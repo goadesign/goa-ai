@@ -1,0 +1,39 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: false
+  skip-dirs:
+    - example/.*/gen
+    - example/.*/goa.*
+    - goa.*
+
+linters:
+  enable:
+    - errorlint
+    - errcheck
+    - staticcheck
+    - unparam
+    - unused
+    - ineffassign
+    - bodyclose
+    - gocritic
+    - misspell
+    - nakedret
+    - prealloc
+    - unconvert
+    - whitespace
+    - nilerr
+    - copyloopvar
+    - sqlclosecheck
+    - makezero
+  settings:
+    staticcheck:
+      checks:
+        - "-ST1001"   # Dot imports are used intentionally in DSL
+    nakedret:
+      max-func-lines: 30
+    misspell:
+      ignore-rules:
+        - Statuser
+
