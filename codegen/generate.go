@@ -101,8 +101,10 @@ func generateMCPServiceCode(genpkg string, root *expr.RootExpr, mcpService *expr
 func generateMCPTransport(genpkg string, svc *expr.ServiceExpr, mcp *mcpexpr.MCPExpr, mapping *ServiceMethodMapping) []*codegen.File {
 	var files []*codegen.File
 	svcName := codegen.SnakeCase(svc.Name)
+	// Use a stable package name without underscores to match Goa's service package naming
+	pkgName := "mcp" + strings.ReplaceAll(svcName, "_", "")
 
-	// Generate adapter file in gen/<service>/mcp/adapter.go
+	// Generate adapter file in gen/mcp_<service>/adapter.go
 	adapterPath := filepath.Join(codegen.Gendir, "mcp_"+svcName, "adapter.go")
 	adapterGen := newAdapterGenerator(genpkg, svc, mcp, mapping)
 	data := adapterGen.buildAdapterData()
@@ -115,14 +117,15 @@ func generateMCPTransport(genpkg string, svc *expr.ServiceExpr, mcp *mcpexpr.MCP
 		{Path: "io"},
 		{Path: "net/http"},
 		{Path: genpkg + "/" + svcName, Name: svcName},
-		{Path: genpkg + "/http/" + svcName + "/server", Name: svcName + "http"},
+		// Use JSON-RPC server decoders for the original service
+		{Path: genpkg + "/jsonrpc/" + svcName + "/server", Name: svcName + "jsonrpc"},
 		{Path: "goa.design/goa/v3/http", Name: "goahttp"},
 		{Path: "goa.design/goa/v3/pkg", Name: "goa"},
 	}
 	files = append(files, &codegen.File{
 		Path: adapterPath,
 		SectionTemplates: []*codegen.SectionTemplate{
-			codegen.Header(fmt.Sprintf("MCP adapter for %s service", svc.Name), "mcp"+svcName, adapterImports),
+			codegen.Header(fmt.Sprintf("MCP adapter for %s service", svc.Name), pkgName, adapterImports),
 			{
 				Name:   "mcp-adapter",
 				Source: mcpTemplates.Read("adapter"),
@@ -146,7 +149,7 @@ func generateMCPTransport(genpkg string, svc *expr.ServiceExpr, mcp *mcpexpr.MCP
 		files = append(files, &codegen.File{
 			Path: providerPath,
 			SectionTemplates: []*codegen.SectionTemplate{
-				codegen.Header(fmt.Sprintf("MCP prompt provider for %s service", svc.Name), "mcp"+svcName, providerImports),
+				codegen.Header(fmt.Sprintf("MCP prompt provider for %s service", svc.Name), pkgName, providerImports),
 				{
 					Name:   "mcp-prompt-provider",
 					Source: mcpTemplates.Read("prompt_provider"),
