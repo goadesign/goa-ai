@@ -92,8 +92,8 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 			Header: http.Header{"Content-Type": []string{"application/json"}},
 		}
 		
-        // Decode using the original service's HTTP decoder
-        dec := {{ $.Package }}http.Decode{{ .OriginalMethodName }}Request(a.mux, goahttp.RequestDecoder)
+        // Decode using the original service's JSON-RPC decoder
+        dec := {{ $.Package }}jsonrpc.Decode{{ .OriginalMethodName }}Request(a.mux, goahttp.RequestDecoder)
         payload, err := dec(req)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode arguments for tool {{ .Name }}: %w", err)
@@ -174,8 +174,8 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 			Header: http.Header{"Content-Type": []string{"application/json"}},
 		}
 		
-        // Decode using the original service's HTTP decoder
-        dec := {{ $.Package }}http.Decode{{ .OriginalMethodName }}Request(a.mux, goahttp.RequestDecoder)
+        // Decode using the original service's JSON-RPC decoder
+        dec := {{ $.Package }}jsonrpc.Decode{{ .OriginalMethodName }}Request(a.mux, goahttp.RequestDecoder)
         payload, err := dec(req)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode payload for resource {{ .URI }}: %w", err)
@@ -280,8 +280,8 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 			Header: http.Header{"Content-Type": []string{"application/json"}},
 		}
 		
-        // Decode using the original service's HTTP decoder
-        dec := {{ $.Package }}http.Decode{{ .OriginalMethodName }}Request(a.mux, goahttp.RequestDecoder)
+        // Decode using the original service's JSON-RPC decoder
+        dec := {{ $.Package }}jsonrpc.Decode{{ .OriginalMethodName }}Request(a.mux, goahttp.RequestDecoder)
         payload, err := dec(req)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode arguments for prompt {{ .Name }}: %w", err)
