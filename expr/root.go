@@ -58,7 +58,7 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 	if len(mcps) > 0 {
 		walk(mcps)
 	}
-	
+
 	// Walk capabilities
 	var caps eval.ExpressionSet
 	for _, mcp := range r.MCPServers {
@@ -69,7 +69,7 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 	if len(caps) > 0 {
 		walk(caps)
 	}
-	
+
 	// Walk tools
 	var tools eval.ExpressionSet
 	for _, mcp := range r.MCPServers {
@@ -80,7 +80,7 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 	if len(tools) > 0 {
 		walk(tools)
 	}
-	
+
 	// Walk resources
 	var resources eval.ExpressionSet
 	for _, mcp := range r.MCPServers {
@@ -91,7 +91,7 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 	if len(resources) > 0 {
 		walk(resources)
 	}
-	
+
 	// Walk prompts and messages
 	var prompts eval.ExpressionSet
 	var messages eval.ExpressionSet
@@ -109,7 +109,7 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 	if len(messages) > 0 {
 		walk(messages)
 	}
-	
+
 	// Walk dynamic prompts
 	var dynPrompts eval.ExpressionSet
 	for _, prompts := range r.DynamicPrompts {
@@ -121,7 +121,6 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 		walk(dynPrompts)
 	}
 }
-
 
 // RegisterMCP registers an MCP server configuration for a service
 func (r *RootExpr) RegisterMCP(svc *expr.ServiceExpr, mcp *MCPExpr) {

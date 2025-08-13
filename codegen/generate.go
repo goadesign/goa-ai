@@ -120,6 +120,7 @@ func generateMCPTransport(genpkg string, svc *expr.ServiceExpr, mcp *mcpexpr.MCP
 		// Use JSON-RPC server decoders for the original service
 		{Path: genpkg + "/jsonrpc/" + svcName + "/server", Name: svcName + "jsonrpc"},
 		{Path: "goa.design/goa/v3/http", Name: "goahttp"},
+		{Path: "goa.design/goa/v3/jsonrpc", Name: "jsonrpc"},
 		{Path: "goa.design/goa/v3/pkg", Name: "goa"},
 	}
 	files = append(files, &codegen.File{

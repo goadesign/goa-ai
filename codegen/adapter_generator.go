@@ -131,7 +131,7 @@ func (g *adapterGenerator) Generate() *codegen.File {
 
 	sections = append(sections, &codegen.SectionTemplate{
 		Name:   "mcp-adapter",
-		Source: mcpTemplates.Read("server"),
+		Source: mcpTemplates.Read("adapter"),
 		Data:   data,
 		FuncMap: map[string]any{
 			"goify":     func(s string) string { return codegen.Goify(s, true) },

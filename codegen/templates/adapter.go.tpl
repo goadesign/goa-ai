@@ -2,18 +2,22 @@
 
 {{ comment "MCPAdapter handles MCP protocol requests and adapts them to the original service" }}
 type MCPAdapter struct {
-	service {{ .Package }}.Service
-	mux goahttp.Muxer
-	promptProvider PromptProvider
+    service {{ .Package }}.Service
+    mux goahttp.Muxer
+    {{- if or .StaticPrompts .DynamicPrompts }}
+    promptProvider PromptProvider
+    {{- end }}
 }
 
 {{ comment "NewMCPAdapter creates a new MCP adapter that wraps the original service" }}
-func NewMCPAdapter(service {{ .Package }}.Service, promptProvider PromptProvider) *MCPAdapter {
-	return &MCPAdapter{
-		service: service,
-		mux: goahttp.NewMuxer(),
-		promptProvider: promptProvider,
-	}
+func NewMCPAdapter(service {{ .Package }}.Service{{ if or .StaticPrompts .DynamicPrompts }}, promptProvider PromptProvider{{ end }}) *MCPAdapter {
+    return &MCPAdapter{
+        service: service,
+        mux: goahttp.NewMuxer(),
+        {{- if or .StaticPrompts .DynamicPrompts }}
+        promptProvider: promptProvider,
+        {{- end }}
+    }
 }
 
 {{ comment "Initialize handles the MCP initialize request" }}
@@ -86,7 +90,7 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 	{{- range .Tools }}
 	case "{{ .Name }}":
 		{{- if .HasPayload }}
-		// Use HTTP decoder from the original service
+        	// Use JSON-RPC decoder from the original service
 		req := &http.Request{
 			Body:   io.NopCloser(bytes.NewReader(p.Arguments)),
 			Header: http.Header{"Content-Type": []string{"application/json"}},
@@ -94,7 +98,7 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		
         // Decode using the original service's JSON-RPC decoder
         dec := {{ $.Package }}jsonrpc.Decode{{ .OriginalMethodName }}Request(a.mux, goahttp.RequestDecoder)
-        payload, err := dec(req)
+        payload, err := dec(req, &jsonrpc.RawRequest{Params: p.Arguments})
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode arguments for tool {{ .Name }}: %w", err)
 		}
@@ -176,7 +180,7 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 		
         // Decode using the original service's JSON-RPC decoder
         dec := {{ $.Package }}jsonrpc.Decode{{ .OriginalMethodName }}Request(a.mux, goahttp.RequestDecoder)
-        payload, err := dec(req)
+        payload, err := dec(req, &jsonrpc.RawRequest{Params: p.Arguments})
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode payload for resource {{ .URI }}: %w", err)
 		}
@@ -282,7 +286,7 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 		
         // Decode using the original service's JSON-RPC decoder
         dec := {{ $.Package }}jsonrpc.Decode{{ .OriginalMethodName }}Request(a.mux, goahttp.RequestDecoder)
-        payload, err := dec(req)
+        payload, err := dec(req, &jsonrpc.RawRequest{Params: p.Arguments})
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode arguments for prompt {{ .Name }}: %w", err)
 		}
