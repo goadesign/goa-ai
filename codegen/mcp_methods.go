@@ -80,12 +80,17 @@ func (b *mcpExprBuilder) buildToolsListMethod() *expr.MethodExpr {
 
 // buildToolsCallMethod creates the tools/call method
 func (b *mcpExprBuilder) buildToolsCallMethod() *expr.MethodExpr {
-	return &expr.MethodExpr{
+	m := &expr.MethodExpr{
 		Name:        "tools/call",
 		Description: "Call a tool",
 		Payload:     b.getOrCreateType("ToolsCallPayload", b.buildToolsCallPayloadType).AttributeExpr,
 		Result:      b.getOrCreateType("ToolsCallResult", b.buildToolsCallResultType).AttributeExpr,
 	}
+	if b.anyToolStreaming() {
+		m.Stream = expr.ServerStreamKind
+		m.StreamingResult = b.getOrCreateType("ToolsCallResult", b.buildToolsCallResultType).AttributeExpr
+	}
+	return m
 }
 
 // buildResourcesListMethod creates the resources/list method
@@ -100,12 +105,17 @@ func (b *mcpExprBuilder) buildResourcesListMethod() *expr.MethodExpr {
 
 // buildResourcesReadMethod creates the resources/read method
 func (b *mcpExprBuilder) buildResourcesReadMethod() *expr.MethodExpr {
-	return &expr.MethodExpr{
+	m := &expr.MethodExpr{
 		Name:        "resources/read",
 		Description: "Read a resource",
 		Payload:     b.getOrCreateType("ResourcesReadPayload", b.buildResourcesReadPayloadType).AttributeExpr,
 		Result:      b.getOrCreateType("ResourcesReadResult", b.buildResourcesReadResultType).AttributeExpr,
 	}
+	if b.anyResourceStreaming() {
+		m.Stream = expr.ServerStreamKind
+		m.StreamingResult = b.getOrCreateType("ResourcesReadResult", b.buildResourcesReadResultType).AttributeExpr
+	}
+	return m
 }
 
 // buildResourcesSubscribeMethod creates the resources/subscribe method
@@ -196,5 +206,25 @@ func (b *mcpExprBuilder) hasPrompts() bool {
 		}
 	}
 
+	return false
+}
+
+// anyToolStreaming returns true if any referenced tool method is streaming
+func (b *mcpExprBuilder) anyToolStreaming() bool {
+	for _, t := range b.mcp.Tools {
+		if t != nil && t.Method != nil && t.Method.Stream == expr.ServerStreamKind {
+			return true
+		}
+	}
+	return false
+}
+
+// anyResourceStreaming returns true if any referenced resource method is streaming
+func (b *mcpExprBuilder) anyResourceStreaming() bool {
+	for _, r := range b.mcp.Resources {
+		if r != nil && r.Method != nil && r.Method.Stream == expr.ServerStreamKind {
+			return true
+		}
+	}
 	return false
 }

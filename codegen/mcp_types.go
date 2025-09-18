@@ -1,8 +1,7 @@
 package codegen
 
 import (
-	"goa.design/goa/v3/expr"
-	mcpexpr "goa.design/plugins/v3/mcp/expr"
+    "goa.design/goa/v3/expr"
 )
 
 // buildMCPTypes creates all MCP protocol type definitions
@@ -228,15 +227,12 @@ func (b *mcpExprBuilder) buildToolsCallPayloadType() *expr.AttributeExpr {
 		toolNames[i] = tool.Name
 	}
 
-	return &expr.AttributeExpr{
-		Type: &expr.Object{
-			{Name: "name", Attribute: &expr.AttributeExpr{
-				Type:        expr.String,
-				Description: "Tool name",
-				Validation: &expr.ValidationExpr{
-					Values: toolNames,
-				},
-			}},
+    return &expr.AttributeExpr{
+        Type: &expr.Object{
+            {Name: "name", Attribute: &expr.AttributeExpr{
+                Type:        expr.String,
+                Description: "Tool name",
+            }},
 			{Name: "arguments", Attribute: &expr.AttributeExpr{
 				Type:        expr.Any,
 				Description: "Tool arguments",
@@ -464,27 +460,12 @@ func (b *mcpExprBuilder) buildPromptInfoType() *expr.AttributeExpr {
 }
 
 func (b *mcpExprBuilder) buildPromptsGetPayloadType() *expr.AttributeExpr {
-	// Build enum of prompt names
-	promptNames := make([]any, 0, len(b.mcp.Prompts))
-	for _, prompt := range b.mcp.Prompts {
-		promptNames = append(promptNames, prompt.Name)
-	}
-	if mcpexpr.Root != nil {
-		dynamicPrompts := mcpexpr.Root.DynamicPrompts[b.originalService.Name]
-		for _, dp := range dynamicPrompts {
-			promptNames = append(promptNames, dp.Name)
-		}
-	}
-
-	return &expr.AttributeExpr{
-		Type: &expr.Object{
-			{Name: "name", Attribute: &expr.AttributeExpr{
-				Type:        expr.String,
-				Description: "Prompt name",
-				Validation: &expr.ValidationExpr{
-					Values: promptNames,
-				},
-			}},
+    return &expr.AttributeExpr{
+        Type: &expr.Object{
+            {Name: "name", Attribute: &expr.AttributeExpr{
+                Type:        expr.String,
+                Description: "Prompt name",
+            }},
 			{Name: "arguments", Attribute: &expr.AttributeExpr{
 				Type:        expr.Any,
 				Description: "Prompt arguments",

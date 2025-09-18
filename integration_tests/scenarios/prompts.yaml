@@ -1,0 +1,61 @@
+# MCP Prompts Test Scenarios (new shape)
+
+scenarios:
+  - name: prompts_list
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: true
+    steps:
+      - name: list
+        op: PromptsList
+        input: {}
+        expect:
+          status: success
+          result:
+            prompts:
+              - name: contextual_prompts
+                arguments:
+                  - { name: context, required: true }
+                  - { name: task, required: true }
+
+  - name: prompts_get_static
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: true
+    steps:
+      - name: get
+        op: PromptsGet
+        input:
+          name: code_review
+          arguments: { code: "func add(a, b int) int { return a + b }" }
+        expect:
+          status: success
+
+  - name: prompts_get_dynamic
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: true
+    steps:
+      - name: get
+        op: PromptsGet
+        input:
+          name: contextual_prompts
+          arguments: { context: testing, task: unit-test }
+        expect:
+          status: success
+
+  - name: prompts_get_invalid
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: true
+    steps:
+      - name: get
+        op: PromptsGet
+        input: { name: non_existent_prompt, arguments: {} }
+        expect:
+          status: error
+          error: { code: -32601 }

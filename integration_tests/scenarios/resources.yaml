@@ -1,0 +1,87 @@
+# MCP Resources Test Scenarios (new shape)
+
+scenarios:
+  - name: resources_list
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: true
+    steps:
+      - name: list
+        op: ResourcesList
+        input: {}
+        expect:
+          status: success
+          result: { resources: [ {} ] }
+
+  - name: resources_read_system
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: true
+    steps:
+      - name: read
+        op: ResourcesRead
+        input: { uri: "system://info" }
+        expect:
+          status: success
+          result:
+            contents: [ { uri: "system://info", mimeType: "application/json" } ]
+
+  - name: resources_read_conversation_with_params
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: true
+    steps:
+      - name: read_with_params
+        op: ResourcesRead
+        input: { uri: "conversation://history?limit=10" }
+        expect:
+          status: success
+          result:
+            contents: [ { uri: "conversation://history", mimeType: "application/json" } ]
+
+  - name: resources_read_coercions
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: true
+    steps:
+      - name: read_with_types
+        op: ResourcesRead
+        input: { uri: "conversation://history?limit=10&flag=true&nums=1&nums=2.5" }
+        expect:
+          status: success
+          result:
+            contents: [ { uri: "conversation://history" } ]
+
+  - name: resources_read_invalid
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: true
+    steps:
+      - name: read
+        op: ResourcesRead
+        input: { uri: "invalid://resource" }
+        expect:
+          status: error
+          error: { code: -32601 }
+
+  - name: resources_subscribe_unsubscribe
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: true
+    steps:
+      - name: subscribe
+        op: ResourcesSubscribe
+        input: { uri: "doc://list" }
+        expect:
+          status: success
+      - name: unsubscribe
+        op: ResourcesUnsubscribe
+        input: { uri: "doc://list" }
+        expect:
+          status: success

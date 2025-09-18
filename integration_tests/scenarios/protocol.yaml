@@ -1,0 +1,118 @@
+# MCP Protocol Compliance Test Scenarios (new shape)
+
+scenarios:
+  - name: initialize_basic
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: false
+    steps:
+      - name: initialize
+        op: Initialize
+        input:
+          protocolVersion: "2025-06-18"
+          capabilities: { tools: true, resources: true, prompts: true }
+          clientInfo: { name: "test-client", version: "1.0.0" }
+        expect:
+          status: success
+          result:
+            protocolVersion: "2025-06-18"
+
+  - name: initialize_tools_only
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: false
+    steps:
+      - name: initialize
+        op: Initialize
+        input:
+          protocolVersion: "2025-06-18"
+          capabilities: { tools: true, resources: false, prompts: false }
+          clientInfo: { name: "test-client", version: "1.0.0" }
+        expect:
+          status: success
+          result:
+            protocolVersion: "2025-06-18"
+
+  - name: initialize_unsupported_version
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: false
+    steps:
+      - name: initialize_bad_version
+        op: Initialize
+        input:
+          protocolVersion: "1.0.0"
+          capabilities: {}
+          clientInfo: { name: "test-client", version: "1.0.0" }
+        expect:
+          status: error
+          error: { code: -32602, message: "Unsupported protocol version" }
+
+  - name: initialize_twice
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: false
+    steps:
+      - name: init1
+        op: Initialize
+        input:
+          protocolVersion: "2025-06-18"
+          capabilities: {}
+          clientInfo: { name: "test-client", version: "1.0.0" }
+        expect:
+          status: success
+          result: { protocolVersion: "2025-06-18" }
+      - name: init2
+        op: Initialize
+        input:
+          protocolVersion: "2025-06-18"
+          capabilities: {}
+          clientInfo: { name: "test-client", version: "1.0.0" }
+        expect:
+          status: error
+          error: { code: -32602, message: "Already initialized" }
+
+  - name: call_before_init
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: false
+    steps:
+      - name: tools_list_before_init
+        op: ToolsList
+        input: {}
+        expect:
+          status: error
+          error: { code: -32602, message: "Not initialized" }
+
+  - name: invalid_method
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: false
+    steps:
+      - name: invalid_op
+        op: InvalidOp
+        input: {}
+        expect:
+          status: error
+          error: { code: -32601, message: "Method not found" }
+
+  - name: notification_no_response
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: true
+    steps:
+      - name: notify_status_update
+        op: NotifyStatusUpdate
+        notification: true
+        input:
+          type: info
+          message: "Testing notification"
+        expect:
+          status: no_response

@@ -1,0 +1,17 @@
+# MCP Notifications Test Scenarios (new shape)
+
+scenarios:
+  - name: notify_status_update_no_response
+    defaults:
+      client: jsonrpc.mcp_assistant
+    steps:
+      - name: notify
+        op: NotifyStatusUpdate
+        notification: true
+        input:
+          type: info
+          message: "Server status ok"
+        expect:
+          status: no_response
+
+

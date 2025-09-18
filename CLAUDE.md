@@ -54,7 +54,6 @@ This file guides Claude when working on this repo. It captures intent, guardrail
 - Small, composable functions; avoid deep nesting.
 - Descriptive names; no 1-2 letter identifiers.
 - Prefer guard clauses and early returns.
-- Keep templates minimal and transport-agnostic.
 - Lint must pass (`golangci-lint`, v2 config) and `go build ./...` must be clean.
 
 The Goa project favors short-ish files (ideally no more than 2,000 lines of code

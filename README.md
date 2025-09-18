@@ -1,253 +1,154 @@
 # Goa MCP Plugin
 
-A Goa plugin that enables Model Context Protocol (MCP) server generation from Goa service designs.
+Design-first Model Context Protocol servers generated from your Goa service design.
 
-## Overview
+Why Goa + MCP
+- One design, many surfaces. Describe your service once in Goa’s DSL and generate a fully-typed MCP server that tools, prompts, and resources can call. No drift between docs, types, handlers, and clients.
+- Strong types → clear schemas. The plugin derives compact JSON Schema for tool inputs from your Goa payloads, so models get reliable shapes and you keep compile-time confidence.
+- Built-in streaming done right. JSON‑RPC over HTTP with Server‑Sent Events (SSE) is negotiated by the Accept header — non‑streaming and streaming endpoints coexist cleanly.
+- Opinionated protocol glue. Initialization gating, capability negotiation, and consistent JSON‑RPC error mapping are handled for you so you can focus on domain logic.
+- Batteries included. Generated adapters, clients, and an example server make it easy to try, test, and ship. A comprehensive integration test suite ships in this repo.
 
-This plugin extends Goa's DSL to allow services to be exposed as MCP servers, providing:
-- **Tools**: Expose service methods as callable tools for AI models
-- **Resources**: Provide contextual data through service endpoints
-- **Prompts**: Define templated prompts for AI interactions
-- **Dynamic Prompts**: Generate prompts dynamically based on runtime data
+What You Get
+- Tools: expose methods as MCP tools callable by AI agents.
+- Resources: serve contextual data via URI-like addresses (list, read, subscribe).
+- Prompts: define static templates or generate dynamic prompts from code.
+- Notifications and subscriptions: send progress, status, and change events.
+- Transports: JSON‑RPC over HTTP with optional SSE for streaming.
 
-The plugin leverages Goa's native JSON-RPC support to implement the MCP protocol with automatic SSE streaming when clients send `Accept: text/event-stream` header.
+Quickstart
+1) Install
+   - `go get goa.design/plugins/v3/mcp`
 
-## Installation
+2) Import the MCP DSL in your design
+   - `import mcp "goa.design/plugins/v3/mcp/dsl"`
 
-```bash
-go get goa.design/plugins/v3/mcp
-```
+3) Enable MCP and JSON‑RPC on a service
+   - Minimal example:
+     ```go
+     var _ = Service("assistant", func() {
+       Description("MCP-enabled assistant service")
+       mcp.MCPServer("assistant-mcp", "1.0.0")
+       JSONRPC(func() { POST("/rpc") })
+     })
+     ```
 
-## Usage
+4) Expose functionality
+   - Tool:
+     ```go
+     Method("analyze", func() {
+       Payload(func() { Attribute("text", String); Required("text") })
+       Result(String)
+       mcp.Tool("analyze_text", "Analyze user text")
+       JSONRPC(func() {})
+     })
+     ```
+   - Resource:
+     ```go
+     Method("systemInfo", func() {
+       Result(MapOf(String, String))
+       mcp.Resource("system_info", "system://info", "application/json")
+       JSONRPC(func() {})
+     })
+     ```
+   - Dynamic prompt:
+     ```go
+     Method("makePrompt", func() {
+       Payload(func(){ Attribute("topic", String); Required("topic") })
+       Result(ArrayOf(PromptResult))
+       mcp.DynamicPrompt("topic_prompts", "Generate prompts for a topic")
+       JSONRPC(func() {})
+     })
+     ```
 
-### 1. Import the Plugin DSL
+5) Add streaming (optional)
+   - Mixed mode (HTTP or SSE by Accept header):
+     ```go
+     Method("processBatch", func() {
+       Payload(func(){ Attribute("items", ArrayOf(String)); Required("items") })
+       Result(String)
+       StreamingResult(String)
+       mcp.Tool("process_batch", "Process items with progress updates")
+       JSONRPC(func() {})
+     })
+     ```
 
-```go
-package design
+6) Generate and run
+   - `goa gen <module>/design`
+   - `goa example <module>/design`
+   - `go run cmd/<service>/main.go --http-port 8080`
 
-import (
-    . "goa.design/goa/v3/dsl"
-    . "goa.design/plugins/v3/mcp/dsl"
-)
-```
+Try It (curl)
+- Initialize (once per connection):
+  ```bash
+  curl -s localhost:8080/rpc -H 'Content-Type: application/json' -d '{
+    "jsonrpc":"2.0","id":1,"method":"initialize",
+    "params":{"protocolVersion":"2025-06-18","capabilities":{"tools":true,"resources":true,"prompts":true}}
+  }'
+  ```
 
-### 2. Define an MCP Server
+- List tools:
+  ```bash
+  curl -s localhost:8080/rpc -H 'Content-Type: application/json' -d '{
+    "jsonrpc":"2.0","id":2,"method":"tools/list","params":{}
+  }' | jq
+  ```
 
-```go
-var _ = Service("calculator", func() {
-    Description("Calculator service")
-    
-    // Configure MCP server
-    // Transport is automatically JSON-RPC
-    // Capabilities are auto-detected from defined tools, resources, etc.
-    MCPServer("calculator-mcp", "1.0.0")
-    
-    // Enable JSON-RPC (automatically supports SSE via Accept header)
-    JSONRPC(func() {
-        POST("/rpc")
-    })
-})
-```
+- Call a streaming tool (SSE):
+  ```bash
+  curl -N localhost:8080/rpc \
+    -H 'Accept: text/event-stream' -H 'Content-Type: application/json' \
+    -d '{"jsonrpc":"2.0","id":"call-1","method":"tools/call","params":{"name":"process_batch","arguments":{"items":["a","b"]}}}'
+  ```
 
-### 3. Define Tools
+Concepts & Mapping
+- Tools → Goa Method with `mcp.Tool(...)` and `JSONRPC(func(){})`.
+- Resources → Goa Method with `mcp.Resource(...)` and `JSONRPC(func(){})`.
+- Static prompts → `mcp.StaticPrompt(...)` at service scope.
+- Dynamic prompts → Goa Method with `mcp.DynamicPrompt(...)` and `JSONRPC(func(){})`.
+- Streaming → add `StreamingResult(...)` (optional alongside `Result(...)`).
+- Content negotiation → set `Accept: text/event-stream` for streaming.
 
-Expose service methods as MCP tools:
+Initialization & Errors
+- Calls are gated until `initialize` succeeds.
+- JSON‑RPC error mapping used by the generated server:
+  - `-32601` Method Not Found for unknown tools/resources/prompts.
+  - `-32602` Invalid Params for decode/validation/service param errors.
+  - `-32603` Internal Error for unhandled failures.
+- SSE errors are emitted as `event: error` with a JSON‑RPC error body.
 
-```go
-Method("add", func() {
-    Description("Add two numbers")
-    Payload(func() {
-        Attribute("a", Float64, "First number")
-        Attribute("b", Float64, "Second number")
-        Required("a", "b")
-    })
-    Result(Float64)
-    
-    // Mark as MCP tool
-    Tool("add", "Add two numbers together")
-    
-    JSONRPC(func() {})
-})
-```
+Why This Approach Works
+- Design-first development reduces surface bugs: one source of truth for types, transports, and documentation.
+- Automatic schema and adapter generation accelerates iteration and improves agent reliability.
+- Unified transport with first-class SSE encourages gradual adoption of streaming without separate stacks.
+- Integration tests as contract: this repo ships high-signal scenarios you can extend or mirror.
 
-### 4. Define Resources
+Integration Tests
+- Location: `integration_tests/`
+- Run everything:
+  - `go test -v ./integration_tests/tests`
+- Useful env vars:
+  - `TEST_PARALLEL=true` run scenarios in parallel
+  - `TEST_FILTER=initialize.*` filter by scenario name
+  - `TEST_KEEP_GENERATED=true` keep generated example code for debugging
+  - `TEST_DEBUG=true` verbose runner logs
 
-Expose data as MCP resources:
+Requirements
+- Goa v3.22.2 or newer (JSON‑RPC mixed transport and SSE fixes).
+- Go 1.24+.
 
-```go
-Method("history", func() {
-    Description("Get calculation history")
-    Result(ArrayOf(HistoryEntry))
-    
-    // Mark as MCP resource
-    Resource("calculation_history", "history://calculations", "application/json")
-    
-    JSONRPC(func() {})
-})
-```
+Recipes
+- Resource URI params are coerced into your payload types: repeated params → arrays, booleans/ints/floats parsed when possible.
+- Mixed response methods: declare both `Result(...)` and `StreamingResult(...)` to let clients choose HTTP or SSE via Accept.
+- SSE event framing: interim updates use JSON‑RPC notifications, final response uses a JSON‑RPC success envelope.
 
-### 5. Define Prompts
+FAQ
+- Do I need WebSockets? No — JSON‑RPC over HTTP + SSE covers request/response and server‑push efficiently.
+- Can I keep my existing Goa service? Yes. The plugin generates an MCP adapter that wraps your service; you keep your domain code.
+- How do I test complex outputs? Extend or add scenarios in `integration_tests/scenarios/*.yaml` and use partial matching in expectations.
 
-Create templated prompts for AI interactions:
+Contributing
+- Issues and PRs welcome. Please include a failing scenario or a minimal design when possible.
 
-```go
-// Define static prompts
-StaticPrompt(
-    "solve_equation",
-    "Prompt for solving equations",
-    "system", "You are a mathematical assistant.",
-    "user", "Please solve: {{.equation}}",
-    "assistant", "I'll solve this step by step.",
-)
-```
-
-### 6. Dynamic Prompts
-
-Generate prompts dynamically:
-
-```go
-Method("generate_prompts", func() {
-    Description("Generate prompts dynamically")
-    Payload(func() {
-        Attribute("topic", String, "Topic for prompts")
-        Required("topic")
-    })
-    Result(ArrayOf(PromptResult))
-    
-    // Mark as dynamic prompt generator
-    DynamicPrompt("calculation_prompts", "Generate calculation prompts")
-    
-    JSONRPC(func() {})
-})
-```
-
-## Code Generation
-
-Generate the MCP server code:
-
-```bash
-goa gen <module>/design
-```
-
-This generates:
-- MCP server implementation in `gen/mcp/`
-- Transport adapters (stdio, HTTP, WebSocket)
-- Client implementation for testing
-- Example main file in `cmd/<service>_mcp/`
-
-## Running the Server
-
-### JSON-RPC Server
-
-```bash
-go run cmd/calculator/main.go --http-port 8080
-```
-
-The server automatically:
-- Handles MCP protocol methods at `/rpc`
-- Supports SSE streaming when clients send `Accept: text/event-stream`
-- Provides both HTTP and JSON-RPC endpoints
-
-## Integration with AI Models
-
-The generated MCP server can be integrated with:
-- Claude Desktop (via MCP SDK)
-- Other AI assistants supporting MCP
-- Custom AI applications using the MCP client
-
-### Example MCP Client Configuration
-
-```json
-{
-  "servers": {
-    "calculator": {
-      "url": "http://localhost:8080/rpc",
-      "transport": "jsonrpc"
-    }
-  }
-}
-```
-
-## Security
-
-The plugin integrates with Goa's security DSL:
-
-```go
-Service("secure", func() {
-    // Define security
-    Security(BasicAuth, func() {
-        Scope("api:read", "Read access")
-        Scope("api:write", "Write access")
-    })
-    
-    MCPServer(func() {
-        // MCP configuration
-    })
-    
-    Method("protected", func() {
-        Security(BasicAuth, func() {
-            Scope("api:write")
-        })
-        // Method definition
-    })
-})
-```
-
-## Architecture
-
-The plugin follows Goa's architecture:
-
-1. **DSL Layer** (`dsl/`): Extends Goa's DSL with MCP-specific functions
-2. **Expression Layer** (`expr/`): Defines data structures for MCP metadata
-3. **Code Generation** (`codegen/`): Generates type-safe MCP server code
-4. **Transport Adapters**: Implements MCP protocol over different transports
-
-The generated code:
-- Wraps service implementations with MCP protocol handling
-- Provides type-safe interfaces for tools, resources, and prompts
-- Handles JSON-RPC communication and error handling
-- Supports capability negotiation and session management
-
-## Supported MCP Features
-
-The plugin supports all features from the MCP 2025-06-18 specification:
-
-### Server Features
-- **Tools**: Expose service methods as AI-callable tools
-- **Resources**: Provide data resources with URI templates
-- **Prompts**: Define static and dynamic prompt templates
-
-### Client Features  
-- **Sampling**: Request LLM completions from the client
-- **Roots**: Query filesystem/URI roots from the client
-- **Elicitation**: Request additional information from users
-
-### Additional Protocol Features
-- **Notifications**: Send status updates to clients
-- **Progress Tracking**: Report progress for long operations
-- **Cancellation**: Support for canceling operations
-- **Logging**: Structured logging support
-- **Completion**: Auto-completion support
-- **Subscriptions**: Resource update subscriptions
-- **Server-Sent Events (SSE)**: Stream real-time updates when clients set `Accept: text/event-stream` header
-  - Resource subscription monitoring
-  - Log streaming  
-  - Real-time updates
-
-### Technical Features
-- ✅ Type-safe code generation
-- ✅ Integration with Goa's validation and error handling
-- ✅ Security integration via Goa's security DSL
-- ✅ Automatic capability detection
-- ✅ JSON-RPC transport with SSE support
-
-## Contributing
-
-Contributions are welcome! Please ensure:
-- Code follows Goa's coding standards
-- Tests are included for new features
-- Documentation is updated
-
-## License
-
-Same as Goa framework
+License
+MIT — same as the Goa framework.

@@ -55,8 +55,8 @@ paths:
                     required:
                         - items
             responses:
-                "200":
-                    description: OK response.
+                "101":
+                    description: Switching Protocols response.
                     schema:
                         $ref: '#/definitions/BatchResult'
                         required:
@@ -64,32 +64,7 @@ paths:
                             - failed
                             - results
             schemes:
-                - http
-    /api/complete:
-        post:
-            tags:
-                - assistant
-            summary: request_completion assistant
-            description: Request text completion from client LLM
-            operationId: assistant#request_completion
-            parameters:
-                - name: request_completion_request_body
-                  in: body
-                  required: true
-                  schema:
-                    $ref: '#/definitions/AssistantRequestCompletionRequestBody'
-                    required:
-                        - messages
-            responses:
-                "200":
-                    description: OK response.
-                    schema:
-                        $ref: '#/definitions/AssistantRequestCompletionResponseBody'
-                        required:
-                            - model
-                            - content
-            schemes:
-                - http
+                - ws
     /api/conversation:
         get:
             tags:
@@ -152,55 +127,6 @@ paths:
                         required:
                             - output
                             - execution_time
-            schemes:
-                - http
-    /api/logs:
-        get:
-            tags:
-                - assistant
-            summary: stream_logs assistant
-            description: Stream server logs in real-time via SSE
-            operationId: assistant#stream_logs
-            parameters:
-                - name: stream_logs_request_body
-                  in: body
-                  required: true
-                  schema:
-                    $ref: '#/definitions/AssistantStreamLogsRequestBody'
-            responses:
-                "200":
-                    description: OK response.
-                    schema:
-                        $ref: '#/definitions/AssistantStreamLogsResponseBody'
-                        required:
-                            - logs
-            schemes:
-                - http
-    /api/monitor/{subscription_id}:
-        get:
-            tags:
-                - assistant
-            summary: monitor_resource_changes assistant
-            description: 'Monitor resource changes and send updates via SSE when Accept: text/event-stream is set'
-            operationId: assistant#monitor_resource_changes
-            parameters:
-                - name: subscription_id
-                  in: path
-                  description: Subscription ID from subscribe_to_updates
-                  required: true
-                  type: string
-                - name: monitor_resource_changes_request_body
-                  in: body
-                  required: true
-                  schema:
-                    $ref: '#/definitions/AssistantMonitorResourceChangesRequestBody'
-            responses:
-                "200":
-                    description: OK response.
-                    schema:
-                        $ref: '#/definitions/AssistantMonitorResourceChangesResponseBody'
-                        required:
-                            - updates
             schemes:
                 - http
     /api/notify:
@@ -335,6 +261,199 @@ paths:
                             - roots
             schemes:
                 - http
+    /stream/data/{data_type}:
+        get:
+            tags:
+                - streaming
+            summary: flexible_data streaming
+            description: Flexible data streaming
+            operationId: streaming#flexible_data
+            parameters:
+                - name: data_type
+                  in: path
+                  description: Type of data
+                  required: true
+                  type: string
+                - name: streaming
+                  in: query
+                  description: Enable streaming
+                  required: false
+                  type: boolean
+                  default: true
+            responses:
+                "101":
+                    description: Switching Protocols response.
+                    schema:
+                        $ref: '#/definitions/DataUpdate'
+                        required:
+                            - update_id
+                            - data
+                            - sequence
+                            - final
+            schemes:
+                - ws
+    /stream/events/{category}:
+        get:
+            tags:
+                - streaming
+            summary: stream_events streaming
+            description: Stream events from server to client using SSE
+            operationId: streaming#stream_events
+            parameters:
+                - name: category
+                  in: path
+                  description: Event category
+                  required: true
+                  type: string
+                  enum:
+                    - system
+                    - user
+                    - application
+                - name: filter
+                  in: query
+                  description: Optional filter
+                  required: false
+                  type: string
+            responses:
+                "101":
+                    description: Switching Protocols response.
+                    schema:
+                        $ref: '#/definitions/EventUpdate'
+                        required:
+                            - event_id
+                            - category
+                            - type
+                            - timestamp
+            schemes:
+                - ws
+    /stream/logs:
+        get:
+            tags:
+                - streaming
+            summary: stream_logs streaming
+            description: Stream logs using SSE
+            operationId: streaming#stream_logs
+            parameters:
+                - name: level
+                  in: query
+                  description: Log level
+                  required: false
+                  type: string
+                  default: info
+                  enum:
+                    - debug
+                    - info
+                    - warning
+                    - error
+            responses:
+                "101":
+                    description: Switching Protocols response.
+                    schema:
+                        $ref: '#/definitions/LogEntry'
+                        required:
+                            - timestamp
+                            - level
+                            - message
+            schemes:
+                - ws
+    /stream/monitor/{resource_type}:
+        get:
+            tags:
+                - streaming
+            summary: monitor_resource_changes streaming
+            description: Monitor resource changes with server streaming
+            operationId: streaming#monitor_resource_changes
+            parameters:
+                - name: resource_type
+                  in: path
+                  description: Type of resource to monitor
+                  required: true
+                  type: string
+                - name: filter
+                  in: query
+                  description: Optional filter
+                  required: false
+                  type: string
+            responses:
+                "101":
+                    description: Switching Protocols response.
+                    schema:
+                        $ref: '#/definitions/ResourceUpdate'
+                        required:
+                            - update_id
+                            - resource
+                            - event_type
+                            - timestamp
+            schemes:
+                - ws
+    /ws/chat:
+        get:
+            tags:
+                - websocket
+            summary: chat websocket
+            description: Interactive chat with bidirectional streaming
+            operationId: websocket#chat
+            responses:
+                "101":
+                    description: Switching Protocols response.
+                    schema:
+                        $ref: '#/definitions/ChatResponse'
+                        required:
+                            - response
+                            - thinking
+            schemes:
+                - ws
+    /ws/interactive_chat:
+        get:
+            tags:
+                - websocket
+            summary: interactive_chat websocket
+            description: Extended interactive chat with bidirectional streaming
+            operationId: websocket#interactive_chat
+            responses:
+                "101":
+                    description: Switching Protocols response.
+                    schema:
+                        $ref: '#/definitions/ChatResponse'
+                        required:
+                            - response
+                            - thinking
+            schemes:
+                - ws
+    /ws/upload:
+        get:
+            tags:
+                - websocket
+            summary: upload_chunks websocket
+            description: Upload data chunks via client stream
+            operationId: websocket#upload_chunks
+            responses:
+                "101":
+                    description: Switching Protocols response.
+                    schema:
+                        $ref: '#/definitions/WebsocketUploadChunksResponseBody'
+                        required:
+                            - total_size
+                            - chunk_count
+            schemes:
+                - ws
+    /ws/upload_documents:
+        get:
+            tags:
+                - websocket
+            summary: upload_documents websocket
+            description: Upload multiple documents via client stream
+            operationId: websocket#upload_documents
+            responses:
+                "101":
+                    description: Switching Protocols response.
+                    schema:
+                        $ref: '#/definitions/WebsocketUploadDocumentsResponseBody'
+                        required:
+                            - total_size
+                            - document_count
+            schemes:
+                - ws
 definitions:
     AnalysisResult:
         title: AnalysisResult
@@ -343,28 +462,30 @@ definitions:
             confidence:
                 type: number
                 description: Confidence score
-                example: 0.20157068479252324
+                example: 0.6998759386199344
                 format: double
             metadata:
                 type: object
                 description: Additional metadata
                 example:
-                    Laudantium dolorum eveniet et at omnis.: Nulla aperiam officia delectus tempore et illo.
-                    Molestiae cupiditate tempore inventore adipisci maiores.: Et vitae sequi.
+                    Distinctio exercitationem tempora reprehenderit minus et consectetur.: Corporis corrupti necessitatibus sint aliquam labore.
+                    Perspiciatis aut pariatur sit et vel.: Dolores amet atque et aut officiis sit.
+                    Praesentium voluptatem dolorum quo voluptatem corporis.: Officia totam odio consequatur consectetur.
                 additionalProperties: true
             mode:
                 type: string
                 description: Analysis mode used
-                example: Aut nostrum voluptatem ut at recusandae.
+                example: Fuga iure deleniti.
             result:
                 description: Analysis result (varies by mode)
-                example: Ratione consequatur aut labore nesciunt placeat libero.
+                example: Harum molestiae eos sint aut beatae.
         example:
-            confidence: 0.7993244911441817
+            confidence: 0.05578425480947909
             metadata:
-                Autem voluptate inventore consequatur.: Nisi quod sed et et eligendi.
-            mode: Sint ratione delectus tenetur ea.
-            result: Inventore amet odit.
+                In est aut amet.: Quidem doloribus et enim.
+                Non deleniti dolore voluptatem.: Nihil ut labore iste qui molestiae.
+            mode: Necessitatibus ex dolore facere alias.
+            result: Non quae ut iste dolorem eveniet.
         required:
             - mode
             - result
@@ -383,10 +504,10 @@ definitions:
             text:
                 type: string
                 description: Text to analyze
-                example: Quae quo.
+                example: Doloribus ad et.
         example:
             mode: sentiment
-            text: Ut ex fugit.
+            text: Aut quo animi minus non.
         required:
             - text
             - mode
@@ -397,14 +518,14 @@ definitions:
             code:
                 type: string
                 description: Code to execute
-                example: Qui quibusdam voluptates quos et quia.
+                example: Quis amet natus earum eos quia.
             language:
                 type: string
                 description: Programming language
-                example: Architecto quia quis optio amet magnam animi.
+                example: Est ad et et et rerum.
         example:
-            code: Earum ut placeat nostrum et.
-            language: Magnam laboriosam iure.
+            code: Et qui similique eaque occaecati.
+            language: Vero perferendis voluptatum.
         required:
             - language
             - code
@@ -415,14 +536,14 @@ definitions:
             context:
                 type: string
                 description: Current context
-                example: Non similique magnam et.
+                example: Cupiditate qui nulla rerum fugiat unde ut.
             task:
                 type: string
                 description: Task type
-                example: Voluptatem magni quam consequuntur qui ab.
+                example: Cupiditate ut est repellendus.
         example:
-            context: Est dolorum.
-            task: Sunt et.
+            context: Quia alias eum.
+            task: Natus ipsum officia aut.
         required:
             - context
             - task
@@ -434,10 +555,10 @@ definitions:
                 type: integer
                 description: Number of messages
                 default: 50
-                example: 9029521817163794350
+                example: 2233147623092009829
                 format: int64
         example:
-            limit: 7332724919033185906
+            limit: 6982686517971143854
     AssistantGetWorkspaceInfoResponseBody:
         title: AssistantGetWorkspaceInfoResponseBody
         type: object
@@ -447,180 +568,156 @@ definitions:
                 items:
                     $ref: '#/definitions/RootInfo'
                 example:
-                    - name: Necessitatibus est nesciunt autem alias ea rem.
-                      uri: Iusto explicabo doloribus reprehenderit.
-                    - name: Necessitatibus est nesciunt autem alias ea rem.
-                      uri: Iusto explicabo doloribus reprehenderit.
+                    - name: Tenetur omnis mollitia vitae porro est.
+                      uri: Qui quidem.
+                    - name: Tenetur omnis mollitia vitae porro est.
+                      uri: Qui quidem.
+                    - name: Tenetur omnis mollitia vitae porro est.
+                      uri: Qui quidem.
         example:
             roots:
-                - name: Necessitatibus est nesciunt autem alias ea rem.
-                  uri: Iusto explicabo doloribus reprehenderit.
-                - name: Necessitatibus est nesciunt autem alias ea rem.
-                  uri: Iusto explicabo doloribus reprehenderit.
+                - name: Tenetur omnis mollitia vitae porro est.
+                  uri: Qui quidem.
+                - name: Tenetur omnis mollitia vitae porro est.
+                  uri: Qui quidem.
         required:
             - roots
-    AssistantMonitorResourceChangesRequestBody:
-        title: AssistantMonitorResourceChangesRequestBody
-        type: object
-        properties:
-            stream:
-                type: boolean
-                description: Whether to stream updates (for SSE)
-                default: false
-                example: false
-        example:
-            stream: true
-    AssistantMonitorResourceChangesResponseBody:
-        title: AssistantMonitorResourceChangesResponseBody
-        type: object
-        properties:
-            updates:
-                type: array
-                items:
-                    $ref: '#/definitions/ResourceUpdate'
-                description: Resource updates
-                example:
-                    - data: Dolorum debitis.
-                      event_type: created
-                      resource: Vitae consectetur tenetur tempore nesciunt odit autem.
-                      timestamp: "1984-07-30T20:25:27Z"
-                      update_id: Numquam sit iusto.
-                    - data: Dolorum debitis.
-                      event_type: created
-                      resource: Vitae consectetur tenetur tempore nesciunt odit autem.
-                      timestamp: "1984-07-30T20:25:27Z"
-                      update_id: Numquam sit iusto.
-                    - data: Dolorum debitis.
-                      event_type: created
-                      resource: Vitae consectetur tenetur tempore nesciunt odit autem.
-                      timestamp: "1984-07-30T20:25:27Z"
-                      update_id: Numquam sit iusto.
-        example:
-            updates:
-                - data: Dolorum debitis.
-                  event_type: created
-                  resource: Vitae consectetur tenetur tempore nesciunt odit autem.
-                  timestamp: "1984-07-30T20:25:27Z"
-                  update_id: Numquam sit iusto.
-                - data: Dolorum debitis.
-                  event_type: created
-                  resource: Vitae consectetur tenetur tempore nesciunt odit autem.
-                  timestamp: "1984-07-30T20:25:27Z"
-                  update_id: Numquam sit iusto.
-                - data: Dolorum debitis.
-                  event_type: created
-                  resource: Vitae consectetur tenetur tempore nesciunt odit autem.
-                  timestamp: "1984-07-30T20:25:27Z"
-                  update_id: Numquam sit iusto.
-        required:
-            - updates
     AssistantProcessBatchRequestBody:
         title: AssistantProcessBatchRequestBody
         type: object
         properties:
+            blob:
+                type: string
+                description: Blob data when format=blob
+                example:
+                    - 68
+                    - 111
+                    - 108
+                    - 111
+                    - 114
+                    - 32
+                    - 99
+                    - 111
+                    - 114
+                    - 112
+                    - 111
+                    - 114
+                    - 105
+                    - 115
+                    - 32
+                    - 114
+                    - 101
+                    - 114
+                    - 117
+                    - 109
+                    - 32
+                    - 97
+                    - 115
+                    - 115
+                    - 117
+                    - 109
+                    - 101
+                    - 110
+                    - 100
+                    - 97
+                    - 32
+                    - 97
+                    - 99
+                    - 99
+                    - 117
+                    - 115
+                    - 97
+                    - 110
+                    - 116
+                    - 105
+                    - 117
+                    - 109
+                    - 46
+                format: byte
+            format:
+                type: string
+                description: Output format
+                example: text
+                enum:
+                    - text
+                    - blob
+                    - uri
             items:
                 type: array
                 items:
                     type: string
-                    example: Molestias et.
+                    example: Ut et ea quis laboriosam quisquam quis.
                 description: Items to process
                 example:
-                    - Dolore repudiandae recusandae dolore et.
-                    - Veritatis et quia minima neque recusandae est.
+                    - Quae odit qui.
+                    - Illo suscipit rem.
+                    - Illo et sint tenetur atque qui.
+                    - Molestiae dolore.
+            mimeType:
+                type: string
+                description: Mime type for blob/uri
+                example: Sit ipsam sed.
+            uri:
+                type: string
+                description: URI to include when format=uri
+                example: Cupiditate ut voluptas.
         example:
+            blob:
+                - 68
+                - 111
+                - 108
+                - 111
+                - 114
+                - 101
+                - 32
+                - 101
+                - 110
+                - 105
+                - 109
+                - 32
+                - 97
+                - 99
+                - 99
+                - 117
+                - 115
+                - 97
+                - 110
+                - 116
+                - 105
+                - 117
+                - 109
+                - 32
+                - 114
+                - 101
+                - 99
+                - 117
+                - 115
+                - 97
+                - 110
+                - 100
+                - 97
+                - 101
+                - 32
+                - 101
+                - 114
+                - 114
+                - 111
+                - 114
+                - 32
+                - 113
+                - 117
+                - 97
+                - 109
+                - 46
+            format: uri
             items:
-                - Fugiat aperiam blanditiis.
-                - Rerum et ut quam blanditiis vitae.
+                - Accusantium non ipsam.
+                - Repellendus nostrum tempora delectus.
+                - Iusto corrupti quo error aperiam quo.
+            mimeType: Soluta sed quos est.
+            uri: Nihil autem.
         required:
             - items
-    AssistantRequestCompletionRequestBody:
-        title: AssistantRequestCompletionRequestBody
-        type: object
-        properties:
-            messages:
-                type: array
-                items:
-                    $ref: '#/definitions/SamplingMessage'
-                description: Messages for sampling
-                example:
-                    - content: Sunt occaecati aut consectetur.
-                      role: Quasi sit excepturi eaque ut commodi tempore.
-                    - content: Sunt occaecati aut consectetur.
-                      role: Quasi sit excepturi eaque ut commodi tempore.
-                    - content: Sunt occaecati aut consectetur.
-                      role: Quasi sit excepturi eaque ut commodi tempore.
-                    - content: Sunt occaecati aut consectetur.
-                      role: Quasi sit excepturi eaque ut commodi tempore.
-            model_preferences:
-                type: object
-                properties:
-                    cost_priority:
-                        type: number
-                        example: 0.12467231469778275
-                        format: double
-                    hints:
-                        type: array
-                        items:
-                            $ref: '#/definitions/ModelHint'
-                        example:
-                            - name: Quia provident officia.
-                            - name: Quia provident officia.
-                    intelligence_priority:
-                        type: number
-                        example: 0.17452965227216974
-                        format: double
-                    speed_priority:
-                        type: number
-                        example: 0.7710480980053118
-                        format: double
-                example:
-                    cost_priority: 0.30169902918405667
-                    hints:
-                        - name: Quia provident officia.
-                        - name: Quia provident officia.
-                        - name: Quia provident officia.
-                    intelligence_priority: 0.5657606547705776
-                    speed_priority: 0.05691957424422827
-        example:
-            messages:
-                - content: Sunt occaecati aut consectetur.
-                  role: Quasi sit excepturi eaque ut commodi tempore.
-                - content: Sunt occaecati aut consectetur.
-                  role: Quasi sit excepturi eaque ut commodi tempore.
-                - content: Sunt occaecati aut consectetur.
-                  role: Quasi sit excepturi eaque ut commodi tempore.
-            model_preferences:
-                cost_priority: 0.4072205939013987
-                hints:
-                    - name: Quia provident officia.
-                    - name: Quia provident officia.
-                intelligence_priority: 0.561351386278618
-                speed_priority: 0.5412906490556354
-        required:
-            - messages
-    AssistantRequestCompletionResponseBody:
-        title: AssistantRequestCompletionResponseBody
-        type: object
-        properties:
-            content:
-                type: string
-                description: Generated content
-                example: Quos ratione.
-            model:
-                type: string
-                description: Model used
-                example: Et aut facilis recusandae et quos.
-            stop_reason:
-                type: string
-                description: Stop reason
-                example: Est aut in ab et saepe.
-        example:
-            content: Vitae cumque consequuntur totam quasi.
-            model: Dolor rerum molestiae.
-            stop_reason: Accusamus laboriosam magnam quas unde.
-        required:
-            - model
-            - content
     AssistantSearchKnowledgeRequestBody:
         title: AssistantSearchKnowledgeRequestBody
         type: object
@@ -629,15 +726,15 @@ definitions:
                 type: integer
                 description: Maximum results
                 default: 10
-                example: 8569040935669146744
+                example: 5025665387931577427
                 format: int64
             query:
                 type: string
                 description: Search query
-                example: Quia velit distinctio sunt.
+                example: Cumque consequuntur totam quasi.
         example:
-            limit: 4958234003180186104
-            query: Quod voluptas laborum ex.
+            limit: 6854150837456685193
+            query: Laboriosam magnam quas unde sed.
         required:
             - query
     AssistantSendNotificationRequestBody:
@@ -646,111 +743,27 @@ definitions:
         properties:
             data:
                 description: Additional data
-                example: Inventore voluptas omnis voluptatem dolores qui.
+                example: Omnis sed non.
             message:
                 type: string
                 description: Notification message
-                example: Temporibus voluptatem optio aut.
+                example: Consequatur aut nobis eos et dolores totam.
             type:
                 type: string
                 description: Notification type
-                example: warning
+                example: info
                 enum:
                     - info
                     - warning
                     - error
                     - success
         example:
-            data: Voluptatum at incidunt harum.
-            message: Quod assumenda nihil voluptatibus facilis labore minus.
-            type: success
+            data: Est enim nobis quia amet ut.
+            message: Quis fugit dolores voluptatem.
+            type: warning
         required:
             - type
             - message
-    AssistantStreamLogsRequestBody:
-        title: AssistantStreamLogsRequestBody
-        type: object
-        properties:
-            filter:
-                type: string
-                description: Optional log filter
-                example: Commodi nostrum omnis est.
-            level:
-                type: string
-                description: Minimum log level
-                default: info
-                example: warning
-                enum:
-                    - debug
-                    - info
-                    - warning
-                    - error
-        example:
-            filter: Excepturi sunt nobis.
-            level: warning
-    AssistantStreamLogsResponseBody:
-        title: AssistantStreamLogsResponseBody
-        type: object
-        properties:
-            logs:
-                type: array
-                items:
-                    $ref: '#/definitions/LogEntry'
-                description: Log entries
-                example:
-                    - data:
-                        Enim nemo nulla vel in rerum eum.: Aut illo perferendis.
-                        Et libero provident voluptas saepe impedit.: Aut sit corporis.
-                        In earum quia.: Aut aut aut.
-                      level: info
-                      message: Voluptates totam quis voluptatem.
-                      timestamp: "1981-10-14T04:26:22Z"
-                    - data:
-                        Enim nemo nulla vel in rerum eum.: Aut illo perferendis.
-                        Et libero provident voluptas saepe impedit.: Aut sit corporis.
-                        In earum quia.: Aut aut aut.
-                      level: info
-                      message: Voluptates totam quis voluptatem.
-                      timestamp: "1981-10-14T04:26:22Z"
-                    - data:
-                        Enim nemo nulla vel in rerum eum.: Aut illo perferendis.
-                        Et libero provident voluptas saepe impedit.: Aut sit corporis.
-                        In earum quia.: Aut aut aut.
-                      level: info
-                      message: Voluptates totam quis voluptatem.
-                      timestamp: "1981-10-14T04:26:22Z"
-                    - data:
-                        Enim nemo nulla vel in rerum eum.: Aut illo perferendis.
-                        Et libero provident voluptas saepe impedit.: Aut sit corporis.
-                        In earum quia.: Aut aut aut.
-                      level: info
-                      message: Voluptates totam quis voluptatem.
-                      timestamp: "1981-10-14T04:26:22Z"
-        example:
-            logs:
-                - data:
-                    Enim nemo nulla vel in rerum eum.: Aut illo perferendis.
-                    Et libero provident voluptas saepe impedit.: Aut sit corporis.
-                    In earum quia.: Aut aut aut.
-                  level: info
-                  message: Voluptates totam quis voluptatem.
-                  timestamp: "1981-10-14T04:26:22Z"
-                - data:
-                    Enim nemo nulla vel in rerum eum.: Aut illo perferendis.
-                    Et libero provident voluptas saepe impedit.: Aut sit corporis.
-                    In earum quia.: Aut aut aut.
-                  level: info
-                  message: Voluptates totam quis voluptatem.
-                  timestamp: "1981-10-14T04:26:22Z"
-                - data:
-                    Enim nemo nulla vel in rerum eum.: Aut illo perferendis.
-                    Et libero provident voluptas saepe impedit.: Aut sit corporis.
-                    In earum quia.: Aut aut aut.
-                  level: info
-                  message: Voluptates totam quis voluptatem.
-                  timestamp: "1981-10-14T04:26:22Z"
-        required:
-            - logs
     AssistantSubscribeToUpdatesRequestBody:
         title: AssistantSubscribeToUpdatesRequestBody
         type: object
@@ -758,14 +771,14 @@ definitions:
             filter:
                 type: string
                 description: Optional filter
-                example: Voluptatibus deserunt dolores sapiente vel.
+                example: Aperiam voluptas.
             resource:
                 type: string
                 description: Resource to monitor
-                example: Minus non maiores et.
+                example: Repudiandae porro vel.
         example:
-            filter: Nemo sequi quidem dolore.
-            resource: Est nulla suscipit enim eum.
+            filter: Nemo ea sint eaque vitae accusamus omnis.
+            resource: Sint officia sed consequuntur dicta quia.
         required:
             - resource
     BatchResult:
@@ -775,28 +788,28 @@ definitions:
             failed:
                 type: integer
                 description: Number of items failed
-                example: 7812720188360121352
+                example: 4886681267631838556
                 format: int64
             processed:
                 type: integer
                 description: Number of items processed
-                example: 6072117827099001824
+                example: 5956571237208302151
                 format: int64
             results:
                 type: array
                 items:
-                    example: Sapiente accusamus labore consequatur in animi saepe.
+                    example: Et deserunt sed distinctio veniam deserunt.
                 description: Processing results
                 example:
-                    - Eveniet ut officia et.
-                    - Sed et ratione voluptatem sed et similique.
-                    - Et quia cumque eum non sed aperiam.
+                    - Ut commodi nostrum omnis est debitis nihil.
+                    - Sunt nobis voluptas omnis velit quod.
+                    - Illo nostrum dolor eum sapiente architecto.
         example:
-            failed: 8389688152141082095
-            processed: 2025456551443659083
+            failed: 1949787460382070786
+            processed: 2355568225631366847
             results:
-                - Ut molestias aut quo illum libero.
-                - Aut qui architecto dolores veniam.
+                - Aliquam alias inventore.
+                - Corporis quas porro quidem provident.
         required:
             - processed
             - failed
@@ -808,15 +821,15 @@ definitions:
             content:
                 type: string
                 description: Message content
-                example: Deleniti at enim eos aut unde.
+                example: Est illum pariatur voluptas praesentium quia alias.
             id:
                 type: string
                 description: Message ID
-                example: Quisquam dolores voluptatem.
+                example: Temporibus atque.
             role:
                 type: string
                 description: Message role
-                example: system
+                example: assistant
                 enum:
                     - user
                     - assistant
@@ -824,18 +837,75 @@ definitions:
             timestamp:
                 type: string
                 description: Message timestamp
-                example: "1977-02-22T17:45:07Z"
+                example: "2003-11-15T07:12:19Z"
                 format: date-time
         example:
-            content: Cupiditate vitae.
-            id: Consequuntur voluptatem est.
-            role: user
-            timestamp: "1987-09-08T15:04:02Z"
+            content: Quo illum libero id.
+            id: Voluptas ut.
+            role: assistant
+            timestamp: "2001-04-02T02:58:49Z"
         required:
             - id
             - role
             - content
             - timestamp
+    ChatResponse:
+        title: ChatResponse
+        type: object
+        properties:
+            metadata:
+                type: object
+                description: Response metadata
+                example:
+                    Ipsa nesciunt ea exercitationem eos consectetur.: Impedit autem.
+                    Voluptatibus excepturi et soluta quis.: Et enim.
+                additionalProperties: true
+            response:
+                type: string
+                description: Assistant response
+                example: Quo maxime ad est odit.
+            thinking:
+                type: boolean
+                description: Whether assistant is still thinking
+                example: true
+        example:
+            metadata:
+                Omnis fugit deserunt.: Architecto quia dignissimos quasi omnis.
+            response: Esse consequuntur explicabo vero.
+            thinking: true
+        required:
+            - response
+            - thinking
+    DataUpdate:
+        title: DataUpdate
+        type: object
+        properties:
+            data:
+                description: Update data
+                example: Commodi natus fugiat facilis officiis.
+            final:
+                type: boolean
+                description: Whether this is the final update
+                example: true
+            sequence:
+                type: integer
+                description: Update sequence number
+                example: 714371531622845588
+                format: int64
+            update_id:
+                type: string
+                description: Update ID
+                example: Vitae qui totam iure inventore vitae ut.
+        example:
+            data: Eos impedit modi consequatur tempore.
+            final: false
+            sequence: 7752027507917360641
+            update_id: Rerum officia cupiditate saepe asperiores perferendis aspernatur.
+        required:
+            - update_id
+            - data
+            - sequence
+            - final
     Document:
         title: Document
         type: object
@@ -843,37 +913,72 @@ definitions:
             id:
                 type: string
                 description: Document ID
-                example: Dolorem unde est esse et ipsa qui.
+                example: Ullam ab cupiditate enim sapiente unde.
             modified:
                 type: string
                 description: Last modified
-                example: "2005-06-05T20:19:19Z"
+                example: "1994-08-21T16:28:52Z"
                 format: date-time
             name:
                 type: string
                 description: Document name
-                example: Ullam ea hic enim quasi totam.
+                example: Mollitia nihil quo qui nam in.
             size:
                 type: integer
                 description: Size in bytes
-                example: 758936096371495727
+                example: 4675607083413966591
                 format: int64
             type:
                 type: string
                 description: Document type
-                example: Repellendus error eligendi porro deleniti reprehenderit odio.
+                example: Similique nostrum accusamus aut nam.
         example:
-            id: Adipisci distinctio cum molestias adipisci non reiciendis.
-            modified: "1999-08-15T10:09:05Z"
-            name: Nihil qui tempore maxime iusto.
-            size: 7839110296689594221
-            type: Ea odio sequi.
+            id: Id ducimus vero quo.
+            modified: "1985-02-09T16:00:39Z"
+            name: Voluptatem nisi nam nesciunt aspernatur recusandae dolorum.
+            size: 3433029339235296147
+            type: Facere soluta.
         required:
             - id
             - name
             - type
             - size
             - modified
+    EventUpdate:
+        title: EventUpdate
+        type: object
+        properties:
+            category:
+                type: string
+                description: Event category
+                example: Sunt fugiat cupiditate aliquid est at sit.
+            data:
+                description: Event data
+                example: Eum aut.
+            event_id:
+                type: string
+                description: Event ID
+                example: Deserunt dolor.
+            timestamp:
+                type: string
+                description: Event timestamp
+                example: "1998-10-25T01:13:40Z"
+                format: date-time
+            type:
+                type: string
+                description: Event type
+                example: Cum eveniet.
+        example:
+            category: Quaerat labore aspernatur sunt sit.
+            data: Sint et est soluta.
+            event_id: Dolorem earum nesciunt et ut id.
+            timestamp: "2009-04-15T17:08:38Z"
+            type: Voluptate magni fugit labore vero at.
+        required:
+            - event_id
+            - category
+            - type
+            - timestamp
     ExecutionResult:
         title: ExecutionResult
         type: object
@@ -881,20 +986,20 @@ definitions:
             error:
                 type: string
                 description: Error message if any
-                example: Sunt et et ipsam.
+                example: Nihil illum.
             execution_time:
                 type: number
                 description: Execution time in seconds
-                example: 0.7048314902363586
+                example: 0.6275259772595723
                 format: double
             output:
                 type: string
                 description: Execution output
-                example: Nobis eos quibusdam nulla quia quidem.
+                example: Quas eos cum et.
         example:
-            error: Provident nulla beatae et ipsum dignissimos odio.
-            execution_time: 0.02693615625738592
-            output: Sequi inventore harum quidem.
+            error: Sint qui est quis et.
+            execution_time: 0.37505384816256027
+            output: Odio a provident aliquam.
         required:
             - output
             - execution_time
@@ -906,12 +1011,12 @@ definitions:
                 type: object
                 description: Additional log data
                 example:
-                    Voluptatem ut.: Nobis iste consequatur ea odio quia at.
+                    Quae reiciendis ea pariatur.: Odit itaque dolor quibusdam.
                 additionalProperties: true
             level:
                 type: string
                 description: Log level
-                example: info
+                example: debug
                 enum:
                     - debug
                     - info
@@ -920,34 +1025,24 @@ definitions:
             message:
                 type: string
                 description: Log message
-                example: Quam nulla officia incidunt et praesentium ut.
+                example: Provident quis.
             timestamp:
                 type: string
                 description: Log timestamp
-                example: "2009-12-23T00:15:49Z"
+                example: "2000-08-21T02:24:09Z"
                 format: date-time
         example:
             data:
-                Asperiores sint.: Sed consequuntur dicta quia hic nemo ea.
-                Eaque vitae accusamus omnis.: Asperiores voluptatem et deserunt sed distinctio veniam.
-                Et sunt vel facere.: Porro vel cum aperiam.
-            level: info
-            message: Excepturi non.
-            timestamp: "2014-12-19T13:46:16Z"
+                Earum inventore error est a molestiae.: Eaque qui.
+                Enim sit alias repudiandae qui sed suscipit.: Pariatur consectetur dolorem suscipit.
+                Laborum ipsa enim neque.: Saepe necessitatibus debitis dignissimos.
+            level: warning
+            message: Voluptatem ut harum totam.
+            timestamp: "1999-11-01T23:06:39Z"
         required:
             - timestamp
             - level
             - message
-    ModelHint:
-        title: ModelHint
-        type: object
-        properties:
-            name:
-                type: string
-                description: Model hint name
-                example: Ad et.
-        example:
-            name: Et rerum voluptates quis amet.
     PromptTemplate:
         title: PromptTemplate
         type: object
@@ -955,34 +1050,31 @@ definitions:
             description:
                 type: string
                 description: Template description
-                example: Reprehenderit minus et consectetur.
+                example: Asperiores eaque.
             name:
                 type: string
                 description: Template name
-                example: Aut officiis sit deleniti distinctio exercitationem.
+                example: Beatae rerum voluptas.
             template:
                 type: string
                 description: Template content
-                example: Non quae ut iste dolorem eveniet.
+                example: Ex enim ab sed facilis laboriosam.
             variables:
                 type: array
                 items:
                     type: string
-                    example: Corporis corrupti necessitatibus sint aliquam labore.
+                    example: Consectetur exercitationem ut rerum aperiam dolor.
                 description: Required variables
                 example:
-                    - Voluptatem dolorum.
-                    - Voluptatem corporis.
-                    - Officia totam odio consequatur consectetur.
-                    - Necessitatibus ex dolore facere alias.
+                    - Harum soluta doloribus.
+                    - Consequatur expedita perspiciatis.
         example:
-            description: Quis quidem doloribus.
-            name: Deleniti quos in est aut.
-            template: Aliquid aut quo animi.
+            description: Dolore ut ut.
+            name: Similique aut.
+            template: Quasi nihil.
             variables:
-                - Ullam non deleniti dolore voluptatem facilis.
-                - Ut labore iste qui molestiae.
-                - Doloribus ad et.
+                - Consequatur eveniet ut doloribus qui ut.
+                - Accusamus aspernatur est illo qui veritatis rerum.
         required:
             - name
             - description
@@ -993,11 +1085,11 @@ definitions:
         properties:
             data:
                 description: Update data
-                example: Aperiam ea est quia tempore sed.
+                example: Facilis exercitationem.
             event_type:
                 type: string
                 description: Type of change
-                example: updated
+                example: deleted
                 enum:
                     - created
                     - updated
@@ -1005,22 +1097,22 @@ definitions:
             resource:
                 type: string
                 description: Resource that changed
-                example: Explicabo quis culpa est corrupti sunt voluptates.
+                example: Unde suscipit qui minus deserunt vel.
             timestamp:
                 type: string
                 description: Update timestamp
-                example: "1989-01-10T03:37:10Z"
+                example: "1972-08-28T05:47:53Z"
                 format: date-time
             update_id:
                 type: string
                 description: Update ID
-                example: Quam et recusandae.
+                example: Et deserunt.
         example:
-            data: Ut est repellendus laudantium quia alias.
+            data: Aut aut ab deleniti et.
             event_type: updated
-            resource: Cupiditate qui nulla rerum fugiat unde ut.
-            timestamp: "2001-10-17T05:06:35Z"
-            update_id: Quasi nihil.
+            resource: Consectetur consequuntur.
+            timestamp: "1985-02-04T17:53:41Z"
+            update_id: Molestiae fuga labore fugiat consequatur enim.
         required:
             - update_id
             - resource
@@ -1033,34 +1125,16 @@ definitions:
             name:
                 type: string
                 description: Root name
-                example: Cupiditate enim.
+                example: Fugiat voluptatem consequatur repudiandae.
             uri:
                 type: string
                 description: Root URI
-                example: Ea ullam.
+                example: Est corporis sunt numquam officia deserunt.
         example:
-            name: Qui nam in perferendis similique nostrum.
-            uri: Unde non mollitia nihil.
+            name: Aperiam dolores soluta voluptatibus aut aut possimus.
+            uri: Nihil voluptatum sit dolorem perspiciatis.
         required:
             - uri
-    SamplingMessage:
-        title: SamplingMessage
-        type: object
-        properties:
-            content:
-                type: string
-                description: Message content
-                example: Illum voluptatem consectetur odio a provident.
-            role:
-                type: string
-                description: Message role
-                example: Et numquam quas eos cum et aliquid.
-        example:
-            content: Est quis et provident.
-            role: Minima sint.
-        required:
-            - role
-            - content
     SearchResult:
         title: SearchResult
         type: object
@@ -1068,25 +1142,25 @@ definitions:
             content:
                 type: string
                 description: Result content
-                example: Dolore eligendi nostrum provident ut et adipisci.
+                example: Consequatur et aut facilis recusandae et.
             id:
                 type: string
                 description: Result ID
-                example: Quos ut.
+                example: Et ea voluptatem magni quam consequuntur qui.
             score:
                 type: number
                 description: Relevance score
-                example: 0.255421204839672
+                example: 0.33127797702185113
                 format: double
             title:
                 type: string
                 description: Result title
-                example: Ex ipsum fugiat.
+                example: Quo est dolorum est sunt.
         example:
-            content: Necessitatibus cupiditate optio consequuntur eos tenetur.
-            id: Sed cum corrupti numquam.
-            score: 0.5248842967441175
-            title: Voluptatum quod ex facilis fugiat facere.
+            content: Dolor rerum molestiae.
+            id: Quos ratione.
+            score: 0.6442524611019738
+            title: Est aut in ab et saepe.
         required:
             - id
             - title
@@ -1099,20 +1173,20 @@ definitions:
             created_at:
                 type: string
                 description: Subscription created
-                example: "1973-12-18T15:17:57Z"
+                example: "1980-01-06T21:16:29Z"
                 format: date-time
             resource:
                 type: string
                 description: Subscribed resource
-                example: Perspiciatis amet mollitia ea hic deleniti aut.
+                example: Totam nesciunt laborum odit illum id.
             subscription_id:
                 type: string
                 description: Subscription ID
-                example: Ea reiciendis dolorem sit illum exercitationem voluptatem.
+                example: Et inventore iure quod amet ratione quasi.
         example:
-            created_at: "1996-08-21T16:24:59Z"
-            resource: Iure odio.
-            subscription_id: Velit aut et rerum.
+            created_at: "2014-05-15T13:28:34Z"
+            resource: Explicabo illum labore molestiae quae aut id.
+            subscription_id: Nobis iste consequatur ea odio quia at.
         required:
             - subscription_id
             - resource
@@ -1124,36 +1198,76 @@ definitions:
             active_connections:
                 type: integer
                 description: Number of active connections
-                example: 5196161455299946067
+                example: 5608664955245254563
                 format: int64
             cpu_usage:
                 type: number
                 description: CPU usage percentage
-                example: 0.39311968303435896
+                example: 0.12971549284157427
                 format: double
             memory_usage:
                 type: number
                 description: Memory usage percentage
-                example: 0.6015733003652208
+                example: 0.03172970076403245
                 format: double
             uptime:
                 type: integer
                 description: Uptime in seconds
-                example: 4758837532270770724
+                example: 1876451224952413972
                 format: int64
             version:
                 type: string
                 description: System version
-                example: Est illum pariatur consectetur consequatur dolore.
+                example: Voluptatem libero voluptas voluptatem qui minus.
         example:
-            active_connections: 2255384539633346481
-            cpu_usage: 0.39064171561519906
-            memory_usage: 0.6610785772462917
-            uptime: 1966002182643415488
-            version: Debitis reprehenderit.
+            active_connections: 50380309053489249
+            cpu_usage: 0.579434670104967
+            memory_usage: 0.443533877369721
+            uptime: 7493426241331792621
+            version: Et enim aliquam.
         required:
             - version
             - uptime
             - memory_usage
             - cpu_usage
             - active_connections
+    WebsocketUploadChunksResponseBody:
+        title: WebsocketUploadChunksResponseBody
+        type: object
+        properties:
+            chunk_count:
+                type: integer
+                description: Number of chunks
+                example: 6598043672253404290
+                format: int64
+            total_size:
+                type: integer
+                description: Total size
+                example: 8604497704076735188
+                format: int64
+        example:
+            chunk_count: 2464344440871943718
+            total_size: 6985621418409294997
+        required:
+            - total_size
+            - chunk_count
+    WebsocketUploadDocumentsResponseBody:
+        title: WebsocketUploadDocumentsResponseBody
+        type: object
+        properties:
+            document_count:
+                type: integer
+                description: Number of documents
+                example: 3381427208398525601
+                format: int64
+            total_size:
+                type: integer
+                description: Total size
+                example: 4549758102847658067
+                format: int64
+        example:
+            document_count: 1407432909465207131
+            total_size: 7643562077792481157
+        required:
+            - total_size
+            - document_count

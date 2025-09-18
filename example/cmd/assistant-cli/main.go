@@ -69,6 +69,8 @@ func main() {
 	)
 	{
 		switch scheme {
+		case "grpc", "grpcs":
+			endpoint, payload, err = doGRPC(scheme, host, timeout, debug)
 		case "http", "https":
 			if *jsonrpcF || *jF {
 				endpoint, payload, err = doJSONRPC(scheme, host, timeout, debug)

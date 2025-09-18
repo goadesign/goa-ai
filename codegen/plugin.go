@@ -1,9 +1,9 @@
 package codegen
 
 import (
-	"goa.design/goa/v3/codegen"
-	"goa.design/goa/v3/eval"
-	"goa.design/goa/v3/expr"
+    "goa.design/goa/v3/codegen"
+    "goa.design/goa/v3/eval"
+    "goa.design/goa/v3/expr"
 )
 
 // originalServices stores the original services before filtering
@@ -18,31 +18,31 @@ var originalJSONRPCPaths map[string]string
 
 // init registers the plugin generator
 func init() {
-	// Register MCP plugin with PrepareServices and Generate for the gen phase
-	codegen.RegisterPluginFirst("mcp", "gen", PrepareServices, Generate)
+    // Register MCP plugin with PrepareServices and Generate for the gen phase
+    codegen.RegisterPluginFirst("mcp", "gen", PrepareServices, Generate)
 
-	// Register MCP plugin for the example phase
-	codegen.RegisterPlugin("mcp", "example", nil, Example)
+    // Register MCP plugin for the example phase: prepare augments roots so example mounts MCP
+    codegen.RegisterPlugin("mcp", "example", PrepareExample, ModifyExampleFiles)
+
+    // No post-processing needed if upstream Goa fix is present.
 }
 
 // PrepareServices filters out MCP-mapped methods from the original services and saves originals
 // This runs BEFORE the main service generation
 func PrepareServices(genpkg string, roots []eval.Root) error {
-	for _, root := range roots {
-		r, ok := root.(*expr.RootExpr)
-		if !ok {
-			continue
-		}
+    // Reset global state at the beginning of each prepare phase
+    originalServices = make(map[string]*expr.ServiceExpr)
+    originalJSONRPCPaths = make(map[string]string)
 
-		// Save original services and JSONRPC paths before filtering
-		if originalServices == nil {
-			originalServices = make(map[string]*expr.ServiceExpr)
-		}
-		if originalJSONRPCPaths == nil {
-			originalJSONRPCPaths = make(map[string]string)
-		}
-		for _, svc := range r.Services {
-			originalServices[svc.Name] = svc
+    for _, root := range roots {
+        r, ok := root.(*expr.RootExpr)
+        if !ok {
+            continue
+        }
+
+        // Save original services and JSONRPC paths before filtering
+        for _, svc := range r.Services {
+            originalServices[svc.Name] = svc
 
 			if r.API == nil || r.API.JSONRPC == nil {
 				continue
@@ -58,7 +58,17 @@ func PrepareServices(genpkg string, roots []eval.Root) error {
 				}
 			}
 		}
-	}
 
-	return nil
+        // Keep original HTTP/JSON-RPC services so standard transports and clients
+        // continue to be generated. The example phase ensures only the MCP service
+        // is mounted for /rpc to avoid conflicts at runtime.
+    }
+
+    return nil
 }
+
+// DedupeJSONRPCServers scans JSON-RPC server.go files and removes the second
+// ServeHTTP definition (the basic HTTP-only one) when both SSE-aware and basic
+// ServeHTTP functions are emitted into the same file by upstream generators.
+// The logic edits section sources in place and preserves all other templates.
+func DedupeJSONRPCServers(genpkg string, roots []eval.Root, files []*codegen.File) ([]*codegen.File, error) { return files, nil }

@@ -78,7 +78,7 @@ var _ = Service("assistant", func() {
 			})
 			Required("query")
 		})
-		Result(ArrayOf(SearchResult))
+		Result(SearchResults)
 
 		// Expose as MCP tool
 		mcp.Tool("search", "Search the knowledge base")
@@ -112,7 +112,7 @@ var _ = Service("assistant", func() {
 
 	Method("list_documents", func() {
 		Description("List available documents")
-		Result(ArrayOf(Document))
+		Result(Documents)
 
 		// Expose as MCP resource
 		mcp.Resource("documents", "doc://list", "application/json")
@@ -143,7 +143,7 @@ var _ = Service("assistant", func() {
 				Default(50)
 			})
 		})
-		Result(ArrayOf(ChatMessage))
+		Result(ChatMessages)
 
 		// Expose as MCP resource
 		mcp.Resource("conversation", "conversation://history", "application/json")
@@ -164,7 +164,7 @@ var _ = Service("assistant", func() {
 			Attribute("task", String, "Task type")
 			Required("context", "task")
 		})
-		Result(ArrayOf(PromptTemplate))
+		Result(PromptTemplates)
 
 		// Mark as dynamic prompt generator
 		mcp.DynamicPrompt("contextual_prompts", "Generate prompts based on context")
@@ -172,34 +172,6 @@ var _ = Service("assistant", func() {
 		JSONRPC(func() {})
 		HTTP(func() {
 			POST("/prompts/generate")
-		})
-	})
-
-	// ========== SAMPLING (Client Features) ==========
-	// Server can request LLM sampling from client
-
-	Method("request_completion", func() {
-		Description("Request text completion from client LLM")
-		Payload(func() {
-			Attribute("messages", ArrayOf(SamplingMessage), "Messages for sampling")
-			Attribute("model_preferences", func() {
-				Attribute("hints", ArrayOf(ModelHint))
-				Attribute("cost_priority", Float64)
-				Attribute("speed_priority", Float64)
-				Attribute("intelligence_priority", Float64)
-			})
-			Required("messages")
-		})
-		Result(func() {
-			Attribute("model", String, "Model used")
-			Attribute("content", String, "Generated content")
-			Attribute("stop_reason", String, "Stop reason")
-			Required("model", "content")
-		})
-
-		JSONRPC(func() {})
-		HTTP(func() {
-			POST("/complete")
 		})
 	})
 
@@ -273,66 +245,224 @@ var _ = Service("assistant", func() {
 		Description("Process a batch of items with progress tracking")
 		Payload(func() {
 			Attribute("items", ArrayOf(String), "Items to process")
+			// Optional output shaping for streaming scenarios
+			Attribute("format", String, "Output format", func() { Enum("text", "blob", "uri") })
+			Attribute("blob", Bytes, "Blob data when format=blob")
+			Attribute("uri", String, "URI to include when format=uri")
+			Attribute("mimeType", String, "Mime type for blob/uri")
 			Required("items")
 		})
 		Result(BatchResult)
+		StreamingResult(BatchResult)
 
 		// This will report progress via MCP progress notifications
 		mcp.Tool("process_batch", "Process items with progress updates")
 
-		JSONRPC(func() {})
+		JSONRPC(func() {
+			ServerSentEvents()
+		})
 		HTTP(func() {
 			POST("/batch")
+			ServerSentEvents()
 		})
 	})
 
-	// ========== STREAMING (SSE Support) ==========
-	// Resource subscription updates via SSE
-	// When a client subscribes to a resource, it can request SSE updates
-	// by setting Accept: text/event-stream header
+})
 
-	Method("monitor_resource_changes", func() {
-		Description("Monitor resource changes and send updates via SSE when Accept: text/event-stream is set")
+// ========== STREAMING SERVICE (HTTP/SSE) ==========
+// Service for testing HTTP streaming with SSE
+var _ = Service("streaming", func() {
+	Description("Service for testing HTTP streaming features")
+
+	// Server streaming with SSE
+	Method("stream_events", func() {
+		Description("Stream events from server to client using SSE")
 		Payload(func() {
-			Attribute("subscription_id", String, "Subscription ID from subscribe_to_updates")
-			Attribute("stream", Boolean, "Whether to stream updates (for SSE)", func() {
-				Default(false)
+			Attribute("category", String, "Event category", func() {
+				Enum("system", "user", "application")
 			})
-			Required("subscription_id")
+			Attribute("filter", String, "Optional filter")
+			Required("category")
 		})
-		Result(func() {
-			Attribute("updates", ArrayOf(ResourceUpdate), "Resource updates")
-			Required("updates")
-		})
+		StreamingResult(EventUpdate)
 
-		// Mark as subscription monitor - uses SSE when Accept header is set
-		mcp.SubscriptionMonitor("resource_changes")
-
-		JSONRPC(func() {})
 		HTTP(func() {
-			GET("/monitor/{subscription_id}")
-			// SSE is automatically enabled when Accept: text/event-stream
+			GET("/stream/events/{category}")
+			Params(func() {
+				Param("category")
+				Param("filter")
+			})
 		})
 	})
 
+	// Another server streaming example
 	Method("stream_logs", func() {
-		Description("Stream server logs in real-time via SSE")
+		Description("Stream logs using SSE")
 		Payload(func() {
-			Attribute("level", String, "Minimum log level", func() {
+			Attribute("level", String, "Log level", func() {
 				Enum("debug", "info", "warning", "error")
 				Default("info")
 			})
-			Attribute("filter", String, "Optional log filter")
 		})
+		StreamingResult(LogEntry)
+
+		HTTP(func() {
+			GET("/stream/logs")
+			Params(func() {
+				Param("level")
+			})
+		})
+	})
+
+	// Monitor resource changes with SSE
+	Method("monitor_resource_changes", func() {
+		Description("Monitor resource changes with server streaming")
+		Payload(func() {
+			Attribute("resource_type", String, "Type of resource to monitor")
+			Attribute("filter", String, "Optional filter")
+			Required("resource_type")
+		})
+		StreamingResult(ResourceUpdate)
+
+		HTTP(func() {
+			GET("/stream/monitor/{resource_type}")
+			Params(func() {
+				Param("resource_type")
+				Param("filter")
+			})
+		})
+	})
+
+	// Flexible data streaming with SSE
+	Method("flexible_data", func() {
+		Description("Flexible data streaming")
+		Payload(func() {
+			Attribute("data_type", String, "Type of data")
+			Attribute("streaming", Boolean, "Enable streaming", func() {
+				Default(true)
+			})
+		})
+		StreamingResult(DataUpdate)
+
+		HTTP(func() {
+			GET("/stream/data/{data_type}")
+			Params(func() {
+				Param("data_type")
+				Param("streaming")
+			})
+		})
+	})
+})
+
+// ========== WEBSOCKET SERVICE ==========
+// Service for WebSocket streaming
+var _ = Service("websocket", func() {
+	Description("Service for testing WebSocket streaming")
+
+	// Client streaming
+	Method("upload_chunks", func() {
+		Description("Upload data chunks via client stream")
+		StreamingPayload(DocumentChunk)
 		Result(func() {
-			Attribute("logs", ArrayOf(LogEntry), "Log entries")
-			Required("logs")
+			Attribute("total_size", Int, "Total size")
+			Attribute("chunk_count", Int, "Number of chunks")
+			Required("total_size", "chunk_count")
 		})
 
-		JSONRPC(func() {})
 		HTTP(func() {
-			GET("/logs")
+			POST("/ws/upload")
 		})
+	})
+
+	// Client streaming for documents
+	Method("upload_documents", func() {
+		Description("Upload multiple documents via client stream")
+		StreamingPayload(DocumentChunk)
+		Result(func() {
+			Attribute("total_size", Int, "Total size")
+			Attribute("document_count", Int, "Number of documents")
+			Required("total_size", "document_count")
+		})
+
+		HTTP(func() {
+			POST("/ws/upload_documents")
+		})
+	})
+
+	// Bidirectional streaming
+	Method("chat", func() {
+		Description("Interactive chat with bidirectional streaming")
+		StreamingPayload(ChatInput)
+		StreamingResult(ChatResponse)
+
+		HTTP(func() {
+			POST("/ws/chat")
+		})
+	})
+
+	// Another bidirectional streaming
+	Method("interactive_chat", func() {
+		Description("Extended interactive chat with bidirectional streaming")
+		StreamingPayload(ChatInput)
+		StreamingResult(ChatResponse)
+
+		HTTP(func() {
+			POST("/ws/interactive_chat")
+		})
+	})
+})
+
+// ========== GRPC STREAMING SERVICE ==========
+// Service for testing gRPC streaming
+var _ = Service("grpcstream", func() {
+	Description("Service for testing gRPC streaming")
+
+	// Server streaming
+	Method("list_items", func() {
+		Description("List items with server streaming")
+		Payload(func() {
+			Field(1, "filter", String, "Filter criteria")
+		})
+		StreamingResult(func() {
+			Field(1, "id", String, "Item ID")
+			Field(2, "name", String, "Item name")
+			Required("id", "name")
+		})
+
+		GRPC(func() {})
+	})
+
+	// Client streaming
+	Method("collect_metrics", func() {
+		Description("Collect metrics via client stream")
+		StreamingPayload(func() {
+			Field(1, "metric", String, "Metric name")
+			Field(2, "value", Float64, "Metric value")
+			Required("metric", "value")
+		})
+		Result(func() {
+			Field(1, "count", Int, "Total metrics received")
+			Field(2, "average", Float64, "Average value")
+			Required("count", "average")
+		})
+
+		GRPC(func() {})
+	})
+
+	// Bidirectional streaming
+	Method("echo", func() {
+		Description("Echo service with bidirectional streaming")
+		StreamingPayload(func() {
+			Field(1, "message", String, "Message to echo")
+			Required("message")
+		})
+		StreamingResult(func() {
+			Field(1, "echo", String, "Echoed message")
+			Field(2, "timestamp", String, "Echo timestamp")
+			Required("echo", "timestamp")
+		})
+
+		GRPC(func() {})
 	})
 })
 
@@ -457,3 +587,60 @@ var LogEntry = Type("LogEntry", func() {
 	Attribute("data", MapOf(String, Any), "Additional log data")
 	Required("timestamp", "level", "message")
 })
+
+// Streaming type definitions
+var EventUpdate = Type("EventUpdate", func() {
+	Attribute("event_id", String, "Event ID")
+	Attribute("category", String, "Event category")
+	Attribute("type", String, "Event type")
+	Attribute("data", Any, "Event data")
+	Attribute("timestamp", String, "Event timestamp", func() {
+		Format(FormatDateTime)
+	})
+	Required("event_id", "category", "type", "timestamp")
+})
+
+var DocumentChunk = Type("DocumentChunk", func() {
+	Attribute("document_id", String, "Document ID")
+	Attribute("chunk_index", Int, "Chunk index")
+	Attribute("total_chunks", Int, "Total number of chunks")
+	Attribute("data", Bytes, "Chunk data")
+	Attribute("metadata", MapOf(String, Any), "Document metadata")
+	Required("document_id", "chunk_index", "data")
+})
+
+var ChatInput = Type("ChatInput", func() {
+	Attribute("message", String, "User message")
+	Attribute("context", MapOf(String, Any), "Additional context")
+	Attribute("stream_control", String, "Stream control command", func() {
+		Enum("continue", "pause", "stop")
+	})
+	Required("message")
+})
+
+var ChatResponse = Type("ChatResponse", func() {
+	Attribute("response", String, "Assistant response")
+	Attribute("thinking", Boolean, "Whether assistant is still thinking")
+	Attribute("metadata", MapOf(String, Any), "Response metadata")
+	Required("response", "thinking")
+})
+
+var DataResponse = Type("DataResponse", func() {
+	Attribute("data", Any, "Response data")
+	Attribute("total_count", Int, "Total count of items")
+	Attribute("metadata", MapOf(String, Any), "Response metadata")
+	Required("data")
+})
+
+var DataUpdate = Type("DataUpdate", func() {
+	Attribute("update_id", String, "Update ID")
+	Attribute("data", Any, "Update data")
+	Attribute("sequence", Int, "Update sequence number")
+	Attribute("final", Boolean, "Whether this is the final update")
+	Required("update_id", "data", "sequence", "final")
+})
+
+var SearchResults = Type("SearchResults", ArrayOf(SearchResult))
+var Documents = Type("Documents", ArrayOf(Document))
+var ChatMessages = Type("ChatMessages", ArrayOf(ChatMessage))
+var PromptTemplates = Type("PromptTemplates", ArrayOf(PromptTemplate))

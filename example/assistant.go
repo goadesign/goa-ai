@@ -7,80 +7,111 @@ import (
 	"goa.design/clue/log"
 )
 
-// assistant service example implementation implements gen/assistant.Service
+// assistant service example implementation.
+// The example methods log the requests and return zero values.
 type assistantsrvc struct{}
 
 // NewAssistant returns the assistant service implementation.
-func NewAssistant() assistant.Service { return &assistantsrvc{} }
+func NewAssistant() assistant.Service {
+	return &assistantsrvc{}
+}
 
 // Analyze text for sentiment, keywords, or summary
-func (s *assistantsrvc) AnalyzeText(ctx context.Context, p *assistant.AnalyzeTextPayload) (*assistant.AnalysisResult, error) {
+func (s *assistantsrvc) AnalyzeText(ctx context.Context, p *assistant.AnalyzeTextPayload) (res *assistant.AnalysisResult, err error) {
+	res = &assistant.AnalysisResult{}
 	log.Printf(ctx, "assistant.analyze_text")
-	return &assistant.AnalysisResult{Mode: p.Mode, Result: "ok"}, nil
+	return
 }
 
 // Search the knowledge base
-func (s *assistantsrvc) SearchKnowledge(ctx context.Context, p *assistant.SearchKnowledgePayload) ([]*assistant.SearchResult, error) {
-	return []*assistant.SearchResult{}, nil
+func (s *assistantsrvc) SearchKnowledge(ctx context.Context, p *assistant.SearchKnowledgePayload) (res assistant.SearchResults, err error) {
+	log.Printf(ctx, "assistant.search_knowledge")
+	return
 }
 
 // Execute code in a sandboxed environment
-func (s *assistantsrvc) ExecuteCode(ctx context.Context, p *assistant.ExecuteCodePayload) (*assistant.ExecutionResult, error) {
-	return &assistant.ExecutionResult{Output: "", ExecutionTime: 0}, nil
+func (s *assistantsrvc) ExecuteCode(ctx context.Context, p *assistant.ExecuteCodePayload) (res *assistant.ExecutionResult, err error) {
+	res = &assistant.ExecutionResult{}
+	log.Printf(ctx, "assistant.execute_code")
+	return
 }
 
 // List available documents
-func (s *assistantsrvc) ListDocuments(ctx context.Context) ([]*assistant.Document, error) {
-	return []*assistant.Document{}, nil
+func (s *assistantsrvc) ListDocuments(ctx context.Context) (res assistant.Documents, err error) {
+	log.Printf(ctx, "assistant.list_documents")
+	return
 }
 
 // Get system information and status
-func (s *assistantsrvc) GetSystemInfo(ctx context.Context) (*assistant.SystemInfo, error) {
-	return &assistant.SystemInfo{Version: "1.0.0", Uptime: 0}, nil
+func (s *assistantsrvc) GetSystemInfo(ctx context.Context) (res *assistant.SystemInfo, err error) {
+	res = &assistant.SystemInfo{}
+	log.Printf(ctx, "assistant.get_system_info")
+	return
 }
 
 // Get conversation history
-func (s *assistantsrvc) GetConversationHistory(ctx context.Context, p *assistant.GetConversationHistoryPayload) ([]*assistant.ChatMessage, error) {
-	return []*assistant.ChatMessage{}, nil
+func (s *assistantsrvc) GetConversationHistory(ctx context.Context, p *assistant.GetConversationHistoryPayload) (res assistant.ChatMessages, err error) {
+	log.Printf(ctx, "assistant.get_conversation_history")
+	return
 }
 
 // Generate context-aware prompts
-func (s *assistantsrvc) GeneratePrompts(ctx context.Context, p *assistant.GeneratePromptsPayload) ([]*assistant.PromptTemplate, error) {
-	return []*assistant.PromptTemplate{}, nil
-}
-
-// Request text completion from client LLM
-func (s *assistantsrvc) RequestCompletion(ctx context.Context, p *assistant.RequestCompletionPayload) (*assistant.RequestCompletionResult, error) {
-	return &assistant.RequestCompletionResult{Model: "", Content: ""}, nil
+func (s *assistantsrvc) GeneratePrompts(ctx context.Context, p *assistant.GeneratePromptsPayload) (res assistant.PromptTemplates, err error) {
+	log.Printf(ctx, "assistant.generate_prompts")
+	return
 }
 
 // Get workspace root directories from client
-func (s *assistantsrvc) GetWorkspaceInfo(ctx context.Context) (*assistant.GetWorkspaceInfoResult, error) {
-	return &assistant.GetWorkspaceInfoResult{Roots: []*assistant.RootInfo{}}, nil
+func (s *assistantsrvc) GetWorkspaceInfo(ctx context.Context) (res *assistant.GetWorkspaceInfoResult, err error) {
+	res = &assistant.GetWorkspaceInfoResult{}
+	log.Printf(ctx, "assistant.get_workspace_info")
+	return
 }
 
 // Send status notification to client
-func (s *assistantsrvc) SendNotification(ctx context.Context, p *assistant.SendNotificationPayload) error {
+func (s *assistantsrvc) SendNotification(ctx context.Context, p *assistant.SendNotificationPayload) (err error) {
 	log.Printf(ctx, "assistant.send_notification")
-	return nil
+	return
 }
 
 // Subscribe to resource updates
-func (s *assistantsrvc) SubscribeToUpdates(ctx context.Context, p *assistant.SubscribeToUpdatesPayload) (*assistant.SubscriptionInfo, error) {
-	return &assistant.SubscriptionInfo{SubscriptionID: "sub-1", Resource: p.Resource, CreatedAt: "2024-01-01T00:00:00Z"}, nil
+func (s *assistantsrvc) SubscribeToUpdates(ctx context.Context, p *assistant.SubscribeToUpdatesPayload) (res *assistant.SubscriptionInfo, err error) {
+	res = &assistant.SubscriptionInfo{}
+	log.Printf(ctx, "assistant.subscribe_to_updates")
+	return
 }
 
 // Process a batch of items with progress tracking
-func (s *assistantsrvc) ProcessBatch(ctx context.Context, p *assistant.ProcessBatchPayload) (*assistant.BatchResult, error) {
-	return &assistant.BatchResult{Processed: len(p.Items), Failed: 0, Results: []any{}}, nil
+func (s *assistantsrvc) ProcessBatch(ctx context.Context, p *assistant.ProcessBatchPayload, stream assistant.ProcessBatchServerStream) (err error) {
+	log.Printf(ctx, "assistant.process_batch")
+	// Minimal example: emit one progress notification and one final response
+	{
+		// Progress notification (no ID)
+		notif := &assistant.BatchResult{}
+		if err := stream.Send(ctx, notif); err != nil {
+			return err
+		}
+		// Final response
+		final := &assistant.BatchResult{}
+		return stream.SendAndClose(ctx, final)
+	}
+	return
 }
 
-// Monitor resource changes
-func (s *assistantsrvc) MonitorResourceChanges(ctx context.Context, p *assistant.MonitorResourceChangesPayload) (*assistant.MonitorResourceChangesResult, error) {
-	return &assistant.MonitorResourceChangesResult{Updates: []*assistant.ResourceUpdate{}}, nil
-}
+// HandleStream manages a JSON-RPC WebSocket connection, enabling bidirectional
+// communication between the server and client. It receives requests from the
+// client, dispatches them to the appropriate service methods, and can send
+// server-initiated messages back to the client as needed.
+func (s *assistantsrvc) HandleStream(ctx context.Context, stream assistant.Stream) error {
+	log.Printf(ctx, "assistant.HandleStream")
 
-// Stream server logs in real-time
-func (s *assistantsrvc) StreamLogs(ctx context.Context, p *assistant.StreamLogsPayload) (*assistant.StreamLogsResult, error) {
-	return &assistant.StreamLogsResult{Logs: []*assistant.LogEntry{}}, nil
+	// Example: In a real implementation you might read from an event source
+	// and send notifications via stream.Send(ctx, event). This stub returns
+	// when the context is canceled.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return nil
+	}
 }

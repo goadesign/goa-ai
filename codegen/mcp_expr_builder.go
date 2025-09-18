@@ -172,13 +172,14 @@ func (b *mcpExprBuilder) buildHTTPService(mcpService *expr.ServiceExpr) *expr.HT
 	// Get the JSONRPC path from the stored original configuration
 	jsonrpcPath := ""
 
-	// Use the path that was captured before filtering - required for MCP
-	if path, ok := originalJSONRPCPaths[b.originalService.Name]; ok && path != "" {
-		jsonrpcPath = path
-	} else {
-		// If no path was captured, the design doesn't have JSONRPC configured properly
-		panic(fmt.Sprintf("MCP service %s requires JSONRPC transport with a path defined", b.originalService.Name))
-	}
+    // Use the path that was captured before filtering - required for MCP
+    if path, ok := originalJSONRPCPaths[b.originalService.Name]; ok && path != "" {
+        jsonrpcPath = path
+    } else {
+        // If no path was captured, record a validation error and default to /rpc
+        eval.Context.Record(&eval.Error{GoError: fmt.Errorf("service %q must declare JSONRPC(func(){ POST(...) }) with a service-level path", b.originalService.Name)})
+        jsonrpcPath = "/rpc"
+    }
 
 	httpService := &expr.HTTPServiceExpr{
 		ServiceExpr: mcpService,
@@ -192,6 +193,8 @@ func (b *mcpExprBuilder) buildHTTPService(mcpService *expr.ServiceExpr) *expr.HT
 		// Enable SSE for streaming endpoints
 		SSE: &expr.HTTPSSEExpr{},
 	}
+	// Ensure the JSONRPCRoute can compute full paths by giving it an endpoint with Service set
+	httpService.JSONRPCRoute.Endpoint = &expr.HTTPEndpointExpr{Service: httpService}
 
 	// Create endpoints for each method
 	for _, method := range mcpService.Methods {
@@ -202,11 +205,17 @@ func (b *mcpExprBuilder) buildHTTPService(mcpService *expr.ServiceExpr) *expr.HT
 				"jsonrpc": []string{},
 			},
 			// Explicitly set JSON-RPC route so downstream generators (including paths) have it
-			Routes: []*expr.RouteExpr{{
-				Method: "POST",
-				Path:   jsonrpcPath,
-			}},
+			Routes: []*expr.RouteExpr{},
 		}
+		// Ensure JSON-RPC decoders decode params into payload by setting body to method payload
+		endpoint.Body = method.Payload
+		// Ensure mapped attributes are non-nil for codegen analyze paths
+		endpoint.Params = expr.NewEmptyMappedAttributeExpr()
+		endpoint.Headers = expr.NewEmptyMappedAttributeExpr()
+		endpoint.Cookies = expr.NewEmptyMappedAttributeExpr()
+		// Create the route and set its Endpoint back-reference
+		rt := &expr.RouteExpr{Method: "POST", Path: jsonrpcPath, Endpoint: endpoint}
+		endpoint.Routes = []*expr.RouteExpr{rt}
 
 		// For streaming methods, configure SSE
 		if method.Stream == expr.ServerStreamKind {

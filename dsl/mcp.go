@@ -3,6 +3,7 @@ package dsl
 import (
 	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"
+	_ "goa.design/plugins/v3/mcp"      // Import plugin to register with eval
 	mcpexpr "goa.design/plugins/v3/mcp/expr"
 )
 
@@ -20,10 +21,7 @@ func MCPServer(name, version string) {
 		Name:         name,
 		Version:      version,
 		Description:  svc.Description,
-		Transport:    "jsonrpc", // Always use Goa's JSON-RPC
-		Capabilities: &mcpexpr.CapabilitiesExpr{
-			// These will be auto-detected in Finalize
-		},
+		Capabilities: &mcpexpr.CapabilitiesExpr{},
 	}
 
 	// Register with the root
@@ -62,6 +60,9 @@ func Tool(name, description string) {
 	if method.Payload != nil {
 		tool.InputSchema = method.Payload
 	}
+
+	// Set expression for proper error reporting
+	tool.Expression = method
 
 	mcp.Tools = append(mcp.Tools, tool)
 }

@@ -29,6 +29,13 @@ Note: Goa ultimately decides filenames; we transform whatever it emits into the 
 ### Streaming
 No custom streaming templates. When your methods stream, Goa’s JSON‑RPC generator emits the SSE stack. We simply adjust paths/imports so it lives under the MCP tree.
 
+### Tool Input Schema
+For each tool with a non-empty payload, the plugin derives a compact JSON
+Schema from the Goa attribute and exposes it in `tools/list` under
+`inputSchema`. This aims to provide client-side hints; it is not a full
+validation schema but covers common primitives, arrays, objects (with required
+fields), enums and base64-encoded bytes.
+
 ### Cross‑platform paths
 All path checks and rewrites go through `codegen/pathutil.go`:
 - `normalize` for comparisons, `replaceFirst` for targeted rewrites, `join` for building paths
@@ -57,5 +64,16 @@ Some projects want MCP‑only services. We support this behind a filter:
 
 ### Summary
 This plugin gives you MCP with familiar Goa patterns, minimal surface area, and a directory layout that feels natural. It’s accurate, easy to maintain, and designed to evolve alongside Goa.
+### Resource URI → Payload Mapping
+When an MCP resource has an underlying method with a payload, the adapter maps
+URI query parameters into that payload using Goa’s JSON‑RPC decoders:
 
+- Query parameters are collected into a JSON object where keys are parameter
+  names and values are best-effort typed (bool/int/float); repeated parameters
+  produce arrays.
+- The JSON object is then passed to the Goa-generated JSON‑RPC request decoder
+  for the original method, ensuring consistent field/tag handling.
+- Unknown fields are ignored by the decoder; service defaults still apply.
 
+This keeps resource calls simple (`resource://name?field=value`) while reusing
+the same decoding pipeline as tools.

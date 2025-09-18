@@ -1,0 +1,60 @@
+// Code generated with goa v3.22.2, DO NOT EDIT.
+//
+// grpcstream protocol buffer definition
+//
+// Command:
+// $ goa gen example.com/assistant/design
+
+syntax = "proto3";
+
+package grpcstream;
+
+option go_package = "/grpcstreampb";
+
+// Service for testing gRPC streaming
+service Grpcstream {
+	// List items with server streaming
+	rpc ListItems (ListItemsRequest) returns (stream ListItemsResponse);
+	// Collect metrics via client stream
+	rpc CollectMetrics (stream CollectMetricsStreamingRequest) returns (CollectMetricsResponse);
+	// Echo service with bidirectional streaming
+	rpc Echo (stream EchoStreamingRequest) returns (stream EchoResponse);
+}
+
+message ListItemsRequest {
+	// Filter criteria
+	optional string filter = 1;
+}
+
+message ListItemsResponse {
+	// Item ID
+	string id = 1;
+	// Item name
+	string name = 2;
+}
+
+message CollectMetricsStreamingRequest {
+	// Metric name
+	string metric = 1;
+	// Metric value
+	double value = 2;
+}
+
+message CollectMetricsResponse {
+	// Total metrics received
+	sint32 count = 1;
+	// Average value
+	double average = 2;
+}
+
+message EchoStreamingRequest {
+	// Message to echo
+	string message_ = 1;
+}
+
+message EchoResponse {
+	// Echoed message
+	string echo = 1;
+	// Echo timestamp
+	string timestamp = 2;
+}

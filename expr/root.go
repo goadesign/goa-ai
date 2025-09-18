@@ -34,17 +34,10 @@ func (r *RootExpr) DependsOn() []eval.Root {
 	return []eval.Root{expr.Root}
 }
 
-// Packages returns the Go packages imported by the generated code
+// Packages returns the DSL packages that should be recognized for error reporting
 func (r *RootExpr) Packages() []string {
 	return []string{
-		"context",
-		"encoding/json",
-		"fmt",
-		"io",
-		"log",
-		"net/http",
-		"os",
-		"strings",
+		"goa.design/plugins/v3/mcp/dsl",
 	}
 }
 

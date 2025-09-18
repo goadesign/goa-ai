@@ -188,7 +188,7 @@ func (m *MCPExpr) EvalName() string {
 func (m *MCPExpr) Finalize() {
 	// Validate transport
 	if m.Transport == "" {
-		m.Transport = "stdio" // Default transport
+		m.Transport = "jsonrpc" // Default transport per plugin
 	}
 
 	// Initialize capabilities if not set
@@ -217,14 +217,6 @@ func (m *MCPExpr) Validate() error {
 	}
 	if m.Version == "" {
 		verr.Add(m, "MCP server version is required")
-	}
-
-	// Validate transport
-	switch m.Transport {
-	case "jsonrpc", "http", "sse":
-		// Valid transports (jsonrpc is the default)
-	default:
-		verr.Add(m, "invalid transport: %s (must be jsonrpc, http, or sse)", m.Transport)
 	}
 
 	// Validate tools
