@@ -582,13 +582,13 @@ func (r *Runner) runSteps(t *testing.T, steps []Step, defaults *Defaults, pre *P
 
 // ensureInitialized sends an initialize request.
 func (r *Runner) ensureInitialized() error {
-    payload := map[string]any{
-        "protocolVersion": "2025-06-18",
-        "capabilities":    map[string]any{"tools": true, "resources": true, "prompts": true},
-        "clientInfo":      map[string]any{"name": "runner", "version": "1.0.0"},
-    }
-    _, _, err := r.executeJSONRPC("initialize", payload, map[string]string{"Content-Type": "application/json"}, true)
-    return err
+	payload := map[string]any{
+		"protocolVersion": "2025-06-18",
+		"capabilities":    map[string]any{"tools": true, "resources": true, "prompts": true},
+		"clientInfo":      map[string]any{"name": "runner", "version": "1.0.0"},
+	}
+	_, _, err := r.executeJSONRPC("initialize", payload, map[string]string{"Content-Type": "application/json"}, true)
+	return err
 }
 
 // executeJSONRPC sends a JSON-RPC request and returns the result map, raw bytes, and error.
