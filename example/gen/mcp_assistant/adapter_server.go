@@ -48,12 +48,19 @@ type MCPAdapterOptions struct {
 	ErrorMapper func(error) error
 	// Allowed/Deny lists for resource URIs. If AllowedResourceURIs is non-empty,
 	// only URIs in that list are permitted. DeniedResourceURIs takes precedence.
-	AllowedResourceURIs []string
-	DeniedResourceURIs  []string
+	AllowedResourceURIs     []string
+	DeniedResourceURIs      []string
+	StructuredStreamJSON    bool
+	ProtocolVersionOverride string
 }
 
-// supportedProtocolVersion defines the MCP protocol version this adapter expects.
-const supportedProtocolVersion = "2025-06-18"
+// mcpProtocolVersion resolves the protocol version from options or default.
+func (a *MCPAdapter) mcpProtocolVersion() string {
+	if a != nil && a.opts != nil && a.opts.ProtocolVersionOverride != "" {
+		return a.opts.ProtocolVersionOverride
+	}
+	return DefaultProtocolVersion
+}
 
 // bufferResponseWriter is a minimal http.ResponseWriter that writes to an in-memory buffer
 // used to leverage goa encoders without an actual HTTP response.
@@ -140,7 +147,7 @@ func (a *MCPAdapter) Initialize(ctx context.Context, p *InitializePayload) (*Ini
 		return nil, goa.PermanentError("invalid_params", "Missing protocolVersion")
 	}
 	switch p.ProtocolVersion {
-	case supportedProtocolVersion:
+	case a.mcpProtocolVersion():
 	default:
 		return nil, goa.PermanentError("invalid_params", "Unsupported protocol version")
 	}
@@ -162,7 +169,7 @@ func (a *MCPAdapter) Initialize(ctx context.Context, p *InitializePayload) (*Ini
 	capabilities.Resources = &ResourcesCapability{}
 	capabilities.Prompts = &PromptsCapability{}
 	return &InitializeResult{
-		ProtocolVersion: supportedProtocolVersion,
+		ProtocolVersion: a.mcpProtocolVersion(),
 		ServerInfo:      serverInfo,
 		Capabilities:    capabilities,
 	}, nil
@@ -212,9 +219,10 @@ func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*Tools
 
 // Stream bridges from original server-streaming methods to MCP ToolsCall stream
 type ProcessBatchStreamBridge struct {
-	out  ToolsCallServerStream
-	sent bool
-	mu   sync.Mutex
+	out     ToolsCallServerStream
+	sent    bool
+	mu      sync.Mutex
+	adapter *MCPAdapter
 }
 
 func (b *ProcessBatchStreamBridge) Send(ctx context.Context, ev assistant.ProcessBatchEvent) error {
@@ -225,7 +233,7 @@ func (b *ProcessBatchStreamBridge) Send(ctx context.Context, ev assistant.Proces
 	if serr != nil {
 		return serr
 	}
-	return b.out.Send(ctx, &ToolsCallResult{Content: []*ContentItem{&ContentItem{Type: "text", Text: &s}}})
+	return b.out.Send(ctx, &ToolsCallResult{Content: []*ContentItem{buildContentItem(b.adapter, s)}})
 }
 func (b *ProcessBatchStreamBridge) SendAndClose(ctx context.Context, ev assistant.ProcessBatchEvent) error {
 	b.mu.Lock()
@@ -235,7 +243,7 @@ func (b *ProcessBatchStreamBridge) SendAndClose(ctx context.Context, ev assistan
 	if serr != nil {
 		return serr
 	}
-	return b.out.SendAndClose(ctx, &ToolsCallResult{Content: []*ContentItem{&ContentItem{Type: "text", Text: &s}}})
+	return b.out.SendAndClose(ctx, &ToolsCallResult{Content: []*ContentItem{buildContentItem(b.adapter, s)}})
 }
 func (b *ProcessBatchStreamBridge) SendError(ctx context.Context, id string, err error) error {
 	return b.out.SendError(ctx, id, err)
@@ -373,7 +381,7 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload, stream 
 			}
 		}
 		// Bridge original server stream interface to MCP ToolsCall stream
-		bridge := &ProcessBatchStreamBridge{out: stream}
+		bridge := &ProcessBatchStreamBridge{out: stream, adapter: a}
 		if err := a.service.ProcessBatch(ctx, payload, bridge); err != nil {
 			return err
 		}
@@ -612,4 +620,34 @@ func (a *MCPAdapter) Unsubscribe(ctx context.Context, p *UnsubscribePayload) (*U
 // stringPtr returns a pointer to a string
 func stringPtr(s string) *string {
 	return &s
+}
+
+// buildContentItem returns a ContentItem honoring StructuredStreamJSON option.
+func buildContentItem(a *MCPAdapter, s string) *ContentItem {
+	if a != nil && a.opts != nil && a.opts.StructuredStreamJSON && isLikelyJSON(s) {
+		mt := stringPtr("application/json")
+		return &ContentItem{Type: "resource", MimeType: mt, Text: &s}
+	}
+	return &ContentItem{Type: "text", Text: &s}
+}
+
+func isLikelyJSON(s string) bool {
+	t := strings.TrimSpace(s)
+	return len(t) > 0 && (t[0] == '{' || t[0] == '[')
+}
+
+// mapError and log helpers (no-op if options are nil)
+func (a *MCPAdapter) mapError(err error) error {
+	if a != nil && a.opts != nil && a.opts.ErrorMapper != nil && err != nil {
+		if m := a.opts.ErrorMapper(err); m != nil {
+			return m
+		}
+	}
+	return err
+}
+
+func (a *MCPAdapter) log(ctx context.Context, event string, details any) {
+	if a != nil && a.opts != nil && a.opts.Logger != nil {
+		a.opts.Logger(ctx, event, details)
+	}
 }

@@ -4,13 +4,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	mcpexpr "goa.design/goa-ai/expr"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/example"
 	"goa.design/goa/v3/codegen/service"
 	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"
 	httpcodegen "goa.design/goa/v3/http/codegen"
-	mcpexpr "goa.design/plugins/v3/mcp/expr"
 )
 
 // PrepareExample augments the original roots so the Goa example generator includes the
@@ -30,16 +30,13 @@ func PrepareExample(genpkg string, roots []eval.Root) error {
 			mcpService := builder.BuildServiceExpr()
 
 			// Capture original JSON-RPC path (used by builder)
-			if originalJSONRPCPaths == nil {
-				originalJSONRPCPaths = make(map[string]string)
-			}
-			if _, exists := originalJSONRPCPaths[svc.Name]; !exists && r.API != nil && r.API.JSONRPC != nil {
+			if _, exists := getOriginalJSONRPCPath(svc.Name); !exists && r.API != nil && r.API.JSONRPC != nil {
 				for _, jsonrpcSvc := range r.API.JSONRPC.Services {
 					if jsonrpcSvc.ServiceExpr == nil || jsonrpcSvc.ServiceExpr.Name != svc.Name {
 						continue
 					}
 					if route := jsonrpcSvc.JSONRPCRoute; route != nil && route.Path != "" {
-						originalJSONRPCPaths[svc.Name] = route.Path
+						setOriginalJSONRPCPath(svc.Name, route.Path)
 					}
 					break
 				}
@@ -158,19 +155,19 @@ func ModifyExampleFiles(genpkg string, roots []eval.Root, files []*codegen.File)
 			svrdata := example.Servers.Get(svr, r)
 			mainPath := filepath.Join("cmd", svrdata.Dir, "main.go")
 			httpPath := filepath.Join("cmd", svrdata.Dir, "http.go")
-            for _, f := range files {
-                if f.Path == mainPath {
+			for _, f := range files {
+				if f.Path == mainPath {
 					for i, s := range f.SectionTemplates {
 						if s.Name == "server-main-services" {
 							// Append a section to wire MCP adapters generically for all MCP-enabled services
-                    src := "\n\t\t{\n\t\t\t// Wire MCP adapters on top of original services\n\t\t\t// Provide a simple prompt provider implementation so Prompts.get works.\n\t\t\tprovider := assistantapi.NewPromptProvider()\n"
+							src := "\n\t\t{\n\t\t\t// Wire MCP adapters on top of original services\n\t\t\t// Provide a simple prompt provider implementation so Prompts.get works.\n\t\t\tprovider := assistantapi.NewPromptProvider()\n"
 							for _, sv := range mcpServices {
 								svcSnake := codegen.SnakeCase(sv.Name)
 								mcpSvcSnake := "mcp_" + svcSnake
 								origVar := codegen.Goify(svcSnake, false) + "Svc"
 								mcpVar := codegen.Goify(mcpSvcSnake, false) + "Svc"
 								mcpAlias := "mcp" + strings.ReplaceAll(svcSnake, "_", "")
-                            src += "\t\t\t" + mcpVar + " = " + mcpAlias + ".NewMCPAdapter(" + origVar + ", provider, nil)\n"
+								src += "\t\t\t" + mcpVar + " = " + mcpAlias + ".NewMCPAdapter(" + origVar + ", provider, nil)\n"
 							}
 							src += "\t\t}\n"
 							injection := &codegen.SectionTemplate{
@@ -202,8 +199,8 @@ func ModifyExampleFiles(genpkg string, roots []eval.Root, files []*codegen.File)
 						}
 						s.Source = serverHTTPStartJSONRPCTemplate
 					}
-                }
-                if f.Path == httpPath {
+				}
+				if f.Path == httpPath {
 					// Collect JSON-RPC services for this server once
 					var jsonrpcSvcData []*httpcodegen.ServiceData
 					for _, name := range svr.Services {
@@ -241,31 +238,33 @@ func ModifyExampleFiles(genpkg string, roots []eval.Root, files []*codegen.File)
 							s.Source = strings.ReplaceAll(s.Source, old, newp)
 						}
 					}
-                }
-                // Patch example assistant implementation to avoid using Stream.Close/Recv on assistant.Stream
-                if f.Path == "assistant.go" {
-                    for _, s := range f.SectionTemplates {
-                        if s.Source == "" { continue }
-                        // Remove defer stream.Close() lines
-                        s.Source = strings.ReplaceAll(s.Source, "\n\tdefer stream.Close()\n", "\n")
-                        // Replace HandleStream body with a minimal no-op that exits on context cancel
-                        sig := "func (s *assistantsrvc) HandleStream(ctx context.Context, stream assistant.Stream) error {"
-                        idx := strings.Index(s.Source, sig)
-                        if idx >= 0 {
-                            tail := s.Source[idx+len(sig):]
-                            // find end of function by matching last closing brace in this section
-                            if end := strings.LastIndex(tail, "}"); end > 0 {
-                                body := "\n\tlog.Printf(ctx, \"assistant.HandleStream\")\n\t// (no-op example)\n\tselect {\n\tcase <-ctx.Done():\n\t\treturn ctx.Err()\n\tdefault:\n\t\treturn nil\n\t}\n"
-                                s.Source = s.Source[:idx+len(sig)] + body + tail[end:]
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    // Upstream Goa fix for mixed JSON-RPC handler avoids duplicate ServeHTTP.
-    return files, nil
+				}
+				// Patch example assistant implementation to avoid using Stream.Close/Recv on assistant.Stream
+				if f.Path == "assistant.go" {
+					for _, s := range f.SectionTemplates {
+						if s.Source == "" {
+							continue
+						}
+						// Remove defer stream.Close() lines
+						s.Source = strings.ReplaceAll(s.Source, "\n\tdefer stream.Close()\n", "\n")
+						// Replace HandleStream body with a minimal no-op that exits on context cancel
+						sig := "func (s *assistantsrvc) HandleStream(ctx context.Context, stream assistant.Stream) error {"
+						idx := strings.Index(s.Source, sig)
+						if idx >= 0 {
+							tail := s.Source[idx+len(sig):]
+							// find end of function by matching last closing brace in this section
+							if end := strings.LastIndex(tail, "}"); end > 0 {
+								body := "\n\tlog.Printf(ctx, \"assistant.HandleStream\")\n\t// (no-op example)\n\tselect {\n\tcase <-ctx.Done():\n\t\treturn ctx.Err()\n\tdefault:\n\t\treturn nil\n\t}\n"
+								s.Source = s.Source[:idx+len(sig)] + body + tail[end:]
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	// Upstream Goa fix for mixed JSON-RPC handler avoids duplicate ServeHTTP.
+	return files, nil
 }
 
 func serviceInList(list []*expr.ServiceExpr, name string) bool {

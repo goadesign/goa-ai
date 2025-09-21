@@ -1,6 +1,8 @@
 // NewEndpoints creates endpoints that expose the original service API while
 // invoking the MCP transport under the hood for mapped methods. Unmapped
 // methods transparently fall back to the original JSON-RPC transport.
+// NewEndpoints creates an Endpoints set that routes mapped methods through
+// the MCP transport while leaving unmapped methods on the original transport.
 func NewEndpoints(
     scheme string,
     host string,

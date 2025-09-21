@@ -1,15 +1,15 @@
 package dsl
 
 import (
+	_ "goa.design/goa-ai" // Import plugin to register with eval
+	mcpexpr "goa.design/goa-ai/expr"
 	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"
-	_ "goa.design/plugins/v3/mcp"      // Import plugin to register with eval
-	mcpexpr "goa.design/plugins/v3/mcp/expr"
 )
 
-// MCPServer enables MCP for the current service
+// MCPServer enables MCP for the current service and sets server and protocol metadata.
 // Capabilities are automatically detected based on defined tools, resources, etc.
-func MCPServer(name, version string) {
+func MCPServer(name, version string, opts ...func(*mcpexpr.MCPExpr)) {
 	svc, ok := eval.Current().(*expr.ServiceExpr)
 	if !ok {
 		eval.IncompatibleDSL()
@@ -24,9 +24,23 @@ func MCPServer(name, version string) {
 		Capabilities: &mcpexpr.CapabilitiesExpr{},
 	}
 
+	// Apply options (e.g., ProtocolVersion)
+	for _, o := range opts {
+		if o != nil {
+			o(mcp)
+		}
+	}
+
 	// Register with the root
 	if r := mcpexpr.Root; r != nil {
 		r.RegisterMCP(svc, mcp)
+	}
+}
+
+// ProtocolVersion sets the MCP protocol version (e.g., 2025-06-18) for MCPServer.
+func ProtocolVersion(version string) func(*mcpexpr.MCPExpr) {
+	return func(m *mcpexpr.MCPExpr) {
+		m.ProtocolVersion = version
 	}
 }
 

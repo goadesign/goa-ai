@@ -1,8 +1,8 @@
 package codegen
 
 import (
+	mcpexpr "goa.design/goa-ai/expr"
 	"goa.design/goa/v3/expr"
-	mcpexpr "goa.design/plugins/v3/mcp/expr"
 )
 
 // buildMethods creates all MCP protocol methods
@@ -54,8 +54,8 @@ func (b *mcpExprBuilder) buildInitializeMethod() *expr.MethodExpr {
 	return &expr.MethodExpr{
 		Name:        "initialize",
 		Description: "Initialize MCP session",
-		Payload:     b.getOrCreateType("InitializePayload", b.buildInitializePayloadType).AttributeExpr,
-		Result:      b.getOrCreateType("InitializeResult", b.buildInitializeResultType).AttributeExpr,
+		Payload:     b.userTypeAttr("InitializePayload", b.buildInitializePayloadType),
+		Result:      b.userTypeAttr("InitializeResult", b.buildInitializeResultType),
 	}
 }
 
@@ -64,7 +64,7 @@ func (b *mcpExprBuilder) buildPingMethod() *expr.MethodExpr {
 	return &expr.MethodExpr{
 		Name:        "ping",
 		Description: "Ping the server",
-		Result:      b.getOrCreateType("PingResult", b.buildPingResultType).AttributeExpr,
+		Result:      b.userTypeAttr("PingResult", b.buildPingResultType),
 	}
 }
 
@@ -73,8 +73,8 @@ func (b *mcpExprBuilder) buildToolsListMethod() *expr.MethodExpr {
 	return &expr.MethodExpr{
 		Name:        "tools/list",
 		Description: "List available tools",
-		Payload:     b.getOrCreateType("ToolsListPayload", b.buildToolsListPayloadType).AttributeExpr,
-		Result:      b.getOrCreateType("ToolsListResult", b.buildToolsListResultType).AttributeExpr,
+		Payload:     b.userTypeAttr("ToolsListPayload", b.buildToolsListPayloadType),
+		Result:      b.userTypeAttr("ToolsListResult", b.buildToolsListResultType),
 	}
 }
 
@@ -83,12 +83,12 @@ func (b *mcpExprBuilder) buildToolsCallMethod() *expr.MethodExpr {
 	m := &expr.MethodExpr{
 		Name:        "tools/call",
 		Description: "Call a tool",
-		Payload:     b.getOrCreateType("ToolsCallPayload", b.buildToolsCallPayloadType).AttributeExpr,
-		Result:      b.getOrCreateType("ToolsCallResult", b.buildToolsCallResultType).AttributeExpr,
+		Payload:     b.userTypeAttr("ToolsCallPayload", b.buildToolsCallPayloadType),
+		Result:      b.userTypeAttr("ToolsCallResult", b.buildToolsCallResultType),
 	}
 	if b.anyToolStreaming() {
 		m.Stream = expr.ServerStreamKind
-		m.StreamingResult = b.getOrCreateType("ToolsCallResult", b.buildToolsCallResultType).AttributeExpr
+		m.StreamingResult = b.userTypeAttr("ToolsCallResult", b.buildToolsCallResultType)
 	}
 	return m
 }
@@ -98,8 +98,8 @@ func (b *mcpExprBuilder) buildResourcesListMethod() *expr.MethodExpr {
 	return &expr.MethodExpr{
 		Name:        "resources/list",
 		Description: "List available resources",
-		Payload:     b.getOrCreateType("ResourcesListPayload", b.buildResourcesListPayloadType).AttributeExpr,
-		Result:      b.getOrCreateType("ResourcesListResult", b.buildResourcesListResultType).AttributeExpr,
+		Payload:     b.userTypeAttr("ResourcesListPayload", b.buildResourcesListPayloadType),
+		Result:      b.userTypeAttr("ResourcesListResult", b.buildResourcesListResultType),
 	}
 }
 
@@ -108,12 +108,12 @@ func (b *mcpExprBuilder) buildResourcesReadMethod() *expr.MethodExpr {
 	m := &expr.MethodExpr{
 		Name:        "resources/read",
 		Description: "Read a resource",
-		Payload:     b.getOrCreateType("ResourcesReadPayload", b.buildResourcesReadPayloadType).AttributeExpr,
-		Result:      b.getOrCreateType("ResourcesReadResult", b.buildResourcesReadResultType).AttributeExpr,
+		Payload:     b.userTypeAttr("ResourcesReadPayload", b.buildResourcesReadPayloadType),
+		Result:      b.userTypeAttr("ResourcesReadResult", b.buildResourcesReadResultType),
 	}
 	if b.anyResourceStreaming() {
 		m.Stream = expr.ServerStreamKind
-		m.StreamingResult = b.getOrCreateType("ResourcesReadResult", b.buildResourcesReadResultType).AttributeExpr
+		m.StreamingResult = b.userTypeAttr("ResourcesReadResult", b.buildResourcesReadResultType)
 	}
 	return m
 }
@@ -123,7 +123,7 @@ func (b *mcpExprBuilder) buildResourcesSubscribeMethod() *expr.MethodExpr {
 	return &expr.MethodExpr{
 		Name:        "resources/subscribe",
 		Description: "Subscribe to resource changes",
-		Payload:     b.getOrCreateType("ResourcesSubscribePayload", b.buildSubscribePayloadType).AttributeExpr,
+		Payload:     b.userTypeAttr("ResourcesSubscribePayload", b.buildSubscribePayloadType),
 		Result:      nil, // No result, returns nothing on success
 	}
 }
@@ -133,7 +133,7 @@ func (b *mcpExprBuilder) buildResourcesUnsubscribeMethod() *expr.MethodExpr {
 	return &expr.MethodExpr{
 		Name:        "resources/unsubscribe",
 		Description: "Unsubscribe from resource changes",
-		Payload:     b.getOrCreateType("ResourcesUnsubscribePayload", b.buildUnsubscribePayloadType).AttributeExpr,
+		Payload:     b.userTypeAttr("ResourcesUnsubscribePayload", b.buildUnsubscribePayloadType),
 		Result:      nil, // No result, returns nothing on success
 	}
 }
@@ -143,8 +143,8 @@ func (b *mcpExprBuilder) buildPromptsListMethod() *expr.MethodExpr {
 	return &expr.MethodExpr{
 		Name:        "prompts/list",
 		Description: "List available prompts",
-		Payload:     b.getOrCreateType("PromptsListPayload", b.buildPromptsListPayloadType).AttributeExpr,
-		Result:      b.getOrCreateType("PromptsListResult", b.buildPromptsListResultType).AttributeExpr,
+		Payload:     b.userTypeAttr("PromptsListPayload", b.buildPromptsListPayloadType),
+		Result:      b.userTypeAttr("PromptsListResult", b.buildPromptsListResultType),
 	}
 }
 
@@ -153,8 +153,8 @@ func (b *mcpExprBuilder) buildPromptsGetMethod() *expr.MethodExpr {
 	return &expr.MethodExpr{
 		Name:        "prompts/get",
 		Description: "Get a prompt by name",
-		Payload:     b.getOrCreateType("PromptsGetPayload", b.buildPromptsGetPayloadType).AttributeExpr,
-		Result:      b.getOrCreateType("PromptsGetResult", b.buildPromptsGetResultType).AttributeExpr,
+		Payload:     b.userTypeAttr("PromptsGetPayload", b.buildPromptsGetPayloadType),
+		Result:      b.userTypeAttr("PromptsGetResult", b.buildPromptsGetResultType),
 	}
 }
 
@@ -167,7 +167,7 @@ func (b *mcpExprBuilder) buildNotificationMethods() []*expr.MethodExpr {
 		method := &expr.MethodExpr{
 			Name:        "notify_" + notif.Name,
 			Description: notif.Description,
-			Payload:     b.getOrCreateType("SendNotificationPayload", b.buildSendNotificationPayloadType).AttributeExpr,
+			Payload:     b.userTypeAttr("SendNotificationPayload", b.buildSendNotificationPayloadType),
 		}
 		methods = append(methods, method)
 	}

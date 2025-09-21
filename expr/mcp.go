@@ -15,6 +15,8 @@ type MCPExpr struct {
 	Version string
 	// Description is the server description
 	Description string
+	// ProtocolVersion is the MCP protocol version (e.g., 2025-06-18)
+	ProtocolVersion string
 	// Transport defines the transport mechanism (stdio, http, sse)
 	Transport string
 	// Capabilities defines server capabilities

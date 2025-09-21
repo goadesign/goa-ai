@@ -1,25 +1,25 @@
 package codegen
 
 import (
-    "fmt"
-    "path/filepath"
-    "strings"
+	"fmt"
+	"path/filepath"
+	"strings"
 
-    "goa.design/goa/v3/codegen"
-    "goa.design/goa/v3/codegen/service"
-    "goa.design/goa/v3/eval"
-    "goa.design/goa/v3/expr"
-    httpcodegen "goa.design/goa/v3/http/codegen"
-    jsonrpccodegen "goa.design/goa/v3/jsonrpc/codegen"
-    mcpexpr "goa.design/plugins/v3/mcp/expr"
+	mcpexpr "goa.design/goa-ai/expr"
+	"goa.design/goa/v3/codegen"
+	"goa.design/goa/v3/codegen/service"
+	"goa.design/goa/v3/eval"
+	"goa.design/goa/v3/expr"
+	httpcodegen "goa.design/goa/v3/http/codegen"
+	jsonrpccodegen "goa.design/goa/v3/jsonrpc/codegen"
 )
 
-// mcpTemplates defined in templates.go
-
-// Generate orchestrates all MCP code generation
+// Generate orchestrates MCP code generation for services that declare MCP
+// configuration in the DSL. It composes Goa service and JSON-RPC generators
+// and adds adapter/client helpers.
 func Generate(genpkg string, roots []eval.Root, files []*codegen.File) ([]*codegen.File, error) {
 	// Process MCP services from original services
-	for _, svc := range originalServices {
+	for _, svc := range getOriginalServices() {
 		if !mcpexpr.Root.HasMCP(svc) {
 			continue
 		}
@@ -39,9 +39,9 @@ func Generate(genpkg string, roots []eval.Root, files []*codegen.File) ([]*codeg
 			return nil, fmt.Errorf("MCP expression validation failed: %w", err)
 		}
 
-        // Generate MCP service code using Goa's standard generators
-        mcpFiles := generateMCPServiceCode(genpkg, mcpRoot, mcpService)
-        files = append(files, mcpFiles...)
+		// Generate MCP service code using Goa's standard generators
+		mcpFiles := generateMCPServiceCode(genpkg, mcpRoot, mcpService)
+		files = append(files, mcpFiles...)
 
 		// Generate MCP transport that wraps the original service
 		mapping := exprBuilder.BuildServiceMapping()
@@ -51,14 +51,15 @@ func Generate(genpkg string, roots []eval.Root, files []*codegen.File) ([]*codeg
 		files = append(files, generateMCPClientAdapter(genpkg, svc, mcp, mapping)...)
 	}
 
-    return files, nil
+	return files, nil
 }
 
 // (removed) generateMCPAdapter: unused
 
-// generateMCPServiceCode generates all MCP service code using Goa's codegen
+// generateMCPServiceCode generates the MCP service layer and JSON-RPC transport
+// using Goa's built-in generators.
 func generateMCPServiceCode(genpkg string, root *expr.RootExpr, mcpService *expr.ServiceExpr) []*codegen.File {
-    files := make([]*codegen.File, 0, 16)
+	files := make([]*codegen.File, 0, 16)
 
 	// Create services data from temporary MCP root
 	servicesData := service.NewServicesData(root)
@@ -75,29 +76,30 @@ func generateMCPServiceCode(genpkg string, root *expr.RootExpr, mcpService *expr
 	files = append(files, service.EndpointFile(genpkg, mcpService, servicesData))
 	files = append(files, service.ClientFile(genpkg, mcpService, servicesData))
 
-    // Generate JSON-RPC transport for MCP service only
-    httpServices := httpcodegen.NewServicesData(servicesData, &root.API.JSONRPC.HTTPExpr)
-    httpServices.Root = root
+	// Generate JSON-RPC transport for MCP service only
+	httpServices := httpcodegen.NewServicesData(servicesData, &root.API.JSONRPC.HTTPExpr)
+	httpServices.Root = root
 
-    // Generate both base and SSE server files.
-    base := jsonrpccodegen.ServerFiles(genpkg, httpServices)
-    sse := jsonrpccodegen.SSEServerFiles(genpkg, httpServices)
-    files = append(files, base...)
-    files = append(files, sse...)
-    files = append(files, jsonrpccodegen.ServerTypeFiles(genpkg, httpServices)...)
-    files = append(files, jsonrpccodegen.PathFiles(httpServices)...)
+	// Generate both base and SSE server files.
+	base := jsonrpccodegen.ServerFiles(genpkg, httpServices)
+	sse := jsonrpccodegen.SSEServerFiles(genpkg, httpServices)
+	files = append(files, base...)
+	files = append(files, sse...)
+	files = append(files, jsonrpccodegen.ServerTypeFiles(genpkg, httpServices)...)
+	files = append(files, jsonrpccodegen.PathFiles(httpServices)...)
 	// Add client-side JSON-RPC for MCP service so adapters can depend on it
 	files = append(files, jsonrpccodegen.ClientTypeFiles(genpkg, httpServices)...)
 	files = append(files, jsonrpccodegen.ClientFiles(genpkg, httpServices)...)
 	// NOTE: SSEClientFiles may not exist depending on Goa version
 	// files = append(files, jsonrpccodegen.SSEClientFiles(genpkg, httpServices)...)
 
-    return files
+	return files
 }
 
 // (no dedupe or merge of JSON-RPC server handlers is performed here).
 
-// generateMCPTransport generates MCP transport layer files
+// generateMCPTransport generates adapter and prompt provider files that adapt
+// MCP protocol methods to the original service implementation.
 func generateMCPTransport(genpkg string, svc *expr.ServiceExpr, mcp *mcpexpr.MCPExpr, mapping *ServiceMethodMapping) []*codegen.File {
 	var files []*codegen.File
 	svcName := codegen.SnakeCase(svc.Name)
@@ -108,21 +110,22 @@ func generateMCPTransport(genpkg string, svc *expr.ServiceExpr, mcp *mcpexpr.MCP
 	data := adapterGen.buildAdapterData()
 	pkgName := data.MCPPackage
 
-    adapterImports := []*codegen.ImportSpec{
-        {Path: "bytes"},
-        {Path: "context"},
-        {Path: "encoding/json"},
-        {Path: "fmt"},
-        {Path: "io"},
-        {Path: "net/http"},
-        {Path: "net/url"},
-        {Path: "strconv"},
-        {Path: "strings"},
-        {Path: "sync"},
-        {Path: genpkg + "/" + svcName, Name: svcName},
-        {Path: "goa.design/goa/v3/http", Name: "goahttp"},
+	adapterImports := []*codegen.ImportSpec{
+		{Path: "bytes"},
+		{Path: "context"},
+		{Path: "encoding/json"},
+		{Path: "fmt"},
+		{Path: "io"},
+		{Path: "net/http"},
+		{Path: "net/url"},
+		{Path: "path"},
+		{Path: "strconv"},
+		{Path: "strings"},
+		{Path: "sync"},
+		{Path: genpkg + "/" + svcName, Name: svcName},
+		{Path: "goa.design/goa/v3/http", Name: "goahttp"},
 		{Path: "goa.design/goa/v3/pkg", Name: "goa"},
-    }
+	}
 	files = append(files, &codegen.File{
 		Path: adapterPath,
 		SectionTemplates: []*codegen.SectionTemplate{
@@ -136,6 +139,25 @@ func generateMCPTransport(genpkg string, svc *expr.ServiceExpr, mcp *mcpexpr.MCP
 					"comment": codegen.Comment,
 					"quote":   func(s string) string { return fmt.Sprintf("%q", s) },
 				},
+			},
+		},
+	})
+
+	// Generate protocol version constant in MCP package
+	versionPath := filepath.Join(codegen.Gendir, "mcp_"+svcName, "protocol_version.go")
+	versionImports := []*codegen.ImportSpec{}
+	pv := data.ProtocolVersion
+	if pv == "" {
+		// Default to integration test expected version when none provided via DSL
+		pv = "2025-06-18"
+	}
+	files = append(files, &codegen.File{
+		Path: versionPath,
+		SectionTemplates: []*codegen.SectionTemplate{
+			codegen.Header("MCP protocol version", pkgName, versionImports),
+			{
+				Name:   "mcp-protocol-version",
+				Source: fmt.Sprintf("const DefaultProtocolVersion = %q\n", pv),
 			},
 		},
 	})

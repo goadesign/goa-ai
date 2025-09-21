@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"goa.design/plugins/v3/mcp/integration_tests/framework"
+	"goa.design/goa-ai/integration_tests/framework"
 )
 
 func TestMCPProtocol(t *testing.T) {

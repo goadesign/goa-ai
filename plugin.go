@@ -1,9 +1,9 @@
 package mcp
 
 import (
+	_ "goa.design/goa-ai/codegen" // Import to trigger plugin registration
+	mcpexpr "goa.design/goa-ai/expr"
 	"goa.design/goa/v3/eval"
-	_ "goa.design/plugins/v3/mcp/codegen" // Import to trigger plugin registration
-	mcpexpr "goa.design/plugins/v3/mcp/expr"
 )
 
 // Register initializes the MCP plugin

@@ -1,7 +1,7 @@
 package codegen
 
 import (
-    "goa.design/goa/v3/expr"
+	"goa.design/goa/v3/expr"
 )
 
 // buildMCPTypes creates all MCP protocol type definitions
@@ -221,18 +221,12 @@ func (b *mcpExprBuilder) buildToolInfoType() *expr.AttributeExpr {
 }
 
 func (b *mcpExprBuilder) buildToolsCallPayloadType() *expr.AttributeExpr {
-	// Build enum of tool names
-	toolNames := make([]any, len(b.mcp.Tools))
-	for i, tool := range b.mcp.Tools {
-		toolNames[i] = tool.Name
-	}
-
-    return &expr.AttributeExpr{
-        Type: &expr.Object{
-            {Name: "name", Attribute: &expr.AttributeExpr{
-                Type:        expr.String,
-                Description: "Tool name",
-            }},
+	return &expr.AttributeExpr{
+		Type: &expr.Object{
+			{Name: "name", Attribute: &expr.AttributeExpr{
+				Type:        expr.String,
+				Description: "Tool name",
+			}},
 			{Name: "arguments", Attribute: &expr.AttributeExpr{
 				Type:        expr.Any,
 				Description: "Tool arguments",
@@ -460,12 +454,12 @@ func (b *mcpExprBuilder) buildPromptInfoType() *expr.AttributeExpr {
 }
 
 func (b *mcpExprBuilder) buildPromptsGetPayloadType() *expr.AttributeExpr {
-    return &expr.AttributeExpr{
-        Type: &expr.Object{
-            {Name: "name", Attribute: &expr.AttributeExpr{
-                Type:        expr.String,
-                Description: "Prompt name",
-            }},
+	return &expr.AttributeExpr{
+		Type: &expr.Object{
+			{Name: "name", Attribute: &expr.AttributeExpr{
+				Type:        expr.String,
+				Description: "Prompt name",
+			}},
 			{Name: "arguments", Attribute: &expr.AttributeExpr{
 				Type:        expr.Any,
 				Description: "Prompt arguments",

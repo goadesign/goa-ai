@@ -37,7 +37,7 @@ func (r *RootExpr) DependsOn() []eval.Root {
 // Packages returns the DSL packages that should be recognized for error reporting
 func (r *RootExpr) Packages() []string {
 	return []string{
-		"goa.design/plugins/v3/mcp/dsl",
+		"goa.design/goa-ai/dsl",
 	}
 }
 

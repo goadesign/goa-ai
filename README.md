@@ -1,154 +1,186 @@
-# Goa MCP Plugin
+<p align="center">
+  <p align="center">
+    <a href="https://goa.design">
+      <img alt="Goa-AI" src="https://goa.design/img/social/goa-banner.png">
+    </a>
+  </p>
+  <p align="center">
+    <a href="https://github.com/goadesign/goa-ai/releases/latest"><img alt="Release" src="https://img.shields.io/github/release/goadesign/goa-ai.svg?style=for-the-badge"></a>
+    <a href="https://pkg.go.dev/goa.design/goa-ai"><img alt="Go Doc" src="https://img.shields.io/badge/godoc-reference-blue.svg?style=for-the-badge"></a>
+    <a href="https://github.com/goadesign/goa-ai/actions/workflows/ci.yml"><img alt="GitHub Action: CI" src="https://img.shields.io/github/actions/workflow/status/goadesign/goa-ai/ci.yml?branch=main&style=for-the-badge"></a>
+    <a href="https://goreportcard.com/report/goa.design/goa-ai"><img alt="Go Report Card" src="https://goreportcard.com/badge/goa.design/goa-ai?style=for-the-badge"></a>
+    <a href="/LICENSE"><img alt="Software License" src="https://img.shields.io/badge/license-MIT-brightgreen.svg?style=for-the-badge"></a>
+  </p>
+</p>
 
-Design-first Model Context Protocol servers generated from your Goa service design.
+# Goa-AI: The Design-First Toolkit for AI Backends
 
-Why Goa + MCP
-- One design, many surfaces. Describe your service once in Goa’s DSL and generate a fully-typed MCP server that tools, prompts, and resources can call. No drift between docs, types, handlers, and clients.
-- Strong types → clear schemas. The plugin derives compact JSON Schema for tool inputs from your Goa payloads, so models get reliable shapes and you keep compile-time confidence.
-- Built-in streaming done right. JSON‑RPC over HTTP with Server‑Sent Events (SSE) is negotiated by the Accept header — non‑streaming and streaming endpoints coexist cleanly.
-- Opinionated protocol glue. Initialization gating, capability negotiation, and consistent JSON‑RPC error mapping are handled for you so you can focus on domain logic.
-- Batteries included. Generated adapters, clients, and an example server make it easy to try, test, and ship. A comprehensive integration test suite ships in this repo.
+**Stop handwriting API specs and boilerplate for your AI agents. Start describing your tools in simple, type-safe Go and let `goa-ai` generate the entire robust, streaming-capable backend for you.**
 
-What You Get
-- Tools: expose methods as MCP tools callable by AI agents.
-- Resources: serve contextual data via URI-like addresses (list, read, subscribe).
-- Prompts: define static templates or generate dynamic prompts from code.
-- Notifications and subscriptions: send progress, status, and change events.
-- Transports: JSON‑RPC over HTTP with optional SSE for streaming.
+Building reliable backends for AI agents is a new kind of challenge. You're constantly fighting to keep your agent's tool definitions, your API's JSON schema, and your actual backend implementation in sync. This constant manual translation is slow, error-prone, and full of tedious boilerplate.
 
-Quickstart
-1) Install
-   - `go get goa.design/plugins/v3/mcp`
+`Goa-AI` solves this. It introduces a design-first methodology that allows you to go from a simple Go definition to a production-ready AI backend in minutes, not days.
 
-2) Import the MCP DSL in your design
-   - `import mcp "goa.design/plugins/v3/mcp/dsl"`
+### The Design-First Advantage: From DSL to Live Server
 
-3) Enable MCP and JSON‑RPC on a service
-   - Minimal example:
-     ```go
-     var _ = Service("assistant", func() {
-       Description("MCP-enabled assistant service")
-       mcp.MCPServer("assistant-mcp", "1.0.0")
-       JSONRPC(func() { POST("/rpc") })
-     })
-     ```
+See how a simple, readable design becomes a powerful, feature-rich server with a single command. This is the core of the `goa-ai` workflow.
 
-4) Expose functionality
-   - Tool:
-     ```go
-     Method("analyze", func() {
-       Payload(func() { Attribute("text", String); Required("text") })
-       Result(String)
-       mcp.Tool("analyze_text", "Analyze user text")
-       JSONRPC(func() {})
-     })
-     ```
-   - Resource:
-     ```go
-     Method("systemInfo", func() {
-       Result(MapOf(String, String))
-       mcp.Resource("system_info", "system://info", "application/json")
-       JSONRPC(func() {})
-     })
-     ```
-   - Dynamic prompt:
-     ```go
-     Method("makePrompt", func() {
-       Payload(func(){ Attribute("topic", String); Required("topic") })
-       Result(ArrayOf(PromptResult))
-       mcp.DynamicPrompt("topic_prompts", "Generate prompts for a topic")
-       JSONRPC(func() {})
-     })
-     ```
+<table>
+  <thead>
+    <tr>
+      <th align="left">You Write This... (A Simple Go DSL)</th>
+      <th align="left">...And You Get This (A Production-Ready AI Backend)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td valign="top">
 
-5) Add streaming (optional)
-   - Mixed mode (HTTP or SSE by Accept header):
-     ```go
-     Method("processBatch", func() {
-       Payload(func(){ Attribute("items", ArrayOf(String)); Required("items") })
-       Result(String)
-       StreamingResult(String)
-       mcp.Tool("process_batch", "Process items with progress updates")
-       JSONRPC(func() {})
-     })
-     ```
+<pre><code>// design/design.go
+var _ = Service("orders", func() {
+  // Describe a tool for your AI agent
+  Method("get_status", func() {
+    Payload(String, "Order ID")
+    Result(OrderStatus)
 
-6) Generate and run
-   - `goa gen <module>/design`
-   - `goa example <module>/design`
-   - `go run cmd/<service>/main.go --http-port 8080`
+    // Decorate it for the AI
+    mcp.Tool(
+      "lookup_order_status",
+      "Gets the current status of an order.",
+    )
+  })
+})
+</code></pre>
 
-Try It (curl)
-- Initialize (once per connection):
-  ```bash
-  curl -s localhost:8080/rpc -H 'Content-Type: application/json' -d '{
-    "jsonrpc":"2.0","id":1,"method":"initialize",
-    "params":{"protocolVersion":"2025-06-18","capabilities":{"tools":true,"resources":true,"prompts":true}}
+      </td>
+      <td valign="top">
+
+<ul>
+  <li>Strongly-typed JSON Schema for the model.</li>
+  <li>Boilerplate-free server handlers.</li>
+  <li>JSON-RPC transport over HTTP.</li>
+  <li>First-class streaming via SSE.</li>
+  <li>Automatic error mapping.</li>
+  <li>Built-in capability negotiation.</li>
+  <li>...and much more, generated instantly by running:</li>
+</ul>
+
+<pre><code>goa gen my-module/design
+</code></pre>
+
+      </td>
+    </tr>
+  </tbody>
+  
+</table>
+
+You remain focused on your business logic. `goa-ai` handles the complex, tedious protocol and transport layers.
+
+## Why This is a Better Way to Build for AI
+
+  * **Eliminate Drift and Hallucinations**: By generating the server, client, and JSON Schema from a single source of truth, you make it impossible for your agent's tools to become outdated. This drastically reduces model errors and failed API calls.
+  * **Give Your Agent a Voice with Streaming**: Easily add a `StreamingResult` to your design to push real-time progress updates. Your agent can stream responses like "Searching for flights...", "Analyzing the data...", and "Finalizing the report..." without any complex transport logic on your part.
+  * **Type-Safety Meets AI**: Leverage Go's powerful type system to define your tools. `goa-ai` ensures that the data structures you define in Go are the same ones the language model uses, backed by compile-time checks.
+  * **Focus on What Matters**: Stop wasting time on API boilerplate—serialization, routing, validation, error handling. The generated code is robust, efficient, and lets you concentrate entirely on your application's core functionality.
+
+## The Technology Behind `goa-ai`
+
+Now that you've seen the "why," here's the "how." `goa-ai` is powered by two key technologies:
+
+  * **[Goa](https://goa.design)**: A powerful framework for building micro-services in Go using a design-first approach. You write a simple DSL in Go to describe your service's API, and Goa uses that to generate code, documentation, and more. It combines the rigor of OpenAPI or gRPC with the expressiveness of pure Go.
+
+  * **[MCP (Model Context Protocol)](https://www.google.com/search?q=https://github.com/model-context/protocol)**: An open, opinionated protocol designed specifically for communication between language models and backend systems. It standardizes how models discover and call tools, access data resources, and receive streaming updates.
+
+`goa-ai` seamlessly bridges the two, making Goa the fastest and most reliable way to build a production-grade MCP server.
+
+## Quickstart
+
+Get a simple MCP server running in just a few steps.
+
+### 1\. Install the Toolkit
+
+```bash
+go get goa.design/goa-ai
+```
+
+### 2\. Define a Service in a `design` folder
+
+Create a `design/design.go` file and describe your service.
+
+```go
+package design
+
+import (
+    . "goa.design/goa/v3/dsl"
+    mcp "goa.design/goa-ai/dsl"
+)
+
+var _ = Service("assistant", func() {
+	Description("An MCP-enabled assistant service")
+
+	// Enable MCP for this service.
+	mcp.MCPServer("assistant-mcp", "1.0.0")
+
+	// Expose it over the JSON-RPC transport.
+	JSONRPC(func() {
+		POST("/rpc")
+	})
+
+	// Expose a method as an AI tool.
+	Method("analyze", func() {
+		Payload(String, "Text to analyze")
+		Result(String)
+		mcp.Tool("analyze_text", "Analyzes user-provided text")
+		JSONRPC(func() {})
+	})
+})
+```
+
+### 3\. Generate and Run
+
+```bash
+# Generate the server code
+goa gen your.module/design
+
+# (Optional) Generate and run the example server
+goa example your.module/design
+go run cmd/assistant/main.go --http-port 8080
+```
+
+Your AI-ready backend is now live.
+
+## Usage Examples
+
+Interact with your running server using `curl`.
+
+#### 1\. Initialize the Connection
+
+```bash
+curl -s localhost:8080/rpc \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc": "2.0", "id": 1, "method": "initialize",
+    "params": {"protocolVersion": "2025-06-18", "capabilities": {"tools": true}}
   }'
-  ```
+```
 
-- List tools:
-  ```bash
-  curl -s localhost:8080/rpc -H 'Content-Type: application/json' -d '{
-    "jsonrpc":"2.0","id":2,"method":"tools/list","params":{}
-  }' | jq
-  ```
+#### 2\. List Available Tools
 
-- Call a streaming tool (SSE):
-  ```bash
-  curl -N localhost:8080/rpc \
-    -H 'Accept: text/event-stream' -H 'Content-Type: application/json' \
-    -d '{"jsonrpc":"2.0","id":"call-1","method":"tools/call","params":{"name":"process_batch","arguments":{"items":["a","b"]}}}'
-  ```
+```bash
+curl -s localhost:8080/rpc \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}' | jq
+```
 
-Concepts & Mapping
-- Tools → Goa Method with `mcp.Tool(...)` and `JSONRPC(func(){})`.
-- Resources → Goa Method with `mcp.Resource(...)` and `JSONRPC(func(){})`.
-- Static prompts → `mcp.StaticPrompt(...)` at service scope.
-- Dynamic prompts → Goa Method with `mcp.DynamicPrompt(...)` and `JSONRPC(func(){})`.
-- Streaming → add `StreamingResult(...)` (optional alongside `Result(...)`).
-- Content negotiation → set `Accept: text/event-stream` for streaming.
+## Requirements
 
-Initialization & Errors
-- Calls are gated until `initialize` succeeds.
-- JSON‑RPC error mapping used by the generated server:
-  - `-32601` Method Not Found for unknown tools/resources/prompts.
-  - `-32602` Invalid Params for decode/validation/service param errors.
-  - `-32603` Internal Error for unhandled failures.
-- SSE errors are emitted as `event: error` with a JSON‑RPC error body.
+  * **Go**: `1.24` or newer
+  * **Goa**: `v3.22.2` or newer
 
-Why This Approach Works
-- Design-first development reduces surface bugs: one source of truth for types, transports, and documentation.
-- Automatic schema and adapter generation accelerates iteration and improves agent reliability.
-- Unified transport with first-class SSE encourages gradual adoption of streaming without separate stacks.
-- Integration tests as contract: this repo ships high-signal scenarios you can extend or mirror.
+## Contributing
 
-Integration Tests
-- Location: `integration_tests/`
-- Run everything:
-  - `go test -v ./integration_tests/tests`
-- Useful env vars:
-  - `TEST_PARALLEL=true` run scenarios in parallel
-  - `TEST_FILTER=initialize.*` filter by scenario name
-  - `TEST_KEEP_GENERATED=true` keep generated example code for debugging
-  - `TEST_DEBUG=true` verbose runner logs
+Issues and Pull Requests are welcome. When reporting a bug or proposing a change, please include a failing test scenario or a minimal Goa design to reproduce the issue.
 
-Requirements
-- Goa v3.22.2 or newer (JSON‑RPC mixed transport and SSE fixes).
-- Go 1.24+.
+## License
 
-Recipes
-- Resource URI params are coerced into your payload types: repeated params → arrays, booleans/ints/floats parsed when possible.
-- Mixed response methods: declare both `Result(...)` and `StreamingResult(...)` to let clients choose HTTP or SSE via Accept.
-- SSE event framing: interim updates use JSON‑RPC notifications, final response uses a JSON‑RPC success envelope.
-
-FAQ
-- Do I need WebSockets? No — JSON‑RPC over HTTP + SSE covers request/response and server‑push efficiently.
-- Can I keep my existing Goa service? Yes. The plugin generates an MCP adapter that wraps your service; you keep your domain code.
-- How do I test complex outputs? Extend or add scenarios in `integration_tests/scenarios/*.yaml` and use partial matching in expectations.
-
-Contributing
-- Issues and PRs welcome. Please include a failing scenario or a minimal design when possible.
-
-License
-MIT — same as the Goa framework.
+**MIT**—same as the Goa framework.

@@ -76,7 +76,7 @@ This plan is self‑contained and sufficient to implement the Assistant MCP from
 ## Dependencies (pinned)
 
 - Goa: `goa.design/goa/v3` v3.22.2+
-- MCP plugin: `goa.design/plugins/v3/mcp` v3.x
+- MCP plugin: `goa.design/goa-ai` v3.x
 - Clue: `goa.design/clue` v1.2.2+ (log/debug/health; cmg generator)
 - Model: `goa.design/model` latest
 - Model plugin (drift): `goa.design/plugins/v3/model` (DSL import)
@@ -96,7 +96,7 @@ External CLIs executed via `exec`:
 ```
 go mod init <module>
 go get goa.design/goa/v3@v3.22.2
-go get goa.design/plugins/v3/mcp@latest
+go get goa.design/goa-ai@latest
 go get goa.design/clue@latest
 go get goa.design/model@latest
 ```

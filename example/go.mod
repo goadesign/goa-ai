@@ -7,7 +7,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	goa.design/clue v1.2.2
 	goa.design/goa/v3 v3.22.2
-	goa.design/plugins/v3/mcp v0.0.0
+    goa.design/goa-ai v0.0.0
 	google.golang.org/grpc v1.75.1
 	google.golang.org/protobuf v1.36.9
 )
@@ -35,4 +35,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace goa.design/plugins/v3/mcp => ../
+replace goa.design/goa-ai => ../

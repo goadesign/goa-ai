@@ -3,9 +3,9 @@ package codegen
 import (
 	"fmt"
 
+	mcpexpr "goa.design/goa-ai/expr"
 	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"
-	mcpexpr "goa.design/plugins/v3/mcp/expr"
 )
 
 type (
@@ -19,7 +19,8 @@ type (
 	}
 )
 
-// newMCPExprBuilder creates a new MCP expression builder
+// newMCPExprBuilder creates a new MCP expression builder for the given
+// original service and its associated MCP expression configuration.
 func newMCPExprBuilder(svc *expr.ServiceExpr, mcp *mcpexpr.MCPExpr) *mcpExprBuilder {
 	return &mcpExprBuilder{
 		originalService: svc,
@@ -28,7 +29,8 @@ func newMCPExprBuilder(svc *expr.ServiceExpr, mcp *mcpexpr.MCPExpr) *mcpExprBuil
 	}
 }
 
-// BuildServiceExpr creates the MCP service expression
+// BuildServiceExpr creates the Goa service expression that models the MCP
+// protocol surface for the original service.
 func (b *mcpExprBuilder) BuildServiceExpr() *expr.ServiceExpr {
 	b.mcpService = &expr.ServiceExpr{
 		Name:        "mcp_" + b.originalService.Name,
@@ -50,7 +52,16 @@ func (b *mcpExprBuilder) BuildServiceExpr() *expr.ServiceExpr {
 	return b.mcpService
 }
 
-// BuildRootExpr creates a temporary root expression for MCP generation
+// userTypeAttr returns an attribute that references the MCP user type with the
+// given name. This ensures downstream codegen treats the payload/result as a
+// user type instead of inlining the underlying object, which is important for
+// generated client body init functions to return pointer types consistently.
+func (b *mcpExprBuilder) userTypeAttr(name string, builder func() *expr.AttributeExpr) *expr.AttributeExpr {
+	return &expr.AttributeExpr{Type: b.getOrCreateType(name, builder)}
+}
+
+// BuildRootExpr creates a temporary Goa root expression containing only the
+// MCP service and its transport setup used to drive code generation.
 func (b *mcpExprBuilder) BuildRootExpr(mcpService *expr.ServiceExpr) *expr.RootExpr {
 	// Build all MCP types
 	b.buildMCPTypes()
@@ -97,21 +108,15 @@ func (b *mcpExprBuilder) BuildRootExpr(mcpService *expr.ServiceExpr) *expr.RootE
 	return b.root
 }
 
-// PrepareAndValidate prepares, validates, and finalizes the MCP expressions
+// PrepareAndValidate runs Prepare, Validate, and Finalize on the provided root
+// without mutating the global Goa expr.Root to keep generation reentrant.
 func (b *mcpExprBuilder) PrepareAndValidate(root *expr.RootExpr) error {
-	// Save the original global Root and temporarily set our root
-	// This is needed because Goa's Prepare/Finalize methods reference the global Root
+	// Temporarily set global expr.Root so Goa validations that reference it
+	// resolve services and servers correctly against this temporary root.
 	originalRoot := expr.Root
 	expr.Root = root
-	defer func() {
-		// Restore original root
-		expr.Root = originalRoot
-	}()
-
-	// Use eval engine to process expressions in the correct order
-	// This mimics what RunDSL does but without the DSL execution phase
-
-	// Step 1: Prepare phase - walk the expression tree and call Prepare
+	defer func() { expr.Root = originalRoot }()
+	// Step 1: Prepare
 	prepareSet := func(set eval.ExpressionSet) {
 		for _, def := range set {
 			if def == nil {
@@ -125,7 +130,7 @@ func (b *mcpExprBuilder) PrepareAndValidate(root *expr.RootExpr) error {
 	prepareSet(eval.ExpressionSet{root})
 	root.WalkSets(prepareSet)
 
-	// Step 2: Validate phase - walk the expression tree and call Validate
+	// Step 2: Validate
 	validateSet := func(set eval.ExpressionSet) {
 		errors := &eval.ValidationErrors{}
 		for _, def := range set {
@@ -145,12 +150,11 @@ func (b *mcpExprBuilder) PrepareAndValidate(root *expr.RootExpr) error {
 	validateSet(eval.ExpressionSet{root})
 	root.WalkSets(validateSet)
 
-	// Check for validation errors
 	if eval.Context.Errors != nil {
 		return eval.Context.Errors
 	}
 
-	// Step 3: Finalize phase - walk the expression tree and call Finalize
+	// Step 3: Finalize
 	finalizeSet := func(set eval.ExpressionSet) {
 		for _, def := range set {
 			if def == nil {
@@ -167,19 +171,20 @@ func (b *mcpExprBuilder) PrepareAndValidate(root *expr.RootExpr) error {
 	return nil
 }
 
-// buildHTTPService creates the HTTP service for JSON-RPC transport
+// buildHTTPService creates the HTTP/JSON-RPC service expression for MCP,
+// configuring routes and SSE for streaming methods.
 func (b *mcpExprBuilder) buildHTTPService(mcpService *expr.ServiceExpr) *expr.HTTPServiceExpr {
 	// Get the JSONRPC path from the stored original configuration
 	jsonrpcPath := ""
 
-    // Use the path that was captured before filtering - required for MCP
-    if path, ok := originalJSONRPCPaths[b.originalService.Name]; ok && path != "" {
-        jsonrpcPath = path
-    } else {
-        // If no path was captured, record a validation error and default to /rpc
-        eval.Context.Record(&eval.Error{GoError: fmt.Errorf("service %q must declare JSONRPC(func(){ POST(...) }) with a service-level path", b.originalService.Name)})
-        jsonrpcPath = "/rpc"
-    }
+	// Use the path that was captured before filtering - required for MCP
+	if path, ok := getOriginalJSONRPCPath(b.originalService.Name); ok && path != "" {
+		jsonrpcPath = path
+	} else {
+		// If no path was captured, record a validation error and default to /rpc
+		eval.Context.Record(&eval.Error{GoError: fmt.Errorf("service %q must declare JSONRPC(func(){ POST(...) }) with a service-level path", b.originalService.Name)})
+		jsonrpcPath = "/rpc"
+	}
 
 	httpService := &expr.HTTPServiceExpr{
 		ServiceExpr: mcpService,
@@ -231,16 +236,31 @@ func (b *mcpExprBuilder) buildHTTPService(mcpService *expr.ServiceExpr) *expr.HT
 	return httpService
 }
 
-// collectUserTypes returns all defined types as UserType slice
+// collectUserTypes returns all user types referenced by the MCP service in a
+// deterministic order for stable code generation.
 func (b *mcpExprBuilder) collectUserTypes() []expr.UserType {
-	types := make([]expr.UserType, 0, len(b.types))
-	for _, t := range b.types {
-		types = append(types, t)
+	// Gather keys and sort to ensure deterministic ordering
+	keys := make([]string, 0, len(b.types))
+	for k := range b.types {
+		keys = append(keys, k)
 	}
-	return types
+	// simple insertion sort to avoid extra imports
+	for i := 1; i < len(keys); i++ {
+		j := i
+		for j > 0 && keys[j-1] > keys[j] {
+			keys[j-1], keys[j] = keys[j], keys[j-1]
+			j--
+		}
+	}
+	out := make([]expr.UserType, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, b.types[k])
+	}
+	return out
 }
 
-// BuildServiceMapping creates the mapping between MCP methods and original service methods
+// BuildServiceMapping creates the mapping between MCP methods and original
+// service methods, used by templates to wire adapters and clients.
 func (b *mcpExprBuilder) BuildServiceMapping() *ServiceMethodMapping {
 	mapping := &ServiceMethodMapping{
 		ToolMethods:          make(map[string]string),
@@ -269,7 +289,7 @@ func (b *mcpExprBuilder) BuildServiceMapping() *ServiceMethodMapping {
 	return mapping
 }
 
-// getOrCreateType retrieves or creates a user type
+// getOrCreateType retrieves or creates a named user type used by the MCP model.
 func (b *mcpExprBuilder) getOrCreateType(name string, builder func() *expr.AttributeExpr) *expr.UserTypeExpr {
 	if t, ok := b.types[name]; ok {
 		return t
@@ -283,7 +303,7 @@ func (b *mcpExprBuilder) getOrCreateType(name string, builder func() *expr.Attri
 	return t
 }
 
-// ServiceMethodMapping maps MCP operations to original service methods
+// ServiceMethodMapping maps MCP operations to original service methods.
 type ServiceMethodMapping struct {
 	ToolMethods          map[string]string
 	ResourceMethods      map[string]string

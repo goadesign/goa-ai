@@ -1,4 +1,4 @@
-module goa.design/plugins/v3/mcp
+module goa.design/goa-ai
 
 go 1.24.5
 

@@ -1,9 +1,9 @@
 package design
 
 import (
+	_ "goa.design/goa-ai" // Import to register the plugin
+	mcp "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
-	_ "goa.design/plugins/v3/mcp" // Import to register the plugin
-	mcp "goa.design/plugins/v3/mcp/dsl"
 )
 
 var _ = API("assistant", func() {
