@@ -1,7 +1,7 @@
 <p align="center">
   <p align="center">
     <a href="https://goa.design">
-      <img alt="Goa-AI" src="https://raw.githubusercontent.com/goadesign/goa-ai/main/docs/img/goa-ai-banner.png">
+      <img alt="Goa-AI" src="https://raw.githubusercontent.com/goadesign/goa-ai/main/docs/img/goa-ai-banner.png" width="50%">
     </a>
   </p>
   <p align="center">
