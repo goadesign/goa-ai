@@ -47,7 +47,7 @@ var _ = Service("orders", func() {
     // Decorate it for the AI
     mcp.Tool(
       "lookup_order_status",
-      "Gets the current status of an order.",
+      "Gets current status of order.",
     )
   })
 })
