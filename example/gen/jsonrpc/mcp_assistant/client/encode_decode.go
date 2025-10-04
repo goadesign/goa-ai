@@ -43,7 +43,7 @@ func EncodeInitializeRequest(encoder func(*http.Request) goahttp.Encoder) func(*
 		if !ok {
 			return goahttp.ErrInvalidType("mcp_assistant", "initialize", "*mcpassistant.InitializePayload", v)
 		}
-		b := NewStructMCPprotocolVersionProtocolVersionStringForm(p)
+		b := NewInitializeRequestBody(p)
 		body := &jsonrpc.Request{
 			JSONRPC: "2.0",
 			Method:  "initialize",
@@ -201,7 +201,7 @@ func EncodeToolsListRequest(encoder func(*http.Request) goahttp.Encoder) func(*h
 		if !ok {
 			return goahttp.ErrInvalidType("mcp_assistant", "tools/list", "*mcpassistant.ToolsListPayload", v)
 		}
-		b := p
+		b := NewToolsListRequestBody(p)
 		body := &jsonrpc.Request{
 			JSONRPC: "2.0",
 			Method:  "tools/list",
@@ -292,7 +292,7 @@ func EncodeToolsCallRequest(encoder func(*http.Request) goahttp.Encoder) func(*h
 		if !ok {
 			return goahttp.ErrInvalidType("mcp_assistant", "tools/call", "*mcpassistant.ToolsCallPayload", v)
 		}
-		b := p
+		b := NewToolsCallRequestBody(p)
 		body := &jsonrpc.Request{
 			JSONRPC: "2.0",
 			Method:  "tools/call",
@@ -383,7 +383,7 @@ func EncodeResourcesListRequest(encoder func(*http.Request) goahttp.Encoder) fun
 		if !ok {
 			return goahttp.ErrInvalidType("mcp_assistant", "resources/list", "*mcpassistant.ResourcesListPayload", v)
 		}
-		b := p
+		b := NewResourcesListRequestBody(p)
 		body := &jsonrpc.Request{
 			JSONRPC: "2.0",
 			Method:  "resources/list",
@@ -474,7 +474,7 @@ func EncodeResourcesReadRequest(encoder func(*http.Request) goahttp.Encoder) fun
 		if !ok {
 			return goahttp.ErrInvalidType("mcp_assistant", "resources/read", "*mcpassistant.ResourcesReadPayload", v)
 		}
-		b := p
+		b := NewResourcesReadRequestBody(p)
 		body := &jsonrpc.Request{
 			JSONRPC: "2.0",
 			Method:  "resources/read",
@@ -566,7 +566,7 @@ func EncodeResourcesSubscribeRequest(encoder func(*http.Request) goahttp.Encoder
 		if !ok {
 			return goahttp.ErrInvalidType("mcp_assistant", "resources/subscribe", "*mcpassistant.ResourcesSubscribePayload", v)
 		}
-		b := p
+		b := NewResourcesSubscribeRequestBody(p)
 		body := &jsonrpc.Request{
 			JSONRPC: "2.0",
 			Method:  "resources/subscribe",
@@ -645,7 +645,7 @@ func EncodeResourcesUnsubscribeRequest(encoder func(*http.Request) goahttp.Encod
 		if !ok {
 			return goahttp.ErrInvalidType("mcp_assistant", "resources/unsubscribe", "*mcpassistant.ResourcesUnsubscribePayload", v)
 		}
-		b := p
+		b := NewResourcesUnsubscribeRequestBody(p)
 		body := &jsonrpc.Request{
 			JSONRPC: "2.0",
 			Method:  "resources/unsubscribe",
@@ -724,7 +724,7 @@ func EncodePromptsListRequest(encoder func(*http.Request) goahttp.Encoder) func(
 		if !ok {
 			return goahttp.ErrInvalidType("mcp_assistant", "prompts/list", "*mcpassistant.PromptsListPayload", v)
 		}
-		b := p
+		b := NewPromptsListRequestBody(p)
 		body := &jsonrpc.Request{
 			JSONRPC: "2.0",
 			Method:  "prompts/list",
@@ -815,7 +815,7 @@ func EncodePromptsGetRequest(encoder func(*http.Request) goahttp.Encoder) func(*
 		if !ok {
 			return goahttp.ErrInvalidType("mcp_assistant", "prompts/get", "*mcpassistant.PromptsGetPayload", v)
 		}
-		b := p
+		b := NewPromptsGetRequestBody(p)
 		body := &jsonrpc.Request{
 			JSONRPC: "2.0",
 			Method:  "prompts/get",
@@ -903,11 +903,11 @@ func (c *Client) BuildNotifyStatusUpdateRequest(ctx context.Context, v any) (*ht
 // mcp_assistant notify_status_update server.
 func EncodeNotifyStatusUpdateRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
 	return func(req *http.Request, v any) error {
-		p, ok := v.(*mcpassistant.NotifyStatusUpdatePayload)
+		p, ok := v.(*mcpassistant.SendNotificationPayload)
 		if !ok {
-			return goahttp.ErrInvalidType("mcp_assistant", "notify_status_update", "*mcpassistant.NotifyStatusUpdatePayload", v)
+			return goahttp.ErrInvalidType("mcp_assistant", "notify_status_update", "*mcpassistant.SendNotificationPayload", v)
 		}
-		b := p
+		b := NewNotifyStatusUpdateRequestBody(p)
 		body := &jsonrpc.Request{
 			JSONRPC: "2.0",
 			Method:  "notify_status_update",
@@ -1161,9 +1161,6 @@ func marshalMcpassistantClientInfoToClientInfoRequestBodyRequestBodyRequestBodyR
 // builds a value of type *mcpassistant.ClientInfo from a value of type
 // *ClientInfoRequestBodyRequestBodyRequestBodyRequestBody.
 func marshalClientInfoRequestBodyRequestBodyRequestBodyRequestBodyToMcpassistantClientInfo(v *ClientInfoRequestBodyRequestBodyRequestBodyRequestBody) *mcpassistant.ClientInfo {
-	if v == nil {
-		return nil
-	}
 	res := &mcpassistant.ClientInfo{
 		Name:    v.Name,
 		Version: v.Version,

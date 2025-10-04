@@ -147,7 +147,7 @@ func (c *Client) PromptsGet(ctx context.Context, p *PromptsGetPayload) (res *Pro
 
 // NotifyStatusUpdate calls the "notify_status_update" endpoint of the
 // "mcp_assistant" service.
-func (c *Client) NotifyStatusUpdate(ctx context.Context, p *NotifyStatusUpdatePayload) (err error) {
+func (c *Client) NotifyStatusUpdate(ctx context.Context, p *SendNotificationPayload) (err error) {
 	_, err = c.NotifyStatusUpdateEndpoint(ctx, p)
 	return
 }

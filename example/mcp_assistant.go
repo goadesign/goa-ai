@@ -95,7 +95,7 @@ func (s *mcpAssistantsrvc) PromptsGet(ctx context.Context, p *mcpassistant.Promp
 }
 
 // Send status updates to client
-func (s *mcpAssistantsrvc) NotifyStatusUpdate(ctx context.Context, p *mcpassistant.NotifyStatusUpdatePayload) (err error) {
+func (s *mcpAssistantsrvc) NotifyStatusUpdate(ctx context.Context, p *mcpassistant.SendNotificationPayload) (err error) {
 	log.Printf(ctx, "mcpAssistant.notify_status_update")
 	return
 }

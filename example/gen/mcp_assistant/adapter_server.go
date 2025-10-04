@@ -597,7 +597,7 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 }
 
 // NotifyStatusUpdate handles notifications with no response
-func (a *MCPAdapter) NotifyStatusUpdate(ctx context.Context, p *NotifyStatusUpdatePayload) error {
+func (a *MCPAdapter) NotifyStatusUpdate(ctx context.Context, p *SendNotificationPayload) error {
 	return nil
 }
 

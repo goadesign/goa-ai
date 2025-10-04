@@ -7,434 +7,6 @@ servers:
     - url: http://localhost:80
       description: Default server for assistant
 paths:
-    /api/analyze:
-        post:
-            tags:
-                - assistant
-            summary: analyze_text assistant
-            description: Analyze text for sentiment, keywords, or summary
-            operationId: assistant#analyze_text
-            requestBody:
-                required: true
-                content:
-                    application/json:
-                        schema:
-                            $ref: '#/components/schemas/AnalyzeTextRequestBody'
-                        example:
-                            mode: sentiment
-                            text: Dolore atque qui possimus ipsam esse.
-            responses:
-                "200":
-                    description: OK response.
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/AnalysisResult'
-                            example:
-                                confidence: 0.44361421918867255
-                                metadata:
-                                    Et porro sunt repellat qui non ducimus.: Et minus tempora dolor.
-                                    Reprehenderit nam temporibus.: Perferendis et architecto.
-                                    Voluptatum rerum voluptas eum saepe.: Sed sed ut.
-                                mode: Molestiae molestiae autem hic vitae.
-                                result: Maiores vero qui quam delectus enim.
-    /api/batch:
-        post:
-            tags:
-                - assistant
-            summary: process_batch assistant
-            description: Process a batch of items with progress tracking
-            operationId: assistant#process_batch
-            requestBody:
-                required: true
-                content:
-                    application/json:
-                        schema:
-                            $ref: '#/components/schemas/ProcessBatchRequestBody'
-                        example:
-                            blob:
-                                - 83
-                                - 101
-                                - 100
-                                - 32
-                                - 118
-                                - 101
-                                - 108
-                                - 105
-                                - 116
-                                - 32
-                                - 118
-                                - 111
-                                - 108
-                                - 117
-                                - 112
-                                - 116
-                                - 97
-                                - 116
-                                - 117
-                                - 109
-                                - 32
-                                - 117
-                                - 108
-                                - 108
-                                - 97
-                                - 109
-                                - 32
-                                - 116
-                                - 111
-                                - 116
-                                - 97
-                                - 109
-                                - 32
-                                - 118
-                                - 111
-                                - 108
-                                - 117
-                                - 112
-                                - 116
-                                - 97
-                                - 116
-                                - 101
-                                - 115
-                                - 32
-                                - 116
-                                - 111
-                                - 116
-                                - 97
-                                - 109
-                                - 46
-                            format: text
-                            items:
-                                - Eius corrupti impedit expedita.
-                                - Sint quos fuga.
-                                - Quo et velit odio quasi eum totam.
-                            mimeType: Provident voluptas saepe impedit quia aut.
-                            uri: Voluptatem quam veniam et.
-            responses:
-                "101":
-                    description: Switching Protocols response.
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/BatchResult'
-                            example:
-                                failed: 1494396166624717992
-                                processed: 5821207804610892575
-                                results:
-                                    - Earum quia qui aut aut.
-                                    - Voluptatem enim nemo nulla vel in rerum.
-                                    - Velit aut illo perferendis expedita molestias eum.
-                                    - Perspiciatis inventore vero eaque.
-    /api/conversation:
-        get:
-            tags:
-                - assistant
-            summary: get_conversation_history assistant
-            description: Get conversation history
-            operationId: assistant#get_conversation_history
-            requestBody:
-                required: true
-                content:
-                    application/json:
-                        schema:
-                            $ref: '#/components/schemas/GetConversationHistoryRequestBody'
-                        example:
-                            limit: 512059023657992185
-            responses:
-                "200":
-                    description: OK response.
-                    content:
-                        application/json:
-                            schema:
-                                type: array
-                                items:
-                                    $ref: '#/components/schemas/ChatMessage'
-                                example:
-                                    - content: Nemo esse sit.
-                                      id: Minus qui in non dolor omnis asperiores.
-                                      role: assistant
-                                      timestamp: "2007-10-05T03:42:41Z"
-                                    - content: Nemo esse sit.
-                                      id: Minus qui in non dolor omnis asperiores.
-                                      role: assistant
-                                      timestamp: "2007-10-05T03:42:41Z"
-                            example:
-                                - content: Nemo esse sit.
-                                  id: Minus qui in non dolor omnis asperiores.
-                                  role: assistant
-                                  timestamp: "2007-10-05T03:42:41Z"
-                                - content: Nemo esse sit.
-                                  id: Minus qui in non dolor omnis asperiores.
-                                  role: assistant
-                                  timestamp: "2007-10-05T03:42:41Z"
-                                - content: Nemo esse sit.
-                                  id: Minus qui in non dolor omnis asperiores.
-                                  role: assistant
-                                  timestamp: "2007-10-05T03:42:41Z"
-                                - content: Nemo esse sit.
-                                  id: Minus qui in non dolor omnis asperiores.
-                                  role: assistant
-                                  timestamp: "2007-10-05T03:42:41Z"
-    /api/documents:
-        get:
-            tags:
-                - assistant
-            summary: list_documents assistant
-            description: List available documents
-            operationId: assistant#list_documents
-            responses:
-                "200":
-                    description: OK response.
-                    content:
-                        application/json:
-                            schema:
-                                type: array
-                                items:
-                                    $ref: '#/components/schemas/Document'
-                                example:
-                                    - id: Eaque ut commodi.
-                                      modified: "2004-01-01T16:40:30Z"
-                                      name: Qui sunt occaecati aut.
-                                      size: 4833199934457509209
-                                      type: Cum eos quia provident.
-                                    - id: Eaque ut commodi.
-                                      modified: "2004-01-01T16:40:30Z"
-                                      name: Qui sunt occaecati aut.
-                                      size: 4833199934457509209
-                                      type: Cum eos quia provident.
-                            example:
-                                - id: Eaque ut commodi.
-                                  modified: "2004-01-01T16:40:30Z"
-                                  name: Qui sunt occaecati aut.
-                                  size: 4833199934457509209
-                                  type: Cum eos quia provident.
-                                - id: Eaque ut commodi.
-                                  modified: "2004-01-01T16:40:30Z"
-                                  name: Qui sunt occaecati aut.
-                                  size: 4833199934457509209
-                                  type: Cum eos quia provident.
-    /api/execute:
-        post:
-            tags:
-                - assistant
-            summary: execute_code assistant
-            description: Execute code in a sandboxed environment
-            operationId: assistant#execute_code
-            requestBody:
-                required: true
-                content:
-                    application/json:
-                        schema:
-                            $ref: '#/components/schemas/ExecuteCodeRequestBody'
-                        example:
-                            code: Aut exercitationem sequi.
-                            language: Sit debitis vel temporibus quia ea ipsa.
-            responses:
-                "200":
-                    description: OK response.
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ExecutionResult'
-                            example:
-                                error: Culpa quidem quod quasi quasi.
-                                execution_time: 0.29616639365329694
-                                output: Voluptas consectetur ipsum rerum.
-    /api/notify:
-        post:
-            tags:
-                - assistant
-            summary: send_notification assistant
-            description: Send status notification to client
-            operationId: assistant#send_notification
-            requestBody:
-                required: true
-                content:
-                    application/json:
-                        schema:
-                            $ref: '#/components/schemas/SendNotificationRequestBody'
-                        example:
-                            data: Optio laborum.
-                            message: Omnis voluptate suscipit alias tempora.
-                            type: warning
-            responses:
-                "204":
-                    description: No Content response.
-    /api/prompts/generate:
-        post:
-            tags:
-                - assistant
-            summary: generate_prompts assistant
-            description: Generate context-aware prompts
-            operationId: assistant#generate_prompts
-            requestBody:
-                required: true
-                content:
-                    application/json:
-                        schema:
-                            $ref: '#/components/schemas/GeneratePromptsRequestBody'
-                        example:
-                            context: Dolor sit.
-                            task: Dolores et sit ut et.
-            responses:
-                "200":
-                    description: OK response.
-                    content:
-                        application/json:
-                            schema:
-                                type: array
-                                items:
-                                    $ref: '#/components/schemas/PromptTemplate'
-                                example:
-                                    - description: Et nisi numquam sit iusto.
-                                      name: Ipsum iste officia blanditiis et.
-                                      template: Atque ut.
-                                      variables:
-                                        - Consectetur tenetur tempore nesciunt odit autem voluptatem.
-                                        - Dolorum debitis.
-                                    - description: Et nisi numquam sit iusto.
-                                      name: Ipsum iste officia blanditiis et.
-                                      template: Atque ut.
-                                      variables:
-                                        - Consectetur tenetur tempore nesciunt odit autem voluptatem.
-                                        - Dolorum debitis.
-                                    - description: Et nisi numquam sit iusto.
-                                      name: Ipsum iste officia blanditiis et.
-                                      template: Atque ut.
-                                      variables:
-                                        - Consectetur tenetur tempore nesciunt odit autem voluptatem.
-                                        - Dolorum debitis.
-                                    - description: Et nisi numquam sit iusto.
-                                      name: Ipsum iste officia blanditiis et.
-                                      template: Atque ut.
-                                      variables:
-                                        - Consectetur tenetur tempore nesciunt odit autem voluptatem.
-                                        - Dolorum debitis.
-                            example:
-                                - description: Et nisi numquam sit iusto.
-                                  name: Ipsum iste officia blanditiis et.
-                                  template: Atque ut.
-                                  variables:
-                                    - Consectetur tenetur tempore nesciunt odit autem voluptatem.
-                                    - Dolorum debitis.
-                                - description: Et nisi numquam sit iusto.
-                                  name: Ipsum iste officia blanditiis et.
-                                  template: Atque ut.
-                                  variables:
-                                    - Consectetur tenetur tempore nesciunt odit autem voluptatem.
-                                    - Dolorum debitis.
-    /api/search:
-        post:
-            tags:
-                - assistant
-            summary: search_knowledge assistant
-            description: Search the knowledge base
-            operationId: assistant#search_knowledge
-            requestBody:
-                required: true
-                content:
-                    application/json:
-                        schema:
-                            $ref: '#/components/schemas/SearchKnowledgeRequestBody'
-                        example:
-                            limit: 8368102686863965314
-                            query: Nihil eaque aspernatur commodi.
-            responses:
-                "200":
-                    description: OK response.
-                    content:
-                        application/json:
-                            schema:
-                                type: array
-                                items:
-                                    $ref: '#/components/schemas/SearchResult'
-                                example:
-                                    - content: Reiciendis mollitia laboriosam cumque magnam eos.
-                                      id: Reprehenderit nihil tenetur reprehenderit non velit.
-                                      score: 0.7555842451386628
-                                      title: Assumenda earum aspernatur officiis eveniet facere.
-                                    - content: Reiciendis mollitia laboriosam cumque magnam eos.
-                                      id: Reprehenderit nihil tenetur reprehenderit non velit.
-                                      score: 0.7555842451386628
-                                      title: Assumenda earum aspernatur officiis eveniet facere.
-                            example:
-                                - content: Reiciendis mollitia laboriosam cumque magnam eos.
-                                  id: Reprehenderit nihil tenetur reprehenderit non velit.
-                                  score: 0.7555842451386628
-                                  title: Assumenda earum aspernatur officiis eveniet facere.
-                                - content: Reiciendis mollitia laboriosam cumque magnam eos.
-                                  id: Reprehenderit nihil tenetur reprehenderit non velit.
-                                  score: 0.7555842451386628
-                                  title: Assumenda earum aspernatur officiis eveniet facere.
-    /api/subscribe:
-        post:
-            tags:
-                - assistant
-            summary: subscribe_to_updates assistant
-            description: Subscribe to resource updates
-            operationId: assistant#subscribe_to_updates
-            requestBody:
-                required: true
-                content:
-                    application/json:
-                        schema:
-                            $ref: '#/components/schemas/SubscribeToUpdatesRequestBody'
-                        example:
-                            filter: Commodi dolor et reprehenderit sunt.
-                            resource: Velit eos quos.
-            responses:
-                "200":
-                    description: OK response.
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/SubscriptionInfo'
-                            example:
-                                created_at: "1991-08-01T14:49:09Z"
-                                resource: Unde et quo.
-                                subscription_id: Accusamus corporis eius iste.
-    /api/system:
-        get:
-            tags:
-                - assistant
-            summary: get_system_info assistant
-            description: Get system information and status
-            operationId: assistant#get_system_info
-            responses:
-                "200":
-                    description: OK response.
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/SystemInfo'
-                            example:
-                                active_connections: 4347426448963690279
-                                cpu_usage: 0.007665776299600347
-                                memory_usage: 0.20581609057996977
-                                uptime: 2919480189818636711
-                                version: Velit deserunt rerum enim.
-    /api/workspace:
-        get:
-            tags:
-                - assistant
-            summary: get_workspace_info assistant
-            description: Get workspace root directories from client
-            operationId: assistant#get_workspace_info
-            responses:
-                "200":
-                    description: OK response.
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/GetWorkspaceInfoResponseBody'
-                            example:
-                                roots:
-                                    - name: Tenetur omnis mollitia vitae porro est.
-                                      uri: Qui quidem.
-                                    - name: Tenetur omnis mollitia vitae porro est.
-                                      uri: Qui quidem.
-                                    - name: Tenetur omnis mollitia vitae porro est.
-                                      uri: Qui quidem.
     /stream/data/{data_type}:
         get:
             tags:
@@ -450,8 +22,8 @@ paths:
                   schema:
                     type: string
                     description: Type of data
-                    example: Non qui at.
-                  example: Voluptatem nulla.
+                    example: Eum voluptatem quaerat quia consequatur.
+                  example: Blanditiis voluptas perspiciatis.
                 - name: streaming
                   in: query
                   description: Enable streaming
@@ -461,7 +33,7 @@ paths:
                     description: Enable streaming
                     default: true
                     example: true
-                  example: false
+                  example: true
             responses:
                 "101":
                     description: Switching Protocols response.
@@ -470,10 +42,10 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/DataUpdate'
                             example:
-                                data: Illum eos veniam qui consequatur.
+                                data: Et nulla.
                                 final: false
-                                sequence: 5198489240899351049
-                                update_id: Ut maxime.
+                                sequence: 8157686993030319852
+                                update_id: Quia nostrum et animi quaerat.
     /stream/events/{category}:
         get:
             tags:
@@ -502,8 +74,8 @@ paths:
                   schema:
                     type: string
                     description: Optional filter
-                    example: Velit molestias.
-                  example: Ut voluptatum beatae ut neque aperiam omnis.
+                    example: Quia in soluta velit.
+                  example: Est inventore nihil.
             responses:
                 "101":
                     description: Switching Protocols response.
@@ -512,11 +84,11 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/EventUpdate'
                             example:
-                                category: Ipsum dignissimos odio.
-                                data: Rerum qui quibusdam voluptates.
-                                event_id: Inventore harum quidem animi provident nulla beatae.
-                                timestamp: "1984-10-29T02:04:03Z"
-                                type: Magnam architecto quia quis optio amet magnam.
+                                category: Molestiae quia perferendis iste.
+                                data: Qui voluptatem pariatur.
+                                event_id: Suscipit vero optio.
+                                timestamp: "1981-10-25T00:34:24Z"
+                                type: Ad dolor delectus.
     /stream/logs:
         get:
             tags:
@@ -533,13 +105,13 @@ paths:
                     type: string
                     description: Log level
                     default: info
-                    example: warning
+                    example: debug
                     enum:
                         - debug
                         - info
                         - warning
                         - error
-                  example: info
+                  example: error
             responses:
                 "101":
                     description: Switching Protocols response.
@@ -549,10 +121,10 @@ paths:
                                 $ref: '#/components/schemas/LogEntry'
                             example:
                                 data:
-                                    In non ut eius voluptas.: At eum.
-                                level: debug
-                                message: Dignissimos aut est dicta soluta modi officiis.
-                                timestamp: "1973-04-30T05:39:31Z"
+                                    Dolor sit.: Dolores et sit ut et.
+                                level: error
+                                message: Autem dolor earum aut adipisci consequuntur qui.
+                                timestamp: "1974-05-28T10:58:14Z"
     /stream/monitor/{resource_type}:
         get:
             tags:
@@ -568,8 +140,8 @@ paths:
                   schema:
                     type: string
                     description: Type of resource to monitor
-                    example: Officiis commodi error excepturi consequatur.
-                  example: Deleniti rerum.
+                    example: Delectus hic.
+                  example: Consequatur rem.
                 - name: filter
                   in: query
                   description: Optional filter
@@ -577,8 +149,8 @@ paths:
                   schema:
                     type: string
                     description: Optional filter
-                    example: Optio dolores neque omnis.
-                  example: Consequuntur debitis ea commodi.
+                    example: Vel iusto.
+                  example: Dolor laborum recusandae est qui.
             responses:
                 "101":
                     description: Switching Protocols response.
@@ -587,11 +159,11 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ResourceUpdate'
                             example:
-                                data: Sit id possimus omnis a est.
-                                event_type: created
-                                resource: Sunt nisi.
-                                timestamp: "1979-03-08T09:40:19Z"
-                                update_id: Ut corporis delectus animi id vel.
+                                data: Omnis mollitia.
+                                event_type: deleted
+                                resource: Voluptas qui quidem.
+                                timestamp: "2006-05-22T00:33:34Z"
+                                update_id: Iste dolorum debitis deserunt atque ut quod.
     /ws/chat:
         get:
             tags:
@@ -608,10 +180,9 @@ paths:
                                 $ref: '#/components/schemas/ChatResponse'
                             example:
                                 metadata:
-                                    Consequatur dolorum nisi quod sed et et.: Earum quae quo et nemo ut.
-                                    Delectus tenetur ea rerum inventore.: Odit reiciendis accusantium repudiandae autem voluptate.
-                                    Fugit dolorem dolores.: Ut consequuntur ex ipsum fugiat eum dolore.
-                                response: Omnis et vitae sequi.
+                                    Minus tempora dolor eos reprehenderit nam temporibus.: Perferendis et architecto.
+                                    Ut distinctio et.: Sunt repellat qui non ducimus deleniti.
+                                response: Voluptas eum saepe.
                                 thinking: true
     /ws/interactive_chat:
         get:
@@ -629,10 +200,11 @@ paths:
                                 $ref: '#/components/schemas/ChatResponse'
                             example:
                                 metadata:
-                                    Explicabo et quia velit distinctio.: Harum debitis quod.
-                                    Laborum ex.: Qui nobis eos quibusdam.
-                                response: Facere molestiae necessitatibus cupiditate optio.
-                                thinking: false
+                                    Amet incidunt omnis itaque sit debitis.: Temporibus quia ea ipsa nisi aut.
+                                    Excepturi eaque ut.: Tempore qui sunt occaecati aut.
+                                    Sequi odit voluptas consectetur ipsum rerum.: Culpa quidem quod quasi quasi.
+                                response: Mollitia laboriosam.
+                                thinking: true
     /ws/upload:
         get:
             tags:
@@ -648,8 +220,8 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/UploadChunksResponseBody'
                             example:
-                                chunk_count: 8023441592797156989
-                                total_size: 1031094758649114646
+                                chunk_count: 3765163312233799780
+                                total_size: 5247657848168133741
     /ws/upload_documents:
         get:
             tags:
@@ -665,8 +237,8 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/UploadDocumentsResponseBody'
                             example:
-                                document_count: 8774600984563126940
-                                total_size: 7276766726501827577
+                                document_count: 1326968030445959609
+                                total_size: 8644785188870320628
 components:
     schemas:
         AnalysisResult:
@@ -675,81 +247,61 @@ components:
                 confidence:
                     type: number
                     description: Confidence score
-                    example: 0.8003212461925087
+                    example: 0.0037759207566700455
                     format: double
                 metadata:
                     type: object
                     description: Additional metadata
                     example:
-                        Consequuntur reiciendis quaerat est in.: Nam ducimus nulla commodi mollitia minima.
+                        Repudiandae ipsum nihil voluptatum sit dolorem.: Dolorem aperiam.
+                        Sunt numquam.: Deserunt sequi fugiat voluptatem.
                     additionalProperties: true
                 mode:
                     type: string
                     description: Analysis mode used
-                    example: Sunt ut rerum.
+                    example: Quia alias eum.
                 result:
                     description: Analysis result (varies by mode)
-                    example: Ullam magni vel aliquam.
+                    example: Natus ipsum officia aut.
             example:
-                confidence: 0.519308925524035
+                confidence: 0.05561787715582566
                 metadata:
-                    Explicabo voluptatem officia tempora recusandae.: Quam omnis quisquam.
-                    Rem sint cum ipsa.: Cum et neque necessitatibus numquam assumenda.
-                mode: Veniam debitis officiis quod nesciunt.
-                result: Et repellat reiciendis quis.
+                    Aut nobis eos et dolores totam.: Omnis sed non.
+                mode: Soluta voluptatibus.
+                result: Aut possimus rerum repellendus.
             required:
                 - mode
                 - result
-        AnalyzeTextRequestBody:
-            type: object
-            properties:
-                mode:
-                    type: string
-                    description: Analysis mode
-                    example: keywords
-                    enum:
-                        - sentiment
-                        - keywords
-                        - summary
-                text:
-                    type: string
-                    description: Text to analyze
-                    example: Unde sit optio vel eum.
-            example:
-                mode: summary
-                text: Aut molestias consequuntur debitis excepturi officia natus.
-            required:
-                - text
-                - mode
         BatchResult:
             type: object
             properties:
                 failed:
                     type: integer
                     description: Number of items failed
-                    example: 3305899860653449498
+                    example: 3104612192479221186
                     format: int64
                 processed:
                     type: integer
                     description: Number of items processed
-                    example: 839242038017172209
+                    example: 8835040137609887433
                     format: int64
                 results:
                     type: array
                     items:
-                        example: Sunt deserunt cupiditate cumque exercitationem.
+                        example: Totam et rerum.
                     description: Processing results
                     example:
-                        - Veritatis qui rerum quaerat quis.
-                        - Aut dolor minus.
+                        - Dolorum animi mollitia itaque modi.
+                        - Quibusdam aut quas non laudantium.
+                        - At dicta.
+                        - Quia consectetur autem eos.
             example:
-                failed: 1713742259528410356
-                processed: 6216120666933685415
+                failed: 7766530898455742371
+                processed: 8209723605472851312
                 results:
-                    - Ea laboriosam molestias.
-                    - Dignissimos et exercitationem sapiente.
-                    - Voluptas a.
-                    - Eaque fugit placeat deleniti aut.
+                    - Eaque deserunt qui vitae.
+                    - Molestiae quasi debitis reprehenderit similique.
+                    - Qui eos blanditiis quae facere quidem rerum.
             required:
                 - processed
                 - failed
@@ -761,14 +313,14 @@ components:
                     type: object
                     description: Additional context
                     example:
-                        Eum laborum.: Et occaecati tempora velit voluptate accusamus vel.
-                        Nesciunt est magnam commodi sit.: Et inventore neque quo et.
-                        Quo quo quia.: Quo id eum doloremque dignissimos molestias.
+                        Amet minima libero provident.: Veniam autem dolorem molestias quis ut.
+                        Dolorum dolore aliquam impedit voluptas accusamus similique.: Itaque exercitationem nam officiis debitis.
+                        Et voluptatem.: Quo ab.
                     additionalProperties: true
                 message:
                     type: string
                     description: User message
-                    example: Alias aperiam ut totam dolor.
+                    example: Repudiandae asperiores porro.
                 stream_control:
                     type: string
                     description: Stream control command
@@ -779,10 +331,9 @@ components:
                         - stop
             example:
                 context:
-                    Aliquid doloremque omnis numquam molestiae.: Quo sed cumque quo.
-                    Eos eos placeat autem doloremque dolorum hic.: Quam natus hic a illo et.
-                    Nulla ab deserunt nam magnam non omnis.: Sunt alias omnis non voluptate aperiam repellat.
-                message: Quasi et quam illum non ut.
+                    Aut laborum.: Officiis expedita voluptatum.
+                    Facere sapiente incidunt ducimus mollitia.: Non ut necessitatibus adipisci et iusto quod.
+                message: Repellendus et.
                 stream_control: stop
             required:
                 - message
@@ -792,11 +343,11 @@ components:
                 content:
                     type: string
                     description: Message content
-                    example: Officiis debitis.
+                    example: Illo et sint tenetur atque qui.
                 id:
                     type: string
                     description: Message ID
-                    example: Accusamus similique corporis itaque.
+                    example: Neque quae odit qui eos illo suscipit.
                 role:
                     type: string
                     description: Message role
@@ -808,13 +359,13 @@ components:
                 timestamp:
                     type: string
                     description: Message timestamp
-                    example: "1978-04-29T04:41:14Z"
+                    example: "2004-07-29T01:49:05Z"
                     format: date-time
             example:
-                content: Modi et omnis ut.
-                id: Sit nulla odio qui.
-                role: system
-                timestamp: "1973-08-27T16:07:39Z"
+                content: Est odit ea dolores.
+                id: Dolores quo.
+                role: assistant
+                timestamp: "1973-08-15T05:14:19Z"
             required:
                 - id
                 - role
@@ -840,24 +391,22 @@ components:
                     type: object
                     description: Response metadata
                     example:
-                        Quam perferendis voluptates est.: Ab vel eos libero sit.
-                        Qui quia id placeat qui illo.: Porro similique et et explicabo est quis.
+                        Vel at sit nulla odio qui.: Aut modi et omnis ut vel et.
                     additionalProperties: true
                 response:
                     type: string
                     description: Assistant response
-                    example: Maiores cumque ullam amet nobis eligendi.
+                    example: Vitae eveniet quae et aut ut ab.
                 thinking:
                     type: boolean
                     description: Whether assistant is still thinking
-                    example: true
+                    example: false
             example:
                 metadata:
-                    Doloribus magni quae similique tenetur dolorem.: Itaque similique facere amet nesciunt debitis minima.
-                    Eum sit.: Non commodi ipsa.
-                    Voluptatem id quod rerum iure culpa nemo.: Earum id saepe.
-                response: Porro voluptatem tempora ipsam sit officiis autem.
-                thinking: false
+                    Ipsam similique autem quae molestiae.: Labore repellendus.
+                    Qui et in quo et dolorum nam.: Eos nemo eum occaecati quis fugit et.
+                response: Et nihil atque voluptatem dignissimos aut nisi.
+                thinking: true
             required:
                 - response
                 - thinking
@@ -866,26 +415,25 @@ components:
             properties:
                 data:
                     description: Response data
-                    example: Libero animi.
+                    example: Soluta libero.
                 metadata:
                     type: object
                     description: Response metadata
                     example:
-                        Eos est dolorem deserunt quia.: Dignissimos tempore.
-                        Nesciunt ducimus nisi et.: Atque dolores.
+                        Distinctio dolorem quia molestias et labore soluta.: In est unde pariatur ut neque.
+                        Libero eaque nam.: Atque neque.
                     additionalProperties: true
                 total_count:
                     type: integer
                     description: Total count of items
-                    example: 8067797675160094014
+                    example: 6899694024325631979
                     format: int64
             example:
-                data: Rem enim rerum ducimus.
+                data: Vero vero et vitae ut sed.
                 metadata:
-                    Adipisci labore.: Corrupti aut.
-                    Nemo blanditiis ipsam.: Nemo nihil eos corporis magni repellendus.
-                    Similique minima et.: Autem consequatur ut consequatur sint.
-                total_count: 662941919512342249
+                    Maxime veniam temporibus enim enim atque eos.: Molestiae ut.
+                    Praesentium saepe ea voluptatibus.: Facilis sequi enim repellat perferendis.
+                total_count: 1776853217001426691
             required:
                 - data
         DataUpdate:
@@ -893,25 +441,25 @@ components:
             properties:
                 data:
                     description: Update data
-                    example: Autem earum dignissimos.
+                    example: Officia vel voluptatem distinctio nihil labore consectetur.
                 final:
                     type: boolean
                     description: Whether this is the final update
-                    example: true
+                    example: false
                 sequence:
                     type: integer
                     description: Update sequence number
-                    example: 171725026858621719
+                    example: 6346398898121102458
                     format: int64
                 update_id:
                     type: string
                     description: Update ID
-                    example: Sed aut ut et animi nam et.
+                    example: Ut suscipit et pariatur et rem omnis.
             example:
-                data: Saepe nam tempora ea unde quam iusto.
+                data: Distinctio est ipsum laudantium earum maxime.
                 final: true
-                sequence: 2800827906609232051
-                update_id: Non velit sapiente nisi est.
+                sequence: 4395274201230308361
+                update_id: In fugiat non deleniti et.
             required:
                 - update_id
                 - data
@@ -923,31 +471,31 @@ components:
                 id:
                     type: string
                     description: Document ID
-                    example: Nisi qui vero voluptatem officiis.
+                    example: Hic at officia nihil.
                 modified:
                     type: string
                     description: Last modified
-                    example: "1978-05-18T20:40:13Z"
+                    example: "1980-07-16T11:41:54Z"
                     format: date-time
                 name:
                     type: string
                     description: Document name
-                    example: Deleniti iure ut fuga temporibus enim.
+                    example: Earum alias ea quam nulla officia.
                 size:
                     type: integer
                     description: Size in bytes
-                    example: 8494277733495022099
+                    example: 7214841699267422456
                     format: int64
                 type:
                     type: string
                     description: Document type
-                    example: Maxime ut culpa debitis.
+                    example: Et praesentium.
             example:
-                id: Odit tenetur.
-                modified: "1973-04-11T13:51:51Z"
-                name: Cum unde provident.
-                size: 3135127997042469234
-                type: Non quas vel sapiente eveniet.
+                id: Totam et delectus rerum quia.
+                modified: "2007-02-28T07:48:03Z"
+                name: Alias quos asperiores sunt suscipit.
+                size: 6140069277268955606
+                type: Et excepturi.
             required:
                 - id
                 - name
@@ -960,91 +508,91 @@ components:
                 chunk_index:
                     type: integer
                     description: Chunk index
-                    example: 8587053517718017834
+                    example: 3896836710233989246
                     format: int64
                 data:
                     type: string
                     description: Chunk data
                     example:
-                        - 65
-                        - 112
+                        - 82
                         - 101
-                        - 114
-                        - 105
-                        - 97
                         - 109
                         - 32
-                        - 116
-                        - 111
+                        - 115
+                        - 101
+                        - 100
+                        - 32
+                        - 110
+                        - 101
+                        - 99
+                        - 101
+                        - 115
+                        - 115
+                        - 105
                         - 116
                         - 97
-                        - 109
+                        - 116
+                        - 105
+                        - 98
+                        - 117
+                        - 115
                         - 46
                     format: binary
                 document_id:
                     type: string
                     description: Document ID
-                    example: Sapiente repellat aut ex laborum.
+                    example: Quia odit id ipsum.
                 metadata:
                     type: object
                     description: Document metadata
                     example:
-                        Sed molestias mollitia quia omnis.: Ex cumque fugiat.
+                        Delectus quia.: Dolorum voluptatem et animi et repellat fugit.
+                        Earum omnis quos non.: Illo omnis voluptate corporis illum maiores.
                     additionalProperties: true
                 total_chunks:
                     type: integer
                     description: Total number of chunks
-                    example: 4690052146341841718
+                    example: 5320563286399981682
                     format: int64
             example:
-                chunk_index: 1419406978320147503
+                chunk_index: 4341479410576033004
                 data:
-                    - 81
+                    - 65
+                    - 115
+                    - 115
                     - 117
-                    - 105
+                    - 109
+                    - 101
+                    - 110
+                    - 100
+                    - 97
+                    - 32
+                    - 99
+                    - 117
+                    - 109
+                    - 113
+                    - 117
+                    - 101
                     - 32
                     - 114
                     - 101
-                    - 109
-                    - 32
-                    - 105
-                    - 115
-                    - 116
-                    - 101
-                    - 32
-                    - 97
-                    - 117
-                    - 116
-                    - 101
-                    - 109
-                    - 32
-                    - 109
-                    - 111
-                    - 108
-                    - 101
-                    - 115
-                    - 116
-                    - 105
-                    - 97
-                    - 115
-                    - 32
-                    - 100
+                    - 112
                     - 101
                     - 108
-                    - 101
-                    - 99
+                    - 108
+                    - 97
                     - 116
-                    - 117
-                    - 115
                     - 32
+                    - 115
                     - 105
                     - 110
+                    - 116
                     - 46
-                document_id: Minima et non excepturi rerum.
+                document_id: Laudantium quia.
                 metadata:
-                    Itaque fuga sunt voluptatum modi nam rerum.: Velit quae mollitia alias alias ut.
-                    Perspiciatis nulla non.: Et quo cupiditate aliquid cum.
-                total_chunks: 6547465358163973897
+                    Modi magni quis minima ullam.: Perspiciatis dolorem illum sint maiores fugiat.
+                    Ut nisi magnam.: Ab qui nulla.
+                total_chunks: 1067953484486840722
             required:
                 - document_id
                 - chunk_index
@@ -1064,142 +612,63 @@ components:
                   name: Sed inventore id ab explicabo.
                   size: 7714282152330931263
                   type: Sed rerum laudantium quos est maxime.
-                - id: Occaecati aut libero.
-                  modified: "1997-12-15T06:06:05Z"
-                  name: Sed inventore id ab explicabo.
-                  size: 7714282152330931263
-                  type: Sed rerum laudantium quos est maxime.
-                - id: Occaecati aut libero.
-                  modified: "1997-12-15T06:06:05Z"
-                  name: Sed inventore id ab explicabo.
-                  size: 7714282152330931263
-                  type: Sed rerum laudantium quos est maxime.
         EventUpdate:
             type: object
             properties:
                 category:
                     type: string
                     description: Event category
-                    example: Ut expedita totam.
+                    example: Et ut vitae repellendus.
                 data:
                     description: Event data
-                    example: Eligendi consectetur eius qui omnis voluptatem inventore.
+                    example: Ea velit atque perferendis deleniti odio.
                 event_id:
                     type: string
                     description: Event ID
-                    example: Veritatis beatae et.
+                    example: Quam omnis quisquam.
                 timestamp:
                     type: string
                     description: Event timestamp
-                    example: "1982-09-13T14:26:07Z"
+                    example: "2003-02-08T04:28:29Z"
                     format: date-time
                 type:
                     type: string
                     description: Event type
-                    example: Est qui optio.
+                    example: Culpa aut ex quos soluta.
             example:
-                category: Tenetur mollitia iste tenetur illum.
-                data: Repellendus quia aut ea neque.
-                event_id: A ad aut dolorem ut.
-                timestamp: "2014-01-18T01:00:02Z"
-                type: Et et consequatur omnis veniam quod exercitationem.
+                category: Qui laboriosam qui blanditiis.
+                data: Dolorem rem laboriosam quibusdam.
+                event_id: Debitis nisi voluptatem voluptatem eligendi.
+                timestamp: "1976-04-25T01:59:03Z"
+                type: Totam enim.
             required:
                 - event_id
                 - category
                 - type
                 - timestamp
-        ExecuteCodeRequestBody:
-            type: object
-            properties:
-                code:
-                    type: string
-                    description: Code to execute
-                    example: Qui sit neque.
-                language:
-                    type: string
-                    description: Programming language
-                    example: Hic veritatis aut autem nemo nesciunt.
-            example:
-                code: Corrupti quo nulla mollitia.
-                language: Sint blanditiis et.
-            required:
-                - language
-                - code
         ExecutionResult:
             type: object
             properties:
                 error:
                     type: string
                     description: Error message if any
-                    example: Rerum et nihil.
+                    example: Tenetur impedit debitis voluptas aut nihil provident.
                 execution_time:
                     type: number
                     description: Execution time in seconds
-                    example: 0.9269881838053036
+                    example: 0.930058453003383
                     format: double
                 output:
                     type: string
                     description: Execution output
-                    example: Qui qui enim aspernatur.
+                    example: Eos animi molestiae est incidunt voluptas.
             example:
-                error: Sit corporis ut.
-                execution_time: 0.8355367352830027
-                output: Deserunt consequuntur ut id ut magni.
+                error: Et eos.
+                execution_time: 0.7420908307898458
+                output: Illum sed eveniet illo pariatur sint ab.
             required:
                 - output
                 - execution_time
-        GeneratePromptsRequestBody:
-            type: object
-            properties:
-                context:
-                    type: string
-                    description: Current context
-                    example: Animi molestiae harum ex voluptas corporis.
-                task:
-                    type: string
-                    description: Task type
-                    example: Sint et alias enim occaecati velit.
-            example:
-                context: Sunt cum excepturi est.
-                task: Aut numquam et.
-            required:
-                - context
-                - task
-        GetConversationHistoryRequestBody:
-            type: object
-            properties:
-                limit:
-                    type: integer
-                    description: Number of messages
-                    default: 50
-                    example: 6466853866195958371
-                    format: int64
-            example:
-                limit: 8047509215613551246
-        GetWorkspaceInfoResponseBody:
-            type: object
-            properties:
-                roots:
-                    type: array
-                    items:
-                        $ref: '#/components/schemas/RootInfo'
-                    example:
-                        - name: Tenetur omnis mollitia vitae porro est.
-                          uri: Qui quidem.
-                        - name: Tenetur omnis mollitia vitae porro est.
-                          uri: Qui quidem.
-                        - name: Tenetur omnis mollitia vitae porro est.
-                          uri: Qui quidem.
-                        - name: Tenetur omnis mollitia vitae porro est.
-                          uri: Qui quidem.
-            example:
-                roots:
-                    - name: Tenetur omnis mollitia vitae porro est.
-                      uri: Qui quidem.
-                    - name: Tenetur omnis mollitia vitae porro est.
-                      uri: Qui quidem.
-            required:
-                - roots
         LogEntry:
             type: object
             properties:
@@ -1207,12 +676,14 @@ components:
                     type: object
                     description: Additional log data
                     example:
-                        Aperiam perferendis ipsum quia.: Minus modi itaque ad ut ea.
+                        Harum deserunt porro qui mollitia molestiae.: Nihil numquam.
+                        Possimus rerum officia cupiditate saepe.: Perferendis aspernatur id eos impedit modi.
+                        Tempore placeat atque.: Qui et at omnis suscipit.
                     additionalProperties: true
                 level:
                     type: string
                     description: Log level
-                    example: info
+                    example: warning
                     enum:
                         - debug
                         - info
@@ -1221,18 +692,19 @@ components:
                 message:
                     type: string
                     description: Log message
-                    example: Aliquid est.
+                    example: Fugiat facilis officiis.
                 timestamp:
                     type: string
                     description: Log timestamp
-                    example: "2001-02-14T04:01:41Z"
+                    example: "1980-07-16T03:12:08Z"
                     format: date-time
             example:
                 data:
-                    Unde labore.: Enim repellendus.
+                    Numquam assumenda sit explicabo.: Officia tempora recusandae.
+                    Reiciendis quis soluta quis maxime rem sint.: Ipsa enim cum et neque.
                 level: debug
-                message: Autem quia dolorem.
-                timestamp: "1998-11-14T17:00:28Z"
+                message: Quod nesciunt tempore.
+                timestamp: "1986-11-16T07:16:11Z"
             required:
                 - timestamp
                 - level
@@ -1243,178 +715,43 @@ components:
                 name:
                     type: string
                     description: Model hint name
-                    example: Quis nihil eaque sunt accusamus id.
+                    example: Dolorum consequatur eveniet ut doloribus.
             example:
-                name: Quam enim.
-        ProcessBatchRequestBody:
-            type: object
-            properties:
-                blob:
-                    type: string
-                    description: Blob data when format=blob
-                    example:
-                        - 84
-                        - 101
-                        - 109
-                        - 112
-                        - 111
-                        - 114
-                        - 101
-                        - 32
-                        - 101
-                        - 116
-                        - 32
-                        - 114
-                        - 101
-                        - 112
-                        - 101
-                        - 108
-                        - 108
-                        - 101
-                        - 110
-                        - 100
-                        - 117
-                        - 115
-                        - 32
-                        - 100
-                        - 111
-                        - 108
-                        - 111
-                        - 114
-                        - 117
-                        - 109
-                        - 46
-                    format: binary
-                format:
-                    type: string
-                    description: Output format
-                    example: uri
-                    enum:
-                        - text
-                        - blob
-                        - uri
-                items:
-                    type: array
-                    items:
-                        type: string
-                        example: Doloribus quidem qui et.
-                    description: Items to process
-                    example:
-                        - Voluptatem cum aut veniam.
-                        - Totam qui ea veniam commodi.
-                        - Ratione ut assumenda voluptates suscipit.
-                mimeType:
-                    type: string
-                    description: Mime type for blob/uri
-                    example: Aut est corporis quasi numquam suscipit.
-                uri:
-                    type: string
-                    description: URI to include when format=uri
-                    example: Nesciunt quam aut.
-            example:
-                blob:
-                    - 68
-                    - 105
-                    - 103
-                    - 110
-                    - 105
-                    - 115
-                    - 115
-                    - 105
-                    - 109
-                    - 111
-                    - 115
-                    - 32
-                    - 118
-                    - 101
-                    - 108
-                    - 105
-                    - 116
-                    - 32
-                    - 111
-                    - 100
-                    - 105
-                    - 111
-                    - 32
-                    - 98
-                    - 101
-                    - 97
-                    - 116
-                    - 97
-                    - 101
-                    - 32
-                    - 100
-                    - 101
-                    - 108
-                    - 101
-                    - 99
-                    - 116
-                    - 117
-                    - 115
-                    - 32
-                    - 110
-                    - 117
-                    - 109
-                    - 113
-                    - 117
-                    - 97
-                    - 109
-                    - 32
-                    - 112
-                    - 101
-                    - 114
-                    - 102
-                    - 101
-                    - 114
-                    - 101
-                    - 110
-                    - 100
-                    - 105
-                    - 115
-                    - 46
-                format: uri
-                items:
-                    - Dolores fugit sequi.
-                    - Distinctio est velit culpa ipsum dolor saepe.
-                    - Est exercitationem eos sit ducimus commodi.
-                    - Quia odio iste inventore earum doloribus.
-                mimeType: Est accusantium error voluptatibus qui qui mollitia.
-                uri: Eos nihil earum vel quia sapiente.
-            required:
-                - items
+                name: Ut ad.
         PromptTemplate:
             type: object
             properties:
                 description:
                     type: string
                     description: Template description
-                    example: Atque neque.
+                    example: Harum cum et quasi laboriosam.
                 name:
                     type: string
                     description: Template name
-                    example: Libero eaque nam.
+                    example: Sunt excepturi laborum consectetur est magnam.
                 template:
                     type: string
                     description: Template content
-                    example: Enim repellat perferendis molestiae ut suscipit et.
+                    example: Molestias soluta voluptas ipsam ut voluptas.
                 variables:
                     type: array
                     items:
                         type: string
-                        example: Vero vero et vitae ut sed.
+                        example: Numquam repellendus.
                     description: Required variables
                     example:
-                        - Assumenda maxime veniam temporibus enim enim.
-                        - Eos ducimus molestiae ut quas.
-                        - Saepe ea voluptatibus quia facilis.
+                        - Et pariatur.
+                        - Excepturi officia.
+                        - Expedita iste repudiandae minus alias illo.
+                        - Tempore et laboriosam maiores voluptate.
             example:
-                description: Officia vel voluptatem distinctio nihil labore consectetur.
-                name: Et rem omnis.
-                template: Consequuntur similique voluptatem sit enim.
+                description: Autem ut ut repellendus eaque illo dolorem.
+                name: Et tempora qui consequatur.
+                template: Est soluta.
                 variables:
-                    - Eius in fugiat non deleniti et.
-                    - Distinctio est ipsum laudantium earum maxime.
-                    - Voluptatem rerum magni voluptatum asperiores velit magni.
+                    - Et ut id et quaerat.
+                    - Aspernatur sunt sit natus.
+                    - Magni fugit labore vero at debitis sint.
             required:
                 - name
                 - description
@@ -1436,18 +773,12 @@ components:
                   variables:
                     - Odio eum qui explicabo dolores ea non.
                     - Ut magni saepe eveniet.
-                - description: Ducimus alias velit in magni accusamus.
-                  name: Quibusdam in delectus ipsum dolorem adipisci consectetur.
-                  template: Non qui magnam.
-                  variables:
-                    - Odio eum qui explicabo dolores ea non.
-                    - Ut magni saepe eveniet.
         ResourceUpdate:
             type: object
             properties:
                 data:
                     description: Update data
-                    example: Eos qui error perferendis consequatur nemo quod.
+                    example: Voluptatem maxime laborum ipsa.
                 event_type:
                     type: string
                     description: Type of change
@@ -1459,22 +790,22 @@ components:
                 resource:
                     type: string
                     description: Resource that changed
-                    example: Non maxime accusamus ullam laudantium fugiat.
+                    example: Nihil nihil deleniti voluptatem ut.
                 timestamp:
                     type: string
                     description: Update timestamp
-                    example: "1988-11-29T16:10:55Z"
+                    example: "1990-10-14T23:50:18Z"
                     format: date-time
                 update_id:
                     type: string
                     description: Update ID
-                    example: Quia laborum alias quibusdam explicabo quidem.
+                    example: Aut facere quia.
             example:
-                data: Omnis deserunt voluptas non velit.
+                data: Saepe officia.
                 event_type: deleted
-                resource: Non eveniet ut a nostrum aut voluptate.
-                timestamp: "1976-07-20T23:04:51Z"
-                update_id: Ab hic iste.
+                resource: Vel tenetur explicabo.
+                timestamp: "2010-05-10T15:24:23Z"
+                update_id: Error facilis perspiciatis animi.
             required:
                 - update_id
                 - resource
@@ -1486,14 +817,14 @@ components:
                 name:
                     type: string
                     description: Root name
-                    example: Libero quia non.
+                    example: Qui veritatis rerum rem quasi nihil.
                 uri:
                     type: string
                     description: Root URI
-                    example: Et voluptas at voluptatem.
+                    example: Aspernatur est.
             example:
-                name: Expedita excepturi.
-                uri: Earum omnis quasi.
+                name: Cupiditate ut est repellendus.
+                uri: Cupiditate qui nulla rerum fugiat unde ut.
             required:
                 - uri
         SamplingMessage:
@@ -1502,60 +833,42 @@ components:
                 content:
                     type: string
                     description: Message content
-                    example: Harum deserunt porro qui mollitia molestiae.
+                    example: Enim ab sed.
                 role:
                     type: string
                     description: Message role
-                    example: Qui et at omnis suscipit.
+                    example: Expedita perspiciatis sit.
             example:
-                content: Facere qui dolores porro.
-                role: Nihil numquam.
+                content: Aut dolore ut ut.
+                role: Laboriosam id similique.
             required:
                 - role
                 - content
-        SearchKnowledgeRequestBody:
-            type: object
-            properties:
-                limit:
-                    type: integer
-                    description: Maximum results
-                    default: 10
-                    example: 6201386324449085828
-                    format: int64
-                query:
-                    type: string
-                    description: Search query
-                    example: Voluptates repellendus sunt facilis porro suscipit.
-            example:
-                limit: 6109044404732472746
-                query: Est non cupiditate ipsam exercitationem voluptate.
-            required:
-                - query
         SearchResult:
             type: object
             properties:
                 content:
                     type: string
                     description: Result content
-                    example: Ea velit atque perferendis deleniti odio.
+                    example: Et inventore iure quod amet ratione quasi.
                 id:
                     type: string
                     description: Result ID
-                    example: Et ut vitae repellendus.
+                    example: Molestiae quis fugit dolores voluptatem beatae.
                 score:
                     type: number
                     description: Relevance score
-                    example: 0.49451469230809986
+                    example: 0.8721112721352322
                     format: double
                 title:
                     type: string
                     description: Result title
-                    example: Culpa aut ex quos soluta.
+                    example: Enim nobis quia amet ut.
             example:
-                content: Iure voluptatum non nulla debitis.
-                id: Dolor ad minima qui nostrum voluptatem.
-                score: 0.8170029769992853
-                title: Unde asperiores ut consequatur.
+                content: Minima ab minus deserunt.
+                id: Nesciunt laborum odit illum.
+                score: 0.0802880264593932
+                title: Iusto aut sunt id porro.
             required:
                 - id
                 - title
@@ -1574,72 +887,26 @@ components:
                   id: Quo id ut.
                   score: 0.19805860168008388
                   title: Repellendus delectus illum eveniet.
-                - content: Ut optio quo id qui sit.
-                  id: Quo id ut.
-                  score: 0.19805860168008388
-                  title: Repellendus delectus illum eveniet.
-        SendNotificationRequestBody:
-            type: object
-            properties:
-                data:
-                    description: Additional data
-                    example: Eligendi nisi id.
-                message:
-                    type: string
-                    description: Notification message
-                    example: Vitae doloremque ipsa laborum et sunt.
-                type:
-                    type: string
-                    description: Notification type
-                    example: error
-                    enum:
-                        - info
-                        - warning
-                        - error
-                        - success
-            example:
-                data: Sit id tenetur.
-                message: Facilis quas.
-                type: info
-            required:
-                - type
-                - message
-        SubscribeToUpdatesRequestBody:
-            type: object
-            properties:
-                filter:
-                    type: string
-                    description: Optional filter
-                    example: Consequuntur suscipit facilis ducimus labore.
-                resource:
-                    type: string
-                    description: Resource to monitor
-                    example: Neque ex autem cum enim maxime.
-            example:
-                filter: Sint atque illo et aut.
-                resource: Inventore voluptatem fugiat eius molestiae.
-            required:
-                - resource
         SubscriptionInfo:
             type: object
             properties:
                 created_at:
                     type: string
                     description: Subscription created
-                    example: "2015-06-16T11:37:12Z"
+                    example: "1982-11-19T06:50:42Z"
                     format: date-time
                 resource:
                     type: string
                     description: Subscribed resource
-                    example: Velit rerum est.
+                    example: Aut laudantium.
                 subscription_id:
                     type: string
                     description: Subscription ID
-                    example: Deleniti illum quia in.
+                    example: Recusandae nesciunt est aliquam maxime.
             example:
-                created_at: "2008-12-29T10:27:27Z"
-                resource: Error consequatur voluptas natus et repellat.
-                subscription_id: Tempore a iste cum.
+                created_at: "1970-05-30T10:08:02Z"
+                resource: Nesciunt quidem quia tempora.
+                subscription_id: Laborum dolorem nam officiis cum.
             required:
                 - subscription_id
                 - resource
@@ -1650,33 +917,33 @@ components:
                 active_connections:
                     type: integer
                     description: Number of active connections
-                    example: 3491302214824057026
+                    example: 865360575479963595
                     format: int64
                 cpu_usage:
                     type: number
                     description: CPU usage percentage
-                    example: 0.9675132966320078
+                    example: 0.12928390660988726
                     format: double
                 memory_usage:
                     type: number
                     description: Memory usage percentage
-                    example: 0.7472332780604253
+                    example: 0.3225543107340783
                     format: double
                 uptime:
                     type: integer
                     description: Uptime in seconds
-                    example: 4278230164189421542
+                    example: 8467129523957363982
                     format: int64
                 version:
                     type: string
                     description: System version
-                    example: Minima ullam dolorum perspiciatis dolorem illum sint.
+                    example: Architecto veniam est asperiores vel aliquam alias.
             example:
-                active_connections: 8212185851102895394
-                cpu_usage: 0.8233535832777822
-                memory_usage: 0.37408436032680703
-                uptime: 7591931178628792928
-                version: Porro eius optio.
+                active_connections: 4108116872481430879
+                cpu_usage: 0.44870173191087326
+                memory_usage: 0.0033950452740606437
+                uptime: 7845734177198489840
+                version: Quidem provident quos ut et ea.
             required:
                 - version
                 - uptime
@@ -1689,16 +956,16 @@ components:
                 chunk_count:
                     type: integer
                     description: Number of chunks
-                    example: 824715632500416410
+                    example: 6704415956700148752
                     format: int64
                 total_size:
                     type: integer
                     description: Total size
-                    example: 7499922432478788567
+                    example: 8448906524188494146
                     format: int64
             example:
-                chunk_count: 3960972879172816934
-                total_size: 4866387401787670509
+                chunk_count: 5313566094390018558
+                total_size: 4821495332139899368
             required:
                 - total_size
                 - chunk_count
@@ -1708,22 +975,20 @@ components:
                 document_count:
                     type: integer
                     description: Number of documents
-                    example: 1104957877339701339
+                    example: 7000341667204525282
                     format: int64
                 total_size:
                     type: integer
                     description: Total size
-                    example: 3467642952561079386
+                    example: 3618266576424580255
                     format: int64
             example:
-                document_count: 5337730009893659863
-                total_size: 2621472585616481294
+                document_count: 7932152862445935408
+                total_size: 7274095540652845803
             required:
                 - total_size
                 - document_count
 tags:
-    - name: assistant
-      description: AI Assistant service with full MCP protocol support
     - name: websocket
       description: Service for testing WebSocket streaming
     - name: streaming

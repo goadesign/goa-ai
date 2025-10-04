@@ -96,8 +96,6 @@ func generateMCPServiceCode(genpkg string, root *expr.RootExpr, mcpService *expr
 	return files
 }
 
-// (no dedupe or merge of JSON-RPC server handlers is performed here).
-
 // generateMCPTransport generates adapter and prompt provider files that adapt
 // MCP protocol methods to the original service implementation.
 func generateMCPTransport(genpkg string, svc *expr.ServiceExpr, mcp *mcpexpr.MCPExpr, mapping *ServiceMethodMapping) []*codegen.File {

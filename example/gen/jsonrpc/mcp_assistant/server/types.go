@@ -14,6 +14,86 @@ import (
 	goa "goa.design/goa/v3/pkg"
 )
 
+// InitializeRequestBody is the type of the "mcp_assistant" service
+// "initialize" endpoint HTTP request body.
+type InitializeRequestBody struct {
+	// MCP protocol version
+	ProtocolVersion *string `form:"protocolVersion,omitempty" json:"protocolVersion,omitempty" xml:"protocolVersion,omitempty"`
+	// Client information
+	ClientInfo *ClientInfoRequestBodyRequestBodyRequestBodyRequestBody `form:"clientInfo,omitempty" json:"clientInfo,omitempty" xml:"clientInfo,omitempty"`
+}
+
+// ToolsListRequestBody is the type of the "mcp_assistant" service "tools/list"
+// endpoint HTTP request body.
+type ToolsListRequestBody struct {
+	// Pagination cursor
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty" xml:"cursor,omitempty"`
+}
+
+// ToolsCallRequestBody is the type of the "mcp_assistant" service "tools/call"
+// endpoint HTTP request body.
+type ToolsCallRequestBody struct {
+	// Tool name
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Tool arguments
+	Arguments json.RawMessage `form:"arguments,omitempty" json:"arguments,omitempty" xml:"arguments,omitempty"`
+}
+
+// ResourcesListRequestBody is the type of the "mcp_assistant" service
+// "resources/list" endpoint HTTP request body.
+type ResourcesListRequestBody struct {
+	// Pagination cursor
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty" xml:"cursor,omitempty"`
+}
+
+// ResourcesReadRequestBody is the type of the "mcp_assistant" service
+// "resources/read" endpoint HTTP request body.
+type ResourcesReadRequestBody struct {
+	// Resource URI
+	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
+}
+
+// ResourcesSubscribeRequestBody is the type of the "mcp_assistant" service
+// "resources/subscribe" endpoint HTTP request body.
+type ResourcesSubscribeRequestBody struct {
+	// Resource URI to subscribe to
+	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
+}
+
+// ResourcesUnsubscribeRequestBody is the type of the "mcp_assistant" service
+// "resources/unsubscribe" endpoint HTTP request body.
+type ResourcesUnsubscribeRequestBody struct {
+	// Resource URI to unsubscribe from
+	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
+}
+
+// PromptsListRequestBody is the type of the "mcp_assistant" service
+// "prompts/list" endpoint HTTP request body.
+type PromptsListRequestBody struct {
+	// Pagination cursor
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty" xml:"cursor,omitempty"`
+}
+
+// PromptsGetRequestBody is the type of the "mcp_assistant" service
+// "prompts/get" endpoint HTTP request body.
+type PromptsGetRequestBody struct {
+	// Prompt name
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Prompt arguments
+	Arguments json.RawMessage `form:"arguments,omitempty" json:"arguments,omitempty" xml:"arguments,omitempty"`
+}
+
+// NotifyStatusUpdateRequestBody is the type of the "mcp_assistant" service
+// "notify_status_update" endpoint HTTP request body.
+type NotifyStatusUpdateRequestBody struct {
+	// Notification type
+	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`
+	// Notification message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Additional data
+	Data any `form:"data,omitempty" json:"data,omitempty" xml:"data,omitempty"`
+}
+
 // InitializeResponseBody is the type of the "mcp_assistant" service
 // "initialize" endpoint HTTP response body.
 type InitializeResponseBody InitializeResponseBodyResponseBody
@@ -411,29 +491,18 @@ func NewUnsubscribeResponseBody(res *mcpassistant.UnsubscribeResult) *Unsubscrib
 
 // NewInitializePayload builds a mcp_assistant service initialize endpoint
 // payload.
-func NewInitializePayload(body struct {
-	// MCP protocol version
-	ProtocolVersion *string `form:"protocolVersion" json:"protocolVersion" xml:"protocolVersion"`
-	// Client information
-	ClientInfo *ClientInfoRequestBodyRequestBodyRequestBodyRequestBody `form:"clientInfo" json:"clientInfo" xml:"clientInfo"`
-}) *mcpassistant.InitializePayload {
-	v := &mcpassistant.InitializePayload{}
-	if body.ProtocolVersion != nil {
-		v.ProtocolVersion = *body.ProtocolVersion
+func NewInitializePayload(body *InitializeRequestBody) *mcpassistant.InitializePayload {
+	v := &mcpassistant.InitializePayload{
+		ProtocolVersion: *body.ProtocolVersion,
 	}
-	if body.ClientInfo != nil {
-		v.ClientInfo = unmarshalClientInfoRequestBodyRequestBodyRequestBodyRequestBodyToMcpassistantClientInfo(body.ClientInfo)
-	}
+	v.ClientInfo = unmarshalClientInfoRequestBodyRequestBodyRequestBodyRequestBodyToMcpassistantClientInfo(body.ClientInfo)
 
 	return v
 }
 
 // NewToolsListPayload builds a mcp_assistant service tools/list endpoint
 // payload.
-func NewToolsListPayload(body struct {
-	// Pagination cursor
-	Cursor *string `form:"cursor" json:"cursor" xml:"cursor"`
-}) *mcpassistant.ToolsListPayload {
+func NewToolsListPayload(body *ToolsListRequestBody) *mcpassistant.ToolsListPayload {
 	v := &mcpassistant.ToolsListPayload{
 		Cursor: body.Cursor,
 	}
@@ -443,17 +512,10 @@ func NewToolsListPayload(body struct {
 
 // NewToolsCallPayload builds a mcp_assistant service tools/call endpoint
 // payload.
-func NewToolsCallPayload(body struct {
-	// Tool name
-	Name *string `form:"name" json:"name" xml:"name"`
-	// Tool arguments
-	Arguments json.RawMessage `form:"arguments" json:"arguments" xml:"arguments"`
-}) *mcpassistant.ToolsCallPayload {
+func NewToolsCallPayload(body *ToolsCallRequestBody) *mcpassistant.ToolsCallPayload {
 	v := &mcpassistant.ToolsCallPayload{
+		Name:      *body.Name,
 		Arguments: body.Arguments,
-	}
-	if body.Name != nil {
-		v.Name = *body.Name
 	}
 
 	return v
@@ -461,10 +523,7 @@ func NewToolsCallPayload(body struct {
 
 // NewResourcesListPayload builds a mcp_assistant service resources/list
 // endpoint payload.
-func NewResourcesListPayload(body struct {
-	// Pagination cursor
-	Cursor *string `form:"cursor" json:"cursor" xml:"cursor"`
-}) *mcpassistant.ResourcesListPayload {
+func NewResourcesListPayload(body *ResourcesListRequestBody) *mcpassistant.ResourcesListPayload {
 	v := &mcpassistant.ResourcesListPayload{
 		Cursor: body.Cursor,
 	}
@@ -474,13 +533,9 @@ func NewResourcesListPayload(body struct {
 
 // NewResourcesReadPayload builds a mcp_assistant service resources/read
 // endpoint payload.
-func NewResourcesReadPayload(body struct {
-	// Resource URI
-	URI *string `form:"uri" json:"uri" xml:"uri"`
-}) *mcpassistant.ResourcesReadPayload {
-	v := &mcpassistant.ResourcesReadPayload{}
-	if body.URI != nil {
-		v.URI = *body.URI
+func NewResourcesReadPayload(body *ResourcesReadRequestBody) *mcpassistant.ResourcesReadPayload {
+	v := &mcpassistant.ResourcesReadPayload{
+		URI: *body.URI,
 	}
 
 	return v
@@ -488,13 +543,9 @@ func NewResourcesReadPayload(body struct {
 
 // NewResourcesSubscribePayload builds a mcp_assistant service
 // resources/subscribe endpoint payload.
-func NewResourcesSubscribePayload(body struct {
-	// Resource URI to subscribe to
-	URI *string `form:"uri" json:"uri" xml:"uri"`
-}) *mcpassistant.ResourcesSubscribePayload {
-	v := &mcpassistant.ResourcesSubscribePayload{}
-	if body.URI != nil {
-		v.URI = *body.URI
+func NewResourcesSubscribePayload(body *ResourcesSubscribeRequestBody) *mcpassistant.ResourcesSubscribePayload {
+	v := &mcpassistant.ResourcesSubscribePayload{
+		URI: *body.URI,
 	}
 
 	return v
@@ -502,13 +553,9 @@ func NewResourcesSubscribePayload(body struct {
 
 // NewResourcesUnsubscribePayload builds a mcp_assistant service
 // resources/unsubscribe endpoint payload.
-func NewResourcesUnsubscribePayload(body struct {
-	// Resource URI to unsubscribe from
-	URI *string `form:"uri" json:"uri" xml:"uri"`
-}) *mcpassistant.ResourcesUnsubscribePayload {
-	v := &mcpassistant.ResourcesUnsubscribePayload{}
-	if body.URI != nil {
-		v.URI = *body.URI
+func NewResourcesUnsubscribePayload(body *ResourcesUnsubscribeRequestBody) *mcpassistant.ResourcesUnsubscribePayload {
+	v := &mcpassistant.ResourcesUnsubscribePayload{
+		URI: *body.URI,
 	}
 
 	return v
@@ -516,10 +563,7 @@ func NewResourcesUnsubscribePayload(body struct {
 
 // NewPromptsListPayload builds a mcp_assistant service prompts/list endpoint
 // payload.
-func NewPromptsListPayload(body struct {
-	// Pagination cursor
-	Cursor *string `form:"cursor" json:"cursor" xml:"cursor"`
-}) *mcpassistant.PromptsListPayload {
+func NewPromptsListPayload(body *PromptsListRequestBody) *mcpassistant.PromptsListPayload {
 	v := &mcpassistant.PromptsListPayload{
 		Cursor: body.Cursor,
 	}
@@ -529,38 +573,22 @@ func NewPromptsListPayload(body struct {
 
 // NewPromptsGetPayload builds a mcp_assistant service prompts/get endpoint
 // payload.
-func NewPromptsGetPayload(body struct {
-	// Prompt name
-	Name *string `form:"name" json:"name" xml:"name"`
-	// Prompt arguments
-	Arguments json.RawMessage `form:"arguments" json:"arguments" xml:"arguments"`
-}) *mcpassistant.PromptsGetPayload {
+func NewPromptsGetPayload(body *PromptsGetRequestBody) *mcpassistant.PromptsGetPayload {
 	v := &mcpassistant.PromptsGetPayload{
+		Name:      *body.Name,
 		Arguments: body.Arguments,
-	}
-	if body.Name != nil {
-		v.Name = *body.Name
 	}
 
 	return v
 }
 
-// NewNotifyStatusUpdatePayload builds a mcp_assistant service
+// NewNotifyStatusUpdateSendNotificationPayload builds a mcp_assistant service
 // notify_status_update endpoint payload.
-func NewNotifyStatusUpdatePayload(body struct {
-	// Notification type
-	Type *string `form:"type" json:"type" xml:"type"`
-	// Notification message
-	Message *string `form:"message" json:"message" xml:"message"`
-	// Additional data
-	Data any `form:"data" json:"data" xml:"data"`
-}) *mcpassistant.NotifyStatusUpdatePayload {
-	v := &mcpassistant.NotifyStatusUpdatePayload{
+func NewNotifyStatusUpdateSendNotificationPayload(body *NotifyStatusUpdateRequestBody) *mcpassistant.SendNotificationPayload {
+	v := &mcpassistant.SendNotificationPayload{
+		Type:    *body.Type,
 		Message: body.Message,
 		Data:    body.Data,
-	}
-	if body.Type != nil {
-		v.Type = *body.Type
 	}
 
 	return v
@@ -592,6 +620,80 @@ func NewUnsubscribePayload(body struct {
 	}
 
 	return v
+}
+
+// ValidateInitializeRequestBody runs the validations defined on
+// InitializeRequestBody
+func ValidateInitializeRequestBody(body *InitializeRequestBody) (err error) {
+	if body.ProtocolVersion == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("protocolVersion", "body"))
+	}
+	if body.ClientInfo == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clientInfo", "body"))
+	}
+	if body.ClientInfo != nil {
+		if err2 := ValidateClientInfoRequestBodyRequestBodyRequestBodyRequestBody(body.ClientInfo); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateToolsCallRequestBody runs the validations defined on
+// Tools/CallRequestBody
+func ValidateToolsCallRequestBody(body *ToolsCallRequestBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	return
+}
+
+// ValidateResourcesReadRequestBody runs the validations defined on
+// Resources/ReadRequestBody
+func ValidateResourcesReadRequestBody(body *ResourcesReadRequestBody) (err error) {
+	if body.URI == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
+	}
+	if body.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.uri", *body.URI, "^[a-zA-Z][a-zA-Z0-9+.-]*:.*"))
+	}
+	return
+}
+
+// ValidateResourcesSubscribeRequestBody runs the validations defined on
+// Resources/SubscribeRequestBody
+func ValidateResourcesSubscribeRequestBody(body *ResourcesSubscribeRequestBody) (err error) {
+	if body.URI == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
+	}
+	return
+}
+
+// ValidateResourcesUnsubscribeRequestBody runs the validations defined on
+// Resources/UnsubscribeRequestBody
+func ValidateResourcesUnsubscribeRequestBody(body *ResourcesUnsubscribeRequestBody) (err error) {
+	if body.URI == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
+	}
+	return
+}
+
+// ValidatePromptsGetRequestBody runs the validations defined on
+// Prompts/GetRequestBody
+func ValidatePromptsGetRequestBody(body *PromptsGetRequestBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	return
+}
+
+// ValidateNotifyStatusUpdateRequestBody runs the validations defined on
+// notify_status_update_request_body
+func ValidateNotifyStatusUpdateRequestBody(body *NotifyStatusUpdateRequestBody) (err error) {
+	if body.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
+	}
+	return
 }
 
 // ValidateClientInfoRequestBodyRequestBodyRequestBodyRequestBody runs the

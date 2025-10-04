@@ -24,7 +24,7 @@ func BuildListItemsPayload(grpcstreamListItemsMessage string) (*grpcstream.ListI
 		if grpcstreamListItemsMessage != "" {
 			err = json.Unmarshal([]byte(grpcstreamListItemsMessage), &message)
 			if err != nil {
-				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"filter\": \"Numquam ex.\"\n   }'")
+				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"filter\": \"Voluptatem quia dolorem quo excepturi earum.\"\n   }'")
 			}
 		}
 	}
