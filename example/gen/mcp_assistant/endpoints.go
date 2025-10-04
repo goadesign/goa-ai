@@ -171,7 +171,7 @@ func NewPromptsGetEndpoint(s Service) goa.Endpoint {
 // method "notify_status_update" of service "mcp_assistant".
 func NewNotifyStatusUpdateEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
-		p := req.(*NotifyStatusUpdatePayload)
+		p := req.(*SendNotificationPayload)
 		return nil, s.NotifyStatusUpdate(ctx, p)
 	}
 }

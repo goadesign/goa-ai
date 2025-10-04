@@ -1,13 +1,5 @@
 version: "2"
 
-run:
-  timeout: 5m
-  tests: false
-  skip-dirs:
-    - example/.*/gen
-    - example/.*/goa.*
-    - goa.*
-
 linters:
   enable:
     - errorlint
@@ -37,3 +29,9 @@ linters:
       ignore-rules:
         - Statuser
 
+issues:
+  exclude-rules:
+    # Exclude generated/example code from linting
+    - path: ^example/.*/gen/
+    - path: ^example/.*/goa.*
+    - path: ^goa\.

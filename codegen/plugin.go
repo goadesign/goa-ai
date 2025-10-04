@@ -1,6 +1,7 @@
 package codegen
 
 import (
+	mcpexpr "goa.design/goa-ai/expr"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"
@@ -46,6 +47,21 @@ func PrepareServices(genpkg string, roots []eval.Root) error {
 					break
 				}
 			}
+		}
+
+		// Filter out HTTP transport for MCP-enabled services to avoid
+		// generating conflicting HTTP SSE code. Keep JSON-RPC so the
+		// service interface remains JSON-RPC SSE-aware where applicable.
+		if r.API != nil && r.API.HTTP != nil {
+			filtered := make([]*expr.HTTPServiceExpr, 0, len(r.API.HTTP.Services))
+			for _, hs := range r.API.HTTP.Services {
+				if hs.ServiceExpr != nil && mcpexpr.Root != nil && mcpexpr.Root.HasMCP(hs.ServiceExpr) {
+					// Skip HTTP generation for MCP-enabled service
+					continue
+				}
+				filtered = append(filtered, hs)
+			}
+			r.API.HTTP.Services = filtered
 		}
 	}
 

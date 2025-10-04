@@ -30,8 +30,8 @@ func UsageCommands() []string {
 // UsageExamples produces an example of a valid invocation of the CLI tool.
 func UsageExamples() string {
 	return os.Args[0] + ` assistant analyze-text --body '{
-      "mode": "sentiment",
-      "text": "Dolore atque qui possimus ipsam esse."
+      "mode": "summary",
+      "text": "Corporis asperiores in."
    }'` + "\n" +
 		""
 }
@@ -261,8 +261,8 @@ func assistantAnalyzeTextUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant analyze-text --body '{
-      "mode": "sentiment",
-      "text": "Dolore atque qui possimus ipsam esse."
+      "mode": "summary",
+      "text": "Corporis asperiores in."
    }'`)
 }
 
@@ -283,8 +283,8 @@ func assistantSearchKnowledgeUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant search-knowledge --body '{
-      "limit": 8368102686863965314,
-      "query": "Nihil eaque aspernatur commodi."
+      "limit": 480693088241816126,
+      "query": "Consequatur aut."
    }'`)
 }
 
@@ -305,8 +305,8 @@ func assistantExecuteCodeUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant execute-code --body '{
-      "code": "Aut exercitationem sequi.",
-      "language": "Sit debitis vel temporibus quia ea ipsa."
+      "code": "Sequi aspernatur sint ratione.",
+      "language": "Cupiditate tempore inventore adipisci maiores omnis et."
    }'`)
 }
 
@@ -361,7 +361,7 @@ func assistantGetConversationHistoryUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant get-conversation-history --body '{
-      "limit": 512059023657992185
+      "limit": 463184493172424536
    }'`)
 }
 
@@ -382,8 +382,8 @@ func assistantGeneratePromptsUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant generate-prompts --body '{
-      "context": "Dolor sit.",
-      "task": "Dolores et sit ut et."
+      "context": "Reiciendis illo assumenda.",
+      "task": "Cupiditate quis excepturi occaecati labore qui enim."
    }'`)
 }
 
@@ -421,9 +421,9 @@ func assistantSendNotificationUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant send-notification --body '{
-      "data": "Optio laborum.",
-      "message": "Omnis voluptate suscipit alias tempora.",
-      "type": "warning"
+      "data": "Adipisci non.",
+      "message": "Distinctio cum.",
+      "type": "info"
    }'`)
 }
 
@@ -444,8 +444,8 @@ func assistantSubscribeToUpdatesUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant subscribe-to-updates --body '{
-      "filter": "Commodi dolor et reprehenderit sunt.",
-      "resource": "Velit eos quos."
+      "filter": "Officiis ea odio sequi et.",
+      "resource": "Et nihil qui tempore maxime."
    }'`)
 }
 
@@ -466,14 +466,14 @@ func assistantProcessBatchUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant process-batch --body '{
-      "blob": "U2VkIHZlbGl0IHZvbHVwdGF0dW0gdWxsYW0gdG90YW0gdm9sdXB0YXRlcyB0b3RhbS4=",
+      "blob": "RGlnbmlzc2ltb3MgY3VtcXVlIG1heGltZSBkaXN0aW5jdGlvLg==",
       "format": "text",
       "items": [
-         "Eius corrupti impedit expedita.",
-         "Sint quos fuga.",
-         "Quo et velit odio quasi eum totam."
+         "Iste ducimus eaque et omnis quisquam.",
+         "Voluptatem ipsam.",
+         "Deleniti at enim eos aut unde."
       ],
-      "mimeType": "Provident voluptas saepe impedit quia aut.",
-      "uri": "Voluptatem quam veniam et."
+      "mimeType": "Voluptas ea ut sequi ipsam.",
+      "uri": "Rerum minus ut facere quis."
    }'`)
 }

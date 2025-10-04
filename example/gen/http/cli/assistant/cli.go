@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"os"
 
-	assistantc "example.com/assistant/gen/http/assistant/client"
 	streamingc "example.com/assistant/gen/http/streaming/client"
 	websocketsvcc "example.com/assistant/gen/http/websocket/client"
 	goahttp "goa.design/goa/v3/http"
@@ -27,18 +26,13 @@ func UsageCommands() []string {
 	return []string{
 		"websocket (upload-chunks|upload-documents|chat|interactive-chat)",
 		"streaming (stream-events|stream-logs|monitor-resource-changes|flexible-data)",
-		"assistant (analyze-text|search-knowledge|execute-code|list-documents|get-system-info|get-conversation-history|generate-prompts|get-workspace-info|send-notification|subscribe-to-updates|process-batch)",
 	}
 }
 
 // UsageExamples produces an example of a valid invocation of the CLI tool.
 func UsageExamples() string {
 	return os.Args[0] + ` websocket upload-chunks` + "\n" +
-		os.Args[0] + ` streaming stream-events --category "system" --filter "Minus sunt et et ipsam atque eum."` + "\n" +
-		os.Args[0] + ` assistant analyze-text --body '{
-      "mode": "sentiment",
-      "text": "Dolore atque qui possimus ipsam esse."
-   }'` + "\n" +
+		os.Args[0] + ` streaming stream-events --category "system" --filter "Quia provident officia."` + "\n" +
 		""
 }
 
@@ -81,38 +75,6 @@ func ParseEndpoint(
 		streamingFlexibleDataFlags          = flag.NewFlagSet("flexible-data", flag.ExitOnError)
 		streamingFlexibleDataDataTypeFlag   = streamingFlexibleDataFlags.String("data-type", "REQUIRED", "Type of data")
 		streamingFlexibleDataStreaming2Flag = streamingFlexibleDataFlags.String("streaming2", "true", "")
-
-		assistantFlags = flag.NewFlagSet("assistant", flag.ContinueOnError)
-
-		assistantAnalyzeTextFlags    = flag.NewFlagSet("analyze-text", flag.ExitOnError)
-		assistantAnalyzeTextBodyFlag = assistantAnalyzeTextFlags.String("body", "REQUIRED", "")
-
-		assistantSearchKnowledgeFlags    = flag.NewFlagSet("search-knowledge", flag.ExitOnError)
-		assistantSearchKnowledgeBodyFlag = assistantSearchKnowledgeFlags.String("body", "REQUIRED", "")
-
-		assistantExecuteCodeFlags    = flag.NewFlagSet("execute-code", flag.ExitOnError)
-		assistantExecuteCodeBodyFlag = assistantExecuteCodeFlags.String("body", "REQUIRED", "")
-
-		assistantListDocumentsFlags = flag.NewFlagSet("list-documents", flag.ExitOnError)
-
-		assistantGetSystemInfoFlags = flag.NewFlagSet("get-system-info", flag.ExitOnError)
-
-		assistantGetConversationHistoryFlags    = flag.NewFlagSet("get-conversation-history", flag.ExitOnError)
-		assistantGetConversationHistoryBodyFlag = assistantGetConversationHistoryFlags.String("body", "REQUIRED", "")
-
-		assistantGeneratePromptsFlags    = flag.NewFlagSet("generate-prompts", flag.ExitOnError)
-		assistantGeneratePromptsBodyFlag = assistantGeneratePromptsFlags.String("body", "REQUIRED", "")
-
-		assistantGetWorkspaceInfoFlags = flag.NewFlagSet("get-workspace-info", flag.ExitOnError)
-
-		assistantSendNotificationFlags    = flag.NewFlagSet("send-notification", flag.ExitOnError)
-		assistantSendNotificationBodyFlag = assistantSendNotificationFlags.String("body", "REQUIRED", "")
-
-		assistantSubscribeToUpdatesFlags    = flag.NewFlagSet("subscribe-to-updates", flag.ExitOnError)
-		assistantSubscribeToUpdatesBodyFlag = assistantSubscribeToUpdatesFlags.String("body", "REQUIRED", "")
-
-		assistantProcessBatchFlags    = flag.NewFlagSet("process-batch", flag.ExitOnError)
-		assistantProcessBatchBodyFlag = assistantProcessBatchFlags.String("body", "REQUIRED", "")
 	)
 	websocketFlags.Usage = websocketUsage
 	websocketUploadChunksFlags.Usage = websocketUploadChunksUsage
@@ -125,19 +87,6 @@ func ParseEndpoint(
 	streamingStreamLogsFlags.Usage = streamingStreamLogsUsage
 	streamingMonitorResourceChangesFlags.Usage = streamingMonitorResourceChangesUsage
 	streamingFlexibleDataFlags.Usage = streamingFlexibleDataUsage
-
-	assistantFlags.Usage = assistantUsage
-	assistantAnalyzeTextFlags.Usage = assistantAnalyzeTextUsage
-	assistantSearchKnowledgeFlags.Usage = assistantSearchKnowledgeUsage
-	assistantExecuteCodeFlags.Usage = assistantExecuteCodeUsage
-	assistantListDocumentsFlags.Usage = assistantListDocumentsUsage
-	assistantGetSystemInfoFlags.Usage = assistantGetSystemInfoUsage
-	assistantGetConversationHistoryFlags.Usage = assistantGetConversationHistoryUsage
-	assistantGeneratePromptsFlags.Usage = assistantGeneratePromptsUsage
-	assistantGetWorkspaceInfoFlags.Usage = assistantGetWorkspaceInfoUsage
-	assistantSendNotificationFlags.Usage = assistantSendNotificationUsage
-	assistantSubscribeToUpdatesFlags.Usage = assistantSubscribeToUpdatesUsage
-	assistantProcessBatchFlags.Usage = assistantProcessBatchUsage
 
 	if err := flag.CommandLine.Parse(os.Args[1:]); err != nil {
 		return nil, nil, err
@@ -158,8 +107,6 @@ func ParseEndpoint(
 			svcf = websocketFlags
 		case "streaming":
 			svcf = streamingFlags
-		case "assistant":
-			svcf = assistantFlags
 		default:
 			return nil, nil, fmt.Errorf("unknown service %q", svcn)
 		}
@@ -204,43 +151,6 @@ func ParseEndpoint(
 
 			case "flexible-data":
 				epf = streamingFlexibleDataFlags
-
-			}
-
-		case "assistant":
-			switch epn {
-			case "analyze-text":
-				epf = assistantAnalyzeTextFlags
-
-			case "search-knowledge":
-				epf = assistantSearchKnowledgeFlags
-
-			case "execute-code":
-				epf = assistantExecuteCodeFlags
-
-			case "list-documents":
-				epf = assistantListDocumentsFlags
-
-			case "get-system-info":
-				epf = assistantGetSystemInfoFlags
-
-			case "get-conversation-history":
-				epf = assistantGetConversationHistoryFlags
-
-			case "generate-prompts":
-				epf = assistantGeneratePromptsFlags
-
-			case "get-workspace-info":
-				epf = assistantGetWorkspaceInfoFlags
-
-			case "send-notification":
-				epf = assistantSendNotificationFlags
-
-			case "subscribe-to-updates":
-				epf = assistantSubscribeToUpdatesFlags
-
-			case "process-batch":
-				epf = assistantProcessBatchFlags
 
 			}
 
@@ -291,40 +201,6 @@ func ParseEndpoint(
 			case "flexible-data":
 				endpoint = c.FlexibleData()
 				data, err = streamingc.BuildFlexibleDataPayload(*streamingFlexibleDataDataTypeFlag, *streamingFlexibleDataStreaming2Flag)
-			}
-		case "assistant":
-			c := assistantc.NewClient(scheme, host, doer, enc, dec, restore)
-			switch epn {
-			case "analyze-text":
-				endpoint = c.AnalyzeText()
-				data, err = assistantc.BuildAnalyzeTextPayload(*assistantAnalyzeTextBodyFlag)
-			case "search-knowledge":
-				endpoint = c.SearchKnowledge()
-				data, err = assistantc.BuildSearchKnowledgePayload(*assistantSearchKnowledgeBodyFlag)
-			case "execute-code":
-				endpoint = c.ExecuteCode()
-				data, err = assistantc.BuildExecuteCodePayload(*assistantExecuteCodeBodyFlag)
-			case "list-documents":
-				endpoint = c.ListDocuments()
-			case "get-system-info":
-				endpoint = c.GetSystemInfo()
-			case "get-conversation-history":
-				endpoint = c.GetConversationHistory()
-				data, err = assistantc.BuildGetConversationHistoryPayload(*assistantGetConversationHistoryBodyFlag)
-			case "generate-prompts":
-				endpoint = c.GeneratePrompts()
-				data, err = assistantc.BuildGeneratePromptsPayload(*assistantGeneratePromptsBodyFlag)
-			case "get-workspace-info":
-				endpoint = c.GetWorkspaceInfo()
-			case "send-notification":
-				endpoint = c.SendNotification()
-				data, err = assistantc.BuildSendNotificationPayload(*assistantSendNotificationBodyFlag)
-			case "subscribe-to-updates":
-				endpoint = c.SubscribeToUpdates()
-				data, err = assistantc.BuildSubscribeToUpdatesPayload(*assistantSubscribeToUpdatesBodyFlag)
-			case "process-batch":
-				endpoint = c.ProcessBatch()
-				data, err = assistantc.BuildProcessBatchPayload(*assistantProcessBatchBodyFlag)
 			}
 		}
 	}
@@ -449,7 +325,7 @@ func streamingStreamEventsUsage() {
 	// Example block: pass example as parameter to avoid format parsing of % characters
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `streaming stream-events --category "system" --filter "Minus sunt et et ipsam atque eum."`)
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `streaming stream-events --category "system" --filter "Quia provident officia."`)
 }
 
 func streamingStreamLogsUsage() {
@@ -468,7 +344,7 @@ func streamingStreamLogsUsage() {
 	// Example block: pass example as parameter to avoid format parsing of % characters
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `streaming stream-logs --level "error"`)
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `streaming stream-logs --level "info"`)
 }
 
 func streamingMonitorResourceChangesUsage() {
@@ -489,7 +365,7 @@ func streamingMonitorResourceChangesUsage() {
 	// Example block: pass example as parameter to avoid format parsing of % characters
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `streaming monitor-resource-changes --resource-type "Accusantium dignissimos nihil." --filter "Qui ipsum nihil voluptatibus amet perspiciatis voluptates."`)
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `streaming monitor-resource-changes --resource-type "Et nisi numquam sit iusto." --filter "Vitae consectetur tenetur tempore nesciunt odit autem."`)
 }
 
 func streamingFlexibleDataUsage() {
@@ -510,260 +386,5 @@ func streamingFlexibleDataUsage() {
 	// Example block: pass example as parameter to avoid format parsing of % characters
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `streaming flexible-data --data-type "Et ut odio recusandae temporibus omnis architecto." --streaming2 true`)
-}
-
-// assistantUsage displays the usage of the assistant command and its
-// subcommands.
-func assistantUsage() {
-	fmt.Fprintln(os.Stderr, `AI Assistant service with full MCP protocol support`)
-	fmt.Fprintf(os.Stderr, "Usage:\n    %s [globalflags] assistant COMMAND [flags]\n\n", os.Args[0])
-	fmt.Fprintln(os.Stderr, "COMMAND:")
-	fmt.Fprintln(os.Stderr, `    analyze-text: Analyze text for sentiment, keywords, or summary`)
-	fmt.Fprintln(os.Stderr, `    search-knowledge: Search the knowledge base`)
-	fmt.Fprintln(os.Stderr, `    execute-code: Execute code in a sandboxed environment`)
-	fmt.Fprintln(os.Stderr, `    list-documents: List available documents`)
-	fmt.Fprintln(os.Stderr, `    get-system-info: Get system information and status`)
-	fmt.Fprintln(os.Stderr, `    get-conversation-history: Get conversation history`)
-	fmt.Fprintln(os.Stderr, `    generate-prompts: Generate context-aware prompts`)
-	fmt.Fprintln(os.Stderr, `    get-workspace-info: Get workspace root directories from client`)
-	fmt.Fprintln(os.Stderr, `    send-notification: Send status notification to client`)
-	fmt.Fprintln(os.Stderr, `    subscribe-to-updates: Subscribe to resource updates`)
-	fmt.Fprintln(os.Stderr, `    process-batch: Process a batch of items with progress tracking`)
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Additional help:")
-	fmt.Fprintf(os.Stderr, "    %s assistant COMMAND --help\n", os.Args[0])
-}
-func assistantAnalyzeTextUsage() {
-	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] assistant analyze-text", os.Args[0])
-	fmt.Fprint(os.Stderr, " -body JSON")
-	fmt.Fprintln(os.Stderr)
-
-	// Description
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Analyze text for sentiment, keywords, or summary`)
-
-	// Flags list
-	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-
-	// Example block: pass example as parameter to avoid format parsing of % characters
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant analyze-text --body '{
-      "mode": "sentiment",
-      "text": "Dolore atque qui possimus ipsam esse."
-   }'`)
-}
-
-func assistantSearchKnowledgeUsage() {
-	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] assistant search-knowledge", os.Args[0])
-	fmt.Fprint(os.Stderr, " -body JSON")
-	fmt.Fprintln(os.Stderr)
-
-	// Description
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Search the knowledge base`)
-
-	// Flags list
-	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-
-	// Example block: pass example as parameter to avoid format parsing of % characters
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant search-knowledge --body '{
-      "limit": 8368102686863965314,
-      "query": "Nihil eaque aspernatur commodi."
-   }'`)
-}
-
-func assistantExecuteCodeUsage() {
-	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] assistant execute-code", os.Args[0])
-	fmt.Fprint(os.Stderr, " -body JSON")
-	fmt.Fprintln(os.Stderr)
-
-	// Description
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Execute code in a sandboxed environment`)
-
-	// Flags list
-	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-
-	// Example block: pass example as parameter to avoid format parsing of % characters
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant execute-code --body '{
-      "code": "Aut exercitationem sequi.",
-      "language": "Sit debitis vel temporibus quia ea ipsa."
-   }'`)
-}
-
-func assistantListDocumentsUsage() {
-	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] assistant list-documents", os.Args[0])
-	fmt.Fprintln(os.Stderr)
-
-	// Description
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `List available documents`)
-
-	// Flags list
-
-	// Example block: pass example as parameter to avoid format parsing of % characters
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant list-documents`)
-}
-
-func assistantGetSystemInfoUsage() {
-	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] assistant get-system-info", os.Args[0])
-	fmt.Fprintln(os.Stderr)
-
-	// Description
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Get system information and status`)
-
-	// Flags list
-
-	// Example block: pass example as parameter to avoid format parsing of % characters
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant get-system-info`)
-}
-
-func assistantGetConversationHistoryUsage() {
-	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] assistant get-conversation-history", os.Args[0])
-	fmt.Fprint(os.Stderr, " -body JSON")
-	fmt.Fprintln(os.Stderr)
-
-	// Description
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Get conversation history`)
-
-	// Flags list
-	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-
-	// Example block: pass example as parameter to avoid format parsing of % characters
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant get-conversation-history --body '{
-      "limit": 512059023657992185
-   }'`)
-}
-
-func assistantGeneratePromptsUsage() {
-	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] assistant generate-prompts", os.Args[0])
-	fmt.Fprint(os.Stderr, " -body JSON")
-	fmt.Fprintln(os.Stderr)
-
-	// Description
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Generate context-aware prompts`)
-
-	// Flags list
-	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-
-	// Example block: pass example as parameter to avoid format parsing of % characters
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant generate-prompts --body '{
-      "context": "Dolor sit.",
-      "task": "Dolores et sit ut et."
-   }'`)
-}
-
-func assistantGetWorkspaceInfoUsage() {
-	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] assistant get-workspace-info", os.Args[0])
-	fmt.Fprintln(os.Stderr)
-
-	// Description
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Get workspace root directories from client`)
-
-	// Flags list
-
-	// Example block: pass example as parameter to avoid format parsing of % characters
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant get-workspace-info`)
-}
-
-func assistantSendNotificationUsage() {
-	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] assistant send-notification", os.Args[0])
-	fmt.Fprint(os.Stderr, " -body JSON")
-	fmt.Fprintln(os.Stderr)
-
-	// Description
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Send status notification to client`)
-
-	// Flags list
-	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-
-	// Example block: pass example as parameter to avoid format parsing of % characters
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant send-notification --body '{
-      "data": "Optio laborum.",
-      "message": "Omnis voluptate suscipit alias tempora.",
-      "type": "warning"
-   }'`)
-}
-
-func assistantSubscribeToUpdatesUsage() {
-	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] assistant subscribe-to-updates", os.Args[0])
-	fmt.Fprint(os.Stderr, " -body JSON")
-	fmt.Fprintln(os.Stderr)
-
-	// Description
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Subscribe to resource updates`)
-
-	// Flags list
-	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-
-	// Example block: pass example as parameter to avoid format parsing of % characters
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant subscribe-to-updates --body '{
-      "filter": "Commodi dolor et reprehenderit sunt.",
-      "resource": "Velit eos quos."
-   }'`)
-}
-
-func assistantProcessBatchUsage() {
-	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] assistant process-batch", os.Args[0])
-	fmt.Fprint(os.Stderr, " -body JSON")
-	fmt.Fprintln(os.Stderr)
-
-	// Description
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Process a batch of items with progress tracking`)
-
-	// Flags list
-	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-
-	// Example block: pass example as parameter to avoid format parsing of % characters
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant process-batch --body '{
-      "blob": "U2VkIHZlbGl0IHZvbHVwdGF0dW0gdWxsYW0gdG90YW0gdm9sdXB0YXRlcyB0b3RhbS4=",
-      "format": "text",
-      "items": [
-         "Eius corrupti impedit expedita.",
-         "Sint quos fuga.",
-         "Quo et velit odio quasi eum totam."
-      ],
-      "mimeType": "Provident voluptas saepe impedit quia aut.",
-      "uri": "Voluptatem quam veniam et."
-   }'`)
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `streaming flexible-data --data-type "Cupiditate aut qui quas qui vitae." --streaming2 true`)
 }

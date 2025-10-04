@@ -343,9 +343,8 @@ func (g *adapterGenerator) buildDynamicPromptAdapters() []*DynamicPromptAdapter 
 
 // promptArgsFromPayload builds a flat list of prompt arguments from a payload attribute (top-level only)
 func (g *adapterGenerator) promptArgsFromPayload(attr *expr.AttributeExpr) []PromptArg {
-	var out []PromptArg
 	if attr == nil || attr.Type == nil || attr.Type == expr.Empty {
-		return out
+		return nil
 	}
 	// Unwrap user type
 	if ut, ok := attr.Type.(expr.UserType); ok {
@@ -353,8 +352,10 @@ func (g *adapterGenerator) promptArgsFromPayload(attr *expr.AttributeExpr) []Pro
 	}
 	obj, ok := attr.Type.(*expr.Object)
 	if !ok {
-		return out
+		return nil
 	}
+	// Pre-allocate based on number of top-level fields
+	out := make([]PromptArg, 0, len(*obj))
 	// Build required set
 	required := map[string]struct{}{}
 	if attr.Validation != nil {

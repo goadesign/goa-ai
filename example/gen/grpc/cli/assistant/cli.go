@@ -29,7 +29,7 @@ func UsageCommands() []string {
 // UsageExamples produces an example of a valid invocation of the CLI tool.
 func UsageExamples() string {
 	return os.Args[0] + ` grpcstream list-items --message '{
-      "filter": "Numquam ex."
+      "filter": "Voluptatem quia dolorem quo excepturi earum."
    }'` + "\n" +
 		""
 }
@@ -170,7 +170,7 @@ func grpcstreamListItemsUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `grpcstream list-items --message '{
-      "filter": "Numquam ex."
+      "filter": "Voluptatem quia dolorem quo excepturi earum."
    }'`)
 }
 

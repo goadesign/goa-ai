@@ -35,7 +35,7 @@ type Service interface {
 	// Get a prompt by name
 	PromptsGet(context.Context, *PromptsGetPayload) (res *PromptsGetResult, err error)
 	// Send status updates to client
-	NotifyStatusUpdate(context.Context, *NotifyStatusUpdatePayload) (err error)
+	NotifyStatusUpdate(context.Context, *SendNotificationPayload) (err error)
 	// Subscribe to resource updates
 	Subscribe(context.Context, *SubscribePayload) (res *SubscribeResult, err error)
 	// Unsubscribe from resource updates
@@ -195,17 +195,6 @@ type MessageContent struct {
 	URI *string
 }
 
-// NotifyStatusUpdatePayload is the payload type of the mcp_assistant service
-// notify_status_update method.
-type NotifyStatusUpdatePayload struct {
-	// Notification type
-	Type string
-	// Notification message
-	Message *string
-	// Additional data
-	Data any
-}
-
 // PingResult is the result type of the mcp_assistant service ping method.
 type PingResult struct {
 	// Response to ping
@@ -339,6 +328,17 @@ type ResourcesSubscribePayload struct {
 type ResourcesUnsubscribePayload struct {
 	// Resource URI to unsubscribe from
 	URI string
+}
+
+// SendNotificationPayload is the payload type of the mcp_assistant service
+// notify_status_update method.
+type SendNotificationPayload struct {
+	// Notification type
+	Type string
+	// Notification message
+	Message *string
+	// Additional data
+	Data any
 }
 
 type ServerCapabilities struct {

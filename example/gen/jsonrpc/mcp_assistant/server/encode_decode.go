@@ -10,7 +10,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -39,13 +38,8 @@ func DecodeInitializeRequest(mux goahttp.Muxer, decoder func(*http.Request) goah
 	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpassistant.InitializePayload, error) {
 		r.Body = io.NopCloser(bytes.NewReader(req.Params))
 		var (
-			body struct {
-				// MCP protocol version
-				ProtocolVersion *string `form:"protocolVersion" json:"protocolVersion" xml:"protocolVersion"`
-				// Client information
-				ClientInfo *ClientInfoRequestBodyRequestBodyRequestBodyRequestBody `form:"clientInfo" json:"clientInfo" xml:"clientInfo"`
-			}
-			err error
+			body InitializeRequestBody
+			err  error
 		)
 		err = decoder(r).Decode(&body)
 		if err != nil {
@@ -61,22 +55,12 @@ func DecodeInitializeRequest(mux goahttp.Muxer, decoder func(*http.Request) goah
 			var zero *mcpassistant.InitializePayload
 			return zero, goa.DecodePayloadError(err.Error())
 		}
-		if body.ProtocolVersion == nil {
-			err = goa.MergeErrors(err, goa.MissingFieldError("protocolVersion", "body"))
-		}
-		if body.ClientInfo == nil {
-			err = goa.MergeErrors(err, goa.MissingFieldError("clientInfo", "body"))
-		}
-		if body.ClientInfo != nil {
-			if err2 := ValidateClientInfoRequestBodyRequestBodyRequestBodyRequestBody(body.ClientInfo); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
-		}
+		err = ValidateInitializeRequestBody(&body)
 		if err != nil {
 			var zero *mcpassistant.InitializePayload
 			return zero, err
 		}
-		payload := NewInitializePayload(body)
+		payload := NewInitializePayload(&body)
 
 		return payload, nil
 	}
@@ -112,11 +96,8 @@ func DecodeToolsListRequest(mux goahttp.Muxer, decoder func(*http.Request) goaht
 	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpassistant.ToolsListPayload, error) {
 		r.Body = io.NopCloser(bytes.NewReader(req.Params))
 		var (
-			body struct {
-				// Pagination cursor
-				Cursor *string `form:"cursor" json:"cursor" xml:"cursor"`
-			}
-			err error
+			body ToolsListRequestBody
+			err  error
 		)
 		err = decoder(r).Decode(&body)
 		if err != nil {
@@ -132,7 +113,7 @@ func DecodeToolsListRequest(mux goahttp.Muxer, decoder func(*http.Request) goaht
 			var zero *mcpassistant.ToolsListPayload
 			return zero, goa.DecodePayloadError(err.Error())
 		}
-		payload := NewToolsListPayload(body)
+		payload := NewToolsListPayload(&body)
 
 		return payload, nil
 	}
@@ -156,13 +137,8 @@ func DecodeToolsCallRequest(mux goahttp.Muxer, decoder func(*http.Request) goaht
 	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpassistant.ToolsCallPayload, error) {
 		r.Body = io.NopCloser(bytes.NewReader(req.Params))
 		var (
-			body struct {
-				// Tool name
-				Name *string `form:"name" json:"name" xml:"name"`
-				// Tool arguments
-				Arguments json.RawMessage `form:"arguments" json:"arguments" xml:"arguments"`
-			}
-			err error
+			body ToolsCallRequestBody
+			err  error
 		)
 		err = decoder(r).Decode(&body)
 		if err != nil {
@@ -178,14 +154,12 @@ func DecodeToolsCallRequest(mux goahttp.Muxer, decoder func(*http.Request) goaht
 			var zero *mcpassistant.ToolsCallPayload
 			return zero, goa.DecodePayloadError(err.Error())
 		}
-		if body.Name == nil {
-			err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
-		}
+		err = ValidateToolsCallRequestBody(&body)
 		if err != nil {
 			var zero *mcpassistant.ToolsCallPayload
 			return zero, err
 		}
-		payload := NewToolsCallPayload(body)
+		payload := NewToolsCallPayload(&body)
 
 		return payload, nil
 	}
@@ -209,11 +183,8 @@ func DecodeResourcesListRequest(mux goahttp.Muxer, decoder func(*http.Request) g
 	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpassistant.ResourcesListPayload, error) {
 		r.Body = io.NopCloser(bytes.NewReader(req.Params))
 		var (
-			body struct {
-				// Pagination cursor
-				Cursor *string `form:"cursor" json:"cursor" xml:"cursor"`
-			}
-			err error
+			body ResourcesListRequestBody
+			err  error
 		)
 		err = decoder(r).Decode(&body)
 		if err != nil {
@@ -229,7 +200,7 @@ func DecodeResourcesListRequest(mux goahttp.Muxer, decoder func(*http.Request) g
 			var zero *mcpassistant.ResourcesListPayload
 			return zero, goa.DecodePayloadError(err.Error())
 		}
-		payload := NewResourcesListPayload(body)
+		payload := NewResourcesListPayload(&body)
 
 		return payload, nil
 	}
@@ -253,11 +224,8 @@ func DecodeResourcesReadRequest(mux goahttp.Muxer, decoder func(*http.Request) g
 	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpassistant.ResourcesReadPayload, error) {
 		r.Body = io.NopCloser(bytes.NewReader(req.Params))
 		var (
-			body struct {
-				// Resource URI
-				URI *string `form:"uri" json:"uri" xml:"uri"`
-			}
-			err error
+			body ResourcesReadRequestBody
+			err  error
 		)
 		err = decoder(r).Decode(&body)
 		if err != nil {
@@ -273,17 +241,12 @@ func DecodeResourcesReadRequest(mux goahttp.Muxer, decoder func(*http.Request) g
 			var zero *mcpassistant.ResourcesReadPayload
 			return zero, goa.DecodePayloadError(err.Error())
 		}
-		if body.URI == nil {
-			err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
-		}
-		if body.URI != nil {
-			err = goa.MergeErrors(err, goa.ValidatePattern("body.uri", *body.URI, "^[a-zA-Z][a-zA-Z0-9+.-]*:.*"))
-		}
+		err = ValidateResourcesReadRequestBody(&body)
 		if err != nil {
 			var zero *mcpassistant.ResourcesReadPayload
 			return zero, err
 		}
-		payload := NewResourcesReadPayload(body)
+		payload := NewResourcesReadPayload(&body)
 
 		return payload, nil
 	}
@@ -304,11 +267,8 @@ func DecodeResourcesSubscribeRequest(mux goahttp.Muxer, decoder func(*http.Reque
 	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpassistant.ResourcesSubscribePayload, error) {
 		r.Body = io.NopCloser(bytes.NewReader(req.Params))
 		var (
-			body struct {
-				// Resource URI to subscribe to
-				URI *string `form:"uri" json:"uri" xml:"uri"`
-			}
-			err error
+			body ResourcesSubscribeRequestBody
+			err  error
 		)
 		err = decoder(r).Decode(&body)
 		if err != nil {
@@ -324,14 +284,12 @@ func DecodeResourcesSubscribeRequest(mux goahttp.Muxer, decoder func(*http.Reque
 			var zero *mcpassistant.ResourcesSubscribePayload
 			return zero, goa.DecodePayloadError(err.Error())
 		}
-		if body.URI == nil {
-			err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
-		}
+		err = ValidateResourcesSubscribeRequestBody(&body)
 		if err != nil {
 			var zero *mcpassistant.ResourcesSubscribePayload
 			return zero, err
 		}
-		payload := NewResourcesSubscribePayload(body)
+		payload := NewResourcesSubscribePayload(&body)
 
 		return payload, nil
 	}
@@ -352,11 +310,8 @@ func DecodeResourcesUnsubscribeRequest(mux goahttp.Muxer, decoder func(*http.Req
 	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpassistant.ResourcesUnsubscribePayload, error) {
 		r.Body = io.NopCloser(bytes.NewReader(req.Params))
 		var (
-			body struct {
-				// Resource URI to unsubscribe from
-				URI *string `form:"uri" json:"uri" xml:"uri"`
-			}
-			err error
+			body ResourcesUnsubscribeRequestBody
+			err  error
 		)
 		err = decoder(r).Decode(&body)
 		if err != nil {
@@ -372,14 +327,12 @@ func DecodeResourcesUnsubscribeRequest(mux goahttp.Muxer, decoder func(*http.Req
 			var zero *mcpassistant.ResourcesUnsubscribePayload
 			return zero, goa.DecodePayloadError(err.Error())
 		}
-		if body.URI == nil {
-			err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
-		}
+		err = ValidateResourcesUnsubscribeRequestBody(&body)
 		if err != nil {
 			var zero *mcpassistant.ResourcesUnsubscribePayload
 			return zero, err
 		}
-		payload := NewResourcesUnsubscribePayload(body)
+		payload := NewResourcesUnsubscribePayload(&body)
 
 		return payload, nil
 	}
@@ -403,11 +356,8 @@ func DecodePromptsListRequest(mux goahttp.Muxer, decoder func(*http.Request) goa
 	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpassistant.PromptsListPayload, error) {
 		r.Body = io.NopCloser(bytes.NewReader(req.Params))
 		var (
-			body struct {
-				// Pagination cursor
-				Cursor *string `form:"cursor" json:"cursor" xml:"cursor"`
-			}
-			err error
+			body PromptsListRequestBody
+			err  error
 		)
 		err = decoder(r).Decode(&body)
 		if err != nil {
@@ -423,7 +373,7 @@ func DecodePromptsListRequest(mux goahttp.Muxer, decoder func(*http.Request) goa
 			var zero *mcpassistant.PromptsListPayload
 			return zero, goa.DecodePayloadError(err.Error())
 		}
-		payload := NewPromptsListPayload(body)
+		payload := NewPromptsListPayload(&body)
 
 		return payload, nil
 	}
@@ -447,13 +397,8 @@ func DecodePromptsGetRequest(mux goahttp.Muxer, decoder func(*http.Request) goah
 	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpassistant.PromptsGetPayload, error) {
 		r.Body = io.NopCloser(bytes.NewReader(req.Params))
 		var (
-			body struct {
-				// Prompt name
-				Name *string `form:"name" json:"name" xml:"name"`
-				// Prompt arguments
-				Arguments json.RawMessage `form:"arguments" json:"arguments" xml:"arguments"`
-			}
-			err error
+			body PromptsGetRequestBody
+			err  error
 		)
 		err = decoder(r).Decode(&body)
 		if err != nil {
@@ -469,14 +414,12 @@ func DecodePromptsGetRequest(mux goahttp.Muxer, decoder func(*http.Request) goah
 			var zero *mcpassistant.PromptsGetPayload
 			return zero, goa.DecodePayloadError(err.Error())
 		}
-		if body.Name == nil {
-			err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
-		}
+		err = ValidatePromptsGetRequestBody(&body)
 		if err != nil {
 			var zero *mcpassistant.PromptsGetPayload
 			return zero, err
 		}
-		payload := NewPromptsGetPayload(body)
+		payload := NewPromptsGetPayload(&body)
 
 		return payload, nil
 	}
@@ -493,42 +436,33 @@ func EncodeNotifyStatusUpdateResponse(encoder func(context.Context, http.Respons
 
 // DecodeNotifyStatusUpdateRequest returns a decoder for requests sent to the
 // mcp_assistant notify_status_update endpoint.
-func DecodeNotifyStatusUpdateRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*mcpassistant.NotifyStatusUpdatePayload, error) {
-	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpassistant.NotifyStatusUpdatePayload, error) {
+func DecodeNotifyStatusUpdateRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*mcpassistant.SendNotificationPayload, error) {
+	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpassistant.SendNotificationPayload, error) {
 		r.Body = io.NopCloser(bytes.NewReader(req.Params))
 		var (
-			body struct {
-				// Notification type
-				Type *string `form:"type" json:"type" xml:"type"`
-				// Notification message
-				Message *string `form:"message" json:"message" xml:"message"`
-				// Additional data
-				Data any `form:"data" json:"data" xml:"data"`
-			}
-			err error
+			body NotifyStatusUpdateRequestBody
+			err  error
 		)
 		err = decoder(r).Decode(&body)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				var zero *mcpassistant.NotifyStatusUpdatePayload
+				var zero *mcpassistant.SendNotificationPayload
 				return zero, goa.MissingPayloadError()
 			}
 			var gerr *goa.ServiceError
 			if errors.As(err, &gerr) {
-				var zero *mcpassistant.NotifyStatusUpdatePayload
+				var zero *mcpassistant.SendNotificationPayload
 				return zero, gerr
 			}
-			var zero *mcpassistant.NotifyStatusUpdatePayload
+			var zero *mcpassistant.SendNotificationPayload
 			return zero, goa.DecodePayloadError(err.Error())
 		}
-		if body.Type == nil {
-			err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
-		}
+		err = ValidateNotifyStatusUpdateRequestBody(&body)
 		if err != nil {
-			var zero *mcpassistant.NotifyStatusUpdatePayload
+			var zero *mcpassistant.SendNotificationPayload
 			return zero, err
 		}
-		payload := NewNotifyStatusUpdatePayload(body)
+		payload := NewNotifyStatusUpdateSendNotificationPayload(&body)
 
 		return payload, nil
 	}
@@ -640,9 +574,6 @@ func DecodeUnsubscribeRequest(mux goahttp.Muxer, decoder func(*http.Request) goa
 // builds a value of type *mcpassistant.ClientInfo from a value of type
 // *ClientInfoRequestBodyRequestBodyRequestBodyRequestBody.
 func unmarshalClientInfoRequestBodyRequestBodyRequestBodyRequestBodyToMcpassistantClientInfo(v *ClientInfoRequestBodyRequestBodyRequestBodyRequestBody) *mcpassistant.ClientInfo {
-	if v == nil {
-		return nil
-	}
 	res := &mcpassistant.ClientInfo{
 		Name:    *v.Name,
 		Version: *v.Version,
