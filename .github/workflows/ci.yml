@@ -33,12 +33,14 @@ jobs:
           go mod download
           go build ./...
 
-      - name: Install golangci-lint v2
+      - name: Install protoc (for make tools)
         run: |
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
-            | sh -s -- -b "$HOME/bin" v2.0.0
-          echo "$HOME/bin" >> "$GITHUB_PATH"
-          golangci-lint version
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Install developer tools
+        run: |
+          make tools
       - name: Lint (golangci-lint v2)
         run: |
           golangci-lint run --timeout=5m
