@@ -3,6 +3,7 @@
 GO ?= go
 HTTP_PORT ?= 8888
 
+GOPATH ?= $(shell go env GOPATH)
 GOLANGCI_LINT := $(shell command -v golangci-lint 2>/dev/null)
 PROTOC := $(shell command -v protoc 2>/dev/null)
 PROTOC_GEN_GO := protoc-gen-go
