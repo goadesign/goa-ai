@@ -4,7 +4,7 @@
 
 We're excited to announce the first release of **Goa-AI**, a powerful plugin for the [Goa framework](https://goa.design) that brings design-first development to AI backends. With Goa-AI, you can build production-ready [Model Context Protocol (MCP)](https://modelcontextprotocol.io) servers from simple Go definitions—no more handwriting API specs, JSON schemas, or boilerplate code.
 
-## 🎯 What is Goa-AI?
+## What is Goa-AI?
 
 Goa-AI extends Goa's proven design-first methodology to the world of AI agents. Define your AI backend's tools, resources, and prompts in a simple, type-safe Go DSL, and let Goa-AI generate:
 
@@ -15,9 +15,9 @@ Goa-AI extends Goa's proven design-first methodology to the world of AI agents. 
 - **Protocol compliance** with automatic capability negotiation
 - **Production-ready code** with robust error handling
 
-## ✨ Key Features
+## Key Features
 
-### 🛠️ MCP Protocol Implementation
+### MCP Protocol Implementation
 
 Complete implementation of the Model Context Protocol specification:
 
@@ -28,7 +28,7 @@ Complete implementation of the Model Context Protocol specification:
 - **Subscriptions**: Real-time resource updates via Server-Sent Events
 - **Streaming**: First-class support for streaming tool responses
 
-### 🎨 Elegant DSL
+### Elegant DSL
 
 Simple, readable API for describing your AI backend:
 
@@ -47,7 +47,7 @@ var _ = Service("assistant", func() {
 })
 ```
 
-### 🔄 JSON-RPC Transport
+### JSON-RPC Transport
 
 Built on Goa's robust JSON-RPC implementation:
 
@@ -57,21 +57,21 @@ Built on Goa's robust JSON-RPC implementation:
 - Content negotiation via Accept headers
 - Goa-generated encoders (no manual JSON marshaling)
 
-### 🧩 Flexible Architecture
+### Flexible Architecture
 
 - **Adapter pattern**: Clean separation between MCP protocol and your business logic
 - **Configurable options**: Logging, error mapping, resource access control
 - **Client wrapper**: Incremental MCP adoption for existing services
 - **Protocol versioning**: Explicit version negotiation and validation
 
-### 🎯 Type Safety
+### Type Safety
 
 - Go type system ensures consistency between server and JSON schemas
 - Compile-time checks prevent runtime errors
 - Goa validations enforce contracts at API boundaries
 - No redundant nil checks or defensive programming needed
 
-### 🧪 Comprehensive Testing
+### Comprehensive Testing
 
 Production-ready with extensive integration tests:
 
@@ -80,7 +80,7 @@ Production-ready with extensive integration tests:
 - Framework for adding custom scenarios
 - CI/CD integration with GitHub Actions
 
-## 📦 What's Included
+## What's Included
 
 ### Core Components
 
@@ -152,7 +152,7 @@ Comprehensive test suite (`integration_tests/`):
 - **Prompts tests**: Static and dynamic prompts, variables
 - **Notifications tests**: Progress, status, resource changes
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Installation
 
@@ -252,7 +252,7 @@ curl localhost:8080/rpc \
   }'
 ```
 
-## 🎨 Design Philosophy
+## Design Philosophy
 
 Goa-AI follows these core principles:
 
@@ -263,7 +263,7 @@ Goa-AI follows these core principles:
 5. **Minimal Surface Area**: Small, focused API that composes well
 6. **Production-Ready**: Generated code is robust, efficient, and maintainable
 
-## 📚 Documentation
+## Documentation
 
 - **README.md**: Quick overview and quickstart
 - **DESIGN.md**: Deep dive into architecture and implementation
@@ -271,7 +271,7 @@ Goa-AI follows these core principles:
 - **integration_tests/README.md**: Comprehensive testing guide
 - **Example service**: Complete working demonstration
 
-## 🔧 Configuration & Customization
+## Configuration & Customization
 
 ### Adapter Options
 
@@ -312,7 +312,7 @@ adapter, err := mcpassistant.NewMCPAdapter(
 )
 ```
 
-## 🧪 Testing
+## Testing
 
 Run the full test suite:
 
@@ -337,7 +337,7 @@ go test -v ./tests -run TestMCPResources
 go test -v ./tests -run TestMCPPrompts
 ```
 
-## 🏗️ Architecture Highlights
+## Architecture Highlights
 
 ### Code Generation Strategy
 
@@ -361,13 +361,13 @@ go test -v ./tests -run TestMCPPrompts
 - Handles required fields and validation
 - Base64-encoded bytes support
 
-## 📋 Requirements
+## Requirements
 
 - **Go**: 1.24 or newer
 - **Goa**: v3.22.2 or newer
 - **Protoc**: For running `make tools` (optional)
 
-## 🛣️ Roadmap
+## Roadmap
 
 Future enhancements under consideration:
 
@@ -379,7 +379,7 @@ Future enhancements under consideration:
 - **OpenAPI integration**: Export tool definitions to OpenAPI
 - **Enhanced schema validation**: More comprehensive JSON schema generation
 
-## 🤝 Contributing
+## Contributing
 
 We welcome contributions! Please:
 
@@ -389,11 +389,11 @@ We welcome contributions! Please:
 4. Ensure tests pass: `make ci`
 5. Update documentation for new features
 
-## 📄 License
+## License
 
 MIT License—same as the Goa framework.
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 Built with and for:
 
@@ -401,7 +401,7 @@ Built with and for:
 - **[Model Context Protocol](https://modelcontextprotocol.io)**: The open protocol for AI-backend communication
 - The Go community for excellent tooling and libraries
 
-## 🔗 Links
+## Links
 
 - **GitHub**: https://github.com/goadesign/goa-ai
 - **Documentation**: https://pkg.go.dev/goa.design/goa-ai
