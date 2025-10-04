@@ -36,7 +36,8 @@ See how a simple, readable design becomes a powerful, feature-rich server with a
     <tr>
       <td valign="top">
 
-<pre><code>// design/design.go
+```go
+// design/design.go
 var _ = Service("orders", func() {
   // Describe a tool for your AI agent
   Method("get_status", func() {
@@ -50,25 +51,24 @@ var _ = Service("orders", func() {
     )
   })
 })
-</code></pre>
+```
 
-      </td>
-      <td valign="top">
+</td>
+<td valign="top">
 
-<ul>
-  <li>Strongly-typed JSON Schema for the model.</li>
-  <li>Boilerplate-free server handlers.</li>
-  <li>JSON-RPC transport over HTTP.</li>
-  <li>First-class streaming via SSE.</li>
-  <li>Automatic error mapping.</li>
-  <li>Built-in capability negotiation.</li>
-  <li>...and much more, generated instantly by running:</li>
-</ul>
+- Strongly-typed JSON Schema for the model
+- Boilerplate-free server handlers
+- JSON-RPC transport over HTTP
+- First-class streaming via SSE
+- Automatic error mapping
+- Built-in capability negotiation
+- ...and much more, generated instantly by running:
 
-<pre><code>goa gen my-module/design
-</code></pre>
+```bash
+goa gen my-module/design
+```
 
-      </td>
+</td>
     </tr>
   </tbody>
   
