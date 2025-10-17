@@ -24,34 +24,41 @@ import (
 	goa "goa.design/goa/v3/pkg"
 )
 
-// MCPAdapter handles MCP protocol requests and adapts them to the original
-// service
-// Required imports:
-// - bytes, context, encoding/json, io, net/http, sync
-// - goahttp, jsonrpc, goa and original service packages are included via header
+// MCPAdapter core: types, options, constructor, helpers
+
 type MCPAdapter struct {
 	service        assistant.Service
-	mux            goahttp.Muxer
 	initialized    bool
 	mu             sync.RWMutex
 	opts           *MCPAdapterOptions
 	promptProvider PromptProvider
+	// Minimal subscription registry keyed by resource URI
+	subs   map[string]int
+	subsMu sync.Mutex
+	// Broadcaster for server-initiated events (notifications/resources)
+	broadcaster Broadcaster
+	// resourceNameToURI holds DSL-derived mapping for policy and lookups
+	resourceNameToURI map[string]string
 }
 
 // MCPAdapterOptions allows customizing adapter behavior.
 type MCPAdapterOptions struct {
 	// Logger is an optional hook called with internal adapter events.
-	// event examples: "request", "response", "error"; details is implementation-defined.
 	Logger func(ctx context.Context, event string, details any)
 	// ErrorMapper allows mapping arbitrary errors to framework-friendly errors
-	// (e.g., goa.PermanentError with specific JSON-RPC codes).
 	ErrorMapper func(error) error
-	// Allowed/Deny lists for resource URIs. If AllowedResourceURIs is non-empty,
-	// only URIs in that list are permitted. DeniedResourceURIs takes precedence.
-	AllowedResourceURIs     []string
-	DeniedResourceURIs      []string
+	// Allowed/Deny lists for resource URIs; Denied takes precedence unless header allow overrides
+	AllowedResourceURIs []string
+	DeniedResourceURIs  []string
+	// Name-based policy resolved to URIs at construction
+	AllowedResourceNames    []string
+	DeniedResourceNames     []string
 	StructuredStreamJSON    bool
 	ProtocolVersionOverride string
+	// Pluggable broadcaster, else default channel broadcaster
+	Broadcaster     Broadcaster
+	BroadcastBuffer int
+	DropIfSlow      bool
 }
 
 // mcpProtocolVersion resolves the protocol version from options or default.
@@ -62,8 +69,7 @@ func (a *MCPAdapter) mcpProtocolVersion() string {
 	return DefaultProtocolVersion
 }
 
-// bufferResponseWriter is a minimal http.ResponseWriter that writes to an in-memory buffer
-// used to leverage goa encoders without an actual HTTP response.
+// bufferResponseWriter writes to a buffer to reuse Goa encoders without HTTP response.
 type bufferResponseWriter struct {
 	headers http.Header
 	buf     bytes.Buffer
@@ -86,9 +92,7 @@ func encodeJSONToString(ctx context.Context, v any) (string, error) {
 	return bw.buf.String(), nil
 }
 
-// parseQueryParamsToJSON parses the query parameters of a URI into a JSON
-// object where keys are parameter names and values are best-effort typed.
-// Repeated parameters become arrays. Numbers and booleans are detected.
+// parseQueryParamsToJSON converts URI query params into JSON.
 func parseQueryParamsToJSON(uri string) ([]byte, error) {
 	u, err := url.Parse(uri)
 	if err != nil {
@@ -113,7 +117,6 @@ func parseQueryParamsToJSON(uri string) ([]byte, error) {
 	return json.Marshal(m)
 }
 
-// coerce tries to interpret s as bool, int, float, else returns s.
 func coerce(s string) any {
 	ls := strings.ToLower(s)
 	switch ls {
@@ -131,48 +134,63 @@ func coerce(s string) any {
 	return s
 }
 
-// NewMCPAdapter creates a new MCP adapter that wraps the original service
 func NewMCPAdapter(service assistant.Service, promptProvider PromptProvider, opts *MCPAdapterOptions) *MCPAdapter {
+	// Resolve name-based policy to URIs
+	if opts != nil && (len(opts.AllowedResourceNames) > 0 || len(opts.DeniedResourceNames) > 0) {
+		nameToURI := map[string]string{
+			"documents":            "doc://list",
+			"system_info":          "system://info",
+			"conversation_history": "conversation://history",
+		}
+		seen := map[string]struct{}{}
+		for _, n := range opts.AllowedResourceNames {
+			if u, ok := nameToURI[n]; ok {
+				if _, dup := seen["allow:"+u]; !dup {
+					opts.AllowedResourceURIs = append(opts.AllowedResourceURIs, u)
+					seen["allow:"+u] = struct{}{}
+				}
+			}
+		}
+		for _, n := range opts.DeniedResourceNames {
+			if u, ok := nameToURI[n]; ok {
+				if _, dup := seen["deny:"+u]; !dup {
+					opts.DeniedResourceURIs = append(opts.DeniedResourceURIs, u)
+					seen["deny:"+u] = struct{}{}
+				}
+			}
+		}
+	}
+	// Broadcaster
+	var bc Broadcaster
+	if opts != nil && opts.Broadcaster != nil {
+		bc = opts.Broadcaster
+	} else {
+		buf := 32
+		drop := true
+		if opts != nil {
+			if opts.BroadcastBuffer > 0 {
+				buf = opts.BroadcastBuffer
+			}
+			if opts.DropIfSlow == false {
+				drop = false
+			}
+		}
+		bc = newChannelBroadcaster(buf, drop)
+	}
+	// Build name->URI map from generated resources
+	nameToURI := map[string]string{
+		"documents":            "doc://list",
+		"system_info":          "system://info",
+		"conversation_history": "conversation://history",
+	}
 	return &MCPAdapter{
-		service:        service,
-		mux:            goahttp.NewMuxer(),
-		opts:           opts,
-		promptProvider: promptProvider,
+		service:           service,
+		opts:              opts,
+		promptProvider:    promptProvider,
+		subs:              make(map[string]int),
+		broadcaster:       bc,
+		resourceNameToURI: nameToURI,
 	}
-}
-
-// Initialize handles the MCP initialize request
-func (a *MCPAdapter) Initialize(ctx context.Context, p *InitializePayload) (*InitializeResult, error) {
-	if p == nil || p.ProtocolVersion == "" {
-		return nil, goa.PermanentError("invalid_params", "Missing protocolVersion")
-	}
-	switch p.ProtocolVersion {
-	case a.mcpProtocolVersion():
-	default:
-		return nil, goa.PermanentError("invalid_params", "Unsupported protocol version")
-	}
-	a.mu.Lock()
-	if a.initialized {
-		a.mu.Unlock()
-		return nil, goa.PermanentError("invalid_params", "Already initialized")
-	}
-	a.initialized = true
-	a.mu.Unlock()
-	// Build server info
-	serverInfo := &ServerInfo{
-		Name:    "assistant-mcp",
-		Version: "1.0.0",
-	}
-	// Build capabilities
-	capabilities := &ServerCapabilities{}
-	capabilities.Tools = &ToolsCapability{}
-	capabilities.Resources = &ResourcesCapability{}
-	capabilities.Prompts = &PromptsCapability{}
-	return &InitializeResult{
-		ProtocolVersion: a.mcpProtocolVersion(),
-		ServerInfo:      serverInfo,
-		Capabilities:    capabilities,
-	}, nil
 }
 
 func (a *MCPAdapter) isInitialized() bool {
@@ -182,66 +200,245 @@ func (a *MCPAdapter) isInitialized() bool {
 	return ok
 }
 
-// Ping handles the MCP ping request
-func (a *MCPAdapter) Ping(ctx context.Context) (*PingResult, error) {
-	return &PingResult{Pong: true}, nil
+func (a *MCPAdapter) log(ctx context.Context, event string, details any) {
+	if a != nil && a.opts != nil && a.opts.Logger != nil {
+		a.opts.Logger(ctx, event, details)
+	}
 }
 
-// ToolsList returns the list of available tools
+func (a *MCPAdapter) mapError(err error) error {
+	if a != nil && a.opts != nil && a.opts.ErrorMapper != nil && err != nil {
+		if m := a.opts.ErrorMapper(err); m != nil {
+			return m
+		}
+	}
+	return err
+}
+
+func stringPtr(s string) *string { return &s }
+
+func isLikelyJSON(s string) bool { return json.Valid([]byte(s)) }
+
+// buildContentItem returns a ContentItem honoring StructuredStreamJSON option.
+func buildContentItem(a *MCPAdapter, s string) *ContentItem {
+	if a != nil && a.opts != nil && a.opts.StructuredStreamJSON && isLikelyJSON(s) {
+		mt := stringPtr("application/json")
+		return &ContentItem{Type: "text", MimeType: mt, Text: &s}
+	}
+	return &ContentItem{Type: "text", Text: &s}
+}
+
+// Initialize handles the MCP initialize request.
+func (a *MCPAdapter) Initialize(ctx context.Context, p *InitializePayload) (*InitializeResult, error) {
+	if p == nil || p.ProtocolVersion == "" {
+		return nil, goa.PermanentError("invalid_params", "Missing protocolVersion")
+	}
+	switch p.ProtocolVersion {
+	case a.mcpProtocolVersion():
+	default:
+		return nil, goa.PermanentError("invalid_params", "Unsupported protocol version")
+	}
+
+	a.mu.Lock()
+	if a.initialized {
+		a.mu.Unlock()
+		return nil, goa.PermanentError("invalid_params", "Already initialized")
+	}
+	a.initialized = true
+	a.mu.Unlock()
+
+	serverInfo := &ServerInfo{
+		Name:    "assistant-mcp",
+		Version: "1.0.0",
+	}
+
+	capabilities := &ServerCapabilities{}
+	capabilities.Tools = &ToolsCapability{}
+	capabilities.Resources = &ResourcesCapability{}
+	capabilities.Prompts = &PromptsCapability{}
+
+	return &InitializeResult{
+		ProtocolVersion: a.mcpProtocolVersion(),
+		ServerInfo:      serverInfo,
+		Capabilities:    capabilities,
+	}, nil
+}
+
+// Ping handles the MCP ping request.
+func (a *MCPAdapter) Ping(ctx context.Context) (*PingResult, error) {
+	a.log(ctx, "request", map[string]any{"method": "ping"})
+	res := &PingResult{Pong: true}
+	a.log(ctx, "response", map[string]any{"method": "ping"})
+	return res, nil
+}
+
+// Broadcaster and publish helpers for server-initiated events
+
+// Broadcaster defines a simple publish/subscribe API for server-initiated events.
+type Broadcaster interface {
+	Subscribe(ctx context.Context) (Subscription, error)
+	Publish(ev *EventsStreamResult)
+	Close() error
+}
+
+// Subscription represents a subscriber to broadcast events.
+type Subscription interface {
+	C() <-chan *EventsStreamResult
+	Close() error
+}
+
+// channelBroadcaster is a default in-memory broadcaster.
+type channelBroadcaster struct {
+	mu     sync.RWMutex
+	subs   map[chan *EventsStreamResult]struct{}
+	buf    int
+	drop   bool
+	closed bool
+}
+
+func newChannelBroadcaster(buf int, drop bool) *channelBroadcaster {
+	return &channelBroadcaster{subs: make(map[chan *EventsStreamResult]struct{}), buf: buf, drop: drop}
+}
+
+func (b *channelBroadcaster) Subscribe(ctx context.Context) (Subscription, error) {
+	ch := make(chan *EventsStreamResult, b.buf)
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		close(ch)
+		return &subscription{ch: ch, parent: b}, nil
+	}
+	b.subs[ch] = struct{}{}
+	b.mu.Unlock()
+	return &subscription{ch: ch, parent: b}, nil
+}
+
+func (b *channelBroadcaster) Publish(ev *EventsStreamResult) {
+	if ev == nil {
+		return
+	}
+	b.mu.RLock()
+	for ch := range b.subs {
+		if b.drop {
+			select {
+			case ch <- ev:
+			default:
+			}
+		} else {
+			ch <- ev
+		}
+	}
+	b.mu.RUnlock()
+}
+
+func (b *channelBroadcaster) Close() error {
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return nil
+	}
+	b.closed = true
+	for ch := range b.subs {
+		close(ch)
+		delete(b.subs, ch)
+	}
+	b.mu.Unlock()
+	return nil
+}
+
+type subscription struct {
+	ch     chan *EventsStreamResult
+	parent *channelBroadcaster
+	once   sync.Once
+}
+
+func (s *subscription) C() <-chan *EventsStreamResult { return s.ch }
+
+func (s *subscription) Close() error {
+	s.once.Do(func() {
+		if s.parent != nil {
+			s.parent.mu.Lock()
+			delete(s.parent.subs, s.ch)
+			s.parent.mu.Unlock()
+		}
+		close(s.ch)
+	})
+	return nil
+}
+
+// Publish sends an event to all event stream subscribers.
+func (a *MCPAdapter) Publish(ev *EventsStreamResult) {
+	if a == nil || a.broadcaster == nil {
+		return
+	}
+	a.broadcaster.Publish(ev)
+}
+
+// PublishStatus is a convenience to publish a status_update message.
+func (a *MCPAdapter) PublishStatus(ctx context.Context, typ string, message string, data any) {
+	m := map[string]any{"type": typ, "message": message}
+	if data != nil {
+		m["data"] = data
+	}
+	s, err := encodeJSONToString(ctx, m)
+	if err != nil {
+		return
+	}
+	a.Publish(&EventsStreamResult{
+		Content: []*ContentItem{buildContentItem(a, s)},
+	})
+}
+
+// Tools handling
+
 func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*ToolsListResult, error) {
 	if !a.isInitialized() {
 		return nil, goa.PermanentError("invalid_params", "Not initialized")
 	}
+	a.log(ctx, "request", map[string]any{"method": "tools/list"})
 	tools := []*ToolInfo{
 		{
 			Name:        "analyze_text",
 			Description: stringPtr("Analyze text with various modes"),
-			InputSchema: json.RawMessage(`{"additionalProperties":false,"properties":{"mode":{"enum":["sentiment","keywords","summary"],"type":"string"},"text":{"type":"string"}},"required":["text","mode"],"type":"object"}`),
+			InputSchema: json.RawMessage(`{"additionalProperties":false,"properties":{"mode":{"enum":["sentiment","keywords","summary"],"type":"string"},"text":{"maxLength":10000,"minLength":1,"type":"string"}},"required":["text","mode"],"type":"object"}`),
 		},
 		{
 			Name:        "search",
 			Description: stringPtr("Search the knowledge base"),
-			InputSchema: json.RawMessage(`{"additionalProperties":false,"properties":{"limit":{"type":"integer"},"query":{"type":"string"}},"required":["query"],"type":"object"}`),
+			InputSchema: json.RawMessage(`{"additionalProperties":false,"properties":{"limit":{"maximum":100,"minimum":1,"type":"integer"},"query":{"maxLength":256,"minLength":1,"type":"string"}},"required":["query"],"type":"object"}`),
 		},
 		{
 			Name:        "execute_code",
 			Description: stringPtr("Execute code safely in sandbox"),
-			InputSchema: json.RawMessage(`{"additionalProperties":false,"properties":{"code":{"type":"string"},"language":{"type":"string"}},"required":["language","code"],"type":"object"}`),
+			InputSchema: json.RawMessage(`{"additionalProperties":false,"properties":{"code":{"maxLength":20000,"minLength":1,"type":"string"},"language":{"enum":["python","javascript","go"],"type":"string"}},"required":["language","code"],"type":"object"}`),
 		},
 		{
 			Name:        "process_batch",
 			Description: stringPtr("Process items with progress updates"),
-			InputSchema: json.RawMessage(`{"additionalProperties":false,"properties":{"blob":{"contentEncoding":"base64","type":"string"},"format":{"enum":["text","blob","uri"],"type":"string"},"items":{"items":{"type":"string"},"type":"array"},"mimeType":{"type":"string"},"uri":{"type":"string"}},"required":["items"],"type":"object"}`),
+			InputSchema: json.RawMessage(`{"additionalProperties":false,"properties":{"blob":{"contentEncoding":"base64","type":"string"},"format":{"enum":["text","blob","uri"],"type":"string"},"items":{"items":{"type":"string"},"minItems":1,"type":"array"},"mimeType":{"type":"string"},"uri":{"type":"string"}},"required":["items"],"type":"object"}`),
 		},
 	}
-	return &ToolsListResult{Tools: tools}, nil
+	res := &ToolsListResult{Tools: tools}
+	a.log(ctx, "response", map[string]any{"method": "tools/list"})
+	return res, nil
 }
 
-// Stream bridges from original server-streaming methods to MCP ToolsCall stream
 type ProcessBatchStreamBridge struct {
 	out     ToolsCallServerStream
-	sent    bool
-	mu      sync.Mutex
 	adapter *MCPAdapter
 }
 
 func (b *ProcessBatchStreamBridge) Send(ctx context.Context, ev assistant.ProcessBatchEvent) error {
-	b.mu.Lock()
-	b.sent = true
-	b.mu.Unlock()
-	s, serr := encodeJSONToString(ctx, ev)
-	if serr != nil {
-		return serr
+	s, e := encodeJSONToString(ctx, ev)
+	if e != nil {
+		return e
 	}
 	return b.out.Send(ctx, &ToolsCallResult{Content: []*ContentItem{buildContentItem(b.adapter, s)}})
 }
 func (b *ProcessBatchStreamBridge) SendAndClose(ctx context.Context, ev assistant.ProcessBatchEvent) error {
-	b.mu.Lock()
-	b.sent = true
-	b.mu.Unlock()
-	s, serr := encodeJSONToString(ctx, ev)
-	if serr != nil {
-		return serr
+	s, e := encodeJSONToString(ctx, ev)
+	if e != nil {
+		return e
 	}
 	return b.out.SendAndClose(ctx, &ToolsCallResult{Content: []*ContentItem{buildContentItem(b.adapter, s)}})
 }
@@ -249,15 +446,13 @@ func (b *ProcessBatchStreamBridge) SendError(ctx context.Context, id string, err
 	return b.out.SendError(ctx, id, err)
 }
 
-// ToolsCall executes a tool and streams progress and final result when
-// requested via SSE
 func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload, stream ToolsCallServerStream) error {
 	if !a.isInitialized() {
 		return goa.PermanentError("invalid_params", "Not initialized")
 	}
+	a.log(ctx, "request", map[string]any{"method": "tools/call", "name": p.Name})
 	switch p.Name {
 	case "analyze_text":
-		// Decode arguments into original payload using goa HTTP decoder
 		req := &http.Request{Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(bytes.NewReader(p.Arguments))}
 		var payload *assistant.AnalyzeTextPayload
 		if err := goahttp.RequestDecoder(req).Decode(&payload); err != nil {
@@ -291,18 +486,16 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload, stream 
 		}
 		result, err := a.service.AnalyzeText(ctx, payload)
 		if err != nil {
-			return err
+			return a.mapError(err)
 		}
-		// Encode result to JSON string using goa encoder
 		s, serr := encodeJSONToString(ctx, result)
 		if serr != nil {
 			return serr
 		}
-		// Emit final response and close stream
-		final := &ToolsCallResult{Content: []*ContentItem{&ContentItem{Type: "text", Text: &s}}}
+		final := &ToolsCallResult{Content: []*ContentItem{buildContentItem(a, s)}}
+		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
 		return stream.SendAndClose(ctx, final)
 	case "search":
-		// Decode arguments into original payload using goa HTTP decoder
 		req := &http.Request{Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(bytes.NewReader(p.Arguments))}
 		var payload *assistant.SearchKnowledgePayload
 		if err := goahttp.RequestDecoder(req).Decode(&payload); err != nil {
@@ -315,18 +508,16 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload, stream 
 		}
 		result, err := a.service.SearchKnowledge(ctx, payload)
 		if err != nil {
-			return err
+			return a.mapError(err)
 		}
-		// Encode result to JSON string using goa encoder
 		s, serr := encodeJSONToString(ctx, result)
 		if serr != nil {
 			return serr
 		}
-		// Emit final response and close stream
-		final := &ToolsCallResult{Content: []*ContentItem{&ContentItem{Type: "text", Text: &s}}}
+		final := &ToolsCallResult{Content: []*ContentItem{buildContentItem(a, s)}}
+		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
 		return stream.SendAndClose(ctx, final)
 	case "execute_code":
-		// Decode arguments into original payload using goa HTTP decoder
 		req := &http.Request{Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(bytes.NewReader(p.Arguments))}
 		var payload *assistant.ExecuteCodePayload
 		if err := goahttp.RequestDecoder(req).Decode(&payload); err != nil {
@@ -340,26 +531,41 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload, stream 
 				return goa.PermanentError("invalid_params", "Missing required field: code")
 			}
 		}
+		{
+			{
+				var __val string
+				__val = payload.Language
+				ok := false
+				switch __val {
+				case "python":
+					ok = true
+				case "javascript":
+					ok = true
+				case "go":
+					ok = true
+				}
+				if !ok && __val != "" {
+					return goa.PermanentError("invalid_params", "Invalid value for language")
+				}
+			}
+		}
 		result, err := a.service.ExecuteCode(ctx, payload)
 		if err != nil {
-			return err
+			return a.mapError(err)
 		}
-		// Encode result to JSON string using goa encoder
 		s, serr := encodeJSONToString(ctx, result)
 		if serr != nil {
 			return serr
 		}
-		// Emit final response and close stream
-		final := &ToolsCallResult{Content: []*ContentItem{&ContentItem{Type: "text", Text: &s}}}
+		final := &ToolsCallResult{Content: []*ContentItem{buildContentItem(a, s)}}
+		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
 		return stream.SendAndClose(ctx, final)
 	case "process_batch":
-		// Decode arguments into original payload using goa HTTP decoder
 		req := &http.Request{Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(bytes.NewReader(p.Arguments))}
 		var payload *assistant.ProcessBatchPayload
 		if err := goahttp.RequestDecoder(req).Decode(&payload); err != nil {
 			return goa.PermanentError("invalid_params", "%s", err.Error())
 		}
-		// Enum fields check (top-level)
 		{
 			{
 				var __val string
@@ -380,10 +586,9 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload, stream 
 				}
 			}
 		}
-		// Bridge original server stream interface to MCP ToolsCall stream
 		bridge := &ProcessBatchStreamBridge{out: stream, adapter: a}
 		if err := a.service.ProcessBatch(ctx, payload, bridge); err != nil {
-			return err
+			return a.mapError(err)
 		}
 		return nil
 	default:
@@ -391,42 +596,31 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload, stream 
 	}
 }
 
-// ResourcesList returns the list of available resources
+// Resources handling
+
 func (a *MCPAdapter) ResourcesList(ctx context.Context, p *ResourcesListPayload) (*ResourcesListResult, error) {
 	if !a.isInitialized() {
 		return nil, goa.PermanentError("invalid_params", "Not initialized")
 	}
+	a.log(ctx, "request", map[string]any{"method": "resources/list"})
 	resources := []*ResourceInfo{
-		{
-			URI:         "doc://list",
-			Name:        stringPtr("documents"),
-			Description: stringPtr("List available documents"),
-			MimeType:    stringPtr("application/json"),
-		},
-		{
-			URI:         "system://info",
-			Name:        stringPtr("system_info"),
-			Description: stringPtr("Get system information and status"),
-			MimeType:    stringPtr("application/json"),
-		},
-		{
-			URI:         "conversation://history",
-			Name:        stringPtr("conversation"),
-			Description: stringPtr("Get conversation history"),
-			MimeType:    stringPtr("application/json"),
-		},
+		{URI: "doc://list", Name: stringPtr("documents"), Description: stringPtr("List available documents"), MimeType: stringPtr("application/json")},
+		{URI: "system://info", Name: stringPtr("system_info"), Description: stringPtr("Get system information and status"), MimeType: stringPtr("application/json")},
+		{URI: "conversation://history", Name: stringPtr("conversation_history"), Description: stringPtr("Get conversation history with optional filtering"), MimeType: stringPtr("application/json")},
 	}
-	return &ResourcesListResult{Resources: resources}, nil
+	res := &ResourcesListResult{Resources: resources}
+	a.log(ctx, "response", map[string]any{"method": "resources/list"})
+	return res, nil
 }
 
-// ResourcesRead reads a resource and returns its content
 func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload) (*ResourcesReadResult, error) {
 	if !a.isInitialized() {
 		return nil, goa.PermanentError("invalid_params", "Not initialized")
 	}
-	if err := a.assertResourceURIAllowed(p.URI); err != nil {
+	if err := a.assertResourceURIAllowed(ctx, p.URI); err != nil {
 		return nil, goa.PermanentError("invalid_params", "%s", err.Error())
 	}
+	a.log(ctx, "request", map[string]any{"method": "resources/read", "uri": p.URI})
 	baseURI := p.URI
 	if i := strings.Index(baseURI, "?"); i >= 0 {
 		baseURI = baseURI[:i]
@@ -435,25 +629,28 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 	case "doc://list":
 		result, err := a.service.ListDocuments(ctx)
 		if err != nil {
-			return nil, err
+			return nil, a.mapError(err)
 		}
 		s, serr := encodeJSONToString(ctx, result)
 		if serr != nil {
 			return nil, goa.PermanentError("invalid_params", "%s", serr.Error())
 		}
-		return &ResourcesReadResult{Contents: []*ResourceContent{{URI: baseURI, MimeType: stringPtr("application/json"), Text: &s}}}, nil
+		res := &ResourcesReadResult{Contents: []*ResourceContent{{URI: baseURI, MimeType: stringPtr("application/json"), Text: &s}}}
+		a.log(ctx, "response", map[string]any{"method": "resources/read", "uri": baseURI})
+		return res, nil
 	case "system://info":
 		result, err := a.service.GetSystemInfo(ctx)
 		if err != nil {
-			return nil, err
+			return nil, a.mapError(err)
 		}
 		s, serr := encodeJSONToString(ctx, result)
 		if serr != nil {
 			return nil, goa.PermanentError("invalid_params", "%s", serr.Error())
 		}
-		return &ResourcesReadResult{Contents: []*ResourceContent{{URI: baseURI, MimeType: stringPtr("application/json"), Text: &s}}}, nil
+		res := &ResourcesReadResult{Contents: []*ResourceContent{{URI: baseURI, MimeType: stringPtr("application/json"), Text: &s}}}
+		a.log(ctx, "response", map[string]any{"method": "resources/read", "uri": baseURI})
+		return res, nil
 	case "conversation://history":
-		// Map URI query parameters to original payload and decode
 		args, aerr := parseQueryParamsToJSON(p.URI)
 		if aerr != nil {
 			return nil, goa.PermanentError("invalid_params", "%s", aerr.Error())
@@ -465,86 +662,114 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 		}
 		result, err := a.service.GetConversationHistory(ctx, payload)
 		if err != nil {
-			return nil, err
+			return nil, a.mapError(err)
 		}
 		s, serr := encodeJSONToString(ctx, result)
 		if serr != nil {
 			return nil, goa.PermanentError("invalid_params", "%s", serr.Error())
 		}
-		return &ResourcesReadResult{Contents: []*ResourceContent{{URI: baseURI, MimeType: stringPtr("application/json"), Text: &s}}}, nil
+		res := &ResourcesReadResult{Contents: []*ResourceContent{{URI: baseURI, MimeType: stringPtr("application/json"), Text: &s}}}
+		a.log(ctx, "response", map[string]any{"method": "resources/read", "uri": baseURI})
+		return res, nil
 	default:
 		return nil, goa.PermanentError("method_not_found", "Unknown resource: %s", p.URI)
 	}
 }
 
 // assertResourceURIAllowed verifies pURI passes allow/deny filters when configured.
-func (a *MCPAdapter) assertResourceURIAllowed(pURI string) error {
-	if a == nil || a.opts == nil {
-		return nil
+func (a *MCPAdapter) assertResourceURIAllowed(ctx context.Context, pURI string) error {
+	base := pURI
+	if i := strings.Index(base, "?"); i >= 0 {
+		base = base[:i]
 	}
-	// Deny list takes precedence
-	for _, d := range a.opts.DeniedResourceURIs {
-		if d == pURI {
+	// Merge header-driven allow/deny lists from context (CSV of names)
+	var extraAllowURIs, extraDenyURIs []string
+	if ctx != nil {
+		if v := ctx.Value("mcp_allow_names"); v != nil {
+			if s, ok := v.(string); ok {
+				for _, n := range strings.Split(s, ",") {
+					n = strings.TrimSpace(n)
+					if u, ok2 := a.resourceNameToURI[n]; ok2 {
+						extraAllowURIs = append(extraAllowURIs, u)
+					}
+				}
+			}
+		}
+		if v := ctx.Value("mcp_deny_names"); v != nil {
+			if s, ok := v.(string); ok {
+				for _, n := range strings.Split(s, ",") {
+					n = strings.TrimSpace(n)
+					if u, ok2 := a.resourceNameToURI[n]; ok2 {
+						extraDenyURIs = append(extraDenyURIs, u)
+					}
+				}
+			}
+		}
+	}
+	for _, allow := range extraAllowURIs {
+		if allow == base {
+			return nil
+		}
+	}
+	for _, d := range append(a.opts.DeniedResourceURIs, extraDenyURIs...) {
+		if d == base {
 			return fmt.Errorf("resource URI denied: %s", pURI)
 		}
 	}
-	if len(a.opts.AllowedResourceURIs) == 0 {
+	if len(a.opts.AllowedResourceURIs) == 0 && len(extraAllowURIs) == 0 {
 		return nil
 	}
-	for _, allow := range a.opts.AllowedResourceURIs {
-		if allow == pURI {
+	for _, allow := range append(a.opts.AllowedResourceURIs, extraAllowURIs...) {
+		if allow == base {
 			return nil
 		}
 	}
 	return fmt.Errorf("resource URI not allowed: %s", pURI)
 }
 
-// ResourcesSubscribe subscribes to resource changes
 func (a *MCPAdapter) ResourcesSubscribe(ctx context.Context, p *ResourcesSubscribePayload) error {
 	if !a.isInitialized() {
 		return goa.PermanentError("invalid_params", "Not initialized")
 	}
-	return nil
+	switch p.URI {
+	default:
+		return goa.PermanentError("method_not_found", "Unknown resource: %s", p.URI)
+	}
 }
 
-// ResourcesUnsubscribe unsubscribes from resource changes
 func (a *MCPAdapter) ResourcesUnsubscribe(ctx context.Context, p *ResourcesUnsubscribePayload) error {
 	if !a.isInitialized() {
 		return goa.PermanentError("invalid_params", "Not initialized")
 	}
-	return nil
+	switch p.URI {
+	default:
+		return goa.PermanentError("method_not_found", "Unknown resource: %s", p.URI)
+	}
 }
 
-// PromptsList returns the list of available prompts
+// Prompts handling
+
 func (a *MCPAdapter) PromptsList(ctx context.Context, p *PromptsListPayload) (*PromptsListResult, error) {
 	if !a.isInitialized() {
 		return nil, goa.PermanentError("invalid_params", "Not initialized")
 	}
+	a.log(ctx, "request", map[string]any{"method": "prompts/list"})
 	prompts := []*PromptInfo{
-		{
-			Name:        "contextual_prompts",
-			Description: stringPtr("Generate prompts based on context"),
-			Arguments: []*PromptArgument{
-				{Name: "context", Description: stringPtr("Current context"), Required: true},
-				{Name: "task", Description: stringPtr("Task type"), Required: true},
-			},
-		},
-		{
-			Name:        "code_review",
-			Description: stringPtr("Template for code review"),
-			// No explicit arguments for static prompts
-		},
-		{
-			Name:        "explain_concept",
-			Description: stringPtr("Template for explaining concepts"),
-			// No explicit arguments for static prompts
-		},
+
+		{Name: "contextual_prompts", Description: stringPtr("Generate prompts based on context"), Arguments: []*PromptArgument{
+
+			{Name: "context", Description: stringPtr("Current context"), Required: true},
+
+			{Name: "task", Description: stringPtr("Task type"), Required: true},
+		}},
+
+		{Name: "code_review", Description: stringPtr("Template for code review")},
 	}
-	return &PromptsListResult{Prompts: prompts}, nil
+	res := &PromptsListResult{Prompts: prompts}
+	a.log(ctx, "response", map[string]any{"method": "prompts/list"})
+	return res, nil
 }
 
-// PromptsGet resolves static prompts directly and delegates dynamic prompts to
-// the provider
 func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*PromptsGetResult, error) {
 	if !a.isInitialized() {
 		return nil, goa.PermanentError("invalid_params", "Not initialized")
@@ -552,102 +777,158 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 	if p == nil || p.Name == "" {
 		return nil, goa.PermanentError("invalid_params", "Missing prompt name")
 	}
-
-	// Static prompts handled inline with optional provider override
+	a.log(ctx, "request", map[string]any{"method": "prompts/get", "name": p.Name})
 	switch p.Name {
+
 	case "code_review":
 		if a.promptProvider != nil {
 			if res, err := a.promptProvider.GetCodeReviewPrompt(p.Arguments); err == nil && res != nil {
+				a.log(ctx, "response", map[string]any{"method": "prompts/get", "name": p.Name})
 				return res, nil
 			} else if err != nil {
 				return nil, err
 			}
 		}
-		// Fallback to generated static prompt content
 		msgs := make([]*PromptMessage, 0, 3)
-		msgs = append(msgs, &PromptMessage{Role: "system", Content: &MessageContent{Type: "text", Text: stringPtr("You are an expert code reviewer.")}})
-		msgs = append(msgs, &PromptMessage{Role: "user", Content: &MessageContent{Type: "text", Text: stringPtr("Please review this code: {{.code}}")}})
-		msgs = append(msgs, &PromptMessage{Role: "assistant", Content: &MessageContent{Type: "text", Text: stringPtr("I'll analyze the code for quality, bugs, and improvements.")}})
-		return &PromptsGetResult{Description: stringPtr("Template for code review"), Messages: msgs}, nil
-	case "explain_concept":
-		if a.promptProvider != nil {
-			if res, err := a.promptProvider.GetExplainConceptPrompt(p.Arguments); err == nil && res != nil {
-				return res, nil
-			} else if err != nil {
-				return nil, err
-			}
+
+		msgs = append(msgs, &PromptMessage{
+			Role: "system",
+			Content: &MessageContent{
+				Type: "text",
+				Text: stringPtr("You are an expert code reviewer."),
+			},
+		})
+
+		msgs = append(msgs, &PromptMessage{
+			Role: "user",
+			Content: &MessageContent{
+				Type: "text",
+				Text: stringPtr("Please review this code: {{.code}}"),
+			},
+		})
+
+		msgs = append(msgs, &PromptMessage{
+			Role: "assistant",
+			Content: &MessageContent{
+				Type: "text",
+				Text: stringPtr("I'll analyze the code for quality, bugs, and improvements."),
+			},
+		})
+
+		res := &PromptsGetResult{
+			Description: stringPtr("Template for code review"),
+			Messages:    msgs,
 		}
-		// Fallback to generated static prompt content
-		msgs := make([]*PromptMessage, 0, 2)
-		msgs = append(msgs, &PromptMessage{Role: "system", Content: &MessageContent{Type: "text", Text: stringPtr("You are a helpful teacher.")}})
-		msgs = append(msgs, &PromptMessage{Role: "user", Content: &MessageContent{Type: "text", Text: stringPtr("Explain {{.concept}} in simple terms.")}})
-		return &PromptsGetResult{Description: stringPtr("Template for explaining concepts"), Messages: msgs}, nil
+		a.log(ctx, "response", map[string]any{"method": "prompts/get", "name": p.Name})
+		return res, nil
+
 	}
 
-	// Dynamic prompts require a provider implementation
-	if a.promptProvider == nil {
-		return nil, goa.PermanentError("invalid_params", "No prompt provider configured for dynamic prompts")
-	}
 	switch p.Name {
+
 	case "contextual_prompts":
-		return a.promptProvider.GetContextualPromptsPrompt(ctx, p.Arguments)
+		{
+
+			var args map[string]any
+			if len(p.Arguments) > 0 {
+				if err := json.Unmarshal(p.Arguments, &args); err != nil {
+					return nil, goa.PermanentError("invalid_params", "%s", err.Error())
+				}
+			}
+
+			if _, ok := args["context"]; !ok {
+				return nil, goa.PermanentError("invalid_params", "Missing required argument: context")
+			}
+
+			if _, ok := args["task"]; !ok {
+				return nil, goa.PermanentError("invalid_params", "Missing required argument: task")
+			}
+
+		}
+		if a.promptProvider == nil {
+			return nil, goa.PermanentError("invalid_params", "No prompt provider configured for dynamic prompts")
+		}
+		res, err := a.promptProvider.GetContextualPromptsPrompt(ctx, p.Arguments)
+		if err != nil {
+			return nil, a.mapError(err)
+		}
+		a.log(ctx, "response", map[string]any{"method": "prompts/get", "name": p.Name})
+		return res, nil
+
 	}
 
 	return nil, goa.PermanentError("method_not_found", "Unknown prompt: %s", p.Name)
 }
 
-// NotifyStatusUpdate handles notifications with no response
+// Notifications and events stream
+
 func (a *MCPAdapter) NotifyStatusUpdate(ctx context.Context, p *SendNotificationPayload) error {
+	if !a.isInitialized() {
+		return goa.PermanentError("invalid_params", "Not initialized")
+	}
+	if p == nil || p.Type == "" {
+		return goa.PermanentError("invalid_params", "Missing notification type")
+	}
+	m := map[string]any{"type": p.Type}
+	if p.Message != nil {
+		m["message"] = *p.Message
+	}
+	if p.Data != nil {
+		m["data"] = p.Data
+	}
+	s, err := encodeJSONToString(ctx, m)
+	if err != nil {
+		return err
+	}
+	ev := &EventsStreamResult{
+		Content: []*ContentItem{buildContentItem(a, s)},
+	}
+	a.Publish(ev)
 	return nil
 }
 
-// Subscribe returns a default success for demo purposes
+func (a *MCPAdapter) EventsStream(ctx context.Context, stream EventsStreamServerStream) error {
+	if !a.isInitialized() {
+		return goa.PermanentError("invalid_params", "Not initialized")
+	}
+	if a.broadcaster == nil {
+		return goa.PermanentError("invalid_params", "No broadcaster configured")
+	}
+	sub, _ := a.broadcaster.Subscribe(ctx)
+	defer sub.Close()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case ev, ok := <-sub.C():
+			if !ok {
+				return nil
+			}
+			if err := stream.Send(ctx, ev); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+// General subscriptions handling
+
 func (a *MCPAdapter) Subscribe(ctx context.Context, p *SubscribePayload) (*SubscribeResult, error) {
 	if !a.isInitialized() {
 		return nil, goa.PermanentError("invalid_params", "Not initialized")
 	}
-	return &SubscribeResult{Success: true}, nil
+	a.log(ctx, "request", map[string]any{"method": "subscribe"})
+	res := &SubscribeResult{Success: true}
+	a.log(ctx, "response", map[string]any{"method": "subscribe"})
+	return res, nil
 }
 
-// Unsubscribe returns a default success for demo purposes
 func (a *MCPAdapter) Unsubscribe(ctx context.Context, p *UnsubscribePayload) (*UnsubscribeResult, error) {
 	if !a.isInitialized() {
 		return nil, goa.PermanentError("invalid_params", "Not initialized")
 	}
-	return &UnsubscribeResult{Success: true}, nil
-}
-
-// stringPtr returns a pointer to a string
-func stringPtr(s string) *string {
-	return &s
-}
-
-// buildContentItem returns a ContentItem honoring StructuredStreamJSON option.
-func buildContentItem(a *MCPAdapter, s string) *ContentItem {
-	if a != nil && a.opts != nil && a.opts.StructuredStreamJSON && isLikelyJSON(s) {
-		mt := stringPtr("application/json")
-		return &ContentItem{Type: "resource", MimeType: mt, Text: &s}
-	}
-	return &ContentItem{Type: "text", Text: &s}
-}
-
-func isLikelyJSON(s string) bool {
-	t := strings.TrimSpace(s)
-	return len(t) > 0 && (t[0] == '{' || t[0] == '[')
-}
-
-// mapError and log helpers (no-op if options are nil)
-func (a *MCPAdapter) mapError(err error) error {
-	if a != nil && a.opts != nil && a.opts.ErrorMapper != nil && err != nil {
-		if m := a.opts.ErrorMapper(err); m != nil {
-			return m
-		}
-	}
-	return err
-}
-
-func (a *MCPAdapter) log(ctx context.Context, event string, details any) {
-	if a != nil && a.opts != nil && a.opts.Logger != nil {
-		a.opts.Logger(ctx, event, details)
-	}
+	a.log(ctx, "request", map[string]any{"method": "unsubscribe"})
+	res := &UnsubscribeResult{Success: true}
+	a.log(ctx, "response", map[string]any{"method": "unsubscribe"})
+	return res, nil
 }

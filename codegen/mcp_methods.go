@@ -39,6 +39,8 @@ func (b *mcpExprBuilder) buildMethods() []*expr.MethodExpr {
 	// Add notification methods if defined
 	if len(b.mcp.Notifications) > 0 {
 		methods = append(methods, b.buildNotificationMethods()...)
+		// Provide a dedicated server-sent events channel for notifications
+		methods = append(methods, b.buildEventsStreamMethod())
 	}
 
 	// Add subscription methods if defined
@@ -191,6 +193,18 @@ func (b *mcpExprBuilder) buildSubscriptionMethods() []*expr.MethodExpr {
 			Result:      b.getOrCreateType("UnsubscribeResult", b.buildUnsubscribeResultType).AttributeExpr,
 		},
 	}
+}
+
+// buildEventsStreamMethod creates the events/stream server-sent events method
+func (b *mcpExprBuilder) buildEventsStreamMethod() *expr.MethodExpr {
+	m := &expr.MethodExpr{
+		Name:        "events/stream",
+		Description: "Stream server-sent events (notifications)",
+		Result:      b.userTypeAttr("EventsStreamResult", b.buildEventsStreamResultType),
+	}
+	m.Stream = expr.ServerStreamKind
+	m.StreamingResult = b.userTypeAttr("EventsStreamResult", b.buildEventsStreamResultType)
+	return m
 }
 
 // hasPrompts checks if there are any prompts defined

@@ -62,6 +62,11 @@ func NotifyStatusUpdateMcpAssistantPath() string {
 	return "/rpc"
 }
 
+// EventsStreamMcpAssistantPath returns the URL path to the mcp_assistant service events/stream HTTP endpoint.
+func EventsStreamMcpAssistantPath() string {
+	return "/rpc"
+}
+
 // SubscribeMcpAssistantPath returns the URL path to the mcp_assistant service subscribe HTTP endpoint.
 func SubscribeMcpAssistantPath() string {
 	return "/rpc"

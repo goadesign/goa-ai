@@ -16,10 +16,8 @@ import (
 
 func main() {
 	var (
-		hostF    = flag.String("host", "localhost", "Server host (valid values: localhost)")
-		addrF    = flag.String("url", "", "URL to service host")
-		jsonrpcF = flag.Bool("jsonrpc", false, "Force JSON-RPC transport")
-		jF       = flag.Bool("j", false, "Force JSON-RPC transport")
+		hostF = flag.String("host", "localhost", "Server host (valid values: localhost)")
+		addrF = flag.String("url", "", "URL to service host")
 
 		verboseF = flag.Bool("verbose", false, "Print request and response details")
 		vF       = flag.Bool("v", false, "Print request and response details")
@@ -69,17 +67,8 @@ func main() {
 	)
 	{
 		switch scheme {
-		case "grpc", "grpcs":
-			endpoint, payload, err = doGRPC(scheme, host, timeout, debug)
 		case "http", "https":
-			if *jsonrpcF || *jF {
-				endpoint, payload, err = doJSONRPC(scheme, host, timeout, debug)
-			} else {
-				endpoint, payload, err = doHTTP(scheme, host, timeout, debug)
-				if err != nil && strings.HasPrefix(err.Error(), "unknown") {
-					endpoint, payload, err = doJSONRPC(scheme, host, timeout, debug)
-				}
-			}
+			endpoint, payload, err = doJSONRPC(scheme, host, timeout, debug)
 		default:
 			fmt.Fprintf(os.Stderr, "invalid scheme: %q (valid schemes: grpc|http)\n", scheme)
 			os.Exit(1)
@@ -108,7 +97,6 @@ func main() {
 
 func usage() {
 	var usageCommands []string
-	usageCommands = append(usageCommands, httpUsageCommands()...)
 	usageCommands = append(usageCommands, jsonrpcUsageCommands()...)
 	sort.Strings(usageCommands)
 	usageCommands = slices.Compact(usageCommands)
@@ -119,7 +107,6 @@ Usage:
 
     -host HOST:  server host (localhost). valid values: localhost
     -url URL:    specify service URL overriding host URL (http://localhost:8080)
-    -jsonrpc|-j: force JSON-RPC (false)
     -timeout:    maximum number of seconds to wait for response (30)
     -verbose|-v: print request and response details (false)
 
@@ -130,7 +117,7 @@ Additional help:
 
 Example:
 %s
-`, os.Args[0], os.Args[0], indent(strings.Join(usageCommands, "\n")), os.Args[0], indent(httpUsageExamples()))
+`, os.Args[0], os.Args[0], indent(strings.Join(usageCommands, "\n")), os.Args[0], indent(jsonrpcUsageExamples()))
 }
 
 func indent(s string) string {

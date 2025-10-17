@@ -186,7 +186,7 @@ func EncodeGetSystemInfoResponse(encoder func(context.Context, http.ResponseWrit
 // returned by the assistant get_conversation_history endpoint.
 func EncodeGetConversationHistoryResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
 	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		res, _ := v.(assistant.ChatMessages)
+		res, _ := v.(*assistant.ConversationHistory)
 		enc := encoder(ctx, w)
 		body := NewGetConversationHistoryResponseBody(res)
 		w.WriteHeader(http.StatusOK)
@@ -266,18 +266,6 @@ func DecodeGeneratePromptsRequest(mux goahttp.Muxer, decoder func(*http.Request)
 		payload := NewGeneratePromptsPayload(&body)
 
 		return payload, nil
-	}
-}
-
-// EncodeGetWorkspaceInfoResponse returns an encoder for responses returned by
-// the assistant get_workspace_info endpoint.
-func EncodeGetWorkspaceInfoResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		res, _ := v.(*assistant.GetWorkspaceInfoResult)
-		enc := encoder(ctx, w)
-		body := NewGetWorkspaceInfoResponseBody(res)
-		w.WriteHeader(http.StatusOK)
-		return enc.Encode(body)
 	}
 }
 
@@ -443,19 +431,6 @@ func marshalAssistantDocumentToDocumentResponse(v *assistant.Document) *Document
 	return res
 }
 
-// marshalAssistantChatMessageToChatMessageResponse builds a value of type
-// *ChatMessageResponse from a value of type *assistant.ChatMessage.
-func marshalAssistantChatMessageToChatMessageResponse(v *assistant.ChatMessage) *ChatMessageResponse {
-	res := &ChatMessageResponse{
-		ID:        v.ID,
-		Role:      v.Role,
-		Content:   v.Content,
-		Timestamp: v.Timestamp,
-	}
-
-	return res
-}
-
 // marshalAssistantPromptTemplateToPromptTemplateResponse builds a value of
 // type *PromptTemplateResponse from a value of type *assistant.PromptTemplate.
 func marshalAssistantPromptTemplateToPromptTemplateResponse(v *assistant.PromptTemplate) *PromptTemplateResponse {
@@ -469,17 +444,6 @@ func marshalAssistantPromptTemplateToPromptTemplateResponse(v *assistant.PromptT
 		for i, val := range v.Variables {
 			res.Variables[i] = val
 		}
-	}
-
-	return res
-}
-
-// marshalAssistantRootInfoToRootInfoResponseBody builds a value of type
-// *RootInfoResponseBody from a value of type *assistant.RootInfo.
-func marshalAssistantRootInfoToRootInfoResponseBody(v *assistant.RootInfo) *RootInfoResponseBody {
-	res := &RootInfoResponseBody{
-		URI:  v.URI,
-		Name: v.Name,
 	}
 
 	return res

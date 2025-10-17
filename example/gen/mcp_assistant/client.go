@@ -26,12 +26,13 @@ type Client struct {
 	PromptsListEndpoint          goa.Endpoint
 	PromptsGetEndpoint           goa.Endpoint
 	NotifyStatusUpdateEndpoint   goa.Endpoint
+	EventsStreamEndpoint         goa.Endpoint
 	SubscribeEndpoint            goa.Endpoint
 	UnsubscribeEndpoint          goa.Endpoint
 }
 
 // NewClient initializes a "mcp_assistant" service client given the endpoints.
-func NewClient(initialize, ping, toolsList, toolsCall, resourcesList, resourcesRead, resourcesSubscribe, resourcesUnsubscribe, promptsList, promptsGet, notifyStatusUpdate, subscribe, unsubscribe goa.Endpoint) *Client {
+func NewClient(initialize, ping, toolsList, toolsCall, resourcesList, resourcesRead, resourcesSubscribe, resourcesUnsubscribe, promptsList, promptsGet, notifyStatusUpdate, eventsStream, subscribe, unsubscribe goa.Endpoint) *Client {
 	return &Client{
 		InitializeEndpoint:           initialize,
 		PingEndpoint:                 ping,
@@ -44,6 +45,7 @@ func NewClient(initialize, ping, toolsList, toolsCall, resourcesList, resourcesR
 		PromptsListEndpoint:          promptsList,
 		PromptsGetEndpoint:           promptsGet,
 		NotifyStatusUpdateEndpoint:   notifyStatusUpdate,
+		EventsStreamEndpoint:         eventsStream,
 		SubscribeEndpoint:            subscribe,
 		UnsubscribeEndpoint:          unsubscribe,
 	}
@@ -150,6 +152,17 @@ func (c *Client) PromptsGet(ctx context.Context, p *PromptsGetPayload) (res *Pro
 func (c *Client) NotifyStatusUpdate(ctx context.Context, p *SendNotificationPayload) (err error) {
 	_, err = c.NotifyStatusUpdateEndpoint(ctx, p)
 	return
+}
+
+// EventsStream calls the "events/stream" endpoint of the "mcp_assistant"
+// service.
+func (c *Client) EventsStream(ctx context.Context) (res EventsStreamClientStream, err error) {
+	var ires any
+	ires, err = c.EventsStreamEndpoint(ctx, nil)
+	if err != nil {
+		return
+	}
+	return ires.(EventsStreamClientStream), nil
 }
 
 // Subscribe calls the "subscribe" endpoint of the "mcp_assistant" service.

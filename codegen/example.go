@@ -1,21 +1,21 @@
+//nolint:lll // example patchers include long string replacements for clarity
 package codegen
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 
 	mcpexpr "goa.design/goa-ai/expr"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/example"
-	"goa.design/goa/v3/codegen/service"
 	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"
-	httpcodegen "goa.design/goa/v3/http/codegen"
 )
 
 // PrepareExample augments the original roots so the Goa example generator includes the
 // MCP JSON-RPC server without manual cmd edits.
-func PrepareExample(genpkg string, roots []eval.Root) error {
+func PrepareExample(_ string, roots []eval.Root) error {
 	for _, root := range roots {
 		r, ok := root.(*expr.RootExpr)
 		if !ok {
@@ -88,14 +88,14 @@ func PrepareExample(genpkg string, roots []eval.Root) error {
 			}
 			// Add to JSONRPC.HTTP services if not already present
 			already := false
-			for _, hs := range r.API.JSONRPC.HTTPExpr.Services {
+			for _, hs := range r.API.JSONRPC.Services {
 				if hs.ServiceExpr != nil && hs.ServiceExpr.Name == httpSvc.ServiceExpr.Name {
 					already = true
 					break
 				}
 			}
 			if !already {
-				r.API.JSONRPC.HTTPExpr.Services = append(r.API.JSONRPC.HTTPExpr.Services, httpSvc)
+				r.API.JSONRPC.Services = append(r.API.JSONRPC.Services, httpSvc)
 			}
 			// Remove original JSON-RPC service for this server so /rpc is handled by MCP only
 			if len(r.API.JSONRPC.Services) > 0 {
@@ -135,136 +135,340 @@ func PrepareExample(genpkg string, roots []eval.Root) error {
 }
 
 // ModifyExampleFiles augments main.go so handleHTTPServer signature and call include JSON-RPC args in correct order.
-func ModifyExampleFiles(genpkg string, roots []eval.Root, files []*codegen.File) ([]*codegen.File, error) {
+func ModifyExampleFiles(_ string, roots []eval.Root, files []*codegen.File) ([]*codegen.File, error) {
+	r, ok := firstRootWithJSONRPC(roots)
+	if !ok {
+		return files, nil
+	}
+
+	mcpServices := collectMCPServices(r)
+	if len(mcpServices) == 0 {
+		return files, nil
+	}
+
+	// Ensure example stub returns the adapter-backed service instead of zero-value stub
+	files = patchExampleStubForMCP(mcpServices, files)
+
+	for _, svr := range r.API.Servers {
+		dir := example.Servers.Get(svr, r).Dir
+		files = patchCLIForServer(dir, mcpServices, files)
+		files = patchMainForServer(dir, mcpServices, files)
+	}
+
+	return files, nil
+}
+
+// cliParseReplacement is injected in place of the default cli.ParseEndpoint return.
+const cliParseReplacement = `_, payload, err := cli.ParseEndpoint(
+	scheme,
+	host,
+	doer,
+	goahttp.RequestEncoder,
+	goahttp.ResponseDecoder,
+	debug,
+)
+if err != nil {
+	return nil, nil, err
+}
+// MCP-backed adapter endpoints
+e := mcpac.NewEndpoints(scheme, host, doer, goahttp.RequestEncoder, goahttp.ResponseDecoder, debug)
+// Extract non-flag args for service and subcommand
+var nonflags []string
+for i := 1; i < len(os.Args); i++ {
+	a := os.Args[i]
+	if strings.HasPrefix(a, "-") {
+		if !strings.Contains(a, "=") && i+1 < len(os.Args) { i++ }
+		continue
+	}
+	nonflags = append(nonflags, a)
+}
+if len(nonflags) < 2 {
+	return nil, nil, fmt.Errorf("not enough arguments")
+}
+service := nonflags[0]
+subcmd := nonflags[1]
+switch service {
+default:
+	switch subcmd {
+	case "analyze-text":
+		return e.AnalyzeText, payload, nil
+	case "search-knowledge":
+		return e.SearchKnowledge, payload, nil
+	case "execute-code":
+		return e.ExecuteCode, payload, nil
+	case "list-documents":
+		return e.ListDocuments, payload, nil
+	case "get-system-info":
+		return e.GetSystemInfo, payload, nil
+	case "generate-prompts":
+		return e.GeneratePrompts, payload, nil
+	case "send-notification":
+		return e.SendNotification, payload, nil
+	case "subscribe-to-updates":
+		return e.SubscribeToUpdates, payload, nil
+	case "process-batch":
+		return e.ProcessBatch, payload, nil
+	}
+}
+return nil, nil, fmt.Errorf("unknown service %q or command %q", service, subcmd)`
+
+// firstRootWithJSONRPC returns the first root with JSON-RPC configured.
+func firstRootWithJSONRPC(roots []eval.Root) (*expr.RootExpr, bool) {
 	for _, root := range roots {
 		r, ok := root.(*expr.RootExpr)
 		if !ok || r.API == nil || r.API.JSONRPC == nil {
 			continue
 		}
-		// Build JSON-RPC services data
-		servicesData := httpcodegen.NewServicesData(service.NewServicesData(r), &r.API.JSONRPC.HTTPExpr)
-		servicesData.Root = r
-		// Collect MCP-enabled services (generic, no example-specific names)
-		var mcpServices []*expr.ServiceExpr
-		for _, sv := range r.Services {
-			if mcpexpr.Root.HasMCP(sv) {
-				mcpServices = append(mcpServices, sv)
-			}
+		return r, true
+	}
+	return nil, false
+}
+
+// collectMCPServices returns services that have MCP configured in DSL.
+func collectMCPServices(r *expr.RootExpr) []*expr.ServiceExpr {
+	var svcs []*expr.ServiceExpr
+	for _, sv := range r.Services {
+		if mcpexpr.Root.HasMCP(sv) {
+			svcs = append(svcs, sv)
 		}
-		for _, svr := range r.API.Servers {
-			svrdata := example.Servers.Get(svr, r)
-			mainPath := filepath.Join("cmd", svrdata.Dir, "main.go")
-			httpPath := filepath.Join("cmd", svrdata.Dir, "http.go")
-			for _, f := range files {
-				if f.Path == mainPath {
-					for i, s := range f.SectionTemplates {
-						if s.Name == "server-main-services" {
-							// Append a section to wire MCP adapters generically for all MCP-enabled services
-							src := "\n\t\t{\n\t\t\t// Wire MCP adapters on top of original services\n\t\t\t// Provide a simple prompt provider implementation so Prompts.get works.\n\t\t\tprovider := assistantapi.NewPromptProvider()\n"
-							for _, sv := range mcpServices {
-								svcSnake := codegen.SnakeCase(sv.Name)
-								mcpSvcSnake := "mcp_" + svcSnake
-								origVar := codegen.Goify(svcSnake, false) + "Svc"
-								mcpVar := codegen.Goify(mcpSvcSnake, false) + "Svc"
-								mcpAlias := "mcp" + strings.ReplaceAll(svcSnake, "_", "")
-								src += "\t\t\t" + mcpVar + " = " + mcpAlias + ".NewMCPAdapter(" + origVar + ", provider, nil)\n"
-							}
-							src += "\t\t}\n"
-							injection := &codegen.SectionTemplate{
-								Name:   "server-main-services-mcp-wire",
-								Source: src,
-							}
-							// Insert right after the services section
-							n := make([]*codegen.SectionTemplate, 0, len(f.SectionTemplates)+1)
-							n = append(n, f.SectionTemplates[:i+1]...)
-							n = append(n, injection)
-							n = append(n, f.SectionTemplates[i+1:]...)
-							f.SectionTemplates = n
+	}
+	return svcs
+}
+
+// patchCLIForServer locates the generated JSON-RPC CLI support file and rewrites it
+// to instantiate the MCP adapter client endpoints. It also adds required imports.
+func patchCLIForServer(dir string, mcpServices []*expr.ServiceExpr, files []*codegen.File) []*codegen.File {
+	cliPath := filepath.Join("cmd", dir+"-cli", "jsonrpc.go")
+	var cliFile *codegen.File
+	for _, f := range files {
+		if f.Path != cliPath {
+			continue
+		}
+		cliFile = f
+		break
+	}
+	// Add imports in source header
+	header := findSection(cliFile, headerSection)
+	if header != nil {
+		baseModule := deriveBaseModuleFromHeader(header)
+		if baseModule != "" && len(mcpServices) > 0 {
+			svcSnake := codegen.SnakeCase(mcpServices[0].Name)
+			codegen.AddImport(header, &codegen.ImportSpec{Path: baseModule + "/gen/mcp_" + svcSnake + "/adapter/client", Name: "mcpac"})
+		}
+		codegen.AddImport(header,
+			&codegen.ImportSpec{Path: "fmt"},
+			&codegen.ImportSpec{Path: "os"},
+			&codegen.ImportSpec{Path: "strings"},
+		)
+	}
+	// Replace the endpoint constructor logic
+	for _, s := range cliFile.SectionTemplates {
+		idx := strings.Index(s.Source, "return cli.ParseEndpoint(")
+		if idx < 0 {
+			continue
+		}
+		endrel := strings.Index(s.Source[idx:], ")\n")
+		if endrel < 0 {
+			continue
+		}
+		end := idx + endrel + 2
+		s.Source = s.Source[:idx] + cliParseReplacement + s.Source[end:]
+	}
+	return files
+}
+
+// patchMainForServer updates cmd/<dir>/main.go to wire the MCP adapter service
+// instead of the stub implementation. We look for assignment to the MCP service
+// variable (e.g., mcpAssistantSvc) and replace the RHS with adapter constructor.
+func patchMainForServer(dir string, mcpServices []*expr.ServiceExpr, files []*codegen.File) []*codegen.File {
+	if len(mcpServices) == 0 {
+		return files
+	}
+	mainPath := filepath.Join("cmd", dir, "main.go")
+	var fmain *codegen.File
+	for _, f := range files {
+		if f.Path == mainPath {
+			fmain = f
+			break
+		}
+	}
+	if fmain == nil {
+		return files
+	}
+
+	// Determine MCP package alias from existing imports; fallback to generated alias
+	header := findSection(fmain, headerSection)
+	mcpAlias := ""
+	if header != nil {
+		if data, ok := header.Data.(map[string]any); ok {
+			if imv, ok2 := data["Imports"]; ok2 {
+				if specs, ok3 := imv.([]*codegen.ImportSpec); ok3 {
+					for _, spec := range specs {
+						if strings.Contains(spec.Path, "/gen/mcp_") {
+							mcpAlias = spec.Name
 							break
-						}
-					}
-					for _, s := range f.SectionTemplates {
-						if s.Name != "server-http-start" {
-							continue
-						}
-						// Collect JSON-RPC services for this server
-						var jsonrpcSvcData []*httpcodegen.ServiceData
-						for _, name := range svr.Services {
-							if d := servicesData.Get(name); d != nil {
-								jsonrpcSvcData = append(jsonrpcSvcData, d)
-							}
-						}
-						if dataMap, ok := s.Data.(map[string]any); ok {
-							dataMap["JSONRPCServices"] = jsonrpcSvcData
-						}
-						s.Source = serverHTTPStartJSONRPCTemplate
-					}
-				}
-				if f.Path == httpPath {
-					// Collect JSON-RPC services for this server once
-					var jsonrpcSvcData []*httpcodegen.ServiceData
-					for _, name := range svr.Services {
-						if d := servicesData.Get(name); d != nil {
-							jsonrpcSvcData = append(jsonrpcSvcData, d)
-						}
-					}
-					for _, s := range f.SectionTemplates {
-						if s.Name == "server-http-start" {
-							if dataMap, ok := s.Data.(map[string]any); ok {
-								dataMap["JSONRPCServices"] = jsonrpcSvcData
-							}
-							// Use swapped template so signature is Endpoints then Svc, matching main.go call
-							s.Source = serverHTTPStartJSONRPC
-						}
-						if s.Name == "server-http-init" {
-							// Ensure JSONRPCServices available
-							if dataMap, ok := s.Data.(map[string]any); ok {
-								dataMap["JSONRPCServices"] = jsonrpcSvcData
-							}
-						}
-					}
-				}
-				// Rewrite JSON-RPC CLI import generically to point to MCP service client
-				cliPath := filepath.Join("cmd", svrdata.Dir+"-cli", "jsonrpc.go")
-				if f.Path == cliPath {
-					for _, s := range f.SectionTemplates {
-						if s.Source == "" {
-							continue
-						}
-						for _, sv := range mcpServices {
-							svcSnake := codegen.SnakeCase(sv.Name)
-							old := "/gen/jsonrpc/cli/" + svcSnake + "\""
-							newp := "/gen/jsonrpc/mcp_" + svcSnake + "/client\""
-							s.Source = strings.ReplaceAll(s.Source, old, newp)
-						}
-					}
-				}
-				// Patch example assistant implementation to avoid using Stream.Close/Recv on assistant.Stream
-				if f.Path == "assistant.go" {
-					for _, s := range f.SectionTemplates {
-						if s.Source == "" {
-							continue
-						}
-						// Remove defer stream.Close() lines
-						s.Source = strings.ReplaceAll(s.Source, "\n\tdefer stream.Close()\n", "\n")
-						// Replace HandleStream body with a minimal no-op that exits on context cancel
-						sig := "func (s *assistantsrvc) HandleStream(ctx context.Context, stream assistant.Stream) error {"
-						idx := strings.Index(s.Source, sig)
-						if idx >= 0 {
-							tail := s.Source[idx+len(sig):]
-							// find end of function by matching last closing brace in this section
-							if end := strings.LastIndex(tail, "}"); end > 0 {
-								body := "\n\tlog.Printf(ctx, \"assistant.HandleStream\")\n\t// (no-op example)\n\tselect {\n\tcase <-ctx.Done():\n\t\treturn ctx.Err()\n\tdefault:\n\t\treturn nil\n\t}\n"
-								s.Source = s.Source[:idx+len(sig)] + body + tail[end:]
-							}
 						}
 					}
 				}
 			}
 		}
 	}
-	// Upstream Goa fix for mixed JSON-RPC handler avoids duplicate ServeHTTP.
-	return files, nil
+	if mcpAlias == "" {
+		mcpAlias = codegen.Goify("mcp_"+codegen.SnakeCase(mcpServices[0].Name), false)
+	}
+
+	// Build variable root for MCP service variable name
+	varRoot := codegen.Goify("mcp_"+codegen.SnakeCase(mcpServices[0].Name), false)
+	mcpSvcVar := varRoot + "Svc"
+
+	// Replace assignment to mcp<Service>Svc with adapter constructor
+	// and also replace factory NewMcp<Service>() calls as a fallback
+	for _, s := range fmain.SectionTemplates {
+		if s.Name == headerSection {
+			continue
+		}
+		src := s.Source
+		// Primary: variable assignment replacement
+		if strings.Contains(src, mcpSvcVar+" =") {
+			lines := strings.Split(src, "\n")
+			var b strings.Builder
+			changed := false
+			for _, ln := range lines {
+				idx := strings.Index(ln, mcpSvcVar+" =")
+				if idx >= 0 {
+					lead := ln[:idx]
+					b.WriteString(lead)
+					b.WriteString(mcpSvcVar + " = " + mcpAlias + ".NewMCPAdapter(assistantSvc, nil, nil)")
+					b.WriteByte('\n')
+					changed = true
+					continue
+				}
+				b.WriteString(ln)
+				b.WriteByte('\n')
+			}
+			if changed {
+				s.Source = b.String()
+				continue
+			}
+		}
+		// Fallback: replace factory constructor call of the stub
+		svcGo := codegen.Goify(mcpServices[0].Name, true)
+		factory := "assistantapi.NewMcp" + svcGo + "()"
+		if strings.Contains(src, factory) {
+			s.Source = strings.ReplaceAll(src, factory, mcpAlias+".NewMCPAdapter(assistantSvc, nil, nil)")
+		}
+	}
+	return files
+}
+
+// patchExampleStubForMCP rewrites the generated example stub (mcp_<svc>.go)
+// to return the adapter that wraps the original service implementation, so the
+// server exposes proper MCP behavior.
+func patchExampleStubForMCP(mcpServices []*expr.ServiceExpr, files []*codegen.File) []*codegen.File {
+	if len(mcpServices) == 0 {
+		return files
+	}
+
+	// Patch any generated top-level MCP stub: func NewMcp<Service>() should
+	// return the adapter wrapping the original service (New<Service>()).
+	svc := mcpServices[0]
+	svcGo := codegen.Goify(svc.Name, true) // e.g., Assistant
+	// We expect stub file path to be mcp_<svc>.go at repository root (as produced by goa example)
+	for _, f := range files {
+		// Heuristic: look for a function named NewMcp<Service>
+		hasFactory := false
+		for _, s := range f.SectionTemplates {
+			if s.Name == headerSection {
+				continue
+			}
+			if strings.Contains(s.Source, "func NewMcp"+svcGo+"()") {
+				hasFactory = true
+				break
+			}
+		}
+		if !hasFactory {
+			continue
+		}
+
+		// Determine alias of MCP package import from header
+		header := findSection(f, headerSection)
+		mcpAlias := ""
+		if header != nil {
+			if data, ok := header.Data.(map[string]any); ok {
+				if imv, ok2 := data["Imports"]; ok2 {
+					if specs, ok3 := imv.([]*codegen.ImportSpec); ok3 {
+						for _, spec := range specs {
+							if strings.Contains(spec.Path, "/gen/mcp_") {
+								mcpAlias = spec.Name
+								break
+							}
+						}
+					}
+				}
+			}
+		}
+		if mcpAlias == "" {
+			mcpAlias = codegen.Goify("mcp_"+codegen.SnakeCase(svc.Name), false)
+		}
+
+		// Perform replacement inside factory: return &mcp<Go>srvc{} -> return <mcpAlias>.NewMCPAdapter(New<Service>(), nil, nil)
+		repl := mcpAlias + ".NewMCPAdapter(New" + svcGo + "(), nil, nil)"
+		for _, s := range f.SectionTemplates {
+			if s.Name == headerSection {
+				continue
+			}
+			// Known example stub return; also fallback to generic pattern
+			if strings.Contains(s.Source, "return &mcp"+svcGo+"srvc{}") {
+				s.Source = strings.Replace(s.Source, "return &mcp"+svcGo+"srvc{}", "return "+repl, 1)
+				continue
+			}
+			if strings.Contains(s.Source, "return &mcp") && strings.Contains(s.Source, "srvc{}") {
+				// Last resort: coarse replacement
+				s.Source = strings.Replace(s.Source, "srvc{}", ")", 1)
+				s.Source = strings.Replace(s.Source, "return &mcp", "return "+repl, 1)
+			}
+		}
+		// Only patch the first matching file
+		break
+	}
+	return files
+}
+
+// findSection returns the first section with the given name in file f.
+func findSection(f *codegen.File, name string) *codegen.SectionTemplate {
+	for _, s := range f.SectionTemplates {
+		if s.Name == name {
+			return s
+		}
+	}
+	return nil
+}
+
+// deriveBaseModuleFromHeader inspects the header imports to find the module path
+// prefix used by the generated example code (by locating the JSON-RPC CLI import).
+func deriveBaseModuleFromHeader(header *codegen.SectionTemplate) string {
+	if header == nil || header.Data == nil {
+		return ""
+	}
+	data, ok := header.Data.(map[string]any)
+	if !ok {
+		return ""
+	}
+	imv, ok := data["Imports"]
+	if !ok {
+		return ""
+	}
+	specs, ok := imv.([]*codegen.ImportSpec)
+	if !ok {
+		return ""
+	}
+	for _, spec := range specs {
+		idx := strings.Index(spec.Path, "/gen/jsonrpc/cli/")
+		if idx >= 0 {
+			return spec.Path[:idx]
+		}
+	}
+	return ""
 }
 
 func serviceInList(list []*expr.ServiceExpr, name string) bool {
@@ -285,14 +489,69 @@ func stringInList(list []string, name string) bool {
 	return false
 }
 
-// serverHTTPStartJSONRPCTemplate mirrors Goa JSON-RPC server_http_start.go.tpl for handleHTTPServer signature
-const serverHTTPStartJSONRPCTemplate = `
-
-func handleHTTPServer(ctx context.Context, u *url.URL{{ range $.Services }}{{ if .Service.Methods }}, {{ .Service.VarName }}Endpoints *{{ .Service.PkgName }}.Endpoints{{ end }}{{ end }}{{ range $.JSONRPCServices }}, {{ .Service.VarName }}Endpoints *{{ .Service.PkgName }}.Endpoints, {{ .Service.VarName }}Svc {{ .Service.PkgName }}.Service{{ end }}, wg *sync.WaitGroup, errc chan error, dbg bool) {
-`
-
-// serverHTTPStartJSONRPC defines handleHTTPServer signature with JSON-RPC args ordered as Endpoints then Service to match main.go call
-const serverHTTPStartJSONRPC = `
-
-func handleHTTPServer(ctx context.Context, u *url.URL{{ range $.Services }}{{ if .Service.Methods }}, {{ .Service.VarName }}Endpoints *{{ .Service.PkgName }}.Endpoints{{ end }}{{ end }}{{ range $.JSONRPCServices }}, {{ .Service.VarName }}Endpoints *{{ .Service.PkgName }}.Endpoints, {{ .Service.VarName }}Svc {{ .Service.PkgName }}.Service{{ end }}, wg *sync.WaitGroup, errc chan error, dbg bool) {
-`
+// PatchCLIToUseMCPAdapter rewrites the generated service CLI support code to instantiate
+// the MCP adapter client instead of the original JSON-RPC service client.
+func PatchCLIToUseMCPAdapter(_ string, _ []eval.Root, files []*codegen.File) ([]*codegen.File, error) {
+	for _, f := range files {
+		// Target generated CLI support under gen/jsonrpc/cli/<service>/cli.go
+		p := filepath.ToSlash(f.Path)
+		if !strings.Contains(p, "/jsonrpc/cli/") || !strings.HasSuffix(p, "/cli.go") {
+			continue
+		}
+		// Extract service snake from path segment after /jsonrpc/cli/
+		svc := ""
+		if idx := strings.Index(p, "/jsonrpc/cli/"); idx >= 0 {
+			rest := p[idx+len("/jsonrpc/cli/"):]
+			if j := strings.Index(rest, "/"); j > 0 {
+				svc = rest[:j]
+			}
+		}
+		if svc == "" {
+			continue
+		}
+		// 1) Find header and add adapter import via AddImport
+		var header *codegen.SectionTemplate
+		for _, s := range f.SectionTemplates {
+			if s.Name == "source-header" {
+				header = s
+				break
+			}
+		}
+		if header == nil {
+			return files, fmt.Errorf("header not found in %s", f.Path)
+		}
+		var origAlias string
+		// Inspect existing imports to locate the original JSON-RPC client import
+		var imps []*codegen.ImportSpec
+		if data, ok := header.Data.(map[string]any); ok {
+			if imv, ok2 := data["Imports"]; ok2 {
+				if specs, ok3 := imv.([]*codegen.ImportSpec); ok3 {
+					imps = specs
+				}
+			}
+		}
+		for _, spec := range imps {
+			if strings.HasSuffix(spec.Path, "/gen/jsonrpc/"+svc+"/client") {
+				baseModule := strings.TrimSuffix(spec.Path, "/gen/jsonrpc/"+svc+"/client")
+				adapterPath := baseModule + "/gen/mcp_" + svc + "/adapter/client"
+				codegen.AddImport(header, &codegen.ImportSpec{Path: adapterPath, Name: "mcpac"})
+				origAlias = spec.Name
+				break
+			}
+		}
+		// 2) Replace constructor call to use the adapter client
+		if origAlias == "" {
+			// Fallback to conventional alias used by Goa: <service> + "c"
+			origAlias = svc + "c"
+		}
+		if origAlias != "" {
+			for _, s := range f.SectionTemplates {
+				if s.Name == "source-header" {
+					continue
+				}
+				s.Source = strings.ReplaceAll(s.Source, "c := "+origAlias+".NewClient(", "c := mcpac.NewClient(")
+			}
+		}
+	}
+	return files, nil
+}

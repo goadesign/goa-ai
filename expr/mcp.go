@@ -95,6 +95,8 @@ type ResourceExpr struct {
 	MimeType string
 	// Method is the Goa method that provides the resource
 	Method *expr.MethodExpr
+	// Watchable indicates whether the resource supports subscriptions
+	Watchable bool
 	// Parent expression
 	eval.Expression
 }
@@ -309,9 +311,19 @@ func (p *PromptExpr) Validate() error {
 }
 
 // EvalName returns the name for other expressions
-func (c *CapabilitiesExpr) EvalName() string  { return "MCP capabilities" }
-func (t *ToolExpr) EvalName() string          { return "MCP tool " + t.Name }
-func (r *ResourceExpr) EvalName() string      { return "MCP resource " + r.Name }
-func (p *PromptExpr) EvalName() string        { return "MCP prompt " + p.Name }
-func (m *MessageExpr) EvalName() string       { return "MCP message" }
+func (c *CapabilitiesExpr) EvalName() string { return "MCP capabilities" }
+
+// EvalName returns the DSL evaluation name for the tool expression.
+func (t *ToolExpr) EvalName() string { return "MCP tool " + t.Name }
+
+// EvalName returns the DSL evaluation name for the resource expression.
+func (r *ResourceExpr) EvalName() string { return "MCP resource " + r.Name }
+
+// EvalName returns the DSL evaluation name for the prompt expression.
+func (p *PromptExpr) EvalName() string { return "MCP prompt " + p.Name }
+
+// EvalName returns the DSL evaluation name for the message expression.
+func (m *MessageExpr) EvalName() string { return "MCP message" }
+
+// EvalName returns the DSL evaluation name for the dynamic prompt expression.
 func (d *DynamicPromptExpr) EvalName() string { return "MCP dynamic prompt " + d.Name }

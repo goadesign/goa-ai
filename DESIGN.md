@@ -97,3 +97,18 @@ the same decoding pipeline as tools.
 - Resource policy: use deny/allow lists to constrain which URIs can be read; denylist takes precedence. If the allowlist is empty, all URIs are allowed by default.
 - Logging: if you configure a Logger, avoid logging sensitive payloads and results in production.
 - Protocol version: clients must send `initialize.protocolVersion` matching the service’s configured version. You can override the default via adapter options for compatibility testing.
+
+### Initialization policy
+Clients must call `initialize` before invoking any method that depends on server state (`tools/list`, `tools/call`, `resources/*`, `prompts/*`, subscriptions). `ping` may be called pre-initialization and is intended for health checks only.
+
+### Error code mapping
+The adapter maps Goa `ServiceError` with name `invalid_params` to JSON-RPC `-32602`, `method_not_found` to `-32601`, and otherwise defaults to `-32603` (internal). SSE error events carry the same JSON-RPC codes and messages as non-streaming responses.
+
+### Accept negotiation
+The JSON-RPC server mounts a single `POST /rpc` endpoint. The server negotiates streaming based on the `Accept` header: if it contains `text/event-stream`, compatible methods (e.g., `tools/call`) are served over SSE; otherwise, regular JSON responses are sent. This can be generalized in the future for additional streaming methods without endpoint proliferation.
+
+### Content item semantics
+When `StructuredStreamJSON` is true and the payload is valid JSON, the adapter emits items with `type: "text"` and `mimeType: "application/json"` to convey inline JSON efficiently. For binary or external resources, prefer `type: "resource"` with `data` (base64) or a `uri`.
+
+### Client parameter forwarding
+For resource-backed endpoints with payloads, the generated client adapter forwards original payload fields via query string so that MCP `resources/read` can reconstruct the original payload. This preserves Goa validations and keeps MCP resources simple.

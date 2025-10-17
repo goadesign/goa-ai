@@ -1,6 +1,8 @@
+//nolint:lll // long signatures and struct literals are acceptable in generator
 package codegen
 
 import (
+	"encoding/json"
 	"fmt"
 
 	mcpexpr "goa.design/goa-ai/expr"
@@ -30,6 +32,8 @@ type (
 		Subscriptions       []*SubscriptionAdapter
 		// Streaming flags derived from original service DSL
 		ToolsCallStreaming bool
+		// Derived flags
+		HasWatchableResources bool
 	}
 
 	// ToolAdapter represents a tool adapter
@@ -49,6 +53,8 @@ type (
 		RequiredFields []string
 		EnumFields     map[string][]string
 		EnumFieldsPtr  map[string]bool
+		// ExampleArguments contains a minimal valid JSON for tool arguments
+		ExampleArguments string
 	}
 
 	// ResourceAdapter represents a resource adapter
@@ -62,6 +68,7 @@ type (
 		HasResult          bool
 		PayloadType        string
 		ResultType         string
+		Watchable          bool
 	}
 
 	// StaticPromptAdapter represents a static prompt
@@ -87,6 +94,8 @@ type (
 		ResultType         string
 		// Arguments describes prompt arguments derived from the payload (dynamic prompts)
 		Arguments []PromptArg
+		// ExampleArguments contains a minimal valid JSON for prompt arguments
+		ExampleArguments string
 	}
 
 	// PromptArg is a lightweight representation for generating PromptArgument values
@@ -157,6 +166,14 @@ func (g *adapterGenerator) buildAdapterData() *AdapterData {
 	// Static prompts are handled directly in the adapter
 	data.StaticPrompts = g.buildStaticPrompts()
 
+	// Derive watchable resources presence
+	for _, r := range data.Resources {
+		if r.Watchable {
+			data.HasWatchableResources = true
+			break
+		}
+	}
+
 	return data
 }
 
@@ -193,6 +210,10 @@ func (g *adapterGenerator) buildToolAdapters() []*ToolAdapter {
 			adapter.RequiredFields = req
 			adapter.EnumFields = enums
 			adapter.EnumFieldsPtr = enumPtr
+			// Produce a minimal valid example JSON for arguments
+			adapter.ExampleArguments = g.buildExampleJSON(tool.Method.Payload)
+		} else {
+			adapter.ExampleArguments = "{}"
 		}
 
 		// Set result type reference
@@ -288,6 +309,7 @@ func (g *adapterGenerator) buildResourceAdapters() []*ResourceAdapter {
 			OriginalMethodName: codegen.Goify(resource.Method.Name, true),
 			HasPayload:         hasRealPayload,
 			HasResult:          resource.Method.Result != nil,
+			Watchable:          resource.Watchable,
 		}
 
 		// Set payload type reference only for real payloads
@@ -327,6 +349,9 @@ func (g *adapterGenerator) buildDynamicPromptAdapters() []*DynamicPromptAdapter 
 			if hasRealPayload {
 				adapter.PayloadType = g.getTypeReference(dp.Method.Payload)
 				adapter.Arguments = g.promptArgsFromPayload(dp.Method.Payload)
+				adapter.ExampleArguments = g.buildExampleJSON(dp.Method.Payload)
+			} else {
+				adapter.ExampleArguments = "{}"
 			}
 
 			// Set result type reference if present
@@ -339,6 +364,25 @@ func (g *adapterGenerator) buildDynamicPromptAdapters() []*DynamicPromptAdapter 
 	}
 
 	return adapters
+}
+
+// buildExampleJSON produces a minimal valid JSON string for the given payload attribute.
+// It prioritizes required fields and uses enum defaults when available.
+func (g *adapterGenerator) buildExampleJSON(attr *expr.AttributeExpr) string {
+	if attr == nil || attr.Type == nil || attr.Type == expr.Empty {
+		return "{}"
+	}
+	// Use Goa's example generator with a deterministic randomizer for stable output
+	r := &expr.ExampleGenerator{Randomizer: expr.NewDeterministicRandomizer()}
+	v := attr.Example(r)
+	if v == nil {
+		return "{}"
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
 }
 
 // promptArgsFromPayload builds a flat list of prompt arguments from a payload attribute (top-level only)

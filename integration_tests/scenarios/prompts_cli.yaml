@@ -1,0 +1,16 @@
+scenarios:
+  - name: generate_prompts_invalid_cli_retry
+    defaults:
+      client: jsonrpc.mcp_assistant
+      client_mode: cli
+    pre:
+      auto_initialize: true
+    steps:
+      - name: gen
+        op: GeneratePrompts
+        input: { context: testing }
+        expect:
+          status: error
+
+
+

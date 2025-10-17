@@ -42,11 +42,6 @@ func GeneratePromptsAssistantPath() string {
 	return "/rpc"
 }
 
-// GetWorkspaceInfoAssistantPath returns the URL path to the assistant service get_workspace_info HTTP endpoint.
-func GetWorkspaceInfoAssistantPath() string {
-	return "/rpc"
-}
-
 // SendNotificationAssistantPath returns the URL path to the assistant service send_notification HTTP endpoint.
 func SendNotificationAssistantPath() string {
 	return "/rpc"

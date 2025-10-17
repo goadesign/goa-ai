@@ -8,6 +8,8 @@
 package server
 
 import (
+	"unicode/utf8"
+
 	assistant "example.com/assistant/gen/assistant"
 	goa "goa.design/goa/v3/pkg"
 )
@@ -42,8 +44,12 @@ type ExecuteCodeRequestBody struct {
 // GetConversationHistoryRequestBody is the type of the "assistant" service
 // "get_conversation_history" endpoint HTTP request body.
 type GetConversationHistoryRequestBody struct {
-	// Number of messages
+	// Maximum items
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty" xml:"limit,omitempty"`
+	// Flag example
+	Flag *bool `form:"flag,omitempty" json:"flag,omitempty" xml:"flag,omitempty"`
+	// Numbers
+	Nums []any `form:"nums,omitempty" json:"nums,omitempty" xml:"nums,omitempty"`
 }
 
 // GeneratePromptsRequestBody is the type of the "assistant" service
@@ -95,9 +101,9 @@ type ProcessBatchRequestBody struct {
 type AnalyzeTextResponseBody struct {
 	// Analysis mode used
 	Mode string `form:"mode" json:"mode" xml:"mode"`
-	// Analysis result (varies by mode)
-	Result any `form:"result" json:"result" xml:"result"`
-	// Confidence score
+	// Analysis result (summary, keywords or sentiment)
+	Result string `form:"result" json:"result" xml:"result"`
+	// Confidence score (0–1)
 	Confidence *float64 `form:"confidence,omitempty" json:"confidence,omitempty" xml:"confidence,omitempty"`
 	// Additional metadata
 	Metadata map[string]any `form:"metadata,omitempty" json:"metadata,omitempty" xml:"metadata,omitempty"`
@@ -139,17 +145,14 @@ type GetSystemInfoResponseBody struct {
 
 // GetConversationHistoryResponseBody is the type of the "assistant" service
 // "get_conversation_history" endpoint HTTP response body.
-type GetConversationHistoryResponseBody []*ChatMessageResponse
+type GetConversationHistoryResponseBody struct {
+	// Conversation messages
+	Messages []any `form:"messages,omitempty" json:"messages,omitempty" xml:"messages,omitempty"`
+}
 
 // GeneratePromptsResponseBody is the type of the "assistant" service
 // "generate_prompts" endpoint HTTP response body.
 type GeneratePromptsResponseBody []*PromptTemplateResponse
-
-// GetWorkspaceInfoResponseBody is the type of the "assistant" service
-// "get_workspace_info" endpoint HTTP response body.
-type GetWorkspaceInfoResponseBody struct {
-	Roots []*RootInfoResponseBody `form:"roots" json:"roots" xml:"roots"`
-}
 
 // SubscribeToUpdatesResponseBody is the type of the "assistant" service
 // "subscribe_to_updates" endpoint HTTP response body.
@@ -181,7 +184,7 @@ type SearchResultResponse struct {
 	Title string `form:"title" json:"title" xml:"title"`
 	// Result content
 	Content string `form:"content" json:"content" xml:"content"`
-	// Relevance score
+	// Relevance score (0–1)
 	Score float64 `form:"score" json:"score" xml:"score"`
 }
 
@@ -199,18 +202,6 @@ type DocumentResponse struct {
 	Modified string `form:"modified" json:"modified" xml:"modified"`
 }
 
-// ChatMessageResponse is used to define fields on response body types.
-type ChatMessageResponse struct {
-	// Message ID
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message role
-	Role string `form:"role" json:"role" xml:"role"`
-	// Message content
-	Content string `form:"content" json:"content" xml:"content"`
-	// Message timestamp
-	Timestamp string `form:"timestamp" json:"timestamp" xml:"timestamp"`
-}
-
 // PromptTemplateResponse is used to define fields on response body types.
 type PromptTemplateResponse struct {
 	// Template name
@@ -221,14 +212,6 @@ type PromptTemplateResponse struct {
 	Variables []string `form:"variables,omitempty" json:"variables,omitempty" xml:"variables,omitempty"`
 	// Template content
 	Template string `form:"template" json:"template" xml:"template"`
-}
-
-// RootInfoResponseBody is used to define fields on response body types.
-type RootInfoResponseBody struct {
-	// Root URI
-	URI string `form:"uri" json:"uri" xml:"uri"`
-	// Root name
-	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
 }
 
 // NewAnalyzeTextResponseBody builds the HTTP response body from the result of
@@ -296,10 +279,13 @@ func NewGetSystemInfoResponseBody(res *assistant.SystemInfo) *GetSystemInfoRespo
 
 // NewGetConversationHistoryResponseBody builds the HTTP response body from the
 // result of the "get_conversation_history" endpoint of the "assistant" service.
-func NewGetConversationHistoryResponseBody(res assistant.ChatMessages) GetConversationHistoryResponseBody {
-	body := make([]*ChatMessageResponse, len(res))
-	for i, val := range res {
-		body[i] = marshalAssistantChatMessageToChatMessageResponse(val)
+func NewGetConversationHistoryResponseBody(res *assistant.ConversationHistory) *GetConversationHistoryResponseBody {
+	body := &GetConversationHistoryResponseBody{}
+	if res.Messages != nil {
+		body.Messages = make([]any, len(res.Messages))
+		for i, val := range res.Messages {
+			body.Messages[i] = val
+		}
 	}
 	return body
 }
@@ -310,21 +296,6 @@ func NewGeneratePromptsResponseBody(res assistant.PromptTemplates) GeneratePromp
 	body := make([]*PromptTemplateResponse, len(res))
 	for i, val := range res {
 		body[i] = marshalAssistantPromptTemplateToPromptTemplateResponse(val)
-	}
-	return body
-}
-
-// NewGetWorkspaceInfoResponseBody builds the HTTP response body from the
-// result of the "get_workspace_info" endpoint of the "assistant" service.
-func NewGetWorkspaceInfoResponseBody(res *assistant.GetWorkspaceInfoResult) *GetWorkspaceInfoResponseBody {
-	body := &GetWorkspaceInfoResponseBody{}
-	if res.Roots != nil {
-		body.Roots = make([]*RootInfoResponseBody, len(res.Roots))
-		for i, val := range res.Roots {
-			body.Roots[i] = marshalAssistantRootInfoToRootInfoResponseBody(val)
-		}
-	} else {
-		body.Roots = []*RootInfoResponseBody{}
 	}
 	return body
 }
@@ -399,12 +370,15 @@ func NewExecuteCodePayload(body *ExecuteCodeRequestBody) *assistant.ExecuteCodeP
 // NewGetConversationHistoryPayload builds a assistant service
 // get_conversation_history endpoint payload.
 func NewGetConversationHistoryPayload(body *GetConversationHistoryRequestBody) *assistant.GetConversationHistoryPayload {
-	v := &assistant.GetConversationHistoryPayload{}
-	if body.Limit != nil {
-		v.Limit = *body.Limit
+	v := &assistant.GetConversationHistoryPayload{
+		Limit: body.Limit,
+		Flag:  body.Flag,
 	}
-	if body.Limit == nil {
-		v.Limit = 50
+	if body.Nums != nil {
+		v.Nums = make([]any, len(body.Nums))
+		for i, val := range body.Nums {
+			v.Nums[i] = val
+		}
 	}
 
 	return v
@@ -470,6 +444,16 @@ func ValidateAnalyzeTextRequestBody(body *AnalyzeTextRequestBody) (err error) {
 	if body.Mode == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("mode", "body"))
 	}
+	if body.Text != nil {
+		if utf8.RuneCountInString(*body.Text) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.text", *body.Text, utf8.RuneCountInString(*body.Text), 1, true))
+		}
+	}
+	if body.Text != nil {
+		if utf8.RuneCountInString(*body.Text) > 10000 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.text", *body.Text, utf8.RuneCountInString(*body.Text), 10000, false))
+		}
+	}
 	if body.Mode != nil {
 		if !(*body.Mode == "sentiment" || *body.Mode == "keywords" || *body.Mode == "summary") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mode", *body.Mode, []any{"sentiment", "keywords", "summary"}))
@@ -484,6 +468,26 @@ func ValidateSearchKnowledgeRequestBody(body *SearchKnowledgeRequestBody) (err e
 	if body.Query == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("query", "body"))
 	}
+	if body.Query != nil {
+		if utf8.RuneCountInString(*body.Query) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.query", *body.Query, utf8.RuneCountInString(*body.Query), 1, true))
+		}
+	}
+	if body.Query != nil {
+		if utf8.RuneCountInString(*body.Query) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.query", *body.Query, utf8.RuneCountInString(*body.Query), 256, false))
+		}
+	}
+	if body.Limit != nil {
+		if *body.Limit < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.limit", *body.Limit, 1, true))
+		}
+	}
+	if body.Limit != nil {
+		if *body.Limit > 100 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.limit", *body.Limit, 100, false))
+		}
+	}
 	return
 }
 
@@ -495,6 +499,21 @@ func ValidateExecuteCodeRequestBody(body *ExecuteCodeRequestBody) (err error) {
 	}
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Language != nil {
+		if !(*body.Language == "python" || *body.Language == "javascript" || *body.Language == "go") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.language", *body.Language, []any{"python", "javascript", "go"}))
+		}
+	}
+	if body.Code != nil {
+		if utf8.RuneCountInString(*body.Code) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.code", *body.Code, utf8.RuneCountInString(*body.Code), 1, true))
+		}
+	}
+	if body.Code != nil {
+		if utf8.RuneCountInString(*body.Code) > 20000 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.code", *body.Code, utf8.RuneCountInString(*body.Code), 20000, false))
+		}
 	}
 	return
 }
@@ -525,6 +544,16 @@ func ValidateSendNotificationRequestBody(body *SendNotificationRequestBody) (err
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *body.Type, []any{"info", "warning", "error", "success"}))
 		}
 	}
+	if body.Message != nil {
+		if utf8.RuneCountInString(*body.Message) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.message", *body.Message, utf8.RuneCountInString(*body.Message), 1, true))
+		}
+	}
+	if body.Message != nil {
+		if utf8.RuneCountInString(*body.Message) > 2000 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.message", *body.Message, utf8.RuneCountInString(*body.Message), 2000, false))
+		}
+	}
 	return
 }
 
@@ -533,6 +562,11 @@ func ValidateSendNotificationRequestBody(body *SendNotificationRequestBody) (err
 func ValidateSubscribeToUpdatesRequestBody(body *SubscribeToUpdatesRequestBody) (err error) {
 	if body.Resource == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
+	}
+	if body.Resource != nil {
+		if !(*body.Resource == "documents" || *body.Resource == "conversation" || *body.Resource == "system_info") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.resource", *body.Resource, []any{"documents", "conversation", "system_info"}))
+		}
 	}
 	return
 }
@@ -543,10 +577,16 @@ func ValidateProcessBatchRequestBody(body *ProcessBatchRequestBody) (err error) 
 	if body.Items == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("items", "body"))
 	}
+	if len(body.Items) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.items", body.Items, len(body.Items), 1, true))
+	}
 	if body.Format != nil {
 		if !(*body.Format == "text" || *body.Format == "blob" || *body.Format == "uri") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.format", *body.Format, []any{"text", "blob", "uri"}))
 		}
+	}
+	if body.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", *body.URI, goa.FormatURI))
 	}
 	return
 }

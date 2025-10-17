@@ -22,7 +22,6 @@ type Endpoints struct {
 	GetSystemInfo          goa.Endpoint
 	GetConversationHistory goa.Endpoint
 	GeneratePrompts        goa.Endpoint
-	GetWorkspaceInfo       goa.Endpoint
 	SendNotification       goa.Endpoint
 	SubscribeToUpdates     goa.Endpoint
 	ProcessBatch           goa.Endpoint
@@ -49,7 +48,6 @@ func NewEndpoints(s Service) *Endpoints {
 		GetSystemInfo:          NewGetSystemInfoEndpoint(s),
 		GetConversationHistory: NewGetConversationHistoryEndpoint(s),
 		GeneratePrompts:        NewGeneratePromptsEndpoint(s),
-		GetWorkspaceInfo:       NewGetWorkspaceInfoEndpoint(s),
 		SendNotification:       NewSendNotificationEndpoint(s),
 		SubscribeToUpdates:     NewSubscribeToUpdatesEndpoint(s),
 		ProcessBatch:           NewProcessBatchEndpoint(s),
@@ -65,7 +63,6 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.GetSystemInfo = m(e.GetSystemInfo)
 	e.GetConversationHistory = m(e.GetConversationHistory)
 	e.GeneratePrompts = m(e.GeneratePrompts)
-	e.GetWorkspaceInfo = m(e.GetWorkspaceInfo)
 	e.SendNotification = m(e.SendNotification)
 	e.SubscribeToUpdates = m(e.SubscribeToUpdates)
 	e.ProcessBatch = m(e.ProcessBatch)
@@ -129,14 +126,6 @@ func NewGeneratePromptsEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		p := req.(*GeneratePromptsPayload)
 		return s.GeneratePrompts(ctx, p)
-	}
-}
-
-// NewGetWorkspaceInfoEndpoint returns an endpoint function that calls the
-// method "get_workspace_info" of service "assistant".
-func NewGetWorkspaceInfoEndpoint(s Service) goa.Endpoint {
-	return func(ctx context.Context, req any) (any, error) {
-		return s.GetWorkspaceInfo(ctx)
 	}
 }
 

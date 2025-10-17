@@ -8,6 +8,8 @@
 package client
 
 import (
+	"unicode/utf8"
+
 	assistant "example.com/assistant/gen/assistant"
 	goa "goa.design/goa/v3/pkg"
 )
@@ -42,8 +44,12 @@ type ExecuteCodeRequestBody struct {
 // GetConversationHistoryRequestBody is the type of the "assistant" service
 // "get_conversation_history" endpoint HTTP request body.
 type GetConversationHistoryRequestBody struct {
-	// Number of messages
-	Limit int `form:"limit" json:"limit" xml:"limit"`
+	// Maximum items
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty" xml:"limit,omitempty"`
+	// Flag example
+	Flag *bool `form:"flag,omitempty" json:"flag,omitempty" xml:"flag,omitempty"`
+	// Numbers
+	Nums []any `form:"nums,omitempty" json:"nums,omitempty" xml:"nums,omitempty"`
 }
 
 // GeneratePromptsRequestBody is the type of the "assistant" service
@@ -95,9 +101,9 @@ type ProcessBatchRequestBody struct {
 type AnalyzeTextResponseBody struct {
 	// Analysis mode used
 	Mode *string `form:"mode,omitempty" json:"mode,omitempty" xml:"mode,omitempty"`
-	// Analysis result (varies by mode)
-	Result any `form:"result,omitempty" json:"result,omitempty" xml:"result,omitempty"`
-	// Confidence score
+	// Analysis result (summary, keywords or sentiment)
+	Result *string `form:"result,omitempty" json:"result,omitempty" xml:"result,omitempty"`
+	// Confidence score (0–1)
 	Confidence *float64 `form:"confidence,omitempty" json:"confidence,omitempty" xml:"confidence,omitempty"`
 	// Additional metadata
 	Metadata map[string]any `form:"metadata,omitempty" json:"metadata,omitempty" xml:"metadata,omitempty"`
@@ -139,17 +145,14 @@ type GetSystemInfoResponseBody struct {
 
 // GetConversationHistoryResponseBody is the type of the "assistant" service
 // "get_conversation_history" endpoint HTTP response body.
-type GetConversationHistoryResponseBody []*ChatMessageResponse
+type GetConversationHistoryResponseBody struct {
+	// Conversation messages
+	Messages []any `form:"messages,omitempty" json:"messages,omitempty" xml:"messages,omitempty"`
+}
 
 // GeneratePromptsResponseBody is the type of the "assistant" service
 // "generate_prompts" endpoint HTTP response body.
 type GeneratePromptsResponseBody []*PromptTemplateResponse
-
-// GetWorkspaceInfoResponseBody is the type of the "assistant" service
-// "get_workspace_info" endpoint HTTP response body.
-type GetWorkspaceInfoResponseBody struct {
-	Roots []*RootInfoResponseBody `form:"roots,omitempty" json:"roots,omitempty" xml:"roots,omitempty"`
-}
 
 // SubscribeToUpdatesResponseBody is the type of the "assistant" service
 // "subscribe_to_updates" endpoint HTTP response body.
@@ -181,7 +184,7 @@ type SearchResultResponse struct {
 	Title *string `form:"title,omitempty" json:"title,omitempty" xml:"title,omitempty"`
 	// Result content
 	Content *string `form:"content,omitempty" json:"content,omitempty" xml:"content,omitempty"`
-	// Relevance score
+	// Relevance score (0–1)
 	Score *float64 `form:"score,omitempty" json:"score,omitempty" xml:"score,omitempty"`
 }
 
@@ -199,18 +202,6 @@ type DocumentResponse struct {
 	Modified *string `form:"modified,omitempty" json:"modified,omitempty" xml:"modified,omitempty"`
 }
 
-// ChatMessageResponse is used to define fields on response body types.
-type ChatMessageResponse struct {
-	// Message ID
-	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
-	// Message role
-	Role *string `form:"role,omitempty" json:"role,omitempty" xml:"role,omitempty"`
-	// Message content
-	Content *string `form:"content,omitempty" json:"content,omitempty" xml:"content,omitempty"`
-	// Message timestamp
-	Timestamp *string `form:"timestamp,omitempty" json:"timestamp,omitempty" xml:"timestamp,omitempty"`
-}
-
 // PromptTemplateResponse is used to define fields on response body types.
 type PromptTemplateResponse struct {
 	// Template name
@@ -221,14 +212,6 @@ type PromptTemplateResponse struct {
 	Variables []string `form:"variables,omitempty" json:"variables,omitempty" xml:"variables,omitempty"`
 	// Template content
 	Template *string `form:"template,omitempty" json:"template,omitempty" xml:"template,omitempty"`
-}
-
-// RootInfoResponseBody is used to define fields on response body types.
-type RootInfoResponseBody struct {
-	// Root URI
-	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
-	// Root name
-	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
 }
 
 // NewAnalyzeTextRequestBody builds the HTTP request body from the payload of
@@ -273,11 +256,12 @@ func NewExecuteCodeRequestBody(p *assistant.ExecuteCodePayload) *ExecuteCodeRequ
 func NewGetConversationHistoryRequestBody(p *assistant.GetConversationHistoryPayload) *GetConversationHistoryRequestBody {
 	body := &GetConversationHistoryRequestBody{
 		Limit: p.Limit,
+		Flag:  p.Flag,
 	}
-	{
-		var zero int
-		if body.Limit == zero {
-			body.Limit = 50
+	if p.Nums != nil {
+		body.Nums = make([]any, len(p.Nums))
+		for i, val := range p.Nums {
+			body.Nums[i] = val
 		}
 	}
 	return body
@@ -339,7 +323,7 @@ func NewProcessBatchRequestBody(p *assistant.ProcessBatchPayload) *ProcessBatchR
 func NewAnalyzeTextAnalysisResultOK(body *AnalyzeTextResponseBody) *assistant.AnalysisResult {
 	v := &assistant.AnalysisResult{
 		Mode:       *body.Mode,
-		Result:     body.Result,
+		Result:     *body.Result,
 		Confidence: body.Confidence,
 	}
 	if body.Metadata != nil {
@@ -402,12 +386,15 @@ func NewGetSystemInfoSystemInfoOK(body *GetSystemInfoResponseBody) *assistant.Sy
 	return v
 }
 
-// NewGetConversationHistoryChatMessagesOK builds a "assistant" service
+// NewGetConversationHistoryConversationHistoryOK builds a "assistant" service
 // "get_conversation_history" endpoint result from a HTTP "OK" response.
-func NewGetConversationHistoryChatMessagesOK(body []*ChatMessageResponse) assistant.ChatMessages {
-	v := make([]*assistant.ChatMessage, len(body))
-	for i, val := range body {
-		v[i] = unmarshalChatMessageResponseToAssistantChatMessage(val)
+func NewGetConversationHistoryConversationHistoryOK(body *GetConversationHistoryResponseBody) *assistant.ConversationHistory {
+	v := &assistant.ConversationHistory{}
+	if body.Messages != nil {
+		v.Messages = make([]any, len(body.Messages))
+		for i, val := range body.Messages {
+			v.Messages[i] = val
+		}
 	}
 
 	return v
@@ -419,18 +406,6 @@ func NewGeneratePromptsPromptTemplatesOK(body []*PromptTemplateResponse) assista
 	v := make([]*assistant.PromptTemplate, len(body))
 	for i, val := range body {
 		v[i] = unmarshalPromptTemplateResponseToAssistantPromptTemplate(val)
-	}
-
-	return v
-}
-
-// NewGetWorkspaceInfoResultOK builds a "assistant" service
-// "get_workspace_info" endpoint result from a HTTP "OK" response.
-func NewGetWorkspaceInfoResultOK(body *GetWorkspaceInfoResponseBody) *assistant.GetWorkspaceInfoResult {
-	v := &assistant.GetWorkspaceInfoResult{}
-	v.Roots = make([]*assistant.RootInfo, len(body.Roots))
-	for i, val := range body.Roots {
-		v.Roots[i] = unmarshalRootInfoResponseBodyToAssistantRootInfo(val)
 	}
 
 	return v
@@ -472,6 +447,26 @@ func ValidateAnalyzeTextResponseBody(body *AnalyzeTextResponseBody) (err error) 
 	if body.Result == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("result", "body"))
 	}
+	if body.Mode != nil {
+		if !(*body.Mode == "sentiment" || *body.Mode == "keywords" || *body.Mode == "summary") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mode", *body.Mode, []any{"sentiment", "keywords", "summary"}))
+		}
+	}
+	if body.Result != nil {
+		if utf8.RuneCountInString(*body.Result) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.result", *body.Result, utf8.RuneCountInString(*body.Result), 1, true))
+		}
+	}
+	if body.Confidence != nil {
+		if *body.Confidence < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.confidence", *body.Confidence, 0, true))
+		}
+	}
+	if body.Confidence != nil {
+		if *body.Confidence > 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.confidence", *body.Confidence, 1, false))
+		}
+	}
 	return
 }
 
@@ -483,6 +478,11 @@ func ValidateExecuteCodeResponseBody(body *ExecuteCodeResponseBody) (err error) 
 	}
 	if body.ExecutionTime == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("execution_time", "body"))
+	}
+	if body.ExecutionTime != nil {
+		if *body.ExecutionTime < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.execution_time", *body.ExecutionTime, 0, true))
+		}
 	}
 	return
 }
@@ -505,20 +505,34 @@ func ValidateGetSystemInfoResponseBody(body *GetSystemInfoResponseBody) (err err
 	if body.ActiveConnections == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("active_connections", "body"))
 	}
-	return
-}
-
-// ValidateGetWorkspaceInfoResponseBody runs the validations defined on
-// get_workspace_info_response_body
-func ValidateGetWorkspaceInfoResponseBody(body *GetWorkspaceInfoResponseBody) (err error) {
-	if body.Roots == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("roots", "body"))
+	if body.Uptime != nil {
+		if *body.Uptime < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.uptime", *body.Uptime, 0, true))
+		}
 	}
-	for _, e := range body.Roots {
-		if e != nil {
-			if err2 := ValidateRootInfoResponseBody(e); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
+	if body.MemoryUsage != nil {
+		if *body.MemoryUsage < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.memory_usage", *body.MemoryUsage, 0, true))
+		}
+	}
+	if body.MemoryUsage != nil {
+		if *body.MemoryUsage > 100 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.memory_usage", *body.MemoryUsage, 100, false))
+		}
+	}
+	if body.CPUUsage != nil {
+		if *body.CPUUsage < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.cpu_usage", *body.CPUUsage, 0, true))
+		}
+	}
+	if body.CPUUsage != nil {
+		if *body.CPUUsage > 100 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.cpu_usage", *body.CPUUsage, 100, false))
+		}
+	}
+	if body.ActiveConnections != nil {
+		if *body.ActiveConnections < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.active_connections", *body.ActiveConnections, 0, true))
 		}
 	}
 	return
@@ -535,6 +549,9 @@ func ValidateSubscribeToUpdatesResponseBody(body *SubscribeToUpdatesResponseBody
 	}
 	if body.CreatedAt == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("created_at", "body"))
+	}
+	if body.SubscriptionID != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.subscription_id", *body.SubscriptionID, goa.FormatUUID))
 	}
 	if body.CreatedAt != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.created_at", *body.CreatedAt, goa.FormatDateTime))
@@ -554,6 +571,16 @@ func ValidateProcessBatchResponseBody(body *ProcessBatchResponseBody) (err error
 	if body.Results == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("results", "body"))
 	}
+	if body.Processed != nil {
+		if *body.Processed < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.processed", *body.Processed, 0, true))
+		}
+	}
+	if body.Failed != nil {
+		if *body.Failed < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.failed", *body.Failed, 0, true))
+		}
+	}
 	return
 }
 
@@ -571,6 +598,21 @@ func ValidateSearchResultResponse(body *SearchResultResponse) (err error) {
 	}
 	if body.Score == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("score", "body"))
+	}
+	if body.Content != nil {
+		if utf8.RuneCountInString(*body.Content) > 10000 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.content", *body.Content, utf8.RuneCountInString(*body.Content), 10000, false))
+		}
+	}
+	if body.Score != nil {
+		if *body.Score < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.score", *body.Score, 0, true))
+		}
+	}
+	if body.Score != nil {
+		if *body.Score > 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.score", *body.Score, 1, false))
+		}
 	}
 	return
 }
@@ -592,34 +634,18 @@ func ValidateDocumentResponse(body *DocumentResponse) (err error) {
 	if body.Modified == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("modified", "body"))
 	}
-	if body.Modified != nil {
-		err = goa.MergeErrors(err, goa.ValidateFormat("body.modified", *body.Modified, goa.FormatDateTime))
-	}
-	return
-}
-
-// ValidateChatMessageResponse runs the validations defined on
-// ChatMessageResponse
-func ValidateChatMessageResponse(body *ChatMessageResponse) (err error) {
-	if body.ID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
-	}
-	if body.Role == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("role", "body"))
-	}
-	if body.Content == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
-	}
-	if body.Timestamp == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("timestamp", "body"))
-	}
-	if body.Role != nil {
-		if !(*body.Role == "user" || *body.Role == "assistant" || *body.Role == "system") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.role", *body.Role, []any{"user", "assistant", "system"}))
+	if body.Type != nil {
+		if !(*body.Type == "text" || *body.Type == "pdf" || *body.Type == "image" || *body.Type == "markdown") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *body.Type, []any{"text", "pdf", "image", "markdown"}))
 		}
 	}
-	if body.Timestamp != nil {
-		err = goa.MergeErrors(err, goa.ValidateFormat("body.timestamp", *body.Timestamp, goa.FormatDateTime))
+	if body.Size != nil {
+		if *body.Size < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.size", *body.Size, 0, true))
+		}
+	}
+	if body.Modified != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.modified", *body.Modified, goa.FormatDateTime))
 	}
 	return
 }
@@ -636,14 +662,10 @@ func ValidatePromptTemplateResponse(body *PromptTemplateResponse) (err error) {
 	if body.Template == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("template", "body"))
 	}
-	return
-}
-
-// ValidateRootInfoResponseBody runs the validations defined on
-// RootInfoResponseBody
-func ValidateRootInfoResponseBody(body *RootInfoResponseBody) (err error) {
-	if body.URI == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
+	if body.Template != nil {
+		if utf8.RuneCountInString(*body.Template) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.template", *body.Template, utf8.RuneCountInString(*body.Template), 1, true))
+		}
 	}
 	return
 }

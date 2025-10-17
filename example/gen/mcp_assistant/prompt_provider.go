@@ -17,8 +17,6 @@ import (
 type PromptProvider interface {
 	// GetCodeReviewPrompt returns the content for the code_review prompt
 	GetCodeReviewPrompt(arguments json.RawMessage) (*PromptsGetResult, error)
-	// GetExplainConceptPrompt returns the content for the explain_concept prompt
-	GetExplainConceptPrompt(arguments json.RawMessage) (*PromptsGetResult, error)
 	// GetContextualPromptsPrompt returns the dynamic content for the contextual_prompts prompt
 	GetContextualPromptsPrompt(ctx context.Context, arguments json.RawMessage) (*PromptsGetResult, error)
 }

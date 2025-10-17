@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -23,6 +24,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
+)
+
+const (
+	statusError = "error"
 )
 
 // Runner runs scenarios against the generated example server.
@@ -46,8 +51,9 @@ type Scenario struct {
 
 // Defaults apply to steps when not explicitly set in a step.
 type Defaults struct {
-	Client  string            `yaml:"client"`  // e.g., "jsonrpc.mcp_assistant" (hint to pick generated client)
-	Headers map[string]string `yaml:"headers"` // default headers for all steps
+	Client     string            `yaml:"client"`      // e.g., "jsonrpc.mcp_assistant" (hint to pick generated client)
+	Headers    map[string]string `yaml:"headers"`     // default headers for all steps
+	ClientMode string            `yaml:"client_mode"` // http | cli (optional)
 }
 
 // Pre controls scenario-level behavior (e.g., auto-initialize handshake).
@@ -67,6 +73,7 @@ type Step struct {
 	// Expectations
 	Expect       *Expect       `yaml:"expect"`
 	StreamExpect *StreamExpect `yaml:"stream_expect"`
+	ExpectRetry  *ExpectRetry  `yaml:"expect_retry"` // generated client retry expectation
 }
 
 // ExpectedError captures expected JSON-RPC error.
@@ -80,6 +87,12 @@ type Expect struct {
 	Status string         `yaml:"status"` // success | error | no_response
 	Error  *ExpectedError `yaml:"error"`
 	Result map[string]any `yaml:"result"`
+}
+
+// ExpectRetry describes retry expectations for generated client mode
+type ExpectRetry struct {
+	PromptContains string   `yaml:"prompt_contains"`
+	Contains       []string `yaml:"contains"`
 }
 
 // StreamExpect describes streaming expectations.
@@ -123,7 +136,7 @@ var (
 
 // LoadScenarios loads scenarios from a YAML file path.
 func LoadScenarios(path string) ([]Scenario, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- test helper reads scenarios file from testdata path
 	if err != nil {
 		return nil, fmt.Errorf("read scenarios: %w", err)
 	}
@@ -153,6 +166,7 @@ func (r *Runner) Run(t *testing.T, scenarios []Scenario) error {
 			t.Parallel()
 			// Use a fresh runner instance per scenario to avoid shared mutable state
 			lr := NewRunner()
+			// No dynamic adapter flags for tests by default
 			require.NoError(t, lr.startServer(t))
 			defer lr.stopServer()
 			lr.runSteps(t, sc.Steps, sc.Defaults, sc.Pre)
@@ -200,7 +214,15 @@ func validateSubset(t *testing.T, actual map[string]any, expected map[string]any
 		case []any:
 			aarr, ok := vact.([]any)
 			require.Truef(t, ok, "key %q: expected array", k)
-			require.GreaterOrEqualf(t, len(aarr), len(ev), "key %q: expected at least %d items, got %d", k, len(ev), len(aarr))
+			require.GreaterOrEqualf(
+				t,
+				len(aarr),
+				len(ev),
+				"key %q: expected at least %d items, got %d",
+				k,
+				len(ev),
+				len(aarr),
+			)
 			for i := range ev {
 				if elemExp, ok := ev[i].(map[string]any); ok {
 					elemAct, ok := toMap(aarr[i])
@@ -230,6 +252,8 @@ func toMap(v any) (map[string]any, bool) {
 }
 
 // getFreePort finds an available port on localhost.
+//
+//nolint:noctx // tests use a simple TCP listen to pick a free port; no context needed
 func getFreePort() (string, error) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -344,7 +368,7 @@ func regenerateExample(t *testing.T, exampleRoot string) error {
 		}
 		if strings.HasSuffix(path, "_test.go") {
 			// Only delete tests that contain the goa generated header
-			f, oErr := os.Open(path)
+			f, oErr := os.Open(path) // #nosec G304 -- test helper reads a generated test file path
 			if oErr != nil {
 				return nil
 			}
@@ -358,18 +382,36 @@ func regenerateExample(t *testing.T, exampleRoot string) error {
 		return nil
 	})
 	// Run goa gen
-	genCmd := exec.CommandContext(context.Background(), "go", "run", "-C", exampleRoot, "goa.design/goa/v3/cmd/goa", "gen", "example.com/assistant/design")
+	genCmd := exec.CommandContext(
+		context.Background(),
+		"go",
+		"run",
+		"-C",
+		exampleRoot,
+		"goa.design/goa/v3/cmd/goa",
+		"gen",
+		"example.com/assistant/design",
+	) // #nosec G204
 	if out, err := genCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("goa gen failed: %w\n%s", err, string(out))
 	}
 	// Remove top-level example stubs so goa example regenerates them with updated signatures
+	// Keep mcp_assistant.go to allow plugin-controlled adapter wiring in stub factory
 	_ = os.Remove(filepath.Join(exampleRoot, "assistant.go"))
-	_ = os.Remove(filepath.Join(exampleRoot, "mcp_assistant.go"))
 	_ = os.Remove(filepath.Join(exampleRoot, "streaming.go"))
 	_ = os.Remove(filepath.Join(exampleRoot, "websocket.go"))
 	_ = os.Remove(filepath.Join(exampleRoot, "grpcstream.go"))
 	// Run goa example (we rely on goa >= v3.22.2 for mixed JSON-RPC ServeHTTP).
-	exCmd := exec.CommandContext(context.Background(), "go", "run", "-C", exampleRoot, "goa.design/goa/v3/cmd/goa", "example", "example.com/assistant/design")
+	exCmd := exec.CommandContext(
+		context.Background(),
+		"go",
+		"run",
+		"-C",
+		exampleRoot,
+		"goa.design/goa/v3/cmd/goa",
+		"example",
+		"example.com/assistant/design",
+	) // #nosec G204
 	if out, err := exCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("goa example failed: %w\n%s", err, string(out))
 	}
@@ -399,12 +441,13 @@ func (r *Runner) startServer(t *testing.T) error {
 	if err != nil {
 		return err
 	}
-	// Allocate a free gRPC port to avoid conflicts (example defaults to 8080)
-	grpcPort, err := getFreePort()
-	if err != nil {
-		return err
-	}
-	cmd := exec.CommandContext(context.Background(), "go", "run", "-C", cmdPath, ".", "-http-port", port, "-grpc-port", grpcPort)
+	// Start HTTP server; generated example may not support gRPC port flag
+	// Build server run command
+	args := []string{"run", "-C", cmdPath, ".", "-http-port", port}
+	//nolint:gosec // launching 'go run' test server is expected
+	cmd := exec.CommandContext(context.Background(), "go", args...)
+	// Inherit environment and propagate MCP_* variables captured for this scenario
+	cmd.Env = os.Environ()
 	// Capture bounded stdout/stderr tails for diagnostics
 	r.stdoutTail = &ringBuffer{max: tailMaxBytes}
 	r.stderrTail = &ringBuffer{max: tailMaxBytes}
@@ -430,7 +473,12 @@ func (r *Runner) startServer(t *testing.T) error {
 	for time.Now().Before(deadline) {
 		select {
 		case err := <-r.exitCh:
-			return fmt.Errorf("server exited early: %w\n-- stdout (tail) --\n%s\n-- stderr (tail) --\n%s", err, string(r.stdoutTail.Bytes()), string(r.stderrTail.Bytes()))
+			return fmt.Errorf(
+				"server exited early: %w\n-- stdout (tail) --\n%s\n-- stderr (tail) --\n%s",
+				err,
+				string(r.stdoutTail.Bytes()),
+				string(r.stderrTail.Bytes()),
+			)
 		default:
 		}
 		if err := r.ping(); err == nil {
@@ -439,7 +487,12 @@ func (r *Runner) startServer(t *testing.T) error {
 		time.Sleep(200 * time.Millisecond)
 	}
 	// Include last logs for diagnosis
-	return fmt.Errorf("server failed to become ready at %s\n-- stdout (tail) --\n%s\n-- stderr (tail) --\n%s", r.baseURL, string(r.stdoutTail.Bytes()), string(r.stderrTail.Bytes()))
+	return fmt.Errorf(
+		"server failed to become ready at %s\n-- stdout (tail) --\n%s\n-- stderr (tail) --\n%s",
+		r.baseURL,
+		string(r.stdoutTail.Bytes()),
+		string(r.stderrTail.Bytes()),
+	)
 }
 
 // stopServer stops the test server.
@@ -506,13 +559,9 @@ func (r *Runner) runSteps(t *testing.T, steps []Step, defaults *Defaults, pre *P
 		// Merge headers
 		headers := map[string]string{}
 		if defaults != nil {
-			for k, v := range defaults.Headers {
-				headers[k] = v
-			}
+			maps.Copy(headers, defaults.Headers)
 		}
-		for k, v := range st.Headers {
-			headers[k] = v
-		}
+		maps.Copy(headers, st.Headers)
 
 		// Resolve method name from op
 		method := methodFromOp(st.Op)
@@ -522,62 +571,172 @@ func (r *Runner) runSteps(t *testing.T, steps []Step, defaults *Defaults, pre *P
 		isStream := accept == "text/event-stream" || st.StreamExpect != nil
 
 		if isStream {
-			resEvents, err := r.executeSSE(method, st.Input, headers, st.StreamExpect)
-			if st.Expect != nil && st.Expect.Status == "error" {
-				require.Error(t, err)
-				if st.Expect.Error != nil && st.Expect.Error.Code != 0 {
-					assert.Contains(t, err.Error(), strconv.Itoa(st.Expect.Error.Code))
-				}
-				if st.Expect.Error != nil && st.Expect.Error.Message != "" {
-					assert.Contains(t, err.Error(), st.Expect.Error.Message)
-				}
-				continue
-			}
-			require.NoError(t, err)
-			// Validate stream
-			if st.StreamExpect != nil {
-				if st.StreamExpect.MinEvents > 0 {
-					assert.GreaterOrEqual(t, len(resEvents), st.StreamExpect.MinEvents)
-				}
-				for i := range st.StreamExpect.Events {
-					if i >= len(resEvents) {
-						break
-					}
-					exp := st.StreamExpect.Events[i]
-					act := resEvents[i]
-					if exp.Event != "" {
-						assert.Equal(t, exp.Event, act.Event)
-					}
-					if exp.Data != nil {
-						validateSubset(t, act.Data, exp.Data)
-					}
-				}
-			}
+			r.runStepStreaming(t, st, headers, method)
 			continue
 		}
 
-		// Non-streaming
-		notify := st.Notification || (st.Expect != nil && st.Expect.Status == "no_response")
-		result, raw, err := r.executeJSONRPC(method, st.Input, headers, notify)
-		if st.Expect != nil && st.Expect.Status == "no_response" {
-			assert.Empty(t, raw)
-			continue
+		r.runStepNonStreaming(t, st, headers, method, defaults)
+	}
+}
+
+// runStepStreaming executes a streaming step and validates the response.
+func (r *Runner) runStepStreaming(t *testing.T, st Step, headers map[string]string, method string) {
+	resEvents, err := r.executeSSE(method, st.Input, headers, st.StreamExpect)
+	if st.Expect != nil && st.Expect.Status == statusError {
+		require.Error(t, err)
+		if st.Expect.Error != nil && st.Expect.Error.Code != 0 {
+			assert.Contains(t, err.Error(), strconv.Itoa(st.Expect.Error.Code))
 		}
-		if st.Expect != nil && st.Expect.Status == "error" {
-			require.Error(t, err)
-			if st.Expect.Error != nil && st.Expect.Error.Code != 0 {
-				assert.Contains(t, err.Error(), strconv.Itoa(st.Expect.Error.Code))
-			}
-			if st.Expect.Error != nil && st.Expect.Error.Message != "" {
-				assert.Contains(t, err.Error(), st.Expect.Error.Message)
-			}
-			continue
+		if st.Expect.Error != nil && st.Expect.Error.Message != "" {
+			assert.Contains(t, err.Error(), st.Expect.Error.Message)
 		}
-		require.NoError(t, err)
-		if st.Expect != nil && st.Expect.Result != nil {
-			validateSubset(t, result, st.Expect.Result)
+		return
+	}
+	require.NoError(t, err)
+	if st.StreamExpect != nil {
+		if st.StreamExpect.MinEvents > 0 {
+			assert.GreaterOrEqual(t, len(resEvents), st.StreamExpect.MinEvents)
+		}
+		for i := range st.StreamExpect.Events {
+			if i >= len(resEvents) {
+				break
+			}
+			exp := st.StreamExpect.Events[i]
+			act := resEvents[i]
+			if exp.Event != "" {
+				assert.Equal(t, exp.Event, act.Event)
+			}
+			if exp.Data != nil {
+				validateSubset(t, act.Data, exp.Data)
+			}
 		}
 	}
+}
+
+// runStepNonStreaming executes a non-streaming step using either HTTP or CLI mode and validates the response.
+func (r *Runner) runStepNonStreaming(
+	t *testing.T,
+	st Step,
+	headers map[string]string,
+	method string,
+	defaults *Defaults,
+) {
+	notify := st.Notification || (st.Expect != nil && st.Expect.Status == "no_response")
+	clientMode := "http"
+	if defaults != nil && defaults.ClientMode != "" {
+		clientMode = strings.ToLower(defaults.ClientMode)
+	}
+
+	var (
+		result map[string]any
+		raw    []byte
+		err    error
+	)
+
+	if clientMode == "cli" {
+		svc := "assistant"
+		if defaults != nil && defaults.Client != "" {
+			parts := strings.Split(defaults.Client, ".")
+			last := parts[len(parts)-1]
+			last = strings.TrimPrefix(last, "mcp_")
+			if last != "" {
+				svc = last
+			}
+		}
+		subcmd := r.cliSubcommandFromOp(svc, st.Op)
+		exRoot := findExampleRoot()
+		require.NotEmpty(t, exRoot)
+		srvCmdPath, ferr := findServerCmdDir(exRoot)
+		require.NoError(t, ferr)
+		cliPath := filepath.Join(exRoot, "cmd", filepath.Base(srvCmdPath)+"-cli")
+		var bodyArg []string
+		if st.Input != nil && (subcmd == "analyze-text" ||
+			subcmd == "search-knowledge" ||
+			subcmd == "execute-code" ||
+			subcmd == "generate-prompts" ||
+			subcmd == "send-notification" ||
+			subcmd == "subscribe-to-updates" ||
+			subcmd == "process-batch") {
+			b, _ := json.Marshal(st.Input)
+			bodyArg = []string{"--body", string(b)}
+		}
+		cliArgs := []string{"run", "-C", cliPath, ".", "-url", r.baseURL, svc, subcmd}
+		if len(bodyArg) > 0 {
+			cliArgs = append(cliArgs, bodyArg...)
+		}
+		cmd := exec.CommandContext(context.Background(), "go", cliArgs...) // #nosec G204
+		var out bytes.Buffer
+		var errb bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &errb
+		cerr := cmd.Run()
+		if st.ExpectRetry != nil {
+			require.Error(t, cerr)
+			if st.ExpectRetry.PromptContains != "" {
+				assert.Contains(t, errb.String(), st.ExpectRetry.PromptContains)
+			}
+			for _, s := range st.ExpectRetry.Contains {
+				assert.Contains(t, errb.String(), s)
+			}
+			return
+		}
+		if st.Expect != nil && st.Expect.Status == statusError {
+			require.Error(t, cerr, "cli stderr: %s", errb.String())
+			return
+		}
+		require.NoErrorf(t, cerr, "cli stderr: %s", errb.String())
+		var res map[string]any
+		_ = json.Unmarshal(out.Bytes(), &res)
+		result, raw = res, out.Bytes()
+	} else {
+		result, raw, err = r.executeJSONRPC(method, st.Input, headers, notify)
+	}
+
+	if st.Expect != nil && st.Expect.Status == "no_response" {
+		assert.Empty(t, raw)
+		return
+	}
+	if st.Expect != nil && st.Expect.Status == statusError {
+		require.Error(t, err)
+		if st.Expect.Error != nil && st.Expect.Error.Code != 0 {
+			assert.Contains(t, err.Error(), strconv.Itoa(st.Expect.Error.Code))
+		}
+		if st.Expect.Error != nil && st.Expect.Error.Message != "" {
+			assert.Contains(t, err.Error(), st.Expect.Error.Message)
+		}
+		return
+	}
+	require.NoError(t, err)
+	if st.Expect != nil && st.Expect.Result != nil {
+		validateSubset(t, result, st.Expect.Result)
+	}
+}
+
+// cliSubcommandFromOp maps an operation to the CLI subcommand for a given service.
+func (r *Runner) cliSubcommandFromOp(svc string, op string) string {
+	if svc == "assistant" {
+		switch op {
+		case "AnalyzeText":
+			return "analyze-text"
+		case "SearchKnowledge":
+			return "search-knowledge"
+		case "ExecuteCode":
+			return "execute-code"
+		case "ListDocuments":
+			return "list-documents"
+		case "GetSystemInfo":
+			return "get-system-info"
+		case "GeneratePrompts":
+			return "generate-prompts"
+		case "SendNotification":
+			return "send-notification"
+		case "SubscribeToUpdates":
+			return "subscribe-to-updates"
+		case "ProcessBatch":
+			return "process-batch"
+		}
+	}
+	return op
 }
 
 // ensureInitialized sends an initialize request.
@@ -592,23 +751,28 @@ func (r *Runner) ensureInitialized() error {
 }
 
 // executeJSONRPC sends a JSON-RPC request and returns the result map, raw bytes, and error.
-func (r *Runner) executeJSONRPC(method string, input map[string]any, headers map[string]string, notification bool) (map[string]any, []byte, error) {
+func (r *Runner) executeJSONRPC(
+	method string,
+	input map[string]any,
+	headers map[string]string,
+	notification bool,
+) (map[string]any, []byte, error) {
 	if input == nil {
 		input = map[string]any{}
 	}
 	// For our JSON-RPC, payload is under "params"
-	params := input
-	id := any(1)
-	if notification {
-		id = nil
-	}
-	reqObj := map[string]any{"jsonrpc": "2.0", "method": method, "params": params}
-	if id != nil {
-		reqObj["id"] = id
+	reqObj := map[string]any{"jsonrpc": "2.0", "method": method, "params": input}
+	if !notification {
+		reqObj["id"] = 1
 	}
 	body, _ := json.Marshal(reqObj)
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, r.baseURL+"/rpc", bytes.NewReader(body))
 	for k, v := range headers {
+		// Special-case env vars to allow tests to set process env for the example server
+		if strings.HasPrefix(k, "MCP_") {
+			_ = os.Setenv(k, v)
+			continue
+		}
 		req.Header.Set(k, v)
 	}
 	if req.Header.Get("Content-Type") == "" {
@@ -639,7 +803,12 @@ func (r *Runner) executeJSONRPC(method string, input map[string]any, headers map
 }
 
 // executeSSE sends a request expecting SSE and returns captured events.
-func (r *Runner) executeSSE(method string, input map[string]any, headers map[string]string, spec *StreamExpect) ([]sseEvent, error) {
+func (r *Runner) executeSSE(
+	method string,
+	input map[string]any,
+	headers map[string]string,
+	spec *StreamExpect,
+) ([]sseEvent, error) {
 	if input == nil {
 		input = map[string]any{}
 	}
@@ -663,6 +832,11 @@ func (r *Runner) executeSSE(method string, input map[string]any, headers map[str
 		raw, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(raw))
 	}
+	// Basic SSE content-type assertion
+	if ct := resp.Header.Get("Content-Type"); ct != "" && !strings.HasPrefix(strings.ToLower(ct), "text/event-stream") {
+		raw, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected content type: %s body: %s", ct, string(raw))
+	}
 
 	timeout := 10 * time.Second
 	if spec != nil && spec.TimeoutMS > 0 {
@@ -675,10 +849,7 @@ func (r *Runner) executeSSE(method string, input map[string]any, headers map[str
 	sawErrorEvent := false
 	var lastErrMsg string
 	var lastErrCode any
-	for {
-		if time.Now().After(deadline) {
-			break
-		}
+	for time.Now().Before(deadline) {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
@@ -706,20 +877,18 @@ func (r *Runner) executeSSE(method string, input map[string]any, headers map[str
 			}
 			continue
 		}
-		if strings.HasPrefix(line, "event:") {
-			cur.Event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+		if after, ok := strings.CutPrefix(line, "event:"); ok {
+			cur.Event = strings.TrimSpace(after)
 			continue
 		}
-		if strings.HasPrefix(line, "data:") {
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if after, ok := strings.CutPrefix(line, "data:"); ok {
+			data := strings.TrimSpace(after)
 			var m map[string]any
 			_ = json.Unmarshal([]byte(data), &m)
 			if cur.Data == nil {
 				cur.Data = map[string]any{}
 			}
-			for k, v := range m {
-				cur.Data[k] = v
-			}
+			maps.Copy(cur.Data, m)
 			continue
 		}
 	}

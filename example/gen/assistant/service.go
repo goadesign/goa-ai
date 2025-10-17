@@ -23,12 +23,10 @@ type Service interface {
 	ListDocuments(context.Context) (res Documents, err error)
 	// Get system information and status
 	GetSystemInfo(context.Context) (res *SystemInfo, err error)
-	// Get conversation history
-	GetConversationHistory(context.Context, *GetConversationHistoryPayload) (res ChatMessages, err error)
+	// Get conversation history with optional filtering
+	GetConversationHistory(context.Context, *GetConversationHistoryPayload) (res *ConversationHistory, err error)
 	// Generate context-aware prompts
 	GeneratePrompts(context.Context, *GeneratePromptsPayload) (res PromptTemplates, err error)
-	// Get workspace root directories from client
-	GetWorkspaceInfo(context.Context) (res *GetWorkspaceInfoResult, err error)
 	// Send status notification to client
 	SendNotification(context.Context, *SendNotificationPayload) (err error)
 	// Subscribe to resource updates
@@ -51,7 +49,7 @@ const ServiceName = "assistant"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [11]string{"analyze_text", "search_knowledge", "execute_code", "list_documents", "get_system_info", "get_conversation_history", "generate_prompts", "get_workspace_info", "send_notification", "subscribe_to_updates", "process_batch"}
+var MethodNames = [10]string{"analyze_text", "search_knowledge", "execute_code", "list_documents", "get_system_info", "get_conversation_history", "generate_prompts", "send_notification", "subscribe_to_updates", "process_batch"}
 
 // ProcessBatchEvent is the interface implemented by the result type for the
 // process_batch method.
@@ -94,8 +92,8 @@ type Stream interface {
 	// For notifications, the result should not have an ID field.
 	// For responses, the result must have an ID field.
 	// Accepted types: *AnalysisResult, SearchResults, *ExecutionResult, Documents,
-	// *SystemInfo, ChatMessages, PromptTemplates, *GetWorkspaceInfoResult,
-	// *SubscriptionInfo, *BatchResult
+	// *SystemInfo, *ConversationHistory, PromptTemplates, *SubscriptionInfo,
+	// *BatchResult
 	Send(ctx context.Context, event Event) error
 }
 
@@ -121,13 +119,10 @@ func (Documents) isassistantEvent() {}
 func (*SystemInfo) isassistantEvent() {}
 
 // isassistantEvent implements the Event interface.
-func (ChatMessages) isassistantEvent() {}
+func (*ConversationHistory) isassistantEvent() {}
 
 // isassistantEvent implements the Event interface.
 func (PromptTemplates) isassistantEvent() {}
-
-// isassistantEvent implements the Event interface.
-func (*GetWorkspaceInfoResult) isassistantEvent() {}
 
 // isassistantEvent implements the Event interface.
 func (*SubscriptionInfo) isassistantEvent() {}
@@ -140,9 +135,9 @@ func (*BatchResult) isassistantEvent() {}
 type AnalysisResult struct {
 	// Analysis mode used
 	Mode string
-	// Analysis result (varies by mode)
-	Result any
-	// Confidence score
+	// Analysis result (summary, keywords or sentiment)
+	Result string
+	// Confidence score (0–1)
 	Confidence *float64
 	// Additional metadata
 	Metadata map[string]any
@@ -167,20 +162,12 @@ type BatchResult struct {
 	Results []any
 }
 
-type ChatMessage struct {
-	// Message ID
-	ID string
-	// Message role
-	Role string
-	// Message content
-	Content string
-	// Message timestamp
-	Timestamp string
-}
-
-// ChatMessages is the result type of the assistant service
+// ConversationHistory is the result type of the assistant service
 // get_conversation_history method.
-type ChatMessages []*ChatMessage
+type ConversationHistory struct {
+	// Conversation messages
+	Messages []any
+}
 
 type Document struct {
 	// Document ID
@@ -230,14 +217,12 @@ type GeneratePromptsPayload struct {
 // GetConversationHistoryPayload is the payload type of the assistant service
 // get_conversation_history method.
 type GetConversationHistoryPayload struct {
-	// Number of messages
-	Limit int
-}
-
-// GetWorkspaceInfoResult is the result type of the assistant service
-// get_workspace_info method.
-type GetWorkspaceInfoResult struct {
-	Roots []*RootInfo
+	// Maximum items
+	Limit *int
+	// Flag example
+	Flag *bool
+	// Numbers
+	Nums []any
 }
 
 // ProcessBatchPayload is the payload type of the assistant service
@@ -270,13 +255,6 @@ type PromptTemplate struct {
 // method.
 type PromptTemplates []*PromptTemplate
 
-type RootInfo struct {
-	// Root URI
-	URI string
-	// Root name
-	Name *string
-}
-
 // SearchKnowledgePayload is the payload type of the assistant service
 // search_knowledge method.
 type SearchKnowledgePayload struct {
@@ -293,7 +271,7 @@ type SearchResult struct {
 	Title string
 	// Result content
 	Content string
-	// Relevance score
+	// Relevance score (0–1)
 	Score float64
 }
 

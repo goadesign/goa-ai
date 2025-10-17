@@ -26,6 +26,7 @@ type Endpoints struct {
 	PromptsList          goa.Endpoint
 	PromptsGet           goa.Endpoint
 	NotifyStatusUpdate   goa.Endpoint
+	EventsStream         goa.Endpoint
 	Subscribe            goa.Endpoint
 	Unsubscribe          goa.Endpoint
 }
@@ -39,6 +40,15 @@ type ToolsCallEndpointInput struct {
 	RequestID any
 	// Stream is the server stream used by the "tools/call" method to send data.
 	Stream ToolsCallServerStream
+}
+
+// EventsStreamEndpointInput holds both the payload and the server stream of
+// the "events/stream" method.
+type EventsStreamEndpointInput struct {
+	// RequestID is the JSON-RPC request ID (available for JSON-RPC transports).
+	RequestID any
+	// Stream is the server stream used by the "events/stream" method to send data.
+	Stream EventsStreamServerStream
 }
 
 // NewEndpoints wraps the methods of the "mcp_assistant" service with endpoints.
@@ -55,6 +65,7 @@ func NewEndpoints(s Service) *Endpoints {
 		PromptsList:          NewPromptsListEndpoint(s),
 		PromptsGet:           NewPromptsGetEndpoint(s),
 		NotifyStatusUpdate:   NewNotifyStatusUpdateEndpoint(s),
+		EventsStream:         NewEventsStreamEndpoint(s),
 		Subscribe:            NewSubscribeEndpoint(s),
 		Unsubscribe:          NewUnsubscribeEndpoint(s),
 	}
@@ -74,6 +85,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.PromptsList = m(e.PromptsList)
 	e.PromptsGet = m(e.PromptsGet)
 	e.NotifyStatusUpdate = m(e.NotifyStatusUpdate)
+	e.EventsStream = m(e.EventsStream)
 	e.Subscribe = m(e.Subscribe)
 	e.Unsubscribe = m(e.Unsubscribe)
 }
@@ -173,6 +185,15 @@ func NewNotifyStatusUpdateEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		p := req.(*SendNotificationPayload)
 		return nil, s.NotifyStatusUpdate(ctx, p)
+	}
+}
+
+// NewEventsStreamEndpoint returns an endpoint function that calls the method
+// "events/stream" of service "mcp_assistant".
+func NewEventsStreamEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		ep := req.(*EventsStreamEndpointInput)
+		return nil, s.EventsStream(ctx, ep.Stream)
 	}
 }
 

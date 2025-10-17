@@ -1,3 +1,5 @@
+// Package design defines the Goa design for the example AI assistant service.
+// It models a realistic, simple MCP surface with validated payloads and types.
 package design
 
 import (
@@ -8,7 +10,7 @@ import (
 
 var _ = API("assistant", func() {
 	Title("AI Assistant API")
-	Description("A comprehensive AI assistant service demonstrating all MCP features")
+	Description("Simple MCP example exposing a few tools, resources, and prompts")
 	Version("1.0")
 })
 
@@ -18,7 +20,7 @@ var _ = Service("assistant", func() {
 	// Enable MCP for this service
 	// Transport is automatically JSON-RPC with SSE support
 	// Capabilities are auto-detected from defined tools, resources, etc.
-	mcp.MCPServer("assistant-mcp", "1.0.0")
+	mcp.MCPServer("assistant-mcp", "1.0.0", mcp.ProtocolVersion("2025-06-18"))
 
 	// Add static prompts to the service
 	mcp.StaticPrompt(
@@ -29,21 +31,9 @@ var _ = Service("assistant", func() {
 		"assistant", "I'll analyze the code for quality, bugs, and improvements.",
 	)
 
-	mcp.StaticPrompt(
-		"explain_concept",
-		"Template for explaining concepts",
-		"system", "You are a helpful teacher.",
-		"user", "Explain {{.concept}} in simple terms.",
-	)
-
 	// Enable JSON-RPC (automatically supports SSE via Accept header)
 	JSONRPC(func() {
 		POST("/rpc")
-	})
-
-	// Also expose as HTTP for testing
-	HTTP(func() {
-		Path("/api")
 	})
 
 	// ========== TOOLS ==========
@@ -52,9 +42,14 @@ var _ = Service("assistant", func() {
 	Method("analyze_text", func() {
 		Description("Analyze text for sentiment, keywords, or summary")
 		Payload(func() {
-			Attribute("text", String, "Text to analyze")
+			Attribute("text", String, "Text to analyze", func() {
+				MinLength(1)
+				MaxLength(10000)
+				Example("I love this new feature! It works perfectly.")
+			})
 			Attribute("mode", String, "Analysis mode", func() {
 				Enum("sentiment", "keywords", "summary")
+				Example("sentiment")
 			})
 			Required("text", "mode")
 		})
@@ -64,17 +59,21 @@ var _ = Service("assistant", func() {
 		mcp.Tool("analyze_text", "Analyze text with various modes")
 
 		JSONRPC(func() {})
-		HTTP(func() {
-			POST("/analyze")
-		})
 	})
 
 	Method("search_knowledge", func() {
 		Description("Search the knowledge base")
 		Payload(func() {
-			Attribute("query", String, "Search query")
+			Attribute("query", String, "Search query", func() {
+				MinLength(1)
+				MaxLength(256)
+				Example("MCP protocol")
+			})
 			Attribute("limit", Int, "Maximum results", func() {
 				Default(10)
+				Minimum(1)
+				Maximum(100)
+				Example(5)
 			})
 			Required("query")
 		})
@@ -84,16 +83,20 @@ var _ = Service("assistant", func() {
 		mcp.Tool("search", "Search the knowledge base")
 
 		JSONRPC(func() {})
-		HTTP(func() {
-			POST("/search")
-		})
 	})
 
 	Method("execute_code", func() {
 		Description("Execute code in a sandboxed environment")
 		Payload(func() {
-			Attribute("language", String, "Programming language")
-			Attribute("code", String, "Code to execute")
+			Attribute("language", String, "Programming language", func() {
+				Enum("python", "javascript", "go")
+				Example("python")
+			})
+			Attribute("code", String, "Code to execute", func() {
+				MinLength(1)
+				MaxLength(20000)
+				Example("print(2 + 2)")
+			})
 			Required("language", "code")
 		})
 		Result(ExecutionResult)
@@ -102,9 +105,6 @@ var _ = Service("assistant", func() {
 		mcp.Tool("execute_code", "Execute code safely in sandbox")
 
 		JSONRPC(func() {})
-		HTTP(func() {
-			POST("/execute")
-		})
 	})
 
 	// ========== RESOURCES ==========
@@ -118,9 +118,6 @@ var _ = Service("assistant", func() {
 		mcp.Resource("documents", "doc://list", "application/json")
 
 		JSONRPC(func() {})
-		HTTP(func() {
-			GET("/documents")
-		})
 	})
 
 	Method("get_system_info", func() {
@@ -131,27 +128,22 @@ var _ = Service("assistant", func() {
 		mcp.Resource("system_info", "system://info", "application/json")
 
 		JSONRPC(func() {})
-		HTTP(func() {
-			GET("/system")
-		})
 	})
 
+	// Additional conversation resource for tests
 	Method("get_conversation_history", func() {
-		Description("Get conversation history")
+		Description("Get conversation history with optional filtering")
 		Payload(func() {
-			Attribute("limit", Int, "Number of messages", func() {
-				Default(50)
-			})
+			Attribute("limit", Int, "Maximum items")
+			Attribute("flag", Boolean, "Flag example")
+			Attribute("nums", ArrayOf(Any), "Numbers")
 		})
-		Result(ChatMessages)
+		Result(ConversationHistory)
 
 		// Expose as MCP resource
-		mcp.Resource("conversation", "conversation://history", "application/json")
+		mcp.Resource("conversation_history", "conversation://history", "application/json")
 
 		JSONRPC(func() {})
-		HTTP(func() {
-			GET("/conversation")
-		})
 	})
 
 	// ========== DYNAMIC PROMPTS ==========
@@ -160,8 +152,8 @@ var _ = Service("assistant", func() {
 	Method("generate_prompts", func() {
 		Description("Generate context-aware prompts")
 		Payload(func() {
-			Attribute("context", String, "Current context")
-			Attribute("task", String, "Task type")
+			Attribute("context", String, "Current context", func() { Example("testing") })
+			Attribute("task", String, "Task type", func() { Example("unit-test") })
 			Required("context", "task")
 		})
 		Result(PromptTemplates)
@@ -170,25 +162,6 @@ var _ = Service("assistant", func() {
 		mcp.DynamicPrompt("contextual_prompts", "Generate prompts based on context")
 
 		JSONRPC(func() {})
-		HTTP(func() {
-			POST("/prompts/generate")
-		})
-	})
-
-	// ========== ROOTS (Client Features) ==========
-	// Server can query filesystem/URI roots from client
-
-	Method("get_workspace_info", func() {
-		Description("Get workspace root directories from client")
-		Result(func() {
-			Attribute("roots", ArrayOf(RootInfo))
-			Required("roots")
-		})
-
-		JSONRPC(func() {})
-		HTTP(func() {
-			GET("/workspace")
-		})
 	})
 
 	// ========== NOTIFICATIONS ==========
@@ -200,7 +173,11 @@ var _ = Service("assistant", func() {
 			Attribute("type", String, "Notification type", func() {
 				Enum("info", "warning", "error", "success")
 			})
-			Attribute("message", String, "Notification message")
+			Attribute("message", String, "Notification message", func() {
+				MinLength(1)
+				MaxLength(2000)
+				Example("Testing notification")
+			})
 			Attribute("data", Any, "Additional data")
 			Required("type", "message")
 		})
@@ -212,9 +189,6 @@ var _ = Service("assistant", func() {
 		)
 
 		JSONRPC(func() {})
-		HTTP(func() {
-			POST("/notify")
-		})
 	})
 
 	// ========== SUBSCRIPTIONS ==========
@@ -223,7 +197,10 @@ var _ = Service("assistant", func() {
 	Method("subscribe_to_updates", func() {
 		Description("Subscribe to resource updates")
 		Payload(func() {
-			Attribute("resource", String, "Resource to monitor")
+			Attribute("resource", String, "Resource to monitor", func() {
+				Enum("documents", "conversation", "system_info")
+				Example("documents")
+			})
 			Attribute("filter", String, "Optional filter")
 			Required("resource")
 		})
@@ -233,9 +210,6 @@ var _ = Service("assistant", func() {
 		mcp.Subscription("documents")
 
 		JSONRPC(func() {})
-		HTTP(func() {
-			POST("/subscribe")
-		})
 	})
 
 	// ========== PROGRESS TRACKING ==========
@@ -244,12 +218,15 @@ var _ = Service("assistant", func() {
 	Method("process_batch", func() {
 		Description("Process a batch of items with progress tracking")
 		Payload(func() {
-			Attribute("items", ArrayOf(String), "Items to process")
+			Attribute("items", ArrayOf(String), "Items to process", func() {
+				MinLength(1)
+				Example([]string{"item1", "item2"})
+			})
 			// Optional output shaping for streaming scenarios
-			Attribute("format", String, "Output format", func() { Enum("text", "blob", "uri") })
-			Attribute("blob", Bytes, "Blob data when format=blob")
-			Attribute("uri", String, "URI to include when format=uri")
-			Attribute("mimeType", String, "Mime type for blob/uri")
+			Attribute("format", String, "Output format", func() { Enum("text", "blob", "uri"); Example("text") })
+			Attribute("blob", Bytes, "Blob data when format=blob", func() { Example([]byte("hello")) })
+			Attribute("uri", String, "URI to include when format=uri", func() { Format(FormatURI); Example("system://info") })
+			Attribute("mimeType", String, "Mime type for blob/uri", func() { Example("text/plain") })
 			Required("items")
 		})
 		Result(BatchResult)
@@ -261,386 +238,108 @@ var _ = Service("assistant", func() {
 		JSONRPC(func() {
 			ServerSentEvents()
 		})
-		HTTP(func() {
-			POST("/batch")
-			ServerSentEvents()
-		})
 	})
 
 })
 
-// ========== STREAMING SERVICE (HTTP/SSE) ==========
-// Service for testing HTTP streaming with SSE
-var _ = Service("streaming", func() {
-	Description("Service for testing HTTP streaming features")
-
-	// Server streaming with SSE
-	Method("stream_events", func() {
-		Description("Stream events from server to client using SSE")
-		Payload(func() {
-			Attribute("category", String, "Event category", func() {
-				Enum("system", "user", "application")
-			})
-			Attribute("filter", String, "Optional filter")
-			Required("category")
-		})
-		StreamingResult(EventUpdate)
-
-		HTTP(func() {
-			GET("/stream/events/{category}")
-			Params(func() {
-				Param("category")
-				Param("filter")
-			})
-		})
-	})
-
-	// Another server streaming example
-	Method("stream_logs", func() {
-		Description("Stream logs using SSE")
-		Payload(func() {
-			Attribute("level", String, "Log level", func() {
-				Enum("debug", "info", "warning", "error")
-				Default("info")
-			})
-		})
-		StreamingResult(LogEntry)
-
-		HTTP(func() {
-			GET("/stream/logs")
-			Params(func() {
-				Param("level")
-			})
-		})
-	})
-
-	// Monitor resource changes with SSE
-	Method("monitor_resource_changes", func() {
-		Description("Monitor resource changes with server streaming")
-		Payload(func() {
-			Attribute("resource_type", String, "Type of resource to monitor")
-			Attribute("filter", String, "Optional filter")
-			Required("resource_type")
-		})
-		StreamingResult(ResourceUpdate)
-
-		HTTP(func() {
-			GET("/stream/monitor/{resource_type}")
-			Params(func() {
-				Param("resource_type")
-				Param("filter")
-			})
-		})
-	})
-
-	// Flexible data streaming with SSE
-	Method("flexible_data", func() {
-		Description("Flexible data streaming")
-		Payload(func() {
-			Attribute("data_type", String, "Type of data")
-			Attribute("streaming", Boolean, "Enable streaming", func() {
-				Default(true)
-			})
-		})
-		StreamingResult(DataUpdate)
-
-		HTTP(func() {
-			GET("/stream/data/{data_type}")
-			Params(func() {
-				Param("data_type")
-				Param("streaming")
-			})
-		})
-	})
-})
-
-// ========== WEBSOCKET SERVICE ==========
-// Service for WebSocket streaming
-var _ = Service("websocket", func() {
-	Description("Service for testing WebSocket streaming")
-
-	// Client streaming
-	Method("upload_chunks", func() {
-		Description("Upload data chunks via client stream")
-		StreamingPayload(DocumentChunk)
-		Result(func() {
-			Attribute("total_size", Int, "Total size")
-			Attribute("chunk_count", Int, "Number of chunks")
-			Required("total_size", "chunk_count")
-		})
-
-		HTTP(func() {
-			POST("/ws/upload")
-		})
-	})
-
-	// Client streaming for documents
-	Method("upload_documents", func() {
-		Description("Upload multiple documents via client stream")
-		StreamingPayload(DocumentChunk)
-		Result(func() {
-			Attribute("total_size", Int, "Total size")
-			Attribute("document_count", Int, "Number of documents")
-			Required("total_size", "document_count")
-		})
-
-		HTTP(func() {
-			POST("/ws/upload_documents")
-		})
-	})
-
-	// Bidirectional streaming
-	Method("chat", func() {
-		Description("Interactive chat with bidirectional streaming")
-		StreamingPayload(ChatInput)
-		StreamingResult(ChatResponse)
-
-		HTTP(func() {
-			POST("/ws/chat")
-		})
-	})
-
-	// Another bidirectional streaming
-	Method("interactive_chat", func() {
-		Description("Extended interactive chat with bidirectional streaming")
-		StreamingPayload(ChatInput)
-		StreamingResult(ChatResponse)
-
-		HTTP(func() {
-			POST("/ws/interactive_chat")
-		})
-	})
-})
-
-// ========== GRPC STREAMING SERVICE ==========
-// Service for testing gRPC streaming
-var _ = Service("grpcstream", func() {
-	Description("Service for testing gRPC streaming")
-
-	// Server streaming
-	Method("list_items", func() {
-		Description("List items with server streaming")
-		Payload(func() {
-			Field(1, "filter", String, "Filter criteria")
-		})
-		StreamingResult(func() {
-			Field(1, "id", String, "Item ID")
-			Field(2, "name", String, "Item name")
-			Required("id", "name")
-		})
-
-		GRPC(func() {})
-	})
-
-	// Client streaming
-	Method("collect_metrics", func() {
-		Description("Collect metrics via client stream")
-		StreamingPayload(func() {
-			Field(1, "metric", String, "Metric name")
-			Field(2, "value", Float64, "Metric value")
-			Required("metric", "value")
-		})
-		Result(func() {
-			Field(1, "count", Int, "Total metrics received")
-			Field(2, "average", Float64, "Average value")
-			Required("count", "average")
-		})
-
-		GRPC(func() {})
-	})
-
-	// Bidirectional streaming
-	Method("echo", func() {
-		Description("Echo service with bidirectional streaming")
-		StreamingPayload(func() {
-			Field(1, "message", String, "Message to echo")
-			Required("message")
-		})
-		StreamingResult(func() {
-			Field(1, "echo", String, "Echoed message")
-			Field(2, "timestamp", String, "Echo timestamp")
-			Required("echo", "timestamp")
-		})
-
-		GRPC(func() {})
-	})
-})
+// (Removed streaming, websocket, and grpc streaming example services to keep the MCP example minimal)
 
 // ========== TYPE DEFINITIONS ==========
 
-var SamplingMessage = Type("SamplingMessage", func() {
-	Attribute("role", String, "Message role")
-	Attribute("content", String, "Message content")
-	Required("role", "content")
-})
-
-var ModelHint = Type("ModelHint", func() {
-	Attribute("name", String, "Model hint name")
-})
-
-var RootInfo = Type("RootInfo", func() {
-	Attribute("uri", String, "Root URI")
-	Attribute("name", String, "Root name")
-	Required("uri")
-})
-
+// AnalysisResult contains the outcome of text analysis.
 var AnalysisResult = Type("AnalysisResult", func() {
-	Attribute("mode", String, "Analysis mode used")
-	Attribute("result", Any, "Analysis result (varies by mode)")
-	Attribute("confidence", Float64, "Confidence score")
+	Attribute("mode", String, "Analysis mode used", func() {
+		Enum("sentiment", "keywords", "summary")
+		Example("sentiment")
+	})
+	Attribute("result", String, "Analysis result (summary, keywords or sentiment)", func() {
+		MinLength(1)
+		Example("positive")
+	})
+	Attribute("confidence", Float64, "Confidence score (0–1)", func() {
+		Minimum(0)
+		Maximum(1)
+		Example(0.98)
+	})
 	Attribute("metadata", MapOf(String, Any), "Additional metadata")
 	Required("mode", "result")
 })
 
+// SearchResult represents a single search match.
 var SearchResult = Type("SearchResult", func() {
-	Attribute("id", String, "Result ID")
-	Attribute("title", String, "Result title")
-	Attribute("content", String, "Result content")
-	Attribute("score", Float64, "Relevance score")
+	Attribute("id", String, "Result ID", func() { Example("doc-1") })
+	Attribute("title", String, "Result title", func() { Example("MCP Specification Overview") })
+	Attribute("content", String, "Result content", func() { MaxLength(10000); Example("The Model Context Protocol (MCP) defines...") })
+	Attribute("score", Float64, "Relevance score (0–1)", func() { Minimum(0); Maximum(1); Example(0.87) })
 	Required("id", "title", "content", "score")
 })
 
+// ExecutionResult reports the outcome of code execution.
 var ExecutionResult = Type("ExecutionResult", func() {
-	Attribute("output", String, "Execution output")
-	Attribute("error", String, "Error message if any")
-	Attribute("execution_time", Float64, "Execution time in seconds")
+	Attribute("output", String, "Execution output", func() { Example("4") })
+	Attribute("error", String, "Error message if any", func() { Example("") })
+	Attribute("execution_time", Float64, "Execution time in seconds", func() { Minimum(0); Example(0.01) })
 	Required("output", "execution_time")
 })
 
+// Document describes a document available via resources.
 var Document = Type("Document", func() {
-	Attribute("id", String, "Document ID")
-	Attribute("name", String, "Document name")
-	Attribute("type", String, "Document type")
-	Attribute("size", Int64, "Size in bytes")
+	Attribute("id", String, "Document ID", func() { Example("doc-1") })
+	Attribute("name", String, "Document name", func() { Example("README.md") })
+	Attribute("type", String, "Document type", func() { Enum("text", "pdf", "image", "markdown"); Example("markdown") })
+	Attribute("size", Int64, "Size in bytes", func() { Minimum(0); Example(2048) })
 	Attribute("modified", String, "Last modified", func() {
 		Format(FormatDateTime)
+		Example("2025-01-01T12:00:00Z")
 	})
 	Required("id", "name", "type", "size", "modified")
 })
 
+// SystemInfo summarizes server status.
 var SystemInfo = Type("SystemInfo", func() {
-	Attribute("version", String, "System version")
-	Attribute("uptime", Int64, "Uptime in seconds")
-	Attribute("memory_usage", Float64, "Memory usage percentage")
-	Attribute("cpu_usage", Float64, "CPU usage percentage")
-	Attribute("active_connections", Int, "Number of active connections")
+	Attribute("version", String, "System version", func() { Example("1.0.0") })
+	Attribute("uptime", Int64, "Uptime in seconds", func() { Minimum(0); Example(12345) })
+	Attribute("memory_usage", Float64, "Memory usage percentage", func() { Minimum(0); Maximum(100); Example(42.5) })
+	Attribute("cpu_usage", Float64, "CPU usage percentage", func() { Minimum(0); Maximum(100); Example(17.3) })
+	Attribute("active_connections", Int, "Number of active connections", func() { Minimum(0); Example(3) })
 	Required("version", "uptime", "memory_usage", "cpu_usage", "active_connections")
 })
 
-var ChatMessage = Type("ChatMessage", func() {
-	Attribute("id", String, "Message ID")
-	Attribute("role", String, "Message role", func() {
-		Enum("user", "assistant", "system")
-	})
-	Attribute("content", String, "Message content")
-	Attribute("timestamp", String, "Message timestamp", func() {
-		Format(FormatDateTime)
-	})
-	Required("id", "role", "content", "timestamp")
-})
-
+// PromptTemplate defines a reusable prompt template.
 var PromptTemplate = Type("PromptTemplate", func() {
-	Attribute("name", String, "Template name")
-	Attribute("description", String, "Template description")
-	Attribute("variables", ArrayOf(String), "Required variables")
-	Attribute("template", String, "Template content")
+	Attribute("name", String, "Template name", func() { Example("code_review") })
+	Attribute("description", String, "Template description", func() { Example("Template for code review") })
+	Attribute("variables", ArrayOf(String), "Required variables", func() { Example([]string{"code"}) })
+	Attribute("template", String, "Template content", func() { MinLength(1); Example("You are an expert code reviewer. {{.code}}") })
 	Required("name", "description", "template")
 })
 
+// SubscriptionInfo contains details about a resource subscription.
 var SubscriptionInfo = Type("SubscriptionInfo", func() {
-	Attribute("subscription_id", String, "Subscription ID")
-	Attribute("resource", String, "Subscribed resource")
-	Attribute("created_at", String, "Subscription created", func() {
-		Format(FormatDateTime)
-	})
+	Attribute("subscription_id", String, "Subscription ID", func() { Format(FormatUUID); Example("550e8400-e29b-41d4-a716-446655440000") })
+	Attribute("resource", String, "Subscribed resource", func() { Example("documents") })
+	Attribute("created_at", String, "Subscription created", func() { Format(FormatDateTime); Example("2025-01-01T12:00:00Z") })
 	Required("subscription_id", "resource", "created_at")
 })
 
+// BatchResult summarizes batch processing progress or results.
 var BatchResult = Type("BatchResult", func() {
-	Attribute("processed", Int, "Number of items processed")
-	Attribute("failed", Int, "Number of items failed")
+	Attribute("processed", Int, "Number of items processed", func() { Minimum(0); Example(2) })
+	Attribute("failed", Int, "Number of items failed", func() { Minimum(0); Example(0) })
 	Attribute("results", ArrayOf(Any), "Processing results")
 	Required("processed", "failed", "results")
 })
 
-var ResourceUpdate = Type("ResourceUpdate", func() {
-	Attribute("update_id", String, "Update ID")
-	Attribute("resource", String, "Resource that changed")
-	Attribute("event_type", String, "Type of change", func() {
-		Enum("created", "updated", "deleted")
-	})
-	Attribute("data", Any, "Update data")
-	Attribute("timestamp", String, "Update timestamp", func() {
-		Format(FormatDateTime)
-	})
-	Required("update_id", "resource", "event_type", "timestamp")
-})
-
-var LogEntry = Type("LogEntry", func() {
-	Attribute("timestamp", String, "Log timestamp", func() {
-		Format(FormatDateTime)
-	})
-	Attribute("level", String, "Log level", func() {
-		Enum("debug", "info", "warning", "error")
-	})
-	Attribute("message", String, "Log message")
-	Attribute("data", MapOf(String, Any), "Additional log data")
-	Required("timestamp", "level", "message")
-})
-
-// Streaming type definitions
-var EventUpdate = Type("EventUpdate", func() {
-	Attribute("event_id", String, "Event ID")
-	Attribute("category", String, "Event category")
-	Attribute("type", String, "Event type")
-	Attribute("data", Any, "Event data")
-	Attribute("timestamp", String, "Event timestamp", func() {
-		Format(FormatDateTime)
-	})
-	Required("event_id", "category", "type", "timestamp")
-})
-
-var DocumentChunk = Type("DocumentChunk", func() {
-	Attribute("document_id", String, "Document ID")
-	Attribute("chunk_index", Int, "Chunk index")
-	Attribute("total_chunks", Int, "Total number of chunks")
-	Attribute("data", Bytes, "Chunk data")
-	Attribute("metadata", MapOf(String, Any), "Document metadata")
-	Required("document_id", "chunk_index", "data")
-})
-
-var ChatInput = Type("ChatInput", func() {
-	Attribute("message", String, "User message")
-	Attribute("context", MapOf(String, Any), "Additional context")
-	Attribute("stream_control", String, "Stream control command", func() {
-		Enum("continue", "pause", "stop")
-	})
-	Required("message")
-})
-
-var ChatResponse = Type("ChatResponse", func() {
-	Attribute("response", String, "Assistant response")
-	Attribute("thinking", Boolean, "Whether assistant is still thinking")
-	Attribute("metadata", MapOf(String, Any), "Response metadata")
-	Required("response", "thinking")
-})
-
-var DataResponse = Type("DataResponse", func() {
-	Attribute("data", Any, "Response data")
-	Attribute("total_count", Int, "Total count of items")
-	Attribute("metadata", MapOf(String, Any), "Response metadata")
-	Required("data")
-})
-
-var DataUpdate = Type("DataUpdate", func() {
-	Attribute("update_id", String, "Update ID")
-	Attribute("data", Any, "Update data")
-	Attribute("sequence", Int, "Update sequence number")
-	Attribute("final", Boolean, "Whether this is the final update")
-	Required("update_id", "data", "sequence", "final")
-})
-
+// SearchResults is a list of search results.
 var SearchResults = Type("SearchResults", ArrayOf(SearchResult))
+
+// Documents is a list of documents.
 var Documents = Type("Documents", ArrayOf(Document))
-var ChatMessages = Type("ChatMessages", ArrayOf(ChatMessage))
+
+// PromptTemplates is a list of prompt templates.
 var PromptTemplates = Type("PromptTemplates", ArrayOf(PromptTemplate))
+
+// ConversationHistory represents conversation data for the history resource.
+var ConversationHistory = Type("ConversationHistory", func() {
+	Attribute("messages", ArrayOf(Any), "Conversation messages")
+})

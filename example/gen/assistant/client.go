@@ -22,14 +22,13 @@ type Client struct {
 	GetSystemInfoEndpoint          goa.Endpoint
 	GetConversationHistoryEndpoint goa.Endpoint
 	GeneratePromptsEndpoint        goa.Endpoint
-	GetWorkspaceInfoEndpoint       goa.Endpoint
 	SendNotificationEndpoint       goa.Endpoint
 	SubscribeToUpdatesEndpoint     goa.Endpoint
 	ProcessBatchEndpoint           goa.Endpoint
 }
 
 // NewClient initializes a "assistant" service client given the endpoints.
-func NewClient(analyzeText, searchKnowledge, executeCode, listDocuments, getSystemInfo, getConversationHistory, generatePrompts, getWorkspaceInfo, sendNotification, subscribeToUpdates, processBatch goa.Endpoint) *Client {
+func NewClient(analyzeText, searchKnowledge, executeCode, listDocuments, getSystemInfo, getConversationHistory, generatePrompts, sendNotification, subscribeToUpdates, processBatch goa.Endpoint) *Client {
 	return &Client{
 		AnalyzeTextEndpoint:            analyzeText,
 		SearchKnowledgeEndpoint:        searchKnowledge,
@@ -38,7 +37,6 @@ func NewClient(analyzeText, searchKnowledge, executeCode, listDocuments, getSyst
 		GetSystemInfoEndpoint:          getSystemInfo,
 		GetConversationHistoryEndpoint: getConversationHistory,
 		GeneratePromptsEndpoint:        generatePrompts,
-		GetWorkspaceInfoEndpoint:       getWorkspaceInfo,
 		SendNotificationEndpoint:       sendNotification,
 		SubscribeToUpdatesEndpoint:     subscribeToUpdates,
 		ProcessBatchEndpoint:           processBatch,
@@ -99,13 +97,13 @@ func (c *Client) GetSystemInfo(ctx context.Context) (res *SystemInfo, err error)
 
 // GetConversationHistory calls the "get_conversation_history" endpoint of the
 // "assistant" service.
-func (c *Client) GetConversationHistory(ctx context.Context, p *GetConversationHistoryPayload) (res ChatMessages, err error) {
+func (c *Client) GetConversationHistory(ctx context.Context, p *GetConversationHistoryPayload) (res *ConversationHistory, err error) {
 	var ires any
 	ires, err = c.GetConversationHistoryEndpoint(ctx, p)
 	if err != nil {
 		return
 	}
-	return ires.(ChatMessages), nil
+	return ires.(*ConversationHistory), nil
 }
 
 // GeneratePrompts calls the "generate_prompts" endpoint of the "assistant"
@@ -117,17 +115,6 @@ func (c *Client) GeneratePrompts(ctx context.Context, p *GeneratePromptsPayload)
 		return
 	}
 	return ires.(PromptTemplates), nil
-}
-
-// GetWorkspaceInfo calls the "get_workspace_info" endpoint of the "assistant"
-// service.
-func (c *Client) GetWorkspaceInfo(ctx context.Context) (res *GetWorkspaceInfoResult, err error) {
-	var ires any
-	ires, err = c.GetWorkspaceInfoEndpoint(ctx, nil)
-	if err != nil {
-		return
-	}
-	return ires.(*GetWorkspaceInfoResult), nil
 }
 
 // SendNotification calls the "send_notification" endpoint of the "assistant"

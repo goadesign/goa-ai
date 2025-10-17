@@ -14,13 +14,17 @@ func init() {
 
 	// Register MCP plugin for the example phase: prepare augments roots so example mounts MCP
 	codegen.RegisterPlugin("mcp", "example", PrepareExample, ModifyExampleFiles)
+
+	// Register a late gen-phase patcher to switch example CLI support to MCP adapter client
+	// Run last to ensure JSON-RPC CLI files are present
+	codegen.RegisterPluginLast("mcp-cli", "gen", nil, PatchCLIToUseMCPAdapter)
 }
 
 // PrepareServices filters out MCP-mapped methods from the original services and saves originals
 // This runs BEFORE the main service generation
 // PrepareServices walks the provided roots, records the original services and
 // their JSON-RPC paths into a per-run context. It does not mutate the roots.
-func PrepareServices(genpkg string, roots []eval.Root) error {
+func PrepareServices(_ string, roots []eval.Root) error {
 	// Initialize per-run context
 	_ = ensureCtx()
 
@@ -66,11 +70,4 @@ func PrepareServices(genpkg string, roots []eval.Root) error {
 	}
 
 	return nil
-}
-
-// DedupeJSONRPCServers scans JSON-RPC server files and removes duplicate
-// handlers when upstream generators emit both SSE-aware and basic versions.
-// Currently a no-op unless future fallback is implemented.
-func DedupeJSONRPCServers(genpkg string, roots []eval.Root, files []*codegen.File) ([]*codegen.File, error) {
-	return files, nil
 }

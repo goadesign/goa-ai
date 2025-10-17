@@ -1,3 +1,4 @@
+//nolint:lll // types builder constructs long composite literals for clarity
 package codegen
 
 import (
@@ -29,6 +30,11 @@ func (b *mcpExprBuilder) buildMCPTypes() {
 		b.getOrCreateType("PromptArgument", b.buildPromptArgumentType)
 		b.getOrCreateType("PromptMessage", b.buildPromptMessageType)
 		b.getOrCreateType("MessageContent", b.buildMessageContentType)
+	}
+
+	// Events stream result type (avoid reusing ToolsCallResult to prevent duplicate method impls)
+	if len(b.mcp.Notifications) > 0 {
+		b.getOrCreateType("EventsStreamResult", b.buildEventsStreamResultType)
 	}
 }
 
@@ -259,39 +265,29 @@ func (b *mcpExprBuilder) buildToolsCallResultType() *expr.AttributeExpr {
 	}
 }
 
-// (removed) buildTextContentType: unused
-
-func (b *mcpExprBuilder) buildContentItemType() *expr.AttributeExpr {
+// buildEventsStreamResultType is identical to ToolsCallResult but named differently
+func (b *mcpExprBuilder) buildEventsStreamResultType() *expr.AttributeExpr {
 	return &expr.AttributeExpr{
 		Type: &expr.Object{
-			{Name: "type", Attribute: &expr.AttributeExpr{
-				Type:        expr.String,
-				Description: "Content type",
-				Validation: &expr.ValidationExpr{
-					Values: []any{"text", "image", "resource"},
-				},
+			{Name: "content", Attribute: &expr.AttributeExpr{
+				Type:        &expr.Array{ElemType: &expr.AttributeExpr{Type: b.getOrCreateType("ContentItem", b.buildContentItemType)}},
+				Description: "Tool execution results",
 			}},
-			{Name: "text", Attribute: &expr.AttributeExpr{
-				Type:        expr.String,
-				Description: "Text content",
-			}},
-			{Name: "data", Attribute: &expr.AttributeExpr{
-				Type:        expr.String,
-				Description: "Base64 encoded data",
-			}},
-			{Name: "mimeType", Attribute: &expr.AttributeExpr{
-				Type:        expr.String,
-				Description: "MIME type",
-			}},
-			{Name: "uri", Attribute: &expr.AttributeExpr{
-				Type:        expr.String,
-				Description: "Resource URI",
+			{Name: "isError", Attribute: &expr.AttributeExpr{
+				Type:        expr.Boolean,
+				Description: "Whether the tool encountered an error",
 			}},
 		},
 		Validation: &expr.ValidationExpr{
-			Required: []string{"type"},
+			Required: []string{"content"},
 		},
 	}
+}
+
+// (removed) buildTextContentType: unused
+
+func (b *mcpExprBuilder) buildContentItemType() *expr.AttributeExpr {
+	return b.buildContentLikeType()
 }
 
 // Resource type builders
@@ -536,35 +532,24 @@ func (b *mcpExprBuilder) buildPromptMessageType() *expr.AttributeExpr {
 }
 
 func (b *mcpExprBuilder) buildMessageContentType() *expr.AttributeExpr {
+	return b.buildContentLikeType()
+}
+
+// buildContentLikeType defines the shared structure used by ContentItem and MessageContent.
+func (b *mcpExprBuilder) buildContentLikeType() *expr.AttributeExpr {
 	return &expr.AttributeExpr{
 		Type: &expr.Object{
 			{Name: "type", Attribute: &expr.AttributeExpr{
 				Type:        expr.String,
 				Description: "Content type",
-				Validation: &expr.ValidationExpr{
-					Values: []any{"text", "image", "resource"},
-				},
+				Validation:  &expr.ValidationExpr{Values: []any{"text", "image", "resource"}},
 			}},
-			{Name: "text", Attribute: &expr.AttributeExpr{
-				Type:        expr.String,
-				Description: "Text content",
-			}},
-			{Name: "data", Attribute: &expr.AttributeExpr{
-				Type:        expr.String,
-				Description: "Base64 encoded data",
-			}},
-			{Name: "mimeType", Attribute: &expr.AttributeExpr{
-				Type:        expr.String,
-				Description: "MIME type",
-			}},
-			{Name: "uri", Attribute: &expr.AttributeExpr{
-				Type:        expr.String,
-				Description: "Resource URI",
-			}},
+			{Name: "text", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Text content"}},
+			{Name: "data", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Base64 encoded data"}},
+			{Name: "mimeType", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "MIME type"}},
+			{Name: "uri", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Resource URI"}},
 		},
-		Validation: &expr.ValidationExpr{
-			Required: []string{"type"},
-		},
+		Validation: &expr.ValidationExpr{Required: []string{"type"}},
 	}
 }
 

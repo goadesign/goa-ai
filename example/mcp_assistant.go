@@ -2,6 +2,7 @@ package assistantapi
 
 import (
 	"context"
+	"strings"
 
 	mcpassistant "example.com/assistant/gen/mcp_assistant"
 	"goa.design/clue/log"
@@ -11,16 +12,51 @@ import (
 // The example methods log the requests and return zero values.
 type mcpAssistantsrvc struct{}
 
+// providedMCPOptions holds options set by the server main via flags.
+var providedMCPOptions *mcpassistant.MCPAdapterOptions
+
+// SetMCPAdapterOptions allows the server main to configure MCP adapter options
+// without relying on environment variables.
+func SetMCPAdapterOptions(o *mcpassistant.MCPAdapterOptions) {
+	providedMCPOptions = o
+}
+
 // NewMcpAssistant returns the mcp_assistant service implementation.
 func NewMcpAssistant() mcpassistant.Service {
-	return &mcpAssistantsrvc{}
+	// Prefer options provided via flags; do not read environment variables
+	var opts *mcpassistant.MCPAdapterOptions
+	if providedMCPOptions != nil {
+		opts = providedMCPOptions
+	} else {
+		opts = &mcpassistant.MCPAdapterOptions{}
+	}
+	// If no policy provided, apply a simple default for tests: deny reading system_info
+	if opts != nil && len(opts.AllowedResourceNames) == 0 &&
+		len(opts.DeniedResourceNames) == 0 &&
+		len(opts.AllowedResourceURIs) == 0 &&
+		len(opts.DeniedResourceURIs) == 0 {
+		opts.DeniedResourceNames = []string{"system_info"}
+	}
+	return mcpassistant.NewMCPAdapter(NewAssistant(), &promptProvider{}, opts)
+}
+
+// SplitCSV splits a comma-separated list into trimmed items, ignoring empties.
+func SplitCSV(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // Initialize MCP session
 func (s *mcpAssistantsrvc) Initialize(ctx context.Context, p *mcpassistant.InitializePayload) (res *mcpassistant.InitializeResult, err error) {
-	res = &mcpassistant.InitializeResult{}
 	log.Printf(ctx, "mcpAssistant.initialize")
-	return
+	return &mcpassistant.InitializeResult{}, nil
 }
 
 // Ping the server
@@ -32,40 +68,26 @@ func (s *mcpAssistantsrvc) Ping(ctx context.Context) (res *mcpassistant.PingResu
 
 // List available tools
 func (s *mcpAssistantsrvc) ToolsList(ctx context.Context, p *mcpassistant.ToolsListPayload) (res *mcpassistant.ToolsListResult, err error) {
-	res = &mcpassistant.ToolsListResult{}
 	log.Printf(ctx, "mcpAssistant.tools/list")
-	return
+	return &mcpassistant.ToolsListResult{}, nil
 }
 
 // Call a tool
-func (s *mcpAssistantsrvc) ToolsCall(ctx context.Context, p *mcpassistant.ToolsCallPayload, stream mcpassistant.ToolsCallServerStream) (err error) {
+func (s *mcpAssistantsrvc) ToolsCall(ctx context.Context, p *mcpassistant.ToolsCallPayload, stream mcpassistant.ToolsCallServerStream) error {
 	log.Printf(ctx, "mcpAssistant.tools/call")
-	// Minimal example: emit one progress notification and one final response
-	{
-		// Progress notification (no ID)
-		notif := &mcpassistant.ToolsCallResult{}
-		if err := stream.Send(ctx, notif); err != nil {
-			return err
-		}
-		// Final response
-		final := &mcpassistant.ToolsCallResult{}
-		return stream.SendAndClose(ctx, final)
-	}
-	return
+	return nil
 }
 
 // List available resources
 func (s *mcpAssistantsrvc) ResourcesList(ctx context.Context, p *mcpassistant.ResourcesListPayload) (res *mcpassistant.ResourcesListResult, err error) {
-	res = &mcpassistant.ResourcesListResult{}
 	log.Printf(ctx, "mcpAssistant.resources/list")
-	return
+	return &mcpassistant.ResourcesListResult{}, nil
 }
 
 // Read a resource
 func (s *mcpAssistantsrvc) ResourcesRead(ctx context.Context, p *mcpassistant.ResourcesReadPayload) (res *mcpassistant.ResourcesReadResult, err error) {
-	res = &mcpassistant.ResourcesReadResult{}
 	log.Printf(ctx, "mcpAssistant.resources/read")
-	return
+	return &mcpassistant.ResourcesReadResult{}, nil
 }
 
 // Subscribe to resource changes
@@ -82,16 +104,14 @@ func (s *mcpAssistantsrvc) ResourcesUnsubscribe(ctx context.Context, p *mcpassis
 
 // List available prompts
 func (s *mcpAssistantsrvc) PromptsList(ctx context.Context, p *mcpassistant.PromptsListPayload) (res *mcpassistant.PromptsListResult, err error) {
-	res = &mcpassistant.PromptsListResult{}
 	log.Printf(ctx, "mcpAssistant.prompts/list")
-	return
+	return &mcpassistant.PromptsListResult{}, nil
 }
 
 // Get a prompt by name
 func (s *mcpAssistantsrvc) PromptsGet(ctx context.Context, p *mcpassistant.PromptsGetPayload) (res *mcpassistant.PromptsGetResult, err error) {
-	res = &mcpassistant.PromptsGetResult{}
 	log.Printf(ctx, "mcpAssistant.prompts/get")
-	return
+	return &mcpassistant.PromptsGetResult{}, nil
 }
 
 // Send status updates to client

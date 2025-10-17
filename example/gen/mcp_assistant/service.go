@@ -36,6 +36,8 @@ type Service interface {
 	PromptsGet(context.Context, *PromptsGetPayload) (res *PromptsGetResult, err error)
 	// Send status updates to client
 	NotifyStatusUpdate(context.Context, *SendNotificationPayload) (err error)
+	// Stream server-sent events (notifications)
+	EventsStream(context.Context, EventsStreamServerStream) (err error)
 	// Subscribe to resource updates
 	Subscribe(context.Context, *SubscribePayload) (res *SubscribeResult, err error)
 	// Unsubscribe from resource updates
@@ -56,7 +58,7 @@ const ServiceName = "mcp_assistant"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [13]string{"initialize", "ping", "tools/list", "tools/call", "resources/list", "resources/read", "resources/subscribe", "resources/unsubscribe", "prompts/list", "prompts/get", "notify_status_update", "subscribe", "unsubscribe"}
+var MethodNames = [14]string{"initialize", "ping", "tools/list", "tools/call", "resources/list", "resources/read", "resources/subscribe", "resources/unsubscribe", "prompts/list", "prompts/get", "notify_status_update", "events/stream", "subscribe", "unsubscribe"}
 
 // ToolsCallEvent is the interface implemented by the result type for the
 // tools/call method.
@@ -92,6 +94,40 @@ type ToolsCallClientStream interface {
 	RecvWithContext(context.Context) (*ToolsCallResult, error)
 }
 
+// EventsStreamEvent is the interface implemented by the result type for the
+// events/stream method.
+type EventsStreamEvent interface {
+	isEventsStreamEvent()
+}
+
+// isEventsStreamEvent implements the EventsStreamEvent interface.
+func (*EventsStreamResult) isEventsStreamEvent() {}
+
+// EventsStreamServerStream allows streaming instances of *EventsStreamResult
+// over SSE.
+type EventsStreamServerStream interface {
+	// Send streams JSON-RPC notifications with "EventsStreamResult". Notifications
+	// do not expect a response.
+	// IMPORTANT: Send only sends JSON-RPC notifications. Use SendAndClose to send
+	// a final response.
+	Send(ctx context.Context, event EventsStreamEvent) error
+	// SendAndClose sends a final response with "EventsStreamResult" and closes the
+	// stream.
+	// The result will be sent as a JSON-RPC response with the original request ID.
+	// If the result has an ID field populated, that ID will be used instead of the
+	// request ID.
+	SendAndClose(ctx context.Context, event EventsStreamEvent) error
+	// SendError sends a JSON-RPC error response.
+	SendError(ctx context.Context, id string, err error) error
+}
+
+// EventsStreamClientStream allows streaming instances of *EventsStreamResult
+// to the client.
+type EventsStreamClientStream interface {
+	Recv() (*EventsStreamResult, error)
+	RecvWithContext(context.Context) (*EventsStreamResult, error)
+}
+
 // Stream defines the interface for managing an SSE streaming connection in the
 // mcp_assistant server. It allows sending notifications and final responses.
 // This interface is used by the service to interact with clients over SSE
@@ -102,7 +138,8 @@ type Stream interface {
 	// For responses, the result must have an ID field.
 	// Accepted types: *InitializeResult, *PingResult, *ToolsListResult,
 	// *ToolsCallResult, *ResourcesListResult, *ResourcesReadResult,
-	// *PromptsListResult, *PromptsGetResult, *SubscribeResult, *UnsubscribeResult
+	// *PromptsListResult, *PromptsGetResult, *EventsStreamResult,
+	// *SubscribeResult, *UnsubscribeResult
 	Send(ctx context.Context, event Event) error
 }
 
@@ -137,6 +174,9 @@ func (*PromptsListResult) ismcpAssistantEvent() {}
 func (*PromptsGetResult) ismcpAssistantEvent() {}
 
 // ismcpAssistantEvent implements the Event interface.
+func (*EventsStreamResult) ismcpAssistantEvent() {}
+
+// ismcpAssistantEvent implements the Event interface.
 func (*SubscribeResult) ismcpAssistantEvent() {}
 
 // ismcpAssistantEvent implements the Event interface.
@@ -160,6 +200,15 @@ type ContentItem struct {
 	MimeType *string
 	// Resource URI
 	URI *string
+}
+
+// EventsStreamResult is the result type of the mcp_assistant service
+// events/stream method.
+type EventsStreamResult struct {
+	// Tool execution results
+	Content []*ContentItem
+	// Whether the tool encountered an error
+	IsError *bool
 }
 
 // InitializePayload is the payload type of the mcp_assistant service

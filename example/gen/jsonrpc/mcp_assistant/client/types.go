@@ -126,6 +126,10 @@ type PromptsListResponseBody PromptsListResponseBodyResponseBody
 // "prompts/get" endpoint HTTP response body.
 type PromptsGetResponseBody PromptsGetResponseBodyResponseBody
 
+// EventsStreamResponseBody is the type of the "mcp_assistant" service
+// "events/stream" endpoint HTTP response body.
+type EventsStreamResponseBody EventsStreamResponseBodyResponseBody
+
 // SubscribeResponseBody is the type of the "mcp_assistant" service "subscribe"
 // endpoint HTTP response body.
 type SubscribeResponseBody SubscribeResponseBodyResponseBody
@@ -339,6 +343,15 @@ type MessageContentResponseBodyResponseBody struct {
 	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
 }
 
+// EventsStreamResponseBodyResponseBody is used to define fields on response
+// body types.
+type EventsStreamResponseBodyResponseBody struct {
+	// Tool execution results
+	Content []*ContentItemResponseBodyResponseBody `form:"content,omitempty" json:"content,omitempty" xml:"content,omitempty"`
+	// Whether the tool encountered an error
+	IsError *bool `form:"isError,omitempty" json:"isError,omitempty" xml:"isError,omitempty"`
+}
+
 // SubscribeResponseBodyResponseBody is used to define fields on response body
 // types.
 type SubscribeResponseBodyResponseBody struct {
@@ -550,6 +563,20 @@ func NewPromptsGetResultOK(body *PromptsGetResponseBody) *mcpassistant.PromptsGe
 	return v
 }
 
+// NewEventsStreamResultOK builds a "mcp_assistant" service "events/stream"
+// endpoint result from a HTTP "OK" response.
+func NewEventsStreamResultOK(body *EventsStreamResponseBody) *mcpassistant.EventsStreamResult {
+	v := &mcpassistant.EventsStreamResult{
+		IsError: body.IsError,
+	}
+	v.Content = make([]*mcpassistant.ContentItem, len(body.Content))
+	for i, val := range body.Content {
+		v.Content[i] = unmarshalContentItemResponseBodyResponseBodyToMcpassistantContentItem(val)
+	}
+
+	return v
+}
+
 // NewSubscribeResultOK builds a "mcp_assistant" service "subscribe" endpoint
 // result from a HTTP "OK" response.
 func NewSubscribeResultOK(body *SubscribeResponseBody) *mcpassistant.SubscribeResult {
@@ -687,6 +714,22 @@ func ValidatePromptsGetResponseBody(body *PromptsGetResponseBody) (err error) {
 	for _, e := range body.Messages {
 		if e != nil {
 			if err2 := ValidatePromptMessageResponseBodyResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateEventsStreamResponseBody runs the validations defined on
+// Events/StreamResponseBody
+func ValidateEventsStreamResponseBody(body *EventsStreamResponseBody) (err error) {
+	if body.Content == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
+	}
+	for _, e := range body.Content {
+		if e != nil {
+			if err2 := ValidateContentItemResponseBodyResponseBody(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -949,6 +992,22 @@ func ValidateMessageContentResponseBodyResponseBody(body *MessageContentResponse
 	if body.Type != nil {
 		if !(*body.Type == "text" || *body.Type == "image" || *body.Type == "resource") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *body.Type, []any{"text", "image", "resource"}))
+		}
+	}
+	return
+}
+
+// ValidateEventsStreamResponseBodyResponseBody runs the validations defined on
+// Events/StreamResponseBodyResponseBody
+func ValidateEventsStreamResponseBodyResponseBody(body *EventsStreamResponseBodyResponseBody) (err error) {
+	if body.Content == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
+	}
+	for _, e := range body.Content {
+		if e != nil {
+			if err2 := ValidateContentItemResponseBodyResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
 		}
 	}
 	return

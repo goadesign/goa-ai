@@ -468,6 +468,18 @@ func DecodeNotifyStatusUpdateRequest(mux goahttp.Muxer, decoder func(*http.Reque
 	}
 }
 
+// EncodeEventsStreamResponse returns an encoder for responses returned by the
+// mcp_assistant events/stream endpoint.
+func EncodeEventsStreamResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*mcpassistant.EventsStreamResult)
+		enc := encoder(ctx, w)
+		body := NewEventsStreamResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
 // EncodeSubscribeResponse returns an encoder for responses returned by the
 // mcp_assistant subscribe endpoint.
 func EncodeSubscribeResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {

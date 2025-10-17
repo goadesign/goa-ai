@@ -49,8 +49,9 @@ func (s *assistantsrvc) GetSystemInfo(ctx context.Context) (res *assistant.Syste
 	return
 }
 
-// Get conversation history
-func (s *assistantsrvc) GetConversationHistory(ctx context.Context, p *assistant.GetConversationHistoryPayload) (res assistant.ChatMessages, err error) {
+// Get conversation history with optional filtering
+func (s *assistantsrvc) GetConversationHistory(ctx context.Context, p *assistant.GetConversationHistoryPayload) (res *assistant.ConversationHistory, err error) {
+	res = &assistant.ConversationHistory{}
 	log.Printf(ctx, "assistant.get_conversation_history")
 	return
 }
@@ -58,13 +59,6 @@ func (s *assistantsrvc) GetConversationHistory(ctx context.Context, p *assistant
 // Generate context-aware prompts
 func (s *assistantsrvc) GeneratePrompts(ctx context.Context, p *assistant.GeneratePromptsPayload) (res assistant.PromptTemplates, err error) {
 	log.Printf(ctx, "assistant.generate_prompts")
-	return
-}
-
-// Get workspace root directories from client
-func (s *assistantsrvc) GetWorkspaceInfo(ctx context.Context) (res *assistant.GetWorkspaceInfoResult, err error) {
-	res = &assistant.GetWorkspaceInfoResult{}
-	log.Printf(ctx, "assistant.get_workspace_info")
 	return
 }
 

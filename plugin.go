@@ -1,3 +1,4 @@
+// Package mcp wires the MCP code generation plugin into Goa.
 package mcp
 
 import (

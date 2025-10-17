@@ -35,6 +35,13 @@ func TestMCPPrompts(t *testing.T) {
 	require.NoError(t, r.Run(t, scenarios))
 }
 
+func TestMCPPromptsCLI(t *testing.T) {
+	scenarios, err := framework.LoadScenarios("../scenarios/prompts_cli.yaml")
+	require.NoError(t, err)
+	r := framework.NewRunner()
+	require.NoError(t, r.Run(t, scenarios))
+}
+
 func TestMCPNotifications(t *testing.T) {
 	scenarios, err := framework.LoadScenarios("../scenarios/notifications.yaml")
 	require.NoError(t, err)

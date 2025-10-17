@@ -50,6 +50,8 @@ type Server struct {
 	PromptsGet func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
 	// NotifyStatusUpdate is the handler for the notify_status_update method.
 	NotifyStatusUpdate func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
+	// EventsStream is the handler for the events/stream method.
+	EventsStream func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
 	// Subscribe is the handler for the subscribe method.
 	Subscribe func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
 	// Unsubscribe is the handler for the unsubscribe method.
@@ -82,6 +84,7 @@ func New(
 			"prompts/list",
 			"prompts/get",
 			"notify_status_update",
+			"events/stream",
 			"subscribe",
 			"unsubscribe",
 		},
@@ -96,6 +99,7 @@ func New(
 		PromptsList:          NewPromptsListHandler(endpoints.PromptsList, mux, decoder, encoder, errhandler),
 		PromptsGet:           NewPromptsGetHandler(endpoints.PromptsGet, mux, decoder, encoder, errhandler),
 		NotifyStatusUpdate:   NewNotifyStatusUpdateHandler(endpoints.NotifyStatusUpdate, mux, decoder, encoder, errhandler),
+		EventsStream:         NewEventsStreamHandler(endpoints.EventsStream, mux, decoder, encoder, errhandler),
 		Subscribe:            NewSubscribeHandler(endpoints.Subscribe, mux, decoder, encoder, errhandler),
 		Unsubscribe:          NewUnsubscribeHandler(endpoints.Unsubscribe, mux, decoder, encoder, errhandler),
 		decoder:              decoder,
@@ -209,6 +213,9 @@ func (s *Server) handleBatch(w http.ResponseWriter, r *http.Request) {
 
 // ProcessRequest processes a single JSON-RPC request.
 func (s *Server) processRequest(ctx context.Context, r *http.Request, req *jsonrpc.RawRequest, w http.ResponseWriter) {
+	// Inject MCP resource policy from headers into context
+	ctx = context.WithValue(ctx, "mcp_allow_names", r.Header.Get("x-mcp-allow-names"))
+	ctx = context.WithValue(ctx, "mcp_deny_names", r.Header.Get("x-mcp-deny-names"))
 	if req.JSONRPC != "2.0" {
 		s.encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidRequest, "Invalid request", nil)
 		return
@@ -263,6 +270,10 @@ func (s *Server) processRequest(ctx context.Context, r *http.Request, req *jsonr
 	case "notify_status_update":
 		if err := s.NotifyStatusUpdate(ctx, r, req, w); err != nil {
 			s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", "notify_status_update", err))
+		}
+	case "events/stream":
+		if err := s.EventsStream(ctx, r, req, w); err != nil {
+			s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", "events/stream", err))
 		}
 	case "subscribe":
 		if err := s.Subscribe(ctx, r, req, w); err != nil {
@@ -340,6 +351,8 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	switch req.Method {
 	case "tools/call":
 		handler = s.ToolsCall
+	case "events/stream":
+		handler = s.EventsStream
 	default:
 		stream := &mcpAssistantSSEStream{w: w, r: r, encoder: s.encoder, decoder: s.decoder}
 		_ = stream.sendError(ctx, req.ID, jsonrpc.MethodNotFound, "Method not found", nil)
@@ -1165,6 +1178,53 @@ func NewNotifyStatusUpdateHandler(
 		response := jsonrpc.MakeSuccessResponse(req.ID, nil)
 		if err := encoder(ctx, w).Encode(response); err != nil {
 			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
+		}
+		return nil
+	}
+}
+
+// NewEventsStreamHandler creates a JSON-RPC handler which calls the
+// "mcp_assistant" service "events/stream" endpoint.
+func NewEventsStreamHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+) func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error {
+	return func(ctx context.Context, r *http.Request, req *jsonrpc.RawRequest, w http.ResponseWriter) error {
+		ctx = context.WithValue(ctx, goa.MethodKey, "events/stream")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
+		// Initialize SSE stream early so decode errors can be sent as SSE error events
+		strm := &EventsStreamServerStream{
+			w:         w,
+			r:         r,
+			encoder:   encoder,
+			requestID: req.ID,
+		}
+		v := &mcpassistant.EventsStreamEndpointInput{
+			Stream: strm,
+		}
+		if _, err := endpoint(ctx, v); err != nil {
+			// Send error response via SSE with proper JSON-RPC code mapping
+			if req.ID != nil && req.ID != "" {
+				var en goa.GoaErrorNamer
+				if errors.As(err, &en) {
+					switch en.GoaErrorName() {
+					case "invalid_params":
+						return strm.sendError(ctx, jsonrpc.IDToString(req.ID), jsonrpc.InvalidParams, err.Error(), nil)
+					case "method_not_found":
+						return strm.sendError(ctx, jsonrpc.IDToString(req.ID), jsonrpc.MethodNotFound, err.Error(), nil)
+					}
+				}
+				// Fallback
+				code := jsonrpc.InternalError
+				if _, ok := err.(*goa.ServiceError); ok {
+					code = jsonrpc.InvalidParams
+				}
+				return strm.sendError(ctx, jsonrpc.IDToString(req.ID), code, err.Error(), nil)
+			}
+			return nil
 		}
 		return nil
 	}

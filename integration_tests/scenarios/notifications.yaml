@@ -14,4 +14,23 @@ scenarios:
         expect:
           status: no_response
 
+  - name: notify_status_update_request
+    defaults:
+      client: jsonrpc.mcp_assistant
+    steps:
+      - name: init
+        op: Initialize
+        input:
+          protocolVersion: "2025-06-18"
+          clientInfo: { name: "itest", version: "1.0.0" }
+        expect:
+          status: success
+      - name: notify_req
+        op: NotifyStatusUpdate
+        input:
+          type: info
+          message: "Server status ok"
+        expect:
+          status: success
+
 

@@ -11,13 +11,18 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
 
+	mcpAssistant "example.com/assistant/gen/mcp_assistant"
+	retry "goa.design/goa-ai/retry"
 	goahttp "goa.design/goa/v3/http"
+	"goa.design/goa/v3/jsonrpc"
 	goa "goa.design/goa/v3/pkg"
 )
 
@@ -28,6 +33,9 @@ type Client struct {
 	// ToolsCall Doer is the HTTP client used to make requests to the tools/call
 	// endpoint.
 	ToolsCallDoer goahttp.Doer
+	// EventsStream Doer is the HTTP client used to make requests to the
+	// events/stream endpoint.
+	EventsStreamDoer goahttp.Doer
 	// RestoreResponseBody controls whether the response bodies are reset after
 	// decoding so they can be read again.
 	RestoreResponseBody bool
@@ -57,6 +65,7 @@ func NewClient(
 	return &Client{
 		Doer:                doer,
 		ToolsCallDoer:       doer,
+		EventsStreamDoer:    doer,
 		RestoreResponseBody: restoreBody,
 		scheme:              scheme,
 		host:                host,
@@ -338,6 +347,49 @@ func (c *Client) NotifyStatusUpdate() goa.Endpoint {
 	}
 }
 
+// EventsStream returns an endpoint that makes JSON-RPC requests to the
+// mcp_assistant service events/stream method.
+func (c *Client) EventsStream() goa.Endpoint {
+	var (
+		encodeRequest = EncodeEventsStreamRequest(c.encoder)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildEventsStreamRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		if err := encodeRequest(req, v); err != nil {
+			return nil, err
+		}
+		// For SSE endpoints, send JSON-RPC request and establish stream
+		resp, err := c.Doer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("mcp_assistant", "events/stream", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "events/stream", resp.StatusCode, string(body))
+		}
+
+		contentType := resp.Header.Get("Content-Type")
+		if contentType != "" && !strings.HasPrefix(contentType, "text/event-stream") {
+			resp.Body.Close()
+			return nil, fmt.Errorf("unexpected content type: %s (expected text/event-stream)", contentType)
+		}
+
+		// Create the SSE client stream
+		stream := &EventsStreamClientStream{
+			resp:    resp,
+			reader:  bufio.NewReader(resp.Body),
+			decoder: c.decoder,
+		}
+
+		return stream, nil
+	}
+}
+
 // Subscribe returns an endpoint that makes JSON-RPC requests to the
 // mcp_assistant service subscribe method.
 func (c *Client) Subscribe() goa.Endpoint {
@@ -381,5 +433,182 @@ func (c *Client) Unsubscribe() goa.Endpoint {
 			return nil, goahttp.ErrRequestError("mcp_assistant", "unsubscribe", err)
 		}
 		return decodeResponse(resp)
+	}
+}
+
+const example_analyze_text = `{"mode":"sentiment","text":"I love this new feature! It works perfectly."}`
+const example_search = `{"limit":5,"query":"MCP protocol"}`
+const example_execute_code = `{"code":"print(2 + 2)","language":"python"}`
+const example_process_batch = `{"blob":"aGVsbG8=","format":"text","items":["item1","item2"],"mimeType":"text/plain","uri":"system://info"}`
+
+// toolExample returns a built-in example (if any) for a tool name.
+func toolExample(name string) string {
+	switch name {
+	case "analyze_text":
+		return example_analyze_text
+	case "search":
+		return example_search
+	case "execute_code":
+		return example_execute_code
+	case "process_batch":
+		return example_process_batch
+	default:
+		return "{}"
+	}
+}
+
+// Cached lookup of tool input schema via tools/list.
+var toolSchemaCache struct {
+	sync.Mutex
+	m map[string]string
+}
+
+func getToolSchema(ctx context.Context, c *Client, name string) string {
+	toolSchemaCache.Lock()
+	if toolSchemaCache.m == nil {
+		toolSchemaCache.m = make(map[string]string)
+	}
+	if s, ok := toolSchemaCache.m[name]; ok {
+		toolSchemaCache.Unlock()
+		return s
+	}
+	toolSchemaCache.Unlock()
+
+	// Fetch tools list once and cache
+	ep := c.ToolsList()
+	ires, err := ep(ctx, &mcpAssistant.ToolsListPayload{})
+	if err != nil {
+		return ""
+	}
+	res, ok := ires.(*mcpAssistant.ToolsListResult)
+	if !ok || res == nil {
+		return ""
+	}
+	var schema string
+	for _, t := range res.Tools {
+		if t != nil && t.Name == name {
+			// InputSchema is of type any; marshal back to JSON string if needed
+			switch v := t.InputSchema.(type) {
+			case string:
+				schema = v
+			case []byte:
+				schema = string(v)
+			default:
+				// attempt JSON marshal via Goa encoder path: best-effort string
+				b, _ := json.Marshal(v)
+				schema = string(b)
+			}
+			break
+		}
+	}
+	toolSchemaCache.Lock()
+	toolSchemaCache.m[name] = schema
+	toolSchemaCache.Unlock()
+	return schema
+}
+
+// JSONRPCError is a typed error for convenient code checks.
+type JSONRPCError struct {
+	Code    int
+	Message string
+}
+
+func (e *JSONRPCError) Error() string { return fmt.Sprintf("JSON-RPC error %d: %s", e.Code, e.Message) }
+
+func isInvalidParams(err error) bool {
+	if err == nil {
+		return false
+	}
+	var jre *JSONRPCError
+	if errors.As(err, &jre) {
+		return jre.Code == -32602
+	}
+	return false
+}
+
+// toolsCallStreamWithRetry wraps ToolsCallClientStream to convert invalid params
+// into retry.RetryableError enriched with schema/example context.
+type toolsCallStreamWithRetry struct {
+	inner  *ToolsCallClientStream
+	tool   string
+	client *Client
+}
+
+func (s *toolsCallStreamWithRetry) Recv(ctx context.Context) (*mcpAssistant.ToolsCallResult, error) {
+	res, err := s.inner.Recv(ctx)
+	if err != nil {
+		if isInvalidParams(err) {
+			schema := getToolSchema(ctx, s.client, s.tool)
+			example := toolExample(s.tool)
+			prompt := retry.BuildRepairPrompt("tools/call:"+s.tool, err.Error(), example, schema)
+			return nil, &retry.RetryableError{Prompt: prompt, Cause: err}
+		}
+		return nil, err
+	}
+	return res, nil
+}
+
+func (s *toolsCallStreamWithRetry) Close() error { return s.inner.Close() }
+
+func (c *Client) wrapToolsCallStream(tool string, anyStream any) any {
+	if s, ok := anyStream.(*ToolsCallClientStream); ok {
+		return &toolsCallStreamWithRetry{inner: s, tool: tool, client: c}
+	}
+	return anyStream
+}
+
+func withRetryError(op string, err error, example, schema string) error {
+	if err == nil {
+		return nil
+	}
+	if isInvalidParams(err) {
+		prompt := retry.BuildRepairPrompt(op, err.Error(), example, schema)
+		return &retry.RetryableError{Prompt: prompt, Cause: err}
+	}
+	return err
+}
+
+// DecodePromptsGetResponseWithRetry is like DecodePromptsGetResponse but returns
+// retry.RetryableError on JSON-RPC invalid params (-32602).
+func DecodePromptsGetResponseWithRetry(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() { resp.Body = io.NopCloser(bytes.NewBuffer(b)) }()
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "prompts/get", resp.StatusCode, string(body))
+		}
+
+		var jresp jsonrpc.RawResponse
+		if err := decoder(resp).Decode(&jresp); err != nil {
+			return nil, goahttp.ErrDecodingError("mcp_assistant", "prompts/get", err)
+		}
+
+		if jresp.Error != nil {
+			if jresp.Error.Code == -32602 {
+				prompt := retry.BuildRepairPrompt("prompts/get", jresp.Error.Message, "{}", "")
+				return nil, &retry.RetryableError{Prompt: prompt, Cause: fmt.Errorf("JSON-RPC error %d: %s", jresp.Error.Code, jresp.Error.Message)}
+			}
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "prompts/get", resp.StatusCode, string(body))
+		}
+		resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Result))
+		var body PromptsGetResponseBody
+		if err := decoder(resp).Decode(&body); err != nil {
+			return nil, goahttp.ErrDecodingError("mcp_assistant", "prompts/get", err)
+		}
+		if err := ValidatePromptsGetResponseBody(&body); err != nil {
+			return nil, goahttp.ErrValidationError("mcp_assistant", "prompts/get", err)
+		}
+		res := NewPromptsGetResultOK(&body)
+		return res, nil
 	}
 }

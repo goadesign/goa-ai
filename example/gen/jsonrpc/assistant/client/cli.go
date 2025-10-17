@@ -10,6 +10,7 @@ package client
 import (
 	"encoding/json"
 	"fmt"
+	"unicode/utf8"
 
 	assistant "example.com/assistant/gen/assistant"
 	goa "goa.design/goa/v3/pkg"
@@ -23,7 +24,13 @@ func BuildAnalyzeTextPayload(assistantAnalyzeTextBody string) (*assistant.Analyz
 	{
 		err = json.Unmarshal([]byte(assistantAnalyzeTextBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"mode\": \"summary\",\n      \"text\": \"Corporis asperiores in.\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"mode\": \"sentiment\",\n      \"text\": \"I love this new feature! It works perfectly.\"\n   }'")
+		}
+		if utf8.RuneCountInString(body.Text) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.text", body.Text, utf8.RuneCountInString(body.Text), 1, true))
+		}
+		if utf8.RuneCountInString(body.Text) > 10000 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.text", body.Text, utf8.RuneCountInString(body.Text), 10000, false))
 		}
 		if !(body.Mode == "sentiment" || body.Mode == "keywords" || body.Mode == "summary") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mode", body.Mode, []any{"sentiment", "keywords", "summary"}))
@@ -48,7 +55,22 @@ func BuildSearchKnowledgePayload(assistantSearchKnowledgeBody string) (*assistan
 	{
 		err = json.Unmarshal([]byte(assistantSearchKnowledgeBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"limit\": 480693088241816126,\n      \"query\": \"Consequatur aut.\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"limit\": 5,\n      \"query\": \"MCP protocol\"\n   }'")
+		}
+		if utf8.RuneCountInString(body.Query) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.query", body.Query, utf8.RuneCountInString(body.Query), 1, true))
+		}
+		if utf8.RuneCountInString(body.Query) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.query", body.Query, utf8.RuneCountInString(body.Query), 256, false))
+		}
+		if body.Limit < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.limit", body.Limit, 1, true))
+		}
+		if body.Limit > 100 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.limit", body.Limit, 100, false))
+		}
+		if err != nil {
+			return nil, err
 		}
 	}
 	v := &assistant.SearchKnowledgePayload{
@@ -73,7 +95,19 @@ func BuildExecuteCodePayload(assistantExecuteCodeBody string) (*assistant.Execut
 	{
 		err = json.Unmarshal([]byte(assistantExecuteCodeBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"code\": \"Sequi aspernatur sint ratione.\",\n      \"language\": \"Cupiditate tempore inventore adipisci maiores omnis et.\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"code\": \"print(2 + 2)\",\n      \"language\": \"python\"\n   }'")
+		}
+		if !(body.Language == "python" || body.Language == "javascript" || body.Language == "go") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.language", body.Language, []any{"python", "javascript", "go"}))
+		}
+		if utf8.RuneCountInString(body.Code) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.code", body.Code, utf8.RuneCountInString(body.Code), 1, true))
+		}
+		if utf8.RuneCountInString(body.Code) > 20000 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.code", body.Code, utf8.RuneCountInString(body.Code), 20000, false))
+		}
+		if err != nil {
+			return nil, err
 		}
 	}
 	v := &assistant.ExecuteCodePayload{
@@ -92,16 +126,17 @@ func BuildGetConversationHistoryPayload(assistantGetConversationHistoryBody stri
 	{
 		err = json.Unmarshal([]byte(assistantGetConversationHistoryBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"limit\": 463184493172424536\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"flag\": true,\n      \"limit\": 7371898376364845327,\n      \"nums\": [\n         \"Quidem dolore dolorem aliquid numquam a quas.\",\n         \"Esse omnis velit id.\",\n         \"Animi odio eius.\"\n      ]\n   }'")
 		}
 	}
 	v := &assistant.GetConversationHistoryPayload{
 		Limit: body.Limit,
+		Flag:  body.Flag,
 	}
-	{
-		var zero int
-		if v.Limit == zero {
-			v.Limit = 50
+	if body.Nums != nil {
+		v.Nums = make([]any, len(body.Nums))
+		for i, val := range body.Nums {
+			v.Nums[i] = val
 		}
 	}
 
@@ -116,7 +151,7 @@ func BuildGeneratePromptsPayload(assistantGeneratePromptsBody string) (*assistan
 	{
 		err = json.Unmarshal([]byte(assistantGeneratePromptsBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"context\": \"Reiciendis illo assumenda.\",\n      \"task\": \"Cupiditate quis excepturi occaecati labore qui enim.\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"context\": \"testing\",\n      \"task\": \"unit-test\"\n   }'")
 		}
 	}
 	v := &assistant.GeneratePromptsPayload{
@@ -135,10 +170,16 @@ func BuildSendNotificationPayload(assistantSendNotificationBody string) (*assist
 	{
 		err = json.Unmarshal([]byte(assistantSendNotificationBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"data\": \"Adipisci non.\",\n      \"message\": \"Distinctio cum.\",\n      \"type\": \"info\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"data\": \"At iste aliquid.\",\n      \"message\": \"Testing notification\",\n      \"type\": \"success\"\n   }'")
 		}
 		if !(body.Type == "info" || body.Type == "warning" || body.Type == "error" || body.Type == "success") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", body.Type, []any{"info", "warning", "error", "success"}))
+		}
+		if utf8.RuneCountInString(body.Message) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.message", body.Message, utf8.RuneCountInString(body.Message), 1, true))
+		}
+		if utf8.RuneCountInString(body.Message) > 2000 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.message", body.Message, utf8.RuneCountInString(body.Message), 2000, false))
 		}
 		if err != nil {
 			return nil, err
@@ -161,7 +202,13 @@ func BuildSubscribeToUpdatesPayload(assistantSubscribeToUpdatesBody string) (*as
 	{
 		err = json.Unmarshal([]byte(assistantSubscribeToUpdatesBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"filter\": \"Officiis ea odio sequi et.\",\n      \"resource\": \"Et nihil qui tempore maxime.\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"filter\": \"Eveniet voluptas.\",\n      \"resource\": \"documents\"\n   }'")
+		}
+		if !(body.Resource == "documents" || body.Resource == "conversation" || body.Resource == "system_info") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.resource", body.Resource, []any{"documents", "conversation", "system_info"}))
+		}
+		if err != nil {
+			return nil, err
 		}
 	}
 	v := &assistant.SubscribeToUpdatesPayload{
@@ -180,15 +227,21 @@ func BuildProcessBatchPayload(assistantProcessBatchBody string) (*assistant.Proc
 	{
 		err = json.Unmarshal([]byte(assistantProcessBatchBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"blob\": \"RGlnbmlzc2ltb3MgY3VtcXVlIG1heGltZSBkaXN0aW5jdGlvLg==\",\n      \"format\": \"text\",\n      \"items\": [\n         \"Iste ducimus eaque et omnis quisquam.\",\n         \"Voluptatem ipsam.\",\n         \"Deleniti at enim eos aut unde.\"\n      ],\n      \"mimeType\": \"Voluptas ea ut sequi ipsam.\",\n      \"uri\": \"Rerum minus ut facere quis.\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"blob\": \"aGVsbG8=\",\n      \"format\": \"text\",\n      \"items\": [\n         \"item1\",\n         \"item2\"\n      ],\n      \"mimeType\": \"text/plain\",\n      \"uri\": \"system://info\"\n   }'")
 		}
 		if body.Items == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("items", "body"))
+		}
+		if len(body.Items) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.items", body.Items, len(body.Items), 1, true))
 		}
 		if body.Format != nil {
 			if !(*body.Format == "text" || *body.Format == "blob" || *body.Format == "uri") {
 				err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.format", *body.Format, []any{"text", "blob", "uri"}))
 			}
+		}
+		if body.URI != nil {
+			err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", *body.URI, goa.FormatURI))
 		}
 		if err != nil {
 			return nil, err

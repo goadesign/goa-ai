@@ -27,51 +27,47 @@ func NewEndpoints(
     {{- range .Tools }}
     // Tool: {{ .Name }} -> {{ .OriginalMethodName }}
     e.{{ .OriginalMethodName }} = func(ctx context.Context, v any) (any, error) {
-        // Encode original payload to JSON-RPC request using Goa encoder, then extract params
+        // Encode original payload to raw JSON using Goa encoder (no JSON-RPC envelope)
         var args []byte
         {
-            req, err := origC.Build{{ .OriginalMethodName }}Request(ctx, v)
-            if err != nil {
-                return nil, err
-            }
-            encReq := {{ $.SvcJSONRPCCAlias }}.Encode{{ .OriginalMethodName }}Request(enc)
             var payload any
             {{- if .HasPayload }}
             payload = v.(*{{ $.ServicePkg }}.{{ .OriginalMethodName }}Payload)
             {{- else }}
-            payload = nil
+            payload = struct{}{}
             {{- end }}
-            if err := encReq(req, payload); err != nil {
-                return nil, err
-            }
-            b, err := io.ReadAll(req.Body)
-            if err != nil {
-                return nil, err
-            }
-            resp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(b))}
-            var jr jsonrpc.Request
-            if err := dec(resp).Decode(&jr); err != nil {
-                return nil, err
-            }
-            // Re-encode params using Goa encoder to get raw bytes
-            req2, _ := origC.Build{{ .OriginalMethodName }}Request(ctx, v)
-            if err := enc(req2).Encode(jr.Params); err != nil {
-                return nil, err
-            }
-            args, err = io.ReadAll(req2.Body)
-            if err != nil {
-                return nil, err
-            }
+            reqArgs, _ := http.NewRequestWithContext(ctx, http.MethodPost, "", nil)
+            if err := enc(reqArgs).Encode(payload); err != nil { return nil, err }
+            b, err := io.ReadAll(reqArgs.Body)
+            if err != nil { return nil, err }
+            args = b
         }
 
-        // Call MCP tools/call via transport endpoint
-        ires, err := mcpC.ToolsCall()(ctx, &{{ $.MCPPkgAlias }}.ToolsCallPayload{Name: "{{ .Name }}", Arguments: args})
+        // Call MCP tools/call via transport endpoint (SSE stream)
+        streamAny, err := mcpC.ToolsCall()(ctx, &{{ $.MCPPkgAlias }}.ToolsCallPayload{Name: "{{ .Name }}", Arguments: args})
         if err != nil {
-            return nil, err
+            prompt := retry.BuildRepairPrompt("tools/call:{{ .Name }}", err.Error(), {{ printf "%q" .ExampleArguments }}, {{ printf "%q" .InputSchema }})
+            return nil, &retry.RetryableError{Prompt: prompt, Cause: err}
         }
-        r := ires.(*{{ $.MCPPkgAlias }}.ToolsCallResult)
+        stream, ok := streamAny.(*{{ $.MCPJSONRPCCAlias }}.ToolsCallClientStream)
+        if !ok {
+            return nil, fmt.Errorf("unexpected stream type for {{ .Name }}")
+        }
+        var r *{{ $.MCPPkgAlias }}.ToolsCallResult
+        for {
+            ev, recvErr := stream.Recv(ctx)
+            if recvErr == io.EOF {
+                break
+            }
+            if recvErr != nil {
+                prompt := retry.BuildRepairPrompt("tools/call:{{ .Name }}", recvErr.Error(), {{ printf "%q" .ExampleArguments }}, {{ printf "%q" .InputSchema }})
+                return nil, &retry.RetryableError{Prompt: prompt, Cause: recvErr}
+            }
+            r = ev
+        }
         if r == nil || r.Content == nil || len(r.Content) == 0 || r.Content[0] == nil || r.Content[0].Text == nil {
-            return nil, fmt.Errorf("empty MCP tool response for {{ .Name }}")
+            prompt := retry.BuildRepairPrompt("tools/call:{{ .Name }}", "empty MCP tool response", {{ printf "%q" .ExampleArguments }}, {{ printf "%q" .InputSchema }})
+            return nil, &retry.RetryableError{Prompt: prompt, Cause: fmt.Errorf("empty MCP tool response for {{ .Name }}")}
         }
         {{- if .HasResult }}
         // Build JSON-RPC response envelope and decode using Goa-generated decoder
@@ -96,8 +92,39 @@ func NewEndpoints(
     {{- range .Resources }}
     // Resource: {{ .URI }} -> {{ .OriginalMethodName }}
     e.{{ .OriginalMethodName }} = func(ctx context.Context, v any) (any, error) {
-        // Resources in MCP don't support parameters, only URI
-        ires, err := mcpC.ResourcesRead()(ctx, &{{ $.MCPPkgAlias }}.ResourcesReadPayload{URI: "{{ .URI }}"})
+        // Forward original payload parameters via URI query string when applicable
+        uri := "{{ .URI }}"
+        {
+            var payload any
+            {{- if .HasPayload }}
+            payload = v.(*{{ $.ServicePkg }}.{{ .OriginalMethodName }}Payload)
+            {{- else }}
+            payload = struct{}{}
+            {{- end }}
+            reqArgs, _ := http.NewRequestWithContext(ctx, http.MethodPost, "", nil)
+            if err := enc(reqArgs).Encode(payload); err == nil {
+                b, rerr := io.ReadAll(reqArgs.Body)
+                if rerr == nil && len(b) > 0 {
+                    var m map[string]any
+                    if jerr := json.Unmarshal(b, &m); jerr == nil && len(m) > 0 {
+                        var keys []string
+                        for k := range m { keys = append(keys, k) }
+                        sort.Strings(keys)
+                        var q []string
+                        for _, k := range keys {
+                            switch vv := m[k].(type) {
+                            case []any:
+                                for _, e := range vv { q = append(q, fmt.Sprintf("%s=%v", url.QueryEscape(k), url.QueryEscape(fmt.Sprint(e)))) }
+                            default:
+                                q = append(q, fmt.Sprintf("%s=%v", url.QueryEscape(k), url.QueryEscape(fmt.Sprint(vv))))
+                            }
+                        }
+                        if len(q) > 0 { uri = uri + "?" + strings.Join(q, "&") }
+                    }
+                }
+            }
+        }
+        ires, err := mcpC.ResourcesRead()(ctx, &{{ $.MCPPkgAlias }}.ResourcesReadPayload{URI: uri})
         if err != nil {
             return nil, err
         }
@@ -130,45 +157,27 @@ func NewEndpoints(
     e.{{ .OriginalMethodName }} = func(ctx context.Context, v any) (any, error) {
         var args []byte
         {
-            req, err := origC.Build{{ .OriginalMethodName }}Request(ctx, v)
-            if err != nil {
-                return nil, err
-            }
-            encReq := {{ $.SvcJSONRPCCAlias }}.Encode{{ .OriginalMethodName }}Request(enc)
             var payload any
             {{- if .HasPayload }}
             payload = v.(*{{ $.ServicePkg }}.{{ .OriginalMethodName }}Payload)
             {{- else }}
-            payload = nil
+            payload = struct{}{}
             {{- end }}
-            if err := encReq(req, payload); err != nil {
-                return nil, err
-            }
-            b, err := io.ReadAll(req.Body)
-            if err != nil {
-                return nil, err
-            }
-            resp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(b))}
-            var jr jsonrpc.Request
-            if err := dec(resp).Decode(&jr); err != nil {
-                return nil, err
-            }
-            req2, _ := origC.Build{{ .OriginalMethodName }}Request(ctx, v)
-            if err := enc(req2).Encode(jr.Params); err != nil {
-                return nil, err
-            }
-            args, err = io.ReadAll(req2.Body)
-            if err != nil {
-                return nil, err
-            }
+            reqArgs, _ := http.NewRequestWithContext(ctx, http.MethodPost, "", nil)
+            if err := enc(reqArgs).Encode(payload); err != nil { return nil, err }
+            b, err := io.ReadAll(reqArgs.Body)
+            if err != nil { return nil, err }
+            args = b
         }
         ires, err := mcpC.PromptsGet()(ctx, &{{ $.MCPPkgAlias }}.PromptsGetPayload{Name: "{{ .Name }}", Arguments: args})
         if err != nil {
-            return nil, err
+            prompt := retry.BuildRepairPrompt("prompts/get:{{ .Name }}", err.Error(), {{ printf "%q" .ExampleArguments }}, "")
+            return nil, &retry.RetryableError{Prompt: prompt, Cause: err}
         }
         r := ires.(*{{ $.MCPPkgAlias }}.PromptsGetResult)
         if r == nil || r.Messages == nil || len(r.Messages) == 0 || r.Messages[0] == nil || r.Messages[0].Content == nil || r.Messages[0].Content.Text == nil {
-            return nil, fmt.Errorf("empty MCP prompt response for {{ .Name }}")
+            prompt := retry.BuildRepairPrompt("prompts/get:{{ .Name }}", "empty MCP prompt response", {{ printf "%q" .ExampleArguments }}, "")
+            return nil, &retry.RetryableError{Prompt: prompt, Cause: fmt.Errorf("empty MCP prompt response for {{ .Name }}")}
         }
         // Build JSON-RPC response envelope and decode using Goa-generated decoder
         jrr := &jsonrpc.RawResponse{JSONRPC: "2.0", Result: []byte(*r.Messages[0].Content.Text)}
@@ -197,14 +206,16 @@ func NewClient(
     restore bool,
 ) *{{ .ServicePkg }}.Client {
     e := NewEndpoints(scheme, host, doer, enc, dec, restore)
+    origClient := {{ $.SvcJSONRPCCAlias }}.NewClient(scheme, host, doer, enc, dec, restore)
     return {{ .ServicePkg }}.NewClient(
         {{- range $i, $method := .AllMethods }}
         {{- if $method.IsMapped }}
         e.{{ $method.Name }},
         {{- else }}
-        {{ $.SvcJSONRPCCAlias }}.NewClient(scheme, host, doer, enc, dec, restore).{{ $method.Name }}(),
+        origClient.{{ $method.Name }}(),
         {{- end }}
         {{- end }}
     )
 }
+
 

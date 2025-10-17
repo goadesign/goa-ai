@@ -962,6 +962,73 @@ func DecodeNotifyStatusUpdateResponse(decoder func(*http.Response) goahttp.Decod
 	}
 }
 
+// BuildEventsStreamRequest instantiates a HTTP request object with method and
+// path set to call the "mcp_assistant" service "events/stream" endpoint
+func (c *Client) BuildEventsStreamRequest(ctx context.Context, v any) (*http.Request, error) {
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: EventsStreamMcpAssistantPath()}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("mcp_assistant", "events/stream", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// DecodeEventsStreamResponse returns a decoder for responses returned by the
+// mcp_assistant service events/stream JSON-RPC method. restoreBody controls
+// whether the response body should be restored after having been read.
+func DecodeEventsStreamResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "events/stream", resp.StatusCode, string(body))
+		}
+
+		var jresp jsonrpc.RawResponse
+		if err := decoder(resp).Decode(&jresp); err != nil {
+			return nil, goahttp.ErrDecodingError("mcp_assistant", "events/stream", err)
+		}
+
+		if jresp.Error != nil {
+			switch jresp.Error.Code {
+			default:
+				body, _ := io.ReadAll(resp.Body)
+				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "events/stream", resp.StatusCode, string(body))
+			}
+		}
+		resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Result))
+		var (
+			body EventsStreamResponseBody
+			err  error
+		)
+		err = decoder(resp).Decode(&body)
+		if err != nil {
+			return nil, goahttp.ErrDecodingError("mcp_assistant", "events/stream", err)
+		}
+		err = ValidateEventsStreamResponseBody(&body)
+		if err != nil {
+			return nil, goahttp.ErrValidationError("mcp_assistant", "events/stream", err)
+		}
+		res := NewEventsStreamResultOK(&body)
+		return res, nil
+	}
+}
+
 // BuildSubscribeRequest instantiates a HTTP request object with method and
 // path set to call the "mcp_assistant" service "subscribe" endpoint
 func (c *Client) BuildSubscribeRequest(ctx context.Context, v any) (*http.Request, error) {
@@ -1366,6 +1433,23 @@ func EncodePingRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.R
 		}
 		if err := encoder(req).Encode(body); err != nil {
 			return goahttp.ErrEncodingError("mcp_assistant", "ping", err)
+		}
+		return nil
+	}
+} // EncodeEventsStreamRequest returns an encoder for requests sent to the
+// mcp_assistant service events/stream JSON-RPC method.
+func EncodeEventsStreamRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		// For JSON-RPC methods without payloads, we still need to send the method envelope
+		// Generate a unique ID for the request
+		id := uuid.New().String()
+		body := &jsonrpc.Request{
+			JSONRPC: "2.0",
+			Method:  "events/stream",
+			ID:      id,
+		}
+		if err := encoder(req).Encode(body); err != nil {
+			return goahttp.ErrEncodingError("mcp_assistant", "events/stream", err)
 		}
 		return nil
 	}

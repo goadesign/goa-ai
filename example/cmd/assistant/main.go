@@ -13,10 +13,7 @@ import (
 
 	assistantapi "example.com/assistant"
 	assistant "example.com/assistant/gen/assistant"
-	grpcstream "example.com/assistant/gen/grpcstream"
 	mcpassistant "example.com/assistant/gen/mcp_assistant"
-	streaming "example.com/assistant/gen/streaming"
-	websocketsvc "example.com/assistant/gen/websocket"
 	"goa.design/clue/debug"
 	"goa.design/clue/log"
 )
@@ -27,7 +24,6 @@ func main() {
 	var (
 		hostF     = flag.String("host", "localhost", "Server host (valid values: localhost)")
 		domainF   = flag.String("domain", "", "Host domain name (overrides host domain specified in service design)")
-		grpcPortF = flag.String("grpc-port", "", "gRPC port (overrides host gRPC port specified in service design)")
 		httpPortF = flag.String("http-port", "", "HTTP port (overrides host HTTP port specified in service design)")
 		secureF   = flag.Bool("secure", false, "Use secure scheme (https or grpcs)")
 		dbgF      = flag.Bool("debug", false, "Log request and response bodies")
@@ -48,46 +44,21 @@ func main() {
 
 	// Initialize the services.
 	var (
-		grpcstreamSvc   grpcstream.Service
-		websocketSvc    websocketsvc.Service
-		streamingSvc    streaming.Service
 		assistantSvc    assistant.Service
 		mcpAssistantSvc mcpassistant.Service
 	)
 	{
-		grpcstreamSvc = assistantapi.NewGrpcstream()
-		websocketSvc = assistantapi.NewWebsocket()
-		streamingSvc = assistantapi.NewStreaming()
 		assistantSvc = assistantapi.NewAssistant()
 		mcpAssistantSvc = assistantapi.NewMcpAssistant()
-	}
-
-	{
-		// Wire MCP adapters on top of original services
-		// Provide a simple prompt provider implementation so Prompts.get works.
-		provider := assistantapi.NewPromptProvider()
-		mcpAssistantSvc = mcpassistant.NewMCPAdapter(assistantSvc, provider, nil)
 	}
 
 	// Wrap the services in endpoints that can be invoked from other services
 	// potentially running in different processes.
 	var (
-		grpcstreamEndpoints   *grpcstream.Endpoints
-		websocketEndpoints    *websocketsvc.Endpoints
-		streamingEndpoints    *streaming.Endpoints
 		assistantEndpoints    *assistant.Endpoints
 		mcpAssistantEndpoints *mcpassistant.Endpoints
 	)
 	{
-		grpcstreamEndpoints = grpcstream.NewEndpoints(grpcstreamSvc)
-		grpcstreamEndpoints.Use(debug.LogPayloads())
-		grpcstreamEndpoints.Use(log.Endpoint)
-		websocketEndpoints = websocketsvc.NewEndpoints(websocketSvc)
-		websocketEndpoints.Use(debug.LogPayloads())
-		websocketEndpoints.Use(log.Endpoint)
-		streamingEndpoints = streaming.NewEndpoints(streamingSvc)
-		streamingEndpoints.Use(debug.LogPayloads())
-		streamingEndpoints.Use(log.Endpoint)
 		assistantEndpoints = assistant.NewEndpoints(assistantSvc)
 		assistantEndpoints.Use(debug.LogPayloads())
 		assistantEndpoints.Use(log.Endpoint)
@@ -135,31 +106,7 @@ func main() {
 			} else if u.Port() == "" {
 				u.Host = net.JoinHostPort(u.Host, "80")
 			}
-			handleHTTPServer(ctx, u, websocketEndpoints, streamingEndpoints, mcpAssistantEndpoints, mcpAssistantSvc, &wg, errc, *dbgF)
-		}
-
-		{
-			addr := "grpc://localhost:8080"
-			u, err := url.Parse(addr)
-			if err != nil {
-				log.Fatalf(ctx, err, "invalid URL %#v\n", addr)
-			}
-			if *secureF {
-				u.Scheme = "grpcs"
-			}
-			if *domainF != "" {
-				u.Host = *domainF
-			}
-			if *grpcPortF != "" {
-				h, _, err := net.SplitHostPort(u.Host)
-				if err != nil {
-					log.Fatalf(ctx, err, "invalid URL %#v\n", u.Host)
-				}
-				u.Host = net.JoinHostPort(h, *grpcPortF)
-			} else if u.Port() == "" {
-				u.Host = net.JoinHostPort(u.Host, "8080")
-			}
-			handleGRPCServer(ctx, u, grpcstreamEndpoints, &wg, errc, *dbgF)
+			handleHTTPServer(ctx, u, mcpAssistantEndpoints, mcpAssistantSvc, &wg, errc, *dbgF)
 		}
 
 	default:

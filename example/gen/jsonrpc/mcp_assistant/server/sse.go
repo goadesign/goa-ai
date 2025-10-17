@@ -130,6 +130,37 @@ func (s *mcpAssistantSSEStream) Send(ctx context.Context, event mcpassistant.Eve
 		}
 
 		return s.sendSSEEvent(eventType, message)
+	case *mcpassistant.EventsStreamResult:
+		// Convert to response body type for proper JSON encoding
+		body := NewEventsStreamResponseBody(v)
+
+		// Check if this is a notification or response by looking for ID field
+		var id string
+		var isResponse bool
+
+		var message map[string]any
+		var eventType string
+
+		if isResponse {
+			// Send as response with ID
+			resp := jsonrpc.MakeSuccessResponse(id, body)
+			message = map[string]any{
+				"jsonrpc": resp.JSONRPC,
+				"id":      resp.ID,
+				"result":  resp.Result,
+			}
+			eventType = "response"
+		} else {
+			// Send as notification (no ID)
+			message = map[string]any{
+				"jsonrpc": "2.0",
+				"method":  "events/stream",
+				"params":  body,
+			}
+			eventType = "notification"
+		}
+
+		return s.sendSSEEvent(eventType, message)
 	default:
 		return fmt.Errorf("unknown event type: %T", event)
 	}

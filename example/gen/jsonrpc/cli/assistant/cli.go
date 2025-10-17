@@ -23,15 +23,15 @@ import (
 //	command (subcommand1|subcommand2|...)
 func UsageCommands() []string {
 	return []string{
-		"assistant (analyze-text|search-knowledge|execute-code|list-documents|get-system-info|get-conversation-history|generate-prompts|get-workspace-info|send-notification|subscribe-to-updates|process-batch)",
+		"assistant (analyze-text|search-knowledge|execute-code|list-documents|get-system-info|get-conversation-history|generate-prompts|send-notification|subscribe-to-updates|process-batch)",
 	}
 }
 
 // UsageExamples produces an example of a valid invocation of the CLI tool.
 func UsageExamples() string {
 	return os.Args[0] + ` assistant analyze-text --body '{
-      "mode": "summary",
-      "text": "Corporis asperiores in."
+      "mode": "sentiment",
+      "text": "I love this new feature! It works perfectly."
    }'` + "\n" +
 		""
 }
@@ -67,8 +67,6 @@ func ParseEndpoint(
 		assistantGeneratePromptsFlags    = flag.NewFlagSet("generate-prompts", flag.ExitOnError)
 		assistantGeneratePromptsBodyFlag = assistantGeneratePromptsFlags.String("body", "REQUIRED", "")
 
-		assistantGetWorkspaceInfoFlags = flag.NewFlagSet("get-workspace-info", flag.ExitOnError)
-
 		assistantSendNotificationFlags    = flag.NewFlagSet("send-notification", flag.ExitOnError)
 		assistantSendNotificationBodyFlag = assistantSendNotificationFlags.String("body", "REQUIRED", "")
 
@@ -86,7 +84,6 @@ func ParseEndpoint(
 	assistantGetSystemInfoFlags.Usage = assistantGetSystemInfoUsage
 	assistantGetConversationHistoryFlags.Usage = assistantGetConversationHistoryUsage
 	assistantGeneratePromptsFlags.Usage = assistantGeneratePromptsUsage
-	assistantGetWorkspaceInfoFlags.Usage = assistantGetWorkspaceInfoUsage
 	assistantSendNotificationFlags.Usage = assistantSendNotificationUsage
 	assistantSubscribeToUpdatesFlags.Usage = assistantSubscribeToUpdatesUsage
 	assistantProcessBatchFlags.Usage = assistantProcessBatchUsage
@@ -146,9 +143,6 @@ func ParseEndpoint(
 			case "generate-prompts":
 				epf = assistantGeneratePromptsFlags
 
-			case "get-workspace-info":
-				epf = assistantGetWorkspaceInfoFlags
-
 			case "send-notification":
 				epf = assistantSendNotificationFlags
 
@@ -202,8 +196,6 @@ func ParseEndpoint(
 			case "generate-prompts":
 				endpoint = c.GeneratePrompts()
 				data, err = assistantc.BuildGeneratePromptsPayload(*assistantGeneratePromptsBodyFlag)
-			case "get-workspace-info":
-				endpoint = c.GetWorkspaceInfo()
 			case "send-notification":
 				endpoint = c.SendNotification()
 				data, err = assistantc.BuildSendNotificationPayload(*assistantSendNotificationBodyFlag)
@@ -234,9 +226,8 @@ func assistantUsage() {
 	fmt.Fprintln(os.Stderr, `    execute-code: Execute code in a sandboxed environment`)
 	fmt.Fprintln(os.Stderr, `    list-documents: List available documents`)
 	fmt.Fprintln(os.Stderr, `    get-system-info: Get system information and status`)
-	fmt.Fprintln(os.Stderr, `    get-conversation-history: Get conversation history`)
+	fmt.Fprintln(os.Stderr, `    get-conversation-history: Get conversation history with optional filtering`)
 	fmt.Fprintln(os.Stderr, `    generate-prompts: Generate context-aware prompts`)
-	fmt.Fprintln(os.Stderr, `    get-workspace-info: Get workspace root directories from client`)
 	fmt.Fprintln(os.Stderr, `    send-notification: Send status notification to client`)
 	fmt.Fprintln(os.Stderr, `    subscribe-to-updates: Subscribe to resource updates`)
 	fmt.Fprintln(os.Stderr, `    process-batch: Process a batch of items with progress tracking`)
@@ -261,8 +252,8 @@ func assistantAnalyzeTextUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant analyze-text --body '{
-      "mode": "summary",
-      "text": "Corporis asperiores in."
+      "mode": "sentiment",
+      "text": "I love this new feature! It works perfectly."
    }'`)
 }
 
@@ -283,8 +274,8 @@ func assistantSearchKnowledgeUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant search-knowledge --body '{
-      "limit": 480693088241816126,
-      "query": "Consequatur aut."
+      "limit": 5,
+      "query": "MCP protocol"
    }'`)
 }
 
@@ -305,8 +296,8 @@ func assistantExecuteCodeUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant execute-code --body '{
-      "code": "Sequi aspernatur sint ratione.",
-      "language": "Cupiditate tempore inventore adipisci maiores omnis et."
+      "code": "print(2 + 2)",
+      "language": "python"
    }'`)
 }
 
@@ -352,7 +343,7 @@ func assistantGetConversationHistoryUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Get conversation history`)
+	fmt.Fprintln(os.Stderr, `Get conversation history with optional filtering`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
@@ -361,7 +352,13 @@ func assistantGetConversationHistoryUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant get-conversation-history --body '{
-      "limit": 463184493172424536
+      "flag": true,
+      "limit": 7371898376364845327,
+      "nums": [
+         "Quidem dolore dolorem aliquid numquam a quas.",
+         "Esse omnis velit id.",
+         "Animi odio eius."
+      ]
    }'`)
 }
 
@@ -382,26 +379,9 @@ func assistantGeneratePromptsUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant generate-prompts --body '{
-      "context": "Reiciendis illo assumenda.",
-      "task": "Cupiditate quis excepturi occaecati labore qui enim."
+      "context": "testing",
+      "task": "unit-test"
    }'`)
-}
-
-func assistantGetWorkspaceInfoUsage() {
-	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] assistant get-workspace-info", os.Args[0])
-	fmt.Fprintln(os.Stderr)
-
-	// Description
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Get workspace root directories from client`)
-
-	// Flags list
-
-	// Example block: pass example as parameter to avoid format parsing of % characters
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant get-workspace-info`)
 }
 
 func assistantSendNotificationUsage() {
@@ -421,9 +401,9 @@ func assistantSendNotificationUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant send-notification --body '{
-      "data": "Adipisci non.",
-      "message": "Distinctio cum.",
-      "type": "info"
+      "data": "At iste aliquid.",
+      "message": "Testing notification",
+      "type": "success"
    }'`)
 }
 
@@ -444,8 +424,8 @@ func assistantSubscribeToUpdatesUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant subscribe-to-updates --body '{
-      "filter": "Officiis ea odio sequi et.",
-      "resource": "Et nihil qui tempore maxime."
+      "filter": "Eveniet voluptas.",
+      "resource": "documents"
    }'`)
 }
 
@@ -466,14 +446,13 @@ func assistantProcessBatchUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], `assistant process-batch --body '{
-      "blob": "RGlnbmlzc2ltb3MgY3VtcXVlIG1heGltZSBkaXN0aW5jdGlvLg==",
+      "blob": "aGVsbG8=",
       "format": "text",
       "items": [
-         "Iste ducimus eaque et omnis quisquam.",
-         "Voluptatem ipsam.",
-         "Deleniti at enim eos aut unde."
+         "item1",
+         "item2"
       ],
-      "mimeType": "Voluptas ea ut sequi ipsam.",
-      "uri": "Rerum minus ut facere quis."
+      "mimeType": "text/plain",
+      "uri": "system://info"
    }'`)
 }

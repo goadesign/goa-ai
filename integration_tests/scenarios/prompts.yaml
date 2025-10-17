@@ -59,3 +59,29 @@ scenarios:
         expect:
           status: error
           error: { code: -32601 }
+
+  - name: prompts_get_missing_name
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: true
+    steps:
+      - name: get
+        op: PromptsGet
+        input: { name: "" }
+        expect:
+          status: error
+          error: { code: -32602 }
+
+  - name: prompts_get_missing_arg_http
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: true
+    steps:
+      - name: get_missing_task
+        op: PromptsGet
+        input: { name: contextual_prompts, arguments: { context: testing } }
+        expect:
+          status: error
+          error: { code: -32602 }

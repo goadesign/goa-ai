@@ -524,17 +524,7 @@ func DecodeGetConversationHistoryResponse(decoder func(*http.Response) goahttp.D
 		if err != nil {
 			return nil, goahttp.ErrDecodingError("assistant", "get_conversation_history", err)
 		}
-		for _, e := range body {
-			if e != nil {
-				if err2 := ValidateChatMessageResponse(e); err2 != nil {
-					err = goa.MergeErrors(err, err2)
-				}
-			}
-		}
-		if err != nil {
-			return nil, goahttp.ErrValidationError("assistant", "get_conversation_history", err)
-		}
-		res := NewGetConversationHistoryChatMessagesOK(body)
+		res := NewGetConversationHistoryConversationHistoryOK(&body)
 		return res, nil
 	}
 }
@@ -632,73 +622,6 @@ func DecodeGeneratePromptsResponse(decoder func(*http.Response) goahttp.Decoder,
 			return nil, goahttp.ErrValidationError("assistant", "generate_prompts", err)
 		}
 		res := NewGeneratePromptsPromptTemplatesOK(body)
-		return res, nil
-	}
-}
-
-// BuildGetWorkspaceInfoRequest instantiates a HTTP request object with method
-// and path set to call the "assistant" service "get_workspace_info" endpoint
-func (c *Client) BuildGetWorkspaceInfoRequest(ctx context.Context, v any) (*http.Request, error) {
-	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: GetWorkspaceInfoAssistantPath()}
-	req, err := http.NewRequest("POST", u.String(), nil)
-	if err != nil {
-		return nil, goahttp.ErrInvalidURL("assistant", "get_workspace_info", u.String(), err)
-	}
-	if ctx != nil {
-		req = req.WithContext(ctx)
-	}
-
-	return req, nil
-}
-
-// DecodeGetWorkspaceInfoResponse returns a decoder for responses returned by
-// the assistant service get_workspace_info JSON-RPC method. restoreBody
-// controls whether the response body should be restored after having been read.
-func DecodeGetWorkspaceInfoResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
-	return func(resp *http.Response) (any, error) {
-		if restoreBody {
-			b, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return nil, err
-			}
-			resp.Body = io.NopCloser(bytes.NewBuffer(b))
-			defer func() {
-				resp.Body = io.NopCloser(bytes.NewBuffer(b))
-			}()
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			return nil, goahttp.ErrInvalidResponse("assistant", "get_workspace_info", resp.StatusCode, string(body))
-		}
-
-		var jresp jsonrpc.RawResponse
-		if err := decoder(resp).Decode(&jresp); err != nil {
-			return nil, goahttp.ErrDecodingError("assistant", "get_workspace_info", err)
-		}
-
-		if jresp.Error != nil {
-			switch jresp.Error.Code {
-			default:
-				body, _ := io.ReadAll(resp.Body)
-				return nil, goahttp.ErrInvalidResponse("assistant", "get_workspace_info", resp.StatusCode, string(body))
-			}
-		}
-		resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Result))
-		var (
-			body GetWorkspaceInfoResponseBody
-			err  error
-		)
-		err = decoder(resp).Decode(&body)
-		if err != nil {
-			return nil, goahttp.ErrDecodingError("assistant", "get_workspace_info", err)
-		}
-		err = ValidateGetWorkspaceInfoResponseBody(&body)
-		if err != nil {
-			return nil, goahttp.ErrValidationError("assistant", "get_workspace_info", err)
-		}
-		res := NewGetWorkspaceInfoResultOK(&body)
 		return res, nil
 	}
 }
@@ -991,19 +914,6 @@ func unmarshalDocumentResponseToAssistantDocument(v *DocumentResponse) *assistan
 	return res
 }
 
-// unmarshalChatMessageResponseToAssistantChatMessage builds a value of type
-// *assistant.ChatMessage from a value of type *ChatMessageResponse.
-func unmarshalChatMessageResponseToAssistantChatMessage(v *ChatMessageResponse) *assistant.ChatMessage {
-	res := &assistant.ChatMessage{
-		ID:        *v.ID,
-		Role:      *v.Role,
-		Content:   *v.Content,
-		Timestamp: *v.Timestamp,
-	}
-
-	return res
-}
-
 // unmarshalPromptTemplateResponseToAssistantPromptTemplate builds a value of
 // type *assistant.PromptTemplate from a value of type *PromptTemplateResponse.
 func unmarshalPromptTemplateResponseToAssistantPromptTemplate(v *PromptTemplateResponse) *assistant.PromptTemplate {
@@ -1017,17 +927,6 @@ func unmarshalPromptTemplateResponseToAssistantPromptTemplate(v *PromptTemplateR
 		for i, val := range v.Variables {
 			res.Variables[i] = val
 		}
-	}
-
-	return res
-}
-
-// unmarshalRootInfoResponseBodyToAssistantRootInfo builds a value of type
-// *assistant.RootInfo from a value of type *RootInfoResponseBody.
-func unmarshalRootInfoResponseBodyToAssistantRootInfo(v *RootInfoResponseBody) *assistant.RootInfo {
-	res := &assistant.RootInfo{
-		URI:  *v.URI,
-		Name: v.Name,
 	}
 
 	return res
@@ -1064,23 +963,6 @@ func EncodeGetSystemInfoRequest(encoder func(*http.Request) goahttp.Encoder) fun
 		}
 		if err := encoder(req).Encode(body); err != nil {
 			return goahttp.ErrEncodingError("assistant", "get_system_info", err)
-		}
-		return nil
-	}
-} // EncodeGetWorkspaceInfoRequest returns an encoder for requests sent to the
-// assistant service get_workspace_info JSON-RPC method.
-func EncodeGetWorkspaceInfoRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
-	return func(req *http.Request, v any) error {
-		// For JSON-RPC methods without payloads, we still need to send the method envelope
-		// Generate a unique ID for the request
-		id := uuid.New().String()
-		body := &jsonrpc.Request{
-			JSONRPC: "2.0",
-			Method:  "get_workspace_info",
-			ID:      id,
-		}
-		if err := encoder(req).Encode(body); err != nil {
-			return goahttp.ErrEncodingError("assistant", "get_workspace_info", err)
 		}
 		return nil
 	}

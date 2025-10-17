@@ -13,6 +13,19 @@
 - Integration tests: `make itest`
 - Run example server: `make run-example`
 
+## Change Workflow
+
+- Standard:
+  1. Make changes
+  2. Run lint: `make lint`
+  3. Fix errors
+  4. Run tests: `make test` (or `make itest`)
+- Goa design changes:
+  1. Edit `design/*.go`
+  2. Regenerate code (`goa gen ...`) — verify `gen/` updated
+  3. Lint and test
+- Never manually edit `gen/` — always regenerate.
+
 ## Testing Guidelines
 - Frameworks: standard `testing`, `testify/require` in integration tests.
 - Place new e2e scenarios under `integration_tests/scenarios/*.yaml` and wire in `tests/`.
@@ -28,8 +41,46 @@
 - Style & naming: Go 1.24+, format with `go fmt ./...`; keep imports grouped (stdlib separate). Files use `lower_snake_case.go`; packages are short, lowercase. Exported identifiers need GoDoc; avoid stutter. Wrap errors with `%w` and use `errors.Is/As`.
 - File organization: Order declarations as Types → Consts → Vars → Public funcs → Public methods → Private funcs → Private methods. No commented‑out code; delete dead code.
 - Additional style: Prefer `any` over `interface{}` in new code. Use multi‑line `if` blocks; target ~80 columns where practical. For long struct/composite literals, one field per line with trailing commas; closing brace on its own line.
+- Generator edits MUST be section‑driven and guard‑first: check section name early and `continue` (`if s.Name != "target" { continue }`), then mutate. Avoid redundant `s.Source == ""` checks.
+- Generator code MUST NOT rely on example‑specific aliases or names. Derive aliases (e.g., original client alias) from header imports and operate generically.
 - DSL note: Dot imports are allowed in DSL packages; see `.golangci.yml` which disables `ST1001`.
 - Testing: Write table‑driven tests in `*_test.go` using `testing` (optional `testify`). Name tests `TestXxx`; keep unit tests fast/deterministic. Run `go test -race -vet=off ./...` (or `make test`) locally and avoid coverage regressions.
+
+### Boundaries & Validation
+
+- Validate only at system boundaries:
+  - gRPC/HTTP handlers (Goa performs validation)
+  - Event consumers (validate deserialized events)
+  - Database query results (check errors and unexpected nulls)
+  - Third‑party API responses
+  - Context extraction (`ctx.Value()`)
+  - Type assertions (always check `ok`)
+  - Map lookups when required
+- Inside service code, do not re‑validate values already guaranteed by contracts:
+  - Function arguments between your own functions
+  - Goa‑generated type fields (already validated)
+  - Non‑nil pointers guaranteed by constructors
+- Style within functions:
+  - Prefer early returns over deep nesting; avoid useless locals
+  - Use modern Go helpers (e.g., `max`, `min`, `clear`) when appropriate
+  - Trust contracts; avoid defensive nil/empty checks except at boundaries
+
+### Template Formatting (Goa codegen templates)
+
+- Keep Go code indentation independent from template directives. Do not shift Go code to align with `{{ ... }}` blocks.
+- Indent template directives relative to each other to reflect structure (`if`, `range`, `else`, `end`). Prefer `{{- ... }}` to trim surrounding whitespace when appropriate.
+- Example pattern:
+
+  ```
+  {{- if condition }}
+      {{- if nested }}
+  // Go code here (indented for Go readability only)
+      {{- end }}
+  {{- end }}
+  ```
+
+- Apply the same rule in loops and multi-branch templates. Keep closing `{{- end }}` aligned with its opening directive.
+- Favor readable, minimal whitespace while preserving valid Go formatting in the emitted code.
 
 ### Slice and map length checks
 
@@ -46,6 +97,13 @@
 - Prefer `SharedType` for cross-service types; keep descriptions self-contained.
 - Avoid documentation in `//` comments for fields or types; use DSL `Description("...")` and field descriptions instead.
 - Ensure requiredness via `Required(...)` and avoid redundant runtime nil/empty guards in code — rely on Goa validations.
+
+### Goa Critical Rules
+
+- Required arrays must contain at least one element; empty slices serialize to `null` and fail Goa validation. If empty is valid, make the field optional.
+- OneOf/union types must have exactly one variant set — never send `nil` for unions.
+- Define all validation in the Goa design. Service code trusts validation.
+- Return typed or structured errors at boundaries; wrap with `%w`.
 
 ### Error Handling (Always check for errors)
 
@@ -68,6 +126,27 @@
 - Avoid optional/nullable fields unless they are genuinely optional
 
 #### Avoid Defensive Programming
+- Configuration should be passed via constructors; do not read environment variables in core logic.
+
+### Files and Style Clarifications
+
+- Target ~80 columns where practical.
+- Files should be ≤ 2000 lines; split proactively when adding code would exceed this.
+- Strings: use exact comparison; only use `strings.EqualFold` when the external contract is case‑insensitive.
+
+## Safety & Permissions
+
+| Action              | Policy                          |
+|---------------------|---------------------------------|
+| `git clean/stash`   | FORBIDDEN (risk of data loss)   |
+| `git checkout`      | Avoid context switches mid‑task  |
+| `git push`          | Explain intent, then proceed     |
+| Changes (≥3 files)  | Describe plan, then proceed      |
+| Install dependencies| Explain, then proceed            |
+| Delete files        | Explain, then proceed            |
+| Everything else     | Allowed                          |
+
+- Never run `go clean -cache` during normal development (expensive rebuilds).
 
 - Do not add nil/empty guards for values guaranteed by Goa or by construction. If a required field is missing, let it fail loudly at the boundary.
 - Prefer immediate, unmistakable failures over subtle behavior later. If a contract is violated, blow up early so the producer can be fixed.

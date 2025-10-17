@@ -225,29 +225,6 @@ func (c *Client) GeneratePrompts() goa.Endpoint {
 	}
 }
 
-// GetWorkspaceInfo returns an endpoint that makes JSON-RPC requests to the
-// assistant service get_workspace_info method.
-func (c *Client) GetWorkspaceInfo() goa.Endpoint {
-	var (
-		encodeRequest  = EncodeGetWorkspaceInfoRequest(c.encoder)
-		decodeResponse = DecodeGetWorkspaceInfoResponse(c.decoder, c.RestoreResponseBody)
-	)
-	return func(ctx context.Context, v any) (any, error) {
-		req, err := c.BuildGetWorkspaceInfoRequest(ctx, v)
-		if err != nil {
-			return nil, err
-		}
-		if err := encodeRequest(req, v); err != nil {
-			return nil, err
-		}
-		resp, err := c.Doer.Do(req)
-		if err != nil {
-			return nil, goahttp.ErrRequestError("assistant", "get_workspace_info", err)
-		}
-		return decodeResponse(resp)
-	}
-}
-
 // SendNotification returns an endpoint that makes JSON-RPC requests to the
 // assistant service send_notification method.
 func (c *Client) SendNotification() goa.Endpoint {

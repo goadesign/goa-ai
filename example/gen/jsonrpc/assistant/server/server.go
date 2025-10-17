@@ -43,8 +43,6 @@ type Server struct {
 	GetConversationHistory func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
 	// GeneratePrompts is the handler for the generate_prompts method.
 	GeneratePrompts func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
-	// GetWorkspaceInfo is the handler for the get_workspace_info method.
-	GetWorkspaceInfo func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
 	// SendNotification is the handler for the send_notification method.
 	SendNotification func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
 	// SubscribeToUpdates is the handler for the subscribe_to_updates method.
@@ -75,7 +73,6 @@ func New(
 			"get_system_info",
 			"get_conversation_history",
 			"generate_prompts",
-			"get_workspace_info",
 			"send_notification",
 			"subscribe_to_updates",
 			"process_batch",
@@ -87,7 +84,6 @@ func New(
 		GetSystemInfo:          NewGetSystemInfoHandler(endpoints.GetSystemInfo, mux, decoder, encoder, errhandler),
 		GetConversationHistory: NewGetConversationHistoryHandler(endpoints.GetConversationHistory, mux, decoder, encoder, errhandler),
 		GeneratePrompts:        NewGeneratePromptsHandler(endpoints.GeneratePrompts, mux, decoder, encoder, errhandler),
-		GetWorkspaceInfo:       NewGetWorkspaceInfoHandler(endpoints.GetWorkspaceInfo, mux, decoder, encoder, errhandler),
 		SendNotification:       NewSendNotificationHandler(endpoints.SendNotification, mux, decoder, encoder, errhandler),
 		SubscribeToUpdates:     NewSubscribeToUpdatesHandler(endpoints.SubscribeToUpdates, mux, decoder, encoder, errhandler),
 		ProcessBatch:           NewProcessBatchHandler(endpoints.ProcessBatch, mux, decoder, encoder, errhandler),
@@ -240,10 +236,6 @@ func (s *Server) processRequest(ctx context.Context, r *http.Request, req *jsonr
 	case "generate_prompts":
 		if err := s.GeneratePrompts(ctx, r, req, w); err != nil {
 			s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", "generate_prompts", err))
-		}
-	case "get_workspace_info":
-		if err := s.GetWorkspaceInfo(ctx, r, req, w); err != nil {
-			s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", "get_workspace_info", err))
 		}
 	case "send_notification":
 		if err := s.SendNotification(ctx, r, req, w); err != nil {
@@ -784,7 +776,7 @@ func NewGetConversationHistoryHandler(
 
 		// Send response with the result
 		// Convert result to response body with proper JSON tags
-		body := NewGetConversationHistoryResponseBody(res.(assistant.ChatMessages))
+		body := NewGetConversationHistoryResponseBody(res.(*assistant.ConversationHistory))
 		response := jsonrpc.MakeSuccessResponse(id, body)
 		if err := encoder(ctx, w).Encode(response); err != nil {
 			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
@@ -864,69 +856,6 @@ func NewGeneratePromptsHandler(
 		// Send response with the result
 		// Convert result to response body with proper JSON tags
 		body := NewGeneratePromptsResponseBody(res.(assistant.PromptTemplates))
-		response := jsonrpc.MakeSuccessResponse(id, body)
-		if err := encoder(ctx, w).Encode(response); err != nil {
-			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
-		}
-		return nil
-	}
-}
-
-// NewGetWorkspaceInfoHandler creates a JSON-RPC handler which calls the
-// "assistant" service "get_workspace_info" endpoint.
-func NewGetWorkspaceInfoHandler(
-	endpoint goa.Endpoint,
-	mux goahttp.Muxer,
-	decoder func(*http.Request) goahttp.Decoder,
-	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
-	errhandler func(context.Context, http.ResponseWriter, error),
-) func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error {
-	return func(ctx context.Context, r *http.Request, req *jsonrpc.RawRequest, w http.ResponseWriter) error {
-		ctx = context.WithValue(ctx, goa.MethodKey, "get_workspace_info")
-		ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
-		res, err := endpoint(ctx, nil)
-		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				var en goa.GoaErrorNamer
-				if !errors.As(err, &en) {
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
-					return nil
-				}
-				switch en.GoaErrorName() {
-				case "invalid_params":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
-				case "method_not_found":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, err.Error(), nil, encoder, errhandler)
-				default:
-					code := jsonrpc.InternalError
-					if _, ok := err.(*goa.ServiceError); ok {
-						code = jsonrpc.InvalidParams
-					}
-					encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
-				}
-			} else {
-				// No ID means notification - just log error
-				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
-			}
-			return nil
-		}
-
-		// For methods with no result, check if this is a notification
-
-		// For methods with results, determine the ID to use for the response
-		var id any
-		// No ID field in result - use request ID
-		id = req.ID
-
-		if id == nil || id == "" {
-			// Notification - no response
-			return nil
-		}
-
-		// Send response with the result
-		// Convert result to response body with proper JSON tags
-		body := NewGetWorkspaceInfoResponseBody(res.(*assistant.GetWorkspaceInfoResult))
 		response := jsonrpc.MakeSuccessResponse(id, body)
 		if err := encoder(ctx, w).Encode(response); err != nil {
 			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))

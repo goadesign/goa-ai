@@ -167,6 +167,8 @@ scenarios:
           min_events: 1
           events:
             - event: error
+              data:
+                error: { code: -32601 }
 
   - name: tool_call_missing_args
     defaults:
@@ -185,6 +187,10 @@ scenarios:
           min_events: 1
           events:
             - event: error
+              data:
+                error:
+                  code: -32602
+                  message: "Missing required field: mode"
 
   - name: tool_call_invalid_arg_type
     defaults:
@@ -203,6 +209,8 @@ scenarios:
           min_events: 1
           events:
             - event: error
+              data:
+                error: { code: -32602 }
 
   - name: tool_call_invalid_enum
     defaults:
@@ -221,7 +229,53 @@ scenarios:
           min_events: 1
           events:
             - event: error
+              data:
+                error:
+                  code: -32602
+                  message: "Invalid value for mode"
 
+  - name: tool_call_malformed_arguments
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: true
+    steps:
+      - name: call
+        op: ToolsCall
+        headers:
+          Accept: text/event-stream
+        input:
+          name: analyze_text
+          # arguments provided as non-object (malformed) to trigger invalid_params
+          arguments: "not-json-object"
+        stream_expect:
+          min_events: 1
+          events:
+            - event: error
+              data:
+                error: { code: -32602 }
+
+  - name: tool_process_batch_invalid_enum
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: true
+    steps:
+      - name: call
+        op: ToolsCall
+        headers:
+          Accept: text/event-stream
+        input:
+          name: process_batch
+          arguments: { items: ["x"], format: invalid }
+        stream_expect:
+          min_events: 1
+          events:
+            - event: error
+              data:
+                error:
+                  code: -32602
+                  message: "Invalid value for format"
 
   - name: tool_process_batch_json
     defaults:

@@ -182,7 +182,8 @@ func (b *mcpExprBuilder) buildHTTPService(mcpService *expr.ServiceExpr) *expr.HT
 		jsonrpcPath = path
 	} else {
 		// If no path was captured, record a validation error and default to /rpc
-		eval.Context.Record(&eval.Error{GoError: fmt.Errorf("service %q must declare JSONRPC(func(){ POST(...) }) with a service-level path", b.originalService.Name)})
+		const missingPathMsg = "service %q must declare JSONRPC(func(){ POST(...) }) with a service-level path"
+		eval.Context.Record(&eval.Error{GoError: fmt.Errorf(missingPathMsg, b.originalService.Name)})
 		jsonrpcPath = "/rpc"
 	}
 

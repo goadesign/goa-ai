@@ -126,6 +126,10 @@ type PromptsListResponseBody PromptsListResponseBodyResponseBody
 // "prompts/get" endpoint HTTP response body.
 type PromptsGetResponseBody PromptsGetResponseBodyResponseBody
 
+// EventsStreamResponseBody is the type of the "mcp_assistant" service
+// "events/stream" endpoint HTTP response body.
+type EventsStreamResponseBody EventsStreamResponseBodyResponseBody
+
 // SubscribeResponseBody is the type of the "mcp_assistant" service "subscribe"
 // endpoint HTTP response body.
 type SubscribeResponseBody SubscribeResponseBodyResponseBody
@@ -330,6 +334,15 @@ type MessageContentResponseBodyResponseBody struct {
 	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
 }
 
+// EventsStreamResponseBodyResponseBody is used to define fields on response
+// body types.
+type EventsStreamResponseBodyResponseBody struct {
+	// Tool execution results
+	Content []*ContentItemResponseBodyResponseBody `form:"content" json:"content" xml:"content"`
+	// Whether the tool encountered an error
+	IsError *bool `form:"isError,omitempty" json:"isError,omitempty" xml:"isError,omitempty"`
+}
+
 // SubscribeResponseBodyResponseBody is used to define fields on response body
 // types.
 type SubscribeResponseBodyResponseBody struct {
@@ -467,6 +480,23 @@ func NewPromptsGetResponseBody(res *mcpassistant.PromptsGetResult) *PromptsGetRe
 		}
 	} else {
 		body.Messages = []*PromptMessageResponseBodyResponseBody{}
+	}
+	return body
+}
+
+// NewEventsStreamResponseBody builds the HTTP response body from the result of
+// the "events/stream" endpoint of the "mcp_assistant" service.
+func NewEventsStreamResponseBody(res *mcpassistant.EventsStreamResult) *EventsStreamResponseBody {
+	body := &EventsStreamResponseBody{
+		IsError: res.IsError,
+	}
+	if res.Content != nil {
+		body.Content = make([]*ContentItemResponseBodyResponseBody, len(res.Content))
+		for i, val := range res.Content {
+			body.Content[i] = marshalMcpassistantContentItemToContentItemResponseBodyResponseBody(val)
+		}
+	} else {
+		body.Content = []*ContentItemResponseBodyResponseBody{}
 	}
 	return body
 }
