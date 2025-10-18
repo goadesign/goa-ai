@@ -157,6 +157,7 @@ func (c *Client) ToolsCall() goa.Endpoint {
 		if err := encodeRequest(req, v); err != nil {
 			return nil, err
 		}
+		req.Header.Set("Accept", "text/event-stream")
 		// For SSE endpoints, send JSON-RPC request and establish stream
 		resp, err := c.Doer.Do(req)
 		if err != nil {
@@ -361,6 +362,7 @@ func (c *Client) EventsStream() goa.Endpoint {
 		if err := encodeRequest(req, v); err != nil {
 			return nil, err
 		}
+		req.Header.Set("Accept", "text/event-stream")
 		// For SSE endpoints, send JSON-RPC request and establish stream
 		resp, err := c.Doer.Do(req)
 		if err != nil {

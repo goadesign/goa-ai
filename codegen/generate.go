@@ -112,51 +112,92 @@ func generateMCPServiceCode(genpkg string, root *expr.RootExpr, mcpService *expr
 // patchMCPJSONRPCServerSSEFiles tweaks the generated SSE server stream to
 // propagate request context to the encoder and event emission.
 func patchMCPJSONRPCServerSSEFiles(mcpService *expr.ServiceExpr, sseFiles []*codegen.File) {
-	// Locate jsonrpc/mcp_<svc>/server/stream.go
+	// Resolve targets once
 	svcNameAll := codegen.SnakeCase(mcpService.Name) // e.g., mcp_assistant
 	baseSvc := strings.TrimPrefix(svcNameAll, "mcp_")
-	target := filepath.Join(codegen.Gendir, "jsonrpc", "mcp_"+baseSvc, "server", "stream.go")
-	for _, f := range sseFiles {
-		if filepath.ToSlash(f.Path) != filepath.ToSlash(target) {
-			continue
-		}
+	streamTarget := filepath.Join(codegen.Gendir, "jsonrpc", "mcp_"+baseSvc, "server", "stream.go")
+	sseTarget := filepath.Join(codegen.Gendir, "jsonrpc", "mcp_"+baseSvc, "server", "sse.go")
+
+	// Helper: add an import to a file header if present
+	addImport := func(f *codegen.File, path string) {
 		for _, s := range f.SectionTemplates {
-			if strings.Contains(s.Source, "ToolsCallServerStream") && strings.Contains(s.Source, "sendSSEEvent(") {
-				// Update helper signature to accept ctx
+			if s.Name == headerSection {
+				codegen.AddImport(s, &codegen.ImportSpec{Path: path})
+				return
+			}
+		}
+	}
+
+	// Helper: patch stream.go to pass ctx to encoder and improve error mapping
+	patchStream := func(f *codegen.File) {
+		for _, s := range f.SectionTemplates {
+			if !strings.Contains(s.Source, "ToolsCallServerStream") || !strings.Contains(s.Source, "sendSSEEvent(") {
+				continue
+			}
+			// Update signature to include ctx and pass ctx through
+			s.Source = strings.ReplaceAll(s.Source,
+				"func (s *ToolsCallServerStream) sendSSEEvent(eventType string, v any) error {",
+				"func (s *ToolsCallServerStream) sendSSEEvent(ctx context.Context, eventType string, v any) error {")
+			s.Source = strings.ReplaceAll(s.Source,
+				"s.encoder(context.Background(), ew).Encode(v)",
+				"s.encoder(ctx, ew).Encode(v)")
+			s.Source = strings.ReplaceAll(s.Source,
+				"return s.sendSSEEvent(\"notification\", message)",
+				"return s.sendSSEEvent(ctx, \"notification\", message)")
+			s.Source = strings.ReplaceAll(s.Source,
+				"return s.sendSSEEvent(\"response\", message)",
+				"return s.sendSSEEvent(ctx, \"response\", message)")
+			s.Source = strings.ReplaceAll(s.Source,
+				"return s.sendSSEEvent(\"error\", response)",
+				"return s.sendSSEEvent(ctx, \"error\", response)")
+			// Improve SendError code mapping when present
+			if strings.Contains(s.Source, "func (s *ToolsCallServerStream) SendError(") {
 				s.Source = strings.ReplaceAll(s.Source,
-					"func (s *ToolsCallServerStream) sendSSEEvent(eventType string, v any) error {",
-					"func (s *ToolsCallServerStream) sendSSEEvent(ctx context.Context, eventType string, v any) error {")
-				// Pass ctx to encoder
+					"code := jsonrpc.InternalError\n\tif _, ok := err.(*goa.ServiceError); ok {\n\t\tcode = jsonrpc.InvalidParams\n\t}",
+					"code := jsonrpc.InternalError\n\tvar en goa.GoaErrorNamer\n\tif errors.As(err, &en) {"+
+						"\n\t\tswitch en.GoaErrorName() {\n\t\tcase \"invalid_params\": code = jsonrpc.InvalidParams"+
+						"\n\t\tcase \"method_not_found\": code = jsonrpc.MethodNotFound\n\t\tdefault: code = jsonrpc.InternalError\n\t\t}\n\t}"+
+						" else if _, ok := err.(*goa.ServiceError); ok {\n\t\tcode = jsonrpc.InvalidParams\n\t}")
+			}
+		}
+		addImport(f, "errors")
+	}
+
+	// Helper: patch sse.go to pass ctx through sendSSEEvent and call sites
+	patchSSE := func(f *codegen.File) {
+		for _, s := range f.SectionTemplates {
+			// Update signature
+			if strings.Contains(s.Source, "func (s *mcpAssistantSSEStream) sendSSEEvent(eventType string, v any) error") {
+				s.Source = strings.ReplaceAll(s.Source,
+					"func (s *mcpAssistantSSEStream) sendSSEEvent(eventType string, v any) error {",
+					"func (s *mcpAssistantSSEStream) sendSSEEvent(ctx context.Context, eventType string, v any) error {")
 				s.Source = strings.ReplaceAll(s.Source,
 					"s.encoder(context.Background(), ew).Encode(v)",
 					"s.encoder(ctx, ew).Encode(v)")
-				// Update call sites to pass ctx
-				s.Source = strings.ReplaceAll(s.Source,
-					"return s.sendSSEEvent(\"notification\", message)",
-					"return s.sendSSEEvent(ctx, \"notification\", message)")
-				s.Source = strings.ReplaceAll(s.Source,
-					"return s.sendSSEEvent(\"response\", message)",
-					"return s.sendSSEEvent(ctx, \"response\", message)")
-				s.Source = strings.ReplaceAll(s.Source,
-					"return s.sendSSEEvent(\"error\", response)",
-					"return s.sendSSEEvent(ctx, \"error\", response)")
-				// Improve SendError error code mapping where present
-				if strings.Contains(s.Source, "func (s *ToolsCallServerStream) SendError(") {
-					s.Source = strings.ReplaceAll(s.Source,
-						"code := jsonrpc.InternalError\n\tif _, ok := err.(*goa.ServiceError); ok {\n\t\tcode = jsonrpc.InvalidParams\n\t}",
-						"code := jsonrpc.InternalError\n\tvar en goa.GoaErrorNamer\n\tif errors.As(err, &en) {"+
-							"\n\t\tswitch en.GoaErrorName() {\n\t\tcase \"invalid_params\": code = jsonrpc.InvalidParams"+
-							"\n\t\tcase \"method_not_found\": code = jsonrpc.MethodNotFound\n\t\tdefault: code = jsonrpc.InternalError\n\t\t}\n\t}"+
-							" else if _, ok := err.(*goa.ServiceError); ok {\n\t\tcode = jsonrpc.InvalidParams\n\t}")
-				}
 			}
+			// Update call sites
+			s.Source = strings.ReplaceAll(s.Source,
+				"return s.sendSSEEvent(\"error\", response)",
+				"return s.sendSSEEvent(ctx, \"error\", response)")
+			s.Source = strings.ReplaceAll(s.Source,
+				"return s.sendSSEEvent(\"notification\", message)",
+				"return s.sendSSEEvent(ctx, \"notification\", message)")
+			s.Source = strings.ReplaceAll(s.Source,
+				"return s.sendSSEEvent(\"response\", message)",
+				"return s.sendSSEEvent(ctx, \"response\", message)")
 		}
-		// Ensure errors package is imported in the stream file header
-		for _, s := range f.SectionTemplates {
-			if s.Name == headerSection {
-				codegen.AddImport(s, &codegen.ImportSpec{Path: "errors"})
-				break
-			}
+	}
+
+	// Walk files once and patch the matching targets
+	for _, f := range sseFiles {
+		p := filepath.ToSlash(f.Path)
+		switch p {
+		case filepath.ToSlash(streamTarget):
+			patchStream(f)
+		case filepath.ToSlash(sseTarget):
+			patchSSE(f)
+		default:
+			continue
 		}
 	}
 }
@@ -192,6 +233,12 @@ func patchMCPJSONRPCServerBaseFiles(mcpService *expr.ServiceExpr, baseFiles []*c
 				s.Source = strings.Replace(s.Source, sig, inj, 1)
 			}
 		}
+		// Normalize JSON-RPC ID checks: only test for non-nil ID regardless of concrete type
+		for _, s := range f.SectionTemplates {
+			s.Source = strings.ReplaceAll(s.Source, "if req.ID != nil && req.ID != \"\"", "if req.ID != nil")
+			// Remove stray empty switch blocks after SSE handling
+			s.Source = strings.ReplaceAll(s.Source, "switch req.Method {\n\t}", "")
+		}
 	}
 }
 
@@ -204,104 +251,78 @@ func patchMCPJSONRPCClientFiles(genpkg string, mcpService *expr.ServiceExpr, dat
 	clientPath := filepath.Join(codegen.Gendir, "jsonrpc", "mcp_"+baseSvc, "client", "client.go")
 	encodeDecodePath := filepath.Join(codegen.Gendir, "jsonrpc", "mcp_"+baseSvc, "client", "encode_decode.go")
 	streamPath := filepath.Join(codegen.Gendir, "jsonrpc", "mcp_"+baseSvc, "client", "stream.go")
-	for _, f := range clientFiles {
-		if filepath.ToSlash(f.Path) != filepath.ToSlash(clientPath) {
-			// Patch encode/decode to set Accept header for SSE tools/call
-			if filepath.ToSlash(f.Path) == filepath.ToSlash(encodeDecodePath) {
-				for _, s := range f.SectionTemplates {
-					// Prefer patching BuildToolsCallRequest so header is always present
-					if strings.Contains(s.Source, "func (c *Client) BuildToolsCallRequest(") {
-						s.Source = strings.Replace(s.Source,
-							"return req, nil",
-							"req.Header.Set(\"Accept\", \"text/event-stream\")\n\treturn req, nil",
-							1)
-					}
-					// Also patch EncodeToolsCallRequest to set Accept header
-					if strings.Contains(s.Source, "func EncodeToolsCallRequest(") && strings.Contains(s.Source, "return func(req *http.Request, v any) error {") {
-						s.Source = strings.Replace(s.Source,
-							"return func(req *http.Request, v any) error {",
-							"return func(req *http.Request, v any) error {\n\t\t// Request SSE stream for tools/call\n\t\treq.Header.Set(\"Accept\", \"text/event-stream\")",
-							1)
-					}
-				}
-				continue
-			}
-			// Patch client stream to satisfy interface and use typed errors
-			if filepath.ToSlash(f.Path) == filepath.ToSlash(streamPath) {
-				for _, s := range f.SectionTemplates {
-					// Replace fmt.Errorf JSON-RPC error returns with typed JSONRPCError
-					s.Source = strings.ReplaceAll(s.Source,
-						"return zero, fmt.Errorf(\"JSON-RPC error %d: %s\", response.Error.Code, response.Error.Message)",
-						"return zero, &JSONRPCError{Code: int(response.Error.Code), Message: response.Error.Message}")
-					// Rename any ToolsCallClientStream Recv signature to RecvWithContext
-					s.Source = strings.Replace(s.Source,
-						"func (s *ToolsCallClientStream) Recv(ctx context.Context)",
-						"func (s *ToolsCallClientStream) RecvWithContext(ctx context.Context)",
-						1)
-					s.Source = strings.ReplaceAll(s.Source,
-						") Recv(ctx context.Context) (*",
-						") RecvWithContext(ctx context.Context) (*")
-					s.Source = strings.ReplaceAll(s.Source, " s.Recv(ctx)", " s.RecvWithContext(ctx)")
-					// Insert ctx cancellation handling in receive loop
-					s.Source = strings.Replace(s.Source,
-						"for {\n\t\teventType, data, err := s.parseSSEEvent()",
-						"for {\n\t\tselect {\n\t\tcase <-ctx.Done():\n\t\t\ts.closed = true\n\t\t\treturn zero, ctx.Err()\n\t\tdefault:\n\t\t}\n\t\teventType, data, err := s.parseSSEEvent()",
-						1)
-				}
-				// Do not append extra wrappers; keep original Recv(ctx) signature
-				continue
-			}
-			continue
-		}
 
-		// 1) Patch sections broadly (wrap stream, swap decoder) without relying on specific names
+	// Helpers
+	addImports := func(f *codegen.File, specs ...*codegen.ImportSpec) {
 		for _, s := range f.SectionTemplates {
-			// tools/call stream wrapper: look for method marker and the return of raw stream
+			if s.Name == headerSection {
+				codegen.AddImport(s, specs...)
+				return
+			}
+		}
+	}
+
+	patchEncodeDecode := func(f *codegen.File) {
+		for _, s := range f.SectionTemplates {
+			if strings.Contains(s.Source, "func (c *Client) BuildToolsCallRequest(") {
+				s.Source = strings.Replace(s.Source, "return req, nil", "req.Header.Set(\"Accept\", \"text/event-stream\")\n\treturn req, nil", 1)
+			}
+			if strings.Contains(s.Source, "func EncodeToolsCallRequest(") && strings.Contains(s.Source, "return func(req *http.Request, v any) error {") {
+				s.Source = strings.Replace(s.Source, "return func(req *http.Request, v any) error {", "return func(req *http.Request, v any) error {\n\t\t// Request SSE stream for tools/call\n\t\treq.Header.Set(\"Accept\", \"text/event-stream\")", 1)
+			}
+			if strings.Contains(s.Source, "func (c *Client) BuildEventsStreamRequest(") {
+				s.Source = strings.Replace(s.Source, "return req, nil", "req.Header.Set(\"Accept\", \"text/event-stream\")\n\treturn req, nil", 1)
+			}
+			if strings.Contains(s.Source, "func EncodeEventsStreamRequest(") && strings.Contains(s.Source, "return func(req *http.Request, v any) error {") {
+				s.Source = strings.Replace(s.Source, "return func(req *http.Request, v any) error {", "return func(req *http.Request, v any) error {\n\t\t// Request SSE stream for events/stream\n\t\treq.Header.Set(\"Accept\", \"text/event-stream\")", 1)
+			}
+			if strings.Contains(s.Source, "func EncodeNotifyStatusUpdateRequest(") {
+				s.Source = strings.Replace(s.Source, "\t\t// No ID field in payload - always send as a request with generated ID\n\t\tid := uuid.New().String()\n\t\tbody.ID = id\n", "\t\t// Notification: omit ID for JSON-RPC notifications\n", 1)
+				s.Source = strings.ReplaceAll(s.Source, "id := uuid.New().String()\n", "")
+				s.Source = strings.ReplaceAll(s.Source, "body.ID = id\n", "")
+			}
+		}
+	}
+
+	patchStream := func(f *codegen.File) {
+		for _, s := range f.SectionTemplates {
+			s.Source = strings.ReplaceAll(s.Source, "return zero, fmt.Errorf(\"JSON-RPC error %d: %s\", response.Error.Code, response.Error.Message)", "return zero, &JSONRPCError{Code: int(response.Error.Code), Message: response.Error.Message}")
+			s.Source = strings.Replace(s.Source, "for {\n\t\teventType, data, err := s.parseSSEEvent()", "for {\n\t\tselect {\n\t\tcase <-ctx.Done():\n\t\t\ts.closed = true\n\t\t\treturn zero, ctx.Err()\n\t\tdefault:\n\t\t}\n\t\teventType, data, err := s.parseSSEEvent()", 1)
+		}
+	}
+
+	patchClient := func(f *codegen.File) {
+		for _, s := range f.SectionTemplates {
 			if strings.Contains(s.Source, `"tools/call"`) && strings.Contains(s.Source, "return stream, nil") {
 				mcpAliasLocal := codegen.Goify("mcp_"+baseSvc, false)
 				toolExtract := `\t\ttool := ""\n\t\tif p, ok := v.(*` + mcpAliasLocal + `.ToolsCallPayload); ok { tool = p.Name }\n\t\treturn c.wrapToolsCallStream(tool, stream), nil`
 				s.Source = strings.ReplaceAll(s.Source, "\t\treturn stream, nil", toolExtract)
 			}
-			// prompts/get decoder swap to WithRetry variant
 			if strings.Contains(s.Source, "DecodePromptsGetResponse(") {
 				s.Source = strings.ReplaceAll(s.Source, "DecodePromptsGetResponse(", "DecodePromptsGetResponseWithRetry(")
 			}
-		}
-
-		// 2) Ensure header imports include dependencies used by helper section using AddImport
-		var hdr *codegen.SectionTemplate
-		for _, s := range f.SectionTemplates {
-			if s.Name == headerSection {
-				hdr = s
-				break
-			}
+			s.Source = strings.ReplaceAll(s.Source, "// For SSE endpoints, send JSON-RPC request and establish stream", "req.Header.Set(\"Accept\", \"text/event-stream\")\n\t\t// For SSE endpoints, send JSON-RPC request and establish stream")
 		}
 		mcpAlias := codegen.Goify("mcp_"+baseSvc, false)
-		codegen.AddImport(
-			hdr,
-			&codegen.ImportSpec{Path: genpkg + "/mcp_" + baseSvc, Name: mcpAlias},
-			&codegen.ImportSpec{Path: "goa.design/goa-ai/retry", Name: "retry"},
-			&codegen.ImportSpec{Path: "errors"},
-			&codegen.ImportSpec{Path: "encoding/json"},
-			&codegen.ImportSpec{Path: "sync"},
-		)
-
-		// 3) Append helper section via template into client.go (no separate file)
+		addImports(f, &codegen.ImportSpec{Path: genpkg + "/mcp_" + baseSvc, Name: mcpAlias}, &codegen.ImportSpec{Path: "goa.design/goa-ai/retry", Name: "retry"}, &codegen.ImportSpec{Path: "errors"}, &codegen.ImportSpec{Path: "encoding/json"}, &codegen.ImportSpec{Path: "sync"})
 		type clientRetryTemplateData struct {
-			Tools          []*ToolAdapter
-			MCPAlias       string
-			MCPServiceName string
+			Tools                    []*ToolAdapter
+			MCPAlias, MCPServiceName string
 		}
-		tdata := &clientRetryTemplateData{
-			Tools:          data.Tools,
-			MCPAlias:       codegen.Goify("mcp_"+baseSvc, false),
-			MCPServiceName: mcpService.Name,
+		tdata := &clientRetryTemplateData{Tools: data.Tools, MCPAlias: codegen.Goify("mcp_"+baseSvc, false), MCPServiceName: mcpService.Name}
+		f.SectionTemplates = append(f.SectionTemplates, &codegen.SectionTemplate{Name: "mcp-jsonrpc-client-retry-baked", Source: mcpTemplates.Read("client_retry_helpers"), Data: tdata})
+	}
+
+	for _, f := range clientFiles {
+		p := filepath.ToSlash(f.Path)
+		switch p {
+		case filepath.ToSlash(encodeDecodePath):
+			patchEncodeDecode(f)
+		case filepath.ToSlash(streamPath):
+			patchStream(f)
+		case filepath.ToSlash(clientPath):
+			patchClient(f)
 		}
-		f.SectionTemplates = append(f.SectionTemplates, &codegen.SectionTemplate{
-			Name:   "mcp-jsonrpc-client-retry-baked",
-			Source: mcpTemplates.Read("client_retry_helpers"),
-			Data:   tdata,
-		})
 	}
 }
 
@@ -325,27 +346,21 @@ func patchGeneratedCLISupportToUseMCPAdapter(files []*codegen.File) []*codegen.F
 			continue
 		}
 		// Locate header to add adapter import and capture original alias
-		var header *codegen.SectionTemplate
 		var origAlias string
 		for _, s := range f.SectionTemplates {
 			if s.Name != headerSection {
 				continue
 			}
-			header = s
-			if data, ok := header.Data.(map[string]any); ok {
-				if imv, ok2 := data["Imports"]; ok2 {
-					if specs, ok3 := imv.([]*codegen.ImportSpec); ok3 {
-						for _, spec := range specs {
-							if strings.HasSuffix(spec.Path, "/gen/jsonrpc/"+svc+"/client") {
-								base := strings.TrimSuffix(spec.Path, "/gen/jsonrpc/"+svc+"/client")
-								adapterPath := base + "/gen/mcp_" + svc + "/adapter/client"
-								codegen.AddImport(header, &codegen.ImportSpec{Path: adapterPath, Name: "mcpac"})
-								origAlias = spec.Name
-								break
-							}
-						}
-					}
+			specs := s.Data.(map[string]any)["Imports"].([]*codegen.ImportSpec)
+			for _, spec := range specs {
+				if !strings.HasSuffix(spec.Path, "/gen/jsonrpc/"+svc+"/client") {
+					continue
 				}
+				base := strings.TrimSuffix(spec.Path, "/gen/jsonrpc/"+svc+"/client")
+				adapterPath := base + "/gen/mcp_" + svc + "/adapter/client"
+				codegen.AddImport(s, &codegen.ImportSpec{Path: adapterPath, Name: "mcpac"})
+				origAlias = spec.Name
+				break
 			}
 			break
 		}
