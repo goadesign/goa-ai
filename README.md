@@ -172,6 +172,36 @@ curl -s localhost:8080/rpc \
   -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}' | jq
 ```
 
+### Initialization Contract and Streaming
+
+- Call `initialize` with a supported `protocolVersion` before any request that depends on server state (`tools/*`, `resources/*`, `prompts/*`, subscriptions). `ping` is permitted pre-init.
+- Generated clients automatically set `Accept: text/event-stream` for streaming methods (e.g., `tools/call`, `events/stream`).
+
+### Adapter Options (high level)
+
+- Logging via `MCPAdapterOptions.Logger`.
+- Error mapping via `MCPAdapterOptions.ErrorMapper` (maps to JSON-RPC codes `-32602`, `-32601`, default `-32603`).
+- Resource policy via `AllowedResourceURIs`/`DeniedResourceURIs` and name-based `AllowedResourceNames`/`DeniedResourceNames` (names resolved from generated resource table). Headers `x-mcp-allow-names` and `x-mcp-deny-names` are also supported.
+- `StructuredStreamJSON` to emit JSON stream items with `mimeType: application/json`.
+- `ProtocolVersionOverride` to test protocol negotiation.
+
+Header-based allow/deny at request time (merged with adapter options):
+
+```bash
+curl -s localhost:8080/rpc \
+  -H 'Content-Type: application/json' \
+  -H 'x-mcp-allow-names: documents,conversation_history' \
+  -H 'x-mcp-deny-names: system_info' \
+  -d '{"jsonrpc": "2.0", "id": 10, "method": "resources/read", "params": {"uri":"system://info"}}'
+# -> JSON-RPC error -32602 (denied by name-based policy)
+```
+
+### Typed Errors and Retry (clients)
+
+- Streaming `Recv` returns a typed `JSONRPCError` for JSON-RPC failures.
+- `tools/call`: invalid parameters (`-32602`) are wrapped as `retry.RetryableError` with a repair prompt built from the tool input schema and a built-in example.
+- `prompts/get`: decode helper returns `retry.RetryableError` on `-32602`.
+
 ## Requirements
 
   * **Go**: `1.24` or newer

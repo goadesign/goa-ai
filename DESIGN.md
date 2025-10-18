@@ -104,6 +104,16 @@ Clients must call `initialize` before invoking any method that depends on server
 ### Error code mapping
 The adapter maps Goa `ServiceError` with name `invalid_params` to JSON-RPC `-32602`, `method_not_found` to `-32601`, and otherwise defaults to `-32603` (internal). SSE error events carry the same JSON-RPC codes and messages as non-streaming responses.
 
+### Client typed errors and retry
+Generated clients surface JSON-RPC failures from streaming and non-streaming paths as typed errors to simplify handling:
+
+- Streaming (`tools/call`, `events/stream`): client stream `Recv` returns a `JSONRPCError` (with fields `Code`, `Message`) when the server emits a JSON-RPC error event.
+- Invalid parameters (`-32602`) are classified as retryable for certain endpoints:
+  - `tools/call`: wrapped as `retry.RetryableError` enriched with a repair prompt built from the tool’s input schema and a built-in example. This enables agent-side auto-repair.
+  - `prompts/get`: a decode helper mirrors the same behavior and returns `retry.RetryableError` on `-32602`.
+
+This keeps error handling explicit and structured while enabling ergonomic auto-retry flows in clients.
+
 ### Accept negotiation
 The JSON-RPC server mounts a single `POST /rpc` endpoint. The server negotiates streaming based on the `Accept` header: if it contains `text/event-stream`, compatible methods (e.g., `tools/call`) are served over SSE; otherwise, regular JSON responses are sent. This can be generalized in the future for additional streaming methods without endpoint proliferation.
 

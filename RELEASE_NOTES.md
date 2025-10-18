@@ -53,14 +53,14 @@ Built on Goa's robust JSON-RPC implementation:
 
 - Automatic request/response encoding/decoding
 - Structured error codes and messages
-- SSE for streaming responses
+- SSE for streaming responses (generated clients set `Accept: text/event-stream` automatically for streaming endpoints)
 - Content negotiation via Accept headers
 - Goa-generated encoders (no manual JSON marshaling)
 
 ### Flexible Architecture
 
 - **Adapter pattern**: Clean separation between MCP protocol and your business logic
-- **Configurable options**: Logging, error mapping, resource access control
+- **Configurable options**: Logging, error mapping, resource access control, name-based policy resolution
 - **Client wrapper**: Incremental MCP adoption for existing services
 - **Protocol versioning**: Explicit version negotiation and validation
 
@@ -151,6 +151,13 @@ Comprehensive test suite (`integration_tests/`):
 - **Resources tests**: Discovery, reading, URI templates, subscriptions
 - **Prompts tests**: Static and dynamic prompts, variables
 - **Notifications tests**: Progress, status, resource changes
+
+### Behavior Changes (since last)
+
+- Adapter now enforces an explicit initialization contract: calling `initialize` is required before any stateful method (`tools/*`, `resources/*`, `prompts/*`, subscriptions). `ping` remains allowed pre-init.
+- Generated clients surface typed JSON-RPC errors for streaming paths and classify `-32602` invalid parameter errors as retryable for `tools/call` and `prompts/get`, returning `retry.RetryableError` with a repair prompt.
+- Generated clients automatically set `Accept: text/event-stream` on streaming endpoints (`tools/call`, `events/stream`).
+- Adapter options expanded with name-based resource policy (`AllowedResourceNames`, `DeniedResourceNames`) in addition to URI lists. Header-driven policy supported via `x-mcp-allow-names`/`x-mcp-deny-names`.
 
 ## Getting Started
 
