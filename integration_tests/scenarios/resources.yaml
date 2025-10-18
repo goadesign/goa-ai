@@ -1,6 +1,35 @@
 # MCP Resources Test Scenarios (new shape)
 
 scenarios:
+  - name: resources_read_denied_by_name
+    defaults:
+      client: jsonrpc.mcp_assistant
+      headers:
+        Accept: application/json
+        x-mcp-deny-names: "system_info"
+    pre:
+      auto_initialize: true
+    steps:
+      - name: read_denied_by_name
+        op: ResourcesRead
+        input: { uri: "system://info" }
+        expect:
+          status: error
+          error: { code: -32602 }
+
+  - name: resources_read_uninitialized
+    defaults:
+      client: jsonrpc.mcp_assistant
+      headers:
+        Accept: application/json
+    steps:
+      - name: read_before_init
+        op: ResourcesRead
+        input: { uri: "system://info" }
+        expect:
+          status: error
+          error: { code: -32602, message: "Not initialized" }
+
   - name: resources_list
     defaults:
       client: jsonrpc.mcp_assistant

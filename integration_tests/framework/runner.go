@@ -274,6 +274,8 @@ func methodFromOp(op string) string {
 		return "initialize"
 	case "Ping":
 		return "ping"
+	case "EventsStream":
+		return "events/stream"
 	case "ToolsList":
 		return "tools/list"
 	case "ToolsCall":

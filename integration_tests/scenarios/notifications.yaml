@@ -33,4 +33,19 @@ scenarios:
         expect:
           status: success
 
+  - name: notify_status_update_request_uninitialized
+    defaults:
+      client: jsonrpc.mcp_assistant
+    steps:
+      - name: notify_req_uninit
+        op: NotifyStatusUpdate
+        input:
+          type: info
+          message: "Server status ok"
+        expect:
+          status: error
+          error:
+            code: -32602
+            message: "Not initialized"
+
 
