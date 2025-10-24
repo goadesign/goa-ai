@@ -1,26 +1,20 @@
-{{- if .Notifications }}
 {{ comment "Notifications and events stream" }}
 
-func (a *MCPAdapter) NotifyStatusUpdate(ctx context.Context, p *SendNotificationPayload) error {
+func (a *MCPAdapter) NotifyStatusUpdate(ctx context.Context, n *mcpruntime.Notification) error {
     if !a.isInitialized() {
         return goa.PermanentError("invalid_params", "Not initialized")
     }
-    if p == nil || p.Type == "" {
+    if n == nil || n.Type == "" {
         return goa.PermanentError("invalid_params", "Missing notification type")
     }
-    m := map[string]any{"type": p.Type}
-    if p.Message != nil {
-        m["message"] = *p.Message
-    }
-    if p.Data != nil {
-        m["data"] = p.Data
-    }
-    s, err := encodeJSONToString(ctx, m)
+    s, err := mcpruntime.EncodeJSONToString(ctx, goahttp.ResponseEncoder, n)
     if err != nil {
         return err
     }
     ev := &EventsStreamResult{
-        Content: []*ContentItem{ buildContentItem(a, s) },
+        Content: []*ContentItem{
+            buildContentItem(a, s),
+        },
     }
     a.Publish(ev)
     return nil
@@ -28,23 +22,31 @@ func (a *MCPAdapter) NotifyStatusUpdate(ctx context.Context, p *SendNotification
 
 func (a *MCPAdapter) EventsStream(ctx context.Context, stream EventsStreamServerStream) error {
     if !a.isInitialized() {
-        return goa.PermanentError("invalid_params", "Not initialized")
+        return goa.PermanentError("internal_error", "Not initialized")
     }
-    if a.broadcaster == nil {
-        return goa.PermanentError("invalid_params", "No broadcaster configured")
+    sub, err := a.broadcaster.Subscribe(ctx)
+    if err != nil {
+        return goa.PermanentError("internal_error", "Failed to subscribe to events: %v", err)
     }
-    sub, _ := a.broadcaster.Subscribe(ctx)
     defer sub.Close()
     for {
         select {
         case <-ctx.Done():
             return ctx.Err()
         case ev, ok := <-sub.C():
-            if !ok { return nil }
-            if err := stream.Send(ctx, ev); err != nil { return err }
+            if !ok {
+                return nil
+            }
+            // Ensure published events implement the generated EventsStreamEvent marker.
+            evt, ok := ev.(EventsStreamEvent)
+            if !ok {
+                continue
+            }
+            if err := stream.Send(ctx, evt); err != nil { 
+                return goa.PermanentError("internal_error", "Failed to send event: %v", err)
+            }
         }
     }
 }
-{{- end }}
 
 

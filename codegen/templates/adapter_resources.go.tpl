@@ -45,7 +45,7 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
         if err != nil {
             return nil, a.mapError(err)
         }
-        s, serr := encodeJSONToString(ctx, result)
+        s, serr := mcpruntime.EncodeJSONToString(ctx, goahttp.ResponseEncoder, result)
         if serr != nil {
             return nil, goa.PermanentError("invalid_params", "%s", serr.Error())
         }

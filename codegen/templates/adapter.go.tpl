@@ -1,11 +1,6 @@
 {{/* Header generated via codegen.Header */}}
 
 {{ comment "MCPAdapter handles MCP protocol requests and adapts them to the original service" }}
-{{/*
-This legacy monolithic template is intentionally left as a thin orchestrator.
-It now stitches together the split, well-scoped templates to keep output order
-stable for generated files while maintaining readability in the templates.
-*/}}
 
 {{- /* Core: struct, options, constructor, common helpers, Initialize, Ping */ -}}
 {{ mcpTemplates.Read "adapter_core" }}
@@ -60,30 +55,6 @@ func (a *MCPAdapter) mcpProtocolVersion() string {
         return a.opts.ProtocolVersionOverride
     }
     return DefaultProtocolVersion
-}
-
-// bufferResponseWriter is a minimal http.ResponseWriter that writes to an in-memory buffer
-// used to leverage goa encoders without an actual HTTP response.
-type bufferResponseWriter struct {
-	headers http.Header
-	buf     bytes.Buffer
-}
-
-func (w *bufferResponseWriter) Header() http.Header {
-	if w.headers == nil {
-		w.headers = make(http.Header)
-	}
-	return w.headers
-}
-func (w *bufferResponseWriter) WriteHeader(statusCode int) {}
-func (w *bufferResponseWriter) Write(p []byte) (int, error) { return w.buf.Write(p) }
-
-func encodeJSONToString(ctx context.Context, v any) (string, error) {
-    bw := &bufferResponseWriter{}
-    if err := goahttp.ResponseEncoder(ctx, bw).Encode(v); err != nil {
-        return "", err
-    }
-    return bw.buf.String(), nil
 }
 
 // parseQueryParamsToJSON parses the query parameters of a URI into a JSON
@@ -355,12 +326,20 @@ type {{ goify .OriginalMethodName }}StreamBridge struct { out ToolsCallServerStr
 func (b *{{ goify .OriginalMethodName }}StreamBridge) Send(ctx context.Context, ev {{ $.Package }}.{{ .StreamEventType }}) error {
     s, serr := encodeJSONToString(ctx, ev)
     if serr != nil { return serr }
-    return b.out.Send(ctx, &ToolsCallResult{ Content: []*ContentItem{ buildContentItem(b.adapter, s) } })
+    return b.out.Send(ctx, &ToolsCallResult{
+        Content: []*ContentItem{
+            buildContentItem(b.adapter, s),
+        },
+    })
 }
 func (b *{{ goify .OriginalMethodName }}StreamBridge) SendAndClose(ctx context.Context, ev {{ $.Package }}.{{ .StreamEventType }}) error {
     s, serr := encodeJSONToString(ctx, ev)
     if serr != nil { return serr }
-    return b.out.SendAndClose(ctx, &ToolsCallResult{ Content: []*ContentItem{ buildContentItem(b.adapter, s) } })
+    return b.out.SendAndClose(ctx, &ToolsCallResult{
+        Content: []*ContentItem{
+            buildContentItem(b.adapter, s),
+        },
+    })
 }
 func (b *{{ goify .OriginalMethodName }}StreamBridge) SendError(ctx context.Context, id string, err error) error {
     return b.out.SendError(ctx, id, err)
@@ -466,7 +445,11 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload, stream 
         s, serr := encodeJSONToString(ctx, result)
         if serr != nil { return serr }
         // Emit final response and close stream
-        final := &ToolsCallResult{ Content: []*ContentItem{ buildContentItem(a, s) } }
+        final := &ToolsCallResult{
+            Content: []*ContentItem{
+                buildContentItem(a, s),
+            },
+        }
         a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
         return stream.SendAndClose(ctx, final)
         {{- else }}
@@ -477,7 +460,14 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload, stream 
         {{- end }}
         ok := stringPtr("{\"status\":\"success\"}")
         a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
-        return stream.SendAndClose(ctx, &ToolsCallResult{ Content: []*ContentItem{ &ContentItem{ Type: "text", Text: ok } } })
+        return stream.SendAndClose(ctx, &ToolsCallResult{
+            Content: []*ContentItem{
+                &ContentItem{
+                    Type: "text",
+                    Text: ok,
+                },
+            },
+        })
         {{- end }}
         {{- end }}
     {{- end }}
@@ -504,9 +494,13 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		result, err := a.service.{{ .OriginalMethodName }}(ctx)
 		{{- end }}
 		if err != nil { return nil, err }
-		s, serr := encodeJSONToString(ctx, result)
+        s, serr := encodeJSONToString(ctx, result)
 		if serr != nil { return nil, goa.PermanentError("invalid_params", "%s", serr.Error()) }
-		return &ToolsCallResult{ Content: []*ContentItem{ buildContentItem(a, s) } }, nil
+		return &ToolsCallResult{
+            Content: []*ContentItem{
+                buildContentItem(a, s),
+            },
+        }, nil
 		{{- else }}
 		{{- if .HasPayload }}
 		if err := a.service.{{ .OriginalMethodName }}(ctx, payload); err != nil { return nil, err }
@@ -514,7 +508,14 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		if err := a.service.{{ .OriginalMethodName }}(ctx); err != nil { return nil, err }
 		{{- end }}
 		ok := stringPtr("{\"status\":\"success\"}")
-		return &ToolsCallResult{ Content: []*ContentItem{ &ContentItem{ Type: "text", Text: ok } } }, nil
+		return &ToolsCallResult{
+            Content: []*ContentItem{
+                &ContentItem{
+                    Type: "text",
+                    Text: ok,
+                },
+            },
+        }, nil
 		{{- end }}
 	{{- end }}
     default:
@@ -795,16 +796,16 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 
 {{- if .Notifications }}
 {{ comment "NotifyStatusUpdate handles notifications with no response" }}
-func (a *MCPAdapter) NotifyStatusUpdate(ctx context.Context, p *SendNotificationPayload) error {
+func (a *MCPAdapter) NotifyStatusUpdate(ctx context.Context, n *mcpruntime.Notification) error {
     if !a.isInitialized() { return goa.PermanentError("invalid_params", "Not initialized") }
-    if p == nil || p.Type == "" { return goa.PermanentError("invalid_params", "Missing notification type") }
-    // Encode as JSON text; buildContentItem will mark JSON when enabled.
-    m := map[string]any{"type": p.Type}
-    if p.Message != nil { m["message"] = *p.Message }
-    if p.Data != nil { m["data"] = p.Data }
-    s, err := encodeJSONToString(ctx, m)
+    if n == nil || n.Type == "" { return goa.PermanentError("invalid_params", "Missing notification type") }
+    s, err := mcpruntime.EncodeJSONToString(ctx, goahttp.ResponseEncoder, n)
     if err != nil { return err }
-    ev := &ToolsCallResult{ Content: []*ContentItem{ buildContentItem(a, s) } }
+    ev := &ToolsCallResult{
+        Content: []*ContentItem{
+            buildContentItem(a, s),
+        },
+    }
     a.Publish(ev)
     return nil
 }
@@ -893,5 +894,9 @@ func (a *MCPAdapter) PublishStatus(ctx context.Context, typ string, message stri
     if data != nil { m["data"] = data }
     s, err := encodeJSONToString(ctx, m)
     if err != nil { return }
-    a.Publish(&ToolsCallResult{ Content: []*ContentItem{ buildContentItem(a, s) } })
+    a.Publish(&ToolsCallResult{
+        Content: []*ContentItem{
+            buildContentItem(a, s),
+        },
+    })
 }

@@ -12,8 +12,8 @@ scenarios:
         headers:
           Accept: text/event-stream
         input:
-          name: analyze_text
-          arguments: { text: "hello" }
+          name: analyze_sentiment
+          arguments: { text: "" }
         stream_expect:
           min_events: 1
           events:

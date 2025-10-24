@@ -30,18 +30,26 @@ type {{ goify .OriginalMethodName }}StreamBridge struct {
     adapter *MCPAdapter
 }
 func (b *{{ goify .OriginalMethodName }}StreamBridge) Send(ctx context.Context, ev {{ $.Package }}.{{ .StreamEventType }}) error {
-    s, e := encodeJSONToString(ctx, ev)
+    s, e := mcpruntime.EncodeJSONToString(ctx, goahttp.ResponseEncoder, ev)
     if e != nil {
         return e
     }
-    return b.out.Send(ctx, &ToolsCallResult{ Content: []*ContentItem{ buildContentItem(b.adapter, s) } })
+    return b.out.Send(ctx, &ToolsCallResult{
+        Content: []*ContentItem{
+            buildContentItem(b.adapter, s),
+        },
+    })
 }
 func (b *{{ goify .OriginalMethodName }}StreamBridge) SendAndClose(ctx context.Context, ev {{ $.Package }}.{{ .StreamEventType }}) error {
-    s, e := encodeJSONToString(ctx, ev)
+    s, e := mcpruntime.EncodeJSONToString(ctx, goahttp.ResponseEncoder, ev)
     if e != nil {
         return e
     }
-    return b.out.SendAndClose(ctx, &ToolsCallResult{ Content: []*ContentItem{ buildContentItem(b.adapter, s) } })
+    return b.out.SendAndClose(ctx, &ToolsCallResult{
+        Content: []*ContentItem{
+            buildContentItem(b.adapter, s),
+        },
+    })
 }
 func (b *{{ goify .OriginalMethodName }}StreamBridge) SendError(ctx context.Context, id string, err error) error {
     return b.out.SendError(ctx, id, err)
@@ -148,9 +156,13 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload, stream 
         result, err := a.service.{{ .OriginalMethodName }}(ctx)
         {{- end }}
         if err != nil { return a.mapError(err) }
-        s, serr := encodeJSONToString(ctx, result)
+        s, serr := mcpruntime.EncodeJSONToString(ctx, goahttp.ResponseEncoder, result)
         if serr != nil { return serr }
-        final := &ToolsCallResult{ Content: []*ContentItem{ buildContentItem(a, s) } }
+        final := &ToolsCallResult{
+            Content: []*ContentItem{
+                buildContentItem(a, s),
+            },
+        }
         a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
         return stream.SendAndClose(ctx, final)
         {{- else }}
@@ -161,7 +173,11 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload, stream 
         {{- end }}
         ok := stringPtr("{\"status\":\"success\"}")
         a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
-        return stream.SendAndClose(ctx, &ToolsCallResult{ Content: []*ContentItem{ &ContentItem{ Type: "text", Text: ok } } })
+        return stream.SendAndClose(ctx, &ToolsCallResult{
+            Content: []*ContentItem{
+                &ContentItem{ Type: "text", Text: ok },
+            },
+        })
         {{- end }}
         {{- end }}
     {{- end }}

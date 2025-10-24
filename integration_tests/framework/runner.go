@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,6 +40,8 @@ type Runner struct {
 	stdoutTail *ringBuffer
 	stderrTail *ringBuffer
 	exitCh     chan error
+
+	externalServer bool
 }
 
 // Scenario models a test scenario (new multi-step form only).
@@ -51,14 +54,14 @@ type Scenario struct {
 
 // Defaults apply to steps when not explicitly set in a step.
 type Defaults struct {
-	Client     string            `yaml:"client"`      // e.g., "jsonrpc.mcp_assistant" (hint to pick generated client)
-	Headers    map[string]string `yaml:"headers"`     // default headers for all steps
-	ClientMode string            `yaml:"client_mode"` // http | cli (optional)
+	Client     string            `yaml:"client"`     // e.g., "jsonrpc.mcp_assistant" (hint to pick generated client)
+	Headers    map[string]string `yaml:"headers"`    // default headers for all steps
+	ClientMode string            `yaml:"clientMode"` // http | cli (optional)
 }
 
 // Pre controls scenario-level behavior (e.g., auto-initialize handshake).
 type Pre struct {
-	AutoInitialize *bool `yaml:"auto_initialize"` // default true
+	AutoInitialize *bool `yaml:"autoInitialize"` // default true
 }
 
 // Step defines a single operation invocation using a generated client.
@@ -72,8 +75,8 @@ type Step struct {
 
 	// Expectations
 	Expect       *Expect       `yaml:"expect"`
-	StreamExpect *StreamExpect `yaml:"stream_expect"`
-	ExpectRetry  *ExpectRetry  `yaml:"expect_retry"` // generated client retry expectation
+	StreamExpect *StreamExpect `yaml:"streamExpect"`
+	ExpectRetry  *ExpectRetry  `yaml:"expectRetry"` // generated client retry expectation
 }
 
 // ExpectedError captures expected JSON-RPC error.
@@ -152,6 +155,19 @@ func NewRunner() *Runner {
 	return &Runner{
 		client: &http.Client{Timeout: 30 * time.Second},
 	}
+}
+
+// SupportsServer reports whether the integration framework can reach a server.
+func SupportsServer() bool {
+	if strings.TrimSpace(os.Getenv("TEST_SERVER_URL")) != "" {
+		return true
+	}
+	return findExampleRoot() != ""
+}
+
+// SupportsCLI reports whether CLI-based scenarios can run.
+func SupportsCLI() bool {
+	return findExampleRoot() != ""
 }
 
 // Run executes the scenarios (always parallel, no filtering).
@@ -424,6 +440,24 @@ func regenerateExample(t *testing.T, exampleRoot string) error {
 // startServer starts the test server.
 func (r *Runner) startServer(t *testing.T) error {
 	t.Helper()
+	if external := strings.TrimSpace(os.Getenv("TEST_SERVER_URL")); external != "" {
+		u, err := url.Parse(external)
+		if err != nil {
+			return fmt.Errorf("parse TEST_SERVER_URL: %w", err)
+		}
+		if u.Scheme == "" || u.Host == "" {
+			return fmt.Errorf("invalid TEST_SERVER_URL %q: must include scheme and host", external)
+		}
+		u.RawQuery = ""
+		u.Fragment = ""
+		base := strings.TrimRight(u.String(), "/")
+		if base == "" {
+			return fmt.Errorf("invalid TEST_SERVER_URL %q", external)
+		}
+		r.baseURL = base
+		r.externalServer = true
+		return nil
+	}
 	port, err := getFreePort()
 	if err != nil {
 		return err
@@ -434,9 +468,11 @@ func (r *Runner) startServer(t *testing.T) error {
 		return fmt.Errorf("could not locate example root")
 	}
 	// Regenerate example code once for the entire test process
-	codegenOnce.Do(func() { codegenErr = regenerateExample(t, exampleRoot) })
-	if codegenErr != nil {
-		return codegenErr
+	if !strings.EqualFold(os.Getenv("TEST_SKIP_GENERATION"), "true") {
+		codegenOnce.Do(func() { codegenErr = regenerateExample(t, exampleRoot) })
+		if codegenErr != nil {
+			return codegenErr
+		}
 	}
 	// Locate server command directory
 	cmdPath, err := findServerCmdDir(exampleRoot)
@@ -499,6 +535,9 @@ func (r *Runner) startServer(t *testing.T) error {
 
 // stopServer stops the test server.
 func (r *Runner) stopServer() {
+	if r.externalServer {
+		return
+	}
 	if r.server == nil || r.server.Process == nil {
 		return
 	}
@@ -623,6 +662,7 @@ func (r *Runner) runStepNonStreaming(
 	method string,
 	defaults *Defaults,
 ) {
+	t.Helper()
 	notify := st.Notification || (st.Expect != nil && st.Expect.Status == "no_response")
 	clientMode := "http"
 	if defaults != nil && defaults.ClientMode != "" {
@@ -636,6 +676,9 @@ func (r *Runner) runStepNonStreaming(
 	)
 
 	if clientMode == "cli" {
+		if !SupportsCLI() {
+			t.Skip("CLI mode requires the generated example CLI; restore the example directory to run CLI scenarios")
+		}
 		svc := "assistant"
 		if defaults != nil && defaults.Client != "" {
 			parts := strings.Split(defaults.Client, ".")

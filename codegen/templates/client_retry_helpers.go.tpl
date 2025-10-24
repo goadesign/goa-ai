@@ -117,49 +117,51 @@ func withRetryError(op string, err error, example, schema string) error {
 }
 
 
+{{- if .HasPrompts }}
 // DecodePromptsGetResponseWithRetry is like DecodePromptsGetResponse but returns
 // retry.RetryableError on JSON-RPC invalid params (-32602).
 func DecodePromptsGetResponseWithRetry(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
-	return func(resp *http.Response) (any, error) {
-		if restoreBody {
-			b, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return nil, err
-			}
-			resp.Body = io.NopCloser(bytes.NewBuffer(b))
-			defer func() { resp.Body = io.NopCloser(bytes.NewBuffer(b)) }()
-		}
-		defer resp.Body.Close()
+    return func(resp *http.Response) (any, error) {
+        if restoreBody {
+            b, err := io.ReadAll(resp.Body)
+            if err != nil {
+                return nil, err
+            }
+            resp.Body = io.NopCloser(bytes.NewBuffer(b))
+            defer func() { resp.Body = io.NopCloser(bytes.NewBuffer(b)) }()
+        }
+        defer resp.Body.Close()
 
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			return nil, goahttp.ErrInvalidResponse("{{ .MCPServiceName }}", "prompts/get", resp.StatusCode, string(body))
-		}
+        if resp.StatusCode != http.StatusOK {
+            body, _ := io.ReadAll(resp.Body)
+            return nil, goahttp.ErrInvalidResponse("{{ .MCPServiceName }}", "prompts/get", resp.StatusCode, string(body))
+        }
 
-		var jresp jsonrpc.RawResponse
-		if err := decoder(resp).Decode(&jresp); err != nil {
-			return nil, goahttp.ErrDecodingError("{{ .MCPServiceName }}", "prompts/get", err)
-		}
+        var jresp jsonrpc.RawResponse
+        if err := decoder(resp).Decode(&jresp); err != nil {
+            return nil, goahttp.ErrDecodingError("{{ .MCPServiceName }}", "prompts/get", err)
+        }
 
-		if jresp.Error != nil {
-			if jresp.Error.Code == -32602 {
-				prompt := retry.BuildRepairPrompt("prompts/get", jresp.Error.Message, "{}", "")
-				return nil, &retry.RetryableError{Prompt: prompt, Cause: fmt.Errorf("JSON-RPC error %d: %s", jresp.Error.Code, jresp.Error.Message)}
-			}
-			body, _ := io.ReadAll(resp.Body)
-			return nil, goahttp.ErrInvalidResponse("{{ .MCPServiceName }}", "prompts/get", resp.StatusCode, string(body))
-		}
-		resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Result))
-		var body PromptsGetResponseBody
-		if err := decoder(resp).Decode(&body); err != nil {
-			return nil, goahttp.ErrDecodingError("{{ .MCPServiceName }}", "prompts/get", err)
-		}
-		if err := ValidatePromptsGetResponseBody(&body); err != nil {
-			return nil, goahttp.ErrValidationError("{{ .MCPServiceName }}", "prompts/get", err)
-		}
-		res := NewPromptsGetResultOK(&body)
-		return res, nil
-	}
+        if jresp.Error != nil {
+            if jresp.Error.Code == -32602 {
+                prompt := retry.BuildRepairPrompt("prompts/get", jresp.Error.Message, "{}", "")
+                return nil, &retry.RetryableError{Prompt: prompt, Cause: fmt.Errorf("JSON-RPC error %d: %s", jresp.Error.Code, jresp.Error.Message)}
+            }
+            body, _ := io.ReadAll(resp.Body)
+            return nil, goahttp.ErrInvalidResponse("{{ .MCPServiceName }}", "prompts/get", resp.StatusCode, string(body))
+        }
+        resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Result))
+        var body PromptsGetResponseBody
+        if err := decoder(resp).Decode(&body); err != nil {
+            return nil, goahttp.ErrDecodingError("{{ .MCPServiceName }}", "prompts/get", err)
+        }
+        if err := ValidatePromptsGetResponseBody(&body); err != nil {
+            return nil, goahttp.ErrValidationError("{{ .MCPServiceName }}", "prompts/get", err)
+        }
+        res := NewPromptsGetResultOK(&body)
+        return res, nil
+    }
 }
+{{- end }}
 
 

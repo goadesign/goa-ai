@@ -7,7 +7,22 @@ import (
 	"goa.design/goa-ai/integration_tests/framework"
 )
 
+func requireServer(t *testing.T) {
+	t.Helper()
+	if !framework.SupportsServer() {
+		t.Skip("integration server not available; set TEST_SERVER_URL or restore the example directory")
+	}
+}
+
+func requireCLI(t *testing.T) {
+	t.Helper()
+	if !framework.SupportsCLI() {
+		t.Skip("integration CLI not available; restore the example directory to run CLI scenarios")
+	}
+}
+
 func TestMCPProtocol(t *testing.T) {
+	requireServer(t)
 	scenarios, err := framework.LoadScenarios("../scenarios/protocol.yaml")
 	require.NoError(t, err)
 	r := framework.NewRunner()
@@ -15,6 +30,7 @@ func TestMCPProtocol(t *testing.T) {
 }
 
 func TestMCPTools(t *testing.T) {
+	requireServer(t)
 	scenarios, err := framework.LoadScenarios("../scenarios/tools.yaml")
 	require.NoError(t, err)
 	r := framework.NewRunner()
@@ -22,6 +38,7 @@ func TestMCPTools(t *testing.T) {
 }
 
 func TestMCPResources(t *testing.T) {
+	requireServer(t)
 	scenarios, err := framework.LoadScenarios("../scenarios/resources.yaml")
 	require.NoError(t, err)
 	r := framework.NewRunner()
@@ -29,6 +46,7 @@ func TestMCPResources(t *testing.T) {
 }
 
 func TestMCPPrompts(t *testing.T) {
+	requireServer(t)
 	scenarios, err := framework.LoadScenarios("../scenarios/prompts.yaml")
 	require.NoError(t, err)
 	r := framework.NewRunner()
@@ -36,6 +54,8 @@ func TestMCPPrompts(t *testing.T) {
 }
 
 func TestMCPPromptsCLI(t *testing.T) {
+	requireServer(t)
+	requireCLI(t)
 	scenarios, err := framework.LoadScenarios("../scenarios/prompts_cli.yaml")
 	require.NoError(t, err)
 	r := framework.NewRunner()
@@ -43,6 +63,7 @@ func TestMCPPromptsCLI(t *testing.T) {
 }
 
 func TestMCPNotifications(t *testing.T) {
+	requireServer(t)
 	scenarios, err := framework.LoadScenarios("../scenarios/notifications.yaml")
 	require.NoError(t, err)
 	r := framework.NewRunner()

@@ -1,7 +1,7 @@
 package dsl
 
 import (
-	_ "goa.design/goa-ai" // Import plugin to register with eval
+	_ "goa.design/goa-ai/codegen" // Automatically registers the plugin with Goa
 	mcpexpr "goa.design/goa-ai/expr"
 	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"

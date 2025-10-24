@@ -12,7 +12,7 @@ type MCPAdapter struct {
     subs   map[string]int
     subsMu sync.Mutex
     // Broadcaster for server-initiated events (notifications/resources)
-    broadcaster Broadcaster
+    broadcaster mcpruntime.Broadcaster
     // resourceNameToURI holds DSL-derived mapping for policy and lookups
     resourceNameToURI map[string]string
 }
@@ -32,61 +32,9 @@ type MCPAdapterOptions struct {
     StructuredStreamJSON bool
     ProtocolVersionOverride string
     // Pluggable broadcaster, else default channel broadcaster
-    Broadcaster Broadcaster
+    Broadcaster mcpruntime.Broadcaster
     BroadcastBuffer int
     DropIfSlow bool
-}
-
-// mcpProtocolVersion resolves the protocol version from options or default.
-func (a *MCPAdapter) mcpProtocolVersion() string {
-    if a != nil && a.opts != nil && a.opts.ProtocolVersionOverride != "" {
-        return a.opts.ProtocolVersionOverride
-    }
-    return DefaultProtocolVersion
-}
-
-// bufferResponseWriter writes to a buffer to reuse Goa encoders without HTTP response.
-type bufferResponseWriter struct {
-    headers http.Header
-    buf     bytes.Buffer
-}
-
-func (w *bufferResponseWriter) Header() http.Header { if w.headers == nil { w.headers = make(http.Header) }; return w.headers }
-func (w *bufferResponseWriter) WriteHeader(statusCode int) {}
-func (w *bufferResponseWriter) Write(p []byte) (int, error) { return w.buf.Write(p) }
-
-func encodeJSONToString(ctx context.Context, v any) (string, error) {
-    bw := &bufferResponseWriter{}
-    if err := goahttp.ResponseEncoder(ctx, bw).Encode(v); err != nil { return "", err }
-    return bw.buf.String(), nil
-}
-
-// parseQueryParamsToJSON converts URI query params into JSON.
-func parseQueryParamsToJSON(uri string) ([]byte, error) {
-    u, err := url.Parse(uri)
-    if err != nil { return nil, fmt.Errorf("invalid resource URI: %w", err) }
-    q := u.Query(); if len(q) == 0 { return []byte("{}"), nil }
-    m := make(map[string]any, len(q))
-    for k, vals := range q {
-        if len(vals) == 1 { m[k] = coerce(vals[0]); continue }
-        arr := make([]any, len(vals)); for i := range vals { arr[i] = coerce(vals[i]) }; m[k] = arr
-    }
-    return json.Marshal(m)
-}
-
-func coerce(s string) any {
-    ls := strings.ToLower(s)
-    switch ls {
-    case "true","t","1": return true
-    case "false","f","0": return false
-    }
-    if i, err := strconv.ParseInt(s, 10, 64); err == nil {
-        return i
-    }
-    if f, err := strconv.ParseFloat(s, 64); err == nil {
-        return f
-    }
-    return s
 }
 
 func NewMCPAdapter(service {{ .Package }}.Service{{ if or .StaticPrompts .DynamicPrompts }}, promptProvider PromptProvider{{ end }}, opts *MCPAdapterOptions) *MCPAdapter {
@@ -116,7 +64,7 @@ func NewMCPAdapter(service {{ .Package }}.Service{{ if or .StaticPrompts .Dynami
         }
     }
     // Broadcaster
-    var bc Broadcaster
+    var bc mcpruntime.Broadcaster
     if opts != nil && opts.Broadcaster != nil {
         bc = opts.Broadcaster
     } else {
@@ -130,7 +78,7 @@ func NewMCPAdapter(service {{ .Package }}.Service{{ if or .StaticPrompts .Dynami
                 drop = false
             }
         }
-        bc = newChannelBroadcaster(buf, drop)
+        bc = mcpruntime.NewChannelBroadcaster(buf, drop)
     }
     // Build name->URI map from generated resources
     nameToURI := map[string]string{
@@ -148,6 +96,26 @@ func NewMCPAdapter(service {{ .Package }}.Service{{ if or .StaticPrompts .Dynami
         broadcaster: bc,
         resourceNameToURI: nameToURI,
     }
+}
+
+// mcpProtocolVersion resolves the protocol version from options or default.
+func (a *MCPAdapter) mcpProtocolVersion() string {
+    if a != nil && a.opts != nil && a.opts.ProtocolVersionOverride != "" {
+        return a.opts.ProtocolVersionOverride
+    }
+    return DefaultProtocolVersion
+}
+
+// parseQueryParamsToJSON converts URI query params into JSON.
+func parseQueryParamsToJSON(uri string) ([]byte, error) {
+    u, err := url.Parse(uri)
+    if err != nil { return nil, fmt.Errorf("invalid resource URI: %w", err) }
+    q := u.Query(); if len(q) == 0 { return []byte("{}"), nil }
+    // Copy to plain map[string][]string to avoid depending on url.Values in helper
+    m := make(map[string][]string, len(q))
+    for k, v := range q { m[k] = v }
+    coerced := mcpruntime.CoerceQuery(m)
+    return json.Marshal(coerced)
 }
 
 func (a *MCPAdapter) isInitialized() bool {

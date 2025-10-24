@@ -39,9 +39,9 @@ func (b *mcpExprBuilder) buildMethods() []*expr.MethodExpr {
 	// Add notification methods if defined
 	if len(b.mcp.Notifications) > 0 {
 		methods = append(methods, b.buildNotificationMethods()...)
-		// Provide a dedicated server-sent events channel for notifications
-		methods = append(methods, b.buildEventsStreamMethod())
 	}
+	// Always provide a dedicated server-sent events channel for notifications and server events
+	methods = append(methods, b.buildEventsStreamMethod())
 
 	// Add subscription methods if defined
 	if len(b.mcp.Subscriptions) > 0 {

@@ -291,6 +291,7 @@ func patchMCPJSONRPCClientFiles(genpkg string, mcpService *expr.ServiceExpr, dat
 		}
 	}
 
+	hasPrompts := len(data.StaticPrompts) > 0 || len(data.DynamicPrompts) > 0
 	patchClient := func(f *codegen.File) {
 		for _, s := range f.SectionTemplates {
 			if strings.Contains(s.Source, `"tools/call"`) && strings.Contains(s.Source, "return stream, nil") {
@@ -298,7 +299,7 @@ func patchMCPJSONRPCClientFiles(genpkg string, mcpService *expr.ServiceExpr, dat
 				toolExtract := `\t\ttool := ""\n\t\tif p, ok := v.(*` + mcpAliasLocal + `.ToolsCallPayload); ok { tool = p.Name }\n\t\treturn c.wrapToolsCallStream(tool, stream), nil`
 				s.Source = strings.ReplaceAll(s.Source, "\t\treturn stream, nil", toolExtract)
 			}
-			if strings.Contains(s.Source, "DecodePromptsGetResponse(") {
+			if hasPrompts && strings.Contains(s.Source, "DecodePromptsGetResponse(") {
 				s.Source = strings.ReplaceAll(s.Source, "DecodePromptsGetResponse(", "DecodePromptsGetResponseWithRetry(")
 			}
 			s.Source = strings.ReplaceAll(s.Source, "// For SSE endpoints, send JSON-RPC request and establish stream", "req.Header.Set(\"Accept\", \"text/event-stream\")\n\t\t// For SSE endpoints, send JSON-RPC request and establish stream")
@@ -308,8 +309,9 @@ func patchMCPJSONRPCClientFiles(genpkg string, mcpService *expr.ServiceExpr, dat
 		type clientRetryTemplateData struct {
 			Tools                    []*ToolAdapter
 			MCPAlias, MCPServiceName string
+			HasPrompts               bool
 		}
-		tdata := &clientRetryTemplateData{Tools: data.Tools, MCPAlias: codegen.Goify("mcp_"+baseSvc, false), MCPServiceName: mcpService.Name}
+		tdata := &clientRetryTemplateData{Tools: data.Tools, MCPAlias: codegen.Goify("mcp_"+baseSvc, false), MCPServiceName: mcpService.Name, HasPrompts: len(data.StaticPrompts) > 0 || len(data.DynamicPrompts) > 0}
 		f.SectionTemplates = append(f.SectionTemplates, &codegen.SectionTemplate{Name: "mcp-jsonrpc-client-retry-baked", Source: mcpTemplates.Read("client_retry_helpers"), Data: tdata})
 	}
 
@@ -422,6 +424,7 @@ func generateMCPTransport(genpkg string, svc *expr.ServiceExpr, mcp *mcpexpr.MCP
 		{Path: "strings"},
 		{Path: "sync"},
 		{Path: genpkg + "/" + svcName, Name: svcName},
+		{Path: "goa.design/goa-ai/mcp/runtime", Name: "mcpruntime"},
 		{Path: "goa.design/goa/v3/http", Name: "goahttp"},
 		{Path: "goa.design/goa/v3/pkg", Name: "goa"},
 	}

@@ -32,10 +32,13 @@ func (b *mcpExprBuilder) buildMCPTypes() {
 		b.getOrCreateType("MessageContent", b.buildMessageContentType)
 	}
 
-	// Events stream result type (avoid reusing ToolsCallResult to prevent duplicate method impls)
-	if len(b.mcp.Notifications) > 0 {
-		b.getOrCreateType("EventsStreamResult", b.buildEventsStreamResultType)
-	}
+	// Events stream result type (avoid reusing ToolsCallResult to prevent duplicate method impls).
+	// Always define to support events/stream even when no notifications are defined in the design.
+	b.getOrCreateType("EventsStreamResult", b.buildEventsStreamResultType)
+
+	// Ensure notification payload type exists; templates may reference it even
+	// when no explicit notifications are declared in the design.
+	b.getOrCreateType("SendNotificationPayload", b.buildSendNotificationPayloadType)
 }
 
 // Core type builders

@@ -13,7 +13,7 @@ scenarios:
         expect:
           status: success
           result:
-            tools: [ { name: "analyze_text" }, { name: "search" }, { name: "execute_code" }, { name: "process_batch" } ]
+            tools: [ { name: "analyze_sentiment" }, { name: "extract_keywords" }, { name: "summarize_text" }, { name: "search" }, { name: "execute_code" }, { name: "process_batch" } ]
 
   - name: tools_list_schema
     defaults:
@@ -28,17 +28,14 @@ scenarios:
           status: success
           result:
             tools:
-              - name: analyze_text
+              - name: analyze_sentiment
                 inputSchema:
                   type: object
-                  required: [ "text", "mode" ]
+                  required: [ "text" ]
                   properties:
                     text: { type: string }
-                    mode:
-                      type: string
-                      enum: [ "sentiment", "keywords", "summary" ]
 
-  - name: tool_analyze_text_sentiment
+  - name: tool_analyze_sentiment
     defaults:
       client: jsonrpc.mcp_assistant
     pre:
@@ -49,12 +46,12 @@ scenarios:
         headers:
           Accept: text/event-stream
         input:
-          name: analyze_text
-          arguments: { text: "I love this new feature! It works perfectly.", mode: sentiment }
+          name: analyze_sentiment
+          arguments: { text: "I love this new feature! It works perfectly." }
         stream_expect:
           min_events: 1
 
-  - name: tool_analyze_text_keywords
+  - name: tool_extract_keywords
     defaults:
       client: jsonrpc.mcp_assistant
     pre:
@@ -65,12 +62,12 @@ scenarios:
         headers:
           Accept: text/event-stream
         input:
-          name: analyze_text
-          arguments: { text: "Machine learning algorithms process data to identify patterns.", mode: keywords }
+          name: extract_keywords
+          arguments: { text: "Machine learning algorithms process data to identify patterns." }
         stream_expect:
           min_events: 1
 
-  - name: tool_analyze_text_summary
+  - name: tool_summarize_text
     defaults:
       client: jsonrpc.mcp_assistant
     pre:
@@ -81,8 +78,8 @@ scenarios:
         headers:
           Accept: text/event-stream
         input:
-          name: analyze_text
-          arguments: { text: "This is a long text that needs to be summarized.", mode: summary }
+          name: summarize_text
+          arguments: { text: "This is a long text that needs to be summarized." }
         stream_expect:
           min_events: 1
 
@@ -181,8 +178,8 @@ scenarios:
         headers:
           Accept: text/event-stream
         input:
-          name: analyze_text
-          arguments: { text: "Some text" }
+          name: analyze_sentiment
+          arguments: { text: "" }
         stream_expect:
           min_events: 1
           events:
@@ -190,7 +187,7 @@ scenarios:
               data:
                 error:
                   code: -32602
-                  message: "Missing required field: mode"
+                  message: "Missing required field: text"
 
   - name: tool_call_invalid_arg_type
     defaults:
@@ -223,8 +220,8 @@ scenarios:
         headers:
           Accept: text/event-stream
         input:
-          name: analyze_text
-          arguments: { text: test, mode: invalid_mode }
+          name: process_batch
+          arguments: { items: ["x"], format: invalid }
         stream_expect:
           min_events: 1
           events:
@@ -232,7 +229,7 @@ scenarios:
               data:
                 error:
                   code: -32602
-                  message: "Invalid value for mode"
+                  message: "Invalid value for format"
 
   - name: tool_call_malformed_arguments
     defaults:
@@ -245,8 +242,7 @@ scenarios:
         headers:
           Accept: text/event-stream
         input:
-          name: analyze_text
-          # arguments provided as non-object (malformed) to trigger invalid_params
+          name: analyze_sentiment
           arguments: "not-json-object"
         stream_expect:
           min_events: 1
@@ -341,7 +337,7 @@ scenarios:
         stream_expect:
           min_events: 1
 
-  - name: tool_analyze_text_sse_on_non_streaming
+  - name: tool_analyze_sentiment_sse_on_non_streaming
     defaults:
       client: jsonrpc.mcp_assistant
     pre:
@@ -351,8 +347,8 @@ scenarios:
         op: ToolsCall
         headers: { Accept: text/event-stream }
         input:
-          name: analyze_text
-          arguments: { text: "hello", mode: sentiment }
+          name: analyze_sentiment
+          arguments: { text: "hello" }
         stream_expect:
           min_events: 1
           events:

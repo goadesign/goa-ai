@@ -18,6 +18,10 @@ func NewEndpoints(
     {{- $needsClients := or $hasTools (or $hasResources $hasDynamic) -}}
     {{- if $needsClients }}
     mcpC := {{ .MCPJSONRPCCAlias }}.NewClient(scheme, host, doer, enc, dec, restore)
+    {{- end }}
+    {{- $hasMappedWithResult := false -}}
+    {{- range .Tools }}{{- if .HasResult }}{{- $hasMappedWithResult = true }}{{- end }}{{- end -}}
+    {{- if $hasMappedWithResult }}
     origC := {{ .SvcJSONRPCCAlias }}.NewClient(scheme, host, doer, enc, dec, restore)
     {{- end }}
 
@@ -206,7 +210,15 @@ func NewClient(
     restore bool,
 ) *{{ .ServicePkg }}.Client {
     e := NewEndpoints(scheme, host, doer, enc, dec, restore)
+    {{- $hasUnmapped := false -}}
+    {{- range $i, $method := .AllMethods }}
+    {{- if (not $method.IsMapped) }}
+    {{- $hasUnmapped = true }}
+    {{- end }}
+    {{- end -}}
+    {{- if $hasUnmapped }}
     origClient := {{ $.SvcJSONRPCCAlias }}.NewClient(scheme, host, doer, enc, dec, restore)
+    {{- end }}
     return {{ .ServicePkg }}.NewClient(
         {{- range $i, $method := .AllMethods }}
         {{- if $method.IsMapped }}
