@@ -13,204 +13,211 @@
   </p>
 </p>
 
-# Goa-AI: The Design-First Toolkit for AI Backends
+# Goa-AI · Design-First Agent Framework
 
-**Stop handwriting API specs and boilerplate for your AI agents. Start describing your tools in simple, type-safe Go and let `goa-ai` generate the entire robust, streaming-capable backend for you.**
+Goa-AI turns Goa's design-first workflow into a complete framework for building **agentic, tool-driven systems** in Go. Describe your agents, toolsets, policies, and workflows once in Go, then let Goa-AI generate:
 
-Building reliable backends for AI agents is a new kind of challenge. You're constantly fighting to keep your agent's tool definitions, your API's JSON schema, and your actual backend implementation in sync. This constant manual translation is slow, error-prone, and full of tedious boilerplate.
+- Typed tool payload/result structs plus JSON codecs (no more hand-written schemas)
+- Temporal-ready workflows & activities (Plan/Resume/Execute) with retry/timeouts baked in
+- Runtime registries for toolsets, exported agents, and MCP suites
+- Durable execution loop with policy enforcement, memory persistence, stream hooks, and telemetry
 
-`Goa-AI` solves this. It introduces a design-first methodology that allows you to go from a simple Go definition to a production-ready AI backend in minutes, not days.
+The result is a cohesive architecture where planners focus on business logic while Goa-AI supplies the plumbing for Temporal, Mongo-backed memory, Pulse streams, MCP integration, and model providers.
 
-### The Design-First Advantage: From DSL to Live Server
+> 📚 **Documentation:**
+> - [Architecture & plan](docs/plan.md)
+> - [Agent DSL reference](docs/dsl.md)
+> - [Runtime wiring](docs/runtime.md)
+> - [Migration guide (legacy goa-ai → new framework)](docs/migration.md)
 
-See how a simple, readable design becomes a powerful, feature-rich server with a single command. This is the core of the `goa-ai` workflow.
+## Quick Start
 
-<table>
-  <thead>
-    <tr>
-      <th align="left">You Write This... (A Simple Go DSL)</th>
-      <th align="left">...And You Get This (A Production-Ready AI Backend)</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td valign="top">
-
-```go
-// design/design.go
-var _ = Service("orders", func() {
-  // Describe a tool for your AI agent
-  Method("get_status", func() {
-    Payload(String, "Order ID")
-    Result(OrderStatus)
-
-    // Decorate it for the AI
-    mcp.Tool(
-      "lookup_order_status",
-      "Gets current status of order.",
-    )
-  })
-})
-```
-
-</td>
-<td valign="top">
-
-- Strongly-typed JSON Schema for the model
-- Boilerplate-free server handlers
-- JSON-RPC transport over HTTP
-- First-class streaming via SSE
-- Automatic error mapping
-- Built-in capability negotiation
-- ...and much more, generated instantly by running:
-
+### 1. Install Goa & Goa-AI
 ```bash
-goa gen my-module/design
-```
-
-</td>
-    </tr>
-  </tbody>
-  
-</table>
-
-You remain focused on your business logic. `goa-ai` handles the complex, tedious protocol and transport layers.
-
-## Why This is a Better Way to Build for AI
-
-  * **Eliminate Drift and Hallucinations**: By generating the server, client, and JSON Schema from a single source of truth, you make it impossible for your agent's tools to become outdated. This drastically reduces model errors and failed API calls.
-  * **Give Your Agent a Voice with Streaming**: Easily add a `StreamingResult` to your design to push real-time progress updates. Your agent can stream responses like "Searching for flights...", "Analyzing the data...", and "Finalizing the report..." without any complex transport logic on your part.
-  * **Type-Safety Meets AI**: Leverage Go's powerful type system to define your tools. `goa-ai` ensures that the data structures you define in Go are the same ones the language model uses, backed by compile-time checks.
-  * **Focus on What Matters**: Stop wasting time on API boilerplate—serialization, routing, validation, error handling. The generated code is robust, efficient, and lets you concentrate entirely on your application's core functionality.
-
-## The Technology Behind `goa-ai`
-
-Now that you've seen the "why," here's the "how." `goa-ai` is powered by two key technologies:
-
-  * **[Goa](https://goa.design)**: A powerful framework for building micro-services in Go using a design-first approach. You write a simple DSL in Go to describe your service's API, and Goa uses that to generate code, documentation, and more. It combines the rigor of OpenAPI or gRPC with the expressiveness of pure Go.
-
-  * **[MCP (Model Context Protocol)](https://www.google.com/search?q=https://github.com/model-context/protocol)**: An open, opinionated protocol designed specifically for communication between language models and backend systems. It standardizes how models discover and call tools, access data resources, and receive streaming updates.
-
-`goa-ai` seamlessly bridges the two, making Goa the fastest and most reliable way to build a production-grade MCP server.
-
-## Quickstart
-
-Get a simple MCP server running in just a few steps.
-
-### 1\. Install the Toolkit
-
-```bash
+go install goa.design/goa/v3/cmd/goa@latest
 go get goa.design/goa-ai
 ```
 
-### 2\. Define a Service in a `design` folder
-
-Create a `design/design.go` file and describe your service.
-
+### 2. Define a service + agent in `design/design.go`
 ```go
 package design
 
 import (
     . "goa.design/goa/v3/dsl"
-    mcp "goa.design/goa-ai/dsl"
+    agentsdsl "goa.design/goa-ai/agents/dsl"
 )
 
-var _ = Service("assistant", func() {
-	Description("An MCP-enabled assistant service")
+var _ = Service("orchestrator", func() {
+    Description("Chat orchestrator")
 
-	// Enable MCP for this service.
-	mcp.MCPServer("assistant-mcp", "1.0.0")
+    agentsdsl.Agent("orchestrator.chat", func() {
+        Description("LLM-driven planner")
 
-	// Expose it over the JSON-RPC transport.
-	JSONRPC(func() {
-		POST("/rpc")
-	})
+        agentsdsl.Tools(func() {
+            Toolset("atlas.read", func() {
+                Tool("FindEvents", func() {
+                    Description("Query recent Atlas events")
+                    Args(func() {
+                        Attribute("query", String, "Search expression")
+                        Required("query")
+                    })
+                    Return(func() {
+                        Attribute("summary", String, "Natural language summary")
+                    })
+                })
+            })
+            agentsdsl.UseMCPToolset("assistant", "assistant-mcp")
+        })
 
-	// Expose a method as an AI tool.
-	Method("analyze", func() {
-		Payload(String, "Text to analyze")
-		Result(String)
-		mcp.Tool("analyze_text", "Analyzes user-provided text")
-		JSONRPC(func() {})
-	})
+        agentsdsl.RunPolicy(func() {
+            MaxToolCalls(8)
+            TimeBudget("2m")
+        })
+    })
 })
 ```
 
-### 3\. Generate and Run
-
+### 3. Generate code
 ```bash
-# Generate the server code
-goa gen your.module/design
+goa gen example.com/assistant/design
+```
+This produces agent packages under `gen/orchestrator/agents/...`, tool codecs/specs, planner configs, and Temporal activities.
 
-# (Optional) Generate and run the example server
-goa example your.module/design
-go run cmd/assistant/main.go --http-port 8080
+### 4. Wire the runtime + Temporal engine
+```go
+package main
+
+import (
+    "context"
+
+    "go.temporal.io/sdk/client"
+
+    chat "example.com/assistant/gen/orchestrator/agents/chat"
+    runtimeTemporal "goa.design/goa-ai/agents/runtime/engine/temporal"
+    "goa.design/goa-ai/agents/runtime/runtime"
+    basicpolicy "goa.design/goa-ai/features/policy/basic"
+    memorymongo "goa.design/goa-ai/features/memory/mongo"
+    runmongo "goa.design/goa-ai/features/run/mongo"
+    pulse "goa.design/goa-ai/features/stream/pulse"
+    "goa.design/goa-ai/agents/runtime/telemetry"
+)
+
+func main() {
+    temporalEng, err := runtimeTemporal.New(runtimeTemporal.Options{
+        ClientOptions: &client.Options{HostPort: "127.0.0.1:7233", Namespace: "default"},
+        WorkerOptions: runtimeTemporal.WorkerOptions{TaskQueue: "orchestrator.chat"},
+    })
+    if err != nil {
+        panic(err)
+    }
+    defer temporalEng.Close()
+
+    mongoClient := newMongoClient()    // user-provided helper
+    redisClient := newRedisClient()    // user-provided helper
+    pulseSink, err := pulse.NewSink(pulse.Options{Client: redisClient})
+    if err != nil {
+        panic(err)
+    }
+
+    rt := runtime.New(runtime.Options{
+        Engine:      temporalEng,
+        MemoryStore: memorymongo.New(mongoClient),
+        RunStore:    runmongo.New(mongoClient),
+        Stream:      pulseSink,
+        Policy:      basicpolicy.New(),
+        Logger:      telemetry.NewClueLogger(),
+        Metrics:     telemetry.NewClueMetrics(),
+        Tracer:      telemetry.NewClueTracer(),
+    })
+
+    if err := chat.RegisterChatAgent(context.Background(), rt, chat.ChatAgentConfig{
+        Planner:        newChatPlanner(),
+        PromptProvider: chat.NewPromptProvider(),
+    }); err != nil {
+        panic(err)
+    }
+
+    handle, err := rt.StartRun(context.Background(), runtime.RunInput{
+        AgentID:  "orchestrator.chat",
+        SessionID: "session-1",
+        Messages: []planner.AgentMessage{{Role: "user", Content: "Summarize the latest status"}},
+    })
+    if err != nil {
+        panic(err)
+    }
+    var out runtime.RunOutput
+    if err := handle.Wait(context.Background(), &out); err != nil {
+        panic(err)
+    }
+}
 ```
 
-Your AI-ready backend is now live.
-
-## Usage Examples
-
-Interact with your running server using `curl`.
-
-#### 1\. Initialize the Connection
-
+### 5. Explore the example
+`example/` contains the **chat data loop** harness: it registers the generated MCP toolset helper, runs the runtime harness (in-process engine), and demonstrates planners invoking MCP tools with streaming + memory hooks. Run it via:
 ```bash
-curl -s localhost:8080/rpc \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "jsonrpc": "2.0", "id": 1, "method": "initialize",
-    "params": {"protocolVersion": "2025-06-18", "capabilities": {"tools": true}}
-  }'
+go test ./example
 ```
 
-#### 2\. List Available Tools
+Need to hand execution back to a human reviewer? Use the built-in interrupt API to pause and resume durable runs:
 
-```bash
-curl -s localhost:8080/rpc \
-  -H 'Content-Type: application/json' \
-  -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}' | jq
+```go
+rt.PauseRun(ctx, interrupt.PauseRequest{
+    RunID:       "session-1-run-1",
+    Reason:      "human_review",
+    RequestedBy: "policy-engine",
+})
+
+// ... later ...
+rt.ResumeRun(ctx, interrupt.ResumeRequest{
+    RunID:  "session-1-run-1",
+    Notes:  "Reviewer approved",
+})
 ```
 
-### Initialization Contract and Streaming
+The workflow loop drains `goaai.runtime.pause` / `goaai.runtime.resume` signals via the interrupt controller, updates the run store, and emits `run_paused` / `run_resumed` hook events so Pulse subscribers stay in sync.
 
-- Call `initialize` with a supported `protocolVersion` before any request that depends on server state (`tools/*`, `resources/*`, `prompts/*`, subscriptions). `ping` is permitted pre-init.
-- Generated clients automatically set `Accept: text/event-stream` for streaming methods (e.g., `tools/call`, `events/stream`).
+## Architecture Overview
 
-### Adapter Options (high level)
-
-- Logging via `MCPAdapterOptions.Logger`.
-- Error mapping via `MCPAdapterOptions.ErrorMapper` (maps to JSON-RPC codes `-32602`, `-32601`, default `-32603`).
-- Resource policy via `AllowedResourceURIs`/`DeniedResourceURIs` and name-based `AllowedResourceNames`/`DeniedResourceNames` (names resolved from generated resource table). Headers `x-mcp-allow-names` and `x-mcp-deny-names` are also supported.
-- `StructuredStreamJSON` to emit JSON stream items with `mimeType: application/json`.
-- `ProtocolVersionOverride` to test protocol negotiation.
-
-Header-based allow/deny at request time (merged with adapter options):
-
-```bash
-curl -s localhost:8080/rpc \
-  -H 'Content-Type: application/json' \
-  -H 'x-mcp-allow-names: documents,conversation_history' \
-  -H 'x-mcp-deny-names: system_info' \
-  -d '{"jsonrpc": "2.0", "id": 10, "method": "resources/read", "params": {"uri":"system://info"}}'
-# -> JSON-RPC error -32602 (denied by name-based policy)
+```
+ DSL → Codegen → Runtime → Engine + Features
 ```
 
-### Typed Errors and Retry (clients)
+| Layer | Responsibility |
+| --- | --- |
+| **DSL (`agents/dsl`)** | Define agents, toolsets, policies, MCP suites inside Goa services. |
+| **Codegen (`agents/codegen`)** | Emit tool codecs/specs, registries, Temporal workflows, activity handlers, MCP adapters. |
+| **Runtime (`agents/runtime`)** | Durable plan/execute loop with policy enforcement, memory/session stores, hook bus, telemetry. |
+| **Engine (`agents/runtime/engine`)** | Abstract workflow API; Temporal adapter ships with OTEL interceptors, auto-start workers, and context propagation. |
+| **Features (`features/*`)** | Optional modules (Mongo memory/session, Pulse stream sink, MCP callers, Bedrock/OpenAI model clients, policy adapters). |
 
-- Streaming `Recv` returns a typed `JSONRPCError` for JSON-RPC failures.
-- `tools/call`: invalid parameters (`-32602`) are wrapped as `retry.RetryableError` with a repair prompt built from the tool input schema and a built-in example.
-- `prompts/get`: decode helper returns `retry.RetryableError` on `-32602`.
+See `docs/plan.md` for a deep dive into generated structures, templates, and runtime packages.
+
+## MCP + External Toolsets
+
+- Declare MCP servers in your Goa services as before.
+- Reference suites from agents using `agentsdsl.UseMCPToolset(service, suite)`.
+- Supply MCP callers via the generated agent config (`MCPCallers[<toolsetID>] = caller`). The agent registry automatically invokes the generated helper (`Register<Service><Suite>Toolset`) for each `UseMCPToolset` entry, wiring schemas, retry hints, and OTEL-aware transports (HTTP/SSE/stdio) into the runtime.
+
+## Learning Resources
+
+- **DSL reference:** `docs/dsl.md` (all DSL functions, contexts, and examples)
+- **Runtime guide:** `docs/runtime.md` (engine adapters, hooks, telemetry, memory semantics)
+- **Migration guide:** `docs/migration.md` (legacy goa-ai → agents framework)
+- **Architecture plan:** `docs/plan.md` (data structures, templates, roadmap)
+- **Example walkthrough:** `docs/examples-chat-data-loop.md` (chat data loop harness + MCP integration)
+- **Integration tests:** `integration_tests/tests` (scenarios auto-run with `go test ./...`)
 
 ## Requirements
 
-  * **Go**: `1.24` or newer
-  * **Goa**: `v3.22.2` or newer
+- Go 1.24+
+- Goa v3.22.2+
+- Temporal SDK v1.37.0 (adapter auto-wires OTEL interceptors)
+- MongoDB & Redis/Pulse (default memory + stream implementations; optional via feature modules)
 
 ## Contributing
 
-Issues and Pull Requests are welcome. When reporting a bug or proposing a change, please include a failing test scenario or a minimal Goa design to reproduce the issue.
+Issues and PRs are welcome! Please include a Goa design, failing test, or clear reproduction steps. See `AGENTS.md` for repository-specific guidelines (e.g., no `git` commands inside the workspace).
 
 ## License
 
-**MIT**—same as the Goa framework.
+MIT License © Goa community.

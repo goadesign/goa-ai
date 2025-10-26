@@ -38,13 +38,33 @@
 - Keep diffs minimal; update docs (`README.md`, `DESIGN.md`) when behavior changes.
 
 ## Coding Guidelines
-- Style & naming: Go 1.24+, format with `go fmt ./...`; keep imports grouped (stdlib separate). Files use `lower_snake_case.go`; packages are short, lowercase. Exported identifiers need GoDoc; avoid stutter. Wrap errors with `%w` and use `errors.Is/As`.
-- File organization: Order declarations as Types → Consts → Vars → Public funcs → Public methods → Private funcs → Private methods. No commented‑out code; delete dead code.
-- Additional style: Prefer `any` over `interface{}` in new code. Use multi‑line `if` blocks; target ~80 columns where practical. For long struct/composite literals, one field per line with trailing commas; closing brace on its own line.
-- Generator edits MUST be section‑driven and guard‑first: check section name early and `continue` (`if s.Name != "target" { continue }`), then mutate. Avoid redundant `s.Source == ""` checks.
-- Generator code MUST NOT rely on example‑specific aliases or names. Derive aliases (e.g., original client alias) from header imports and operate generically.
-- DSL note: Dot imports are allowed in DSL packages; see `.golangci.yml` which disables `ST1001`.
-- Testing: Write table‑driven tests in `*_test.go` using `testing` (optional `testify`). Name tests `TestXxx`; keep unit tests fast/deterministic. Run `go test -race -vet=off ./...` (or `make test`) locally and avoid coverage regressions.
+- Style & naming: Go 1.24+, format with `go fmt ./...`; keep imports grouped
+  (stdlib separate). Files use `lower_snake_case.go`; packages are short,
+  lowercase. Exported identifiers need GoDoc; avoid stutter. Wrap errors with `%w`
+  and use `errors.Is/As`.
+- File organization: Order declarations as Types → Consts → Vars → Public funcs
+  → Public methods → Private funcs → Private methods. No commented‑out code;
+  delete dead code.
+- Additional style: Prefer `any` over `interface{}` in new code. Use multi‑line
+  `if` blocks; target ~80 columns where practical. For long struct/composite
+  literals, one field per line with trailing commas; closing brace on its own
+  line. In general content between curly braces must be on multiple lines.
+- Documentation: Every exported type, function, and struct field must have a Go
+  stdlib GoDoc-quality comment that explains its contract to someone with no prior
+  context. Treat this like stdlib documentation—clarify when/how callers should
+  use the API and what each field/config represents.
+- Generator edits MUST be section‑driven and guard‑first: check section name
+  early and `continue` (`if s.Name != "target" { continue }`), then mutate. Avoid
+  redundant `s.Source == ""` checks.
+- Generator code MUST NOT rely on example‑specific aliases or names. Derive
+  aliases (e.g., original client alias) from header imports and operate
+  generically.
+- DSL note: Dot imports are encouraged in DSL packages; see `.golangci.yml`
+  which disables `ST1001`.
+- Testing: Write table‑driven tests in `*_test.go` using `testing` (optional
+  `testify`). Name tests `TestXxx`; keep unit tests fast/deterministic. Run `go
+  test -race -vet=off ./...` (or `make test`) locally and avoid coverage
+  regressions.
 
 ### Boundaries & Validation
 
@@ -63,7 +83,8 @@
 - Style within functions:
   - Prefer early returns over deep nesting; avoid useless locals
   - Use modern Go helpers (e.g., `max`, `min`, `clear`) when appropriate
-  - Trust contracts; avoid defensive nil/empty checks except at boundaries
+  - Avoid defensive programming: do not add nil checks, fallback paths, or silent defaults for values whose contracts guarantee validity. Let violations panic or error loudly so bugs surface early.
+  - DSL and codegen packages MUST rely on Goa’s evaluation guarantees (e.g., `ToolExpr.Toolset` is never nil). Never guard these invariants—if they are violated, fail fast to expose the design issue.
 
 ### Template Formatting (Goa codegen templates)
 
@@ -125,6 +146,15 @@
 - Prefer fail-fast validation and precise, structured errors over silent recovery.
 - Avoid optional/nullable fields unless they are genuinely optional
 
+#### No Fallback Coercion in Runtime/Codegen
+
+- Do not perform best-effort coercions when types do not match expected contracts.
+- Generated code must prefer strong typing and fail fast rather than silently
+  remapping payloads or results (e.g., avoid JSON round-trips to "fix" types
+  unless the contract explicitly defines that mapping).
+- If a tool payload/result type assertion fails, return a clear, structured error
+  instead of attempting fallback conversions.
+
 #### Avoid Defensive Programming
 - Configuration should be passed via constructors; do not read environment variables in core logic.
 
@@ -136,15 +166,15 @@
 
 ## Safety & Permissions
 
-| Action              | Policy                          |
-|---------------------|---------------------------------|
-| `git clean/stash`   | FORBIDDEN (risk of data loss)   |
-| `git checkout`      | Avoid context switches mid‑task  |
-| `git push`          | Explain intent, then proceed     |
-| Changes (≥3 files)  | Describe plan, then proceed      |
-| Install dependencies| Explain, then proceed            |
-| Delete files        | Explain, then proceed            |
-| Everything else     | Allowed                          |
+| Action              | Policy                         |
+|---------------------|--------------------------------|
+| `git clean/stash`   | FORBIDDEN (risk of data loss)  |
+| `git checkout`      | FORBIDDEN                      |
+| `git push`          | Explain intent, then proceed   |
+| Changes (≥3 files)  | Describe plan, then proceed    |
+| Install dependencies| Explain, then proceed          | 
+| Delete files        | Explain, then proceed          |
+| Everything else     | Allowed                        |
 
 - Never run `go clean -cache` during normal development (expensive rebuilds).
 
@@ -153,3 +183,31 @@
 - Do not include conditional caps or config handling like `if in.Caps != nil { ... }` when the design requires them; set them directly and rely on validations.
 - Do not add defensive guards that “paper over” invariant violations (e.g., treating nil events as normal or silently skipping unexpected states).
 - In streaming/IPC paths, if the producer/client contract says a value is non-nil, do not guard it with nil checks; allow panics to surface violations so the producer/client can be fixed.
+
+### Agent-as-Tool registration (options API)
+
+Register exported agent-tools using the generated helper and runtime-owned options:
+
+```go
+reg, err := agenttools.NewRegistration(
+    rt,
+    "You are a data expert.",
+    agenttools.WithText(agenttools.ToolQueryData, "Query: {{ . }}"),
+    agenttools.WithTemplate(agenttools.ToolAnalyzeData, compiledAnalyzeTmpl),
+)
+if err != nil { log.Fatal(err) }
+if err := rt.RegisterToolset(reg); err != nil { log.Fatal(err) }
+```
+
+Apply the same content across tools:
+
+```go
+reg, _ := agenttools.NewRegistration(rt, "",
+    agenttools.WithTextAll(agenttools.ToolIDs, "Handle: {{ . }}"),
+)
+```
+
+Validation rules:
+- Every tool must be configured via text or template
+- A tool cannot be configured with both text and template
+- Templates are compiled with missingkey=error; use `runtime.ValidateAgentToolTemplates` for early checks

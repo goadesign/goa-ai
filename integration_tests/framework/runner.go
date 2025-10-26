@@ -54,14 +54,14 @@ type Scenario struct {
 
 // Defaults apply to steps when not explicitly set in a step.
 type Defaults struct {
-	Client     string            `yaml:"client"`     // e.g., "jsonrpc.mcp_assistant" (hint to pick generated client)
-	Headers    map[string]string `yaml:"headers"`    // default headers for all steps
-	ClientMode string            `yaml:"clientMode"` // http | cli (optional)
+	Client     string            `yaml:"client"`      // e.g., "jsonrpc.mcp_assistant" (hint to pick generated client)
+	Headers    map[string]string `yaml:"headers"`     // default headers for all steps
+	ClientMode string            `yaml:"client_mode"` // http | cli (optional)
 }
 
 // Pre controls scenario-level behavior (e.g., auto-initialize handshake).
 type Pre struct {
-	AutoInitialize *bool `yaml:"autoInitialize"` // default true
+	AutoInitialize *bool `yaml:"auto_initialize"` // default true
 }
 
 // Step defines a single operation invocation using a generated client.
@@ -72,11 +72,9 @@ type Step struct {
 	Input        map[string]any    `yaml:"input"`        // maps to payload fields
 	Headers      map[string]string `yaml:"headers"`      // per-step headers (e.g., Accept)
 	Notification bool              `yaml:"notification"` // send as JSON-RPC notification (no id)
-
-	// Expectations
-	Expect       *Expect       `yaml:"expect"`
-	StreamExpect *StreamExpect `yaml:"streamExpect"`
-	ExpectRetry  *ExpectRetry  `yaml:"expectRetry"` // generated client retry expectation
+	Expect       *Expect           `yaml:"expect"`
+	StreamExpect *StreamExpect     `yaml:"stream_expect"`
+	ExpectRetry  *ExpectRetry      `yaml:"expect_retry"` // generated client retry expectation
 }
 
 // ExpectedError captures expected JSON-RPC error.

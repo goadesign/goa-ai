@@ -1,0 +1,377 @@
+package assistantapi
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sync"
+
+	chat "example.com/assistant/gen/orchestrator/agents/chat"
+	"goa.design/goa-ai/agents/runtime/engine"
+	"goa.design/goa-ai/agents/runtime/memory"
+	memoryinmem "goa.design/goa-ai/agents/runtime/memory/inmem"
+	runinmem "goa.design/goa-ai/agents/runtime/run/inmem"
+	agentsruntime "goa.design/goa-ai/agents/runtime/runtime"
+	"goa.design/goa-ai/agents/runtime/stream"
+	"goa.design/goa-ai/agents/runtime/telemetry"
+	mcpruntime "goa.design/goa-ai/features/mcp/runtime"
+)
+
+type (
+	// RuntimeHarness wires together the generated agents, the example MCP client,
+	// and an in-process workflow engine so tests (and future docs) can demonstrate
+	// the full data-loop without Temporal.
+	RuntimeHarness struct {
+		runtime *agentsruntime.Runtime
+		engine  *exampleEngine
+		memory  *memoryinmem.Store
+		stream  stream.Sink
+	}
+
+	// captureSink stores stream events for inspection in tests/examples.
+	captureSink struct {
+		mu     sync.Mutex
+		events []stream.Event
+	}
+
+	// exampleEngine records workflows and activities so the harness can execute
+	// them synchronously.
+	exampleEngine struct {
+		mu         sync.RWMutex
+		workflows  map[string]engine.WorkflowDefinition
+		activities map[string]engine.ActivityDefinition
+	}
+
+	// exampleWorkflowContext routes ExecuteActivity calls back into the registered
+	// activity handlers so the runtime loop behaves just like it would inside
+	// Temporal.
+	exampleWorkflowContext struct {
+		ctx        context.Context
+		engine     *exampleEngine
+		workflowID string
+		runID      string
+		signals    map[string]*harnessSignalChannel
+	}
+
+	// immediateFuture returns pre-computed activity results, satisfying the
+	// engine.Future contract used by the runtime's executeToolCalls helper.
+	immediateFuture struct {
+		result any
+		err    error
+	}
+
+	harnessSignalChannel struct {
+		ch chan any
+	}
+)
+
+// NewRuntimeHarness constructs a runtime with in-memory stores, registers the
+// generated MCP toolset helper, and wires the chat agent planner. The returned
+// harness can execute workflows entirely in-process, making it ideal for
+// examples and documentation snippets.
+func NewRuntimeHarness(ctx context.Context) (*RuntimeHarness, error) {
+	return NewRuntimeHarnessWithSink(ctx, newCaptureSink())
+}
+
+// NewRuntimeHarnessWithSink constructs a runtime using the provided stream.Sink.
+// Use this to inject a Pulse-backed sink (for SSE) or a capture sink (for tests).
+// Telemetry (Logger/Metrics/Tracer) defaults to noop implementations; callers can
+// construct the Runtime directly with agentsruntime.New() if they need observability.
+func NewRuntimeHarnessWithSink(ctx context.Context, sink stream.Sink) (*RuntimeHarness, error) {
+	eng := newExampleEngine()
+	mem := memoryinmem.New()
+	runs := runinmem.New()
+
+	rt := agentsruntime.New(agentsruntime.Options{
+		Engine:      eng,
+		MemoryStore: mem,
+		RunStore:    runs,
+		Stream:      sink,
+		// Logger, Metrics, Tracer: omitted, defaults to noop for examples
+	})
+
+	if err := rt.RegisterModel(chatModelID, newStreamingModel()); err != nil {
+		return nil, fmt.Errorf("register model: %w", err)
+	}
+
+	if err := chat.RegisterChatAgent(ctx, rt, chat.ChatAgentConfig{
+		Planner: newChatPlanner(chatModelID),
+		MCPCallers: map[string]mcpruntime.Caller{
+			chat.ChatAssistantAssistantMcpToolsetID: newExampleCaller(),
+		},
+	}); err != nil {
+		return nil, fmt.Errorf("register chat agent: %w", err)
+	}
+
+	return &RuntimeHarness{
+		runtime: rt,
+		engine:  eng,
+		memory:  mem,
+		stream:  sink,
+	}, nil
+}
+
+// Run executes the registered chat workflow in-process and returns the final
+// runtime output. The provided RunInput should set AgentID and RunID to keep the
+// memory store deterministic.
+func (h *RuntimeHarness) Run(ctx context.Context, input agentsruntime.RunInput) (agentsruntime.RunOutput, error) {
+	if input.AgentID == "" {
+		return agentsruntime.RunOutput{}, errors.New("AgentID is required")
+	}
+	if input.RunID == "" {
+		return agentsruntime.RunOutput{}, errors.New("RunID is required")
+	}
+	def, ok := h.engine.workflow("orchestrator.chat.workflow")
+	if !ok {
+		return agentsruntime.RunOutput{}, errors.New("chat workflow not registered")
+	}
+	wfCtx := newExampleWorkflowContext(ctx, h.engine, def.Name, input.RunID)
+	result, err := def.Handler(wfCtx, input)
+	if err != nil {
+		return agentsruntime.RunOutput{}, err
+	}
+	out, ok := result.(agentsruntime.RunOutput)
+	if !ok {
+		return agentsruntime.RunOutput{}, fmt.Errorf("unexpected workflow output %T", result)
+	}
+	return out, nil
+}
+
+// MemoryEvents returns the durable memory events recorded for the given run.
+func (h *RuntimeHarness) MemoryEvents(ctx context.Context, agentID, runID string) ([]memory.Event, error) {
+	snapshot, err := h.memory.LoadRun(ctx, agentID, runID)
+	if err != nil {
+		return nil, err
+	}
+	return snapshot.Events, nil
+}
+
+// StreamEvents returns a copy of the streaming events captured during the last run.
+func (h *RuntimeHarness) StreamEvents() []stream.Event {
+	if c, ok := h.stream.(*captureSink); ok {
+		return c.Events()
+	}
+	return nil
+}
+
+// Send appends the event to the internal buffer for later inspection.
+func (s *captureSink) Send(ctx context.Context, event stream.Event) error {
+	s.mu.Lock()
+	s.events = append(s.events, event)
+	s.mu.Unlock()
+	return nil
+}
+
+// Close is a no-op for the capture sink.
+func (s *captureSink) Close(context.Context) error { return nil }
+
+// Events returns a copy of all captured events.
+func (s *captureSink) Events() []stream.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]stream.Event, len(s.events))
+	copy(out, s.events)
+	return out
+}
+
+// RegisterWorkflow records the workflow definition for later invocation.
+func (e *exampleEngine) RegisterWorkflow(ctx context.Context, def engine.WorkflowDefinition) error {
+	e.mu.Lock()
+	e.workflows[def.Name] = def
+	e.mu.Unlock()
+	return nil
+}
+
+// RegisterActivity records the activity definition for later invocation.
+func (e *exampleEngine) RegisterActivity(ctx context.Context, def engine.ActivityDefinition) error {
+	e.mu.Lock()
+	e.activities[def.Name] = def
+	e.mu.Unlock()
+	return nil
+}
+
+// StartWorkflow returns an error because the example engine executes workflows directly.
+func (e *exampleEngine) StartWorkflow(context.Context, engine.WorkflowStartRequest) (engine.WorkflowHandle, error) {
+	return nil, errors.New("example engine does not start workflows")
+}
+
+// Context returns the underlying context.
+func (w *exampleWorkflowContext) Context() context.Context { return w.ctx }
+
+// WorkflowID returns the workflow identifier.
+func (w *exampleWorkflowContext) WorkflowID() string { return w.workflowID }
+
+// RunID returns the run identifier.
+func (w *exampleWorkflowContext) RunID() string { return w.runID }
+
+// ExecuteActivity invokes the registered activity handler synchronously, injecting
+// the workflow context for nested agent execution support.
+func (w *exampleWorkflowContext) ExecuteActivity(ctx context.Context, req engine.ActivityRequest, result any) error {
+	// Inject workflow context into activity handler context so runtime code
+	// can retrieve it (e.g., for nested agent execution).
+	ctx = engine.WithWorkflowContext(ctx, w)
+	out, err := w.engine.invoke(ctx, req)
+	if err != nil {
+		return err
+	}
+	return assignActivityResult(result, out)
+}
+
+// ExecuteActivityAsync invokes the registered activity handler and returns an
+// immediate future with the result, injecting the workflow context.
+func (w *exampleWorkflowContext) ExecuteActivityAsync(ctx context.Context, req engine.ActivityRequest) (engine.Future, error) {
+	// Inject workflow context into activity handler context for async as well.
+	ctx = engine.WithWorkflowContext(ctx, w)
+	out, err := w.engine.invoke(ctx, req)
+	return &immediateFuture{result: out, err: err}, nil
+}
+
+// Logger returns a no-op logger.
+func (w *exampleWorkflowContext) Logger() telemetry.Logger { return telemetry.NewNoopLogger() }
+
+// Metrics returns a no-op metrics recorder.
+func (w *exampleWorkflowContext) Metrics() telemetry.Metrics { return telemetry.NewNoopMetrics() }
+
+// Tracer returns a no-op tracer.
+func (w *exampleWorkflowContext) Tracer() telemetry.Tracer { return telemetry.NewNoopTracer() }
+
+// SignalChannel returns or creates a buffered channel for the given signal name.
+func (w *exampleWorkflowContext) SignalChannel(name string) engine.SignalChannel {
+	if w.signals == nil {
+		w.signals = make(map[string]*harnessSignalChannel)
+	}
+	ch, ok := w.signals[name]
+	if !ok {
+		ch = &harnessSignalChannel{ch: make(chan any, 1)}
+		w.signals[name] = ch
+	}
+	return ch
+}
+
+// Get returns the pre-computed result or error.
+func (f *immediateFuture) Get(ctx context.Context, result any) error {
+	if f.err != nil {
+		return f.err
+	}
+	return assignActivityResult(result, f.result)
+}
+
+// IsReady always returns true since results are pre-computed.
+func (f *immediateFuture) IsReady() bool { return true }
+
+func (s *harnessSignalChannel) Receive(ctx context.Context, dest interface{}) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case val := <-s.ch:
+		assignActivityResult(dest, val)
+		return nil
+	}
+}
+
+func (s *harnessSignalChannel) ReceiveAsync(dest interface{}) bool {
+	select {
+	case val := <-s.ch:
+		assignActivityResult(dest, val)
+		return true
+	default:
+		return false
+	}
+}
+
+// newCaptureSink constructs a capture sink for tests.
+func newCaptureSink() *captureSink { return &captureSink{} }
+
+// newExampleEngine constructs an in-process workflow engine.
+func newExampleEngine() *exampleEngine {
+	return &exampleEngine{
+		workflows:  make(map[string]engine.WorkflowDefinition),
+		activities: make(map[string]engine.ActivityDefinition),
+	}
+}
+
+// newExampleWorkflowContext constructs a workflow context that routes activities
+// through the example engine.
+func newExampleWorkflowContext(ctx context.Context, eng *exampleEngine, workflowID, runID string) *exampleWorkflowContext {
+	return &exampleWorkflowContext{ctx: ctx, engine: eng, workflowID: workflowID, runID: runID}
+}
+
+// newExampleCaller constructs a mock MCP caller for tests and examples.
+func newExampleCaller() mcpruntime.Caller {
+	return mcpruntime.CallerFunc(func(ctx context.Context, req mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
+		switch req.Tool {
+		case "search":
+			var payload struct {
+				Query string `json:"query"`
+				Limit int    `json:"limit"`
+			}
+			_ = json.Unmarshal(req.Payload, &payload)
+			if payload.Query == "" {
+				payload.Query = "status update"
+			}
+			doc := map[string]any{
+				"title":   fmt.Sprintf("Result for %s", payload.Query),
+				"content": "System reports nominal operations in this mock",
+			}
+			body, _ := json.Marshal(map[string]any{"documents": []any{doc}})
+			structured, _ := json.Marshal(map[string]any{"source": "mcp", "tool": req.Tool})
+			return mcpruntime.CallResponse{Result: body, Structured: structured}, nil
+		default:
+			return mcpruntime.CallResponse{}, fmt.Errorf("tool %q not implemented in example caller", req.Tool)
+		}
+	})
+}
+
+// workflow looks up a workflow definition by name.
+func (e *exampleEngine) workflow(name string) (engine.WorkflowDefinition, bool) {
+	e.mu.RLock()
+	def, ok := e.workflows[name]
+	e.mu.RUnlock()
+	return def, ok
+}
+
+// activity looks up an activity definition by name.
+func (e *exampleEngine) activity(name string) (engine.ActivityDefinition, bool) {
+	e.mu.RLock()
+	def, ok := e.activities[name]
+	e.mu.RUnlock()
+	return def, ok
+}
+
+// invoke executes an activity by name and returns the result.
+func (e *exampleEngine) invoke(ctx context.Context, req engine.ActivityRequest) (any, error) {
+	def, ok := e.activity(req.Name)
+	if !ok {
+		return nil, fmt.Errorf("activity %q not registered", req.Name)
+	}
+	return def.Handler(ctx, req.Input)
+}
+
+// assignActivityResult type-asserts the activity output and assigns it to the target pointer.
+func assignActivityResult(target any, value any) error {
+	if target == nil {
+		return nil
+	}
+	switch t := target.(type) {
+	case *agentsruntime.PlanActivityOutput:
+		out, ok := value.(agentsruntime.PlanActivityOutput)
+		if !ok {
+			return fmt.Errorf("expected PlanActivityOutput, got %T", value)
+		}
+		*t = out
+		return nil
+	case *agentsruntime.ToolOutput:
+		out, ok := value.(agentsruntime.ToolOutput)
+		if !ok {
+			return fmt.Errorf("expected ToolOutput, got %T", value)
+		}
+		*t = out
+		return nil
+	default:
+		return fmt.Errorf("unsupported activity result %T", target)
+	}
+}

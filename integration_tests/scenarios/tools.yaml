@@ -147,6 +147,27 @@ scenarios:
         stream_expect:
           min_events: 1
 
+  - name: tool_execute_code_invalid_language_retry_hint
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: true
+    steps:
+      - name: call
+        op: ToolsCall
+        headers:
+          Accept: text/event-stream
+        input:
+          name: execute_code
+          arguments: { language: ruby, code: "puts 1" }
+        stream_expect:
+          min_events: 1
+          events:
+            - event: error
+              data:
+                error:
+                  code: -32602
+
   - name: tool_call_invalid_name
     defaults:
       client: jsonrpc.mcp_assistant
