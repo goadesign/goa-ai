@@ -228,9 +228,6 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 		"execute": {Name: "execute", Handler: func(ctx context.Context, input any) (any, error) {
 			return rt.ExecuteToolActivity(ctx, input.(ToolInput))
 		}},
-		"resume": {Name: "resume", Handler: func(context.Context, any) (any, error) {
-			return PlanActivityOutput{Result: planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "done"}}}}, nil
-		}},
 	}
 	wfCtx := &routeWorkflowContext{ctx: context.Background(), runID: "run-parent", routes: routes}
 
