@@ -52,7 +52,53 @@ import (
 	"goa.design/goa-ai/agents/runtime/tools"
 )
 
-type (
+	type (
+	// Runtime orchestrates agent workflows, policy enforcement, memory persistence,
+	// and event streaming. It serves as the central registry for agents, toolsets,
+	// and models. All public methods are thread-safe and can be called concurrently.
+	//
+	// The Runtime coordinates with several subsystems:
+	//   - Workflow engine (Temporal) for durable execution
+	//   - Policy engine for runtime caps and tool filtering
+	//   - Memory store for transcript persistence
+	//   - Event bus (hooks) for observability and streaming
+	//   - Telemetry subsystems (logging, metrics, tracing)
+	//
+	// Lifecycle:
+	//  1. Construct with New()
+	//  2. Register agents, toolsets, and models
+	//  3. Start workflows via Run() or StartRun()
+	//
+	// The Runtime automatically subscribes to hooks for memory persistence and
+	// stream publishing when MemoryStore or Stream are configured.
+	Runtime struct {
+		// Engine is the workflow backend adapter (Temporal by default).
+		Engine engine.Engine
+		// MemoryStore persists run transcripts and annotations.
+		Memory memory.Store
+		// Policy evaluates allowlists and caps per planner turn.
+		Policy policy.Engine
+		// RunStore tracks run metadata for observability.
+		RunStore run.Store
+		// Bus is the bus used for streaming runtime events.
+		Bus hooks.Bus
+		// Stream publishes planner/tool/assistant events to the caller.
+		Stream stream.Sink
+
+		logger  telemetry.Logger
+		metrics telemetry.Metrics
+		tracer  telemetry.Tracer
+
+		mu        sync.RWMutex
+		agents    map[string]AgentRegistration
+		toolsets  map[string]ToolsetRegistration
+		toolSpecs map[string]tools.ToolSpec
+		models    map[string]model.Client
+
+		handleMu   sync.RWMutex
+		runHandles map[string]engine.WorkflowHandle
+	}
+
 	// Options configures the Runtime instance. All fields are optional except Engine
 	// for production deployments. Noop implementations are substituted for nil Logger,
 	// Metrics, and Tracer. A default in-memory event bus is created if Hooks is nil.
@@ -75,44 +121,6 @@ type (
 		Metrics telemetry.Metrics
 		// Tracer emits spans for planner/tool execution.
 		Tracer telemetry.Tracer
-	}
-
-	// Runtime orchestrates agent workflows, policy enforcement, memory persistence,
-	// and event streaming. It serves as the central registry for agents, toolsets,
-	// and models. All public methods are thread-safe and can be called concurrently.
-	//
-	// The Runtime coordinates with several subsystems:
-	//   - Workflow engine (Temporal) for durable execution
-	//   - Policy engine for runtime caps and tool filtering
-	//   - Memory store for transcript persistence
-	//   - Event bus (hooks) for observability and streaming
-	//   - Telemetry subsystems (logging, metrics, tracing)
-	//
-	// Lifecycle:
-	//  1. Construct with New()
-	//  2. Register agents, toolsets, and models
-	//  3. Start workflows via Run() or StartRun()
-	//
-	// The Runtime automatically subscribes to hooks for memory persistence and
-	// stream publishing when MemoryStore or Stream are configured.
-	Runtime struct {
-		engine  engine.Engine
-		memory  memory.Store
-		policy  policy.Engine
-		runs    run.Store
-		hooks   hooks.Bus
-		stream  stream.Sink
-		logger  telemetry.Logger
-		metrics telemetry.Metrics
-		tracer  telemetry.Tracer
-
-		mu         sync.RWMutex
-		agents     map[string]AgentRegistration
-		toolsets   map[string]ToolsetRegistration
-		toolSpecs  map[string]tools.ToolSpec
-		models     map[string]model.Client
-		runHandles map[string]engine.WorkflowHandle
-		handleMu   sync.RWMutex
 	}
 
 	// AgentRegistration bundles the generated assets for an agent. This struct is
@@ -200,6 +208,12 @@ type (
 	}
 )
 
+var (
+    // defaultRT holds the process-wide default runtime used by generated
+    // workflow/activities. Services should call SetDefault during bootstrap.
+    defaultRT *Runtime
+)
+
 // RunOption configures the RunInput constructed by RunAgent and StartAgent.
 // Options allow callers to set optional fields without building RunInput directly.
 type RunOption func(*RunInput)
@@ -224,10 +238,15 @@ func WithWorkflowOptions(o *WorkflowOptions) RunOption {
 	return func(in *RunInput) { in.WorkflowOptions = o }
 }
 
-// Default returns a new Runtime with the default options.
-func Default() *Runtime {
-	return New(Options{})
-}
+// Default returns the process-wide default Runtime. Generated workflow and
+// activity code use this value to route execution into the correct runtime
+// instance. It is nil until SetDefault is called by service bootstrap code.
+func Default() *Runtime { return defaultRT }
+
+// SetDefault sets the process-wide default Runtime used by generated workflow
+// and activity handlers. Call this during service/bootstrap initialization
+// after constructing the runtime via New.
+func SetDefault(r *Runtime) { defaultRT = r }
 
 // New constructs a Runtime with the provided options. If Hooks, Logger, Metrics, or
 // Tracer are nil, noop implementations are substituted. The returned Runtime is
@@ -253,12 +272,12 @@ func New(opts Options) *Runtime {
 		tracer = telemetry.NoopTracer{}
 	}
 	rt := &Runtime{
-		engine:     opts.Engine,
-		memory:     opts.MemoryStore,
-		policy:     opts.Policy,
-		runs:       opts.RunStore,
-		hooks:      bus,
-		stream:     opts.Stream,
+		Engine:     opts.Engine,
+		Memory:     opts.MemoryStore,
+		Policy:     opts.Policy,
+		RunStore:   opts.RunStore,
+		Bus:        bus,
+		Stream:     opts.Stream,
 		logger:     logger,
 		metrics:    metrics,
 		tracer:     tracer,
@@ -268,7 +287,7 @@ func New(opts Options) *Runtime {
 		models:     make(map[string]model.Client),
 		runHandles: make(map[string]engine.WorkflowHandle),
 	}
-	if rt.memory != nil {
+	if rt.Memory != nil {
 		memSub := hooks.SubscriberFunc(func(ctx context.Context, event hooks.Event) error {
 			var memEvent memory.Event
 			switch evt := event.(type) {
@@ -282,19 +301,21 @@ func New(opts Options) *Runtime {
 						"queue":     evt.Queue,
 					},
 				}
-				return rt.memory.AppendEvents(ctx, evt.AgentID(), evt.RunID(), memEvent)
+				return rt.Memory.AppendEvents(ctx, evt.AgentID(), evt.RunID(), memEvent)
 			case *hooks.ToolResultReceivedEvent:
 				memEvent = memory.Event{
 					Type:      memory.EventToolResult,
 					Timestamp: time.UnixMilli(evt.Timestamp()),
 					Data: map[string]any{
+						"tool_call_id":        evt.ToolCallID,
+						"parent_tool_call_id": evt.ParentToolCallID,
 						"tool_name": evt.ToolName,
 						"result":    evt.Result,
 						"duration":  evt.Duration,
 						"error":     evt.Error,
 					},
 				}
-				return rt.memory.AppendEvents(ctx, evt.AgentID(), evt.RunID(), memEvent)
+				return rt.Memory.AppendEvents(ctx, evt.AgentID(), evt.RunID(), memEvent)
 			case *hooks.AssistantMessageEvent:
 				memEvent = memory.Event{
 					Type:      memory.EventAssistantMessage,
@@ -304,7 +325,7 @@ func New(opts Options) *Runtime {
 						"structured": evt.Structured,
 					},
 				}
-				return rt.memory.AppendEvents(ctx, evt.AgentID(), evt.RunID(), memEvent)
+				return rt.Memory.AppendEvents(ctx, evt.AgentID(), evt.RunID(), memEvent)
 			case *hooks.PlannerNoteEvent:
 				memEvent = memory.Event{
 					Type:      memory.EventPlannerNote,
@@ -312,7 +333,7 @@ func New(opts Options) *Runtime {
 					Data:      map[string]any{"note": evt.Note},
 					Labels:    evt.Labels,
 				}
-				return rt.memory.AppendEvents(ctx, evt.AgentID(), evt.RunID(), memEvent)
+				return rt.Memory.AppendEvents(ctx, evt.AgentID(), evt.RunID(), memEvent)
 			}
 			return nil
 		})
@@ -320,8 +341,8 @@ func New(opts Options) *Runtime {
 			rt.logger.Warn(context.Background(), "failed to register memory subscriber", "err", err)
 		}
 	}
-	if rt.stream != nil {
-		streamSub, err := hooks.NewStreamSubscriber(rt.stream)
+	if rt.Stream != nil {
+		streamSub, err := hooks.NewStreamSubscriber(rt.Stream)
 		if err != nil {
 			rt.logger.Warn(context.Background(), "failed to create stream subscriber", "err", err)
 		} else if _, err := bus.Register(streamSub); err != nil {
@@ -356,18 +377,18 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	if reg.ResumeActivityName == "" {
 		return errors.New("agent registration missing resume activity")
 	}
-	if r.engine == nil {
+	if r.Engine == nil {
 		return errors.New("runtime engine not configured")
 	}
 
-	if err := r.engine.RegisterWorkflow(ctx, reg.Workflow); err != nil {
+	if err := r.Engine.RegisterWorkflow(ctx, reg.Workflow); err != nil {
 		return err
 	}
 	for _, act := range reg.Activities {
 		if act.Handler == nil {
 			continue
 		}
-		if err := r.engine.RegisterActivity(ctx, act); err != nil {
+		if err := r.Engine.RegisterActivity(ctx, act); err != nil {
 			return err
 		}
 	}
@@ -549,22 +570,6 @@ func (r *Runtime) ExecuteAgentInline(
 	return r.runLoop(wfCtx, reg, &nestedInput, planInput, initialPlan, caps, deadline, 1, seq, parentTracker, nil)
 }
 
-// Options exposes the runtime dependencies, useful for generated code hooking
-// and introspection.
-func (r *Runtime) Options() Options {
-	return Options{
-		Engine:      r.engine,
-		MemoryStore: r.memory,
-		Policy:      r.policy,
-		RunStore:    r.runs,
-		Hooks:       r.hooks,
-		Stream:      r.stream,
-		Logger:      r.logger,
-		Metrics:     r.metrics,
-		Tracer:      r.tracer,
-	}
-}
-
 // Run starts the agent workflow synchronously and waits for the final output.
 // Generated Goa transports call this helper to offer a simple request/response API.
 // Returns an error if the workflow fails to start or execute.
@@ -644,7 +649,7 @@ func (r *Runtime) StartRun(ctx context.Context, input RunInput) (engine.Workflow
 			req.RetryPolicy = opts.RetryPolicy
 		}
 	}
-	handle, err := r.engine.StartWorkflow(ctx, req)
+	handle, err := r.Engine.StartWorkflow(ctx, req)
 	if err != nil {
 		return nil, err
 	}

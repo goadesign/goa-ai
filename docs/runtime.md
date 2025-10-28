@@ -62,6 +62,7 @@ func main() {
 * `WorkflowOptions` on `RunInput` map directly to engine start options (memo, search attributes, queue overrides), so services can attach Temporal metadata for observability.
 * Application code wires engine/storage/policy/model feature modules into `runtime.Options`. The Temporal adapter auto-starts workers the first time a workflow runs; call `temporalEng.Worker().Start()` only when you need explicit lifecycle control.
 * `StartRun` returns an engine workflow handle so callers can wait, signal, or cancel. `Run` simply calls `StartRun` and `Wait` for request/response transports.
+* DSL-generated Goa types expose `ConvertTo*` / `CreateFrom*` helpers (backed by `agents/apitypes`) so transports can bridge into the runtime/planner structs without hand-written mappers; rely on those conversions in service handlers and tests rather than re-implementing translation logic.
 
 ## Pause & Resume
 
@@ -99,6 +100,38 @@ The runtime publishes structured events to a hook bus. Default subscribers inclu
 
 Custom subscribers can register via `Hooks.Register` to emit analytics, trigger approval workflows, etc.
 
+Streaming event mapping (default StreamSubscriber):
+
+- ToolCallScheduled → `tool_start` (payload: `*hooks.ToolCallScheduledEvent`)
+- ToolResultReceived → `tool_end` (payload: `*hooks.ToolResultReceivedEvent`)
+- PlannerNote → `planner_thought` (payload: `string`)
+- AssistantMessage → `assistant_reply` (payload: `string`)
+
+The `stream` package exposes a small interface `Event` implemented by concrete types:
+
+- `AssistantReply{Run, Text}`
+- `PlannerThought{Run, Note}`
+- `ToolStart{Run, Data: ToolStartPayload{...}}`
+- `ToolEnd{Run, Data: ToolEndPayload{...}}`
+
+Transports should type-switch on `stream.Event` for compile-time safety:
+
+```go
+switch e := evt.(type) {
+case stream.AssistantReply:
+    // e.Text
+case stream.ToolStart:
+    // e.Data.ToolCallID, e.Data.ToolName, e.Data.Payload
+case stream.ToolUpdate:
+    // e.Data.Result, e.Data.Error
+}
+```
+
+For convenience, services often translate:
+
+- `tool_start` → a “tool_call” chunk (ID, name, payload) for SSE/WebSocket
+- `tool_end` → a “tool_result” chunk (ID, result, error)
+
 ## Workflow Options & Metadata
 
 Use `runtime.WorkflowOptions` to forward memo/search attributes to the engine:
@@ -126,6 +159,11 @@ To publish hook events to Pulse:
 pulseClient := pulse.NewClient(redisClient)
 sink, _ := pulseSink.NewSink(pulseSink.Options{Client: pulseClient})
 rt := runtime.New(runtime.Options{Engine: eng, Stream: sink})
+
+API shortcuts
+
+- Helper constructors: `stream.NewAssistantReply`, `NewPlannerThought`, `NewToolStart`, `NewToolEnd` create typed events with base metadata set.
+- Bridge helpers: `agents/runtime/stream/bridge` exposes `Register(bus, sink)` and `NewSubscriber(sink)` so you can wire the hook bus to any `stream.Sink` without importing the hooks subscriber directly.
 ```
 
 Services keep direct access to their Pulse client to create/close per-turn streams as needed, while the runtime handles event fan-out.
@@ -164,6 +202,16 @@ Each module is optional; services import the ones they need and pass the resulti
 - Bedrock adapter translates ConverseStream events into chunk types and automatically injects the beta thinking header when `ThinkingOptions.Enable` is true and tools remain available. OpenAI currently reports `model.ErrStreamingUnsupported`, so planners should fall back to `Complete` until streaming support lands.
 - Streaming chunks flow through the runtime hook bus the same way unary responses do: the capture sink publishes partial assistant replies, tool-call updates emit `tool_call_scheduled`/`tool_result_received`, and Pulse subscribers can surface progress to clients without custom glue.
 - `planner.AgentContext` exposes `EmitAssistantMessage`/`EmitPlannerNote` so streaming planners can forward chunks without touching the hook bus. Pair these with `planner.ConsumeStream(ctx, streamer, agentCtx)` to drain provider streamers, emit events, and receive a `StreamSummary` (final text + requested tool calls + usage) that can be converted into a `PlanResult`.
+
+## Example Bootstrap Helpers
+
+`goa example` emits `cmd/<service>/agents_bootstrap.go` when a design declares agents. The helper:
+
+- Creates a Temporal engine + in-memory stores, then calls each generated `Register<Agent>` function.
+- Instantiates planner stubs (`cmd/<service>/agents_planner_<agent>.go`) so examples compile out-of-the-box.
+- Emits a `configure<Agent>MCPCallers` stub only when the agent uses `UseMCPToolset`. Replace the placeholder `mcpruntime.CallerFunc` entries with real callers (e.g., `mcpruntime.NewHTTPCaller`, `NewSSECaller`, or a custom adapter) before running agents in production. Services without MCP bindings avoid unused imports automatically.
+
+If you implement a bespoke bootstrap path (e.g., non-Temporal engine, custom stores), you can delete the generated helper and wire everything manually by following the pattern above.
 
 ### Wiring Pulse Streaming
 

@@ -1,10 +1,10 @@
 package hooks
 
 import (
-	"context"
-	"errors"
+    "context"
+    "errors"
 
-	"goa.design/goa-ai/agents/runtime/stream"
+    "goa.design/goa-ai/agents/runtime/stream"
 )
 
 type (
@@ -15,7 +15,7 @@ type (
 	// Only user-facing events are forwarded to the stream:
 	//   - AssistantMessage → EventAssistantReply
 	//   - PlannerNote → EventPlannerThought
-	//   - ToolResultReceived → EventToolUpdate
+    //   - ToolResultReceived → EventToolEnd
 	//
 	// Other hook events (WorkflowStarted, WorkflowCompleted, etc.) are silently
 	// ignored as they are typically used for internal observability rather than
@@ -54,33 +54,52 @@ func NewStreamSubscriber(sink stream.Sink) (Subscriber, error) {
 // Event translation:
 //   - AssistantMessage events are sent as EventAssistantReply
 //   - PlannerNote events are sent as EventPlannerThought
-//   - ToolResultReceived events are sent as EventToolUpdate
+    //   - ToolResultReceived events are sent as EventToolEnd
 //   - All other event types are ignored (return nil)
 //
 // If the sink returns an error, HandleEvent propagates it to the bus, which
 // stops event delivery to remaining subscribers. This fail-fast behavior
 // ensures that streaming failures are visible to the runtime.
 func (s *StreamSubscriber) HandleEvent(ctx context.Context, event Event) error {
-	switch evt := event.(type) {
-	case *AssistantMessageEvent:
-		return s.sink.Send(ctx, stream.Event{
-			Type:    stream.EventAssistantReply,
-			RunID:   evt.RunID(),
-			Content: evt.Message,
-		})
-	case *PlannerNoteEvent:
-		return s.sink.Send(ctx, stream.Event{
-			Type:    stream.EventPlannerThought,
-			RunID:   evt.RunID(),
-			Content: evt.Note,
-		})
-	case *ToolResultReceivedEvent:
-		return s.sink.Send(ctx, stream.Event{
-			Type:    stream.EventToolUpdate,
-			RunID:   evt.RunID(),
-			Content: evt,
-		})
-	default:
-		return nil
-	}
+    switch evt := event.(type) {
+    case *ToolCallScheduledEvent:
+        payload := stream.ToolStartPayload{
+            ToolCallID:            evt.ToolCallID,
+            ToolName:              evt.ToolName,
+            Payload:               evt.Payload,
+            Queue:                 evt.Queue,
+            ParentToolCallID:      evt.ParentToolCallID,
+            ExpectedChildrenTotal: evt.ExpectedChildrenTotal,
+        }
+        return s.sink.Send(ctx, stream.ToolStart{
+            Base: stream.Base{T: stream.EventToolStart, R: evt.RunID(), P: payload},
+            Data: payload,
+        })
+    case *AssistantMessageEvent:
+        return s.sink.Send(ctx, stream.AssistantReply{
+            Base: stream.Base{T: stream.EventAssistantReply, R: evt.RunID(), P: evt.Message},
+            Text: evt.Message,
+        })
+    case *PlannerNoteEvent:
+        return s.sink.Send(ctx, stream.PlannerThought{
+            Base: stream.Base{T: stream.EventPlannerThought, R: evt.RunID(), P: evt.Note},
+            Note: evt.Note,
+        })
+    case *ToolResultReceivedEvent:
+        payload := stream.ToolEndPayload{
+            ToolCallID:       evt.ToolCallID,
+            ParentToolCallID: evt.ParentToolCallID,
+            ToolName:         evt.ToolName,
+            Result:           evt.Result,
+            Duration:         evt.Duration,
+            Telemetry:        evt.Telemetry,
+            Error:            evt.Error,
+        }
+        return s.sink.Send(ctx, stream.ToolEnd{
+            Base: stream.Base{T: stream.EventToolEnd, R: evt.RunID(), P: payload},
+            Data: payload,
+        })
+    default:
+        return nil
+    }
 }

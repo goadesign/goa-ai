@@ -73,7 +73,7 @@ func TestActivityToolExecutorExecute(t *testing.T) {
 
 func TestRunLoopPauseResumeEmitsEvents(t *testing.T) {
 	recorder := &recordingHooks{}
-	rt := &Runtime{hooks: recorder, toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call planner.ToolCallRequest) (planner.ToolResult, error) {
+	rt := &Runtime{Bus: recorder, toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call planner.ToolCallRequest) (planner.ToolResult, error) {
 		return planner.ToolResult{
 			Name: call.Name,
 		}, nil

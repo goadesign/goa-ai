@@ -11,70 +11,6 @@ import (
 	apitypes "goa.design/goa-ai/agents/apitypes"
 )
 
-// ConvertToToolTelemetry creates an instance of ToolTelemetry initialized from
-// t.
-func (t *AgentToolTelemetry) ConvertToToolTelemetry() *apitypes.ToolTelemetry {
-	v := &apitypes.ToolTelemetry{}
-	if t.DurationMs != nil {
-		v.DurationMs = *t.DurationMs
-	}
-	if t.TokensUsed != nil {
-		v.TokensUsed = *t.TokensUsed
-	}
-	if t.Model != nil {
-		v.Model = *t.Model
-	}
-	if t.Extra != nil {
-		v.Extra = make(map[string]any, len(t.Extra))
-		for key, val := range t.Extra {
-			tk := key
-			tv := val
-			v.Extra[tk] = tv
-		}
-	}
-	return v
-}
-
-// ConvertToRetryHint creates an instance of RetryHint initialized from t.
-func (t *AgentRetryHint) ConvertToRetryHint() *apitypes.RetryHint {
-	v := &apitypes.RetryHint{
-		Reason: t.Reason,
-		Tool:   t.Tool,
-	}
-	if t.RestrictToTool != nil {
-		v.RestrictToTool = *t.RestrictToTool
-	}
-	if t.ClarifyingQuestion != nil {
-		v.ClarifyingQuestion = *t.ClarifyingQuestion
-	}
-	if t.Message != nil {
-		v.Message = *t.Message
-	}
-	if t.MissingFields != nil {
-		v.MissingFields = make([]string, len(t.MissingFields))
-		for i, val := range t.MissingFields {
-			v.MissingFields[i] = val
-		}
-	}
-	if t.ExampleInput != nil {
-		v.ExampleInput = make(map[string]any, len(t.ExampleInput))
-		for key, val := range t.ExampleInput {
-			tk := key
-			tv := val
-			v.ExampleInput[tk] = tv
-		}
-	}
-	if t.PriorInput != nil {
-		v.PriorInput = make(map[string]any, len(t.PriorInput))
-		for key, val := range t.PriorInput {
-			tk := key
-			tv := val
-			v.PriorInput[tk] = tv
-		}
-	}
-	return v
-}
-
 // ConvertToToolError creates an instance of ToolError initialized from t.
 func (t *AgentToolError) ConvertToToolError() *apitypes.ToolError {
 	v := &apitypes.ToolError{}
@@ -83,42 +19,6 @@ func (t *AgentToolError) ConvertToToolError() *apitypes.ToolError {
 	}
 	if t.Cause != nil {
 		v.Cause = transformAgentToolErrorToApitypesToolError(t.Cause)
-	}
-	return v
-}
-
-// ConvertToToolResult creates an instance of ToolResult initialized from t.
-func (t *AgentToolEvent) ConvertToToolResult() *apitypes.ToolResult {
-	v := &apitypes.ToolResult{
-		Name:    t.Name,
-		Payload: t.Payload,
-	}
-	if t.Error != nil {
-		v.Error = transformAgentToolErrorToApitypesToolError(t.Error)
-	}
-	if t.RetryHint != nil {
-		v.RetryHint = transformAgentRetryHintToApitypesRetryHint(t.RetryHint)
-	}
-	if t.Telemetry != nil {
-		v.Telemetry = transformAgentToolTelemetryToApitypesToolTelemetry(t.Telemetry)
-	}
-	return v
-}
-
-// ConvertToPlannerAnnotation creates an instance of PlannerAnnotation
-// initialized from t.
-func (t *AgentPlannerAnnotation) ConvertToPlannerAnnotation() *apitypes.PlannerAnnotation {
-	v := &apitypes.PlannerAnnotation{}
-	if t.Text != nil {
-		v.Text = *t.Text
-	}
-	if t.Labels != nil {
-		v.Labels = make(map[string]string, len(t.Labels))
-		for key, val := range t.Labels {
-			tk := key
-			tv := val
-			v.Labels[tk] = tv
-		}
 	}
 	return v
 }
@@ -182,88 +82,6 @@ func (t *AgentRunPayload) ConvertToRunInput() *apitypes.RunInput {
 	return v
 }
 
-// ConvertToRunOutput creates an instance of RunOutput initialized from t.
-func (t *AgentRunResult) ConvertToRunOutput() *apitypes.RunOutput {
-	v := &apitypes.RunOutput{
-		AgentID: t.AgentID,
-		RunID:   t.RunID,
-	}
-	v.Final = transformAgentMessageToApitypesAgentMessage(t.Final)
-	if t.ToolEvents != nil {
-		v.ToolEvents = make([]*apitypes.ToolResult, len(t.ToolEvents))
-		for i, val := range t.ToolEvents {
-			if val == nil {
-				v.ToolEvents[i] = nil
-				continue
-			}
-			v.ToolEvents[i] = transformAgentToolEventToApitypesToolResult(val)
-		}
-	}
-	if t.Notes != nil {
-		v.Notes = make([]*apitypes.PlannerAnnotation, len(t.Notes))
-		for i, val := range t.Notes {
-			if val == nil {
-				v.Notes[i] = nil
-				continue
-			}
-			v.Notes[i] = transformAgentPlannerAnnotationToApitypesPlannerAnnotation(val)
-		}
-	}
-	return v
-}
-
-// CreateFromToolTelemetry initializes t from the fields of v
-func (t *AgentToolTelemetry) CreateFromToolTelemetry(v *apitypes.ToolTelemetry) {
-	temp := &AgentToolTelemetry{
-		DurationMs: &v.DurationMs,
-		TokensUsed: &v.TokensUsed,
-		Model:      &v.Model,
-	}
-	if v.Extra != nil {
-		temp.Extra = make(map[string]any, len(v.Extra))
-		for key, val := range v.Extra {
-			tk := key
-			tv := val
-			temp.Extra[tk] = tv
-		}
-	}
-	*t = *temp
-}
-
-// CreateFromRetryHint initializes t from the fields of v
-func (t *AgentRetryHint) CreateFromRetryHint(v *apitypes.RetryHint) {
-	temp := &AgentRetryHint{
-		Reason:             v.Reason,
-		Tool:               v.Tool,
-		RestrictToTool:     &v.RestrictToTool,
-		ClarifyingQuestion: &v.ClarifyingQuestion,
-		Message:            &v.Message,
-	}
-	if v.MissingFields != nil {
-		temp.MissingFields = make([]string, len(v.MissingFields))
-		for i, val := range v.MissingFields {
-			temp.MissingFields[i] = val
-		}
-	}
-	if v.ExampleInput != nil {
-		temp.ExampleInput = make(map[string]any, len(v.ExampleInput))
-		for key, val := range v.ExampleInput {
-			tk := key
-			tv := val
-			temp.ExampleInput[tk] = tv
-		}
-	}
-	if v.PriorInput != nil {
-		temp.PriorInput = make(map[string]any, len(v.PriorInput))
-		for key, val := range v.PriorInput {
-			tk := key
-			tv := val
-			temp.PriorInput[tk] = tv
-		}
-	}
-	*t = *temp
-}
-
 // CreateFromToolError initializes t from the fields of v
 func (t *AgentToolError) CreateFromToolError(v *apitypes.ToolError) {
 	temp := &AgentToolError{
@@ -271,40 +89,6 @@ func (t *AgentToolError) CreateFromToolError(v *apitypes.ToolError) {
 	}
 	if v.Cause != nil {
 		temp.Cause = transformApitypesToolErrorToAgentToolError(v.Cause)
-	}
-	*t = *temp
-}
-
-// CreateFromToolResult initializes t from the fields of v
-func (t *AgentToolEvent) CreateFromToolResult(v *apitypes.ToolResult) {
-	temp := &AgentToolEvent{
-		Name:    v.Name,
-		Payload: v.Payload,
-	}
-	if v.Error != nil {
-		temp.Error = transformApitypesToolErrorToAgentToolError(v.Error)
-	}
-	if v.RetryHint != nil {
-		temp.RetryHint = transformApitypesRetryHintToAgentRetryHint(v.RetryHint)
-	}
-	if v.Telemetry != nil {
-		temp.Telemetry = transformApitypesToolTelemetryToAgentToolTelemetry(v.Telemetry)
-	}
-	*t = *temp
-}
-
-// CreateFromPlannerAnnotation initializes t from the fields of v
-func (t *AgentPlannerAnnotation) CreateFromPlannerAnnotation(v *apitypes.PlannerAnnotation) {
-	temp := &AgentPlannerAnnotation{
-		Text: &v.Text,
-	}
-	if v.Labels != nil {
-		temp.Labels = make(map[string]string, len(v.Labels))
-		for key, val := range v.Labels {
-			tk := key
-			tv := val
-			temp.Labels[tk] = tv
-		}
 	}
 	*t = *temp
 }
@@ -363,38 +147,6 @@ func (t *AgentRunPayload) CreateFromRunInput(v *apitypes.RunInput) {
 	*t = *temp
 }
 
-// CreateFromRunOutput initializes t from the fields of v
-func (t *AgentRunResult) CreateFromRunOutput(v *apitypes.RunOutput) {
-	temp := &AgentRunResult{
-		AgentID: v.AgentID,
-		RunID:   v.RunID,
-	}
-	if v.Final != nil {
-		temp.Final = transformApitypesAgentMessageToAgentMessage(v.Final)
-	}
-	if v.ToolEvents != nil {
-		temp.ToolEvents = make([]*AgentToolEvent, len(v.ToolEvents))
-		for i, val := range v.ToolEvents {
-			if val == nil {
-				temp.ToolEvents[i] = nil
-				continue
-			}
-			temp.ToolEvents[i] = transformApitypesToolResultToAgentToolEvent(val)
-		}
-	}
-	if v.Notes != nil {
-		temp.Notes = make([]*AgentPlannerAnnotation, len(v.Notes))
-		for i, val := range v.Notes {
-			if val == nil {
-				temp.Notes[i] = nil
-				continue
-			}
-			temp.Notes[i] = transformApitypesPlannerAnnotationToAgentPlannerAnnotation(val)
-		}
-	}
-	*t = *temp
-}
-
 // transformAgentToolErrorToApitypesToolError builds a value of type
 // *apitypes.ToolError from a value of type *AgentToolError.
 func transformAgentToolErrorToApitypesToolError(v *AgentToolError) *apitypes.ToolError {
@@ -407,79 +159,6 @@ func transformAgentToolErrorToApitypesToolError(v *AgentToolError) *apitypes.Too
 	}
 	if v.Cause != nil {
 		res.Cause = transformAgentToolErrorToApitypesToolError(v.Cause)
-	}
-
-	return res
-}
-
-// transformAgentRetryHintToApitypesRetryHint builds a value of type
-// *apitypes.RetryHint from a value of type *AgentRetryHint.
-func transformAgentRetryHintToApitypesRetryHint(v *AgentRetryHint) *apitypes.RetryHint {
-	if v == nil {
-		return nil
-	}
-	res := &apitypes.RetryHint{
-		Reason: v.Reason,
-		Tool:   v.Tool,
-	}
-	if v.RestrictToTool != nil {
-		res.RestrictToTool = *v.RestrictToTool
-	}
-	if v.ClarifyingQuestion != nil {
-		res.ClarifyingQuestion = *v.ClarifyingQuestion
-	}
-	if v.Message != nil {
-		res.Message = *v.Message
-	}
-	if v.MissingFields != nil {
-		res.MissingFields = make([]string, len(v.MissingFields))
-		for i, val := range v.MissingFields {
-			res.MissingFields[i] = val
-		}
-	}
-	if v.ExampleInput != nil {
-		res.ExampleInput = make(map[string]any, len(v.ExampleInput))
-		for key, val := range v.ExampleInput {
-			tk := key
-			tv := val
-			res.ExampleInput[tk] = tv
-		}
-	}
-	if v.PriorInput != nil {
-		res.PriorInput = make(map[string]any, len(v.PriorInput))
-		for key, val := range v.PriorInput {
-			tk := key
-			tv := val
-			res.PriorInput[tk] = tv
-		}
-	}
-
-	return res
-}
-
-// transformAgentToolTelemetryToApitypesToolTelemetry builds a value of type
-// *apitypes.ToolTelemetry from a value of type *AgentToolTelemetry.
-func transformAgentToolTelemetryToApitypesToolTelemetry(v *AgentToolTelemetry) *apitypes.ToolTelemetry {
-	if v == nil {
-		return nil
-	}
-	res := &apitypes.ToolTelemetry{}
-	if v.DurationMs != nil {
-		res.DurationMs = *v.DurationMs
-	}
-	if v.TokensUsed != nil {
-		res.TokensUsed = *v.TokensUsed
-	}
-	if v.Model != nil {
-		res.Model = *v.Model
-	}
-	if v.Extra != nil {
-		res.Extra = make(map[string]any, len(v.Extra))
-		for key, val := range v.Extra {
-			tk := key
-			tv := val
-			res.Extra[tk] = tv
-		}
 	}
 
 	return res
@@ -504,52 +183,6 @@ func transformAgentMessageToApitypesAgentMessage(v *AgentMessage) *apitypes.Agen
 	return res
 }
 
-// transformAgentToolEventToApitypesToolResult builds a value of type
-// *apitypes.ToolResult from a value of type *AgentToolEvent.
-func transformAgentToolEventToApitypesToolResult(v *AgentToolEvent) *apitypes.ToolResult {
-	if v == nil {
-		return nil
-	}
-	res := &apitypes.ToolResult{
-		Name:    v.Name,
-		Payload: v.Payload,
-	}
-	if v.Error != nil {
-		res.Error = transformAgentToolErrorToApitypesToolError(v.Error)
-	}
-	if v.RetryHint != nil {
-		res.RetryHint = transformAgentRetryHintToApitypesRetryHint(v.RetryHint)
-	}
-	if v.Telemetry != nil {
-		res.Telemetry = transformAgentToolTelemetryToApitypesToolTelemetry(v.Telemetry)
-	}
-
-	return res
-}
-
-// transformAgentPlannerAnnotationToApitypesPlannerAnnotation builds a value of
-// type *apitypes.PlannerAnnotation from a value of type
-// *AgentPlannerAnnotation.
-func transformAgentPlannerAnnotationToApitypesPlannerAnnotation(v *AgentPlannerAnnotation) *apitypes.PlannerAnnotation {
-	if v == nil {
-		return nil
-	}
-	res := &apitypes.PlannerAnnotation{}
-	if v.Text != nil {
-		res.Text = *v.Text
-	}
-	if v.Labels != nil {
-		res.Labels = make(map[string]string, len(v.Labels))
-		for key, val := range v.Labels {
-			tk := key
-			tv := val
-			res.Labels[tk] = tv
-		}
-	}
-
-	return res
-}
-
 // transformApitypesToolErrorToAgentToolError builds a value of type
 // *AgentToolError from a value of type *apitypes.ToolError.
 func transformApitypesToolErrorToAgentToolError(v *apitypes.ToolError) *AgentToolError {
@@ -561,68 +194,6 @@ func transformApitypesToolErrorToAgentToolError(v *apitypes.ToolError) *AgentToo
 	}
 	if v.Cause != nil {
 		res.Cause = transformApitypesToolErrorToAgentToolError(v.Cause)
-	}
-
-	return res
-}
-
-// transformApitypesRetryHintToAgentRetryHint builds a value of type
-// *AgentRetryHint from a value of type *apitypes.RetryHint.
-func transformApitypesRetryHintToAgentRetryHint(v *apitypes.RetryHint) *AgentRetryHint {
-	if v == nil {
-		return nil
-	}
-	res := &AgentRetryHint{
-		Reason:             v.Reason,
-		Tool:               v.Tool,
-		RestrictToTool:     &v.RestrictToTool,
-		ClarifyingQuestion: &v.ClarifyingQuestion,
-		Message:            &v.Message,
-	}
-	if v.MissingFields != nil {
-		res.MissingFields = make([]string, len(v.MissingFields))
-		for i, val := range v.MissingFields {
-			res.MissingFields[i] = val
-		}
-	}
-	if v.ExampleInput != nil {
-		res.ExampleInput = make(map[string]any, len(v.ExampleInput))
-		for key, val := range v.ExampleInput {
-			tk := key
-			tv := val
-			res.ExampleInput[tk] = tv
-		}
-	}
-	if v.PriorInput != nil {
-		res.PriorInput = make(map[string]any, len(v.PriorInput))
-		for key, val := range v.PriorInput {
-			tk := key
-			tv := val
-			res.PriorInput[tk] = tv
-		}
-	}
-
-	return res
-}
-
-// transformApitypesToolTelemetryToAgentToolTelemetry builds a value of type
-// *AgentToolTelemetry from a value of type *apitypes.ToolTelemetry.
-func transformApitypesToolTelemetryToAgentToolTelemetry(v *apitypes.ToolTelemetry) *AgentToolTelemetry {
-	if v == nil {
-		return nil
-	}
-	res := &AgentToolTelemetry{
-		DurationMs: &v.DurationMs,
-		TokensUsed: &v.TokensUsed,
-		Model:      &v.Model,
-	}
-	if v.Extra != nil {
-		res.Extra = make(map[string]any, len(v.Extra))
-		for key, val := range v.Extra {
-			tk := key
-			tv := val
-			res.Extra[tk] = tv
-		}
 	}
 
 	return res
@@ -644,51 +215,6 @@ func transformApitypesAgentMessageToAgentMessage(v *apitypes.AgentMessage) *Agen
 			tk := key
 			tv := val
 			res.Meta[tk] = tv
-		}
-	}
-
-	return res
-}
-
-// transformApitypesToolResultToAgentToolEvent builds a value of type
-// *AgentToolEvent from a value of type *apitypes.ToolResult.
-func transformApitypesToolResultToAgentToolEvent(v *apitypes.ToolResult) *AgentToolEvent {
-	if v == nil {
-		return nil
-	}
-	res := &AgentToolEvent{
-		Name:    v.Name,
-		Payload: v.Payload,
-	}
-	if v.Error != nil {
-		res.Error = transformApitypesToolErrorToAgentToolError(v.Error)
-	}
-	if v.RetryHint != nil {
-		res.RetryHint = transformApitypesRetryHintToAgentRetryHint(v.RetryHint)
-	}
-	if v.Telemetry != nil {
-		res.Telemetry = transformApitypesToolTelemetryToAgentToolTelemetry(v.Telemetry)
-	}
-
-	return res
-}
-
-// transformApitypesPlannerAnnotationToAgentPlannerAnnotation builds a value of
-// type *AgentPlannerAnnotation from a value of type
-// *apitypes.PlannerAnnotation.
-func transformApitypesPlannerAnnotationToAgentPlannerAnnotation(v *apitypes.PlannerAnnotation) *AgentPlannerAnnotation {
-	if v == nil {
-		return nil
-	}
-	res := &AgentPlannerAnnotation{
-		Text: &v.Text,
-	}
-	if v.Labels != nil {
-		res.Labels = make(map[string]string, len(v.Labels))
-		for key, val := range v.Labels {
-			tk := key
-			tv := val
-			res.Labels[tk] = tv
 		}
 	}
 

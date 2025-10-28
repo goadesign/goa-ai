@@ -9,5 +9,5 @@ package client
 
 // RunOrchestratorPath returns the URL path to the orchestrator service run HTTP endpoint.
 func RunOrchestratorPath() string {
-	return "/"
+	return "/orchestrator"
 }

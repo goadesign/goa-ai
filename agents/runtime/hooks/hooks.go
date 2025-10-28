@@ -48,11 +48,11 @@ type (
 	//	})
 	//	subscription, _ := bus.Register(sub)
 	SubscriberFunc func(ctx context.Context, event Event) error
-
-	// EventType enumerates well-known runtime events broadcast on the hook bus.
-	// Each type corresponds to a specific phase in the agent workflow lifecycle.
-	EventType string
 )
+
+// EventType enumerates well-known runtime events broadcast on the hook bus.
+// Each type corresponds to a specific phase in the agent workflow lifecycle.
+type EventType string
 
 const (
 	// RunStarted fires when a run begins execution. The Payload

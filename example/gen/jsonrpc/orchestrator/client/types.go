@@ -36,16 +36,16 @@ type RunRequestBody struct {
 // RunResponseBody is the type of the "orchestrator" service "run" endpoint
 // HTTP response body.
 type RunResponseBody struct {
-	// Identifier of the agent that produced the result
-	AgentID *string `form:"agent_id,omitempty" json:"agent_id,omitempty" xml:"agent_id,omitempty"`
-	// Identifier of the completed run
-	RunID *string `form:"run_id,omitempty" json:"run_id,omitempty" xml:"run_id,omitempty"`
-	// Final assistant response returned to the caller
-	Final *AgentMessageResponseBody `form:"final,omitempty" json:"final,omitempty" xml:"final,omitempty"`
-	// Tool events emitted during the final turn
-	ToolEvents []*AgentToolEventResponseBody `form:"tool_events,omitempty" json:"tool_events,omitempty" xml:"tool_events,omitempty"`
-	// Planner annotations captured during completion
-	Notes []*AgentPlannerAnnotationResponseBody `form:"notes,omitempty" json:"notes,omitempty" xml:"notes,omitempty"`
+	// Kind of chunk being delivered
+	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`
+	// Assistant message fragment.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Tool call scheduling notification.
+	ToolCall *AgentToolCallChunkResponseBody `form:"tool_call,omitempty" json:"tool_call,omitempty" xml:"tool_call,omitempty"`
+	// Tool result payload notification.
+	ToolResult *AgentToolResultChunkResponseBody `form:"tool_result,omitempty" json:"tool_result,omitempty" xml:"tool_result,omitempty"`
+	// Run status update.
+	Status *AgentRunStatusChunkResponseBody `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 }
 
 // AgentMessageRequestBody is used to define fields on request body types.
@@ -58,28 +58,26 @@ type AgentMessageRequestBody struct {
 	Meta map[string]any `form:"meta,omitempty" json:"meta,omitempty" xml:"meta,omitempty"`
 }
 
-// AgentMessageResponseBody is used to define fields on response body types.
-type AgentMessageResponseBody struct {
-	// Role that produced the message
-	Role *string `form:"role,omitempty" json:"role,omitempty" xml:"role,omitempty"`
-	// Message content
-	Content *string `form:"content,omitempty" json:"content,omitempty" xml:"content,omitempty"`
-	// Optional structured metadata attached to the message
-	Meta map[string]any `form:"meta,omitempty" json:"meta,omitempty" xml:"meta,omitempty"`
+// AgentToolCallChunkResponseBody is used to define fields on response body
+// types.
+type AgentToolCallChunkResponseBody struct {
+	// Tool call identifier
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Tool name
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Payload submitted to the tool
+	Payload any `form:"payload,omitempty" json:"payload,omitempty" xml:"payload,omitempty"`
 }
 
-// AgentToolEventResponseBody is used to define fields on response body types.
-type AgentToolEventResponseBody struct {
-	// Tool identifier
-	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
-	// Tool result payload when the call succeeds
-	Payload any `form:"payload,omitempty" json:"payload,omitempty" xml:"payload,omitempty"`
-	// Structured error returned by the tool
+// AgentToolResultChunkResponseBody is used to define fields on response body
+// types.
+type AgentToolResultChunkResponseBody struct {
+	// Tool call identifier
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Decoded tool result payload
+	Result any `form:"result,omitempty" json:"result,omitempty" xml:"result,omitempty"`
+	// Tool error, when the call failed
 	Error *AgentToolErrorResponseBody `form:"error,omitempty" json:"error,omitempty" xml:"error,omitempty"`
-	// Retry guidance emitted by the tool on failure
-	RetryHint *AgentRetryHintResponseBody `form:"retry_hint,omitempty" json:"retry_hint,omitempty" xml:"retry_hint,omitempty"`
-	// Telemetry metadata captured during execution
-	Telemetry *AgentToolTelemetryResponseBody `form:"telemetry,omitempty" json:"telemetry,omitempty" xml:"telemetry,omitempty"`
 }
 
 // AgentToolErrorResponseBody is used to define fields on response body types.
@@ -90,46 +88,13 @@ type AgentToolErrorResponseBody struct {
 	Cause *AgentToolErrorResponseBody `form:"cause,omitempty" json:"cause,omitempty" xml:"cause,omitempty"`
 }
 
-// AgentRetryHintResponseBody is used to define fields on response body types.
-type AgentRetryHintResponseBody struct {
-	// Categorized reason for the retry guidance
-	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
-	// Qualified tool name associated with the hint
-	Tool *string `form:"tool,omitempty" json:"tool,omitempty" xml:"tool,omitempty"`
-	// Restrict subsequent planner turns to this tool
-	RestrictToTool *bool `form:"restrict_to_tool,omitempty" json:"restrict_to_tool,omitempty" xml:"restrict_to_tool,omitempty"`
-	// Missing or invalid fields that caused the failure
-	MissingFields []string `form:"missing_fields,omitempty" json:"missing_fields,omitempty" xml:"missing_fields,omitempty"`
-	// Representative payload that satisfies validation
-	ExampleInput map[string]any `form:"example_input,omitempty" json:"example_input,omitempty" xml:"example_input,omitempty"`
-	// Payload that triggered the failure
-	PriorInput map[string]any `form:"prior_input,omitempty" json:"prior_input,omitempty" xml:"prior_input,omitempty"`
-	// Question that callers should answer to proceed
-	ClarifyingQuestion *string `form:"clarifying_question,omitempty" json:"clarifying_question,omitempty" xml:"clarifying_question,omitempty"`
-	// Human-readable guidance for logs or UI
+// AgentRunStatusChunkResponseBody is used to define fields on response body
+// types.
+type AgentRunStatusChunkResponseBody struct {
+	// Current run state
+	State *string `form:"state,omitempty" json:"state,omitempty" xml:"state,omitempty"`
+	// Optional status annotation
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
-}
-
-// AgentToolTelemetryResponseBody is used to define fields on response body
-// types.
-type AgentToolTelemetryResponseBody struct {
-	// Wall-clock duration in milliseconds
-	DurationMs *int64 `form:"duration_ms,omitempty" json:"duration_ms,omitempty" xml:"duration_ms,omitempty"`
-	// Total tokens consumed by the tool call
-	TokensUsed *int `form:"tokens_used,omitempty" json:"tokens_used,omitempty" xml:"tokens_used,omitempty"`
-	// Identifier of the model used by the tool
-	Model *string `form:"model,omitempty" json:"model,omitempty" xml:"model,omitempty"`
-	// Tool-specific telemetry key/value pairs
-	Extra map[string]any `form:"extra,omitempty" json:"extra,omitempty" xml:"extra,omitempty"`
-}
-
-// AgentPlannerAnnotationResponseBody is used to define fields on response body
-// types.
-type AgentPlannerAnnotationResponseBody struct {
-	// Annotation emitted by the planner
-	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
-	// Structured metadata associated with the note
-	Labels map[string]string `form:"labels,omitempty" json:"labels,omitempty" xml:"labels,omitempty"`
 }
 
 // NewRunRequestBody builds the HTTP request body from the payload of the "run"
@@ -172,33 +137,21 @@ func NewRunRequestBody(p *orchestrator.AgentRunPayload) *RunRequestBody {
 	return body
 }
 
-// NewRunAgentRunResultOK builds a "orchestrator" service "run" endpoint result
+// NewRunAgentRunChunkOK builds a "orchestrator" service "run" endpoint result
 // from a HTTP "OK" response.
-func NewRunAgentRunResultOK(body *RunResponseBody) *orchestrator.AgentRunResult {
-	v := &orchestrator.AgentRunResult{
-		AgentID: *body.AgentID,
-		RunID:   *body.RunID,
+func NewRunAgentRunChunkOK(body *RunResponseBody) *orchestrator.AgentRunChunk {
+	v := &orchestrator.AgentRunChunk{
+		Type:    *body.Type,
+		Message: body.Message,
 	}
-	v.Final = unmarshalAgentMessageResponseBodyToOrchestratorAgentMessage(body.Final)
-	if body.ToolEvents != nil {
-		v.ToolEvents = make([]*orchestrator.AgentToolEvent, len(body.ToolEvents))
-		for i, val := range body.ToolEvents {
-			if val == nil {
-				v.ToolEvents[i] = nil
-				continue
-			}
-			v.ToolEvents[i] = unmarshalAgentToolEventResponseBodyToOrchestratorAgentToolEvent(val)
-		}
+	if body.ToolCall != nil {
+		v.ToolCall = unmarshalAgentToolCallChunkResponseBodyToOrchestratorAgentToolCallChunk(body.ToolCall)
 	}
-	if body.Notes != nil {
-		v.Notes = make([]*orchestrator.AgentPlannerAnnotation, len(body.Notes))
-		for i, val := range body.Notes {
-			if val == nil {
-				v.Notes[i] = nil
-				continue
-			}
-			v.Notes[i] = unmarshalAgentPlannerAnnotationResponseBodyToOrchestratorAgentPlannerAnnotation(val)
-		}
+	if body.ToolResult != nil {
+		v.ToolResult = unmarshalAgentToolResultChunkResponseBodyToOrchestratorAgentToolResultChunk(body.ToolResult)
+	}
+	if body.Status != nil {
+		v.Status = unmarshalAgentRunStatusChunkResponseBodyToOrchestratorAgentRunStatusChunk(body.Status)
 	}
 
 	return v
@@ -206,42 +159,27 @@ func NewRunAgentRunResultOK(body *RunResponseBody) *orchestrator.AgentRunResult 
 
 // ValidateRunResponseBody runs the validations defined on RunResponseBody
 func ValidateRunResponseBody(body *RunResponseBody) (err error) {
-	if body.AgentID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("agent_id", "body"))
+	if body.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
 	}
-	if body.RunID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("run_id", "body"))
-	}
-	if body.Final == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("final", "body"))
-	}
-	if body.AgentID != nil {
-		if utf8.RuneCountInString(*body.AgentID) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.agent_id", *body.AgentID, utf8.RuneCountInString(*body.AgentID), 1, true))
+	if body.Type != nil {
+		if !(*body.Type == "message" || *body.Type == "tool_call" || *body.Type == "tool_result" || *body.Type == "status") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *body.Type, []any{"message", "tool_call", "tool_result", "status"}))
 		}
 	}
-	if body.RunID != nil {
-		if utf8.RuneCountInString(*body.RunID) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.run_id", *body.RunID, utf8.RuneCountInString(*body.RunID), 1, true))
-		}
-	}
-	if body.Final != nil {
-		if err2 := ValidateAgentMessageResponseBody(body.Final); err2 != nil {
+	if body.ToolCall != nil {
+		if err2 := ValidateAgentToolCallChunkResponseBody(body.ToolCall); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
-	for _, e := range body.ToolEvents {
-		if e != nil {
-			if err2 := ValidateAgentToolEventResponseBody(e); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
+	if body.ToolResult != nil {
+		if err2 := ValidateAgentToolResultChunkResponseBody(body.ToolResult); err2 != nil {
+			err = goa.MergeErrors(err, err2)
 		}
 	}
-	for _, e := range body.Notes {
-		if e != nil {
-			if err2 := ValidateAgentPlannerAnnotationResponseBody(e); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
+	if body.Status != nil {
+		if err2 := ValidateAgentRunStatusChunkResponseBody(body.Status); err2 != nil {
+			err = goa.MergeErrors(err, err2)
 		}
 	}
 	return
@@ -259,96 +197,51 @@ func ValidateAgentMessageRequestBody(body *AgentMessageRequestBody) (err error) 
 	return
 }
 
-// ValidateAgentMessageResponseBody runs the validations defined on
-// AgentMessageResponseBody
-func ValidateAgentMessageResponseBody(body *AgentMessageResponseBody) (err error) {
-	if body.Role == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("role", "body"))
+// ValidateAgentToolCallChunkResponseBody runs the validations defined on
+// AgentToolCallChunkResponseBody
+func ValidateAgentToolCallChunkResponseBody(body *AgentToolCallChunkResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
 	}
-	if body.Content == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
-	}
-	if body.Role != nil {
-		if !(*body.Role == "user" || *body.Role == "assistant" || *body.Role == "tool" || *body.Role == "system") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.role", *body.Role, []any{"user", "assistant", "tool", "system"}))
-		}
-	}
-	if body.Content != nil {
-		if utf8.RuneCountInString(*body.Content) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.content", *body.Content, utf8.RuneCountInString(*body.Content), 1, true))
-		}
-	}
-	return
-}
-
-// ValidateAgentToolEventResponseBody runs the validations defined on
-// AgentToolEventResponseBody
-func ValidateAgentToolEventResponseBody(body *AgentToolEventResponseBody) (err error) {
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID != nil {
+		if utf8.RuneCountInString(*body.ID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.id", *body.ID, utf8.RuneCountInString(*body.ID), 1, true))
+		}
 	}
 	if body.Name != nil {
 		if utf8.RuneCountInString(*body.Name) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.name", *body.Name, utf8.RuneCountInString(*body.Name), 1, true))
 		}
 	}
-	if body.RetryHint != nil {
-		if err2 := ValidateAgentRetryHintResponseBody(body.RetryHint); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
+	return
+}
+
+// ValidateAgentToolResultChunkResponseBody runs the validations defined on
+// AgentToolResultChunkResponseBody
+func ValidateAgentToolResultChunkResponseBody(body *AgentToolResultChunkResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
 	}
-	if body.Telemetry != nil {
-		if err2 := ValidateAgentToolTelemetryResponseBody(body.Telemetry); err2 != nil {
-			err = goa.MergeErrors(err, err2)
+	if body.ID != nil {
+		if utf8.RuneCountInString(*body.ID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.id", *body.ID, utf8.RuneCountInString(*body.ID), 1, true))
 		}
 	}
 	return
 }
 
-// ValidateAgentRetryHintResponseBody runs the validations defined on
-// AgentRetryHintResponseBody
-func ValidateAgentRetryHintResponseBody(body *AgentRetryHintResponseBody) (err error) {
-	if body.Reason == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("reason", "body"))
+// ValidateAgentRunStatusChunkResponseBody runs the validations defined on
+// AgentRunStatusChunkResponseBody
+func ValidateAgentRunStatusChunkResponseBody(body *AgentRunStatusChunkResponseBody) (err error) {
+	if body.State == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("state", "body"))
 	}
-	if body.Tool == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("tool", "body"))
-	}
-	if body.Reason != nil {
-		if !(*body.Reason == "invalid_arguments" || *body.Reason == "missing_fields" || *body.Reason == "malformed_response" || *body.Reason == "timeout" || *body.Reason == "rate_limited" || *body.Reason == "tool_unavailable") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"invalid_arguments", "missing_fields", "malformed_response", "timeout", "rate_limited", "tool_unavailable"}))
-		}
-	}
-	if body.Tool != nil {
-		if utf8.RuneCountInString(*body.Tool) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.tool", *body.Tool, utf8.RuneCountInString(*body.Tool), 1, true))
-		}
-	}
-	return
-}
-
-// ValidateAgentToolTelemetryResponseBody runs the validations defined on
-// AgentToolTelemetryResponseBody
-func ValidateAgentToolTelemetryResponseBody(body *AgentToolTelemetryResponseBody) (err error) {
-	if body.DurationMs != nil {
-		if *body.DurationMs < 0 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("body.duration_ms", *body.DurationMs, 0, true))
-		}
-	}
-	if body.TokensUsed != nil {
-		if *body.TokensUsed < 0 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("body.tokens_used", *body.TokensUsed, 0, true))
-		}
-	}
-	return
-}
-
-// ValidateAgentPlannerAnnotationResponseBody runs the validations defined on
-// AgentPlannerAnnotationResponseBody
-func ValidateAgentPlannerAnnotationResponseBody(body *AgentPlannerAnnotationResponseBody) (err error) {
-	if body.Text != nil {
-		if utf8.RuneCountInString(*body.Text) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.text", *body.Text, utf8.RuneCountInString(*body.Text), 1, true))
+	if body.State != nil {
+		if !(*body.State == "started" || *body.State == "paused" || *body.State == "resumed" || *body.State == "completed") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.state", *body.State, []any{"started", "paused", "resumed", "completed"}))
 		}
 	}
 	return

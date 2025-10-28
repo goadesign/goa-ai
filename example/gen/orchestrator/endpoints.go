@@ -18,6 +18,17 @@ type Endpoints struct {
 	Run goa.Endpoint
 }
 
+// RunEndpointInput holds both the payload and the server stream of the "run"
+// method.
+type RunEndpointInput struct {
+	// Payload is the method payload.
+	Payload *AgentRunPayload
+	// RequestID is the JSON-RPC request ID (available for JSON-RPC transports).
+	RequestID any
+	// Stream is the server stream used by the "run" method to send data.
+	Stream RunServerStream
+}
+
 // NewEndpoints wraps the methods of the "orchestrator" service with endpoints.
 func NewEndpoints(s Service) *Endpoints {
 	return &Endpoints{
@@ -34,7 +45,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 // service "orchestrator".
 func NewRunEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
-		p := req.(*AgentRunPayload)
-		return s.Run(ctx, p)
+		ep := req.(*RunEndpointInput)
+		return nil, s.Run(ctx, ep.Payload, ep.Stream)
 	}
 }

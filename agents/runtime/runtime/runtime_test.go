@@ -43,7 +43,7 @@ func (p *nestedPlannerStub) PlanResume(ctx context.Context, in planner.PlanResum
 func TestStartRunSetsWorkflowName(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
-		engine:  eng,
+		Engine:  eng,
 		logger:  telemetry.NoopLogger{},
 		metrics: telemetry.NoopMetrics{},
 		tracer:  telemetry.NoopTracer{},
@@ -123,7 +123,7 @@ func TestConsecutiveFailureBreaker(t *testing.T) {
 func TestStartRunForwardsWorkflowOptions(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
-		engine: eng,
+		Engine: eng,
 		agents: map[string]AgentRegistration{
 			"service.agent": {ID: "service.agent", Workflow: engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "defaultq"}},
 		},
@@ -211,7 +211,7 @@ func TestConvertRunOutputToToolResult(t *testing.T) {
 func TestAgentAsToolNestedUpdates(t *testing.T) {
 	recorder := &recordingHooks{}
 	rt := &Runtime{
-		hooks:   recorder,
+		Bus:     recorder,
 		logger:  telemetry.NoopLogger{},
 		metrics: telemetry.NoopMetrics{},
 		tracer:  telemetry.NoopTracer{},
@@ -369,7 +369,7 @@ func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 			},
 		},
 		toolSpecs: make(map[string]tools.ToolSpec),
-		hooks:     recorder,
+		Bus:       recorder,
 		logger:    telemetry.NoopLogger{},
 		metrics:   telemetry.NoopMetrics{},
 		tracer:    telemetry.NoopTracer{},
@@ -416,9 +416,9 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 		},
 	}
 	rt := &Runtime{
-		policy: &stubPolicyEngine{decision: decision},
-		runs:   store,
-		hooks:  bus,
+		Policy:   &stubPolicyEngine{decision: decision},
+		RunStore: store,
+		Bus:      bus,
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {
 				Metadata: policy.ToolMetadata{

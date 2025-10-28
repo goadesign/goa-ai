@@ -354,6 +354,7 @@ Putting everything together:
 2. DSL + codegen foundation: agent/toolset/run-policy DSL implemented with unit tests, generator data structs refactored, and tool spec/type/codec templates emitting runtime-consumable packages.
 3. Runtime loop & tool activities: Execute-tool scheduling now runs through the workflow engine using codec-aware payloads, and generated registries feed `tool_specs.Specs` into the runtime at registration time.
 4. Planner activities & workflow glue: Generated Plan/Resume activities call the runtime helpers, `ExecuteWorkflow` schedules them with DSL-derived retry/timeout options, unit tests assert both activity paths, and pause/resume signals now flow through the interrupt controller plus `PauseRun` / `ResumeRun` helpers so human-in-loop workflows can suspend deterministically.
+5. API conversions & bootstrap polish: Shared Goa-facing structs live in `agents/apitypes`, the DSL wires `CreateFrom`/`ConvertTo` so Goa emits runtime/planner conversion helpers, and the example bootstrap helper now emits per-agent `configure<MCP>Callers` stubs only when MCP toolsets are referenced (no more unused imports for MCP-free services).
 
 ### In Progress / Next
 1. **AURA parity & feature readiness**
@@ -364,10 +365,9 @@ Putting everything together:
 2. **Runtime subpackages polish**
    - Finish any remaining gaps in the `policy`, `planner`, `stream`, and `telemetry` subpackages (Pulse fan-out, Clue instrumentation, blob adapters for large payloads) now that the AURA requirements are captured above. Mongo-backed memory and session stores already exist; remaining work is mostly wiring default subscribers/adapters so downstream services can opt in without bespoke code.
 
-3. **API conversion types**
-   - Introduce `agents/apitypes` to host Goa-friendly structs (`RunInput`, `RunOutput`, `AgentMessage`, `ToolResult`, etc.) that mirror runtime/planner data but follow pointer semantics expected by Goa.
-   - Provide helpers in that package to convert to/from the runtime and planner structs so service code and generators can bridge without touching core runtime packages.
-   - Update the orchestration DSL to call `CreateFrom` / `ConvertTo` with the new apitypes, letting Goa generate conversion glue automatically while runtime/planner continue using their original value-based types.
+3. **API conversion follow-ups**
+   - Audit remaining call sites (policy hooks, CLI adapters) to ensure everything routes through the generated apitype helpers before surfacing data outside the runtime.
+   - Explore adding optional streaming chunk conversions once the runtime exposes chunk types via the DSL.
 
 4. **Docs & rollout** (✅ core docs updated)
    - `docs/dsl.md`, `docs/runtime.md`, and the chat data loop walkthrough now cover streaming, planner usage, and runtime wiring. Remaining documentation work is limited to the README refresh once the last parity features land.
@@ -2368,6 +2368,9 @@ Agent("atlas_data_agent", func() {
 - [ ] Document when to use `ExecuteAgentInline` vs `runLoop`  
 - [ ] Document codegen for agent-tools
 - [ ] Update AURA migration guide with agent-as-tool patterns
+
+**Hook/Event Parity**:
+- [x] Extend `ToolResultReceivedEvent` (and the memory subscriber payloads derived from it) with `ToolCallID` and `ParentToolCallID` so downstream services can correlate tool results with the originating call hierarchy.
 
 ### References
 

@@ -16,7 +16,7 @@ import (
 
 func TestPolicyAllowlistTrimsToolExecution(t *testing.T) {
 	recorder := &recordingHooks{}
-	rt := &Runtime{hooks: recorder, policy: &stubPolicyEngine{decision: policy.Decision{AllowedTools: []policy.ToolHandle{{ID: "svc.tools.allowed"}}}}}
+	rt := &Runtime{Bus: recorder, Policy: &stubPolicyEngine{decision: policy.Decision{AllowedTools: []policy.ToolHandle{{ID: "svc.tools.allowed"}}}}}
 	rt.toolsets = map[string]ToolsetRegistration{"svc.tools": {Execute: func(ctx context.Context, call planner.ToolCallRequest) (planner.ToolResult, error) {
 		return planner.ToolResult{
 			Name:    call.Name,

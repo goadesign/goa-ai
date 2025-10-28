@@ -234,8 +234,8 @@ func (r *Runtime) runLoop(
 			return RunOutput{}, errors.New("time budget exceeded")
 		}
 		allowed := result.ToolCalls
-		if r.policy != nil {
-			decision, err := r.policy.Decide(ctx, policy.Input{
+		if r.Policy != nil {
+			decision, err := r.Policy.Decide(ctx, policy.Input{
 				RunContext:    base.RunContext,
 				Tools:         r.toolMetadata(result.ToolCalls),
 				RetryHint:     toPolicyRetryHint(result.RetryHint),
@@ -517,11 +517,11 @@ func (r *Runtime) executeToolCalls(
 			toolRes.RetryHint = out.RetryHint
 		}
 
-		r.publishHook(
-			ctx,
-			hooks.NewToolResultReceivedEvent(runID, agentID, info.call.Name, decoded, duration, out.Telemetry, toolErr),
-			seq,
-		)
+        r.publishHook(
+            ctx,
+            hooks.NewToolResultReceivedEvent(runID, agentID, info.call.Name, info.call.ToolCallID, info.call.ParentToolCallID, decoded, duration, out.Telemetry, toolErr),
+            seq,
+        )
 
 		results = append(results, toolRes)
 	}
@@ -555,7 +555,7 @@ func (r *Runtime) runPlanActivity(
 
 // recordRunStatus upserts run metadata to the store if configured.
 func (r *Runtime) recordRunStatus(ctx context.Context, input *RunInput, status run.Status, meta map[string]any) {
-	if r.runs == nil {
+	if r.RunStore == nil {
 		return
 	}
 	rec := run.Record{
@@ -569,16 +569,16 @@ func (r *Runtime) recordRunStatus(ctx context.Context, input *RunInput, status r
 		Labels:    cloneLabels(input.Labels),
 		Metadata:  meta,
 	}
-	if err := r.runs.Upsert(ctx, rec); err != nil {
+	if err := r.RunStore.Upsert(ctx, rec); err != nil {
 		r.logWarn(ctx, "run record upsert failed", err)
 	}
 }
 
 func (r *Runtime) recordPolicyDecision(ctx context.Context, input *RunInput, decision policy.Decision) {
-	if r.runs == nil {
+	if r.RunStore == nil {
 		return
 	}
-	rec, err := r.runs.Load(ctx, input.RunID)
+	rec, err := r.RunStore.Load(ctx, input.RunID)
 	if err != nil {
 		r.logWarn(ctx, "run record load failed", err, "run_id", input.RunID)
 		return
@@ -622,17 +622,17 @@ func (r *Runtime) recordPolicyDecision(ctx context.Context, input *RunInput, dec
 	meta = appendPolicyDecisionMetadata(meta, entry)
 	rec.Metadata = meta
 
-	if err := r.runs.Upsert(ctx, rec); err != nil {
+	if err := r.RunStore.Upsert(ctx, rec); err != nil {
 		r.logWarn(ctx, "policy decision upsert failed", err)
 	}
 }
 
 // memoryReader loads the run snapshot from the memory store and wraps it in a Reader.
 func (r *Runtime) memoryReader(ctx context.Context, agentID, runID string) memory.Reader {
-	if r.memory == nil {
+	if r.Memory == nil {
 		return emptyMemoryReader{}
 	}
-	snapshot, err := r.memory.LoadRun(ctx, agentID, runID)
+	snapshot, err := r.Memory.LoadRun(ctx, agentID, runID)
 	if err != nil {
 		return emptyMemoryReader{}
 	}

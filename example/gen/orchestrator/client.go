@@ -26,11 +26,11 @@ func NewClient(run goa.Endpoint) *Client {
 }
 
 // Run calls the "run" endpoint of the "orchestrator" service.
-func (c *Client) Run(ctx context.Context, p *AgentRunPayload) (res *AgentRunResult, err error) {
+func (c *Client) Run(ctx context.Context, p *AgentRunPayload) (res RunClientStream, err error) {
 	var ires any
 	ires, err = c.RunEndpoint(ctx, p)
 	if err != nil {
 		return
 	}
-	return ires.(*AgentRunResult), nil
+	return ires.(RunClientStream), nil
 }

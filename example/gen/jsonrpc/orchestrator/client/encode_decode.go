@@ -106,7 +106,7 @@ func DecodeRunResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody
 		if err != nil {
 			return nil, goahttp.ErrValidationError("orchestrator", "run", err)
 		}
-		res := NewRunAgentRunResultOK(&body)
+		res := NewRunAgentRunChunkOK(&body)
 		return res, nil
 	}
 }
@@ -151,45 +151,35 @@ func marshalAgentMessageRequestBodyToOrchestratorAgentMessage(v *AgentMessageReq
 	return res
 }
 
-// unmarshalAgentMessageResponseBodyToOrchestratorAgentMessage builds a value
-// of type *orchestrator.AgentMessage from a value of type
-// *AgentMessageResponseBody.
-func unmarshalAgentMessageResponseBodyToOrchestratorAgentMessage(v *AgentMessageResponseBody) *orchestrator.AgentMessage {
-	res := &orchestrator.AgentMessage{
-		Role:    *v.Role,
-		Content: *v.Content,
+// unmarshalAgentToolCallChunkResponseBodyToOrchestratorAgentToolCallChunk
+// builds a value of type *orchestrator.AgentToolCallChunk from a value of type
+// *AgentToolCallChunkResponseBody.
+func unmarshalAgentToolCallChunkResponseBodyToOrchestratorAgentToolCallChunk(v *AgentToolCallChunkResponseBody) *orchestrator.AgentToolCallChunk {
+	if v == nil {
+		return nil
 	}
-	if v.Meta != nil {
-		res.Meta = make(map[string]any, len(v.Meta))
-		for key, val := range v.Meta {
-			tk := key
-			tv := val
-			res.Meta[tk] = tv
-		}
+	res := &orchestrator.AgentToolCallChunk{
+		ID:      *v.ID,
+		Name:    *v.Name,
+		Payload: v.Payload,
 	}
 
 	return res
 }
 
-// unmarshalAgentToolEventResponseBodyToOrchestratorAgentToolEvent builds a
-// value of type *orchestrator.AgentToolEvent from a value of type
-// *AgentToolEventResponseBody.
-func unmarshalAgentToolEventResponseBodyToOrchestratorAgentToolEvent(v *AgentToolEventResponseBody) *orchestrator.AgentToolEvent {
+// unmarshalAgentToolResultChunkResponseBodyToOrchestratorAgentToolResultChunk
+// builds a value of type *orchestrator.AgentToolResultChunk from a value of
+// type *AgentToolResultChunkResponseBody.
+func unmarshalAgentToolResultChunkResponseBodyToOrchestratorAgentToolResultChunk(v *AgentToolResultChunkResponseBody) *orchestrator.AgentToolResultChunk {
 	if v == nil {
 		return nil
 	}
-	res := &orchestrator.AgentToolEvent{
-		Name:    *v.Name,
-		Payload: v.Payload,
+	res := &orchestrator.AgentToolResultChunk{
+		ID:     *v.ID,
+		Result: v.Result,
 	}
 	if v.Error != nil {
 		res.Error = unmarshalAgentToolErrorResponseBodyToOrchestratorAgentToolError(v.Error)
-	}
-	if v.RetryHint != nil {
-		res.RetryHint = unmarshalAgentRetryHintResponseBodyToOrchestratorAgentRetryHint(v.RetryHint)
-	}
-	if v.Telemetry != nil {
-		res.Telemetry = unmarshalAgentToolTelemetryResponseBodyToOrchestratorAgentToolTelemetry(v.Telemetry)
 	}
 
 	return res
@@ -212,87 +202,16 @@ func unmarshalAgentToolErrorResponseBodyToOrchestratorAgentToolError(v *AgentToo
 	return res
 }
 
-// unmarshalAgentRetryHintResponseBodyToOrchestratorAgentRetryHint builds a
-// value of type *orchestrator.AgentRetryHint from a value of type
-// *AgentRetryHintResponseBody.
-func unmarshalAgentRetryHintResponseBodyToOrchestratorAgentRetryHint(v *AgentRetryHintResponseBody) *orchestrator.AgentRetryHint {
+// unmarshalAgentRunStatusChunkResponseBodyToOrchestratorAgentRunStatusChunk
+// builds a value of type *orchestrator.AgentRunStatusChunk from a value of
+// type *AgentRunStatusChunkResponseBody.
+func unmarshalAgentRunStatusChunkResponseBodyToOrchestratorAgentRunStatusChunk(v *AgentRunStatusChunkResponseBody) *orchestrator.AgentRunStatusChunk {
 	if v == nil {
 		return nil
 	}
-	res := &orchestrator.AgentRetryHint{
-		Reason:             *v.Reason,
-		Tool:               *v.Tool,
-		RestrictToTool:     v.RestrictToTool,
-		ClarifyingQuestion: v.ClarifyingQuestion,
-		Message:            v.Message,
-	}
-	if v.MissingFields != nil {
-		res.MissingFields = make([]string, len(v.MissingFields))
-		for i, val := range v.MissingFields {
-			res.MissingFields[i] = val
-		}
-	}
-	if v.ExampleInput != nil {
-		res.ExampleInput = make(map[string]any, len(v.ExampleInput))
-		for key, val := range v.ExampleInput {
-			tk := key
-			tv := val
-			res.ExampleInput[tk] = tv
-		}
-	}
-	if v.PriorInput != nil {
-		res.PriorInput = make(map[string]any, len(v.PriorInput))
-		for key, val := range v.PriorInput {
-			tk := key
-			tv := val
-			res.PriorInput[tk] = tv
-		}
-	}
-
-	return res
-}
-
-// unmarshalAgentToolTelemetryResponseBodyToOrchestratorAgentToolTelemetry
-// builds a value of type *orchestrator.AgentToolTelemetry from a value of type
-// *AgentToolTelemetryResponseBody.
-func unmarshalAgentToolTelemetryResponseBodyToOrchestratorAgentToolTelemetry(v *AgentToolTelemetryResponseBody) *orchestrator.AgentToolTelemetry {
-	if v == nil {
-		return nil
-	}
-	res := &orchestrator.AgentToolTelemetry{
-		DurationMs: v.DurationMs,
-		TokensUsed: v.TokensUsed,
-		Model:      v.Model,
-	}
-	if v.Extra != nil {
-		res.Extra = make(map[string]any, len(v.Extra))
-		for key, val := range v.Extra {
-			tk := key
-			tv := val
-			res.Extra[tk] = tv
-		}
-	}
-
-	return res
-}
-
-// unmarshalAgentPlannerAnnotationResponseBodyToOrchestratorAgentPlannerAnnotation
-// builds a value of type *orchestrator.AgentPlannerAnnotation from a value of
-// type *AgentPlannerAnnotationResponseBody.
-func unmarshalAgentPlannerAnnotationResponseBodyToOrchestratorAgentPlannerAnnotation(v *AgentPlannerAnnotationResponseBody) *orchestrator.AgentPlannerAnnotation {
-	if v == nil {
-		return nil
-	}
-	res := &orchestrator.AgentPlannerAnnotation{
-		Text: v.Text,
-	}
-	if v.Labels != nil {
-		res.Labels = make(map[string]string, len(v.Labels))
-		for key, val := range v.Labels {
-			tk := key
-			tv := val
-			res.Labels[tk] = tv
-		}
+	res := &orchestrator.AgentRunStatusChunk{
+		State:   *v.State,
+		Message: v.Message,
 	}
 
 	return res

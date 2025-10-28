@@ -152,8 +152,6 @@ func ModifyExampleFiles(_ string, roots []eval.Root, files []*codegen.File) ([]*
 	for _, svr := range r.API.Servers {
 		dir := example.Servers.Get(svr, r).Dir
 		files = patchCLIForServer(dir, svr, mcpServices, files)
-		files = patchMainForServer(dir, mcpServices, files)
-		files = patchHTTPServerSignature(dir, files)
 	}
 
 	return files, nil
@@ -243,121 +241,6 @@ func patchCLIForServer(dir string, svr *expr.ServerExpr, mcpServices []*expr.Ser
 	}
 	if end := findSectionByName(cliFile, "cli-http-end"); end != nil {
 		end.Source = ""
-	}
-	return files
-}
-
-// patchMainForServer updates cmd/<dir>/main.go to wire the MCP adapter service
-// instead of the stub implementation. We look for assignment to the MCP service
-// variable (e.g., mcpAssistantSvc) and replace the RHS with adapter constructor.
-func patchMainForServer(dir string, mcpServices []*expr.ServiceExpr, files []*codegen.File) []*codegen.File {
-	if len(mcpServices) == 0 {
-		return files
-	}
-	mainPath := filepath.Join("cmd", dir, "main.go")
-	var fmain *codegen.File
-	for _, f := range files {
-		if f.Path == mainPath {
-			fmain = f
-			break
-		}
-	}
-	if fmain == nil {
-		return files
-	}
-
-	// Determine MCP package alias from existing imports; fallback to generated alias
-	header := findSection(fmain, headerSection)
-	mcpAlias := ""
-	if header != nil {
-		if data, ok := header.Data.(map[string]any); ok {
-			if imv, ok2 := data["Imports"]; ok2 {
-				if specs, ok3 := imv.([]*codegen.ImportSpec); ok3 {
-					for _, spec := range specs {
-						if strings.Contains(spec.Path, "/gen/mcp_") {
-							mcpAlias = spec.Name
-							break
-						}
-					}
-				}
-			}
-		}
-	}
-	if mcpAlias == "" {
-		mcpAlias = codegen.Goify("mcp_"+codegen.SnakeCase(mcpServices[0].Name), false)
-	}
-
-	// Build variable root for MCP service variable name
-	varRoot := codegen.Goify("mcp_"+codegen.SnakeCase(mcpServices[0].Name), false)
-	mcpSvcVar := varRoot + "Svc"
-
-	// Replace assignment to mcp<Service>Svc with adapter constructor
-	// and also replace factory NewMcp<Service>() calls as a fallback
-	for _, s := range fmain.SectionTemplates {
-		if s.Name == headerSection {
-			continue
-		}
-		src := s.Source
-		// Primary: variable assignment replacement
-		if strings.Contains(src, mcpSvcVar+" =") {
-			lines := strings.Split(src, "\n")
-			var b strings.Builder
-			changed := false
-			for _, ln := range lines {
-				idx := strings.Index(ln, mcpSvcVar+" =")
-				if idx >= 0 {
-					lead := ln[:idx]
-					b.WriteString(lead)
-					b.WriteString(mcpSvcVar + " = " + mcpAlias + ".NewMCPAdapter(assistantSvc, nil, nil)")
-					b.WriteByte('\n')
-					changed = true
-					continue
-				}
-				b.WriteString(ln)
-				b.WriteByte('\n')
-			}
-			if changed {
-				s.Source = b.String()
-				continue
-			}
-		}
-		// Fallback: replace factory constructor call of the stub
-		svcGo := codegen.Goify(mcpServices[0].Name, true)
-		factory := "assistantapi.NewMcp" + svcGo + "()"
-		if strings.Contains(src, factory) {
-			s.Source = strings.ReplaceAll(src, factory, mcpAlias+".NewMCPAdapter(assistantSvc, nil, nil)")
-		}
-		if strings.Contains(s.Source, "handleHTTPServer(") {
-			const from = ", mcpAssistantEndpoints, orchestratorSvc, mcpAssistantSvc"
-			const to = ", orchestratorSvc, mcpAssistantSvc, mcpAssistantEndpoints"
-			if strings.Contains(s.Source, from) {
-				lines := strings.Split(s.Source, "\n")
-				for i, ln := range lines {
-					if strings.Contains(ln, from) {
-						lines[i] = strings.Replace(ln, from, to, 1)
-					}
-				}
-				s.Source = strings.Join(lines, "\n")
-			}
-		}
-	}
-	return files
-}
-
-func patchHTTPServerSignature(dir string, files []*codegen.File) []*codegen.File {
-	httpPath := filepath.Join("cmd", dir, "http.go")
-	for _, f := range files {
-		if f.Path != httpPath {
-			continue
-		}
-		for _, s := range f.SectionTemplates {
-			const sig = "func handleHTTPServer(ctx context.Context, u *url.URL, orchestratorEndpoints *orchestrator.Endpoints, orchestratorSvc orchestrator.Service, mcpAssistantSvc mcpassistant.Service, mcpAssistantEndpoints *mcpassistant.Endpoints"
-			if strings.Contains(s.Source, sig) {
-				replacement := "func handleHTTPServer(ctx context.Context, u *url.URL, orchestratorEndpoints *orchestrator.Endpoints, mcpAssistantEndpoints *mcpassistant.Endpoints, orchestratorSvc orchestrator.Service, mcpAssistantSvc mcpassistant.Service"
-				s.Source = strings.Replace(s.Source, sig, replacement, 1)
-			}
-		}
-		break
 	}
 	return files
 }

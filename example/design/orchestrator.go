@@ -1,22 +1,29 @@
 package design
 
 import (
-	agentsdsl "goa.design/goa-ai/agents/dsl"
+	. "goa.design/goa-ai/agents/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
 var _ = Service("orchestrator", func() {
 	Description("Agent service consuming the assistant MCP toolset")
 
-	HTTP(func() {
-		Path("/orchestrator")
+	JSONRPC(func() {
+		POST("/orchestrator")
 	})
 
-	agentsdsl.Agent("chat", "Chat orchestrator", func() {
-		agentsdsl.Uses(func() {
-			agentsdsl.UseMCPToolset("assistant", "assistant-mcp")
+	Agent("chat", "Chat orchestrator", func() {
+		Uses(func() {
+			UseMCPToolset("assistant", "assistant-mcp")
 		})
 	})
 
-	agentsdsl.ExposeRun("chat", false)
+	Method("run", func() {
+		Description("Invoke the chat agent")
+		Payload(AgentRunPayload)
+		StreamingResult(AgentRunChunk)
+		JSONRPC(func() {
+			ServerSentEvents(func() {})
+		})
+	})
 })

@@ -5,14 +5,14 @@
 package pulse
 
 import (
-	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"time"
+    "context"
+    "encoding/json"
+    "errors"
+    "fmt"
+    "time"
 
-	"goa.design/goa-ai/agents/runtime/stream"
-	"goa.design/goa-ai/features/stream/pulse/clients/pulse"
+    "goa.design/goa-ai/agents/runtime/stream"
+    "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 )
 
 type (
@@ -43,7 +43,7 @@ type (
 	// envelope wraps runtime events for transmission over Pulse streams.
 	// It adds metadata and serializes the event content as JSON.
 	envelope struct {
-		// Type identifies the event kind (e.g., "tool_update", "assistant_reply").
+    // Type identifies the event kind (e.g., "tool_end", "assistant_reply").
 		Type string `json:"type"`
 		// RunID links the event to a specific workflow execution.
 		RunID string `json:"run_id"`
@@ -81,27 +81,27 @@ func NewSink(opts Options) (*Sink, error) {
 // wraps the event in an envelope, marshals it to JSON, and publishes it via the
 // Pulse client. Thread-safe for concurrent calls.
 func (s *Sink) Send(ctx context.Context, event stream.Event) error {
-	streamID, err := s.opts.streamID(event)
+    streamID, err := s.opts.streamID(event)
+    if err != nil {
+        return err
+    }
+    handle, err := s.client.Stream(streamID)
+    if err != nil {
+        return err
+    }
+    env := envelope{
+        Type:      string(event.Type()),
+        RunID:     event.RunID(),
+        Timestamp: time.Now().UTC(),
+        Payload:   event.Payload(),
+    }
+    payload, err := s.opts.marshalEnvelope(env)
 	if err != nil {
 		return err
 	}
-	handle, err := s.client.Stream(streamID)
-	if err != nil {
-		return err
-	}
-	env := envelope{
-		Type:      string(event.Type),
-		RunID:     event.RunID,
-		Timestamp: time.Now().UTC(),
-		Payload:   event.Content,
-	}
-	payload, err := s.opts.marshalEnvelope(env)
-	if err != nil {
-		return err
-	}
-	if _, err := handle.Add(ctx, string(event.Type), payload); err != nil {
-		return err
-	}
+    if _, err := handle.Add(ctx, string(event.Type()), payload); err != nil {
+        return err
+    }
 	return nil
 }
 
@@ -115,10 +115,10 @@ func (s *Sink) Close(ctx context.Context) error {
 // defaultStreamID derives the Pulse stream name from the event's RunID.
 // Returns an error if the RunID is empty.
 func defaultStreamID(event stream.Event) (string, error) {
-	if event.RunID == "" {
-		return "", errors.New("stream event missing run id")
-	}
-	return fmt.Sprintf("run/%s", event.RunID), nil
+    if event.RunID() == "" {
+        return "", errors.New("stream event missing run id")
+    }
+    return fmt.Sprintf("run/%s", event.RunID()), nil
 }
 
 // defaultMarshal serializes an envelope to JSON.

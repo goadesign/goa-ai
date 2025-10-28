@@ -14,7 +14,7 @@ import (
 // Agent service consuming the assistant MCP toolset
 type Service interface {
 	// Invoke the chat agent
-	Run(context.Context, *AgentRunPayload) (res *AgentRunResult, err error)
+	Run(context.Context, *AgentRunPayload, RunServerStream) (err error)
 }
 
 // APIName is the name of the API as defined in the design.
@@ -33,6 +33,61 @@ const ServiceName = "orchestrator"
 // MethodKey key.
 var MethodNames = [1]string{"run"}
 
+// RunEvent is the interface implemented by the result type for the run method.
+type RunEvent interface {
+	isRunEvent()
+}
+
+// isRunEvent implements the RunEvent interface.
+func (*AgentRunChunk) isRunEvent() {}
+
+// RunServerStream allows streaming instances of *AgentRunChunk over SSE.
+type RunServerStream interface {
+	// Send streams JSON-RPC notifications with "AgentRunChunk". Notifications do
+	// not expect a response.
+	// IMPORTANT: Send only sends JSON-RPC notifications. Use SendAndClose to send
+	// a final response.
+	Send(ctx context.Context, event RunEvent) error
+	// SendAndClose sends a final response with "AgentRunChunk" and closes the
+	// stream.
+	// The result will be sent as a JSON-RPC response with the original request ID.
+	// If the result has an ID field populated, that ID will be used instead of the
+	// request ID.
+	SendAndClose(ctx context.Context, event RunEvent) error
+	// SendError sends a JSON-RPC error response.
+	SendError(ctx context.Context, id string, err error) error
+}
+
+// RunClientStream allows streaming instances of *AgentRunChunk to the client.
+type RunClientStream interface {
+	// Recv reads instances of "AgentRunChunk" from the stream.
+	Recv() (*AgentRunChunk, error)
+	// RecvWithContext reads instances of "AgentRunChunk" from the stream with
+	// context.
+	RecvWithContext(context.Context) (*AgentRunChunk, error)
+}
+
+// Stream defines the interface for managing an SSE streaming connection in the
+// orchestrator server. It allows sending notifications and final responses.
+// This interface is used by the service to interact with clients over SSE
+// using JSON-RPC.
+type Stream interface {
+	// Send sends an event (notification or response) to the client.
+	// For notifications, the result should not have an ID field.
+	// For responses, the result must have an ID field.
+	// Accepted types: *AgentRunChunk
+	Send(ctx context.Context, event Event) error
+}
+
+// Event is the interface implemented by all result types that can be sent via
+// the orchestrator Stream.
+type Event interface {
+	isorchestratorEvent()
+}
+
+// isorchestratorEvent implements the Event interface.
+func (*AgentRunChunk) isorchestratorEvent() {}
+
 // Single conversational message in the agent transcript.
 type AgentMessage struct {
 	// Role that produced the message
@@ -43,32 +98,18 @@ type AgentMessage struct {
 	Meta map[string]any
 }
 
-// Planner observation persisted alongside run history.
-type AgentPlannerAnnotation struct {
-	// Annotation emitted by the planner
-	Text *string
-	// Structured metadata associated with the note
-	Labels map[string]string
-}
-
-// Structured guidance emitted after a tool failure.
-type AgentRetryHint struct {
-	// Categorized reason for the retry guidance
-	Reason string
-	// Qualified tool name associated with the hint
-	Tool string
-	// Restrict subsequent planner turns to this tool
-	RestrictToTool *bool
-	// Missing or invalid fields that caused the failure
-	MissingFields []string
-	// Representative payload that satisfies validation
-	ExampleInput map[string]any
-	// Payload that triggered the failure
-	PriorInput map[string]any
-	// Question that callers should answer to proceed
-	ClarifyingQuestion *string
-	// Human-readable guidance for logs or UI
+// AgentRunChunk is the result type of the orchestrator service run method.
+type AgentRunChunk struct {
+	// Kind of chunk being delivered
+	Type string
+	// Assistant message fragment.
 	Message *string
+	// Tool call scheduling notification.
+	ToolCall *AgentToolCallChunk
+	// Tool result payload notification.
+	ToolResult *AgentToolResultChunk
+	// Run status update.
+	Status *AgentRunStatusChunk
 }
 
 // AgentRunPayload is the payload type of the orchestrator service run method.
@@ -89,18 +130,22 @@ type AgentRunPayload struct {
 	Metadata map[string]any
 }
 
-// AgentRunResult is the result type of the orchestrator service run method.
-type AgentRunResult struct {
-	// Identifier of the agent that produced the result
-	AgentID string
-	// Identifier of the completed run
-	RunID string
-	// Final assistant response returned to the caller
-	Final *AgentMessage
-	// Tool events emitted during the final turn
-	ToolEvents []*AgentToolEvent
-	// Planner annotations captured during completion
-	Notes []*AgentPlannerAnnotation
+// Run status change emitted during streaming.
+type AgentRunStatusChunk struct {
+	// Current run state
+	State string
+	// Optional status annotation
+	Message *string
+}
+
+// Chunk describing a scheduled tool call.
+type AgentToolCallChunk struct {
+	// Tool call identifier
+	ID string
+	// Tool name
+	Name string
+	// Payload submitted to the tool
+	Payload any
 }
 
 // Structured tool error chain captured during execution.
@@ -111,28 +156,12 @@ type AgentToolError struct {
 	Cause *AgentToolError
 }
 
-// Outcome of an executed tool call.
-type AgentToolEvent struct {
-	// Tool identifier
-	Name string
-	// Tool result payload when the call succeeds
-	Payload any
-	// Structured error returned by the tool
+// Chunk containing the result of a tool call.
+type AgentToolResultChunk struct {
+	// Tool call identifier
+	ID string
+	// Decoded tool result payload
+	Result any
+	// Tool error, when the call failed
 	Error *AgentToolError
-	// Retry guidance emitted by the tool on failure
-	RetryHint *AgentRetryHint
-	// Telemetry metadata captured during execution
-	Telemetry *AgentToolTelemetry
-}
-
-// Telemetry metadata gathered during tool execution.
-type AgentToolTelemetry struct {
-	// Wall-clock duration in milliseconds
-	DurationMs *int64
-	// Total tokens consumed by the tool call
-	TokensUsed *int
-	// Identifier of the model used by the tool
-	Model *string
-	// Tool-specific telemetry key/value pairs
-	Extra map[string]any
 }

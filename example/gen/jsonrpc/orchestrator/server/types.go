@@ -36,40 +36,38 @@ type RunRequestBody struct {
 // RunResponseBody is the type of the "orchestrator" service "run" endpoint
 // HTTP response body.
 type RunResponseBody struct {
-	// Identifier of the agent that produced the result
-	AgentID string `form:"agent_id" json:"agent_id" xml:"agent_id"`
-	// Identifier of the completed run
-	RunID string `form:"run_id" json:"run_id" xml:"run_id"`
-	// Final assistant response returned to the caller
-	Final *AgentMessageResponseBody `form:"final" json:"final" xml:"final"`
-	// Tool events emitted during the final turn
-	ToolEvents []*AgentToolEventResponseBody `form:"tool_events,omitempty" json:"tool_events,omitempty" xml:"tool_events,omitempty"`
-	// Planner annotations captured during completion
-	Notes []*AgentPlannerAnnotationResponseBody `form:"notes,omitempty" json:"notes,omitempty" xml:"notes,omitempty"`
+	// Kind of chunk being delivered
+	Type string `form:"type" json:"type" xml:"type"`
+	// Assistant message fragment.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Tool call scheduling notification.
+	ToolCall *AgentToolCallChunkResponseBody `form:"tool_call,omitempty" json:"tool_call,omitempty" xml:"tool_call,omitempty"`
+	// Tool result payload notification.
+	ToolResult *AgentToolResultChunkResponseBody `form:"tool_result,omitempty" json:"tool_result,omitempty" xml:"tool_result,omitempty"`
+	// Run status update.
+	Status *AgentRunStatusChunkResponseBody `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 }
 
-// AgentMessageResponseBody is used to define fields on response body types.
-type AgentMessageResponseBody struct {
-	// Role that produced the message
-	Role string `form:"role" json:"role" xml:"role"`
-	// Message content
-	Content string `form:"content" json:"content" xml:"content"`
-	// Optional structured metadata attached to the message
-	Meta map[string]any `form:"meta,omitempty" json:"meta,omitempty" xml:"meta,omitempty"`
-}
-
-// AgentToolEventResponseBody is used to define fields on response body types.
-type AgentToolEventResponseBody struct {
-	// Tool identifier
+// AgentToolCallChunkResponseBody is used to define fields on response body
+// types.
+type AgentToolCallChunkResponseBody struct {
+	// Tool call identifier
+	ID string `form:"id" json:"id" xml:"id"`
+	// Tool name
 	Name string `form:"name" json:"name" xml:"name"`
-	// Tool result payload when the call succeeds
+	// Payload submitted to the tool
 	Payload any `form:"payload,omitempty" json:"payload,omitempty" xml:"payload,omitempty"`
-	// Structured error returned by the tool
+}
+
+// AgentToolResultChunkResponseBody is used to define fields on response body
+// types.
+type AgentToolResultChunkResponseBody struct {
+	// Tool call identifier
+	ID string `form:"id" json:"id" xml:"id"`
+	// Decoded tool result payload
+	Result any `form:"result,omitempty" json:"result,omitempty" xml:"result,omitempty"`
+	// Tool error, when the call failed
 	Error *AgentToolErrorResponseBody `form:"error,omitempty" json:"error,omitempty" xml:"error,omitempty"`
-	// Retry guidance emitted by the tool on failure
-	RetryHint *AgentRetryHintResponseBody `form:"retry_hint,omitempty" json:"retry_hint,omitempty" xml:"retry_hint,omitempty"`
-	// Telemetry metadata captured during execution
-	Telemetry *AgentToolTelemetryResponseBody `form:"telemetry,omitempty" json:"telemetry,omitempty" xml:"telemetry,omitempty"`
 }
 
 // AgentToolErrorResponseBody is used to define fields on response body types.
@@ -80,46 +78,13 @@ type AgentToolErrorResponseBody struct {
 	Cause *AgentToolErrorResponseBody `form:"cause,omitempty" json:"cause,omitempty" xml:"cause,omitempty"`
 }
 
-// AgentRetryHintResponseBody is used to define fields on response body types.
-type AgentRetryHintResponseBody struct {
-	// Categorized reason for the retry guidance
-	Reason string `form:"reason" json:"reason" xml:"reason"`
-	// Qualified tool name associated with the hint
-	Tool string `form:"tool" json:"tool" xml:"tool"`
-	// Restrict subsequent planner turns to this tool
-	RestrictToTool *bool `form:"restrict_to_tool,omitempty" json:"restrict_to_tool,omitempty" xml:"restrict_to_tool,omitempty"`
-	// Missing or invalid fields that caused the failure
-	MissingFields []string `form:"missing_fields,omitempty" json:"missing_fields,omitempty" xml:"missing_fields,omitempty"`
-	// Representative payload that satisfies validation
-	ExampleInput map[string]any `form:"example_input,omitempty" json:"example_input,omitempty" xml:"example_input,omitempty"`
-	// Payload that triggered the failure
-	PriorInput map[string]any `form:"prior_input,omitempty" json:"prior_input,omitempty" xml:"prior_input,omitempty"`
-	// Question that callers should answer to proceed
-	ClarifyingQuestion *string `form:"clarifying_question,omitempty" json:"clarifying_question,omitempty" xml:"clarifying_question,omitempty"`
-	// Human-readable guidance for logs or UI
+// AgentRunStatusChunkResponseBody is used to define fields on response body
+// types.
+type AgentRunStatusChunkResponseBody struct {
+	// Current run state
+	State string `form:"state" json:"state" xml:"state"`
+	// Optional status annotation
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
-}
-
-// AgentToolTelemetryResponseBody is used to define fields on response body
-// types.
-type AgentToolTelemetryResponseBody struct {
-	// Wall-clock duration in milliseconds
-	DurationMs *int64 `form:"duration_ms,omitempty" json:"duration_ms,omitempty" xml:"duration_ms,omitempty"`
-	// Total tokens consumed by the tool call
-	TokensUsed *int `form:"tokens_used,omitempty" json:"tokens_used,omitempty" xml:"tokens_used,omitempty"`
-	// Identifier of the model used by the tool
-	Model *string `form:"model,omitempty" json:"model,omitempty" xml:"model,omitempty"`
-	// Tool-specific telemetry key/value pairs
-	Extra map[string]any `form:"extra,omitempty" json:"extra,omitempty" xml:"extra,omitempty"`
-}
-
-// AgentPlannerAnnotationResponseBody is used to define fields on response body
-// types.
-type AgentPlannerAnnotationResponseBody struct {
-	// Annotation emitted by the planner
-	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
-	// Structured metadata associated with the note
-	Labels map[string]string `form:"labels,omitempty" json:"labels,omitempty" xml:"labels,omitempty"`
 }
 
 // AgentMessageRequestBody is used to define fields on request body types.
@@ -134,33 +99,19 @@ type AgentMessageRequestBody struct {
 
 // NewRunResponseBody builds the HTTP response body from the result of the
 // "run" endpoint of the "orchestrator" service.
-func NewRunResponseBody(res *orchestrator.AgentRunResult) *RunResponseBody {
+func NewRunResponseBody(res *orchestrator.AgentRunChunk) *RunResponseBody {
 	body := &RunResponseBody{
-		AgentID: res.AgentID,
-		RunID:   res.RunID,
+		Type:    res.Type,
+		Message: res.Message,
 	}
-	if res.Final != nil {
-		body.Final = marshalOrchestratorAgentMessageToAgentMessageResponseBody(res.Final)
+	if res.ToolCall != nil {
+		body.ToolCall = marshalOrchestratorAgentToolCallChunkToAgentToolCallChunkResponseBody(res.ToolCall)
 	}
-	if res.ToolEvents != nil {
-		body.ToolEvents = make([]*AgentToolEventResponseBody, len(res.ToolEvents))
-		for i, val := range res.ToolEvents {
-			if val == nil {
-				body.ToolEvents[i] = nil
-				continue
-			}
-			body.ToolEvents[i] = marshalOrchestratorAgentToolEventToAgentToolEventResponseBody(val)
-		}
+	if res.ToolResult != nil {
+		body.ToolResult = marshalOrchestratorAgentToolResultChunkToAgentToolResultChunkResponseBody(res.ToolResult)
 	}
-	if res.Notes != nil {
-		body.Notes = make([]*AgentPlannerAnnotationResponseBody, len(res.Notes))
-		for i, val := range res.Notes {
-			if val == nil {
-				body.Notes[i] = nil
-				continue
-			}
-			body.Notes[i] = marshalOrchestratorAgentPlannerAnnotationToAgentPlannerAnnotationResponseBody(val)
-		}
+	if res.Status != nil {
+		body.Status = marshalOrchestratorAgentRunStatusChunkToAgentRunStatusChunkResponseBody(res.Status)
 	}
 	return body
 }

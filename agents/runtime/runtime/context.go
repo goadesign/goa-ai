@@ -57,7 +57,7 @@ func newAgentContext(opts agentContextOptions) *agentContext {
 		runID:   opts.runID,
 		turnID:  opts.turnID,
 		memory:  reader,
-		hooks:   rt.hooks,
+		hooks:   rt.Bus,
 		logger:  logger,
 		metrics: metrics,
 		tracer:  tracer,

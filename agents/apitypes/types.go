@@ -210,10 +210,13 @@ func FromRuntimeRunInput(in runtimeruntime.RunInput) *RunInput {
 
 // ToRuntimeRunOutput converts API RunOutput into the runtime representation.
 func ToRuntimeRunOutput(in *RunOutput) runtimeruntime.RunOutput {
-	out := runtimeruntime.RunOutput{
-		AgentID: in.AgentID,
-		RunID:   in.RunID,
-	}
+    if in == nil {
+        return runtimeruntime.RunOutput{}
+    }
+    out := runtimeruntime.RunOutput{
+        AgentID: in.AgentID,
+        RunID:   in.RunID,
+    }
 	if in.Final != nil {
 		out.Final = toPlannerAgentMessage(in.Final)
 	}

@@ -8,9 +8,13 @@
 package client
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"sync"
 
 	goahttp "goa.design/goa/v3/http"
@@ -21,6 +25,8 @@ import (
 type Client struct {
 	// Doer is the HTTP client used to make requests to the orchestrator service.
 	Doer goahttp.Doer
+	// Run Doer is the HTTP client used to make requests to the run endpoint.
+	RunDoer goahttp.Doer
 	// RestoreResponseBody controls whether the response bodies are reset after
 	// decoding so they can be read again.
 	RestoreResponseBody bool
@@ -48,6 +54,7 @@ func NewClient(
 
 	return &Client{
 		Doer:                doer,
+		RunDoer:             doer,
 		RestoreResponseBody: restoreBody,
 		scheme:              scheme,
 		host:                host,
@@ -60,8 +67,7 @@ func NewClient(
 // service run method.
 func (c *Client) Run() goa.Endpoint {
 	var (
-		encodeRequest  = EncodeRunRequest(c.encoder)
-		decodeResponse = DecodeRunResponse(c.decoder, c.RestoreResponseBody)
+		encodeRequest = EncodeRunRequest(c.encoder)
 	)
 	return func(ctx context.Context, v any) (any, error) {
 		req, err := c.BuildRunRequest(ctx, v)
@@ -71,10 +77,31 @@ func (c *Client) Run() goa.Endpoint {
 		if err := encodeRequest(req, v); err != nil {
 			return nil, err
 		}
+		// For SSE endpoints, send JSON-RPC request and establish stream
 		resp, err := c.Doer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("orchestrator", "run", err)
 		}
-		return decodeResponse(resp)
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return nil, goahttp.ErrInvalidResponse("orchestrator", "run", resp.StatusCode, string(body))
+		}
+
+		contentType := resp.Header.Get("Content-Type")
+		if contentType != "" && !strings.HasPrefix(contentType, "text/event-stream") {
+			resp.Body.Close()
+			return nil, fmt.Errorf("unexpected content type: %s (expected text/event-stream)", contentType)
+		}
+
+		// Create the SSE client stream
+		stream := &RunClientStream{
+			resp:    resp,
+			reader:  bufio.NewReader(resp.Body),
+			decoder: c.decoder,
+		}
+
+		return stream, nil
 	}
 }

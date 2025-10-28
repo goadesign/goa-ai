@@ -114,7 +114,7 @@ func main() {
 			} else if u.Port() == "" {
 				u.Host = net.JoinHostPort(u.Host, "80")
 			}
-			handleHTTPServer(ctx, u, orchestratorEndpoints, orchestratorSvc, mcpAssistantSvc, mcpAssistantEndpoints, &wg, errc, *dbgF)
+			handleHTTPServer(ctx, u, orchestratorEndpoints, mcpAssistantEndpoints, orchestratorSvc, mcpAssistantSvc, &wg, errc, *dbgF)
 		}
 
 	default:

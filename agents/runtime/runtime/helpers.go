@@ -190,14 +190,14 @@ func (r *Runtime) logWarn(ctx context.Context, msg string, err error, kv ...any)
 // baseEvent fields. A future enhancement could update event constructors to accept
 // turn tracking parameters directly for a cleaner implementation.
 func (r *Runtime) publishHook(ctx context.Context, evt hooks.Event, seq *turnSequencer) {
-	if r.hooks == nil {
+	if r.Bus == nil {
 		return
 	}
 	// Stamp the event with turn tracking if sequencer is provided
 	if seq != nil {
 		stampEventWithTurn(evt, seq)
 	}
-	if err := r.hooks.Publish(ctx, evt); err != nil {
+	if err := r.Bus.Publish(ctx, evt); err != nil {
 		r.logWarn(ctx, "hook publish failed", err, "event", evt.Type())
 	}
 }

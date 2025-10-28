@@ -34,10 +34,10 @@ type (
 	}
 
 	// captureSink stores stream events for inspection in tests/examples.
-	captureSink struct {
-		mu     sync.Mutex
-		events []stream.Event
-	}
+    captureSink struct {
+        mu     sync.Mutex
+        events []stream.Event
+    }
 
 	// exampleEngine records workflows and activities so the harness can execute
 	// them synchronously.
@@ -95,13 +95,16 @@ func NewRuntimeHarnessWithSink(ctx context.Context, sink stream.Sink) (*RuntimeH
 	mem := memoryinmem.New()
 	runs := runinmem.New()
 
-	rt := agentsruntime.New(agentsruntime.Options{
-		Engine:      eng,
-		MemoryStore: mem,
-		RunStore:    runs,
-		Stream:      sink,
-		// Logger, Metrics, Tracer: omitted, defaults to noop for examples
-	})
+    rt := agentsruntime.New(agentsruntime.Options{
+        Engine:      eng,
+        MemoryStore: mem,
+        RunStore:    runs,
+        Stream:      sink,
+        // Logger, Metrics, Tracer: omitted, defaults to noop for examples
+    })
+    // Generated workflow and activities use agentsruntime.Default(); set it here
+    // so in-process execution uses this harness runtime instance.
+    agentsruntime.SetDefault(rt)
 
 	if err := rt.RegisterModel(chatModelID, newStreamingModel()); err != nil {
 		return nil, fmt.Errorf("register model: %w", err)
@@ -169,10 +172,10 @@ func (h *RuntimeHarness) StreamEvents() []stream.Event {
 
 // Send appends the event to the internal buffer for later inspection.
 func (s *captureSink) Send(ctx context.Context, event stream.Event) error {
-	s.mu.Lock()
-	s.events = append(s.events, event)
-	s.mu.Unlock()
-	return nil
+    s.mu.Lock()
+    s.events = append(s.events, event)
+    s.mu.Unlock()
+    return nil
 }
 
 // Close is a no-op for the capture sink.

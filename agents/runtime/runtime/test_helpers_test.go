@@ -266,9 +266,9 @@ func newTestRuntimeWithPlanner(agentID string, pl planner.Planner) *Runtime {
 		logger:    telemetry.NoopLogger{},
 		metrics:   telemetry.NoopMetrics{},
 		tracer:    telemetry.NoopTracer{},
-		hooks:     noopHooks{},
+		Bus:       noopHooks{},
 		models:    make(map[string]model.Client),
-		runs:      runinmem.New(),
+		RunStore:  runinmem.New(),
 	}
 }
 

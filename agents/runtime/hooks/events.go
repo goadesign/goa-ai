@@ -26,11 +26,30 @@ type (
 	//	    return nil
 	//	}
 	Event interface {
+		// Type returns the specific event type constant (e.g., RunStarted, ToolCallScheduled).
+		// Subscribers use this to filter events or route to specific handlers without
+		// type assertions.
 		Type() EventType
+		// RunID returns the unique identifier for the workflow run that produced this event.
+		// All events within a single run execution share the same run ID. This allows
+		// correlation across distributed systems and enables filtering events by run.
 		RunID() string
+		// AgentID returns the agent identifier that triggered this event. Subscribers can
+		// use this to filter events by agent when multiple agents run in the same system.
 		AgentID() string
+		// Timestamp returns the Unix timestamp in milliseconds when the event occurred.
+		// Events are timestamped at creation, not at delivery, so subscribers can calculate
+		// durations and latencies between related events.
 		Timestamp() int64
+		// TurnID returns the conversational turn identifier if turn tracking is active,
+		// empty string otherwise. A turn groups events for a single user interaction cycle
+		// (e.g., from user message through final assistant response). UI systems use this
+		// to render threaded conversations.
 		TurnID() string
+		// SeqInTurn returns the monotonic sequence number of this event within its turn,
+		// starting at 0. When TurnID is empty, SeqInTurn is 0. This ordering allows
+		// deterministic replay and helps UIs render events in the correct order even when
+		// delivery is out of sequence.
 		SeqInTurn() int
 	}
 
@@ -58,18 +77,44 @@ type (
 	// RunPausedEvent fires when a run is intentionally paused.
 	RunPausedEvent struct {
 		baseEvent
-		Reason      string
+		// Reason provides a human-readable explanation for why the run was paused.
+		// Examples: "user_requested", "approval_required", "manual_review_needed".
+		// Subscribers can use this to categorize pause events and display appropriate
+		// messages to end users.
+		Reason string
+		// RequestedBy identifies the actor who initiated the pause (e.g., user ID,
+		// service name, or "policy_engine"). This enables audit logging and attribution
+		// for governance workflows.
 		RequestedBy string
-		Labels      map[string]string
-		Metadata    map[string]any
+		// Labels carries optional key-value metadata for categorizing the pause event.
+		// These labels are propagated from the pause request and can be used for filtering,
+		// reporting, or triggering downstream workflows. Nil if no labels were provided.
+		Labels map[string]string
+		// Metadata holds arbitrary structured data attached to the pause request for audit
+		// trails or workflow-specific logic (e.g., approval ticket IDs, escalation reasons).
+		// The runtime persists this alongside the run status. Nil if no metadata was provided.
+		Metadata map[string]any
 	}
 
 	// RunResumedEvent fires when a paused run resumes.
 	RunResumedEvent struct {
 		baseEvent
-		Notes        string
-		RequestedBy  string
-		Labels       map[string]string
+		// Notes carries optional human-readable context provided when resuming the run.
+		// This might include instructions for the planner ("focus on X"), approval
+		// summaries, or other guidance. Empty if no notes were provided with the resume request.
+		Notes string
+		// RequestedBy identifies the actor who initiated the resume (e.g., user ID,
+		// service name, or "approval_system"). This enables audit logging and attribution
+		// for governance workflows.
+		RequestedBy string
+		// Labels carries optional key-value metadata for categorizing the resume event.
+		// These labels are propagated from the resume request and can be used for filtering,
+		// reporting, or triggering downstream workflows. Nil if no labels were provided.
+		Labels map[string]string
+		// MessageCount indicates how many new conversational messages were injected when
+		// resuming the run. When greater than zero, these messages are appended to the
+		// planner's context before execution continues. Subscribers can use this to track
+		// human-in-the-loop interventions.
 		MessageCount int
 	}
 
@@ -98,6 +143,11 @@ type (
 	// a result or error.
 	ToolResultReceivedEvent struct {
 		baseEvent
+		// ToolCallID uniquely identifies the tool invocation that produced this result.
+		ToolCallID string
+		// ParentToolCallID identifies the parent tool call if this tool was invoked by another tool.
+		// Empty when the tool call was scheduled directly by the planner.
+		ParentToolCallID string
 		// ToolName is the fully qualified tool identifier that was executed.
 		ToolName string
 		// Result contains the tool's output payload. Nil if Error is set.
@@ -169,10 +219,29 @@ type (
 	// systems can audit allowlists, cap adjustments, and metadata applied for a turn.
 	PolicyDecisionEvent struct {
 		baseEvent
+		// AllowedTools lists the fully qualified tool identifiers that the policy engine
+		// permitted for this turn. The runtime enforces this allowlist: planners can only
+		// invoke tools in this list. An empty slice means no tools are allowed for this turn,
+		// forcing the planner to produce a final response. Subscribers use this for security
+		// auditing and debugging tool restrictions.
 		AllowedTools []string
-		Caps         policy.CapsState
-		Labels       map[string]string
-		Metadata     map[string]any
+		// Caps reflects the updated execution budgets after policy evaluation for this turn.
+		// This includes remaining tool call limits, consecutive failure thresholds, and time
+		// budgets. Policies may adjust these dynamically based on observed behavior (e.g.,
+		// reducing limits after repeated failures). Subscribers can monitor cap consumption
+		// to predict run termination or trigger alerts.
+		Caps policy.CapsState
+		// Labels carries policy-applied metadata merged into the run context and propagated
+		// to subsequent turns. Examples: {"circuit_breaker": "active", "policy_version": "v2"}.
+		// These labels appear in downstream telemetry, memory records, and hooks. Subscribers
+		// can use them to correlate policy decisions with run outcomes. Nil if the policy did
+		// not add labels.
+		Labels map[string]string
+		// Metadata holds policy-specific structured data for audit trails and compliance
+		// reporting (e.g., approval IDs, justification codes, external system responses).
+		// The runtime persists this alongside run records. Subscribers can extract this for
+		// governance dashboards or regulatory logging. Nil if the policy did not provide metadata.
+		Metadata map[string]any
 	}
 
 	// baseEvent holds common fields shared by all event types. It is embedded
@@ -283,7 +352,7 @@ func NewToolCallScheduledEvent(
 // err capture the tool outcome; duration is the wall-clock execution time;
 // telemetry carries structured observability metadata (nil if not collected).
 func NewToolResultReceivedEvent(
-	runID, agentID, toolName string,
+	runID, agentID, toolName, toolCallID, parentToolCallID string,
 	result any,
 	duration time.Duration,
 	telemetry *telemetry.ToolTelemetry,
@@ -291,6 +360,8 @@ func NewToolResultReceivedEvent(
 ) *ToolResultReceivedEvent {
 	return &ToolResultReceivedEvent{
 		baseEvent: newBaseEvent(runID, agentID),
+		ToolCallID:       toolCallID,
+		ParentToolCallID: parentToolCallID,
 		ToolName:  toolName,
 		Result:    result,
 		Duration:  duration,

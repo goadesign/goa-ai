@@ -1,17 +1,31 @@
 package assistantapi
 
 import (
-	context "context"
+	"context"
 	"fmt"
 
-	orchestrator "example.com/assistant/gen/orchestrator"
-	"github.com/google/uuid"
-	apitypes "goa.design/goa-ai/agents/apitypes"
+	"goa.design/goa-ai/agents/apitypes"
+	"goa.design/goa-ai/agents/runtime/stream"
+	streambridge "goa.design/goa-ai/agents/runtime/stream/bridge"
+	"goa.design/goa-ai/agents/runtime/toolerrors"
+
+	"example.com/assistant/gen/orchestrator"
 )
 
-type orchestratorsrvc struct {
-	runtime *RuntimeHarness
-}
+type (
+	// orchestratorsrvc is the service implementation for the orchestrator
+	// service.
+	orchestratorsrvc struct {
+		runtime *RuntimeHarness
+	}
+
+	// sseSink adapts the runtime stream.Sink interface to the generated
+	// orchestrator RunServerStream so runtime events are pushed to the
+	// client.
+	sseSink struct {
+		stream orchestrator.RunServerStream
+	}
+)
 
 // NewOrchestrator returns the orchestrator service implementation.
 func NewOrchestrator() orchestrator.Service {
@@ -22,41 +36,75 @@ func NewOrchestrator() orchestrator.Service {
 	return &orchestratorsrvc{runtime: h}
 }
 
-func (s *orchestratorsrvc) Run(ctx context.Context, payload *orchestrator.AgentRunPayload) (*orchestrator.AgentRunResult, error) {
-	return s.runAgent(ctx, payload)
+func (s *orchestratorsrvc) Run(ctx context.Context, payload *orchestrator.AgentRunPayload, stream orchestrator.RunServerStream) error {
+	// Convert Goa payload → apitypes → runtime
+	rin, err := apitypes.ToRuntimeRunInput(payload.ConvertToRunInput())
+	if err != nil {
+		return fmt.Errorf("convert run input: %w", err)
+	}
+
+	// Attach a temporary stream subscriber that forwards runtime hook events to the client stream.
+	bus := s.runtime.runtime.Bus
+	subscription, err := streambridge.Register(bus, &sseSink{stream: stream})
+	if err != nil {
+		return err
+	}
+	defer subscription.Close()
+
+	// Execute the run synchronously; events are forwarded as they occur.
+	out, err := s.runtime.runtime.Run(ctx, rin)
+	if err != nil {
+		return err
+	}
+
+	// Send final assistant message as the closing chunk.
+	finalText := out.Final.Content
+	chunk := &orchestrator.AgentRunChunk{Type: "message", Message: &finalText}
+	return stream.SendAndClose(ctx, chunk)
 }
 
-func (s *orchestratorsrvc) RunEndpoint(ctx context.Context, payload *orchestrator.AgentRunPayload) (*orchestrator.AgentRunResult, error) {
-	return s.runAgent(ctx, payload)
+func (s *sseSink) Send(ctx context.Context, evt stream.Event) error {
+	switch e := evt.(type) {
+	case stream.ToolStart:
+		chunk := &orchestrator.AgentRunChunk{
+			Type: "tool_call",
+			ToolCall: &orchestrator.AgentToolCallChunk{
+				ID:      e.Data.ToolCallID,
+				Name:    e.Data.ToolName,
+				Payload: e.Data.Payload,
+			},
+		}
+		return s.stream.Send(ctx, chunk)
+	case stream.AssistantReply:
+		msg := e.Text
+		return s.stream.Send(ctx, &orchestrator.AgentRunChunk{Type: "message", Message: &msg})
+	case stream.PlannerThought:
+		prefixed := "[planner] " + e.Note
+		return s.stream.Send(ctx, &orchestrator.AgentRunChunk{Type: "message", Message: &prefixed})
+	case stream.ToolEnd:
+		chunk := &orchestrator.AgentRunChunk{Type: "tool_result", ToolResult: &orchestrator.AgentToolResultChunk{}}
+		chunk.ToolResult.ID = e.Data.ToolCallID
+		if e.Data.Result != nil {
+			chunk.ToolResult.Result = e.Data.Result
+		}
+		if e.Data.Error != nil {
+			chunk.ToolResult.Error = toAgentToolError(e.Data.Error)
+		}
+		return s.stream.Send(ctx, chunk)
+	}
+	return nil
 }
 
-func (s *orchestratorsrvc) runAgent(ctx context.Context, payload *orchestrator.AgentRunPayload) (*orchestrator.AgentRunResult, error) {
-	if payload == nil {
-		return nil, fmt.Errorf("payload required")
+func (s *sseSink) Close(context.Context) error { return nil }
+
+func toAgentToolError(err *toolerrors.ToolError) *orchestrator.AgentToolError {
+	if err == nil {
+		return nil
 	}
-	apiInput := payload.ConvertToRunInput()
-	if apiInput.AgentID == "" {
-		apiInput.AgentID = "orchestrator.chat"
+	msg := err.Message
+	out := &orchestrator.AgentToolError{Message: &msg}
+	if err.Cause != nil {
+		out.Cause = toAgentToolError(err.Cause)
 	}
-	if apiInput.RunID == "" {
-		apiInput.RunID = uuid.NewString()
-	}
-	runtimeInput, err := apitypes.ToRuntimeRunInput(apiInput)
-	if err != nil {
-		return nil, fmt.Errorf("convert run input: %w", err)
-	}
-	out, err := s.runtime.Run(ctx, runtimeInput)
-	if err != nil {
-		return nil, err
-	}
-	apiOutput := apitypes.FromRuntimeRunOutput(out)
-	if apiOutput.AgentID == "" {
-		apiOutput.AgentID = runtimeInput.AgentID
-	}
-	if apiOutput.RunID == "" {
-		apiOutput.RunID = runtimeInput.RunID
-	}
-	result := new(orchestrator.AgentRunResult)
-	result.CreateFromRunOutput(apiOutput)
-	return result, nil
+	return out
 }

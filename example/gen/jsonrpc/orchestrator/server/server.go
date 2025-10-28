@@ -8,11 +8,9 @@
 package server
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 
 	orchestrator "example.com/assistant/gen/orchestrator"
@@ -54,8 +52,8 @@ func New(
 		errhandler: errhandler,
 	}
 	// Default HTTP handler per transport kind
-	// Plain HTTP JSON-RPC
-	s.Handler = http.HandlerFunc(s.ServeHTTP)
+	// SSE-only services route via handleSSE
+	s.Handler = http.HandlerFunc(s.handleSSE)
 	return s
 }
 
@@ -70,141 +68,56 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 // MethodNames returns the methods served.
 func (s *Server) MethodNames() []string { return orchestrator.MethodNames[:] }
 
-// ServeHTTP handles JSON-RPC requests.
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.handleHTTP(w, r)
-} // handleHTTP handles JSON-RPC requests.
-func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
-	// Peek at the first byte to determine request type
-	bufReader := bufio.NewReader(r.Body)
-	peek, err := bufReader.Peek(1)
-	if err != nil && err != io.EOF {
-		r.Body.Close()
-		s.errhandler(r.Context(), w, fmt.Errorf("failed to read request body: %w", err))
-		return
-	}
+// handleSSE handles JSON-RPC SSE requests by dispatching to the appropriate method.
+func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 
-	// Wrap the buffered reader with the original closer
-	r.Body = struct {
-		io.Reader
-		io.Closer
-	}{
-		Reader: bufReader,
-		Closer: r.Body,
-	}
-	defer func(r *http.Request) {
-		if err := r.Body.Close(); err != nil {
-			s.errhandler(r.Context(), w, fmt.Errorf("failed to close request body: %w", err))
-		}
-	}(r)
-
-	// Route to appropriate handler
-	if len(peek) > 0 && peek[0] == '[' {
-		s.handleBatch(w, r)
-		return
-	}
-	s.handleSingle(w, r)
-}
-
-// handleSingle handles a single JSON-RPC request.
-func (s *Server) handleSingle(w http.ResponseWriter, r *http.Request) {
+	// Read the JSON-RPC request
 	var req jsonrpc.RawRequest
 	if err := s.decoder(r).Decode(&req); err != nil {
-		// JSON-RPC parse error with null id and generic message
-		response := jsonrpc.MakeErrorResponse(nil, jsonrpc.ParseError, "Parse error", nil)
-		if encErr := s.encoder(r.Context(), w).Encode(response); encErr != nil {
-			s.errhandler(r.Context(), w, fmt.Errorf("failed to encode parse error response: %w", encErr))
-		}
-		return
-	}
-	s.processRequest(r.Context(), r, &req, w)
-}
-
-// handleBatch handles a batch of JSON-RPC requests.
-func (s *Server) handleBatch(w http.ResponseWriter, r *http.Request) {
-	var reqs []jsonrpc.RawRequest
-	if err := s.decoder(r).Decode(&reqs); err != nil {
-		// JSON-RPC parse error for batch with null id and generic message
-		response := jsonrpc.MakeErrorResponse(nil, jsonrpc.ParseError, "Parse error", nil)
-		if encErr := s.encoder(r.Context(), w).Encode(response); encErr != nil {
-			s.errhandler(r.Context(), w, fmt.Errorf("failed to encode parse error response: %w", encErr))
-		}
+		// Emit JSON-RPC parse error as SSE event
+		stream := &orchestratorSSEStream{w: w, r: r, encoder: s.encoder, decoder: s.decoder}
+		_ = stream.sendError(ctx, nil, jsonrpc.ParseError, "Parse error", nil)
 		return
 	}
 
-	// Write responses
-	w.Header().Set("Content-Type", "application/json")
-	writer := &batchWriter{Writer: w}
-
-	for _, req := range reqs {
-		// Process the request with batch writer
-		s.processRequest(r.Context(), r, &req, writer)
-	}
-
-	// Close the batch array
-	if writer.written {
-		writer.Writer.Write([]byte{']'})
-	}
-}
-
-// ProcessRequest processes a single JSON-RPC request.
-func (s *Server) processRequest(ctx context.Context, r *http.Request, req *jsonrpc.RawRequest, w http.ResponseWriter) {
+	// Validate JSON-RPC request
 	if req.JSONRPC != "2.0" {
-		s.encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidRequest, "Invalid request", nil)
+		stream := &orchestratorSSEStream{w: w, r: r, encoder: s.encoder, decoder: s.decoder}
+		_ = stream.sendError(ctx, req.ID, jsonrpc.InvalidRequest, "Invalid request", nil)
 		return
 	}
 
 	if req.Method == "" {
-		s.encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidRequest, "Missing method field", nil)
+		stream := &orchestratorSSEStream{w: w, r: r, encoder: s.encoder, decoder: s.decoder}
+		_ = stream.sendError(ctx, req.ID, jsonrpc.InvalidRequest, "Invalid request", nil)
 		return
 	}
 
+	// Find the appropriate handler based on method name
+	var handler func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
 	switch req.Method {
 	case "run":
-		if err := s.Run(ctx, r, req, w); err != nil {
-			s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", "run", err))
-		}
+		handler = s.Run
 	default:
-		s.encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, "Method not found", nil)
-	}
-}
-
-// batchWriter is a helper type that implements http.ResponseWriter for writing multiple JSON-RPC responses
-type batchWriter struct {
-	io.Writer
-	header     http.Header
-	statusCode int
-	written    bool
-}
-
-func (rb *batchWriter) Header() http.Header {
-	if rb.header == nil {
-		rb.header = make(http.Header)
-	}
-	return rb.header
-}
-
-func (rb *batchWriter) WriteHeader(statusCode int) {
-	if rb.written {
+		stream := &orchestratorSSEStream{w: w, r: r, encoder: s.encoder, decoder: s.decoder}
+		_ = stream.sendError(ctx, req.ID, jsonrpc.MethodNotFound, "Method not found", nil)
 		return
 	}
-	rb.statusCode = statusCode
-}
 
-func (rb *batchWriter) Write(data []byte) (int, error) {
-	if !rb.written {
-		rb.written = true
-		rb.Writer.Write([]byte{'['})
-	} else {
-		rb.Writer.Write([]byte{','})
+	// Call the handler for the specific method
+	if err := handler(ctx, r, &req, w); err != nil {
+		s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", req.Method, err))
+		return
 	}
-	return rb.Writer.Write(data)
-}
 
-// Mount configures the mux to serve the JSON-RPC orchestrator service methods.
+	// For notifications (requests without ID) that don't stream, return 204 No Content
+	switch req.Method {
+	}
+} // Mount configures the mux to serve the JSON-RPC orchestrator service methods.
 func Mount(mux goahttp.Muxer, h *Server) {
-	// HTTP only
-	mux.Handle("POST", "/", h.ServeHTTP)
+	// SSE only: mount SSE handler
+	mux.Handle("POST", "/orchestrator", h.handleSSE)
 }
 
 // Mount configures the mux to serve the JSON-RPC orchestrator service methods.
@@ -221,71 +134,49 @@ func NewRunHandler(
 	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
 	errhandler func(context.Context, http.ResponseWriter, error),
 ) func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error {
-	decodeParams := DecodeRunRequest(mux, decoder)
 	return func(ctx context.Context, r *http.Request, req *jsonrpc.RawRequest, w http.ResponseWriter) error {
 		ctx = context.WithValue(ctx, goa.MethodKey, "run")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "orchestrator")
+		// Initialize SSE stream early so decode errors can be sent as SSE error events
+		strm := &RunServerStream{
+			w:         w,
+			r:         r,
+			encoder:   encoder,
+			requestID: req.ID,
+		}
+		decodeParams := DecodeRunRequest(mux, decoder)
 		params, err := decodeParams(r, req)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
+			// Send error via SSE (JSON-RPC error event) to match SSE transport semantics
 			if req.ID != nil && req.ID != "" {
+				strm.SendError(ctx, jsonrpc.IDToString(req.ID), err)
+			}
+			return nil
+		}
+		v := &orchestrator.RunEndpointInput{
+			Stream:  strm,
+			Payload: params,
+		}
+		if _, err := endpoint(ctx, v); err != nil {
+			// Send error response via SSE with proper JSON-RPC code mapping
+			if req.ID != nil && req.ID != "" {
+				var en goa.GoaErrorNamer
+				if errors.As(err, &en) {
+					switch en.GoaErrorName() {
+					case "invalid_params":
+						return strm.sendError(ctx, jsonrpc.IDToString(req.ID), jsonrpc.InvalidParams, err.Error(), nil)
+					case "method_not_found":
+						return strm.sendError(ctx, jsonrpc.IDToString(req.ID), jsonrpc.MethodNotFound, err.Error(), nil)
+					}
+				}
+				// Fallback
 				code := jsonrpc.InternalError
 				if _, ok := err.(*goa.ServiceError); ok {
 					code = jsonrpc.InvalidParams
 				}
-				encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
-			} else {
-				// No ID means notification - just log error
-				errhandler(ctx, w, fmt.Errorf("failed to decode parameters: %w", err))
+				return strm.sendError(ctx, jsonrpc.IDToString(req.ID), code, err.Error(), nil)
 			}
 			return nil
-		}
-		res, err := endpoint(ctx, params)
-		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				var en goa.GoaErrorNamer
-				if !errors.As(err, &en) {
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
-					return nil
-				}
-				switch en.GoaErrorName() {
-				case "invalid_params":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
-				case "method_not_found":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, err.Error(), nil, encoder, errhandler)
-				default:
-					code := jsonrpc.InternalError
-					if _, ok := err.(*goa.ServiceError); ok {
-						code = jsonrpc.InvalidParams
-					}
-					encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
-				}
-			} else {
-				// No ID means notification - just log error
-				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
-			}
-			return nil
-		}
-
-		// For methods with no result, check if this is a notification
-
-		// For methods with results, determine the ID to use for the response
-		var id any
-		// No ID field in result - use request ID
-		id = req.ID
-
-		if id == nil || id == "" {
-			// Notification - no response
-			return nil
-		}
-
-		// Send response with the result
-		// Convert result to response body with proper JSON tags
-		body := NewRunResponseBody(res.(*orchestrator.AgentRunResult))
-		response := jsonrpc.MakeSuccessResponse(id, body)
-		if err := encoder(ctx, w).Encode(response); err != nil {
-			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
 		}
 		return nil
 	}

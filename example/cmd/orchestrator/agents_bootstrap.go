@@ -60,6 +60,7 @@ func bootstrapAgents(ctx context.Context) (*agentsruntime.Runtime, func(), error
 // configureChatMCPCallers returns the MCP callers required by the chat agent.
 // Replace the stubs with real callers (e.g., mcpruntime.NewHTTPCaller) before running agents.
 func configureChatMCPCallers(ctx context.Context) (map[string]mcpruntime.Caller, error) {
+	_ = ctx
 	callers := make(map[string]mcpruntime.Caller, 1)
 	callers[chat.ChatAssistantAssistantMcpToolsetID] = mcpruntime.CallerFunc(func(ctx context.Context, req mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
 		return mcpruntime.CallResponse{}, fmt.Errorf("configure MCP caller for %s in cmd/orchestrator/agents_bootstrap.go", "assistant.assistant-mcp")
