@@ -727,6 +727,10 @@ func marshalMcpassistantPromptInfoToPromptInfoResponseBodyResponseBody(v *mcpass
 	if v.Arguments != nil {
 		res.Arguments = make([]*PromptArgumentResponseBodyResponseBody, len(v.Arguments))
 		for i, val := range v.Arguments {
+			if val == nil {
+				res.Arguments[i] = nil
+				continue
+			}
 			res.Arguments[i] = marshalMcpassistantPromptArgumentToPromptArgumentResponseBodyResponseBody(val)
 		}
 	}

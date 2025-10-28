@@ -28,7 +28,7 @@ func TestLoadRunMissingReturnsEmptySnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "agent", snap.AgentID)
 	require.Equal(t, "run", snap.RunID)
-	require.Len(t, snap.Events, 0)
+	require.Empty(t, snap.Events)
 	require.NotNil(t, snap.Meta)
 }
 
@@ -112,7 +112,8 @@ func (c *fakeCollection) FindOne(ctx context.Context, filter any, opts ...*optio
 	return fakeSingleResult{doc: &clone}
 }
 
-func (c *fakeCollection) UpdateOne(ctx context.Context, filter any, update any, opts ...*options.UpdateOptions) (*mongodriver.UpdateResult, error) {
+func (c *fakeCollection) UpdateOne(ctx context.Context, filter any, update any,
+	opts ...*options.UpdateOptions) (*mongodriver.UpdateResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	key := docKey(filter)
@@ -153,7 +154,8 @@ type fakeIndexView struct {
 	parent *fakeCollection
 }
 
-func (v fakeIndexView) CreateOne(ctx context.Context, model mongodriver.IndexModel, opts ...*options.CreateIndexesOptions) (string, error) {
+func (v fakeIndexView) CreateOne(ctx context.Context, model mongodriver.IndexModel,
+	opts ...*options.CreateIndexesOptions) (string, error) {
 	if len(model.Keys.(bson.D)) == 0 {
 		return "", errors.New("missing keys")
 	}

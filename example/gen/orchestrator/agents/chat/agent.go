@@ -7,11 +7,17 @@
 
 package chat
 
-import "goa.design/goa-ai/agents/runtime/planner"
+import (
+	"context"
+
+	"goa.design/goa-ai/agents/runtime/engine"
+	"goa.design/goa-ai/agents/runtime/planner"
+	runtime "goa.design/goa-ai/agents/runtime/runtime"
+)
 
 // ChatAgent wraps the planner implementation for agent "chat".
 type ChatAgent struct {
-	planner planner.Planner
+	Planner planner.Planner
 }
 
 // NewChatAgent validates the configuration and constructs a ChatAgent.
@@ -19,10 +25,17 @@ func NewChatAgent(cfg ChatAgentConfig) (*ChatAgent, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	return &ChatAgent{planner: cfg.Planner}, nil
+	return &ChatAgent{Planner: cfg.Planner}, nil
 }
 
-// Planner exposes the configured planner instance.
-func (a *ChatAgent) Planner() planner.Planner {
-	return a.planner
+// Run is a high-level helper that invokes this agent using the provided runtime
+// and messages. It forwards options to the runtime helper.
+func Run(ctx context.Context, rt *runtime.Runtime, messages []planner.AgentMessage, opts ...runtime.RunOption) (runtime.RunOutput, error) {
+	return rt.RunAgent(ctx, "orchestrator.chat", messages, opts...)
+}
+
+// Start is a high-level helper that starts this agent and returns a workflow handle.
+// It forwards options to the runtime helper.
+func Start(ctx context.Context, rt *runtime.Runtime, messages []planner.AgentMessage, opts ...runtime.RunOption) (engine.WorkflowHandle, error) {
+	return rt.StartAgent(ctx, "orchestrator.chat", messages, opts...)
 }

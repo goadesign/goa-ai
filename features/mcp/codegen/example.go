@@ -151,66 +151,13 @@ func ModifyExampleFiles(_ string, roots []eval.Root, files []*codegen.File) ([]*
 
 	for _, svr := range r.API.Servers {
 		dir := example.Servers.Get(svr, r).Dir
-		files = patchCLIForServer(dir, mcpServices, files)
+		files = patchCLIForServer(dir, svr, mcpServices, files)
 		files = patchMainForServer(dir, mcpServices, files)
+		files = patchHTTPServerSignature(dir, files)
 	}
 
 	return files, nil
 }
-
-// cliParseReplacement is injected in place of the default cli.ParseEndpoint return.
-const cliParseReplacement = `_, payload, err := cli.ParseEndpoint(
-	scheme,
-	host,
-	doer,
-	goahttp.RequestEncoder,
-	goahttp.ResponseDecoder,
-	debug,
-)
-if err != nil {
-	return nil, nil, err
-}
-// MCP-backed adapter endpoints
-e := mcpac.NewEndpoints(scheme, host, doer, goahttp.RequestEncoder, goahttp.ResponseDecoder, debug)
-// Extract non-flag args for service and subcommand
-var nonflags []string
-for i := 1; i < len(os.Args); i++ {
-	a := os.Args[i]
-	if strings.HasPrefix(a, "-") {
-		if !strings.Contains(a, "=") && i+1 < len(os.Args) { i++ }
-		continue
-	}
-	nonflags = append(nonflags, a)
-}
-if len(nonflags) < 2 {
-	return nil, nil, fmt.Errorf("not enough arguments")
-}
-service := nonflags[0]
-subcmd := nonflags[1]
-switch service {
-default:
-	switch subcmd {
-	case "analyze-text":
-		return e.AnalyzeText, payload, nil
-	case "search-knowledge":
-		return e.SearchKnowledge, payload, nil
-	case "execute-code":
-		return e.ExecuteCode, payload, nil
-	case "list-documents":
-		return e.ListDocuments, payload, nil
-	case "get-system-info":
-		return e.GetSystemInfo, payload, nil
-	case "generate-prompts":
-		return e.GeneratePrompts, payload, nil
-	case "send-notification":
-		return e.SendNotification, payload, nil
-	case "subscribe-to-updates":
-		return e.SubscribeToUpdates, payload, nil
-	case "process-batch":
-		return e.ProcessBatch, payload, nil
-	}
-}
-return nil, nil, fmt.Errorf("unknown service %q or command %q", service, subcmd)`
 
 // firstRootWithJSONRPC returns the first root with JSON-RPC configured.
 func firstRootWithJSONRPC(roots []eval.Root) (*expr.RootExpr, bool) {
@@ -237,7 +184,7 @@ func collectMCPServices(r *expr.RootExpr) []*expr.ServiceExpr {
 
 // patchCLIForServer locates the generated JSON-RPC CLI support file and rewrites it
 // to instantiate the MCP adapter client endpoints. It also adds required imports.
-func patchCLIForServer(dir string, mcpServices []*expr.ServiceExpr, files []*codegen.File) []*codegen.File {
+func patchCLIForServer(dir string, svr *expr.ServerExpr, mcpServices []*expr.ServiceExpr, files []*codegen.File) []*codegen.File {
 	cliPath := filepath.Join("cmd", dir+"-cli", "jsonrpc.go")
 	var cliFile *codegen.File
 	for _, f := range files {
@@ -247,32 +194,55 @@ func patchCLIForServer(dir string, mcpServices []*expr.ServiceExpr, files []*cod
 		cliFile = f
 		break
 	}
-	// Add imports in source header
-	header := findSection(cliFile, headerSection)
-	if header != nil {
-		baseModule := deriveBaseModuleFromHeader(header)
-		if baseModule != "" && len(mcpServices) > 0 {
-			svcSnake := codegen.SnakeCase(mcpServices[0].Name)
-			codegen.AddImport(header, &codegen.ImportSpec{Path: baseModule + "/gen/mcp_" + svcSnake + "/adapter/client", Name: "mcpac"})
-		}
-		codegen.AddImport(header,
-			&codegen.ImportSpec{Path: "fmt"},
-			&codegen.ImportSpec{Path: "os"},
-			&codegen.ImportSpec{Path: "strings"},
-		)
+	if cliFile == nil {
+		return files
 	}
-	// Replace the endpoint constructor logic
-	for _, s := range cliFile.SectionTemplates {
-		idx := strings.Index(s.Source, "return cli.ParseEndpoint(")
-		if idx < 0 {
-			continue
+
+	svcMap := make(map[string]*expr.ServiceExpr, len(mcpServices))
+	for _, svc := range mcpServices {
+		svcMap[svc.Name] = svc
+	}
+
+	var targetSvcs []*expr.ServiceExpr
+	for _, name := range svr.Services {
+		if svc := svcMap[name]; svc != nil {
+			targetSvcs = append(targetSvcs, svc)
 		}
-		endrel := strings.Index(s.Source[idx:], ")\n")
-		if endrel < 0 {
-			continue
-		}
-		end := idx + endrel + 2
-		s.Source = s.Source[:idx] + cliParseReplacement + s.Source[end:]
+	}
+	if len(targetSvcs) == 0 {
+		return files
+	}
+
+	header := findSection(cliFile, headerSection)
+	if header == nil {
+		return files
+	}
+	baseModule := deriveBaseModuleFromHeader(header)
+	if baseModule == "" {
+		return files
+	}
+
+	serviceData := buildCLIServiceData(targetSvcs, header, baseModule)
+	if len(serviceData) == 0 {
+		return files
+	}
+	replacement := renderCLIDoJSONRPC(serviceData)
+	if replacement == "" {
+		return files
+	}
+
+	codegen.AddImport(header,
+		&codegen.ImportSpec{Path: "fmt"},
+		&codegen.ImportSpec{Path: "os"},
+		&codegen.ImportSpec{Path: "strings"},
+	)
+
+	section := findSectionByName(cliFile, "cli-http-start")
+	if section != nil {
+		section.Source = replacement
+	}
+	if end := findSectionByName(cliFile, "cli-http-end"); end != nil {
+		end.Source = ""
 	}
 	return files
 }
@@ -357,6 +327,37 @@ func patchMainForServer(dir string, mcpServices []*expr.ServiceExpr, files []*co
 		if strings.Contains(src, factory) {
 			s.Source = strings.ReplaceAll(src, factory, mcpAlias+".NewMCPAdapter(assistantSvc, nil, nil)")
 		}
+		if strings.Contains(s.Source, "handleHTTPServer(") {
+			const from = ", mcpAssistantEndpoints, orchestratorSvc, mcpAssistantSvc"
+			const to = ", orchestratorSvc, mcpAssistantSvc, mcpAssistantEndpoints"
+			if strings.Contains(s.Source, from) {
+				lines := strings.Split(s.Source, "\n")
+				for i, ln := range lines {
+					if strings.Contains(ln, from) {
+						lines[i] = strings.Replace(ln, from, to, 1)
+					}
+				}
+				s.Source = strings.Join(lines, "\n")
+			}
+		}
+	}
+	return files
+}
+
+func patchHTTPServerSignature(dir string, files []*codegen.File) []*codegen.File {
+	httpPath := filepath.Join("cmd", dir, "http.go")
+	for _, f := range files {
+		if f.Path != httpPath {
+			continue
+		}
+		for _, s := range f.SectionTemplates {
+			const sig = "func handleHTTPServer(ctx context.Context, u *url.URL, orchestratorEndpoints *orchestrator.Endpoints, orchestratorSvc orchestrator.Service, mcpAssistantSvc mcpassistant.Service, mcpAssistantEndpoints *mcpassistant.Endpoints"
+			if strings.Contains(s.Source, sig) {
+				replacement := "func handleHTTPServer(ctx context.Context, u *url.URL, orchestratorEndpoints *orchestrator.Endpoints, mcpAssistantEndpoints *mcpassistant.Endpoints, orchestratorSvc orchestrator.Service, mcpAssistantSvc mcpassistant.Service"
+				s.Source = strings.Replace(s.Source, sig, replacement, 1)
+			}
+		}
+		break
 	}
 	return files
 }
@@ -487,6 +488,58 @@ func stringInList(list []string, name string) bool {
 		}
 	}
 	return false
+}
+
+func findSectionByName(f *codegen.File, name string) *codegen.SectionTemplate {
+	for _, s := range f.SectionTemplates {
+		if s.Name == name {
+			return s
+		}
+	}
+	return nil
+}
+
+func buildCLIServiceData(
+	services []*expr.ServiceExpr,
+	header *codegen.SectionTemplate,
+	baseModule string,
+) []cliServiceTemplateData {
+	data := make([]cliServiceTemplateData, 0, len(services))
+	for _, svc := range services {
+		if len(svc.Methods) == 0 {
+			continue
+		}
+		svcSnake := codegen.SnakeCase(svc.Name)
+		alias := codegen.Goify("mcp_"+svcSnake, false) + "adapter"
+		path := baseModule + "/gen/mcp_" + svcSnake + "/adapter/client"
+		codegen.AddImport(header, &codegen.ImportSpec{Path: path, Name: alias})
+
+		methods := make([]cliMethodTemplateData, 0, len(svc.Methods))
+		for _, m := range svc.Methods {
+			methods = append(methods, cliMethodTemplateData{
+				Command:  methodCommandName(m.Name),
+				Endpoint: codegen.Goify(m.Name, true),
+			})
+		}
+		data = append(data, cliServiceTemplateData{
+			Name:    svc.Name,
+			Alias:   alias,
+			Methods: methods,
+		})
+	}
+	return data
+}
+
+func renderCLIDoJSONRPC(services []cliServiceTemplateData) string {
+	if len(services) == 0 {
+		return ""
+	}
+	data := cliParseTemplateData{Services: services}
+	return mcpTemplates.MustRender("cli_dojsonrpc", data)
+}
+
+func methodCommandName(name string) string {
+	return strings.ReplaceAll(codegen.SnakeCase(name), "_", "-")
 }
 
 // PatchCLIToUseMCPAdapter rewrites the generated service CLI support code to instantiate

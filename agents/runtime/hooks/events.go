@@ -6,6 +6,7 @@ import (
 	"goa.design/goa-ai/agents/runtime/policy"
 	"goa.design/goa-ai/agents/runtime/run"
 	"goa.design/goa-ai/agents/runtime/telemetry"
+	"goa.design/goa-ai/agents/runtime/toolerrors"
 )
 
 type (
@@ -107,7 +108,7 @@ type (
 		// Nil if no telemetry was collected.
 		Telemetry *telemetry.ToolTelemetry
 		// Error contains any error returned by the tool execution. Nil on success.
-		Error error
+		Error *toolerrors.ToolError
 	}
 
 	// ToolCallUpdatedEvent fires when a tool call's metadata is updated after
@@ -286,7 +287,7 @@ func NewToolResultReceivedEvent(
 	result any,
 	duration time.Duration,
 	telemetry *telemetry.ToolTelemetry,
-	err error,
+	err *toolerrors.ToolError,
 ) *ToolResultReceivedEvent {
 	return &ToolResultReceivedEvent{
 		baseEvent: newBaseEvent(runID, agentID),

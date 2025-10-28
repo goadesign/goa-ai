@@ -3,7 +3,6 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"text/template"
 	"time"
@@ -93,7 +92,10 @@ func TestConsecutiveFailureBreaker(t *testing.T) {
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {Execute: func(ctx context.Context, call planner.ToolCallRequest) (planner.ToolResult, error) {
-				return planner.ToolResult{Name: call.Name, Error: errors.New("boom")}, nil
+				return planner.ToolResult{
+					Name:  call.Name,
+					Error: planner.NewToolError("boom"),
+				}, nil
 			}},
 		},
 		toolSpecs: map[string]tools.ToolSpec{
@@ -107,7 +109,13 @@ func TestConsecutiveFailureBreaker(t *testing.T) {
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 	initial := planner.PlanResult{ToolCalls: []planner.ToolCallRequest{{Name: "svc.tools.fail"}}}
-	_, err := rt.runLoop(wfCtx, AgentRegistration{ID: input.AgentID, ExecuteToolActivity: "execute", ResumeActivityName: "resume", Policy: RunPolicy{MaxConsecutiveFailedToolCalls: 1}}, input, base, initial, initialCaps(RunPolicy{MaxConsecutiveFailedToolCalls: 1}), time.Time{}, 2, nil, nil, nil)
+	_, err := rt.runLoop(wfCtx, AgentRegistration{
+		ID:                  input.AgentID,
+		Planner:             &stubPlanner{},
+		ExecuteToolActivity: "execute",
+		ResumeActivityName:  "resume",
+		Policy:              RunPolicy{MaxConsecutiveFailedToolCalls: 1},
+	}, input, base, initial, initialCaps(RunPolicy{MaxConsecutiveFailedToolCalls: 1}), time.Time{}, 2, nil, nil, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "consecutive failed tool call cap exceeded")
 }
@@ -123,20 +131,33 @@ func TestStartRunForwardsWorkflowOptions(t *testing.T) {
 		metrics: telemetry.NoopMetrics{},
 		tracer:  telemetry.NoopTracer{},
 	}
-	in := RunInput{AgentID: "service.agent", RunID: "run-x", WorkflowOptions: &WorkflowOptions{TaskQueue: "customq", Memo: map[string]any{"k": "v"}, SearchAttributes: map[string]any{"sa": "x"}, RetryPolicy: engine.RetryPolicy{MaxAttempts: 5}}}
+	in := RunInput{
+		AgentID: "service.agent",
+		RunID:   "run-x",
+		WorkflowOptions: &WorkflowOptions{
+			TaskQueue:        "customq",
+			Memo:             map[string]any{"k": "v"},
+			SearchAttributes: map[string]any{"sa": "x"},
+			RetryPolicy:      engine.RetryPolicy{MaxAttempts: 5, InitialInterval: 5 * time.Second, BackoffCoefficient: 1.5},
+		},
+	}
 	_, err := rt.StartRun(context.Background(), in)
 	require.NoError(t, err)
 	require.Equal(t, "customq", eng.last.TaskQueue)
 	require.Equal(t, in.RunID, eng.last.ID)
 	require.Equal(t, in.WorkflowOptions.Memo, eng.last.Memo)
 	require.Equal(t, in.WorkflowOptions.SearchAttributes, eng.last.SearchAttributes)
-	require.Equal(t, in.WorkflowOptions.RetryPolicy, eng.last.RetryPolicy)
+	require.Equal(t, 5, eng.last.RetryPolicy.MaxAttempts)
+	require.Equal(t, 5*time.Second, eng.last.RetryPolicy.InitialInterval)
+	require.Equal(t, 1.5, eng.last.RetryPolicy.BackoffCoefficient)
 }
 
 func TestTimeBudgetExceeded(t *testing.T) {
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call planner.ToolCallRequest) (planner.ToolResult, error) {
-			return planner.ToolResult{Name: call.Name}, nil
+			return planner.ToolResult{
+				Name: call.Name,
+			}, nil
 		}}},
 		toolSpecs: map[string]tools.ToolSpec{"svc.ts.tool": newAnyJSONSpec("svc.ts.tool")},
 		logger:    telemetry.NoopLogger{},
@@ -147,7 +168,12 @@ func TestTimeBudgetExceeded(t *testing.T) {
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 	initial := planner.PlanResult{ToolCalls: []planner.ToolCallRequest{{Name: "svc.ts.tool"}}}
-	_, err := rt.runLoop(wfCtx, AgentRegistration{ID: input.AgentID, ExecuteToolActivity: "execute", ResumeActivityName: "resume"}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Now().Add(-time.Second), 2, nil, nil, nil)
+	_, err := rt.runLoop(wfCtx, AgentRegistration{
+		ID:                  input.AgentID,
+		Planner:             &stubPlanner{},
+		ExecuteToolActivity: "execute",
+		ResumeActivityName:  "resume",
+	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Now().Add(-time.Second), 2, nil, nil, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "time budget exceeded")
 }
@@ -162,7 +188,7 @@ func TestConvertRunOutputToToolResult(t *testing.T) {
 			},
 		}
 		tr := ConvertRunOutputToToolResult("parent.tool", out)
-		require.NoError(t, tr.Error)
+		require.Nil(t, tr.Error)
 		require.NotNil(t, tr.Telemetry)
 		require.Equal(t, 15, tr.Telemetry.TokensUsed)
 		require.Equal(t, int64(150), tr.Telemetry.DurationMs)
@@ -173,8 +199,8 @@ func TestConvertRunOutputToToolResult(t *testing.T) {
 		out := RunOutput{
 			Final: planner.AgentMessage{Content: "final"},
 			ToolEvents: []planner.ToolResult{
-				{Error: errors.New("e1")},
-				{Error: errors.New("e2")},
+				{Error: planner.NewToolError("e1")},
+				{Error: planner.NewToolError("e2")},
 			},
 		}
 		tr := ConvertRunOutputToToolResult("parent.tool", out)
@@ -195,7 +221,10 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 	rt.toolsets = map[string]ToolsetRegistration{
 		"nested.tools": {
 			Execute: func(ctx context.Context, call planner.ToolCallRequest) (planner.ToolResult, error) {
-				return planner.ToolResult{Name: call.Name, Payload: map[string]string{"ok": "true"}}, nil
+				return planner.ToolResult{
+					Name:    call.Name,
+					Payload: map[string]string{"ok": "true"},
+				}, nil
 			},
 		},
 	}
@@ -227,6 +256,11 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 		}},
 		"execute": {Name: "execute", Handler: func(ctx context.Context, input any) (any, error) {
 			return rt.ExecuteToolActivity(ctx, input.(ToolInput))
+		}},
+		"resume": {Name: "resume", Handler: func(context.Context, any) (any, error) {
+			return PlanActivityOutput{Result: planner.PlanResult{
+				FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "done"}},
+			}}, nil
 		}},
 	}
 	wfCtx := &routeWorkflowContext{ctx: context.Background(), runID: "run-parent", routes: routes}
@@ -263,7 +297,12 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 	base := planner.PlanInput{RunContext: run.Context{RunID: parentInput.RunID, TurnID: parentInput.TurnID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: parentInput.AgentID, runID: parentInput.RunID})}
 	initial := planner.PlanResult{ToolCalls: []planner.ToolCallRequest{{Name: "svc.agenttools.invoke"}}}
 
-	_, err := rt.runLoop(wfCtx, AgentRegistration{ID: parentInput.AgentID, ExecuteToolActivity: "execute", ResumeActivityName: "resume"}, parentInput, base, initial, policy.CapsState{MaxToolCalls: 3, RemainingToolCalls: 3}, time.Time{}, 2, &turnSequencer{turnID: parentInput.TurnID}, nil, nil)
+	_, err := rt.runLoop(wfCtx, AgentRegistration{
+		ID:                  parentInput.AgentID,
+		Planner:             &stubPlanner{},
+		ExecuteToolActivity: "execute",
+		ResumeActivityName:  "resume",
+	}, parentInput, base, initial, policy.CapsState{MaxToolCalls: 3, RemainingToolCalls: 3}, time.Time{}, 2, &turnSequencer{turnID: parentInput.TurnID}, nil, nil)
 	require.NoError(t, err)
 
 	// Assert ToolCallUpdatedEvent emitted twice with counts 2 then 3 referencing parent tool call id
@@ -323,7 +362,9 @@ func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 		toolsets: map[string]ToolsetRegistration{
 			"svc.export": {
 				Execute: func(ctx context.Context, call planner.ToolCallRequest) (planner.ToolResult, error) {
-					return planner.ToolResult{Name: call.Name}, nil
+					return planner.ToolResult{
+						Name: call.Name,
+					}, nil
 				},
 			},
 		},
@@ -452,6 +493,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 		wfCtx,
 		AgentRegistration{
 			ID:                  input.AgentID,
+			Planner:             &stubPlanner{},
 			ExecuteToolActivity: "execute",
 			ResumeActivityName:  "resume",
 		},

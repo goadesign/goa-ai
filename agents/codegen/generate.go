@@ -1,7 +1,6 @@
 package codegen
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -38,10 +37,7 @@ type (
 )
 
 const bootstrapMainSnippet = `
-{{- if not .HasContext }}
-	ctx := context.Background()
-{{- end }}
-	rt, cleanup, err := bootstrapAgents(ctx)
+	rt, cleanup, err := bootstrapAgents(context.Background())
 	if err != nil {
 		panic(err)
 	}
@@ -194,6 +190,19 @@ func emitBootstrapHelper(svc *ServiceAgentsData) *codegen.File {
 		{Path: "goa.design/goa-ai/agents/runtime/engine/temporal", Name: "runtimeTemporal"},
 		{Path: "go.temporal.io/sdk/client", Name: "temporalclient"},
 	}
+	needsMCP := false
+	for _, ag := range svc.Agents {
+		if len(ag.MCPToolsets) > 0 {
+			needsMCP = true
+			break
+		}
+	}
+	if needsMCP {
+		imports = append(imports,
+			&codegen.ImportSpec{Path: "fmt"},
+			&codegen.ImportSpec{Name: "mcpruntime", Path: "goa.design/goa-ai/features/mcp/runtime"},
+		)
+	}
 	// Import agent registration packages
 	for _, ag := range svc.Agents {
 		imports = append(imports, &codegen.ImportSpec{Path: ag.ImportPath, Name: ag.PackageName})
@@ -213,7 +222,10 @@ func emitBootstrapHelper(svc *ServiceAgentsData) *codegen.File {
 // emitPlannerStub creates a minimal planner implementation file at module root
 // named <service>_<agent>_planner.go so example builds compile without custom code.
 func emitPlannerStub(svc *ServiceAgentsData, ag *AgentData) *codegen.File {
-	imports := []*codegen.ImportSpec{{Path: "context"}, {Path: "goa.design/goa-ai/agents/runtime/planner"}}
+	imports := []*codegen.ImportSpec{
+		{Path: "context"},
+		{Path: "goa.design/goa-ai/agents/runtime/planner"},
+	}
 	name := filepath.Join("cmd", svc.Service.PathName, "agents_planner_"+ag.PathName+".go")
 	sections := []*codegen.SectionTemplate{
 		codegen.Header("Example planner stub for "+ag.Name, "main", imports),
@@ -244,12 +256,25 @@ func patchServiceMainForBootstrap(svc *ServiceAgentsData, files []*codegen.File)
 			break
 		}
 	}
-	hasCtxAssign := false
+	// If the snippet already exists, replace it with the canonical version to keep
+	// future runs idempotent.
+	const snippetHead = "\n\trt, cleanup, err := bootstrapAgents("
+	const snippetTail = "\n\t_ = rt\n"
 	for _, s := range fmain.SectionTemplates {
-		if strings.Contains(s.Source, "ctx :=") {
-			hasCtxAssign = true
-			break
+		if s.Name == "source-header" {
+			continue
 		}
+		start := strings.Index(s.Source, snippetHead)
+		if start < 0 {
+			continue
+		}
+		end := strings.Index(s.Source[start:], snippetTail)
+		if end < 0 {
+			continue
+		}
+		end += start + len(snippetTail)
+		s.Source = s.Source[:start] + bootstrapMainSnippet + s.Source[end:]
+		return files, nil
 	}
 	// Insert bootstrap call inside main function body
 	for _, s := range fmain.SectionTemplates {
@@ -263,15 +288,7 @@ func patchServiceMainForBootstrap(svc *ServiceAgentsData, files []*codegen.File)
 			continue
 		}
 		sigEnd := idx + len(mainSig)
-		snippet, err := codegen.RunTemplate(
-			"agents-bootstrap-main-snippet",
-			bootstrapMainSnippet,
-			map[string]any{"HasContext": hasCtxAssign},
-		)
-		if err != nil {
-			return files, fmt.Errorf("agents: render bootstrap snippet for %s: %w", svc.Service.Name, err)
-		}
-		insert := "\n" + snippet
+		insert := "\n" + bootstrapMainSnippet
 		s.Source = src[:sigEnd] + insert + src[sigEnd:]
 		break
 	}

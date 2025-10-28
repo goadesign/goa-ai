@@ -16,7 +16,9 @@ import (
 func TestRunLoopPauseResumeEmitsEvents_Barriered(t *testing.T) {
 	recorder := &recordingHooks{}
 	rt := &Runtime{hooks: recorder, toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call planner.ToolCallRequest) (planner.ToolResult, error) {
-		return planner.ToolResult{Name: call.Name}, nil
+		return planner.ToolResult{
+			Name: call.Name,
+		}, nil
 	}}}}
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, barrier: make(chan struct{}, 1)}
 	go func() {
@@ -32,6 +34,11 @@ func TestRunLoopPauseResumeEmitsEvents_Barriered(t *testing.T) {
 	base := planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 	initial := planner.PlanResult{ToolCalls: []planner.ToolCallRequest{{Name: "svc.ts.tool"}}}
 	ctrl := interrupt.NewController(wfCtx)
-	_, err := rt.runLoop(wfCtx, AgentRegistration{ID: input.AgentID, ExecuteToolActivity: "execute", ResumeActivityName: "resume"}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, &turnSequencer{turnID: "turn-1"}, nil, ctrl)
+	_, err := rt.runLoop(wfCtx, AgentRegistration{
+		ID:                  input.AgentID,
+		Planner:             &stubPlanner{},
+		ExecuteToolActivity: "execute",
+		ResumeActivityName:  "resume",
+	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, &turnSequencer{turnID: "turn-1"}, nil, ctrl)
 	require.NoError(t, err)
 }

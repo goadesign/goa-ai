@@ -8,14 +8,29 @@
 package orchestrator
 
 import (
+	"context"
+
 	goa "goa.design/goa/v3/pkg"
 )
 
 // Client is the "orchestrator" service client.
 type Client struct {
+	RunEndpoint goa.Endpoint
 }
 
 // NewClient initializes a "orchestrator" service client given the endpoints.
-func NewClient(goa.Endpoint) *Client {
-	return &Client{}
+func NewClient(run goa.Endpoint) *Client {
+	return &Client{
+		RunEndpoint: run,
+	}
+}
+
+// Run calls the "run" endpoint of the "orchestrator" service.
+func (c *Client) Run(ctx context.Context, p *AgentRunPayload) (res *AgentRunResult, err error) {
+	var ires any
+	ires, err = c.RunEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*AgentRunResult), nil
 }

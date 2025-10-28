@@ -7,8 +7,14 @@
 
 package orchestrator
 
+import (
+	"context"
+)
+
 // Agent service consuming the assistant MCP toolset
 type Service interface {
+	// Invoke the chat agent
+	Run(context.Context, *AgentRunPayload) (res *AgentRunResult, err error)
 }
 
 // APIName is the name of the API as defined in the design.
@@ -25,4 +31,108 @@ const ServiceName = "orchestrator"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [0]string{}
+var MethodNames = [1]string{"run"}
+
+// Single conversational message in the agent transcript.
+type AgentMessage struct {
+	// Role that produced the message
+	Role string
+	// Message content
+	Content string
+	// Optional structured metadata attached to the message
+	Meta map[string]any
+}
+
+// Planner observation persisted alongside run history.
+type AgentPlannerAnnotation struct {
+	// Annotation emitted by the planner
+	Text *string
+	// Structured metadata associated with the note
+	Labels map[string]string
+}
+
+// Structured guidance emitted after a tool failure.
+type AgentRetryHint struct {
+	// Categorized reason for the retry guidance
+	Reason string
+	// Qualified tool name associated with the hint
+	Tool string
+	// Restrict subsequent planner turns to this tool
+	RestrictToTool *bool
+	// Missing or invalid fields that caused the failure
+	MissingFields []string
+	// Representative payload that satisfies validation
+	ExampleInput map[string]any
+	// Payload that triggered the failure
+	PriorInput map[string]any
+	// Question that callers should answer to proceed
+	ClarifyingQuestion *string
+	// Human-readable guidance for logs or UI
+	Message *string
+}
+
+// AgentRunPayload is the payload type of the orchestrator service run method.
+type AgentRunPayload struct {
+	// Agent identifier to invoke (optional when bound to a single agent)
+	AgentID *string
+	// Caller-provided run identifier
+	RunID *string
+	// Session identifier used for grouping runs
+	SessionID *string
+	// Turn identifier associated with the run
+	TurnID *string
+	// Complete conversation history supplied to the agent
+	Messages []*AgentMessage
+	// Caller-supplied labels forwarded to the runtime
+	Labels map[string]string
+	// Arbitrary metadata forwarded to the runtime
+	Metadata map[string]any
+}
+
+// AgentRunResult is the result type of the orchestrator service run method.
+type AgentRunResult struct {
+	// Identifier of the agent that produced the result
+	AgentID string
+	// Identifier of the completed run
+	RunID string
+	// Final assistant response returned to the caller
+	Final *AgentMessage
+	// Tool events emitted during the final turn
+	ToolEvents []*AgentToolEvent
+	// Planner annotations captured during completion
+	Notes []*AgentPlannerAnnotation
+}
+
+// Structured tool error chain captured during execution.
+type AgentToolError struct {
+	// Human-readable error summary
+	Message *string
+	// Nested cause describing the underlying failure
+	Cause *AgentToolError
+}
+
+// Outcome of an executed tool call.
+type AgentToolEvent struct {
+	// Tool identifier
+	Name string
+	// Tool result payload when the call succeeds
+	Payload any
+	// Structured error returned by the tool
+	Error *AgentToolError
+	// Retry guidance emitted by the tool on failure
+	RetryHint *AgentRetryHint
+	// Telemetry metadata captured during execution
+	Telemetry *AgentToolTelemetry
+}
+
+// Telemetry metadata gathered during tool execution.
+type AgentToolTelemetry struct {
+	// Wall-clock duration in milliseconds
+	DurationMs *int64
+	// Total tokens consumed by the tool call
+	TokensUsed *int
+	// Identifier of the model used by the tool
+	Model *string
+	// Tool-specific telemetry key/value pairs
+	Extra map[string]any
+}

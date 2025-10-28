@@ -26,6 +26,7 @@ func TestRuntimeHarnessExecutesChatWorkflow(t *testing.T) {
 
 	out, err := harness.Run(ctx, input)
 	require.NoError(t, err)
+	require.NotNil(t, out.Final)
 	require.Contains(t, out.Final.Content, "Result for")
 
 	events, err := harness.MemoryEvents(ctx, input.AgentID, input.RunID)

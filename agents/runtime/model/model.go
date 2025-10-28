@@ -34,8 +34,11 @@ type (
 	// Chunk values until io.EOF. Implementations must be safe to call from a single
 	// goroutine and release any underlying resources when Close is invoked.
 	Streamer interface {
+		// Recv returns the next chunk from the stream.
 		Recv() (Chunk, error)
+		// Close closes the stream.
 		Close() error
+		// Metadata returns the metadata for the stream.
 		Metadata() map[string]any
 	}
 

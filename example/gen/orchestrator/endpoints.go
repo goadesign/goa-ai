@@ -8,18 +8,33 @@
 package orchestrator
 
 import (
+	"context"
+
 	goa "goa.design/goa/v3/pkg"
 )
 
 // Endpoints wraps the "orchestrator" service endpoints.
 type Endpoints struct {
+	Run goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "orchestrator" service with endpoints.
 func NewEndpoints(s Service) *Endpoints {
-	return &Endpoints{}
+	return &Endpoints{
+		Run: NewRunEndpoint(s),
+	}
 }
 
 // Use applies the given middleware to all the "orchestrator" service endpoints.
 func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
+	e.Run = m(e.Run)
+}
+
+// NewRunEndpoint returns an endpoint function that calls the method "run" of
+// service "orchestrator".
+func NewRunEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*AgentRunPayload)
+		return s.Run(ctx, p)
+	}
 }

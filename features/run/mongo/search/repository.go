@@ -145,7 +145,9 @@ func (r *SearchRepository) Sessions(ctx context.Context, q SessionSearchQuery) (
 	if err != nil {
 		return SessionSearchResult{}, err
 	}
-	defer cur.Close(ctx)
+	defer func() {
+		_ = cur.Close(ctx)
+	}()
 
 	var result SessionSearchResult
 	for cur.Next(ctx) {
@@ -176,7 +178,9 @@ func (r *SearchRepository) Failures(ctx context.Context, q FailureQuery) ([]Fail
 	if err != nil {
 		return nil, nil, err
 	}
-	defer cur.Close(ctx)
+	defer func() {
+		_ = cur.Close(ctx)
+	}()
 	var records []FailureRecord
 	for cur.Next(ctx) {
 		var doc eventDocument
@@ -251,6 +255,8 @@ func sortTimestamp(rec SessionRecord, sortField SessionSortField) time.Time {
 		if rec.LastEventAt != nil {
 			return *rec.LastEventAt
 		}
+	case SortByCreatedAt:
+		// Use CreatedAt for this case
 	}
 	return rec.CreatedAt
 }

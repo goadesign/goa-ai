@@ -5,7 +5,6 @@ package {{ .PackageName }}
 
 import (
     "context"
-    "errors"
 
     "goa.design/goa-ai/agents/runtime/policy"
     "goa.design/goa-ai/agents/runtime/planner"
@@ -56,7 +55,9 @@ func New{{ .Agent.GoName }}{{ .Toolset.PathName | goify true }}ServiceToolsetReg
         Metadata:    policy.ToolMetadata{ID: {{ printf "%q" .Toolset.Name }}, Name: {{ printf "%q" .Toolset.Name }}},
         Execute: func(ctx context.Context, call planner.ToolCallRequest) (planner.ToolResult, error) {
             if cfg.Client == nil {
-                return planner.ToolResult{Error: errors.New("client is required")}, nil
+                return planner.ToolResult{
+                    Error: planner.NewToolError("client is required"),
+                }, nil
             }
             switch call.Name {
             {{- range .Toolset.Tools }}
@@ -69,28 +70,48 @@ func New{{ .Agent.GoName }}{{ .Toolset.PathName | goify true }}ServiceToolsetReg
                 case nil:
                     // leave nil; adapter may supply defaults
                 default:
-                    return planner.ToolResult{Error: errors.New("invalid payload type for tool: " + call.Name)}, nil
+                    return planner.ToolResult{
+                        Error: planner.NewToolError("invalid payload type for tool: " + call.Name),
+                    }, nil
                 }
                 if cfg.{{ .MethodGoName }}Adapter == nil {
-                    return planner.ToolResult{Error: errors.New("adapter required for method-backed tool: " + call.Name)}, nil
+                    return planner.ToolResult{
+                        Error: planner.NewToolError("adapter required for method-backed tool: " + call.Name),
+                    }, nil
                 }
                 req, err := cfg.{{ .MethodGoName }}Adapter(ctx, argsPtr)
-                if err != nil { return planner.ToolResult{Error: err}, nil }
+                if err != nil {
+                    return planner.ToolResult{
+                        Error: planner.ToolErrorFromError(err),
+                    }, nil
+                }
                 res, err := cfg.Client.{{ .MethodGoName }}(ctx, &req)
-                if err != nil { return planner.ToolResult{Error: err}, nil }
+                if err != nil {
+                    return planner.ToolResult{
+                        Error: planner.ToolErrorFromError(err),
+                    }, nil
+                }
                 if cfg.{{ .MethodGoName }}ResultAdapter == nil {
-                    return planner.ToolResult{Error: errors.New("result adapter required for method-backed tool: " + call.Name)}, nil
+                    return planner.ToolResult{
+                        Error: planner.NewToolError("result adapter required for method-backed tool: " + call.Name),
+                    }, nil
                 }
                 out, rerr := cfg.{{ .MethodGoName }}ResultAdapter(ctx, res)
-                if rerr != nil { return planner.ToolResult{Error: rerr}, nil }
-                return planner.ToolResult{Payload: out}, nil
+                if rerr != nil {
+                    return planner.ToolResult{
+                        Error: planner.ToolErrorFromError(rerr),
+                    }, nil
+                }
+                return planner.ToolResult{
+                    Payload: out,
+                }, nil
             {{- end }}
             {{- end }}
             default:
-                return planner.ToolResult{Error: errors.New("tool not found in service toolset: " + call.Name)}, nil
+                return planner.ToolResult{
+                    Error: planner.NewToolError("tool not found in service toolset: " + call.Name),
+                }, nil
             }
         },
     }
 }
-
-

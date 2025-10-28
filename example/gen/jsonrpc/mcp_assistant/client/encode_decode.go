@@ -1369,6 +1369,10 @@ func unmarshalPromptInfoResponseBodyResponseBodyToMcpassistantPromptInfo(v *Prom
 	if v.Arguments != nil {
 		res.Arguments = make([]*mcpassistant.PromptArgument, len(v.Arguments))
 		for i, val := range v.Arguments {
+			if val == nil {
+				res.Arguments[i] = nil
+				continue
+			}
 			res.Arguments[i] = unmarshalPromptArgumentResponseBodyResponseBodyToMcpassistantPromptArgument(val)
 		}
 	}

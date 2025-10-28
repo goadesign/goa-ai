@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	"goa.design/goa-ai/agents/runtime/engine"
 	"goa.design/goa-ai/agents/runtime/hooks"
@@ -24,6 +25,7 @@ type testWorkflowContext struct {
 	lastRequest   engine.ActivityRequest
 	asyncResult   any
 	signals       map[string]*testSignalChannel
+	sigMu         sync.Mutex
 	planResult    planner.PlanResult
 	hasPlanResult bool
 	barrier       chan struct{}
@@ -37,6 +39,8 @@ func (t *testWorkflowContext) Metrics() telemetry.Metrics { return telemetry.Noo
 func (t *testWorkflowContext) Tracer() telemetry.Tracer   { return telemetry.NoopTracer{} }
 
 func (t *testWorkflowContext) SignalChannel(name string) engine.SignalChannel {
+	t.sigMu.Lock()
+	defer t.sigMu.Unlock()
 	if t.signals == nil {
 		t.signals = make(map[string]*testSignalChannel)
 	}
@@ -142,6 +146,7 @@ type routeWorkflowContext struct {
 	routes  map[string]engine.ActivityDefinition
 	lastReq engine.ActivityRequest
 	signals map[string]*testSignalChannel
+	sigMu   sync.Mutex
 }
 
 func (r *routeWorkflowContext) Context() context.Context   { return r.ctx }
@@ -152,6 +157,8 @@ func (r *routeWorkflowContext) Metrics() telemetry.Metrics { return telemetry.No
 func (r *routeWorkflowContext) Tracer() telemetry.Tracer   { return telemetry.NoopTracer{} }
 
 func (r *routeWorkflowContext) SignalChannel(name string) engine.SignalChannel {
+	r.sigMu.Lock()
+	defer r.sigMu.Unlock()
 	if r.signals == nil {
 		r.signals = make(map[string]*testSignalChannel)
 	}

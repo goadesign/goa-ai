@@ -62,7 +62,7 @@ func TestClientComplete(t *testing.T) {
 	require.Equal(t, "hello", resp.Content[0].Content)
 	require.Len(t, resp.ToolCalls, 1)
 	require.Equal(t, "calc.tool", resp.ToolCalls[0].Name)
-	require.Equal(t, float64(42), resp.ToolCalls[0].Payload.(map[string]any)["value"])
+	require.InDelta(t, 42.0, resp.ToolCalls[0].Payload.(map[string]any)["value"], 0.001)
 	require.Equal(t, "tool_use", resp.StopReason)
 	require.Equal(t, 120, resp.Usage.TotalTokens)
 
@@ -101,9 +101,9 @@ func TestClientStream(t *testing.T) {
 		}},
 		&brtypes.ConverseStreamOutputMemberContentBlockDelta{Value: brtypes.ContentBlockDeltaEvent{
 			ContentBlockIndex: aws.Int32(0),
-			Delta: &brtypes.ContentBlockDeltaMemberReasoningContent{Value: &brtypes.ReasoningContentBlockDeltaMemberText{
-				Value: "Thinking",
-			}},
+			Delta: &brtypes.ContentBlockDeltaMemberReasoningContent{
+				Value: &brtypes.ReasoningContentBlockDeltaMemberText{Value: "Thinking"},
+			},
 		}},
 		&brtypes.ConverseStreamOutputMemberContentBlockStart{Value: brtypes.ContentBlockStartEvent{
 			ContentBlockIndex: aws.Int32(1),
@@ -128,7 +128,9 @@ func TestClientStream(t *testing.T) {
 				TotalTokens:  aws.Int32(12),
 			},
 		}},
-		&brtypes.ConverseStreamOutputMemberMessageStop{Value: brtypes.MessageStopEvent{StopReason: brtypes.StopReasonToolUse}},
+		&brtypes.ConverseStreamOutputMemberMessageStop{
+			Value: brtypes.MessageStopEvent{StopReason: brtypes.StopReasonToolUse},
+		},
 	}
 
 	mock.streamOutput = newFakeStreamOutput(events, nil)
@@ -145,7 +147,9 @@ func TestClientStream(t *testing.T) {
 		Thinking: &model.ThinkingOptions{Enable: true, BudgetTokens: 1024},
 	})
 	require.NoError(t, err)
-	defer streamer.Close()
+	defer func() {
+		_ = streamer.Close()
+	}()
 
 	var chunks []model.Chunk
 	for {
@@ -191,12 +195,14 @@ type mockRuntime struct {
 	streamErr    error
 }
 
-func (m *mockRuntime) Converse(ctx context.Context, params *bedrockruntime.ConverseInput, optFns ...func(*bedrockruntime.Options)) (*bedrockruntime.ConverseOutput, error) {
+func (m *mockRuntime) Converse(ctx context.Context, params *bedrockruntime.ConverseInput,
+	optFns ...func(*bedrockruntime.Options)) (*bedrockruntime.ConverseOutput, error) {
 	m.captured = params
 	return m.output, nil
 }
 
-func (m *mockRuntime) ConverseStream(ctx context.Context, params *bedrockruntime.ConverseStreamInput, optFns ...func(*bedrockruntime.Options)) (bedrock.StreamOutput, error) {
+func (m *mockRuntime) ConverseStream(ctx context.Context, params *bedrockruntime.ConverseStreamInput,
+	optFns ...func(*bedrockruntime.Options)) (bedrock.StreamOutput, error) {
 	m.streamInput = params
 	if m.streamErr != nil {
 		return nil, m.streamErr

@@ -176,7 +176,7 @@ func BuildGetConversationHistoryPayload(assistantGetConversationHistoryBody stri
 	{
 		err = json.Unmarshal([]byte(assistantGetConversationHistoryBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"flag\": false,\n      \"limit\": 6546115627246963903,\n      \"nums\": [\n         \"Voluptas nihil eos cumque ut.\",\n         \"Et necessitatibus voluptatem dolor at.\",\n         \"Dolores ut alias non.\",\n         \"Amet deserunt inventore ducimus asperiores iste.\"\n      ]\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"flag\": false,\n      \"limit\": 4829313388173465475,\n      \"nums\": [\n         \"Delectus et.\",\n         \"Voluptatem dolor at omnis dolores ut alias.\"\n      ]\n   }'")
 		}
 	}
 	v := &assistant.GetConversationHistoryPayload{

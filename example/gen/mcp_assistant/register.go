@@ -291,10 +291,14 @@ func RegisterAssistantAssistantMcpToolset(ctx context.Context, rt *agentsruntime
 		if strings.HasPrefix(toolName, suitePrefix) {
 			toolName = toolName[len(suitePrefix):]
 		}
+
 		payload, err := json.Marshal(call.Payload)
 		if err != nil {
-			return planner.ToolResult{Name: fullName}, err
+			return planner.ToolResult{
+				Name: fullName,
+			}, err
 		}
+
 		resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
 			Suite:   suite,
 			Tool:    toolName,
@@ -303,23 +307,34 @@ func RegisterAssistantAssistantMcpToolset(ctx context.Context, rt *agentsruntime
 		if err != nil {
 			return AssistantAssistantMcpToolsetHandleError(fullName, err), nil
 		}
+
 		var value any
 		if len(resp.Result) > 0 {
 			if err := json.Unmarshal(resp.Result, &value); err != nil {
-				return planner.ToolResult{Name: fullName}, err
+				return planner.ToolResult{
+					Name: fullName,
+				}, err
 			}
 		}
+
 		var toolTelemetry *telemetry.ToolTelemetry
 		if len(resp.Structured) > 0 {
 			var structured any
 			if err := json.Unmarshal(resp.Structured, &structured); err != nil {
-				return planner.ToolResult{Name: fullName}, err
+				return planner.ToolResult{
+					Name: fullName,
+				}, err
 			}
 			toolTelemetry = &telemetry.ToolTelemetry{
 				Extra: map[string]any{"structured": structured},
 			}
 		}
-		return planner.ToolResult{Name: fullName, Payload: value, Telemetry: toolTelemetry}, nil
+
+		return planner.ToolResult{
+			Name:      fullName,
+			Payload:   value,
+			Telemetry: toolTelemetry,
+		}, nil
 	}
 
 	return rt.RegisterToolset(agentsruntime.ToolsetRegistration{
@@ -331,7 +346,10 @@ func RegisterAssistantAssistantMcpToolset(ctx context.Context, rt *agentsruntime
 }
 
 func AssistantAssistantMcpToolsetHandleError(toolName string, err error) planner.ToolResult {
-	result := planner.ToolResult{Name: toolName, Error: err}
+	result := planner.ToolResult{
+		Name:  toolName,
+		Error: planner.ToolErrorFromError(err),
+	}
 	if hint := AssistantAssistantMcpToolsetRetryHint(toolName, err); hint != nil {
 		result.RetryHint = hint
 	}

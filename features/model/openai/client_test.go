@@ -78,7 +78,8 @@ type mockChatClient struct {
 	captured openai.ChatCompletionRequest
 }
 
-func (m *mockChatClient) CreateChatCompletion(ctx context.Context, request openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error) {
+func (m *mockChatClient) CreateChatCompletion(ctx context.Context, request openai.ChatCompletionRequest) (
+	openai.ChatCompletionResponse, error) {
 	m.captured = request
 	return m.response, nil
 }

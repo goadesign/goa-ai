@@ -397,6 +397,10 @@ func NewToolsListResponseBody(res *mcpassistant.ToolsListResult) *ToolsListRespo
 	if res.Tools != nil {
 		body.Tools = make([]*ToolInfoResponseBodyResponseBody, len(res.Tools))
 		for i, val := range res.Tools {
+			if val == nil {
+				body.Tools[i] = nil
+				continue
+			}
 			body.Tools[i] = marshalMcpassistantToolInfoToToolInfoResponseBodyResponseBody(val)
 		}
 	} else {
@@ -414,6 +418,10 @@ func NewToolsCallResponseBody(res *mcpassistant.ToolsCallResult) *ToolsCallRespo
 	if res.Content != nil {
 		body.Content = make([]*ContentItemResponseBodyResponseBody, len(res.Content))
 		for i, val := range res.Content {
+			if val == nil {
+				body.Content[i] = nil
+				continue
+			}
 			body.Content[i] = marshalMcpassistantContentItemToContentItemResponseBodyResponseBody(val)
 		}
 	} else {
@@ -429,6 +437,10 @@ func NewResourcesListResponseBody(res *mcpassistant.ResourcesListResult) *Resour
 	if res.Resources != nil {
 		body.Resources = make([]*ResourceInfoResponseBodyResponseBody, len(res.Resources))
 		for i, val := range res.Resources {
+			if val == nil {
+				body.Resources[i] = nil
+				continue
+			}
 			body.Resources[i] = marshalMcpassistantResourceInfoToResourceInfoResponseBodyResponseBody(val)
 		}
 	} else {
@@ -444,6 +456,10 @@ func NewResourcesReadResponseBody(res *mcpassistant.ResourcesReadResult) *Resour
 	if res.Contents != nil {
 		body.Contents = make([]*ResourceContentResponseBodyResponseBody, len(res.Contents))
 		for i, val := range res.Contents {
+			if val == nil {
+				body.Contents[i] = nil
+				continue
+			}
 			body.Contents[i] = marshalMcpassistantResourceContentToResourceContentResponseBodyResponseBody(val)
 		}
 	} else {
@@ -459,6 +475,10 @@ func NewPromptsListResponseBody(res *mcpassistant.PromptsListResult) *PromptsLis
 	if res.Prompts != nil {
 		body.Prompts = make([]*PromptInfoResponseBodyResponseBody, len(res.Prompts))
 		for i, val := range res.Prompts {
+			if val == nil {
+				body.Prompts[i] = nil
+				continue
+			}
 			body.Prompts[i] = marshalMcpassistantPromptInfoToPromptInfoResponseBodyResponseBody(val)
 		}
 	} else {
@@ -476,6 +496,10 @@ func NewPromptsGetResponseBody(res *mcpassistant.PromptsGetResult) *PromptsGetRe
 	if res.Messages != nil {
 		body.Messages = make([]*PromptMessageResponseBodyResponseBody, len(res.Messages))
 		for i, val := range res.Messages {
+			if val == nil {
+				body.Messages[i] = nil
+				continue
+			}
 			body.Messages[i] = marshalMcpassistantPromptMessageToPromptMessageResponseBodyResponseBody(val)
 		}
 	} else {
@@ -493,6 +517,10 @@ func NewEventsStreamResponseBody(res *mcpassistant.EventsStreamResult) *EventsSt
 	if res.Content != nil {
 		body.Content = make([]*ContentItemResponseBodyResponseBody, len(res.Content))
 		for i, val := range res.Content {
+			if val == nil {
+				body.Content[i] = nil
+				continue
+			}
 			body.Content[i] = marshalMcpassistantContentItemToContentItemResponseBodyResponseBody(val)
 		}
 	} else {

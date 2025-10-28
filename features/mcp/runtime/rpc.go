@@ -41,13 +41,13 @@ func (e *rpcError) callerError() *Error {
 
 type toolsCallResult struct {
 	Content []contentItem `json:"content"`
-	IsError bool          `json:"isError"`
+	IsError bool          `json:"is_error"`
 }
 
 type contentItem struct {
 	Type     string  `json:"type"`
 	Text     *string `json:"text"`
-	MimeType *string `json:"mimeType"`
+	MimeType *string `json:"mime_type"`
 }
 
 func (c contentItem) text() string {

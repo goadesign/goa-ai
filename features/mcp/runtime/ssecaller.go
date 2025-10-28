@@ -30,7 +30,7 @@ func NewSSECaller(ctx context.Context, opts HTTPOptions) (*SSECaller, error) {
 func (c *SSECaller) CallTool(ctx context.Context, req CallRequest) (CallResponse, error) {
 	params := map[string]any{
 		"name":      req.Tool,
-		"arguments": json.RawMessage(req.Payload),
+		"arguments": req.Payload,
 	}
 	addTraceMeta(ctx, params)
 	rpcReq := rpcRequest{JSONRPC: "2.0", Method: "tools/call", ID: c.transport.nextID(), Params: params}
@@ -49,14 +49,17 @@ func (c *SSECaller) CallTool(ctx context.Context, req CallRequest) (CallResponse
 	if err != nil {
 		return CallResponse{}, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
 		return CallResponse{}, fmt.Errorf("mcp rpc status %d: %s", resp.StatusCode, string(raw))
 	}
 	if ct := strings.ToLower(resp.Header.Get("Content-Type")); ct != "" && !strings.HasPrefix(ct, "text/event-stream") {
 		raw, _ := io.ReadAll(resp.Body)
-		return CallResponse{}, fmt.Errorf("unexpected content type %q: %s", resp.Header.Get("Content-Type"), string(raw))
+		ctVal := resp.Header.Get("Content-Type")
+		return CallResponse{}, fmt.Errorf("unexpected content type %q: %s", ctVal, string(raw))
 	}
 	reader := bufio.NewReader(resp.Body)
 	for {

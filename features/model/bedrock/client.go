@@ -30,8 +30,10 @@ const (
 // by the adapter. It matches *bedrockruntime.Client so callers can pass either
 // the real client or a mock in tests.
 type RuntimeClient interface {
-	Converse(ctx context.Context, params *bedrockruntime.ConverseInput, optFns ...func(*bedrockruntime.Options)) (*bedrockruntime.ConverseOutput, error)
-	ConverseStream(ctx context.Context, params *bedrockruntime.ConverseStreamInput, optFns ...func(*bedrockruntime.Options)) (StreamOutput, error)
+	Converse(ctx context.Context, params *bedrockruntime.ConverseInput,
+		optFns ...func(*bedrockruntime.Options)) (*bedrockruntime.ConverseOutput, error)
+	ConverseStream(ctx context.Context, params *bedrockruntime.ConverseStreamInput,
+		optFns ...func(*bedrockruntime.Options)) (StreamOutput, error)
 }
 
 // StreamOutput is the subset of the AWS ConverseStream output type required by
@@ -182,7 +184,9 @@ func (c *Client) buildConverseInput(parts *requestParts, req model.Request) *bed
 	return input
 }
 
-func (c *Client) buildConverseStreamInput(parts *requestParts, req model.Request, thinking thinkingConfig) *bedrockruntime.ConverseStreamInput {
+func (c *Client) buildConverseStreamInput(
+	parts *requestParts, req model.Request, thinking thinkingConfig,
+) *bedrockruntime.ConverseStreamInput {
 	input := &bedrockruntime.ConverseStreamInput{
 		ModelId:  aws.String(parts.modelID),
 		Messages: parts.messages,
@@ -239,7 +243,7 @@ func (c *Client) inferenceConfig(maxTokens int, temp float32) *brtypes.Inference
 	var cfg brtypes.InferenceConfiguration
 	tokens := c.effectiveMaxTokens(maxTokens)
 	if tokens > 0 {
-		cfg.MaxTokens = aws.Int32(int32(tokens))
+		cfg.MaxTokens = aws.Int32(int32(tokens)) //nolint:gosec // AWS SDK requires int32
 	}
 	if t := c.effectiveTemperature(temp); t > 0 {
 		cfg.Temperature = aws.Float32(t)

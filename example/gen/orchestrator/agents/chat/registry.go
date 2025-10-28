@@ -30,7 +30,7 @@ func RegisterChatAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ChatA
 	}
 	if err := rt.RegisterAgent(ctx, agentsruntime.AgentRegistration{
 		ID:       "orchestrator.chat",
-		Planner:  agent.Planner(),
+		Planner:  agent.Planner,
 		Workflow: ChatWorkflowDefinition,
 		Activities: []engine.ActivityDefinition{
 			ChatPlanActivityDefinition,

@@ -18,7 +18,8 @@ import (
 
 // ChatClient captures the subset of the go-openai client used by the adapter.
 type ChatClient interface {
-	CreateChatCompletion(ctx context.Context, request openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error)
+	CreateChatCompletion(ctx context.Context, request openai.ChatCompletionRequest) (
+		openai.ChatCompletionResponse, error)
 }
 
 // Options configures the OpenAI adapter.

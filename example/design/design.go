@@ -1,7 +1,6 @@
 package design
 
 import (
-	agentsdsl "goa.design/goa-ai/agents/dsl"
 	mcpdsl "goa.design/goa-ai/features/mcp/dsl"
 	. "goa.design/goa/v3/dsl"
 )
@@ -10,6 +9,12 @@ var _ = API("assistant", func() {
 	Title("AI Assistant API")
 	Description("Simple MCP example exposing tools, resources, prompts, and an agent consumer")
 	Version("1.0")
+	Server("orchestrator", func() {
+		Host("dev", func() {
+			URI("http://localhost:8080")
+		})
+		Services("orchestrator")
+	})
 })
 
 var _ = Service("assistant", func() {
@@ -213,16 +218,6 @@ var _ = Service("assistant", func() {
 	})
 })
 
-var _ = Service("orchestrator", func() {
-	Description("Agent service consuming the assistant MCP toolset")
-
-	agentsdsl.Agent("chat", "Chat orchestrator", func() {
-		agentsdsl.Uses(func() {
-			agentsdsl.UseMCPToolset("assistant", "assistant-mcp")
-		})
-	})
-})
-
 var SentimentResult = Type("SentimentResult", func() {
 	Attribute("label", String, "Sentiment label", func() { Enum("positive", "neutral", "negative"); Example("positive") })
 	Attribute("confidence", Float64, "Confidence score (0–1)", func() { Minimum(0); Maximum(1); Example(0.98) })
@@ -305,4 +300,17 @@ var PromptTemplates = Type("PromptTemplates", ArrayOf(PromptTemplate))
 
 var ConversationHistory = Type("ConversationHistory", func() {
 	Attribute("messages", ArrayOf(Any), "Conversation messages")
+})
+
+var RunPayload = Type("RunPayload", func() {
+	Attribute("prompt", String, "User prompt to execute", func() { Example("Summarize the latest status update.") })
+	Attribute("session_id", String, "Session identifier", func() { Example("session-123") })
+	Attribute("run_id", String, "Optional run identifier", func() { Example("run-123") })
+	Required("prompt")
+})
+
+var RunResult = Type("RunResult", func() {
+	Attribute("run_id", String, "Unique run identifier", func() { Example("run-123") })
+	Attribute("content", String, "Final assistant reply", func() { Example("All systems nominal.") })
+	Required("run_id", "content")
 })

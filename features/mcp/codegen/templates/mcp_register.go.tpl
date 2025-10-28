@@ -87,35 +87,50 @@ func Register{{ .Register.HelperName }}(ctx context.Context, rt *agentsruntime.R
 		if strings.HasPrefix(toolName, suitePrefix) {
 			toolName = toolName[len(suitePrefix):]
 		}
-	payload, err := json.Marshal(call.Payload)
-	if err != nil {
-	    return planner.ToolResult{Name: fullName}, err
-	}
-	resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
-		Suite:  suite,
-		Tool:   toolName,
-		Payload: payload,
-	})
-	if err != nil {
-	    return {{ .Register.HelperName }}HandleError(fullName, err), nil
-	}
-	var value any
-	if len(resp.Result) > 0 {
-		if err := json.Unmarshal(resp.Result, &value); err != nil {
-		    return planner.ToolResult{Name: fullName}, err
+
+		payload, err := json.Marshal(call.Payload)
+		if err != nil {
+			return planner.ToolResult{
+				Name: fullName,
+			}, err
 		}
-	}
-	var toolTelemetry *telemetry.ToolTelemetry
-	if len(resp.Structured) > 0 {
-		var structured any
-		if err := json.Unmarshal(resp.Structured, &structured); err != nil {
-		    return planner.ToolResult{Name: fullName}, err
+
+		resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
+			Suite:   suite,
+			Tool:    toolName,
+			Payload: payload,
+		})
+		if err != nil {
+			return {{ .Register.HelperName }}HandleError(fullName, err), nil
 		}
-		toolTelemetry = &telemetry.ToolTelemetry{
-			Extra: map[string]any{"structured": structured},
+
+		var value any
+		if len(resp.Result) > 0 {
+			if err := json.Unmarshal(resp.Result, &value); err != nil {
+				return planner.ToolResult{
+					Name: fullName,
+				}, err
 			}
 		}
-		return planner.ToolResult{Name: fullName, Payload: value, Telemetry: toolTelemetry}, nil
+
+		var toolTelemetry *telemetry.ToolTelemetry
+		if len(resp.Structured) > 0 {
+			var structured any
+			if err := json.Unmarshal(resp.Structured, &structured); err != nil {
+				return planner.ToolResult{
+					Name: fullName,
+				}, err
+			}
+			toolTelemetry = &telemetry.ToolTelemetry{
+				Extra: map[string]any{"structured": structured},
+			}
+		}
+
+		return planner.ToolResult{
+			Name:      fullName,
+			Payload:   value,
+			Telemetry: toolTelemetry,
+		}, nil
 	}
 
     return rt.RegisterToolset(agentsruntime.ToolsetRegistration{
@@ -127,7 +142,10 @@ func Register{{ .Register.HelperName }}(ctx context.Context, rt *agentsruntime.R
 }
 
 func {{ .Register.HelperName }}HandleError(toolName string, err error) planner.ToolResult {
-	result := planner.ToolResult{Name: toolName, Error: err}
+	result := planner.ToolResult{
+	Name:  toolName,
+	Error: planner.ToolErrorFromError(err),
+}
 	if hint := {{ .Register.HelperName }}RetryHint(toolName, err); hint != nil {
 		result.RetryHint = hint
 	}

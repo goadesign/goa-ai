@@ -105,7 +105,8 @@ func (c *fakeCollection) FindOne(ctx context.Context, filter any, opts ...*optio
 	return fakeSingleResult{doc: &copyDoc}
 }
 
-func (c *fakeCollection) UpdateOne(ctx context.Context, filter any, update any, opts ...*options.UpdateOptions) (*mongodriver.UpdateResult, error) {
+func (c *fakeCollection) UpdateOne(ctx context.Context, filter any, update any,
+	opts ...*options.UpdateOptions) (*mongodriver.UpdateResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	runID := filter.(bson.M)["run_id"].(string)
@@ -134,7 +135,8 @@ type fakeIndexView struct {
 	parent *bool
 }
 
-func (v fakeIndexView) CreateOne(ctx context.Context, model mongodriver.IndexModel, opts ...*options.CreateIndexesOptions) (string, error) {
+func (v fakeIndexView) CreateOne(ctx context.Context, model mongodriver.IndexModel,
+	opts ...*options.CreateIndexesOptions) (string, error) {
 	if len(model.Keys.(bson.D)) == 0 {
 		return "", errors.New("missing keys")
 	}

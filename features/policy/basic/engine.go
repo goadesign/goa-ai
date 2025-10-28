@@ -51,7 +51,8 @@ func New(opts Options) (*Engine, error) {
 		honorHints: !opts.DisableRetryHints,
 		label:      label,
 	}
-	if !e.honorHints && len(e.allowTools) == 0 && len(e.allowTags) == 0 && len(e.blockTools) == 0 && len(e.blockTags) == 0 {
+	if !e.honorHints && len(e.allowTools) == 0 && len(e.allowTags) == 0 &&
+		len(e.blockTools) == 0 && len(e.blockTags) == 0 {
 		// Default to honoring retry hints so the engine always influences behavior.
 		e.honorHints = true
 	}
@@ -129,7 +130,10 @@ func (e *Engine) isAllowed(meta policy.ToolMetadata) bool {
 	return true
 }
 
-func (e *Engine) applyRetryHint(allowed []policy.ToolHandle, meta map[string]policy.ToolMetadata, caps policy.CapsState, hint *policy.RetryHint) ([]policy.ToolHandle, policy.CapsState) {
+func (e *Engine) applyRetryHint(
+	allowed []policy.ToolHandle, meta map[string]policy.ToolMetadata,
+	caps policy.CapsState, hint *policy.RetryHint,
+) ([]policy.ToolHandle, policy.CapsState) {
 	if hint == nil || hint.Tool == "" {
 		return allowed, caps
 	}
@@ -144,7 +148,7 @@ func (e *Engine) applyRetryHint(allowed []policy.ToolHandle, meta map[string]pol
 	case hint.Reason == policy.RetryReasonToolUnavailable:
 		allowed = removeHandle(allowed, hint.Tool)
 	default:
-		allowed = allowed
+		// Use existing allowed slice as-is
 	}
 	return allowed, caps
 }

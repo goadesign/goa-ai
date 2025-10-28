@@ -395,6 +395,10 @@ func NewSummarizeTextSummaryResultOK(body *SummarizeTextResponseBody) *assistant
 func NewSearchKnowledgeSearchResultsOK(body []*SearchResultResponse) assistant.SearchResults {
 	v := make([]*assistant.SearchResult, len(body))
 	for i, val := range body {
+		if val == nil {
+			v[i] = nil
+			continue
+		}
 		v[i] = unmarshalSearchResultResponseToAssistantSearchResult(val)
 	}
 
@@ -418,6 +422,10 @@ func NewExecuteCodeExecutionResultOK(body *ExecuteCodeResponseBody) *assistant.E
 func NewListDocumentsDocumentsOK(body []*DocumentResponse) assistant.Documents {
 	v := make([]*assistant.Document, len(body))
 	for i, val := range body {
+		if val == nil {
+			v[i] = nil
+			continue
+		}
 		v[i] = unmarshalDocumentResponseToAssistantDocument(val)
 	}
 
@@ -457,6 +465,10 @@ func NewGetConversationHistoryConversationHistoryOK(body *GetConversationHistory
 func NewGeneratePromptsPromptTemplatesOK(body []*PromptTemplateResponse) assistant.PromptTemplates {
 	v := make([]*assistant.PromptTemplate, len(body))
 	for i, val := range body {
+		if val == nil {
+			v[i] = nil
+			continue
+		}
 		v[i] = unmarshalPromptTemplateResponseToAssistantPromptTemplate(val)
 	}
 

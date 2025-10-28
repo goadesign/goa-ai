@@ -30,7 +30,9 @@ func ConsumeStream(ctx context.Context, streamer model.Streamer, agent AgentCont
 	if streamer == nil {
 		return summary, errors.New("nil streamer")
 	}
-	defer streamer.Close()
+	defer func() {
+		_ = streamer.Close()
+	}()
 
 	for {
 		chunk, err := streamer.Recv()

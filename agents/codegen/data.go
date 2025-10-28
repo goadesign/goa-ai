@@ -16,23 +16,6 @@ import (
 	goaexpr "goa.design/goa/v3/expr"
 )
 
-const (
-	// toolSpecsPackageName is the fixed package name for generated tool
-	// specification files (specs.go, types.go, codecs.go). It's nested under
-	// each agent package (e.g., gen/assistant/agents/chat/tool_specs/).
-	// Templates reference this via AgentData.ToolSpecsPackage.
-	toolSpecsPackageName = "tool_specs"
-
-	// defaultPlannerActivityTimeout bounds planner activity execution time
-	// (both Plan and Resume activities). This prevents runaway LLM calls and
-	// ensures the workflow engine can reclaim resources. Activities that exceed
-	// this timeout fail after retries and cause the workflow to error.
-	//
-	// 2 minutes accommodates typical LLM response times with retries while
-	// preventing indefinite hangs.
-	defaultPlannerActivityTimeout = 2 * time.Minute
-)
-
 type (
 	// GeneratorData holds the complete design metadata extracted from Goa DSL
 	// expressions and transformed into a template-friendly structure. It groups
@@ -517,6 +500,23 @@ const (
 	ActivityKindExecuteTool ActivityKind = "execute_tool"
 )
 
+const (
+	// toolSpecsPackageName is the fixed package name for generated tool
+	// specification files (specs.go, types.go, codecs.go). It's nested under
+	// each agent package (e.g., gen/assistant/agents/chat/tool_specs/).
+	// Templates reference this via AgentData.ToolSpecsPackage.
+	toolSpecsPackageName = "tool_specs"
+
+	// defaultPlannerActivityTimeout bounds planner activity execution time
+	// (both Plan and Resume activities). This prevents runaway LLM calls and
+	// ensures the workflow engine can reclaim resources. Activities that exceed
+	// this timeout fail after retries and cause the workflow to error.
+	//
+	// 2 minutes accommodates typical LLM response times with retries while
+	// preventing indefinite hangs.
+	defaultPlannerActivityTimeout = 2 * time.Minute
+)
+
 // buildGeneratorData inspects the Goa and agents roots to build template-friendly data.
 func buildGeneratorData(genpkg string, roots []eval.Root) (*GeneratorData, error) {
 	var (
@@ -768,8 +768,10 @@ func newToolsetData(
 		helperPkg := "mcp_" + codegen.SnakeCase(expr.MCPService)
 		helperImport := path.Join(agent.Genpkg, helperPkg)
 		helperAlias := "mcp" + codegen.Goify(expr.MCPService, false)
-		helperFunc := fmt.Sprintf("Register%s%sToolset", codegen.Goify(expr.MCPService, true), codegen.Goify(expr.MCPSuite, true))
-		constName := fmt.Sprintf("%s%s%sToolsetID", agent.GoName, codegen.Goify(expr.MCPService, true), codegen.Goify(expr.MCPSuite, true))
+		helperFunc := fmt.Sprintf("Register%s%sToolset",
+			codegen.Goify(expr.MCPService, true), codegen.Goify(expr.MCPSuite, true))
+		constName := fmt.Sprintf("%s%s%sToolsetID",
+			agent.GoName, codegen.Goify(expr.MCPService, true), codegen.Goify(expr.MCPSuite, true))
 		ts.MCP = &MCPToolsetMeta{
 			ServiceName:      expr.MCPService,
 			SuiteName:        expr.MCPSuite,

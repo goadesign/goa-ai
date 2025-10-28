@@ -3,7 +3,6 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -21,25 +20,40 @@ func TestExecuteToolActivityReturnsErrorAndHint(t *testing.T) {
 		require.Equal(t, "tool-1", call.ToolCallID)
 		require.Equal(t, "parent-1", call.ParentToolCallID)
 		require.Equal(t, "run", call.RunID)
-		return planner.ToolResult{Name: call.Name, Payload: map[string]string{"status": "ok"}, Error: errors.New("invalid payload"), RetryHint: &planner.RetryHint{Reason: planner.RetryReasonInvalidArguments, Tool: call.Name}}, nil
+		return planner.ToolResult{
+			Name:  call.Name,
+			Error: planner.NewToolError("invalid payload"),
+			RetryHint: &planner.RetryHint{
+				Reason: planner.RetryReasonInvalidArguments,
+				Tool:   call.Name,
+			},
+		}, nil
 	}}}}
 	out, err := rt.ExecuteToolActivity(context.Background(), ToolInput{AgentID: "agent", RunID: "run", ToolName: "svc.ts.tool", ToolCallID: "tool-1", ParentToolCallID: "parent-1", Payload: []byte("null")})
 	require.NoError(t, err)
 	require.Equal(t, "invalid payload", out.Error)
+	require.Nil(t, out.Payload)
 	require.NotNil(t, out.RetryHint)
 	require.Equal(t, planner.RetryReasonInvalidArguments, out.RetryHint.Reason)
 }
 
 func TestToolsetTaskQueueOverrideUsed(t *testing.T) {
 	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.export": {TaskQueue: "q1", Execute: func(ctx context.Context, call planner.ToolCallRequest) (planner.ToolResult, error) {
-		return planner.ToolResult{Name: call.Name}, nil
+		return planner.ToolResult{
+			Name: call.Name,
+		}, nil
 	}}}}
 	rt.toolSpecs = map[string]tools.ToolSpec{"svc.export.child": newAnyJSONSpec("svc.export.child")}
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, hasPlanResult: true}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 	initial := planner.PlanResult{ToolCalls: []planner.ToolCallRequest{{Name: "svc.export.child"}}}
-	_, err := rt.runLoop(wfCtx, AgentRegistration{ID: input.AgentID, ExecuteToolActivity: "execute", ResumeActivityName: "resume"}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, nil, nil, nil)
+	_, err := rt.runLoop(wfCtx, AgentRegistration{
+		ID:                  input.AgentID,
+		Planner:             &stubPlanner{},
+		ExecuteToolActivity: "execute",
+		ResumeActivityName:  "resume",
+	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, "q1", wfCtx.lastRequest.Queue)
 	if ti, ok := wfCtx.lastRequest.Input.(ToolInput); ok {
@@ -60,7 +74,9 @@ func TestActivityToolExecutorExecute(t *testing.T) {
 func TestRunLoopPauseResumeEmitsEvents(t *testing.T) {
 	recorder := &recordingHooks{}
 	rt := &Runtime{hooks: recorder, toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call planner.ToolCallRequest) (planner.ToolResult, error) {
-		return planner.ToolResult{Name: call.Name}, nil
+		return planner.ToolResult{
+			Name: call.Name,
+		}, nil
 	}}}}
 	rt.toolSpecs = map[string]tools.ToolSpec{"svc.ts.tool": newAnyJSONSpec("svc.ts.tool")}
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, barrier: make(chan struct{}, 1)}
@@ -77,7 +93,12 @@ func TestRunLoopPauseResumeEmitsEvents(t *testing.T) {
 	base := planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 	initial := planner.PlanResult{ToolCalls: []planner.ToolCallRequest{{Name: "svc.ts.tool"}}}
 	ctrl := interrupt.NewController(wfCtx)
-	_, err := rt.runLoop(wfCtx, AgentRegistration{ID: input.AgentID, ExecuteToolActivity: "execute", ResumeActivityName: "resume"}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, &turnSequencer{turnID: "turn-1"}, nil, ctrl)
+	_, err := rt.runLoop(wfCtx, AgentRegistration{
+		ID:                  input.AgentID,
+		Planner:             &stubPlanner{},
+		ExecuteToolActivity: "execute",
+		ResumeActivityName:  "resume",
+	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, &turnSequencer{turnID: "turn-1"}, nil, ctrl)
 	require.NoError(t, err)
 	var sawPause, sawResume bool
 	for _, evt := range recorder.events {

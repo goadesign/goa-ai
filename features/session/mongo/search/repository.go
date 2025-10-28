@@ -12,6 +12,25 @@ import (
 	"goa.design/goa-ai/agents/runtime/session"
 )
 
+// The search package mirrors interfaces from features/run/mongo/search so tests can
+// compile without importing that package. We redefine minimal collection and cursor
+// interfaces locally to avoid an extra dependency edge.
+type (
+	sessionCollection interface {
+		Find(ctx context.Context, filter any, opts ...*options.FindOptions) (cursor, error)
+	}
+
+	eventCollection interface {
+		Find(ctx context.Context, filter any, opts ...*options.FindOptions) (cursor, error)
+	}
+
+	cursor interface {
+		Next(ctx context.Context) bool
+		Decode(val any) error
+		Close(ctx context.Context) error
+	}
+)
+
 // SessionSortField enumerates supported sort fields.
 type SessionSortField string
 
@@ -19,9 +38,10 @@ const (
 	// SortByCreatedAt orders sessions by creation timestamp.
 	SortByCreatedAt SessionSortField = "created_at"
 	// SortByLastEvent orders sessions by last event timestamp.
-	SortByLastEvent     SessionSortField = "last_event_at"
-	defaultSessionLimit                  = 50
-	defaultFailureLimit                  = 50
+	SortByLastEvent SessionSortField = "last_event_at"
+
+	defaultSessionLimit = 50
+	defaultFailureLimit = 50
 )
 
 // SessionCursor encodes pagination state for session searches.
@@ -144,7 +164,9 @@ func (r *SearchRepository) Sessions(ctx context.Context, q SessionSearchQuery) (
 	if err != nil {
 		return SessionSearchResult{}, err
 	}
-	defer cur.Close(ctx)
+	defer func() {
+		_ = cur.Close(ctx)
+	}()
 
 	var result SessionSearchResult
 	for cur.Next(ctx) {
@@ -175,7 +197,9 @@ func (r *SearchRepository) Failures(ctx context.Context, q FailureQuery) ([]Fail
 	if err != nil {
 		return nil, nil, err
 	}
-	defer cur.Close(ctx)
+	defer func() {
+		_ = cur.Close(ctx)
+	}()
 	var records []FailureRecord
 	for cur.Next(ctx) {
 		var doc eventDocument
@@ -250,6 +274,8 @@ func sortTimestamp(rec SessionRecord, sortField SessionSortField) time.Time {
 		if rec.LastEventAt != nil {
 			return *rec.LastEventAt
 		}
+	case SortByCreatedAt:
+		// Use CreatedAt for this case
 	}
 	return rec.CreatedAt
 }

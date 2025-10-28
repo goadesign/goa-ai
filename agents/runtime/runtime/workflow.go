@@ -508,9 +508,9 @@ func (r *Runtime) executeToolCalls(
 			Payload:   decoded,
 			Telemetry: out.Telemetry,
 		}
-		var toolErr error
+		var toolErr *planner.ToolError
 		if out.Error != "" {
-			toolErr = errors.New(out.Error)
+			toolErr = planner.NewToolError(out.Error)
 			toolRes.Error = toolErr
 		}
 		if out.RetryHint != nil {

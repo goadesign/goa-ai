@@ -17,7 +17,11 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-const stdioHelperEnv = "GOA_MCP_STDIO_HELPER"
+const (
+	stdioHelperEnv      = "GOA_MCP_STDIO_HELPER"
+	rpcMethodInitialize = "initialize"
+	rpcMethodToolsCall  = "tools/call"
+)
 
 func init() {
 	otel.SetTextMapPropagator(propagation.TraceContext{})
@@ -33,10 +37,10 @@ func TestHTTPCallerCallTool(t *testing.T) {
 			t.Fatalf("decode request: %v", err)
 		}
 		switch req.Method {
-		case "initialize":
+		case rpcMethodInitialize:
 			resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"capabilities":{}}`)}
 			_ = json.NewEncoder(w).Encode(resp)
-		case "tools/call":
+		case rpcMethodToolsCall:
 			traceHeader = r.Header.Get("Traceparent")
 			if params, ok := req.Params.(map[string]any); ok {
 				if meta, ok := params["_meta"].(map[string]any); ok {
@@ -45,8 +49,9 @@ func TestHTTPCallerCallTool(t *testing.T) {
 					}
 				}
 			}
-			resp := rpcResponse{JSONRPC: "2.0", ID: req.ID,
-				Result: json.RawMessage(`{"content":[{"type":"text","text":"{\"ok\":true}","mimeType":"application/json"}],"isError":false}`)}
+			resultJSON := `{"content":[{"type":"text","text":"{\"ok\":true}",` +
+				`"mimeType":"application/json"}],"isError":false}`
+			resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(resultJSON)}
 			_ = json.NewEncoder(w).Encode(resp)
 		default:
 			http.Error(w, "unknown method", http.StatusBadRequest)
@@ -59,7 +64,8 @@ func TestHTTPCallerCallTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new caller: %v", err)
 	}
-	resp, err := caller.CallTool(ctx, CallRequest{Suite: "svc.ts", Tool: "search", Payload: json.RawMessage(`{"query":"hi"}`)})
+	req := CallRequest{Suite: "svc.ts", Tool: "search", Payload: json.RawMessage(`{"query":"hi"}`)}
+	resp, err := caller.CallTool(ctx, req)
 	if err != nil {
 		t.Fatalf("call tool: %v", err)
 	}
@@ -84,10 +90,10 @@ func TestSSECallerCallTool(t *testing.T) {
 			t.Fatalf("decode request: %v", err)
 		}
 		switch req.Method {
-		case "initialize":
+		case rpcMethodInitialize:
 			resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"capabilities":{}}`)}
 			_ = json.NewEncoder(w).Encode(resp)
-		case "tools/call":
+		case rpcMethodToolsCall:
 			traceHeader = r.Header.Get("Traceparent")
 			if params, ok := req.Params.(map[string]any); ok {
 				if meta, ok := params["_meta"].(map[string]any); ok {
@@ -98,11 +104,12 @@ func TestSSECallerCallTool(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "text/event-stream")
 			flusher, _ := w.(http.Flusher)
-			resp := rpcResponse{JSONRPC: "2.0", ID: req.ID,
-				Result: json.RawMessage(`{"content":[{"type":"text","text":"{\"ok\":true}","mimeType":"application/json"}],"isError":false}`)}
+			resultJSON := `{"content":[{"type":"text","text":"{\"ok\":true}",` +
+				`"mimeType":"application/json"}],"isError":false}`
+			resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(resultJSON)}
 			data, _ := json.Marshal(resp)
-			fmt.Fprintf(w, "event: response\n")
-			fmt.Fprintf(w, "data: %s\n\n", bytes.TrimSpace(data))
+			_, _ = fmt.Fprintf(w, "event: response\n")
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", bytes.TrimSpace(data))
 			flusher.Flush()
 		default:
 			http.Error(w, "unknown method", http.StatusBadRequest)
@@ -115,7 +122,8 @@ func TestSSECallerCallTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new caller: %v", err)
 	}
-	resp, err := caller.CallTool(ctx, CallRequest{Suite: "svc.ts", Tool: "search", Payload: json.RawMessage(`{"query":"hi"}`)})
+	req := CallRequest{Suite: "svc.ts", Tool: "search", Payload: json.RawMessage(`{"query":"hi"}`)}
+	resp, err := caller.CallTool(ctx, req)
 	if err != nil {
 		t.Fatalf("call tool: %v", err)
 	}
@@ -142,7 +150,9 @@ func TestStdioCallerCallTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new stdio caller: %v", err)
 	}
-	defer caller.Close()
+	defer func() {
+		_ = caller.Close()
+	}()
 	resp, err := caller.CallTool(ctx, CallRequest{Suite: "svc.ts", Tool: "meta", Payload: json.RawMessage(`"noop"`)})
 	if err != nil {
 		t.Fatalf("call tool: %v", err)
@@ -157,9 +167,14 @@ func TestStdioCallerCallTool(t *testing.T) {
 }
 
 func contextWithTrace() (context.Context, string) {
-	traceID := trace.TraceID{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0x00}
+	traceID := trace.TraceID{
+		0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x11, 0x22,
+		0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0x00,
+	}
 	spanID := trace.SpanID{0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80}
-	spanCtx := trace.NewSpanContext(trace.SpanContextConfig{TraceID: traceID, SpanID: spanID, TraceFlags: trace.FlagsSampled})
+	spanCtx := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID: traceID, SpanID: spanID, TraceFlags: trace.FlagsSampled,
+	})
 	ctx := trace.ContextWithSpanContext(context.Background(), spanCtx)
 	expected := fmt.Sprintf("00-%s-%s-01", traceID.String(), spanID.String())
 	return ctx, expected
@@ -185,10 +200,10 @@ func runStdioHelper() {
 			continue
 		}
 		switch req.Method {
-		case "initialize":
+		case rpcMethodInitialize:
 			resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"capabilities":{}}`)}
 			writeFrame(writer, resp)
-		case "tools/call":
+		case rpcMethodToolsCall:
 			traceVal := ""
 			if params, ok := req.Params.(map[string]any); ok {
 				if meta, ok := params["_meta"].(map[string]any); ok {
@@ -198,7 +213,10 @@ func runStdioHelper() {
 				}
 			}
 			if traceVal == "" {
-				errResp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32602, Message: "missing traceparent"}}
+				errResp := rpcResponse{
+					JSONRPC: "2.0", ID: req.ID,
+					Error: &rpcError{Code: -32602, Message: "missing traceparent"},
+				}
 				writeFrame(writer, errResp)
 				continue
 			}
@@ -207,17 +225,20 @@ func runStdioHelper() {
 			resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: data}
 			writeFrame(writer, resp)
 		default:
-			errResp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32601, Message: "unknown method"}}
+			errResp := rpcResponse{
+				JSONRPC: "2.0", ID: req.ID,
+				Error: &rpcError{Code: -32601, Message: "unknown method"},
+			}
 			writeFrame(writer, errResp)
 		}
 	}
-	writer.Flush()
+	_ = writer.Flush()
 	os.Exit(0)
 }
 
 func writeFrame(writer *bufio.Writer, resp rpcResponse) {
 	data, _ := json.Marshal(resp)
-	fmt.Fprintf(writer, "Content-Length: %d\r\n\r\n", len(data))
-	writer.Write(data)
-	writer.Flush()
+	_, _ = fmt.Fprintf(writer, "Content-Length: %d\r\n\r\n", len(data))
+	_, _ = writer.Write(data)
+	_ = writer.Flush()
 }

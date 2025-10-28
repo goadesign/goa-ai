@@ -253,12 +253,14 @@ func newClientWithCollection(mongoClient *mongodriver.Client, coll collection, t
 
 type collection interface {
 	FindOne(ctx context.Context, filter any, opts ...*options.FindOneOptions) singleResult
-	UpdateOne(ctx context.Context, filter any, update any, opts ...*options.UpdateOptions) (*mongodriver.UpdateResult, error)
+	UpdateOne(ctx context.Context, filter any, update any,
+		opts ...*options.UpdateOptions) (*mongodriver.UpdateResult, error)
 	Indexes() indexView
 }
 
 type indexView interface {
-	CreateOne(ctx context.Context, model mongodriver.IndexModel, opts ...*options.CreateIndexesOptions) (string, error)
+	CreateOne(ctx context.Context, model mongodriver.IndexModel,
+		opts ...*options.CreateIndexesOptions) (string, error)
 }
 
 type singleResult interface {
@@ -273,7 +275,8 @@ func (c mongoCollection) FindOne(ctx context.Context, filter any, opts ...*optio
 	return mongoSingleResult{res: c.coll.FindOne(ctx, filter, opts...)}
 }
 
-func (c mongoCollection) UpdateOne(ctx context.Context, filter any, update any, opts ...*options.UpdateOptions) (*mongodriver.UpdateResult, error) {
+func (c mongoCollection) UpdateOne(ctx context.Context, filter any, update any,
+	opts ...*options.UpdateOptions) (*mongodriver.UpdateResult, error) {
 	return c.coll.UpdateOne(ctx, filter, update, opts...)
 }
 
@@ -293,6 +296,7 @@ type mongoIndexView struct {
 	view mongodriver.IndexView
 }
 
-func (v mongoIndexView) CreateOne(ctx context.Context, model mongodriver.IndexModel, opts ...*options.CreateIndexesOptions) (string, error) {
+func (v mongoIndexView) CreateOne(ctx context.Context, model mongodriver.IndexModel,
+	opts ...*options.CreateIndexesOptions) (string, error) {
 	return v.view.CreateOne(ctx, model, opts...)
 }

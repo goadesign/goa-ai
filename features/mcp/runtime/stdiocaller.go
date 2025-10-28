@@ -52,6 +52,7 @@ func NewStdioCaller(ctx context.Context, opts StdioOptions) (*StdioCaller, error
 	if opts.Command == "" {
 		return nil, errors.New("command is required")
 	}
+	//nolint:gosec // G204: Command and args are controlled by the caller configuration
 	cmd := exec.CommandContext(ctx, opts.Command, opts.Args...)
 	if opts.Dir != "" {
 		cmd.Dir = opts.Dir
@@ -79,7 +80,9 @@ func NewStdioCaller(ctx context.Context, opts StdioOptions) (*StdioCaller, error
 	}
 	go caller.readLoop(stdout)
 	if stderr != nil {
-		go io.Copy(io.Discard, stderr)
+		go func() {
+			_, _ = io.Copy(io.Discard, stderr)
+		}()
 	}
 	if err := caller.initialize(ctx, opts); err != nil {
 		_ = caller.Close()
@@ -109,7 +112,7 @@ func (c *StdioCaller) Close() error {
 func (c *StdioCaller) CallTool(ctx context.Context, req CallRequest) (CallResponse, error) {
 	params := map[string]any{
 		"name":      req.Tool,
-		"arguments": json.RawMessage(req.Payload),
+		"arguments": req.Payload,
 	}
 	addTraceMeta(ctx, params)
 	var result toolsCallResult

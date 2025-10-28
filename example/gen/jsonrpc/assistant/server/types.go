@@ -275,6 +275,10 @@ func NewSummarizeTextResponseBody(res *assistant.SummaryResult) *SummarizeTextRe
 func NewSearchKnowledgeResponseBody(res assistant.SearchResults) SearchKnowledgeResponseBody {
 	body := make([]*SearchResultResponse, len(res))
 	for i, val := range res {
+		if val == nil {
+			body[i] = nil
+			continue
+		}
 		body[i] = marshalAssistantSearchResultToSearchResultResponse(val)
 	}
 	return body
@@ -296,6 +300,10 @@ func NewExecuteCodeResponseBody(res *assistant.ExecutionResult) *ExecuteCodeResp
 func NewListDocumentsResponseBody(res assistant.Documents) ListDocumentsResponseBody {
 	body := make([]*DocumentResponse, len(res))
 	for i, val := range res {
+		if val == nil {
+			body[i] = nil
+			continue
+		}
 		body[i] = marshalAssistantDocumentToDocumentResponse(val)
 	}
 	return body
@@ -332,6 +340,10 @@ func NewGetConversationHistoryResponseBody(res *assistant.ConversationHistory) *
 func NewGeneratePromptsResponseBody(res assistant.PromptTemplates) GeneratePromptsResponseBody {
 	body := make([]*PromptTemplateResponse, len(res))
 	for i, val := range res {
+		if val == nil {
+			body[i] = nil
+			continue
+		}
 		body[i] = marshalAssistantPromptTemplateToPromptTemplateResponse(val)
 	}
 	return body

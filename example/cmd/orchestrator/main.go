@@ -11,18 +11,26 @@ import (
 	"sync"
 	"syscall"
 
-	assistantapi "example.com/assistant"
-	assistant "example.com/assistant/gen/assistant"
+	assistant "example.com/assistant"
 	mcpassistant "example.com/assistant/gen/mcp_assistant"
+	orchestrator "example.com/assistant/gen/orchestrator"
 	"goa.design/clue/debug"
 	"goa.design/clue/log"
 )
 
 func main() {
+
+	rt, cleanup, err := bootstrapAgents(context.Background())
+	if err != nil {
+		panic(err)
+	}
+	defer cleanup()
+	_ = rt
+
 	// Define command line flags, add any other flag required to configure the
 	// service.
 	var (
-		hostF     = flag.String("host", "localhost", "Server host (valid values: localhost)")
+		hostF     = flag.String("host", "dev", "Server host (valid values: dev)")
 		domainF   = flag.String("domain", "", "Host domain name (overrides host domain specified in service design)")
 		httpPortF = flag.String("http-port", "", "HTTP port (overrides host HTTP port specified in service design)")
 		secureF   = flag.Bool("secure", false, "Use secure scheme (https or grpcs)")
@@ -44,24 +52,24 @@ func main() {
 
 	// Initialize the services.
 	var (
-		assistantSvc    assistant.Service
+		orchestratorSvc orchestrator.Service
 		mcpAssistantSvc mcpassistant.Service
 	)
 	{
-		assistantSvc = assistantapi.NewAssistant()
-		mcpAssistantSvc = assistantapi.NewMcpAssistant()
+		orchestratorSvc = assistant.NewOrchestrator()
+		mcpAssistantSvc = assistant.NewMcpAssistant()
 	}
 
 	// Wrap the services in endpoints that can be invoked from other services
 	// potentially running in different processes.
 	var (
-		assistantEndpoints    *assistant.Endpoints
+		orchestratorEndpoints *orchestrator.Endpoints
 		mcpAssistantEndpoints *mcpassistant.Endpoints
 	)
 	{
-		assistantEndpoints = assistant.NewEndpoints(assistantSvc)
-		assistantEndpoints.Use(debug.LogPayloads())
-		assistantEndpoints.Use(log.Endpoint)
+		orchestratorEndpoints = orchestrator.NewEndpoints(orchestratorSvc)
+		orchestratorEndpoints.Use(debug.LogPayloads())
+		orchestratorEndpoints.Use(log.Endpoint)
 		mcpAssistantEndpoints = mcpassistant.NewEndpoints(mcpAssistantSvc)
 		mcpAssistantEndpoints.Use(debug.LogPayloads())
 		mcpAssistantEndpoints.Use(log.Endpoint)
@@ -84,9 +92,9 @@ func main() {
 
 	// Start the servers and send errors (if any) to the error channel.
 	switch *hostF {
-	case "localhost":
+	case "dev":
 		{
-			addr := "http://localhost:80"
+			addr := "http://localhost:8080"
 			u, err := url.Parse(addr)
 			if err != nil {
 				log.Fatalf(ctx, err, "invalid URL %#v\n", addr)
@@ -106,11 +114,11 @@ func main() {
 			} else if u.Port() == "" {
 				u.Host = net.JoinHostPort(u.Host, "80")
 			}
-			handleHTTPServer(ctx, u, mcpAssistantEndpoints, mcpAssistantSvc, &wg, errc, *dbgF)
+			handleHTTPServer(ctx, u, orchestratorEndpoints, orchestratorSvc, mcpAssistantSvc, mcpAssistantEndpoints, &wg, errc, *dbgF)
 		}
 
 	default:
-		log.Fatal(ctx, fmt.Errorf("invalid host argument: %q (valid hosts: localhost)", *hostF))
+		log.Fatal(ctx, fmt.Errorf("invalid host argument: %q (valid hosts: dev)", *hostF))
 	}
 
 	// Wait for signal.

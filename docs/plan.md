@@ -45,6 +45,7 @@ The outcome is a modular framework composed of:
 - ✅ Pulse-backed stream sink shipped under `features/stream/pulse`: accepts a caller-provided Redis client, mirrors the Pulse layering pattern, and exposes clue-generated mocks for deterministic tests.
 - ✅ Model + policy feature adapters shipped: `features/model/bedrock`, `features/model/openai`, and `features/policy/basic` wire runtime.ModelClient/policy.Engine contracts to real providers so services can opt in without bespoke glue.
 - ✅ MCP runtime callers now cover HTTP, SSE, and stdio transports with OTEL context propagation and unit tests validating trace injection plus structured payload handling. JSON-RPC error codes map into structured retry hints so policy engines receive precise reasons.
+- ✅ Goa example generation now emits `handleHTTPServer` invocations in the same order as the helper signature; the agents plugin no longer rewrites the example main, and we carry a temporary `replace goa.design/goa/v3 => ../goa` until the upstream release lands.
 - ✅ Temporal engine adapter now instantiates clients (when requested), wires OTEL tracing/metrics interceptors, auto-starts workers on the first run (while keeping `WorkerController` for advanced lifecycle control), supports multiple registered workflows, rehydrates Clue/OTEL context inside activities, and exposes a `Close` helper when it owns the client.
 - ✅ Planner activities (`Plan`, `Resume`) now run as real runtime activities. Codegen registers them with DSL-derived retry/timeout options, `Runtime.ExecuteWorkflow` schedules them through `runPlanActivity`, and unit tests cover both PlanStart/PlanResume paths (while future signal/interrupt hooks remain on the roadmap).
 - ✅ Example “chat data loop” harness (planner + runtime bootstrap) runs end-to-end via `RuntimeHarness`, registers the generated MCP toolset helper, and now shares the same MCP adapter shim used by the JSON-RPC server so `go test ./...` (integration suite included) passes.
@@ -138,7 +139,7 @@ Running `goa gen` after adding the DSL produces:
      - registers the agent workflow/activities with the runtime package.
    - Optional HTTP/gRPC handlers for `Run` (standard Goa output).
 
-4. **Examples/tests** (via `goa example`): sample main showing how to wire inference gateway, Temporal client, streaming/persistence connectors.
+4. **Examples/tests** (via `goa example`): sample main showing how to wire inference gateway, Temporal client, streaming/persistence connectors. The JSON-RPC CLI patcher now operates generically—rather than hardcoding tool names, we rewrite the generated `doJSONRPC` section via Goa’s `codegen.File` APIs and a small template so every MCP-enabled service automatically exposes its tool commands through the adapter endpoints.
 
 ## Code Generation Summary
 
@@ -363,9 +364,14 @@ Putting everything together:
 2. **Runtime subpackages polish**
    - Finish any remaining gaps in the `policy`, `planner`, `stream`, and `telemetry` subpackages (Pulse fan-out, Clue instrumentation, blob adapters for large payloads) now that the AURA requirements are captured above. Mongo-backed memory and session stores already exist; remaining work is mostly wiring default subscribers/adapters so downstream services can opt in without bespoke code.
 
-3. **Docs & rollout** (✅ core docs updated)
-   - `docs/dsl.md`, `docs/runtime.md`, and the chat data loop walkthrough now cover streaming, planner usage, and runtime wiring. Remaining documentation work is limited to the migration guide/README refresh once the last parity features land.
-   - Expand integration/unit tests to cover README walkthroughs after the migration guide ships, ensuring the documented flows (registration, MCP usage, runtime harness) stay green.
+3. **API conversion types**
+   - Introduce `agents/apitypes` to host Goa-friendly structs (`RunInput`, `RunOutput`, `AgentMessage`, `ToolResult`, etc.) that mirror runtime/planner data but follow pointer semantics expected by Goa.
+   - Provide helpers in that package to convert to/from the runtime and planner structs so service code and generators can bridge without touching core runtime packages.
+   - Update the orchestration DSL to call `CreateFrom` / `ConvertTo` with the new apitypes, letting Goa generate conversion glue automatically while runtime/planner continue using their original value-based types.
+
+4. **Docs & rollout** (✅ core docs updated)
+   - `docs/dsl.md`, `docs/runtime.md`, and the chat data loop walkthrough now cover streaming, planner usage, and runtime wiring. Remaining documentation work is limited to the README refresh once the last parity features land.
+   - Expand integration/unit tests to cover README walkthroughs, ensuring the documented flows (registration, MCP usage, runtime harness) stay green.
 
 > **Note:** When implementing code or documentation generated from this plan, avoid referencing Strands or AURA directly. Use neutral terminology (e.g., “durable agent workflow,” “inspiration from existing agent architectures”) to keep goa-ai independent of private projects.
 

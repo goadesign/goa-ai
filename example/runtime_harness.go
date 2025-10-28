@@ -5,18 +5,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 
 	chat "example.com/assistant/gen/orchestrator/agents/chat"
 	"goa.design/goa-ai/agents/runtime/engine"
 	"goa.design/goa-ai/agents/runtime/memory"
 	memoryinmem "goa.design/goa-ai/agents/runtime/memory/inmem"
+	"goa.design/goa-ai/agents/runtime/model"
 	runinmem "goa.design/goa-ai/agents/runtime/run/inmem"
 	agentsruntime "goa.design/goa-ai/agents/runtime/runtime"
 	"goa.design/goa-ai/agents/runtime/stream"
 	"goa.design/goa-ai/agents/runtime/telemetry"
 	mcpruntime "goa.design/goa-ai/features/mcp/runtime"
 )
+
+const chatModelID = "example.chat.streaming"
 
 type (
 	// RuntimeHarness wires together the generated agents, the example MCP client,
@@ -63,6 +67,14 @@ type (
 
 	harnessSignalChannel struct {
 		ch chan any
+	}
+
+	exampleStreamingModel struct{}
+
+	exampleStreamer struct {
+		chunks []model.Chunk
+		index  int
+		meta   map[string]any
 	}
 )
 
@@ -324,6 +336,67 @@ func newExampleCaller() mcpruntime.Caller {
 			return mcpruntime.CallResponse{}, fmt.Errorf("tool %q not implemented in example caller", req.Tool)
 		}
 	})
+}
+
+func newStreamingModel() model.Client { return &exampleStreamingModel{} }
+
+func (m *exampleStreamingModel) Complete(context.Context, model.Request) (model.Response, error) {
+	return model.Response{
+		Content:    []model.Message{{Role: "assistant", Content: "Streaming model received request."}},
+		StopReason: "stop",
+	}, nil
+}
+
+func (m *exampleStreamingModel) Stream(_ context.Context, req model.Request) (model.Streamer, error) {
+	summary := streamingSummary(req.Messages)
+	chunks := []model.Chunk{
+		{
+			Type:    model.ChunkTypeThinking,
+			Message: model.Message{Role: "assistant", Content: "Thinking about the MCP findings..."},
+		},
+		{
+			Type:    model.ChunkTypeText,
+			Message: model.Message{Role: "assistant", Content: summary},
+		},
+		{
+			Type:       model.ChunkTypeStop,
+			StopReason: "stop",
+		},
+	}
+	tokens := max(1, len(summary)/16)
+	meta := map[string]any{"usage": model.TokenUsage{OutputTokens: tokens, TotalTokens: tokens}}
+	return &exampleStreamer{chunks: chunks, meta: meta}, nil
+}
+
+func streamingSummary(messages []model.Message) string {
+	if len(messages) == 0 {
+		return "No context available for streaming response."
+	}
+	last := messages[len(messages)-1].Content
+	if last == "" {
+		return "Streaming response ready."
+	}
+	return fmt.Sprintf("Streaming refinement: %s", last)
+}
+
+func (s *exampleStreamer) Recv() (model.Chunk, error) {
+	if s.index >= len(s.chunks) {
+		return model.Chunk{}, io.EOF
+	}
+	chunk := s.chunks[s.index]
+	s.index++
+	return chunk, nil
+}
+
+func (s *exampleStreamer) Close() error { return nil }
+
+func (s *exampleStreamer) Metadata() map[string]any { return s.meta }
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // workflow looks up a workflow definition by name.

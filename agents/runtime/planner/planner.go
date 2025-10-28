@@ -14,7 +14,31 @@ import (
 	"goa.design/goa-ai/agents/runtime/model"
 	"goa.design/goa-ai/agents/runtime/run"
 	"goa.design/goa-ai/agents/runtime/telemetry"
+	toolerrors "goa.design/goa-ai/agents/runtime/toolerrors"
 )
+
+// ToolError represents a structured tool failure and is an alias to the runtime toolerrors type.
+type ToolError = toolerrors.ToolError
+
+// NewToolError constructs a ToolError with the provided message.
+func NewToolError(message string) *ToolError {
+	return toolerrors.New(message)
+}
+
+// NewToolErrorWithCause wraps an existing error with a ToolError message.
+func NewToolErrorWithCause(message string, cause error) *ToolError {
+	return toolerrors.NewWithCause(message, cause)
+}
+
+// ToolErrorFromError converts an arbitrary error into a ToolError chain.
+func ToolErrorFromError(err error) *ToolError {
+	return toolerrors.FromError(err)
+}
+
+// ToolErrorf formats according to a format specifier and returns the string as a ToolError.
+func ToolErrorf(format string, args ...any) *ToolError {
+	return toolerrors.Errorf(format, args...)
+}
 
 // RetryReason categorizes the type of failure that triggered a retry hint.
 // Policy engines use this to make informed decisions about retry strategies

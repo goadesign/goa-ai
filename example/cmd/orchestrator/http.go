@@ -7,8 +7,11 @@ import (
 	"sync"
 	"time"
 
+	orchestratorsvr "example.com/assistant/gen/http/orchestrator/server"
 	mcpassistantjssvr "example.com/assistant/gen/jsonrpc/mcp_assistant/server"
+	orchestratorjssvr "example.com/assistant/gen/jsonrpc/orchestrator/server"
 	mcpassistant "example.com/assistant/gen/mcp_assistant"
+	orchestrator "example.com/assistant/gen/orchestrator"
 	"goa.design/clue/debug"
 	"goa.design/clue/log"
 	goahttp "goa.design/goa/v3/http"
@@ -16,7 +19,7 @@ import (
 
 // handleHTTPServer starts configures and starts a HTTP server on the given
 // URL. It shuts down the server if any error is received in the error channel.
-func handleHTTPServer(ctx context.Context, u *url.URL, mcpAssistantEndpoints *mcpassistant.Endpoints, mcpAssistantSvc mcpassistant.Service, wg *sync.WaitGroup, errc chan error, dbg bool) {
+func handleHTTPServer(ctx context.Context, u *url.URL, orchestratorEndpoints *orchestrator.Endpoints, orchestratorSvc orchestrator.Service, mcpAssistantSvc mcpassistant.Service, mcpAssistantEndpoints *mcpassistant.Endpoints, wg *sync.WaitGroup, errc chan error, dbg bool) {
 	// Provide the transport specific request decoder and response encoder.
 	// The goa http package has built-in support for JSON, XML and gob.
 	// Other encodings can be used by providing the corresponding functions,
@@ -44,14 +47,20 @@ func handleHTTPServer(ctx context.Context, u *url.URL, mcpAssistantEndpoints *mc
 	// the service input and output data structures to HTTP requests and
 	// responses.
 	var (
+		orchestratorServer        *orchestratorsvr.Server
+		orchestratorJSONRPCServer *orchestratorjssvr.Server
 		mcpAssistantJSONRPCServer *mcpassistantjssvr.Server
 	)
 	{
 		eh := errorHandler(ctx)
+		orchestratorServer = orchestratorsvr.New(orchestratorEndpoints, mux, dec, enc, eh, nil)
+		orchestratorJSONRPCServer = orchestratorjssvr.New(orchestratorEndpoints, mux, dec, enc, eh)
 		mcpAssistantJSONRPCServer = mcpassistantjssvr.New(mcpAssistantEndpoints, mux, dec, enc, eh)
 	}
 
 	// Configure the mux.
+	orchestratorsvr.Mount(mux, orchestratorServer)
+	orchestratorjssvr.Mount(mux, orchestratorJSONRPCServer)
 	mcpassistantjssvr.Mount(mux, mcpAssistantJSONRPCServer)
 
 	var handler http.Handler = mux
@@ -64,6 +73,12 @@ func handleHTTPServer(ctx context.Context, u *url.URL, mcpAssistantEndpoints *mc
 	// Start HTTP server using default configuration, change the code to
 	// configure the server as required by your service.
 	srv := &http.Server{Addr: u.Host, Handler: handler, ReadHeaderTimeout: time.Second * 60}
+	for _, m := range orchestratorServer.Mounts {
+		log.Printf(ctx, "HTTP %q mounted on %s %s", m.Method, m.Verb, m.Pattern)
+	}
+	for _, m := range orchestratorJSONRPCServer.Methods {
+		log.Printf(ctx, "JSON-RPC method %q mounted on POST /", m)
+	}
 	for _, m := range mcpAssistantJSONRPCServer.Methods {
 		log.Printf(ctx, "JSON-RPC method %q mounted on POST /rpc", m)
 	}

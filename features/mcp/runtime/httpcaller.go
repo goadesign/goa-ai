@@ -41,7 +41,7 @@ func NewHTTPCaller(ctx context.Context, opts HTTPOptions) (*HTTPCaller, error) {
 func (c *HTTPCaller) CallTool(ctx context.Context, req CallRequest) (CallResponse, error) {
 	params := map[string]any{
 		"name":      req.Tool,
-		"arguments": json.RawMessage(req.Payload),
+		"arguments": req.Payload,
 	}
 	addTraceMeta(ctx, params)
 	var result toolsCallResult
@@ -125,7 +125,9 @@ func (t *httpTransport) call(ctx context.Context, method string, params any, res
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("mcp rpc status %d", resp.StatusCode)
 	}
