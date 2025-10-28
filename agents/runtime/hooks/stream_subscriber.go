@@ -8,21 +8,28 @@ import (
 )
 
 type (
-	// StreamSubscriber is a Subscriber implementation that bridges hook events
-	// to a stream.Sink, enabling real-time updates to be pushed to clients
-	// (e.g., via Server-Sent Events or WebSockets).
-	//
-	// Only user-facing events are forwarded to the stream:
-	//   - AssistantMessage → EventAssistantReply
-	//   - PlannerNote → EventPlannerThought
+    // StreamSubscriber is a Subscriber implementation that RECEIVES hook events
+    // and forwards selected ones to a stream.Sink. Think of it as a bridge
+    // between the internal observability bus and an external streaming transport
+    // (SSE, WebSockets, Pulse, etc.).
+    //
+    // Naming note: only the sink exposes a Send method. The subscriber itself does
+    // not "send"; it handles incoming hook events and calls sink.Send under the
+    // hood. This separation avoids confusion between receiving from the bus and
+    // transmitting to the client transport.
+    //
+    // Forwarded (client‑facing) events:
+    //   - AssistantMessage → EventAssistantReply
+    //   - PlannerNote → EventPlannerThought
+    //   - ToolCallScheduled → EventToolStart
+    //   - ToolCallUpdated → EventToolUpdate
     //   - ToolResultReceived → EventToolEnd
-	//
-	// Other hook events (WorkflowStarted, WorkflowCompleted, etc.) are silently
-	// ignored as they are typically used for internal observability rather than
-	// client streaming.
-	StreamSubscriber struct {
-		sink stream.Sink
-	}
+    //
+    // Internal‑only events (e.g., workflow lifecycle) are ignored as they are
+    // primarily used for observability, not client streaming.
+    StreamSubscriber struct {
+        sink stream.Sink
+    }
 )
 
 // NewStreamSubscriber constructs a subscriber that forwards selected hook
@@ -52,9 +59,11 @@ func NewStreamSubscriber(sink stream.Sink) (Subscriber, error) {
 // into stream events and forwarding them to the configured sink.
 //
 // Event translation:
-//   - AssistantMessage events are sent as EventAssistantReply
-//   - PlannerNote events are sent as EventPlannerThought
-    //   - ToolResultReceived events are sent as EventToolEnd
+//   - AssistantMessage → EventAssistantReply
+//   - PlannerNote → EventPlannerThought
+//   - ToolCallScheduled → EventToolStart
+//   - ToolCallUpdated → EventToolUpdate
+//   - ToolResultReceived → EventToolEnd
 //   - All other event types are ignored (return nil)
 //
 // If the sink returns an error, HandleEvent propagates it to the bus, which
@@ -98,6 +107,15 @@ func (s *StreamSubscriber) HandleEvent(ctx context.Context, event Event) error {
         return s.sink.Send(ctx, stream.ToolEnd{
             Base: stream.Base{T: stream.EventToolEnd, R: evt.RunID(), P: payload},
             Data: payload,
+        })
+    case *ToolCallUpdatedEvent:
+        up := stream.ToolUpdatePayload{
+            ToolCallID:            evt.ToolCallID,
+            ExpectedChildrenTotal: evt.ExpectedChildrenTotal,
+        }
+        return s.sink.Send(ctx, stream.ToolUpdate{
+            Base: stream.Base{T: stream.EventToolUpdate, R: evt.RunID(), P: up},
+            Data: up,
         })
     default:
         return nil

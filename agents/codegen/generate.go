@@ -138,11 +138,7 @@ func ModifyExampleFiles(genpkg string, roots []eval.Root, files []*codegen.File)
 			files = append(files, bfile)
 		}
 		// Patch cmd/<service>/main.go to call bootstrapAgents(ctx)
-		var err error
-		files, err = patchServiceMainForBootstrap(svc, files)
-		if err != nil {
-			return nil, err
-		}
+    files = patchServiceMainForBootstrap(svc, files)
 		// Planner stubs at module root: <service>_<agent>_planner.go
 		for _, ag := range svc.Agents {
 			if f := emitPlannerStub(svc, ag); f != nil {
@@ -237,62 +233,64 @@ func emitPlannerStub(svc *ServiceAgentsData, ag *AgentData) *codegen.File {
 // patchServiceMainForBootstrap locates cmd/<service>/main.go and inserts a call
 // to bootstrapAgents(ctx) after a context/logger setup if present, or at the
 // start of main() otherwise. It also adds necessary imports.
-func patchServiceMainForBootstrap(svc *ServiceAgentsData, files []*codegen.File) ([]*codegen.File, error) {
-	mainPath := filepath.Join("cmd", svc.Service.PathName, "main.go")
-	var fmain *codegen.File
-	for _, f := range files {
-		if f.Path == mainPath {
-			fmain = f
-			break
-		}
-	}
-	if fmain == nil {
-		return files, nil
-	}
-	// Add context import if missing (header import management is idempotent)
-	for _, s := range fmain.SectionTemplates {
-		if s.Name == "source-header" {
-			codegen.AddImport(s, &codegen.ImportSpec{Path: "context"})
-			break
-		}
-	}
+const sectionSourceHeader = "source-header"
+
+func patchServiceMainForBootstrap(svc *ServiceAgentsData, files []*codegen.File) []*codegen.File {
+    mainPath := filepath.Join("cmd", svc.Service.PathName, "main.go")
+    var fmain *codegen.File
+    for _, f := range files {
+        if f.Path == mainPath {
+            fmain = f
+            break
+        }
+    }
+    if fmain == nil {
+        return files
+    }
+    // Add context import if missing (header import management is idempotent)
+    for _, s := range fmain.SectionTemplates {
+        if s.Name == sectionSourceHeader {
+            codegen.AddImport(s, &codegen.ImportSpec{Path: "context"})
+            break
+        }
+    }
 	// If the snippet already exists, replace it with the canonical version to keep
 	// future runs idempotent.
-	const snippetHead = "\n\trt, cleanup, err := bootstrapAgents("
-	const snippetTail = "\n\t_ = rt\n"
-	for _, s := range fmain.SectionTemplates {
-		if s.Name == "source-header" {
-			continue
-		}
-		start := strings.Index(s.Source, snippetHead)
-		if start < 0 {
-			continue
-		}
-		end := strings.Index(s.Source[start:], snippetTail)
-		if end < 0 {
-			continue
-		}
-		end += start + len(snippetTail)
-		s.Source = s.Source[:start] + bootstrapMainSnippet + s.Source[end:]
-		return files, nil
-	}
-	// Insert bootstrap call inside main function body
-	for _, s := range fmain.SectionTemplates {
-		if s.Name == "source-header" {
-			continue
-		}
-		src := s.Source
-		const mainSig = "func main() {"
-		idx := findSubstring(src, mainSig)
-		if idx < 0 {
-			continue
-		}
-		sigEnd := idx + len(mainSig)
-		insert := "\n" + bootstrapMainSnippet
-		s.Source = src[:sigEnd] + insert + src[sigEnd:]
-		break
-	}
-	return files, nil
+    const snippetHead = "\n\trt, cleanup, err := bootstrapAgents("
+    const snippetTail = "\n\t_ = rt\n"
+    for _, s := range fmain.SectionTemplates {
+        if s.Name == sectionSourceHeader {
+            continue
+        }
+        start := strings.Index(s.Source, snippetHead)
+        if start < 0 {
+            continue
+        }
+        end := strings.Index(s.Source[start:], snippetTail)
+        if end < 0 {
+            continue
+        }
+        end += start + len(snippetTail)
+        s.Source = s.Source[:start] + bootstrapMainSnippet + s.Source[end:]
+        return files
+    }
+    // Insert bootstrap call inside main function body
+    for _, s := range fmain.SectionTemplates {
+        if s.Name == sectionSourceHeader {
+            continue
+        }
+        src := s.Source
+        const mainSig = "func main() {"
+        idx := findSubstring(src, mainSig)
+        if idx < 0 {
+            continue
+        }
+        sigEnd := idx + len(mainSig)
+        insert := "\n" + bootstrapMainSnippet
+        s.Source = src[:sigEnd] + insert + src[sigEnd:]
+        break
+    }
+    return files
 }
 
 func agentImplFile(agent *AgentData) *codegen.File {

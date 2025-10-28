@@ -30,14 +30,16 @@ func TestRunInputConversionRoundTrip(t *testing.T) {
     if err != nil {
         t.Fatalf("ToRuntimeRunInput: %v", err)
     }
-    if rin.AgentID != in.AgentID || rin.RunID != in.RunID || rin.SessionID != in.SessionID || rin.TurnID != in.TurnID {
+    if rin.AgentID != in.AgentID || rin.RunID != in.RunID ||
+        rin.SessionID != in.SessionID || rin.TurnID != in.TurnID {
         t.Fatalf("mismatch ids: %+v vs %+v", rin, in)
     }
     if len(rin.Messages) != len(in.Messages) {
         t.Fatalf("messages len: got %d want %d", len(rin.Messages), len(in.Messages))
     }
     back := FromRuntimeRunInput(rin)
-    if back.AgentID != in.AgentID || back.RunID != in.RunID || back.SessionID != in.SessionID || back.TurnID != in.TurnID {
+    if back.AgentID != in.AgentID || back.RunID != in.RunID ||
+        back.SessionID != in.SessionID || back.TurnID != in.TurnID {
         t.Fatalf("roundtrip ids mismatch: %+v vs %+v", back, in)
     }
     if len(back.Messages) != len(in.Messages) || back.Messages[1].Content != "Hello" {

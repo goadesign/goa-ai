@@ -1,4 +1,3 @@
-//nolint:lll // long signatures and struct literals are acceptable in generator
 package codegen
 
 import (
@@ -12,7 +11,6 @@ import (
 	"goa.design/goa/v3/expr"
 )
 
-// Types
 type (
 	// AdapterData holds the data for generating the adapter
 	AdapterData struct {
@@ -159,7 +157,12 @@ type (
 )
 
 // newAdapterGenerator creates a new adapter generator
-func newAdapterGenerator(genpkg string, svc *expr.ServiceExpr, mcp *mcpexpr.MCPExpr, mapping *ServiceMethodMapping) *adapterGenerator {
+func newAdapterGenerator(
+	genpkg string,
+	svc *expr.ServiceExpr,
+	mcp *mcpexpr.MCPExpr,
+	mapping *ServiceMethodMapping,
+) *adapterGenerator {
 	return &adapterGenerator{
 		genpkg:          genpkg,
 		originalService: svc,
@@ -316,7 +319,9 @@ func (g *adapterGenerator) buildToolAdapters() []*ToolAdapter {
 }
 
 // collectTopLevelValidations extracts required fields and enum values for a top-level object payload
-func (g *adapterGenerator) collectTopLevelValidations(attr *expr.AttributeExpr) ([]string, map[string][]string, map[string]bool) {
+func (g *adapterGenerator) collectTopLevelValidations(
+	attr *expr.AttributeExpr,
+) ([]string, map[string][]string, map[string]bool) {
 	if attr == nil || attr.Type == nil || attr.Type == expr.Empty {
 		return nil, nil, nil
 	}

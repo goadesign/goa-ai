@@ -46,7 +46,7 @@ func Example_perRequest() {
 
     // Attach a temporary subscriber for this request/connection.
     sub, _ := streambridge.Register(bus, sink)
-    defer sub.Close()
+    defer func() { _ = sub.Close() }()
 
     // Publish a planner note; the subscriber forwards it as a stream event.
     _ = bus.Publish(ctx, hooks.NewPlannerNoteEvent("run-1", "svc.agent", "thinking", nil))
@@ -55,4 +55,3 @@ func Example_perRequest() {
     fmt.Println(sink.events[0].Type())
     // Output: planner_thought
 }
-

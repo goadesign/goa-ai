@@ -16,6 +16,7 @@ import (
 )
 
 const headerSection = "source-header"
+const exampleMCPStubSection = "example-mcp-stub"
 
 // Generate orchestrates MCP code generation for services that declare MCP
 // configuration in the DSL. It composes Goa service and JSON-RPC generators

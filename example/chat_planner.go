@@ -9,26 +9,31 @@ import (
 	"goa.design/goa-ai/agents/runtime/planner"
 )
 
-const (
-	searchToolName = "assistant.assistant-mcp.search"
+type (
+	// chatPlanner is a deterministic planner used by the example runtime harness.
+	// It demonstrates the data-loop flow described in docs/plan.md: the first turn
+	// always calls the MCP search tool, then the second turn summarizes the returned
+	// documents into a natural-language reply.
+	chatPlanner struct {
+		modelID string
+	}
 )
 
-// chatPlanner is a tiny deterministic planner used by the example runtime
-// harness. It demonstrates the data-loop flow described in docs/plan.md: the
-// first turn always calls the MCP search tool, then the second turn summarizes
-// the returned documents into a natural-language reply.
-type chatPlanner struct {
-	modelID string
-}
+const searchToolName = "assistant.assistant-mcp.search"
 
+// newChatPlanner constructs a chat planner with the specified model ID for
+// streaming responses.
 func newChatPlanner(modelID string) *chatPlanner {
 	return &chatPlanner{modelID: modelID}
 }
 
-// PlanStart always schedules a single MCP search tool call. The query is
-// derived from the last user message so tests can control the response
-// deterministically.
-func (p *chatPlanner) PlanStart(ctx context.Context, input planner.PlanInput) (planner.PlanResult, error) {
+// PlanStart always schedules a single MCP search tool call. The query is derived
+// from the last user message so tests can control the response deterministically.
+// Returns a plan with one tool call and a planner annotation describing the action.
+func (p *chatPlanner) PlanStart(
+	ctx context.Context,
+	input planner.PlanInput,
+) (planner.PlanResult, error) {
 	query := "status update"
 	if len(input.Messages) > 0 {
 		query = input.Messages[len(input.Messages)-1].Content
@@ -48,9 +53,15 @@ func (p *chatPlanner) PlanStart(ctx context.Context, input planner.PlanInput) (p
 }
 
 // PlanResume inspects the MCP tool results and emits a friendly summary. Any
-// structured payloads passed through the tool telemetry are echoed so the
-// runtime stream demonstrates both planner notes and assistant replies.
-func (p *chatPlanner) PlanResume(ctx context.Context, input planner.PlanResumeInput) (planner.PlanResult, error) {
+// structured payloads passed through the tool telemetry are echoed so the runtime
+// stream demonstrates both planner notes and assistant replies.
+//
+// If a streaming model is configured, this method uses it to generate the final
+// response incrementally, emitting text chunks via the planner's streaming API.
+func (p *chatPlanner) PlanResume(
+	ctx context.Context,
+	input planner.PlanResumeInput,
+) (planner.PlanResult, error) {
 	summary := "I could not find any related documents."
 	if len(input.ToolResults) > 0 {
 		summary = summarizeResult(input.ToolResults[0])
@@ -96,6 +107,9 @@ func (p *chatPlanner) PlanResume(ctx context.Context, input planner.PlanResumeIn
 	}, nil
 }
 
+// summarizeResult extracts a human-readable summary from the MCP search tool
+// result payload. It handles different payload structures (string arrays, object
+// arrays with title/content fields) and returns a descriptive message.
 func summarizeResult(result planner.ToolResult) string {
 	docs, ok := result.Payload.(map[string]any)
 	if !ok {

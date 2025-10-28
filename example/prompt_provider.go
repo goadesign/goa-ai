@@ -7,19 +7,37 @@ import (
 	mcpassistant "example.com/assistant/gen/mcp_assistant"
 )
 
-// promptProvider implements the generated PromptProvider interface so the MCP
-// adapter can serve both static and dynamic prompts.
-type promptProvider struct{}
+type (
+	// promptProvider implements the generated PromptProvider interface so the MCP
+	// adapter can serve both static and dynamic prompts. Static prompts are defined
+	// in the DSL and served automatically; dynamic prompts are synthesized at runtime
+	// based on caller-provided arguments.
+	promptProvider struct{}
+)
 
-// GetCodeReviewPrompt returns nil to fall back to the static template defined
-// in the design. This keeps static prompt maintenance centralized in the DSL.
-func (p *promptProvider) GetCodeReviewPrompt(json.RawMessage) (*mcpassistant.PromptsGetResult, error) {
+// GetCodeReviewPrompt returns nil to fall back to the static template defined in
+// the design. This keeps static prompt maintenance centralized in the DSL rather
+// than duplicating template content in the service implementation.
+//
+// When nil is returned, the MCP adapter serves the static prompt template
+// from the design definition.
+func (p *promptProvider) GetCodeReviewPrompt(
+	json.RawMessage,
+) (*mcpassistant.PromptsGetResult, error) {
 	return nil, nil
 }
 
 // GetContextualPromptsPrompt synthesizes a deterministic prompt deck from the
-// caller-provided arguments so tests can exercise dynamic prompt flows.
-func (p *promptProvider) GetContextualPromptsPrompt(_ context.Context, arguments json.RawMessage) (*mcpassistant.PromptsGetResult, error) {
+// caller-provided arguments so tests can exercise dynamic prompt flows. The
+// generated prompt includes a system message and user message constructed from
+// the context and task arguments.
+//
+// This demonstrates how to implement dynamic prompts that vary based on runtime
+// parameters while maintaining type safety through the generated interface.
+func (p *promptProvider) GetContextualPromptsPrompt(
+	_ context.Context,
+	arguments json.RawMessage,
+) (*mcpassistant.PromptsGetResult, error) {
 	var args struct {
 		Context string `json:"context"`
 		Task    string `json:"task"`
@@ -52,4 +70,8 @@ func (p *promptProvider) GetContextualPromptsPrompt(_ context.Context, arguments
 	}, nil
 }
 
-func strptr(s string) *string { return &s }
+// strptr returns a pointer to the provided string. Helper for constructing
+// pointer fields in generated types.
+func strptr(s string) *string {
+	return &s
+}

@@ -39,17 +39,17 @@ func NewWithCause(message string, cause error) *ToolError {
 
 // FromError converts an arbitrary error into a ToolError chain.
 func FromError(err error) *ToolError {
-	switch e := err.(type) {
-	case nil:
-		return nil
-	case *ToolError:
-		return e
-	default:
-		return &ToolError{
-			Message: e.Error(),
-			Cause:   FromError(errors.Unwrap(err)),
-		}
-	}
+    if err == nil {
+        return nil
+    }
+    var te *ToolError
+    if errors.As(err, &te) {
+        return te
+    }
+    return &ToolError{
+        Message: err.Error(),
+        Cause:   FromError(errors.Unwrap(err)),
+    }
 }
 
 // Errorf formats according to a format specifier and returns the string as a ToolError.

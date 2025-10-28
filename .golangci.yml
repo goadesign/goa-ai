@@ -46,3 +46,9 @@ linters:
       - diagram/*
       - gql/*
       - mocks/*
+issues:
+  exclude-rules:
+    - path: ".*/dsl/.*"
+      linters:
+        - staticcheck
+      text: "ST1001: should not use dot imports"

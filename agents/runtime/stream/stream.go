@@ -22,18 +22,23 @@ import (
 )
 
 type (
-	// Sink delivers streaming updates to clients over a transport (SSE, WebSocket, Pulse).
-	// Implementations must be thread-safe: the runtime may call Send concurrently from
-	// multiple goroutines when streaming tool results or planner thoughts in parallel.
-	Sink interface {
+    // Sink delivers streaming updates to clients over a transport (SSE, WebSocket, Pulse).
+    // Implementations must be thread-safe: the runtime may call Send concurrently from
+    // multiple goroutines when streaming tool results or planner thoughts in parallel.
+    //
+    // Naming note: Send belongs to the sink (the transmitter), not the subscriber.
+    // The hooks.StreamSubscriber RECEIVES events from the internal bus and forwards
+    // them by invoking Sink.Send. Transports and tests implement Sink; typical
+    // application code does not call Send directly unless it is acting as a transport.
+    Sink interface {
 		// Send publishes an event to the sink's underlying transport. The implementation
 		// is responsible for marshaling the event into the wire format and handling
 		// transport-specific delivery semantics (retry, buffering, backpressure).
 		//
-		// Send should return an error if delivery fails (connection closed, serialization
-		// error, transport unavailable). The runtime propagates Send errors to the hook
-		// bus, which stops event delivery to remaining subscribers, ensuring streaming
-		// failures surface immediately rather than silently dropping events.
+        // Send should return an error if delivery fails (connection closed, serialization
+        // error, transport unavailable). The runtime propagates Send errors to the hook
+        // bus, which stops event delivery to remaining subscribers, ensuring streaming
+        // failures surface immediately rather than silently dropping events.
 		//
 		// Thread-safe: safe to call concurrently from multiple goroutines.
 		Send(ctx context.Context, event Event) error
@@ -51,7 +56,7 @@ type (
 		Close(ctx context.Context) error
 	}
 
-	// Event describes a streaming event delivered to clients through a Sink. All concrete
+    // Event describes a streaming event delivered to clients through a Sink. All concrete
 	// event types embed Base to provide standard metadata (type, run ID, payload). Sinks
 	// use the Event interface to marshal events generically; consumers can type-assert to
 	// concrete types when they need structured field access.
@@ -208,11 +213,26 @@ type (
 		// Nil if no telemetry was collected. Clients use this for cost tracking, performance
 		// monitoring, and compliance reporting.
 		Telemetry *telemetry.ToolTelemetry `json:"telemetry,omitempty"`
-		// Error contains any error returned by the tool execution. Nil on success. When
-		// non-nil, Result is nil and this field contains structured error details (code,
-		// message, retryability). Clients display error messages and may implement retry UIs.
-		Error *toolerrors.ToolError `json:"error,omitempty"`
-	}
+        // Error contains any error returned by the tool execution. Nil on success. When
+        // non-nil, Result is nil and this field contains structured error details (code,
+        // message, retryability). Clients display error messages and may implement retry UIs.
+        Error *toolerrors.ToolError `json:"error,omitempty"`
+    }
+
+    // ToolUpdatePayload describes a non-terminal update to a tool call, typically used
+    // when a parent tool dynamically discovers more child tools across planning iterations.
+    ToolUpdatePayload struct {
+        // ToolCallID identifies the (parent) tool call being updated.
+        ToolCallID string `json:"tool_call_id"`
+        // ExpectedChildrenTotal is the new total of expected child tools.
+        ExpectedChildrenTotal int `json:"expected_children_total"`
+    }
+
+    // ToolUpdate streams progress updates for a tool call (new expected child count).
+    ToolUpdate struct {
+        Base
+        Data ToolUpdatePayload
+    }
 )
 
 // EventType enumerates stream payload flavors.
@@ -231,12 +251,18 @@ const (
 	// batches. Emitted by StreamSubscriber when ToolCallScheduledEvent hooks fire.
 	EventToolStart EventType = "tool_start"
 
-	// EventToolEnd streams when a tool activity completes with either a result or error.
-	// This event includes execution duration, telemetry (token counts, model info), and
-	// structured error details if the tool failed. UIs use this to update tool status,
-	// display results, and close progress indicators. Emitted by StreamSubscriber when
-	// ToolResultReceivedEvent hooks fire.
-	EventToolEnd EventType = "tool_end"
+    // EventToolEnd streams when a tool activity completes with either a result or error.
+    // This event includes execution duration, telemetry (token counts, model info), and
+    // structured error details if the tool failed. UIs use this to update tool status,
+    // display results, and close progress indicators. Emitted by StreamSubscriber when
+    // ToolResultReceivedEvent hooks fire.
+    EventToolEnd EventType = "tool_end"
+
+    // EventToolUpdate streams a non-terminal update to a tool call (e.g., when a parent
+    // tool discovers additional child tools to execute). Emitted by StreamSubscriber when
+    // ToolCallUpdatedEvent hooks fire. The payload carries the updated expected child
+    // count for progress tracking.
+    EventToolUpdate EventType = "tool_update"
 
 	// EventAssistantReply streams incremental assistant message content as the planner
 	// produces the final response. Clients receive text chunks that can be displayed

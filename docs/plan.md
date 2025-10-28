@@ -259,6 +259,28 @@ server := atlasserver.New(rt.RunHandler("chat"))
 
 The runtime implements the durable loop using a durable workflow engine (Temporal integration provided by default), closely matching AURA’s orchestration:
 
+## Recent Updates
+
+- Typed streaming events and bridge:
+  - Introduced typed events in `agents/runtime/stream` with a small `Base` to avoid boilerplate: `tool_start`, `tool_update`, `tool_end`, `planner_thought`, `assistant_reply`.
+  - Added helper constructors and a `stream/bridge` package to register a hook subscriber with a `stream.Sink` (broadcast or per-request) without importing hooks directly.
+- Tool result correlation:
+  - `ToolResultReceivedEvent` now includes `ToolCallID` and `ParentToolCallID`.
+  - Memory subscriber persists both; `ToolEnd` payload surfaces both for UIs and downstream consumers.
+- MCP codegen is fully template-driven for example wiring:
+  - CLI JSON-RPC wiring replaces service clients with adapter clients by rendering a template and updating imports via `codegen.AddImport` (no string surgery).
+  - Example `NewMcp<Service>()` stub is generated from a template to return the adapter wrapping the original service.
+
+## In Progress
+
+- Map `ToolCallUpdatedEvent` to typed `tool_update` stream events and reflect in example SSE mapping.
+- Add multi-service goldens for MCP codegen (adapter stub + CLI patch).
+
+## Next
+
+- Update this plan and `docs/runtime.md` with typed streaming examples (ToolStart/ToolUpdate/ToolEnd) and bridge usage.
+- Add an end-to-end streaming test that connects to the Run SSE endpoint, receives event kinds, and asserts final close.
+
 1. **Run workflow**:
    - Inspect `RunContext` (run ID, resumption tokens, caps, retry hints).
    - Compute allowed tool list via generated registries + optional policy engine.

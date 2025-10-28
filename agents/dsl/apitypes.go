@@ -1,8 +1,9 @@
 package dsl
 
 import (
-	apitypes "goa.design/goa-ai/agents/apitypes"
-	. "goa.design/goa/v3/dsl"
+    apitypes "goa.design/goa-ai/agents/apitypes"
+    //nolint:staticcheck // Dot imports are idiomatic in Goa DSL packages.
+    . "goa.design/goa/v3/dsl"
 )
 
 var AgentToolTelemetry = Type("AgentToolTelemetry", func() {

@@ -21,28 +21,28 @@ func TestSendPublishesEnvelope(t *testing.T) {
 		require.Equal(t, "run/run-123", name)
 		return str, nil
 	})
-    str.AddAdd(func(ctx context.Context, event string, payload []byte) (string, error) {
-        require.Equal(t, string(stream.EventToolEnd), event)
-        var env envelope
-        require.NoError(t, json.Unmarshal(payload, &env))
-        require.Equal(t, "run-123", env.RunID)
-        require.Equal(t, "tool_end", env.Type)
-        body, ok := env.Payload.(map[string]any)
-        require.True(t, ok)
-        res, ok := body["result"].(map[string]any)
-        require.True(t, ok)
-        require.Equal(t, "ok", res["status"])
-        return "1-0", nil
-    })
+	str.AddAdd(func(ctx context.Context, event string, payload []byte) (string, error) {
+		require.Equal(t, string(stream.EventToolEnd), event)
+		var env envelope
+		require.NoError(t, json.Unmarshal(payload, &env))
+		require.Equal(t, "run-123", env.RunID)
+		require.Equal(t, "tool_end", env.Type)
+		body, ok := env.Payload.(map[string]any)
+		require.True(t, ok)
+		res, ok := body["result"].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "ok", res["status"])
+		return "1-0", nil
+	})
 
 	sink, err := NewSink(Options{Client: cli})
 	require.NoError(t, err)
 
-    endPayload := stream.ToolEndPayload{Result: map[string]string{"status": "ok"}}
-    err = sink.Send(context.Background(), stream.ToolEnd{
-        Base: stream.Base{T: stream.EventToolEnd, R: "run-123", P: endPayload},
-        Data: endPayload,
-    })
+	endPayload := stream.ToolEndPayload{Result: map[string]string{"status": "ok"}}
+	err = sink.Send(context.Background(), stream.ToolEnd{
+		Base: stream.Base{T: stream.EventToolEnd, R: "run-123", P: endPayload},
+		Data: endPayload,
+	})
 	require.NoError(t, err)
 	require.False(t, str.HasMore())
 }
@@ -57,20 +57,26 @@ func TestCustomStreamID(t *testing.T) {
 	str.AddAdd(func(ctx context.Context, event string, payload []byte) (string, error) {
 		return "1-0", nil
 	})
-    sink, err := NewSink(Options{
-        Client: cli,
-        StreamID: func(e stream.Event) (string, error) {
-            return "custom/" + e.RunID(), nil
-        },
-    })
+	sink, err := NewSink(Options{
+		Client: cli,
+		StreamID: func(e stream.Event) (string, error) {
+			return "custom/" + e.RunID(), nil
+		},
+	})
 	require.NoError(t, err)
-    require.NoError(t, sink.Send(context.Background(), stream.PlannerThought{Base: stream.Base{T: stream.EventPlannerThought, R: "run-1", P: "n"}, Note: "n"}))
+	require.NoError(t, sink.Send(
+		context.Background(),
+		stream.PlannerThought{
+			Base: stream.Base{T: stream.EventPlannerThought, R: "run-1", P: "n"},
+			Note: "n",
+		},
+	))
 }
 
 func TestSendRequiresRunID(t *testing.T) {
 	sink, err := NewSink(Options{Client: mockpulse.NewClient(t)})
 	require.NoError(t, err)
-    err = sink.Send(context.Background(), stream.AssistantReply{Text: "hi"})
+	err = sink.Send(context.Background(), stream.AssistantReply{Text: "hi"})
 	require.EqualError(t, err, "stream event missing run id")
 }
 
@@ -81,7 +87,13 @@ func TestStreamCreationError(t *testing.T) {
 	})
 	sink, err := NewSink(Options{Client: cli})
 	require.NoError(t, err)
-    err = sink.Send(context.Background(), stream.AssistantReply{Base: stream.Base{T: stream.EventAssistantReply, R: "r", P: "ok"}, Text: "ok"})
+	err = sink.Send(
+		context.Background(),
+		stream.AssistantReply{
+			Base: stream.Base{T: stream.EventAssistantReply, R: "r", P: "ok"},
+			Text: "ok",
+		},
+	)
 	require.EqualError(t, err, "boom")
 }
 
@@ -96,7 +108,13 @@ func TestAddError(t *testing.T) {
 	})
 	sink, err := NewSink(Options{Client: cli})
 	require.NoError(t, err)
-    err = sink.Send(context.Background(), stream.AssistantReply{Base: stream.Base{T: stream.EventAssistantReply, R: "r", P: "ok"}, Text: "ok"})
+	err = sink.Send(
+		context.Background(),
+		stream.AssistantReply{
+			Base: stream.Base{T: stream.EventAssistantReply, R: "r", P: "ok"},
+			Text: "ok",
+		},
+	)
 	require.EqualError(t, err, "add-failed")
 }
 

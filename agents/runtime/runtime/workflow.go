@@ -519,7 +519,17 @@ func (r *Runtime) executeToolCalls(
 
         r.publishHook(
             ctx,
-            hooks.NewToolResultReceivedEvent(runID, agentID, info.call.Name, info.call.ToolCallID, info.call.ParentToolCallID, decoded, duration, out.Telemetry, toolErr),
+            hooks.NewToolResultReceivedEvent(
+                runID,
+                agentID,
+                info.call.Name,
+                info.call.ToolCallID,
+                info.call.ParentToolCallID,
+                decoded,
+                duration,
+                out.Telemetry,
+                toolErr,
+            ),
             seq,
         )
 

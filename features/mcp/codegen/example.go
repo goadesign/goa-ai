@@ -134,7 +134,9 @@ func PrepareExample(_ string, roots []eval.Root) error {
 	return nil
 }
 
-// ModifyExampleFiles augments main.go so handleHTTPServer signature and call include JSON-RPC args in correct order.
+// ModifyExampleFiles patches example CLI wiring to target the MCP adapter client
+// and replaces the default MCP stub factory to return the adapter-wrapped
+// service. It avoids touching HTTP server signatures or example mains.
 func ModifyExampleFiles(_ string, roots []eval.Root, files []*codegen.File) ([]*codegen.File, error) {
 	r, ok := firstRootWithJSONRPC(roots)
 	if !ok {
@@ -147,7 +149,7 @@ func ModifyExampleFiles(_ string, roots []eval.Root, files []*codegen.File) ([]*
 	}
 
 	// Ensure example stub returns the adapter-backed service instead of zero-value stub
-	files = patchExampleStubForMCP(mcpServices, files)
+	files = generateExampleAdapterStubs(mcpServices, files)
 
 	for _, svr := range r.API.Servers {
 		dir := example.Servers.Get(svr, r).Dir
@@ -248,74 +250,102 @@ func patchCLIForServer(dir string, svr *expr.ServerExpr, mcpServices []*expr.Ser
 // patchExampleStubForMCP rewrites the generated example stub (mcp_<svc>.go)
 // to return the adapter that wraps the original service implementation, so the
 // server exposes proper MCP behavior.
-func patchExampleStubForMCP(mcpServices []*expr.ServiceExpr, files []*codegen.File) []*codegen.File {
+func generateExampleAdapterStubs(mcpServices []*expr.ServiceExpr, files []*codegen.File) []*codegen.File {
 	if len(mcpServices) == 0 {
 		return files
 	}
-
-	// Patch any generated top-level MCP stub: func NewMcp<Service>() should
-	// return the adapter wrapping the original service (New<Service>()).
-	svc := mcpServices[0]
-	svcGo := codegen.Goify(svc.Name, true) // e.g., Assistant
-	// We expect stub file path to be mcp_<svc>.go at repository root (as produced by goa example)
+	// Build lookup of files by path for quick replacement
+	byPath := make(map[string]*codegen.File, len(files))
 	for _, f := range files {
-		// Heuristic: look for a function named NewMcp<Service>
-		hasFactory := false
-		for _, s := range f.SectionTemplates {
-			if s.Name == headerSection {
-				continue
-			}
-			if strings.Contains(s.Source, "func NewMcp"+svcGo+"()") {
-				hasFactory = true
-				break
+		byPath[filepath.ToSlash(f.Path)] = f
+	}
+	for _, svc := range mcpServices {
+		svcGo := codegen.Goify(svc.Name, true)
+		svcSnake := codegen.SnakeCase(svc.Name)
+		// Locate existing stub file and header to copy package/import context
+		stubPath := filepath.ToSlash("mcp_" + svcSnake + ".go")
+		f := byPath[stubPath]
+		if f == nil {
+			// As a fallback, scan for any file declaring NewMcp<Service>()
+			for _, cf := range files {
+				for _, s := range cf.SectionTemplates {
+					if s.Name != headerSection && strings.Contains(s.Source, "func NewMcp"+svcGo+"()") {
+						f = cf
+						break
+					}
+				}
+				if f != nil {
+					break
+				}
 			}
 		}
-		if !hasFactory {
+		if f == nil {
+			// No stub found; skip
 			continue
 		}
-
-		// Determine alias of MCP package import from header
 		header := findSection(f, headerSection)
+		if header == nil {
+			continue
+		}
+		// Ensure import for MCP service package exists and capture its alias
 		mcpAlias := ""
-		if header != nil {
-			if data, ok := header.Data.(map[string]any); ok {
-				if imv, ok2 := data["Imports"]; ok2 {
-					if specs, ok3 := imv.([]*codegen.ImportSpec); ok3 {
-						for _, spec := range specs {
-							if strings.Contains(spec.Path, "/gen/mcp_") {
-								mcpAlias = spec.Name
-								break
-							}
+		if data, ok := header.Data.(map[string]any); ok {
+			if imv, ok2 := data["Imports"]; ok2 {
+				if specs, ok3 := imv.([]*codegen.ImportSpec); ok3 {
+					for _, spec := range specs {
+						if strings.HasSuffix(spec.Path, "/gen/mcp_"+svcSnake) {
+							mcpAlias = spec.Name
+							break
 						}
 					}
 				}
 			}
 		}
 		if mcpAlias == "" {
-			mcpAlias = codegen.Goify("mcp_"+codegen.SnakeCase(svc.Name), false)
-		}
-
-		// Perform replacement inside factory: return &mcp<Go>srvc{} -> return <mcpAlias>.NewMCPAdapter(New<Service>(), nil, nil)
-		repl := mcpAlias + ".NewMCPAdapter(New" + svcGo + "(), nil, nil)"
-		for _, s := range f.SectionTemplates {
-			if s.Name == headerSection {
-				continue
-			}
-			// Known example stub return; also fallback to generic pattern
-			if strings.Contains(s.Source, "return &mcp"+svcGo+"srvc{}") {
-				s.Source = strings.Replace(s.Source, "return &mcp"+svcGo+"srvc{}", "return "+repl, 1)
-				continue
-			}
-			if strings.Contains(s.Source, "return &mcp") && strings.Contains(s.Source, "srvc{}") {
-				// Last resort: coarse replacement
-				s.Source = strings.Replace(s.Source, "srvc{}", ")", 1)
-				s.Source = strings.Replace(s.Source, "return &mcp", "return "+repl, 1)
+			// Derive base module from any CLI header if available
+			base := deriveBaseModuleFromFiles(files)
+			if base != "" {
+				codegen.AddImport(header, &codegen.ImportSpec{Path: base + "/gen/mcp_" + svcSnake, Name: codegen.Goify("mcp_"+svcSnake, false)})
+				mcpAlias = codegen.Goify("mcp_"+svcSnake, false)
 			}
 		}
-		// Only patch the first matching file
-		break
+		if mcpAlias == "" {
+			// As a last resort keep using a conventional alias
+			mcpAlias = codegen.Goify("mcp_"+svcSnake, false)
+		}
+		// Determine whether prompts are enabled to decide constructor arity
+		hasPrompts := false
+		if m := mcpexpr.Root.GetMCP(svc); m != nil {
+			hasPrompts = m.Capabilities != nil && m.Capabilities.EnablePrompts
+		}
+		body := mcpTemplates.MustRender("example_mcp_stub", map[string]any{
+			"ServiceGo":  svcGo,
+			"MCPAlias":   mcpAlias,
+			"HasPrompts": hasPrompts,
+		})
+        // Replace file content except header with our body
+        f.SectionTemplates = []*codegen.SectionTemplate{header, {Name: exampleMCPStubSection, Source: body}}
 	}
 	return files
+}
+
+// deriveBaseModuleFromFiles attempts to locate the module import prefix by inspecting
+// CLI files that import gen/jsonrpc/cli/. Returns empty string if not found.
+func deriveBaseModuleFromFiles(files []*codegen.File) string {
+	for _, f := range files {
+		p := filepath.ToSlash(f.Path)
+		if !strings.Contains(p, "/cmd/") || !strings.HasSuffix(p, "/jsonrpc.go") {
+			continue
+		}
+		header := findSection(f, headerSection)
+		if header == nil {
+			continue
+		}
+		if base := deriveBaseModuleFromHeader(header); base != "" {
+			return base
+		}
+	}
+	return ""
 }
 
 // findSection returns the first section with the given name in file f.

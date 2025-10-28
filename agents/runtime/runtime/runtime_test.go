@@ -149,7 +149,7 @@ func TestStartRunForwardsWorkflowOptions(t *testing.T) {
 	require.Equal(t, in.WorkflowOptions.SearchAttributes, eng.last.SearchAttributes)
 	require.Equal(t, 5, eng.last.RetryPolicy.MaxAttempts)
 	require.Equal(t, 5*time.Second, eng.last.RetryPolicy.InitialInterval)
-	require.Equal(t, 1.5, eng.last.RetryPolicy.BackoffCoefficient)
+    require.InEpsilon(t, 1.5, eng.last.RetryPolicy.BackoffCoefficient, 1e-9)
 }
 
 func TestTimeBudgetExceeded(t *testing.T) {
@@ -188,7 +188,7 @@ func TestConvertRunOutputToToolResult(t *testing.T) {
 			},
 		}
 		tr := ConvertRunOutputToToolResult("parent.tool", out)
-		require.Nil(t, tr.Error)
+        require.NoError(t, tr.Error)
 		require.NotNil(t, tr.Telemetry)
 		require.Equal(t, 15, tr.Telemetry.TokensUsed)
 		require.Equal(t, int64(150), tr.Telemetry.DurationMs)

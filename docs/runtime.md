@@ -107,6 +107,15 @@ Streaming event mapping (default StreamSubscriber):
 - PlannerNote → `planner_thought` (payload: `string`)
 - AssistantMessage → `assistant_reply` (payload: `string`)
 
+Flow overview:
+
+```
+hooks.Bus → hooks.StreamSubscriber.HandleEvent → stream.Sink.Send → transport (SSE/WebSocket/Pulse) → client
+```
+
+Naming note: only the sink exposes `Send`. The subscriber receives hook events and
+forwards them by calling `sink.Send` under the hood.
+
 The `stream` package exposes a small interface `Event` implemented by concrete types:
 
 - `AssistantReply{Run, Text}`
@@ -123,6 +132,8 @@ case stream.AssistantReply:
 case stream.ToolStart:
     // e.Data.ToolCallID, e.Data.ToolName, e.Data.Payload
 case stream.ToolUpdate:
+    // e.Data.ExpectedChildrenTotal
+case stream.ToolEnd:
     // e.Data.Result, e.Data.Error
 }
 ```
@@ -131,6 +142,35 @@ For convenience, services often translate:
 
 - `tool_start` → a “tool_call” chunk (ID, name, payload) for SSE/WebSocket
 - `tool_end` → a “tool_result” chunk (ID, result, error)
+
+Typed streaming example (per-request sink):
+
+```go
+// Attach a temporary subscriber for this request/connection.
+sub, _ := streambridge.Register(rt.Bus, mySink)
+defer sub.Close()
+
+// In your sink implementation, handle typed events.
+func (s *mySSE) Send(ctx context.Context, evt stream.Event) error {
+    switch e := evt.(type) {
+    case stream.ToolStart:
+        log.Printf("tool start: %s (%s)", e.Data.ToolName, e.Data.ToolCallID)
+    case stream.ToolUpdate:
+        log.Printf("tool update: %s expected children now %d", e.Data.ToolCallID, e.Data.ExpectedChildrenTotal)
+    case stream.ToolEnd:
+        if e.Data.Error != nil {
+            log.Printf("tool end (error): %s err=%v", e.Data.ToolName, e.Data.Error)
+        } else {
+            log.Printf("tool end: %s result=%v", e.Data.ToolName, e.Data.Result)
+        }
+    case stream.PlannerThought:
+        log.Printf("planner: %s", e.Note)
+    case stream.AssistantReply:
+        log.Printf("assistant: %s", e.Text)
+    }
+    return nil
+}
+```
 
 ## Workflow Options & Metadata
 
