@@ -1,16 +1,16 @@
 package pulse
 
 import (
-    "context"
-    "encoding/json"
-    "errors"
-    "fmt"
-    "time"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
 
-    streamopts "goa.design/pulse/streaming/options"
+	streamopts "goa.design/pulse/streaming/options"
 
-    "goa.design/goa-ai/agents/runtime/stream"
-    clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
+	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
+	"goa.design/goa-ai/runtime/agents/stream"
 )
 
 type (
@@ -30,21 +30,21 @@ type (
 		Decoder EnvelopeDecoder
 	}
 
-    // Subscriber consumes Pulse streams and emits runtime stream events. It wraps
-    // a Pulse sink (consumer group) and decodes incoming payloads into stream.Event
-    // values.
-    Subscriber struct {
-        client clientspulse.Client
-        buffer int
-        name   string
-        decode EnvelopeDecoder
-    }
-    // decodedEvent implements stream.Event for Pulse-decoded envelopes.
-    decodedEvent struct {
-        t   stream.EventType
-        run string
-        b   json.RawMessage
-    }
+	// Subscriber consumes Pulse streams and emits runtime stream events. It wraps
+	// a Pulse sink (consumer group) and decodes incoming payloads into stream.Event
+	// values.
+	Subscriber struct {
+		client clientspulse.Client
+		buffer int
+		name   string
+		decode EnvelopeDecoder
+	}
+	// decodedEvent implements stream.Event for Pulse-decoded envelopes.
+	decodedEvent struct {
+		t   stream.EventType
+		run string
+		b   json.RawMessage
+	}
 )
 
 func (e decodedEvent) Type() stream.EventType { return e.t }
@@ -151,14 +151,14 @@ func (s *Subscriber) consume(ctx context.Context, sink clientspulse.Sink, out ch
 // decodeEnvelope deserializes the default JSON envelope format and extracts the
 // runtime stream event. Returns an error if the payload is malformed.
 func decodeEnvelope(payload []byte) (stream.Event, error) {
-    var env struct {
-        Type      string          `json:"type"`
-        RunID     string          `json:"run_id"`
-        Timestamp time.Time       `json:"timestamp"`
-        Payload   json.RawMessage `json:"payload"`
-    }
-    if err := json.Unmarshal(payload, &env); err != nil {
-        return nil, err
-    }
-    return decodedEvent{t: stream.EventType(env.Type), run: env.RunID, b: env.Payload}, nil
+	var env struct {
+		Type      string          `json:"type"`
+		RunID     string          `json:"run_id"`
+		Timestamp time.Time       `json:"timestamp"`
+		Payload   json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(payload, &env); err != nil {
+		return nil, err
+	}
+	return decodedEvent{t: stream.EventType(env.Type), run: env.RunID, b: env.Payload}, nil
 }

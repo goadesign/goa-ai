@@ -1,7 +1,7 @@
 package design
 
 import (
-	mcpdsl "goa.design/goa-ai/features/mcp/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -20,9 +20,9 @@ var _ = API("assistant", func() {
 var _ = Service("assistant", func() {
 	Description("AI Assistant service with full MCP protocol support")
 
-	mcpdsl.MCPServer("assistant-mcp", "1.0.0", mcpdsl.ProtocolVersion("2025-06-18"))
+	MCPServer("assistant-mcp", "1.0.0", ProtocolVersion("2025-06-18"))
 
-	mcpdsl.StaticPrompt(
+	StaticPrompt(
 		"code_review",
 		"Template for code review",
 		"system", "You are an expert code reviewer.",
@@ -45,7 +45,7 @@ var _ = Service("assistant", func() {
 			Required("text")
 		})
 		Result(SentimentResult)
-		mcpdsl.Tool("analyze_sentiment", "Analyze text sentiment")
+		Tool("analyze_sentiment", "Analyze text sentiment")
 		JSONRPC(func() {})
 	})
 
@@ -60,7 +60,7 @@ var _ = Service("assistant", func() {
 			Required("text")
 		})
 		Result(KeywordsResult)
-		mcpdsl.Tool("extract_keywords", "Extract keywords from text")
+		Tool("extract_keywords", "Extract keywords from text")
 		JSONRPC(func() {})
 	})
 
@@ -75,7 +75,7 @@ var _ = Service("assistant", func() {
 			Required("text")
 		})
 		Result(SummaryResult)
-		mcpdsl.Tool("summarize_text", "Summarize text")
+		Tool("summarize_text", "Summarize text")
 		JSONRPC(func() {})
 	})
 
@@ -96,7 +96,7 @@ var _ = Service("assistant", func() {
 			Required("query")
 		})
 		Result(SearchResults)
-		mcpdsl.Tool("search", "Search the knowledge base")
+		Tool("search", "Search the knowledge base")
 		JSONRPC(func() {})
 	})
 
@@ -115,21 +115,21 @@ var _ = Service("assistant", func() {
 			Required("language", "code")
 		})
 		Result(ExecutionResult)
-		mcpdsl.Tool("execute_code", "Execute code safely in sandbox")
+		Tool("execute_code", "Execute code safely in sandbox")
 		JSONRPC(func() {})
 	})
 
 	Method("list_documents", func() {
 		Description("List available documents")
 		Result(Documents)
-		mcpdsl.Resource("documents", "doc://list", "application/json")
+		Resource("documents", "doc://list", "application/json")
 		JSONRPC(func() {})
 	})
 
 	Method("get_system_info", func() {
 		Description("Get system information and status")
 		Result(SystemInfo)
-		mcpdsl.Resource("system_info", "system://info", "application/json")
+		Resource("system_info", "system://info", "application/json")
 		JSONRPC(func() {})
 	})
 
@@ -141,7 +141,7 @@ var _ = Service("assistant", func() {
 			Attribute("nums", ArrayOf(Any), "Numbers")
 		})
 		Result(ConversationHistory)
-		mcpdsl.Resource("conversation_history", "conversation://history", "application/json")
+		Resource("conversation_history", "conversation://history", "application/json")
 		JSONRPC(func() {})
 	})
 
@@ -153,7 +153,7 @@ var _ = Service("assistant", func() {
 			Required("context", "task")
 		})
 		Result(PromptTemplates)
-		mcpdsl.DynamicPrompt("contextual_prompts", "Generate prompts based on context")
+		DynamicPrompt("contextual_prompts", "Generate prompts based on context")
 		JSONRPC(func() {})
 	})
 
@@ -171,7 +171,7 @@ var _ = Service("assistant", func() {
 			Attribute("data", Any, "Additional data")
 			Required("type", "message")
 		})
-		mcpdsl.Notification("status_update", "Send status updates to client")
+		Notification("status_update", "Send status updates to client")
 		JSONRPC(func() {})
 	})
 
@@ -186,7 +186,7 @@ var _ = Service("assistant", func() {
 			Required("resource")
 		})
 		Result(SubscriptionInfo)
-		mcpdsl.Subscription("documents")
+		Subscription("documents")
 		JSONRPC(func() {})
 	})
 
@@ -211,7 +211,7 @@ var _ = Service("assistant", func() {
 		})
 		Result(BatchResult)
 		StreamingResult(BatchResult)
-		mcpdsl.Tool("process_batch", "Process items with progress updates")
+		Tool("process_batch", "Process items with progress updates")
 		JSONRPC(func() {
 			ServerSentEvents()
 		})

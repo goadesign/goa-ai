@@ -1,3 +1,7 @@
+// Package inmem provides an in-memory implementation of session.Store for
+// testing and local development. Data is stored in process memory and is
+// lost when the process exits. Production deployments should use a durable
+// backend such as features/session/mongo (MongoDB-backed implementation).
 package inmem
 
 import (
@@ -5,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"goa.design/goa-ai/agents/runtime/session"
+	"goa.design/goa-ai/runtime/agents/session"
 )
 
 // Store provides an in-memory implementation of session.Store for tests and local tooling.
@@ -20,7 +24,7 @@ func New() *Store {
 }
 
 // Upsert inserts or updates the run metadata.
-func (s *Store) Upsert(ctx context.Context, run session.Run) error {
+func (s *Store) Upsert(_ context.Context, run session.Run) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	existing, ok := s.runs[run.RunID]
@@ -42,7 +46,7 @@ func (s *Store) Upsert(ctx context.Context, run session.Run) error {
 }
 
 // Load returns the stored run metadata. Missing runs return zero Run and no error.
-func (s *Store) Load(ctx context.Context, runID string) (session.Run, error) {
+func (s *Store) Load(_ context.Context, runID string) (session.Run, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	run, ok := s.runs[runID]

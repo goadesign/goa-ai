@@ -1,8 +1,8 @@
 package design
 
 import (
-	. "goa.design/goa-ai/agents/dsl"
-	. "goa.design/goa/v3/dsl"
+    . "goa.design/goa-ai/dsl"
+    . "goa.design/goa/v3/dsl"
 )
 
 var _ = Service("orchestrator", func() {

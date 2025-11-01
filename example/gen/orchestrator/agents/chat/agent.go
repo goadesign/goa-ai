@@ -9,10 +9,12 @@ package chat
 
 import (
 	"context"
+	"errors"
+	"strings"
 
-	"goa.design/goa-ai/agents/runtime/engine"
-	"goa.design/goa-ai/agents/runtime/planner"
-	runtime "goa.design/goa-ai/agents/runtime/runtime"
+	"goa.design/goa-ai/runtime/agents/engine"
+	"goa.design/goa-ai/runtime/agents/planner"
+	runtime "goa.design/goa-ai/runtime/agents/runtime"
 )
 
 // ChatAgent wraps the planner implementation for agent "chat".
@@ -28,14 +30,22 @@ func NewChatAgent(cfg ChatAgentConfig) (*ChatAgent, error) {
 	return &ChatAgent{Planner: cfg.Planner}, nil
 }
 
-// Run is a high-level helper that invokes this agent using the provided runtime
-// and messages. It forwards options to the runtime helper.
-func Run(ctx context.Context, rt *runtime.Runtime, messages []planner.AgentMessage, opts ...runtime.RunOption) (runtime.RunOutput, error) {
+// Run invokes this agent using the provided runtime and messages.
+// sessionID is required and is applied via runtime.WithSessionID.
+func Run(ctx context.Context, rt *runtime.Runtime, sessionID string, messages []planner.AgentMessage, opts ...runtime.RunOption) (runtime.RunOutput, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return runtime.RunOutput{}, errors.New("session id is required")
+	}
+	opts = append(opts, runtime.WithSessionID(sessionID))
 	return rt.RunAgent(ctx, "orchestrator.chat", messages, opts...)
 }
 
-// Start is a high-level helper that starts this agent and returns a workflow handle.
-// It forwards options to the runtime helper.
-func Start(ctx context.Context, rt *runtime.Runtime, messages []planner.AgentMessage, opts ...runtime.RunOption) (engine.WorkflowHandle, error) {
+// Start begins execution of this agent and returns a workflow handle.
+// sessionID is required and is applied via runtime.WithSessionID.
+func Start(ctx context.Context, rt *runtime.Runtime, sessionID string, messages []planner.AgentMessage, opts ...runtime.RunOption) (engine.WorkflowHandle, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, errors.New("session id is required")
+	}
+	opts = append(opts, runtime.WithSessionID(sessionID))
 	return rt.StartAgent(ctx, "orchestrator.chat", messages, opts...)
 }

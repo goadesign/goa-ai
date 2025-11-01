@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"goa.design/goa-ai/agents/runtime/model"
-	"goa.design/goa-ai/agents/runtime/planner"
+	"goa.design/goa-ai/runtime/agents/model"
+	"goa.design/goa-ai/runtime/agents/planner"
 )
 
 type (
@@ -47,7 +47,7 @@ func (p *chatPlanner) PlanStart(
 		Labels: map[string]string{"tool": "search"},
 	}
 	return planner.PlanResult{
-		ToolCalls: []planner.ToolCallRequest{{Name: searchToolName, Payload: payload}},
+		ToolCalls: []planner.ToolRequest{{Name: searchToolName, Payload: payload}},
 		Notes:     []planner.PlannerAnnotation{note},
 	}, nil
 }
@@ -111,9 +111,9 @@ func (p *chatPlanner) PlanResume(
 // result payload. It handles different payload structures (string arrays, object
 // arrays with title/content fields) and returns a descriptive message.
 func summarizeResult(result planner.ToolResult) string {
-	docs, ok := result.Payload.(map[string]any)
+	docs, ok := result.Result.(map[string]any)
 	if !ok {
-		return "Search completed but returned an unexpected payload."
+		return "Search completed but returned an unexpected result."
 	}
 	items, _ := docs["documents"].([]any)
 	if len(items) == 0 {

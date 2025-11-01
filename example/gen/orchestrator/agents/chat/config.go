@@ -11,8 +11,8 @@ import (
 	"errors"
 	"fmt"
 
-	"goa.design/goa-ai/agents/runtime/planner"
-	mcpruntime "goa.design/goa-ai/features/mcp/runtime"
+	"goa.design/goa-ai/runtime/agents/planner"
+	mcpruntime "goa.design/goa-ai/runtime/mcp"
 )
 
 const (

@@ -8,8 +8,8 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 	"github.com/stretchr/testify/require"
 
-	"goa.design/goa-ai/agents/runtime/model"
 	openaimodel "goa.design/goa-ai/features/model/openai"
+	"goa.design/goa-ai/runtime/agents/model"
 )
 
 func TestClientComplete(t *testing.T) {

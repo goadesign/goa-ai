@@ -15,7 +15,7 @@ import (
 
 	"goa.design/clue/health"
 
-	"goa.design/goa-ai/agents/runtime/run"
+	"goa.design/goa-ai/runtime/agents/run"
 )
 
 const (

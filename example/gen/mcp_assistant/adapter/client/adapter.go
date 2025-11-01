@@ -22,7 +22,7 @@ import (
 	assistantjsonrpcc "example.com/assistant/gen/jsonrpc/assistant/client"
 	mcpAssistantjsonrpcc "example.com/assistant/gen/jsonrpc/mcp_assistant/client"
 	mcpAssistant "example.com/assistant/gen/mcp_assistant"
-	retry "goa.design/goa-ai/features/mcp/retry"
+	retry "goa.design/goa-ai/runtime/mcp/retry"
 	goahttp "goa.design/goa/v3/http"
 	jsonrpc "goa.design/goa/v3/jsonrpc"
 )

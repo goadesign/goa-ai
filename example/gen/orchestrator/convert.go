@@ -8,7 +8,7 @@
 package orchestrator
 
 import (
-	apitypes "goa.design/goa-ai/agents/apitypes"
+	apitypes "goa.design/goa-ai/apitypes"
 )
 
 // ConvertToToolError creates an instance of ToolError initialized from t.

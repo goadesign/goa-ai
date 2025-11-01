@@ -11,8 +11,8 @@ import (
 
 	"goa.design/clue/mock"
 
-	"goa.design/goa-ai/agents/runtime/memory"
 	"goa.design/goa-ai/features/memory/mongo/clients/mongo"
+	"goa.design/goa-ai/runtime/agents/memory"
 )
 
 type (

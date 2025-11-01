@@ -7,17 +7,18 @@ import (
 	"fmt"
 	"io"
 	"sync"
+    "time"
 
 	chat "example.com/assistant/gen/orchestrator/agents/chat"
-	"goa.design/goa-ai/agents/runtime/engine"
-	"goa.design/goa-ai/agents/runtime/memory"
-	memoryinmem "goa.design/goa-ai/agents/runtime/memory/inmem"
-	"goa.design/goa-ai/agents/runtime/model"
-	runinmem "goa.design/goa-ai/agents/runtime/run/inmem"
-	agentsruntime "goa.design/goa-ai/agents/runtime/runtime"
-	"goa.design/goa-ai/agents/runtime/stream"
-	"goa.design/goa-ai/agents/runtime/telemetry"
-	mcpruntime "goa.design/goa-ai/features/mcp/runtime"
+	"goa.design/goa-ai/runtime/agents/engine"
+	"goa.design/goa-ai/runtime/agents/memory"
+	memoryinmem "goa.design/goa-ai/runtime/agents/memory/inmem"
+	"goa.design/goa-ai/runtime/agents/model"
+	runinmem "goa.design/goa-ai/runtime/agents/run/inmem"
+	agentsruntime "goa.design/goa-ai/runtime/agents/runtime"
+	"goa.design/goa-ai/runtime/agents/stream"
+	"goa.design/goa-ai/runtime/agents/telemetry"
+    mcpruntime "goa.design/goa-ai/runtime/mcp"
 )
 
 type (
@@ -180,15 +181,14 @@ func (h *RuntimeHarness) Run(
 		return agentsruntime.RunOutput{}, errors.New("chat workflow not registered")
 	}
 	wfCtx := newExampleWorkflowContext(ctx, h.engine, def.Name, input.RunID)
-	result, err := def.Handler(wfCtx, input)
-	if err != nil {
-		return agentsruntime.RunOutput{}, err
-	}
-	out, ok := result.(agentsruntime.RunOutput)
-	if !ok {
-		return agentsruntime.RunOutput{}, fmt.Errorf("unexpected workflow output %T", result)
-	}
-	return out, nil
+    result, err := def.Handler(wfCtx, input)
+    if err != nil {
+        return agentsruntime.RunOutput{}, err
+    }
+    if ptr, ok := result.(*agentsruntime.RunOutput); ok && ptr != nil {
+        return *ptr, nil
+    }
+    return agentsruntime.RunOutput{}, fmt.Errorf("unexpected workflow output %T", result)
 }
 
 // MemoryEvents returns the durable memory events recorded for the given run.
@@ -337,8 +337,11 @@ func (w *exampleWorkflowContext) Metrics() telemetry.Metrics {
 // Tracer returns a no-op tracer since the example harness doesn't configure
 // telemetry by default.
 func (w *exampleWorkflowContext) Tracer() telemetry.Tracer {
-	return telemetry.NewNoopTracer()
+    return telemetry.NewNoopTracer()
 }
+
+// Now returns a deterministic workflow time for the in-process harness.
+func (w *exampleWorkflowContext) Now() time.Time { return time.Unix(0, 0) }
 
 // SignalChannel returns or creates a buffered channel for the given signal name.
 // Used for pause/resume workflow control in the in-process engine.

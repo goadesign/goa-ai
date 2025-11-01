@@ -20,7 +20,7 @@ import (
 	"sync"
 
 	mcpAssistant "example.com/assistant/gen/mcp_assistant"
-	retry "goa.design/goa-ai/features/mcp/retry"
+	retry "goa.design/goa-ai/runtime/mcp/retry"
 	goahttp "goa.design/goa/v3/http"
 	"goa.design/goa/v3/jsonrpc"
 	goa "goa.design/goa/v3/pkg"
@@ -521,7 +521,9 @@ type JSONRPCError struct {
 	Message string
 }
 
-func (e *JSONRPCError) Error() string { return fmt.Sprintf("JSON-RPC error %d: %s", e.Code, e.Message) }
+func (e *JSONRPCError) Error() string {
+	return fmt.Sprintf("JSON-RPC error %d: %s", e.Code, e.Message)
+}
 
 func isInvalidParams(err error) bool {
 	if err == nil {
@@ -556,7 +558,9 @@ func (s *toolsCallStreamWithRetry) Recv(ctx context.Context) (*mcpAssistant.Tool
 	return res, nil
 }
 
-func (s *toolsCallStreamWithRetry) Close() error { return s.inner.Close() }
+func (s *toolsCallStreamWithRetry) Close() error {
+	return s.inner.Close()
+}
 
 func (c *Client) wrapToolsCallStream(tool string, anyStream any) any {
 	if s, ok := anyStream.(*ToolsCallClientStream); ok {

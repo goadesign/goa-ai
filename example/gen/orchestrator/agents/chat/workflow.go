@@ -10,8 +10,8 @@ package chat
 import (
 	"errors"
 
-	"goa.design/goa-ai/agents/runtime/engine"
-	"goa.design/goa-ai/agents/runtime/runtime"
+	"goa.design/goa-ai/runtime/agents/engine"
+	"goa.design/goa-ai/runtime/agents/runtime"
 )
 
 // ChatWorkflow is the durable workflow entry point for the agent.

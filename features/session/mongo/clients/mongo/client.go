@@ -15,7 +15,7 @@ import (
 
 	"goa.design/clue/health"
 
-	"goa.design/goa-ai/agents/runtime/session"
+	"goa.design/goa-ai/runtime/agents/session"
 )
 
 const (

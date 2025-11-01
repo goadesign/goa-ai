@@ -13,10 +13,10 @@ import (
 	"fmt"
 	"time"
 
-	mcpassistant "example.com/assistant/gen/mcp_assistant"
-	tool_specs "example.com/assistant/gen/orchestrator/agents/chat/tool_specs"
-	"goa.design/goa-ai/agents/runtime/engine"
-	agentsruntime "goa.design/goa-ai/agents/runtime/runtime"
+	assistant_assistant_mcp "example.com/assistant/gen/orchestrator/agents/chat/assistant_assistant_mcp"
+	specs "example.com/assistant/gen/orchestrator/agents/chat/specs"
+	"goa.design/goa-ai/runtime/agents/engine"
+	agentsruntime "goa.design/goa-ai/runtime/agents/runtime"
 )
 
 // RegisterChatAgent registers the generated agent components with the runtime.
@@ -58,21 +58,26 @@ func RegisterChatAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ChatA
 			},
 		},
 		ExecuteToolActivity: "orchestrator.chat.executetool",
-		Specs:               tool_specs.Specs,
+		Specs:               specs.Specs,
 		Policy:              agentsruntime.RunPolicy{},
 	}); err != nil {
 		return err
 	}
-
-	// Auto-register service toolsets for method-backed tools.
+	// Register external MCP toolsets using local executors and callers from config.
 	if cfg.MCPCallers == nil {
 		return fmt.Errorf("mcp callers are required for agent %s", "orchestrator.chat")
 	}
-	if caller := cfg.MCPCallers[ChatAssistantAssistantMcpToolsetID]; caller == nil {
-		return fmt.Errorf("mcp caller for %s is required", ChatAssistantAssistantMcpToolsetID)
-	} else if err := mcpassistant.RegisterAssistantAssistantMcpToolset(ctx, rt, caller); err != nil {
-		return fmt.Errorf("register mcp toolset %s: %w", ChatAssistantAssistantMcpToolsetID, err)
+	{
+		caller := cfg.MCPCallers[ChatAssistantAssistantMcpToolsetID]
+		if caller == nil {
+			return fmt.Errorf("mcp caller for %s is required", ChatAssistantAssistantMcpToolsetID)
+		}
+		exec := assistant_assistant_mcp.NewChatAssistantAssistantMcpMCPExecutor(caller)
+		if err := rt.RegisterToolset(assistant_assistant_mcp.NewChatAssistantAssistantMcpToolsetRegistration(exec)); err != nil {
+			return err
+		}
 	}
 
+	// Service toolsets are registered by application code using executors.
 	return nil
 }

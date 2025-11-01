@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"goa.design/goa-ai/agents/apitypes"
-	"goa.design/goa-ai/agents/runtime/stream"
-	streambridge "goa.design/goa-ai/agents/runtime/stream/bridge"
-	"goa.design/goa-ai/agents/runtime/toolerrors"
+	"goa.design/goa-ai/apitypes"
+	"goa.design/goa-ai/runtime/agents/stream"
+	streambridge "goa.design/goa-ai/runtime/agents/stream/bridge"
+	"goa.design/goa-ai/runtime/agents/toolerrors"
 
 	"example.com/assistant/gen/orchestrator"
 )

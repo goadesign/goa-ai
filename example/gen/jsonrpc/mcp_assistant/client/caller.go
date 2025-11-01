@@ -7,7 +7,7 @@ import (
 	"io"
 
 	mcppkg "example.com/assistant/gen/mcp_assistant"
-	mcpruntime "goa.design/goa-ai/features/mcp/runtime"
+	mcpruntime "goa.design/goa-ai/runtime/mcp"
 )
 
 // Caller adapts the generated MCP JSON-RPC client to the runtime Caller interface.

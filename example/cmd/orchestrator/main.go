@@ -19,14 +19,6 @@ import (
 )
 
 func main() {
-
-	rt, cleanup, err := bootstrapAgents(context.Background())
-	if err != nil {
-		panic(err)
-	}
-	defer cleanup()
-	_ = rt
-
 	// Define command line flags, add any other flag required to configure the
 	// service.
 	var (

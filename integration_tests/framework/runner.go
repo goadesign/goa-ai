@@ -169,6 +169,8 @@ func SupportsCLI() bool {
 }
 
 // Run executes the scenarios (always parallel, no filtering).
+//
+//nolint:unparam // Error return maintained for consistency with testing patterns.
 func (r *Runner) Run(t *testing.T, scenarios []Scenario) error {
 	t.Helper()
 	if len(scenarios) == 0 {

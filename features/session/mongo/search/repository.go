@@ -1,3 +1,6 @@
+// Package search provides MongoDB-backed search repositories for session and
+// failure record queries. It supports pagination, filtering, and sorting for
+// session management and tool failure diagnostics.
 package search
 
 import (
@@ -9,7 +12,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
-	"goa.design/goa-ai/agents/runtime/session"
+	"goa.design/goa-ai/runtime/agents/session"
 )
 
 // The search package mirrors interfaces from features/run/mongo/search so tests can

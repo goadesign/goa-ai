@@ -6,9 +6,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"goa.design/goa-ai/agents/runtime/run"
 	clientsmongo "goa.design/goa-ai/features/run/mongo/clients/mongo"
 	mockmongo "goa.design/goa-ai/features/run/mongo/clients/mongo/mocks"
+	"goa.design/goa-ai/runtime/agents/run"
 )
 
 func TestNewStoreRequiresClient(t *testing.T) {

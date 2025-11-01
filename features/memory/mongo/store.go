@@ -5,8 +5,8 @@ import (
 	"context"
 	"errors"
 
-	"goa.design/goa-ai/agents/runtime/memory"
 	clientsmongo "goa.design/goa-ai/features/memory/mongo/clients/mongo"
+	"goa.design/goa-ai/runtime/agents/memory"
 )
 
 // Options configures the Store wrapper.

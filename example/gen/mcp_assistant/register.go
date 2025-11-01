@@ -6,12 +6,12 @@ import (
 	"errors"
 	"strings"
 
-	"goa.design/goa-ai/agents/runtime/planner"
-	agentsruntime "goa.design/goa-ai/agents/runtime/runtime"
-	"goa.design/goa-ai/agents/runtime/telemetry"
-	"goa.design/goa-ai/agents/runtime/tools"
-	"goa.design/goa-ai/features/mcp/retry"
-	mcpruntime "goa.design/goa-ai/features/mcp/runtime"
+	"goa.design/goa-ai/runtime/agents/planner"
+	agentsruntime "goa.design/goa-ai/runtime/agents/runtime"
+	"goa.design/goa-ai/runtime/agents/telemetry"
+	"goa.design/goa-ai/runtime/agents/tools"
+	mcpruntime "goa.design/goa-ai/runtime/mcp"
+	"goa.design/goa-ai/runtime/mcp/retry"
 )
 
 var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
@@ -24,7 +24,9 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 			Name:   "*assistant.AnalyzeSentimentPayload",
 			Schema: []byte("{\"additionalProperties\":false,\"properties\":{\"text\":{\"maxLength\":10000,\"minLength\":1,\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
 			Codec: tools.JSONCodec[any]{
-				ToJSON: func(v any) ([]byte, error) { return json.Marshal(v) },
+				ToJSON: func(v any) ([]byte, error) {
+					return json.Marshal(v)
+				},
 				FromJSON: func(data []byte) (any, error) {
 					if len(data) == 0 {
 						return nil, nil
@@ -41,7 +43,9 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 			Name:   "*assistant.SentimentResult",
 			Schema: nil,
 			Codec: tools.JSONCodec[any]{
-				ToJSON: func(v any) ([]byte, error) { return json.Marshal(v) },
+				ToJSON: func(v any) ([]byte, error) {
+					return json.Marshal(v)
+				},
 				FromJSON: func(data []byte) (any, error) {
 					if len(data) == 0 {
 						return nil, nil
@@ -64,7 +68,9 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 			Name:   "*assistant.ExtractKeywordsPayload",
 			Schema: []byte("{\"additionalProperties\":false,\"properties\":{\"text\":{\"maxLength\":10000,\"minLength\":1,\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
 			Codec: tools.JSONCodec[any]{
-				ToJSON: func(v any) ([]byte, error) { return json.Marshal(v) },
+				ToJSON: func(v any) ([]byte, error) {
+					return json.Marshal(v)
+				},
 				FromJSON: func(data []byte) (any, error) {
 					if len(data) == 0 {
 						return nil, nil
@@ -81,7 +87,9 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 			Name:   "*assistant.KeywordsResult",
 			Schema: nil,
 			Codec: tools.JSONCodec[any]{
-				ToJSON: func(v any) ([]byte, error) { return json.Marshal(v) },
+				ToJSON: func(v any) ([]byte, error) {
+					return json.Marshal(v)
+				},
 				FromJSON: func(data []byte) (any, error) {
 					if len(data) == 0 {
 						return nil, nil
@@ -104,7 +112,9 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 			Name:   "*assistant.SummarizeTextPayload",
 			Schema: []byte("{\"additionalProperties\":false,\"properties\":{\"text\":{\"maxLength\":10000,\"minLength\":1,\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
 			Codec: tools.JSONCodec[any]{
-				ToJSON: func(v any) ([]byte, error) { return json.Marshal(v) },
+				ToJSON: func(v any) ([]byte, error) {
+					return json.Marshal(v)
+				},
 				FromJSON: func(data []byte) (any, error) {
 					if len(data) == 0 {
 						return nil, nil
@@ -121,7 +131,9 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 			Name:   "*assistant.SummaryResult",
 			Schema: nil,
 			Codec: tools.JSONCodec[any]{
-				ToJSON: func(v any) ([]byte, error) { return json.Marshal(v) },
+				ToJSON: func(v any) ([]byte, error) {
+					return json.Marshal(v)
+				},
 				FromJSON: func(data []byte) (any, error) {
 					if len(data) == 0 {
 						return nil, nil
@@ -144,7 +156,9 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 			Name:   "*assistant.SearchKnowledgePayload",
 			Schema: []byte("{\"additionalProperties\":false,\"properties\":{\"limit\":{\"maximum\":100,\"minimum\":1,\"type\":\"integer\"},\"query\":{\"maxLength\":256,\"minLength\":1,\"type\":\"string\"}},\"required\":[\"query\"],\"type\":\"object\"}"),
 			Codec: tools.JSONCodec[any]{
-				ToJSON: func(v any) ([]byte, error) { return json.Marshal(v) },
+				ToJSON: func(v any) ([]byte, error) {
+					return json.Marshal(v)
+				},
 				FromJSON: func(data []byte) (any, error) {
 					if len(data) == 0 {
 						return nil, nil
@@ -161,7 +175,9 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 			Name:   "assistant.SearchResults",
 			Schema: nil,
 			Codec: tools.JSONCodec[any]{
-				ToJSON: func(v any) ([]byte, error) { return json.Marshal(v) },
+				ToJSON: func(v any) ([]byte, error) {
+					return json.Marshal(v)
+				},
 				FromJSON: func(data []byte) (any, error) {
 					if len(data) == 0 {
 						return nil, nil
@@ -184,7 +200,9 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 			Name:   "*assistant.ExecuteCodePayload",
 			Schema: []byte("{\"additionalProperties\":false,\"properties\":{\"code\":{\"maxLength\":20000,\"minLength\":1,\"type\":\"string\"},\"language\":{\"enum\":[\"python\",\"javascript\",\"go\"],\"type\":\"string\"}},\"required\":[\"language\",\"code\"],\"type\":\"object\"}"),
 			Codec: tools.JSONCodec[any]{
-				ToJSON: func(v any) ([]byte, error) { return json.Marshal(v) },
+				ToJSON: func(v any) ([]byte, error) {
+					return json.Marshal(v)
+				},
 				FromJSON: func(data []byte) (any, error) {
 					if len(data) == 0 {
 						return nil, nil
@@ -201,7 +219,9 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 			Name:   "*assistant.ExecutionResult",
 			Schema: nil,
 			Codec: tools.JSONCodec[any]{
-				ToJSON: func(v any) ([]byte, error) { return json.Marshal(v) },
+				ToJSON: func(v any) ([]byte, error) {
+					return json.Marshal(v)
+				},
 				FromJSON: func(data []byte) (any, error) {
 					if len(data) == 0 {
 						return nil, nil
@@ -224,7 +244,9 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 			Name:   "*assistant.ProcessBatchPayload",
 			Schema: []byte("{\"additionalProperties\":false,\"properties\":{\"blob\":{\"contentEncoding\":\"base64\",\"type\":\"string\"},\"format\":{\"enum\":[\"text\",\"blob\",\"uri\"],\"type\":\"string\"},\"items\":{\"items\":{\"type\":\"string\"},\"minItems\":1,\"type\":\"array\"},\"mimeType\":{\"type\":\"string\"},\"uri\":{\"type\":\"string\"}},\"required\":[\"items\"],\"type\":\"object\"}"),
 			Codec: tools.JSONCodec[any]{
-				ToJSON: func(v any) ([]byte, error) { return json.Marshal(v) },
+				ToJSON: func(v any) ([]byte, error) {
+					return json.Marshal(v)
+				},
 				FromJSON: func(data []byte) (any, error) {
 					if len(data) == 0 {
 						return nil, nil
@@ -241,7 +263,9 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 			Name:   "*assistant.BatchResult",
 			Schema: nil,
 			Codec: tools.JSONCodec[any]{
-				ToJSON: func(v any) ([]byte, error) { return json.Marshal(v) },
+				ToJSON: func(v any) ([]byte, error) {
+					return json.Marshal(v)
+				},
 				FromJSON: func(data []byte) (any, error) {
 					if len(data) == 0 {
 						return nil, nil
@@ -285,7 +309,7 @@ func RegisterAssistantAssistantMcpToolset(ctx context.Context, rt *agentsruntime
 	suite := "assistant.assistant-mcp"
 	suitePrefix := suite + "."
 
-	exec := func(ctx context.Context, call planner.ToolCallRequest) (planner.ToolResult, error) {
+	exec := func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
 		fullName := call.Name
 		toolName := fullName
 		if strings.HasPrefix(toolName, suitePrefix) {
@@ -332,7 +356,7 @@ func RegisterAssistantAssistantMcpToolset(ctx context.Context, rt *agentsruntime
 
 		return planner.ToolResult{
 			Name:      fullName,
-			Payload:   value,
+			Result:    value,
 			Telemetry: toolTelemetry,
 		}, nil
 	}

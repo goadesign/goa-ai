@@ -6,7 +6,7 @@ This document explains how to author agents, toolsets, and runtime policies with
 
 - **Import path:** add `agentsdsl "goa.design/goa-ai/agents/dsl"` to your Goa design packages.
 - **Entry point:** declare agents inside a regular Goa `Service` definition. The DSL augments Goa’s design tree and is processed during `goa gen`.
-- **Outcome:** `goa gen` produces agent packages (`gen/<service>/agents/<agent>`), tool codecs/specs, activity handlers, and registration helpers that wire the design into the runtime.
+- **Outcome:** `goa gen` produces agent packages (`gen/<service>/agents/<agent>`), tool codecs/specs, activity handlers, and registration helpers that wire the design into the runtime. A contextual `AGENTS_QUICKSTART.md` is written at the module root unless disabled via `agentsdsl.DisableAgentDocs()`.
 
 The DSL is evaluated by Goa’s `eval` engine, so the same rules apply as with the standard service/transport DSL: expressions must be invoked in the proper context, and attribute definitions reuse Goa’s type system (`Attribute`, `Field`, validations, examples, etc.).
 
@@ -38,7 +38,7 @@ var DocsToolset = agentsdsl.Toolset("docs.search", func() {
 var _ = Service("orchestrator", func() {
 	Description("Human front door for the knowledge agent.")
 
-	agentsdsl.Agent("chat", "Conversational runner", func() {
+        agentsdsl.Agent("chat", "Conversational runner", func() {
 		agentsdsl.Uses(func() {
 			agentsdsl.Toolset(DocsToolset)
 			agentsdsl.UseMCPToolset("assistant", "assistant-mcp")
@@ -80,11 +80,11 @@ Running `goa gen example.com/assistant/design` now produces:
 
 | Function | Location | Context | Purpose |
 |----------|----------|---------|---------|
-| `Agent(name, description, dsl)` | `agents/dsl/agent.go` | Inside `Service` | Declares an agent, its tool usage/exports, and run policy. |
-| `Uses(dsl)` | `agents/dsl/agent.go` | Inside `Agent` | Describes toolsets the agent consumes. |
-| `Exports(dsl)` | `agents/dsl/agent.go` | Inside `Agent` | Declares toolsets exposed to other agents. |
-| `Toolset(nameOrExpr, dsl)` | `agents/dsl/toolset.go` | Top-level or inside `Uses` / `Exports` | Defines or references a set of tools. |
-| `UseMCPToolset(service, suite)` | `agents/dsl/toolset.go` | Inside `Uses` | Pulls in a toolset that originated from a Goa-declared MCP server. |
+| `Agent(name, description, dsl)` | `dsl/agent.go` | Inside `Service` | Declares an agent, its tool usage/exports, and run policy. |
+| `Uses(dsl)` | `dsl/agent.go` | Inside `Agent` | Describes toolsets the agent consumes. |
+| `Exports(dsl)` | `dsl/agent.go` | Inside `Agent` | Declares toolsets exposed to other agents. |
+| `Toolset(nameOrExpr, dsl)` | `dsl/toolset.go` | Top-level or inside `Uses` / `Exports` | Defines or references a set of tools. |
+| `UseMCPToolset(service, suite)` | `dsl/toolset.go` | Inside `Uses` | Pulls in a toolset that originated from a Goa-declared MCP server. |
 | `Tool(name, description, dsl)` | `agents/dsl/toolset.go` | Inside `Toolset` | Defines a tool (arguments, result, metadata). |
 | `Args(...)`, `Return(...)` | `agents/dsl/toolset.go` | Inside `Tool` | Define payload/result types using the standard Goa attribute DSL. |
 | `Tags(values...)` | `agents/dsl/toolset.go` | Inside `Tool` | Annotates tools with metadata tags. |
@@ -93,6 +93,7 @@ Running `goa gen example.com/assistant/design` now produces:
 | `MaxToolCalls`, `MaxConsecutiveFailedToolCalls` | `agents/dsl/policy.go` | Arguments to `DefaultCaps` | Helper options for caps. |
 | `TimeBudget(duration)` | `agents/dsl/policy.go` | Inside `RunPolicy` | Sets max wall-clock execution time. |
 | `InterruptsAllowed(bool)` | `agents/dsl/policy.go` | Inside `RunPolicy` | Enables run interruption handling. |
+| `DisableAgentDocs()` | `agents/dsl/docs.go` | Inside `API` | Disables generation of `AGENTS_QUICKSTART.md` at the module root. |
 
 ### Agent, Uses, and Exports
 
@@ -124,6 +125,31 @@ Code generation emits:
 - JSON codecs (`tool_specs/codecs.go`) used for activity marshaling and memory.
 - JSON Schema definitions consumed by planners and optional validation layers.
 - Tool registry entries consumed by the runtime, including helper prompts and metadata.
+
+#### BindTo(service, method)
+
+Use `BindTo("Method")` to associate a tool with a service method on the current
+service, or `BindTo("Service", "Method")` for cross‑service bindings. During
+evaluation the DSL resolves the referenced `*expr.MethodExpr`; codegen then
+emits:
+
+- Typed tool specs/codecs under `gen/<svc>/agents/<agent>/specs/<toolset>/`.
+- A `New<Agent><Toolset>ToolsetRegistration(exec runtime.ToolCallExecutor)`
+  helper. Application code registers the toolset by supplying an executor
+  function (see docs/runtime.md for the executor‑first model).
+- When shapes are compatible, per‑tool transform helpers in
+  `specs/<toolset>/transforms.go`:
+  - `ToMethodPayload_<Tool>(in <ToolArgs>) (<MethodPayload>, error)`
+  - `ToToolReturn_<Tool>(in <MethodResult>) (<ToolReturn>, error)`
+
+Mapping logic lives in your application‑owned executor stubs under
+`internal/agents/<agent>/toolsets/<toolset>/execute.go` (generated by
+`goa example`). Executors decode typed payloads, optionally call the generated
+transforms, invoke your service client, and return a `planner.ToolResult`.
+
+#### Tool Call IDs (Model Correlation)
+
+Planners may set `ToolRequest.ToolCallID` (e.g., model `tool_call.id`). The runtime preserves this ID end-to-end and returns it in `ToolResult.ToolCallID`. If omitted, the runtime assigns a deterministic ID so workflow replay correlates correctly.
 
 ### RunPolicy & Caps
 
@@ -185,3 +211,64 @@ The example runtime harness (`example/runtime_harness.go`) shows the flow end-to
 - When planners require incremental LLM output, fetch the registered model via `AgentContext.Model()`, set `model.Request.Stream = true`, and (optionally) specify `model.ThinkingOptions`. Bedrock adapters translate these hints into ConverseStream requests; providers that do not support streaming return `model.ErrStreamingUnsupported`, so planners can fall back to unary completions.
 
 For deeper architectural context (workflow engine interface, runtime package layout, feature modules), see the comprehensive roadmap in `docs/plan.md` and the upcoming `docs/runtime.md`.
+
+## Transforms and Compatibility (BindTo)
+
+When a tool is bound to a Goa method via `BindTo`, code generation analyzes the
+tool Arg/Return and the method Payload/Result. If the shapes are compatible,
+Goa emits type‑safe transform helpers in
+`gen/<svc>/agents/<agent>/specs/<toolset>/transforms.go`:
+
+- `ToMethodPayload_<Tool>(in <ToolArgs>) (<MethodPayload>, error)`
+- `ToToolReturn_<Tool>(in <MethodResult>) (<ToolReturn>, error)`
+
+Use these helpers inside your executor implementation to avoid boilerplate. If
+shapes are not compatible, write explicit field mappings in the executor.
+
+Notes:
+- Compatibility uses Goa’s type system (names and structure, including
+  `Extend`). For non‑primitive/nested shapes, keep pointers in user types so
+  validators and codecs work as expected.
+- No adapters are generated in core. Mapping lives in executors; transforms are
+  conveniences when types align.
+
+Example (compatible types → transforms emitted):
+
+```
+var SearchPayload = Type("SearchPayload", func() {
+    Attribute("query", String); Required("query")
+})
+var SearchResult = Type("SearchResult", func() {
+    Attribute("documents", ArrayOf(String))
+})
+
+Service("svc", func() {
+    Method("Search", func() {
+        Payload(SearchPayload)
+        Result(SearchResult)
+    })
+
+    Agent("a", "", func() {
+        Uses(func() {
+            Toolset("ts", func() {
+                Tool("search", "", func() {
+                    Args(SearchPayload)      // aliases method payload
+                    Return(SearchResult)     // aliases method result
+                    BindTo("svc", "Search")
+                })
+            })
+        })
+    })
+})
+```
+
+Generated transforms live under `specs/ts/transforms.go`. In your executor
+stub (`internal/agents/a/toolsets/ts/execute.go`) you can:
+
+```go
+// args := tspecs.UnmarshalSearchPayload(call.Payload)
+mp, _ := tspecs.ToMethodPayload_Search(args)
+// result := yourClient.Search(ctx, mp)
+tr, _ := tspecs.ToToolReturn_Search(result)
+return planner.ToolResult{Payload: tr}, nil
+```

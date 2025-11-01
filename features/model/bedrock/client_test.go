@@ -13,8 +13,8 @@ import (
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"github.com/stretchr/testify/require"
 
-	"goa.design/goa-ai/agents/runtime/model"
 	"goa.design/goa-ai/features/model/bedrock"
+	"goa.design/goa-ai/runtime/agents/model"
 )
 
 func TestClientComplete(t *testing.T) {

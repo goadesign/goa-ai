@@ -11,9 +11,9 @@ import (
 	"goa.design/pulse/streaming"
 	streamopts "goa.design/pulse/streaming/options"
 
-	"goa.design/goa-ai/agents/runtime/stream"
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	mockpulse "goa.design/goa-ai/features/stream/pulse/clients/pulse/mocks"
+	"goa.design/goa-ai/runtime/agents/stream"
 )
 
 func TestSubscribeEmitsEvents(t *testing.T) {
@@ -55,10 +55,10 @@ func TestSubscribeEmitsEvents(t *testing.T) {
 	eventCh <- &streaming.Event{ID: "1-0", Payload: payload}
 	close(eventCh)
 
-    e := <-events
-    require.Equal(t, stream.EventAssistantReply, e.Type())
-    body := make(map[string]string)
-    require.NoError(t, json.Unmarshal(e.Payload().(json.RawMessage), &body))
+	e := <-events
+	require.Equal(t, stream.EventAssistantReply, e.Type())
+	body := make(map[string]string)
+	require.NoError(t, json.Unmarshal(e.Payload().(json.RawMessage), &body))
 	require.Equal(t, "hi", body["chunk"])
 	require.Empty(t, errs)
 }
@@ -76,12 +76,12 @@ func TestSubscribeDecoderError(t *testing.T) {
 	sinkMock.AddSubscribe(func() <-chan *streaming.Event { return eventCh })
 	sinkMock.AddClose(func(ctx context.Context) {})
 
-    sub, err := NewSubscriber(SubscriberOptions{
-        Client: client,
-        Decoder: func([]byte) (stream.Event, error) {
-            return nil, errors.New("decode error")
-        },
-    })
+	sub, err := NewSubscriber(SubscriberOptions{
+		Client: client,
+		Decoder: func([]byte) (stream.Event, error) {
+			return nil, errors.New("decode error")
+		},
+	})
 	require.NoError(t, err)
 
 	events, errs, cancel, err := sub.Subscribe(context.Background(), "run/run-1")

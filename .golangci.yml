@@ -14,7 +14,6 @@ linters:
     - goprintffuncname
     - gosec
     - ineffassign
-    - lll
     - makezero
     - misspell
     - nakedret
@@ -31,14 +30,16 @@ linters:
     - unused
     - whitespace
   settings:
-    lll:
-      line-length: 120
-      tab-width: 4
     tagliatelle:
       case:
         rules:
           json: snake
           yaml: snake
+    unparam:
+      check-exported: true
+    staticcheck:
+      checks:
+        - all
   exclusions:
     generated: strict
     paths:
@@ -46,9 +47,4 @@ linters:
       - diagram/*
       - gql/*
       - mocks/*
-issues:
-  exclude-rules:
-    - path: ".*/dsl/.*"
-      linters:
-        - staticcheck
-      text: "ST1001: should not use dot imports"
+      - agents/codegen/tests/testscenarios/*

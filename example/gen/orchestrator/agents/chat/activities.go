@@ -12,8 +12,8 @@ import (
 	"errors"
 	"time"
 
-	"goa.design/goa-ai/agents/runtime/engine"
-	agentsruntime "goa.design/goa-ai/agents/runtime/runtime"
+	"goa.design/goa-ai/runtime/agents/engine"
+	agentsruntime "goa.design/goa-ai/runtime/agents/runtime"
 )
 
 // ChatPlanActivity handles the orchestrator.chat.plan activity.

@@ -93,6 +93,29 @@ URI query parameters into that payload using Goa’s JSON‑RPC decoders:
 This keeps resource calls simple (`resource://name?field=value`) while reusing
 the same decoding pipeline as tools.
 
+---
+
+## Agents Quickstart & Example Scaffold
+
+In addition to MCP features, the agents plugin improves the developer experience after code generation:
+
+- A contextual quickstart file `AGENTS_QUICKSTART.md` is emitted at the module root on `goa gen`, summarizing what was generated and how to wire it. To opt out, invoke `agentsdsl.DisableAgentDocs()` inside your API DSL.
+- The `goa example` phase generates application-owned scaffold under `internal/agents/` instead of modifying your `main` package:
+  - `internal/agents/bootstrap/bootstrap.go`: constructs a minimal runtime and registers generated agents. Edit and maintain this file; it is not re-generated.
+  - `internal/agents/<agent>/planner/planner.go`: planner stub implementing `planner.PlanStart`/`PlanResume` with header comments explaining its role.
+  - `internal/agents/<agent>/toolsets/<toolset>/adapter.go`: stubs for mapping method‑backed tools to service types.
+
+From your `cmd` entrypoint, import and use the bootstrap:
+
+```go
+rt, cleanup, err := bootstrap.New(ctx)
+if err != nil { log.Fatal(err) }
+defer cleanup()
+// Start runs or serve transports using rt...
+```
+
+This pattern keeps generated code under `gen/` while giving you a clean, editable scaffold in `internal/agents/` for planners and adapters.
+
 ### Security considerations
 - Resource policy: use deny/allow lists to constrain which URIs can be read; denylist takes precedence. If the allowlist is empty, all URIs are allowed by default.
 - Logging: if you configure a Logger, avoid logging sensitive payloads and results in production.

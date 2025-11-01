@@ -13,9 +13,9 @@ import (
     "go.temporal.io/sdk/client"
 
     chat "example.com/assistant/gen/orchestrator/agents/chat"
-    runtimeTemporal "goa.design/goa-ai/agents/runtime/engine/temporal"
-    "goa.design/goa-ai/agents/runtime/planner"
-    "goa.design/goa-ai/agents/runtime/runtime"
+    runtimeTemporal "goa.design/goa-ai/runtime/agents/engine/temporal"
+    "goa.design/goa-ai/runtime/agents/planner"
+    "goa.design/goa-ai/runtime/agents/runtime"
 )
 
 func main() {
@@ -64,12 +64,18 @@ func main() {
 * `StartRun` returns an engine workflow handle so callers can wait, signal, or cancel. `Run` simply calls `StartRun` and `Wait` for request/response transports.
 * DSL-generated Goa types expose `ConvertTo*` / `CreateFrom*` helpers (backed by `agents/apitypes`) so transports can bridge into the runtime/planner structs without hand-written mappers; rely on those conversions in service handlers and tests rather than re-implementing translation logic.
 
+### Run Contracts
+
+- `SessionID` is required at run start. `StartRun` fails fast when `SessionID` is empty or whitespace.
+- Tool executors receive explicit per‑call metadata (`ToolCallMeta`) rather than fishing values from `context.Context`.
+- Do not rely on implicit fallbacks; all domain identifiers (run, session, turn, correlation) must be passed explicitly.
+
 ## Pause & Resume
 
 Human-in-loop workflows can suspend and resume runs using the runtime’s interrupt helpers. Behind the scenes, pause/resume signals update the run store and emit `run_paused`/`run_resumed` hook events so UI layers stay in sync.
 
 ```go
-import "goa.design/goa-ai/agents/runtime/interrupt"
+import "goa.design/goa-ai/runtime/agents/interrupt"
 
 // Pause
 if err := rt.PauseRun(ctx, interrupt.PauseRequest{RunID: "session-1-run-1", Reason: "human_review"}); err != nil {
@@ -106,6 +112,7 @@ Streaming event mapping (default StreamSubscriber):
 - ToolResultReceived → `tool_end` (payload: `*hooks.ToolResultReceivedEvent`)
 - PlannerNote → `planner_thought` (payload: `string`)
 - AssistantMessage → `assistant_reply` (payload: `string`)
+- ToolCallUpdated → `tool_update` (payload: `*hooks.ToolCallUpdatedEvent`)
 
 Flow overview:
 
@@ -132,11 +139,38 @@ case stream.AssistantReply:
 case stream.ToolStart:
     // e.Data.ToolCallID, e.Data.ToolName, e.Data.Payload
 case stream.ToolUpdate:
-    // e.Data.ExpectedChildrenTotal
+    // e.Data.ExpectedChildrenTotal, e.Data.ToolCallID
 case stream.ToolEnd:
     // e.Data.Result, e.Data.Error
 }
 ```
+
+## Executor-First Tool Execution
+
+Generated service toolsets expose a single, generic constructor:
+
+- `New<Agent><Toolset>ToolsetRegistration(exec runtime.ToolCallExecutor)`
+
+Applications register an executor implementation for each consumed toolset. The executor decides how to run the tool (service client, MCP, nested agent, etc.) and receives explicit per-call metadata via `ToolCallMeta` (RunID, SessionID, TurnID, ToolCallID, ParentToolCallID).
+
+To reduce mapping boilerplate, Goa generates per-tool transforms when shapes are compatible:
+
+- `ToMethodPayload_<Tool>(in <ToolArgs>) (<MethodPayload>, error)`
+- `ToToolReturn_<Tool>(in <MethodResult>) (<ToolReturn>, error)`
+
+Transforms are emitted under `gen/<service>/agents/<agent>/specs/<toolset>/transforms.go` and use Goa’s GoTransform to safely map fields. If a transform isn’t emitted, write an explicit mapper in the executor.
+
+Method vs. Tool Result and the Execution Envelope
+
+- Method result: domain type returned by your service method.
+- Tool result: planner-facing subset type (from tool specs).
+- Execution envelope (server-only): runtime record with code, summary, data JSON, evidence refs, backend calls, duration, error, retry hint, and facts.
+
+Executor Guidance
+
+- Use generated transforms when present; otherwise implement clear field mappings.
+- Keep server-only fields out of tool results; envelope/telemetry capture them.
+- MCP-backed toolsets typically wrap generated clients with `mcpruntime.Caller` in the executor.
 
 For convenience, services often translate:
 
@@ -208,6 +242,32 @@ API shortcuts
 
 Services keep direct access to their Pulse client to create/close per-turn streams as needed, while the runtime handles event fan-out.
 
+## Schemas and Summaries
+
+Prefer generated tool specs over documentation introspection:
+
+- Schema lookup: use `gen/<svc>/agents/<agent>/<toolset>/tool_specs.Specs`. Each
+  entry exposes `Payload.Schema` and `Result.Schema` plus typed/untyped codecs.
+  Example:
+
+```go
+spec := tool_specs.Specs[i] // or find by name
+payloadSchema := spec.Payload.Schema
+resultSchema := spec.Result.Schema
+bytes, _ := spec.Payload.Codec.Marshal(v) // JSON encode typed payload
+```
+
+- Summaries: use runtime/planner data instead of schema text. Two common
+  patterns:
+  - Streaming: accumulate a `planner.StreamSummary` via `planner.ConsumeStream`
+    and surface `summary.Text`.
+  - Typed results: derive concise summaries from concrete result fields inside
+    adapters or service logic (e.g., count items, key fields). Avoid
+    reconstructing summaries from JSON Schemas.
+
+Do not parse or traverse `docs.json` at runtime; all information required for
+tool execution and validation is available in the generated specs and codecs.
+
 ## Memory & Session Stores
 
 `memory.Store` and `run.Store` have in-memory references plus Mongo-backed implementations (`features/memory/mongo`, `features/run/mongo`). Feature modules follow the client pattern (domain-specific client packages with Clue-generated mocks) so services can swap storage backends easily.
@@ -224,6 +284,11 @@ type Planner interface {
 ```
 
 `PlanResult` contains tool calls, final response, annotations, and optional `RetryHint`. The runtime enforces caps, schedules tool activities, and feeds tool results back into `PlanResume` until a final response is produced.
+
+### Determinism & Correlation
+
+- ToolCall IDs: planners may supply `ToolRequest.ToolCallID` (e.g., from a model `tool_call.id`). The runtime preserves it end-to-end and returns the same ID in `planner.ToolResult.ToolCallID`. When omitted, the runtime assigns a deterministic ID derived from `(runID, turnID, toolName, index)` for replay safety.
+- Time: workflows use a deterministic clock via `engine.WorkflowContext.Now()` (Temporal → `workflow.Now`). Deadlines and durations are computed from this source; avoid `time.Now()` in workflow code.
 
 ## Feature Modules
 
@@ -261,7 +326,7 @@ and spawns subscribers (typically feeding SSE gateways) without duplicating
 Redis plumbing:
 
 ```go
-redisClient := redis.NewClient(&redis.Options{Addr: os.Getenv("REDIS_ADDR")})
+redisClient := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"}) // inject via flag/config in your app
 pulseClient, _ := pulseclient.New(pulseclient.Options{Redis: redisClient})
 
 streams, _ := pulsestream.NewRuntimeStreams(pulsestream.RuntimeStreamsOptions{
@@ -284,3 +349,8 @@ defer streams.Close(ctx)
 `runtime.New` automatically registers the stream sink with the hook bus when the
 `Stream` option is non-nil, so tool/planner/assistant events flow to Pulse with
 no additional wiring.
+
+## Glossary
+
+- Tool Execution Record
+  - A server-only structured record composed at execution time that packages outcome classification and observability metadata for storage/streaming: code, summary, data (JSON), evidence references, backend calls, duration, error, and facts. Generated adapters must not add server-only fields to tool results; instead the record is composed in the ExecuteTool activity path and persisted/streamed via hooks. It is never sent to the model.

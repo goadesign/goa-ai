@@ -8,9 +8,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"goa.design/goa-ai/agents/runtime/stream"
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	mockpulse "goa.design/goa-ai/features/stream/pulse/clients/pulse/mocks"
+	"goa.design/goa-ai/runtime/agents/stream"
 )
 
 func TestSendPublishesEnvelope(t *testing.T) {

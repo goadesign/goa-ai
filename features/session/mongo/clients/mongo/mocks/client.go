@@ -11,8 +11,8 @@ import (
 
 	"goa.design/clue/mock"
 
-	"goa.design/goa-ai/agents/runtime/session"
 	"goa.design/goa-ai/features/session/mongo/clients/mongo"
+	"goa.design/goa-ai/runtime/agents/session"
 )
 
 type (

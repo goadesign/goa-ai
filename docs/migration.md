@@ -9,7 +9,7 @@ MCP generator.
 
 | Legacy Concept | New Equivalent |
 | --- | --- |
-| `goa-ai` MCP plugin living under `goa.design/plugins/tools` | `agents/dsl` for design-time declarations, `agents/codegen` for generation, `agents/runtime` for execution |
+| `goa-ai` MCP plugin living under `goa.design/plugins/tools` | `dsl` for design-time declarations, `codegen/agents` for generation, `runtime/agents` for execution |
 | Hand-authored MCP server implementations | Generated agent packages + tool codecs + registries under `gen/<service>/agents/...` |
 | Ad-hoc workflow loops | Durable workflows driven by `agents/runtime/runtime` atop the `engine` interface (Temporal adapter provided) |
 | Manual JSON schema validators | Generated `tool_types.go` + `tool_codecs.go` mirroring Goa validations |
@@ -28,7 +28,7 @@ runtime plumbing are now first-class DSL constructs with shared runtime support.
 2. Ensure Go 1.24+ and Temporal SDK `v1.37.0` (ships with the new OTEL contrib package).
 3. Replace references to the old MCP plugin (`goa.design/plugins/tools`) with the new agents DSL import:
    ```go
-   agentsdsl "goa.design/goa-ai/agents/dsl"
+   . "goa.design/goa-ai/dsl"
    ```.
 
 ### 2. Introduce the Agent DSL
@@ -39,19 +39,19 @@ Inside each Goa service definition:
 var _ = Service("orchestrator", func() {
     Description("Chat orchestration service")
 
-    agentsdsl.Agent("orchestrator.chat", func() {
+    .Agent("orchestrator.chat", func() {
         Description("Chat agent that plans and executes tool calls")
 
-        agentsdsl.Tools(func() {
-            agentsdsl.UseToolset(myInternalTools)
-            agentsdsl.UseMCPToolset("assistant.mcp", func() {
+        .Tools(func() {
+            .UseToolset(myInternalTools)
+            .UseMCPToolset("assistant.mcp", func() {
                 Description("External MCP suite exported by the assistant service")
             })
         })
 
-        agentsdsl.RunPolicy(func() {
-            agentsdsl.MaxToolCalls(8)
-            agentsdsl.TimeBudget("2m")
+        .RunPolicy(func() {
+            .MaxToolCalls(8)
+            .TimeBudget("2m")
         })
     })
 })
@@ -180,7 +180,7 @@ runtime features (memory persistence, policy enforcement, telemetry).
 - `docs/dsl.md` – full DSL reference with examples.
 - `docs/runtime.md` – runtime wiring, hook events, telemetry guidance.
 - `example/` – chat data loop showcasing MCP toolsets, planner, runtime harness.
-- `agents/runtime/engine/temporal` – Temporal adapter options and telemetry behavior.
+- `runtime/agents/engine/temporal` – Temporal adapter options and telemetry behavior.
 
 Following the steps above keeps existing business logic intact while adopting the
 new abstractions that make durable agent workflows, tool retries, and observability

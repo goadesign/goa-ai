@@ -8,7 +8,7 @@ import (
 	"context"
 	"strings"
 
-	"goa.design/goa-ai/agents/runtime/policy"
+	"goa.design/goa-ai/runtime/agents/policy"
 )
 
 // Options configures the basic policy engine.
@@ -38,6 +38,8 @@ type Engine struct {
 }
 
 // New builds a new Engine using the supplied options.
+//
+//nolint:unparam // Error return maintained for consistency with other constructors.
 func New(opts Options) (*Engine, error) {
 	label := strings.TrimSpace(opts.Label)
 	if label == "" {
@@ -60,7 +62,9 @@ func New(opts Options) (*Engine, error) {
 }
 
 // Decide evaluates the tool allowlist for the current turn.
-func (e *Engine) Decide(ctx context.Context, input policy.Input) (policy.Decision, error) {
+//
+//nolint:unparam // Error return maintained for interface compatibility.
+func (e *Engine) Decide(_ context.Context, input policy.Input) (policy.Decision, error) {
 	meta := indexMetadata(input.Tools)
 	candidates := candidateHandles(input, meta)
 	allowed := e.filterAllowed(candidates, meta)

@@ -6,10 +6,10 @@ import (
 
 	assistantapi "example.com/assistant"
 	"github.com/stretchr/testify/require"
-	"goa.design/goa-ai/agents/runtime/memory"
-	"goa.design/goa-ai/agents/runtime/planner"
-	agentsruntime "goa.design/goa-ai/agents/runtime/runtime"
-	"goa.design/goa-ai/agents/runtime/stream"
+	"goa.design/goa-ai/runtime/agents/memory"
+	"goa.design/goa-ai/runtime/agents/planner"
+	agentsruntime "goa.design/goa-ai/runtime/agents/runtime"
+	"goa.design/goa-ai/runtime/agents/stream"
 )
 
 func TestRuntimeHarnessExecutesChatWorkflow(t *testing.T) {

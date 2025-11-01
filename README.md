@@ -28,7 +28,7 @@ The result is a cohesive architecture where planners focus on business logic whi
 > - [Architecture & plan](docs/plan.md)
 > - [Agent DSL reference](docs/dsl.md)
 > - [Runtime wiring](docs/runtime.md)
-> - [Migration guide (legacy goa-ai → new framework)](docs/migration.md)
+> - [Migration guide (legacy goa-ai → new framework)](docs/migrate.md)
 
 ## Quick Start
 
@@ -44,7 +44,7 @@ package design
 
 import (
     . "goa.design/goa/v3/dsl"
-    agentsdsl "goa.design/goa-ai/agents/dsl"
+    agentsdsl "goa.design/goa-ai/dsl"
 )
 
 var _ = Service("orchestrator", func() {
@@ -83,6 +83,8 @@ goa gen example.com/assistant/design
 ```
 This produces agent packages under `gen/orchestrator/agents/...`, tool codecs/specs, planner configs, and Temporal activities.
 
+> Note: After generation, a contextual guide named `AGENTS_QUICKSTART.md` is written at the module root to summarize what was generated and how to use it. To opt out, call `agentsdsl.DisableAgentDocs()` inside your API DSL.
+
 ### 4. Wire the runtime + Temporal engine
 ```go
 package main
@@ -93,13 +95,13 @@ import (
     "go.temporal.io/sdk/client"
 
     chat "example.com/assistant/gen/orchestrator/agents/chat"
-    runtimeTemporal "goa.design/goa-ai/agents/runtime/engine/temporal"
-    "goa.design/goa-ai/agents/runtime/runtime"
+    runtimeTemporal "goa.design/goa-ai/runtime/agents/engine/temporal"
+    "goa.design/goa-ai/runtime/agents/runtime"
     basicpolicy "goa.design/goa-ai/features/policy/basic"
     memorymongo "goa.design/goa-ai/features/memory/mongo"
     runmongo "goa.design/goa-ai/features/run/mongo"
     pulse "goa.design/goa-ai/features/stream/pulse"
-    "goa.design/goa-ai/agents/runtime/telemetry"
+    "goa.design/goa-ai/runtime/agents/telemetry"
 )
 
 func main() {
@@ -152,6 +154,81 @@ func main() {
 }
 ```
 
+### Optional: Internal example scaffold
+
+If you run `goa example`, the example scaffold is emitted under `internal/agents/` instead of modifying your `main` package. It includes:
+
+- `internal/agents/bootstrap/bootstrap.go`: constructs a minimal runtime and registers generated agents. This file is application-owned; edit and maintain it (it is not re-generated).
+- `internal/agents/<agent>/planner/planner.go`: planner stub to replace with your LLM logic.
+- `internal/agents/<agent>/toolsets/<toolset>/execute.go`: executor stub for method‑backed tools (decode typed args, optionally use transforms, call your client, return ToolResult).
+
+Use the bootstrap from your `cmd` entrypoint:
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+
+    "example.com/assistant/internal/agents/bootstrap"
+)
+
+func main() {
+    ctx := context.Background()
+    rt, cleanup, err := bootstrap.New(ctx)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer cleanup()
+
+    // Start runs or serve transports using the runtime...
+}
+```
+
+### Executor‑First TL;DR
+
+- Register method‑backed toolsets with a ToolCallExecutor you control:
+  - `reg := <agentpkg>.New<Agent><Toolset>ToolsetRegistration(runtime.ToolCallExecutorFunc(Execute))`
+  - `rt.RegisterToolset(reg)`
+- Implement `Execute(ctx, meta, call)` with a per‑tool switch:
+  - Decode typed payload using generated codecs: `args, _ := <specspkg>.Unmarshal<ToolPayload>(call.Payload)`
+  - Optionally use transforms from `specs/<toolset>/transforms.go` when shapes are compatible:
+    - `mp, _ := <specspkg>.ToMethodPayload_<Tool>(args)`
+    - `tr, _ := <specspkg>.ToToolReturn_<Tool>(methodRes)`
+  - Call your service client and return `planner.ToolResult{Payload: tr}` (or map explicitly if no transform was emitted).
+
+Minimal executor sketch:
+
+```go
+// Register at startup
+reg := agent.NewChatProfilesToolsetRegistration(runtime.ToolCallExecutorFunc(Execute))
+if err := rt.RegisterToolset(reg); err != nil { panic(err) }
+
+// Execute per tool
+func Execute(ctx context.Context, meta runtime.ToolCallMeta, call planner.ToolRequest) (planner.ToolResult, error) {
+    switch call.Name {
+    case "orchestrator.profiles.upsert":
+        args, err := profilesspecs.UnmarshalUpsertPayload(call.Payload)
+        if err != nil { return planner.ToolResult{Error: planner.NewToolError("invalid payload")}, nil }
+
+        // Optional transforms if emitted by codegen
+        // mp, _ := profilesspecs.ToMethodPayload_Upsert(args)
+        // methodRes, err := client.Upsert(ctx, mp)
+        // if err != nil { return planner.ToolResult{Error: planner.ToolErrorFromError(err)}, nil }
+        // tr, _ := profilesspecs.ToToolReturn_Upsert(methodRes)
+        // return planner.ToolResult{Payload: tr}, nil
+
+        // Or explicit mapping when no transform exists
+        return planner.ToolResult{Payload: map[string]any{"status": "ok"}}, nil
+    default:
+        return planner.ToolResult{Error: planner.NewToolError("unknown tool")}, nil
+    }
+}
+```
+
+Transforms are emitted only when the tool Arg/Return and method Payload/Result are structurally compatible. When they are not, write the field mapping explicitly inside your executor.
+
 ### 5. Explore the example
 `example/` contains the **chat data loop** harness: it registers the generated MCP toolset helper, runs the runtime harness (in-process engine), and demonstrates planners invoking MCP tools with streaming + memory hooks. Run it via:
 ```bash
@@ -184,11 +261,11 @@ The workflow loop drains `goaai.runtime.pause` / `goaai.runtime.resume` signals 
 
 | Layer | Responsibility |
 | --- | --- |
-| **DSL (`agents/dsl`)** | Define agents, toolsets, policies, MCP suites inside Goa services. |
-| **Codegen (`agents/codegen`)** | Emit tool codecs/specs, registries, Temporal workflows, activity handlers, MCP adapters. |
-| **Runtime (`agents/runtime`)** | Durable plan/execute loop with policy enforcement, memory/session stores, hook bus, telemetry. |
-| **Engine (`agents/runtime/engine`)** | Abstract workflow API; Temporal adapter ships with OTEL interceptors, auto-start workers, and context propagation. |
-| **Features (`features/*`)** | Optional modules (Mongo memory/session, Pulse stream sink, MCP callers, Bedrock/OpenAI model clients, policy adapters). |
+| **DSL (`dsl`)** | Define agents, toolsets, policies, MCP suites inside Goa services. |
+| **Codegen (`codegen/agents`, `codegen/mcp`)** | Emit tool codecs/specs, registries, Temporal workflows, activity handlers, MCP helpers. |
+| **Runtime (`runtime/agents`, `runtime/mcp`)** | Durable plan/execute loop with policy enforcement, memory/session stores, hook bus, telemetry, MCP callers. |
+| **Engine (`runtime/agents/engine`)** | Abstract workflow API; Temporal adapter ships with OTEL interceptors, auto-start workers, and context propagation. |
+| **Features (`features/*`)** | Optional modules (Mongo memory/session, Pulse stream sink, MCP callers, Bedrock/OpenAI model clients, policy engine). |
 
 See `docs/plan.md` for a deep dive into generated structures, templates, and runtime packages.
 

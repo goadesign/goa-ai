@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"goa.design/goa-ai/agents/runtime/stream"
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
+	"goa.design/goa-ai/runtime/agents/stream"
 )
 
 // RuntimeStreams wires a caller-provided Pulse client into goa-ai's runtime.

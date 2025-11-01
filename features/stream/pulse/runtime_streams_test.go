@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"goa.design/pulse/streaming"
 	streamopts "goa.design/pulse/streaming/options"
 
@@ -14,19 +15,10 @@ import (
 func TestRuntimeStreamsSinkLifecycle(t *testing.T) {
 	client := &fakeClient{stream: &fakeStream{sink: &fakeSink{events: make(chan *streaming.Event)}}}
 	streams, err := NewRuntimeStreams(RuntimeStreamsOptions{Client: client})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if streams.Sink() == nil {
-		t.Fatalf("expected sink")
-	}
-
-	if err := streams.Close(context.Background()); err != nil {
-		t.Fatalf("close sink: %v", err)
-	}
-	if client.closeCount != 1 {
-		t.Fatalf("expected client close")
-	}
+	require.NoError(t, err)
+	require.NotNil(t, streams.Sink())
+	require.NoError(t, streams.Close(context.Background()))
+	require.Equal(t, 1, client.closeCount)
 }
 
 func TestRuntimeStreamsSubscriberUsesClient(t *testing.T) {
@@ -34,20 +26,16 @@ func TestRuntimeStreamsSubscriberUsesClient(t *testing.T) {
 	fakeSink := &fakeSink{events: eventsCh}
 	client := &fakeClient{stream: &fakeStream{sink: fakeSink}}
 	streams, err := NewRuntimeStreams(RuntimeStreamsOptions{Client: client})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
 	sub, err := streams.NewSubscriber(SubscriberOptions{SinkName: "front", Buffer: 1})
-	if err != nil {
-		t.Fatalf("subscriber error: %v", err)
-	}
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	events, errs, stop, err := sub.Subscribe(ctx, "run/test")
 	if err != nil {
 		cancel()
-		t.Fatalf("subscribe error: %v", err)
+		require.FailNowf(t, "subscribe", "subscribe error: %v", err)
 	}
 	close(eventsCh)
 	stop()
@@ -55,23 +43,17 @@ func TestRuntimeStreamsSubscriberUsesClient(t *testing.T) {
 
 	select {
 	case _, ok := <-events:
-		if ok {
-			t.Fatalf("expected closed events channel")
-		}
+		require.False(t, ok, "expected closed events channel")
 	case <-time.After(time.Second):
-		t.Fatalf("timeout waiting for events close")
+		require.FailNow(t, "timeout waiting for events close")
 	}
 	select {
 	case _, ok := <-errs:
-		if ok {
-			t.Fatalf("expected closed errs channel")
-		}
+		require.False(t, ok, "expected closed errs channel")
 	case <-time.After(time.Second):
-		t.Fatalf("timeout waiting for errs close")
+		require.FailNow(t, "timeout waiting for errs close")
 	}
-	if !fakeSink.closed {
-		t.Fatalf("expected sink close")
-	}
+	require.True(t, fakeSink.closed)
 }
 
 type fakeClient struct {

@@ -49,6 +49,25 @@
   `if` blocks; target ~80 columns where practical. For long struct/composite
   literals, one field per line with trailing commas; closing brace on its own
   line. In general content between curly braces must be on multiple lines.
+  Curly braces style: always place a newline immediately after `{` and before
+  `}` for blocks and composite literals (no single‑line blocks or literals),
+  including empty blocks. Example:
+  
+      // Good
+      type T struct {
+          A int
+      }
+      v := T{
+          A: 1,
+      }
+      if cond {
+          do()
+      }
+      
+      // Avoid
+      type T struct { A int }
+      v := T{ A: 1 }
+      if cond { do() }
 - Documentation: Every exported type, function, and struct field must have a Go
   stdlib GoDoc-quality comment that explains its contract to someone with no prior
   context. Treat this like stdlib documentation—clarify when/how callers should
@@ -61,6 +80,9 @@
   generically.
 - DSL note: Dot imports are encouraged in DSL packages; see `.golangci.yml`
   which disables `ST1001`.
+- Schema access: do not introspect Goa `docs.json` at runtime. Always use the
+  generated `tool_specs.Specs` (and their `Payload/Result.Schema` and codecs)
+  for schema and encoding needs. Avoid maintaining parallel schema helpers.
 - Testing: Write table‑driven tests in `*_test.go` using `testing` (optional
   `testify`). Name tests `TestXxx`; keep unit tests fast/deterministic. Run `go
   test -race -vet=off ./...` (or `make test`) locally and avoid coverage
@@ -84,7 +106,30 @@
   - Prefer early returns over deep nesting; avoid useless locals
   - Use modern Go helpers (e.g., `max`, `min`, `clear`) when appropriate
   - Avoid defensive programming: do not add nil checks, fallback paths, or silent defaults for values whose contracts guarantee validity. Let violations panic or error loudly so bugs surface early.
-  - DSL and codegen packages MUST rely on Goa’s evaluation guarantees (e.g., `ToolExpr.Toolset` is never nil). Never guard these invariants—if they are violated, fail fast to expose the design issue.
+- DSL and codegen packages MUST rely on Goa’s evaluation guarantees (e.g., `ToolExpr.Toolset` is never nil). Never guard these invariants—if they are violated, fail fast to expose the design issue.
+
+### Repo‑Wide Contracts (No Defensive Guards)
+
+- Validate only at boundaries (above). Inside the codebase, assume invariants hold and avoid speculative guards or fallbacks.
+- Do not add nil/empty checks for values guaranteed by construction or prior validation. Examples that are guaranteed in this repo:
+  - Generated maps/registries (e.g., `tool_specs.Specs`) have non‑nil entries; `Name`, `Payload.Schema`, and `Result.Schema` exist.
+  - Event payloads are non‑nil when their `Type` indicates they are present.
+  - Service method type references are valid (resolved via Goa `NameScope`), no string surgery needed.
+- Prefer fail‑fast: if a contract is violated, return a precise, structured error (or panic for true invariants) rather than continuing with best‑effort behavior.
+- Never synthesize type references by string surgery. Always use Goa `NameScope` helpers (`GoTypeRef/GoFullTypeRef`) to derive pointer/value semantics. If you need a reference to a local generated name, construct a synthetic `expr.UserTypeExpr` with `TypeName` set to the local name and pass it to `GoTypeRef` to compute the correct pointer prefix.
+
+PR review checklist (reject when present in core logic):
+- “Should not happen” branches or generic fallbacks; comments like “just in case”, “fallback”.
+- Defensive guards on invariant holders (e.g., `if s == nil || s.Name == ""` for spec entries; `len(schema) == 0` after generation).
+- String manipulation to build type/package refs; use Goa `NameScope` helpers instead.
+
+Tests policy (complements Testing Guidelines):
+- Do not test impossible states from internal invariants (e.g., nil spec entries, empty schemas, missing payloads for a set event type). If such a test seems needed, you are testing the wrong layer—add a boundary test or fix the upstream contract.
+- Do test boundaries: malformed JSON at the transport, third‑party failures, DB nulls, context extraction issues, type assertion misses across package boundaries.
+
+Bad → Good examples:
+- Bad: `if s == nil || s.Name == "" || len(s.Payload.Schema) == 0 { continue }`
+- Good: `for _, s := range tool_specs.Specs { /* use s.Name/Schema directly */ }`
 
 ### Template Formatting (Goa codegen templates)
 
@@ -155,8 +200,23 @@
 - If a tool payload/result type assertion fails, return a clear, structured error
   instead of attempting fallback conversions.
 
+#### No "Should-Not-Happen" Fallbacks
+
+- Do not add catch‑all or “should not happen” fallbacks (e.g., silent defaults
+  when a method or type lookup fails). We rely on Goa’s guarantees; violations
+  are bugs and must fail fast.
+- Prefer explicit checks that panic or return an error with a precise message
+  rather than continuing with best‑effort behavior.
+- Never synthesize type references by string surgery. Use Goa’s `NameScope`
+  helpers (`GoFullTypeRef/Name`, `GoTypeRef/Name`) and `UserTypeLocation` to
+  produce deterministic, pointer‑correct references.
+
 #### Avoid Defensive Programming
 - Configuration should be passed via constructors; do not read environment variables in core logic.
+ - Do not guard against states that Goa guarantees cannot occur. For example,
+   `expr.Root.Services` and `Service.Methods` do not contain nil entries;
+   avoid `nil` checks when iterating them. Prefer fail-fast code that relies on
+   Goa invariants—unexpected states are bugs and must surface loudly.
 
 ### Files and Style Clarifications
 

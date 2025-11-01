@@ -1,0 +1,33 @@
+# Welcome to Your Goa-AI Agents! 👋
+
+This guide is your personal co-pilot, generated specifically to help you bring your new AI agents to life. We'll go from the code Goa just created to a running agent in a few simple steps.
+
+> **A Quick Note on This File:**
+>
+> - **Want to hide me?** No problem! Add `DisableAgentDocs()` to your `API` design and I won't be generated next time.
+> - **Safety First:** It's safe to delete this file. It will reappear, updated, after the next `goa gen`.
+> - **Golden Rule:** Never edit the `gen/` directory directly. Your design files are the source of truth!
+
+---
+
+## 1. Your Design, At a Glance ✨
+
+Here’s a map of what Goa-AI just built for you based on your `design/*.go` files.
+
+*   **Service `calc`:**
+    *   **Agent `scribe`** (ID: `calc.scribe`):
+        *   **Mission:** *Doc helper*
+        *   **Uses Toolsets:**
+            *   `calc.helpers` 
+        *   **Exports Toolsets:**
+            *none*
+        *   **Run Policy:**
+            *   Max Tool Calls: `0`
+            *   Max Consecutive Failures: `0`
+            *   Time Budget: `0s`
+            *   Interrupts Allowed: `false`
+
+---
+
+## 2. 🚀 The 3-Step Liftoff: Your First Agent Run
+

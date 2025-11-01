@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	mcpassistant "example.com/assistant/gen/mcp_assistant"
-	mcpruntime "goa.design/goa-ai/features/mcp/runtime"
+    mcpruntime "goa.design/goa-ai/runtime/mcp"
 	goa "goa.design/goa/v3/pkg"
 )
 

@@ -19,7 +19,7 @@ import (
 	"sync"
 
 	assistant "example.com/assistant/gen/assistant"
-	mcpruntime "goa.design/goa-ai/features/mcp/runtime"
+	mcpruntime "goa.design/goa-ai/runtime/mcp"
 	goahttp "goa.design/goa/v3/http"
 	goa "goa.design/goa/v3/pkg"
 )
@@ -169,17 +169,28 @@ func (a *MCPAdapter) mapError(err error) error {
 	return err
 }
 
-func stringPtr(s string) *string { return &s }
+func stringPtr(s string) *string {
+	return &s
+}
 
-func isLikelyJSON(s string) bool { return json.Valid([]byte(s)) }
+func isLikelyJSON(s string) bool {
+	return json.Valid([]byte(s))
+}
 
 // buildContentItem returns a ContentItem honoring StructuredStreamJSON option.
 func buildContentItem(a *MCPAdapter, s string) *ContentItem {
 	if a != nil && a.opts != nil && a.opts.StructuredStreamJSON && isLikelyJSON(s) {
 		mt := stringPtr("application/json")
-		return &ContentItem{Type: "text", MimeType: mt, Text: &s}
+		return &ContentItem{
+			Type:     "text",
+			MimeType: mt,
+			Text:     &s,
+		}
 	}
-	return &ContentItem{Type: "text", Text: &s}
+	return &ContentItem{
+		Type: "text",
+		Text: &s,
+	}
 }
 
 // Initialize handles the MCP initialize request.
