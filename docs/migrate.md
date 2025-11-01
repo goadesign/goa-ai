@@ -17,6 +17,9 @@ Outcomes:
 - Stream and session persistence integrated via hook subscribers (Pulse + Mongo stores).
 - Approval logic expressed via `policy.Engine` with the same effective behavior.
 
+See also:
+- AURA API Types Migration Plan: `docs/aura_api_types_migration.md` (detailed, service-by-service type replacement guidance)
+
 -------------------------------------------------------------------------------
 
 ## 0) Prepare, Read, and Inventory
@@ -82,12 +85,12 @@ Goa‑AI (this repo)
 
 | ID | Area | Task | Description | Where | Verify | Status |
 |----|------|------|-------------|-------|--------|--------|
-| GA‑1 | Codegen | External MCP tool_specs: inline all user types | Ensure tool_specs/types.go for external MCP toolsets are self‑contained (no undefined cross‑service types like SearchResult). Add unit test covering alias/inlining. | agents/codegen/specs_builder.go (inlineAllUserTypes, ensureLocalUserTypesAll) | make test; integration should not fail with “undefined: SearchResult”. | Pending |
+| GA‑1 | Codegen | External MCP tool_specs: refer to existing types | External MCP toolsets reference existing types from their service packages rather than inlining. This is the chosen approach; types are imported and used directly. | N/A (design decision) | Integration uses existing types; no inlining needed. | Cancelled (use existing types) |
 | GA‑2 | Tests | Add ToolUpdate stream mapping test | Cover hooks → stream mapping for ToolCallUpdatedEvent → stream.ToolUpdate with payload + correlation IDs. | agents/runtime/hooks/stream_subscriber_test.go | go test ./agents/runtime/hooks -run ToolUpdate. | Completed |
 | GA‑3 | Codegen tests | Multi‑service MCP goldens | Strengthen goldens for multi‑service MCP stub + CLI generation (imports, aliases, commands). | features/mcp/codegen/golden_multi_service_test.go | go test ./features/mcp/codegen -run TestMultiService_GeneratesCLIAndStubs. | Completed |
 | GA‑4 | Codegen tests | Transform helpers emission | Add generator tests asserting: transforms emitted for compatible shapes and omitted otherwise. | agents/codegen tests | go test ./agents/codegen -run Transforms. | Completed |
-| GA‑5 | Integration | Always set a planner | Ensure example bootstrap registers a stub planner for each agent so tools/results are available during CI. | agents/codegen/templates/bootstrap_helper.go.tpl; example/cmd/orchestrator/agents_planner_*.go | make itest with TEST_FILTER=MCPPrompts. | Completed |
-| GA‑6 | Example | Optional MCP callers | In example bootstrap, wire optional real MCP callers (HTTP/SSE/Stdio) behind env flags; keep default stubs. | agents/codegen/templates/bootstrap_helper.go.tpl; example/cmd/orchestrator/agents_bootstrap.go | make run-example; exercise MCP CLI. | Completed |
+| GA‑5 | Integration | Always set a planner | Ensure example bootstrap registers a stub planner for each agent so tools/results are available during CI. | agents/codegen/templates/bootstrap_helper.go.tpl; example/complete/cmd/orchestrator/agents_planner_*.go | make itest with TEST_FILTER=MCPPrompts. | Completed |
+| GA‑6 | Example | Optional MCP callers | In example bootstrap, wire optional real MCP callers (HTTP/SSE/Stdio) behind env flags; keep default stubs. | agents/codegen/templates/bootstrap_helper.go.tpl; example/complete/cmd/orchestrator/agents_bootstrap.go | make run-example; exercise MCP CLI. | Completed |
 | GA‑7 | Docs | Update docs for streaming + executors | Add typed streaming example (ToolStart/Update/End) and document executor‑first + transforms. | docs/runtime.md, docs/plan.md, docs/dsl.md | N/A (docs). | Completed |
 | GA‑8 | Dependencies | Upstream Goa recursion guard | Open PR and bump goa once merged (jsonrpc:id recursion guard). Remove local replace if present. | go.mod (replace), Goa PR link | make test in goa and goa‑ai. | Completed |
 
@@ -108,7 +111,7 @@ AURA (application repo)
 
 Notes
 - Execute AURA items in order: AU‑2 → AU‑3 → AU‑4/AU‑5 → AU‑7/AU‑8 → AU‑9.
-- Execute Goa‑AI items in order: GA‑1 (unblocks integration) → GA‑5 → GA‑2/GA‑3/GA‑4 → GA‑6/GA‑7 → GA‑8.
+- Goa‑AI items: GA‑1 cancelled (use existing types for external MCP toolsets). All other GA items completed.
 
 ## Action Items to Complete Migration
 
@@ -330,7 +333,7 @@ Schemas and Codecs via tool_specs
 ```go
 import (
     adaread "github.com/yourorg/yourrepo/gen/atlas_data_agent/agents/atlas_data_agent/atlas_read/tool_specs"
-    "goa.design/goa-ai/runtime/agents/tools"
+    "goa.design/goa-ai/runtime/agent/tools"
 )
 
 func find(name string) (tools.ToolSpec, bool) {

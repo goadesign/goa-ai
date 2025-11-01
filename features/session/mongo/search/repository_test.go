@@ -11,7 +11,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
-	"goa.design/goa-ai/runtime/agents/session"
+	"goa.design/goa-ai/runtime/agent/session"
 )
 
 func TestSessionsBuildsFilter(t *testing.T) {

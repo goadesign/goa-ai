@@ -8,7 +8,7 @@ import (
 
 	clientsmongo "goa.design/goa-ai/features/memory/mongo/clients/mongo"
 	mockmongo "goa.design/goa-ai/features/memory/mongo/clients/mongo/mocks"
-	"goa.design/goa-ai/runtime/agents/memory"
+	"goa.design/goa-ai/runtime/agent/memory"
 )
 
 func TestNewStoreRequiresClient(t *testing.T) {

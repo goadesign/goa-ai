@@ -137,8 +137,6 @@ func PrepareExample(_ string, roots []eval.Root) error {
 // ModifyExampleFiles patches example CLI wiring to target the MCP adapter client
 // and replaces the default MCP stub factory to return the adapter-wrapped
 // service. It avoids touching HTTP server signatures or example mains.
-//
-//nolint:unparam // Error return maintained for interface compatibility.
 func ModifyExampleFiles(_ string, roots []eval.Root, files []*codegen.File) ([]*codegen.File, error) {
 	r, ok := firstRootWithJSONRPC(roots)
 	if !ok {

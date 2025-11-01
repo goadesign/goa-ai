@@ -40,6 +40,7 @@ linters:
     staticcheck:
       checks:
         - all
+        - "-ST1001" # Allow dot imports in DSL packages
   exclusions:
     generated: strict
     paths:
@@ -47,4 +48,4 @@ linters:
       - diagram/*
       - gql/*
       - mocks/*
-      - agents/codegen/tests/testscenarios/*
+      - codegen/agents/tests/testscenarios/*

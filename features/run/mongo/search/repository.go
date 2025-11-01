@@ -9,7 +9,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
-	"goa.design/goa-ai/runtime/agents/run"
+	"goa.design/goa-ai/runtime/agent/run"
 )
 
 // SessionSortField enumerates supported sort fields.

@@ -161,6 +161,33 @@ Planners may set `ToolRequest.ToolCallID` (e.g., model `tool_call.id`). The runt
 
 These values appear in the generated workflow configuration and the runtime enforces them on every turn.
 
+### Agent API Types (re‑exported)
+
+The DSL re‑exports standardized agent API types for use directly in Goa service designs. Import the agents DSL and reference these types when declaring agent endpoints:
+
+- `AgentRunPayload`: input for agent run/start/resume endpoints (fields: `agent_id`, `run_id`, `session_id`, `turn_id`, `messages`, `labels`, `metadata`).
+- `AgentRunResult`: terminal result for non‑streaming endpoints (fields: `agent_id`, `run_id`, `final`, `tool_events`, `notes`).
+- `AgentRunChunk`: streaming progress events (variants via fields: `message`, `tool_call`, `tool_result`, `status`).
+- Supporting types: `AgentMessage`, `AgentToolEvent`, `AgentToolError`, `AgentRetryHint`, `AgentToolTelemetry`, `AgentPlannerAnnotation`, `AgentToolCallChunk`, `AgentToolResultChunk`, `AgentRunStatusChunk`.
+
+Example:
+
+```go
+Service("orchestrator", func() {
+    Method("run", func() {
+        Payload(agentsdsl.AgentRunPayload)
+        StreamingResult(agentsdsl.AgentRunChunk)
+        JSONRPC(func() { ServerSentEvents(func() {}) })
+    })
+    Method("run_sync", func() {
+        Payload(agentsdsl.AgentRunPayload)
+        Result(agentsdsl.AgentRunResult)
+    })
+})
+```
+
+These types map to runtime/planner types via generated conversions (`ConvertTo*`/`CreateFrom*`) and should be used only at API boundaries. Inside planners and runtime code, prefer the runtime `planner.*` types.
+
 ## Generated Artifacts (Design → Code)
 
 For each service/agent combination, `goa gen` produces:
@@ -199,7 +226,7 @@ if err := mcpassistant.RegisterAssistantAssistantMcpToolset(ctx, rt, caller); er
 4. **Runtime wiring**: instantiate an `mcpruntime.Caller` transport (HTTP/SSE/stdio). Generated helpers register the toolset and adapt JSON-RPC errors into `planner.RetryHint` values.
 5. **Planner execution**: planners simply enqueue tool calls; the runtime automatically encodes payloads, invokes the MCP caller, persists results via hooks, and surfaces structured telemetry.
 
-The example runtime harness (`example/runtime_harness.go`) shows the flow end-to-end without Temporal: it registers the generated helper, uses a stubbed MCP caller, and executes the chat workflow fully in-process for tests and documentation.
+The example runtime harness (`example/complete/runtime_harness.go`) shows the flow end-to-end without Temporal: it registers the generated helper, uses a stubbed MCP caller, and executes the chat workflow fully in-process for tests and documentation.
 
 ## Best Practices
 

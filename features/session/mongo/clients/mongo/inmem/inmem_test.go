@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"goa.design/goa-ai/runtime/agents/session"
+	"goa.design/goa-ai/runtime/agent/session"
 )
 
 func TestStoreUpsertLoad(t *testing.T) {

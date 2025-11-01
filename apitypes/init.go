@@ -3,7 +3,7 @@ package apitypes
 import (
 	goacodegen "goa.design/goa/v3/codegen"
 
-	"goa.design/goa-ai/codegen/agents"
+	"goa.design/goa-ai/codegen/agent"
 )
 
 // init registers the agents plugin with Goa.

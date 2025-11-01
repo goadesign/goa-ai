@@ -10,8 +10,6 @@ import (
 // This runs BEFORE the main service generation
 // PrepareServices walks the provided roots, records the original services and
 // their JSON-RPC paths into a per-run context. It does not mutate the roots.
-//
-//nolint:unparam // Error return maintained for interface compatibility.
 func PrepareServices(_ string, roots []eval.Root) error {
 	// Initialize per-run context
 	_ = ensureCtx()

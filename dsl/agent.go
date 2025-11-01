@@ -4,7 +4,7 @@
 package dsl
 
 import (
-	expragents "goa.design/goa-ai/expr/agents"
+	expragents "goa.design/goa-ai/expr/agent"
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
 )

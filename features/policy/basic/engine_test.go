@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/features/policy/basic"
-	"goa.design/goa-ai/runtime/agents/policy"
+	"goa.design/goa-ai/runtime/agent/policy"
 )
 
 func TestEngineFiltersByTags(t *testing.T) {

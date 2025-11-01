@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"goa.design/goa-ai/features/stream/pulse/clients/pulse"
-	"goa.design/goa-ai/runtime/agents/stream"
+	"goa.design/goa-ai/runtime/agent/stream"
 )
 
 type (

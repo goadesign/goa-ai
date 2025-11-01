@@ -105,7 +105,7 @@ This document turns the recent critique into an actionable plan to improve how w
 2. Add runtime hint builder that consumes `Issues()` + fallback to schema parsing.
 3. Cache schemas at registration; update helpers.
 4. Update activities (boundary mapping) – already aligned to inputs‑only validation.
-5. Update tests and regenerate example/Aura; fix any compile issues.
+5. Update tests and regenerate example/complete/Aura; fix any compile issues.
 
 ## Notes
 

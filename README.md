@@ -29,6 +29,7 @@ The result is a cohesive architecture where planners focus on business logic whi
 > - [Agent DSL reference](docs/dsl.md)
 > - [Runtime wiring](docs/runtime.md)
 > - [Migration guide (legacy goa-ai → new framework)](docs/migrate.md)
+> - [AURA API types migration plan](docs/aura_api_types_migration.md)
 
 ## Quick Start
 
@@ -95,13 +96,13 @@ import (
     "go.temporal.io/sdk/client"
 
     chat "example.com/assistant/gen/orchestrator/agents/chat"
-    runtimeTemporal "goa.design/goa-ai/runtime/agents/engine/temporal"
-    "goa.design/goa-ai/runtime/agents/runtime"
+    runtimeTemporal "goa.design/goa-ai/runtime/agent/engine/temporal"
+    "goa.design/goa-ai/runtime/agent/runtime"
     basicpolicy "goa.design/goa-ai/features/policy/basic"
     memorymongo "goa.design/goa-ai/features/memory/mongo"
     runmongo "goa.design/goa-ai/features/run/mongo"
     pulse "goa.design/goa-ai/features/stream/pulse"
-    "goa.design/goa-ai/runtime/agents/telemetry"
+    "goa.design/goa-ai/runtime/agent/telemetry"
 )
 
 func main() {
@@ -230,7 +231,7 @@ func Execute(ctx context.Context, meta runtime.ToolCallMeta, call planner.ToolRe
 Transforms are emitted only when the tool Arg/Return and method Payload/Result are structurally compatible. When they are not, write the field mapping explicitly inside your executor.
 
 ### 5. Explore the example
-`example/` contains the **chat data loop** harness: it registers the generated MCP toolset helper, runs the runtime harness (in-process engine), and demonstrates planners invoking MCP tools with streaming + memory hooks. Run it via:
+`example/complete/` contains the **chat data loop** harness: it registers the generated MCP toolset helper, runs the runtime harness (in-process engine), and demonstrates planners invoking MCP tools with streaming + memory hooks. Run it via:
 ```bash
 go test ./example
 ```
@@ -262,8 +263,8 @@ The workflow loop drains `goaai.runtime.pause` / `goaai.runtime.resume` signals 
 | Layer | Responsibility |
 | --- | --- |
 | **DSL (`dsl`)** | Define agents, toolsets, policies, MCP suites inside Goa services. |
-| **Codegen (`codegen/agents`, `codegen/mcp`)** | Emit tool codecs/specs, registries, Temporal workflows, activity handlers, MCP helpers. |
-| **Runtime (`runtime/agents`, `runtime/mcp`)** | Durable plan/execute loop with policy enforcement, memory/session stores, hook bus, telemetry, MCP callers. |
+| **Codegen (`codegen/agent`, `codegen/mcp`)** | Emit tool codecs/specs, registries, Temporal workflows, activity handlers, MCP helpers. |
+| **Runtime (`runtime/agent`, `runtime/mcp`)** | Durable plan/execute loop with policy enforcement, memory/session stores, hook bus, telemetry, MCP callers. |
 | **Engine (`runtime/agents/engine`)** | Abstract workflow API; Temporal adapter ships with OTEL interceptors, auto-start workers, and context propagation. |
 | **Features (`features/*`)** | Optional modules (Mongo memory/session, Pulse stream sink, MCP callers, Bedrock/OpenAI model clients, policy engine). |
 

@@ -3,7 +3,7 @@ package dsl
 import (
 	"time"
 
-	expragents "goa.design/goa-ai/expr/agents"
+	expragents "goa.design/goa-ai/expr/agent"
 	"goa.design/goa/v3/eval"
 )
 

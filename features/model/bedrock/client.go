@@ -18,7 +18,7 @@ import (
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 
-	"goa.design/goa-ai/runtime/agents/model"
+	"goa.design/goa-ai/runtime/agent/model"
 )
 
 const (

@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"goa.design/goa-ai/runtime/agents/planner"
+	"goa.design/goa-ai/runtime/agent/planner"
 )
 
 func TestRunInputConversionRoundTrip(t *testing.T) {

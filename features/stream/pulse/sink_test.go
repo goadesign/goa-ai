@@ -10,7 +10,7 @@ import (
 
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	mockpulse "goa.design/goa-ai/features/stream/pulse/clients/pulse/mocks"
-	"goa.design/goa-ai/runtime/agents/stream"
+	"goa.design/goa-ai/runtime/agent/stream"
 )
 
 func TestSendPublishesEnvelope(t *testing.T) {

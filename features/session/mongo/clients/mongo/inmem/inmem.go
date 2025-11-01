@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"goa.design/goa-ai/runtime/agents/session"
+	"goa.design/goa-ai/runtime/agent/session"
 )
 
 // Store provides an in-memory implementation of session.Store for tests and local tooling.

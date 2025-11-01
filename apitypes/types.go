@@ -43,11 +43,11 @@ import (
 	"fmt"
 	"time"
 
-	"goa.design/goa-ai/runtime/agents/engine"
-	"goa.design/goa-ai/runtime/agents/planner"
-	runtimeruntime "goa.design/goa-ai/runtime/agents/runtime"
-	"goa.design/goa-ai/runtime/agents/telemetry"
-	toolerrors "goa.design/goa-ai/runtime/agents/toolerrors"
+	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/planner"
+	runtimeruntime "goa.design/goa-ai/runtime/agent/runtime"
+	"goa.design/goa-ai/runtime/agent/telemetry"
+	toolerrors "goa.design/goa-ai/runtime/agent/toolerrors"
 )
 
 type (

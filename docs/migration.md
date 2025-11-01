@@ -9,7 +9,7 @@ MCP generator.
 
 | Legacy Concept | New Equivalent |
 | --- | --- |
-| `goa-ai` MCP plugin living under `goa.design/plugins/tools` | `dsl` for design-time declarations, `codegen/agents` for generation, `runtime/agents` for execution |
+| `goa-ai` MCP plugin living under `goa.design/plugins/tools` | `dsl` for design-time declarations, `codegen/agent` for generation, `runtime/agent` for execution |
 | Hand-authored MCP server implementations | Generated agent packages + tool codecs + registries under `gen/<service>/agents/...` |
 | Ad-hoc workflow loops | Durable workflows driven by `agents/runtime/runtime` atop the `engine` interface (Temporal adapter provided) |
 | Manual JSON schema validators | Generated `tool_types.go` + `tool_codecs.go` mirroring Goa validations |
@@ -160,7 +160,7 @@ runtime features (memory persistence, policy enforcement, telemetry).
 ### 8. Integration Tests
 
 - Regenerate the example tree before running integration tests (`goa gen && goa example`).
-- Use the runtime harness (`example/runtime_harness.go`) for deterministic planner/tool tests.
+- Use the runtime harness (`example/complete/runtime_harness.go`) for deterministic planner/tool tests.
 - Update YAML scenarios under `integration_tests/scenarios` to expect the new hook events
   (snake_case fields: `auto_initialize`, `client_mode`, `stream_expect`, `expect_retry`).
 
@@ -179,7 +179,7 @@ runtime features (memory persistence, policy enforcement, telemetry).
 
 - `docs/dsl.md` – full DSL reference with examples.
 - `docs/runtime.md` – runtime wiring, hook events, telemetry guidance.
-- `example/` – chat data loop showcasing MCP toolsets, planner, runtime harness.
+- `example/complete/` – chat data loop showcasing MCP toolsets, planner, runtime harness.
 - `runtime/agents/engine/temporal` – Temporal adapter options and telemetry behavior.
 
 Following the steps above keeps existing business logic intact while adopting the

@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	. "goa.design/goa-ai/dsl"
-	agentsexpr "goa.design/goa-ai/expr/agents"
+	agentsexpr "goa.design/goa-ai/expr/agent"
 	. "goa.design/goa/v3/dsl"
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"

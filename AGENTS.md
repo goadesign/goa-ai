@@ -154,6 +154,32 @@ Bad → Good examples:
   `len(nilMap)` both return 0. Prefer `len(x) == 0` over `x == nil || len(x) == 0`.
   This keeps code concise and idiomatic.
 
+### Go Type References in Codegen
+
+When emitting code that references types, rely on Goa’s codegen helpers:
+
+- Use the owning service/specs `NameScope` to compute references.
+- Same‑package references: set the attribute context package to `""` and use
+  `codegen.NewAttributeContextForConversion(...)` so generated code does not
+  qualify with the current package alias.
+- External references: use `Scope.GoFullTypeRef(attr, pkg)` to qualify user types
+  with the proper package alias derived from `UserTypeLocation` or service scope.
+- Prefer `GoTypeRef/GoFullTypeRef` (attribute‑aware) over string concatenation.
+  Only use a local type name directly when referring to a generated alias within
+  the same package (e.g., `*ByIDPayload`).
+
+For transforms helpers (specs/<toolset>/transforms.go):
+
+- Param/result types on function signatures must reference the local alias types
+  (e.g., `*ByIDPayload`, `*ByIDResult`).
+- When converting to/from service method types, compute `*svc.Payload` and
+  `*svc.Result` via `GoFullTypeRef` and the service NameScope.
+- To initialize the local alias in the body, synthesize a temporary
+  `expr.UserTypeExpr` with `TypeName` set to the local alias and the underlying
+  attribute set to the tool’s attribute. Pass that as the transform target along
+  with a conversion context whose package is `""` so struct literals render as
+  `&ByIDResult{...}` instead of a qualified service type.
+
 ### Goa Design Authoring
 
 - Every `Field` MUST include an inline description string (4th argument). Example: `Field(2, "name", String, "Name of tool")`.

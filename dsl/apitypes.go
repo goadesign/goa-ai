@@ -1,253 +1,190 @@
 package dsl
 
 import (
-	apitypes "goa.design/goa-ai/apitypes"
-	. "goa.design/goa/v3/dsl"
+	apitypesdesign "goa.design/goa-ai/apitypes/design"
 )
 
-var AgentToolTelemetry = Type("AgentToolTelemetry", func() {
-	Description("Telemetry metadata gathered during tool execution.")
-	Attribute("duration_ms", Int64, "Wall-clock duration in milliseconds", func() {
-		Minimum(0)
-		Example(1250)
-	})
-	Attribute("tokens_used", Int, "Total tokens consumed by the tool call", func() {
-		Minimum(0)
-		Example(512)
-	})
-	Attribute("model", String, "Identifier of the model used by the tool", func() {
-		Example("claude-3-opus")
-	})
-	Attribute("extra", MapOf(String, Any), "Tool-specific telemetry key/value pairs", func() {
-		Example(map[string]any{"trace_id": "abc-123"})
-	})
-	CreateFrom(apitypes.ToolTelemetry{})
-	ConvertTo(apitypes.ToolTelemetry{})
-})
+// API type definitions for agent-related endpoints. These types are re-exported
+// from apitypes/design for use in DSL definitions. They provide the standard
+// types for agent run inputs, outputs, streaming chunks, and tool execution
+// metadata.
+//
+// Use these types when defining service methods that interact with agents:
+//   - AgentRunPayload: Input payload for agent run endpoints
+//   - AgentRunResult: Terminal output from agent run endpoints
+//   - AgentRunChunk: Streaming chunks for agent run progress
+//   - AgentMessage: Individual messages in agent conversations
+//   - AgentToolEvent: Tool execution outcomes
+//   - AgentToolError: Structured tool error chains
+//   - AgentRetryHint: Guidance for retrying failed tool calls
+//   - AgentToolTelemetry: Telemetry metadata from tool execution
+//   - AgentPlannerAnnotation: Planner observations and notes
+//
+// Example usage:
+//
+//	Service("orchestrator", func() {
+//	    Agent("chat", "Chat orchestrator", func() {
+//	        Uses(func() {
+//	            UseMCPToolset("assistant", "assistant-mcp")
+//	        })
+//	    })
+//
+//	    Method("run", func() {
+//	        Description("Invoke the chat agent")
+//	        Payload(AgentRunPayload)
+//	        StreamingResult(AgentRunChunk)
+//	    })
+//	})
 
-var AgentRetryHint = Type("AgentRetryHint", func() {
-	Description("Structured guidance emitted after a tool failure.")
-	Attribute("reason", String, "Categorized reason for the retry guidance", func() {
-		Enum(
-			"invalid_arguments",
-			"missing_fields",
-			"malformed_response",
-			"timeout",
-			"rate_limited",
-			"tool_unavailable",
-		)
-		Example("invalid_arguments")
-	})
-	Attribute("tool", String, "Qualified tool name associated with the hint", func() {
-		MinLength(1)
-		Example("assistant.search")
-	})
-	Attribute("restrict_to_tool", Boolean, "Restrict subsequent planner turns to this tool")
-	Attribute("missing_fields", ArrayOf(String), "Missing or invalid fields that caused the failure", func() {
-		Example([]any{"query", "filters"})
-	})
-	Attribute("example_input", MapOf(String, Any), "Representative payload that satisfies validation", func() {
-		Example(map[string]any{"query": "latest status"})
-	})
-	Attribute("prior_input", MapOf(String, Any), "Payload that triggered the failure", func() {
-		Example(map[string]any{"query": ""})
-	})
-	Attribute("clarifying_question", String, "Question that callers should answer to proceed", func() {
-		Example("Which incident should I summarize?")
-	})
-	Attribute("message", String, "Human-readable guidance for logs or UI", func() {
-		Example("Tool returned 400: invalid request payload")
-	})
-	Required("reason", "tool")
-	CreateFrom(apitypes.RetryHint{})
-	ConvertTo(apitypes.RetryHint{})
-})
+var (
+	// AgentRunPayload is the standard payload type for agent run endpoints.
+	// It contains the conversation history, session/run identifiers, and optional
+	// metadata. Use this as the Payload type for methods that invoke agents.
+	//
+	// Example:
+	//   Method("run", func() {
+	//       Payload(AgentRunPayload)
+	//   })
+	AgentRunPayload = apitypesdesign.AgentRunPayload
 
-var AgentToolError = Type("AgentToolError", func() {
-	Description("Structured tool error chain captured during execution.")
-	Attribute("message", String, "Human-readable error summary", func() {
-		Example("timeout contacting upstream search API")
-	})
-	Attribute("cause", "AgentToolError", "Nested cause describing the underlying failure")
-	CreateFrom(apitypes.ToolError{})
-	ConvertTo(apitypes.ToolError{})
-})
+	// AgentRunResult is the standard result type for non-streaming agent run
+	// endpoints. It contains the final assistant response, tool events, and
+	// planner annotations from the completed run. Use this as the Result type
+	// for methods that return terminal agent outputs.
+	//
+	// Example:
+	//   Method("run", func() {
+	//       Payload(AgentRunPayload)
+	//       Result(AgentRunResult)
+	//   })
+	AgentRunResult = apitypesdesign.AgentRunResult
 
-var AgentToolEvent = Type("AgentToolEvent", func() {
-	Description("Outcome of an executed tool call.")
-	Attribute("name", String, "Tool identifier", func() {
-		MinLength(1)
-		Example("assistant.search")
-	})
-	Attribute("result", Any, "Tool result content when the call succeeds", func() {
-		Example(map[string]any{"documents": []any{"alpha.md", "beta.md"}})
-	})
-	Attribute("error", AgentToolError, "Structured error returned by the tool")
-	Attribute("retry_hint", AgentRetryHint, "Retry guidance emitted by the tool on failure")
-	Attribute("telemetry", AgentToolTelemetry, "Telemetry metadata captured during execution")
-	Required("name")
-	Example("search-failure", func() {
-		Description("Search tool failed with retry guidance.")
-		Value(Val{
-			"name": "assistant.search",
-			"error": Val{
-				"message": "invalid filter value",
-			},
-			"retry_hint": Val{
-				"reason":  "invalid_arguments",
-				"tool":    "assistant.search",
-				"message": "Ensure the filter is a recognized status value.",
-			},
-		})
-	})
-	CreateFrom(apitypes.ToolResult{})
-	ConvertTo(apitypes.ToolResult{})
-})
+	// AgentRunChunk is the standard streaming result type for agent run endpoints.
+	// It represents incremental progress updates during agent execution, including
+	// message fragments, tool call notifications, tool results, and status updates.
+	// Use this as the StreamingResult type for methods that stream agent progress.
+	//
+	// Example:
+	//   Method("run", func() {
+	//       Payload(AgentRunPayload)
+	//       StreamingResult(AgentRunChunk)
+	//       JSONRPC(func() {
+	//           ServerSentEvents(func() {})
+	//       })
+	//   })
+	AgentRunChunk = apitypesdesign.AgentRunChunk
 
-var AgentPlannerAnnotation = Type("AgentPlannerAnnotation", func() {
-	Description("Planner observation persisted alongside run history.")
-	Attribute("text", String, "Annotation emitted by the planner", func() {
-		MinLength(1)
-		Example("Calling search to gather the latest incidents.")
-	})
-	Attribute("labels", MapOf(String, String), "Structured metadata associated with the note", func() {
-		Example(map[string]string{"type": "reasoning"})
-	})
-	CreateFrom(apitypes.PlannerAnnotation{})
-	ConvertTo(apitypes.PlannerAnnotation{})
-})
+	// AgentMessage represents a single message in an agent conversation transcript.
+	// It includes the role (user, assistant, tool, system), content, and optional
+	// metadata. This type is typically embedded within AgentRunPayload messages
+	// arrays and AgentRunResult final fields.
+	//
+	// Example:
+	//   Method("chat", func() {
+	//       Payload(func() {
+	//           Attribute("messages", ArrayOf(AgentMessage))
+	//       })
+	//   })
+	AgentMessage = apitypesdesign.AgentMessage
 
-var AgentMessage = Type("AgentMessage", func() {
-	Description("Single conversational message in the agent transcript.")
-	Attribute("role", String, "Role that produced the message", func() {
-		Enum("user", "assistant", "tool", "system")
-		Example("user")
-	})
-	Attribute("content", String, "Message content", func() {
-		MinLength(1)
-		Example("Summarize today's incidents.")
-	})
-	Attribute("meta", MapOf(String, Any), "Optional structured metadata attached to the message", func() {
-		Example(map[string]any{"message_id": "sys-1"})
-	})
-	Required("role", "content")
-	CreateFrom(apitypes.AgentMessage{})
-	ConvertTo(apitypes.AgentMessage{})
-})
+	// AgentToolEvent represents the outcome of a tool call during agent execution.
+	// It includes the tool name, result payload (on success), error information,
+	// retry hints, and telemetry. This type is typically embedded within
+	// AgentRunResult tool_events arrays.
+	//
+	// Example:
+	//   Method("execute", func() {
+	//       Result(func() {
+	//           Attribute("tool_events", ArrayOf(AgentToolEvent))
+	//       })
+	//   })
+	AgentToolEvent = apitypesdesign.AgentToolEvent
 
-var AgentRunPayload = Type("AgentRunPayload", func() {
-	Description("Payload submitted to agent Run endpoints.")
-	Attribute("agent_id", String, "Agent identifier to invoke (optional when bound to a single agent)", func() {
-		Example("orchestrator.chat")
-	})
-	Attribute("run_id", String, "Caller-provided run identifier", func() {
-		MinLength(1)
-		Example("run-abc")
-	})
-	Attribute("session_id", String, "Session identifier used for grouping runs", func() {
-		MinLength(1)
-		Example("session-123")
-	})
-	Attribute("turn_id", String, "Turn identifier associated with the run", func() {
-		Example("turn-7")
-	})
-	Attribute("messages", ArrayOf(AgentMessage), "Complete conversation history supplied to the agent", func() {
-		MinLength(1)
-		Example([]any{
-			Val{
-				"role":    "system",
-				"content": "You are a concise assistant.",
-				"meta":    Val{"message_id": "sys-1"},
-			},
-			Val{
-				"role":    "user",
-				"content": "Summarize the latest status update.",
-				"meta":    Val{"message_id": "user-1"},
-			},
-		})
-	})
-	Attribute("labels", MapOf(String, String), "Caller-supplied labels forwarded to the runtime", func() {
-		Example(map[string]string{"tenant": "acme"})
-	})
-	Attribute("metadata", MapOf(String, Any), "Arbitrary metadata forwarded to the runtime", func() {
-		Example(map[string]any{"priority": "p1"})
-	})
-	Required("messages")
-	CreateFrom(apitypes.RunInput{})
-	ConvertTo(apitypes.RunInput{})
-})
+	// AgentToolError represents a structured error chain from tool execution failures.
+	// It includes a human-readable message and optional nested cause. This type is
+	// typically embedded within AgentToolEvent error fields.
+	//
+	// Example:
+	//   Method("tools", func() {
+	//       Result(func() {
+	//           Attribute("error", AgentToolError)
+	//       })
+	//   })
+	AgentToolError = apitypesdesign.AgentToolError
 
-var AgentRunResult = Type("AgentRunResult", func() {
-	Description("Terminal output produced by agent Run endpoints.")
-	Attribute("agent_id", String, "Identifier of the agent that produced the result", func() {
-		MinLength(1)
-		Example("orchestrator.chat")
-	})
-	Attribute("run_id", String, "Identifier of the completed run", func() {
-		MinLength(1)
-		Example("run-abc")
-	})
-	Attribute("final", AgentMessage, "Final assistant response returned to the caller", func() {
-		Example(Val{
-			"role":    "assistant",
-			"content": "All systems nominal. No outstanding action items.",
-		})
-	})
-	Attribute("tool_events", ArrayOf(AgentToolEvent), "Tool events emitted during the final turn")
-	Attribute("notes", ArrayOf(AgentPlannerAnnotation), "Planner annotations captured during completion")
-	Required("agent_id", "run_id", "final")
-	CreateFrom(apitypes.RunOutput{})
-	ConvertTo(apitypes.RunOutput{})
-})
+	// AgentRetryHint provides structured guidance after tool failures to help the
+	// planner adjust behavior. It includes the failure reason, tool identifier,
+	// missing fields, example inputs, and clarifying questions. This type is
+	// typically embedded within AgentToolEvent retry_hint fields.
+	//
+	// Example:
+	//   Method("tool_result", func() {
+	//       Result(func() {
+	//           Attribute("retry_hint", AgentRetryHint)
+	//       })
+	//   })
+	AgentRetryHint = apitypesdesign.AgentRetryHint
 
-var AgentRunChunk = Type("AgentRunChunk", func() {
-	Description("Streaming chunk emitted while an agent run progresses.")
-	Attribute("type", String, "Kind of chunk being delivered", func() {
-		Enum("message", "tool_call", "tool_result", "status")
-		Example("message")
-	})
-	Attribute("message", String, "Assistant message fragment.", func() {
-		Example("Processing request...")
-	})
-	Attribute("tool_call", AgentToolCallChunk, "Tool call scheduling notification.")
-	Attribute("tool_result", AgentToolResultChunk, "Tool result payload notification.")
-	Attribute("status", AgentRunStatusChunk, "Run status update.")
-	Required("type")
-})
+	// AgentToolTelemetry captures telemetry metadata gathered during tool execution,
+	// including duration, token usage, model identifier, and tool-specific metrics.
+	// This type is typically embedded within AgentToolEvent telemetry fields.
+	//
+	// Example:
+	//   Method("execute", func() {
+	//       Result(func() {
+	//           Attribute("telemetry", AgentToolTelemetry)
+	//       })
+	//   })
+	AgentToolTelemetry = apitypesdesign.AgentToolTelemetry
 
-var AgentToolCallChunk = Type("AgentToolCallChunk", func() {
-	Description("Chunk describing a scheduled tool call.")
-	Attribute("id", String, "Tool call identifier", func() {
-		MinLength(1)
-		Example("call-001")
-	})
-	Attribute("name", String, "Tool name", func() {
-		MinLength(1)
-		Example("assistant.search")
-	})
-	Attribute("payload", Any, "Payload submitted to the tool")
-	Required("id", "name")
-})
+	// AgentPlannerAnnotation represents optional notes or reasoning steps emitted
+	// by planners during agent execution. It includes annotation text and optional
+	// structured labels. This type is typically embedded within AgentRunResult
+	// notes arrays.
+	//
+	// Example:
+	//   Method("run", func() {
+	//       Result(func() {
+	//           Attribute("notes", ArrayOf(AgentPlannerAnnotation))
+	//       })
+	//   })
+	AgentPlannerAnnotation = apitypesdesign.AgentPlannerAnnotation
 
-var AgentToolResultChunk = Type("AgentToolResultChunk", func() {
-	Description("Chunk containing the result of a tool call.")
-	Attribute("id", String, "Tool call identifier", func() {
-		MinLength(1)
-		Example("call-001")
-	})
-	Attribute("result", Any, "Decoded tool result payload")
-	Attribute("error", AgentToolError, "Tool error, when the call failed")
-	Required("id")
-})
+	// AgentToolCallChunk represents a streaming notification about a scheduled tool
+	// call. It includes the call identifier, tool name, and payload. This type is
+	// typically embedded within AgentRunChunk tool_call fields.
+	//
+	// Example:
+	//   Method("stream", func() {
+	//       StreamingResult(func() {
+	//           Attribute("tool_call", AgentToolCallChunk)
+	//       })
+	//   })
+	AgentToolCallChunk = apitypesdesign.AgentToolCallChunk
 
-var AgentRunStatusChunk = Type("AgentRunStatusChunk", func() {
-	Description("Run status change emitted during streaming.")
-	Attribute("state", String, "Current run state", func() {
-		Enum("started", "paused", "resumed", "completed")
-		Example("started")
-	})
-	Attribute("message", String, "Optional status annotation", func() {
-		Example("Awaiting human approval")
-	})
-	Required("state")
-})
+	// AgentToolResultChunk represents a streaming notification containing the result
+	// of a completed tool call. It includes the call identifier, result payload,
+	// and optional error information. This type is typically embedded within
+	// AgentRunChunk tool_result fields.
+	//
+	// Example:
+	//   Method("stream", func() {
+	//       StreamingResult(func() {
+	//           Attribute("tool_result", AgentToolResultChunk)
+	//       })
+	//   })
+	AgentToolResultChunk = apitypesdesign.AgentToolResultChunk
+
+	// AgentRunStatusChunk represents a streaming notification about run status
+	// changes (started, paused, resumed, completed). It includes the state and
+	// optional status message. This type is typically embedded within AgentRunChunk
+	// status fields.
+	//
+	// Example:
+	//   Method("stream", func() {
+	//       StreamingResult(func() {
+	//           Attribute("status", AgentRunStatusChunk)
+	//       })
+	//   })
+	AgentRunStatusChunk = apitypesdesign.AgentRunStatusChunk
+)

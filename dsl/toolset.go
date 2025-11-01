@@ -6,60 +6,90 @@ import (
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
 
-	agentsexpr "goa.design/goa-ai/expr/agents"
+	agentsexpr "goa.design/goa-ai/expr/agent"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 )
 
-// Toolset defines a group of related tools—either as reusable global toolsets
-// or as exports from an agent. Use Toolset inside the root design (for global
-// toolsets) or within Uses or Exports expressions on an Agent. Each Toolset
-// declares a collection of actions that agents can invoke or expose to other
-// agents. Toolsets provide logical packaging for capability exposure, are
-// referenced by name, and are enforced at runtime.
+// Toolset defines a group of related tools that agents can invoke. Toolsets provide
+// logical packaging for capability exposure and enable tool reuse across multiple agents.
+// Tools are bound to service method implementations at runtime.
 //
-// Toolset must be declared at the top level or inside Agent Uses or Exports
-// expressions. When called with a name and DSL function, Toolset declares a new
-// toolset and returns the expression so it can be reused elsewhere in the
-// design. When called with an existing Toolset expression, the toolset is
-// referenced in the current context (for example, inside another agent's Uses
-// block) without redefining it.
+// Toolset has three distinct usage patterns:
 //
-// Toolset supports two forms:
-//   - Toolset("name", func() { ... }) to declare a new toolset
-//   - Toolset(existingToolset) to reference a previously declared toolset
+// 1. Global Toolset (top-level declaration):
 //
-// The DSL function can use the following functions to define the toolset:
-//   - Tool: defines a tool that the toolset can use
+// Declare a toolset outside any agent or service to create a reusable set of tools
+// that multiple agents can consume. Global toolsets are stored as design-time
+// expressions and must be explicitly referenced by agents that use them.
 //
-// Example (global toolset):
-//
-//	Toolset("docs", func() {
-//	    Tool("summarize", ...)
-//	    Tool("tag", ...)
+//	var CommonTools = Toolset("common", func() {
+//	    Tool("notify", "Send notification", func() {
+//	        // Tool implementation here
+//	    })
 //	})
 //
-// Example (agent export):
+// 2. Agent Export (inside agent Exports):
 //
-//	Agent("docs-agent", "Agent for docs", func() {
+// Declare a toolset that this agent provides for other agents to consume. Export
+// toolsets define the agent's public API.
+//
+//	Agent("docs", "Document processor", func() {
 //	    Exports(func() {
-//	        Toolset("exported-tools", func() {
-//	            Tool("transform", ...)
+//	        Toolset("document-tools", func() {
+//	            Tool("summarize", "Summarize document", func() {
+//	                // Tool implementation here
+//	            })
 //	        })
 //	    })
 //	})
 //
-// Example (reuse global toolset):
+// 3. Agent Reference (inside agent Uses):
 //
-//	var Shared = Toolset("shared", func() {
-//	    Tool("ping", "Ping helper", func() {})
+// Reference an existing global toolset or another agent's export. Pass the toolset
+// expression (not the name) to indicate which toolset this agent consumes.
+//
+//	Agent("assistant", "helper", func() {
+//	    Uses(func() {
+//	        Toolset(CommonTools) // reference global toolset by expression
+//	    })
 //	})
-//	Service("ops", func() {
-//	    Agent("watch", "Watcher", func() {
+//
+// Toolset accepts two forms:
+//
+// - Toolset("name", func()) - declares a new toolset with the given name and tools
+// - Toolset(existingToolset) - references an existing toolset expression
+//
+// The DSL function for new toolsets supports:
+//   - Tool("name", "description", func()) - declare tools with Args, Return, Tags
+//
+// Complete example showing global toolset declaration and reuse:
+//
+//	// 1. Declare global toolset at top level
+//	var SharedTools = Toolset("shared", func() {
+//	    Tool("log", "Log a message", func() {
+//	        Args(func() {
+//	            Attribute("level", String, "Log level")
+//	            Attribute("message", String, "Log message")
+//	            Required("level", "message")
+//	        })
+//	    })
+//	})
+//
+//	// 2. Multiple agents reference the same toolset
+//	Service("operations", func() {
+//	    Agent("monitor", "System monitor", func() {
 //	        Uses(func() {
-//	            Toolset(Shared)
+//	            Toolset(SharedTools)  // First agent uses it
+//	        })
+//	    })
+//	    Agent("analyzer", "Log analyzer", func() {
+//	        Uses(func() {
+//	            Toolset(SharedTools)  // Second agent uses it
 //	        })
 //	    })
 //	})
+//
+// Note: For external MCP toolsets, use MCPToolset() instead of Toolset().
 func Toolset(value any, fn ...func()) *agentsexpr.ToolsetExpr {
 	var dsl func()
 	if len(fn) > 0 {
@@ -90,52 +120,144 @@ func Toolset(value any, fn ...func()) *agentsexpr.ToolsetExpr {
 	}
 }
 
-// UseMCPToolset is kept for backward compatibility. Prefer MCP(..., mcp.FromService(service)).
+// MCPToolset declares an external MCP toolset that an agent consumes. It must be
+// used inside an agent's Uses expression. MCPToolset supports two forms:
 //
-// Example:
+//  1. Reference a Goa-backed MCP service defined in the same design:
+//     MCPToolset(service, suite) - tools are discovered from the service's MCP declaration
 //
-//	Uses(func(){
-//	    UseMCPToolset("calc", "core")
+//  2. Declare an external MCP server with inline tool schemas:
+//     MCPToolset(service, suite, func() { Tool(...) }) - tools must be declared explicitly
+//
+// For Goa-backed MCP, the service and suite must match an MCP server declared via
+// the MCP DSL on a Goa service. Tool schemas are automatically extracted from the
+// service methods.
+//
+// For external MCP servers (not defined in this design), provide a DSL function
+// that declares the tools using Tool(). The runtime will require an mcpruntime.Caller
+// configured to communicate with the external server.
+//
+// Example (Goa-backed MCP):
+//
+//	Agent("assistant", "Helper agent", func() {
+//	    Uses(func() {
+//	        MCPToolset("calc", "core")  // References calc service's "core" MCP suite
+//	    })
 //	})
-func UseMCPToolset(service, suite string) {
-	if _, ok := eval.Current().(*agentsexpr.ToolsetGroupExpr); !ok {
+//
+// Example (external MCP with inline tools):
+//
+//	Agent("assistant", "Helper agent", func() {
+//	    Uses(func() {
+//	        MCPToolset("remote", "search", func() {
+//	            Tool("web_search", "Search the web", func() {
+//	                Args(func() { Attribute("query", String) })
+//	                Return(func() { Attribute("results", ArrayOf(String)) })
+//	            })
+//	        })
+//	    })
+//	})
+func MCPToolset(service, suite string, dsl ...func()) *agentsexpr.ToolsetExpr {
+	var dslFunc func()
+	if len(dsl) > 0 {
+		dslFunc = dsl[0]
+	}
+	group, ok := eval.Current().(*agentsexpr.ToolsetGroupExpr)
+	if !ok {
 		eval.IncompatibleDSL()
-		return
+		return nil
 	}
 	service = strings.TrimSpace(service)
 	suite = strings.TrimSpace(suite)
-	if service == "" || suite == "" {
-		eval.ReportError("UseMCPToolset requires non-empty service and suite")
-		return
+	if service == "" {
+		eval.ReportError("MCPToolset requires non-empty service name")
+		return nil
 	}
-	MCP(service+"."+suite, func() { FromService(service) })
+	if suite == "" {
+		eval.ReportError("MCPToolset requires non-empty suite name")
+		return nil
+	}
+	ts := &agentsexpr.ToolsetExpr{
+		Name:       suite,
+		Agent:      group.Agent,
+		External:   true,
+		MCPService: service,
+		MCPSuite:   suite,
+		DSLFunc:    dslFunc,
+	}
+	group.Toolsets = append(group.Toolsets, ts)
+	return ts
 }
 
-// Tool defines a single tool inside the current toolset.
+// UseMCPToolset is a compatibility alias for MCPToolset. Prefer MCPToolset.
+func UseMCPToolset(service, suite string, dsl ...func()) *agentsexpr.ToolsetExpr {
+	return MCPToolset(service, suite, dsl...)
+}
 
-// Tool marks the current method as an MCP tool.
-// Call Tool inside a Method DSL to expose it to MCP clients. The method payload
-// becomes the tool input schema and the method result becomes the tool output.
+// Tool declares a tool for agents or MCP servers. It has two distinct use cases:
 //
-// Tool must be declared inside a Tool expression.
+//  1. Inside a Toolset (agent tools): Declares a tool with inline argument and
+//     return schemas. Use this for custom tools in agent toolsets or external MCP
+//     servers where you manually define the schemas.
 //
-// Tool takes three arguments:
-//   - name: the name of the tool
-//   - description: a concise summary used to present the tool to the LLM
-//   - dsl: a DSL function that defines the tool's configuration, including its
-//     arguments, return type, and metadata.
+//  2. Inside a Method (MCP tools): Marks a Goa service method as an MCP tool.
+//     The method's payload becomes the tool input schema and the method result
+//     becomes the tool output schema. This automatically exposes the method via
+//     the service's MCP server.
 //
-// The dsl function can use the following functions to define the tool:
-// - Args: defines the tool's arguments
-// - Return: defines the tool's return value
-// - Tags: attaches metadata tags to the tool
+// Tool takes two required arguments and one optional DSL function:
+//   - name: the tool identifier
+//   - description: a concise summary presented to the LLM
+//   - dsl (optional): configuration block (only for toolset tools, ignored for method tools)
 //
-// Example:
+// Inside toolsets, the DSL function can use:
+//   - Args: defines the input parameter schema
+//   - Return: defines the output result schema
+//   - Tags: attaches metadata labels
+//   - BindTo: binds to a service method for implementation (optional)
 //
-//	Tool("summarize", "Summarize a document", func() {
-//	    Args(func() { /* Input fields */ })
-//	    Return(func() { /* Output fields */ })
-//	    Tags("nlp", "summarization")
+// Example (toolset tool with inline schemas):
+//
+//	Toolset("utils", func() {
+//	    Tool("summarize", "Summarize a document", func() {
+//	        Args(func() {
+//	            Attribute("text", String, "Document text")
+//	            Required("text")
+//	        })
+//	        Return(func() {
+//	            Attribute("summary", String, "Summary text")
+//	        })
+//	        Tags("nlp", "summarization")
+//	    })
+//	})
+//
+// Example (external MCP tool with inline schemas):
+//
+//	Agent("helper", "", func() {
+//	    Uses(func() {
+//	        MCPToolset("remote", "search", func() {
+//	            Tool("web_search", "Search the web", func() {
+//	                Args(func() { Attribute("query", String) })
+//	                Return(func() { Attribute("results", ArrayOf(String)) })
+//	            })
+//	        })
+//	    })
+//	})
+//
+// Example (MCP tool from service method):
+//
+//	Service("calculator", func() {
+//	    MCP("calc", "1.0", "Calculator tools", func() {})
+//	    Method("add", func() {
+//	        Payload(func() {
+//	            Attribute("a", Int)
+//	            Attribute("b", Int)
+//	        })
+//	        Result(func() {
+//	            Attribute("sum", Int)
+//	        })
+//	        Tool("add", "Add two numbers")  // Exposes method as MCP tool
+//	    })
 //	})
 func Tool(name, description string, fn ...func()) {
 	if name == "" {
@@ -180,8 +302,52 @@ func Tool(name, description string, fn ...func()) {
 	}
 }
 
-// Args defines the arguments data structure for a Tool.
-// See Goa's methodDSL function used to define method payload and result.
+// Args defines the input parameter schema for a tool. Use Args inside a Tool DSL
+// to specify what arguments the tool accepts when invoked by an agent or LLM.
+//
+// Args follows the same patterns as Goa's Payload function for methods. It accepts:
+//   - A function to define an inline object schema with Attribute() calls
+//   - A Goa user type (Type, ResultType, etc.) to reuse existing type definitions
+//   - A primitive type (String, Int, etc.) for simple single-value inputs
+//
+// When using a function to define the schema inline, you can use:
+//   - Attribute(name, type, description) to define each parameter
+//   - Required(...) to mark parameters as required
+//   - All Goa attribute DSL functions (MinLength, Maximum, Pattern, etc.)
+//
+// Example (inline schema):
+//
+//	Tool("search", "Search documents", func() {
+//	    Args(func() {
+//	        Attribute("query", String, "Search query text")
+//	        Attribute("limit", Int, "Maximum number of results")
+//	        Attribute("filters", MapOf(String, String), "Search filters")
+//	        Required("query")
+//	    })
+//	    Return(func() { ... })
+//	})
+//
+// Example (reuse existing type):
+//
+//	var SearchParams = Type("SearchParams", func() {
+//	    Attribute("query", String)
+//	    Attribute("limit", Int)
+//	    Required("query")
+//	})
+//
+//	Tool("search", "Search documents", func() {
+//	    Args(SearchParams)
+//	    Return(func() { ... })
+//	})
+//
+// Example (primitive type for simple tools):
+//
+//	Tool("echo", "Echo a message", func() {
+//	    Args(String)  // Single string parameter
+//	    Return(String)
+//	})
+//
+// If Args is not called, the tool accepts no parameters (empty/null payload).
 func Args(val any, args ...any) {
 	if len(args) > 2 {
 		eval.TooManyArgError()
@@ -195,7 +361,52 @@ func Args(val any, args ...any) {
 	tool.Args = toolDSL(tool, "Args", val, args...)
 }
 
-// Return defines the data type of a tool's output.
+// Return defines the output result schema for a tool. Use Return inside a Tool DSL
+// to specify what data structure the tool produces when successfully executed.
+//
+// Return follows the same patterns as Goa's Result function for methods. It accepts:
+//   - A function to define an inline object schema with Attribute() calls
+//   - A Goa user type (Type, ResultType, etc.) to reuse existing type definitions
+//   - A primitive type (String, Int, etc.) for simple single-value outputs
+//
+// When using a function to define the schema inline, you can use:
+//   - Attribute(name, type, description) to define each result field
+//   - Required(...) to mark fields as always present
+//   - All Goa attribute DSL functions (Example, MinLength, etc.)
+//
+// Example (inline schema):
+//
+//	Tool("analyze", "Analyze document", func() {
+//	    Args(func() { ... })
+//	    Return(func() {
+//	        Attribute("summary", String, "Document summary")
+//	        Attribute("keywords", ArrayOf(String), "Extracted keywords")
+//	        Attribute("score", Float64, "Confidence score")
+//	        Required("summary", "keywords", "score")
+//	    })
+//	})
+//
+// Example (reuse existing type):
+//
+//	var AnalysisResult = ResultType("application/vnd.analysis", func() {
+//	    Attribute("summary", String)
+//	    Attribute("keywords", ArrayOf(String))
+//	    Required("summary")
+//	})
+//
+//	Tool("analyze", "Analyze document", func() {
+//	    Args(func() { ... })
+//	    Return(AnalysisResult)
+//	})
+//
+// Example (primitive type for simple tools):
+//
+//	Tool("count_words", "Count words in text", func() {
+//	    Args(String)
+//	    Return(Int)  // Returns single integer count
+//	})
+//
+// If Return is not called, the tool produces no output (empty/null result).
 func Return(val any, args ...any) {
 	if len(args) > 2 {
 		eval.TooManyArgError()
@@ -209,7 +420,34 @@ func Return(val any, args ...any) {
 	tool.Return = toolDSL(tool, "Return", val, args...)
 }
 
-// Tags attaches metadata tags to the current tool.
+// Tags attaches metadata labels to a tool for categorization and filtering. Tags
+// can be used by agents, planners, or monitoring systems to organize and discover
+// tools based on their capabilities or domains.
+//
+// Tags accepts a variadic list of strings. Each tag should be a simple lowercase
+// identifier or category name. Common patterns include:
+//   - Domain categories: "nlp", "database", "api", "filesystem"
+//   - Capability types: "read", "write", "search", "transform"
+//   - Risk levels: "safe", "destructive", "external"
+//   - Performance hints: "slow", "fast", "cached"
+//
+// Example (domain and capability tags):
+//
+//	Tool("search_docs", "Search documentation", func() {
+//	    Args(func() { ... })
+//	    Return(func() { ... })
+//	    Tags("search", "documentation", "nlp")
+//	})
+//
+// Example (risk and performance tags):
+//
+//	Tool("delete_file", "Delete a file", func() {
+//	    Args(func() { ... })
+//	    Tags("filesystem", "write", "destructive")
+//	})
+//
+// Tags are optional. Tools without tags are still fully functional but may be
+// harder to organize in systems with many available tools.
 func Tags(values ...string) {
 	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
 	if !ok {
@@ -219,7 +457,55 @@ func Tags(values ...string) {
 	tool.Tags = append(tool.Tags, values...)
 }
 
-// BindTo associates the current tool with a Goa service method.
+// BindTo associates a tool with a Goa service method implementation. Use BindTo
+// inside a Tool DSL to specify which service method executes the tool when invoked.
+// This enables tools to reuse existing service logic and separates tool schema
+// definitions from implementation.
+//
+// BindTo accepts one or two arguments:
+//   - BindTo(methodName) - binds to a method in the agent's service
+//   - BindTo(serviceName, methodName) - binds to a method in a different service
+//
+// The method name should match the Goa method name (case-insensitive). When using
+// two arguments, the service name should match the Goa service name.
+//
+// When a tool is bound to a method:
+//   - The tool's Args schema can differ from the method's Payload
+//   - The tool's Return schema can differ from the method's Result
+//   - Generated adapters will transform between tool and method types
+//   - Method payload/result validation still applies
+//
+// Example (bind to method in same service):
+//
+//	Service("docs", func() {
+//	    Method("search_documents", func() {
+//	        Payload(func() { ... })
+//	        Result(func() { ... })
+//	    })
+//	    Agent("assistant", "Helper", func() {
+//	        Uses(func() {
+//	            Toolset("doc-tools", func() {
+//	                Tool("search", "Search documents", func() {
+//	                    Args(func() { ... })  // Can differ from method payload
+//	                    Return(func() { ... }) // Can differ from method result
+//	                    BindTo("search_documents")
+//	                })
+//	            })
+//	        })
+//	    })
+//	})
+//
+// Example (bind to method in different service):
+//
+//	Tool("notify", "Send notification", func() {
+//	    Args(func() {
+//	        Attribute("message", String)
+//	    })
+//	    BindTo("notifications", "send")  // notifications.send method
+//	})
+//
+// BindTo is optional. Tools without BindTo are external tools that must be
+// implemented through custom executors or MCP callers.
 func BindTo(args ...string) {
 	var (
 		serviceName string

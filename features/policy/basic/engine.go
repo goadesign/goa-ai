@@ -8,7 +8,7 @@ import (
 	"context"
 	"strings"
 
-	"goa.design/goa-ai/runtime/agents/policy"
+	"goa.design/goa-ai/runtime/agent/policy"
 )
 
 // Options configures the basic policy engine.

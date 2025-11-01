@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/features/model/bedrock"
-	"goa.design/goa-ai/runtime/agents/model"
+	"goa.design/goa-ai/runtime/agent/model"
 )
 
 func TestClientComplete(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	openaimodel "goa.design/goa-ai/features/model/openai"
-	"goa.design/goa-ai/runtime/agents/model"
+	"goa.design/goa-ai/runtime/agent/model"
 )
 
 func TestClientComplete(t *testing.T) {

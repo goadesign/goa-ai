@@ -56,7 +56,7 @@ protoc-check:
 	fi
 
 run-example:
-	cd example && $(GO) run ./cmd/assistant --http-port $(HTTP_PORT)
+	cd example/complete && $(GO) run ./cmd/orchestrator --http-port $(HTTP_PORT)
 
 gen-example:
-	cd example && goa gen example.com/assistant/design
+	cd example/complete && goa gen example.com/assistant/design

@@ -13,9 +13,9 @@ import (
     "go.temporal.io/sdk/client"
 
     chat "example.com/assistant/gen/orchestrator/agents/chat"
-    runtimeTemporal "goa.design/goa-ai/runtime/agents/engine/temporal"
-    "goa.design/goa-ai/runtime/agents/planner"
-    "goa.design/goa-ai/runtime/agents/runtime"
+    runtimeTemporal "goa.design/goa-ai/runtime/agent/engine/temporal"
+    "goa.design/goa-ai/runtime/agent/planner"
+    "goa.design/goa-ai/runtime/agent/runtime"
 )
 
 func main() {
@@ -75,7 +75,7 @@ func main() {
 Human-in-loop workflows can suspend and resume runs using the runtime’s interrupt helpers. Behind the scenes, pause/resume signals update the run store and emit `run_paused`/`run_resumed` hook events so UI layers stay in sync.
 
 ```go
-import "goa.design/goa-ai/runtime/agents/interrupt"
+import "goa.design/goa-ai/runtime/agent/interrupt"
 
 // Pause
 if err := rt.PauseRun(ctx, interrupt.PauseRequest{RunID: "session-1-run-1", Reason: "human_review"}); err != nil {

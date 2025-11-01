@@ -12,7 +12,7 @@ import (
 	"goa.design/clue/mock"
 
 	"goa.design/goa-ai/features/session/mongo/clients/mongo"
-	"goa.design/goa-ai/runtime/agents/session"
+	"goa.design/goa-ai/runtime/agent/session"
 )
 
 type (

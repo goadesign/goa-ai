@@ -6,10 +6,10 @@ import (
 	"errors"
 	"strings"
 
-	"goa.design/goa-ai/runtime/agents/planner"
-	agentsruntime "goa.design/goa-ai/runtime/agents/runtime"
-	"goa.design/goa-ai/runtime/agents/telemetry"
-	"goa.design/goa-ai/runtime/agents/tools"
+	"goa.design/goa-ai/runtime/agent/planner"
+	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
+	"goa.design/goa-ai/runtime/agent/telemetry"
+	"goa.design/goa-ai/runtime/agent/tools"
     mcpruntime "goa.design/goa-ai/runtime/mcp"
     "goa.design/goa-ai/runtime/mcp/retry"
 )

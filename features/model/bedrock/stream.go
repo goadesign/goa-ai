@@ -12,7 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 
-	"goa.design/goa-ai/runtime/agents/model"
+	"goa.design/goa-ai/runtime/agent/model"
 )
 
 // bedrockStreamer adapts a Bedrock ConverseStream event stream to the

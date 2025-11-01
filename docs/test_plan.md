@@ -77,7 +77,7 @@ Add or extend tests under agents/runtime/runtime/:
 
 ### 2) Harness Mini-E2E (deterministic, no network)
 
-Extend example/runtime_example_test.go (or add example/runtime_harness_e2e_test.go):
+Extend example/complete/runtime_example_test.go (or add example/complete/runtime_harness_e2e_test.go):
 
 - Nested agent-as-tool: have a parent planner emit an agent-tool; nested agent discovers 2 tools then 1 more; assert ToolCallUpdatedEvent fires with totals 2 then 3; assert parent receives aggregated results and error semantics.
 - Parallel scheduling, ordered collection: simulate tools with different durations in the example engine; assert results are collected in call order; verify events exist for each tool with deterministic SeqInTurn.
@@ -112,7 +112,7 @@ Gate any live Temporal tests behind a build tag for opt-in only (not in PR CI).
 
 ## Golden-lite Snapshots (Optional, Stable)
 
-- Capture event streams as JSON Lines (event type + essential fields only: tool name, expected children, message, error flag). Mask dynamic fields (timestamps, IDs, durations). Store in example/testdata/*.golden.jsonl.
+- Capture event streams as JSON Lines (event type + essential fields only: tool name, expected children, message, error flag). Mask dynamic fields (timestamps, IDs, durations). Store in example/complete/testdata/*.golden.jsonl.
 - Provide a small helper to serialize runtime hook events into this reduced shape for comparison.
 - Always ignore generated header lines in golden comparisons per repo guidelines.
 
@@ -120,7 +120,7 @@ Gate any live Temporal tests behind a build tag for opt-in only (not in PR CI).
 
 - Runtime unit: agents/runtime/runtime/runtime_test.go, agents/runtime/runtime/types_test.go.
 - Engine adapter: agents/runtime/engine/temporal/engine_test.go.
-- Harness e2e: example/runtime_example_test.go or example/runtime_harness_e2e_test.go.
+- Harness e2e: example/complete/runtime_example_test.go or example/complete/runtime_harness_e2e_test.go.
 - MCP scenarios: integration_tests/scenarios/*.yaml.
 
 ## Running Tests
@@ -160,7 +160,7 @@ Gate any live Temporal tests behind a build tag for opt-in only (not in PR CI).
   - Validate only at system boundaries per repo guidelines; do not add defensive nil checks in unit-under-test unless contracts require them.
 
 - Golden files
-  - Store in example/testdata; ignore generated headers; mask dynamic fields.
+  - Store in example/complete/testdata; ignore generated headers; mask dynamic fields.
 
 ## Implementation Checklist (ordered)
 

@@ -13,7 +13,7 @@ import (
 
 	openai "github.com/sashabaranov/go-openai"
 
-	"goa.design/goa-ai/runtime/agents/model"
+	"goa.design/goa-ai/runtime/agent/model"
 )
 
 // ChatClient captures the subset of the go-openai client used by the adapter.

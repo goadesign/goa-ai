@@ -1,6 +1,6 @@
 # Chat Data Loop Example
 
-This walkthrough explains how the example under `example/` wires the full Goa-AI stack together:
+This walkthrough explains how the example under `example/complete/` wires the full Goa-AI stack together:
 
 - Agent + planner defined via the DSL
 - Runtime harness (in-process engine) for deterministic tests
@@ -12,12 +12,12 @@ Use this document alongside the source files:
 
 | File | Purpose |
 | --- | --- |
-| `example/design/design.go` | Goa + agent DSL definitions (chat agent + MCP suite) |
-| `example/chat_planner.go` | Sample planner implementing `planner.Planner` |
-| `example/runtime_harness.go` | In-process engine to run workflows without Temporal |
-| `example/runtime_example_test.go` | End-to-end test driving the harness |
-| `example/mcp_assistant.go` | JSON-RPC server exposing the MCP suite |
-| `example/orchestrator.go` | Temporal worker bootstrap for the chat agent |
+| `example/complete/design/design.go` | Goa + agent DSL definitions (chat agent + MCP suite) |
+| `example/complete/chat_planner.go` | Sample planner implementing `planner.Planner` |
+| `example/complete/runtime_harness.go` | In-process engine to run workflows without Temporal |
+| `example/complete/runtime_example_test.go` | End-to-end test driving the harness |
+| `example/complete/mcp_assistant.go` | JSON-RPC server exposing the MCP suite |
+| `example/complete/orchestrator.go` | Temporal worker bootstrap for the chat agent |
 
 ---
 
@@ -26,7 +26,7 @@ Use this document alongside the source files:
 From the repository root:
 
 ```bash
-go generate ./example/...   # if you add go:generate hooks
+go generate ./example/complete/...   # if you add go:generate hooks
 cd example
 goa gen example.com/assistant/design
 goa example example.com/assistant/design
@@ -68,12 +68,12 @@ You can extend the test to inspect recorded stream events (see `captureSink` in 
 The assistant service exposes an MCP suite (`assistant-mcp`) consumed by the orchestrator. Start it with the generated server + adapter:
 
 ```bash
-go run ./example/cmd/assistant -http-port 8080
+go run ./example/complete/cmd/assistant -http-port 8080
 ```
 
 Key pieces:
 
-- `example/mcp_assistant.go` wires the generated Goa transport to `mcpassistant.NewMCPAdapter`.
+- `example/complete/mcp_assistant.go` wires the generated Goa transport to `mcpassistant.NewMCPAdapter`.
 - `RegisterAssistantAssistantMcpToolset` is invoked in `orchestrator.go` so the orchestration runtime knows about the external tools.
 - The adapter captures structured tool output (`ToolResult.Telemetry["structured"]`) so downstream policy/observability layers can differentiate plain text vs structured payloads.
 
@@ -83,7 +83,7 @@ With the MCP server running:
 
 ```bash
 # start Temporal worker that registers the chat agent
-TEMPORAL_NAMESPACE=default go run ./example/cmd/orchestrator \
+TEMPORAL_NAMESPACE=default go run ./example/complete/cmd/orchestrator \
   -temporal-address 127.0.0.1:7233 \
   -mongo-uri mongodb://localhost:27017 \
   -redis-uri redis://localhost:6379

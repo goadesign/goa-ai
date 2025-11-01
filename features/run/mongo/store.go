@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	clientsmongo "goa.design/goa-ai/features/run/mongo/clients/mongo"
-	"goa.design/goa-ai/runtime/agents/run"
+	"goa.design/goa-ai/runtime/agent/run"
 )
 
 // Options configures the Mongo-backed session store.
