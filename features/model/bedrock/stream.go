@@ -203,12 +203,8 @@ func (p *chunkProcessor) Handle(event any) error {
 				return nil
 			}
 			return p.emit(model.Chunk{
-				Type: model.ChunkTypeText,
-				Message: model.Message{
-					Role:    "assistant",
-					Content: delta.Value,
-					Meta:    map[string]any{"content_index": idx},
-				},
+				Type:    model.ChunkTypeText,
+				Message: &model.Message{Role: "assistant", Content: delta.Value, Meta: map[string]any{"content_index": idx}},
 			})
 		case *brtypes.ContentBlockDeltaMemberReasoningContent:
 			if textDelta, ok := delta.Value.(*brtypes.ReasoningContentBlockDeltaMemberText); ok {
@@ -216,12 +212,9 @@ func (p *chunkProcessor) Handle(event any) error {
 					return nil
 				}
 				return p.emit(model.Chunk{
-					Type: model.ChunkTypeThinking,
-					Message: model.Message{
-						Role:    "assistant",
-						Content: textDelta.Value,
-						Meta:    map[string]any{"content_index": idx},
-					},
+					Type:     model.ChunkTypeThinking,
+					Thinking: textDelta.Value,
+					Message:  &model.Message{Role: "assistant", Content: textDelta.Value, Meta: map[string]any{"content_index": idx}},
 				})
 			}
 		case *brtypes.ContentBlockDeltaMemberToolUse:
@@ -240,7 +233,7 @@ func (p *chunkProcessor) Handle(event any) error {
 			delete(p.toolBlocks, idx)
 			return p.emit(model.Chunk{
 				Type:     model.ChunkTypeToolCall,
-				ToolCall: model.ToolCall{Name: tb.name, Payload: payload},
+				ToolCall: &model.ToolCall{Name: tb.name, Payload: payload},
 			})
 		}
 		return nil
@@ -255,15 +248,22 @@ func (p *chunkProcessor) Handle(event any) error {
 		if ev.Value.Usage == nil {
 			return nil
 		}
-		usage := model.TokenUsage{
-			InputTokens:  int(int32Value(ev.Value.Usage.InputTokens)),
-			OutputTokens: int(int32Value(ev.Value.Usage.OutputTokens)),
-			TotalTokens:  int(int32Value(ev.Value.Usage.TotalTokens)),
+		// Compute ints efficiently with direct nil checks (avoid helper + double cast)
+		var in, out, tot int
+		if t := ev.Value.Usage.InputTokens; t != nil {
+			in = int(*t)
 		}
+		if t := ev.Value.Usage.OutputTokens; t != nil {
+			out = int(*t)
+		}
+		if t := ev.Value.Usage.TotalTokens; t != nil {
+			tot = int(*t)
+		}
+		usage := model.TokenUsage{InputTokens: in, OutputTokens: out, TotalTokens: tot}
 		if p.recordUsage != nil {
 			p.recordUsage(usage)
 		}
-		return p.emit(model.Chunk{Type: model.ChunkTypeUsage, UsageDelta: usage})
+		return p.emit(model.Chunk{Type: model.ChunkTypeUsage, UsageDelta: &usage})
 	}
 	return nil
 }
@@ -302,13 +302,6 @@ func decodeToolPayload(raw string) any {
 		return map[string]any{"raw": raw}
 	}
 	return payload
-}
-
-func int32Value(v *int32) int32 {
-	if v == nil {
-		return 0
-	}
-	return *v
 }
 
 func normalizeToolName(name string) string {

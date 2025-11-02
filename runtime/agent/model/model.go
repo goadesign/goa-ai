@@ -38,7 +38,11 @@ type (
 		Recv() (Chunk, error)
 		// Close closes the stream.
 		Close() error
-		// Metadata returns the metadata for the stream.
+		// Metadata returns provider-specific metadata for the stream. Typical keys
+		// include identifiers such as "provider", "model", and request/trace IDs
+		// (e.g., "request_id"). Implementations may also expose rate-limit details
+		// or response headers when available. Callers should treat contents as
+		// optional and provider-defined.
 		Metadata() map[string]any
 	}
 
@@ -54,7 +58,7 @@ type (
 		// Messages is the ordered chat history provided to the model, including
 		// system prompts, user inputs, and prior assistant responses. The order
 		// matters for context window and model understanding.
-		Messages []Message
+		Messages []*Message
 
 		// Temperature controls sampling temperature (typically 0.0 to 2.0). Lower
 		// values produce more deterministic outputs; higher values increase randomness.
@@ -64,7 +68,7 @@ type (
 		// Tools describes the tool schemas exposed to the model for function calling.
 		// Empty if the model should not invoke tools. Not all models support tool
 		// calling; implementations should return an error or ignore unsupported tools.
-		Tools []ToolDefinition
+		Tools []*ToolDefinition
 
 		// MaxTokens caps the number of completion tokens the model can generate.
 		// Zero typically means use the provider's default (which may vary by model).
@@ -101,9 +105,10 @@ type (
 		// availability.
 		Usage TokenUsage
 
-		// StopReason explains why the model stopped generating. Common values:
-		// "stop" (natural end), "length" (hit max tokens), "tool_calls" (requested tools),
-		// "content_filter" (content policy violation). Provider-specific; may be empty.
+		// StopReason explains why the model stopped generating. Common values include:
+		// "stop_sequence" (natural end), "max_tokens" (hit token cap), "tool_calls"
+		// (requested tools), and content policy outcomes such as "content_filter" or
+		// "content_filter_catastrophic". Values are provider-specific and may be empty.
 		StopReason string
 	}
 
@@ -161,23 +166,47 @@ type (
 		Payload any
 	}
 
-	// Chunk represents a streaming event emitted by the model. Only one of Message,
-	// ToolCall, or Usage will be populated depending on Type.
+	// Chunk represents a streaming event emitted by the model. The Type value
+	// indicates which payload fields are populated. Allowed Type values are:
+	// "text", "thinking", "tool_call", "usage", and "stop".
+	//
+	//   - "text":      Message is populated with an assistant message.
+	//   - "thinking":  Thinking contains a reasoning delta.
+	//   - "tool_call": ToolCall is populated with the requested tool invocation.
+	//   - "usage":     UsageDelta reports incremental token usage.
+	//   - "stop":      StopReason explains the termination reason; common values:
+	//                   "stop_sequence", "max_tokens", "tool_calls",
+	//                   "content_filter", "content_filter_catastrophic".
 	Chunk struct {
-		Type       ChunkType
-		Message    Message
-		ToolCall   ToolCall
-		UsageDelta TokenUsage
+		// Type is the chunk kind. One of: "text", "thinking", "tool_call",
+		// "usage", or "stop".
+		Type string
+		// Message contains the assistant message when Type == "text".
+		Message *Message
+		// Thinking contains the reasoning delta when Type == "thinking".
+		Thinking string
+		// ToolCall carries the requested tool invocation when Type == "tool_call".
+		ToolCall *ToolCall
+		// UsageDelta reports incremental token usage when Type == "usage".
+		UsageDelta *TokenUsage
+		// StopReason explains termination when Type == "stop". Common values include
+		// "stop_sequence", "max_tokens", "tool_calls", "content_filter", and
+		// "content_filter_catastrophic".
 		StopReason string
 	}
 
-	// ChunkType identifies the chunk payload type.
-	ChunkType string
-
-	// ThinkingOptions toggles provider-specific thinking modes.
+	// ThinkingOptions toggles provider-specific thinking modes for models that
+	// support reflective chains. When Enable is true, providers may generate
+	// additional "thinking" content before final answers.
 	ThinkingOptions struct {
-		Enable        bool
-		BudgetTokens  int
+		// Enable turns provider-specific thinking modes on or off. When false, the
+		// request should use the provider default (typically disabled).
+		Enable bool
+		// BudgetTokens caps the number of tokens allocated to thinking output. A
+		// value of 0 indicates the provider default.
+		BudgetTokens int
+		// DisableReason optionally records why thinking was disabled (e.g., policy or
+		// capability). Implementations may set this when overriding caller intent.
 		DisableReason string
 	}
 
@@ -200,13 +229,14 @@ type (
 	}
 )
 
-// Chunk type constants.
+// Chunk type constants are the well-known streaming event kinds produced by
+// model providers. These values populate Chunk.Type.
 const (
-	ChunkTypeText     ChunkType = "text"
-	ChunkTypeToolCall ChunkType = "tool_call"
-	ChunkTypeThinking ChunkType = "thinking"
-	ChunkTypeUsage    ChunkType = "usage"
-	ChunkTypeStop     ChunkType = "stop"
+	ChunkTypeText     = "text"
+	ChunkTypeToolCall = "tool_call"
+	ChunkTypeThinking = "thinking"
+	ChunkTypeUsage    = "usage"
+	ChunkTypeStop     = "stop"
 )
 
 // ErrStreamingUnsupported indicates the model provider does not implement

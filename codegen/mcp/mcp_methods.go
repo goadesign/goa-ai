@@ -88,10 +88,10 @@ func (b *mcpExprBuilder) buildToolsCallMethod() *expr.MethodExpr {
 		Payload:     b.userTypeAttr("ToolsCallPayload", b.buildToolsCallPayloadType),
 		Result:      b.userTypeAttr("ToolsCallResult", b.buildToolsCallResultType),
 	}
-	if b.anyToolStreaming() {
-		m.Stream = expr.ServerStreamKind
-		m.StreamingResult = b.userTypeAttr("ToolsCallResult", b.buildToolsCallResultType)
-	}
+	// Always expose tools/call as a server stream. For non-streaming tools the
+	// adapter sends a single final event via SendAndClose; clients use SSE.
+	m.Stream = expr.ServerStreamKind
+	m.StreamingResult = b.userTypeAttr("ToolsCallResult", b.buildToolsCallResultType)
 	return m
 }
 
@@ -220,16 +220,6 @@ func (b *mcpExprBuilder) hasPrompts() bool {
 		}
 	}
 
-	return false
-}
-
-// anyToolStreaming returns true if any referenced tool method is streaming
-func (b *mcpExprBuilder) anyToolStreaming() bool {
-	for _, t := range b.mcp.Tools {
-		if t != nil && t.Method != nil && t.Method.Stream == expr.ServerStreamKind {
-			return true
-		}
-	}
 	return false
 }
 

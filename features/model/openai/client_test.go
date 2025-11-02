@@ -38,18 +38,14 @@ func TestClientComplete(t *testing.T) {
 		Usage: openai.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15},
 	}
 
-	resp, err := client.Complete(context.Background(), model.Request{
-		Messages: []model.Message{
-			{Role: "user", Content: "ping"},
-		},
-		Tools: []model.ToolDefinition{
-			{
-				Name:        "lookup",
-				Description: "Search",
-				InputSchema: map[string]any{"type": "object"},
-			},
-		},
-	})
+    resp, err := client.Complete(context.Background(), model.Request{
+        Messages: []*model.Message{{Role: "user", Content: "ping"}},
+        Tools: []*model.ToolDefinition{{
+            Name:        "lookup",
+            Description: "Search",
+            InputSchema: map[string]any{"type": "object"},
+        }},
+    })
 	require.NoError(t, err)
 	require.Equal(t, "hi there", resp.Content[0].Content)
 	require.Equal(t, "lookup", resp.ToolCalls[0].Name)

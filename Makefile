@@ -9,7 +9,7 @@ PROTOC := $(shell command -v protoc 2>/dev/null)
 PROTOC_GEN_GO := protoc-gen-go
 PROTOC_GEN_GO_GRPC := protoc-gen-go-grpc
 
-.PHONY: all build lint test ci tools ensure-golangci ensure-protoc-plugins protoc-check run-example example-gen
+.PHONY: all build lint test itest ci tools ensure-golangci ensure-protoc-plugins protoc-check run-example example-gen
 
 all: build lint test
 
@@ -21,6 +21,10 @@ lint: tools
 
 test: tools
 	$(GO) test -race -covermode=atomic -coverprofile=cover.out ./...
+
+# Run integration tests (scenarios under integration_tests/)
+itest: tools
+	$(GO) test -race -vet=off ./integration_tests/...
 
 ci: build lint test
 

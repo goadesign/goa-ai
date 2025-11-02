@@ -347,7 +347,7 @@ func New(opts Options) *Runtime {
 		}
 	}
 	if rt.Stream != nil {
-		streamSub, err := hooks.NewStreamSubscriber(rt.Stream)
+		streamSub, err := stream.NewSubscriber(rt.Stream)
 		if err != nil {
 			rt.logger.Warn(context.Background(), "failed to create stream subscriber", "err", err)
 		} else if _, err := bus.Register(streamSub); err != nil {

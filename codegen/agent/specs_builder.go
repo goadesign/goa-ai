@@ -286,6 +286,9 @@ func (d *toolSpecsData) typeImports() []*codegen.ImportSpec {
 			}
 			uniq[im.Path] = im
 		}
+		if info.ServiceImport != nil && info.ServiceImport.Path != "" {
+			uniq[info.ServiceImport.Path] = info.ServiceImport
+		}
 	}
 	if len(uniq) == 0 {
 		return nil
@@ -378,6 +381,22 @@ func (b *toolSpecBuilder) scopeForTool(t *ToolData) *codegen.NameScope {
 }
 
 func (b *toolSpecBuilder) typeFor(tool *ToolData, att *goaexpr.AttributeExpr, usage typeUsage) (*typeData, error) {
+	// Prefer bound method types for method-backed tools so generated specs
+	// alias concrete service types (e.g., <Method>Payload/Result). This avoids
+	// referencing non-existent tool-local types (e.g., *ToolArgs/*ToolReturn)
+	// when the design intends to bind directly to a service method.
+	if tool != nil && tool.IsMethodBacked {
+		switch usage {
+		case usagePayload:
+			if tool.MethodPayloadAttr != nil && tool.MethodPayloadAttr.Type != goaexpr.Empty {
+				att = tool.MethodPayloadAttr
+			}
+		case usageResult:
+			if tool.MethodResultAttr != nil && tool.MethodResultAttr.Type != goaexpr.Empty {
+				att = tool.MethodResultAttr
+			}
+		}
+	}
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		// Synthesize an empty object for payloads with no args so that a
 		// concrete Payload type is always generated. This keeps adapters and
@@ -419,8 +438,12 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 		return existing, nil
 	}
 
+	// Preserve user types so codecs reference service user types explicitly
+	// (e.g., *alpha.Doc) even for non-method-backed tools. This ensures
+	// deterministic aliasing and imports and matches the repository tests
+	// which assert service-qualified references in generated codecs.
 	// Materialize definition and type reference
-	tt, defLine, fullRef, imports := b.materialize(tool, typeName, att, scope, svc, usage)
+	tt, defLine, fullRef, imports := b.materialize(typeName, att, scope, svc)
 
 	// JSON schema from effective attribute
 	schemaBytes, err := schemaForAttribute(tt)
@@ -457,11 +480,17 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 		TypeImports:   imports,
 		GenerateCodec: true,
 	}
-	// Populate pointer and validation-related fields using the attribute type,
-	// avoiding any string manipulation of the computed references.
-	if _, isUser := att.Type.(goaexpr.UserType); isUser {
+	// For service-local user types we alias to local helper types and do not
+	// reference the service package; no need to force-add a service import.
+	// Populate pointer and validation-related fields based on the computed
+	// full reference. If the reference is pointer-qualified, enable nil checks;
+	// otherwise treat it as a value type.
+	if strings.HasPrefix(fullRef, "*") {
 		info.Pointer = true
 		info.CheckNil = true
+	} else {
+		info.Pointer = false
+		info.CheckNil = false
 	}
 	info.MarshalArg = "v"
 	info.UnmarshalArg = "v"
@@ -482,91 +511,51 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 // materialize returns the effective attribute (unchanged), an empty type
 // definition (we do not synthesize local types), the fully-qualified reference
 // to the owner or primitive type, and the imports required.
-//
-//nolint:unparam // signature kept stable with previous implementation
-func (b *toolSpecBuilder) materialize(
-	tool *ToolData,
-	typeName string,
-	att *goaexpr.AttributeExpr,
-	scope *codegen.NameScope,
-	svc *service.Data,
-	_ typeUsage,
-) (
-	tt *goaexpr.AttributeExpr,
-	defLine string,
-	fullRef string,
-	imports []*codegen.ImportSpec,
-) {
-	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+func (b *toolSpecBuilder) materialize(typeName string, att *goaexpr.AttributeExpr, scope *codegen.NameScope, svc *service.Data) (tt *goaexpr.AttributeExpr, defLine string, fullRef string, imports []*codegen.ImportSpec) {
+	if att.Type == goaexpr.Empty {
 		return att, "", "", nil
 	}
 
 	// Base imports from attribute metadata and locations
 	imports = gatherAttributeImports(b.genpkg, att)
 
-	// Compute underlying reference for user types to drive aliasing/imports
+	// Use Goa's type definition helpers to compute RHS of the type definition,
+	// qualifying service-local user types against the owning service package.
 	switch dt := att.Type.(type) {
 	case goaexpr.UserType:
-		// If the user type specifies a custom package, alias to that package/type
-		// and preserve the underlying reference. Otherwise, qualify service-local
-		// user types against the service package so codecs reference the owner
-		// type directly (e.g., *alpha.Doc), while still emitting a stable local
-		// alias for readability (e.g., DocPayload = alpha.Doc).
 		loc := codegen.UserTypeLocation(dt)
 		if loc != nil && loc.PackageName() != "" && loc.RelImportPath != "" {
-			pkg := packageName(loc, svc)
-			baseRef := scope.GoFullTypeRef(&goaexpr.AttributeExpr{Type: dt}, pkg)
-			nonPtr := strings.TrimPrefix(baseRef, "*")
-			defLine = typeName + " = " + nonPtr
-			fullRef = baseRef
-			// external import already captured via gatherAttributeImports
+			// External user type: qualify explicitly with the declared package
+			// alias to ensure the reference is properly qualified in generated code.
+			pkg := loc.PackageName()
+			rhs := scope.GoTypeDefWithTargetPkg(att, false, true, pkg)
+			defLine = typeName + " = " + rhs
+			fullRef = scope.GoFullTypeRef(&goaexpr.AttributeExpr{Type: dt}, pkg)
 		} else {
-			// Service-local user type: alias to the owner service type and set
-			// FullRef to the qualified pointer reference so codecs target the
-			// canonical service type.
-			var utName string
-			switch u := dt.(type) {
-			case *goaexpr.UserTypeExpr:
-				utName = u.TypeName
-			case *goaexpr.ResultTypeExpr:
-				utName = u.TypeName
-			default:
-				utName = scope.GoTypeRef(dt.Attribute())
-			}
-			alias := servicePkgAlias(svc)
-			if alias != "" && utName != "" {
-				// Ensure the service import is included.
-				svcPath := joinImportPath(b.genpkg, svc.PathName)
-				imports = append(imports, &codegen.ImportSpec{Name: alias, Path: svcPath})
-				defLine = typeName + " = " + alias + "." + utName
-				fullRef = "*" + alias + "." + utName
-			} else {
-				// Fallback to aliasing the underlying composite/value shape.
-				comp := scope.GoTypeRef(dt.Attribute())
-				defLine = typeName + " = " + comp
-				fullRef = "*" + typeName
-			}
+			// Service-local user type: alias to its underlying composite/value
+			// without qualifying with the service package. Nested user types
+			// referenced by the composite are materialized locally by
+			// ensureNestedLocalTypes.
+			rhs := scope.GoTypeDef(dt.Attribute(), false, true)
+			defLine = typeName + " = " + rhs
+			fullRef = typeName
 		}
 	case *goaexpr.Array:
-		// Alias to the composite type; if the alias would be self-referential
-		// (e.g., "T = []*T"), materialize an element helper type and alias to
-		// a slice of that element to preserve strong typing.
-		comp := scope.GoTypeRef(att)
+		// Build alias to composite; if self-referential, introduce element helper.
+		comp := scope.GoTypeDef(att, false, true)
 		if strings.Contains(comp, typeName) {
-			// Create element helper type: <TypeName>Item = <elemComp>
 			elemName := typeName + "Item"
 			elemKey := "name:" + elemName
 			if _, exists := b.types[elemKey]; !exists {
-				elemComp := scope.GoTypeRef(dt.ElemType)
+				elemComp := scope.GoTypeDef(dt.ElemType, false, true)
 				b.types[elemKey] = &typeData{
-					Key:         elemKey,
-					TypeName:    elemName,
-					Doc:         elemName + " is a helper element for " + typeName + ".",
-					Def:         elemName + " = " + elemComp,
-					FullRef:     elemName,
-					NeedType:    true,
-					TypeImports: gatherAttributeImports(b.genpkg, dt.ElemType),
-					// No codecs/schemas for helper element types.
+					Key:           elemKey,
+					TypeName:      elemName,
+					Doc:           elemName + " is a helper element for " + typeName + ".",
+					Def:           elemName + " = " + elemComp,
+					FullRef:       elemName,
+					NeedType:      true,
+					TypeImports:   gatherAttributeImports(b.genpkg, dt.ElemType),
 					ExportedCodec: "",
 					GenericCodec:  "",
 					GenerateCodec: false,
@@ -579,13 +568,12 @@ func (b *toolSpecBuilder) materialize(
 			fullRef = typeName
 		}
 	case *goaexpr.Map:
-		comp := scope.GoTypeRef(att)
+		comp := scope.GoTypeDef(att, false, true)
 		if strings.Contains(comp, typeName) {
-			// Create value helper type: <TypeName>Value = <valueComp>
 			valName := typeName + "Value"
 			valKey := "name:" + valName
 			if _, exists := b.types[valKey]; !exists {
-				valComp := scope.GoTypeRef(dt.ElemType)
+				valComp := scope.GoTypeDef(dt.ElemType, false, true)
 				b.types[valKey] = &typeData{
 					Key:           valKey,
 					TypeName:      valName,
@@ -599,7 +587,7 @@ func (b *toolSpecBuilder) materialize(
 					GenerateCodec: false,
 				}
 			}
-			keyRef := scope.GoTypeRef(dt.KeyType)
+			keyRef := scope.GoTypeDef(dt.KeyType, false, true)
 			defLine = typeName + " = map[" + keyRef + "]" + valName
 			fullRef = typeName
 		} else {
@@ -607,13 +595,14 @@ func (b *toolSpecBuilder) materialize(
 			fullRef = typeName
 		}
 	case *goaexpr.Object, goaexpr.CompositeExpr:
-		// Materialize a named struct type using alias to the inline struct.
-		// Using an alias keeps marshaling semantics identical to the inline shape.
-		comp := scope.GoTypeRef(att)
-		defLine = typeName + " = " + comp
+		// Alias to inline struct definition using Goa's type def helper without
+		// service package qualification so nested service user types are
+		// referenced locally.
+		rhs := scope.GoTypeDef(att, false, true)
+		defLine = typeName + " = " + rhs
 		fullRef = typeName
 	default:
-		// Primitives: refer directly by type
+		// Primitives: refer directly by type (no local alias emitted).
 		fullRef = scope.GoTypeRef(att)
 	}
 	tt = att
@@ -635,13 +624,6 @@ func stableTypeKey(tool *ToolData, usage typeUsage) string {
 	}
 	return "name:" + tn
 }
-
-// ensureValidationDependencies is a no-op: tool specs do not emit local validation.
-// (removed)
-
-// (removed)
-
-// (removed)
 
 func newToolSpecsData(agent *AgentData) *toolSpecsData {
 	return &toolSpecsData{
@@ -823,15 +805,7 @@ func servicePkgAlias(svc *service.Data) string {
 
 // packageName returns the package name for a user type location, falling back
 // to the service package name if no location is provided.
-func packageName(loc *codegen.Location, svc *service.Data) string {
-	if loc != nil {
-		return loc.PackageName()
-	}
-	if svc != nil {
-		return svc.PkgName
-	}
-	return ""
-}
+// (removed) packageName helper was unused; servicePkgAlias governs aliasing.
 
 // schemaForAttribute generates an OpenAPI JSON schema for the given attribute.
 // It returns the schema as JSON bytes, or nil if the attribute is empty or

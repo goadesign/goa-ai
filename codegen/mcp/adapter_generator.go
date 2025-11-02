@@ -193,8 +193,9 @@ func (g *adapterGenerator) buildAdapterData() *AdapterData {
 		Subscriptions:       g.buildSubscriptionAdapters(),
 	}
 
-	// Streaming flags
-	data.ToolsCallStreaming = g.anyToolStreaming()
+	// Streaming: tools/call uses SSE. For non-streaming tools the adapter sends
+	// a single final event via SendAndClose; clients consistently use SSE.
+	data.ToolsCallStreaming = true
 
 	// Static prompts are handled directly in the adapter
 	data.StaticPrompts = g.buildStaticPrompts()
@@ -374,16 +375,6 @@ func (g *adapterGenerator) collectTopLevelValidations(
 		enumPtr[n] = !isReq
 	}
 	return req, enums, enumPtr
-}
-
-// anyToolStreaming returns true if any MCP tool maps to a streaming method
-func (g *adapterGenerator) anyToolStreaming() bool {
-	for _, t := range g.mcp.Tools {
-		if t != nil && t.Method != nil && t.Method.Stream == expr.ServerStreamKind {
-			return true
-		}
-	}
-	return false
 }
 
 // buildResourceAdapters creates adapter data for resources

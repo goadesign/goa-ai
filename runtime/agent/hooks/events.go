@@ -127,7 +127,8 @@ type (
 		ToolCallID string
 		// ToolName is the fully qualified tool identifier (e.g., "service.toolset.tool").
 		ToolName string
-		// Payload contains the marshaled tool arguments passed to the activity.
+		// Payload contains the structured tool arguments (JSON-serializable) for the scheduled tool.
+		// Not pre-encoded; sinks/transports encode it for wire format.
 		Payload any
 		// Queue is the activity queue name where the tool execution is scheduled.
 		Queue string
@@ -327,9 +328,9 @@ func NewPolicyDecisionEvent(
 	}
 }
 
-// NewToolCallScheduledEvent constructs a ToolCallScheduledEvent. Payload is
-// the marshaled tool arguments; queue is the activity queue name. ParentToolCallID
-// and expectedChildren are optional (empty/0 for top-level calls).
+// NewToolCallScheduledEvent constructs a ToolCallScheduledEvent. Payload is the
+// structured tool arguments (JSON-serializable); queue is the activity queue name.
+// ParentToolCallID and expectedChildren are optional (empty/0 for top-level calls).
 func NewToolCallScheduledEvent(
 	runID, agentID, toolName, toolCallID string,
 	payload any,

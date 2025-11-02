@@ -7,11 +7,11 @@
 package bootstrap
 
 import (
-    "context"
-    agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
-    scribe "goa.design/goa-ai/alpha/agents/scribe"
-    plannerscribe "goa.design/goa-ai/internal/agents/scribe/planner"
-    toolsetscribeprofiles "goa.design/goa-ai/internal/agents/scribe/toolsets/profiles"
+	"context"
+	scribe "goa.design/goa-ai/alpha/agents/scribe"
+	plannerscribe "goa.design/goa-ai/internal/agents/scribe/planner"
+	toolsetscribeprofiles "goa.design/goa-ai/internal/agents/scribe/toolsets/profiles"
+	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 )
 
 // Package bootstrap wires the goa-ai runtime and registers generated agents.
@@ -29,14 +29,14 @@ func New(ctx context.Context) (*agentsruntime.Runtime, func(), error) {
 	// Register agents with example planners. Replace with your own planner impls.
 	{
 		cfg := scribe.ScribeAgentConfig{Planner: plannerscribe.New()}
-        if err := scribe.RegisterScribeAgent(ctx, rt, cfg); err != nil {
-            return nil, nil, err
-        }
-        // Register method-backed toolsets with default executors.
-        if err := toolsetscribeprofiles.Register(ctx, rt); err != nil {
-            return nil, nil, err
-        }
-    }
+		if err := scribe.RegisterScribeAgent(ctx, rt, cfg); err != nil {
+			return nil, nil, err
+		}
+		// Register method-backed toolsets with default executors.
+		if err := toolsetscribeprofiles.Register(ctx, rt); err != nil {
+			return nil, nil, err
+		}
+	}
 
 	return rt, cleanup, nil
 }

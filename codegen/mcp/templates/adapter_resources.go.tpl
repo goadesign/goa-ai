@@ -20,9 +20,6 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
     if !a.isInitialized() {
         return nil, goa.PermanentError("invalid_params", "Not initialized")
     }
-    if err := a.assertResourceURIAllowed(ctx, p.URI); err != nil {
-        return nil, goa.PermanentError("invalid_params", "%s", err.Error())
-    }
     a.log(ctx, "request", map[string]any{"method": "resources/read", "uri": p.URI})
     baseURI := p.URI
     if i := strings.Index(baseURI, "?"); i >= 0 {
@@ -31,6 +28,9 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
     switch baseURI {
     {{- range .Resources }}
     case {{ quote .URI }}:
+        if err := a.assertResourceURIAllowed(ctx, p.URI); err != nil {
+            return nil, goa.PermanentError("invalid_params", "%s", err.Error())
+        }
         {{- if .HasPayload }}
         args, aerr := parseQueryParamsToJSON(p.URI)
         if aerr != nil {
@@ -106,15 +106,19 @@ func (a *MCPAdapter) assertResourceURIAllowed(ctx context.Context, pURI string) 
             return nil
         }
     }
-    for _, d := range append(a.opts.DeniedResourceURIs, extraDenyURIs...) {
+    var denied []string
+    if a.opts != nil { denied = a.opts.DeniedResourceURIs }
+    for _, d := range append(denied, extraDenyURIs...) {
         if d == base {
             return fmt.Errorf("resource URI denied: %s", pURI)
         }
     }
-    if len(a.opts.AllowedResourceURIs) == 0 && len(extraAllowURIs) == 0 {
-        return nil
+    var allowed []string
+    if a.opts != nil { allowed = a.opts.AllowedResourceURIs }
+    if len(allowed) == 0 && len(extraAllowURIs) == 0 {
+        return fmt.Errorf("resource URI not allowed: %s", pURI)
     }
-    for _, allow := range append(a.opts.AllowedResourceURIs, extraAllowURIs...) {
+    for _, allow := range append(allowed, extraAllowURIs...) {
         if allow == base {
             return nil
         }

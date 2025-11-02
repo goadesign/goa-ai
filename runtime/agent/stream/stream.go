@@ -88,27 +88,6 @@ type (
 		Payload() any
 	}
 
-	// Base provides a default implementation of Event. Embed this struct in concrete
-	// event types to inherit the Type(), RunID(), and Payload() methods. All stream
-	// event types (AssistantReply, ToolStart, etc.) embed Base to avoid boilerplate.
-	//
-	// Field names are abbreviated to minimize visual clutter when constructing events,
-	// since Base fields are rarely accessed directly (consumers use the interface methods
-	// or type-assert to concrete types for their specific fields).
-	Base struct {
-		// T is the event type constant (e.g., EventToolEnd, EventAssistantReply).
-		// Set this when constructing concrete events to identify the payload category.
-		T EventType
-		// R is the workflow run identifier that produced this event. All events from
-		// a single run share the same R value, enabling clients to filter or correlate
-		// events by run.
-		R string
-		// P is the JSON-serializable payload returned by the Payload() method. Sinks
-		// marshal this value when publishing events. Set P to the appropriate payload
-		// type for the event (e.g., ToolStartPayload for ToolStart events).
-		P any
-	}
-
 	// AssistantReply streams incremental assistant message content as the planner
 	// produces the final response. Clients receive these events to display streaming
 	// text with a typewriter effect. Multiple AssistantReply events may be sent for
@@ -142,6 +121,23 @@ type (
 		Data ToolStartPayload
 	}
 
+	// ToolUpdate streams progress updates for a tool call (new expected child count).
+	ToolUpdate struct {
+		Base
+		Data ToolUpdatePayload
+	}
+
+	// ToolEnd streams when a tool activity completes with either a result or error. Clients
+	// receive this to update tool status, close progress indicators, display results or errors,
+	// and track tool execution metrics. Every ToolStart event eventually produces a ToolEnd.
+	ToolEnd struct {
+		Base
+		// Data contains the structured result metadata for this tool completion. Clients
+		// access this field directly for type-safe field access (e.g., event.Data.Duration,
+		// event.Data.ToolCallID).
+		Data ToolEndPayload
+	}
+
 	// ToolStartPayload carries the metadata for a scheduled tool invocation. This
 	// structure is JSON-serialized when sent over the wire (SSE, WebSocket, Pulse).
 	ToolStartPayload struct {
@@ -153,9 +149,9 @@ type (
 		// Format: <service>.<toolset>.<tool>. Clients can use this to display tool names
 		// or icons in progress indicators.
 		ToolName string `json:"tool_name"`
-		// Payload contains the marshaled tool arguments passed to the activity. This is
-		// the input data the tool will process. Nil if no arguments were provided. Clients
-		// can display this for debugging or audit logging.
+		// Payload contains the structured tool arguments (JSON-serializable) for this call.
+		// It is not pre-encoded; stream sinks are responsible for encoding it for transport.
+		// Nil when no arguments were provided. Suitable for UIs/tests to inspect or log.
 		Payload any `json:"payload,omitempty"`
 		// Queue is the activity queue name where the tool execution is scheduled. Empty for
 		// in-process tools. Clients typically don't display this but may use it for routing
@@ -174,17 +170,6 @@ type (
 		// transport- or domain-specific fields without breaking the wire contract.
 		// The runtime ignores its contents; sinks may include it when present.
 		Extra map[string]any `json:"extra,omitempty"`
-	}
-
-	// ToolEnd streams when a tool activity completes with either a result or error. Clients
-	// receive this to update tool status, close progress indicators, display results or errors,
-	// and track tool execution metrics. Every ToolStart event eventually produces a ToolEnd.
-	ToolEnd struct {
-		Base
-		// Data contains the structured result metadata for this tool completion. Clients
-		// access this field directly for type-safe field access (e.g., event.Data.Duration,
-		// event.Data.ToolCallID).
-		Data ToolEndPayload
 	}
 
 	// ToolEndPayload carries the result metadata for a completed tool invocation. This
@@ -236,10 +221,25 @@ type (
 		ExpectedChildrenTotal int `json:"expected_children_total"`
 	}
 
-	// ToolUpdate streams progress updates for a tool call (new expected child count).
-	ToolUpdate struct {
-		Base
-		Data ToolUpdatePayload
+	// Base provides a default implementation of Event. Embed this struct in concrete
+	// event types to inherit the Type(), RunID(), and Payload() methods. All stream
+	// event types (AssistantReply, ToolStart, etc.) embed Base to avoid boilerplate.
+	//
+	// Field names are abbreviated to minimize visual clutter when constructing events,
+	// since Base fields are rarely accessed directly (consumers use the interface methods
+	// or type-assert to concrete types for their specific fields).
+	Base struct {
+		// t is the event type constant (e.g., EventToolEnd, EventAssistantReply).
+		// Set this when constructing concrete events to identify the payload category.
+		t EventType
+		// r is the workflow run identifier that produced this event. All events from
+		// a single run share the same R value, enabling clients to filter or correlate
+		// events by run.
+		r string
+		// p is the JSON-serializable payload returned by the Payload() method. Sinks
+		// marshal this value when publishing events. Set P to the appropriate payload
+		// type for the event (e.g., ToolStartPayload for ToolStart events).
+		p any
 	}
 )
 
@@ -279,11 +279,20 @@ const (
 	EventAssistantReply EventType = "assistant_reply"
 )
 
+// NewBaseForTest constructs a Base event with the given type, run ID, and
+// payload. Intended for testing scenarios where arbitrary events must be
+// injected (e.g., serialization round-trips, wrapping, or introspection of
+// different event types). Production code should retrieve events from the
+// stream.Sink.
+func NewBaseForTest(t EventType, runID string, payload any) Base {
+	return Base{t: t, r: runID, p: payload}
+}
+
 // Type implements Event.Type.
-func (e Base) Type() EventType { return e.T }
+func (e Base) Type() EventType { return e.t }
 
 // RunID implements Event.RunID.
-func (e Base) RunID() string { return e.R }
+func (e Base) RunID() string { return e.r }
 
 // Payload implements Event.Payload.
-func (e Base) Payload() any { return e.P }
+func (e Base) Payload() any { return e.p }

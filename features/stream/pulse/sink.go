@@ -99,7 +99,7 @@ func (s *Sink) Send(ctx context.Context, event stream.Event) error {
 	if err != nil {
 		return err
 	}
-	if _, err := handle.Add(ctx, string(event.Type()), payload); err != nil {
+	if _, err := handle.Add(ctx, env.Type, payload); err != nil {
 		return err
 	}
 	return nil

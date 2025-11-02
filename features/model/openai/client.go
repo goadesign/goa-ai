@@ -63,14 +63,14 @@ func (c *Client) Complete(ctx context.Context, req model.Request) (model.Respons
 	if modelID == "" {
 		modelID = c.model
 	}
-	messages := make([]openai.ChatCompletionMessage, len(req.Messages))
-	for i, msg := range req.Messages {
-		messages[i] = openai.ChatCompletionMessage{
-			Role:    msg.Role,
-			Content: msg.Content,
-		}
-	}
-	tools, err := encodeTools(req.Tools)
+    messages := make([]openai.ChatCompletionMessage, 0, len(req.Messages))
+    for _, m := range req.Messages {
+        if m == nil {
+            continue
+        }
+        messages = append(messages, openai.ChatCompletionMessage{Role: m.Role, Content: m.Content})
+    }
+    tools, err := encodeTools(req.Tools)
 	if err != nil {
 		return model.Response{}, err
 	}
@@ -94,13 +94,16 @@ func (c *Client) Stream(context.Context, model.Request) (model.Streamer, error) 
 	return nil, model.ErrStreamingUnsupported
 }
 
-func encodeTools(defs []model.ToolDefinition) ([]openai.Tool, error) {
-	if len(defs) == 0 {
-		return nil, nil
-	}
-	tools := make([]openai.Tool, 0, len(defs))
-	for _, def := range defs {
-		params, err := json.Marshal(def.InputSchema)
+func encodeTools(defs []*model.ToolDefinition) ([]openai.Tool, error) {
+    if len(defs) == 0 {
+        return nil, nil
+    }
+    tools := make([]openai.Tool, 0, len(defs))
+    for _, def := range defs {
+        if def == nil {
+            continue
+        }
+        params, err := json.Marshal(def.InputSchema)
 		if err != nil {
 			return nil, fmt.Errorf("marshal tool %s schema: %w", def.Name, err)
 		}

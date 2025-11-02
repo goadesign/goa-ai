@@ -535,8 +535,8 @@ func PlanStart(ctx context.Context, input planner.PlanInput) (planner.PlanResult
 
 **Likely Custom Types (based on migration docs and AU-3 status):**
 - `BRTool` / `ToolSet` - custom tool definition types (should use `model.ToolDefinition`)
-- Custom message types for model input/output (`ModelMessage`, `ChatMessage`, etc.)
-- `ModelRequest` / `ModelResponse` - custom request/response types
+- Custom message types for model input/output (`LLMMessage`, `ChatMessage`, etc.)
+  - `LLMRequest` / `ModelResponse` - custom request/response types
 - Custom telemetry types (`ModelTelemetry`, `ExecutionMetrics`)
 - Custom error types for model failures
 
@@ -550,7 +550,7 @@ func PlanStart(ctx context.Context, input planner.PlanInput) (planner.PlanResult
 **1. Tool Definition Types (`services/inference-engine/service.go`):**
 ```go
 // BEFORE: Using BRTool/ToolSet
-type ModelRequest struct {
+type LLMRequest struct {
     Messages []ChatMessage
     Tools    []*gentypes.BRTool  // or ToolSet
     // ...
@@ -559,7 +559,7 @@ type ModelRequest struct {
 // AFTER: Use model.ToolDefinition (goa-ai runtime type)
 import "goa.design/goa-ai/runtime/agent/model"
 
-type ModelRequest struct {
+type LLMRequest struct {
     Messages []model.Message
     Tools    []model.ToolDefinition
     // ...
@@ -582,7 +582,7 @@ type ChatMessage struct {
 import "goa.design/goa-ai/runtime/agent/model"
 
 // For model client interface:
-type ModelRequest struct {
+type LLMRequest struct {
     Messages []model.Message  // model.Message mirrors planner.AgentMessage
     // ...
 }
@@ -613,7 +613,7 @@ type ModelTelemetry struct {
 import "goa.design/goa-ai/runtime/agent/telemetry"
 
 // Capture telemetry from model response
-func (s *service) CallModel(ctx context.Context, req ModelRequest) (ModelResponse, error) {
+func (s *service) CallModel(ctx context.Context, req LLMRequest) (ModelResponse, error) {
     start := time.Now()
     resp, err := s.client.Chat(ctx, req)
     
@@ -646,7 +646,7 @@ type ModelError struct {
 import "goa.design/goa-ai/runtime/agent/planner"
 
 // Return errors wrapped in ToolResult
-func (s *service) CallModel(ctx context.Context, req ModelRequest) (ModelResponse, error) {
+func (s *service) CallModel(ctx context.Context, req LLMRequest) (ModelResponse, error) {
     resp, err := s.client.Chat(ctx, req)
     if err != nil {
         // Wrap in planner.ToolError if needed for tool context
@@ -1084,4 +1084,3 @@ func metadataFromPayload(payload *orchestrator.AgentRunPayload) RunMetadata {
 - goa-ai runtime types: `goa.design/goa-ai/runtime/agent/*` packages
 - Generated conversions: `gen/*/convert.go` files
 - Example usage: `example/complete/design/orchestrator.go`
-

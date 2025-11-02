@@ -4,17 +4,16 @@
 //
 // Command:
 
-
 package bootstrap
 
 import (
-    "context"
-    "flag"
-    "fmt"
-    agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
-    scribe "goa.design/goa-ai/alpha/agents/scribe"
-    mcpruntime "goa.design/goa-ai/runtime/mcp"
-    plannerscribe "goa.design/goa-ai/internal/agents/scribe/planner"
+	"context"
+	"flag"
+	"fmt"
+	scribe "goa.design/goa-ai/alpha/agents/scribe"
+	plannerscribe "goa.design/goa-ai/internal/agents/scribe/planner"
+	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
+	mcpruntime "goa.design/goa-ai/runtime/mcp"
 )
 
 // Package bootstrap wires the goa-ai runtime and registers generated agents.
@@ -23,7 +22,7 @@ import (
 
 // Define flags for MCP endpoints (if any). Pass values via your cmd main.
 var (
-    mcpCalcCoreEndpoint = flag.String("mcp-calc-core-endpoint", "", "MCP calc.core HTTP endpoint (e.g., http://127.0.0.1:8080/rpc)")
+	mcpCalcCoreEndpoint = flag.String("mcp-calc-core-endpoint", "", "MCP calc.core HTTP endpoint (e.g., http://127.0.0.1:8080/rpc)")
 )
 
 // New constructs a minimal runtime and registers all agents for this service.
@@ -33,25 +32,25 @@ func New(ctx context.Context) (*agentsruntime.Runtime, func(), error) {
 	cleanup := func() {}
 
 	// Register agents with example planners. Replace with your own planner impls.
-    {
-        cfg := scribe.ScribeAgentConfig{Planner: plannerscribe.New()}
-        // Configure MCP callers for external toolsets.
-        cfg.MCPCallers = map[string]mcpruntime.Caller{}
-        if mcpCalcCoreEndpoint != nil && *mcpCalcCoreEndpoint != "" {
-            caller, err := mcpruntime.NewHTTPCaller(ctx, mcpruntime.HTTPOptions{Endpoint: *mcpCalcCoreEndpoint})
-            if err != nil {
-                return nil, nil, err
-            }
-            cfg.MCPCallers[scribe.ScribeCalcCoreToolsetID] = caller
-        } else {
-            cfg.MCPCallers[scribe.ScribeCalcCoreToolsetID] = mcpruntime.CallerFunc(func(ctx context.Context, req mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
-                return mcpruntime.CallResponse{}, fmt.Errorf("configure MCP caller for %s via -mcp-calc-core-endpoint flag", "calc.core")
-            })
-        }
-        if err := scribe.RegisterScribeAgent(ctx, rt, cfg); err != nil {
-            return nil, nil, err
-        }
-    }
+	{
+		cfg := scribe.ScribeAgentConfig{Planner: plannerscribe.New()}
+		// Configure MCP callers for external toolsets.
+		cfg.MCPCallers = map[string]mcpruntime.Caller{}
+		if mcpCalcCoreEndpoint != nil && *mcpCalcCoreEndpoint != "" {
+			caller, err := mcpruntime.NewHTTPCaller(ctx, mcpruntime.HTTPOptions{Endpoint: *mcpCalcCoreEndpoint})
+			if err != nil {
+				return nil, nil, err
+			}
+			cfg.MCPCallers[scribe.ScribeCalcCoreToolsetID] = caller
+		} else {
+			cfg.MCPCallers[scribe.ScribeCalcCoreToolsetID] = mcpruntime.CallerFunc(func(ctx context.Context, req mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
+				return mcpruntime.CallResponse{}, fmt.Errorf("configure MCP caller for %s via -mcp-calc-core-endpoint flag", "calc.core")
+			})
+		}
+		if err := scribe.RegisterScribeAgent(ctx, rt, cfg); err != nil {
+			return nil, nil, err
+		}
+	}
 
 	return rt, cleanup, nil
 }

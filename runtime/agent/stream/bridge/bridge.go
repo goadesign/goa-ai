@@ -1,6 +1,7 @@
-// Package bridge provides a discoverable entrypoint to wire the runtime hook bus
-// to a stream.Sink without importing the hooks subscriber directly. It avoids
-// coupling the stream and hooks packages while giving users a simple API.
+// Package bridge provides a discoverable entrypoint to wire the runtime hook
+// bus to a stream.Sink without importing the hooks subscriber directly. It
+// avoids coupling the stream and hooks packages while giving users a simple
+// API.
 package bridge
 
 import (
@@ -12,7 +13,7 @@ import (
 // (assistant replies, planner thoughts, tool start/end) to the provided sink
 // as typed stream.Event values.
 func NewSubscriber(sink stream.Sink) (hooks.Subscriber, error) {
-	return hooks.NewStreamSubscriber(sink)
+	return stream.NewSubscriber(sink)
 }
 
 // Register creates a stream subscriber for the given sink and registers it

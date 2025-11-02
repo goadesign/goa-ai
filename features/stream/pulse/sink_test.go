@@ -40,7 +40,7 @@ func TestSendPublishesEnvelope(t *testing.T) {
 
 	endPayload := stream.ToolEndPayload{Result: map[string]string{"status": "ok"}}
 	err = sink.Send(context.Background(), stream.ToolEnd{
-		Base: stream.Base{T: stream.EventToolEnd, R: "run-123", P: endPayload},
+		Base: stream.NewBaseForTest(stream.EventToolEnd, "run-123", endPayload),
 		Data: endPayload,
 	})
 	require.NoError(t, err)
@@ -67,7 +67,7 @@ func TestCustomStreamID(t *testing.T) {
 	require.NoError(t, sink.Send(
 		context.Background(),
 		stream.PlannerThought{
-			Base: stream.Base{T: stream.EventPlannerThought, R: "run-1", P: "n"},
+			Base: stream.NewBaseForTest(stream.EventPlannerThought, "run-1", "n"),
 			Note: "n",
 		},
 	))
@@ -90,7 +90,7 @@ func TestStreamCreationError(t *testing.T) {
 	err = sink.Send(
 		context.Background(),
 		stream.AssistantReply{
-			Base: stream.Base{T: stream.EventAssistantReply, R: "r", P: "ok"},
+			Base: stream.NewBaseForTest(stream.EventAssistantReply, "r", "ok"),
 			Text: "ok",
 		},
 	)
@@ -111,7 +111,7 @@ func TestAddError(t *testing.T) {
 	err = sink.Send(
 		context.Background(),
 		stream.AssistantReply{
-			Base: stream.Base{T: stream.EventAssistantReply, R: "r", P: "ok"},
+			Base: stream.NewBaseForTest(stream.EventAssistantReply, "r", "ok"),
 			Text: "ok",
 		},
 	)

@@ -7,6 +7,9 @@ import (
 	expragents "goa.design/goa-ai/expr/agent"
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
+
+	// Import codegen package to ensure agent code generation plugin is registered
+	_ "goa.design/goa-ai/codegen/agent"
 )
 
 // Agent defines an LLM-based agent associated with the current service.

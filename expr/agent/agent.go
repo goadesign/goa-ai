@@ -1,4 +1,4 @@
-// Package agents defines the expression types used to represent agent and toolset
+// Package agent defines the expression types used to represent agent and toolset
 // declarations during Goa design evaluation. These types are populated during
 // DSL execution and form the schema used for code generation and validation.
 package agent

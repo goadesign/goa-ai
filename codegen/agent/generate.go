@@ -50,10 +50,15 @@ type transformFuncData struct {
 }
 
 type transformsFileData struct {
-	HeaderComment string
-	PackageName   string
-	Imports       []*codegen.ImportSpec
-	Functions     []transformFuncData
+    HeaderComment string
+    PackageName   string
+    Imports       []*codegen.ImportSpec
+    Functions     []transformFuncData
+    // Helpers contains a file-level, de-duplicated list of helper transform
+    // functions referenced by any of the Functions bodies. Rendering helpers at
+    // the file scope avoids duplicate helper definitions when multiple
+    // transforms share the same nested conversions.
+    Helpers       []*codegen.TransformFunctionData
 }
 
 // Generate is the code generation entry point for the agents plugin. It is called
@@ -243,19 +248,20 @@ func agentPerToolsetSpecsFiles(agent *AgentData) []*codegen.File {
 				{Name: "tool-spec-codecs", Source: agentsTemplates.Read(toolCodecsFileT), Data: toolCodecsFileData{Types: data.typesList(), Tools: data.tools}},
 			}
 			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, "codecs.go"), SectionTemplates: codecsSections})
-			// specs.go
-			specImports := []*codegen.ImportSpec{{Path: "sort"}, {Path: "goa.design/goa-ai/runtime/agent/policy"}, {Path: "goa.design/goa-ai/runtime/agent/tools"}}
-			specSections := []*codegen.SectionTemplate{
-				codegen.Header(agent.StructName+" tool specs", ts.SpecsPackageName, specImports),
-				{Name: "tool-specs", Source: agentsTemplates.Read(toolSpecFileT), Data: toolSpecFileData{PackageName: ts.SpecsPackageName, Tools: data.tools, Types: data.typesList()}},
-			}
-			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, "specs.go"), SectionTemplates: specSections})
-			if tf := emitTransformsFile(agent, ts, data); tf != nil {
-				out = append(out, tf)
-			}
-		}
-	}
-	return out
+            // specs.go
+            specImports := []*codegen.ImportSpec{{Path: "sort"}, {Path: "goa.design/goa-ai/runtime/agent/policy"}, {Path: "goa.design/goa-ai/runtime/agent/tools"}}
+            specSections := []*codegen.SectionTemplate{
+                codegen.Header(agent.StructName+" tool specs", ts.SpecsPackageName, specImports),
+                {Name: "tool-specs", Source: agentsTemplates.Read(toolSpecFileT), Data: toolSpecFileData{PackageName: ts.SpecsPackageName, Tools: data.tools, Types: data.typesList()}},
+            }
+            out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, "specs.go"), SectionTemplates: specSections})
+            // Emit transforms guarded by strict compatibility checks.
+            if tf := emitTransformsFile(agent, ts, data); tf != nil {
+                out = append(out, tf)
+            }
+        }
+    }
+    return out
 }
 
 // emitTransformsFile builds GoTransform-based helper functions that convert
@@ -266,7 +272,11 @@ func emitTransformsFile(agent *AgentData, ts *ToolsetData, data *toolSpecsData) 
 	if ts == nil || len(ts.Tools) == 0 || ts.SpecsDir == "" {
 		return nil
 	}
-	var fns []transformFuncData
+    var fns []transformFuncData
+    // Collect additional imports referenced by source/target attributes so that
+    // helper bodies compiling nested user types (e.g., shared `types` package)
+    // have the proper qualifiers available.
+    extraImports := make(map[string]*codegen.ImportSpec)
 	// Resolve service import alias/path for method types
 	svc := ts.SourceService
 	if svc == nil {
@@ -291,69 +301,127 @@ func emitTransformsFile(agent *AgentData, ts *ToolsetData, data *toolSpecsData) 
 				toolResult = td
 			}
 		}
-		// Payload transform: Args -> Method Payload
-		if toolPayload != nil && t.Args != nil && t.Args.Type != goaexpr.Empty {
-			srcCtx := codegen.NewAttributeContextForConversion(false, false, true, ts.SpecsPackageName, codegen.NewNameScope())
-			tgtCtx := codegen.NewAttributeContext(false, false, false, svcAlias, codegen.NewNameScope())
-			body, helpers, err := codegen.GoTransform(t.Args, t.MethodPayloadAttr, "in", "out", srcCtx, tgtCtx, "", false)
-			if err == nil && strings.TrimSpace(body) != "" {
-				// Compute local param type via NameScope to honor pointer/value semantics.
-				var argBase *goaexpr.AttributeExpr
-				if ut, ok := t.Args.Type.(goaexpr.UserType); ok && ut != nil {
-					argBase = ut.Attribute()
-				} else {
-					argBase = t.Args
-				}
-				localArgAttr := &goaexpr.AttributeExpr{Type: &goaexpr.UserTypeExpr{AttributeExpr: argBase, TypeName: toolPayload.TypeName}}
-				paramRef := codegen.NewNameScope().GoTypeRef(localArgAttr)
-				fns = append(fns, transformFuncData{
-					Name:          "ToMethodPayload_" + t.ConstName,
-					ParamTypeRef:  paramRef,
-					ResultTypeRef: t.MethodPayloadTypeRef,
-					Body:          body,
-					Helpers:       helpers,
-				})
-			}
+        // Payload transform: Args -> Method Payload
+        if toolPayload != nil && t.Args != nil && t.Args.Type != goaexpr.Empty && t.MethodPayloadAttr != nil && t.MethodPayloadAttr.Type != goaexpr.Empty {
+            // Only when shapes are compatible.
+            if err := codegen.IsCompatible(t.Args.Type, t.MethodPayloadAttr.Type, "in", "out"); err != nil {
+                continue
+            }
+            // imports from source and target attributes
+            for _, im := range gatherAttributeImports(agent.Genpkg, t.Args) {
+                if im != nil && im.Path != "" {
+                    extraImports[im.Path] = im
+                }
+            }
+            for _, im := range gatherAttributeImports(agent.Genpkg, t.MethodPayloadAttr) {
+                if im != nil && im.Path != "" {
+                    extraImports[im.Path] = im
+                }
+            }
+            srcCtx := codegen.NewAttributeContextForConversion(false, false, true, ts.SpecsPackageName, codegen.NewNameScope())
+            tgtCtx := codegen.NewAttributeContextForConversion(false, false, true, svcAlias, codegen.NewNameScope())
+            body, helpers, err := codegen.GoTransform(t.Args, t.MethodPayloadAttr, "in", "out", srcCtx, tgtCtx, "", false)
+            // Emit only when transform is trivial (no nested helper funcs).
+            if err == nil && strings.TrimSpace(body) != "" && len(helpers) == 0 {
+                // Compute local param type via NameScope to honor pointer/value semantics.
+                var argBase *goaexpr.AttributeExpr
+                if ut, ok := t.Args.Type.(goaexpr.UserType); ok && ut != nil {
+                    argBase = ut.Attribute()
+                } else {
+                    argBase = t.Args
+                }
+                localArgAttr := &goaexpr.AttributeExpr{Type: &goaexpr.UserTypeExpr{AttributeExpr: argBase, TypeName: toolPayload.TypeName}}
+                paramRef := codegen.NewNameScope().GoTypeRef(localArgAttr)
+                fns = append(fns, transformFuncData{
+                    Name:          "ToMethodPayload_" + t.ConstName,
+                    ParamTypeRef:  paramRef,
+                    ResultTypeRef: t.MethodPayloadTypeRef,
+                    Body:          body,
+                    Helpers:       nil,
+                })
+            }
 		}
-		// Result transform: Method Result -> Tool Result (target is the local alias type)
-		if toolResult != nil && t.Return != nil && t.Return.Type != goaexpr.Empty {
-			srcCtx := codegen.NewAttributeContext(false, false, false, svcAlias, codegen.NewNameScope())
-			// Synthesize a target user type with the local alias name so the body initializes
-			// the local type (e.g., &ByIDResult{...}) rather than the service type.
-			// Use the underlying attribute of the tool return user type to avoid self-recursion.
-			var baseAttr *goaexpr.AttributeExpr
-			if ut, ok := t.Return.Type.(goaexpr.UserType); ok && ut != nil {
-				baseAttr = ut.Attribute()
-			} else {
-				baseAttr = t.Return
-			}
-			targetUT := &goaexpr.UserTypeExpr{AttributeExpr: baseAttr, TypeName: toolResult.TypeName}
-			targetAttr := &goaexpr.AttributeExpr{Type: targetUT}
-			// For same-package conversion use empty pkg to avoid qualifying with current package alias.
-			tgtCtx := codegen.NewAttributeContextForConversion(false, false, true, "", codegen.NewNameScope())
-			body, helpers, err := codegen.GoTransform(t.MethodResultAttr, targetAttr, "in", "out", srcCtx, tgtCtx, "", false)
-			if err == nil && strings.TrimSpace(body) != "" {
-				// Compute local result type via NameScope
-				resRef := codegen.NewNameScope().GoTypeRef(targetAttr)
-				fns = append(fns, transformFuncData{
-					Name:          "ToToolReturn_" + t.ConstName,
-					ParamTypeRef:  t.MethodResultTypeRef,
-					ResultTypeRef: resRef,
-					Body:          body,
-					Helpers:       helpers,
-				})
-			}
+        // Result transform: Method Result -> Tool Result (target is the local alias type)
+        if toolResult != nil && t.Return != nil && t.Return.Type != goaexpr.Empty && t.MethodResultAttr != nil && t.MethodResultAttr.Type != goaexpr.Empty {
+            // Only when shapes are compatible.
+            var baseAttr *goaexpr.AttributeExpr
+            if ut, ok := t.Return.Type.(goaexpr.UserType); ok && ut != nil {
+                baseAttr = ut.Attribute()
+            } else {
+                baseAttr = t.Return
+            }
+            if err := codegen.IsCompatible(t.MethodResultAttr.Type, baseAttr.Type, "in", "out"); err != nil {
+                continue
+            }
+            // imports from source and target attributes
+            for _, im := range gatherAttributeImports(agent.Genpkg, t.MethodResultAttr) {
+                if im != nil && im.Path != "" {
+                    extraImports[im.Path] = im
+                }
+            }
+            for _, im := range gatherAttributeImports(agent.Genpkg, t.Return) {
+                if im != nil && im.Path != "" {
+                    extraImports[im.Path] = im
+                }
+            }
+            srcCtx := codegen.NewAttributeContextForConversion(false, false, true, svcAlias, codegen.NewNameScope())
+            // Synthesize a target user type with the local alias name so the body initializes
+            // the local type (e.g., &ByIDResult{...}) rather than the service type.
+            // Use the underlying attribute of the tool return user type to avoid self-recursion.
+            targetUT := &goaexpr.UserTypeExpr{AttributeExpr: baseAttr, TypeName: toolResult.TypeName}
+            targetAttr := &goaexpr.AttributeExpr{Type: targetUT}
+            // For same-package conversion use empty pkg to avoid qualifying with current package alias.
+            tgtCtx := codegen.NewAttributeContextForConversion(false, false, true, "", codegen.NewNameScope())
+            body, helpers, err := codegen.GoTransform(t.MethodResultAttr, targetAttr, "in", "out", srcCtx, tgtCtx, "", false)
+            if err == nil && strings.TrimSpace(body) != "" && len(helpers) == 0 {
+                // Compute local result type via NameScope
+                resRef := codegen.NewNameScope().GoTypeRef(targetAttr)
+                fns = append(fns, transformFuncData{
+                    Name:          "ToToolReturn_" + t.ConstName,
+                    ParamTypeRef:  t.MethodResultTypeRef,
+                    ResultTypeRef: resRef,
+                    Body:          body,
+                    Helpers:       nil,
+                })
+            }
 		}
 	}
-	if len(fns) == 0 {
-		return nil
-	}
-	imports := []*codegen.ImportSpec{{Name: svcAlias, Path: svcImport}}
-	sections := []*codegen.SectionTemplate{
-		codegen.Header(agent.StructName+" tool transforms", ts.SpecsPackageName, imports),
-		{Name: "tool-transforms", Source: agentsTemplates.Read(toolTransformsFileT), Data: transformsFileData{Functions: fns}},
-	}
-	return &codegen.File{Path: filepath.Join(ts.SpecsDir, "transforms.go"), SectionTemplates: sections}
+    if len(fns) == 0 {
+        return nil
+    }
+    // Build file-level helper set to avoid duplicate declarations.
+    uniq := make(map[string]*codegen.TransformFunctionData)
+    for _, fn := range fns {
+        for _, h := range fn.Helpers {
+            if h == nil || h.Name == "" {
+                continue
+            }
+            if _, ok := uniq[h.Name]; ok {
+                continue
+            }
+            uniq[h.Name] = h
+        }
+    }
+    helpers := make([]*codegen.TransformFunctionData, 0, len(uniq))
+    for _, h := range uniq {
+        helpers = append(helpers, h)
+    }
+    // Build imports: service alias + any extra imports discovered.
+    imports := []*codegen.ImportSpec{{Name: svcAlias, Path: svcImport}}
+    if len(extraImports) > 0 {
+        // Ensure we don't duplicate the service import.
+        for p, im := range extraImports {
+            if p == svcImport {
+                continue
+            }
+            imports = append(imports, im)
+        }
+    }
+    sections := []*codegen.SectionTemplate{
+        codegen.Header(agent.StructName+" tool transforms", ts.SpecsPackageName, imports),
+        {Name: "tool-transforms", Source: agentsTemplates.Read(toolTransformsFileT), Data: transformsFileData{Functions: fns, Helpers: helpers}},
+    }
+    return &codegen.File{Path: filepath.Join(ts.SpecsDir, "transforms.go"), SectionTemplates: sections}
 }
 
 // agentSpecsAggregatorFile emits specs/specs.go that aggregates Specs and metadata
