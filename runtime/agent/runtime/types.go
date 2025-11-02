@@ -8,6 +8,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
@@ -74,7 +75,7 @@ type (
 		// Used to lookup the toolset registration and call its Execute function.
 		ToolsetName string
 		// ToolName is the fully qualified tool identifier (`service.toolset.tool`).
-		ToolName string
+		ToolName tools.Ident
 		// ToolCallID is a unique identifier for this specific tool call, used for
 		// parent-child tracking and event correlation.
 		ToolCallID string

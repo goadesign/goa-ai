@@ -10,6 +10,7 @@ import (
 
 	openaimodel "goa.design/goa-ai/features/model/openai"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 func TestClientComplete(t *testing.T) {
@@ -38,17 +39,17 @@ func TestClientComplete(t *testing.T) {
 		Usage: openai.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15},
 	}
 
-    resp, err := client.Complete(context.Background(), model.Request{
-        Messages: []*model.Message{{Role: "user", Content: "ping"}},
-        Tools: []*model.ToolDefinition{{
-            Name:        "lookup",
-            Description: "Search",
-            InputSchema: map[string]any{"type": "object"},
-        }},
-    })
+	resp, err := client.Complete(context.Background(), model.Request{
+		Messages: []*model.Message{{Role: "user", Content: "ping"}},
+		Tools: []*model.ToolDefinition{{
+			Name:        "lookup",
+			Description: "Search",
+			InputSchema: map[string]any{"type": "object"},
+		}},
+	})
 	require.NoError(t, err)
 	require.Equal(t, "hi there", resp.Content[0].Content)
-	require.Equal(t, "lookup", resp.ToolCalls[0].Name)
+	require.Equal(t, tools.Ident("lookup"), resp.ToolCalls[0].Name)
 	require.Equal(t, "docs", resp.ToolCalls[0].Payload.(map[string]any)["query"])
 	require.Equal(t, "stop", resp.StopReason)
 	require.Equal(t, 15, resp.Usage.TotalTokens)

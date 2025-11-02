@@ -194,13 +194,29 @@ For each service/agent combination, `goa gen` produces:
 
 1. **Agent package (`gen/<svc>/agents/<agent>/`)**
    - `agent.go` registers workflows/activities/toolsets with `runtime.Runtime`.
+   - `agent.go` also exports `const AgentID agent.Ident = "<service>.<agent>"` for type‑safe references.
    - `workflow.go` implements the durable run loop (start, execute tools, resume).
    - `activities.go` exposes thin wrappers that call into `runtime.PlanStartActivity`, `PlanResumeActivity`, and `ExecuteToolActivity`.
-   - `config.go` bundles runtime options (planner implementation, task queues, retry policies).
+   - `config.go` bundles runtime options (planner implementation, task queues, retry policies). When MCP toolsets are used, the config includes an `MCPCallers` map and a builder `WithMCPCaller(id string, caller mcpruntime.Caller)` to simplify wiring.
 2. **Tool specs (`tool_specs/`)**
    - `types.go`, `codecs.go`, `specs.go` as described above.
 3. **Agent tool exports (`agenttools/`)**
    - Helper constructors for exported toolsets, ready to be registered with other agents (`Register<Service><Toolset>`).
+   - Content configuration is optional: if you do not provide per‑tool text or templates, the runtime builds a reasonable default user message from the tool payload. You can override the default builder via `WithPromptBuilder`.
+   - Each exported toolset also defines typed tool identifiers as `tools.Ident` constants you can reference anywhere. For example:
+     ```go
+     import chattools "example.com/assistant/gen/orchestrator/agents/chat/agenttools/search"
+
+     // Use a generated constant instead of ad‑hoc strings/casts
+     spec, _ := rt.ToolSpec(chattools.Search)
+     schemas, _ := rt.ToolSchema(chattools.Search)
+
+     // Build a typed tool call using only agenttools aliases (no specs import needed)
+     req := chattools.NewFindCall(&chattools.FindPayload{
+         // fill fields per your design
+     }, chattools.WithToolCallID("tc-1"))
+     _ = req
+     ```
 4. **MCP helpers (`gen/<svc>/mcp_<service>/register.go`, `client/caller.go`)**
    - `Register<Service><Suite>Toolset` functions that adapt MCP tool metadata into runtime registrations.
    - `client.NewCaller` helper so Goa-generated MCP clients can be plugged directly into the runtime.
@@ -208,7 +224,11 @@ For each service/agent combination, `goa gen` produces:
 Consumers import these generated packages inside their worker/binary setup code:
 
 ```go
-rt := runtime.New(runtime.Options{Engine: temporalClient, MemoryStore: mongoStore, RunStore: runStore})
+rt := runtime.New(
+    runtime.WithEngine(temporalClient),
+    runtime.WithMemoryStore(mongoStore),
+    runtime.WithRunStore(runStore),
+)
 if err := chat.RegisterChatAgent(ctx, rt, chat.ChatAgentConfig{Planner: myPlanner}); err != nil {
 	log.Fatal(err)
 }
@@ -216,6 +236,13 @@ caller := featuresmcp.NewHTTPCaller("https://assistant.example.com/mcp")
 if err := mcpassistant.RegisterAssistantAssistantMcpToolset(ctx, rt, caller); err != nil {
 	log.Fatal(err)
 }
+
+// Execute the agent using the runtime client and the typed AgentID constant.
+messages := []planner.AgentMessage{{Role: "user", Content: "Say hi"}}
+client := chat.NewClient(rt)
+out, err := client.Run(ctx, messages, runtime.WithSessionID("session-1"))
+if err != nil { log.Fatal(err) }
+_ = out // *runtime.RunOutput
 ```
 
 ## MCP Bridge Workflow

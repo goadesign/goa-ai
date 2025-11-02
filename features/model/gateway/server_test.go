@@ -49,9 +49,9 @@ func TestNewServer_BuildsChains(t *testing.T) {
 	if _, err := srv.Complete(context.Background(), model.Request{Model: "m"}); err != nil {
 		t.Fatalf("Complete error: %v", err)
 	}
-    if err := srv.Stream(context.Background(), model.Request{Model: "m"}, func(model.Chunk) error { return errors.New("eof") }); err == nil {
-        t.Fatal("expected error from stream")
-    }
+	if err := srv.Stream(context.Background(), model.Request{Model: "m"}, func(model.Chunk) error { return errors.New("eof") }); err == nil {
+		t.Fatal("expected error from stream")
+	}
 
 	if !calledUnary {
 		t.Fatal("unary middleware not invoked")

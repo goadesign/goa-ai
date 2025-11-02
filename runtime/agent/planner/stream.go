@@ -43,31 +43,31 @@ func ConsumeStream(ctx context.Context, streamer model.Streamer, agent AgentCont
 			return summary, err
 		}
 		switch chunk.Type {
-    case model.ChunkTypeText:
-        if chunk.Message.Content == "" {
-            continue
-        }
-        summary.Text += chunk.Message.Content
-        if agent != nil {
-            agent.EmitAssistantMessage(ctx, chunk.Message.Content, nil)
-        }
-    case model.ChunkTypeThinking:
-        if chunk.Thinking == "" || agent == nil {
-            continue
-        }
-        agent.EmitPlannerNote(ctx, chunk.Thinking, map[string]string{"phase": "thinking"})
-    case model.ChunkTypeToolCall:
-        if chunk.ToolCall.Name == "" {
-            continue
-        }
-        summary.ToolCalls = append(summary.ToolCalls, ToolRequest{
-            Name:    chunk.ToolCall.Name,
-            Payload: chunk.ToolCall.Payload,
-        })
-    case model.ChunkTypeUsage:
-        if chunk.UsageDelta != nil {
-            summary.Usage = addUsage(summary.Usage, *chunk.UsageDelta)
-        }
+		case model.ChunkTypeText:
+			if chunk.Message.Content == "" {
+				continue
+			}
+			summary.Text += chunk.Message.Content
+			if agent != nil {
+				agent.EmitAssistantMessage(ctx, chunk.Message.Content, nil)
+			}
+		case model.ChunkTypeThinking:
+			if chunk.Thinking == "" || agent == nil {
+				continue
+			}
+			agent.EmitPlannerNote(ctx, chunk.Thinking, map[string]string{"phase": "thinking"})
+		case model.ChunkTypeToolCall:
+			if chunk.ToolCall.Name == "" {
+				continue
+			}
+			summary.ToolCalls = append(summary.ToolCalls, ToolRequest{
+				Name:    chunk.ToolCall.Name,
+				Payload: chunk.ToolCall.Payload,
+			})
+		case model.ChunkTypeUsage:
+			if chunk.UsageDelta != nil {
+				summary.Usage = addUsage(summary.Usage, *chunk.UsageDelta)
+			}
 		case model.ChunkTypeStop:
 			summary.StopReason = chunk.StopReason
 		}

@@ -11,6 +11,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/telemetry"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 const (
@@ -20,13 +21,13 @@ const (
 
 // toolsetIdentifier extracts the toolset name from a fully qualified tool name.
 // For example, "service.toolset.tool" returns "service.toolset".
-func toolsetIdentifier(tool string) string {
-	parts := strings.Split(tool, ".")
+func toolsetIdentifier(tool tools.Ident) string {
+	parts := strings.Split(string(tool), ".")
 	if len(parts) < 3 {
 		if len(parts) > 1 {
 			return strings.Join(parts[:len(parts)-1], ".")
 		}
-		return tool
+		return string(tool)
 	}
 	return strings.Join(parts[:len(parts)-1], ".")
 }
@@ -38,7 +39,7 @@ func toolsetIdentifier(tool string) string {
 //
 // Generated code for agent-tools uses this to construct nested run contexts
 // from the parent run metadata passed explicitly in ToolRequest.
-func NestedRunID(parentRunID, toolName string) string {
+func NestedRunID(parentRunID string, toolName tools.Ident) string {
 	if parentRunID == "" {
 		parentRunID = unknownID
 	}
@@ -48,20 +49,20 @@ func NestedRunID(parentRunID, toolName string) string {
 // generateDeterministicToolCallID creates a replay-safe tool-call ID using the
 // run ID, optional turn ID, sanitized tool name, and the deterministic index of
 // the tool within the current batch.
-func generateDeterministicToolCallID(runID, turnID, toolName string, index int) string {
+func generateDeterministicToolCallID(runID, turnID string, toolName tools.Ident, index int) string {
 	if runID == "" {
 		runID = unknownID
 	}
 	if toolName == "" {
 		toolName = "tool"
 	}
-	safeTool := strings.ReplaceAll(toolName, ".", "-")
+	safeTool := strings.ReplaceAll(string(toolName), ".", "-")
 	// Format: <runID>/<turnID|no-turn>/<tool>/<index>
 	tid := turnID
 	if tid == "" {
 		tid = "no-turn"
 	}
-	return strings.Join([]string{runID, tid, safeTool, strconv.Itoa(index)}, "/")
+	return strings.Join([]string{string(runID), string(tid), safeTool, strconv.Itoa(index)}, "/")
 }
 
 // generateParentToolCallID creates a deterministic parent ToolCallID suitable
@@ -134,18 +135,7 @@ func mergeLabels(dst map[string]string, src map[string]string) map[string]string
 	return dst
 }
 
-func handlesToIDs(handles []policy.ToolHandle) []string {
-	if len(handles) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(handles))
-	for _, h := range handles {
-		if h.ID != "" {
-			out = append(out, h.ID)
-		}
-	}
-	return out
-}
+// handlesToIDs removed: policy uses []tools.Ident directly.
 
 func appendPolicyDecisionMetadata(meta map[string]any, entry map[string]any) map[string]any {
 	if entry == nil {
@@ -291,10 +281,10 @@ func mergeCaps(current policy.CapsState, decision policy.CapsState) policy.CapsS
 }
 
 // toolHandles converts tool call requests into policy tool handles for policy evaluation.
-func toolHandles(calls []planner.ToolRequest) []policy.ToolHandle {
-	handles := make([]policy.ToolHandle, len(calls))
+func toolHandles(calls []planner.ToolRequest) []tools.Ident {
+	handles := make([]tools.Ident, len(calls))
 	for i, call := range calls {
-		handles[i] = policy.ToolHandle{ID: call.Name}
+		handles[i] = call.Name
 	}
 	return handles
 }
@@ -309,7 +299,7 @@ func (r *Runtime) toolMetadata(calls []planner.ToolRequest) []policy.ToolMetadat
 		if ts, ok := r.toolsets[sName]; ok {
 			metas = append(metas, ts.Metadata)
 		} else {
-			metas = append(metas, policy.ToolMetadata{ID: call.Name, Name: call.Name})
+			metas = append(metas, policy.ToolMetadata{ID: call.Name, Name: string(call.Name)})
 		}
 	}
 	return metas
@@ -317,13 +307,13 @@ func (r *Runtime) toolMetadata(calls []planner.ToolRequest) []policy.ToolMetadat
 
 // filterToolCalls filters tool calls to only those present in the allowed list.
 // If the allowed list is empty, returns all calls unchanged.
-func filterToolCalls(calls []planner.ToolRequest, allowed []policy.ToolHandle) []planner.ToolRequest {
+func filterToolCalls(calls []planner.ToolRequest, allowed []tools.Ident) []planner.ToolRequest {
 	if len(allowed) == 0 {
 		return calls
 	}
-	allow := make(map[string]struct{}, len(allowed))
-	for _, handle := range allowed {
-		allow[handle.ID] = struct{}{}
+	allow := make(map[tools.Ident]struct{}, len(allowed))
+	for _, id := range allowed {
+		allow[id] = struct{}{}
 	}
 	filtered := make([]planner.ToolRequest, 0, len(calls))
 	for _, call := range calls {
@@ -383,7 +373,7 @@ func stampEventWithTurn(evt hooks.Event, seq *turnSequencer) {
 //
 // Planner notes are currently discarded. Future enhancement: include notes as structured
 // metadata or append them to the payload content for visibility to the parent planner.
-func ConvertRunOutputToToolResult(toolName string, output RunOutput) planner.ToolResult {
+func ConvertRunOutputToToolResult(toolName tools.Ident, output RunOutput) planner.ToolResult {
 	result := planner.ToolResult{
 		Name:   toolName,
 		Result: output.Final.Content,

@@ -19,6 +19,7 @@ import (
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 const (
@@ -151,11 +152,11 @@ func (c *Client) prepareRequest(req model.Request) (*requestParts, error) {
 	if modelID == "" {
 		modelID = c.model
 	}
-    messages, system, err := splitMessages(req.Messages)
+	messages, system, err := splitMessages(req.Messages)
 	if err != nil {
 		return nil, err
 	}
-    toolConfig, err := encodeTools(req.Tools)
+	toolConfig, err := encodeTools(req.Tools)
 	if err != nil {
 		return nil, err
 	}
@@ -273,29 +274,29 @@ func splitMessages(msgs []*model.Message) ([]brtypes.Message, []brtypes.SystemCo
 		conversation []brtypes.Message
 		system       []brtypes.SystemContentBlock
 	)
-    for _, m := range msgs {
-        if m == nil {
-            continue
-        }
-        text := strings.TrimSpace(m.Content)
-        if text == "" {
-            continue
-        }
-        switch strings.ToLower(m.Role) {
-        case "system":
+	for _, m := range msgs {
+		if m == nil {
+			continue
+		}
+		text := strings.TrimSpace(m.Content)
+		if text == "" {
+			continue
+		}
+		switch strings.ToLower(m.Role) {
+		case "system":
 			system = append(system, &brtypes.SystemContentBlockMemberText{Value: text})
 		case "assistant":
 			conversation = append(conversation, brtypes.Message{
 				Role:    brtypes.ConversationRoleAssistant,
 				Content: []brtypes.ContentBlock{&brtypes.ContentBlockMemberText{Value: text}},
 			})
-        default:
-            conversation = append(conversation, brtypes.Message{
-                Role:    brtypes.ConversationRoleUser,
-                Content: []brtypes.ContentBlock{&brtypes.ContentBlockMemberText{Value: text}},
-            })
-        }
-    }
+		default:
+			conversation = append(conversation, brtypes.Message{
+				Role:    brtypes.ConversationRoleUser,
+				Content: []brtypes.ContentBlock{&brtypes.ContentBlockMemberText{Value: text}},
+			})
+		}
+	}
 	if len(conversation) == 0 {
 		return nil, nil, errors.New("bedrock: at least one user/assistant message is required")
 	}
@@ -303,18 +304,18 @@ func splitMessages(msgs []*model.Message) ([]brtypes.Message, []brtypes.SystemCo
 }
 
 func encodeTools(defs []*model.ToolDefinition) (*brtypes.ToolConfiguration, error) {
-    if len(defs) == 0 {
-        return nil, nil
-    }
-    tools := make([]brtypes.Tool, 0, len(defs))
-    for _, def := range defs {
-        if def == nil {
-            continue
-        }
-        name := strings.TrimSpace(def.Name)
-        if name == "" {
-            continue
-        }
+	if len(defs) == 0 {
+		return nil, nil
+	}
+	tools := make([]brtypes.Tool, 0, len(defs))
+	for _, def := range defs {
+		if def == nil {
+			continue
+		}
+		name := strings.TrimSpace(def.Name)
+		if name == "" {
+			continue
+		}
 		schemaDoc, err := toDocument(def.InputSchema)
 		if err != nil {
 			return nil, fmt.Errorf("bedrock tool %s schema: %w", def.Name, err)
@@ -373,7 +374,7 @@ func translateResponse(output *bedrockruntime.ConverseOutput) (model.Response, e
 				if v.Value.Name != nil {
 					name = *v.Value.Name
 				}
-				resp.ToolCalls = append(resp.ToolCalls, model.ToolCall{Name: name, Payload: payload})
+				resp.ToolCalls = append(resp.ToolCalls, model.ToolCall{Name: tools.Ident(name), Payload: payload})
 			}
 		}
 	}

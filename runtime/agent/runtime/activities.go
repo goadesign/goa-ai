@@ -12,10 +12,17 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-// PlanStartActivity executes the planner's PlanStart method. This activity is
-// registered with the workflow engine and invoked at the beginning of a run to
-// produce the initial plan. The activity creates an agent context with memory
-// access and delegates to the planner's PlanStart implementation.
+// PlanStartActivity executes the planner's PlanStart method.
+//
+// Advanced & generated integration
+//   - Intended to be registered by generated code with the workflow engine.
+//   - Normal applications should use AgentClient (Runtime.Client(...).Run/Start)
+//     instead of invoking activities directly.
+//
+// This activity is registered with the workflow engine and invoked at the
+// beginning of a run to produce the initial plan. The activity creates an
+// agent context with memory access and delegates to the planner's PlanStart
+// implementation.
 func (r *Runtime) PlanStartActivity(ctx context.Context, input PlanActivityInput) (PlanActivityOutput, error) {
 	reg, agentCtx, err := r.plannerContext(ctx, input)
 	if err != nil {
@@ -33,10 +40,16 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input PlanActivityInput
 	return PlanActivityOutput{Result: result}, nil
 }
 
-// PlanResumeActivity executes the planner's PlanResume method. This activity is
-// registered with the workflow engine and invoked after tool execution to produce
-// the next plan. The activity creates an agent context with memory access and
-// delegates to the planner's PlanResume implementation.
+// PlanResumeActivity executes the planner's PlanResume method.
+//
+// Advanced & generated integration
+//   - Intended to be registered by generated code with the workflow engine.
+//   - Normal applications should use AgentClient (Runtime.Client(...).Run/Start)
+//     instead of invoking activities directly.
+//
+// This activity is registered with the workflow engine and invoked after tool
+// execution to produce the next plan. The activity creates an agent context
+// with memory access and delegates to the planner's PlanResume implementation.
 func (r *Runtime) PlanResumeActivity(ctx context.Context, input PlanActivityInput) (PlanActivityOutput, error) {
 	reg, agentCtx, err := r.plannerContext(ctx, input)
 	if err != nil {
@@ -55,10 +68,16 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input PlanActivityInpu
 	return PlanActivityOutput{Result: result}, nil
 }
 
-// ExecuteToolActivity is invoked by generated activities (or inline during tests) to
-// decode a tool payload, run the registered tool implementation, and encode the
-// result using the tool-specific codec. Returns an error if the toolset is not
-// registered or if encoding/decoding fails.
+// ExecuteToolActivity runs a tool invocation as a workflow activity.
+//
+// Advanced & generated integration
+//   - Intended to be registered by generated code with the workflow engine.
+//   - Normal applications should use AgentClient (Runtime.Client(...).Run/Start)
+//     rather than invoking activities directly.
+//
+// It decodes the tool payload, runs the registered tool implementation, and
+// encodes the result using the tool‑specific codec. Returns an error if the
+// toolset is not registered or if encoding/decoding fails.
 func (r *Runtime) ExecuteToolActivity(ctx context.Context, req ToolInput) (ToolOutput, error) {
 	if req.ToolName == "" {
 		return ToolOutput{}, errors.New("tool name is required")
@@ -119,7 +138,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req ToolInput) (ToolO
 // buildRetryHintFromValidation attempts to extract structured validation issues from
 // a generated ValidationError (emitted by tool codecs) and build a precise retry hint.
 // It returns (fields, question, reason, true) when successful; otherwise ok is false.
-func buildRetryHintFromValidation(err error, toolName string) ([]string, string, planner.RetryReason, bool) {
+func buildRetryHintFromValidation(err error, toolName tools.Ident) ([]string, string, planner.RetryReason, bool) {
 	// Match generated ValidationError via method set (no concrete type import).
 	var ip interface {
 		Issues() []*tools.FieldIssue
@@ -169,7 +188,7 @@ func buildRetryHintFromValidation(err error, toolName string) ([]string, string,
 		}
 		list := strings.Join(parts, ", ")
 		if toolName != "" {
-			question = "I need additional information to run " + toolName + ". Please provide: " + list + "."
+			question = "I need additional information to run " + string(toolName) + ". Please provide: " + list + "."
 		} else {
 			question = "I need additional information. Please provide: " + list + "."
 		}
@@ -220,7 +239,7 @@ func (r *Runtime) plannerContext(
 	if input.AgentID == "" {
 		return AgentRegistration{}, nil, errors.New("agent id is required")
 	}
-	reg, ok := r.Agent(input.AgentID)
+	reg, ok := r.agentByID(input.AgentID)
 	if !ok {
 		return AgentRegistration{}, nil, fmt.Errorf("agent %q is not registered", input.AgentID)
 	}
@@ -237,7 +256,7 @@ func (r *Runtime) plannerContext(
 
 // marshalToolValue encodes a tool value using the registered codec or standard JSON.
 func (r *Runtime) marshalToolValue(
-	ctx context.Context, toolName string, value any, payload bool,
+	ctx context.Context, toolName tools.Ident, value any, payload bool,
 ) (json.RawMessage, error) {
 	if value == nil {
 		return nil, nil
@@ -261,7 +280,7 @@ func (r *Runtime) marshalToolValue(
 
 // unmarshalToolValue decodes a tool value using the registered codec or standard JSON.
 func (r *Runtime) unmarshalToolValue(
-	ctx context.Context, toolName string, raw json.RawMessage, payload bool,
+	ctx context.Context, toolName tools.Ident, raw json.RawMessage, payload bool,
 ) (any, error) {
 	if len(raw) == 0 {
 		return nil, nil
@@ -279,7 +298,7 @@ func (r *Runtime) unmarshalToolValue(
 }
 
 // toolCodec retrieves the JSON codec for a tool's payload or result.
-func (r *Runtime) toolCodec(toolName string, payload bool) (tools.JSONCodec[any], bool) {
+func (r *Runtime) toolCodec(toolName tools.Ident, payload bool) (tools.JSONCodec[any], bool) {
 	spec, ok := r.toolSpec(toolName)
 	if !ok {
 		return tools.JSONCodec[any]{}, false

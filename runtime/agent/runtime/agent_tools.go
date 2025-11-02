@@ -21,10 +21,10 @@ type AgentToolOption func(*AgentToolConfig)
 // WithText sets plain text content for the given tool ID. The runtime treats the
 // text as the user message for that tool. Exactly one of WithText or WithTemplate
 // should be provided per tool across all options.
-func WithText(id tools.ID, s string) AgentToolOption {
+func WithText(id tools.Ident, s string) AgentToolOption {
 	return func(c *AgentToolConfig) {
 		if c.Texts == nil {
-			c.Texts = make(map[tools.ID]string)
+			c.Texts = make(map[tools.Ident]string)
 		}
 		c.Texts[id] = s
 	}
@@ -32,20 +32,20 @@ func WithText(id tools.ID, s string) AgentToolOption {
 
 // WithTemplate sets a compiled template for the given tool ID. The template is
 // executed with the tool payload as the root value to produce the user message.
-func WithTemplate(id tools.ID, t *template.Template) AgentToolOption {
+func WithTemplate(id tools.Ident, t *template.Template) AgentToolOption {
 	return func(c *AgentToolConfig) {
 		if c.Templates == nil {
-			c.Templates = make(map[tools.ID]*template.Template)
+			c.Templates = make(map[tools.Ident]*template.Template)
 		}
 		c.Templates[id] = t
 	}
 }
 
 // WithTextAll applies the same text to all provided tool IDs.
-func WithTextAll(ids []tools.ID, s string) AgentToolOption {
+func WithTextAll(ids []tools.Ident, s string) AgentToolOption {
 	return func(c *AgentToolConfig) {
 		if c.Texts == nil {
-			c.Texts = make(map[tools.ID]string)
+			c.Texts = make(map[tools.Ident]string)
 		}
 		for _, id := range ids {
 			c.Texts[id] = s
@@ -54,16 +54,20 @@ func WithTextAll(ids []tools.ID, s string) AgentToolOption {
 }
 
 // WithTemplateAll applies the same template to all provided tool IDs.
-func WithTemplateAll(ids []tools.ID, t *template.Template) AgentToolOption {
+func WithTemplateAll(ids []tools.Ident, t *template.Template) AgentToolOption {
 	return func(c *AgentToolConfig) {
 		if c.Templates == nil {
-			c.Templates = make(map[tools.ID]*template.Template)
+			c.Templates = make(map[tools.Ident]*template.Template)
 		}
 		for _, id := range ids {
 			c.Templates[id] = t
 		}
 	}
 }
+
+// PromptBuilder builds a user message for a tool call from its payload when
+// no explicit text or template is configured.
+type PromptBuilder func(id tools.Ident, payload any) string
 
 // AgentToolConfig configures how an agent-tool executes.
 //
@@ -79,12 +83,15 @@ type AgentToolConfig struct {
 	// the tool-specific user message from the tool payload. Templates MUST be
 	// provided for all tools in this toolset and are compiled with
 	// template.Option("missingkey=error").
-	Templates map[tools.ID]*template.Template
+	Templates map[tools.Ident]*template.Template
 	// Texts maps fully-qualified tool IDs to a pure text user message. When a
 	// template for a tool is not provided, the runtime uses the corresponding
 	// text if present. Exactly one of Templates[id] or Texts[id] should be set
 	// per tool. Callers are responsible for ensuring full coverage across tools.
-	Texts map[tools.ID]string
+	Texts map[tools.Ident]string
+	// Prompt builds a user message when neither text nor template is provided.
+	// When nil, the runtime falls back to PayloadToString(payload).
+	Prompt PromptBuilder
 	// Name optionally sets the toolset registration name (qualified toolset id).
 	Name string
 	// Description optionally describes the toolset.
@@ -126,8 +133,8 @@ func NewAgentToolsetRegistration(rt *Runtime, cfg AgentToolConfig) ToolsetRegist
 // Returns a map keyed by fully qualified tool IDs. An error is returned if the
 // input is empty or any template fails to parse.
 func CompileAgentToolTemplates(
-	raw map[tools.ID]string, userFuncs template.FuncMap,
-) (map[tools.ID]*template.Template, error) {
+	raw map[tools.Ident]string, userFuncs template.FuncMap,
+) (map[tools.Ident]*template.Template, error) {
 	if len(raw) == 0 {
 		return nil, fmt.Errorf("no templates provided")
 	}
@@ -142,7 +149,7 @@ func CompileAgentToolTemplates(
 		"join": strings.Join,
 	}
 	maps.Copy(funcs, userFuncs)
-	compiled := make(map[tools.ID]*template.Template, len(raw))
+	compiled := make(map[tools.Ident]*template.Template, len(raw))
 	for id, src := range raw {
 		name := string(id)
 		tmpl, err := template.New(name).
@@ -164,9 +171,9 @@ func CompileAgentToolTemplates(
 // For primitive/array/map payloads, callers should pass a suitable zero/root; when
 // unknown, nil is acceptable and authors should reference {{.}} accordingly.
 func ValidateAgentToolTemplates(
-	templates map[tools.ID]*template.Template,
-	toolIDs []tools.ID,
-	zeroByTool map[tools.ID]any,
+	templates map[tools.Ident]*template.Template,
+	toolIDs []tools.Ident,
+	zeroByTool map[tools.Ident]any,
 ) error {
 	for _, id := range toolIDs {
 		tmpl := templates[id]
@@ -187,18 +194,15 @@ func ValidateAgentToolTemplates(
 // configured content source across texts and templates. Returns an error if a
 // tool is missing content or provided in both maps.
 func ValidateAgentToolCoverage(
-	texts map[tools.ID]string,
-	templates map[tools.ID]*template.Template,
-	toolIDs []tools.ID,
+	texts map[tools.Ident]string,
+	templates map[tools.Ident]*template.Template,
+	toolIDs []tools.Ident,
 ) error {
 	for _, id := range toolIDs {
 		_, hasText := texts[id]
 		_, hasTpl := templates[id]
 		if hasText && hasTpl {
 			return fmt.Errorf("tool %s configured as both text and template", id)
-		}
-		if !hasText && !hasTpl {
-			return fmt.Errorf("missing content for tool %s", id)
 		}
 	}
 	return nil
@@ -246,7 +250,7 @@ func defaultAgentToolExecute(
 		}
 
 		// Build per-tool user message via template if present, otherwise fall back to text
-		if tmpl := cfg.Templates[tools.ID(call.Name)]; tmpl != nil {
+		if tmpl := cfg.Templates[tools.Ident(call.Name)]; tmpl != nil {
 			var b strings.Builder
 			if err := tmpl.Execute(&b, call.Payload); err != nil {
 				return planner.ToolResult{}, fmt.Errorf(
@@ -255,10 +259,15 @@ func defaultAgentToolExecute(
 				)
 			}
 			messages = append(messages, planner.AgentMessage{Role: "user", Content: b.String()})
-		} else if txt, ok := cfg.Texts[tools.ID(call.Name)]; ok {
+		} else if txt, ok := cfg.Texts[tools.Ident(call.Name)]; ok {
 			messages = append(messages, planner.AgentMessage{Role: "user", Content: txt})
 		} else {
-			return planner.ToolResult{}, fmt.Errorf("no content configured for tool: %s", call.Name)
+			// Default: build from payload via PromptBuilder or JSON/string fallback
+			if cfg.Prompt != nil {
+				messages = append(messages, planner.AgentMessage{Role: "user", Content: cfg.Prompt(tools.Ident(call.Name), call.Payload)})
+			} else {
+				messages = append(messages, planner.AgentMessage{Role: "user", Content: PayloadToString(call.Payload)})
+			}
 		}
 
 		// Build nested run context from explicit ToolRequest fields

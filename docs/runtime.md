@@ -10,63 +10,97 @@ package main
 import (
     "context"
 
-    "go.temporal.io/sdk/client"
-
     chat "example.com/assistant/gen/orchestrator/agents/chat"
-    runtimeTemporal "goa.design/goa-ai/runtime/agent/engine/temporal"
     "goa.design/goa-ai/runtime/agent/planner"
     "goa.design/goa-ai/runtime/agent/runtime"
 )
 
 func main() {
-    temporalEng, err := runtimeTemporal.New(runtimeTemporal.Options{
-        ClientOptions: &client.Options{
-            HostPort:  "127.0.0.1:7233",
-            Namespace: "default",
-        },
-        WorkerOptions: runtimeTemporal.WorkerOptions{TaskQueue: "orchestrator.chat"},
-    })
-    if err != nil {
-        panic(err)
-    }
-    defer temporalEng.Close()
-
-    rt := runtime.New(runtime.Options{Engine: temporalEng})
+    // In-memory engine is the default; pass Engine for Temporal or custom engines.
+    rt := runtime.New()
 
     if err := chat.RegisterChatAgent(context.Background(), rt, chat.ChatAgentConfig{Planner: newChatPlanner()}); err != nil {
         panic(err)
     }
 
-    handle, err := rt.StartRun(context.Background(), runtime.RunInput{
-        AgentID: "orchestrator.chat",
-        RunID:   "session-1-run-1",
-        SessionID: "session-1",
-        Messages: []planner.AgentMessage{{Role: "user", Content: "Summarize the latest status."}},
-        WorkflowOptions: &runtime.WorkflowOptions{
-            Memo: map[string]any{"workflow_name": "ChatWorkflow", "session_id": "session-1"},
-            SearchAttributes: map[string]any{"SessionID": "session-1"},
-        },
-    })
+    client := chat.NewClient(rt)
+    handle, err := client.Start(context.Background(), []planner.AgentMessage{{Role: "user", Content: "Summarize the latest status."}},
+        runtime.WithSessionID("session-1"),
+        runtime.WithMemo(map[string]any{"workflow_name": "ChatWorkflow", "session_id": "session-1"}),
+        runtime.WithSearchAttributes(map[string]any{"SessionID": "session-1"}),
+        runtime.WithTaskQueue("orchestrator.chat"),
+    )
     if err != nil {
         panic(err)
     }
 
-    var output runtime.RunOutput
+    var output *runtime.RunOutput
     if err := handle.Wait(context.Background(), &output); err != nil {
         panic(err)
     }
 }
 ```
 
+## Client-Only vs Worker
+
+Two roles use the runtime:
+
+- Client-only (submit runs): constructs a runtime with a client-capable engine and does not register agents. Use the generated `<agent>.NewClient(rt)` which carries the route (workflow + queue) registered by remote workers.
+- Worker (execute runs): constructs a runtime with a worker-capable engine, registers agents (with real planners), and lets the engine poll and execute workflows/activities.
+
+Client-only example:
+
+```go
+rt := runtime.New(runtime.Options{Engine: temporalClient}) // engine client
+
+// No agent registration needed in a caller-only process
+client := chat.NewClient(rt)
+out, err := client.Run(ctx, msgs, runtime.WithSessionID("s1"))
+```
+
+Worker example:
+
+```go
+rt := runtime.New(runtime.Options{Engine: temporalWorker}) // worker-enabled engine
+if err := chat.RegisterChatAgent(ctx, rt, chat.ChatAgentConfig{Planner: myPlanner}); err != nil {
+    panic(err)
+}
+// Start engine worker loop per engine’s integration (e.g., Temporal worker.Run())
+```
+
 * Generated `Register<Agent>` functions register workflows, activities, toolsets, codecs, and planner bindings.
-* `WorkflowOptions` on `RunInput` map directly to engine start options (memo, search attributes, queue overrides), so services can attach Temporal metadata for observability.
-* Application code wires engine/storage/policy/model feature modules into `runtime.Options`. The Temporal adapter auto-starts workers the first time a workflow runs; call `temporalEng.Worker().Start()` only when you need explicit lifecycle control.
-* `StartRun` returns an engine workflow handle so callers can wait, signal, or cancel. `Run` simply calls `StartRun` and `Wait` for request/response transports.
+* `AgentClient` exposes `Run` and `Start` bound to a given agent and accepts functional RunOptions to configure memo, search attributes, and queue.
+* Application code wires engine/storage/policy/model feature modules into `runtime.Options`.
+* Workers (per agent): When using a polling engine (e.g., Temporal), the runtime starts a worker for each registered agent by default. You rarely need to configure workers explicitly; production can rely on defaults. To override the queue for a specific agent or disable local workers entirely, see “Workers (per agent)”.
+* Client-only callers: Processes that only start runs do not need to register agents locally. Use the generated `<agent>.NewClient(rt)` which carries the route (workflow + queue) to remote workers.
+* `Start` returns an engine workflow handle so callers can wait, signal, or cancel. `Run` simply calls `Start` and `Wait` for request/response transports.
 * DSL-generated Goa types expose `ConvertTo*` / `CreateFrom*` helpers (backed by `agents/apitypes`) so transports can bridge into the runtime/planner structs without hand-written mappers; rely on those conversions in service handlers and tests rather than re-implementing translation logic.
+
+### Advanced & Dynamic
+
+Use advanced entry points when you need dynamic selection across many agents or
+to construct a client using a route explicitly.
+
+```go
+// Dynamic across locally registered agents
+c, _ := rt.Client(agent.Ident("service.chat"))
+out, _ := c.Run(ctx, msgs, runtime.WithSessionID("s1"))
+
+// Explicit route (caller-only), no local registration required
+route := runtime.AgentRoute{ID: agent.Ident("service.chat"), WorkflowName: "ChatWorkflow", DefaultTaskQueue: "orchestrator.chat"}
+c2 := rt.MustClientFor(route)
+out2, _ := c2.Run(ctx, msgs, runtime.WithSessionID("s2"))
+```
+
+Engines and transports can also integrate directly with the workflow handler
+and activity handlers for advanced use cases. See `runtime/agent/runtime` package
+docs for `WorkflowHandler`, `PlanStartActivityHandler`, `PlanResumeActivityHandler`,
+and `ExecuteToolActivityHandler`.
 
 ### Run Contracts
 
-- `SessionID` is required at run start. `StartRun` fails fast when `SessionID` is empty or whitespace.
+- `SessionID` is required at run start. `Start` fails fast when `SessionID` is empty or whitespace.
+- Agents must be registered before the first run. The runtime rejects registration after the first run submission with `ErrRegistrationClosed` to keep engine workers deterministic.
 - Tool executors receive explicit per‑call metadata (`ToolCallMeta`) rather than fishing values from `context.Context`.
 - Do not rely on implicit fallbacks; all domain identifiers (run, session, turn, correlation) must be passed explicitly.
 
@@ -96,6 +130,43 @@ if err := rt.ResumeRun(ctx, interrupt.ResumeRequest{RunID: "session-1-run-1"}); 
 | Runtime Core | Orchestrates plan/start/resume loop, policy enforcement, hooks, memory |
 | Workflow Engine Adapter | Temporal adapter implements `engine.Engine`; other engines can plug in |
 | Feature Modules | Optional integrations (MCP, Pulse, Mongo stores, model providers) |
+
+## Workers (per agent)
+
+For engines that poll task queues (e.g., Temporal), the runtime manages one worker per agent. By default, you do not need to configure workers: the runtime binds each agent to its generated queue and starts a worker in this process. This is suitable for most production setups.
+
+Customize only when needed:
+
+- Override queue for an agent (rare):
+
+```go
+// Build a worker config for the agent package
+w := chat.NewWorker(runtime.WithQueue("orchestrator.chat"))
+
+// Supply the worker to the runtime at construction
+rt := runtime.New(
+    runtime.WithEngine(temporalEngine),
+    runtime.WithWorker(chat.AgentID, w),
+)
+
+// Register the agent as usual
+_ = chat.RegisterChatAgent(ctx, rt, chat.ChatAgentConfig{Planner: myPlanner})
+```
+
+- Submit-only process (no local workers):
+
+```go
+rt := runtime.New(runtime.Options{Engine: temporalEngine})
+
+// No registration needed in a submit-only caller
+client := chat.NewClient(rt)
+out, _ := client.Run(ctx, msgs, runtime.WithSessionID("s1"))
+```
+
+Notes:
+- In-memory engine: workers are unsupported and ignored; all runs execute inline.
+- Workers are supplied via runtime options at construction time; attaching workers later is not supported.
+- If you don’t supply a worker for an agent, the runtime starts a default worker for that agent (when the engine supports polling). For submit-only processes, disable worker auto-start using engine-level options (e.g., Temporal’s DisableWorkerAutoStart) and rely on remote workers.
 
 ## Hooks, Memory, and Streaming
 
@@ -143,6 +214,27 @@ case stream.ToolUpdate:
 case stream.ToolEnd:
     // e.Data.Result, e.Data.Error
 }
+```
+
+## Calling Exported Tools (Agent-as-Tool)
+
+When an agent exports tools, Goa-AI generates an `agenttools` package with typed
+helpers to build planner tool requests. Import the agenttools package and its
+specs package to construct typed payloads and keep planners clean and type-safe.
+
+```go
+import (
+    chattools "example.com/assistant/gen/orchestrator/agents/chat/agenttools/search"
+)
+
+// Build a typed tool call for the exported Search tool
+req := chattools.NewSearchCall(&chattools.SearchPayload{
+    Query: "golang",
+    Limit: 5,
+}, chattools.WithToolCallID("tc-1"))
+
+// Use in a planner result
+result := planner.PlanResult{ToolCalls: []planner.ToolRequest{req}}
 ```
 
 ## Executor-First Tool Execution
@@ -238,6 +330,54 @@ API shortcuts
 
 - Helper constructors: `stream.NewAssistantReply`, `NewPlannerThought`, `NewToolStart`, `NewToolEnd` create typed events with base metadata set.
 - Bridge helpers: `agents/runtime/stream/bridge` exposes `Register(bus, sink)` and `NewSubscriber(sink)` so you can wire the hook bus to any `stream.Sink` without importing the hooks subscriber directly.
+
+## Introspection & Subscriptions
+
+List registered agents and tool metadata at runtime (prefer generated constants):
+
+```go
+import (
+    chattools "example.com/assistant/gen/orchestrator/agents/chat/agenttools/search"
+)
+
+agents := rt.ListAgents()     // []agent.Ident
+toolsets := rt.ListToolsets() // []string
+
+spec, ok := rt.ToolSpec(chattools.Search)
+schemas, ok := rt.ToolSchema(chattools.Search)
+specs := rt.ToolSpecsForAgent(chat.AgentID)
+```
+
+Subscribe to a single run’s stream using a filtered subscriber (returns a close func):
+
+```go
+type mySink struct {}
+func (s *mySink) Send(ctx context.Context, e stream.Event) error { /* deliver */ return nil }
+func (s *mySink) Close(ctx context.Context) error { return nil }
+
+stop, err := rt.SubscribeRun(ctx, "run-123", &mySink{})
+if err != nil { panic(err) }
+defer stop()
+```
+
+Runtime publishes hook events internally; the subscription bridges only relevant
+events (assistant replies, planner thoughts, tool start/update/end) for the given
+run ID into the provided sink.
+
+## Policy Overrides (Runtime)
+
+Adjust an agent’s policy at runtime (local to the current process) for experiments
+or temporary backoffs. Only non-zero fields are applied (and `InterruptsAllowed`
+when true). Overrides apply to subsequent runs.
+
+```go
+// Reduce caps and allow interruptions for the chat agent
+_ = rt.OverridePolicy(chat.AgentID, runtime.RunPolicy{
+    MaxToolCalls:                    3,
+    MaxConsecutiveFailedToolCalls:   1,
+    InterruptsAllowed:               true,
+})
+```
 ```
 
 Services keep direct access to their Pulse client to create/close per-turn streams as needed, while the runtime handles event fan-out.

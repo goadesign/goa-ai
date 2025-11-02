@@ -13,6 +13,7 @@ import (
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 // bedrockStreamer adapts a Bedrock ConverseStream event stream to the
@@ -233,7 +234,7 @@ func (p *chunkProcessor) Handle(event any) error {
 			delete(p.toolBlocks, idx)
 			return p.emit(model.Chunk{
 				Type:     model.ChunkTypeToolCall,
-				ToolCall: &model.ToolCall{Name: tb.name, Payload: payload},
+				ToolCall: &model.ToolCall{Name: tools.Ident(tb.name), Payload: payload},
 			})
 		}
 		return nil

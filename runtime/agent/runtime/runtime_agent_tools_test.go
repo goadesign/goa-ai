@@ -24,10 +24,10 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 	}}}
 
 	tmpl := template.Must(template.New("t").Parse("hello {{.x}}"))
-	cfg := AgentToolConfig{AgentID: "svc.agent", SystemPrompt: "sys", Templates: map[tools.ID]*template.Template{"svc.ts.tool": tmpl}, Texts: map[tools.ID]string{"svc.ts.tool": "fallback"}}
+	cfg := AgentToolConfig{AgentID: "svc.agent", SystemPrompt: "sys", Templates: map[tools.Ident]*template.Template{"svc.ts.tool": tmpl}, Texts: map[tools.Ident]string{"svc.ts.tool": "fallback"}}
 
 	exec := defaultAgentToolExecute(rt, cfg)
-	res, err := exec(ctx, planner.ToolRequest{Name: "svc.ts.tool", RunID: "run", Payload: map[string]string{"x": "world"}})
+	res, err := exec(ctx, planner.ToolRequest{Name: tools.Ident("svc.ts.tool"), RunID: "run", Payload: map[string]string{"x": "world"}})
 	require.NoError(t, err)
 	require.Equal(t, "ok", res.Result)
 	require.Len(t, got, 2)
@@ -48,9 +48,9 @@ func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
 		return planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, nil
 	}}}
 
-	cfg := AgentToolConfig{AgentID: "svc.agent", Texts: map[tools.ID]string{"svc.ts.tool": "just text"}}
+	cfg := AgentToolConfig{AgentID: "svc.agent", Texts: map[tools.Ident]string{"svc.ts.tool": "just text"}}
 	exec := defaultAgentToolExecute(rt, cfg)
-	res, err := exec(ctx, planner.ToolRequest{Name: "svc.ts.tool", RunID: "run"})
+	res, err := exec(ctx, planner.ToolRequest{Name: tools.Ident("svc.ts.tool"), RunID: "run"})
 	require.NoError(t, err)
 	require.Equal(t, "ok", res.Result)
 	require.Len(t, got, 1)
@@ -58,15 +58,21 @@ func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
 	require.Equal(t, "just text", got[0].Content)
 }
 
-func TestDefaultAgentToolExecute_ErrorsWhenMissingContent(t *testing.T) {
+func TestDefaultAgentToolExecute_DefaultsWhenMissingContent(t *testing.T) {
 	rt := &Runtime{agents: make(map[string]AgentRegistration)}
 	wf := &testWorkflowContext{ctx: context.Background()}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
+	var seen []planner.AgentMessage
 	rt.agents["svc.agent"] = AgentRegistration{ID: "svc.agent", Planner: &stubPlanner{start: func(ctx context.Context, input planner.PlanInput) (planner.PlanResult, error) {
+		seen = append([]planner.AgentMessage{}, input.Messages...)
 		return planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, nil
 	}}}
 	cfg := AgentToolConfig{AgentID: "svc.agent"}
 	exec := defaultAgentToolExecute(rt, cfg)
-	_, err := exec(ctx, planner.ToolRequest{Name: "svc.ts.tool", RunID: "run"})
-	require.Error(t, err)
+	res, err := exec(ctx, planner.ToolRequest{Name: tools.Ident("svc.ts.tool"), RunID: "run"})
+	require.NoError(t, err)
+	require.Equal(t, "ok", res.Result)
+	require.Len(t, seen, 1)
+	require.Equal(t, "user", seen[0].Role)
+	require.Equal(t, "", seen[0].Content)
 }

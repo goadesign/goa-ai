@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"goa.design/goa-ai/codegen/agent"
+	codegen "goa.design/goa-ai/codegen/agent"
 	. "goa.design/goa-ai/dsl"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	. "goa.design/goa/v3/dsl"
@@ -107,8 +107,6 @@ func TestGenerateProducesFiles(t *testing.T) {
 
 	require.Contains(t, paths, "gen/calc/agents/scribe/agent.go")
 	require.Contains(t, paths, "gen/calc/agents/scribe/config.go")
-	require.Contains(t, paths, "gen/calc/agents/scribe/workflow.go")
-	require.Contains(t, paths, "gen/calc/agents/scribe/activities.go")
 	require.Contains(t, paths, "gen/calc/agents/scribe/registry.go")
 	require.Contains(t, paths, "gen/calc/agents/scribe/specs/specs.go")
 	require.Contains(t, paths, "gen/calc/agents/scribe/agenttools/docs_export/helpers.go")

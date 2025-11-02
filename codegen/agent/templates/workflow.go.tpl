@@ -1,13 +1,8 @@
-// {{ .Runtime.Workflow.FuncName }} is the durable workflow entry point for the agent.
+// {{ .Runtime.Workflow.FuncName }} is a placeholder workflow handler. The
+// concrete handler is registered by Register{{ .StructName }} using a closure
+// that captures the runtime. This function is not invoked at runtime.
 func {{ .Runtime.Workflow.FuncName }}(ctx engine.WorkflowContext, input any) (any, error) {
-    runInput, ok := input.(runtime.RunInput)
-    if !ok {
-        return nil, errors.New("invalid run input")
-    }
-    if runtime.Default() == nil {
-        return nil, errors.New("runtime not initialized")
-    }
-    return runtime.Default().ExecuteWorkflow(ctx, runInput)
+    return nil, errors.New("unreachable workflow handler")
 }
 
 // {{ .Runtime.Workflow.DefinitionVar }} describes the workflow for runtime registration.

@@ -27,17 +27,11 @@
 
 {{- range .Runtime.Activities }}
 {{- if eq .Kind "plan" }}
-// {{ .FuncName }} handles the {{ .Name }} activity.
+// {{ .FuncName }} is a placeholder for the {{ .Name }} activity. The concrete
+// handler is registered by Register{{ $.StructName }} using a closure that captures
+// the runtime. This function is not invoked at runtime.
 func {{ .FuncName }}(ctx context.Context, input any) (any, error) {
-    payload, ok := input.(agentsruntime.PlanActivityInput)
-    if !ok {
-        return nil, errors.New("invalid plan activity input")
-    }
-    rt := agentsruntime.Default()
-    if rt == nil {
-        return nil, errors.New("runtime not initialized")
-    }
-    return rt.PlanStartActivity(ctx, payload)
+    return nil, errors.New("unreachable activity handler")
 }
 
 // {{ .DefinitionVar }} describes the activity for runtime registration.
@@ -48,17 +42,11 @@ var {{ .DefinitionVar }} = engine.ActivityDefinition{
 }
 
 {{- else if eq .Kind "resume" }}
-// {{ .FuncName }} handles the {{ .Name }} activity.
+// {{ .FuncName }} is a placeholder for the {{ .Name }} activity. The concrete
+// handler is registered by Register{{ $.StructName }} using a closure that captures
+// the runtime. This function is not invoked at runtime.
 func {{ .FuncName }}(ctx context.Context, input any) (any, error) {
-    payload, ok := input.(agentsruntime.PlanActivityInput)
-    if !ok {
-        return nil, errors.New("invalid plan activity input")
-    }
-    rt := agentsruntime.Default()
-    if rt == nil {
-        return nil, errors.New("runtime not initialized")
-    }
-    return rt.PlanResumeActivity(ctx, payload)
+    return nil, errors.New("unreachable activity handler")
 }
 
 // {{ .DefinitionVar }} describes the activity for runtime registration.
@@ -69,17 +57,11 @@ var {{ .DefinitionVar }} = engine.ActivityDefinition{
 }
 
 {{- else if eq .Kind "execute_tool" }}
-// {{ .FuncName }} handles the {{ .Name }} activity.
+// {{ .FuncName }} is a placeholder for the {{ .Name }} activity. The concrete
+// handler is registered by Register{{ $.StructName }} using a closure that captures
+// the runtime. This function is not invoked at runtime.
 func {{ .FuncName }}(ctx context.Context, input any) (any, error) {
-    payload, ok := input.(agentsruntime.ToolInput)
-    if !ok {
-        return nil, errors.New("invalid tool activity input")
-    }
-    rt := agentsruntime.Default()
-    if rt == nil {
-        return nil, errors.New("runtime not initialized")
-    }
-    return rt.ExecuteToolActivity(ctx, payload)
+    return nil, errors.New("unreachable activity handler")
 }
 
 // {{ .DefinitionVar }} describes the activity for runtime registration.

@@ -321,21 +321,21 @@ func methodFromOp(op string) string {
 
 // findExampleRoot locates the example directory.
 func findExampleRoot() string {
-    wd, _ := os.Getwd()
-    for up := 0; up < 8; up++ {
-        root := wd
-        for i := 0; i < up; i++ {
-            root = filepath.Dir(root)
-        }
-        // Use integration test fixture module exclusively
-        fx := filepath.Join(root, "integration_tests", "fixtures", "assistant")
-        if st, err := os.Stat(fx); err == nil && st.IsDir() {
-            if _, err := os.Stat(filepath.Join(fx, "go.mod")); err == nil {
-                return fx
-            }
-        }
-    }
-    return ""
+	wd, _ := os.Getwd()
+	for up := 0; up < 8; up++ {
+		root := wd
+		for i := 0; i < up; i++ {
+			root = filepath.Dir(root)
+		}
+		// Use integration test fixture module exclusively
+		fx := filepath.Join(root, "integration_tests", "fixtures", "assistant")
+		if st, err := os.Stat(fx); err == nil && st.IsDir() {
+			if _, err := os.Stat(filepath.Join(fx, "go.mod")); err == nil {
+				return fx
+			}
+		}
+	}
+	return ""
 }
 
 // findServerCmdDir finds the server command directory.
@@ -398,18 +398,18 @@ func regenerateExample(t *testing.T, exampleRoot string) error {
 		}
 		return nil
 	})
-    // Ensure module dependencies are present
-    tidyCmd := exec.CommandContext(
-        context.Background(),
-        "go",
-        "mod",
-        "tidy",
-    )
-    tidyCmd.Dir = exampleRoot
-    if out, err := tidyCmd.CombinedOutput(); err != nil {
-        return fmt.Errorf("go mod tidy failed: %w\n%s", err, string(out))
-    }
-    // Run goa gen
+	// Ensure module dependencies are present
+	tidyCmd := exec.CommandContext(
+		context.Background(),
+		"go",
+		"mod",
+		"tidy",
+	)
+	tidyCmd.Dir = exampleRoot
+	if out, err := tidyCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("go mod tidy failed: %w\n%s", err, string(out))
+	}
+	// Run goa gen
 	genCmd := exec.CommandContext(
 		context.Background(),
 		"go",

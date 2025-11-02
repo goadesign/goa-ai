@@ -73,7 +73,8 @@ This creates the generated tree under `gen/` and runnable examples under `cmd/or
 
 ## 4) Add the tiniest planner + runner (cmd/demo/main.go)
 
-This wires the Temporal engine, registers the generated agent, and runs a single turn.
+This wires the runtime and runs a single turn. By default, the runtime uses an
+in-memory engine so you can run without Temporal during development.
 
 ```go
 package main
@@ -82,10 +83,7 @@ import (
     "context"
     "fmt"
 
-    "go.temporal.io/sdk/client"
-
     chat "example.com/quickstart/gen/orchestrator/agents/chat"
-    "goa.design/goa-ai/runtime/agent/engine/temporal"
     "goa.design/goa-ai/runtime/agent/planner"
     "goa.design/goa-ai/runtime/agent/runtime"
 )
@@ -105,26 +103,19 @@ func (p *StubPlanner) PlanResume(ctx context.Context, in planner.PlanResumeInput
 }
 
 func main() {
-    // 1) Engine (Temporal dev server)
-    eng, err := temporal.New(temporal.Options{
-        ClientOptions: &client.Options{HostPort: "127.0.0.1:7233", Namespace: "default"},
-        WorkerOptions: temporal.WorkerOptions{TaskQueue: "orchestrator.chat"},
-    })
-    if err != nil { panic(err) }
-    defer eng.Close()
+    // 1) Runtime (uses in-memory engine by default)
+    rt := runtime.New()
 
-    // 2) Runtime
-    rt := runtime.New(runtime.Options{Engine: eng})
-    runtime.SetDefault(rt)
-
-    // 3) Register generated agent with our planner
+    // 2) Register generated agent with our planner
     if err := chat.RegisterChatAgent(context.Background(), rt, chat.ChatAgentConfig{Planner: &StubPlanner{}}); err != nil {
         panic(err)
     }
 
-    // 4) Run it
-    out, err := chat.Run(context.Background(), rt, "session-1",
+    // 3) Run it using the generated typed client
+    client := chat.NewClient(rt)
+    out, err := client.Run(context.Background(),
         []planner.AgentMessage{{Role: "user", Content: "Say hi"}},
+        runtime.WithSessionID("session-1"),
     )
     if err != nil { panic(err) }
     fmt.Println("RunID:", out.RunID)
@@ -132,13 +123,17 @@ func main() {
 }
 ```
 
-## 5) Start Temporal dev (one‑liner)
+## 5) (Optional) Start Temporal dev (one‑liner)
 
 ```
 docker run --rm -d --name temporal-dev -p 7233:7233 temporalio/auto-setup:latest
 ```
 
 Alternatively, install Temporalite or point the client to an existing cluster.
+
+To use Temporal instead of the in-memory engine, construct the engine and pass
+it to `runtime.New(runtime.Options{Engine: eng})`. The rest of the code remains
+identical.
 
 ## 6) Run the demo
 

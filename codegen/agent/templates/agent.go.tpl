@@ -1,3 +1,6 @@
+// AgentID is the fully-qualified identifier for this agent.
+const AgentID agent.Ident = {{ printf "%q" .ID }}
+
 // {{ .StructName }} wraps the planner implementation for agent "{{ .Name }}".
 type {{ .StructName }} struct {
     Planner planner.Planner
@@ -11,22 +14,32 @@ func New{{ .StructName }}(cfg {{ .ConfigType }}) (*{{ .StructName }}, error) {
     return &{{ .StructName }}{Planner: cfg.Planner}, nil
 }
 
-// Run invokes this agent using the provided runtime and messages.
-// sessionID is required and is applied via runtime.WithSessionID.
-func Run(ctx context.Context, rt *runtime.Runtime, sessionID string, messages []planner.AgentMessage, opts ...runtime.RunOption) (runtime.RunOutput, error) {
-    if strings.TrimSpace(sessionID) == "" {
-        return runtime.RunOutput{}, errors.New("session id is required")
+// NewWorker returns a per-agent worker configuration. Engines that support
+// workers (e.g., Temporal) use this to bind the agent's workflow and activities
+// to a specific queue. Supplying no options uses the generated default queue.
+func NewWorker(opts ...runtime.WorkerOption) runtime.WorkerConfig {
+    var cfg runtime.WorkerConfig
+    for _, o := range opts {
+        if o != nil {
+            o(&cfg)
+        }
     }
-    opts = append(opts, runtime.WithSessionID(sessionID))
-    return rt.RunAgent(ctx, {{ printf "%q" .ID }}, messages, opts...)
+    return cfg
 }
 
-// Start begins execution of this agent and returns a workflow handle.
-// sessionID is required and is applied via runtime.WithSessionID.
-func Start(ctx context.Context, rt *runtime.Runtime, sessionID string, messages []planner.AgentMessage, opts ...runtime.RunOption) (engine.WorkflowHandle, error) {
-    if strings.TrimSpace(sessionID) == "" {
-        return nil, errors.New("session id is required")
+// Route returns the minimal route required to construct a client in a
+// caller process without registering the agent locally.
+func Route() runtime.AgentRoute {
+    return runtime.AgentRoute{
+        ID:              AgentID,
+        WorkflowName:    {{ printf "%q" .Runtime.Workflow.Name }},
+        DefaultTaskQueue: {{ printf "%q" .Runtime.Workflow.Queue }},
     }
-    opts = append(opts, runtime.WithSessionID(sessionID))
-    return rt.StartAgent(ctx, {{ printf "%q" .ID }}, messages, opts...)
+}
+
+// NewClient returns a runtime.AgentClient bound to this agent. In caller
+// processes that do not register the agent locally, this uses ClientMeta to
+// construct a client that can start workflows against remote workers.
+func NewClient(rt *runtime.Runtime) runtime.AgentClient {
+    return rt.MustClientFor(Route())
 }

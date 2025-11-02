@@ -8,6 +8,8 @@ package model
 import (
 	"context"
 	"errors"
+
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
@@ -158,7 +160,7 @@ type (
 	ToolCall struct {
 		// Name identifies which tool should be invoked (must match a ToolDefinition.Name
 		// from the request).
-		Name string
+		Name tools.Ident
 
 		// Payload carries the JSON arguments requested by the model, typically as a
 		// map[string]any or struct. The shape conforms to the InputSchema provided

@@ -15,6 +15,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	toolerrors "goa.design/goa-ai/runtime/agent/toolerrors"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 // ToolError represents a structured tool failure and is an alias to the runtime toolerrors type.
@@ -164,9 +165,9 @@ type (
 	// ToolRequest schedules a single tool invocation. The runtime validates the
 	// tool name against the allowlist and marshals the payload for execution.
 	ToolRequest struct {
-		// Name identifies the tool to execute (e.g., "search", "calculate"). Must match
+		// Name identifies the tool to execute (e.g., "service.toolset.tool"). Must match
 		// a registered tool in the agent's toolset.
-		Name string
+		Name tools.Ident
 
 		// Payload is the tool-specific argument payload, typically a map[string]any or
 		// struct matching the tool's input schema. The runtime serializes this for
@@ -236,7 +237,7 @@ type (
 
 		// Tool identifies the tool involved in the failure (e.g., "search", "calculate").
 		// Required field. Policy engines use this to target tool-specific mitigations.
-		Tool string
+		Tool tools.Ident
 
 		// RestrictToTool signals the policy engine should allow only this tool on the
 		// next turn, implementing a circuit breaker pattern for other tools. This prevents
@@ -274,7 +275,7 @@ type (
 	// PlanResume for integration into the next reasoning turn.
 	ToolResult struct {
 		// Name identifies the tool that was executed (matches ToolRequest.Name).
-		Name string
+		Name tools.Ident
 
 		// Result carries the tool result payload if successful (e.g., search results,
 		// calculation output). Nil if Error is set.

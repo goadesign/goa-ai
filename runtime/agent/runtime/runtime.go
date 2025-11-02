@@ -17,19 +17,12 @@
 // with MongoDB-backed stores (features/memory/mongo, features/run/mongo) and
 // Temporal as the workflow engine.
 //
-// Example usage:
+// Example usage: use AgentClient for execution.
 //
-//	rt := runtime.New(runtime.Options{
-//	    Engine:      temporalEngine,
-//	    MemoryStore: memoryStore,
-//	    RunStore:    runStore,
-//	    Policy:      policyEngine,
-//	})
-//	rt.RegisterAgent(ctx, agentReg)
-//	output, err := rt.Run(ctx, runtime.RunInput{
-//	    AgentID:  "service.agent",
-//	    Messages: messages,
-//	})
+//	rt := runtime.New(runtime.Options{ Engine: temporalEngine, ... })
+//	_ = rt.RegisterAgent(ctx, agentReg)
+//	client := rt.MustClient(agent.Ident("service.agent"))
+//	out, err := client.Run(ctx, messages, runtime.WithSessionID("s1"))
 package runtime
 
 import (
@@ -41,7 +34,9 @@ import (
 	"sync"
 	"time"
 
+	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
+	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/memory"
@@ -69,7 +64,7 @@ type (
 	// Lifecycle:
 	//  1. Construct with New()
 	//  2. Register agents, toolsets, and models
-	//  3. Start workflows via Run() or StartRun()
+	//  3. Start workflows via AgentClient (Run or Start)
 	//
 	// The Runtime automatically subscribes to hooks for memory persistence and
 	// stream publishing when MemoryStore or Stream are configured.
@@ -94,13 +89,25 @@ type (
 		mu        sync.RWMutex
 		agents    map[string]AgentRegistration
 		toolsets  map[string]ToolsetRegistration
-		toolSpecs map[string]tools.ToolSpec
+		toolSpecs map[tools.Ident]tools.ToolSpec
 		// parsed tool payload schemas cached by tool name for hint building
 		toolSchemas map[string]map[string]any
 		models      map[string]model.Client
 
+		// Per-agent tool specs registered during agent registration for introspection.
+		agentToolSpecs map[agent.Ident][]tools.ToolSpec
+
 		handleMu   sync.RWMutex
 		runHandles map[string]engine.WorkflowHandle
+
+		// workers holds optional per-agent worker configuration supplied at
+		// construction time.
+		workers map[string]WorkerConfig
+
+		// registrationClosed prevents late agent registration after the first
+		// run is submitted, avoiding dynamic handler registration on running
+		// workers (not supported by some engines).
+		registrationClosed bool
 	}
 
 	// Options configures the Runtime instance. All fields are optional except Engine
@@ -125,7 +132,28 @@ type (
 		Metrics telemetry.Metrics
 		// Tracer emits spans for planner/tool execution.
 		Tracer telemetry.Tracer
+
+		// Workers provides per-agent worker configuration. If an agent lacks
+		// an entry, the runtime uses a default worker configuration. Engines
+		// that do not poll (in-memory) ignore this map.
+		Workers map[string]WorkerConfig
 	}
+
+	// RuntimeOption configures the runtime via functional options passed to NewWith.
+	RuntimeOption func(*Options)
+
+	// WorkerConfig configures the worker for a specific agent. Engines that
+	// support background workers (e.g., Temporal) use this configuration to
+	// determine queue bindings and concurrency. For in-memory engines this is
+	// ignored.
+	WorkerConfig struct {
+		// Queue overrides the default task queue for this agent's workflow and
+		// activities. When empty the generated default queue is used.
+		Queue string
+	}
+
+	// WorkerOption configures a WorkerConfig.
+	WorkerOption func(*WorkerConfig)
 
 	// AgentRegistration bundles the generated assets for an agent. This struct is
 	// produced by codegen and passed to RegisterAgent to make an agent available
@@ -213,9 +241,13 @@ type (
 )
 
 var (
-	// defaultRT holds the process-wide default runtime used by generated
-	// workflow/activities. Services should call SetDefault during bootstrap.
-	defaultRT *Runtime
+	// Typed error sentinels for common invalid states.
+	ErrAgentNotFound       = errors.New("agent not found")
+	ErrEngineNotConfigured = errors.New("runtime engine not configured")
+	ErrInvalidConfig       = errors.New("invalid configuration")
+	ErrMissingSessionID    = errors.New("session id is required")
+	ErrWorkflowStartFailed = errors.New("workflow start failed")
+	ErrRegistrationClosed  = errors.New("registration closed after first run")
 )
 
 // RunOption configures the RunInput constructed by RunAgent and StartAgent.
@@ -237,31 +269,82 @@ func WithLabels(labels map[string]string) RunOption {
 	return func(in *RunInput) { in.Labels = mergeLabels(in.Labels, labels) }
 }
 
+// WithTurnID sets the TurnID on the constructed RunInput.
+func WithTurnID(id string) RunOption {
+	return func(in *RunInput) { in.TurnID = id }
+}
+
+// WithMetadata merges the provided metadata into the constructed RunInput.
+func WithMetadata(meta map[string]any) RunOption {
+	return func(in *RunInput) {
+		if len(meta) == 0 {
+			return
+		}
+		if in.Metadata == nil {
+			in.Metadata = make(map[string]any, len(meta))
+		}
+		for k, v := range meta {
+			in.Metadata[k] = v
+		}
+	}
+}
+
+// WithTaskQueue sets the target task queue on WorkflowOptions for this run.
+func WithTaskQueue(name string) RunOption {
+	return func(in *RunInput) {
+		if in.WorkflowOptions == nil {
+			in.WorkflowOptions = &WorkflowOptions{}
+		}
+		in.WorkflowOptions.TaskQueue = name
+	}
+}
+
+// WithMemo sets memo on WorkflowOptions for this run.
+func WithMemo(m map[string]any) RunOption {
+	return func(in *RunInput) {
+		if in.WorkflowOptions == nil {
+			in.WorkflowOptions = &WorkflowOptions{}
+		}
+		// merge shallow
+		if in.WorkflowOptions.Memo == nil {
+			in.WorkflowOptions.Memo = make(map[string]any, len(m))
+		}
+		for k, v := range m {
+			in.WorkflowOptions.Memo[k] = v
+		}
+	}
+}
+
+// WithSearchAttributes sets search attributes on WorkflowOptions for this run.
+func WithSearchAttributes(sa map[string]any) RunOption {
+	return func(in *RunInput) {
+		if in.WorkflowOptions == nil {
+			in.WorkflowOptions = &WorkflowOptions{}
+		}
+		if in.WorkflowOptions.SearchAttributes == nil {
+			in.WorkflowOptions.SearchAttributes = make(map[string]any, len(sa))
+		}
+		for k, v := range sa {
+			in.WorkflowOptions.SearchAttributes[k] = v
+		}
+	}
+}
+
 // WithWorkflowOptions sets workflow engine options on the constructed RunInput.
 func WithWorkflowOptions(o *WorkflowOptions) RunOption {
 	return func(in *RunInput) { in.WorkflowOptions = o }
 }
 
-// Default returns the process-wide default Runtime. Generated workflow and
-// activity code use this value to route execution into the correct runtime
-// instance. It is nil until SetDefault is called by service bootstrap code.
-func Default() *Runtime { return defaultRT }
-
-// SetDefault sets the process-wide default Runtime used by generated workflow
-// and activity handlers. Call this during service/bootstrap initialization
-// after constructing the runtime via New.
-func SetDefault(r *Runtime) { defaultRT = r }
-
-// New constructs a Runtime with the provided options. If Hooks, Logger, Metrics, or
-// Tracer are nil, noop implementations are substituted. The returned Runtime is
-// immediately usable for agent registration but requires an Engine to start workflows.
-//
-// The constructor automatically subscribes to hooks for memory persistence (if
-// MemoryStore is configured) and stream publishing (if Stream is configured).
-func New(opts Options) *Runtime {
+// newFromOptions constructs a Runtime using the provided options. Internal helper
+// used by the public New(...RuntimeOption) constructor.
+func newFromOptions(opts Options) *Runtime {
 	bus := opts.Hooks
 	if bus == nil {
 		bus = hooks.NewBus()
+	}
+	eng := opts.Engine
+	if eng == nil {
+		eng = engineinmem.New()
 	}
 	metrics := opts.Metrics
 	if metrics == nil {
@@ -276,21 +359,23 @@ func New(opts Options) *Runtime {
 		tracer = telemetry.NoopTracer{}
 	}
 	rt := &Runtime{
-		Engine:      opts.Engine,
-		Memory:      opts.MemoryStore,
-		Policy:      opts.Policy,
-		RunStore:    opts.RunStore,
-		Bus:         bus,
-		Stream:      opts.Stream,
-		logger:      logger,
-		metrics:     metrics,
-		tracer:      tracer,
-		agents:      make(map[string]AgentRegistration),
-		toolsets:    make(map[string]ToolsetRegistration),
-		toolSpecs:   make(map[string]tools.ToolSpec),
-		toolSchemas: make(map[string]map[string]any),
-		models:      make(map[string]model.Client),
-		runHandles:  make(map[string]engine.WorkflowHandle),
+		Engine:         eng,
+		Memory:         opts.MemoryStore,
+		Policy:         opts.Policy,
+		RunStore:       opts.RunStore,
+		Bus:            bus,
+		Stream:         opts.Stream,
+		logger:         logger,
+		metrics:        metrics,
+		tracer:         tracer,
+		agents:         make(map[string]AgentRegistration),
+		toolsets:       make(map[string]ToolsetRegistration),
+		toolSpecs:      make(map[tools.Ident]tools.ToolSpec),
+		toolSchemas:    make(map[string]map[string]any),
+		models:         make(map[string]model.Client),
+		runHandles:     make(map[string]engine.WorkflowHandle),
+		agentToolSpecs: make(map[agent.Ident][]tools.ToolSpec),
+		workers:        opts.Workers,
 	}
 	if rt.Memory != nil {
 		memSub := hooks.SubscriberFunc(func(ctx context.Context, event hooks.Event) error {
@@ -357,6 +442,63 @@ func New(opts Options) *Runtime {
 	return rt
 }
 
+// New constructs a Runtime using functional options. It installs sane defaults
+// (in-memory engine, noop logger/metrics/tracer, in-process event bus) when not
+// provided. The returned Runtime is immediately usable for agent registration.
+func New(opts ...RuntimeOption) *Runtime {
+	var o Options
+	for _, fn := range opts {
+		if fn != nil {
+			fn(&o)
+		}
+	}
+	return newFromOptions(o)
+}
+
+// WithEngine sets the workflow engine.
+func WithEngine(e engine.Engine) RuntimeOption { return func(o *Options) { o.Engine = e } }
+
+// WithMemoryStore sets the memory store.
+func WithMemoryStore(m memory.Store) RuntimeOption { return func(o *Options) { o.MemoryStore = m } }
+
+// WithRunStore sets the run metadata store.
+func WithRunStore(s run.Store) RuntimeOption { return func(o *Options) { o.RunStore = s } }
+
+// WithPolicy sets the policy engine.
+func WithPolicy(p policy.Engine) RuntimeOption { return func(o *Options) { o.Policy = p } }
+
+// WithStream sets the stream sink.
+func WithStream(s stream.Sink) RuntimeOption { return func(o *Options) { o.Stream = s } }
+
+// WithHooks sets the event bus.
+func WithHooks(b hooks.Bus) RuntimeOption { return func(o *Options) { o.Hooks = b } }
+
+// WithLogger sets the logger.
+func WithLogger(l telemetry.Logger) RuntimeOption { return func(o *Options) { o.Logger = l } }
+
+// WithMetrics sets the metrics recorder.
+func WithMetrics(m telemetry.Metrics) RuntimeOption { return func(o *Options) { o.Metrics = m } }
+
+// WithTracer sets the tracer.
+func WithTracer(t telemetry.Tracer) RuntimeOption { return func(o *Options) { o.Tracer = t } }
+
+// WithWorker configures the worker for a specific agent. Engines that support
+// worker polling use this configuration to bind the agent to a specific queue.
+// If unspecified, a default worker configuration is used.
+func WithWorker(id agent.Ident, cfg WorkerConfig) RuntimeOption {
+	return func(o *Options) {
+		if o.Workers == nil {
+			o.Workers = make(map[string]WorkerConfig)
+		}
+		o.Workers[string(id)] = cfg
+	}
+}
+
+// WithQueue returns a WorkerOption that sets the queue name on a WorkerConfig.
+func WithQueue(name string) WorkerOption {
+	return func(c *WorkerConfig) { c.Queue = name }
+}
+
 // RegisterAgent validates the registration, registers workflows and activities with
 // the engine, and stores the agent metadata for later lookup. Returns an error if
 // required fields are missing or if engine registration fails.
@@ -364,26 +506,44 @@ func New(opts Options) *Runtime {
 // All agents must be registered before workflows can be started. Generated code
 // calls this during initialization.
 func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) error {
+	r.mu.RLock()
+	if r.registrationClosed {
+		r.mu.RUnlock()
+		return ErrRegistrationClosed
+	}
+	r.mu.RUnlock()
 	if reg.ID == "" {
-		return errors.New("agent registration missing ID")
+		return fmt.Errorf("%w: missing agent ID", ErrInvalidConfig)
 	}
 	if reg.Planner == nil {
-		return errors.New("agent registration missing planner")
+		return fmt.Errorf("%w: missing planner", ErrInvalidConfig)
 	}
 	if reg.Workflow.Handler == nil {
-		return errors.New("agent registration missing workflow handler")
+		return fmt.Errorf("%w: missing workflow handler", ErrInvalidConfig)
 	}
 	if reg.ExecuteToolActivity == "" {
-		return errors.New("agent registration missing execute tool activity")
+		return fmt.Errorf("%w: missing execute tool activity name", ErrInvalidConfig)
 	}
 	if reg.PlanActivityName == "" {
-		return errors.New("agent registration missing plan activity")
+		return fmt.Errorf("%w: missing plan activity name", ErrInvalidConfig)
 	}
 	if reg.ResumeActivityName == "" {
-		return errors.New("agent registration missing resume activity")
+		return fmt.Errorf("%w: missing resume activity name", ErrInvalidConfig)
 	}
 	if r.Engine == nil {
-		return errors.New("runtime engine not configured")
+		return ErrEngineNotConfigured
+	}
+
+	// Apply per-agent worker overrides before engine registration.
+	if cfg, ok := r.workers[reg.ID]; ok {
+		if q := strings.TrimSpace(cfg.Queue); q != "" {
+			reg.Workflow.TaskQueue = q
+			for i := range reg.Activities {
+				reg.Activities[i].Options.Queue = q
+			}
+			reg.PlanActivityOptions.Queue = q
+			reg.ResumeActivityOptions.Queue = q
+		}
 	}
 
 	if err := r.Engine.RegisterWorkflow(ctx, reg.Workflow); err != nil {
@@ -401,6 +561,12 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	r.mu.Lock()
 	r.agents[reg.ID] = reg
 	r.addToolSpecsLocked(reg.Specs)
+	if len(reg.Specs) > 0 {
+		// store a shallow copy to avoid external mutation
+		cp := make([]tools.ToolSpec, len(reg.Specs))
+		copy(cp, reg.Specs)
+		r.agentToolSpecs[agent.Ident(reg.ID)] = cp
+	}
 	for _, ts := range reg.Toolsets {
 		r.addToolsetLocked(ts)
 	}
@@ -443,22 +609,18 @@ func (r *Runtime) RegisterModel(id string, client model.Client) error {
 
 // Toolset returns a registered toolset by ID if present. The boolean indicates
 // whether the toolset was found.
-func (r *Runtime) Toolset(id string) (ToolsetRegistration, bool) {
-	return r.LookupToolset(id)
-}
-
-// LookupToolset retrieves a registered toolset by name. Returns false if the
-// toolset is not registered.
-func (r *Runtime) LookupToolset(id string) (ToolsetRegistration, bool) {
+// lookupToolset retrieves a registered toolset by name. Returns false if the
+// toolset is not registered. Intended for internal/runtime use and codegen.
+func (r *Runtime) lookupToolset(id string) (ToolsetRegistration, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	ts, ok := r.toolsets[id]
 	return ts, ok
 }
 
-// Agent returns the registered agent by ID if present. The boolean indicates
-// whether the agent was found.
-func (r *Runtime) Agent(id string) (AgentRegistration, bool) {
+// agentByID returns the registered agent by ID if present. The boolean indicates
+// whether the agent was found. Intended for internal/runtime use and codegen.
+func (r *Runtime) agentByID(id string) (AgentRegistration, bool) {
 	r.mu.RLock()
 	agent, ok := r.agents[id]
 	r.mu.RUnlock()
@@ -517,7 +679,7 @@ func (r *Runtime) ExecuteAgentInline(
 	}
 
 	// Look up agent registration
-	reg, ok := r.Agent(agentID)
+	reg, ok := r.agentByID(agentID)
 	if !ok {
 		return nil, fmt.Errorf("agent %q not registered", agentID)
 	}
@@ -582,73 +744,54 @@ func (r *Runtime) ExecuteAgentInline(
 // Run starts the agent workflow synchronously and waits for the final output.
 // Generated Goa transports call this helper to offer a simple request/response API.
 // Returns an error if the workflow fails to start or execute.
-func (r *Runtime) Run(ctx context.Context, input RunInput) (RunOutput, error) {
-	h, err := r.StartRun(ctx, input)
-	if err != nil {
-		return RunOutput{}, err
-	}
-	var out RunOutput
-	if err := h.Wait(ctx, &out); err != nil {
-		return RunOutput{}, err
-	}
-	return out, nil
-}
-
-// RunAgent starts a run for the given agent and messages and waits for completion.
-// It is a high-level convenience over Run that constructs RunInput from arguments
-// and applies optional RunOptions.
-func (r *Runtime) RunAgent(
-	ctx context.Context,
-	agentID string,
-	messages []planner.AgentMessage,
-	opts ...RunOption,
-) (RunOutput, error) {
-	in := RunInput{AgentID: agentID, Messages: messages}
-	for _, o := range opts {
-		o(&in)
-	}
-	return r.Run(ctx, in)
-}
-
-// StartAgent starts a run for the given agent and messages and returns the workflow handle.
-// It is a high-level convenience over StartRun that constructs RunInput from arguments
-// and applies optional RunOptions.
-func (r *Runtime) StartAgent(
-	ctx context.Context,
-	agentID string,
-	messages []planner.AgentMessage,
-	opts ...RunOption,
-) (engine.WorkflowHandle, error) {
-	in := RunInput{AgentID: agentID, Messages: messages}
-	for _, o := range opts {
-		o(&in)
-	}
-	return r.StartRun(ctx, in)
-}
+// Note: legacy helpers (Run, RunAgent, StartAgent) have been removed. Use
+// AgentClient.Run/Start obtained via Runtime.Client instead.
 
 // StartRun launches the agent workflow asynchronously and returns a workflow handle
 // so callers can wait, signal, or cancel execution. The RunID is generated if not
 // provided in the input. Returns an error if the agent is not registered or if the
 // workflow fails to start.
-func (r *Runtime) StartRun(ctx context.Context, input RunInput) (engine.WorkflowHandle, error) {
+func (r *Runtime) startRun(ctx context.Context, input *RunInput) (engine.WorkflowHandle, error) {
 	if input.AgentID == "" {
-		return nil, errors.New("agent id is required")
+		return nil, fmt.Errorf("%w: missing agent id", ErrAgentNotFound)
 	}
-	reg, ok := r.Agent(input.AgentID)
+	reg, ok := r.agentByID(input.AgentID)
 	if !ok {
-		return nil, fmt.Errorf("agent %q is not registered", input.AgentID)
+		return nil, fmt.Errorf("%w: %q", ErrAgentNotFound, input.AgentID)
 	}
+	return r.startRunOn(ctx, input, reg.Workflow.Name, reg.Workflow.TaskQueue)
+}
+
+// startRunWithMeta launches the agent workflow using client-supplied metadata
+// rather than a locally registered agent. This enables remote caller processes
+// to start runs when workers are registered in another process.
+func (r *Runtime) startRunWithRoute(ctx context.Context, input *RunInput, route AgentRoute) (engine.WorkflowHandle, error) {
+	if route.ID == "" || route.WorkflowName == "" {
+		return nil, fmt.Errorf("%w: missing route for agent client", ErrAgentNotFound)
+	}
+	if input.AgentID == "" {
+		input.AgentID = string(route.ID)
+	}
+	return r.startRunOn(ctx, input, route.WorkflowName, route.DefaultTaskQueue)
+}
+
+// startRunOn contains common start logic for both locally-registered and remote-route clients.
+func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName, defaultQueue string) (engine.WorkflowHandle, error) {
+	// Close registration on first run submission to avoid dynamic handler registration after workers may have started.
+	r.mu.Lock()
+	r.registrationClosed = true
+	r.mu.Unlock()
 	if input.RunID == "" {
 		input.RunID = generateRunID(input.AgentID)
 	}
 	if strings.TrimSpace(input.SessionID) == "" {
-		return nil, errors.New("session id is required")
+		return nil, ErrMissingSessionID
 	}
-	r.recordRunStatus(ctx, &input, run.StatusPending, nil)
+	r.recordRunStatus(ctx, input, run.StatusPending, nil)
 	req := engine.WorkflowStartRequest{
 		ID:        input.RunID,
-		Workflow:  reg.Workflow.Name,
-		TaskQueue: reg.Workflow.TaskQueue,
+		Workflow:  workflowName,
+		TaskQueue: defaultQueue,
 		Input:     input,
 	}
 	if opts := input.WorkflowOptions; opts != nil {
@@ -663,7 +806,7 @@ func (r *Runtime) StartRun(ctx context.Context, input RunInput) (engine.Workflow
 	}
 	handle, err := r.Engine.StartWorkflow(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrWorkflowStartFailed, err)
 	}
 	r.storeWorkflowHandle(input.RunID, handle)
 	return handle, nil
@@ -712,7 +855,7 @@ func (r *Runtime) addToolSpecsLocked(specs []tools.ToolSpec) {
 			if len(spec.Payload.Schema) > 0 {
 				var m map[string]any
 				if err := json.Unmarshal(spec.Payload.Schema, &m); err == nil {
-					r.toolSchemas[spec.Name] = m
+					r.toolSchemas[string(spec.Name)] = m
 				}
 			}
 		}
@@ -720,11 +863,124 @@ func (r *Runtime) addToolSpecsLocked(specs []tools.ToolSpec) {
 }
 
 // toolSpec retrieves a tool spec by fully qualified name. Thread-safe.
-func (r *Runtime) toolSpec(name string) (tools.ToolSpec, bool) {
+func (r *Runtime) toolSpec(name tools.Ident) (tools.ToolSpec, bool) {
 	r.mu.RLock()
 	spec, ok := r.toolSpecs[name]
 	r.mu.RUnlock()
 	return spec, ok
+}
+
+// ListAgents returns the IDs of registered agents.
+func (r *Runtime) ListAgents() []agent.Ident {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.agents) == 0 {
+		return nil
+	}
+	out := make([]agent.Ident, 0, len(r.agents))
+	for id := range r.agents {
+		out = append(out, agent.Ident(id))
+	}
+	return out
+}
+
+// ListToolsets returns the names of registered toolsets.
+func (r *Runtime) ListToolsets() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.toolsets) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(r.toolsets))
+	for id := range r.toolsets {
+		out = append(out, id)
+	}
+	return out
+}
+
+// ToolSpec returns the registered ToolSpec for the given tool name.
+func (r *Runtime) ToolSpec(name tools.Ident) (tools.ToolSpec, bool) {
+	return r.toolSpec(name)
+}
+
+// ToolSpecsForAgent returns the ToolSpecs registered by the given agent.
+func (r *Runtime) ToolSpecsForAgent(agentID agent.Ident) []tools.ToolSpec {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	specs := r.agentToolSpecs[agentID]
+	if len(specs) == 0 {
+		return nil
+	}
+	out := make([]tools.ToolSpec, len(specs))
+	copy(out, specs)
+	return out
+}
+
+// ToolSchema returns the parsed JSON schema for the tool payload when available.
+func (r *Runtime) ToolSchema(name tools.Ident) (map[string]any, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	m, ok := r.toolSchemas[string(name)]
+	if !ok {
+		return nil, false
+	}
+	// shallow copy to avoid external mutation
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out, true
+}
+
+// OverridePolicy applies a best-effort in-process override of the registered agent policy.
+// Only non-zero fields are applied (and InterruptsAllowed when true). Overrides affect
+// subsequent runs and are local to this runtime instance.
+func (r *Runtime) OverridePolicy(agentID agent.Ident, delta RunPolicy) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	reg, ok := r.agents[string(agentID)]
+	if !ok {
+		return ErrAgentNotFound
+	}
+	if delta.MaxToolCalls > 0 {
+		reg.Policy.MaxToolCalls = delta.MaxToolCalls
+	}
+	if delta.MaxConsecutiveFailedToolCalls > 0 {
+		reg.Policy.MaxConsecutiveFailedToolCalls = delta.MaxConsecutiveFailedToolCalls
+	}
+	if delta.TimeBudget > 0 {
+		reg.Policy.TimeBudget = delta.TimeBudget
+	}
+	if delta.InterruptsAllowed {
+		reg.Policy.InterruptsAllowed = true
+	}
+	r.agents[string(agentID)] = reg
+	return nil
+}
+
+// SubscribeRun registers a filtered stream subscriber for the given runID and returns
+// a function that closes the subscription and the sink.
+func (r *Runtime) SubscribeRun(ctx context.Context, runID string, sink stream.Sink) (func(), error) {
+	// Reuse the standard stream subscriber and filter by run ID.
+	sub, err := stream.NewSubscriber(sink)
+	if err != nil {
+		return nil, err
+	}
+	filtered := hooks.SubscriberFunc(func(c context.Context, evt hooks.Event) error {
+		if evt.RunID() != runID {
+			return nil
+		}
+		return sub.HandleEvent(c, evt)
+	})
+	s, err := r.Bus.Register(filtered)
+	if err != nil {
+		return nil, err
+	}
+	closeFn := func() {
+		_ = s.Close()
+		_ = sink.Close(ctx)
+	}
+	return closeFn, nil
 }
 
 func (r *Runtime) storeWorkflowHandle(runID string, handle engine.WorkflowHandle) {

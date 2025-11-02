@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"goa.design/goa-ai/runtime/agent/policy"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 // Options configures the basic policy engine.
@@ -31,8 +32,8 @@ type Options struct {
 type Engine struct {
 	allowTags  map[string]struct{}
 	blockTags  map[string]struct{}
-	allowTools map[string]struct{}
-	blockTools map[string]struct{}
+	allowTools map[tools.Ident]struct{}
+	blockTools map[tools.Ident]struct{}
 	honorHints bool
 	label      string
 }
@@ -46,10 +47,10 @@ func New(opts Options) (*Engine, error) {
 		label = "basic"
 	}
 	e := &Engine{
-		allowTags:  toSet(opts.AllowTags),
-		blockTags:  toSet(opts.BlockTags),
-		allowTools: toSet(opts.AllowTools),
-		blockTools: toSet(opts.BlockTools),
+		allowTags:  toSet[string](opts.AllowTags),
+		blockTags:  toSet[string](opts.BlockTags),
+		allowTools: toSet[tools.Ident](opts.AllowTools),
+		blockTools: toSet[tools.Ident](opts.BlockTools),
 		honorHints: !opts.DisableRetryHints,
 		label:      label,
 	}
@@ -86,14 +87,14 @@ func (e *Engine) Decide(_ context.Context, input policy.Input) (policy.Decision,
 	}, nil
 }
 
-func (e *Engine) filterAllowed(handles []policy.ToolHandle, meta map[string]policy.ToolMetadata) []policy.ToolHandle {
-	filtered := make([]policy.ToolHandle, 0, len(handles))
-	seen := make(map[string]struct{}, len(handles))
+func (e *Engine) filterAllowed(handles []tools.Ident, meta map[tools.Ident]policy.ToolMetadata) []tools.Ident {
+	filtered := make([]tools.Ident, 0, len(handles))
+	seen := make(map[tools.Ident]struct{}, len(handles))
 	for _, handle := range handles {
-		if _, ok := seen[handle.ID]; ok {
+		if _, ok := seen[handle]; ok {
 			continue
 		}
-		md, ok := meta[handle.ID]
+		md, ok := meta[handle]
 		if !ok {
 			continue
 		}
@@ -101,7 +102,7 @@ func (e *Engine) filterAllowed(handles []policy.ToolHandle, meta map[string]poli
 			continue
 		}
 		filtered = append(filtered, handle)
-		seen[handle.ID] = struct{}{}
+		seen[handle] = struct{}{}
 	}
 	return filtered
 }
@@ -135,16 +136,16 @@ func (e *Engine) isAllowed(meta policy.ToolMetadata) bool {
 }
 
 func (e *Engine) applyRetryHint(
-	allowed []policy.ToolHandle, meta map[string]policy.ToolMetadata,
+	allowed []tools.Ident, meta map[tools.Ident]policy.ToolMetadata,
 	caps policy.CapsState, hint *policy.RetryHint,
-) ([]policy.ToolHandle, policy.CapsState) {
+) ([]tools.Ident, policy.CapsState) {
 	if hint == nil || hint.Tool == "" {
 		return allowed, caps
 	}
 	switch {
 	case hint.RestrictToTool:
 		if _, ok := meta[hint.Tool]; ok {
-			allowed = []policy.ToolHandle{{ID: hint.Tool}}
+			allowed = []tools.Ident{hint.Tool}
 			caps.RemainingToolCalls = limitCap(caps.RemainingToolCalls, 1)
 		} else {
 			allowed = nil
@@ -157,21 +158,21 @@ func (e *Engine) applyRetryHint(
 	return allowed, caps
 }
 
-func candidateHandles(input policy.Input, meta map[string]policy.ToolMetadata) []policy.ToolHandle {
+func candidateHandles(input policy.Input, meta map[tools.Ident]policy.ToolMetadata) []tools.Ident {
 	if len(input.Requested) > 0 {
 		return cloneHandles(input.Requested)
 	}
-	handles := make([]policy.ToolHandle, 0, len(meta))
+	handles := make([]tools.Ident, 0, len(meta))
 	for id := range meta {
-		handles = append(handles, policy.ToolHandle{ID: id})
+		handles = append(handles, id)
 	}
 	return handles
 }
 
-func removeHandle(handles []policy.ToolHandle, id string) []policy.ToolHandle {
+func removeHandle(handles []tools.Ident, id tools.Ident) []tools.Ident {
 	filtered := handles[:0]
 	for _, handle := range handles {
-		if handle.ID == id {
+		if handle == id {
 			continue
 		}
 		filtered = append(filtered, handle)
@@ -179,28 +180,28 @@ func removeHandle(handles []policy.ToolHandle, id string) []policy.ToolHandle {
 	return filtered
 }
 
-func cloneHandles(handles []policy.ToolHandle) []policy.ToolHandle {
-	dup := make([]policy.ToolHandle, len(handles))
+func cloneHandles(handles []tools.Ident) []tools.Ident {
+	dup := make([]tools.Ident, len(handles))
 	copy(dup, handles)
 	return dup
 }
 
-func indexMetadata(list []policy.ToolMetadata) map[string]policy.ToolMetadata {
-	index := make(map[string]policy.ToolMetadata, len(list))
+func indexMetadata(list []policy.ToolMetadata) map[tools.Ident]policy.ToolMetadata {
+	index := make(map[tools.Ident]policy.ToolMetadata, len(list))
 	for _, meta := range list {
 		index[meta.ID] = meta
 	}
 	return index
 }
 
-func toSet(values []string) map[string]struct{} {
+func toSet[T ~string](values []string) map[T]struct{} {
 	if len(values) == 0 {
 		return nil
 	}
-	set := make(map[string]struct{}, len(values))
+	set := make(map[T]struct{}, len(values))
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			set[trimmed] = struct{}{}
+			set[T(trimmed)] = struct{}{}
 		}
 	}
 	if len(set) == 0 {

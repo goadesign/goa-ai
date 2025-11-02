@@ -86,8 +86,7 @@ func (p *StubPlanner) PlanResume(ctx context.Context, in planner.PlanResumeInput
 func main() {
     // 1. Create the Runtime
     // This is the central engine for all your agents.
-    rt := runtime.New(runtime.Options{})
-    runtime.SetDefault(rt) // Important: Makes the runtime available to generated code.
+    rt := runtime.New()
 
     // 2. Register Your Agent(s)
     // Let the runtime know about the agents it can manage.
@@ -106,17 +105,19 @@ func main() {
     {{- end }}{{- end }}
 
     // 3. Run it!
-    // Let's invoke our first agent and see what it says.
+    // Let's invoke our first agent and see what it says using AgentClient.
     fmt.Println("🚀 Invoking agent...")
-    out, err := {{ (index (index .Services 0).Agents 0).PackageName }}.Run(
-        context.Background(), rt, "my-first-session", // A session ID is required!
+    client := {{ (index (index .Services 0).Agents 0).PackageName }}.NewClient(rt)
+    out, err := client.Run(
+        context.Background(),
         []planner.AgentMessage{ {Role: "user", Content: "Hi there!"} },
+        runtime.WithSessionID("my-first-session"), // A session ID is required!
     )
     if err != nil { panic(err) }
 
     fmt.Println("✅ Success!")
     fmt.Println("RunID:", out.RunID)
-    fmt.Println("Assistant says:", out.Content)
+    fmt.Println("Assistant says:", out.Final.Content)
 }
 ```
 
@@ -134,9 +135,17 @@ Here are the detailed cheat sheets for each agent you designed.
 *   **Directory:** `{{ .Dir }}`
 *   **Config Struct:** `{{ .StructName }}Config`
 *   **Register Function:** `Register{{ .StructName }}(ctx, rt, cfg)`
-*   **Run Helpers:**
-    *   **Synchronous (wait for result):** `{{ .PackageName }}.Run(ctx, rt, sessionID, messages, opts...)`
-    *   **Asynchronous (get a handle):** `{{ .PackageName }}.Start(ctx, rt, sessionID, messages, opts...)`
+*   **How to Run:**
+    *   **Synchronous (wait for result):**
+        ```go
+        client := {{ .PackageName }}.NewClient(rt)
+        out, err := client.Run(ctx, messages, runtime.WithSessionID(sessionID))
+        ```
+    *   **Asynchronous (get a handle):**
+        ```go
+        client := {{ .PackageName }}.NewClient(rt)
+        handle, err := client.Start(ctx, messages, runtime.WithSessionID(sessionID))
+        ```
 *   **Workflow Name:** `{{ .Runtime.Workflow.Name }}` (Queue: `{{ .Runtime.Workflow.Queue }}`)
 
 #### Minimal Configuration
@@ -314,8 +323,9 @@ When an agent `Exports` a toolset, other agents can call it. Goa-AI generates a 
 // In your main.go, register the exported toolset so others can find it.
 reg, err := <agenttools>.NewRegistration(
     rt,
-    "You are a helpful specialist assistant.",  // A system prompt for the nested agent
-    // Tell the agent how to format the input for each tool it exposes.
+    "You are a helpful specialist assistant.",  // A system prompt for the nested agent (optional)
+    // Configure per-tool content (optional). If omitted, the runtime builds a default
+    // user message from the payload; override the builder with WithPromptBuilder.
     runtime.WithText(<agenttools>.ToolXYZ, "Please perform the following task: {{"{{"}} . {{"}}"}}"),
 )
 if err != nil { panic(err) }
@@ -328,7 +338,7 @@ if err := rt.RegisterToolset(reg); err != nil { panic(err) }
 
 ## 8. Ready for Prime Time: Advanced Features 🔭
 
-*   **Asynchronous Runs & Streaming:** Use `rt.StartAgent()` to get a workflow handle. This is great for long-running tasks or streaming updates back to a UI.
+*   **Asynchronous Runs & Streaming:** Use `client.Start()` to get a workflow handle. This is great for long-running tasks or streaming updates back to a UI.
 *   **Interrupts (Human-in-the-Loop):** If your policy allows it, you can pause and resume agent runs with `rt.PauseRun()` and `rt.ResumeRun()`.
 *   **Policies & Caps:** The `RunPolicy` in your design (max tool calls, time budgets) is automatically enforced by the runtime.
 *   **Persistence & Observability:** The `runtime.New` function accepts `runtime.Options` to configure production-grade components like a Temporal engine, MongoDB for memory, and telemetry hooks.
@@ -341,7 +351,6 @@ rt := runtime.New(runtime.Options{
     // RunStore: myMongoRunStore,
     // Stream: myEventStreamSink,
 })
-runtime.SetDefault(rt)
 ```
 
 ---
@@ -357,7 +366,7 @@ runtime.SetDefault(rt)
 ## 10. 🤔 Stuck? Common Questions & Fixes
 
 *   **Error: "runtime not initialized"**
-    *   **Fix:** Make sure you call `runtime.SetDefault(rt)` right after `runtime.New(...)`.
+*   **Fix:** Ensure you register agents with the same runtime instance you use to start runs.
 *   **Error: "agent not registered"**
     *   **Fix:** Check that `Register<AgentName>(...)` was called successfully for that agent before you tried to run it.
 *   **Error: "session id is required"**

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
@@ -60,7 +61,7 @@ type (
 		// Requested enumerates tools explicitly requested by the caller or planner
 		// (e.g., via caller override or planner-generated tool calls). Policies can
 		// use this to prioritize or restrict requested tools.
-		Requested []ToolHandle
+		Requested []tools.Ident
 
 		// Labels are arbitrary key/value pairs propagated to policy decisions. These
 		// come from the RunContext or may be augmented by prior policy decisions.
@@ -75,7 +76,7 @@ type (
 		// AllowedTools is the final allowlist of tools for this turn. The runtime
 		// ensures planners can only invoke tools in this list. Empty means no tools
 		// are allowed (planner must produce a final response).
-		AllowedTools []ToolHandle
+		AllowedTools []tools.Ident
 
 		// Caps carries the updated caps that should be enforced for this turn and
 		// subsequent turns. Policies can decrement counts (consume budget) or adjust
@@ -103,7 +104,7 @@ type (
 	ToolMetadata struct {
 		// ID is the fully qualified tool identifier (e.g., "weather.search.forecast").
 		// Format: <service>.<toolset>.<tool>.
-		ID string
+		ID tools.Ident
 
 		// Name is the human-readable tool name (e.g., "Get Weather Forecast").
 		// Used for UI display or logging.
@@ -116,14 +117,6 @@ type (
 		// Tags lists metadata labels for filtering (e.g., ["privileged", "external"]).
 		// Policies can allowlist/blocklist based on tags without hardcoding tool IDs.
 		Tags []string
-	}
-
-	// ToolHandle identifies a tool by its fully qualified ID. Used in allowlists,
-	// requested tool lists, and policy decisions to reference specific tools without
-	// carrying full metadata.
-	ToolHandle struct {
-		// ID is the fully qualified tool identifier (matches ToolMetadata.ID).
-		ID string
 	}
 
 	// CapsState tracks remaining execution budgets for a run. The runtime decrements
@@ -175,7 +168,7 @@ const (
 // before invoking Engine.Decide.
 type RetryHint struct {
 	Reason             RetryReason
-	Tool               string
+	Tool               tools.Ident
 	RestrictToTool     bool
 	MissingFields      []string
 	ExampleInput       map[string]any

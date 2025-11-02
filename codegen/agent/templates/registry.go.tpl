@@ -32,13 +32,29 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
         return err
     }
     if err := rt.RegisterAgent(ctx, agentsruntime.AgentRegistration{
-        ID:       {{ printf "%q" .ID }},
-        Planner:  agent.Planner,
-        Workflow: {{ .Runtime.Workflow.DefinitionVar }},
+        ID:      {{ printf "%q" .ID }},
+        Planner: agent.Planner,
+        Workflow: engine.WorkflowDefinition{
+            Name:      {{ printf "%q" .Runtime.Workflow.Name }},
+            TaskQueue: {{ printf "%q" .Runtime.Workflow.Queue }},
+            Handler:   agentsruntime.WorkflowHandler(rt),
+        },
 {{- if .Runtime.Activities }}
         Activities: []engine.ActivityDefinition{
 {{- range .Runtime.Activities }}
-            {{ .DefinitionVar }},
+            {
+                Name: {{ printf "%q" .Name }},
+{{- if eq .Kind "plan" }}
+                Handler: agentsruntime.PlanStartActivityHandler(rt),
+{{- else if eq .Kind "resume" }}
+                Handler: agentsruntime.PlanResumeActivityHandler(rt),
+{{- else if eq .Kind "execute_tool" }}
+                Handler: agentsruntime.ExecuteToolActivityHandler(rt),
+{{- else }}
+                Handler: func(context.Context, any) (any, error) { return nil, errors.New("activity not implemented") },
+{{- end }}
+                Options: {{ template "activityOptionsLiteral" . }},
+            },
 {{- end }}
         },
 {{- end }}

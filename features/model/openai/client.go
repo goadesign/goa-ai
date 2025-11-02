@@ -14,6 +14,7 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 // ChatClient captures the subset of the go-openai client used by the adapter.
@@ -63,14 +64,14 @@ func (c *Client) Complete(ctx context.Context, req model.Request) (model.Respons
 	if modelID == "" {
 		modelID = c.model
 	}
-    messages := make([]openai.ChatCompletionMessage, 0, len(req.Messages))
-    for _, m := range req.Messages {
-        if m == nil {
-            continue
-        }
-        messages = append(messages, openai.ChatCompletionMessage{Role: m.Role, Content: m.Content})
-    }
-    tools, err := encodeTools(req.Tools)
+	messages := make([]openai.ChatCompletionMessage, 0, len(req.Messages))
+	for _, m := range req.Messages {
+		if m == nil {
+			continue
+		}
+		messages = append(messages, openai.ChatCompletionMessage{Role: m.Role, Content: m.Content})
+	}
+	tools, err := encodeTools(req.Tools)
 	if err != nil {
 		return model.Response{}, err
 	}
@@ -95,15 +96,15 @@ func (c *Client) Stream(context.Context, model.Request) (model.Streamer, error) 
 }
 
 func encodeTools(defs []*model.ToolDefinition) ([]openai.Tool, error) {
-    if len(defs) == 0 {
-        return nil, nil
-    }
-    tools := make([]openai.Tool, 0, len(defs))
-    for _, def := range defs {
-        if def == nil {
-            continue
-        }
-        params, err := json.Marshal(def.InputSchema)
+	if len(defs) == 0 {
+		return nil, nil
+	}
+	tools := make([]openai.Tool, 0, len(defs))
+	for _, def := range defs {
+		if def == nil {
+			continue
+		}
+		params, err := json.Marshal(def.InputSchema)
 		if err != nil {
 			return nil, fmt.Errorf("marshal tool %s schema: %w", def.Name, err)
 		}
@@ -130,7 +131,7 @@ func translateResponse(resp openai.ChatCompletionResponse) model.Response {
 		for _, call := range msg.ToolCalls {
 			payload := parseToolArguments(call.Function.Arguments)
 			toolCalls = append(toolCalls, model.ToolCall{
-				Name:    call.Function.Name,
+				Name:    tools.Ident(call.Function.Name),
 				Payload: payload,
 			})
 		}

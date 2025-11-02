@@ -7,6 +7,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/toolerrors"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
@@ -126,7 +127,7 @@ type (
 		// updates can correlate with the original request.
 		ToolCallID string
 		// ToolName is the fully qualified tool identifier (e.g., "service.toolset.tool").
-		ToolName string
+		ToolName tools.Ident
 		// Payload contains the structured tool arguments (JSON-serializable) for the scheduled tool.
 		// Not pre-encoded; sinks/transports encode it for wire format.
 		Payload any
@@ -150,7 +151,7 @@ type (
 		// Empty when the tool call was scheduled directly by the planner.
 		ParentToolCallID string
 		// ToolName is the fully qualified tool identifier that was executed.
-		ToolName string
+		ToolName tools.Ident
 		// Result contains the tool's output payload. Nil if Error is set.
 		Result any
 		// Duration is the wall-clock execution time for the tool activity.
@@ -203,7 +204,7 @@ type (
 		// Reason summarizes why the retry hint was issued (e.g., "invalid_arguments").
 		Reason string
 		// ToolName identifies the tool involved in the failure, if applicable.
-		ToolName string
+		ToolName tools.Ident
 		// Message provides human-readable guidance for the retry adjustment.
 		Message string
 	}
@@ -225,7 +226,7 @@ type (
 		// invoke tools in this list. An empty slice means no tools are allowed for this turn,
 		// forcing the planner to produce a final response. Subscribers use this for security
 		// auditing and debugging tool restrictions.
-		AllowedTools []string
+		AllowedTools []tools.Ident
 		// Caps reflects the updated execution budgets after policy evaluation for this turn.
 		// This includes remaining tool call limits, consecutive failure thresholds, and time
 		// budgets. Policies may adjust these dynamically based on observed behavior (e.g.,
@@ -314,7 +315,7 @@ func NewRunResumedEvent(
 // NewPolicyDecisionEvent constructs a PolicyDecisionEvent with the provided metadata.
 func NewPolicyDecisionEvent(
 	runID, agentID string,
-	allowed []string,
+	allowed []tools.Ident,
 	caps policy.CapsState,
 	labels map[string]string,
 	metadata map[string]any,
@@ -332,7 +333,8 @@ func NewPolicyDecisionEvent(
 // structured tool arguments (JSON-serializable); queue is the activity queue name.
 // ParentToolCallID and expectedChildren are optional (empty/0 for top-level calls).
 func NewToolCallScheduledEvent(
-	runID, agentID, toolName, toolCallID string,
+	runID, agentID string,
+	toolName tools.Ident, toolCallID string,
 	payload any,
 	queue string,
 	parentToolCallID string,
@@ -353,7 +355,9 @@ func NewToolCallScheduledEvent(
 // err capture the tool outcome; duration is the wall-clock execution time;
 // telemetry carries structured observability metadata (nil if not collected).
 func NewToolResultReceivedEvent(
-	runID, agentID, toolName, toolCallID, parentToolCallID string,
+	runID, agentID string,
+	toolName tools.Ident,
+	toolCallID, parentToolCallID string,
 	result any,
 	duration time.Duration,
 	telemetry *telemetry.ToolTelemetry,
@@ -374,7 +378,8 @@ func NewToolResultReceivedEvent(
 // NewToolCallUpdatedEvent constructs a ToolCallUpdatedEvent to signal that a
 // parent tool's child count has increased due to dynamic discovery.
 func NewToolCallUpdatedEvent(
-	runID, agentID, toolCallID string,
+	runID, agentID string,
+	toolCallID string,
 	expectedChildrenTotal int,
 ) *ToolCallUpdatedEvent {
 	return &ToolCallUpdatedEvent{
@@ -406,7 +411,7 @@ func NewAssistantMessageEvent(runID, agentID, message string, structured any) *A
 
 // NewRetryHintIssuedEvent constructs a RetryHintIssuedEvent indicating a
 // suggested retry policy adjustment.
-func NewRetryHintIssuedEvent(runID, agentID, reason, toolName, message string) *RetryHintIssuedEvent {
+func NewRetryHintIssuedEvent(runID, agentID, reason string, toolName tools.Ident, message string) *RetryHintIssuedEvent {
 	return &RetryHintIssuedEvent{
 		baseEvent: newBaseEvent(runID, agentID),
 		Reason:    reason,

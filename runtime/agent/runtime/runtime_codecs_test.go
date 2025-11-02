@@ -23,7 +23,7 @@ func TestExecuteToolActivity_UsesGeneratedCodecs(t *testing.T) {
 		FromJSON: func(_ []byte) (any, error) { return "decoded_result", nil },
 	}
 	spec := tools.ToolSpec{
-		Name:    "svc.ts.tool",
+		Name:    tools.Ident("svc.ts.tool"),
 		Toolset: "svc.ts",
 		Payload: tools.TypeSpec{Name: "P", Codec: payloadCodec},
 		Result:  tools.TypeSpec{Name: "R", Codec: resultCodec},
@@ -35,7 +35,7 @@ func TestExecuteToolActivity_UsesGeneratedCodecs(t *testing.T) {
 		// Return arbitrary value; encode path should use result codec
 		return planner.ToolResult{Result: map[string]string{"status": "ok"}}, nil
 	}}}}
-	rt.toolSpecs = map[string]tools.ToolSpec{spec.Name: spec}
+	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{spec.Name: spec}
 
 	out, err := rt.ExecuteToolActivity(context.Background(), ToolInput{AgentID: "agent", RunID: "run", ToolName: spec.Name, Payload: json.RawMessage("{}")})
 	require.NoError(t, err)

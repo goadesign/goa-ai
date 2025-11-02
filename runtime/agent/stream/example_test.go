@@ -27,7 +27,7 @@ func Example_broadcast() {
 	sink := &collectSink{}
 
 	// Wire sink into the runtime; subscriber is auto-registered.
-	rt := agentsruntime.New(agentsruntime.Options{Stream: sink})
+	rt := agentsruntime.New(agentsruntime.WithStream(sink))
 
 	// Publish a user-facing hook event; the stream subscriber forwards it.
 	_ = rt.Bus.Publish(ctx, hooks.NewAssistantMessageEvent("run-1", "svc.agent", "hello", nil))

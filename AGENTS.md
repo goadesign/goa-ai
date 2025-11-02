@@ -293,7 +293,7 @@ reg, _ := agenttools.NewRegistration(rt, "",
 )
 ```
 
-Validation rules:
-- Every tool must be configured via text or template
-- A tool cannot be configured with both text and template
-- Templates are compiled with missingkey=error; use `runtime.ValidateAgentToolTemplates` for early checks
+Content rules:
+- You may configure per-tool text or templates. If neither is provided, the runtime builds a sensible default: optional SystemPrompt as a system message, followed by a user message constructed from the tool payload (string payloads are used as-is; structured payloads are JSON-encoded). You can override the default builder by supplying `WithPromptBuilder`.
+- Do not set both text and template for the same tool.
+- Templates are compiled with missingkey=error; use `runtime.ValidateAgentToolTemplates` for early checks (validation applies only to the templates you provide).

@@ -140,15 +140,15 @@ func main() {
         panic(err)
     }
 
-    handle, err := rt.StartRun(context.Background(), runtime.RunInput{
-        AgentID:  "orchestrator.chat",
-        SessionID: "session-1",
-        Messages: []planner.AgentMessage{{Role: "user", Content: "Summarize the latest status"}},
-    })
+    client := chat.NewClient(rt)
+    handle, err := client.Start(context.Background(),
+        []planner.AgentMessage{{Role: "user", Content: "Summarize the latest status"}},
+        runtime.WithSessionID("session-1"),
+    )
     if err != nil {
         panic(err)
     }
-    var out runtime.RunOutput
+    var out *runtime.RunOutput
     if err := handle.Wait(context.Background(), &out); err != nil {
         panic(err)
     }

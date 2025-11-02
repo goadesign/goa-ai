@@ -107,18 +107,18 @@ func (t *ToolExpr) validateShapes() error {
 		if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 			return
 		}
-        if _, ok := att.Type.(goaexpr.UserType); ok {
-            return
-        }
-        if goaexpr.IsPrimitive(att.Type) {
-            return
-        }
-        // Allow composite inline shapes (arrays, maps, objects, and composites).
-        switch att.Type.(type) {
-        case *goaexpr.Array, *goaexpr.Map, *goaexpr.Object, goaexpr.CompositeExpr:
-            return
-        }
-        verr.Add(t, "%s must be a user type, primitive, or composite shape", where)
+		if _, ok := att.Type.(goaexpr.UserType); ok {
+			return
+		}
+		if goaexpr.IsPrimitive(att.Type) {
+			return
+		}
+		// Allow composite inline shapes (arrays, maps, objects, and composites).
+		switch att.Type.(type) {
+		case *goaexpr.Array, *goaexpr.Map, *goaexpr.Object, goaexpr.CompositeExpr:
+			return
+		}
+		verr.Add(t, "%s must be a user type, primitive, or composite shape", where)
 	}
 	check("Args", t.Args)
 	check("Return", t.Return)

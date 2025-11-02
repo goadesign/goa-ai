@@ -48,7 +48,11 @@ func bootstrapAgents(ctx context.Context) (*agentsruntime.Runtime, func(), error
         if err != nil {
             return nil, nil, err
         }
-        rt := agentsruntime.New(agentsruntime.Options{ Engine: eng, MemoryStore: meminmem.New(), RunStore: runinmem.New() })
+        rt := agentsruntime.New(
+            agentsruntime.WithEngine(eng),
+            agentsruntime.WithMemoryStore(meminmem.New()),
+            agentsruntime.WithRunStore(runinmem.New()),
+        )
         // Register all agents in this service.
         {{- range .Agents }}
         {{- $agent := . }}
@@ -66,7 +70,10 @@ func bootstrapAgents(ctx context.Context) (*agentsruntime.Runtime, func(), error
         return rt, func() { _ = eng.Close() }, nil
     }
     // In-memory runtime for quick starts and CI (no engine).
-    rt := agentsruntime.New(agentsruntime.Options{ MemoryStore: meminmem.New(), RunStore: runinmem.New() })
+    rt := agentsruntime.New(
+        agentsruntime.WithMemoryStore(meminmem.New()),
+        agentsruntime.WithRunStore(runinmem.New()),
+    )
     cleanup := func() {}
     return rt, cleanup, nil
 }

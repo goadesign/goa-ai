@@ -15,6 +15,7 @@ import (
 
 	"goa.design/goa-ai/features/model/bedrock"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 func TestClientComplete(t *testing.T) {
@@ -44,19 +45,19 @@ func TestClientComplete(t *testing.T) {
 		StopReason: brtypes.StopReasonToolUse,
 	}
 
-    resp, err := client.Complete(context.Background(), model.Request{
-        Messages: []*model.Message{{Role: "system", Content: "You are smart."}, {Role: "user", Content: "hi"}},
-        Tools: []*model.ToolDefinition{{
-            Name:        "calc.tool",
-            Description: "calculator",
-            InputSchema: map[string]any{"type": "object"},
-        }},
-    })
+	resp, err := client.Complete(context.Background(), model.Request{
+		Messages: []*model.Message{{Role: "system", Content: "You are smart."}, {Role: "user", Content: "hi"}},
+		Tools: []*model.ToolDefinition{{
+			Name:        "calc.tool",
+			Description: "calculator",
+			InputSchema: map[string]any{"type": "object"},
+		}},
+	})
 	require.NoError(t, err)
 	require.Len(t, resp.Content, 1)
 	require.Equal(t, "hello", resp.Content[0].Content)
 	require.Len(t, resp.ToolCalls, 1)
-	require.Equal(t, "calc.tool", resp.ToolCalls[0].Name)
+	require.Equal(t, tools.Ident("calc.tool"), resp.ToolCalls[0].Name)
 	require.InDelta(t, 42.0, resp.ToolCalls[0].Payload.(map[string]any)["value"], 0.001)
 	require.Equal(t, "tool_use", resp.StopReason)
 	require.Equal(t, 120, resp.Usage.TotalTokens)
@@ -74,7 +75,7 @@ func TestClientComplete(t *testing.T) {
 func TestClientRequiresUserMessage(t *testing.T) {
 	client, err := bedrock.New(bedrock.Options{Runtime: &mockRuntime{}, Model: "id"})
 	require.NoError(t, err)
-    _, err = client.Complete(context.Background(), model.Request{Messages: []*model.Message{{Role: "system", Content: "only system"}}})
+	_, err = client.Complete(context.Background(), model.Request{Messages: []*model.Message{{Role: "system", Content: "only system"}}})
 	require.Error(t, err)
 }
 
@@ -127,15 +128,15 @@ func TestClientStream(t *testing.T) {
 	}
 
 	mock.streamOutput = newFakeStreamOutput(events, nil)
-    streamer, err := client.Stream(context.Background(), model.Request{
-        Messages: []*model.Message{{Role: "system", Content: "system"}, {Role: "user", Content: "hello"}},
-        Tools: []*model.ToolDefinition{{
-            Name:        "search",
-            Description: "search",
-            InputSchema: map[string]any{"type": "object"},
-        }},
-        Thinking: &model.ThinkingOptions{Enable: true, BudgetTokens: 1024},
-    })
+	streamer, err := client.Stream(context.Background(), model.Request{
+		Messages: []*model.Message{{Role: "system", Content: "system"}, {Role: "user", Content: "hello"}},
+		Tools: []*model.ToolDefinition{{
+			Name:        "search",
+			Description: "search",
+			InputSchema: map[string]any{"type": "object"},
+		}},
+		Thinking: &model.ThinkingOptions{Enable: true, BudgetTokens: 1024},
+	})
 	require.NoError(t, err)
 	defer func() {
 		_ = streamer.Close()
@@ -152,13 +153,13 @@ func TestClientStream(t *testing.T) {
 	}
 	require.Len(t, chunks, 5)
 	require.Equal(t, model.ChunkTypeText, chunks[0].Type)
-    require.NotNil(t, chunks[0].Message)
-    require.Equal(t, "Hello", chunks[0].Message.Content)
+	require.NotNil(t, chunks[0].Message)
+	require.Equal(t, "Hello", chunks[0].Message.Content)
 	require.Equal(t, model.ChunkTypeThinking, chunks[1].Type)
 	require.Equal(t, model.ChunkTypeToolCall, chunks[2].Type)
-    require.NotNil(t, chunks[2].ToolCall)
-    require.Equal(t, "search", chunks[2].ToolCall.Name)
-    require.Equal(t, "goa", chunks[2].ToolCall.Payload.(map[string]any)["query"])
+	require.NotNil(t, chunks[2].ToolCall)
+	require.Equal(t, tools.Ident("search"), chunks[2].ToolCall.Name)
+	require.Equal(t, "goa", chunks[2].ToolCall.Payload.(map[string]any)["query"])
 	require.Equal(t, model.ChunkTypeUsage, chunks[3].Type)
 	require.Equal(t, 12, chunks[3].UsageDelta.TotalTokens)
 	require.Equal(t, model.ChunkTypeStop, chunks[4].Type)

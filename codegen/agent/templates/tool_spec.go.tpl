@@ -51,7 +51,7 @@ var {{ .SchemaVar }} = {{ .SchemaLiteral }}
 {{- end }}
 
 var (
-    specIndex = make(map[string]*tools.ToolSpec, len(Specs))
+    specIndex = make(map[tools.Ident]*tools.ToolSpec, len(Specs))
     metadata   = []policy.ToolMetadata{
     {{- range .Tools }}
         {
@@ -76,23 +76,28 @@ func init() {
 }
 
 // Names returns the identifiers of all generated tools.
-func Names() []string {
-    names := make([]string, 0, len(specIndex))
+func Names() []tools.Ident {
+    names := make([]tools.Ident, 0, len(specIndex))
     for name := range specIndex {
         names = append(names, name)
     }
-    sort.Strings(names)
-    return names
+    // Convert to []string for sorting stability
+    strs := make([]string, len(names))
+    for i, n := range names { strs[i] = string(n) }
+    sort.Strings(strs)
+    out := make([]tools.Ident, len(strs))
+    for i, s := range strs { out[i] = tools.Ident(s) }
+    return out
 }
 
 // Spec returns the specification for the named tool if present.
-func Spec(name string) (*tools.ToolSpec, bool) {
+func Spec(name tools.Ident) (*tools.ToolSpec, bool) {
     spec, ok := specIndex[name]
     return spec, ok
 }
 
 // PayloadSchema returns the JSON schema for the named tool payload.
-func PayloadSchema(name string) ([]byte, bool) {
+func PayloadSchema(name tools.Ident) ([]byte, bool) {
     spec, ok := specIndex[name]
     if !ok {
         return nil, false
@@ -101,7 +106,7 @@ func PayloadSchema(name string) ([]byte, bool) {
 }
 
 // ResultSchema returns the JSON schema for the named tool result.
-func ResultSchema(name string) ([]byte, bool) {
+func ResultSchema(name tools.Ident) ([]byte, bool) {
     spec, ok := specIndex[name]
     if !ok {
         return nil, false

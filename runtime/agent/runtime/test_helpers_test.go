@@ -265,7 +265,7 @@ func newTestRuntimeWithPlanner(agentID string, pl planner.Planner) *Runtime {
 	return &Runtime{
 		agents:    map[string]AgentRegistration{agentID: {Planner: pl}},
 		toolsets:  make(map[string]ToolsetRegistration),
-		toolSpecs: make(map[string]tools.ToolSpec),
+		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
 		logger:    telemetry.NoopLogger{},
 		metrics:   telemetry.NoopMetrics{},
 		tracer:    telemetry.NoopTracer{},
@@ -303,7 +303,7 @@ func (s *stubPolicyEngine) Decide(context.Context, policy.Input) (policy.Decisio
 	return s.decision, nil
 }
 
-func newAnyJSONSpec(name string) tools.ToolSpec {
+func newAnyJSONSpec(name tools.Ident) tools.ToolSpec {
 	codec := tools.JSONCodec[any]{
 		ToJSON: json.Marshal,
 		FromJSON: func(data []byte) (any, error) {
@@ -320,7 +320,7 @@ func newAnyJSONSpec(name string) tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:    name,
 		Toolset: "ts",
-		Payload: tools.TypeSpec{Name: name + "_payload", Codec: codec},
-		Result:  tools.TypeSpec{Name: name + "_result", Codec: codec},
+		Payload: tools.TypeSpec{Name: string(name) + "_payload", Codec: codec},
+		Result:  tools.TypeSpec{Name: string(name + "_result"), Codec: codec},
 	}
 }

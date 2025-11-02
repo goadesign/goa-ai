@@ -72,7 +72,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 	case *hooks.ToolCallScheduledEvent:
 		payload := ToolStartPayload{
 			ToolCallID:            evt.ToolCallID,
-			ToolName:              evt.ToolName,
+			ToolName:              string(evt.ToolName),
 			Payload:               evt.Payload,
 			Queue:                 evt.Queue,
 			ParentToolCallID:      evt.ParentToolCallID,
@@ -96,7 +96,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		payload := ToolEndPayload{
 			ToolCallID:       evt.ToolCallID,
 			ParentToolCallID: evt.ParentToolCallID,
-			ToolName:         evt.ToolName,
+			ToolName:         string(evt.ToolName),
 			Result:           evt.Result,
 			Duration:         evt.Duration,
 			Telemetry:        evt.Telemetry,

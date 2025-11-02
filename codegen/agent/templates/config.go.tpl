@@ -37,3 +37,16 @@ func (c {{ .ConfigType }}) Validate() error {
 {{- end }}
     return nil
 }
+
+{{- if .MCPToolsets }}
+
+// WithMCPCaller adds or replaces the caller for the given MCP toolset ID and returns
+// the config pointer for chaining in builder-style initialization.
+func (c *{{ .ConfigType }}) WithMCPCaller(id string, caller mcpruntime.Caller) *{{ .ConfigType }} {
+    if c.MCPCallers == nil {
+        c.MCPCallers = make(map[string]mcpruntime.Caller)
+    }
+    c.MCPCallers[id] = caller
+    return c
+}
+{{- end }}

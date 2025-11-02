@@ -1,10 +1,10 @@
 package dsl
 
 import (
-    _ "goa.design/goa-ai/codegen/mcp" // Registers the MCP codegen plugin with Goa
-    exprmcp "goa.design/goa-ai/expr/mcp"
-    "goa.design/goa/v3/eval"
-    goaexpr "goa.design/goa/v3/expr"
+	_ "goa.design/goa-ai/codegen/mcp" // Registers the MCP codegen plugin with Goa
+	exprmcp "goa.design/goa-ai/expr/mcp"
+	"goa.design/goa/v3/eval"
+	goaexpr "goa.design/goa/v3/expr"
 )
 
 // MCPServer enables Model Context Protocol (MCP) for the current service and sets server metadata.
@@ -113,28 +113,28 @@ func DynamicPrompt(name, description string) {
 // The method payload defines the tool input shape and the method result defines
 // the tool output shape. Streaming methods will cause tools/call to stream.
 func MCPTool(name, description string) {
-    parent := eval.Current()
-    method, isMethod := parent.(*goaexpr.MethodExpr)
-    if !isMethod {
-        eval.IncompatibleDSL()
-        return
-    }
-    svc := method.Service
-    var mcp *exprmcp.MCPExpr
-    if r := exprmcp.Root; r != nil {
-        mcp = r.GetMCP(svc)
-    }
-    if mcp == nil {
-        eval.IncompatibleDSL()
-        return
-    }
-    t := &exprmcp.ToolExpr{
-        Name:        name,
-        Description: description,
-        Method:      method,
-        InputSchema: method.Payload,
-    }
-    mcp.Tools = append(mcp.Tools, t)
+	parent := eval.Current()
+	method, isMethod := parent.(*goaexpr.MethodExpr)
+	if !isMethod {
+		eval.IncompatibleDSL()
+		return
+	}
+	svc := method.Service
+	var mcp *exprmcp.MCPExpr
+	if r := exprmcp.Root; r != nil {
+		mcp = r.GetMCP(svc)
+	}
+	if mcp == nil {
+		eval.IncompatibleDSL()
+		return
+	}
+	t := &exprmcp.ToolExpr{
+		Name:        name,
+		Description: description,
+		Method:      method,
+		InputSchema: method.Payload,
+	}
+	mcp.Tools = append(mcp.Tools, t)
 }
 
 // Notification marks the current method as an MCP notification sender.

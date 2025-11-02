@@ -8,6 +8,7 @@ import (
 
 	"goa.design/goa-ai/features/policy/basic"
 	"goa.design/goa-ai/runtime/agent/policy"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 func TestEngineFiltersByTags(t *testing.T) {
@@ -20,7 +21,7 @@ func TestEngineFiltersByTags(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.Equal(t, []policy.ToolHandle{{ID: "svc.alpha.tool"}}, decision.AllowedTools)
+	require.Equal(t, []tools.Ident{tools.Ident("svc.alpha.tool")}, decision.AllowedTools)
 }
 
 func TestEngineBlocksExplicitTools(t *testing.T) {
@@ -31,10 +32,10 @@ func TestEngineBlocksExplicitTools(t *testing.T) {
 			{ID: "svc.alpha.tool"},
 			{ID: "svc.beta.tool"},
 		},
-		Requested: []policy.ToolHandle{{ID: "svc.alpha.tool"}, {ID: "svc.beta.tool"}},
+		Requested: []tools.Ident{tools.Ident("svc.alpha.tool"), tools.Ident("svc.beta.tool")},
 	})
 	require.NoError(t, err)
-	require.Equal(t, []policy.ToolHandle{{ID: "svc.alpha.tool"}}, decision.AllowedTools)
+	require.Equal(t, []tools.Ident{tools.Ident("svc.alpha.tool")}, decision.AllowedTools)
 }
 
 func TestEngineRestrictsViaRetryHint(t *testing.T) {
@@ -46,7 +47,7 @@ func TestEngineRestrictsViaRetryHint(t *testing.T) {
 		RemainingCaps: policy.CapsState{MaxToolCalls: 5, RemainingToolCalls: 5},
 	})
 	require.NoError(t, err)
-	require.Equal(t, []policy.ToolHandle{{ID: "svc.beta.tool"}}, decision.AllowedTools)
+	require.Equal(t, []tools.Ident{tools.Ident("svc.beta.tool")}, decision.AllowedTools)
 	require.Equal(t, 1, decision.Caps.RemainingToolCalls)
 }
 
@@ -58,7 +59,7 @@ func TestEngineRemovesUnavailableTool(t *testing.T) {
 		RetryHint: &policy.RetryHint{Tool: "svc.beta.tool", Reason: policy.RetryReasonToolUnavailable},
 	})
 	require.NoError(t, err)
-	require.Equal(t, []policy.ToolHandle{{ID: "svc.alpha.tool"}}, decision.AllowedTools)
+	require.Equal(t, []tools.Ident{tools.Ident("svc.alpha.tool")}, decision.AllowedTools)
 }
 
 func TestEngineEmitsMetadata(t *testing.T) {
