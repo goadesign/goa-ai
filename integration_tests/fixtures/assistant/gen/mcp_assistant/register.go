@@ -311,7 +311,7 @@ func RegisterAssistantAssistantMcpToolset(ctx context.Context, rt *agentsruntime
 
 	exec := func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
 		fullName := call.Name
-		toolName := fullName
+		toolName := string(fullName)
 		if strings.HasPrefix(toolName, suitePrefix) {
 			toolName = toolName[len(suitePrefix):]
 		}
@@ -369,7 +369,7 @@ func RegisterAssistantAssistantMcpToolset(ctx context.Context, rt *agentsruntime
 	})
 }
 
-func AssistantAssistantMcpToolsetHandleError(toolName string, err error) planner.ToolResult {
+func AssistantAssistantMcpToolsetHandleError(toolName tools.Ident, err error) planner.ToolResult {
 	result := planner.ToolResult{
 		Name:  toolName,
 		Error: planner.ToolErrorFromError(err),
@@ -380,9 +380,10 @@ func AssistantAssistantMcpToolsetHandleError(toolName string, err error) planner
 	return result
 }
 
-func AssistantAssistantMcpToolsetRetryHint(toolName string, err error) *planner.RetryHint {
-	schema := AssistantAssistantMcpToolsetToolSchemas[toolName]
-	example := AssistantAssistantMcpToolsetToolExamples[toolName]
+func AssistantAssistantMcpToolsetRetryHint(toolName tools.Ident, err error) *planner.RetryHint {
+	key := string(toolName)
+	schema := AssistantAssistantMcpToolsetToolSchemas[key]
+	example := AssistantAssistantMcpToolsetToolExamples[key]
 	var retryErr *retry.RetryableError
 	if errors.As(err, &retryErr) {
 		return &planner.RetryHint{
@@ -396,7 +397,7 @@ func AssistantAssistantMcpToolsetRetryHint(toolName string, err error) *planner.
 	if errors.As(err, &rpcErr) {
 		switch rpcErr.Code {
 		case mcpruntime.JSONRPCInvalidParams:
-			prompt := retry.BuildRepairPrompt("tools/call:"+toolName, rpcErr.Message, example, schema)
+			prompt := retry.BuildRepairPrompt("tools/call:"+key, rpcErr.Message, example, schema)
 			return &planner.RetryHint{
 				Reason:         planner.RetryReasonInvalidArguments,
 				Tool:           toolName,

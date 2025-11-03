@@ -95,7 +95,15 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req ToolInput) (ToolO
 	if decErr != nil {
 		// Build structured retry hints using generated ValidationError when present.
 		if fields, question, reason, ok := buildRetryHintFromValidation(decErr, req.ToolName); ok {
-			return ToolOutput{Error: decErr.Error(), RetryHint: &planner.RetryHint{Reason: reason, Tool: req.ToolName, MissingFields: fields, ClarifyingQuestion: question}}, nil
+			return ToolOutput{
+				Error: decErr.Error(),
+				RetryHint: &planner.RetryHint{
+					Reason:             reason,
+					Tool:               req.ToolName,
+					MissingFields:      fields,
+					ClarifyingQuestion: question,
+				},
+			}, nil
 		}
 		// Not a validation error: no retry hint.
 		return ToolOutput{Error: decErr.Error()}, nil
@@ -279,22 +287,16 @@ func (r *Runtime) marshalToolValue(
 }
 
 // unmarshalToolValue decodes a tool value using the registered codec or standard JSON.
-func (r *Runtime) unmarshalToolValue(
-	ctx context.Context, toolName tools.Ident, raw json.RawMessage, payload bool,
-) (any, error) {
-	if len(raw) == 0 {
-		return nil, nil
-	}
-	codec, ok := r.toolCodec(toolName, payload)
-	if ok && codec.FromJSON != nil {
-		return codec.FromJSON(raw)
-	}
-	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
-		r.logger.Warn(ctx, "tool fallback decode failed", "tool", toolName, "payload", payload, "err", err)
-		return nil, err
-	}
-	return v, nil
+func (r *Runtime) unmarshalToolValue(ctx context.Context, toolName tools.Ident, raw json.RawMessage, payload bool) (any, error) {
+    if len(raw) == 0 {
+        return nil, nil
+    }
+    codec, ok := r.toolCodec(toolName, payload)
+    if ok && codec.FromJSON != nil {
+        return codec.FromJSON(raw)
+    }
+    r.logger.Error(ctx, "no codec found for tool", "tool", toolName, "payload", payload)
+    return nil, fmt.Errorf("no codec found for tool %s", toolName)
 }
 
 // toolCodec retrieves the JSON codec for a tool's payload or result.

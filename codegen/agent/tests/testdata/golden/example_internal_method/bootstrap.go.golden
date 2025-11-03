@@ -23,7 +23,7 @@ import (
 // New constructs a minimal runtime and registers all agents for this service.
 // Replace options (engine, stores, telemetry) as you adopt production wiring.
 func New(ctx context.Context) (*agentsruntime.Runtime, func(), error) {
-    rt := agentsruntime.New()
+	rt := agentsruntime.New()
 	cleanup := func() {}
 
 	// Register agents with example planners. Replace with your own planner impls.

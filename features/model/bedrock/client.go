@@ -31,10 +31,8 @@ const (
 // by the adapter. It matches *bedrockruntime.Client so callers can pass either
 // the real client or a mock in tests.
 type RuntimeClient interface {
-	Converse(ctx context.Context, params *bedrockruntime.ConverseInput,
-		optFns ...func(*bedrockruntime.Options)) (*bedrockruntime.ConverseOutput, error)
-	ConverseStream(ctx context.Context, params *bedrockruntime.ConverseStreamInput,
-		optFns ...func(*bedrockruntime.Options)) (StreamOutput, error)
+	Converse(ctx context.Context, params *bedrockruntime.ConverseInput, optFns ...func(*bedrockruntime.Options)) (*bedrockruntime.ConverseOutput, error)
+	ConverseStream(ctx context.Context, params *bedrockruntime.ConverseStreamInput, optFns ...func(*bedrockruntime.Options)) (*bedrockruntime.ConverseStreamOutput, error)
 }
 
 // StreamOutput is the subset of the AWS ConverseStream output type required by

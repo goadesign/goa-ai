@@ -246,13 +246,13 @@ func agentPerToolsetSpecsFiles(agent *AgentData) []*codegen.File {
 				{Name: "tool-spec-codecs", Source: agentsTemplates.Read(toolCodecsFileT), Data: toolCodecsFileData{Types: data.typesList(), Tools: data.tools}},
 			}
 			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, "codecs.go"), SectionTemplates: codecsSections})
-			// specs.go
-			specImports := []*codegen.ImportSpec{{Path: "sort"}, {Path: "goa.design/goa-ai/runtime/agent/policy"}, {Path: "goa.design/goa-ai/runtime/agent/tools"}}
-			specSections := []*codegen.SectionTemplate{
-				codegen.Header(agent.StructName+" tool specs", ts.SpecsPackageName, specImports),
-				{Name: "tool-specs", Source: agentsTemplates.Read(toolSpecFileT), Data: toolSpecFileData{PackageName: ts.SpecsPackageName, Tools: data.tools, Types: data.typesList()}},
-			}
-			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, "specs.go"), SectionTemplates: specSections})
+            // specs.go
+            specImports := []*codegen.ImportSpec{{Path: "sort"}, {Path: "goa.design/goa-ai/runtime/agent/policy"}, {Path: "goa.design/goa-ai/runtime/agent/tools"}}
+            specSections := []*codegen.SectionTemplate{
+                codegen.Header(agent.StructName+" tool specs", ts.SpecsPackageName, specImports),
+                {Name: "tool-specs", Source: agentsTemplates.Read(toolSpecFileT), Data: toolSpecFileData{PackageName: ts.SpecsPackageName, Tools: data.tools, Types: data.typesList()}, FuncMap: templateFuncMap()},
+            }
+            out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, "specs.go"), SectionTemplates: specSections})
 			// Emit transforms guarded by strict compatibility checks.
 			if tf := emitTransformsFile(agent, ts, data); tf != nil {
 				out = append(out, tf)
@@ -569,10 +569,12 @@ func agentActivitiesFile(agent *AgentData) *codegen.File {
 }
 
 func agentRegistryFile(agent *AgentData) *codegen.File {
-	imports := []*codegen.ImportSpec{
-		{Path: "goa.design/goa-ai/runtime/agent/engine"},
-		{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "agentsruntime"},
-	}
+    imports := []*codegen.ImportSpec{
+        {Path: "context"},
+        {Path: "errors"},
+        {Path: "goa.design/goa-ai/runtime/agent/engine"},
+        {Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "agentsruntime"},
+    }
 	// fmt needed for error messages in external MCP registration path
 	hasExternal := false
 	for _, ts := range agent.AllToolsets {
@@ -601,9 +603,9 @@ func agentRegistryFile(agent *AgentData) *codegen.File {
 			imports = append(imports, &codegen.ImportSpec{Path: ts.PackageImportPath, Name: ts.PackageName})
 		}
 	}
-	if needsTimeImport(agent) {
-		imports = append(imports, &codegen.ImportSpec{Path: "time"})
-	}
+    if needsTimeImport(agent) {
+        imports = append(imports, &codegen.ImportSpec{Path: "time"})
+    }
 	if len(agent.Tools) > 0 {
 		imports = append(imports, &codegen.ImportSpec{Path: agent.ToolSpecsImportPath, Name: agent.ToolSpecsPackage})
 	}

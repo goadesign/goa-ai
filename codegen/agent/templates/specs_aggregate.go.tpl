@@ -22,13 +22,8 @@ func Names() []tools.Ident {
     for _, s := range Specs {
         names = append(names, s.Name)
     }
-    // Sort using string values for stability
-    strs := make([]string, len(names))
-    for i, n := range names { strs[i] = string(n) }
-    sort.Strings(strs)
-    out := make([]tools.Ident, len(strs))
-    for i, s := range strs { out[i] = tools.Ident(s) }
-    return out
+    sort.Slice(names, func(i, j int) bool { return string(names[i]) < string(names[j]) })
+    return names
 }
 
 // Spec returns the specification for the named tool if present.

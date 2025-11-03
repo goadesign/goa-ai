@@ -11,10 +11,11 @@ import (
 // code generation templates. We keep the definition centralized so all sections
 // share the same helpers (e.g., goify for consistent identifier casing).
 func templateFuncMap() map[string]any {
-	return map[string]any{
-		"goify":      goacodegen.Goify,
-		"trimPrefix": strings.TrimPrefix,
-		"ToLower":    strings.ToLower,
+    return map[string]any{
+        "goify":      goacodegen.Goify,
+        "trimPrefix": strings.TrimPrefix,
+        "trimSuffix": strings.TrimSuffix,
+        "ToLower":    strings.ToLower,
 		// simpleField reports whether the named field on the given attribute
 		// resolves to a simple assignable type between packages: primitives
 		// (string, bool, numbers) or arrays/maps composed of primitives. It

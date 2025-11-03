@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -219,6 +220,8 @@ type (
 		Expr *agentsExpr.ToolsetExpr
 		// Name is the DSL-specified toolset identifier.
 		Name string
+		// Title is a human-friendly display name derived from Name.
+		Title string
 		// Description captures the DSL description for docs/registries.
 		Description string
 		// Tags attaches suite-level tags used by policy/filtering at registration time.
@@ -302,7 +305,7 @@ type (
 	//   - Name: original DSL identifier (e.g., "analyze_data")
 	//   - ConstName: Go constant name for referencing in code (e.g., "AnalyzeData")
 	//   - QualifiedName: globally unique identifier (e.g., "service.toolset.tool")
-	//   - DisplayName: human-readable label (e.g., "toolset.tool")
+	//   - Title: human-readable title (e.g., "Analyze Data")
 	//
 	// Tool implementation strategies:
 	//   - IsMethodBacked=true: tool dispatches to a Goa service method (client call)
@@ -324,8 +327,9 @@ type (
 		Description string
 		// QualifiedName is the service/toolset scoped identifier (`service.toolset.tool`).
 		QualifiedName string
-		// DisplayName is the human-readable label (`toolset.tool`).
-		DisplayName string
+		// Title is a human-friendly title for presentation (e.g., "Analyze Data").
+		// Defaults to a derived value from Name unless explicitly set in the DSL.
+		Title string
 		// Tags holds optional metadata tags supplied in the DSL.
 		Tags []string
 		// Args is the Goa attribute describing the tool payload.
@@ -808,6 +812,7 @@ func newToolsetData(
 	ts := &ToolsetData{
 		Expr:                 expr,
 		Name:                 expr.Name,
+		Title:                humanizeTitle(expr.Name),
 		Description:          expr.Description,
 		Tags:                 slices.Clone(expr.Tags),
 		ServiceName:          serviceName,
@@ -907,21 +912,12 @@ func buildServiceImportMap(svc *service.Data) map[string]*codegen.ImportSpec {
 }
 
 func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *service.ServicesData) *ToolData {
-	qualified := expr.Name
-	display := expr.Name
-	if ts != nil {
-		if ts.QualifiedName != "" {
-			qualified = fmt.Sprintf("%s.%s", ts.QualifiedName, expr.Name)
-		} else if ts.Name != "" {
-			qualified = fmt.Sprintf("%s.%s", ts.Name, expr.Name)
-		}
-		if ts.Name != "" {
-			display = fmt.Sprintf("%s.%s", ts.Name, expr.Name)
-		}
-	}
+	// ts is guaranteed non-nil by construction (collectToolsets/newToolsetData)
+	// and ts.QualifiedName is always set there.
+	qualified := fmt.Sprintf("%s.%s", ts.QualifiedName, expr.Name)
 
 	// Check if this tool is exported by an agent (agent-as-tool pattern)
-	isExported := ts != nil && ts.Kind == ToolsetKindExported && ts.Agent != nil
+	isExported := ts.Kind == ToolsetKindExported && ts.Agent != nil
 	var exportingAgentID string
 	if isExported {
 		exportingAgentID = ts.Agent.ID
@@ -932,7 +928,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		ConstName:         codegen.Goify(expr.Name, true),
 		Description:       expr.Description,
 		QualifiedName:     qualified,
-		DisplayName:       display,
+		Title:             humanizeTitle(defaultString(expr.Title, expr.Name)),
 		Tags:              slices.Clone(expr.Tags),
 		Args:              expr.Args,
 		Return:            expr.Return,
@@ -946,7 +942,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 	tool.IsMethodBacked = true
 	tool.MethodGoName = codegen.Goify(expr.Method.Name, true)
 	// Populate exact payload/result type names using Goa service metadata.
-	if servicesData == nil || ts == nil || ts.SourceService == nil {
+	if servicesData == nil || ts.SourceService == nil {
 		return tool
 	}
 	sd := servicesData.Get(ts.SourceService.Name)
@@ -1096,4 +1092,39 @@ func joinIdentifier(parts ...string) string {
 		return "agent"
 	}
 	return strings.Join(sanitized, ".")
+}
+
+// humanizeTitle converts a slug-like name (snake_case, kebab-case, dotted)
+// into a simple Title Case string. It is intentionally conservative and does
+// not attempt natural language capitalization beyond first letters.
+func humanizeTitle(s string) string {
+	if s == "" {
+		return s
+	}
+	// use last segment after '.' when present
+	if i := strings.LastIndexByte(s, '.'); i >= 0 && i+1 < len(s) {
+		s = s[i+1:]
+	}
+	s = strings.ReplaceAll(s, "_", " ")
+	s = strings.ReplaceAll(s, "-", " ")
+	parts := strings.Fields(s)
+	for i := range parts {
+		if len(parts[i]) == 0 {
+			continue
+		}
+		r := []rune(parts[i])
+		r[0] = unicode.ToUpper(r[0])
+		for j := 1; j < len(r); j++ {
+			r[j] = unicode.ToLower(r[j])
+		}
+		parts[i] = string(r)
+	}
+	return strings.Join(parts, " ")
+}
+
+func defaultString(val, fallback string) string {
+	if strings.TrimSpace(val) != "" {
+		return val
+	}
+	return fallback
 }

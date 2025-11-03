@@ -16,19 +16,22 @@ import (
 )
 
 func TestExecuteToolActivityReturnsErrorAndHint(t *testing.T) {
-	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
-		require.Equal(t, "tool-1", call.ToolCallID)
-		require.Equal(t, "parent-1", call.ParentToolCallID)
-		require.Equal(t, "run", call.RunID)
-		return planner.ToolResult{
-			Name:  call.Name,
-			Error: planner.NewToolError("invalid payload"),
-			RetryHint: &planner.RetryHint{
-				Reason: planner.RetryReasonInvalidArguments,
-				Tool:   call.Name,
-			},
-		}, nil
-	}}}}
+    rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
+        require.Equal(t, "tool-1", call.ToolCallID)
+        require.Equal(t, "parent-1", call.ParentToolCallID)
+        require.Equal(t, "run", call.RunID)
+        return planner.ToolResult{
+            Name:  call.Name,
+            Error: planner.NewToolError("invalid payload"),
+            RetryHint: &planner.RetryHint{
+                Reason: planner.RetryReasonInvalidArguments,
+                Tool:   call.Name,
+            },
+        }, nil
+    }}}}
+    rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
+        tools.Ident("svc.ts.tool"): newAnyJSONSpec("svc.ts.tool"),
+    }
 	out, err := rt.ExecuteToolActivity(context.Background(), ToolInput{AgentID: "agent", RunID: "run", ToolName: "svc.ts.tool", ToolCallID: "tool-1", ParentToolCallID: "parent-1", Payload: []byte("null")})
 	require.NoError(t, err)
 	require.Equal(t, "invalid payload", out.Error)

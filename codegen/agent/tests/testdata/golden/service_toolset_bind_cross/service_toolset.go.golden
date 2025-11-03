@@ -14,14 +14,17 @@ import (
 	runtime "goa.design/goa-ai/runtime/agent/runtime"
 )
 
+// ToolsetID is the qualified identifier for this toolset.
+const ToolsetID = "alpha.lookup"
+
 // NewScribeLookupToolsetRegistration returns a ToolsetRegistration
 // that delegates execution to the provided ToolCallExecutor.
 func NewScribeLookupToolsetRegistration(exec runtime.ToolCallExecutor) runtime.ToolsetRegistration {
 	return runtime.ToolsetRegistration{
-		Name:        "alpha.lookup",
+		Name:        ToolsetID,
 		Description: "",
 		Specs:       specs.Specs,
-		Metadata:    policy.ToolMetadata{ID: "lookup", Name: "lookup"},
+		Metadata:    policy.ToolMetadata{Title: "Lookup"},
 		Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
 			if exec == nil {
 				return planner.ToolResult{

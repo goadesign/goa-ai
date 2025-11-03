@@ -1,10 +1,10 @@
 package {{ .Register.Package }}
 
 import (
-	"context"
-	"encoding/json"
-	"errors"
-	"strings"
+    "context"
+    "encoding/json"
+    "errors"
+    "strings"
 
 	"goa.design/goa-ai/runtime/agent/planner"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
@@ -85,12 +85,12 @@ func Register{{ .Register.HelperName }}(ctx context.Context, rt *agentsruntime.R
     suite := {{ printf "%q" .Register.SuiteQualifiedName }}
     suitePrefix := suite + "."
 
-	exec := func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
-		fullName := call.Name
-		toolName := fullName
-		if strings.HasPrefix(toolName, suitePrefix) {
-			toolName = toolName[len(suitePrefix):]
-		}
+    exec := func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
+        fullName := call.Name
+        toolName := string(fullName)
+        if strings.HasPrefix(toolName, suitePrefix) {
+            toolName = toolName[len(suitePrefix):]
+        }
 
 		payload, err := json.Marshal(call.Payload)
 		if err != nil {
@@ -99,14 +99,14 @@ func Register{{ .Register.HelperName }}(ctx context.Context, rt *agentsruntime.R
 			}, err
 		}
 
-		resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
-			Suite:   suite,
-			Tool:    toolName,
-			Payload: payload,
-		})
-		if err != nil {
-			return {{ .Register.HelperName }}HandleError(fullName, err), nil
-		}
+        resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
+            Suite:   suite,
+            Tool:    toolName,
+            Payload: payload,
+        })
+        if err != nil {
+            return {{ .Register.HelperName }}HandleError(fullName, err), nil
+        }
 
 		var value any
 		if len(resp.Result) > 0 {
@@ -130,12 +130,12 @@ func Register{{ .Register.HelperName }}(ctx context.Context, rt *agentsruntime.R
 			}
 		}
 
-		return planner.ToolResult{
-			Name:      fullName,
-			Result:    value,
-			Telemetry: toolTelemetry,
-		}, nil
-	}
+        return planner.ToolResult{
+            Name:      fullName,
+            Result:    value,
+            Telemetry: toolTelemetry,
+        }, nil
+    }
 
     return rt.RegisterToolset(agentsruntime.ToolsetRegistration{
         Name: {{ printf "%q" .Register.SuiteQualifiedName }},
@@ -145,47 +145,48 @@ func Register{{ .Register.HelperName }}(ctx context.Context, rt *agentsruntime.R
     })
 }
 
-func {{ .Register.HelperName }}HandleError(toolName string, err error) planner.ToolResult {
-	result := planner.ToolResult{
-	Name:  toolName,
-	Error: planner.ToolErrorFromError(err),
-}
-	if hint := {{ .Register.HelperName }}RetryHint(toolName, err); hint != nil {
-		result.RetryHint = hint
-	}
-	return result
+func {{ .Register.HelperName }}HandleError(toolName tools.Ident, err error) planner.ToolResult {
+    result := planner.ToolResult{
+        Name:  toolName,
+        Error: planner.ToolErrorFromError(err),
+    }
+    if hint := {{ .Register.HelperName }}RetryHint(toolName, err); hint != nil {
+        result.RetryHint = hint
+    }
+    return result
 }
 
-func {{ .Register.HelperName }}RetryHint(toolName string, err error) *planner.RetryHint {
-	schema := {{ .Register.HelperName }}ToolSchemas[toolName]
-	example := {{ .Register.HelperName }}ToolExamples[toolName]
-	var retryErr *retry.RetryableError
-	if errors.As(err, &retryErr) {
-		return &planner.RetryHint{
-			Reason:         planner.RetryReasonInvalidArguments,
-			Tool:           toolName,
-			Message:        retryErr.Prompt,
-			RestrictToTool: true,
-		}
-	}
-	var rpcErr *mcpruntime.Error
-	if errors.As(err, &rpcErr) {
-		switch rpcErr.Code {
-		case mcpruntime.JSONRPCInvalidParams:
-			prompt := retry.BuildRepairPrompt("tools/call:"+toolName, rpcErr.Message, example, schema)
-			return &planner.RetryHint{
-				Reason:         planner.RetryReasonInvalidArguments,
-				Tool:           toolName,
-				Message:        prompt,
-				RestrictToTool: true,
-			}
-		case mcpruntime.JSONRPCMethodNotFound:
-			return &planner.RetryHint{
-				Reason: planner.RetryReasonToolUnavailable,
-				Tool:   toolName,
-				Message: rpcErr.Message,
-			}
-		}
-	}
-	return nil
+func {{ .Register.HelperName }}RetryHint(toolName tools.Ident, err error) *planner.RetryHint {
+    key := string(toolName)
+    schema := {{ .Register.HelperName }}ToolSchemas[key]
+    example := {{ .Register.HelperName }}ToolExamples[key]
+    var retryErr *retry.RetryableError
+    if errors.As(err, &retryErr) {
+        return &planner.RetryHint{
+            Reason:         planner.RetryReasonInvalidArguments,
+            Tool:           toolName,
+            Message:        retryErr.Prompt,
+            RestrictToTool: true,
+        }
+    }
+    var rpcErr *mcpruntime.Error
+    if errors.As(err, &rpcErr) {
+        switch rpcErr.Code {
+        case mcpruntime.JSONRPCInvalidParams:
+            prompt := retry.BuildRepairPrompt("tools/call:"+key, rpcErr.Message, example, schema)
+            return &planner.RetryHint{
+                Reason:         planner.RetryReasonInvalidArguments,
+                Tool:           toolName,
+                Message:        prompt,
+                RestrictToTool: true,
+            }
+        case mcpruntime.JSONRPCMethodNotFound:
+            return &planner.RetryHint{
+                Reason: planner.RetryReasonToolUnavailable,
+                Tool:   toolName,
+                Message: rpcErr.Message,
+            }
+        }
+    }
+    return nil
 }

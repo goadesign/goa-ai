@@ -76,6 +76,22 @@ Running `goa gen example.com/assistant/design` now produces:
 - `gen/orchestrator/agents/chat/agenttools`: helpers that expose exported tools to other agents.
 - `features/mcp`-aware registration helpers when `UseMCPToolset` is invoked.
 
+Each per-toolset specs package also defines typed tool identifiers (tools.Ident)
+for every generated tool and uses those constants inside the exported `Specs`
+slice. Example (package `gen/orchestrator/agents/chat/specs/search`):
+
+    const (
+        // Typed tool IDs
+        Search tools.Ident = "orchestrator.search.search"
+    )
+
+    var Specs = []tools.ToolSpec{
+        { Name: Search, /* ... */ },
+    }
+
+Use these constants anywhere you need to reference tools, including for
+non‑exported toolsets (no need to define ad‑hoc strings).
+
 ## Function Reference
 
 | Function | Location | Context | Purpose |

@@ -12,6 +12,9 @@
   - [x] Generated packages compile (smoke via tests/templates)
   - [x] Golden tests updated (templates, transforms)
   - [x] Docs updated (DSL/codegen)
+  - [x] Per-agent Route() and NewClient(rt) emitted in agent.go
+  - [x] Typed tool-call helpers (New<Tool>Call, CallOption) emitted in agenttools
+  - [x] Specs packages emit typed tool ID constants and use them in Specs
   - Notes: AgentID constants exposed; WithMCPCaller builder added; transforms unchanged; AgentClient.Run returns *RunOutput.
 
 - Phase 3 — Runtime Refactor (remove old helpers, introspection, SubscribeRun, policy override, per‑agent workers)

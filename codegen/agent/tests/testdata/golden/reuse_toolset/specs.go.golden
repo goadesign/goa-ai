@@ -25,22 +25,22 @@ func init() {
 	Specs = append(Specs, shared.Specs...)
 	metadata = append(metadata, shared.Metadata()...)
 	sort.Slice(Specs, func(i, j int) bool {
-		return Specs[i].Name < Specs[j].Name
+		return string(Specs[i].Name) < string(Specs[j].Name)
 	})
 }
 
 // Names returns sorted tool identifiers for all aggregated toolsets.
-func Names() []string {
-	names := make([]string, 0, len(Specs))
+func Names() []tools.Ident {
+	names := make([]tools.Ident, 0, len(Specs))
 	for _, s := range Specs {
 		names = append(names, s.Name)
 	}
-	sort.Strings(names)
+	sort.Slice(names, func(i, j int) bool { return string(names[i]) < string(names[j]) })
 	return names
 }
 
 // Spec returns the specification for the named tool if present.
-func Spec(name string) (*tools.ToolSpec, bool) {
+func Spec(name tools.Ident) (*tools.ToolSpec, bool) {
 	for i := range Specs {
 		if Specs[i].Name == name {
 			return &Specs[i], true
@@ -50,7 +50,7 @@ func Spec(name string) (*tools.ToolSpec, bool) {
 }
 
 // PayloadSchema returns the JSON schema for the named tool payload.
-func PayloadSchema(name string) ([]byte, bool) {
+func PayloadSchema(name tools.Ident) ([]byte, bool) {
 	if s, ok := Spec(name); ok {
 		return s.Payload.Schema, true
 	}
@@ -58,7 +58,7 @@ func PayloadSchema(name string) ([]byte, bool) {
 }
 
 // ResultSchema returns the JSON schema for the named tool result.
-func ResultSchema(name string) ([]byte, bool) {
+func ResultSchema(name tools.Ident) ([]byte, bool) {
 	if s, ok := Spec(name); ok {
 		return s.Result.Schema, true
 	}

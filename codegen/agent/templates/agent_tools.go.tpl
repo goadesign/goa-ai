@@ -62,7 +62,7 @@ func NewRegistration(
     opts ...runtime.AgentToolOption,
 ) (runtime.ToolsetRegistration, error) {
     cfg := runtime.AgentToolConfig{
-        AgentID:      string(AgentID),
+        AgentID:      AgentID,
         Name:         Name,
         TaskQueue:    {{ printf "%q" .Toolset.TaskQueue }},
         SystemPrompt: systemPrompt,

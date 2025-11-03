@@ -449,13 +449,37 @@ func Return(val any, args ...any) {
 // Tags are optional. Tools without tags are still fully functional but may be
 // harder to organize in systems with many available tools.
 func Tags(values ...string) {
-	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
-	if !ok {
-		eval.IncompatibleDSL()
-		return
-	}
-	tool.Tags = append(tool.Tags, values...)
+    switch cur := eval.Current().(type) {
+    case *agentsexpr.ToolExpr:
+        cur.Tags = append(cur.Tags, values...)
+    case *agentsexpr.ToolsetExpr:
+        cur.Tags = append(cur.Tags, values...)
+    default:
+        eval.IncompatibleDSL()
+        return
+    }
 }
+
+// ToolsetDescription sets the description for the current toolset. Use inside a
+// Toolset DSL block. It has no effect outside of toolset scope.
+func ToolsetDescription(s string) {
+    ts, ok := eval.Current().(*agentsexpr.ToolsetExpr)
+    if !ok {
+        eval.IncompatibleDSL()
+        return
+    }
+    ts.Description = strings.TrimSpace(s)
+}
+
+// Aliases declares alternate short names that should resolve to this tool's
+// fully qualified identifier. Use Aliases inside a Tool DSL to accept legacy
+// or UI-facing names without hardcoding mappings in application code.
+//
+// Example:
+//   Tool("add_todo_items", "...", func() {
+//       Aliases("todos_upsert")
+//   })
+// (Aliases DSL removed; use boundary mapping in callers instead of core aliases.)
 
 // BindTo associates a tool with a Goa service method implementation. Use BindTo
 // inside a Tool DSL to specify which service method executes the tool when invoked.
@@ -532,6 +556,18 @@ func BindTo(args ...string) {
 	}
 	// Defer resolution to Prepare/Validate by recording the binding intent.
 	tool.RecordBinding(serviceName, methodName)
+}
+
+// ToolTitle sets a human-friendly display title for the current tool. Use inside a
+// Tool DSL block. When not set, code generation derives a sensible default from
+// the tool name (snake_case/kebab-case to Title Case).
+func ToolTitle(s string) {
+    tool, ok := eval.Current().(*agentsexpr.ToolExpr)
+    if !ok {
+        eval.IncompatibleDSL()
+        return
+    }
+    tool.Title = strings.TrimSpace(s)
 }
 
 // buildToolsetExpr constructs a ToolsetExpr from a value and DSL function.

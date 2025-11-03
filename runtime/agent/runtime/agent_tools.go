@@ -9,6 +9,7 @@ import (
 	"text/template"
 
 	"goa.design/goa-ai/runtime/agent/engine"
+	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -76,7 +77,7 @@ type PromptBuilder func(id tools.Ident, payload any) string
 // prompts that will be prepended to the nested agent messages for that tool.
 type AgentToolConfig struct {
 	// AgentID is the fully qualified identifier of the nested agent.
-	AgentID string
+	AgentID agent.Ident
 	// SystemPrompt, when non-empty, is prepended as a system message for all tools.
 	SystemPrompt string
 	// Templates maps fully-qualified tool IDs to compiled templates used to render
@@ -278,7 +279,7 @@ func defaultAgentToolExecute(
 			ParentToolCallID: call.ToolCallID,
 		}
 
-		outPtr, err := rt.ExecuteAgentInline(wfCtx, cfg.AgentID, messages, nestedRunCtx)
+		outPtr, err := rt.ExecuteAgentInline(wfCtx, string(cfg.AgentID), messages, nestedRunCtx)
 		if err != nil {
 			return planner.ToolResult{}, fmt.Errorf("execute agent inline: %w", err)
 		}

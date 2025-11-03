@@ -99,25 +99,27 @@ type (
 		Metadata map[string]any
 	}
 
-	// ToolMetadata describes a candidate tool available to the agent. The runtime
-	// provides this metadata to the policy engine for filtering and allowlist decisions.
-	ToolMetadata struct {
-		// ID is the fully qualified tool identifier (e.g., "weather.search.forecast").
-		// Format: <service>.<toolset>.<tool>.
-		ID tools.Ident
+    // ToolMetadata describes a candidate tool available to the agent. The runtime
+    // provides this metadata to the policy engine for filtering and allowlist decisions.
+    ToolMetadata struct {
+        // ID is the fully qualified tool identifier (e.g., "weather.search.forecast").
+        // Format: <service>.<toolset>.<tool>.
+        ID tools.Ident
 
-		// Name is the human-readable tool name (e.g., "Get Weather Forecast").
-		// Used for UI display or logging.
-		Name string
+        // Title is a human-readable display title (e.g., "Get Weather Forecast").
+        // It is presentation-only; policy engines should make decisions based on
+        // ID and Tags. Codegen derives a sensible default from the tool name and
+        // the DSL can optionally override it.
+        Title string
 
-		// Description documents the tool's purpose and behavior. Policies may inspect
-		// this for keyword-based filtering (e.g., block tools mentioning "delete").
-		Description string
+        // Description documents the tool's purpose and behavior. Policies may inspect
+        // this for keyword-based filtering (e.g., block tools mentioning "delete").
+        Description string
 
-		// Tags lists metadata labels for filtering (e.g., ["privileged", "external"]).
-		// Policies can allowlist/blocklist based on tags without hardcoding tool IDs.
-		Tags []string
-	}
+        // Tags lists metadata labels for filtering (e.g., ["privileged", "external"]).
+        // Policies can allowlist/blocklist based on tags without hardcoding tool IDs.
+        Tags []string
+    }
 
 	// CapsState tracks remaining execution budgets for a run. The runtime decrements
 	// these counters as tool calls execute and failures occur. When caps are exhausted,

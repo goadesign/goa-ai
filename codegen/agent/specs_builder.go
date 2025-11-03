@@ -55,8 +55,8 @@ type (
 	toolEntry struct {
 		// Qualified tool name used in runtime lookups (e.g., "service.toolset.tool").
 		Name string
-		// Human-readable tool name for display purposes.
-		DisplayName string
+		// Title is the human-friendly display title.
+		Title string
 		// Service name that owns the tool.
 		Service string
 		// Toolset name that contains the tool.
@@ -107,8 +107,6 @@ type (
 		FullRef string
 		// Whether the type is a pointer.
 		Pointer bool
-		// Whether to check for nil before marshaling.
-		CheckNil bool
 		// Argument expression for marshal calls (e.g., "v" or "*v").
 		MarshalArg string
 		// Argument expression for unmarshal calls (e.g., "v" or "&v").
@@ -192,7 +190,7 @@ func buildToolSpecsDataFor(agent *AgentData, tools []*ToolData) (*toolSpecsData,
 		}
 		entry := &toolEntry{
 			Name:              tool.QualifiedName,
-			DisplayName:       tool.DisplayName,
+			Title:             tool.Title,
 			Service:           serviceName(tool),
 			Toolset:           toolsetName(tool),
 			Description:       tool.Description,
@@ -362,13 +360,6 @@ func (d *toolSpecsData) codecsImports() []*codegen.ImportSpec {
 	return base
 }
 
-func (b *toolSpecBuilder) serviceForTool(t *ToolData) *service.Data {
-	if t.Toolset.SourceService != nil {
-		return t.Toolset.SourceService
-	}
-	return b.agent.Service
-}
-
 func (b *toolSpecBuilder) scopeForTool(t *ToolData) *codegen.NameScope {
 	// Prefer the source service (provider) scope when available (e.g., MCP/external)
 	if t != nil && t.Toolset != nil && t.Toolset.SourceService != nil && t.Toolset.SourceService.Scope != nil {
@@ -430,7 +421,6 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	}
 
 	scope := b.scopeForTool(tool)
-	svc := b.serviceForTool(tool)
 
 	// Stable cache key: reference for service-alias, otherwise deterministic name
 	key := stableTypeKey(tool, usage)
@@ -442,8 +432,11 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	// (e.g., *alpha.Doc) even for non-method-backed tools. This ensures
 	// deterministic aliasing and imports and matches the repository tests
 	// which assert service-qualified references in generated codecs.
-	// Materialize definition and type reference
-	tt, defLine, fullRef, imports := b.materialize(typeName, att, scope, svc)
+    // Materialize definition and type reference
+    tt, defLine, fullRef, imports := b.materialize(typeName, att, scope)
+    // Determine pointer semantics for top-level alias/value.
+    aliasIsPointer := strings.Contains(defLine, "= *")
+    ptr := aliasIsPointer || strings.HasPrefix(fullRef, "*")
 
 	// JSON schema from effective attribute
 	schemaBytes, err := schemaForAttribute(tt)
@@ -457,50 +450,58 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	}
 
 	doc := fmt.Sprintf("%s defines the JSON %s for the %s tool.", typeName, usage, tool.QualifiedName)
-	info := &typeData{
-		Key:           key,
-		TypeName:      typeName,
-		Doc:           doc,
-		Def:           defLine,
-		SchemaVar:     schemaVar,
-		SchemaLiteral: schemaLiteral,
-		ExportedCodec: typeName + "Codec",
-		GenericCodec:  lowerCamel(typeName) + "Codec",
-		MarshalFunc:   "Marshal" + typeName,
-		UnmarshalFunc: "Unmarshal" + typeName,
-		ValidateFunc:  "Validate" + typeName,
-		Validation:    "",
-		FullRef:       fullRef,
-		NeedType:      defLine != "",
-		NilError:      fmt.Sprintf("%s is nil", lowerCamel(typeName)),
-		DecodeError:   fmt.Sprintf("decode %s", lowerCamel(typeName)),
-		ValidateError: fmt.Sprintf("validate %s", lowerCamel(typeName)),
-		EmptyError:    fmt.Sprintf("%s JSON is empty", lowerCamel(typeName)),
-		Usage:         usage,
-		TypeImports:   imports,
-		GenerateCodec: true,
-	}
-	// For service-local user types we alias to local helper types and do not
-	// reference the service package; no need to force-add a service import.
-	// Populate pointer and validation-related fields based on the computed
-	// full reference. If the reference is pointer-qualified, enable nil checks;
-	// otherwise treat it as a value type.
-	if strings.HasPrefix(fullRef, "*") {
-		info.Pointer = true
-		info.CheckNil = true
-	} else {
-		info.Pointer = false
-		info.CheckNil = false
-	}
-	info.MarshalArg = "v"
-	info.UnmarshalArg = "v"
-	if info.Validation != "" {
-		info.ValidationSrc = strings.Split(info.Validation, "\n")
+    info := &typeData{
+        Key:           key,
+        TypeName:      typeName,
+        Doc:           doc,
+        Def:           defLine,
+        SchemaVar:     schemaVar,
+        SchemaLiteral: schemaLiteral,
+        ExportedCodec: typeName + "Codec",
+        GenericCodec:  lowerCamel(typeName) + "Codec",
+        MarshalFunc:   "Marshal" + typeName,
+        UnmarshalFunc: "Unmarshal" + typeName,
+        ValidateFunc:  "Validate" + typeName,
+        FullRef:       fullRef,
+        NeedType:      defLine != "",
+        NilError:      fmt.Sprintf("%s is nil", lowerCamel(typeName)),
+        DecodeError:   fmt.Sprintf("decode %s", lowerCamel(typeName)),
+        ValidateError: fmt.Sprintf("validate %s", lowerCamel(typeName)),
+        EmptyError:    fmt.Sprintf("%s JSON is empty", lowerCamel(typeName)),
+        Usage:         usage,
+        TypeImports:   imports,
+        GenerateCodec: true,
+        Pointer:       ptr,
+        MarshalArg:    "v",
+        UnmarshalArg:  "v",
+    }
+	// Populate validation and field descriptions for payload types only.
+	if usage == usagePayload {
+		if vcode := b.generateValidationCode(scope, tt); strings.TrimSpace(vcode) != "" {
+			info.Validation = vcode
+			info.ValidationSrc = strings.Split(vcode, "\n")
+		}
+		if fdesc := buildFieldDescriptions(tt); len(fdesc) > 0 {
+			info.FieldDescs = fdesc
+		}
 	}
 	b.types[key] = info
+	// Also index by the public type name so auxiliary passes (e.g.,
+	// validator collection) can detect that a concrete alias already
+	// exists and avoid emitting duplicate helpers for the same name.
+	nameKey := "name:" + typeName
+	if _, exists := b.types[nameKey]; !exists {
+		b.types[nameKey] = info
+	}
 	// Also ensure any nested service-local user types are materialized locally so
 	// unqualified references inside composite shapes compile.
 	b.ensureNestedLocalTypes(scope, tt)
+	// Collect validators for all unique user types referenced within payloads so
+	// nested validations do not rely on external packages to provide local
+	// Validate<Name> functions.
+	if usage == usagePayload {
+		b.collectUserTypeValidators(scope, tt)
+	}
 	return info, nil
 }
 
@@ -511,7 +512,7 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 // materialize returns the effective attribute (unchanged), an empty type
 // definition (we do not synthesize local types), the fully-qualified reference
 // to the owner or primitive type, and the imports required.
-func (b *toolSpecBuilder) materialize(typeName string, att *goaexpr.AttributeExpr, scope *codegen.NameScope, svc *service.Data) (tt *goaexpr.AttributeExpr, defLine string, fullRef string, imports []*codegen.ImportSpec) {
+func (b *toolSpecBuilder) materialize(typeName string, att *goaexpr.AttributeExpr, scope *codegen.NameScope) (tt *goaexpr.AttributeExpr, defLine string, fullRef string, imports []*codegen.ImportSpec) {
 	if att.Type == goaexpr.Empty {
 		return att, "", "", nil
 	}
@@ -694,7 +695,9 @@ func (b *toolSpecBuilder) ensureNestedLocalTypes(scope *codegen.NameScope, att *
 			return nil
 		}
 		// Alias to the underlying composite/value shape for the nested type.
-		comp := scope.GoTypeRef(ut.Attribute())
+		// Use GoTypeDef to inline the concrete shape instead of referencing the
+		// user type name, avoiding circular aliases.
+		comp := scope.GoTypeDef(ut.Attribute(), false, true)
 		td := &typeData{
 			Key:         key,
 			TypeName:    name,
@@ -703,12 +706,154 @@ func (b *toolSpecBuilder) ensureNestedLocalTypes(scope *codegen.NameScope, att *
 			FullRef:     name,
 			NeedType:    true,
 			TypeImports: gatherAttributeImports(b.genpkg, ut.Attribute()),
-			// No codecs/schemas/validation for nested helper types.
-			ExportedCodec: "",
-			GenericCodec:  "",
-			GenerateCodec: false,
 		}
 		b.types[key] = td
+		return nil
+	})
+}
+
+// generateValidationCode produces Go validation code for the given attribute using
+// Goa's validation generator. The returned code assumes a pre-existing `err error`
+// variable and validates `body`.
+func (b *toolSpecBuilder) generateValidationCode(scope *codegen.NameScope, att *goaexpr.AttributeExpr) string {
+    if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+        return ""
+    }
+    // Disable pointer use in validation code to avoid nil checks on value alias
+    // fields. Optionality is governed by Required lists, not pointers here.
+    attCtx := codegen.NewAttributeContext(false, false, false, "", scope)
+    // Force value-style validation for aliases to avoid pointer nil checks on
+    // value alias fields. Optionality is governed by the attribute Required list.
+    return codegen.ValidationCode(att, nil, attCtx, true, false, false, "body")
+}
+
+// buildFieldDescriptions collects dotted field-path descriptions from the provided
+// attribute. It follows objects, arrays, maps and user types, trimming any leading
+// root qualifiers at error construction time (newValidationError does this for "body.").
+func buildFieldDescriptions(att *goaexpr.AttributeExpr) map[string]string {
+	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+		return nil
+	}
+	out := make(map[string]string)
+	seen := make(map[string]struct{})
+	var walk func(prefix string, a *goaexpr.AttributeExpr)
+	walk = func(prefix string, a *goaexpr.AttributeExpr) {
+		if a == nil || a.Type == nil || a.Type == goaexpr.Empty {
+			return
+		}
+		switch dt := a.Type.(type) {
+		case goaexpr.UserType:
+			// Avoid infinite recursion on recursive user types.
+			id := dt.ID()
+			if _, ok := seen[id]; ok {
+				return
+			}
+			seen[id] = struct{}{}
+			walk(prefix, dt.Attribute())
+		case *goaexpr.Object:
+			for _, nat := range *dt {
+				name := nat.Name
+				path := name
+				if prefix != "" {
+					path = prefix + "." + name
+				}
+				if nat.Attribute != nil && strings.TrimSpace(nat.Attribute.Description) != "" {
+					out[path] = nat.Attribute.Description
+				}
+				walk(path, nat.Attribute)
+			}
+		case *goaexpr.Array:
+			walk(prefix, dt.ElemType)
+		case *goaexpr.Map:
+			walk(prefix, dt.ElemType)
+		case *goaexpr.Union:
+			for _, v := range dt.Values {
+				walk(prefix, v.Attribute)
+			}
+		}
+	}
+	walk("", att)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// collectUserTypeValidators walks the attribute graph and generates validator entries
+// for each unique user type encountered that yields non-empty validation code. The
+// generated entries are validator-only (no codecs), and allow Validate<Name>() to be
+// called from top-level payload validators.
+func (b *toolSpecBuilder) collectUserTypeValidators(scope *codegen.NameScope, att *goaexpr.AttributeExpr) {
+	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+		return
+	}
+	seen := make(map[string]struct{})
+	_ = codegen.Walk(att, func(a *goaexpr.AttributeExpr) error {
+		if a == nil || a.Type == nil || a.Type == goaexpr.Empty {
+			return nil
+		}
+        ut, ok := a.Type.(goaexpr.UserType)
+        if !ok || ut == nil {
+            return nil
+        }
+        id := ut.ID()
+        if _, ok := seen[id]; ok {
+            return nil
+        }
+        seen[id] = struct{}{}
+        // Generate validation code for the user type attribute itself. For
+        // alias user types, ask Goa to cast to the underlying base type by
+        // setting the alias flag so validations operate on correct values
+        // (e.g., string(body) for string aliases) and avoid type mismatch.
+        var vcode string
+        {
+            attCtx := codegen.NewAttributeContext(false, false, false, "", scope)
+            vcode = codegen.ValidationCode(ut.Attribute(), nil, attCtx, true, goaexpr.IsAlias(ut), false, "body")
+        }
+        // Emit a validator entry even if vcode is empty because Goa-generated
+        // parent validators may still call Validate<Type> for nested user types
+        // (e.g., when only required validations exist on primitives). Emit a
+        // no-op body in that case.
+        {
+            // Compute the fully-qualified reference and the public type name.
+            typeName := ""
+			switch u := ut.(type) {
+			case *goaexpr.UserTypeExpr:
+				typeName = u.TypeName
+			case *goaexpr.ResultTypeExpr:
+				typeName = u.TypeName
+			default:
+				typeName = codegen.Goify("UserType", true)
+			}
+            // Always generate a standalone validator for the user type. The
+            // presence of a local alias with the same public name does not
+            // conflict since validator entries only emit functions, not types.
+            // Qualify with the owning package when available so validators use
+            // the correct package alias (e.g., types.TimeContext).
+            var fullRef string
+            if loc := codegen.UserTypeLocation(ut); loc != nil && loc.PackageName() != "" {
+                fullRef = scope.GoFullTypeRef(&goaexpr.AttributeExpr{Type: ut}, loc.PackageName())
+            } else {
+                fullRef = scope.GoFullTypeRef(&goaexpr.AttributeExpr{Type: ut}, "")
+            }
+			key := "validator:" + id
+			if _, exists := b.types[key]; exists {
+				return nil
+			}
+            b.types[key] = &typeData{
+                Key:          key,
+                TypeName:     typeName,
+                ValidateFunc: "Validate" + typeName,
+                Validation:   vcode,
+                FullRef:      fullRef,
+                // Pointer flag is unused for validator-only entries; leave false
+                // to avoid implying pointer semantics for composites.
+                Pointer:       false,
+                ValidationSrc: strings.Split(vcode, "\n"),
+                Usage:         usagePayload,
+                TypeImports:   gatherAttributeImports(b.genpkg, &goaexpr.AttributeExpr{Type: ut}),
+            }
+        }
 		return nil
 	})
 }
@@ -854,7 +999,3 @@ func formatSchema(schema []byte) string {
 func lowerCamel(s string) string {
 	return codegen.Goify(s, false)
 }
-
-// finalizeTypeInfo completes the initialization of a typeData struct by setting
-// pointer-related fields, marshal/unmarshal arguments, and validation source lines.
-// finalizeTypeInfo removed: pointer and validation fields are derived in ensureType.

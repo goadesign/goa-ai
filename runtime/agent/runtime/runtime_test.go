@@ -540,22 +540,25 @@ func TestChildTrackerLifecycle(t *testing.T) {
 
 func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 	recorder := &recordingHooks{}
-	rt := &Runtime{
-		toolsets: map[string]ToolsetRegistration{
-			"svc.export": {
-				Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
-					return planner.ToolResult{
-						Name: call.Name,
-					}, nil
-				},
-			},
-		},
-		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
-		Bus:       recorder,
-		logger:    telemetry.NoopLogger{},
-		metrics:   telemetry.NoopMetrics{},
-		tracer:    telemetry.NoopTracer{},
-	}
+    rt := &Runtime{
+        toolsets: map[string]ToolsetRegistration{
+            "svc.export": {
+                Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
+                    return planner.ToolResult{
+                        Name: call.Name,
+                    }, nil
+                },
+            },
+        },
+        toolSpecs: map[tools.Ident]tools.ToolSpec{
+            tools.Ident("svc.export.child1"): newAnyJSONSpec("svc.export.child1"),
+            tools.Ident("svc.export.child2"): newAnyJSONSpec("svc.export.child2"),
+        },
+        Bus:       recorder,
+        logger:    telemetry.NoopLogger{},
+        metrics:   telemetry.NoopMetrics{},
+        tracer:    telemetry.NoopTracer{},
+    }
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		asyncResult: ToolOutput{Payload: []byte("null")},
@@ -602,12 +605,12 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 		RunStore: store,
 		Bus:      bus,
 		toolsets: map[string]ToolsetRegistration{
-			"svc.tools": {
-				Metadata: policy.ToolMetadata{
-					ID:   "svc.tools.search",
-					Name: "svc.tools.search",
-				},
-			},
+            "svc.tools": {
+                Metadata: policy.ToolMetadata{
+                    ID:    "svc.tools.search",
+                    Title: "Svc Tools Search",
+                },
+            },
 		},
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
 			"svc.tools.search": newAnyJSONSpec("svc.tools.search"),

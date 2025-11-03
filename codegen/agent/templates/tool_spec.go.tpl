@@ -1,7 +1,20 @@
+// Tool IDs for this toolset.
+const (
+{{- range .Tools }}
+    {{- if .Payload }}
+    {{ trimSuffix .Payload.TypeName "Payload" }} tools.Ident = {{ printf "%q" .Name }}
+    {{- else if .Result }}
+    {{ trimSuffix .Result.TypeName "Result" }} tools.Ident = {{ printf "%q" .Name }}
+    {{- else }}
+    {{ goify .Name true }} tools.Ident = {{ printf "%q" .Name }}
+    {{- end }}
+{{- end }}
+)
+
 var Specs = []tools.ToolSpec{
 {{- range .Tools }}
     {
-        Name:        {{ printf "%q" .Name }},
+        Name:        {{ if .Payload }}{{ trimSuffix .Payload.TypeName "Payload" }}{{ else if .Result }}{{ trimSuffix .Result.TypeName "Result" }}{{ else }}{{ goify .Name true }}{{ end }},
         Service:     {{ printf "%q" .Service }},
         Toolset:     {{ printf "%q" .Toolset }},
         Description: {{ printf "%q" .Description }},
@@ -55,8 +68,8 @@ var (
     metadata   = []policy.ToolMetadata{
     {{- range .Tools }}
         {
-            ID:          {{ printf "%q" .Name }},
-            Name:        {{ printf "%q" .DisplayName }},
+            ID:          {{ if .Payload }}{{ trimSuffix .Payload.TypeName "Payload" }}{{ else if .Result }}{{ trimSuffix .Result.TypeName "Result" }}{{ else }}{{ goify .Name true }}{{ end }},
+            Title:       {{ printf "%q" .Title }},
             Description: {{ printf "%q" .Description }},
             Tags: []string{
             {{- range .Tags }}
@@ -81,13 +94,8 @@ func Names() []tools.Ident {
     for name := range specIndex {
         names = append(names, name)
     }
-    // Convert to []string for sorting stability
-    strs := make([]string, len(names))
-    for i, n := range names { strs[i] = string(n) }
-    sort.Strings(strs)
-    out := make([]tools.Ident, len(strs))
-    for i, s := range strs { out[i] = tools.Ident(s) }
-    return out
+    sort.Slice(names, func(i, j int) bool { return string(names[i]) < string(names[j]) })
+    return names
 }
 
 // Spec returns the specification for the named tool if present.

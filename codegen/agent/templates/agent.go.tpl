@@ -1,6 +1,20 @@
 // AgentID is the fully-qualified identifier for this agent.
 const AgentID agent.Ident = {{ printf "%q" .ID }}
 
+// Workflow and activity identifiers for this agent.
+const (
+    // WorkflowName is the fully-qualified workflow identifier registered with the engine.
+    WorkflowName = {{ printf "%q" .Runtime.Workflow.Name }}
+    // DefaultTaskQueue is the engine queue this agent polls for workflow and activity tasks.
+    DefaultTaskQueue = {{ printf "%q" .Runtime.Workflow.Queue }}
+    // PlanActivity is the activity name that runs the initial planning turn.
+    PlanActivity = {{ printf "%q" .Runtime.PlanActivity.Name }}
+    // ResumeActivity is the activity name that runs the resume turn after tool execution.
+    ResumeActivity = {{ printf "%q" .Runtime.ResumeActivity.Name }}
+    // ExecuteToolActivity is the activity name used to execute tools via the engine.
+    ExecuteToolActivity = {{ printf "%q" .Runtime.ExecuteTool.Name }}
+)
+
 // {{ .StructName }} wraps the planner implementation for agent "{{ .Name }}".
 type {{ .StructName }} struct {
     Planner planner.Planner
@@ -31,8 +45,8 @@ func NewWorker(opts ...runtime.WorkerOption) runtime.WorkerConfig {
 // caller process without registering the agent locally.
 func Route() runtime.AgentRoute {
     return runtime.AgentRoute{
-        ID:              AgentID,
-        WorkflowName:    {{ printf "%q" .Runtime.Workflow.Name }},
+        ID:               AgentID,
+        WorkflowName:     WorkflowName,
         DefaultTaskQueue: {{ printf "%q" .Runtime.Workflow.Queue }},
     }
 }

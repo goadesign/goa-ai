@@ -2,24 +2,29 @@
 package runtime
 
 import (
-	"context"
-	"testing"
-	"time"
+    "context"
+    "testing"
+    "time"
 
-	"github.com/stretchr/testify/require"
-	"goa.design/goa-ai/runtime/agent/interrupt"
-	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/policy"
-	"goa.design/goa-ai/runtime/agent/run"
+    "github.com/stretchr/testify/require"
+    "goa.design/goa-ai/runtime/agent/interrupt"
+    "goa.design/goa-ai/runtime/agent/planner"
+    "goa.design/goa-ai/runtime/agent/policy"
+    "goa.design/goa-ai/runtime/agent/run"
+    "goa.design/goa-ai/runtime/agent/tools"
 )
 
 func TestRunLoopPauseResumeEmitsEvents_Barriered(t *testing.T) {
 	recorder := &recordingHooks{}
-	rt := &Runtime{Bus: recorder, toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
-		return planner.ToolResult{
-			Name: call.Name,
-		}, nil
-	}}}}
+    rt := &Runtime{Bus: recorder, toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
+        return planner.ToolResult{
+            Name: call.Name,
+        }, nil
+    }}}}
+    // Strong contract: codecs must be present. Provide a minimal spec for the tool.
+    rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
+        tools.Ident("svc.ts.tool"): newAnyJSONSpec("svc.ts.tool"),
+    }
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, barrier: make(chan struct{}, 1)}
 	go func() {
 		// enqueue pause/resume before allowing async completion

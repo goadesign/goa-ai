@@ -176,14 +176,9 @@ func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
     {{- if .GenerateCodec }}
 // {{ .MarshalFunc }} serializes {{ .FullRef }} into JSON.
 func {{ .MarshalFunc }}(v {{ .FullRef }}) ([]byte, error) {
-    {{- if .CheckNil }}
+    {{- if .Pointer }}
     if v == nil {
         return nil, fmt.Errorf("{{ .NilError }}")
-    }
-    {{- end }}
-    {{- if .Validation }}
-    if err := {{ .ValidateFunc }}({{ .MarshalArg }}); err != nil {
-        return nil, fmt.Errorf("{{ .ValidateError }}: %w", err)
     }
     {{- end }}
     return json.Marshal(v)
@@ -209,8 +204,17 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ .FullRef }}, error) {
         return zero, fmt.Errorf("{{ .DecodeError }}: %w", err)
         {{- end }}
     }
-    {{- if .Validation }}
-    if err := {{ .ValidateFunc }}({{ .UnmarshalArg }}); err != nil {
+    {{- if and .Validation (eq .Usage "payload") }}
+    var err error
+    body := v
+    {{- range .ValidationSrc }}
+    {{ . }}
+    {{- end }}
+    if err != nil {
+        err = newValidationError(err)
+        {{- if .NeedType }}
+        err = enrich{{ .TypeName }}ValidationError(err)
+        {{- end }}
         {{- if .Pointer }}
         return nil, fmt.Errorf("{{ .ValidateError }}: %w", err)
         {{- else }}
@@ -221,22 +225,20 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ .FullRef }}, error) {
     return v, nil
 }
     {{- end }}
-    {{- if and .Validation .NeedType }}
-// {{ .ValidateFunc }} validates {{ .FullRef }}.
-func {{ .ValidateFunc }}(body {{ .FullRef }}) (err error) {
-    {{- range .ValidationSrc }}
-        {{- if eq . "" }}
+{{- end }}
 
-        {{- else }}
+{{- /* Emit standalone validators for embedded user types that require them. */ -}}
+{{- range .Types }}
+    {{- if and (not .GenerateCodec) .ValidateFunc }}
+
+// {{ .ValidateFunc }} validates values of type {{ .FullRef }}.
+func {{ .ValidateFunc }}(body {{ .FullRef }}) (err error) {
+    {{- if .ValidationSrc }}
+        {{- range .ValidationSrc }}
     {{ . }}
         {{- end }}
     {{- end }}
-    if err != nil {
-        err = newValidationError(err)
-        err = enrich{{ .TypeName }}ValidationError(err)
-    }
     return
 }
-
     {{- end }}
 {{- end }}

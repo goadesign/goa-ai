@@ -221,6 +221,9 @@ case stream.ToolEnd:
 When an agent exports tools, Goa-AI generates an `agenttools` package with typed
 helpers to build planner tool requests. Import the agenttools package and its
 specs package to construct typed payloads and keep planners clean and type-safe.
+Per‑toolset specs packages also export typed tool identifiers (tools.Ident) for
+all generated tools — including non‑exported toolsets. Prefer these constants
+over ad‑hoc strings.
 
 ```go
 import (

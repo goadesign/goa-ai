@@ -21,7 +21,7 @@ func NewScribeProfilesToolsetRegistration(exec runtime.ToolCallExecutor) runtime
 		Name:        "alpha.profiles",
 		Description: "",
 		Specs:       specs.Specs,
-		Metadata:    policy.ToolMetadata{ID: "profiles", Name: "profiles"},
+        Metadata:    policy.ToolMetadata{Title: "Profiles"},
         Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
             if exec == nil {
                 return planner.ToolResult{
