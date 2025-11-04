@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-    "unicode"
+	"unicode"
 
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -290,71 +290,88 @@ func toolHandles(calls []planner.ToolRequest) []tools.Ident {
 	return handles
 }
 
+// hasIntersection reports whether two string slices share at least one common value.
+func hasIntersection(a []string, b []string) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	set := make(map[string]struct{}, len(a))
+	for _, v := range a {
+		set[v] = struct{}{}
+	}
+	for _, v := range b {
+		if _, ok := set[v]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 // toolMetadata retrieves policy metadata for each tool call by looking up the
 // toolset registration. If the toolset is not found, constructs minimal metadata
 // with the tool name.
 func (r *Runtime) toolMetadata(calls []planner.ToolRequest) []policy.ToolMetadata {
-    metas := make([]policy.ToolMetadata, 0, len(calls))
-    for _, call := range calls {
-        if spec, ok := r.toolSpec(call.Name); ok {
-            metas = append(metas, policy.ToolMetadata{
-                ID:          spec.Name,
-                Title:       defaultToolTitle(spec.Name),
-                Description: spec.Description,
-                Tags:        append([]string(nil), spec.Tags...),
-            })
-            continue
-        }
-        metas = append(metas, policy.ToolMetadata{
-            ID:    call.Name,
-            Title: defaultToolTitle(call.Name),
-        })
-    }
-    return metas
+	metas := make([]policy.ToolMetadata, 0, len(calls))
+	for _, call := range calls {
+		if spec, ok := r.toolSpec(call.Name); ok {
+			metas = append(metas, policy.ToolMetadata{
+				ID:          spec.Name,
+				Title:       defaultToolTitle(spec.Name),
+				Description: spec.Description,
+				Tags:        append([]string(nil), spec.Tags...),
+			})
+			continue
+		}
+		metas = append(metas, policy.ToolMetadata{
+			ID:    call.Name,
+			Title: defaultToolTitle(call.Name),
+		})
+	}
+	return metas
 }
 
 // defaultToolTitle derives a human-friendly title from a fully-qualified tool id.
 // It uses the last segment after '.' and converts snake_case/kebab-case to Title Case.
 func defaultToolTitle(id tools.Ident) string {
-    s := string(id)
-    // take last segment after '.'
-    if last := lastSegment(s, '.'); last != "" {
-        s = last
-    }
-    // Normalize separators to spaces
-    s = strings.ReplaceAll(s, "_", " ")
-    s = strings.ReplaceAll(s, "-", " ")
-    // Collapse multiple spaces
-    s = strings.Join(strings.Fields(s), " ")
-    // Title-case words
-    var b strings.Builder
-    for i, w := range strings.Fields(s) {
-        if i > 0 {
-            b.WriteByte(' ')
-        }
-        if len(w) == 0 {
-            continue
-        }
-        r := []rune(w)
-        r[0] = unicode.ToUpper(r[0])
-        for j := 1; j < len(r); j++ {
-            r[j] = unicode.ToLower(r[j])
-        }
-        b.WriteString(string(r))
-    }
-    return b.String()
+	s := string(id)
+	// take last segment after '.'
+	if last := lastSegment(s, '.'); last != "" {
+		s = last
+	}
+	// Normalize separators to spaces
+	s = strings.ReplaceAll(s, "_", " ")
+	s = strings.ReplaceAll(s, "-", " ")
+	// Collapse multiple spaces
+	s = strings.Join(strings.Fields(s), " ")
+	// Title-case words
+	var b strings.Builder
+	for i, w := range strings.Fields(s) {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		if len(w) == 0 {
+			continue
+		}
+		r := []rune(w)
+		r[0] = unicode.ToUpper(r[0])
+		for j := 1; j < len(r); j++ {
+			r[j] = unicode.ToLower(r[j])
+		}
+		b.WriteString(string(r))
+	}
+	return b.String()
 }
 
 func lastSegment(s string, sep rune) string {
-    for i := len(s) - 1; i >= 0; i-- {
-        if rune(s[i]) == sep {
-            if i+1 < len(s) {
-                return s[i+1:]
-            }
-            return ""
-        }
-    }
-    return s
+	for i := len(s) - 1; i >= 0; i-- {
+		if rune(s[i]) == sep {
+			if i+1 < len(s) {
+				return s[i+1:]
+			}
+			return ""
+		}
+	}
+	return s
 }
 
 // filterToolCalls filters tool calls to only those present in the allowed list.
@@ -405,6 +422,10 @@ func stampEventWithTurn(evt hooks.Event, seq *turnSequencer) {
 	case *hooks.MemoryAppendedEvent:
 		e.SetTurn(seq.turnID, seqNum)
 	case *hooks.PolicyDecisionEvent:
+		e.SetTurn(seq.turnID, seqNum)
+	case *hooks.AwaitClarificationEvent:
+		e.SetTurn(seq.turnID, seqNum)
+	case *hooks.AwaitExternalToolsEvent:
 		e.SetTurn(seq.turnID, seqNum)
 	}
 }

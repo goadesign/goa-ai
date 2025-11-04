@@ -36,6 +36,11 @@ type (
 		// custom task queues). If nil, the runtime derives defaults from the agent
 		// registration.
 		WorkflowOptions *WorkflowOptions
+
+		// Policy carries optional per-run policy overrides applied on every planner turn.
+		// These options allow callers to set caps and tool filters without modifying
+		// the agent registration defaults.
+		Policy PolicyOverrides
 	}
 
 	// WorkflowOptions mirrors the subset of engine start options we expose through
@@ -46,6 +51,23 @@ type (
 		SearchAttributes map[string]any
 		TaskQueue        string
 		RetryPolicy      engine.RetryPolicy
+	}
+
+	// PolicyOverrides configures per-run policy constraints.
+	// All fields are optional; zero values mean no override.
+	PolicyOverrides struct {
+		// PerTurnMaxToolCalls limits the number of tool calls the runtime will execute
+		// in a single turn (prior to PlanResume). Zero means no per-turn limit.
+		PerTurnMaxToolCalls int
+		// RestrictToTool filters the candidate tools to a single tool for this run.
+		// Empty means no restriction.
+		RestrictToTool tools.Ident
+		// AllowedTags filters candidate tools to those whose tags intersect this list.
+		// Empty means allow all tags.
+		AllowedTags []string
+		// DeniedTags filters out candidate tools that have any of these tags.
+		// Empty means no denylist.
+		DeniedTags []string
 	}
 
 	// RunOutput represents the final outcome returned by a run workflow, including the

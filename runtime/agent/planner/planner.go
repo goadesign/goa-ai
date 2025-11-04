@@ -160,6 +160,52 @@ type (
 		// tools can dynamically request additional tools (e.g., search → fetch papers).
 		// A value of 0 means no children are expected or the planner doesn't track this.
 		ExpectedChildren int
+
+		// Await requests the runtime to pause and wait for external input before
+		// continuing the plan loop. Exactly one of Clarification or ExternalTools
+		// should be set when Await is non-nil. When Await is set, ToolCalls and
+		// FinalResponse must be empty.
+		Await *Await
+	}
+
+	// Await describes a typed external continuation request. The runtime pauses
+	// the run and emits an await event; callers can satisfy the request via the
+	// runtime Provide APIs (ProvideClarification/ProvideToolResults).
+	Await struct {
+		// Clarification asks for a human-provided answer before continuing.
+		Clarification *ClarificationRequest
+		// ExternalTools declares a set of tool calls that will be fulfilled by
+		// an external system; the runtime waits for their results to be provided.
+		ExternalTools *ExternalToolsRequest
+	}
+
+	// ClarificationRequest models a human-in-the-loop pause for missing info or approval.
+	ClarificationRequest struct {
+		// ID correlates the await with a later ProvideClarification.
+		ID string
+		// Question is the prompt to present to the user.
+		Question string
+		// MissingFields optionally lists fields needed to proceed.
+		MissingFields []string
+		// RestrictToTool optionally narrows the next turn to a specific tool.
+		RestrictToTool tools.Ident
+		// ExampleInput optionally provides a schema-compliant example.
+		ExampleInput map[string]any
+	}
+
+	// ExternalToolsRequest models a pause while external systems execute tools.
+	ExternalToolsRequest struct {
+		// ID correlates the await with a later ProvideToolResults.
+		ID string
+		// Items enumerate the external tool calls to be satisfied.
+		Items []AwaitTool
+	}
+
+	// AwaitTool describes a single external tool call to be executed out-of-band.
+	AwaitTool struct {
+		Name       tools.Ident
+		Payload    any
+		ToolCallID string
 	}
 
 	// ToolRequest schedules a single tool invocation. The runtime validates the

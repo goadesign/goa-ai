@@ -162,6 +162,105 @@ func (r *Runtime) runLoop(
 		if !deadline.IsZero() && wfCtx.Now().After(deadline) {
 			return nil, errors.New("time budget exceeded")
 		}
+		// Handle Await: publish await event, pause and wait for external input.
+		if result.Await != nil {
+			if ctrl == nil {
+				return nil, errors.New("await not supported in inline runs")
+			}
+			// Publish paused event with a reason.
+			reason := "await_external"
+			if result.Await.Clarification != nil {
+				reason = "await_clarification"
+			}
+			// If planner provided structured await info, emit a typed await event first.
+			if result.Await.Clarification != nil {
+				c := result.Await.Clarification
+				r.publishHook(ctx, hooks.NewAwaitClarificationEvent(
+					base.RunContext.RunID, base.Agent.ID(), c.ID, c.Question, c.MissingFields, c.RestrictToTool, c.ExampleInput,
+				), seq)
+			} else if result.Await.ExternalTools != nil {
+				e := result.Await.ExternalTools
+				items := make([]hooks.AwaitToolItem, 0, len(e.Items))
+				for _, it := range e.Items {
+					items = append(items, hooks.AwaitToolItem{
+						ToolName:   it.Name,
+						ToolCallID: it.ToolCallID,
+						Payload:    it.Payload,
+					})
+				}
+				r.publishHook(ctx, hooks.NewAwaitExternalToolsEvent(
+					base.RunContext.RunID, base.Agent.ID(), e.ID, items,
+				), seq)
+			}
+			r.publishHook(ctx, hooks.NewRunPausedEvent(base.RunContext.RunID, base.Agent.ID(), reason, "runtime", nil, nil), seq)
+			// Block until the appropriate provide signal arrives.
+			if result.Await.Clarification != nil {
+				ans, err := ctrl.WaitProvideClarification(ctx)
+				if err != nil {
+					return nil, err
+				}
+				// Validate await ID when provided
+				if c := result.Await.Clarification; c != nil && c.ID != "" && ans.ID != "" && ans.ID != c.ID {
+					return nil, errors.New("unexpected await ID for clarification")
+				}
+				// Append the answer as a user message and continue planning.
+				if strings.TrimSpace(ans.Answer) != "" {
+					base.Messages = append(base.Messages, planner.AgentMessage{Role: "user", Content: ans.Answer})
+				}
+				// Set running and emit resumed
+				r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{"resumed_by": "clarification"})
+				r.publishHook(ctx, hooks.NewRunResumedEvent(base.RunContext.RunID, base.Agent.ID(), "clarification_provided", ans.RunID, ans.Labels, 1), seq)
+				// Immediately PlanResume
+				resumeCtx := base.RunContext
+				resumeCtx.Attempt = nextAttempt
+				nextAttempt++
+				resumeReq := PlanActivityInput{
+					AgentID:     base.Agent.ID(),
+					RunID:       base.RunContext.RunID,
+					Messages:    base.Messages,
+					RunContext:  resumeCtx,
+					ToolResults: nil,
+				}
+				var err2 error
+				result, err2 = r.runPlanActivity(wfCtx, reg.ResumeActivityName, reg.ResumeActivityOptions, resumeReq)
+				if err2 != nil {
+					return nil, err2
+				}
+				continue
+			} else if result.Await.ExternalTools != nil {
+				rs, err := ctrl.WaitProvideToolResults(ctx)
+				if err != nil {
+					return nil, err
+				}
+				// Validate await ID when provided
+				if e := result.Await.ExternalTools; e != nil && e.ID != "" && rs.ID != "" && rs.ID != e.ID {
+					return nil, errors.New("unexpected await ID for external tools")
+				}
+				// Feed results into next PlanResume turn directly.
+				lastToolResults = rs.Results
+				// Advance to PlanResume immediately without executing internal tools.
+				resumeCtx := base.RunContext
+				resumeCtx.Attempt = nextAttempt
+				nextAttempt++
+				resumeReq := PlanActivityInput{
+					AgentID:     base.Agent.ID(),
+					RunID:       base.RunContext.RunID,
+					Messages:    base.Messages,
+					RunContext:  resumeCtx,
+					ToolResults: lastToolResults,
+				}
+				// Set running and emit resumed
+				r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{"resumed_by": "tool_results", "results": len(lastToolResults)})
+				r.publishHook(ctx, hooks.NewRunResumedEvent(base.RunContext.RunID, base.Agent.ID(), "tool_results_provided", input.RunID, nil, 0), seq)
+				var err2 error
+				result, err2 = r.runPlanActivity(wfCtx, reg.ResumeActivityName, reg.ResumeActivityOptions, resumeReq)
+				if err2 != nil {
+					return nil, err2
+				}
+				continue
+			}
+		}
+
 		if len(result.ToolCalls) == 0 {
 			if result.FinalResponse == nil {
 				return nil, errors.New("planner returned neither tool calls nor final response")
@@ -203,14 +302,46 @@ func (r *Runtime) runLoop(
 		if !deadline.IsZero() && wfCtx.Now().After(deadline) {
 			return nil, errors.New("time budget exceeded")
 		}
-		allowed := result.ToolCalls
+		// Start with candidate tool calls from the planner.
+		candidates := result.ToolCalls
+		// Apply per-run policy overrides (restrict tool and tag filters) before policy decision.
+		if ov := input.Policy; (ov.RestrictToTool != "" || len(ov.AllowedTags) > 0 || len(ov.DeniedTags) > 0) && len(candidates) > 0 {
+			metas := r.toolMetadata(candidates)
+			filtered := make([]planner.ToolRequest, 0, len(candidates))
+			for i, call := range candidates {
+				// RestrictToTool
+				if ov.RestrictToTool != "" && call.Name != ov.RestrictToTool {
+					continue
+				}
+				// Tag allow/deny checks
+				ok := true
+				if len(ov.AllowedTags) > 0 || len(ov.DeniedTags) > 0 {
+					tags := metas[i].Tags
+					if len(ov.AllowedTags) > 0 {
+						if !hasIntersection(tags, ov.AllowedTags) {
+							ok = false
+						}
+					}
+					if ok && len(ov.DeniedTags) > 0 {
+						if hasIntersection(tags, ov.DeniedTags) {
+							ok = false
+						}
+					}
+				}
+				if ok {
+					filtered = append(filtered, call)
+				}
+			}
+			candidates = filtered
+		}
+		allowed := candidates
 		if r.Policy != nil {
 			decision, err := r.Policy.Decide(ctx, policy.Input{
 				RunContext:    base.RunContext,
-				Tools:         r.toolMetadata(result.ToolCalls),
+				Tools:         r.toolMetadata(candidates),
 				RetryHint:     toPolicyRetryHint(result.RetryHint),
 				RemainingCaps: caps,
-				Requested:     toolHandles(result.ToolCalls),
+				Requested:     toolHandles(candidates),
 				Labels:        base.RunContext.Labels,
 			})
 			if err != nil {
@@ -255,6 +386,10 @@ func (r *Runtime) runLoop(
 				)
 				parentTracker.markUpdated()
 			}
+		}
+		// Per-turn max cap from overrides (applies before remaining run caps)
+		if input.Policy.PerTurnMaxToolCalls > 0 && len(allowed) > input.Policy.PerTurnMaxToolCalls {
+			allowed = allowed[:input.Policy.PerTurnMaxToolCalls]
 		}
 		if caps.MaxToolCalls > 0 && caps.RemainingToolCalls < len(allowed) {
 			allowed = allowed[:caps.RemainingToolCalls]

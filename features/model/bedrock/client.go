@@ -77,8 +77,9 @@ type requestParts struct {
 }
 
 type thinkingConfig struct {
-	enable bool
-	budget int
+	enable      bool
+	interleaved bool
+	budget      int
 }
 
 // New constructs a Bedrock-backed model client using the provided options.
@@ -183,9 +184,7 @@ func (c *Client) buildConverseInput(parts *requestParts, req model.Request) *bed
 	return input
 }
 
-func (c *Client) buildConverseStreamInput(
-	parts *requestParts, req model.Request, thinking thinkingConfig,
-) *bedrockruntime.ConverseStreamInput {
+func (c *Client) buildConverseStreamInput(parts *requestParts, req model.Request, thinking thinkingConfig) *bedrockruntime.ConverseStreamInput {
 	input := &bedrockruntime.ConverseStreamInput{
 		ModelId:  aws.String(parts.modelID),
 		Messages: parts.messages,
@@ -197,12 +196,16 @@ func (c *Client) buildConverseStreamInput(
 		input.ToolConfig = parts.toolConfig
 	}
 	if thinking.enable {
-		input.AdditionalModelRequestFields = document.NewLazyDocument(&map[string]any{
+		fields := map[string]any{
 			"thinking": map[string]any{
 				"type":          "enabled",
 				"budget_tokens": thinking.budget,
 			},
-		})
+		}
+		if thinking.interleaved {
+			fields["anthropic_beta"] = []string{"interleaved-thinking-2025-05-14"}
+		}
+		input.AdditionalModelRequestFields = document.NewLazyDocument(&fields)
 	}
 	if cfg := c.inferenceConfig(req.MaxTokens, req.Temperature); cfg != nil {
 		input.InferenceConfig = cfg
@@ -224,7 +227,11 @@ func (c *Client) resolveThinking(req model.Request, parts *requestParts) thinkin
 	if budget <= 0 {
 		budget = defaultThinkingBudget
 	}
-	return thinkingConfig{enable: true, budget: budget}
+	return thinkingConfig{
+		enable:      true,
+		interleaved: req.Thinking.Interleaved,
+		budget:      budget,
+	}
 }
 
 func (c *Client) streamOptions(thinking thinkingConfig) []func(*bedrockruntime.Options) {

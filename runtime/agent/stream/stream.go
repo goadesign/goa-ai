@@ -138,6 +138,18 @@ type (
 		Data ToolEndPayload
 	}
 
+	// AwaitClarification streams a human clarification request from the planner/runtime.
+	AwaitClarification struct {
+		Base
+		Data AwaitClarificationPayload
+	}
+
+	// AwaitExternalTools streams a request for external tool execution.
+	AwaitExternalTools struct {
+		Base
+		Data AwaitExternalToolsPayload
+	}
+
 	// ToolStartPayload carries the metadata for a scheduled tool invocation. This
 	// structure is JSON-serialized when sent over the wire (SSE, WebSocket, Pulse).
 	ToolStartPayload struct {
@@ -212,6 +224,28 @@ type (
 		Extra map[string]any `json:"extra,omitempty"`
 	}
 
+	// AwaitClarificationPayload describes a human clarification request.
+	AwaitClarificationPayload struct {
+		ID             string         `json:"id"`
+		Question       string         `json:"question"`
+		MissingFields  []string       `json:"missing_fields,omitempty"`
+		RestrictToTool string         `json:"restrict_to_tool,omitempty"`
+		ExampleInput   map[string]any `json:"example_input,omitempty"`
+	}
+
+	// AwaitExternalToolsPayload describes external tool requests to be provided by callers.
+	AwaitExternalToolsPayload struct {
+		ID    string             `json:"id"`
+		Items []AwaitToolPayload `json:"items"`
+	}
+
+	// AwaitToolPayload describes a single external tool call to be satisfied.
+	AwaitToolPayload struct {
+		ToolName   string `json:"tool_name"`
+		ToolCallID string `json:"tool_call_id,omitempty"`
+		Payload    any    `json:"payload,omitempty"`
+	}
+
 	// ToolUpdatePayload describes a non-terminal update to a tool call, typically used
 	// when a parent tool dynamically discovers more child tools across planning iterations.
 	ToolUpdatePayload struct {
@@ -277,6 +311,12 @@ const (
 	// progressively (streaming typewriter effect). Emitted by StreamSubscriber when
 	// AssistantMessageEvent hooks fire.
 	EventAssistantReply EventType = "assistant_reply"
+
+	// EventAwaitClarification streams when a planner requests human clarification.
+	EventAwaitClarification EventType = "await_clarification"
+
+	// EventAwaitExternalTools streams when a planner requests external tool execution.
+	EventAwaitExternalTools EventType = "await_external_tools"
 )
 
 // NewBaseForTest constructs a Base event with the given type, run ID, and

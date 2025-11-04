@@ -606,6 +606,14 @@ func (h *workflowHandle) Signal(ctx context.Context, name string, payload any) e
 	return h.client.SignalWorkflow(ctx, h.run.GetID(), h.run.GetRunID(), name, payload)
 }
 
+// SignalByID sends a signal to a workflow by its workflow ID/run ID directly.
+func (e *Engine) SignalByID(ctx context.Context, workflowID, runID, name string, payload any) error {
+	if workflowID == "" {
+		return fmt.Errorf("workflow id is required")
+	}
+	return e.client.SignalWorkflow(ctx, workflowID, runID, name, payload)
+}
+
 func (h *workflowHandle) Cancel(ctx context.Context) error {
 	return h.client.CancelWorkflow(ctx, h.run.GetID(), h.run.GetRunID())
 }

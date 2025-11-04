@@ -16,6 +16,11 @@ const (
 	SignalPause = "goaai.runtime.pause"
 	// SignalResume is the workflow signal name used to resume a paused run.
 	SignalResume = "goaai.runtime.resume"
+
+	// SignalProvideClarification delivers a ClarificationAnswer to a waiting run.
+	SignalProvideClarification = "goaai.runtime.provide.clarification"
+	// SignalProvideToolResults delivers external tool results to a waiting run.
+	SignalProvideToolResults = "goaai.runtime.provide.toolresults"
 )
 
 type (
@@ -42,16 +47,20 @@ type (
 	// Controller drains runtime interrupt signals and exposes helpers the
 	// workflow loop can call to react to pause/resume requests.
 	Controller struct {
-		pauseCh  engine.SignalChannel
-		resumeCh engine.SignalChannel
+		pauseCh   engine.SignalChannel
+		resumeCh  engine.SignalChannel
+		clarifyCh engine.SignalChannel
+		resultsCh engine.SignalChannel
 	}
 )
 
 // NewController builds a controller wired to the workflow context signals.
 func NewController(wfCtx engine.WorkflowContext) *Controller {
 	return &Controller{
-		pauseCh:  wfCtx.SignalChannel(SignalPause),
-		resumeCh: wfCtx.SignalChannel(SignalResume),
+		pauseCh:   wfCtx.SignalChannel(SignalPause),
+		resumeCh:  wfCtx.SignalChannel(SignalResume),
+		clarifyCh: wfCtx.SignalChannel(SignalProvideClarification),
+		resultsCh: wfCtx.SignalChannel(SignalProvideToolResults),
 	}
 }
 
@@ -78,4 +87,45 @@ func (c *Controller) WaitResume(ctx context.Context) (ResumeRequest, error) {
 		return ResumeRequest{}, err
 	}
 	return req, nil
+}
+
+// ClarificationAnswer carries a typed answer for a paused clarification request.
+type ClarificationAnswer struct {
+	RunID  string
+	ID     string
+	Answer string
+	Labels map[string]string
+}
+
+// ToolResultsSet carries results for an external tools await request.
+type ToolResultsSet struct {
+	RunID   string
+	ID      string
+	Results []planner.ToolResult
+	// RetryHints optionally provides hints associated with failures.
+	RetryHints []*planner.RetryHint
+}
+
+// WaitProvideClarification blocks until a clarification answer is delivered.
+func (c *Controller) WaitProvideClarification(ctx context.Context) (ClarificationAnswer, error) {
+	if c == nil || c.clarifyCh == nil {
+		return ClarificationAnswer{}, errors.New("interrupt: clarification channel unavailable")
+	}
+	var ans ClarificationAnswer
+	if err := c.clarifyCh.Receive(ctx, &ans); err != nil {
+		return ClarificationAnswer{}, err
+	}
+	return ans, nil
+}
+
+// WaitProvideToolResults blocks until external tool results are delivered.
+func (c *Controller) WaitProvideToolResults(ctx context.Context) (ToolResultsSet, error) {
+	if c == nil || c.resultsCh == nil {
+		return ToolResultsSet{}, errors.New("interrupt: results channel unavailable")
+	}
+	var rs ToolResultsSet
+	if err := c.resultsCh.Receive(ctx, &rs); err != nil {
+		return ToolResultsSet{}, err
+	}
+	return rs, nil
 }

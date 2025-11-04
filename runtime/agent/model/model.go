@@ -204,6 +204,8 @@ type (
 		// Enable turns provider-specific thinking modes on or off. When false, the
 		// request should use the provider default (typically disabled).
 		Enable bool
+		// Interleaved turns on interleaved thinking mode for models that support it.
+		Interleaved bool
 		// BudgetTokens caps the number of tokens allocated to thinking output. A
 		// value of 0 indicates the provider default.
 		BudgetTokens int

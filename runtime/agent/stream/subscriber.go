@@ -69,6 +69,32 @@ func NewSubscriber(sink Sink) (*Subscriber, error) {
 // ensures that streaming failures are visible to the runtime.
 func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 	switch evt := event.(type) {
+	case *hooks.AwaitClarificationEvent:
+		payload := AwaitClarificationPayload{
+			ID:             evt.ID,
+			Question:       evt.Question,
+			MissingFields:  append([]string(nil), evt.MissingFields...),
+			RestrictToTool: string(evt.RestrictToTool),
+			ExampleInput:   evt.ExampleInput,
+		}
+		return s.sink.Send(ctx, AwaitClarification{
+			Base: Base{t: EventAwaitClarification, r: evt.RunID(), p: payload},
+			Data: payload,
+		})
+	case *hooks.AwaitExternalToolsEvent:
+		items := make([]AwaitToolPayload, 0, len(evt.Items))
+		for _, it := range evt.Items {
+			items = append(items, AwaitToolPayload{
+				ToolName:   string(it.ToolName),
+				ToolCallID: it.ToolCallID,
+				Payload:    it.Payload,
+			})
+		}
+		payload := AwaitExternalToolsPayload{ID: evt.ID, Items: items}
+		return s.sink.Send(ctx, AwaitExternalTools{
+			Base: Base{t: EventAwaitExternalTools, r: evt.RunID(), p: payload},
+			Data: payload,
+		})
 	case *hooks.ToolCallScheduledEvent:
 		payload := ToolStartPayload{
 			ToolCallID:            evt.ToolCallID,

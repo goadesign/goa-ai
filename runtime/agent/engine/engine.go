@@ -35,6 +35,17 @@ type (
 		StartWorkflow(ctx context.Context, req WorkflowStartRequest) (WorkflowHandle, error)
 	}
 
+	// Signaler provides direct signaling by workflow ID/run ID without relying on
+	// in-process workflow handles. Engines that support out-of-process signaling
+	// (e.g., Temporal) should implement this interface so the runtime can deliver
+	// Provide*/Pause/Resume signals across process restarts.
+	Signaler interface {
+		// SignalByID sends a signal to the given workflow identified by workflowID
+		// and optional runID. The payload is engine-specific and must be
+		// serializable by the engine client.
+		SignalByID(ctx context.Context, workflowID, runID, name string, payload any) error
+	}
+
 	// WorkflowDefinition binds a workflow handler to a logical name and default queue.
 	// Generated code creates these during agent registration.
 	WorkflowDefinition struct {

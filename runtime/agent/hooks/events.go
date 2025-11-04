@@ -260,6 +260,38 @@ type (
 		// Used to order events deterministically for display and debugging.
 		seqInTurn int
 	}
+
+	// AwaitClarificationEvent indicates the planner requested a human-provided
+	// clarification before continuing execution.
+	AwaitClarificationEvent struct {
+		baseEvent
+		// ID correlates this await with a subsequent ProvideClarification.
+		ID string
+		// Question is the prompt to present to the user.
+		Question string
+		// MissingFields optionally lists fields needed to proceed.
+		MissingFields []string
+		// RestrictToTool optionally narrows the next turn to a specific tool.
+		RestrictToTool tools.Ident
+		// ExampleInput optionally provides a schema-compliant example.
+		ExampleInput map[string]any
+	}
+
+	// AwaitExternalToolsEvent indicates the planner requested external tool execution.
+	AwaitExternalToolsEvent struct {
+		baseEvent
+		// ID correlates this await with a subsequent ProvideToolResults.
+		ID string
+		// Items enumerate the external tool calls to be satisfied.
+		Items []AwaitToolItem
+	}
+
+	// AwaitToolItem describes a single external tool call to be executed out-of-band.
+	AwaitToolItem struct {
+		ToolName   tools.Ident
+		ToolCallID string
+		Payload    any
+	}
 )
 
 // NewRunStartedEvent constructs a RunStartedEvent with the current
@@ -312,6 +344,45 @@ func NewRunResumedEvent(
 	}
 }
 
+// NewAwaitClarificationEvent constructs an AwaitClarificationEvent with the provided details.
+func NewAwaitClarificationEvent(
+	runID, agentID, id, question string,
+	missing []string,
+	restrict tools.Ident,
+	example map[string]any,
+) *AwaitClarificationEvent {
+	var ex map[string]any
+	if len(example) > 0 {
+		ex = make(map[string]any, len(example))
+		for k, v := range example {
+			ex[k] = v
+		}
+	}
+	return &AwaitClarificationEvent{
+		baseEvent:      newBaseEvent(runID, agentID),
+		ID:             id,
+		Question:       question,
+		MissingFields:  append([]string(nil), missing...),
+		RestrictToTool: restrict,
+		ExampleInput:   ex,
+	}
+}
+
+// NewAwaitExternalToolsEvent constructs an AwaitExternalToolsEvent.
+func NewAwaitExternalToolsEvent(
+	runID, agentID, id string,
+	items []AwaitToolItem,
+) *AwaitExternalToolsEvent {
+	// ensure copy
+	copied := make([]AwaitToolItem, len(items))
+	copy(copied, items)
+	return &AwaitExternalToolsEvent{
+		baseEvent: newBaseEvent(runID, agentID),
+		ID:        id,
+		Items:     copied,
+	}
+}
+
 // NewPolicyDecisionEvent constructs a PolicyDecisionEvent with the provided metadata.
 func NewPolicyDecisionEvent(
 	runID, agentID string,
@@ -328,6 +399,12 @@ func NewPolicyDecisionEvent(
 		Metadata:     metadata,
 	}
 }
+
+// Type implements Event for AwaitClarificationEvent.
+func (e *AwaitClarificationEvent) Type() EventType { return AwaitClarification }
+
+// Type implements Event for AwaitExternalToolsEvent.
+func (e *AwaitExternalToolsEvent) Type() EventType { return AwaitExternalTools }
 
 // NewToolCallScheduledEvent constructs a ToolCallScheduledEvent. Payload is the
 // structured tool arguments (JSON-serializable); queue is the activity queue name.

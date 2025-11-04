@@ -66,6 +66,12 @@ const (
 	// RunPaused fires when execution is suspended awaiting external action.
 	RunPaused EventType = "run_paused"
 
+	// AwaitClarification fires when the planner requests a human clarification.
+	AwaitClarification EventType = "await_clarification"
+
+	// AwaitExternalTools fires when the planner requests external tools to run out-of-band.
+	AwaitExternalTools EventType = "await_external_tools"
+
 	// RunResumed fires when a previously paused run resumes execution.
 	RunResumed EventType = "run_resumed"
 

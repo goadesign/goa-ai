@@ -335,6 +335,26 @@ func WithWorkflowOptions(o *WorkflowOptions) RunOption {
 	return func(in *RunInput) { in.WorkflowOptions = o }
 }
 
+// WithPerTurnMaxToolCalls sets a per-turn cap on tool executions. Zero means unlimited.
+func WithPerTurnMaxToolCalls(n int) RunOption {
+	return func(in *RunInput) { in.Policy.PerTurnMaxToolCalls = n }
+}
+
+// WithRestrictToTool restricts candidate tools to a single tool for the run.
+func WithRestrictToTool(id tools.Ident) RunOption {
+	return func(in *RunInput) { in.Policy.RestrictToTool = id }
+}
+
+// WithAllowedTags filters candidate tools to those whose tags intersect this list.
+func WithAllowedTags(tags []string) RunOption {
+	return func(in *RunInput) { in.Policy.AllowedTags = append([]string(nil), tags...) }
+}
+
+// WithDeniedTags filters out candidate tools that have any of these tags.
+func WithDeniedTags(tags []string) RunOption {
+	return func(in *RunInput) { in.Policy.DeniedTags = append([]string(nil), tags...) }
+}
+
 // newFromOptions constructs a Runtime using the provided options. Internal helper
 // used by the public New(...RuntimeOption) constructor.
 func newFromOptions(opts Options) *Runtime {
@@ -818,6 +838,9 @@ func (r *Runtime) PauseRun(ctx context.Context, req interrupt.PauseRequest) erro
 	if req.RunID == "" {
 		return errors.New("run id is required")
 	}
+	if s, ok := r.Engine.(engine.Signaler); ok {
+		return s.SignalByID(ctx, req.RunID, "", interrupt.SignalPause, req)
+	}
 	handle, ok := r.workflowHandle(req.RunID)
 	if !ok {
 		return fmt.Errorf("run %q not found", req.RunID)
@@ -831,11 +854,44 @@ func (r *Runtime) ResumeRun(ctx context.Context, req interrupt.ResumeRequest) er
 	if req.RunID == "" {
 		return errors.New("run id is required")
 	}
+	if s, ok := r.Engine.(engine.Signaler); ok {
+		return s.SignalByID(ctx, req.RunID, "", interrupt.SignalResume, req)
+	}
 	handle, ok := r.workflowHandle(req.RunID)
 	if !ok {
 		return fmt.Errorf("run %q not found", req.RunID)
 	}
 	return handle.Signal(ctx, interrupt.SignalResume, req)
+}
+
+// ProvideClarification sends a typed clarification answer to a waiting run.
+func (r *Runtime) ProvideClarification(ctx context.Context, ans interrupt.ClarificationAnswer) error {
+	if ans.RunID == "" {
+		return errors.New("run id is required")
+	}
+	if s, ok := r.Engine.(engine.Signaler); ok {
+		return s.SignalByID(ctx, ans.RunID, "", interrupt.SignalProvideClarification, ans)
+	}
+	handle, ok := r.workflowHandle(ans.RunID)
+	if !ok {
+		return fmt.Errorf("run %q not found", ans.RunID)
+	}
+	return handle.Signal(ctx, interrupt.SignalProvideClarification, ans)
+}
+
+// ProvideToolResults sends a set of external tool results to a waiting run.
+func (r *Runtime) ProvideToolResults(ctx context.Context, rs interrupt.ToolResultsSet) error {
+	if rs.RunID == "" {
+		return errors.New("run id is required")
+	}
+	if s, ok := r.Engine.(engine.Signaler); ok {
+		return s.SignalByID(ctx, rs.RunID, "", interrupt.SignalProvideToolResults, rs)
+	}
+	handle, ok := r.workflowHandle(rs.RunID)
+	if !ok {
+		return fmt.Errorf("run %q not found", rs.RunID)
+	}
+	return handle.Signal(ctx, interrupt.SignalProvideToolResults, rs)
 }
 
 // addToolsetLocked registers a toolset and its specs without acquiring the lock.
