@@ -138,6 +138,20 @@ type (
 		Data ToolEndPayload
 	}
 
+	// Usage reports token usage for a model invocation.
+	Usage struct {
+		Base
+		Data UsagePayload
+	}
+
+	// UsagePayload describes token usage details.
+	UsagePayload struct {
+		Model        string
+		InputTokens  int
+		OutputTokens int
+		TotalTokens  int
+	}
+
 	// AwaitClarification streams a human clarification request from the planner/runtime.
 	AwaitClarification struct {
 		Base
@@ -317,6 +331,9 @@ const (
 
 	// EventAwaitExternalTools streams when a planner requests external tool execution.
 	EventAwaitExternalTools EventType = "await_external_tools"
+
+	// EventUsage streams token usage details.
+	EventUsage EventType = "usage"
 )
 
 // NewBaseForTest constructs a Base event with the given type, run ID, and

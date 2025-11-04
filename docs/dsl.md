@@ -278,7 +278,7 @@ The example runtime harness (`example/complete/runtime_harness.go`) shows the fl
 - Prefer specific validations (Required, MinLength, Enum) so planners receive strong schemas; the runtime trusts these contracts.
 - Treat run policies as part of your API contract: choose bounds that match downstream SLAs and enforce them consistently (policy engines can still override at runtime).
 - For MCP integrations, let the codegen-managed helper register the toolset; avoid hand-written glue so codecs and retry hints stay consistent with future updates.
-- When planners require incremental LLM output, fetch the registered model via `AgentContext.Model()`, set `model.Request.Stream = true`, and (optionally) specify `model.ThinkingOptions`. Bedrock adapters translate these hints into ConverseStream requests; providers that do not support streaming return `model.ErrStreamingUnsupported`, so planners can fall back to unary completions.
+- When planners require incremental LLM output, fetch the registered model via `PlannerContext.ModelClient(...)`, set `model.Request.Stream = true`, and (optionally) specify `model.ThinkingOptions`. Bedrock adapters translate these hints into ConverseStream requests; providers that do not support streaming return `model.ErrStreamingUnsupported`, so planners can fall back to unary completions.
 
 For deeper architectural context (workflow engine interface, runtime package layout, feature modules), see the comprehensive roadmap in `docs/plan.md` and the upcoming `docs/runtime.md`.
 

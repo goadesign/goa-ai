@@ -318,20 +318,32 @@ type PlannerStreamEvent struct {
     ToolCall *ToolCallNotification
 }
 
-// AFTER: Use planner.AgentContext for streaming
-import "goa.design/goa-ai/runtime/agent/planner"
+// AFTER: Use PlannerContext for data and PlannerEvents for streaming
+import (
+    "goa.design/goa-ai/runtime/agent/planner"
+    "goa.design/goa-ai/runtime/agent/model"
+)
 
-func PlanResume(ctx context.Context, input planner.PlanInput) (planner.PlanResult, error) {
-    agentCtx := planner.AgentContextFromContext(ctx)
-    
-    // Stream assistant messages
-    agentCtx.EmitAssistantMessage("Processing request...")
-    
-    // Stream planner notes
-    agentCtx.EmitPlannerNote("Calling search tool to gather data")
-    
-    // Tool calls are automatically emitted by runtime
-    return planner.PlanResult{...}, nil
+func PlanResume(ctx context.Context, input planner.PlanResumeInput) (planner.PlanResult, error) {
+    // Obtain a streaming model client
+    m, _ := input.Agent.ModelClient("bedrock")
+    req := model.Request{ /* ... set system, messages, tools ... */ }
+    req.Stream = true
+
+    strm, err := m.Stream(ctx, req)
+    if err != nil {
+        return planner.PlanResult{}, err
+    }
+    // Drain provider stream, emit events via input.Events, and build a summary
+    sum, err := planner.ConsumeStream(ctx, strm, input.Events)
+    if err != nil {
+        return planner.PlanResult{}, err
+    }
+    // Turn stream summary into a plan decision
+    if len(sum.ToolCalls) > 0 {
+        return planner.PlanResult{ToolCalls: sum.ToolCalls}, nil
+    }
+    return planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: sum.Text}}}, nil
 }
 ```
 

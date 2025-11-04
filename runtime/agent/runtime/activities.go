@@ -24,15 +24,16 @@ import (
 // agent context with memory access and delegates to the planner's PlanStart
 // implementation.
 func (r *Runtime) PlanStartActivity(ctx context.Context, input PlanActivityInput) (PlanActivityOutput, error) {
-	reg, agentCtx, err := r.plannerContext(ctx, input)
-	if err != nil {
-		return PlanActivityOutput{}, err
-	}
-	planInput := planner.PlanInput{
-		Messages:   input.Messages,
-		RunContext: input.RunContext,
-		Agent:      agentCtx,
-	}
+    reg, agentCtx, err := r.plannerContext(ctx, input)
+    if err != nil {
+        return PlanActivityOutput{}, err
+    }
+    planInput := planner.PlanInput{
+        Messages:   input.Messages,
+        RunContext: input.RunContext,
+        Agent:      agentCtx,
+        Events:     newPlannerEvents(r, input.AgentID, input.RunID),
+    }
 	result, err := r.planStart(ctx, reg, planInput)
 	if err != nil {
 		return PlanActivityOutput{}, err
@@ -51,16 +52,17 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input PlanActivityInput
 // execution to produce the next plan. The activity creates an agent context
 // with memory access and delegates to the planner's PlanResume implementation.
 func (r *Runtime) PlanResumeActivity(ctx context.Context, input PlanActivityInput) (PlanActivityOutput, error) {
-	reg, agentCtx, err := r.plannerContext(ctx, input)
-	if err != nil {
-		return PlanActivityOutput{}, err
-	}
-	planInput := planner.PlanResumeInput{
-		Messages:    input.Messages,
-		RunContext:  input.RunContext,
-		Agent:       agentCtx,
-		ToolResults: input.ToolResults,
-	}
+    reg, agentCtx, err := r.plannerContext(ctx, input)
+    if err != nil {
+        return PlanActivityOutput{}, err
+    }
+    planInput := planner.PlanResumeInput{
+        Messages:    input.Messages,
+        RunContext:  input.RunContext,
+        Agent:       agentCtx,
+        Events:      newPlannerEvents(r, input.AgentID, input.RunID),
+        ToolResults: input.ToolResults,
+    }
 	result, err := r.planResume(ctx, reg, planInput)
 	if err != nil {
 		return PlanActivityOutput{}, err
@@ -209,9 +211,7 @@ func buildRetryHintFromValidation(err error, toolName tools.Ident) ([]string, st
 }
 
 // planStart invokes the planner's PlanStart method with tracing.
-func (r *Runtime) planStart(
-	ctx context.Context, reg AgentRegistration, input planner.PlanInput,
-) (planner.PlanResult, error) {
+func (r *Runtime) planStart(ctx context.Context, reg AgentRegistration, input planner.PlanInput) (planner.PlanResult, error) {
 	if reg.Planner == nil {
 		return planner.PlanResult{}, errors.New("planner not configured")
 	}
@@ -225,9 +225,7 @@ func (r *Runtime) planStart(
 }
 
 // planResume invokes the planner's PlanResume method with tracing.
-func (r *Runtime) planResume(
-	ctx context.Context, reg AgentRegistration, input planner.PlanResumeInput,
-) (planner.PlanResult, error) {
+func (r *Runtime) planResume(ctx context.Context, reg AgentRegistration, input planner.PlanResumeInput) (planner.PlanResult, error) {
 	if reg.Planner == nil {
 		return planner.PlanResult{}, errors.New("planner not configured")
 	}
@@ -241,9 +239,7 @@ func (r *Runtime) planResume(
 }
 
 // plannerContext constructs the agent registration and context needed for planner execution.
-func (r *Runtime) plannerContext(
-	ctx context.Context, input PlanActivityInput,
-) (AgentRegistration, planner.AgentContext, error) {
+func (r *Runtime) plannerContext(ctx context.Context, input PlanActivityInput) (AgentRegistration, planner.PlannerContext, error) {
 	if input.AgentID == "" {
 		return AgentRegistration{}, nil, errors.New("agent id is required")
 	}
@@ -288,15 +284,15 @@ func (r *Runtime) marshalToolValue(
 
 // unmarshalToolValue decodes a tool value using the registered codec or standard JSON.
 func (r *Runtime) unmarshalToolValue(ctx context.Context, toolName tools.Ident, raw json.RawMessage, payload bool) (any, error) {
-    if len(raw) == 0 {
-        return nil, nil
-    }
-    codec, ok := r.toolCodec(toolName, payload)
-    if ok && codec.FromJSON != nil {
-        return codec.FromJSON(raw)
-    }
-    r.logger.Error(ctx, "no codec found for tool", "tool", toolName, "payload", payload)
-    return nil, fmt.Errorf("no codec found for tool %s", toolName)
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	codec, ok := r.toolCodec(toolName, payload)
+	if ok && codec.FromJSON != nil {
+		return codec.FromJSON(raw)
+	}
+	r.logger.Error(ctx, "no codec found for tool", "tool", toolName, "payload", payload)
+	return nil, fmt.Errorf("no codec found for tool %s", toolName)
 }
 
 // toolCodec retrieves the JSON codec for a tool's payload or result.

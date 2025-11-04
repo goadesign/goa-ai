@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/memory"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -83,13 +84,13 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	}
 	ctrl := interrupt.NewController(wfCtx)
 	reader := r.memoryReader(wfCtx.Context(), input.AgentID, input.RunID)
-	agentCtx := newAgentContext(agentContextOptions{
-		runtime: r,
-		agentID: input.AgentID,
-		runID:   input.RunID,
-		memory:  reader,
-		turnID:  input.TurnID,
-	})
+    agentCtx := newAgentContext(agentContextOptions{
+        runtime: r,
+        agentID: input.AgentID,
+        runID:   input.RunID,
+        memory:  reader,
+        turnID:  input.TurnID,
+    })
 	runCtx := run.Context{
 		RunID:     input.RunID,
 		SessionID: input.SessionID,
@@ -106,11 +107,12 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	r.recordRunStatus(wfCtx.Context(), input, run.StatusRunning, nil)
 	defer r.publishHook(wfCtx.Context(), hooks.NewRunCompletedEvent(input.RunID, input.AgentID, "success", nil), seq)
 
-	planInput := planner.PlanInput{
-		Messages:   input.Messages,
-		RunContext: runCtx,
-		Agent:      agentCtx,
-	}
+    planInput := planner.PlanInput{
+        Messages:   input.Messages,
+        RunContext: runCtx,
+        Agent:      agentCtx,
+        Events:     newPlannerEvents(r, input.AgentID, input.RunID),
+    }
 	startReq := PlanActivityInput{
 		AgentID:    input.AgentID,
 		RunID:      input.RunID,
@@ -152,7 +154,23 @@ func (r *Runtime) runLoop(
 	parentTracker *childTracker,
 	ctrl *interrupt.Controller,
 ) (*RunOutput, error) {
-	ctx := wfCtx.Context()
+    ctx := wfCtx.Context()
+    // Aggregate usage during the run via a temporary subscriber.
+    var aggUsage model.TokenUsage
+    usageSub, _ := r.Bus.Register(hooks.SubscriberFunc(func(c context.Context, evt hooks.Event) error {
+        if evt.RunID() != input.RunID || evt.AgentID() != input.AgentID {
+            return nil
+        }
+        if u, ok := evt.(*hooks.UsageEvent); ok {
+            aggUsage = model.TokenUsage{
+                InputTokens:  aggUsage.InputTokens + u.InputTokens,
+                OutputTokens: aggUsage.OutputTokens + u.OutputTokens,
+                TotalTokens:  aggUsage.TotalTokens + u.TotalTokens,
+            }
+        }
+        return nil
+    }))
+    defer func() { if usageSub != nil { _ = usageSub.Close() } }()
 	result := initial
 	var lastToolResults []planner.ToolResult
 	for {
@@ -287,14 +305,15 @@ func (r *Runtime) runLoop(
 					seq,
 				)
 			}
-			return &RunOutput{
-				AgentID:    base.Agent.ID(),
-				RunID:      base.RunContext.RunID,
-				Final:      result.FinalResponse.Message,
-				ToolEvents: lastToolResults,
-				Notes:      result.Notes,
-			}, nil
-		}
+            return &RunOutput{
+                AgentID:    base.Agent.ID(),
+                RunID:      base.RunContext.RunID,
+                Final:      result.FinalResponse.Message,
+                ToolEvents: lastToolResults,
+                Notes:      result.Notes,
+                Usage:      aggUsage,
+            }, nil
+        }
 
 		if caps.RemainingToolCalls == 0 && caps.MaxToolCalls > 0 {
 			return nil, errors.New("tool call cap exceeded")

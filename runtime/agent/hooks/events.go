@@ -292,6 +292,20 @@ type (
 		ToolCallID string
 		Payload    any
 	}
+
+	// UsageEvent reports token usage for a model invocation within a run.
+	// Emitted when the model stream reports usage deltas or a final summary.
+	UsageEvent struct {
+		baseEvent
+		// Model identifier when available (provider dependent).
+		Model string
+		// InputTokens is the number of prompt tokens consumed.
+		InputTokens int
+		// OutputTokens is the number of completion tokens produced.
+		OutputTokens int
+		// TotalTokens is InputTokens + OutputTokens.
+		TotalTokens int
+	}
 )
 
 // NewRunStartedEvent constructs a RunStartedEvent with the current
@@ -454,15 +468,21 @@ func NewToolResultReceivedEvent(
 
 // NewToolCallUpdatedEvent constructs a ToolCallUpdatedEvent to signal that a
 // parent tool's child count has increased due to dynamic discovery.
-func NewToolCallUpdatedEvent(
-	runID, agentID string,
-	toolCallID string,
-	expectedChildrenTotal int,
-) *ToolCallUpdatedEvent {
+func NewToolCallUpdatedEvent(runID, agentID string, toolCallID string, expectedChildrenTotal int) *ToolCallUpdatedEvent {
 	return &ToolCallUpdatedEvent{
 		baseEvent:             newBaseEvent(runID, agentID),
 		ToolCallID:            toolCallID,
 		ExpectedChildrenTotal: expectedChildrenTotal,
+	}
+}
+
+// NewUsageEvent constructs a UsageEvent with the provided details.
+func NewUsageEvent(runID, agentID string, input, output, total int) *UsageEvent {
+	return &UsageEvent{
+		baseEvent:    newBaseEvent(runID, agentID),
+		InputTokens:  input,
+		OutputTokens: output,
+		TotalTokens:  total,
 	}
 }
 
@@ -551,3 +571,4 @@ func (e *AssistantMessageEvent) Type() EventType   { return AssistantMessage }
 func (e *RetryHintIssuedEvent) Type() EventType    { return RetryHintIssued }
 func (e *MemoryAppendedEvent) Type() EventType     { return MemoryAppended }
 func (e *PolicyDecisionEvent) Type() EventType     { return PolicyDecision }
+func (e *UsageEvent) Type() EventType              { return Usage }

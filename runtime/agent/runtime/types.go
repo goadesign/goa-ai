@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -83,6 +84,8 @@ type (
 		ToolEvents []planner.ToolResult
 		// Notes aggregates planner annotations produced during the final turn.
 		Notes []planner.PlannerAnnotation
+		// Usage aggregates model-reported token usage during the run when available.
+		Usage model.TokenUsage
 	}
 
 	// ToolInput is the payload passed to tool executors. All tool types (activity-based,

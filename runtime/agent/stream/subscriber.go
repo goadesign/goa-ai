@@ -1,10 +1,10 @@
 package stream
 
 import (
-	"context"
-	"errors"
+    "context"
+    "errors"
 
-	"goa.design/goa-ai/runtime/agent/hooks"
+    "goa.design/goa-ai/runtime/agent/hooks"
 )
 
 type (
@@ -68,12 +68,20 @@ func NewSubscriber(sink Sink) (*Subscriber, error) {
 // stops event delivery to remaining subscribers. This fail-fast behavior
 // ensures that streaming failures are visible to the runtime.
 func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
-	switch evt := event.(type) {
-	case *hooks.AwaitClarificationEvent:
-		payload := AwaitClarificationPayload{
-			ID:             evt.ID,
-			Question:       evt.Question,
-			MissingFields:  append([]string(nil), evt.MissingFields...),
+    switch evt := event.(type) {
+    case *hooks.UsageEvent:
+        payload := UsagePayload{
+            Model:        evt.Model,
+            InputTokens:  evt.InputTokens,
+            OutputTokens: evt.OutputTokens,
+            TotalTokens:  evt.TotalTokens,
+        }
+        return s.sink.Send(ctx, Usage{Base: Base{t: EventUsage, r: evt.RunID(), p: payload}, Data: payload})
+    case *hooks.AwaitClarificationEvent:
+        payload := AwaitClarificationPayload{
+            ID:             evt.ID,
+            Question:       evt.Question,
+            MissingFields:  append([]string(nil), evt.MissingFields...),
 			RestrictToTool: string(evt.RestrictToTool),
 			ExampleInput:   evt.ExampleInput,
 		}

@@ -627,17 +627,6 @@ func (r *Runtime) RegisterModel(id string, client model.Client) error {
 	return nil
 }
 
-// Toolset returns a registered toolset by ID if present. The boolean indicates
-// whether the toolset was found.
-// lookupToolset retrieves a registered toolset by name. Returns false if the
-// toolset is not registered. Intended for internal/runtime use and codegen.
-func (r *Runtime) lookupToolset(id string) (ToolsetRegistration, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	ts, ok := r.toolsets[id]
-	return ts, ok
-}
-
 // agentByID returns the registered agent by ID if present. The boolean indicates
 // whether the agent was found. Intended for internal/runtime use and codegen.
 func (r *Runtime) agentByID(id string) (AgentRegistration, bool) {
@@ -761,12 +750,6 @@ func (r *Runtime) ExecuteAgentInline(
 	return out, nil
 }
 
-// Run starts the agent workflow synchronously and waits for the final output.
-// Generated Goa transports call this helper to offer a simple request/response API.
-// Returns an error if the workflow fails to start or execute.
-// Note: legacy helpers (Run, RunAgent, StartAgent) have been removed. Use
-// AgentClient.Run/Start obtained via Runtime.Client instead.
-
 // StartRun launches the agent workflow asynchronously and returns a workflow handle
 // so callers can wait, signal, or cancel execution. The RunID is generated if not
 // provided in the input. Returns an error if the agent is not registered or if the
@@ -826,7 +809,7 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	}
 	handle, err := r.Engine.StartWorkflow(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrWorkflowStartFailed, err)
+		return nil, fmt.Errorf("%w: %w", ErrWorkflowStartFailed, err)
 	}
 	r.storeWorkflowHandle(input.RunID, handle)
 	return handle, nil

@@ -111,6 +111,9 @@ const (
 
 	// PolicyDecision fires when a policy engine returns a decision for the turn.
 	PolicyDecision EventType = "policy_decision"
+
+	// Usage reports token usage for a model invocation within a run.
+	Usage EventType = "usage"
 )
 
 // HandleEvent implements Subscriber by invoking the function.

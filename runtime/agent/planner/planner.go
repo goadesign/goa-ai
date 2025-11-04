@@ -7,15 +7,14 @@
 package planner
 
 import (
-	"context"
+    "context"
 
-	"goa.design/goa-ai/runtime/agent/hooks"
-	"goa.design/goa-ai/runtime/agent/memory"
-	"goa.design/goa-ai/runtime/agent/model"
-	"goa.design/goa-ai/runtime/agent/run"
-	"goa.design/goa-ai/runtime/agent/telemetry"
-	toolerrors "goa.design/goa-ai/runtime/agent/toolerrors"
-	"goa.design/goa-ai/runtime/agent/tools"
+    "goa.design/goa-ai/runtime/agent/memory"
+    "goa.design/goa-ai/runtime/agent/model"
+    "goa.design/goa-ai/runtime/agent/run"
+    "goa.design/goa-ai/runtime/agent/telemetry"
+    toolerrors "goa.design/goa-ai/runtime/agent/toolerrors"
+    "goa.design/goa-ai/runtime/agent/tools"
 )
 
 // ToolError represents a structured tool failure and is an alias to the runtime toolerrors type.
@@ -110,9 +109,13 @@ type (
 		// inspect labels for routing decisions or use caps to understand resource limits.
 		RunContext run.Context
 
-		// Agent provides access to runtime services: memory for history lookups, model
-		// clients for LLM calls, hooks for event publishing, and telemetry.
-		Agent AgentContext
+    // Agent provides access to runtime services (memory, models, telemetry).
+    Agent PlannerContext
+
+    // Events provides streaming callbacks to emit assistant chunks, planner thoughts,
+    // and usage deltas during provider streaming. Implemented by the runtime and not
+    // serialized across workflow/activity boundaries.
+    Events PlannerEvents
 	}
 
 	// PlanResumeInput contains the information provided to the planner when resuming
@@ -125,8 +128,12 @@ type (
 		// RunContext carries identifiers, labels, and caps for the run.
 		RunContext run.Context
 
-		// Agent provides access to runtime services (memory, models, hooks).
-		Agent AgentContext
+    // Agent provides access to runtime services (memory, models, telemetry).
+    Agent PlannerContext
+
+    // Events provides streaming callbacks to emit assistant chunks, planner thoughts,
+    // and usage deltas during provider streaming.
+    Events PlannerEvents
 
 		// ToolResults lists the results of the tools executed since the previous planner
 		// call. Planners integrate these results (successes and failures) into their
@@ -366,40 +373,27 @@ type (
 		Meta map[string]any
 	}
 
-	// AgentContext gives planners access to runtime services (memory, models, logging,
-	// hooks) and per-run state. Implementations are provided by the runtime and scoped
-	// to the current workflow execution.
-	AgentContext interface {
-		// ID returns the agent identifier (e.g., "weather_assistant").
-		ID() string
+    // PlannerContext gives planners access to runtime services (memory, models, logging)
+    // and per-run state. Implementations are provided by the runtime and scoped to the
+    // current workflow execution. This interface is read-only from the planner's
+    // perspective; streaming callbacks live on PlannerEvents.
+    PlannerContext interface {
+        // ID returns the agent identifier (e.g., "weather_assistant").
+        ID() string
 
 		// RunID returns the workflow run identifier for this execution.
 		RunID() string
 
-		// Memory returns a reader for querying the agent's persistent history. Planners
-		// use this to look up prior turns, tool results, or annotations.
-		Memory() memory.Reader
+        // Memory returns a reader for querying the agent's persistent history. Planners use
+        // this to look up prior turns, tool results, or annotations.
+        Memory() memory.Reader
 
-		// Hooks returns the event bus for publishing planner-generated events (notes,
-		// decisions). These are propagated to subscribers for observability.
-		Hooks() hooks.Bus
+        // ModelClient returns the model client for the given ID. The boolean indicates
+        // whether the client exists. Planners use this to invoke LLMs for reasoning.
+        ModelClient(id string) (model.Client, bool)
 
-		// ModelClient returns the model client for the given ID. The boolean indicates
-		// whether the client exists. Planners use this to invoke LLMs for reasoning.
-		ModelClient(id string) (model.Client, bool)
-
-		// EmitAssistantMessage publishes a partial assistant reply (typically during
-		// streaming). Implementations stamp the event with run/turn metadata and fan
-		// it out through the runtime hook bus.
-		EmitAssistantMessage(ctx context.Context, message string, structured any)
-
-		// EmitPlannerNote publishes a planner note immediately (e.g., thinking traces
-		// during streaming). Notes are persisted to memory and broadcast to stream
-		// subscribers just like the entries emitted via PlanResult.Notes.
-		EmitPlannerNote(ctx context.Context, note string, labels map[string]string)
-
-		// Logger returns a logger scoped to this workflow execution.
-		Logger() telemetry.Logger
+        // Logger returns a logger scoped to this workflow execution.
+        Logger() telemetry.Logger
 
 		// Metrics returns a metrics recorder for emitting planner-scoped metrics.
 		Metrics() telemetry.Metrics
@@ -410,8 +404,17 @@ type (
 		// State returns mutable per-run state storage. Planners use this to persist
 		// ephemeral data (conversation context, partial results) across PlanStart/PlanResume
 		// calls within a single run.
-		State() AgentState
-	}
+        State() AgentState
+    }
+
+    // PlannerEvents exposes streaming callbacks used by streaming planners to forward
+    // assistant chunks, planner thoughts and usage deltas to the runtime. The runtime
+    // adapts these into stream and hook events. Implementations must be non-blocking.
+    PlannerEvents interface {
+        AssistantChunk(ctx context.Context, text string)
+        PlannerThought(ctx context.Context, note string, labels map[string]string)
+        UsageDelta(ctx context.Context, usage model.TokenUsage)
+    }
 
 	// AgentState exposes mutable per-run planner state managed by the runtime. This
 	// allows planners to store ephemeral data that doesn't belong in durable memory

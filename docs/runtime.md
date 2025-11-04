@@ -449,7 +449,33 @@ Each module is optional; services import the ones they need and pass the resulti
 - `model.Client` now exposes `Complete` (unary) and `Stream`. Set `model.Request.Stream = true` (and optionally `ThinkingOptions`) when planners want Bedrock-style streaming; call `Client.Stream` to receive incremental `model.Chunk`s (text/tool_call/thinking/usage/stop). Callers must drain the returned `model.Streamer` (loop on `Recv` until `io.EOF`) and invoke `Close` when finished.
 - Bedrock adapter translates ConverseStream events into chunk types and automatically injects the beta thinking header when `ThinkingOptions.Enable` is true and tools remain available. OpenAI currently reports `model.ErrStreamingUnsupported`, so planners should fall back to `Complete` until streaming support lands.
 - Streaming chunks flow through the runtime hook bus the same way unary responses do: the capture sink publishes partial assistant replies, tool-call updates emit `tool_call_scheduled`/`tool_result_received`, and Pulse subscribers can surface progress to clients without custom glue.
-- `planner.AgentContext` exposes `EmitAssistantMessage`/`EmitPlannerNote` so streaming planners can forward chunks without touching the hook bus. Pair these with `planner.ConsumeStream(ctx, streamer, agentCtx)` to drain provider streamers, emit events, and receive a `StreamSummary` (final text + requested tool calls + usage) that can be converted into a `PlanResult`.
+- Streaming planners use the read-only `planner.PlannerContext` for data access and a separate `planner.PlannerEvents` for emitting assistant chunks, planner thoughts, and usage deltas.
+- Use `planner.ConsumeStream(ctx, streamer, events)` to drain provider streamers, emit events via `PlannerEvents`, and obtain a `StreamSummary` (final text + requested tool calls + usage) that can be converted into a `PlanResult`.
+
+Example (streaming planner):
+
+```go
+func (p *MyPlanner) PlanResume(ctx context.Context, input planner.PlanResumeInput) (planner.PlanResult, error) {
+    m, ok := input.Agent.ModelClient("bedrock")
+    if !ok {
+        return planner.PlanResult{}, errors.New("model not configured")
+    }
+    req := model.Request{ /* system, messages, tools */ }
+    req.Stream = true
+    s, err := m.Stream(ctx, req)
+    if err != nil {
+        return planner.PlanResult{}, err
+    }
+    sum, err := planner.ConsumeStream(ctx, s, input.Events)
+    if err != nil {
+        return planner.PlanResult{}, err
+    }
+    if len(sum.ToolCalls) > 0 {
+        return planner.PlanResult{ToolCalls: sum.ToolCalls}, nil
+    }
+    return planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: sum.Text}}}, nil
+}
+```
 
 ## Example Bootstrap Helpers
 
