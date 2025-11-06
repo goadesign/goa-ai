@@ -41,7 +41,6 @@ func TestGolden_ServiceAlias_Consistency(t *testing.T) {
 	// local alias types when specs generate short forms.
 	if !strings.Contains(codecs, "atlasdataagent \"goa.design/goa-ai/gen/atlas_data_agent\"") &&
 		!strings.Contains(codecs, "JSONCodec[") {
-
 		t.Fatalf("expected either service import alias or JSONCodec generics, got:\n%s", codecs)
 	}
 }

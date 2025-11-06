@@ -16,6 +16,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/toolerrors"
 )
 
@@ -157,10 +158,6 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{"error": err.Error()})
 		return nil, err
 	}
-	// CRITICAL: If we reach here without executing tools, something is wrong
-	if len(result.ToolCalls) > 0 {
-		return nil, fmt.Errorf("CRITICAL: Workflow completed with %d tool calls but never executed them - this indicates a bug in the workflow loop", len(result.ToolCalls))
-	}
 	r.recordRunStatus(wfCtx.Context(), input, run.StatusCompleted, nil)
 	return out, nil
 }
@@ -181,27 +178,15 @@ func (r *Runtime) runLoop(
 	ctrl *interrupt.Controller,
 ) (*RunOutput, error) {
 	ctx := wfCtx.Context()
-	r.logger.Info(ctx, "runLoop entered", "tool_calls", len(initial.ToolCalls), "final_response", initial.FinalResponse != nil, "await", initial.Await != nil)
+	if r.logger == nil {
+		r.logger = telemetry.NoopLogger{}
+	}
 	// Aggregate usage during the run via a temporary subscriber.
 	var aggUsage model.TokenUsage
-	usageSub, _ := r.Bus.Register(hooks.SubscriberFunc(func(c context.Context, evt hooks.Event) error {
-		if evt.RunID() != input.RunID || evt.AgentID() != input.AgentID {
-			return nil
-		}
-		if u, ok := evt.(*hooks.UsageEvent); ok {
-			aggUsage = model.TokenUsage{
-				InputTokens:  aggUsage.InputTokens + u.InputTokens,
-				OutputTokens: aggUsage.OutputTokens + u.OutputTokens,
-				TotalTokens:  aggUsage.TotalTokens + u.TotalTokens,
-			}
-		}
-		return nil
-	}))
-	defer func() {
-		if usageSub != nil {
-			_ = usageSub.Close()
-		}
-	}()
+	usageSub := r.registerUsageAggregator(ctx, input.RunID, input.AgentID, &aggUsage)
+	if usageSub != nil {
+		defer func() { _ = usageSub.Close() }()
+	}
 	if initial == nil {
 		return nil, fmt.Errorf("CRITICAL: runLoop initial PlanResult is nil")
 	}
@@ -210,7 +195,7 @@ func (r *Runtime) runLoop(
 	}
 	r.logger.Info(ctx, "runLoop starting iteration", "tool_calls", len(initial.ToolCalls), "final_response", initial.FinalResponse != nil, "await", initial.Await != nil)
 	result := initial
-    var lastToolResults []*planner.ToolResult
+	var lastToolResults []*planner.ToolResult
 	for {
 		r.logger.Info(ctx, "runLoop iteration", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil, "await", result.Await != nil)
 		if err := r.handleInterrupts(wfCtx, input, &base, seq, ctrl, &nextAttempt); err != nil {
@@ -300,13 +285,13 @@ func (r *Runtime) runLoop(
 				resumeCtx := base.RunContext
 				resumeCtx.Attempt = nextAttempt
 				nextAttempt++
-        resumeReq := PlanActivityInput{
-            AgentID:     base.Agent.ID(),
-            RunID:       base.RunContext.RunID,
-            Messages:    base.Messages,
-            RunContext:  resumeCtx,
-            ToolResults: lastToolResults,
-        }
+				resumeReq := PlanActivityInput{
+					AgentID:     base.Agent.ID(),
+					RunID:       base.RunContext.RunID,
+					Messages:    base.Messages,
+					RunContext:  resumeCtx,
+					ToolResults: lastToolResults,
+				}
 				// Set running and emit resumed
 				r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{"resumed_by": "tool_results", "results": len(lastToolResults)})
 				r.publishHook(ctx, hooks.NewRunResumedEvent(base.RunContext.RunID, base.Agent.ID(), "tool_results_provided", input.RunID, nil, 0), seq)
@@ -320,35 +305,15 @@ func (r *Runtime) runLoop(
 		}
 
 		r.logger.Info(ctx, "Checking result.ToolCalls", "len", len(result.ToolCalls))
-		// CRITICAL: Emit hook event to make this visible in logs
+		// Diagnostic note for visibility; loss checks removed to allow normal resume→final transitions
 		r.publishHook(ctx, hooks.NewPlannerNoteEvent(
 			base.RunContext.RunID,
 			base.Agent.ID(),
-			fmt.Sprintf("DEBUG: Checking ToolCalls - len=%d, initial_len=%d, FinalResponse=%v, Await=%v", len(result.ToolCalls), len(initial.ToolCalls), result.FinalResponse != nil, result.Await != nil),
+			fmt.Sprintf("DEBUG: Checking ToolCalls - len=%d, FinalResponse=%v, Await=%v", len(result.ToolCalls), result.FinalResponse != nil, result.Await != nil),
 			nil,
 		), seq)
-		// CRITICAL: If we have ToolCalls in initial but not in result, they were lost during serialization
-		if len(result.ToolCalls) == 0 && len(initial.ToolCalls) > 0 {
-			r.publishHook(ctx, hooks.NewPlannerNoteEvent(
-				base.RunContext.RunID,
-				base.Agent.ID(),
-				fmt.Sprintf("CRITICAL ERROR: ToolCalls lost - initial had %d, result has %d", len(initial.ToolCalls), len(result.ToolCalls)),
-				nil,
-			), seq)
-			return nil, fmt.Errorf("CRITICAL: ToolCalls lost during workflow iteration - initial had %d, result has %d. This indicates a serialization bug", len(initial.ToolCalls), len(result.ToolCalls))
-		}
 		if len(result.ToolCalls) == 0 {
 			r.logger.Info(ctx, "No tool calls, checking FinalResponse")
-			// CRITICAL: If initial had ToolCalls but result doesn't, something went wrong
-			if len(initial.ToolCalls) > 0 {
-				r.publishHook(ctx, hooks.NewPlannerNoteEvent(
-					base.RunContext.RunID,
-					base.Agent.ID(),
-					fmt.Sprintf("CRITICAL ERROR: ToolCalls lost - initial had %d tool calls but result has 0", len(initial.ToolCalls)),
-					nil,
-				), seq)
-				return nil, fmt.Errorf("CRITICAL: ToolCalls lost - initial had %d tool calls but result has 0. This should never happen unless result was reassigned incorrectly", len(initial.ToolCalls))
-			}
 			if result.FinalResponse == nil {
 				r.logger.Error(ctx, "ERROR - Neither tool calls nor final response!")
 				// CRITICAL: This error will be visible in workflow failure logs
@@ -530,39 +495,39 @@ func (r *Runtime) runLoop(
 				allowed[i].ParentToolCallID = parentTracker.parentToolCallID
 			}
 		}
-        vals, err := r.executeToolCalls(
-            wfCtx, reg.ExecuteToolActivity, base.RunContext.RunID, base.Agent.ID(),
-            allowed, result.ExpectedChildren, seq, parentTracker,
-        )
-        if err != nil {
-            return nil, err
-        }
-        // Directly use pointer results for the planner input
-        lastToolResults = vals
-        caps.RemainingToolCalls = decrementCap(caps.RemainingToolCalls, len(vals))
-        if failures(vals) > 0 {
-            caps.RemainingConsecutiveFailedToolCalls = decrementCap(
-                caps.RemainingConsecutiveFailedToolCalls, failures(vals),
-            )
-            if caps.MaxConsecutiveFailedToolCalls > 0 && caps.RemainingConsecutiveFailedToolCalls <= 0 {
-                return nil, errors.New("consecutive failed tool call cap exceeded")
-            }
-        } else if caps.MaxConsecutiveFailedToolCalls > 0 {
-                caps.RemainingConsecutiveFailedToolCalls = caps.MaxConsecutiveFailedToolCalls
-            }
+		vals, err := r.executeToolCalls(
+			wfCtx, reg.ExecuteToolActivity, base.RunContext.RunID, base.Agent.ID(),
+			allowed, result.ExpectedChildren, seq, parentTracker,
+		)
+		if err != nil {
+			return nil, err
+		}
+		// Directly use pointer results for the planner input
+		lastToolResults = vals
+		caps.RemainingToolCalls = decrementCap(caps.RemainingToolCalls, len(vals))
+		if failures(vals) > 0 {
+			caps.RemainingConsecutiveFailedToolCalls = decrementCap(
+				caps.RemainingConsecutiveFailedToolCalls, failures(vals),
+			)
+			if caps.MaxConsecutiveFailedToolCalls > 0 && caps.RemainingConsecutiveFailedToolCalls <= 0 {
+				return nil, errors.New("consecutive failed tool call cap exceeded")
+			}
+		} else if caps.MaxConsecutiveFailedToolCalls > 0 {
+			caps.RemainingConsecutiveFailedToolCalls = caps.MaxConsecutiveFailedToolCalls
+		}
 
-            resumeCtx := base.RunContext
-            resumeCtx.Attempt = nextAttempt
-            nextAttempt++
-            resumeReq := PlanActivityInput{
-                AgentID:     base.Agent.ID(),
-                RunID:       base.RunContext.RunID,
-                Messages:    base.Messages,
-                RunContext:  resumeCtx,
-                ToolResults: lastToolResults,
-            }
-            result, err = r.runPlanActivity(wfCtx, reg.ResumeActivityName, reg.ResumeActivityOptions, resumeReq)
-            if err != nil {
+		resumeCtx := base.RunContext
+		resumeCtx.Attempt = nextAttempt
+		nextAttempt++
+		resumeReq := PlanActivityInput{
+			AgentID:     base.Agent.ID(),
+			RunID:       base.RunContext.RunID,
+			Messages:    base.Messages,
+			RunContext:  resumeCtx,
+			ToolResults: lastToolResults,
+		}
+		result, err = r.runPlanActivity(wfCtx, reg.ResumeActivityName, reg.ResumeActivityOptions, resumeReq)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -656,7 +621,7 @@ func (r *Runtime) executeToolCalls(
 	// activities and collect futures. Results are returned in call order.
 	futures := make([]futureInfo, 0, len(calls))
 	discoveredIDs := make([]string, 0, len(calls))
-    inlineResults := make([]*planner.ToolResult, 0)
+	inlineResults := make([]*planner.ToolResult, 0)
 	for i, call := range calls {
 		if call.ToolCallID == "" {
 			call.ToolCallID = generateDeterministicToolCallID(runID, call.TurnID, call.Name, i)
@@ -719,14 +684,14 @@ func (r *Runtime) executeToolCalls(
 				seq,
 			)
 			// Accumulate result preserving order
-            inlineResults = append(inlineResults, &planner.ToolResult{
-                Name:       call.Name,
-                Result:     res.Result,
-                ToolCallID: call.ToolCallID,
-                Telemetry:  res.Telemetry,
-                Error:      res.Error,
-                RetryHint:  res.RetryHint,
-            })
+			inlineResults = append(inlineResults, &planner.ToolResult{
+				Name:       call.Name,
+				Result:     res.Result,
+				ToolCallID: call.ToolCallID,
+				Telemetry:  res.Telemetry,
+				Error:      res.Error,
+				RetryHint:  res.RetryHint,
+			})
 			if parentTracker != nil {
 				discoveredIDs = append(discoveredIDs, call.ToolCallID)
 			}
@@ -774,24 +739,24 @@ func (r *Runtime) executeToolCalls(
 		parentTracker.markUpdated()
 	}
 
-		// Collect all results in order
-	    results := make([]*planner.ToolResult, 0, len(calls))
-		// First, append inline results in the same order they were executed relative to calls.
-		// We'll merge activity results preserving call order below.
-		// To keep ordering simple, we build a map from ToolCallID to inline result.
-		inlineByID := make(map[string]*planner.ToolResult, len(inlineResults))
-		for _, ir := range inlineResults {
-			if ir != nil {
-				inlineByID[ir.ToolCallID] = ir
-			}
+	// Collect all results in order
+	results := make([]*planner.ToolResult, 0, len(calls))
+	// First, append inline results in the same order they were executed relative to calls.
+	// We'll merge activity results preserving call order below.
+	// To keep ordering simple, we build a map from ToolCallID to inline result.
+	inlineByID := make(map[string]*planner.ToolResult, len(inlineResults))
+	for _, ir := range inlineResults {
+		if ir != nil {
+			inlineByID[ir.ToolCallID] = ir
 		}
-		// Collect activity results
-		activityByID := make(map[string]*planner.ToolResult, len(futures))
-		for _, info := range futures {
-			var out ToolOutput
-			if err := info.future.Get(ctx, &out); err != nil {
-				return nil, fmt.Errorf("tool %q failed: %w", info.call.Name, err)
-			}
+	}
+	// Collect activity results
+	activityByID := make(map[string]*planner.ToolResult, len(futures))
+	for _, info := range futures {
+		var out ToolOutput
+		if err := info.future.Get(ctx, &out); err != nil {
+			return nil, fmt.Errorf("tool %q failed: %w", info.call.Name, err)
+		}
 
 		duration := wfCtx.Now().Sub(info.startTime)
 		// Decode tool result. If decoding fails (mismatch with generated result
@@ -806,20 +771,20 @@ func (r *Runtime) executeToolCalls(
 			}
 		}
 
-			toolRes := &planner.ToolResult{
-			    Name:       info.call.Name,
-			    Result:     decoded,
-			    ToolCallID: info.call.ToolCallID,
-			    Telemetry:  out.Telemetry,
-			}
-			var toolErr *planner.ToolError
-			if out.Error != "" {
-				toolErr = planner.NewToolError(out.Error)
-				toolRes.Error = toolErr
-			}
-			if out.RetryHint != nil {
-				toolRes.RetryHint = out.RetryHint
-			}
+		toolRes := &planner.ToolResult{
+			Name:       info.call.Name,
+			Result:     decoded,
+			ToolCallID: info.call.ToolCallID,
+			Telemetry:  out.Telemetry,
+		}
+		var toolErr *planner.ToolError
+		if out.Error != "" {
+			toolErr = planner.NewToolError(out.Error)
+			toolRes.Error = toolErr
+		}
+		if out.RetryHint != nil {
+			toolRes.RetryHint = out.RetryHint
+		}
 
 		r.publishHook(
 			ctx,
@@ -837,24 +802,24 @@ func (r *Runtime) executeToolCalls(
 			seq,
 		)
 
-			activityByID[info.call.ToolCallID] = toolRes
-		}
+		activityByID[info.call.ToolCallID] = toolRes
+	}
 
-		// Merge results following original call order (inline or activity)
-		for _, call := range calls {
-			if ir, ok := inlineByID[call.ToolCallID]; ok {
-				results = append(results, ir)
-				continue
-			}
-			if ar, ok := activityByID[call.ToolCallID]; ok {
-				results = append(results, ar)
-				continue
-			}
-			// Should not happen; defensive: keep order consistent even if missing.
-			r.logWarn(ctx, "missing tool result for call", fmt.Errorf("no result"), "tool", call.Name, "tool_call_id", call.ToolCallID)
+	// Merge results following original call order (inline or activity)
+	for _, call := range calls {
+		if ir, ok := inlineByID[call.ToolCallID]; ok {
+			results = append(results, ir)
+			continue
 		}
+		if ar, ok := activityByID[call.ToolCallID]; ok {
+			results = append(results, ar)
+			continue
+		}
+		// Should not happen; defensive: keep order consistent even if missing.
+		r.logWarn(ctx, "missing tool result for call", fmt.Errorf("no result"), "tool", call.Name, "tool_call_id", call.ToolCallID)
+	}
 
-		return results, nil
+	return results, nil
 }
 
 // runPlanActivity schedules a plan/resume activity with the configured options.
@@ -878,13 +843,13 @@ func (r *Runtime) runPlanActivity(
 	if err := wfCtx.ExecuteActivity(wfCtx.Context(), req, &out); err != nil {
 		return nil, err
 	}
-	r.logger.Info(wfCtx.Context(), "runPlanActivity received PlanResult", "tool_calls", len(out.Result.ToolCalls), "final_response", out.Result.FinalResponse != nil, "await", out.Result.Await != nil)
 	if out.Result == nil {
 		return nil, fmt.Errorf("CRITICAL: runPlanActivity received nil PlanResult")
 	}
 	if len(out.Result.ToolCalls) == 0 && out.Result.FinalResponse == nil && out.Result.Await == nil {
 		return nil, fmt.Errorf("CRITICAL: runPlanActivity received PlanResult with no ToolCalls, FinalResponse, or Await")
 	}
+	r.logger.Info(wfCtx.Context(), "runPlanActivity received PlanResult", "tool_calls", len(out.Result.ToolCalls), "final_response", out.Result.FinalResponse != nil, "await", out.Result.Await != nil)
 	return out.Result, nil
 }
 
@@ -960,6 +925,39 @@ func (r *Runtime) recordPolicyDecision(ctx context.Context, input *RunInput, dec
 	if err := r.RunStore.Upsert(ctx, rec); err != nil {
 		r.logWarn(ctx, "policy decision upsert failed", err)
 	}
+}
+
+// registerUsageAggregator subscribes to Usage events for a specific run/agent and
+// aggregates token usage into the provided accumulator. Returns a subscription
+// handle that should be closed by the caller. If the bus is nil or registration
+// fails, returns nil.
+func (r *Runtime) registerUsageAggregator(
+	ctx context.Context,
+	runID string,
+	agentID string,
+	agg *model.TokenUsage,
+) hooks.Subscription {
+	if r.Bus == nil {
+		return nil
+	}
+	sub, err := r.Bus.Register(hooks.SubscriberFunc(func(c context.Context, evt hooks.Event) error {
+		if evt.RunID() != runID || evt.AgentID() != agentID {
+			return nil
+		}
+		if u, ok := evt.(*hooks.UsageEvent); ok {
+			*agg = model.TokenUsage{
+				InputTokens:  agg.InputTokens + u.InputTokens,
+				OutputTokens: agg.OutputTokens + u.OutputTokens,
+				TotalTokens:  agg.TotalTokens + u.TotalTokens,
+			}
+		}
+		return nil
+	}))
+	if err != nil {
+		r.logWarn(ctx, "usage subscriber register failed", err)
+		return nil
+	}
+	return sub
 }
 
 // memoryReader loads the run snapshot from the memory store and wraps it in a Reader.
