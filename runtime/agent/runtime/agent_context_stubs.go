@@ -1,13 +1,13 @@
 package runtime
 
 import (
-    "context"
+	"context"
 
-    "goa.design/goa-ai/runtime/agent/hooks"
-    "goa.design/goa-ai/runtime/agent/memory"
-    "goa.design/goa-ai/runtime/agent/model"
-    "goa.design/goa-ai/runtime/agent/planner"
-    "goa.design/goa-ai/runtime/agent/telemetry"
+	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/memory"
+	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/telemetry"
 )
 
 // agentContextOptions configures construction of a planner.PlannerContext.
@@ -21,14 +21,14 @@ type agentContextOptions struct {
 
 // simplePlannerContext is a minimal implementation of planner.PlannerContext.
 type simplePlannerContext struct {
-    rt    *Runtime
-    agent string
-    runID string
-    mem   memory.Reader
+	rt    *Runtime
+	agent string
+	runID string
+	mem   memory.Reader
 }
 
 func newAgentContext(opts agentContextOptions) planner.PlannerContext {
-    return &simplePlannerContext{rt: opts.runtime, agent: opts.agentID, runID: opts.runID, mem: opts.memory}
+	return &simplePlannerContext{rt: opts.runtime, agent: opts.agentID, runID: opts.runID, mem: opts.memory}
 }
 
 func (c *simplePlannerContext) ID() string                 { return c.agent }
@@ -39,42 +39,42 @@ func (c *simplePlannerContext) Metrics() telemetry.Metrics { return c.rt.metrics
 func (c *simplePlannerContext) Tracer() telemetry.Tracer   { return c.rt.tracer }
 func (c *simplePlannerContext) State() planner.AgentState  { return noopAgentState{} }
 func (c *simplePlannerContext) ModelClient(id string) (model.Client, bool) {
-    c.rt.mu.RLock()
-    m, ok := c.rt.models[id]
-    c.rt.mu.RUnlock()
-    return m, ok
+	c.rt.mu.RLock()
+	m, ok := c.rt.models[id]
+	c.rt.mu.RUnlock()
+	return m, ok
 }
 
 // runtimePlannerEvents implements planner.PlannerEvents by publishing to the runtime bus.
 type runtimePlannerEvents struct {
-    rt    *Runtime
-    agent string
-    runID string
+	rt    *Runtime
+	agent string
+	runID string
 }
 
 func newPlannerEvents(rt *Runtime, agentID, runID string) planner.PlannerEvents {
-    return &runtimePlannerEvents{rt: rt, agent: agentID, runID: runID}
+	return &runtimePlannerEvents{rt: rt, agent: agentID, runID: runID}
 }
 
 func (e *runtimePlannerEvents) AssistantChunk(ctx context.Context, text string) {
-    if e == nil || e.rt == nil || e.rt.Bus == nil || text == "" {
-        return
-    }
-    _ = e.rt.Bus.Publish(ctx, hooks.NewAssistantMessageEvent(e.runID, e.agent, text, nil))
+	if e == nil || e.rt == nil || e.rt.Bus == nil || text == "" {
+		return
+	}
+	_ = e.rt.Bus.Publish(ctx, hooks.NewAssistantMessageEvent(e.runID, e.agent, text, nil))
 }
 
 func (e *runtimePlannerEvents) PlannerThought(ctx context.Context, note string, labels map[string]string) {
-    if e == nil || e.rt == nil || e.rt.Bus == nil || note == "" {
-        return
-    }
-    _ = e.rt.Bus.Publish(ctx, hooks.NewPlannerNoteEvent(e.runID, e.agent, note, labels))
+	if e == nil || e.rt == nil || e.rt.Bus == nil || note == "" {
+		return
+	}
+	_ = e.rt.Bus.Publish(ctx, hooks.NewPlannerNoteEvent(e.runID, e.agent, note, labels))
 }
 
 func (e *runtimePlannerEvents) UsageDelta(ctx context.Context, usage model.TokenUsage) {
-    if e == nil || e.rt == nil || e.rt.Bus == nil {
-        return
-    }
-    _ = e.rt.Bus.Publish(ctx, hooks.NewUsageEvent(e.runID, e.agent, usage.InputTokens, usage.OutputTokens, usage.TotalTokens))
+	if e == nil || e.rt == nil || e.rt.Bus == nil {
+		return
+	}
+	_ = e.rt.Bus.Publish(ctx, hooks.NewUsageEvent(e.runID, e.agent, usage.InputTokens, usage.OutputTokens, usage.TotalTokens))
 }
 
 // noopAgentState implements planner.AgentState with no persistence.

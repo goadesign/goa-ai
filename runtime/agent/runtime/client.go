@@ -14,7 +14,7 @@ type AgentClient interface {
 	Start(ctx context.Context, messages []planner.AgentMessage, opts ...RunOption) (engine.WorkflowHandle, error)
 }
 
-// ClientMeta carries the minimum metadata a caller needs to construct an
+// AgentRoute carries the minimum metadata a caller needs to construct an
 // AgentClient without registering the agent locally. This enables remote
 // caller processes to start workflows when workers are registered elsewhere.
 type AgentRoute struct {
@@ -26,7 +26,7 @@ type AgentRoute struct {
 	DefaultTaskQueue string
 }
 
-// Agent returns a client bound to the given agent identifier if registered.
+// Client returns a client bound to the given agent identifier if registered.
 // Returns ErrAgentNotFound when the agent is unknown.
 func (r *Runtime) Client(id agent.Ident) (AgentClient, error) {
 	if id == "" {
@@ -48,7 +48,7 @@ func (r *Runtime) MustClient(id agent.Ident) AgentClient {
 	return c
 }
 
-// ClientByMeta returns a client bound to the provided metadata. Use this in
+// ClientFor returns a client bound to the provided metadata. Use this in
 // caller processes that do not register agents locally. The returned client
 // uses WorkflowName and DefaultTaskQueue when starting runs unless overridden
 // by WithTaskQueue.

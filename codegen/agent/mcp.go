@@ -43,16 +43,16 @@ func populateMCPToolset(ts *ToolsetData) bool {
 			payload = tool.Method.Payload
 			result = tool.Method.Result
 		}
-    	td := &ToolData{
-        	Name:        tool.Name,
-        	Description: tool.Description,
-        	Args:        payload,
-        	Return:      result,
-        	Toolset:     ts,
-        }
-        td.Title = humanizeTitle(tool.Name)
-        td.QualifiedName = fmt.Sprintf("%s.%s.%s", ts.SourceServiceName, ts.Name, tool.Name)
-        ts.Tools = append(ts.Tools, td)
+		td := &ToolData{
+			Name:        tool.Name,
+			Description: tool.Description,
+			Args:        payload,
+			Return:      result,
+			Toolset:     ts,
+		}
+		td.Title = humanizeTitle(tool.Name)
+		td.QualifiedName = fmt.Sprintf("%s.%s.%s", ts.SourceServiceName, ts.Name, tool.Name)
+		ts.Tools = append(ts.Tools, td)
 	}
 	sort.Slice(ts.Tools, func(i, j int) bool {
 		return ts.Tools[i].Name < ts.Tools[j].Name

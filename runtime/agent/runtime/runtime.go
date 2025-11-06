@@ -108,6 +108,13 @@ type (
 		// run is submitted, avoiding dynamic handler registration on running
 		// workers (not supported by some engines).
 		registrationClosed bool
+
+		// routes stores route-only registrations for agents that are executed
+		// inline but whose planners live in other processes. These provide
+		// activity names/options and policy/spec metadata so ExecuteAgentInline
+		// can orchestrate nested planning via activities across processes.
+		// routes removed: inline composition now piggybacks on toolset
+		// registration and conventions; no explicit route registry.
 	}
 
 	// Options configures the Runtime instance. All fields are optional except Engine
@@ -223,6 +230,15 @@ type (
 
 		// TaskQueue optionally overrides the queue used when scheduling this toolset's activities.
 		TaskQueue string
+
+		// Inline indicates that tools in this toolset must execute inline within the
+		// workflow loop rather than via a separate activity. This is required for
+		// agent-as-tool compositions where the Execute implementation invokes
+		// ExecuteAgentInline, which relies on an in-scope engine.WorkflowContext.
+		//
+		// Non-agent toolsets (service/client backed) should leave this false so that
+		// tools are scheduled as activities, enabling isolation and retries.
+		Inline bool
 	}
 
 	// RunPolicy configures per-agent runtime behavior (caps, time budgets, interrupts).
@@ -566,6 +582,9 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 		}
 	}
 
+	// Register untyped workflow; Temporal adapter wraps with workflow.Context and
+	// we coerce input to *RunInput inside WorkflowHandler. This preserves engine
+	// boundaries and avoids leaking Temporal types here.
 	if err := r.Engine.RegisterWorkflow(ctx, reg.Workflow); err != nil {
 		return err
 	}
@@ -610,6 +629,13 @@ func (r *Runtime) RegisterToolset(ts ToolsetRegistration) error {
 	r.addToolsetLocked(ts)
 	return nil
 }
+
+// RegisterAgentRoute registers route-only metadata for an agent so that
+// ExecuteAgentInline can orchestrate the agent via activities even when the
+// planner is not locally registered. Safe to call multiple times; later calls
+// replace previous metadata.
+// RegisterAgentRoute removed: toolset registration piggybacks provider metadata
+// and conventions are used as fallback for activity names/queues.
 
 // RegisterModel registers a ModelClient by identifier for planner lookup. Planners
 // can retrieve registered models via AgentContext.ModelClient(). Returns an error
@@ -687,7 +713,6 @@ func (r *Runtime) ExecuteAgentInline(
 		parentTracker = newChildTracker(nestedRunCtx.ParentToolCallID)
 	}
 
-	// Look up agent registration
 	reg, ok := r.agentByID(agentID)
 	if !ok {
 		return nil, fmt.Errorf("agent %q not registered", agentID)
@@ -703,24 +728,39 @@ func (r *Runtime) ExecuteAgentInline(
 		turnID:  nestedRunCtx.TurnID,
 	})
 
-	// Create planner input
+	// Build initial plan. If a local planner is registered, invoke directly; otherwise
+	// schedule the plan activity so engines can route to remote workers.
 	planInput := planner.PlanInput{
 		Messages:   messages,
 		RunContext: nestedRunCtx,
 		Agent:      agentCtx,
+		Events:     newPlannerEvents(r, agentID, nestedRunCtx.RunID),
 	}
-
-	// Call PlanStart to get initial plan
-	initialPlan, err := r.planStart(ctx, reg, planInput)
-	if err != nil {
-		return nil, fmt.Errorf("plan start: %w", err)
+	var initialPlan *planner.PlanResult
+	if reg.Planner != nil {
+		// Local planner available: call directly (test-friendly and efficient)
+		var err error
+		initialPlan, err = r.planStart(ctx, reg, planInput)
+		if err != nil {
+			return nil, fmt.Errorf("plan start: %w", err)
+		}
+	} else {
+		startReq := PlanActivityInput{AgentID: agentID, RunID: nestedRunCtx.RunID, Messages: planInput.Messages, RunContext: planInput.RunContext}
+		if reg.PlanActivityName == "" {
+			return nil, fmt.Errorf("agent %q missing plan activity for inline execution", agentID)
+		}
+		var err error
+		initialPlan, err = r.runPlanActivity(wfCtx, reg.PlanActivityName, reg.PlanActivityOptions, startReq)
+		if err != nil {
+			return nil, fmt.Errorf("plan activity failed: %w", err)
+		}
+	}
+	if initialPlan == nil {
+		return nil, fmt.Errorf("plan start returned nil result")
 	}
 
 	// Initialize caps from agent policy
-	caps := policy.CapsState{
-		RemainingToolCalls:                  reg.Policy.MaxToolCalls,
-		RemainingConsecutiveFailedToolCalls: reg.Policy.MaxConsecutiveFailedToolCalls,
-	}
+	caps := initialCaps(reg.Policy)
 
 	// Calculate deadline
 	var deadline time.Time
@@ -728,12 +768,11 @@ func (r *Runtime) ExecuteAgentInline(
 		deadline = wfCtx.Now().Add(reg.Policy.TimeBudget)
 	}
 
-	// Create or inherit turn sequencer
+	// Turn sequencer for nested run
 	var seq *turnSequencer
 	if nestedRunCtx.TurnID != "" {
 		seq = &turnSequencer{turnID: nestedRunCtx.TurnID}
 	}
-
 	nestedInput := RunInput{
 		AgentID:   agentID,
 		RunID:     nestedRunCtx.RunID,
@@ -742,12 +781,66 @@ func (r *Runtime) ExecuteAgentInline(
 		Messages:  messages,
 		Labels:    nestedRunCtx.Labels,
 	}
-
 	out, err := r.runLoop(wfCtx, reg, &nestedInput, planInput, initialPlan, caps, deadline, 1, seq, parentTracker, nil)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+// ExecuteAgentInlineWithRoute runs an agent inline using explicit route and activity
+// names without relying on local registration. Strong contract: no conventions.
+func (r *Runtime) ExecuteAgentInlineWithRoute(
+	wfCtx engine.WorkflowContext,
+	route AgentRoute,
+	planActivityName, resumeActivityName, executeToolActivity string,
+	messages []planner.AgentMessage,
+	nestedRunCtx run.Context,
+) (*RunOutput, error) {
+	if route.ID == "" || route.WorkflowName == "" || route.DefaultTaskQueue == "" {
+		return nil, fmt.Errorf("inline route is incomplete")
+	}
+	if planActivityName == "" || resumeActivityName == "" || executeToolActivity == "" {
+		return nil, fmt.Errorf("inline activity names are required")
+	}
+	ctx := wfCtx.Context()
+	reader := r.memoryReader(ctx, string(route.ID), nestedRunCtx.RunID)
+	agentCtx := newAgentContext(agentContextOptions{
+		runtime: r,
+		agentID: string(route.ID),
+		runID:   nestedRunCtx.RunID,
+		memory:  reader,
+		turnID:  nestedRunCtx.TurnID,
+	})
+	planInput := planner.PlanInput{Messages: messages, RunContext: nestedRunCtx, Agent: agentCtx, Events: newPlannerEvents(r, string(route.ID), nestedRunCtx.RunID)}
+
+	// Always schedule plan activity on the provider queue
+	startReq := PlanActivityInput{AgentID: string(route.ID), RunID: nestedRunCtx.RunID, Messages: planInput.Messages, RunContext: planInput.RunContext}
+	initial, err := r.runPlanActivity(wfCtx, planActivityName, engine.ActivityOptions{Queue: route.DefaultTaskQueue}, startReq)
+	if err != nil {
+		return nil, err
+	}
+	if initial == nil {
+		return nil, fmt.Errorf("plan start returned nil result")
+	}
+	caps := initialCaps(RunPolicy{})
+	var deadline time.Time
+	var seq *turnSequencer
+	if nestedRunCtx.TurnID != "" {
+		seq = &turnSequencer{turnID: nestedRunCtx.TurnID}
+	}
+	nestedInput := RunInput{AgentID: string(route.ID), RunID: nestedRunCtx.RunID, SessionID: nestedRunCtx.SessionID, TurnID: nestedRunCtx.TurnID, Messages: messages, Labels: nestedRunCtx.Labels}
+	// Build a synthetic registration for the run loop (policy/specs not needed)
+	reg := AgentRegistration{
+		ID:                    string(route.ID),
+		Workflow:              engine.WorkflowDefinition{Name: route.WorkflowName, TaskQueue: route.DefaultTaskQueue},
+		PlanActivityName:      planActivityName,
+		ResumeActivityName:    resumeActivityName,
+		ExecuteToolActivity:   executeToolActivity,
+		PlanActivityOptions:   engine.ActivityOptions{Queue: route.DefaultTaskQueue},
+		ResumeActivityOptions: engine.ActivityOptions{Queue: route.DefaultTaskQueue},
+	}
+	return r.runLoop(wfCtx, reg, &nestedInput, planInput, initial, caps, deadline, 1, seq, nil, nil)
 }
 
 // StartRun launches the agent workflow asynchronously and returns a workflow handle
@@ -888,14 +981,12 @@ func (r *Runtime) addToolsetLocked(ts ToolsetRegistration) {
 // Caller must hold r.mu.
 func (r *Runtime) addToolSpecsLocked(specs []tools.ToolSpec) {
 	for _, spec := range specs {
-		if spec.Name != "" {
-			r.toolSpecs[spec.Name] = spec
-			// Cache parsed payload schema for hint building
-			if len(spec.Payload.Schema) > 0 {
-				var m map[string]any
-				if err := json.Unmarshal(spec.Payload.Schema, &m); err == nil {
-					r.toolSchemas[string(spec.Name)] = m
-				}
+		r.toolSpecs[spec.Name] = spec
+		// Cache parsed payload schema for hint building
+		if len(spec.Payload.Schema) > 0 {
+			var m map[string]any
+			if err := json.Unmarshal(spec.Payload.Schema, &m); err == nil {
+				r.toolSchemas[string(spec.Name)] = m
 			}
 		}
 	}
@@ -1041,3 +1132,10 @@ func (r *Runtime) workflowHandle(runID string) (engine.WorkflowHandle, bool) {
 	r.handleMu.RUnlock()
 	return h, ok
 }
+
+// AgentRouteRegistration holds route-only metadata for an agent to enable
+// inline composition across processes. It mirrors the subset of
+// AgentRegistration required to schedule plan/resume/tool activities and
+// enforce policy without requiring a local Planner.
+// AgentRouteRegistration removed; see ToolsetRegistration metadata and
+// ExecuteAgentInline conventions.

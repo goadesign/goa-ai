@@ -101,7 +101,7 @@ type ClarificationAnswer struct {
 type ToolResultsSet struct {
 	RunID   string
 	ID      string
-	Results []planner.ToolResult
+    Results []*planner.ToolResult
 	// RetryHints optionally provides hints associated with failures.
 	RetryHints []*planner.RetryHint
 }

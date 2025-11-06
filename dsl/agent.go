@@ -39,7 +39,6 @@ import (
 //	})
 //
 //	Agent("docs-agent", "Agent for managing documentation workflows", func() {
-//		SystemPrompt("You are a helpful assistant that can summarize documents.")
 //		Uses(func() {
 //			Toolset("summarization-tools", func() {
 //				Tool("document-summarizer", func() {

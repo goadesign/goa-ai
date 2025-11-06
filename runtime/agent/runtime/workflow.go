@@ -10,12 +10,13 @@ import (
 	"github.com/google/uuid"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
-	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/memory"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/toolerrors"
 )
 
 type (
@@ -74,6 +75,9 @@ type (
 // fails. Generated code calls this from the workflow handler registered with
 // the engine.
 func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput) (*RunOutput, error) {
+	if r.logger != nil {
+		r.logger.Info(wfCtx.Context(), "ExecuteWorkflow called", "agent_id", input.AgentID, "run_id", input.RunID)
+	}
 	if input.AgentID == "" {
 		return nil, errors.New("agent id is required")
 	}
@@ -82,15 +86,16 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	if !ok {
 		return nil, fmt.Errorf("agent %q is not registered", input.AgentID)
 	}
+	r.logger.Info(wfCtx.Context(), "Agent found, executing plan activity", "agent_id", input.AgentID)
 	ctrl := interrupt.NewController(wfCtx)
 	reader := r.memoryReader(wfCtx.Context(), input.AgentID, input.RunID)
-    agentCtx := newAgentContext(agentContextOptions{
-        runtime: r,
-        agentID: input.AgentID,
-        runID:   input.RunID,
-        memory:  reader,
-        turnID:  input.TurnID,
-    })
+	agentCtx := newAgentContext(agentContextOptions{
+		runtime: r,
+		agentID: input.AgentID,
+		runID:   input.RunID,
+		memory:  reader,
+		turnID:  input.TurnID,
+	})
 	runCtx := run.Context{
 		RunID:     input.RunID,
 		SessionID: input.SessionID,
@@ -107,12 +112,12 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	r.recordRunStatus(wfCtx.Context(), input, run.StatusRunning, nil)
 	defer r.publishHook(wfCtx.Context(), hooks.NewRunCompletedEvent(input.RunID, input.AgentID, "success", nil), seq)
 
-    planInput := planner.PlanInput{
-        Messages:   input.Messages,
-        RunContext: runCtx,
-        Agent:      agentCtx,
-        Events:     newPlannerEvents(r, input.AgentID, input.RunID),
-    }
+	planInput := planner.PlanInput{
+		Messages:   input.Messages,
+		RunContext: runCtx,
+		Agent:      agentCtx,
+		Events:     newPlannerEvents(r, input.AgentID, input.RunID),
+	}
 	startReq := PlanActivityInput{
 		AgentID:    input.AgentID,
 		RunID:      input.RunID,
@@ -121,8 +126,24 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	}
 	result, err := r.runPlanActivity(wfCtx, reg.PlanActivityName, reg.PlanActivityOptions, startReq)
 	if err != nil {
+		r.logger.Error(wfCtx.Context(), "Plan activity failed", "error", err)
 		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{"error": err.Error()})
 		return nil, err
+	}
+	if result == nil {
+		r.logger.Error(wfCtx.Context(), "Plan activity returned nil result")
+		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{"error": "CRITICAL: Plan activity returned nil PlanResult"})
+		return nil, fmt.Errorf("CRITICAL: Plan activity returned nil PlanResult")
+	}
+	r.logger.Info(wfCtx.Context(), "Plan activity completed", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil)
+	// CRITICAL: Validate PlanResult structure - if planner returned ToolCalls, they should be present
+	if len(result.ToolCalls) == 0 && result.FinalResponse == nil && result.Await == nil {
+		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{"error": "CRITICAL: PlanResult has no ToolCalls, FinalResponse, or Await"})
+		return nil, fmt.Errorf("CRITICAL: PlanResult has no ToolCalls, FinalResponse, or Await - this should never happen")
+	}
+	// CRITICAL: If ToolCalls is empty but planner returned them, serialization may have failed
+	if len(result.ToolCalls) == 0 && result.FinalResponse != nil {
+		r.logger.Info(wfCtx.Context(), "PlanResult has FinalResponse but no ToolCalls - workflow will return early")
 	}
 	caps := initialCaps(reg.Policy)
 	var deadline time.Time
@@ -130,10 +151,15 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		deadline = wfCtx.Now().Add(reg.Policy.TimeBudget)
 	}
 	nextAttempt := planInput.RunContext.Attempt + 1
+	r.logger.Info(wfCtx.Context(), "Starting runLoop", "tool_calls", len(result.ToolCalls))
 	out, err := r.runLoop(wfCtx, reg, input, planInput, result, caps, deadline, nextAttempt, seq, nil, ctrl)
 	if err != nil {
 		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{"error": err.Error()})
 		return nil, err
+	}
+	// CRITICAL: If we reach here without executing tools, something is wrong
+	if len(result.ToolCalls) > 0 {
+		return nil, fmt.Errorf("CRITICAL: Workflow completed with %d tool calls but never executed them - this indicates a bug in the workflow loop", len(result.ToolCalls))
 	}
 	r.recordRunStatus(wfCtx.Context(), input, run.StatusCompleted, nil)
 	return out, nil
@@ -146,7 +172,7 @@ func (r *Runtime) runLoop(
 	reg AgentRegistration,
 	input *RunInput,
 	base planner.PlanInput,
-	initial planner.PlanResult,
+	initial *planner.PlanResult,
 	caps policy.CapsState,
 	deadline time.Time,
 	nextAttempt int,
@@ -154,26 +180,39 @@ func (r *Runtime) runLoop(
 	parentTracker *childTracker,
 	ctrl *interrupt.Controller,
 ) (*RunOutput, error) {
-    ctx := wfCtx.Context()
-    // Aggregate usage during the run via a temporary subscriber.
-    var aggUsage model.TokenUsage
-    usageSub, _ := r.Bus.Register(hooks.SubscriberFunc(func(c context.Context, evt hooks.Event) error {
-        if evt.RunID() != input.RunID || evt.AgentID() != input.AgentID {
-            return nil
-        }
-        if u, ok := evt.(*hooks.UsageEvent); ok {
-            aggUsage = model.TokenUsage{
-                InputTokens:  aggUsage.InputTokens + u.InputTokens,
-                OutputTokens: aggUsage.OutputTokens + u.OutputTokens,
-                TotalTokens:  aggUsage.TotalTokens + u.TotalTokens,
-            }
-        }
-        return nil
-    }))
-    defer func() { if usageSub != nil { _ = usageSub.Close() } }()
+	ctx := wfCtx.Context()
+	r.logger.Info(ctx, "runLoop entered", "tool_calls", len(initial.ToolCalls), "final_response", initial.FinalResponse != nil, "await", initial.Await != nil)
+	// Aggregate usage during the run via a temporary subscriber.
+	var aggUsage model.TokenUsage
+	usageSub, _ := r.Bus.Register(hooks.SubscriberFunc(func(c context.Context, evt hooks.Event) error {
+		if evt.RunID() != input.RunID || evt.AgentID() != input.AgentID {
+			return nil
+		}
+		if u, ok := evt.(*hooks.UsageEvent); ok {
+			aggUsage = model.TokenUsage{
+				InputTokens:  aggUsage.InputTokens + u.InputTokens,
+				OutputTokens: aggUsage.OutputTokens + u.OutputTokens,
+				TotalTokens:  aggUsage.TotalTokens + u.TotalTokens,
+			}
+		}
+		return nil
+	}))
+	defer func() {
+		if usageSub != nil {
+			_ = usageSub.Close()
+		}
+	}()
+	if initial == nil {
+		return nil, fmt.Errorf("CRITICAL: runLoop initial PlanResult is nil")
+	}
+	if len(initial.ToolCalls) == 0 && initial.FinalResponse == nil && initial.Await == nil {
+		return nil, fmt.Errorf("CRITICAL: runLoop initial PlanResult has no ToolCalls, FinalResponse, or Await")
+	}
+	r.logger.Info(ctx, "runLoop starting iteration", "tool_calls", len(initial.ToolCalls), "final_response", initial.FinalResponse != nil, "await", initial.Await != nil)
 	result := initial
-	var lastToolResults []planner.ToolResult
+    var lastToolResults []*planner.ToolResult
 	for {
+		r.logger.Info(ctx, "runLoop iteration", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil, "await", result.Await != nil)
 		if err := r.handleInterrupts(wfCtx, input, &base, seq, ctrl, &nextAttempt); err != nil {
 			return nil, err
 		}
@@ -182,6 +221,7 @@ func (r *Runtime) runLoop(
 		}
 		// Handle Await: publish await event, pause and wait for external input.
 		if result.Await != nil {
+			r.logger.Info(ctx, "PlanResult has Await, handling await")
 			if ctrl == nil {
 				return nil, errors.New("await not supported in inline runs")
 			}
@@ -260,13 +300,13 @@ func (r *Runtime) runLoop(
 				resumeCtx := base.RunContext
 				resumeCtx.Attempt = nextAttempt
 				nextAttempt++
-				resumeReq := PlanActivityInput{
-					AgentID:     base.Agent.ID(),
-					RunID:       base.RunContext.RunID,
-					Messages:    base.Messages,
-					RunContext:  resumeCtx,
-					ToolResults: lastToolResults,
-				}
+        resumeReq := PlanActivityInput{
+            AgentID:     base.Agent.ID(),
+            RunID:       base.RunContext.RunID,
+            Messages:    base.Messages,
+            RunContext:  resumeCtx,
+            ToolResults: lastToolResults,
+        }
 				// Set running and emit resumed
 				r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{"resumed_by": "tool_results", "results": len(lastToolResults)})
 				r.publishHook(ctx, hooks.NewRunResumedEvent(base.RunContext.RunID, base.Agent.ID(), "tool_results_provided", input.RunID, nil, 0), seq)
@@ -279,9 +319,40 @@ func (r *Runtime) runLoop(
 			}
 		}
 
+		r.logger.Info(ctx, "Checking result.ToolCalls", "len", len(result.ToolCalls))
+		// CRITICAL: Emit hook event to make this visible in logs
+		r.publishHook(ctx, hooks.NewPlannerNoteEvent(
+			base.RunContext.RunID,
+			base.Agent.ID(),
+			fmt.Sprintf("DEBUG: Checking ToolCalls - len=%d, initial_len=%d, FinalResponse=%v, Await=%v", len(result.ToolCalls), len(initial.ToolCalls), result.FinalResponse != nil, result.Await != nil),
+			nil,
+		), seq)
+		// CRITICAL: If we have ToolCalls in initial but not in result, they were lost during serialization
+		if len(result.ToolCalls) == 0 && len(initial.ToolCalls) > 0 {
+			r.publishHook(ctx, hooks.NewPlannerNoteEvent(
+				base.RunContext.RunID,
+				base.Agent.ID(),
+				fmt.Sprintf("CRITICAL ERROR: ToolCalls lost - initial had %d, result has %d", len(initial.ToolCalls), len(result.ToolCalls)),
+				nil,
+			), seq)
+			return nil, fmt.Errorf("CRITICAL: ToolCalls lost during workflow iteration - initial had %d, result has %d. This indicates a serialization bug", len(initial.ToolCalls), len(result.ToolCalls))
+		}
 		if len(result.ToolCalls) == 0 {
+			r.logger.Info(ctx, "No tool calls, checking FinalResponse")
+			// CRITICAL: If initial had ToolCalls but result doesn't, something went wrong
+			if len(initial.ToolCalls) > 0 {
+				r.publishHook(ctx, hooks.NewPlannerNoteEvent(
+					base.RunContext.RunID,
+					base.Agent.ID(),
+					fmt.Sprintf("CRITICAL ERROR: ToolCalls lost - initial had %d tool calls but result has 0", len(initial.ToolCalls)),
+					nil,
+				), seq)
+				return nil, fmt.Errorf("CRITICAL: ToolCalls lost - initial had %d tool calls but result has 0. This should never happen unless result was reassigned incorrectly", len(initial.ToolCalls))
+			}
 			if result.FinalResponse == nil {
-				return nil, errors.New("planner returned neither tool calls nor final response")
+				r.logger.Error(ctx, "ERROR - Neither tool calls nor final response!")
+				// CRITICAL: This error will be visible in workflow failure logs
+				return nil, fmt.Errorf("CRITICAL: planner returned neither tool calls nor final response - ToolCalls=%d, FinalResponse=%v, Await=%v", len(result.ToolCalls), result.FinalResponse != nil, result.Await != nil)
 			}
 			r.publishHook(
 				ctx,
@@ -305,15 +376,15 @@ func (r *Runtime) runLoop(
 					seq,
 				)
 			}
-            return &RunOutput{
-                AgentID:    base.Agent.ID(),
-                RunID:      base.RunContext.RunID,
-                Final:      result.FinalResponse.Message,
-                ToolEvents: lastToolResults,
-                Notes:      result.Notes,
-                Usage:      aggUsage,
-            }, nil
-        }
+			return &RunOutput{
+				AgentID:    base.Agent.ID(),
+				RunID:      base.RunContext.RunID,
+				Final:      result.FinalResponse.Message,
+				ToolEvents: lastToolResults,
+				Notes:      result.Notes,
+				Usage:      aggUsage,
+			}, nil
+		}
 
 		if caps.RemainingToolCalls == 0 && caps.MaxToolCalls > 0 {
 			return nil, errors.New("tool call cap exceeded")
@@ -323,13 +394,33 @@ func (r *Runtime) runLoop(
 		}
 		// Start with candidate tool calls from the planner.
 		candidates := result.ToolCalls
+		// CRITICAL: Emit hook event to make this visible in logs
+		r.publishHook(ctx, hooks.NewPlannerNoteEvent(
+			base.RunContext.RunID,
+			base.Agent.ID(),
+			fmt.Sprintf("DEBUG: About to process tool calls - candidates=%d", len(candidates)),
+			nil,
+		), seq)
+		if len(candidates) == 0 {
+			// CRITICAL: This should never happen if planner returned ToolCalls
+			r.publishHook(ctx, hooks.NewPlannerNoteEvent(
+				base.RunContext.RunID,
+				base.Agent.ID(),
+				"CRITICAL ERROR: candidates is empty but we passed the len(result.ToolCalls) == 0 check",
+				nil,
+			), seq)
+			return nil, fmt.Errorf("CRITICAL: candidates is empty but we passed the len(result.ToolCalls) == 0 check - this indicates a bug")
+		}
+		r.logger.Info(ctx, "Workflow received tool calls from planner", "count", len(candidates))
 		// Apply per-run policy overrides (restrict tool and tag filters) before policy decision.
 		if ov := input.Policy; (ov.RestrictToTool != "" || len(ov.AllowedTags) > 0 || len(ov.DeniedTags) > 0) && len(candidates) > 0 {
+			r.logger.Info(ctx, "Applying per-run policy overrides", "restrict_to_tool", ov.RestrictToTool, "allowed_tags", ov.AllowedTags, "denied_tags", ov.DeniedTags)
 			metas := r.toolMetadata(candidates)
 			filtered := make([]planner.ToolRequest, 0, len(candidates))
 			for i, call := range candidates {
 				// RestrictToTool
 				if ov.RestrictToTool != "" && call.Name != ov.RestrictToTool {
+					r.logger.Info(ctx, "Tool filtered by RestrictToTool", "tool", call.Name)
 					continue
 				}
 				// Tag allow/deny checks
@@ -338,11 +429,13 @@ func (r *Runtime) runLoop(
 					tags := metas[i].Tags
 					if len(ov.AllowedTags) > 0 {
 						if !hasIntersection(tags, ov.AllowedTags) {
+							r.logger.Info(ctx, "Tool filtered by AllowedTags", "tool", call.Name, "tags", tags, "required", ov.AllowedTags)
 							ok = false
 						}
 					}
 					if ok && len(ov.DeniedTags) > 0 {
 						if hasIntersection(tags, ov.DeniedTags) {
+							r.logger.Info(ctx, "Tool filtered by DeniedTags", "tool", call.Name, "tags", tags, "denied", ov.DeniedTags)
 							ok = false
 						}
 					}
@@ -352,9 +445,11 @@ func (r *Runtime) runLoop(
 				}
 			}
 			candidates = filtered
+			r.logger.Info(ctx, "After per-run policy filtering", "candidates", len(candidates))
 		}
 		allowed := candidates
 		if r.Policy != nil {
+			r.logger.Info(ctx, "Applying runtime policy decision")
 			decision, err := r.Policy.Decide(ctx, policy.Input{
 				RunContext:    base.RunContext,
 				Tools:         r.toolMetadata(candidates),
@@ -388,8 +483,10 @@ func (r *Runtime) runLoop(
 			), seq)
 		}
 		if len(allowed) == 0 {
+			r.logger.Error(ctx, "ERROR - No tools allowed for execution after filtering", "candidates", len(result.ToolCalls))
 			return nil, errors.New("no tools allowed for execution")
 		}
+		r.logger.Info(ctx, "Executing allowed tool calls", "count", len(allowed))
 		if parentTracker != nil {
 			ids := collectToolCallIDs(allowed)
 			if len(ids) > 0 && parentTracker.registerDiscovered(ids) {
@@ -433,38 +530,39 @@ func (r *Runtime) runLoop(
 				allowed[i].ParentToolCallID = parentTracker.parentToolCallID
 			}
 		}
-		toolResults, err := r.executeToolCalls(
-			wfCtx, reg.ExecuteToolActivity, base.RunContext.RunID, base.Agent.ID(),
-			allowed, result.ExpectedChildren, seq, parentTracker,
-		)
-		if err != nil {
-			return nil, err
-		}
-		lastToolResults = toolResults
-		caps.RemainingToolCalls = decrementCap(caps.RemainingToolCalls, len(toolResults))
-		if failures(toolResults) > 0 {
-			caps.RemainingConsecutiveFailedToolCalls = decrementCap(
-				caps.RemainingConsecutiveFailedToolCalls, failures(toolResults),
-			)
-			if caps.MaxConsecutiveFailedToolCalls > 0 && caps.RemainingConsecutiveFailedToolCalls <= 0 {
-				return nil, errors.New("consecutive failed tool call cap exceeded")
-			}
-		} else if caps.MaxConsecutiveFailedToolCalls > 0 {
-			caps.RemainingConsecutiveFailedToolCalls = caps.MaxConsecutiveFailedToolCalls
-		}
+        vals, err := r.executeToolCalls(
+            wfCtx, reg.ExecuteToolActivity, base.RunContext.RunID, base.Agent.ID(),
+            allowed, result.ExpectedChildren, seq, parentTracker,
+        )
+        if err != nil {
+            return nil, err
+        }
+        // Directly use pointer results for the planner input
+        lastToolResults = vals
+        caps.RemainingToolCalls = decrementCap(caps.RemainingToolCalls, len(vals))
+        if failures(vals) > 0 {
+            caps.RemainingConsecutiveFailedToolCalls = decrementCap(
+                caps.RemainingConsecutiveFailedToolCalls, failures(vals),
+            )
+            if caps.MaxConsecutiveFailedToolCalls > 0 && caps.RemainingConsecutiveFailedToolCalls <= 0 {
+                return nil, errors.New("consecutive failed tool call cap exceeded")
+            }
+        } else if caps.MaxConsecutiveFailedToolCalls > 0 {
+                caps.RemainingConsecutiveFailedToolCalls = caps.MaxConsecutiveFailedToolCalls
+            }
 
-		resumeCtx := base.RunContext
-		resumeCtx.Attempt = nextAttempt
-		nextAttempt++
-		resumeReq := PlanActivityInput{
-			AgentID:     base.Agent.ID(),
-			RunID:       base.RunContext.RunID,
-			Messages:    base.Messages,
-			RunContext:  resumeCtx,
-			ToolResults: toolResults,
-		}
-		result, err = r.runPlanActivity(wfCtx, reg.ResumeActivityName, reg.ResumeActivityOptions, resumeReq)
-		if err != nil {
+            resumeCtx := base.RunContext
+            resumeCtx.Attempt = nextAttempt
+            nextAttempt++
+            resumeReq := PlanActivityInput{
+                AgentID:     base.Agent.ID(),
+                RunID:       base.RunContext.RunID,
+                Messages:    base.Messages,
+                RunContext:  resumeCtx,
+                ToolResults: lastToolResults,
+            }
+            result, err = r.runPlanActivity(wfCtx, reg.ResumeActivityName, reg.ResumeActivityOptions, resumeReq)
+            if err != nil {
 			return nil, err
 		}
 	}
@@ -547,15 +645,18 @@ func (r *Runtime) executeToolCalls(
 	expectedChildren int,
 	seq *turnSequencer,
 	parentTracker *childTracker,
-) ([]planner.ToolResult, error) {
+) ([]*planner.ToolResult, error) {
 	if activityName == "" {
 		return nil, errors.New("execute tool activity not registered")
 	}
 	ctx := wfCtx.Context()
 
-	// Launch all activities in parallel
+	// Decide per-call execution path (inline vs activity) by toolset.
+	// Inline toolsets run synchronously within the workflow loop; others schedule
+	// activities and collect futures. Results are returned in call order.
 	futures := make([]futureInfo, 0, len(calls))
 	discoveredIDs := make([]string, 0, len(calls))
+    inlineResults := make([]*planner.ToolResult, 0)
 	for i, call := range calls {
 		if call.ToolCallID == "" {
 			call.ToolCallID = generateDeterministicToolCallID(runID, call.TurnID, call.Name, i)
@@ -565,12 +666,78 @@ func (r *Runtime) executeToolCalls(
 			call.ParentToolCallID = parentTracker.parentToolCallID
 			calls[i] = call
 		}
+
+		toolsetName := toolsetIdentifier(call.Name)
+		ts, hasTS := r.toolsets[toolsetName]
+
+		// Prepare scheduled event (queue filled only for activity execution)
+		queue := ""
+		if hasTS && ts.TaskQueue != "" {
+			queue = ts.TaskQueue
+		}
+		r.publishHook(ctx,
+			hooks.NewToolCallScheduledEvent(
+				runID, agentID, call.Name, call.ToolCallID, call.Payload, queue,
+				call.ParentToolCallID, expectedChildren,
+			),
+			seq,
+		)
+
+		if hasTS && ts.Inline {
+			// Execute inline, preserving workflow context on ctx for agent-as-tool
+			start := wfCtx.Now()
+			ctxWithWF := engine.WithWorkflowContext(ctx, wfCtx)
+			res, err := ts.Execute(ctxWithWF, call)
+			if err != nil {
+				return nil, fmt.Errorf("tool %q inline execution failed: %w", call.Name, err)
+			}
+			duration := wfCtx.Now().Sub(start)
+			// Emit result event with typed payload directly
+			// Coerce error to *toolerrors.ToolError for event
+			var evtErr *toolerrors.ToolError
+			if res.Error != nil {
+				var te *toolerrors.ToolError
+				if errors.As(res.Error, &te) {
+					evtErr = te
+				} else {
+					evtErr = toolerrors.FromError(res.Error)
+				}
+			}
+			r.publishHook(
+				ctx,
+				hooks.NewToolResultReceivedEvent(
+					runID,
+					agentID,
+					call.Name,
+					call.ToolCallID,
+					call.ParentToolCallID,
+					res.Result,
+					duration,
+					res.Telemetry,
+					evtErr,
+				),
+				seq,
+			)
+			// Accumulate result preserving order
+            inlineResults = append(inlineResults, &planner.ToolResult{
+                Name:       call.Name,
+                Result:     res.Result,
+                ToolCallID: call.ToolCallID,
+                Telemetry:  res.Telemetry,
+                Error:      res.Error,
+                RetryHint:  res.RetryHint,
+            })
+			if parentTracker != nil {
+				discoveredIDs = append(discoveredIDs, call.ToolCallID)
+			}
+			continue
+		}
+
+		// Activity path (default)
 		rawPayload, err := r.marshalToolValue(ctx, call.Name, call.Payload, true)
 		if err != nil {
 			return nil, err
 		}
-
-		toolsetName := toolsetIdentifier(call.Name)
 		req := engine.ActivityRequest{
 			Name: activityName,
 			Input: ToolInput{
@@ -585,29 +752,14 @@ func (r *Runtime) executeToolCalls(
 				ParentToolCallID: call.ParentToolCallID,
 			},
 		}
-
-		if ts, ok := r.toolsets[toolsetName]; ok && ts.TaskQueue != "" {
+		if hasTS && ts.TaskQueue != "" {
 			req.Queue = ts.TaskQueue
 		}
-
-		r.publishHook(ctx,
-			hooks.NewToolCallScheduledEvent(
-				runID, agentID, call.Name, call.ToolCallID, call.Payload, req.Queue,
-				call.ParentToolCallID, expectedChildren,
-			),
-			seq,
-		)
-
 		future, err := wfCtx.ExecuteActivityAsync(ctx, req)
 		if err != nil {
 			return nil, fmt.Errorf("failed to schedule tool %q: %w", call.Name, err)
 		}
-
-		futures = append(futures, futureInfo{
-			future:    future,
-			call:      call,
-			startTime: wfCtx.Now(),
-		})
+		futures = append(futures, futureInfo{future: future, call: call, startTime: wfCtx.Now()})
 		if parentTracker != nil {
 			discoveredIDs = append(discoveredIDs, call.ToolCallID)
 		}
@@ -622,34 +774,52 @@ func (r *Runtime) executeToolCalls(
 		parentTracker.markUpdated()
 	}
 
-	// Collect all results in order
-	results := make([]planner.ToolResult, 0, len(futures))
-	for _, info := range futures {
-		var out ToolOutput
-		if err := info.future.Get(ctx, &out); err != nil {
-			return nil, fmt.Errorf("tool %q failed: %w", info.call.Name, err)
+		// Collect all results in order
+	    results := make([]*planner.ToolResult, 0, len(calls))
+		// First, append inline results in the same order they were executed relative to calls.
+		// We'll merge activity results preserving call order below.
+		// To keep ordering simple, we build a map from ToolCallID to inline result.
+		inlineByID := make(map[string]*planner.ToolResult, len(inlineResults))
+		for _, ir := range inlineResults {
+			if ir != nil {
+				inlineByID[ir.ToolCallID] = ir
+			}
 		}
+		// Collect activity results
+		activityByID := make(map[string]*planner.ToolResult, len(futures))
+		for _, info := range futures {
+			var out ToolOutput
+			if err := info.future.Get(ctx, &out); err != nil {
+				return nil, fmt.Errorf("tool %q failed: %w", info.call.Name, err)
+			}
 
 		duration := wfCtx.Now().Sub(info.startTime)
-		decoded, err := r.unmarshalToolValue(ctx, info.call.Name, out.Payload, false)
-		if err != nil {
-			return nil, err
+		// Decode tool result. If decoding fails (mismatch with generated result
+		// type), do not abort the workflow. Forward the raw payload to preserve
+		// observability and allow clients to render best‑effort data.
+		var decoded any
+		if len(out.Payload) > 0 {
+			if v, decErr := r.unmarshalToolValue(ctx, info.call.Name, out.Payload, false); decErr == nil {
+				decoded = v
+			} else {
+				decoded = out.Payload
+			}
 		}
 
-		toolRes := planner.ToolResult{
-			Name:       info.call.Name,
-			Result:     decoded,
-			ToolCallID: info.call.ToolCallID,
-			Telemetry:  out.Telemetry,
-		}
-		var toolErr *planner.ToolError
-		if out.Error != "" {
-			toolErr = planner.NewToolError(out.Error)
-			toolRes.Error = toolErr
-		}
-		if out.RetryHint != nil {
-			toolRes.RetryHint = out.RetryHint
-		}
+			toolRes := &planner.ToolResult{
+			    Name:       info.call.Name,
+			    Result:     decoded,
+			    ToolCallID: info.call.ToolCallID,
+			    Telemetry:  out.Telemetry,
+			}
+			var toolErr *planner.ToolError
+			if out.Error != "" {
+				toolErr = planner.NewToolError(out.Error)
+				toolRes.Error = toolErr
+			}
+			if out.RetryHint != nil {
+				toolRes.RetryHint = out.RetryHint
+			}
 
 		r.publishHook(
 			ctx,
@@ -667,18 +837,32 @@ func (r *Runtime) executeToolCalls(
 			seq,
 		)
 
-		results = append(results, toolRes)
-	}
+			activityByID[info.call.ToolCallID] = toolRes
+		}
 
-	return results, nil
+		// Merge results following original call order (inline or activity)
+		for _, call := range calls {
+			if ir, ok := inlineByID[call.ToolCallID]; ok {
+				results = append(results, ir)
+				continue
+			}
+			if ar, ok := activityByID[call.ToolCallID]; ok {
+				results = append(results, ar)
+				continue
+			}
+			// Should not happen; defensive: keep order consistent even if missing.
+			r.logWarn(ctx, "missing tool result for call", fmt.Errorf("no result"), "tool", call.Name, "tool_call_id", call.ToolCallID)
+		}
+
+		return results, nil
 }
 
 // runPlanActivity schedules a plan/resume activity with the configured options.
 func (r *Runtime) runPlanActivity(
 	wfCtx engine.WorkflowContext, activityName string, options engine.ActivityOptions, input PlanActivityInput,
-) (planner.PlanResult, error) {
+) (*planner.PlanResult, error) {
 	if activityName == "" {
-		return planner.PlanResult{}, errors.New("plan activity not registered")
+		return nil, errors.New("plan activity not registered")
 	}
 	var out PlanActivityOutput
 	req := engine.ActivityRequest{Name: activityName, Input: input}
@@ -692,7 +876,14 @@ func (r *Runtime) runPlanActivity(
 		req.RetryPolicy = options.RetryPolicy
 	}
 	if err := wfCtx.ExecuteActivity(wfCtx.Context(), req, &out); err != nil {
-		return planner.PlanResult{}, err
+		return nil, err
+	}
+	r.logger.Info(wfCtx.Context(), "runPlanActivity received PlanResult", "tool_calls", len(out.Result.ToolCalls), "final_response", out.Result.FinalResponse != nil, "await", out.Result.Await != nil)
+	if out.Result == nil {
+		return nil, fmt.Errorf("CRITICAL: runPlanActivity received nil PlanResult")
+	}
+	if len(out.Result.ToolCalls) == 0 && out.Result.FinalResponse == nil && out.Result.Await == nil {
+		return nil, fmt.Errorf("CRITICAL: runPlanActivity received PlanResult with no ToolCalls, FinalResponse, or Await")
 	}
 	return out.Result, nil
 }

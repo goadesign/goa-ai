@@ -43,6 +43,11 @@ func New{{ .Toolset.Agent.GoName }}ToolsetRegistration(rt *runtime.Runtime) runt
         AgentID:   AgentID,
         Name:      {{ printf "%q" .Toolset.QualifiedName }},
         TaskQueue: {{ printf "%q" .Toolset.TaskQueue }},
+        // Strong-contract routing for cross-process inline composition
+        Route: runtime.AgentRoute{ID: AgentID, WorkflowName: {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Name }}, DefaultTaskQueue: {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Queue }}},
+        PlanActivityName:    {{ printf "%q" .Toolset.Agent.Runtime.PlanActivity.Name }},
+        ResumeActivityName:  {{ printf "%q" .Toolset.Agent.Runtime.ResumeActivity.Name }},
+        ExecuteToolActivity: {{ printf "%q" .Toolset.Agent.Runtime.ExecuteTool.Name }},
     })
 }
 
@@ -66,6 +71,11 @@ func NewRegistration(
         Name:         Name,
         TaskQueue:    {{ printf "%q" .Toolset.TaskQueue }},
         SystemPrompt: systemPrompt,
+        // Strong-contract routing for cross-process inline composition
+        Route: runtime.AgentRoute{ID: AgentID, WorkflowName: {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Name }}, DefaultTaskQueue: {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Queue }}},
+        PlanActivityName:    {{ printf "%q" .Toolset.Agent.Runtime.PlanActivity.Name }},
+        ResumeActivityName:  {{ printf "%q" .Toolset.Agent.Runtime.ResumeActivity.Name }},
+        ExecuteToolActivity: {{ printf "%q" .Toolset.Agent.Runtime.ExecuteTool.Name }},
     }
     for _, o := range opts { o(&cfg) }
     // Validate only for the templates explicitly provided (optional)

@@ -47,6 +47,16 @@ func NestedRunID(parentRunID string, toolName tools.Ident) string {
 	return fmt.Sprintf("%s/agent/%s", parentRunID, toolName)
 }
 
+// defaultQueueFor derives a conventional task queue name from an agent ID
+// in the form "service.agent" → "service_agent_workflow".
+func defaultQueueFor(agentID string) string {
+	if agentID == "" {
+		return "default_workflow"
+	}
+	s := strings.ReplaceAll(agentID, ".", "_")
+	return s + "_workflow"
+}
+
 // generateDeterministicToolCallID creates a replay-safe tool-call ID using the
 // run ID, optional turn ID, sanitized tool name, and the deterministic index of
 // the tool within the current batch.
@@ -63,7 +73,7 @@ func generateDeterministicToolCallID(runID, turnID string, toolName tools.Ident,
 	if tid == "" {
 		tid = "no-turn"
 	}
-	return strings.Join([]string{string(runID), string(tid), safeTool, strconv.Itoa(index)}, "/")
+	return strings.Join([]string{runID, tid, safeTool, strconv.Itoa(index)}, "/")
 }
 
 // generateParentToolCallID creates a deterministic parent ToolCallID suitable
@@ -250,14 +260,17 @@ func decrementCap(current int, delta int) int {
 }
 
 // failures counts the number of tool results with non-nil errors.
-func failures(results []planner.ToolResult) int {
-	count := 0
-	for _, res := range results {
-		if res.Error != nil {
-			count++
-		}
-	}
-	return count
+func failures(results []*planner.ToolResult) int {
+    count := 0
+    for _, res := range results {
+        if res == nil {
+            continue
+        }
+        if res.Error != nil {
+            count++
+        }
+    }
+    return count
 }
 
 // mergeCaps merges policy decision caps into the current caps state. Decision caps
@@ -447,10 +460,10 @@ func stampEventWithTurn(evt hooks.Event, seq *turnSequencer) {
 // Planner notes are currently discarded. Future enhancement: include notes as structured
 // metadata or append them to the payload content for visibility to the parent planner.
 func ConvertRunOutputToToolResult(toolName tools.Ident, output RunOutput) planner.ToolResult {
-	result := planner.ToolResult{
-		Name:   toolName,
-		Result: output.Final.Content,
-	}
+    result := planner.ToolResult{
+        Name:   toolName,
+        Result: output.Final.Content,
+    }
 
 	// Aggregate telemetry and track failures from all nested tool executions
 	if len(output.ToolEvents) > 0 {
@@ -479,13 +492,11 @@ func ConvertRunOutputToToolResult(toolName tools.Ident, output RunOutput) planne
 
 		// If ALL tools failed, propagate error to parent planner
 		if failedCount > 0 && failedCount == len(output.ToolEvents) {
-			if failedCount == 1 {
-				result.Error = fmt.Errorf("agent-tool %q: nested tool failed: %w",
-					toolName, lastError)
-			} else {
-				result.Error = fmt.Errorf("agent-tool %q: all %d nested tools failed (last: %w)",
-					toolName, failedCount, lastError)
-			}
+            if failedCount == 1 {
+                result.Error = fmt.Errorf("agent-tool %q: nested tool failed: %w", toolName, lastError)
+            } else {
+                result.Error = fmt.Errorf("agent-tool %q: all %d nested tools failed (last: %w)", toolName, failedCount, lastError)
+            }
 		}
 
 		// Create aggregated telemetry if we collected any data
@@ -501,5 +512,5 @@ func ConvertRunOutputToToolResult(toolName tools.Ident, output RunOutput) planne
 		}
 	}
 
-	return result
+    return result
 }

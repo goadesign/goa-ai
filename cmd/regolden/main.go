@@ -72,7 +72,7 @@ func main() {
 	}
 
 	golden := filepath.Join("codegen", "agent", "tests", "testdata", "golden", "method_complex_embedded", "codecs.go.golden")
-	if err := os.WriteFile(golden, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(golden, []byte(content), 0600); err != nil {
 		panic(fmt.Errorf("write golden: %w", err))
 	}
 	fmt.Println("Updated:", golden)

@@ -10,12 +10,12 @@ func New() planner.Planner { return &examplePlanner{} }
 // messages/notes for streaming, and integrate tool results in PlanResume.
 type examplePlanner struct{}
 
-func (p *examplePlanner) PlanStart(ctx context.Context, in planner.PlanInput) (planner.PlanResult, error) {
-    return planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "Hello from example planner."}}}, nil
+func (p *examplePlanner) PlanStart(ctx context.Context, in planner.PlanInput) (*planner.PlanResult, error) {
+    return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "Hello from example planner."}}}, nil
 }
 
-func (p *examplePlanner) PlanResume(ctx context.Context, in planner.PlanResumeInput) (planner.PlanResult, error) {
-    return planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "Done."}}}, nil
+func (p *examplePlanner) PlanResume(ctx context.Context, in planner.PlanResumeInput) (*planner.PlanResult, error) {
+    return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "Done."}}}, nil
 }
 
 

@@ -24,20 +24,21 @@ import (
 // agent context with memory access and delegates to the planner's PlanStart
 // implementation.
 func (r *Runtime) PlanStartActivity(ctx context.Context, input PlanActivityInput) (PlanActivityOutput, error) {
-    reg, agentCtx, err := r.plannerContext(ctx, input)
-    if err != nil {
-        return PlanActivityOutput{}, err
-    }
-    planInput := planner.PlanInput{
-        Messages:   input.Messages,
-        RunContext: input.RunContext,
-        Agent:      agentCtx,
-        Events:     newPlannerEvents(r, input.AgentID, input.RunID),
-    }
+	reg, agentCtx, err := r.plannerContext(ctx, input)
+	if err != nil {
+		return PlanActivityOutput{}, err
+	}
+	planInput := planner.PlanInput{
+		Messages:   input.Messages,
+		RunContext: input.RunContext,
+		Agent:      agentCtx,
+		Events:     newPlannerEvents(r, input.AgentID, input.RunID),
+	}
 	result, err := r.planStart(ctx, reg, planInput)
 	if err != nil {
 		return PlanActivityOutput{}, err
 	}
+	r.logger.Info(ctx, "PlanStartActivity returning PlanResult", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil, "await", result.Await != nil)
 	return PlanActivityOutput{Result: result}, nil
 }
 
@@ -52,17 +53,17 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input PlanActivityInput
 // execution to produce the next plan. The activity creates an agent context
 // with memory access and delegates to the planner's PlanResume implementation.
 func (r *Runtime) PlanResumeActivity(ctx context.Context, input PlanActivityInput) (PlanActivityOutput, error) {
-    reg, agentCtx, err := r.plannerContext(ctx, input)
-    if err != nil {
-        return PlanActivityOutput{}, err
-    }
-    planInput := planner.PlanResumeInput{
-        Messages:    input.Messages,
-        RunContext:  input.RunContext,
-        Agent:       agentCtx,
-        Events:      newPlannerEvents(r, input.AgentID, input.RunID),
-        ToolResults: input.ToolResults,
-    }
+	reg, agentCtx, err := r.plannerContext(ctx, input)
+	if err != nil {
+		return PlanActivityOutput{}, err
+	}
+	planInput := planner.PlanResumeInput{
+		Messages:    input.Messages,
+		RunContext:  input.RunContext,
+		Agent:       agentCtx,
+		Events:      newPlannerEvents(r, input.AgentID, input.RunID),
+		ToolResults: input.ToolResults,
+	}
 	result, err := r.planResume(ctx, reg, planInput)
 	if err != nil {
 		return PlanActivityOutput{}, err
@@ -211,9 +212,9 @@ func buildRetryHintFromValidation(err error, toolName tools.Ident) ([]string, st
 }
 
 // planStart invokes the planner's PlanStart method with tracing.
-func (r *Runtime) planStart(ctx context.Context, reg AgentRegistration, input planner.PlanInput) (planner.PlanResult, error) {
+func (r *Runtime) planStart(ctx context.Context, reg AgentRegistration, input planner.PlanInput) (*planner.PlanResult, error) {
 	if reg.Planner == nil {
-		return planner.PlanResult{}, errors.New("planner not configured")
+		return nil, errors.New("planner not configured")
 	}
 	tracer := r.tracer
 	if tracer == nil {
@@ -225,9 +226,9 @@ func (r *Runtime) planStart(ctx context.Context, reg AgentRegistration, input pl
 }
 
 // planResume invokes the planner's PlanResume method with tracing.
-func (r *Runtime) planResume(ctx context.Context, reg AgentRegistration, input planner.PlanResumeInput) (planner.PlanResult, error) {
+func (r *Runtime) planResume(ctx context.Context, reg AgentRegistration, input planner.PlanResumeInput) (*planner.PlanResult, error) {
 	if reg.Planner == nil {
-		return planner.PlanResult{}, errors.New("planner not configured")
+		return nil, errors.New("planner not configured")
 	}
 	tracer := r.tracer
 	if tracer == nil {

@@ -16,10 +16,7 @@ type (
 	// in-memory, or custom) can be swapped without touching generated code.
 	// Implementations translate these generic types into backend-specific primitives.
 	Engine interface {
-		// RegisterWorkflow registers a workflow definition with the engine. This is
-		// typically called during service initialization before starting the worker pool.
-		// Returns an error if the workflow name is already registered or if
-		// registration fails.
+		// RegisterWorkflow registers a workflow definition with the engine (untyped).
 		RegisterWorkflow(ctx context.Context, def WorkflowDefinition) error
 
 		// RegisterActivity registers an activity definition with the engine. Activities
@@ -46,8 +43,8 @@ type (
 		SignalByID(ctx context.Context, workflowID, runID, name string, payload any) error
 	}
 
-	// WorkflowDefinition binds a workflow handler to a logical name and default queue.
-	// Generated code creates these during agent registration.
+	// WorkflowDefinition binds a workflow handler to a logical name and default queue
+	// (untyped). Prefer WorkflowDefinitionTyped for production engines.
 	WorkflowDefinition struct {
 		// Name is the logical identifier registered with the engine (e.g., "AgentWorkflow").
 		Name string

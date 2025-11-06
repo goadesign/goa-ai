@@ -1,11 +1,11 @@
 package planner
 
 import (
-    "context"
-    "errors"
-    "io"
+	"context"
+	"errors"
+	"io"
 
-    "goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/model"
 )
 
 // StreamSummary aggregates the outcome of a streaming LLM invocation. Planners
@@ -26,13 +26,13 @@ type StreamSummary struct {
 // StreamSummary so planners can produce a final response or schedule tool calls.
 // Callers are responsible for handling ToolCalls in the resulting summary.
 func ConsumeStream(ctx context.Context, streamer model.Streamer, ev PlannerEvents) (StreamSummary, error) {
-    var summary StreamSummary
-    if streamer == nil {
-        return summary, errors.New("nil streamer")
-    }
-    if ev == nil {
-        return summary, errors.New("nil PlannerEvents")
-    }
+	var summary StreamSummary
+	if streamer == nil {
+		return summary, errors.New("nil streamer")
+	}
+	if ev == nil {
+		return summary, errors.New("nil PlannerEvents")
+	}
 	defer func() {
 		_ = streamer.Close()
 	}()
@@ -46,17 +46,17 @@ func ConsumeStream(ctx context.Context, streamer model.Streamer, ev PlannerEvent
 			return summary, err
 		}
 		switch chunk.Type {
-        case model.ChunkTypeText:
-            if chunk.Message.Content == "" {
-                continue
-            }
-            summary.Text += chunk.Message.Content
-            ev.AssistantChunk(ctx, chunk.Message.Content)
-        case model.ChunkTypeThinking:
-            if chunk.Thinking == "" {
-                continue
-            }
-            ev.PlannerThought(ctx, chunk.Thinking, map[string]string{"phase": "thinking"})
+		case model.ChunkTypeText:
+			if chunk.Message.Content == "" {
+				continue
+			}
+			summary.Text += chunk.Message.Content
+			ev.AssistantChunk(ctx, chunk.Message.Content)
+		case model.ChunkTypeThinking:
+			if chunk.Thinking == "" {
+				continue
+			}
+			ev.PlannerThought(ctx, chunk.Thinking, map[string]string{"phase": "thinking"})
 		case model.ChunkTypeToolCall:
 			if chunk.ToolCall.Name == "" {
 				continue
@@ -65,22 +65,22 @@ func ConsumeStream(ctx context.Context, streamer model.Streamer, ev PlannerEvent
 				Name:    chunk.ToolCall.Name,
 				Payload: chunk.ToolCall.Payload,
 			})
-        case model.ChunkTypeUsage:
-            if chunk.UsageDelta != nil {
-                summary.Usage = addUsage(summary.Usage, *chunk.UsageDelta)
-                ev.UsageDelta(ctx, *chunk.UsageDelta)
-            }
+		case model.ChunkTypeUsage:
+			if chunk.UsageDelta != nil {
+				summary.Usage = addUsage(summary.Usage, *chunk.UsageDelta)
+				ev.UsageDelta(ctx, *chunk.UsageDelta)
+			}
 		case model.ChunkTypeStop:
 			summary.StopReason = chunk.StopReason
 		}
 	}
 
-    if meta := streamer.Metadata(); meta != nil {
-        if usage, ok := meta["usage"].(model.TokenUsage); ok {
-            summary.Usage = addUsage(summary.Usage, usage)
-            ev.UsageDelta(ctx, usage)
-        }
-    }
+	if meta := streamer.Metadata(); meta != nil {
+		if usage, ok := meta["usage"].(model.TokenUsage); ok {
+			summary.Usage = addUsage(summary.Usage, usage)
+			ev.UsageDelta(ctx, usage)
+		}
+	}
 
 	return summary, nil
 }

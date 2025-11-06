@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -12,22 +13,57 @@ import (
 // generating per-agent boilerplate handlers.
 func WorkflowHandler(rt *Runtime) engine.WorkflowFunc {
 	return func(wfctx engine.WorkflowContext, input any) (any, error) {
-		in, ok := input.(*RunInput)
-		if !ok {
-			return nil, errors.New("invalid run input")
+		var in *RunInput
+		switch v := input.(type) {
+		case *RunInput:
+			in = v
+		case RunInput:
+			in = &v
+		default:
+			// Best-effort decode: JSON round-trip into RunInput to survive generic decoders
+			// used by workflow engines (e.g., Temporal JSON payloads).
+			if v == nil {
+				return nil, errors.New("invalid run input")
+			}
+			b, err := json.Marshal(v)
+			if err != nil {
+				return nil, errors.New("invalid run input")
+			}
+			var tmp RunInput
+			if err := json.Unmarshal(b, &tmp); err != nil {
+				return nil, errors.New("invalid run input")
+			}
+			in = &tmp
 		}
 		return rt.ExecuteWorkflow(wfctx, in)
 	}
 }
+
+// WorkflowHandlerTyped returns a typed workflow handler that Temporal can decode into directly.
+// (Typed workflow handler removed; use WorkflowHandler with coercion.)
 
 // PlanStartActivityHandler returns a generic activity handler for the plan-start
 // activity. It type-asserts the input to PlanActivityInput and delegates to
 // Runtime.PlanStartActivity.
 func PlanStartActivityHandler(rt *Runtime) func(context.Context, any) (any, error) {
 	return func(ctx context.Context, input any) (any, error) {
-		in, ok := input.(PlanActivityInput)
-		if !ok {
-			return nil, errors.New("invalid plan activity input")
+		var in PlanActivityInput
+		switch v := input.(type) {
+		case PlanActivityInput:
+			in = v
+		case *PlanActivityInput:
+			if v == nil {
+				return nil, errors.New("invalid plan activity input")
+			}
+			in = *v
+		default:
+			b, err := json.Marshal(v)
+			if err != nil {
+				return nil, errors.New("invalid plan activity input")
+			}
+			if err := json.Unmarshal(b, &in); err != nil {
+				return nil, errors.New("invalid plan activity input")
+			}
 		}
 		return rt.PlanStartActivity(ctx, in)
 	}
@@ -38,9 +74,23 @@ func PlanStartActivityHandler(rt *Runtime) func(context.Context, any) (any, erro
 // Runtime.PlanResumeActivity.
 func PlanResumeActivityHandler(rt *Runtime) func(context.Context, any) (any, error) {
 	return func(ctx context.Context, input any) (any, error) {
-		in, ok := input.(PlanActivityInput)
-		if !ok {
-			return nil, errors.New("invalid plan activity input")
+		var in PlanActivityInput
+		switch v := input.(type) {
+		case PlanActivityInput:
+			in = v
+		case *PlanActivityInput:
+			if v == nil {
+				return nil, errors.New("invalid plan activity input")
+			}
+			in = *v
+		default:
+			b, err := json.Marshal(v)
+			if err != nil {
+				return nil, errors.New("invalid plan activity input")
+			}
+			if err := json.Unmarshal(b, &in); err != nil {
+				return nil, errors.New("invalid plan activity input")
+			}
 		}
 		return rt.PlanResumeActivity(ctx, in)
 	}
@@ -51,9 +101,23 @@ func PlanResumeActivityHandler(rt *Runtime) func(context.Context, any) (any, err
 // Runtime.ExecuteToolActivity.
 func ExecuteToolActivityHandler(rt *Runtime) func(context.Context, any) (any, error) {
 	return func(ctx context.Context, input any) (any, error) {
-		in, ok := input.(ToolInput)
-		if !ok {
-			return nil, errors.New("invalid tool activity input")
+		var in ToolInput
+		switch v := input.(type) {
+		case ToolInput:
+			in = v
+		case *ToolInput:
+			if v == nil {
+				return nil, errors.New("invalid tool activity input")
+			}
+			in = *v
+		default:
+			b, err := json.Marshal(v)
+			if err != nil {
+				return nil, errors.New("invalid tool activity input")
+			}
+			if err := json.Unmarshal(b, &in); err != nil {
+				return nil, errors.New("invalid tool activity input")
+			}
 		}
 		return rt.ExecuteToolActivity(ctx, in)
 	}

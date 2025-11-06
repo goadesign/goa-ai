@@ -10,11 +10,26 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/telemetry"
 )
 
 func TestRunPlanActivityUsesOptions(t *testing.T) {
-	rt := &Runtime{}
-	wf := &testWorkflowContext{ctx: context.Background()}
+	rt := &Runtime{
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Bus:     noopHooks{},
+	}
+	wf := &testWorkflowContext{
+		ctx:           context.Background(),
+		hasPlanResult: true,
+		planResult: &planner.PlanResult{
+			FinalResponse: &planner.FinalResponse{
+				Message: planner.AgentMessage{Role: "assistant", Content: "ok"},
+			},
+		},
+	}
+
 	opts := engine.ActivityOptions{
 		Queue:       "custom_queue",
 		Timeout:     30 * time.Second,
@@ -29,13 +44,13 @@ func TestRunPlanActivityUsesOptions(t *testing.T) {
 
 func TestPlanStartActivityInvokesPlanner(t *testing.T) {
 	called := false
-	pl := &stubPlanner{start: func(ctx context.Context, input planner.PlanInput) (planner.PlanResult, error) {
+	pl := &stubPlanner{start: func(ctx context.Context, input planner.PlanInput) (*planner.PlanResult, error) {
 		called = true
 		require.Equal(t, run.Context{RunID: "run-123"}, input.RunContext)
 		require.Len(t, input.Messages, 1)
 		require.Equal(t, "hello", input.Messages[0].Content)
 		require.NotNil(t, input.Agent)
-		return planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, nil
+		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
 	input := PlanActivityInput{AgentID: "service.agent", RunID: "run-123", Messages: []planner.AgentMessage{{Role: "user", Content: "hello"}}, RunContext: run.Context{RunID: "run-123"}}
@@ -47,12 +62,12 @@ func TestPlanStartActivityInvokesPlanner(t *testing.T) {
 
 func TestPlanResumeActivityPassesToolResults(t *testing.T) {
 	called := false
-	toolResults := []planner.ToolResult{{Name: "svc.ts.tool"}}
-	pl := &stubPlanner{resume: func(ctx context.Context, input planner.PlanResumeInput) (planner.PlanResult, error) {
+	toolResults := []*planner.ToolResult{{Name: "svc.ts.tool"}}
+	pl := &stubPlanner{resume: func(ctx context.Context, input planner.PlanResumeInput) (*planner.PlanResult, error) {
 		called = true
 		require.Equal(t, toolResults, input.ToolResults)
 		require.Equal(t, 3, input.RunContext.Attempt)
-		return planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: "svc.other.tool"}}}, nil
+		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: "svc.other.tool"}}}, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
 	input := PlanActivityInput{AgentID: "service.agent", RunID: "run-123", RunContext: run.Context{RunID: "run-123", Attempt: 3}, ToolResults: toolResults}

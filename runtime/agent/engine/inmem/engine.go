@@ -1,3 +1,5 @@
+// Package inmem provides an in-memory implementation of the workflow engine
+// for testing and development.
 package inmem
 
 import (
@@ -7,9 +9,10 @@ import (
 	"sync"
 	"time"
 
+	"reflect"
+
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/telemetry"
-	"reflect"
 )
 
 // New returns a new in-memory Engine implementation suitable for local

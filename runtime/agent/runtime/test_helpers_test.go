@@ -27,7 +27,7 @@ type testWorkflowContext struct {
 	asyncResult   any
 	signals       map[string]*testSignalChannel
 	sigMu         sync.Mutex
-	planResult    planner.PlanResult
+	planResult    *planner.PlanResult
 	hasPlanResult bool
 	barrier       chan struct{}
 }
@@ -59,7 +59,7 @@ func (t *testWorkflowContext) ExecuteActivity(ctx context.Context, req engine.Ac
 		t.lastRequest = req
 	}
 	if out, ok := result.(*PlanActivityOutput); ok {
-		res := planner.PlanResult{}
+		var res *planner.PlanResult
 		if t.hasPlanResult {
 			res = t.planResult
 		}
@@ -72,7 +72,7 @@ func (t *testWorkflowContext) ExecuteActivityAsync(ctx context.Context, req engi
 	t.lastRequest = req
 	result := t.asyncResult
 	if result == nil {
-		result = PlanActivityOutput{Result: planner.PlanResult{}}
+		result = PlanActivityOutput{Result: &planner.PlanResult{}}
 	}
 	return &testFuture{result: result, barrier: t.barrier}, nil
 }
@@ -215,22 +215,22 @@ func copyActivityResult(dst any, src any) error {
 }
 
 type stubPlanner struct {
-	start  func(context.Context, planner.PlanInput) (planner.PlanResult, error)
-	resume func(context.Context, planner.PlanResumeInput) (planner.PlanResult, error)
+	start  func(context.Context, planner.PlanInput) (*planner.PlanResult, error)
+	resume func(context.Context, planner.PlanResumeInput) (*planner.PlanResult, error)
 }
 
-func (s *stubPlanner) PlanStart(ctx context.Context, input planner.PlanInput) (planner.PlanResult, error) {
+func (s *stubPlanner) PlanStart(ctx context.Context, input planner.PlanInput) (*planner.PlanResult, error) {
 	if s.start != nil {
 		return s.start(ctx, input)
 	}
-	return planner.PlanResult{}, nil
+	return &planner.PlanResult{}, nil
 }
 
-func (s *stubPlanner) PlanResume(ctx context.Context, input planner.PlanResumeInput) (planner.PlanResult, error) {
+func (s *stubPlanner) PlanResume(ctx context.Context, input planner.PlanResumeInput) (*planner.PlanResult, error) {
 	if s.resume != nil {
 		return s.resume(ctx, input)
 	}
-	return planner.PlanResult{}, nil
+	return &planner.PlanResult{}, nil
 }
 
 type stubWorkflowHandle struct {

@@ -249,6 +249,10 @@ func (e *Engine) RegisterWorkflow(_ context.Context, def engine.WorkflowDefiniti
 	return nil
 }
 
+// RegisterWorkflowTyped registers a strongly-typed workflow, allowing Temporal to decode
+// the input directly into *T.
+// (Typed workflow registration removed; use RegisterWorkflow.)
+
 // RegisterActivity registers an activity handler with the Temporal worker for
 // the specified task queue. The activity handler is wrapped to inject the workflow
 // context and telemetry context when available, enabling activities to access
@@ -544,6 +548,9 @@ func (b *workerBundle) stop() {
 func (b *workerBundle) registerWorkflow(name string, fn any) {
 	b.worker.RegisterWorkflowWithOptions(fn, workflow.RegisterOptions{Name: name})
 }
+
+// typed registration reuses the same underlying RegisterWorkflowWithOptions since
+// Temporal infers payload type from the function signature.
 
 func (b *workerBundle) registerActivity(name string, fn any) {
 	b.worker.RegisterActivityWithOptions(fn, activity.RegisterOptions{Name: name})

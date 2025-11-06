@@ -12,5 +12,9 @@ func TestGolden_Imports_Deterministic(t *testing.T) {
 	files := buildAndGenerate(t, testscenarios.ImportsDeterministic())
 	codecs := fileContent(t, files, "gen/alpha/agents/scribe/specs/docs/codecs.go")
 	require.Contains(t, codecs, "goa.design/goa-ai/gen/example.com/mod/gen/types")
-	require.Contains(t, codecs, "JSONCodec[*types.Doc]")
+	// The codec uses the alias type (StorePayload) which aliases to types.Doc
+	require.Contains(t, codecs, "JSONCodec[StorePayload]")
+	// The type alias is defined in types.go, verify it's used in codecs.go
+	types := fileContent(t, files, "gen/alpha/agents/scribe/specs/docs/types.go")
+	require.Contains(t, types, "StorePayload = types.Doc")
 }

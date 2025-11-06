@@ -8,8 +8,8 @@ import (
 	"strings"
 	"text/template"
 
-	"goa.design/goa-ai/runtime/agent/engine"
 	agent "goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -76,8 +76,20 @@ type PromptBuilder func(id tools.Ident, payload any) string
 // maps fully-qualified tool names (e.g., "service.toolset.tool") to system
 // prompts that will be prepended to the nested agent messages for that tool.
 type AgentToolConfig struct {
-	// AgentID is the fully qualified identifier of the nested agent.
-	AgentID agent.Ident
+    // AgentID is the fully qualified identifier of the nested agent.
+    AgentID agent.Ident
+    // Route provides strong-contract routing metadata for cross-process inline
+    // execution. When set, the runtime uses this route (workflow + queue) and
+    // the provided activity names to orchestrate the nested agent. When empty,
+    // inline execution must rely on a locally registered agent; otherwise the
+    // runtime returns an error (no fallbacks).
+    Route AgentRoute
+    // PlanActivityName is the fully-qualified plan activity name for the nested agent.
+    PlanActivityName string
+    // ResumeActivityName is the fully-qualified resume activity name for the nested agent.
+    ResumeActivityName string
+    // ExecuteToolActivity is the fully-qualified execute_tool activity name for the nested agent.
+    ExecuteToolActivity string
 	// SystemPrompt, when non-empty, is prepended as a system message for all tools.
 	SystemPrompt string
 	// Templates maps fully-qualified tool IDs to compiled templates used to render
@@ -112,6 +124,7 @@ func NewAgentToolsetRegistration(rt *Runtime, cfg AgentToolConfig) ToolsetRegist
 		Name:        cfg.Name,
 		Description: cfg.Description,
 		TaskQueue:   cfg.TaskQueue,
+		Inline:      true,
 		Execute:     defaultAgentToolExecute(rt, cfg),
 	}
 }
@@ -231,15 +244,15 @@ func PayloadToString(payload any) string {
 // the current tool call, executes the nested agent inline, and adapts the result
 // to a planner.ToolResult.
 func defaultAgentToolExecute(
-	rt *Runtime, cfg AgentToolConfig,
+    rt *Runtime, cfg AgentToolConfig,
 ) func(context.Context, planner.ToolRequest) (planner.ToolResult, error) {
-	return func(
-		ctx context.Context, call planner.ToolRequest,
-	) (planner.ToolResult, error) {
-		wfCtx := engine.WorkflowContextFromContext(ctx)
-		if wfCtx == nil {
-			return planner.ToolResult{}, fmt.Errorf("workflow context not found")
-		}
+    return func(
+        ctx context.Context, call planner.ToolRequest,
+) (planner.ToolResult, error) {
+        wfCtx := engine.WorkflowContextFromContext(ctx)
+        if wfCtx == nil {
+            return planner.ToolResult{}, fmt.Errorf("workflow context not found")
+        }
 
 		// Build messages: optional agent system prompt, then the per-tool user message
 		var messages []planner.AgentMessage
@@ -251,21 +264,21 @@ func defaultAgentToolExecute(
 		}
 
 		// Build per-tool user message via template if present, otherwise fall back to text
-		if tmpl := cfg.Templates[tools.Ident(call.Name)]; tmpl != nil {
+		if tmpl := cfg.Templates[call.Name]; tmpl != nil {
 			var b strings.Builder
 			if err := tmpl.Execute(&b, call.Payload); err != nil {
-				return planner.ToolResult{}, fmt.Errorf(
-					"render tool template for %s: %w",
-					call.Name, err,
-				)
+            return planner.ToolResult{}, fmt.Errorf(
+                "render tool template for %s: %w",
+                call.Name, err,
+            )
 			}
 			messages = append(messages, planner.AgentMessage{Role: "user", Content: b.String()})
-		} else if txt, ok := cfg.Texts[tools.Ident(call.Name)]; ok {
+		} else if txt, ok := cfg.Texts[call.Name]; ok {
 			messages = append(messages, planner.AgentMessage{Role: "user", Content: txt})
 		} else {
 			// Default: build from payload via PromptBuilder or JSON/string fallback
 			if cfg.Prompt != nil {
-				messages = append(messages, planner.AgentMessage{Role: "user", Content: cfg.Prompt(tools.Ident(call.Name), call.Payload)})
+				messages = append(messages, planner.AgentMessage{Role: "user", Content: cfg.Prompt(call.Name, call.Payload)})
 			} else {
 				messages = append(messages, planner.AgentMessage{Role: "user", Content: PayloadToString(call.Payload)})
 			}
@@ -279,14 +292,32 @@ func defaultAgentToolExecute(
 			ParentToolCallID: call.ToolCallID,
 		}
 
-		outPtr, err := rt.ExecuteAgentInline(wfCtx, string(cfg.AgentID), messages, nestedRunCtx)
-		if err != nil {
-			return planner.ToolResult{}, fmt.Errorf("execute agent inline: %w", err)
-		}
+        var outPtr *RunOutput
+        var err error
+        if cfg.Route.ID != "" {
+            // Strong contract: use explicit route + activity names; no fallbacks.
+            outPtr, err = rt.ExecuteAgentInlineWithRoute(
+                wfCtx,
+                cfg.Route,
+                cfg.PlanActivityName,
+                cfg.ResumeActivityName,
+                cfg.ExecuteToolActivity,
+                messages,
+                nestedRunCtx,
+            )
+        } else {
+            // Require local registration; avoid synthetic conventions.
+            // ExecuteAgentInline will look up the local agent; if not present,
+            // return a clear error rather than guessing.
+            outPtr, err = rt.ExecuteAgentInline(wfCtx, string(cfg.AgentID), messages, nestedRunCtx)
+        }
+        if err != nil {
+            return planner.ToolResult{}, fmt.Errorf("execute agent inline: %w", err)
+        }
 
-		if outPtr == nil {
-			return planner.ToolResult{}, fmt.Errorf("execute agent inline returned no output")
-		}
-		return ConvertRunOutputToToolResult(call.Name, *outPtr), nil
-	}
+        if outPtr == nil {
+            return planner.ToolResult{}, fmt.Errorf("execute agent inline returned no output")
+        }
+        return ConvertRunOutputToToolResult(call.Name, *outPtr), nil
+    }
 }

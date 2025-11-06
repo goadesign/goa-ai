@@ -9,8 +9,8 @@ import (
 
 	codegen "goa.design/goa-ai/codegen/agent"
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
-	gcodegen "goa.design/goa/v3/codegen"
 	agentsExpr "goa.design/goa-ai/expr/agent"
+	gcodegen "goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -67,7 +67,7 @@ func main() {
 	}
 
 	golden := filepath.Join("codegen", "agent", "tests", "testdata", "golden", "deep_nested_validations", "codecs.go.golden")
-	if err := os.WriteFile(golden, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(golden, []byte(content), 0600); err != nil {
 		panic(fmt.Errorf("write golden: %w", err))
 	}
 	fmt.Println("Updated:", golden)

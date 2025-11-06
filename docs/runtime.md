@@ -237,7 +237,7 @@ req := chattools.NewSearchCall(&chattools.SearchPayload{
 }, chattools.WithToolCallID("tc-1"))
 
 // Use in a planner result
-result := planner.PlanResult{ToolCalls: []planner.ToolRequest{req}}
+result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{req}}
 ```
 
 ## Executor-First Tool Execution
@@ -421,8 +421,8 @@ Planners implement:
 
 ```go
 type Planner interface {
-    PlanStart(ctx context.Context, input planner.PlanInput) (planner.PlanResult, error)
-    PlanResume(ctx context.Context, input planner.PlanResumeInput) (planner.PlanResult, error)
+    PlanStart(ctx context.Context, input planner.PlanInput) (*planner.PlanResult, error)
+    PlanResume(ctx context.Context, input planner.PlanResumeInput) (*planner.PlanResult, error)
 }
 ```
 
@@ -455,25 +455,25 @@ Each module is optional; services import the ones they need and pass the resulti
 Example (streaming planner):
 
 ```go
-func (p *MyPlanner) PlanResume(ctx context.Context, input planner.PlanResumeInput) (planner.PlanResult, error) {
+func (p *MyPlanner) PlanResume(ctx context.Context, input planner.PlanResumeInput) (*planner.PlanResult, error) {
     m, ok := input.Agent.ModelClient("bedrock")
     if !ok {
-        return planner.PlanResult{}, errors.New("model not configured")
+        return nil, errors.New("model not configured")
     }
     req := model.Request{ /* system, messages, tools */ }
     req.Stream = true
     s, err := m.Stream(ctx, req)
     if err != nil {
-        return planner.PlanResult{}, err
+        return nil, err
     }
     sum, err := planner.ConsumeStream(ctx, s, input.Events)
     if err != nil {
-        return planner.PlanResult{}, err
+        return nil, err
     }
     if len(sum.ToolCalls) > 0 {
-        return planner.PlanResult{ToolCalls: sum.ToolCalls}, nil
+        return &planner.PlanResult{ToolCalls: sum.ToolCalls}, nil
     }
-    return planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: sum.Text}}}, nil
+    return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: sum.Text}}}, nil
 }
 ```
 
@@ -518,6 +518,46 @@ defer streams.Close(ctx)
 `runtime.New` automatically registers the stream sink with the hook bus when the
 `Stream` option is non-nil, so tool/planner/assistant events flow to Pulse with
 no additional wiring.
+
+## Inline Agent Composition (Cross‑Process)
+
+Inline means “part of the same workflow history,” not “in‑process.” The parent
+workflow orchestrates the nested agent by scheduling that agent’s Plan/Resume
+activities (and its tools) on the nested agent’s queues. The engine routes those
+activities to whichever worker registered them (possibly in another process), but
+the parent workflow maintains a single deterministic history and a single stream
+of ToolStart/ToolResult events.
+
+Key points:
+
+- JSON once: carry canonical JSON (`json.RawMessage`) over boundaries and decode
+  exactly once at the tool boundary using generated codecs.
+- Activities only: no network I/O or planner calls inside workflow code. All I/O
+  happens in activities (`PlanStartActivity`, `PlanResumeActivity`, `ExecuteToolActivity`).
+- Piggyback and conventions: provider metadata piggybacks on toolset registration
+  (agent‑as‑tool), and `ExecuteAgentInline` falls back to conventions for
+  workflow/activity names and default queue when needed. No separate route API.
+- Inline toolsets: toolsets that represent “agent‑as‑tool” are marked `Inline` and
+  their generated `Execute` uses `ExecuteAgentInline` to run the nested agent.
+
+Runtime API:
+
+- `ExecuteAgentInline(wfCtx, agentID, messages, nestedCtx)`: orchestrate the nested
+  agent via activities and run its full plan/execute/resume loop inline.
+
+Codegen additions:
+
+- Consumers: when DSL declares a dependency on an exported toolset, generate code to
+  `RegisterToolset` with an inline agent‑tool registration that calls
+  `ExecuteAgentInline`. Provider metadata piggybacks on the toolset registration;
+  conventions are used as fallback.
+
+Streaming:
+
+- The runtime publishes `ToolCallScheduledEvent` and `ToolResultReceivedEvent` for both
+  agent and nested agent tools; the default stream subscriber maps these to `tool_start`
+  and `tool_result`. Clients observe a single coherent stream regardless of process
+  layout.
 
 ## Glossary
 

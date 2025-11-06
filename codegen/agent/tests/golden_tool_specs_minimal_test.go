@@ -17,7 +17,7 @@ func TestGolden_ToolSpecs_Minimal(t *testing.T) {
 	specs := fileContent(t, files, "gen/calc/agents/scribe/specs/helpers/specs.go")
 
 	// Allow either fully-qualified service type references or short local types.
-	if !(strings.Contains(codecs, "goa.design/goa-ai/gen/calc") || strings.Contains(codecs, "JSONCodec[")) {
+	if !strings.Contains(codecs, "goa.design/goa-ai/gen/calc") && !strings.Contains(codecs, "JSONCodec[") {
 		t.Fatalf("expected service import or JSONCodec generics, got:\n%s", codecs)
 	}
 	require.Contains(t, specs, "\"calc.helpers.summarize_doc\"")

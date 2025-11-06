@@ -15,33 +15,33 @@ This guide is your personal co-pilot, generated specifically to help you bring y
 Here’s a map of what Goa-AI just built for you based on your `design/*.go` files.
 
 {{- range .Services }}
-*   **Service `{{ .Service.Name }}`:**
+* **Service `{{ .Service.Name }}`:**
     {{- if .Agents }}
     {{- range .Agents }}
-    *   **Agent `{{ .Name }}`** (ID: `{{ .ID }}`):
-        *   **Mission:** *{{ .Description }}*
-        *   **Uses Toolsets:**
+    * **Agent `{{ .Name }}`** (ID: `{{ .ID }}`):
+        * **Mission:** *{{ .Description }}*
+        * **Uses Toolsets:**
             {{- if .UsedToolsets }}
             {{- range .UsedToolsets }}
-            *   `{{ .QualifiedName }}`{{ if .Expr.External }} (from remote MCP service `{{ .Expr.MCPService }}.{{ .Name }}`){{ end }}
+            * `{{ .QualifiedName }}`{{ if .Expr.External }} (from remote MCP service `{{ .Expr.MCPService }}.{{ .Name }}`){{ end }}
             {{- end }}
             {{- else }}*none*
             {{- end }}
-        *   **Exports Toolsets:**
+        * **Exports Toolsets:**
             {{- if .ExportedToolsets }}
             {{- range .ExportedToolsets }}
-            *   `{{ .QualifiedName }}`
+            * `{{ .QualifiedName }}`
             {{- end }}
             {{- else }}*none*
             {{- end }}
-        *   **Run Policy:**
-            *   Max Tool Calls: `{{ .RunPolicy.Caps.MaxToolCalls }}`
-            *   Max Consecutive Failures: `{{ .RunPolicy.Caps.MaxConsecutiveFailedToolCalls }}`
-            *   Time Budget: `{{ .RunPolicy.TimeBudget }}`
-            *   Interrupts Allowed: `{{ .RunPolicy.InterruptsAllowed }}`
+        * **Run Policy:**
+            * Max Tool Calls: `{{ .RunPolicy.Caps.MaxToolCalls }}`
+            * Max Consecutive Failures: `{{ .RunPolicy.Caps.MaxConsecutiveFailedToolCalls }}`
+            * Time Budget: `{{ .RunPolicy.TimeBudget }}`
+            * Interrupts Allowed: `{{ .RunPolicy.InterruptsAllowed }}`
     {{- end }}
     {{- else }}
-    *   This service doesn't define any agents itself, but it might provide tools for others to use!
+    * This service doesn't define any agents itself, but it might provide tools for others to use!
     {{- end }}
 {{- end }}
 
@@ -72,13 +72,13 @@ import (
 // A simple "brain" for our agent. It just says hello for now.
 // We'll make this smarter in the next section!
 type StubPlanner struct{}
-func (p *StubPlanner) PlanStart(ctx context.Context, in planner.PlanInput) (planner.PlanResult, error) {
-    return planner.PlanResult{FinalResponse: &planner.FinalResponse{
+func (p *StubPlanner) PlanStart(ctx context.Context, in planner.PlanInput) (*planner.PlanResult, error) {
+    return &planner.PlanResult{FinalResponse: &planner.FinalResponse{
         Message: planner.AgentMessage{Role: "assistant", Content: "Hello!"},
     }}, nil
 }
-func (p *StubPlanner) PlanResume(ctx context.Context, in planner.PlanResumeInput) (planner.PlanResult, error) {
-    return planner.PlanResult{FinalResponse: &planner.FinalResponse{
+func (p *StubPlanner) PlanResume(ctx context.Context, in planner.PlanResumeInput) (*planner.PlanResult, error) {
+    return &planner.PlanResult{FinalResponse: &planner.FinalResponse{
         Message: planner.AgentMessage{Role: "assistant", Content: "Done."},
     }}, nil
 }
@@ -131,22 +131,22 @@ Here are the detailed cheat sheets for each agent you designed.
 <details>
 <summary><strong>Agent: <code>{{ .Name }}</code></strong> (ID: <code>{{ .ID }}</code>)</summary>
 
-*   **Package:** `{{ .ImportPath }}`
-*   **Directory:** `{{ .Dir }}`
-*   **Config Struct:** `{{ .StructName }}Config`
-*   **Register Function:** `Register{{ .StructName }}(ctx, rt, cfg)`
-*   **How to Run:**
-    *   **Synchronous (wait for result):**
+* **Package:** `{{ .ImportPath }}`
+* **Directory:** `{{ .Dir }}`
+* **Config Struct:** `{{ .StructName }}Config`
+* **Register Function:** `Register{{ .StructName }}(ctx, rt, cfg)`
+* **How to Run:**
+    * **Synchronous (wait for result):**
         ```go
         client := {{ .PackageName }}.NewClient(rt)
         out, err := client.Run(ctx, messages, runtime.WithSessionID(sessionID))
         ```
-    *   **Asynchronous (get a handle):**
+    * **Asynchronous (get a handle):**
         ```go
         client := {{ .PackageName }}.NewClient(rt)
         handle, err := client.Start(ctx, messages, runtime.WithSessionID(sessionID))
         ```
-*   **Workflow Name:** `{{ .Runtime.Workflow.Name }}` (Queue: `{{ .Runtime.Workflow.Queue }}`)
+* **Workflow Name:** `{{ .Runtime.Workflow.Name }}` (Queue: `{{ .Runtime.Workflow.Queue }}`)
 
 #### Minimal Configuration
 
@@ -178,14 +178,14 @@ The `Planner` is where your agent's intelligence lives. It connects to an LLM to
 type MySmartPlanner struct{}
 
 // PlanStart is called at the beginning of a run.
-func (p *MySmartPlanner) PlanStart(ctx context.Context, in planner.PlanInput) (planner.PlanResult, error) {
+func (p *MySmartPlanner) PlanStart(ctx context.Context, in planner.PlanInput) (*planner.PlanResult, error) {
     // 1. Get an LLM client from the runtime.
     // model, _ := in.Agent.ModelClient("openai")
     
     // 2. Build a prompt from in.Messages.
     
     // 3. Call the LLM and decide whether to call tools or give a final answer.
-    return planner.PlanResult{
+    return &planner.PlanResult{
         FinalResponse: &planner.FinalResponse{
             Message: planner.AgentMessage{Role: "assistant", Content: "I'm ready to help!"},
         },
@@ -193,11 +193,11 @@ func (p *MySmartPlanner) PlanStart(ctx context.Context, in planner.PlanInput) (p
 }
 
 // PlanResume is called after tools have run, giving the agent new information.
-func (p *MySmartPlanner) PlanResume(ctx context.Context, in planner.PlanResumeInput) (planner.PlanResult, error) {
+func (p *MySmartPlanner) PlanResume(ctx context.Context, in planner.PlanResumeInput) (*planner.PlanResult, error) {
     // 1. Inspect the tool results from in.ToolResults.
     // 2. Build a new prompt including the tool results.
     // 3. Call the LLM to decide what to do next.
-    return planner.PlanResult{
+    return &planner.PlanResult{
         FinalResponse: &planner.FinalResponse{
             Message: planner.AgentMessage{Role: "assistant", Content: "The tools have run. Here's what I found..."},
         },
@@ -287,27 +287,27 @@ cfg := <agentpkg>.<AgentConfig>{
 
 ### Agent `{{ .Name }}` Toolsets
 
-*   **Tools this agent can USE:**
+* **Tools this agent can USE:**
     {{- if .UsedToolsets }}
     {{- range .UsedToolsets }}
-    *   **`{{ .QualifiedName }}`** {{ if .Expr.External }}(MCP Suite: `{{ .Expr.MCPService }}.{{ .Name }}`){{ end }}
+    * **`{{ .QualifiedName }}`** {{ if .Expr.External }}(MCP Suite: `{{ .Expr.MCPService }}.{{ .Name }}`){{ end }}
         {{- if .Tools }}
         {{- range .Tools }}
-        *   **Tool: `{{ .QualifiedName }}`**
-            *   *{{ .Description }}*
+        * **Tool: `{{ .QualifiedName }}`**
+            * *{{ .Description }}*
         {{- end }}
         {{- end }}
     {{- end }}
     {{- else }}
-    *   *This agent does not use any toolsets.*
+    * *This agent does not use any toolsets.*
     {{- end }}
-*   **Tools this agent EXPORTS for others to use:**
+* **Tools this agent EXPORTS for others to use:**
     {{- if .ExportedToolsets }}
     {{- range .ExportedToolsets }}
-    *   **`{{ .QualifiedName }}`**
+    * **`{{ .QualifiedName }}`**
     {{- end }}
     {{- else }}
-    *   *This agent does not export any toolsets.*
+    * *This agent does not export any toolsets.*
     {{- end }}
 {{- end }}
 {{- end }}
@@ -338,10 +338,10 @@ if err := rt.RegisterToolset(reg); err != nil { panic(err) }
 
 ## 8. Ready for Prime Time: Advanced Features 🔭
 
-*   **Asynchronous Runs & Streaming:** Use `client.Start()` to get a workflow handle. This is great for long-running tasks or streaming updates back to a UI.
-*   **Interrupts (Human-in-the-Loop):** If your policy allows it, you can pause and resume agent runs with `rt.PauseRun()` and `rt.ResumeRun()`.
-*   **Policies & Caps:** The `RunPolicy` in your design (max tool calls, time budgets) is automatically enforced by the runtime.
-*   **Persistence & Observability:** The `runtime.New` function accepts `runtime.Options` to configure production-grade components like a Temporal engine, MongoDB for memory, and telemetry hooks.
+* **Asynchronous Runs & Streaming:** Use `client.Start()` to get a workflow handle. This is great for long-running tasks or streaming updates back to a UI.
+* **Interrupts (Human-in-the-Loop):** If your policy allows it, you can pause and resume agent runs with `rt.PauseRun()` and `rt.ResumeRun()`.
+* **Policies & Caps:** The `RunPolicy` in your design (max tool calls, time budgets) is automatically enforced by the runtime.
+* **Persistence & Observability:** The `runtime.New` function accepts `runtime.Options` to configure production-grade components like a Temporal engine, MongoDB for memory, and telemetry hooks.
 
 ```go
 // Example of production-ready runtime options
@@ -357,21 +357,21 @@ rt := runtime.New(runtime.Options{
 
 ## 9. 📜 The Golden Rules: Working with Codegen
 
-*   ✍️ **Design First:** Always make changes in your `design/*.go` files.
-*   🔄 **Regenerate:** Run `goa gen <module>/design` to apply your changes.
-*   🚫 **Hands Off `gen/`:** Never edit the `gen/` directory by hand. Your changes will be overwritten!
+* ✍️ **Design First:** Always make changes in your `design/*.go` files.
+* 🔄 **Regenerate:** Run `goa gen <module>/design` to apply your changes.
+* 🚫 **Hands Off `gen/`:** Never edit the `gen/` directory by hand. Your changes will be overwritten!
 
 ---
 
 ## 10. 🤔 Stuck? Common Questions & Fixes
 
-*   **Error: "runtime not initialized"**
-*   **Fix:** Ensure you register agents with the same runtime instance you use to start runs.
-*   **Error: "agent not registered"**
-    *   **Fix:** Check that `Register<AgentName>(...)` was called successfully for that agent before you tried to run it.
-*   **Error: "session id is required"**
-    *   **Fix:** Always provide a unique, non-empty string for the `sessionID` when calling `agent.Run(...)`.
-*   **Error: "mcp caller is required for <suite>"**
-    *   **Fix:** Your agent's config is missing an entry in the `MCPCallers` map for the specified toolset ID. See section 5.
-*   **Agent-as-Tool isn't working?**
-    *   **Fix:** Ensure you've provided `WithText` or `WithTemplate` for **every single tool** in the exported toolset when calling `NewRegistration`.
+* **Error: "runtime not initialized"**
+* **Fix:** Ensure you register agents with the same runtime instance you use to start runs.
+* **Error: "agent not registered"**
+    * **Fix:** Check that `Register<AgentName>(...)` was called successfully for that agent before you tried to run it.
+* **Error: "session id is required"**
+    * **Fix:** Always provide a unique, non-empty string for the `sessionID` when calling `agent.Run(...)`.
+* **Error: "mcp caller is required for <suite>"**
+    * **Fix:** Your agent's config is missing an entry in the `MCPCallers` map for the specified toolset ID. See section 5.
+* **Agent-as-Tool isn't working?**
+    * **Fix:** Ensure you've provided `WithText` or `WithTemplate` for **every single tool** in the exported toolset when calling `NewRegistration`.

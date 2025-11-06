@@ -27,6 +27,7 @@ const (
 	toolTransformsFileT  = "tool_transforms"
 	toolTypesFileT       = "tool_types"
 	workflowFileT        = "workflow"
+    // routeRegisterFileT removed; piggyback route on toolset registration
 )
 
 //go:embed templates/*.go.tpl

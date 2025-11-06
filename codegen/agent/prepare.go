@@ -18,8 +18,6 @@ import (
 // user types. For each user type, if it is not already part of goaexpr.Root.Types,
 // it is appended and marked with the "type:generate:force" meta so core codegen
 // generates it even when not directly used by a service method payload/result.
-//
-//nolint:unparam // result is always nil by design; Prepare should not fail
 func Prepare(_ string, _ []eval.Root) error {
 	if agentsExpr.Root == nil {
 		return nil

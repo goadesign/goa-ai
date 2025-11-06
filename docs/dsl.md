@@ -92,6 +92,24 @@ slice. Example (package `gen/orchestrator/agents/chat/specs/search`):
 Use these constants anywhere you need to reference tools, including for
 non‑exported toolsets (no need to define ad‑hoc strings).
 
+### Cross‑Process Inline Composition (Auto‑Wiring)
+
+When agent A declares it “uses” a toolset exported by agent B, goa‑ai has enough
+information to wire composition automatically:
+
+- The exporter (agent B) package includes a generated `Register<Agent>Route(ctx, rt)`
+  function that registers route‑only metadata (workflow + queue, plan/resume activity
+  names + options, execute‑tool name, policy caps, specs).
+- The consumer (agent A) registry calls `Register<AgentB>Route(ctx, rt)` and registers
+  an inline agent‑tool `ToolsetRegistration` for the exported toolset. The generated
+  Execute function calls `runtime.ExecuteAgentInline` so the nested agent runs as part
+  of the parent workflow history while workers can live in separate processes.
+- Payloads and results remain canonical JSON across boundaries and are decoded exactly
+  once at the tool boundary using generated codecs.
+
+This yields a single deterministic workflow and a single stream of `tool_start` /
+`tool_result` events, even when agents execute on different workers.
+
 ## Function Reference
 
 | Function | Location | Context | Purpose |

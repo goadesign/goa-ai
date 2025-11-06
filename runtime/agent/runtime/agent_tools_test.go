@@ -8,22 +8,30 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 // planner that captures messages passed to PlanStart and returns a final response
 type capturePlanner struct{ msgs []planner.AgentMessage }
 
-func (p *capturePlanner) PlanStart(ctx context.Context, in planner.PlanInput) (planner.PlanResult, error) {
+func (p *capturePlanner) PlanStart(ctx context.Context, in planner.PlanInput) (*planner.PlanResult, error) {
 	p.msgs = append([]planner.AgentMessage(nil), in.Messages...)
-	return planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, nil
+	return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, nil
 }
-func (p *capturePlanner) PlanResume(ctx context.Context, in planner.PlanResumeInput) (planner.PlanResult, error) {
-	return planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "done"}}}, nil
+func (p *capturePlanner) PlanResume(ctx context.Context, in planner.PlanResumeInput) (*planner.PlanResult, error) {
+	return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "done"}}}, nil
 }
 
 func TestAgentTool_DefaultsFromPayload(t *testing.T) {
-	rt := &Runtime{agents: make(map[string]AgentRegistration), Engine: engineinmem.New()}
+	rt := &Runtime{
+		agents:  make(map[string]AgentRegistration),
+		Engine:  engineinmem.New(),
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Bus:     noopHooks{},
+	}
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
 	// Register nested agent
@@ -50,7 +58,14 @@ func TestAgentTool_DefaultsFromPayload(t *testing.T) {
 }
 
 func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
-	rt := &Runtime{agents: make(map[string]AgentRegistration), Engine: engineinmem.New()}
+	rt := &Runtime{
+		agents:  make(map[string]AgentRegistration),
+		Engine:  engineinmem.New(),
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Bus:     noopHooks{},
+	}
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
 	require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{
@@ -74,7 +89,14 @@ func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 }
 
 func TestAgentTool_SystemPromptPrepended(t *testing.T) {
-	rt := &Runtime{agents: make(map[string]AgentRegistration), Engine: engineinmem.New()}
+	rt := &Runtime{
+		agents:  make(map[string]AgentRegistration),
+		Engine:  engineinmem.New(),
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Bus:     noopHooks{},
+	}
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
 	require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{

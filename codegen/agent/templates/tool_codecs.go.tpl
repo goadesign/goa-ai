@@ -51,7 +51,7 @@ var {{ .TypeName }}FieldDescs = map[string]string{
 {{- /* Compute whether any type has validation to gate helper emission */ -}}
 {{- $hasValidation := false }}
 {{- range .Types }}
-    {{- if .Validation }}
+    {{- if or .Validation .JSONValidation }}
         {{- $hasValidation = true }}
     {{- end }}
 {{- end }}
@@ -119,9 +119,9 @@ func newValidationError(err error) error {
 }
 {{- end }}
 
-{{- /* Per-type enrichment attaching descriptions for any type with validation */ -}}
+{{- /* Per-type enrichment attaching descriptions for any type with validation (payload or non-payload) */ -}}
 {{- range .Types }}
-{{- if and .Validation .NeedType }}
+{{- if and (or .Validation .JSONValidation) .NeedType }}
 func enrich{{ .TypeName }}ValidationError(err error) error {
     ve, ok := err.(*ValidationError)
     if !ok || ve == nil {
@@ -190,29 +190,35 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ .FullRef }}, error) {
     var zero {{ .FullRef }}
     {{- end }}
     if len(data) == 0 {
+        {{- if and (eq .Usage "payload") .AcceptEmpty }}
+        var v {{ .FullRef }}
+        return v, nil
+        {{- else }}
         {{- if .Pointer }}
         return nil, fmt.Errorf("{{ .EmptyError }}")
         {{- else }}
         return zero, fmt.Errorf("{{ .EmptyError }}")
         {{- end }}
+        {{- end }}
     }
-    var v {{ .FullRef }}
-    if err := json.Unmarshal(data, &v); err != nil {
+    {{- if eq .Usage "payload" }}
+    // Decode into JSON body (server body style) then validate & transform
+    var raw {{ .JSONRef }}
+    if err := json.Unmarshal(data, &raw); err != nil {
         {{- if .Pointer }}
         return nil, fmt.Errorf("{{ .DecodeError }}: %w", err)
         {{- else }}
         return zero, fmt.Errorf("{{ .DecodeError }}: %w", err)
         {{- end }}
     }
-    {{- if and .Validation (eq .Usage "payload") }}
+    {{- if .JSONValidationSrc }}
     var err error
-    body := v
-    {{- range .ValidationSrc }}
+    {{- range .JSONValidationSrc }}
     {{ . }}
     {{- end }}
     if err != nil {
         err = newValidationError(err)
-        {{- if .NeedType }}
+        {{- if and (or .Validation .JSONValidation) .NeedType }}
         err = enrich{{ .TypeName }}ValidationError(err)
         {{- end }}
         {{- if .Pointer }}
@@ -222,7 +228,41 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ .FullRef }}, error) {
         {{- end }}
     }
     {{- end }}
+    // Transform into final type
+    {{- if .TransformBody }}
+    {{ .TransformBody }}
+    {{- else }}
+    // Fallback: direct assignment if shapes are identical
+    v := {{ .FullRef }}(raw)
+    {{- end }}
+    {{- if .Pointer }}
     return v, nil
+    {{- else }}
+    return *v, nil
+    {{- end }}
+    {{- else }}
+    // Non-payload types: simple decode
+    var v {{ .FullRef }}
+    if err := json.Unmarshal(data, &v); err != nil {
+        {{- if .Pointer }}
+        return nil, fmt.Errorf("{{ .DecodeError }}: %w", err)
+        {{- else }}
+        return zero, fmt.Errorf("{{ .DecodeError }}: %w", err)
+        {{- end }}
+    }
+    return v, nil
+    {{- end }}
+}
+    {{- end }}
+{{- end }}
+
+// Transform helpers
+{{- range .Types }}
+    {{- range .TransformHelpers }}
+func {{ .Name }}(v {{ .ParamTypeRef }}) (out {{ .ResultTypeRef }}) {
+{{ .Code }}
+    out = res
+    return
 }
     {{- end }}
 {{- end }}

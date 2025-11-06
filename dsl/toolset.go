@@ -449,26 +449,26 @@ func Return(val any, args ...any) {
 // Tags are optional. Tools without tags are still fully functional but may be
 // harder to organize in systems with many available tools.
 func Tags(values ...string) {
-    switch cur := eval.Current().(type) {
-    case *agentsexpr.ToolExpr:
-        cur.Tags = append(cur.Tags, values...)
-    case *agentsexpr.ToolsetExpr:
-        cur.Tags = append(cur.Tags, values...)
-    default:
-        eval.IncompatibleDSL()
-        return
-    }
+	switch cur := eval.Current().(type) {
+	case *agentsexpr.ToolExpr:
+		cur.Tags = append(cur.Tags, values...)
+	case *agentsexpr.ToolsetExpr:
+		cur.Tags = append(cur.Tags, values...)
+	default:
+		eval.IncompatibleDSL()
+		return
+	}
 }
 
 // ToolsetDescription sets the description for the current toolset. Use inside a
 // Toolset DSL block. It has no effect outside of toolset scope.
 func ToolsetDescription(s string) {
-    ts, ok := eval.Current().(*agentsexpr.ToolsetExpr)
-    if !ok {
-        eval.IncompatibleDSL()
-        return
-    }
-    ts.Description = strings.TrimSpace(s)
+	ts, ok := eval.Current().(*agentsexpr.ToolsetExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	ts.Description = strings.TrimSpace(s)
 }
 
 // Aliases declares alternate short names that should resolve to this tool's
@@ -562,12 +562,12 @@ func BindTo(args ...string) {
 // Tool DSL block. When not set, code generation derives a sensible default from
 // the tool name (snake_case/kebab-case to Title Case).
 func ToolTitle(s string) {
-    tool, ok := eval.Current().(*agentsexpr.ToolExpr)
-    if !ok {
-        eval.IncompatibleDSL()
-        return
-    }
-    tool.Title = strings.TrimSpace(s)
+	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	tool.Title = strings.TrimSpace(s)
 }
 
 // buildToolsetExpr constructs a ToolsetExpr from a value and DSL function.
