@@ -13,21 +13,17 @@ This guide is your personal co-pilot, generated specifically to help you bring y
 ## 1. Your Design, At a Glance ✨
 
 Here’s a map of what Goa-AI just built for you based on your `design/*.go` files.
-
-*   **Service `calc`:**
-    *   **Agent `scribe`** (ID: `calc.scribe`):
-        *   **Mission:** *Doc helper*
-        *   **Uses Toolsets:**
-            *   `calc.helpers` 
-        *   **Exports Toolsets:**
-            *none*
-        *   **Run Policy:**
-            *   Max Tool Calls: `0`
-            *   Max Consecutive Failures: `0`
-            *   Time Budget: `0s`
-            *   Interrupts Allowed: `false`
+* **Service `calc`:**
+    * **Agent `scribe`** (ID: `calc.scribe`):
+        * **Mission:** *Doc helper*
+        * **Uses Toolsets:**
+            * `calc.helpers`
+        * **Exports Toolsets:***none*
+        * **Run Policy:**
+            * Max Tool Calls: `0`
+            * Max Consecutive Failures: `0`
+            * Time Budget: `0s`
+            * Interrupts Allowed: `false`
 
 ---
-
-## 2. 🚀 The 3-Step Liftoff: Your First Agent Run
 

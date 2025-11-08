@@ -73,14 +73,24 @@ import (
 // We'll make this smarter in the next section!
 type StubPlanner struct{}
 func (p *StubPlanner) PlanStart(ctx context.Context, in planner.PlanInput) (*planner.PlanResult, error) {
-    return &planner.PlanResult{FinalResponse: &planner.FinalResponse{
-        Message: planner.AgentMessage{Role: "assistant", Content: "Hello!"},
-    }}, nil
+    return &planner.PlanResult{
+		FinalResponse: &planner.FinalResponse{
+			Message: planner.AgentMessage{
+				Role:    "assistant",
+				Content: "Hello!",
+			},
+		},
+	}, nil
 }
 func (p *StubPlanner) PlanResume(ctx context.Context, in planner.PlanResumeInput) (*planner.PlanResult, error) {
-    return &planner.PlanResult{FinalResponse: &planner.FinalResponse{
-        Message: planner.AgentMessage{Role: "assistant", Content: "Done."},
-    }}, nil
+    return &planner.PlanResult{
+		FinalResponse: &planner.FinalResponse{
+			Message: planner.AgentMessage{
+				Role:    "assistant",
+				Content: "Done.",
+			},
+		},
+	}, nil
 }
 
 func main() {
@@ -110,10 +120,17 @@ func main() {
     client := {{ (index (index .Services 0).Agents 0).PackageName }}.NewClient(rt)
     out, err := client.Run(
         context.Background(),
-        []planner.AgentMessage{ {Role: "user", Content: "Hi there!"} },
+        []planner.AgentMessage{
+			{
+				Role:    "user",
+				Content: "Hi there!",
+			},
+		},
         runtime.WithSessionID("my-first-session"), // A session ID is required!
     )
-    if err != nil { panic(err) }
+    if err != nil {
+		panic(err)
+	}
 
     fmt.Println("✅ Success!")
     fmt.Println("RunID:", out.RunID)
@@ -187,7 +204,10 @@ func (p *MySmartPlanner) PlanStart(ctx context.Context, in planner.PlanInput) (*
     // 3. Call the LLM and decide whether to call tools or give a final answer.
     return &planner.PlanResult{
         FinalResponse: &planner.FinalResponse{
-            Message: planner.AgentMessage{Role: "assistant", Content: "I'm ready to help!"},
+            Message: planner.AgentMessage{
+				Role:    "assistant",
+				Content: "I'm ready to help!",
+			},
         },
     }, nil
 }
@@ -199,7 +219,10 @@ func (p *MySmartPlanner) PlanResume(ctx context.Context, in planner.PlanResumeIn
     // 3. Call the LLM to decide what to do next.
     return &planner.PlanResult{
         FinalResponse: &planner.FinalResponse{
-            Message: planner.AgentMessage{Role: "assistant", Content: "The tools have run. Here's what I found..."},
+            Message: planner.AgentMessage{
+				Role:    "assistant",
+				Content: "The tools have run. Here's what I found...",
+			},
         },
     }, nil
 }
@@ -242,13 +265,21 @@ func Execute(ctx context.Context, meta runtime.ToolCallMeta, call planner.ToolRe
     case "<svc>.<toolset>.<tool>":
         var args specs.<ToolPayload>
         if err := specs.Unmarshal<ToolPayload>(call.Payload, &args); err != nil {
-            return planner.ToolResult{Error: planner.NewToolError("invalid payload")}, nil
+            return planner.ToolResult{
+				Error: planner.NewToolError("invalid payload"),
+			}, nil
         }
         // Optionally: mp, _ := ToMethodPayload_<Tool>(args)
         // TODO: invoke your service client, map result via ToToolReturn_<Tool>
-        return planner.ToolResult{Payload: map[string]any{"status": "ok"}}, nil
+        return planner.ToolResult{
+			Payload: map[string]any{
+				"status": "ok",
+			},
+		}, nil
     }
-    return planner.ToolResult{Error: planner.NewToolError("unknown tool")}, nil
+    return planner.ToolResult{
+		Error: planner.NewToolError("unknown tool"),
+	}, nil
 }
 ```
 

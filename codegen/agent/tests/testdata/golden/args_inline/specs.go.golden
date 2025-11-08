@@ -12,38 +12,43 @@ import (
 	"sort"
 )
 
+// Tool IDs for this toolset.
+const (
+	Add tools.Ident = "alpha.math.add"
+)
+
 var Specs = []tools.ToolSpec{
 	{
-		Name:        "alpha.math.add",
+		Name:        Add,
 		Service:     "alpha",
 		Toolset:     "math",
 		Description: "Add",
 		Tags:        []string{},
 		Payload: tools.TypeSpec{
-			Name:   "MathAddPayload",
-			Schema: mathAddPayloadSchema,
-			Codec:  mathAddPayloadCodec,
+			Name:   "AddPayload",
+			Schema: addPayloadSchema,
+			Codec:  addPayloadCodec,
 		},
 		Result: tools.TypeSpec{
-			Name:   "MathAddResult",
-			Schema: mathAddResultSchema,
-			Codec:  mathAddResultCodec,
+			Name:   "AddResult",
+			Schema: addResultSchema,
+			Codec:  addResultCodec,
 		},
 	},
 }
-var mathAddPayloadSchema = []byte(`
-{"$schema":"http://json-schema.org/draft-04/hyper-schema","type":"object","properties":{"left":{"type":"integer","description":"Left operand","example":1835081150,"format":"int32"},"right":{"type":"integer","description":"Right operand","example":884537394,"format":"int32"}},"required":["left","right"]}
+var addPayloadSchema = []byte(`
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"AddPayload","type":"object","properties":{"left":{"type":"integer","description":"Left operand","example":1056967519,"format":"int32"},"right":{"type":"integer","description":"Right operand","example":1084554470,"format":"int32"}},"example":{"left":1051318795,"right":1835081150},"required":["left","right"]}
 `)
-var mathAddResultSchema = []byte(`
-{"$schema":"http://json-schema.org/draft-04/hyper-schema","type":"object","properties":{"sum":{"type":"integer","description":"Sum","example":1051318795,"format":"int32"}},"required":["sum"]}
+var addResultSchema = []byte(`
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"AddResult","type":"object","properties":{"sum":{"type":"integer","description":"Sum","example":884537394,"format":"int32"}},"example":{"sum":2062538041},"required":["sum"]}
 `)
 
 var (
-	specIndex = make(map[string]*tools.ToolSpec, len(Specs))
+	specIndex = make(map[tools.Ident]*tools.ToolSpec, len(Specs))
 	metadata  = []policy.ToolMetadata{
 		{
-			ID:          "alpha.math.add",
-			Name:        "math.add",
+			ID:          Add,
+			Title:       "Add",
 			Description: "Add",
 			Tags:        []string{},
 		},
@@ -58,23 +63,23 @@ func init() {
 }
 
 // Names returns the identifiers of all generated tools.
-func Names() []string {
-	names := make([]string, 0, len(specIndex))
+func Names() []tools.Ident {
+	names := make([]tools.Ident, 0, len(specIndex))
 	for name := range specIndex {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	sort.Slice(names, func(i, j int) bool { return string(names[i]) < string(names[j]) })
 	return names
 }
 
 // Spec returns the specification for the named tool if present.
-func Spec(name string) (*tools.ToolSpec, bool) {
+func Spec(name tools.Ident) (*tools.ToolSpec, bool) {
 	spec, ok := specIndex[name]
 	return spec, ok
 }
 
 // PayloadSchema returns the JSON schema for the named tool payload.
-func PayloadSchema(name string) ([]byte, bool) {
+func PayloadSchema(name tools.Ident) ([]byte, bool) {
 	spec, ok := specIndex[name]
 	if !ok {
 		return nil, false
@@ -83,7 +88,7 @@ func PayloadSchema(name string) ([]byte, bool) {
 }
 
 // ResultSchema returns the JSON schema for the named tool result.
-func ResultSchema(name string) ([]byte, bool) {
+func ResultSchema(name tools.Ident) ([]byte, bool) {
 	spec, ok := specIndex[name]
 	if !ok {
 		return nil, false

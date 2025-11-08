@@ -10,9 +10,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	core "goa.design/goa-ai/alpha/agents/scribe/core"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/planner"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
-    calc_core "goa.design/goa-ai/alpha/agents/scribe/calc_core"
 	"time"
 )
 
@@ -25,14 +26,46 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 	if err != nil {
 		return err
 	}
-    if err := rt.RegisterAgent(ctx, agentsruntime.AgentRegistration{
-		ID:       "alpha.scribe",
-		Planner:  agent.Planner,
-		Workflow: ScribeWorkflowDefinition,
+	if err := rt.RegisterAgent(ctx, agentsruntime.AgentRegistration{
+		ID:      "alpha.scribe",
+		Planner: agent.Planner,
+		Workflow: engine.WorkflowDefinition{
+			Name:      "alpha.scribe.workflow",
+			TaskQueue: "alpha_scribe_workflow",
+			Handler:   agentsruntime.WorkflowHandler(rt),
+		},
 		Activities: []engine.ActivityDefinition{
-			ScribePlanActivityDefinition,
-			ScribeResumeActivityDefinition,
-			ScribeExecuteToolActivityDefinition,
+			{
+				Name:    "alpha.scribe.plan",
+				Handler: agentsruntime.PlanStartActivityHandler(rt),
+				Options: engine.ActivityOptions{
+					Queue:   "alpha_scribe_workflow",
+					Timeout: time.Duration(120000000000),
+					RetryPolicy: engine.RetryPolicy{
+						MaxAttempts:        3,
+						InitialInterval:    time.Duration(1000000000),
+						BackoffCoefficient: 2,
+					},
+				},
+			},
+			{
+				Name:    "alpha.scribe.resume",
+				Handler: agentsruntime.PlanResumeActivityHandler(rt),
+				Options: engine.ActivityOptions{
+					Queue:   "alpha_scribe_workflow",
+					Timeout: time.Duration(120000000000),
+					RetryPolicy: engine.RetryPolicy{
+						MaxAttempts:        3,
+						InitialInterval:    time.Duration(1000000000),
+						BackoffCoefficient: 2,
+					},
+				},
+			},
+			{
+				Name:    "alpha.scribe.executetool",
+				Handler: agentsruntime.ExecuteToolActivityHandler(rt),
+				Options: engine.ActivityOptions{},
+			},
 		},
 		PlanActivityName: "alpha.scribe.plan",
 		PlanActivityOptions: engine.ActivityOptions{
@@ -60,20 +93,31 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 	}); err != nil {
 		return err
 	}
-    // Register external MCP toolsets using local executors and callers from config.
-    if cfg.MCPCallers == nil {
+	// Register external MCP toolsets using local executors and callers from config.
+	if cfg.MCPCallers == nil {
 		return fmt.Errorf("mcp callers are required for agent %s", "alpha.scribe")
 	}
-    {
-        caller := cfg.MCPCallers[ScribeCalcCoreToolsetID]
-        if caller == nil {
-            return fmt.Errorf("mcp caller for %s is required", ScribeCalcCoreToolsetID)
-        }
-        exec := calc_core.NewScribeCalcCoreMCPExecutor(caller)
-        if err := rt.RegisterToolset(calc_core.NewScribeCalcCoreToolsetRegistration(exec)); err != nil {
-            return err
-        }
-    }
+	{
+		caller := cfg.MCPCallers[ScribeCalcCoreToolsetID]
+		if caller == nil {
+			return fmt.Errorf("mcp caller for %s is required", ScribeCalcCoreToolsetID)
+		}
+		exec := core.NewScribeCoreMCPExecutor(caller)
+		// Build a runtime ToolsetRegistration inline to avoid exposing method/service adapters.
+		reg := agentsruntime.ToolsetRegistration{
+			Name: "calc.core",
+			// Provide the agent-wide specs; runtime de-duplicates tool specs across registrations.
+			Specs: specs.Specs,
+			Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
+				return exec.Execute(ctx, agentsruntime.ToolCallMeta{}, call)
+			},
+		}
+		if err := rt.RegisterToolset(reg); err != nil {
+			return err
+		}
+	}
 
+	// Service toolsets are registered by application code using executors.
 	return nil
 }
+

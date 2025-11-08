@@ -190,7 +190,7 @@ func main() {
 ### Executor‑First TL;DR
 
 - Register method‑backed toolsets with a ToolCallExecutor you control:
-  - `reg := <agentpkg>.New<Agent><Toolset>ToolsetRegistration(runtime.ToolCallExecutorFunc(Execute))`
+  - For service/method-backed toolsets, applications construct registrations explicitly and provide an executor. Codegen supplies registration helpers; the application wires them with `rt.RegisterToolset`.
   - `rt.RegisterToolset(reg)`
 - Implement `Execute(ctx, meta, call)` with a per‑tool switch:
   - Decode typed payload using generated codecs: `args, _ := <specspkg>.Unmarshal<ToolPayload>(call.Payload)`
@@ -203,7 +203,7 @@ Minimal executor sketch:
 
 ```go
 // Register at startup
-reg := agent.NewChatProfilesToolsetRegistration(runtime.ToolCallExecutorFunc(Execute))
+// Build ToolsetRegistration explicitly in application code
 if err := rt.RegisterToolset(reg); err != nil { panic(err) }
 
 // Execute per tool

@@ -6,16 +6,60 @@
 
 package profiles
 
-import alpha "goa.design/goa-ai/gen/alpha"
-
 type (
 
-    // UpsertPayload defines the JSON payload for the alpha.profiles.upsert tool.
-    UpsertPayload struct {
-        // Profile
-        Profile *alpha.Profile
-    }
+	// UpsertPayload defines the JSON payload for the alpha.profiles.upsert tool.
+	UpsertPayload = struct {
+		// Identifier
+		ID string
+		// Name
+		Name *string
+		// Address
+		Address *Address
+	}
 
-    // UpsertResult defines the JSON result for the alpha.profiles.upsert tool.
-    UpsertResult = alpha.Profile
+	// UpsertResult defines the JSON result for the alpha.profiles.upsert tool.
+	UpsertResult = struct {
+		// Identifier
+		ID string
+		// Name
+		Name *string
+		// Address
+		Address *Address
+	}
+
+	// Address is a helper type materialized for nested references.
+	Address = struct {
+		// Street
+		Street string
+		// City
+		City string
+	}
+
+	// Profile is a helper type materialized for nested references.
+	Profile = struct {
+		// Identifier
+		ID string
+		// Name
+		Name *string
+		// Address
+		Address *Address
+	}
+
+	// UpsertPayloadJSON2 is a helper type for JSON decode-body.
+	UpsertPayloadJSON2 struct {
+		// Identifier
+		ID *string
+		// Name
+		Name    *string
+		Address *UpsertPayloadJSONAddressJSON2
+	}
+
+	// UpsertPayloadJSONAddressJSON2 is a helper type for JSON decode-body.
+	UpsertPayloadJSONAddressJSON2 struct {
+		// Street
+		Street *string
+		// City
+		City *string
+	}
 )

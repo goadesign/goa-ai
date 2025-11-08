@@ -87,6 +87,15 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
 {{- if .RunPolicy.InterruptsAllowed }}
             InterruptsAllowed: true,
 {{- end }}
+{{- if .RunPolicy.OnMissingFields }}
+            {{- if eq .RunPolicy.OnMissingFields "finalize" }}
+            OnMissingFields: agentsruntime.MissingFieldsFinalize,
+            {{- else if eq .RunPolicy.OnMissingFields "await_clarification" }}
+            OnMissingFields: agentsruntime.MissingFieldsAwaitClarification,
+            {{- else if eq .RunPolicy.OnMissingFields "resume" }}
+            OnMissingFields: agentsruntime.MissingFieldsResume,
+            {{- end }}
+{{- end }}
         },
     }); err != nil {
         return err
@@ -105,7 +114,16 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
             return fmt.Errorf("mcp caller for %s is required", {{ .MCP.ConstName }})
         }
         exec := {{ .PackageName }}.New{{ $.GoName }}{{ goify .PathName true }}MCPExecutor(caller)
-        if err := rt.RegisterToolset({{ .PackageName }}.New{{ $.GoName }}{{ goify .PathName true }}ToolsetRegistration(exec)); err != nil {
+        // Build a runtime ToolsetRegistration inline to avoid exposing method/service adapters.
+        reg := agentsruntime.ToolsetRegistration{
+            Name: {{ printf "%q" .QualifiedName }},
+            // Provide the agent-wide specs; runtime de-duplicates tool specs across registrations.
+            Specs: {{ $.ToolSpecsPackage }}.Specs,
+            Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
+                return exec.Execute(ctx, agentsruntime.ToolCallMeta{}, call)
+            },
+        }
+        if err := rt.RegisterToolset(reg); err != nil {
             return err
         }
     }
@@ -116,3 +134,80 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
     // Service toolsets are registered by application code using executors.
     return nil
 }
+
+{{- $had := false -}}
+{{- range .UsedToolsets }}
+{{- if not (and .Expr .Expr.External) }}
+{{- $had = true -}}
+{{- end }}
+{{- end }}
+{{- if $had }}
+// RegisterUsedToolsets registers all non-external Used toolsets for this agent.
+// Provide executors via typed options for each required toolset.
+//
+// Example:
+//   err := RegisterUsedToolsets(ctx, rt,
+{{- range .UsedToolsets }}
+{{- if not (and .Expr .Expr.External) }}
+//       With{{ goify .PathName true }}Executor(exec),
+{{- end }}
+{{- end }}
+//   )
+func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts ...func(map[string]agentsruntime.ToolCallExecutor)) error {
+    if rt == nil {
+        return errors.New("runtime is required")
+    }
+    execs := make(map[string]agentsruntime.ToolCallExecutor)
+    for _, o := range opts {
+        if o != nil {
+            o(execs)
+        }
+    }
+    // Register service (non-external) used toolsets.
+    {{- range .UsedToolsets }}
+    {{- if not (and .Expr .Expr.External) }}
+    {
+        const toolsetID = {{ printf "%q" .QualifiedName }}
+        exec := execs[toolsetID]
+        reg := agentsruntime.ToolsetRegistration{
+            Name:  toolsetID,
+            Specs: {{ $.ToolSpecsPackage }}.Specs,
+            Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
+                if exec == nil {
+                    return planner.ToolResult{
+                        Error: planner.NewToolError("executor is required"),
+                    }, nil
+                }
+                meta := agentsruntime.ToolCallMeta{
+                    RunID:            call.RunID,
+                    SessionID:        call.SessionID,
+                    TurnID:           call.TurnID,
+                    ToolCallID:       call.ToolCallID,
+                    ParentToolCallID: call.ParentToolCallID,
+                }
+                return exec.Execute(ctx, meta, call)
+            },
+        }
+        if err := rt.RegisterToolset(reg); err != nil {
+            return err
+        }
+    }
+    {{- end }}
+    {{- end }}
+    return nil
+}
+
+{{- range .UsedToolsets }}
+{{- if not (and .Expr .Expr.External) }}
+// With{{ goify .PathName true }}Executor associates an executor for {{ .QualifiedName }}.
+func With{{ goify .PathName true }}Executor(exec agentsruntime.ToolCallExecutor) func(map[string]agentsruntime.ToolCallExecutor) {
+    return func(m map[string]agentsruntime.ToolCallExecutor) {
+        if exec == nil {
+            return
+        }
+        m[{{ printf "%q" .QualifiedName }}] = exec
+    }
+}
+{{- end }}
+{{- end }}
+{{- end }}

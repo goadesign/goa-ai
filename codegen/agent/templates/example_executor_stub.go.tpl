@@ -27,15 +27,23 @@ func Execute(ctx context.Context, meta runtime.ToolCallMeta, call planner.ToolRe
         // Decode typed payload
         args, err := {{ $.SpecsAlias }}.{{ .PayloadUnmarshal }}(call.Payload)
         if err != nil {
-            return planner.ToolResult{Error: planner.NewToolError("invalid payload")}, nil
+            return planner.ToolResult{
+				Error: planner.NewToolError("invalid payload"),
+			}, nil
         }
         // Optional: transform to method payload if compatible
         // mp, _ := {{ $.SpecsAlias }}.ToMethodPayload_{{ .GoName }}(args)
         // TODO: Call your service client with mp (or args), map result back:
         // tr, _ := {{ $.SpecsAlias }}.ToToolReturn_{{ .GoName }}(methodRes)
-        return planner.ToolResult{Payload: map[string]any{"status": "ok"}}, nil
+        return planner.ToolResult{
+			Payload: map[string]any{
+				"status": "ok",
+			},
+		}, nil
     {{- end }}
     default:
-        return planner.ToolResult{Error: planner.NewToolError("unknown tool")}, nil
+        return planner.ToolResult{
+			Error: planner.NewToolError("unknown tool"),
+		}, nil
     }
 }

@@ -1,7 +1,6 @@
 package tests
 
 import (
-	"strings"
 	"testing"
 
 	. "goa.design/goa-ai/dsl"
@@ -35,12 +34,7 @@ func TestGolden_ServiceAlias_Consistency(t *testing.T) {
 		})
 	})
 
-	// Locate generated codecs.go under specs/docs.
+	// Compare generated codecs.go under specs/docs against golden.
 	codecs := fileContent(t, files, "gen/atlas_data_agent/agents/reader/specs/docs/codecs.go")
-	// Prefer service package alias when user types are referenced directly; allow
-	// local alias types when specs generate short forms.
-	if !strings.Contains(codecs, "atlasdataagent \"goa.design/goa-ai/gen/atlas_data_agent\"") &&
-		!strings.Contains(codecs, "JSONCodec[") {
-		t.Fatalf("expected either service import alias or JSONCodec generics, got:\n%s", codecs)
-	}
+	assertGoldenGo(t, "service_alias_consistency", "codecs.go.golden", codecs)
 }

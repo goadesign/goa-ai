@@ -7,7 +7,34 @@ import (
 	goaexpr "goa.design/goa/v3/expr"
 )
 
-// MCPServer enables Model Context Protocol (MCP) for the current service and sets server metadata.
+// MCPServer enables Model Context Protocol (MCP) support for the current service.
+// It configures the service to expose tools, resources, and prompts via the MCP
+// protocol. Once enabled, use Resource, MCPTool, and related DSL functions within
+// service methods to define MCP capabilities.
+//
+// MCPServer must appear in a Service expression.
+//
+// MCPServer takes two required arguments and an optional list of configuration
+// functions:
+//   - name: the MCP server name (used in MCP handshake)
+//   - version: the server version string
+//   - opts: optional configuration functions (e.g., ProtocolVersion)
+//
+// Example:
+//
+//	Service("calculator", func() {
+//	    MCPServer("calc", "1.0.0", ProtocolVersion("2025-06-18"))
+//	    Method("add", func() {
+//	        Payload(func() {
+//	            Attribute("a", Int)
+//	            Attribute("b", Int)
+//	        })
+//	        Result(func() {
+//	            Attribute("sum", Int)
+//	        })
+//	        MCPTool("add", "Add two numbers")
+//	    })
+//	})
 func MCPServer(name, version string, opts ...func(*exprmcp.MCPExpr)) {
 	svc, ok := eval.Current().(*goaexpr.ServiceExpr)
 	if !ok {
@@ -25,12 +52,36 @@ func MCPServer(name, version string, opts ...func(*exprmcp.MCPExpr)) {
 	}
 }
 
-// ProtocolVersion sets the MCP protocol version (e.g., "2025-06-18").
+// ProtocolVersion configures the MCP protocol version supported by the server.
+// It returns a configuration function for use with MCPServer.
+//
+// ProtocolVersion takes a single argument which is the protocol version string.
+//
+// Example:
+//
+//	Service("calculator", func() {
+//	    MCPServer("calc", "1.0.0", ProtocolVersion("2025-06-18"))
+//	})
 func ProtocolVersion(version string) func(*exprmcp.MCPExpr) {
 	return func(m *exprmcp.MCPExpr) { m.ProtocolVersion = version }
 }
 
-// Resource marks the current method as an MCP resource provider.
+// Resource marks the current method as an MCP resource provider. The method's
+// result becomes the resource content returned when clients read the resource.
+//
+// Resource must appear in a Method expression within a service that has MCP enabled.
+//
+// Resource takes three arguments:
+//   - name: the resource name (used in MCP resource list)
+//   - uri: the resource URI (e.g., "file:///docs/readme.md")
+//   - mimeType: the content MIME type (e.g., "text/plain", "application/json")
+//
+// Example:
+//
+//	Method("readme", func() {
+//	    Result(String)
+//	    Resource("readme", "file:///docs/README.md", "text/markdown")
+//	})
 func Resource(name, uri, mimeType string) {
 	parent := eval.Current()
 	method, isMethod := parent.(*goaexpr.MethodExpr)
@@ -51,7 +102,27 @@ func Resource(name, uri, mimeType string) {
 	mcp.Resources = append(mcp.Resources, resource)
 }
 
-// WatchableResource marks the current method as an MCP resource that supports subscriptions.
+// WatchableResource marks the current method as an MCP resource that supports
+// subscriptions. Clients can subscribe to receive notifications when the resource
+// content changes.
+//
+// WatchableResource must appear in a Method expression within a service that has
+// MCP enabled.
+//
+// WatchableResource takes three arguments:
+//   - name: the resource name (used in MCP resource list)
+//   - uri: the resource URI (e.g., "file:///logs/app.log")
+//   - mimeType: the content MIME type (e.g., "text/plain")
+//
+// Example:
+//
+//	Method("system_status", func() {
+//	    Result(func() {
+//	        Attribute("status", String)
+//	        Attribute("uptime", Int)
+//	    })
+//	    WatchableResource("status", "status://system", "application/json")
+//	})
 func WatchableResource(name, uri, mimeType string) {
 	parent := eval.Current()
 	method, isMethod := parent.(*goaexpr.MethodExpr)
@@ -72,7 +143,24 @@ func WatchableResource(name, uri, mimeType string) {
 	mcp.Resources = append(mcp.Resources, resource)
 }
 
-// StaticPrompt adds a static prompt template to the MCP server.
+// StaticPrompt adds a static prompt template to the MCP server. Static prompts
+// provide pre-defined message sequences that clients can use without parameters.
+//
+// StaticPrompt must appear in a Service expression with MCP enabled.
+//
+// StaticPrompt takes a name, description, and a list of role-content pairs:
+//   - name: the prompt identifier
+//   - description: human-readable prompt description
+//   - messages: alternating role and content strings (e.g., "user", "text", "system", "text")
+//
+// Example:
+//
+//	Service("assistant", func() {
+//	    MCPServer("assistant", "1.0")
+//	    StaticPrompt("greeting", "Friendly greeting",
+//	        "system", "You are a helpful assistant",
+//	        "user", "Hello!")
+//	})
 func StaticPrompt(name, description string, messages ...string) {
 	var mcp *exprmcp.MCPExpr
 	if svc, ok := eval.Current().(*goaexpr.ServiceExpr); ok {
@@ -93,7 +181,26 @@ func StaticPrompt(name, description string, messages ...string) {
 	mcp.Prompts = append(mcp.Prompts, prompt)
 }
 
-// DynamicPrompt marks the current method as a dynamic prompt generator.
+// DynamicPrompt marks the current method as a dynamic prompt generator. The
+// method's payload defines parameters that customize the generated prompt, and
+// the result contains the generated message sequence.
+//
+// DynamicPrompt must appear in a Method expression within a service that has MCP enabled.
+//
+// DynamicPrompt takes two arguments:
+//   - name: the prompt identifier
+//   - description: human-readable prompt description
+//
+// Example:
+//
+//	Method("code_review", func() {
+//	    Payload(func() {
+//	        Attribute("language", String)
+//	        Attribute("code", String)
+//	    })
+//	    Result(ArrayOf(Message))
+//	    DynamicPrompt("code_review", "Generate code review prompt")
+//	})
 func DynamicPrompt(name, description string) {
 	parent := eval.Current()
 	method, isMethod := parent.(*goaexpr.MethodExpr)
@@ -108,10 +215,28 @@ func DynamicPrompt(name, description string) {
 	}
 }
 
-// MCPTool marks the current method as an MCP tool.
-// It must be called within a Method DSL.
-// The method payload defines the tool input shape and the method result defines
-// the tool output shape. Streaming methods will cause tools/call to stream.
+// MCPTool marks the current method as an MCP tool. The method's payload becomes
+// the tool input schema and the method's result becomes the tool output schema.
+// Streaming methods produce streaming tool responses.
+//
+// MCPTool must appear in a Method expression within a service that has MCP enabled.
+//
+// MCPTool takes two arguments:
+//   - name: the tool identifier (used by MCP clients)
+//   - description: human-readable tool description shown to LLMs
+//
+// Example:
+//
+//	Method("search", func() {
+//	    Payload(func() {
+//	        Attribute("query", String)
+//	        Attribute("limit", Int)
+//	    })
+//	    Result(func() {
+//	        Attribute("results", ArrayOf(String))
+//	    })
+//	    MCPTool("search", "Search documents by query")
+//	})
 func MCPTool(name, description string) {
 	parent := eval.Current()
 	method, isMethod := parent.(*goaexpr.MethodExpr)
@@ -137,7 +262,24 @@ func MCPTool(name, description string) {
 	mcp.Tools = append(mcp.Tools, t)
 }
 
-// Notification marks the current method as an MCP notification sender.
+// Notification marks the current method as an MCP notification sender. The
+// method's payload defines the notification message structure.
+//
+// Notification must appear in a Method expression within a service that has MCP enabled.
+//
+// Notification takes two arguments:
+//   - name: the notification identifier
+//   - description: human-readable notification description
+//
+// Example:
+//
+//	Method("progress_update", func() {
+//	    Payload(func() {
+//	        Attribute("task_id", String)
+//	        Attribute("progress", Int)
+//	    })
+//	    Notification("progress", "Task progress notification")
+//	})
 func Notification(name, description string) {
 	parent := eval.Current()
 	method, isMethod := parent.(*goaexpr.MethodExpr)
@@ -158,7 +300,24 @@ func Notification(name, description string) {
 	mcp.Notifications = append(mcp.Notifications, notif)
 }
 
-// Subscription marks the current method as handling subscriptions for the given resource name.
+// Subscription marks the current method as a subscription handler for a
+// watchable resource. The method is invoked when clients subscribe to the
+// resource identified by resourceName.
+//
+// Subscription must appear in a Method expression within a service that has MCP enabled.
+//
+// Subscription takes a single argument which is the resource name to subscribe to.
+// The resource name must match a WatchableResource declaration.
+//
+// Example:
+//
+//	Method("subscribe_status", func() {
+//	    Payload(func() {
+//	        Attribute("uri", String)
+//	    })
+//	    Result(String)
+//	    Subscription("status")
+//	})
 func Subscription(resourceName string) {
 	parent := eval.Current()
 	method, isMethod := parent.(*goaexpr.MethodExpr)
@@ -179,7 +338,23 @@ func Subscription(resourceName string) {
 	mcp.Subscriptions = append(mcp.Subscriptions, sub)
 }
 
-// SubscriptionMonitor marks the current method as an SSE monitor for subscription updates.
+// SubscriptionMonitor marks the current method as a server-sent events (SSE)
+// monitor for subscription updates. The method streams subscription change events
+// to connected clients.
+//
+// SubscriptionMonitor must appear in a Method expression within a service that has MCP enabled.
+//
+// SubscriptionMonitor takes a single argument which is the monitor name.
+//
+// Example:
+//
+//	Method("watch_subscriptions", func() {
+//	    StreamingResult(func() {
+//	        Attribute("resource", String)
+//	        Attribute("event", String)
+//	    })
+//	    SubscriptionMonitor("subscriptions")
+//	})
 func SubscriptionMonitor(name string) {
 	parent := eval.Current()
 	method, isMethod := parent.(*goaexpr.MethodExpr)

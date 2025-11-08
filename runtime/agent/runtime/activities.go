@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -63,6 +64,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input PlanActivityInpu
 		Agent:       agentCtx,
 		Events:      newPlannerEvents(r, input.AgentID, input.RunID),
 		ToolResults: input.ToolResults,
+		Finalize:    input.Finalize,
 	}
 	result, err := r.planResume(ctx, reg, planInput)
 	if err != nil {
@@ -94,22 +96,47 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req ToolInput) (ToolO
 		return ToolOutput{}, fmt.Errorf("toolset %q is not registered", sName)
 	}
 
-	decoded, decErr := r.unmarshalToolValue(ctx, req.ToolName, req.Payload, true)
-	if decErr != nil {
-		// Build structured retry hints using generated ValidationError when present.
-		if fields, question, reason, ok := buildRetryHintFromValidation(decErr, req.ToolName); ok {
-			return ToolOutput{
-				Error: decErr.Error(),
-				RetryHint: &planner.RetryHint{
-					Reason:             reason,
-					Tool:               req.ToolName,
-					MissingFields:      fields,
-					ClarifyingQuestion: question,
-				},
-			}, nil
+	// Apply optional payload adapter before decoding.
+	raw := req.Payload
+	meta := ToolCallMeta{
+		RunID:            req.RunID,
+		SessionID:        req.SessionID,
+		TurnID:           req.TurnID,
+		ToolCallID:       req.ToolCallID,
+		ParentToolCallID: req.ParentToolCallID,
+	}
+	if reg.PayloadAdapter != nil && len(raw) > 0 {
+		if adapted, err := reg.PayloadAdapter(ctx, meta, req.ToolName, raw); err == nil && len(adapted) > 0 {
+			raw = adapted
+		} else if err != nil {
+			return ToolOutput{Error: fmt.Sprintf("payload adapter failed: %v", err)}, nil
 		}
-		// Not a validation error: no retry hint.
-		return ToolOutput{Error: decErr.Error()}, nil
+	}
+
+	var decoded any
+	if reg.DecodeInExecutor {
+		// Pass raw JSON through to the executor; it will decode using the generated codec.
+		decoded = append(json.RawMessage(nil), raw...)
+	} else {
+		// Decode using the registered payload codec.
+		val, decErr := r.unmarshalToolValue(ctx, req.ToolName, raw, true)
+		if decErr != nil {
+			// Build structured retry hints using generated ValidationError when present.
+			if fields, question, reason, ok := buildRetryHintFromValidation(decErr, req.ToolName); ok {
+				return ToolOutput{
+					Error: decErr.Error(),
+					RetryHint: &planner.RetryHint{
+						Reason:             reason,
+						Tool:               req.ToolName,
+						MissingFields:      fields,
+						ClarifyingQuestion: question,
+					},
+				}, nil
+			}
+			// Not a validation error: no retry hint.
+			return ToolOutput{Error: decErr.Error()}, nil
+		}
+		decoded = val
 	}
 
 	// Populate run context fields so tool implementations can access metadata.
@@ -123,11 +150,18 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req ToolInput) (ToolO
 		ParentToolCallID: req.ParentToolCallID,
 		ToolCallID:       req.ToolCallID,
 	}
+	start := time.Now()
 	result, err := reg.Execute(ctx, call)
 	if err != nil {
 		return ToolOutput{}, err
 	}
-	raw, encErr := r.marshalToolValue(ctx, req.ToolName, result.Result, false)
+	// Enrich or build telemetry via registration builder when available.
+	if reg.TelemetryBuilder != nil {
+		if tel := reg.TelemetryBuilder(ctx, meta, req.ToolName, start, time.Now(), nil); tel != nil && result.Telemetry == nil {
+			result.Telemetry = tel
+		}
+	}
+	enc, encErr := r.marshalToolValue(ctx, req.ToolName, result.Result, false)
 	if encErr != nil {
 		// Result could not be encoded. Forward best-effort JSON and no retry hint.
 		var best json.RawMessage
@@ -136,7 +170,13 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req ToolInput) (ToolO
 		}
 		return ToolOutput{Error: encErr.Error(), Payload: best}, nil
 	}
-	out := ToolOutput{Payload: raw, Telemetry: result.Telemetry}
+	// Apply optional result adapter after encoding.
+	if reg.ResultAdapter != nil && len(enc) > 0 {
+		if adapted, err := reg.ResultAdapter(ctx, meta, req.ToolName, enc); err == nil && len(adapted) > 0 {
+			enc = adapted
+		}
+	}
+	out := ToolOutput{Payload: enc, Telemetry: result.Telemetry}
 	if result.Error != nil {
 		out.Error = result.Error.Error()
 	}

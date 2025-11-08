@@ -24,9 +24,23 @@ func New() planner.Planner { return &examplePlanner{} }
 type examplePlanner struct{}
 
 func (p *examplePlanner) PlanStart(ctx context.Context, in planner.PlanInput) (*planner.PlanResult, error) {
-    return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "Hello from example planner."}}}, nil
+    return &planner.PlanResult{
+        FinalResponse: &planner.FinalResponse{
+            Message: planner.AgentMessage{
+                Role:    "assistant",
+                Content: "Hello from example planner.",
+            },
+        },
+    }, nil
 }
 
 func (p *examplePlanner) PlanResume(ctx context.Context, in planner.PlanResumeInput) (*planner.PlanResult, error) {
-    return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "Done."}}}, nil
+    return &planner.PlanResult{
+        FinalResponse: &planner.FinalResponse{
+            Message: planner.AgentMessage{
+                Role:    "assistant",
+                Content: "Done.",
+            },
+        },
+    }, nil
 }

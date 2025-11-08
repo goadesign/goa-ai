@@ -70,8 +70,8 @@ func TestToolSpecsDeterministicTypeRefs(t *testing.T) {
 }
 
 // TestServiceToolsetCrossServiceBindTo verifies cross-service BindTo uses the
-// target service package for method payload/result references in the generated
-// service_toolset.go.
+// target service package for method payload/result references in generator data
+// (used by executor-first registrations and transforms).
 func TestServiceToolsetCrossServiceBindTo(t *testing.T) {
 	eval.Reset()
 	goaexpr.Root = new(goaexpr.RootExpr)

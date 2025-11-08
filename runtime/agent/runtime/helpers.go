@@ -66,6 +66,28 @@ func generateDeterministicToolCallID(runID, turnID string, toolName tools.Ident,
 	return strings.Join([]string{runID, tid, safeTool, strconv.Itoa(index)}, "/")
 }
 
+// generateDeterministicAwaitID creates a replay-safe await identifier using the runID,
+// optional turnID, the tool name, and the originating tool call ID when available.
+// The format mirrors other runtime IDs for ease of correlation:
+// <runID>/<turnID|no-turn>/<tool>/await/<toolCallID|no-call>
+func generateDeterministicAwaitID(runID, turnID string, tool tools.Ident, toolCallID string) string {
+	if runID == "" {
+		runID = unknownID
+	}
+	safeTool := strings.ReplaceAll(string(tool), ".", "-")
+	if safeTool == "" {
+		safeTool = "tool"
+	}
+	tid := turnID
+	if tid == "" {
+		tid = "no-turn"
+	}
+	if strings.TrimSpace(toolCallID) == "" {
+		toolCallID = "no-call"
+	}
+	return strings.Join([]string{runID, tid, safeTool, "await", toolCallID}, "/")
+}
+
 // generateParentToolCallID creates a deterministic parent ToolCallID suitable
 // for agent-as-tool invocations when the parent ID is not supplied.
 // generateParentToolCallID is currently unused.
@@ -483,9 +505,9 @@ func ConvertRunOutputToToolResult(toolName tools.Ident, output RunOutput) planne
 		// If ALL tools failed, propagate error to parent planner
 		if failedCount > 0 && failedCount == len(output.ToolEvents) {
 			if failedCount == 1 {
-				result.Error = fmt.Errorf("agent-tool %q: nested tool failed: %w", toolName, lastError)
+				result.Error = planner.NewToolErrorWithCause(fmt.Sprintf("agent-tool %q: nested tool failed", toolName), lastError)
 			} else {
-				result.Error = fmt.Errorf("agent-tool %q: all %d nested tools failed (last: %w)", toolName, failedCount, lastError)
+				result.Error = planner.NewToolErrorWithCause(fmt.Sprintf("agent-tool %q: all %d nested tools failed", toolName, failedCount), lastError)
 			}
 		}
 

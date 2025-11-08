@@ -126,7 +126,9 @@ func Register{{ .Register.HelperName }}(ctx context.Context, rt *agentsruntime.R
 				}, err
 			}
 			toolTelemetry = &telemetry.ToolTelemetry{
-				Extra: map[string]any{"structured": structured},
+				Extra: map[string]any{
+					"structured": structured,
+				},
 			}
 		}
 

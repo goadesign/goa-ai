@@ -15,22 +15,22 @@ import (
 )
 
 var (
-	// EchoPayloadCodec serializes values of type EchoPayload to canonical JSON.
-	EchoPayloadCodec = tools.JSONCodec[EchoPayload]{
+	// EchoPayloadCodec serializes values of type string to canonical JSON.
+	EchoPayloadCodec = tools.JSONCodec[string]{
 		ToJSON:   MarshalEchoPayload,
 		FromJSON: UnmarshalEchoPayload,
 	}
-	// EchoResultCodec serializes values of type EchoResult to canonical JSON.
-	EchoResultCodec = tools.JSONCodec[EchoResult]{
+	// EchoResultCodec serializes values of type string to canonical JSON.
+	EchoResultCodec = tools.JSONCodec[string]{
 		ToJSON:   MarshalEchoResult,
 		FromJSON: UnmarshalEchoResult,
 	}
-	// echoPayloadCodec provides an untyped codec for EchoPayload.
+	// echoPayloadCodec provides an untyped codec for string.
 	echoPayloadCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
-			typed, ok := v.(EchoPayload)
+			typed, ok := v.(string)
 			if !ok {
-				return nil, fmt.Errorf("expected EchoPayload, got %T", v)
+				return nil, fmt.Errorf("expected string, got %T", v)
 			}
 			return MarshalEchoPayload(typed)
 		},
@@ -38,12 +38,12 @@ var (
 			return UnmarshalEchoPayload(data)
 		},
 	}
-	// echoResultCodec provides an untyped codec for EchoResult.
+	// echoResultCodec provides an untyped codec for string.
 	echoResultCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
-			typed, ok := v.(EchoResult)
+			typed, ok := v.(string)
 			if !ok {
-				return nil, fmt.Errorf("expected EchoResult, got %T", v)
+				return nil, fmt.Errorf("expected string, got %T", v)
 			}
 			return MarshalEchoResult(typed)
 		},
@@ -107,38 +107,51 @@ func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 	}
 }
 
-// MarshalEchoPayload serializes EchoPayload into JSON.
-func MarshalEchoPayload(v EchoPayload) ([]byte, error) {
+// MarshalEchoPayload serializes string into JSON.
+func MarshalEchoPayload(v string) ([]byte, error) {
 	return json.Marshal(v)
 }
 
-// UnmarshalEchoPayload deserializes JSON into EchoPayload.
-func UnmarshalEchoPayload(data []byte) (EchoPayload, error) {
-	var zero EchoPayload
+// UnmarshalEchoPayload deserializes JSON into string.
+func UnmarshalEchoPayload(data []byte) (string, error) {
+	var zero string
 	if len(data) == 0 {
 		return zero, fmt.Errorf("echoPayload JSON is empty")
 	}
-	var v EchoPayload
-	if err := json.Unmarshal(data, &v); err != nil {
+	// Decode into JSON body (server body style) then validate & transform
+	var raw EchoPayloadJSON2
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return zero, fmt.Errorf("decode echoPayload: %w", err)
 	}
-	return v, nil
+	// Transform into final type
+	// Fallback: direct assignment if shapes are identical
+	v := string(raw)
+	return *v, nil
 }
 
-// MarshalEchoResult serializes EchoResult into JSON.
-func MarshalEchoResult(v EchoResult) ([]byte, error) {
+// MarshalEchoResult serializes string into JSON.
+func MarshalEchoResult(v string) ([]byte, error) {
 	return json.Marshal(v)
 }
 
-// UnmarshalEchoResult deserializes JSON into EchoResult.
-func UnmarshalEchoResult(data []byte) (EchoResult, error) {
-	var zero EchoResult
+// UnmarshalEchoResult deserializes JSON into string.
+func UnmarshalEchoResult(data []byte) (string, error) {
+	var zero string
 	if len(data) == 0 {
 		return zero, fmt.Errorf("echoResult JSON is empty")
 	}
-	var v EchoResult
+	// Non-payload types: simple decode
+	var v string
 	if err := json.Unmarshal(data, &v); err != nil {
 		return zero, fmt.Errorf("decode echoResult: %w", err)
 	}
 	return v, nil
+}
+
+// Transform helpers
+
+// ValidateEchoPayloadJSON2 validates values of type *EchoPayloadJSON2.
+func ValidateEchoPayloadJSON2(body *EchoPayloadJSON2) (err error) {
+
+	return
 }

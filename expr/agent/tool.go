@@ -34,6 +34,10 @@ type (
 		// to, if any.
 		Method *goaexpr.MethodExpr
 
+		// Optional display hint templates declared in the DSL.
+		CallHintTemplate   string
+		ResultHintTemplate string
+
 		bindServiceName string
 		bindMethodName  string
 	}

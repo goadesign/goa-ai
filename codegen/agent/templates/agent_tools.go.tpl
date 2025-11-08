@@ -43,8 +43,11 @@ func New{{ .Toolset.Agent.GoName }}ToolsetRegistration(rt *runtime.Runtime) runt
         AgentID:   AgentID,
         Name:      {{ printf "%q" .Toolset.QualifiedName }},
         TaskQueue: {{ printf "%q" .Toolset.TaskQueue }},
-        // Strong-contract routing for cross-process inline composition
-        Route: runtime.AgentRoute{ID: AgentID, WorkflowName: {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Name }}, DefaultTaskQueue: {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Queue }}},
+        Route: runtime.AgentRoute{
+			ID:              AgentID,
+			WorkflowName:    {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Name }},
+			DefaultTaskQueue: {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Queue }},
+		},
         PlanActivityName:    {{ printf "%q" .Toolset.Agent.Runtime.PlanActivity.Name }},
         ResumeActivityName:  {{ printf "%q" .Toolset.Agent.Runtime.ResumeActivity.Name }},
         ExecuteToolActivity: {{ printf "%q" .Toolset.Agent.Runtime.ExecuteTool.Name }},
@@ -68,11 +71,15 @@ func NewRegistration(
 ) (runtime.ToolsetRegistration, error) {
     cfg := runtime.AgentToolConfig{
         AgentID:      AgentID,
-        Name:         Name,
+        Name:         {{ printf "%q" .Toolset.QualifiedName }},
         TaskQueue:    {{ printf "%q" .Toolset.TaskQueue }},
         SystemPrompt: systemPrompt,
         // Strong-contract routing for cross-process inline composition
-        Route: runtime.AgentRoute{ID: AgentID, WorkflowName: {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Name }}, DefaultTaskQueue: {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Queue }}},
+        Route: runtime.AgentRoute{
+			ID:              AgentID,
+			WorkflowName:    {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Name }},
+			DefaultTaskQueue: {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Queue }},
+		},
         PlanActivityName:    {{ printf "%q" .Toolset.Agent.Runtime.PlanActivity.Name }},
         ResumeActivityName:  {{ printf "%q" .Toolset.Agent.Runtime.ResumeActivity.Name }},
         ExecuteToolActivity: {{ printf "%q" .Toolset.Agent.Runtime.ExecuteTool.Name }},

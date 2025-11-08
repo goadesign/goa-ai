@@ -11,26 +11,27 @@ import (
 	"errors"
 	"fmt"
 	"goa.design/goa-ai/runtime/agent/tools"
+	goa "goa.design/goa/v3/pkg"
 	"strings"
 )
 
 var (
-	// SummarizeDocPayloadCodec serializes values of type *SummarizeDocPayload to canonical JSON.
-	SummarizeDocPayloadCodec = tools.JSONCodec[*SummarizeDocPayload]{
+	// SummarizeDocPayloadCodec serializes values of type SummarizeDocPayload to canonical JSON.
+	SummarizeDocPayloadCodec = tools.JSONCodec[SummarizeDocPayload]{
 		ToJSON:   MarshalSummarizeDocPayload,
 		FromJSON: UnmarshalSummarizeDocPayload,
 	}
-	// SummarizeDocResultCodec serializes values of type *SummarizeDocResult to canonical JSON.
-	SummarizeDocResultCodec = tools.JSONCodec[*SummarizeDocResult]{
+	// SummarizeDocResultCodec serializes values of type SummarizeDocResult to canonical JSON.
+	SummarizeDocResultCodec = tools.JSONCodec[SummarizeDocResult]{
 		ToJSON:   MarshalSummarizeDocResult,
 		FromJSON: UnmarshalSummarizeDocResult,
 	}
-	// summarizeDocPayloadCodec provides an untyped codec for *SummarizeDocPayload.
+	// summarizeDocPayloadCodec provides an untyped codec for SummarizeDocPayload.
 	summarizeDocPayloadCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
-			typed, ok := v.(*SummarizeDocPayload)
+			typed, ok := v.(SummarizeDocPayload)
 			if !ok {
-				return nil, fmt.Errorf("expected *SummarizeDocPayload, got %T", v)
+				return nil, fmt.Errorf("expected SummarizeDocPayload, got %T", v)
 			}
 			return MarshalSummarizeDocPayload(typed)
 		},
@@ -38,12 +39,12 @@ var (
 			return UnmarshalSummarizeDocPayload(data)
 		},
 	}
-	// summarizeDocResultCodec provides an untyped codec for *SummarizeDocResult.
+	// summarizeDocResultCodec provides an untyped codec for SummarizeDocResult.
 	summarizeDocResultCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
-			typed, ok := v.(*SummarizeDocResult)
+			typed, ok := v.(SummarizeDocResult)
 			if !ok {
-				return nil, fmt.Errorf("expected *SummarizeDocResult, got %T", v)
+				return nil, fmt.Errorf("expected SummarizeDocResult, got %T", v)
 			}
 			return MarshalSummarizeDocResult(typed)
 		},
@@ -52,6 +53,9 @@ var (
 		},
 	}
 )
+var SummarizeDocPayloadFieldDescs = map[string]string{
+	"doc_id": "Document identifier",
+}
 
 // ValidationError wraps a validation failure and exposes issues that callers
 // can use to build retry hints. It implements error and an Issues() accessor.
@@ -86,6 +90,63 @@ func (e ValidationError) Descriptions() map[string]string {
 // newValidationError converts a goa.ServiceError (possibly merged) into a
 // ValidationError with structured FieldIssue entries. It trims any leading
 // "body." from field names for conciseness.
+func newValidationError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var se *goa.ServiceError
+	if !errors.As(err, &se) {
+		return err
+	}
+	hist := se.History()
+	issues := make([]*tools.FieldIssue, 0, len(hist))
+	for _, h := range hist {
+		var field string
+		if h.Field != nil {
+			field = *h.Field
+		}
+		if strings.HasPrefix(field, "body.") {
+			field = strings.TrimPrefix(field, "body.")
+		}
+		issues = append(issues, &tools.FieldIssue{Field: field, Constraint: h.Name})
+	}
+	if len(issues) == 0 {
+		return err
+	}
+	return &ValidationError{
+		msg:    err.Error(),
+		issues: issues,
+	}
+}
+func enrichSummarizeDocPayloadValidationError(err error) error {
+	ve, ok := err.(*ValidationError)
+	if !ok || ve == nil {
+		return err
+	}
+	if len(ve.issues) == 0 {
+		return err
+	}
+	m := make(map[string]string)
+	for _, is := range ve.issues {
+		if d, ok := SummarizeDocPayloadFieldDescs[is.Field]; ok && d != "" {
+			m[is.Field] = d
+		}
+	}
+	ve.descriptions = m
+	return ve
+}
+func enrichSummarizeDocPayloadJSON2ValidationError(err error) error {
+	ve, ok := err.(*ValidationError)
+	if !ok || ve == nil {
+		return err
+	}
+	if len(ve.issues) == 0 {
+		return err
+	}
+	m := make(map[string]string)
+	ve.descriptions = m
+	return ve
+}
 
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
@@ -107,42 +168,69 @@ func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 	}
 }
 
-// MarshalSummarizeDocPayload serializes *SummarizeDocPayload into JSON.
-func MarshalSummarizeDocPayload(v *SummarizeDocPayload) ([]byte, error) {
-	if v == nil {
-		return nil, fmt.Errorf("summarizeDocPayload is nil")
-	}
+// MarshalSummarizeDocPayload serializes SummarizeDocPayload into JSON.
+func MarshalSummarizeDocPayload(v SummarizeDocPayload) ([]byte, error) {
 	return json.Marshal(v)
 }
 
-// UnmarshalSummarizeDocPayload deserializes JSON into *SummarizeDocPayload.
-func UnmarshalSummarizeDocPayload(data []byte) (*SummarizeDocPayload, error) {
+// UnmarshalSummarizeDocPayload deserializes JSON into SummarizeDocPayload.
+func UnmarshalSummarizeDocPayload(data []byte) (SummarizeDocPayload, error) {
+	var zero SummarizeDocPayload
 	if len(data) == 0 {
-		return nil, fmt.Errorf("summarizeDocPayload JSON is empty")
+		return zero, fmt.Errorf("summarizeDocPayload JSON is empty")
 	}
-	var v SummarizeDocPayload
-	if err := json.Unmarshal(data, &v); err != nil {
-		return nil, fmt.Errorf("decode summarizeDocPayload: %w", err)
+	// Decode into JSON body (server body style) then validate & transform
+	var raw SummarizeDocPayloadJSON2
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return zero, fmt.Errorf("decode summarizeDocPayload: %w", err)
 	}
-	return &v, nil
+	var err error
+	if raw.DocID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("doc_id", "raw"))
+	}
+	if err != nil {
+		err = newValidationError(err)
+		err = enrichSummarizeDocPayloadValidationError(err)
+		return zero, fmt.Errorf("validate summarizeDocPayload: %w", err)
+	}
+	// Transform into final type
+	v := &SummarizePayload{
+		DocID: *raw.DocID,
+	}
+	return *v, nil
 }
 
-// MarshalSummarizeDocResult serializes *SummarizeDocResult into JSON.
-func MarshalSummarizeDocResult(v *SummarizeDocResult) ([]byte, error) {
-	if v == nil {
-		return nil, fmt.Errorf("summarizeDocResult is nil")
-	}
+// MarshalSummarizeDocResult serializes SummarizeDocResult into JSON.
+func MarshalSummarizeDocResult(v SummarizeDocResult) ([]byte, error) {
 	return json.Marshal(v)
 }
 
-// UnmarshalSummarizeDocResult deserializes JSON into *SummarizeDocResult.
-func UnmarshalSummarizeDocResult(data []byte) (*SummarizeDocResult, error) {
+// UnmarshalSummarizeDocResult deserializes JSON into SummarizeDocResult.
+func UnmarshalSummarizeDocResult(data []byte) (SummarizeDocResult, error) {
+	var zero SummarizeDocResult
 	if len(data) == 0 {
-		return nil, fmt.Errorf("summarizeDocResult JSON is empty")
+		return zero, fmt.Errorf("summarizeDocResult JSON is empty")
 	}
+	// Non-payload types: simple decode
 	var v SummarizeDocResult
 	if err := json.Unmarshal(data, &v); err != nil {
-		return nil, fmt.Errorf("decode summarizeDocResult: %w", err)
+		return zero, fmt.Errorf("decode summarizeDocResult: %w", err)
 	}
-	return &v, nil
+	return v, nil
+}
+
+// Transform helpers
+
+// ValidateSummarizeDocPayloadJSON2 validates values of type *SummarizeDocPayloadJSON2.
+func ValidateSummarizeDocPayloadJSON2(body *SummarizeDocPayloadJSON2) (err error) {
+	if body.DocID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("doc_id", "body"))
+	}
+	return
+}
+
+// ValidateSummarizePayload validates values of type *SummarizePayload.
+func ValidateSummarizePayload(body *SummarizePayload) (err error) {
+
+	return
 }

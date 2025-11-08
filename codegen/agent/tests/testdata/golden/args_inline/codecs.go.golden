@@ -11,26 +11,27 @@ import (
 	"errors"
 	"fmt"
 	"goa.design/goa-ai/runtime/agent/tools"
+	goa "goa.design/goa/v3/pkg"
 	"strings"
 )
 
 var (
-	// AddPayloadCodec serializes values of type *AddPayload to canonical JSON.
-	AddPayloadCodec = tools.JSONCodec[*AddPayload]{
+	// AddPayloadCodec serializes values of type AddPayload to canonical JSON.
+	AddPayloadCodec = tools.JSONCodec[AddPayload]{
 		ToJSON:   MarshalAddPayload,
 		FromJSON: UnmarshalAddPayload,
 	}
-	// AddResultCodec serializes values of type *AddResult to canonical JSON.
-	AddResultCodec = tools.JSONCodec[*AddResult]{
+	// AddResultCodec serializes values of type AddResult to canonical JSON.
+	AddResultCodec = tools.JSONCodec[AddResult]{
 		ToJSON:   MarshalAddResult,
 		FromJSON: UnmarshalAddResult,
 	}
-	// addPayloadCodec provides an untyped codec for *AddPayload.
+	// addPayloadCodec provides an untyped codec for AddPayload.
 	addPayloadCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
-			typed, ok := v.(*AddPayload)
+			typed, ok := v.(AddPayload)
 			if !ok {
-				return nil, fmt.Errorf("expected *AddPayload, got %T", v)
+				return nil, fmt.Errorf("expected AddPayload, got %T", v)
 			}
 			return MarshalAddPayload(typed)
 		},
@@ -38,12 +39,12 @@ var (
 			return UnmarshalAddPayload(data)
 		},
 	}
-	// addResultCodec provides an untyped codec for *AddResult.
+	// addResultCodec provides an untyped codec for AddResult.
 	addResultCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
-			typed, ok := v.(*AddResult)
+			typed, ok := v.(AddResult)
 			if !ok {
-				return nil, fmt.Errorf("expected *AddResult, got %T", v)
+				return nil, fmt.Errorf("expected AddResult, got %T", v)
 			}
 			return MarshalAddResult(typed)
 		},
@@ -52,6 +53,10 @@ var (
 		},
 	}
 )
+var AddPayloadFieldDescs = map[string]string{
+	"left":  "Left operand",
+	"right": "Right operand",
+}
 
 // ValidationError wraps a validation failure and exposes issues that callers
 // can use to build retry hints. It implements error and an Issues() accessor.
@@ -86,6 +91,63 @@ func (e ValidationError) Descriptions() map[string]string {
 // newValidationError converts a goa.ServiceError (possibly merged) into a
 // ValidationError with structured FieldIssue entries. It trims any leading
 // "body." from field names for conciseness.
+func newValidationError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var se *goa.ServiceError
+	if !errors.As(err, &se) {
+		return err
+	}
+	hist := se.History()
+	issues := make([]*tools.FieldIssue, 0, len(hist))
+	for _, h := range hist {
+		var field string
+		if h.Field != nil {
+			field = *h.Field
+		}
+		if strings.HasPrefix(field, "body.") {
+			field = strings.TrimPrefix(field, "body.")
+		}
+		issues = append(issues, &tools.FieldIssue{Field: field, Constraint: h.Name})
+	}
+	if len(issues) == 0 {
+		return err
+	}
+	return &ValidationError{
+		msg:    err.Error(),
+		issues: issues,
+	}
+}
+func enrichAddPayloadValidationError(err error) error {
+	ve, ok := err.(*ValidationError)
+	if !ok || ve == nil {
+		return err
+	}
+	if len(ve.issues) == 0 {
+		return err
+	}
+	m := make(map[string]string)
+	for _, is := range ve.issues {
+		if d, ok := AddPayloadFieldDescs[is.Field]; ok && d != "" {
+			m[is.Field] = d
+		}
+	}
+	ve.descriptions = m
+	return ve
+}
+func enrichAddPayloadJSON2ValidationError(err error) error {
+	ve, ok := err.(*ValidationError)
+	if !ok || ve == nil {
+		return err
+	}
+	if len(ve.issues) == 0 {
+		return err
+	}
+	m := make(map[string]string)
+	ve.descriptions = m
+	return ve
+}
 
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
@@ -107,42 +169,76 @@ func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 	}
 }
 
-// MarshalAddPayload serializes *AddPayload into JSON.
-func MarshalAddPayload(v *AddPayload) ([]byte, error) {
-	if v == nil {
-		return nil, fmt.Errorf("addPayload is nil")
-	}
+// MarshalAddPayload serializes AddPayload into JSON.
+func MarshalAddPayload(v AddPayload) ([]byte, error) {
 	return json.Marshal(v)
 }
 
-// UnmarshalAddPayload deserializes JSON into *AddPayload.
-func UnmarshalAddPayload(data []byte) (*AddPayload, error) {
+// UnmarshalAddPayload deserializes JSON into AddPayload.
+func UnmarshalAddPayload(data []byte) (AddPayload, error) {
+	var zero AddPayload
 	if len(data) == 0 {
-		return nil, fmt.Errorf("addPayload JSON is empty")
+		return zero, fmt.Errorf("addPayload JSON is empty")
 	}
-	var v AddPayload
-	if err := json.Unmarshal(data, &v); err != nil {
-		return nil, fmt.Errorf("decode addPayload: %w", err)
+	// Decode into JSON body (server body style) then validate & transform
+	var raw AddPayloadJSON2
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return zero, fmt.Errorf("decode addPayload: %w", err)
 	}
-	return &v, nil
+	var err error
+	if raw.Left == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("left", "raw"))
+	}
+	if raw.Right == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("right", "raw"))
+	}
+	if err != nil {
+		err = newValidationError(err)
+		err = enrichAddPayloadValidationError(err)
+		return zero, fmt.Errorf("validate addPayload: %w", err)
+	}
+	// Transform into final type
+	v := &AddPayload{
+		Left:  *raw.Left,
+		Right: *raw.Right,
+	}
+	return *v, nil
 }
 
-// MarshalAddResult serializes *AddResult into JSON.
-func MarshalAddResult(v *AddResult) ([]byte, error) {
-	if v == nil {
-		return nil, fmt.Errorf("addResult is nil")
-	}
+// MarshalAddResult serializes AddResult into JSON.
+func MarshalAddResult(v AddResult) ([]byte, error) {
 	return json.Marshal(v)
 }
 
-// UnmarshalAddResult deserializes JSON into *AddResult.
-func UnmarshalAddResult(data []byte) (*AddResult, error) {
+// UnmarshalAddResult deserializes JSON into AddResult.
+func UnmarshalAddResult(data []byte) (AddResult, error) {
+	var zero AddResult
 	if len(data) == 0 {
-		return nil, fmt.Errorf("addResult JSON is empty")
+		return zero, fmt.Errorf("addResult JSON is empty")
 	}
+	// Non-payload types: simple decode
 	var v AddResult
 	if err := json.Unmarshal(data, &v); err != nil {
-		return nil, fmt.Errorf("decode addResult: %w", err)
+		return zero, fmt.Errorf("decode addResult: %w", err)
 	}
-	return &v, nil
+	return v, nil
+}
+
+// Transform helpers
+
+// ValidateAddPayload validates values of type *AddPayload.
+func ValidateAddPayload(body *AddPayload) (err error) {
+
+	return
+}
+
+// ValidateAddPayloadJSON2 validates values of type *AddPayloadJSON2.
+func ValidateAddPayloadJSON2(body *AddPayloadJSON2) (err error) {
+	if body.Left == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("left", "body"))
+	}
+	if body.Right == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("right", "body"))
+	}
+	return
 }

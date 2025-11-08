@@ -169,6 +169,9 @@ type (
 		InterruptsAllowed bool
 		// Caps enumerates max tool-call limits.
 		Caps CapsData
+		// OnMissingFields controls behavior when validation indicates missing fields.
+		// Allowed: "finalize" | "await_clarification" | "resume". Empty means unspecified.
+		OnMissingFields string
 	}
 
 	// CapsData captures per-run resource limits that restrict agent tool usage.
@@ -405,6 +408,10 @@ type (
 		// generated code bypasses the result adapter and returns the service result
 		// directly as the tool result.
 		ResultAliasesMethod bool
+
+		// Optional hint templates from DSL
+		CallHintTemplate   string
+		ResultHintTemplate string
 	}
 
 	// RuntimeData contains the workflow and activity artifacts generated for an agent,
@@ -609,6 +616,44 @@ func buildGeneratorData(genpkg string, roots []eval.Root) (*GeneratorData, error
 			return strings.Compare(a.Name, b.Name)
 		})
 	}
+
+	// Reuse provider specs for Used toolsets within the same design:
+	// If a toolset is exported by an agent, point consumer Used toolsets with the
+	// same qualified name to the provider's specs import/package and skip emitting
+	// duplicate specs in the consumer by clearing SpecsDir.
+	type specsRef struct {
+		importPath  string
+		packageName string
+	}
+	exported := make(map[string]specsRef)
+	for _, svc := range services {
+		for _, ag := range svc.Agents {
+			for _, ts := range ag.ExportedToolsets {
+				if ts == nil || ts.SpecsImportPath == "" || ts.SpecsPackageName == "" {
+					continue
+				}
+				exported[ts.QualifiedName] = specsRef{
+					importPath:  ts.SpecsImportPath,
+					packageName: ts.SpecsPackageName,
+				}
+			}
+		}
+	}
+	if len(exported) > 0 {
+		for _, svc := range services {
+			for _, ag := range svc.Agents {
+				for _, ts := range ag.UsedToolsets {
+					if ref, ok := exported[ts.QualifiedName]; ok {
+						ts.SpecsImportPath = ref.importPath
+						ts.SpecsPackageName = ref.packageName
+						// Prevent per-toolset emission under the consumer by clearing SpecsDir.
+						ts.SpecsDir = ""
+					}
+				}
+			}
+		}
+	}
+
 	return &GeneratorData{Genpkg: genpkg, Services: services}, nil
 }
 
@@ -742,6 +787,7 @@ func newRunPolicyData(expr *agentsExpr.RunPolicyExpr) RunPolicyData {
 	rp := RunPolicyData{
 		TimeBudget:        expr.TimeBudget,
 		InterruptsAllowed: expr.InterruptsAllowed,
+		OnMissingFields:   expr.OnMissingFields,
 	}
 	if expr.DefaultCaps != nil {
 		rp.Caps = CapsData{
@@ -807,6 +853,15 @@ func newToolsetData(
 	var imports map[string]*codegen.ImportSpec
 	if sourceService != nil {
 		imports = buildServiceImportMap(sourceService)
+	}
+
+	// Default consumer behavior: when using a toolset exported by another service,
+	// qualify tools under the provider's canonical service namespace so callers
+	// see provider IDs end-to-end. Preserve consumer namespace for exported/local
+	// toolsets and for custom inline (non-external) suites that truly belong to
+	// the consumer. External MCP sets its qualified name below.
+	if kind == ToolsetKindUsed && !expr.External {
+		qualifiedName = fmt.Sprintf("%s.%s", sourceServiceName, expr.Name)
 	}
 
 	ts := &ToolsetData{
@@ -924,17 +979,19 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 	}
 
 	tool := &ToolData{
-		Name:              expr.Name,
-		ConstName:         codegen.Goify(expr.Name, true),
-		Description:       expr.Description,
-		QualifiedName:     qualified,
-		Title:             humanizeTitle(defaultString(expr.Title, expr.Name)),
-		Tags:              slices.Clone(expr.Tags),
-		Args:              expr.Args,
-		Return:            expr.Return,
-		Toolset:           ts,
-		IsExportedByAgent: isExported,
-		ExportingAgentID:  exportingAgentID,
+		Name:               expr.Name,
+		ConstName:          codegen.Goify(expr.Name, true),
+		Description:        expr.Description,
+		QualifiedName:      qualified,
+		Title:              humanizeTitle(defaultString(expr.Title, expr.Name)),
+		Tags:               slices.Clone(expr.Tags),
+		Args:               expr.Args,
+		Return:             expr.Return,
+		Toolset:            ts,
+		IsExportedByAgent:  isExported,
+		ExportingAgentID:   exportingAgentID,
+		CallHintTemplate:   expr.CallHintTemplate,
+		ResultHintTemplate: expr.ResultHintTemplate,
 	}
 	if expr.Method == nil {
 		return tool

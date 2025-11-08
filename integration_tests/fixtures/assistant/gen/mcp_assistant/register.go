@@ -350,7 +350,9 @@ func RegisterAssistantAssistantMcpToolset(ctx context.Context, rt *agentsruntime
 				}, err
 			}
 			toolTelemetry = &telemetry.ToolTelemetry{
-				Extra: map[string]any{"structured": structured},
+				Extra: map[string]any{
+					"structured": structured,
+				},
 			}
 		}
 

@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -69,6 +70,15 @@ type (
 		// DeniedTags filters out candidate tools that have any of these tags.
 		// Empty means no denylist.
 		DeniedTags []string
+		// MaxToolCalls caps total tool executions allowed for the run. Zero means unlimited.
+		MaxToolCalls int
+		// MaxConsecutiveFailedToolCalls caps sequential failures before aborting. Zero means unlimited.
+		MaxConsecutiveFailedToolCalls int
+		// TimeBudget sets a wall-clock budget for the run. Zero means no override.
+		TimeBudget time.Duration
+		// InterruptsAllowed enables human-in-the-loop interruptions for this run when true.
+		// When false (default), no override is applied and agent registration policy governs.
+		InterruptsAllowed bool
 	}
 
 	// RunOutput represents the final outcome returned by a run workflow, including the
@@ -80,8 +90,8 @@ type (
 		RunID string
 		// Final is the assistant reply returned to the caller.
 		Final planner.AgentMessage
-        // ToolEvents captures the last set of tool results emitted before completion.
-        ToolEvents []*planner.ToolResult
+		// ToolEvents captures the last set of tool results emitted before completion.
+		ToolEvents []*planner.ToolResult
 		// Notes aggregates planner annotations produced during the final turn.
 		Notes []planner.PlannerAnnotation
 		// Usage aggregates model-reported token usage during the run when available.
@@ -142,8 +152,10 @@ type (
 		Messages []planner.AgentMessage
 		// RunContext carries caps, labels, and attempt metadata for the planner.
 		RunContext run.Context
-        // ToolResults lists the results since the previous planner turn (empty for PlanStart).
-        ToolResults []*planner.ToolResult
+		// ToolResults lists the results since the previous planner turn (empty for PlanStart).
+		ToolResults []*planner.ToolResult
+		// Finalize, when set, asks the planner to return a final response without tools.
+		Finalize *planner.Termination
 	}
 
 	// PlanActivityOutput wraps the planner result produced by a plan/resume activity.
@@ -194,12 +206,12 @@ type (
 	// generic interface enables a uniform execution model across method-backed
 	// tools, MCP tools, and agent-tools. Registrations accept a ToolCallExecutor and
 	// the runtime delegates execution via this interface.
-    ToolCallExecutor interface {
-        Execute(ctx context.Context, meta ToolCallMeta, call planner.ToolRequest) (planner.ToolResult, error)
-    }
+	ToolCallExecutor interface {
+		Execute(ctx context.Context, meta ToolCallMeta, call planner.ToolRequest) (planner.ToolResult, error)
+	}
 
 	// ToolCallExecutorFunc adapts a function to the ToolCallExecutor interface.
-    ToolCallExecutorFunc func(ctx context.Context, meta ToolCallMeta, call planner.ToolRequest) (planner.ToolResult, error)
+	ToolCallExecutorFunc func(ctx context.Context, meta ToolCallMeta, call planner.ToolRequest) (planner.ToolResult, error)
 )
 
 // Execute calls f(ctx, meta, call).

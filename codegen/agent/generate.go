@@ -75,7 +75,7 @@ type transformsFileData struct {
 //   - specs/<toolset>/: per-toolset specifications, types, and codecs
 //   - specs/specs.go: agent-level aggregator of all toolset specs
 //   - agenttools/: helpers for exported toolsets (agent-as-tool pattern)
-//   - service_toolset.go: method-backed tool adapters (when tools bind to service methods)
+//   - (optional) service_toolset.go: executor-first registration for method-backed toolsets
 //
 // Parameters:
 //   - genpkg: Go import path to the generated code root (e.g., "myapp/gen")
@@ -96,7 +96,9 @@ type transformsFileData struct {
 //	gen/<service>/agents/<agent>/specs/<toolset>/*.go
 //	gen/<service>/agents/<agent>/specs/specs.go
 //	gen/<service>/agents/<agent>/agenttools/<toolset>/helpers.go
-//	gen/<service>/agents/<agent>/<toolset>/service_toolset.go
+//	# Note: service_toolset.go is not emitted in the current generator path; registrations
+//	# are built at application boundaries via runtime APIs. The template and builder remain
+//	# for potential future use.
 //
 // The function is safe to call multiple times during generation but expects DSL
 // evaluation to be complete before invocation.
@@ -197,8 +199,14 @@ func agentFiles(agent *AgentData) []*codegen.File {
 		}
 	}
 	files = append(files, agentToolsFiles(agent)...)
-	files = append(files, serviceToolsetFiles(agent)...)
+	// Emit internal adapter transforms for method-backed tools.
+	files = append(files, internalAdapterTransformsFiles(agent)...)
+	// Do not emit service toolset registrations; executors map tool payloads to service methods.
 	files = append(files, mcpExecutorFiles(agent)...)
+	// Emit typed helpers for Used toolsets (method-backed) to align planner UX.
+	files = append(files, usedToolsFiles(agent)...)
+	// Emit default service executor factories for method-backed Used toolsets.
+	files = append(files, serviceExecutorFiles(agent)...)
 
 	var filtered []*codegen.File
 	for _, f := range files {
@@ -219,7 +227,7 @@ func agentPerToolsetSpecsFiles(agent *AgentData) []*codegen.File {
 	var out []*codegen.File
 	emitted := make(map[string]struct{})
 	for _, ts := range agent.AllToolsets {
-		if len(ts.Tools) == 0 {
+		if len(ts.Tools) == 0 || ts.SpecsDir == "" {
 			continue
 		}
 		// Deduplicate per-toolset emission by SpecsDir to avoid generating the
@@ -257,173 +265,199 @@ func agentPerToolsetSpecsFiles(agent *AgentData) []*codegen.File {
 				{Name: "tool-specs", Source: agentsTemplates.Read(toolSpecFileT), Data: toolSpecFileData{PackageName: ts.SpecsPackageName, Tools: data.tools, Types: data.typesList()}, FuncMap: templateFuncMap()},
 			}
 			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, "specs.go"), SectionTemplates: specSections})
-			// Emit transforms guarded by strict compatibility checks.
-			if tf := emitTransformsFile(agent, ts, data); tf != nil {
-				out = append(out, tf)
-			}
+			// Specs-level transforms are no longer generated; mapping is explicit in adapters.
 		}
 	}
 	return out
 }
 
-// emitTransformsFile builds GoTransform-based helper functions that convert
-// between tool arguments/results and bound method payload/result types when
-// shapes are compatible. The functions are emitted under
-// gen/<service>/agents/<agent>/specs/<toolset>/transforms.go.
-func emitTransformsFile(agent *AgentData, ts *ToolsetData, data *toolSpecsData) *codegen.File {
-	if ts == nil || len(ts.Tools) == 0 || ts.SpecsDir == "" {
-		return nil
-	}
-	var fns []transformFuncData
-	// Collect additional imports referenced by source/target attributes so that
-	// helper bodies compiling nested user types (e.g., shared `types` package)
-	// have the proper qualifiers available.
-	extraImports := make(map[string]*codegen.ImportSpec)
-	// Resolve service import alias/path for method types
-	svc := ts.SourceService
-	if svc == nil {
-		svc = agent.Service
-	}
-	svcAlias := servicePkgAlias(svc)
-	svcImport := joinImportPath(agent.Genpkg, svc.PathName)
-
-	for _, t := range ts.Tools {
-		if !t.IsMethodBacked || t.MethodPayloadAttr == nil || t.MethodResultAttr == nil {
+// internalAdapterTransformsFiles emits best-effort transform helpers for method-backed tools
+// under internal/agents/<agent>/toolsets/<toolset>/xform.go. These are adapter-facing utilities
+// that initialize service payloads from tool payloads and tool results from service results.
+func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
+	out := make([]*codegen.File, 0, len(agent.AllToolsets))
+	for _, ts := range agent.AllToolsets {
+		if len(ts.Tools) == 0 || ts.SpecsDir == "" {
 			continue
 		}
-		// Locate tool payload/result type metadata by type name convention
-		var toolPayload, toolResult *typeData
-		wantPayload := codegen.Goify(t.Name, true) + "Payload"
-		wantResult := codegen.Goify(t.Name, true) + "Result"
-		for _, td := range data.typesList() {
-			if td.TypeName == wantPayload {
-				toolPayload = td
-			}
-			if td.TypeName == wantResult {
-				toolResult = td
-			}
+		// Build data from specs to find tool-local payload/result type names
+		data, err := buildToolSpecsDataFor(agent, ts.Tools)
+		if err != nil || data == nil {
+			continue
 		}
-		// Payload transform: Args -> Method Payload
-		if toolPayload != nil && t.Args != nil && t.Args.Type != goaexpr.Empty && t.MethodPayloadAttr != nil && t.MethodPayloadAttr.Type != goaexpr.Empty {
-			// Only when shapes are compatible.
-			if err := codegen.IsCompatible(t.Args.Type, t.MethodPayloadAttr.Type, "in", "out"); err != nil {
+		// Resolve service import alias/path for method types
+		svc := ts.SourceService
+		if svc == nil {
+			svc = agent.Service
+		}
+		svcAlias := servicePkgAlias(svc)
+		svcImport := joinImportPath(agent.Genpkg, svc.PathName)
+		// Use the actual specs package name so GoTransform qualifier matches (e.g., atlas_read).
+		specsAlias := ts.SpecsPackageName
+
+		// Single NameScope per emitted file to ensure consistent, conflict‑free refs
+		scope := codegen.NewNameScope()
+		var fns []transformFuncData
+		extraImports := make(map[string]*codegen.ImportSpec)
+		// File-level helper functions aggregated across all transforms (deduplicated).
+		fileHelpers := make([]*codegen.TransformFunctionData, 0)
+		helperKeys := make(map[string]struct{})
+
+		for _, t := range ts.Tools {
+			if !t.IsMethodBacked || t.MethodPayloadAttr == nil || t.MethodResultAttr == nil {
 				continue
 			}
-			// imports from source and target attributes
-			for _, im := range gatherAttributeImports(agent.Genpkg, t.Args) {
-				if im != nil && im.Path != "" {
-					extraImports[im.Path] = im
+			// Locate tool payload/result type metadata by type name convention
+			var toolPayload, toolResult *typeData
+			wantPayload := codegen.Goify(t.Name, true) + "Payload"
+			wantResult := codegen.Goify(t.Name, true) + "Result"
+			for _, td := range data.typesList() {
+				if td.TypeName == wantPayload {
+					toolPayload = td
+				}
+				if td.TypeName == wantResult {
+					toolResult = td
 				}
 			}
-			for _, im := range gatherAttributeImports(agent.Genpkg, t.MethodPayloadAttr) {
-				if im != nil && im.Path != "" {
-					extraImports[im.Path] = im
+			// Init<GoName>MethodPayload: tool payload (specs) -> service method payload
+			if toolPayload != nil && t.Args != nil && t.Args.Type != goaexpr.Empty && t.MethodPayloadAttr != nil && t.MethodPayloadAttr.Type != goaexpr.Empty {
+				// Only when shapes are compatible.
+				if err := codegen.IsCompatible(t.Args.Type, t.MethodPayloadAttr.Type, "in", "out"); err == nil {
+					// imports from source and target attributes
+					for _, im := range gatherAttributeImports(agent.Genpkg, t.Args) {
+						if im != nil && im.Path != "" {
+							extraImports[im.Path] = im
+						}
+					}
+					for _, im := range gatherAttributeImports(agent.Genpkg, t.MethodPayloadAttr) {
+						if im != nil && im.Path != "" {
+							extraImports[im.Path] = im
+						}
+					}
+					// Do not force pointer semantics; let Goa default rules apply
+					srcCtx := codegen.NewAttributeContextForConversion(false, false, false, ts.SpecsPackageName, scope)
+					tgtCtx := codegen.NewAttributeContextForConversion(false, false, false, svcAlias, scope)
+					body, helpers, err := codegen.GoTransform(t.Args, t.MethodPayloadAttr, "in", "out", srcCtx, tgtCtx, "", false)
+					if err == nil && strings.TrimSpace(body) != "" {
+						// Accumulate helpers at file scope (deduplicated).
+						for _, h := range helpers {
+							if h == nil {
+								continue
+							}
+							key := h.Name + "|" + h.ParamTypeRef + "|" + h.ResultTypeRef
+							if _, ok := helperKeys[key]; ok {
+								continue
+							}
+							helperKeys[key] = struct{}{}
+							fileHelpers = append(fileHelpers, h)
+						}
+						// Build a local alias type in the specs package for the tool payload and compute full ref.
+						var argBase *goaexpr.AttributeExpr
+						if ut, ok := t.Args.Type.(goaexpr.UserType); ok && ut != nil {
+							argBase = ut.Attribute()
+						} else {
+							argBase = t.Args
+						}
+						// Build a local alias user type for the tool payload. Do not propagate struct:pkg:path
+						// from the base attribute so initializers/casts use the specs package alias.
+						dupArg := *argBase
+						if dupArg.Meta != nil {
+							delete(dupArg.Meta, "struct:pkg:path")
+						}
+						localArgAttr := &goaexpr.AttributeExpr{Type: &goaexpr.UserTypeExpr{AttributeExpr: &dupArg, TypeName: toolPayload.TypeName}}
+						paramRef := scope.GoFullTypeRef(localArgAttr, specsAlias)
+						// Use precomputed fully-qualified service payload ref to handle external imports (e.g., types.*).
+						serviceRef := t.MethodPayloadTypeRef
+						fns = append(fns, transformFuncData{
+							Name:          "Init" + codegen.Goify(t.Name, true) + "MethodPayload",
+							ParamTypeRef:  paramRef,
+							ResultTypeRef: serviceRef,
+							Body:          body,
+							Helpers:       nil,
+						})
+					}
 				}
 			}
-			srcCtx := codegen.NewAttributeContextForConversion(false, false, true, ts.SpecsPackageName, codegen.NewNameScope())
-			tgtCtx := codegen.NewAttributeContextForConversion(false, false, true, svcAlias, codegen.NewNameScope())
-			body, helpers, err := codegen.GoTransform(t.Args, t.MethodPayloadAttr, "in", "out", srcCtx, tgtCtx, "", false)
-			// Emit only when transform is trivial (no nested helper funcs).
-			if err == nil && strings.TrimSpace(body) != "" && len(helpers) == 0 {
-				// Compute local param type via NameScope to honor pointer/value semantics.
-				var argBase *goaexpr.AttributeExpr
-				if ut, ok := t.Args.Type.(goaexpr.UserType); ok && ut != nil {
-					argBase = ut.Attribute()
+			// Init<GoName>ToolResult: service method result -> tool result (specs)
+			if toolResult != nil && t.Return != nil && t.Return.Type != goaexpr.Empty && t.MethodResultAttr != nil && t.MethodResultAttr.Type != goaexpr.Empty {
+				var baseAttr *goaexpr.AttributeExpr
+				if ut, ok := t.Return.Type.(goaexpr.UserType); ok && ut != nil {
+					baseAttr = ut.Attribute()
 				} else {
-					argBase = t.Args
+					baseAttr = t.Return
 				}
-				localArgAttr := &goaexpr.AttributeExpr{Type: &goaexpr.UserTypeExpr{AttributeExpr: argBase, TypeName: toolPayload.TypeName}}
-				paramRef := codegen.NewNameScope().GoTypeRef(localArgAttr)
-				fns = append(fns, transformFuncData{
-					Name:          "ToMethodPayload_" + t.ConstName,
-					ParamTypeRef:  paramRef,
-					ResultTypeRef: t.MethodPayloadTypeRef,
-					Body:          body,
-					Helpers:       nil,
-				})
+				// Only when shapes are compatible.
+				if err := codegen.IsCompatible(t.MethodResultAttr.Type, baseAttr.Type, "in", "out"); err == nil {
+					for _, im := range gatherAttributeImports(agent.Genpkg, t.MethodResultAttr) {
+						if im != nil && im.Path != "" {
+							extraImports[im.Path] = im
+						}
+					}
+					for _, im := range gatherAttributeImports(agent.Genpkg, t.Return) {
+						if im != nil && im.Path != "" {
+							extraImports[im.Path] = im
+						}
+					}
+					// Do not force pointer semantics; let Goa default rules apply
+					srcCtx := codegen.NewAttributeContextForConversion(false, false, false, svcAlias, scope)
+					// Build a local alias user type for the tool result. Do not propagate struct:pkg:path
+					// from the base attribute so initializers/casts use the specs package alias.
+					dupRes := *baseAttr
+					if dupRes.Meta != nil {
+						delete(dupRes.Meta, "struct:pkg:path")
+					}
+					targetUT := &goaexpr.UserTypeExpr{AttributeExpr: &dupRes, TypeName: toolResult.TypeName}
+					targetAttr := &goaexpr.AttributeExpr{Type: targetUT}
+					// Target (tool result) should be a value type in specs; do not request pointer semantics here.
+					tgtCtx := codegen.NewAttributeContextForConversion(false, false, false, specsAlias, scope)
+					body, helpers, err := codegen.GoTransform(t.MethodResultAttr, targetAttr, "in", "out", srcCtx, tgtCtx, "", false)
+					if err == nil && strings.TrimSpace(body) != "" {
+						// Accumulate helpers at file scope (deduplicated).
+						for _, h := range helpers {
+							if h == nil {
+								continue
+							}
+							key := h.Name + "|" + h.ParamTypeRef + "|" + h.ResultTypeRef
+							if _, ok := helperKeys[key]; ok {
+								continue
+							}
+							helperKeys[key] = struct{}{}
+							fileHelpers = append(fileHelpers, h)
+						}
+						// Compute correct result type reference (including composites) and qualify with specs alias.
+						resRef := scope.GoFullTypeRef(targetAttr, specsAlias)
+						// Use precomputed fully-qualified service result ref to handle external imports (e.g., types.*).
+						serviceResRef := t.MethodResultTypeRef
+						fns = append(fns, transformFuncData{
+							Name:          "Init" + codegen.Goify(t.Name, true) + "ToolResult",
+							ParamTypeRef:  serviceResRef,
+							ResultTypeRef: resRef,
+							Body:          body,
+							Helpers:       nil,
+						})
+					}
+				}
 			}
 		}
-		// Result transform: Method Result -> Tool Result (target is the local alias type)
-		if toolResult != nil && t.Return != nil && t.Return.Type != goaexpr.Empty && t.MethodResultAttr != nil && t.MethodResultAttr.Type != goaexpr.Empty {
-			// Only when shapes are compatible.
-			var baseAttr *goaexpr.AttributeExpr
-			if ut, ok := t.Return.Type.(goaexpr.UserType); ok && ut != nil {
-				baseAttr = ut.Attribute()
-			} else {
-				baseAttr = t.Return
-			}
-			if err := codegen.IsCompatible(t.MethodResultAttr.Type, baseAttr.Type, "in", "out"); err != nil {
-				continue
-			}
-			// imports from source and target attributes
-			for _, im := range gatherAttributeImports(agent.Genpkg, t.MethodResultAttr) {
-				if im != nil && im.Path != "" {
-					extraImports[im.Path] = im
-				}
-			}
-			for _, im := range gatherAttributeImports(agent.Genpkg, t.Return) {
-				if im != nil && im.Path != "" {
-					extraImports[im.Path] = im
-				}
-			}
-			srcCtx := codegen.NewAttributeContextForConversion(false, false, true, svcAlias, codegen.NewNameScope())
-			// Synthesize a target user type with the local alias name so the body initializes
-			// the local type (e.g., &ByIDResult{...}) rather than the service type.
-			// Use the underlying attribute of the tool return user type to avoid self-recursion.
-			targetUT := &goaexpr.UserTypeExpr{AttributeExpr: baseAttr, TypeName: toolResult.TypeName}
-			targetAttr := &goaexpr.AttributeExpr{Type: targetUT}
-			// For same-package conversion use empty pkg to avoid qualifying with current package alias.
-			tgtCtx := codegen.NewAttributeContextForConversion(false, false, true, "", codegen.NewNameScope())
-			body, helpers, err := codegen.GoTransform(t.MethodResultAttr, targetAttr, "in", "out", srcCtx, tgtCtx, "", false)
-			if err == nil && strings.TrimSpace(body) != "" && len(helpers) == 0 {
-				// Compute local result type via NameScope
-				resRef := codegen.NewNameScope().GoTypeRef(targetAttr)
-				fns = append(fns, transformFuncData{
-					Name:          "ToToolReturn_" + t.ConstName,
-					ParamTypeRef:  t.MethodResultTypeRef,
-					ResultTypeRef: resRef,
-					Body:          body,
-					Helpers:       nil,
-				})
-			}
+		if len(fns) == 0 {
+			continue
 		}
-	}
-	if len(fns) == 0 {
-		return nil
-	}
-	// Build file-level helper set to avoid duplicate declarations.
-	uniq := make(map[string]*codegen.TransformFunctionData)
-	for _, fn := range fns {
-		for _, h := range fn.Helpers {
-			if h == nil || h.Name == "" {
-				continue
-			}
-			if _, ok := uniq[h.Name]; ok {
-				continue
-			}
-			uniq[h.Name] = h
-		}
-	}
-	helpers := make([]*codegen.TransformFunctionData, 0, len(uniq))
-	for _, h := range uniq {
-		helpers = append(helpers, h)
-	}
-	// Build imports: service alias + any extra imports discovered.
-	imports := []*codegen.ImportSpec{{Name: svcAlias, Path: svcImport}}
-	if len(extraImports) > 0 {
-		// Ensure we don't duplicate the service import.
+		// Assemble imports: service, specs, and any additional referenced packages
+		imports := []*codegen.ImportSpec{{Name: svcAlias, Path: svcImport}, {Path: ts.SpecsImportPath, Name: specsAlias}}
 		for p, im := range extraImports {
-			if p == svcImport {
+			if p == svcImport || p == ts.SpecsImportPath {
 				continue
 			}
 			imports = append(imports, im)
 		}
+		sections := []*codegen.SectionTemplate{
+			codegen.Header(ts.Name+" adapter transforms", ts.PathName, imports),
+			{Name: "tool-transforms", Source: agentsTemplates.Read(toolTransformsFileT), Data: transformsFileData{Functions: fns, Helpers: fileHelpers}},
+		}
+		path := filepath.Join("internal", "agents", agent.PathName, "toolsets", ts.PathName, "xform.go")
+		out = append(out, &codegen.File{Path: path, SectionTemplates: sections})
 	}
-	sections := []*codegen.SectionTemplate{
-		codegen.Header(agent.StructName+" tool transforms", ts.SpecsPackageName, imports),
-		{Name: "tool-transforms", Source: agentsTemplates.Read(toolTransformsFileT), Data: transformsFileData{Functions: fns, Helpers: helpers}},
-	}
-	return &codegen.File{Path: filepath.Join(ts.SpecsDir, "transforms.go"), SectionTemplates: sections}
+	return out
 }
 
 // agentSpecsAggregatorFile emits specs/specs.go that aggregates Specs and metadata
@@ -536,6 +570,7 @@ func agentRegistryFile(agent *AgentData) *codegen.File {
 		{Path: "context"},
 		{Path: "errors"},
 		{Path: "goa.design/goa-ai/runtime/agent/engine"},
+		{Path: "goa.design/goa-ai/runtime/agent/planner"},
 		{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "agentsruntime"},
 	}
 	// fmt needed for error messages in external MCP registration path
@@ -681,69 +716,75 @@ func mcpExecutorFiles(agent *AgentData) []*codegen.File {
 	return out
 }
 
-// serviceToolsetFiles generates a per-agent toolset registration for tools that are
-// explicitly bound to service methods via Method(). It creates a thin registration
-// file that will later be expanded to include per-tool adapters. For now, we emit
-// the registration skeleton so Method() influences codegen structure.
-func serviceToolsetFiles(agent *AgentData) []*codegen.File {
-	// Collect toolsets with at least one method-backed tool
-	out := []*codegen.File{}
-	for _, ts := range agent.AllToolsets {
-		// Emit for method-backed toolsets, external MCP toolsets, and custom global toolsets
-		need := false
-		for _, t := range ts.Tools {
-			if t.IsMethodBacked {
-				need = true
-				break
-			}
-		}
-		if ts.Expr != nil && ts.Expr.External {
-			need = true
-		}
-		if !need {
-			// Non-method, non-external toolsets still require an app-supplied executor when used
-			// by the agent; generate the generic registration for Used toolsets.
-			if ts.Kind == ToolsetKindUsed {
-				need = true
-			}
-		}
-		if !need {
+// usedToolsFiles emits typed call builders and type aliases for method-backed Used toolsets
+// to align UX with agent-as-tool helpers.
+func usedToolsFiles(agent *AgentData) []*codegen.File {
+	if len(agent.MethodBackedToolsets) == 0 {
+		return nil
+	}
+	files := make([]*codegen.File, 0, len(agent.MethodBackedToolsets))
+	for _, ts := range agent.MethodBackedToolsets {
+		// Only emit when specs are present
+		if ts.SpecsImportPath == "" || len(ts.Tools) == 0 {
 			continue
 		}
-		// Build imports including the source service package and any user type packages
-		// referenced by method payload/result types (e.g., gen/types).
-		src := ts.SourceService
-		if src == nil {
-			// Skip generation if we cannot resolve the source service (e.g., malformed test fixture)
-			continue
-		}
+		data := agentToolsetFileData{PackageName: ts.PackageName, Toolset: ts}
 		imports := []*codegen.ImportSpec{
-			{Path: "context"},
+			{Path: "goa.design/goa-ai/runtime/agent/tools"},
 			{Path: "goa.design/goa-ai/runtime/agent/planner"},
-			{Path: "goa.design/goa-ai/runtime/agent/policy"},
-			{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "runtime"},
-			// Aggregated specs for registry references
-			{Path: agent.ToolSpecsImportPath, Name: agent.ToolSpecsPackage},
-		}
-		// No per-toolset short type imports or service imports are required in executor-first API.
-		data := serviceToolsetFileData{
-			PackageName: ts.PackageName,
-			Agent:       agent,
-			Toolset:     ts,
+			// Per-toolset specs package for typed payloads
+			{Path: ts.SpecsImportPath, Name: ts.SpecsPackageName + "specs"},
 		}
 		sections := []*codegen.SectionTemplate{
-			codegen.Header(ts.Name+" service toolset", ts.PackageName, imports),
+			codegen.Header(ts.Name+" used tool helpers", ts.PackageName, imports),
 			{
-				Name:    "service-toolset",
-				Source:  agentsTemplates.Read(serviceToolsetFileT),
+				Name:    "used-tools",
+				Source:  agentsTemplates.Read(usedToolsFileT),
 				Data:    data,
 				FuncMap: templateFuncMap(),
 			},
 		}
-		path := filepath.Join(ts.Dir, "service_toolset.go")
-		out = append(out, &codegen.File{Path: path, SectionTemplates: sections})
+		path := filepath.Join(ts.Dir, "used_tools.go")
+		files = append(files, &codegen.File{Path: path, SectionTemplates: sections})
 	}
-	return out
+	return files
+}
+
+// serviceExecutorFiles emits per-toolset service executors that adapt runtime
+// ToolCallExecutor to user-provided callers using generated codecs and optional mappers.
+func serviceExecutorFiles(agent *AgentData) []*codegen.File {
+	if len(agent.MethodBackedToolsets) == 0 {
+		return nil
+	}
+	files := make([]*codegen.File, 0, len(agent.MethodBackedToolsets))
+	for _, ts := range agent.MethodBackedToolsets {
+		if ts.Expr == nil || len(ts.Tools) == 0 {
+			continue
+		}
+		data := serviceToolsetFileData{PackageName: ts.PackageName, Agent: agent, Toolset: ts}
+		imports := []*codegen.ImportSpec{
+			{Path: "fmt"},
+			{Path: "strings"},
+			{Path: "context"},
+			{Path: "encoding/json"},
+			{Path: "goa.design/goa-ai/runtime/agent/planner"},
+			{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "runtime"},
+			{Path: "goa.design/goa-ai/runtime/agent/tools"},
+			{Path: ts.SpecsImportPath, Name: ts.SpecsPackageName},
+		}
+		sections := []*codegen.SectionTemplate{
+			codegen.Header(ts.Name+" service executor", ts.PackageName, imports),
+			{
+				Name:    "service-executor",
+				Source:  agentsTemplates.Read(serviceExecutorFileT),
+				Data:    data,
+				FuncMap: templateFuncMap(),
+			},
+		}
+		path := filepath.Join(ts.Dir, "service_executor.go")
+		files = append(files, &codegen.File{Path: path, SectionTemplates: sections})
+	}
+	return files
 }
 
 // Note: we intentionally avoid parsing type references to infer imports. All

@@ -42,3 +42,13 @@ func (c ScribeAgentConfig) Validate() error {
 	}
 	return nil
 }
+
+// WithMCPCaller adds or replaces the caller for the given MCP toolset ID and returns
+// the config pointer for chaining in builder-style initialization.
+func (c *ScribeAgentConfig) WithMCPCaller(id string, caller mcpruntime.Caller) *ScribeAgentConfig {
+	if c.MCPCallers == nil {
+		c.MCPCallers = make(map[string]mcpruntime.Caller)
+	}
+	c.MCPCallers[id] = caller
+	return c
+}

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"goa.design/goa/v3/eval"
@@ -23,6 +24,10 @@ type (
 		// InterruptsAllowed indicates whether the agent can be
 		// interrupted during execution.
 		InterruptsAllowed bool
+		// OnMissingFields controls behavior when validation indicates
+		// missing fields.  Allowed values: "finalize" |
+		// "await_clarification" | "resume". Empty means unspecified.
+		OnMissingFields string
 	}
 
 	// CapsExpr defines per-run limits on agent tool usage.
@@ -42,6 +47,23 @@ type (
 // EvalName returns a descriptive identifier for error reporting.
 func (r *RunPolicyExpr) EvalName() string {
 	return fmt.Sprintf("run policy for agent %q", r.Agent.Name)
+}
+
+// Validate enforces semantic constraints on the run policy.
+func (r *RunPolicyExpr) Validate() error {
+	verr := new(eval.ValidationErrors)
+	if strings.TrimSpace(r.OnMissingFields) != "" {
+		switch r.OnMissingFields {
+		case "finalize", "await_clarification", "resume":
+			// ok
+		default:
+			verr.Add(r, "invalid OnMissingFields value %q (allowed: finalize, await_clarification, resume)", r.OnMissingFields)
+		}
+		if r.OnMissingFields == "await_clarification" && !r.InterruptsAllowed {
+			verr.Add(r, "OnMissingFields(\"await_clarification\") requires InterruptsAllowed(true)")
+		}
+	}
+	return verr
 }
 
 // EvalName returns a descriptive identifier for error reporting.

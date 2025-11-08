@@ -14,17 +14,17 @@ This directory hosts the golden tests for the agents Goa code generator. The goa
 - `tests/testscenarios/`: small, single‑purpose DSL design functions
   - One exported function per scenario returning `func()` DSL
 - `tests/testdata/golden/<scenario>/`: expected generated sources
-  - File names mirror generator outputs (e.g. `types.go.golden`, `specs.go.golden`, `codecs.go.golden`, `service_toolset.go.golden`)
+  - File names mirror generator outputs (e.g. `types.go.golden`, `specs.go.golden`, `codecs.go.golden`)
 
 ### How the helpers work
 
 - DSL execution: `eval.Reset()` → register Goa and agents roots → `eval.Execute(design)` → `eval.RunDSL()`
-- Code generation: call `agents/codegen.Generate` to obtain `[]*codegen.File`
+- Code generation: call `codegen/agent.Generate` to obtain `[]*codegen.File`
 - Rendering: every `SectionTemplate` is executed with `text/template` using its `FuncMap` and `Data`
   - Default helpers for shared headers are injected for determinism:
     - `comment`: Goa codegen comment helper
     - `commandLine`: returns an empty string to avoid embedding environment‐dependent commands
-- Comparison: use `internal/testutil.AssertGo` to compare the rendered code to goldens
+- Comparison: use `testutil.AssertGo` (Go) or `testutil.AssertString` (text/markdown) to compare to goldens
   - Go code is formatted; generated headers are version‐normalized
 
 ### Running and updating
@@ -32,13 +32,13 @@ This directory hosts the golden tests for the agents Goa code generator. The goa
 - Run all:
 
 ```bash
-go test ./agents/codegen/tests
+go test ./codegen/agent/tests
 ```
 
-- Update a specific scenario:
+- Update a specific scenario (example: quickstart header):
 
 ```bash
-go test ./agents/codegen/tests -run ServiceToolset_BindSelf -update
+go test ./codegen/agent/tests -run Quickstart_Renders_Minimal -update
 ```
 
 ### Test matrix (initial)
@@ -48,10 +48,10 @@ go test ./agents/codegen/tests -run ServiceToolset_BindSelf -update
   - Verifies: `tool_specs/types.go`, `tool_specs/codecs.go`, `tool_specs/specs.go`
   - Focus: basic payload/result structs, codecs, schemas, and spec registry
 
-- Service toolset – bind to self service
-  - DSL: `testscenarios.ServiceToolsetBindSelf()`
-  - Verifies: `<toolset>/service_toolset.go`
-  - Focus: imports, meta struct, client interface, default adapters, `Execute` switch
+- Internal transforms – method-backed tools
+  - DSL: `testscenarios.MethodSimpleCompatible()`
+  - Verifies: `internal/agents/<agent>/toolsets/<toolset>/xform.go` contains transform helpers
+  - Focus: presence of transform init helpers and header markers
 
 Planned additions (recommended next):
 
@@ -89,7 +89,5 @@ Planned additions (recommended next):
 
 ### CI notes
 
-- `./agents/codegen/tests` can be run independently from unit tests in `./agents/codegen`
+- `./codegen/agent/tests` can be run independently from unit tests elsewhere
 - Golden failures should be actionable by reviewing the generated vs. expected code
-
-

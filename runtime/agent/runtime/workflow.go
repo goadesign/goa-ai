@@ -18,6 +18,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/toolerrors"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
@@ -107,7 +108,9 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	// Initialize turn sequencer for event ordering if TurnID is provided
 	var seq *turnSequencer
 	if input.TurnID != "" {
-		seq = &turnSequencer{turnID: input.TurnID}
+		seq = &turnSequencer{
+			turnID: input.TurnID,
+		}
 	}
 	r.publishHook(wfCtx.Context(), hooks.NewRunStartedEvent(input.RunID, input.AgentID, runCtx, *input), seq)
 	r.recordRunStatus(wfCtx.Context(), input, run.StatusRunning, nil)
@@ -128,18 +131,24 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	result, err := r.runPlanActivity(wfCtx, reg.PlanActivityName, reg.PlanActivityOptions, startReq)
 	if err != nil {
 		r.logger.Error(wfCtx.Context(), "Plan activity failed", "error", err)
-		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{"error": err.Error()})
+		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{
+			"error": err.Error(),
+		})
 		return nil, err
 	}
 	if result == nil {
 		r.logger.Error(wfCtx.Context(), "Plan activity returned nil result")
-		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{"error": "CRITICAL: Plan activity returned nil PlanResult"})
+		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{
+			"error": "CRITICAL: Plan activity returned nil PlanResult",
+		})
 		return nil, fmt.Errorf("CRITICAL: Plan activity returned nil PlanResult")
 	}
 	r.logger.Info(wfCtx.Context(), "Plan activity completed", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil)
 	// CRITICAL: Validate PlanResult structure - if planner returned ToolCalls, they should be present
 	if len(result.ToolCalls) == 0 && result.FinalResponse == nil && result.Await == nil {
-		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{"error": "CRITICAL: PlanResult has no ToolCalls, FinalResponse, or Await"})
+		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{
+			"error": "CRITICAL: PlanResult has no ToolCalls, FinalResponse, or Await",
+		})
 		return nil, fmt.Errorf("CRITICAL: PlanResult has no ToolCalls, FinalResponse, or Await - this should never happen")
 	}
 	// CRITICAL: If ToolCalls is empty but planner returned them, serialization may have failed
@@ -147,15 +156,29 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		r.logger.Info(wfCtx.Context(), "PlanResult has FinalResponse but no ToolCalls - workflow will return early")
 	}
 	caps := initialCaps(reg.Policy)
+	// Apply per-run cap overrides (run-level)
+	if input.Policy.MaxToolCalls > 0 {
+		caps.MaxToolCalls = input.Policy.MaxToolCalls
+		caps.RemainingToolCalls = input.Policy.MaxToolCalls
+	}
+	if input.Policy.MaxConsecutiveFailedToolCalls > 0 {
+		caps.MaxConsecutiveFailedToolCalls = input.Policy.MaxConsecutiveFailedToolCalls
+		caps.RemainingConsecutiveFailedToolCalls = input.Policy.MaxConsecutiveFailedToolCalls
+	}
+	// Compute deadline with per-run override taking precedence over registration policy
 	var deadline time.Time
-	if reg.Policy.TimeBudget > 0 {
+	if input.Policy.TimeBudget > 0 {
+		deadline = wfCtx.Now().Add(input.Policy.TimeBudget)
+	} else if reg.Policy.TimeBudget > 0 {
 		deadline = wfCtx.Now().Add(reg.Policy.TimeBudget)
 	}
 	nextAttempt := planInput.RunContext.Attempt + 1
 	r.logger.Info(wfCtx.Context(), "Starting runLoop", "tool_calls", len(result.ToolCalls))
 	out, err := r.runLoop(wfCtx, reg, input, planInput, result, caps, deadline, nextAttempt, seq, nil, ctrl)
 	if err != nil {
-		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{"error": err.Error()})
+		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{
+			"error": err.Error(),
+		})
 		return nil, err
 	}
 	r.recordRunStatus(wfCtx.Context(), input, run.StatusCompleted, nil)
@@ -185,7 +208,9 @@ func (r *Runtime) runLoop(
 	var aggUsage model.TokenUsage
 	usageSub := r.registerUsageAggregator(ctx, input.RunID, input.AgentID, &aggUsage)
 	if usageSub != nil {
-		defer func() { _ = usageSub.Close() }()
+		defer func() {
+			_ = usageSub.Close()
+		}()
 	}
 	if initial == nil {
 		return nil, fmt.Errorf("CRITICAL: runLoop initial PlanResult is nil")
@@ -202,7 +227,8 @@ func (r *Runtime) runLoop(
 			return nil, err
 		}
 		if !deadline.IsZero() && wfCtx.Now().After(deadline) {
-			return nil, errors.New("time budget exceeded")
+			// Time budget exceeded: request a final tool-free response from the planner.
+			return r.finalizeWithPlanner(wfCtx, reg, input, base, lastToolResults, nextAttempt, seq, planner.TerminationReasonTimeBudget)
 		}
 		// Handle Await: publish await event, pause and wait for external input.
 		if result.Await != nil {
@@ -248,10 +274,15 @@ func (r *Runtime) runLoop(
 				}
 				// Append the answer as a user message and continue planning.
 				if strings.TrimSpace(ans.Answer) != "" {
-					base.Messages = append(base.Messages, planner.AgentMessage{Role: "user", Content: ans.Answer})
+					base.Messages = append(base.Messages, planner.AgentMessage{
+						Role:    "user",
+						Content: ans.Answer,
+					})
 				}
 				// Set running and emit resumed
-				r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{"resumed_by": "clarification"})
+				r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{
+					"resumed_by": "clarification",
+				})
 				r.publishHook(ctx, hooks.NewRunResumedEvent(base.RunContext.RunID, base.Agent.ID(), "clarification_provided", ans.RunID, ans.Labels, 1), seq)
 				// Immediately PlanResume
 				resumeCtx := base.RunContext
@@ -293,7 +324,10 @@ func (r *Runtime) runLoop(
 					ToolResults: lastToolResults,
 				}
 				// Set running and emit resumed
-				r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{"resumed_by": "tool_results", "results": len(lastToolResults)})
+				r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{
+					"resumed_by": "tool_results",
+					"results":    len(lastToolResults),
+				})
 				r.publishHook(ctx, hooks.NewRunResumedEvent(base.RunContext.RunID, base.Agent.ID(), "tool_results_provided", input.RunID, nil, 0), seq)
 				var err2 error
 				result, err2 = r.runPlanActivity(wfCtx, reg.ResumeActivityName, reg.ResumeActivityOptions, resumeReq)
@@ -305,13 +339,7 @@ func (r *Runtime) runLoop(
 		}
 
 		r.logger.Info(ctx, "Checking result.ToolCalls", "len", len(result.ToolCalls))
-		// Diagnostic note for visibility; loss checks removed to allow normal resume→final transitions
-		r.publishHook(ctx, hooks.NewPlannerNoteEvent(
-			base.RunContext.RunID,
-			base.Agent.ID(),
-			fmt.Sprintf("DEBUG: Checking ToolCalls - len=%d, FinalResponse=%v, Await=%v", len(result.ToolCalls), result.FinalResponse != nil, result.Await != nil),
-			nil,
-		), seq)
+
 		if len(result.ToolCalls) == 0 {
 			r.logger.Info(ctx, "No tool calls, checking FinalResponse")
 			if result.FinalResponse == nil {
@@ -352,30 +380,25 @@ func (r *Runtime) runLoop(
 		}
 
 		if caps.RemainingToolCalls == 0 && caps.MaxToolCalls > 0 {
-			return nil, errors.New("tool call cap exceeded")
+			// Tool cap exhausted: request a final tool-free response from the planner.
+			return r.finalizeWithPlanner(wfCtx, reg, input, base, lastToolResults, nextAttempt, seq, planner.TerminationReasonToolCap)
 		}
 		if !deadline.IsZero() && wfCtx.Now().After(deadline) {
-			return nil, errors.New("time budget exceeded")
+			// Time budget exceeded after evaluating caps/policy
+			return r.finalizeWithPlanner(
+				wfCtx,
+				reg,
+				input,
+				base,
+				lastToolResults,
+				nextAttempt,
+				seq,
+				planner.TerminationReasonTimeBudget,
+			)
 		}
 		// Start with candidate tool calls from the planner.
 		candidates := result.ToolCalls
-		// CRITICAL: Emit hook event to make this visible in logs
-		r.publishHook(ctx, hooks.NewPlannerNoteEvent(
-			base.RunContext.RunID,
-			base.Agent.ID(),
-			fmt.Sprintf("DEBUG: About to process tool calls - candidates=%d", len(candidates)),
-			nil,
-		), seq)
-		if len(candidates) == 0 {
-			// CRITICAL: This should never happen if planner returned ToolCalls
-			r.publishHook(ctx, hooks.NewPlannerNoteEvent(
-				base.RunContext.RunID,
-				base.Agent.ID(),
-				"CRITICAL ERROR: candidates is empty but we passed the len(result.ToolCalls) == 0 check",
-				nil,
-			), seq)
-			return nil, fmt.Errorf("CRITICAL: candidates is empty but we passed the len(result.ToolCalls) == 0 check - this indicates a bug")
-		}
+
 		r.logger.Info(ctx, "Workflow received tool calls from planner", "count", len(candidates))
 		// Apply per-run policy overrides (restrict tool and tag filters) before policy decision.
 		if ov := input.Policy; (ov.RestrictToTool != "" || len(ov.AllowedTags) > 0 || len(ov.DeniedTags) > 0) && len(candidates) > 0 {
@@ -455,8 +478,7 @@ func (r *Runtime) runLoop(
 		if parentTracker != nil {
 			ids := collectToolCallIDs(allowed)
 			if len(ids) > 0 && parentTracker.registerDiscovered(ids) {
-				r.publishHook(
-					ctx,
+				r.publishHook(ctx,
 					hooks.NewToolCallUpdatedEvent(
 						base.RunContext.RunID,
 						base.Agent.ID(),
@@ -496,7 +518,7 @@ func (r *Runtime) runLoop(
 			}
 		}
 		vals, err := r.executeToolCalls(
-			wfCtx, reg.ExecuteToolActivity, base.RunContext.RunID, base.Agent.ID(),
+			wfCtx, reg.ExecuteToolActivity, reg.ExecuteToolActivityOptions, base.RunContext.RunID, base.Agent.ID(),
 			allowed, result.ExpectedChildren, seq, parentTracker,
 		)
 		if err != nil {
@@ -504,16 +526,26 @@ func (r *Runtime) runLoop(
 		}
 		// Directly use pointer results for the planner input
 		lastToolResults = vals
-		caps.RemainingToolCalls = decrementCap(caps.RemainingToolCalls, len(vals))
+		// Decrement cap by the number of tool calls executed, not the number of results returned.
+		// This ensures the cap is properly decremented even if some results are missing.
+		caps.RemainingToolCalls = decrementCap(caps.RemainingToolCalls, len(allowed))
 		if failures(vals) > 0 {
 			caps.RemainingConsecutiveFailedToolCalls = decrementCap(
 				caps.RemainingConsecutiveFailedToolCalls, failures(vals),
 			)
 			if caps.MaxConsecutiveFailedToolCalls > 0 && caps.RemainingConsecutiveFailedToolCalls <= 0 {
-				return nil, errors.New("consecutive failed tool call cap exceeded")
+				// Consecutive failure cap exhausted: request finalization.
+				return r.finalizeWithPlanner(wfCtx, reg, input, base, lastToolResults, nextAttempt, seq, planner.TerminationReasonFailureCap)
 			}
 		} else if caps.MaxConsecutiveFailedToolCalls > 0 {
 			caps.RemainingConsecutiveFailedToolCalls = caps.MaxConsecutiveFailedToolCalls
+		}
+
+		// Apply missing-fields policy if configured. The helper may finalize or pause/resume.
+		if out, err := r.handleMissingFieldsPolicy(wfCtx, reg, input, &base, vals, &nextAttempt, seq, ctrl); err != nil {
+			return nil, err
+		} else if out != nil {
+			return out, nil
 		}
 
 		resumeCtx := base.RunContext
@@ -533,6 +565,201 @@ func (r *Runtime) runLoop(
 	}
 }
 
+// handleMissingFieldsPolicy inspects tool results for a RetryHint indicating missing
+// required fields and applies the agent RunPolicy.OnMissingFields behavior:
+//
+//   - MissingFieldsFinalize: immediately finalize by requesting a tool-free final answer
+//     from the planner. Returns a non-nil RunOutput to short-circuit the loop.
+//   - MissingFieldsAwaitClarification: when durable (interrupt controller present), emit
+//     an await_clarification event and pause the run. On resume, appends the user answer
+//     as a message to the base PlanInput so the next turn can proceed. Returns handled=true.
+//   - MissingFieldsResume (or unspecified): do nothing; the planner will see RetryHints
+//     and may choose how to proceed. Returns handled=false.
+//
+// The function returns:
+//   - out: non-nil only when finalization occurred
+//   - handled: true when a pause/resume cycle was performed
+//   - err: any error encountered while pausing/resuming
+func (r *Runtime) handleMissingFieldsPolicy(
+	wfCtx engine.WorkflowContext,
+	reg AgentRegistration,
+	input *RunInput,
+	base *planner.PlanInput,
+	results []*planner.ToolResult,
+	nextAttempt *int,
+	seq *turnSequencer,
+	ctrl *interrupt.Controller,
+) (*RunOutput, error) {
+	if ctrl == nil || reg.Policy.OnMissingFields == "" {
+		return nil, nil
+	}
+	ctx := wfCtx.Context()
+	// Find first result with missing-fields hint and capture tool context.
+	var (
+		mf          *planner.RetryHint
+		triggerTool tools.Ident
+		triggerCall string
+	)
+	for _, tr := range results {
+		if tr == nil || tr.RetryHint == nil {
+			continue
+		}
+		if tr.RetryHint.Reason == planner.RetryReasonMissingFields || len(tr.RetryHint.MissingFields) > 0 {
+			mf = tr.RetryHint
+			triggerTool = tr.Name
+			triggerCall = tr.ToolCallID
+			break
+		}
+	}
+	if mf == nil {
+		return nil, nil
+	}
+	switch reg.Policy.OnMissingFields {
+	case MissingFieldsFinalize:
+		out, err := r.finalizeWithPlanner(wfCtx, reg, input, *base, results, *nextAttempt, seq, planner.TerminationReasonFailureCap)
+		return out, err
+	case MissingFieldsAwaitClarification:
+		// Generate deterministic await ID for correlation safety.
+		awaitID := generateDeterministicAwaitID(base.RunContext.RunID, base.RunContext.TurnID, triggerTool, triggerCall)
+		var restrict tools.Ident
+		if mf.RestrictToTool {
+			restrict = mf.Tool
+		}
+		r.publishHook(ctx, hooks.NewAwaitClarificationEvent(
+			base.RunContext.RunID,
+			base.Agent.ID(),
+			awaitID,
+			mf.ClarifyingQuestion,
+			mf.MissingFields,
+			restrict,
+			mf.ExampleInput,
+		), seq)
+		r.publishHook(ctx, hooks.NewRunPausedEvent(base.RunContext.RunID, base.Agent.ID(), "await_clarification", "runtime", nil, nil), seq)
+		ans, err := ctrl.WaitProvideClarification(ctx)
+		if err != nil {
+			return nil, err
+		}
+		// Validate correlation when ID is present on the answer.
+		if strings.TrimSpace(ans.ID) != "" && ans.ID != awaitID {
+			return nil, fmt.Errorf("unexpected await ID for clarification")
+		}
+		if strings.TrimSpace(ans.Answer) != "" {
+			base.Messages = append(base.Messages, planner.AgentMessage{
+				Role:    "user",
+				Content: ans.Answer,
+			})
+		}
+		r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{
+			"resumed_by": "clarification",
+		})
+		r.publishHook(ctx, hooks.NewRunResumedEvent(base.RunContext.RunID, base.Agent.ID(), "clarification_provided", input.RunID, ans.Labels, 1), seq)
+		return nil, nil
+	case MissingFieldsResume:
+		return nil, nil
+	default:
+		return nil, nil
+	}
+}
+
+// finalizeWithPlanner asks the planner for a tool-free final response and returns it as RunOutput.
+func (r *Runtime) finalizeWithPlanner(
+	wfCtx engine.WorkflowContext,
+	reg AgentRegistration,
+	input *RunInput,
+	base planner.PlanInput,
+	lastToolResults []*planner.ToolResult,
+	nextAttempt int,
+	seq *turnSequencer,
+	reason planner.TerminationReason,
+) (*RunOutput, error) {
+	ctx := wfCtx.Context()
+	// Prepare a brief message to steer planners that incorporate system messages.
+	var hint string
+	switch reason {
+	case planner.TerminationReasonTimeBudget:
+		hint = "Time budget reached. Provide the best possible final answer now. Do not call any tools."
+	case planner.TerminationReasonToolCap:
+		hint = "Tool budget exhausted. Provide the best possible final answer now. Do not call any tools."
+	case planner.TerminationReasonFailureCap:
+		hint = "Too many tool failures. Provide the best possible final answer now. Do not call any tools."
+	default:
+		hint = "Provide the best possible final answer now. Do not call any tools."
+	}
+	messages := base.Messages
+	if strings.TrimSpace(hint) != "" {
+		messages = append(messages, planner.AgentMessage{Role: "system", Content: hint})
+	}
+	resumeCtx := base.RunContext
+	resumeCtx.Attempt = nextAttempt
+	// Signal zero remaining duration for any prompt engineering that uses MaxDuration
+	resumeCtx.MaxDuration = "0s"
+	req := PlanActivityInput{
+		AgentID:     base.Agent.ID(),
+		RunID:       base.RunContext.RunID,
+		Messages:    messages,
+		RunContext:  resumeCtx,
+		ToolResults: lastToolResults,
+		Finalize:    &planner.Termination{Reason: reason, Message: hint},
+	}
+	// Emit a pause/resume pair to indicate a finalization turn began.
+	r.publishHook(ctx, hooks.NewRunPausedEvent(base.RunContext.RunID, base.Agent.ID(), "finalize", "runtime", map[string]string{"reason": string(reason)}, nil), seq)
+	r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{"resumed_by": "finalize"})
+	r.publishHook(ctx, hooks.NewRunResumedEvent(base.RunContext.RunID, base.Agent.ID(), "finalize", input.RunID, nil, 0), seq)
+
+	// Human‑readable reason strings for error contexts when finalization fails.
+	reasonText := func() string {
+		switch reason {
+		case planner.TerminationReasonTimeBudget:
+			return "time budget exceeded"
+		case planner.TerminationReasonToolCap:
+			return "tool call cap exceeded"
+		case planner.TerminationReasonFailureCap:
+			return "consecutive failed tool call cap exceeded"
+		default:
+			return "finalization failed"
+		}
+	}()
+
+	result, err := r.runPlanActivity(wfCtx, reg.ResumeActivityName, reg.ResumeActivityOptions, req)
+	if err != nil {
+		// Surface the termination reason prominently; include underlying error for observability.
+		return nil, fmt.Errorf("%s: %w", reasonText, err)
+	}
+	if result == nil || result.FinalResponse == nil {
+		return nil, fmt.Errorf("%s", reasonText)
+	}
+	r.publishHook(
+		ctx,
+		hooks.NewAssistantMessageEvent(
+			base.RunContext.RunID,
+			base.Agent.ID(),
+			result.FinalResponse.Message.Content,
+			nil,
+		),
+		seq,
+	)
+	for _, note := range result.Notes {
+		r.publishHook(
+			ctx,
+			hooks.NewPlannerNoteEvent(
+				base.RunContext.RunID,
+				base.Agent.ID(),
+				note.Text,
+				note.Labels,
+			),
+			seq,
+		)
+	}
+	return &RunOutput{
+		AgentID:    base.Agent.ID(),
+		RunID:      base.RunContext.RunID,
+		Final:      result.FinalResponse.Message,
+		ToolEvents: lastToolResults,
+		Notes:      result.Notes,
+		// Usage aggregation continues to be recorded by the surrounding loop
+	}, nil
+}
+
 func (r *Runtime) handleInterrupts(
 	wfCtx engine.WorkflowContext,
 	input *RunInput,
@@ -550,7 +777,9 @@ func (r *Runtime) handleInterrupts(
 		if !ok {
 			break
 		}
-		r.recordRunStatus(ctx, input, run.StatusPaused, map[string]any{"reason": req.Reason})
+		r.recordRunStatus(ctx, input, run.StatusPaused, map[string]any{
+			"reason": req.Reason,
+		})
 		r.publishHook(
 			ctx,
 			hooks.NewRunPausedEvent(
@@ -573,7 +802,9 @@ func (r *Runtime) handleInterrupts(
 		}
 		base.RunContext.Attempt = *nextAttempt
 		*nextAttempt++
-		r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{"resumed_by": resumeReq.RequestedBy})
+		r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{
+			"resumed_by": resumeReq.RequestedBy,
+		})
 		r.publishHook(
 			ctx,
 			hooks.NewRunResumedEvent(
@@ -605,7 +836,7 @@ func collectToolCallIDs(calls []planner.ToolRequest) []string {
 
 func (r *Runtime) executeToolCalls(
 	wfCtx engine.WorkflowContext,
-	activityName, runID, agentID string,
+	activityName string, toolActOptions engine.ActivityOptions, runID, agentID string,
 	calls []planner.ToolRequest,
 	expectedChildren int,
 	seq *turnSequencer,
@@ -657,32 +888,28 @@ func (r *Runtime) executeToolCalls(
 				return nil, fmt.Errorf("tool %q inline execution failed: %w", call.Name, err)
 			}
 			duration := wfCtx.Now().Sub(start)
-			// Emit result event with typed payload directly
-			// Coerce error to *toolerrors.ToolError for event
-			var evtErr *toolerrors.ToolError
-			if res.Error != nil {
-				var te *toolerrors.ToolError
-				if errors.As(res.Error, &te) {
-					evtErr = te
-				} else {
-					evtErr = toolerrors.FromError(res.Error)
+			// Telemetry builder support can be applied post-aggregation where needed.
+			// Emit result event with typed payload directly unless suppressed.
+			if !ts.SuppressChildEvents {
+				var evtErr *toolerrors.ToolError
+				if res.Error != nil {
+					evtErr = res.Error
 				}
+				r.publishHook(ctx,
+					hooks.NewToolResultReceivedEvent(
+						runID,
+						agentID,
+						call.Name,
+						call.ToolCallID,
+						call.ParentToolCallID,
+						res.Result,
+						duration,
+						res.Telemetry,
+						evtErr,
+					),
+					seq,
+				)
 			}
-			r.publishHook(
-				ctx,
-				hooks.NewToolResultReceivedEvent(
-					runID,
-					agentID,
-					call.Name,
-					call.ToolCallID,
-					call.ParentToolCallID,
-					res.Result,
-					duration,
-					res.Telemetry,
-					evtErr,
-				),
-				seq,
-			)
 			// Accumulate result preserving order
 			inlineResults = append(inlineResults, &planner.ToolResult{
 				Name:       call.Name,
@@ -717,14 +944,29 @@ func (r *Runtime) executeToolCalls(
 				ParentToolCallID: call.ParentToolCallID,
 			},
 		}
-		if hasTS && ts.TaskQueue != "" {
+		// Apply strong-contract execute_tool options first
+		if toolActOptions.Queue != "" {
+			req.Queue = toolActOptions.Queue
+		}
+		if toolActOptions.Timeout > 0 {
+			req.Timeout = toolActOptions.Timeout
+		}
+		if !isZeroRetryPolicy(toolActOptions.RetryPolicy) {
+			req.RetryPolicy = toolActOptions.RetryPolicy
+		}
+		// If no queue specified via options, allow explicit toolset TaskQueue to set it
+		if req.Queue == "" && hasTS && ts.TaskQueue != "" {
 			req.Queue = ts.TaskQueue
 		}
 		future, err := wfCtx.ExecuteActivityAsync(ctx, req)
 		if err != nil {
 			return nil, fmt.Errorf("failed to schedule tool %q: %w", call.Name, err)
 		}
-		futures = append(futures, futureInfo{future: future, call: call, startTime: wfCtx.Now()})
+		futures = append(futures, futureInfo{
+			future:    future,
+			call:      call,
+			startTime: wfCtx.Now(),
+		})
 		if parentTracker != nil {
 			discoveredIDs = append(discoveredIDs, call.ToolCallID)
 		}
@@ -830,7 +1072,10 @@ func (r *Runtime) runPlanActivity(
 		return nil, errors.New("plan activity not registered")
 	}
 	var out PlanActivityOutput
-	req := engine.ActivityRequest{Name: activityName, Input: input}
+	req := engine.ActivityRequest{
+		Name:  activityName,
+		Input: input,
+	}
 	if options.Queue != "" {
 		req.Queue = options.Queue
 	}

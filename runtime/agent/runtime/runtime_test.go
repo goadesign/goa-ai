@@ -361,13 +361,13 @@ func TestConvertRunOutputToToolResult(t *testing.T) {
 	t.Run("aggregates_telemetry_without_error", func(t *testing.T) {
 		out := RunOutput{
 			Final: planner.AgentMessage{Content: "final"},
-        ToolEvents: []*planner.ToolResult{
-            {Telemetry: &telemetry.ToolTelemetry{TokensUsed: 10, DurationMs: 100, Model: "m1"}},
-            {Telemetry: &telemetry.ToolTelemetry{TokensUsed: 5, DurationMs: 50, Model: "m1"}},
-        },
+			ToolEvents: []*planner.ToolResult{
+				{Telemetry: &telemetry.ToolTelemetry{TokensUsed: 10, DurationMs: 100, Model: "m1"}},
+				{Telemetry: &telemetry.ToolTelemetry{TokensUsed: 5, DurationMs: 50, Model: "m1"}},
+			},
 		}
 		tr := ConvertRunOutputToToolResult("parent.tool", out)
-		require.NoError(t, tr.Error)
+		require.Nil(t, tr.Error)
 		require.NotNil(t, tr.Telemetry)
 		require.Equal(t, 15, tr.Telemetry.TokensUsed)
 		require.Equal(t, int64(150), tr.Telemetry.DurationMs)
@@ -377,10 +377,10 @@ func TestConvertRunOutputToToolResult(t *testing.T) {
 	t.Run("propagates_error_when_all_nested_fail", func(t *testing.T) {
 		out := RunOutput{
 			Final: planner.AgentMessage{Content: "final"},
-        ToolEvents: []*planner.ToolResult{
-            {Error: planner.NewToolError("e1")},
-            {Error: planner.NewToolError("e2")},
-        },
+			ToolEvents: []*planner.ToolResult{
+				{Error: planner.NewToolError("e1")},
+				{Error: planner.NewToolError("e2")},
+			},
 		}
 		tr := ConvertRunOutputToToolResult("parent.tool", out)
 		require.Error(t, tr.Error)
@@ -569,7 +569,7 @@ func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 		{Name: tools.Ident("svc.export.child2")},
 	}
 	seq := &turnSequencer{turnID: "turn-1"}
-	_, err := rt.executeToolCalls(wfCtx, "execute", "run-1", "agent-1", calls, 0, seq, tracker)
+	_, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "run-1", "agent-1", calls, 0, seq, tracker)
 	require.NoError(t, err)
 
 	var update *hooks.ToolCallUpdatedEvent

@@ -4,7 +4,7 @@ const ToolsetID = {{ printf "%q" .Toolset.QualifiedName }}
 // New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}ToolsetRegistration returns a ToolsetRegistration
 // that delegates execution to the provided ToolCallExecutor.
 func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}ToolsetRegistration(exec runtime.ToolCallExecutor) runtime.ToolsetRegistration {
-    return runtime.ToolsetRegistration{
+    ts := runtime.ToolsetRegistration{
         Name:        ToolsetID,
         Description: {{ printf "%q" .Toolset.Description }},
         Specs:       {{ $.Agent.ToolSpecsPackage }}.Specs,
@@ -25,4 +25,27 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}ToolsetRegistration
             return exec.Execute(ctx, meta, call)
         },
     }
+    // Install DSL-provided hint templates when present.
+    {
+        // Build maps only when at least one template exists to avoid overhead.
+        var callRaw map[tools.Ident]string
+        var resultRaw map[tools.Ident]string
+        {{- range .Toolset.Tools }}
+        {{- if .CallHintTemplate }}
+        if callRaw == nil { callRaw = make(map[tools.Ident]string) }
+        callRaw[tools.Ident({{ printf "%q" .QualifiedName }})] = {{ printf "%q" .CallHintTemplate }}
+        {{- end }}
+        {{- if .ResultHintTemplate }}
+        if resultRaw == nil { resultRaw = make(map[tools.Ident]string) }
+        resultRaw[tools.Ident({{ printf "%q" .QualifiedName }})] = {{ printf "%q" .ResultHintTemplate }}
+        {{- end }}
+        {{- end }}
+        if len(callRaw) > 0 {
+            if compiled, err := hints.CompileHintTemplates(callRaw, nil); err == nil { ts.CallHints = compiled }
+        }
+        if len(resultRaw) > 0 {
+            if compiled, err := hints.CompileHintTemplates(resultRaw, nil); err == nil { ts.ResultHints = compiled }
+        }
+    }
+    return ts
 }

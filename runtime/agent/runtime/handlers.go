@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"goa.design/goa-ai/runtime/agent/engine"
 )
@@ -86,10 +87,10 @@ func PlanResumeActivityHandler(rt *Runtime) func(context.Context, any) (any, err
 		default:
 			b, err := json.Marshal(v)
 			if err != nil {
-				return nil, errors.New("invalid plan activity input")
+				return nil, fmt.Errorf("invalid plan activity input: failed to marshal input (type %T): %w", v, err)
 			}
 			if err := json.Unmarshal(b, &in); err != nil {
-				return nil, errors.New("invalid plan activity input")
+				return nil, fmt.Errorf("invalid plan activity input: failed to unmarshal input (type %T, json: %s): %w", v, string(b), err)
 			}
 		}
 		return rt.PlanResumeActivity(ctx, in)

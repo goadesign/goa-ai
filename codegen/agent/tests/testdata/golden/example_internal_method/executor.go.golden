@@ -42,15 +42,23 @@ func Execute(ctx context.Context, meta runtime.ToolCallMeta, call planner.ToolRe
 	case "alpha.profiles.upsert":
 		// Decode typed payload
 		args, err := profilesspecs.UnmarshalUpsertPayload(call.Payload)
-		if err != nil {
-			return planner.ToolResult{Error: planner.NewToolError("invalid payload")}, nil
-		}
+        if err != nil {
+            return planner.ToolResult{
+                Error: planner.NewToolError("invalid payload"),
+            }, nil
+        }
 		// Optional: transform to method payload if compatible
 		// mp, _ := profilesspecs.ToMethodPayload_Upsert(args)
 		// TODO: Call your service client with mp (or args), map result back:
 		// tr, _ := profilesspecs.ToToolReturn_Upsert(methodRes)
-		return planner.ToolResult{Payload: map[string]any{"status": "ok"}}, nil
+        return planner.ToolResult{
+            Payload: map[string]any{
+                "status": "ok",
+            },
+        }, nil
 	default:
-		return planner.ToolResult{Error: planner.NewToolError("unknown tool")}, nil
+        return planner.ToolResult{
+            Error: planner.NewToolError("unknown tool"),
+        }, nil
 	}
 }

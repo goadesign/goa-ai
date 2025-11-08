@@ -81,21 +81,28 @@ func Agent(name, description string, dsl func()) *expragents.AgentExpr {
 	return agent
 }
 
-// Uses declares the toolsets consumed by the current agent. Toolsets
-// can be declared inline or by reference.
+// Uses declares the toolsets that the current agent consumes. Toolsets may be
+// declared inline or referenced from existing toolset definitions.
 //
-// Example usage:
+// Uses must appear in an Agent expression.
 //
-//	Agent("docs-agent", "Agent description", func() {
+// Uses takes a single argument which is the defining DSL function.
+//
+// The DSL function may contain:
+//   - Toolset declarations (inline or by reference)
+//   - MCPToolset declarations for external MCP servers
+//
+// Example:
+//
+//	Agent("docs-agent", "Document processor", func() {
 //	    Uses(func() {
-//	        Toolset("summarization-tools", func() {
-//	            Tool("summarizer", func() { ... })
+//	        Toolset("summarization", func() {
+//	            Tool("summarizer", "Summarize text", func() { ... })
 //	        })
-//	        Toolset(OtherToolsetReference)
+//	        Toolset(SharedToolset)  // Reference existing toolset
+//	        MCPToolset("external", "search")  // External MCP server
 //	    })
 //	})
-//
-// The function passed to Uses should declare Toolsets to be used by the agent.
 func Uses(fn func()) {
 	agent, ok := eval.Current().(*expragents.AgentExpr)
 	if !ok {
@@ -105,21 +112,26 @@ func Uses(fn func()) {
 	agent.Used = &expragents.ToolsetGroupExpr{Agent: agent, DSLFunc: fn}
 }
 
-// Exports declares toolsets exposed by the current agent.
-// Toolsets can be declared inline or by reference.
+// Exports declares the toolsets that the current agent provides for other
+// agents to consume. Exported toolsets define the agent's public tool API.
 //
-// Example usage:
+// Exports must appear in an Agent expression.
 //
-//	Agent("docs-agent", "Agent description", func() {
+// Exports takes a single argument which is the defining DSL function.
+//
+// The DSL function may contain:
+//   - Toolset declarations (inline only, not references)
+//
+// Example:
+//
+//	Agent("docs-agent", "Document processor", func() {
 //	    Exports(func() {
-//	        Toolset("summarization-tools", func() {
-//	            Tool("summarizer", func() { ... })
+//	        Toolset("document-tools", func() {
+//	            Tool("summarize", "Summarize document", func() { ... })
+//	            Tool("extract", "Extract metadata", func() { ... })
 //	        })
-//	        Toolset(OtherToolsetReference)
 //	    })
 //	})
-//
-// The function passed to Exports should declare Toolsets to be exported by the agent.
 func Exports(fn func()) {
 	agent, ok := eval.Current().(*expragents.AgentExpr)
 	if !ok {

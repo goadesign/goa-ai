@@ -420,6 +420,59 @@ func Return(val any, args ...any) {
 	tool.Return = toolDSL(tool, "Return", val, args...)
 }
 
+// CallHintTemplate configures a display template for tool invocations. The
+// template is rendered with the tool's payload to produce a concise hint shown
+// during execution. Templates are compiled with missingkey=error.
+//
+// CallHintTemplate must appear in a Tool expression.
+//
+// CallHintTemplate takes a single string argument which is the Go template text.
+// Keep templates concise (≤ 140 characters recommended).
+//
+// Example:
+//
+//	Tool("search", "Search documents", func() {
+//	    Args(func() {
+//	        Attribute("query", String)
+//	        Attribute("limit", Int)
+//	    })
+//	    CallHintTemplate("Searching for: {{ .Query }} (limit: {{ .Limit }})")
+//	})
+func CallHintTemplate(s string) {
+	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	tool.CallHintTemplate = strings.TrimSpace(s)
+}
+
+// ResultHintTemplate configures a display template for tool results. The
+// template is rendered with the tool's result to produce a preview shown after
+// execution. Templates are compiled with missingkey=error.
+//
+// ResultHintTemplate must appear in a Tool expression.
+//
+// ResultHintTemplate takes a single string argument which is the Go template text.
+//
+// Example:
+//
+//	Tool("search", "Search documents", func() {
+//	    Return(func() {
+//	        Attribute("count", Int)
+//	        Attribute("results", ArrayOf(String))
+//	    })
+//	    ResultHintTemplate("Found {{ .Count }} results")
+//	})
+func ResultHintTemplate(s string) {
+	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	tool.ResultHintTemplate = strings.TrimSpace(s)
+}
+
 // Tags attaches metadata labels to a tool for categorization and filtering. Tags
 // can be used by agents, planners, or monitoring systems to organize and discover
 // tools based on their capabilities or domains.
@@ -460,8 +513,19 @@ func Tags(values ...string) {
 	}
 }
 
-// ToolsetDescription sets the description for the current toolset. Use inside a
-// Toolset DSL block. It has no effect outside of toolset scope.
+// ToolsetDescription sets a human-readable description for the current toolset.
+// This description can help document the toolset's purpose and capabilities.
+//
+// ToolsetDescription must appear in a Toolset expression.
+//
+// ToolsetDescription takes a single string argument.
+//
+// Example:
+//
+//	Toolset("data-tools", func() {
+//	    ToolsetDescription("Tools for data processing and analysis")
+//	    Tool("analyze", "Analyze dataset", func() { ... })
+//	})
 func ToolsetDescription(s string) {
 	ts, ok := eval.Current().(*agentsexpr.ToolsetExpr)
 	if !ok {
@@ -470,16 +534,6 @@ func ToolsetDescription(s string) {
 	}
 	ts.Description = strings.TrimSpace(s)
 }
-
-// Aliases declares alternate short names that should resolve to this tool's
-// fully qualified identifier. Use Aliases inside a Tool DSL to accept legacy
-// or UI-facing names without hardcoding mappings in application code.
-//
-// Example:
-//   Tool("add_todo_items", "...", func() {
-//       Aliases("todos_upsert")
-//   })
-// (Aliases DSL removed; use boundary mapping in callers instead of core aliases.)
 
 // BindTo associates a tool with a Goa service method implementation. Use BindTo
 // inside a Tool DSL to specify which service method executes the tool when invoked.
@@ -558,9 +612,20 @@ func BindTo(args ...string) {
 	tool.RecordBinding(serviceName, methodName)
 }
 
-// ToolTitle sets a human-friendly display title for the current tool. Use inside a
-// Tool DSL block. When not set, code generation derives a sensible default from
-// the tool name (snake_case/kebab-case to Title Case).
+// ToolTitle sets a human-friendly display title for the current tool. If not
+// specified, the generated code derives a title from the tool name by converting
+// snake_case or kebab-case to Title Case.
+//
+// ToolTitle must appear in a Tool expression.
+//
+// ToolTitle takes a single string argument.
+//
+// Example:
+//
+//	Tool("web_search", "Search the web", func() {
+//	    ToolTitle("Web Search")
+//	    Args(func() { ... })
+//	})
 func ToolTitle(s string) {
 	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
 	if !ok {

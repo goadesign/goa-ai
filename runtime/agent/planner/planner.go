@@ -135,10 +135,15 @@ type (
 		// and usage deltas during provider streaming.
 		Events PlannerEvents
 
-        // ToolResults lists the results of the tools executed since the previous planner
-        // call. Planners integrate these results (successes and failures) into their
-        // reasoning to decide the next action.
-        ToolResults []*ToolResult
+		// ToolResults lists the results of the tools executed since the previous planner
+		// call. Planners integrate these results (successes and failures) into their
+		// reasoning to decide the next action.
+		ToolResults []*ToolResult
+
+		// Finalize, when non-nil, indicates the runtime is requesting a tool-free
+		// final response due to termination conditions (time budget, caps, policy).
+		// Planners SHOULD ignore tool discovery and return a FinalResponse in this turn.
+		Finalize *Termination
 	}
 
 	// PlanResult communicates the planner's decision: either request more tool executions
@@ -343,7 +348,8 @@ type (
 
 		// Error contains the error returned by the tool execution, if any. Nil on success.
 		// Planners should handle errors gracefully (retry, fallback, or report to user).
-		Error error
+		// Uses *ToolError (not error interface) to ensure serialization compatibility.
+		Error *ToolError
 
 		// RetryHint carries structured guidance directly from the tool execution when
 		// available (e.g., invalid arguments, tool unavailable). Planners can leverage
@@ -432,4 +438,25 @@ type (
 		// iterating over stored data.
 		Keys() []string
 	}
+
+	// Termination requests a final assistant response without executing tools.
+	// Planners should produce the best possible answer with available context.
+	Termination struct {
+		// Reason identifies the termination category.
+		Reason TerminationReason
+		// Message provides a brief human-readable hint that can be included in prompts.
+		Message string
+	}
+)
+
+// TerminationReason categorizes why the runtime is requesting a tool-free finalization.
+type TerminationReason string
+
+const (
+	// TerminationReasonTimeBudget indicates the run exceeded its time budget.
+	TerminationReasonTimeBudget TerminationReason = "time_budget_exceeded"
+	// TerminationReasonToolCap indicates the run exhausted its tool call cap.
+	TerminationReasonToolCap TerminationReason = "tool_cap_exhausted"
+	// TerminationReasonFailureCap indicates the run exceeded consecutive failure cap.
+	TerminationReasonFailureCap TerminationReason = "failure_cap_exhausted"
 )

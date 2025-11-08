@@ -3,31 +3,33 @@ package tests
 import (
 	"testing"
 
-	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
-	"strings"
 )
 
 func TestGolden_Args_Primitive(t *testing.T) {
 	files := buildAndGenerate(t, testscenarios.ArgsPrimitive())
+	types := fileContent(t, files, "gen/alpha/agents/scribe/specs/ops/types.go")
 	codecs := fileContent(t, files, "gen/alpha/agents/scribe/specs/ops/codecs.go")
-	require.Contains(t, codecs, "JSONCodec[string]")
-	require.Contains(t, codecs, "func MarshalEchoPayload(v string)")
+	specs := fileContent(t, files, "gen/alpha/agents/scribe/specs/ops/specs.go")
+	assertGoldenGo(t, "args_primitive", "types.go.golden", types)
+	assertGoldenGo(t, "args_primitive", "codecs.go.golden", codecs)
+	assertGoldenGo(t, "args_primitive", "specs.go.golden", specs)
 }
 
 func TestGolden_Args_InlineObject(t *testing.T) {
 	files := buildAndGenerate(t, testscenarios.ArgsInlineObject())
+	types := fileContent(t, files, "gen/alpha/agents/scribe/specs/math/types.go")
 	codecs := fileContent(t, files, "gen/alpha/agents/scribe/specs/math/codecs.go")
-	require.NotEmpty(t, codecs)
+	specs := fileContent(t, files, "gen/alpha/agents/scribe/specs/math/specs.go")
+	assertGoldenGo(t, "args_inline", "types.go.golden", types)
+	assertGoldenGo(t, "args_inline", "codecs.go.golden", codecs)
+	assertGoldenGo(t, "args_inline", "specs.go.golden", specs)
 }
 
 func TestGolden_Args_UserType(t *testing.T) {
 	files := buildAndGenerate(t, testscenarios.ArgsUserType())
-	// user type variants typically do not emit pure types; check codecs/specs
 	codecs := fileContent(t, files, "gen/alpha/agents/scribe/specs/docs/codecs.go")
-	// Accept either external pointer types or local aliases depending on shape
-	// resolution; both are valid codegen outcomes.
-	if !strings.Contains(codecs, "JSONCodec[*alpha.") && !strings.Contains(codecs, "JSONCodec[StorePayload]") {
-		t.Fatalf("expected codecs to contain external pointer or local alias JSONCodec, got:\n%s", codecs)
-	}
+	specs := fileContent(t, files, "gen/alpha/agents/scribe/specs/docs/specs.go")
+	assertGoldenGo(t, "args_usertype", "codecs.go.golden", codecs)
+	assertGoldenGo(t, "args_usertype", "specs.go.golden", specs)
 }

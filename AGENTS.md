@@ -88,6 +88,65 @@
   test -race -vet=off ./...` (or `make test`) locally and avoid coverage
   regressions.
 
+## Codegen: Handling Types Elegantly (Goa Scopes, Refs, and Locators)
+
+This repository generates a significant amount of Go based on Goa designs. Type
+references must be produced by Goa’s codegen APIs — never by manual string
+concatenation — to stay correct across composites, aliases, and external package
+locators.
+
+Key principles
+
+- Always compute type references using NameScope helpers:
+  - `Scope.GoTypeName(att)`, `Scope.GoFullTypeName(att, pkgAlias)`
+  - `Scope.GoTypeRef(att)`, `Scope.GoFullTypeRef(att, pkgAlias)`
+  - Prefer the “Full” variants when qualifying with a specific package alias.
+- Use a single `NameScope` per emitted file to ensure consistent, conflict‑free
+  naming across that file.
+- Preserve the original `*expr.AttributeExpr` when computing refs so Goa can
+  honor `Meta("struct:pkg:path")` locators. Do not fabricate user types unless
+  you faithfully copy locator metadata.
+- Let Goa decide pointer/value semantics. Do not globally force pointers
+  (e.g., `pointer=true`) in `AttributeContextForConversion` except in transports
+  where it’s required for validation. For internal transforms, set `pointer=false`
+  and rely on default semantics (required/default → pointer or value as needed).
+- Build conversion bodies via `codegen.GoTransform(src, dst, "in", "out", srcCtx, dstCtx, …)`;
+  don’t post‑process emitted code to change pointer/value or qualification.
+- Gather imports from attributes and locators:
+  - `codegen.UserTypeLocation(ut)`, `codegen.GetMetaTypeImports(att)`
+  - plus explicit service/specs imports where needed.
+  - Render with `codegen.Header` so unused imports are pruned automatically.
+
+Internal adapter transforms
+
+- When generating adapter helpers that map tool payloads/results to service
+  method payloads/results:
+  - Signatures use `Scope.GoFullTypeRef` on the original tool/service attributes
+    with the correct package alias (specs vs service); this handles composites
+    (arrays/maps) and external locators.
+  - Bodies use `GoTransform` with `AttributeContextForConversion(pointer=false)`
+    for both source and target contexts to preserve Goa’s default pointer rules.
+  - Example (conceptual):
+    - Payload helper: `Init<GoName>MethodPayload(in <specsRef>) <serviceRef>`
+    - Result helper: `Init<GoName>ToolResult(in <serviceRef>) <specsRef>`
+
+Why this matters
+
+- Meta locators and composite types break ad‑hoc string construction. Using
+  Goa’s Scope + locators ensures refs are qualified to the correct package and
+  that pointer/value forms match the design’s required/default contracts.
+- A single file‑level `NameScope` guarantees deterministic naming and reduces
+  collisions.
+
+Common pitfalls to avoid
+
+- Do not concatenate `"*" + pkg + "." + Type` — this fails for arrays/maps and
+  nested composites.
+- Do not set `pointer=true` in transforms unless you’re in transport/validation
+  code; it forces pointers even where defaults/requireds intend value types.
+- Do not drop locator metadata when synthesizing user types; refs will be wrong.
+
+
 ### Boundaries & Validation
 
 - Validate only at system boundaries:

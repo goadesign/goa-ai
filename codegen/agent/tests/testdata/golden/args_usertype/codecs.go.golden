@@ -11,27 +11,27 @@ import (
 	"errors"
 	"fmt"
 	"goa.design/goa-ai/runtime/agent/tools"
-    alpha "goa.design/goa-ai/gen/alpha"
+	goa "goa.design/goa/v3/pkg"
 	"strings"
 )
 
 var (
-	// StorePayloadCodec serializes values of type *StorePayload to canonical JSON.
-	StorePayloadCodec = tools.JSONCodec[*StorePayload]{
+	// StorePayloadCodec serializes values of type StorePayload to canonical JSON.
+	StorePayloadCodec = tools.JSONCodec[StorePayload]{
 		ToJSON:   MarshalStorePayload,
 		FromJSON: UnmarshalStorePayload,
 	}
-	// StoreResultCodec serializes values of type *StoreResult to canonical JSON.
-	StoreResultCodec = tools.JSONCodec[*StoreResult]{
+	// StoreResultCodec serializes values of type StoreResult to canonical JSON.
+	StoreResultCodec = tools.JSONCodec[StoreResult]{
 		ToJSON:   MarshalStoreResult,
 		FromJSON: UnmarshalStoreResult,
 	}
-	// storePayloadCodec provides an untyped codec for *StorePayload.
+	// storePayloadCodec provides an untyped codec for StorePayload.
 	storePayloadCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
-			typed, ok := v.(*StorePayload)
+			typed, ok := v.(StorePayload)
 			if !ok {
-				return nil, fmt.Errorf("expected *StorePayload, got %T", v)
+				return nil, fmt.Errorf("expected StorePayload, got %T", v)
 			}
 			return MarshalStorePayload(typed)
 		},
@@ -39,12 +39,12 @@ var (
 			return UnmarshalStorePayload(data)
 		},
 	}
-	// storeResultCodec provides an untyped codec for *StoreResult.
+	// storeResultCodec provides an untyped codec for StoreResult.
 	storeResultCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
-			typed, ok := v.(*StoreResult)
+			typed, ok := v.(StoreResult)
 			if !ok {
-				return nil, fmt.Errorf("expected *StoreResult, got %T", v)
+				return nil, fmt.Errorf("expected StoreResult, got %T", v)
 			}
 			return MarshalStoreResult(typed)
 		},
@@ -53,6 +53,10 @@ var (
 		},
 	}
 )
+var StorePayloadFieldDescs = map[string]string{
+	"id":    "Identifier",
+	"title": "Title",
+}
 
 // ValidationError wraps a validation failure and exposes issues that callers
 // can use to build retry hints. It implements error and an Issues() accessor.
@@ -87,6 +91,63 @@ func (e ValidationError) Descriptions() map[string]string {
 // newValidationError converts a goa.ServiceError (possibly merged) into a
 // ValidationError with structured FieldIssue entries. It trims any leading
 // "body." from field names for conciseness.
+func newValidationError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var se *goa.ServiceError
+	if !errors.As(err, &se) {
+		return err
+	}
+	hist := se.History()
+	issues := make([]*tools.FieldIssue, 0, len(hist))
+	for _, h := range hist {
+		var field string
+		if h.Field != nil {
+			field = *h.Field
+		}
+		if strings.HasPrefix(field, "body.") {
+			field = strings.TrimPrefix(field, "body.")
+		}
+		issues = append(issues, &tools.FieldIssue{Field: field, Constraint: h.Name})
+	}
+	if len(issues) == 0 {
+		return err
+	}
+	return &ValidationError{
+		msg:    err.Error(),
+		issues: issues,
+	}
+}
+func enrichStorePayloadValidationError(err error) error {
+	ve, ok := err.(*ValidationError)
+	if !ok || ve == nil {
+		return err
+	}
+	if len(ve.issues) == 0 {
+		return err
+	}
+	m := make(map[string]string)
+	for _, is := range ve.issues {
+		if d, ok := StorePayloadFieldDescs[is.Field]; ok && d != "" {
+			m[is.Field] = d
+		}
+	}
+	ve.descriptions = m
+	return ve
+}
+func enrichStorePayloadJSON2ValidationError(err error) error {
+	ve, ok := err.(*ValidationError)
+	if !ok || ve == nil {
+		return err
+	}
+	if len(ve.issues) == 0 {
+		return err
+	}
+	m := make(map[string]string)
+	ve.descriptions = m
+	return ve
+}
 
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
@@ -108,42 +169,76 @@ func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 	}
 }
 
-// MarshalStorePayload serializes *StorePayload into JSON.
-func MarshalStorePayload(v *StorePayload) ([]byte, error) {
-	if v == nil {
-		return nil, fmt.Errorf("storePayload is nil")
-	}
+// MarshalStorePayload serializes StorePayload into JSON.
+func MarshalStorePayload(v StorePayload) ([]byte, error) {
 	return json.Marshal(v)
 }
 
-// UnmarshalStorePayload deserializes JSON into *StorePayload.
-func UnmarshalStorePayload(data []byte) (*StorePayload, error) {
+// UnmarshalStorePayload deserializes JSON into StorePayload.
+func UnmarshalStorePayload(data []byte) (StorePayload, error) {
+	var zero StorePayload
 	if len(data) == 0 {
-		return nil, fmt.Errorf("storePayload JSON is empty")
+		return zero, fmt.Errorf("storePayload JSON is empty")
 	}
-	var v StorePayload
-	if err := json.Unmarshal(data, &v); err != nil {
-		return nil, fmt.Errorf("decode storePayload: %w", err)
+	// Decode into JSON body (server body style) then validate & transform
+	var raw StorePayloadJSON2
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return zero, fmt.Errorf("decode storePayload: %w", err)
 	}
-	return &v, nil
+	var err error
+	if raw.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "raw"))
+	}
+	if raw.Title == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("title", "raw"))
+	}
+	if err != nil {
+		err = newValidationError(err)
+		err = enrichStorePayloadValidationError(err)
+		return zero, fmt.Errorf("validate storePayload: %w", err)
+	}
+	// Transform into final type
+	v := &DocStoreArgs{
+		ID:    *raw.ID,
+		Title: *raw.Title,
+	}
+	return *v, nil
 }
 
-// MarshalStoreResult serializes *StoreResult into JSON.
-func MarshalStoreResult(v *StoreResult) ([]byte, error) {
-	if v == nil {
-		return nil, fmt.Errorf("storeResult is nil")
-	}
+// MarshalStoreResult serializes StoreResult into JSON.
+func MarshalStoreResult(v StoreResult) ([]byte, error) {
 	return json.Marshal(v)
 }
 
-// UnmarshalStoreResult deserializes JSON into *StoreResult.
-func UnmarshalStoreResult(data []byte) (*StoreResult, error) {
+// UnmarshalStoreResult deserializes JSON into StoreResult.
+func UnmarshalStoreResult(data []byte) (StoreResult, error) {
+	var zero StoreResult
 	if len(data) == 0 {
-		return nil, fmt.Errorf("storeResult JSON is empty")
+		return zero, fmt.Errorf("storeResult JSON is empty")
 	}
+	// Non-payload types: simple decode
 	var v StoreResult
 	if err := json.Unmarshal(data, &v); err != nil {
-		return nil, fmt.Errorf("decode storeResult: %w", err)
+		return zero, fmt.Errorf("decode storeResult: %w", err)
 	}
-	return &v, nil
+	return v, nil
+}
+
+// Transform helpers
+
+// ValidateDoc_store_Args validates values of type *DocStoreArgs.
+func ValidateDoc_store_Args(body *DocStoreArgs) (err error) {
+
+	return
+}
+
+// ValidateStorePayloadJSON2 validates values of type *StorePayloadJSON2.
+func ValidateStorePayloadJSON2(body *StorePayloadJSON2) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Title == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("title", "body"))
+	}
+	return
 }

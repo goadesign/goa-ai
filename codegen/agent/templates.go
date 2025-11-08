@@ -21,13 +21,15 @@ const (
 	registryFileT        = "registry"
 	serviceToolsetFileT  = "service_toolset"
 	mcpExecutorFileT     = "mcp_executor"
+	serviceExecutorFileT = "service_executor"
 	toolCodecsFileT      = "tool_codecs"
 	toolSpecFileT        = "tool_spec"
 	toolSpecsAggregateT  = "specs_aggregate"
 	toolTransformsFileT  = "tool_transforms"
 	toolTypesFileT       = "tool_types"
 	workflowFileT        = "workflow"
-    // routeRegisterFileT removed; piggyback route on toolset registration
+	// routeRegisterFileT removed; piggyback route on toolset registration
+	usedToolsFileT = "used_tools"
 )
 
 //go:embed templates/*.go.tpl

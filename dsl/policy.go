@@ -7,21 +7,31 @@ import (
 	"goa.design/goa/v3/eval"
 )
 
-// RunPolicy defines the agent run policy DSL, used to set runtime limits and
-// constraints (such as capability budgets or timeout ceilings) for the current
-// agent declaration.  Place this inside an Agent block to specify execution
-// boundaries and limits enforced during agent runs. The policy is
-// surface-level, configuring the agent's resource consumption contract during
-// evaluation and orchestration.
+// RunPolicy defines execution constraints for the current agent. Use RunPolicy
+// to configure resource limits, timeouts, and runtime behaviors that govern how
+// the agent executes. These policies are enforced by the runtime during agent
+// execution.
 //
-// RunPolicy must appear in a Agent expression.
+// RunPolicy must appear in an Agent expression.
 //
-// RunPolicy takes a function that defines the run policy. The function can use
-// the following functions to define the run policy:
-//   - DefaultCaps: sets the default capability limits for the agent run
-//   - TimeBudget: sets the time budget for the agent run
-//   - InterruptsAllowed: sets whether user-initiated interruptions are allowed
-//     during the agent run
+// RunPolicy takes a single argument which is the defining DSL function.
+//
+// The DSL function may use:
+//   - DefaultCaps to set capability limits (tool calls, consecutive failures)
+//   - TimeBudget to set maximum execution duration
+//   - InterruptsAllowed to enable or disable user interruptions
+//   - OnMissingFields to configure validation behavior
+//
+// Example:
+//
+//	Agent("assistant", "Helper agent", func() {
+//	    RunPolicy(func() {
+//	        DefaultCaps(MaxToolCalls(10), MaxConsecutiveFailedToolCalls(3))
+//	        TimeBudget("5m")
+//	        InterruptsAllowed(true)
+//	        OnMissingFields("await_clarification")
+//	    })
+//	})
 func RunPolicy(fn func()) {
 	agent, ok := eval.Current().(*expragents.AgentExpr)
 	if !ok {
@@ -40,10 +50,23 @@ func RunPolicy(fn func()) {
 	}
 }
 
-// DefaultCaps defines the per-run capability limits for the current agent
-// policy, configuring resource ceilings such as the maximum number of tool
-// calls or allowed consecutive failures during each agent execution. Place
-// DefaultCaps inside a RunPolicy block to specify these constraints.
+// DefaultCaps configures resource limits for agent execution. Use DefaultCaps
+// to control how many tools the agent can invoke and how many consecutive
+// failures are tolerated before stopping execution.
+//
+// DefaultCaps must appear in a RunPolicy expression.
+//
+// DefaultCaps takes zero or more CapsOption arguments (created via MaxToolCalls
+// and MaxConsecutiveFailedToolCalls).
+//
+// Example:
+//
+//	RunPolicy(func() {
+//	    DefaultCaps(
+//	        MaxToolCalls(20),
+//	        MaxConsecutiveFailedToolCalls(3),
+//	    )
+//	})
 func DefaultCaps(opts ...CapsOption) {
 	policy, ok := eval.Current().(*expragents.RunPolicyExpr)
 	if !ok {
@@ -62,7 +85,19 @@ func DefaultCaps(opts ...CapsOption) {
 	}
 }
 
-// TimeBudget sets the maximum wall-clock duration the agent is allowed to run per execution.
+// TimeBudget sets the maximum execution time for the agent. The agent will be
+// stopped if it exceeds this duration.
+//
+// TimeBudget must appear in a RunPolicy expression.
+//
+// TimeBudget takes a single argument which is a duration string (e.g., "30s",
+// "5m", "1h").
+//
+// Example:
+//
+//	RunPolicy(func() {
+//	    TimeBudget("5m")
+//	})
 func TimeBudget(duration string) {
 	policy, ok := eval.Current().(*expragents.RunPolicyExpr)
 	if !ok {
@@ -77,7 +112,19 @@ func TimeBudget(duration string) {
 	policy.TimeBudget = dur
 }
 
-// InterruptsAllowed toggles whether runtime interrupts are honored.
+// InterruptsAllowed configures whether user interruptions are permitted during
+// agent execution. When enabled, users can interrupt running agents to provide
+// guidance or stop execution.
+//
+// InterruptsAllowed must appear in a RunPolicy expression.
+//
+// InterruptsAllowed takes a single boolean argument.
+//
+// Example:
+//
+//	RunPolicy(func() {
+//	    InterruptsAllowed(true)
+//	})
 func InterruptsAllowed(allowed bool) {
 	policy, ok := eval.Current().(*expragents.RunPolicyExpr)
 	if !ok {
@@ -87,18 +134,65 @@ func InterruptsAllowed(allowed bool) {
 	policy.InterruptsAllowed = allowed
 }
 
+// OnMissingFields configures how the agent responds when tool invocation
+// validation detects missing required fields. This allows you to control
+// whether the agent should stop, wait for user input, or continue execution.
+//
+// OnMissingFields must appear in a RunPolicy expression.
+//
+// OnMissingFields takes a single string argument. Valid values:
+//   - "finalize": stop execution when required fields are missing
+//   - "await_clarification": pause and wait for user to provide missing information
+//   - "resume": continue execution despite missing fields
+//   - "" (empty): let the planner decide based on context
+//
+// Example:
+//
+//	RunPolicy(func() {
+//	    OnMissingFields("await_clarification")
+//	})
+func OnMissingFields(action string) {
+	policy, ok := eval.Current().(*expragents.RunPolicyExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	switch action {
+	case "", "finalize", "await_clarification", "resume":
+		policy.OnMissingFields = action
+	default:
+		eval.ReportError("invalid OnMissingFields value %q (allowed: finalize, await_clarification, resume)", action)
+	}
+}
+
 // CapsOption defines a functional option for configuring per-run resource limits
 // on agent execution.
 type CapsOption func(*expragents.CapsExpr)
 
-// MaxToolCalls returns a CapsOption that sets the maximum number of tool invocations.
+// MaxToolCalls configures the maximum number of tool invocations allowed during
+// agent execution. Use this with DefaultCaps to limit total tool usage.
+//
+// MaxToolCalls takes a single integer argument specifying the maximum count.
+//
+// Example:
+//
+//	DefaultCaps(MaxToolCalls(15))
 func MaxToolCalls(n int) CapsOption {
 	return func(c *expragents.CapsExpr) {
 		c.MaxToolCalls = n
 	}
 }
 
-// MaxConsecutiveFailedToolCalls sets the maximum number of consecutive failed tool invocations.
+// MaxConsecutiveFailedToolCalls configures the maximum number of consecutive
+// tool failures before the agent stops execution. Use this with DefaultCaps to
+// prevent runaway failure loops.
+//
+// MaxConsecutiveFailedToolCalls takes a single integer argument specifying the
+// maximum consecutive failure count.
+//
+// Example:
+//
+//	DefaultCaps(MaxConsecutiveFailedToolCalls(3))
 func MaxConsecutiveFailedToolCalls(n int) CapsOption {
 	return func(c *expragents.CapsExpr) {
 		c.MaxConsecutiveFailedToolCall = n

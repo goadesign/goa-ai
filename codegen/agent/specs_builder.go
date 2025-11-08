@@ -21,15 +21,15 @@
 package codegen
 
 import (
-    "fmt"
-    "path"
-    "sort"
-    "strings"
+	"fmt"
+	"path"
+	"sort"
+	"strings"
 
-    "goa.design/goa/v3/codegen"
-    "goa.design/goa/v3/codegen/service"
-    goaexpr "goa.design/goa/v3/expr"
-    "goa.design/goa/v3/http/codegen/openapi"
+	"goa.design/goa/v3/codegen"
+	"goa.design/goa/v3/codegen/service"
+	goaexpr "goa.design/goa/v3/expr"
+	"goa.design/goa/v3/http/codegen/openapi"
 )
 
 type (
@@ -1150,9 +1150,9 @@ func schemaForAttribute(att *goaexpr.AttributeExpr) ([]byte, error) {
 	if schema == nil {
 		return nil, nil
 	}
-    if len(openapi.Definitions) > 0 {
-        schema.Defs = openapi.Definitions
-    }
+	if len(openapi.Definitions) > 0 {
+		schema.Defs = openapi.Definitions
+	}
 	// Prefer a concrete root schema: for user types, inline the referenced
 	// definition as the root so that the top-level contains "type":"object".
 	// Retain definitions to allow nested $ref resolution.
@@ -1181,20 +1181,20 @@ func schemaForAttribute(att *goaexpr.AttributeExpr) ([]byte, error) {
 						def.Defs = defs
 					}
 				}
-                // Marshal schema JSON directly (Goa emits 2020-12 + $defs).
-                b, err := def.JSON()
-                if err != nil {
-                    return b, nil
-                }
-                return b, nil
-            }
-        }
-    }
-    b, err := schema.JSON()
-    if err != nil {
-        return b, err
-    }
-    return b, nil
+				// Marshal schema JSON directly (Goa emits 2020-12 + $defs).
+				b, err := def.JSON()
+				if err != nil {
+					return b, nil
+				}
+				return b, nil
+			}
+		}
+	}
+	b, err := schema.JSON()
+	if err != nil {
+		return b, err
+	}
+	return b, nil
 }
 
 // joinImportPath constructs a full import path by joining the generation package

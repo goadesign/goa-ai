@@ -8,9 +8,9 @@ package ops
 
 type (
 
-	// EchoPayload defines the JSON payload for the alpha.ops.echo tool.
-	EchoPayload string
-
-	// EchoResult defines the JSON result for the alpha.ops.echo tool.
-	EchoResult string
+	// EchoPayloadJSON2 is a helper type for JSON decode-body.
+	EchoPayloadJSON2 struct {
+		// text to echo
+		Value *string
+	}
 )

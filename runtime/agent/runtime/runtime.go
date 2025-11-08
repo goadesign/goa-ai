@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +48,10 @@ import (
 	"goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
+
+	"text/template"
+
+	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 )
 
 type (
@@ -186,6 +191,10 @@ type (
 		ResumeActivityOptions engine.ActivityOptions
 		// ExecuteToolActivity is the logical name of the registered ExecuteTool activity.
 		ExecuteToolActivity string
+		// ExecuteToolActivityOptions describes retry/timeout/queue for the ExecuteTool activity.
+		// Strong-contract scheduling: when set, these options are applied to all tool activities
+		// scheduled by this agent (including nested inline agent runs via ExecuteAgentInlineWithRoute).
+		ExecuteToolActivityOptions engine.ActivityOptions
 		// Specs provides JSON codecs for every tool declared in the agent design.
 		Specs []tools.ToolSpec
 		// Policy configures caps/time budget/interrupt settings for the agent.
@@ -239,6 +248,38 @@ type (
 		// Non-agent toolsets (service/client backed) should leave this false so that
 		// tools are scheduled as activities, enabling isolation and retries.
 		Inline bool
+
+		// CallHints optionally provides precompiled templates for call display hints
+		// keyed by tool ident. When present, RegisterToolset installs these in the
+		// global hints registry so sinks can render concise, domain-authored labels.
+		CallHints map[tools.Ident]*template.Template
+
+		// ResultHints optionally provides precompiled templates for result previews
+		// keyed by tool ident. When present, RegisterToolset installs these in the
+		// global hints registry so sinks can render concise result previews.
+		ResultHints map[tools.Ident]*template.Template
+
+		// PayloadAdapter normalizes or enriches raw JSON payloads prior to decoding.
+		// The adapter is applied exactly once at the activity boundary, or before
+		// inline execution for Inline toolsets. When nil, no adaptation is applied.
+		PayloadAdapter func(ctx context.Context, meta ToolCallMeta, tool tools.Ident, raw json.RawMessage) (json.RawMessage, error)
+
+		// ResultAdapter normalizes encoded JSON results before they are published or
+		// returned to the caller. When nil, no adaptation is applied.
+		ResultAdapter func(ctx context.Context, meta ToolCallMeta, tool tools.Ident, raw json.RawMessage) (json.RawMessage, error)
+
+		// DecodeInExecutor instructs the runtime to pass raw JSON payloads through to
+		// the executor without pre-decoding. The executor must decode using generated
+		// codecs. Defaults to false.
+		DecodeInExecutor bool
+
+		// SuppressChildEvents hides child inline tool events for agent-as-tool
+		// registrations. When true, only the aggregated parent event is emitted.
+		SuppressChildEvents bool
+
+		// TelemetryBuilder can be provided to build or enrich telemetry consistently
+		// across transports. When set, the runtime may invoke it with timing/context.
+		TelemetryBuilder func(ctx context.Context, meta ToolCallMeta, tool tools.Ident, start, end time.Time, extras map[string]any) *telemetry.ToolTelemetry
 	}
 
 	// RunPolicy configures per-agent runtime behavior (caps, time budgets, interrupts).
@@ -247,13 +288,35 @@ type (
 	RunPolicy struct {
 		// MaxToolCalls caps the total number of tool invocations per run (0 = unlimited).
 		MaxToolCalls int
+
 		// MaxConsecutiveFailedToolCalls caps sequential failures before aborting (0 = unlimited).
 		MaxConsecutiveFailedToolCalls int
+
 		// TimeBudget is the wall-clock deadline for run completion (0 = unlimited).
 		TimeBudget time.Duration
+
 		// InterruptsAllowed indicates whether the workflow can be paused and resumed.
 		InterruptsAllowed bool
+
+		// OnMissingFields controls behavior when validation indicates missing fields:
+		// "finalize" | "await_clarification" | "resume"
+		OnMissingFields MissingFieldsAction
 	}
+)
+
+// MissingFieldsAction controls behavior when a tool validation error indicates
+// missing fields.  It is string-backed for JSON friendliness. Empty value means
+// unspecified (planner decides).
+type MissingFieldsAction string
+
+const (
+	// MissingFieldsFinalize instructs the runtime to finalize immediately
+	// when fields are missing.
+	MissingFieldsFinalize MissingFieldsAction = "finalize"
+	// MissingFieldsAwaitClarification instructs the runtime to pause and await user clarification.
+	MissingFieldsAwaitClarification MissingFieldsAction = "await_clarification"
+	// MissingFieldsResume instructs the runtime to continue without pausing; surface hints to the planner.
+	MissingFieldsResume MissingFieldsAction = "resume"
 )
 
 var (
@@ -340,9 +403,7 @@ func WithSearchAttributes(sa map[string]any) RunOption {
 		if in.WorkflowOptions.SearchAttributes == nil {
 			in.WorkflowOptions.SearchAttributes = make(map[string]any, len(sa))
 		}
-		for k, v := range sa {
-			in.WorkflowOptions.SearchAttributes[k] = v
-		}
+		maps.Copy(in.WorkflowOptions.SearchAttributes, sa)
 	}
 }
 
@@ -354,6 +415,31 @@ func WithWorkflowOptions(o *WorkflowOptions) RunOption {
 // WithPerTurnMaxToolCalls sets a per-turn cap on tool executions. Zero means unlimited.
 func WithPerTurnMaxToolCalls(n int) RunOption {
 	return func(in *RunInput) { in.Policy.PerTurnMaxToolCalls = n }
+}
+
+// WithRunMaxToolCalls sets a per-run cap on total tool executions.
+// Non-zero overrides the agent's DSL RunPolicy default for this run.
+// Zero means no override (use the design default, which may be unlimited).
+func WithRunMaxToolCalls(n int) RunOption {
+	return func(in *RunInput) { in.Policy.MaxToolCalls = n }
+}
+
+// WithRunMaxConsecutiveFailedToolCalls caps consecutive failures before aborting the run.
+// Non-zero overrides the agent's DSL RunPolicy default for this run.
+// Zero means no override (use the design default, which may be unlimited).
+func WithRunMaxConsecutiveFailedToolCalls(n int) RunOption {
+	return func(in *RunInput) { in.Policy.MaxConsecutiveFailedToolCalls = n }
+}
+
+// WithRunTimeBudget sets a wall-clock budget for the run. Zero means no override.
+func WithRunTimeBudget(d time.Duration) RunOption {
+	return func(in *RunInput) { in.Policy.TimeBudget = d }
+}
+
+// WithRunInterruptsAllowed enables human-in-the-loop interruptions for this run.
+// When false, no override is applied and the agent registration policy governs.
+func WithRunInterruptsAllowed(allowed bool) RunOption {
+	return func(in *RunInput) { in.Policy.InterruptsAllowed = allowed }
 }
 
 // WithRestrictToTool restricts candidate tools to a single tool for the run.
@@ -456,8 +542,10 @@ func newFromOptions(opts Options) *Runtime {
 				memEvent = memory.Event{
 					Type:      memory.EventPlannerNote,
 					Timestamp: time.UnixMilli(evt.Timestamp()),
-					Data:      map[string]any{"note": evt.Note},
-					Labels:    evt.Labels,
+					Data: map[string]any{
+						"note": evt.Note,
+					},
+					Labels: evt.Labels,
 				}
 				return rt.Memory.AppendEvents(ctx, evt.AgentID(), evt.RunID(), memEvent)
 			}
@@ -627,6 +715,14 @@ func (r *Runtime) RegisterToolset(ts ToolsetRegistration) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.addToolsetLocked(ts)
+
+	// Install optional hint templates into the global registry for sinks.
+	if len(ts.CallHints) > 0 {
+		rthints.RegisterCallHints(ts.CallHints)
+	}
+	if len(ts.ResultHints) > 0 {
+		rthints.RegisterResultHints(ts.ResultHints)
+	}
 	return nil
 }
 
@@ -745,7 +841,12 @@ func (r *Runtime) ExecuteAgentInline(
 			return nil, fmt.Errorf("plan start: %w", err)
 		}
 	} else {
-		startReq := PlanActivityInput{AgentID: agentID, RunID: nestedRunCtx.RunID, Messages: planInput.Messages, RunContext: planInput.RunContext}
+		startReq := PlanActivityInput{
+			AgentID:    agentID,
+			RunID:      nestedRunCtx.RunID,
+			Messages:   planInput.Messages,
+			RunContext: planInput.RunContext,
+		}
 		if reg.PlanActivityName == "" {
 			return nil, fmt.Errorf("agent %q missing plan activity for inline execution", agentID)
 		}
@@ -771,7 +872,9 @@ func (r *Runtime) ExecuteAgentInline(
 	// Turn sequencer for nested run
 	var seq *turnSequencer
 	if nestedRunCtx.TurnID != "" {
-		seq = &turnSequencer{turnID: nestedRunCtx.TurnID}
+		seq = &turnSequencer{
+			turnID: nestedRunCtx.TurnID,
+		}
 	}
 	nestedInput := RunInput{
 		AgentID:   agentID,
@@ -812,11 +915,23 @@ func (r *Runtime) ExecuteAgentInlineWithRoute(
 		memory:  reader,
 		turnID:  nestedRunCtx.TurnID,
 	})
-	planInput := planner.PlanInput{Messages: messages, RunContext: nestedRunCtx, Agent: agentCtx, Events: newPlannerEvents(r, string(route.ID), nestedRunCtx.RunID)}
+	planInput := planner.PlanInput{
+		Messages:   messages,
+		RunContext: nestedRunCtx,
+		Agent:      agentCtx,
+		Events:     newPlannerEvents(r, string(route.ID), nestedRunCtx.RunID),
+	}
 
 	// Always schedule plan activity on the provider queue
-	startReq := PlanActivityInput{AgentID: string(route.ID), RunID: nestedRunCtx.RunID, Messages: planInput.Messages, RunContext: planInput.RunContext}
-	initial, err := r.runPlanActivity(wfCtx, planActivityName, engine.ActivityOptions{Queue: route.DefaultTaskQueue}, startReq)
+	startReq := PlanActivityInput{
+		AgentID:    string(route.ID),
+		RunID:      nestedRunCtx.RunID,
+		Messages:   planInput.Messages,
+		RunContext: planInput.RunContext,
+	}
+	initial, err := r.runPlanActivity(wfCtx, planActivityName, engine.ActivityOptions{
+		Queue: route.DefaultTaskQueue,
+	}, startReq)
 	if err != nil {
 		return nil, err
 	}
@@ -827,18 +942,28 @@ func (r *Runtime) ExecuteAgentInlineWithRoute(
 	var deadline time.Time
 	var seq *turnSequencer
 	if nestedRunCtx.TurnID != "" {
-		seq = &turnSequencer{turnID: nestedRunCtx.TurnID}
+		seq = &turnSequencer{
+			turnID: nestedRunCtx.TurnID,
+		}
 	}
-	nestedInput := RunInput{AgentID: string(route.ID), RunID: nestedRunCtx.RunID, SessionID: nestedRunCtx.SessionID, TurnID: nestedRunCtx.TurnID, Messages: messages, Labels: nestedRunCtx.Labels}
+	nestedInput := RunInput{
+		AgentID:   string(route.ID),
+		RunID:     nestedRunCtx.RunID,
+		SessionID: nestedRunCtx.SessionID,
+		TurnID:    nestedRunCtx.TurnID,
+		Messages:  messages,
+		Labels:    nestedRunCtx.Labels,
+	}
 	// Build a synthetic registration for the run loop (policy/specs not needed)
 	reg := AgentRegistration{
-		ID:                    string(route.ID),
-		Workflow:              engine.WorkflowDefinition{Name: route.WorkflowName, TaskQueue: route.DefaultTaskQueue},
-		PlanActivityName:      planActivityName,
-		ResumeActivityName:    resumeActivityName,
-		ExecuteToolActivity:   executeToolActivity,
-		PlanActivityOptions:   engine.ActivityOptions{Queue: route.DefaultTaskQueue},
-		ResumeActivityOptions: engine.ActivityOptions{Queue: route.DefaultTaskQueue},
+		ID:                         string(route.ID),
+		Workflow:                   engine.WorkflowDefinition{Name: route.WorkflowName, TaskQueue: route.DefaultTaskQueue},
+		PlanActivityName:           planActivityName,
+		ResumeActivityName:         resumeActivityName,
+		ExecuteToolActivity:        executeToolActivity,
+		PlanActivityOptions:        engine.ActivityOptions{Queue: route.DefaultTaskQueue},
+		ResumeActivityOptions:      engine.ActivityOptions{Queue: route.DefaultTaskQueue},
+		ExecuteToolActivityOptions: engine.ActivityOptions{Queue: route.DefaultTaskQueue},
 	}
 	return r.runLoop(wfCtx, reg, &nestedInput, planInput, initial, caps, deadline, 1, seq, nil, nil)
 }
@@ -1132,10 +1257,3 @@ func (r *Runtime) workflowHandle(runID string) (engine.WorkflowHandle, bool) {
 	r.handleMu.RUnlock()
 	return h, ok
 }
-
-// AgentRouteRegistration holds route-only metadata for an agent to enable
-// inline composition across processes. It mirrors the subset of
-// AgentRegistration required to schedule plan/resume/tool activities and
-// enforce policy without requiring a local Planner.
-// AgentRouteRegistration removed; see ToolsetRegistration metadata and
-// ExecuteAgentInline conventions.
