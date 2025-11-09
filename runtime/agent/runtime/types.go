@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -20,17 +21,23 @@ type (
 	RunInput struct {
 		// AgentID identifies which agent should process the run.
 		AgentID string
+
 		// RunID is the durable workflow execution identifier.
 		RunID string
+
 		// SessionID groups related runs (e.g., multi-turn conversations).
 		SessionID string
+
 		// TurnID identifies the conversational turn (optional). When set, all events
 		// produced during this run are tagged with this TurnID for UI grouping.
 		TurnID string
+
 		// Messages carries the conversation history supplied by the caller.
-		Messages []planner.AgentMessage
+		Messages []*planner.AgentMessage
+
 		// Labels contains caller-provided metadata (tenant, priority, etc.).
 		Labels map[string]string
+
 		// Metadata allows orchestrators to attach arbitrary structured data.
 		Metadata map[string]any
 
@@ -42,17 +49,21 @@ type (
 		// Policy carries optional per-run policy overrides applied on every planner turn.
 		// These options allow callers to set caps and tool filters without modifying
 		// the agent registration defaults.
-		Policy PolicyOverrides
+		Policy *PolicyOverrides
 	}
 
 	// WorkflowOptions mirrors the subset of engine start options we expose through
 	// the runtime. Memo/SearchAttributes follow Temporal semantics but remain generic
 	// maps so other engines can interpret them as needed.
 	WorkflowOptions struct {
-		Memo             map[string]any
+		// Memo is a map of key-value pairs that can be used to store data for the workflow.
+		Memo map[string]any
+		// SearchAttributes is a map of key-value pairs that can be used to store data for the workflow.
 		SearchAttributes map[string]any
-		TaskQueue        string
-		RetryPolicy      engine.RetryPolicy
+		// TaskQueue is the name of the task queue to use for the workflow.
+		TaskQueue string
+		// RetryPolicy is the retry policy to use for the workflow.
+		RetryPolicy engine.RetryPolicy
 	}
 
 	// PolicyOverrides configures per-run policy constraints.
@@ -89,13 +100,13 @@ type (
 		// RunID echoes the workflow execution identifier.
 		RunID string
 		// Final is the assistant reply returned to the caller.
-		Final planner.AgentMessage
+		Final *planner.AgentMessage
 		// ToolEvents captures the last set of tool results emitted before completion.
 		ToolEvents []*planner.ToolResult
 		// Notes aggregates planner annotations produced during the final turn.
-		Notes []planner.PlannerAnnotation
+		Notes []*planner.PlannerAnnotation
 		// Usage aggregates model-reported token usage during the run when available.
-		Usage model.TokenUsage
+		Usage *model.TokenUsage
 	}
 
 	// ToolInput is the payload passed to tool executors. All tool types (activity-based,
@@ -149,7 +160,7 @@ type (
 		// RunID is the durable workflow execution identifier.
 		RunID string
 		// Messages contains the conversation context supplied to the planner.
-		Messages []planner.AgentMessage
+		Messages []*planner.AgentMessage
 		// RunContext carries caps, labels, and attempt metadata for the planner.
 		RunContext run.Context
 		// ToolResults lists the results since the previous planner turn (empty for PlanStart).
@@ -207,35 +218,38 @@ type (
 	// tools, MCP tools, and agent-tools. Registrations accept a ToolCallExecutor and
 	// the runtime delegates execution via this interface.
 	ToolCallExecutor interface {
-		Execute(ctx context.Context, meta ToolCallMeta, call planner.ToolRequest) (planner.ToolResult, error)
+		Execute(ctx context.Context, meta *ToolCallMeta, call *planner.ToolRequest) (*planner.ToolResult, error)
 	}
 
 	// ToolCallExecutorFunc adapts a function to the ToolCallExecutor interface.
-	ToolCallExecutorFunc func(ctx context.Context, meta ToolCallMeta, call planner.ToolRequest) (planner.ToolResult, error)
+	ToolCallExecutorFunc func(ctx context.Context, meta *ToolCallMeta, call *planner.ToolRequest) (*planner.ToolResult, error)
+
+	// ToolActivityExecutor handles execution of a single tool via workflow
+	// activities. Implementations decide how to schedule and await activity
+	// completion while preserving workflow determinism.
+	ToolActivityExecutor interface {
+		// Execute runs the tool with the given input and returns the result.
+		// The workflow context is provided for workflow-level operations (activities,
+		// timers, etc.). Input and output use the ToolInput/ToolOutput envelope.
+		Execute(ctx context.Context, wfCtx engine.WorkflowContext, input *ToolInput) (*ToolOutput, error)
+	}
 )
-
-// Execute calls f(ctx, meta, call).
-func (f ToolCallExecutorFunc) Execute(ctx context.Context, meta ToolCallMeta, call planner.ToolRequest) (planner.ToolResult, error) {
-	return f(ctx, meta, call)
-}
-
-// ToolActivityExecutor handles execution of a single tool via workflow
-// activities. Implementations decide how to schedule and await activity
-// completion while preserving workflow determinism.
-type ToolActivityExecutor interface {
-	// Execute runs the tool with the given input and returns the result.
-	// The workflow context is provided for workflow-level operations (activities,
-	// timers, etc.). Input and output use the ToolInput/ToolOutput envelope.
-	Execute(ctx context.Context, wfCtx engine.WorkflowContext, input ToolInput) (ToolOutput, error)
-}
 
 // Ensure ActivityToolExecutor implements ToolActivityExecutor at compile time.
 var _ ToolActivityExecutor = (*ActivityToolExecutor)(nil)
 
+// Execute calls f(ctx, meta, call).
+func (f ToolCallExecutorFunc) Execute(ctx context.Context, meta *ToolCallMeta, call *planner.ToolRequest) (*planner.ToolResult, error) {
+	return f(ctx, meta, call)
+}
+
 // Execute schedules the tool as a workflow activity and waits for its result.
 // This maintains workflow determinism while allowing the tool to run out-of-process.
 // The input is passed through to the activity as-is (already properly formatted).
-func (e *ActivityToolExecutor) Execute(ctx context.Context, wfCtx engine.WorkflowContext, input ToolInput) (ToolOutput, error) {
+func (e *ActivityToolExecutor) Execute(ctx context.Context, wfCtx engine.WorkflowContext, input *ToolInput) (*ToolOutput, error) {
+	if input == nil {
+		return nil, errors.New("tool input is required")
+	}
 	req := engine.ActivityRequest{
 		Name:  e.activityName,
 		Queue: e.queue,
@@ -244,13 +258,13 @@ func (e *ActivityToolExecutor) Execute(ctx context.Context, wfCtx engine.Workflo
 
 	future, err := wfCtx.ExecuteActivityAsync(ctx, req)
 	if err != nil {
-		return ToolOutput{}, err
+		return nil, err
 	}
 
 	var result ToolOutput
 	if err := future.Get(ctx, &result); err != nil {
-		return ToolOutput{}, err
+		return nil, err
 	}
 
-	return result, nil
+	return &result, nil
 }

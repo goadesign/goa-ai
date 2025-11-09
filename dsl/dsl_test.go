@@ -167,6 +167,74 @@ func TestBindToCrossServiceMethod(t *testing.T) {
 	require.Equal(t, "svcB", tool.Method.Service.Name)
 }
 
+func TestAgentToolsetCrossServiceReference(t *testing.T) {
+	runDSL(t, func() {
+		API("test", func() {})
+		// Service A exports a toolset
+		Service("svcA", func() {
+			Agent("agentA", "desc", func() {
+				Exports(func() {
+					Toolset("exported", func() {
+						Tool("t1", "tool one", func() {})
+					})
+				})
+			})
+		})
+		// Service B consumes it via AgentToolset
+		Service("svcB", func() {
+			Agent("agentB", "desc", func() {
+				Uses(func() {
+					AgentToolset("svcA", "agentA", "exported")
+				})
+			})
+		})
+	})
+
+	require.Len(t, agentsexpr.Root.Agents, 2)
+	// Find consumer agent (svcB.agentB)
+	var consumer *agentsexpr.AgentExpr
+	for _, a := range agentsexpr.Root.Agents {
+		if a.Service != nil && a.Service.Name == "svcB" && a.Name == "agentB" {
+			consumer = a
+			break
+		}
+	}
+	require.NotNil(t, consumer)
+	require.NotNil(t, consumer.Used)
+	require.Len(t, consumer.Used.Toolsets, 1)
+	ts := consumer.Used.Toolsets[0]
+	require.NotNil(t, ts.Origin, "AgentToolset should preserve origin")
+	require.Equal(t, agentsexpr.ProviderRemoteAgent, ts.Provider.Kind)
+	require.Equal(t, "svcA", ts.Provider.ServiceName)
+	require.Equal(t, "agentA", ts.Provider.AgentName)
+	require.Equal(t, "exported", ts.Provider.ToolsetName)
+}
+
+func TestProviderInference_LocalAndMCP(t *testing.T) {
+	runDSL(t, func() {
+		API("test", func() {})
+		Service("svc", func() {
+			Agent("a", "desc", func() {
+				Uses(func() {
+					Toolset("local", func() { Tool("x", "", func() {}) })
+					MCPToolset("svc", "search")
+				})
+			})
+		})
+	})
+	require.Len(t, agentsexpr.Root.Agents, 1)
+	a := agentsexpr.Root.Agents[0]
+	require.Len(t, a.Used.Toolsets, 2)
+	// Order matches declaration: local then MCP
+	local := a.Used.Toolsets[0]
+	mcp := a.Used.Toolsets[1]
+	require.Equal(t, agentsexpr.ProviderLocal, local.Provider.Kind)
+	require.Equal(t, "svc", local.Provider.ServiceName)
+	require.Equal(t, agentsexpr.ProviderMCP, mcp.Provider.Kind)
+	require.Equal(t, "svc", mcp.Provider.ServiceName)
+	require.Equal(t, "search", mcp.Provider.ToolsetName)
+}
+
 func runDSL(t *testing.T, dsl func()) {
 	t.Helper()
 

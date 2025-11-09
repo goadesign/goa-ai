@@ -231,7 +231,7 @@ type (
 		// For agent-tools (Exports), codegen generates this to call ExecuteAgentInline
 		// and convert RunOutput to ToolResult.
 		// For custom/server-side tools, users provide their own implementation.
-		Execute func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error)
+		Execute func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error)
 
 		// Specs enumerates the codecs associated with each tool in the set.
 		// Used by the runtime for JSON marshaling/unmarshaling and schema validation.
@@ -414,47 +414,87 @@ func WithWorkflowOptions(o *WorkflowOptions) RunOption {
 
 // WithPerTurnMaxToolCalls sets a per-turn cap on tool executions. Zero means unlimited.
 func WithPerTurnMaxToolCalls(n int) RunOption {
-	return func(in *RunInput) { in.Policy.PerTurnMaxToolCalls = n }
+	return func(in *RunInput) {
+		if in.Policy == nil {
+			in.Policy = &PolicyOverrides{}
+		}
+		in.Policy.PerTurnMaxToolCalls = n
+	}
 }
 
 // WithRunMaxToolCalls sets a per-run cap on total tool executions.
 // Non-zero overrides the agent's DSL RunPolicy default for this run.
 // Zero means no override (use the design default, which may be unlimited).
 func WithRunMaxToolCalls(n int) RunOption {
-	return func(in *RunInput) { in.Policy.MaxToolCalls = n }
+	return func(in *RunInput) {
+		if in.Policy == nil {
+			in.Policy = &PolicyOverrides{}
+		}
+		in.Policy.MaxToolCalls = n
+	}
 }
 
 // WithRunMaxConsecutiveFailedToolCalls caps consecutive failures before aborting the run.
 // Non-zero overrides the agent's DSL RunPolicy default for this run.
 // Zero means no override (use the design default, which may be unlimited).
 func WithRunMaxConsecutiveFailedToolCalls(n int) RunOption {
-	return func(in *RunInput) { in.Policy.MaxConsecutiveFailedToolCalls = n }
+	return func(in *RunInput) {
+		if in.Policy == nil {
+			in.Policy = &PolicyOverrides{}
+		}
+		in.Policy.MaxConsecutiveFailedToolCalls = n
+	}
 }
 
 // WithRunTimeBudget sets a wall-clock budget for the run. Zero means no override.
 func WithRunTimeBudget(d time.Duration) RunOption {
-	return func(in *RunInput) { in.Policy.TimeBudget = d }
+	return func(in *RunInput) {
+		if in.Policy == nil {
+			in.Policy = &PolicyOverrides{}
+		}
+		in.Policy.TimeBudget = d
+	}
 }
 
 // WithRunInterruptsAllowed enables human-in-the-loop interruptions for this run.
 // When false, no override is applied and the agent registration policy governs.
 func WithRunInterruptsAllowed(allowed bool) RunOption {
-	return func(in *RunInput) { in.Policy.InterruptsAllowed = allowed }
+	return func(in *RunInput) {
+		if in.Policy == nil {
+			in.Policy = &PolicyOverrides{}
+		}
+		in.Policy.InterruptsAllowed = allowed
+	}
 }
 
 // WithRestrictToTool restricts candidate tools to a single tool for the run.
 func WithRestrictToTool(id tools.Ident) RunOption {
-	return func(in *RunInput) { in.Policy.RestrictToTool = id }
+	return func(in *RunInput) {
+		if in.Policy == nil {
+			in.Policy = &PolicyOverrides{}
+		}
+		in.Policy.RestrictToTool = id
+	}
 }
 
 // WithAllowedTags filters candidate tools to those whose tags intersect this list.
 func WithAllowedTags(tags []string) RunOption {
-	return func(in *RunInput) { in.Policy.AllowedTags = append([]string(nil), tags...) }
+	return func(in *RunInput) {
+		if in.Policy == nil {
+			in.Policy = &PolicyOverrides{}
+		}
+		in.Policy.AllowedTags = append([]string(nil), tags...)
+	}
 }
 
 // WithDeniedTags filters out candidate tools that have any of these tags.
 func WithDeniedTags(tags []string) RunOption {
-	return func(in *RunInput) { in.Policy.DeniedTags = append([]string(nil), tags...) }
+	return func(in *RunInput) {
+		if in.Policy == nil {
+			in.Policy = &PolicyOverrides{}
+		}
+		in.Policy.DeniedTags = append([]string(nil), tags...)
+	}
 }
 
 // newFromOptions constructs a Runtime using the provided options. Internal helper
@@ -799,7 +839,7 @@ func (r *Runtime) agentByID(id string) (AgentRegistration, bool) {
 func (r *Runtime) ExecuteAgentInline(
 	wfCtx engine.WorkflowContext,
 	agentID string,
-	messages []planner.AgentMessage,
+	messages []*planner.AgentMessage,
 	nestedRunCtx run.Context,
 ) (*RunOutput, error) {
 	ctx := wfCtx.Context()
@@ -826,7 +866,7 @@ func (r *Runtime) ExecuteAgentInline(
 
 	// Build initial plan. If a local planner is registered, invoke directly; otherwise
 	// schedule the plan activity so engines can route to remote workers.
-	planInput := planner.PlanInput{
+	planInput := &planner.PlanInput{
 		Messages:   messages,
 		RunContext: nestedRunCtx,
 		Agent:      agentCtx,
@@ -897,7 +937,7 @@ func (r *Runtime) ExecuteAgentInlineWithRoute(
 	wfCtx engine.WorkflowContext,
 	route AgentRoute,
 	planActivityName, resumeActivityName, executeToolActivity string,
-	messages []planner.AgentMessage,
+	messages []*planner.AgentMessage,
 	nestedRunCtx run.Context,
 ) (*RunOutput, error) {
 	if route.ID == "" || route.WorkflowName == "" || route.DefaultTaskQueue == "" {
@@ -915,7 +955,7 @@ func (r *Runtime) ExecuteAgentInlineWithRoute(
 		memory:  reader,
 		turnID:  nestedRunCtx.TurnID,
 	})
-	planInput := planner.PlanInput{
+	planInput := &planner.PlanInput{
 		Messages:   messages,
 		RunContext: nestedRunCtx,
 		Agent:      agentCtx,

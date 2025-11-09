@@ -32,11 +32,11 @@ type nestedPlannerStub struct {
 var _ engine.WorkflowContext = (*testWorkflowContext)(nil)
 var _ engine.Future = (*testFuture)(nil)
 
-func (p *nestedPlannerStub) PlanStart(ctx context.Context, in planner.PlanInput) (*planner.PlanResult, error) {
+func (p *nestedPlannerStub) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
 	p.iter = 0
 	return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("nested.tools.child1")}, {Name: tools.Ident("nested.tools.child2")}}}, nil
 }
-func (p *nestedPlannerStub) PlanResume(ctx context.Context, in planner.PlanResumeInput) (*planner.PlanResult, error) {
+func (p *nestedPlannerStub) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
 	p.iter++
 	if p.iter == 1 {
 		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("nested.tools.child3")}}}, nil
@@ -166,8 +166,8 @@ func TestRuntimeResumeRunSignalsWorkflow(t *testing.T) {
 func TestConsecutiveFailureBreaker(t *testing.T) {
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
-			"svc.tools": {Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
-				return planner.ToolResult{
+			"svc.tools": {Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+				return &planner.ToolResult{
 					Name:  call.Name,
 					Error: planner.NewToolError("boom"),
 				}, nil
@@ -182,7 +182,7 @@ func TestConsecutiveFailureBreaker(t *testing.T) {
 	}
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Error: "boom"}}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
-	base := planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
+	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("svc.tools.fail")}}}
 	_, err := rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  input.AgentID,
@@ -283,8 +283,8 @@ func TestRegisterAgentAfterFirstRunIsRejected(t *testing.T) {
 
 func TestTimeBudgetExceeded(t *testing.T) {
 	rt := &Runtime{
-		toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
-			return planner.ToolResult{
+		toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			return &planner.ToolResult{
 				Name: call.Name,
 			}, nil
 		}}},
@@ -295,7 +295,7 @@ func TestTimeBudgetExceeded(t *testing.T) {
 	}
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
-	base := planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
+	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("svc.ts.tool")}}}
 	_, err := rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  input.AgentID,
@@ -312,8 +312,8 @@ func TestOverridePolicy_AppliesToNewRuns_MaxToolCalls(t *testing.T) {
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {
-				Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
-					return planner.ToolResult{Name: call.Name, Result: json.RawMessage("null")}, nil
+				Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+					return &planner.ToolResult{Name: call.Name, Result: json.RawMessage("null")}, nil
 				},
 			},
 		},
@@ -348,7 +348,7 @@ func TestOverridePolicy_AppliesToNewRuns_MaxToolCalls(t *testing.T) {
 
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, hasPlanResult: true, planResult: &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("svc.tools.echo")}}}}
 	input := &RunInput{AgentID: agentID, RunID: "run-1"}
-	base := planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
+	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 
 	// Provide an initial plan with 2 tools; resume will return 1 tool via wfCtx.planResult
 	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("svc.tools.echo")}, {Name: tools.Ident("svc.tools.echo")}}}
@@ -360,7 +360,7 @@ func TestOverridePolicy_AppliesToNewRuns_MaxToolCalls(t *testing.T) {
 func TestConvertRunOutputToToolResult(t *testing.T) {
 	t.Run("aggregates_telemetry_without_error", func(t *testing.T) {
 		out := RunOutput{
-			Final: planner.AgentMessage{Content: "final"},
+			Final: &planner.AgentMessage{Content: "final"},
 			ToolEvents: []*planner.ToolResult{
 				{Telemetry: &telemetry.ToolTelemetry{TokensUsed: 10, DurationMs: 100, Model: "m1"}},
 				{Telemetry: &telemetry.ToolTelemetry{TokensUsed: 5, DurationMs: 50, Model: "m1"}},
@@ -376,7 +376,7 @@ func TestConvertRunOutputToToolResult(t *testing.T) {
 	})
 	t.Run("propagates_error_when_all_nested_fail", func(t *testing.T) {
 		out := RunOutput{
-			Final: planner.AgentMessage{Content: "final"},
+			Final: &planner.AgentMessage{Content: "final"},
 			ToolEvents: []*planner.ToolResult{
 				{Error: planner.NewToolError("e1")},
 				{Error: planner.NewToolError("e2")},
@@ -399,8 +399,8 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 	// Register nested tools toolset used by nested agent
 	rt.toolsets = map[string]ToolsetRegistration{
 		"nested.tools": {
-			Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
-				return planner.ToolResult{
+			Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+				return &planner.ToolResult{
 					Name:   call.Name,
 					Result: map[string]string{"ok": "true"},
 				}, nil
@@ -431,10 +431,12 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 			return rt.PlanResumeActivity(ctx, input.(PlanActivityInput))
 		}},
 		"nested.execute": {Name: "nested.execute", Handler: func(ctx context.Context, input any) (any, error) {
-			return rt.ExecuteToolActivity(ctx, input.(ToolInput))
+			ti := input.(ToolInput)
+			return rt.ExecuteToolActivity(ctx, &ti)
 		}},
 		"execute": {Name: "execute", Handler: func(ctx context.Context, input any) (any, error) {
-			return rt.ExecuteToolActivity(ctx, input.(ToolInput))
+			ti := input.(ToolInput)
+			return rt.ExecuteToolActivity(ctx, &ti)
 		}},
 		"resume": {Name: "resume", Handler: func(context.Context, any) (any, error) {
 			return PlanActivityOutput{Result: &planner.PlanResult{
@@ -447,12 +449,15 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 	// Parent agent-tools toolset that invokes nested agent inline
 	agentTools := ToolsetRegistration{
 		Name: "svc.agenttools",
-		Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
+		Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			if call == nil {
+				return nil, fmt.Errorf("tool request is nil")
+			}
 			wf := engine.WorkflowContextFromContext(ctx)
 			if wf == nil {
 				wf = wfCtx
 			}
-			msgs := []planner.AgentMessage{{Role: "user", Content: "go"}}
+			msgs := []*planner.AgentMessage{{Role: "user", Content: "go"}}
 			nestedCtx := run.Context{RunID: NestedRunID(call.RunID, call.Name), SessionID: call.SessionID, TurnID: call.TurnID, ParentToolCallID: call.ToolCallID}
 			// Inject nested agent registration into runtime for lookup
 			rt.mu.Lock()
@@ -460,12 +465,13 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 			rt.mu.Unlock()
 			outPtr, err := rt.ExecuteAgentInline(wf, "nested.agent", msgs, nestedCtx)
 			if err != nil {
-				return planner.ToolResult{}, err
+				return nil, err
 			}
 			if outPtr == nil {
-				return planner.ToolResult{}, fmt.Errorf("nil nested output")
+				return nil, fmt.Errorf("nil nested output")
 			}
-			return ConvertRunOutputToToolResult(call.Name, *outPtr), nil
+			result := ConvertRunOutputToToolResult(call.Name, *outPtr)
+			return &result, nil
 		},
 	}
 	// Register parent toolset
@@ -476,7 +482,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 
 	// Parent run requests a single agent-tool invocation
 	parentInput := &RunInput{AgentID: "parent.agent", RunID: "run-parent", TurnID: "turn-1"}
-	base := planner.PlanInput{RunContext: run.Context{RunID: parentInput.RunID, TurnID: parentInput.TurnID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: parentInput.AgentID, runID: parentInput.RunID})}
+	base := &planner.PlanInput{RunContext: run.Context{RunID: parentInput.RunID, TurnID: parentInput.TurnID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: parentInput.AgentID, runID: parentInput.RunID})}
 	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("svc.agenttools.invoke")}}}
 
 	_, err := rt.runLoop(wfCtx, AgentRegistration{
@@ -543,8 +549,8 @@ func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
 			"svc.export": {
-				Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
-					return planner.ToolResult{
+				Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+					return &planner.ToolResult{
 						Name: call.Name,
 					}, nil
 				},
@@ -645,8 +651,8 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 		},
 	}
 
-	base := planner.PlanInput{
-		Messages: []planner.AgentMessage{
+	base := &planner.PlanInput{
+		Messages: []*planner.AgentMessage{
 			{Role: "user", Content: "hello"},
 		},
 		RunContext: run.Context{

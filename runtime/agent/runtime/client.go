@@ -10,8 +10,8 @@ import (
 
 // AgentClient provides a narrow interface to run a specific agent.
 type AgentClient interface {
-	Run(ctx context.Context, messages []planner.AgentMessage, opts ...RunOption) (*RunOutput, error)
-	Start(ctx context.Context, messages []planner.AgentMessage, opts ...RunOption) (engine.WorkflowHandle, error)
+	Run(ctx context.Context, messages []*planner.AgentMessage, opts ...RunOption) (*RunOutput, error)
+	Start(ctx context.Context, messages []*planner.AgentMessage, opts ...RunOption) (engine.WorkflowHandle, error)
 }
 
 // AgentRoute carries the minimum metadata a caller needs to construct an
@@ -73,7 +73,7 @@ type agentClient struct {
 	id string
 }
 
-func (c *agentClient) Run(ctx context.Context, messages []planner.AgentMessage, opts ...RunOption) (*RunOutput, error) {
+func (c *agentClient) Run(ctx context.Context, messages []*planner.AgentMessage, opts ...RunOption) (*RunOutput, error) {
 	in := RunInput{AgentID: c.id, Messages: messages}
 	for _, o := range opts {
 		if o != nil {
@@ -91,7 +91,7 @@ func (c *agentClient) Run(ctx context.Context, messages []planner.AgentMessage, 
 	return out, nil
 }
 
-func (c *agentClient) Start(ctx context.Context, messages []planner.AgentMessage, opts ...RunOption) (engine.WorkflowHandle, error) {
+func (c *agentClient) Start(ctx context.Context, messages []*planner.AgentMessage, opts ...RunOption) (engine.WorkflowHandle, error) {
 	in := RunInput{AgentID: c.id, Messages: messages}
 	for _, o := range opts {
 		if o != nil {
@@ -106,7 +106,7 @@ type agentClientRoute struct {
 	route AgentRoute
 }
 
-func (c *agentClientRoute) Run(ctx context.Context, messages []planner.AgentMessage, opts ...RunOption) (*RunOutput, error) {
+func (c *agentClientRoute) Run(ctx context.Context, messages []*planner.AgentMessage, opts ...RunOption) (*RunOutput, error) {
 	in := RunInput{AgentID: string(c.route.ID), Messages: messages}
 	for _, o := range opts {
 		if o != nil {
@@ -124,7 +124,7 @@ func (c *agentClientRoute) Run(ctx context.Context, messages []planner.AgentMess
 	return out, nil
 }
 
-func (c *agentClientRoute) Start(ctx context.Context, messages []planner.AgentMessage, opts ...RunOption) (engine.WorkflowHandle, error) {
+func (c *agentClientRoute) Start(ctx context.Context, messages []*planner.AgentMessage, opts ...RunOption) (engine.WorkflowHandle, error) {
 	in := RunInput{AgentID: string(c.route.ID), Messages: messages}
 	for _, o := range opts {
 		if o != nil {

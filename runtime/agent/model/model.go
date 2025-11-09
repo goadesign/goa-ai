@@ -55,7 +55,14 @@ type (
 	Request struct {
 		// Model identifies the target model using the provider-specific identifier
 		// (e.g., "gpt-4", "claude-3-5-sonnet-20241022", "anthropic.claude-v2").
+		// Requests must specify at least one of Model or ModelClass.
+		// Model takes precedence over ModelClass.
 		Model string
+
+		// ModelClass identifies the model class: "high-reasoning", "default", "small".
+		// Requests must specify at least one of Model or ModelClass.
+		// Model takes precedence over ModelClass.
+		ModelClass ModelClass
 
 		// Messages is the ordered chat history provided to the model, including
 		// system prompts, user inputs, and prior assistant responses. The order
@@ -231,6 +238,9 @@ type (
 		// this field when available instead of summing Input + Output.
 		TotalTokens int
 	}
+
+	// ModelClass identifies the model class: "high-reasoning", "default", "small".
+	ModelClass string
 )
 
 // Chunk type constants are the well-known streaming event kinds produced by
@@ -241,6 +251,13 @@ const (
 	ChunkTypeThinking = "thinking"
 	ChunkTypeUsage    = "usage"
 	ChunkTypeStop     = "stop"
+)
+
+// ModelClass constants are the well-known model classes.
+const (
+	ModelClassHighReasoning = "high-reasoning"
+	ModelClassDefault       = "default"
+	ModelClassSmall         = "small"
 )
 
 // ErrStreamingUnsupported indicates the model provider does not implement

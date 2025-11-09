@@ -13,11 +13,17 @@ import (
 // stubPlanner is a tiny planner that immediately returns a final response.
 type stubPlanner struct{}
 
-func (p *stubPlanner) PlanStart(ctx context.Context, in planner.PlanInput) (*planner.PlanResult, error) {
+func (p *stubPlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
+	if in == nil {
+		return nil, fmt.Errorf("plan input is required")
+	}
 	r := &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "Hello from Goa‑AI!"}}}
 	return r, nil
 }
-func (p *stubPlanner) PlanResume(ctx context.Context, in planner.PlanResumeInput) (*planner.PlanResult, error) {
+func (p *stubPlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
+	if in == nil {
+		return nil, fmt.Errorf("plan resume input is required")
+	}
 	r := &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "Done."}}}
 	return r, nil
 }
@@ -67,10 +73,12 @@ func main() {
 
 	// 3) Run the agent using a route-based client (no local lookup required)
 	client := rt.MustClientFor(runtime.AgentRoute{ID: agent.Ident(agentID), WorkflowName: wfName, DefaultTaskQueue: taskQueue})
-	out, err := client.Run(ctx, []planner.AgentMessage{{Role: "user", Content: "Say hi"}}, runtime.WithSessionID("session-1"))
+	out, err := client.Run(ctx, []*planner.AgentMessage{{Role: "user", Content: "Say hi"}}, runtime.WithSessionID("session-1"))
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println("RunID:", out.RunID)
-	fmt.Println("Assistant:", out.Final.Content)
+	if out.Final != nil {
+		fmt.Println("Assistant:", out.Final.Content)
+	}
 }

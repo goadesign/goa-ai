@@ -24,9 +24,12 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 	wf := &testWorkflowContext{ctx: context.Background()}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
 
-	var got []planner.AgentMessage
-	rt.agents["svc.agent"] = AgentRegistration{ID: "svc.agent", Planner: &stubPlanner{start: func(ctx context.Context, input planner.PlanInput) (*planner.PlanResult, error) {
-		got = append([]planner.AgentMessage{}, input.Messages...)
+	var got []*planner.AgentMessage
+	rt.agents["svc.agent"] = AgentRegistration{ID: "svc.agent", Planner: &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+		if input == nil {
+			return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, nil
+		}
+		got = append([]*planner.AgentMessage{}, input.Messages...)
 		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, nil
 	}}}
 
@@ -34,8 +37,10 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 	cfg := AgentToolConfig{AgentID: "svc.agent", SystemPrompt: "sys", Templates: map[tools.Ident]*template.Template{"svc.ts.tool": tmpl}, Texts: map[tools.Ident]string{"svc.ts.tool": "fallback"}}
 
 	exec := defaultAgentToolExecute(rt, cfg)
-	res, err := exec(ctx, planner.ToolRequest{Name: tools.Ident("svc.ts.tool"), RunID: "run", Payload: map[string]string{"x": "world"}})
+	call := planner.ToolRequest{Name: tools.Ident("svc.ts.tool"), RunID: "run", Payload: map[string]string{"x": "world"}}
+	res, err := exec(ctx, &call)
 	require.NoError(t, err)
+	require.NotNil(t, res)
 	require.Equal(t, "ok", res.Result)
 	require.Len(t, got, 2)
 	require.Equal(t, "system", got[0].Role)
@@ -55,16 +60,21 @@ func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
 	wf := &testWorkflowContext{ctx: context.Background()}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
 
-	var got []planner.AgentMessage
-	rt.agents["svc.agent"] = AgentRegistration{ID: "svc.agent", Planner: &stubPlanner{start: func(ctx context.Context, input planner.PlanInput) (*planner.PlanResult, error) {
-		got = append([]planner.AgentMessage{}, input.Messages...)
+	var got []*planner.AgentMessage
+	rt.agents["svc.agent"] = AgentRegistration{ID: "svc.agent", Planner: &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+		if input == nil {
+			return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, nil
+		}
+		got = append([]*planner.AgentMessage{}, input.Messages...)
 		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, nil
 	}}}
 
 	cfg := AgentToolConfig{AgentID: "svc.agent", Texts: map[tools.Ident]string{"svc.ts.tool": "just text"}}
 	exec := defaultAgentToolExecute(rt, cfg)
-	res, err := exec(ctx, planner.ToolRequest{Name: tools.Ident("svc.ts.tool"), RunID: "run"})
+	call := planner.ToolRequest{Name: tools.Ident("svc.ts.tool"), RunID: "run"}
+	res, err := exec(ctx, &call)
 	require.NoError(t, err)
+	require.NotNil(t, res)
 	require.Equal(t, "ok", res.Result)
 	require.Len(t, got, 1)
 	require.Equal(t, "user", got[0].Role)
@@ -81,15 +91,20 @@ func TestDefaultAgentToolExecute_DefaultsWhenMissingContent(t *testing.T) {
 	}
 	wf := &testWorkflowContext{ctx: context.Background()}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
-	var seen []planner.AgentMessage
-	rt.agents["svc.agent"] = AgentRegistration{ID: "svc.agent", Planner: &stubPlanner{start: func(ctx context.Context, input planner.PlanInput) (*planner.PlanResult, error) {
-		seen = append([]planner.AgentMessage{}, input.Messages...)
+	var seen []*planner.AgentMessage
+	rt.agents["svc.agent"] = AgentRegistration{ID: "svc.agent", Planner: &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+		if input == nil {
+			return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, nil
+		}
+		seen = append([]*planner.AgentMessage{}, input.Messages...)
 		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, nil
 	}}}
 	cfg := AgentToolConfig{AgentID: "svc.agent"}
 	exec := defaultAgentToolExecute(rt, cfg)
-	res, err := exec(ctx, planner.ToolRequest{Name: tools.Ident("svc.ts.tool"), RunID: "run"})
+	call := planner.ToolRequest{Name: tools.Ident("svc.ts.tool"), RunID: "run"}
+	res, err := exec(ctx, &call)
 	require.NoError(t, err)
+	require.NotNil(t, res)
 	require.Equal(t, "ok", res.Result)
 	require.Len(t, seen, 1)
 	require.Equal(t, "user", seen[0].Role)

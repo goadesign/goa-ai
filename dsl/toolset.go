@@ -658,12 +658,96 @@ func buildToolsetExpr(value any, dsl func(), agent *agentsexpr.AgentExpr) *agent
 			Description: v.Description,
 			DSLFunc:     v.DSLFunc,
 			Agent:       agent,
+			Origin:      v,
 		}
 		return dup
 	default:
 		eval.ReportError("toolset must be declared with a name or an existing Toolset expression")
 		return nil
 	}
+}
+
+// AgentToolset references a toolset exported by another agent identified by
+// service and agent names. Use inside an Agent's Uses block to explicitly
+// depend on an exported toolset when inference is not possible or ambiguous.
+//
+// When to use AgentToolset vs Toolset:
+//   - Prefer Toolset(X) when you already have an expression handle (e.g., a
+//     top-level Toolset variable or an agent's exported Toolset). Goa-AI will
+//     infer a RemoteAgent provider automatically when exactly one agent in a
+//     different service Exports a toolset with the same name.
+//   - Use AgentToolset(service, agent, toolset) when you:
+//   - Do not have an expression handle to the exported toolset, or
+//   - Have ambiguity (multiple agents export a toolset with the same name), or
+//   - Want to be explicit in the design for clarity.
+//
+// AgentToolset(service, agent, toolset)
+//   - service: Goa service name that owns the exporting agent
+//   - agent:   Agent name in that service
+//   - toolset: Exported toolset name in that agent
+//
+// The referenced toolset is resolved from the design, and a local reference is
+// recorded with its Origin set to the defining toolset. Provider information is
+// inferred during validation and will classify this as a RemoteAgent provider
+// when the owner service differs from the consumer service.
+func AgentToolset(service, agent, toolset string) *agentsexpr.ToolsetExpr {
+	group, ok := eval.Current().(*agentsexpr.ToolsetGroupExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return nil
+	}
+	service = strings.TrimSpace(service)
+	agent = strings.TrimSpace(agent)
+	toolset = strings.TrimSpace(toolset)
+	if service == "" || agent == "" || toolset == "" {
+		eval.ReportError("AgentToolset requires non-empty service, agent, and toolset")
+		return nil
+	}
+	svc := goaexpr.Root.Service(service)
+	if svc == nil {
+		eval.ReportError("AgentToolset could not resolve service %q", service)
+		return nil
+	}
+	// Locate the exporting agent
+	var originAgent *agentsexpr.AgentExpr
+	for _, a := range agentsexpr.Root.Agents {
+		if a != nil && a.Service == svc && strings.TrimSpace(a.Name) == agent {
+			originAgent = a
+			break
+		}
+	}
+	if originAgent == nil || originAgent.Exported == nil {
+		eval.ReportError("AgentToolset could not find exported toolsets for %q.%q", service, agent)
+		return nil
+	}
+	// Find the exported toolset
+	var originTS *agentsexpr.ToolsetExpr
+	for _, ts := range originAgent.Exported.Toolsets {
+		if ts != nil && strings.TrimSpace(ts.Name) == toolset {
+			originTS = ts
+			break
+		}
+	}
+	if originTS == nil {
+		eval.ReportError("AgentToolset could not resolve toolset %q exported by agent %q.%q", toolset, service, agent)
+		return nil
+	}
+	// Clone a local reference and record origin; assign to current agent group
+	dup := &agentsexpr.ToolsetExpr{
+		Name:        originTS.Name,
+		Description: originTS.Description,
+		DSLFunc:     originTS.DSLFunc,
+		Agent:       group.Agent,
+		Origin:      originTS,
+	}
+	group.Toolsets = append(group.Toolsets, dup)
+	return dup
+}
+
+// UseAgentToolset is an alias for AgentToolset. Prefer AgentToolset in new
+// designs; this alias exists for readability in some codebases.
+func UseAgentToolset(service, agent, toolset string) *agentsexpr.ToolsetExpr {
+	return AgentToolset(service, agent, toolset)
 }
 
 // toolDSL mirrors Goa's method DSL helpers to define tool shapes.

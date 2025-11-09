@@ -89,11 +89,17 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             panic(fmt.Errorf("service executor missing callers for tools: %s", strings.Join(missing, ", ")))
         }
     }
-    return runtime.ToolCallExecutorFunc(func(ctx context.Context, meta runtime.ToolCallMeta, call planner.ToolRequest) (planner.ToolResult, error) {
+    return runtime.ToolCallExecutorFunc(func(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*planner.ToolResult, error) {
+        if call == nil {
+            return &planner.ToolResult{Error: planner.NewToolError("tool request is nil")}, nil
+        }
+        if meta == nil {
+            return &planner.ToolResult{Error: planner.NewToolError("tool call meta is nil")}, nil
+        }
         // Lookup caller
         caller := cfg.callers[call.Name]
         if caller == nil {
-            return planner.ToolResult{
+            return &planner.ToolResult{
                 Name:  call.Name,
                 Error: planner.NewToolError("caller is required"),
             }, nil
@@ -105,7 +111,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             if pc, ok := {{ $.Toolset.SpecsPackageName }}.PayloadCodec(string(call.Name)); ok && pc != nil && pc.FromJSON != nil {
                 val, err := pc.FromJSON(v)
                 if err != nil {
-                    return planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
+                    return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
                 }
                 toolArgs = val
             } else {
@@ -118,26 +124,26 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
         methodIn := toolArgs
         if cfg.mapPayload != nil {
             var err error
-            methodIn, err = cfg.mapPayload(call.Name, toolArgs, meta)
+            methodIn, err = cfg.mapPayload(call.Name, toolArgs, *meta)
             if err != nil {
-                return planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
+                return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
             }
         }
         // Invoke caller
         methodOut, err := caller(ctx, methodIn)
         if err != nil {
-            return planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
+            return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
         }
         // Map back to tool result
         result := methodOut
         if cfg.mapResult != nil {
-            if val, e := cfg.mapResult(call.Name, methodOut, meta); e == nil {
+            if val, e := cfg.mapResult(call.Name, methodOut, *meta); e == nil {
                 result = val
             } else {
-                return planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(e)}, nil
+                return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(e)}, nil
             }
         }
-        return planner.ToolResult{
+        return &planner.ToolResult{
             Name:   call.Name,
             Result: result,
         }, nil

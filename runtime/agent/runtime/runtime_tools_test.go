@@ -17,11 +17,11 @@ import (
 )
 
 func TestExecuteToolActivityReturnsErrorAndHint(t *testing.T) {
-	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
+	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 		require.Equal(t, "tool-1", call.ToolCallID)
 		require.Equal(t, "parent-1", call.ParentToolCallID)
 		require.Equal(t, "run", call.RunID)
-		return planner.ToolResult{
+		return &planner.ToolResult{
 			Name:  call.Name,
 			Error: planner.NewToolError("invalid payload"),
 			RetryHint: &planner.RetryHint{
@@ -33,8 +33,10 @@ func TestExecuteToolActivityReturnsErrorAndHint(t *testing.T) {
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
 		tools.Ident("svc.ts.tool"): newAnyJSONSpec("svc.ts.tool"),
 	}
-	out, err := rt.ExecuteToolActivity(context.Background(), ToolInput{AgentID: "agent", RunID: "run", ToolName: "svc.ts.tool", ToolCallID: "tool-1", ParentToolCallID: "parent-1", Payload: []byte("null")})
+	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "svc.ts.tool", ToolCallID: "tool-1", ParentToolCallID: "parent-1", Payload: []byte("null")}
+	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
+	require.NotNil(t, out)
 	require.Equal(t, "invalid payload", out.Error)
 	require.Nil(t, out.Payload)
 	require.NotNil(t, out.RetryHint)
@@ -42,15 +44,15 @@ func TestExecuteToolActivityReturnsErrorAndHint(t *testing.T) {
 }
 
 func TestToolsetTaskQueueOverrideUsed(t *testing.T) {
-	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.export": {TaskQueue: "q1", Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
-		return planner.ToolResult{
+	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.export": {TaskQueue: "q1", Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		return &planner.ToolResult{
 			Name: call.Name,
 		}, nil
 	}}}}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{"svc.export.child": newAnyJSONSpec("svc.export.child")}
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, hasPlanResult: true}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
-	base := planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
+	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("svc.export.child")}}}
 	_, err := rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  input.AgentID,
@@ -66,15 +68,15 @@ func TestToolsetTaskQueueOverrideUsed(t *testing.T) {
 }
 
 func TestPreserveModelProvidedToolCallID(t *testing.T) {
-	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
+	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 		// Ensure the ID provided by the planner/model flows into the executor unchanged
 		require.Equal(t, "model-123", call.ToolCallID)
-		return planner.ToolResult{Name: call.Name}, nil
+		return &planner.ToolResult{Name: call.Name}, nil
 	}}}}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{"svc.ts.tool": newAnyJSONSpec("svc.ts.tool")}
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, hasPlanResult: true}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
-	base := planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
+	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 	// Planner supplies an explicit ToolCallID from the model
 	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("svc.ts.tool"), ToolCallID: "model-123"}}}
 	_, err := rt.runLoop(wfCtx, AgentRegistration{
@@ -93,8 +95,10 @@ func TestPreserveModelProvidedToolCallID(t *testing.T) {
 func TestActivityToolExecutorExecute(t *testing.T) {
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("123")}}
 	exec := &ActivityToolExecutor{activityName: "execute"}
-	out, err := exec.Execute(context.Background(), wfCtx, ToolInput{RunID: "r1"})
+	input := ToolInput{RunID: "r1"}
+	out, err := exec.Execute(context.Background(), wfCtx, &input)
 	require.NoError(t, err)
+	require.NotNil(t, out)
 	require.Equal(t, []byte("123"), []byte(out.Payload))
 }
 
@@ -105,8 +109,8 @@ func TestRunLoopPauseResumeEmitsEvents(t *testing.T) {
 		logger:  telemetry.NoopLogger{},
 		metrics: telemetry.NoopMetrics{},
 		tracer:  telemetry.NoopTracer{},
-		toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
-			return planner.ToolResult{
+		toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			return &planner.ToolResult{
 				Name: call.Name,
 			}, nil
 		}}},
@@ -123,7 +127,7 @@ func TestRunLoopPauseResumeEmitsEvents(t *testing.T) {
 	wfCtx.hasPlanResult = true
 	wfCtx.planResult = &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
-	base := planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
+	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("svc.ts.tool")}}}
 	ctrl := interrupt.NewController(wfCtx)
 	_, err := rt.runLoop(wfCtx, AgentRegistration{

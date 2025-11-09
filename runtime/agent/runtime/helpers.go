@@ -472,10 +472,16 @@ func stampEventWithTurn(evt hooks.Event, seq *turnSequencer) {
 // Planner notes are currently discarded. Future enhancement: include notes as structured
 // metadata or append them to the payload content for visibility to the parent planner.
 func ConvertRunOutputToToolResult(toolName tools.Ident, output RunOutput) planner.ToolResult {
+	var resultContent string
+	if output.Final != nil {
+		resultContent = output.Final.Content
+	}
 	result := planner.ToolResult{
 		Name:   toolName,
-		Result: output.Final.Content,
+		Result: resultContent,
 	}
+	// Record child count for agent-as-tool detection in the runtime.
+	result.ChildrenCount = len(output.ToolEvents)
 
 	// Aggregate telemetry and track failures from all nested tool executions
 	if len(output.ToolEvents) > 0 {

@@ -9,20 +9,30 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}ToolsetRegistration
         Description: {{ printf "%q" .Toolset.Description }},
         Specs:       {{ $.Agent.ToolSpecsPackage }}.Specs,
         Metadata:    policy.ToolMetadata{Title: {{ printf "%q" .Toolset.Title }}{{- if .Toolset.Tags }}, Tags: []string{ {{- range $i, $t := .Toolset.Tags }}{{ if $i }}, {{ end }}{{ printf "%q" $t }}{{- end }} }{{- end }}},
-        Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
+        Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+            if call == nil {
+                return nil, fmt.Errorf("tool request is nil")
+            }
             if exec == nil {
-                return planner.ToolResult{
+                return &planner.ToolResult{
                     Error: planner.NewToolError("executor is required"),
                 }, nil
             }
-            meta := runtime.ToolCallMeta{
+            meta := &runtime.ToolCallMeta{
                 RunID:            call.RunID,
                 SessionID:        call.SessionID,
                 TurnID:           call.TurnID,
                 ToolCallID:       call.ToolCallID,
                 ParentToolCallID: call.ParentToolCallID,
             }
-            return exec.Execute(ctx, meta, call)
+            result, err := exec.Execute(ctx, meta, call)
+            if err != nil {
+                return nil, err
+            }
+            if result == nil {
+                return nil, fmt.Errorf("executor returned nil result")
+            }
+            return result, nil
         },
     }
     // Install DSL-provided hint templates when present.

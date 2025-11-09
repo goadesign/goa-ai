@@ -202,7 +202,8 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ .FullRef }}, error) {
         {{- end }}
     }
     {{- if eq .Usage "payload" }}
-    // Decode into JSON body (server body style) then validate & transform
+    // Decode into JSON body (server body style) then transform.
+    // Note: Agent used-tools perform lenient decode (no required-field validation here).
     var raw {{ .JSONRef }}
     if err := json.Unmarshal(data, &raw); err != nil {
         {{- if .Pointer }}
@@ -219,12 +220,17 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ .FullRef }}, error) {
     if err != nil {
         err = newValidationError(err)
         {{- if and (or .Validation .JSONValidation) .NeedType }}
-        err = enrich{{ .TypeName }}ValidationError(err)
-        {{- end }}
         {{- if .Pointer }}
-        return nil, fmt.Errorf("{{ .ValidateError }}: %w", err)
+        return nil, err
         {{- else }}
-        return zero, fmt.Errorf("{{ .ValidateError }}: %w", err)
+        return zero, err
+        {{- end }}
+        {{- else }}
+        {{- if .Pointer }}
+        return nil, fmt.Errorf("{{ .DecodeError }}: %w", err)
+        {{- else }}
+        return zero, fmt.Errorf("{{ .DecodeError }}: %w", err)
+        {{- end }}
         {{- end }}
     }
     {{- end }}

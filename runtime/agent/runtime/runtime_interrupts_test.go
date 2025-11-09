@@ -22,11 +22,12 @@ func TestRunLoopPauseResumeEmitsEvents_Barriered(t *testing.T) {
 		logger:  telemetry.NoopLogger{},
 		metrics: telemetry.NoopMetrics{},
 		tracer:  telemetry.NoopTracer{},
-		toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
-			return planner.ToolResult{
-				Name: call.Name,
-			}, nil
-		}}},
+		toolsets: map[string]ToolsetRegistration{"svc.ts": {
+			Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+				return &planner.ToolResult{
+					Name: call.Name,
+				}, nil
+			}}},
 	}
 	// Strong contract: codecs must be present. Provide a minimal spec for the tool.
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
@@ -43,7 +44,7 @@ func TestRunLoopPauseResumeEmitsEvents_Barriered(t *testing.T) {
 	wfCtx.hasPlanResult = true
 	wfCtx.planResult = &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
-	base := planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
+	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: "svc.ts.tool"}}}
 	ctrl := interrupt.NewController(wfCtx)
 	_, err := rt.runLoop(wfCtx, AgentRegistration{

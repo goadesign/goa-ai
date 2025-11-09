@@ -275,83 +275,75 @@ func PayloadToString(payload any) string {
 // system prompts when configured), constructs a nested run context derived from
 // the current tool call, executes the nested agent inline, and adapts the result
 // to a planner.ToolResult.
-func defaultAgentToolExecute(
-	rt *Runtime, cfg AgentToolConfig,
-) func(context.Context, planner.ToolRequest) (planner.ToolResult, error) {
-	return func(
-		ctx context.Context, call planner.ToolRequest,
-	) (planner.ToolResult, error) {
+func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Context, *planner.ToolRequest) (*planner.ToolResult, error) {
+	return func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		if call == nil {
+			return nil, fmt.Errorf("tool request is nil")
+		}
 		wfCtx := engine.WorkflowContextFromContext(ctx)
 		if wfCtx == nil {
-			return planner.ToolResult{}, fmt.Errorf("workflow context not found")
+			return nil, fmt.Errorf("workflow context not found")
 		}
 
 		// Build messages: optional agent system prompt, then the per-tool user message
-		var messages []planner.AgentMessage
-		if strings.TrimSpace(cfg.SystemPrompt) != "" {
-			messages = append(
-				messages,
-				planner.AgentMessage{
-					Role:    "system",
-					Content: cfg.SystemPrompt,
-				},
-			)
+		var messages []*planner.AgentMessage
+		if cfg.SystemPrompt != "" {
+			messages = []*planner.AgentMessage{{Role: "system", Content: cfg.SystemPrompt}}
 		}
 
-		// Build per-tool user message via template if present, otherwise fall back to text
+		// Build per-tool user message via template if present, otherwise fall
+		// back to text/prompt/payload. Skip appending when the content is empty
+		// or a meaningless JSON shell (\"{}\" / \"null\").
+		var userContent string
 		if tmpl := cfg.Templates[call.Name]; tmpl != nil {
 			var b strings.Builder
 			if err := tmpl.Execute(&b, call.Payload); err != nil {
-				return planner.ToolResult{}, fmt.Errorf(
+				return nil, fmt.Errorf(
 					"render tool template for %s: %w",
 					call.Name, err,
 				)
 			}
-			messages = append(messages, planner.AgentMessage{
-				Role:    "user",
-				Content: b.String(),
-			})
+			userContent = b.String()
 		} else if txt, ok := cfg.Texts[call.Name]; ok {
-			messages = append(messages, planner.AgentMessage{
-				Role:    "user",
-				Content: txt,
-			})
+			userContent = txt
 		} else {
 			// Default: build from payload via PromptBuilder or JSON/string fallback
 			if cfg.Prompt != nil {
-				messages = append(messages, planner.AgentMessage{
-					Role:    "user",
-					Content: cfg.Prompt(call.Name, call.Payload),
-				})
+				userContent = cfg.Prompt(call.Name, call.Payload)
 			} else {
-				messages = append(messages, planner.AgentMessage{
-					Role:    "user",
-					Content: PayloadToString(call.Payload),
-				})
+				userContent = PayloadToString(call.Payload)
 			}
+		}
+		switch trimmed := strings.TrimSpace(userContent); trimmed {
+		case "", "{}", "null":
+			// Do not append an empty/meaningless user message.
+		default:
+			messages = append(messages, &planner.AgentMessage{
+				Role:    "user",
+				Content: userContent,
+			})
 		}
 
 		// Build nested run context from explicit ToolRequest fields
 		nestedRunCtx := run.Context{
+			ToolID:           call.Name,
 			RunID:            NestedRunID(call.RunID, call.Name),
 			SessionID:        call.SessionID,
 			TurnID:           call.TurnID,
 			ParentToolCallID: call.ToolCallID,
+		}
+		// Strong contract: record the canonical JSON args using the tool codec.
+		// marshalToolValue returns a defensive copy for json.RawMessage, so this
+		// never double-encodes.
+		if argsJSON, err := rt.marshalToolValue(wfCtx.Context(), call.Name, call.Payload, true); err == nil && len(argsJSON) > 0 {
+			nestedRunCtx.ToolArgs = argsJSON
 		}
 
 		var outPtr *RunOutput
 		var err error
 		if cfg.Route.ID != "" {
 			// Strong contract: use explicit route + activity names; no fallbacks.
-			outPtr, err = rt.ExecuteAgentInlineWithRoute(
-				wfCtx,
-				cfg.Route,
-				cfg.PlanActivityName,
-				cfg.ResumeActivityName,
-				cfg.ExecuteToolActivity,
-				messages,
-				nestedRunCtx,
-			)
+			outPtr, err = rt.ExecuteAgentInlineWithRoute(wfCtx, cfg.Route, cfg.PlanActivityName, cfg.ResumeActivityName, cfg.ExecuteToolActivity, messages, nestedRunCtx)
 		} else {
 			// Require local registration; avoid synthetic conventions.
 			// ExecuteAgentInline will look up the local agent; if not present,
@@ -359,11 +351,11 @@ func defaultAgentToolExecute(
 			outPtr, err = rt.ExecuteAgentInline(wfCtx, string(cfg.AgentID), messages, nestedRunCtx)
 		}
 		if err != nil {
-			return planner.ToolResult{}, fmt.Errorf("execute agent inline: %w", err)
+			return nil, fmt.Errorf("execute agent inline: %w", err)
 		}
 
 		if outPtr == nil {
-			return planner.ToolResult{}, fmt.Errorf("execute agent inline returned no output")
+			return nil, fmt.Errorf("execute agent inline returned no output")
 		}
 		// Aggregation path: assemble parent tool_result from child results.
 		if cfg.Aggregate != nil {
@@ -391,9 +383,10 @@ func defaultAgentToolExecute(
 			}
 			tr, aerr := cfg.Aggregate(ctx, parent, children)
 			if aerr == nil {
-				return tr, nil
+				// Record child count so the runtime can detect empty-child agent-tools.
+				tr.ChildrenCount = len(outPtr.ToolEvents)
+				return &tr, nil
 			}
-			// Fall back to default conversion on aggregation failure.
 		}
 		// JSON-only structured result default: aggregate child results into a structured payload
 		// instead of returning the nested agent's final prose. This produces a consistent,
@@ -416,7 +409,9 @@ func defaultAgentToolExecute(
 				payload = items
 			default:
 				// No child tools: return the final message content to avoid empty payloads
-				payload = outPtr.Final.Content
+				if outPtr.Final != nil {
+					payload = outPtr.Final.Content
+				}
 			}
 			// Aggregate telemetry similar to ConvertRunOutputToToolResult
 			var tel *telemetry.ToolTelemetry
@@ -446,16 +441,18 @@ func defaultAgentToolExecute(
 					lastErr = ev.Error
 				}
 			}
-			tr := planner.ToolResult{
+			tr := &planner.ToolResult{
 				Name:      call.Name,
 				Result:    payload,
 				Telemetry: tel,
 			}
+			tr.ChildrenCount = len(outPtr.ToolEvents)
 			if errCount > 0 && errCount == len(outPtr.ToolEvents) {
 				tr.Error = planner.NewToolErrorWithCause("agent-tool: all nested tools failed", lastErr)
 			}
 			return tr, nil
 		}
-		return ConvertRunOutputToToolResult(call.Name, *outPtr), nil
+		result := ConvertRunOutputToToolResult(call.Name, *outPtr)
+		return &result, nil
 	}
 }

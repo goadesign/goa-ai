@@ -9,6 +9,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 )
 
+var errInvalidToolActivityInput = errors.New("invalid tool activity input")
+
 // WorkflowHandler returns a generic workflow handler that type-asserts the
 // input to *RunInput and delegates to Runtime.ExecuteWorkflow. Use this to avoid
 // generating per-agent boilerplate handlers.
@@ -102,24 +104,20 @@ func PlanResumeActivityHandler(rt *Runtime) func(context.Context, any) (any, err
 // Runtime.ExecuteToolActivity.
 func ExecuteToolActivityHandler(rt *Runtime) func(context.Context, any) (any, error) {
 	return func(ctx context.Context, input any) (any, error) {
-		var in ToolInput
 		switch v := input.(type) {
 		case ToolInput:
-			in = v
+			in := v
+			return rt.ExecuteToolActivity(ctx, &in)
 		case *ToolInput:
 			if v == nil {
-				return nil, errors.New("invalid tool activity input")
+				return nil, fmt.Errorf("%w: nil *ToolInput", errInvalidToolActivityInput)
 			}
-			in = *v
+			return rt.ExecuteToolActivity(ctx, v)
 		default:
-			b, err := json.Marshal(v)
-			if err != nil {
-				return nil, errors.New("invalid tool activity input")
-			}
-			if err := json.Unmarshal(b, &in); err != nil {
-				return nil, errors.New("invalid tool activity input")
-			}
+			return nil, fmt.Errorf(
+				"%w: expected ToolInput or *ToolInput, got %T",
+				errInvalidToolActivityInput, input,
+			)
 		}
-		return rt.ExecuteToolActivity(ctx, in)
 	}
 }

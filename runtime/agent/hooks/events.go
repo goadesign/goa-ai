@@ -306,6 +306,24 @@ type (
 		// TotalTokens is InputTokens + OutputTokens.
 		TotalTokens int
 	}
+
+	// HardProtectionEvent signals that the runtime applied a hard protection to
+	// avoid a pathological loop or expensive no-op behavior. For example, when
+	// an agent-as-tool produced zero child tool calls, the runtime finalizes
+	// instead of resuming.
+	HardProtectionEvent struct {
+		baseEvent
+		// Reason is a fixed string describing the protection that was applied.
+		// Example: "agent_tool_no_children".
+		Reason string
+		// ExecutedAgentTools is the number of agent-as-tool executions in the turn.
+		ExecutedAgentTools int
+		// ChildrenTotal is the total number of child tool calls produced by those
+		// agent tools (typically zero when this event fires).
+		ChildrenTotal int
+		// ToolNames lists the agent-tool identifiers executed in the turn.
+		ToolNames []tools.Ident
+	}
 )
 
 // NewRunStartedEvent constructs a RunStartedEvent with the current
@@ -486,6 +504,23 @@ func NewUsageEvent(runID, agentID string, input, output, total int) *UsageEvent 
 	}
 }
 
+// NewHardProtectionEvent constructs a HardProtectionEvent.
+func NewHardProtectionEvent(
+	runID, agentID, reason string,
+	executedAgentTools, childrenTotal int,
+	toolNames []tools.Ident,
+) *HardProtectionEvent {
+	names := make([]tools.Ident, len(toolNames))
+	copy(names, toolNames)
+	return &HardProtectionEvent{
+		baseEvent:          newBaseEvent(runID, agentID),
+		Reason:             reason,
+		ExecutedAgentTools: executedAgentTools,
+		ChildrenTotal:      childrenTotal,
+		ToolNames:          names,
+	}
+}
+
 // NewPlannerNoteEvent constructs a PlannerNoteEvent with the given note text
 // and optional labels for categorization.
 func NewPlannerNoteEvent(runID, agentID, note string, labels map[string]string) *PlannerNoteEvent {
@@ -572,3 +607,4 @@ func (e *RetryHintIssuedEvent) Type() EventType    { return RetryHintIssued }
 func (e *MemoryAppendedEvent) Type() EventType     { return MemoryAppended }
 func (e *PolicyDecisionEvent) Type() EventType     { return PolicyDecision }
 func (e *UsageEvent) Type() EventType              { return Usage }
+func (e *HardProtectionEvent) Type() EventType     { return HardProtectionTriggered }

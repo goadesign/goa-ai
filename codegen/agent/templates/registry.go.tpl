@@ -119,8 +119,25 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
             Name: {{ printf "%q" .QualifiedName }},
             // Provide the agent-wide specs; runtime de-duplicates tool specs across registrations.
             Specs: {{ $.ToolSpecsPackage }}.Specs,
-            Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
-                return exec.Execute(ctx, agentsruntime.ToolCallMeta{}, call)
+            Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+                if call == nil {
+                    return nil, fmt.Errorf("tool request is nil")
+                }
+                meta := &agentsruntime.ToolCallMeta{
+                    RunID:            call.RunID,
+                    SessionID:        call.SessionID,
+                    TurnID:           call.TurnID,
+                    ToolCallID:       call.ToolCallID,
+                    ParentToolCallID: call.ParentToolCallID,
+                }
+                result, err := exec.Execute(ctx, meta, call)
+                if err != nil {
+                    return nil, err
+                }
+                if result == nil {
+                    return nil, fmt.Errorf("executor returned nil result")
+                }
+                return result, nil
             },
         }
         if err := rt.RegisterToolset(reg); err != nil {
@@ -172,20 +189,30 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
         reg := agentsruntime.ToolsetRegistration{
             Name:  toolsetID,
             Specs: {{ $.ToolSpecsPackage }}.Specs,
-            Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
+            Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+                if call == nil {
+                    return nil, fmt.Errorf("tool request is nil")
+                }
                 if exec == nil {
-                    return planner.ToolResult{
+                    return &planner.ToolResult{
                         Error: planner.NewToolError("executor is required"),
                     }, nil
                 }
-                meta := agentsruntime.ToolCallMeta{
+                meta := &agentsruntime.ToolCallMeta{
                     RunID:            call.RunID,
                     SessionID:        call.SessionID,
                     TurnID:           call.TurnID,
                     ToolCallID:       call.ToolCallID,
                     ParentToolCallID: call.ParentToolCallID,
                 }
-                return exec.Execute(ctx, meta, call)
+                result, err := exec.Execute(ctx, meta, call)
+                if err != nil {
+                    return nil, err
+                }
+                if result == nil {
+                    return nil, fmt.Errorf("executor returned nil result")
+                }
+                return result, nil
             },
         }
         if err := rt.RegisterToolset(reg); err != nil {

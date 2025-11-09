@@ -368,6 +368,8 @@ func RegisterAssistantAssistantMcpToolset(ctx context.Context, rt *agentsruntime
 		Description: "AI Assistant service with full MCP protocol support",
 		Execute:     exec,
 		Specs:       AssistantAssistantMcpToolsetToolSpecs,
+		// Pass raw JSON through to executor; it decodes using MCP/client codecs.
+		DecodeInExecutor: true,
 	})
 }
 

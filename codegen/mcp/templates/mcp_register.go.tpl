@@ -144,6 +144,8 @@ func Register{{ .Register.HelperName }}(ctx context.Context, rt *agentsruntime.R
         Description: {{ printf "%q" .Register.Description }},
         Execute: exec,
         Specs: {{ .Register.HelperName }}ToolSpecs,
+        // Pass raw JSON through to executor; it decodes using MCP/client codecs.
+        DecodeInExecutor: true,
     })
 }
 

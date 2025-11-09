@@ -116,7 +116,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	r.recordRunStatus(wfCtx.Context(), input, run.StatusRunning, nil)
 	defer r.publishHook(wfCtx.Context(), hooks.NewRunCompletedEvent(input.RunID, input.AgentID, "success", nil), seq)
 
-	planInput := planner.PlanInput{
+	planInput := &planner.PlanInput{
 		Messages:   input.Messages,
 		RunContext: runCtx,
 		Agent:      agentCtx,
@@ -157,17 +157,19 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	}
 	caps := initialCaps(reg.Policy)
 	// Apply per-run cap overrides (run-level)
-	if input.Policy.MaxToolCalls > 0 {
-		caps.MaxToolCalls = input.Policy.MaxToolCalls
-		caps.RemainingToolCalls = input.Policy.MaxToolCalls
-	}
-	if input.Policy.MaxConsecutiveFailedToolCalls > 0 {
-		caps.MaxConsecutiveFailedToolCalls = input.Policy.MaxConsecutiveFailedToolCalls
-		caps.RemainingConsecutiveFailedToolCalls = input.Policy.MaxConsecutiveFailedToolCalls
+	if input.Policy != nil {
+		if input.Policy.MaxToolCalls > 0 {
+			caps.MaxToolCalls = input.Policy.MaxToolCalls
+			caps.RemainingToolCalls = input.Policy.MaxToolCalls
+		}
+		if input.Policy.MaxConsecutiveFailedToolCalls > 0 {
+			caps.MaxConsecutiveFailedToolCalls = input.Policy.MaxConsecutiveFailedToolCalls
+			caps.RemainingConsecutiveFailedToolCalls = input.Policy.MaxConsecutiveFailedToolCalls
+		}
 	}
 	// Compute deadline with per-run override taking precedence over registration policy
 	var deadline time.Time
-	if input.Policy.TimeBudget > 0 {
+	if input.Policy != nil && input.Policy.TimeBudget > 0 {
 		deadline = wfCtx.Now().Add(input.Policy.TimeBudget)
 	} else if reg.Policy.TimeBudget > 0 {
 		deadline = wfCtx.Now().Add(reg.Policy.TimeBudget)
@@ -191,7 +193,7 @@ func (r *Runtime) runLoop(
 	wfCtx engine.WorkflowContext,
 	reg AgentRegistration,
 	input *RunInput,
-	base planner.PlanInput,
+	base *planner.PlanInput,
 	initial *planner.PlanResult,
 	caps policy.CapsState,
 	deadline time.Time,
@@ -200,6 +202,9 @@ func (r *Runtime) runLoop(
 	parentTracker *childTracker,
 	ctrl *interrupt.Controller,
 ) (*RunOutput, error) {
+	if base == nil {
+		return nil, errors.New("base plan input is required")
+	}
 	ctx := wfCtx.Context()
 	if r.logger == nil {
 		r.logger = telemetry.NoopLogger{}
@@ -223,7 +228,7 @@ func (r *Runtime) runLoop(
 	var lastToolResults []*planner.ToolResult
 	for {
 		r.logger.Info(ctx, "runLoop iteration", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil, "await", result.Await != nil)
-		if err := r.handleInterrupts(wfCtx, input, &base, seq, ctrl, &nextAttempt); err != nil {
+		if err := r.handleInterrupts(wfCtx, input, base, seq, ctrl, &nextAttempt); err != nil {
 			return nil, err
 		}
 		if !deadline.IsZero() && wfCtx.Now().After(deadline) {
@@ -274,7 +279,7 @@ func (r *Runtime) runLoop(
 				}
 				// Append the answer as a user message and continue planning.
 				if strings.TrimSpace(ans.Answer) != "" {
-					base.Messages = append(base.Messages, planner.AgentMessage{
+					base.Messages = append(base.Messages, &planner.AgentMessage{
 						Role:    "user",
 						Content: ans.Answer,
 					})
@@ -369,13 +374,17 @@ func (r *Runtime) runLoop(
 					seq,
 				)
 			}
+			notes := make([]*planner.PlannerAnnotation, len(result.Notes))
+			for i := range result.Notes {
+				notes[i] = &result.Notes[i]
+			}
 			return &RunOutput{
 				AgentID:    base.Agent.ID(),
 				RunID:      base.RunContext.RunID,
-				Final:      result.FinalResponse.Message,
+				Final:      &result.FinalResponse.Message,
 				ToolEvents: lastToolResults,
-				Notes:      result.Notes,
-				Usage:      aggUsage,
+				Notes:      notes,
+				Usage:      &aggUsage,
 			}, nil
 		}
 
@@ -401,7 +410,7 @@ func (r *Runtime) runLoop(
 
 		r.logger.Info(ctx, "Workflow received tool calls from planner", "count", len(candidates))
 		// Apply per-run policy overrides (restrict tool and tag filters) before policy decision.
-		if ov := input.Policy; (ov.RestrictToTool != "" || len(ov.AllowedTags) > 0 || len(ov.DeniedTags) > 0) && len(candidates) > 0 {
+		if ov := input.Policy; ov != nil && (ov.RestrictToTool != "" || len(ov.AllowedTags) > 0 || len(ov.DeniedTags) > 0) && len(candidates) > 0 {
 			r.logger.Info(ctx, "Applying per-run policy overrides", "restrict_to_tool", ov.RestrictToTool, "allowed_tags", ov.AllowedTags, "denied_tags", ov.DeniedTags)
 			metas := r.toolMetadata(candidates)
 			filtered := make([]planner.ToolRequest, 0, len(candidates))
@@ -491,7 +500,7 @@ func (r *Runtime) runLoop(
 			}
 		}
 		// Per-turn max cap from overrides (applies before remaining run caps)
-		if input.Policy.PerTurnMaxToolCalls > 0 && len(allowed) > input.Policy.PerTurnMaxToolCalls {
+		if input.Policy != nil && input.Policy.PerTurnMaxToolCalls > 0 && len(allowed) > input.Policy.PerTurnMaxToolCalls {
 			allowed = allowed[:input.Policy.PerTurnMaxToolCalls]
 		}
 		if caps.MaxToolCalls > 0 && caps.RemainingToolCalls < len(allowed) {
@@ -542,10 +551,44 @@ func (r *Runtime) runLoop(
 		}
 
 		// Apply missing-fields policy if configured. The helper may finalize or pause/resume.
-		if out, err := r.handleMissingFieldsPolicy(wfCtx, reg, input, &base, vals, &nextAttempt, seq, ctrl); err != nil {
+		if out, err := r.handleMissingFieldsPolicy(wfCtx, reg, input, base, vals, &nextAttempt, seq, ctrl); err != nil {
 			return nil, err
 		} else if out != nil {
 			return out, nil
+		}
+
+		// Hard protection: If this turn executed agent-as-tool calls
+		// and they produced zero child tool calls in total, do not
+		// resume. Finalize immediately to avoid loops.
+		{
+			var agentToolCount int
+			var totalChildren int
+			toolNames := make([]tools.Ident, 0, len(vals))
+			for _, tr := range vals {
+				// Identify agent-tools by spec metadata
+				if spec, ok := r.toolSpec(tr.Name); ok && spec.IsAgentTool {
+					agentToolCount++
+					toolNames = append(toolNames, tr.Name)
+					if tr.ChildrenCount > 0 {
+						totalChildren += tr.ChildrenCount
+					}
+				}
+			}
+			if agentToolCount > 0 && totalChildren == 0 {
+				// Emit a clear observability signal before finalization.
+				r.publishHook(ctx,
+					hooks.NewHardProtectionEvent(
+						base.RunContext.RunID,
+						base.Agent.ID(),
+						"agent_tool_no_children",
+						agentToolCount,
+						totalChildren,
+						toolNames,
+					),
+					seq,
+				)
+				return r.finalizeWithPlanner(wfCtx, reg, input, base, lastToolResults, nextAttempt, seq, planner.TerminationReasonFailureCap)
+			}
 		}
 
 		resumeCtx := base.RunContext
@@ -616,7 +659,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 	}
 	switch reg.Policy.OnMissingFields {
 	case MissingFieldsFinalize:
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, *base, results, *nextAttempt, seq, planner.TerminationReasonFailureCap)
+		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, results, *nextAttempt, seq, planner.TerminationReasonFailureCap)
 		return out, err
 	case MissingFieldsAwaitClarification:
 		// Generate deterministic await ID for correlation safety.
@@ -644,7 +687,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 			return nil, fmt.Errorf("unexpected await ID for clarification")
 		}
 		if strings.TrimSpace(ans.Answer) != "" {
-			base.Messages = append(base.Messages, planner.AgentMessage{
+			base.Messages = append(base.Messages, &planner.AgentMessage{
 				Role:    "user",
 				Content: ans.Answer,
 			})
@@ -666,12 +709,15 @@ func (r *Runtime) finalizeWithPlanner(
 	wfCtx engine.WorkflowContext,
 	reg AgentRegistration,
 	input *RunInput,
-	base planner.PlanInput,
+	base *planner.PlanInput,
 	lastToolResults []*planner.ToolResult,
 	nextAttempt int,
 	seq *turnSequencer,
 	reason planner.TerminationReason,
 ) (*RunOutput, error) {
+	if base == nil {
+		return nil, errors.New("base plan input is required")
+	}
 	ctx := wfCtx.Context()
 	// Prepare a brief message to steer planners that incorporate system messages.
 	var hint string
@@ -687,7 +733,7 @@ func (r *Runtime) finalizeWithPlanner(
 	}
 	messages := base.Messages
 	if strings.TrimSpace(hint) != "" {
-		messages = append(messages, planner.AgentMessage{Role: "system", Content: hint})
+		messages = append(messages, &planner.AgentMessage{Role: "system", Content: hint})
 	}
 	resumeCtx := base.RunContext
 	resumeCtx.Attempt = nextAttempt
@@ -750,12 +796,16 @@ func (r *Runtime) finalizeWithPlanner(
 			seq,
 		)
 	}
+	notes := make([]*planner.PlannerAnnotation, len(result.Notes))
+	for i := range result.Notes {
+		notes[i] = &result.Notes[i]
+	}
 	return &RunOutput{
 		AgentID:    base.Agent.ID(),
 		RunID:      base.RunContext.RunID,
-		Final:      result.FinalResponse.Message,
+		Final:      &result.FinalResponse.Message,
 		ToolEvents: lastToolResults,
-		Notes:      result.Notes,
+		Notes:      notes,
 		// Usage aggregation continues to be recorded by the surrounding loop
 	}, nil
 }
@@ -883,9 +933,12 @@ func (r *Runtime) executeToolCalls(
 			// Execute inline, preserving workflow context on ctx for agent-as-tool
 			start := wfCtx.Now()
 			ctxWithWF := engine.WithWorkflowContext(ctx, wfCtx)
-			res, err := ts.Execute(ctxWithWF, call)
+			res, err := ts.Execute(ctxWithWF, &call)
 			if err != nil {
 				return nil, fmt.Errorf("tool %q inline execution failed: %w", call.Name, err)
+			}
+			if res == nil {
+				return nil, fmt.Errorf("tool %q inline execution returned nil result", call.Name)
 			}
 			duration := wfCtx.Now().Sub(start)
 			// Telemetry builder support can be applied post-aggregation where needed.
@@ -911,14 +964,7 @@ func (r *Runtime) executeToolCalls(
 				)
 			}
 			// Accumulate result preserving order
-			inlineResults = append(inlineResults, &planner.ToolResult{
-				Name:       call.Name,
-				Result:     res.Result,
-				ToolCallID: call.ToolCallID,
-				Telemetry:  res.Telemetry,
-				Error:      res.Error,
-				RetryHint:  res.RetryHint,
-			})
+			inlineResults = append(inlineResults, res)
 			if parentTracker != nil {
 				discoveredIDs = append(discoveredIDs, call.ToolCallID)
 			}

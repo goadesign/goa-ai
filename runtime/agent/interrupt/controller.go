@@ -41,7 +41,7 @@ type (
 		Labels      map[string]string
 		// Messages allows human or policy actors to inject new conversational
 		// messages before the planner resumes execution.
-		Messages []planner.AgentMessage
+		Messages []*planner.AgentMessage
 	}
 
 	// Controller drains runtime interrupt signals and exposes helpers the

@@ -270,7 +270,51 @@ The workflow loop drains `goaai.runtime.pause` / `goaai.runtime.resume` signals 
 
 See `docs/plan.md` for a deep dive into generated structures, templates, and runtime packages.
 
-## MCP + External Toolsets
+## Agent Toolsets vs MCP (Cross‑Service Tools)
+
+Agent‑as‑Tool and external toolsets follow a simple rule: decode at the executor, never in the planner/transport.
+
+- Single decode authority: only the tool executor decodes payloads.
+- Byte preservation: carry raw JSON for cross‑service calls.
+- Stable identity: use provider tool IDs (no string surgery).
+- Decode once: no intermediate map[string]any coercions.
+
+### When to use Toolset vs AgentToolset
+
+- `Toolset(X)` (preferred when possible):
+  - Use when you have an expression handle (e.g., a top‑level `var X = Toolset("name", ...)` or an agent’s exported toolset).
+  - Goa‑AI infers the provider automatically when exactly one agent in another service exports a toolset with the same name. In that case, the consumer advertises provider tool IDs and reuses provider specs.
+  - If the toolset is owned by the same service/agent, it remains local.
+
+- `AgentToolset(service, agent, toolset)` (be explicit):
+  - Use when you don’t have an expression handle, or there is ambiguity (multiple agents export the same toolset name), or you want explicitness.
+  - This pins the provider (service/agent/toolset) in the design and avoids name ambiguity.
+
+### MCP Toolsets
+
+- Use `MCPToolset(service, suite)` inside `Uses(...)` to depend on an MCP server.
+- Generated registration sets `DecodeInExecutor=true` so raw JSON is passed through to the MCP executor, which decodes using its own codecs.
+
+### Planner and Executors
+
+- Planners should forward `json.RawMessage` for cross‑service/MCP tool calls and only decode local toolsets for ergonomics when needed.
+- Executors decode using the generated `PayloadCodec`/`ResultCodec` for their toolsets.
+
+#### Used‑Tools decode and validation (agent side)
+- Agent used‑tools perform a lenient JSON decode for payloads: required‑field validation is not enforced during `FromJSON` on the agent side.
+- After lenient decode, your executor (or generated per‑tool callers) runs and may map the lenient tool args into the service method payload (e.g., inject server‑owned context like `session_id` from `ToolCallMeta`).
+- Strict validation happens at the service boundary (Goa service). If the service returns validation errors, you may map them to `RetryHint` in your runtime layer as desired.
+
+Agent‑as‑Tool and external toolsets follow a simple rule: decode at the executor, never in the planner/transport.
+
+- Use `MCPToolset(service, suite)` inside `Uses(...)` to depend on an MCP server.
+- For agent‑to‑agent calls, use `AgentToolset(service, agent, toolset)` inside `Uses(...)` to consume another agent’s exported toolset.
+- The DSL and codegen infer locality automatically:
+  - Local toolsets execute in‑process.
+  - Agent‑as‑tool executes inline (no activity) and preserves payload bytes.
+  - MCP toolsets register with `DecodeInExecutor=true`, so the runtime forwards raw JSON to the executor, which decodes using its own codecs.
+
+This keeps ownership clear (executor decodes), prevents cross‑package type mismatches, and makes transports byte‑preserving by default.
 
 - Declare MCP servers in your Goa services as before.
 - Reference suites from agents using `agentsdsl.UseMCPToolset(service, suite)`.

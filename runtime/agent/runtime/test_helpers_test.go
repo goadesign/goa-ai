@@ -215,18 +215,18 @@ func copyActivityResult(dst any, src any) error {
 }
 
 type stubPlanner struct {
-	start  func(context.Context, planner.PlanInput) (*planner.PlanResult, error)
-	resume func(context.Context, planner.PlanResumeInput) (*planner.PlanResult, error)
+	start  func(context.Context, *planner.PlanInput) (*planner.PlanResult, error)
+	resume func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error)
 }
 
-func (s *stubPlanner) PlanStart(ctx context.Context, input planner.PlanInput) (*planner.PlanResult, error) {
+func (s *stubPlanner) PlanStart(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 	if s.start != nil {
 		return s.start(ctx, input)
 	}
 	return &planner.PlanResult{}, nil
 }
 
-func (s *stubPlanner) PlanResume(ctx context.Context, input planner.PlanResumeInput) (*planner.PlanResult, error) {
+func (s *stubPlanner) PlanResume(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
 	if s.resume != nil {
 		return s.resume(ctx, input)
 	}

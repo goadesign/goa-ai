@@ -160,6 +160,11 @@ Code generation emits:
 - JSON Schema definitions consumed by planners and optional validation layers.
 - Tool registry entries consumed by the runtime, including helper prompts and metadata.
 
+#### Decode & Validation semantics (used‑tools)
+- Agent used‑tools perform a lenient JSON decode on the agent side: `FromJSON` does not enforce required‑field validation for payloads.
+- Executors (or generated per‑tool callers) can construct the final service method payload (e.g., fill server‑owned fields from `ToolCallMeta`) before invoking the backend.
+- Strict validation remains at the service boundary (Goa service). Validation errors returned by services can be mapped to `RetryHint` if you choose to surface recoverable guidance to planners.
+
 #### BindTo(service, method)
 
 Use `BindTo("Method")` to associate a tool with a service method on the current

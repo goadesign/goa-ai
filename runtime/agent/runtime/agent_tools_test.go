@@ -13,13 +13,18 @@ import (
 )
 
 // planner that captures messages passed to PlanStart and returns a final response
-type capturePlanner struct{ msgs []planner.AgentMessage }
+type capturePlanner struct {
+	msgs []*planner.AgentMessage
+}
 
-func (p *capturePlanner) PlanStart(ctx context.Context, in planner.PlanInput) (*planner.PlanResult, error) {
-	p.msgs = append([]planner.AgentMessage(nil), in.Messages...)
+func (p *capturePlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
+	if in == nil {
+		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, nil
+	}
+	p.msgs = append([]*planner.AgentMessage{}, in.Messages...)
 	return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, nil
 }
-func (p *capturePlanner) PlanResume(ctx context.Context, in planner.PlanResumeInput) (*planner.PlanResult, error) {
+func (p *capturePlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
 	return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "done"}}}, nil
 }
 
@@ -49,8 +54,10 @@ func TestAgentTool_DefaultsFromPayload(t *testing.T) {
 	wf := &testWorkflowContext{ctx: context.Background()}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
 	// String payload path
-	tr, err := reg.Execute(ctx, planner.ToolRequest{RunID: "r1", SessionID: "s1", Name: tools.Ident("svc.tools.do"), Payload: "hello"})
+	call := planner.ToolRequest{RunID: "r1", SessionID: "s1", Name: tools.Ident("svc.tools.do"), Payload: "hello"}
+	tr, err := reg.Execute(ctx, &call)
 	require.NoError(t, err)
+	require.NotNil(t, tr)
 	require.Equal(t, tools.Ident("svc.tools.do"), tr.Name)
 	require.Len(t, pl.msgs, 1)
 	require.Equal(t, "user", pl.msgs[0].Role)
@@ -81,8 +88,10 @@ func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 	}})
 	wf := &testWorkflowContext{ctx: context.Background()}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
-	tr, err := reg.Execute(ctx, planner.ToolRequest{RunID: "r1", SessionID: "s1", Name: tools.Ident("svc.tools.do"), Payload: "hello"})
+	call := planner.ToolRequest{RunID: "r1", SessionID: "s1", Name: tools.Ident("svc.tools.do"), Payload: "hello"}
+	tr, err := reg.Execute(ctx, &call)
 	require.NoError(t, err)
+	require.NotNil(t, tr)
 	require.Equal(t, tools.Ident("svc.tools.do"), tr.Name)
 	require.Len(t, pl.msgs, 1)
 	require.Equal(t, "PB:hello", pl.msgs[0].Content)
@@ -110,7 +119,8 @@ func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 	reg := NewAgentToolsetRegistration(rt, AgentToolConfig{AgentID: agentID, SystemPrompt: "SYS"})
 	wf := &testWorkflowContext{ctx: context.Background()}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
-	_, err := reg.Execute(ctx, planner.ToolRequest{RunID: "r1", SessionID: "s1", Name: tools.Ident("svc.tools.do"), Payload: "hello"})
+	call := planner.ToolRequest{RunID: "r1", SessionID: "s1", Name: tools.Ident("svc.tools.do"), Payload: "hello"}
+	_, err := reg.Execute(ctx, &call)
 	require.NoError(t, err)
 	require.Len(t, pl.msgs, 2)
 	require.Equal(t, "system", pl.msgs[0].Role)

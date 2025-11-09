@@ -4,7 +4,13 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}MCPExecutor(caller 
     suite := {{ printf "%q" .Toolset.QualifiedName }}
     prefix := suite + "."
 
-    return runtime.ToolCallExecutorFunc(func(ctx context.Context, meta runtime.ToolCallMeta, call planner.ToolRequest) (planner.ToolResult, error) {
+    return runtime.ToolCallExecutorFunc(func(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*planner.ToolResult, error) {
+        if call == nil {
+            return &planner.ToolResult{Error: planner.NewToolError("tool request is nil")}, nil
+        }
+        if meta == nil {
+            return &planner.ToolResult{Error: planner.NewToolError("tool call meta is nil")}, nil
+        }
         full := call.Name
         tool := full
         if strings.HasPrefix(tool, prefix) {
@@ -17,7 +23,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}MCPExecutor(caller 
             // PayloadCodec will encode it deterministically for transport.
             payload, err := pc.ToJSON(call.Payload)
             if err != nil {
-                return planner.ToolResult{
+                return &planner.ToolResult{
 					Name:  full,
 					Error: planner.ToolErrorFromError(err),
 				}, nil
@@ -28,7 +34,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}MCPExecutor(caller 
 				Payload: payload,
 			})
             if err != nil {
-                return planner.ToolResult{
+                return &planner.ToolResult{
 					Name:  full,
 					Error: planner.ToolErrorFromError(err),
 				}, nil
@@ -38,7 +44,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}MCPExecutor(caller 
                 if rc, ok := {{ $.Toolset.SpecsPackageName }}.ResultCodec(full); ok {
                     v, err := rc.FromJSON(resp.Result)
                     if err != nil {
-                        return planner.ToolResult{
+                        return &planner.ToolResult{
 					Name:  full,
 					Error: planner.ToolErrorFromError(err),
 				}, nil
@@ -54,13 +60,13 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}MCPExecutor(caller 
 					},
 				}
             }
-            return planner.ToolResult{
+            return &planner.ToolResult{
 				Name:      full,
 				Result:    value,
 				Telemetry: tel,
 			}, nil
         }
-        return planner.ToolResult{
+        return &planner.ToolResult{
 			Name:  full,
 			Error: planner.NewToolError("payload codec not found"),
 		}, nil

@@ -21,16 +21,17 @@ func TestEventSequencingMonotonic(t *testing.T) {
 		logger:  telemetry.NoopLogger{},
 		metrics: telemetry.NoopMetrics{},
 		tracer:  telemetry.NoopTracer{},
-		toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
-			return planner.ToolResult{
-				Name: call.Name,
-			}, nil
-		}}},
+		toolsets: map[string]ToolsetRegistration{"svc.ts": {
+			Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+				return &planner.ToolResult{
+					Name: call.Name,
+				}, nil
+			}}},
 	}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{"svc.ts.tool": newAnyJSONSpec("svc.ts.tool")}
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, hasPlanResult: true}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1", TurnID: "turn-1"}
-	base := planner.PlanInput{RunContext: run.Context{RunID: input.RunID, TurnID: input.TurnID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
+	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID, TurnID: input.TurnID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("svc.ts.tool")}}}
 	_, err := rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  input.AgentID,

@@ -835,6 +835,14 @@ func newToolsetData(
 			sourceService = svc
 		}
 	}
+	// If this toolset references a remote agent provider (AgentToolset or
+	// a referenced export from another service), honor the provider's service
+	// as the source for qualified naming so tool identities cross boundaries.
+	if expr.Provider.Kind == agentsExpr.ProviderRemoteAgent && servicesData != nil {
+		if svc := servicesData.Get(expr.Provider.ServiceName); svc != nil {
+			sourceService = svc
+		}
+	}
 	// If this is a method-backed toolset, prefer the service referenced by the
 	// first bound method (BindTo) when present.
 	if !expr.External && servicesData != nil && len(expr.Tools) > 0 {

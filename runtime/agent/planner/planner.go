@@ -13,63 +13,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
-	toolerrors "goa.design/goa-ai/runtime/agent/toolerrors"
 	"goa.design/goa-ai/runtime/agent/tools"
-)
-
-// ToolError represents a structured tool failure and is an alias to the runtime toolerrors type.
-type ToolError = toolerrors.ToolError
-
-// NewToolError constructs a ToolError with the provided message.
-func NewToolError(message string) *ToolError {
-	return toolerrors.New(message)
-}
-
-// NewToolErrorWithCause wraps an existing error with a ToolError message.
-func NewToolErrorWithCause(message string, cause error) *ToolError {
-	return toolerrors.NewWithCause(message, cause)
-}
-
-// ToolErrorFromError converts an arbitrary error into a ToolError chain.
-func ToolErrorFromError(err error) *ToolError {
-	return toolerrors.FromError(err)
-}
-
-// ToolErrorf formats according to a format specifier and returns the string as a ToolError.
-func ToolErrorf(format string, args ...any) *ToolError {
-	return toolerrors.Errorf(format, args...)
-}
-
-// RetryReason categorizes the type of failure that triggered a retry hint.
-// Policy engines use this to make informed decisions about retry strategies
-// (e.g., disable tools, adjust caps, request human intervention).
-type RetryReason string
-
-const (
-	// RetryReasonInvalidArguments indicates the tool call failed due to invalid
-	// or malformed input arguments (schema violation, type mismatch, etc.).
-	RetryReasonInvalidArguments RetryReason = "invalid_arguments"
-
-	// RetryReasonMissingFields indicates required fields were missing or empty
-	// in the tool call payload. The planner may populate MissingFields to specify
-	// which fields are needed.
-	RetryReasonMissingFields RetryReason = "missing_fields"
-
-	// RetryReasonMalformedResponse indicates the tool returned data that couldn't
-	// be parsed or didn't match the expected schema (e.g., invalid JSON).
-	RetryReasonMalformedResponse RetryReason = "malformed_response"
-
-	// RetryReasonTimeout indicates the tool execution exceeded time limits.
-	// Policy engines may reduce caps or disable the tool for this run.
-	RetryReasonTimeout RetryReason = "timeout"
-
-	// RetryReasonRateLimited indicates the tool or underlying service is rate-limited.
-	// Policy engines may back off or disable the tool temporarily.
-	RetryReasonRateLimited RetryReason = "rate_limited"
-
-	// RetryReasonToolUnavailable indicates the tool is temporarily or permanently
-	// unavailable (service down, not configured, etc.).
-	RetryReasonToolUnavailable RetryReason = "tool_unavailable"
 )
 
 // Planner defines the contract generated workflows expect planner implementations
@@ -87,13 +31,13 @@ type Planner interface {
 	// user input. Returns either tool calls to execute or a final response.
 	// Returns an error if the planner encounters a fatal issue (LLM unavailable,
 	// invalid input, etc.).
-	PlanStart(ctx context.Context, input PlanInput) (*PlanResult, error)
+	PlanStart(ctx context.Context, input *PlanInput) (*PlanResult, error)
 
 	// PlanResume continues reasoning after tool execution. The planner receives
 	// the conversation history plus tool results from the previous turn. It should
 	// integrate tool outputs and decide the next action (more tools or final response).
 	// Returns an error if the planner cannot continue (LLM failure, context too large).
-	PlanResume(ctx context.Context, input PlanResumeInput) (*PlanResult, error)
+	PlanResume(ctx context.Context, input *PlanResumeInput) (*PlanResult, error)
 }
 
 type (
@@ -103,7 +47,7 @@ type (
 		// Messages is the conversation history provided at run start, typically including
 		// the system prompt (if any) and initial user message. Planners use this as the
 		// basis for reasoning and tool selection.
-		Messages []AgentMessage
+		Messages []*AgentMessage
 
 		// RunContext carries identifiers, labels, and caps for the run. Planners can
 		// inspect labels for routing decisions or use caps to understand resource limits.
@@ -123,7 +67,7 @@ type (
 	PlanResumeInput struct {
 		// Messages is the conversation history available at resume time, updated to include
 		// any new assistant messages or user inputs since the last planner call.
-		Messages []AgentMessage
+		Messages []*AgentMessage
 
 		// RunContext carries identifiers, labels, and caps for the run.
 		RunContext run.Context
@@ -338,6 +282,12 @@ type (
 		// Result carries the tool result payload if successful (e.g., search results,
 		// calculation output). Nil if Error is set.
 		Result any
+
+		// ChildrenCount records how many child tool calls were produced by this tool when
+		// it represents an agent-as-tool execution. Used by the runtime to detect cases
+		// where an agent-tool produced no child calls and avoid pointless resumes.
+		// Zero for regular service-backed tools.
+		ChildrenCount int
 
 		// ToolCallID echoes the identifier of the tool invocation as known to the
 		// planner/model. When the planner supplied ToolRequest.ToolCallID (e.g., from

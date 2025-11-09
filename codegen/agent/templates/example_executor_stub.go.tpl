@@ -20,14 +20,20 @@ func Register(ctx context.Context, rt *runtime.Runtime) error {
 
 // Execute demonstrates per-tool branching with typed decode. Replace placeholders
 // with client calls and optional transforms from the specs package (transforms.go).
-func Execute(ctx context.Context, meta runtime.ToolCallMeta, call planner.ToolRequest) (planner.ToolResult, error) {
+func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*planner.ToolResult, error) {
+    if call == nil {
+        return &planner.ToolResult{Error: planner.NewToolError("tool request is nil")}, nil
+    }
+    if meta == nil {
+        return &planner.ToolResult{Error: planner.NewToolError("tool call meta is nil")}, nil
+    }
     switch call.Name {
     {{- range .Tools }}
     case "{{ .Qualified }}":
         // Decode typed payload
         args, err := {{ $.SpecsAlias }}.{{ .PayloadUnmarshal }}(call.Payload)
         if err != nil {
-            return planner.ToolResult{
+            return &planner.ToolResult{
 				Error: planner.NewToolError("invalid payload"),
 			}, nil
         }
@@ -35,14 +41,14 @@ func Execute(ctx context.Context, meta runtime.ToolCallMeta, call planner.ToolRe
         // mp, _ := {{ $.SpecsAlias }}.ToMethodPayload_{{ .GoName }}(args)
         // TODO: Call your service client with mp (or args), map result back:
         // tr, _ := {{ $.SpecsAlias }}.ToToolReturn_{{ .GoName }}(methodRes)
-        return planner.ToolResult{
-			Payload: map[string]any{
+        return &planner.ToolResult{
+			Result: map[string]any{
 				"status": "ok",
 			},
 		}, nil
     {{- end }}
     default:
-        return planner.ToolResult{
+        return &planner.ToolResult{
 			Error: planner.NewToolError("unknown tool"),
 		}, nil
     }

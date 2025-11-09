@@ -29,16 +29,19 @@ func TestExecuteToolActivity_UsesGeneratedCodecs(t *testing.T) {
 		Result:  tools.TypeSpec{Name: "R", Codec: resultCodec},
 	}
 
-	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
-		// Ensure decode path used payload codec
-		require.Equal(t, "decoded_payload", call.Payload)
-		// Return arbitrary value; encode path should use result codec
-		return planner.ToolResult{Result: map[string]string{"status": "ok"}}, nil
-	}}}}
+	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {
+		Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			// Ensure decode path used payload codec
+			require.Equal(t, "decoded_payload", call.Payload)
+			// Return arbitrary value; encode path should use result codec
+			return &planner.ToolResult{Result: map[string]string{"status": "ok"}}, nil
+		}}}}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{spec.Name: spec}
 
-	out, err := rt.ExecuteToolActivity(context.Background(), ToolInput{AgentID: "agent", RunID: "run", ToolName: spec.Name, Payload: json.RawMessage("{}")})
+	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: spec.Name, Payload: json.RawMessage("{}")}
+	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
+	require.NotNil(t, out)
 	// Result encoding must come from the result codec ("encoded_result")
 	var got any
 	require.NoError(t, json.Unmarshal(out.Payload, &got))

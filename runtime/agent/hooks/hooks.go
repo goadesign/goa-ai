@@ -114,6 +114,11 @@ const (
 
 	// Usage reports token usage for a model invocation within a run.
 	Usage EventType = "usage"
+
+	// HardProtectionTriggered fires when a runtime hard protection is applied to
+	// avoid pathological behavior (e.g., agent-tool produced no child calls).
+	// Payload is a HardProtectionEvent.
+	HardProtectionTriggered EventType = "hard_protection_triggered"
 )
 
 // HandleEvent implements Subscriber by invoking the function.

@@ -260,24 +260,30 @@ import (
     specs "<module>/gen/<svc>/agents/<agent>/specs/<toolset>"
 )
 
-func Execute(ctx context.Context, meta runtime.ToolCallMeta, call planner.ToolRequest) (planner.ToolResult, error) {
+func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*planner.ToolResult, error) {
+    if call == nil {
+        return &planner.ToolResult{Error: planner.NewToolError("tool request is nil")}, nil
+    }
+    if meta == nil {
+        return &planner.ToolResult{Error: planner.NewToolError("tool call meta is nil")}, nil
+    }
     switch call.Name {
     case "<svc>.<toolset>.<tool>":
         var args specs.<ToolPayload>
         if err := specs.Unmarshal<ToolPayload>(call.Payload, &args); err != nil {
-            return planner.ToolResult{
+            return &planner.ToolResult{
 				Error: planner.NewToolError("invalid payload"),
 			}, nil
         }
         // Optionally: mp, _ := ToMethodPayload_<Tool>(args)
         // TODO: invoke your service client, map result via ToToolReturn_<Tool>
-        return planner.ToolResult{
-			Payload: map[string]any{
+        return &planner.ToolResult{
+			Result: map[string]any{
 				"status": "ok",
 			},
 		}, nil
     }
-    return planner.ToolResult{
+    return &planner.ToolResult{
 		Error: planner.NewToolError("unknown tool"),
 	}, nil
 }

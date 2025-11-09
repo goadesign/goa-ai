@@ -29,7 +29,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input PlanActivityInput
 	if err != nil {
 		return PlanActivityOutput{}, err
 	}
-	planInput := planner.PlanInput{
+	planInput := &planner.PlanInput{
 		Messages:   input.Messages,
 		RunContext: input.RunContext,
 		Agent:      agentCtx,
@@ -58,7 +58,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input PlanActivityInpu
 	if err != nil {
 		return PlanActivityOutput{}, err
 	}
-	planInput := planner.PlanResumeInput{
+	planInput := &planner.PlanResumeInput{
 		Messages:    input.Messages,
 		RunContext:  input.RunContext,
 		Agent:       agentCtx,
@@ -83,9 +83,12 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input PlanActivityInpu
 // It decodes the tool payload, runs the registered tool implementation, and
 // encodes the result using the tool‑specific codec. Returns an error if the
 // toolset is not registered or if encoding/decoding fails.
-func (r *Runtime) ExecuteToolActivity(ctx context.Context, req ToolInput) (ToolOutput, error) {
+func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*ToolOutput, error) {
+	if req == nil {
+		return nil, errors.New("tool input is required")
+	}
 	if req.ToolName == "" {
-		return ToolOutput{}, errors.New("tool name is required")
+		return nil, errors.New("tool name is required")
 	}
 	sName := req.ToolsetName
 	if sName == "" {
@@ -93,7 +96,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req ToolInput) (ToolO
 	}
 	reg, ok := r.toolsets[sName]
 	if !ok {
-		return ToolOutput{}, fmt.Errorf("toolset %q is not registered", sName)
+		return nil, fmt.Errorf("toolset %q is not registered", sName)
 	}
 
 	// Apply optional payload adapter before decoding.
@@ -109,7 +112,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req ToolInput) (ToolO
 		if adapted, err := reg.PayloadAdapter(ctx, meta, req.ToolName, raw); err == nil && len(adapted) > 0 {
 			raw = adapted
 		} else if err != nil {
-			return ToolOutput{Error: fmt.Sprintf("payload adapter failed: %v", err)}, nil
+			return &ToolOutput{Error: fmt.Sprintf("payload adapter failed: %v", err)}, nil
 		}
 	}
 
@@ -123,7 +126,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req ToolInput) (ToolO
 		if decErr != nil {
 			// Build structured retry hints using generated ValidationError when present.
 			if fields, question, reason, ok := buildRetryHintFromValidation(decErr, req.ToolName); ok {
-				return ToolOutput{
+				return &ToolOutput{
 					Error: decErr.Error(),
 					RetryHint: &planner.RetryHint{
 						Reason:             reason,
@@ -134,7 +137,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req ToolInput) (ToolO
 				}, nil
 			}
 			// Not a validation error: no retry hint.
-			return ToolOutput{Error: decErr.Error()}, nil
+			return &ToolOutput{Error: decErr.Error()}, nil
 		}
 		decoded = val
 	}
@@ -151,9 +154,12 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req ToolInput) (ToolO
 		ToolCallID:       req.ToolCallID,
 	}
 	start := time.Now()
-	result, err := reg.Execute(ctx, call)
+	result, err := reg.Execute(ctx, &call)
 	if err != nil {
-		return ToolOutput{}, err
+		return nil, err
+	}
+	if result == nil {
+		return nil, errors.New("tool execution returned nil result")
 	}
 	// Enrich or build telemetry via registration builder when available.
 	if reg.TelemetryBuilder != nil {
@@ -168,7 +174,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req ToolInput) (ToolO
 		if b, e := json.Marshal(result.Result); e == nil {
 			best = json.RawMessage(b)
 		}
-		return ToolOutput{Error: encErr.Error(), Payload: best}, nil
+		return &ToolOutput{Error: encErr.Error(), Payload: best}, nil
 	}
 	// Apply optional result adapter after encoding.
 	if reg.ResultAdapter != nil && len(enc) > 0 {
@@ -176,7 +182,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req ToolInput) (ToolO
 			enc = adapted
 		}
 	}
-	out := ToolOutput{Payload: enc, Telemetry: result.Telemetry}
+	out := &ToolOutput{Payload: enc, Telemetry: result.Telemetry}
 	if result.Error != nil {
 		out.Error = result.Error.Error()
 	}
@@ -252,9 +258,12 @@ func buildRetryHintFromValidation(err error, toolName tools.Ident) ([]string, st
 }
 
 // planStart invokes the planner's PlanStart method with tracing.
-func (r *Runtime) planStart(ctx context.Context, reg AgentRegistration, input planner.PlanInput) (*planner.PlanResult, error) {
+func (r *Runtime) planStart(ctx context.Context, reg AgentRegistration, input *planner.PlanInput) (*planner.PlanResult, error) {
 	if reg.Planner == nil {
 		return nil, errors.New("planner not configured")
+	}
+	if input == nil {
+		return nil, errors.New("plan input is required")
 	}
 	tracer := r.tracer
 	if tracer == nil {
@@ -266,9 +275,12 @@ func (r *Runtime) planStart(ctx context.Context, reg AgentRegistration, input pl
 }
 
 // planResume invokes the planner's PlanResume method with tracing.
-func (r *Runtime) planResume(ctx context.Context, reg AgentRegistration, input planner.PlanResumeInput) (*planner.PlanResult, error) {
+func (r *Runtime) planResume(ctx context.Context, reg AgentRegistration, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
 	if reg.Planner == nil {
 		return nil, errors.New("planner not configured")
+	}
+	if input == nil {
+		return nil, errors.New("plan resume input is required")
 	}
 	tracer := r.tracer
 	if tracer == nil {
@@ -300,11 +312,35 @@ func (r *Runtime) plannerContext(ctx context.Context, input PlanActivityInput) (
 }
 
 // marshalToolValue encodes a tool value using the registered codec or standard JSON.
-func (r *Runtime) marshalToolValue(
-	ctx context.Context, toolName tools.Ident, value any, payload bool,
-) (json.RawMessage, error) {
+func (r *Runtime) marshalToolValue(ctx context.Context, toolName tools.Ident, value any, payload bool) (json.RawMessage, error) {
 	if value == nil {
 		return nil, nil
+	}
+	// Preserve raw JSON payloads/results without re-encoding.
+	// Rationale:
+	//   - The runtime is tool‑agnostic and does not import generated payload
+	//     types. Callers may legitimately pass pre‑encoded JSON (json.RawMessage
+	//     or a JSON []byte) to defer decoding to an executor (e.g., agent‑as‑tool
+	//     DecodeInExecutor=true) or to avoid lossy/expensive round‑trips.
+	//   - Re‑encoding already‑encoded JSON wastes CPU and can change formatting.
+	//   - For non‑JSON []byte or typed values, we fall through to the tool codec
+	//     (or json.Marshal as a last resort) to produce the canonical encoding.
+	switch v := value.(type) {
+	case json.RawMessage:
+		if len(v) == 0 {
+			return nil, nil
+		}
+		// Return a defensive copy.
+		return append(json.RawMessage(nil), v...), nil
+	case []byte:
+		if len(v) == 0 {
+			return nil, nil
+		}
+		if json.Valid(v) {
+			// Treat as already-encoded JSON; return a defensive copy.
+			return json.RawMessage(append([]byte(nil), v...)), nil
+		}
+		// Fall through to codec/json.Marshal for non-JSON []byte values.
 	}
 	codec, ok := r.toolCodec(toolName, payload)
 	if !ok || codec.ToJSON == nil {
@@ -337,13 +373,13 @@ func (r *Runtime) unmarshalToolValue(ctx context.Context, toolName tools.Ident, 
 }
 
 // toolCodec retrieves the JSON codec for a tool's payload or result.
-func (r *Runtime) toolCodec(toolName tools.Ident, payload bool) (tools.JSONCodec[any], bool) {
+func (r *Runtime) toolCodec(toolName tools.Ident, payload bool) (*tools.JSONCodec[any], bool) {
 	spec, ok := r.toolSpec(toolName)
 	if !ok {
-		return tools.JSONCodec[any]{}, false
+		return nil, false
 	}
 	if payload {
-		return spec.Payload.Codec, true
+		return &spec.Payload.Codec, true
 	}
-	return spec.Result.Codec, true
+	return &spec.Result.Codec, true
 }

@@ -46,9 +46,12 @@ type StreamOutput interface {
 type Options struct {
 	// Runtime provides access to the Bedrock runtime. Required.
 	Runtime RuntimeClient
-	// Model is the default model identifier (e.g., "anthropic.claude-3-sonnet").
-	// Requests can override this per-call via Request.Model.
-	Model string
+	// DefaultModel is the default model identifier (e.g., Sonnet).
+	DefaultModel string
+	// HighModel is the high-reasoning model identifier (e.g., Opus/Sonnet-Reasoning).
+	HighModel string
+	// SmallModel is the small/cheap model identifier (e.g., Haiku).
+	SmallModel string
 	// MaxTokens sets the default completion cap when a request does not specify
 	// MaxTokens. Must be positive; defaults to 4096.
 	MaxTokens int
@@ -62,11 +65,13 @@ type Options struct {
 
 // Client implements model.Client on top of AWS Bedrock Converse.
 type Client struct {
-	runtime RuntimeClient
-	model   string
-	maxTok  int
-	temp    float32
-	think   int
+	runtime      RuntimeClient
+	defaultModel string
+	highModel    string
+	smallModel   string
+	maxTok       int
+	temp         float32
+	think        int
 }
 
 type requestParts struct {
@@ -87,9 +92,9 @@ func New(opts Options) (*Client, error) {
 	if opts.Runtime == nil {
 		return nil, errors.New("bedrock runtime client is required")
 	}
-	modelID := strings.TrimSpace(opts.Model)
-	if modelID == "" {
-		return nil, errors.New("model identifier is required")
+	// DefaultModel should be provided; High/Small are optional but recommended.
+	if strings.TrimSpace(opts.DefaultModel) == "" {
+		return nil, errors.New("default model identifier is required")
 	}
 	maxTokens := opts.MaxTokens
 	if maxTokens <= 0 {
@@ -100,11 +105,13 @@ func New(opts Options) (*Client, error) {
 		thinkBudget = defaultThinkingBudget
 	}
 	return &Client{
-		runtime: opts.Runtime,
-		model:   modelID,
-		maxTok:  maxTokens,
-		temp:    opts.Temperature,
-		think:   thinkBudget,
+		runtime:      opts.Runtime,
+		defaultModel: opts.DefaultModel,
+		highModel:    opts.HighModel,
+		smallModel:   opts.SmallModel,
+		maxTok:       maxTokens,
+		temp:         opts.Temperature,
+		think:        thinkBudget,
 	}, nil
 }
 
@@ -147,9 +154,9 @@ func (c *Client) prepareRequest(req model.Request) (*requestParts, error) {
 	if len(req.Messages) == 0 {
 		return nil, errors.New("bedrock: messages are required")
 	}
-	modelID := strings.TrimSpace(req.Model)
+	modelID := c.resolveModelID(req)
 	if modelID == "" {
-		modelID = c.model
+		return nil, errors.New("bedrock: model identifier is required")
 	}
 	messages, system, err := splitMessages(req.Messages)
 	if err != nil {
@@ -165,6 +172,26 @@ func (c *Client) prepareRequest(req model.Request) (*requestParts, error) {
 		system:     system,
 		toolConfig: toolConfig,
 	}, nil
+}
+
+// resolveModelID decides which concrete model ID to use based on Request.Model
+// and Request.ModelClass. Request.Model takes precedence; when empty, the class
+// is mapped to the configured identifiers. Falls back to the default model.
+func (c *Client) resolveModelID(req model.Request) string {
+	if s := strings.TrimSpace(req.Model); s != "" {
+		return s
+	}
+	switch string(req.ModelClass) {
+	case string(model.ModelClassHighReasoning):
+		if strings.TrimSpace(c.highModel) != "" {
+			return c.highModel
+		}
+	case string(model.ModelClassSmall):
+		if strings.TrimSpace(c.smallModel) != "" {
+			return c.smallModel
+		}
+	}
+	return c.defaultModel
 }
 
 func (c *Client) buildConverseInput(parts *requestParts, req model.Request) *bedrockruntime.ConverseInput {
