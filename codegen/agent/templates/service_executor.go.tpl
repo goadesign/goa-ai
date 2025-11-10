@@ -35,8 +35,8 @@
 type (
     seCfg struct {
         callers map[tools.Ident]func(context.Context, any) (any, error)
-        mapPayload func(tools.Ident, any, runtime.ToolCallMeta) (any, error)
-        mapResult  func(tools.Ident, any, runtime.ToolCallMeta) (any, error)
+        mapPayload func(tools.Ident, any, *runtime.ToolCallMeta) (any, error)
+        mapResult  func(tools.Ident, any, *runtime.ToolCallMeta) (any, error)
     }
     // ExecOpt customizes the default service executor.
     ExecOpt interface{ apply(*seCfg) }
@@ -46,12 +46,12 @@ type execOptFunc func(*seCfg)
 func (f execOptFunc) apply(c *seCfg) { f(c) }
 
 // WithPayloadMapper installs a mapper for tool payload -> method payload.
-func WithPayloadMapper(f func(tools.Ident, any, runtime.ToolCallMeta) (any, error)) ExecOpt {
+func WithPayloadMapper(f func(tools.Ident, any, *runtime.ToolCallMeta) (any, error)) ExecOpt {
     return execOptFunc(func(c *seCfg) { c.mapPayload = f })
 }
 
 // WithResultMapper installs a mapper for method result -> tool result.
-func WithResultMapper(f func(tools.Ident, any, runtime.ToolCallMeta) (any, error)) ExecOpt {
+func WithResultMapper(f func(tools.Ident, any, *runtime.ToolCallMeta) (any, error)) ExecOpt {
     return execOptFunc(func(c *seCfg) { c.mapResult = f })
 }
 
@@ -124,7 +124,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
         methodIn := toolArgs
         if cfg.mapPayload != nil {
             var err error
-            methodIn, err = cfg.mapPayload(call.Name, toolArgs, *meta)
+            methodIn, err = cfg.mapPayload(call.Name, toolArgs, meta)
             if err != nil {
                 return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
             }
@@ -137,7 +137,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
         // Map back to tool result
         result := methodOut
         if cfg.mapResult != nil {
-            if val, e := cfg.mapResult(call.Name, methodOut, *meta); e == nil {
+            if val, e := cfg.mapResult(call.Name, methodOut, meta); e == nil {
                 result = val
             } else {
                 return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(e)}, nil

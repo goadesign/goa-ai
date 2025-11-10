@@ -336,6 +336,11 @@ func (e *Engine) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequ
 		ID:        req.ID,
 		TaskQueue: queue,
 	}
+	if req.RunTimeout > 0 {
+		// Apply as WorkflowRunTimeout. Temporal also supports WorkflowExecutionTimeout;
+		// we set RunTimeout here to bound total execution wall time.
+		opts.WorkflowRunTimeout = req.RunTimeout
+	}
 	if rp := convertRetryPolicy(req.RetryPolicy); rp != nil {
 		opts.RetryPolicy = rp
 	}

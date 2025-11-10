@@ -34,7 +34,7 @@ func TestStreamSubscriber(t *testing.T) {
 	require.Equal(t, EventAssistantReply, sink.events[0].Type())
 	v, ok := sink.events[0].(AssistantReply)
 	require.True(t, ok)
-	require.Equal(t, "hello", v.Text)
+	require.Equal(t, "hello", v.Data.Text)
 }
 
 func TestStreamSubscriber_ToolStart(t *testing.T) {

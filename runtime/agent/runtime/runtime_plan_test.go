@@ -35,7 +35,7 @@ func TestRunPlanActivityUsesOptions(t *testing.T) {
 		Timeout:     30 * time.Second,
 		RetryPolicy: engine.RetryPolicy{MaxAttempts: 3, InitialInterval: time.Second, BackoffCoefficient: 2},
 	}
-	_, err := rt.runPlanActivity(wf, "calc.agent.plan", opts, PlanActivityInput{})
+	_, err := rt.runPlanActivity(wf, "calc.agent.plan", opts, PlanActivityInput{}, time.Time{})
 	require.NoError(t, err)
 	require.Equal(t, opts.Queue, wf.lastRequest.Queue)
 	require.Equal(t, opts.Timeout, wf.lastRequest.Timeout)

@@ -87,6 +87,9 @@ type (
 		MaxConsecutiveFailedToolCalls int
 		// TimeBudget sets a wall-clock budget for the run. Zero means no override.
 		TimeBudget time.Duration
+		// FinalizerGrace reserves time to produce a final assistant message after the
+		// budget is exhausted. Zero means no override.
+		FinalizerGrace time.Duration
 		// InterruptsAllowed enables human-in-the-loop interruptions for this run when true.
 		// When false (default), no override is applied and agent registration policy governs.
 		InterruptsAllowed bool

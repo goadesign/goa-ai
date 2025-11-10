@@ -104,20 +104,39 @@ func PlanResumeActivityHandler(rt *Runtime) func(context.Context, any) (any, err
 // Runtime.ExecuteToolActivity.
 func ExecuteToolActivityHandler(rt *Runtime) func(context.Context, any) (any, error) {
 	return func(ctx context.Context, input any) (any, error) {
+		var in *ToolInput
 		switch v := input.(type) {
 		case ToolInput:
-			in := v
-			return rt.ExecuteToolActivity(ctx, &in)
+			in = &v
 		case *ToolInput:
 			if v == nil {
 				return nil, fmt.Errorf("%w: nil *ToolInput", errInvalidToolActivityInput)
 			}
-			return rt.ExecuteToolActivity(ctx, v)
+			in = v
 		default:
-			return nil, fmt.Errorf(
-				"%w: expected ToolInput or *ToolInput, got %T",
-				errInvalidToolActivityInput, input,
-			)
+			// Best-effort decode: JSON round-trip into ToolInput to survive generic
+			// decoders used by workflow engines. Temporal's default JSON codec
+			// deserializes into map[string]any when handlers accept `any`, so we
+			// coerce that generic value back into the strong ToolInput envelope.
+			if v == nil {
+				return nil, fmt.Errorf("%w: nil input", errInvalidToolActivityInput)
+			}
+			b, err := json.Marshal(v)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"%w: failed to marshal input (type %T): %w",
+					errInvalidToolActivityInput, v, err,
+				)
+			}
+			var tmp ToolInput
+			if err := json.Unmarshal(b, &tmp); err != nil {
+				return nil, fmt.Errorf(
+					"%w: failed to unmarshal input (type %T, json: %s): %w",
+					errInvalidToolActivityInput, v, string(b), err,
+				)
+			}
+			in = &tmp
 		}
+		return rt.ExecuteToolActivity(ctx, in)
 	}
 }

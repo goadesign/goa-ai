@@ -199,7 +199,7 @@ func agentFiles(agent *AgentData) []*codegen.File {
 		}
 	}
 	files = append(files, agentToolsFiles(agent)...)
-	// Emit internal adapter transforms for method-backed tools.
+	// Emit adapter transforms for method-backed tools (under generated toolset package).
 	files = append(files, internalAdapterTransformsFiles(agent)...)
 	// Do not emit service toolset registrations; executors map tool payloads to service methods.
 	files = append(files, mcpExecutorFiles(agent)...)
@@ -272,8 +272,9 @@ func agentPerToolsetSpecsFiles(agent *AgentData) []*codegen.File {
 }
 
 // internalAdapterTransformsFiles emits best-effort transform helpers for method-backed tools
-// under internal/agents/<agent>/toolsets/<toolset>/xform.go. These are adapter-facing utilities
-// that initialize service payloads from tool payloads and tool results from service results.
+// under gen/<service>/agents/<agent>/<toolset>/transforms.go. These are adapter-facing
+// utilities that initialize service payloads from tool payloads and tool results from
+// service results.
 func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 	out := make([]*codegen.File, 0, len(agent.AllToolsets))
 	for _, ts := range agent.AllToolsets {
@@ -294,6 +295,7 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 		svcImport := joinImportPath(agent.Genpkg, svc.PathName)
 		// Use the actual specs package name so GoTransform qualifier matches (e.g., atlas_read).
 		specsAlias := ts.SpecsPackageName
+		specsImportPath := ts.SpecsImportPath
 
 		// Single NameScope per emitted file to ensure consistent, conflict‑free refs
 		scope := codegen.NewNameScope()
@@ -443,7 +445,7 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 			continue
 		}
 		// Assemble imports: service, specs, and any additional referenced packages
-		imports := []*codegen.ImportSpec{{Name: svcAlias, Path: svcImport}, {Path: ts.SpecsImportPath, Name: specsAlias}}
+		imports := []*codegen.ImportSpec{{Name: svcAlias, Path: svcImport}, {Path: specsImportPath, Name: specsAlias}}
 		for p, im := range extraImports {
 			if p == svcImport || p == ts.SpecsImportPath {
 				continue
@@ -454,7 +456,9 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 			codegen.Header(ts.Name+" adapter transforms", ts.PathName, imports),
 			{Name: "tool-transforms", Source: agentsTemplates.Read(toolTransformsFileT), Data: transformsFileData{Functions: fns, Helpers: fileHelpers}},
 		}
-		path := filepath.Join("internal", "agents", agent.PathName, "toolsets", ts.PathName, "xform.go")
+		// Place transforms alongside other generated toolset files (service_executor.go, used_tools.go).
+		// Example: gen/<service>/agents/<agent>/<toolset>/transforms.go
+		path := filepath.Join(ts.Dir, "transforms.go")
 		out = append(out, &codegen.File{Path: path, SectionTemplates: sections})
 	}
 	return out
@@ -569,20 +573,18 @@ func agentRegistryFile(agent *AgentData) *codegen.File {
 	imports := []*codegen.ImportSpec{
 		{Path: "context"},
 		{Path: "errors"},
+		{Path: "fmt"},
 		{Path: "goa.design/goa-ai/runtime/agent/engine"},
 		{Path: "goa.design/goa-ai/runtime/agent/planner"},
 		{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "agentsruntime"},
 	}
-	// fmt needed for error messages in external MCP registration path
+	// fmt needed for error messages in registry (used in both MCP and Used toolsets paths)
 	hasExternal := false
 	for _, ts := range agent.AllToolsets {
 		if ts.Expr != nil && ts.Expr.External {
 			hasExternal = true
 			break
 		}
-	}
-	if hasExternal {
-		imports = append(imports, &codegen.ImportSpec{Path: "fmt"})
 	}
 	// Import toolset packages that have method-backed tools so we can call their registration helpers.
 	for _, ts := range agent.AllToolsets {

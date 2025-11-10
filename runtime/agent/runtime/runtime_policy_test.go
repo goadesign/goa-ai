@@ -41,7 +41,7 @@ func TestPolicyAllowlistTrimsToolExecution(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, policy.CapsState{MaxToolCalls: 5, RemainingToolCalls: 5}, time.Time{}, 2, &turnSequencer{turnID: "turn-1"}, nil, nil)
+	}, input, base, initial, policy.CapsState{MaxToolCalls: 5, RemainingToolCalls: 5}, time.Time{}, 2, &turnSequencer{turnID: "turn-1"}, nil, nil, 0)
 	require.NoError(t, err)
 	require.Len(t, out.ToolEvents, 1)
 	require.Equal(t, tools.Ident("svc.tools.allowed"), out.ToolEvents[0].Name)

@@ -5,8 +5,8 @@ var (
     {{- if $printed }}
 
     {{- end }}
-    // {{ .ExportedCodec }} serializes values of type {{ .FullRef }} to canonical JSON.
-    {{ .ExportedCodec }} = tools.JSONCodec[{{ .FullRef }}]{
+    // {{ .ExportedCodec }} serializes values of type {{ if .Pointer }}*{{ end }}{{ .FullRef }} to canonical JSON.
+    {{ .ExportedCodec }} = tools.JSONCodec[{{ if .Pointer }}*{{ end }}{{ .FullRef }}]{
         ToJSON:   {{ .MarshalFunc }},
         FromJSON: {{ .UnmarshalFunc }},
     }
@@ -19,14 +19,15 @@ var (
     {{- if $printed }}
 
     {{- end }}
-    // {{ .GenericCodec }} provides an untyped codec for {{ .FullRef }}.
+    // {{ .GenericCodec }} provides an untyped codec for {{ if .Pointer }}*{{ end }}{{ .FullRef }}.
     {{ .GenericCodec }} = tools.JSONCodec[any]{
         ToJSON: func(v any) ([]byte, error) {
-            typed, ok := v.({{ .FullRef }})
-            if !ok {
-                return nil, fmt.Errorf("expected {{ .FullRef }}, got %T", v)
+            // Prefer typed marshal when the value matches the expected type.
+            if typed, ok := v.({{ if .Pointer }}*{{ end }}{{ .FullRef }}); ok {
+                return {{ .MarshalFunc }}(typed)
             }
-            return {{ .MarshalFunc }}(typed)
+            // Fallback: marshal structurally compatible values directly.
+            return json.Marshal(v)
         },
         FromJSON: func(data []byte) (any, error) {
             return {{ .UnmarshalFunc }}(data)
@@ -174,8 +175,8 @@ func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 
 {{- range .Types }}
     {{- if .GenerateCodec }}
-// {{ .MarshalFunc }} serializes {{ .FullRef }} into JSON.
-func {{ .MarshalFunc }}(v {{ .FullRef }}) ([]byte, error) {
+// {{ .MarshalFunc }} serializes {{ if .Pointer }}*{{ end }}{{ .FullRef }} into JSON.
+func {{ .MarshalFunc }}(v {{ if .Pointer }}*{{ end }}{{ .FullRef }}) ([]byte, error) {
     {{- if .Pointer }}
     if v == nil {
         return nil, fmt.Errorf("{{ .NilError }}")
@@ -184,14 +185,14 @@ func {{ .MarshalFunc }}(v {{ .FullRef }}) ([]byte, error) {
     return json.Marshal(v)
 }
 
-// {{ .UnmarshalFunc }} deserializes JSON into {{ .FullRef }}.
-func {{ .UnmarshalFunc }}(data []byte) ({{ .FullRef }}, error) {
+// {{ .UnmarshalFunc }} deserializes JSON into {{ if .Pointer }}*{{ end }}{{ .FullRef }}.
+func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }}, error) {
     {{- if not .Pointer }}
-    var zero {{ .FullRef }}
+    var zero {{ if .Pointer }}*{{ end }}{{ .FullRef }}
     {{- end }}
     if len(data) == 0 {
         {{- if and (eq .Usage "payload") .AcceptEmpty }}
-        var v {{ .FullRef }}
+        var v {{ if .Pointer }}*{{ end }}{{ .FullRef }}
         return v, nil
         {{- else }}
         {{- if .Pointer }}
@@ -239,7 +240,7 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ .FullRef }}, error) {
     {{ .TransformBody }}
     {{- else }}
     // Fallback: direct assignment if shapes are identical
-    v := {{ .FullRef }}(raw)
+    v := {{ if .Pointer }}*{{ end }}{{ .FullRef }}(raw)
     {{- end }}
     {{- if .Pointer }}
     return v, nil
@@ -248,7 +249,7 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ .FullRef }}, error) {
     {{- end }}
     {{- else }}
     // Non-payload types: simple decode
-    var v {{ .FullRef }}
+    var v {{ if .Pointer }}*{{ end }}{{ .FullRef }}
     if err := json.Unmarshal(data, &v); err != nil {
         {{- if .Pointer }}
         return nil, fmt.Errorf("{{ .DecodeError }}: %w", err)

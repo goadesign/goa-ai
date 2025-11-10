@@ -15,8 +15,8 @@ import (
 )
 
 var (
-	// EchoPayloadCodec serializes values of type string to canonical JSON.
-	EchoPayloadCodec = tools.JSONCodec[string]{
+	// EchoPayloadCodec serializes values of type *string to canonical JSON.
+	EchoPayloadCodec = tools.JSONCodec[*string]{
 		ToJSON:   MarshalEchoPayload,
 		FromJSON: UnmarshalEchoPayload,
 	}
@@ -25,12 +25,12 @@ var (
 		ToJSON:   MarshalEchoResult,
 		FromJSON: UnmarshalEchoResult,
 	}
-	// echoPayloadCodec provides an untyped codec for string.
+	// echoPayloadCodec provides an untyped codec for *string.
 	echoPayloadCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
-			typed, ok := v.(string)
+			typed, ok := v.(*string)
 			if !ok {
-				return nil, fmt.Errorf("expected string, got %T", v)
+				return nil, fmt.Errorf("expected *string, got %T", v)
 			}
 			return MarshalEchoPayload(typed)
 		},
@@ -107,26 +107,29 @@ func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 	}
 }
 
-// MarshalEchoPayload serializes string into JSON.
-func MarshalEchoPayload(v string) ([]byte, error) {
+// MarshalEchoPayload serializes *string into JSON.
+func MarshalEchoPayload(v *string) ([]byte, error) {
+	if v == nil {
+		return nil, fmt.Errorf("echoPayload is nil")
+	}
 	return json.Marshal(v)
 }
 
-// UnmarshalEchoPayload deserializes JSON into string.
-func UnmarshalEchoPayload(data []byte) (string, error) {
-	var zero string
+// UnmarshalEchoPayload deserializes JSON into *string.
+func UnmarshalEchoPayload(data []byte) (*string, error) {
 	if len(data) == 0 {
-		return zero, fmt.Errorf("echoPayload JSON is empty")
+		return nil, fmt.Errorf("echoPayload JSON is empty")
 	}
-	// Decode into JSON body (server body style) then validate & transform
+	// Decode into JSON body (server body style) then transform.
+	// Note: Agent used-tools perform lenient decode (no required-field validation here).
 	var raw EchoPayloadJSON2
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return zero, fmt.Errorf("decode echoPayload: %w", err)
+		return nil, fmt.Errorf("decode echoPayload: %w", err)
 	}
 	// Transform into final type
 	// Fallback: direct assignment if shapes are identical
-	v := string(raw)
-	return *v, nil
+	v := *string(raw)
+	return v, nil
 }
 
 // MarshalEchoResult serializes string into JSON.

@@ -91,13 +91,20 @@ type (
 	}
 
 	// PlanResult communicates the planner's decision: either request more tool executions
-	// or produce a final response. Exactly one of ToolCalls or FinalResponse should be
-	// populated (not both, not neither).
+	// or produce a final response.
+	// - ToolCalls and AssistantMessage may be set together to record the assistant
+	//   message associated with the tool calls in conversation history.
+	// - FinalResponse is mutually exclusive with both ToolCalls and AssistantMessage.
 	PlanResult struct {
 		// ToolCalls enumerates tool invocations to schedule next. Empty if FinalResponse
 		// is set. The runtime validates these against the policy allowlist and executes
 		// them (subject to caps).
 		ToolCalls []ToolRequest
+
+		// AssistantMessage contains the assistant's message to add to conversation
+		// history when tool calls are made (or when providing intermediate context).
+		// Can be set alongside ToolCalls. Must be nil when FinalResponse is set.
+		AssistantMessage *AgentMessage
 
 		// FinalResponse holds the assistant message when the planner decides to terminate
 		// the run. Nil if ToolCalls is non-empty. The runtime returns this to the caller.

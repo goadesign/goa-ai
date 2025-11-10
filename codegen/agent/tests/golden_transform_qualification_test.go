@@ -12,8 +12,8 @@ import (
 // with the specs package alias while preserving external package qualifiers for nested types.
 func TestGolden_InternalTransforms_Qualification(t *testing.T) {
 	files := buildAndGenerate(t, testscenarios.MethodExternalAlias())
-	// internal/agents/<agent>/toolsets/<toolset>/xform.go
-	p := filepath.ToSlash("internal/agents/scribe/toolsets/svcset/xform.go")
+	// gen/<service>/agents/<agent>/<toolset>/transforms.go
+	p := filepath.ToSlash("gen/alpha/agents/scribe/svcset/transforms.go")
 	content := fileContent(t, files, p)
 
 	// Top-level transform function should exist for the tool result.

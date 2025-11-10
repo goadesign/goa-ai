@@ -16,8 +16,8 @@ import (
 )
 
 var (
-	// ReadPayloadCodec serializes values of type ReadPayload to canonical JSON.
-	ReadPayloadCodec = tools.JSONCodec[ReadPayload]{
+	// ReadPayloadCodec serializes values of type *ReadPayload to canonical JSON.
+	ReadPayloadCodec = tools.JSONCodec[*ReadPayload]{
 		ToJSON:   MarshalReadPayload,
 		FromJSON: UnmarshalReadPayload,
 	}
@@ -26,12 +26,12 @@ var (
 		ToJSON:   MarshalReadResult,
 		FromJSON: UnmarshalReadResult,
 	}
-	// readPayloadCodec provides an untyped codec for ReadPayload.
+	// readPayloadCodec provides an untyped codec for *ReadPayload.
 	readPayloadCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
-			typed, ok := v.(ReadPayload)
+			typed, ok := v.(*ReadPayload)
 			if !ok {
-				return nil, fmt.Errorf("expected ReadPayload, got %T", v)
+				return nil, fmt.Errorf("expected *ReadPayload, got %T", v)
 			}
 			return MarshalReadPayload(typed)
 		},
@@ -168,21 +168,24 @@ func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 	}
 }
 
-// MarshalReadPayload serializes ReadPayload into JSON.
-func MarshalReadPayload(v ReadPayload) ([]byte, error) {
+// MarshalReadPayload serializes *ReadPayload into JSON.
+func MarshalReadPayload(v *ReadPayload) ([]byte, error) {
+	if v == nil {
+		return nil, fmt.Errorf("readPayload is nil")
+	}
 	return json.Marshal(v)
 }
 
-// UnmarshalReadPayload deserializes JSON into ReadPayload.
-func UnmarshalReadPayload(data []byte) (ReadPayload, error) {
-	var zero ReadPayload
+// UnmarshalReadPayload deserializes JSON into *ReadPayload.
+func UnmarshalReadPayload(data []byte) (*ReadPayload, error) {
 	if len(data) == 0 {
-		return zero, fmt.Errorf("readPayload JSON is empty")
+		return nil, fmt.Errorf("readPayload JSON is empty")
 	}
-	// Decode into JSON body (server body style) then validate & transform
+	// Decode into JSON body (server body style) then transform.
+	// Note: Agent used-tools perform lenient decode (no required-field validation here).
 	var raw ReadPayloadJSON2
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return zero, fmt.Errorf("decode readPayload: %w", err)
+		return nil, fmt.Errorf("decode readPayload: %w", err)
 	}
 	var err error
 	if raw.ID == nil {
@@ -190,14 +193,13 @@ func UnmarshalReadPayload(data []byte) (ReadPayload, error) {
 	}
 	if err != nil {
 		err = newValidationError(err)
-		err = enrichReadPayloadValidationError(err)
-		return zero, fmt.Errorf("validate readPayload: %w", err)
+		return nil, err
 	}
 	// Transform into final type
 	v := &Doc{
 		ID: *raw.ID,
 	}
-	return *v, nil
+	return v, nil
 }
 
 // MarshalReadResult serializes ReadResult into JSON.

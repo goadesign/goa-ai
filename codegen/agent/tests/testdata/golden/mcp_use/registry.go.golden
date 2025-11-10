@@ -108,8 +108,25 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 			Name: "calc.core",
 			// Provide the agent-wide specs; runtime de-duplicates tool specs across registrations.
 			Specs: specs.Specs,
-			Execute: func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
-				return exec.Execute(ctx, agentsruntime.ToolCallMeta{}, call)
+			Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+				if call == nil {
+					return nil, fmt.Errorf("tool request is nil")
+				}
+				meta := &agentsruntime.ToolCallMeta{
+					RunID:            call.RunID,
+					SessionID:        call.SessionID,
+					TurnID:           call.TurnID,
+					ToolCallID:       call.ToolCallID,
+					ParentToolCallID: call.ParentToolCallID,
+				}
+				result, err := exec.Execute(ctx, meta, call)
+				if err != nil {
+					return nil, err
+				}
+				if result == nil {
+					return nil, fmt.Errorf("executor returned nil result")
+				}
+				return result, nil
 			},
 		}
 		if err := rt.RegisterToolset(reg); err != nil {
@@ -120,4 +137,3 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 	// Service toolsets are registered by application code using executors.
 	return nil
 }
-

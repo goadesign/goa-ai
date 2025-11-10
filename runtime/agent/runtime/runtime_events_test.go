@@ -38,7 +38,7 @@ func TestEventSequencingMonotonic(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, &turnSequencer{turnID: input.TurnID}, nil, nil)
+	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, &turnSequencer{turnID: input.TurnID}, nil, nil, 0)
 	require.NoError(t, err)
 	seqs := make([]int, 0, len(recorder.events))
 	for _, evt := range recorder.events {

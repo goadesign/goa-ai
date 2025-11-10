@@ -187,6 +187,10 @@ type (
 		TaskQueue string
 		// Input is the payload passed to the workflow handler (e.g., RunInput).
 		Input any
+		// RunTimeout bounds the total workflow execution time at the engine level.
+		// Zero means use the engine default (if any). Engines may map this to their
+		// native execution timeout/TTL (Temporal: WorkflowRunTimeout/ExecutionTimeout).
+		RunTimeout time.Duration
 		// Memo stores small diagnostic payloads alongside the workflow execution.
 		// Engines like Temporal persist these for queries/visibility. Nil means no memo.
 		Memo map[string]any

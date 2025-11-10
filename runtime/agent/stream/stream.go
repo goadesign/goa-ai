@@ -94,10 +94,10 @@ type (
 	// a single response as the planner generates content progressively.
 	AssistantReply struct {
 		Base
-		// Text contains the assistant message content (partial or complete chunk).
-		// Clients should concatenate Text from sequential AssistantReply events
-		// to reconstruct the full message.
-		Text string
+		// Data contains the assistant reply payload. Clients should concatenate
+		// Data.Text from sequential AssistantReply events to reconstruct the
+		// full message.
+		Data AssistantReplyPayload
 	}
 
 	// PlannerThought streams planner reasoning and intermediate annotations during
@@ -105,10 +105,10 @@ type (
 	// show the planner's internal reasoning process before tool calls complete.
 	PlannerThought struct {
 		Base
-		// Note contains the planner's annotation text (e.g., "Analyzing user query...",
+		// Data contains the planner thought payload (e.g., "Analyzing user query...",
 		// "Calling weather API to get forecast..."). This is human-readable text
 		// suitable for displaying in a UI thought bubble or debug panel.
-		Note string
+		Data PlannerThoughtPayload
 	}
 
 	// ToolStart streams when the runtime schedules a tool activity for execution. Clients
@@ -150,6 +150,18 @@ type (
 		InputTokens  int
 		OutputTokens int
 		TotalTokens  int
+	}
+
+	// AssistantReplyPayload is the typed wire payload for assistant reply events.
+	// It mirrors AssistantReply.Text for consumers decoding Base.Payload().
+	AssistantReplyPayload struct {
+		Text string `json:"text"`
+	}
+
+	// PlannerThoughtPayload is the typed wire payload for planner thought events.
+	// It mirrors PlannerThought.Note for consumers decoding Base.Payload().
+	PlannerThoughtPayload struct {
+		Note string `json:"note"`
 	}
 
 	// AwaitClarification streams a human clarification request from the planner/runtime.
@@ -323,7 +335,7 @@ const (
 	// EventAssistantReply streams incremental assistant message content as the planner
 	// produces the final response. Clients receive text chunks that can be displayed
 	// progressively (streaming typewriter effect). Emitted by StreamSubscriber when
-	// AssistantMessageEvent hooks fire.
+	// AssistantMessageEvent hooks fire. Payload is AssistantReplyPayload.
 	EventAssistantReply EventType = "assistant_reply"
 
 	// EventAwaitClarification streams when a planner requests human clarification.

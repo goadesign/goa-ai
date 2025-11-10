@@ -190,7 +190,7 @@ func TestConsecutiveFailureBreaker(t *testing.T) {
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 		Policy:              RunPolicy{MaxConsecutiveFailedToolCalls: 1},
-	}, input, base, initial, initialCaps(RunPolicy{MaxConsecutiveFailedToolCalls: 1}), time.Time{}, 2, nil, nil, nil)
+	}, input, base, initial, initialCaps(RunPolicy{MaxConsecutiveFailedToolCalls: 1}), time.Time{}, 2, nil, nil, nil, 0)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "consecutive failed tool call cap exceeded")
 }
@@ -302,7 +302,7 @@ func TestTimeBudgetExceeded(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, wfCtx.Now().Add(-time.Second), 2, nil, nil, nil)
+	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, wfCtx.Now().Add(-time.Second), 2, nil, nil, nil, 0)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "time budget exceeded")
 }
@@ -352,7 +352,7 @@ func TestOverridePolicy_AppliesToNewRuns_MaxToolCalls(t *testing.T) {
 
 	// Provide an initial plan with 2 tools; resume will return 1 tool via wfCtx.planResult
 	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("svc.tools.echo")}, {Name: tools.Ident("svc.tools.echo")}}}
-	_, err := rt.runLoop(wfCtx, rt.agents[agentID], input, base, initial, initialCaps(rt.agents[agentID].Policy), time.Time{}, 2, nil, nil, nil)
+	_, err := rt.runLoop(wfCtx, rt.agents[agentID], input, base, initial, initialCaps(rt.agents[agentID].Policy), time.Time{}, 2, nil, nil, nil, 0)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "tool call cap exceeded")
 }
@@ -490,7 +490,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, parentInput, base, initial, policy.CapsState{MaxToolCalls: 3, RemainingToolCalls: 3}, time.Time{}, 2, &turnSequencer{turnID: parentInput.TurnID}, nil, nil)
+	}, parentInput, base, initial, policy.CapsState{MaxToolCalls: 3, RemainingToolCalls: 3}, time.Time{}, 2, &turnSequencer{turnID: parentInput.TurnID}, nil, nil, 0)
 	require.NoError(t, err)
 
 	// Assert ToolCallUpdatedEvent emitted twice with counts 2 then 3 referencing parent tool call id
@@ -575,7 +575,7 @@ func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 		{Name: tools.Ident("svc.export.child2")},
 	}
 	seq := &turnSequencer{turnID: "turn-1"}
-	_, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "run-1", "agent-1", calls, 0, seq, tracker)
+	_, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "run-1", "agent-1", calls, 0, seq, tracker, time.Time{})
 	require.NoError(t, err)
 
 	var update *hooks.ToolCallUpdatedEvent
@@ -697,6 +697,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		0,
 	)
 	require.NoError(t, err)
 

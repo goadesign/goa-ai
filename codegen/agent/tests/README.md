@@ -48,9 +48,9 @@ go test ./codegen/agent/tests -run Quickstart_Renders_Minimal -update
   - Verifies: `tool_specs/types.go`, `tool_specs/codecs.go`, `tool_specs/specs.go`
   - Focus: basic payload/result structs, codecs, schemas, and spec registry
 
-- Internal transforms – method-backed tools
+- Transforms – method-backed tools
   - DSL: `testscenarios.MethodSimpleCompatible()`
-  - Verifies: `internal/agents/<agent>/toolsets/<toolset>/xform.go` contains transform helpers
+  - Verifies: `gen/<service>/agents/<agent>/<toolset>/transforms.go` contains transform helpers
   - Focus: presence of transform init helpers and header markers
 
 Planned additions (recommended next):

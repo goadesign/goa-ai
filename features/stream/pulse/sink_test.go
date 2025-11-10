@@ -67,8 +67,8 @@ func TestCustomStreamID(t *testing.T) {
 	require.NoError(t, sink.Send(
 		context.Background(),
 		stream.PlannerThought{
-			Base: stream.NewBaseForTest(stream.EventPlannerThought, "run-1", "n"),
-			Note: "n",
+			Base: stream.NewBaseForTest(stream.EventPlannerThought, "run-1", stream.PlannerThoughtPayload{Note: "n"}),
+			Data: stream.PlannerThoughtPayload{Note: "n"},
 		},
 	))
 }
@@ -76,7 +76,7 @@ func TestCustomStreamID(t *testing.T) {
 func TestSendRequiresRunID(t *testing.T) {
 	sink, err := NewSink(Options{Client: mockpulse.NewClient(t)})
 	require.NoError(t, err)
-	err = sink.Send(context.Background(), stream.AssistantReply{Text: "hi"})
+	err = sink.Send(context.Background(), stream.AssistantReply{Data: stream.AssistantReplyPayload{Text: "hi"}})
 	require.EqualError(t, err, "stream event missing run id")
 }
 
@@ -90,8 +90,8 @@ func TestStreamCreationError(t *testing.T) {
 	err = sink.Send(
 		context.Background(),
 		stream.AssistantReply{
-			Base: stream.NewBaseForTest(stream.EventAssistantReply, "r", "ok"),
-			Text: "ok",
+			Base: stream.NewBaseForTest(stream.EventAssistantReply, "r", stream.AssistantReplyPayload{Text: "ok"}),
+			Data: stream.AssistantReplyPayload{Text: "ok"},
 		},
 	)
 	require.EqualError(t, err, "boom")
@@ -111,8 +111,8 @@ func TestAddError(t *testing.T) {
 	err = sink.Send(
 		context.Background(),
 		stream.AssistantReply{
-			Base: stream.NewBaseForTest(stream.EventAssistantReply, "r", "ok"),
-			Text: "ok",
+			Base: stream.NewBaseForTest(stream.EventAssistantReply, "r", stream.AssistantReplyPayload{Text: "ok"}),
+			Data: stream.AssistantReplyPayload{Text: "ok"},
 		},
 	)
 	require.EqualError(t, err, "add-failed")

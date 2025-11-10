@@ -16,8 +16,8 @@ import (
 )
 
 var (
-	// UpsertPayloadCodec serializes values of type UpsertPayload to canonical JSON.
-	UpsertPayloadCodec = tools.JSONCodec[UpsertPayload]{
+	// UpsertPayloadCodec serializes values of type *UpsertPayload to canonical JSON.
+	UpsertPayloadCodec = tools.JSONCodec[*UpsertPayload]{
 		ToJSON:   MarshalUpsertPayload,
 		FromJSON: UnmarshalUpsertPayload,
 	}
@@ -26,12 +26,12 @@ var (
 		ToJSON:   MarshalUpsertResult,
 		FromJSON: UnmarshalUpsertResult,
 	}
-	// upsertPayloadCodec provides an untyped codec for UpsertPayload.
+	// upsertPayloadCodec provides an untyped codec for *UpsertPayload.
 	upsertPayloadCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
-			typed, ok := v.(UpsertPayload)
+			typed, ok := v.(*UpsertPayload)
 			if !ok {
-				return nil, fmt.Errorf("expected UpsertPayload, got %T", v)
+				return nil, fmt.Errorf("expected *UpsertPayload, got %T", v)
 			}
 			return MarshalUpsertPayload(typed)
 		},
@@ -54,11 +54,12 @@ var (
 	}
 )
 var UpsertPayloadFieldDescs = map[string]string{
-	"address":        "Address",
-	"address.city":   "City",
-	"address.street": "Street",
-	"id":             "Identifier",
-	"name":           "Name",
+	"profile":                "Profile",
+	"profile.address":        "Address",
+	"profile.address.city":   "City",
+	"profile.address.street": "Street",
+	"profile.id":             "Identifier",
+	"profile.name":           "Name",
 }
 
 // ValidationError wraps a validation failure and exposes issues that callers
@@ -151,7 +152,19 @@ func enrichUpsertPayloadJSON2ValidationError(err error) error {
 	ve.descriptions = m
 	return ve
 }
-func enrichUpsertPayloadJSONAddressJSON2ValidationError(err error) error {
+func enrichUpsertPayloadJSONProfileJSON2ValidationError(err error) error {
+	ve, ok := err.(*ValidationError)
+	if !ok || ve == nil {
+		return err
+	}
+	if len(ve.issues) == 0 {
+		return err
+	}
+	m := make(map[string]string)
+	ve.descriptions = m
+	return ve
+}
+func enrichUpsertPayloadJSONProfileJSONAddressJSON2ValidationError(err error) error {
 	ve, ok := err.(*ValidationError)
 	if !ok || ve == nil {
 		return err
@@ -184,46 +197,42 @@ func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 	}
 }
 
-// MarshalUpsertPayload serializes UpsertPayload into JSON.
-func MarshalUpsertPayload(v UpsertPayload) ([]byte, error) {
+// MarshalUpsertPayload serializes *UpsertPayload into JSON.
+func MarshalUpsertPayload(v *UpsertPayload) ([]byte, error) {
+	if v == nil {
+		return nil, fmt.Errorf("upsertPayload is nil")
+	}
 	return json.Marshal(v)
 }
 
-// UnmarshalUpsertPayload deserializes JSON into UpsertPayload.
-func UnmarshalUpsertPayload(data []byte) (UpsertPayload, error) {
-	var zero UpsertPayload
+// UnmarshalUpsertPayload deserializes JSON into *UpsertPayload.
+func UnmarshalUpsertPayload(data []byte) (*UpsertPayload, error) {
 	if len(data) == 0 {
-		return zero, fmt.Errorf("upsertPayload JSON is empty")
+		return nil, fmt.Errorf("upsertPayload JSON is empty")
 	}
-	// Decode into JSON body (server body style) then validate & transform
+	// Decode into JSON body (server body style) then transform.
+	// Note: Agent used-tools perform lenient decode (no required-field validation here).
 	var raw UpsertPayloadJSON2
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return zero, fmt.Errorf("decode upsertPayload: %w", err)
+		return nil, fmt.Errorf("decode upsertPayload: %w", err)
 	}
 	var err error
-	if raw.ID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("id", "raw"))
+	if raw.Profile == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("profile", "raw"))
 	}
-	if raw.Address == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("address", "raw"))
-	}
-	if raw.Address != nil {
-		if err2 := ValidateUpsertPayloadJSONAddressJSON2(raw.Address); err2 != nil {
+	if raw.Profile != nil {
+		if err2 := ValidateUpsertPayloadJSONProfileJSON2(raw.Profile); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
 	if err != nil {
 		err = newValidationError(err)
-		err = enrichUpsertPayloadValidationError(err)
-		return zero, fmt.Errorf("validate upsertPayload: %w", err)
+		return nil, err
 	}
 	// Transform into final type
-	v := &Profile{
-		ID:   *raw.ID,
-		Name: raw.Name,
-	}
-	v.Address = payloadUpsertPayloadJSONAddressJSON2ToAddress(raw.Address)
-	return *v, nil
+	v := &UpsertArgs{}
+	v.Profile = payloadUpsertPayloadJSONProfileJSON2ToProfile(raw.Profile)
+	return v, nil
 }
 
 // MarshalUpsertResult serializes UpsertResult into JSON.
@@ -246,7 +255,17 @@ func UnmarshalUpsertResult(data []byte) (UpsertResult, error) {
 }
 
 // Transform helpers
-func payloadUpsertPayloadJSONAddressJSON2ToAddress(v *UpsertPayloadJSONAddressJSON2) (out *Address) {
+func payloadUpsertPayloadJSONProfileJSON2ToProfile(v *UpsertPayloadJSONProfileJSON2) (out *Profile) {
+	res := &Profile{
+		ID:   *v.ID,
+		Name: v.Name,
+	}
+	res.Address = payloadUpsertPayloadJSONProfileJSONAddressJSON2ToAddress(v.Address)
+
+	out = res
+	return
+}
+func payloadUpsertPayloadJSONProfileJSONAddressJSON2ToAddress(v *UpsertPayloadJSONProfileJSONAddressJSON2) (out *Address) {
 	res := &Address{
 		Street: *v.Street,
 		City:   *v.City,
@@ -270,8 +289,34 @@ func ValidateProfile(body *Profile) (err error) {
 	return
 }
 
+// ValidateUpsertArgs validates values of type *UpsertArgs.
+func ValidateUpsertArgs(body *UpsertArgs) (err error) {
+	if body.Profile == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("profile", "body"))
+	}
+	if body.Profile != nil {
+		if err2 := ValidateProfile(body.Profile); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
 // ValidateUpsertPayloadJSON2 validates values of type *UpsertPayloadJSON2.
 func ValidateUpsertPayloadJSON2(body *UpsertPayloadJSON2) (err error) {
+	if body.Profile == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("profile", "body"))
+	}
+	if body.Profile != nil {
+		if err2 := ValidateUpsertPayloadJSONProfileJSON2(body.Profile); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateUpsertPayloadJSONProfileJSON2 validates values of type *UpsertPayloadJSONProfileJSON2.
+func ValidateUpsertPayloadJSONProfileJSON2(body *UpsertPayloadJSONProfileJSON2) (err error) {
 	if body.ID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
 	}
@@ -279,15 +324,15 @@ func ValidateUpsertPayloadJSON2(body *UpsertPayloadJSON2) (err error) {
 		err = goa.MergeErrors(err, goa.MissingFieldError("address", "body"))
 	}
 	if body.Address != nil {
-		if err2 := ValidateUpsertPayloadJSONAddressJSON2(body.Address); err2 != nil {
+		if err2 := ValidateUpsertPayloadJSONProfileJSONAddressJSON2(body.Address); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
 	return
 }
 
-// ValidateUpsertPayloadJSONAddressJSON2 validates values of type *UpsertPayloadJSONAddressJSON2.
-func ValidateUpsertPayloadJSONAddressJSON2(body *UpsertPayloadJSONAddressJSON2) (err error) {
+// ValidateUpsertPayloadJSONProfileJSONAddressJSON2 validates values of type *UpsertPayloadJSONProfileJSONAddressJSON2.
+func ValidateUpsertPayloadJSONProfileJSONAddressJSON2(body *UpsertPayloadJSONProfileJSONAddressJSON2) (err error) {
 	if body.Street == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("street", "body"))
 	}

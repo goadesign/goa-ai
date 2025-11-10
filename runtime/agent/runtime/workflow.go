@@ -21,6 +21,16 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+const (
+	// Minimal viable timeout for scheduling an activity. If remaining time is
+	// less than or equal to this value, the runtime should not schedule new work.
+	minActivityTimeout = 3 * time.Second
+
+	// Minimal viable grace period for finalization. If remaining time is
+	// less than or equal to this value, the runtime should finalize with a user-facing message.
+	defaultFinalizerGrace = 10 * time.Second
+)
+
 type (
 	// futureInfo bundles a Future with its associated tool call metadata for parallel execution.
 	// When tools are launched asynchronously via ExecuteActivityAsync, we need to track the
@@ -128,7 +138,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		Messages:   planInput.Messages,
 		RunContext: planInput.RunContext,
 	}
-	result, err := r.runPlanActivity(wfCtx, reg.PlanActivityName, reg.PlanActivityOptions, startReq)
+	result, err := r.runPlanActivity(wfCtx, reg.PlanActivityName, reg.PlanActivityOptions, startReq, time.Time{})
 	if err != nil {
 		r.logger.Error(wfCtx.Context(), "Plan activity failed", "error", err)
 		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{
@@ -167,16 +177,37 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 			caps.RemainingConsecutiveFailedToolCalls = input.Policy.MaxConsecutiveFailedToolCalls
 		}
 	}
-	// Compute deadline with per-run override taking precedence over registration policy
-	var deadline time.Time
-	if input.Policy != nil && input.Policy.TimeBudget > 0 {
-		deadline = wfCtx.Now().Add(input.Policy.TimeBudget)
-	} else if reg.Policy.TimeBudget > 0 {
-		deadline = wfCtx.Now().Add(reg.Policy.TimeBudget)
+	// Compute deadlines with per-run override taking precedence over registration policy.
+	// - budgetDeadline: stop scheduling when remaining <= grace to allow finalization.
+	// - hardDeadline: budgetDeadline + grace; last-chance window for finalization.
+	var (
+		budgetDeadline time.Time
+		hardDeadline   time.Time
+		grace          time.Duration
+	)
+	{
+		timeBudget := time.Duration(0)
+		if input.Policy != nil && input.Policy.TimeBudget > 0 {
+			timeBudget = input.Policy.TimeBudget
+		} else if reg.Policy.TimeBudget > 0 {
+			timeBudget = reg.Policy.TimeBudget
+		}
+		switch {
+		case input.Policy != nil && input.Policy.FinalizerGrace > 0:
+			grace = input.Policy.FinalizerGrace
+		case reg.Policy.FinalizerGrace > 0:
+			grace = reg.Policy.FinalizerGrace
+		default:
+			grace = defaultFinalizerGrace
+		}
+		if timeBudget > 0 {
+			budgetDeadline = wfCtx.Now().Add(timeBudget)
+			hardDeadline = budgetDeadline.Add(grace)
+		}
 	}
 	nextAttempt := planInput.RunContext.Attempt + 1
 	r.logger.Info(wfCtx.Context(), "Starting runLoop", "tool_calls", len(result.ToolCalls))
-	out, err := r.runLoop(wfCtx, reg, input, planInput, result, caps, deadline, nextAttempt, seq, nil, ctrl)
+	out, err := r.runLoop(wfCtx, reg, input, planInput, result, caps, hardDeadline, nextAttempt, seq, nil, ctrl, grace)
 	if err != nil {
 		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{
 			"error": err.Error(),
@@ -201,6 +232,7 @@ func (r *Runtime) runLoop(
 	seq *turnSequencer,
 	parentTracker *childTracker,
 	ctrl *interrupt.Controller,
+	finalizerGrace time.Duration,
 ) (*RunOutput, error) {
 	if base == nil {
 		return nil, errors.New("base plan input is required")
@@ -231,9 +263,27 @@ func (r *Runtime) runLoop(
 		if err := r.handleInterrupts(wfCtx, input, base, seq, ctrl, &nextAttempt); err != nil {
 			return nil, err
 		}
+		// When a hard deadline is set, stop scheduling new work when the remaining time
+		// is less than or equal to the grace period; request finalization instead.
+		if !deadline.IsZero() {
+			now := wfCtx.Now()
+			remaining := deadline.Sub(now)
+			if finalizerGrace > 0 && remaining <= finalizerGrace {
+				return r.finalizeWithPlanner(wfCtx, reg, input, base, lastToolResults, nextAttempt, seq, planner.TerminationReasonTimeBudget, deadline)
+			}
+			if finalizerGrace == 0 && remaining <= minActivityTimeout {
+				// No configured grace; avoid scheduling work that cannot complete meaningfully.
+				return r.finalizeWithPlanner(wfCtx, reg, input, base, lastToolResults, nextAttempt, seq, planner.TerminationReasonTimeBudget, deadline)
+			}
+			if remaining <= 0 {
+				// Time budget fully exhausted (including grace): try to finalize.
+				// This may still race with engine TTLs, but provides a best-effort reply.
+				return r.finalizeWithPlanner(wfCtx, reg, input, base, lastToolResults, nextAttempt, seq, planner.TerminationReasonTimeBudget, deadline)
+			}
+		}
 		if !deadline.IsZero() && wfCtx.Now().After(deadline) {
-			// Time budget exceeded: request a final tool-free response from the planner.
-			return r.finalizeWithPlanner(wfCtx, reg, input, base, lastToolResults, nextAttempt, seq, planner.TerminationReasonTimeBudget)
+			// Redundant guard; kept for clarity with prior semantics.
+			return r.finalizeWithPlanner(wfCtx, reg, input, base, lastToolResults, nextAttempt, seq, planner.TerminationReasonTimeBudget, deadline)
 		}
 		// Handle Await: publish await event, pause and wait for external input.
 		if result.Await != nil {
@@ -301,7 +351,7 @@ func (r *Runtime) runLoop(
 					ToolResults: nil,
 				}
 				var err2 error
-				result, err2 = r.runPlanActivity(wfCtx, reg.ResumeActivityName, reg.ResumeActivityOptions, resumeReq)
+				result, err2 = r.runPlanActivity(wfCtx, reg.ResumeActivityName, reg.ResumeActivityOptions, resumeReq, deadline)
 				if err2 != nil {
 					return nil, err2
 				}
@@ -335,7 +385,7 @@ func (r *Runtime) runLoop(
 				})
 				r.publishHook(ctx, hooks.NewRunResumedEvent(base.RunContext.RunID, base.Agent.ID(), "tool_results_provided", input.RunID, nil, 0), seq)
 				var err2 error
-				result, err2 = r.runPlanActivity(wfCtx, reg.ResumeActivityName, reg.ResumeActivityOptions, resumeReq)
+				result, err2 = r.runPlanActivity(wfCtx, reg.ResumeActivityName, reg.ResumeActivityOptions, resumeReq, deadline)
 				if err2 != nil {
 					return nil, err2
 				}
@@ -390,7 +440,7 @@ func (r *Runtime) runLoop(
 
 		if caps.RemainingToolCalls == 0 && caps.MaxToolCalls > 0 {
 			// Tool cap exhausted: request a final tool-free response from the planner.
-			return r.finalizeWithPlanner(wfCtx, reg, input, base, lastToolResults, nextAttempt, seq, planner.TerminationReasonToolCap)
+			return r.finalizeWithPlanner(wfCtx, reg, input, base, lastToolResults, nextAttempt, seq, planner.TerminationReasonToolCap, deadline)
 		}
 		if !deadline.IsZero() && wfCtx.Now().After(deadline) {
 			// Time budget exceeded after evaluating caps/policy
@@ -403,10 +453,27 @@ func (r *Runtime) runLoop(
 				nextAttempt,
 				seq,
 				planner.TerminationReasonTimeBudget,
+				deadline,
 			)
 		}
 		// Start with candidate tool calls from the planner.
 		candidates := result.ToolCalls
+
+		// If the planner provided an assistant message alongside tool calls,
+		// append it to the conversation so the next turn has proper context.
+		if result.AssistantMessage != nil {
+			base.Messages = append(base.Messages, result.AssistantMessage)
+			r.publishHook(
+				ctx,
+				hooks.NewAssistantMessageEvent(
+					base.RunContext.RunID,
+					base.Agent.ID(),
+					result.AssistantMessage.Content,
+					nil,
+				),
+				seq,
+			)
+		}
 
 		r.logger.Info(ctx, "Workflow received tool calls from planner", "count", len(candidates))
 		// Apply per-run policy overrides (restrict tool and tag filters) before policy decision.
@@ -528,7 +595,7 @@ func (r *Runtime) runLoop(
 		}
 		vals, err := r.executeToolCalls(
 			wfCtx, reg.ExecuteToolActivity, reg.ExecuteToolActivityOptions, base.RunContext.RunID, base.Agent.ID(),
-			allowed, result.ExpectedChildren, seq, parentTracker,
+			allowed, result.ExpectedChildren, seq, parentTracker, deadline,
 		)
 		if err != nil {
 			return nil, err
@@ -544,7 +611,7 @@ func (r *Runtime) runLoop(
 			)
 			if caps.MaxConsecutiveFailedToolCalls > 0 && caps.RemainingConsecutiveFailedToolCalls <= 0 {
 				// Consecutive failure cap exhausted: request finalization.
-				return r.finalizeWithPlanner(wfCtx, reg, input, base, lastToolResults, nextAttempt, seq, planner.TerminationReasonFailureCap)
+				return r.finalizeWithPlanner(wfCtx, reg, input, base, lastToolResults, nextAttempt, seq, planner.TerminationReasonFailureCap, deadline)
 			}
 		} else if caps.MaxConsecutiveFailedToolCalls > 0 {
 			caps.RemainingConsecutiveFailedToolCalls = caps.MaxConsecutiveFailedToolCalls
@@ -587,7 +654,7 @@ func (r *Runtime) runLoop(
 					),
 					seq,
 				)
-				return r.finalizeWithPlanner(wfCtx, reg, input, base, lastToolResults, nextAttempt, seq, planner.TerminationReasonFailureCap)
+				return r.finalizeWithPlanner(wfCtx, reg, input, base, lastToolResults, nextAttempt, seq, planner.TerminationReasonFailureCap, deadline)
 			}
 		}
 
@@ -601,7 +668,7 @@ func (r *Runtime) runLoop(
 			RunContext:  resumeCtx,
 			ToolResults: lastToolResults,
 		}
-		result, err = r.runPlanActivity(wfCtx, reg.ResumeActivityName, reg.ResumeActivityOptions, resumeReq)
+		result, err = r.runPlanActivity(wfCtx, reg.ResumeActivityName, reg.ResumeActivityOptions, resumeReq, deadline)
 		if err != nil {
 			return nil, err
 		}
@@ -659,7 +726,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 	}
 	switch reg.Policy.OnMissingFields {
 	case MissingFieldsFinalize:
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, results, *nextAttempt, seq, planner.TerminationReasonFailureCap)
+		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, results, *nextAttempt, seq, planner.TerminationReasonFailureCap, time.Time{})
 		return out, err
 	case MissingFieldsAwaitClarification:
 		// Generate deterministic await ID for correlation safety.
@@ -714,6 +781,7 @@ func (r *Runtime) finalizeWithPlanner(
 	nextAttempt int,
 	seq *turnSequencer,
 	reason planner.TerminationReason,
+	hardDeadline time.Time,
 ) (*RunOutput, error) {
 	if base == nil {
 		return nil, errors.New("base plan input is required")
@@ -766,7 +834,7 @@ func (r *Runtime) finalizeWithPlanner(
 		}
 	}()
 
-	result, err := r.runPlanActivity(wfCtx, reg.ResumeActivityName, reg.ResumeActivityOptions, req)
+	result, err := r.runPlanActivity(wfCtx, reg.ResumeActivityName, reg.ResumeActivityOptions, req, hardDeadline)
 	if err != nil {
 		// Surface the termination reason prominently; include underlying error for observability.
 		return nil, fmt.Errorf("%s: %w", reasonText, err)
@@ -891,6 +959,7 @@ func (r *Runtime) executeToolCalls(
 	expectedChildren int,
 	seq *turnSequencer,
 	parentTracker *childTracker,
+	hardDeadline time.Time,
 ) ([]*planner.ToolResult, error) {
 	if activityName == "" {
 		return nil, errors.New("execute tool activity not registered")
@@ -940,29 +1009,36 @@ func (r *Runtime) executeToolCalls(
 			if res == nil {
 				return nil, fmt.Errorf("tool %q inline execution returned nil result", call.Name)
 			}
+			// Ensure correlation fields are populated so results can be merged
+			// back to their originating calls.
+			if res.Name == "" {
+				res.Name = call.Name
+			}
+			if res.ToolCallID == "" {
+				res.ToolCallID = call.ToolCallID
+			}
 			duration := wfCtx.Now().Sub(start)
 			// Telemetry builder support can be applied post-aggregation where needed.
-			// Emit result event with typed payload directly unless suppressed.
-			if !ts.SuppressChildEvents {
-				var evtErr *toolerrors.ToolError
-				if res.Error != nil {
-					evtErr = res.Error
-				}
-				r.publishHook(ctx,
-					hooks.NewToolResultReceivedEvent(
-						runID,
-						agentID,
-						call.Name,
-						call.ToolCallID,
-						call.ParentToolCallID,
-						res.Result,
-						duration,
-						res.Telemetry,
-						evtErr,
-					),
-					seq,
-				)
+			// Always emit the parent tool result event; child events suppression applies
+			// to nested child tool calls, not the parent tool completion.
+			var evtErr *toolerrors.ToolError
+			if res.Error != nil {
+				evtErr = res.Error
 			}
+			r.publishHook(ctx,
+				hooks.NewToolResultReceivedEvent(
+					runID,
+					agentID,
+					call.Name,
+					call.ToolCallID,
+					call.ParentToolCallID,
+					res.Result,
+					duration,
+					res.Telemetry,
+					evtErr,
+				),
+				seq,
+			)
 			// Accumulate result preserving order
 			inlineResults = append(inlineResults, res)
 			if parentTracker != nil {
@@ -994,8 +1070,18 @@ func (r *Runtime) executeToolCalls(
 		if toolActOptions.Queue != "" {
 			req.Queue = toolActOptions.Queue
 		}
-		if toolActOptions.Timeout > 0 {
-			req.Timeout = toolActOptions.Timeout
+		// Apply timeout: start with configured, then cap to remaining time to hard deadline.
+		timeout := toolActOptions.Timeout
+		if !hardDeadline.IsZero() {
+			now := wfCtx.Now()
+			if rem := hardDeadline.Sub(now); rem > 0 {
+				if timeout == 0 || timeout > rem {
+					timeout = rem
+				}
+			}
+		}
+		if timeout > 0 {
+			req.Timeout = timeout
 		}
 		if !isZeroRetryPolicy(toolActOptions.RetryPolicy) {
 			req.RetryPolicy = toolActOptions.RetryPolicy
@@ -1112,7 +1198,7 @@ func (r *Runtime) executeToolCalls(
 
 // runPlanActivity schedules a plan/resume activity with the configured options.
 func (r *Runtime) runPlanActivity(
-	wfCtx engine.WorkflowContext, activityName string, options engine.ActivityOptions, input PlanActivityInput,
+	wfCtx engine.WorkflowContext, activityName string, options engine.ActivityOptions, input PlanActivityInput, hardDeadline time.Time,
 ) (*planner.PlanResult, error) {
 	if activityName == "" {
 		return nil, errors.New("plan activity not registered")
@@ -1125,8 +1211,18 @@ func (r *Runtime) runPlanActivity(
 	if options.Queue != "" {
 		req.Queue = options.Queue
 	}
-	if options.Timeout > 0 {
-		req.Timeout = options.Timeout
+	// Apply timeout: start with configured, then cap to remaining time to hard deadline.
+	timeout := options.Timeout
+	if !hardDeadline.IsZero() {
+		now := wfCtx.Now()
+		if rem := hardDeadline.Sub(now); rem > 0 {
+			if timeout == 0 || timeout > rem {
+				timeout = rem
+			}
+		}
+	}
+	if timeout > 0 {
+		req.Timeout = timeout
 	}
 	if !isZeroRetryPolicy(options.RetryPolicy) {
 		req.RetryPolicy = options.RetryPolicy

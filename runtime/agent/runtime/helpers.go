@@ -20,7 +20,7 @@ const (
 	unknownID                 = "unknown"
 )
 
-// toolsetIdentifier extracts the toolset name from a fully qualified tool name.
+// toolsetIdentifier extracts the toolset name from a tool name.
 // For example, "service.toolset.tool" returns "service.toolset".
 func toolsetIdentifier(tool tools.Ident) string {
 	parts := strings.Split(string(tool), ".")

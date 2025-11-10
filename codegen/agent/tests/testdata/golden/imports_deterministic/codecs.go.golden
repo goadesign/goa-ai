@@ -17,8 +17,8 @@ import (
 )
 
 var (
-	// StorePayloadCodec serializes values of type StorePayload to canonical JSON.
-	StorePayloadCodec = tools.JSONCodec[StorePayload]{
+	// StorePayloadCodec serializes values of type *StorePayload to canonical JSON.
+	StorePayloadCodec = tools.JSONCodec[*StorePayload]{
 		ToJSON:   MarshalStorePayload,
 		FromJSON: UnmarshalStorePayload,
 	}
@@ -27,12 +27,12 @@ var (
 		ToJSON:   MarshalStoreResult,
 		FromJSON: UnmarshalStoreResult,
 	}
-	// storePayloadCodec provides an untyped codec for StorePayload.
+	// storePayloadCodec provides an untyped codec for *StorePayload.
 	storePayloadCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
-			typed, ok := v.(StorePayload)
+			typed, ok := v.(*StorePayload)
 			if !ok {
-				return nil, fmt.Errorf("expected StorePayload, got %T", v)
+				return nil, fmt.Errorf("expected *StorePayload, got %T", v)
 			}
 			return MarshalStorePayload(typed)
 		},
@@ -169,21 +169,24 @@ func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 	}
 }
 
-// MarshalStorePayload serializes StorePayload into JSON.
-func MarshalStorePayload(v StorePayload) ([]byte, error) {
+// MarshalStorePayload serializes *StorePayload into JSON.
+func MarshalStorePayload(v *StorePayload) ([]byte, error) {
+	if v == nil {
+		return nil, fmt.Errorf("storePayload is nil")
+	}
 	return json.Marshal(v)
 }
 
-// UnmarshalStorePayload deserializes JSON into StorePayload.
-func UnmarshalStorePayload(data []byte) (StorePayload, error) {
-	var zero StorePayload
+// UnmarshalStorePayload deserializes JSON into *StorePayload.
+func UnmarshalStorePayload(data []byte) (*StorePayload, error) {
 	if len(data) == 0 {
-		return zero, fmt.Errorf("storePayload JSON is empty")
+		return nil, fmt.Errorf("storePayload JSON is empty")
 	}
-	// Decode into JSON body (server body style) then validate & transform
+	// Decode into JSON body (server body style) then transform.
+	// Note: Agent used-tools perform lenient decode (no required-field validation here).
 	var raw StorePayloadJSON2
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return zero, fmt.Errorf("decode storePayload: %w", err)
+		return nil, fmt.Errorf("decode storePayload: %w", err)
 	}
 	var err error
 	if raw.ID == nil {
@@ -191,14 +194,13 @@ func UnmarshalStorePayload(data []byte) (StorePayload, error) {
 	}
 	if err != nil {
 		err = newValidationError(err)
-		err = enrichStorePayloadValidationError(err)
-		return zero, fmt.Errorf("validate storePayload: %w", err)
+		return nil, err
 	}
 	// Transform into final type
 	v := &types.Doc{
 		ID: *raw.ID,
 	}
-	return *v, nil
+	return v, nil
 }
 
 // MarshalStoreResult serializes StoreResult into JSON.

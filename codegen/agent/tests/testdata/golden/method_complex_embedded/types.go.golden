@@ -10,12 +10,8 @@ type (
 
 	// UpsertPayload defines the JSON payload for the alpha.profiles.upsert tool.
 	UpsertPayload = struct {
-		// Identifier
-		ID string
-		// Name
-		Name *string
-		// Address
-		Address *Address
+		// Profile
+		Profile *Profile
 	}
 
 	// UpsertResult defines the JSON result for the alpha.profiles.upsert tool.
@@ -46,17 +42,28 @@ type (
 		Address *Address
 	}
 
+	// UpsertArgs is a helper type materialized for nested references.
+	UpsertArgs = struct {
+		// Profile
+		Profile *Profile
+	}
+
 	// UpsertPayloadJSON2 is a helper type for JSON decode-body.
 	UpsertPayloadJSON2 struct {
+		Profile *UpsertPayloadJSONProfileJSON2
+	}
+
+	// UpsertPayloadJSONProfileJSON2 is a helper type for JSON decode-body.
+	UpsertPayloadJSONProfileJSON2 struct {
 		// Identifier
 		ID *string
 		// Name
 		Name    *string
-		Address *UpsertPayloadJSONAddressJSON2
+		Address *UpsertPayloadJSONProfileJSONAddressJSON2
 	}
 
-	// UpsertPayloadJSONAddressJSON2 is a helper type for JSON decode-body.
-	UpsertPayloadJSONAddressJSON2 struct {
+	// UpsertPayloadJSONProfileJSONAddressJSON2 is a helper type for JSON decode-body.
+	UpsertPayloadJSONProfileJSONAddressJSON2 struct {
 		// Street
 		Street *string
 		// City

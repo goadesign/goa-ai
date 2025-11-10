@@ -390,33 +390,27 @@ func (b *toolSpecBuilder) scopeForTool(t *ToolData) *codegen.NameScope {
 }
 
 func (b *toolSpecBuilder) typeFor(tool *ToolData, att *goaexpr.AttributeExpr, usage typeUsage) (*typeData, error) {
-	// Prefer bound method types for method-backed tools so generated specs
-	// alias concrete service types (e.g., <Method>Payload/Result). This avoids
-	// referencing non-existent tool-local types (e.g., *ToolArgs/*ToolReturn)
-	// when the design intends to bind directly to a service method.
+	// For method-backed tools, use the bound service method type for RESULTs
+	// so that generated specs alias the concrete service result types directly.
+	// For PAYLOADs, always use the tool's own argument type to prevent
+	// server-only fields (e.g., session_id) from leaking into tool-visible
+	// schemas. Server fields are injected post-decode by adapters before
+	// making the actual service method call.
 	if tool != nil && tool.IsMethodBacked {
-		switch usage {
-		case usagePayload:
-			if tool.MethodPayloadAttr != nil && tool.MethodPayloadAttr.Type != goaexpr.Empty {
-				att = tool.MethodPayloadAttr
-			}
-		case usageResult:
+		if usage == usageResult {
 			if tool.MethodResultAttr != nil && tool.MethodResultAttr.Type != goaexpr.Empty {
 				att = tool.MethodResultAttr
 			}
 		}
 	}
-	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
-		// Synthesize an empty object for payloads with no args so that a
-		// concrete Payload type is always generated. This keeps adapters and
-		// codecs uniform and avoids nil checks in generated code.
-		if usage == usagePayload {
-			empty := &goaexpr.AttributeExpr{Type: &goaexpr.Object{}}
-			att = empty
-		} else {
-			return nil, nil
-		}
+
+	if usage == usagePayload && att.Type == goaexpr.Empty {
+		// For payloads with no arguments, synthesize an empty object.
+		// This ensures a concrete Payload type is always generated for adapters and codecs,
+		// avoiding nil checks in generated code.
+		att = &goaexpr.AttributeExpr{Type: &goaexpr.Object{}}
 	}
+
 	info, err := b.buildTypeInfo(tool, att, usage)
 	if err != nil {
 		return nil, err
@@ -493,6 +487,12 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 		MarshalArg:    "v",
 		UnmarshalArg:  "v",
 	}
+	// For tool payloads, untyped codecs should return pointers.
+	// Record pointer intent via the flag; templates will render "*" where needed
+	// using Goa NameScope-derived base references (no string surgery here).
+	if usage == usagePayload {
+		info.Pointer = true
+	}
 	// Populate JSON validation and field descriptions for payload types only.
 	if usage == usagePayload {
 		// Do not generate standalone validation for the final payload type.
@@ -503,9 +503,14 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 		if isEmptyStruct(att) {
 			info.AcceptEmpty = true
 		}
+		// Build JSON decode-body types uniformly, treating Empty as an empty object.
+		jsonAttr := att
+		if att.Type == goaexpr.Empty {
+			jsonAttr = &goaexpr.AttributeExpr{Type: &goaexpr.Object{}}
+		}
 		// 1) JSON decode-body type: materialize a single named user type for the
 		// root body with inline nested objects (no separate nested user types).
-		jsonRoot, jsonDefs := b.materializeJSONUserTypes(att, typeName+"JSON", scope)
+		jsonRoot, jsonDefs := b.materializeJSONUserTypes(jsonAttr, typeName+"JSON", scope)
 		// Compute the final public name for the root JSON type so that
 		// references in codecs match the emitted type name in types.go.
 		// JSON helper types are emitted in the current package; use GoTypeName
@@ -519,8 +524,10 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 			// consistency with references produced by GoTypeDef/GoTypeName.
 			// Helper JSON types are local to the specs package; use GoTypeName
 			// to keep names unqualified.
-			gname := scope.GoTypeName(&goaexpr.AttributeExpr{Type: jut})
+			jattr := &goaexpr.AttributeExpr{Type: jut}
+			gname := scope.GoTypeName(jattr)
 			def := gname + " " + scope.GoTypeDef(jut.Attribute(), true, false)
+			ref := scope.GoTypeRef(jattr)
 			// Generate standalone validator for this JSON helper user type so
 			// root validators that call Validate<Helper> compile.
 			httpctx := codegen.NewAttributeContext(true, false, false, "", scope)
@@ -530,7 +537,7 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 				TypeName:      gname,
 				Doc:           gname + " is a helper type for JSON decode-body.",
 				Def:           def,
-				FullRef:       "*" + gname,
+				FullRef:       ref,
 				NeedType:      true,
 				TypeImports:   gatherAttributeImports(b.genpkg, jut.Attribute()),
 				ValidateFunc:  "Validate" + gname,
@@ -550,33 +557,44 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 			info.JSONValidationSrc = strings.Split(jv, "\n")
 		}
 
-		// 3) Transform raw(JSON) -> final type using GoTransform
-		// Synthesize source and target user types from the underlying base attribute
-		// so we don't create recursive self-references.
-		baseAttr := att
-		if ut, ok := att.Type.(goaexpr.UserType); ok && ut != nil {
-			baseAttr = ut.Attribute()
-		}
-		srcUT := jsonRoot
-		srcAttr := &goaexpr.AttributeExpr{Type: srcUT}
-		var tgtAttr *goaexpr.AttributeExpr
-		if u2, ok := att.Type.(goaexpr.UserType); ok && u2 != nil {
-			// Transform directly into the declared user type (external or local)
-			tgtAttr = &goaexpr.AttributeExpr{Type: u2}
+		// 3) Transform raw(JSON) -> final type.
+		// For empty payloads, emit a direct initializer to the local alias to avoid
+		// Goa's transform generating '&Empty{}'.
+		if att.Type == goaexpr.Empty {
+			info.TransformBody = "v := &" + typeName + "{}"
 		} else {
-			// Synthesize a local user type name for anonymous payloads
-			tgtUT := &goaexpr.UserTypeExpr{AttributeExpr: baseAttr, TypeName: typeName}
-			tgtAttr = &goaexpr.AttributeExpr{Type: tgtUT}
-		}
-		// Use the service scope so helper names/types resolved by transforms
-		// match the emitted JSON helper type names (avoid JSON2 suffix skew).
-		srcCtx := codegen.NewAttributeContext(true, false, false, "", scope)
-		tgtCtx := codegen.NewAttributeContext(false, false, true, "", scope)
-		body, helpers, err := codegen.GoTransform(srcAttr, tgtAttr, "raw", "v", srcCtx, tgtCtx, "payload", true)
-		if err == nil && strings.TrimSpace(body) != "" {
-			info.TransformBody = body
-			if len(helpers) > 0 {
-				info.TransformHelpers = helpers
+			// Synthesize source and target user types from the underlying base attribute
+			// so we don't create recursive self-references.
+			baseAttr := att
+			if ut, ok := att.Type.(goaexpr.UserType); ok && ut != nil {
+				baseAttr = ut.Attribute()
+			}
+			// Treat empty payloads as empty objects for transforms so Goa emits
+			// '&<TypeName>{}' rather than '&Empty{}' in generated code.
+			if baseAttr.Type == goaexpr.Empty {
+				baseAttr = &goaexpr.AttributeExpr{Type: &goaexpr.Object{}}
+			}
+			srcUT := jsonRoot
+			srcAttr := &goaexpr.AttributeExpr{Type: srcUT}
+			var tgtAttr *goaexpr.AttributeExpr
+			if u2, ok := att.Type.(goaexpr.UserType); ok && u2 != nil {
+				// Transform directly into the declared user type (external or local)
+				tgtAttr = &goaexpr.AttributeExpr{Type: u2}
+			} else {
+				// Synthesize a local user type name for anonymous payloads
+				tgtUT := &goaexpr.UserTypeExpr{AttributeExpr: baseAttr, TypeName: typeName}
+				tgtAttr = &goaexpr.AttributeExpr{Type: tgtUT}
+			}
+			// Use the service scope so helper names/types resolved by transforms
+			// match the emitted JSON helper type names (avoid JSON2 suffix skew).
+			srcCtx := codegen.NewAttributeContext(true, false, false, "", scope)
+			tgtCtx := codegen.NewAttributeContext(false, false, true, "", scope)
+			body, helpers, err := codegen.GoTransform(srcAttr, tgtAttr, "raw", "v", srcCtx, tgtCtx, "payload", true)
+			if err == nil && strings.TrimSpace(body) != "" {
+				info.TransformBody = body
+				if len(helpers) > 0 {
+					info.TransformHelpers = helpers
+				}
 			}
 		}
 
@@ -634,7 +652,11 @@ func isEmptyStruct(att *goaexpr.AttributeExpr) bool {
 // to the owner or primitive type, and the imports required.
 func (b *toolSpecBuilder) materialize(typeName string, att *goaexpr.AttributeExpr, scope *codegen.NameScope) (tt *goaexpr.AttributeExpr, defLine string, fullRef string, imports []*codegen.ImportSpec) {
 	if att.Type == goaexpr.Empty {
-		return att, "", "", nil
+		// Synthesize a concrete, named empty payload type so templates
+		// always have a valid type reference. Using an alias keeps
+		// pointer/value semantics straightforward and avoids generating
+		// unnecessary struct declarations.
+		return att, typeName + " = struct{}", typeName, nil
 	}
 
 	// Base imports from attribute metadata and locations

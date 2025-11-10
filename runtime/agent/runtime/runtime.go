@@ -295,6 +295,12 @@ type (
 		// TimeBudget is the wall-clock deadline for run completion (0 = unlimited).
 		TimeBudget time.Duration
 
+		// FinalizerGrace reserves time to produce a last assistant message after the
+		// budget is exhausted. When set, the runtime stops scheduling new work once
+		// the remaining time is less than or equal to this value and requests a final
+		// response from the planner. Zero means no reserved window; defaults may apply.
+		FinalizerGrace time.Duration
+
 		// InterruptsAllowed indicates whether the workflow can be paused and resumed.
 		InterruptsAllowed bool
 
@@ -317,6 +323,13 @@ const (
 	MissingFieldsAwaitClarification MissingFieldsAction = "await_clarification"
 	// MissingFieldsResume instructs the runtime to continue without pausing; surface hints to the planner.
 	MissingFieldsResume MissingFieldsAction = "resume"
+)
+
+const (
+	// Opinionated defaults applied when activity timeouts are unspecified.
+	defaultPlanActivityTimeout        = 30 * time.Second
+	defaultResumeActivityTimeout      = 30 * time.Second
+	defaultExecuteToolActivityTimeout = 2 * time.Minute
 )
 
 var (
@@ -453,6 +466,17 @@ func WithRunTimeBudget(d time.Duration) RunOption {
 			in.Policy = &PolicyOverrides{}
 		}
 		in.Policy.TimeBudget = d
+	}
+}
+
+// WithRunFinalizerGrace reserves time to produce a final assistant message after
+// the run's TimeBudget is exhausted. Zero means no override.
+func WithRunFinalizerGrace(d time.Duration) RunOption {
+	return func(in *RunInput) {
+		if in.Policy == nil {
+			in.Policy = &PolicyOverrides{}
+		}
+		in.Policy.FinalizerGrace = d
 	}
 }
 
@@ -710,6 +734,18 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 		}
 	}
 
+	// Apply opinionated default timeouts when unspecified. These keep activities bounded
+	// even when designs omit explicit values.
+	if reg.PlanActivityOptions.Timeout == 0 {
+		reg.PlanActivityOptions.Timeout = defaultPlanActivityTimeout
+	}
+	if reg.ResumeActivityOptions.Timeout == 0 {
+		reg.ResumeActivityOptions.Timeout = defaultResumeActivityTimeout
+	}
+	if reg.ExecuteToolActivityOptions.Timeout == 0 {
+		reg.ExecuteToolActivityOptions.Timeout = defaultExecuteToolActivityTimeout
+	}
+
 	// Register untyped workflow; Temporal adapter wraps with workflow.Context and
 	// we coerce input to *RunInput inside WorkflowHandler. This preserves engine
 	// boundaries and avoids leaking Temporal types here.
@@ -891,7 +927,7 @@ func (r *Runtime) ExecuteAgentInline(
 			return nil, fmt.Errorf("agent %q missing plan activity for inline execution", agentID)
 		}
 		var err error
-		initialPlan, err = r.runPlanActivity(wfCtx, reg.PlanActivityName, reg.PlanActivityOptions, startReq)
+		initialPlan, err = r.runPlanActivity(wfCtx, reg.PlanActivityName, reg.PlanActivityOptions, startReq, time.Time{})
 		if err != nil {
 			return nil, fmt.Errorf("plan activity failed: %w", err)
 		}
@@ -903,10 +939,19 @@ func (r *Runtime) ExecuteAgentInline(
 	// Initialize caps from agent policy
 	caps := initialCaps(reg.Policy)
 
-	// Calculate deadline
-	var deadline time.Time
-	if reg.Policy.TimeBudget > 0 {
-		deadline = wfCtx.Now().Add(reg.Policy.TimeBudget)
+	// Calculate deadlines: budget and hard (budget + grace).
+	var hardDeadline time.Time
+	var grace time.Duration
+	{
+		if reg.Policy.FinalizerGrace > 0 {
+			grace = reg.Policy.FinalizerGrace
+		} else {
+			grace = 10 * time.Second
+		}
+		if reg.Policy.TimeBudget > 0 {
+			budgetDeadline := wfCtx.Now().Add(reg.Policy.TimeBudget)
+			hardDeadline = budgetDeadline.Add(grace)
+		}
 	}
 
 	// Turn sequencer for nested run
@@ -924,7 +969,7 @@ func (r *Runtime) ExecuteAgentInline(
 		Messages:  messages,
 		Labels:    nestedRunCtx.Labels,
 	}
-	out, err := r.runLoop(wfCtx, reg, &nestedInput, planInput, initialPlan, caps, deadline, 1, seq, parentTracker, nil)
+	out, err := r.runLoop(wfCtx, reg, &nestedInput, planInput, initialPlan, caps, hardDeadline, 1, seq, parentTracker, nil, grace)
 	if err != nil {
 		return nil, err
 	}
@@ -971,7 +1016,7 @@ func (r *Runtime) ExecuteAgentInlineWithRoute(
 	}
 	initial, err := r.runPlanActivity(wfCtx, planActivityName, engine.ActivityOptions{
 		Queue: route.DefaultTaskQueue,
-	}, startReq)
+	}, startReq, time.Time{})
 	if err != nil {
 		return nil, err
 	}
@@ -1005,7 +1050,7 @@ func (r *Runtime) ExecuteAgentInlineWithRoute(
 		ResumeActivityOptions:      engine.ActivityOptions{Queue: route.DefaultTaskQueue},
 		ExecuteToolActivityOptions: engine.ActivityOptions{Queue: route.DefaultTaskQueue},
 	}
-	return r.runLoop(wfCtx, reg, &nestedInput, planInput, initial, caps, deadline, 1, seq, nil, nil)
+	return r.runLoop(wfCtx, reg, &nestedInput, planInput, initial, caps, deadline, 1, seq, nil, nil, 0)
 }
 
 // StartRun launches the agent workflow asynchronously and returns a workflow handle
@@ -1054,6 +1099,32 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 		Workflow:  workflowName,
 		TaskQueue: defaultQueue,
 		Input:     input,
+	}
+	// Compute an engine-level TTL for the workflow to prevent indefinite runs.
+	// Use agent/run policy when available and cap by a hard maximum.
+	{
+		const hardCap = 15 * time.Minute
+		const headroom = 5 * time.Second
+		var (
+			policyBudget time.Duration
+			grace        time.Duration
+		)
+		if input.Policy != nil && input.Policy.TimeBudget > 0 {
+			policyBudget = input.Policy.TimeBudget
+			grace = input.Policy.FinalizerGrace
+		} else if reg, ok := r.agentByID(input.AgentID); ok {
+			policyBudget = reg.Policy.TimeBudget
+			grace = reg.Policy.FinalizerGrace
+		}
+		if grace == 0 {
+			grace = defaultFinalizerGrace
+		}
+		req.RunTimeout = hardCap
+		if policyBudget > 0 {
+			if t := policyBudget + grace + headroom; t > 0 && t < req.RunTimeout {
+				req.RunTimeout = t
+			}
+		}
 	}
 	if opts := input.WorkflowOptions; opts != nil {
 		if opts.TaskQueue != "" {
@@ -1245,6 +1316,9 @@ func (r *Runtime) OverridePolicy(agentID agent.Ident, delta RunPolicy) error {
 	}
 	if delta.TimeBudget > 0 {
 		reg.Policy.TimeBudget = delta.TimeBudget
+	}
+	if delta.FinalizerGrace > 0 {
+		reg.Policy.FinalizerGrace = delta.FinalizerGrace
 	}
 	if delta.InterruptsAllowed {
 		reg.Policy.InterruptsAllowed = true

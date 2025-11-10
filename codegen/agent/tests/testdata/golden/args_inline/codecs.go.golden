@@ -16,8 +16,8 @@ import (
 )
 
 var (
-	// AddPayloadCodec serializes values of type AddPayload to canonical JSON.
-	AddPayloadCodec = tools.JSONCodec[AddPayload]{
+	// AddPayloadCodec serializes values of type *AddPayload to canonical JSON.
+	AddPayloadCodec = tools.JSONCodec[*AddPayload]{
 		ToJSON:   MarshalAddPayload,
 		FromJSON: UnmarshalAddPayload,
 	}
@@ -26,12 +26,12 @@ var (
 		ToJSON:   MarshalAddResult,
 		FromJSON: UnmarshalAddResult,
 	}
-	// addPayloadCodec provides an untyped codec for AddPayload.
+	// addPayloadCodec provides an untyped codec for *AddPayload.
 	addPayloadCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
-			typed, ok := v.(AddPayload)
+			typed, ok := v.(*AddPayload)
 			if !ok {
-				return nil, fmt.Errorf("expected AddPayload, got %T", v)
+				return nil, fmt.Errorf("expected *AddPayload, got %T", v)
 			}
 			return MarshalAddPayload(typed)
 		},
@@ -169,21 +169,24 @@ func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 	}
 }
 
-// MarshalAddPayload serializes AddPayload into JSON.
-func MarshalAddPayload(v AddPayload) ([]byte, error) {
+// MarshalAddPayload serializes *AddPayload into JSON.
+func MarshalAddPayload(v *AddPayload) ([]byte, error) {
+	if v == nil {
+		return nil, fmt.Errorf("addPayload is nil")
+	}
 	return json.Marshal(v)
 }
 
-// UnmarshalAddPayload deserializes JSON into AddPayload.
-func UnmarshalAddPayload(data []byte) (AddPayload, error) {
-	var zero AddPayload
+// UnmarshalAddPayload deserializes JSON into *AddPayload.
+func UnmarshalAddPayload(data []byte) (*AddPayload, error) {
 	if len(data) == 0 {
-		return zero, fmt.Errorf("addPayload JSON is empty")
+		return nil, fmt.Errorf("addPayload JSON is empty")
 	}
-	// Decode into JSON body (server body style) then validate & transform
+	// Decode into JSON body (server body style) then transform.
+	// Note: Agent used-tools perform lenient decode (no required-field validation here).
 	var raw AddPayloadJSON2
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return zero, fmt.Errorf("decode addPayload: %w", err)
+		return nil, fmt.Errorf("decode addPayload: %w", err)
 	}
 	var err error
 	if raw.Left == nil {
@@ -194,15 +197,14 @@ func UnmarshalAddPayload(data []byte) (AddPayload, error) {
 	}
 	if err != nil {
 		err = newValidationError(err)
-		err = enrichAddPayloadValidationError(err)
-		return zero, fmt.Errorf("validate addPayload: %w", err)
+		return nil, err
 	}
 	// Transform into final type
 	v := &AddPayload{
 		Left:  *raw.Left,
 		Right: *raw.Right,
 	}
-	return *v, nil
+	return v, nil
 }
 
 // MarshalAddResult serializes AddResult into JSON.

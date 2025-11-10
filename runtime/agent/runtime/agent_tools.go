@@ -315,7 +315,7 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 			}
 		}
 		switch trimmed := strings.TrimSpace(userContent); trimmed {
-		case "", "{}", "null":
+		case "{}", "null":
 			// Do not append an empty/meaningless user message.
 		default:
 			messages = append(messages, &planner.AgentMessage{
@@ -383,6 +383,10 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 			}
 			tr, aerr := cfg.Aggregate(ctx, parent, children)
 			if aerr == nil {
+				// Ensure correlation fields are set so inline results can be
+				// matched back to the originating call during merging.
+				tr.Name = call.Name
+				tr.ToolCallID = call.ToolCallID
 				// Record child count so the runtime can detect empty-child agent-tools.
 				tr.ChildrenCount = len(outPtr.ToolEvents)
 				return &tr, nil
@@ -442,9 +446,10 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 				}
 			}
 			tr := &planner.ToolResult{
-				Name:      call.Name,
-				Result:    payload,
-				Telemetry: tel,
+				Name:       call.Name,
+				ToolCallID: call.ToolCallID,
+				Result:     payload,
+				Telemetry:  tel,
 			}
 			tr.ChildrenCount = len(outPtr.ToolEvents)
 			if errCount > 0 && errCount == len(outPtr.ToolEvents) {

@@ -117,14 +117,22 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Data: payload,
 		})
 	case *hooks.AssistantMessageEvent:
-		return s.sink.Send(ctx, AssistantReply{
-			Base: Base{t: EventAssistantReply, r: evt.RunID(), p: evt.Message},
+		// Publish a typed payload object on the wire (no string-wrapping).
+		payload := AssistantReplyPayload{
 			Text: evt.Message,
+		}
+		return s.sink.Send(ctx, AssistantReply{
+			Base: Base{t: EventAssistantReply, r: evt.RunID(), p: payload},
+			Data: payload,
 		})
 	case *hooks.PlannerNoteEvent:
-		return s.sink.Send(ctx, PlannerThought{
-			Base: Base{t: EventPlannerThought, r: evt.RunID(), p: evt.Note},
+		// Publish a typed payload object on the wire (no string-wrapping).
+		payload := PlannerThoughtPayload{
 			Note: evt.Note,
+		}
+		return s.sink.Send(ctx, PlannerThought{
+			Base: Base{t: EventPlannerThought, r: evt.RunID(), p: payload},
+			Data: payload,
 		})
 	case *hooks.ToolResultReceivedEvent:
 		payload := ToolEndPayload{

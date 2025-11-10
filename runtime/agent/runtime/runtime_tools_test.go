@@ -59,7 +59,7 @@ func TestToolsetTaskQueueOverrideUsed(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, nil, nil, nil)
+	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, nil, nil, nil, 0)
 	require.NoError(t, err)
 	require.Equal(t, "q1", wfCtx.lastRequest.Queue)
 	ti, ok := wfCtx.lastRequest.Input.(ToolInput)
@@ -84,7 +84,7 @@ func TestPreserveModelProvidedToolCallID(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, nil, nil, nil)
+	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, nil, nil, nil, 0)
 	require.NoError(t, err)
 	// Activity input should carry the same ID
 	ti, ok := wfCtx.lastRequest.Input.(ToolInput)
@@ -135,7 +135,7 @@ func TestRunLoopPauseResumeEmitsEvents(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, &turnSequencer{turnID: "turn-1"}, nil, ctrl)
+	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, &turnSequencer{turnID: "turn-1"}, nil, ctrl, 0)
 	require.NoError(t, err)
 	var sawPause, sawResume bool
 	for _, evt := range recorder.events {

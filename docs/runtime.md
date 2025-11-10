@@ -179,11 +179,11 @@ Custom subscribers can register via `Hooks.Register` to emit analytics, trigger 
 
 Streaming event mapping (default StreamSubscriber):
 
-- ToolCallScheduled → `tool_start` (payload: `*hooks.ToolCallScheduledEvent`)
-- ToolResultReceived → `tool_end` (payload: `*hooks.ToolResultReceivedEvent`)
-- PlannerNote → `planner_thought` (payload: `string`)
-- AssistantMessage → `assistant_reply` (payload: `string`)
-- ToolCallUpdated → `tool_update` (payload: `*hooks.ToolCallUpdatedEvent`)
+- ToolCallScheduled → `tool_start` (payload: `ToolStartPayload`)
+- ToolResultReceived → `tool_end` (payload: `ToolEndPayload`)
+- PlannerNote → `planner_thought` (payload: `PlannerThoughtPayload`)
+- AssistantMessage → `assistant_reply` (payload: `AssistantReplyPayload`)
+- ToolCallUpdated → `tool_update` (payload: `ToolUpdatePayload`)
 
 Flow overview:
 
@@ -196,8 +196,8 @@ forwards them by calling `sink.Send` under the hood.
 
 The `stream` package exposes a small interface `Event` implemented by concrete types:
 
-- `AssistantReply{Run, Text}`
-- `PlannerThought{Run, Note}`
+- `AssistantReply{Run, Data: AssistantReplyPayload{...}}`
+- `PlannerThought{Run, Data: PlannerThoughtPayload{...}}`
 - `ToolStart{Run, Data: ToolStartPayload{...}}`
 - `ToolEnd{Run, Data: ToolEndPayload{...}}`
 
@@ -206,7 +206,9 @@ Transports should type-switch on `stream.Event` for compile-time safety:
 ```go
 switch e := evt.(type) {
 case stream.AssistantReply:
-    // e.Text
+    // e.Data.Text
+case stream.PlannerThought:
+    // e.Data.Note
 case stream.ToolStart:
     // e.Data.ToolCallID, e.Data.ToolName, e.Data.Payload
 case stream.ToolUpdate:
@@ -293,9 +295,9 @@ func (s *mySSE) Send(ctx context.Context, evt stream.Event) error {
             log.Printf("tool end: %s result=%v", e.Data.ToolName, e.Data.Result)
         }
     case stream.PlannerThought:
-        log.Printf("planner: %s", e.Note)
+        log.Printf("planner: %s", e.Data.Note)
     case stream.AssistantReply:
-        log.Printf("assistant: %s", e.Text)
+        log.Printf("assistant: %s", e.Data.Text)
     }
     return nil
 }
