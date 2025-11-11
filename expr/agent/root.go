@@ -3,6 +3,7 @@ package agent
 import (
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
+	"strings"
 )
 
 // RootExpr represents the top-level root for all agent and toolset
@@ -82,4 +83,57 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 	if len(tools) > 0 {
 		walk(eval.ToExpressionSet(tools))
 	}
+}
+
+// Validate enforces repository-wide invariants that require a view of all
+// agent and toolset declarations. In particular, tool names must be globally
+// unique so they can serve as simple, stable identifiers without qualification.
+func (r *RootExpr) Validate() error {
+	verr := new(eval.ValidationErrors)
+	seen := make(map[string]*ToolExpr)
+	record := func(ts *ToolsetExpr) {
+		if ts == nil {
+			return
+		}
+		// Only enforce uniqueness on defining/origin toolsets to avoid counting
+		// the same tool multiple times when a toolset is referenced via Uses/Toolset().
+		if ts.Origin != nil {
+			return
+		}
+		for _, t := range ts.Tools {
+			if t == nil {
+				continue
+			}
+			name := strings.TrimSpace(t.Name)
+			if name == "" {
+				continue
+			}
+			if other, dup := seen[name]; dup {
+				verr.Add(t, "tool name %q duplicates a tool declared in %s", name, other.EvalName())
+				continue
+			}
+			seen[name] = t
+		}
+	}
+	// Top-level toolsets.
+	for _, ts := range r.Toolsets {
+		record(ts)
+	}
+	// Agent Used/Exported toolsets.
+	for _, a := range r.Agents {
+		if a == nil {
+			continue
+		}
+		if a.Used != nil {
+			for _, ts := range a.Used.Toolsets {
+				record(ts)
+			}
+		}
+		if a.Exported != nil {
+			for _, ts := range a.Exported.Toolsets {
+				record(ts)
+			}
+		}
+	}
+	return verr
 }

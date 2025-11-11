@@ -174,8 +174,8 @@ type (
 	// ToolRequest schedules a single tool invocation. The runtime validates the
 	// tool name against the allowlist and marshals the payload for execution.
 	ToolRequest struct {
-		// Name identifies the tool to execute (e.g., "service.toolset.tool"). Must match
-		// a registered tool in the agent's toolset.
+		// Name identifies the tool to execute (globally unique simple ID). Must
+		// match a registered tool in the agent's toolset.
 		Name tools.Ident
 
 		// Payload is the tool-specific argument payload, typically a map[string]any or

@@ -16,9 +16,9 @@ import (
 
 var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 	{
-		Name:        "assistant.assistant-mcp.analyze_sentiment",
+		Name:        "analyze_sentiment",
 		Service:     "assistant",
-		Toolset:     "assistant-mcp",
+		Toolset:     "assistant.assistant-mcp",
 		Description: "Analyze sentiment of text",
 		Payload: tools.TypeSpec{
 			Name:   "*assistant.AnalyzeSentimentPayload",
@@ -60,9 +60,9 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		},
 	},
 	{
-		Name:        "assistant.assistant-mcp.extract_keywords",
+		Name:        "extract_keywords",
 		Service:     "assistant",
-		Toolset:     "assistant-mcp",
+		Toolset:     "assistant.assistant-mcp",
 		Description: "Extract keywords from text",
 		Payload: tools.TypeSpec{
 			Name:   "*assistant.ExtractKeywordsPayload",
@@ -104,9 +104,9 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		},
 	},
 	{
-		Name:        "assistant.assistant-mcp.summarize_text",
+		Name:        "summarize_text",
 		Service:     "assistant",
-		Toolset:     "assistant-mcp",
+		Toolset:     "assistant.assistant-mcp",
 		Description: "Summarize text",
 		Payload: tools.TypeSpec{
 			Name:   "*assistant.SummarizeTextPayload",
@@ -148,9 +148,9 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		},
 	},
 	{
-		Name:        "assistant.assistant-mcp.search",
+		Name:        "search",
 		Service:     "assistant",
-		Toolset:     "assistant-mcp",
+		Toolset:     "assistant.assistant-mcp",
 		Description: "Search knowledge base",
 		Payload: tools.TypeSpec{
 			Name:   "*assistant.SearchPayload",
@@ -192,9 +192,9 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		},
 	},
 	{
-		Name:        "assistant.assistant-mcp.execute_code",
+		Name:        "execute_code",
 		Service:     "assistant",
-		Toolset:     "assistant-mcp",
+		Toolset:     "assistant.assistant-mcp",
 		Description: "Execute code",
 		Payload: tools.TypeSpec{
 			Name:   "*assistant.ExecuteCodePayload",
@@ -236,9 +236,9 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		},
 	},
 	{
-		Name:        "assistant.assistant-mcp.process_batch",
+		Name:        "process_batch",
 		Service:     "assistant",
-		Toolset:     "assistant-mcp",
+		Toolset:     "assistant.assistant-mcp",
 		Description: "Process a batch of items",
 		Payload: tools.TypeSpec{
 			Name:   "*assistant.ProcessBatchPayload",
@@ -282,21 +282,21 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 }
 
 var AssistantAssistantMcpToolsetToolSchemas = map[string]string{
-	"assistant.assistant-mcp.analyze_sentiment": "{\"additionalProperties\":false,\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}",
-	"assistant.assistant-mcp.extract_keywords":  "{\"additionalProperties\":false,\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}",
-	"assistant.assistant-mcp.summarize_text":    "{\"additionalProperties\":false,\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}",
-	"assistant.assistant-mcp.search":            "{\"additionalProperties\":false,\"properties\":{\"limit\":{\"type\":\"integer\"},\"query\":{\"type\":\"string\"}},\"required\":[\"query\"],\"type\":\"object\"}",
-	"assistant.assistant-mcp.execute_code":      "{\"additionalProperties\":false,\"properties\":{\"code\":{\"type\":\"string\"},\"language\":{\"enum\":[\"python\",\"javascript\"],\"type\":\"string\"}},\"required\":[\"language\",\"code\"],\"type\":\"object\"}",
-	"assistant.assistant-mcp.process_batch":     "{\"additionalProperties\":false,\"properties\":{\"blob\":{\"type\":\"string\"},\"format\":{\"enum\":[\"json\",\"text\",\"blob\",\"uri\"],\"type\":\"string\"},\"items\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"mimeType\":{\"type\":\"string\"},\"uri\":{\"type\":\"string\"}},\"required\":[\"items\"],\"type\":\"object\"}",
+	"analyze_sentiment": "{\"additionalProperties\":false,\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}",
+	"extract_keywords":  "{\"additionalProperties\":false,\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}",
+	"summarize_text":    "{\"additionalProperties\":false,\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}",
+	"search":            "{\"additionalProperties\":false,\"properties\":{\"limit\":{\"type\":\"integer\"},\"query\":{\"type\":\"string\"}},\"required\":[\"query\"],\"type\":\"object\"}",
+	"execute_code":      "{\"additionalProperties\":false,\"properties\":{\"code\":{\"type\":\"string\"},\"language\":{\"enum\":[\"python\",\"javascript\"],\"type\":\"string\"}},\"required\":[\"language\",\"code\"],\"type\":\"object\"}",
+	"process_batch":     "{\"additionalProperties\":false,\"properties\":{\"blob\":{\"type\":\"string\"},\"format\":{\"enum\":[\"json\",\"text\",\"blob\",\"uri\"],\"type\":\"string\"},\"items\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"mimeType\":{\"type\":\"string\"},\"uri\":{\"type\":\"string\"}},\"required\":[\"items\"],\"type\":\"object\"}",
 }
 
 var AssistantAssistantMcpToolsetToolExamples = map[string]string{
-	"assistant.assistant-mcp.analyze_sentiment": "{\"text\":\"abc123\"}",
-	"assistant.assistant-mcp.extract_keywords":  "{\"text\":\"abc123\"}",
-	"assistant.assistant-mcp.summarize_text":    "{\"text\":\"abc123\"}",
-	"assistant.assistant-mcp.search":            "{\"limit\":1,\"query\":\"abc123\"}",
-	"assistant.assistant-mcp.execute_code":      "{\"code\":\"abc123\",\"language\":\"javascript\"}",
-	"assistant.assistant-mcp.process_batch":     "{\"blob\":\"abc123\",\"format\":\"text\",\"items\":[\"abc123\"],\"mimeType\":\"abc123\",\"uri\":\"abc123\"}",
+	"analyze_sentiment": "{\"text\":\"abc123\"}",
+	"extract_keywords":  "{\"text\":\"abc123\"}",
+	"summarize_text":    "{\"text\":\"abc123\"}",
+	"search":            "{\"limit\":1,\"query\":\"abc123\"}",
+	"execute_code":      "{\"code\":\"abc123\",\"language\":\"javascript\"}",
+	"process_batch":     "{\"blob\":\"abc123\",\"format\":\"text\",\"items\":[\"abc123\"],\"mimeType\":\"abc123\",\"uri\":\"abc123\"}",
 }
 
 func RegisterAssistantAssistantMcpToolset(ctx context.Context, rt *agentsruntime.Runtime, caller mcpruntime.Caller) error {
@@ -366,8 +366,17 @@ func RegisterAssistantAssistantMcpToolset(ctx context.Context, rt *agentsruntime
 	return rt.RegisterToolset(agentsruntime.ToolsetRegistration{
 		Name:        "assistant.assistant-mcp",
 		Description: "AI Assistant service with full MCP protocol support",
-		Execute:     exec,
-		Specs:       AssistantAssistantMcpToolsetToolSpecs,
+		Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			if call == nil {
+				return nil, errors.New("tool request is nil")
+			}
+			out, err := exec(ctx, *call)
+			if err != nil {
+				return nil, err
+			}
+			return &out, nil
+		},
+		Specs: AssistantAssistantMcpToolsetToolSpecs,
 		// Pass raw JSON through to executor; it decodes using MCP/client codecs.
 		DecodeInExecutor: true,
 	})

@@ -31,6 +31,10 @@ const (
 	defaultFinalizerGrace = 10 * time.Second
 )
 
+// hardDeadlineCtxKey is a private context key used to propagate the parent
+// hard deadline to nested inline agent runs.
+type hardDeadlineCtxKey struct{}
+
 type (
 	// futureInfo bundles a Future with its associated tool call metadata for parallel execution.
 	// When tools are launched asynchronously via ExecuteActivityAsync, we need to track the
@@ -132,13 +136,63 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		Agent:      agentCtx,
 		Events:     newPlannerEvents(r, input.AgentID, input.RunID),
 	}
+	// Compute deadlines before the initial Plan so it cannot outlive the run window.
+	var (
+		timeBudget     time.Duration
+		budgetDeadline time.Time
+		hardDeadline   time.Time
+		grace          time.Duration
+	)
+	{
+		timeBudget = time.Duration(0)
+		if input.Policy != nil && input.Policy.TimeBudget > 0 {
+			timeBudget = input.Policy.TimeBudget
+		} else if reg.Policy.TimeBudget > 0 {
+			timeBudget = reg.Policy.TimeBudget
+		}
+		switch {
+		case input.Policy != nil && input.Policy.FinalizerGrace > 0:
+			grace = input.Policy.FinalizerGrace
+		case reg.Policy.FinalizerGrace > 0:
+			grace = reg.Policy.FinalizerGrace
+		default:
+			grace = defaultFinalizerGrace
+		}
+		if timeBudget > 0 {
+			budgetDeadline = wfCtx.Now().Add(timeBudget)
+			hardDeadline = budgetDeadline.Add(grace)
+		}
+	}
 	startReq := PlanActivityInput{
 		AgentID:    input.AgentID,
 		RunID:      input.RunID,
 		Messages:   planInput.Messages,
 		RunContext: planInput.RunContext,
 	}
-	result, err := r.runPlanActivity(wfCtx, reg.PlanActivityName, reg.PlanActivityOptions, startReq, time.Time{})
+	// Apply run-level Plan timeout override when provided.
+	planOpts := reg.PlanActivityOptions
+	if input.Policy != nil && input.Policy.PlanTimeout > 0 {
+		planOpts.Timeout = input.Policy.PlanTimeout
+	}
+	// Emit timing resolution for observability.
+	if r.logger != nil {
+		var planTimeout time.Duration
+		if planOpts.Timeout > 0 {
+			planTimeout = planOpts.Timeout
+		}
+		var toolTimeout time.Duration
+		if input.Policy != nil && input.Policy.ToolTimeout > 0 {
+			toolTimeout = input.Policy.ToolTimeout
+		}
+		r.logger.Info(wfCtx.Context(), "timing_resolved",
+			"time_budget", timeBudget,
+			"finalizer_grace", grace,
+			"hard_deadline", hardDeadline,
+			"plan_timeout", planTimeout,
+			"tool_timeout", toolTimeout,
+		)
+	}
+	result, err := r.runPlanActivity(wfCtx, reg.PlanActivityName, planOpts, startReq, hardDeadline)
 	if err != nil {
 		r.logger.Error(wfCtx.Context(), "Plan activity failed", "error", err)
 		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{
@@ -177,34 +231,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 			caps.RemainingConsecutiveFailedToolCalls = input.Policy.MaxConsecutiveFailedToolCalls
 		}
 	}
-	// Compute deadlines with per-run override taking precedence over registration policy.
-	// - budgetDeadline: stop scheduling when remaining <= grace to allow finalization.
-	// - hardDeadline: budgetDeadline + grace; last-chance window for finalization.
-	var (
-		budgetDeadline time.Time
-		hardDeadline   time.Time
-		grace          time.Duration
-	)
-	{
-		timeBudget := time.Duration(0)
-		if input.Policy != nil && input.Policy.TimeBudget > 0 {
-			timeBudget = input.Policy.TimeBudget
-		} else if reg.Policy.TimeBudget > 0 {
-			timeBudget = reg.Policy.TimeBudget
-		}
-		switch {
-		case input.Policy != nil && input.Policy.FinalizerGrace > 0:
-			grace = input.Policy.FinalizerGrace
-		case reg.Policy.FinalizerGrace > 0:
-			grace = reg.Policy.FinalizerGrace
-		default:
-			grace = defaultFinalizerGrace
-		}
-		if timeBudget > 0 {
-			budgetDeadline = wfCtx.Now().Add(timeBudget)
-			hardDeadline = budgetDeadline.Add(grace)
-		}
-	}
+	// Deadlines (budgetDeadline, hardDeadline, grace) already computed above.
 	nextAttempt := planInput.RunContext.Attempt + 1
 	r.logger.Info(wfCtx.Context(), "Starting runLoop", "tool_calls", len(result.ToolCalls))
 	out, err := r.runLoop(wfCtx, reg, input, planInput, result, caps, hardDeadline, nextAttempt, seq, nil, ctrl, grace)
@@ -257,6 +284,15 @@ func (r *Runtime) runLoop(
 	}
 	r.logger.Info(ctx, "runLoop starting iteration", "tool_calls", len(initial.ToolCalls), "final_response", initial.FinalResponse != nil, "await", initial.Await != nil)
 	result := initial
+	// Derive per-run overrides for Resume and Tools.
+	resumeOpts := reg.ResumeActivityOptions
+	if input != nil && input.Policy != nil && input.Policy.PlanTimeout > 0 {
+		resumeOpts.Timeout = input.Policy.PlanTimeout
+	}
+	toolOpts := reg.ExecuteToolActivityOptions
+	if input != nil && input.Policy != nil && input.Policy.ToolTimeout > 0 {
+		toolOpts.Timeout = input.Policy.ToolTimeout
+	}
 	var lastToolResults []*planner.ToolResult
 	for {
 		r.logger.Info(ctx, "runLoop iteration", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil, "await", result.Await != nil)
@@ -328,7 +364,7 @@ func (r *Runtime) runLoop(
 					return nil, errors.New("unexpected await ID for clarification")
 				}
 				// Append the answer as a user message and continue planning.
-				if strings.TrimSpace(ans.Answer) != "" {
+				if ans.Answer != "" {
 					base.Messages = append(base.Messages, &planner.AgentMessage{
 						Role:    "user",
 						Content: ans.Answer,
@@ -351,7 +387,7 @@ func (r *Runtime) runLoop(
 					ToolResults: nil,
 				}
 				var err2 error
-				result, err2 = r.runPlanActivity(wfCtx, reg.ResumeActivityName, reg.ResumeActivityOptions, resumeReq, deadline)
+				result, err2 = r.runPlanActivity(wfCtx, reg.ResumeActivityName, resumeOpts, resumeReq, deadline)
 				if err2 != nil {
 					return nil, err2
 				}
@@ -385,7 +421,7 @@ func (r *Runtime) runLoop(
 				})
 				r.publishHook(ctx, hooks.NewRunResumedEvent(base.RunContext.RunID, base.Agent.ID(), "tool_results_provided", input.RunID, nil, 0), seq)
 				var err2 error
-				result, err2 = r.runPlanActivity(wfCtx, reg.ResumeActivityName, reg.ResumeActivityOptions, resumeReq, deadline)
+				result, err2 = r.runPlanActivity(wfCtx, reg.ResumeActivityName, resumeOpts, resumeReq, deadline)
 				if err2 != nil {
 					return nil, err2
 				}
@@ -593,12 +629,56 @@ func (r *Runtime) runLoop(
 				allowed[i].ParentToolCallID = parentTracker.parentToolCallID
 			}
 		}
-		vals, err := r.executeToolCalls(
-			wfCtx, reg.ExecuteToolActivity, reg.ExecuteToolActivityOptions, base.RunContext.RunID, base.Agent.ID(),
-			allowed, result.ExpectedChildren, seq, parentTracker, deadline,
-		)
-		if err != nil {
-			return nil, err
+		// Group allowed calls by per-tool timeout to apply overrides without changing executor API.
+		var grouped [][]planner.ToolRequest
+		var timeouts []time.Duration
+		if input != nil && input.Policy != nil && len(input.Policy.PerToolTimeout) > 0 {
+			buckets := make(map[time.Duration][]planner.ToolRequest)
+			resolve := func(name tools.Ident) (time.Duration, bool) {
+				for k, v := range input.Policy.PerToolTimeout {
+					kn := string(k)
+					n := string(name)
+					if strings.HasSuffix(kn, "*") {
+						prefix := strings.TrimSuffix(kn, "*")
+						if strings.HasPrefix(n, prefix) {
+							return v, true
+						}
+					} else if kn == n {
+						return v, true
+					}
+				}
+				return 0, false
+			}
+			for _, call := range allowed {
+				if to, ok := resolve(call.Name); ok && to > 0 {
+					buckets[to] = append(buckets[to], call)
+				} else {
+					// Use default bucket (use current toolOpts.Timeout)
+					buckets[toolOpts.Timeout] = append(buckets[toolOpts.Timeout], call)
+				}
+			}
+			for to, calls := range buckets {
+				grouped = append(grouped, calls)
+				timeouts = append(timeouts, to)
+			}
+		} else {
+			grouped = [][]planner.ToolRequest{allowed}
+			timeouts = []time.Duration{toolOpts.Timeout}
+		}
+		var vals []*planner.ToolResult
+		for i := range grouped {
+			opt := toolOpts
+			if timeouts[i] > 0 {
+				opt.Timeout = timeouts[i]
+			}
+			sub, err := r.executeToolCalls(
+				wfCtx, reg.ExecuteToolActivity, opt, base.RunContext.RunID, base.Agent.ID(),
+				grouped[i], result.ExpectedChildren, seq, parentTracker, deadline,
+			)
+			if err != nil {
+				return nil, err
+			}
+			vals = append(vals, sub...)
 		}
 		// Directly use pointer results for the planner input
 		lastToolResults = vals
@@ -668,10 +748,11 @@ func (r *Runtime) runLoop(
 			RunContext:  resumeCtx,
 			ToolResults: lastToolResults,
 		}
-		result, err = r.runPlanActivity(wfCtx, reg.ResumeActivityName, reg.ResumeActivityOptions, resumeReq, deadline)
-		if err != nil {
-			return nil, err
+		res, rerr := r.runPlanActivity(wfCtx, reg.ResumeActivityName, resumeOpts, resumeReq, deadline)
+		if rerr != nil {
+			return nil, rerr
 		}
+		result = res
 	}
 }
 
@@ -750,10 +831,10 @@ func (r *Runtime) handleMissingFieldsPolicy(
 			return nil, err
 		}
 		// Validate correlation when ID is present on the answer.
-		if strings.TrimSpace(ans.ID) != "" && ans.ID != awaitID {
+		if ans.ID != "" && ans.ID != awaitID {
 			return nil, fmt.Errorf("unexpected await ID for clarification")
 		}
-		if strings.TrimSpace(ans.Answer) != "" {
+		if ans.Answer != "" {
 			base.Messages = append(base.Messages, &planner.AgentMessage{
 				Role:    "user",
 				Content: ans.Answer,
@@ -800,7 +881,7 @@ func (r *Runtime) finalizeWithPlanner(
 		hint = "Provide the best possible final answer now. Do not call any tools."
 	}
 	messages := base.Messages
-	if strings.TrimSpace(hint) != "" {
+	if hint != "" {
 		messages = append(messages, &planner.AgentMessage{Role: "system", Content: hint})
 	}
 	resumeCtx := base.RunContext
@@ -834,7 +915,12 @@ func (r *Runtime) finalizeWithPlanner(
 		}
 	}()
 
-	result, err := r.runPlanActivity(wfCtx, reg.ResumeActivityName, reg.ResumeActivityOptions, req, hardDeadline)
+	// Apply run-level Plan timeout override to Resume if present.
+	resumeOpts := reg.ResumeActivityOptions
+	if input != nil && input.Policy != nil && input.Policy.PlanTimeout > 0 {
+		resumeOpts.Timeout = input.Policy.PlanTimeout
+	}
+	result, err := r.runPlanActivity(wfCtx, reg.ResumeActivityName, resumeOpts, req, hardDeadline)
 	if err != nil {
 		// Surface the termination reason prominently; include underlying error for observability.
 		return nil, fmt.Errorf("%s: %w", reasonText, err)
@@ -982,8 +1068,11 @@ func (r *Runtime) executeToolCalls(
 			calls[i] = call
 		}
 
-		toolsetName := toolsetIdentifier(call.Name)
-		ts, hasTS := r.toolsets[toolsetName]
+		spec, hasSpec := r.toolSpec(call.Name)
+		if !hasSpec {
+			return nil, fmt.Errorf("unknown tool %q", call.Name)
+		}
+		ts, hasTS := r.toolsets[spec.Toolset]
 
 		// Prepare scheduled event (queue filled only for activity execution)
 		queue := ""
@@ -1001,7 +1090,9 @@ func (r *Runtime) executeToolCalls(
 		if hasTS && ts.Inline {
 			// Execute inline, preserving workflow context on ctx for agent-as-tool
 			start := wfCtx.Now()
-			ctxWithWF := engine.WithWorkflowContext(ctx, wfCtx)
+			// Propagate hard deadline to nested agent via context for effective capping.
+			parentCtx := context.WithValue(ctx, hardDeadlineCtxKey{}, hardDeadline)
+			ctxWithWF := engine.WithWorkflowContext(parentCtx, wfCtx)
 			res, err := ts.Execute(ctxWithWF, &call)
 			if err != nil {
 				return nil, fmt.Errorf("tool %q inline execution failed: %w", call.Name, err)
@@ -1057,7 +1148,7 @@ func (r *Runtime) executeToolCalls(
 			Input: ToolInput{
 				AgentID:          agentID,
 				RunID:            runID,
-				ToolsetName:      toolsetName,
+				ToolsetName:      spec.Toolset,
 				ToolName:         call.Name,
 				ToolCallID:       call.ToolCallID,
 				Payload:          rawPayload,

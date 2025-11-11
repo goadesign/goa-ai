@@ -92,7 +92,11 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	}
 	sName := req.ToolsetName
 	if sName == "" {
-		sName = toolsetIdentifier(req.ToolName)
+		spec, ok := r.toolSpec(req.ToolName)
+		if !ok {
+			return nil, fmt.Errorf("unknown tool %q", req.ToolName)
+		}
+		sName = spec.Toolset
 	}
 	reg, ok := r.toolsets[sName]
 	if !ok {

@@ -2,7 +2,6 @@ package agent
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"goa.design/goa/v3/eval"
@@ -21,6 +20,10 @@ type (
 		// TimeBudget is the maximum duration a run may execute before
 		// being terminated.
 		TimeBudget time.Duration
+		// PlanTimeout applies to both Plan and Resume activities when set.
+		PlanTimeout time.Duration
+		// ToolTimeout is the default ExecuteTool activity timeout when set.
+		ToolTimeout time.Duration
 		// InterruptsAllowed indicates whether the agent can be
 		// interrupted during execution.
 		InterruptsAllowed bool
@@ -52,7 +55,7 @@ func (r *RunPolicyExpr) EvalName() string {
 // Validate enforces semantic constraints on the run policy.
 func (r *RunPolicyExpr) Validate() error {
 	verr := new(eval.ValidationErrors)
-	if strings.TrimSpace(r.OnMissingFields) != "" {
+	if r.OnMissingFields != "" {
 		switch r.OnMissingFields {
 		case "finalize", "await_clarification", "resume":
 			// ok

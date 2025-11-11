@@ -340,7 +340,7 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 					srcCtx := codegen.NewAttributeContextForConversion(false, false, false, ts.SpecsPackageName, scope)
 					tgtCtx := codegen.NewAttributeContextForConversion(false, false, false, svcAlias, scope)
 					body, helpers, err := codegen.GoTransform(t.Args, t.MethodPayloadAttr, "in", "out", srcCtx, tgtCtx, "", false)
-					if err == nil && strings.TrimSpace(body) != "" {
+					if err == nil && body != "" {
 						// Accumulate helpers at file scope (deduplicated).
 						for _, h := range helpers {
 							if h == nil {
@@ -413,7 +413,7 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 					// Target (tool result) should be a value type in specs; do not request pointer semantics here.
 					tgtCtx := codegen.NewAttributeContextForConversion(false, false, false, specsAlias, scope)
 					body, helpers, err := codegen.GoTransform(t.MethodResultAttr, targetAttr, "in", "out", srcCtx, tgtCtx, "", false)
-					if err == nil && strings.TrimSpace(body) != "" {
+					if err == nil && body != "" {
 						// Accumulate helpers at file scope (deduplicated).
 						for _, h := range helpers {
 							if h == nil {
@@ -893,7 +893,7 @@ func emitExecutorInternalStub(ag *AgentData, ts *ToolsetData) *codegen.File {
 
 	// Build tool switch metadata
 	type execTool struct {
-		Qualified        string
+		ID               string
 		GoName           string
 		PayloadUnmarshal string
 		PayloadType      string
@@ -912,7 +912,7 @@ func emitExecutorInternalStub(ag *AgentData, ts *ToolsetData) *codegen.File {
 		}
 		g := codegen.Goify(t.Name, true)
 		tools = append(tools, execTool{
-			Qualified:        t.QualifiedName,
+			ID:               t.Name,
 			GoName:           g,
 			PayloadUnmarshal: "Unmarshal" + g + "Payload",
 			PayloadType:      g + "Payload",

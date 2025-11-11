@@ -128,7 +128,7 @@ func CompileHintTemplates(raw map[tools.Ident]string, extra template.FuncMap) (m
 	}
 	out := make(map[tools.Ident]*template.Template, len(raw))
 	for id, src := range raw {
-		if strings.TrimSpace(src) == "" {
+		if src == "" {
 			continue
 		}
 		tmpl, err := template.New(string(id)).Funcs(funcs).Parse(src)

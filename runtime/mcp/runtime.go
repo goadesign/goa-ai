@@ -68,7 +68,7 @@ func CoerceQuery(m map[string][]string) map[string]any {
 
 func coerce(s string) any {
 	// Trim but preserve original if no coercion applies.
-	t := strings.TrimSpace(s)
+	t := s
 	if t == "" {
 		return ""
 	}

@@ -2,7 +2,6 @@ package agent
 
 import (
 	"fmt"
-	"strings"
 
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
@@ -91,10 +90,10 @@ func (t *ToolsetExpr) WalkSets(walk eval.SetWalker) {
 func (t *ToolsetExpr) Validate() error {
 	verr := new(eval.ValidationErrors)
 	if t.External {
-		if strings.TrimSpace(t.MCPSuite) == "" {
+		if t.MCPSuite == "" {
 			verr.Add(t, "MCP suite name is required; set it via MCP(\"<suite>\", ...) block name")
 		}
-		if strings.TrimSpace(t.MCPService) != "" {
+		if t.MCPService != "" {
 			if goaexpr.Root.Service(t.MCPService) == nil {
 				verr.Add(t, "MCP FromService could not resolve service %q", t.MCPService)
 			}

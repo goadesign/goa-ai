@@ -118,7 +118,7 @@ func readSSEEvent(reader *bufio.Reader) (string, []byte, error) {
 			continue
 		}
 		if after, ok := strings.CutPrefix(line, "data:"); ok {
-			chunk := strings.TrimSpace(after)
+			chunk := after
 			if len(data) > 0 {
 				data = append(data, '\n')
 			}

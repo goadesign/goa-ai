@@ -7,6 +7,7 @@ import (
 	"maps"
 	"strings"
 	"text/template"
+	"time"
 
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -28,8 +29,8 @@ type (
 	// AgentToolConfig configures how an agent-tool executes.
 	//
 	// AgentID identifies the nested agent to execute. SystemPrompts optionally
-	// maps fully-qualified tool names (e.g., "service.toolset.tool") to system
-	// prompts that will be prepended to the nested agent messages for that tool.
+	// maps tool IDs (globally unique simple names) to system prompts that will
+	// be prepended to the nested agent messages for that tool.
 	AgentToolConfig struct {
 		// AgentID is the fully qualified identifier of the nested agent.
 		AgentID agent.Ident
@@ -47,12 +48,12 @@ type (
 		ExecuteToolActivity string
 		// SystemPrompt, when non-empty, is prepended as a system message for all tools.
 		SystemPrompt string
-		// Templates maps fully-qualified tool IDs to compiled templates used to render
+		// Templates maps tool IDs (globally unique) to compiled templates used to render
 		// the tool-specific user message from the tool payload. Templates MUST be
 		// provided for all tools in this toolset and are compiled with
 		// template.Option("missingkey=error").
 		Templates map[tools.Ident]*template.Template
-		// Texts maps fully-qualified tool IDs to a pure text user message. When a
+		// Texts maps tool IDs (globally unique) to a pure text user message. When a
 		// template for a tool is not provided, the runtime uses the corresponding
 		// text if present. Exactly one of Templates[id] or Texts[id] should be set
 		// per tool. Callers are responsible for ensuring full coverage across tools.
@@ -284,6 +285,23 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 		if wfCtx == nil {
 			return nil, fmt.Errorf("workflow context not found")
 		}
+		// Derive parent hard deadline when present to bound nested run.
+		var overrides *PolicyOverrides
+		if v := ctx.Value(hardDeadlineCtxKey{}); v != nil {
+			if parentDeadline, ok := v.(time.Time); ok && !parentDeadline.IsZero() {
+				if rem := parentDeadline.Sub(wfCtx.Now()); rem > 0 {
+					ov := &PolicyOverrides{
+						PlanTimeout: rem,
+						ToolTimeout: rem,
+					}
+					// Reserve internal finalize window when possible.
+					if rem > defaultFinalizerGrace {
+						ov.TimeBudget = rem - defaultFinalizerGrace
+					}
+					overrides = ov
+				}
+			}
+		}
 
 		// Build messages: optional agent system prompt, then the per-tool user message
 		var messages []*planner.AgentMessage
@@ -314,7 +332,7 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 				userContent = PayloadToString(call.Payload)
 			}
 		}
-		switch trimmed := strings.TrimSpace(userContent); trimmed {
+		switch trimmed := userContent; trimmed {
 		case "{}", "null":
 			// Do not append an empty/meaningless user message.
 		default:
@@ -348,7 +366,11 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 			// Require local registration; avoid synthetic conventions.
 			// ExecuteAgentInline will look up the local agent; if not present,
 			// return a clear error rather than guessing.
-			outPtr, err = rt.ExecuteAgentInline(wfCtx, string(cfg.AgentID), messages, nestedRunCtx)
+			if overrides != nil {
+				outPtr, err = rt.ExecuteAgentInlineWithOverrides(wfCtx, string(cfg.AgentID), messages, nestedRunCtx, overrides)
+			} else {
+				outPtr, err = rt.ExecuteAgentInline(wfCtx, string(cfg.AgentID), messages, nestedRunCtx)
+			}
 		}
 		if err != nil {
 			return nil, fmt.Errorf("execute agent inline: %w", err)

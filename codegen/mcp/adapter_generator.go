@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
-	"strings"
 
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa/v3/codegen"
@@ -56,6 +55,7 @@ type (
 
 	// RegisterTool represents a single tool entry in the helper file.
 	RegisterTool struct {
+		ID            string
 		QualifiedName string
 		Description   string
 		PayloadType   string
@@ -221,7 +221,7 @@ func (g *adapterGenerator) buildRegisterData(data *AdapterData) *RegisterData {
 	serviceGoName := data.ServiceGoName
 	suiteGoName := codegen.Goify(g.mcp.Name, true)
 	desc := g.mcp.Description
-	if strings.TrimSpace(desc) == "" {
+	if desc == "" {
 		desc = fmt.Sprintf("MCP suite %s.%s", g.originalService.Name, g.mcp.Name)
 	}
 	helper := serviceGoName + suiteGoName + "Toolset"
@@ -235,7 +235,7 @@ func (g *adapterGenerator) buildRegisterData(data *AdapterData) *RegisterData {
 	}
 	for _, tool := range data.Tools {
 		schema := tool.InputSchema
-		if strings.TrimSpace(schema) == "" {
+		if schema == "" {
 			schema = "{}"
 		}
 		payloadType := tool.PayloadType
@@ -247,6 +247,7 @@ func (g *adapterGenerator) buildRegisterData(data *AdapterData) *RegisterData {
 			resultType = "any"
 		}
 		reg.Tools = append(reg.Tools, RegisterTool{
+			ID:            tool.Name,
 			QualifiedName: fmt.Sprintf("%s.%s.%s", reg.ServiceName, reg.SuiteName, tool.Name),
 			Description:   tool.Description,
 			PayloadType:   payloadType,

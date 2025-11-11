@@ -34,10 +34,10 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 	}}}
 
 	tmpl := template.Must(template.New("t").Parse("hello {{.x}}"))
-	cfg := AgentToolConfig{AgentID: "svc.agent", SystemPrompt: "sys", Templates: map[tools.Ident]*template.Template{"svc.ts.tool": tmpl}, Texts: map[tools.Ident]string{"svc.ts.tool": "fallback"}}
+	cfg := AgentToolConfig{AgentID: "svc.agent", SystemPrompt: "sys", Templates: map[tools.Ident]*template.Template{"tool": tmpl}, Texts: map[tools.Ident]string{"tool": "fallback"}}
 
 	exec := defaultAgentToolExecute(rt, cfg)
-	call := planner.ToolRequest{Name: tools.Ident("svc.ts.tool"), RunID: "run", Payload: map[string]string{"x": "world"}}
+	call := planner.ToolRequest{Name: tools.Ident("tool"), RunID: "run", Payload: map[string]string{"x": "world"}}
 	res, err := exec(ctx, &call)
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -69,9 +69,9 @@ func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
 		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, nil
 	}}}
 
-	cfg := AgentToolConfig{AgentID: "svc.agent", Texts: map[tools.Ident]string{"svc.ts.tool": "just text"}}
+	cfg := AgentToolConfig{AgentID: "svc.agent", Texts: map[tools.Ident]string{"tool": "just text"}}
 	exec := defaultAgentToolExecute(rt, cfg)
-	call := planner.ToolRequest{Name: tools.Ident("svc.ts.tool"), RunID: "run"}
+	call := planner.ToolRequest{Name: tools.Ident("tool"), RunID: "run"}
 	res, err := exec(ctx, &call)
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -101,7 +101,7 @@ func TestDefaultAgentToolExecute_DefaultsWhenMissingContent(t *testing.T) {
 	}}}
 	cfg := AgentToolConfig{AgentID: "svc.agent"}
 	exec := defaultAgentToolExecute(rt, cfg)
-	call := planner.ToolRequest{Name: tools.Ident("svc.ts.tool"), RunID: "run"}
+	call := planner.ToolRequest{Name: tools.Ident("tool"), RunID: "run"}
 	res, err := exec(ctx, &call)
 	require.NoError(t, err)
 	require.NotNil(t, res)

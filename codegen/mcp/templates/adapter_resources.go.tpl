@@ -87,7 +87,7 @@ func (a *MCPAdapter) assertResourceURIAllowed(ctx context.Context, pURI string) 
         if v := ctx.Value("mcp_allow_names"); v != nil {
             if s, ok := v.(string); ok {
                 for _, n := range strings.Split(s, ",") {
-                    n = strings.TrimSpace(n)
+                    n = n
                     if u, ok2 := a.resourceNameToURI[n]; ok2 { extraAllowURIs = append(extraAllowURIs, u) }
                 }
             }
@@ -95,7 +95,7 @@ func (a *MCPAdapter) assertResourceURIAllowed(ctx context.Context, pURI string) 
         if v := ctx.Value("mcp_deny_names"); v != nil {
             if s, ok := v.(string); ok {
                 for _, n := range strings.Split(s, ",") {
-                    n = strings.TrimSpace(n)
+                    n = n
                     if u, ok2 := a.resourceNameToURI[n]; ok2 { extraDenyURIs = append(extraDenyURIs, u) }
                 }
             }

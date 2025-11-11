@@ -7,11 +7,11 @@ const Service = {{ printf "%q" .Toolset.ServiceName }}
 // AgentID is the fully-qualified identifier of the agent exporting this toolset.
 const AgentID agent.Ident = {{ printf "%q" .Toolset.Agent.ID }}
 
-// Tool IDs for this exported toolset (fully qualified). Use these typed
+// Tool IDs for this exported toolset (globally unique). Use these typed
 // constants as keys for per-tool configuration maps (e.g., SystemPrompts).
 const (
 {{- range .Toolset.Tools }}
-    {{ .ConstName }} tools.Ident = {{ printf "%q" .QualifiedName }}
+    {{ .ConstName }} tools.Ident = {{ printf "%q" .Name }}
 {{- end }}
 )
 

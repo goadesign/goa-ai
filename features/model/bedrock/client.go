@@ -93,7 +93,7 @@ func New(opts Options) (*Client, error) {
 		return nil, errors.New("bedrock runtime client is required")
 	}
 	// DefaultModel should be provided; High/Small are optional but recommended.
-	if strings.TrimSpace(opts.DefaultModel) == "" {
+	if opts.DefaultModel == "" {
 		return nil, errors.New("default model identifier is required")
 	}
 	maxTokens := opts.MaxTokens
@@ -178,16 +178,16 @@ func (c *Client) prepareRequest(req model.Request) (*requestParts, error) {
 // and Request.ModelClass. Request.Model takes precedence; when empty, the class
 // is mapped to the configured identifiers. Falls back to the default model.
 func (c *Client) resolveModelID(req model.Request) string {
-	if s := strings.TrimSpace(req.Model); s != "" {
+	if s := req.Model; s != "" {
 		return s
 	}
 	switch string(req.ModelClass) {
 	case string(model.ModelClassHighReasoning):
-		if strings.TrimSpace(c.highModel) != "" {
+		if c.highModel != "" {
 			return c.highModel
 		}
 	case string(model.ModelClassSmall):
-		if strings.TrimSpace(c.smallModel) != "" {
+		if c.smallModel != "" {
 			return c.smallModel
 		}
 	}
@@ -310,7 +310,7 @@ func splitMessages(msgs []*model.Message) ([]brtypes.Message, []brtypes.SystemCo
 		if m == nil {
 			continue
 		}
-		text := strings.TrimSpace(m.Content)
+		text := m.Content
 		if text == "" {
 			continue
 		}
@@ -344,7 +344,7 @@ func encodeTools(defs []*model.ToolDefinition) (*brtypes.ToolConfiguration, erro
 		if def == nil {
 			continue
 		}
-		name := strings.TrimSpace(def.Name)
+		name := def.Name
 		if name == "" {
 			continue
 		}
@@ -396,7 +396,7 @@ func translateResponse(output *bedrockruntime.ConverseOutput) (model.Response, e
 		for _, block := range msg.Value.Content {
 			switch v := block.(type) {
 			case *brtypes.ContentBlockMemberText:
-				if strings.TrimSpace(v.Value) == "" {
+				if v.Value == "" {
 					continue
 				}
 				resp.Content = append(resp.Content, model.Message{Role: "assistant", Content: v.Value})

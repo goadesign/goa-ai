@@ -2,7 +2,6 @@ package agent
 
 import (
 	"fmt"
-	"strings"
 
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/eval"
@@ -63,8 +62,8 @@ func (t *ToolExpr) EvalName() string {
 
 // RecordBinding records the service and method names specified via the DSL.
 func (t *ToolExpr) RecordBinding(serviceName, methodName string) {
-	t.bindServiceName = strings.TrimSpace(serviceName)
-	t.bindMethodName = strings.TrimSpace(methodName)
+	t.bindServiceName = serviceName
+	t.bindMethodName = methodName
 }
 
 // Prepare ensures Args and Return are always non-nil attributes.

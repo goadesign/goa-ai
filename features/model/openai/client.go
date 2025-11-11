@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	openai "github.com/sashabaranov/go-openai"
 
@@ -40,7 +39,7 @@ func New(opts Options) (*Client, error) {
 	if opts.Client == nil {
 		return nil, errors.New("openai client is required")
 	}
-	modelID := strings.TrimSpace(opts.DefaultModel)
+	modelID := opts.DefaultModel
 	if modelID == "" {
 		return nil, errors.New("default model is required")
 	}
@@ -49,7 +48,7 @@ func New(opts Options) (*Client, error) {
 
 // NewFromAPIKey constructs a client using the default go-openai HTTP client.
 func NewFromAPIKey(apiKey, defaultModel string) (*Client, error) {
-	if strings.TrimSpace(apiKey) == "" {
+	if apiKey == "" {
 		return nil, errors.New("api key is required")
 	}
 	return New(Options{Client: openai.NewClient(apiKey), DefaultModel: defaultModel})
@@ -60,7 +59,7 @@ func (c *Client) Complete(ctx context.Context, req model.Request) (model.Respons
 	if len(req.Messages) == 0 {
 		return model.Response{}, errors.New("messages are required")
 	}
-	modelID := strings.TrimSpace(req.Model)
+	modelID := req.Model
 	if modelID == "" {
 		modelID = c.model
 	}
@@ -125,7 +124,7 @@ func translateResponse(resp openai.ChatCompletionResponse) model.Response {
 	toolCalls := make([]model.ToolCall, 0)
 	for _, choice := range resp.Choices {
 		msg := choice.Message
-		if strings.TrimSpace(msg.Content) != "" {
+		if msg.Content != "" {
 			messages = append(messages, model.Message{Role: msg.Role, Content: msg.Content})
 		}
 		for _, call := range msg.ToolCalls {
@@ -154,7 +153,7 @@ func translateResponse(resp openai.ChatCompletionResponse) model.Response {
 }
 
 func parseToolArguments(raw string) any {
-	if strings.TrimSpace(raw) == "" {
+	if raw == "" {
 		return nil
 	}
 	var payload any

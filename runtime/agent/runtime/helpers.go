@@ -20,19 +20,6 @@ const (
 	unknownID                 = "unknown"
 )
 
-// toolsetIdentifier extracts the toolset name from a tool name.
-// For example, "service.toolset.tool" returns "service.toolset".
-func toolsetIdentifier(tool tools.Ident) string {
-	parts := strings.Split(string(tool), ".")
-	if len(parts) < 3 {
-		if len(parts) > 1 {
-			return strings.Join(parts[:len(parts)-1], ".")
-		}
-		return string(tool)
-	}
-	return strings.Join(parts[:len(parts)-1], ".")
-}
-
 // NestedRunID generates a hierarchical run ID for nested agent execution.
 // Format: "{parentRunID}/agent/{toolName}". If parentRunID is empty, returns
 // "unknown/agent/{toolName}". This ensures nested agent runs are traceable back
@@ -45,6 +32,28 @@ func NestedRunID(parentRunID string, toolName tools.Ident) string {
 		parentRunID = unknownID
 	}
 	return fmt.Sprintf("%s/agent/%s", parentRunID, toolName)
+}
+
+// RootRunID returns the root (top-level) run identifier for a given run ID.
+// Nested agent executions derive their run IDs from the parent using the
+// NestedRunID format: "<parent>/agent/<toolName>". RootRunID strips the
+// first "/agent/" suffix and everything after it. If the input does not
+// contain the nested marker, RootRunID returns the input unchanged.
+//
+// Examples:
+//
+//	RootRunID("chat-run-123")                              -> "chat-run-123"
+//	RootRunID("chat-run-123/agent/atlas_data_agent.ada")   -> "chat-run-123"
+//	RootRunID("A/agent/B/agent/C")                         -> "A"
+func RootRunID(runID string) string {
+	if runID == "" {
+		return ""
+	}
+	const marker = "/agent/"
+	if idx := strings.Index(runID, marker); idx >= 0 {
+		return runID[:idx]
+	}
+	return runID
 }
 
 // generateDeterministicToolCallID creates a replay-safe tool-call ID using the
@@ -82,7 +91,7 @@ func generateDeterministicAwaitID(runID, turnID string, tool tools.Ident, toolCa
 	if tid == "" {
 		tid = "no-turn"
 	}
-	if strings.TrimSpace(toolCallID) == "" {
+	if toolCallID == "" {
 		toolCallID = "no-call"
 	}
 	return strings.Join([]string{runID, tid, safeTool, "await", toolCallID}, "/")

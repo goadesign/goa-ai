@@ -28,11 +28,12 @@ var (
 	// echoPayloadCodec provides an untyped codec for *string.
 	echoPayloadCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
-			typed, ok := v.(*string)
-			if !ok {
-				return nil, fmt.Errorf("expected *string, got %T", v)
+			// Prefer typed marshal when the value matches the expected type.
+			if typed, ok := v.(*string); ok {
+				return MarshalEchoPayload(typed)
 			}
-			return MarshalEchoPayload(typed)
+			// Fallback: marshal structurally compatible values directly.
+			return json.Marshal(v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalEchoPayload(data)
@@ -41,11 +42,12 @@ var (
 	// echoResultCodec provides an untyped codec for string.
 	echoResultCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
-			typed, ok := v.(string)
-			if !ok {
-				return nil, fmt.Errorf("expected string, got %T", v)
+			// Prefer typed marshal when the value matches the expected type.
+			if typed, ok := v.(string); ok {
+				return MarshalEchoResult(typed)
 			}
-			return MarshalEchoResult(typed)
+			// Fallback: marshal structurally compatible values directly.
+			return json.Marshal(v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalEchoResult(data)
@@ -90,7 +92,7 @@ func (e ValidationError) Descriptions() map[string]string {
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
 	switch name {
-	case "alpha.ops.echo":
+	case "echo":
 		return &echoPayloadCodec, true
 	default:
 		return nil, false
@@ -100,7 +102,7 @@ func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
 // ResultCodec returns the generic codec for the named tool result.
 func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 	switch name {
-	case "alpha.ops.echo":
+	case "echo":
 		return &echoResultCodec, true
 	default:
 		return nil, false

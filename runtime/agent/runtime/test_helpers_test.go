@@ -303,7 +303,7 @@ func (s *stubPolicyEngine) Decide(context.Context, policy.Input) (policy.Decisio
 	return s.decision, nil
 }
 
-func newAnyJSONSpec(name tools.Ident) tools.ToolSpec {
+func newAnyJSONSpec(name tools.Ident, toolset string) tools.ToolSpec {
 	codec := tools.JSONCodec[any]{
 		ToJSON: json.Marshal,
 		FromJSON: func(data []byte) (any, error) {
@@ -319,7 +319,7 @@ func newAnyJSONSpec(name tools.Ident) tools.ToolSpec {
 	}
 	return tools.ToolSpec{
 		Name:    name,
-		Toolset: "ts",
+		Toolset: toolset,
 		Payload: tools.TypeSpec{Name: string(name) + "_payload", Codec: codec},
 		Result:  tools.TypeSpec{Name: string(name + "_result"), Codec: codec},
 	}

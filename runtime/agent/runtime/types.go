@@ -87,6 +87,14 @@ type (
 		MaxConsecutiveFailedToolCalls int
 		// TimeBudget sets a wall-clock budget for the run. Zero means no override.
 		TimeBudget time.Duration
+		// PlanTimeout applies to both Plan and Resume activities for this run.
+		// Zero means no override.
+		PlanTimeout time.Duration
+		// ToolTimeout sets the default ExecuteTool activity timeout for this run.
+		// Zero means no override.
+		ToolTimeout time.Duration
+		// PerToolTimeout allows overriding tool timeout per tool identifier. Empty means none.
+		PerToolTimeout map[tools.Ident]time.Duration
 		// FinalizerGrace reserves time to produce a final assistant message after the
 		// budget is exhausted. Zero means no override.
 		FinalizerGrace time.Duration
@@ -123,7 +131,7 @@ type (
 		// ToolsetName is the qualified toolset identifier (e.g., "service.toolset_name").
 		// Used to lookup the toolset registration and call its Execute function.
 		ToolsetName string
-		// ToolName is the fully qualified tool identifier (`service.toolset.tool`).
+		// ToolName is the globally unique tool identifier (simple DSL name).
 		ToolName tools.Ident
 		// ToolCallID is a unique identifier for this specific tool call, used for
 		// parent-child tracking and event correlation.
@@ -235,6 +243,19 @@ type (
 		// The workflow context is provided for workflow-level operations (activities,
 		// timers, etc.). Input and output use the ToolInput/ToolOutput envelope.
 		Execute(ctx context.Context, wfCtx engine.WorkflowContext, input *ToolInput) (*ToolOutput, error)
+	}
+
+	// Timing groups per-run timing overrides in a single structure.
+	// Zero values mean no override.
+	Timing struct {
+		// Budget sets the total wall-clock budget for this run.
+		Budget time.Duration
+		// Plan sets the Plan/Resume activity timeout for this run.
+		Plan time.Duration
+		// Tools sets the default ExecuteTool activity timeout for this run.
+		Tools time.Duration
+		// PerToolTimeout allows targeting specific tools with custom timeouts.
+		PerToolTimeout map[tools.Ident]time.Duration
 	}
 )
 

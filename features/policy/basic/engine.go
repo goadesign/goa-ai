@@ -6,7 +6,6 @@ package basic
 
 import (
 	"context"
-	"strings"
 
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -42,7 +41,7 @@ type Engine struct {
 //
 //nolint:unparam // Error return maintained for consistency with other constructors.
 func New(opts Options) (*Engine, error) {
-	label := strings.TrimSpace(opts.Label)
+	label := opts.Label
 	if label == "" {
 		label = "basic"
 	}
@@ -200,7 +199,7 @@ func toSet[T ~string](values []string) map[T]struct{} {
 	}
 	set := make(map[T]struct{}, len(values))
 	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
+		if trimmed := value; trimmed != "" {
 			set[T(trimmed)] = struct{}{}
 		}
 	}

@@ -165,6 +165,10 @@ type (
 	RunPolicyData struct {
 		// TimeBudget is the maximum wall-clock time allocated to the run.
 		TimeBudget time.Duration
+		// PlanTimeout applies to both Plan and Resume activities when set.
+		PlanTimeout time.Duration
+		// ToolTimeout sets the default ExecuteTool activity timeout when set.
+		ToolTimeout time.Duration
 		// InterruptsAllowed indicates whether human interrupts are honored.
 		InterruptsAllowed bool
 		// Caps enumerates max tool-call limits.
@@ -733,6 +737,20 @@ func newAgentData(
 	}
 
 	agent.RunPolicy = newRunPolicyData(agentExpr.RunPolicy)
+	// Apply DSL timing overrides to activity artifacts when provided.
+	if agent.RunPolicy.PlanTimeout > 0 {
+		if agent.Runtime.PlanActivity != nil {
+			agent.Runtime.PlanActivity.Timeout = agent.RunPolicy.PlanTimeout
+		}
+		if agent.Runtime.ResumeActivity != nil {
+			agent.Runtime.ResumeActivity.Timeout = agent.RunPolicy.PlanTimeout
+		}
+	}
+	if agent.RunPolicy.ToolTimeout > 0 {
+		if agent.Runtime.ExecuteTool != nil {
+			agent.Runtime.ExecuteTool.Timeout = agent.RunPolicy.ToolTimeout
+		}
+	}
 	agent.UsedToolsets = collectToolsets(agent, agentExpr.Used, ToolsetKindUsed, servicesData)
 	agent.ExportedToolsets = collectToolsets(agent, agentExpr.Exported, ToolsetKindExported, servicesData)
 	agent.AllToolsets = append([]*ToolsetData{}, agent.UsedToolsets...)
@@ -786,6 +804,8 @@ func newRunPolicyData(expr *agentsExpr.RunPolicyExpr) RunPolicyData {
 	}
 	rp := RunPolicyData{
 		TimeBudget:        expr.TimeBudget,
+		PlanTimeout:       expr.PlanTimeout,
+		ToolTimeout:       expr.ToolTimeout,
 		InterruptsAllowed: expr.InterruptsAllowed,
 		OnMissingFields:   expr.OnMissingFields,
 	}
@@ -1188,7 +1208,7 @@ func humanizeTitle(s string) string {
 }
 
 func defaultString(val, fallback string) string {
-	if strings.TrimSpace(val) != "" {
+	if val != "" {
 		return val
 	}
 	return fallback

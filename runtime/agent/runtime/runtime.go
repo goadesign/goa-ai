@@ -425,6 +425,33 @@ func WithWorkflowOptions(o *WorkflowOptions) RunOption {
 	return func(in *RunInput) { in.WorkflowOptions = o }
 }
 
+// WithTiming sets run-level timing overrides in a single structured option.
+// Zero-valued fields are ignored.
+func WithTiming(t Timing) RunOption {
+	return func(in *RunInput) {
+		if in.Policy == nil {
+			in.Policy = &PolicyOverrides{}
+		}
+		if t.Budget > 0 {
+			in.Policy.TimeBudget = t.Budget
+		}
+		if t.Plan > 0 {
+			in.Policy.PlanTimeout = t.Plan
+		}
+		if t.Tools > 0 {
+			in.Policy.ToolTimeout = t.Tools
+		}
+		if len(t.PerToolTimeout) > 0 {
+			if in.Policy.PerToolTimeout == nil {
+				in.Policy.PerToolTimeout = make(map[tools.Ident]time.Duration, len(t.PerToolTimeout))
+			}
+			for k, v := range t.PerToolTimeout {
+				in.Policy.PerToolTimeout[k] = v
+			}
+		}
+	}
+}
+
 // WithPerTurnMaxToolCalls sets a per-turn cap on tool executions. Zero means unlimited.
 func WithPerTurnMaxToolCalls(n int) RunOption {
 	return func(in *RunInput) {
@@ -724,7 +751,7 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 
 	// Apply per-agent worker overrides before engine registration.
 	if cfg, ok := r.workers[reg.ID]; ok {
-		if q := strings.TrimSpace(cfg.Queue); q != "" {
+		if q := cfg.Queue; q != "" {
 			reg.Workflow.TaskQueue = q
 			for i := range reg.Activities {
 				reg.Activities[i].Options.Queue = q
@@ -878,6 +905,18 @@ func (r *Runtime) ExecuteAgentInline(
 	messages []*planner.AgentMessage,
 	nestedRunCtx run.Context,
 ) (*RunOutput, error) {
+	return r.ExecuteAgentInlineWithOverrides(wfCtx, agentID, messages, nestedRunCtx, nil)
+}
+
+// ExecuteAgentInlineWithOverrides runs an agent inline with optional per-run overrides.
+// Overrides may include Plan/Tool timeouts and a derived TimeBudget from a parent deadline.
+func (r *Runtime) ExecuteAgentInlineWithOverrides(
+	wfCtx engine.WorkflowContext,
+	agentID string,
+	messages []*planner.AgentMessage,
+	nestedRunCtx run.Context,
+	overrides *PolicyOverrides,
+) (*RunOutput, error) {
 	ctx := wfCtx.Context()
 
 	var parentTracker *childTracker
@@ -926,8 +965,13 @@ func (r *Runtime) ExecuteAgentInline(
 		if reg.PlanActivityName == "" {
 			return nil, fmt.Errorf("agent %q missing plan activity for inline execution", agentID)
 		}
+		// Apply Plan override when provided.
+		opts := reg.PlanActivityOptions
+		if overrides != nil && overrides.PlanTimeout > 0 {
+			opts.Timeout = overrides.PlanTimeout
+		}
 		var err error
-		initialPlan, err = r.runPlanActivity(wfCtx, reg.PlanActivityName, reg.PlanActivityOptions, startReq, time.Time{})
+		initialPlan, err = r.runPlanActivity(wfCtx, reg.PlanActivityName, opts, startReq, time.Time{})
 		if err != nil {
 			return nil, fmt.Errorf("plan activity failed: %w", err)
 		}
@@ -943,12 +987,17 @@ func (r *Runtime) ExecuteAgentInline(
 	var hardDeadline time.Time
 	var grace time.Duration
 	{
-		if reg.Policy.FinalizerGrace > 0 {
+		if overrides != nil && overrides.FinalizerGrace > 0 {
+			grace = overrides.FinalizerGrace
+		} else if reg.Policy.FinalizerGrace > 0 {
 			grace = reg.Policy.FinalizerGrace
 		} else {
 			grace = 10 * time.Second
 		}
-		if reg.Policy.TimeBudget > 0 {
+		if overrides != nil && overrides.TimeBudget > 0 {
+			budgetDeadline := wfCtx.Now().Add(overrides.TimeBudget)
+			hardDeadline = budgetDeadline.Add(grace)
+		} else if reg.Policy.TimeBudget > 0 {
 			budgetDeadline := wfCtx.Now().Add(reg.Policy.TimeBudget)
 			hardDeadline = budgetDeadline.Add(grace)
 		}

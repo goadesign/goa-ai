@@ -29,7 +29,7 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
     }
     switch call.Name {
     {{- range .Tools }}
-    case "{{ .Qualified }}":
+    case "{{ .ID }}":
         // Decode typed payload
         args, err := {{ $.SpecsAlias }}.{{ .PayloadUnmarshal }}(call.Payload)
         if err != nil {

@@ -200,7 +200,7 @@ func (p *chunkProcessor) Handle(event any) error {
 		}
 		switch delta := ev.Value.Delta.(type) {
 		case *brtypes.ContentBlockDeltaMemberText:
-			if strings.TrimSpace(delta.Value) == "" {
+			if delta.Value == "" {
 				return nil
 			}
 			return p.emit(model.Chunk{
@@ -209,7 +209,7 @@ func (p *chunkProcessor) Handle(event any) error {
 			})
 		case *brtypes.ContentBlockDeltaMemberReasoningContent:
 			if textDelta, ok := delta.Value.(*brtypes.ReasoningContentBlockDeltaMemberText); ok {
-				if strings.TrimSpace(textDelta.Value) == "" {
+				if textDelta.Value == "" {
 					return nil
 				}
 				return p.emit(model.Chunk{
@@ -280,7 +280,7 @@ func (tb *toolBuffer) finalInput() string {
 		return "{}"
 	}
 	joined := strings.Join(tb.fragments, "")
-	if strings.TrimSpace(joined) == "" {
+	if joined == "" {
 		return "{}"
 	}
 	return joined
@@ -294,7 +294,7 @@ func contentIndex(idx *int32) (int, error) {
 }
 
 func decodeToolPayload(raw string) any {
-	trimmed := strings.TrimSpace(raw)
+	trimmed := raw
 	if trimmed == "" {
 		trimmed = "{}"
 	}

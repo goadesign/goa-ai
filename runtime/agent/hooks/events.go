@@ -126,7 +126,7 @@ type (
 		// ToolCallID uniquely identifies the scheduled tool invocation so progress
 		// updates can correlate with the original request.
 		ToolCallID string
-		// ToolName is the fully qualified tool identifier (e.g., "service.toolset.tool").
+		// ToolName is the globally unique tool identifier (simple DSL name).
 		ToolName tools.Ident
 		// Payload contains the structured tool arguments (JSON-serializable) for the scheduled tool.
 		// Not pre-encoded; sinks/transports encode it for wire format.
@@ -150,7 +150,7 @@ type (
 		// ParentToolCallID identifies the parent tool call if this tool was invoked by another tool.
 		// Empty when the tool call was scheduled directly by the planner.
 		ParentToolCallID string
-		// ToolName is the fully qualified tool identifier that was executed.
+		// ToolName is the globally unique tool identifier that was executed.
 		ToolName tools.Ident
 		// Result contains the tool's output payload. Nil if Error is set.
 		Result any
@@ -221,7 +221,7 @@ type (
 	// systems can audit allowlists, cap adjustments, and metadata applied for a turn.
 	PolicyDecisionEvent struct {
 		baseEvent
-		// AllowedTools lists the fully qualified tool identifiers that the policy engine
+		// AllowedTools lists the globally unique tool identifiers that the policy engine
 		// permitted for this turn. The runtime enforces this allowlist: planners can only
 		// invoke tools in this list. An empty slice means no tools are allowed for this turn,
 		// forcing the planner to produce a final response. Subscribers use this for security

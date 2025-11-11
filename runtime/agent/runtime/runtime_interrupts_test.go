@@ -31,7 +31,7 @@ func TestRunLoopPauseResumeEmitsEvents_Barriered(t *testing.T) {
 	}
 	// Strong contract: codecs must be present. Provide a minimal spec for the tool.
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
-		tools.Ident("svc.ts.tool"): newAnyJSONSpec("svc.ts.tool"),
+		tools.Ident("tool"): newAnyJSONSpec("tool", "svc.ts"),
 	}
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, barrier: make(chan struct{}, 1)}
 	go func() {
@@ -45,7 +45,7 @@ func TestRunLoopPauseResumeEmitsEvents_Barriered(t *testing.T) {
 	wfCtx.planResult = &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: "svc.ts.tool"}}}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: "tool"}}}
 	ctrl := interrupt.NewController(wfCtx)
 	_, err := rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  input.AgentID,

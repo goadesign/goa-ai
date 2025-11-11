@@ -29,11 +29,12 @@ var (
 	// addPayloadCodec provides an untyped codec for *AddPayload.
 	addPayloadCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
-			typed, ok := v.(*AddPayload)
-			if !ok {
-				return nil, fmt.Errorf("expected *AddPayload, got %T", v)
+			// Prefer typed marshal when the value matches the expected type.
+			if typed, ok := v.(*AddPayload); ok {
+				return MarshalAddPayload(typed)
 			}
-			return MarshalAddPayload(typed)
+			// Fallback: marshal structurally compatible values directly.
+			return json.Marshal(v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalAddPayload(data)
@@ -42,11 +43,12 @@ var (
 	// addResultCodec provides an untyped codec for AddResult.
 	addResultCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
-			typed, ok := v.(AddResult)
-			if !ok {
-				return nil, fmt.Errorf("expected AddResult, got %T", v)
+			// Prefer typed marshal when the value matches the expected type.
+			if typed, ok := v.(AddResult); ok {
+				return MarshalAddResult(typed)
 			}
-			return MarshalAddResult(typed)
+			// Fallback: marshal structurally compatible values directly.
+			return json.Marshal(v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalAddResult(data)
@@ -152,7 +154,7 @@ func enrichAddPayloadJSON2ValidationError(err error) error {
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
 	switch name {
-	case "alpha.math.add":
+	case "add":
 		return &addPayloadCodec, true
 	default:
 		return nil, false
@@ -162,7 +164,7 @@ func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
 // ResultCodec returns the generic codec for the named tool result.
 func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 	switch name {
-	case "alpha.math.add":
+	case "add":
 		return &addResultCodec, true
 	default:
 		return nil, false

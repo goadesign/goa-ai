@@ -29,11 +29,12 @@ var (
 	// readPayloadCodec provides an untyped codec for *ReadPayload.
 	readPayloadCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
-			typed, ok := v.(*ReadPayload)
-			if !ok {
-				return nil, fmt.Errorf("expected *ReadPayload, got %T", v)
+			// Prefer typed marshal when the value matches the expected type.
+			if typed, ok := v.(*ReadPayload); ok {
+				return MarshalReadPayload(typed)
 			}
-			return MarshalReadPayload(typed)
+			// Fallback: marshal structurally compatible values directly.
+			return json.Marshal(v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalReadPayload(data)
@@ -42,11 +43,12 @@ var (
 	// readResultCodec provides an untyped codec for ReadResult.
 	readResultCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
-			typed, ok := v.(ReadResult)
-			if !ok {
-				return nil, fmt.Errorf("expected ReadResult, got %T", v)
+			// Prefer typed marshal when the value matches the expected type.
+			if typed, ok := v.(ReadResult); ok {
+				return MarshalReadResult(typed)
 			}
-			return MarshalReadResult(typed)
+			// Fallback: marshal structurally compatible values directly.
+			return json.Marshal(v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalReadResult(data)
@@ -151,7 +153,7 @@ func enrichReadPayloadJSON2ValidationError(err error) error {
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
 	switch name {
-	case "atlas_data_agent.docs.read":
+	case "read":
 		return &readPayloadCodec, true
 	default:
 		return nil, false
@@ -161,7 +163,7 @@ func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
 // ResultCodec returns the generic codec for the named tool result.
 func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 	switch name {
-	case "atlas_data_agent.docs.read":
+	case "read":
 		return &readResultCodec, true
 	default:
 		return nil, false

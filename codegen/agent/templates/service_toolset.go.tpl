@@ -43,11 +43,11 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}ToolsetRegistration
         {{- range .Toolset.Tools }}
         {{- if .CallHintTemplate }}
         if callRaw == nil { callRaw = make(map[tools.Ident]string) }
-        callRaw[tools.Ident({{ printf "%q" .QualifiedName }})] = {{ printf "%q" .CallHintTemplate }}
+        callRaw[tools.Ident({{ printf "%q" .Name }})] = {{ printf "%q" .CallHintTemplate }}
         {{- end }}
         {{- if .ResultHintTemplate }}
         if resultRaw == nil { resultRaw = make(map[tools.Ident]string) }
-        resultRaw[tools.Ident({{ printf "%q" .QualifiedName }})] = {{ printf "%q" .ResultHintTemplate }}
+        resultRaw[tools.Ident({{ printf "%q" .Name }})] = {{ printf "%q" .ResultHintTemplate }}
         {{- end }}
         {{- end }}
         if len(callRaw) > 0 {

@@ -17,9 +17,9 @@ import (
 var {{ .Register.HelperName }}ToolSpecs = []tools.ToolSpec{
 {{- range .Register.Tools }}
     {
-        Name:      {{ printf "%q" .QualifiedName }},
-        Service:   {{ printf "%q" $.Register.ServiceName }},
-        Toolset:   {{ printf "%q" $.Register.SuiteName }},
+        Name:        {{ printf "%q" .ID }},
+        Service:     {{ printf "%q" $.Register.ServiceName }},
+        Toolset:     {{ printf "%q" $.Register.SuiteQualifiedName }},
         Description: {{ printf "%q" .Description }},
         Payload: tools.TypeSpec{
             Name: {{ printf "%q" .PayloadType }},
@@ -65,13 +65,13 @@ var {{ .Register.HelperName }}ToolSpecs = []tools.ToolSpec{
 
 var {{ .Register.HelperName }}ToolSchemas = map[string]string{
 {{- range .Register.Tools }}
-	{{ printf "%q" .QualifiedName }}: {{ printf "%q" .InputSchema }},
+	{{ printf "%q" .ID }}: {{ printf "%q" .InputSchema }},
 {{- end }}
 }
 
 var {{ .Register.HelperName }}ToolExamples = map[string]string{
 {{- range .Register.Tools }}
-	{{ printf "%q" .QualifiedName }}: {{ printf "%q" .ExampleArgs }},
+	{{ printf "%q" .ID }}: {{ printf "%q" .ExampleArgs }},
 {{- end }}
 }
 
@@ -140,9 +140,18 @@ func Register{{ .Register.HelperName }}(ctx context.Context, rt *agentsruntime.R
     }
 
     return rt.RegisterToolset(agentsruntime.ToolsetRegistration{
-        Name: {{ printf "%q" .Register.SuiteQualifiedName }},
+        Name:        {{ printf "%q" .Register.SuiteQualifiedName }},
         Description: {{ printf "%q" .Register.Description }},
-        Execute: exec,
+        Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+            if call == nil {
+                return nil, errors.New("tool request is nil")
+            }
+            out, err := exec(ctx, *call)
+            if err != nil {
+                return nil, err
+            }
+            return &out, nil
+        },
         Specs: {{ .Register.HelperName }}ToolSpecs,
         // Pass raw JSON through to executor; it decodes using MCP/client codecs.
         DecodeInExecutor: true,

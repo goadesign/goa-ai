@@ -1,8 +1,6 @@
 package dsl
 
 import (
-	"strings"
-
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
 
@@ -167,8 +165,6 @@ func MCPToolset(service, suite string, dsl ...func()) *agentsexpr.ToolsetExpr {
 		eval.IncompatibleDSL()
 		return nil
 	}
-	service = strings.TrimSpace(service)
-	suite = strings.TrimSpace(suite)
 	if service == "" {
 		eval.ReportError("MCPToolset requires non-empty service name")
 		return nil
@@ -444,7 +440,7 @@ func CallHintTemplate(s string) {
 		eval.IncompatibleDSL()
 		return
 	}
-	tool.CallHintTemplate = strings.TrimSpace(s)
+	tool.CallHintTemplate = s
 }
 
 // ResultHintTemplate configures a display template for tool results. The
@@ -470,7 +466,7 @@ func ResultHintTemplate(s string) {
 		eval.IncompatibleDSL()
 		return
 	}
-	tool.ResultHintTemplate = strings.TrimSpace(s)
+	tool.ResultHintTemplate = s
 }
 
 // Tags attaches metadata labels to a tool for categorization and filtering. Tags
@@ -532,7 +528,7 @@ func ToolsetDescription(s string) {
 		eval.IncompatibleDSL()
 		return
 	}
-	ts.Description = strings.TrimSpace(s)
+	ts.Description = s
 }
 
 // BindTo associates a tool with a Goa service method implementation. Use BindTo
@@ -591,10 +587,10 @@ func BindTo(args ...string) {
 	)
 	switch len(args) {
 	case 1:
-		methodName = strings.TrimSpace(args[0])
+		methodName = args[0]
 	case 2:
-		serviceName = strings.TrimSpace(args[0])
-		methodName = strings.TrimSpace(args[1])
+		serviceName = args[0]
+		methodName = args[1]
 	default:
 		eval.ReportError("BindTo requires 1 or 2 arguments")
 		return
@@ -632,7 +628,7 @@ func ToolTitle(s string) {
 		eval.IncompatibleDSL()
 		return
 	}
-	tool.Title = strings.TrimSpace(s)
+	tool.Title = s
 }
 
 // buildToolsetExpr constructs a ToolsetExpr from a value and DSL function.
@@ -696,9 +692,6 @@ func AgentToolset(service, agent, toolset string) *agentsexpr.ToolsetExpr {
 		eval.IncompatibleDSL()
 		return nil
 	}
-	service = strings.TrimSpace(service)
-	agent = strings.TrimSpace(agent)
-	toolset = strings.TrimSpace(toolset)
 	if service == "" || agent == "" || toolset == "" {
 		eval.ReportError("AgentToolset requires non-empty service, agent, and toolset")
 		return nil
@@ -711,7 +704,7 @@ func AgentToolset(service, agent, toolset string) *agentsexpr.ToolsetExpr {
 	// Locate the exporting agent
 	var originAgent *agentsexpr.AgentExpr
 	for _, a := range agentsexpr.Root.Agents {
-		if a != nil && a.Service == svc && strings.TrimSpace(a.Name) == agent {
+		if a != nil && a.Service == svc && a.Name == agent {
 			originAgent = a
 			break
 		}
@@ -723,7 +716,7 @@ func AgentToolset(service, agent, toolset string) *agentsexpr.ToolsetExpr {
 	// Find the exported toolset
 	var originTS *agentsexpr.ToolsetExpr
 	for _, ts := range originAgent.Exported.Toolsets {
-		if ts != nil && strings.TrimSpace(ts.Name) == toolset {
+		if ts != nil && ts.Name == toolset {
 			originTS = ts
 			break
 		}

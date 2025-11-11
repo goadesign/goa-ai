@@ -157,7 +157,7 @@ func NewRunner() *Runner {
 
 // SupportsServer reports whether the integration framework can reach a server.
 func SupportsServer() bool {
-	if strings.TrimSpace(os.Getenv("TEST_SERVER_URL")) != "" {
+	if os.Getenv("TEST_SERVER_URL") != "" {
 		return true
 	}
 	return findExampleRoot() != ""
@@ -464,7 +464,7 @@ func regenerateExample(t *testing.T, exampleRoot string) error {
 // startServer starts the test server.
 func (r *Runner) startServer(t *testing.T) error {
 	t.Helper()
-	if external := strings.TrimSpace(os.Getenv("TEST_SERVER_URL")); external != "" {
+	if external := os.Getenv("TEST_SERVER_URL"); external != "" {
 		u, err := url.Parse(external)
 		if err != nil {
 			return fmt.Errorf("parse TEST_SERVER_URL: %w", err)
@@ -951,7 +951,7 @@ func (r *Runner) executeSSE(
 			continue
 		}
 		if after, ok := strings.CutPrefix(line, "data:"); ok {
-			data := strings.TrimSpace(after)
+			data := after
 			var m map[string]any
 			_ = json.Unmarshal([]byte(data), &m)
 			if cur.Data == nil {

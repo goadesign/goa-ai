@@ -14,14 +14,14 @@ import (
 
 // Tool IDs for this toolset.
 const (
-	Add tools.Ident = "alpha.math.add"
+	Add tools.Ident = "add"
 )
 
 var Specs = []tools.ToolSpec{
 	{
 		Name:        Add,
 		Service:     "alpha",
-		Toolset:     "math",
+		Toolset:     "alpha.math",
 		Description: "Add",
 		Tags:        []string{},
 		Payload: tools.TypeSpec{

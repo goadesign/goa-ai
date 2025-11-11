@@ -3,7 +3,6 @@ package aggregate
 
 import (
 	"context"
-	"strings"
 
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/runtime"
@@ -75,7 +74,7 @@ func ProvenancedEnvelope(opts ...Option) Aggregator {
 			"code":   code,
 			"result": primary,
 		}
-		if s := cfg.summaryFn(primary, children); strings.TrimSpace(s) != "" {
+		if s := cfg.summaryFn(primary, children); s != "" {
 			out["summary"] = s
 		}
 		if cfg.includeCalls {

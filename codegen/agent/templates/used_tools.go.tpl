@@ -2,10 +2,10 @@
 // These helpers mirror the agent-as-tool helpers to provide a consistent planner UX.
 // They expose typed payload/result aliases and `New<Tool>Call` builders.
 
-// Tool IDs (fully qualified). Use these constants in planner tool calls.
+// Tool IDs (globally unique). Use these constants in planner tool calls.
 const (
 {{- range .Toolset.Tools }}
-    {{ .ConstName }} tools.Ident = {{ printf "%q" .QualifiedName }}
+    {{ .ConstName }} tools.Ident = {{ printf "%q" .Name }}
 {{- end }}
 )
 

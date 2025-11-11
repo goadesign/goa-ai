@@ -206,7 +206,7 @@ func buildToolSpecsDataFor(agent *AgentData, tools []*ToolData) (*toolSpecsData,
 			return nil, err
 		}
 		entry := &toolEntry{
-			Name:              tool.QualifiedName,
+			Name:              tool.Name,
 			Title:             tool.Title,
 			Service:           serviceName(tool),
 			Toolset:           toolsetName(tool),
@@ -273,7 +273,7 @@ func (d *toolSpecsData) pureTypes() []*typeData {
 
 func (d *toolSpecsData) needsGoaImport() bool {
 	for _, info := range d.order {
-		if strings.TrimSpace(info.Validation) != "" || strings.TrimSpace(info.JSONValidation) != "" {
+		if info.Validation != "" || info.JSONValidation != "" {
 			return true
 		}
 	}
@@ -282,8 +282,8 @@ func (d *toolSpecsData) needsGoaImport() bool {
 
 func (d *toolSpecsData) needsUnicodeImport() bool {
 	for _, info := range d.order {
-		if (strings.TrimSpace(info.Validation) != "" && strings.Contains(info.Validation, "utf8.")) ||
-			(strings.TrimSpace(info.JSONValidation) != "" && strings.Contains(info.JSONValidation, "utf8.")) {
+		if (info.Validation != "" && strings.Contains(info.Validation, "utf8.")) ||
+			(info.JSONValidation != "" && strings.Contains(info.JSONValidation, "utf8.")) {
 			return true
 		}
 	}
@@ -552,7 +552,7 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 		// 2) Validation against JSON body using HTTP server-like AttributeContext
 		httpctx := codegen.NewAttributeContext(true, false, false, "", scope)
 		jv := codegen.ValidationCode(jsonRoot.Attribute(), nil, httpctx, true, false, false, "raw")
-		if strings.TrimSpace(jv) != "" {
+		if jv != "" {
 			info.JSONValidation = jv
 			info.JSONValidationSrc = strings.Split(jv, "\n")
 		}
@@ -590,7 +590,7 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 			srcCtx := codegen.NewAttributeContext(true, false, false, "", scope)
 			tgtCtx := codegen.NewAttributeContext(false, false, true, "", scope)
 			body, helpers, err := codegen.GoTransform(srcAttr, tgtAttr, "raw", "v", srcCtx, tgtCtx, "payload", true)
-			if err == nil && strings.TrimSpace(body) != "" {
+			if err == nil && body != "" {
 				info.TransformBody = body
 				if len(helpers) > 0 {
 					info.TransformHelpers = helpers
@@ -955,7 +955,7 @@ func buildFieldDescriptions(att *goaexpr.AttributeExpr) map[string]string {
 				if prefix != "" {
 					path = prefix + "." + name
 				}
-				if nat.Attribute != nil && strings.TrimSpace(nat.Attribute.Description) != "" {
+				if nat.Attribute != nil && nat.Attribute.Description != "" {
 					out[path] = nat.Attribute.Description
 				}
 				walk(path, nat.Attribute)
@@ -1092,7 +1092,7 @@ func serviceName(tool *ToolData) string {
 
 // toolsetName returns the name of the toolset that contains the tool.
 func toolsetName(tool *ToolData) string {
-	return tool.Toolset.Name
+	return tool.Toolset.QualifiedName
 }
 
 // gatherAttributeImports collects all import specifications needed for a given

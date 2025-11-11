@@ -15,14 +15,14 @@ var (
 )
 
 func envString(key, def string) string {
-    if v := os.Getenv(key); strings.TrimSpace(v) != "" {
+    if v := os.Getenv(key); v != "" {
         return v
     }
     return def
 }
 
 func envBool(key string, def bool) bool {
-    v := strings.TrimSpace(os.Getenv(key))
+    v := os.Getenv(key)
     if v == "" {
         return def
     }
@@ -106,7 +106,7 @@ func configure{{ $agent.GoName }}MCPCallers(ctx context.Context) (map[string]mcp
             caller, err = mcpruntime.NewSSECaller(ctx, mcpruntime.HTTPOptions{Endpoint: endpoint})
         case "stdio":
             var args []string
-            if strings.TrimSpace(argstr) != "" {
+            if argstr != "" {
                 args = strings.Split(argstr, ",")
             }
             caller, err = mcpruntime.NewStdioCaller(ctx, mcpruntime.StdioOptions{Command: cmd, Args: args})

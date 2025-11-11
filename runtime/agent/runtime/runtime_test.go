@@ -34,12 +34,12 @@ var _ engine.Future = (*testFuture)(nil)
 
 func (p *nestedPlannerStub) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
 	p.iter = 0
-	return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("nested.tools.child1")}, {Name: tools.Ident("nested.tools.child2")}}}, nil
+	return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("child1")}, {Name: tools.Ident("child2")}}}, nil
 }
 func (p *nestedPlannerStub) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
 	p.iter++
 	if p.iter == 1 {
-		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("nested.tools.child3")}}}, nil
+		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("child3")}}}, nil
 	}
 	return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "nested done"}}}, nil
 }
@@ -174,7 +174,7 @@ func TestConsecutiveFailureBreaker(t *testing.T) {
 			}},
 		},
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			"svc.tools.fail": newAnyJSONSpec("svc.tools.fail"),
+			"fail": newAnyJSONSpec("fail", "svc.tools"),
 		},
 		logger:  telemetry.NoopLogger{},
 		metrics: telemetry.NoopMetrics{},
@@ -183,7 +183,7 @@ func TestConsecutiveFailureBreaker(t *testing.T) {
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Error: "boom"}}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("svc.tools.fail")}}}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("fail")}}}
 	_, err := rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  input.AgentID,
 		Planner:             &stubPlanner{},
@@ -288,7 +288,7 @@ func TestTimeBudgetExceeded(t *testing.T) {
 				Name: call.Name,
 			}, nil
 		}}},
-		toolSpecs: map[tools.Ident]tools.ToolSpec{"svc.ts.tool": newAnyJSONSpec("svc.ts.tool")},
+		toolSpecs: map[tools.Ident]tools.ToolSpec{"tool": newAnyJSONSpec("tool", "svc.ts")},
 		logger:    telemetry.NoopLogger{},
 		metrics:   telemetry.NoopMetrics{},
 		tracer:    telemetry.NoopTracer{},
@@ -296,7 +296,7 @@ func TestTimeBudgetExceeded(t *testing.T) {
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("svc.ts.tool")}}}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("tool")}}}
 	_, err := rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  input.AgentID,
 		Planner:             &stubPlanner{},
@@ -318,7 +318,7 @@ func TestOverridePolicy_AppliesToNewRuns_MaxToolCalls(t *testing.T) {
 			},
 		},
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			"svc.tools.echo": newAnyJSONSpec("svc.tools.echo"),
+			"echo": newAnyJSONSpec("echo", "svc.tools"),
 		},
 		logger:  telemetry.NoopLogger{},
 		metrics: telemetry.NoopMetrics{},
@@ -346,12 +346,12 @@ func TestOverridePolicy_AppliesToNewRuns_MaxToolCalls(t *testing.T) {
 	reg.Planner = pl
 	rt.agents[agentID] = reg
 
-	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, hasPlanResult: true, planResult: &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("svc.tools.echo")}}}}
+	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, hasPlanResult: true, planResult: &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("echo")}}}}
 	input := &RunInput{AgentID: agentID, RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 
 	// Provide an initial plan with 2 tools; resume will return 1 tool via wfCtx.planResult
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("svc.tools.echo")}, {Name: tools.Ident("svc.tools.echo")}}}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("echo")}, {Name: tools.Ident("echo")}}}
 	_, err := rt.runLoop(wfCtx, rt.agents[agentID], input, base, initial, initialCaps(rt.agents[agentID].Policy), time.Time{}, 2, nil, nil, nil, 0)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "tool call cap exceeded")
@@ -408,9 +408,9 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 		},
 	}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
-		"nested.tools.child1": newAnyJSONSpec("nested.tools.child1"),
-		"nested.tools.child2": newAnyJSONSpec("nested.tools.child2"),
-		"nested.tools.child3": newAnyJSONSpec("nested.tools.child3"),
+		"child1": newAnyJSONSpec("child1", "nested.tools"),
+		"child2": newAnyJSONSpec("child2", "nested.tools"),
+		"child3": newAnyJSONSpec("child3", "nested.tools"),
 	}
 
 	// Register nested agent (planner + activity names)
@@ -477,13 +477,13 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 	// Register parent toolset
 	rt.mu.Lock()
 	rt.toolsets[agentTools.Name] = agentTools
-	rt.toolSpecs["svc.agenttools.invoke"] = newAnyJSONSpec("svc.agenttools.invoke")
+	rt.toolSpecs["invoke"] = newAnyJSONSpec("invoke", "svc.agenttools")
 	rt.mu.Unlock()
 
 	// Parent run requests a single agent-tool invocation
 	parentInput := &RunInput{AgentID: "parent.agent", RunID: "run-parent", TurnID: "turn-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: parentInput.RunID, TurnID: parentInput.TurnID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: parentInput.AgentID, runID: parentInput.RunID})}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("svc.agenttools.invoke")}}}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("invoke")}}}
 
 	_, err := rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  parentInput.AgentID,
@@ -506,23 +506,23 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 }
 
 func TestValidateAgentToolCoverage(t *testing.T) {
-	ids := []tools.Ident{"svc.ts.a", "svc.ts.b"}
+	ids := []tools.Ident{"a", "b"}
 	// Missing both: allowed (defaults will be used)
 	err := ValidateAgentToolCoverage(nil, nil, ids)
 	require.NoError(t, err)
 
 	// Duplicate for A
 	err = ValidateAgentToolCoverage(
-		map[tools.Ident]string{"svc.ts.a": "x"},
-		map[tools.Ident]*template.Template{"svc.ts.a": template.Must(template.New("t").Parse("{{.}}"))},
+		map[tools.Ident]string{"a": "x"},
+		map[tools.Ident]*template.Template{"a": template.Must(template.New("t").Parse("{{.}}"))},
 		ids,
 	)
 	require.Error(t, err)
 
 	// OK: A text, B template
 	err = ValidateAgentToolCoverage(
-		map[tools.Ident]string{"svc.ts.a": "x"},
-		map[tools.Ident]*template.Template{"svc.ts.b": template.Must(template.New("t").Parse("{{.}}"))},
+		map[tools.Ident]string{"a": "x"},
+		map[tools.Ident]*template.Template{"b": template.Must(template.New("t").Parse("{{.}}"))},
 		ids,
 	)
 	require.NoError(t, err)
@@ -557,8 +557,8 @@ func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 			},
 		},
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			tools.Ident("svc.export.child1"): newAnyJSONSpec("svc.export.child1"),
-			tools.Ident("svc.export.child2"): newAnyJSONSpec("svc.export.child2"),
+			tools.Ident("child1"): newAnyJSONSpec("child1", "svc.export"),
+			tools.Ident("child2"): newAnyJSONSpec("child2", "svc.export"),
 		},
 		Bus:     recorder,
 		logger:  telemetry.NoopLogger{},
@@ -571,8 +571,8 @@ func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 	}
 	tracker := newChildTracker("parent-123")
 	calls := []planner.ToolRequest{
-		{Name: tools.Ident("svc.export.child1")},
-		{Name: tools.Ident("svc.export.child2")},
+		{Name: tools.Ident("child1")},
+		{Name: tools.Ident("child2")},
 	}
 	seq := &turnSequencer{turnID: "turn-1"}
 	_, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "run-1", "agent-1", calls, 0, seq, tracker, time.Time{})
@@ -594,7 +594,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 	store := runinmem.New()
 	bus := hooks.NewBus()
 	decision := policy.Decision{
-		AllowedTools: []tools.Ident{tools.Ident("svc.tools.search")},
+		AllowedTools: []tools.Ident{tools.Ident("search")},
 		Caps: policy.CapsState{
 			MaxToolCalls:       5,
 			RemainingToolCalls: 5,
@@ -613,13 +613,13 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {
 				Metadata: policy.ToolMetadata{
-					ID:    "svc.tools.search",
-					Title: "Svc Tools Search",
+					ID:    "search",
+					Title: "Search",
 				},
 			},
 		},
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			"svc.tools.search": newAnyJSONSpec("svc.tools.search"),
+			"search": newAnyJSONSpec("search", "svc.tools"),
 		},
 		logger:  telemetry.NoopLogger{},
 		metrics: telemetry.NoopMetrics{},
@@ -675,7 +675,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 
 	initial := &planner.PlanResult{
 		ToolCalls: []planner.ToolRequest{
-			{Name: tools.Ident("svc.tools.search"), Payload: map[string]string{"query": "status"}},
+			{Name: tools.Ident("search"), Payload: map[string]string{"query": "status"}},
 		},
 	}
 	caps := policy.CapsState{MaxToolCalls: 5, RemainingToolCalls: 5}
@@ -703,7 +703,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 
 	require.NotNil(t, policyEvent)
 	require.Equal(t, hooks.PolicyDecision, policyEvent.Type())
-	require.Equal(t, []tools.Ident{tools.Ident("svc.tools.search")}, policyEvent.AllowedTools)
+	require.Equal(t, []tools.Ident{tools.Ident("search")}, policyEvent.AllowedTools)
 	require.Equal(t, decision.Metadata, policyEvent.Metadata)
 	require.Equal(t, decision.Caps, policyEvent.Caps)
 	require.Equal(t, decision.Labels, policyEvent.Labels)
@@ -718,6 +718,6 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 	entry := meta[0]
 	require.Equal(t, decision.Caps, entry["caps"])
 	require.Equal(t, decision.Metadata, entry["metadata"])
-	require.Equal(t, []tools.Ident{tools.Ident("svc.tools.search")}, entry["allowed_tools"])
+	require.Equal(t, []tools.Ident{tools.Ident("search")}, entry["allowed_tools"])
 	require.NotNil(t, entry["timestamp"])
 }

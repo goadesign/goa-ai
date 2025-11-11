@@ -45,7 +45,7 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
 		return &planner.ToolResult{Error: planner.NewToolError("tool call meta is nil")}, nil
 	}
 	switch call.Name {
-	case "alpha.profiles.upsert":
+	case "upsert":
 		// Decode typed payload
 		args, err := profilesspecs.UnmarshalUpsertPayload(call.Payload)
 		if err != nil {

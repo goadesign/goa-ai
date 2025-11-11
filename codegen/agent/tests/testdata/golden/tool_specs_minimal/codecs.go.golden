@@ -29,11 +29,12 @@ var (
 	// summarizeDocPayloadCodec provides an untyped codec for *SummarizeDocPayload.
 	summarizeDocPayloadCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
-			typed, ok := v.(*SummarizeDocPayload)
-			if !ok {
-				return nil, fmt.Errorf("expected *SummarizeDocPayload, got %T", v)
+			// Prefer typed marshal when the value matches the expected type.
+			if typed, ok := v.(*SummarizeDocPayload); ok {
+				return MarshalSummarizeDocPayload(typed)
 			}
-			return MarshalSummarizeDocPayload(typed)
+			// Fallback: marshal structurally compatible values directly.
+			return json.Marshal(v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalSummarizeDocPayload(data)
@@ -42,11 +43,12 @@ var (
 	// summarizeDocResultCodec provides an untyped codec for SummarizeDocResult.
 	summarizeDocResultCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
-			typed, ok := v.(SummarizeDocResult)
-			if !ok {
-				return nil, fmt.Errorf("expected SummarizeDocResult, got %T", v)
+			// Prefer typed marshal when the value matches the expected type.
+			if typed, ok := v.(SummarizeDocResult); ok {
+				return MarshalSummarizeDocResult(typed)
 			}
-			return MarshalSummarizeDocResult(typed)
+			// Fallback: marshal structurally compatible values directly.
+			return json.Marshal(v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalSummarizeDocResult(data)
@@ -151,7 +153,7 @@ func enrichSummarizeDocPayloadJSON2ValidationError(err error) error {
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
 	switch name {
-	case "calc.helpers.summarize_doc":
+	case "summarize_doc":
 		return &summarizeDocPayloadCodec, true
 	default:
 		return nil, false
@@ -161,7 +163,7 @@ func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
 // ResultCodec returns the generic codec for the named tool result.
 func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 	switch name {
-	case "calc.helpers.summarize_doc":
+	case "summarize_doc":
 		return &summarizeDocResultCodec, true
 	default:
 		return nil, false
