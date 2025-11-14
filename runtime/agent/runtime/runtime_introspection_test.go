@@ -20,8 +20,7 @@ func TestIntrospectionListsAgentsAndToolSpecs(t *testing.T) {
 	reg := AgentRegistration{
 		ID:                  "svc.agent",
 		Planner:             &stubPlanner{},
-		Workflow:            engine.WorkflowDefinition{Name: "wf", TaskQueue: "q", Handler: func(engine.WorkflowContext, any) (any, error) { return nil, nil }},
-		Activities:          []engine.ActivityDefinition{{Name: "plan"}},
+		Workflow:            engine.WorkflowDefinition{Name: "wf", TaskQueue: "q", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return nil, nil }},
 		PlanActivityName:    "plan",
 		ResumeActivityName:  "resume",
 		ExecuteToolActivity: "execute",

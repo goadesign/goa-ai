@@ -84,11 +84,7 @@ func (c *agentClient) Run(ctx context.Context, messages []*planner.AgentMessage,
 	if err != nil {
 		return nil, err
 	}
-	var out *RunOutput
-	if err := h.Wait(ctx, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
+	return h.Wait(ctx)
 }
 
 func (c *agentClient) Start(ctx context.Context, messages []*planner.AgentMessage, opts ...RunOption) (engine.WorkflowHandle, error) {
@@ -117,11 +113,7 @@ func (c *agentClientRoute) Run(ctx context.Context, messages []*planner.AgentMes
 	if err != nil {
 		return nil, err
 	}
-	var out *RunOutput
-	if err := h.Wait(ctx, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
+	return h.Wait(ctx)
 }
 
 func (c *agentClientRoute) Start(ctx context.Context, messages []*planner.AgentMessage, opts ...RunOption) (engine.WorkflowHandle, error) {

@@ -16,8 +16,8 @@ Here’s a map of what Goa-AI just built for you based on your `design/*.go` fil
 
 {{- range .Services }}
 * **Service `{{ .Service.Name }}`:**
-    {{- if .Agents }}
-    {{- range .Agents }}
+{{- if .Agents }}
+{{- range .Agents }}
     * **Agent `{{ .Name }}`** (ID: `{{ .ID }}`):
         * **Mission:** *{{ .Description }}*
         * **Uses Toolsets:**
@@ -39,10 +39,10 @@ Here’s a map of what Goa-AI just built for you based on your `design/*.go` fil
             * Max Consecutive Failures: `{{ .RunPolicy.Caps.MaxConsecutiveFailedToolCalls }}`
             * Time Budget: `{{ .RunPolicy.TimeBudget }}`
             * Interrupts Allowed: `{{ .RunPolicy.InterruptsAllowed }}`
-    {{- end }}
-    {{- else }}
-    * This service doesn't define any agents itself, but it might provide tools for others to use!
-    {{- end }}
+{{- end }}
+{{- else }}
+* This service doesn't define any agents itself, but it might provide tools for others to use!
+{{- end }}
 {{- end }}
 
 ---
@@ -76,8 +76,8 @@ func (p *StubPlanner) PlanStart(ctx context.Context, in planner.PlanInput) (*pla
     return &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{
 			Message: planner.AgentMessage{
-				Role:    "assistant",
-				Content: "Hello!",
+				Role:  "assistant",
+				Parts: []planner.Part{planner.TextPart{Text: "Hello!"}},
 			},
 		},
 	}, nil
@@ -86,8 +86,8 @@ func (p *StubPlanner) PlanResume(ctx context.Context, in planner.PlanResumeInput
     return &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{
 			Message: planner.AgentMessage{
-				Role:    "assistant",
-				Content: "Done.",
+				Role:  "assistant",
+				Parts: []planner.Part{planner.TextPart{Text: "Done."}},
 			},
 		},
 	}, nil
@@ -121,10 +121,7 @@ func main() {
     out, err := client.Run(
         context.Background(),
         []planner.AgentMessage{
-			{
-				Role:    "user",
-				Content: "Hi there!",
-			},
+			{ Role: "user", Parts: []planner.Part{planner.TextPart{Text: "Hi there!"}} },
 		},
         runtime.WithSessionID("my-first-session"), // A session ID is required!
     )
@@ -134,7 +131,12 @@ func main() {
 
     fmt.Println("✅ Success!")
     fmt.Println("RunID:", out.RunID)
-    fmt.Println("Assistant says:", out.Final.Content)
+    // Print first text part (if any)
+    if len(out.Final.Message.Parts) > 0 {
+        if tp, ok := out.Final.Message.Parts[0].(planner.TextPart); ok {
+            fmt.Println("Assistant says:", tp.Text)
+        }
+    }
 }
 ```
 
@@ -205,8 +207,8 @@ func (p *MySmartPlanner) PlanStart(ctx context.Context, in planner.PlanInput) (*
     return &planner.PlanResult{
         FinalResponse: &planner.FinalResponse{
             Message: planner.AgentMessage{
-				Role:    "assistant",
-				Content: "I'm ready to help!",
+				Role:  "assistant",
+				Parts: []planner.Part{planner.TextPart{Text: "I'm ready to help!"}},
 			},
         },
     }, nil
@@ -220,8 +222,8 @@ func (p *MySmartPlanner) PlanResume(ctx context.Context, in planner.PlanResumeIn
     return &planner.PlanResult{
         FinalResponse: &planner.FinalResponse{
             Message: planner.AgentMessage{
-				Role:    "assistant",
-				Content: "The tools have run. Here's what I found...",
+				Role:  "assistant",
+				Parts: []planner.Part{planner.TextPart{Text: "The tools have run. Here's what I found..."}},
 			},
         },
     }, nil
@@ -325,27 +327,27 @@ cfg := <agentpkg>.<AgentConfig>{
 ### Agent `{{ .Name }}` Toolsets
 
 * **Tools this agent can USE:**
-    {{- if .UsedToolsets }}
-    {{- range .UsedToolsets }}
-    * **`{{ .QualifiedName }}`** {{ if .Expr.External }}(MCP Suite: `{{ .Expr.MCPService }}.{{ .Name }}`){{ end }}
-        {{- if .Tools }}
-        {{- range .Tools }}
-        * **Tool: `{{ .QualifiedName }}`**
-            * *{{ .Description }}*
-        {{- end }}
-        {{- end }}
-    {{- end }}
-    {{- else }}
-    * *This agent does not use any toolsets.*
-    {{- end }}
+{{- if .UsedToolsets }}
+{{- range .UsedToolsets }}
+* **`{{ .QualifiedName }}`** {{ if .Expr.External }}(MCP Suite: `{{ .Expr.MCPService }}.{{ .Name }}`){{ end }}
+{{- if .Tools }}
+{{- range .Tools }}
+* **Tool: `{{ .QualifiedName }}`**
+* *{{ .Description }}*
+{{- end }}
+{{- end }}
+{{- end }}
+{{- else }}
+* *This agent does not use any toolsets.*
+{{- end }}
 * **Tools this agent EXPORTS for others to use:**
-    {{- if .ExportedToolsets }}
-    {{- range .ExportedToolsets }}
-    * **`{{ .QualifiedName }}`**
-    {{- end }}
-    {{- else }}
-    * *This agent does not export any toolsets.*
-    {{- end }}
+{{- if .ExportedToolsets }}
+{{- range .ExportedToolsets }}
+* **`{{ .QualifiedName }}`**
+{{- end }}
+{{- else }}
+* *This agent does not export any toolsets.*
+{{- end }}
 {{- end }}
 {{- end }}
 </details>

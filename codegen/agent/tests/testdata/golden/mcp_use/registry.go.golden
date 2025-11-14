@@ -32,40 +32,7 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 		Workflow: engine.WorkflowDefinition{
 			Name:      "alpha.scribe.workflow",
 			TaskQueue: "alpha_scribe_workflow",
-			Handler:   agentsruntime.WorkflowHandler(rt),
-		},
-		Activities: []engine.ActivityDefinition{
-			{
-				Name:    "alpha.scribe.plan",
-				Handler: agentsruntime.PlanStartActivityHandler(rt),
-				Options: engine.ActivityOptions{
-					Queue:   "alpha_scribe_workflow",
-					Timeout: time.Duration(120000000000),
-					RetryPolicy: engine.RetryPolicy{
-						MaxAttempts:        3,
-						InitialInterval:    time.Duration(1000000000),
-						BackoffCoefficient: 2,
-					},
-				},
-			},
-			{
-				Name:    "alpha.scribe.resume",
-				Handler: agentsruntime.PlanResumeActivityHandler(rt),
-				Options: engine.ActivityOptions{
-					Queue:   "alpha_scribe_workflow",
-					Timeout: time.Duration(120000000000),
-					RetryPolicy: engine.RetryPolicy{
-						MaxAttempts:        3,
-						InitialInterval:    time.Duration(1000000000),
-						BackoffCoefficient: 2,
-					},
-				},
-			},
-			{
-				Name:    "alpha.scribe.executetool",
-				Handler: agentsruntime.ExecuteToolActivityHandler(rt),
-				Options: engine.ActivityOptions{},
-			},
+			Handler:   rt.ExecuteWorkflow,
 		},
 		PlanActivityName: "alpha.scribe.plan",
 		PlanActivityOptions: engine.ActivityOptions{
@@ -87,9 +54,10 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 				BackoffCoefficient: 2,
 			},
 		},
-		ExecuteToolActivity: "alpha.scribe.executetool",
-		Specs:               nil,
-		Policy:              agentsruntime.RunPolicy{},
+		ExecuteToolActivity:        "alpha.scribe.executetool",
+		ExecuteToolActivityOptions: engine.ActivityOptions{},
+		Specs:                      nil,
+		Policy:                     agentsruntime.RunPolicy{},
 	}); err != nil {
 		return err
 	}

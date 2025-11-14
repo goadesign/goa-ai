@@ -47,16 +47,30 @@ func ConsumeStream(ctx context.Context, streamer model.Streamer, ev PlannerEvent
 		}
 		switch chunk.Type {
 		case model.ChunkTypeText:
-			if chunk.Message.Content == "" {
+			if chunk.Message == nil || len(chunk.Message.Parts) == 0 {
 				continue
 			}
-			summary.Text += chunk.Message.Content
-			ev.AssistantChunk(ctx, chunk.Message.Content)
+			// Concatenate text parts in the chunk in order
+			var delta string
+			for _, p := range chunk.Message.Parts {
+				if tp, ok := p.(model.TextPart); ok && tp.Text != "" {
+					delta += tp.Text
+				}
+			}
+			if delta == "" {
+				continue
+			}
+			summary.Text += delta
+			ev.AssistantChunk(ctx, delta)
 		case model.ChunkTypeThinking:
-			if chunk.Thinking == "" {
-				continue
+			// Emit structured thinking block when present.
+			if chunk.Message != nil {
+				for _, p := range chunk.Message.Parts {
+					if tp, ok := p.(model.ThinkingPart); ok {
+						ev.PlannerThinkingBlock(ctx, tp)
+					}
+				}
 			}
-			ev.PlannerThought(ctx, chunk.Thinking, map[string]string{"phase": "thinking"})
 		case model.ChunkTypeToolCall:
 			if chunk.ToolCall.Name == "" {
 				continue

@@ -9,6 +9,7 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -95,6 +96,36 @@ func generateDeterministicAwaitID(runID, turnID string, tool tools.Ident, toolCa
 		toolCallID = "no-call"
 	}
 	return strings.Join([]string{runID, tid, safeTool, "await", toolCallID}, "/")
+}
+
+// agentMessageText concatenates text parts from a planner.AgentMessage.
+func agentMessageText(msg *planner.AgentMessage) string {
+	if msg == nil || len(msg.Parts) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, p := range msg.Parts {
+		// Skip ThinkingPart to avoid leaking non-user-facing reasoning.
+		if _, isThinking := p.(model.ThinkingPart); isThinking {
+			continue
+		}
+		if tp, ok := p.(model.TextPart); ok && tp.Text != "" {
+			b.WriteString(tp.Text)
+		}
+	}
+	return b.String()
+}
+
+// newTextAgentMessage builds a planner.AgentMessage with a single TextPart.
+// Returns nil when text is empty to allow callers to skip no-op messages.
+func newTextAgentMessage(role string, text string) *planner.AgentMessage {
+	if text == "" {
+		return nil
+	}
+	return &planner.AgentMessage{
+		Role:  role,
+		Parts: []model.Part{model.TextPart{Text: text}},
+	}
 }
 
 // generateParentToolCallID creates a deterministic parent ToolCallID suitable
@@ -483,7 +514,7 @@ func stampEventWithTurn(evt hooks.Event, seq *turnSequencer) {
 func ConvertRunOutputToToolResult(toolName tools.Ident, output RunOutput) planner.ToolResult {
 	var resultContent string
 	if output.Final != nil {
-		resultContent = output.Final.Content
+		resultContent = agentMessageText(output.Final)
 	}
 	result := planner.ToolResult{
 		Name:   toolName,

@@ -17,7 +17,7 @@ func (s *stubStreamer) Metadata() map[string]any   { return s.meta }
 type stubProvider struct{}
 
 func (stubProvider) Complete(_ context.Context, req model.Request) (model.Response, error) {
-	return model.Response{Content: []model.Message{{Role: "assistant", Content: "ok"}}}, nil
+	return model.Response{Content: []model.Message{{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 }
 func (stubProvider) Stream(_ context.Context, _ model.Request) (model.Streamer, error) {
 	return &stubStreamer{}, nil

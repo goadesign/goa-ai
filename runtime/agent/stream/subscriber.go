@@ -134,6 +134,23 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Base: Base{t: EventPlannerThought, r: evt.RunID(), p: payload},
 			Data: payload,
 		})
+	case *hooks.ThinkingBlockEvent:
+		// Map structured thinking block to PlannerThought with enriched payload.
+		payload := PlannerThoughtPayload{
+			Text:         evt.Text,
+			Signature:    evt.Signature,
+			Redacted:     evt.Redacted,
+			ContentIndex: evt.ContentIndex,
+			Final:        evt.Final,
+		}
+		// For back-compat, mirror plaintext into Note when present.
+		if payload.Text != "" {
+			payload.Note = payload.Text
+		}
+		return s.sink.Send(ctx, PlannerThought{
+			Base: Base{t: EventPlannerThought, r: evt.RunID(), p: payload},
+			Data: payload,
+		})
 	case *hooks.ToolResultReceivedEvent:
 		payload := ToolEndPayload{
 			ToolCallID:       evt.ToolCallID,

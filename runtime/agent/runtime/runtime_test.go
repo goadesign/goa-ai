@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	agent "goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/interrupt"
@@ -41,7 +42,7 @@ func (p *nestedPlannerStub) PlanResume(ctx context.Context, in *planner.PlanResu
 	if p.iter == 1 {
 		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("child3")}}}, nil
 	}
-	return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "nested done"}}}, nil
+	return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "nested done"}}}}}, nil
 }
 func TestStartRunSetsWorkflowName(t *testing.T) {
 	eng := &stubEngine{}
@@ -132,8 +133,7 @@ func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 	require.Equal(t, sa, eng.last.SearchAttributes)
 
 	// Input payload
-	inPtr, ok := eng.last.Input.(*RunInput)
-	require.True(t, ok)
+	inPtr := eng.last.Input
 	require.Equal(t, "sess-1", inPtr.SessionID)
 	require.Equal(t, "turn-1", inPtr.TurnID)
 	require.Equal(t, meta, inPtr.Metadata)
@@ -190,7 +190,7 @@ func TestConsecutiveFailureBreaker(t *testing.T) {
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 		Policy:              RunPolicy{MaxConsecutiveFailedToolCalls: 1},
-	}, input, base, initial, initialCaps(RunPolicy{MaxConsecutiveFailedToolCalls: 1}), time.Time{}, 2, nil, nil, nil, 0)
+	}, input, base, initial, nil, initialCaps(RunPolicy{MaxConsecutiveFailedToolCalls: 1}), time.Time{}, 2, nil, nil, nil, 0)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "consecutive failed tool call cap exceeded")
 }
@@ -214,7 +214,7 @@ func TestStartRunForwardsWorkflowOptions(t *testing.T) {
 			TaskQueue:        "customq",
 			Memo:             map[string]any{"k": "v"},
 			SearchAttributes: map[string]any{"sa": "x"},
-			RetryPolicy:      engine.RetryPolicy{MaxAttempts: 5, InitialInterval: 5 * time.Second, BackoffCoefficient: 1.5},
+			RetryPolicy:      api.RetryPolicy{MaxAttempts: 5, InitialInterval: 5 * time.Second, BackoffCoefficient: 1.5},
 		},
 	}
 	client := rt.MustClient(agent.Ident("service.agent"))
@@ -251,7 +251,7 @@ func TestRegisterAgentAfterFirstRunIsRejected(t *testing.T) {
 		Workflow: engine.WorkflowDefinition{
 			Name:      "service.workflow",
 			TaskQueue: "q",
-			Handler: func(wfctx engine.WorkflowContext, input any) (any, error) {
+			Handler: func(wfctx engine.WorkflowContext, input *RunInput) (*RunOutput, error) {
 				return &RunOutput{AgentID: "service.agent", RunID: "r1"}, nil
 			},
 		},
@@ -272,7 +272,7 @@ func TestRegisterAgentAfterFirstRunIsRejected(t *testing.T) {
 		Workflow: engine.WorkflowDefinition{
 			Name:      "service.other.workflow",
 			TaskQueue: "q",
-			Handler:   func(wfctx engine.WorkflowContext, input any) (any, error) { return &RunOutput{}, nil },
+			Handler:   func(wfctx engine.WorkflowContext, input *RunInput) (*RunOutput, error) { return &RunOutput{}, nil },
 		},
 		PlanActivityName:    "plan",
 		ResumeActivityName:  "resume",
@@ -302,7 +302,7 @@ func TestTimeBudgetExceeded(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, wfCtx.Now().Add(-time.Second), 2, nil, nil, nil, 0)
+	}, input, base, initial, nil, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, wfCtx.Now().Add(-time.Second), 2, nil, nil, nil, 0)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "time budget exceeded")
 }
@@ -352,7 +352,7 @@ func TestOverridePolicy_AppliesToNewRuns_MaxToolCalls(t *testing.T) {
 
 	// Provide an initial plan with 2 tools; resume will return 1 tool via wfCtx.planResult
 	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("echo")}, {Name: tools.Ident("echo")}}}
-	_, err := rt.runLoop(wfCtx, rt.agents[agentID], input, base, initial, initialCaps(rt.agents[agentID].Policy), time.Time{}, 2, nil, nil, nil, 0)
+	_, err := rt.runLoop(wfCtx, rt.agents[agentID], input, base, initial, nil, initialCaps(rt.agents[agentID].Policy), time.Time{}, 2, nil, nil, nil, 0)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "tool call cap exceeded")
 }
@@ -360,7 +360,7 @@ func TestOverridePolicy_AppliesToNewRuns_MaxToolCalls(t *testing.T) {
 func TestConvertRunOutputToToolResult(t *testing.T) {
 	t.Run("aggregates_telemetry_without_error", func(t *testing.T) {
 		out := RunOutput{
-			Final: &planner.AgentMessage{Content: "final"},
+			Final: &planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "final"}}},
 			ToolEvents: []*planner.ToolResult{
 				{Telemetry: &telemetry.ToolTelemetry{TokensUsed: 10, DurationMs: 100, Model: "m1"}},
 				{Telemetry: &telemetry.ToolTelemetry{TokensUsed: 5, DurationMs: 50, Model: "m1"}},
@@ -376,7 +376,7 @@ func TestConvertRunOutputToToolResult(t *testing.T) {
 	})
 	t.Run("propagates_error_when_all_nested_fail", func(t *testing.T) {
 		out := RunOutput{
-			Final: &planner.AgentMessage{Content: "final"},
+			Final: &planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "final"}}},
 			ToolEvents: []*planner.ToolResult{
 				{Error: planner.NewToolError("e1")},
 				{Error: planner.NewToolError("e2")},
@@ -423,28 +423,40 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 		Policy:              RunPolicy{MaxToolCalls: 10},
 	}
 	// Add activity routes to call runtime handlers
-	routes := map[string]engine.ActivityDefinition{
-		"nested.plan": {Name: "nested.plan", Handler: func(ctx context.Context, input any) (any, error) {
-			return rt.PlanStartActivity(ctx, input.(PlanActivityInput))
+	routes := map[string]testActivityDef{
+		"nested.plan": {Handler: func(ctx context.Context, input any) (any, error) {
+			if p, ok := input.(*PlanActivityInput); ok {
+				return rt.PlanStartActivity(ctx, p)
+			}
+			if v, ok := input.(PlanActivityInput); ok {
+				return rt.PlanStartActivity(ctx, &v)
+			}
+			return nil, fmt.Errorf("unexpected plan input type %T", input)
 		}},
-		"nested.resume": {Name: "nested.resume", Handler: func(ctx context.Context, input any) (any, error) {
-			return rt.PlanResumeActivity(ctx, input.(PlanActivityInput))
+		"nested.resume": {Handler: func(ctx context.Context, input any) (any, error) {
+			if p, ok := input.(*PlanActivityInput); ok {
+				return rt.PlanResumeActivity(ctx, p)
+			}
+			if v, ok := input.(PlanActivityInput); ok {
+				return rt.PlanResumeActivity(ctx, &v)
+			}
+			return nil, fmt.Errorf("unexpected plan input type %T", input)
 		}},
-		"nested.execute": {Name: "nested.execute", Handler: func(ctx context.Context, input any) (any, error) {
+		"nested.execute": {Handler: func(ctx context.Context, input any) (any, error) {
 			ti := input.(ToolInput)
 			return rt.ExecuteToolActivity(ctx, &ti)
 		}},
-		"execute": {Name: "execute", Handler: func(ctx context.Context, input any) (any, error) {
+		"execute": {Handler: func(ctx context.Context, input any) (any, error) {
 			ti := input.(ToolInput)
 			return rt.ExecuteToolActivity(ctx, &ti)
 		}},
-		"resume": {Name: "resume", Handler: func(context.Context, any) (any, error) {
+		"resume": {Handler: func(context.Context, any) (any, error) {
 			return PlanActivityOutput{Result: &planner.PlanResult{
-				FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "done"}},
-			}}, nil
+				FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "done"}}}},
+			}, Transcript: nil}, nil
 		}},
 	}
-	wfCtx := &routeWorkflowContext{ctx: context.Background(), runID: "run-parent", routes: routes}
+	wfCtx := &routeWorkflowContext{ctx: context.Background(), runID: "run-parent", routes: routes, runtime: rt}
 
 	// Parent agent-tools toolset that invokes nested agent inline
 	agentTools := ToolsetRegistration{
@@ -457,13 +469,17 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 			if wf == nil {
 				wf = wfCtx
 			}
-			msgs := []*planner.AgentMessage{{Role: "user", Content: "go"}}
+			msgs := []*planner.AgentMessage{{Role: "user", Parts: []model.Part{model.TextPart{Text: "go"}}}}
 			nestedCtx := run.Context{RunID: NestedRunID(call.RunID, call.Name), SessionID: call.SessionID, TurnID: call.TurnID, ParentToolCallID: call.ToolCallID}
 			// Inject nested agent registration into runtime for lookup
 			rt.mu.Lock()
 			rt.agents = map[string]AgentRegistration{"nested.agent": nestedReg}
 			rt.mu.Unlock()
-			outPtr, err := rt.ExecuteAgentInline(wf, "nested.agent", msgs, nestedCtx)
+			outPtr, err := rt.ExecuteAgentChildWithRoute(wf, AgentRoute{
+				ID:               "nested.agent",
+				WorkflowName:     "nested.workflow",
+				DefaultTaskQueue: "q",
+			}, msgs, nestedCtx)
 			if err != nil {
 				return nil, err
 			}
@@ -490,7 +506,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, parentInput, base, initial, policy.CapsState{MaxToolCalls: 3, RemainingToolCalls: 3}, time.Time{}, 2, &turnSequencer{turnID: parentInput.TurnID}, nil, nil, 0)
+	}, parentInput, base, initial, nil, policy.CapsState{MaxToolCalls: 3, RemainingToolCalls: 3}, time.Time{}, 2, &turnSequencer{turnID: parentInput.TurnID}, nil, nil, 0)
 	require.NoError(t, err)
 
 	// Assert ToolCallUpdatedEvent emitted twice with counts 2 then 3 referencing parent tool call id
@@ -653,7 +669,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 
 	base := &planner.PlanInput{
 		Messages: []*planner.AgentMessage{
-			{Role: "user", Content: "hello"},
+			{Role: "user", Parts: []model.Part{model.TextPart{Text: "hello"}}},
 		},
 		RunContext: run.Context{
 			RunID:  input.RunID,
@@ -669,7 +685,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 	wfCtx := &testWorkflowContext{
 		ctx:           context.Background(),
 		asyncResult:   ToolOutput{Payload: []byte("null")},
-		planResult:    &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "done"}}},
+		planResult:    &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "done"}}}}},
 		hasPlanResult: true,
 	}
 
@@ -691,6 +707,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 		&input,
 		base,
 		initial,
+		nil,
 		caps,
 		time.Time{},
 		2,

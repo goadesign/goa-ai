@@ -24,23 +24,27 @@ import (
 // beginning of a run to produce the initial plan. The activity creates an
 // agent context with memory access and delegates to the planner's PlanStart
 // implementation.
-func (r *Runtime) PlanStartActivity(ctx context.Context, input PlanActivityInput) (PlanActivityOutput, error) {
-	reg, agentCtx, err := r.plannerContext(ctx, input)
+func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
+	events := newPlannerEvents(r, input.AgentID, input.RunID)
+	reg, agentCtx, err := r.plannerContext(ctx, input, events)
 	if err != nil {
-		return PlanActivityOutput{}, err
+		return nil, err
 	}
 	planInput := &planner.PlanInput{
 		Messages:   input.Messages,
 		RunContext: input.RunContext,
 		Agent:      agentCtx,
-		Events:     newPlannerEvents(r, input.AgentID, input.RunID),
+		Events:     events,
 	}
 	result, err := r.planStart(ctx, reg, planInput)
 	if err != nil {
-		return PlanActivityOutput{}, err
+		return nil, err
 	}
 	r.logger.Info(ctx, "PlanStartActivity returning PlanResult", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil, "await", result.Await != nil)
-	return PlanActivityOutput{Result: result}, nil
+	return &PlanActivityOutput{
+		Result:     result,
+		Transcript: events.exportTranscript(),
+	}, nil
 }
 
 // PlanResumeActivity executes the planner's PlanResume method.
@@ -53,24 +57,28 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input PlanActivityInput
 // This activity is registered with the workflow engine and invoked after tool
 // execution to produce the next plan. The activity creates an agent context
 // with memory access and delegates to the planner's PlanResume implementation.
-func (r *Runtime) PlanResumeActivity(ctx context.Context, input PlanActivityInput) (PlanActivityOutput, error) {
-	reg, agentCtx, err := r.plannerContext(ctx, input)
+func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
+	events := newPlannerEvents(r, input.AgentID, input.RunID)
+	reg, agentCtx, err := r.plannerContext(ctx, input, events)
 	if err != nil {
-		return PlanActivityOutput{}, err
+		return nil, err
 	}
 	planInput := &planner.PlanResumeInput{
 		Messages:    input.Messages,
 		RunContext:  input.RunContext,
 		Agent:       agentCtx,
-		Events:      newPlannerEvents(r, input.AgentID, input.RunID),
+		Events:      events,
 		ToolResults: input.ToolResults,
 		Finalize:    input.Finalize,
 	}
 	result, err := r.planResume(ctx, reg, planInput)
 	if err != nil {
-		return PlanActivityOutput{}, err
+		return nil, err
 	}
-	return PlanActivityOutput{Result: result}, nil
+	return &PlanActivityOutput{
+		Result:     result,
+		Transcript: events.exportTranscript(),
+	}, nil
 }
 
 // ExecuteToolActivity runs a tool invocation as a workflow activity.
@@ -89,6 +97,11 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	}
 	if req.ToolName == "" {
 		return nil, errors.New("tool name is required")
+	}
+	// Forbid agent-as-tool execution from activities. Agent-tools must execute inside
+	// the workflow thread so child workflows can be started legally.
+	if spec, ok := r.toolSpec(req.ToolName); ok && spec.IsAgentTool {
+		return nil, fmt.Errorf("agent-as-tool %q must run in workflow context", req.ToolName)
 	}
 	sName := req.ToolsetName
 	if sName == "" {
@@ -262,7 +275,7 @@ func buildRetryHintFromValidation(err error, toolName tools.Ident) ([]string, st
 }
 
 // planStart invokes the planner's PlanStart method with tracing.
-func (r *Runtime) planStart(ctx context.Context, reg AgentRegistration, input *planner.PlanInput) (*planner.PlanResult, error) {
+func (r *Runtime) planStart(ctx context.Context, reg *AgentRegistration, input *planner.PlanInput) (*planner.PlanResult, error) {
 	if reg.Planner == nil {
 		return nil, errors.New("planner not configured")
 	}
@@ -279,7 +292,7 @@ func (r *Runtime) planStart(ctx context.Context, reg AgentRegistration, input *p
 }
 
 // planResume invokes the planner's PlanResume method with tracing.
-func (r *Runtime) planResume(ctx context.Context, reg AgentRegistration, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+func (r *Runtime) planResume(ctx context.Context, reg *AgentRegistration, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
 	if reg.Planner == nil {
 		return nil, errors.New("planner not configured")
 	}
@@ -296,13 +309,13 @@ func (r *Runtime) planResume(ctx context.Context, reg AgentRegistration, input *
 }
 
 // plannerContext constructs the agent registration and context needed for planner execution.
-func (r *Runtime) plannerContext(ctx context.Context, input PlanActivityInput) (AgentRegistration, planner.PlannerContext, error) {
+func (r *Runtime) plannerContext(ctx context.Context, input *PlanActivityInput, events planner.PlannerEvents) (*AgentRegistration, planner.PlannerContext, error) {
 	if input.AgentID == "" {
-		return AgentRegistration{}, nil, errors.New("agent id is required")
+		return nil, nil, errors.New("agent id is required")
 	}
 	reg, ok := r.agentByID(input.AgentID)
 	if !ok {
-		return AgentRegistration{}, nil, fmt.Errorf("agent %q is not registered", input.AgentID)
+		return nil, nil, fmt.Errorf("agent %q is not registered", input.AgentID)
 	}
 	reader := r.memoryReader(ctx, input.AgentID, input.RunID)
 	agentCtx := newAgentContext(agentContextOptions{
@@ -311,8 +324,9 @@ func (r *Runtime) plannerContext(ctx context.Context, input PlanActivityInput) (
 		runID:   input.RunID,
 		memory:  reader,
 		turnID:  input.RunContext.TurnID,
+		events:  events,
 	})
-	return reg, agentCtx, nil
+	return &reg, agentCtx, nil
 }
 
 // marshalToolValue encodes a tool value using the registered codec or standard JSON.

@@ -7,13 +7,16 @@ import (
 	"text/template"
 
 	"github.com/stretchr/testify/require"
+	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
+// setupTestAgentWithPlanner creates a test runtime with an agent that uses the provided planner function.
+func setupTestAgentWithPlanner(plannerFn func(context.Context, *planner.PlanInput) (*planner.PlanResult, error)) (*Runtime, context.Context) {
 	rt := &Runtime{
 		agents:  make(map[string]AgentRegistration),
 		logger:  telemetry.NoopLogger{},
@@ -21,20 +24,41 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 		tracer:  telemetry.NoopTracer{},
 		Bus:     noopHooks{},
 	}
-	wf := &testWorkflowContext{ctx: context.Background()}
+	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
+	rt.agents["svc.agent"] = AgentRegistration{
+		ID:                  "svc.agent",
+		Planner:             &stubPlanner{start: plannerFn},
+		PlanActivityName:    "plan",
+		ResumeActivityName:  "resume",
+		ExecuteToolActivity: "execute",
+		Workflow:            engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }},
+	}
+	return rt, ctx
+}
 
+func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 	var got []*planner.AgentMessage
-	rt.agents["svc.agent"] = AgentRegistration{ID: "svc.agent", Planner: &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+	rt, ctx := setupTestAgentWithPlanner(func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		if input == nil {
-			return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, nil
+			return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 		}
 		got = append([]*planner.AgentMessage{}, input.Messages...)
-		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, nil
-	}}}
+		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
+	})
 
 	tmpl := template.Must(template.New("t").Parse("hello {{.x}}"))
-	cfg := AgentToolConfig{AgentID: "svc.agent", SystemPrompt: "sys", Templates: map[tools.Ident]*template.Template{"tool": tmpl}, Texts: map[tools.Ident]string{"tool": "fallback"}}
+	cfg := AgentToolConfig{
+		AgentID: "svc.agent",
+		Route: AgentRoute{
+			ID:               agent.Ident("svc.agent"),
+			WorkflowName:     "wf",
+			DefaultTaskQueue: "default",
+		},
+		SystemPrompt: "sys",
+		Templates:    map[tools.Ident]*template.Template{"tool": tmpl},
+		Texts:        map[tools.Ident]string{"tool": "fallback"},
+	}
 
 	exec := defaultAgentToolExecute(rt, cfg)
 	call := planner.ToolRequest{Name: tools.Ident("tool"), RunID: "run", Payload: map[string]string{"x": "world"}}
@@ -44,32 +68,38 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 	require.Equal(t, "ok", res.Result)
 	require.Len(t, got, 2)
 	require.Equal(t, "system", got[0].Role)
-	require.Equal(t, "sys", got[0].Content)
+	if tp, ok := got[0].Parts[0].(model.TextPart); ok {
+		require.Equal(t, "sys", tp.Text)
+	} else {
+		t.Fatalf("expected TextPart in system message, got %#v", got[0].Parts)
+	}
 	require.Equal(t, "user", got[1].Role)
-	require.Equal(t, "hello world", got[1].Content)
+	if tp, ok := got[1].Parts[0].(model.TextPart); ok {
+		require.Equal(t, "hello world", tp.Text)
+	} else {
+		t.Fatalf("expected TextPart in user message, got %#v", got[1].Parts)
+	}
 }
 
 func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
-	rt := &Runtime{
-		agents:  make(map[string]AgentRegistration),
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
-		Bus:     noopHooks{},
-	}
-	wf := &testWorkflowContext{ctx: context.Background()}
-	ctx := engine.WithWorkflowContext(context.Background(), wf)
-
 	var got []*planner.AgentMessage
-	rt.agents["svc.agent"] = AgentRegistration{ID: "svc.agent", Planner: &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+	rt, ctx := setupTestAgentWithPlanner(func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		if input == nil {
-			return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, nil
+			return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 		}
 		got = append([]*planner.AgentMessage{}, input.Messages...)
-		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, nil
-	}}}
+		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
+	})
 
-	cfg := AgentToolConfig{AgentID: "svc.agent", Texts: map[tools.Ident]string{"tool": "just text"}}
+	cfg := AgentToolConfig{
+		AgentID: "svc.agent",
+		Route: AgentRoute{
+			ID:               agent.Ident("svc.agent"),
+			WorkflowName:     "wf",
+			DefaultTaskQueue: "default",
+		},
+		Texts: map[tools.Ident]string{"tool": "just text"},
+	}
 	exec := defaultAgentToolExecute(rt, cfg)
 	call := planner.ToolRequest{Name: tools.Ident("tool"), RunID: "run"}
 	res, err := exec(ctx, &call)
@@ -78,28 +108,30 @@ func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
 	require.Equal(t, "ok", res.Result)
 	require.Len(t, got, 1)
 	require.Equal(t, "user", got[0].Role)
-	require.Equal(t, "just text", got[0].Content)
+	if tp, ok := got[0].Parts[0].(model.TextPart); ok {
+		require.Equal(t, "just text", tp.Text)
+	} else {
+		t.Fatalf("expected TextPart in user message, got %#v", got[0].Parts)
+	}
 }
 
 func TestDefaultAgentToolExecute_DefaultsWhenMissingContent(t *testing.T) {
-	rt := &Runtime{
-		agents:  make(map[string]AgentRegistration),
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
-		Bus:     noopHooks{},
-	}
-	wf := &testWorkflowContext{ctx: context.Background()}
-	ctx := engine.WithWorkflowContext(context.Background(), wf)
 	var seen []*planner.AgentMessage
-	rt.agents["svc.agent"] = AgentRegistration{ID: "svc.agent", Planner: &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+	rt, ctx := setupTestAgentWithPlanner(func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		if input == nil {
-			return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, nil
+			return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 		}
 		seen = append([]*planner.AgentMessage{}, input.Messages...)
-		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, nil
-	}}}
-	cfg := AgentToolConfig{AgentID: "svc.agent"}
+		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
+	})
+	cfg := AgentToolConfig{
+		AgentID: "svc.agent",
+		Route: AgentRoute{
+			ID:               agent.Ident("svc.agent"),
+			WorkflowName:     "wf",
+			DefaultTaskQueue: "default",
+		},
+	}
 	exec := defaultAgentToolExecute(rt, cfg)
 	call := planner.ToolRequest{Name: tools.Ident("tool"), RunID: "run"}
 	res, err := exec(ctx, &call)
@@ -108,5 +140,12 @@ func TestDefaultAgentToolExecute_DefaultsWhenMissingContent(t *testing.T) {
 	require.Equal(t, "ok", res.Result)
 	require.Len(t, seen, 1)
 	require.Equal(t, "user", seen[0].Role)
-	require.Empty(t, seen[0].Content)
+	// When no content provided, default should be empty text part
+	if len(seen[0].Parts) == 0 {
+		// ok
+	} else if tp, ok := seen[0].Parts[0].(model.TextPart); ok {
+		require.Empty(t, tp.Text)
+	} else {
+		t.Fatalf("expected empty or TextPart in user message, got %#v", seen[0].Parts)
+	}
 }

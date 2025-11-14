@@ -1,3 +1,8 @@
+// Package temporal implements the engine.Engine adapter backed by Temporal.
+// It registers workflows and activities, manages per-queue workers, starts
+// executions, and exposes workflow handles for waiting, signaling, and
+// cancellation. The adapter wires OpenTelemetry tracing/metrics and supports
+// lazy worker startup.
 package temporal
 
 import (
@@ -12,6 +17,7 @@ import (
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 )
@@ -234,7 +240,7 @@ func (e *Engine) RegisterWorkflow(_ context.Context, def engine.WorkflowDefiniti
 		return err
 	}
 
-	bundle.registerWorkflow(def.Name, func(tctx workflow.Context, input any) (any, error) {
+	bundle.registerWorkflow(def.Name, func(tctx workflow.Context, input *api.RunInput) (*api.RunOutput, error) {
 		wfCtx := newTemporalWorkflowContext(e, tctx)
 		defer e.releaseWorkflowContext(wfCtx.RunID())
 		return def.Handler(wfCtx, input)
@@ -249,53 +255,44 @@ func (e *Engine) RegisterWorkflow(_ context.Context, def engine.WorkflowDefiniti
 	return nil
 }
 
-// RegisterWorkflowTyped registers a strongly-typed workflow, allowing Temporal to decode
-// the input directly into *T.
-// (Typed workflow registration removed; use RegisterWorkflow.)
-
-// RegisterActivity registers an activity handler with the Temporal worker for
-// the specified task queue. The activity handler is wrapped to inject the workflow
-// context and telemetry context when available, enabling activities to access
-// workflow metadata and observability tools.
+// RegisterPlannerActivity registers a typed planner activity
+// (PlanStart/PlanResume) with the Temporal engine. It binds a Go function that
+// accepts *api.PlanActivityInput and returns *api.PlanActivityOutput to a
+// logical activity name for use in agent workflows.  The activity is registered
+// on the specified task queue (opts.Queue), falling back to the engine's
+// default queue if unspecified. Registered activities can be invoked from
+// workflows via ExecuteActivity using the provided name.
 //
-// The activity's Queue (from Options) determines which worker handles executions.
-// If empty, the engine's default queue is used. Activity-specific retry policies
-// and timeouts are stored for runtime use.
-//
-// Returns an error if the activity name is empty or if worker creation fails.
-// Registration must complete before the activity can be invoked from workflows.
+// Returns an error if the activity name is empty or if registration fails due to
+// worker configuration.
 //
 // Thread-safe: Safe to call concurrently with other Register* methods.
-func (e *Engine) RegisterActivity(_ context.Context, def engine.ActivityDefinition) error {
-	if def.Name == "" {
-		return fmt.Errorf("temporal engine: activity name cannot be empty")
+func (e *Engine) RegisterPlannerActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.PlanActivityInput) (*api.PlanActivityOutput, error)) error {
+	// Wrap to inject originating WorkflowContext into activity context so runtime code
+	// can start child workflows (agent-as-tool) with engine-owned context.
+	wrapped := func(ctx context.Context, in *api.PlanActivityInput) (*api.PlanActivityOutput, error) {
+		return fn(e.injectWorkflowContextIntoActivity(ctx), in)
 	}
-	queue := def.Options.Queue
-	if queue == "" {
-		queue = e.defaultQueue
-	}
-	bundle, err := e.workerForQueue(queue)
-	if err != nil {
-		return err
-	}
+	return e.registerActivityWithCtx(name, opts, wrapped)
+}
 
-	bundle.registerActivity(def.Name, func(actx context.Context, input any) (any, error) {
-		runID, wfCtx := e.lookupWorkflowContext(actx)
-		if wfCtx != nil {
-			actx = engine.WithWorkflowContext(actx, wfCtx)
-		} else if runID != "" {
-			e.logger.Warn(actx, "workflow context not found for activity", "run_id", runID, "activity", def.Name)
-		}
-		if base := e.workflowBaseContext(runID); base != nil {
-			actx = telemetry.MergeContext(actx, base)
-		}
-		return def.Handler(actx, input)
-	})
-
-	e.mu.Lock()
-	e.activityOptions[def.Name] = def.Options
-	e.mu.Unlock()
-	return nil
+// RegisterExecuteToolActivity registers a typed execute_tool activity with the
+// Temporal engine.  This method binds a Go function that accepts *api.ToolInput
+// and returns *api.ToolOutput to a logical activity name for use within agent
+// workflows. The activity is registered on the specified task queue
+// (opts.Queue), or falls back to the engine's default queue if unspecified.
+// Registered activities are accessible from workflows via ExecuteActivity using
+// the provided name.  Returns an error if the activity name is empty or
+// registration fails due to worker configuration.
+//
+// Thread-safe: Safe to call concurrently with other Register* methods.
+func (e *Engine) RegisterExecuteToolActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.ToolInput) (*api.ToolOutput, error)) error {
+	// Wrap to inject originating WorkflowContext into activity context so runtime code
+	// can start child workflows (agent-as-tool) with engine-owned context.
+	wrapped := func(ctx context.Context, in *api.ToolInput) (*api.ToolOutput, error) {
+		return fn(e.injectWorkflowContextIntoActivity(ctx), in)
+	}
+	return e.registerActivityWithCtx(name, opts, wrapped)
 }
 
 // StartWorkflow launches a new workflow execution on Temporal using the specified
@@ -390,6 +387,41 @@ func (e *Engine) Close() error {
 	return nil
 }
 
+// injectWorkflowContextIntoActivity attaches the originating WorkflowContext to the
+// activity context when available so runtime code can access engine-owned workflow
+// operations (e.g., starting child workflows for agent-as-tool).
+func (e *Engine) injectWorkflowContextIntoActivity(ctx context.Context) context.Context {
+	info := activity.GetInfo(ctx)
+	with := ctx
+	if v, ok := e.workflowContexts.Load(info.WorkflowExecution.RunID); ok {
+		if wf, ok2 := v.(engine.WorkflowContext); ok2 {
+			with = engine.WithWorkflowContext(ctx, wf)
+		}
+	}
+	return with
+}
+
+// registerActivityWithCtx registers an activity function on the appropriate queue,
+// records its options, and returns any worker configuration error.
+func (e *Engine) registerActivityWithCtx(name string, opts engine.ActivityOptions, fn any) error {
+	if name == "" {
+		return fmt.Errorf("temporal engine: activity name cannot be empty")
+	}
+	queue := opts.Queue
+	if queue == "" {
+		queue = e.defaultQueue
+	}
+	bundle, err := e.workerForQueue(queue)
+	if err != nil {
+		return err
+	}
+	bundle.registerActivity(name, fn)
+	e.mu.Lock()
+	e.activityOptions[name] = opts
+	e.mu.Unlock()
+	return nil
+}
+
 func (e *Engine) workerForQueue(queue string) (*workerBundle, error) {
 	if queue == "" {
 		queue = e.defaultQueue
@@ -429,6 +461,13 @@ func (e *Engine) workflowDefinition(name string) (engine.WorkflowDefinition, err
 	return def, nil
 }
 
+// TemporalClient exposes the underlying Temporal SDK client for read-only
+// operations such as workflow queries. Callers must not close or mutate the
+// client; lifecycle is owned by the engine.
+func (e *Engine) TemporalClient() client.Client {
+	return e.client
+}
+
 func (e *Engine) ensureWorkersStarted() {
 	e.mu.Lock()
 	if e.workersStarted {
@@ -459,20 +498,6 @@ func (e *Engine) releaseWorkflowContext(runID string) {
 	}
 	e.workflowContexts.Delete(runID)
 	e.baseContexts.Delete(runID)
-}
-
-func (e *Engine) lookupWorkflowContext(ctx context.Context) (string, engine.WorkflowContext) {
-	info := activity.GetInfo(ctx)
-	runID := info.WorkflowExecution.RunID
-	if runID == "" {
-		return "", nil
-	}
-	if wf, ok := e.workflowContexts.Load(runID); ok {
-		if typed, ok := wf.(engine.WorkflowContext); ok {
-			return runID, typed
-		}
-	}
-	return runID, nil
 }
 
 func (e *Engine) workflowBaseContext(runID string) context.Context {
@@ -610,8 +635,12 @@ type workflowHandle struct {
 	client client.Client
 }
 
-func (h *workflowHandle) Wait(ctx context.Context, result any) error {
-	return h.run.Get(ctx, result)
+func (h *workflowHandle) Wait(ctx context.Context) (*api.RunOutput, error) {
+	var out api.RunOutput
+	if err := h.run.Get(ctx, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 func (h *workflowHandle) Signal(ctx context.Context, name string, payload any) error {

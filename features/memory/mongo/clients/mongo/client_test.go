@@ -64,9 +64,9 @@ func TestAppendAndLoadRun(t *testing.T) {
 
 func TestAppendEventsRequiresIdentifiers(t *testing.T) {
 	client := mustNewTestClient()
-	err := client.AppendEvents(context.Background(), "", "run", []memory.Event{{Type: memory.EventAnnotation}})
+	err := client.AppendEvents(context.Background(), "", "run", []memory.Event{{Type: memory.EventPlannerNote}})
 	require.EqualError(t, err, "agent id is required")
-	err = client.AppendEvents(context.Background(), "agent", "", []memory.Event{{Type: memory.EventAnnotation}})
+	err = client.AppendEvents(context.Background(), "agent", "", []memory.Event{{Type: memory.EventPlannerNote}})
 	require.EqualError(t, err, "run id is required")
 }
 

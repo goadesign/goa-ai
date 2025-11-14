@@ -270,6 +270,16 @@ The workflow loop drains `goaai.runtime.pause` / `goaai.runtime.resume` signals 
 
 See `docs/plan.md` for a deep dive into generated structures, templates, and runtime packages.
 
+### Automatic thinking/event capture
+
+By default, planners no longer need to emit streaming events. The runtime decorates the per‑turn `model.Client` returned by `AgentContext.ModelClient(id)` so:
+
+- Streaming Recv() calls automatically publish assistant text and thinking blocks to the runtime bus and append them to the per‑turn provider ledger.
+- Unary Complete() emits assistant text and usage once at the end.
+- The Bedrock client validates message ordering when thinking is enabled (assistant messages with tool_use must start with thinking) and fails fast with a precise error instead of a provider 400.
+
+This means planners only pass new messages (system/user/tool_result) and the `RunID`; rehydration of prior provider‑ready messages is handled by the runtime via a Temporal workflow query wired into the Bedrock adapter.
+
 ## Agent Toolsets vs MCP (Cross‑Service Tools)
 
 Agent‑as‑Tool and external toolsets follow a simple rule: decode at the executor, never in the planner/transport.

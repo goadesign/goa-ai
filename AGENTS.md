@@ -32,6 +32,12 @@
 - Aim for coverage on: tools, resources, prompts, initialization, and errors.
 - Useful env vars: `TEST_FILTER`, `TEST_DEBUG`, `TEST_KEEP_GENERATED`, `TEST_SERVER_URL` (see `integration_tests/README.md`).
 
+### Unit Test Assertions
+- Prefer `t.Errorf` over `t.Fatalf` so the test reports multiple failures where
+  safe. Reserve `t.Fatalf` for cases where continuing would panic or
+  meaningfully corrupt subsequent assertions (e.g., required setup failed and
+  state is unusable).
+
 ## Commit & Pull Requests
 - Commits: imperative and scoped (e.g., “Refactor adapter stream bridge”, “Fix tools/list schema”).
 - PRs must include: summary, rationale, linked issues, and test evidence (unit or integration). Add before/after notes for generator output when relevant.
@@ -356,3 +362,12 @@ Content rules:
 - You may configure per-tool text or templates. If neither is provided, the runtime builds a sensible default: optional SystemPrompt as a system message, followed by a user message constructed from the tool payload (string payloads are used as-is; structured payloads are JSON-encoded). You can override the default builder by supplying `WithPromptBuilder`.
 - Do not set both text and template for the same tool.
 - Templates are compiled with missingkey=error; use `runtime.ValidateAgentToolTemplates` for early checks (validation applies only to the templates you provide).
+
+### Agent-as-Tool
+
+- Use child workflows by default. Codegen emits Route and Inline=true; runtime
+  executes via `ExecuteAgentChildWithRoute` inside the workflow loop.
+- Do not schedule ExecuteTool activities for agent-as-tool. Service toolsets
+  continue to run as activities with ActivityOptions.
+- Provider agents must run a worker on their workflow queue. Consumers only need
+  to `RegisterToolset(reg)`. See architecture docs for rationale and flows.

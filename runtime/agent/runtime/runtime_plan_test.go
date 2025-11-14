@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -25,7 +26,7 @@ func TestRunPlanActivityUsesOptions(t *testing.T) {
 		hasPlanResult: true,
 		planResult: &planner.PlanResult{
 			FinalResponse: &planner.FinalResponse{
-				Message: planner.AgentMessage{Role: "assistant", Content: "ok"},
+				Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}},
 			},
 		},
 	}
@@ -49,13 +50,13 @@ func TestPlanStartActivityInvokesPlanner(t *testing.T) {
 		require.NotNil(t, input)
 		require.Equal(t, run.Context{RunID: "run-123"}, input.RunContext)
 		require.Len(t, input.Messages, 1)
-		require.Equal(t, "hello", input.Messages[0].Content)
+		require.Equal(t, "hello", agentMessageText(input.Messages[0]))
 		require.NotNil(t, input.Agent)
-		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "ok"}}}, nil
+		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
-	input := PlanActivityInput{AgentID: "service.agent", RunID: "run-123", Messages: []*planner.AgentMessage{{Role: "user", Content: "hello"}}, RunContext: run.Context{RunID: "run-123"}}
-	out, err := rt.PlanStartActivity(context.Background(), input)
+	input := PlanActivityInput{AgentID: "service.agent", RunID: "run-123", Messages: []*planner.AgentMessage{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hello"}}}}, RunContext: run.Context{RunID: "run-123"}}
+	out, err := rt.PlanStartActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.True(t, called)
 	require.NotNil(t, out.Result.FinalResponse)
@@ -73,7 +74,7 @@ func TestPlanResumeActivityPassesToolResults(t *testing.T) {
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
 	input := PlanActivityInput{AgentID: "service.agent", RunID: "run-123", RunContext: run.Context{RunID: "run-123", Attempt: 3}, ToolResults: toolResults}
-	out, err := rt.PlanResumeActivity(context.Background(), input)
+	out, err := rt.PlanResumeActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.True(t, called)
 	require.Len(t, out.Result.ToolCalls, 1)

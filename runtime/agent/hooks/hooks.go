@@ -94,6 +94,10 @@ const (
 	// categorization.
 	PlannerNote EventType = "planner_note"
 
+	// ThinkingBlock fires when the planner emits a structured thinking block
+	// (signed plaintext or redacted bytes). Payload is a ThinkingBlockEvent.
+	ThinkingBlock EventType = "thinking_block"
+
 	// AssistantMessage fires when a final assistant response is produced,
 	// indicating the workflow is completing with a user-facing message. The
 	// Payload contains the message content and any structured output.

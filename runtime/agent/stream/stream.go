@@ -159,9 +159,16 @@ type (
 	}
 
 	// PlannerThoughtPayload is the typed wire payload for planner thought events.
-	// It mirrors PlannerThought.Note for consumers decoding Base.Payload().
+	// Back-compat: Note carries legacy text-only thoughts. When the planner emits
+	// structured thinking blocks, Text/Signature or Redacted are populated with
+	// ContentIndex and Final flags mirroring provider content blocks.
 	PlannerThoughtPayload struct {
-		Note string `json:"note"`
+		Note         string `json:"note,omitempty"`
+		Text         string `json:"text,omitempty"`
+		Signature    string `json:"signature,omitempty"`
+		Redacted     []byte `json:"redacted,omitempty"`
+		ContentIndex int    `json:"content_index,omitempty"`
+		Final        bool   `json:"final,omitempty"`
 	}
 
 	// AwaitClarification streams a human clarification request from the planner/runtime.

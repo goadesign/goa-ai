@@ -40,7 +40,7 @@ func TestClientComplete(t *testing.T) {
 	}
 
 	resp, err := client.Complete(context.Background(), model.Request{
-		Messages: []*model.Message{{Role: "user", Content: "ping"}},
+		Messages: []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "ping"}}}},
 		Tools: []*model.ToolDefinition{{
 			Name:        "lookup",
 			Description: "Search",
@@ -48,7 +48,16 @@ func TestClientComplete(t *testing.T) {
 		}},
 	})
 	require.NoError(t, err)
-	require.Equal(t, "hi there", resp.Content[0].Content)
+	require.Len(t, resp.Content, 1)
+	// Extract text from parts
+	found := false
+	for _, p := range resp.Content[0].Parts {
+		if tp, ok := p.(model.TextPart); ok && tp.Text == "hi there" {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "expected hi there text part")
 	require.Equal(t, tools.Ident("lookup"), resp.ToolCalls[0].Name)
 	require.Equal(t, "docs", resp.ToolCalls[0].Payload.(map[string]any)["query"])
 	require.Equal(t, "stop", resp.StopReason)

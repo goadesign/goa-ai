@@ -68,7 +68,20 @@ func (c *Client) Complete(ctx context.Context, req model.Request) (model.Respons
 		if m == nil {
 			continue
 		}
-		messages = append(messages, openai.ChatCompletionMessage{Role: m.Role, Content: m.Content})
+		// Join only text parts for OpenAI; ignore tool_result parts.
+		var text string
+		for _, p := range m.Parts {
+			if tp, ok := p.(model.TextPart); ok && tp.Text != "" {
+				text += tp.Text
+			}
+		}
+		// If JSON-only requested, prepend a strict instruction.
+		if req.ResponseFormat != nil {
+			if req.ResponseFormat.JSONSchema != nil || req.ResponseFormat.JSONOnly {
+				text = "Return only a single valid JSON value with no extra text.\n" + text
+			}
+		}
+		messages = append(messages, openai.ChatCompletionMessage{Role: string(m.Role), Content: text})
 	}
 	tools, err := encodeTools(req.Tools)
 	if err != nil {
@@ -80,6 +93,27 @@ func (c *Client) Complete(ctx context.Context, req model.Request) (model.Respons
 		Temperature: req.Temperature,
 		MaxTokens:   req.MaxTokens,
 		Tools:       tools,
+	}
+	// Map ResponseFormat to OpenAI JSON mode when requested.
+	if rf := req.ResponseFormat; rf != nil {
+		if len(rf.JSONSchema) > 0 {
+			name := rf.SchemaName
+			if name == "" {
+				name = "result"
+			}
+			request.ResponseFormat = &openai.ChatCompletionResponseFormat{
+				Type: openai.ChatCompletionResponseFormatTypeJSONSchema,
+				JSONSchema: &openai.ChatCompletionResponseFormatJSONSchema{
+					Name:   name,
+					Schema: rf.JSONSchema,
+					Strict: true,
+				},
+			}
+		} else if rf.JSONOnly {
+			request.ResponseFormat = &openai.ChatCompletionResponseFormat{
+				Type: openai.ChatCompletionResponseFormatTypeJSONObject,
+			}
+		}
 	}
 	response, err := c.chat.CreateChatCompletion(ctx, request)
 	if err != nil {
@@ -125,7 +159,7 @@ func translateResponse(resp openai.ChatCompletionResponse) model.Response {
 	for _, choice := range resp.Choices {
 		msg := choice.Message
 		if msg.Content != "" {
-			messages = append(messages, model.Message{Role: msg.Role, Content: msg.Content})
+			messages = append(messages, model.Message{Role: model.ConversationRole(msg.Role), Parts: []model.Part{model.TextPart{Text: msg.Content}}})
 		}
 		for _, call := range msg.ToolCalls {
 			payload := parseToolArguments(call.Function.Arguments)

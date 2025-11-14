@@ -34,12 +34,12 @@ type captureProvider struct {
 
 func (p *captureProvider) Complete(_ context.Context, req model.Request) (model.Response, error) {
 	p.lastReq.Store(req)
-	return model.Response{Content: []model.Message{{Role: "assistant", Content: "ok"}}}, nil
+	return model.Response{Content: []model.Message{{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 }
 func (p *captureProvider) Stream(_ context.Context, req model.Request) (model.Streamer, error) {
 	p.lastReq.Store(req)
 	return &seqStreamer{chunks: []model.Chunk{
-		{Type: model.ChunkTypeText, Message: &model.Message{Role: "assistant", Content: "hello"}},
+		{Type: model.ChunkTypeText, Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "hello"}}}},
 		{Type: model.ChunkTypeToolCall, ToolCall: &model.ToolCall{Name: "emit_tool", Payload: map[string]any{"k": "v"}}},
 		{Type: model.ChunkTypeUsage, UsageDelta: &model.TokenUsage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3}},
 		{Type: model.ChunkTypeStop, StopReason: "stop_sequence"},
@@ -96,11 +96,21 @@ func TestE2E_UnaryComplete_WithMiddleware(t *testing.T) {
 	client := NewRemoteClient(completeFn, streamFn)
 
 	// call complete
-	resp, err := client.Complete(context.Background(), model.Request{Model: "m", Messages: []*model.Message{{Role: "user", Content: "hi"}}})
+	resp, err := client.Complete(context.Background(), model.Request{Model: "m", Messages: []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hi"}}}}})
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	if len(resp.Content) == 0 || resp.Content[0].Content != "ok" {
+	if len(resp.Content) == 0 {
+		t.Fatalf("unexpected response: %#v", resp)
+	}
+	// Expect first message to contain a single text part "ok"
+	ok := false
+	if len(resp.Content[0].Parts) > 0 {
+		if tp, ok2 := resp.Content[0].Parts[0].(model.TextPart); ok2 && tp.Text == "ok" {
+			ok = true
+		}
+	}
+	if !ok {
 		t.Fatalf("unexpected response: %#v", resp)
 	}
 	if atomic.LoadInt32(&unaryCount) != 1 {
@@ -137,7 +147,7 @@ func TestE2E_Stream_WithMiddleware(t *testing.T) {
 	}
 	client := NewRemoteClient(nil, streamFn)
 
-	st, err := client.Stream(context.Background(), model.Request{Model: "m", Messages: []*model.Message{{Role: "user", Content: "hi"}}})
+	st, err := client.Stream(context.Background(), model.Request{Model: "m", Messages: []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hi"}}}}})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
 	}

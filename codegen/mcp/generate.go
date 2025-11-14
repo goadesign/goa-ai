@@ -4,6 +4,7 @@ package codegen
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	mcpexpr "goa.design/goa-ai/expr/mcp"
@@ -14,6 +15,69 @@ import (
 	httpcodegen "goa.design/goa/v3/http/codegen"
 	jsonrpccodegen "goa.design/goa/v3/jsonrpc/codegen"
 )
+
+// joinImportPathMCP constructs a full import path by joining the generation package
+// base path with a relative path. It handles trailing "/gen" suffixes correctly.
+func joinImportPathMCP(genpkg, rel string) string {
+	if rel == "" {
+		return ""
+	}
+	base := strings.TrimSuffix(genpkg, "/")
+	for strings.HasSuffix(base, "/gen") {
+		base = strings.TrimSuffix(base, "/gen")
+	}
+	return filepath.ToSlash(filepath.Join(base, "gen", rel))
+}
+
+// gatherAttributeImportsMCP collects import specifications for external user types
+// and meta-type imports referenced by the given attribute expression.
+func gatherAttributeImportsMCP(genpkg string, att *expr.AttributeExpr) []*codegen.ImportSpec {
+	uniq := make(map[string]*codegen.ImportSpec)
+	var visit func(*expr.AttributeExpr)
+	visit = func(a *expr.AttributeExpr) {
+		if a == nil {
+			return
+		}
+		for _, im := range codegen.GetMetaTypeImports(a) {
+			if im != nil && im.Path != "" {
+				uniq[im.Path] = im
+			}
+		}
+		switch dt := a.Type.(type) {
+		case expr.UserType:
+			if loc := codegen.UserTypeLocation(dt); loc != nil && loc.RelImportPath != "" {
+				imp := &codegen.ImportSpec{Name: loc.PackageName(), Path: joinImportPathMCP(genpkg, loc.RelImportPath)}
+				uniq[imp.Path] = imp
+			}
+			visit(dt.Attribute())
+		case *expr.Array:
+			visit(dt.ElemType)
+		case *expr.Map:
+			visit(dt.KeyType)
+			visit(dt.ElemType)
+		case *expr.Object:
+			for _, nat := range *dt {
+				visit(nat.Attribute)
+			}
+		case expr.CompositeExpr:
+			visit(dt.Attribute())
+		}
+	}
+	visit(att)
+	if len(uniq) == 0 {
+		return nil
+	}
+	paths := make([]string, 0, len(uniq))
+	for p := range uniq {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	imports := make([]*codegen.ImportSpec, 0, len(paths))
+	for _, p := range paths {
+		imports = append(imports, uniq[p])
+	}
+	return imports
+}
 
 const headerSection = "source-header"
 const exampleMCPStubSection = "example-mcp-stub"
@@ -434,6 +498,47 @@ func generateMCPTransport(genpkg string, svc *expr.ServiceExpr, mcp *mcpexpr.MCP
 		{Path: "goa.design/goa-ai/runtime/mcp", Name: "mcpruntime"},
 		{Path: "goa.design/goa/v3/http", Name: "goahttp"},
 		{Path: "goa.design/goa/v3/pkg", Name: "goa"},
+	}
+	// Include external user type imports referenced by method payloads/results.
+	existing := make(map[string]struct{}, len(adapterImports))
+	for _, im := range adapterImports {
+		if im != nil && im.Path != "" {
+			existing[im.Path] = struct{}{}
+		}
+	}
+	extra := make(map[string]*codegen.ImportSpec)
+	for _, m := range svc.Methods {
+		if m == nil {
+			continue
+		}
+		if m.Payload != nil {
+			for _, im := range gatherAttributeImportsMCP(genpkg, m.Payload) {
+				if im != nil && im.Path != "" {
+					extra[im.Path] = im
+				}
+			}
+		}
+		if m.Result != nil {
+			for _, im := range gatherAttributeImportsMCP(genpkg, m.Result) {
+				if im != nil && im.Path != "" {
+					extra[im.Path] = im
+				}
+			}
+		}
+	}
+	if len(extra) > 0 {
+		// Deterministic order
+		paths := make([]string, 0, len(extra))
+		for p := range extra {
+			if _, ok := existing[p]; ok {
+				continue
+			}
+			paths = append(paths, p)
+		}
+		sort.Strings(paths)
+		for _, p := range paths {
+			adapterImports = append(adapterImports, extra[p])
+		}
 	}
 	files = append(files, &codegen.File{
 		Path: adapterPath,

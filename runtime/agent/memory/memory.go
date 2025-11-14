@@ -107,7 +107,8 @@ const (
 	// steps emitted during plan generation.
 	EventPlannerNote EventType = "planner_note"
 
-	// EventAnnotation records arbitrary annotations injected by policy engines,
-	// hooks, or external systems for observability or debugging.
-	EventAnnotation EventType = "annotation"
+	// EventThinking records provider-issued reasoning blocks (plaintext+signature or
+	// redacted bytes). These reconstruct as the head of assistant messages that
+	// contain tool_use when thinking mode is enabled.
+	EventThinking EventType = "thinking"
 )

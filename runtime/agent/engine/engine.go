@@ -8,7 +8,7 @@ import (
 	"context"
 	"time"
 
-	"goa.design/goa-ai/runtime/agent/telemetry"
+	"goa.design/goa-ai/runtime/agent/api"
 )
 
 type (
@@ -16,14 +16,16 @@ type (
 	// in-memory, or custom) can be swapped without touching generated code.
 	// Implementations translate these generic types into backend-specific primitives.
 	Engine interface {
-		// RegisterWorkflow registers a workflow definition with the engine (untyped).
+		// RegisterWorkflow registers a workflow definition with the engine.
 		RegisterWorkflow(ctx context.Context, def WorkflowDefinition) error
 
-		// RegisterActivity registers an activity definition with the engine. Activities
-		// are short-lived tasks invoked from workflows. This must be called during
-		// initialization before starting workers. Returns an error if the activity
-		// name conflicts or registration fails.
-		RegisterActivity(ctx context.Context, def ActivityDefinition) error
+		// RegisterPlannerActivity registers a typed planner activity (PlanStart or
+		// PlanResume) that accepts *api.PlanActivityInput and returns *api.PlanActivityOutput.
+		RegisterPlannerActivity(ctx context.Context, name string, opts ActivityOptions, fn func(context.Context, *api.PlanActivityInput) (*api.PlanActivityOutput, error)) error
+
+		// RegisterExecuteToolActivity registers a typed execute_tool activity that
+		// accepts *api.ToolInput and returns *api.ToolOutput.
+		RegisterExecuteToolActivity(ctx context.Context, name string, opts ActivityOptions, fn func(context.Context, *api.ToolInput) (*api.ToolOutput, error)) error
 
 		// StartWorkflow initiates a new workflow execution and returns a handle for
 		// interacting with it. The workflow ID in req must be unique for the engine
@@ -43,8 +45,7 @@ type (
 		SignalByID(ctx context.Context, workflowID, runID, name string, payload any) error
 	}
 
-	// WorkflowDefinition binds a workflow handler to a logical name and default queue
-	// (untyped). Prefer WorkflowDefinitionTyped for production engines.
+	// WorkflowDefinition binds a workflow handler to a logical name and default queue.
 	WorkflowDefinition struct {
 		// Name is the logical identifier registered with the engine (e.g., "AgentWorkflow").
 		Name string
@@ -56,9 +57,9 @@ type (
 	}
 
 	// WorkflowFunc is the generated workflow entry point. It receives a WorkflowContext
-	// and arbitrary input, returning a result or error. The function must be deterministic:
-	// it should produce the same execution sequence given the same inputs and activity results.
-	WorkflowFunc func(ctx WorkflowContext, input any) (any, error)
+	// and a typed RunInput, returning a typed RunOutput. Implementations must be
+	// deterministic with respect to activity results.
+	WorkflowFunc func(ctx WorkflowContext, input *api.RunInput) (*api.RunOutput, error)
 
 	// WorkflowContext exposes engine operations to workflow handlers within the
 	// deterministic execution environment of a workflow. It wraps engine-specific
@@ -83,6 +84,11 @@ type (
 		// (like Temporal), this is a special replay-aware context. Use this for activity
 		// execution and cancellation propagation.
 		Context() context.Context
+		// SetQueryHandler registers a read-only query handler that can be invoked by
+		// external clients to retrieve workflow state. Handlers must be deterministic
+		// and side-effect free. Engines that do not support queries may implement
+		// this as a no-op.
+		SetQueryHandler(name string, handler any) error
 
 		// WorkflowID returns the unique identifier for this workflow execution.
 		WorkflowID() string
@@ -107,18 +113,15 @@ type (
 		// inputs, etc.) delivered via the workflow engine's signaling mechanism.
 		SignalChannel(name string) SignalChannel
 
-		// Logger returns a logger scoped to this workflow execution.
-		Logger() telemetry.Logger
-
-		// Metrics returns a metrics recorder for emitting workflow-scoped metrics.
-		Metrics() telemetry.Metrics
-
-		// Tracer returns a tracer for creating spans within the workflow.
-		Tracer() telemetry.Tracer
-
 		// Now returns the current workflow time in a deterministic manner. Implementations
 		// must return a time source that is replay-safe (e.g., Temporal's workflow.Now).
 		Now() time.Time
+
+		// StartChildWorkflow starts a child workflow execution and returns a handle
+		// to await its completion or cancel it. Implementations should honor the
+		// provided workflow name, task queue and timeouts without requiring local
+		// registration lookups in the parent process.
+		StartChildWorkflow(ctx context.Context, req ChildWorkflowRequest) (ChildWorkflowHandle, error)
 	}
 
 	// Future represents a pending activity result that will become available after
@@ -143,22 +146,6 @@ type (
 		// will not block. This allows workflows to poll or implement custom waiting strategies.
 		IsReady() bool
 	}
-
-	// ActivityDefinition registers an activity handler with optional defaults.
-	// Activities are stateless, short-lived tasks invoked from workflows.
-	ActivityDefinition struct {
-		// Name is the logical identifier for the activity (e.g., "ExecuteToolActivity").
-		Name string
-		// Handler executes the activity logic when invoked.
-		Handler ActivityFunc
-		// Options configures retry/timeout behavior for the activity.
-		Options ActivityOptions
-	}
-
-	// ActivityFunc handles an activity invocation. It receives a standard Go context
-	// and arbitrary input, returning a result or error. Unlike workflows, activities
-	// can perform side effects (I/O, API calls, database access).
-	ActivityFunc func(ctx context.Context, input any) (any, error)
 
 	// ActivityOptions configures retry and timeouts for an activity.
 	ActivityOptions struct {
@@ -185,8 +172,8 @@ type (
 		// TaskQueue selects the queue to schedule the workflow on. Workers listening
 		// on this queue will pick up the workflow.
 		TaskQueue string
-		// Input is the payload passed to the workflow handler (e.g., RunInput).
-		Input any
+		// Input is the typed payload passed to the workflow handler.
+		Input *api.RunInput
 		// RunTimeout bounds the total workflow execution time at the engine level.
 		// Zero means use the engine default (if any). Engines may map this to their
 		// native execution timeout/TTL (Temporal: WorkflowRunTimeout/ExecutionTimeout).
@@ -205,15 +192,15 @@ type (
 	// ActivityRequest contains the info needed to schedule an activity from a workflow.
 	// Workflows construct these when calling ExecuteActivity.
 	ActivityRequest struct {
-		// Name identifies the activity to execute (must match a registered ActivityDefinition).
+		// Name identifies the activity to execute (must match a registered name).
 		Name string
 		// Input is the payload passed to the activity handler.
 		Input any
 		// Queue optionally overrides the queue for this invocation. If empty, inherits
-		// from the activity definition or workflow queue.
+		// from the activity registration or workflow queue.
 		Queue string
 		// RetryPolicy controls retry behavior for the scheduled activity. If zero-valued,
-		// uses the policy from the activity definition.
+		// uses the policy from the activity registration.
 		RetryPolicy RetryPolicy
 		// Timeout bounds the activity execution time. Zero means no timeout.
 		Timeout time.Duration
@@ -223,10 +210,9 @@ type (
 	// by Engine.StartWorkflow, it provides methods to wait for completion, send
 	// signals, or cancel execution.
 	WorkflowHandle interface {
-		// Wait blocks until the workflow completes, populating result with the workflow's
-		// return value. Returns an error if the workflow fails, is cancelled, or if
-		// deserialization of the result fails.
-		Wait(ctx context.Context, result any) error
+		// Wait blocks until the workflow completes and returns the typed result.
+		// Returns an error if the workflow fails or is cancelled.
+		Wait(ctx context.Context) (*api.RunOutput, error)
 
 		// Signal sends an asynchronous message to the workflow. The workflow can listen
 		// for signals using engine-specific APIs. Returns an error if the signal cannot
@@ -264,5 +250,32 @@ type (
 		// ReceiveAsync attempts to receive a signal without blocking. It returns true
 		// when a value was written into dest, or false if no signal was available.
 		ReceiveAsync(dest any) bool
+	}
+
+	// ChildWorkflowRequest describes a child workflow to start from within an
+	// existing workflow execution.
+	ChildWorkflowRequest struct {
+		// ID is the child workflow identifier, unique within the engine scope.
+		ID string
+		// Workflow is the provider workflow name to execute.
+		Workflow string
+		// TaskQueue is the queue to schedule the child on.
+		TaskQueue string
+		// Input is the payload passed to the child workflow handler.
+		Input *api.RunInput
+		// RunTimeout bounds the total child workflow execution time.
+		RunTimeout time.Duration
+		// RetryPolicy controls start retries for the child workflow start attempt.
+		RetryPolicy RetryPolicy
+	}
+
+	// ChildWorkflowHandle allows a parent workflow to await/cancel a child workflow.
+	ChildWorkflowHandle interface {
+		// Get waits for child completion and returns the typed result.
+		Get(ctx context.Context) (*api.RunOutput, error)
+		// Cancel requests cancellation of the child workflow execution.
+		Cancel(ctx context.Context) error
+		// RunID returns the engine-assigned run identifier of the child.
+		RunID() string
 	}
 )

@@ -1,4 +1,3 @@
-//nolint:lll // allow long lines in test literals for readability
 package runtime
 
 import (
@@ -8,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -32,7 +32,7 @@ func TestPolicyAllowlistTrimsToolExecution(t *testing.T) {
 			}, nil
 		}}}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{"allowed": newAnyJSONSpec("allowed", "svc.tools"), "blocked": newAnyJSONSpec("blocked", "svc.tools")}
-	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: "done"}}}, hasPlanResult: true}
+	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "done"}}}}}, hasPlanResult: true}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("allowed")}, {Name: tools.Ident("blocked")}}}
@@ -41,7 +41,7 @@ func TestPolicyAllowlistTrimsToolExecution(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, policy.CapsState{MaxToolCalls: 5, RemainingToolCalls: 5}, time.Time{}, 2, &turnSequencer{turnID: "turn-1"}, nil, nil, 0)
+	}, input, base, initial, nil, policy.CapsState{MaxToolCalls: 5, RemainingToolCalls: 5}, time.Time{}, 2, &turnSequencer{turnID: "turn-1"}, nil, nil, 0)
 	require.NoError(t, err)
 	require.Len(t, out.ToolEvents, 1)
 	require.Equal(t, tools.Ident("allowed"), out.ToolEvents[0].Name)

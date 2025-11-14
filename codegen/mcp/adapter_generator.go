@@ -153,6 +153,7 @@ type (
 		originalService *expr.ServiceExpr
 		mcp             *mcpexpr.MCPExpr
 		mapping         *ServiceMethodMapping
+		scope           *codegen.NameScope
 	}
 )
 
@@ -168,6 +169,7 @@ func newAdapterGenerator(
 		originalService: svc,
 		mcp:             mcp,
 		mapping:         mapping,
+		scope:           codegen.NewNameScope(),
 	}
 }
 
@@ -559,16 +561,14 @@ func (g *adapterGenerator) buildStaticPrompts() []*StaticPromptAdapter {
 
 // getTypeReference returns a Go type reference for an attribute
 func (g *adapterGenerator) getTypeReference(attr *expr.AttributeExpr) string {
-	// Use Goa's built-in scope for proper type references
-	scope := codegen.NewNameScope()
-	svcName := codegen.SnakeCase(g.originalService.Name)
-
-	// Check if it's a user type that needs package qualification
-	if _, ok := attr.Type.(expr.UserType); ok {
-		// For user types, use GoFullTypeRef with package qualification
-		return scope.GoFullTypeRef(attr, svcName)
+	// Service package alias used in adapter imports.
+	svcAlias := codegen.SnakeCase(g.originalService.Name)
+	// External user types should be qualified with their locator package alias.
+	if ut, ok := attr.Type.(expr.UserType); ok && ut != nil {
+		if loc := codegen.UserTypeLocation(ut); loc != nil && loc.PackageName() != "" {
+			return g.scope.GoFullTypeRef(attr, loc.PackageName())
+		}
 	}
-
-	// For other types, use GoTypeRef which handles pointers correctly
-	return scope.GoTypeRef(attr)
+	// For composites and service-local user types, qualify nested refs with service alias.
+	return g.scope.GoFullTypeRef(attr, svcAlias)
 }

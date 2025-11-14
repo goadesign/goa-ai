@@ -6,24 +6,67 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 
-	"reflect"
-
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/telemetry"
+)
+
+type (
+	eng struct {
+		mu         sync.RWMutex
+		workflows  map[string]engine.WorkflowDefinition
+		activities map[string]inmemActivity
+	}
+
+	childHandle struct {
+		h engine.WorkflowHandle
+	}
+
+	handle struct {
+		mu     sync.Mutex
+		done   chan struct{}
+		err    error
+		result *api.RunOutput
+		wfCtx  *wfCtx
+	}
+
+	wfCtx struct {
+		ctx     context.Context
+		id      string
+		runID   string
+		logger  telemetry.Logger
+		metrics telemetry.Metrics
+		tracer  telemetry.Tracer
+		eng     *eng
+
+		sigMu *sync.Mutex
+		sigs  map[string]*signalChan
+	}
+
+	future struct {
+		mu     sync.Mutex
+		ready  chan struct{}
+		result any
+		err    error
+	}
+
+	signalChan struct{ ch chan any }
+
+	inmemActivity struct {
+		handler func(context.Context, any) (any, error)
+		opts    engine.ActivityOptions
+	}
 )
 
 // New returns a new in-memory Engine implementation suitable for local
 // development, tests, and simple single-process runs. It is not deterministic
 // or replay-safe and should not be used for production workloads.
-func New() engine.Engine { return &eng{} }
-
-type eng struct {
-	mu         sync.RWMutex
-	workflows  map[string]engine.WorkflowDefinition
-	activities map[string]engine.ActivityDefinition
+func New() engine.Engine {
+	return &eng{}
 }
 
 func (e *eng) RegisterWorkflow(ctx context.Context, def engine.WorkflowDefinition) error {
@@ -42,20 +85,42 @@ func (e *eng) RegisterWorkflow(ctx context.Context, def engine.WorkflowDefinitio
 	return nil
 }
 
-func (e *eng) RegisterActivity(ctx context.Context, def engine.ActivityDefinition) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.activities == nil {
-		e.activities = make(map[string]engine.ActivityDefinition)
+// RegisterPlannerActivity registers a typed planner activity (PlanStart/PlanResume).
+func (e *eng) RegisterPlannerActivity(ctx context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.PlanActivityInput) (*api.PlanActivityOutput, error)) error {
+	if name == "" || fn == nil {
+		return errors.New("invalid planner activity definition")
 	}
-	if _, dup := e.activities[def.Name]; dup {
-		return fmt.Errorf("activity %q already registered", def.Name)
+	return e.registerActivity(ctx, name, func(c context.Context, input any) (any, error) {
+		in, _ := input.(*api.PlanActivityInput)
+		if in == nil {
+			if v, ok := input.(api.PlanActivityInput); ok {
+				in = &v
+			}
+		}
+		if in == nil {
+			return nil, errors.New("invalid planner activity input")
+		}
+		return fn(c, in)
+	}, opts)
+}
+
+// RegisterExecuteToolActivity registers a typed execute_tool activity.
+func (e *eng) RegisterExecuteToolActivity(ctx context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.ToolInput) (*api.ToolOutput, error)) error {
+	if name == "" || fn == nil {
+		return errors.New("invalid execute tool activity definition")
 	}
-	if def.Handler == nil || def.Name == "" {
-		return errors.New("invalid activity definition")
-	}
-	e.activities[def.Name] = def
-	return nil
+	return e.registerActivity(ctx, name, func(c context.Context, input any) (any, error) {
+		in, _ := input.(*api.ToolInput)
+		if in == nil {
+			if v, ok := input.(api.ToolInput); ok {
+				in = &v
+			}
+		}
+		if in == nil {
+			return nil, errors.New("invalid tool activity input")
+		}
+		return fn(c, in)
+	}, opts)
 }
 
 func (e *eng) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest) (engine.WorkflowHandle, error) {
@@ -95,23 +160,52 @@ func (e *eng) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest
 	return h, nil
 }
 
-type handle struct {
-	mu     sync.Mutex
-	done   chan struct{}
-	err    error
-	result any
-	wfCtx  *wfCtx
+func (e *eng) registerActivity(_ context.Context, name string, handler func(context.Context, any) (any, error), opts engine.ActivityOptions) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.activities == nil {
+		e.activities = make(map[string]inmemActivity)
+	}
+	if _, dup := e.activities[name]; dup {
+		return fmt.Errorf("activity %q already registered", name)
+	}
+	if handler == nil || name == "" {
+		return errors.New("invalid activity definition")
+	}
+	e.activities[name] = inmemActivity{handler: handler, opts: opts}
+	return nil
 }
 
-func (h *handle) Wait(ctx context.Context, result any) error {
+// StartChildWorkflow starts a new in-memory workflow using the engine and returns an adapter handle.
+func (w *wfCtx) StartChildWorkflow(ctx context.Context, req engine.ChildWorkflowRequest) (engine.ChildWorkflowHandle, error) {
+	h, err := w.eng.StartWorkflow(ctx, engine.WorkflowStartRequest{
+		ID:          req.ID,
+		Workflow:    req.Workflow,
+		TaskQueue:   req.TaskQueue,
+		Input:       req.Input,
+		RunTimeout:  req.RunTimeout,
+		RetryPolicy: req.RetryPolicy,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &childHandle{h: h}, nil
+}
+
+func (c *childHandle) Get(ctx context.Context) (*api.RunOutput, error) {
+	return c.h.Wait(ctx)
+}
+func (c *childHandle) Cancel(ctx context.Context) error { return c.h.Cancel(ctx) }
+func (c *childHandle) RunID() string                    { return "" }
+
+func (h *handle) Wait(ctx context.Context) (*api.RunOutput, error) {
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return nil, ctx.Err()
 	case <-h.done:
 		h.mu.Lock()
 		defer h.mu.Unlock()
-		assignResult(result, h.result)
-		return h.err
+		return h.result, h.err
 	}
 }
 
@@ -133,19 +227,6 @@ func (h *handle) Cancel(ctx context.Context) error {
 	return nil
 }
 
-type wfCtx struct {
-	ctx     context.Context
-	id      string
-	runID   string
-	logger  telemetry.Logger
-	metrics telemetry.Metrics
-	tracer  telemetry.Tracer
-	eng     *eng
-
-	sigMu *sync.Mutex
-	sigs  map[string]*signalChan
-}
-
 func (w *wfCtx) Context() context.Context   { return w.ctx }
 func (w *wfCtx) WorkflowID() string         { return w.id }
 func (w *wfCtx) RunID() string              { return w.runID }
@@ -153,6 +234,9 @@ func (w *wfCtx) Logger() telemetry.Logger   { return w.logger }
 func (w *wfCtx) Metrics() telemetry.Metrics { return w.metrics }
 func (w *wfCtx) Tracer() telemetry.Tracer   { return w.tracer }
 func (w *wfCtx) Now() time.Time             { return time.Now() }
+
+// SetQueryHandler is a no-op for the in-memory engine.
+func (w *wfCtx) SetQueryHandler(name string, handler any) error { return nil }
 
 func (w *wfCtx) ExecuteActivity(ctx context.Context, req engine.ActivityRequest, result any) error {
 	fut, err := w.ExecuteActivityAsync(ctx, req)
@@ -172,20 +256,13 @@ func (w *wfCtx) ExecuteActivityAsync(ctx context.Context, req engine.ActivityReq
 	f := &future{ready: make(chan struct{})}
 	go func() {
 		defer close(f.ready)
-		res, err := def.Handler(ctx, req.Input)
+		res, err := def.handler(ctx, req.Input)
 		f.mu.Lock()
 		f.result = res
 		f.err = err
 		f.mu.Unlock()
 	}()
 	return f, nil
-}
-
-type future struct {
-	mu     sync.Mutex
-	ready  chan struct{}
-	result any
-	err    error
 }
 
 func (f *future) Get(ctx context.Context, result any) error {
@@ -208,8 +285,6 @@ func (f *future) IsReady() bool {
 		return false
 	}
 }
-
-type signalChan struct{ ch chan any }
 
 func (s *signalChan) Receive(ctx context.Context, dest any) error {
 	select {

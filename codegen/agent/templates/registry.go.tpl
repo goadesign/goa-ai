@@ -37,27 +37,8 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
         Workflow: engine.WorkflowDefinition{
             Name:      {{ printf "%q" .Runtime.Workflow.Name }},
             TaskQueue: {{ printf "%q" .Runtime.Workflow.Queue }},
-            Handler:   agentsruntime.WorkflowHandler(rt),
+            Handler:   rt.ExecuteWorkflow,
         },
-{{- if .Runtime.Activities }}
-        Activities: []engine.ActivityDefinition{
-{{- range .Runtime.Activities }}
-            {
-                Name: {{ printf "%q" .Name }},
-{{- if eq .Kind "plan" }}
-                Handler: agentsruntime.PlanStartActivityHandler(rt),
-{{- else if eq .Kind "resume" }}
-                Handler: agentsruntime.PlanResumeActivityHandler(rt),
-{{- else if eq .Kind "execute_tool" }}
-                Handler: agentsruntime.ExecuteToolActivityHandler(rt),
-{{- else }}
-                Handler: func(context.Context, any) (any, error) { return nil, errors.New("activity not implemented") },
-{{- end }}
-                Options: {{ template "activityOptionsLiteral" . }},
-            },
-{{- end }}
-        },
-{{- end }}
 {{- if .Runtime.PlanActivity }}
         PlanActivityName: {{ printf "%q" .Runtime.PlanActivity.Name }},
         PlanActivityOptions: {{ template "activityOptionsLiteral" .Runtime.PlanActivity }},
@@ -68,6 +49,7 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
 {{- end }}
 {{- if .Runtime.ExecuteTool }}
         ExecuteToolActivity: {{ printf "%q" .Runtime.ExecuteTool.Name }},
+        ExecuteToolActivityOptions: {{ template "activityOptionsLiteral" .Runtime.ExecuteTool }},
 {{- end }}
         {{- if .Tools }}
         Specs: {{ .ToolSpecsPackage }}.Specs,

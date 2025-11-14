@@ -74,11 +74,11 @@ type (
 		// Format: typically "turn-1", "turn-2", etc. within a session.
 		TurnID string
 
-		// ToolID identifies the fully-qualified tool name when this run is a nested
+		// Tool identifies the fully-qualified tool name when this run is a nested
 		// agent-as-tool execution. For top-level runs (not invoked via a parent tool),
-		// ToolID is empty. Planners may use this to select method-specific prompts.
+		// Tool is empty. Planners may use this to select method-specific prompts.
 		// Format: "<service>.<toolset>.<tool>".
-		ToolID tools.Ident
+		Tool tools.Ident
 
 		// ToolArgs carries the original JSON arguments for the parent tool when this run
 		// is an agent-as-tool execution. Nil for top-level runs. Nested agent planners

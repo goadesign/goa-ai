@@ -10,6 +10,75 @@ import (
 	goaexpr "goa.design/goa/v3/expr"
 )
 
+// rewriteNestedLocalUserTypes walks the attribute and replaces service-local user
+// types (types without an explicit struct:pkg:path locator) with local user types
+// that use the same public type names. This ensures that transforms targeting
+// specs-local aliases reference the emitted helper types (e.g., App, AppInput)
+// instead of inventing new names.
+func rewriteNestedLocalUserTypes(att *goaexpr.AttributeExpr) *goaexpr.AttributeExpr {
+	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+		return att
+	}
+	switch dt := att.Type.(type) {
+	case goaexpr.UserType:
+		// Preserve external locators; rewrite only service-local user types.
+		if loc := codegen.UserTypeLocation(dt); loc != nil && loc.RelImportPath != "" {
+			// Recurse into attribute to update children.
+			return &goaexpr.AttributeExpr{Type: dt}
+		}
+		// Compute the local public name from the user type.
+		name := ""
+		var base *goaexpr.AttributeExpr
+		switch u := dt.(type) {
+		case *goaexpr.UserTypeExpr:
+			name = u.TypeName
+			base = u.Attribute()
+		case *goaexpr.ResultTypeExpr:
+			name = u.TypeName
+			base = u.Attribute()
+		default:
+			return att
+		}
+		// Recurse into the underlying attribute, do not propagate struct:pkg:path.
+		var dup goaexpr.AttributeExpr
+		if base != nil {
+			dup = *base
+			if dup.Meta != nil {
+				delete(dup.Meta, "struct:pkg:path")
+			}
+		}
+		return &goaexpr.AttributeExpr{Type: &goaexpr.UserTypeExpr{
+			AttributeExpr: rewriteNestedLocalUserTypes(&dup),
+			TypeName:      name,
+		}}
+	case *goaexpr.Array:
+		return &goaexpr.AttributeExpr{Type: &goaexpr.Array{ElemType: rewriteNestedLocalUserTypes(dt.ElemType)}}
+	case *goaexpr.Map:
+		return &goaexpr.AttributeExpr{Type: &goaexpr.Map{
+			KeyType:  rewriteNestedLocalUserTypes(dt.KeyType),
+			ElemType: rewriteNestedLocalUserTypes(dt.ElemType),
+		}}
+	case *goaexpr.Object:
+		obj := &goaexpr.Object{}
+		for _, nat := range *dt {
+			var dup *goaexpr.AttributeExpr
+			if nat.Attribute != nil {
+				dup = rewriteNestedLocalUserTypes(nat.Attribute)
+			}
+			*obj = append(*obj, &goaexpr.NamedAttributeExpr{
+				Name:      nat.Name,
+				Attribute: dup,
+			})
+		}
+		return &goaexpr.AttributeExpr{Type: obj, Description: att.Description, Docs: att.Docs, Validation: att.Validation}
+	case *goaexpr.Union:
+		// Leave unions unchanged.
+		return att
+	default:
+		return att
+	}
+}
+
 type toolSpecFileData struct {
 	PackageName string
 	Tools       []*toolEntry
@@ -382,11 +451,14 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 			}
 			// Init<GoName>ToolResult: service method result -> tool result (specs)
 			if toolResult != nil && t.Return != nil && t.Return.Type != goaexpr.Empty && t.MethodResultAttr != nil && t.MethodResultAttr.Type != goaexpr.Empty {
+				// Use the SERVICE method result shape as the base target shape so that
+				// nested user types map to local specs aliases (e.g., App, AtlasDeviceBrief),
+				// not the chat tool’s bespoke types.
 				var baseAttr *goaexpr.AttributeExpr
-				if ut, ok := t.Return.Type.(goaexpr.UserType); ok && ut != nil {
+				if ut, ok := t.MethodResultAttr.Type.(goaexpr.UserType); ok && ut != nil {
 					baseAttr = ut.Attribute()
 				} else {
-					baseAttr = t.Return
+					baseAttr = t.MethodResultAttr
 				}
 				// Only when shapes are compatible.
 				if err := codegen.IsCompatible(t.MethodResultAttr.Type, baseAttr.Type, "in", "out"); err == nil {
@@ -408,7 +480,40 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 					if dupRes.Meta != nil {
 						delete(dupRes.Meta, "struct:pkg:path")
 					}
-					targetUT := &goaexpr.UserTypeExpr{AttributeExpr: &dupRes, TypeName: toolResult.TypeName}
+					// Seed the NameScope with desired names for service-local nested user types
+					// so transform helpers use the emitted local alias names
+					var seedLocalNames func(a *goaexpr.AttributeExpr)
+					seedLocalNames = func(a *goaexpr.AttributeExpr) {
+						if a == nil || a.Type == nil || a.Type == goaexpr.Empty {
+							return
+						}
+						switch dt := a.Type.(type) {
+						case goaexpr.UserType:
+							if loc := codegen.UserTypeLocation(dt); loc == nil {
+								// Determine public name from the user type expression.
+								switch u := dt.(type) {
+								case *goaexpr.UserTypeExpr:
+									_ = scope.HashedUnique(dt, codegen.Goify(u.TypeName, true), "")
+								case *goaexpr.ResultTypeExpr:
+									_ = scope.HashedUnique(dt, codegen.Goify(u.TypeName, true), "")
+								}
+							}
+							seedLocalNames(dt.Attribute())
+						case *goaexpr.Array:
+							seedLocalNames(dt.ElemType)
+						case *goaexpr.Map:
+							seedLocalNames(dt.KeyType)
+							seedLocalNames(dt.ElemType)
+						case *goaexpr.Object:
+							for _, nat := range *dt {
+								seedLocalNames(nat.Attribute)
+							}
+						}
+					}
+					seedLocalNames(&dupRes)
+					// Rewrite nested service-local user types to reference local specs aliases.
+					rewritten := rewriteNestedLocalUserTypes(&dupRes)
+					targetUT := &goaexpr.UserTypeExpr{AttributeExpr: rewritten, TypeName: toolResult.TypeName}
 					targetAttr := &goaexpr.AttributeExpr{Type: targetUT}
 					// Target (tool result) should be a value type in specs; do not request pointer semantics here.
 					tgtCtx := codegen.NewAttributeContextForConversion(false, false, false, specsAlias, scope)

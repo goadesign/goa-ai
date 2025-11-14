@@ -186,6 +186,23 @@ type (
 		Labels map[string]string
 	}
 
+	// ThinkingBlockEvent fires when the planner emits a structured reasoning block
+	// (either signed plaintext or redacted bytes). This preserves provider-accurate
+	// thinking suitable for exact replay and auditing.
+	ThinkingBlockEvent struct {
+		baseEvent
+		// Text is the plaintext reasoning content when provided by the model.
+		Text string
+		// Signature is the provider signature for plaintext reasoning (when required).
+		Signature string
+		// Redacted contains provider-issued redacted reasoning bytes (mutually exclusive with Text).
+		Redacted []byte
+		// ContentIndex is the provider content block index.
+		ContentIndex int
+		// Final indicates that the reasoning block was finalized by the provider.
+		Final bool
+	}
+
 	// AssistantMessageEvent fires when a final assistant response is produced,
 	// indicating the workflow is completing with a user-facing message.
 	AssistantMessageEvent struct {
@@ -531,6 +548,28 @@ func NewPlannerNoteEvent(runID, agentID, note string, labels map[string]string) 
 	}
 }
 
+// NewThinkingBlockEvent constructs a ThinkingBlockEvent with structured reasoning fields.
+func NewThinkingBlockEvent(
+	runID, agentID string,
+	text, signature string,
+	redacted []byte,
+	contentIndex int,
+	final bool,
+) *ThinkingBlockEvent {
+	var rb []byte
+	if len(redacted) > 0 {
+		rb = append([]byte(nil), redacted...)
+	}
+	return &ThinkingBlockEvent{
+		baseEvent:    newBaseEvent(runID, agentID),
+		Text:         text,
+		Signature:    signature,
+		Redacted:     rb,
+		ContentIndex: contentIndex,
+		Final:        final,
+	}
+}
+
 // NewAssistantMessageEvent constructs an AssistantMessageEvent. Structured
 // may be nil if only a text message is provided.
 func NewAssistantMessageEvent(runID, agentID, message string, structured any) *AssistantMessageEvent {
@@ -603,6 +642,7 @@ func (e *ToolResultReceivedEvent) Type() EventType { return ToolResultReceived }
 func (e *ToolCallUpdatedEvent) Type() EventType    { return ToolCallUpdated }
 func (e *PlannerNoteEvent) Type() EventType        { return PlannerNote }
 func (e *AssistantMessageEvent) Type() EventType   { return AssistantMessage }
+func (e *ThinkingBlockEvent) Type() EventType      { return ThinkingBlock }
 func (e *RetryHintIssuedEvent) Type() EventType    { return RetryHintIssued }
 func (e *MemoryAppendedEvent) Type() EventType     { return MemoryAppended }
 func (e *PolicyDecisionEvent) Type() EventType     { return PolicyDecision }

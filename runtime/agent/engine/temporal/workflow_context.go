@@ -7,6 +7,7 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 )
@@ -64,6 +65,10 @@ func (w *temporalWorkflowContext) Context() context.Context {
 	ctx = context.WithValue(ctx, workflowIDKey, w.workflowID)
 	ctx = context.WithValue(ctx, runIDKey, w.runID)
 	return ctx
+}
+
+func (w *temporalWorkflowContext) SetQueryHandler(name string, handler any) error {
+	return workflow.SetQueryHandler(w.ctx, name, handler)
 }
 
 func (w *temporalWorkflowContext) WorkflowID() string {
@@ -139,6 +144,48 @@ func (w *temporalWorkflowContext) activityOptionsFor(req engine.ActivityRequest)
 		TaskQueue:           queue,
 		RetryPolicy:         convertRetryPolicy(retry),
 	}
+}
+
+// StartChildWorkflow starts a Temporal child workflow using explicit workflow
+// name and task queue without requiring parent-side registration lookups.
+func (w *temporalWorkflowContext) StartChildWorkflow(ctx context.Context, req engine.ChildWorkflowRequest) (engine.ChildWorkflowHandle, error) {
+	opts := workflow.ChildWorkflowOptions{
+		WorkflowID:         req.ID,
+		TaskQueue:          req.TaskQueue,
+		WorkflowRunTimeout: req.RunTimeout,
+		RetryPolicy:        convertRetryPolicy(req.RetryPolicy),
+	}
+	cctx := workflow.WithChildOptions(w.ctx, opts)
+	cctx, cancel := workflow.WithCancel(cctx)
+	fut := workflow.ExecuteChildWorkflow(cctx, req.Workflow, req.Input)
+	return &temporalChildHandle{future: fut, ctx: cctx, cancel: cancel}, nil
+}
+
+type temporalChildHandle struct {
+	future workflow.ChildWorkflowFuture
+	ctx    workflow.Context
+	runID  string
+	cancel workflow.CancelFunc
+}
+
+func (h *temporalChildHandle) Get(_ context.Context) (*api.RunOutput, error) {
+	var out api.RunOutput
+	if err := h.future.Get(h.ctx, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (h *temporalChildHandle) Cancel(_ context.Context) error {
+	if h.cancel != nil {
+		h.cancel()
+	}
+	return nil
+}
+
+func (h *temporalChildHandle) RunID() string {
+	// Best-effort: not all SDKs expose child run ID synchronously; return cached value if set.
+	return h.runID
 }
 
 type temporalFuture struct {

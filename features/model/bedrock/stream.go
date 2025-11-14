@@ -55,9 +55,8 @@ func (s *bedrockStreamer) Recv() (model.Chunk, error) {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return model.Chunk{}, err
 			}
-			if err != nil {
-				return model.Chunk{}, err
-			}
+			s.setErr(err)
+			return model.Chunk{}, err
 		}
 		return model.Chunk{}, io.EOF
 	case <-s.ctx.Done():
@@ -159,6 +158,8 @@ type chunkProcessor struct {
 	recordUsage func(model.TokenUsage)
 
 	toolBlocks map[int]*toolBuffer
+	// reasoningBlocks accumulates reasoning content per content index until stop.
+	reasoningBlocks map[int]*reasoningBuffer
 }
 
 func newChunkProcessor(emit func(model.Chunk) error, recordUsage func(model.TokenUsage)) *chunkProcessor {
@@ -166,6 +167,7 @@ func newChunkProcessor(emit func(model.Chunk) error, recordUsage func(model.Toke
 		emit:        emit,
 		recordUsage: recordUsage,
 		toolBlocks:  make(map[int]*toolBuffer),
+		reasoningBlocks: make(map[int]*reasoningBuffer),
 	}
 }
 
@@ -204,19 +206,52 @@ func (p *chunkProcessor) Handle(event any) error {
 				return nil
 			}
 			return p.emit(model.Chunk{
-				Type:    model.ChunkTypeText,
-				Message: &model.Message{Role: "assistant", Content: delta.Value, Meta: map[string]any{"content_index": idx}},
+				Type: model.ChunkTypeText,
+				Message: &model.Message{
+					Role:  "assistant",
+					Parts: []model.Part{model.TextPart{Text: delta.Value}},
+					Meta:  map[string]any{"content_index": idx},
+				},
 			})
 		case *brtypes.ContentBlockDeltaMemberReasoningContent:
-			if textDelta, ok := delta.Value.(*brtypes.ReasoningContentBlockDeltaMemberText); ok {
-				if textDelta.Value == "" {
+			// Initialize/lookup buffer for this content index.
+			rb := p.reasoningBlocks[idx]
+			if rb == nil {
+				rb = &reasoningBuffer{}
+				p.reasoningBlocks[idx] = rb
+			}
+			// Capture reasoning deltas (text, redacted bytes, signature).
+			switch v := delta.Value.(type) {
+			case *brtypes.ReasoningContentBlockDeltaMemberText:
+				if v.Value == "" {
 					return nil
 				}
+				rb.text.WriteString(v.Value)
+				// Stream incremental thinking text for UX; final part is emitted on stop.
 				return p.emit(model.Chunk{
 					Type:     model.ChunkTypeThinking,
-					Thinking: textDelta.Value,
-					Message:  &model.Message{Role: "assistant", Content: textDelta.Value, Meta: map[string]any{"content_index": idx}},
+					Thinking: v.Value,
+					Message: &model.Message{
+						Role:  "assistant",
+						Parts: []model.Part{model.ThinkingPart{
+							Text:  v.Value,
+							Index: idx,
+							Final: false,
+						}},
+					},
 				})
+			case *brtypes.ReasoningContentBlockDeltaMemberRedactedContent:
+				if len(v.Value) > 0 {
+					rb.redacted = append(rb.redacted, v.Value...)
+				}
+				return nil
+			case *brtypes.ReasoningContentBlockDeltaMemberSignature:
+				if v.Value != "" {
+					rb.signature = v.Value
+				}
+				return nil
+			default:
+				return nil
 			}
 		case *brtypes.ContentBlockDeltaMemberToolUse:
 			if tb := p.toolBlocks[idx]; tb != nil && delta.Value.Input != nil {
@@ -229,12 +264,48 @@ func (p *chunkProcessor) Handle(event any) error {
 		if err != nil {
 			return err
 		}
+		// Finalize any reasoning block accumulated for this index.
+		if rb := p.reasoningBlocks[idx]; rb != nil {
+			delete(p.reasoningBlocks, idx)
+			if part := rb.finalize(); part != nil {
+				part.Index = idx
+				part.Final = true
+				if part.Text != "" {
+					// Emit final plaintext thinking with signature preserved.
+					if err := p.emit(model.Chunk{
+						Type:     model.ChunkTypeThinking,
+						Thinking: part.Text,
+						Message: &model.Message{
+							Role:  "assistant",
+							Parts: []model.Part{*part},
+						},
+					}); err != nil {
+						return err
+					}
+				} else if len(part.Redacted) > 0 {
+					// Emit final redacted thinking.
+					if err := p.emit(model.Chunk{
+						Type: model.ChunkTypeThinking,
+						Message: &model.Message{
+							Role:  "assistant",
+							Parts: []model.Part{*part},
+						},
+					}); err != nil {
+						return err
+					}
+				}
+			}
+		}
 		if tb := p.toolBlocks[idx]; tb != nil {
 			payload := decodeToolPayload(tb.finalInput())
 			delete(p.toolBlocks, idx)
 			return p.emit(model.Chunk{
-				Type:     model.ChunkTypeToolCall,
-				ToolCall: &model.ToolCall{Name: tools.Ident(tb.name), Payload: payload},
+				Type: model.ChunkTypeToolCall,
+				ToolCall: &model.ToolCall{
+					Name:    tools.Ident(tb.name),
+					Payload: payload,
+					ID:      tb.id,
+				},
 			})
 		}
 		return nil
@@ -244,6 +315,7 @@ func (p *chunkProcessor) Handle(event any) error {
 			chunk.StopReason = string(ev.Value.StopReason)
 		}
 		p.toolBlocks = make(map[int]*toolBuffer)
+		p.reasoningBlocks = make(map[int]*reasoningBuffer)
 		return p.emit(chunk)
 	case *brtypes.ConverseStreamOutputMemberMetadata:
 		if ev.Value.Usage == nil {
@@ -310,4 +382,24 @@ func normalizeToolName(name string) string {
 		return strings.TrimPrefix(name, "$FUNCTIONS.")
 	}
 	return name
+}
+
+type reasoningBuffer struct {
+	text      strings.Builder
+	redacted  []byte
+	signature string
+}
+
+func (rb *reasoningBuffer) finalize() *model.ThinkingPart {
+	// Prefer redacted variant when present.
+	if len(rb.redacted) > 0 {
+		return &model.ThinkingPart{Redacted: append([]byte(nil), rb.redacted...)}
+	}
+	if s := rb.text.String(); s != "" && rb.signature != "" {
+		return &model.ThinkingPart{
+			Text:      s,
+			Signature: rb.signature,
+		}
+	}
+	return nil
 }
