@@ -14,7 +14,7 @@ import (
 
 // Tool IDs for this toolset.
 const (
-	Add tools.Ident = "add"
+	Add tools.Ident = "math.add"
 )
 
 var Specs = []tools.ToolSpec{

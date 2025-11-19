@@ -74,6 +74,78 @@ func TestClientComplete(t *testing.T) {
 	require.JSONEq(t, `{"type":"object"}`, string(params))
 }
 
+func TestClientCompleteWithToolChoiceTool(t *testing.T) {
+	mock := &mockChatClient{}
+	client, err := openaimodel.New(openaimodel.Options{
+		Client:       mock,
+		DefaultModel: "gpt-4o",
+	})
+	require.NoError(t, err)
+
+	mock.response = openai.ChatCompletionResponse{}
+
+	_, err = client.Complete(context.Background(), model.Request{
+		Messages: []*model.Message{
+			{
+				Role:  model.ConversationRoleUser,
+				Parts: []model.Part{model.TextPart{Text: "ping"}},
+			},
+		},
+		Tools: []*model.ToolDefinition{
+			{
+				Name:        "lookup",
+				Description: "Search",
+				InputSchema: map[string]any{"type": "object"},
+			},
+		},
+		ToolChoice: &model.ToolChoice{
+			Mode: model.ToolChoiceModeTool,
+			Name: "lookup",
+		},
+	})
+	require.NoError(t, err)
+
+	req := mock.captured
+	tc, ok := req.ToolChoice.(openai.ToolChoice)
+	require.True(t, ok, "expected ToolChoice object")
+	require.Equal(t, openai.ToolTypeFunction, tc.Type)
+	require.Equal(t, "lookup", tc.Function.Name)
+}
+
+func TestClientCompleteWithToolChoiceNone(t *testing.T) {
+	mock := &mockChatClient{}
+	client, err := openaimodel.New(openaimodel.Options{
+		Client:       mock,
+		DefaultModel: "gpt-4o",
+	})
+	require.NoError(t, err)
+
+	mock.response = openai.ChatCompletionResponse{}
+
+	_, err = client.Complete(context.Background(), model.Request{
+		Messages: []*model.Message{
+			{
+				Role:  model.ConversationRoleUser,
+				Parts: []model.Part{model.TextPart{Text: "ping"}},
+			},
+		},
+		Tools: []*model.ToolDefinition{
+			{
+				Name:        "lookup",
+				Description: "Search",
+				InputSchema: map[string]any{"type": "object"},
+			},
+		},
+		ToolChoice: &model.ToolChoice{
+			Mode: model.ToolChoiceModeNone,
+		},
+	})
+	require.NoError(t, err)
+
+	req := mock.captured
+	require.Equal(t, "none", req.ToolChoice)
+}
+
 func TestClientRequiresDefaultModel(t *testing.T) {
 	_, err := openaimodel.New(openaimodel.Options{Client: &mockChatClient{}})
 	require.Error(t, err)

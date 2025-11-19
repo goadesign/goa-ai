@@ -24,7 +24,7 @@ func main() {
     }
 
     client := chat.NewClient(rt)
-    handle, err := client.Start(context.Background(), []planner.AgentMessage{{Role: "user", Content: "Summarize the latest status."}},
+    handle, err := client.Start(context.Background(), []model.Message{{Role: "user", Content: "Summarize the latest status."}},
         runtime.WithSessionID("session-1"),
         runtime.WithMemo(map[string]any{"workflow_name": "ChatWorkflow", "session_id": "session-1"}),
         runtime.WithSearchAttributes(map[string]any{"SessionID": "session-1"}),
@@ -447,37 +447,148 @@ Each module is optional; services import the ones they need and pass the resulti
 
 ## Model Clients & Streaming
 
-- Register model providers (Bedrock, OpenAI, custom) by calling `rt.RegisterModel("provider-id", client)` before registering agents. Generated agent config structs expose a `Models` map so planners can select the desired client per turn.
-- `model.Client` now exposes `Complete` (unary) and `Stream`. Set `model.Request.Stream = true` (and optionally `ThinkingOptions`) when planners want Bedrock-style streaming; call `Client.Stream` to receive incremental `model.Chunk`s (text/tool_call/thinking/usage/stop). Callers must drain the returned `model.Streamer` (loop on `Recv` until `io.EOF`) and invoke `Close` when finished.
-- Bedrock adapter translates ConverseStream events into chunk types and automatically injects the beta thinking header when `ThinkingOptions.Enable` is true and tools remain available. OpenAI currently reports `model.ErrStreamingUnsupported`, so planners should fall back to `Complete` until streaming support lands.
-- Streaming chunks flow through the runtime hook bus the same way unary responses do: the capture sink publishes partial assistant replies, tool-call updates emit `tool_call_scheduled`/`tool_result_received`, and Pulse subscribers can surface progress to clients without custom glue.
-- Streaming planners use the read-only `planner.PlannerContext` for data access and a separate `planner.PlannerEvents` for emitting assistant chunks, planner thoughts, and usage deltas.
-- Use `planner.ConsumeStream(ctx, streamer, events)` to drain provider streamers, emit events via `PlannerEvents`, and obtain a `StreamSummary` (final text + requested tool calls + usage) that can be converted into a `PlanResult`.
+- Register model providers (Bedrock, OpenAI, custom) by calling
+  `rt.RegisterModel("provider-id", client)` before registering agents. Generated
+  agent config structs expose a `Models` map so planners can select the desired
+  client per turn.
+- `model.Client` exposes `Complete` (unary) and `Stream`. Set
+  `model.Request.Stream = true` (and optionally `ThinkingOptions`) when planners
+  want Bedrock-style streaming; call `Client.Stream` to receive incremental
+  `model.Chunk`s (text/tool_call/thinking/usage/stop). Callers must drain the
+  returned `model.Streamer` (loop on `Recv` until `io.EOF`) and invoke `Close`
+  when finished.
+- Bedrock adapter translates ConverseStream events into chunk types and
+  automatically injects the beta thinking header when `ThinkingOptions.Enable`
+  is true and tools remain available. OpenAI currently reports
+  `model.ErrStreamingUnsupported`, so planners should fall back to `Complete`
+  until streaming support lands.
+- Streaming chunks flow through the runtime hook bus the same way unary
+  responses do: the capture sink publishes partial assistant replies, tool-call
+  updates emit `tool_call_scheduled`/`tool_result_received`, and Pulse
+  subscribers can surface progress to clients without custom glue.
+- Streaming planners use the read-only `planner.PlannerContext` for data access
+  and a separate `planner.PlannerEvents` for emitting assistant chunks, planner
+  thoughts, and usage deltas.
 
-Example (streaming planner):
+### Streaming planners: choose one emission path
 
-```go
-func (p *MyPlanner) PlanResume(ctx context.Context, input planner.PlanResumeInput) (*planner.PlanResult, error) {
-    m, ok := input.Agent.ModelClient("bedrock")
-    if !ok {
-        return nil, errors.New("model not configured")
-    }
-    req := model.Request{ /* system, messages, tools */ }
-    req.Stream = true
-    s, err := m.Stream(ctx, req)
-    if err != nil {
-        return nil, err
-    }
-    sum, err := planner.ConsumeStream(ctx, s, input.Events)
-    if err != nil {
-        return nil, err
-    }
-    if len(sum.ToolCalls) > 0 {
-        return &planner.PlanResult{ToolCalls: sum.ToolCalls}, nil
-    }
-    return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: sum.Text}}}, nil
-}
-```
+The runtime can surface model chunks to `PlannerEvents` in two ways. It is
+critical to choose **exactly one** per stream to avoid double-emitting events.
+
+1. **Runtime-decorated client (recommended)**  
+   `PlannerContext.ModelClient(id)` returns a `model.Client` wrapped with an
+   event decorator. The decorator emits `AssistantChunk`, `PlannerThinkingBlock`
+   and `UsageDelta` every time you call `Recv()` on the returned `Streamer`.
+
+   In this mode, planners should **drain the stream manually**:
+
+   ```go
+   func (p *MyPlanner) PlanResume(
+       ctx context.Context,
+       input *planner.PlanResumeInput,
+   ) (*planner.PlanResult, error) {
+       mc, ok := input.Agent.ModelClient("bedrock")
+       if !ok || mc == nil {
+           return nil, errors.New("model not configured")
+       }
+       req := model.Request{
+           RunID:      input.RunContext.RunID,
+           ModelClass: model.ModelClassHighReasoning,
+           Messages:   input.Messages,
+           Stream:     true,
+       }
+       st, err := mc.Stream(ctx, req)
+       if err != nil {
+           return nil, err
+       }
+       defer st.Close()
+
+       var calls []planner.ToolRequest
+       var out strings.Builder
+       for {
+           chunk, rerr := st.Recv()
+           if rerr != nil {
+               if errors.Is(rerr, io.EOF) {
+                   break
+               }
+               return nil, rerr
+           }
+           switch chunk.Type {
+           case model.ChunkTypeToolCall:
+               if chunk.ToolCall != nil {
+                   calls = append(calls, planner.ToolRequest{
+                       Name:       chunk.ToolCall.Name,
+                       Payload:    chunk.ToolCall.Payload,
+                       ToolCallID: chunk.ToolCall.ID,
+                   })
+               }
+           case model.ChunkTypeText:
+               if chunk.Message != nil {
+                   for _, p := range chunk.Message.Parts {
+                       if tp, ok := p.(model.TextPart); ok && tp.Text != "" {
+                           out.WriteString(tp.Text)
+                       }
+                   }
+               }
+           case model.ChunkTypeThinking:
+               // No-op: event wrapper already emitted thinking events.
+           }
+       }
+       if len(calls) > 0 {
+           return &planner.PlanResult{ToolCalls: calls}, nil
+       }
+       return &planner.PlanResult{
+           FinalResponse: &planner.FinalResponse{
+               Message: &model.Message{
+                   Role:  model.ConversationRoleAssistant,
+                   Parts: []model.Part{model.TextPart{Text: out.String()}},
+               },
+           },
+           Streamed: true,
+       }, nil
+   }
+   ```
+
+   > **Important:** In this pattern, **do not call `planner.ConsumeStream`**.
+   > The event-decorated client already emits all `PlannerEvents` on `Recv()`.
+
+2. **`planner.ConsumeStream` (raw-client mode)**  
+   When you have a **raw** `model.Client` (not wrapped with the runtime event
+   decorator) and want a helper that both emits events and aggregates a
+   `StreamSummary`, you can use `planner.ConsumeStream`:
+
+   ```go
+   raw, ok := runtimeModelClient("bedrock") // implementation-specific
+   if !ok || raw == nil {
+       return nil, errors.New("model not configured")
+   }
+   req := model.Request{ /* messages, tools, Stream: true */ }
+   st, err := raw.Stream(ctx, req)
+   if err != nil {
+       return nil, err
+   }
+   defer st.Close()
+
+   sum, err := planner.ConsumeStream(ctx, st, input.Events)
+   if err != nil {
+       return nil, err
+   }
+   if len(sum.ToolCalls) > 0 {
+       return &planner.PlanResult{ToolCalls: sum.ToolCalls}, nil
+   }
+   return &planner.PlanResult{
+       FinalResponse: &planner.FinalResponse{
+           Message: &model.Message{
+               Role:  model.ConversationRoleAssistant,
+               Parts: []model.Part{model.TextPart{Text: sum.Text}},
+           },
+       },
+       Streamed: true,
+   }, nil
+   ```
+
+   > **Important:** Never combine an event-decorated client with
+   > `planner.ConsumeStream`. Doing so will emit every text/thinking chunk twice.
 
 ## Example Bootstrap Helpers
 

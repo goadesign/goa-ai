@@ -4,7 +4,7 @@ This note proposes a small but high‑leverage refinement to goa‑ai so consume
 
 ### Desired outcome
 
-- Default behavior: When an agent Uses a toolset exported by another service, the public tool IDs surfaced to the model are the provider’s canonical IDs (service.toolset.tool). No mapping required.
+- Default behavior: When an agent Uses a toolset exported by another service, the public tool IDs surfaced to the model are the provider’s canonical IDs (`toolset.tool`). No mapping required.
 - Generated helpers: The generated `specs` package exposes an explicit `AdvertisedSpecs()` function returning the full, sorted list of tool specs the planner should advertise. Apps do not hand‑craft tool lists.
 - Backward clarity: If a consumer wants to publish its own namespaced facade, we can add that later as a separate, explicit feature (not part of this change).
 

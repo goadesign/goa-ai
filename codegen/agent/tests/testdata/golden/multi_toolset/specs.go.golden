@@ -7,8 +7,8 @@
 package specs
 
 import (
-	math "goa.design/goa-ai/alpha/agents/scribe/specs/math"
-	ops "goa.design/goa-ai/alpha/agents/scribe/specs/ops"
+	math "goa.design/goa-ai/alpha/tools/math"
+	ops "goa.design/goa-ai/alpha/tools/ops"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"sort"

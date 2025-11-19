@@ -93,12 +93,12 @@ type StubPlanner struct{}
 
 func (p *StubPlanner) PlanStart(ctx context.Context, in planner.PlanInput) (planner.PlanResult, error) {
     return planner.PlanResult{FinalResponse: &planner.FinalResponse{
-        Message: planner.AgentMessage{Role: "assistant", Content: "Hello from Goa‑AI!"},
+        Message: model.Message{Role: "assistant", Content: "Hello from Goa‑AI!"},
     }}, nil
 }
 func (p *StubPlanner) PlanResume(ctx context.Context, in planner.PlanResumeInput) (planner.PlanResult, error) {
     return planner.PlanResult{FinalResponse: &planner.FinalResponse{
-        Message: planner.AgentMessage{Role: "assistant", Content: "Done."},
+        Message: model.Message{Role: "assistant", Content: "Done."},
     }}, nil
 }
 
@@ -114,7 +114,7 @@ func main() {
     // 3) Run it using the generated typed client
     client := chat.NewClient(rt)
     out, err := client.Run(context.Background(),
-        []planner.AgentMessage{{Role: "user", Content: "Say hi"}},
+        []model.Message{{Role: "user", Content: "Say hi"}},
         runtime.WithSessionID("session-1"),
     )
     if err != nil { panic(err) }
@@ -134,6 +134,46 @@ Alternatively, install Temporalite or point the client to an existing cluster.
 To use Temporal instead of the in-memory engine, construct the engine and pass
 it to `runtime.New(runtime.Options{Engine: eng})`. The rest of the code remains
 identical.
+
+### Tool-based aggregation example
+
+Agent-as-tool composition often needs to collapse multiple child tool results into a single parent tool_result. The runtime now exposes `ToolResultFinalizer` plus a reusable payload helper so you can implement this pattern without bespoke glue:
+
+```go
+import (
+    "goa.design/goa-ai/runtime/agent/runtime"
+    "goa.design/goa-ai/runtime/agent/tools"
+)
+
+allowlist := map[tools.Ident]struct{}{
+    tools.Ident("atlas.read.get_device_snapshot"): {},
+    tools.Ident("atlas.read.get_time_series"):     {},
+}
+
+finalizer := runtime.ToolResultFinalizer(
+    tools.Ident("ada.aggregate.finalize_result"),
+    func(ctx context.Context, in runtime.FinalizerInput) (any, error) {
+        facts := runtime.BuildAggregationFacts(in)
+        // Optionally prune children by tool name / status before sending to the tool
+        filtered := facts.Children[:0]
+        for _, child := range facts.Children {
+            if _, ok := allowlist[child.Tool]; ok {
+                filtered = append(filtered, child)
+            }
+        }
+        facts.Children = filtered
+        return facts, nil
+    },
+)
+
+reg := runtime.NewAgentToolsetRegistration(rt, runtime.AgentToolConfig{
+    AgentID:  agentID,
+    Finalizer: finalizer,
+    JSONOnly: true,
+})
+```
+
+The finalizer uses the runtime-provided `ToolInvoker` under the hood, so the aggregation tool executes deterministically via the same `execute_tool` activity pipeline as any other service-backed tool.
 
 ## 6) Run the demo
 

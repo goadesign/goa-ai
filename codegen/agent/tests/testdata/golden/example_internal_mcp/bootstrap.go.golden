@@ -22,7 +22,7 @@ import (
 
 // Define flags for MCP endpoints (if any). Pass values via your cmd main.
 var (
-	mcpCalcCoreEndpoint = flag.String("mcp-calc-core-endpoint", "", "MCP calc.core HTTP endpoint (e.g., http://127.0.0.1:8080/rpc)")
+	mcpCalcCoreEndpoint = flag.String("mcp-calc-core-endpoint", "", "MCP core HTTP endpoint (e.g., http://127.0.0.1:8080/rpc)")
 )
 
 // New constructs a minimal runtime and registers all agents for this service.
@@ -44,7 +44,7 @@ func New(ctx context.Context) (*agentsruntime.Runtime, func(), error) {
 			cfg.MCPCallers[scribe.ScribeCalcCoreToolsetID] = caller
 		} else {
 			cfg.MCPCallers[scribe.ScribeCalcCoreToolsetID] = mcpruntime.CallerFunc(func(ctx context.Context, req mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
-				return mcpruntime.CallResponse{}, fmt.Errorf("configure MCP caller for %s via -mcp-calc-core-endpoint flag", "calc.core")
+				return mcpruntime.CallResponse{}, fmt.Errorf("configure MCP caller for %s via -mcp-calc-core-endpoint flag", "core")
 			})
 		}
 		if err := scribe.RegisterScribeAgent(ctx, rt, cfg); err != nil {

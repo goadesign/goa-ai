@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -64,10 +66,10 @@ type (
 		// When true (default), the runtime ignores the nested agent's final prose and
 		// uses the aggregator output as the parent tool_result.
 		JSONOnly bool
-		// Aggregate, when set, is invoked once after the nested agent finishes to
+		// Finalizer, when set, executes once after the nested agent finishes to
 		// construct the parent tool_result from the child tool results of the nested run.
 		// If nil, the runtime falls back to ConvertRunOutputToToolResult.
-		Aggregate func(ctx context.Context, parent ParentCall, children []ChildCall) (planner.ToolResult, error)
+		Finalizer Finalizer
 		// Name optionally sets the toolset registration name (qualified toolset id).
 		Name string
 		// Description optionally describes the toolset.
@@ -159,6 +161,82 @@ type ChildCall struct {
 	Status     string // "ok" | "error"
 	Result     any
 	Error      error
+}
+
+// Finalizer produces the parent tool_result for nested agent executions.
+type Finalizer interface {
+	Finalize(ctx context.Context, input FinalizerInput) (planner.ToolResult, error)
+}
+
+// FinalizerFunc adapts a function to the Finalizer interface.
+type FinalizerFunc func(ctx context.Context, input FinalizerInput) (planner.ToolResult, error)
+
+// Finalize satisfies the Finalizer interface.
+func (f FinalizerFunc) Finalize(ctx context.Context, input FinalizerInput) (planner.ToolResult, error) {
+	return f(ctx, input)
+}
+
+// FinalizerInput captures aggregation context for Finalize.
+type FinalizerInput struct {
+	Parent   ParentCall
+	Children []ChildCall
+	// Invoke executes additional tools deterministically during aggregation. It
+	// is nil when tool-based finalization is unavailable (e.g., service tools
+	// invoked outside a workflow context).
+	Invoke ToolInvoker
+}
+
+// ToolPayloadBuilder constructs the payload passed to a tool-based finalizer.
+type ToolPayloadBuilder func(ctx context.Context, input FinalizerInput) (any, error)
+
+// PassThroughFinalizer returns a finalizer that leaves aggregation to the JSONOnly fallback.
+func PassThroughFinalizer() Finalizer {
+	return FinalizerFunc(func(context.Context, FinalizerInput) (planner.ToolResult, error) {
+		return planner.ToolResult{}, nil
+	})
+}
+
+// ToolResultFinalizer returns a finalizer that delegates aggregation to a dedicated tool.
+// The builder constructs the tool payload from the parent/child calls; the configured
+// ToolInvoker executes the aggregation tool and the resulting ToolResult becomes the
+// parent tool_result (the runtime overwrites Name/ToolCallID for correlation).
+func ToolResultFinalizer(tool tools.Ident, builder ToolPayloadBuilder) Finalizer {
+	return FinalizerFunc(func(ctx context.Context, input FinalizerInput) (planner.ToolResult, error) {
+		if input.Invoke == nil {
+			return planner.ToolResult{}, fmt.Errorf("tool finalizer for %s: tool invoker unavailable", tool)
+		}
+		if tool == "" {
+			return planner.ToolResult{}, errors.New("tool finalizer: tool identifier is required")
+		}
+		if builder == nil {
+			return planner.ToolResult{}, errors.New("tool finalizer: payload builder is required")
+		}
+		payload, err := builder(ctx, input)
+		if err != nil {
+			return planner.ToolResult{}, err
+		}
+		result, err := input.Invoke.Invoke(ctx, tool, payload)
+		if err != nil {
+			return planner.ToolResult{}, err
+		}
+		if result == nil {
+			return planner.ToolResult{}, errors.New("tool finalizer: tool returned nil result")
+		}
+		return *result, nil
+	})
+}
+
+// ToolInvoker executes registered tool calls on behalf of a finalizer.
+type ToolInvoker interface {
+	Invoke(ctx context.Context, tool tools.Ident, payload any) (*planner.ToolResult, error)
+}
+
+// ToolInvokerFunc adapts a function to ToolInvoker.
+type ToolInvokerFunc func(ctx context.Context, tool tools.Ident, payload any) (*planner.ToolResult, error)
+
+// Invoke satisfies the ToolInvoker interface.
+func (f ToolInvokerFunc) Invoke(ctx context.Context, tool tools.Ident, payload any) (*planner.ToolResult, error) {
+	return f(ctx, tool, payload)
 }
 
 // CompileAgentToolTemplates compiles per-tool message templates from plain
@@ -284,10 +362,10 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 			return nil, fmt.Errorf("workflow context not found")
 		}
 		// Build messages: optional agent system prompt, then the per-tool user message
-		var messages []*planner.AgentMessage
+		var messages []*model.Message
 		if cfg.SystemPrompt != "" {
-			if m := newTextAgentMessage("system", cfg.SystemPrompt); m != nil {
-				messages = []*planner.AgentMessage{m}
+			if m := newTextAgentMessage(model.ConversationRoleSystem, cfg.SystemPrompt); m != nil {
+				messages = []*model.Message{m}
 			}
 		}
 
@@ -314,16 +392,16 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 				userContent = PayloadToString(call.Payload)
 			}
 		}
-		switch trimmed := strings.TrimSpace(userContent); trimmed {
+		switch userContent {
 		case "{}", "null":
 			// Append an empty user message to preserve turn semantics.
-			messages = append(messages, &planner.AgentMessage{Role: "user"})
+			messages = append(messages, &model.Message{Role: model.ConversationRoleUser})
 		default:
-			if m := newTextAgentMessage("user", trimmed); m != nil {
+			if m := newTextAgentMessage(model.ConversationRoleUser, userContent); m != nil {
 				messages = append(messages, m)
 			} else {
 				// No text content; still append an empty user message.
-				messages = append(messages, &planner.AgentMessage{Role: "user"})
+				messages = append(messages, &model.Message{Role: model.ConversationRoleUser})
 			}
 		}
 
@@ -334,6 +412,8 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 			SessionID:        call.SessionID,
 			TurnID:           call.TurnID,
 			ParentToolCallID: call.ToolCallID,
+			ParentRunID:      call.RunID,
+			ParentAgentID:    call.AgentID,
 		}
 		// Strong contract: record the canonical JSON args using the tool codec.
 		// marshalToolValue returns a defensive copy for json.RawMessage, so this
@@ -358,7 +438,7 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 			return nil, fmt.Errorf("execute agent returned no output")
 		}
 		// Aggregation path: assemble parent tool_result from child results.
-		if cfg.Aggregate != nil {
+		if cfg.Finalizer != nil {
 			// Build children from the nested run's ToolEvents (last turn results).
 			children := make([]ChildCall, 0, len(outPtr.ToolEvents))
 			for _, ev := range outPtr.ToolEvents {
@@ -381,7 +461,13 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 				ToolName:   call.Name,
 				ToolCallID: call.ToolCallID,
 			}
-			tr, aerr := cfg.Aggregate(ctx, parent, children)
+			invoker := finalizerToolInvokerFromContext(ctx, call)
+			input := FinalizerInput{
+				Parent:   parent,
+				Children: children,
+				Invoke:   invoker,
+			}
+			tr, aerr := cfg.Finalizer.Finalize(ctx, input)
 			if aerr == nil {
 				// Ensure correlation fields are set so inline results can be
 				// matched back to the originating call during merging.

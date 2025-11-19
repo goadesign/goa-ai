@@ -171,8 +171,8 @@ re-export ID aliases.
 ```go
 // Agent client
 type AgentClient interface {
-    Run(ctx context.Context, messages []planner.AgentMessage, opts ...RunOption) (*RunOutput, error)
-    Start(ctx context.Context, messages []planner.AgentMessage, opts ...RunOption) (engine.WorkflowHandle, error)
+    Run(ctx context.Context, messages []model.Message, opts ...RunOption) (*RunOutput, error)
+    Start(ctx context.Context, messages []model.Message, opts ...RunOption) (engine.WorkflowHandle, error)
 }
 
 // Runtime entry points

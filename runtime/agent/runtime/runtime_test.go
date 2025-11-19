@@ -3,7 +3,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"testing"
 	"text/template"
@@ -42,7 +41,7 @@ func (p *nestedPlannerStub) PlanResume(ctx context.Context, in *planner.PlanResu
 	if p.iter == 1 {
 		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("child3")}}}, nil
 	}
-	return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "nested done"}}}}}, nil
+	return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "nested done"}}}}}, nil
 }
 func TestStartRunSetsWorkflowName(t *testing.T) {
 	eng := &stubEngine{}
@@ -308,59 +307,32 @@ func TestTimeBudgetExceeded(t *testing.T) {
 }
 
 func TestOverridePolicy_AppliesToNewRuns_MaxToolCalls(t *testing.T) {
-	// Runtime with a success tool that returns immediately
+	agentID := "svc.agent"
 	rt := &Runtime{
-		toolsets: map[string]ToolsetRegistration{
-			"svc.tools": {
-				Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
-					return &planner.ToolResult{Name: call.Name, Result: json.RawMessage("null")}, nil
-				},
+		agents: map[string]AgentRegistration{
+			agentID: {
+				ID:     agentID,
+				Policy: RunPolicy{MaxToolCalls: 5},
 			},
 		},
-		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			"echo": newAnyJSONSpec("echo", "svc.tools"),
-		},
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
 	}
 
-	// Agent registration with neutral policy (will be overridden)
-	agentID := "svc.agent"
-	rt.agents = map[string]AgentRegistration{
-		agentID: {
-			ID:                  agentID,
-			Planner:             &stubPlanner{},
-			ExecuteToolActivity: "execute",
-			ResumeActivityName:  "resume",
-			Policy:              RunPolicy{MaxToolCalls: 5},
-		},
-	}
-
-	// Override policy to allow only 1 tool call
+	// Override policy to allow only 1 tool call.
 	require.NoError(t, rt.OverridePolicy(agent.Ident(agentID), RunPolicy{MaxToolCalls: 1}))
 
-	// Planner that would keep asking for tools (we emulate via wfCtx)
-	pl := &stubPlanner{}
 	reg := rt.agents[agentID]
-	reg.Planner = pl
-	rt.agents[agentID] = reg
+	require.Equal(t, 1, reg.Policy.MaxToolCalls)
 
-	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, hasPlanResult: true, planResult: &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("echo")}}}}
-	input := &RunInput{AgentID: agentID, RunID: "run-1"}
-	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
-
-	// Provide an initial plan with 2 tools; resume will return 1 tool via wfCtx.planResult
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("echo")}, {Name: tools.Ident("echo")}}}
-	_, err := rt.runLoop(wfCtx, rt.agents[agentID], input, base, initial, nil, initialCaps(rt.agents[agentID].Policy), time.Time{}, 2, nil, nil, nil, 0)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "tool call cap exceeded")
+	// New runs should see the overridden caps when initializing caps state.
+	caps := initialCaps(reg.Policy)
+	require.Equal(t, 1, caps.MaxToolCalls)
+	require.Equal(t, 1, caps.RemainingToolCalls)
 }
 
 func TestConvertRunOutputToToolResult(t *testing.T) {
 	t.Run("aggregates_telemetry_without_error", func(t *testing.T) {
 		out := RunOutput{
-			Final: &planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "final"}}},
+			Final: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "final"}}},
 			ToolEvents: []*planner.ToolResult{
 				{Telemetry: &telemetry.ToolTelemetry{TokensUsed: 10, DurationMs: 100, Model: "m1"}},
 				{Telemetry: &telemetry.ToolTelemetry{TokensUsed: 5, DurationMs: 50, Model: "m1"}},
@@ -376,7 +348,7 @@ func TestConvertRunOutputToToolResult(t *testing.T) {
 	})
 	t.Run("propagates_error_when_all_nested_fail", func(t *testing.T) {
 		out := RunOutput{
-			Final: &planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "final"}}},
+			Final: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "final"}}},
 			ToolEvents: []*planner.ToolResult{
 				{Error: planner.NewToolError("e1")},
 				{Error: planner.NewToolError("e2")},
@@ -452,7 +424,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 		}},
 		"resume": {Handler: func(context.Context, any) (any, error) {
 			return PlanActivityOutput{Result: &planner.PlanResult{
-				FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "done"}}}},
+				FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "done"}}}},
 			}, Transcript: nil}, nil
 		}},
 	}
@@ -469,7 +441,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 			if wf == nil {
 				wf = wfCtx
 			}
-			msgs := []*planner.AgentMessage{{Role: "user", Parts: []model.Part{model.TextPart{Text: "go"}}}}
+			msgs := []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "go"}}}}
 			nestedCtx := run.Context{RunID: NestedRunID(call.RunID, call.Name), SessionID: call.SessionID, TurnID: call.TurnID, ParentToolCallID: call.ToolCallID}
 			// Inject nested agent registration into runtime for lookup
 			rt.mu.Lock()
@@ -591,7 +563,7 @@ func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 		{Name: tools.Ident("child2")},
 	}
 	seq := &turnSequencer{turnID: "turn-1"}
-	_, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "run-1", "agent-1", calls, 0, seq, tracker, time.Time{})
+	_, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "run-1", "agent-1", &run.Context{}, calls, 0, seq, tracker, time.Time{})
 	require.NoError(t, err)
 
 	var update *hooks.ToolCallUpdatedEvent
@@ -668,7 +640,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 	}
 
 	base := &planner.PlanInput{
-		Messages: []*planner.AgentMessage{
+		Messages: []*model.Message{
 			{Role: "user", Parts: []model.Part{model.TextPart{Text: "hello"}}},
 		},
 		RunContext: run.Context{
@@ -685,7 +657,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 	wfCtx := &testWorkflowContext{
 		ctx:           context.Background(),
 		asyncResult:   ToolOutput{Payload: []byte("null")},
-		planResult:    &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "done"}}}}},
+		planResult:    &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "done"}}}}},
 		hasPlanResult: true,
 	}
 

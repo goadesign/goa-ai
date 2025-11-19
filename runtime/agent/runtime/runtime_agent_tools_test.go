@@ -38,13 +38,13 @@ func setupTestAgentWithPlanner(plannerFn func(context.Context, *planner.PlanInpu
 }
 
 func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
-	var got []*planner.AgentMessage
+	var got []*model.Message
 	rt, ctx := setupTestAgentWithPlanner(func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		if input == nil {
-			return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
+			return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 		}
-		got = append([]*planner.AgentMessage{}, input.Messages...)
-		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
+		got = append([]*model.Message{}, input.Messages...)
+		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 	})
 
 	tmpl := template.Must(template.New("t").Parse("hello {{.x}}"))
@@ -67,13 +67,13 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 	require.NotNil(t, res)
 	require.Equal(t, "ok", res.Result)
 	require.Len(t, got, 2)
-	require.Equal(t, "system", got[0].Role)
+	require.Equal(t, model.ConversationRoleSystem, got[0].Role)
 	if tp, ok := got[0].Parts[0].(model.TextPart); ok {
 		require.Equal(t, "sys", tp.Text)
 	} else {
 		t.Fatalf("expected TextPart in system message, got %#v", got[0].Parts)
 	}
-	require.Equal(t, "user", got[1].Role)
+	require.Equal(t, model.ConversationRoleUser, got[1].Role)
 	if tp, ok := got[1].Parts[0].(model.TextPart); ok {
 		require.Equal(t, "hello world", tp.Text)
 	} else {
@@ -82,13 +82,13 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 }
 
 func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
-	var got []*planner.AgentMessage
+	var got []*model.Message
 	rt, ctx := setupTestAgentWithPlanner(func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		if input == nil {
-			return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
+			return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 		}
-		got = append([]*planner.AgentMessage{}, input.Messages...)
-		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
+		got = append([]*model.Message{}, input.Messages...)
+		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 	})
 
 	cfg := AgentToolConfig{
@@ -107,7 +107,7 @@ func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
 	require.NotNil(t, res)
 	require.Equal(t, "ok", res.Result)
 	require.Len(t, got, 1)
-	require.Equal(t, "user", got[0].Role)
+	require.Equal(t, model.ConversationRoleUser, got[0].Role)
 	if tp, ok := got[0].Parts[0].(model.TextPart); ok {
 		require.Equal(t, "just text", tp.Text)
 	} else {
@@ -116,13 +116,13 @@ func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
 }
 
 func TestDefaultAgentToolExecute_DefaultsWhenMissingContent(t *testing.T) {
-	var seen []*planner.AgentMessage
+	var seen []*model.Message
 	rt, ctx := setupTestAgentWithPlanner(func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		if input == nil {
-			return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
+			return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 		}
-		seen = append([]*planner.AgentMessage{}, input.Messages...)
-		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
+		seen = append([]*model.Message{}, input.Messages...)
+		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 	})
 	cfg := AgentToolConfig{
 		AgentID: "svc.agent",
@@ -139,7 +139,7 @@ func TestDefaultAgentToolExecute_DefaultsWhenMissingContent(t *testing.T) {
 	require.NotNil(t, res)
 	require.Equal(t, "ok", res.Result)
 	require.Len(t, seen, 1)
-	require.Equal(t, "user", seen[0].Role)
+	require.Equal(t, model.ConversationRoleUser, seen[0].Role)
 	// When no content provided, default should be empty text part
 	if len(seen[0].Parts) == 0 {
 		// ok

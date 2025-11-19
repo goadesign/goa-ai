@@ -15,7 +15,7 @@ import (
 
 const (
 	// ScribeCalcCoreToolsetID uniquely identifies the calc.core MCP toolset.
-	ScribeCalcCoreToolsetID = "calc.core"
+	ScribeCalcCoreToolsetID = "core"
 )
 
 // ScribeAgentConfig configures the ScribeAgent agent package.

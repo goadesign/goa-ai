@@ -92,7 +92,7 @@ func (e ValidationError) Descriptions() map[string]string {
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
 	switch name {
-	case "echo":
+	case "ops.echo":
 		return &echoPayloadCodec, true
 	default:
 		return nil, false
@@ -102,7 +102,7 @@ func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
 // ResultCodec returns the generic codec for the named tool result.
 func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 	switch name {
-	case "echo":
+	case "ops.echo":
 		return &echoResultCodec, true
 	default:
 		return nil, false

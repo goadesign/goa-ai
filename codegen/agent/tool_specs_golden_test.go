@@ -57,14 +57,14 @@ func TestToolSpecsDeterministicTypeRefs(t *testing.T) {
 
 	var codecs string
 	for _, f := range files {
-		if filepath.ToSlash(f.Path) == filepath.ToSlash("gen/alpha/agents/scribe/specs/summarize/codecs.go") {
+		if filepath.ToSlash(f.Path) == filepath.ToSlash("gen/alpha/tools/summarize/codecs.go") {
 			for _, s := range f.SectionTemplates {
 				codecs += s.Source
 			}
 			break
 		}
 	}
-	require.NotEmpty(t, codecs, "expected generated specs/summarize/codecs.go")
+	require.NotEmpty(t, codecs, "expected generated tools/summarize/codecs.go")
 	// The template source contains placeholders; concrete rendering is validated
 	// via specs_builder_internal_test. Here we simply assert we found the file.
 }

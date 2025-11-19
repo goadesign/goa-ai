@@ -8,7 +8,7 @@ package math
 
 type (
 
-	// AddPayload defines the JSON payload for the alpha.math.add tool.
+	// AddPayload defines the JSON payload for the math.add tool.
 	AddPayload = struct {
 		// Left operand
 		Left int32
@@ -16,7 +16,7 @@ type (
 		Right int32
 	}
 
-	// AddResult defines the JSON result for the alpha.math.add tool.
+	// AddResult defines the JSON result for the math.add tool.
 	AddResult = struct {
 		// Sum
 		Sum int32
@@ -25,8 +25,8 @@ type (
 	// AddPayloadJSON2 is a helper type for JSON decode-body.
 	AddPayloadJSON2 struct {
 		// Left operand
-		Left *int32
+		Left *int32 `json:"left"`
 		// Right operand
-		Right *int32
+		Right *int32 `json:"right"`
 	}
 )

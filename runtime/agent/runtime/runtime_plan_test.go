@@ -26,7 +26,7 @@ func TestRunPlanActivityUsesOptions(t *testing.T) {
 		hasPlanResult: true,
 		planResult: &planner.PlanResult{
 			FinalResponse: &planner.FinalResponse{
-				Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}},
+				Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}},
 			},
 		},
 	}
@@ -52,10 +52,10 @@ func TestPlanStartActivityInvokesPlanner(t *testing.T) {
 		require.Len(t, input.Messages, 1)
 		require.Equal(t, "hello", agentMessageText(input.Messages[0]))
 		require.NotNil(t, input.Agent)
-		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
+		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
-	input := PlanActivityInput{AgentID: "service.agent", RunID: "run-123", Messages: []*planner.AgentMessage{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hello"}}}}, RunContext: run.Context{RunID: "run-123"}}
+	input := PlanActivityInput{AgentID: "service.agent", RunID: "run-123", Messages: []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hello"}}}}, RunContext: run.Context{RunID: "run-123"}}
 	out, err := rt.PlanStartActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.True(t, called)

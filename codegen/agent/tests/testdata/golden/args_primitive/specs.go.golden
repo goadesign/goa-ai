@@ -14,7 +14,7 @@ import (
 
 // Tool IDs for this toolset.
 const (
-	Echo tools.Ident = "echo"
+	Echo tools.Ident = "ops.echo"
 )
 
 var Specs = []tools.ToolSpec{

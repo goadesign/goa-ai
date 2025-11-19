@@ -1,3 +1,6 @@
+// Package planner defines helpers for streaming model responses into planner
+// results and events. This file provides StreamSummary and ConsumeStream for
+// planners that work with streaming model clients.
 package planner
 
 import (
@@ -76,8 +79,9 @@ func ConsumeStream(ctx context.Context, streamer model.Streamer, ev PlannerEvent
 				continue
 			}
 			summary.ToolCalls = append(summary.ToolCalls, ToolRequest{
-				Name:    chunk.ToolCall.Name,
-				Payload: chunk.ToolCall.Payload,
+				Name:       chunk.ToolCall.Name,
+				Payload:    chunk.ToolCall.Payload,
+				ToolCallID: chunk.ToolCall.ID,
 			})
 		case model.ChunkTypeUsage:
 			if chunk.UsageDelta != nil {

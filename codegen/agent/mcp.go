@@ -51,7 +51,7 @@ func populateMCPToolset(ts *ToolsetData) bool {
 			Toolset:     ts,
 		}
 		td.Title = humanizeTitle(tool.Name)
-		td.QualifiedName = fmt.Sprintf("%s.%s.%s", ts.SourceServiceName, ts.Name, tool.Name)
+		td.QualifiedName = fmt.Sprintf("%s.%s", ts.Name, tool.Name)
 		ts.Tools = append(ts.Tools, td)
 	}
 	sort.Slice(ts.Tools, func(i, j int) bool {

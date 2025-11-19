@@ -36,8 +36,8 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
-	agent "goa.design/goa-ai/runtime/agent"
 	bedrock "goa.design/goa-ai/features/model/bedrock"
+	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
 	engtemporal "goa.design/goa-ai/runtime/agent/engine/temporal"
@@ -918,15 +918,11 @@ func (r *Runtime) NewBedrockModelClient(awsrt *bedrockruntime.Client, cfg Bedroc
 		ThinkingBudget: cfg.ThinkingBudget,
 		Temperature:    cfg.Temperature,
 	}
-	switch eng := r.Engine.(type) {
-	case *engtemporal.Engine:
-		tc := eng.TemporalClient()
-		ledger := bedrock.NewTemporalLedgerSource(tc)
-		return bedrock.NewWithLedger(awsrt, opts, ledger)
-	default:
-		// Engines without durable queries: construct without ledger rehydration.
-		return bedrock.NewWithLedger(awsrt, opts, nil)
+	if eng, ok := r.Engine.(*engtemporal.Engine); ok {
+		return bedrock.New(awsrt, opts, bedrock.NewTemporalLedgerSource(eng.TemporalClient()))
 	}
+	// Engines without durable queries: construct without ledger rehydration.
+	return bedrock.New(awsrt, opts, nil)
 }
 
 // agentByID returns the registered agent by ID if present. The boolean indicates
@@ -944,7 +940,7 @@ func (r *Runtime) agentByID(id string) (AgentRegistration, bool) {
 func (r *Runtime) ExecuteAgentChildWithRoute(
 	wfCtx engine.WorkflowContext,
 	route AgentRoute,
-	messages []*planner.AgentMessage,
+	messages []*model.Message,
 	nestedRunCtx run.Context,
 ) (*RunOutput, error) {
 	if route.ID == "" || route.WorkflowName == "" || route.DefaultTaskQueue == "" {
@@ -956,6 +952,8 @@ func (r *Runtime) ExecuteAgentChildWithRoute(
 		SessionID:        nestedRunCtx.SessionID,
 		TurnID:           nestedRunCtx.TurnID,
 		ParentToolCallID: nestedRunCtx.ParentToolCallID,
+		ParentRunID:      nestedRunCtx.ParentRunID,
+		ParentAgentID:    nestedRunCtx.ParentAgentID,
 		Tool:             nestedRunCtx.Tool,
 		ToolArgs:         nestedRunCtx.ToolArgs,
 		Messages:         messages,

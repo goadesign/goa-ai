@@ -16,6 +16,32 @@ func templateFuncMap() map[string]any {
 		"trimPrefix": strings.TrimPrefix,
 		"trimSuffix": strings.TrimSuffix,
 		"ToLower":    strings.ToLower,
+		// hasMethodBackedTools reports whether the given toolset contains at
+		// least one method-backed tool (bound to a Goa service method).
+		"hasMethodBackedTools": func(ts *ToolsetData) bool {
+			if ts == nil || len(ts.Tools) == 0 {
+				return false
+			}
+			for _, t := range ts.Tools {
+				if t != nil && t.IsMethodBacked {
+					return true
+				}
+			}
+			return false
+		},
+		// hasExportedTools reports whether the given toolset contains at least
+		// one tool exported by an agent (agent-as-tool pattern).
+		"hasExportedTools": func(ts *ToolsetData) bool {
+			if ts == nil || len(ts.Tools) == 0 {
+				return false
+			}
+			for _, t := range ts.Tools {
+				if t != nil && t.IsExportedByAgent {
+					return true
+				}
+			}
+			return false
+		},
 		// simpleField reports whether the named field on the given attribute
 		// resolves to a simple assignable type between packages: primitives
 		// (string, bool, numbers) or arrays/maps composed of primitives. It

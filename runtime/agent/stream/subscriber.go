@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"goa.design/goa-ai/runtime/agent/hooks"
+	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 )
 
 type (
@@ -111,6 +112,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Queue:                 evt.Queue,
 			ParentToolCallID:      evt.ParentToolCallID,
 			ExpectedChildrenTotal: evt.ExpectedChildrenTotal,
+			DisplayHint:           rthints.FormatCallHint(evt.ToolName, evt.Payload),
 		}
 		return s.sink.Send(ctx, ToolStart{
 			Base: Base{t: EventToolStart, r: evt.RunID(), p: payload},
@@ -161,6 +163,9 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Telemetry:        evt.Telemetry,
 			Error:            evt.Error,
 		}
+		if preview := clampPreview(rthints.FormatResultHint(evt.ToolName, evt.Result)); preview != "" {
+			payload.ResultPreview = preview
+		}
 		return s.sink.Send(ctx, ToolEnd{
 			Base: Base{t: EventToolEnd, r: evt.RunID(), p: payload},
 			Data: payload,
@@ -174,7 +179,63 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Base: Base{t: EventToolUpdate, r: evt.RunID(), p: up},
 			Data: up,
 		})
+	case *hooks.RunCompletedEvent:
+		// Map run status to workflow phase and emit terminal workflow event.
+		switch evt.Status {
+		case "success":
+			payload := WorkflowPayload{Phase: "completed"}
+			return s.sink.Send(ctx, Workflow{
+				Base: Base{t: EventWorkflow, r: evt.RunID(), p: payload},
+				Data: payload,
+			})
+		case "failed":
+			payload := WorkflowPayload{Phase: "failed"}
+			return s.sink.Send(ctx, Workflow{
+				Base: Base{t: EventWorkflow, r: evt.RunID(), p: payload},
+				Data: payload,
+			})
+		case "canceled":
+			payload := WorkflowPayload{Phase: "canceled"}
+			return s.sink.Send(ctx, Workflow{
+				Base: Base{t: EventWorkflow, r: evt.RunID(), p: payload},
+				Data: payload,
+			})
+		default:
+			payload := WorkflowPayload{Phase: evt.Status}
+			return s.sink.Send(ctx, Workflow{
+				Base: Base{t: EventWorkflow, r: evt.RunID(), p: payload},
+				Data: payload,
+			})
+		}
 	default:
 		return nil
 	}
+}
+
+// clampPreview normalizes whitespace and clamps result previews to a reasonable
+// length for UI display.
+func clampPreview(in string) string {
+	if in == "" {
+		return ""
+	}
+	// normalize whitespace
+	out := make([]rune, 0, len(in))
+	prevSpace := false
+	for _, r := range in {
+		switch r {
+		case '\n', '\r', '\t', ' ':
+			if !prevSpace {
+				out = append(out, ' ')
+			}
+			prevSpace = true
+		default:
+			out = append(out, r)
+			prevSpace = false
+		}
+	}
+	const max = 140
+	if len(out) <= max {
+		return string(out)
+	}
+	return string(out[:max])
 }

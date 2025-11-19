@@ -28,7 +28,9 @@ var {{ goify .Name true }}ResultCodec  = {{ $.Toolset.SpecsPackageName }}specs.{
 // New{{ .Toolset.Agent.GoName }}ToolsetRegistration creates a toolset registration for the {{ .Toolset.Agent.Name }} agent.
 // The returned registration can be used with runtime.RegisterToolset to make the agent
 // available as a tool to other agents. When invoked, the agent runs its full planning loop
-// and returns the final response as the tool result.
+// and returns the final response as the tool result. DSL-authored CallHintTemplate and
+// ResultHintTemplate declarations are compiled into hint templates so sinks can render
+// concise labels and previews without heuristics.
 //
 // Example usage:
 //
@@ -38,20 +40,55 @@ var {{ goify .Name true }}ResultCodec  = {{ $.Toolset.SpecsPackageName }}specs.{
 //		// handle error
 //	}
 func New{{ .Toolset.Agent.GoName }}ToolsetRegistration(rt *runtime.Runtime) runtime.ToolsetRegistration {
-    // Build a default agent-tool registration using runtime helper (no templates).
-    return runtime.NewAgentToolsetRegistration(rt, runtime.AgentToolConfig{
+    cfg := runtime.AgentToolConfig{
         AgentID:   AgentID,
         Name:      {{ printf "%q" .Toolset.QualifiedName }},
         TaskQueue: {{ printf "%q" .Toolset.TaskQueue }},
         Route: runtime.AgentRoute{
-			ID:              AgentID,
-			WorkflowName:    {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Name }},
+			ID:               AgentID,
+			WorkflowName:     {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Name }},
 			DefaultTaskQueue: {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Queue }},
 		},
         PlanActivityName:    {{ printf "%q" .Toolset.Agent.Runtime.PlanActivity.Name }},
         ResumeActivityName:  {{ printf "%q" .Toolset.Agent.Runtime.ResumeActivity.Name }},
         ExecuteToolActivity: {{ printf "%q" .Toolset.Agent.Runtime.ExecuteTool.Name }},
-    })
+    }
+    reg := runtime.NewAgentToolsetRegistration(rt, cfg)
+    // Install DSL-provided hint templates when present.
+    {
+        // Build maps only when at least one template exists to avoid overhead.
+        var callRaw map[tools.Ident]string
+        var resultRaw map[tools.Ident]string
+        {{- range .Toolset.Tools }}
+        {{- if .CallHintTemplate }}
+        if callRaw == nil {
+            callRaw = make(map[tools.Ident]string)
+        }
+        callRaw[{{ .ConstName }}] = {{ printf "%q" .CallHintTemplate }}
+        {{- end }}
+        {{- if .ResultHintTemplate }}
+        if resultRaw == nil {
+            resultRaw = make(map[tools.Ident]string)
+        }
+        resultRaw[{{ .ConstName }}] = {{ printf "%q" .ResultHintTemplate }}
+        {{- end }}
+        {{- end }}
+        if len(callRaw) > 0 {
+            compiled, err := hints.CompileHintTemplates(callRaw, nil)
+            if err != nil {
+                panic(err)
+            }
+            reg.CallHints = compiled
+        }
+        if len(resultRaw) > 0 {
+            compiled, err := hints.CompileHintTemplates(resultRaw, nil)
+            if err != nil {
+                panic(err)
+            }
+            reg.ResultHints = compiled
+        }
+    }
+    return reg
 }
 
 // ToolIDs lists all tools in this toolset for validation.
@@ -84,16 +121,55 @@ func NewRegistration(
         ResumeActivityName:  {{ printf "%q" .Toolset.Agent.Runtime.ResumeActivity.Name }},
         ExecuteToolActivity: {{ printf "%q" .Toolset.Agent.Runtime.ExecuteTool.Name }},
     }
-    for _, o := range opts { o(&cfg) }
+    for _, o := range opts {
+        o(&cfg)
+    }
     // Validate only for the templates explicitly provided (optional)
     if len(cfg.Templates) > 0 {
         ids := make([]tools.Ident, 0, len(cfg.Templates))
-        for id := range cfg.Templates { ids = append(ids, id) }
+        for id := range cfg.Templates {
+            ids = append(ids, id)
+        }
         if err := runtime.ValidateAgentToolTemplates(cfg.Templates, ids, nil); err != nil {
             return runtime.ToolsetRegistration{}, err
         }
     }
-    return runtime.NewAgentToolsetRegistration(rt, cfg), nil
+    reg := runtime.NewAgentToolsetRegistration(rt, cfg)
+    // Install DSL-provided hint templates when present.
+    {
+        // Build maps only when at least one template exists to avoid overhead.
+        var callRaw map[tools.Ident]string
+        var resultRaw map[tools.Ident]string
+        {{- range .Toolset.Tools }}
+        {{- if .CallHintTemplate }}
+        if callRaw == nil {
+            callRaw = make(map[tools.Ident]string)
+        }
+        callRaw[{{ .ConstName }}] = {{ printf "%q" .CallHintTemplate }}
+        {{- end }}
+        {{- if .ResultHintTemplate }}
+        if resultRaw == nil {
+            resultRaw = make(map[tools.Ident]string)
+        }
+        resultRaw[{{ .ConstName }}] = {{ printf "%q" .ResultHintTemplate }}
+        {{- end }}
+        {{- end }}
+        if len(callRaw) > 0 {
+            compiled, err := hints.CompileHintTemplates(callRaw, nil)
+            if err != nil {
+                panic(err)
+            }
+            reg.CallHints = compiled
+        }
+        if len(resultRaw) > 0 {
+            compiled, err := hints.CompileHintTemplates(resultRaw, nil)
+            if err != nil {
+                panic(err)
+            }
+            reg.ResultHints = compiled
+        }
+    }
+    return reg, nil
 }
 
 // CallOption customizes planner.ToolRequest values built by the typed helpers

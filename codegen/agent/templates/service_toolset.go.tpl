@@ -15,7 +15,14 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}ToolsetRegistration
             }
             if exec == nil {
                 return &planner.ToolResult{
-                    Error: planner.NewToolError("executor is required"),
+                    Error: planner.NewToolError(
+                        fmt.Sprintf(
+                            "no executor configured for toolset %q; pass a non-nil ToolCallExecutor to New%v%vToolsetRegistration",
+                            ToolsetID,
+                            "{{ .Agent.GoName }}",
+                            "{{ goify .Toolset.PathName true }}",
+                        ),
+                    ),
                 }, nil
             }
             meta := &runtime.ToolCallMeta{
@@ -59,3 +66,5 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}ToolsetRegistration
     }
     return ts
 }
+
+

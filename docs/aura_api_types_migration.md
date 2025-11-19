@@ -225,14 +225,14 @@ type ChatMessage struct {
     Meta    map[string]any
 }
 
-// AFTER: Use planner.AgentMessage (runtime type) internally
+// AFTER: Use model.Message (runtime type) internally
 // For API boundaries, use AgentMessage from DSL
 import "goa.design/goa-ai/runtime/agent/planner"
 
 func PlanStart(ctx context.Context, input planner.PlanInput) (planner.PlanResult, error) {
-    messages := make([]planner.AgentMessage, len(input.Messages))
+    messages := make([]model.Message, len(input.Messages))
     for i, msg := range input.Messages {
-        messages[i] = planner.AgentMessage{
+        messages[i] = model.Message{
             Role:    msg.Role,
             Content: msg.Content,
             Meta:    msg.Meta,
@@ -302,7 +302,7 @@ func PlanResume(ctx context.Context, input planner.PlanInput) (planner.PlanResul
     return planner.PlanResult{
         ToolCalls: []planner.ToolRequest{...},
         FinalResponse: &planner.FinalResponse{
-            Message: planner.AgentMessage{...},
+            Message: model.Message{...},
         },
         Notes: []planner.PlannerAnnotation{...},
     }, nil
@@ -343,7 +343,7 @@ func PlanResume(ctx context.Context, input planner.PlanResumeInput) (planner.Pla
     if len(sum.ToolCalls) > 0 {
         return planner.PlanResult{ToolCalls: sum.ToolCalls}, nil
     }
-    return planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Content: sum.Text}}}, nil
+    return planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: model.Message{Role: "assistant", Content: sum.Text}}}, nil
 }
 ```
 
@@ -379,7 +379,7 @@ func PlanResume(ctx context.Context, input planner.PlanInput) (planner.PlanResul
 - [ ] Review `services/chat-agent/design/agents.go` - verify agent definition
 - [ ] Review `services/chat-agent/prompts/builder.go` - replace BRTool with model.ToolDefinition
 - [ ] Create `services/chat-agent/tools/config_from_specs.go` helper
-- [ ] Update planner (when migrated) to use `planner.AgentMessage`, `planner.ToolResult`, `planner.PlannerAnnotation`
+- [ ] Update planner (when migrated) to use `model.Message`, `planner.ToolResult`, `planner.PlannerAnnotation`
 - [ ] Remove custom ChatMessage type if planner uses it
 - [ ] Update tests to use standard types
 - [ ] Regenerate code: `goa gen github.com/crossnokaye/aura/services/chat-agent/design`
@@ -590,17 +590,17 @@ type ChatMessage struct {
     Meta    map[string]any
 }
 
-// AFTER: Use model.Message (goa-ai runtime type) OR planner.AgentMessage
+// AFTER: Use model.Message (goa-ai runtime type) OR model.Message
 import "goa.design/goa-ai/runtime/agent/model"
 
 // For model client interface:
 type LLMRequest struct {
-    Messages []model.Message  // model.Message mirrors planner.AgentMessage
+    Messages []model.Message  // model.Message mirrors model.Message
     // ...
 }
 
-// Internal conversion from planner.AgentMessage:
-func toModelMessages(msgs []planner.AgentMessage) []model.Message {
+// Internal conversion from model.Message:
+func toModelMessages(msgs []model.Message) []model.Message {
     result := make([]model.Message, len(msgs))
     for i, msg := range msgs {
         result[i] = model.Message{
@@ -707,7 +707,7 @@ func sanitizeToolResultForModel(tr *ToolExecutionResult) string {
 **Actions:**
 - [ ] Review `services/inference-engine/service.go` - identify all custom types
 - [ ] Replace `BRTool`/`ToolSet` with `model.ToolDefinition`
-- [ ] Replace custom message types with `model.Message` or `planner.AgentMessage`
+- [ ] Replace custom message types with `model.Message` or `model.Message`
 - [ ] Replace custom telemetry types with `telemetry.ToolTelemetry`
 - [ ] Replace custom error types with `planner.ToolError` where appropriate
 - [ ] Migrate to `model.Client` interface (from `services/inference-engine` abstraction)
@@ -965,7 +965,7 @@ func metadataFromPayload(payload *orchestrator.AgentRunPayload) RunMetadata {
 | Service | Custom Types to Replace | goa-ai Replacement | Priority |
 |---------|------------------------|-------------------|----------|
 | **orchestrator** | `RunRequest`, `RunPayload`, `RunResponse`, `RunResult`, `ChatEvent`, `SessionEvent` | `AgentRunPayload`, `AgentRunResult`, `AgentRunChunk` | High |
-| **chat-agent** | `ChatMessage`, `BRTool`, `ToolSet`, `ToolExecutionResult`, `PlannerError` | `planner.AgentMessage`, `model.ToolDefinition`, `planner.ToolResult`, `planner.ToolError` | High |
+| **chat-agent** | `ChatMessage`, `BRTool`, `ToolSet`, `ToolExecutionResult`, `PlannerError` | `model.Message`, `model.ToolDefinition`, `planner.ToolResult`, `planner.ToolError` | High |
 | **atlas-data-agent** | `ToolSet`, `BRTool`, `ADAPlanResult` | `model.ToolDefinition`, `planner.PlanResult` | High |
 | **inference-engine** | `BRTool`, `ToolSet`, `ChatMessage`, `ModelTelemetry`, `ModelError`, `InferenceEngine` interface | `model.ToolDefinition`, `model.Message`, `telemetry.ToolTelemetry`, `planner.ToolError`, `model.Client` | High |
 | **front** | `ChatEvent`, `UIMessage`, `UIToolResult`, custom event types | `AgentRunChunk`, `AgentMessage`, `AgentToolEvent` | Medium |

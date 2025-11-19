@@ -153,7 +153,7 @@ func enrichReadPayloadJSON2ValidationError(err error) error {
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
 	switch name {
-	case "read":
+	case "docs.read":
 		return &readPayloadCodec, true
 	default:
 		return nil, false
@@ -163,7 +163,7 @@ func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
 // ResultCodec returns the generic codec for the named tool result.
 func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 	switch name {
-	case "read":
+	case "docs.read":
 		return &readResultCodec, true
 	default:
 		return nil, false

@@ -10,7 +10,7 @@ import (
 	"context"
 	"errors"
 	scribe "goa.design/goa-ai/alpha/agents/scribe"
-	profilesspecs "goa.design/goa-ai/alpha/agents/scribe/specs/profiles"
+	profilesspecs "goa.design/goa-ai/alpha/tools/profiles"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/runtime"
 )

@@ -204,10 +204,19 @@ func TestAgentToolsetCrossServiceReference(t *testing.T) {
 	require.Len(t, consumer.Used.Toolsets, 1)
 	ts := consumer.Used.Toolsets[0]
 	require.NotNil(t, ts.Origin, "AgentToolset should preserve origin")
-	require.Equal(t, agentsexpr.ProviderRemoteAgent, ts.Provider.Kind)
-	require.Equal(t, "svcA", ts.Provider.ServiceName)
-	require.Equal(t, "agentA", ts.Provider.AgentName)
-	require.Equal(t, "exported", ts.Provider.ToolsetName)
+	// Origin should point to the exported toolset on svcA.agentA.
+	var provider *agentsexpr.AgentExpr
+	for _, a := range agentsexpr.Root.Agents {
+		if a.Service != nil && a.Service.Name == "svcA" && a.Name == "agentA" {
+			provider = a
+			break
+		}
+	}
+	require.NotNil(t, provider)
+	require.NotNil(t, provider.Exported)
+	require.Len(t, provider.Exported.Toolsets, 1)
+	exported := provider.Exported.Toolsets[0]
+	require.Equal(t, exported, ts.Origin)
 }
 
 func TestProviderInference_LocalAndMCP(t *testing.T) {
@@ -225,14 +234,13 @@ func TestProviderInference_LocalAndMCP(t *testing.T) {
 	require.Len(t, agentsexpr.Root.Agents, 1)
 	a := agentsexpr.Root.Agents[0]
 	require.Len(t, a.Used.Toolsets, 2)
-	// Order matches declaration: local then MCP
+	// Order matches declaration: local then MCP.
 	local := a.Used.Toolsets[0]
 	mcp := a.Used.Toolsets[1]
-	require.Equal(t, agentsexpr.ProviderLocal, local.Provider.Kind)
-	require.Equal(t, "svc", local.Provider.ServiceName)
-	require.Equal(t, agentsexpr.ProviderMCP, mcp.Provider.Kind)
-	require.Equal(t, "svc", mcp.Provider.ServiceName)
-	require.Equal(t, "search", mcp.Provider.ToolsetName)
+	require.False(t, local.External)
+	require.True(t, mcp.External)
+	require.Equal(t, "svc", mcp.MCPService)
+	require.Equal(t, "search", mcp.MCPSuite)
 }
 
 func runDSL(t *testing.T, dsl func()) {

@@ -8,13 +8,13 @@ package helpers
 
 type (
 
-	// SummarizeDocPayload defines the JSON payload for the calc.helpers.summarize_doc tool.
+	// SummarizeDocPayload defines the JSON payload for the helpers.summarize_doc tool.
 	SummarizeDocPayload = struct {
 		// Document identifier
 		DocID string
 	}
 
-	// SummarizeDocResult defines the JSON result for the calc.helpers.summarize_doc tool.
+	// SummarizeDocResult defines the JSON result for the helpers.summarize_doc tool.
 	SummarizeDocResult = struct {
 		// Title
 		Title string
@@ -23,13 +23,13 @@ type (
 	// SummarizeDocPayloadJSON2 is a helper type for JSON decode-body.
 	SummarizeDocPayloadJSON2 struct {
 		// Document identifier
-		DocID *string
+		DocID *string `json:"doc_id"`
 	}
 
 	// SummarizePayload is a helper type materialized for nested references.
 	SummarizePayload = struct {
 		// Document identifier
-		DocID string
+		DocID string `json:"doc_id"`
 	}
 
 	// SummarizeResult is a helper type materialized for nested references.

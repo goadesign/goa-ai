@@ -5,13 +5,13 @@ import (
 
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
-	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/model"
 )
 
 // AgentClient provides a narrow interface to run a specific agent.
 type AgentClient interface {
-	Run(ctx context.Context, messages []*planner.AgentMessage, opts ...RunOption) (*RunOutput, error)
-	Start(ctx context.Context, messages []*planner.AgentMessage, opts ...RunOption) (engine.WorkflowHandle, error)
+	Run(ctx context.Context, messages []*model.Message, opts ...RunOption) (*RunOutput, error)
+	Start(ctx context.Context, messages []*model.Message, opts ...RunOption) (engine.WorkflowHandle, error)
 }
 
 // AgentRoute carries the minimum metadata a caller needs to construct an
@@ -32,10 +32,13 @@ func (r *Runtime) Client(id agent.Ident) (AgentClient, error) {
 	if id == "" {
 		return nil, ErrAgentNotFound
 	}
-	if _, ok := r.agentByID(string(id)); !ok { // confirm presence
+	if _, ok := r.agentByID(string(id)); !ok {
 		return nil, ErrAgentNotFound
 	}
-	return &agentClient{r: r, id: string(id)}, nil
+	return &agentClient{
+		r:  r,
+		id: string(id),
+	}, nil
 }
 
 // MustClient returns a client bound to the given agent identifier and panics
@@ -56,7 +59,10 @@ func (r *Runtime) ClientFor(route AgentRoute) (AgentClient, error) {
 	if route.ID == "" || route.WorkflowName == "" {
 		return nil, ErrAgentNotFound
 	}
-	return &agentClientRoute{r: r, route: route}, nil
+	return &agentClientRoute{
+		r:     r,
+		route: route,
+	}, nil
 }
 
 // MustClientFor is like ClientFor but panics on error.
@@ -73,8 +79,15 @@ type agentClient struct {
 	id string
 }
 
-func (c *agentClient) Run(ctx context.Context, messages []*planner.AgentMessage, opts ...RunOption) (*RunOutput, error) {
-	in := RunInput{AgentID: c.id, Messages: messages}
+func (c *agentClient) Run(
+	ctx context.Context,
+	messages []*model.Message,
+	opts ...RunOption,
+) (*RunOutput, error) {
+	in := RunInput{
+		AgentID:  c.id,
+		Messages: messages,
+	}
 	for _, o := range opts {
 		if o != nil {
 			o(&in)
@@ -87,8 +100,15 @@ func (c *agentClient) Run(ctx context.Context, messages []*planner.AgentMessage,
 	return h.Wait(ctx)
 }
 
-func (c *agentClient) Start(ctx context.Context, messages []*planner.AgentMessage, opts ...RunOption) (engine.WorkflowHandle, error) {
-	in := RunInput{AgentID: c.id, Messages: messages}
+func (c *agentClient) Start(
+	ctx context.Context,
+	messages []*model.Message,
+	opts ...RunOption,
+) (engine.WorkflowHandle, error) {
+	in := RunInput{
+		AgentID:  c.id,
+		Messages: messages,
+	}
 	for _, o := range opts {
 		if o != nil {
 			o(&in)
@@ -102,8 +122,15 @@ type agentClientRoute struct {
 	route AgentRoute
 }
 
-func (c *agentClientRoute) Run(ctx context.Context, messages []*planner.AgentMessage, opts ...RunOption) (*RunOutput, error) {
-	in := RunInput{AgentID: string(c.route.ID), Messages: messages}
+func (c *agentClientRoute) Run(
+	ctx context.Context,
+	messages []*model.Message,
+	opts ...RunOption,
+) (*RunOutput, error) {
+	in := RunInput{
+		AgentID:  string(c.route.ID),
+		Messages: messages,
+	}
 	for _, o := range opts {
 		if o != nil {
 			o(&in)
@@ -116,8 +143,15 @@ func (c *agentClientRoute) Run(ctx context.Context, messages []*planner.AgentMes
 	return h.Wait(ctx)
 }
 
-func (c *agentClientRoute) Start(ctx context.Context, messages []*planner.AgentMessage, opts ...RunOption) (engine.WorkflowHandle, error) {
-	in := RunInput{AgentID: string(c.route.ID), Messages: messages}
+func (c *agentClientRoute) Start(
+	ctx context.Context,
+	messages []*model.Message,
+	opts ...RunOption,
+) (engine.WorkflowHandle, error) {
+	in := RunInput{
+		AgentID:  string(c.route.ID),
+		Messages: messages,
+	}
 	for _, o := range opts {
 		if o != nil {
 			o(&in)
@@ -125,3 +159,5 @@ func (c *agentClientRoute) Start(ctx context.Context, messages []*planner.AgentM
 	}
 	return c.r.startRunWithRoute(ctx, &in, c.route)
 }
+
+

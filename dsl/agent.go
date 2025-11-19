@@ -133,12 +133,18 @@ func Uses(fn func()) {
 //	    })
 //	})
 func Exports(fn func()) {
-	agent, ok := eval.Current().(*expragents.AgentExpr)
-	if !ok {
+	switch cur := eval.Current().(type) {
+	case *expragents.AgentExpr:
+		cur.Exported = &expragents.ToolsetGroupExpr{Agent: cur, DSLFunc: fn}
+	case *goaexpr.ServiceExpr:
+		se := &expragents.ServiceExportsExpr{
+			Service: cur,
+			DSLFunc: fn,
+		}
+		expragents.Root.ServiceExports = append(expragents.Root.ServiceExports, se)
+	default:
 		eval.IncompatibleDSL()
-		return
 	}
-	agent.Exported = &expragents.ToolsetGroupExpr{Agent: agent, DSLFunc: fn}
 }
 
 // DisableAgentDocs disables generation of the AGENTS_QUICKSTART.md quickstart guide.

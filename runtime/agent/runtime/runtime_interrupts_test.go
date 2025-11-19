@@ -42,7 +42,7 @@ func TestRunLoopPauseResumeEmitsEvents_Barriered(t *testing.T) {
 		wfCtx.barrier <- struct{}{}
 	}()
 	wfCtx.hasPlanResult = true
-	wfCtx.planResult = &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}
+	wfCtx.planResult = &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: "tool"}}}

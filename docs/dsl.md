@@ -277,7 +277,7 @@ if err := mcpassistant.RegisterAssistantAssistantMcpToolset(ctx, rt, caller); er
 }
 
 // Execute the agent using the runtime client and the typed AgentID constant.
-messages := []planner.AgentMessage{{Role: "user", Content: "Say hi"}}
+messages := []model.Message{{Role: "user", Content: "Say hi"}}
 client := chat.NewClient(rt)
 out, err := client.Run(ctx, messages, runtime.WithSessionID("session-1"))
 if err != nil { log.Fatal(err) }

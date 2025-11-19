@@ -98,8 +98,8 @@ func generateDeterministicAwaitID(runID, turnID string, tool tools.Ident, toolCa
 	return strings.Join([]string{runID, tid, safeTool, "await", toolCallID}, "/")
 }
 
-// agentMessageText concatenates text parts from a planner.AgentMessage.
-func agentMessageText(msg *planner.AgentMessage) string {
+// agentMessageText concatenates text parts from a model.Message.
+func agentMessageText(msg *model.Message) string {
 	if msg == nil || len(msg.Parts) == 0 {
 		return ""
 	}
@@ -116,13 +116,13 @@ func agentMessageText(msg *planner.AgentMessage) string {
 	return b.String()
 }
 
-// newTextAgentMessage builds a planner.AgentMessage with a single TextPart.
+// newTextAgentMessage builds a model.Message with a single TextPart.
 // Returns nil when text is empty to allow callers to skip no-op messages.
-func newTextAgentMessage(role string, text string) *planner.AgentMessage {
+func newTextAgentMessage(role model.ConversationRole, text string) *model.Message {
 	if text == "" {
 		return nil
 	}
-	return &planner.AgentMessage{
+	return &model.Message{
 		Role:  role,
 		Parts: []model.Part{model.TextPart{Text: text}},
 	}
@@ -183,6 +183,22 @@ func cloneStrings(src []string) []string {
 	dst := make([]string, len(src))
 	copy(dst, src)
 	return dst
+}
+
+func cloneToolResults(src []*planner.ToolResult) []*planner.ToolResult {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make([]*planner.ToolResult, 0, len(src))
+	for _, tr := range src {
+		if tr == nil {
+			out = append(out, nil)
+			continue
+		}
+		cp := *tr
+		out = append(out, &cp)
+	}
+	return out
 }
 
 func mergeLabels(dst map[string]string, src map[string]string) map[string]string {

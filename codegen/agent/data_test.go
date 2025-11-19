@@ -84,14 +84,14 @@ func TestBuildGeneratorData(t *testing.T) {
 	require.Equal(t, "calc_scribe_summarize_tasks", consumed.TaskQueue)
 	require.Len(t, consumed.Tools, 1)
 	require.Equal(t, "summarize_doc", consumed.Tools[0].Name)
-	require.Equal(t, "calc.summarize.summarize_doc", consumed.Tools[0].QualifiedName)
+	require.Equal(t, "summarize.summarize_doc", consumed.Tools[0].QualifiedName)
 
 	exported := agent.ExportedToolsets[0]
 	require.Equal(t, "docs.export", exported.Name)
 	require.Equal(t, filepath.Join("gen", "calc", "agents", "scribe", "agenttools", "docs_export", "helpers.go"),
 		filepath.Join(exported.AgentToolsDir, "helpers.go"))
 	require.Equal(t, "calc", exported.ServiceName)
-	require.Equal(t, "calc.docs.export", exported.QualifiedName)
+	require.Equal(t, "docs.export", exported.QualifiedName)
 }
 
 func TestGenerateProducesFiles(t *testing.T) {

@@ -33,13 +33,14 @@ import (
 )
 
 type (
-	// toolSpecsData aggregates all type and codec metadata for an agent's tools.
-	// It collects type definitions, schemas, and codec functions during the
-	// generation process and provides them to templates for rendering.
+	// toolSpecsData aggregates all type and codec metadata for a set of tools
+	// owned by a single Goa service. It collects type definitions, schemas, and
+	// codec functions during the generation process and provides them to
+	// templates for rendering.
 	toolSpecsData struct {
-		// Agent data for the agent being processed.
-		agent *AgentData
-		// Generation package base path.
+		// svc is the Goa service that owns the tools.
+		svc *service.Data
+		// genpkg is the Go import path to the generated root (typically `<module>/gen`).
 		genpkg string
 		// Type metadata indexed by cache key for deduplication.
 		types map[string]*typeData
@@ -53,7 +54,7 @@ type (
 	// Each entry represents one tool that will be generated in the tool_specs
 	// package with its associated type definitions and codecs.
 	toolEntry struct {
-		// Qualified tool name used in runtime lookups (e.g., "service.toolset.tool").
+		// Qualified tool name used in runtime lookups (e.g., "toolset.tool").
 		Name string
 		// Title is the human-friendly display title.
 		Title string
@@ -155,9 +156,7 @@ type (
 	toolSpecBuilder struct {
 		// Generation package base path.
 		genpkg string
-		// Agent data for the agent being processed.
-		agent *AgentData
-		// Service data for the agent's primary service.
+		// Service data for the owning service.
 		service *service.Data
 		// Name scope for service type references.
 		svcScope *codegen.NameScope
@@ -189,13 +188,14 @@ const (
 // deduplicates types across tools, and maintains topological ordering for type
 // dependencies. Returns an error if type resolution or schema generation fails.
 func buildToolSpecsData(agent *AgentData) (*toolSpecsData, error) {
-	return buildToolSpecsDataFor(agent, agent.Tools)
+	return buildToolSpecsDataFor(agent.Genpkg, agent.Service, agent.Tools)
 }
 
-// buildToolSpecsDataFor builds specs/types/codecs data for the provided tool slice.
-func buildToolSpecsDataFor(agent *AgentData, tools []*ToolData) (*toolSpecsData, error) {
-	data := newToolSpecsData(agent)
-	builder := newToolSpecBuilder(agent)
+// buildToolSpecsDataFor builds specs/types/codecs data for the provided tool
+// slice using the owning service as the context for type/import resolution.
+func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) (*toolSpecsData, error) {
+	data := newToolSpecsData(genpkg, svc)
+	builder := newToolSpecBuilder(genpkg, svc)
 	for _, tool := range tools {
 		payload, err := builder.typeFor(tool, tool.Args, usagePayload)
 		if err != nil {
@@ -206,7 +206,8 @@ func buildToolSpecsDataFor(agent *AgentData, tools []*ToolData) (*toolSpecsData,
 			return nil, err
 		}
 		entry := &toolEntry{
-			Name:              tool.Name,
+			// Name is the qualified tool ID used at runtime (toolset.tool).
+			Name:              tool.QualifiedName,
 			Title:             tool.Title,
 			Service:           serviceName(tool),
 			Toolset:           toolsetName(tool),
@@ -334,17 +335,17 @@ func (d *toolSpecsData) codecsImports() []*codegen.ImportSpec {
 	needsGoa := d.needsGoaImport()
 	extra := make(map[string]*codegen.ImportSpec)
 	needsServiceImport := false
-	serviceImportPath := joinImportPath(d.agent.Genpkg, d.agent.Service.PathName)
+	serviceImportPath := joinImportPath(d.genpkg, d.svc.PathName)
 	for _, info := range d.typesList() {
 		if info.Import != nil && info.Import.Path != "" {
 			extra[info.Import.Path] = info.Import
-			if info.Import.Name == d.agent.Service.PkgName {
+			if info.Import.Name == d.svc.PkgName {
 				needsServiceImport = true
 			}
 		}
 		if info.ServiceImport != nil && info.ServiceImport.Path != "" {
 			extra[info.ServiceImport.Path] = info.ServiceImport
-			if info.ServiceImport.Name == d.agent.Service.PkgName {
+			if info.ServiceImport.Name == d.svc.PkgName {
 				needsServiceImport = true
 			}
 		}
@@ -357,7 +358,7 @@ func (d *toolSpecsData) codecsImports() []*codegen.ImportSpec {
 	}
 	if needsServiceImport && serviceImportPath != "" {
 		if _, exists := extra[serviceImportPath]; !exists {
-			extra[serviceImportPath] = &codegen.ImportSpec{Name: d.agent.Service.PkgName, Path: serviceImportPath}
+			extra[serviceImportPath] = &codegen.ImportSpec{Name: d.svc.PkgName, Path: serviceImportPath}
 		}
 	}
 	if len(extra) > 0 {
@@ -383,8 +384,8 @@ func (b *toolSpecBuilder) scopeForTool(t *ToolData) *codegen.NameScope {
 	if t != nil && t.Toolset != nil && t.Toolset.SourceService != nil && t.Toolset.SourceService.Scope != nil {
 		return t.Toolset.SourceService.Scope
 	}
-	if b.agent.Service.Scope != nil {
-		return b.agent.Service.Scope
+	if b.service.Scope != nil {
+		return b.service.Scope
 	}
 	return b.svcScope
 }
@@ -518,8 +519,28 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 		jsonRootPublic := scope.GoTypeName(&goaexpr.AttributeExpr{Type: jsonRoot})
 		info.JSONTypeName = jsonRootPublic
 		info.JSONRef = jsonRootPublic
+
 		// Emit the JSON root type as a standalone declaration.
 		for _, jut := range jsonDefs {
+			// Ensure JSON helper fields carry struct tag metadata so GoTypeDef
+			// can emit json tags that match the original field names (including
+			// underscores). Without this, names like "device_aliases" will not
+			// populate fields such as DeviceAliases correctly.
+			if obj := goaexpr.AsObject(jut.Attribute().Type); obj != nil {
+				for _, nat := range *obj {
+					if nat == nil || nat.Attribute == nil {
+						continue
+					}
+					if nat.Attribute.Meta == nil {
+						nat.Attribute.Meta = make(map[string][]string)
+					}
+					// Only set when no tag is present so DSL authors can override it.
+					if _, ok := nat.Attribute.Meta["struct:tag:json"]; !ok {
+						nat.Attribute.Meta["struct:tag:json"] = []string{nat.Name}
+					}
+				}
+			}
+
 			// Use Goa scope to compute the final public name, which guarantees
 			// consistency with references produced by GoTypeDef/GoTypeName.
 			// Helper JSON types are local to the specs package; use GoTypeName
@@ -770,21 +791,21 @@ func stableTypeKey(tool *ToolData, usage typeUsage) string {
 	return "name:" + tn
 }
 
-func newToolSpecsData(agent *AgentData) *toolSpecsData {
+func newToolSpecsData(genpkg string, svc *service.Data) *toolSpecsData {
 	return &toolSpecsData{
-		agent:  agent,
-		genpkg: agent.Genpkg,
+		svc:    svc,
+		genpkg: genpkg,
 		types:  make(map[string]*typeData),
 	}
 }
 
-func newToolSpecBuilder(agent *AgentData) *toolSpecBuilder {
-	scope := agent.Service.Scope
+func newToolSpecBuilder(genpkg string, svc *service.Data) *toolSpecBuilder {
+	scope := svc.Scope
 	if scope == nil {
 		scope = codegen.NewNameScope()
 	}
 	svcImports := make(map[string]*codegen.ImportSpec)
-	for _, im := range agent.Service.UserTypeImports {
+	for _, im := range svc.UserTypeImports {
 		if im.Path == "" {
 			continue
 		}
@@ -795,9 +816,8 @@ func newToolSpecBuilder(agent *AgentData) *toolSpecBuilder {
 		svcImports[alias] = im
 	}
 	return &toolSpecBuilder{
-		genpkg:      agent.Genpkg,
-		agent:       agent,
-		service:     agent.Service,
+		genpkg:      genpkg,
+		service:     svc,
 		svcScope:    scope,
 		svcImports:  svcImports,
 		types:       make(map[string]*typeData),

@@ -63,6 +63,16 @@ type (
 		// correlate ToolCallUpdated events and propagate parent-child relationships.
 		ParentToolCallID string
 
+		// ParentRunID identifies the run that scheduled this nested execution. Empty for
+		// top-level runs. When set, tool events emitted by this run can be attributed to
+		// the parent run for streaming/UI purposes.
+		ParentRunID string
+
+		// ParentAgentID identifies the agent that invoked this nested execution. Empty
+		// for top-level runs. When set alongside ParentRunID, tool events can retain the
+		// parent agent identity even though execution occurs in a child agent.
+		ParentAgentID string
+
 		// SessionID associates related runs into a conversation or interaction thread.
 		// Multiple turns in a chat session share the same SessionID. Optional.
 		SessionID string

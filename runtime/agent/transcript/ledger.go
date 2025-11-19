@@ -198,6 +198,15 @@ func NewLedger() *Ledger {
 	}
 }
 
+// ToolResultSpec describes a single tool_result block for appending user
+// messages in a turn. It is used by AppendUserToolResults to build a single
+// user message containing multiple tool_result parts.
+type ToolResultSpec struct {
+	ToolUseID string
+	Content   any
+	IsError   bool
+}
+
 // AppendThinking records a structured thinking block and ensures it appears at
 // the head of the current assistant message. When a message is not yet open,
 // a new assistant message is started.
@@ -236,24 +245,15 @@ func (l *Ledger) AppendText(text string) {
 	l.current.Parts = append(l.current.Parts, TextPart{Text: text})
 }
 
-// DeclareToolUse appends a tool_use to the current assistant message and flushes
-// the message to the ledger so the subsequent user tool_result can correlate to it.
+// DeclareToolUse appends a tool_use to the current assistant message. The
+// caller is responsible for flushing the assistant message at the end of the
+// turn so that subsequent user tool_result messages can correlate to the full
+// set of tool_use blocks.
 func (l *Ledger) DeclareToolUse(id, name string, args any) {
 	if l.current == nil {
 		l.current = &Message{Role: "assistant", Parts: make([]Part, 0, 1)}
 	}
 	l.current.Parts = append(l.current.Parts, ToolUsePart{ID: id, Name: name, Args: args})
-	l.flushAssistant()
-}
-
-// AppendToolResult appends a user tool_result message correlated to a prior tool_use.
-func (l *Ledger) AppendToolResult(id string, content any, isErr bool) {
-	l.messages = append(l.messages, Message{
-		Role: "user",
-		Parts: []Part{
-			ToolResultPart{ToolUseID: id, Content: content, IsError: isErr},
-		},
-	})
 }
 
 func (l *Ledger) flushAssistant() {
@@ -263,6 +263,35 @@ func (l *Ledger) flushAssistant() {
 	}
 	l.messages = append(l.messages, *l.current)
 	l.current = nil
+}
+
+// FlushAssistant finalizes the current assistant message (if any) and appends
+// it to the ledger. It is safe to call when no assistant message is open.
+func (l *Ledger) FlushAssistant() {
+	l.flushAssistant()
+}
+
+// AppendUserToolResults appends a single user message containing tool_result
+// parts for the provided specs, preserving their order. Specs with empty
+// ToolUseID are ignored.
+func (l *Ledger) AppendUserToolResults(results []ToolResultSpec) {
+	if len(results) == 0 {
+		return
+	}
+	parts := make([]Part, 0, len(results))
+	for _, r := range results {
+		if r.ToolUseID == "" {
+			continue
+		}
+		parts = append(parts, ToolResultPart(r))
+	}
+	if len(parts) == 0 {
+		return
+	}
+	l.messages = append(l.messages, Message{
+		Role:  "user",
+		Parts: parts,
+	})
 }
 
 // BuildMessages flushes the current assistant (if any) and converts the ledger
@@ -339,6 +368,8 @@ func FromModelMessages(msgs []*model.Message) *Ledger {
 				led.AppendText(v.Text)
 			case model.ToolUsePart:
 				led.DeclareToolUse(v.ID, v.Name, v.Input)
+				// Tool results are not part of assistant messages; they are
+				// reconstructed from events or planner results.
 			}
 		}
 	}
@@ -363,16 +394,16 @@ func (l *Ledger) IsEmpty() bool {
 //
 // It returns a descriptive error when a constraint is violated.
 func ValidateBedrock(messages []*model.Message, thinkingEnabled bool) error {
-	if !thinkingEnabled || len(messages) == 0 {
+	if len(messages) == 0 {
 		return nil
 	}
-	// Check final assistant must start with thinking when it contains tool_use.
-	// And for each user tool_result, prior assistant must contain tool_use.
+	// Validate assistant → user tooling handshakes. When thinking is enabled,
+	// also enforce that assistant messages with tool_use begin with thinking.
 	for i, m := range messages {
 		if m == nil || m.Role != model.ConversationRoleAssistant {
 			continue
 		}
-		// If message contains tool_use, require thinking at head.
+		// Detect tool_use presence and optionally enforce thinking-first.
 		hasToolUse := false
 		for _, p := range m.Parts {
 			if _, ok := p.(model.ToolUsePart); ok {
@@ -384,27 +415,42 @@ func ValidateBedrock(messages []*model.Message, thinkingEnabled bool) error {
 			if len(m.Parts) == 0 {
 				return errors.New("bedrock: assistant message is empty where tool_use present")
 			}
-			if _, ok := m.Parts[0].(model.ThinkingPart); !ok {
-				return errors.New("bedrock: assistant message with tool_use must start with thinking")
+			if thinkingEnabled {
+				if _, ok := m.Parts[0].(model.ThinkingPart); !ok {
+					return errors.New("bedrock: assistant message with tool_use must start with thinking")
+				}
 			}
-		}
-		// Ensure next user tool_result counts do not exceed this assistant's tool_use count.
-		if i+1 < len(messages) {
+			// The very next message must be a user message containing tool_result
+			// blocks that correspond to the tool_use IDs in this assistant message.
+			if i+1 >= len(messages) || messages[i+1] == nil || messages[i+1].Role != model.ConversationRoleUser {
+				return errors.New("bedrock: expected user tool_result following assistant tool_use")
+			}
 			next := messages[i+1]
-			if next != nil && next.Role == model.ConversationRoleUser {
-				var useCount, resCount int
-				for _, p := range m.Parts {
-					if _, ok := p.(model.ToolUsePart); ok {
-						useCount++
+			// Collect tool_use IDs from assistant and tool_result IDs from user.
+			useIDs := make(map[string]struct{})
+			for _, p := range m.Parts {
+				if tu, ok := p.(model.ToolUsePart); ok {
+					if tu.ID != "" {
+						useIDs[tu.ID] = struct{}{}
 					}
 				}
-				for _, p := range next.Parts {
-					if _, ok := p.(model.ToolResultPart); ok {
-						resCount++
+			}
+			resIDs := make(map[string]struct{})
+			for _, p := range next.Parts {
+				if tr, ok := p.(model.ToolResultPart); ok {
+					if tr.ToolUseID != "" {
+						resIDs[tr.ToolUseID] = struct{}{}
 					}
 				}
-				if resCount > useCount {
-					return errors.New("bedrock: tool_result count exceeds prior assistant tool_use count")
+			}
+			// Count check (cannot exceed).
+			if len(resIDs) > len(useIDs) {
+				return errors.New("bedrock: tool_result count exceeds prior assistant tool_use count")
+			}
+			// Subset check (all tool_result IDs must match declared tool_use IDs).
+			for id := range resIDs {
+				if _, ok := useIDs[id]; !ok {
+					return errors.New("bedrock: tool_result id does not match prior assistant tool_use id")
 				}
 			}
 		}
@@ -417,6 +463,8 @@ func ValidateBedrock(messages []*model.Message, thinkingEnabled bool) error {
 // canonical provider order (assistant thinking → text → tool_use; user tool_result).
 func BuildMessagesFromEvents(events []memory.Event) []*model.Message {
 	l := NewLedger()
+	var pendingResults []ToolResultSpec
+	var toolOrder []string
 	for _, e := range events {
 		switch e.Type {
 		case memory.EventAssistantMessage:
@@ -441,6 +489,7 @@ func BuildMessagesFromEvents(events []memory.Event) []*model.Message {
 				}
 				if id != "" && name != "" {
 					l.DeclareToolUse(id, name, payload)
+					toolOrder = append(toolOrder, id)
 				}
 			}
 		case memory.EventToolResult:
@@ -458,7 +507,11 @@ func BuildMessagesFromEvents(events []memory.Event) []*model.Message {
 					isErr = true
 				}
 				if id != "" {
-					l.AppendToolResult(id, content, isErr)
+					pendingResults = append(pendingResults, ToolResultSpec{
+						ToolUseID: id,
+						Content:   content,
+						IsError:   isErr,
+					})
 				}
 			}
 		case memory.EventPlannerNote:
@@ -486,6 +539,30 @@ func BuildMessagesFromEvents(events []memory.Event) []*model.Message {
 				l.AppendThinking(tp)
 			}
 		}
+	}
+	if len(pendingResults) > 0 {
+		// Order tool results to match the assistant tool_use declaration order
+		// recorded in toolOrder so that provider handshakes are deterministic.
+		byID := make(map[string]ToolResultSpec, len(pendingResults))
+		for _, r := range pendingResults {
+			if r.ToolUseID == "" {
+				continue
+			}
+			byID[r.ToolUseID] = r
+		}
+		ordered := make([]ToolResultSpec, 0, len(byID))
+		for _, id := range toolOrder {
+			if r, ok := byID[id]; ok {
+				ordered = append(ordered, r)
+				delete(byID, id)
+			}
+		}
+		// Append any remaining results with unknown IDs at the end to preserve
+		// observability; this should not happen in normal operation.
+		for _, r := range byID {
+			ordered = append(ordered, r)
+		}
+		l.AppendUserToolResults(ordered)
 	}
 	return l.BuildMessages()
 }

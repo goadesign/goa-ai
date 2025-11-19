@@ -1,3 +1,6 @@
+// Package planner defines planner contracts and helper implementations. This
+// file provides a no-op PlannerEvents implementation used in tests or in
+// planners that do not emit streaming events.
 package planner
 
 import (

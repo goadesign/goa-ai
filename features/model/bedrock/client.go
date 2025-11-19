@@ -24,7 +24,6 @@ import (
 )
 
 const (
-	defaultMaxTokens      = 4096
 	defaultThinkingBudget = 16384
 )
 
@@ -58,15 +57,16 @@ type Options struct {
 	SmallModel string
 
 	// MaxTokens sets the default completion cap when a request does not specify
-	// MaxTokens. Must be positive; defaults to 4096.
+	// MaxTokens. When zero or negative, the client omits MaxTokens so Bedrock
+	// uses its own default.
 	MaxTokens int
 
 	// Temperature is used when a request does not specify Temperature.
 	Temperature float32
 
 	// ThinkingBudget defines the thinking token budget when thinking is enabled
-	// for streaming calls. Defaults to 16k tokens to match the production
-	// inference-engine settings.
+	// for streaming calls. When zero or negative, the client omits
+	// budget_tokens so Bedrock uses its own default budget.
 	ThinkingBudget int
 }
 
@@ -90,10 +90,12 @@ type ledgerSource interface {
 }
 
 type requestParts struct {
-	modelID    string
-	messages   []brtypes.Message
-	system     []brtypes.SystemContentBlock
-	toolConfig *brtypes.ToolConfiguration
+	modelID                 string
+	messages                []brtypes.Message
+	system                  []brtypes.SystemContentBlock
+	toolConfig              *brtypes.ToolConfiguration
+	toolNameCanonicalToProv map[string]string
+	toolNameProvToCanonical map[string]string
 }
 
 type thinkingConfig struct {
@@ -102,8 +104,13 @@ type thinkingConfig struct {
 	budget      int
 }
 
-// New constructs a Bedrock-backed model client using the provided options.
-func New(opts Options) (*Client, error) {
+// New initializes a Bedrock-powered model client configured for chat completion
+// and streaming requests. The provided ledgerSource allows the client to
+// prepend provider-verified messages for a specific run ID during request
+// encoding, ensuring transcript continuity and accurate context across
+// completions.
+func New(aws *bedrockruntime.Client, opts Options, ledger ledgerSource) (*Client, error) {
+	opts.Runtime = aws
 	if opts.Runtime == nil {
 		return nil, errors.New("bedrock runtime client is required")
 	}
@@ -112,34 +119,20 @@ func New(opts Options) (*Client, error) {
 		return nil, errors.New("default model identifier is required")
 	}
 	maxTokens := opts.MaxTokens
-	if maxTokens <= 0 {
-		maxTokens = defaultMaxTokens
-	}
 	thinkBudget := opts.ThinkingBudget
 	if thinkBudget <= 0 {
 		thinkBudget = defaultThinkingBudget
 	}
-	return &Client{
+	c := &Client{
 		runtime:      opts.Runtime,
+		ledger:       ledger,
 		defaultModel: opts.DefaultModel,
 		highModel:    opts.HighModel,
 		smallModel:   opts.SmallModel,
 		maxTok:       maxTokens,
 		temp:         opts.Temperature,
 		think:        thinkBudget,
-	}, nil
-}
-
-// NewWithLedger constructs a Bedrock-backed model client with an internal ledger
-// source for transcript rehydration. The ledger source is used to prepend provider-
-// ready messages for the given RunID before encoding the request.
-func NewWithLedger(aws *bedrockruntime.Client, opts Options, ledger ledgerSource) (*Client, error) {
-	opts.Runtime = aws
-	c, err := New(opts)
-	if err != nil {
-		return nil, err
 	}
-	c.ledger = ledger
 	return c, nil
 }
 
@@ -155,7 +148,7 @@ func (c *Client) Complete(ctx context.Context, req model.Request) (model.Respons
 	if err != nil {
 		return model.Response{}, fmt.Errorf("bedrock converse: %w", err)
 	}
-	return translateResponse(output)
+	return translateResponse(output, parts.toolNameProvToCanonical)
 }
 
 // Stream invokes the Bedrock ConverseStream API and adapts incremental events
@@ -175,7 +168,7 @@ func (c *Client) Stream(ctx context.Context, req model.Request) (model.Streamer,
 	if stream == nil {
 		return nil, errors.New("bedrock: stream output missing event stream")
 	}
-	return newBedrockStreamer(ctx, stream), nil
+	return newBedrockStreamer(ctx, stream, parts.toolNameProvToCanonical), nil
 }
 
 func (c *Client) prepareRequest(ctx context.Context, req model.Request) (*requestParts, error) {
@@ -202,16 +195,24 @@ func (c *Client) prepareRequest(ctx context.Context, req model.Request) (*reques
 			return nil, fmt.Errorf("bedrock: invalid message ordering with thinking enabled (run=%s, model=%s): %w", req.RunID, modelID, err)
 		}
 	}
-	messages, system, err := encodeMessages(ctx, merged)
+	// Build tool configuration and name maps before encoding messages so tool_use
+	// names can reuse the exact sanitized identifiers. encodeTools is the single
+	// source of truth for name sanitization.
+	toolConfig, canonToSan, sanToCanon, err := encodeTools(ctx, req.Tools, req.ToolChoice)
 	if err != nil {
 		return nil, err
 	}
-	toolConfig := encodeTools(ctx, req.Tools)
+	messages, system, err := encodeMessages(ctx, merged, canonToSan)
+	if err != nil {
+		return nil, err
+	}
 	return &requestParts{
-		modelID:    modelID,
-		messages:   messages,
-		system:     system,
-		toolConfig: toolConfig,
+		modelID:                 modelID,
+		messages:                messages,
+		system:                  system,
+		toolConfig:              toolConfig,
+		toolNameCanonicalToProv: canonToSan,
+		toolNameProvToCanonical: sanToCanon,
 	}, nil
 }
 
@@ -240,31 +241,6 @@ func (c *Client) buildConverseInput(parts *requestParts, req model.Request) *bed
 		ModelId:  aws.String(parts.modelID),
 		Messages: parts.messages,
 	}
-	// Encode response_format for unary calls as well.
-	if rf := req.ResponseFormat; rf != nil {
-		fields := map[string]any{}
-		if len(rf.JSONSchema) > 0 {
-			name := rf.SchemaName
-			if name == "" {
-				name = "result"
-			}
-			var schema any
-			if err := json.Unmarshal(rf.JSONSchema, &schema); err == nil {
-				fields["response_format"] = map[string]any{
-					"type": "json_schema",
-					"json_schema": map[string]any{
-						"name":   name,
-						"schema": schema,
-					},
-				}
-			}
-		} else if rf.JSONOnly {
-			fields["response_format"] = map[string]any{"type": "json_object"}
-		}
-		if len(fields) > 0 {
-			input.AdditionalModelRequestFields = document.NewLazyDocument(&fields)
-		}
-	}
 	if len(parts.system) > 0 {
 		input.System = parts.system
 	}
@@ -282,33 +258,6 @@ func (c *Client) buildConverseStreamInput(parts *requestParts, req model.Request
 		ModelId:  aws.String(parts.modelID),
 		Messages: parts.messages,
 	}
-	// Encode response_format when requested (JSON-only or schema-constrained).
-	if rf := req.ResponseFormat; rf != nil {
-		fields := map[string]any{}
-		if len(rf.JSONSchema) > 0 {
-			name := rf.SchemaName
-			if name == "" {
-				name = "result"
-			}
-			var schema any
-			if err := json.Unmarshal(rf.JSONSchema, &schema); err == nil {
-				fields["response_format"] = map[string]any{
-					"type": "json_schema",
-					"json_schema": map[string]any{
-						"name":   name,
-						"schema": schema,
-					},
-				}
-			}
-		} else if rf.JSONOnly {
-			fields["response_format"] = map[string]any{
-				"type": "json_object",
-			}
-		}
-		if len(fields) > 0 {
-			input.AdditionalModelRequestFields = document.NewLazyDocument(&fields)
-		}
-	}
 	if len(parts.system) > 0 {
 		input.System = parts.system
 	}
@@ -316,11 +265,14 @@ func (c *Client) buildConverseStreamInput(parts *requestParts, req model.Request
 		input.ToolConfig = parts.toolConfig
 	}
 	if thinking.enable {
+		thinkingCfg := map[string]any{
+			"type": "enabled",
+		}
+		if thinking.budget > 0 {
+			thinkingCfg["budget_tokens"] = thinking.budget
+		}
 		fields := map[string]any{
-			"thinking": map[string]any{
-				"type":          "enabled",
-				"budget_tokens": thinking.budget,
-			},
+			"thinking": thinkingCfg,
 		}
 		if thinking.interleaved {
 			fields["anthropic_beta"] = []string{"interleaved-thinking-2025-05-14"}
@@ -334,10 +286,6 @@ func (c *Client) buildConverseStreamInput(parts *requestParts, req model.Request
 }
 
 func (c *Client) resolveThinking(req model.Request, parts *requestParts) thinkingConfig {
-	// Disable thinking when requesting schema/JSON-only responses.
-	if req.ResponseFormat != nil {
-		return thinkingConfig{}
-	}
 	if req.Thinking == nil || !req.Thinking.Enable {
 		return thinkingConfig{}
 	}
@@ -347,9 +295,6 @@ func (c *Client) resolveThinking(req model.Request, parts *requestParts) thinkin
 	budget := req.Thinking.BudgetTokens
 	if budget <= 0 {
 		budget = c.think
-	}
-	if budget <= 0 {
-		budget = defaultThinkingBudget
 	}
 	return thinkingConfig{
 		enable:      true,
@@ -408,7 +353,7 @@ func (c *Client) effectiveTemperature(requested float32) float32 {
 	return c.temp
 }
 
-func encodeMessages(ctx context.Context, msgs []*model.Message) ([]brtypes.Message, []brtypes.SystemContentBlock, error) {
+func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[string]string) ([]brtypes.Message, []brtypes.SystemContentBlock, error) {
 	conversation := make([]brtypes.Message, 0, len(msgs))
 	system := make([]brtypes.SystemContentBlock, 0, len(msgs))
 	for _, m := range msgs {
@@ -454,6 +399,16 @@ func encodeMessages(ctx context.Context, msgs []*model.Message) ([]brtypes.Messa
 				tb := brtypes.ToolUseBlock{}
 				if v.Name != "" {
 					name := v.Name
+					// Strong contract: callers should provide canonical names that
+					// match tool definitions. Reuse the exact sanitized name when
+					// available so tool_use and ToolSpecification stay aligned.
+					if m, ok := nameMap[name]; ok && m != "" {
+						name = m
+					} else {
+						// Fallback for unexpected names: sanitize once here so
+						// Bedrock still accepts the request.
+						name = sanitizeToolName(name)
+					}
 					tb.Name = aws.String(name)
 				}
 				if v.ID != "" {
@@ -501,31 +456,143 @@ func encodeMessages(ctx context.Context, msgs []*model.Message) ([]brtypes.Messa
 	return conversation, system, nil
 }
 
-func encodeTools(ctx context.Context, defs []*model.ToolDefinition) *brtypes.ToolConfiguration {
+func encodeTools(ctx context.Context, defs []*model.ToolDefinition, choice *model.ToolChoice) (*brtypes.ToolConfiguration, map[string]string, map[string]string, error) {
 	if len(defs) == 0 {
-		return nil
+		if choice == nil {
+			return nil, nil, nil, nil
+		}
+		return nil, nil, nil, fmt.Errorf("bedrock: tool choice is set but no tools are defined")
 	}
 	tools := make([]brtypes.Tool, 0, len(defs))
+	// canonToSan maps canonical IDs (toolset.tool) to provider-visible sanitized names.
+	canonToSan := make(map[string]string, len(defs))
+	// sanToCanon is the reverse map used to translate provider names back to canonical IDs.
+	sanToCanon := make(map[string]string, len(defs))
 	for _, def := range defs {
 		if def == nil {
 			continue
 		}
-		name := def.Name
-		if name == "" {
+		canonical := def.Name
+		if canonical == "" {
 			continue
+		}
+		sanitized := sanitizeToolName(canonical)
+		if prev, ok := sanToCanon[sanitized]; ok && prev != canonical {
+			return nil, nil, nil, fmt.Errorf(
+				"bedrock: tool name %q sanitizes to %q which collides with %q",
+				canonical, sanitized, prev,
+			)
+		}
+		sanToCanon[sanitized] = canonical
+		canonToSan[canonical] = sanitized
+		if def.Description == "" {
+			return nil, nil, nil, fmt.Errorf("bedrock: tool %q is missing description", canonical)
 		}
 		schemaDoc := toDocument(ctx, def.InputSchema)
 		spec := brtypes.ToolSpecification{
-			Name:        aws.String(name),
+			Name:        aws.String(sanitized),
 			Description: aws.String(def.Description),
 			InputSchema: &brtypes.ToolInputSchemaMemberJson{Value: schemaDoc},
 		}
 		tools = append(tools, &brtypes.ToolMemberToolSpec{Value: spec})
 	}
 	if len(tools) == 0 {
-		return nil
+		if choice == nil || choice.Mode == model.ToolChoiceModeNone {
+			return nil, nil, nil, nil
+		}
+		return nil, nil, nil, fmt.Errorf("bedrock: tool choice is set but no tools are defined")
 	}
-	return &brtypes.ToolConfiguration{Tools: tools}
+
+	if choice == nil {
+		return &brtypes.ToolConfiguration{Tools: tools}, canonToSan, sanToCanon, nil
+	}
+
+	cfg := brtypes.ToolConfiguration{
+		Tools: tools,
+	}
+
+	switch choice.Mode {
+	case "", model.ToolChoiceModeAuto:
+		// Auto is the provider default; omit ToolChoice to preserve existing
+		// behavior.
+	case model.ToolChoiceModeNone:
+		// Disable tool use for this request by omitting the configuration
+		// entirely.
+		return nil, canonToSan, sanToCanon, nil
+	case model.ToolChoiceModeAny:
+		cfg.ToolChoice = &brtypes.ToolChoiceMemberAny{
+			Value: brtypes.AnyToolChoice{},
+		}
+	case model.ToolChoiceModeTool:
+		if choice.Name == "" {
+			return nil, nil, nil, fmt.Errorf(
+				"bedrock: tool choice mode %q requires a tool name",
+				choice.Mode,
+			)
+		}
+		if !hasToolDefinition(defs, choice.Name) {
+			return nil, nil, nil, fmt.Errorf(
+				"bedrock: tool choice name %q does not match any tool",
+				choice.Name,
+			)
+		}
+		sanitized := sanitizeToolName(choice.Name)
+		if canonical, ok := sanToCanon[sanitized]; !ok || canonical != choice.Name {
+			return nil, nil, nil, fmt.Errorf(
+				"bedrock: tool choice name %q does not match any tool",
+				choice.Name,
+			)
+		}
+		cfg.ToolChoice = &brtypes.ToolChoiceMemberTool{
+			Value: brtypes.SpecificToolChoice{
+				Name: aws.String(sanitized),
+			},
+		}
+	default:
+		return nil, nil, nil, fmt.Errorf(
+			"bedrock: unsupported tool choice mode %q",
+			choice.Mode,
+		)
+	}
+
+	return &cfg, canonToSan, sanToCanon, nil
+}
+
+// sanitizeToolName maps a canonical tool identifier to characters allowed by
+// the Bedrock constraint [a-zA-Z0-9_-]+ by replacing any disallowed rune with
+// '_'. The mapping must be reversible within a single request; callers rely on
+// encodeTools to build a collision-free sanitized → canonical name map.
+func sanitizeToolName(in string) string {
+	if in == "" {
+		return in
+	}
+	// Fast path: if all runes are allowed, return as-is.
+	allowed := true
+	for _, r := range in {
+		if (r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') ||
+			r == '_' || r == '-' {
+			continue
+		}
+		allowed = false
+		break
+	}
+	if allowed {
+		return in
+	}
+	out := make([]rune, 0, len(in))
+	for _, r := range in {
+		if (r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') ||
+			r == '_' || r == '-' {
+			out = append(out, r)
+		} else {
+			out = append(out, '_')
+		}
+	}
+	return string(out)
 }
 
 func toDocument(ctx context.Context, schema any) document.Interface {
@@ -552,7 +619,7 @@ func toDocument(ctx context.Context, schema any) document.Interface {
 	}
 }
 
-func translateResponse(output *bedrockruntime.ConverseOutput) (model.Response, error) {
+func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string]string) (model.Response, error) {
 	if output == nil {
 		return model.Response{}, errors.New("bedrock: response is nil")
 	}
@@ -570,6 +637,9 @@ func translateResponse(output *bedrockruntime.ConverseOutput) (model.Response, e
 				name := ""
 				if v.Value.Name != nil {
 					name = *v.Value.Name
+					if canonical, ok := nameMap[name]; ok {
+						name = canonical
+					}
 				}
 				var id string
 				if v.Value.ToolUseId != nil {
@@ -614,4 +684,16 @@ func ptrValue[T ~int32 | ~int64](ptr *T) T {
 
 func lazyDocument(v any) document.Interface {
 	return document.NewLazyDocument(&v)
+}
+
+func hasToolDefinition(defs []*model.ToolDefinition, name string) bool {
+	for _, def := range defs {
+		if def == nil {
+			continue
+		}
+		if def.Name == name {
+			return true
+		}
+	}
+	return false
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -50,7 +51,7 @@ func TestToolsetTaskQueueOverrideUsed(t *testing.T) {
 		}, nil
 	}}}}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{"child": newAnyJSONSpec("child", "svc.export")}
-	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, hasPlanResult: true}
+	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, hasPlanResult: true}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("child")}}}
@@ -74,7 +75,7 @@ func TestPreserveModelProvidedToolCallID(t *testing.T) {
 		return &planner.ToolResult{Name: call.Name}, nil
 	}}}}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{"tool": newAnyJSONSpec("tool", "svc.ts")}
-	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, hasPlanResult: true}
+	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, hasPlanResult: true}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 	// Planner supplies an explicit ToolCallID from the model
@@ -125,7 +126,7 @@ func TestRunLoopPauseResumeEmitsEvents(t *testing.T) {
 		wfCtx.barrier <- struct{}{}
 	}()
 	wfCtx.hasPlanResult = true
-	wfCtx.planResult = &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: planner.AgentMessage{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}
+	wfCtx.planResult = &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("tool")}}}
@@ -148,4 +149,151 @@ func TestRunLoopPauseResumeEmitsEvents(t *testing.T) {
 	}
 	require.True(t, sawPause)
 	require.True(t, sawResume)
+}
+
+func TestServiceToolEventsUseParentRunContext(t *testing.T) {
+	recorder := &recordingHooks{}
+	rt := &Runtime{
+		Bus:     recorder,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		toolsets: map[string]ToolsetRegistration{
+			"svc.tools": {},
+		},
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			tools.Ident("atlas.read.atlas_get_time_series"): newAnyJSONSpec("atlas.read.atlas_get_time_series", "svc.tools"),
+		},
+	}
+	wfCtx := &testWorkflowContext{
+		ctx:         context.Background(),
+		asyncResult: ToolOutput{Payload: []byte("null")},
+	}
+	parentCtx := &run.Context{
+		ParentRunID:      "parent-run",
+		ParentAgentID:    "chat.agent",
+		ParentToolCallID: "tool-parent",
+	}
+	calls := []planner.ToolRequest{{
+		Name:       tools.Ident("atlas.read.atlas_get_time_series"),
+		ToolCallID: "child-call",
+	}}
+	seq := &turnSequencer{turnID: "turn-1"}
+	_, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "child-run", "ada.agent", parentCtx, calls, 0, seq, nil, time.Time{})
+	require.NoError(t, err)
+
+	var scheduled *hooks.ToolCallScheduledEvent
+	var resultEvt *hooks.ToolResultReceivedEvent
+	for _, evt := range recorder.events {
+		switch e := evt.(type) {
+		case *hooks.ToolCallScheduledEvent:
+			scheduled = e
+		case *hooks.ToolResultReceivedEvent:
+			resultEvt = e
+		}
+	}
+	require.NotNil(t, scheduled, "expected ToolCallScheduledEvent")
+	require.Equal(t, "parent-run", scheduled.RunID())
+	require.Equal(t, "chat.agent", scheduled.AgentID())
+	require.Equal(t, "tool-parent", scheduled.ParentToolCallID)
+
+	require.NotNil(t, resultEvt, "expected ToolResultReceivedEvent")
+	require.Equal(t, "parent-run", resultEvt.RunID())
+	require.Equal(t, "chat.agent", resultEvt.AgentID())
+	require.Equal(t, "tool-parent", resultEvt.ParentToolCallID)
+}
+
+func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
+	recorder := &recordingHooks{}
+	rt := &Runtime{
+		Bus:     recorder,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+	}
+	rt.toolsets = map[string]ToolsetRegistration{
+		"ada.tools": {
+			Inline: true,
+			Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+				require.NotNil(t, call)
+				require.Equal(t, tools.Ident("ada.get_time_series"), call.Name)
+				require.Equal(t, "tool-parent", call.ToolCallID)
+				return &planner.ToolResult{
+					Name:       call.Name,
+					ToolCallID: call.ToolCallID,
+					Result:     map[string]any{"ok": true},
+				}, nil
+			},
+		},
+	}
+	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
+		tools.Ident("ada.get_time_series"): newAnyJSONSpec("ada.get_time_series", "ada.tools"),
+	}
+	wfCtx := &testWorkflowContext{
+		ctx: context.Background(),
+		planResult: &planner.PlanResult{
+			FinalResponse: &planner.FinalResponse{
+				Message: &model.Message{
+					Role:  model.ConversationRoleAssistant,
+					Parts: []model.Part{model.TextPart{Text: "done"}},
+				},
+			},
+		},
+		hasPlanResult: true,
+	}
+	input := &RunInput{AgentID: "chat.agent", RunID: "run-inline", SessionID: "sess-1", TurnID: "turn-1"}
+	base := &planner.PlanInput{
+		RunContext: run.Context{RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID},
+		Agent:      newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID}),
+	}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		Name:       tools.Ident("ada.get_time_series"),
+		ToolCallID: "tool-parent",
+	}}}
+	_, err := rt.runLoop(
+		wfCtx,
+		AgentRegistration{
+			ID:                  input.AgentID,
+			Planner:             &stubPlanner{},
+			ExecuteToolActivity: "execute",
+			ResumeActivityName:  "resume",
+		},
+		input,
+		base,
+		initial,
+		nil,
+		policy.CapsState{MaxToolCalls: 2, RemainingToolCalls: 2},
+		time.Time{},
+		2,
+		&turnSequencer{turnID: input.TurnID},
+		nil,
+		nil,
+		0,
+	)
+	require.NoError(t, err)
+
+	var scheduled *hooks.ToolCallScheduledEvent
+	var resultEvt *hooks.ToolResultReceivedEvent
+	for _, evt := range recorder.events {
+		switch e := evt.(type) {
+		case *hooks.ToolCallScheduledEvent:
+			if e.ToolCallID == "tool-parent" {
+				scheduled = e
+			}
+		case *hooks.ToolResultReceivedEvent:
+			if e.ToolCallID == "tool-parent" {
+				resultEvt = e
+			}
+		}
+	}
+	require.NotNil(t, scheduled, "expected ToolCallScheduledEvent for inline tool")
+	require.Equal(t, input.RunID, scheduled.RunID())
+	require.Equal(t, tools.Ident("ada.get_time_series"), scheduled.ToolName)
+	require.Equal(t, "", scheduled.ParentToolCallID)
+
+	require.NotNil(t, resultEvt, "expected ToolResultReceivedEvent for inline tool")
+	require.Equal(t, input.RunID, resultEvt.RunID())
+	require.Equal(t, tools.Ident("ada.get_time_series"), resultEvt.ToolName)
+	require.Equal(t, map[string]any{"ok": true}, resultEvt.Result)
+	require.Equal(t, "", resultEvt.ParentToolCallID)
 }

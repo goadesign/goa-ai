@@ -10,6 +10,7 @@ const (
 	activitiesFileT      = "activities"
 	agentFileT           = "agent"
 	agentToolsFileT      = "agent_tools"
+	agentToolsConsumerT  = "agent_tools_consumer"
 	bootstrapHelperT     = "bootstrap_helper"
 	bootstrapInternalT   = "bootstrap_internal"
 	exampleExecutorStubT = "example_executor_stub"

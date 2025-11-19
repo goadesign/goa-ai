@@ -8,6 +8,7 @@ import (
 	"errors"
 
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 )
 
@@ -41,7 +42,7 @@ type (
 		Labels      map[string]string
 		// Messages allows human or policy actors to inject new conversational
 		// messages before the planner resumes execution.
-		Messages []*planner.AgentMessage
+		Messages []*model.Message
 	}
 
 	// Controller drains runtime interrupt signals and exposes helpers the

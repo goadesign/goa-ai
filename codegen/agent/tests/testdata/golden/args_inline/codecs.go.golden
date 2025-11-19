@@ -154,7 +154,7 @@ func enrichAddPayloadJSON2ValidationError(err error) error {
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
 	switch name {
-	case "add":
+	case "math.add":
 		return &addPayloadCodec, true
 	default:
 		return nil, false
@@ -164,7 +164,7 @@ func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
 // ResultCodec returns the generic codec for the named tool result.
 func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 	switch name {
-	case "add":
+	case "math.add":
 		return &addResultCodec, true
 	default:
 		return nil, false

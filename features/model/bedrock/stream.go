@@ -29,17 +29,19 @@ type bedrockStreamer struct {
 	errSet   bool
 	finalErr error
 
-	metaMu   sync.RWMutex
-	metadata map[string]any
+	metaMu      sync.RWMutex
+	metadata    map[string]any
+	toolNameMap map[string]string
 }
 
-func newBedrockStreamer(ctx context.Context, stream *bedrockruntime.ConverseStreamEventStream) model.Streamer {
+func newBedrockStreamer(ctx context.Context, stream *bedrockruntime.ConverseStreamEventStream, nameMap map[string]string) model.Streamer {
 	cctx, cancel := context.WithCancel(ctx)
 	bs := &bedrockStreamer{
-		ctx:    cctx,
-		cancel: cancel,
-		stream: stream,
-		chunks: make(chan model.Chunk, 32),
+		ctx:         cctx,
+		cancel:      cancel,
+		stream:      stream,
+		chunks:      make(chan model.Chunk, 32),
+		toolNameMap: nameMap,
 	}
 	go bs.run()
 	return bs
@@ -91,7 +93,7 @@ func (s *bedrockStreamer) run() {
 	defer close(s.chunks)
 	defer func() { _ = s.stream.Close() }()
 
-	processor := newChunkProcessor(s.emitChunk, s.recordUsage)
+	processor := newChunkProcessor(s.emitChunk, s.recordUsage, s.toolNameMap)
 	events := s.stream.Events()
 
 	for {
@@ -160,14 +162,17 @@ type chunkProcessor struct {
 	toolBlocks map[int]*toolBuffer
 	// reasoningBlocks accumulates reasoning content per content index until stop.
 	reasoningBlocks map[int]*reasoningBuffer
+
+	toolNameMap map[string]string
 }
 
-func newChunkProcessor(emit func(model.Chunk) error, recordUsage func(model.TokenUsage)) *chunkProcessor {
+func newChunkProcessor(emit func(model.Chunk) error, recordUsage func(model.TokenUsage), nameMap map[string]string) *chunkProcessor {
 	return &chunkProcessor{
-		emit:        emit,
-		recordUsage: recordUsage,
-		toolBlocks:  make(map[int]*toolBuffer),
+		emit:           emit,
+		recordUsage:    recordUsage,
+		toolBlocks:     make(map[int]*toolBuffer),
 		reasoningBlocks: make(map[int]*reasoningBuffer),
+		toolNameMap:    nameMap,
 	}
 }
 
@@ -185,7 +190,12 @@ func (p *chunkProcessor) Handle(event any) error {
 			if toolUse, ok := start.(*brtypes.ContentBlockStartMemberToolUse); ok {
 				tb := &toolBuffer{}
 				if toolUse.Value.Name != nil {
-					tb.name = normalizeToolName(*toolUse.Value.Name)
+					raw := *toolUse.Value.Name
+					name := normalizeToolName(raw)
+					if canonical, ok := p.toolNameMap[name]; ok {
+						name = canonical
+					}
+					tb.name = name
 				}
 				if toolUse.Value.ToolUseId != nil {
 					tb.id = *toolUse.Value.ToolUseId

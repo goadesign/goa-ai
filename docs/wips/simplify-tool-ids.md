@@ -1,10 +1,10 @@
-## Simplify Tool Identifiers (Global Simple IDs, No Fully-Qualified Names)
+## Simplify Tool Identifiers (Canonical `toolset.tool` IDs)
 
 ### Desired Outcome
 
-- Tools are identified by a single, globally unique simple ID (the DSL `Tool("name", ...)`), not a fully-qualified string like `service.toolset.tool`.
+- Tools are identified by a canonical ID of the form `toolset.tool`, not a service-qualified string like `service.toolset.tool`.
 - The runtime routes tool calls based on specs (metadata) rather than parsing tool names.
-- Code generation emits simple tool IDs everywhere; toolset IDs remain qualified (e.g., `service.toolset`) for registration and routing.
+- Code generation emits `toolset.tool` IDs everywhere; toolset IDs remain the simple DSL toolset name for registration and routing.
 - Documentation and APIs refer to tool “IDs” (globally unique), not “fully-qualified IDs.”
 - The repository compiles cleanly; tests and lint pass.
 

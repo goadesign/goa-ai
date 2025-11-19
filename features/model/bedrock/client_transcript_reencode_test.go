@@ -27,7 +27,7 @@ func TestEncodeMessages_ReencodeTranscriptOrder(t *testing.T) {
 			},
 		},
 	}
-	conv, _, err := encodeMessages(ctx, msgs)
+	conv, _, err := encodeMessages(ctx, msgs, nil)
 	if err != nil {
 		t.Fatalf("encodeMessages error: %v", err)
 	}

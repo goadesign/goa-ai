@@ -244,7 +244,7 @@ type (
 		// SourceServiceImports caches the user type imports for the source service. This
 		// enables tool spec generation to reference external service types.
 		SourceServiceImports map[string]*codegen.ImportSpec
-		// QualifiedName is the service-scoped identifier (`service.toolset`).
+		// QualifiedName is the toolset-scoped identifier (`toolset`).
 		QualifiedName string
 		// TaskQueue is the derived Temporal/engine queue for tool execution.
 		TaskQueue string
@@ -270,6 +270,11 @@ type (
 		AgentToolsPackage string
 		// AgentToolsDir is the filesystem directory for exported tool helpers.
 		AgentToolsDir string
+		// AgentToolsImportPath is the Go import path for exported agent tool helpers
+		// (provider side). It is populated for exported toolsets and propagated to
+		// Used toolsets that consume the same provider so consumer agents can
+		// reference provider agent-as-tool registrations.
+		AgentToolsImportPath string
 		// Tools lists the tools defined inside the toolset.
 		Tools []*ToolData
 		// MCP describes the external MCP helper metadata when this toolset references
@@ -291,7 +296,7 @@ type (
 		ServiceName string
 		// SuiteName is the MCP suite identifier provided in the service DSL.
 		SuiteName string
-		// QualifiedName is the fully qualified toolset identifier (service.suite).
+		// QualifiedName is the canonical toolset identifier (suite name).
 		QualifiedName string
 		// HelperImportPath is the Go import path for the generated register helper.
 		HelperImportPath string
@@ -311,7 +316,7 @@ type (
 	// Name variants serve different purposes:
 	//   - Name: original DSL identifier (e.g., "analyze_data")
 	//   - ConstName: Go constant name for referencing in code (e.g., "AnalyzeData")
-	//   - QualifiedName: globally unique identifier (e.g., "service.toolset.tool")
+	//   - QualifiedName: globally unique identifier (e.g., "toolset.tool")
 	//   - Title: human-readable title (e.g., "Analyze Data")
 	//
 	// Tool implementation strategies:
@@ -332,7 +337,7 @@ type (
 		ConstName string
 		// Description is the DSL description for docs and planners.
 		Description string
-		// QualifiedName is the service/toolset scoped identifier (`service.toolset.tool`).
+		// QualifiedName is the toolset-scoped identifier (`toolset.tool`).
 		QualifiedName string
 		// Title is a human-friendly title for presentation (e.g., "Analyze Data").
 		// Defaults to a derived value from Name unless explicitly set in the DSL.
@@ -621,25 +626,43 @@ func buildGeneratorData(genpkg string, roots []eval.Root) (*GeneratorData, error
 		})
 	}
 
-	// Reuse provider specs for Used toolsets within the same design:
+	// Reuse provider specs and agenttools metadata for Used toolsets within the same
+	// design:
 	// If a toolset is exported by an agent, point consumer Used toolsets with the
 	// same qualified name to the provider's specs import/package and skip emitting
-	// duplicate specs in the consumer by clearing SpecsDir.
+	// duplicate specs in the consumer by clearing SpecsDir. When the provider also
+	// emits agent-as-tool helpers (AgentToolsImportPath), propagate that import
+	// information so consumers can reference provider-side agenttools helpers.
 	type specsRef struct {
-		importPath  string
-		packageName string
+		importPath        string
+		packageName       string
+		agentToolsImport  string
+		agentToolsPackage string
+		qualifiedName     string
+		sourceServiceName string
+		sourceService     *service.Data
+		sourceServiceImps map[string]*codegen.ImportSpec
 	}
 	exported := make(map[string]specsRef)
+	exportedByName := make(map[string]specsRef)
 	for _, svc := range services {
 		for _, ag := range svc.Agents {
 			for _, ts := range ag.ExportedToolsets {
 				if ts == nil || ts.SpecsImportPath == "" || ts.SpecsPackageName == "" {
 					continue
 				}
-				exported[ts.QualifiedName] = specsRef{
-					importPath:  ts.SpecsImportPath,
-					packageName: ts.SpecsPackageName,
+				ref := specsRef{
+					importPath:        ts.SpecsImportPath,
+					packageName:       ts.SpecsPackageName,
+					agentToolsImport:  ts.AgentToolsImportPath,
+					agentToolsPackage: ts.AgentToolsPackage,
+					qualifiedName:     ts.QualifiedName,
+					sourceServiceName: ts.SourceServiceName,
+					sourceService:     ts.SourceService,
+					sourceServiceImps: ts.SourceServiceImports,
 				}
+				exported[ts.QualifiedName] = ref
+				exportedByName[ts.Name] = ref
 			}
 		}
 	}
@@ -647,11 +670,34 @@ func buildGeneratorData(genpkg string, roots []eval.Root) (*GeneratorData, error
 		for _, svc := range services {
 			for _, ag := range svc.Agents {
 				for _, ts := range ag.UsedToolsets {
-					if ref, ok := exported[ts.QualifiedName]; ok {
+					ref, ok := exported[ts.QualifiedName]
+					if !ok {
+						if alt, okName := exportedByName[ts.Name]; okName {
+							ref = alt
+							ok = true
+							ts.QualifiedName = alt.qualifiedName
+						}
+					}
+					if ok {
 						ts.SpecsImportPath = ref.importPath
 						ts.SpecsPackageName = ref.packageName
 						// Prevent per-toolset emission under the consumer by clearing SpecsDir.
 						ts.SpecsDir = ""
+						if ref.sourceServiceName != "" {
+							ts.SourceServiceName = ref.sourceServiceName
+						}
+						if ref.sourceService != nil {
+							ts.SourceService = ref.sourceService
+						}
+						if len(ref.sourceServiceImps) > 0 {
+							ts.SourceServiceImports = ref.sourceServiceImps
+						}
+						// Propagate provider agenttools helpers so consumer agents can import
+						// and call provider-side agent-as-tool registrations.
+						if ref.agentToolsImport != "" {
+							ts.AgentToolsImportPath = ref.agentToolsImport
+							ts.AgentToolsPackage = ref.agentToolsPackage
+						}
 					}
 				}
 			}
@@ -846,7 +892,7 @@ func newToolsetData(
 	toolsetSlug := sanitizeToken(expr.Name, "toolset")
 	serviceName := agent.Service.Name
 	queue := queueName(agent.Service.PathName, agent.Slug, toolsetSlug, "tasks")
-	qualifiedName := fmt.Sprintf("%s.%s", serviceName, expr.Name)
+	qualifiedName := expr.Name
 	sourceService := agent.Service
 
 	// If this is an MCP toolset, use the service name from the MCP service.
@@ -855,11 +901,14 @@ func newToolsetData(
 			sourceService = svc
 		}
 	}
-	// If this toolset references a remote agent provider (AgentToolset or
-	// a referenced export from another service), honor the provider's service
-	// as the source for qualified naming so tool identities cross boundaries.
-	if expr.Provider.Kind == agentsExpr.ProviderRemoteAgent && servicesData != nil {
-		if svc := servicesData.Get(expr.Provider.ServiceName); svc != nil {
+	// Track provider service name (when referencing an exported toolset).
+	var originServiceName string
+	if expr.Origin != nil && expr.Origin.Agent != nil && expr.Origin.Agent.Service != nil {
+		originServiceName = expr.Origin.Agent.Service.Name
+	}
+	// If this toolset references an origin from another agent, inherit the source service.
+	if originServiceName != "" && servicesData != nil {
+		if svc := servicesData.Get(originServiceName); svc != nil {
 			sourceService = svc
 		}
 	}
@@ -883,24 +932,26 @@ func newToolsetData(
 		imports = buildServiceImportMap(sourceService)
 	}
 
-	// Default consumer behavior: when using a toolset exported by another service,
-	// qualify tools under the provider's canonical service namespace so callers
-	// see provider IDs end-to-end. Preserve consumer namespace for exported/local
-	// toolsets and for custom inline (non-external) suites that truly belong to
-	// the consumer. External MCP sets its qualified name below.
+	// When consuming a local toolset (defined within this agent/service), qualify
+	// it under the consumer namespace to prevent collisions. When the toolset is
+	// exported by another agent (Origin set and different service), reuse the
+	// provider's canonical name so callers see consistent identifiers end-to-end.
 	if kind == ToolsetKindUsed && !expr.External {
-		qualifiedName = fmt.Sprintf("%s.%s", sourceServiceName, expr.Name)
+		if originServiceName == "" || originServiceName == agent.Service.Name {
+			qualifiedName = fmt.Sprintf("%s.%s", sourceServiceName, expr.Name)
+		}
 	}
 
 	ts := &ToolsetData{
-		Expr:                 expr,
-		Name:                 expr.Name,
-		Title:                humanizeTitle(expr.Name),
-		Description:          expr.Description,
-		Tags:                 slices.Clone(expr.Tags),
-		ServiceName:          serviceName,
-		SourceServiceName:    sourceServiceName,
-		SourceService:        sourceService,
+		Expr:              expr,
+		Name:              expr.Name,
+		Title:             humanizeTitle(expr.Name),
+		Description:       expr.Description,
+		Tags:              slices.Clone(expr.Tags),
+		ServiceName:       serviceName,
+		SourceServiceName: sourceServiceName,
+		SourceService:     sourceService,
+		// QualifiedName is the toolset-scoped identifier (`toolset`).
 		QualifiedName:        qualifiedName,
 		TaskQueue:            queue,
 		Kind:                 kind,
@@ -911,13 +962,14 @@ func newToolsetData(
 		PackageImportPath:    path.Join(agent.ImportPath, toolsetSlug),
 		Dir:                  filepath.Join(agent.Dir, toolsetSlug),
 		SpecsPackageName:     toolsetSlug,
-		SpecsImportPath:      path.Join(agent.ImportPath, "specs", toolsetSlug),
-		SpecsDir:             filepath.Join(agent.Dir, "specs", toolsetSlug),
+		SpecsImportPath:      path.Join(agent.Genpkg, agent.Service.PathName, "tools", toolsetSlug),
+		SpecsDir:             filepath.Join(codegen.Gendir, agent.Service.PathName, "tools", toolsetSlug),
 	}
 
 	if kind == ToolsetKindExported {
 		ts.AgentToolsPackage = toolsetSlug
 		ts.AgentToolsDir = filepath.Join(agent.Dir, "agenttools", toolsetSlug)
+		ts.AgentToolsImportPath = path.Join(agent.ImportPath, "agenttools", toolsetSlug)
 	}
 
 	if expr.External {
@@ -926,7 +978,6 @@ func newToolsetData(
 		}
 		if expr.MCPService != "" {
 			ts.SourceServiceName = expr.MCPService
-			ts.QualifiedName = fmt.Sprintf("%s.%s", expr.MCPService, expr.MCPSuite)
 		}
 		helperPkg := "mcp_" + codegen.SnakeCase(expr.MCPService)
 		helperImport := path.Join(agent.Genpkg, helperPkg)
@@ -997,7 +1048,7 @@ func buildServiceImportMap(svc *service.Data) map[string]*codegen.ImportSpec {
 func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *service.ServicesData) *ToolData {
 	// ts is guaranteed non-nil by construction (collectToolsets/newToolsetData)
 	// and ts.QualifiedName is always set there.
-	qualified := fmt.Sprintf("%s.%s", ts.QualifiedName, expr.Name)
+	qualified := fmt.Sprintf("%s.%s", ts.Name, expr.Name)
 
 	// Check if this tool is exported by an agent (agent-as-tool pattern)
 	isExported := ts.Kind == ToolsetKindExported && ts.Agent != nil

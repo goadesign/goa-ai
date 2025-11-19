@@ -169,23 +169,22 @@ func SupportsCLI() bool {
 }
 
 // Run executes the scenarios (always parallel, no filtering).
-//
-//nolint:unparam // Error return maintained for consistency with testing patterns.
 func (r *Runner) Run(t *testing.T, scenarios []Scenario) error {
 	t.Helper()
 	if len(scenarios) == 0 {
 		t.Skip("no scenarios to run")
 	}
 
+	if err := r.startServer(t); err != nil {
+		return err
+	}
+	defer r.stopServer()
+
 	for _, sc := range scenarios {
-		t.Run(sc.Name, func(t *testing.T) {
+		scenario := sc
+		t.Run(scenario.Name, func(t *testing.T) {
 			t.Parallel()
-			// Use a fresh runner instance per scenario to avoid shared mutable state
-			lr := NewRunner()
-			// No dynamic adapter flags for tests by default
-			require.NoError(t, lr.startServer(t))
-			defer lr.stopServer()
-			lr.runSteps(t, sc.Steps, sc.Defaults, sc.Pre)
+			r.runSteps(t, scenario.Steps, scenario.Defaults, scenario.Pre)
 		})
 	}
 	return nil

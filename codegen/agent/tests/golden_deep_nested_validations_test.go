@@ -11,6 +11,6 @@ import (
 // validation errors to ValidationError for retry hints.
 func TestGolden_DeepNested_Validations(t *testing.T) {
 	files := buildAndGenerate(t, testscenarios.DeepNestedValidations())
-	codecs := fileContent(t, files, "gen/alpha/agents/scribe/specs/deep/codecs.go")
+	codecs := fileContent(t, files, "gen/alpha/tools/deep/codecs.go")
 	assertGoldenGo(t, "deep_nested_validations", "codecs.go.golden", codecs)
 }

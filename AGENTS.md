@@ -6,6 +6,27 @@
 - `example/`: Minimal service, generated `gen/` tree, and runnable `cmd/assistant`.
 - `integration_tests/`: MCP end‑to‑end tests (YAML scenarios + runner).
 
+## Streaming Planners (goa-ai runtime)
+
+- Streaming planners MUST choose exactly one path for emitting
+  `planner.PlannerEvents`:
+  - Use the **runtime-decorated client** obtained from
+    `PlannerContext.ModelClient(id)` and drain the `Streamer` yourself, or
+  - Use `planner.ConsumeStream` with a **raw** `model.Client` that is not
+    wrapped by the runtime.
+- When you call `input.Agent.ModelClient(id)`, the runtime returns a client
+  wrapped with an event decorator. That decorator emits `AssistantChunk`,
+  `PlannerThinkingBlock`, and `UsageDelta` each time you call `Recv()` on the
+  `Streamer`. In this mode:
+  - Do **not** call `planner.ConsumeStream` on the resulting `Streamer`.
+  - Drain the stream in the planner using a `for` / `Recv()` loop and build the
+    final text and tool-call list locally.
+- If you need `planner.ConsumeStream`, obtain a raw `model.Client` (without the
+  event wrapper) and pass its `Streamer` to `ConsumeStream`. Mixing the
+  decorated client with `ConsumeStream` is a bug and will double-emit all
+  thinking/text events.
+
+
 ## Build, Test, and Development
 - Build library: `make build`
 - Lint: `make lint` (config: `.golangci.yml`)

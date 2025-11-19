@@ -14,7 +14,7 @@ import (
 
 // Tool IDs for this toolset.
 const (
-	Upsert tools.Ident = "upsert"
+	Upsert tools.Ident = "profiles.upsert"
 )
 
 var Specs = []tools.ToolSpec{

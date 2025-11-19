@@ -3,7 +3,6 @@ package agent
 import (
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
-	"strings"
 )
 
 // RootExpr represents the top-level root for all agent and toolset
@@ -12,6 +11,8 @@ type RootExpr struct {
 	// Agents is the collection of all agent expressions defined in the
 	// design.
 	Agents []*AgentExpr
+	// ServiceExports holds toolsets exported directly by services.
+	ServiceExports []*ServiceExportsExpr
 	// Toolsets is the collection of all standalone toolset expressions not
 	// owned by an agent.
 	Toolsets []*ToolsetExpr
@@ -58,6 +59,11 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 			groups = append(groups, agent.Exported)
 		}
 	}
+	for _, se := range r.ServiceExports {
+		if se != nil {
+			groups = append(groups, se)
+		}
+	}
 	if len(groups) > 0 {
 		walk(groups)
 	}
@@ -69,6 +75,11 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 		}
 		if agent.Exported != nil {
 			toolsets = append(toolsets, agent.Exported.Toolsets...)
+		}
+	}
+	for _, se := range r.ServiceExports {
+		if se != nil {
+			toolsets = append(toolsets, se.Toolsets...)
 		}
 	}
 	toolsets = append(toolsets, r.Toolsets...)
@@ -86,11 +97,33 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 }
 
 // Validate enforces repository-wide invariants that require a view of all
-// agent and toolset declarations. In particular, tool names must be globally
-// unique so they can serve as simple, stable identifiers without qualification.
+// agent and toolset declarations. In particular:
+//   - Defining toolsets (Origin == nil) must use globally unique names so
+//     they can serve as stable identifiers.
+//   - Tool names must be unique within a defining toolset (Origin == nil)
+//     but may be reused across different toolsets. Qualified tool IDs are
+//     derived as "toolset.tool".
 func (r *RootExpr) Validate() error {
 	verr := new(eval.ValidationErrors)
-	seen := make(map[string]*ToolExpr)
+	toolsets := make(map[string]*ToolsetExpr)
+	recordToolset := func(ts *ToolsetExpr) {
+		if ts == nil {
+			return
+		}
+		// Only enforce uniqueness on defining/origin toolsets; references
+		// inherit the origin name.
+		if ts.Origin != nil {
+			return
+		}
+		if ts.Name == "" {
+			return
+		}
+		if other, dup := toolsets[ts.Name]; dup {
+			verr.Add(ts, "toolset name %q duplicates a toolset declared in %s", ts.Name, other.EvalName())
+			return
+		}
+		toolsets[ts.Name] = ts
+	}
 	record := func(ts *ToolsetExpr) {
 		if ts == nil {
 			return
@@ -100,19 +133,24 @@ func (r *RootExpr) Validate() error {
 		if ts.Origin != nil {
 			return
 		}
+		// Record defining toolset names first to enforce global uniqueness.
+		recordToolset(ts)
+		// Enforce per-toolset uniqueness for tool names while allowing the
+		// same tool name to appear in multiple toolsets.
+		local := make(map[string]*ToolExpr)
 		for _, t := range ts.Tools {
 			if t == nil {
 				continue
 			}
-			name := strings.TrimSpace(t.Name)
+			name := t.Name
 			if name == "" {
 				continue
 			}
-			if other, dup := seen[name]; dup {
+			if other, dup := local[name]; dup {
 				verr.Add(t, "tool name %q duplicates a tool declared in %s", name, other.EvalName())
 				continue
 			}
-			seen[name] = t
+			local[name] = t
 		}
 	}
 	// Top-level toolsets.

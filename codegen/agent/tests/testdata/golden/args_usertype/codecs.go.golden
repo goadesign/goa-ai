@@ -154,7 +154,7 @@ func enrichStorePayloadJSON2ValidationError(err error) error {
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
 	switch name {
-	case "store":
+	case "docs.store":
 		return &storePayloadCodec, true
 	default:
 		return nil, false
@@ -164,7 +164,7 @@ func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
 // ResultCodec returns the generic codec for the named tool result.
 func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 	switch name {
-	case "store":
+	case "docs.store":
 		return &storeResultCodec, true
 	default:
 		return nil, false

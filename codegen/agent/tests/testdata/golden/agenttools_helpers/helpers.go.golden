@@ -7,10 +7,11 @@
 package search
 
 import (
-	searchspecs "goa.design/goa-ai/alpha/agents/scribe/specs/search"
+	searchspecs "goa.design/goa-ai/alpha/tools/search"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
 	runtime "goa.design/goa-ai/runtime/agent/runtime"
+	hints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -40,7 +41,9 @@ var FindResultCodec = searchspecs.FindResultCodec
 // NewScribeToolsetRegistration creates a toolset registration for the scribe agent.
 // The returned registration can be used with runtime.RegisterToolset to make the agent
 // available as a tool to other agents. When invoked, the agent runs its full planning loop
-// and returns the final response as the tool result.
+// and returns the final response as the tool result. DSL-authored CallHintTemplate and
+// ResultHintTemplate declarations are compiled into hint templates so sinks can render
+// concise labels and previews without heuristics.
 //
 // Example usage:
 //
@@ -50,10 +53,9 @@ var FindResultCodec = searchspecs.FindResultCodec
 //		// handle error
 //	}
 func NewScribeToolsetRegistration(rt *runtime.Runtime) runtime.ToolsetRegistration {
-	// Build a default agent-tool registration using runtime helper (no templates).
-	return runtime.NewAgentToolsetRegistration(rt, runtime.AgentToolConfig{
+	cfg := runtime.AgentToolConfig{
 		AgentID:   AgentID,
-		Name:      "alpha.search",
+		Name:      "search",
 		TaskQueue: "alpha_scribe_search_tasks",
 		Route: runtime.AgentRoute{
 			ID:               AgentID,
@@ -63,7 +65,29 @@ func NewScribeToolsetRegistration(rt *runtime.Runtime) runtime.ToolsetRegistrati
 		PlanActivityName:    "alpha.scribe.plan",
 		ResumeActivityName:  "alpha.scribe.resume",
 		ExecuteToolActivity: "alpha.scribe.executetool",
-	})
+	}
+	reg := runtime.NewAgentToolsetRegistration(rt, cfg)
+	// Install DSL-provided hint templates when present.
+	{
+		// Build maps only when at least one template exists to avoid overhead.
+		var callRaw map[tools.Ident]string
+		var resultRaw map[tools.Ident]string
+		if len(callRaw) > 0 {
+			compiled, err := hints.CompileHintTemplates(callRaw, nil)
+			if err != nil {
+				panic(err)
+			}
+			reg.CallHints = compiled
+		}
+		if len(resultRaw) > 0 {
+			compiled, err := hints.CompileHintTemplates(resultRaw, nil)
+			if err != nil {
+				panic(err)
+			}
+			reg.ResultHints = compiled
+		}
+	}
+	return reg
 }
 
 // ToolIDs lists all tools in this toolset for validation.
@@ -81,7 +105,7 @@ func NewRegistration(
 ) (runtime.ToolsetRegistration, error) {
 	cfg := runtime.AgentToolConfig{
 		AgentID:      AgentID,
-		Name:         "alpha.search",
+		Name:         "search",
 		TaskQueue:    "alpha_scribe_search_tasks",
 		SystemPrompt: systemPrompt,
 		// Strong-contract routing for cross-process inline composition
@@ -107,7 +131,28 @@ func NewRegistration(
 			return runtime.ToolsetRegistration{}, err
 		}
 	}
-	return runtime.NewAgentToolsetRegistration(rt, cfg), nil
+	reg := runtime.NewAgentToolsetRegistration(rt, cfg)
+	// Install DSL-provided hint templates when present.
+	{
+		// Build maps only when at least one template exists to avoid overhead.
+		var callRaw map[tools.Ident]string
+		var resultRaw map[tools.Ident]string
+		if len(callRaw) > 0 {
+			compiled, err := hints.CompileHintTemplates(callRaw, nil)
+			if err != nil {
+				panic(err)
+			}
+			reg.CallHints = compiled
+		}
+		if len(resultRaw) > 0 {
+			compiled, err := hints.CompileHintTemplates(resultRaw, nil)
+			if err != nil {
+				panic(err)
+			}
+			reg.ResultHints = compiled
+		}
+	}
+	return reg, nil
 }
 
 // CallOption customizes planner.ToolRequest values built by the typed helpers
@@ -128,7 +173,7 @@ func WithToolCallID(id string) CallOption {
 // Typed tool-call helpers for each tool in this exported toolset. These helpers
 // enforce use of the generated tool identifier and accept a typed payload that
 // matches the tool schema.
-// NewFindCall builds a planner.ToolRequest for the alpha.search.find tool.
+// NewFindCall builds a planner.ToolRequest for the search.find tool.
 func NewFindCall(args *FindPayload, opts ...CallOption) planner.ToolRequest {
 	req := planner.ToolRequest{
 		Name:    Find,

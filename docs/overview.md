@@ -35,6 +35,34 @@ Never edit `gen/` by hand — always regenerate after DSL changes.
 - **Streaming, memory, telemetry**  
   - Configure a memory store and a stream sink; the runtime publishes events and persists transcripts automatically via hooks.
 
+## Toolsets: service‑owned, agent‑ or method‑backed
+
+Toolsets are owned by Goa services; agents, MCP, and custom executors are
+consumers or implementations. The DSL (`Toolset`, `Tool`, `BindTo`,
+`Uses`, `Exports`) remains symmetric.
+
+- **Service‑owned toolsets (method‑backed or custom)**  
+  - Declared via `Toolset("name", func() { ... })`; tools may `BindTo`
+    Goa service methods or be implemented by custom executors.
+  - Codegen emits per‑toolset specs/types/codecs under
+    `gen/<service>/tools/<toolset>/`.
+  - Agents that `Use` these toolsets import the provider specs and get
+    typed call builders and executor factories for wiring service
+    clients or other executors.
+
+- **Agent‑implemented toolsets (agent‑as‑tool)**  
+  - Defined in an agent `Exports` block, and optionally `Uses`d by other
+    agents.
+  - Ownership still lives with the service; the agent is the
+    implementation.
+  - Codegen emits provider‑side `agenttools/<toolset>` helpers with
+    `NewRegistration` and typed call builders, plus consumer‑side
+    helpers in agents that `Use` the exported toolset.
+
+In all cases, `Uses` merges tool specs into the consuming agent’s tool
+universe so planners see a single, coherent tool catalog regardless of
+how tools are wired.
+
 ## Minimal example
 ### 1) DSL (design/design.go)
 ```go
@@ -100,14 +128,14 @@ type StubPlanner struct{}
 func (p *StubPlanner) PlanStart(ctx context.Context, in planner.PlanInput) (planner.PlanResult, error) {
 	return planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{
-			Message: planner.AgentMessage{Role: "assistant", Content: "Hello from Goa‑AI!"},
+			Message: model.Message{Role: "assistant", Content: "Hello from Goa‑AI!"},
 		},
 	}, nil
 }
 func (p *StubPlanner) PlanResume(ctx context.Context, in planner.PlanResumeInput) (planner.PlanResult, error) {
 	return planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{
-			Message: planner.AgentMessage{Role: "assistant", Content: "Done."},
+			Message: model.Message{Role: "assistant", Content: "Done."},
 		},
 	}, nil
 }
@@ -123,7 +151,7 @@ func main() {
 
 	client := chat.NewClient(rt) // generated, typed
 	out, err := client.Run(context.Background(),
-		[]planner.AgentMessage{{Role: "user", Content: "Say hi"}},
+		[]model.Message{{Role: "user", Content: "Say hi"}},
 		runtime.WithSessionID("session-1"),
 	)
 	if err != nil {
@@ -179,7 +207,7 @@ This section reflects the exported APIs and structs in the runtime and generated
 
 1) Client invocation (caller process)
 - Use the generated `NewClient(rt) runtime.AgentClient` and call:
-  - `Run(ctx, []planner.AgentMessage, ...runtime.RunOption)` to start and wait
+  - `Run(ctx, []model.Message, ...runtime.RunOption)` to start and wait
   - or `Start(ctx, ...opts)` to get an `engine.WorkflowHandle` and `Wait/Signal/Cancel` out‑of‑process
 - Common `RunOption`s:
   - `runtime.WithSessionID(string)` (required)
@@ -218,7 +246,7 @@ This section reflects the exported APIs and structs in the runtime and generated
 
 6) Completion
 - `runLoop` returns a `*runtime.RunOutput` containing:
-  - `Final` (`planner.AgentMessage`), last `ToolEvents`, `Notes` and aggregated `Usage`.
+  - `Final` (`model.Message`), last `ToolEvents`, `Notes` and aggregated `Usage`.
 - Runtime sets final status and returns to the client (`Run` path) or leaves result on the handle (`Start` path).
 
 ## Agent‑as‑tool (inline composition)
@@ -318,5 +346,4 @@ Notes
 - Quickstart example: `quickstart/README.md`
 - MCP integration: see `codegen/mcp` and `runtime/mcp`
 - Features (memory, session, stream, model clients): `features/*`
-
 

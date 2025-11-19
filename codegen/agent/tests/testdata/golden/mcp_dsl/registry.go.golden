@@ -73,7 +73,7 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 		exec := core.NewScribeCoreMCPExecutor(caller)
 		// Build a runtime ToolsetRegistration inline to avoid exposing method/service adapters.
 		reg := agentsruntime.ToolsetRegistration{
-			Name: "calc.core",
+			Name: "core",
 			// Provide the agent-wide specs; runtime de-duplicates tool specs across registrations.
 			Specs: specs.Specs,
 			Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
@@ -102,6 +102,8 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 		}
 	}
 
-	// Service toolsets are registered by application code using executors.
+	// Service-backed toolsets (method-backed Used toolsets) are registered by
+	// application code using executors. Agent-exported toolsets are wired via
+	// provider agenttools helpers and consumer-side agent toolset helpers.
 	return nil
 }

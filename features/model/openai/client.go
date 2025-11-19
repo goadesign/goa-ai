@@ -75,12 +75,6 @@ func (c *Client) Complete(ctx context.Context, req model.Request) (model.Respons
 				text += tp.Text
 			}
 		}
-		// If JSON-only requested, prepend a strict instruction.
-		if req.ResponseFormat != nil {
-			if req.ResponseFormat.JSONSchema != nil || req.ResponseFormat.JSONOnly {
-				text = "Return only a single valid JSON value with no extra text.\n" + text
-			}
-		}
 		messages = append(messages, openai.ChatCompletionMessage{Role: string(m.Role), Content: text})
 	}
 	tools, err := encodeTools(req.Tools)
@@ -94,25 +88,38 @@ func (c *Client) Complete(ctx context.Context, req model.Request) (model.Respons
 		MaxTokens:   req.MaxTokens,
 		Tools:       tools,
 	}
-	// Map ResponseFormat to OpenAI JSON mode when requested.
-	if rf := req.ResponseFormat; rf != nil {
-		if len(rf.JSONSchema) > 0 {
-			name := rf.SchemaName
-			if name == "" {
-				name = "result"
+	if req.ToolChoice != nil {
+		tc := req.ToolChoice
+		switch tc.Mode {
+		case "", model.ToolChoiceModeAuto:
+			// Auto is the provider default; omit ToolChoice to preserve existing
+			// behavior.
+		case model.ToolChoiceModeNone:
+			// Disable tool use for this request.
+			request.ToolChoice = "none"
+		case model.ToolChoiceModeTool:
+			if tc.Name == "" {
+				return model.Response{},
+					fmt.Errorf("openai: tool choice mode %q requires a tool name",
+						tc.Mode)
 			}
-			request.ResponseFormat = &openai.ChatCompletionResponseFormat{
-				Type: openai.ChatCompletionResponseFormatTypeJSONSchema,
-				JSONSchema: &openai.ChatCompletionResponseFormatJSONSchema{
-					Name:   name,
-					Schema: rf.JSONSchema,
-					Strict: true,
+			if !hasToolDefinition(req.Tools, tc.Name) {
+				return model.Response{},
+					fmt.Errorf("openai: tool choice name %q does not match any tool",
+						tc.Name)
+			}
+			request.ToolChoice = openai.ToolChoice{
+				Type: openai.ToolTypeFunction,
+				Function: openai.ToolFunction{
+					Name: tc.Name,
 				},
 			}
-		} else if rf.JSONOnly {
-			request.ResponseFormat = &openai.ChatCompletionResponseFormat{
-				Type: openai.ChatCompletionResponseFormatTypeJSONObject,
-			}
+		case model.ToolChoiceModeAny:
+			return model.Response{},
+				fmt.Errorf("openai: tool choice mode %q is not supported", tc.Mode)
+		default:
+			return model.Response{},
+				fmt.Errorf("openai: unsupported tool choice mode %q", tc.Mode)
 		}
 	}
 	response, err := c.chat.CreateChatCompletion(ctx, request)
@@ -120,6 +127,18 @@ func (c *Client) Complete(ctx context.Context, req model.Request) (model.Respons
 		return model.Response{}, fmt.Errorf("openai chat completion: %w", err)
 	}
 	return translateResponse(response), nil
+}
+
+func hasToolDefinition(defs []*model.ToolDefinition, name string) bool {
+	for _, def := range defs {
+		if def == nil {
+			continue
+		}
+		if def.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // Stream reports that OpenAI Chat Completions streaming is not yet supported by

@@ -16,9 +16,9 @@ func (p *example{{ .GoName }}Planner) PlanStart(ctx context.Context, in planner.
     // Minimal example: produce a generic assistant reply when no tools are requested.
     return &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{
-			Message: planner.AgentMessage{
-				Role:    "assistant",
-				Content: "Hello from example planner.",
+			Message: &model.Message{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "Hello from example planner."}},
 			},
 		},
 	}, nil
@@ -27,10 +27,12 @@ func (p *example{{ .GoName }}Planner) PlanStart(ctx context.Context, in planner.
 func (p *example{{ .GoName }}Planner) PlanResume(ctx context.Context, in planner.PlanResumeInput) (*planner.PlanResult, error) {
     return &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{
-			Message: planner.AgentMessage{
-				Role:    "assistant",
-				Content: "Done.",
+			Message: &model.Message{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "Done."}},
 			},
 		},
 	}, nil
 }
+
+

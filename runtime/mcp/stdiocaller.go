@@ -275,8 +275,7 @@ func readFrame(reader *bufio.Reader) ([]byte, error) {
 			break
 		}
 		if after, ok := strings.CutPrefix(strings.ToLower(line), "content-length:"); ok {
-			val := strings.TrimSpace(after)
-			n, err := strconv.Atoi(val)
+			n, err := strconv.Atoi(strings.TrimSpace(after))
 			if err != nil {
 				return nil, err
 			}

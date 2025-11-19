@@ -103,6 +103,12 @@ type agentToolsetFileData struct {
 	Toolset     *ToolsetData
 }
 
+type agentToolsetConsumerFileData struct {
+	Agent         *AgentData
+	Toolset       *ToolsetData
+	ProviderAlias string
+}
+
 type serviceToolsetFileData struct {
 	PackageName string
 	Agent       *AgentData
@@ -268,6 +274,7 @@ func agentFiles(agent *AgentData) []*codegen.File {
 		}
 	}
 	files = append(files, agentToolsFiles(agent)...)
+	files = append(files, agentToolsConsumerFiles(agent)...)
 	// Emit adapter transforms for method-backed tools (under generated toolset package).
 	files = append(files, internalAdapterTransformsFiles(agent)...)
 	// Do not emit service toolset registrations; executors map tool payloads to service methods.
@@ -308,7 +315,13 @@ func agentPerToolsetSpecsFiles(agent *AgentData) []*codegen.File {
 			}
 			emitted[ts.SpecsDir] = struct{}{}
 		}
-		data, err := buildToolSpecsDataFor(agent, ts.Tools)
+		// Use the provider/owning service for specs generation when known;
+		// fall back to the agent service otherwise.
+		svc := ts.SourceService
+		if svc == nil {
+			svc = agent.Service
+		}
+		data, err := buildToolSpecsDataFor(agent.Genpkg, svc, ts.Tools)
 		if err != nil || data == nil {
 			continue
 		}
@@ -350,21 +363,27 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 		if len(ts.Tools) == 0 || ts.SpecsDir == "" {
 			continue
 		}
-		// Build data from specs to find tool-local payload/result type names
-		data, err := buildToolSpecsDataFor(agent, ts.Tools)
-		if err != nil || data == nil {
-			continue
-		}
-		// Resolve service import alias/path for method types
+		// Build data from specs to find tool-local payload/result type names.
+		// Use the provider/owning service when known for type resolution.
 		svc := ts.SourceService
 		if svc == nil {
 			svc = agent.Service
 		}
+		data, err := buildToolSpecsDataFor(agent.Genpkg, svc, ts.Tools)
+		if err != nil || data == nil {
+			continue
+		}
+		// Resolve service import alias/path for method types
 		svcAlias := servicePkgAlias(svc)
 		svcImport := joinImportPath(agent.Genpkg, svc.PathName)
 		// Use the actual specs package name so GoTransform qualifier matches (e.g., atlas_read).
 		specsAlias := ts.SpecsPackageName
 		specsImportPath := ts.SpecsImportPath
+		// Avoid alias collisions when the toolset package name matches the service
+		// package name (for example, service "todos" with toolset "todos").
+		if svcAlias == specsAlias {
+			svcAlias += "svc"
+		}
 
 		// Single NameScope per emitted file to ensure consistent, conflict‑free refs
 		scope := codegen.NewNameScope()
@@ -437,8 +456,12 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 						}
 						localArgAttr := &goaexpr.AttributeExpr{Type: &goaexpr.UserTypeExpr{AttributeExpr: &dupArg, TypeName: toolPayload.TypeName}}
 						paramRef := scope.GoFullTypeRef(localArgAttr, specsAlias)
-						// Use precomputed fully-qualified service payload ref to handle external imports (e.g., types.*).
-						serviceRef := t.MethodPayloadTypeRef
+						// Compute fully-qualified service payload ref using the service
+						// alias so that the result type always matches the service
+						// package, even when the toolset package name matches the
+						// service package name (e.g., service "todos" with toolset
+						// "todos").
+						serviceRef := scope.GoFullTypeRef(t.MethodPayloadAttr, svcAlias)
 						fns = append(fns, transformFuncData{
 							Name:          "Init" + codegen.Goify(t.Name, true) + "MethodPayload",
 							ParamTypeRef:  paramRef,
@@ -708,6 +731,26 @@ func agentRegistryFile(agent *AgentData) *codegen.File {
 			imports = append(imports, &codegen.ImportSpec{Path: ts.PackageImportPath, Name: ts.PackageName})
 		}
 	}
+	// Import tools when non-external Used toolsets are present without agenttools
+	// helpers; registry templates use tools.Ident for DSL-provided call/result
+	// hint templates on these method-backed toolsets.
+	needsTools := false
+	for _, ts := range agent.UsedToolsets {
+		if ts.Expr != nil && ts.Expr.External {
+			continue
+		}
+		if ts.AgentToolsImportPath != "" {
+			continue
+		}
+		needsTools = true
+		break
+	}
+	if needsTools {
+		imports = append(imports,
+			&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/tools"},
+			&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/runtime/hints", Name: "hints"},
+		)
+	}
 	if needsTimeImport(agent) {
 		imports = append(imports, &codegen.ImportSpec{Path: "time"})
 	}
@@ -766,6 +809,7 @@ func agentToolsFiles(agent *AgentData) []*codegen.File {
 			{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "runtime"},
 			{Path: "goa.design/goa-ai/runtime/agent", Name: "agent"},
 			{Path: "goa.design/goa-ai/runtime/agent/tools"},
+			{Path: "goa.design/goa-ai/runtime/agent/runtime/hints", Name: "hints"},
 			{Path: "goa.design/goa-ai/runtime/agent/planner"},
 			// Per-toolset specs package for typed payloads
 			{Path: ts.SpecsImportPath, Name: ts.SpecsPackageName + "specs"},
@@ -780,6 +824,52 @@ func agentToolsFiles(agent *AgentData) []*codegen.File {
 			},
 		}
 		path := filepath.Join(ts.AgentToolsDir, "helpers.go")
+		files = append(files, &codegen.File{
+			Path:             path,
+			SectionTemplates: sections,
+		})
+	}
+	return files
+}
+
+// agentToolsConsumerFiles emits thin helpers in the consumer agent package that
+// delegate to provider-side agenttools.NewRegistration helpers for toolsets
+// exported by other agents. These helpers improve ergonomics for the agent-as-tool
+// pattern without hard-coding aggregators or prompts in the generator.
+func agentToolsConsumerFiles(agent *AgentData) []*codegen.File {
+	if len(agent.UsedToolsets) == 0 {
+		return nil
+	}
+	files := make([]*codegen.File, 0, len(agent.UsedToolsets))
+	for _, ts := range agent.UsedToolsets {
+		// Only emit helpers when the toolset is backed by an exported agent and
+		// we have a provider agenttools package to call into.
+		if ts.AgentToolsImportPath == "" || len(ts.Tools) == 0 {
+			continue
+		}
+		data := agentToolsetConsumerFileData{
+			Agent:         agent,
+			Toolset:       ts,
+			ProviderAlias: ts.AgentToolsPackage,
+		}
+		imports := []*codegen.ImportSpec{
+			{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "runtime"},
+			{Path: ts.AgentToolsImportPath, Name: ts.AgentToolsPackage},
+		}
+		sections := []*codegen.SectionTemplate{
+			codegen.Header(
+				ts.Name+" agent toolset client",
+				agent.PackageName,
+				imports,
+			),
+			{
+				Name:    "agent-tools-consumer",
+				Source:  agentsTemplates.Read(agentToolsConsumerT),
+				Data:    data,
+				FuncMap: templateFuncMap(),
+			},
+		}
+		path := filepath.Join(agent.Dir, ts.PathName+"_agenttools_client.go")
 		files = append(files, &codegen.File{
 			Path:             path,
 			SectionTemplates: sections,

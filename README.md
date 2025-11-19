@@ -142,7 +142,7 @@ func main() {
 
     client := chat.NewClient(rt)
     handle, err := client.Start(context.Background(),
-        []planner.AgentMessage{{Role: "user", Content: "Summarize the latest status"}},
+        []model.Message{{Role: "user", Content: "Summarize the latest status"}},
         runtime.WithSessionID("session-1"),
     )
     if err != nil {
@@ -269,6 +269,32 @@ The workflow loop drains `goaai.runtime.pause` / `goaai.runtime.resume` signals 
 | **Features (`features/*`)** | Optional modules (Mongo memory/session, Pulse stream sink, MCP callers, Bedrock/OpenAI model clients, policy engine). |
 
 See `docs/plan.md` for a deep dive into generated structures, templates, and runtime packages.
+
+### Toolsets: service‑backed vs agent‑exported
+
+Goa‑AI generates slightly different helpers depending on how a toolset is declared.
+
+- **Service‑backed toolsets (method‑backed)**
+  - Declared in an agent `Uses` block with tools bound to Goa service methods.
+  - Codegen emits per‑toolset specs/types/codecs, executor factories (for example,
+    `New<Agent><Toolset>Exec`), and `RegisterUsedToolsets`/`With<...>Executor` helpers
+    so applications can bind service clients and register toolsets.
+
+- **Agent‑exported toolsets (agent‑as‑tool)**
+  - Declared in an agent `Exports` block and optionally `Uses`d by other agents.
+  - Codegen emits provider‑side `agenttools/<toolset>` helpers with `NewRegistration`
+    and typed call builders, plus consumer helpers like
+    `New<Agent><Toolset>AgentToolsetRegistration` that delegate to the provider
+    helpers while keeping routing metadata centralized with the exporting agent.
+  - Applications pass `runtime.AgentToolOption` values (system prompts, aggregators,
+    JSON‑only behavior, telemetry) and register with `rt.RegisterToolset`.
+
+In both cases, `Uses` merges tool specs into the consuming agent’s tool universe so
+planners see a single, coherent tool catalog regardless of how tools are wired.
+
+### Tool-based aggregation, no ResponseFormat
+
+Agent-as-tool registrations now aggregate child tool results by invoking a real tool (`runtime.ToolResultFinalizer`) instead of relying on provider-specific `response_format` settings. The runtime captures child results, `BuildAggregationFacts` constructs a canonical payload, and the aggregation tool executes via the same `execute_tool` activity path as every other service-backed tool. The legacy ResponseFormat plumbing has been removed from the model clients (Bedrock/OpenAI); applications that need JSON-only responses should express that as a typed aggregation tool.
 
 ### Automatic thinking/event capture
 

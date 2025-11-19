@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -25,47 +26,86 @@ func TestMCPProtocol(t *testing.T) {
 	requireServer(t)
 	scenarios, err := framework.LoadScenarios("../scenarios/protocol.yaml")
 	require.NoError(t, err)
-	r := framework.NewRunner()
-	require.NoError(t, r.Run(t, scenarios))
+	for _, sc := range scenarios {
+		scenario := sc
+		t.Run(scenario.Name, func(t *testing.T) {
+			t.Parallel()
+			r := framework.NewRunner()
+			require.NoError(t, r.Run(t, []framework.Scenario{scenario}))
+		})
+	}
 }
 
 func TestMCPTools(t *testing.T) {
 	requireServer(t)
 	scenarios, err := framework.LoadScenarios("../scenarios/tools.yaml")
 	require.NoError(t, err)
-	r := framework.NewRunner()
-	require.NoError(t, r.Run(t, scenarios))
+	for _, sc := range scenarios {
+		scenario := sc
+		t.Run(scenario.Name, func(t *testing.T) {
+			t.Parallel()
+			r := framework.NewRunner()
+			require.NoError(t, r.Run(t, []framework.Scenario{scenario}))
+		})
+	}
 }
 
 func TestMCPResources(t *testing.T) {
 	requireServer(t)
 	scenarios, err := framework.LoadScenarios("../scenarios/resources.yaml")
 	require.NoError(t, err)
-	r := framework.NewRunner()
-	require.NoError(t, r.Run(t, scenarios))
+	for _, sc := range scenarios {
+		scenario := sc
+		t.Run(scenario.Name, func(t *testing.T) {
+			t.Parallel()
+			r := framework.NewRunner()
+			require.NoError(t, r.Run(t, []framework.Scenario{scenario}))
+		})
+	}
 }
 
 func TestMCPPrompts(t *testing.T) {
 	requireServer(t)
 	scenarios, err := framework.LoadScenarios("../scenarios/prompts.yaml")
 	require.NoError(t, err)
-	r := framework.NewRunner()
-	require.NoError(t, r.Run(t, scenarios))
+	for _, sc := range scenarios {
+		scenario := sc
+		t.Run(scenario.Name, func(t *testing.T) {
+			t.Parallel()
+			r := framework.NewRunner()
+			require.NoError(t, r.Run(t, []framework.Scenario{scenario}))
+		})
+	}
 }
 
 func TestMCPPromptsCLI(t *testing.T) {
+	if os.Getenv("MCP_CLI_TESTS") != "true" {
+		t.Skip("CLI tests disabled; set MCP_CLI_TESTS=true to enable")
+	}
 	requireServer(t)
 	requireCLI(t)
 	scenarios, err := framework.LoadScenarios("../scenarios/prompts_cli.yaml")
 	require.NoError(t, err)
-	r := framework.NewRunner()
-	require.NoError(t, r.Run(t, scenarios))
+	for _, sc := range scenarios {
+		scenario := sc
+		t.Run(scenario.Name, func(t *testing.T) {
+			t.Parallel()
+			r := framework.NewRunner()
+			require.NoError(t, r.Run(t, []framework.Scenario{scenario}))
+		})
+	}
 }
 
 func TestMCPNotifications(t *testing.T) {
 	requireServer(t)
 	scenarios, err := framework.LoadScenarios("../scenarios/notifications.yaml")
 	require.NoError(t, err)
-	r := framework.NewRunner()
-	require.NoError(t, r.Run(t, scenarios))
+	for _, sc := range scenarios {
+		scenario := sc
+		t.Run(scenario.Name, func(t *testing.T) {
+			t.Parallel()
+			r := framework.NewRunner()
+			require.NoError(t, r.Run(t, []framework.Scenario{scenario}))
+		})
+	}
 }

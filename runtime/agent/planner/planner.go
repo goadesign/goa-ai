@@ -1,3 +1,6 @@
+// Package planner defines the contracts between user-provided planners and the
+// goa-ai runtime. Planners decide which tools to call (or when to answer
+// directly) based on the current messages, run context, and planner events.
 package planner
 
 import (
@@ -45,17 +48,11 @@ type PlannerEvents interface {
 	UsageDelta(ctx context.Context, usage model.TokenUsage)
 }
 
-// AgentMessage is the normalized, provider-agnostic message type planners use.
-type AgentMessage struct {
-	Role  string
-	Parts []model.Part
-	Meta  map[string]any
-}
-
 // ToolRequest describes a tool invocation requested by the planner.
 type ToolRequest struct {
 	Name             tools.Ident
 	Payload          any
+	AgentID          string
 	RunID            string
 	SessionID        string
 	TurnID           string
@@ -89,7 +86,7 @@ type RetryHint struct {
 
 // FinalResponse contains the assistant message that concludes the run.
 type FinalResponse struct {
-	Message AgentMessage
+	Message *model.Message
 }
 
 // PlannerAnnotation is a free-form planner note with optional labels.
@@ -144,7 +141,7 @@ type Termination struct {
 
 // PlanInput carries the initial messages and context into PlanStart.
 type PlanInput struct {
-	Messages   []*AgentMessage
+	Messages   []*model.Message
 	RunContext run.Context
 	Agent      PlannerContext
 	Events     PlannerEvents
@@ -152,7 +149,7 @@ type PlanInput struct {
 
 // PlanResumeInput carries messages plus recent tool results into PlanResume.
 type PlanResumeInput struct {
-	Messages    []*AgentMessage
+	Messages    []*model.Message
 	RunContext  run.Context
 	Agent       PlannerContext
 	Events      PlannerEvents
@@ -164,8 +161,14 @@ type PlanResumeInput struct {
 type PlanResult struct {
 	ToolCalls        []ToolRequest
 	FinalResponse    *FinalResponse
+	// Streamed reports whether assistant text for this result has already been
+	// streamed via PlannerEvents.AssistantChunk. When true, runtimes should
+	// avoid emitting an additional full AssistantMessageEvent for the
+	// FinalResponse to prevent duplicate assistant messages.
+	Streamed         bool
 	Await            *Await
 	RetryHint        *RetryHint
 	ExpectedChildren int
 	Notes            []PlannerAnnotation
 }
+

@@ -59,6 +59,12 @@ Schema from the Goa attribute and exposes it in `tools/list` under
 validation schema but covers common primitives, arrays, objects (with required
 fields), enums and base64-encoded bytes.
 
+### Tool Identification
+Tools are identified by canonical IDs in the format `<toolset>.<tool>` (dot-separated).
+The generated code produces typed constants (e.g., `MyTool tools.Ident`) matching this format.
+Platform adapters (e.g., Bedrock) are responsible for mapping these canonical IDs to platform-specific formats (e.g., replacing dots with underscores) and back, ensuring user code only ever interacts with canonical IDs.
+Use the `tools.Ident` type and its helpers (`Toolset()`, `Tool()`) to manipulate IDs safely.
+
 ### Cross‑platform paths
 Path handling relies on `filepath` and Goa’s codegen helpers directly. Templates and generators use `filepath.Join` and Goa’s path data.
 

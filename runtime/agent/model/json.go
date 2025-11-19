@@ -1,3 +1,6 @@
+// Package model defines JSON helpers for marshaling and unmarshaling provider
+// message parts. This file focuses on decoding messages and discriminating
+// concrete part types based on the Kind field.
 package model
 
 import (

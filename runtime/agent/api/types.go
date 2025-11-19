@@ -35,6 +35,16 @@ type RunInput struct {
 	// correlate ToolCallUpdated events and propagate parent-child relationships.
 	ParentToolCallID string
 
+	// ParentRunID identifies the run that scheduled this nested execution. Empty for
+	// top-level runs. When set, tool events emitted by this run can be attributed to
+	// the parent run.
+	ParentRunID string
+
+	// ParentAgentID identifies the agent that invoked this nested execution. Empty for
+	// top-level runs. When set with ParentRunID, tool events can retain the parent agent
+	// identity even though execution happens in a child agent.
+	ParentAgentID string
+
 	// Tool identifies the fully-qualified tool name when this run is a nested
 	// agent-as-tool execution. For top-level runs (not invoked via a parent tool),
 	// Tool is empty. Planners may use this to select method-specific prompts.
@@ -48,7 +58,7 @@ type RunInput struct {
 	ToolArgs json.RawMessage
 
 	// Messages carries the conversation history supplied by the caller.
-	Messages []*planner.AgentMessage
+	Messages []*model.Message
 
 	// Labels contains caller-provided metadata (tenant, priority, etc.).
 	Labels map[string]string
@@ -114,8 +124,8 @@ type RunOutput struct {
 	// RunID echoes the workflow execution identifier.
 	RunID string
 	// Final is the assistant reply returned to the caller.
-	Final *planner.AgentMessage
-	// ToolEvents captures the last set of tool results emitted before completion.
+	Final *model.Message
+	// ToolEvents captures all tool results emitted before completion in execution order.
 	ToolEvents []*planner.ToolResult
 	// Notes aggregates planner annotations produced during the final turn.
 	Notes []*planner.PlannerAnnotation
@@ -127,7 +137,7 @@ type RunOutput struct {
 type PlanActivityInput struct {
 	AgentID     string
 	RunID       string
-	Messages    []*planner.AgentMessage
+	Messages    []*model.Message
 	RunContext  run.Context
 	ToolResults []*planner.ToolResult
 	Finalize    *planner.Termination

@@ -14,7 +14,7 @@ import (
 
 // Tool IDs for this toolset.
 const (
-	Store tools.Ident = "store"
+	Store tools.Ident = "docs.store"
 )
 
 var Specs = []tools.ToolSpec{

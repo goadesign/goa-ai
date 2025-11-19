@@ -34,7 +34,7 @@
 
 type (
     seCfg struct {
-        callers map[tools.Ident]func(context.Context, any) (any, error)
+        callers    map[tools.Ident]func(context.Context, any) (any, error)
         mapPayload func(tools.Ident, any, *runtime.ToolCallMeta) (any, error)
         mapResult  func(tools.Ident, any, *runtime.ToolCallMeta) (any, error)
     }
@@ -43,6 +43,7 @@ type (
 )
 
 type execOptFunc func(*seCfg)
+
 func (f execOptFunc) apply(c *seCfg) { f(c) }
 
 // WithPayloadMapper installs a mapper for tool payload -> method payload.
@@ -60,7 +61,9 @@ func WithResultMapper(f func(tools.Ident, any, *runtime.ToolCallMeta) (any, erro
 // With{{ goify .Name true }} sets the caller for {{ .QualifiedName }}.
 func With{{ goify .Name true }}(f func(context.Context, any) (any, error)) ExecOpt {
     return execOptFunc(func(c *seCfg) {
-        if c.callers == nil { c.callers = make(map[tools.Ident]func(context.Context, any) (any, error)) }
+        if c.callers == nil {
+            c.callers = make(map[tools.Ident]func(context.Context, any) (any, error))
+        }
         c.callers[tools.Ident({{ printf "%q" .QualifiedName }})] = f
     })
 }
@@ -73,7 +76,9 @@ func With{{ goify .Name true }}(f func(context.Context, any) (any, error)) ExecO
 func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOpt) runtime.ToolCallExecutor {
     var cfg seCfg
     for _, o := range opts {
-        if o != nil { o.apply(&cfg) }
+        if o != nil {
+            o.apply(&cfg)
+        }
     }
     // Preflight: ensure callers are provided for all method-backed tools.
     {
@@ -81,6 +86,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
         {{- range .Toolset.Tools }}
         {{- if .IsMethodBacked }}
         if cfg.callers == nil || cfg.callers[tools.Ident({{ printf "%q" .QualifiedName }})] == nil {
+            // report the fully-qualified tool for clarity
             missing = append(missing, {{ printf "%q" .QualifiedName }})
         }
         {{- end }}
@@ -96,12 +102,19 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
         if meta == nil {
             return &planner.ToolResult{Error: planner.NewToolError("tool call meta is nil")}, nil
         }
-        // Lookup caller
+        // Lookup caller registered for this tool.
         caller := cfg.callers[call.Name]
         if caller == nil {
             return &planner.ToolResult{
-                Name:  call.Name,
-                Error: planner.NewToolError("caller is required"),
+                Name: call.Name,
+                Error: planner.NewToolError(
+                    fmt.Sprintf(
+                        "no service caller registered for tool %q in toolset %q; "+
+                            "ensure the appropriate With... option is wired when constructing the executor",
+                        call.Name,
+                        "{{ .Toolset.QualifiedName }}",
+                    ),
+                ),
             }, nil
         }
         // Decode tool payload if needed

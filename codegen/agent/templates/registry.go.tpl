@@ -130,13 +130,15 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
     {{- end }}
     {{- end }}
 
-    // Service toolsets are registered by application code using executors.
+    // Service-backed toolsets (method-backed Used toolsets) are registered by
+    // application code using executors. Agent-exported toolsets are wired via
+    // provider agenttools helpers and consumer-side agent toolset helpers.
     return nil
 }
 
 {{- $had := false -}}
 {{- range .UsedToolsets }}
-{{- if not (and .Expr .Expr.External) }}
+{{- if and (not (and .Expr .Expr.External)) (eq .AgentToolsImportPath "") }}
 {{- $had = true -}}
 {{- end }}
 {{- end }}
@@ -147,7 +149,7 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
 // Example:
 //   err := RegisterUsedToolsets(ctx, rt,
 {{- range .UsedToolsets }}
-{{- if not (and .Expr .Expr.External) }}
+{{- if and (not (and .Expr .Expr.External)) (eq .AgentToolsImportPath "") }}
 //       With{{ goify .PathName true }}Executor(exec),
 {{- end }}
 {{- end }}
@@ -162,9 +164,9 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
             o(execs)
         }
     }
-    // Register service (non-external) used toolsets.
+    // Register non-external used toolsets that are not provided by agent-as-tool exports.
     {{- range .UsedToolsets }}
-    {{- if not (and .Expr .Expr.External) }}
+    {{- if and (not (and .Expr .Expr.External)) (eq .AgentToolsImportPath "") }}
     {
         const toolsetID = {{ printf "%q" .QualifiedName }}
         exec := execs[toolsetID]
@@ -177,7 +179,12 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
                 }
                 if exec == nil {
                     return &planner.ToolResult{
-                        Error: planner.NewToolError("executor is required"),
+                        Error: planner.NewToolError(
+                            fmt.Sprintf(
+                                "no executor registered for toolset %q; ensure the appropriate With...Executor is wired in RegisterUsedToolsets",
+                                toolsetID,
+                            ),
+                        ),
                     }, nil
                 }
                 meta := &agentsruntime.ToolCallMeta{
@@ -197,6 +204,40 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
                 return result, nil
             },
         }
+        // Install DSL-provided hint templates when present.
+        {
+            // Build maps only when at least one template exists to avoid overhead.
+            var callRaw map[tools.Ident]string
+            var resultRaw map[tools.Ident]string
+            {{- range .Tools }}
+            {{- if .CallHintTemplate }}
+            if callRaw == nil {
+                callRaw = make(map[tools.Ident]string)
+            }
+            callRaw[tools.Ident({{ printf "%q" .Name }})] = {{ printf "%q" .CallHintTemplate }}
+            {{- end }}
+            {{- if .ResultHintTemplate }}
+            if resultRaw == nil {
+                resultRaw = make(map[tools.Ident]string)
+            }
+            resultRaw[tools.Ident({{ printf "%q" .Name }})] = {{ printf "%q" .ResultHintTemplate }}
+            {{- end }}
+            {{- end }}
+            if len(callRaw) > 0 {
+                compiled, err := hints.CompileHintTemplates(callRaw, nil)
+                if err != nil {
+                    return err
+                }
+                reg.CallHints = compiled
+            }
+            if len(resultRaw) > 0 {
+                compiled, err := hints.CompileHintTemplates(resultRaw, nil)
+                if err != nil {
+                    return err
+                }
+                reg.ResultHints = compiled
+            }
+        }
         if err := rt.RegisterToolset(reg); err != nil {
             return err
         }
@@ -206,8 +247,8 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
     return nil
 }
 
-{{- range .UsedToolsets }}
-{{- if not (and .Expr .Expr.External) }}
+    {{- range .UsedToolsets }}
+    {{- if and (not (and .Expr .Expr.External)) (eq .AgentToolsImportPath "") }}
 // With{{ goify .PathName true }}Executor associates an executor for {{ .QualifiedName }}.
 func With{{ goify .PathName true }}Executor(exec agentsruntime.ToolCallExecutor) func(map[string]agentsruntime.ToolCallExecutor) {
     return func(m map[string]agentsruntime.ToolCallExecutor) {

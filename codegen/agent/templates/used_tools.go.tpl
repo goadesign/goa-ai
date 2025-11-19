@@ -5,7 +5,7 @@
 // Tool IDs (globally unique). Use these constants in planner tool calls.
 const (
 {{- range .Toolset.Tools }}
-    {{ .ConstName }} tools.Ident = {{ printf "%q" .Name }}
+    {{ .ConstName }} tools.Ident = {{ printf "%q" .QualifiedName }}
 {{- end }}
 )
 

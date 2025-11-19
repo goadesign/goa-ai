@@ -113,6 +113,8 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		SessionID:        input.SessionID,
 		TurnID:           input.TurnID,
 		ParentToolCallID: input.ParentToolCallID,
+		ParentRunID:      input.ParentRunID,
+		ParentAgentID:    input.ParentAgentID,
 		Tool:             input.Tool,
 		ToolArgs:         input.ToolArgs,
 		Attempt:          1,
@@ -312,8 +314,8 @@ func (r *Runtime) runLoop(
 		toolOpts.Timeout = input.Policy.ToolTimeout
 	}
 	var lastToolResults []*planner.ToolResult
+	var aggregatedToolResults []*planner.ToolResult
 	for {
-		r.logger.Info(ctx, "runLoop iteration", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil, "await", result.Await != nil)
 		if err := r.handleInterrupts(wfCtx, input, base, seq, ctrl, &nextAttempt); err != nil {
 			return nil, err
 		}
@@ -323,21 +325,21 @@ func (r *Runtime) runLoop(
 			now := wfCtx.Now()
 			remaining := deadline.Sub(now)
 			if finalizerGrace > 0 && remaining <= finalizerGrace {
-				return r.finalizeWithPlanner(wfCtx, reg, input, base, lastToolResults, nextAttempt, seq, planner.TerminationReasonTimeBudget, deadline)
+				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, seq, planner.TerminationReasonTimeBudget, deadline)
 			}
 			if finalizerGrace == 0 && remaining <= minActivityTimeout {
 				// No configured grace; avoid scheduling work that cannot complete meaningfully.
-				return r.finalizeWithPlanner(wfCtx, reg, input, base, lastToolResults, nextAttempt, seq, planner.TerminationReasonTimeBudget, deadline)
+				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, seq, planner.TerminationReasonTimeBudget, deadline)
 			}
 			if remaining <= 0 {
 				// Time budget fully exhausted (including grace): try to finalize.
 				// This may still race with engine TTLs, but provides a best-effort reply.
-				return r.finalizeWithPlanner(wfCtx, reg, input, base, lastToolResults, nextAttempt, seq, planner.TerminationReasonTimeBudget, deadline)
+				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, seq, planner.TerminationReasonTimeBudget, deadline)
 			}
 		}
 		if !deadline.IsZero() && wfCtx.Now().After(deadline) {
 			// Redundant guard; kept for clarity with prior semantics.
-			return r.finalizeWithPlanner(wfCtx, reg, input, base, lastToolResults, nextAttempt, seq, planner.TerminationReasonTimeBudget, deadline)
+			return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, seq, planner.TerminationReasonTimeBudget, deadline)
 		}
 		// Handle Await: publish await event, pause and wait for external input.
 		if result.Await != nil {
@@ -383,8 +385,8 @@ func (r *Runtime) runLoop(
 				}
 				// Append the answer as a user message and continue planning.
 				if ans.Answer != "" {
-					base.Messages = append(base.Messages, &planner.AgentMessage{
-						Role:  "user",
+					base.Messages = append(base.Messages, &model.Message{
+						Role:  model.ConversationRoleUser,
 						Parts: []model.Part{model.TextPart{Text: ans.Answer}},
 					})
 				}
@@ -427,6 +429,7 @@ func (r *Runtime) runLoop(
 				}
 				// Feed results into next PlanResume turn directly.
 				lastToolResults = rs.Results
+				aggregatedToolResults = append(aggregatedToolResults, cloneToolResults(rs.Results)...)
 				// Advance to PlanResume immediately without executing internal tools.
 				resumeCtx := base.RunContext
 				resumeCtx.Attempt = nextAttempt
@@ -468,16 +471,18 @@ func (r *Runtime) runLoop(
 				// CRITICAL: This error will be visible in workflow failure logs
 				return nil, fmt.Errorf("CRITICAL: planner returned neither tool calls nor final response - ToolCalls=%d, FinalResponse=%v, Await=%v", len(result.ToolCalls), result.FinalResponse != nil, result.Await != nil)
 			}
-			r.publishHook(
-				ctx,
-				hooks.NewAssistantMessageEvent(
-					base.RunContext.RunID,
-					base.Agent.ID(),
-					agentMessageText(&result.FinalResponse.Message),
-					nil,
-				),
-				seq,
-			)
+			if !result.Streamed {
+				r.publishHook(
+					ctx,
+					hooks.NewAssistantMessageEvent(
+						base.RunContext.RunID,
+						base.Agent.ID(),
+						agentMessageText(result.FinalResponse.Message),
+						nil,
+					),
+					seq,
+				)
+			}
 			for _, note := range result.Notes {
 				r.publishHook(
 					ctx,
@@ -497,8 +502,8 @@ func (r *Runtime) runLoop(
 			return &RunOutput{
 				AgentID:    base.Agent.ID(),
 				RunID:      base.RunContext.RunID,
-				Final:      &result.FinalResponse.Message,
-				ToolEvents: lastToolResults,
+				Final:      result.FinalResponse.Message,
+				ToolEvents: aggregatedToolResults,
 				Notes:      notes,
 				Usage:      &aggUsage,
 			}, nil
@@ -506,7 +511,7 @@ func (r *Runtime) runLoop(
 
 		if caps.RemainingToolCalls == 0 && caps.MaxToolCalls > 0 {
 			// Tool cap exhausted: request a final tool-free response from the planner.
-			return r.finalizeWithPlanner(wfCtx, reg, input, base, lastToolResults, nextAttempt, seq, planner.TerminationReasonToolCap, deadline)
+			return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, seq, planner.TerminationReasonToolCap, deadline)
 		}
 		if !deadline.IsZero() && wfCtx.Now().After(deadline) {
 			// Time budget exceeded after evaluating caps/policy
@@ -515,7 +520,7 @@ func (r *Runtime) runLoop(
 				reg,
 				input,
 				base,
-				lastToolResults,
+				aggregatedToolResults,
 				nextAttempt,
 				seq,
 				planner.TerminationReasonTimeBudget,
@@ -569,25 +574,27 @@ func (r *Runtime) runLoop(
 		}
 		// Directly use pointer results for the planner input.
 		lastToolResults = vals
+		aggregatedToolResults = append(aggregatedToolResults, cloneToolResults(vals)...)
 		// Decrement cap by the number of tool calls executed, not the number of results returned.
 		// This ensures the cap is properly decremented even if some results are missing.
 		caps.RemainingToolCalls = decrementCap(caps.RemainingToolCalls, len(allowed))
-		// Append user tool_result message and update ledger.
-		r.appendUserToolResults(base, vals, led)
+		// Append user tool_result message and update ledger in the same order as
+		// the assistant tool_use declarations for this turn.
+		r.appendUserToolResults(base, allowed, vals, led)
 		if failures(vals) > 0 {
 			caps.RemainingConsecutiveFailedToolCalls = decrementCap(
 				caps.RemainingConsecutiveFailedToolCalls, failures(vals),
 			)
 			if caps.MaxConsecutiveFailedToolCalls > 0 && caps.RemainingConsecutiveFailedToolCalls <= 0 {
 				// Consecutive failure cap exhausted: request finalization.
-				return r.finalizeWithPlanner(wfCtx, reg, input, base, lastToolResults, nextAttempt, seq, planner.TerminationReasonFailureCap, deadline)
+				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, seq, planner.TerminationReasonFailureCap, deadline)
 			}
 		} else if caps.MaxConsecutiveFailedToolCalls > 0 {
 			caps.RemainingConsecutiveFailedToolCalls = caps.MaxConsecutiveFailedToolCalls
 		}
 
 		// Apply missing-fields policy if configured. The helper may finalize or pause/resume.
-		if out, err := r.handleMissingFieldsPolicy(wfCtx, reg, input, base, vals, &nextAttempt, seq, ctrl); err != nil {
+		if out, err := r.handleMissingFieldsPolicy(wfCtx, reg, input, base, vals, aggregatedToolResults, &nextAttempt, seq, ctrl); err != nil {
 			return nil, err
 		} else if out != nil {
 			return out, nil
@@ -597,7 +604,7 @@ func (r *Runtime) runLoop(
 		// and they produced zero child tool calls in total, do not
 		// resume. Finalize immediately to avoid loops.
 		if r.hardProtectionIfNeeded(ctx, base, vals, seq) {
-			return r.finalizeWithPlanner(wfCtx, reg, input, base, lastToolResults, nextAttempt, seq, planner.TerminationReasonFailureCap, deadline)
+			return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, seq, planner.TerminationReasonFailureCap, deadline)
 		}
 
 		resumeReq := r.buildNextResumeRequest(base, led, lastToolResults, &nextAttempt)
@@ -635,6 +642,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 	input *RunInput,
 	base *planner.PlanInput,
 	results []*planner.ToolResult,
+	allResults []*planner.ToolResult,
 	nextAttempt *int,
 	seq *turnSequencer,
 	ctrl *interrupt.Controller,
@@ -665,7 +673,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 	}
 	switch reg.Policy.OnMissingFields {
 	case MissingFieldsFinalize:
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, results, *nextAttempt, seq, planner.TerminationReasonFailureCap, time.Time{})
+		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, allResults, *nextAttempt, seq, planner.TerminationReasonFailureCap, time.Time{})
 		return out, err
 	case MissingFieldsAwaitClarification:
 		// Generate deterministic await ID for correlation safety.
@@ -693,8 +701,8 @@ func (r *Runtime) handleMissingFieldsPolicy(
 			return nil, fmt.Errorf("unexpected await ID for clarification")
 		}
 		if ans.Answer != "" {
-			base.Messages = append(base.Messages, &planner.AgentMessage{
-				Role:  "user",
+			base.Messages = append(base.Messages, &model.Message{
+				Role:  model.ConversationRoleUser,
 				Parts: []model.Part{model.TextPart{Text: ans.Answer}},
 			})
 		}
@@ -716,7 +724,7 @@ func (r *Runtime) finalizeWithPlanner(
 	reg AgentRegistration,
 	input *RunInput,
 	base *planner.PlanInput,
-	lastToolResults []*planner.ToolResult,
+	allToolResults []*planner.ToolResult,
 	nextAttempt int,
 	seq *turnSequencer,
 	reason planner.TerminationReason,
@@ -740,8 +748,8 @@ func (r *Runtime) finalizeWithPlanner(
 	}
 	messages := base.Messages
 	if hint != "" {
-		messages = append(messages, &planner.AgentMessage{
-			Role:  "system",
+		messages = append(messages, &model.Message{
+			Role:  model.ConversationRoleSystem,
 			Parts: []model.Part{model.TextPart{Text: hint}},
 		})
 	}
@@ -754,7 +762,7 @@ func (r *Runtime) finalizeWithPlanner(
 		RunID:       base.RunContext.RunID,
 		Messages:    messages,
 		RunContext:  resumeCtx,
-		ToolResults: lastToolResults,
+		ToolResults: allToolResults,
 		Finalize:    &planner.Termination{Reason: reason, Message: hint},
 	}
 	// Emit a pause/resume pair to indicate a finalization turn began.
@@ -790,16 +798,18 @@ func (r *Runtime) finalizeWithPlanner(
 	if output == nil || output.Result == nil || output.Result.FinalResponse == nil {
 		return nil, fmt.Errorf("%s", reasonText)
 	}
-	r.publishHook(
-		ctx,
-		hooks.NewAssistantMessageEvent(
-			base.RunContext.RunID,
-			base.Agent.ID(),
-			agentMessageText(&output.Result.FinalResponse.Message),
-			nil,
-		),
-		seq,
-	)
+	if !output.Result.Streamed {
+		r.publishHook(
+			ctx,
+			hooks.NewAssistantMessageEvent(
+				base.RunContext.RunID,
+				base.Agent.ID(),
+				agentMessageText(output.Result.FinalResponse.Message),
+				nil,
+			),
+			seq,
+		)
+	}
 	for _, note := range output.Result.Notes {
 		r.publishHook(
 			ctx,
@@ -819,8 +829,8 @@ func (r *Runtime) finalizeWithPlanner(
 	return &RunOutput{
 		AgentID:    base.Agent.ID(),
 		RunID:      base.RunContext.RunID,
-		Final:      &output.Result.FinalResponse.Message,
-		ToolEvents: lastToolResults,
+		Final:      output.Result.FinalResponse.Message,
+		ToolEvents: allToolResults,
 		Notes:      notes,
 		// Usage aggregation continues to be recorded by the surrounding loop
 	}, nil
@@ -903,6 +913,7 @@ func collectToolCallIDs(calls []planner.ToolRequest) []string {
 func (r *Runtime) executeToolCalls(
 	wfCtx engine.WorkflowContext,
 	activityName string, toolActOptions engine.ActivityOptions, runID, agentID string,
+	runCtx *run.Context,
 	calls []planner.ToolRequest,
 	expectedChildren int,
 	seq *turnSequencer,
@@ -910,6 +921,16 @@ func (r *Runtime) executeToolCalls(
 	hardDeadline time.Time,
 ) ([]*planner.ToolResult, error) {
 	ctx := wfCtx.Context()
+	eventRunID := runID
+	eventAgentID := agentID
+	if runCtx != nil {
+		if runCtx.ParentRunID != "" {
+			eventRunID = runCtx.ParentRunID
+		}
+		if runCtx.ParentAgentID != "" {
+			eventAgentID = runCtx.ParentAgentID
+		}
+	}
 
 	// Decide per-call execution path (inline vs activity) by toolset.
 	// Inline toolsets run synchronously within the workflow loop (agent-as-tool child workflows).
@@ -926,6 +947,10 @@ func (r *Runtime) executeToolCalls(
 			call.ParentToolCallID = parentTracker.parentToolCallID
 			calls[i] = call
 		}
+		if call.ParentToolCallID == "" && runCtx != nil && runCtx.ParentToolCallID != "" {
+			call.ParentToolCallID = runCtx.ParentToolCallID
+			calls[i] = call
+		}
 
 		spec, hasSpec := r.toolSpec(call.Name)
 		if !hasSpec {
@@ -940,7 +965,7 @@ func (r *Runtime) executeToolCalls(
 		}
 		r.publishHook(ctx,
 			hooks.NewToolCallScheduledEvent(
-				runID, agentID, call.Name, call.ToolCallID, call.Payload, queue,
+				eventRunID, eventAgentID, call.Name, call.ToolCallID, call.Payload, queue,
 				call.ParentToolCallID, expectedChildren,
 			),
 			seq,
@@ -951,6 +976,13 @@ func (r *Runtime) executeToolCalls(
 			start := wfCtx.Now()
 			// Attach workflow context so agent-tool executor can start a child workflow.
 			ctxInline := engine.WithWorkflowContext(ctx, wfCtx)
+			ctxInline = withFinalizerInvokerFactory(ctxInline, &finalizerInvokerFactory{
+				runtime:         r,
+				wfCtx:           wfCtx,
+				activityName:    activityName,
+				activityOptions: toolActOptions,
+				agentID:         agentID,
+			})
 			result, err := ts.Execute(ctxInline, &call)
 			if err != nil {
 				return nil, fmt.Errorf("inline tool %q failed: %w", call.Name, err)
@@ -967,8 +999,8 @@ func (r *Runtime) executeToolCalls(
 			r.publishHook(
 				ctx,
 				hooks.NewToolResultReceivedEvent(
-					runID,
-					agentID,
+					eventRunID,
+					eventAgentID,
 					call.Name,
 					call.ToolCallID,
 					call.ParentToolCallID,
@@ -1049,7 +1081,7 @@ func (r *Runtime) executeToolCalls(
 	if parentTracker != nil && parentTracker.registerDiscovered(discoveredIDs) && parentTracker.needsUpdate() {
 		r.publishHook(
 			ctx,
-			hooks.NewToolCallUpdatedEvent(runID, agentID, parentTracker.parentToolCallID, parentTracker.currentTotal()),
+			hooks.NewToolCallUpdatedEvent(eventRunID, eventAgentID, parentTracker.parentToolCallID, parentTracker.currentTotal()),
 			seq,
 		)
 		parentTracker.markUpdated()
@@ -1093,14 +1125,18 @@ func (r *Runtime) executeToolCalls(
 			toolRes.RetryHint = out.RetryHint
 		}
 
+		parentID := info.call.ParentToolCallID
+		if parentID == "" && runCtx != nil {
+			parentID = runCtx.ParentToolCallID
+		}
 		r.publishHook(
 			ctx,
 			hooks.NewToolResultReceivedEvent(
-				runID,
-				agentID,
+				eventRunID,
+				eventAgentID,
 				info.call.Name,
 				info.call.ToolCallID,
-				info.call.ParentToolCallID,
+				parentID,
 				decoded,
 				duration,
 				out.Telemetry,
@@ -1292,6 +1328,9 @@ func (r *Runtime) prepareAllowedCallsMetadata(
 		if allowed[i].RunID == "" {
 			allowed[i].RunID = base.RunContext.RunID
 		}
+		if allowed[i].AgentID == "" && base.Agent != nil {
+			allowed[i].AgentID = base.Agent.ID()
+		}
 		if allowed[i].SessionID == "" {
 			allowed[i].SessionID = base.RunContext.SessionID
 		}
@@ -1327,10 +1366,14 @@ func (r *Runtime) recordAssistantTurn(
 	for _, call := range allowed {
 		led.DeclareToolUse(call.ToolCallID, string(call.Name), call.Payload)
 	}
+	// Flush a single assistant message capturing the full turn (thinking/text
+	// plus all tool_use blocks) so the next user message can correlate to the
+	// complete set of tool_use IDs.
+	led.FlushAssistant()
 	messages := cloneMessages(transcriptMsgs)
 	target := findAssistantMessage(messages)
 	if target == nil {
-		target = &planner.AgentMessage{Role: "assistant"}
+		target = &model.Message{Role: model.ConversationRoleAssistant}
 		messages = append(messages, target)
 	}
 	for _, call := range allowed {
@@ -1343,28 +1386,28 @@ func (r *Runtime) recordAssistantTurn(
 	base.Messages = append(base.Messages, messages...)
 }
 
-func findAssistantMessage(msgs []*planner.AgentMessage) *planner.AgentMessage {
+func findAssistantMessage(msgs []*model.Message) *model.Message {
 	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i] != nil && msgs[i].Role == "assistant" {
+		if msgs[i] != nil && msgs[i].Role == model.ConversationRoleAssistant {
 			return msgs[i]
 		}
 	}
 	return nil
 }
 
-func cloneMessages(msgs []*model.Message) []*planner.AgentMessage {
+func cloneMessages(msgs []*model.Message) []*model.Message {
 	if len(msgs) == 0 {
 		return nil
 	}
-	out := make([]*planner.AgentMessage, 0, len(msgs))
+	out := make([]*model.Message, 0, len(msgs))
 	for _, msg := range msgs {
 		if msg == nil {
 			continue
 		}
 		parts := make([]model.Part, len(msg.Parts))
 		copy(parts, msg.Parts)
-		out = append(out, &planner.AgentMessage{
-			Role:  string(msg.Role),
+		out = append(out, &model.Message{
+			Role:  msg.Role,
 			Parts: parts,
 			Meta:  cloneMetadata(msg.Meta),
 		})
@@ -1438,7 +1481,7 @@ func (r *Runtime) executeGroupedToolCalls(
 		}
 		sub, err := r.executeToolCalls(
 			wfCtx, reg.ExecuteToolActivity, opt, base.RunContext.RunID, base.Agent.ID(),
-			grouped[i], expectedChildren, seq, parentTracker, deadline,
+			&base.RunContext, grouped[i], expectedChildren, seq, parentTracker, deadline,
 		)
 		if err != nil {
 			return nil, err
@@ -1449,34 +1492,55 @@ func (r *Runtime) executeGroupedToolCalls(
 }
 
 // appendUserToolResults appends a user message with tool_result blocks for the
-// executed tools and updates the ledger.
+// executed tools and updates the ledger. Tool results are ordered to match the
+// assistant tool_use IDs from the allowed calls slice so that provider
+// handshakes remain deterministic regardless of execution timing.
 func (r *Runtime) appendUserToolResults(
 	base *planner.PlanInput,
+	allowed []planner.ToolRequest,
 	vals []*planner.ToolResult,
 	led *transcript.Ledger,
 ) {
 	if len(vals) == 0 {
 		return
 	}
-	parts := make([]model.Part, 0, len(vals))
+	// Index results by ToolCallID for quick lookup.
+	resultsByID := make(map[string]*planner.ToolResult, len(vals))
 	for _, tr := range vals {
 		if tr == nil || tr.ToolCallID == "" {
 			continue
 		}
-		parts = append(parts, model.ToolResultPart{
+		resultsByID[tr.ToolCallID] = tr
+	}
+	// Order results by allowed tool call IDs so tool_result blocks follow the
+	// assistant tool_use declaration order.
+	parts := make([]model.Part, 0, len(resultsByID))
+	specs := make([]transcript.ToolResultSpec, 0, len(resultsByID))
+	for _, call := range allowed {
+		tr, ok := resultsByID[call.ToolCallID]
+		if !ok || tr == nil || tr.ToolCallID == "" {
+			continue
+		}
+		part := model.ToolResultPart{
+			ToolUseID: tr.ToolCallID,
+			Content:   tr.Result,
+			IsError:   tr.Error != nil,
+		}
+		parts = append(parts, part)
+		specs = append(specs, transcript.ToolResultSpec{
 			ToolUseID: tr.ToolCallID,
 			Content:   tr.Result,
 			IsError:   tr.Error != nil,
 		})
-		led.AppendToolResult(tr.ToolCallID, tr.Result, tr.Error != nil)
 	}
 	if len(parts) == 0 {
 		return
 	}
-	base.Messages = append(base.Messages, &planner.AgentMessage{
-		Role:  "user",
+	base.Messages = append(base.Messages, &model.Message{
+		Role:  model.ConversationRoleUser,
 		Parts: parts,
 	})
+	led.AppendUserToolResults(specs)
 }
 
 // hardProtectionIfNeeded emits a protection event and signals finalization when
@@ -1527,15 +1591,11 @@ func (r *Runtime) buildNextResumeRequest(
 	resumeCtx := base.RunContext
 	resumeCtx.Attempt = *nextAttempt
 	*nextAttempt++
-	nextMsgs := led.BuildMessages()
-	_ = transcript.ValidateBedrock(nextMsgs, true)
-	plannerMsgs := make([]*planner.AgentMessage, 0, len(nextMsgs))
-	for _, m := range nextMsgs {
-		if m == nil || len(m.Parts) == 0 {
-			continue
-		}
-		pm := &planner.AgentMessage{Role: string(m.Role), Parts: m.Parts, Meta: m.Meta}
-		plannerMsgs = append(plannerMsgs, pm)
+	plannerMsgs := cloneMessages(base.Messages)
+	if err := transcript.ValidateBedrock(plannerMsgs, false); err != nil {
+		// Fail fast rather than sending an invalid sequence to the provider.
+		// This surfaces a clear runtime/ledger bug to the caller.
+		panic(fmt.Sprintf("invalid Bedrock transcript for run %s: %v", base.RunContext.RunID, err))
 	}
 	return PlanActivityInput{
 		AgentID:     base.Agent.ID(),

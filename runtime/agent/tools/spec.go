@@ -3,12 +3,12 @@ package tools
 type (
 	// ToolSpec enumerates the metadata and JSON codecs for a tool.
 	ToolSpec struct {
-		// Name is the globally unique tool identifier (simple DSL name).
+		// Name is the globally unique tool identifier (`toolset.tool`).
 		Name Ident
 		// Service identifies the Goa service that declared the tool.
 		Service string
 		// Toolset is the toolset registration identifier used for routing.
-		// It is typically qualified as "service.toolset".
+		// It is typically the DSL toolset name.
 		Toolset string
 		// Description provides human-readable context for planners and tooling.
 		Description string

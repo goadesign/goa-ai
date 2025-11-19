@@ -20,7 +20,7 @@ lint: tools
 	golangci-lint run --timeout=5m
 
 test: tools
-	$(GO) test -race -covermode=atomic -coverprofile=cover.out ./...
+	$(GO) test -race -covermode=atomic -coverprofile=cover.out `$(GO) list ./... | grep -v '/integration_tests'`
 
 # Run integration tests (scenarios under integration_tests/)
 itest: tools

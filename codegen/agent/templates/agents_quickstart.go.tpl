@@ -60,6 +60,7 @@ import (
 
     // The core Goa-AI runtime and planner interfaces
     "goa.design/goa-ai/runtime/agent/runtime"
+    "goa.design/goa-ai/runtime/agent/model"
     "goa.design/goa-ai/runtime/agent/planner"
 
     // === Your Generated Agent Packages ===
@@ -75,9 +76,9 @@ type StubPlanner struct{}
 func (p *StubPlanner) PlanStart(ctx context.Context, in planner.PlanInput) (*planner.PlanResult, error) {
     return &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{
-			Message: planner.AgentMessage{
-				Role:  "assistant",
-				Parts: []planner.Part{planner.TextPart{Text: "Hello!"}},
+			Message: &model.Message{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "Hello!"}},
 			},
 		},
 	}, nil
@@ -85,9 +86,9 @@ func (p *StubPlanner) PlanStart(ctx context.Context, in planner.PlanInput) (*pla
 func (p *StubPlanner) PlanResume(ctx context.Context, in planner.PlanResumeInput) (*planner.PlanResult, error) {
     return &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{
-			Message: planner.AgentMessage{
+			Message: &model.Message{
 				Role:  "assistant",
-				Parts: []planner.Part{planner.TextPart{Text: "Done."}},
+				Parts: []model.Part{model.TextPart{Text: "Done."}},
 			},
 		},
 	}, nil
@@ -120,8 +121,8 @@ func main() {
     client := {{ (index (index .Services 0).Agents 0).PackageName }}.NewClient(rt)
     out, err := client.Run(
         context.Background(),
-        []planner.AgentMessage{
-			{ Role: "user", Parts: []planner.Part{planner.TextPart{Text: "Hi there!"}} },
+        []*model.Message{
+			{ Role: "user", Parts: []model.Part{model.TextPart{Text: "Hi there!"}} },
 		},
         runtime.WithSessionID("my-first-session"), // A session ID is required!
     )
@@ -133,7 +134,7 @@ func main() {
     fmt.Println("RunID:", out.RunID)
     // Print first text part (if any)
     if len(out.Final.Message.Parts) > 0 {
-        if tp, ok := out.Final.Message.Parts[0].(planner.TextPart); ok {
+        if tp, ok := out.Final.Message.Parts[0].(model.TextPart); ok {
             fmt.Println("Assistant says:", tp.Text)
         }
     }
@@ -206,9 +207,9 @@ func (p *MySmartPlanner) PlanStart(ctx context.Context, in planner.PlanInput) (*
     // 3. Call the LLM and decide whether to call tools or give a final answer.
     return &planner.PlanResult{
         FinalResponse: &planner.FinalResponse{
-            Message: planner.AgentMessage{
+            Message: &model.Message{
 				Role:  "assistant",
-				Parts: []planner.Part{planner.TextPart{Text: "I'm ready to help!"}},
+				Parts: []model.Part{model.TextPart{Text: "I'm ready to help!"}},
 			},
         },
     }, nil
@@ -221,9 +222,9 @@ func (p *MySmartPlanner) PlanResume(ctx context.Context, in planner.PlanResumeIn
     // 3. Call the LLM to decide what to do next.
     return &planner.PlanResult{
         FinalResponse: &planner.FinalResponse{
-            Message: planner.AgentMessage{
+            Message: &model.Message{
 				Role:  "assistant",
-				Parts: []planner.Part{planner.TextPart{Text: "The tools have run. Here's what I found..."}},
+				Parts: []model.Part{model.TextPart{Text: "The tools have run. Here's what I found..."}},
 			},
         },
     }, nil

@@ -18,6 +18,30 @@ var (
 	resultHints = make(map[tools.Ident]*template.Template)
 )
 
+// shortIdent returns a normalized "simple" identifier for a tool by taking the
+// last segment after a dot separator. This enables hint templates authored
+// against DSL simple names (e.g., "get_time_series") to apply to fully
+// qualified tool IDs (e.g., "ada.get_time_series" or
+// "atlas.read.chat.chat_get_time_series").
+//
+// The function is deliberately local to this package to avoid dependencies on
+// runtime helpers and keep mapping logic encapsulated.
+func shortIdent(id tools.Ident) tools.Ident {
+	s := string(id)
+	if s == "" {
+		return id
+	}
+	for i := len(s) - 1; i >= 0; i-- {
+		if s[i] == '.' {
+			if i+1 < len(s) {
+				return tools.Ident(s[i+1:])
+			}
+			return id
+		}
+	}
+	return id
+}
+
 // RegisterCallHint registers a compiled template for a tool call hint.
 func RegisterCallHint(id tools.Ident, tmpl *template.Template) {
 	if id == "" || tmpl == nil {
@@ -71,6 +95,11 @@ func RegisterResultHints(m map[tools.Ident]*template.Template) {
 func FormatCallHint(id tools.Ident, payload any) string {
 	mu.RLock()
 	tmpl := callHints[id]
+	if tmpl == nil {
+		if sid := shortIdent(id); sid != id {
+			tmpl = callHints[sid]
+		}
+	}
 	mu.RUnlock()
 	if tmpl == nil {
 		return ""
@@ -87,6 +116,11 @@ func FormatCallHint(id tools.Ident, payload any) string {
 func FormatResultHint(id tools.Ident, result any) string {
 	mu.RLock()
 	tmpl := resultHints[id]
+	if tmpl == nil {
+		if sid := shortIdent(id); sid != id {
+			tmpl = resultHints[sid]
+		}
+	}
 	mu.RUnlock()
 	if tmpl == nil {
 		return ""

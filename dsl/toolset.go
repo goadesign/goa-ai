@@ -112,6 +112,13 @@ func Toolset(value any, fn ...func()) *agentsexpr.ToolsetExpr {
 		}
 		cur.Toolsets = append(cur.Toolsets, ts)
 		return ts
+	case *agentsexpr.ServiceExportsExpr:
+		ts := buildToolsetExpr(value, dsl, nil)
+		if ts == nil {
+			return nil
+		}
+		cur.Toolsets = append(cur.Toolsets, ts)
+		return ts
 	default:
 		eval.IncompatibleDSL()
 		return nil
