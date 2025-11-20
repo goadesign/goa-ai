@@ -23,7 +23,22 @@ func New() planner.Planner { return &examplePlanner{} }
 // messages/notes for streaming, and integrate tool results in PlanResume.
 type examplePlanner struct{}
 
-func (p *examplePlanner) PlanStart(ctx context.Context, in planner.PlanInput) (*planner.PlanResult, error) {
+func (p *examplePlanner) Decide(ctx context.Context, tool string) string {
+	return "reason"
+}
+
+func (p *examplePlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
+	// Check for deterministic routing (Passthrough)
+	if in.RunContext.Tool != "" {
+		route := p.Decide(ctx, string(in.RunContext.Tool))
+		if route == "passthrough" {
+			// Deterministic passthrough: forward args directly to the target tool.
+			// For this example stub, we don't have the target mapping (it's in the DSL but not fully exposed here yet).
+			// Real implementation would use the Passthrough metadata to construct the ToolRequest.
+			// This stub just falls through to the default response.
+		}
+	}
+
 	return &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{
 			Message: &model.Message{
@@ -34,7 +49,7 @@ func (p *examplePlanner) PlanStart(ctx context.Context, in planner.PlanInput) (*
 	}, nil
 }
 
-func (p *examplePlanner) PlanResume(ctx context.Context, in planner.PlanResumeInput) (*planner.PlanResult, error) {
+func (p *examplePlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
 	return &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{
 			Message: &model.Message{

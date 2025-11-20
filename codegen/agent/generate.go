@@ -1,6 +1,8 @@
 package codegen
 
 import (
+	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -110,9 +112,10 @@ type agentToolsetConsumerFileData struct {
 }
 
 type serviceToolsetFileData struct {
-	PackageName string
-	Agent       *AgentData
-	Toolset     *ToolsetData
+	PackageName     string
+	Agent           *AgentData
+	Toolset         *ToolsetData
+	ServicePkgAlias string
 }
 
 // transforms metadata used by tool_transforms.go.tpl
@@ -272,6 +275,9 @@ func agentFiles(agent *AgentData) []*codegen.File {
 		if agg := agentSpecsAggregatorFile(agent); agg != nil {
 			files = append(files, agg)
 		}
+		if jsonFile := agentSpecsJSONFile(agent); jsonFile != nil {
+			files = append(files, jsonFile)
+		}
 	}
 	files = append(files, agentToolsFiles(agent)...)
 	files = append(files, agentToolsConsumerFiles(agent)...)
@@ -351,6 +357,167 @@ func agentPerToolsetSpecsFiles(agent *AgentData) []*codegen.File {
 		}
 	}
 	return out
+}
+
+// agentSpecsJSONFile emits specs/tool_schemas.json for an agent, capturing the
+// JSON schemas for all tools declared across its toolsets. The file aggregates
+// payload and result schemas in a backend-agnostic format that can be consumed
+// by frontends or other tooling without depending on generated Go types.
+//
+// The JSON structure is:
+//
+//	{
+//	  "tools": [
+//	    {
+//	      "id": "toolset.tool",
+//	      "service": "svc",
+//	      "toolset": "toolset",
+//	      "title": "Title",
+//	      "description": "Description",
+//	      "tags": ["tag"],
+//	      "payload": {
+//	        "name": "PayloadType",
+//	        "schema": { /* JSON Schema */ }
+//	      },
+//	      "result": {
+//	        "name": "ResultType",
+//	        "schema": { /* JSON Schema */ }
+//	      }
+//	    }
+//	  ]
+//	}
+//
+// Schemas are emitted only when available; tools without payload or result
+// schemas still appear with name metadata so callers can rely on a stable
+// catalogue.
+func agentSpecsJSONFile(agent *AgentData) *codegen.File {
+	data, err := buildToolSpecsData(agent)
+	if err != nil {
+		// Schema generation failures indicate a broken design or codegen bug and
+		// must surface loudly so callers do not observe partial or drifting
+		// tool catalogues. Fail generation instead of silently omitting schemas.
+		panic(fmt.Errorf("goa-ai: tool schema generation failed for agent %q: %w", agent.Name, err))
+	}
+	if data == nil {
+		return nil
+	}
+	if len(data.tools) == 0 {
+		return nil
+	}
+
+	type typeSchema struct {
+		Name   string          `json:"name"`
+		Schema json.RawMessage `json:"schema,omitempty"`
+	}
+
+	type toolSchema struct {
+		ID          string      `json:"id"`
+		Service     string      `json:"service"`
+		Toolset     string      `json:"toolset"`
+		Title       string      `json:"title,omitempty"`
+		Description string      `json:"description,omitempty"`
+		Tags        []string    `json:"tags,omitempty"`
+		Payload     *typeSchema `json:"payload,omitempty"`
+		Result      *typeSchema `json:"result,omitempty"`
+	}
+
+	out := struct {
+		Tools []toolSchema `json:"tools"`
+	}{
+		Tools: make([]toolSchema, 0, len(data.tools)),
+	}
+
+	for _, t := range data.tools {
+		if t == nil {
+			continue
+		}
+
+		entry := toolSchema{
+			ID:          t.Name,
+			Service:     t.Service,
+			Toolset:     t.Toolset,
+			Title:       t.Title,
+			Description: t.Description,
+		}
+		if len(t.Tags) > 0 {
+			tags := make([]string, len(t.Tags))
+			copy(tags, t.Tags)
+			entry.Tags = tags
+		}
+
+		if td := t.Payload; td != nil && td.TypeName != "" {
+			ts := typeSchema{
+				Name: td.TypeName,
+			}
+			if schema := schemaJSON(td.SchemaLiteral); len(schema) > 0 {
+				ts.Schema = schema
+			}
+			entry.Payload = &ts
+		}
+
+		if td := t.Result; td != nil && td.TypeName != "" {
+			ts := typeSchema{
+				Name: td.TypeName,
+			}
+			if schema := schemaJSON(td.SchemaLiteral); len(schema) > 0 {
+				ts.Schema = schema
+			}
+			entry.Result = &ts
+		}
+
+		out.Tools = append(out.Tools, entry)
+	}
+
+	if len(out.Tools) == 0 {
+		return nil
+	}
+
+	payload, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return nil
+	}
+	// Ensure a trailing newline for POSIX-friendly files and cleaner diffs.
+	payload = append(payload, '\n')
+
+	sections := []*codegen.SectionTemplate{
+		{
+			Name:   "tool-schemas-json",
+			Source: string(payload),
+		},
+	}
+	path := filepath.Join(agent.Dir, "specs", "tool_schemas.json")
+	return &codegen.File{
+		Path:             path,
+		SectionTemplates: sections,
+	}
+}
+
+// schemaJSON extracts the raw JSON schema bytes from a SchemaLiteral string
+// produced by formatSchema. When the literal is empty or malformed, it returns
+// nil so callers can omit the schema field.
+func schemaJSON(literal string) json.RawMessage {
+	if strings.TrimSpace(literal) == "" {
+		return nil
+	}
+
+	const prefix = "[]byte(`\n"
+	const suffix = "\n`)"
+
+	if !strings.HasPrefix(literal, prefix) || !strings.HasSuffix(literal, suffix) {
+		return nil
+	}
+
+	raw := literal[len(prefix) : len(literal)-len(suffix)]
+	if raw == "" {
+		return nil
+	}
+
+	b := []byte(raw)
+	if !json.Valid(b) {
+		return nil
+	}
+
+	return json.RawMessage(b)
 }
 
 // internalAdapterTransformsFiles emits best-effort transform helpers for method-backed tools
@@ -474,16 +641,16 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 			}
 			// Init<GoName>ToolResult: service method result -> tool result (specs)
 			if toolResult != nil && t.Return != nil && t.Return.Type != goaexpr.Empty && t.MethodResultAttr != nil && t.MethodResultAttr.Type != goaexpr.Empty {
-				// Use the SERVICE method result shape as the base target shape so that
-				// nested user types map to local specs aliases (e.g., App, AtlasDeviceBrief),
-				// not the chat tool’s bespoke types.
+				// Use the TOOL Return shape as the base target shape so that server-only
+				// fields present only on the service result (e.g., evidence, calls) are
+				// not exposed in the tool-visible result type.
 				var baseAttr *goaexpr.AttributeExpr
-				if ut, ok := t.MethodResultAttr.Type.(goaexpr.UserType); ok && ut != nil {
+				if ut, ok := t.Return.Type.(goaexpr.UserType); ok && ut != nil {
 					baseAttr = ut.Attribute()
 				} else {
-					baseAttr = t.MethodResultAttr
+					baseAttr = t.Return
 				}
-				// Only when shapes are compatible.
+				// Only when shapes are compatible (method result -> tool return).
 				if err := codegen.IsCompatible(t.MethodResultAttr.Type, baseAttr.Type, "in", "out"); err == nil {
 					for _, im := range gatherAttributeImports(agent.Genpkg, t.MethodResultAttr) {
 						if im != nil && im.Path != "" {
@@ -958,7 +1125,48 @@ func serviceExecutorFiles(agent *AgentData) []*codegen.File {
 		if ts.Expr == nil || len(ts.Tools) == 0 {
 			continue
 		}
-		data := serviceToolsetFileData{PackageName: ts.PackageName, Agent: agent, Toolset: ts}
+		svcAlias := ""
+		svcPkgName := ""
+		if svc := ts.SourceService; svc != nil {
+			svcAlias = servicePkgAlias(svc)
+			svcPkgName = svc.PkgName
+			// Avoid alias collisions when the toolset specs package name matches
+			// the service package name (for example, service "todos" with toolset
+			// "todos").
+			if svcAlias == ts.SpecsPackageName {
+				svcAlias += "svc"
+			}
+		}
+		// Ensure method payload/result type refs use the same alias as the
+		// imported service client package (svcAlias) so assertions in the
+		// executor compile even when the specs package shares the original
+		// service PkgName (e.g., "todos").
+		if svcAlias != "" && svcPkgName != "" {
+			oldPrefix := svcPkgName + "."
+			newPrefix := svcAlias + "."
+			for _, t := range ts.Tools {
+				if t.MethodPayloadTypeRef != "" {
+					t.MethodPayloadTypeRef = strings.ReplaceAll(
+						t.MethodPayloadTypeRef,
+						oldPrefix,
+						newPrefix,
+					)
+				}
+				if t.MethodResultTypeRef != "" {
+					t.MethodResultTypeRef = strings.ReplaceAll(
+						t.MethodResultTypeRef,
+						oldPrefix,
+						newPrefix,
+					)
+				}
+			}
+		}
+		data := serviceToolsetFileData{
+			PackageName:     ts.PackageName,
+			Agent:           agent,
+			Toolset:         ts,
+			ServicePkgAlias: svcAlias,
+		}
 		imports := []*codegen.ImportSpec{
 			{Path: "fmt"},
 			{Path: "strings"},
@@ -968,6 +1176,13 @@ func serviceExecutorFiles(agent *AgentData) []*codegen.File {
 			{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "runtime"},
 			{Path: "goa.design/goa-ai/runtime/agent/tools"},
 			{Path: ts.SpecsImportPath, Name: ts.SpecsPackageName},
+		}
+		if svc := ts.SourceService; svc != nil {
+			// Import the service client package (e.g. gen/atlas_data)
+			clientPath := filepath.Join(agent.Genpkg, svc.PathName)
+			// Check for slash/backslash issues if Genpkg has slashes
+			clientPath = strings.ReplaceAll(clientPath, "\\", "/")
+			imports = append(imports, &codegen.ImportSpec{Path: clientPath, Name: svcAlias})
 		}
 		sections := []*codegen.SectionTemplate{
 			codegen.Header(ts.Name+" service executor", ts.PackageName, imports),

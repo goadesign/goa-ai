@@ -1,6 +1,3 @@
-// Package dsl provides the Goa DSL functions for declaring agents, toolsets,
-// and related runtime policies. These functions are evaluated during design
-// parsing and populate the expr package types used for code generation.
 package dsl
 
 import (
@@ -28,6 +25,7 @@ import (
 // - Toolset: defines a toolset that the agent can use
 // - Tool: defines a tool that the agent can use
 // - RunPolicy: defines the run policy for the agent
+// - Method: defines routing strategies for agent methods
 //
 // Example:
 //
@@ -59,6 +57,9 @@ import (
 //		RunPolicy(func() {
 //			DefaultCaps(MaxToolCalls(5), MaxConsecutiveFailedToolCalls(2))
 //			TimeBudget("30s")
+//		})
+//		Method("doc-abstractor", func() {
+//			Passthrough("text-processing-suite", "doc-abstractor")
 //		})
 //	})
 func Agent(name, description string, dsl func()) *expragents.AgentExpr {
@@ -161,4 +162,78 @@ func Exports(fn func()) {
 //	})
 func DisableAgentDocs() {
 	expragents.Root.DisableAgentDocs = true
+}
+
+// AgentMethod declares a routing strategy for an agent method.
+//
+// AgentMethod must appear in an Agent expression.
+//
+// AgentMethod takes two arguments:
+// - name: the name of the method (must match a tool name in the agent's exported toolsets)
+// - dsl: a function that defines the routing strategy
+//
+// The DSL function can use the following functions to define the strategy:
+// - Passthrough: defines deterministic forwarding to another toolset/tool
+//
+// Example:
+//
+//	Agent("docs-agent", "Document processor", func() {
+//		Exports(func() {
+//			Toolset("docs", func() {
+//				Tool("search", func() { ... })
+//			})
+//		})
+//		AgentMethod("search", func() {
+//			Passthrough("search-service", "search")
+//		})
+//	})
+func AgentMethod(name string, fn func()) {
+	agent, ok := eval.Current().(*expragents.AgentExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	if name == "" {
+		eval.ReportError("method name cannot be empty")
+		return
+	}
+	m := &expragents.AgentMethodExpr{
+		Name:    name,
+		DSLFunc: fn,
+		Agent:   agent,
+	}
+	agent.Methods = append(agent.Methods, m)
+}
+
+// Passthrough defines deterministic forwarding to another toolset/tool.
+//
+// Passthrough must appear in a Method expression.
+//
+// Passthrough takes two arguments:
+// - toolset: the name of the target toolset
+// - tool: the name of the target tool
+//
+// Example:
+//
+//	Method("search", func() {
+//		Passthrough("search-service", "search")
+//	})
+func Passthrough(toolset, tool string) {
+	m, ok := eval.Current().(*expragents.AgentMethodExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	if toolset == "" {
+		eval.ReportError("toolset name cannot be empty")
+		return
+	}
+	if tool == "" {
+		eval.ReportError("tool name cannot be empty")
+		return
+	}
+	m.Passthrough = &expragents.PassthroughExpr{
+		Toolset: toolset,
+		Tool:    tool,
+	}
 }

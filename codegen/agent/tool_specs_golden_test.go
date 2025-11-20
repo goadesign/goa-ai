@@ -1,6 +1,7 @@
 package codegen_test
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -67,6 +68,91 @@ func TestToolSpecsDeterministicTypeRefs(t *testing.T) {
 	require.NotEmpty(t, codecs, "expected generated tools/summarize/codecs.go")
 	// The template source contains placeholders; concrete rendering is validated
 	// via specs_builder_internal_test. Here we simply assert we found the file.
+}
+
+// TestToolSchemasJSONEmitted verifies that tool_schemas.json is emitted for
+// agents and that its structure matches the documented format.
+func TestToolSchemasJSONEmitted(t *testing.T) {
+	eval.Reset()
+	goaexpr.Root = new(goaexpr.RootExpr)
+	goaexpr.GeneratedResultTypes = new(goaexpr.ResultTypesRoot)
+	require.NoError(t, eval.Register(goaexpr.Root))
+	require.NoError(t, eval.Register(goaexpr.GeneratedResultTypes))
+
+	agentsExpr.Root = &agentsExpr.RootExpr{}
+	require.NoError(t, eval.Register(agentsExpr.Root))
+
+	design := func() {
+		goadsl.API("orchestrator", func() {})
+		var Ask = goadsl.Type("Ask", func() {
+			goadsl.Attribute("question", goadsl.String, "Question")
+			goadsl.Required("question")
+		})
+		var Answer = goadsl.Type("Answer", func() {
+			goadsl.Attribute("text", goadsl.String, "Answer text")
+			goadsl.Required("text")
+		})
+
+		goadsl.Service("orchestrator", func() {
+			Agent("chat", "Friendly Q&A agent", func() {
+				Uses(func() {
+					Toolset("helpers", func() {
+						Tool("answer", "Answer a simple question", func() {
+							Args(Ask)
+							Return(Answer)
+						})
+					})
+				})
+			})
+		})
+	}
+	require.True(t, eval.Execute(design, nil), eval.Context.Error())
+	require.NoError(t, eval.RunDSL())
+
+	files, err := codegen.Generate("example.com/assistant", []eval.Root{goaexpr.Root, agentsExpr.Root}, nil)
+	require.NoError(t, err)
+
+	var payload string
+	for _, f := range files {
+		if filepath.ToSlash(f.Path) == filepath.ToSlash("gen/orchestrator/agents/chat/specs/tool_schemas.json") {
+			for _, s := range f.SectionTemplates {
+				payload += s.Source
+			}
+			break
+		}
+	}
+	require.NotEmpty(t, payload, "expected generated tool_schemas.json")
+
+	var doc struct {
+		Tools []struct {
+			ID      string `json:"id"`
+			Service string `json:"service"`
+			Toolset string `json:"toolset"`
+			Title   string `json:"title"`
+			Payload *struct {
+				Name   string          `json:"name"`
+				Schema json.RawMessage `json:"schema"`
+			} `json:"payload"`
+			Result *struct {
+				Name   string          `json:"name"`
+				Schema json.RawMessage `json:"schema"`
+			} `json:"result"`
+		} `json:"tools"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(payload), &doc))
+	require.Len(t, doc.Tools, 1)
+
+	tool := doc.Tools[0]
+	require.Equal(t, "helpers.answer", tool.ID)
+	require.Equal(t, "orchestrator", tool.Service)
+	require.Equal(t, "orchestrator.helpers", tool.Toolset)
+	require.Equal(t, "Answer", tool.Title)
+	require.NotNil(t, tool.Payload)
+	require.NotNil(t, tool.Result)
+	require.NotEmpty(t, tool.Payload.Name)
+	require.NotEmpty(t, tool.Result.Name)
+	require.NotEmpty(t, tool.Payload.Schema)
+	require.NotEmpty(t, tool.Result.Schema)
 }
 
 // TestServiceToolsetCrossServiceBindTo verifies cross-service BindTo uses the

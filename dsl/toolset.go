@@ -218,6 +218,7 @@ func UseMCPToolset(service, suite string, dsl ...func()) *agentsexpr.ToolsetExpr
 //   - Return: defines the output result schema
 //   - Tags: attaches metadata labels
 //   - BindTo: binds to a service method for implementation (optional)
+//   - Inject: marks fields as infrastructure-only (hidden from LLM)
 //
 // Example (toolset tool with inline schemas):
 //
@@ -247,32 +248,35 @@ func UseMCPToolset(service, suite string, dsl ...func()) *agentsexpr.ToolsetExpr
 //	    })
 //	})
 //
-// Example (MCP tool from service method):
+// Example (service-backed tool with inheritance):
 //
-//	Service("calculator", func() {
-//	    MCP("calc", "1.0", "Calculator tools", func() {})
-//	    Method("add", func() {
-//	        Payload(func() {
-//	            Attribute("a", Int)
-//	            Attribute("b", Int)
-//	        })
-//	        Result(func() {
-//	            Attribute("sum", Int)
-//	        })
-//	        Tool("add", "Add two numbers")  // Exposes method as MCP tool
+//	Toolset("docs", func() {
+//	    Tool("search_docs", func() {
+//	        BindTo("doc_service", "search")
+//	        Inject("session_id")
 //	    })
 //	})
-func Tool(name, description string, fn ...func()) {
+func Tool(name string, args ...any) {
+	var description string
+	var dslf func()
+
 	if name == "" {
 		eval.ReportError("tool name cannot be empty")
 		return
 	}
+
+	// Parse arguments: (name, description?, func?)
+	for _, arg := range args {
+		switch a := arg.(type) {
+		case string:
+			description = a
+		case func():
+			dslf = a
+		}
+	}
+
 	switch parent := eval.Current().(type) {
 	case *agentsexpr.ToolsetExpr:
-		var dslf func()
-		if len(fn) > 0 {
-			dslf = fn[0]
-		}
 		parent.Tools = append(parent.Tools, &agentsexpr.ToolExpr{
 			Name:        name,
 			Description: description,
@@ -613,6 +617,28 @@ func BindTo(args ...string) {
 	}
 	// Defer resolution to Prepare/Validate by recording the binding intent.
 	tool.RecordBinding(serviceName, methodName)
+}
+
+// Inject marks specific payload fields as "injected" (server-side infrastructure).
+// Injected fields are:
+//  1. Hidden from the LLM (excluded from the JSON schema).
+//  2. Exposed in the generated struct with a Setter method.
+//  3. Intended to be populated by runtime hooks (ToolInterceptor).
+//
+// Example:
+//
+//	Tool("get_data", func() {
+//	    BindTo("data_service", "get")
+//	    // "session_id" is required by the service but hidden from the LLM
+//	    Inject("session_id")
+//	})
+func Inject(names ...string) {
+	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	tool.InjectedFields = append(tool.InjectedFields, names...)
 }
 
 // ToolTitle sets a human-friendly display title for the current tool. If not

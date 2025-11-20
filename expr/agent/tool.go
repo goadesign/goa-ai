@@ -15,20 +15,27 @@ type (
 
 		// Name is the unique identifier for this tool within its toolset.
 		Name string
+
 		// Title is an optional human-friendly display title. When empty, codegen
 		// derives a title from Name (e.g., "analyze_sensor_patterns" -> "Analyze Sensor Patterns").
 		Title string
+
 		// Description provides a human-readable explanation of what the
 		// tool does.
 		Description string
+
 		// Tags are labels for categorizing and filtering this tool.
 		Tags []string
+
 		// Args defines the input parameter schema for this tool.
 		Args *goaexpr.AttributeExpr
+
 		// Return defines the output result schema for this tool.
 		Return *goaexpr.AttributeExpr
+
 		// Toolset is the toolset expression that owns this tool.
 		Toolset *ToolsetExpr
+
 		// Method is the resolved Goa service method this tool is bound
 		// to, if any.
 		Method *goaexpr.MethodExpr
@@ -36,6 +43,9 @@ type (
 		// Optional display hint templates declared in the DSL.
 		CallHintTemplate   string
 		ResultHintTemplate string
+
+		// InjectedFields are fields marked as infrastructure-only.
+		InjectedFields []string
 
 		bindServiceName string
 		bindMethodName  string

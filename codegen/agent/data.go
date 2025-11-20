@@ -145,6 +145,24 @@ type (
 		MCPToolsets []*MCPToolsetMeta
 		// Runtime captures derived workflow/activity data used by templates.
 		Runtime RuntimeData
+		// Methods contains the routing strategies for agent methods.
+		Methods []*MethodData
+	}
+
+	// MethodData captures the routing strategy for an agent method.
+	MethodData struct {
+		// Name is the name of the method (must match a tool name in the agent's exported toolsets).
+		Name string
+		// Passthrough defines deterministic forwarding to another toolset/tool.
+		Passthrough *PassthroughData
+	}
+
+	// PassthroughData defines deterministic forwarding to another toolset/tool.
+	PassthroughData struct {
+		// Toolset is the name of the target toolset.
+		Toolset string
+		// Tool is the name of the target tool.
+		Tool string
 	}
 
 	// RunPolicyData represents the runtime execution constraints and resource limits
@@ -421,6 +439,9 @@ type (
 		// Optional hint templates from DSL
 		CallHintTemplate   string
 		ResultHintTemplate string
+
+		// InjectedFields contains the names of fields marked for injection via DSL.
+		InjectedFields []string
 	}
 
 	// RuntimeData contains the workflow and activity artifacts generated for an agent,
@@ -841,6 +862,20 @@ func newAgentData(
 		})
 	}
 
+	// Populate methods
+	for _, m := range agentExpr.Methods {
+		md := &MethodData{
+			Name: m.Name,
+		}
+		if m.Passthrough != nil {
+			md.Passthrough = &PassthroughData{
+				Toolset: m.Passthrough.Toolset,
+				Tool:    m.Passthrough.Tool,
+			}
+		}
+		agent.Methods = append(agent.Methods, md)
+	}
+
 	return agent
 }
 
@@ -1071,6 +1106,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		ExportingAgentID:   exportingAgentID,
 		CallHintTemplate:   expr.CallHintTemplate,
 		ResultHintTemplate: expr.ResultHintTemplate,
+		InjectedFields:     expr.InjectedFields,
 	}
 	if expr.Method == nil {
 		return tool

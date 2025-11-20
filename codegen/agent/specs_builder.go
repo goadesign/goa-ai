@@ -391,17 +391,20 @@ func (b *toolSpecBuilder) scopeForTool(t *ToolData) *codegen.NameScope {
 }
 
 func (b *toolSpecBuilder) typeFor(tool *ToolData, att *goaexpr.AttributeExpr, usage typeUsage) (*typeData, error) {
-	// For method-backed tools, use the bound service method type for RESULTs
-	// so that generated specs alias the concrete service result types directly.
+	// For method-backed tools, prefer the tool Return type for RESULTs when it
+	// is explicitly declared in the DSL so that model-facing schemas reflect
+	// the tool contract (e.g., AtlasListDevicesToolReturn). When no Return is
+	// provided, fall back to the bound service method result type so specs
+	// alias the concrete service result directly.
+	//
 	// For PAYLOADs, always use the tool's own argument type to prevent
 	// server-only fields (e.g., session_id) from leaking into tool-visible
 	// schemas. Server fields are injected post-decode by adapters before
 	// making the actual service method call.
-	if tool != nil && tool.IsMethodBacked {
-		if usage == usageResult {
-			if tool.MethodResultAttr != nil && tool.MethodResultAttr.Type != goaexpr.Empty {
-				att = tool.MethodResultAttr
-			}
+	if tool != nil && tool.IsMethodBacked && usage == usageResult {
+		if (tool.Return == nil || tool.Return.Type == goaexpr.Empty) &&
+			tool.MethodResultAttr != nil && tool.MethodResultAttr.Type != goaexpr.Empty {
+			att = tool.MethodResultAttr
 		}
 	}
 

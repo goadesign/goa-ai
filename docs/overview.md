@@ -63,6 +63,38 @@ In all cases, `Uses` merges tool specs into the consuming agent’s tool
 universe so planners see a single, coherent tool catalog regardless of
 how tools are wired.
 
+### Tool schemas JSON (`tool_schemas.json`)
+
+For each agent, codegen also emits a backend‑agnostic JSON catalogue of tools
+under:
+
+```text
+gen/<service>/agents/<agent>/specs/tool_schemas.json
+```
+
+The file contains one entry per tool with its canonical ID and JSON Schemas:
+
+```json
+{
+  "tools": [
+    {
+      "id": "toolset.tool",
+      "service": "orchestrator",
+      "toolset": "helpers",
+      "title": "Answer a simple question",
+      "description": "Answer a simple question",
+      "tags": ["chat"],
+      "payload": { "name": "Ask", "schema": { /* JSON Schema */ } },
+      "result": { "name": "Answer", "schema": { /* JSON Schema */ } }
+    }
+  ]
+}
+```
+
+Schemas are derived from the same DSL and builders as the generated specs and
+codecs. If schema generation fails for an agent, `goa gen` fails fast so
+callers never observe a drift between runtime contracts and the JSON catalogue.
+
 ## Minimal example
 ### 1) DSL (design/design.go)
 ```go

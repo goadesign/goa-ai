@@ -40,6 +40,21 @@ func Prepare(_ string, _ []eval.Root) error {
 		}
 		for _, ts := range toolsets {
 			for _, t := range ts.Tools {
+				// Prepare the tool expression (inheritance from method)
+				if t.Method != nil {
+					if t.Args.Type == goaexpr.Empty {
+						t.Args = goaexpr.DupAtt(t.Method.Payload)
+					}
+					if t.Return.Type == goaexpr.Empty {
+						t.Return = goaexpr.DupAtt(t.Method.Result)
+					}
+				}
+
+				// Handle injected fields by hiding them from JSON (LLM view)
+				if len(t.InjectedFields) > 0 {
+					t.Args = flattenAndHide(t.Args, t.InjectedFields)
+				}
+
 				// Walk Args and Return shapes only. Goa will generate method
 				// payloads and results as part of service generation.
 				collectAndForceTypes(t.Args, existingByID, existingByName)
@@ -48,6 +63,59 @@ func Prepare(_ string, _ []eval.Root) error {
 		}
 	}
 	return nil
+}
+
+// flattenAndHide creates a deep copy of the attribute, converting UserTypes to inline Objects
+// where necessary to modify field metadata (hiding injected fields).
+func flattenAndHide(att *goaexpr.AttributeExpr, injected []string) *goaexpr.AttributeExpr {
+	if att == nil {
+		return nil
+	}
+	newAtt := goaexpr.DupAtt(att)
+
+	// If it's a UserType, we must unwrap it to modify fields without side effects on the original type.
+	if ut, ok := newAtt.Type.(goaexpr.UserType); ok {
+		// Extract the underlying attribute from the UserType and dup it.
+		// We lose the named type wrapping, effectively flattening it to an inline definition.
+		inner := goaexpr.DupAtt(ut.Attribute())
+		newAtt.Type = inner.Type
+		// Merge validation if needed (inner validation is the effective one for the fields)
+		if newAtt.Validation == nil {
+			newAtt.Validation = inner.Validation
+		}
+		// Note: we discard the UserType wrapper, so the resulting attribute is anonymous (inline).
+	}
+
+	// If it's an Object, iterate fields and apply hiding
+	if obj, ok := newAtt.Type.(*goaexpr.Object); ok {
+		for _, fieldName := range injected {
+			for _, namedAtt := range *obj {
+				if namedAtt.Name == fieldName {
+					fieldAtt := namedAtt.Attribute
+					// Hide from JSON (LLM)
+					if fieldAtt.Meta == nil {
+						fieldAtt.Meta = make(goaexpr.MetaExpr)
+					}
+					fieldAtt.Meta["struct:tag:json"] = []string{"-"}
+
+					// Remove from Required list if present on the parent object.
+					if newAtt.Validation != nil {
+						required := newAtt.Validation.Required
+						for i, r := range required {
+							if r == fieldName {
+								required = append(required[:i], required[i+1:]...)
+								newAtt.Validation.Required = required
+								break
+							}
+						}
+					}
+					break
+				}
+			}
+		}
+	}
+
+	return newAtt
 }
 
 // collectAndForceTypes walks the attribute recursively and ensures any

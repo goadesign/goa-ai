@@ -607,7 +607,7 @@ func (r *Runtime) runLoop(
 			return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, seq, planner.TerminationReasonFailureCap, deadline)
 		}
 
-		resumeReq := r.buildNextResumeRequest(base, led, lastToolResults, &nextAttempt)
+		resumeReq := r.buildNextResumeRequest(base, lastToolResults, &nextAttempt)
 		resOutput, rerr := r.runPlanActivity(wfCtx, reg.ResumeActivityName, resumeOpts, resumeReq, deadline)
 		if rerr != nil {
 			return nil, rerr
@@ -1580,11 +1580,11 @@ func (r *Runtime) hardProtectionIfNeeded(
 	return false
 }
 
-// buildNextResumeRequest converts the ledger into provider-ready messages, validates
-// constraints for thinking-enabled paths, and builds the next PlanActivityInput.
+// buildNextResumeRequest converts the base plan input into provider-ready
+// messages, validates constraints for thinking-enabled paths, and builds the
+// next PlanActivityInput.
 func (r *Runtime) buildNextResumeRequest(
 	base *planner.PlanInput,
-	led *transcript.Ledger,
 	lastToolResults []*planner.ToolResult,
 	nextAttempt *int,
 ) PlanActivityInput {

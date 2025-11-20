@@ -289,11 +289,11 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 	require.NotNil(t, scheduled, "expected ToolCallScheduledEvent for inline tool")
 	require.Equal(t, input.RunID, scheduled.RunID())
 	require.Equal(t, tools.Ident("ada.get_time_series"), scheduled.ToolName)
-	require.Equal(t, "", scheduled.ParentToolCallID)
+	require.Empty(t, scheduled.ParentToolCallID)
 
 	require.NotNil(t, resultEvt, "expected ToolResultReceivedEvent for inline tool")
 	require.Equal(t, input.RunID, resultEvt.RunID())
 	require.Equal(t, tools.Ident("ada.get_time_series"), resultEvt.ToolName)
 	require.Equal(t, map[string]any{"ok": true}, resultEvt.Result)
-	require.Equal(t, "", resultEvt.ParentToolCallID)
+	require.Empty(t, resultEvt.ParentToolCallID)
 }
