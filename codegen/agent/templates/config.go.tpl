@@ -13,7 +13,7 @@ type {{ .ConfigType }} struct {
     Planner planner.Planner
 {{- if .MCPToolsets }}
     // MCPCallers maps MCP toolset IDs to the callers that invoke them. A caller must be
-    // provided for every toolset referenced via UseMCPToolset.
+    // provided for every toolset referenced via MCPToolset/Use.
     MCPCallers map[string]mcpruntime.Caller
 {{- end }}
 }

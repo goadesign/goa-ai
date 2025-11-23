@@ -23,7 +23,7 @@ type ScribeAgentConfig struct {
 	// Planner provides the concrete planner implementation used by the agent.
 	Planner planner.Planner
 	// MCPCallers maps MCP toolset IDs to the callers that invoke them. A caller must be
-	// provided for every toolset referenced via UseMCPToolset.
+	// provided for every toolset referenced via MCPToolset/Use.
 	MCPCallers map[string]mcpruntime.Caller
 }
 

@@ -45,9 +45,7 @@ func TestQuickstart_Disabled(t *testing.T) {
 		})
 		goadsl.Service("calc", func() {
 			Agent("scribe", "Doc helper", func() {
-				Uses(func() {
-					Toolset("helpers", func() {})
-				})
+				Use("helpers", func() {})
 			})
 		})
 	}

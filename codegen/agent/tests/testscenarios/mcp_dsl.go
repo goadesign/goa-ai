@@ -11,11 +11,10 @@ func MCPDSL() func() {
 		API("alpha", func() {})
 		// Provider service referenced by MCPToolset
 		Service("calc", func() {})
+		var CalcCore = MCPToolset("calc", "core")
 		Service("alpha", func() {
 			Agent("scribe", "Doc helper", func() {
-				Uses(func() {
-					MCPToolset("calc", "core")
-				})
+				Use(CalcCore)
 			})
 		})
 	}

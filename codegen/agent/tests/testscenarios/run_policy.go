@@ -16,10 +16,8 @@ func RunPolicyBasic() func() {
 					TimeBudget("30s")
 					InterruptsAllowed(true)
 				})
-				Uses(func() {
-					Toolset("helpers", func() {
-						Tool("noop", "Noop", func() {})
-					})
+				Use("helpers", func() {
+					Tool("noop", "Noop", func() {})
 				})
 			})
 		})

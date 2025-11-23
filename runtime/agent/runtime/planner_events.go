@@ -15,8 +15,9 @@ type runtimePlannerEvents struct {
 	rt    *Runtime
 	agent string
 	runID string
-	mu    sync.Mutex
-	led   *transcript.Ledger
+
+	mu  sync.Mutex
+	led *transcript.Ledger
 }
 
 func newPlannerEvents(rt *Runtime, agentID, runID string) *runtimePlannerEvents {
@@ -99,5 +100,3 @@ func toTranscriptThinking(block model.ThinkingPart) transcript.ThinkingPart {
 	}
 	return cp
 }
-
-

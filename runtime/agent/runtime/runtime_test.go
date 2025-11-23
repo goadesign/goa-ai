@@ -3,6 +3,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"text/template"
@@ -663,7 +664,10 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 
 	initial := &planner.PlanResult{
 		ToolCalls: []planner.ToolRequest{
-			{Name: tools.Ident("search"), Payload: map[string]string{"query": "status"}},
+			{
+				Name:    tools.Ident("search"),
+				Payload: json.RawMessage(`{"query":"status"}`),
+			},
 		},
 	}
 	caps := policy.CapsState{MaxToolCalls: 5, RemainingToolCalls: 5}

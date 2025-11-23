@@ -16,12 +16,10 @@ func ImportsDeterministic() func() {
 		})
 		Service("alpha", func() {
 			Agent("scribe", "Doc helper", func() {
-				Uses(func() {
-					Toolset("docs", func() {
-						Tool("store", "Store", func() {
-							Args(Doc)
-							Return(Doc)
-						})
+				Use("docs", func() {
+					Tool("store", "Store", func() {
+						Args(Doc)
+						Return(Doc)
 					})
 				})
 			})

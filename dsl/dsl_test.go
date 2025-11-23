@@ -17,15 +17,11 @@ func TestAgentDSLExample(t *testing.T) {
 		API("example", func() {})
 		Service("docs", func() {
 			Agent("docs-agent", "Agent for managing documentation workflows", func() {
-				Uses(func() {
-					Toolset("summarization-tools", func() {
-						Tool("document-summarizer", "Summarize documents", func() {})
-					})
+				Use("summarization-tools", func() {
+					Tool("document-summarizer", "Summarize documents", func() {})
 				})
-				Exports(func() {
-					Toolset("text-processing-suite", func() {
-						Tool("doc-abstractor", "Create document abstracts", func() {})
-					})
+				Export("text-processing-suite", func() {
+					Tool("doc-abstractor", "Create document abstracts", func() {})
 				})
 				RunPolicy(func() {
 					DefaultCaps(
@@ -91,9 +87,7 @@ func TestToolsetReferenceReuse(t *testing.T) {
 		})
 		Service("ops", func() {
 			Agent("watcher", "Watches", func() {
-				Uses(func() {
-					Toolset(shared)
-				})
+				Use(shared)
 			})
 		})
 	})
@@ -114,11 +108,9 @@ func TestBindToSelfServiceMethod(t *testing.T) {
 				Result(String)
 			})
 			Agent("agent", "desc", func() {
-				Uses(func() {
-					Toolset("ts", func() {
-						Tool("tool", "t", func() {
-							BindTo("GetX")
-						})
+				Use("ts", func() {
+					Tool("tool", "t", func() {
+						BindTo("GetX")
 					})
 				})
 			})
@@ -141,11 +133,9 @@ func TestBindToCrossServiceMethod(t *testing.T) {
 		API("test", func() {})
 		Service("svcA", func() {
 			Agent("agent", "desc", func() {
-				Uses(func() {
-					Toolset("ts", func() {
-						Tool("tool", "t", func() {
-							BindTo("svcB", "GetY")
-						})
+				Use("ts", func() {
+					Tool("tool", "t", func() {
+						BindTo("svcB", "GetY")
 					})
 				})
 			})
@@ -173,19 +163,15 @@ func TestAgentToolsetCrossServiceReference(t *testing.T) {
 		// Service A exports a toolset
 		Service("svcA", func() {
 			Agent("agentA", "desc", func() {
-				Exports(func() {
-					Toolset("exported", func() {
-						Tool("t1", "tool one", func() {})
-					})
+				Export("exported", func() {
+					Tool("t1", "tool one", func() {})
 				})
 			})
 		})
 		// Service B consumes it via AgentToolset
 		Service("svcB", func() {
 			Agent("agentB", "desc", func() {
-				Uses(func() {
-					AgentToolset("svcA", "agentA", "exported")
-				})
+				Use(AgentToolset("svcA", "agentA", "exported"))
 			})
 		})
 	})
@@ -222,12 +208,11 @@ func TestAgentToolsetCrossServiceReference(t *testing.T) {
 func TestProviderInference_LocalAndMCP(t *testing.T) {
 	runDSL(t, func() {
 		API("test", func() {})
+		var SearchSuite = MCPToolset("svc", "search")
 		Service("svc", func() {
 			Agent("a", "desc", func() {
-				Uses(func() {
-					Toolset("local", func() { Tool("x", "", func() {}) })
-					MCPToolset("svc", "search")
-				})
+				Use("local", func() { Tool("x", "", func() {}) })
+				Use(SearchSuite)
 			})
 		})
 	})
@@ -240,7 +225,7 @@ func TestProviderInference_LocalAndMCP(t *testing.T) {
 	require.False(t, local.External)
 	require.True(t, mcp.External)
 	require.Equal(t, "svc", mcp.MCPService)
-	require.Equal(t, "search", mcp.MCPSuite)
+	require.Equal(t, "search", mcp.MCPToolset)
 }
 
 func runDSL(t *testing.T, dsl func()) {

@@ -102,11 +102,11 @@ Agents use and optionally export toolsets:
 ```go
 var _ = Service("planner", func() {
     Agent("session-planner", "Plan tasks for a session", func() {
-        Uses(func() {
+        Use(
             Toolset(TodosToolset) // consumes TodosToolset owned by the todos service
         })
 
-        Exports(func() {
+        Export(
             Toolset("planning", func() {
                 Tool("plan_session", "Create a session plan", func() {
                     Args(SessionPlanInput)
@@ -244,7 +244,7 @@ Aggregated specs per agent:
 
 ### Agent: Consume Service Tools
 
-- Agent `planner.session-planner` declares `Uses(func() { Toolset(TodosToolset) })`.
+- Agent `planner.session-planner` declares `Use(TodosToolset)`.
 - Codegen:
   - Imports `gen/todos/tools/todos/specs`.
   - Emits typed builders for `update_todos` and `get_todos`.

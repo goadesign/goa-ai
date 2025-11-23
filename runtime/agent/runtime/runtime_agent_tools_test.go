@@ -3,6 +3,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"text/template"
 
@@ -61,7 +62,11 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 	}
 
 	exec := defaultAgentToolExecute(rt, cfg)
-	call := planner.ToolRequest{Name: tools.Ident("tool"), RunID: "run", Payload: map[string]string{"x": "world"}}
+	call := planner.ToolRequest{
+		Name:    tools.Ident("tool"),
+		RunID:   "run",
+		Payload: json.RawMessage(`{"x":"world"}`),
+	}
 	res, err := exec(ctx, &call)
 	require.NoError(t, err)
 	require.NotNil(t, res)

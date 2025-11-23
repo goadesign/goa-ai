@@ -19,18 +19,16 @@ func MultiToolset() func() {
 		})
 		Service("alpha", func() {
 			Agent("scribe", "Doc helper", func() {
-				Uses(func() {
-					Toolset("ops", func() {
-						Tool("echo", "Echo", func() {
-							Args(String)
-							Return(String)
-						})
+				Use("ops", func() {
+					Tool("echo", "Echo", func() {
+						Args(String)
+						Return(String)
 					})
-					Toolset("math", func() {
-						Tool("add", "Add", func() {
-							Args(AddPayload)
-							Return(AddResult)
-						})
+				})
+				Use("math", func() {
+					Tool("add", "Add", func() {
+						Args(AddPayload)
+						Return(AddResult)
 					})
 				})
 			})

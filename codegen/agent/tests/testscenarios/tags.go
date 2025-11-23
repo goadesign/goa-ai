@@ -11,11 +11,9 @@ func TagsBasic() func() {
 		API("alpha", func() {})
 		Service("alpha", func() {
 			Agent("scribe", "Doc helper", func() {
-				Uses(func() {
-					Toolset("helpers", func() {
-						Tool("summarize", "Summarize a document", func() {
-							Tags("nlp", "summarization")
-						})
+				Use("helpers", func() {
+					Tool("summarize", "Summarize a document", func() {
+						Tags("nlp", "summarization")
 					})
 				})
 			})

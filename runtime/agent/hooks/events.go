@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"encoding/json"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -128,9 +129,10 @@ type (
 		ToolCallID string
 		// ToolName is the globally unique tool identifier (simple DSL name).
 		ToolName tools.Ident
-		// Payload contains the structured tool arguments (JSON-serializable) for the scheduled tool.
-		// Not pre-encoded; sinks/transports encode it for wire format.
-		Payload any
+		// Payload contains the canonical JSON tool arguments for the scheduled tool.
+		// It is a json.RawMessage representing the tool payload object as seen by the
+		// runtime and codecs.
+		Payload json.RawMessage
 		// Queue is the activity queue name where the tool execution is scheduled.
 		Queue string
 		// ParentToolCallID optionally identifies the tool call that requested this tool.
@@ -307,7 +309,7 @@ type (
 	AwaitToolItem struct {
 		ToolName   tools.Ident
 		ToolCallID string
-		Payload    any
+		Payload    json.RawMessage
 	}
 
 	// UsageEvent reports token usage for a model invocation within a run.
@@ -456,12 +458,12 @@ func (e *AwaitClarificationEvent) Type() EventType { return AwaitClarification }
 func (e *AwaitExternalToolsEvent) Type() EventType { return AwaitExternalTools }
 
 // NewToolCallScheduledEvent constructs a ToolCallScheduledEvent. Payload is the
-// structured tool arguments (JSON-serializable); queue is the activity queue name.
+// canonical JSON arguments for the scheduled tool; queue is the activity queue name.
 // ParentToolCallID and expectedChildren are optional (empty/0 for top-level calls).
 func NewToolCallScheduledEvent(
 	runID, agentID string,
 	toolName tools.Ident, toolCallID string,
-	payload any,
+	payload json.RawMessage,
 	queue string,
 	parentToolCallID string,
 	expectedChildren int,

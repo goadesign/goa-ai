@@ -11,13 +11,13 @@ type (
 	// SummarizeDocPayload defines the JSON payload for the helpers.summarize_doc tool.
 	SummarizeDocPayload = struct {
 		// Document identifier
-		DocID string
+		DocID string `json:"doc_id"`
 	}
 
 	// SummarizeDocResult defines the JSON result for the helpers.summarize_doc tool.
 	SummarizeDocResult = struct {
 		// Title
-		Title string
+		Title string `json:"title"`
 	}
 
 	// SummarizeDocPayloadJSON2 is a helper type for JSON decode-body.

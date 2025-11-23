@@ -11,15 +11,15 @@ type (
 	// AddPayload defines the JSON payload for the math.add tool.
 	AddPayload = struct {
 		// Left operand
-		Left int32
+		Left int32 `json:"left"`
 		// Right operand
-		Right int32
+		Right int32 `json:"right"`
 	}
 
 	// AddResult defines the JSON result for the math.add tool.
 	AddResult = struct {
 		// Sum
-		Sum int32
+		Sum int32 `json:"sum"`
 	}
 
 	// AddPayloadJSON2 is a helper type for JSON decode-body.

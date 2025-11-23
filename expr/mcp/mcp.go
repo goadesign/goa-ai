@@ -15,7 +15,7 @@ type (
 	MCPExpr struct {
 		eval.Expression
 
-		// Name is the MCP server name (suite identifier).
+		// Name is the MCP server name as advertised to MCP clients.
 		Name string
 		// Version is the server implementation version.
 		Version string

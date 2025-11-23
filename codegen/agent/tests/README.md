@@ -61,7 +61,7 @@ Planned additions (recommended next):
 - Deterministic user type imports (custom packages, alias stability)
 - RunPolicy (caps, time budget, interrupts) emitted into agent config/registry
 - Toolset reuse (top‑level `Toolset(...)` referenced in `Uses`) – no duplicate specs
-- MCP UseMCPToolset (external toolset registration) – minimal compile‑time scaffolding
+- MCP MCPToolset/Use (external toolset registration) – minimal compile‑time scaffolding
 
 ### Authoring conventions
 

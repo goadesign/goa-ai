@@ -108,6 +108,13 @@ type (
 		handleMu   sync.RWMutex
 		runHandles map[string]engine.WorkflowHandle
 
+		// suppressedParents tracks parent tool call IDs for which child inline
+		// tool events should be hidden from hooks subscribers. Keys are derived
+		// from the parent run ID and parent tool call ID; values are empty
+		// structs for minimal overhead. Access is guarded by suppressMu.
+		suppressMu        sync.RWMutex
+		suppressedParents map[string]struct{}
+
 		// workers holds optional per-agent worker configuration supplied at
 		// construction time.
 		workers map[string]WorkerConfig
@@ -272,7 +279,18 @@ type (
 		DecodeInExecutor bool
 
 		// SuppressChildEvents hides child inline tool events for agent-as-tool
-		// registrations. When true, only the aggregated parent event is emitted.
+		// registrations.
+		//
+		// When true, the runtime still executes all child tools and records their
+		// results in the nested agent run's RunOutput.ToolEvents for use by
+		// finalizers and aggregators, but it does not emit ToolCallScheduled or
+		// ToolResultReceived hook events for those child calls on the global
+		// hooks bus. Only the parent agent-tool ToolCallScheduled/ToolResultReceived
+		// events remain visible to stream sinks and memory subscribers.
+		//
+		// This flag is intended for JSON-only agent-as-tool registrations where
+		// callers and UIs should see a single aggregated parent tool call/result
+		// rather than the full internal child tool tree.
 		SuppressChildEvents bool
 
 		// TelemetryBuilder can be provided to build or enrich telemetry consistently
@@ -570,23 +588,24 @@ func newFromOptions(opts Options) *Runtime {
 		tracer = telemetry.NoopTracer{}
 	}
 	rt := &Runtime{
-		Engine:         eng,
-		Memory:         opts.MemoryStore,
-		Policy:         opts.Policy,
-		RunStore:       opts.RunStore,
-		Bus:            bus,
-		Stream:         opts.Stream,
-		logger:         logger,
-		metrics:        metrics,
-		tracer:         tracer,
-		agents:         make(map[string]AgentRegistration),
-		toolsets:       make(map[string]ToolsetRegistration),
-		toolSpecs:      make(map[tools.Ident]tools.ToolSpec),
-		toolSchemas:    make(map[string]map[string]any),
-		models:         make(map[string]model.Client),
-		runHandles:     make(map[string]engine.WorkflowHandle),
-		agentToolSpecs: make(map[agent.Ident][]tools.ToolSpec),
-		workers:        opts.Workers,
+		Engine:            eng,
+		Memory:            opts.MemoryStore,
+		Policy:            opts.Policy,
+		RunStore:          opts.RunStore,
+		Bus:               bus,
+		Stream:            opts.Stream,
+		logger:            logger,
+		metrics:           metrics,
+		tracer:            tracer,
+		agents:            make(map[string]AgentRegistration),
+		toolsets:          make(map[string]ToolsetRegistration),
+		toolSpecs:         make(map[tools.Ident]tools.ToolSpec),
+		toolSchemas:       make(map[string]map[string]any),
+		models:            make(map[string]model.Client),
+		runHandles:        make(map[string]engine.WorkflowHandle),
+		suppressedParents: make(map[string]struct{}),
+		agentToolSpecs:    make(map[agent.Ident][]tools.ToolSpec),
+		workers:           opts.Workers,
 	}
 	if rt.Memory != nil {
 		memSub := hooks.SubscriberFunc(func(ctx context.Context, event hooks.Event) error {
@@ -661,7 +680,7 @@ func newFromOptions(opts Options) *Runtime {
 		}
 	}
 	if rt.Stream != nil {
-		streamSub, err := stream.NewSubscriber(rt.Stream)
+		streamSub, err := stream.NewSubscriber(newHintingSink(rt, rt.Stream))
 		if err != nil {
 			rt.logger.Warn(context.Background(), "failed to create stream subscriber", "err", err)
 		} else if _, err := bus.Register(streamSub); err != nil {

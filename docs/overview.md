@@ -120,14 +120,12 @@ var Answer = Type("Answer", func() {
 
 var _ = Service("orchestrator", func() {
 	Agent("chat", "Friendly Q&A agent", func() {
-		Uses(func() {
-			Toolset("helpers", func() {
-				Tool("answer", "Answer a simple question", func() {
-					Args(Ask)
-					Return(Answer)
-				})
-			})
-		})
+        Use("helpers", func() {
+            Tool("answer", "Answer a simple question", func() {
+                Args(Ask)
+                Return(Answer)
+            })
+        })
 		RunPolicy(func() {
 			DefaultCaps(MaxToolCalls(2), MaxConsecutiveFailedToolCalls(1))
 			TimeBudget("15s")

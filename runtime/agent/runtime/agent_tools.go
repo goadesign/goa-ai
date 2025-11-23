@@ -335,8 +335,14 @@ func ValidateAgentToolCoverage(
 // PayloadToString converts a tool payload to a string for agent consumption.
 // Strings pass through as-is; structured payloads are marshaled to JSON.
 func PayloadToString(payload any) string {
-	if s, ok := payload.(string); ok {
-		return s
+	switch v := payload.(type) {
+	case string:
+		return v
+	case json.RawMessage:
+		if len(v) == 0 {
+			return ""
+		}
+		return string(v)
 	}
 	if payload == nil {
 		return ""
@@ -361,6 +367,24 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 		if wfCtx == nil {
 			return nil, fmt.Errorf("workflow context not found")
 		}
+		// Decode payload for prompt/template rendering. Prefer tool codecs when
+		// specs are registered, otherwise fall back to generic JSON decoding.
+		var promptPayload any
+		if len(call.Payload) > 0 {
+			if _, ok := rt.ToolSpec(call.Name); ok {
+				if val, err := rt.unmarshalToolValue(wfCtx.Context(), call.Name, call.Payload, true); err == nil {
+					promptPayload = val
+				}
+			}
+			if promptPayload == nil {
+				var generic any
+				if err := json.Unmarshal(call.Payload, &generic); err == nil {
+					promptPayload = generic
+				} else {
+					promptPayload = call.Payload
+				}
+			}
+		}
 		// Build messages: optional agent system prompt, then the per-tool user message
 		var messages []*model.Message
 		if cfg.SystemPrompt != "" {
@@ -375,7 +399,7 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 		var userContent string
 		if tmpl := cfg.Templates[call.Name]; tmpl != nil {
 			var b strings.Builder
-			if err := tmpl.Execute(&b, call.Payload); err != nil {
+			if err := tmpl.Execute(&b, promptPayload); err != nil {
 				return nil, fmt.Errorf(
 					"render tool template for %s: %w",
 					call.Name, err,
@@ -387,9 +411,9 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 		} else {
 			// Default: build from payload via PromptBuilder or JSON/string fallback
 			if cfg.Prompt != nil {
-				userContent = cfg.Prompt(call.Name, call.Payload)
+				userContent = cfg.Prompt(call.Name, promptPayload)
 			} else {
-				userContent = PayloadToString(call.Payload)
+				userContent = PayloadToString(promptPayload)
 			}
 		}
 		switch userContent {

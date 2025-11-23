@@ -31,12 +31,13 @@ type (
 		// External indicates whether this toolset is provided by an
 		// external MCP server.
 		External bool
-		// MCPService is the Goa service name for the MCP client, if
-		// this is an external toolset.
+		// MCPService is the Goa service name that owns the MCPServer(...)
+		// definition backing this external toolset.
 		MCPService string
-		// MCPSuite is the MCP suite identifier for grouping external
-		// toolsets.
-		MCPSuite string
+		// MCPToolset is the MCP server name for this external toolset. It
+		// corresponds to MCPExpr.Name and also becomes the provider-owned
+		// toolset name surfaced to agents.
+		MCPToolset string
 
 		// Origin references the original defining toolset when this toolset
 		// is a reference/alias (e.g., consumed under Uses or via AgentToolset).
@@ -59,8 +60,8 @@ func (t *ToolsetExpr) WalkSets(walk eval.SetWalker) {
 func (t *ToolsetExpr) Validate() error {
 	verr := new(eval.ValidationErrors)
 	if t.External {
-		if t.MCPSuite == "" {
-			verr.Add(t, "MCP suite name is required; set it via MCP(\"<suite>\", ...) block name")
+		if t.MCPToolset == "" {
+			verr.Add(t, "MCP server name is required; set it via MCPServer(\"<name>\", ...) on the provider service")
 		}
 		if t.MCPService != "" {
 			if goaexpr.Root.Service(t.MCPService) == nil {

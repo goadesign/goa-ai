@@ -8,7 +8,7 @@ import (
 	"text/template"
 
 	"github.com/stretchr/testify/require"
-	"goa.design/goa-ai/codegen/agent"
+	codegen "goa.design/goa-ai/codegen/agent"
 	. "goa.design/goa-ai/dsl"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	gcodegen "goa.design/goa/v3/codegen"
@@ -47,13 +47,11 @@ func TestServiceToolset_ConfigNoDefaults(t *testing.T) {
 			})
 			// Agent with a tool bound to svc.Do (within service DSL)
 			Agent("a", "", func() {
-				Uses(func() {
-					Toolset("ts", func() {
-						Tool("do", "", func() {
-							Args(String)
-							Return(Boolean)
-							BindTo("Do")
-						})
+				Use("ts", func() {
+					Tool("do", "", func() {
+						Args(String)
+						Return(Boolean)
+						BindTo("Do")
 					})
 				})
 			})

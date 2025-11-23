@@ -19,12 +19,10 @@ func ToolSpecsMinimal() func() {
 		})
 		Service("calc", func() {
 			Agent("scribe", "Doc helper", func() {
-				Uses(func() {
-					Toolset("helpers", func() {
-						Tool("summarize_doc", "Summarize a document", func() {
-							Args(SummarizePayload)
-							Return(SummarizeResult)
-						})
+				Use("helpers", func() {
+					Tool("summarize_doc", "Summarize a document", func() {
+						Args(SummarizePayload)
+						Return(SummarizeResult)
 					})
 				})
 			})

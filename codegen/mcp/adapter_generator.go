@@ -224,7 +224,7 @@ func (g *adapterGenerator) buildRegisterData(data *AdapterData) *RegisterData {
 	suiteGoName := codegen.Goify(g.mcp.Name, true)
 	desc := g.mcp.Description
 	if desc == "" {
-		desc = fmt.Sprintf("MCP suite %s.%s", g.originalService.Name, g.mcp.Name)
+		desc = fmt.Sprintf("MCP toolset %s.%s", g.originalService.Name, g.mcp.Name)
 	}
 	helper := serviceGoName + suiteGoName + "Toolset"
 	reg := &RegisterData{

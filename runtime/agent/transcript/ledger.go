@@ -543,6 +543,10 @@ func BuildMessagesFromEvents(events []memory.Event) []*model.Message {
 	if len(pendingResults) > 0 {
 		// Order tool results to match the assistant tool_use declaration order
 		// recorded in toolOrder so that provider handshakes are deterministic.
+		// Flush the assistant message before appending user tool_results so that
+		// the final message sequence is assistant (thinking/text/tool_use)
+		// followed by user (tool_result), matching provider expectations.
+		l.FlushAssistant()
 		byID := make(map[string]ToolResultSpec, len(pendingResults))
 		for _, r := range pendingResults {
 			if r.ToolUseID == "" {

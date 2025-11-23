@@ -32,12 +32,10 @@ func DeepNestedValidations() func() {
 
 		Service("alpha", func() {
 			Agent("scribe", "Deep nested validator test", func() {
-				Uses(func() {
-					Toolset("deep", func() {
-						Tool("validate", "Validate nested payload", func() {
-							Args(Level1)
-							Return(Level1)
-						})
+				Use("deep", func() {
+					Tool("validate", "Validate nested payload", func() {
+						Args(Level1)
+						Return(Level1)
 					})
 				})
 			})

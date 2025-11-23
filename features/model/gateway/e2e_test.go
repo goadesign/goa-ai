@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"sync/atomic"
 	"testing"
@@ -40,7 +41,13 @@ func (p *captureProvider) Stream(_ context.Context, req model.Request) (model.St
 	p.lastReq.Store(req)
 	return &seqStreamer{chunks: []model.Chunk{
 		{Type: model.ChunkTypeText, Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "hello"}}}},
-		{Type: model.ChunkTypeToolCall, ToolCall: &model.ToolCall{Name: "emit_tool", Payload: map[string]any{"k": "v"}}},
+		{
+			Type: model.ChunkTypeToolCall,
+			ToolCall: &model.ToolCall{
+				Name:    "emit_tool",
+				Payload: json.RawMessage(`{"k":"v"}`),
+			},
+		},
 		{Type: model.ChunkTypeUsage, UsageDelta: &model.TokenUsage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3}},
 		{Type: model.ChunkTypeStop, StopReason: "stop_sequence"},
 	}}, nil

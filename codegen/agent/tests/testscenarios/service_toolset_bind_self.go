@@ -17,13 +17,11 @@ func ServiceToolsetBindSelf() func() {
 				Result(func() { Attribute("okay", Boolean, "OK"); Required("okay") })
 			})
 			Agent("scribe", "Doc helper", func() {
-				Uses(func() {
-					Toolset("lookup", func() {
-						Tool("by_id", "Lookup by ID", func() {
-							Args(IDPayload)
-							Return(OKResult)
-							BindTo("alpha", "Find")
-						})
+				Use("lookup", func() {
+					Tool("by_id", "Lookup by ID", func() {
+						Args(IDPayload)
+						Return(OKResult)
+						BindTo("alpha", "Find")
 					})
 				})
 			})

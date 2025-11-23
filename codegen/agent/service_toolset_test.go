@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"goa.design/goa-ai/codegen/agent"
+	codegen "goa.design/goa-ai/codegen/agent"
 	. "goa.design/goa-ai/dsl"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	goadsl "goa.design/goa/v3/dsl"
@@ -37,13 +37,11 @@ func TestServiceToolsetIncludesMeta(t *testing.T) {
 		goadsl.Service("calc", func() {
 			goadsl.Method("Lookup", func() {})
 			Agent("scribe", "Doc helper", func() {
-				Uses(func() {
-					Toolset("lookup", func() {
-						Tool("by_id", "Lookup by ID", func() {
-							Args(goadsl.String)
-							Return(goadsl.Boolean)
-							BindTo("Lookup")
-						})
+				Use("lookup", func() {
+					Tool("by_id", "Lookup by ID", func() {
+						Args(goadsl.String)
+						Return(goadsl.Boolean)
+						BindTo("Lookup")
 					})
 				})
 			})

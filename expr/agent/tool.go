@@ -40,6 +40,10 @@ type (
 		// to, if any.
 		Method *goaexpr.MethodExpr
 
+		// ExportPassthrough defines deterministic forwarding for this tool
+		// when it is part of an exported toolset.
+		ExportPassthrough *ToolPassthroughExpr
+
 		// Optional display hint templates declared in the DSL.
 		CallHintTemplate   string
 		ResultHintTemplate string
@@ -49,6 +53,12 @@ type (
 
 		bindServiceName string
 		bindMethodName  string
+	}
+
+	// ToolPassthroughExpr defines deterministic forwarding for an exported tool.
+	ToolPassthroughExpr struct {
+		TargetService string
+		TargetMethod  string
 	}
 )
 

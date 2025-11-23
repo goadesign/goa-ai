@@ -5,6 +5,7 @@ package planner
 
 import (
 	"context"
+	"encoding/json"
 
 	"goa.design/goa-ai/runtime/agent/memory"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -51,7 +52,7 @@ type PlannerEvents interface {
 // ToolRequest describes a tool invocation requested by the planner.
 type ToolRequest struct {
 	Name             tools.Ident
-	Payload          any
+	Payload          json.RawMessage
 	AgentID          string
 	RunID            string
 	SessionID        string
@@ -121,7 +122,7 @@ type AwaitExternalTools struct {
 type AwaitToolItem struct {
 	Name       tools.Ident
 	ToolCallID string
-	Payload    any
+	Payload    json.RawMessage
 }
 
 // TerminationReason indicates why the runtime forced finalization.
@@ -159,8 +160,8 @@ type PlanResumeInput struct {
 
 // PlanResult is the planner's decision for the next step.
 type PlanResult struct {
-	ToolCalls        []ToolRequest
-	FinalResponse    *FinalResponse
+	ToolCalls     []ToolRequest
+	FinalResponse *FinalResponse
 	// Streamed reports whether assistant text for this result has already been
 	// streamed via PlannerEvents.AssistantChunk. When true, runtimes should
 	// avoid emitting an additional full AssistantMessageEvent for the
@@ -171,4 +172,3 @@ type PlanResult struct {
 	ExpectedChildren int
 	Notes            []PlannerAnnotation
 }
-

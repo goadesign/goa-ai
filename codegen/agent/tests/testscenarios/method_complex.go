@@ -36,13 +36,11 @@ func MethodComplexEmbedded() func() {
 				Result(Profile)
 			})
 			Agent("scribe", "Profile helper", func() {
-				Uses(func() {
-					Toolset("profiles", func() {
-						Tool("upsert", "Upsert a profile", func() {
-							Args(UpsertArgs)
-							Return(Profile)
-							BindTo("alpha", "UpsertProfile")
-						})
+				Use("profiles", func() {
+					Tool("upsert", "Upsert a profile", func() {
+						Args(UpsertArgs)
+						Return(Profile)
+						BindTo("alpha", "UpsertProfile")
 					})
 				})
 			})

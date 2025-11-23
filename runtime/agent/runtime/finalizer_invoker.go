@@ -85,9 +85,13 @@ func (i *finalizerToolInvoker) Invoke(ctx context.Context, tool tools.Ident, pay
 		return nil, fmt.Errorf("finalizer tool invoker: unknown tool %q", tool)
 	}
 	parent := i.meta
+	raw, err := i.factory.runtime.marshalToolValue(ctx, tool, payload, true)
+	if err != nil {
+		return nil, err
+	}
 	call := planner.ToolRequest{
 		Name:             tool,
-		Payload:          payload,
+		Payload:          raw,
 		RunID:            parent.RunID,
 		SessionID:        parent.SessionID,
 		TurnID:           parent.TurnID,
@@ -113,10 +117,6 @@ func (i *finalizerToolInvoker) Invoke(ctx context.Context, tool tools.Ident, pay
 		return result, nil
 	}
 
-	raw, err := i.factory.runtime.marshalToolValue(ctx, tool, payload, true)
-	if err != nil {
-		return nil, err
-	}
 	req := engine.ActivityRequest{
 		Name: i.factory.activityName,
 		Input: ToolInput{

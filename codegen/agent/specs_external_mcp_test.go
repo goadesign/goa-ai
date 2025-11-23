@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"goa.design/goa-ai/codegen/agent"
+	codegen "goa.design/goa-ai/codegen/agent"
 	. "goa.design/goa-ai/dsl"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	. "goa.design/goa/v3/dsl"
@@ -27,11 +27,10 @@ func TestExternalMCPToolset_SelfContainedTypes(t *testing.T) {
 		API("svc", func() {})
 		// Provider service referenced by MCPToolset
 		Service("assistant", func() {})
+		assistantSuite := MCPToolset("assistant", "assistant-mcp")
 		Service("svc", func() {
 			Agent("a", "", func() {
-				Uses(func() {
-					MCPToolset("assistant", "assistant-mcp")
-				})
+				Use(assistantSuite)
 			})
 		})
 	}

@@ -28,13 +28,11 @@ func MethodSimpleCompatible() func() {
 				})
 			})
 			Agent("scribe", "Doc helper", func() {
-				Uses(func() {
-					Toolset("lookup", func() {
-						Tool("by_id", "Lookup by ID", func() {
-							Args(QPayload)
-							Return(OkResult)
-							BindTo("Do")
-						})
+				Use("lookup", func() {
+					Tool("by_id", "Lookup by ID", func() {
+						Args(QPayload)
+						Return(OkResult)
+						BindTo("Do")
 					})
 				})
 			})

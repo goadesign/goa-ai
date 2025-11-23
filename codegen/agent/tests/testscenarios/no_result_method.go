@@ -23,11 +23,9 @@ func NoResultMethod() func() {
 		// Agent on a different service binds a tool to the tasks.purge method.
 		Service("alpha", func() {
 			Agent("scribe", "Ops", func() {
-				Uses(func() {
-					Toolset("ops", func() {
-						Tool("purge", "Purge", func() {
-							BindTo("tasks", "purge")
-						})
+				Use("ops", func() {
+					Tool("purge", "Purge", func() {
+						BindTo("tasks", "purge")
 					})
 				})
 			})

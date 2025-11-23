@@ -47,12 +47,10 @@ func MethodExternalAlias() func() {
 
 		Service("alpha", func() {
 			Agent("scribe", "Test agent", func() {
-				Uses(func() {
-					Toolset("svcset", func() {
-						Tool("fetch", "Fetch data", func() {
-							Return(ToolRes)
-							BindTo("svc", "Fetch")
-						})
+				Use("svcset", func() {
+					Tool("fetch", "Fetch data", func() {
+						Return(ToolRes)
+						BindTo("svc", "Fetch")
 					})
 				})
 			})

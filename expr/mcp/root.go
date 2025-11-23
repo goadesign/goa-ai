@@ -121,13 +121,15 @@ func (r *RootExpr) GetMCP(svc *expr.ServiceExpr) *MCPExpr {
 	return r.MCPServers[svc.Name]
 }
 
-// ServiceMCP returns the MCP configuration for a service name and suite name.
-func (r *RootExpr) ServiceMCP(service, suite string) *MCPExpr {
+// ServiceMCP returns the MCP configuration for a service name and optional
+// toolset (server name) filter. When toolset is empty, it returns the MCP
+// server for the service if present.
+func (r *RootExpr) ServiceMCP(service, toolset string) *MCPExpr {
 	m, ok := r.MCPServers[service]
 	if !ok {
 		return nil
 	}
-	if suite != "" && m.Name != suite {
+	if toolset != "" && m.Name != toolset {
 		return nil
 	}
 	return m

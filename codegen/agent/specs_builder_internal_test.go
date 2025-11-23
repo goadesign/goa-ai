@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"goa.design/goa-ai/codegen/agent"
+	codegen "goa.design/goa-ai/codegen/agent"
 	. "goa.design/goa-ai/dsl"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	goadsl "goa.design/goa/v3/dsl"
@@ -36,13 +36,11 @@ func TestBuildToolSpecsData_DeterministicRefs(t *testing.T) {
 
 		goadsl.Service("alpha", func() {
 			Agent("scribe", "Doc helper", func() {
-				Uses(func() {
-					Toolset("summarize", func() {
-						Tool("summarize_doc", "Summarize a document", func() {
-							// Use the user type directly as top-level payload/result.
-							Args(Doc)
-							Return(Doc)
-						})
+				Use("summarize", func() {
+					Tool("summarize_doc", "Summarize a document", func() {
+						// Use the user type directly as top-level payload/result.
+						Args(Doc)
+						Return(Doc)
 					})
 				})
 			})

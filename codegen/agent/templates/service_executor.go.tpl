@@ -146,21 +146,20 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                 ),
             }, nil
         }
-        // Decode tool payload if needed
+        // Decode tool payload from canonical JSON into a typed struct using the
+        // generated payload codec. Method‑backed tools always have a payload
+        // codec; missing codecs are treated as programmer errors.
         var toolArgs any
-        switch v := call.Payload.(type) {
-        case json.RawMessage:
-            if pc, ok := {{ $.Toolset.SpecsPackageName }}.PayloadCodec(string(call.Name)); ok && pc != nil && pc.FromJSON != nil {
-                val, err := pc.FromJSON(v)
-                if err != nil {
-                    return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
-                }
-                toolArgs = val
-            } else {
-                toolArgs = v
+        if len(call.Payload) > 0 {
+            pc, ok := {{ $.Toolset.SpecsPackageName }}.PayloadCodec(string(call.Name))
+            if !ok || pc == nil || pc.FromJSON == nil {
+                panic(fmt.Errorf("missing payload codec for tool %q in toolset %q", call.Name, "{{ .Toolset.QualifiedName }}"))
             }
-        default:
-            toolArgs = v
+            val, err := pc.FromJSON(call.Payload)
+            if err != nil {
+                return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
+            }
+            toolArgs = val
         }
         // Map to method payload
         var methodIn any

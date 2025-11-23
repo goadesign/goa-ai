@@ -11,7 +11,7 @@ type (
 	// UpsertPayload defines the JSON payload for the profiles.upsert tool.
 	UpsertPayload = struct {
 		// Profile
-		Profile *Profile
+		Profile *Profile `json:"profile"`
 	}
 
 	// UpsertResult defines the JSON result for the profiles.upsert tool.
@@ -21,7 +21,7 @@ type (
 		// Name
 		Name *string `json:"name"`
 		// Address
-		Address *Address
+		Address *Address `json:"address"`
 	}
 
 	// Address is a helper type materialized for nested references.

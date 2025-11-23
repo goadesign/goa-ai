@@ -59,7 +59,9 @@ func TestClientComplete(t *testing.T) {
 	}
 	require.True(t, found, "expected hi there text part")
 	require.Equal(t, tools.Ident("lookup"), resp.ToolCalls[0].Name)
-	require.Equal(t, "docs", resp.ToolCalls[0].Payload.(map[string]any)["query"])
+	var args map[string]any
+	require.NoError(t, json.Unmarshal(resp.ToolCalls[0].Payload, &args))
+	require.Equal(t, "docs", args["query"])
 	require.Equal(t, "stop", resp.StopReason)
 	require.Equal(t, 15, resp.Usage.TotalTokens)
 

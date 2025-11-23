@@ -168,11 +168,11 @@ type chunkProcessor struct {
 
 func newChunkProcessor(emit func(model.Chunk) error, recordUsage func(model.TokenUsage), nameMap map[string]string) *chunkProcessor {
 	return &chunkProcessor{
-		emit:           emit,
-		recordUsage:    recordUsage,
-		toolBlocks:     make(map[int]*toolBuffer),
+		emit:            emit,
+		recordUsage:     recordUsage,
+		toolBlocks:      make(map[int]*toolBuffer),
 		reasoningBlocks: make(map[int]*reasoningBuffer),
-		toolNameMap:    nameMap,
+		toolNameMap:     nameMap,
 	}
 }
 
@@ -192,10 +192,14 @@ func (p *chunkProcessor) Handle(event any) error {
 				if toolUse.Value.Name != nil {
 					raw := *toolUse.Value.Name
 					name := normalizeToolName(raw)
-					if canonical, ok := p.toolNameMap[name]; ok {
-						name = canonical
+					canonical, ok := p.toolNameMap[name]
+					if !ok {
+						return fmt.Errorf(
+							"bedrock stream: tool name %q not in reverse map (raw: %q); expected canonical tool ID",
+							name, raw,
+						)
 					}
-					tb.name = name
+					tb.name = canonical
 				}
 				if toolUse.Value.ToolUseId != nil {
 					tb.id = *toolUse.Value.ToolUseId
@@ -242,7 +246,7 @@ func (p *chunkProcessor) Handle(event any) error {
 					Type:     model.ChunkTypeThinking,
 					Thinking: v.Value,
 					Message: &model.Message{
-						Role:  "assistant",
+						Role: "assistant",
 						Parts: []model.Part{model.ThinkingPart{
 							Text:  v.Value,
 							Index: idx,
@@ -375,16 +379,16 @@ func contentIndex(idx *int32) (int, error) {
 	return int(*idx), nil
 }
 
-func decodeToolPayload(raw string) any {
+func decodeToolPayload(raw string) json.RawMessage {
 	trimmed := raw
 	if trimmed == "" {
 		trimmed = "{}"
 	}
-	var payload any
-	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
-		return map[string]any{"raw": raw}
+	data := []byte(trimmed)
+	if len(data) == 0 {
+		return nil
 	}
-	return payload
+	return json.RawMessage(data)
 }
 
 func normalizeToolName(name string) string {

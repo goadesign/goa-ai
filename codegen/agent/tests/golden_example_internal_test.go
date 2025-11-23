@@ -25,7 +25,7 @@ func TestExampleInternal_MethodBacked(t *testing.T) {
 }
 
 func TestExampleInternal_MCP(t *testing.T) {
-	files := buildAndGenerateExample(t, testscenarios.MCPUseToolset())
+	files := buildAndGenerateExample(t, testscenarios.MCPUse())
 
 	// Bootstrap should include MCP caller stubs
 	boot := fileContent(t, files, "internal/agents/bootstrap/bootstrap.go")

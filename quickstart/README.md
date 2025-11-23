@@ -46,12 +46,10 @@ var Answer = Type("Answer", func() {
 
 var _ = Service("orchestrator", func() {
     Agent("chat", "Friendly Q&A assistant", func() {
-        Uses(func() {
-            Toolset("helpers", func() {
-                Tool("answer", "Answer a simple question", func() {
-                    Args(AskPayload)
-                    Return(Answer)
-                })
+        Use("helpers", func() {
+            Tool("answer", "Answer a simple question", func() {
+                Args(AskPayload)
+                Return(Answer)
             })
         })
         RunPolicy(func() {

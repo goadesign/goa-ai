@@ -7,8 +7,8 @@ import (
 )
 
 // MCPToolset should emit registry calls and config additions.
-func TestGolden_MCP_UseToolset(t *testing.T) {
-	files := buildAndGenerate(t, testscenarios.MCPUseToolset())
+func TestGolden_MCP_Use(t *testing.T) {
+	files := buildAndGenerate(t, testscenarios.MCPUse())
 	reg := fileContent(t, files, "gen/alpha/agents/scribe/registry.go")
 	cfg := fileContent(t, files, "gen/alpha/agents/scribe/config.go")
 	assertGoldenGo(t, "mcp_use", "registry.go.golden", reg)

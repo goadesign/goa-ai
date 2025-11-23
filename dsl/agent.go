@@ -10,9 +10,9 @@ import (
 )
 
 // Agent defines an LLM-based agent associated with the current service.
-// A service may provide one or more agents. An agent consists of a system prompt,
-// optional toolset dependencies, and a run policy. Agents can export toolsets
-// for consumption by other agents.
+// A service may provide one or more agents. An agent consists of a system
+// prompt, optional toolset dependencies, and a run policy. Agents can export
+// toolsets for consumption by other agents or services.
 //
 // Agent must appear in a Service expression.
 //
@@ -21,11 +21,9 @@ import (
 // - description: a description of the agent
 // - dsl: a function that defines the agent's system prompt, tools, and run policy
 //
-// The dsl function can use the following functions to define the agent:
-// - Toolset: defines a toolset that the agent can use
-// - Tool: defines a tool that the agent can use
-// - RunPolicy: defines the run policy for the agent
-// - Method: defines routing strategies for agent methods
+// The dsl function can use the following helpers:
+// - Use / Export: declare the toolsets the agent consumes or exposes.
+// - RunPolicy: defines the run policy for the agent.
 //
 // Example:
 //
@@ -37,29 +35,22 @@ import (
 //	})
 //
 //	Agent("docs-agent", "Agent for managing documentation workflows", func() {
-//		Uses(func() {
-//			Toolset("summarization-tools", func() {
-//				Tool("document-summarizer", func() {
-//					Input(func() { /* Document fields */ })
-//					Output(func() { /* Summary fields */ })
-//				})
+//		Use("summarization-tools", func() {
+//			Tool("document-summarizer", "Summarize documents", func() {
+//				Args(func() { /* Document fields */ })
+//				Return(func() { /* Summary fields */ })
 //			})
-//	            Toolset(DataIngestToolset)
-//	    })
-//		Exports(func() {
-//			Toolset("text-processing-suite", func() {
-//				Tool("doc-abstractor", func() {
-//					Input(func() { /* Document fields */ })
-//					Output(func() { /* Summary fields */ })
-//				})
+//		})
+//		Use(DataIngestToolset)
+//		Export("text-processing-suite", func() {
+//			Tool("doc-abstractor", "Create document abstracts", func() {
+//				Args(func() { /* Document fields */ })
+//				Return(func() { /* Summary fields */ })
 //			})
 //		})
 //		RunPolicy(func() {
 //			DefaultCaps(MaxToolCalls(5), MaxConsecutiveFailedToolCalls(2))
 //			TimeBudget("30s")
-//		})
-//		Method("doc-abstractor", func() {
-//			Passthrough("text-processing-suite", "doc-abstractor")
 //		})
 //	})
 func Agent(name, description string, dsl func()) *expragents.AgentExpr {
@@ -82,73 +73,92 @@ func Agent(name, description string, dsl func()) *expragents.AgentExpr {
 	return agent
 }
 
-// Uses declares the toolsets that the current agent consumes. Toolsets may be
-// declared inline or referenced from existing toolset definitions.
+// Use declares that the current agent consumes the specified toolset.
+// The value may be either:
+//   - A *expragents.ToolsetExpr returned by Toolset or MCPToolset (provider-owned)
+//   - A string name for an inline, agent-local toolset definition
 //
-// Uses must appear in an Agent expression.
+// An optional DSL function can:
+//   - Subset tools from a referenced provider toolset by name (Tool("name"))
+//   - Define ad-hoc tools local to this agent
 //
-// Uses takes a single argument which is the defining DSL function.
+// Example (referencing a provider toolset and subsetting):
 //
-// The DSL function may contain:
-//   - Toolset declarations (inline or by reference)
-//   - MCPToolset declarations for external MCP servers
+//	var CommonTools = Toolset("common", func() {
+//	    Tool("notify", "Send notification", func() { ... })
+//	    Tool("log", "Log message", func() { ... })
+//	})
 //
-// Example:
-//
-//	Agent("docs-agent", "Document processor", func() {
-//	    Uses(func() {
-//	        Toolset("summarization", func() {
-//	            Tool("summarizer", "Summarize text", func() { ... })
-//	        })
-//	        Toolset(SharedToolset)  // Reference existing toolset
-//	        MCPToolset("external", "search")  // External MCP server
+//	Agent("assistant", "helper", func() {
+//	    Use(CommonTools, func() {
+//	        Tool("notify") // consume only a subset
 //	    })
 //	})
-func Uses(fn func()) {
+//
+// Example (inline agent-local toolset):
+//
+//	Agent("planner", "Session planner", func() {
+//	    Use("adhoc", func() {
+//	        Tool("foo", "Foo tool", func() { ... })
+//	    })
+//	})
+func Use(value any, fn ...func()) *expragents.ToolsetExpr {
 	agent, ok := eval.Current().(*expragents.AgentExpr)
 	if !ok {
 		eval.IncompatibleDSL()
-		return
+		return nil
 	}
-	agent.Used = &expragents.ToolsetGroupExpr{Agent: agent, DSLFunc: fn}
+	var dsl func()
+	if len(fn) > 0 {
+		dsl = fn[0]
+	}
+	if agent.Used == nil {
+		agent.Used = &expragents.ToolsetGroupExpr{Agent: agent}
+	}
+	ts := instantiateToolset(value, dsl, agent)
+	if ts == nil {
+		return nil
+	}
+	agent.Used.Toolsets = append(agent.Used.Toolsets, ts)
+	return ts
 }
 
-// Exports declares the toolsets that the current agent provides for other
-// agents to consume. Exported toolsets define the agent's public tool API.
-//
-// Exports must appear in an Agent expression.
-//
-// Exports takes a single argument which is the defining DSL function.
-//
-// The DSL function may contain:
-//   - Toolset declarations (inline only, not references)
-//
-// Example:
-//
-//	Agent("docs-agent", "Document processor", func() {
-//	    Exports(func() {
-//	        Toolset("document-tools", func() {
-//	            Tool("summarize", "Summarize document", func() { ... })
-//	            Tool("extract", "Extract metadata", func() { ... })
-//	        })
-//	    })
-//	})
-func Exports(fn func()) {
+// Export declares that the current agent or service exports the specified
+// toolset for other agents to consume. Providers typically declare reusable
+// toolsets at the top level via Toolset or MCPToolset, then reference them from
+// agents or services with Export.
+func Export(value any, fn ...func()) *expragents.ToolsetExpr {
+	var dsl func()
+	if len(fn) > 0 {
+		dsl = fn[0]
+	}
 	switch cur := eval.Current().(type) {
 	case *expragents.AgentExpr:
-		cur.Exported = &expragents.ToolsetGroupExpr{Agent: cur, DSLFunc: fn}
-	case *goaexpr.ServiceExpr:
-		se := &expragents.ServiceExportsExpr{
-			Service: cur,
-			DSLFunc: fn,
+		if cur.Exported == nil {
+			cur.Exported = &expragents.ToolsetGroupExpr{Agent: cur}
 		}
-		expragents.Root.ServiceExports = append(expragents.Root.ServiceExports, se)
+		ts := instantiateToolset(value, dsl, cur)
+		if ts == nil {
+			return nil
+		}
+		cur.Exported.Toolsets = append(cur.Exported.Toolsets, ts)
+		return ts
+	case *goaexpr.ServiceExpr:
+		ts := instantiateToolset(value, dsl, nil)
+		if ts == nil {
+			return nil
+		}
+		se := ensureServiceExports(cur)
+		se.Toolsets = append(se.Toolsets, ts)
+		return ts
 	default:
 		eval.IncompatibleDSL()
+		return nil
 	}
 }
 
-// DisableAgentDocs disables generation of the AGENTS_QUICKSTART.md quickstart guide.
+// DisableAgentDocs disables generation of the AGENTS_QUICKSTART.md quickstart
+// guide.
 //
 // Call DisableAgentDocs() inside your API design to opt-out of generating the
 // contextual agent quickstart README at the module root. This affects only the
@@ -164,76 +174,73 @@ func DisableAgentDocs() {
 	expragents.Root.DisableAgentDocs = true
 }
 
-// AgentMethod declares a routing strategy for an agent method.
+// Passthrough defines deterministic forwarding for an exported tool to a Goa
+// service method. It must appear within the DSL of a Tool nested under
+// Export.
 //
-// AgentMethod must appear in an Agent expression.
-//
-// AgentMethod takes two arguments:
-// - name: the name of the method (must match a tool name in the agent's exported toolsets)
-// - dsl: a function that defines the routing strategy
-//
-// The DSL function can use the following functions to define the strategy:
-// - Passthrough: defines deterministic forwarding to another toolset/tool
+// Passthrough accepts a tool name and a target, which can be:
+//   - A *goaexpr.MethodExpr (e.g., Passthrough("tool", MyService.MyMethod))
+//   - A service name and method name (e.g., Passthrough("tool", "MyService", "MyMethod"))
 //
 // Example:
 //
-//	Agent("docs-agent", "Document processor", func() {
-//		Exports(func() {
-//			Toolset("docs", func() {
-//				Tool("search", func() { ... })
-//			})
-//		})
-//		AgentMethod("search", func() {
-//			Passthrough("search-service", "search")
-//		})
+//	Export("logging-tools", func() {
+//	    Tool("log_message", "Log a message", func() {
+//	        Args(func() { /* ... */ })
+//	        Return(func() { /* ... */ })
+//	        Passthrough("log_message", "LoggingService", "LogMessage")
+//	    })
 //	})
-func AgentMethod(name string, fn func()) {
-	agent, ok := eval.Current().(*expragents.AgentExpr)
+func Passthrough(toolName string, target any, methodNameOpt ...string) {
+	tool, ok := eval.Current().(*expragents.ToolExpr)
 	if !ok {
 		eval.IncompatibleDSL()
 		return
 	}
-	if name == "" {
-		eval.ReportError("method name cannot be empty")
+	if tool.Name != toolName {
+		eval.ReportError("Passthrough tool name %q does not match current tool %q", toolName, tool.Name)
 		return
 	}
-	m := &expragents.AgentMethodExpr{
-		Name:    name,
-		DSLFunc: fn,
-		Agent:   agent,
+
+	var serviceName, methodName string
+	switch t := target.(type) {
+	case *goaexpr.MethodExpr:
+		if t.Service == nil {
+			eval.ReportError("Passthrough target method must belong to a service")
+			return
+		}
+		serviceName = t.Service.Name
+		methodName = t.Name
+	case string:
+		serviceName = t
+		if len(methodNameOpt) != 1 {
+			eval.ReportError("Passthrough with service name requires a method name")
+			return
+		}
+		methodName = methodNameOpt[0]
+	default:
+		eval.ReportError("Passthrough target must be a *goaexpr.MethodExpr or (serviceName string, methodName string)")
+		return
 	}
-	agent.Methods = append(agent.Methods, m)
+
+	if serviceName == "" || methodName == "" {
+		eval.ReportError("Passthrough requires non-empty service and method names")
+		return
+	}
+
+	tool.ExportPassthrough = &expragents.ToolPassthroughExpr{
+		TargetService: serviceName,
+		TargetMethod:  methodName,
+	}
 }
 
-// Passthrough defines deterministic forwarding to another toolset/tool.
-//
-// Passthrough must appear in a Method expression.
-//
-// Passthrough takes two arguments:
-// - toolset: the name of the target toolset
-// - tool: the name of the target tool
-//
-// Example:
-//
-//	Method("search", func() {
-//		Passthrough("search-service", "search")
-//	})
-func Passthrough(toolset, tool string) {
-	m, ok := eval.Current().(*expragents.AgentMethodExpr)
-	if !ok {
-		eval.IncompatibleDSL()
-		return
+func ensureServiceExports(svc *goaexpr.ServiceExpr) *expragents.ServiceExportsExpr {
+	for _, se := range expragents.Root.ServiceExports {
+		if se.Service == svc {
+			return se
+		}
 	}
-	if toolset == "" {
-		eval.ReportError("toolset name cannot be empty")
-		return
-	}
-	if tool == "" {
-		eval.ReportError("tool name cannot be empty")
-		return
-	}
-	m.Passthrough = &expragents.PassthroughExpr{
-		Toolset: toolset,
-		Tool:    tool,
-	}
+	se := &expragents.ServiceExportsExpr{Service: svc}
+	expragents.Root.ServiceExports = append(expragents.Root.ServiceExports, se)
+	return se
 }

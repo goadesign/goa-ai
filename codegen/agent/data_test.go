@@ -136,17 +136,13 @@ func runAgentDesign(t *testing.T) []eval.Root {
 		})
 		Service("calc", func() {
 			Agent("scribe", "Doc helper", func() {
-				Uses(func() {
-					Toolset("summarize", func() {
-						Tool("summarize_doc", "Summarize a document", func() {
-							Args(SummarizeArgs)
-						})
+				Use("summarize", func() {
+					Tool("summarize_doc", "Summarize a document", func() {
+						Args(SummarizeArgs)
 					})
 				})
-				Exports(func() {
-					Toolset("docs.export", func() {
-						Tool("draft_reply", "Draft a reply", func() {})
-					})
+				Export("docs.export", func() {
+					Tool("draft_reply", "Draft a reply", func() {})
 				})
 				RunPolicy(func() {
 					DefaultCaps(

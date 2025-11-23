@@ -205,13 +205,13 @@ func translateResponse(resp openai.ChatCompletionResponse) model.Response {
 	}
 }
 
-func parseToolArguments(raw string) any {
+func parseToolArguments(raw string) json.RawMessage {
 	if raw == "" {
 		return nil
 	}
-	var payload any
-	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		return map[string]any{"raw": raw}
+	data := []byte(raw)
+	if len(data) == 0 {
+		return nil
 	}
-	return payload
+	return json.RawMessage(data)
 }

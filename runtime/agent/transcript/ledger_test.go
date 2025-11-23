@@ -2,8 +2,10 @@ package transcript
 
 import (
 	"testing"
+	"time"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/memory"
 )
 
 func TestLedger_BuildAndValidate(t *testing.T) {
@@ -73,3 +75,60 @@ func TestLedger_MultipleToolUseSingleUserMessage(t *testing.T) {
 		t.Fatalf("second role = %s, want user", msgs[1].Role)
 	}
 }
+
+func TestBuildMessagesFromEvents_ParentToolOnly(t *testing.T) {
+	events := []memory.Event{
+		{
+			Type:      memory.EventThinking,
+			Timestamp: time.Now(),
+			Data: map[string]any{
+				"text":          "thinking",
+				"signature":     "sig",
+				"content_index": 0,
+				"final":         true,
+			},
+		},
+		{
+			Type:      memory.EventAssistantMessage,
+			Timestamp: time.Now(),
+			Data: map[string]any{
+				"message": "calling tool",
+			},
+		},
+		{
+			Type:      memory.EventToolCall,
+			Timestamp: time.Now(),
+			Data: map[string]any{
+				"tool_call_id": "tc-1",
+				"tool_name":    "svc.tool",
+				"payload":      map[string]any{"q": 1},
+			},
+		},
+		{
+			Type:      memory.EventToolResult,
+			Timestamp: time.Now(),
+			Data: map[string]any{
+				"tool_call_id": "tc-1",
+				"tool_name":    "svc.tool",
+				"result":       map[string]any{"ok": true},
+				"duration":     time.Second,
+				"error":        nil,
+			},
+		},
+	}
+
+	msgs := BuildMessagesFromEvents(events)
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	}
+	if err := ValidateBedrock(msgs, true); err != nil {
+		t.Fatalf("validate failed: %v", err)
+	}
+	if msgs[0].Role != model.ConversationRoleAssistant {
+		t.Fatalf("first role = %s, want assistant", msgs[0].Role)
+	}
+	if msgs[1].Role != model.ConversationRoleUser {
+		t.Fatalf("second role = %s, want user", msgs[1].Role)
+	}
+}
+

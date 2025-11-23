@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -72,8 +73,13 @@ func TestAgentTool_DefaultsFromPayload(t *testing.T) {
 	})
 	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
-	// String payload path
-	call := planner.ToolRequest{RunID: "r1", SessionID: "s1", Name: tools.Ident("svc.tools.do"), Payload: "hello"}
+	// String payload path (canonical JSON)
+	call := planner.ToolRequest{
+		RunID:     "r1",
+		SessionID: "s1",
+		Name:      tools.Ident("svc.tools.do"),
+		Payload:   json.RawMessage(`"hello"`),
+	}
 	tr, err := reg.Execute(ctx, &call)
 	require.NoError(t, err)
 	require.NotNil(t, tr)
@@ -115,7 +121,12 @@ func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 	})
 	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
-	call := planner.ToolRequest{RunID: "r1", SessionID: "s1", Name: tools.Ident("svc.tools.do"), Payload: "hello"}
+	call := planner.ToolRequest{
+		RunID:     "r1",
+		SessionID: "s1",
+		Name:      tools.Ident("svc.tools.do"),
+		Payload:   json.RawMessage(`"hello"`),
+	}
 	tr, err := reg.Execute(ctx, &call)
 	require.NoError(t, err)
 	require.NotNil(t, tr)
@@ -154,7 +165,12 @@ func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 	})
 	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
-	call := planner.ToolRequest{RunID: "r1", SessionID: "s1", Name: tools.Ident("svc.tools.do"), Payload: "hello"}
+	call := planner.ToolRequest{
+		RunID:     "r1",
+		SessionID: "s1",
+		Name:      tools.Ident("svc.tools.do"),
+		Payload:   json.RawMessage(`"hello"`),
+	}
 	_, err := reg.Execute(ctx, &call)
 	require.NoError(t, err)
 	require.Len(t, pl.msgs, 2)

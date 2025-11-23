@@ -26,13 +26,11 @@ func AliasBoth() func() {
 				Result(PairResult)
 			})
 			Agent("scribe", "Doc helper", func() {
-				Uses(func() {
-					Toolset("lookup", func() {
-						Tool("pair", "Pair", func() {
-							Args(PairPayload)
-							Return(PairResult)
-							BindTo("alpha", "Pair")
-						})
+				Use("lookup", func() {
+					Tool("pair", "Pair", func() {
+						Args(PairPayload)
+						Return(PairResult)
+						BindTo("alpha", "Pair")
 					})
 				})
 			})
@@ -53,13 +51,11 @@ func AliasPayloadOnly() func() {
 				Result(PR)
 			})
 			Agent("scribe", "Doc helper", func() {
-				Uses(func() {
-					Toolset("echo", func() {
-						Tool("echo", "Echo", func() {
-							Args(P)
-							Return(PR)
-							BindTo("alpha", "Echo")
-						})
+				Use("echo", func() {
+					Tool("echo", "Echo", func() {
+						Args(P)
+						Return(PR)
+						BindTo("alpha", "Echo")
 					})
 				})
 			})
@@ -80,13 +76,11 @@ func AliasResultOnly() func() {
 				Result(R)
 			})
 			Agent("scribe", "Doc helper", func() {
-				Uses(func() {
-					Toolset("reply", func() {
-						Tool("reply", "Reply", func() {
-							Args(P)
-							Return(R)
-							BindTo("alpha", "Reply")
-						})
+				Use("reply", func() {
+					Tool("reply", "Reply", func() {
+						Args(P)
+						Return(R)
+						BindTo("alpha", "Reply")
 					})
 				})
 			})

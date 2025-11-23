@@ -95,3 +95,49 @@ func TestEncodeTools_ChoiceWithoutToolsErrors(t *testing.T) {
 	_, _, _, err := encodeTools(ctx, nil, &model.ToolChoice{Mode: model.ToolChoiceModeAny})
 	require.Error(t, err)
 }
+
+func TestSanitizeToolName_StripsNamespaces(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "ada toolset",
+			in:   "ada.get_application_status",
+			want: "get_application_status",
+		},
+		{
+			name: "ada time series",
+			in:   "ada.get_time_series",
+			want: "get_time_series",
+		},
+		{
+			name: "chat atlas read subset",
+			in:   "atlas.read.chat.chat_get_user_details",
+			want: "get_user_details",
+		},
+		{
+			name: "chat emit toolset",
+			in:   "chat.emit.ask_clarifying_question",
+			want: "ask_clarifying_question",
+		},
+		{
+			name: "todos toolset",
+			in:   "todos.todos.update_todos",
+			want: "update_todos",
+		},
+		{
+			name: "plain name passthrough",
+			in:   "lookup",
+			want: "lookup",
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeToolName(tt.in)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}

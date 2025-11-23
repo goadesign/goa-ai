@@ -17,21 +17,29 @@ func TestExecuteToolActivity_DecodeInExecutor_PassesRaw(t *testing.T) {
 	rt := &Runtime{toolsets: make(map[string]ToolsetRegistration)}
 	// Register a toolset with DecodeInExecutor enabled.
 	called := false
+	decoded := false
 	rt.toolsets["svc.ts"] = ToolsetRegistration{
 		Name:             "svc.ts",
 		DecodeInExecutor: true,
 		Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 			called = true
 			// Payload must be raw JSON to honor decode-in-executor contract.
-			_, ok := call.Payload.(json.RawMessage)
-			require.True(t, ok, "expected json.RawMessage in executor")
+			require.JSONEq(t, `{"x":1}`, string(call.Payload))
 			return &planner.ToolResult{Name: tools.Ident("svc.ts.tool"), Result: map[string]any{"ok": true}}, nil
 		},
 		Specs: []tools.ToolSpec{{
 			Name:        tools.Ident("svc.ts.tool"),
 			Service:     "svc",
 			Toolset:     "ts",
-			Payload:     tools.TypeSpec{Name: "P"},
+			Payload: tools.TypeSpec{
+				Name: "P",
+				Codec: tools.JSONCodec[any]{
+					FromJSON: func(data []byte) (any, error) {
+						decoded = true
+						return map[string]any{"x": 1}, nil
+					},
+				},
+			},
 			Result:      tools.TypeSpec{Name: "R"},
 			IsAgentTool: false,
 		}},
@@ -44,5 +52,6 @@ func TestExecuteToolActivity_DecodeInExecutor_PassesRaw(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.True(t, called)
+	require.False(t, decoded, "payload codec must not be used when DecodeInExecutor=true")
 	require.NotNil(t, out.Payload)
 }

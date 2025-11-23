@@ -104,6 +104,43 @@ and `ExecuteToolActivityHandler`.
 - Tool executors receive explicit per‑call metadata (`ToolCallMeta`) rather than fishing values from `context.Context`.
 - Do not rely on implicit fallbacks; all domain identifiers (run, session, turn, correlation) must be passed explicitly.
 
+### Tool Payload and Result Contracts
+
+Tool payloads and results follow a strict, JSON‑first contract across providers,
+planners, and the runtime:
+
+- **Canonical JSON between provider, planner, and runtime**
+  - Provider adapters (Bedrock, OpenAI, etc.) emit `model.ToolCall.Payload` as
+    `json.RawMessage` containing the tool arguments JSON.
+  - The stream bridge in `runtime/agent/planner/stream.go` copies that
+    `json.RawMessage` into `planner.ToolRequest.Payload` without decoding.
+  - Planner implementations (including AURA services) must treat
+    `ToolRequest.Payload` as canonical JSON and avoid schema‑aware decoding.
+
+- **Runtime‑owned decoding via generated codecs**
+  - `ExecuteToolActivity` receives `ToolInput.Payload` as `json.RawMessage`,
+    applies any `PayloadAdapter`, then uses the generated payload codec
+    (`unmarshalToolValue`) to validate/interpret inputs before invoking the
+    toolset executor. Executors still see the canonical JSON payload and may
+    decode again as needed.
+  - Tool results are decoded centrally in `runLoop` using the generated result
+    codecs before exposing them via `planner.ToolResult`, hooks events, and
+    stream events.
+
+- **Hints and agent‑as‑tool always see typed structs**
+  - The runtime wraps the configured `stream.Sink` with a hinting sink that
+    decodes `ToolStartPayload.Payload` using the payload codec and passes the
+    resulting typed struct to `hints.FormatCallHint`. Call hint templates should
+    therefore use Go field names (e.g., `.From`, `.DeviceAlias`, `.ScopeContext`)
+    instead of JSON keys.
+  - `ToolEnd` events carry decoded result structs into
+    `hints.FormatResultHint`, so result hint templates also operate on typed
+    values.
+  - Agent‑as‑tool executors use the same codecs to build nested `ToolArgs`/tool
+    payloads and to aggregate child `ToolResult` values for finalizers. Consumer
+    planners and UIs never need to decode raw JSON; they rely on the runtime
+    and generated codecs instead.
+
 ## Pause & Resume
 
 Human-in-loop workflows can suspend and resume runs using the runtime’s interrupt helpers. Behind the scenes, pause/resume signals update the run store and emit `run_paused`/`run_resumed` hook events so UI layers stay in sync.
@@ -596,7 +633,7 @@ critical to choose **exactly one** per stream to avoid double-emitting events.
 
 - Creates a Temporal engine + in-memory stores, then calls each generated `Register<Agent>` function.
 - Instantiates planner stubs (`cmd/<service>/agents_planner_<agent>.go`) so examples compile out-of-the-box.
-- Emits a `configure<Agent>MCPCallers` stub only when the agent uses `UseMCPToolset`. Replace the placeholder `mcpruntime.CallerFunc` entries with real callers (e.g., `mcpruntime.NewHTTPCaller`, `NewSSECaller`, or a custom adapter) before running agents in production. Services without MCP bindings avoid unused imports automatically.
+- Emits a `configure<Agent>MCPCallers` stub only when the agent references an `MCPToolset` via `Use`. Replace the placeholder `mcpruntime.CallerFunc` entries with real callers (e.g., `mcpruntime.NewHTTPCaller`, `NewSSECaller`, or a custom adapter) before running agents in production. Services without MCP bindings avoid unused imports automatically.
 
 If you implement a bespoke bootstrap path (e.g., non-Temporal engine, custom stores), you can delete the generated helper and wire everything manually by following the pattern above.
 

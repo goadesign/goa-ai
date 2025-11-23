@@ -9,14 +9,14 @@ This note proposes a small but high‑leverage refinement to goa‑ai so consume
 - Backward clarity: If a consumer wants to publish its own namespaced facade, we can add that later as a separate, explicit feature (not part of this change).
 
 What users do after this change:
-- Keep using the DSL `Uses(...)` for provider toolsets and `Exports(...)` for their own.
+- Use `Use(...)` for provider toolsets and `Export(...)` for their own.
 - In planners, return the generated `specs.AdvertisedSpecs()` directly.
 - Register toolsets using the existing typed helpers; no aliasing or `reg.Name/reg.Specs` overrides.
 
 ### Plan (reader need not know prior context)
 
 1) Codegen: default provider IDs for Used toolsets
-- Change generator so `Uses(...)` emits tool IDs qualified by the provider service (e.g., `atlas_data_agent.ada.*`) instead of the consumer’s service.
+- Change generator so `Use(...)` emits tool IDs qualified by the provider service (e.g., `atlas_data_agent.ada.*`) instead of the consumer’s service.
 - This is computed using the already available `SourceServiceName` for a toolset; only apply when the toolset is externally sourced (method‑backed or external MCP), not when the tools are truly local.
 
 2) Codegen: explicit advertised specs helper

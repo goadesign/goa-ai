@@ -181,7 +181,10 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		if planOpts.Timeout > 0 {
 			planTimeout = planOpts.Timeout
 		}
-		var toolTimeout time.Duration
+		toolTimeout := reg.ExecuteToolActivityOptions.Timeout
+		if toolTimeout == 0 {
+			toolTimeout = 2 * time.Minute
+		}
 		if input.Policy != nil && input.Policy.ToolTimeout > 0 {
 			toolTimeout = input.Policy.ToolTimeout
 		}
@@ -312,6 +315,9 @@ func (r *Runtime) runLoop(
 	toolOpts := reg.ExecuteToolActivityOptions
 	if input != nil && input.Policy != nil && input.Policy.ToolTimeout > 0 {
 		toolOpts.Timeout = input.Policy.ToolTimeout
+	}
+	if toolOpts.Timeout == 0 {
+		toolOpts.Timeout = 2 * time.Minute
 	}
 	var lastToolResults []*planner.ToolResult
 	var aggregatedToolResults []*planner.ToolResult
@@ -958,6 +964,15 @@ func (r *Runtime) executeToolCalls(
 		}
 		ts, hasTS := r.toolsets[spec.Toolset]
 
+		// For agent-as-tool registrations that suppress child events, mark this
+		// parent tool call so that any child tool calls it discovers (executed
+		// in a nested agent run) have their ToolCallScheduled/ToolResultReceived
+		// events filtered from the hooks bus. The nested run still records its
+		// ToolEvents for use by finalizers and aggregators.
+		if hasTS && spec.IsAgentTool && ts.Inline && ts.SuppressChildEvents {
+			r.markSuppressedParent(eventRunID, call.ToolCallID)
+		}
+
 		// Prepare scheduled event (queue filled only for activity execution)
 		queue := ""
 		if hasTS && ts.TaskQueue != "" {
@@ -1011,6 +1026,9 @@ func (r *Runtime) executeToolCalls(
 				),
 				seq,
 			)
+			if hasTS && spec.IsAgentTool && ts.Inline && ts.SuppressChildEvents {
+				r.unmarkSuppressedParent(eventRunID, call.ToolCallID)
+			}
 			inlineResults[call.ToolCallID] = result
 			if parentTracker != nil {
 				discoveredIDs = append(discoveredIDs, call.ToolCallID)
@@ -1018,11 +1036,7 @@ func (r *Runtime) executeToolCalls(
 			continue
 		}
 
-		// Activity path (service-backed tools)
-		rawPayload, err := r.marshalToolValue(ctx, call.Name, call.Payload, true)
-		if err != nil {
-			return nil, err
-		}
+		// Activity path (service-backed tools).
 		req := engine.ActivityRequest{
 			Name: activityName,
 			Input: ToolInput{
@@ -1031,7 +1045,7 @@ func (r *Runtime) executeToolCalls(
 				ToolsetName:      spec.Toolset,
 				ToolName:         call.Name,
 				ToolCallID:       call.ToolCallID,
-				Payload:          rawPayload,
+				Payload:          call.Payload,
 				SessionID:        call.SessionID,
 				TurnID:           call.TurnID,
 				ParentToolCallID: call.ParentToolCallID,

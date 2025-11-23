@@ -191,9 +191,9 @@ type (
 		Data AwaitExternalToolsPayload
 	}
 
-		// ToolStartPayload carries the metadata for a scheduled tool invocation. This
-		// structure is JSON-serialized when sent over the wire (SSE, WebSocket, Pulse).
-		ToolStartPayload struct {
+	// ToolStartPayload carries the metadata for a scheduled tool invocation. This
+	// structure is JSON-serialized when sent over the wire (SSE, WebSocket, Pulse).
+	ToolStartPayload struct {
 		// ToolCallID uniquely identifies this tool invocation. Clients use this to
 		// correlate subsequent ToolEnd events with the original ToolStart, enabling
 		// UIs to update progress indicators and display results for the correct tool call.
@@ -202,14 +202,14 @@ type (
 		// Format: <service>.<toolset>.<tool>. Clients can use this to display tool names
 		// or icons in progress indicators.
 		ToolName string `json:"tool_name"`
-			// Payload contains the structured tool arguments (JSON-serializable) for this call.
-			// It is not pre-encoded; stream sinks are responsible for encoding it for transport.
-			// Nil when no arguments were provided. Suitable for UIs/tests to inspect or log.
-			Payload any `json:"payload,omitempty"`
-			// DisplayHint is a human-facing one-line description of the in-flight tool work,
-			// rendered from DSL-authored templates when available. Suitable for progress lanes
-			// and tool ribbons (for example, "Listing devices of kind VAV").
-			DisplayHint string `json:"display_hint,omitempty"`
+		// Payload contains the structured tool arguments (JSON-serializable) for this call.
+		// It is not pre-encoded; stream sinks are responsible for encoding it for transport.
+		// Nil when no arguments were provided. Suitable for UIs/tests to inspect or log.
+		Payload any `json:"payload,omitempty"`
+		// DisplayHint is a human-facing one-line description of the in-flight tool work,
+		// rendered from DSL-authored templates when available. Suitable for progress lanes
+		// and tool ribbons (for example, "Listing devices of kind VAV").
+		DisplayHint string `json:"display_hint,omitempty"`
 		// Queue is the activity queue name where the tool execution is scheduled. Empty for
 		// in-process tools. Clients typically don't display this but may use it for routing
 		// or infrastructure-level monitoring.
@@ -229,9 +229,9 @@ type (
 		Extra map[string]any `json:"extra,omitempty"`
 	}
 
-		// ToolEndPayload carries the result metadata for a completed tool invocation. This
-		// structure is JSON-serialized when sent over the wire (SSE, WebSocket, Pulse).
-		ToolEndPayload struct {
+	// ToolEndPayload carries the result metadata for a completed tool invocation. This
+	// structure is JSON-serialized when sent over the wire (SSE, WebSocket, Pulse).
+	ToolEndPayload struct {
 		// ToolCallID uniquely identifies the tool invocation that completed. Clients use this
 		// to correlate with the original ToolStart event, enabling UIs to match completion
 		// events with their corresponding progress indicators and display results in the
@@ -246,14 +246,14 @@ type (
 		// "weather.search.forecast"). Matches the ToolName from ToolStart. Useful for
 		// displaying tool names in result summaries and correlating with tool metadata.
 		ToolName string `json:"tool_name"`
-			// Result contains the tool's output payload. This is the structured data returned
-			// by the tool on success. Nil if the tool failed (check Error field). Clients
-			// display this as the tool's answer or pass it to downstream processing.
-			Result any `json:"result,omitempty"`
-			// ResultPreview is a concise, user-facing summary of the tool result rendered from
-			// DSL-authored templates when available. It is intended for UI ribbons and summaries
-			// (for example, "Device list ready" or "Found 3 critical alarms").
-			ResultPreview string `json:"result_preview,omitempty"`
+		// Result contains the tool's output payload. This is the structured data returned
+		// by the tool on success. Nil if the tool failed (check Error field). Clients
+		// display this as the tool's answer or pass it to downstream processing.
+		Result any `json:"result,omitempty"`
+		// ResultPreview is a concise, user-facing summary of the tool result rendered from
+		// DSL-authored templates when available. It is intended for UI ribbons and summaries
+		// (for example, "Device list ready" or "Found 3 critical alarms").
+		ResultPreview string `json:"result_preview,omitempty"`
 		// Duration is the wall-clock execution time for the tool activity, including any
 		// queuing delay, retries, and processing time. Clients can display this in
 		// performance dashboards or debug panels to identify slow tools.
@@ -382,12 +382,9 @@ const (
 	EventWorkflow EventType = "workflow"
 )
 
-// NewBaseForTest constructs a Base event with the given type, run ID, and
-// payload. Intended for testing scenarios where arbitrary events must be
-// injected (e.g., serialization round-trips, wrapping, or introspection of
-// different event types). Production code should retrieve events from the
-// stream.Sink.
-func NewBaseForTest(t EventType, runID string, payload any) Base {
+// NewBase constructs a Base event with the given type, run ID, and
+// payload.
+func NewBase(t EventType, runID string, payload any) Base {
 	return Base{t: t, r: runID, p: payload}
 }
 

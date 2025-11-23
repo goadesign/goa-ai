@@ -392,3 +392,19 @@ Content rules:
   continue to run as activities with ActivityOptions.
 - Provider agents must run a worker on their workflow queue. Consumers only need
   to `RegisterToolset(reg)`. See architecture docs for rationale and flows.
+
+#### Child tool event suppression
+
+- Agent-as-tool registrations may set `ToolsetRegistration.SuppressChildEvents`
+  to hide child inline tool events from streaming and memory while still
+  executing them:
+  - Child tools invoked by the nested agent continue to run and their results
+    are included in the nested run's `RunOutput.ToolEvents` so finalizers and
+    aggregators can inspect them.
+  - The runtime does **not** emit `ToolCallScheduled` or `ToolResultReceived`
+    hook events for those child calls on the global bus. Only the parent
+    agent-tool tool call/result remains visible to stream sinks and memory
+    subscribers.
+- Use this for JSON-only agent-tools that should surface a single aggregated
+  parent tool call/result (for example, ADA calling multiple Atlas Data tools
+  internally) rather than the full internal child tool tree.

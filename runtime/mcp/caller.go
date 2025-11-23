@@ -38,9 +38,9 @@ func (e *Error) Error() string {
 	return e.Message
 }
 
-// CallRequest describes the suite/tool invocation issued by the runtime.
+// CallRequest describes the toolset/tool invocation issued by the runtime.
 type CallRequest struct {
-	// Suite identifies the MCP suite (toolset) associated with the tool.
+	// Suite identifies the MCP toolset (server name) associated with the tool.
 	Suite string
 	// Tool is the MCP-local tool identifier (without the suite prefix).
 	Tool string

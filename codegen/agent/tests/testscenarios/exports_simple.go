@@ -11,12 +11,10 @@ func ExportsSimple() func() {
 		API("alpha", func() {})
 		Service("alpha", func() {
 			Agent("scribe", "Doc helper", func() {
-				Exports(func() {
-					Toolset("search", func() {
-						Tool("find", "Find documents", func() {
-							Args(String)
-							Return(String)
-						})
+				Export("search", func() {
+					Tool("find", "Find documents", func() {
+						Args(String)
+						Return(String)
 					})
 				})
 			})

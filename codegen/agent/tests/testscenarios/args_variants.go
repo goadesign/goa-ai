@@ -11,12 +11,10 @@ func ArgsPrimitive() func() {
 		API("alpha", func() {})
 		Service("alpha", func() {
 			Agent("scribe", "Doc helper", func() {
-				Uses(func() {
-					Toolset("ops", func() {
-						Tool("echo", "Echo", func() {
-							Args(String, "text to echo")
-							Return(String, "echoed text")
-						})
+				Use("ops", func() {
+					Tool("echo", "Echo", func() {
+						Args(String, "text to echo")
+						Return(String, "echoed text")
 					})
 				})
 			})
@@ -39,12 +37,10 @@ func ArgsInlineObject() func() {
 		})
 		Service("alpha", func() {
 			Agent("scribe", "Doc helper", func() {
-				Uses(func() {
-					Toolset("math", func() {
-						Tool("add", "Add", func() {
-							Args(AddPayload)
-							Return(AddResult)
-						})
+				Use("math", func() {
+					Tool("add", "Add", func() {
+						Args(AddPayload)
+						Return(AddResult)
 					})
 				})
 			})
@@ -63,12 +59,10 @@ func ArgsUserType() func() {
 		})
 		Service("alpha", func() {
 			Agent("scribe", "Doc helper", func() {
-				Uses(func() {
-					Toolset("docs", func() {
-						Tool("store", "Store", func() {
-							Args(Doc, func() { Required("title") })
-							Return(Doc)
-						})
+				Use("docs", func() {
+					Tool("store", "Store", func() {
+						Args(Doc, func() { Required("title") })
+						Return(Doc)
 					})
 				})
 			})

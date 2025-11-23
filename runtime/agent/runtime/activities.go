@@ -116,7 +116,9 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		return nil, fmt.Errorf("toolset %q is not registered", sName)
 	}
 
-	// Apply optional payload adapter before decoding.
+	// Apply optional payload adapter before decoding. Payloads are canonical
+	// JSON (json.RawMessage) along the planner/runtime boundary; adapters may
+	// normalize them before validation or execution.
 	raw := req.Payload
 	meta := ToolCallMeta{
 		RunID:            req.RunID,
@@ -133,14 +135,11 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		}
 	}
 
-	var decoded any
-	if reg.DecodeInExecutor {
-		// Pass raw JSON through to the executor; it will decode using the generated codec.
-		decoded = append(json.RawMessage(nil), raw...)
-	} else {
-		// Decode using the registered payload codec.
-		val, decErr := r.unmarshalToolValue(ctx, req.ToolName, raw, true)
-		if decErr != nil {
+	// For non DecodeInExecutor toolsets, validate payloads eagerly using the
+	// generated codecs so we can surface structured retry hints. Executors
+	// still receive the canonical JSON payload and may decode again as needed.
+	if !reg.DecodeInExecutor && len(raw) > 0 {
+		if _, decErr := r.unmarshalToolValue(ctx, req.ToolName, raw, true); decErr != nil {
 			// Build structured retry hints using generated ValidationError when present.
 			if fields, question, reason, ok := buildRetryHintFromValidation(decErr, req.ToolName); ok {
 				return &ToolOutput{
@@ -156,14 +155,14 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 			// Not a validation error: no retry hint.
 			return &ToolOutput{Error: decErr.Error()}, nil
 		}
-		decoded = val
 	}
 
 	// Populate run context fields so tool implementations can access metadata.
-	// Agent-tools use these to construct nested contexts; regular tools use them for logging/telemetry.
+	// Agent-tools use these to construct nested contexts; regular tools use
+	// them for logging/telemetry. Payload is always canonical JSON.
 	call := planner.ToolRequest{
 		Name:             req.ToolName,
-		Payload:          decoded,
+		Payload:          raw,
 		RunID:            req.RunID,
 		SessionID:        req.SessionID,
 		TurnID:           req.TurnID,

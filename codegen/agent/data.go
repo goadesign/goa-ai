@@ -128,9 +128,9 @@ type (
 		ToolSpecsDir string
 		// RunPolicy captures caps/time budget settings.
 		RunPolicy RunPolicyData
-		// UsedToolsets lists toolsets referenced by `Uses`.
+		// UsedToolsets lists toolsets referenced via `Use`.
 		UsedToolsets []*ToolsetData
-		// ExportedToolsets lists toolsets declared under `Exports`.
+		// ExportedToolsets lists toolsets declared via `Export`.
 		ExportedToolsets []*ToolsetData
 		// AllToolsets concatenates consumed and exported toolsets for convenience.
 		AllToolsets []*ToolsetData
@@ -139,9 +139,9 @@ type (
 		MethodBackedToolsets []*ToolsetData
 		// Tools flattens every tool declared across the agent's toolsets.
 		Tools []*ToolData
-		// MCPToolsets lists the distinct external MCP toolsets referenced via UseMCPToolset.
+		// MCPToolsets lists the distinct external MCP toolsets referenced via MCPToolset/Use.
 		// Each entry captures the helper import/path information required to register
-		// the suite with the runtime at agent registration time.
+		// the toolset with the runtime at agent registration time.
 		MCPToolsets []*MCPToolsetMeta
 		// Runtime captures derived workflow/activity data used by templates.
 		Runtime RuntimeData
@@ -153,16 +153,16 @@ type (
 	MethodData struct {
 		// Name is the name of the method (must match a tool name in the agent's exported toolsets).
 		Name string
-		// Passthrough defines deterministic forwarding to another toolset/tool.
+		// Passthrough defines deterministic forwarding to a Goa service method.
 		Passthrough *PassthroughData
 	}
 
-	// PassthroughData defines deterministic forwarding to another toolset/tool.
+	// PassthroughData defines deterministic forwarding to a Goa service method.
 	PassthroughData struct {
-		// Toolset is the name of the target toolset.
-		Toolset string
-		// Tool is the name of the target tool.
-		Tool string
+		// Service is the name of the target Goa service.
+		Service string
+		// Method is the name of the target Goa method.
+		Method string
 	}
 
 	// RunPolicyData represents the runtime execution constraints and resource limits
@@ -249,7 +249,7 @@ type (
 		Title string
 		// Description captures the DSL description for docs/registries.
 		Description string
-		// Tags attaches suite-level tags used by policy/filtering at registration time.
+		// Tags attaches toolset-level tags used by policy/filtering at registration time.
 		Tags []string
 		// ServiceName identifies the owning Goa service (blank for global toolsets).
 		ServiceName string
@@ -296,7 +296,7 @@ type (
 		// Tools lists the tools defined inside the toolset.
 		Tools []*ToolData
 		// MCP describes the external MCP helper metadata when this toolset references
-		// an MCP suite.
+		// an MCP server/toolset.
 		MCP *MCPToolsetMeta
 		// NeedsAdapter indicates whether any method-backed tool in this toolset
 		// requires an adapter for payload or result mapping (i.e., the tool
@@ -306,15 +306,15 @@ type (
 	}
 
 	// MCPToolsetMeta captures the information required to register an external MCP
-	// suite with the runtime from within an agent package. It records the helper
+	// toolset with the runtime from within an agent package. It records the helper
 	// import path, alias, and function name emitted by the MCP plugin as well as
 	// the canonical toolset identifier.
 	MCPToolsetMeta struct {
-		// ServiceName is the Goa service that declared the MCP suite.
+		// ServiceName is the Goa service that declared the MCP server/toolset.
 		ServiceName string
-		// SuiteName is the MCP suite identifier provided in the service DSL.
+		// SuiteName is the MCP server/toolset identifier provided in the service DSL.
 		SuiteName string
-		// QualifiedName is the canonical toolset identifier (suite name).
+		// QualifiedName is the canonical toolset identifier (server/toolset name).
 		QualifiedName string
 		// HelperImportPath is the Go import path for the generated register helper.
 		HelperImportPath string
@@ -442,6 +442,13 @@ type (
 
 		// InjectedFields contains the names of fields marked for injection via DSL.
 		InjectedFields []string
+
+		// PassthroughService is the Goa service name for deterministic forwarding
+		// when this tool is part of an exported toolset.
+		PassthroughService string
+		// PassthroughMethod is the Goa method name for deterministic forwarding
+		// when this tool is part of an exported toolset.
+		PassthroughMethod string
 	}
 
 	// RuntimeData contains the workflow and activity artifacts generated for an agent,
@@ -862,18 +869,22 @@ func newAgentData(
 		})
 	}
 
-	// Populate methods
-	for _, m := range agentExpr.Methods {
-		md := &MethodData{
-			Name: m.Name,
-		}
-		if m.Passthrough != nil {
-			md.Passthrough = &PassthroughData{
-				Toolset: m.Passthrough.Toolset,
-				Tool:    m.Passthrough.Tool,
+	// Populate methods from exported tools. Each exported tool becomes a method
+	// entry keyed by its tool name. Passthrough metadata, when present, marks
+	// deterministic forwarding to a Goa service method.
+	for _, ts := range agent.ExportedToolsets {
+		for _, t := range ts.Tools {
+			md := &MethodData{
+				Name: t.Name,
 			}
+			if t.PassthroughService != "" && t.PassthroughMethod != "" {
+				md.Passthrough = &PassthroughData{
+					Service: t.PassthroughService,
+					Method:  t.PassthroughMethod,
+				}
+			}
+			agent.Methods = append(agent.Methods, md)
 		}
-		agent.Methods = append(agent.Methods, md)
 	}
 
 	return agent
@@ -1008,8 +1019,8 @@ func newToolsetData(
 	}
 
 	if expr.External {
-		if expr.MCPSuite != "" {
-			ts.Name = expr.MCPSuite
+		if expr.MCPToolset != "" {
+			ts.Name = expr.MCPToolset
 		}
 		if expr.MCPService != "" {
 			ts.SourceServiceName = expr.MCPService
@@ -1018,12 +1029,12 @@ func newToolsetData(
 		helperImport := path.Join(agent.Genpkg, helperPkg)
 		helperAlias := "mcp" + codegen.Goify(expr.MCPService, false)
 		helperFunc := fmt.Sprintf("Register%s%sToolset",
-			codegen.Goify(expr.MCPService, true), codegen.Goify(expr.MCPSuite, true))
+			codegen.Goify(expr.MCPService, true), codegen.Goify(expr.MCPToolset, true))
 		constName := fmt.Sprintf("%s%s%sToolsetID",
-			agent.GoName, codegen.Goify(expr.MCPService, true), codegen.Goify(expr.MCPSuite, true))
+			agent.GoName, codegen.Goify(expr.MCPService, true), codegen.Goify(expr.MCPToolset, true))
 		ts.MCP = &MCPToolsetMeta{
 			ServiceName:      expr.MCPService,
-			SuiteName:        expr.MCPSuite,
+			SuiteName:        expr.MCPToolset,
 			QualifiedName:    ts.QualifiedName,
 			HelperImportPath: helperImport,
 			HelperAlias:      helperAlias,
@@ -1107,6 +1118,10 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		CallHintTemplate:   expr.CallHintTemplate,
 		ResultHintTemplate: expr.ResultHintTemplate,
 		InjectedFields:     expr.InjectedFields,
+	}
+	if expr.ExportPassthrough != nil {
+		tool.PassthroughService = expr.ExportPassthrough.TargetService
+		tool.PassthroughMethod = expr.ExportPassthrough.TargetMethod
 	}
 	if expr.Method == nil {
 		return tool

@@ -35,27 +35,25 @@ var DocsToolset = agentsdsl.Toolset("docs.search", func() {
 	})
 })
 
+var AssistantSuite = agentsdsl.MCPToolset("assistant", "assistant-mcp")
+
 var _ = Service("orchestrator", func() {
 	Description("Human front door for the knowledge agent.")
 
-        agentsdsl.Agent("chat", "Conversational runner", func() {
-		agentsdsl.Uses(func() {
-			agentsdsl.Toolset(DocsToolset)
-			agentsdsl.UseMCPToolset("assistant", "assistant-mcp")
-		})
-		agentsdsl.Exports(func() {
-			agentsdsl.Toolset("chat.tools", func() {
-				agentsdsl.Tool("summarize_status", "Produce operator-ready summaries", func() {
-					agentsdsl.Args(func() {
-						Attribute("prompt", String, "User instructions")
-						Required("prompt")
-					})
-					agentsdsl.Return(func() {
-						Attribute("summary", String, "Assistant response")
-						Required("summary")
-					})
-					agentsdsl.Tags("chat")
+	agentsdsl.Agent("chat", "Conversational runner", func() {
+		agentsdsl.Use(DocsToolset)
+		agentsdsl.Use(AssistantSuite)
+		agentsdsl.Export("chat.tools", func() {
+			agentsdsl.Tool("summarize_status", "Produce operator-ready summaries", func() {
+				agentsdsl.Args(func() {
+					Attribute("prompt", String, "User instructions")
+					Required("prompt")
 				})
+				agentsdsl.Return(func() {
+					Attribute("summary", String, "Assistant response")
+					Required("summary")
+				})
+				agentsdsl.Tags("chat")
 			})
 		})
 		agentsdsl.RunPolicy(func() {
@@ -74,7 +72,7 @@ Running `goa gen example.com/assistant/design` now produces:
 - `gen/orchestrator/agents/chat`: workflow + planner activities + agent registry.
 - `gen/orchestrator/agents/chat/tool_specs`: payload/result structs, JSON codecs, tool schemas.
 - `gen/orchestrator/agents/chat/agenttools`: helpers that expose exported tools to other agents.
-- `features/mcp`-aware registration helpers when `UseMCPToolset` is invoked.
+- `features/mcp`-aware registration helpers when an `MCPToolset` is referenced via `Use`.
 
 Each per-toolset specs package also defines typed tool identifiers (tools.Ident)
 for every generated tool and uses those constants inside the exported `Specs`
@@ -115,10 +113,10 @@ This yields a single deterministic workflow and a single stream of `tool_start` 
 | Function | Location | Context | Purpose |
 |----------|----------|---------|---------|
 | `Agent(name, description, dsl)` | `dsl/agent.go` | Inside `Service` | Declares an agent, its tool usage/exports, and run policy. |
-| `Uses(dsl)` | `dsl/agent.go` | Inside `Agent` | Describes toolsets the agent consumes. |
-| `Exports(dsl)` | `dsl/agent.go` | Inside `Agent` | Declares toolsets exposed to other agents. |
-| `Toolset(nameOrExpr, dsl)` | `dsl/toolset.go` | Top-level or inside `Uses` / `Exports` | Defines or references a set of tools. |
-| `UseMCPToolset(service, suite)` | `dsl/toolset.go` | Inside `Uses` | Pulls in a toolset that originated from a Goa-declared MCP server. |
+| `Use(value, dsl)` | `dsl/agent.go` | Inside `Agent` | Declares that an agent consumes a toolset (inline or by reference). |
+| `Export(value, dsl)` | `dsl/agent.go` | Inside `Agent`/`Service` | Declares toolsets exposed to other agents or services. |
+| `Toolset(name, dsl)` | `dsl/toolset.go` | Top-level | Defines a provider-owned toolset (reusable across agents). |
+| `MCPToolset(service, suite, dsl...)` | `dsl/toolset.go` | Top-level | Declares a provider MCP suite that agents reference via `Use`. |
 | `Tool(name, description, dsl)` | `agents/dsl/toolset.go` | Inside `Toolset` | Defines a tool (arguments, result, metadata). |
 | `Args(...)`, `Return(...)` | `agents/dsl/toolset.go` | Inside `Tool` | Define payload/result types using the standard Goa attribute DSL. |
 | `Tags(values...)` | `agents/dsl/toolset.go` | Inside `Tool` | Annotates tools with metadata tags. |
@@ -129,9 +127,9 @@ This yields a single deterministic workflow and a single stream of `tool_start` 
 | `InterruptsAllowed(bool)` | `agents/dsl/policy.go` | Inside `RunPolicy` | Enables run interruption handling. |
 | `DisableAgentDocs()` | `agents/dsl/docs.go` | Inside `API` | Disables generation of `AGENTS_QUICKSTART.md` at the module root. |
 
-### Agent, Uses, and Exports
+### Agent, Use, and Export
 
-`Agent` records the service-scoped agent metadata (name, description, owning service) and attaches toolset groups via `Uses` and `Exports`. Each agent becomes a runtime registration with:
+`Agent` records the service-scoped agent metadata (name, description, owning service) and attaches toolsets via `Use` and `Export`. Each agent becomes a runtime registration with:
 
 - A workflow definition and Temporal activity handlers.
 - PlanStart/PlanResume activities with DSL-derived retry/timeout options.
@@ -139,11 +137,11 @@ This yields a single deterministic workflow and a single stream of `tool_start` 
 
 ### Toolset
 
-`Toolset` either declares a new toolset (`Toolset("name", func(){...})`) or references a previously declared toolset (`Toolset(SharedToolsetExpr)`). When declared at top level, the toolset becomes globally reusable; when declared inside `Exports`, it will be published as agent tools via generated helpers (`agenttools` package). Toolsets can carry multiple tools, each with payload/result schemas, helper prompts, and metadata tags.
+`Toolset` declares a provider-owned toolset (`Toolset("name", func(){...})`). When declared at top level, the toolset becomes globally reusable; agents reference it via `Use` and services can expose it via `Export`. Toolsets can carry multiple tools, each with payload/result schemas, helper prompts, and metadata tags.
 
-### UseMCPToolset
+### MCPToolset
 
-`UseMCPToolset(service, suite)` injects an MCP-defined toolset into the current agent’s `Uses` block. During code generation the DSL is resolved to the service-level MCP metadata, and the agent package automatically imports the generated helper (`Register<Service><Suite>Toolset`) and exposes an `MCPCallers` map in the agent config. At runtime:
+`MCPToolset(service, suite)` declares an MCP-defined toolset that agents reference via `Use(MCPToolset(...))`. During code generation the DSL is resolved to the service-level MCP metadata, and the agent package automatically imports the generated helper (`Register<Service><Suite>Toolset`) and exposes an `MCPCallers` map in the agent config. At runtime:
 
 1. Application code instantiates an `mcpruntime.Caller` (HTTP, SSE, stdio, or the Goa-generated JSON-RPC caller) and stores it under the toolset ID constant (e.g., `ChatAgentAssistantAssistantMcpToolsetID`).
 2. The agent registry automatically invokes the generated helper for each configured caller, registering the MCP suite with the runtime.
@@ -287,7 +285,7 @@ _ = out // *runtime.RunOutput
 ## MCP Bridge Workflow
 
 1. **Service design**: declare the MCP server via Goa’s MCP DSL (unchanged from legacy goa-ai). This records tool/resource/prompt metadata.
-2. **Agent design**: reference that suite with `UseMCPToolset("service", "suite")`.
+2. **Agent design**: reference that suite with `Use(MCPToolset("service", "suite"))`.
 3. **Code generation**: produces both the classic MCP JSON-RPC server (optional) and the runtime registration helper, plus tool codecs/specs mirrored into the agent package.
 4. **Runtime wiring**: instantiate an `mcpruntime.Caller` transport (HTTP/SSE/stdio). Generated helpers register the toolset and adapt JSON-RPC errors into `planner.RetryHint` values.
 5. **Planner execution**: planners simply enqueue tool calls; the runtime automatically encodes payloads, invokes the MCP caller, persists results via hooks, and surfaces structured telemetry.
@@ -342,13 +340,11 @@ Service("svc", func() {
     })
 
     Agent("a", "", func() {
-        Uses(func() {
-            Toolset("ts", func() {
-                Tool("search", "", func() {
-                    Args(SearchPayload)      // aliases method payload
-                    Return(SearchResult)     // aliases method result
-                    BindTo("svc", "Search")
-                })
+        Use("ts", func() {
+            Tool("search", "", func() {
+                Args(SearchPayload)      // aliases method payload
+                Return(SearchResult)     // aliases method result
+                BindTo("svc", "Search")
             })
         })
     })

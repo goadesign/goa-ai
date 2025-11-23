@@ -701,10 +701,14 @@ func (b *toolSpecBuilder) materialize(typeName string, att *goaexpr.AttributeExp
 			fullRef = typeName
 		} else {
 			// Service-local user type: alias to its underlying composite/value
-			// without qualifying with the service package. Nested user types
+			// without qualifying with the service package. For tool aliases we
+			// materialize a local struct where fields carry json struct tags
+			// that mirror the original field names so that encoding/json
+			// produces payloads consistent with the tool schema even when the
+			// design did not set explicit JSON struct tags. Nested user types
 			// referenced by the composite are materialized locally by
 			// ensureNestedLocalTypes.
-			rhs := scope.GoTypeDef(dt.Attribute(), false, true)
+			rhs := scope.GoTypeDef(cloneWithJSONTags(dt.Attribute()), false, true)
 			defLine = typeName + " = " + rhs
 			fullRef = typeName
 		}
@@ -767,7 +771,7 @@ func (b *toolSpecBuilder) materialize(typeName string, att *goaexpr.AttributeExp
 		// service package qualification so nested service user types are
 		// referenced locally. Do not apply default-based pointer elision here so
 		// validation pointer semantics stay aligned with generated field types.
-		rhs := scope.GoTypeDef(att, false, false)
+		rhs := scope.GoTypeDef(cloneWithJSONTags(att), false, false)
 		defLine = typeName + " = " + rhs
 		fullRef = typeName
 	default:

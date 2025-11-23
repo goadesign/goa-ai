@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
@@ -562,13 +563,40 @@ func encodeTools(ctx context.Context, defs []*model.ToolDefinition, choice *mode
 // the Bedrock constraint [a-zA-Z0-9_-]+ by replacing any disallowed rune with
 // '_'. The mapping must be reversible within a single request; callers rely on
 // encodeTools to build a collision-free sanitized → canonical name map.
+//
+// Canonical tool identifiers follow the pattern "toolset.tool". To keep tool
+// names concise and avoid redundant prefixes in provider-facing configs, this
+// helper derives the base name from the segment after the final '.' and, when
+// present, strips a "<toolset_suffix>_" prefix. For example:
+//
+//   - "ada.get_application_status"          → "get_application_status"
+//   - "atlas.read.chat.chat_get_user_details" → "get_user_details"
+//   - "chat.emit.ask_clarifying_question"  → "ask_clarifying_question"
 func sanitizeToolName(in string) string {
 	if in == "" {
 		return in
 	}
+	// Derive base name from the final segment (after the last '.').
+	base := in
+	if idx := strings.LastIndex(in, "."); idx >= 0 && idx+1 < len(in) {
+		base = in[idx+1:]
+
+		// When the tool name is prefixed with the last toolset segment plus "_",
+		// drop that redundant prefix. This turns patterns like
+		// "atlas.read.chat.chat_get_user_details" into "get_user_details".
+		if idx > 0 {
+			if lastDot := strings.LastIndex(in[:idx], "."); lastDot >= 0 && lastDot+1 < idx {
+				toolsetSuffix := in[lastDot+1 : idx]
+				prefix := toolsetSuffix + "_"
+				if strings.HasPrefix(base, prefix) && len(base) > len(prefix) {
+					base = base[len(prefix):]
+				}
+			}
+		}
+	}
 	// Fast path: if all runes are allowed, return as-is.
 	allowed := true
-	for _, r := range in {
+	for _, r := range base {
 		if (r >= 'a' && r <= 'z') ||
 			(r >= 'A' && r <= 'Z') ||
 			(r >= '0' && r <= '9') ||
@@ -579,10 +607,10 @@ func sanitizeToolName(in string) string {
 		break
 	}
 	if allowed {
-		return in
+		return base
 	}
-	out := make([]rune, 0, len(in))
-	for _, r := range in {
+	out := make([]rune, 0, len(base))
+	for _, r := range base {
 		if (r >= 'a' && r <= 'z') ||
 			(r >= 'A' && r <= 'Z') ||
 			(r >= '0' && r <= '9') ||
@@ -636,10 +664,15 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 				payload := decodeDocument(v.Value.Input)
 				name := ""
 				if v.Value.Name != nil {
-					name = *v.Value.Name
-					if canonical, ok := nameMap[name]; ok {
-						name = canonical
+					raw := *v.Value.Name
+					canonical, ok := nameMap[raw]
+					if !ok {
+						return model.Response{}, fmt.Errorf(
+							"bedrock: tool name %q not in reverse map; expected canonical tool ID",
+							raw,
+						)
 					}
+					name = canonical
 				}
 				var id string
 				if v.Value.ToolUseId != nil {
@@ -660,7 +693,7 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 	return resp, nil
 }
 
-func decodeDocument(doc document.Interface) any {
+func decodeDocument(doc document.Interface) json.RawMessage {
 	if doc == nil {
 		return nil
 	}
@@ -668,11 +701,10 @@ func decodeDocument(doc document.Interface) any {
 	if err != nil {
 		return nil
 	}
-	var value any
-	if err := json.Unmarshal(data, &value); err != nil {
+	if len(data) == 0 {
 		return nil
 	}
-	return value
+	return json.RawMessage(data)
 }
 
 func ptrValue[T ~int32 | ~int64](ptr *T) T {

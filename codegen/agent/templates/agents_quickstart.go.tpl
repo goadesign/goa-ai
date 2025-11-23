@@ -294,7 +294,7 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
 
 #### Connecting to Remote Services (MCP)
 
-If your agent uses tools from another service via MCP (`UseMCPToolset`):
+If your agent uses tools from another service via MCP (`Use(MCPToolset(...))`):
 
 1.  Get the generated Goa client for the remote service.
 2.  Wrap it in an `mcpruntime.Caller`.

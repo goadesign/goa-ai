@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"goa.design/goa-ai/codegen/agent"
+	codegen "goa.design/goa-ai/codegen/agent"
 	. "goa.design/goa-ai/dsl"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	goadsl "goa.design/goa/v3/dsl"
@@ -38,13 +38,11 @@ func TestToolSpecsDeterministicTypeRefs(t *testing.T) {
 
 		goadsl.Service("alpha", func() {
 			Agent("scribe", "Doc helper", func() {
-				Uses(func() {
-					Toolset("summarize", func() {
-						Tool("summarize_doc", "Summarize a document", func() {
-							// Use the service user type directly as top-level args and result.
-							Args(Doc)
-							Return(Doc)
-						})
+				Use("summarize", func() {
+					Tool("summarize_doc", "Summarize a document", func() {
+						// Use the service user type directly as top-level args and result.
+						Args(Doc)
+						Return(Doc)
 					})
 				})
 			})
@@ -95,12 +93,10 @@ func TestToolSchemasJSONEmitted(t *testing.T) {
 
 		goadsl.Service("orchestrator", func() {
 			Agent("chat", "Friendly Q&A agent", func() {
-				Uses(func() {
-					Toolset("helpers", func() {
-						Tool("answer", "Answer a simple question", func() {
-							Args(Ask)
-							Return(Answer)
-						})
+				Use("helpers", func() {
+					Tool("answer", "Answer a simple question", func() {
+						Args(Ask)
+						Return(Answer)
 					})
 				})
 			})
@@ -187,13 +183,11 @@ func TestServiceToolsetCrossServiceBindTo(t *testing.T) {
 		// Service A hosts the agent that binds to bravo.Lookup.
 		goadsl.Service("alpha", func() {
 			Agent("scribe", "Doc helper", func() {
-				Uses(func() {
-					Toolset("lookup", func() {
-						Tool("by_id", "Lookup by ID", func() {
-							Args(goadsl.String)
-							Return(goadsl.Boolean)
-							BindTo("bravo", "Lookup")
-						})
+				Use("lookup", func() {
+					Tool("by_id", "Lookup by ID", func() {
+						Args(goadsl.String)
+						Return(goadsl.Boolean)
+						BindTo("bravo", "Lookup")
 					})
 				})
 			})

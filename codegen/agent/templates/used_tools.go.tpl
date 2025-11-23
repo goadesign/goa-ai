@@ -38,9 +38,18 @@ func WithToolCallID(id string) CallOption {
 {{- range .Toolset.Tools }}
 // New{{ goify .Name true }}Call builds a planner.ToolRequest for {{ .QualifiedName }}.
 func New{{ goify .Name true }}Call(args *{{ goify .Name true }}Payload, opts ...CallOption) planner.ToolRequest {
+    var payload []byte
+    if args != nil {
+        // Encode typed payloads into canonical JSON using the generated codec.
+        b, err := {{ goify .Name true }}PayloadCodec.ToJSON(args)
+        if err != nil {
+            panic(err)
+        }
+        payload = b
+    }
     req := planner.ToolRequest{
         Name:    {{ .ConstName }},
-        Payload: args,
+        Payload: payload,
     }
     for _, o := range opts {
         if o != nil {

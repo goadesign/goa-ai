@@ -5,6 +5,7 @@ package model
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -124,8 +125,12 @@ type (
 		// Name is the tool identifier requested by the model.
 		Name tools.Ident
 
-		// Payload is the arguments object supplied by the model.
-		Payload any
+		// Payload is the canonical JSON arguments supplied by the model.
+		//
+		// Provider adapters MUST populate this as a canonical json.RawMessage;
+		// planners and runtimes treat it as opaque JSON and rely on codecs for
+		// any schema-aware decoding.
+		Payload json.RawMessage
 
 		// ID is an optional provider-issued identifier for the tool call.
 		ID string

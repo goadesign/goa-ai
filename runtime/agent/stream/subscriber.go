@@ -138,6 +138,8 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		})
 	case *hooks.ThinkingBlockEvent:
 		// Map structured thinking block to PlannerThought with enriched payload.
+		// Text/Signature/Redacted always carry the provider-issued block for
+		// ledger and replay. Note is reserved for streaming deltas only.
 		payload := PlannerThoughtPayload{
 			Text:         evt.Text,
 			Signature:    evt.Signature,
@@ -145,9 +147,10 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			ContentIndex: evt.ContentIndex,
 			Final:        evt.Final,
 		}
-		// For back-compat, mirror plaintext into Note when present.
-		if payload.Text != "" {
-			payload.Note = payload.Text
+		// Emit Note only for non-final deltas so UIs can append incremental
+		// reasoning without duplicating the final aggregated block.
+		if !evt.Final && evt.Text != "" {
+			payload.Note = evt.Text
 		}
 		return s.sink.Send(ctx, PlannerThought{
 			Base: Base{t: EventPlannerThought, r: evt.RunID(), p: payload},

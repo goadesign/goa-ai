@@ -8,193 +8,134 @@ import (
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 )
 
-// Toolset defines a group of related tools that agents can invoke. Toolsets provide
-// logical packaging for capability exposure and enable tool reuse across multiple agents.
-// Tools are bound to service method implementations at runtime.
+// Toolset defines a provider-owned group of related tools. Declare toolsets at
+// the top level using Toolset(...) and reference them from agents via
+// Use / Export.
 //
-// Toolset has three distinct usage patterns:
+// Tools declared inside a Toolset may be:
 //
-// 1. Global Toolset (top-level declaration):
+//   - Bound to Goa service methods via BindTo, in which case codegen emits
+//     transforms and client helpers.
+//   - Backed by MCP tools declared with the MCP DSL (MCPServer + MCPTool) and
+//     exposed via MCPToolset(...).
+//   - Implemented by custom executors or agent logic when left unbound.
 //
-// Declare a toolset outside any agent or service to create a reusable set of tools
-// that multiple agents can consume. Global toolsets are stored as design-time
-// expressions and must be explicitly referenced by agents that use them.
+// Toolset accepts a single form:
+//
+//   - Toolset("name", func()) declares a new toolset with the given name and tools.
+//
+// Example (provider toolset definition):
 //
 //	var CommonTools = Toolset("common", func() {
 //	    Tool("notify", "Send notification", func() {
-//	        // Tool implementation here
-//	    })
-//	})
-//
-// 2. Agent Export (inside agent Exports):
-//
-// Declare a toolset that this agent provides for other agents to consume. Export
-// toolsets define the agent's public API.
-//
-//	Agent("docs", "Document processor", func() {
-//	    Exports(func() {
-//	        Toolset("document-tools", func() {
-//	            Tool("summarize", "Summarize document", func() {
-//	                // Tool implementation here
-//	            })
+//	        Args(func() {
+//	            Attribute("message", String, "Message to send")
+//	            Required("message")
 //	        })
 //	    })
 //	})
 //
-// 3. Agent Reference (inside agent Uses):
-//
-// Reference an existing global toolset or another agent's export. Pass the toolset
-// expression (not the name) to indicate which toolset this agent consumes.
+// Agents consume this toolset via Use:
 //
 //	Agent("assistant", "helper", func() {
-//	    Uses(func() {
-//	        Toolset(CommonTools) // reference global toolset by expression
+//	    Use(CommonTools, func() {
+//	        Tool("notify") // reference existing tool by name
 //	    })
 //	})
 //
-// Toolset accepts two forms:
-//
-// - Toolset("name", func()) - declares a new toolset with the given name and tools
-// - Toolset(existingToolset) - references an existing toolset expression
-//
-// The DSL function for new toolsets supports:
-//   - Tool("name", "description", func()) - declare tools with Args, Return, Tags
-//
-// Complete example showing global toolset declaration and reuse:
-//
-//	// 1. Declare global toolset at top level
-//	var SharedTools = Toolset("shared", func() {
-//	    Tool("log", "Log a message", func() {
-//	        Args(func() {
-//	            Attribute("level", String, "Log level")
-//	            Attribute("message", String, "Log message")
-//	            Required("level", "message")
-//	        })
-//	    })
-//	})
-//
-//	// 2. Multiple agents reference the same toolset
-//	Service("operations", func() {
-//	    Agent("monitor", "System monitor", func() {
-//	        Uses(func() {
-//	            Toolset(SharedTools)  // First agent uses it
-//	        })
-//	    })
-//	    Agent("analyzer", "Log analyzer", func() {
-//	        Uses(func() {
-//	            Toolset(SharedTools)  // Second agent uses it
-//	        })
-//	    })
-//	})
-//
-// Note: For external MCP toolsets, use MCPToolset() instead of Toolset().
-func Toolset(value any, fn ...func()) *agentsexpr.ToolsetExpr {
+// For MCP-backed toolsets, define MCP tools on service methods using the MCP DSL
+// (see mcp.go), declare a provider with MCPToolset(...), then attach it to agents
+// via Use(MCPToolset(...), ...).
+func Toolset(name string, fn ...func()) *agentsexpr.ToolsetExpr {
+	if name == "" {
+		eval.ReportError("toolset name must be non-empty")
+		return nil
+	}
 	var dsl func()
 	if len(fn) > 0 {
 		dsl = fn[0]
 	}
-	switch cur := eval.Current().(type) {
-	case eval.TopExpr:
-		ts := buildToolsetExpr(value, dsl, nil)
-		if ts == nil {
-			return nil
-		}
-		if ts.Agent != nil {
-			// Top-level toolsets should not capture an agent.
-			ts.Agent = nil
-		}
-		agentsexpr.Root.Toolsets = append(agentsexpr.Root.Toolsets, ts)
-		return ts
-	case *agentsexpr.ToolsetGroupExpr:
-		ts := buildToolsetExpr(value, dsl, cur.Agent)
-		if ts == nil {
-			return nil
-		}
-		cur.Toolsets = append(cur.Toolsets, ts)
-		return ts
-	case *agentsexpr.ServiceExportsExpr:
-		ts := buildToolsetExpr(value, dsl, nil)
-		if ts == nil {
-			return nil
-		}
-		cur.Toolsets = append(cur.Toolsets, ts)
-		return ts
-	default:
+	if _, ok := eval.Current().(eval.TopExpr); !ok {
 		eval.IncompatibleDSL()
 		return nil
 	}
+	ts := newToolsetDefinition(name, dsl)
+	agentsexpr.Root.Toolsets = append(agentsexpr.Root.Toolsets, ts)
+	return ts
 }
 
-// MCPToolset declares an external MCP toolset that an agent consumes. It must be
-// used inside an agent's Uses expression. MCPToolset supports two forms:
+// MCPToolset declares a provider-owned MCP toolset derived from a Goa MCP
+// server. It is a top-level construct (like Toolset) that returns a
+// ToolsetExpr; agents then consume it via Use.
 //
-//  1. Reference a Goa-backed MCP service defined in the same design:
-//     MCPToolset(service, suite) - tools are discovered from the service's MCP declaration
+// MCPToolset takes:
+//   - service: Goa service name that owns the MCPServer(...)
+//   - toolset: MCP server name; this also becomes the toolset name
 //
-//  2. Declare an external MCP server with inline tool schemas:
-//     MCPToolset(service, suite, func() { Tool(...) }) - tools must be declared explicitly
+// There are two usage patterns:
 //
-// For Goa-backed MCP, the service and suite must match an MCP server declared via
-// the MCP DSL on a Goa service. Tool schemas are automatically extracted from the
-// service methods.
+//  1. Goa-backed MCP server defined in the same design:
 //
-// For external MCP servers (not defined in this design), provide a DSL function
-// that declares the tools using Tool(). The runtime will require an mcpruntime.Caller
-// configured to communicate with the external server.
+//     Service("assistant", func() {
+//     MCPServer("assistant", "1.0.0")
+//     Method("search", func() {
+//     Payload(...)
+//     Result(...)
+//     MCPTool("search", "Search documents")
+//     })
+//     })
 //
-// Example (Goa-backed MCP):
+//     var AssistantSuite = MCPToolset("assistant", "assistant-mcp")
 //
-//	Agent("assistant", "Helper agent", func() {
-//	    Uses(func() {
-//	        MCPToolset("calc", "core")  // References calc service's "core" MCP suite
-//	    })
-//	})
+//     Agent("chat", "LLM planner", func() {
+//     Use(AssistantSuite)
+//     })
 //
-// Example (external MCP with inline tools):
+//     In this form, tool schemas are discovered from the service's MCPTool
+//     declarations.
 //
-//	Agent("assistant", "Helper agent", func() {
-//	    Uses(func() {
-//	        MCPToolset("remote", "search", func() {
-//	            Tool("web_search", "Search the web", func() {
-//	                Args(func() { Attribute("query", String) })
-//	                Return(func() { Attribute("results", ArrayOf(String)) })
-//	            })
-//	        })
-//	    })
-//	})
-func MCPToolset(service, suite string, dsl ...func()) *agentsexpr.ToolsetExpr {
-	var dslFunc func()
-	if len(dsl) > 0 {
-		dslFunc = dsl[0]
-	}
-	group, ok := eval.Current().(*agentsexpr.ToolsetGroupExpr)
-	if !ok {
-		eval.IncompatibleDSL()
-		return nil
-	}
+//  2. External MCP server with inline tool schemas:
+//
+//     var RemoteSearch = MCPToolset("remote", "search", func() {
+//     Tool("web_search", "Search the web", func() {
+//     Args(func() { Attribute("query", String) })
+//     Return(func() { Attribute("results", ArrayOf(String)) })
+//     })
+//     })
+//
+//     Agent("helper", "", func() {
+//     Use(RemoteSearch)
+//     })
+//
+//     In this form, tools must be declared explicitly. At runtime, an
+//     mcpruntime.Caller must be configured for the toolset ID so the agent
+//     can reach the external MCP server.
+func MCPToolset(service, toolset string, fn ...func()) *agentsexpr.ToolsetExpr {
 	if service == "" {
 		eval.ReportError("MCPToolset requires non-empty service name")
 		return nil
 	}
-	if suite == "" {
-		eval.ReportError("MCPToolset requires non-empty suite name")
+	if toolset == "" {
+		eval.ReportError("MCPToolset requires non-empty toolset name")
+		return nil
+	}
+	var dsl func()
+	if len(fn) > 0 {
+		dsl = fn[0]
+	}
+	if _, ok := eval.Current().(eval.TopExpr); !ok {
+		eval.IncompatibleDSL()
 		return nil
 	}
 	ts := &agentsexpr.ToolsetExpr{
-		Name:       suite,
-		Agent:      group.Agent,
+		Name:       toolset,
+		DSLFunc:    dsl,
 		External:   true,
 		MCPService: service,
-		MCPSuite:   suite,
-		DSLFunc:    dslFunc,
+		MCPToolset: toolset,
 	}
-	group.Toolsets = append(group.Toolsets, ts)
+	agentsexpr.Root.Toolsets = append(agentsexpr.Root.Toolsets, ts)
 	return ts
-}
-
-// UseMCPToolset is a compatibility alias for MCPToolset. Prefer MCPToolset.
-func UseMCPToolset(service, suite string, dsl ...func()) *agentsexpr.ToolsetExpr {
-	return MCPToolset(service, suite, dsl...)
 }
 
 // Tool declares a tool for agents or MCP servers. It has two distinct use cases:
@@ -237,15 +178,15 @@ func UseMCPToolset(service, suite string, dsl ...func()) *agentsexpr.ToolsetExpr
 //
 // Example (external MCP tool with inline schemas):
 //
-//	Agent("helper", "", func() {
-//	    Uses(func() {
-//	        MCPToolset("remote", "search", func() {
-//	            Tool("web_search", "Search the web", func() {
-//	                Args(func() { Attribute("query", String) })
-//	                Return(func() { Attribute("results", ArrayOf(String)) })
-//	            })
-//	        })
+//	var RemoteSearch = MCPToolset("remote", "search", func() {
+//	    Tool("web_search", "Search the web", func() {
+//	        Args(func() { Attribute("query", String) })
+//	        Return(func() { Attribute("results", ArrayOf(String)) })
 //	    })
+//	})
+//
+//	Agent("helper", "", func() {
+//	    Use(RemoteSearch)
 //	})
 //
 // Example (service-backed tool with inheritance):
@@ -563,21 +504,19 @@ func ToolsetDescription(s string) {
 // Example (bind to method in same service):
 //
 //	Service("docs", func() {
-//	    Method("search_documents", func() {
-//	        Payload(func() { ... })
-//	        Result(func() { ... })
-//	    })
-//	    Agent("assistant", "Helper", func() {
-//	        Uses(func() {
-//	            Toolset("doc-tools", func() {
-//	                Tool("search", "Search documents", func() {
-//	                    Args(func() { ... })  // Can differ from method payload
-//	                    Return(func() { ... }) // Can differ from method result
-//	                    BindTo("search_documents")
-//	                })
-//	            })
-//	        })
-//	    })
+//		Method("search_documents", func() {
+//			Payload(func() { ... })
+//			Result(func() { ... })
+//		})
+//		Agent("assistant", "Helper", func() {
+//			Use("doc-tools", func() {
+//				Tool("search", "Search documents", func() {
+//					Args(func() { ... })  // Can differ from method payload
+//					Return(func() { ... }) // Can differ from method result
+//					BindTo("search_documents")
+//				})
+//			})
+//		})
 //	})
 //
 // Example (bind to method in different service):
@@ -665,33 +604,58 @@ func ToolTitle(s string) {
 }
 
 // buildToolsetExpr constructs a ToolsetExpr from a value and DSL function.
-func buildToolsetExpr(value any, dsl func(), agent *agentsexpr.AgentExpr) *agentsexpr.ToolsetExpr {
+func newToolsetDefinition(name string, dsl func()) *agentsexpr.ToolsetExpr {
+	return &agentsexpr.ToolsetExpr{
+		Name:    name,
+		DSLFunc: dsl,
+	}
+}
+
+func cloneToolset(origin *agentsexpr.ToolsetExpr, agent *agentsexpr.AgentExpr, overlay func()) *agentsexpr.ToolsetExpr {
+	if origin == nil {
+		eval.ReportError("toolset reference cannot be nil")
+		return nil
+	}
+	dup := &agentsexpr.ToolsetExpr{
+		Name:        origin.Name,
+		Description: origin.Description,
+		Tags:        append([]string(nil), origin.Tags...),
+		Agent:       agent,
+		External:    origin.External,
+		MCPService:  origin.MCPService,
+		MCPToolset:  origin.MCPToolset,
+		Origin:      origin,
+	}
+	switch {
+	case origin.DSLFunc != nil && overlay != nil:
+		dup.DSLFunc = func() {
+			origin.DSLFunc()
+			overlay()
+		}
+	case overlay != nil:
+		dup.DSLFunc = overlay
+	default:
+		dup.DSLFunc = origin.DSLFunc
+	}
+	return dup
+}
+
+func instantiateToolset(value any, overlay func(), agent *agentsexpr.AgentExpr) *agentsexpr.ToolsetExpr {
 	switch v := value.(type) {
 	case string:
 		if v == "" {
-			eval.ReportError("toolset name cannot be empty")
+			eval.ReportError("toolset name must be non-empty")
 			return nil
 		}
 		return &agentsexpr.ToolsetExpr{
 			Name:    v,
-			DSLFunc: dsl,
+			DSLFunc: overlay,
 			Agent:   agent,
 		}
 	case *agentsexpr.ToolsetExpr:
-		if dsl != nil {
-			eval.ReportError("toolset reference cannot include DSL overrides")
-			return nil
-		}
-		dup := &agentsexpr.ToolsetExpr{
-			Name:        v.Name,
-			Description: v.Description,
-			DSLFunc:     v.DSLFunc,
-			Agent:       agent,
-			Origin:      v,
-		}
-		return dup
+		return cloneToolset(v, agent, overlay)
 	default:
-		eval.ReportError("toolset must be declared with a name or an existing Toolset expression")
+		eval.ReportError("toolset must be referenced by name or Toolset expression")
 		return nil
 	}
 }
@@ -720,11 +684,6 @@ func buildToolsetExpr(value any, dsl func(), agent *agentsexpr.AgentExpr) *agent
 // inferred during validation and will classify this as a RemoteAgent provider
 // when the owner service differs from the consumer service.
 func AgentToolset(service, agent, toolset string) *agentsexpr.ToolsetExpr {
-	group, ok := eval.Current().(*agentsexpr.ToolsetGroupExpr)
-	if !ok {
-		eval.IncompatibleDSL()
-		return nil
-	}
 	if service == "" || agent == "" || toolset == "" {
 		eval.ReportError("AgentToolset requires non-empty service, agent, and toolset")
 		return nil
@@ -734,7 +693,6 @@ func AgentToolset(service, agent, toolset string) *agentsexpr.ToolsetExpr {
 		eval.ReportError("AgentToolset could not resolve service %q", service)
 		return nil
 	}
-	// Locate the exporting agent
 	var originAgent *agentsexpr.AgentExpr
 	for _, a := range agentsexpr.Root.Agents {
 		if a != nil && a.Service == svc && a.Name == agent {
@@ -746,34 +704,23 @@ func AgentToolset(service, agent, toolset string) *agentsexpr.ToolsetExpr {
 		eval.ReportError("AgentToolset could not find exported toolsets for %q.%q", service, agent)
 		return nil
 	}
-	// Find the exported toolset
-	var originTS *agentsexpr.ToolsetExpr
 	for _, ts := range originAgent.Exported.Toolsets {
 		if ts != nil && ts.Name == toolset {
-			originTS = ts
-			break
+			return ts
 		}
 	}
-	if originTS == nil {
-		eval.ReportError("AgentToolset could not resolve toolset %q exported by agent %q.%q", toolset, service, agent)
-		return nil
-	}
-	// Clone a local reference and record origin; assign to current agent group
-	dup := &agentsexpr.ToolsetExpr{
-		Name:        originTS.Name,
-		Description: originTS.Description,
-		DSLFunc:     originTS.DSLFunc,
-		Agent:       group.Agent,
-		Origin:      originTS,
-	}
-	group.Toolsets = append(group.Toolsets, dup)
-	return dup
+	eval.ReportError("AgentToolset could not resolve toolset %q exported by agent %q.%q", toolset, service, agent)
+	return nil
 }
 
 // UseAgentToolset is an alias for AgentToolset. Prefer AgentToolset in new
 // designs; this alias exists for readability in some codebases.
 func UseAgentToolset(service, agent, toolset string) *agentsexpr.ToolsetExpr {
-	return AgentToolset(service, agent, toolset)
+	ts := AgentToolset(service, agent, toolset)
+	if ts == nil {
+		return nil
+	}
+	return Use(ts)
 }
 
 // toolDSL mirrors Goa's method DSL helpers to define tool shapes.

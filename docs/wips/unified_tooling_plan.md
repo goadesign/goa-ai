@@ -219,7 +219,7 @@ This section will be mirrored into `docs/overview.md` and `docs/runtime.md` as p
 
 ### (A) Used toolsets — Service client (method-backed)
 - Create
-  - Declare `Uses(...)` in the agent DSL.
+  - Declare `Use(...)` in the agent DSL.
   - Codegen emits: aggregated `specs`, payload/result codecs, and typed call builders (planned) `New<Tool>Call(&Payload, ...opts)`.
   - Optionally enable the default service executor factory (planned) or supply your own `runtime.ToolCallExecutor`.
 - Register
@@ -236,7 +236,7 @@ This section will be mirrored into `docs/overview.md` and `docs/runtime.md` as p
 
 ### (B) Used toolsets — MCP-backed
 - Create
-  - Declare `Uses(...)` in the agent DSL.
+  - Declare `Use(...)` in the agent DSL.
   - Prepare an `mcpruntime.Caller` (stdio/HTTP SSE/JSON-RPC).
   - Codegen emits an MCP executor factory: `New<Agent><Toolset>MCPExecutor(caller)`.
 - Register
@@ -250,7 +250,7 @@ This section will be mirrored into `docs/overview.md` and `docs/runtime.md` as p
 
 ### (C) Agent-as-tool — Exports (inline agent execution)
 - Create
-  - Declare `Exports(...)` in the agent DSL.
+  - Declare `Export(...)` in the agent DSL.
   - Codegen emits: exported toolset package with type aliases, payload/result codecs, typed call builders `New<Tool>Call`, and registration helpers.
   - Optional per-tool content via `WithTemplate/WithText`; optional aggregation function; default JSON-only structured result enabled (planned).
 - Register

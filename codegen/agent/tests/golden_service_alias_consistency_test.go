@@ -22,12 +22,10 @@ func TestGolden_ServiceAlias_Consistency(t *testing.T) {
 
 		Service("atlas_data_agent", func() {
 			Agent("reader", "", func() {
-				Uses(func() {
-					Toolset("docs", func() {
-						Tool("read", "Read", func() {
-							Args(Doc)
-							Return(Doc)
-						})
+				Use("docs", func() {
+					Tool("read", "Read", func() {
+						Args(Doc)
+						Return(Doc)
 					})
 				})
 			})

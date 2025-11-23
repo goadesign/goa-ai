@@ -48,27 +48,26 @@ import (
     agentsdsl "goa.design/goa-ai/dsl"
 )
 
+var AtlasReadToolset = agentsdsl.Toolset("atlas.read", func() {
+    Tool("find_events", "Query recent Atlas events", func() {
+        Args(func() {
+            Attribute("query", String, "Search expression")
+            Required("query")
+        })
+        Return(func() {
+            Attribute("summary", String, "Natural language summary")
+        })
+    })
+})
+
+var AssistantSuite = agentsdsl.MCPToolset("assistant", "assistant-mcp")
+
 var _ = Service("orchestrator", func() {
     Description("Chat orchestrator")
 
-    agentsdsl.Agent("orchestrator.chat", func() {
-        Description("LLM-driven planner")
-
-        agentsdsl.Tools(func() {
-            Toolset("atlas.read", func() {
-                Tool("FindEvents", func() {
-                    Description("Query recent Atlas events")
-                    Args(func() {
-                        Attribute("query", String, "Search expression")
-                        Required("query")
-                    })
-                    Return(func() {
-                        Attribute("summary", String, "Natural language summary")
-                    })
-                })
-            })
-            agentsdsl.UseMCPToolset("assistant", "assistant-mcp")
-        })
+    agentsdsl.Agent("orchestrator.chat", "LLM-driven planner", func() {
+        agentsdsl.Use(AtlasReadToolset)
+        agentsdsl.Use(AssistantSuite)
 
         agentsdsl.RunPolicy(func() {
             MaxToolCalls(8)
@@ -322,13 +321,13 @@ Agent‑as‑Tool and external toolsets follow a simple rule: decode at the exec
   - Goa‑AI infers the provider automatically when exactly one agent in another service exports a toolset with the same name. In that case, the consumer advertises provider tool IDs and reuses provider specs.
   - If the toolset is owned by the same service/agent, it remains local.
 
-- `AgentToolset(service, agent, toolset)` (be explicit):
+- `Use(AgentToolset(service, agent, toolset))` (be explicit):
   - Use when you don’t have an expression handle, or there is ambiguity (multiple agents export the same toolset name), or you want explicitness.
   - This pins the provider (service/agent/toolset) in the design and avoids name ambiguity.
 
 ### MCP Toolsets
 
-- Use `MCPToolset(service, suite)` inside `Uses(...)` to depend on an MCP server.
+- Define MCP toolsets with `MCPToolset(service, suite)` at the provider service and reference them via `Use(MCPToolset(...))` inside consumer agents.
 - Generated registration sets `DecodeInExecutor=true` so raw JSON is passed through to the MCP executor, which decodes using its own codecs.
 
 ### Planner and Executors
@@ -343,8 +342,8 @@ Agent‑as‑Tool and external toolsets follow a simple rule: decode at the exec
 
 Agent‑as‑Tool and external toolsets follow a simple rule: decode at the executor, never in the planner/transport.
 
-- Use `MCPToolset(service, suite)` inside `Uses(...)` to depend on an MCP server.
-- For agent‑to‑agent calls, use `AgentToolset(service, agent, toolset)` inside `Uses(...)` to consume another agent’s exported toolset.
+- Define MCP suites via `MCPToolset(...)` and consume them with `Use(MCPToolset(...))`.
+- For agent‑to‑agent calls, use `Use(AgentToolset(service, agent, toolset))` to consume another agent’s exported toolset.
 - The DSL and codegen infer locality automatically:
   - Local toolsets execute in‑process.
   - Agent‑as‑tool executes inline (no activity) and preserves payload bytes.
@@ -353,8 +352,8 @@ Agent‑as‑Tool and external toolsets follow a simple rule: decode at the exec
 This keeps ownership clear (executor decodes), prevents cross‑package type mismatches, and makes transports byte‑preserving by default.
 
 - Declare MCP servers in your Goa services as before.
-- Reference suites from agents using `agentsdsl.UseMCPToolset(service, suite)`.
-- Supply MCP callers via the generated agent config (`MCPCallers[<toolsetID>] = caller`). The agent registry automatically invokes the generated helper (`Register<Service><Suite>Toolset`) for each `UseMCPToolset` entry, wiring schemas, retry hints, and OTEL-aware transports (HTTP/SSE/stdio) into the runtime.
+- Reference suites from agents using `Use(MCPToolset(service, suite))`.
+- Supply MCP callers via the generated agent config (`MCPCallers[<toolsetID>] = caller`). The agent registry automatically invokes the generated helper (`Register<Service><Suite>Toolset`) for each MCP toolset entry, wiring schemas, retry hints, and OTEL-aware transports (HTTP/SSE/stdio) into the runtime.
 
 ## Learning Resources
 
