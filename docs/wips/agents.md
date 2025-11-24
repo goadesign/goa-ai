@@ -28,7 +28,7 @@
 4) Register provider toolsets at chat bootstrap
    - In `services/chat-agent/cmd/chat-agent/main.go`, register ADA and Diagnostics using their typed provider helpers:
      - `NewAtlasDataAgentToolsetRegistration(rt)` and `NewDiagnosticsAgentToolsetRegistration(rt)`
-   - Set `JSONOnly = true` and install the aggregator for ADA using `runtime.ToolResultFinalizer` + `runtime.BuildAggregationFacts` so the final envelope is produced by an actual tool call.
+   - Set `JSONOnly = true` and install the aggregator for ADA using `runtime.ToolResultFinalizer` + `runtime.BuildAggregationSummary` so the final envelope is produced by an actual tool call.
 
 5) Remove any lingering chat-namespaced ADA/Diagnostics usage
    - Ensure there are no references to `chat_agent.ada.*` or `chat_agent.diagnostics.*` outside of truly chat-owned exports.

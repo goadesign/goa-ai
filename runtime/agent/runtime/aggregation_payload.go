@@ -2,8 +2,8 @@ package runtime
 
 import "goa.design/goa-ai/runtime/agent/tools"
 
-// AggregationFacts summarizes a parent tool call and its child results for tool-based finalizers.
-type AggregationFacts struct {
+// AggregationSummary summarizes a parent tool call and its child results for tool-based finalizers.
+type AggregationSummary struct {
 	Method     tools.Ident        `json:"method"`
 	ToolCallID string             `json:"tool_call_id,omitempty"`
 	Children   []AggregationChild `json:"children"`
@@ -17,9 +17,9 @@ type AggregationChild struct {
 	Error  string      `json:"error,omitempty"`
 }
 
-// BuildAggregationFacts constructs an AggregationFacts payload from the provided parent/child snapshots.
-func BuildAggregationFacts(input FinalizerInput) AggregationFacts {
-	facts := AggregationFacts{
+// BuildAggregationSummary constructs an AggregationSummary payload from the provided parent/child snapshots.
+func BuildAggregationSummary(input FinalizerInput) AggregationSummary {
+	summary := AggregationSummary{
 		Method:     input.Parent.ToolName,
 		ToolCallID: input.Parent.ToolCallID,
 		Children:   make([]AggregationChild, 0, len(input.Children)),
@@ -39,7 +39,7 @@ func BuildAggregationFacts(input FinalizerInput) AggregationFacts {
 		if item.Status == "" {
 			item.Status = "ok"
 		}
-		facts.Children = append(facts.Children, item)
+		summary.Children = append(summary.Children, item)
 	}
-	return facts
+	return summary
 }

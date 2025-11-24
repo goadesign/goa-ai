@@ -129,7 +129,22 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	}
 	r.publishHook(wfCtx.Context(), hooks.NewRunStartedEvent(input.RunID, input.AgentID, runCtx, *input), seq)
 	r.recordRunStatus(wfCtx.Context(), input, run.StatusRunning, nil)
-	defer r.publishHook(wfCtx.Context(), hooks.NewRunCompletedEvent(input.RunID, input.AgentID, "success", nil), seq)
+	// Track final run outcome for RunCompletedEvent so streaming and observability
+	// see accurate success/failed/canceled status instead of always "success".
+	const (
+		runStatusSuccess  = "success"
+		runStatusFailed   = "failed"
+		runStatusCanceled = "canceled"
+	)
+	finalStatus := runStatusSuccess
+	var finalErr error
+	defer func() {
+		r.publishHook(
+			wfCtx.Context(),
+			hooks.NewRunCompletedEvent(input.RunID, input.AgentID, finalStatus, finalErr),
+			seq,
+		)
+	}()
 
 	planInput := &planner.PlanInput{
 		Messages:   input.Messages,
@@ -167,8 +182,8 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	startReq := PlanActivityInput{
 		AgentID:    input.AgentID,
 		RunID:      input.RunID,
-		Messages:   planInput.Messages,
-		RunContext: planInput.RunContext,
+		Messages:   input.Messages,
+		RunContext: runCtx,
 	}
 	// Apply run-level Plan timeout override when provided.
 	planOpts := reg.PlanActivityOptions
@@ -199,6 +214,12 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	firstOutput, err := r.runPlanActivity(wfCtx, reg.PlanActivityName, planOpts, startReq, hardDeadline)
 	if err != nil {
 		r.logger.Error(wfCtx.Context(), "Plan activity failed", "error", err)
+		finalErr = err
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			finalStatus = runStatusCanceled
+		} else {
+			finalStatus = runStatusFailed
+		}
 		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{
 			"error": err.Error(),
 		})
@@ -206,19 +227,23 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	}
 	if firstOutput == nil || firstOutput.Result == nil {
 		r.logger.Error(wfCtx.Context(), "Plan activity returned nil result")
+		finalErr = fmt.Errorf("CRITICAL: Plan activity returned nil PlanResult")
+		finalStatus = runStatusFailed
 		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{
 			"error": "CRITICAL: Plan activity returned nil PlanResult",
 		})
-		return nil, fmt.Errorf("CRITICAL: Plan activity returned nil PlanResult")
+		return nil, finalErr
 	}
 	result := firstOutput.Result
 	r.logger.Info(wfCtx.Context(), "Plan activity completed", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil)
 	// CRITICAL: Validate PlanResult structure - if planner returned ToolCalls, they should be present
 	if len(result.ToolCalls) == 0 && result.FinalResponse == nil && result.Await == nil {
+		finalErr = fmt.Errorf("CRITICAL: PlanResult has no ToolCalls, FinalResponse, or Await - this should never happen")
+		finalStatus = runStatusFailed
 		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{
 			"error": "CRITICAL: PlanResult has no ToolCalls, FinalResponse, or Await",
 		})
-		return nil, fmt.Errorf("CRITICAL: PlanResult has no ToolCalls, FinalResponse, or Await - this should never happen")
+		return nil, finalErr
 	}
 	// CRITICAL: If ToolCalls is empty but planner returned them, serialization may have failed
 	if len(result.ToolCalls) == 0 && result.FinalResponse != nil {
@@ -246,11 +271,20 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	}
 	out, err := r.runLoop(wfCtx, reg, input, planInput, firstOutput.Result, firstOutput.Transcript, caps, hardDeadline, nextAttempt, seq, parentTracker, ctrl, grace)
 	if err != nil {
+		finalErr = err
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			finalStatus = runStatusCanceled
+		} else {
+			finalStatus = runStatusFailed
+		}
 		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{
 			"error": err.Error(),
 		})
 		return nil, err
 	}
+	// Successful completion.
+	finalStatus = runStatusSuccess
+	finalErr = nil
 	r.recordRunStatus(wfCtx.Context(), input, run.StatusCompleted, nil)
 	return out, nil
 }

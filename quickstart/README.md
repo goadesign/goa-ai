@@ -151,10 +151,10 @@ allowlist := map[tools.Ident]struct{}{
 finalizer := runtime.ToolResultFinalizer(
     tools.Ident("ada.aggregate.finalize_result"),
     func(ctx context.Context, in runtime.FinalizerInput) (any, error) {
-        facts := runtime.BuildAggregationFacts(in)
+        summary := runtime.BuildAggregationSummary(in)
         // Optionally prune children by tool name / status before sending to the tool
-        filtered := facts.Children[:0]
-        for _, child := range facts.Children {
+        filtered := summary.Children[:0]
+        for _, child := range summary.Children {
             if _, ok := allowlist[child.Tool]; ok {
                 filtered = append(filtered, child)
             }

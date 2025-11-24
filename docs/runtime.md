@@ -214,6 +214,64 @@ The runtime publishes structured events to a hook bus. Default subscribers inclu
 
 Custom subscribers can register via `Hooks.Register` to emit analytics, trigger approval workflows, etc.
 
+### Run lifecycle, nested agents, and stream IDs
+
+Runs and streams follow a few critical invariants:
+
+- **Per‑run lifecycle is authoritative**
+  - Every workflow run has its own `RunStartedEvent` / `RunCompletedEvent` pair.
+  - `RunCompletedEvent.Status` (`"success"`, `"failed"`, `"canceled"`) is the
+    single source of truth for that run’s terminal state.
+  - The default stream subscriber maps `RunCompletedEvent` into a
+    `stream.Workflow` payload with `Phase` set to that status.
+
+- **Global “chat” streams are projections over multiple runs**
+  - Applications often want a single user‑facing stream per *root* run (for
+    example, a chat turn) that also surfaces nested agent activity.
+  - Use `RootRunID` to **aggregate non‑workflow events** (assistant replies,
+    planner thoughts, tool start/end, usage, awaits) under the root run’s
+    stream so callers can subscribe once per conversation turn.
+  - At the same time, keep `Workflow` lifecycle events **per run** so nested
+    agents do not inject extra `"completed"` / `"failed"` phases into the
+    parent stream.
+
+- **Recommended Pulse `StreamID` function**
+  - When wiring `features/stream/pulse.Sink`, derive the stream ID as:
+
+    ```go
+    streamID := func(ev stream.Event) (string, error) {
+        runID := ev.RunID()
+        if runID == "" {
+            return "", errors.New("stream event missing run id")
+        }
+        // Aggregate planner/tool/assistant events under the root run so UIs
+        // can subscribe to a single per‑turn stream.
+        if ev.Type() != stream.EventWorkflow {
+            if root := runtime.RootRunID(runID); root != "" {
+                runID = root
+            }
+        }
+        return fmt.Sprintf("run/%s", runID), nil
+    }
+    ```
+
+  - This guarantees:
+    - Each run’s `RunCompletedEvent` becomes **exactly one** terminal
+      `Workflow{Phase: ...}` entry on that run’s stream.
+    - The root run’s stream shows all relevant nested agent tool activity
+      without ever seeing a child agent’s terminal workflow phase.
+
+- **SuppressChildEvents defines the visibility boundary**
+  - `ToolsetRegistration.SuppressChildEvents` hides child inline tool events
+    (tool start/end) from hooks subscribers when an agent runs as a tool.
+  - The nested agent still executes as a real workflow and returns
+    `RunOutput.ToolEvents` for aggregators and finalizers, but the global
+    stream only sees the **parent** tool’s `ToolCallScheduledEvent` /
+    `ToolResultReceivedEvent`.
+  - Combined with the stream ID pattern above, this makes agent‑as‑tool appear
+    to callers as a **single** tool call/result on the root run while preserving
+    full observability in per‑run histories.
+
 Streaming event mapping (default StreamSubscriber):
 
 - ToolCallScheduled → `tool_start` (payload: `ToolStartPayload`)

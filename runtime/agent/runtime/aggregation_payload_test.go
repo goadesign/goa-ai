@@ -8,7 +8,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-func TestBuildAggregationFacts(t *testing.T) {
+func TestBuildAggregationSummary(t *testing.T) {
 	input := FinalizerInput{
 		Parent: ParentCall{
 			ToolName:   tools.Ident("ada.method"),
@@ -19,14 +19,14 @@ func TestBuildAggregationFacts(t *testing.T) {
 			{ToolName: tools.Ident("child.err"), Error: planner.NewToolError("failed")},
 		},
 	}
-	facts := BuildAggregationFacts(input)
-	require.Equal(t, tools.Ident("ada.method"), facts.Method)
-	require.Equal(t, "parent-123", facts.ToolCallID)
-	require.Len(t, facts.Children, 2)
-	require.Equal(t, tools.Ident("child.ok"), facts.Children[0].Tool)
-	require.Equal(t, "ok", facts.Children[0].Status)
-	require.Equal(t, map[string]any{"v": 1}, facts.Children[0].Result)
-	require.Equal(t, tools.Ident("child.err"), facts.Children[1].Tool)
-	require.Equal(t, "error", facts.Children[1].Status)
-	require.Equal(t, "failed", facts.Children[1].Error)
+	summary := BuildAggregationSummary(input)
+	require.Equal(t, tools.Ident("ada.method"), summary.Method)
+	require.Equal(t, "parent-123", summary.ToolCallID)
+	require.Len(t, summary.Children, 2)
+	require.Equal(t, tools.Ident("child.ok"), summary.Children[0].Tool)
+	require.Equal(t, "ok", summary.Children[0].Status)
+	require.Equal(t, map[string]any{"v": 1}, summary.Children[0].Result)
+	require.Equal(t, tools.Ident("child.err"), summary.Children[1].Tool)
+	require.Equal(t, "error", summary.Children[1].Status)
+	require.Equal(t, "failed", summary.Children[1].Error)
 }

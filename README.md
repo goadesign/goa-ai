@@ -293,7 +293,7 @@ planners see a single, coherent tool catalog regardless of how tools are wired.
 
 ### Tool-based aggregation, no ResponseFormat
 
-Agent-as-tool registrations now aggregate child tool results by invoking a real tool (`runtime.ToolResultFinalizer`) instead of relying on provider-specific `response_format` settings. The runtime captures child results, `BuildAggregationFacts` constructs a canonical payload, and the aggregation tool executes via the same `execute_tool` activity path as every other service-backed tool. The legacy ResponseFormat plumbing has been removed from the model clients (Bedrock/OpenAI); applications that need JSON-only responses should express that as a typed aggregation tool.
+Agent-as-tool registrations now aggregate child tool results by invoking a real tool (`runtime.ToolResultFinalizer`) instead of relying on provider-specific `response_format` settings. The runtime captures child results, `BuildAggregationSummary` constructs a canonical payload, and the aggregation tool executes via the same `execute_tool` activity path as every other service-backed tool. The legacy ResponseFormat plumbing has been removed from the model clients (Bedrock/OpenAI); applications that need JSON-only responses should express that as a typed aggregation tool.
 
 ### Automatic thinking/event capture
 
