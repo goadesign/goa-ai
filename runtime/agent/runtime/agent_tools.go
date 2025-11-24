@@ -11,6 +11,7 @@ import (
 
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -437,7 +438,7 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 			TurnID:           call.TurnID,
 			ParentToolCallID: call.ToolCallID,
 			ParentRunID:      call.RunID,
-			ParentAgentID:    call.AgentID,
+			ParentAgentID:    agent.Ident(call.AgentID),
 		}
 		// Strong contract: record the canonical JSON args using the tool codec.
 		// marshalToolValue returns a defensive copy for json.RawMessage, so this
@@ -448,6 +449,20 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 
 		var outPtr *RunOutput
 		var err error
+		// Emit a parent-scope link event so consumers can discover the child
+		// agent run associated with this agent-as-tool invocation.
+		rt.publishHook(
+			wfCtx.Context(),
+			hooks.NewAgentRunStartedEvent(
+				call.RunID,
+				call.AgentID,
+				call.Name,
+				call.ToolCallID,
+				nestedRunCtx.RunID,
+				cfg.AgentID,
+			),
+			nil,
+		)
 		if cfg.Route.ID != "" {
 			// Child-workflow composition: provider owns planning/tools.
 			outPtr, err = rt.ExecuteAgentChildWithRoute(wfCtx, cfg.Route, messages, nestedRunCtx)
@@ -499,6 +514,12 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 				tr.ToolCallID = call.ToolCallID
 				// Record child count so the runtime can detect empty-child agent-tools.
 				tr.ChildrenCount = len(outPtr.ToolEvents)
+				tr.RunLink = &run.Handle{
+					RunID:           nestedRunCtx.RunID,
+					AgentID:         cfg.AgentID,
+					ParentRunID:     nestedRunCtx.ParentRunID,
+					ParentToolCallID: nestedRunCtx.ParentToolCallID,
+				}
 				return &tr, nil
 			}
 		}
@@ -562,12 +583,24 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 				Telemetry:  tel,
 			}
 			tr.ChildrenCount = len(outPtr.ToolEvents)
+			tr.RunLink = &run.Handle{
+				RunID:           nestedRunCtx.RunID,
+				AgentID:         cfg.AgentID,
+				ParentRunID:     nestedRunCtx.ParentRunID,
+				ParentToolCallID: nestedRunCtx.ParentToolCallID,
+			}
 			if errCount > 0 && errCount == len(outPtr.ToolEvents) {
 				tr.Error = planner.NewToolErrorWithCause("agent-tool: all nested tools failed", lastErr)
 			}
 			return tr, nil
 		}
 		result := ConvertRunOutputToToolResult(call.Name, *outPtr)
+		result.RunLink = &run.Handle{
+			RunID:           nestedRunCtx.RunID,
+			AgentID:         cfg.AgentID,
+			ParentRunID:     nestedRunCtx.ParentRunID,
+			ParentToolCallID: nestedRunCtx.ParentToolCallID,
+		}
 		return &result, nil
 	}
 }

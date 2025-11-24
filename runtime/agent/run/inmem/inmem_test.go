@@ -5,13 +5,14 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/run"
 )
 
 func TestStoreUpsertLoad(t *testing.T) {
 	store := New()
 	ctx := context.Background()
-	r := run.Record{AgentID: "a", RunID: "r", Status: run.StatusRunning, Labels: map[string]string{"foo": "bar"}}
+	r := run.Record{AgentID: agent.Ident("a"), RunID: "r", Status: run.StatusRunning, Labels: map[string]string{"foo": "bar"}}
 	require.NoError(t, store.Upsert(ctx, r))
 	loaded, err := store.Load(ctx, "r")
 	require.NoError(t, err)

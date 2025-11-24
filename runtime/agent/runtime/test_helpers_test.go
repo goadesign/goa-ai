@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -350,9 +351,9 @@ func (noopWorkflowHandle) Wait(context.Context) (*api.RunOutput, error) { return
 func (noopWorkflowHandle) Signal(context.Context, string, any) error    { return nil }
 func (noopWorkflowHandle) Cancel(context.Context) error                 { return nil }
 
-func newTestRuntimeWithPlanner(agentID string, pl planner.Planner) *Runtime {
+func newTestRuntimeWithPlanner(agentID agent.Ident, pl planner.Planner) *Runtime {
 	return &Runtime{
-		agents:    map[string]AgentRegistration{agentID: {Planner: pl}},
+		agents:    map[agent.Ident]AgentRegistration{agentID: {Planner: pl}},
 		toolsets:  make(map[string]ToolsetRegistration),
 		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
 		logger:    telemetry.NoopLogger{},

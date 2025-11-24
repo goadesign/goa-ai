@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -74,6 +75,10 @@ type (
 		Status string
 		// Error contains any terminal error that halted the run. Nil on success.
 		Error error
+		// Phase captures the terminal phase for the run. For successful runs this
+		// is typically PhaseCompleted; failures map to PhaseFailed; cancellations
+		// map to PhaseCanceled.
+		Phase run.Phase
 	}
 
 	// RunPausedEvent fires when a run is intentionally paused.
@@ -118,6 +123,31 @@ type (
 		// planner's context before execution continues. Subscribers can use this to track
 		// human-in-the-loop interventions.
 		MessageCount int
+	}
+
+	// AgentRunStartedEvent fires in the parent run when an agent-as-tool
+	// child run is started. It links the parent tool call to the child
+	// agent run for streaming and observability.
+	AgentRunStartedEvent struct {
+		baseEvent
+		// ToolName is the canonical tool identifier for the parent tool.
+		ToolName tools.Ident
+		// ToolCallID is the parent tool call identifier.
+		ToolCallID string
+		// ChildRunID is the run identifier of the nested agent execution.
+		ChildRunID string
+		// ChildAgentID is the identifier of the nested agent.
+		ChildAgentID agent.Ident
+	}
+
+	// RunPhaseChangedEvent fires when a run transitions between lifecycle phases
+	// (prompted, planning, executing_tools, synthesizing, completed, failed,
+	// canceled). This is a higher-fidelity signal than Status and is primarily
+	// intended for streaming/UX consumers.
+	RunPhaseChangedEvent struct {
+		baseEvent
+		// Phase is the new lifecycle phase for the run.
+		Phase run.Phase
 	}
 
 	// ToolCallScheduledEvent fires when the runtime schedules a tool activity
@@ -270,7 +300,7 @@ type (
 	// the RunID, AgentID, Timestamp, TurnID, and SeqInTurn methods.
 	baseEvent struct {
 		runID     string
-		agentID   string
+		agentID   agent.Ident
 		timestamp int64
 		// turnID identifies the conversational turn this event belongs to (optional).
 		// When set, groups events for UI rendering and conversation tracking.
@@ -347,7 +377,7 @@ type (
 
 // NewRunStartedEvent constructs a RunStartedEvent with the current
 // timestamp. RunContext and Input capture the initial run state.
-func NewRunStartedEvent(runID, agentID string, runContext run.Context, input any) *RunStartedEvent {
+func NewRunStartedEvent(runID string, agentID agent.Ident, runContext run.Context, input any) *RunStartedEvent {
 	return &RunStartedEvent{
 		baseEvent:  newBaseEvent(runID, agentID),
 		RunContext: runContext,
@@ -356,18 +386,47 @@ func NewRunStartedEvent(runID, agentID string, runContext run.Context, input any
 }
 
 // NewRunCompletedEvent constructs a RunCompletedEvent. Status should
-// be "success", "failed", or "canceled"; err may be nil on success.
-func NewRunCompletedEvent(runID, agentID, status string, err error) *RunCompletedEvent {
+// be "success", "failed", or "canceled"; phase must be the terminal
+// lifecycle phase for the run. err may be nil on success.
+func NewRunCompletedEvent(runID string, agentID agent.Ident, status string, phase run.Phase, err error) *RunCompletedEvent {
 	return &RunCompletedEvent{
 		baseEvent: newBaseEvent(runID, agentID),
 		Status:    status,
+		Phase:     phase,
 		Error:     err,
+	}
+}
+
+// NewAgentRunStartedEvent constructs an AgentRunStartedEvent for the given
+// parent run, tool, and child run identifiers.
+func NewAgentRunStartedEvent(
+	runID string,
+	agentID agent.Ident,
+	toolName tools.Ident,
+	toolCallID, childRunID string,
+	childAgentID agent.Ident,
+) *AgentRunStartedEvent {
+	return &AgentRunStartedEvent{
+		baseEvent:    newBaseEvent(runID, agentID),
+		ToolName:     toolName,
+		ToolCallID:   toolCallID,
+		ChildRunID:   childRunID,
+		ChildAgentID: childAgentID,
+	}
+}
+
+// NewRunPhaseChangedEvent constructs a RunPhaseChangedEvent for the given run
+// and agent.
+func NewRunPhaseChangedEvent(runID string, agentID agent.Ident, phase run.Phase) *RunPhaseChangedEvent {
+	return &RunPhaseChangedEvent{
+		baseEvent: newBaseEvent(runID, agentID),
+		Phase:     phase,
 	}
 }
 
 // NewRunPausedEvent constructs a RunPausedEvent with provided metadata.
 func NewRunPausedEvent(
-	runID, agentID, reason, requestedBy string,
+	runID string, agentID agent.Ident, reason, requestedBy string,
 	labels map[string]string,
 	metadata map[string]any,
 ) *RunPausedEvent {
@@ -382,7 +441,7 @@ func NewRunPausedEvent(
 
 // NewRunResumedEvent constructs a RunResumedEvent with provided metadata.
 func NewRunResumedEvent(
-	runID, agentID, notes, requestedBy string,
+	runID string, agentID agent.Ident, notes, requestedBy string,
 	labels map[string]string,
 	messageCount int,
 ) *RunResumedEvent {
@@ -397,7 +456,7 @@ func NewRunResumedEvent(
 
 // NewAwaitClarificationEvent constructs an AwaitClarificationEvent with the provided details.
 func NewAwaitClarificationEvent(
-	runID, agentID, id, question string,
+	runID string, agentID agent.Ident, id, question string,
 	missing []string,
 	restrict tools.Ident,
 	example map[string]any,
@@ -421,7 +480,7 @@ func NewAwaitClarificationEvent(
 
 // NewAwaitExternalToolsEvent constructs an AwaitExternalToolsEvent.
 func NewAwaitExternalToolsEvent(
-	runID, agentID, id string,
+	runID string, agentID agent.Ident, id string,
 	items []AwaitToolItem,
 ) *AwaitExternalToolsEvent {
 	// ensure copy
@@ -436,7 +495,7 @@ func NewAwaitExternalToolsEvent(
 
 // NewPolicyDecisionEvent constructs a PolicyDecisionEvent with the provided metadata.
 func NewPolicyDecisionEvent(
-	runID, agentID string,
+	runID string, agentID agent.Ident,
 	allowed []tools.Ident,
 	caps policy.CapsState,
 	labels map[string]string,
@@ -461,7 +520,7 @@ func (e *AwaitExternalToolsEvent) Type() EventType { return AwaitExternalTools }
 // canonical JSON arguments for the scheduled tool; queue is the activity queue name.
 // ParentToolCallID and expectedChildren are optional (empty/0 for top-level calls).
 func NewToolCallScheduledEvent(
-	runID, agentID string,
+	runID string, agentID agent.Ident,
 	toolName tools.Ident, toolCallID string,
 	payload json.RawMessage,
 	queue string,
@@ -483,7 +542,7 @@ func NewToolCallScheduledEvent(
 // err capture the tool outcome; duration is the wall-clock execution time;
 // telemetry carries structured observability metadata (nil if not collected).
 func NewToolResultReceivedEvent(
-	runID, agentID string,
+	runID string, agentID agent.Ident,
 	toolName tools.Ident,
 	toolCallID, parentToolCallID string,
 	result any,
@@ -505,7 +564,7 @@ func NewToolResultReceivedEvent(
 
 // NewToolCallUpdatedEvent constructs a ToolCallUpdatedEvent to signal that a
 // parent tool's child count has increased due to dynamic discovery.
-func NewToolCallUpdatedEvent(runID, agentID string, toolCallID string, expectedChildrenTotal int) *ToolCallUpdatedEvent {
+func NewToolCallUpdatedEvent(runID string, agentID agent.Ident, toolCallID string, expectedChildrenTotal int) *ToolCallUpdatedEvent {
 	return &ToolCallUpdatedEvent{
 		baseEvent:             newBaseEvent(runID, agentID),
 		ToolCallID:            toolCallID,
@@ -514,7 +573,7 @@ func NewToolCallUpdatedEvent(runID, agentID string, toolCallID string, expectedC
 }
 
 // NewUsageEvent constructs a UsageEvent with the provided details.
-func NewUsageEvent(runID, agentID string, input, output, total int) *UsageEvent {
+func NewUsageEvent(runID string, agentID agent.Ident, input, output, total int) *UsageEvent {
 	return &UsageEvent{
 		baseEvent:    newBaseEvent(runID, agentID),
 		InputTokens:  input,
@@ -525,7 +584,7 @@ func NewUsageEvent(runID, agentID string, input, output, total int) *UsageEvent 
 
 // NewHardProtectionEvent constructs a HardProtectionEvent.
 func NewHardProtectionEvent(
-	runID, agentID, reason string,
+	runID string, agentID agent.Ident, reason string,
 	executedAgentTools, childrenTotal int,
 	toolNames []tools.Ident,
 ) *HardProtectionEvent {
@@ -542,7 +601,7 @@ func NewHardProtectionEvent(
 
 // NewPlannerNoteEvent constructs a PlannerNoteEvent with the given note text
 // and optional labels for categorization.
-func NewPlannerNoteEvent(runID, agentID, note string, labels map[string]string) *PlannerNoteEvent {
+func NewPlannerNoteEvent(runID string, agentID agent.Ident, note string, labels map[string]string) *PlannerNoteEvent {
 	return &PlannerNoteEvent{
 		baseEvent: newBaseEvent(runID, agentID),
 		Note:      note,
@@ -552,7 +611,7 @@ func NewPlannerNoteEvent(runID, agentID, note string, labels map[string]string) 
 
 // NewThinkingBlockEvent constructs a ThinkingBlockEvent with structured reasoning fields.
 func NewThinkingBlockEvent(
-	runID, agentID string,
+	runID string, agentID agent.Ident,
 	text, signature string,
 	redacted []byte,
 	contentIndex int,
@@ -574,7 +633,7 @@ func NewThinkingBlockEvent(
 
 // NewAssistantMessageEvent constructs an AssistantMessageEvent. Structured
 // may be nil if only a text message is provided.
-func NewAssistantMessageEvent(runID, agentID, message string, structured any) *AssistantMessageEvent {
+func NewAssistantMessageEvent(runID string, agentID agent.Ident, message string, structured any) *AssistantMessageEvent {
 	return &AssistantMessageEvent{
 		baseEvent:  newBaseEvent(runID, agentID),
 		Message:    message,
@@ -584,7 +643,7 @@ func NewAssistantMessageEvent(runID, agentID, message string, structured any) *A
 
 // NewRetryHintIssuedEvent constructs a RetryHintIssuedEvent indicating a
 // suggested retry policy adjustment.
-func NewRetryHintIssuedEvent(runID, agentID, reason string, toolName tools.Ident, message string) *RetryHintIssuedEvent {
+func NewRetryHintIssuedEvent(runID string, agentID agent.Ident, reason string, toolName tools.Ident, message string) *RetryHintIssuedEvent {
 	return &RetryHintIssuedEvent{
 		baseEvent: newBaseEvent(runID, agentID),
 		Reason:    reason,
@@ -595,7 +654,7 @@ func NewRetryHintIssuedEvent(runID, agentID, reason string, toolName tools.Ident
 
 // NewMemoryAppendedEvent constructs a MemoryAppendedEvent indicating successful
 // persistence of memory entries.
-func NewMemoryAppendedEvent(runID, agentID string, eventCount int) *MemoryAppendedEvent {
+func NewMemoryAppendedEvent(runID string, agentID agent.Ident, eventCount int) *MemoryAppendedEvent {
 	return &MemoryAppendedEvent{
 		baseEvent:  newBaseEvent(runID, agentID),
 		EventCount: eventCount,
@@ -606,7 +665,7 @@ func NewMemoryAppendedEvent(runID, agentID string, eventCount int) *MemoryAppend
 func (e baseEvent) RunID() string { return e.runID }
 
 // AgentID returns the agent identifier.
-func (e baseEvent) AgentID() string { return e.agentID }
+func (e baseEvent) AgentID() string { return string(e.agentID) }
 
 // Timestamp returns the Unix timestamp in milliseconds when the event occurred.
 func (e baseEvent) Timestamp() int64 { return e.timestamp }
@@ -625,7 +684,7 @@ func (e *baseEvent) SetTurn(turnID string, seqInTurn int) {
 }
 
 // newBaseEvent constructs a baseEvent with the current timestamp.
-func newBaseEvent(runID, agentID string) baseEvent {
+func newBaseEvent(runID string, agentID agent.Ident) baseEvent {
 	return baseEvent{
 		runID:     runID,
 		agentID:   agentID,
@@ -650,3 +709,5 @@ func (e *MemoryAppendedEvent) Type() EventType     { return MemoryAppended }
 func (e *PolicyDecisionEvent) Type() EventType     { return PolicyDecision }
 func (e *UsageEvent) Type() EventType              { return Usage }
 func (e *HardProtectionEvent) Type() EventType     { return HardProtectionTriggered }
+func (e *RunPhaseChangedEvent) Type() EventType    { return RunPhaseChanged }
+func (e *AgentRunStartedEvent) Type() EventType    { return AgentRunStarted }

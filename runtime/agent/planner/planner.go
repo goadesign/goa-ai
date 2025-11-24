@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/memory"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -23,7 +24,7 @@ type Planner interface {
 
 // PlannerContext exposes runtime services to planners.
 type PlannerContext interface {
-	ID() string
+	ID() agent.Ident
 	RunID() string
 	Memory() memory.Reader
 	Logger() telemetry.Logger
@@ -53,7 +54,7 @@ type PlannerEvents interface {
 type ToolRequest struct {
 	Name             tools.Ident
 	Payload          json.RawMessage
-	AgentID          string
+	AgentID          agent.Ident
 	RunID            string
 	SessionID        string
 	TurnID           string
@@ -70,6 +71,11 @@ type ToolResult struct {
 	Telemetry     *telemetry.ToolTelemetry
 	ToolCallID    string
 	ChildrenCount int
+	// RunLink, when non-nil, links this result to a nested agent run that
+	// was executed as an agent-as-tool. For service-backed tools this field
+	// is nil. Callers can use RunLink to subscribe to or display the child
+	// agent run separately from the parent tool call.
+	RunLink *run.Handle
 }
 
 // RetryHint communicates planner guidance after tool failures so policy engines

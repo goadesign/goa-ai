@@ -123,6 +123,15 @@ const (
 	// avoid pathological behavior (e.g., agent-tool produced no child calls).
 	// Payload is a HardProtectionEvent.
 	HardProtectionTriggered EventType = "hard_protection_triggered"
+
+	// RunPhaseChanged fires when a run transitions between lifecycle phases
+	// (prompted, planning, executing_tools, synthesizing, completed, failed,
+	// canceled). Payload is a RunPhaseChangedEvent.
+	RunPhaseChanged EventType = "run_phase_changed"
+
+	// AgentRunStarted fires in the parent run when an agent-as-tool child run
+	// starts. Payload is an AgentRunStartedEvent.
+	AgentRunStarted EventType = "agent_run_started"
 )
 
 // HandleEvent implements Subscriber by invoking the function.

@@ -3,7 +3,7 @@ package runtime
 import (
 	"context"
 
-	agent "goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 )
@@ -32,12 +32,12 @@ func (r *Runtime) Client(id agent.Ident) (AgentClient, error) {
 	if id == "" {
 		return nil, ErrAgentNotFound
 	}
-	if _, ok := r.agentByID(string(id)); !ok {
+	if _, ok := r.agentByID(id); !ok {
 		return nil, ErrAgentNotFound
 	}
 	return &agentClient{
 		r:  r,
-		id: string(id),
+		id: id,
 	}, nil
 }
 
@@ -76,7 +76,7 @@ func (r *Runtime) MustClientFor(route AgentRoute) AgentClient {
 
 type agentClient struct {
 	r  *Runtime
-	id string
+	id agent.Ident
 }
 
 func (c *agentClient) Run(
@@ -128,7 +128,7 @@ func (c *agentClientRoute) Run(
 	opts ...RunOption,
 ) (*RunOutput, error) {
 	in := RunInput{
-		AgentID:  string(c.route.ID),
+		AgentID:  c.route.ID,
 		Messages: messages,
 	}
 	for _, o := range opts {
@@ -149,7 +149,7 @@ func (c *agentClientRoute) Start(
 	opts ...RunOption,
 ) (engine.WorkflowHandle, error) {
 	in := RunInput{
-		AgentID:  string(c.route.ID),
+		AgentID:  c.route.ID,
 		Messages: messages,
 	}
 	for _, o := range opts {

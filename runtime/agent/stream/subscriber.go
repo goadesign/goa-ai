@@ -27,13 +27,15 @@ type (
 	// All other (internal) events, such as workflow lifecycle changes, are
 	// ignored and not sent to clients.
 	Subscriber struct {
-		sink Sink
+		sink    Sink
+		profile StreamProfile
 	}
 )
 
 // NewSubscriber constructs a subscriber that forwards selected hook
-// events to the provided stream sink. The sink is typically backed by a
-// message bus like Pulse or a direct WebSocket/SSE connection.
+// events to the provided stream sink using the default stream profile.
+// The sink is typically backed by a message bus like Pulse or a direct
+// WebSocket/SSE connection.
 //
 // NewSubscriber returns an error if sink is nil, as the subscriber
 // requires a valid sink to function.
@@ -48,10 +50,20 @@ type (
 //	subscription, _ := bus.Register(sub)
 //	defer subscription.Close()
 func NewSubscriber(sink Sink) (*Subscriber, error) {
+	return NewSubscriberWithProfile(sink, DefaultProfile())
+}
+
+// NewSubscriberWithProfile constructs a subscriber that forwards selected
+// hook events to the provided stream sink, applying the given StreamProfile
+// to determine which event kinds are emitted.
+func NewSubscriberWithProfile(sink Sink, profile StreamProfile) (*Subscriber, error) {
 	if sink == nil {
 		return nil, errors.New("stream sink is required")
 	}
-	return &Subscriber{sink: sink}, nil
+	return &Subscriber{
+		sink:    sink,
+		profile: profile,
+	}, nil
 }
 
 // HandleEvent implements the Subscriber interface by translating hook events
@@ -71,6 +83,9 @@ func NewSubscriber(sink Sink) (*Subscriber, error) {
 func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 	switch evt := event.(type) {
 	case *hooks.UsageEvent:
+		if !s.profile.Usage {
+			return nil
+		}
 		payload := UsagePayload{
 			Model:        evt.Model,
 			InputTokens:  evt.InputTokens,
@@ -79,6 +94,9 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		}
 		return s.sink.Send(ctx, Usage{Base: Base{t: EventUsage, r: evt.RunID(), p: payload}, Data: payload})
 	case *hooks.AwaitClarificationEvent:
+		if !s.profile.AwaitClarification {
+			return nil
+		}
 		payload := AwaitClarificationPayload{
 			ID:             evt.ID,
 			Question:       evt.Question,
@@ -91,6 +109,9 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Data: payload,
 		})
 	case *hooks.AwaitExternalToolsEvent:
+		if !s.profile.AwaitExternalTools {
+			return nil
+		}
 		items := make([]AwaitToolPayload, 0, len(evt.Items))
 		for _, it := range evt.Items {
 			items = append(items, AwaitToolPayload{
@@ -105,6 +126,9 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Data: payload,
 		})
 	case *hooks.ToolCallScheduledEvent:
+		if !s.profile.ToolStart {
+			return nil
+		}
 		payload := ToolStartPayload{
 			ToolCallID:            evt.ToolCallID,
 			ToolName:              string(evt.ToolName),
@@ -119,6 +143,9 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Data: payload,
 		})
 	case *hooks.AssistantMessageEvent:
+		if !s.profile.Assistant {
+			return nil
+		}
 		// Publish a typed payload object on the wire (no string-wrapping).
 		payload := AssistantReplyPayload{
 			Text: evt.Message,
@@ -128,6 +155,9 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Data: payload,
 		})
 	case *hooks.PlannerNoteEvent:
+		if !s.profile.Thoughts {
+			return nil
+		}
 		// Publish a typed payload object on the wire (no string-wrapping).
 		payload := PlannerThoughtPayload{
 			Note: evt.Note,
@@ -137,6 +167,9 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Data: payload,
 		})
 	case *hooks.ThinkingBlockEvent:
+		if !s.profile.Thoughts {
+			return nil
+		}
 		// Map structured thinking block to PlannerThought with enriched payload.
 		// Text/Signature/Redacted always carry the provider-issued block for
 		// ledger and replay. Note is reserved for streaming deltas only.
@@ -157,6 +190,9 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Data: payload,
 		})
 	case *hooks.ToolResultReceivedEvent:
+		if !s.profile.ToolEnd {
+			return nil
+		}
 		payload := ToolEndPayload{
 			ToolCallID:       evt.ToolCallID,
 			ParentToolCallID: evt.ParentToolCallID,
@@ -174,6 +210,9 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Data: payload,
 		})
 	case *hooks.ToolCallUpdatedEvent:
+		if !s.profile.ToolUpdate {
+			return nil
+		}
 		up := ToolUpdatePayload{
 			ToolCallID:            evt.ToolCallID,
 			ExpectedChildrenTotal: evt.ExpectedChildrenTotal,
@@ -182,34 +221,58 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Base: Base{t: EventToolUpdate, r: evt.RunID(), p: up},
 			Data: up,
 		})
-	case *hooks.RunCompletedEvent:
-		// Map run status to workflow phase and emit terminal workflow event.
-		switch evt.Status {
-		case "success":
-			payload := WorkflowPayload{Phase: "completed"}
-			return s.sink.Send(ctx, Workflow{
-				Base: Base{t: EventWorkflow, r: evt.RunID(), p: payload},
-				Data: payload,
-			})
-		case "failed":
-			payload := WorkflowPayload{Phase: "failed"}
-			return s.sink.Send(ctx, Workflow{
-				Base: Base{t: EventWorkflow, r: evt.RunID(), p: payload},
-				Data: payload,
-			})
-		case "canceled":
-			payload := WorkflowPayload{Phase: "canceled"}
-			return s.sink.Send(ctx, Workflow{
-				Base: Base{t: EventWorkflow, r: evt.RunID(), p: payload},
-				Data: payload,
-			})
-		default:
-			payload := WorkflowPayload{Phase: evt.Status}
-			return s.sink.Send(ctx, Workflow{
-				Base: Base{t: EventWorkflow, r: evt.RunID(), p: payload},
-				Data: payload,
-			})
+	case *hooks.AgentRunStartedEvent:
+		if !s.profile.AgentRuns {
+			return nil
 		}
+		payload := AgentRunStartedPayload{
+			ToolName:     string(evt.ToolName),
+			ToolCallID:   evt.ToolCallID,
+			ChildRunID:   evt.ChildRunID,
+			ChildAgentID: evt.ChildAgentID,
+		}
+		return s.sink.Send(ctx, AgentRunStarted{
+			Base: Base{t: EventAgentRunStarted, r: evt.RunID(), p: payload},
+			Data: payload,
+		})
+	case *hooks.RunCompletedEvent:
+		if !s.profile.Workflow {
+			return nil
+		}
+		// Prefer the terminal run phase when present; fall back to status for
+		// back-compat with older emitters/tests.
+		phase := string(evt.Phase)
+		if phase == "" {
+			switch evt.Status {
+			case "success":
+				phase = "completed"
+			case "failed":
+				phase = "failed"
+			case "canceled":
+				phase = "canceled"
+			default:
+				phase = evt.Status
+			}
+		}
+		payload := WorkflowPayload{
+			Phase:  phase,
+			Status: evt.Status,
+		}
+		return s.sink.Send(ctx, Workflow{
+			Base: Base{t: EventWorkflow, r: evt.RunID(), p: payload},
+			Data: payload,
+		})
+	case *hooks.RunPhaseChangedEvent:
+		if !s.profile.Workflow {
+			return nil
+		}
+		payload := WorkflowPayload{
+			Phase: string(evt.Phase),
+		}
+		return s.sink.Send(ctx, Workflow{
+			Base: Base{t: EventWorkflow, r: evt.RunID(), p: payload},
+			Data: payload,
+		})
 	default:
 		return nil
 	}

@@ -35,28 +35,6 @@ func NestedRunID(parentRunID string, toolName tools.Ident) string {
 	return fmt.Sprintf("%s/agent/%s", parentRunID, toolName)
 }
 
-// RootRunID returns the root (top-level) run identifier for a given run ID.
-// Nested agent executions derive their run IDs from the parent using the
-// NestedRunID format: "<parent>/agent/<toolName>". RootRunID strips the
-// first "/agent/" suffix and everything after it. If the input does not
-// contain the nested marker, RootRunID returns the input unchanged.
-//
-// Examples:
-//
-//	RootRunID("chat-run-123")                              -> "chat-run-123"
-//	RootRunID("chat-run-123/agent/atlas_data_agent.ada")   -> "chat-run-123"
-//	RootRunID("A/agent/B/agent/C")                         -> "A"
-func RootRunID(runID string) string {
-	if runID == "" {
-		return ""
-	}
-	const marker = "/agent/"
-	if idx := strings.Index(runID, marker); idx >= 0 {
-		return runID[:idx]
-	}
-	return runID
-}
-
 // generateDeterministicToolCallID creates a replay-safe tool-call ID using the
 // run ID, optional turn ID, sanitized tool name, and the deterministic index of
 // the tool within the current batch.
@@ -277,66 +255,6 @@ func (r *Runtime) logWarn(ctx context.Context, msg string, err error, kv ...any)
 	}
 }
 
-// suppressionKey derives a stable map key for (runID, parentToolCallID) pairs.
-// The separator does not matter as run IDs and tool call IDs are opaque tokens.
-func suppressionKey(runID, parentToolCallID string) string {
-	return runID + "|" + parentToolCallID
-}
-
-// markSuppressedParent records that child inline tool events for the given
-// parent tool call (identified by runID and parentToolCallID) should be hidden
-// from hooks subscribers. No-op if either identifier is empty.
-func (r *Runtime) markSuppressedParent(runID, parentToolCallID string) {
-	if runID == "" || parentToolCallID == "" {
-		return
-	}
-	r.suppressMu.Lock()
-	r.suppressedParents[suppressionKey(runID, parentToolCallID)] = struct{}{}
-	r.suppressMu.Unlock()
-}
-
-// unmarkSuppressedParent removes a previously registered suppression entry for
-// the given parent tool call. No-op if either identifier is empty.
-func (r *Runtime) unmarkSuppressedParent(runID, parentToolCallID string) {
-	if runID == "" || parentToolCallID == "" {
-		return
-	}
-	r.suppressMu.Lock()
-	delete(r.suppressedParents, suppressionKey(runID, parentToolCallID))
-	r.suppressMu.Unlock()
-}
-
-// isSuppressedChildEvent reports whether a tool event associated with the
-// provided (runID, parentToolCallID) pair should be filtered from the hooks
-// bus. Returns false when no suppression entry exists.
-func (r *Runtime) isSuppressedChildEvent(runID, parentToolCallID string) bool {
-	if runID == "" || parentToolCallID == "" {
-		return false
-	}
-	r.suppressMu.RLock()
-	_, ok := r.suppressedParents[suppressionKey(runID, parentToolCallID)]
-	r.suppressMu.RUnlock()
-	return ok
-}
-
-// shouldSuppressHook determines whether a hooks event should be hidden from
-// subscribers based on SuppressChildEvents configuration. Only tool start/end
-// events associated with a suppressed parent tool call are filtered; all other
-// events, including parent ToolCallUpdated events, always flow through.
-func (r *Runtime) shouldSuppressHook(evt hooks.Event) bool {
-	if r == nil {
-		return false
-	}
-	switch e := evt.(type) {
-	case *hooks.ToolCallScheduledEvent:
-		return r.isSuppressedChildEvent(e.RunID(), e.ParentToolCallID)
-	case *hooks.ToolResultReceivedEvent:
-		return r.isSuppressedChildEvent(e.RunID(), e.ParentToolCallID)
-	default:
-		return false
-	}
-}
-
 // publishHook publishes an event to the hook bus. If publishing fails, logs a
 // warning. If the bus is nil, this is a no-op. The sequencer parameter is optional;
 // if nil, events are published without turn tracking. If provided, events are stamped
@@ -347,9 +265,6 @@ func (r *Runtime) shouldSuppressHook(evt hooks.Event) bool {
 // turn tracking parameters directly for a cleaner implementation.
 func (r *Runtime) publishHook(ctx context.Context, evt hooks.Event, seq *turnSequencer) {
 	if r.Bus == nil {
-		return
-	}
-	if r.shouldSuppressHook(evt) {
 		return
 	}
 	// Stamp the event with turn tracking if sequencer is provided
@@ -570,6 +485,10 @@ func stampEventWithTurn(evt hooks.Event, seq *turnSequencer) {
 	case *hooks.AwaitClarificationEvent:
 		e.SetTurn(seq.turnID, seqNum)
 	case *hooks.AwaitExternalToolsEvent:
+		e.SetTurn(seq.turnID, seqNum)
+	case *hooks.RunPhaseChangedEvent:
+		e.SetTurn(seq.turnID, seqNum)
+	case *hooks.AgentRunStartedEvent:
 		e.SetTurn(seq.turnID, seqNum)
 	}
 }

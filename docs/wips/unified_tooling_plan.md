@@ -1,5 +1,11 @@
 ## Unifying Service Tools and Agent-as-Tool UX
 
+> Note: This document predates the run/link + stream profile redesign. References
+> to `ToolsetRegistration.SuppressChildEvents`, root-run stream flattening, and
+> legacy event shaping were prototypes and are now superseded by per-run streams,
+> `run.Handle` links, `AgentRunStarted` events, and `stream.StreamProfile` +
+> `ChildStreamPolicy`. The historical notes are kept for context.
+
 ### Goal
 Make service-backed tools (Used toolsets) and agent-as-tool (Exports) feel identical to consumers (planners, UIs, operators) while preserving strong contracts and keeping the runtime generic and provider-agnostic. Elegance over backward compatibility.
 

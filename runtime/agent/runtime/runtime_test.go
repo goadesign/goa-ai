@@ -51,7 +51,7 @@ func TestStartRunSetsWorkflowName(t *testing.T) {
 		logger:  telemetry.NoopLogger{},
 		metrics: telemetry.NoopMetrics{},
 		tracer:  telemetry.NoopTracer{},
-		agents: map[string]AgentRegistration{
+		agents: map[agent.Ident]AgentRegistration{
 			"service.agent": {
 				ID: "service.agent",
 				Workflow: engine.WorkflowDefinition{
@@ -74,7 +74,7 @@ func TestStartRunRequiresSessionID(t *testing.T) {
 		logger:  telemetry.NoopLogger{},
 		metrics: telemetry.NoopMetrics{},
 		tracer:  telemetry.NoopTracer{},
-		agents: map[string]AgentRegistration{
+		agents: map[agent.Ident]AgentRegistration{
 			"service.agent": {ID: "service.agent", Workflow: engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "q"}},
 		},
 	}
@@ -99,7 +99,7 @@ func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 		logger:  telemetry.NoopLogger{},
 		metrics: telemetry.NoopMetrics{},
 		tracer:  telemetry.NoopTracer{},
-		agents: map[string]AgentRegistration{
+		agents: map[agent.Ident]AgentRegistration{
 			"service.agent": {ID: "service.agent", Workflow: engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "q"}},
 		},
 	}
@@ -199,7 +199,7 @@ func TestStartRunForwardsWorkflowOptions(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
 		Engine: eng,
-		agents: map[string]AgentRegistration{
+		agents: map[agent.Ident]AgentRegistration{
 			"service.agent": {ID: "service.agent", Workflow: engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "defaultq"}},
 		},
 		logger:  telemetry.NoopLogger{},
@@ -241,7 +241,7 @@ func TestRegisterAgentAfterFirstRunIsRejected(t *testing.T) {
 		logger:   telemetry.NoopLogger{},
 		metrics:  telemetry.NoopMetrics{},
 		tracer:   telemetry.NoopTracer{},
-		agents:   make(map[string]AgentRegistration),
+		agents:   make(map[agent.Ident]AgentRegistration),
 		toolsets: make(map[string]ToolsetRegistration),
 	}
 	// Register initial agent so we can start a run
@@ -308,9 +308,9 @@ func TestTimeBudgetExceeded(t *testing.T) {
 }
 
 func TestOverridePolicy_AppliesToNewRuns_MaxToolCalls(t *testing.T) {
-	agentID := "svc.agent"
+	agentID := agent.Ident("svc.agent")
 	rt := &Runtime{
-		agents: map[string]AgentRegistration{
+		agents: map[agent.Ident]AgentRegistration{
 			agentID: {
 				ID:     agentID,
 				Policy: RunPolicy{MaxToolCalls: 5},
@@ -446,7 +446,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 			nestedCtx := run.Context{RunID: NestedRunID(call.RunID, call.Name), SessionID: call.SessionID, TurnID: call.TurnID, ParentToolCallID: call.ToolCallID}
 			// Inject nested agent registration into runtime for lookup
 			rt.mu.Lock()
-			rt.agents = map[string]AgentRegistration{"nested.agent": nestedReg}
+			rt.agents = map[agent.Ident]AgentRegistration{"nested.agent": nestedReg}
 			rt.mu.Unlock()
 			outPtr, err := rt.ExecuteAgentChildWithRoute(wf, AgentRoute{
 				ID:               "nested.agent",

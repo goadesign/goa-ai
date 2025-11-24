@@ -316,7 +316,7 @@ func (r *Runtime) plannerContext(ctx context.Context, input *PlanActivityInput, 
 	if !ok {
 		return nil, nil, fmt.Errorf("agent %q is not registered", input.AgentID)
 	}
-	reader := r.memoryReader(ctx, input.AgentID, input.RunID)
+	reader := r.memoryReader(ctx, string(input.AgentID), input.RunID)
 	agentCtx := newAgentContext(agentContextOptions{
 		runtime: r,
 		agentID: input.AgentID,

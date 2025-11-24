@@ -17,6 +17,7 @@ import (
 	"context"
 	"time"
 
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/toolerrors"
 )
@@ -150,6 +151,14 @@ type (
 	Workflow struct {
 		Base
 		Data WorkflowPayload
+	}
+
+	// AgentRunStarted streams a link between a parent run/tool and a child
+	// agent run. This allows clients to render nested agent cards and attach
+	// to child streams on demand.
+	AgentRunStarted struct {
+		Base
+		Data AgentRunStartedPayload
 	}
 
 	// UsagePayload describes token usage details.
@@ -331,8 +340,111 @@ type (
 		Name string `json:"name,omitempty"`
 		// Phase is the lifecycle phase, e.g., "completed", "failed", "canceled".
 		Phase string `json:"phase"`
+		// Status is the coarse-grained terminal status when known
+		// (typically "success", "failed", or "canceled"). It is populated
+		// on terminal updates derived from RunCompletedEvent and may be
+		// empty for non-terminal phase transitions.
+		Status string `json:"status,omitempty"`
+	}
+
+	// AgentRunStartedPayload describes an agent-as-tool child run link.
+	AgentRunStartedPayload struct {
+		ToolName     string      `json:"tool_name"`
+		ToolCallID   string      `json:"tool_call_id"`
+		ChildRunID   string      `json:"child_run_id"`
+		ChildAgentID agent.Ident `json:"child_agent_id"`
+	}
+
+	// ChildStreamPolicy controls how child runs are projected into a given
+	// audience's stream.
+	ChildStreamPolicy int
+
+	// StreamProfile describes which event kinds are emitted for a particular
+	// audience and how child runs are treated. Profiles are applied by the
+	// Subscriber when mapping hook events → stream events.
+	StreamProfile struct {
+		// Assistant controls assistant reply emission.
+		Assistant bool
+		// Thoughts controls planner thought / thinking emission.
+		Thoughts bool
+		// ToolStart controls emission of tool_start events.
+		ToolStart bool
+		// ToolUpdate controls emission of tool_update events.
+		ToolUpdate bool
+		// ToolEnd controls emission of tool_end events.
+		ToolEnd bool
+		// AwaitClarification controls emission of await_clarification events.
+		AwaitClarification bool
+		// AwaitExternalTools controls emission of await_external_tools events.
+		AwaitExternalTools bool
+		// Usage controls emission of usage events.
+		Usage bool
+		// Workflow controls emission of workflow lifecycle events.
+		Workflow bool
+		// AgentRuns controls emission of agent_run_started events.
+		AgentRuns bool
+		// ChildPolicy controls how child runs are projected (off, flatten, linked).
+		ChildPolicy ChildStreamPolicy
 	}
 )
+
+const (
+	// ChildStreamPolicyOff hides child runs from this audience; only parent
+	// tool calls and results are visible.
+	ChildStreamPolicyOff ChildStreamPolicy = iota
+	// ChildStreamPolicyFlatten projects child events into the parent run
+	// stream for this audience, approximating the legacy firehose behavior.
+	ChildStreamPolicyFlatten
+	// ChildStreamPolicyLinked emits link events to child runs instead of
+	// flattening their events into the parent stream.
+	ChildStreamPolicyLinked
+)
+
+// DefaultProfile returns a StreamProfile that emits all event kinds and
+// links child runs via AgentRunStarted events without flattening them into
+// the parent stream.
+func DefaultProfile() StreamProfile {
+	return StreamProfile{
+		Assistant:          true,
+		Thoughts:           true,
+		ToolStart:          true,
+		ToolUpdate:         true,
+		ToolEnd:            true,
+		AwaitClarification: true,
+		AwaitExternalTools: true,
+		Usage:              true,
+		Workflow:           true,
+		AgentRuns:          true,
+		ChildPolicy:        ChildStreamPolicyLinked,
+	}
+}
+
+// UserChatProfile returns a profile suitable for end-user chat views. It emits
+// assistant replies, tool start/end/update, awaits, usage, workflow, and
+// agent_run_started links, and keeps child runs on their own streams so UIs
+// can attach on demand.
+func UserChatProfile() StreamProfile {
+	return DefaultProfile()
+}
+
+// AgentDebugProfile returns a verbose profile intended for operational and
+// debugging views. It flattens child runs into the parent stream while still
+// emitting AgentRunStarted links for precise correlation.
+func AgentDebugProfile() StreamProfile {
+	p := DefaultProfile()
+	p.ChildPolicy = ChildStreamPolicyFlatten
+	return p
+}
+
+// MetricsProfile returns a profile that emits only usage and workflow events,
+// suitable for metrics/telemetry pipelines.
+func MetricsProfile() StreamProfile {
+	return StreamProfile{
+		Usage:       true,
+		Workflow:    true,
+		ChildPolicy: ChildStreamPolicyOff,
+	}
+}
 
 // EventType enumerates stream payload flavors.
 type EventType string
@@ -380,6 +492,9 @@ const (
 
 	// EventWorkflow streams lifecycle phases for the run (e.g., completed).
 	EventWorkflow EventType = "workflow"
+
+	// EventAgentRunStarted streams when an agent-as-tool child run is started.
+	EventAgentRunStarted EventType = "agent_run_started"
 )
 
 // NewBase constructs a Base event with the given type, run ID, and

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -18,7 +19,7 @@ type (
 		wfCtx           engine.WorkflowContext
 		activityName    string
 		activityOptions engine.ActivityOptions
-		agentID         string
+		agentID         agent.Ident
 	}
 
 	toolInvokerMeta struct {
@@ -26,7 +27,7 @@ type (
 		SessionID        string
 		TurnID           string
 		ParentToolCallID string
-		AgentID          string
+		AgentID          agent.Ident
 	}
 
 	finalizerToolInvoker struct {

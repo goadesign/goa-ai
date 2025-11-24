@@ -11,7 +11,7 @@ import (
 
 // NewSubscriber returns a hooks.Subscriber that forwards selected hook events
 // (assistant replies, planner thoughts, tool start/end) to the provided sink
-// as typed stream.Event values.
+// as typed stream.Event values using the default stream profile.
 func NewSubscriber(sink stream.Sink) (hooks.Subscriber, error) {
 	return stream.NewSubscriber(sink)
 }

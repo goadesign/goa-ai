@@ -95,7 +95,7 @@ type (
 		tracer  telemetry.Tracer
 
 		mu        sync.RWMutex
-		agents    map[string]AgentRegistration
+		agents    map[agent.Ident]AgentRegistration
 		toolsets  map[string]ToolsetRegistration
 		toolSpecs map[tools.Ident]tools.ToolSpec
 		// parsed tool payload schemas cached by tool name for hint building
@@ -108,16 +108,9 @@ type (
 		handleMu   sync.RWMutex
 		runHandles map[string]engine.WorkflowHandle
 
-		// suppressedParents tracks parent tool call IDs for which child inline
-		// tool events should be hidden from hooks subscribers. Keys are derived
-		// from the parent run ID and parent tool call ID; values are empty
-		// structs for minimal overhead. Access is guarded by suppressMu.
-		suppressMu        sync.RWMutex
-		suppressedParents map[string]struct{}
-
 		// workers holds optional per-agent worker configuration supplied at
 		// construction time.
-		workers map[string]WorkerConfig
+		workers map[agent.Ident]WorkerConfig
 
 		// registrationClosed prevents late agent registration after the first
 		// run is submitted, avoiding dynamic handler registration on running
@@ -158,7 +151,7 @@ type (
 		// Workers provides per-agent worker configuration. If an agent lacks
 		// an entry, the runtime uses a default worker configuration. Engines
 		// that do not poll (in-memory) ignore this map.
-		Workers map[string]WorkerConfig
+		Workers map[agent.Ident]WorkerConfig
 	}
 
 	// RuntimeOption configures the runtime via functional options passed to NewWith.
@@ -182,7 +175,7 @@ type (
 	// for execution.
 	AgentRegistration struct {
 		// ID is the unique agent identifier (service.agent).
-		ID string
+		ID agent.Ident
 		// Planner is the concrete planner implementation for the agent.
 		Planner planner.Planner
 		// Workflow describes the durable workflow registered with the engine.
@@ -277,21 +270,6 @@ type (
 		// the executor without pre-decoding. The executor must decode using generated
 		// codecs. Defaults to false.
 		DecodeInExecutor bool
-
-		// SuppressChildEvents hides child inline tool events for agent-as-tool
-		// registrations.
-		//
-		// When true, the runtime still executes all child tools and records their
-		// results in the nested agent run's RunOutput.ToolEvents for use by
-		// finalizers and aggregators, but it does not emit ToolCallScheduled or
-		// ToolResultReceived hook events for those child calls on the global
-		// hooks bus. Only the parent agent-tool ToolCallScheduled/ToolResultReceived
-		// events remain visible to stream sinks and memory subscribers.
-		//
-		// This flag is intended for JSON-only agent-as-tool registrations where
-		// callers and UIs should see a single aggregated parent tool call/result
-		// rather than the full internal child tool tree.
-		SuppressChildEvents bool
 
 		// TelemetryBuilder can be provided to build or enrich telemetry consistently
 		// across transports. When set, the runtime may invoke it with timing/context.
@@ -588,24 +566,23 @@ func newFromOptions(opts Options) *Runtime {
 		tracer = telemetry.NoopTracer{}
 	}
 	rt := &Runtime{
-		Engine:            eng,
-		Memory:            opts.MemoryStore,
-		Policy:            opts.Policy,
-		RunStore:          opts.RunStore,
-		Bus:               bus,
-		Stream:            opts.Stream,
-		logger:            logger,
-		metrics:           metrics,
-		tracer:            tracer,
-		agents:            make(map[string]AgentRegistration),
-		toolsets:          make(map[string]ToolsetRegistration),
-		toolSpecs:         make(map[tools.Ident]tools.ToolSpec),
-		toolSchemas:       make(map[string]map[string]any),
-		models:            make(map[string]model.Client),
-		runHandles:        make(map[string]engine.WorkflowHandle),
-		suppressedParents: make(map[string]struct{}),
-		agentToolSpecs:    make(map[agent.Ident][]tools.ToolSpec),
-		workers:           opts.Workers,
+		Engine:         eng,
+		Memory:         opts.MemoryStore,
+		Policy:         opts.Policy,
+		RunStore:       opts.RunStore,
+		Bus:            bus,
+		Stream:         opts.Stream,
+		logger:         logger,
+		metrics:        metrics,
+		tracer:         tracer,
+		agents:         make(map[agent.Ident]AgentRegistration),
+		toolsets:       make(map[string]ToolsetRegistration),
+		toolSpecs:      make(map[tools.Ident]tools.ToolSpec),
+		toolSchemas:    make(map[string]map[string]any),
+		models:         make(map[string]model.Client),
+		runHandles:     make(map[string]engine.WorkflowHandle),
+		agentToolSpecs: make(map[agent.Ident][]tools.ToolSpec),
+		workers:        opts.Workers,
 	}
 	if rt.Memory != nil {
 		memSub := hooks.SubscriberFunc(func(ctx context.Context, event hooks.Event) error {
@@ -736,9 +713,9 @@ func WithTracer(t telemetry.Tracer) RuntimeOption { return func(o *Options) { o.
 func WithWorker(id agent.Ident, cfg WorkerConfig) RuntimeOption {
 	return func(o *Options) {
 		if o.Workers == nil {
-			o.Workers = make(map[string]WorkerConfig)
+			o.Workers = make(map[agent.Ident]WorkerConfig)
 		}
-		o.Workers[string(id)] = cfg
+		o.Workers[id] = cfg
 	}
 }
 
@@ -838,7 +815,7 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	}
 
 	r.mu.Lock()
-	r.agents[reg.ID] = reg
+	r.agents[agent.Ident(reg.ID)] = reg
 	r.addToolSpecsLocked(reg.Specs)
 	if len(reg.Specs) > 0 {
 		// store a shallow copy to avoid external mutation
@@ -946,7 +923,7 @@ func (r *Runtime) NewBedrockModelClient(awsrt *bedrockruntime.Client, cfg Bedroc
 
 // agentByID returns the registered agent by ID if present. The boolean indicates
 // whether the agent was found. Intended for internal/runtime use and codegen.
-func (r *Runtime) agentByID(id string) (AgentRegistration, bool) {
+func (r *Runtime) agentByID(id agent.Ident) (AgentRegistration, bool) {
 	r.mu.RLock()
 	agent, ok := r.agents[id]
 	r.mu.RUnlock()
@@ -966,7 +943,7 @@ func (r *Runtime) ExecuteAgentChildWithRoute(
 		return nil, fmt.Errorf("child route is incomplete")
 	}
 	input := RunInput{
-		AgentID:          string(route.ID),
+		AgentID:          route.ID,
 		RunID:            nestedRunCtx.RunID,
 		SessionID:        nestedRunCtx.SessionID,
 		TurnID:           nestedRunCtx.TurnID,
@@ -1018,7 +995,7 @@ func (r *Runtime) startRunWithRoute(ctx context.Context, input *RunInput, route 
 		return nil, fmt.Errorf("%w: missing route for agent client", ErrAgentNotFound)
 	}
 	if input.AgentID == "" {
-		input.AgentID = string(route.ID)
+		input.AgentID = route.ID
 	}
 	return r.startRunOn(ctx, input, route.WorkflowName, route.DefaultTaskQueue)
 }
@@ -1030,7 +1007,7 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	r.registrationClosed = true
 	r.mu.Unlock()
 	if input.RunID == "" {
-		input.RunID = generateRunID(input.AgentID)
+		input.RunID = generateRunID(string(input.AgentID))
 	}
 	if strings.TrimSpace(input.SessionID) == "" {
 		return nil, ErrMissingSessionID
@@ -1252,7 +1229,7 @@ func (r *Runtime) ToolSchema(name tools.Ident) (map[string]any, bool) {
 func (r *Runtime) OverridePolicy(agentID agent.Ident, delta RunPolicy) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	reg, ok := r.agents[string(agentID)]
+	reg, ok := r.agents[agentID]
 	if !ok {
 		return ErrAgentNotFound
 	}
@@ -1271,7 +1248,7 @@ func (r *Runtime) OverridePolicy(agentID agent.Ident, delta RunPolicy) error {
 	if delta.InterruptsAllowed {
 		reg.Policy.InterruptsAllowed = true
 	}
-	r.agents[string(agentID)] = reg
+	r.agents[agentID] = reg
 	return nil
 }
 

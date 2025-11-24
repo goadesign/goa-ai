@@ -19,7 +19,7 @@ import (
 // setupTestAgentWithPlanner creates a test runtime with an agent that uses the provided planner function.
 func setupTestAgentWithPlanner(plannerFn func(context.Context, *planner.PlanInput) (*planner.PlanResult, error)) (*Runtime, context.Context) {
 	rt := &Runtime{
-		agents:  make(map[string]AgentRegistration),
+		agents:  make(map[agent.Ident]AgentRegistration),
 		logger:  telemetry.NoopLogger{},
 		metrics: telemetry.NoopMetrics{},
 		tracer:  telemetry.NoopTracer{},
@@ -71,6 +71,12 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.Equal(t, "ok", res.Result)
+	// Agent-as-tool must attach a RunLink for the nested agent run.
+	require.NotNil(t, res.RunLink)
+	require.Equal(t, "run/agent/tool", res.RunLink.RunID)
+	require.Equal(t, agent.Ident("svc.agent"), res.RunLink.AgentID)
+	require.Equal(t, "run", res.RunLink.ParentRunID)
+	require.Equal(t, "", res.RunLink.ParentToolCallID)
 	require.Len(t, got, 2)
 	require.Equal(t, model.ConversationRoleSystem, got[0].Role)
 	if tp, ok := got[0].Parts[0].(model.TextPart); ok {

@@ -43,7 +43,7 @@ func firstText(m *model.Message) string {
 
 func TestAgentTool_DefaultsFromPayload(t *testing.T) {
 	rt := &Runtime{
-		agents:  make(map[string]AgentRegistration),
+		agents:  make(map[agent.Ident]AgentRegistration),
 		Engine:  engineinmem.New(),
 		logger:  telemetry.NoopLogger{},
 		metrics: telemetry.NoopMetrics{},
@@ -91,7 +91,7 @@ func TestAgentTool_DefaultsFromPayload(t *testing.T) {
 
 func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 	rt := &Runtime{
-		agents:  make(map[string]AgentRegistration),
+		agents:  make(map[agent.Ident]AgentRegistration),
 		Engine:  engineinmem.New(),
 		logger:  telemetry.NoopLogger{},
 		metrics: telemetry.NoopMetrics{},
@@ -137,7 +137,7 @@ func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 
 func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 	rt := &Runtime{
-		agents:  make(map[string]AgentRegistration),
+		agents:  make(map[agent.Ident]AgentRegistration),
 		Engine:  engineinmem.New(),
 		logger:  telemetry.NoopLogger{},
 		metrics: telemetry.NoopMetrics{},

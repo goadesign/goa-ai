@@ -6,7 +6,10 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type mockSink struct {
@@ -66,6 +69,36 @@ func TestStreamSubscriber_ToolUpdate(t *testing.T) {
 	require.Equal(t, 3, upd.Data.ExpectedChildrenTotal)
 }
 
+func TestStreamSubscriber_WorkflowFromRunCompleted(t *testing.T) {
+	sink := &mockSink{}
+	sub, err := NewSubscriber(sink)
+	require.NoError(t, err)
+	ctx := context.Background()
+	evt := hooks.NewRunCompletedEvent("r1", agent.Ident("agent1"), "success", run.PhaseCompleted, nil)
+	require.NoError(t, sub.HandleEvent(ctx, evt))
+	require.Len(t, sink.events, 1)
+	wf, ok := sink.events[0].(Workflow)
+	require.True(t, ok)
+	require.Equal(t, EventWorkflow, wf.Type())
+	require.Equal(t, "completed", wf.Data.Phase)
+	require.Equal(t, "success", wf.Data.Status)
+}
+
+func TestStreamSubscriber_WorkflowFromRunPhaseChanged(t *testing.T) {
+	sink := &mockSink{}
+	sub, err := NewSubscriber(sink)
+	require.NoError(t, err)
+	ctx := context.Background()
+	evt := hooks.NewRunPhaseChangedEvent("r1", agent.Ident("agent1"), run.PhasePlanning)
+	require.NoError(t, sub.HandleEvent(ctx, evt))
+	require.Len(t, sink.events, 1)
+	wf, ok := sink.events[0].(Workflow)
+	require.True(t, ok)
+	require.Equal(t, EventWorkflow, wf.Type())
+	require.Equal(t, "planning", wf.Data.Phase)
+	require.Empty(t, wf.Data.Status)
+}
+
 func TestStreamSubscriber_ThinkingBlock_StructuredFinalHasNoDelta(t *testing.T) {
 	sink := &mockSink{}
 	sub, err := NewSubscriber(sink)
@@ -106,4 +139,51 @@ func TestStreamSubscriber_ThinkingBlock_StructuredNonFinalDelta(t *testing.T) {
 	require.False(t, th.Data.Final)
 	// Delta propagated via Note for streaming.
 	require.Equal(t, "partial", th.Data.Note)
+}
+
+func TestStreamSubscriber_AgentRunStarted(t *testing.T) {
+	sink := &mockSink{}
+	sub, err := NewSubscriber(sink)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	evt := hooks.NewAgentRunStartedEvent(
+		"parent-run",
+		agent.Ident("parent.agent"),
+		tools.Ident("svc.agent.ada"),
+		"parent-call",
+		"child-run",
+		agent.Ident("child.agent"),
+	)
+	require.NoError(t, sub.HandleEvent(ctx, evt))
+
+	require.Len(t, sink.events, 1)
+	ar, ok := sink.events[0].(AgentRunStarted)
+	require.True(t, ok)
+	require.Equal(t, EventAgentRunStarted, ar.Type())
+	require.Equal(t, "parent-run", ar.RunID())
+	require.Equal(t, "svc.agent.ada", ar.Data.ToolName)
+	require.Equal(t, "parent-call", ar.Data.ToolCallID)
+	require.Equal(t, "child-run", ar.Data.ChildRunID)
+	require.Equal(t, agent.Ident("child.agent"), ar.Data.ChildAgentID)
+}
+
+func TestStreamSubscriber_MultipleRunsPreserveRunID(t *testing.T) {
+	sink := &mockSink{}
+	sub, err := NewSubscriber(sink)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	// Parent and child runs must retain distinct RunIDs in the stream. The
+	// subscriber never rewrites run identities; higher-level projections that
+	// want a flattened view are expected to build it on top.
+	parent := hooks.NewRunPhaseChangedEvent("parent-run", agent.Ident("parent.agent"), run.PhasePlanning)
+	child := hooks.NewRunPhaseChangedEvent("child-run", agent.Ident("child.agent"), run.PhasePlanning)
+
+	require.NoError(t, sub.HandleEvent(ctx, parent))
+	require.NoError(t, sub.HandleEvent(ctx, child))
+
+	require.Len(t, sink.events, 2)
+	require.Equal(t, "parent-run", sink.events[0].RunID())
+	require.Equal(t, "child-run", sink.events[1].RunID())
 }

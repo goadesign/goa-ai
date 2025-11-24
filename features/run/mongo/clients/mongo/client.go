@@ -15,6 +15,7 @@ import (
 
 	"goa.design/clue/health"
 
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/run"
 )
 
@@ -154,7 +155,7 @@ type runDocument struct {
 func fromRun(run run.Record) runDocument {
 	return runDocument{
 		RunID:     run.RunID,
-		AgentID:   run.AgentID,
+		AgentID:   string(run.AgentID),
 		SessionID: run.SessionID,
 		TurnID:    run.TurnID,
 		Status:    run.Status,
@@ -168,7 +169,7 @@ func fromRun(run run.Record) runDocument {
 func (doc runDocument) toRun() run.Record {
 	return run.Record{
 		RunID:     doc.RunID,
-		AgentID:   doc.AgentID,
+		AgentID:   agent.Ident(doc.AgentID),
 		SessionID: doc.SessionID,
 		TurnID:    doc.TurnID,
 		Status:    doc.Status,

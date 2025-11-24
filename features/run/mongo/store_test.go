@@ -8,6 +8,7 @@ import (
 
 	clientsmongo "goa.design/goa-ai/features/run/mongo/clients/mongo"
 	mockmongo "goa.design/goa-ai/features/run/mongo/clients/mongo/mocks"
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/run"
 )
 
@@ -18,7 +19,7 @@ func TestNewStoreRequiresClient(t *testing.T) {
 
 func TestUpsertDelegatesToClient(t *testing.T) {
 	mockClient := mockmongo.NewClient(t)
-	rec := run.Record{RunID: "run", AgentID: "agent"}
+	rec := run.Record{RunID: "run", AgentID: agent.Ident("agent")}
 	mockClient.AddUpsertRun(func(ctx context.Context, r run.Record) error {
 		require.Equal(t, rec, r)
 		return nil
@@ -32,7 +33,7 @@ func TestUpsertDelegatesToClient(t *testing.T) {
 
 func TestLoadDelegatesToClient(t *testing.T) {
 	mockClient := mockmongo.NewClient(t)
-	expected := run.Record{RunID: "run", AgentID: "agent"}
+	expected := run.Record{RunID: "run", AgentID: agent.Ident("agent")}
 	mockClient.AddLoadRun(func(ctx context.Context, runID string) (run.Record, error) {
 		require.Equal(t, "run", runID)
 		return expected, nil

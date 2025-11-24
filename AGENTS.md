@@ -393,18 +393,18 @@ Content rules:
 - Provider agents must run a worker on their workflow queue. Consumers only need
   to `RegisterToolset(reg)`. See architecture docs for rationale and flows.
 
-#### Child tool event suppression
+#### Child runs, run links, and stream profiles
 
-- Agent-as-tool registrations may set `ToolsetRegistration.SuppressChildEvents`
-  to hide child inline tool events from streaming and memory while still
-  executing them:
-  - Child tools invoked by the nested agent continue to run and their results
-    are included in the nested run's `RunOutput.ToolEvents` so finalizers and
-    aggregators can inspect them.
-  - The runtime does **not** emit `ToolCallScheduled` or `ToolResultReceived`
-    hook events for those child calls on the global bus. Only the parent
-    agent-tool tool call/result remains visible to stream sinks and memory
-    subscribers.
-- Use this for JSON-only agent-tools that should surface a single aggregated
-  parent tool call/result (for example, ADA calling multiple Atlas Data tools
-  internally) rather than the full internal child tool tree.
+- Agent-as-tool always executes in a real child run. When a nested agent is
+  invoked, the runtime:
+  - creates a new workflow run with its own `RunID` and `run.Handle`,
+  - emits an `AgentRunStarted` hook/stream event in the parent run that carries
+    a `run.Handle` link to the child (run ID, agent ID, parent run/tool IDs),
+  - sets `ToolResult.RunLink` on the parent tool result so finalizers and
+    planners can correlate structured results with the child run.
+- The runtime no longer flattens or suppresses child tool events globally.
+  Visibility is controlled by `stream.StreamProfile`, which selects event
+  kinds per audience (chat vs debug vs metrics). All profiles operate on
+  per‑run streams linked via `AgentRunStarted` events; if you need a flattened,
+  firehose‑style projection for debugging, build it as a separate subscriber
+  on top of the per‑run model rather than changing the core runtime behavior.

@@ -44,15 +44,16 @@ import (
 	"encoding/json"
 	"time"
 
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-type (
-	// Context carries execution metadata for the current run invocation.
-	// It is passed through the system during workflow execution and contains
-	// the identifiers, labels, and constraints active for this specific
-	// invocation attempt.
-	Context struct {
+	type (
+		// Context carries execution metadata for the current run invocation.
+		// It is passed through the system during workflow execution and contains
+		// the identifiers, labels, and constraints active for this specific
+		// invocation attempt.
+		Context struct {
 		// RunID uniquely identifies the durable workflow run (infrastructure layer).
 		// This corresponds to the workflow engine's execution identifier (e.g.,
 		// Temporal WorkflowID). Used for workflow operations, replay, and observability.
@@ -71,7 +72,7 @@ type (
 		// ParentAgentID identifies the agent that invoked this nested execution. Empty
 		// for top-level runs. When set alongside ParentRunID, tool events can retain the
 		// parent agent identity even though execution occurs in a child agent.
-		ParentAgentID string
+		ParentAgentID agent.Ident
 
 		// SessionID associates related runs into a conversation or interaction thread.
 		// Multiple turns in a chat session share the same SessionID. Optional.
@@ -106,6 +107,23 @@ type (
 		MaxDuration string
 	}
 
+	// Handle is a lightweight handle to a run, used for linking parent and
+	// child runs in planner contracts and streaming surfaces. It intentionally
+	// omits transport/engine details and focuses on logical identity.
+	Handle struct {
+		// RunID uniquely identifies the durable workflow run.
+		RunID string
+		// AgentID identifies the agent that owns this run.
+		AgentID agent.Ident
+		// ParentRunID identifies the run that scheduled this run when used for
+		// nested agent-as-tool execution. Empty for top-level runs.
+		ParentRunID string
+		// ParentToolCallID identifies the parent tool call that created this
+		// run when used for nested agent-as-tool execution. Empty for
+		// top-level runs.
+		ParentToolCallID string
+	}
+
 	// Record captures persistent metadata associated with an agent run execution.
 	// This is the durable record stored for observability and lifecycle tracking.
 	// Each record represents a single workflow invocation and can be associated
@@ -113,7 +131,7 @@ type (
 	// conversations).
 	Record struct {
 		// AgentID identifies which agent processed the run.
-		AgentID string
+		AgentID agent.Ident
 		// RunID is the durable workflow run identifier (workflow execution ID).
 		RunID string
 		// SessionID associates related runs into a conversation thread (optional).
@@ -139,8 +157,15 @@ type (
 		Load(ctx context.Context, runID string) (Record, error)
 	}
 
-	// Status represents the lifecycle state of a run.
+	// Status represents the coarse-grained lifecycle state of a run.
 	Status string
+
+	// Phase represents a finer-grained lifecycle phase for a run. Phases track
+	// where a run is in its execution loop (prompted, planning, executing
+	// tools, synthesizing, or in a terminal state). Phases are intended for
+	// streaming/UX surfaces and do not replace Status, which is used for
+	// durable run metadata.
+	Phase string
 )
 
 const (
@@ -156,4 +181,23 @@ const (
 	StatusCanceled Status = "canceled"
 	// StatusPaused indicates execution is paused awaiting external intervention.
 	StatusPaused Status = "paused"
+
+	// PhasePrompted indicates that input has been received and the run is
+	// about to begin planning.
+	PhasePrompted Phase = "prompted"
+	// PhasePlanning indicates that the planner is deciding whether and how to
+	// call tools or answer directly.
+	PhasePlanning Phase = "planning"
+	// PhaseExecutingTools indicates that tools (including nested agents) are
+	// currently executing.
+	PhaseExecutingTools Phase = "executing_tools"
+	// PhaseSynthesizing indicates that the planner is synthesizing a final
+	// answer without scheduling additional tools.
+	PhaseSynthesizing Phase = "synthesizing"
+	// PhaseCompleted indicates the run has completed successfully.
+	PhaseCompleted Phase = "completed"
+	// PhaseFailed indicates the run has failed.
+	PhaseFailed Phase = "failed"
+	// PhaseCanceled indicates the run was canceled.
+	PhaseCanceled Phase = "canceled"
 )

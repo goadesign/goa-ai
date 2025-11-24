@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/memory"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -10,7 +11,7 @@ import (
 // agentContextOptions configures construction of a planner.PlannerContext.
 type agentContextOptions struct {
 	runtime *Runtime
-	agentID string
+	agentID agent.Ident
 	runID   string
 	memory  memory.Reader
 	turnID  string
@@ -20,7 +21,7 @@ type agentContextOptions struct {
 // simplePlannerContext is a minimal implementation of planner.PlannerContext.
 type simplePlannerContext struct {
 	rt    *Runtime
-	agent string
+	agent agent.Ident
 	runID string
 	mem   memory.Reader
 	ev    planner.PlannerEvents
@@ -36,7 +37,7 @@ func newAgentContext(opts agentContextOptions) planner.PlannerContext {
 	}
 }
 
-func (c *simplePlannerContext) ID() string                 { return c.agent }
+func (c *simplePlannerContext) ID() agent.Ident                 { return c.agent }
 func (c *simplePlannerContext) RunID() string              { return c.runID }
 func (c *simplePlannerContext) Memory() memory.Reader      { return c.mem }
 func (c *simplePlannerContext) Logger() telemetry.Logger   { return c.rt.logger }

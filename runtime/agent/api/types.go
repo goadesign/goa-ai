@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -18,7 +19,7 @@ import (
 // and metadata.
 type RunInput struct {
 	// AgentID identifies which agent should process the run.
-	AgentID string
+	AgentID agent.Ident
 
 	// RunID is the durable workflow execution identifier.
 	RunID string
@@ -43,7 +44,7 @@ type RunInput struct {
 	// ParentAgentID identifies the agent that invoked this nested execution. Empty for
 	// top-level runs. When set with ParentRunID, tool events can retain the parent agent
 	// identity even though execution happens in a child agent.
-	ParentAgentID string
+	ParentAgentID agent.Ident
 
 	// Tool identifies the fully-qualified tool name when this run is a nested
 	// agent-as-tool execution. For top-level runs (not invoked via a parent tool),
@@ -120,7 +121,7 @@ type PolicyOverrides struct {
 // concluding assistant message plus tool traces and planner notes for callers.
 type RunOutput struct {
 	// AgentID echoes the agent that produced the result.
-	AgentID string
+	AgentID agent.Ident
 	// RunID echoes the workflow execution identifier.
 	RunID string
 	// Final is the assistant reply returned to the caller.
@@ -135,7 +136,7 @@ type RunOutput struct {
 
 // PlanActivityInput carries data for planner PlanStart/PlanResume activities.
 type PlanActivityInput struct {
-	AgentID     string
+	AgentID     agent.Ident
 	RunID       string
 	Messages    []*model.Message
 	RunContext  run.Context
@@ -183,7 +184,7 @@ func (o *PlanActivityOutput) UnmarshalJSON(data []byte) error {
 // ToolInput is the payload passed to tool executors. Payload is JSON-encoded.
 type ToolInput struct {
 	RunID            string
-	AgentID          string
+	AgentID          agent.Ident
 	ToolsetName      string
 	ToolName         tools.Ident
 	ToolCallID       string
@@ -200,3 +201,4 @@ type ToolOutput struct {
 	Error     string
 	RetryHint *planner.RetryHint
 }
+
