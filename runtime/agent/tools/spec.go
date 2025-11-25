@@ -26,6 +26,12 @@ type (
 		Payload TypeSpec
 		// Result describes the response schema for the tool.
 		Result TypeSpec
+		// Sidecar describes the optional typed sidecar schema for the tool.
+		// When present, Sidecar is attached to planner.ToolResult.Sidecar and
+		// never serialized into model provider requests. It is typically used
+		// for artifacts and other UI- or policy-facing data that ride alongside
+		// the model-visible payload/result.
+		Sidecar *TypeSpec
 	}
 
 	// TypeSpec describes the payload or result schema for a tool.

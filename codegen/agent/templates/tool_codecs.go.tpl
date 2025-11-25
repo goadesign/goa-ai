@@ -173,6 +173,68 @@ func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
     }
 }
 
+// SidecarCodec returns the generic codec for the named tool sidecar when declared.
+func SidecarCodec(name string) (*tools.JSONCodec[any], bool) {
+    switch name {
+{{- range .Tools }}
+    {{- if .Sidecar }}
+    case {{ printf "%q" .Name }}:
+        return &{{ .Sidecar.GenericCodec }}, true
+    {{- end }}
+{{- end }}
+    default:
+        return nil, false
+    }
+}
+
+{{- /* Per-tool sidecar helpers for planner.ToolResult.Sidecar */ -}}
+{{- range .Tools }}
+    {{- if .Sidecar }}
+// Get{{ goify .Name true }}Sidecar decodes the ToolResult.Sidecar map into the
+// typed {{ .Sidecar.TypeName }} value. It returns nil when no sidecar is present.
+func Get{{ goify .Name true }}Sidecar(res *planner.ToolResult) (*{{ .Sidecar.FullRef }}, error) {
+    if res == nil || len(res.Sidecar) == 0 {
+        return nil, nil
+    }
+    data, err := json.Marshal(res.Sidecar)
+    if err != nil {
+        return nil, err
+    }
+    v, err := {{ .Sidecar.UnmarshalFunc }}(data)
+    if err != nil {
+        return nil, err
+    }
+    return &v, nil
+}
+
+// Set{{ goify .Name true }}Sidecar encodes the typed sidecar onto the ToolResult.Sidecar
+// map, merging with any existing entries.
+func Set{{ goify .Name true }}Sidecar(res *planner.ToolResult, sc *{{ .Sidecar.FullRef }}) error {
+    if res == nil || sc == nil {
+        return nil
+    }
+    data, err := {{ .Sidecar.MarshalFunc }}(*sc)
+    if err != nil {
+        return err
+    }
+    // Decode back into a map to merge with any existing metadata entries.
+    tmp := make(map[string]any)
+    if len(data) > 0 {
+        if err := json.Unmarshal(data, &tmp); err != nil {
+            return err
+        }
+    }
+    if res.Sidecar == nil {
+        res.Sidecar = make(map[string]any, len(tmp))
+    }
+    for k, v := range tmp {
+        res.Sidecar[k] = v
+    }
+    return nil
+}
+    {{- end }}
+{{- end }}
+
 {{- range .Types }}
     {{- if .GenerateCodec }}
 // {{ .MarshalFunc }} serializes {{ if .Pointer }}*{{ end }}{{ .FullRef }} into JSON.

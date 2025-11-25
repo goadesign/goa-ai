@@ -368,6 +368,40 @@ func Return(val any, args ...any) {
 	tool.Return = toolDSL(tool, "Return", val, args...)
 }
 
+// Sidecar defines the typed sidecar schema for a tool result. Use Sidecar
+// inside a Tool DSL to declare structured data that is attached to
+// planner.ToolResult.Sidecar but never sent to the model provider.
+//
+// Sidecar follows the same patterns as Args/Return and Goa's Payload/Result:
+// it accepts either:
+//   - A function to define an inline object schema with Attribute() calls
+//   - A Goa user type (Type, ResultType, etc.) to reuse existing type definitions
+//   - A primitive type (String, Int, etc.) for simple single-value sidecar data
+//
+// Typical usage is to attach full-fidelity artifacts that back a bounded
+// model-facing result. For example:
+//
+//	Tool("get_time_series", "Get Time Series", func() {
+//	    Args(AtlasGetTimeSeriesToolArgs)
+//	    Return(AtlasGetTimeSeriesToolReturn)
+//	    Sidecar(AtlasGetTimeSeriesSidecar)
+//	})
+//
+// If Sidecar is not called, the tool has no declared sidecar type and
+// runtimes continue to use untyped map[string]any metadata.
+func Sidecar(val any, args ...any) {
+	if len(args) > 2 {
+		eval.TooManyArgError()
+		return
+	}
+	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	tool.Sidecar = toolDSL(tool, "Sidecar", val, args...)
+}
+
 // CallHintTemplate configures a display template for tool invocations. The
 // template is rendered with the tool's payload to produce a concise hint shown
 // during execution. Templates are compiled with missingkey=error.

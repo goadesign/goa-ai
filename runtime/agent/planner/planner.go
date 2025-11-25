@@ -64,9 +64,12 @@ type ToolRequest struct {
 
 // ToolResult captures the outcome of a tool invocation.
 type ToolResult struct {
-	Name          tools.Ident
-	Result        any
-	Metadata      map[string]any
+	Name   tools.Ident
+	Result any
+	// Sidecar carries arbitrary non-model data produced alongside the tool
+	// result (for example, UI artifacts or policy annotations).  It is not
+	// sent to model providers.
+	Sidecar       map[string]any
 	Error         *ToolError
 	RetryHint     *RetryHint
 	Telemetry     *telemetry.ToolTelemetry

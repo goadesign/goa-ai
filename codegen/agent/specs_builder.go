@@ -74,6 +74,8 @@ type (
 		Payload *typeData
 		// Type metadata for the tool's output result.
 		Result *typeData
+		// Type metadata for the optional tool sidecar payload.
+		Sidecar *typeData
 	}
 
 	// typeData holds all metadata needed to generate a type definition, schema,
@@ -177,6 +179,7 @@ type (
 const (
 	usagePayload typeUsage = "payload"
 	usageResult  typeUsage = "result"
+	usageSidecar typeUsage = "sidecar"
 )
 
 // buildToolSpecsData constructs the complete type and codec metadata for all tools
@@ -205,6 +208,13 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 		if err != nil {
 			return nil, err
 		}
+		var sidecar *typeData
+		if tool.Sidecar != nil && tool.Sidecar.Type != goaexpr.Empty {
+			sidecar, err = builder.typeFor(tool, tool.Sidecar, usageSidecar)
+			if err != nil {
+				return nil, err
+			}
+		}
 		entry := &toolEntry{
 			// Name is the qualified tool ID used at runtime (toolset.tool).
 			Name:              tool.QualifiedName,
@@ -217,6 +227,7 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 			ExportingAgentID:  tool.ExportingAgentID,
 			Payload:           payload,
 			Result:            result,
+			Sidecar:           sidecar,
 		}
 		data.addTool(entry)
 	}
@@ -241,6 +252,9 @@ func (d *toolSpecsData) addTool(entry *toolEntry) {
 	d.tools = append(d.tools, entry)
 	d.addType(entry.Payload)
 	d.addType(entry.Result)
+	if entry.Sidecar != nil {
+		d.addType(entry.Sidecar)
+	}
 }
 
 func (d *toolSpecsData) addType(info *typeData) {
@@ -371,6 +385,14 @@ func (d *toolSpecsData) codecsImports() []*codegen.ImportSpec {
 			base = append(base, extra[p])
 		}
 	}
+	// Sidecar helpers depend on planner.ToolResult when any tool declares
+	// a sidecar type.
+	for _, t := range d.tools {
+		if t != nil && t.Sidecar != nil {
+			base = append(base, codegen.SimpleImport("goa.design/goa-ai/runtime/agent/planner"))
+			break
+		}
+	}
 	if needsGoa {
 		base = append(base, codegen.GoaImport(""))
 	}
@@ -434,6 +456,8 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 		typeName += "Payload"
 	case usageResult:
 		typeName += "Result"
+	case usageSidecar:
+		typeName += "Sidecar"
 	}
 
 	scope := b.scopeForTool(tool)
@@ -794,6 +818,8 @@ func stableTypeKey(tool *ToolData, usage typeUsage) string {
 		tn += "Payload"
 	case usageResult:
 		tn += "Result"
+	case usageSidecar:
+		tn += "Sidecar"
 	}
 	return "name:" + tn
 }

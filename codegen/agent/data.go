@@ -366,6 +366,11 @@ type (
 		Args *goaexpr.AttributeExpr
 		// Return is the Goa attribute describing the tool result.
 		Return *goaexpr.AttributeExpr
+		// Sidecar is the Goa attribute describing the optional typed sidecar
+		// data attached to this tool. Sidecar data is never sent to the model
+		// provider; it is exposed via planner.ToolResult.Sidecar and is
+		// typically used for artifacts such as full-fidelity results for UIs.
+		Sidecar *goaexpr.AttributeExpr
 		// MethodPayloadAttr is the Goa attribute for the bound service payload
 		// (resolved user type). Used to generate default payload adapters.
 		MethodPayloadAttr *goaexpr.AttributeExpr
@@ -1112,6 +1117,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		Tags:               slices.Clone(expr.Tags),
 		Args:               expr.Args,
 		Return:             expr.Return,
+		Sidecar:            expr.Sidecar,
 		Toolset:            ts,
 		IsExportedByAgent:  isExported,
 		ExportingAgentID:   exportingAgentID,

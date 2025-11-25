@@ -343,7 +343,12 @@ func agentPerToolsetSpecsFiles(agent *AgentData) []*codegen.File {
 			// codecs.go
 			codecsSections := []*codegen.SectionTemplate{
 				codegen.Header(agent.StructName+" tool codecs", ts.SpecsPackageName, data.codecsImports()),
-				{Name: "tool-spec-codecs", Source: agentsTemplates.Read(toolCodecsFileT), Data: toolCodecsFileData{Types: data.typesList(), Tools: data.tools}},
+				{
+					Name:    "tool-spec-codecs",
+					Source:  agentsTemplates.Read(toolCodecsFileT),
+					Data:    toolCodecsFileData{Types: data.typesList(), Tools: data.tools},
+					FuncMap: templateFuncMap(),
+				},
 			}
 			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, "codecs.go"), SectionTemplates: codecsSections})
 			// specs.go
@@ -361,8 +366,9 @@ func agentPerToolsetSpecsFiles(agent *AgentData) []*codegen.File {
 
 // agentSpecsJSONFile emits specs/tool_schemas.json for an agent, capturing the
 // JSON schemas for all tools declared across its toolsets. The file aggregates
-// payload and result schemas in a backend-agnostic format that can be consumed
-// by frontends or other tooling without depending on generated Go types.
+// payload, result, and optional sidecar schemas in a backend-agnostic format
+// that can be consumed by frontends or other tooling without depending on
+// generated Go types.
 //
 // The JSON structure is:
 //
@@ -382,14 +388,18 @@ func agentPerToolsetSpecsFiles(agent *AgentData) []*codegen.File {
 //	      "result": {
 //	        "name": "ResultType",
 //	        "schema": { /* JSON Schema */ }
+//	      },
+//	      "sidecar": {
+//	        "name": "SidecarType",
+//	        "schema": { /* JSON Schema */ }
 //	      }
 //	    }
 //	  ]
 //	}
 //
-// Schemas are emitted only when available; tools without payload or result
-// schemas still appear with name metadata so callers can rely on a stable
-// catalogue.
+// Schemas are emitted only when available; tools without payload, result, or
+// sidecar schemas still appear with name metadata so callers can rely on a
+// stable catalogue.
 func agentSpecsJSONFile(agent *AgentData) *codegen.File {
 	data, err := buildToolSpecsData(agent)
 	if err != nil {
@@ -419,6 +429,7 @@ func agentSpecsJSONFile(agent *AgentData) *codegen.File {
 		Tags        []string    `json:"tags,omitempty"`
 		Payload     *typeSchema `json:"payload,omitempty"`
 		Result      *typeSchema `json:"result,omitempty"`
+		Sidecar     *typeSchema `json:"sidecar,omitempty"`
 	}
 
 	out := struct {
@@ -463,6 +474,16 @@ func agentSpecsJSONFile(agent *AgentData) *codegen.File {
 				ts.Schema = schema
 			}
 			entry.Result = &ts
+		}
+
+		if td := t.Sidecar; td != nil && td.TypeName != "" {
+			ts := typeSchema{
+				Name: td.TypeName,
+			}
+			if schema := schemaJSON(td.SchemaLiteral); len(schema) > 0 {
+				ts.Schema = schema
+			}
+			entry.Sidecar = &ts
 		}
 
 		out.Tools = append(out.Tools, entry)
@@ -564,16 +585,20 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 			if !t.IsMethodBacked || t.MethodPayloadAttr == nil || t.MethodResultAttr == nil {
 				continue
 			}
-			// Locate tool payload/result type metadata by type name convention
-			var toolPayload, toolResult *typeData
+			// Locate tool payload/result/metadata type metadata by type name convention
+			var toolPayload, toolResult, toolMetadata *typeData
 			wantPayload := codegen.Goify(t.Name, true) + "Payload"
 			wantResult := codegen.Goify(t.Name, true) + "Result"
+			wantMetadata := codegen.Goify(t.Name, true) + "Metadata"
 			for _, td := range data.typesList() {
 				if td.TypeName == wantPayload {
 					toolPayload = td
 				}
 				if td.TypeName == wantResult {
 					toolResult = td
+				}
+				if td.TypeName == wantMetadata {
+					toolMetadata = td
 				}
 			}
 			// Init<GoName>MethodPayload: tool payload (specs) -> service method payload
@@ -729,6 +754,61 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 							Name:          "Init" + codegen.Goify(t.Name, true) + "ToolResult",
 							ParamTypeRef:  serviceResRef,
 							ResultTypeRef: resRef,
+							Body:          body,
+							Helpers:       nil,
+						})
+					}
+				}
+			}
+			// Init<GoName>SidecarFromMethodResult: service method result -> sidecar (specs)
+			if toolMetadata != nil && t.Sidecar != nil && t.Sidecar.Type != goaexpr.Empty && t.MethodResultAttr != nil && t.MethodResultAttr.Type != goaexpr.Empty {
+				if err := codegen.IsCompatible(t.MethodResultAttr.Type, t.Sidecar.Type, "in", "out"); err == nil {
+					for _, im := range gatherAttributeImports(agent.Genpkg, t.MethodResultAttr) {
+						if im != nil && im.Path != "" {
+							extraImports[im.Path] = im
+						}
+					}
+					for _, im := range gatherAttributeImports(agent.Genpkg, t.Sidecar) {
+						if im != nil && im.Path != "" {
+							extraImports[im.Path] = im
+						}
+					}
+					srcCtx := codegen.NewAttributeContextForConversion(false, false, false, svcAlias, scope)
+					// Build a local alias user type for the sidecar. Do not propagate struct:pkg:path
+					// from the base attribute so initializers/casts use the specs package alias.
+					var metaBase *goaexpr.AttributeExpr
+					if ut, ok := t.Sidecar.Type.(goaexpr.UserType); ok && ut != nil {
+						metaBase = ut.Attribute()
+					} else {
+						metaBase = t.Sidecar
+					}
+					dupMeta := *metaBase
+					if dupMeta.Meta != nil {
+						delete(dupMeta.Meta, "struct:pkg:path")
+					}
+					rewrittenMeta := rewriteNestedLocalUserTypes(&dupMeta)
+					metaUT := &goaexpr.UserTypeExpr{AttributeExpr: rewrittenMeta, TypeName: toolMetadata.TypeName}
+					metaAttr := &goaexpr.AttributeExpr{Type: metaUT}
+					tgtCtx := codegen.NewAttributeContextForConversion(false, false, false, specsAlias, scope)
+					body, helpers, err := codegen.GoTransform(t.MethodResultAttr, metaAttr, "in", "out", srcCtx, tgtCtx, "", false)
+					if err == nil && body != "" {
+						for _, h := range helpers {
+							if h == nil {
+								continue
+							}
+							key := h.Name + "|" + h.ParamTypeRef + "|" + h.ResultTypeRef
+							if _, ok := helperKeys[key]; ok {
+								continue
+							}
+							helperKeys[key] = struct{}{}
+							fileHelpers = append(fileHelpers, h)
+						}
+						metaRef := scope.GoFullTypeRef(metaAttr, specsAlias)
+						serviceResRef := t.MethodResultTypeRef
+						fns = append(fns, transformFuncData{
+							Name:          "Init" + codegen.Goify(t.Name, true) + "SidecarFromMethodResult",
+							ParamTypeRef:  serviceResRef,
+							ResultTypeRef: metaRef,
 							Body:          body,
 							Helpers:       nil,
 						})

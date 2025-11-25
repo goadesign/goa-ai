@@ -24,6 +24,10 @@ type (
 		StreamID func(stream.Event) (string, error)
 		// MarshalEnvelope allows overriding the envelope serialization (primarily for tests).
 		MarshalEnvelope func(envelope) ([]byte, error)
+		// OnPublished, when set, is invoked after an event has been successfully
+		// written to the underlying Pulse stream. If it returns an error, Send
+		// fails and callers should treat the event as not fully emitted.
+		OnPublished func(context.Context, PublishedEvent) error
 	}
 
 	// Sink publishes runtime Event values into Pulse streams. It delegates
@@ -38,6 +42,7 @@ type (
 	sinkOptions struct {
 		streamID        func(stream.Event) (string, error)
 		marshalEnvelope func(envelope) ([]byte, error)
+		onPublished     func(context.Context, PublishedEvent) error
 	}
 
 	// envelope wraps runtime events for transmission over Pulse streams.
@@ -52,6 +57,15 @@ type (
 		// Payload contains the event-specific data, if any.
 		Payload any `json:"payload,omitempty"`
 	}
+
+	// PublishedEvent describes a runtime event that has been successfully
+	// written to a Pulse stream. It carries the original event together with
+	// the concrete stream name and the Redis-assigned entry ID.
+	PublishedEvent struct {
+		Event    stream.Event
+		StreamID string
+		EntryID  string
+	}
 )
 
 // NewSink constructs a Pulse-backed stream sink. The Client field in opts is
@@ -64,6 +78,7 @@ func NewSink(opts Options) (*Sink, error) {
 	cfg := sinkOptions{
 		streamID:        defaultStreamID,
 		marshalEnvelope: defaultMarshal,
+		onPublished:     opts.OnPublished,
 	}
 	if opts.StreamID != nil {
 		cfg.streamID = opts.StreamID
@@ -99,8 +114,16 @@ func (s *Sink) Send(ctx context.Context, event stream.Event) error {
 	if err != nil {
 		return err
 	}
-	if _, err := handle.Add(ctx, env.Type, payload); err != nil {
+	entryID, err := handle.Add(ctx, env.Type, payload)
+	if err != nil {
 		return err
+	}
+	if cb := s.opts.onPublished; cb != nil {
+		return cb(ctx, PublishedEvent{
+			Event:    event,
+			StreamID: streamID,
+			EntryID:  entryID,
+		})
 	}
 	return nil
 }

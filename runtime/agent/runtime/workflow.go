@@ -1131,7 +1131,7 @@ func (r *Runtime) executeToolCalls(
 					call.ToolCallID,
 					call.ParentToolCallID,
 					result.Result,
-					result.Metadata,
+					result.Sidecar,
 					duration,
 					result.Telemetry,
 					toolErr,
@@ -1236,7 +1236,7 @@ func (r *Runtime) executeToolCalls(
 		toolRes := &planner.ToolResult{
 			Name:       info.call.Name,
 			Result:     decoded,
-			Metadata:   out.Metadata,
+			Sidecar:    out.Sidecar,
 			ToolCallID: info.call.ToolCallID,
 			Telemetry:  out.Telemetry,
 		}
@@ -1262,7 +1262,7 @@ func (r *Runtime) executeToolCalls(
 				info.call.ToolCallID,
 				parentID,
 				decoded,
-				out.Metadata,
+				out.Sidecar,
 				duration,
 				out.Telemetry,
 				toolErr,

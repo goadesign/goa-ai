@@ -53,6 +53,15 @@ var Specs = []tools.ToolSpec{
             Codec:  tools.JSONCodec[any]{},
             {{- end }}
         },
+        Sidecar: {{- if .Sidecar }} &tools.TypeSpec{
+            Name:   {{ printf "%q" .Sidecar.TypeName }},
+            {{- if .Sidecar.SchemaVar }}
+            Schema: {{ .Sidecar.SchemaVar }},
+            {{- else }}
+            Schema: nil,
+            {{- end }}
+            Codec:  {{ .Sidecar.GenericCodec }},
+        },{{ else }}nil,{{ end }}
     },
 {{- end }}
 }
