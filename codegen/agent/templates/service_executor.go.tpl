@@ -216,7 +216,18 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
         // Invoke caller
         methodOut, err := caller(ctx, methodIn)
         if err != nil {
-            return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
+            tr := &planner.ToolResult{
+                Name:  call.Name,
+                Error: planner.ToolErrorFromError(err),
+            }
+            // Attach structured retry hints when the error provides them.
+            var provider planner.RetryHintProvider
+            if errors.As(err, &provider) {
+                if hint := provider.RetryHint(call.Name); hint != nil {
+                    tr.RetryHint = hint
+                }
+            }
+            return tr, nil
         }
         // Map back to tool result
         result := methodOut

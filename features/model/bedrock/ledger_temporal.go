@@ -26,13 +26,9 @@ func (t *temporalLedgerSource) Messages(ctx context.Context, runID string) ([]*m
 	if err != nil {
 		return nil, err
 	}
-	var resp struct {
-		Messages []*model.Message
-	}
-	if err := qr.Get(&resp); err != nil {
+	var msgs []*model.Message
+	if err := qr.Get(&msgs); err != nil {
 		return nil, err
 	}
-	return resp.Messages, nil
+	return msgs, nil
 }
-
-

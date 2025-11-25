@@ -1168,9 +1168,10 @@ func serviceExecutorFiles(agent *AgentData) []*codegen.File {
 			ServicePkgAlias: svcAlias,
 		}
 		imports := []*codegen.ImportSpec{
+			{Path: "context"},
+			{Path: "errors"},
 			{Path: "fmt"},
 			{Path: "strings"},
-			{Path: "context"},
 			{Path: "goa.design/goa-ai/runtime/agent/planner"},
 			{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "runtime"},
 			{Path: "goa.design/goa-ai/runtime/agent/tools"},

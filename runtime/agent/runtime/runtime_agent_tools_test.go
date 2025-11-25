@@ -76,7 +76,7 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 	require.Equal(t, "run/agent/tool", res.RunLink.RunID)
 	require.Equal(t, agent.Ident("svc.agent"), res.RunLink.AgentID)
 	require.Equal(t, "run", res.RunLink.ParentRunID)
-	require.Equal(t, "", res.RunLink.ParentToolCallID)
+	require.Empty(t, res.RunLink.ParentToolCallID)
 	require.Len(t, got, 2)
 	require.Equal(t, model.ConversationRoleSystem, got[0].Role)
 	if tp, ok := got[0].Parts[0].(model.TextPart); ok {

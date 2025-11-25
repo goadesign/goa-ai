@@ -84,8 +84,8 @@ type Client struct {
 }
 
 // ledgerSource provides provider-ready messages for a given run when available.
-// This interface is internal to the goa-ai bedrock client and implemented by
-// the runtime using engine-specific mechanisms (e.g., Temporal workflow queries).
+// This interface is internal to the goa-ai bedrock client and implemented by the
+// runtime using engine-specific mechanisms (e.g., Temporal workflow queries).
 type ledgerSource interface {
 	Messages(ctx context.Context, runID string) ([]*model.Message, error)
 }
@@ -106,10 +106,9 @@ type thinkingConfig struct {
 }
 
 // New initializes a Bedrock-powered model client configured for chat completion
-// and streaming requests. The provided ledgerSource allows the client to
-// prepend provider-verified messages for a specific run ID during request
-// encoding, ensuring transcript continuity and accurate context across
-// completions.
+// and streaming requests. The provided ledgerSource allows the client to prepend
+// provider-verified messages for a specific run ID during request encoding,
+// ensuring transcript continuity across completions.
 func New(aws *bedrockruntime.Client, opts Options, ledger ledgerSource) (*Client, error) {
 	opts.Runtime = aws
 	if opts.Runtime == nil {
@@ -202,6 +201,16 @@ func (c *Client) prepareRequest(ctx context.Context, req model.Request) (*reques
 	toolConfig, canonToSan, sanToCanon, err := encodeTools(ctx, req.Tools, req.ToolChoice)
 	if err != nil {
 		return nil, err
+	}
+	// Bedrock requires toolConfig when messages contain tool_use or tool_result
+	// blocks. Fail fast with a clear error rather than letting Bedrock reject
+	// the request with a generic validation error.
+	if toolConfig == nil && messagesHaveToolBlocks(merged) {
+		return nil, fmt.Errorf(
+			"bedrock: messages contain tool_use/tool_result but no tools provided in request (run=%s); "+
+				"ensure the planner always passes tools when history has tool blocks",
+			req.RunID,
+		)
 	}
 	messages, system, err := encodeMessages(ctx, merged, canonToSan)
 	if err != nil {
@@ -517,9 +526,10 @@ func encodeTools(ctx context.Context, defs []*model.ToolDefinition, choice *mode
 		// Auto is the provider default; omit ToolChoice to preserve existing
 		// behavior.
 	case model.ToolChoiceModeNone:
-		// Disable tool use for this request by omitting the configuration
-		// entirely.
-		return nil, canonToSan, sanToCanon, nil
+		// Preserve tool configuration so Bedrock can interpret existing
+		// tool_use and tool_result content blocks in the transcript, but do
+		// not force additional tool calls. Callers rely on prompts and
+		// higher-level contracts to prevent new tool invocations.
 	case model.ToolChoiceModeAny:
 		cfg.ToolChoice = &brtypes.ToolChoiceMemberAny{
 			Value: brtypes.AnyToolChoice{},
@@ -726,6 +736,24 @@ func hasToolDefinition(defs []*model.ToolDefinition, name string) bool {
 		}
 		if def.Name == name {
 			return true
+		}
+	}
+	return false
+}
+
+// messagesHaveToolBlocks returns true if any message in the slice contains
+// a ToolUsePart or ToolResultPart. Bedrock requires toolConfig to be set
+// when such parts are present.
+func messagesHaveToolBlocks(msgs []*model.Message) bool {
+	for _, m := range msgs {
+		if m == nil {
+			continue
+		}
+		for _, p := range m.Parts {
+			switch p.(type) {
+			case model.ToolUsePart, model.ToolResultPart:
+				return true
+			}
 		}
 	}
 	return false

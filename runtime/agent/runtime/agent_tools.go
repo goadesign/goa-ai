@@ -83,6 +83,14 @@ type (
 		// routing use the canonical name while the public name is preserved in parent
 		// stream events.
 		Aliases map[tools.Ident]tools.Ident
+		// AggregateKeys maps tool IDs to the JSON key for merging their child results.
+		// When a tool produces multiple child results (n > 1) and has an entry here:
+		//   - If each child result is an object containing that key with an array value,
+		//     the arrays are merged into a single array under that key.
+		//   - Otherwise, child results are wrapped: {key: [child1, child2, ...]}.
+		// When a tool is not in this map and n > 1, defaults to wrapping under "results".
+		// This ensures Bedrock compatibility (toolResult.json must be an object).
+		AggregateKeys map[tools.Ident]string
 	}
 )
 
@@ -130,6 +138,19 @@ func WithTemplateAll(ids []tools.Ident, t *template.Template) AgentToolOption {
 		for _, id := range ids {
 			c.Templates[id] = t
 		}
+	}
+}
+
+// WithAggregateKey sets the JSON key for merging multiple child results for the
+// given tool ID. When the tool produces n > 1 child results and each child has
+// an array under this key, the arrays are merged. Otherwise, results are wrapped
+// under this key.
+func WithAggregateKey(id tools.Ident, key string) AgentToolOption {
+	return func(c *AgentToolConfig) {
+		if c.AggregateKeys == nil {
+			c.AggregateKeys = make(map[tools.Ident]string)
+		}
+		c.AggregateKeys[id] = key
 	}
 }
 
@@ -438,7 +459,7 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 			TurnID:           call.TurnID,
 			ParentToolCallID: call.ToolCallID,
 			ParentRunID:      call.RunID,
-			ParentAgentID:    agent.Ident(call.AgentID),
+			ParentAgentID:    call.AgentID,
 		}
 		// Strong contract: record the canonical JSON args using the tool codec.
 		// marshalToolValue returns a defensive copy for json.RawMessage, so this
@@ -507,7 +528,7 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 				Invoke:   invoker,
 			}
 			tr, aerr := cfg.Finalizer.Finalize(ctx, input)
-			if aerr == nil {
+			if aerr == nil && tr.Result != nil {
 				// Ensure correlation fields are set so inline results can be
 				// matched back to the originating call during merging.
 				tr.Name = call.Name
@@ -515,9 +536,9 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 				// Record child count so the runtime can detect empty-child agent-tools.
 				tr.ChildrenCount = len(outPtr.ToolEvents)
 				tr.RunLink = &run.Handle{
-					RunID:           nestedRunCtx.RunID,
-					AgentID:         cfg.AgentID,
-					ParentRunID:     nestedRunCtx.ParentRunID,
+					RunID:            nestedRunCtx.RunID,
+					AgentID:          cfg.AgentID,
+					ParentRunID:      nestedRunCtx.ParentRunID,
 					ParentToolCallID: nestedRunCtx.ParentToolCallID,
 				}
 				return &tr, nil
@@ -528,20 +549,14 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 		// schema-like output across service-backed and agent-as-tool paths.
 		if cfg.JSONOnly {
 			// If exactly one child tool result exists, pass its result through; otherwise
-			// return an array preserving order. Errors and telemetry are aggregated below.
+			// merge/wrap results. Bedrock requires toolResult.json to be an object, not an array.
 			var payload any
 			switch n := len(outPtr.ToolEvents); {
 			case n == 1 && outPtr.ToolEvents[0] != nil:
 				payload = outPtr.ToolEvents[0].Result
 			case n > 1:
-				items := make([]any, 0, n)
-				for _, ev := range outPtr.ToolEvents {
-					if ev == nil {
-						continue
-					}
-					items = append(items, ev.Result)
-				}
-				payload = items
+				aggregateKey := cfg.AggregateKeys[call.Name]
+				payload = aggregateChildResults(outPtr.ToolEvents, aggregateKey)
 			default:
 				// No child tools: return the final message text to avoid empty payloads
 				if outPtr.Final != nil {
@@ -584,9 +599,9 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 			}
 			tr.ChildrenCount = len(outPtr.ToolEvents)
 			tr.RunLink = &run.Handle{
-				RunID:           nestedRunCtx.RunID,
-				AgentID:         cfg.AgentID,
-				ParentRunID:     nestedRunCtx.ParentRunID,
+				RunID:            nestedRunCtx.RunID,
+				AgentID:          cfg.AgentID,
+				ParentRunID:      nestedRunCtx.ParentRunID,
 				ParentToolCallID: nestedRunCtx.ParentToolCallID,
 			}
 			if errCount > 0 && errCount == len(outPtr.ToolEvents) {
@@ -596,11 +611,63 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 		}
 		result := ConvertRunOutputToToolResult(call.Name, *outPtr)
 		result.RunLink = &run.Handle{
-			RunID:           nestedRunCtx.RunID,
-			AgentID:         cfg.AgentID,
-			ParentRunID:     nestedRunCtx.ParentRunID,
+			RunID:            nestedRunCtx.RunID,
+			AgentID:          cfg.AgentID,
+			ParentRunID:      nestedRunCtx.ParentRunID,
 			ParentToolCallID: nestedRunCtx.ParentToolCallID,
 		}
 		return &result, nil
 	}
+}
+
+// aggregateChildResults merges multiple child tool results into a single object.
+// When aggregateKey is set and all children have that key with array values, the
+// arrays are merged. Otherwise, results are wrapped under aggregateKey (or "results"
+// if empty). This ensures Bedrock compatibility (toolResult.json must be an object).
+func aggregateChildResults(events []*planner.ToolResult, aggregateKey string) any {
+	items := make([]any, 0, len(events))
+	for _, ev := range events {
+		if ev == nil {
+			continue
+		}
+		items = append(items, ev.Result)
+	}
+	if len(items) == 0 {
+		return map[string]any{}
+	}
+	key := aggregateKey
+	if key == "" {
+		key = "results"
+	}
+	// Try to merge arrays under aggregateKey if all children have it.
+	if aggregateKey != "" {
+		merged, ok := mergeByKey(items, aggregateKey)
+		if ok {
+			return map[string]any{aggregateKey: merged}
+		}
+	}
+	// Fallback: wrap all results under key.
+	return map[string]any{key: items}
+}
+
+// mergeByKey extracts the array value under key from each item and merges them.
+// Returns the merged slice and true if all items are objects with key containing arrays.
+func mergeByKey(items []any, key string) ([]any, bool) {
+	var merged []any
+	for _, item := range items {
+		obj, ok := item.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		val, exists := obj[key]
+		if !exists {
+			return nil, false
+		}
+		arr, ok := val.([]any)
+		if !ok {
+			return nil, false
+		}
+		merged = append(merged, arr...)
+	}
+	return merged, true
 }

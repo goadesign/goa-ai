@@ -815,13 +815,13 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	}
 
 	r.mu.Lock()
-	r.agents[agent.Ident(reg.ID)] = reg
+	r.agents[reg.ID] = reg
 	r.addToolSpecsLocked(reg.Specs)
 	if len(reg.Specs) > 0 {
 		// store a shallow copy to avoid external mutation
 		cp := make([]tools.ToolSpec, len(reg.Specs))
 		copy(cp, reg.Specs)
-		r.agentToolSpecs[agent.Ident(reg.ID)] = cp
+		r.agentToolSpecs[reg.ID] = cp
 	}
 	for _, ts := range reg.Toolsets {
 		r.addToolsetLocked(ts)
@@ -1170,7 +1170,7 @@ func (r *Runtime) ListAgents() []agent.Ident {
 	}
 	out := make([]agent.Ident, 0, len(r.agents))
 	for id := range r.agents {
-		out = append(out, agent.Ident(id))
+		out = append(out, id)
 	}
 	return out
 }

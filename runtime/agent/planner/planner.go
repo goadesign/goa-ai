@@ -66,6 +66,7 @@ type ToolRequest struct {
 type ToolResult struct {
 	Name          tools.Ident
 	Result        any
+	Metadata      map[string]any
 	Error         *ToolError
 	RetryHint     *RetryHint
 	Telemetry     *telemetry.ToolTelemetry

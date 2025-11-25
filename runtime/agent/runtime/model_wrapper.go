@@ -141,4 +141,3 @@ func emitThinkingParts(ctx context.Context, ev planner.PlannerEvents, msg *model
 		}
 	}
 }
-

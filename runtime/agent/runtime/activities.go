@@ -190,7 +190,11 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		if b, e := json.Marshal(result.Result); e == nil {
 			best = json.RawMessage(b)
 		}
-		return &ToolOutput{Error: encErr.Error(), Payload: best}, nil
+		return &ToolOutput{
+			Payload:  best,
+			Metadata: result.Metadata,
+			Error:    encErr.Error(),
+		}, nil
 	}
 	// Apply optional result adapter after encoding.
 	if reg.ResultAdapter != nil && len(enc) > 0 {
@@ -198,7 +202,11 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 			enc = adapted
 		}
 	}
-	out := &ToolOutput{Payload: enc, Telemetry: result.Telemetry}
+	out := &ToolOutput{
+		Payload:   enc,
+		Metadata:  result.Metadata,
+		Telemetry: result.Telemetry,
+	}
 	if result.Error != nil {
 		out.Error = result.Error.Error()
 	}

@@ -73,7 +73,7 @@ func TestEncodeTools_ModeTool(t *testing.T) {
 	require.Equal(t, "lookup", sanToCanon[*member.Value.Name])
 }
 
-func TestEncodeTools_ModeNoneDisablesConfig(t *testing.T) {
+func TestEncodeTools_ModeNonePreservesConfig(t *testing.T) {
 	ctx := context.Background()
 
 	cfg, canonToSan, sanToCanon, err := encodeTools(ctx, []*model.ToolDefinition{
@@ -84,7 +84,9 @@ func TestEncodeTools_ModeNoneDisablesConfig(t *testing.T) {
 		},
 	}, &model.ToolChoice{Mode: model.ToolChoiceModeNone})
 	require.NoError(t, err)
-	require.Nil(t, cfg)
+	require.NotNil(t, cfg)
+	require.Len(t, cfg.Tools, 1)
+	require.Nil(t, cfg.ToolChoice)
 	require.Len(t, canonToSan, 1)
 	require.Len(t, sanToCanon, 1)
 }

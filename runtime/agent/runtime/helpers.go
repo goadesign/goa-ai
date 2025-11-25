@@ -94,6 +94,25 @@ func agentMessageText(msg *model.Message) string {
 	return b.String()
 }
 
+// transcriptText concatenates assistant-visible text across a transcript.
+// It ignores thinking/tool parts and returns an empty string when there is
+// no user-facing text.
+func transcriptText(msgs []*model.Message) string {
+	if len(msgs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, msg := range msgs {
+		if msg == nil {
+			continue
+		}
+		if text := agentMessageText(msg); text != "" {
+			b.WriteString(text)
+		}
+	}
+	return b.String()
+}
+
 // newTextAgentMessage builds a model.Message with a single TextPart.
 // Returns nil when text is empty to allow callers to skip no-op messages.
 func newTextAgentMessage(role model.ConversationRole, text string) *model.Message {

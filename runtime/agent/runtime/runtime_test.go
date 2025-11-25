@@ -319,7 +319,7 @@ func TestOverridePolicy_AppliesToNewRuns_MaxToolCalls(t *testing.T) {
 	}
 
 	// Override policy to allow only 1 tool call.
-	require.NoError(t, rt.OverridePolicy(agent.Ident(agentID), RunPolicy{MaxToolCalls: 1}))
+	require.NoError(t, rt.OverridePolicy(agentID, RunPolicy{MaxToolCalls: 1}))
 
 	reg := rt.agents[agentID]
 	require.Equal(t, 1, reg.Policy.MaxToolCalls)

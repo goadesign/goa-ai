@@ -7,6 +7,7 @@ import (
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
+	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/toolerrors"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -171,6 +172,11 @@ type (
 		// ExpectedChildrenTotal indicates how many child tools are expected from this batch.
 		// A value of 0 means no children expected or count not tracked by the planner.
 		ExpectedChildrenTotal int
+		// DisplayHint is a human-facing summary of the in-flight tool work derived
+		// from the tool's call hint template. It is computed once by the runtime
+		// so downstream subscribers (streaming, session persistence, memory) can
+		// surface consistent labels without re-rendering templates.
+		DisplayHint string
 	}
 
 	// ToolResultReceivedEvent fires when a tool activity completes and returns
@@ -186,6 +192,9 @@ type (
 		ToolName tools.Ident
 		// Result contains the tool's output payload. Nil if Error is set.
 		Result any
+		// Metadata holds rich, non-provider data attached to the tool result.
+		// It is never serialized into model provider requests.
+		Metadata map[string]any
 		// Duration is the wall-clock execution time for the tool activity.
 		Duration time.Duration
 		// Telemetry holds structured observability metadata (tokens, model, retries).
@@ -527,6 +536,12 @@ func NewToolCallScheduledEvent(
 	parentToolCallID string,
 	expectedChildren int,
 ) *ToolCallScheduledEvent {
+	// Compute a best-effort call hint once at emit time so all subscribers can
+	// reuse it. The payload is the canonical JSON arguments; templates that
+	// depend on typed structs will be rerun by higher-level decorators (e.g.,
+	// the runtime hinting sink) when needed.
+	displayHint := rthints.FormatCallHint(toolName, payload)
+
 	return &ToolCallScheduledEvent{
 		baseEvent:             newBaseEvent(runID, agentID),
 		ToolCallID:            toolCallID,
@@ -535,6 +550,7 @@ func NewToolCallScheduledEvent(
 		Queue:                 queue,
 		ParentToolCallID:      parentToolCallID,
 		ExpectedChildrenTotal: expectedChildren,
+		DisplayHint:           displayHint,
 	}
 }
 
@@ -546,6 +562,7 @@ func NewToolResultReceivedEvent(
 	toolName tools.Ident,
 	toolCallID, parentToolCallID string,
 	result any,
+	metadata map[string]any,
 	duration time.Duration,
 	telemetry *telemetry.ToolTelemetry,
 	err *toolerrors.ToolError,
@@ -556,6 +573,7 @@ func NewToolResultReceivedEvent(
 		ParentToolCallID: parentToolCallID,
 		ToolName:         toolName,
 		Result:           result,
+		Metadata:         metadata,
 		Duration:         duration,
 		Telemetry:        telemetry,
 		Error:            err,
