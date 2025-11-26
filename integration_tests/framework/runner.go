@@ -267,10 +267,8 @@ func toMap(v any) (map[string]any, bool) {
 }
 
 // getFreePort finds an available port on localhost.
-//
-//nolint:noctx // tests use a simple TCP listen to pick a free port; no context needed
 func getFreePort() (string, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := net.Listen("tcp", "127.0.0.1:0") //nolint:noctx // test helper just picks a free port
 	if err != nil {
 		return "", fmt.Errorf("listen for free port: %w", err)
 	}
