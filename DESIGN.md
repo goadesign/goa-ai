@@ -59,6 +59,12 @@ Schema from the Goa attribute and exposes it in `tools/list` under
 validation schema but covers common primitives, arrays, objects (with required
 fields), enums and base64-encoded bytes.
 
+### Tool Identification
+Tools are identified by canonical IDs in the format `<toolset>.<tool>` (dot-separated).
+The generated code produces typed constants (e.g., `MyTool tools.Ident`) matching this format.
+Platform adapters (e.g., Bedrock) are responsible for mapping these canonical IDs to platform-specific formats (e.g., replacing dots with underscores) and back, ensuring user code only ever interacts with canonical IDs.
+Use the `tools.Ident` type and its helpers (`Toolset()`, `Tool()`) to manipulate IDs safely.
+
 ### Cross‑platform paths
 Path handling relies on `filepath` and Goa’s codegen helpers directly. Templates and generators use `filepath.Join` and Goa’s path data.
 
@@ -93,7 +99,55 @@ URI query parameters into that payload using Goa’s JSON‑RPC decoders:
 This keeps resource calls simple (`resource://name?field=value`) while reusing
 the same decoding pipeline as tools.
 
+---
+
+## Agents Quickstart & Example Scaffold
+
+In addition to MCP features, the agents plugin improves the developer experience after code generation:
+
+- A contextual quickstart file `AGENTS_QUICKSTART.md` is emitted at the module root on `goa gen`, summarizing what was generated and how to wire it. To opt out, invoke `agentsdsl.DisableAgentDocs()` inside your API DSL.
+- The `goa example` phase generates application-owned scaffold under `internal/agents/` instead of modifying your `main` package:
+  - `internal/agents/bootstrap/bootstrap.go`: constructs a minimal runtime and registers generated agents. Edit and maintain this file; it is not re-generated.
+  - `internal/agents/<agent>/planner/planner.go`: planner stub implementing `planner.PlanStart`/`PlanResume` with header comments explaining its role.
+  - `internal/agents/<agent>/toolsets/<toolset>/adapter.go`: stubs for mapping method‑backed tools to service types.
+
+From your `cmd` entrypoint, import and use the bootstrap:
+
+```go
+rt, cleanup, err := bootstrap.New(ctx)
+if err != nil { log.Fatal(err) }
+defer cleanup()
+// Start runs or serve transports using rt...
+```
+
+This pattern keeps generated code under `gen/` while giving you a clean, editable scaffold in `internal/agents/` for planners and adapters.
+
 ### Security considerations
 - Resource policy: use deny/allow lists to constrain which URIs can be read; denylist takes precedence. If the allowlist is empty, all URIs are allowed by default.
 - Logging: if you configure a Logger, avoid logging sensitive payloads and results in production.
 - Protocol version: clients must send `initialize.protocolVersion` matching the service’s configured version. You can override the default via adapter options for compatibility testing.
+
+### Initialization policy
+Clients must call `initialize` before invoking any method that depends on server state (`tools/list`, `tools/call`, `resources/*`, `prompts/*`, subscriptions). `ping` may be called pre-initialization and is intended for health checks only.
+
+### Error code mapping
+The adapter maps Goa `ServiceError` with name `invalid_params` to JSON-RPC `-32602`, `method_not_found` to `-32601`, and otherwise defaults to `-32603` (internal). SSE error events carry the same JSON-RPC codes and messages as non-streaming responses.
+
+### Client typed errors and retry
+Generated clients surface JSON-RPC failures from streaming and non-streaming paths as typed errors to simplify handling:
+
+- Streaming (`tools/call`, `events/stream`): client stream `Recv` returns a `JSONRPCError` (with fields `Code`, `Message`) when the server emits a JSON-RPC error event.
+- Invalid parameters (`-32602`) are classified as retryable for certain endpoints:
+  - `tools/call`: wrapped as `retry.RetryableError` enriched with a repair prompt built from the tool’s input schema and a built-in example. This enables agent-side auto-repair.
+  - `prompts/get`: a decode helper mirrors the same behavior and returns `retry.RetryableError` on `-32602`.
+
+This keeps error handling explicit and structured while enabling ergonomic auto-retry flows in clients.
+
+### Accept negotiation
+The JSON-RPC server mounts a single `POST /rpc` endpoint. The server negotiates streaming based on the `Accept` header: if it contains `text/event-stream`, compatible methods (e.g., `tools/call`) are served over SSE; otherwise, regular JSON responses are sent. This can be generalized in the future for additional streaming methods without endpoint proliferation.
+
+### Content item semantics
+When `StructuredStreamJSON` is true and the payload is valid JSON, the adapter emits items with `type: "text"` and `mimeType: "application/json"` to convey inline JSON efficiently. For binary or external resources, prefer `type: "resource"` with `data` (base64) or a `uri`.
+
+### Client parameter forwarding
+For resource-backed endpoints with payloads, the generated client adapter forwards original payload fields via query string so that MCP `resources/read` can reconstruct the original payload. This preserves Goa validations and keeps MCP resources simple.

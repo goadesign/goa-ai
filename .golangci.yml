@@ -1,37 +1,51 @@
 version: "2"
-
 linters:
+  default: none
   enable:
-    - errorlint
-    - errcheck
-    - staticcheck
-    - unparam
-    - unused
-    - ineffassign
     - bodyclose
+    - copyloopvar
+    - dupl
+    - durationcheck
+    - errcheck
+    - errorlint
+    - exhaustive
+    - goconst
     - gocritic
+    - goprintffuncname
+    - gosec
+    - ineffassign
+    - makezero
     - misspell
     - nakedret
-    - prealloc
-    - unconvert
-    - whitespace
     - nilerr
-    - copyloopvar
+    - noctx
+    - nolintlint
+    - prealloc
     - sqlclosecheck
-    - makezero
+    - staticcheck
+    - tagliatelle
+    - testifylint
+    - unconvert
+    - unparam
+    - unused
+    - whitespace
   settings:
+    tagliatelle:
+      case:
+        rules:
+          json: snake
+          yaml: snake
+    unparam:
+      check-exported: true
     staticcheck:
       checks:
-        - "-ST1001"   # Dot imports are used intentionally in DSL
-    nakedret:
-      max-func-lines: 30
-    misspell:
-      ignore-rules:
-        - Statuser
-
-issues:
-  exclude-rules:
-    # Exclude generated/example code from linting
-    - path: ^example/.*/gen/
-    - path: ^example/.*/goa.*
-    - path: ^goa\.
+        - all
+        - "-ST1001" # Allow dot imports in DSL packages
+  exclusions:
+    generated: strict
+    paths:
+      - design/*
+      - diagram/*
+      - gql/*
+      - mocks/*
+      - codegen/agents/tests/testscenarios/*

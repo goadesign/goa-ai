@@ -248,7 +248,7 @@ Start your server manually and test against it:
 
 ```bash
 # Start your MCP server
-go run ./example/cmd/assistant --http-port 8080
+go run ./example/complete/cmd/orchestrator --http-port 8080
 
 # Run tests against it
 TEST_SERVER_URL=http://localhost:8080 TEST_SKIP_GENERATION=true go test ./tests

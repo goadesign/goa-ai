@@ -9,7 +9,7 @@ PROTOC := $(shell command -v protoc 2>/dev/null)
 PROTOC_GEN_GO := protoc-gen-go
 PROTOC_GEN_GO_GRPC := protoc-gen-go-grpc
 
-.PHONY: all build lint test ci tools ensure-golangci ensure-protoc-plugins protoc-check run-example example-gen
+.PHONY: all build lint test itest ci tools ensure-golangci ensure-protoc-plugins protoc-check run-example example-gen
 
 all: build lint test
 
@@ -20,7 +20,11 @@ lint: tools
 	golangci-lint run --timeout=5m
 
 test: tools
-	$(GO) test -race -covermode=atomic -coverprofile=cover.out ./...
+	$(GO) test -race -covermode=atomic -coverprofile=cover.out `$(GO) list ./... | grep -v '/integration_tests'`
+
+# Run integration tests (scenarios under integration_tests/)
+itest: tools
+	$(GO) test -race -vet=off ./integration_tests/...
 
 ci: build lint test
 
@@ -28,8 +32,8 @@ tools: ensure-golangci ensure-protoc-plugins protoc-check
 
 ensure-golangci:
 	@if [ -z "$(GOLANGCI_LINT)" ]; then \
-		echo "Installing golangci-lint v2..."; \
-		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(GOPATH)/bin v2.0.0; \
+		echo "Installing golangci-lint v2.6.2..."; \
+		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(GOPATH)/bin v2.6.2; \
 	else \
 		echo "golangci-lint found: $(GOLANGCI_LINT)"; \
 	fi
@@ -56,7 +60,7 @@ protoc-check:
 	fi
 
 run-example:
-	cd example && $(GO) run ./cmd/assistant --http-port $(HTTP_PORT)
+	cd example/complete && $(GO) run ./cmd/orchestrator --http-port $(HTTP_PORT)
 
 gen-example:
-	cd example && goa gen example.com/assistant/design
+	cd example/complete && goa gen example.com/assistant/design

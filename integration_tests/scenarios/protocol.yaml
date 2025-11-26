@@ -1,6 +1,45 @@
 # MCP Protocol Compliance Test Scenarios (new shape)
 
 scenarios:
+  - name: tools_call_typed_error_invalid_params
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: true
+    steps:
+      - name: call_missing_field
+        op: ToolsCall
+        headers:
+          Accept: text/event-stream
+        input:
+          name: analyze_sentiment
+          arguments: { text: "" }
+        stream_expect:
+          min_events: 1
+          events:
+            - event: error
+              data:
+                error: { code: -32602 }
+
+  - name: tools_call_typed_error_method_not_found
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: true
+    steps:
+      - name: call_unknown_tool
+        op: ToolsCall
+        headers:
+          Accept: text/event-stream
+        input:
+          name: does_not_exist
+          arguments: {}
+        stream_expect:
+          min_events: 1
+          events:
+            - event: error
+              data:
+                error: { code: -32601 }
   - name: initialize_basic
     defaults:
       client: jsonrpc.mcp_assistant
@@ -89,6 +128,32 @@ scenarios:
           status: error
           error: { code: -32602, message: "Not initialized" }
 
+  - name: prompts_list_before_init
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: false
+    steps:
+      - name: prompts_before
+        op: PromptsList
+        input: {}
+        expect:
+          status: error
+          error: { code: -32602, message: "Not initialized" }
+
+  - name: resources_list_before_init
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: false
+    steps:
+      - name: resources_before
+        op: ResourcesList
+        input: {}
+        expect:
+          status: error
+          error: { code: -32602, message: "Not initialized" }
+
   - name: invalid_method
     defaults:
       client: jsonrpc.mcp_assistant
@@ -101,6 +166,51 @@ scenarios:
         expect:
           status: error
           error: { code: -32601, message: "Method not found" }
+
+  - name: initialize_missing_version
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: false
+    steps:
+      - name: init_missing
+        op: Initialize
+        input:
+          capabilities: {}
+          clientInfo: { name: "t", version: "1" }
+        expect:
+          status: error
+          error: { code: -32602 }
+
+  - name: initialize_fields
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: false
+    steps:
+      - name: init_fields
+        op: Initialize
+        input:
+          protocolVersion: "2025-06-18"
+          capabilities: { tools: true, resources: true, prompts: true }
+          clientInfo: { name: "runner", version: "1.0.0" }
+        expect:
+          status: success
+          result:
+            serverInfo: { name: "assistant-mcp", version: "1.0.0" }
+            capabilities: {}
+
+  - name: ping_basic
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: false
+    steps:
+      - name: ping
+        op: Ping
+        input: {}
+        expect:
+          status: success
 
   - name: notification_no_response
     defaults:
