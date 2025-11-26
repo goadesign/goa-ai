@@ -21,6 +21,7 @@ func TestSendPublishesEnvelope(t *testing.T) {
 		require.Equal(t, "run/run-123", name)
 		return str, nil
 	})
+	const lastID = "1-0"
 	str.AddAdd(func(ctx context.Context, event string, payload []byte) (string, error) {
 		require.Equal(t, string(stream.EventToolEnd), event)
 		var env envelope
@@ -32,7 +33,7 @@ func TestSendPublishesEnvelope(t *testing.T) {
 		res, ok := body["result"].(map[string]any)
 		require.True(t, ok)
 		require.Equal(t, "ok", res["status"])
-		return "1-0", nil
+		return lastID, nil
 	})
 
 	sink, err := NewSink(Options{Client: cli})

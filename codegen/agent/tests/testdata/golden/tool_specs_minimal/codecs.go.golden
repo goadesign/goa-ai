@@ -170,6 +170,14 @@ func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 	}
 }
 
+// SidecarCodec returns the generic codec for the named tool sidecar when declared.
+func SidecarCodec(name string) (*tools.JSONCodec[any], bool) {
+	switch name {
+	default:
+		return nil, false
+	}
+}
+
 // MarshalSummarizeDocPayload serializes *SummarizeDocPayload into JSON.
 func MarshalSummarizeDocPayload(v *SummarizeDocPayload) ([]byte, error) {
 	if v == nil {

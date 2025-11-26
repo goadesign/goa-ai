@@ -34,6 +34,7 @@ var Specs = []tools.ToolSpec{
 			Schema: addResultSchema,
 			Codec:  addResultCodec,
 		},
+		Sidecar: nil,
 	},
 }
 var addPayloadSchema = []byte(`
