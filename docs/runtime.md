@@ -114,8 +114,8 @@ planners, and the runtime:
     `json.RawMessage` containing the tool arguments JSON.
   - The stream bridge in `runtime/agent/planner/stream.go` copies that
     `json.RawMessage` into `planner.ToolRequest.Payload` without decoding.
-  - Planner implementations (including AURA services) must treat
-    `ToolRequest.Payload` as canonical JSON and avoid schema‑aware decoding.
+  - Planner implementations must treat `ToolRequest.Payload` as canonical JSON
+    and avoid schema‑aware decoding.
 
 - **Runtime‑owned decoding via generated codecs**
   - `ExecuteToolActivity` receives `ToolInput.Payload` as `json.RawMessage`,
@@ -268,10 +268,9 @@ Runs and streams follow a few critical invariants:
     }
     ```
 
-  - Applications that want higher‑level “chat turn” projections (AURA, for
-    example) should build them on top of per‑run streams using run links and
-    profiles, rather than by flattening child events into a single root run
-    ID.
+  - Applications that want higher‑level “chat turn” projections should build
+    them on top of per‑run streams using run links and profiles, rather than
+    by flattening child events into a single root run ID.
 
 Streaming event mapping (default StreamSubscriber):
 

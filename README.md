@@ -27,9 +27,7 @@ The result is a cohesive architecture where planners focus on business logic whi
 > 📚 **Documentation:**
 > - [Architecture & plan](docs/plan.md)
 > - [Agent DSL reference](docs/dsl.md)
-> - [Runtime wiring](docs/runtime.md)
 > - [Migration guide (legacy goa-ai → new framework)](docs/migrate.md)
-> - [AURA API types migration plan](docs/aura_api_types_migration.md)
 
 ## Quick Start
 
