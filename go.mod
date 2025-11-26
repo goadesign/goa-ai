@@ -4,10 +4,10 @@ go 1.24.5
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.40.0
-	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.45.1
+	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.46.0
 	github.com/aws/smithy-go v1.23.2
 	github.com/google/uuid v1.6.0
-	github.com/redis/go-redis/v9 v9.17.0
+	github.com/redis/go-redis/v9 v9.17.1
 	github.com/sashabaranov/go-openai v1.41.2
 	github.com/stretchr/testify v1.11.1
 	go.mongodb.org/mongo-driver v1.17.6
@@ -17,7 +17,7 @@ require (
 	go.temporal.io/sdk v1.38.0
 	go.temporal.io/sdk/contrib/opentelemetry v0.6.0
 	goa.design/clue v1.2.3
-	goa.design/goa/v3 v3.23.1
+	goa.design/goa/v3 v3.23.2
 	goa.design/pulse v1.4.1
 	gopkg.in/yaml.v3 v3.0.1
 )
