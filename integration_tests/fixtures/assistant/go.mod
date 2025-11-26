@@ -57,5 +57,3 @@ require (
 )
 
 replace goa.design/goa-ai => ../../..
-
-replace goa.design/goa/v3 => ../../../../goa
