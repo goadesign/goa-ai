@@ -6,6 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/goadesign/goa-ai/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/goadesign/goa-ai?style=for-the-badge"></a>
+  <a href="https://goa.design/docs/8-goa-ai/"><img alt="Documentation" src="https://img.shields.io/badge/docs-goa.design-blue.svg?style=for-the-badge"></a>
   <a href="https://pkg.go.dev/goa.design/goa-ai"><img alt="Go Doc" src="https://img.shields.io/badge/godoc-reference-blue.svg?style=for-the-badge"></a>
   <a href="https://github.com/goadesign/goa-ai/actions/workflows/ci.yml"><img alt="GitHub Action: CI" src="https://img.shields.io/github/actions/workflow/status/goadesign/goa-ai/ci.yml?branch=main&style=for-the-badge"></a>
   <a href="https://goreportcard.com/report/goa.design/goa-ai"><img alt="Go Report Card" src="https://goreportcard.com/badge/goa.design/goa-ai?style=for-the-badge"></a>
@@ -13,6 +14,8 @@
 </p>
 
 # Goa-AI: Design-First Agentic Systems in Go
+
+**📚 [Full Documentation](https://goa.design/docs/8-goa-ai/)** · **🚀 [Getting Started](https://goa.design/docs/8-goa-ai/1-getting-started/)** · **💡 [Tutorials](https://goa.design/docs/8-goa-ai/3-tutorials/)**
 
 Build intelligent, tool-wielding agents with the confidence of strong types and the power of durable execution. Goa-AI brings the design-first philosophy you love from [Goa](https://goa.design) to the world of AI agents—declare your agents, toolsets, and policies in a clean DSL, and let code generation handle the rest.
 
