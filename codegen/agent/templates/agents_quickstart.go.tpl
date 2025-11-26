@@ -73,7 +73,7 @@ import (
 // A simple "brain" for our agent. It just says hello for now.
 // We'll make this smarter in the next section!
 type StubPlanner struct{}
-func (p *StubPlanner) PlanStart(ctx context.Context, in planner.PlanInput) (*planner.PlanResult, error) {
+func (p *StubPlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
     return &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{
 			Message: &model.Message{
@@ -83,11 +83,11 @@ func (p *StubPlanner) PlanStart(ctx context.Context, in planner.PlanInput) (*pla
 		},
 	}, nil
 }
-func (p *StubPlanner) PlanResume(ctx context.Context, in planner.PlanResumeInput) (*planner.PlanResult, error) {
+func (p *StubPlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
     return &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{
 			Message: &model.Message{
-				Role:  "assistant",
+				Role:  model.ConversationRoleAssistant,
 				Parts: []model.Part{model.TextPart{Text: "Done."}},
 			},
 		},
@@ -122,7 +122,7 @@ func main() {
     out, err := client.Run(
         context.Background(),
         []*model.Message{
-			{ Role: "user", Parts: []model.Part{model.TextPart{Text: "Hi there!"}} },
+			{ Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "Hi there!"}} },
 		},
         runtime.WithSessionID("my-first-session"), // A session ID is required!
     )
@@ -133,8 +133,8 @@ func main() {
     fmt.Println("✅ Success!")
     fmt.Println("RunID:", out.RunID)
     // Print first text part (if any)
-    if len(out.Final.Message.Parts) > 0 {
-        if tp, ok := out.Final.Message.Parts[0].(model.TextPart); ok {
+    if out.Final != nil && len(out.Final.Parts) > 0 {
+        if tp, ok := out.Final.Parts[0].(model.TextPart); ok {
             fmt.Println("Assistant says:", tp.Text)
         }
     }
@@ -198,9 +198,9 @@ The `Planner` is where your agent's intelligence lives. It connects to an LLM to
 type MySmartPlanner struct{}
 
 // PlanStart is called at the beginning of a run.
-func (p *MySmartPlanner) PlanStart(ctx context.Context, in planner.PlanInput) (*planner.PlanResult, error) {
+func (p *MySmartPlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
     // 1. Get an LLM client from the runtime.
-    // model, _ := in.Agent.ModelClient("openai")
+    // mc, _ := in.Agent.ModelClient("bedrock")
     
     // 2. Build a prompt from in.Messages.
     
@@ -208,7 +208,7 @@ func (p *MySmartPlanner) PlanStart(ctx context.Context, in planner.PlanInput) (*
     return &planner.PlanResult{
         FinalResponse: &planner.FinalResponse{
             Message: &model.Message{
-				Role:  "assistant",
+				Role:  model.ConversationRoleAssistant,
 				Parts: []model.Part{model.TextPart{Text: "I'm ready to help!"}},
 			},
         },
@@ -216,14 +216,14 @@ func (p *MySmartPlanner) PlanStart(ctx context.Context, in planner.PlanInput) (*
 }
 
 // PlanResume is called after tools have run, giving the agent new information.
-func (p *MySmartPlanner) PlanResume(ctx context.Context, in planner.PlanResumeInput) (*planner.PlanResult, error) {
+func (p *MySmartPlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
     // 1. Inspect the tool results from in.ToolResults.
     // 2. Build a new prompt including the tool results.
     // 3. Call the LLM to decide what to do next.
     return &planner.PlanResult{
         FinalResponse: &planner.FinalResponse{
             Message: &model.Message{
-				Role:  "assistant",
+				Role:  model.ConversationRoleAssistant,
 				Parts: []model.Part{model.TextPart{Text: "The tools have run. Here's what I found..."}},
 			},
         },
@@ -244,7 +244,17 @@ When your tool maps to a service method (via `BindTo`), Goa-AI generates:
 - Transform helpers (when shapes are compatible): `transforms.go`
 - An application-owned executor stub under `internal/agents/<agent>/toolsets/<toolset>/execute.go`
 
-Wire executors explicitly in your bootstrap (already done in `internal/agents/bootstrap/bootstrap.go`). Implement the stub’s `Execute` function to:
+Wire executors using the generated `RegisterUsedToolsets` helper:
+
+```go
+// After registering the agent, wire the toolset executors
+err := <agentpkg>.RegisterUsedToolsets(ctx, rt,
+    <agentpkg>.With<ToolsetName>Executor(myExecutor),
+)
+if err != nil { panic(err) }
+```
+
+Implement the executor's `Execute` function to:
 - Switch on `call.Name` for each tool
 - Decode `call.Payload` to typed args using the generated codec
 - Optionally use `ToMethodPayload_<Tool>`/`ToToolReturn_<Tool>` transforms
@@ -272,18 +282,22 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
     }
     switch call.Name {
     case "<svc>.<toolset>.<tool>":
-        var args specs.<ToolPayload>
-        if err := specs.Unmarshal<ToolPayload>(call.Payload, &args); err != nil {
-            return &planner.ToolResult{
-				Error: planner.NewToolError("invalid payload"),
-			}, nil
+        // Decode payload using generated codec
+        pc, ok := specs.PayloadCodec(string(call.Name))
+        if !ok {
+            return &planner.ToolResult{Error: planner.NewToolError("payload codec not found")}, nil
         }
-        // Optionally: mp, _ := ToMethodPayload_<Tool>(args)
-        // TODO: invoke your service client, map result via ToToolReturn_<Tool>
+        args, err := pc.FromJSON(call.Payload)
+        if err != nil {
+            return &planner.ToolResult{Error: planner.NewToolError("invalid payload: " + err.Error())}, nil
+        }
+        // Type-assert to the generated payload type:
+        // typedArgs := args.(*specs.<ToolPayload>)
+        // Optionally use transforms: mp, _ := specs.ToMethodPayload_<Tool>(typedArgs)
+        // Call your service client, map result via specs.ToToolReturn_<Tool>
         return &planner.ToolResult{
-			Result: map[string]any{
-				"status": "ok",
-			},
+			Name:   call.Name,
+			Result: map[string]any{"status": "ok"},
 		}, nil
     }
     return &planner.ToolResult{
