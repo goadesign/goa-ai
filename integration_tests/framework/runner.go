@@ -133,6 +133,12 @@ var (
 	codegenMu   sync.Mutex
 	codegenOnce sync.Once
 	codegenErr  error
+
+	// Pre-compiled binary state: compile once, run many instances.
+	buildOnce     sync.Once
+	buildErr      error
+	serverBinPath string
+	serverBinMu   sync.Mutex
 )
 
 // LoadScenarios loads scenarios from a YAML file path.
@@ -178,7 +184,10 @@ func (r *Runner) Run(t *testing.T, scenarios []Scenario) error {
 	if err := r.startServer(t); err != nil {
 		return err
 	}
-	defer r.stopServer()
+	// Use t.Cleanup instead of defer so stopServer runs after all parallel
+	// subtests complete. With defer, stopServer would run immediately when
+	// Run returns (before parallel subtests execute).
+	t.Cleanup(r.stopServer)
 
 	for _, sc := range scenarios {
 		scenario := sc
@@ -458,6 +467,54 @@ func regenerateExample(t *testing.T, exampleRoot string) error {
 	return nil
 }
 
+// buildServerBinary compiles the server binary once for fast parallel test starts.
+func buildServerBinary(exampleRoot string) (string, error) {
+	serverBinMu.Lock()
+	defer serverBinMu.Unlock()
+
+	buildOnce.Do(func() {
+		cmdPath, err := findServerCmdDir(exampleRoot)
+		if err != nil {
+			buildErr = err
+			return
+		}
+		// Create a temp file for the binary
+		tmpFile, err := os.CreateTemp("", "mcp-test-server-*")
+		if err != nil {
+			buildErr = fmt.Errorf("create temp file for binary: %w", err)
+			return
+		}
+		binPath := tmpFile.Name()
+		_ = tmpFile.Close()
+
+		// Build the server binary
+		//nolint:gosec // launching 'go build' test server is expected
+		buildCmd := exec.CommandContext(
+			context.Background(),
+			"go",
+			"build",
+			"-o",
+			binPath,
+			".",
+		)
+		buildCmd.Dir = cmdPath
+		out, err := buildCmd.CombinedOutput()
+		if err != nil {
+			_ = os.Remove(binPath)
+			buildErr = fmt.Errorf("go build failed in %s: %w\n%s", cmdPath, err, string(out))
+			return
+		}
+		// Verify binary exists
+		if _, err := os.Stat(binPath); err != nil {
+			buildErr = fmt.Errorf("binary not found after build: %w", err)
+			return
+		}
+		serverBinPath = binPath
+	})
+
+	return serverBinPath, buildErr
+}
+
 // startServer starts the test server.
 func (r *Runner) startServer(t *testing.T) error {
 	t.Helper()
@@ -495,16 +552,14 @@ func (r *Runner) startServer(t *testing.T) error {
 			return codegenErr
 		}
 	}
-	// Locate server command directory
-	cmdPath, err := findServerCmdDir(exampleRoot)
+	// Build server binary once, then start instances from the compiled binary
+	binPath, err := buildServerBinary(exampleRoot)
 	if err != nil {
 		return err
 	}
-	// Start HTTP server; generated example may not support gRPC port flag
-	// Build server run command
-	args := []string{"run", "-C", cmdPath, ".", "-http-port", port}
-	//nolint:gosec // launching 'go run' test server is expected
-	cmd := exec.CommandContext(context.Background(), "go", args...)
+	// Start HTTP server from pre-compiled binary (much faster than go run)
+	//nolint:gosec // launching pre-compiled test server binary
+	cmd := exec.CommandContext(context.Background(), binPath, "-http-port", port)
 	// Inherit environment and propagate MCP_* variables captured for this scenario
 	cmd.Env = os.Environ()
 	// Capture bounded stdout/stderr tails for diagnostics
