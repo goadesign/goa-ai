@@ -1,78 +1,113 @@
-## Goa‑AI Overview
+# Goa‑AI: Design‑First Agentic Systems in Go
 
-Goa‑AI is a design‑first framework for building agentic, tool‑driven systems in Go. You declare agents, toolsets, and run policies in Goa’s DSL; Goa‑AI then generates typed code, codecs, workflows, and registry helpers that plug into a production‑grade runtime (in‑memory for dev, Temporal for durability). Planners focus on strategy; the runtime handles orchestration, policies, memory, streaming, telemetry, and MCP integration.
+Build intelligent, tool‑wielding agents with the confidence of strong types and the power of
+durable execution. Goa‑AI brings the design‑first philosophy you love from Goa to the world of AI
+agents—declare your agents, toolsets, and policies in a clean DSL, and let code generation handle
+the rest.
 
-### When to use Goa‑AI
-- **LLM workflows with tools**: Build agents that call typed tools with validations and examples, not ad‑hoc JSON.
-- **Durable orchestration**: Need long‑running, resumable runs with retries, time budgets, and deterministic replays.
-- **Agent composition**: Treat one agent as a tool of another, even across processes (inline execution, single history).
-- **Typed schemas everywhere**: Generated payload/result types and codecs keep schema drift and hand‑rolled encoding out.
-- **Operational visibility**: Stream planner/tool/assistant events; persist transcripts; instrument with logs/metrics/traces.
-- **MCP integration**: Consume tool suites from MCP servers through generated wrappers and callers.
+No more hand‑rolled JSON schemas. No more brittle tool wiring. No more wondering if your agent will
+survive a restart. Just elegant designs that compile into production‑grade systems.
 
-## Core mental model
+## Why Goa‑AI?
+
+| Challenge                            | How Goa‑AI Helps                                                    |
+|--------------------------------------|---------------------------------------------------------------------|
+| **LLM workflows feel fragile**       | Type‑safe tool payloads with validations and examples—no ad‑hoc JSON guessing games |
+| **Long‑running agents crash**        | Durable orchestration with automatic retries, time budgets, and deterministic replay |
+| **Composing agents is messy**        | First‑class agent‑as‑tool composition, even across processes, with unified history |
+| **Schema drift haunts you**          | Generated codecs and registries keep everything in sync—change the DSL, regenerate, done |
+| **Observability is an afterthought** | Built‑in streaming, transcripts, logs, metrics, and traces from day one |
+| **MCP integration is manual**        | Generated wrappers turn MCP servers into typed toolsets automatically |
+
+## The Mental Model
+
 ```
 DSL → Codegen → Runtime → Engine + Features
 ```
-- **DSL (`goa-ai/dsl`)**: Declare agents inside a Goa `Service`. Specify toolsets (native or MCP) and a `RunPolicy`.
-- **Codegen (`codegen/agent`, `codegen/mcp`)**: Emits agent packages under `gen/`, tool specs/codecs, Temporal activities, and registry helpers.
-- **Runtime (`runtime/agent`, `runtime/mcp`)**: Durable plan/execute loop with policy enforcement, memory/session stores, hook bus, telemetry, MCP callers.
-- **Engine (`runtime/agent/engine`)**: Abstracts the workflow backend (in‑memory for dev; Temporal adapter for production).
-- **Features (`features/*`)**: Optional modules (Mongo memory/session, Pulse stream sink, Bedrock/OpenAI model clients, policy engine).
 
-Never edit `gen/` by hand — always regenerate after DSL changes.
+Think of it as a pipeline from intention to execution:
 
-## Usage patterns
-- **Single‑process dev (fast path)**  
-  - Use the default in‑memory engine; register your agent with a stub planner; run and iterate quickly.
-- **Worker / client split (durable)**  
-  - Workers construct a runtime with a worker‑capable engine, register agents/planners, and poll.  
-  - Clients use generated typed clients to `Run` or `Start` (and `Wait`) runs against workers.
-- **Agent composition (agent‑as‑tool)**  
-  - One agent `Exports` a toolset; another `Uses` it. Generated code executes nested agents inline in the same workflow.
-- **MCP toolsets**  
-  - Reference MCP suites in the DSL; supply callers; generated registries wire schemas/codecs/transport with retries and tracing.
-- **Streaming, memory, telemetry**  
-  - Configure a memory store and a stream sink; the runtime publishes events and persists transcripts automatically via hooks.
+1. **DSL** (`goa-ai/dsl`) — Express what you want: agents, tools, policies. Clean, declarative,
+   version‑controlled.
 
-## Toolsets: service‑owned, agent‑ or method‑backed
+2. **Codegen** (`codegen/agent`, `codegen/mcp`) — Transform your design into typed Go packages:
+   tool specs, codecs, workflow definitions, registry helpers. Lives under `gen/`—never edit by
+   hand.
 
-Toolsets are owned by Goa services; agents, MCP, and custom executors are
-consumers or implementations. The DSL (`Toolset`, `Tool`, `BindTo`,
-`Uses`, `Exports`) remains symmetric.
+3. **Runtime** (`runtime/agent`, `runtime/mcp`) — The workhorse that executes your agents:
+   plan/execute loops, policy enforcement, memory, sessions, streaming, telemetry, and MCP
+   integration.
 
-- **Service‑owned toolsets (method‑backed or custom)**  
-  - Declared via `Toolset("name", func() { ... })`; tools may `BindTo`
-    Goa service methods or be implemented by custom executors.
-  - Codegen emits per‑toolset specs/types/codecs under
-    `gen/<service>/tools/<toolset>/`.
-  - Agents that `Use` these toolsets import the provider specs and get
-    typed call builders and executor factories for wiring service
-    clients or other executors.
+4. **Engine** (`runtime/agent/engine`) — Swap backends without changing code. In‑memory for fast
+   iteration; Temporal for production durability.
 
-- **Agent‑implemented toolsets (agent‑as‑tool)**  
-  - Defined in an agent `Exports` block, and optionally `Uses`d by other
-    agents.
-  - Ownership still lives with the service; the agent is the
-    implementation.
-  - Codegen emits provider‑side `agenttools/<toolset>` helpers with
-    `NewRegistration` and typed call builders, plus consumer‑side
-    helpers in agents that `Use` the exported toolset.
+5. **Features** (`features/*`) — Plug in what you need: Mongo for memory/sessions/runs, Pulse for
+   real‑time streams, Bedrock/OpenAI/Gateway model clients, policy engines.
 
-In all cases, `Uses` merges tool specs into the consuming agent’s tool
-universe so planners see a single, coherent tool catalog regardless of
-how tools are wired.
+## Ways to Work
 
-### Tool schemas JSON (`tool_schemas.json`)
+### Fast Iteration (Single Process)
 
-For each agent, codegen also emits a backend‑agnostic JSON catalogue of tools
-under:
+Spin up the in‑memory engine, wire a stub planner, and iterate at the speed of thought. No external
+dependencies, no deployment ceremony—just ideas becoming reality.
+
+### Production Ready (Worker/Client Split)
+
+Workers poll for tasks with a durable Temporal engine. Clients submit runs through generated typed
+APIs. Runs survive restarts, scale horizontally, and replay deterministically.
+
+### Powerful Composition (Agent‑as‑Tool)
+
+One agent exports a toolset; another consumes it. The nested agent executes inline within the same
+workflow history—single transaction, unified debugging, elegant composition.
+
+### External Tools (MCP Toolsets)
+
+Reference MCP servers in your DSL and get generated registries with typed schemas, codecs, transport
+handling, retries, and tracing baked in.
+
+### Full Observability (Streaming & Telemetry)
+
+Configure a memory store and stream sink once. The runtime automatically persists transcripts,
+publishes real‑time events, and instruments everything with OTEL‑aware logging, metrics, and traces.
+
+## Toolsets: Where the Magic Happens
+
+Toolsets are owned by Goa services—agents, MCP, and custom executors are consumers or
+implementations. The DSL keeps everything symmetric with `Toolset`, `Tool`, `BindTo`, `Use`, and
+`Export`.
+
+### Service‑Owned Toolsets
+
+Declare tools with `Toolset("name", func() { ... })`. Bind them to Goa service methods or provide
+custom executors. Codegen produces per‑toolset specs, types, and codecs under
+`gen/<service>/tools/<toolset>/`.
+
+Agents that `Use` these toolsets get typed call builders and executor factories—just wire up your
+service client and go.
+
+### Agent‑Implemented Toolsets (Agent‑as‑Tool)
+
+Define tools in an `Export` block, and other agents can `Use` them seamlessly. Ownership stays with
+the service; the agent provides the implementation.
+
+Codegen emits provider‑side helpers with `NewRegistration` and typed builders, plus consumer‑side
+helpers for agents using the exported toolset.
+
+### One Unified Tool Catalog
+
+No matter how tools are wired—service methods, custom executors, or nested agents—`Use` merges
+everything into a single, coherent catalog. Your planner sees one clean universe of tools.
+
+### Tool Schemas JSON
+
+Every agent gets a backend‑agnostic JSON catalogue at:
 
 ```text
 gen/<service>/agents/<agent>/specs/tool_schemas.json
 ```
 
-The file contains one entry per tool with its canonical ID and JSON Schemas:
+Each entry contains the canonical tool ID with full JSON Schemas:
 
 ```json
 {
@@ -91,12 +126,13 @@ The file contains one entry per tool with its canonical ID and JSON Schemas:
 }
 ```
 
-Schemas are derived from the same DSL and builders as the generated specs and
-codecs. If schema generation fails for an agent, `goa gen` fails fast so
-callers never observe a drift between runtime contracts and the JSON catalogue.
+Schemas derive from the same DSL as your generated specs and codecs. If schema generation fails,
+`goa gen` fails fast—no silent drift between runtime contracts and the JSON catalogue.
 
-## Minimal example
-### 1) DSL (design/design.go)
+## Your First Agent in Five Minutes
+
+### 1. Design (design/design.go)
+
 ```go
 package design
 
@@ -134,12 +170,14 @@ var _ = Service("orchestrator", func() {
 })
 ```
 
-Generate code:
+### 2. Generate
+
 ```bash
 goa gen example.com/quickstart/design
 ```
 
-### 2) Wire runtime and run (cmd/demo/main.go)
+### 3. Run (cmd/demo/main.go)
+
 ```go
 package main
 
@@ -148,24 +186,38 @@ import (
 	"fmt"
 
 	chat "example.com/quickstart/gen/orchestrator/agents/chat"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/runtime"
 )
 
-// A tiny planner: always replies, no tools (great for first run)
+// A tiny planner: always replies, no tools (perfect for first run)
 type StubPlanner struct{}
 
-func (p *StubPlanner) PlanStart(ctx context.Context, in planner.PlanInput) (planner.PlanResult, error) {
-	return planner.PlanResult{
+func (p *StubPlanner) PlanStart(
+	ctx context.Context,
+	in *planner.PlanInput,
+) (*planner.PlanResult, error) {
+	return &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{
-			Message: model.Message{Role: "assistant", Content: "Hello from Goa‑AI!"},
+			Message: &model.Message{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "Hello from Goa‑AI!"}},
+			},
 		},
 	}, nil
 }
-func (p *StubPlanner) PlanResume(ctx context.Context, in planner.PlanResumeInput) (planner.PlanResult, error) {
-	return planner.PlanResult{
+
+func (p *StubPlanner) PlanResume(
+	ctx context.Context,
+	in *planner.PlanResumeInput,
+) (*planner.PlanResult, error) {
+	return &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{
-			Message: model.Message{Role: "assistant", Content: "Done."},
+			Message: &model.Message{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "Done."}},
+			},
 		},
 	}, nil
 }
@@ -181,199 +233,386 @@ func main() {
 
 	client := chat.NewClient(rt) // generated, typed
 	out, err := client.Run(context.Background(),
-		[]model.Message{{Role: "user", Content: "Say hi"}},
+		[]*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "Say hi"}},
+		}},
 		runtime.WithSessionID("session-1"),
 	)
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println("RunID:", out.RunID)
-	fmt.Println("Assistant:", out.Content)
+	// Extract text from the final message parts
+	if out.Final != nil {
+		for _, p := range out.Final.Parts {
+			if tp, ok := p.(model.TextPart); ok {
+				fmt.Println("Assistant:", tp.Text)
+			}
+		}
+	}
 }
 ```
 
-For durability, construct a Temporal engine and pass it to `runtime.New(runtime.Options{Engine: eng})`, then use `Start/Wait` for asynchronous runs and to set task queues, memos, and search attributes.
+**Want durability?** Just swap in a Temporal engine:
 
-## How it works (high level)
-### Plan → Execute Tools → Resume (loop)
-1. The runtime starts a workflow for the agent (in‑memory or Temporal).  
-2. Calls your planner’s `PlanStart` with the current messages.  
-3. Schedules tool calls returned by the planner (tool payloads/results are encoded/decoded via generated codecs).  
-4. Calls `PlanResume` with tool results; repeat until the planner returns a final response or caps/time budgets are hit.  
-5. Streams events (planner/tool/assistant) and persists transcript entries if configured.
+```go
+rt := runtime.New(runtime.WithEngine(temporalEngine))
+```
 
-### Policies and caps
-- Enforced per planner turn: max tool calls, consecutive failures, and time budgets.  
-- Tools can be allowlisted/filtered by policy engines.
+Then use `Start/Wait` for asynchronous runs with task queues, memos, and search attributes.
 
-### Tool execution
-- **Native toolsets**: You write implementations; generated codecs and specs ensure schemas are typed and validated.
-- **Agent‑as‑tool**: Calls `ExecuteAgentInline` to run a nested agent deterministically within the same workflow history.
-- **MCP toolsets**: Generated wrappers and callers handle JSON schemas/encoders and transports (HTTP/SSE/stdio) with retries and tracing.
+## Under the Hood
 
-### Memory, streaming, telemetry
-- Hook bus publishes `tool_start`, `tool_result`, `assistant_message`, etc.  
-- Memory/session stores (e.g., Mongo) subscribe and persist transcripts and run metadata.  
-- Stream sinks (e.g., Pulse) carry real‑time events back to callers or UIs.  
-- OTEL‑aware logging/metrics/tracing instrument workflows and activities.
+### The Plan → Execute → Resume Loop
 
-### Engine abstraction
-- **In‑memory**: Fast dev loop, no external deps.  
-- **Temporal**: Durable execution, replay, retries, signals, workers; adapters wire activities and context propagation.
+1. **Start** — The runtime spins up a workflow for your agent (in‑memory or Temporal)
+2. **Plan** — Your planner's `PlanStart` receives the conversation and decides: final answer or
+   tool calls?
+3. **Execute** — Tool calls run through generated codecs, validated and type‑safe
+4. **Resume** — `PlanResume` gets tool results; the loop continues until a final response or policy
+   limits hit
+5. **Stream** — Events flow to UIs; transcripts persist if configured
 
-## Effective usage tips
-- **Design first**: Put all agent and tool schemas in the DSL; add examples and validations. Let codegen own schemas/codecs.
-- **Never hand‑encode**: Use generated codecs and clients (including for JSON‑RPC/MCP); avoid ad‑hoc `json.Marshal`/`Unmarshal`.
-- **Keep planners focused**: Planners decide “what” (final answer vs tools to call); tool implementations do the “how”.
-- **Split client vs worker**: Register agents only on workers; use generated typed clients from other processes for submissions.
-- **Compose with exports/uses**: Prefer agent‑as‑tool to avoid brittle cross‑service contracts and keep a single deterministic history.
-- **Regenerate often**: Change DSL → `goa gen` → lint/test → run. Never edit `gen/` manually.
+### Policies Keep Things Sane
 
-### Advertising tools in planners
-- Use the generated `specs.AdvertisedSpecs()` from `gen/<svc>/agents/<agent>/specs` to return tool specs to the model. This keeps IDs and schemas aligned with the design (provider IDs for Used toolsets; chat‑owned for Exports) and avoids manual lists.
+Per‑turn enforcement of:
 
-## Temporal runtime flow (end‑to‑end)
-This section reflects the exported APIs and structs in the runtime and generated packages.
+- Maximum tool calls
+- Consecutive failure limits
+- Time budgets
+- Tool allowlists via policy engines
 
-1) Client invocation (caller process)
-- Use the generated `NewClient(rt) runtime.AgentClient` and call:
-  - `Run(ctx, []model.Message, ...runtime.RunOption)` to start and wait
-  - or `Start(ctx, ...opts)` to get an `engine.WorkflowHandle` and `Wait/Signal/Cancel` out‑of‑process
-- Common `RunOption`s:
-  - `runtime.WithSessionID(string)` (required)
-  - `runtime.WithTaskQueue(string)`, `WithMemo(map[string]any)`, `WithSearchAttributes(map[string]any)`
-  - Policy overrides per run: `WithPerTurnMaxToolCalls(int)`, `WithRunMaxToolCalls(int)`, `WithRunMaxConsecutiveFailedToolCalls(int)`, `WithRunTimeBudget(time.Duration)`, `WithRunInterruptsAllowed(bool)`, `WithRestrictToTool(tools.Ident)`, `WithAllowedTags([]string)`, `WithDeniedTags([]string)`
-  - These override the agent's DSL RunPolicy defaults for the run; zero values mean "no override" (use the design defaults).
+### Three Flavors of Tool Execution
 
-2) Engine start (inside `runtime`)
-- `AgentClient.Start` calls `runtime.startRun` which resolves the agent and delegates to `startRunOn`.
-- `startRunOn` constructs `engine.WorkflowStartRequest` containing:
-  - `ID` (generated if absent), `Workflow` (from registration), `TaskQueue`, `Input` (a `*runtime.RunInput`), and optional `Memo`/`SearchAttributes`/`RetryPolicy`.
-- `Engine.StartWorkflow` returns an `engine.WorkflowHandle`. The runtime stores it for later signaling (`PauseRun`, `ResumeRun`, `Provide*`).
+| Type                | How It Works                                                                         |
+|---------------------|--------------------------------------------------------------------------------------|
+| **Native toolsets** | Your implementations + generated codecs = typed, validated tools                     |
+| **Agent‑as‑tool**   | `ExecuteAgentInline` runs a nested agent deterministically within the same workflow  |
+| **MCP toolsets**    | Generated wrappers handle JSON schemas, transport (HTTP/SSE/stdio), retries, tracing |
 
-3) Worker executes workflow
-- During agent registration, the generated code calls `rt.RegisterAgent(ctx, runtime.AgentRegistration{ ... })` which:
-  - Registers the workflow via `engine.WorkflowDefinition{Name, TaskQueue, Handler: runtime.WorkflowHandler(rt)}`
-  - Registers activities: `PlanStartActivityHandler(rt)`, `PlanResumeActivityHandler(rt)`, and `ExecuteToolActivityHandler(rt)` with their `engine.ActivityDefinition`s and options.
-- The engine invokes the workflow handler, which coerces input to `*runtime.RunInput` and calls `rt.ExecuteWorkflow`.
+MCP callers in `runtime/mcp` support multiple transports:
 
-4) Plan/execute/resume loop (inside workflow)
-- `ExecuteWorkflow(wfCtx, *RunInput)`:
-  - Publishes `run_started`, records status, builds a `planner.PlanInput` and calls `runPlanActivity` to run the first planner turn via activity.
-  - Initializes caps/time budget from `runtime.RunPolicy` (from registration) and enters `runLoop(...)`.
-- `runLoop` repeats:
-  - Enforce time budget and interrupts.
-  - If `PlanResult.ToolCalls` present → `executeToolCalls(...)`
-  - Else if `PlanResult.Await` present → publish await and pause; resume via signals.
-  - Else if `PlanResult.FinalResponse` present → complete.
-- `runPlanActivity` schedules the plan/resume activity: `wfCtx.ExecuteActivity(ActivityRequest{Name, Input, Queue/Retry/Timeout})` and validates the returned `*planner.PlanResult`.
+- **`StdioCaller`** — Spawns MCP server as subprocess, communicates via stdin/stdout
+- **`HTTPCaller`** — HTTP POST to MCP endpoints
+- **`SSECaller`** — Server‑Sent Events for streaming MCP responses
 
-5) Tool execution (activity vs inline)
-- `executeToolCalls` chooses path per toolset:
-  - Activity path (default): JSON‑encode payload using generated codec, schedule `ExecuteToolActivity` via `wfCtx.ExecuteActivityAsync(...)`, collect `ToolOutput` futures in order.
-  - Inline path (agent‑as‑tool): execute synchronously inside the workflow by calling the registered toolset `Execute` with the workflow context injected into `ctx` (see agent‑as‑tool below). Results are published and aggregated as `planner.ToolResult` directly.
-- `ExecuteToolActivity` decodes payload via generated codec, calls the toolset registration’s `Execute(ctx, planner.ToolRequest)`, then re‑encodes the result with the generated result codec. Validation errors are converted into structured `planner.RetryHint` for planners/policies.
+All callers implement the `Caller` interface and include automatic retry (`runtime/mcp/retry`) and
+distributed tracing.
 
-6) Completion
-- `runLoop` returns a `*runtime.RunOutput` containing:
-  - `Final` (`model.Message`), last `ToolEvents`, `Notes` and aggregated `Usage`.
-- Runtime sets final status and returns to the client (`Run` path) or leaves result on the handle (`Start` path).
+### Memory, Streaming & Telemetry
 
-## Agent‑as‑tool (inline composition)
-Generated packages for exported toolsets provide first‑class helpers to register an agent as a toolset. Internally this drives inline execution in the same workflow history.
+The hook bus publishes events (`tool_start`, `tool_result`, `assistant_message`, ...) that:
 
-- Generated constants and helpers in the exporter package:
-  - Tool IDs (fully qualified) and type aliases for `Payload`/`Result` codecs.
-  - `New<Agent>ToolsetRegistration(rt *runtime.Runtime) runtime.ToolsetRegistration`:
-    - Uses `runtime.NewAgentToolsetRegistration(rt, runtime.AgentToolConfig{ ... })`
-    - Sets `Inline: true` and supplies a strong‑contract `Route` (`runtime.AgentRoute`) plus the exact activity names for plan/resume/execute_tool.
-  - `NewRegistration(rt, systemPrompt, ...runtime.AgentToolOption)` to configure per‑tool text/templates and an optional system prompt.
-  - Typed tool call builders like `New<TheTool>Call(args *<TheTool>Payload, ...CallOption) planner.ToolRequest`
+- **Memory/session stores** (e.g., Mongo) subscribe to for transcript persistence
+- **Stream sinks** (e.g., Pulse) carry to real‑time UIs
+- **OTEL instrumentation** captures for logs, metrics, and traces
 
-- What happens at runtime:
-  - The consumer process registers the exporter’s toolset with `rt.RegisterToolset(reg)`; the registration’s `Execute` function is the default agent‑tool executor.
-  - When the runtime encounters a tool call whose toolset is `Inline`, it:
-    - Publishes a scheduled event.
-    - Injects the `engine.WorkflowContext` into `ctx` and calls the toolset’s `Execute(ctx, call)`.
-    - The default executor builds messages from the tool payload (optionally using provided templates or text), constructs a nested `run.Context` with `runtime.NestedRunID`, and calls:
-      - `rt.ExecuteAgentInline(wfCtx, <local AgentID>, messages, nestedRunCtx)` when the agent is registered locally, or
-      - `rt.ExecuteAgentInlineWithRoute(wfCtx, route, planActivity, resumeActivity, executeToolActivity, messages, nestedRunCtx)` for cross‑process inline execution using the provider’s queue and activity names.
-    - The nested agent runs a full plan/execute/resume loop inline as part of the parent workflow history, then the result is adapted back to a `planner.ToolResult` for the parent planner.
+### Engine Abstraction
 
-Key runtime types involved:
-- `runtime.ToolsetRegistration` (Name, Specs, Execute, TaskQueue, Inline)
-- `runtime.AgentRoute` (ID, WorkflowName, DefaultTaskQueue)
-- `runtime.AgentToolConfig` (AgentID or Route, activity names, optional system prompt, per‑tool templates/texts)
-- `runtime.NewAgentToolsetRegistration(rt, cfg)` to produce registrations for inline execution
-- `runtime.ExecuteAgentInline(...)` and `runtime.ExecuteAgentInlineWithRoute(...)` for nested runs
+| Engine        | Best For                                                       |
+|---------------|----------------------------------------------------------------|
+| **In‑memory** | Fast dev loops, no external dependencies                       |
+| **Temporal**  | Durable execution, replay, retries, signals, horizontal scaling |
 
-## Integration points: user code vs generated code vs runtime
-- User code
-  - Implement `planner.Planner` (`PlanStart`, `PlanResume`).
-  - Optionally implement service‑backed tools by providing a `runtime.ToolCallExecutor` (or `ToolCallExecutorFunc`) and registering via the generated `New<Agent><Toolset>ToolsetRegistration(exec)` + `rt.RegisterToolset`.
-  - Configure runtime: `runtime.New(runtime.WithEngine(...), WithMemoryStore(...), WithRunStore(...), WithHooks(...), WithStream(...), WithLogger/WithMetrics/WithTracer(...), runtime.WithWorker(agentID, runtime.NewWorker(...)))`.
-  - Provide model clients: `rt.RegisterModel("model-id", client)`.
-  - Drive execution via generated `NewClient(rt).Run/Start` and `runtime.With*` options; handle `engine.WorkflowHandle` if using `Start`.
-  - For exported agent‑as‑tool, optionally provide per‑tool text/templates via `runtime.WithText`, `runtime.WithTemplate`, or use `runtime.CompileAgentToolTemplates`.
+### Human‑in‑the‑Loop (Pause & Resume)
 
-- Generated code
-  - Per agent: constants `AgentID`, `WorkflowName`, `DefaultTaskQueue`, `PlanActivity`, `ResumeActivity`, `ExecuteToolActivity`.
-  - `Register<Agent>(ctx, rt, <Agent>Config) error` registers workflow + activities + toolsets + policy + specs.
-  - `NewWorker(...runtime.WorkerOption) runtime.WorkerConfig` to build queue overrides for worker bindings.
-  - `Route() runtime.AgentRoute` and `NewClient(rt) runtime.AgentClient` for remote callers.
-  - For toolsets:
-    - Service toolsets: `New<Agent><Toolset>ToolsetRegistration(exec runtime.ToolCallExecutor)`; you supply the executor.
-    - Exported agent toolsets: `New<Agent>ToolsetRegistration(rt)` and `NewRegistration(rt, systemPrompt, ...runtime.AgentToolOption)`.
+Agents can pause mid‑run to request human input or external tool results:
 
-- Runtime/library code
-  - `runtime.RegisterAgent`, `runtime.RegisterToolset`, `runtime.Client/ClientFor/MustClient/MustClientFor`.
-  - `runtime.AgentClient` with `Run/Start`.
-  - `runtime.RunOption`s (`WithSessionID`, `WithTaskQueue`, `WithMemo`, `WithSearchAttributes`, policy overrides).
-  - `engine.Engine`, `engine.WorkflowDefinition`, `engine.ActivityDefinition`, `engine.WorkflowHandle`.
-  - Activities: `PlanStartActivity`, `PlanResumeActivity`, `ExecuteToolActivity`.
-  - Inline composition: `runtime.NewAgentToolsetRegistration`, `runtime.ExecuteAgentInline`, `runtime.ExecuteAgentInlineWithRoute`.
-  - Tool codecs/specs: `tools.ToolSpec`, `tools.JSONCodec` used by the runtime to marshal/unmarshal payloads/results.
+- **Await Clarification** — Planner returns `Await.Clarification` when it needs user input
+  (missing fields, ambiguous request). The runtime publishes an event and pauses.
+- **Await External Tools** — Planner requests out‑of‑band tool execution; the runtime pauses
+  until results arrive via signal.
+- **Pause/Resume Signals** — Workflows accept `SignalPause` and `SignalResume` for manual
+  intervention. Use `SignalProvideClarification` or `SignalProvideToolResults` to deliver answers.
+
+The `interrupt` package (`runtime/agent/interrupt`) provides the `Controller` that drains signals
+and exposes helpers for the workflow loop.
+
+### Hook Bus (Internal Event Backbone)
+
+The hook bus (`runtime/agent/hooks`) is the internal pub/sub backbone for runtime observability:
+
+- **Publishers**: Workflows, planners, tool executors emit events (`run_started`, `tool_call_scheduled`,
+  `assistant_message`, `thinking_block`, etc.)
+- **Subscribers**: Memory stores, stream sinks, telemetry adapters receive events and react
+- **Decoupling**: Producers don't know about consumers; add observability without touching core logic
+
+Stream sinks bridge hook events to client‑facing formats via `stream.Subscriber`.
+
+### Transcript Ledger
+
+The transcript ledger (`runtime/agent/transcript`) maintains a provider‑precise record of the
+conversation needed to rebuild model payloads exactly:
+
+- **Provider Fidelity** — Preserves ordering and shape required by providers (thinking → tool_use →
+  tool_result)
+- **Stateless API** — Pure methods safe for workflow replay
+- **Provider‑Agnostic Storage** — Converts to/from provider formats at edges
+
+Use the ledger when you need deterministic conversation replay or provider‑specific payload
+reconstruction.
+
+### Run Store
+
+The run store (`runtime/agent/run`) persists run metadata (status, timestamps, agent ID, session)
+separate from memory transcripts:
+
+- **Interface**: `run.Store` with `Upsert` and `Load`
+- **In‑memory**: `run/inmem` for development
+- **Mongo**: `features/run/mongo` for production persistence
+
+Configure via `runtime.WithRunStore(store)`.
+
+## Best Practices
+
+**Design first** — Put all agent and tool schemas in the DSL. Add examples and validations. Let
+codegen own schemas and codecs.
+
+**Never hand‑encode** — Use generated codecs and clients everywhere. Avoid `json.Marshal`/
+`Unmarshal` for tool payloads.
+
+**Keep planners focused** — Planners decide *what* (final answer vs. which tools). Tool
+implementations handle *how*.
+
+**Split client from worker** — Register agents on workers; use generated typed clients from other
+processes to submit runs.
+
+**Compose with export/use** — Prefer agent‑as‑tool over brittle cross‑service contracts. Single
+history, unified debugging.
+
+**Regenerate often** — DSL change → `goa gen` → lint/test → run. Never edit `gen/` manually.
+
+### Advertising Tools to Planners
+
+Use `specs.AdvertisedSpecs()` from `gen/<svc>/agents/<agent>/specs` to pass tool specs to the model.
+This keeps IDs and schemas aligned with your design and eliminates manual lists.
+
+## Temporal Runtime Flow (Deep Dive)
+
+For those who want the full picture of how execution flows through the system.
+
+### 1. Client Invocation
+
+Use the generated `NewClient(rt)` to get a `runtime.AgentClient`, then:
+
+- **Synchronous**: `Run(ctx, []*model.Message, ...runtime.RunOption)` — start and wait
+- **Asynchronous**: `Start(ctx, ...opts)` → `engine.WorkflowHandle` → `Wait/Signal/Cancel`
+
+**RunOptions** let you configure per‑run behavior:
+
+| Option                              | Purpose                      |
+|-------------------------------------|------------------------------|
+| `WithSessionID(string)`             | Required session identifier  |
+| `WithTaskQueue(string)`             | Route to specific workers    |
+| `WithMemo(map[string]any)`          | Attach metadata              |
+| `WithSearchAttributes(map[string]any)` | Enable queries            |
+| `WithPerTurnMaxToolCalls(int)`      | Override DSL defaults        |
+| `WithRunMaxToolCalls(int)`          | Cap total tool calls         |
+| `WithRunTimeBudget(duration)`       | Set time limits              |
+| `WithRestrictToTool(tools.Ident)`   | Limit available tools        |
+| `WithAllowedTags([]string)`         | Filter by tags               |
+
+### 2. Engine Start
+
+`AgentClient.Start` calls `runtime.startRun`, which resolves the agent and delegates to
+`startRunOn`. This constructs an `engine.WorkflowStartRequest` with:
+
+- `ID` (generated if absent)
+- `Workflow` (from registration)
+- `TaskQueue`, `Input` (`*runtime.RunInput`)
+- Optional `Memo`, `SearchAttributes`, `RetryPolicy`
+
+`Engine.StartWorkflow` returns an `engine.WorkflowHandle` for later signaling.
+
+### 3. Worker Execution
+
+During registration, generated code calls `rt.RegisterAgent(ctx, runtime.AgentRegistration{...})`,
+which:
+
+- Registers the workflow via `engine.WorkflowDefinition`
+- Registers activities: `PlanStartActivityHandler`, `PlanResumeActivityHandler`,
+  `ExecuteToolActivityHandler`
+
+The engine invokes the workflow handler, which calls `rt.ExecuteWorkflow`.
+
+### 4. The Plan/Execute/Resume Loop
+
+`ExecuteWorkflow(wfCtx, *RunInput)`:
+
+1. Publishes `run_started`, initializes caps/time budget
+2. Calls `runPlanActivity` for the first planner turn
+3. Enters `runLoop`:
+   - Enforce time budget and interrupts
+   - If `ToolCalls` present → `executeToolCalls`
+   - If `Await` present → publish and pause for signals
+   - If `FinalResponse` present → complete
+
+### 5. Tool Execution
+
+`executeToolCalls` routes each call:
+
+| Path         | When           | How                                                               |
+|--------------|----------------|-------------------------------------------------------------------|
+| **Activity** | Default        | JSON‑encode via codec, schedule `ExecuteToolActivity`, collect futures |
+| **Inline**   | Agent‑as‑tool  | Execute synchronously in workflow context, publish results directly |
+
+`ExecuteToolActivity` decodes payloads, calls the toolset's `Execute`, re‑encodes results.
+Validation errors become structured `planner.RetryHint` for planners.
+
+### 6. Completion
+
+`runLoop` returns `*runtime.RunOutput` containing:
+
+- `Final` (the assistant's `*model.Message`)
+- `ToolEvents` (all tool results in execution order)
+- `Notes` and aggregated `Usage`
+
+The runtime sets final status and returns to the client.
+
+## Agent‑as‑Tool: Inline Composition
+
+Exported toolsets get first‑class helpers for registering agents as tools. Nested agents execute
+inline within the parent workflow history.
+
+### Generated Provider Helpers
+
+- **Tool IDs** (fully qualified) and type aliases for codecs
+- **`New<Agent>ToolsetRegistration(rt *runtime.Runtime)`** — creates registration with `Inline: true`
+  and strong‑contract routing
+- **`NewRegistration(rt, systemPrompt, ...runtime.AgentToolOption)`** — configure per‑tool
+  text/templates
+- **Typed call builders** like `New<Tool>Call(args, ...CallOption)`
+
+### Runtime Behavior
+
+1. Consumer registers with `rt.RegisterToolset(reg)`
+2. When the runtime sees an `Inline` toolset call:
+   - Publishes a scheduled event
+   - Injects `engine.WorkflowContext` into `ctx`
+   - Calls the toolset's `Execute`
+3. The executor builds messages from the payload (with optional templates) and calls:
+   - `rt.ExecuteAgentInline` (local agent), or
+   - `rt.ExecuteAgentInlineWithRoute` (cross‑process)
+4. Nested agent runs full plan/execute/resume inline
+5. Results adapt back to `planner.ToolResult` for the parent
+
+### Key Types
+
+| Type                                   | Purpose                                          |
+|----------------------------------------|--------------------------------------------------|
+| `runtime.ToolsetRegistration`          | Name, Specs, Execute, TaskQueue, Inline flag     |
+| `runtime.AgentRoute`                   | ID, WorkflowName, DefaultTaskQueue               |
+| `runtime.AgentToolConfig`              | AgentID or Route, activity names, prompts, templates |
+| `runtime.NewAgentToolsetRegistration`  | Build inline registrations                       |
+| `runtime.ExecuteAgentInline[WithRoute]`| Execute nested runs                              |
+
+## Integration Points
+
+### Your Code
+
+- Implement `planner.Planner` (`PlanStart`, `PlanResume`)
+- Provide tool executors via `runtime.ToolCallExecutor`
+- Configure runtime: `runtime.New(WithEngine, WithMemoryStore, WithRunStore, WithHooks, WithStream,
+  WithLogger, WithMetrics, WithTracer, WithWorker)`
+- Register models: `rt.RegisterModel("model-id", client)`
+- Submit runs via generated clients
+- For agent‑as‑tool: configure text/templates with `runtime.WithText`, `runtime.WithTemplate`
+
+### Generated Code
+
+- Per agent: `AgentID`, `WorkflowName`, `DefaultTaskQueue`, activity names
+- `Register<Agent>(ctx, rt, Config)` — full registration
+- `NewWorker(...runtime.WorkerOption)` — worker configuration
+- `Route()` and `NewClient(rt)` — remote access
+- Per toolset: `New<Agent><Toolset>ToolsetRegistration`
+
+### Runtime/Library
+
+- `runtime.RegisterAgent`, `runtime.RegisterToolset`
+- `runtime.Client`, `runtime.ClientFor`, `runtime.MustClient`, `runtime.MustClientFor`
+- `runtime.AgentClient` with `Run/Start`
+- `engine.Engine`, `engine.WorkflowDefinition`, `engine.ActivityDefinition`, `engine.WorkflowHandle`
+- Activities: `PlanStartActivity`, `PlanResumeActivity`, `ExecuteToolActivity`
+- Inline composition: `runtime.ExecuteAgentInline`, `runtime.ExecuteAgentInlineWithRoute`
+- Tool infrastructure: `tools.ToolSpec`, `tools.JSONCodec`
+- Tool errors: `toolerrors.ToolError` for structured error reporting
+- Hooks: `hooks.Bus`, `hooks.Subscriber`, `hooks.Event` for runtime observability
+- Interrupts: `interrupt.Controller` for pause/resume signal handling
 
 ## Streaming for UIs
-Stream client‑facing events (assistant chunks, planner thoughts, tool progress/results, human‑in‑the‑loop awaits, usage) to WebSocket/SSE or a bus (e.g., Pulse).
 
-- What to implement
-  - Implement `stream.Sink` with:
-    - `Send(ctx context.Context, event stream.Event) error`
-    - `Close(ctx context.Context) error`
-  - Event types you’ll receive: `assistant_reply`, `planner_thought`, `tool_start`, `tool_update`, `tool_end`, `await_clarification`, `await_external_tools`, `usage`.
+Push real‑time events to WebSocket/SSE or a message bus for live agent experiences.
 
-- Global broadcast (all runs)
-  - Initialize the runtime with a sink. The runtime auto‑registers a stream subscriber that bridges hooks → stream:
+### Implement a Stream Sink
+
 ```go
-sink := myStreamSink // implements stream.Sink
+type MySink struct{}
+
+func (s *MySink) Send(ctx context.Context, event stream.Event) error {
+    // Handle: assistant_reply, planner_thought, tool_start, 
+    //         tool_update, tool_end, await_clarification, 
+    //         await_external_tools, usage
+    return nil
+}
+
+func (s *MySink) Close(ctx context.Context) error {
+    return nil
+}
+```
+
+### Global Broadcast (All Runs)
+
+```go
+sink := &MySink{}
 rt := runtime.New(runtime.WithStream(sink))
 ```
 
-- Per‑run streaming (UI per tab/connection)
-  - Attach a filtered subscriber for a specific run and receive only its events:
+### Per‑Run Streaming (Per UI Tab)
+
 ```go
 closeFn, err := rt.SubscribeRun(ctx, runID, sink)
 if err != nil { /* handle */ }
-defer closeFn() // unsubscribes and closes the sink
+defer closeFn() // unsubscribes and closes
 ```
 
-- Per‑request manual bridge (using the bus directly)
-  - Create and register a temporary subscriber for a given connection:
+### Manual Bridge (Direct Bus Access)
+
 ```go
-sub, _ := streambridge.Register(rt.Bus, sink) // returns hooks.Subscription
+import "goa.design/goa-ai/runtime/agent/stream/bridge"
+
+sub, _ := bridge.Register(rt.Bus, sink)
 defer sub.Close()
 ```
 
-Notes
-- Stream events are derived from the internal hook bus, filtered to client‑facing payloads.
-- Tool payloads/results in stream events are structured (not pre‑encoded); your sink should JSON‑encode them for transport.
-- For cross‑process UIs, prefer a message bus sink (e.g., Pulse) wired via `WithStream`.
+**Tips**:
 
-## Pointers
-- DSL reference: `docs/dsl.md`
-- Runtime guide: `docs/runtime.md`
-- Quickstart example: `quickstart/README.md`
-- MCP integration: see `codegen/mcp` and `runtime/mcp`
-- Features (memory, session, stream, model clients): `features/*`
+- Stream events are structured, not pre‑encoded—JSON‑encode for transport
+- For cross‑process UIs, wire a message bus sink (e.g., Pulse) via `WithStream`
 
+## Learn More
+
+| Topic           | Resource                                           |
+|-----------------|----------------------------------------------------|
+| DSL reference   | `docs/dsl.md`                                      |
+| Runtime guide   | `docs/runtime.md`                                  |
+| Quickstart      | `quickstart/README.md`                             |
+| MCP integration | `codegen/mcp` and `runtime/mcp`                    |
+| Features        | `features/*` (memory, session, run, stream, model clients) |
+
+### Feature Packages
+
+| Package                  | Purpose                                                |
+|--------------------------|--------------------------------------------------------|
+| `features/memory/mongo`  | Mongo‑backed memory store for transcripts              |
+| `features/session/mongo` | Mongo‑backed session store for multi‑turn state        |
+| `features/run/mongo`     | Mongo‑backed run store for run metadata                |
+| `features/stream/pulse`  | Pulse message bus sink for real‑time streaming         |
+| `features/model/bedrock` | AWS Bedrock model client (Claude, etc.)                |
+| `features/model/openai`  | OpenAI‑compatible model client                         |
+| `features/model/gateway` | Remote model gateway for centralized model serving     |
+| `features/policy/basic`  | Basic policy engine for tool filtering and caps        |
+
+---
+
+*Build agents that are a joy to develop and a breeze to operate. Welcome to Goa‑AI.*

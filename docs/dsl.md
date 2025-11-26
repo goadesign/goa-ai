@@ -1,14 +1,21 @@
 # Goa Agent DSL Reference
 
-This document explains how to author agents, toolsets, and runtime policies with the Goa agents DSL. Use it alongside `docs/plan.md`, which describes the broader architecture, runtime, and code generation pipeline.
+This document explains how to author agents, toolsets, and runtime policies with the Goa‑AI DSL.
+Use it alongside `docs/overview.md` and `docs/runtime.md` for the broader architecture and runtime
+details.
 
 ## Overview
 
-- **Import path:** add `agentsdsl "goa.design/goa-ai/agents/dsl"` to your Goa design packages.
-- **Entry point:** declare agents inside a regular Goa `Service` definition. The DSL augments Goa’s design tree and is processed during `goa gen`.
-- **Outcome:** `goa gen` produces agent packages (`gen/<service>/agents/<agent>`), tool codecs/specs, activity handlers, and registration helpers that wire the design into the runtime. A contextual `AGENTS_QUICKSTART.md` is written at the module root unless disabled via `agentsdsl.DisableAgentDocs()`.
+- **Import path:** `"goa.design/goa-ai/dsl"` (typically dot-imported alongside Goa's DSL).
+- **Entry point:** Declare agents inside a regular Goa `Service` definition. The DSL augments Goa's
+  design tree and is processed during `goa gen`.
+- **Outcome:** `goa gen` produces agent packages (`gen/<service>/agents/<agent>`), tool
+  codecs/specs, activity handlers, and registration helpers. A contextual `AGENTS_QUICKSTART.md` is
+  written at the module root unless disabled via `DisableAgentDocs()`.
 
-The DSL is evaluated by Goa’s `eval` engine, so the same rules apply as with the standard service/transport DSL: expressions must be invoked in the proper context, and attribute definitions reuse Goa’s type system (`Attribute`, `Field`, validations, examples, etc.).
+The DSL is evaluated by Goa's `eval` engine, so the same rules apply as with the standard
+service/transport DSL: expressions must be invoked in the proper context, and attribute definitions
+reuse Goa's type system (`Attribute`, `Field`, validations, examples, etc.).
 
 ## Quickstart
 
@@ -17,248 +24,406 @@ package design
 
 import (
 	. "goa.design/goa/v3/dsl"
-	agentsdsl "goa.design/goa-ai/agents/dsl"
+	. "goa.design/goa-ai/dsl"
 )
 
-var DocsToolset = agentsdsl.Toolset("docs.search", func() {
-	agentsdsl.Tool("search", "Search indexed documentation", func() {
-		agentsdsl.Args(func() {
+var DocsToolset = Toolset("docs.search", func() {
+	Tool("search", "Search indexed documentation", func() {
+		Args(func() {
 			Attribute("query", String, "Search phrase")
 			Attribute("limit", Int, "Max results", func() { Default(5) })
 			Required("query")
 		})
-		agentsdsl.Return(func() {
+		Return(func() {
 			Attribute("documents", ArrayOf(String), "Matched snippets")
 			Required("documents")
 		})
-		agentsdsl.Tags("docs", "search")
+		Tags("docs", "search")
 	})
 })
 
-var AssistantSuite = agentsdsl.MCPToolset("assistant", "assistant-mcp")
+var AssistantSuite = MCPToolset("assistant", "assistant-mcp")
 
 var _ = Service("orchestrator", func() {
 	Description("Human front door for the knowledge agent.")
 
-	agentsdsl.Agent("chat", "Conversational runner", func() {
-		agentsdsl.Use(DocsToolset)
-		agentsdsl.Use(AssistantSuite)
-		agentsdsl.Export("chat.tools", func() {
-			agentsdsl.Tool("summarize_status", "Produce operator-ready summaries", func() {
-				agentsdsl.Args(func() {
+	Agent("chat", "Conversational runner", func() {
+		Use(DocsToolset)
+		Use(AssistantSuite)
+		Export("chat.tools", func() {
+			Tool("summarize_status", "Produce operator-ready summaries", func() {
+				Args(func() {
 					Attribute("prompt", String, "User instructions")
 					Required("prompt")
 				})
-				agentsdsl.Return(func() {
+				Return(func() {
 					Attribute("summary", String, "Assistant response")
 					Required("summary")
 				})
-				agentsdsl.Tags("chat")
+				Tags("chat")
 			})
 		})
-		agentsdsl.RunPolicy(func() {
-			agentsdsl.DefaultCaps(
-				agentsdsl.MaxToolCalls(8),
-				agentsdsl.MaxConsecutiveFailedToolCalls(3),
+		RunPolicy(func() {
+			DefaultCaps(
+				MaxToolCalls(8),
+				MaxConsecutiveFailedToolCalls(3),
 			)
-			agentsdsl.TimeBudget("2m")
+			TimeBudget("2m")
+			OnMissingFields("await_clarification")
 		})
 	})
 })
 ```
 
-Running `goa gen example.com/assistant/design` now produces:
+Running `goa gen example.com/assistant/design` produces:
 
 - `gen/orchestrator/agents/chat`: workflow + planner activities + agent registry.
-- `gen/orchestrator/agents/chat/tool_specs`: payload/result structs, JSON codecs, tool schemas.
+- `gen/orchestrator/agents/chat/specs`: payload/result structs, JSON codecs, tool schemas.
 - `gen/orchestrator/agents/chat/agenttools`: helpers that expose exported tools to other agents.
-- `features/mcp`-aware registration helpers when an `MCPToolset` is referenced via `Use`.
+- MCP registration helpers when an `MCPToolset` is referenced via `Use`.
 
-Each per-toolset specs package also defines typed tool identifiers (tools.Ident)
-for every generated tool and uses those constants inside the exported `Specs`
-slice. Example (package `gen/orchestrator/agents/chat/specs/search`):
+Each per-toolset specs package defines typed tool identifiers (`tools.Ident`) and uses those
+constants inside the exported `Specs` slice:
 
-    const (
-        // Typed tool IDs
-        Search tools.Ident = "orchestrator.search.search"
-    )
+```go
+const (
+    Search tools.Ident = "orchestrator.search.search"
+)
 
-    var Specs = []tools.ToolSpec{
-        { Name: Search, /* ... */ },
-    }
+var Specs = []tools.ToolSpec{
+    { Name: Search, /* ... */ },
+}
+```
 
-Use these constants anywhere you need to reference tools, including for
-non‑exported toolsets (no need to define ad‑hoc strings).
+Use these constants anywhere you need to reference tools.
 
 ### Cross‑Process Inline Composition (Auto‑Wiring)
 
-When agent A declares it “uses” a toolset exported by agent B, goa‑ai has enough
-information to wire composition automatically:
+When agent A "uses" a toolset exported by agent B, Goa‑AI wires composition automatically:
 
-- The exporter (agent B) package includes a generated `Register<Agent>Route(ctx, rt)`
-  function that registers route‑only metadata (workflow + queue, plan/resume activity
-  names + options, execute‑tool name, policy caps, specs).
-- The consumer (agent A) registry calls `Register<AgentB>Route(ctx, rt)` and registers
-  an inline agent‑tool `ToolsetRegistration` for the exported toolset. The generated
-  Execute function calls `runtime.ExecuteAgentInline` so the nested agent runs as part
-  of the parent workflow history while workers can live in separate processes.
-- Payloads and results remain canonical JSON across boundaries and are decoded exactly
-  once at the tool boundary using generated codecs.
+- The exporter (agent B) package includes a generated `Register<Agent>Route(ctx, rt)` function
+  that registers route‑only metadata.
+- The consumer (agent A) registry calls `Register<AgentB>Route(ctx, rt)` and registers an inline
+  agent‑tool `ToolsetRegistration`. The generated Execute function calls
+  `runtime.ExecuteAgentInline` so the nested agent runs as part of the parent workflow history.
+- Payloads and results remain canonical JSON across boundaries and are decoded exactly once.
 
-This yields a single deterministic workflow and a single stream of `tool_start` /
-`tool_result` events, even when agents execute on different workers.
+This yields a single deterministic workflow and unified `tool_start`/`tool_result` events, even
+when agents execute on different workers.
 
 ## Function Reference
 
+### Agent Functions
+
 | Function | Location | Context | Purpose |
 |----------|----------|---------|---------|
-| `Agent(name, description, dsl)` | `dsl/agent.go` | Inside `Service` | Declares an agent, its tool usage/exports, and run policy. |
-| `Use(value, dsl)` | `dsl/agent.go` | Inside `Agent` | Declares that an agent consumes a toolset (inline or by reference). |
-| `Export(value, dsl)` | `dsl/agent.go` | Inside `Agent`/`Service` | Declares toolsets exposed to other agents or services. |
-| `Toolset(name, dsl)` | `dsl/toolset.go` | Top-level | Defines a provider-owned toolset (reusable across agents). |
-| `MCPToolset(service, suite, dsl...)` | `dsl/toolset.go` | Top-level | Declares a provider MCP suite that agents reference via `Use`. |
-| `Tool(name, description, dsl)` | `agents/dsl/toolset.go` | Inside `Toolset` | Defines a tool (arguments, result, metadata). |
-| `Args(...)`, `Return(...)` | `agents/dsl/toolset.go` | Inside `Tool` | Define payload/result types using the standard Goa attribute DSL. |
-| `Tags(values...)` | `agents/dsl/toolset.go` | Inside `Tool` | Annotates tools with metadata tags. |
-| `RunPolicy(dsl)` | `agents/dsl/policy.go` | Inside `Agent` | Configures runtime caps and behavior. |
-| `DefaultCaps(opts...)` | `agents/dsl/policy.go` | Inside `RunPolicy` | Applies capability caps (max calls, consecutive failures). |
-| `MaxToolCalls`, `MaxConsecutiveFailedToolCalls` | `agents/dsl/policy.go` | Arguments to `DefaultCaps` | Helper options for caps. |
-| `TimeBudget(duration)` | `agents/dsl/policy.go` | Inside `RunPolicy` | Sets max wall-clock execution time. |
-| `InterruptsAllowed(bool)` | `agents/dsl/policy.go` | Inside `RunPolicy` | Enables run interruption handling. |
-| `DisableAgentDocs()` | `agents/dsl/docs.go` | Inside `API` | Disables generation of `AGENTS_QUICKSTART.md` at the module root. |
+| `Agent(name, description, dsl)` | `dsl/agent.go` | Inside `Service` | Declares an agent with tool usage/exports and run policy |
+| `Use(value, dsl)` | `dsl/agent.go` | Inside `Agent` | Declares that an agent consumes a toolset |
+| `Export(value, dsl)` | `dsl/agent.go` | Inside `Agent`/`Service` | Declares toolsets exposed to other agents |
+| `AgentToolset(svc, agent, ts)` | `dsl/toolset.go` | Top-level | References a toolset exported by another agent |
+| `DisableAgentDocs()` | `dsl/agent.go` | Inside `API` | Disables `AGENTS_QUICKSTART.md` generation |
+| `Passthrough(tool, target...)` | `dsl/agent.go` | Inside exported `Tool` | Forwards tool to a Goa service method |
 
-### Agent, Use, and Export
+### Toolset Functions
 
-`Agent` records the service-scoped agent metadata (name, description, owning service) and attaches toolsets via `Use` and `Export`. Each agent becomes a runtime registration with:
+| Function | Location | Context | Purpose |
+|----------|----------|---------|---------|
+| `Toolset(name, dsl)` | `dsl/toolset.go` | Top-level | Defines a provider-owned toolset |
+| `MCPToolset(service, suite, dsl...)` | `dsl/toolset.go` | Top-level | Declares a provider MCP suite |
+| `ToolsetDescription(desc)` | `dsl/toolset.go` | Inside `Toolset` | Sets toolset description |
+| `Tags(values...)` | `dsl/toolset.go` | Inside `Toolset`/`Tool` | Annotates with metadata tags |
 
-- A workflow definition and Temporal activity handlers.
-- PlanStart/PlanResume activities with DSL-derived retry/timeout options.
-- A `Register<Agent>` helper that registers workflows, activities, and toolsets against a `runtime.Runtime`.
+### Tool Functions
 
-### Toolset
+| Function | Location | Context | Purpose |
+|----------|----------|---------|---------|
+| `Tool(name, description, dsl)` | `dsl/toolset.go` | Inside `Toolset`/`Method` | Defines a callable tool |
+| `Args(...)` | `dsl/toolset.go` | Inside `Tool` | Defines payload type |
+| `Return(...)` | `dsl/toolset.go` | Inside `Tool` | Defines result type |
+| `Sidecar(...)` | `dsl/toolset.go` | Inside `Tool` | Defines sidecar type (not sent to model) |
+| `BindTo(service?, method)` | `dsl/toolset.go` | Inside `Tool` | Binds tool to a Goa service method |
+| `Inject(fields...)` | `dsl/toolset.go` | Inside `Tool` | Marks fields as server-injected (hidden from LLM) |
+| `ToolTitle(title)` | `dsl/toolset.go` | Inside `Tool` | Sets human-friendly display title |
+| `CallHintTemplate(tmpl)` | `dsl/toolset.go` | Inside `Tool` | Template for call display hint |
+| `ResultHintTemplate(tmpl)` | `dsl/toolset.go` | Inside `Tool` | Template for result display hint |
 
-`Toolset` declares a provider-owned toolset (`Toolset("name", func(){...})`). When declared at top level, the toolset becomes globally reusable; agents reference it via `Use` and services can expose it via `Export`. Toolsets can carry multiple tools, each with payload/result schemas, helper prompts, and metadata tags.
+### Policy Functions
 
-### MCPToolset
+| Function | Location | Context | Purpose |
+|----------|----------|---------|---------|
+| `RunPolicy(dsl)` | `dsl/policy.go` | Inside `Agent` | Configures runtime caps and behavior |
+| `DefaultCaps(opts...)` | `dsl/policy.go` | Inside `RunPolicy` | Applies capability caps |
+| `MaxToolCalls(n)` | `dsl/policy.go` | Argument to `DefaultCaps` | Max total tool calls |
+| `MaxConsecutiveFailedToolCalls(n)` | `dsl/policy.go` | Argument to `DefaultCaps` | Max consecutive failures |
+| `TimeBudget(duration)` | `dsl/policy.go` | Inside `RunPolicy` | Max wall-clock execution time |
+| `InterruptsAllowed(bool)` | `dsl/policy.go` | Inside `RunPolicy` | Enables run interruption handling |
+| `OnMissingFields(action)` | `dsl/policy.go` | Inside `RunPolicy` | Behavior on missing required fields |
 
-`MCPToolset(service, suite)` declares an MCP-defined toolset that agents reference via `Use(MCPToolset(...))`. During code generation the DSL is resolved to the service-level MCP metadata, and the agent package automatically imports the generated helper (`Register<Service><Suite>Toolset`) and exposes an `MCPCallers` map in the agent config. At runtime:
+### MCP Functions
 
-1. Application code instantiates an `mcpruntime.Caller` (HTTP, SSE, stdio, or the Goa-generated JSON-RPC caller) and stores it under the toolset ID constant (e.g., `ChatAgentAssistantAssistantMcpToolsetID`).
-2. The agent registry automatically invokes the generated helper for each configured caller, registering the MCP suite with the runtime.
-3. Planner outputs can now reference the tools by their names just like native toolsets; codecs, schemas, retry hints, and structured telemetry flow through the shared runtime path.
+| Function | Location | Context | Purpose |
+|----------|----------|---------|---------|
+| `MCPServer(name, version, opts...)` | `dsl/mcp.go` | Inside `Service` | Enables MCP protocol for service |
+| `ProtocolVersion(version)` | `dsl/mcp.go` | Option for `MCPServer` | Sets MCP protocol version |
+| `MCPTool(name, description)` | `dsl/mcp.go` | Inside `Method` | Marks method as MCP tool |
+| `Resource(name, uri, mime)` | `dsl/mcp.go` | Inside `Method` | Marks method as MCP resource |
+| `WatchableResource(name, uri, mime)` | `dsl/mcp.go` | Inside `Method` | MCP resource with subscriptions |
+| `StaticPrompt(name, desc, msgs...)` | `dsl/mcp.go` | Inside `Service` | Static MCP prompt template |
+| `DynamicPrompt(name, description)` | `dsl/mcp.go` | Inside `Method` | Dynamic MCP prompt generator |
+| `Notification(name, description)` | `dsl/mcp.go` | Inside `Method` | MCP notification sender |
+| `Subscription(resourceName)` | `dsl/mcp.go` | Inside `Method` | Subscription handler for resource |
+| `SubscriptionMonitor(name)` | `dsl/mcp.go` | Inside `Method` | SSE monitor for subscriptions |
 
-### Tool
+## Agent, Use, and Export
 
-Each `Tool` describes a callable capability. Compose the payload/result with `Args` and `Return` using Goa’s attribute syntax (attributes, types, validations, examples). Tags are optional metadata strings surfaced to policy engines and telemetry.
+`Agent` records the service-scoped agent metadata and attaches toolsets via `Use` and `Export`.
+Each agent becomes a runtime registration with:
 
-Code generation emits:
+- A workflow definition and Temporal activity handlers
+- PlanStart/PlanResume activities with DSL-derived retry/timeout options
+- A `Register<Agent>` helper that registers workflows, activities, and toolsets
 
-- Payload/result Go structs in `tool_specs/types.go`.
-- JSON codecs (`tool_specs/codecs.go`) used for activity marshaling and memory.
-- JSON Schema definitions consumed by planners and optional validation layers.
-- Tool registry entries consumed by the runtime, including helper prompts and metadata.
+## Toolset
 
-#### Decode & Validation semantics (used‑tools)
-- Agent used‑tools perform a lenient JSON decode on the agent side: `FromJSON` does not enforce required‑field validation for payloads.
-- Executors (or generated per‑tool callers) can construct the final service method payload (e.g., fill server‑owned fields from `ToolCallMeta`) before invoking the backend.
-- Strict validation remains at the service boundary (Goa service). Validation errors returned by services can be mapped to `RetryHint` if you choose to surface recoverable guidance to planners.
-
-#### BindTo(service, method)
-
-Use `BindTo("Method")` to associate a tool with a service method on the current
-service, or `BindTo("Service", "Method")` for cross‑service bindings. During
-evaluation the DSL resolves the referenced `*expr.MethodExpr`; codegen then
-emits:
-
-- Typed tool specs/codecs under `gen/<svc>/agents/<agent>/specs/<toolset>/`.
-- A `New<Agent><Toolset>ToolsetRegistration(exec runtime.ToolCallExecutor)`
-  helper. Application code registers the toolset by supplying an executor
-  function (see docs/runtime.md for the executor‑first model).
-- When shapes are compatible, per‑tool transform helpers in
-  `specs/<toolset>/transforms.go`:
-  - `ToMethodPayload_<Tool>(in <ToolArgs>) (<MethodPayload>, error)`
-  - `ToToolReturn_<Tool>(in <MethodResult>) (<ToolReturn>, error)`
-
-Mapping logic lives in your application‑owned executor stubs under
-`internal/agents/<agent>/toolsets/<toolset>/execute.go` (generated by
-`goa example`). Executors decode typed payloads, optionally call the generated
-transforms, invoke your service client, and return a `planner.ToolResult`.
-
-#### Tool Call IDs (Model Correlation)
-
-Planners may set `ToolRequest.ToolCallID` (e.g., model `tool_call.id`). The runtime preserves this ID end-to-end and returns it in `ToolResult.ToolCallID`. If omitted, the runtime assigns a deterministic ID so workflow replay correlates correctly.
-
-### RunPolicy & Caps
-
-`RunPolicy` configures execution limits enforced at runtime:
-
-- `DefaultCaps` with `MaxToolCalls` and `MaxConsecutiveFailedToolCalls` prevent runaway loops.
-- `TimeBudget` enforces a wall-clock limit; the runtime monitors elapsed time and aborts when exceeded.
-- `InterruptsAllowed` signals to the runtime that human-in-the-loop interruptions should be honored.
-
-These values appear in the generated workflow configuration and the runtime enforces them on every turn.
-
-### Agent API Types (re‑exported)
-
-The DSL re‑exports standardized agent API types for use directly in Goa service designs. Import the agents DSL and reference these types when declaring agent endpoints:
-
-- `AgentRunPayload`: input for agent run/start/resume endpoints (fields: `agent_id`, `run_id`, `session_id`, `turn_id`, `messages`, `labels`, `metadata`).
-- `AgentRunResult`: terminal result for non‑streaming endpoints (fields: `agent_id`, `run_id`, `final`, `tool_events`, `notes`).
-- `AgentRunChunk`: streaming progress events (variants via fields: `message`, `tool_call`, `tool_result`, `status`).
-- Supporting types: `AgentMessage`, `AgentToolEvent`, `AgentToolError`, `AgentRetryHint`, `AgentToolTelemetry`, `AgentPlannerAnnotation`, `AgentToolCallChunk`, `AgentToolResultChunk`, `AgentRunStatusChunk`.
-
-Example:
+`Toolset` declares a provider-owned toolset. When declared at top level, the toolset becomes
+globally reusable; agents reference it via `Use` and services can expose it via `Export`.
 
 ```go
-Service("orchestrator", func() {
-    Method("run", func() {
-        Payload(agentsdsl.AgentRunPayload)
-        StreamingResult(agentsdsl.AgentRunChunk)
-        JSONRPC(func() { ServerSentEvents(func() {}) })
-    })
-    Method("run_sync", func() {
-        Payload(agentsdsl.AgentRunPayload)
-        Result(agentsdsl.AgentRunResult)
+var CommonTools = Toolset("common", func() {
+    ToolsetDescription("Shared utility tools")
+    Tool("notify", "Send notification", func() {
+        Args(func() {
+            Attribute("message", String, "Message to send")
+            Required("message")
+        })
     })
 })
 ```
 
-These types map to runtime/planner types via generated conversions (`ConvertTo*`/`CreateFrom*`) and should be used only at API boundaries. Inside planners and runtime code, prefer the runtime `planner.*` types.
+## MCPToolset
 
-## Generated Artifacts (Design → Code)
+`MCPToolset(service, suite)` declares an MCP-defined toolset. There are two patterns:
+
+**1. Goa-backed MCP server (same design):**
+
+```go
+Service("assistant", func() {
+    MCPServer("assistant", "1.0.0")
+    Method("search", func() {
+        Payload(...)
+        Result(...)
+        MCPTool("search", "Search documents")
+    })
+})
+
+var AssistantSuite = MCPToolset("assistant", "assistant-mcp")
+
+Agent("chat", "LLM planner", func() {
+    Use(AssistantSuite)
+})
+```
+
+**2. External MCP server (inline schemas):**
+
+```go
+var RemoteSearch = MCPToolset("remote", "search", func() {
+    Tool("web_search", "Search the web", func() {
+        Args(func() { Attribute("query", String) })
+        Return(func() { Attribute("results", ArrayOf(String)) })
+    })
+})
+
+Agent("helper", "", func() {
+    Use(RemoteSearch)
+})
+```
+
+At runtime, supply an `mcpruntime.Caller` for the toolset ID.
+
+## Tool
+
+Each `Tool` describes a callable capability. Compose the payload/result with `Args` and `Return`
+using Goa's attribute syntax.
+
+Code generation emits:
+
+- Payload/result Go structs in `specs/types.go`
+- JSON codecs in `specs/codecs.go`
+- JSON Schema definitions for planners
+- Tool registry entries with helper prompts and metadata
+
+### Sidecar (Non-Model Data)
+
+Use `Sidecar` to define structured data attached to tool results that is **not** sent to the model:
+
+```go
+Tool("get_time_series", "Get Time Series", func() {
+    Args(GetTimeSeriesArgs)
+    Return(GetTimeSeriesReturn)       // Model sees this
+    Sidecar(GetTimeSeriesSidecar)     // UI/downstream only
+})
+```
+
+### Display Hint Templates
+
+Use `CallHintTemplate` and `ResultHintTemplate` for UI progress hints:
+
+```go
+Tool("search", "Search documents", func() {
+    Args(func() {
+        Attribute("query", String)
+        Attribute("limit", Int)
+    })
+    Return(func() {
+        Attribute("count", Int)
+        Attribute("results", ArrayOf(String))
+    })
+    CallHintTemplate("Searching for: {{ .Query }} (limit: {{ .Limit }})")
+    ResultHintTemplate("Found {{ .Count }} results")
+})
+```
+
+### BindTo (Service Method Binding)
+
+Use `BindTo("Method")` to associate a tool with a service method, or `BindTo("Service", "Method")`
+for cross-service bindings. Codegen emits:
+
+- Typed tool specs/codecs under `gen/<svc>/agents/<agent>/specs/<toolset>/`
+- `New<Agent><Toolset>ToolsetRegistration(exec runtime.ToolCallExecutor)` helper
+- Transform helpers when shapes are compatible:
+  - `ToMethodPayload_<Tool>(in <ToolArgs>) (<MethodPayload>, error)`
+  - `ToToolReturn_<Tool>(in <MethodResult>) (<ToolReturn>, error)`
+
+### Inject (Server-Side Fields)
+
+Use `Inject` to mark fields as server-injected (hidden from LLM, set by runtime hooks):
+
+```go
+Tool("get_data", func() {
+    BindTo("data_service", "get")
+    Inject("session_id")  // Required by service but hidden from LLM
+})
+```
+
+### Tool Call IDs
+
+Planners may set `ToolRequest.ToolCallID`. The runtime preserves this ID end-to-end and returns it
+in `ToolResult.ToolCallID`. If omitted, the runtime assigns a deterministic ID for replay
+correlation.
+
+## RunPolicy & Caps
+
+`RunPolicy` configures execution limits enforced at runtime:
+
+```go
+RunPolicy(func() {
+    DefaultCaps(
+        MaxToolCalls(20),
+        MaxConsecutiveFailedToolCalls(3),
+    )
+    TimeBudget("5m")
+    InterruptsAllowed(true)
+    OnMissingFields("await_clarification")
+})
+```
+
+| Option | Values | Purpose |
+|--------|--------|---------|
+| `MaxToolCalls` | integer | Prevent runaway loops |
+| `MaxConsecutiveFailedToolCalls` | integer | Stop on repeated failures |
+| `TimeBudget` | duration string | Wall-clock limit |
+| `InterruptsAllowed` | boolean | Honor human-in-the-loop interruptions |
+| `OnMissingFields` | `""`, `"finalize"`, `"await_clarification"`, `"resume"` | Validation behavior |
+
+## MCP Server Definition
+
+Enable MCP protocol for a service with `MCPServer`:
+
+```go
+Service("calculator", func() {
+    MCPServer("calc", "1.0.0", ProtocolVersion("2025-06-18"))
+
+    Method("add", func() {
+        Payload(func() {
+            Attribute("a", Int)
+            Attribute("b", Int)
+        })
+        Result(func() {
+            Attribute("sum", Int)
+        })
+        MCPTool("add", "Add two numbers")
+    })
+
+    Method("readme", func() {
+        Result(String)
+        Resource("readme", "file:///docs/README.md", "text/markdown")
+    })
+
+    Method("status", func() {
+        Result(func() {
+            Attribute("status", String)
+        })
+        WatchableResource("status", "status://system", "application/json")
+    })
+
+    StaticPrompt("greeting", "Friendly greeting",
+        "system", "You are a helpful assistant",
+        "user", "Hello!")
+})
+```
+
+## Agent API Types (Re-exported)
+
+The DSL re-exports standardized agent API types for use in Goa service designs:
+
+- `AgentRunPayload`: input for agent run/start/resume endpoints
+- `AgentRunResult`: terminal result for non-streaming endpoints
+- `AgentRunChunk`: streaming progress events
+- Supporting types: `AgentMessage`, `AgentToolEvent`, `AgentToolError`, `AgentRetryHint`, etc.
+
+```go
+Service("orchestrator", func() {
+    Method("run", func() {
+        Payload(AgentRunPayload)
+        StreamingResult(AgentRunChunk)
+        JSONRPC(func() { ServerSentEvents(func() {}) })
+    })
+    Method("run_sync", func() {
+        Payload(AgentRunPayload)
+        Result(AgentRunResult)
+    })
+})
+```
+
+These types map to runtime/planner types via generated conversions and should be used only at API
+boundaries.
+
+## Generated Artifacts
 
 For each service/agent combination, `goa gen` produces:
 
-1. **Agent package (`gen/<svc>/agents/<agent>/`)**
-   - `agent.go` registers workflows/activities/toolsets with `runtime.Runtime`.
-   - `agent.go` also exports `const AgentID agent.Ident = "<service>.<agent>"` for type‑safe references.
-   - `workflow.go` implements the durable run loop (start, execute tools, resume).
-   - `activities.go` exposes thin wrappers that call into `runtime.PlanStartActivity`, `PlanResumeActivity`, and `ExecuteToolActivity`.
-   - `config.go` bundles runtime options (planner implementation, task queues, retry policies). When MCP toolsets are used, the config includes an `MCPCallers` map and a builder `WithMCPCaller(id string, caller mcpruntime.Caller)` to simplify wiring.
-2. **Tool specs (`tool_specs/`)**
-   - `types.go`, `codecs.go`, `specs.go` as described above.
-3. **Agent tool exports (`agenttools/`)**
-   - Helper constructors for exported toolsets, ready to be registered with other agents (`Register<Service><Toolset>`).
-   - Content configuration is optional: if you do not provide per‑tool text or templates, the runtime builds a reasonable default user message from the tool payload. You can override the default builder via `WithPromptBuilder`.
-   - Each exported toolset also defines typed tool identifiers as `tools.Ident` constants you can reference anywhere. For example:
-     ```go
-     import chattools "example.com/assistant/gen/orchestrator/agents/chat/agenttools/search"
+### 1. Agent Package (`gen/<svc>/agents/<agent>/`)
 
-     // Use a generated constant instead of ad‑hoc strings/casts
-     spec, _ := rt.ToolSpec(chattools.Search)
-     schemas, _ := rt.ToolSchema(chattools.Search)
+- `agent.go` — registers workflows/activities/toolsets; exports `const AgentID agent.Ident`
+- `workflow.go` — implements the durable run loop
+- `activities.go` — thin wrappers calling runtime activities
+- `config.go` — runtime options bundle; includes `MCPCallers` map when MCP toolsets are used
 
-     // Build a typed tool call using only agenttools aliases (no specs import needed)
-     req := chattools.NewFindCall(&chattools.FindPayload{
-         // fill fields per your design
-     }, chattools.WithToolCallID("tc-1"))
-     _ = req
-     ```
-4. **MCP helpers (`gen/<svc>/mcp_<service>/register.go`, `client/caller.go`)**
-   - `Register<Service><Suite>Toolset` functions that adapt MCP tool metadata into runtime registrations.
-   - `client.NewCaller` helper so Goa-generated MCP clients can be plugged directly into the runtime.
+### 2. Tool Specs (`specs/`)
 
-Consumers import these generated packages inside their worker/binary setup code:
+- `types.go`, `codecs.go`, `specs.go` — payload/result structs, codecs, registry entries
+
+### 3. Agent Tool Exports (`agenttools/`)
+
+- Helper constructors for exported toolsets
+- Typed tool identifiers as `tools.Ident` constants
+
+### 4. MCP Helpers (`gen/<svc>/mcp_<service>/`)
+
+- `register.go` — `Register<Service><Suite>Toolset` functions
+- `client/caller.go` — `NewCaller` helper for Goa-generated MCP clients
+
+## Wiring Example
 
 ```go
 rt := runtime.New(
@@ -266,66 +431,40 @@ rt := runtime.New(
     runtime.WithMemoryStore(mongoStore),
     runtime.WithRunStore(runStore),
 )
-if err := chat.RegisterChatAgent(ctx, rt, chat.ChatAgentConfig{Planner: myPlanner}); err != nil {
-	log.Fatal(err)
-}
-caller := featuresmcp.NewHTTPCaller("https://assistant.example.com/mcp")
-if err := mcpassistant.RegisterAssistantAssistantMcpToolset(ctx, rt, caller); err != nil {
-	log.Fatal(err)
+
+if err := chat.RegisterChatAgent(ctx, rt, chat.ChatAgentConfig{
+    Planner: myPlanner,
+}); err != nil {
+    log.Fatal(err)
 }
 
-// Execute the agent using the runtime client and the typed AgentID constant.
-messages := []model.Message{{Role: "user", Content: "Say hi"}}
+// MCP toolset wiring
+caller := mcp.NewHTTPCaller("https://assistant.example.com/mcp")
+if err := mcpassistant.RegisterAssistantToolset(ctx, rt, caller); err != nil {
+    log.Fatal(err)
+}
+
+// Execute agent
 client := chat.NewClient(rt)
 out, err := client.Run(ctx, messages, runtime.WithSessionID("session-1"))
-if err != nil { log.Fatal(err) }
-_ = out // *runtime.RunOutput
 ```
-
-## MCP Bridge Workflow
-
-1. **Service design**: declare the MCP server via Goa’s MCP DSL (unchanged from legacy goa-ai). This records tool/resource/prompt metadata.
-2. **Agent design**: reference that suite with `Use(MCPToolset("service", "suite"))`.
-3. **Code generation**: produces both the classic MCP JSON-RPC server (optional) and the runtime registration helper, plus tool codecs/specs mirrored into the agent package.
-4. **Runtime wiring**: instantiate an `mcpruntime.Caller` transport (HTTP/SSE/stdio). Generated helpers register the toolset and adapt JSON-RPC errors into `planner.RetryHint` values.
-5. **Planner execution**: planners simply enqueue tool calls; the runtime automatically encodes payloads, invokes the MCP caller, persists results via hooks, and surfaces structured telemetry.
-
-The example runtime harness (`example/complete/runtime_harness.go`) shows the flow end-to-end without Temporal: it registers the generated helper, uses a stubbed MCP caller, and executes the chat workflow fully in-process for tests and documentation.
 
 ## Best Practices
 
-- Keep tool descriptions concise and action-oriented—the generated helper prompts reuse this text.
-- Reuse toolsets via `var Shared = Toolset("shared", ...)` to avoid duplication across agents.
-- Prefer specific validations (Required, MinLength, Enum) so planners receive strong schemas; the runtime trusts these contracts.
-- Treat run policies as part of your API contract: choose bounds that match downstream SLAs and enforce them consistently (policy engines can still override at runtime).
-- For MCP integrations, let the codegen-managed helper register the toolset; avoid hand-written glue so codecs and retry hints stay consistent with future updates.
-- When planners require incremental LLM output, fetch the registered model via `PlannerContext.ModelClient(...)`, set `model.Request.Stream = true`, and (optionally) specify `model.ThinkingOptions`. Bedrock adapters translate these hints into ConverseStream requests; providers that do not support streaming return `model.ErrStreamingUnsupported`, so planners can fall back to unary completions.
-
-For deeper architectural context (workflow engine interface, runtime package layout, feature modules), see the comprehensive roadmap in `docs/plan.md` and the upcoming `docs/runtime.md`.
+- **Keep tool descriptions concise** — Generated helper prompts reuse this text.
+- **Reuse toolsets** — `var Shared = Toolset("shared", ...)` avoids duplication.
+- **Use specific validations** — Required, MinLength, Enum give planners strong schemas.
+- **Treat run policies as API contracts** — Choose bounds that match downstream SLAs.
+- **Let codegen manage MCP registration** — Avoid hand-written glue for consistent codecs.
+- **Use display hint templates** — `CallHintTemplate` and `ResultHintTemplate` improve UI feedback.
+- **Use Sidecar for full-fidelity data** — Keep model payloads bounded; attach artifacts via Sidecar.
 
 ## Transforms and Compatibility (BindTo)
 
-When a tool is bound to a Goa method via `BindTo`, code generation analyzes the
-tool Arg/Return and the method Payload/Result. If the shapes are compatible,
-Goa emits type‑safe transform helpers in
-`gen/<svc>/agents/<agent>/specs/<toolset>/transforms.go`:
+When a tool is bound to a Goa method via `BindTo`, codegen analyzes shapes and emits transform
+helpers if compatible:
 
-- `ToMethodPayload_<Tool>(in <ToolArgs>) (<MethodPayload>, error)`
-- `ToToolReturn_<Tool>(in <MethodResult>) (<ToolReturn>, error)`
-
-Use these helpers inside your executor implementation to avoid boilerplate. If
-shapes are not compatible, write explicit field mappings in the executor.
-
-Notes:
-- Compatibility uses Goa’s type system (names and structure, including
-  `Extend`). For non‑primitive/nested shapes, keep pointers in user types so
-  validators and codecs work as expected.
-- No adapters are generated in core. Mapping lives in executors; transforms are
-  conveniences when types align.
-
-Example (compatible types → transforms emitted):
-
-```
+```go
 var SearchPayload = Type("SearchPayload", func() {
     Attribute("query", String); Required("query")
 })
@@ -342,8 +481,8 @@ Service("svc", func() {
     Agent("a", "", func() {
         Use("ts", func() {
             Tool("search", "", func() {
-                Args(SearchPayload)      // aliases method payload
-                Return(SearchResult)     // aliases method result
+                Args(SearchPayload)
+                Return(SearchResult)
                 BindTo("svc", "Search")
             })
         })
@@ -351,13 +490,18 @@ Service("svc", func() {
 })
 ```
 
-Generated transforms live under `specs/ts/transforms.go`. In your executor
-stub (`internal/agents/a/toolsets/ts/execute.go`) you can:
+Generated transforms in `specs/ts/transforms.go`:
 
 ```go
-// args := tspecs.UnmarshalSearchPayload(call.Payload)
+// In your executor stub:
+args := tspecs.UnmarshalSearchPayload(call.Payload)
 mp, _ := tspecs.ToMethodPayload_Search(args)
-// result := yourClient.Search(ctx, mp)
+result := yourClient.Search(ctx, mp)
 tr, _ := tspecs.ToToolReturn_Search(result)
-return planner.ToolResult{Payload: tr}, nil
+return planner.ToolResult{Result: tr}, nil
 ```
+
+Notes:
+- Compatibility uses Goa's type system (names and structure, including `Extend`)
+- For nested shapes, keep pointers in user types for validators/codecs
+- Mapping lives in executors; transforms are conveniences when types align
