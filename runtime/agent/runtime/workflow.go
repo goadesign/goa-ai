@@ -509,36 +509,124 @@ func (r *Runtime) runLoop(
 				led = transcript.FromModelMessages(turnTranscript)
 				continue
 			} else if result.Await.ExternalTools != nil {
+				// Record the assistant turn (including tool_use blocks) before
+				// waiting for external tool results. This ensures that when the
+				// planner resumes, base.Messages contains the assistant's tool_use
+				// declarations that correspond to the tool_result blocks we'll add.
+				e := result.Await.ExternalTools
+				if len(e.Items) == 0 {
+					return nil, errors.New("await_external_tools: no items in await")
+				}
+				awaitCalls := make([]planner.ToolRequest, 0, len(e.Items))
+				expectedIDs := make(map[string]struct{}, len(e.Items))
+				for _, it := range e.Items {
+					if it.ToolCallID == "" {
+						return nil, fmt.Errorf(
+							"await_external_tools: missing tool_call_id for external tool %q",
+							it.Name,
+						)
+					}
+					if _, dup := expectedIDs[it.ToolCallID]; dup {
+						return nil, fmt.Errorf(
+							"await_external_tools: duplicate awaited tool_call_id %q",
+							it.ToolCallID,
+						)
+					}
+					expectedIDs[it.ToolCallID] = struct{}{}
+					awaitCalls = append(awaitCalls, planner.ToolRequest{
+						Name:       it.Name,
+						ToolCallID: it.ToolCallID,
+						Payload:    it.Payload,
+					})
+				}
+				r.recordAssistantTurn(base, turnTranscript, awaitCalls, led)
+
 				rs, err := ctrl.WaitProvideToolResults(ctx)
 				if err != nil {
 					return nil, err
 				}
 				// Validate await ID when provided
-				if e := result.Await.ExternalTools; e != nil && e.ID != "" && rs.ID != "" && rs.ID != e.ID {
+				if e.ID != "" && rs.ID != "" && rs.ID != e.ID {
 					return nil, errors.New("unexpected await ID for external tools")
 				}
-				// Feed results into next PlanResume turn directly.
-				lastToolResults = rs.Results
-				aggregatedToolResults = append(aggregatedToolResults, cloneToolResults(rs.Results)...)
-				// Advance to PlanResume immediately without executing internal tools.
-				resumeCtx := base.RunContext
-				resumeCtx.Attempt = nextAttempt
-				nextAttempt++
-				resumeReq := PlanActivityInput{
-					AgentID:     base.Agent.ID(),
-					RunID:       base.RunContext.RunID,
-					Messages:    base.Messages,
-					RunContext:  resumeCtx,
-					ToolResults: lastToolResults,
+				// Enforce strong contracts on external tool results: all results
+				// must carry non-empty tool_call_id values that exactly match the
+				// awaited tool_use IDs (no extras, no omissions, no duplicates).
+				if len(rs.Results) == 0 {
+					return nil, errors.New("await_external_tools: no tool results provided")
 				}
+				seen := make(map[string]struct{}, len(rs.Results))
+				for _, tr := range rs.Results {
+					if tr == nil {
+						return nil, errors.New("await_external_tools: nil tool result")
+					}
+					if tr.ToolCallID == "" {
+						return nil, fmt.Errorf(
+							"await_external_tools: result for tool %q missing tool_call_id",
+							tr.Name,
+						)
+					}
+					if _, dup := seen[tr.ToolCallID]; dup {
+						return nil, fmt.Errorf(
+							"await_external_tools: duplicate result for tool_call_id %q",
+							tr.ToolCallID,
+						)
+					}
+					seen[tr.ToolCallID] = struct{}{}
+				}
+				if len(seen) != len(expectedIDs) {
+					return nil, fmt.Errorf(
+						"await_external_tools: tool result ids did not match awaited tool_use ids (awaited=%d, got=%d)",
+						len(expectedIDs),
+						len(seen),
+					)
+				}
+				for id := range seen {
+					if _, ok := expectedIDs[id]; !ok {
+						return nil, fmt.Errorf(
+							"await_external_tools: unexpected tool result for tool_call_id %q",
+							id,
+						)
+					}
+				}
+
+				// Feed results into next PlanResume turn directly and record them
+				// in the transcript so the provider sees a canonical tool_use →
+				// tool_result handshake, consistent with internal tools.
+				lastToolResults = rs.Results
+				aggregatedToolResults = append(
+					aggregatedToolResults,
+					cloneToolResults(rs.Results)...,
+				)
+				r.appendUserToolResults(base, awaitCalls, lastToolResults, led)
+
 				// Set running and emit resumed
 				r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{
 					"resumed_by": "tool_results",
 					"results":    len(lastToolResults),
 				})
-				r.publishHook(ctx, hooks.NewRunResumedEvent(base.RunContext.RunID, base.Agent.ID(), "tool_results_provided", input.RunID, nil, 0), seq)
-				var err2 error
-				resOutput, err2 := r.runPlanActivity(wfCtx, reg.ResumeActivityName, resumeOpts, resumeReq, deadline)
+				r.publishHook(
+					ctx,
+					hooks.NewRunResumedEvent(
+						base.RunContext.RunID,
+						base.Agent.ID(),
+						"tool_results_provided",
+						input.RunID,
+						nil,
+						0,
+					),
+					seq,
+				)
+
+				// Advance to PlanResume immediately without executing internal tools.
+				resumeReq := r.buildNextResumeRequest(base, lastToolResults, &nextAttempt)
+				resOutput, err2 := r.runPlanActivity(
+					wfCtx,
+					reg.ResumeActivityName,
+					resumeOpts,
+					resumeReq,
+					deadline,
+				)
 				if err2 != nil {
 					return nil, err2
 				}
