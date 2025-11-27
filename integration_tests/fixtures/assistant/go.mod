@@ -6,7 +6,7 @@ require (
 	github.com/google/uuid v1.6.0
 	goa.design/clue v1.2.3
 	goa.design/goa-ai v0.0.0
-	goa.design/goa/v3 v3.23.1
+	goa.design/goa/v3 v3.23.2
 )
 
 require (
@@ -14,7 +14,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.3 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.14 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.14 // indirect
-	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.45.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.46.0 // indirect
 	github.com/aws/smithy-go v1.23.2 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dimfeld/httppath v0.0.0-20170720192232-ee938bf73598 // indirect
