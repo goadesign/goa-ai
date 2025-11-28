@@ -47,6 +47,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
+	"goa.design/goa-ai/runtime/agent/reminder"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -123,6 +124,11 @@ type (
 		// can orchestrate nested planning via activities across processes.
 		// routes removed: inline composition now piggybacks on toolset
 		// registration and conventions; no explicit route registry.
+		// reminders manages run-scoped system reminders used for backstage
+		// guidance (safety, correctness, workflow) injected into prompts by
+		// planners. It is internal to the runtime; planners interact with it
+		// via PlannerContext.
+		reminders *reminder.Engine
 	}
 
 	// Options configures the Runtime instance. All fields are optional except Engine
@@ -583,6 +589,7 @@ func newFromOptions(opts Options) *Runtime {
 		runHandles:     make(map[string]engine.WorkflowHandle),
 		agentToolSpecs: make(map[agent.Ident][]tools.ToolSpec),
 		workers:        opts.Workers,
+		reminders:      reminder.NewEngine(),
 	}
 	if rt.Memory != nil {
 		memSub := hooks.SubscriberFunc(func(ctx context.Context, event hooks.Event) error {
@@ -1205,6 +1212,24 @@ func (r *Runtime) ToolSpecsForAgent(agentID agent.Ident) []tools.ToolSpec {
 	out := make([]tools.ToolSpec, len(specs))
 	copy(out, specs)
 	return out
+}
+
+// addReminder registers a reminder for the given run. It is a no-op when the
+// reminders engine is not configured.
+func (r *Runtime) addReminder(runID string, rem reminder.Reminder) {
+	if r.reminders == nil || runID == "" {
+		return
+	}
+	r.reminders.AddReminder(runID, rem)
+}
+
+// removeReminder removes a reminder by ID for the given run. It is a no-op
+// when the reminders engine is not configured.
+func (r *Runtime) removeReminder(runID, id string) {
+	if r.reminders == nil || runID == "" || id == "" {
+		return
+	}
+	r.reminders.RemoveReminder(runID, id)
 }
 
 // ToolSchema returns the parsed JSON schema for the tool payload when available.

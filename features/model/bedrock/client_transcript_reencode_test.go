@@ -2,6 +2,7 @@ package bedrock
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
@@ -27,7 +28,11 @@ func TestEncodeMessages_ReencodeTranscriptOrder(t *testing.T) {
 			},
 		},
 	}
-	conv, _, err := encodeMessages(ctx, msgs, nil)
+	// Provide the canonical → sanitized name map for tools referenced in messages.
+	nameMap := map[string]string{
+		"search_assets": "search_assets",
+	}
+	conv, _, err := encodeMessages(ctx, msgs, nameMap)
 	if err != nil {
 		t.Fatalf("encodeMessages error: %v", err)
 	}
@@ -59,5 +64,38 @@ func TestEncodeMessages_ReencodeTranscriptOrder(t *testing.T) {
 	trb, ok := user.Content[0].(*brtypes.ContentBlockMemberToolResult)
 	if !ok || trb == nil || trb.Value.ToolUseId == nil || *trb.Value.ToolUseId != "tu1" {
 		t.Fatalf("user tool_result does not reference tu1")
+	}
+}
+
+// Ensures encodeMessages fails fast when a tool_use references a tool that is not in the
+// current tool configuration. This catches transcript contamination (e.g., ledger key
+// collision between agent runs) or missing tool definitions.
+func TestEncodeMessages_FailsOnUnknownToolUse(t *testing.T) {
+	ctx := context.Background()
+	msgs := []*model.Message{
+		{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{
+				model.ToolUsePart{
+					ID:    "tu1",
+					Name:  "ada.unknown_tool",
+					Input: map[string]any{"arg": "value"},
+				},
+			},
+		},
+	}
+	// Provide a nameMap that does NOT include the tool referenced in messages.
+	nameMap := map[string]string{
+		"atlas.read.some_other_tool": "some_other_tool",
+	}
+	_, _, err := encodeMessages(ctx, msgs, nameMap)
+	if err == nil {
+		t.Fatal("expected error for unknown tool_use, got nil")
+	}
+	if !strings.Contains(err.Error(), "ada.unknown_tool") {
+		t.Errorf("error should mention the unknown tool name, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "not in the current tool configuration") {
+		t.Errorf("error should mention tool configuration mismatch, got: %v", err)
 	}
 }
