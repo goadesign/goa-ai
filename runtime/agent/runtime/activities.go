@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/reminder"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -30,11 +31,16 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 	if err != nil {
 		return nil, err
 	}
+	var rems []reminder.Reminder
+	if r.reminders != nil {
+		rems = r.reminders.Snapshot(input.RunID)
+	}
 	planInput := &planner.PlanInput{
 		Messages:   input.Messages,
 		RunContext: input.RunContext,
 		Agent:      agentCtx,
 		Events:     events,
+		Reminders:  rems,
 	}
 	result, err := r.planStart(ctx, reg, planInput)
 	if err != nil {
@@ -63,6 +69,10 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err != nil {
 		return nil, err
 	}
+	var rems []reminder.Reminder
+	if r.reminders != nil {
+		rems = r.reminders.Snapshot(input.RunID)
+	}
 	planInput := &planner.PlanResumeInput{
 		Messages:    input.Messages,
 		RunContext:  input.RunContext,
@@ -70,6 +80,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		Events:      events,
 		ToolResults: input.ToolResults,
 		Finalize:    input.Finalize,
+		Reminders:   rems,
 	}
 	result, err := r.planResume(ctx, reg, planInput)
 	if err != nil {

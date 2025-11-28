@@ -404,29 +404,31 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 				if v.Text != "" {
 					blocks = append(blocks, &brtypes.ContentBlockMemberText{Value: v.Text})
 				}
-			case model.ToolUsePart:
-				// Encode assistant-declared tool_use with optional ID and JSON input.
-				tb := brtypes.ToolUseBlock{}
-				if v.Name != "" {
-					name := v.Name
-					// Strong contract: callers should provide canonical names that
-					// match tool definitions. Reuse the exact sanitized name when
-					// available so tool_use and ToolSpecification stay aligned.
-					if m, ok := nameMap[name]; ok && m != "" {
-						name = m
-					} else {
-						// Fallback for unexpected names: sanitize once here so
-						// Bedrock still accepts the request.
-						name = sanitizeToolName(name)
-					}
-					tb.Name = aws.String(name)
+		case model.ToolUsePart:
+			// Encode assistant-declared tool_use with optional ID and JSON input.
+			tb := brtypes.ToolUseBlock{}
+			if v.Name != "" {
+				// Strong contract: tool_use names in messages must match tool
+				// definitions in the current request. Fail fast when a tool_use
+				// references an unknown tool - this indicates transcript
+				// contamination (e.g., ledger key collision between agent runs)
+				// or a missing tool definition.
+				sanitized, ok := nameMap[v.Name]
+				if !ok || sanitized == "" {
+					return nil, nil, fmt.Errorf(
+						"bedrock: tool_use in messages references %q which is not in "+
+							"the current tool configuration; ensure transcript and "+
+							"tool definitions are aligned (possible ledger contamination)",
+						v.Name,
+					)
 				}
-				if v.ID != "" {
-					id := v.ID
-					tb.ToolUseId = aws.String(id)
-				}
-				tb.Input = toDocument(ctx, v.Input)
-				blocks = append(blocks, &brtypes.ContentBlockMemberToolUse{Value: tb})
+				tb.Name = aws.String(sanitized)
+			}
+			if v.ID != "" {
+				tb.ToolUseId = aws.String(v.ID)
+			}
+			tb.Input = toDocument(ctx, v.Input)
+			blocks = append(blocks, &brtypes.ContentBlockMemberToolUse{Value: tb})
 			case model.ToolResultPart:
 				// Bedrock expects tool_result blocks in user messages, correlated to a prior tool_use.
 				// Encode content as text when Content is a string; otherwise as a JSON document.

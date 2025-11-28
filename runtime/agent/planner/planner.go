@@ -10,6 +10,7 @@ import (
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/memory"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/reminder"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -32,6 +33,14 @@ type PlannerContext interface {
 	Tracer() telemetry.Tracer
 	State() AgentState
 	ModelClient(id string) (model.Client, bool)
+	// AddReminder registers a reminder for the current run so it can be
+	// considered by subsequent planner turns. Reminders are evaluated and
+	// rate-limited by the runtime; callers should supply stable IDs for
+	// de-duplication.
+	AddReminder(r reminder.Reminder)
+	// RemoveReminder removes a previously registered reminder by ID. It is
+	// safe to call RemoveReminder for unknown IDs.
+	RemoveReminder(id string)
 }
 
 // AgentState provides ephemeral, per-run state storage for planners.
@@ -156,6 +165,10 @@ type PlanInput struct {
 	RunContext run.Context
 	Agent      PlannerContext
 	Events     PlannerEvents
+	// Reminders contains the active system reminders for this planner turn.
+	// Callers should treat this slice as read-only and rely on
+	// PlannerContext.AddReminder to register new reminders for future turns.
+	Reminders []reminder.Reminder
 }
 
 // PlanResumeInput carries messages plus recent tool results into PlanResume.
@@ -166,6 +179,8 @@ type PlanResumeInput struct {
 	Events      PlannerEvents
 	ToolResults []*ToolResult
 	Finalize    *Termination
+	// Reminders contains the active system reminders for this planner turn.
+	Reminders []reminder.Reminder
 }
 
 // PlanResult is the planner's decision for the next step.

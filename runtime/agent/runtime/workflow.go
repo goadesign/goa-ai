@@ -94,7 +94,12 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	if input.AgentID == "" {
 		return nil, errors.New("agent id is required")
 	}
-	defer r.storeWorkflowHandle(input.RunID, nil)
+	defer func() {
+		r.storeWorkflowHandle(input.RunID, nil)
+		if r.reminders != nil {
+			r.reminders.ClearRun(input.RunID)
+		}
+	}()
 	reg, ok := r.agentByID(input.AgentID)
 	if !ok {
 		return nil, fmt.Errorf("agent %q is not registered", input.AgentID)
