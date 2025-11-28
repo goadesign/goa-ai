@@ -370,6 +370,23 @@ Per-turn enforcement of:
 - Time budgets
 - Tool allowlists via policy engines
 
+### System Reminders: Backstage Guidance for Models
+
+Deliver structured, rate-limited guidance to models without polluting user conversations:
+
+```go
+// Register a reminder from your planner
+input.Agent.AddReminder(reminder.Reminder{
+    ID:       "search.truncated",
+    Text:     "Results are truncated. Consider narrowing your query.",
+    Priority: reminder.TierCorrect,
+    Attachment: reminder.Attachment{Kind: reminder.AttachmentUserTurn},
+    MinTurnsBetween: 2,
+})
+```
+
+Reminders are automatically wrapped in `<system-reminder>` tags and injected at appropriate points in the conversation. Use priority tiers (`TierSafety`, `TierCorrect`, `TierGuidance`) to ensure critical guidance is never suppressed. See [System Reminders docs](https://goa.design/docs/8-goa-ai/3-concepts/11-system-reminders/) for details.
+
 ### Three Flavors of Tool Execution
 
 | Type                | How It Works                                                                         |
