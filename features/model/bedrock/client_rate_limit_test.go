@@ -62,7 +62,7 @@ func TestComplete_WrapsRateLimitedErrors(t *testing.T) {
 			},
 		},
 	}
-	_, err := client.Complete(context.Background(), req)
+	_, err := client.Complete(context.Background(), &req)
 	require.Error(t, err)
 	require.ErrorIs(t, err, model.ErrRateLimited)
 }
@@ -89,7 +89,7 @@ func TestStream_WrapsRateLimitedErrors(t *testing.T) {
 			},
 		},
 	}
-	_, err := client.Stream(context.Background(), req)
+	_, err := client.Stream(context.Background(), &req)
 	require.Error(t, err)
 	require.ErrorIs(t, err, model.ErrRateLimited)
 }

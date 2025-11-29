@@ -477,6 +477,7 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 			hooks.NewAgentRunStartedEvent(
 				call.RunID,
 				call.AgentID,
+				call.SessionID,
 				call.Name,
 				call.ToolCallID,
 				nestedRunCtx.RunID,

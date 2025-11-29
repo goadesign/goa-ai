@@ -33,12 +33,12 @@ type captureProvider struct {
 	lastReq atomic.Value // model.Request
 }
 
-func (p *captureProvider) Complete(_ context.Context, req model.Request) (model.Response, error) {
-	p.lastReq.Store(req)
-	return model.Response{Content: []model.Message{{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
+func (p *captureProvider) Complete(_ context.Context, req *model.Request) (*model.Response, error) {
+	p.lastReq.Store(*req)
+	return &model.Response{Content: []model.Message{{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 }
-func (p *captureProvider) Stream(_ context.Context, req model.Request) (model.Streamer, error) {
-	p.lastReq.Store(req)
+func (p *captureProvider) Stream(_ context.Context, req *model.Request) (model.Streamer, error) {
+	p.lastReq.Store(*req)
 	return &seqStreamer{chunks: []model.Chunk{
 		{Type: model.ChunkTypeText, Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "hello"}}}},
 		{
@@ -76,7 +76,7 @@ func TestE2E_UnaryComplete_WithMiddleware(t *testing.T) {
 	var unaryCount int32
 	// middleware increments count and bumps temperature
 	bumpTemp := func(next UnaryHandler) UnaryHandler {
-		return func(ctx context.Context, req model.Request) (model.Response, error) {
+		return func(ctx context.Context, req *model.Request) (*model.Response, error) {
 			atomic.AddInt32(&unaryCount, 1)
 			req.Temperature = 0.42
 			return next(ctx, req)
@@ -88,10 +88,10 @@ func TestE2E_UnaryComplete_WithMiddleware(t *testing.T) {
 	}
 
 	// remote client backed by server handlers
-	completeFn := func(ctx context.Context, req model.Request) (model.Response, error) {
+	completeFn := func(ctx context.Context, req *model.Request) (*model.Response, error) {
 		return srv.Complete(ctx, req)
 	}
-	streamFn := func(ctx context.Context, req model.Request) (model.Streamer, error) {
+	streamFn := func(ctx context.Context, req *model.Request) (model.Streamer, error) {
 		wrapper := &serverStreamWrapper{ch: make(chan model.Chunk, 8), done: make(chan error, 1)}
 		go func() {
 			err := srv.Stream(ctx, req, func(c model.Chunk) error { wrapper.ch <- c; return nil })
@@ -103,7 +103,7 @@ func TestE2E_UnaryComplete_WithMiddleware(t *testing.T) {
 	client := NewRemoteClient(completeFn, streamFn)
 
 	// call complete
-	resp, err := client.Complete(context.Background(), model.Request{Model: "m", Messages: []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hi"}}}}})
+	resp, err := client.Complete(context.Background(), &model.Request{Model: "m", Messages: []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hi"}}}}})
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestE2E_Stream_WithMiddleware(t *testing.T) {
 	prov := &captureProvider{}
 	var streamCount int32
 	countMW := func(next StreamHandler) StreamHandler {
-		return func(ctx context.Context, req model.Request, send func(model.Chunk) error) error {
+		return func(ctx context.Context, req *model.Request, send func(model.Chunk) error) error {
 			atomic.AddInt32(&streamCount, 1)
 			return next(ctx, req, send)
 		}
@@ -143,7 +143,7 @@ func TestE2E_Stream_WithMiddleware(t *testing.T) {
 		t.Fatalf("NewServer: %v", err)
 	}
 
-	streamFn := func(ctx context.Context, req model.Request) (model.Streamer, error) {
+	streamFn := func(ctx context.Context, req *model.Request) (model.Streamer, error) {
 		wrapper := &serverStreamWrapper{ch: make(chan model.Chunk, 8), done: make(chan error, 1)}
 		go func() {
 			err := srv.Stream(ctx, req, func(c model.Chunk) error { wrapper.ch <- c; return nil })
@@ -154,7 +154,7 @@ func TestE2E_Stream_WithMiddleware(t *testing.T) {
 	}
 	client := NewRemoteClient(nil, streamFn)
 
-	st, err := client.Stream(context.Background(), model.Request{Model: "m", Messages: []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hi"}}}}})
+	st, err := client.Stream(context.Background(), &model.Request{Model: "m", Messages: []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hi"}}}}})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
 	}

@@ -32,7 +32,7 @@ func TestStreamSubscriber(t *testing.T) {
 	sub, err := NewSubscriber(sink)
 	require.NoError(t, err)
 	ctx := context.Background()
-	evt := hooks.NewAssistantMessageEvent("r1", "agent1", "hello", nil)
+	evt := hooks.NewAssistantMessageEvent("r1", agent.Ident("agent1"), "", "hello", nil)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 	require.Len(t, sink.events, 1)
 	require.Equal(t, EventAssistantReply, sink.events[0].Type())
@@ -46,7 +46,7 @@ func TestStreamSubscriber_ToolStart(t *testing.T) {
 	sub, err := NewSubscriber(sink)
 	require.NoError(t, err)
 	ctx := context.Background()
-	evt := hooks.NewToolCallScheduledEvent("r1", "agent1", "svc.tool", "call-1", json.RawMessage(`{"q":1}`), "queue", "", 0)
+	evt := hooks.NewToolCallScheduledEvent("r1", agent.Ident("agent1"), "", tools.Ident("svc.tool"), "call-1", json.RawMessage(`{"q":1}`), "queue", "", 0)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 	require.Len(t, sink.events, 1)
 	require.Equal(t, EventToolStart, sink.events[0].Type())
@@ -59,7 +59,7 @@ func TestStreamSubscriber_ToolUpdate(t *testing.T) {
 	sub, err := NewSubscriber(sink)
 	require.NoError(t, err)
 	ctx := context.Background()
-	evt := hooks.NewToolCallUpdatedEvent("r1", "agent1", "parent-1", 3)
+	evt := hooks.NewToolCallUpdatedEvent("r1", agent.Ident("agent1"), "", "parent-1", 3)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 	require.Len(t, sink.events, 1)
 	require.Equal(t, EventToolUpdate, sink.events[0].Type())
@@ -74,7 +74,7 @@ func TestStreamSubscriber_WorkflowFromRunCompleted(t *testing.T) {
 	sub, err := NewSubscriber(sink)
 	require.NoError(t, err)
 	ctx := context.Background()
-	evt := hooks.NewRunCompletedEvent("r1", agent.Ident("agent1"), "success", run.PhaseCompleted, nil)
+	evt := hooks.NewRunCompletedEvent("r1", agent.Ident("agent1"), "", "success", run.PhaseCompleted, nil)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 	require.Len(t, sink.events, 1)
 	wf, ok := sink.events[0].(Workflow)
@@ -89,7 +89,7 @@ func TestStreamSubscriber_WorkflowFromRunPhaseChanged(t *testing.T) {
 	sub, err := NewSubscriber(sink)
 	require.NoError(t, err)
 	ctx := context.Background()
-	evt := hooks.NewRunPhaseChangedEvent("r1", agent.Ident("agent1"), run.PhasePlanning)
+	evt := hooks.NewRunPhaseChangedEvent("r1", agent.Ident("agent1"), "", run.PhasePlanning)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 	require.Len(t, sink.events, 1)
 	wf, ok := sink.events[0].(Workflow)
@@ -106,7 +106,7 @@ func TestStreamSubscriber_ThinkingBlock_StructuredFinalHasNoDelta(t *testing.T) 
 	ctx := context.Background()
 
 	// Structured provider reasoning block with final=true and signature populated.
-	evt := hooks.NewThinkingBlockEvent("run-1", "agent-1", "full reasoning text", "sig-123", nil, 0, true)
+	evt := hooks.NewThinkingBlockEvent("run-1", agent.Ident("agent-1"), "", "full reasoning text", "sig-123", nil, 0, true)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 
 	require.Len(t, sink.events, 1)
@@ -128,7 +128,7 @@ func TestStreamSubscriber_ThinkingBlock_StructuredNonFinalDelta(t *testing.T) {
 	ctx := context.Background()
 
 	// Non-final unsigned block should be treated as a delta.
-	evt := hooks.NewThinkingBlockEvent("run-1", "agent-1", "partial", "", nil, 0, false)
+	evt := hooks.NewThinkingBlockEvent("run-1", agent.Ident("agent-1"), "", "partial", "", nil, 0, false)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 
 	require.Len(t, sink.events, 1)
@@ -150,6 +150,7 @@ func TestStreamSubscriber_AgentRunStarted(t *testing.T) {
 	evt := hooks.NewAgentRunStartedEvent(
 		"parent-run",
 		agent.Ident("parent.agent"),
+		"session-1",
 		tools.Ident("svc.agent.ada"),
 		"parent-call",
 		"child-run",
@@ -177,8 +178,8 @@ func TestStreamSubscriber_MultipleRunsPreserveRunID(t *testing.T) {
 	// Parent and child runs must retain distinct RunIDs in the stream. The
 	// subscriber never rewrites run identities; higher-level projections that
 	// want a flattened view are expected to build it on top.
-	parent := hooks.NewRunPhaseChangedEvent("parent-run", agent.Ident("parent.agent"), run.PhasePlanning)
-	child := hooks.NewRunPhaseChangedEvent("child-run", agent.Ident("child.agent"), run.PhasePlanning)
+	parent := hooks.NewRunPhaseChangedEvent("parent-run", agent.Ident("parent.agent"), "", run.PhasePlanning)
+	child := hooks.NewRunPhaseChangedEvent("child-run", agent.Ident("child.agent"), "", run.PhasePlanning)
 
 	require.NoError(t, sub.HandleEvent(ctx, parent))
 	require.NoError(t, sub.HandleEvent(ctx, child))

@@ -43,12 +43,14 @@ type (
 	decodedEvent struct {
 		t   stream.EventType
 		run string
+		s   string
 		b   json.RawMessage
 	}
 )
 
 func (e decodedEvent) Type() stream.EventType { return e.t }
 func (e decodedEvent) RunID() string          { return e.run }
+func (e decodedEvent) SessionID() string      { return e.s }
 func (e decodedEvent) Payload() any           { return e.b }
 
 // NewSubscriber constructs a Pulse-backed subscriber. The Client field in opts
@@ -154,11 +156,17 @@ func decodeEnvelope(payload []byte) (stream.Event, error) {
 	var env struct {
 		Type      string          `json:"type"`
 		RunID     string          `json:"run_id"`
+		SessionID string          `json:"session_id"`
 		Timestamp time.Time       `json:"timestamp"`
 		Payload   json.RawMessage `json:"payload"`
 	}
 	if err := json.Unmarshal(payload, &env); err != nil {
 		return nil, err
 	}
-	return decodedEvent{t: stream.EventType(env.Type), run: env.RunID, b: env.Payload}, nil
+	return decodedEvent{
+		t:   stream.EventType(env.Type),
+		run: env.RunID,
+		s:   env.SessionID,
+		b:   env.Payload,
+	}, nil
 }

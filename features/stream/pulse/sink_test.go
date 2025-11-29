@@ -41,7 +41,7 @@ func TestSendPublishesEnvelope(t *testing.T) {
 
 	endPayload := stream.ToolEndPayload{Result: map[string]string{"status": "ok"}}
 	err = sink.Send(context.Background(), stream.ToolEnd{
-		Base: stream.NewBase(stream.EventToolEnd, "run-123", endPayload),
+		Base: stream.NewBase(stream.EventToolEnd, "run-123", "", endPayload),
 		Data: endPayload,
 	})
 	require.NoError(t, err)
@@ -83,7 +83,7 @@ func TestOnPublishedCalled(t *testing.T) {
 
 	endPayload := stream.ToolEndPayload{Result: map[string]string{"status": "ok"}}
 	err = sink.Send(context.Background(), stream.ToolEnd{
-		Base: stream.NewBase(stream.EventToolEnd, "run-123", endPayload),
+		Base: stream.NewBase(stream.EventToolEnd, "run-123", "", endPayload),
 		Data: endPayload,
 	})
 	require.NoError(t, err)
@@ -115,7 +115,7 @@ func TestOnPublishedErrorPropagates(t *testing.T) {
 	err = sink.Send(
 		context.Background(),
 		stream.AssistantReply{
-			Base: stream.NewBase(stream.EventAssistantReply, "r", stream.AssistantReplyPayload{Text: "ok"}),
+			Base: stream.NewBase(stream.EventAssistantReply, "r", "", stream.AssistantReplyPayload{Text: "ok"}),
 			Data: stream.AssistantReplyPayload{Text: "ok"},
 		},
 	)
@@ -142,7 +142,7 @@ func TestCustomStreamID(t *testing.T) {
 	require.NoError(t, sink.Send(
 		context.Background(),
 		stream.PlannerThought{
-			Base: stream.NewBase(stream.EventPlannerThought, "run-1", stream.PlannerThoughtPayload{Note: "n"}),
+			Base: stream.NewBase(stream.EventPlannerThought, "run-1", "", stream.PlannerThoughtPayload{Note: "n"}),
 			Data: stream.PlannerThoughtPayload{Note: "n"},
 		},
 	))
@@ -165,7 +165,7 @@ func TestStreamCreationError(t *testing.T) {
 	err = sink.Send(
 		context.Background(),
 		stream.AssistantReply{
-			Base: stream.NewBase(stream.EventAssistantReply, "r", stream.AssistantReplyPayload{Text: "ok"}),
+			Base: stream.NewBase(stream.EventAssistantReply, "r", "", stream.AssistantReplyPayload{Text: "ok"}),
 			Data: stream.AssistantReplyPayload{Text: "ok"},
 		},
 	)
@@ -186,7 +186,7 @@ func TestAddError(t *testing.T) {
 	err = sink.Send(
 		context.Background(),
 		stream.AssistantReply{
-			Base: stream.NewBase(stream.EventAssistantReply, "r", stream.AssistantReplyPayload{Text: "ok"}),
+			Base: stream.NewBase(stream.EventAssistantReply, "r", "", stream.AssistantReplyPayload{Text: "ok"}),
 			Data: stream.AssistantReplyPayload{Text: "ok"},
 		},
 	)

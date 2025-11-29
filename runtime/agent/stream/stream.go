@@ -77,6 +77,11 @@ type (
 		// a single Sink may multiplex events from multiple concurrent runs.
 		RunID() string
 
+		// SessionID returns the logical session identifier associated with the run.
+		// All events for a given run share the same session ID, providing a stable
+		// join key across processes and transports.
+		SessionID() string
+
 		// Payload returns the event-specific data in a JSON-serializable form. Sinks use
 		// this for generic marshaling when they don't need typed access. For example, the
 		// Pulse sink calls Payload() and marshals the result to JSON without knowing the
@@ -314,8 +319,9 @@ type (
 	}
 
 	// Base provides a default implementation of Event. Embed this struct in concrete
-	// event types to inherit the Type(), RunID(), and Payload() methods. All stream
-	// event types (AssistantReply, ToolStart, etc.) embed Base to avoid boilerplate.
+	// event types to inherit the Type(), RunID(), SessionID(), and Payload() methods.
+	// All stream event types (AssistantReply, ToolStart, etc.) embed Base to avoid
+	// boilerplate.
 	//
 	// Field names are abbreviated to minimize visual clutter when constructing events,
 	// since Base fields are rarely accessed directly (consumers use the interface methods
@@ -328,6 +334,10 @@ type (
 		// a single run share the same R value, enabling clients to filter or correlate
 		// events by run.
 		r string
+		// s is the logical session identifier for the run that produced this event.
+		// All events from a single run share the same S value, enabling subscribers
+		// to join streams to session-scoped stores without out-of-band registries.
+		s string
 		// p is the JSON-serializable payload returned by the Payload() method. Sinks
 		// marshal this value when publishing events. Set P to the appropriate payload
 		// type for the event (e.g., ToolStartPayload for ToolStart events).
@@ -497,10 +507,10 @@ const (
 	EventAgentRunStarted EventType = "agent_run_started"
 )
 
-// NewBase constructs a Base event with the given type, run ID, and
-// payload.
-func NewBase(t EventType, runID string, payload any) Base {
-	return Base{t: t, r: runID, p: payload}
+// NewBase constructs a Base event with the given type, run ID, optional
+// session ID, and payload.
+func NewBase(t EventType, runID, sessionID string, payload any) Base {
+	return Base{t: t, r: runID, s: sessionID, p: payload}
 }
 
 // Type implements Event.Type.
@@ -508,6 +518,9 @@ func (e Base) Type() EventType { return e.t }
 
 // RunID implements Event.RunID.
 func (e Base) RunID() string { return e.r }
+
+// SessionID implements Event.SessionID.
+func (e Base) SessionID() string { return e.s }
 
 // Payload implements Event.Payload.
 func (e Base) Payload() any { return e.p }

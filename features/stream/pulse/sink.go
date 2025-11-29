@@ -52,6 +52,8 @@ type (
 		Type string `json:"type"`
 		// RunID links the event to a specific workflow execution.
 		RunID string `json:"run_id"`
+		// SessionID links the event to the logical session that owns the run.
+		SessionID string `json:"session_id,omitempty"`
 		// Timestamp records when the event was published (UTC).
 		Timestamp time.Time `json:"timestamp"`
 		// Payload contains the event-specific data, if any.
@@ -107,6 +109,7 @@ func (s *Sink) Send(ctx context.Context, event stream.Event) error {
 	env := envelope{
 		Type:      string(event.Type()),
 		RunID:     event.RunID(),
+		SessionID: event.SessionID(),
 		Timestamp: time.Now().UTC(),
 		Payload:   event.Payload(),
 	}

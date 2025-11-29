@@ -27,17 +27,17 @@ type (
 
 	// UnaryHandler processes a single unary model completion request and returns
 	// the complete response. Implementations receive the request context and a
-	// model.Request, and must return a model.Response or an error. This signature
-	// is used both by the base provider handler and by middleware that compose
-	// additional behavior around it.
-	UnaryHandler func(ctx context.Context, req model.Request) (model.Response, error)
+	// *model.Request, and must return a *model.Response or an error. This
+	// signature is used both by the base provider handler and by middleware that
+	// compose additional behavior around it.
+	UnaryHandler func(ctx context.Context, req *model.Request) (*model.Response, error)
 
 	// StreamHandler processes a streaming model completion request by invoking
 	// the provided send callback for each chunk produced by the model. The send
 	// function must be called sequentially for each chunk; returning an error
 	// from send will abort the stream. Implementations are responsible for
 	// managing the underlying stream lifecycle, including cleanup on errors.
-	StreamHandler func(ctx context.Context, req model.Request, send func(model.Chunk) error) error
+	StreamHandler func(ctx context.Context, req *model.Request, send func(model.Chunk) error) error
 
 	// UnaryMiddleware wraps a UnaryHandler to add behavior before, after, or
 	// around the handler invocation. Middleware receives the next handler in
@@ -112,10 +112,10 @@ func NewServer(opts ...Option) (*Server, error) {
 		return nil, ErrProviderRequired
 	}
 	// Base handlers call the provider directly.
-	baseUnary := func(ctx context.Context, req model.Request) (model.Response, error) {
+	baseUnary := func(ctx context.Context, req *model.Request) (*model.Response, error) {
 		return cfg.provider.Complete(ctx, req)
 	}
-	baseStream := func(ctx context.Context, req model.Request, send func(model.Chunk) error) error {
+	baseStream := func(ctx context.Context, req *model.Request, send func(model.Chunk) error) error {
 		st, err := cfg.provider.Stream(ctx, req)
 		if err != nil {
 			return err
@@ -148,7 +148,7 @@ func NewServer(opts ...Option) (*Server, error) {
 // all registered UnaryMiddleware in order before reaching the provider client.
 // The context is propagated through the chain and can be used for cancellation,
 // timeouts, and request-scoped values.
-func (s *Server) Complete(ctx context.Context, req model.Request) (model.Response, error) {
+func (s *Server) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
 	return s.unary(ctx, req)
 }
 
@@ -157,6 +157,6 @@ func (s *Server) Complete(ctx context.Context, req model.Request) (model.Respons
 // must be called sequentially; returning an error from send or from any
 // middleware aborts the stream. The context is propagated through the chain
 // and controls the lifetime of the stream.
-func (s *Server) Stream(ctx context.Context, req model.Request, send func(model.Chunk) error) error {
+func (s *Server) Stream(ctx context.Context, req *model.Request, send func(model.Chunk) error) error {
 	return s.stream(ctx, req, send)
 }

@@ -39,7 +39,7 @@ func TestClientComplete(t *testing.T) {
 		Usage: openai.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15},
 	}
 
-	resp, err := client.Complete(context.Background(), model.Request{
+	resp, err := client.Complete(context.Background(), &model.Request{
 		Messages: []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "ping"}}}},
 		Tools: []*model.ToolDefinition{{
 			Name:        "lookup",
@@ -86,7 +86,7 @@ func TestClientCompleteWithToolChoiceTool(t *testing.T) {
 
 	mock.response = openai.ChatCompletionResponse{}
 
-	_, err = client.Complete(context.Background(), model.Request{
+	_, err = client.Complete(context.Background(), &model.Request{
 		Messages: []*model.Message{
 			{
 				Role:  model.ConversationRoleUser,
@@ -124,7 +124,7 @@ func TestClientCompleteWithToolChoiceNone(t *testing.T) {
 
 	mock.response = openai.ChatCompletionResponse{}
 
-	_, err = client.Complete(context.Background(), model.Request{
+	_, err = client.Complete(context.Background(), &model.Request{
 		Messages: []*model.Message{
 			{
 				Role:  model.ConversationRoleUser,

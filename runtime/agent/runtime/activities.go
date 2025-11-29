@@ -27,7 +27,7 @@ import (
 // agent context with memory access and delegates to the planner's PlanStart
 // implementation.
 func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
-	events := newPlannerEvents(r, input.AgentID, input.RunID)
+	events := newPlannerEvents(r, input.AgentID, input.RunID, input.RunContext.SessionID)
 	reg, agentCtx, err := r.plannerContext(ctx, input, events)
 	if err != nil {
 		return nil, err
@@ -72,7 +72,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 // execution to produce the next plan. The activity creates an agent context
 // with memory access and delegates to the planner's PlanResume implementation.
 func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
-	events := newPlannerEvents(r, input.AgentID, input.RunID)
+	events := newPlannerEvents(r, input.AgentID, input.RunID, input.RunContext.SessionID)
 	reg, agentCtx, err := r.plannerContext(ctx, input, events)
 	if err != nil {
 		return nil, err
