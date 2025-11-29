@@ -351,6 +351,12 @@ const (
 // ErrStreamingUnsupported indicates the provider does not support streaming.
 var ErrStreamingUnsupported = errors.New("model: streaming not supported")
 
+// ErrRateLimited indicates the provider rejected the request due to rate
+// limiting after exhausting any configured retries. Callers must not retry
+// in a tight loop and should treat this as a transient infrastructure
+// failure that is safe to surface to higher layers.
+var ErrRateLimited = errors.New("model: rate limited")
+
 func (TextPart) isPart() {}
 
 func (ThinkingPart) isPart() {}
