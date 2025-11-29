@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/document"
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
+	smithy "github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 
 	"goa.design/clue/log"
@@ -146,6 +147,9 @@ func (c *Client) Complete(ctx context.Context, req model.Request) (model.Respons
 	}
 	output, err := c.runtime.Converse(ctx, c.buildConverseInput(parts, req))
 	if err != nil {
+		if isRateLimited(err) {
+			return model.Response{}, fmt.Errorf("%w: %w", model.ErrRateLimited, err)
+		}
 		return model.Response{}, fmt.Errorf("bedrock converse: %w", err)
 	}
 	return translateResponse(output, parts.toolNameProvToCanonical)
@@ -162,6 +166,9 @@ func (c *Client) Stream(ctx context.Context, req model.Request) (model.Streamer,
 	input := c.buildConverseStreamInput(parts, req, thinking)
 	out, err := c.runtime.ConverseStream(ctx, input, c.streamOptions(thinking)...)
 	if err != nil {
+		if isRateLimited(err) {
+			return nil, fmt.Errorf("%w: %w", model.ErrRateLimited, err)
+		}
 		return nil, fmt.Errorf("bedrock converse stream: %w", err)
 	}
 	stream := out.GetStream()
@@ -349,6 +356,33 @@ func (c *Client) inferenceConfig(maxTokens int, temp float32) *brtypes.Inference
 	return &cfg
 }
 
+// isRateLimited reports whether err represents a provider rate limiting
+// condition. It treats both HTTP 429 responses and provider error codes like
+// ThrottlingException as rate-limited signals and is idempotent when
+// ErrRateLimited is already present in the error chain.
+func isRateLimited(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, model.ErrRateLimited) {
+		return true
+	}
+
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.ErrorCode() {
+		case "ThrottlingException", "TooManyRequestsException":
+			return true
+		}
+	}
+	var respErr *smithyhttp.ResponseError
+	if errors.As(err, &respErr) && respErr.HTTPStatusCode() == 429 {
+		return true
+	}
+
+	return false
+}
+
 func (c *Client) effectiveMaxTokens(requested int) int {
 	if requested > 0 {
 		return requested
@@ -404,31 +438,31 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 				if v.Text != "" {
 					blocks = append(blocks, &brtypes.ContentBlockMemberText{Value: v.Text})
 				}
-		case model.ToolUsePart:
-			// Encode assistant-declared tool_use with optional ID and JSON input.
-			tb := brtypes.ToolUseBlock{}
-			if v.Name != "" {
-				// Strong contract: tool_use names in messages must match tool
-				// definitions in the current request. Fail fast when a tool_use
-				// references an unknown tool - this indicates transcript
-				// contamination (e.g., ledger key collision between agent runs)
-				// or a missing tool definition.
-				sanitized, ok := nameMap[v.Name]
-				if !ok || sanitized == "" {
-					return nil, nil, fmt.Errorf(
-						"bedrock: tool_use in messages references %q which is not in "+
-							"the current tool configuration; ensure transcript and "+
-							"tool definitions are aligned (possible ledger contamination)",
-						v.Name,
-					)
+			case model.ToolUsePart:
+				// Encode assistant-declared tool_use with optional ID and JSON input.
+				tb := brtypes.ToolUseBlock{}
+				if v.Name != "" {
+					// Strong contract: tool_use names in messages must match tool
+					// definitions in the current request. Fail fast when a tool_use
+					// references an unknown tool - this indicates transcript
+					// contamination (e.g., ledger key collision between agent runs)
+					// or a missing tool definition.
+					sanitized, ok := nameMap[v.Name]
+					if !ok || sanitized == "" {
+						return nil, nil, fmt.Errorf(
+							"bedrock: tool_use in messages references %q which is not in "+
+								"the current tool configuration; ensure transcript and "+
+								"tool definitions are aligned (possible ledger contamination)",
+							v.Name,
+						)
+					}
+					tb.Name = aws.String(sanitized)
 				}
-				tb.Name = aws.String(sanitized)
-			}
-			if v.ID != "" {
-				tb.ToolUseId = aws.String(v.ID)
-			}
-			tb.Input = toDocument(ctx, v.Input)
-			blocks = append(blocks, &brtypes.ContentBlockMemberToolUse{Value: tb})
+				if v.ID != "" {
+					tb.ToolUseId = aws.String(v.ID)
+				}
+				tb.Input = toDocument(ctx, v.Input)
+				blocks = append(blocks, &brtypes.ContentBlockMemberToolUse{Value: tb})
 			case model.ToolResultPart:
 				// Bedrock expects tool_result blocks in user messages, correlated to a prior tool_use.
 				// Encode content as text when Content is a string; otherwise as a JSON document.

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/reminder"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -44,6 +45,13 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 	}
 	result, err := r.planStart(ctx, reg, planInput)
 	if err != nil {
+		if errors.Is(err, model.ErrRateLimited) {
+			events.PlannerThought(
+				ctx,
+				"Model provider is rate-limiting this request. It is safe to retry after a short delay.",
+				map[string]string{"code": "rate_limited"},
+			)
+		}
 		return nil, err
 	}
 	r.logger.Info(ctx, "PlanStartActivity returning PlanResult", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil, "await", result.Await != nil)
@@ -84,6 +92,13 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	}
 	result, err := r.planResume(ctx, reg, planInput)
 	if err != nil {
+		if errors.Is(err, model.ErrRateLimited) {
+			events.PlannerThought(
+				ctx,
+				"Model provider is rate-limiting this request. It is safe to retry after a short delay.",
+				map[string]string{"code": "rate_limited"},
+			)
+		}
 		return nil, err
 	}
 	return &PlanActivityOutput{
