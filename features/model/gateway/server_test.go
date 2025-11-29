@@ -16,10 +16,10 @@ func (s *stubStreamer) Metadata() map[string]any   { return s.meta }
 
 type stubProvider struct{}
 
-func (stubProvider) Complete(_ context.Context, req model.Request) (model.Response, error) {
-	return model.Response{Content: []model.Message{{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
+func (stubProvider) Complete(_ context.Context, req *model.Request) (*model.Response, error) {
+	return &model.Response{Content: []model.Message{{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 }
-func (stubProvider) Stream(_ context.Context, _ model.Request) (model.Streamer, error) {
+func (stubProvider) Stream(_ context.Context, _ *model.Request) (model.Streamer, error) {
 	return &stubStreamer{}, nil
 }
 
@@ -29,13 +29,13 @@ func TestNewServer_BuildsChains(t *testing.T) {
 	calledStream := false
 
 	u := func(next UnaryHandler) UnaryHandler {
-		return func(ctx context.Context, req model.Request) (model.Response, error) {
+		return func(ctx context.Context, req *model.Request) (*model.Response, error) {
 			calledUnary = true
 			return next(ctx, req)
 		}
 	}
 	s := func(next StreamHandler) StreamHandler {
-		return func(ctx context.Context, req model.Request, send func(model.Chunk) error) error {
+		return func(ctx context.Context, req *model.Request, send func(model.Chunk) error) error {
 			calledStream = true
 			return next(ctx, req, send)
 		}
@@ -46,10 +46,10 @@ func TestNewServer_BuildsChains(t *testing.T) {
 		t.Fatalf("NewServer error: %v", err)
 	}
 
-	if _, err := srv.Complete(context.Background(), model.Request{Model: "m"}); err != nil {
+	if _, err := srv.Complete(context.Background(), &model.Request{Model: "m"}); err != nil {
 		t.Fatalf("Complete error: %v", err)
 	}
-	if err := srv.Stream(context.Background(), model.Request{Model: "m"}, func(model.Chunk) error { return errors.New("eof") }); err == nil {
+	if err := srv.Stream(context.Background(), &model.Request{Model: "m"}, func(model.Chunk) error { return errors.New("eof") }); err == nil {
 		t.Fatal("expected error from stream")
 	}
 

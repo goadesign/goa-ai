@@ -55,9 +55,9 @@ func NewFromAPIKey(apiKey, defaultModel string) (*Client, error) {
 }
 
 // Complete renders a chat completion using the configured OpenAI client.
-func (c *Client) Complete(ctx context.Context, req model.Request) (model.Response, error) {
+func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
 	if len(req.Messages) == 0 {
-		return model.Response{}, errors.New("messages are required")
+		return nil, errors.New("messages are required")
 	}
 	modelID := req.Model
 	if modelID == "" {
@@ -79,7 +79,7 @@ func (c *Client) Complete(ctx context.Context, req model.Request) (model.Respons
 	}
 	tools, err := encodeTools(req.Tools)
 	if err != nil {
-		return model.Response{}, err
+		return nil, err
 	}
 	request := openai.ChatCompletionRequest{
 		Model:       modelID,
@@ -99,14 +99,16 @@ func (c *Client) Complete(ctx context.Context, req model.Request) (model.Respons
 			request.ToolChoice = "none"
 		case model.ToolChoiceModeTool:
 			if tc.Name == "" {
-				return model.Response{},
-					fmt.Errorf("openai: tool choice mode %q requires a tool name",
-						tc.Mode)
+				return nil, fmt.Errorf(
+					"openai: tool choice mode %q requires a tool name",
+					tc.Mode,
+				)
 			}
 			if !hasToolDefinition(req.Tools, tc.Name) {
-				return model.Response{},
-					fmt.Errorf("openai: tool choice name %q does not match any tool",
-						tc.Name)
+				return nil, fmt.Errorf(
+					"openai: tool choice name %q does not match any tool",
+					tc.Name,
+				)
 			}
 			request.ToolChoice = openai.ToolChoice{
 				Type: openai.ToolTypeFunction,
@@ -115,16 +117,20 @@ func (c *Client) Complete(ctx context.Context, req model.Request) (model.Respons
 				},
 			}
 		case model.ToolChoiceModeAny:
-			return model.Response{},
-				fmt.Errorf("openai: tool choice mode %q is not supported", tc.Mode)
+			return nil, fmt.Errorf(
+				"openai: tool choice mode %q is not supported",
+				tc.Mode,
+			)
 		default:
-			return model.Response{},
-				fmt.Errorf("openai: unsupported tool choice mode %q", tc.Mode)
+			return nil, fmt.Errorf(
+				"openai: unsupported tool choice mode %q",
+				tc.Mode,
+			)
 		}
 	}
 	response, err := c.chat.CreateChatCompletion(ctx, request)
 	if err != nil {
-		return model.Response{}, fmt.Errorf("openai chat completion: %w", err)
+		return nil, fmt.Errorf("openai chat completion: %w", err)
 	}
 	return translateResponse(response), nil
 }
@@ -143,7 +149,7 @@ func hasToolDefinition(defs []*model.ToolDefinition, name string) bool {
 
 // Stream reports that OpenAI Chat Completions streaming is not yet supported by
 // this adapter. Callers should fall back to Complete.
-func (c *Client) Stream(context.Context, model.Request) (model.Streamer, error) {
+func (c *Client) Stream(context.Context, *model.Request) (model.Streamer, error) {
 	return nil, model.ErrStreamingUnsupported
 }
 
@@ -172,7 +178,7 @@ func encodeTools(defs []*model.ToolDefinition) ([]openai.Tool, error) {
 	return tools, nil
 }
 
-func translateResponse(resp openai.ChatCompletionResponse) model.Response {
+func translateResponse(resp openai.ChatCompletionResponse) *model.Response {
 	messages := make([]model.Message, 0, len(resp.Choices))
 	toolCalls := make([]model.ToolCall, 0)
 	for _, choice := range resp.Choices {
@@ -197,7 +203,7 @@ func translateResponse(resp openai.ChatCompletionResponse) model.Response {
 	if len(resp.Choices) > 0 {
 		stop = string(resp.Choices[0].FinishReason)
 	}
-	return model.Response{
+	return &model.Response{
 		Content:    messages,
 		ToolCalls:  toolCalls,
 		Usage:      usage,

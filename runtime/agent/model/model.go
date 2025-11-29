@@ -269,10 +269,10 @@ type (
 	// Responses and Chunks back into the generic types used by planners.
 	Client interface {
 		// Complete performs a non-streaming model invocation.
-		Complete(ctx context.Context, req Request) (Response, error)
+		Complete(ctx context.Context, req *Request) (*Response, error)
 
 		// Stream performs a streaming model invocation when supported.
-		Stream(ctx context.Context, req Request) (Streamer, error)
+		Stream(ctx context.Context, req *Request) (Streamer, error)
 	}
 
 	// Streamer delivers incremental model output.

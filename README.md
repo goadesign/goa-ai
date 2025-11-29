@@ -49,7 +49,7 @@ Think of it as a pipeline from intention to execution:
 
 4. **Engine** — Swap backends without changing code. In-memory for fast iteration; Temporal for production durability.
 
-5. **Features** — Plug in what you need: Mongo for memory/sessions/runs, Pulse for real-time streams, Bedrock/OpenAI/Gateway model clients, policy engines.
+5. **Features** — Plug in what you need: Mongo for memory/sessions/runs, Pulse for real-time streams, Bedrock/OpenAI/Gateway model clients, rate limiting, policy engines.
 
 ## Quick Start
 
@@ -186,7 +186,7 @@ rt := runtime.New(runtime.Options{
 | **Codegen (`codegen/agent`, `codegen/mcp`)** | Emit tool codecs/specs, registries, Temporal workflows, activity handlers, MCP helpers. |
 | **Runtime (`runtime/agent`, `runtime/mcp`)** | Durable plan/execute loop with policy enforcement, memory/session stores, hook bus, telemetry, MCP callers. |
 | **Engine (`runtime/agent/engine`)** | Abstract workflow API; Temporal adapter ships with OTEL interceptors, auto-start workers, and context propagation. |
-| **Features (`features/*`)** | Optional modules (Mongo memory/session, Pulse stream sink, MCP callers, Bedrock/OpenAI model clients, policy engine). |
+| **Features (`features/*`)** | Optional modules (Mongo memory/session, Pulse stream sink, MCP callers, Bedrock/OpenAI model clients, rate limiting, policy engine). |
 
 ## Toolsets: Where the Magic Happens
 

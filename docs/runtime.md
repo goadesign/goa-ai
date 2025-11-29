@@ -537,6 +537,7 @@ type Planner interface {
 - `features/run/mongo` – run metadata store + search repositories.
 - `features/stream/pulse` – Pulse sink/subscriber helpers (users pass their Pulse client).
 - `features/model/{bedrock,openai}` – model client adapters for planners.
+- `features/model/middleware` – shared model.Client middlewares (e.g., AIMD rate limiting).
 
 Each module is optional; services import the ones they need and pass the resulting clients into `runtime.Options` or their planners.
 
@@ -565,6 +566,41 @@ Each module is optional; services import the ones they need and pass the resulti
   and a separate `planner.PlannerEvents` for emitting assistant chunks, planner
   thoughts, and usage deltas.
 
+### Model client rate limiting
+
+Use `features/model/middleware` to apply adaptive rate limiting on top of any
+`model.Client`. The middleware estimates tokens per request, queues callers
+using a token bucket, and adjusts its effective tokens-per-minute budget using
+an additive increase, multiplicative decrease (AIMD) strategy when providers
+report `model.ErrRateLimited`.
+
+Example with the Bedrock client:
+
+```go
+import (
+    "goa.design/goa-ai/features/model/bedrock"
+    mdlmw "goa.design/goa-ai/features/model/middleware"
+)
+
+awsClient := bedrockruntime.NewFromConfig(cfg)
+bed, _ := bedrock.New(awsClient, bedrock.Options{
+    DefaultModel: "us.anthropic.claude-3-5-sonnet-20240620-v1:0",
+}, ledger)
+
+rl := mdlmw.NewAdaptiveRateLimiter(
+    ctx,
+    throughputMap,       // *rmap.Map joined earlier (nil for process-local)
+    "bedrock:sonnet",    // key for this model family
+    80_000,              // initial TPM
+    1_000_000,           // max TPM
+)
+limited := rl.Middleware()(bed)
+
+rt := runtime.New(runtime.Options{
+    // Register limited as the model client exposed to planners.
+})
+```
+
 ### Streaming planners: choose one emission path
 
 The runtime can surface model chunks to `PlannerEvents` in two ways. It is
@@ -582,17 +618,17 @@ critical to choose **exactly one** per stream to avoid double-emitting events.
        ctx context.Context,
        input *planner.PlanResumeInput,
    ) (*planner.PlanResult, error) {
-       mc, ok := input.Agent.ModelClient("bedrock")
-       if !ok || mc == nil {
-           return nil, errors.New("model not configured")
-       }
-       req := model.Request{
-           RunID:      input.RunContext.RunID,
-           ModelClass: model.ModelClassHighReasoning,
-           Messages:   input.Messages,
-           Stream:     true,
-       }
-       st, err := mc.Stream(ctx, req)
+      mc, ok := input.Agent.ModelClient("bedrock")
+      if !ok || mc == nil {
+          return nil, errors.New("model not configured")
+      }
+      req := &model.Request{
+          RunID:      input.RunContext.RunID,
+          ModelClass: model.ModelClassHighReasoning,
+          Messages:   input.Messages,
+          Stream:     true,
+      }
+      st, err := mc.Stream(ctx, req)
        if err != nil {
            return nil, err
        }
@@ -657,7 +693,7 @@ critical to choose **exactly one** per stream to avoid double-emitting events.
    if !ok || raw == nil {
        return nil, errors.New("model not configured")
    }
-   req := model.Request{ /* messages, tools, Stream: true */ }
+   req := &model.Request{ /* messages, tools, Stream: true */ }
    st, err := raw.Stream(ctx, req)
    if err != nil {
        return nil, err

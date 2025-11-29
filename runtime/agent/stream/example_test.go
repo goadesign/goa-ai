@@ -30,7 +30,7 @@ func Example_broadcast() {
 	rt := agentsruntime.New(agentsruntime.WithStream(sink))
 
 	// Publish a user-facing hook event; the stream subscriber forwards it.
-	_ = rt.Bus.Publish(ctx, hooks.NewAssistantMessageEvent("run-1", "svc.agent", "hello", nil))
+	_ = rt.Bus.Publish(ctx, hooks.NewAssistantMessageEvent("run-1", "svc.agent", "", "hello", nil))
 
 	// The sink received a typed stream event.
 	fmt.Println(sink.events[0].Type())
@@ -49,7 +49,7 @@ func Example_perRequest() {
 	defer func() { _ = sub.Close() }()
 
 	// Publish a planner note; the subscriber forwards it as a stream event.
-	_ = bus.Publish(ctx, hooks.NewPlannerNoteEvent("run-1", "svc.agent", "thinking", nil))
+	_ = bus.Publish(ctx, hooks.NewPlannerNoteEvent("run-1", "svc.agent", "", "thinking", nil))
 
 	// The sink received a typed stream event.
 	fmt.Println(sink.events[0].Type())

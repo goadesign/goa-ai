@@ -42,7 +42,7 @@ func newEventDecoratedClient(inner model.Client, events planner.PlannerEvents) m
 
 // Complete delegates to the inner client, then emits usage and assistant
 // content (text + thinking) for the final response.
-func (c *eventDecoratedClient) Complete(ctx context.Context, req model.Request) (model.Response, error) {
+func (c *eventDecoratedClient) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
 	resp, err := c.inner.Complete(ctx, req)
 	if err != nil {
 		return resp, err
@@ -62,7 +62,7 @@ func (c *eventDecoratedClient) Complete(ctx context.Context, req model.Request) 
 
 // Stream delegates to the inner client and returns a Streamer whose Recv()
 // emits PlannerEvents for assistant text, thinking blocks, and usage.
-func (c *eventDecoratedClient) Stream(ctx context.Context, req model.Request) (model.Streamer, error) {
+func (c *eventDecoratedClient) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
 	st, err := c.inner.Stream(ctx, req)
 	if err != nil {
 		return nil, err

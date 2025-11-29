@@ -13,20 +13,22 @@ import (
 // runtimePlannerEvents implements planner.PlannerEvents by publishing to the runtime bus
 // and capturing thinking/text into a per-turn provider ledger.
 type runtimePlannerEvents struct {
-	rt      *Runtime
-	agentID agent.Ident
-	runID   string
+	rt         *Runtime
+	agentID    agent.Ident
+	runID      string
+	sessionID  string
 
 	mu  sync.Mutex
 	led *transcript.Ledger
 }
 
-func newPlannerEvents(rt *Runtime, agentID agent.Ident, runID string) *runtimePlannerEvents {
+func newPlannerEvents(rt *Runtime, agentID agent.Ident, runID, sessionID string) *runtimePlannerEvents {
 	return &runtimePlannerEvents{
-		rt:      rt,
-		agentID: agentID,
-		runID:   runID,
-		led:     transcript.NewLedger(),
+		rt:        rt,
+		agentID:   agentID,
+		runID:     runID,
+		sessionID: sessionID,
+		led:       transcript.NewLedger(),
 	}
 }
 
@@ -42,21 +44,21 @@ func (e *runtimePlannerEvents) AssistantChunk(ctx context.Context, text string) 
 	if e.rt == nil || e.rt.Bus == nil {
 		return
 	}
-	_ = e.rt.Bus.Publish(ctx, hooks.NewAssistantMessageEvent(e.runID, e.agentID, text, nil))
+	_ = e.rt.Bus.Publish(ctx, hooks.NewAssistantMessageEvent(e.runID, e.agentID, e.sessionID, text, nil))
 }
 
 func (e *runtimePlannerEvents) PlannerThought(ctx context.Context, note string, labels map[string]string) {
 	if e == nil || e.rt == nil || e.rt.Bus == nil || note == "" {
 		return
 	}
-	_ = e.rt.Bus.Publish(ctx, hooks.NewPlannerNoteEvent(e.runID, e.agentID, note, labels))
+	_ = e.rt.Bus.Publish(ctx, hooks.NewPlannerNoteEvent(e.runID, e.agentID, e.sessionID, note, labels))
 }
 
 func (e *runtimePlannerEvents) UsageDelta(ctx context.Context, usage model.TokenUsage) {
 	if e == nil || e.rt == nil || e.rt.Bus == nil {
 		return
 	}
-	_ = e.rt.Bus.Publish(ctx, hooks.NewUsageEvent(e.runID, e.agentID, usage.InputTokens, usage.OutputTokens, usage.TotalTokens))
+	_ = e.rt.Bus.Publish(ctx, hooks.NewUsageEvent(e.runID, e.agentID, e.sessionID, usage.InputTokens, usage.OutputTokens, usage.TotalTokens))
 }
 
 func (e *runtimePlannerEvents) PlannerThinkingBlock(ctx context.Context, block model.ThinkingPart) {
@@ -72,7 +74,7 @@ func (e *runtimePlannerEvents) PlannerThinkingBlock(ctx context.Context, block m
 		return
 	}
 	_ = e.rt.Bus.Publish(ctx, hooks.NewThinkingBlockEvent(
-		e.runID, e.agentID,
+		e.runID, e.agentID, e.sessionID,
 		block.Text, block.Signature, block.Redacted, block.Index, block.Final,
 	))
 }

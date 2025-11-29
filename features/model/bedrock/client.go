@@ -140,24 +140,24 @@ func New(aws *bedrockruntime.Client, opts Options, ledger ledgerSource) (*Client
 // Complete issues a chat completion request to the configured Bedrock model
 // using the Converse API and translates the response into planner-friendly
 // structures (assistant messages + tool calls).
-func (c *Client) Complete(ctx context.Context, req model.Request) (model.Response, error) {
+func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
 	parts, err := c.prepareRequest(ctx, req)
 	if err != nil {
-		return model.Response{}, err
+		return nil, err
 	}
 	output, err := c.runtime.Converse(ctx, c.buildConverseInput(parts, req))
 	if err != nil {
 		if isRateLimited(err) {
-			return model.Response{}, fmt.Errorf("%w: %w", model.ErrRateLimited, err)
+			return nil, fmt.Errorf("%w: %w", model.ErrRateLimited, err)
 		}
-		return model.Response{}, fmt.Errorf("bedrock converse: %w", err)
+		return nil, fmt.Errorf("bedrock converse: %w", err)
 	}
 	return translateResponse(output, parts.toolNameProvToCanonical)
 }
 
 // Stream invokes the Bedrock ConverseStream API and adapts incremental events
 // into model.Chunks so planners can surface partial responses.
-func (c *Client) Stream(ctx context.Context, req model.Request) (model.Streamer, error) {
+func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
 	parts, err := c.prepareRequest(ctx, req)
 	if err != nil {
 		return nil, err
@@ -178,7 +178,7 @@ func (c *Client) Stream(ctx context.Context, req model.Request) (model.Streamer,
 	return newBedrockStreamer(ctx, stream, parts.toolNameProvToCanonical), nil
 }
 
-func (c *Client) prepareRequest(ctx context.Context, req model.Request) (*requestParts, error) {
+func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*requestParts, error) {
 	// Rehydrate provider-ready messages from the ledger when a RunID is provided.
 	var merged []*model.Message
 	if c.ledger != nil && req.RunID != "" {
@@ -236,7 +236,7 @@ func (c *Client) prepareRequest(ctx context.Context, req model.Request) (*reques
 // resolveModelID decides which concrete model ID to use based on Request.Model
 // and Request.ModelClass. Request.Model takes precedence; when empty, the class
 // is mapped to the configured identifiers. Falls back to the default model.
-func (c *Client) resolveModelID(req model.Request) string {
+func (c *Client) resolveModelID(req *model.Request) string {
 	if s := req.Model; s != "" {
 		return s
 	}
@@ -253,7 +253,7 @@ func (c *Client) resolveModelID(req model.Request) string {
 	return c.defaultModel
 }
 
-func (c *Client) buildConverseInput(parts *requestParts, req model.Request) *bedrockruntime.ConverseInput {
+func (c *Client) buildConverseInput(parts *requestParts, req *model.Request) *bedrockruntime.ConverseInput {
 	input := &bedrockruntime.ConverseInput{
 		ModelId:  aws.String(parts.modelID),
 		Messages: parts.messages,
@@ -270,7 +270,7 @@ func (c *Client) buildConverseInput(parts *requestParts, req model.Request) *bed
 	return input
 }
 
-func (c *Client) buildConverseStreamInput(parts *requestParts, req model.Request, thinking thinkingConfig) *bedrockruntime.ConverseStreamInput {
+func (c *Client) buildConverseStreamInput(parts *requestParts, req *model.Request, thinking thinkingConfig) *bedrockruntime.ConverseStreamInput {
 	input := &bedrockruntime.ConverseStreamInput{
 		ModelId:  aws.String(parts.modelID),
 		Messages: parts.messages,
@@ -302,7 +302,7 @@ func (c *Client) buildConverseStreamInput(parts *requestParts, req model.Request
 	return input
 }
 
-func (c *Client) resolveThinking(req model.Request, parts *requestParts) thinkingConfig {
+func (c *Client) resolveThinking(req *model.Request, parts *requestParts) thinkingConfig {
 	if req.Thinking == nil || !req.Thinking.Enable {
 		return thinkingConfig{}
 	}
@@ -693,11 +693,11 @@ func toDocument(ctx context.Context, schema any) document.Interface {
 	}
 }
 
-func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string]string) (model.Response, error) {
+func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string]string) (*model.Response, error) {
 	if output == nil {
-		return model.Response{}, errors.New("bedrock: response is nil")
+		return nil, errors.New("bedrock: response is nil")
 	}
-	var resp model.Response
+	resp := &model.Response{}
 	if msg, ok := output.Output.(*brtypes.ConverseOutputMemberMessage); ok {
 		for _, block := range msg.Value.Content {
 			switch v := block.(type) {
@@ -705,7 +705,10 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 				if v.Value == "" {
 					continue
 				}
-				resp.Content = append(resp.Content, model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: v.Value}}})
+				resp.Content = append(resp.Content, model.Message{
+					Role:  "assistant",
+					Parts: []model.Part{model.TextPart{Text: v.Value}},
+				})
 			case *brtypes.ContentBlockMemberToolUse:
 				payload := decodeDocument(v.Value.Input)
 				name := ""
@@ -714,7 +717,7 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 					key := normalizeToolName(raw)
 					canonical, ok := nameMap[key]
 					if !ok {
-						return model.Response{}, fmt.Errorf(
+						return nil, fmt.Errorf(
 							"bedrock: tool name %q not in reverse map (raw: %q); expected canonical tool ID",
 							key, raw,
 						)
@@ -725,7 +728,11 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 				if v.Value.ToolUseId != nil {
 					id = *v.Value.ToolUseId
 				}
-				resp.ToolCalls = append(resp.ToolCalls, model.ToolCall{Name: tools.Ident(name), Payload: payload, ID: id})
+				resp.ToolCalls = append(resp.ToolCalls, model.ToolCall{
+					Name:    tools.Ident(name),
+					Payload: payload,
+					ID:      id,
+				})
 			}
 		}
 	}

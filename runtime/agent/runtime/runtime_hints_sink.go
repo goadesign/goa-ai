@@ -39,7 +39,7 @@ func (h *hintingSink) Send(ctx context.Context, ev stream.Event) error {
 				}
 			}
 		}
-		base := stream.NewBase(e.Type(), e.RunID(), data)
+		base := stream.NewBase(e.Type(), e.RunID(), e.SessionID(), data)
 		return h.sink.Send(ctx, stream.ToolStart{
 			Base: base,
 			Data: data,

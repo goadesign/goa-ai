@@ -22,7 +22,7 @@ func TestBusPublishFanOut(t *testing.T) {
 	require.NoError(t, err)
 	evt1 := NewRunStartedEvent("run1", agent.Ident("agent1"), run.Context{}, nil)
 	require.NoError(t, bus.Publish(ctx, evt1))
-	evt2 := NewRunCompletedEvent("run1", agent.Ident("agent1"), "success", run.PhaseCompleted, nil)
+	evt2 := NewRunCompletedEvent("run1", agent.Ident("agent1"), "", "success", run.PhaseCompleted, nil)
 	require.NoError(t, bus.Publish(ctx, evt2))
 	require.Equal(t, 2, count)
 }
@@ -46,7 +46,7 @@ func TestSubscriptionClose(t *testing.T) {
 	evt1 := NewRunStartedEvent("run1", agent.Ident("agent1"), run.Context{}, nil)
 	require.NoError(t, bus.Publish(ctx, evt1))
 	require.NoError(t, subscription.Close())
-	evt2 := NewRunCompletedEvent("run1", agent.Ident("agent1"), "success", run.PhaseCompleted, nil)
+	evt2 := NewRunCompletedEvent("run1", agent.Ident("agent1"), "", "success", run.PhaseCompleted, nil)
 	require.NoError(t, bus.Publish(ctx, evt2))
 	require.Equal(t, 1, count)
 }

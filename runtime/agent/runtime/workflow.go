@@ -141,7 +141,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	// Initial phase: input has been received and planning is about to begin.
 	r.publishHook(
 		wfCtx.Context(),
-		hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, run.PhasePrompted),
+		hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, run.PhasePrompted),
 		seq,
 	)
 	r.recordRunStatus(wfCtx.Context(), input, run.StatusRunning, nil)
@@ -170,12 +170,12 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		}
 		r.publishHook(
 			wfCtx.Context(),
-			hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, phase),
+			hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, phase),
 			seq,
 		)
 		r.publishHook(
 			wfCtx.Context(),
-			hooks.NewRunCompletedEvent(input.RunID, input.AgentID, finalStatus, phase, finalErr),
+			hooks.NewRunCompletedEvent(input.RunID, input.AgentID, input.SessionID, finalStatus, phase, finalErr),
 			seq,
 		)
 	}()
@@ -184,7 +184,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		Messages:   input.Messages,
 		RunContext: runCtx,
 		Agent:      agentCtx,
-		Events:     newPlannerEvents(r, input.AgentID, input.RunID),
+		Events:     newPlannerEvents(r, input.AgentID, input.RunID, input.SessionID),
 	}
 	// Compute deadlines before the initial Plan so it cannot outlive the run window.
 	var (
@@ -248,7 +248,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	// Transition into planning before invoking the planner activity.
 	r.publishHook(
 		wfCtx.Context(),
-		hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, run.PhasePlanning),
+		hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, run.PhasePlanning),
 		seq,
 	)
 	firstOutput, err := r.runPlanActivity(wfCtx, reg.PlanActivityName, planOpts, startReq, hardDeadline)
@@ -312,7 +312,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	// Enter tool execution phase for the main run loop.
 	r.publishHook(
 		wfCtx.Context(),
-		hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, run.PhaseExecutingTools),
+		hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, run.PhaseExecutingTools),
 		seq,
 	)
 	out, err := r.runLoop(
@@ -451,7 +451,14 @@ func (r *Runtime) runLoop(
 			if result.Await.Clarification != nil {
 				c := result.Await.Clarification
 				r.publishHook(ctx, hooks.NewAwaitClarificationEvent(
-					base.RunContext.RunID, base.Agent.ID(), c.ID, c.Question, c.MissingFields, c.RestrictToTool, c.ExampleInput,
+					base.RunContext.RunID,
+					base.Agent.ID(),
+					base.RunContext.SessionID,
+					c.ID,
+					c.Question,
+					c.MissingFields,
+					c.RestrictToTool,
+					c.ExampleInput,
 				), seq)
 			} else if result.Await.ExternalTools != nil {
 				e := result.Await.ExternalTools
@@ -464,10 +471,22 @@ func (r *Runtime) runLoop(
 					})
 				}
 				r.publishHook(ctx, hooks.NewAwaitExternalToolsEvent(
-					base.RunContext.RunID, base.Agent.ID(), e.ID, items,
+					base.RunContext.RunID,
+					base.Agent.ID(),
+					base.RunContext.SessionID,
+					e.ID,
+					items,
 				), seq)
 			}
-			r.publishHook(ctx, hooks.NewRunPausedEvent(base.RunContext.RunID, base.Agent.ID(), reason, "runtime", nil, nil), seq)
+			r.publishHook(ctx, hooks.NewRunPausedEvent(
+				base.RunContext.RunID,
+				base.Agent.ID(),
+				base.RunContext.SessionID,
+				reason,
+				"runtime",
+				nil,
+				nil,
+			), seq)
 			// Block until the appropriate provide signal arrives.
 			if result.Await.Clarification != nil {
 				ans, err := ctrl.WaitProvideClarification(ctx)
@@ -489,7 +508,19 @@ func (r *Runtime) runLoop(
 				r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{
 					"resumed_by": "clarification",
 				})
-				r.publishHook(ctx, hooks.NewRunResumedEvent(base.RunContext.RunID, base.Agent.ID(), "clarification_provided", ans.RunID, ans.Labels, 1), seq)
+				r.publishHook(
+					ctx,
+					hooks.NewRunResumedEvent(
+						base.RunContext.RunID,
+						base.Agent.ID(),
+						base.RunContext.SessionID,
+						"clarification_provided",
+						ans.RunID,
+						ans.Labels,
+						1,
+					),
+					seq,
+				)
 				// Immediately PlanResume
 				resumeCtx := base.RunContext
 				resumeCtx.Attempt = nextAttempt
@@ -615,6 +646,7 @@ func (r *Runtime) runLoop(
 					hooks.NewRunResumedEvent(
 						base.RunContext.RunID,
 						base.Agent.ID(),
+						base.RunContext.SessionID,
 						"tool_results_provided",
 						input.RunID,
 						nil,
@@ -666,6 +698,7 @@ func (r *Runtime) runLoop(
 					hooks.NewAssistantMessageEvent(
 						base.RunContext.RunID,
 						base.Agent.ID(),
+						base.RunContext.SessionID,
 						agentMessageText(finalMsg),
 						nil,
 					),
@@ -678,6 +711,7 @@ func (r *Runtime) runLoop(
 					hooks.NewPlannerNoteEvent(
 						base.RunContext.RunID,
 						base.Agent.ID(),
+						base.RunContext.SessionID,
 						note.Text,
 						note.Labels,
 					),
@@ -735,10 +769,12 @@ func (r *Runtime) runLoop(
 		if parentTracker != nil {
 			ids := collectToolCallIDs(allowed)
 			if len(ids) > 0 && parentTracker.registerDiscovered(ids) {
-				r.publishHook(ctx,
+				r.publishHook(
+					ctx,
 					hooks.NewToolCallUpdatedEvent(
 						base.RunContext.RunID,
 						base.Agent.ID(),
+						base.RunContext.SessionID,
 						parentTracker.parentToolCallID,
 						parentTracker.currentTotal(),
 					),
@@ -874,13 +910,26 @@ func (r *Runtime) handleMissingFieldsPolicy(
 		r.publishHook(ctx, hooks.NewAwaitClarificationEvent(
 			base.RunContext.RunID,
 			base.Agent.ID(),
+			base.RunContext.SessionID,
 			awaitID,
 			mf.ClarifyingQuestion,
 			mf.MissingFields,
 			restrict,
 			mf.ExampleInput,
 		), seq)
-		r.publishHook(ctx, hooks.NewRunPausedEvent(base.RunContext.RunID, base.Agent.ID(), "await_clarification", "runtime", nil, nil), seq)
+		r.publishHook(
+			ctx,
+			hooks.NewRunPausedEvent(
+				base.RunContext.RunID,
+				base.Agent.ID(),
+				base.RunContext.SessionID,
+				"await_clarification",
+				"runtime",
+				nil,
+				nil,
+			),
+			seq,
+		)
 		ans, err := ctrl.WaitProvideClarification(ctx)
 		if err != nil {
 			return nil, err
@@ -898,7 +947,15 @@ func (r *Runtime) handleMissingFieldsPolicy(
 		r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{
 			"resumed_by": "clarification",
 		})
-		r.publishHook(ctx, hooks.NewRunResumedEvent(base.RunContext.RunID, base.Agent.ID(), "clarification_provided", input.RunID, ans.Labels, 1), seq)
+		r.publishHook(ctx, hooks.NewRunResumedEvent(
+			base.RunContext.RunID,
+			base.Agent.ID(),
+			base.RunContext.SessionID,
+			"clarification_provided",
+			input.RunID,
+			ans.Labels,
+			1,
+		), seq)
 		return nil, nil
 	case MissingFieldsResume:
 		return nil, nil
@@ -925,7 +982,16 @@ func (r *Runtime) finalizeWithPlanner(
 	ctx := wfCtx.Context()
 	// Transition to synthesizing phase while we obtain a final answer without
 	// scheduling additional tools.
-	r.publishHook(ctx, hooks.NewRunPhaseChangedEvent(base.RunContext.RunID, base.Agent.ID(), run.PhaseSynthesizing), seq)
+	r.publishHook(
+		ctx,
+		hooks.NewRunPhaseChangedEvent(
+			base.RunContext.RunID,
+			base.Agent.ID(),
+			base.RunContext.SessionID,
+			run.PhaseSynthesizing,
+		),
+		seq,
+	)
 	// Prepare a brief message to steer planners that incorporate system messages.
 	var hint string
 	switch reason {
@@ -958,10 +1024,34 @@ func (r *Runtime) finalizeWithPlanner(
 		Finalize:    &planner.Termination{Reason: reason, Message: hint},
 	}
 	// Emit a pause/resume pair to indicate a finalization turn began.
-	r.publishHook(ctx, hooks.NewRunPausedEvent(base.RunContext.RunID, base.Agent.ID(), "finalize", "runtime", map[string]string{"reason": string(reason)}, nil), seq)
+	r.publishHook(
+		ctx,
+		hooks.NewRunPausedEvent(
+			base.RunContext.RunID,
+			base.Agent.ID(),
+			base.RunContext.SessionID,
+			"finalize",
+			"runtime",
+			map[string]string{"reason": string(reason)},
+			nil,
+		),
+		seq,
+	)
 	r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{"resumed_by": "finalize"})
 	// Use base.RunContext.RunID for resilience when input is nil.
-	r.publishHook(ctx, hooks.NewRunResumedEvent(base.RunContext.RunID, base.Agent.ID(), "finalize", base.RunContext.RunID, nil, 0), seq)
+	r.publishHook(
+		ctx,
+		hooks.NewRunResumedEvent(
+			base.RunContext.RunID,
+			base.Agent.ID(),
+			base.RunContext.SessionID,
+			"finalize",
+			base.RunContext.RunID,
+			nil,
+			0,
+		),
+		seq,
+	)
 
 	// Human‑readable reason strings for error contexts when finalization fails.
 	reasonText := func() string {
@@ -1002,6 +1092,7 @@ func (r *Runtime) finalizeWithPlanner(
 			hooks.NewAssistantMessageEvent(
 				base.RunContext.RunID,
 				base.Agent.ID(),
+				base.RunContext.SessionID,
 				agentMessageText(finalMsg),
 				nil,
 			),
@@ -1014,6 +1105,7 @@ func (r *Runtime) finalizeWithPlanner(
 			hooks.NewPlannerNoteEvent(
 				base.RunContext.RunID,
 				base.Agent.ID(),
+				base.RunContext.SessionID,
 				note.Text,
 				note.Labels,
 			),
@@ -1059,6 +1151,7 @@ func (r *Runtime) handleInterrupts(
 			hooks.NewRunPausedEvent(
 				input.RunID,
 				input.AgentID,
+				input.SessionID,
 				req.Reason,
 				req.RequestedBy,
 				req.Labels,
@@ -1084,6 +1177,7 @@ func (r *Runtime) handleInterrupts(
 			hooks.NewRunResumedEvent(
 				input.RunID,
 				input.AgentID,
+				input.SessionID,
 				resumeReq.Notes,
 				resumeReq.RequestedBy,
 				resumeReq.Labels,
@@ -1121,7 +1215,9 @@ func (r *Runtime) executeToolCalls(
 	ctx := wfCtx.Context()
 	eventRunID := runID
 	eventAgentID := agentID
+	sessionID := ""
 	if runCtx != nil {
+		sessionID = runCtx.SessionID
 		if runCtx.ParentRunID != "" {
 			eventRunID = runCtx.ParentRunID
 		}
@@ -1161,10 +1257,18 @@ func (r *Runtime) executeToolCalls(
 		if hasTS && ts.TaskQueue != "" {
 			queue = ts.TaskQueue
 		}
-		r.publishHook(ctx,
+		r.publishHook(
+			ctx,
 			hooks.NewToolCallScheduledEvent(
-				eventRunID, eventAgentID, call.Name, call.ToolCallID, call.Payload, queue,
-				call.ParentToolCallID, expectedChildren,
+				eventRunID,
+				eventAgentID,
+				sessionID,
+				call.Name,
+				call.ToolCallID,
+				call.Payload,
+				queue,
+				call.ParentToolCallID,
+				expectedChildren,
 			),
 			seq,
 		)
@@ -1220,6 +1324,7 @@ func (r *Runtime) executeToolCalls(
 				hooks.NewToolResultReceivedEvent(
 					eventRunID,
 					eventAgentID,
+					sessionID,
 					call.Name,
 					call.ToolCallID,
 					call.ParentToolCallID,
@@ -1297,7 +1402,13 @@ func (r *Runtime) executeToolCalls(
 	if parentTracker != nil && parentTracker.registerDiscovered(discoveredIDs) && parentTracker.needsUpdate() {
 		r.publishHook(
 			ctx,
-			hooks.NewToolCallUpdatedEvent(eventRunID, eventAgentID, parentTracker.parentToolCallID, parentTracker.currentTotal()),
+			hooks.NewToolCallUpdatedEvent(
+				eventRunID,
+				eventAgentID,
+				sessionID,
+				parentTracker.parentToolCallID,
+				parentTracker.currentTotal(),
+			),
 			seq,
 		)
 		parentTracker.markUpdated()
@@ -1351,6 +1462,7 @@ func (r *Runtime) executeToolCalls(
 			hooks.NewToolResultReceivedEvent(
 				eventRunID,
 				eventAgentID,
+				sessionID,
 				info.call.Name,
 				info.call.ToolCallID,
 				parentID,
@@ -1509,14 +1621,19 @@ func (r *Runtime) applyRuntimePolicy(
 	}
 	caps = mergeCaps(caps, decision.Caps)
 	r.recordPolicyDecision(ctx, input, decision)
-	r.publishHook(ctx, hooks.NewPolicyDecisionEvent(
-		base.RunContext.RunID,
-		base.Agent.ID(),
-		decision.AllowedTools,
-		caps,
-		cloneLabels(decision.Labels),
-		cloneMetadata(decision.Metadata),
-	), seq)
+	r.publishHook(
+		ctx,
+		hooks.NewPolicyDecisionEvent(
+			base.RunContext.RunID,
+			base.Agent.ID(),
+			base.RunContext.SessionID,
+			decision.AllowedTools,
+			caps,
+			cloneLabels(decision.Labels),
+			cloneMetadata(decision.Metadata),
+		),
+		seq,
+	)
 	return allowed, caps, nil
 }
 
@@ -1782,10 +1899,12 @@ func (r *Runtime) hardProtectionIfNeeded(
 		}
 	}
 	if agentToolCount > 0 && totalChildren == 0 {
-		r.publishHook(ctx,
+		r.publishHook(
+			ctx,
 			hooks.NewHardProtectionEvent(
 				base.RunContext.RunID,
 				base.Agent.ID(),
+				base.RunContext.SessionID,
 				"agent_tool_no_children",
 				agentToolCount,
 				totalChildren,
