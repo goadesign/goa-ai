@@ -22,6 +22,11 @@ type (
 		// Only set when IsAgentTool is true. Used to look up the agent registration
 		// for inline execution.
 		AgentID string
+		// BoundedResult indicates that this tool's result is declared as a bounded
+		// view over a potentially larger data set. It is set via the BoundedResult
+		// DSL helper and propagated into specs so runtimes and services can enforce
+		// and surface truncation metadata consistently.
+		BoundedResult bool
 		// Payload describes the request schema for the tool.
 		Payload TypeSpec
 		// Result describes the response schema for the tool.

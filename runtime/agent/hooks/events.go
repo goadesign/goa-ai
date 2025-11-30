@@ -196,6 +196,11 @@ type (
 		ToolName tools.Ident
 		// Result contains the tool's output payload. Nil if Error is set.
 		Result any
+		// Bounds, when non-nil, describes how the tool result has been bounded
+		// relative to the full underlying data set. It is supplied by tool
+		// implementations and surfaced for observability; the runtime does not
+		// modify it.
+		Bounds *agent.Bounds
 		// Metadata holds rich, non-provider data attached to the tool result.
 		// It is never serialized into model provider requests.
 		Metadata map[string]any
@@ -625,6 +630,7 @@ func NewToolResultReceivedEvent(
 	toolName tools.Ident,
 	toolCallID, parentToolCallID string,
 	result any,
+	bounds *agent.Bounds,
 	metadata map[string]any,
 	duration time.Duration,
 	telemetry *telemetry.ToolTelemetry,
@@ -638,6 +644,7 @@ func NewToolResultReceivedEvent(
 		ParentToolCallID: parentToolCallID,
 		ToolName:         toolName,
 		Result:           result,
+		Bounds:           bounds,
 		Metadata:         metadata,
 		Duration:         duration,
 		Telemetry:        telemetry,

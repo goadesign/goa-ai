@@ -76,6 +76,10 @@ type (
 		Result *typeData
 		// Type metadata for the optional tool sidecar payload.
 		Sidecar *typeData
+		// BoundedResult indicates that this tool's result is declared as a bounded
+		// view over a potentially larger data set (set via the BoundedResult DSL
+		// helper). It is propagated into ToolSpec for runtime consumers.
+		BoundedResult bool
 	}
 
 	// typeData holds all metadata needed to generate a type definition, schema,
@@ -228,6 +232,7 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 			Payload:           payload,
 			Result:            result,
 			Sidecar:           sidecar,
+			BoundedResult:     tool.BoundedResult,
 		}
 		data.addTool(entry)
 	}

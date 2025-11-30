@@ -27,6 +27,7 @@ var Specs = []tools.ToolSpec{
         IsAgentTool: true,
         AgentID:     {{ printf "%q" .ExportingAgentID }},
         {{- end }}
+        BoundedResult: {{ if .BoundedResult }}true{{ else }}false{{ end }},
         Payload: tools.TypeSpec{
             Name:   {{ if .Payload }}{{ printf "%q" .Payload.TypeName }}{{ else }}""{{ end }},
             {{- if and .Payload .Payload.SchemaVar }}

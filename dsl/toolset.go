@@ -455,6 +455,35 @@ func ResultHintTemplate(s string) {
 	tool.ResultHintTemplate = s
 }
 
+// BoundedResult marks the current tool's result as a bounded view over a
+// potentially larger data set. It is a lightweight contract that tells the
+// runtime and services that this tool:
+//
+//   - Applies domain-aware caps (limits, window clamping, depth bounds), and
+//   - Should surface truncation metadata (returned/total/truncated/hints)
+//     alongside its result.
+//
+// BoundedResult does not change the tool schema by itself; it annotates the
+// tool so codegen and services can attach and enforce bounds in a uniform way.
+//
+// BoundedResult must appear in a Tool expression.
+//
+// Example:
+//
+//	Tool("list_devices", "List devices", func() {
+//	    Args(AtlasListDevicesToolArgs)
+//	    Return(AtlasListDevicesToolReturn)
+//	    BoundedResult()
+//	})
+func BoundedResult() {
+	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	tool.BoundedResult = true
+}
+
 // Tags attaches metadata labels to a tool for categorization and filtering. Tags
 // can be used by agents, planners, or monitoring systems to organize and discover
 // tools based on their capabilities or domains.

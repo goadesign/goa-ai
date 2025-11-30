@@ -618,6 +618,7 @@ func newFromOptions(opts Options) *Runtime {
 						"parent_tool_call_id": evt.ParentToolCallID,
 						"tool_name":           evt.ToolName,
 						"result":              evt.Result,
+						"bounds":              evt.Bounds,
 						"duration":            evt.Duration,
 						"error":               evt.Error,
 					},

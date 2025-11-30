@@ -33,14 +33,6 @@ type PlannerContext interface {
 	Tracer() telemetry.Tracer
 	State() AgentState
 	ModelClient(id string) (model.Client, bool)
-	// AddReminder registers a reminder for the current run so it can be
-	// considered by subsequent planner turns. Reminders are evaluated and
-	// rate-limited by the runtime; callers should supply stable IDs for
-	// de-duplication.
-	AddReminder(r reminder.Reminder)
-	// RemoveReminder removes a previously registered reminder by ID. It is
-	// safe to call RemoveReminder for unknown IDs.
-	RemoveReminder(id string)
 }
 
 // AgentState provides ephemeral, per-run state storage for planners.
@@ -78,7 +70,12 @@ type ToolResult struct {
 	// Sidecar carries arbitrary non-model data produced alongside the tool
 	// result (for example, UI artifacts or policy annotations).  It is not
 	// sent to model providers.
-	Sidecar       map[string]any
+	Sidecar map[string]any
+	// Bounds, when non-nil, describes how the result has been bounded relative
+	// to the full underlying data set (for example, list/window/graph caps).
+	// Tool implementations and adapters populate this field; the runtime and
+	// sinks surface it but never mutate or derive it.
+	Bounds        *agent.Bounds
 	Error         *ToolError
 	RetryHint     *RetryHint
 	Telemetry     *telemetry.ToolTelemetry

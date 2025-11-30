@@ -268,6 +268,11 @@ type (
 		// DSL-authored templates when available. It is intended for UI ribbons and summaries
 		// (for example, "Device list ready" or "Found 3 critical alarms").
 		ResultPreview string `json:"result_preview,omitempty"`
+		// Bounds, when non-nil, describes how the tool result has been bounded relative to
+		// the full underlying data set (for example, list/window/graph caps). It is supplied
+		// by tool implementations and surfaced for observability; the runtime does not
+		// modify it.
+		Bounds *agent.Bounds `json:"bounds,omitempty"`
 		// Duration is the wall-clock execution time for the tool activity, including any
 		// queuing delay, retries, and processing time. Clients can display this in
 		// performance dashboards or debug panels to identify slow tools.

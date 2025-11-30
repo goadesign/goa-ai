@@ -448,6 +448,12 @@ type (
 		// InjectedFields contains the names of fields marked for injection via DSL.
 		InjectedFields []string
 
+		// BoundedResult indicates that this tool's result is declared as a bounded
+		// view over a potentially larger data set (set via the BoundedResult DSL
+		// helper). Codegen and services can use this flag to attach and enforce
+		// truncation metadata consistently.
+		BoundedResult bool
+
 		// PassthroughService is the Goa service name for deterministic forwarding
 		// when this tool is part of an exported toolset.
 		PassthroughService string
@@ -1124,6 +1130,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		CallHintTemplate:   expr.CallHintTemplate,
 		ResultHintTemplate: expr.ResultHintTemplate,
 		InjectedFields:     expr.InjectedFields,
+		BoundedResult:      expr.BoundedResult,
 	}
 	if expr.ExportPassthrough != nil {
 		tool.PassthroughService = expr.ExportPassthrough.TargetService

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -1313,6 +1314,11 @@ func (r *Runtime) executeToolCalls(
 			if result == nil {
 				return nil, fmt.Errorf("inline tool %q returned nil result", call.Name)
 			}
+			if result.Bounds == nil {
+				if b := r.deriveBounds(call.Name, result.Result); b != nil {
+					result.Bounds = b
+				}
+			}
 			// Publish result event for observability parity with activities.
 			duration := wfCtx.Now().Sub(start)
 			var toolErr *planner.ToolError
@@ -1329,6 +1335,7 @@ func (r *Runtime) executeToolCalls(
 					call.ToolCallID,
 					call.ParentToolCallID,
 					result.Result,
+					result.Bounds,
 					result.Sidecar,
 					duration,
 					result.Telemetry,
@@ -1444,6 +1451,9 @@ func (r *Runtime) executeToolCalls(
 			ToolCallID: info.call.ToolCallID,
 			Telemetry:  out.Telemetry,
 		}
+		if b := r.deriveBounds(info.call.Name, decoded); b != nil {
+			toolRes.Bounds = b
+		}
 		var toolErr *planner.ToolError
 		if out.Error != "" {
 			toolErr = planner.NewToolError(out.Error)
@@ -1467,6 +1477,7 @@ func (r *Runtime) executeToolCalls(
 				info.call.ToolCallID,
 				parentID,
 				decoded,
+				toolRes.Bounds,
 				out.Sidecar,
 				duration,
 				out.Telemetry,
@@ -1535,8 +1546,152 @@ func (r *Runtime) runPlanActivity(
 	if len(out.Result.ToolCalls) == 0 && out.Result.FinalResponse == nil && out.Result.Await == nil {
 		return nil, fmt.Errorf("CRITICAL: runPlanActivity received PlanResult with no ToolCalls, FinalResponse, or Await")
 	}
-	r.logger.Info(wfCtx.Context(), "runPlanActivity received PlanResult", "tool_calls", len(out.Result.ToolCalls), "final_response", out.Result.FinalResponse != nil, "await", out.Result.Await != nil)
+	r.logger.Info(
+		wfCtx.Context(),
+		"runPlanActivity received PlanResult",
+		"tool_calls",
+		len(out.Result.ToolCalls),
+		"final_response",
+		out.Result.FinalResponse != nil,
+		"await",
+		out.Result.Await != nil,
+	)
 	return &out, nil
+}
+
+// deriveBounds attempts to construct agent.Bounds for the given tool result
+// using the tool's specification and the decoded result value. It prefers
+// the agent.BoundedResult interface when implemented by the result type and
+// falls back to a best-effort field inspection for common bounded-result
+// patterns (Returned*/Total*/Truncated/RefinementHint). When the tool is not
+// declared as bounded or no bounds can be derived, it returns nil.
+func (r *Runtime) deriveBounds(tool tools.Ident, result any) *agent.Bounds {
+	if result == nil {
+		return nil
+	}
+
+	spec, ok := r.toolSpec(tool)
+	if !ok || !spec.BoundedResult {
+		return nil
+	}
+
+	// Prefer explicit interface implementation when available.
+	if br, ok := result.(agent.BoundedResult); ok {
+		b := br.Bounds()
+		return &b
+	}
+
+	// Fall back to structural inspection for common bounded-result shapes.
+	v := reflect.ValueOf(result)
+	if !v.IsValid() {
+		return nil
+	}
+	// Peel pointer layers.
+	for v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return nil
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return nil
+	}
+
+	t := v.Type()
+
+	intFromPtrField := func(name string) *int {
+		f, ok := t.FieldByName(name)
+		if !ok {
+			return nil
+		}
+		fv := v.FieldByIndex(f.Index)
+		if !fv.IsValid() || fv.IsNil() || fv.Kind() != reflect.Pointer {
+			return nil
+		}
+		elem := fv.Elem()
+		if elem.Kind() != reflect.Int {
+			return nil
+		}
+		val := int(elem.Int())
+		return &val
+	}
+
+	boolFromPtrField := func(name string) *bool {
+		f, ok := t.FieldByName(name)
+		if !ok {
+			return nil
+		}
+		fv := v.FieldByIndex(f.Index)
+		if !fv.IsValid() || fv.IsNil() || fv.Kind() != reflect.Pointer {
+			return nil
+		}
+		elem := fv.Elem()
+		if elem.Kind() != reflect.Bool {
+			return nil
+		}
+		val := elem.Bool()
+		return &val
+	}
+
+	stringFromPtrField := func(name string) *string {
+		f, ok := t.FieldByName(name)
+		if !ok {
+			return nil
+		}
+		fv := v.FieldByIndex(f.Index)
+		if !fv.IsValid() || fv.IsNil() || fv.Kind() != reflect.Pointer {
+			return nil
+		}
+		elem := fv.Elem()
+		if elem.Kind() != reflect.String {
+			return nil
+		}
+		val := elem.String()
+		return &val
+	}
+
+	// Primary dimension: prefer series/nodes when present, otherwise generic Returned/Total.
+	var returned *int
+	var total *int
+
+	if ptr := intFromPtrField("ReturnedSeries"); ptr != nil {
+		returned = ptr
+		total = intFromPtrField("TotalSeries")
+	} else if ptr := intFromPtrField("ReturnedNodes"); ptr != nil {
+		returned = ptr
+		total = intFromPtrField("TotalNodes")
+	} else {
+		returned = intFromPtrField("Returned")
+		total = intFromPtrField("Total")
+	}
+
+	truncated := boolFromPtrField("Truncated")
+	hint := stringFromPtrField("RefinementHint")
+
+	if returned == nil && total == nil && truncated == nil && hint == nil {
+		return nil
+	}
+
+	var out agent.Bounds
+	if returned != nil {
+		out.Returned = *returned
+	}
+	if total != nil {
+		// Copy to avoid aliasing the underlying decoded struct.
+		v := *total
+		out.Total = &v
+	}
+	if truncated != nil {
+		out.Truncated = *truncated
+	}
+	if hint != nil {
+		out.RefinementHint = *hint
+	}
+
+	if out.Returned == 0 && out.Total == nil && !out.Truncated && out.RefinementHint == "" {
+		return nil
+	}
+	return &out
 }
 
 // applyPerRunOverrides filters candidate tool calls using per-run overrides:

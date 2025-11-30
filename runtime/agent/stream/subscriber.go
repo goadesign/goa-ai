@@ -201,6 +201,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			ParentToolCallID: evt.ParentToolCallID,
 			ToolName:         string(evt.ToolName),
 			Result:           evt.Result,
+			Bounds:           evt.Bounds,
 			Duration:         evt.Duration,
 			Telemetry:        evt.Telemetry,
 			Error:            evt.Error,
