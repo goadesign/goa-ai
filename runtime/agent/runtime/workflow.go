@@ -163,13 +163,19 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		default:
 			phase = run.PhaseCompleted
 		}
+		// Use a fresh context with timeout for terminal events. The workflow
+		// context may be cancelled (e.g., user requested cancellation) but we
+		// still need to publish the terminal phase so downstream consumers
+		// (session stores, UIs) can update their state and allow new runs.
+		termCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 		r.publishHook(
-			wfCtx.Context(),
+			termCtx,
 			hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, phase),
 			turnID,
 		)
 		r.publishHook(
-			wfCtx.Context(),
+			termCtx,
 			hooks.NewRunCompletedEvent(input.RunID, input.AgentID, input.SessionID, finalStatus, phase, finalErr),
 			turnID,
 		)
@@ -1893,15 +1899,18 @@ func (r *Runtime) enforceBoundedResultContract(tr *planner.ToolResult) {
 	if !ok || !spec.BoundedResult {
 		return
 	}
+	// When a bounded tool fails or produces no result, there is no bounded view
+	// to validate. Errors are surfaced via ToolError and are not subject to
+	// bounds enforcement.
+	if tr.Error != nil || tr.Result == nil {
+		return
+	}
 	if tr.Bounds == nil {
-		panic(fmt.Sprintf(
-			"bounded tool %q produced result without Bounds metadata",
-			tr.Name,
-		))
+		panic(fmt.Sprintf("bounded tool %q produced result without Bounds metadata", tr.Name))
 	}
 	// When the tool reports truncation, we trust the domain caps and do not
 	// apply size-based enforcement here.
-	if tr.Bounds.Truncated || tr.Result == nil {
+	if tr.Bounds.Truncated {
 		return
 	}
 	// Fail fast when a bounded tool reports an untruncated result that exceeds
@@ -1909,26 +1918,21 @@ func (r *Runtime) enforceBoundedResultContract(tr *planner.ToolResult) {
 	// silently streaming a very large payload back to the model.
 	data, err := json.Marshal(tr.Result)
 	if err != nil {
-		panic(fmt.Sprintf(
-			"failed to encode bounded tool %q result for size check: %v",
-			tr.Name,
-			err,
-		))
+		panic(fmt.Sprintf("failed to encode bounded tool %q result for size check: %v", tr.Name, err))
 	}
 	if len(data) > maxUntruncatedBoundedResultBytes {
 		panic(fmt.Sprintf(
 			"bounded tool %q produced untruncated result of %d bytes (limit %d); "+
 				"services must apply domain caps and set Bounds.Truncated=true for large views",
-			tr.Name,
-			len(data),
-			maxUntruncatedBoundedResultBytes,
-		))
+			tr.Name, len(data), maxUntruncatedBoundedResultBytes))
 	}
 }
 
 // deriveBounds extracts Bounds metadata from a decoded tool result when the
-// result type implements agent.BoundedResult. It returns nil when the value
-// does not implement the interface or when Bounds is the zero value.
+// result type implements agent.BoundedResult. It returns nil only when the
+// value does not implement the interface or when ResultBounds() returns nil.
+// A zero-value Bounds (Returned=0, Total=nil, Truncated=false, RefinementHint="")
+// is valid metadata indicating no truncation occurred and is returned as-is.
 func deriveBounds(result any) *agent.Bounds {
 	if result == nil {
 		return nil
@@ -1937,15 +1941,7 @@ func deriveBounds(result any) *agent.Bounds {
 	if !ok || br == nil {
 		return nil
 	}
-	b := br.ResultBounds()
-	if b == nil {
-		return nil
-	}
-	// Treat the zero Bounds value as "no metadata".
-	if b.Returned == 0 && b.Total == nil && !b.Truncated && b.RefinementHint == "" {
-		return nil
-	}
-	return b
+	return br.ResultBounds()
 }
 
 // hardProtectionIfNeeded emits a protection event and signals finalization when

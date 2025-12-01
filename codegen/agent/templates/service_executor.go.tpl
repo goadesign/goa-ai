@@ -230,12 +230,28 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             return tr, nil
         }
         // Map back to tool result
-        result := methodOut
+        var result any
         if cfg.mapResult != nil {
-            if val, e := cfg.mapResult(call.Name, methodOut, meta); e == nil {
-                result = val
-            } else {
+            var e error
+            result, e = cfg.mapResult(call.Name, methodOut, meta)
+            if e != nil {
                 return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(e)}, nil
+            }
+        } else {
+            // Default mapping using generated transforms
+            switch call.Name {
+            {{- range .Toolset.Tools }}
+            {{- if .IsMethodBacked }}
+            case tools.Ident({{ printf "%q" .QualifiedName }}):
+                {{- if .ResultAliasesMethod }}
+                result = methodOut
+                {{- else }}
+                result = Init{{ goify .Name true }}ToolResult(methodOut.({{ .MethodResultTypeRef }}))
+                {{- end }}
+            {{- end }}
+            {{- end }}
+            default:
+                result = methodOut
             }
         }
 
