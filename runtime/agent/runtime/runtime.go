@@ -307,6 +307,11 @@ type (
 		// OnMissingFields controls behavior when validation indicates missing fields:
 		// "finalize" | "await_clarification" | "resume"
 		OnMissingFields MissingFieldsAction
+
+		// History, when non-nil, transforms the message history before each planner
+		// invocation (PlanStart and PlanResume). It can truncate or compress history
+		// while preserving system prompts and logical turn boundaries.
+		History HistoryPolicy
 	}
 )
 
@@ -1077,6 +1082,20 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	return handle, nil
 }
 
+// CancelRun requests cancellation of a running workflow identified by runID.
+// It is safe to call CancelRun multiple times for the same run; if the runtime
+// no longer tracks a handle for the given run, the call is treated as a no-op.
+func (r *Runtime) CancelRun(ctx context.Context, runID string) error {
+	r.handleMu.RLock()
+	handle, ok := r.runHandles[runID]
+	r.handleMu.RUnlock()
+	if !ok || handle == nil {
+		// Run is not currently tracked; treat as already terminated.
+		return nil
+	}
+	return handle.Cancel(ctx)
+}
+
 // PauseRun requests the underlying workflow to pause via the standard pause signal.
 // Returns an error if the run is unknown or signaling fails.
 func (r *Runtime) PauseRun(ctx context.Context, req interrupt.PauseRequest) error {
@@ -1139,6 +1158,26 @@ func (r *Runtime) ProvideToolResults(ctx context.Context, rs interrupt.ToolResul
 	return handle.Signal(ctx, interrupt.SignalProvideToolResults, rs)
 }
 
+// RunStatus returns the coarse-grained lifecycle status for the given run by
+// delegating to the configured run store. When no record exists for the given
+// run ID, RunStatus returns run.ErrNotFound.
+func (r *Runtime) RunStatus(ctx context.Context, runID string) (run.Status, error) {
+	if strings.TrimSpace(runID) == "" {
+		return "", fmt.Errorf("run id is required")
+	}
+	if r.RunStore == nil {
+		return "", fmt.Errorf("run store not configured")
+	}
+	rec, err := r.RunStore.Load(ctx, runID)
+	if err != nil {
+		return "", err
+	}
+	if rec.RunID == "" {
+		return "", run.ErrNotFound
+	}
+	return rec.Status, nil
+}
+
 // addToolsetLocked registers a toolset and its specs without acquiring the lock.
 // Caller must hold r.mu.
 func (r *Runtime) addToolsetLocked(ts ToolsetRegistration) {
@@ -1151,13 +1190,6 @@ func (r *Runtime) addToolsetLocked(ts ToolsetRegistration) {
 func (r *Runtime) addToolSpecsLocked(specs []tools.ToolSpec) {
 	for _, spec := range specs {
 		r.toolSpecs[spec.Name] = spec
-		// Cache parsed payload schema for hint building
-		if len(spec.Payload.Schema) > 0 {
-			var m map[string]any
-			if err := json.Unmarshal(spec.Payload.Schema, &m); err == nil {
-				r.toolSchemas[string(spec.Name)] = m
-			}
-		}
 	}
 }
 
@@ -1236,9 +1268,13 @@ func (r *Runtime) removeReminder(runID, id string) {
 // ToolSchema returns the parsed JSON schema for the tool payload when available.
 func (r *Runtime) ToolSchema(name tools.Ident) (map[string]any, bool) {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
-	m, ok := r.toolSchemas[string(name)]
-	if !ok {
+	spec, ok := r.toolSpecs[name]
+	r.mu.RUnlock()
+	if !ok || len(spec.Payload.Schema) == 0 {
+		return nil, false
+	}
+	var m map[string]any
+	if err := json.Unmarshal(spec.Payload.Schema, &m); err != nil {
 		return nil, false
 	}
 	// shallow copy to avoid external mutation

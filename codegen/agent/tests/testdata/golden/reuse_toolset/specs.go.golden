@@ -7,6 +7,8 @@
 package specs
 
 import (
+	_ "embed"
+	"encoding/json"
 	shared "goa.design/goa-ai/alpha/tools/shared"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -20,6 +22,25 @@ var (
 	metadata = make([]policy.ToolMetadata, 0)
 )
 
+//go:embed tool_schemas.json
+var toolSchemasJSON []byte
+
+type embeddedTypeSchema struct {
+	Name   string          `json:"name"`
+	Schema json.RawMessage `json:"schema,omitempty"`
+}
+
+type embeddedToolSchema struct {
+	ID      string              `json:"id"`
+	Payload *embeddedTypeSchema `json:"payload,omitempty"`
+	Result  *embeddedTypeSchema `json:"result,omitempty"`
+	Sidecar *embeddedTypeSchema `json:"sidecar,omitempty"`
+}
+
+type embeddedCatalog struct {
+	Tools []embeddedToolSchema `json:"tools"`
+}
+
 func init() {
 	// shared toolset
 	Specs = append(Specs, shared.Specs...)
@@ -27,6 +48,37 @@ func init() {
 	sort.Slice(Specs, func(i, j int) bool {
 		return string(Specs[i].Name) < string(Specs[j].Name)
 	})
+
+	// Hydrate schemas from embedded tool_schemas.json so Specs carries the
+	// same canonical JSON Schemas advertised to UIs and other consumers.
+	if len(toolSchemasJSON) == 0 {
+		return
+	}
+	var cat embeddedCatalog
+	if err := json.Unmarshal(toolSchemasJSON, &cat); err != nil || len(cat.Tools) == 0 {
+		return
+	}
+	byID := make(map[tools.Ident]embeddedToolSchema, len(cat.Tools))
+	for _, t := range cat.Tools {
+		id := tools.Ident(t.ID)
+		byID[id] = t
+	}
+	for i := range Specs {
+		s := &Specs[i]
+		ts, ok := byID[s.Name]
+		if !ok {
+			continue
+		}
+		if ts.Payload != nil && len(ts.Payload.Schema) > 0 {
+			s.Payload.Schema = append([]byte(nil), ts.Payload.Schema...)
+		}
+		if ts.Result != nil && len(ts.Result.Schema) > 0 {
+			s.Result.Schema = append([]byte(nil), ts.Result.Schema...)
+		}
+		if ts.Sidecar != nil && len(ts.Sidecar.Schema) > 0 && s.Sidecar != nil {
+			s.Sidecar.Schema = append([]byte(nil), ts.Sidecar.Schema...)
+		}
+	}
 }
 
 // Names returns sorted tool identifiers for all aggregated toolsets.

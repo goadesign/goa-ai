@@ -94,10 +94,10 @@ type (
 		Doc string
 		// Type definition line (e.g., "MyType struct { ... }" or "MyType = service.Type").
 		Def string
-		// Variable name for the JSON schema (e.g., "myToolPayloadSchema").
-		SchemaVar string
-		// JSON schema as a Go byte slice literal.
-		SchemaLiteral string
+		// SchemaJSON holds the OpenAPI JSON schema bytes for this type. When
+		// empty, no schema is available or the type cannot be represented as
+		// a JSON schema.
+		SchemaJSON []byte
 		// Typed codec variable name (e.g., "MyToolPayloadCodec").
 		ExportedCodec string
 		// Untyped codec variable name (e.g., "myToolPayloadCodec").
@@ -154,6 +154,10 @@ type (
 		JSONValidationSrc []string
 		TransformBody     string
 		TransformHelpers  []*codegen.TransformFunctionData
+		// ImplementsBounds indicates that this type implements agent.BoundedResult.
+		// When true, templates emit a Bounds() method on the result alias type so
+		// runtimes can rely on the interface rather than reflection.
+		ImplementsBounds bool
 	}
 
 	// toolSpecBuilder walks tool types and generates corresponding type metadata,
@@ -455,6 +459,56 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	if tool == nil || tool.Toolset == nil {
 		return nil, fmt.Errorf("invalid tool metadata: nil tool or toolset")
 	}
+	// For bounded tool results, extend the effective attribute with a canonical
+	// bounds field. This ensures:
+	//
+	//   - JSON schemas and tool_schemas.json expose a standard "bounds" property.
+	//   - Generated result alias types include a Bounds helper field with
+	//     non-pointer Returned/Truncated fields and optional Total/RefinementHint,
+	//     which in turn enables a simple, uniform implementation of
+	//     agent.BoundedResult.
+	if usage == usageResult && tool.BoundedResult && att != nil && att.Type != goaexpr.Empty {
+		if obj := goaexpr.AsObject(att.Type); obj != nil {
+			// Avoid mutating the shared design expression; work on a shallow copy of
+			// the attribute and its object.
+			dup := *att
+			// Synthesize an attribute for the canonical bounds metadata. The
+			// underlying schema is a small object with required returned/truncated
+			// and optional total/refinement_hint fields so the generated helper
+			// struct uses non-pointer fields for required data.
+			boundsAttr := &goaexpr.AttributeExpr{
+				Type: &goaexpr.Object{
+					&goaexpr.NamedAttributeExpr{
+						Name:      "returned",
+						Attribute: &goaexpr.AttributeExpr{Type: goaexpr.Int},
+					},
+					&goaexpr.NamedAttributeExpr{
+						Name:      "total",
+						Attribute: &goaexpr.AttributeExpr{Type: goaexpr.Int},
+					},
+					&goaexpr.NamedAttributeExpr{
+						Name:      "truncated",
+						Attribute: &goaexpr.AttributeExpr{Type: goaexpr.Boolean},
+					},
+					&goaexpr.NamedAttributeExpr{
+						Name:      "refinement_hint",
+						Attribute: &goaexpr.AttributeExpr{Type: goaexpr.String},
+					},
+				},
+				Validation: &goaexpr.ValidationExpr{
+					Required: []string{"returned", "truncated"},
+				},
+			}
+			boundsObj := make(goaexpr.Object, 0, len(*obj)+1)
+			boundsObj = append(boundsObj, *obj...)
+			boundsObj = append(boundsObj, &goaexpr.NamedAttributeExpr{
+				Name:      "bounds",
+				Attribute: boundsAttr,
+			})
+			dup.Type = &boundsObj
+			att = &dup
+		}
+	}
 	typeName := codegen.Goify(tool.Name, true)
 	switch usage {
 	case usagePayload:
@@ -477,8 +531,13 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	// (e.g., *alpha.Doc) even for non-method-backed tools. This ensures
 	// deterministic aliasing and imports and matches the repository tests
 	// which assert service-qualified references in generated codecs.
+	//
+	// For bounded tool RESULTS, we intentionally materialize a concrete
+	// defined type (rather than an alias) so that codegen can attach the
+	// agent.BoundedResult interface via a method on the result type.
+	defineType := usage == usageResult && tool.BoundedResult
 	// Materialize definition and type reference
-	tt, defLine, fullRef, imports := b.materialize(typeName, att, scope)
+	tt, defLine, fullRef, imports := b.materialize(typeName, att, scope, defineType)
 	// Determine pointer semantics for top-level alias/value.
 	aliasIsPointer := strings.Contains(defLine, "= *")
 	ptr := aliasIsPointer || strings.HasPrefix(fullRef, "*")
@@ -488,11 +547,6 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	if err != nil {
 		return nil, err
 	}
-	schemaLiteral := formatSchema(schemaBytes)
-	schemaVar := ""
-	if schemaLiteral != "" {
-		schemaVar = lowerCamel(typeName) + "Schema"
-	}
 
 	doc := fmt.Sprintf("%s defines the JSON %s for the %s tool.", typeName, usage, tool.QualifiedName)
 	info := &typeData{
@@ -500,8 +554,7 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 		TypeName:      typeName,
 		Doc:           doc,
 		Def:           defLine,
-		SchemaVar:     schemaVar,
-		SchemaLiteral: schemaLiteral,
+		SchemaJSON:    schemaBytes,
 		ExportedCodec: typeName + "Codec",
 		GenericCodec:  lowerCamel(typeName) + "Codec",
 		MarshalFunc:   "Marshal" + typeName,
@@ -656,6 +709,33 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 			info.FieldDescs = fdesc
 		}
 	}
+	// For bounded tool results, mark the type as implementing agent.BoundedResult
+	// so templates can emit a simple ResultBounds method that exposes the
+	// canonical Bounds contract. Bounded results are decoded as pointers so the
+	// runtime can reliably detect agent.BoundedResult via type assertions
+	// (deriveBounds) when enforcing bounded-view contracts.
+	if usage == usageResult && tool.BoundedResult {
+		info.ImplementsBounds = true
+		// Force pointer semantics for bounded results so codecs return
+		// *<ResultType>. This ensures decoded values implement the
+		// agent.BoundedResult interface (which has a pointer receiver) and
+		// allows the runtime to derive Bounds metadata from the typed result.
+		info.Pointer = true
+		const agentPath = "goa.design/goa-ai/runtime/agent"
+		hasAgentImport := false
+		for _, im := range info.TypeImports {
+			if im != nil && im.Path == agentPath {
+				hasAgentImport = true
+				break
+			}
+		}
+		if !hasAgentImport {
+			info.TypeImports = append(info.TypeImports, &codegen.ImportSpec{
+				Name: "agent",
+				Path: agentPath,
+			})
+		}
+	}
 	b.types[key] = info
 	// Also index by the public type name so auxiliary passes (e.g.,
 	// validator collection) can detect that a concrete alias already
@@ -700,10 +780,12 @@ func isEmptyStruct(att *goaexpr.AttributeExpr) bool {
 // (for local definitions), the fully-qualified reference with correct pointer
 // semantics, and the set of imports needed. For service aliases, ServiceImport
 // is returned to drive deterministic imports downstream.
-// materialize returns the effective attribute (unchanged), an empty type
-// definition (we do not synthesize local types), the fully-qualified reference
-// to the owner or primitive type, and the imports required.
-func (b *toolSpecBuilder) materialize(typeName string, att *goaexpr.AttributeExpr, scope *codegen.NameScope) (tt *goaexpr.AttributeExpr, defLine string, fullRef string, imports []*codegen.ImportSpec) {
+// materialize returns the effective attribute (unchanged), an optional type
+// definition (alias or concrete type), the fully-qualified reference to the
+// owner or primitive type, and the imports required. When defineType is true
+// and the effective attribute is an object, a concrete struct type is emitted
+// instead of an alias so methods (for example, Bounds()) can be attached.
+func (b *toolSpecBuilder) materialize(typeName string, att *goaexpr.AttributeExpr, scope *codegen.NameScope, defineType bool) (tt *goaexpr.AttributeExpr, defLine string, fullRef string, imports []*codegen.ImportSpec) {
 	if att.Type == goaexpr.Empty {
 		// Synthesize a concrete, named empty payload type so templates
 		// always have a valid type reference. Using an alias keeps
@@ -801,7 +883,13 @@ func (b *toolSpecBuilder) materialize(typeName string, att *goaexpr.AttributeExp
 		// referenced locally. Do not apply default-based pointer elision here so
 		// validation pointer semantics stay aligned with generated field types.
 		rhs := scope.GoTypeDef(cloneWithJSONTags(att), false, false)
-		defLine = typeName + " = " + rhs
+		if defineType {
+			// Emit a concrete struct type so callers can attach methods (for
+			// example, agent.BoundedResult on bounded tool result types).
+			defLine = typeName + " " + rhs
+		} else {
+			defLine = typeName + " = " + rhs
+		}
 		fullRef = typeName
 	default:
 		// Primitives: refer directly by type (no local alias emitted).
@@ -811,12 +899,10 @@ func (b *toolSpecBuilder) materialize(typeName string, att *goaexpr.AttributeExp
 	return tt, defLine, fullRef, imports
 }
 
-// stableTypeKey returns a deterministic cache key for the top-level type.
-//
-//   - For ServiceReferenced user types, the fully-qualified ref is used so
-//     aliases converge across tools.
-//   - Otherwise, the deterministic local name is used.
 func stableTypeKey(tool *ToolData, usage typeUsage) string {
+	if tool == nil {
+		return ""
+	}
 	tn := codegen.Goify(tool.Name, true)
 	switch usage {
 	case usagePayload:
@@ -826,7 +912,11 @@ func stableTypeKey(tool *ToolData, usage typeUsage) string {
 	case usageSidecar:
 		tn += "Sidecar"
 	}
-	return "name:" + tn
+	scope := ""
+	if tool.Toolset != nil {
+		scope = tool.Toolset.QualifiedName
+	}
+	return "scope:" + scope + "/name:" + tn
 }
 
 func newToolSpecsData(genpkg string, svc *service.Data) *toolSpecsData {
@@ -1288,16 +1378,6 @@ func joinImportPath(genpkg, rel string) string {
 		base = strings.TrimSuffix(base, "/gen")
 	}
 	return path.Join(base, "gen", rel)
-}
-
-// formatSchema formats a JSON schema byte slice as a Go byte slice literal
-// suitable for embedding in generated code.
-func formatSchema(schema []byte) string {
-	if len(schema) == 0 {
-		return ""
-	}
-	content := string(schema)
-	return "[]byte(`\n" + content + "\n`)"
 }
 
 // lowerCamel converts a string to lower camelCase using Goa's Goify function.

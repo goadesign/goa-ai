@@ -141,6 +141,28 @@ planners, and the runtime:
     planners and UIs never need to decode raw JSON; they rely on the runtime
     and generated codecs instead.
 
+- **Bounded tool results and Bounds metadata**
+  - Goa‑ai defines a small, provider‑agnostic `agent.Bounds` contract that
+    describes how a tool result is bounded relative to the full data set
+    (`Returned`, `Total`, `Truncated`, `RefinementHint`).
+  - Tools opt into bounded semantics via the DSL `BoundedResult()` helper. At
+    codegen time this:
+    - annotates the generated `tools.ToolSpec` with `BoundedResult: true`,
+    - adds a `Bounds *agent.Bounds` field (JSON `bounds` property) to the
+      generated result alias type so models and `tool_schemas.json` see
+      canonical truncation metadata, and
+    - generates a `ResultBounds() agent.Bounds` method so result types implement
+      the `agent.BoundedResult` interface.
+  - When a bounded tool result is decoded, the runtime derives `*agent.Bounds`
+    only from the `agent.BoundedResult` interface implemented by the result
+    type and attaches the derived pointer to `planner.ToolResult.Bounds`, hook
+    events, stream `ToolEnd` payloads, and memory events.
+  - For tools marked `BoundedResult`, the runtime enforces that `Bounds` are
+    present and that any untruncated result (`Bounds.Truncated == false`) stays
+    below a configured JSON size limit. Violations panic fast rather than
+    silently streaming very large payloads to the model; trimming logic remains
+    entirely in service code.
+
 ## Pause & Resume
 
 Human-in-loop workflows can suspend and resume runs using the runtime’s interrupt helpers. Behind the scenes, pause/resume signals update the run store and emit `run_paused`/`run_resumed` hook events so UI layers stay in sync.
@@ -481,6 +503,57 @@ _ = rt.OverridePolicy(chat.AgentID, runtime.RunPolicy{
 ```
 
 Services keep direct access to their Pulse client to create/close per-turn streams as needed, while the runtime handles event fan-out.
+
+## History Policies
+
+Agents can declare a history policy via the DSL; the generated registration
+materializes it into `runtime.RunPolicy.History`. At runtime, the history
+policy is applied to the message transcript before each planner invocation
+(`PlanStart` and `PlanResume`).
+
+Two builtin policies are provided:
+
+- **KeepRecentTurns(n)** — sliding window that preserves:
+  - All system messages at the start of the conversation.
+  - The last `n` logical turns (user + assistant + tool calls/results).
+
+  ```go
+  // Configure at design time (DSL)
+  RunPolicy(func() {
+      History(func() {
+          KeepRecentTurns(20)
+      })
+  })
+  ```
+
+- **Compress(triggerAt, keepRecent, client)** — model-assisted summarization:
+  - When the number of turns reaches `triggerAt`, older turns are summarized
+    into a single message.
+  - The most recent `keepRecent` turns are kept in full fidelity.
+  - Compression uses a `model.Client` (supplied via the generated
+    `HistoryModel` field on the agent config) with `ModelClassSmall`.
+
+  ```go
+  // DSL
+  RunPolicy(func() {
+      History(func() {
+          Compress(30, 10) // trigger at 30 turns, keep 10 recent
+      })
+  })
+
+  // Registration (generated config + application wiring)
+  cfg := chat.ChatAgentConfig{
+      Planner:      &ChatPlanner{},
+      HistoryModel: smallModelClient, // implements model.Client
+  }
+  if err := chat.RegisterChatAgent(ctx, rt, cfg); err != nil {
+      // handle error
+  }
+  ```
+
+The runtime helper `applyHistoryPolicy` applies the configured `HistoryPolicy`
+to the incoming message slice. On errors, it logs a warning and falls back to
+the original messages.
 
 ## Schemas and Summaries
 

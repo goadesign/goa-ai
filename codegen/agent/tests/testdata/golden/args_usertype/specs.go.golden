@@ -19,30 +19,25 @@ const (
 
 var Specs = []tools.ToolSpec{
 	{
-		Name:        Store,
-		Service:     "alpha",
-		Toolset:     "alpha.docs",
-		Description: "Store",
-		Tags:        []string{},
+		Name:          Store,
+		Service:       "alpha",
+		Toolset:       "alpha.docs",
+		Description:   "Store",
+		Tags:          []string{},
+		BoundedResult: false,
 		Payload: tools.TypeSpec{
 			Name:   "StorePayload",
-			Schema: storePayloadSchema,
+			Schema: []byte("{\"$defs\":{\"Doc\":{\"title\":\"Doc\",\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Identifier\",\"example\":\"Dignissimos quo illum.\"},\"title\":{\"type\":\"string\",\"description\":\"Title\",\"example\":\"Nemo quia.\"}},\"example\":{\"id\":\"Consequatur reprehenderit.\",\"title\":\"Molestiae velit quam amet cupiditate non.\"},\"required\":[\"id\",\"title\"]}},\"$ref\":\"#/$defs/Doc\",\"required\":[\"title\"]}"),
 			Codec:  storePayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:   "StoreResult",
-			Schema: storeResultSchema,
+			Schema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"Doc\",\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Identifier\",\"example\":\"Ea ut.\"},\"title\":{\"type\":\"string\",\"description\":\"Title\",\"example\":\"Vitae corrupti.\"}},\"example\":{\"id\":\"Amet distinctio aperiam eligendi.\",\"title\":\"Velit maxime.\"},\"required\":[\"id\"]}"),
 			Codec:  storeResultCodec,
 		},
 		Sidecar: nil,
 	},
 }
-var storePayloadSchema = []byte(`
-{"$defs":{"Doc":{"title":"Doc","type":"object","properties":{"id":{"type":"string","description":"Identifier","example":"Dignissimos quo illum."},"title":{"type":"string","description":"Title","example":"Nemo quia."}},"example":{"id":"Consequatur reprehenderit.","title":"Molestiae velit quam amet cupiditate non."},"required":["id","title"]}},"$ref":"#/$defs/Doc","required":["title"]}
-`)
-var storeResultSchema = []byte(`
-{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"Doc","type":"object","properties":{"id":{"type":"string","description":"Identifier","example":"Ea ut."},"title":{"type":"string","description":"Title","example":"Vitae corrupti."}},"example":{"id":"Amet distinctio aperiam eligendi.","title":"Velit maxime."},"required":["id"]}
-`)
 
 var (
 	specIndex = make(map[tools.Ident]*tools.ToolSpec, len(Specs))

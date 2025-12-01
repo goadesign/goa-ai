@@ -8,9 +8,9 @@ import (
 )
 
 // RunPolicy defines execution constraints for the current agent. Use RunPolicy
-// to configure resource limits, timeouts, and runtime behaviors that govern how
-// the agent executes. These policies are enforced by the runtime during agent
-// execution.
+// to configure resource limits, timeouts, history management, and runtime
+// behaviors that govern how the agent executes. These policies are enforced by
+// the runtime during agent execution.
 //
 // RunPolicy must appear in an Agent expression.
 //
@@ -21,6 +21,7 @@ import (
 //   - TimeBudget to set maximum execution duration
 //   - InterruptsAllowed to enable or disable user interruptions
 //   - OnMissingFields to configure validation behavior
+//   - History to configure how conversation history is truncated or compressed
 //
 // Example:
 //
@@ -30,6 +31,9 @@ import (
 //	        TimeBudget("5m")
 //	        InterruptsAllowed(true)
 //	        OnMissingFields("await_clarification")
+//	        History(func() {
+//	            KeepRecentTurns(20)
+//	        })
 //	    })
 //	})
 func RunPolicy(fn func()) {
@@ -47,6 +51,43 @@ func RunPolicy(fn func()) {
 	}
 	if fn != nil {
 		eval.Execute(fn, policy)
+	}
+}
+
+// History defines how the agent runtime manages conversation history before
+// each planner invocation. It can either:
+//
+//   - KeepRecentTurns(N) to retain only the last N turns, or
+//   - Compress(triggerAt, keepRecent) to summarize older turns once the
+//     trigger threshold is reached.
+//
+// At most one history policy may be configured per agent.
+//
+// History must appear inside a RunPolicy expression.
+//
+// Example:
+//
+//	RunPolicy(func() {
+//	    History(func() {
+//	        KeepRecentTurns(20)
+//	    })
+//	})
+func History(fn func()) {
+	policy, ok := eval.Current().(*expragents.RunPolicyExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	if policy.History != nil {
+		eval.ReportError("History already defined for agent %q", policy.Agent.Name)
+		return
+	}
+	h := &expragents.HistoryExpr{
+		Policy: policy,
+	}
+	policy.History = h
+	if fn != nil {
+		eval.Execute(fn, h)
 	}
 }
 
@@ -168,6 +209,79 @@ func OnMissingFields(action string) {
 // CapsOption defines a functional option for configuring per-run resource limits
 // on agent execution.
 type CapsOption func(*expragents.CapsExpr)
+
+// KeepRecentTurns configures a history policy that retains only the most recent
+// N user/assistant turns while preserving system prompts and tool exchanges.
+//
+// KeepRecentTurns must appear inside a History expression.
+//
+// Example:
+//
+//	RunPolicy(func() {
+//	    History(func() {
+//	        KeepRecentTurns(20)
+//	    })
+//	})
+func KeepRecentTurns(n int) {
+	h, ok := eval.Current().(*expragents.HistoryExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	if h.Mode != "" {
+		eval.ReportError("only one history policy may be configured per agent")
+		return
+	}
+	if n <= 0 {
+		eval.ReportError("KeepRecentTurns requires n > 0, got %d", n)
+		return
+	}
+	h.Mode = expragents.HistoryModeKeepRecent
+	h.KeepRecent = n
+}
+
+// Compress configures a history policy that summarizes older turns once a
+// trigger threshold is reached, retaining the most recent keepRecent turns in
+// full fidelity. The runtime uses the configured thresholds to construct a
+// compression policy; applications supply the model client via generated
+// configuration when Compress is enabled.
+//
+// Compress must appear inside a History expression. At most one of
+// KeepRecentTurns or Compress may be configured.
+//
+// Example:
+//
+//	RunPolicy(func() {
+//	    History(func() {
+//	        Compress(30, 10) // trigger at 30 turns, keep 10 recent
+//	    })
+//	})
+func Compress(triggerAt, keepRecent int) {
+	h, ok := eval.Current().(*expragents.HistoryExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	if h.Mode != "" {
+		eval.ReportError("only one history policy may be configured per agent")
+		return
+	}
+	if triggerAt <= 0 {
+		eval.ReportError("Compress requires triggerAt > 0, got %d", triggerAt)
+		return
+	}
+	if keepRecent < 0 {
+		eval.ReportError("Compress requires keepRecent >= 0, got %d", keepRecent)
+		return
+	}
+	if keepRecent >= triggerAt {
+		eval.ReportError("Compress requires keepRecent < triggerAt (got %d >= %d)", keepRecent, triggerAt)
+		return
+	}
+	h.Mode = expragents.HistoryModeCompress
+	h.TriggerAt = triggerAt
+	h.CompressKeepRecent = keepRecent
+}
 
 // MaxToolCalls configures the maximum number of tool invocations allowed during
 // agent execution. Use this with DefaultCaps to limit total tool usage.

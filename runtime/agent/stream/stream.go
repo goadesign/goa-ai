@@ -273,6 +273,10 @@ type (
 		// by tool implementations and surfaced for observability; the runtime does not
 		// modify it.
 		Bounds *agent.Bounds `json:"bounds,omitempty"`
+		// Sidecar carries rich, non-provider data attached to the tool result. It is
+		// never serialized into model provider requests and is intended for UI artifacts
+		// and observability consumers.
+		Sidecar map[string]any `json:"sidecar,omitempty"`
 		// Duration is the wall-clock execution time for the tool activity, including any
 		// queuing delay, retries, and processing time. Clients can display this in
 		// performance dashboards or debug panels to identify slow tools.

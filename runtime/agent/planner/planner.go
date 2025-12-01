@@ -33,6 +33,14 @@ type PlannerContext interface {
 	Tracer() telemetry.Tracer
 	State() AgentState
 	ModelClient(id string) (model.Client, bool)
+	// AddReminder registers or updates a run-scoped system reminder. Planners use
+	// this to surface structured, rate-limited guidance (for example, “review
+	// open todos”) without baking prompt text directly into planner logic.
+	AddReminder(r reminder.Reminder)
+	// RemoveReminder clears a previously registered reminder by ID. Planners call
+	// this when the conditions for a reminder no longer hold so future turns and
+	// prompts stop surfacing outdated guidance.
+	RemoveReminder(id string)
 }
 
 // AgentState provides ephemeral, per-run state storage for planners.

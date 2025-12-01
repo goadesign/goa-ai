@@ -19,30 +19,25 @@ const (
 
 var Specs = []tools.ToolSpec{
 	{
-		Name:        Add,
-		Service:     "alpha",
-		Toolset:     "alpha.math",
-		Description: "Add",
-		Tags:        []string{},
+		Name:          Add,
+		Service:       "alpha",
+		Toolset:       "alpha.math",
+		Description:   "Add",
+		Tags:          []string{},
+		BoundedResult: false,
 		Payload: tools.TypeSpec{
 			Name:   "AddPayload",
-			Schema: addPayloadSchema,
+			Schema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"AddPayload\",\"type\":\"object\",\"properties\":{\"left\":{\"type\":\"integer\",\"description\":\"Left operand\",\"example\":1056967519,\"format\":\"int32\"},\"right\":{\"type\":\"integer\",\"description\":\"Right operand\",\"example\":1084554470,\"format\":\"int32\"}},\"example\":{\"left\":1051318795,\"right\":1835081150},\"required\":[\"left\",\"right\"]}"),
 			Codec:  addPayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:   "AddResult",
-			Schema: addResultSchema,
+			Schema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"AddResult\",\"type\":\"object\",\"properties\":{\"sum\":{\"type\":\"integer\",\"description\":\"Sum\",\"example\":884537394,\"format\":\"int32\"}},\"example\":{\"sum\":2062538041},\"required\":[\"sum\"]}"),
 			Codec:  addResultCodec,
 		},
 		Sidecar: nil,
 	},
 }
-var addPayloadSchema = []byte(`
-{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"AddPayload","type":"object","properties":{"left":{"type":"integer","description":"Left operand","example":1056967519,"format":"int32"},"right":{"type":"integer","description":"Right operand","example":1084554470,"format":"int32"}},"example":{"left":1051318795,"right":1835081150},"required":["left","right"]}
-`)
-var addResultSchema = []byte(`
-{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"AddResult","type":"object","properties":{"sum":{"type":"integer","description":"Sum","example":884537394,"format":"int32"}},"example":{"sum":2062538041},"required":["sum"]}
-`)
 
 var (
 	specIndex = make(map[tools.Ident]*tools.ToolSpec, len(Specs))

@@ -281,15 +281,6 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 	},
 }
 
-var AssistantAssistantMcpToolsetToolSchemas = map[string]string{
-	"analyze_sentiment": "{\"additionalProperties\":false,\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}",
-	"extract_keywords":  "{\"additionalProperties\":false,\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}",
-	"summarize_text":    "{\"additionalProperties\":false,\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}",
-	"search":            "{\"additionalProperties\":false,\"properties\":{\"limit\":{\"type\":\"integer\"},\"query\":{\"type\":\"string\"}},\"required\":[\"query\"],\"type\":\"object\"}",
-	"execute_code":      "{\"additionalProperties\":false,\"properties\":{\"code\":{\"type\":\"string\"},\"language\":{\"enum\":[\"python\",\"javascript\"],\"type\":\"string\"}},\"required\":[\"language\",\"code\"],\"type\":\"object\"}",
-	"process_batch":     "{\"additionalProperties\":false,\"properties\":{\"blob\":{\"type\":\"string\"},\"format\":{\"enum\":[\"json\",\"text\",\"blob\",\"uri\"],\"type\":\"string\"},\"items\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"mimeType\":{\"type\":\"string\"},\"uri\":{\"type\":\"string\"}},\"required\":[\"items\"],\"type\":\"object\"}",
-}
-
 var AssistantAssistantMcpToolsetToolExamples = map[string]string{
 	"analyze_sentiment": "{\"text\":\"abc123\"}",
 	"extract_keywords":  "{\"text\":\"abc123\"}",
@@ -395,7 +386,6 @@ func AssistantAssistantMcpToolsetHandleError(toolName tools.Ident, err error) pl
 
 func AssistantAssistantMcpToolsetRetryHint(toolName tools.Ident, err error) *planner.RetryHint {
 	key := string(toolName)
-	schema := AssistantAssistantMcpToolsetToolSchemas[key]
 	example := AssistantAssistantMcpToolsetToolExamples[key]
 	var retryErr *retry.RetryableError
 	if errors.As(err, &retryErr) {
@@ -410,7 +400,16 @@ func AssistantAssistantMcpToolsetRetryHint(toolName tools.Ident, err error) *pla
 	if errors.As(err, &rpcErr) {
 		switch rpcErr.Code {
 		case mcpruntime.JSONRPCInvalidParams:
-			prompt := retry.BuildRepairPrompt("tools/call:"+key, rpcErr.Message, example, schema)
+			// Lookup schema from ToolSpecs so payload schemas have a single source
+			// of truth. Fall back to an empty schema when not found.
+			var schemaJSON []byte
+			for _, spec := range AssistantAssistantMcpToolsetToolSpecs {
+				if string(spec.Name) == key {
+					schemaJSON = spec.Payload.Schema
+					break
+				}
+			}
+			prompt := retry.BuildRepairPrompt("tools/call:"+key, rpcErr.Message, example, string(schemaJSON))
 			return &planner.RetryHint{
 				Reason:         planner.RetryReasonInvalidArguments,
 				Tool:           toolName,

@@ -19,30 +19,25 @@ const (
 
 var Specs = []tools.ToolSpec{
 	{
-		Name:        Echo,
-		Service:     "alpha",
-		Toolset:     "alpha.ops",
-		Description: "Echo",
-		Tags:        []string{},
+		Name:          Echo,
+		Service:       "alpha",
+		Toolset:       "alpha.ops",
+		Description:   "Echo",
+		Tags:          []string{},
+		BoundedResult: false,
 		Payload: tools.TypeSpec{
 			Name:   "EchoPayload",
-			Schema: echoPayloadSchema,
+			Schema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
 			Codec:  echoPayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:   "EchoResult",
-			Schema: echoResultSchema,
+			Schema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
 			Codec:  echoResultCodec,
 		},
 		Sidecar: nil,
 	},
 }
-var echoPayloadSchema = []byte(`
-{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"string"}
-`)
-var echoResultSchema = []byte(`
-{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"string"}
-`)
 
 var (
 	specIndex = make(map[tools.Ident]*tools.ToolSpec, len(Specs))

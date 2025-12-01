@@ -19,30 +19,25 @@ const (
 
 var Specs = []tools.ToolSpec{
 	{
-		Name:        SummarizeDoc,
-		Service:     "calc",
-		Toolset:     "calc.helpers",
-		Description: "Summarize a document",
-		Tags:        []string{},
+		Name:          SummarizeDoc,
+		Service:       "calc",
+		Toolset:       "calc.helpers",
+		Description:   "Summarize a document",
+		Tags:          []string{},
+		BoundedResult: false,
 		Payload: tools.TypeSpec{
 			Name:   "SummarizeDocPayload",
-			Schema: summarizeDocPayloadSchema,
+			Schema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"SummarizePayload\",\"type\":\"object\",\"properties\":{\"doc_id\":{\"type\":\"string\",\"description\":\"Document identifier\",\"example\":\"Magnam asperiores dolorum.\"}},\"example\":{\"doc_id\":\"Est ut.\"},\"required\":[\"doc_id\"]}"),
 			Codec:  summarizeDocPayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:   "SummarizeDocResult",
-			Schema: summarizeDocResultSchema,
+			Schema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"SummarizeResult\",\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"description\":\"Title\",\"example\":\"Eos qui exercitationem sed non.\"}},\"example\":{\"title\":\"Recusandae mollitia corporis.\"},\"required\":[\"title\"]}"),
 			Codec:  summarizeDocResultCodec,
 		},
 		Sidecar: nil,
 	},
 }
-var summarizeDocPayloadSchema = []byte(`
-{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"SummarizePayload","type":"object","properties":{"doc_id":{"type":"string","description":"Document identifier","example":"Magnam asperiores dolorum."}},"example":{"doc_id":"Est ut."},"required":["doc_id"]}
-`)
-var summarizeDocResultSchema = []byte(`
-{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"SummarizeResult","type":"object","properties":{"title":{"type":"string","description":"Title","example":"Eos qui exercitationem sed non."}},"example":{"title":"Recusandae mollitia corporis."},"required":["title"]}
-`)
 
 var (
 	specIndex = make(map[tools.Ident]*tools.ToolSpec, len(Specs))

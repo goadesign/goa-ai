@@ -258,6 +258,25 @@ func toPolicyRetryHint(hint *planner.RetryHint) *policy.RetryHint {
 	}
 }
 
+// applyHistoryPolicy applies the agent's history policy to the given messages.
+// When no policy is configured or the policy returns an error, messages are
+// returned unchanged. An empty slice from the policy is treated as a no-op to
+// avoid accidentally wiping history.
+func (r *Runtime) applyHistoryPolicy(ctx context.Context, reg *AgentRegistration, msgs []*model.Message) []*model.Message {
+	if reg.Policy.History == nil || len(msgs) == 0 {
+		return msgs
+	}
+	out, err := reg.Policy.History(ctx, msgs)
+	if err != nil {
+		r.logWarn(ctx, "history policy failed", err, "agent_id", reg.ID)
+		return msgs
+	}
+	if len(out) == 0 {
+		return msgs
+	}
+	return out
+}
+
 // logWarn emits a warning log and records the error in the current span if tracing
 // is enabled. If the logger is nil, this is a no-op.
 func (r *Runtime) logWarn(ctx context.Context, msg string, err error, kv ...any) {
@@ -282,13 +301,13 @@ func (r *Runtime) logWarn(ctx context.Context, msg string, err error, kv ...any)
 // Note: This implementation stamps events using reflection to update the embedded
 // baseEvent fields. A future enhancement could update event constructors to accept
 // turn tracking parameters directly for a cleaner implementation.
-func (r *Runtime) publishHook(ctx context.Context, evt hooks.Event, seq *turnSequencer) {
+func (r *Runtime) publishHook(ctx context.Context, evt hooks.Event, turnID string) {
 	if r.Bus == nil {
 		return
 	}
-	// Stamp the event with turn tracking if sequencer is provided
-	if seq != nil {
-		stampEventWithTurn(evt, seq)
+	// Stamp the event with turn ID if provided
+	if turnID != "" {
+		stampEventWithTurnID(evt, turnID)
 	}
 	if err := r.Bus.Publish(ctx, evt); err != nil {
 		r.logWarn(ctx, "hook publish failed", err, "event", evt.Type())
@@ -471,44 +490,42 @@ func filterToolCalls(calls []planner.ToolRequest, allowed []tools.Ident) []plann
 	return filtered
 }
 
-// stampEventWithTurn updates the baseEvent fields in an event with turn tracking
-// information. This uses a type switch to explicitly handle each event type in a
-// type-safe manner without reflection. The compiler will catch if we add new event
-// types and forget to handle them here.
-func stampEventWithTurn(evt hooks.Event, seq *turnSequencer) {
-	seqNum := seq.nextSeq()
-
+// stampEventWithTurnID updates the baseEvent fields in an event with the turn ID.
+// This uses a type switch to explicitly handle each event type in a type-safe manner
+// without reflection. The compiler will catch if we add new event types and forget
+// to handle them here.
+func stampEventWithTurnID(evt hooks.Event, turnID string) {
 	// Type switch to access and update the embedded baseEvent in each concrete event type.
 	// This is explicit, type-safe, and the compiler will help us maintain it.
 	switch e := evt.(type) {
 	case *hooks.RunStartedEvent:
-		e.SetTurn(seq.turnID, seqNum)
+		e.SetTurnID(turnID)
 	case *hooks.RunCompletedEvent:
-		e.SetTurn(seq.turnID, seqNum)
+		e.SetTurnID(turnID)
 	case *hooks.ToolCallScheduledEvent:
-		e.SetTurn(seq.turnID, seqNum)
+		e.SetTurnID(turnID)
 	case *hooks.ToolResultReceivedEvent:
-		e.SetTurn(seq.turnID, seqNum)
+		e.SetTurnID(turnID)
 	case *hooks.ToolCallUpdatedEvent:
-		e.SetTurn(seq.turnID, seqNum)
+		e.SetTurnID(turnID)
 	case *hooks.PlannerNoteEvent:
-		e.SetTurn(seq.turnID, seqNum)
+		e.SetTurnID(turnID)
 	case *hooks.AssistantMessageEvent:
-		e.SetTurn(seq.turnID, seqNum)
+		e.SetTurnID(turnID)
 	case *hooks.RetryHintIssuedEvent:
-		e.SetTurn(seq.turnID, seqNum)
+		e.SetTurnID(turnID)
 	case *hooks.MemoryAppendedEvent:
-		e.SetTurn(seq.turnID, seqNum)
+		e.SetTurnID(turnID)
 	case *hooks.PolicyDecisionEvent:
-		e.SetTurn(seq.turnID, seqNum)
+		e.SetTurnID(turnID)
 	case *hooks.AwaitClarificationEvent:
-		e.SetTurn(seq.turnID, seqNum)
+		e.SetTurnID(turnID)
 	case *hooks.AwaitExternalToolsEvent:
-		e.SetTurn(seq.turnID, seqNum)
+		e.SetTurnID(turnID)
 	case *hooks.RunPhaseChangedEvent:
-		e.SetTurn(seq.turnID, seqNum)
+		e.SetTurnID(turnID)
 	case *hooks.AgentRunStartedEvent:
-		e.SetTurn(seq.turnID, seqNum)
+		e.SetTurnID(turnID)
 	}
 }
 

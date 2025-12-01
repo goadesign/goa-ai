@@ -63,12 +63,6 @@ var {{ .Register.HelperName }}ToolSpecs = []tools.ToolSpec{
 {{- end }}
 }
 
-var {{ .Register.HelperName }}ToolSchemas = map[string]string{
-{{- range .Register.Tools }}
-	{{ printf "%q" .ID }}: {{ printf "%q" .InputSchema }},
-{{- end }}
-}
-
 var {{ .Register.HelperName }}ToolExamples = map[string]string{
 {{- range .Register.Tools }}
 	{{ printf "%q" .ID }}: {{ printf "%q" .ExampleArgs }},
@@ -171,7 +165,6 @@ func {{ .Register.HelperName }}HandleError(toolName tools.Ident, err error) plan
 
 func {{ .Register.HelperName }}RetryHint(toolName tools.Ident, err error) *planner.RetryHint {
     key := string(toolName)
-    schema := {{ .Register.HelperName }}ToolSchemas[key]
     example := {{ .Register.HelperName }}ToolExamples[key]
     var retryErr *retry.RetryableError
     if errors.As(err, &retryErr) {
@@ -186,7 +179,16 @@ func {{ .Register.HelperName }}RetryHint(toolName tools.Ident, err error) *plann
     if errors.As(err, &rpcErr) {
         switch rpcErr.Code {
         case mcpruntime.JSONRPCInvalidParams:
-            prompt := retry.BuildRepairPrompt("tools/call:"+key, rpcErr.Message, example, schema)
+            // Lookup schema from ToolSpecs so payload schemas have a single source
+            // of truth. Fall back to an empty schema when not found.
+            var schemaJSON []byte
+            for _, spec := range {{ .Register.HelperName }}ToolSpecs {
+                if string(spec.Name) == key {
+                    schemaJSON = spec.Payload.Schema
+                    break
+                }
+            }
+            prompt := retry.BuildRepairPrompt("tools/call:"+key, rpcErr.Message, example, string(schemaJSON))
             return &planner.RetryHint{
                 Reason:         planner.RetryReasonInvalidArguments,
                 Tool:           toolName,

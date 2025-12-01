@@ -202,6 +202,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			ToolName:         string(evt.ToolName),
 			Result:           evt.Result,
 			Bounds:           evt.Bounds,
+			Sidecar:          evt.Sidecar,
 			Duration:         evt.Duration,
 			Telemetry:        evt.Telemetry,
 			Error:            evt.Error,

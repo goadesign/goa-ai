@@ -54,11 +54,6 @@ type (
 		// (e.g., from user message through final assistant response). UI systems use this
 		// to render threaded conversations.
 		TurnID() string
-		// SeqInTurn returns the monotonic sequence number of this event within its turn,
-		// starting at 0. When TurnID is empty, SeqInTurn is 0. This ordering allows
-		// deterministic replay and helps UIs render events in the correct order even when
-		// delivery is out of sequence.
-		SeqInTurn() int
 	}
 
 	// RunStartedEvent fires when a run begins execution.
@@ -201,9 +196,9 @@ type (
 		// implementations and surfaced for observability; the runtime does not
 		// modify it.
 		Bounds *agent.Bounds
-		// Metadata holds rich, non-provider data attached to the tool result.
+		// Sidecar holds rich, non-provider data attached to the tool result.
 		// It is never serialized into model provider requests.
-		Metadata map[string]any
+		Sidecar map[string]any
 		// Duration is the wall-clock execution time for the tool activity.
 		Duration time.Duration
 		// Telemetry holds structured observability metadata (tokens, model, retries).
@@ -315,7 +310,7 @@ type (
 
 	// baseEvent holds common fields shared by all event types. It is embedded
 	// anonymously in each concrete event struct, providing implementations of
-	// the RunID, AgentID, Timestamp, TurnID, and SeqInTurn methods.
+	// the RunID, AgentID, Timestamp, and TurnID methods.
 	baseEvent struct {
 		runID     string
 		agentID   agent.Ident
@@ -326,9 +321,6 @@ type (
 		// turnID identifies the conversational turn this event belongs to (optional).
 		// When set, groups events for UI rendering and conversation tracking.
 		turnID string
-		// seqInTurn is the monotonic sequence number within the turn, starting at 0.
-		// Used to order events deterministically for display and debugging.
-		seqInTurn int
 	}
 
 	// AwaitClarificationEvent indicates the planner requested a human-provided
@@ -631,7 +623,7 @@ func NewToolResultReceivedEvent(
 	toolCallID, parentToolCallID string,
 	result any,
 	bounds *agent.Bounds,
-	metadata map[string]any,
+	sidecar map[string]any,
 	duration time.Duration,
 	telemetry *telemetry.ToolTelemetry,
 	err *toolerrors.ToolError,
@@ -645,7 +637,7 @@ func NewToolResultReceivedEvent(
 		ToolName:         toolName,
 		Result:           result,
 		Bounds:           bounds,
-		Metadata:         metadata,
+		Sidecar:          sidecar,
 		Duration:         duration,
 		Telemetry:        telemetry,
 		Error:            err,
@@ -826,14 +818,10 @@ func (e baseEvent) Timestamp() int64 { return e.timestamp }
 // TurnID returns the conversational turn identifier (empty if not set).
 func (e baseEvent) TurnID() string { return e.turnID }
 
-// SeqInTurn returns the monotonic sequence number within the turn.
-func (e baseEvent) SeqInTurn() int { return e.seqInTurn }
-
-// SetTurn updates the turn tracking fields. This is called by the runtime to stamp
-// events with turn sequencing information after construction.
-func (e *baseEvent) SetTurn(turnID string, seqInTurn int) {
+// SetTurnID updates the turn identifier. This is called by the runtime to stamp
+// events with turn information after construction.
+func (e *baseEvent) SetTurnID(turnID string) {
 	e.turnID = turnID
-	e.seqInTurn = seqInTurn
 }
 
 // SetSessionID updates the session identifier associated with the event. This is

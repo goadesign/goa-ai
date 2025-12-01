@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 )
 
 type fakeClusterMap struct {
+	mu     sync.Mutex
 	values map[string]string
 	ch     chan rmap.EventKind
 }
@@ -23,11 +25,15 @@ func newFakeClusterMap() *fakeClusterMap {
 }
 
 func (m *fakeClusterMap) Get(key string) (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	v, ok := m.values[key]
 	return v, ok
 }
 
 func (m *fakeClusterMap) SetIfNotExists(_ context.Context, key, value string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if _, ok := m.values[key]; ok {
 		return false, nil
 	}
@@ -40,6 +46,8 @@ func (m *fakeClusterMap) SetIfNotExists(_ context.Context, key, value string) (b
 }
 
 func (m *fakeClusterMap) TestAndSet(_ context.Context, key, test, value string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	cur, ok := m.values[key]
 	if !ok || cur != test {
 		return cur, nil
@@ -102,5 +110,3 @@ func TestClusterLimiter_BackoffUpdatesSharedMap(t *testing.T) {
 		t.Fatalf("expected shared TPM to decrease, got %d", cur)
 	}
 }
-
-

@@ -194,6 +194,25 @@ type (
 		// OnMissingFields controls behavior when validation indicates missing fields.
 		// Allowed: "finalize" | "await_clarification" | "resume". Empty means unspecified.
 		OnMissingFields string
+		// History captures conversational history management configuration (if any).
+		// When nil, no history policy is configured and callers retain full history.
+		History *HistoryData
+	}
+
+	// HistoryData represents the configured history policy for an agent. It encodes
+	// either a KeepRecentTurns sliding window or a Compress policy; at most one mode
+	// is set for a given agent.
+	HistoryData struct {
+		// Mode is "keep_recent" or "compress".
+		Mode string
+		// KeepRecent is the number of recent turns to retain when Mode == "keep_recent".
+		KeepRecent int
+		// TriggerAt is the number of turns that must accumulate before compression
+		// triggers when Mode == "compress".
+		TriggerAt int
+		// CompressKeepRecent is the number of recent turns to retain in full fidelity
+		// when Mode == "compress".
+		CompressKeepRecent int
 	}
 
 	// CapsData captures per-run resource limits that restrict agent tool usage.
@@ -911,6 +930,15 @@ func newRunPolicyData(expr *agentsExpr.RunPolicyExpr) RunPolicyData {
 		ToolTimeout:       expr.ToolTimeout,
 		InterruptsAllowed: expr.InterruptsAllowed,
 		OnMissingFields:   expr.OnMissingFields,
+	}
+	if expr.History != nil {
+		h := &HistoryData{
+			Mode:              string(expr.History.Mode),
+			KeepRecent:        expr.History.KeepRecent,
+			TriggerAt:         expr.History.TriggerAt,
+			CompressKeepRecent: expr.History.CompressKeepRecent,
+		}
+		rp.History = h
 	}
 	if expr.DefaultCaps != nil {
 		rp.Caps = CapsData{

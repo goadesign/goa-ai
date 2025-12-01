@@ -11,6 +11,13 @@ const (
 type {{ .ConfigType }} struct {
     // Planner provides the concrete planner implementation used by the agent.
     Planner planner.Planner
+{{- if .RunPolicy.History }}
+    {{- if eq .RunPolicy.History.Mode "compress" }}
+    // HistoryModel provides the model client used for history compression when a
+    // Compress history policy is configured.
+    HistoryModel model.Client
+    {{- end }}
+{{- end }}
 {{- if .MCPToolsets }}
     // MCPCallers maps MCP toolset IDs to the callers that invoke them. A caller must be
     // provided for every toolset referenced via MCPToolset/Use.
@@ -23,6 +30,13 @@ func (c {{ .ConfigType }}) Validate() error {
     if c.Planner == nil {
         return errors.New("planner is required")
     }
+{{- if .RunPolicy.History }}
+    {{- if eq .RunPolicy.History.Mode "compress" }}
+    if c.HistoryModel == nil {
+        return errors.New("history model is required when Compress history policy is configured")
+    }
+    {{- end }}
+{{- end }}
 {{- if .MCPToolsets }}
     required := []string{
 {{- range .MCPToolsets }}

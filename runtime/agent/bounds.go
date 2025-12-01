@@ -21,6 +21,9 @@ type Bounds struct {
 // expose boundedness metadata directly. When a decoded tool result implements
 // this interface, runtimes prefer it over heuristic field inspection so
 // services can provide precise bounds semantics.
+//
+// ResultBounds returns canonical bounds for the result. A nil return value
+// indicates the absence of any bounds metadata.
 type BoundedResult interface {
-	Bounds() Bounds
+	ResultBounds() *Bounds
 }

@@ -2,9 +2,9 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 
@@ -31,6 +31,13 @@ const (
 	// Minimal viable grace period for finalization. If remaining time is
 	// less than or equal to this value, the runtime should finalize with a user-facing message.
 	defaultFinalizerGrace = 10 * time.Second
+
+	// maxUntruncatedBoundedResultBytes is the maximum JSON byte length allowed
+	// for a tool result declared as a bounded view when Bounds.Truncated is
+	// false. Exceeding this limit indicates that the service failed to apply
+	// its own domain caps and must be treated as a hard runtime bug rather
+	// than silently streaming a very large payload back to the model.
+	maxUntruncatedBoundedResultBytes = 64 * 1024
 )
 
 type (
@@ -45,14 +52,6 @@ type (
 		call planner.ToolRequest
 		// startTime records when the activity was scheduled, used to calculate tool duration.
 		startTime time.Time
-	}
-
-	// turnSequencer tracks the turn ID and monotonic sequence counter for event ordering.
-	// Each run maintains its own sequencer to ensure deterministic event ordering within
-	// a conversational turn.
-	turnSequencer struct {
-		turnID   string
-		sequence int
 	}
 
 	// childTracker tracks dynamically discovered child tool calls for a parent tool
@@ -127,23 +126,18 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		Attempt:          1,
 		Labels:           input.Labels,
 	}
-	// Initialize turn sequencer for event ordering if TurnID is provided
-	var seq *turnSequencer
-	if input.TurnID != "" {
-		seq = &turnSequencer{
-			turnID: input.TurnID,
-		}
-	}
+	// Get turn ID for event stamping
+	turnID := input.TurnID
 	r.publishHook(
 		wfCtx.Context(),
 		hooks.NewRunStartedEvent(input.RunID, input.AgentID, runCtx, *input),
-		seq,
+		turnID,
 	)
 	// Initial phase: input has been received and planning is about to begin.
 	r.publishHook(
 		wfCtx.Context(),
 		hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, run.PhasePrompted),
-		seq,
+		turnID,
 	)
 	r.recordRunStatus(wfCtx.Context(), input, run.StatusRunning, nil)
 	// Track final run outcome for RunCompletedEvent so streaming and observability
@@ -172,12 +166,12 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		r.publishHook(
 			wfCtx.Context(),
 			hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, phase),
-			seq,
+			turnID,
 		)
 		r.publishHook(
 			wfCtx.Context(),
 			hooks.NewRunCompletedEvent(input.RunID, input.AgentID, input.SessionID, finalStatus, phase, finalErr),
-			seq,
+			turnID,
 		)
 	}()
 
@@ -250,7 +244,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	r.publishHook(
 		wfCtx.Context(),
 		hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, run.PhasePlanning),
-		seq,
+		turnID,
 	)
 	firstOutput, err := r.runPlanActivity(wfCtx, reg.PlanActivityName, planOpts, startReq, hardDeadline)
 	if err != nil {
@@ -314,7 +308,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	r.publishHook(
 		wfCtx.Context(),
 		hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, run.PhaseExecutingTools),
-		seq,
+		turnID,
 	)
 	out, err := r.runLoop(
 		wfCtx,
@@ -326,7 +320,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		caps,
 		hardDeadline,
 		nextAttempt,
-		seq,
+		turnID,
 		parentTracker,
 		ctrl,
 		grace,
@@ -351,7 +345,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 }
 
 // runLoop executes the plan/tool/resume cycle until the planner returns a final response
-// or a cap/deadline is exceeded. The seq parameter enables turn-based event sequencing.
+// or a cap/deadline is exceeded. The turnID parameter enables turn-based event stamping.
 func (r *Runtime) runLoop(
 	wfCtx engine.WorkflowContext,
 	reg AgentRegistration,
@@ -362,7 +356,7 @@ func (r *Runtime) runLoop(
 	caps policy.CapsState,
 	deadline time.Time,
 	nextAttempt int,
-	seq *turnSequencer,
+	turnID string,
 	parentTracker *childTracker,
 	ctrl *interrupt.Controller,
 	finalizerGrace time.Duration,
@@ -412,7 +406,7 @@ func (r *Runtime) runLoop(
 	var lastToolResults []*planner.ToolResult
 	var aggregatedToolResults []*planner.ToolResult
 	for {
-		if err := r.handleInterrupts(wfCtx, input, base, seq, ctrl, &nextAttempt); err != nil {
+		if err := r.handleInterrupts(wfCtx, input, base, turnID, ctrl, &nextAttempt); err != nil {
 			return nil, err
 		}
 		// When a hard deadline is set, stop scheduling new work when the remaining time
@@ -421,21 +415,21 @@ func (r *Runtime) runLoop(
 			now := wfCtx.Now()
 			remaining := deadline.Sub(now)
 			if finalizerGrace > 0 && remaining <= finalizerGrace {
-				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, seq, planner.TerminationReasonTimeBudget, deadline)
+				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
 			}
 			if finalizerGrace == 0 && remaining <= minActivityTimeout {
 				// No configured grace; avoid scheduling work that cannot complete meaningfully.
-				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, seq, planner.TerminationReasonTimeBudget, deadline)
+				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
 			}
 			if remaining <= 0 {
 				// Time budget fully exhausted (including grace): try to finalize.
 				// This may still race with engine TTLs, but provides a best-effort reply.
-				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, seq, planner.TerminationReasonTimeBudget, deadline)
+				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
 			}
 		}
 		if !deadline.IsZero() && wfCtx.Now().After(deadline) {
 			// Redundant guard; kept for clarity with prior semantics.
-			return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, seq, planner.TerminationReasonTimeBudget, deadline)
+			return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
 		}
 		// Handle Await: publish await event, pause and wait for external input.
 		if result.Await != nil {
@@ -460,7 +454,7 @@ func (r *Runtime) runLoop(
 					c.MissingFields,
 					c.RestrictToTool,
 					c.ExampleInput,
-				), seq)
+				), turnID)
 			} else if result.Await.ExternalTools != nil {
 				e := result.Await.ExternalTools
 				items := make([]hooks.AwaitToolItem, 0, len(e.Items))
@@ -477,7 +471,7 @@ func (r *Runtime) runLoop(
 					base.RunContext.SessionID,
 					e.ID,
 					items,
-				), seq)
+				), turnID)
 			}
 			r.publishHook(ctx, hooks.NewRunPausedEvent(
 				base.RunContext.RunID,
@@ -487,7 +481,7 @@ func (r *Runtime) runLoop(
 				"runtime",
 				nil,
 				nil,
-			), seq)
+			), turnID)
 			// Block until the appropriate provide signal arrives.
 			if result.Await.Clarification != nil {
 				ans, err := ctrl.WaitProvideClarification(ctx)
@@ -520,7 +514,7 @@ func (r *Runtime) runLoop(
 						ans.Labels,
 						1,
 					),
-					seq,
+					turnID,
 				)
 				// Immediately PlanResume
 				resumeCtx := base.RunContext
@@ -653,7 +647,7 @@ func (r *Runtime) runLoop(
 						nil,
 						0,
 					),
-					seq,
+					turnID,
 				)
 
 				// Advance to PlanResume immediately without executing internal tools.
@@ -703,7 +697,7 @@ func (r *Runtime) runLoop(
 						agentMessageText(finalMsg),
 						nil,
 					),
-					seq,
+					turnID,
 				)
 			}
 			for _, note := range result.Notes {
@@ -716,7 +710,7 @@ func (r *Runtime) runLoop(
 						note.Text,
 						note.Labels,
 					),
-					seq,
+					turnID,
 				)
 			}
 			notes := make([]*planner.PlannerAnnotation, len(result.Notes))
@@ -735,7 +729,7 @@ func (r *Runtime) runLoop(
 
 		if caps.RemainingToolCalls == 0 && caps.MaxToolCalls > 0 {
 			// Tool cap exhausted: request a final tool-free response from the planner.
-			return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, seq, planner.TerminationReasonToolCap, deadline)
+			return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, turnID, planner.TerminationReasonToolCap, deadline)
 		}
 		if !deadline.IsZero() && wfCtx.Now().After(deadline) {
 			// Time budget exceeded after evaluating caps/policy
@@ -746,7 +740,7 @@ func (r *Runtime) runLoop(
 				base,
 				aggregatedToolResults,
 				nextAttempt,
-				seq,
+				turnID,
 				planner.TerminationReasonTimeBudget,
 				deadline,
 			)
@@ -758,7 +752,7 @@ func (r *Runtime) runLoop(
 		// Apply per-run overrides (restrict tool and tag filters) before policy decision.
 		candidates = r.applyPerRunOverrides(ctx, input, candidates)
 		// Apply runtime policy if configured.
-		allowed, caps, err := r.applyRuntimePolicy(ctx, base, input, candidates, caps, seq, result.RetryHint)
+		allowed, caps, err := r.applyRuntimePolicy(ctx, base, input, candidates, caps, turnID, result.RetryHint)
 		if err != nil {
 			return nil, err
 		}
@@ -779,7 +773,7 @@ func (r *Runtime) runLoop(
 						parentTracker.parentToolCallID,
 						parentTracker.currentTotal(),
 					),
-					seq,
+					turnID,
 				)
 				parentTracker.markUpdated()
 			}
@@ -792,7 +786,7 @@ func (r *Runtime) runLoop(
 		// Group calls by timeout and execute.
 		grouped, timeouts := r.groupToolCallsByTimeout(allowed, input, toolOpts.Timeout)
 		vals, err := r.executeGroupedToolCalls(
-			wfCtx, reg, base, result.ExpectedChildren, seq, parentTracker, deadline,
+			wfCtx, reg, base, result.ExpectedChildren, turnID, parentTracker, deadline,
 			grouped, timeouts, toolOpts,
 		)
 		if err != nil {
@@ -813,14 +807,14 @@ func (r *Runtime) runLoop(
 			)
 			if caps.MaxConsecutiveFailedToolCalls > 0 && caps.RemainingConsecutiveFailedToolCalls <= 0 {
 				// Consecutive failure cap exhausted: request finalization.
-				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, seq, planner.TerminationReasonFailureCap, deadline)
+				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, turnID, planner.TerminationReasonFailureCap, deadline)
 			}
 		} else if caps.MaxConsecutiveFailedToolCalls > 0 {
 			caps.RemainingConsecutiveFailedToolCalls = caps.MaxConsecutiveFailedToolCalls
 		}
 
 		// Apply missing-fields policy if configured. The helper may finalize or pause/resume.
-		if out, err := r.handleMissingFieldsPolicy(wfCtx, reg, input, base, vals, aggregatedToolResults, &nextAttempt, seq, ctrl); err != nil {
+		if out, err := r.handleMissingFieldsPolicy(wfCtx, reg, input, base, vals, aggregatedToolResults, &nextAttempt, turnID, ctrl); err != nil {
 			return nil, err
 		} else if out != nil {
 			return out, nil
@@ -829,8 +823,8 @@ func (r *Runtime) runLoop(
 		// Hard protection: If this turn executed agent-as-tool calls
 		// and they produced zero child tool calls in total, do not
 		// resume. Finalize immediately to avoid loops.
-		if r.hardProtectionIfNeeded(ctx, base, vals, seq) {
-			return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, seq, planner.TerminationReasonFailureCap, deadline)
+		if r.hardProtectionIfNeeded(ctx, base, vals, turnID) {
+			return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, turnID, planner.TerminationReasonFailureCap, deadline)
 		}
 
 		resumeReq := r.buildNextResumeRequest(base, lastToolResults, &nextAttempt)
@@ -870,7 +864,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 	results []*planner.ToolResult,
 	allResults []*planner.ToolResult,
 	nextAttempt *int,
-	seq *turnSequencer,
+	turnID string,
 	ctrl *interrupt.Controller,
 ) (*RunOutput, error) {
 	if ctrl == nil || reg.Policy.OnMissingFields == "" {
@@ -899,7 +893,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 	}
 	switch reg.Policy.OnMissingFields {
 	case MissingFieldsFinalize:
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, allResults, *nextAttempt, seq, planner.TerminationReasonFailureCap, time.Time{})
+		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, allResults, *nextAttempt, turnID, planner.TerminationReasonFailureCap, time.Time{})
 		return out, err
 	case MissingFieldsAwaitClarification:
 		// Generate deterministic await ID for correlation safety.
@@ -917,7 +911,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 			mf.MissingFields,
 			restrict,
 			mf.ExampleInput,
-		), seq)
+		), turnID)
 		r.publishHook(
 			ctx,
 			hooks.NewRunPausedEvent(
@@ -929,7 +923,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 				nil,
 				nil,
 			),
-			seq,
+			turnID,
 		)
 		ans, err := ctrl.WaitProvideClarification(ctx)
 		if err != nil {
@@ -956,7 +950,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 			input.RunID,
 			ans.Labels,
 			1,
-		), seq)
+		), turnID)
 		return nil, nil
 	case MissingFieldsResume:
 		return nil, nil
@@ -973,7 +967,7 @@ func (r *Runtime) finalizeWithPlanner(
 	base *planner.PlanInput,
 	allToolResults []*planner.ToolResult,
 	nextAttempt int,
-	seq *turnSequencer,
+	turnID string,
 	reason planner.TerminationReason,
 	hardDeadline time.Time,
 ) (*RunOutput, error) {
@@ -991,7 +985,7 @@ func (r *Runtime) finalizeWithPlanner(
 			base.RunContext.SessionID,
 			run.PhaseSynthesizing,
 		),
-		seq,
+		turnID,
 	)
 	// Prepare a brief message to steer planners that incorporate system messages.
 	var hint string
@@ -1036,7 +1030,7 @@ func (r *Runtime) finalizeWithPlanner(
 			map[string]string{"reason": string(reason)},
 			nil,
 		),
-		seq,
+		turnID,
 	)
 	r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{"resumed_by": "finalize"})
 	// Use base.RunContext.RunID for resilience when input is nil.
@@ -1051,7 +1045,7 @@ func (r *Runtime) finalizeWithPlanner(
 			nil,
 			0,
 		),
-		seq,
+		turnID,
 	)
 
 	// Human‑readable reason strings for error contexts when finalization fails.
@@ -1097,7 +1091,7 @@ func (r *Runtime) finalizeWithPlanner(
 				agentMessageText(finalMsg),
 				nil,
 			),
-			seq,
+			turnID,
 		)
 	}
 	for _, note := range output.Result.Notes {
@@ -1110,7 +1104,7 @@ func (r *Runtime) finalizeWithPlanner(
 				note.Text,
 				note.Labels,
 			),
-			seq,
+			turnID,
 		)
 	}
 	notes := make([]*planner.PlannerAnnotation, len(output.Result.Notes))
@@ -1131,7 +1125,7 @@ func (r *Runtime) handleInterrupts(
 	wfCtx engine.WorkflowContext,
 	input *RunInput,
 	base *planner.PlanInput,
-	seq *turnSequencer,
+	turnID string,
 	ctrl *interrupt.Controller,
 	nextAttempt *int,
 ) error {
@@ -1158,7 +1152,7 @@ func (r *Runtime) handleInterrupts(
 				req.Labels,
 				req.Metadata,
 			),
-			seq,
+			turnID,
 		)
 
 		resumeReq, err := ctrl.WaitResume(ctx)
@@ -1184,7 +1178,7 @@ func (r *Runtime) handleInterrupts(
 				resumeReq.Labels,
 				len(resumeReq.Messages),
 			),
-			seq,
+			turnID,
 		)
 	}
 	return nil
@@ -1209,7 +1203,7 @@ func (r *Runtime) executeToolCalls(
 	runCtx *run.Context,
 	calls []planner.ToolRequest,
 	expectedChildren int,
-	seq *turnSequencer,
+	turnID string,
 	parentTracker *childTracker,
 	hardDeadline time.Time,
 ) ([]*planner.ToolResult, error) {
@@ -1271,7 +1265,7 @@ func (r *Runtime) executeToolCalls(
 				call.ParentToolCallID,
 				expectedChildren,
 			),
-			seq,
+			turnID,
 		)
 
 		// Inline path: agent-as-tool executes within workflow (starts child workflow inside Execute).
@@ -1314,8 +1308,12 @@ func (r *Runtime) executeToolCalls(
 			if result == nil {
 				return nil, fmt.Errorf("inline tool %q returned nil result", call.Name)
 			}
+			// Derive Bounds from the decoded result when the result type implements
+			// agent.BoundedResult and the executor did not populate Bounds
+			// explicitly. This keeps truncation metadata attached even when
+			// executors only set the typed result value.
 			if result.Bounds == nil {
-				if b := r.deriveBounds(call.Name, result.Result); b != nil {
+				if b := deriveBounds(result.Result); b != nil {
 					result.Bounds = b
 				}
 			}
@@ -1341,7 +1339,7 @@ func (r *Runtime) executeToolCalls(
 					result.Telemetry,
 					toolErr,
 				),
-				seq,
+				turnID,
 			)
 			inlineResults[call.ToolCallID] = result
 			if parentTracker != nil {
@@ -1416,7 +1414,7 @@ func (r *Runtime) executeToolCalls(
 				parentTracker.parentToolCallID,
 				parentTracker.currentTotal(),
 			),
-			seq,
+			turnID,
 		)
 		parentTracker.markUpdated()
 	}
@@ -1451,7 +1449,7 @@ func (r *Runtime) executeToolCalls(
 			ToolCallID: info.call.ToolCallID,
 			Telemetry:  out.Telemetry,
 		}
-		if b := r.deriveBounds(info.call.Name, decoded); b != nil {
+		if b := deriveBounds(decoded); b != nil {
 			toolRes.Bounds = b
 		}
 		var toolErr *planner.ToolError
@@ -1483,7 +1481,7 @@ func (r *Runtime) executeToolCalls(
 				out.Telemetry,
 				toolErr,
 			),
-			seq,
+			turnID,
 		)
 
 		activityByID[info.call.ToolCallID] = toolRes
@@ -1507,9 +1505,7 @@ func (r *Runtime) executeToolCalls(
 }
 
 // runPlanActivity schedules a plan/resume activity with the configured options.
-func (r *Runtime) runPlanActivity(
-	wfCtx engine.WorkflowContext, activityName string, options engine.ActivityOptions, input PlanActivityInput, hardDeadline time.Time,
-) (*PlanActivityOutput, error) {
+func (r *Runtime) runPlanActivity(wfCtx engine.WorkflowContext, activityName string, options engine.ActivityOptions, input PlanActivityInput, hardDeadline time.Time) (*PlanActivityOutput, error) {
 	if activityName == "" {
 		return nil, errors.New("plan activity not registered")
 	}
@@ -1546,8 +1542,7 @@ func (r *Runtime) runPlanActivity(
 	if len(out.Result.ToolCalls) == 0 && out.Result.FinalResponse == nil && out.Result.Await == nil {
 		return nil, fmt.Errorf("CRITICAL: runPlanActivity received PlanResult with no ToolCalls, FinalResponse, or Await")
 	}
-	r.logger.Info(
-		wfCtx.Context(),
+	r.logger.Info(wfCtx.Context(),
 		"runPlanActivity received PlanResult",
 		"tool_calls",
 		len(out.Result.ToolCalls),
@@ -1557,141 +1552,6 @@ func (r *Runtime) runPlanActivity(
 		out.Result.Await != nil,
 	)
 	return &out, nil
-}
-
-// deriveBounds attempts to construct agent.Bounds for the given tool result
-// using the tool's specification and the decoded result value. It prefers
-// the agent.BoundedResult interface when implemented by the result type and
-// falls back to a best-effort field inspection for common bounded-result
-// patterns (Returned*/Total*/Truncated/RefinementHint). When the tool is not
-// declared as bounded or no bounds can be derived, it returns nil.
-func (r *Runtime) deriveBounds(tool tools.Ident, result any) *agent.Bounds {
-	if result == nil {
-		return nil
-	}
-
-	spec, ok := r.toolSpec(tool)
-	if !ok || !spec.BoundedResult {
-		return nil
-	}
-
-	// Prefer explicit interface implementation when available.
-	if br, ok := result.(agent.BoundedResult); ok {
-		b := br.Bounds()
-		return &b
-	}
-
-	// Fall back to structural inspection for common bounded-result shapes.
-	v := reflect.ValueOf(result)
-	if !v.IsValid() {
-		return nil
-	}
-	// Peel pointer layers.
-	for v.Kind() == reflect.Pointer {
-		if v.IsNil() {
-			return nil
-		}
-		v = v.Elem()
-	}
-	if v.Kind() != reflect.Struct {
-		return nil
-	}
-
-	t := v.Type()
-
-	intFromPtrField := func(name string) *int {
-		f, ok := t.FieldByName(name)
-		if !ok {
-			return nil
-		}
-		fv := v.FieldByIndex(f.Index)
-		if !fv.IsValid() || fv.IsNil() || fv.Kind() != reflect.Pointer {
-			return nil
-		}
-		elem := fv.Elem()
-		if elem.Kind() != reflect.Int {
-			return nil
-		}
-		val := int(elem.Int())
-		return &val
-	}
-
-	boolFromPtrField := func(name string) *bool {
-		f, ok := t.FieldByName(name)
-		if !ok {
-			return nil
-		}
-		fv := v.FieldByIndex(f.Index)
-		if !fv.IsValid() || fv.IsNil() || fv.Kind() != reflect.Pointer {
-			return nil
-		}
-		elem := fv.Elem()
-		if elem.Kind() != reflect.Bool {
-			return nil
-		}
-		val := elem.Bool()
-		return &val
-	}
-
-	stringFromPtrField := func(name string) *string {
-		f, ok := t.FieldByName(name)
-		if !ok {
-			return nil
-		}
-		fv := v.FieldByIndex(f.Index)
-		if !fv.IsValid() || fv.IsNil() || fv.Kind() != reflect.Pointer {
-			return nil
-		}
-		elem := fv.Elem()
-		if elem.Kind() != reflect.String {
-			return nil
-		}
-		val := elem.String()
-		return &val
-	}
-
-	// Primary dimension: prefer series/nodes when present, otherwise generic Returned/Total.
-	var returned *int
-	var total *int
-
-	if ptr := intFromPtrField("ReturnedSeries"); ptr != nil {
-		returned = ptr
-		total = intFromPtrField("TotalSeries")
-	} else if ptr := intFromPtrField("ReturnedNodes"); ptr != nil {
-		returned = ptr
-		total = intFromPtrField("TotalNodes")
-	} else {
-		returned = intFromPtrField("Returned")
-		total = intFromPtrField("Total")
-	}
-
-	truncated := boolFromPtrField("Truncated")
-	hint := stringFromPtrField("RefinementHint")
-
-	if returned == nil && total == nil && truncated == nil && hint == nil {
-		return nil
-	}
-
-	var out agent.Bounds
-	if returned != nil {
-		out.Returned = *returned
-	}
-	if total != nil {
-		// Copy to avoid aliasing the underlying decoded struct.
-		v := *total
-		out.Total = &v
-	}
-	if truncated != nil {
-		out.Truncated = *truncated
-	}
-	if hint != nil {
-		out.RefinementHint = *hint
-	}
-
-	if out.Returned == 0 && out.Total == nil && !out.Truncated && out.RefinementHint == "" {
-		return nil
-	}
-	return &out
 }
 
 // applyPerRunOverrides filters candidate tool calls using per-run overrides:
@@ -1745,7 +1605,7 @@ func (r *Runtime) applyRuntimePolicy(
 	input *RunInput,
 	candidates []planner.ToolRequest,
 	caps policy.CapsState,
-	seq *turnSequencer,
+	turnID string,
 	retry *planner.RetryHint,
 ) ([]planner.ToolRequest, policy.CapsState, error) {
 	if r.Policy == nil {
@@ -1787,17 +1647,13 @@ func (r *Runtime) applyRuntimePolicy(
 			cloneLabels(decision.Labels),
 			cloneMetadata(decision.Metadata),
 		),
-		seq,
+		turnID,
 	)
 	return allowed, caps, nil
 }
 
 // capAllowedCalls applies per-turn and remaining caps to the allowed set.
-func (r *Runtime) capAllowedCalls(
-	allowed []planner.ToolRequest,
-	input *RunInput,
-	caps policy.CapsState,
-) []planner.ToolRequest {
+func (r *Runtime) capAllowedCalls(allowed []planner.ToolRequest, input *RunInput, caps policy.CapsState) []planner.ToolRequest {
 	if input != nil && input.Policy != nil && input.Policy.PerTurnMaxToolCalls > 0 && len(allowed) > input.Policy.PerTurnMaxToolCalls {
 		allowed = allowed[:input.Policy.PerTurnMaxToolCalls]
 	}
@@ -1809,11 +1665,7 @@ func (r *Runtime) capAllowedCalls(
 
 // prepareAllowedCallsMetadata stamps run/session/turn IDs and deterministic tool
 // call IDs on allowed calls. It also fills parentToolCallID when tracking children.
-func (r *Runtime) prepareAllowedCallsMetadata(
-	base *planner.PlanInput,
-	allowed []planner.ToolRequest,
-	parentTracker *childTracker,
-) []planner.ToolRequest {
+func (r *Runtime) prepareAllowedCallsMetadata(base *planner.PlanInput, allowed []planner.ToolRequest, parentTracker *childTracker) []planner.ToolRequest {
 	for i := range allowed {
 		if allowed[i].RunID == "" {
 			allowed[i].RunID = base.RunContext.RunID
@@ -1841,12 +1693,7 @@ func (r *Runtime) prepareAllowedCallsMetadata(
 
 // recordAssistantTurn merges streamed transcript parts with the declared tool calls
 // and appends the resulting assistant messages to the conversation state.
-func (r *Runtime) recordAssistantTurn(
-	base *planner.PlanInput,
-	transcriptMsgs []*model.Message,
-	allowed []planner.ToolRequest,
-	led *transcript.Ledger,
-) {
+func (r *Runtime) recordAssistantTurn(base *planner.PlanInput, transcriptMsgs []*model.Message, allowed []planner.ToolRequest, led *transcript.Ledger) {
 	if led == nil {
 		led = transcript.NewLedger()
 	}
@@ -1956,7 +1803,7 @@ func (r *Runtime) executeGroupedToolCalls(
 	reg AgentRegistration,
 	base *planner.PlanInput,
 	expectedChildren int,
-	seq *turnSequencer,
+	turnID string,
 	parentTracker *childTracker,
 	deadline time.Time,
 	grouped [][]planner.ToolRequest,
@@ -1971,7 +1818,7 @@ func (r *Runtime) executeGroupedToolCalls(
 		}
 		sub, err := r.executeToolCalls(
 			wfCtx, reg.ExecuteToolActivity, opt, base.RunContext.RunID, base.Agent.ID(),
-			&base.RunContext, grouped[i], expectedChildren, seq, parentTracker, deadline,
+			&base.RunContext, grouped[i], expectedChildren, turnID, parentTracker, deadline,
 		)
 		if err != nil {
 			return nil, err
@@ -2011,6 +1858,7 @@ func (r *Runtime) appendUserToolResults(
 		if !ok || tr == nil || tr.ToolCallID == "" {
 			continue
 		}
+		r.enforceBoundedResultContract(tr)
 		part := model.ToolResultPart{
 			ToolUseID: tr.ToolCallID,
 			Content:   tr.Result,
@@ -2033,13 +1881,80 @@ func (r *Runtime) appendUserToolResults(
 	led.AppendUserToolResults(specs)
 }
 
+// enforceBoundedResultContract validates that tools declared as bounded in
+// their specs also surface a consistent Bounds contract on their results. This
+// method never computes subsets or truncation itself; it only enforces that
+// domain services applied their own caps and signalled them correctly.
+func (r *Runtime) enforceBoundedResultContract(tr *planner.ToolResult) {
+	if tr == nil {
+		return
+	}
+	spec, ok := r.toolSpec(tr.Name)
+	if !ok || !spec.BoundedResult {
+		return
+	}
+	if tr.Bounds == nil {
+		panic(fmt.Sprintf(
+			"bounded tool %q produced result without Bounds metadata",
+			tr.Name,
+		))
+	}
+	// When the tool reports truncation, we trust the domain caps and do not
+	// apply size-based enforcement here.
+	if tr.Bounds.Truncated || tr.Result == nil {
+		return
+	}
+	// Fail fast when a bounded tool reports an untruncated result that exceeds
+	// the configured size limit. This surfaces a clear service bug instead of
+	// silently streaming a very large payload back to the model.
+	data, err := json.Marshal(tr.Result)
+	if err != nil {
+		panic(fmt.Sprintf(
+			"failed to encode bounded tool %q result for size check: %v",
+			tr.Name,
+			err,
+		))
+	}
+	if len(data) > maxUntruncatedBoundedResultBytes {
+		panic(fmt.Sprintf(
+			"bounded tool %q produced untruncated result of %d bytes (limit %d); "+
+				"services must apply domain caps and set Bounds.Truncated=true for large views",
+			tr.Name,
+			len(data),
+			maxUntruncatedBoundedResultBytes,
+		))
+	}
+}
+
+// deriveBounds extracts Bounds metadata from a decoded tool result when the
+// result type implements agent.BoundedResult. It returns nil when the value
+// does not implement the interface or when Bounds is the zero value.
+func deriveBounds(result any) *agent.Bounds {
+	if result == nil {
+		return nil
+	}
+	br, ok := result.(agent.BoundedResult)
+	if !ok || br == nil {
+		return nil
+	}
+	b := br.ResultBounds()
+	if b == nil {
+		return nil
+	}
+	// Treat the zero Bounds value as "no metadata".
+	if b.Returned == 0 && b.Total == nil && !b.Truncated && b.RefinementHint == "" {
+		return nil
+	}
+	return b
+}
+
 // hardProtectionIfNeeded emits a protection event and signals finalization when
 // agent-as-tool calls produced no child tool calls.
 func (r *Runtime) hardProtectionIfNeeded(
 	ctx context.Context,
 	base *planner.PlanInput,
 	vals []*planner.ToolResult,
-	seq *turnSequencer,
+	turnID string,
 ) bool {
 	var agentToolCount int
 	var totalChildren int
@@ -2065,7 +1980,7 @@ func (r *Runtime) hardProtectionIfNeeded(
 				totalChildren,
 				toolNames,
 			),
-			seq,
+			turnID,
 		)
 		return true
 	}
@@ -2221,11 +2136,4 @@ func (r *Runtime) memoryReader(ctx context.Context, agentID, runID string) memor
 func generateRunID(agentID string) string {
 	prefix := strings.ReplaceAll(agentID, ".", "-")
 	return fmt.Sprintf("%s-%s", prefix, uuid.NewString())
-}
-
-// nextSeq increments and returns the next sequence number for this turn.
-func (t *turnSequencer) nextSeq() int {
-	seq := t.sequence
-	t.sequence++
-	return seq
 }

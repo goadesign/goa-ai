@@ -311,9 +311,9 @@ Planners may set `ToolRequest.ToolCallID`. The runtime preserves this ID end-to-
 in `ToolResult.ToolCallID`. If omitted, the runtime assigns a deterministic ID for replay
 correlation.
 
-## RunPolicy & Caps
+## RunPolicy, Caps & History
 
-`RunPolicy` configures execution limits enforced at runtime:
+`RunPolicy` configures execution limits and history management enforced at runtime:
 
 ```go
 RunPolicy(func() {
@@ -324,6 +324,11 @@ RunPolicy(func() {
     TimeBudget("5m")
     InterruptsAllowed(true)
     OnMissingFields("await_clarification")
+
+    History(func() {
+        // Simple sliding window: keep only the last 20 turns.
+        KeepRecentTurns(20)
+    })
 })
 ```
 
@@ -334,6 +339,46 @@ RunPolicy(func() {
 | `TimeBudget` | duration string | Wall-clock limit |
 | `InterruptsAllowed` | boolean | Honor human-in-the-loop interruptions |
 | `OnMissingFields` | `""`, `"finalize"`, `"await_clarification"`, `"resume"` | Validation behavior |
+| `History` | `History(func)` | Configure how conversation history is bounded |
+
+### History policies
+
+History policies transform the message history before each planner invocation while preserving:
+
+- System prompts at the start of the conversation
+- Logical turn boundaries (user + assistant + tool calls/results)
+
+Two standard policies are available:
+
+- **Sliding window** — keep the last N turns:
+
+  ```go
+  RunPolicy(func() {
+      History(func() {
+          // Keep the last 20 user–assistant turns.
+          KeepRecentTurns(20)
+      })
+  })
+  ```
+
+- **Compression** — summarize older turns with a model while keeping recent turns in full fidelity:
+
+  ```go
+  RunPolicy(func() {
+      History(func() {
+          // When at least 30 turns exist, summarize older turns and keep
+          // the most recent 10 turns as-is.
+          Compress(30, 10)
+      })
+  })
+  ```
+
+`Compress(triggerAt, keepRecent)` configures:
+
+- `triggerAt`: minimum total turn count before compression runs.
+- `keepRecent`: number of most recent turns to retain in full fidelity.
+
+The generated agent config includes a `HistoryModel` field when `Compress` is used; callers must supply a `model.Client`. At runtime, the history policy uses this client with `ModelClassSmall` to summarize older turns.
 
 ## MCP Server Definition
 
@@ -455,6 +500,15 @@ out, err := client.Run(ctx, messages, runtime.WithSessionID("session-1"))
 - **Reuse toolsets** — `var Shared = Toolset("shared", ...)` avoids duplication.
 - **Use specific validations** — Required, MinLength, Enum give planners strong schemas.
 - **Treat run policies as API contracts** — Choose bounds that match downstream SLAs.
+- **Use `BoundedResult()` for large views** — Mark tools that return potentially large
+  lists, graphs, or windows as bounded. When `BoundedResult()` is set on a `Tool`,
+  codegen:
+  - sets `BoundedResult: true` on the generated `tools.ToolSpec`,
+  - extends the tool result alias type with a `Bounds *agent.Bounds` field
+    (JSON `bounds` property) so models and `tool_schemas.json` see canonical
+    truncation metadata, and
+  - generates a `ResultBounds() agent.Bounds` method so result types implement
+    `agent.BoundedResult` without requiring reflection in the runtime.
 - **Let codegen manage MCP registration** — Avoid hand-written glue for consistent codecs.
 - **Use display hint templates** — `CallHintTemplate` and `ResultHintTemplate` improve UI feedback.
 - **Use Sidecar for full-fidelity data** — Keep model payloads bounded; attach artifacts via Sidecar.
