@@ -360,6 +360,7 @@ func (r *Runtime) plannerContext(ctx context.Context, input *PlanActivityInput, 
 		memory:  reader,
 		turnID:  input.RunContext.TurnID,
 		events:  events,
+		cache:   reg.Policy.Cache,
 	})
 	return &reg, agentCtx, nil
 }

@@ -1,6 +1,7 @@
 // Package model defines JSON helpers for marshaling provider message parts.
 // This file emits discriminated unions for ThinkingPart, TextPart, ToolUsePart,
-// and ToolResultPart so decode logic can recover the concrete types.
+// ToolResultPart, and CacheCheckpointPart so decode logic can recover the
+// concrete types.
 package model
 
 import "encoding/json"
@@ -53,6 +54,19 @@ func (p ToolResultPart) MarshalJSON() ([]byte, error) {
 		alias
 	}{
 		Kind:  "tool_result",
+		alias: alias(p),
+	})
+}
+
+// MarshalJSON encodes CacheCheckpointPart with a Kind discriminator so decode
+// logic can reconstruct cache checkpoint blocks precisely.
+func (p CacheCheckpointPart) MarshalJSON() ([]byte, error) {
+	type alias CacheCheckpointPart
+	return json.Marshal(struct {
+		Kind string `json:"Kind"` //nolint:tagliatelle // Kind discriminator is intentionally upper-cased for compatibility.
+		alias
+	}{
+		Kind:  "cache_checkpoint",
 		alias: alias(p),
 	})
 }

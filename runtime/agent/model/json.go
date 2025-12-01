@@ -97,6 +97,8 @@ func decodeMessagePart(raw json.RawMessage) (Part, error) {
 				return nil, fmt.Errorf("decode TextPart: %w", err)
 			}
 			return text, nil
+		case "cache_checkpoint":
+			return CacheCheckpointPart{}, nil
 		default:
 			return nil, fmt.Errorf("unknown part kind %q", kind)
 		}

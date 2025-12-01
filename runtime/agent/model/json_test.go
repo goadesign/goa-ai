@@ -26,6 +26,7 @@ func TestPartMarshalJSONIncludesKind(t *testing.T) {
 		{name: "text", part: TextPart{Text: "hello"}, kind: "text"},
 		{name: "tool_use", part: ToolUsePart{Name: "search", Input: map[string]any{"q": "golang"}}, kind: "tool_use"},
 		{name: "tool_result", part: ToolResultPart{ToolUseID: "tu", Content: map[string]any{"hits": 1}}, kind: "tool_result"},
+		{name: "cache_checkpoint", part: CacheCheckpointPart{}, kind: "cache_checkpoint"},
 	}
 
 	for _, tt := range cases {
@@ -75,4 +76,26 @@ func TestThinkingPartRoundTripPreservesSignature(t *testing.T) {
 	require.Equal(t, orig.Index, got.Index)
 	require.Equal(t, orig.Final, got.Final)
 	require.Equal(t, orig.Redacted, got.Redacted)
+}
+
+func TestCacheCheckpointPartRoundTrip(t *testing.T) {
+	orig := CacheCheckpointPart{}
+
+	raw, err := json.Marshal(orig)
+	require.NoError(t, err)
+
+	// Verify it emits a Kind discriminator, not an empty object.
+	require.JSONEq(t, `{"Kind":"cache_checkpoint"}`, string(raw))
+
+	part, err := decodeMessagePart(raw)
+	require.NoError(t, err)
+
+	_, ok := part.(CacheCheckpointPart)
+	require.True(t, ok, "expected CacheCheckpointPart, got %T", part)
+}
+
+func TestDecodeEmptyObjectReturnsError(t *testing.T) {
+	_, err := decodeMessagePart([]byte(`{}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "empty part payload")
 }

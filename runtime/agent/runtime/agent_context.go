@@ -17,6 +17,7 @@ type agentContextOptions struct {
 	memory  memory.Reader
 	turnID  string
 	events  planner.PlannerEvents
+	cache   CachePolicy
 }
 
 // simplePlannerContext is a minimal implementation of planner.PlannerContext.
@@ -26,6 +27,7 @@ type simplePlannerContext struct {
 	runID string
 	mem   memory.Reader
 	ev    planner.PlannerEvents
+	cache CachePolicy
 }
 
 func newAgentContext(opts agentContextOptions) planner.PlannerContext {
@@ -35,6 +37,7 @@ func newAgentContext(opts agentContextOptions) planner.PlannerContext {
 		runID: opts.runID,
 		mem:   opts.memory,
 		ev:    opts.events,
+		cache: opts.cache,
 	}
 }
 
@@ -52,11 +55,18 @@ func (c *simplePlannerContext) ModelClient(id string) (model.Client, bool) {
 	if !ok || m == nil {
 		return nil, false
 	}
+	cli := m
 	// Wrap with per-turn event decorator so thinking/text/usage are captured automatically.
 	if c.ev != nil {
-		return newEventDecoratedClient(m, c.ev), true
+		cli = newEventDecoratedClient(cli, c.ev)
 	}
-	return m, true
+	// Apply agent cache policy so planners do not need to thread CacheOptions
+	// through every model.Request construction. Explicit Request.Cache values
+	// continue to take precedence over the agent policy.
+	if c.cache.AfterSystem || c.cache.AfterTools {
+		cli = newCacheConfiguredClient(cli, c.cache)
+	}
+	return cli, true
 }
 
 func (c *simplePlannerContext) AddReminder(r reminder.Reminder) {

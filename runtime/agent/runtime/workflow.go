@@ -113,6 +113,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		runID:   input.RunID,
 		memory:  reader,
 		turnID:  input.TurnID,
+		cache:   reg.Policy.Cache,
 	})
 	runCtx := run.Context{
 		RunID:            input.RunID,
