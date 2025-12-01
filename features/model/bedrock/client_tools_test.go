@@ -19,7 +19,7 @@ func TestEncodeTools_NoChoice(t *testing.T) {
 			Description: "Search",
 			InputSchema: map[string]any{"type": "object"},
 		},
-	}, nil)
+	}, nil, false)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	require.Len(t, cfg.Tools, 1)
@@ -37,7 +37,7 @@ func TestEncodeTools_ModeAny(t *testing.T) {
 			Description: "Search",
 			InputSchema: map[string]any{"type": "object"},
 		},
-	}, &model.ToolChoice{Mode: model.ToolChoiceModeAny})
+	}, &model.ToolChoice{Mode: model.ToolChoiceModeAny}, false)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	require.Len(t, cfg.Tools, 1)
@@ -60,7 +60,7 @@ func TestEncodeTools_ModeTool(t *testing.T) {
 	}, &model.ToolChoice{
 		Mode: model.ToolChoiceModeTool,
 		Name: "lookup",
-	})
+	}, false)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	require.Len(t, cfg.Tools, 1)
@@ -82,7 +82,7 @@ func TestEncodeTools_ModeNonePreservesConfig(t *testing.T) {
 			Description: "Search",
 			InputSchema: map[string]any{"type": "object"},
 		},
-	}, &model.ToolChoice{Mode: model.ToolChoiceModeNone})
+	}, &model.ToolChoice{Mode: model.ToolChoiceModeNone}, false)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	require.Len(t, cfg.Tools, 1)
@@ -94,8 +94,43 @@ func TestEncodeTools_ModeNonePreservesConfig(t *testing.T) {
 func TestEncodeTools_ChoiceWithoutToolsErrors(t *testing.T) {
 	ctx := context.Background()
 
-	_, _, _, err := encodeTools(ctx, nil, &model.ToolChoice{Mode: model.ToolChoiceModeAny})
+	_, _, _, err := encodeTools(ctx, nil, &model.ToolChoice{Mode: model.ToolChoiceModeAny}, false)
 	require.Error(t, err)
+}
+
+func TestEncodeTools_AppendsCacheCheckpoint(t *testing.T) {
+	ctx := context.Background()
+
+	cfg, _, _, err := encodeTools(ctx, []*model.ToolDefinition{
+		{
+			Name:        "lookup",
+			Description: "Search",
+			InputSchema: map[string]any{"type": "object"},
+		},
+	}, nil, true)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	require.Len(t, cfg.Tools, 2, "expected tool spec + cache checkpoint")
+	_, ok := cfg.Tools[1].(*brtypes.ToolMemberCachePoint)
+	require.True(t, ok, "expected second tool entry to be cache checkpoint")
+}
+
+func TestIsNovaModel(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{name: "empty", in: "", want: false},
+		{name: "claude", in: "anthropic.claude-3-sonnet-20241022-v1:0", want: false},
+		{name: "nova", in: "amazon.nova-pro-v1:0", want: true},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isNovaModel(tt.in)
+			require.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestSanitizeToolName_StripsNamespaces(t *testing.T) {

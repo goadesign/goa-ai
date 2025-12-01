@@ -312,6 +312,23 @@ type (
 		// invocation (PlanStart and PlanResume). It can truncate or compress history
 		// while preserving system prompts and logical turn boundaries.
 		History HistoryPolicy
+
+		// Cache configures automatic prompt cache checkpoint placement.
+		Cache CachePolicy
+	}
+
+	// CachePolicy configures automatic cache checkpoint placement for an agent.
+	// The runtime applies this policy to model requests by populating
+	// model.Request.Cache when it is nil so planners do not need to thread
+	// CacheOptions through every call site. Providers that do not support
+	// caching ignore these options.
+	CachePolicy struct {
+		// AfterSystem places a checkpoint after all system messages.
+		AfterSystem bool
+
+		// AfterTools places a checkpoint after tool definitions. Not all
+		// providers support tool-level checkpoints (e.g., Nova does not).
+		AfterTools bool
 	}
 )
 

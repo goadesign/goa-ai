@@ -202,10 +202,25 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*reque
 			return nil, fmt.Errorf("bedrock: invalid message ordering with thinking enabled (run=%s, model=%s): %w", req.RunID, modelID, err)
 		}
 	}
+	// Extract cache options from request.
+	var cacheAfterSystem, cacheAfterTools bool
+	if req.Cache != nil {
+		cacheAfterSystem = req.Cache.AfterSystem
+		cacheAfterTools = req.Cache.AfterTools
+	}
+	// Enforce model-specific cache capabilities: Nova models do not support
+	// tool-level cache checkpoints. Fail fast when AfterTools is requested
+	// for a Nova model rather than sending an invalid configuration.
+	if cacheAfterTools && isNovaModel(modelID) {
+		return nil, fmt.Errorf(
+			"bedrock: Cache.AfterTools is not supported for Nova models (run=%s, model=%s)",
+			req.RunID, modelID,
+		)
+	}
 	// Build tool configuration and name maps before encoding messages so tool_use
 	// names can reuse the exact sanitized identifiers. encodeTools is the single
 	// source of truth for name sanitization.
-	toolConfig, canonToSan, sanToCanon, err := encodeTools(ctx, req.Tools, req.ToolChoice)
+	toolConfig, canonToSan, sanToCanon, err := encodeTools(ctx, req.Tools, req.ToolChoice, cacheAfterTools)
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +234,7 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*reque
 			req.RunID,
 		)
 	}
-	messages, system, err := encodeMessages(ctx, merged, canonToSan)
+	messages, system, err := encodeMessages(ctx, merged, canonToSan, cacheAfterSystem)
 	if err != nil {
 		return nil, err
 	}
@@ -397,15 +412,27 @@ func (c *Client) effectiveTemperature(requested float32) float32 {
 	return c.temp
 }
 
-func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[string]string) ([]brtypes.Message, []brtypes.SystemContentBlock, error) {
+func encodeMessages(
+	ctx context.Context,
+	msgs []*model.Message,
+	nameMap map[string]string,
+	cacheAfterSystem bool,
+) ([]brtypes.Message, []brtypes.SystemContentBlock, error) {
 	conversation := make([]brtypes.Message, 0, len(msgs))
 	system := make([]brtypes.SystemContentBlock, 0, len(msgs))
 	for _, m := range msgs {
 		// Build content blocks from parts
 		if m.Role == "system" {
 			for _, p := range m.Parts {
-				if tp, ok := p.(model.TextPart); ok && tp.Text != "" {
-					system = append(system, &brtypes.SystemContentBlockMemberText{Value: tp.Text})
+				switch v := p.(type) {
+				case model.TextPart:
+					if v.Text != "" {
+						system = append(system, &brtypes.SystemContentBlockMemberText{Value: v.Text})
+					}
+				case model.CacheCheckpointPart:
+					system = append(system, &brtypes.SystemContentBlockMemberCachePoint{
+						Value: brtypes.CachePointBlock{Type: brtypes.CachePointTypeDefault},
+					})
 				}
 			}
 			continue
@@ -480,6 +507,10 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 					}
 				}
 				blocks = append(blocks, &brtypes.ContentBlockMemberToolResult{Value: tr})
+			case model.CacheCheckpointPart:
+				blocks = append(blocks, &brtypes.ContentBlockMemberCachePoint{
+					Value: brtypes.CachePointBlock{Type: brtypes.CachePointTypeDefault},
+				})
 			}
 		}
 		if len(blocks) == 0 {
@@ -499,17 +530,28 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 	if len(conversation) == 0 {
 		return nil, nil, errors.New("bedrock: at least one user/assistant message is required")
 	}
+	// Policy-driven: append a cache checkpoint after system messages when requested.
+	if cacheAfterSystem && len(system) > 0 {
+		system = append(system, &brtypes.SystemContentBlockMemberCachePoint{
+			Value: brtypes.CachePointBlock{Type: brtypes.CachePointTypeDefault},
+		})
+	}
 	return conversation, system, nil
 }
 
-func encodeTools(ctx context.Context, defs []*model.ToolDefinition, choice *model.ToolChoice) (*brtypes.ToolConfiguration, map[string]string, map[string]string, error) {
+func encodeTools(
+	ctx context.Context,
+	defs []*model.ToolDefinition,
+	choice *model.ToolChoice,
+	cacheAfterTools bool,
+) (*brtypes.ToolConfiguration, map[string]string, map[string]string, error) {
 	if len(defs) == 0 {
 		if choice == nil {
 			return nil, nil, nil, nil
 		}
 		return nil, nil, nil, fmt.Errorf("bedrock: tool choice is set but no tools are defined")
 	}
-	tools := make([]brtypes.Tool, 0, len(defs))
+	toolList := make([]brtypes.Tool, 0, len(defs))
 	// canonToSan maps canonical IDs (toolset.tool) to provider-visible sanitized names.
 	canonToSan := make(map[string]string, len(defs))
 	// sanToCanon is the reverse map used to translate provider names back to canonical IDs.
@@ -540,21 +582,28 @@ func encodeTools(ctx context.Context, defs []*model.ToolDefinition, choice *mode
 			Description: aws.String(def.Description),
 			InputSchema: &brtypes.ToolInputSchemaMemberJson{Value: schemaDoc},
 		}
-		tools = append(tools, &brtypes.ToolMemberToolSpec{Value: spec})
+		toolList = append(toolList, &brtypes.ToolMemberToolSpec{Value: spec})
 	}
-	if len(tools) == 0 {
+	if len(toolList) == 0 {
 		if choice == nil || choice.Mode == model.ToolChoiceModeNone {
 			return nil, nil, nil, nil
 		}
 		return nil, nil, nil, fmt.Errorf("bedrock: tool choice is set but no tools are defined")
 	}
+	// Policy-driven: append a cache checkpoint after tools when requested.
+	// Note: Only Claude models support tool-level cache checkpoints; Nova does not.
+	if cacheAfterTools {
+		toolList = append(toolList, &brtypes.ToolMemberCachePoint{
+			Value: brtypes.CachePointBlock{Type: brtypes.CachePointTypeDefault},
+		})
+	}
 
 	if choice == nil {
-		return &brtypes.ToolConfiguration{Tools: tools}, canonToSan, sanToCanon, nil
+		return &brtypes.ToolConfiguration{Tools: toolList}, canonToSan, sanToCanon, nil
 	}
 
 	cfg := brtypes.ToolConfiguration{
-		Tools: tools,
+		Tools: toolList,
 	}
 
 	switch choice.Mode {
@@ -724,9 +773,11 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 	}
 	if usage := output.Usage; usage != nil {
 		resp.Usage = model.TokenUsage{
-			InputTokens:  int(ptrValue(usage.InputTokens)),
-			OutputTokens: int(ptrValue(usage.OutputTokens)),
-			TotalTokens:  int(ptrValue(usage.TotalTokens)),
+			InputTokens:      int(ptrValue(usage.InputTokens)),
+			OutputTokens:     int(ptrValue(usage.OutputTokens)),
+			TotalTokens:      int(ptrValue(usage.TotalTokens)),
+			CacheReadTokens:  int(ptrValue(usage.CacheReadInputTokens)),
+			CacheWriteTokens: int(ptrValue(usage.CacheWriteInputTokens)),
 		}
 	}
 	resp.StopReason = string(output.StopReason)
@@ -768,6 +819,17 @@ func hasToolDefinition(defs []*model.ToolDefinition, name string) bool {
 		}
 	}
 	return false
+}
+
+// isNovaModel reports whether the given model identifier refers to an Amazon
+// Nova family model. Nova models do not currently support tool-level cache
+// checkpoints in the tool configuration.
+func isNovaModel(modelID string) bool {
+	if modelID == "" {
+		return false
+	}
+	// Bedrock Nova models are prefixed with "amazon.nova-".
+	return strings.HasPrefix(modelID, "amazon.nova-")
 }
 
 // messagesHaveToolBlocks returns true if any message in the slice contains

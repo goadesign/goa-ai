@@ -336,7 +336,7 @@ func (p *chunkProcessor) Handle(event any) error {
 			return nil
 		}
 		// Compute ints efficiently with direct nil checks (avoid helper + double cast)
-		var in, out, tot int
+		var in, out, tot, cacheRead, cacheWrite int
 		if t := ev.Value.Usage.InputTokens; t != nil {
 			in = int(*t)
 		}
@@ -346,7 +346,19 @@ func (p *chunkProcessor) Handle(event any) error {
 		if t := ev.Value.Usage.TotalTokens; t != nil {
 			tot = int(*t)
 		}
-		usage := model.TokenUsage{InputTokens: in, OutputTokens: out, TotalTokens: tot}
+		if t := ev.Value.Usage.CacheReadInputTokens; t != nil {
+			cacheRead = int(*t)
+		}
+		if t := ev.Value.Usage.CacheWriteInputTokens; t != nil {
+			cacheWrite = int(*t)
+		}
+		usage := model.TokenUsage{
+			InputTokens:      in,
+			OutputTokens:     out,
+			TotalTokens:      tot,
+			CacheReadTokens:  cacheRead,
+			CacheWriteTokens: cacheWrite,
+		}
 		if p.recordUsage != nil {
 			p.recordUsage(usage)
 		}

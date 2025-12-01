@@ -32,12 +32,15 @@ func TestEncodeMessages_ReencodeTranscriptOrder(t *testing.T) {
 	nameMap := map[string]string{
 		"search_assets": "search_assets",
 	}
-	conv, _, err := encodeMessages(ctx, msgs, nameMap)
+	conv, system, err := encodeMessages(ctx, msgs, nameMap, false)
 	if err != nil {
 		t.Fatalf("encodeMessages error: %v", err)
 	}
 	if len(conv) != 2 {
 		t.Fatalf("expected 2 messages, got %d", len(conv))
+	}
+	if len(system) != 0 {
+		t.Fatalf("expected no system blocks, got %d", len(system))
 	}
 	// Assistant message must start with reasoning content before tool_use.
 	asst := conv[0]
@@ -88,7 +91,7 @@ func TestEncodeMessages_FailsOnUnknownToolUse(t *testing.T) {
 	nameMap := map[string]string{
 		"atlas.read.some_other_tool": "some_other_tool",
 	}
-	_, _, err := encodeMessages(ctx, msgs, nameMap)
+	_, _, err := encodeMessages(ctx, msgs, nameMap, false)
 	if err == nil {
 		t.Fatal("expected error for unknown tool_use, got nil")
 	}
@@ -97,5 +100,39 @@ func TestEncodeMessages_FailsOnUnknownToolUse(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not in the current tool configuration") {
 		t.Errorf("error should mention tool configuration mismatch, got: %v", err)
+	}
+}
+
+func TestEncodeMessages_AppendsSystemCacheCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	msgs := []*model.Message{
+		{
+			Role: model.ConversationRoleSystem,
+			Parts: []model.Part{
+				model.TextPart{Text: "you are a helpful assistant"},
+			},
+		},
+		{
+			Role: model.ConversationRoleUser,
+			Parts: []model.Part{
+				model.TextPart{Text: "hello"},
+			},
+		},
+	}
+	conv, system, err := encodeMessages(ctx, msgs, map[string]string{}, true)
+	if err != nil {
+		t.Fatalf("encodeMessages error: %v", err)
+	}
+	if len(conv) != 1 {
+		t.Fatalf("expected 1 non-system message, got %d", len(conv))
+	}
+	if len(system) != 2 {
+		t.Fatalf("expected 2 system blocks (text + cache point), got %d", len(system))
+	}
+	if _, ok := system[0].(*brtypes.SystemContentBlockMemberText); !ok {
+		t.Fatalf("first system block is not text")
+	}
+	if _, ok := system[1].(*brtypes.SystemContentBlockMemberCachePoint); !ok {
+		t.Fatalf("second system block is not cache checkpoint")
 	}
 }

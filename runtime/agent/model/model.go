@@ -84,6 +84,14 @@ type (
 		IsError bool
 	}
 
+	// CacheCheckpointPart marks a cache boundary in a message. Provider adapters
+	// translate this to provider-specific caching directives (e.g., Bedrock
+	// cachePoint). Providers that do not support caching ignore this part. It is
+	// complementary to CacheOptions/CachePolicy: agents can combine explicit
+	// CacheCheckpointPart instances with policy-driven AfterSystem/AfterTools
+	// checkpoints to express complex caching layouts.
+	CacheCheckpointPart struct{}
+
 	// Message is a single chat message.
 	//
 	// Messages are ordered and grouped into a transcript passed to model
@@ -166,6 +174,12 @@ type (
 
 		// TotalTokens is the total number of tokens consumed by the call.
 		TotalTokens int
+
+		// CacheReadTokens is tokens read from cache (reduced cost).
+		CacheReadTokens int
+
+		// CacheWriteTokens is tokens written to cache.
+		CacheWriteTokens int
 	}
 
 	// Request captures inputs for a model invocation.
@@ -199,6 +213,9 @@ type (
 
 		// Thinking configures provider-specific reasoning behavior.
 		Thinking *ThinkingOptions
+
+		// Cache configures prompt caching behavior. Nil means no caching.
+		Cache *CacheOptions
 	}
 
 	// Response is the result of a non-streaming invocation.
@@ -256,6 +273,21 @@ type (
 
 		// BudgetTokens caps the number of thinking tokens when supported.
 		BudgetTokens int
+	}
+
+	// CacheOptions configures prompt caching behavior for a request. Provider
+	// adapters translate these flags to provider-specific caching directives.
+	// Providers that do not support caching ignore these options. When Cache is
+	// nil on a Request, the runtime may populate it from the agent RunPolicy
+	// (CachePolicy) so callers do not need to thread CacheOptions through every
+	// call site. Explicit Request.Cache values always take precedence.
+	CacheOptions struct {
+		// AfterSystem places a checkpoint after all system messages.
+		AfterSystem bool
+
+		// AfterTools places a checkpoint after tool definitions. Not all
+		// providers support tool-level checkpoints (e.g., Nova does not).
+		AfterTools bool
 	}
 
 	// ModelClass identifies the model family.
@@ -364,3 +396,5 @@ func (ThinkingPart) isPart() {}
 func (ToolUsePart) isPart() {}
 
 func (ToolResultPart) isPart() {}
+
+func (CacheCheckpointPart) isPart() {}

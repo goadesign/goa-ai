@@ -116,6 +116,52 @@ func (s *eventStream) Metadata() map[string]any {
 	return s.inner.Metadata()
 }
 
+// cacheConfiguredClient wraps a model.Client and applies the agent CachePolicy
+// to each request. It sets Request.Cache only when it is currently nil so
+// explicit per-request CacheOptions take precedence over the agent defaults.
+type cacheConfiguredClient struct {
+	inner model.Client
+	cache CachePolicy
+}
+
+func newCacheConfiguredClient(inner model.Client, cache CachePolicy) model.Client {
+	if inner == nil {
+		return nil
+	}
+	if !cache.AfterSystem && !cache.AfterTools {
+		return inner
+	}
+	return &cacheConfiguredClient{
+		inner: inner,
+		cache: cache,
+	}
+}
+
+func (c *cacheConfiguredClient) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
+	applyCachePolicy(req, c.cache)
+	return c.inner.Complete(ctx, req)
+}
+
+func (c *cacheConfiguredClient) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
+	applyCachePolicy(req, c.cache)
+	return c.inner.Stream(ctx, req)
+}
+
+// applyCachePolicy populates Request.Cache from the agent CachePolicy when no
+// explicit CacheOptions are present on the request.
+func applyCachePolicy(req *model.Request, cache CachePolicy) {
+	if req == nil || req.Cache != nil {
+		return
+	}
+	if !cache.AfterSystem && !cache.AfterTools {
+		return
+	}
+	req.Cache = &model.CacheOptions{
+		AfterSystem: cache.AfterSystem,
+		AfterTools:  cache.AfterTools,
+	}
+}
+
 // emitMessageContent forwards assistant text and thinking parts from a message.
 func emitMessageContent(ctx context.Context, ev planner.PlannerEvents, msg *model.Message) {
 	if ev == nil || msg == nil || len(msg.Parts) == 0 {
