@@ -572,34 +572,20 @@ func encodeTools(ctx context.Context, defs []*model.ToolDefinition, choice *mode
 		}
 	case model.ToolChoiceModeTool:
 		if choice.Name == "" {
-			return nil, nil, nil, fmt.Errorf(
-				"bedrock: tool choice mode %q requires a tool name",
-				choice.Mode,
-			)
+			return nil, nil, nil, fmt.Errorf("bedrock: tool choice mode %q requires a tool name", choice.Mode)
 		}
 		if !hasToolDefinition(defs, choice.Name) {
-			return nil, nil, nil, fmt.Errorf(
-				"bedrock: tool choice name %q does not match any tool",
-				choice.Name,
-			)
+			return nil, nil, nil, fmt.Errorf("bedrock: tool choice name %q does not match any tool", choice.Name)
 		}
 		sanitized := sanitizeToolName(choice.Name)
 		if canonical, ok := sanToCanon[sanitized]; !ok || canonical != choice.Name {
-			return nil, nil, nil, fmt.Errorf(
-				"bedrock: tool choice name %q does not match any tool",
-				choice.Name,
-			)
+			return nil, nil, nil, fmt.Errorf("bedrock: tool choice name %q does not match any tool", choice.Name)
 		}
 		cfg.ToolChoice = &brtypes.ToolChoiceMemberTool{
-			Value: brtypes.SpecificToolChoice{
-				Name: aws.String(sanitized),
-			},
+			Value: brtypes.SpecificToolChoice{Name: aws.String(sanitized)},
 		}
 	default:
-		return nil, nil, nil, fmt.Errorf(
-			"bedrock: unsupported tool choice mode %q",
-			choice.Mode,
-		)
+		return nil, nil, nil, fmt.Errorf("bedrock: unsupported tool choice mode %q", choice.Mode)
 	}
 
 	return &cfg, canonToSan, sanToCanon, nil

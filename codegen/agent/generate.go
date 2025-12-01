@@ -783,10 +783,22 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 								body += boundsBody
 							}
 						}
-						// Compute correct result type reference (including composites) and qualify with specs alias.
+						// Compute correct result type reference (including composites) and
+						// qualify with specs alias.
 						resRef := scope.GoFullTypeRef(targetAttr, specsAlias)
-						// Use precomputed fully-qualified service result ref to handle external imports (e.g., types.*).
+						// Compute fully-qualified service result ref. Prefer the
+						// precomputed MethodResultTypeRef (which already accounts for
+						// external locators such as types.*). When the result type is
+						// local to the service package (no MethodResultLoc), re‑compute
+						// using the service alias so the parameter type matches the
+						// import alias even when the toolset and service package names
+						// collide (e.g., service "todos" with toolset "todos").
 						serviceResRef := t.MethodResultTypeRef
+						if (t.MethodResultLoc == nil || t.MethodResultLoc.PackageName() == "") && svcAlias != "" {
+							if ref := scope.GoFullTypeRef(t.MethodResultAttr, svcAlias); ref != "" {
+								serviceResRef = ref
+							}
+						}
 						fns = append(fns, transformFuncData{
 							Name:          "Init" + codegen.Goify(t.Name, true) + "ToolResult",
 							ParamTypeRef:  serviceResRef,
@@ -820,9 +832,18 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 										extraImports[im.Path] = im
 									}
 								}
-								// Build fully-qualified sidecar wrapper type name in the specs package.
+								// Build fully-qualified sidecar wrapper type name in the
+								// specs package.
 								sidecarType := fmt.Sprintf("%s.%s", specsAlias, toolSidecar.TypeName)
+								// Use the same logic as Init<GoName>ToolResult for the
+								// method result parameter type so aliasing remains
+								// consistent across transforms.
 								serviceResRef := t.MethodResultTypeRef
+								if (t.MethodResultLoc == nil || t.MethodResultLoc.PackageName() == "") && svcAlias != "" {
+									if ref := scope.GoFullTypeRef(t.MethodResultAttr, svcAlias); ref != "" {
+										serviceResRef = ref
+									}
+								}
 								// Body: wrap the entire method result into the lone sidecar field
 								// using the already-generated Init<GoName>ToolResult helper to
 								// convert the service result into the specs-level result type.
@@ -888,7 +909,13 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 								fileHelpers = append(fileHelpers, h)
 							}
 							metaRef := scope.GoFullTypeRef(metaAttr, specsAlias)
+							// Keep parameter type aligned with Init<GoName>ToolResult.
 							serviceResRef := t.MethodResultTypeRef
+							if (t.MethodResultLoc == nil || t.MethodResultLoc.PackageName() == "") && svcAlias != "" {
+								if ref := scope.GoFullTypeRef(t.MethodResultAttr, svcAlias); ref != "" {
+									serviceResRef = ref
+								}
+							}
 							fns = append(fns, transformFuncData{
 								Name:          "Init" + codegen.Goify(t.Name, true) + "SidecarFromMethodResult",
 								ParamTypeRef:  serviceResRef,
