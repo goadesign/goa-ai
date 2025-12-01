@@ -42,18 +42,19 @@ package run
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-	type (
-		// Context carries execution metadata for the current run invocation.
-		// It is passed through the system during workflow execution and contains
-		// the identifiers, labels, and constraints active for this specific
-		// invocation attempt.
-		Context struct {
+type (
+	// Context carries execution metadata for the current run invocation.
+	// It is passed through the system during workflow execution and contains
+	// the identifiers, labels, and constraints active for this specific
+	// invocation attempt.
+	Context struct {
 		// RunID uniquely identifies the durable workflow run (infrastructure layer).
 		// This corresponds to the workflow engine's execution identifier (e.g.,
 		// Temporal WorkflowID). Used for workflow operations, replay, and observability.
@@ -166,6 +167,13 @@ import (
 	// streaming/UX surfaces and do not replace Status, which is used for
 	// durable run metadata.
 	Phase string
+)
+
+var (
+	// ErrNotFound indicates that no run record exists for the given identifier.
+	// Callers use this to distinguish between missing runs and other failures
+	// when querying run status or metadata.
+	ErrNotFound = errors.New("run not found")
 )
 
 const (

@@ -36,8 +36,9 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 	if r.reminders != nil {
 		rems = r.reminders.Snapshot(input.RunID)
 	}
+	msgs := r.applyHistoryPolicy(ctx, reg, input.Messages)
 	planInput := &planner.PlanInput{
-		Messages:   input.Messages,
+		Messages:   msgs,
 		RunContext: input.RunContext,
 		Agent:      agentCtx,
 		Events:     events,
@@ -81,8 +82,9 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if r.reminders != nil {
 		rems = r.reminders.Snapshot(input.RunID)
 	}
+	msgs := r.applyHistoryPolicy(ctx, reg, input.Messages)
 	planInput := &planner.PlanResumeInput{
-		Messages:    input.Messages,
+		Messages:    msgs,
 		RunContext:  input.RunContext,
 		Agent:       agentCtx,
 		Events:      events,

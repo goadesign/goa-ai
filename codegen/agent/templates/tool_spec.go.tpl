@@ -27,26 +27,20 @@ var Specs = []tools.ToolSpec{
         IsAgentTool: true,
         AgentID:     {{ printf "%q" .ExportingAgentID }},
         {{- end }}
+        BoundedResult: {{ if .BoundedResult }}true{{ else }}false{{ end }},
         Payload: tools.TypeSpec{
-            Name:   {{ if .Payload }}{{ printf "%q" .Payload.TypeName }}{{ else }}""{{ end }},
-            {{- if and .Payload .Payload.SchemaVar }}
-            Schema: {{ .Payload.SchemaVar }},
-            {{- else }}
-            Schema: nil,
-            {{- end }}
+            Name: {{ if .Payload }}{{ printf "%q" .Payload.TypeName }}{{ else }}""{{ end }},
             {{- if .Payload }}
+            Schema: {{- if gt (len .Payload.SchemaJSON) 0 }}[]byte({{ printf "%q" .Payload.SchemaJSON }}){{ else }}nil{{ end }},
             Codec:  {{ .Payload.GenericCodec }},
             {{- else }}
+            Schema: nil,
             Codec:  tools.JSONCodec[any]{},
             {{- end }}
         },
         Result: tools.TypeSpec{
-            Name:   {{ if .Result }}{{ printf "%q" .Result.TypeName }}{{ else }}""{{ end }},
-            {{- if and .Result .Result.SchemaVar }}
-            Schema: {{ .Result.SchemaVar }},
-            {{- else }}
-            Schema: nil,
-            {{- end }}
+            Name: {{ if .Result }}{{ printf "%q" .Result.TypeName }}{{ else }}""{{ end }},
+            Schema: {{- if and .Result (gt (len .Result.SchemaJSON) 0) }}[]byte({{ printf "%q" .Result.SchemaJSON }}){{ else }}nil{{ end }},
             {{- if .Result }}
             Codec:  {{ .Result.GenericCodec }},
             {{- else }}
@@ -54,23 +48,13 @@ var Specs = []tools.ToolSpec{
             {{- end }}
         },
         Sidecar: {{- if .Sidecar }} &tools.TypeSpec{
-            Name:   {{ printf "%q" .Sidecar.TypeName }},
-            {{- if .Sidecar.SchemaVar }}
-            Schema: {{ .Sidecar.SchemaVar }},
-            {{- else }}
-            Schema: nil,
-            {{- end }}
+            Name: {{ printf "%q" .Sidecar.TypeName }},
+            Schema: {{- if gt (len .Sidecar.SchemaJSON) 0 }}[]byte({{ printf "%q" .Sidecar.SchemaJSON }}){{ else }}nil{{ end }},
             Codec:  {{ .Sidecar.GenericCodec }},
         },{{ else }}nil,{{ end }}
     },
 {{- end }}
 }
-
-{{- range .Types }}
-{{- if .SchemaVar }}
-var {{ .SchemaVar }} = {{ .SchemaLiteral }}
-{{- end }}
-{{- end }}
 
 var (
     specIndex = make(map[tools.Ident]*tools.ToolSpec, len(Specs))
@@ -137,3 +121,5 @@ func Metadata() []policy.ToolMetadata {
     copy(out, metadata)
     return out
 }
+
+

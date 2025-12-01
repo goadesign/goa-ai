@@ -460,8 +460,8 @@ func agentSpecsJSONFile(agent *AgentData) *codegen.File {
 			ts := typeSchema{
 				Name: td.TypeName,
 			}
-			if schema := schemaJSON(td.SchemaLiteral); len(schema) > 0 {
-				ts.Schema = schema
+			if len(td.SchemaJSON) > 0 {
+				ts.Schema = json.RawMessage(td.SchemaJSON)
 			}
 			entry.Payload = &ts
 		}
@@ -470,8 +470,8 @@ func agentSpecsJSONFile(agent *AgentData) *codegen.File {
 			ts := typeSchema{
 				Name: td.TypeName,
 			}
-			if schema := schemaJSON(td.SchemaLiteral); len(schema) > 0 {
-				ts.Schema = schema
+			if len(td.SchemaJSON) > 0 {
+				ts.Schema = json.RawMessage(td.SchemaJSON)
 			}
 			entry.Result = &ts
 		}
@@ -480,8 +480,8 @@ func agentSpecsJSONFile(agent *AgentData) *codegen.File {
 			ts := typeSchema{
 				Name: td.TypeName,
 			}
-			if schema := schemaJSON(td.SchemaLiteral); len(schema) > 0 {
-				ts.Schema = schema
+			if len(td.SchemaJSON) > 0 {
+				ts.Schema = json.RawMessage(td.SchemaJSON)
 			}
 			entry.Sidecar = &ts
 		}
@@ -511,34 +511,6 @@ func agentSpecsJSONFile(agent *AgentData) *codegen.File {
 		Path:             path,
 		SectionTemplates: sections,
 	}
-}
-
-// schemaJSON extracts the raw JSON schema bytes from a SchemaLiteral string
-// produced by formatSchema. When the literal is empty or malformed, it returns
-// nil so callers can omit the schema field.
-func schemaJSON(literal string) json.RawMessage {
-	if strings.TrimSpace(literal) == "" {
-		return nil
-	}
-
-	const prefix = "[]byte(`\n"
-	const suffix = "\n`)"
-
-	if !strings.HasPrefix(literal, prefix) || !strings.HasSuffix(literal, suffix) {
-		return nil
-	}
-
-	raw := literal[len(prefix) : len(literal)-len(suffix)]
-	if raw == "" {
-		return nil
-	}
-
-	b := []byte(raw)
-	if !json.Valid(b) {
-		return nil
-	}
-
-	return json.RawMessage(b)
 }
 
 // internalAdapterTransformsFiles emits best-effort transform helpers for method-backed tools
@@ -585,11 +557,11 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 			if !t.IsMethodBacked || t.MethodPayloadAttr == nil || t.MethodResultAttr == nil {
 				continue
 			}
-			// Locate tool payload/result/metadata type metadata by type name convention
-			var toolPayload, toolResult, toolMetadata *typeData
+			// Locate tool payload/result/sidecar type metadata by type name convention.
+			var toolPayload, toolResult, toolSidecar *typeData
 			wantPayload := codegen.Goify(t.Name, true) + "Payload"
 			wantResult := codegen.Goify(t.Name, true) + "Result"
-			wantMetadata := codegen.Goify(t.Name, true) + "Metadata"
+			wantSidecar := codegen.Goify(t.Name, true) + "Sidecar"
 			for _, td := range data.typesList() {
 				if td.TypeName == wantPayload {
 					toolPayload = td
@@ -597,8 +569,8 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 				if td.TypeName == wantResult {
 					toolResult = td
 				}
-				if td.TypeName == wantMetadata {
-					toolMetadata = td
+				if td.TypeName == wantSidecar {
+					toolSidecar = td
 				}
 			}
 			// Init<GoName>MethodPayload: tool payload (specs) -> service method payload
@@ -761,57 +733,105 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 				}
 			}
 			// Init<GoName>SidecarFromMethodResult: service method result -> sidecar (specs)
-			if toolMetadata != nil && t.Sidecar != nil && t.Sidecar.Type != goaexpr.Empty && t.MethodResultAttr != nil && t.MethodResultAttr.Type != goaexpr.Empty {
-				if err := codegen.IsCompatible(t.MethodResultAttr.Type, t.Sidecar.Type, "in", "out"); err == nil {
-					for _, im := range gatherAttributeImports(agent.Genpkg, t.MethodResultAttr) {
-						if im != nil && im.Path != "" {
-							extraImports[im.Path] = im
-						}
-					}
-					for _, im := range gatherAttributeImports(agent.Genpkg, t.Sidecar) {
-						if im != nil && im.Path != "" {
-							extraImports[im.Path] = im
-						}
-					}
-					srcCtx := codegen.NewAttributeContextForConversion(false, false, false, svcAlias, scope)
-					// Build a local alias user type for the sidecar. Do not propagate struct:pkg:path
-					// from the base attribute so initializers/casts use the specs package alias.
-					var metaBase *goaexpr.AttributeExpr
-					if ut, ok := t.Sidecar.Type.(goaexpr.UserType); ok && ut != nil {
-						metaBase = ut.Attribute()
-					} else {
-						metaBase = t.Sidecar
-					}
-					dupMeta := *metaBase
-					if dupMeta.Meta != nil {
-						delete(dupMeta.Meta, "struct:pkg:path")
-					}
-					rewrittenMeta := rewriteNestedLocalUserTypes(&dupMeta)
-					metaUT := &goaexpr.UserTypeExpr{AttributeExpr: rewrittenMeta, TypeName: toolMetadata.TypeName}
-					metaAttr := &goaexpr.AttributeExpr{Type: metaUT}
-					tgtCtx := codegen.NewAttributeContextForConversion(false, false, false, specsAlias, scope)
-					body, helpers, err := codegen.GoTransform(t.MethodResultAttr, metaAttr, "in", "out", srcCtx, tgtCtx, "", false)
-					if err == nil && body != "" {
-						for _, h := range helpers {
-							if h == nil {
-								continue
+			if toolSidecar != nil && t.Sidecar != nil && t.Sidecar.Type != goaexpr.Empty && t.MethodResultAttr != nil && t.MethodResultAttr.Type != goaexpr.Empty {
+				wrapHandled := false
+				// Fast-path: if the sidecar user type is a single-field wrapper whose
+				// field type matches the method result type, synthesize a direct
+				// wrapper transform instead of relying on structural field matches.
+				if ut, ok := t.Sidecar.Type.(goaexpr.UserType); ok && ut != nil {
+					if obj := goaexpr.AsObject(ut.Attribute().Type); obj != nil && len(*obj) == 1 {
+						// Check the lone field is assignable from the method result type.
+						for _, natt := range *obj {
+							fieldName := natt.Name
+							if err := codegen.IsCompatible(t.MethodResultAttr.Type, natt.Attribute.Type, "in", "out"); err == nil {
+								// imports from source and target attributes
+								for _, im := range gatherAttributeImports(agent.Genpkg, t.MethodResultAttr) {
+									if im != nil && im.Path != "" {
+										extraImports[im.Path] = im
+									}
+								}
+								for _, im := range gatherAttributeImports(agent.Genpkg, t.Sidecar) {
+									if im != nil && im.Path != "" {
+										extraImports[im.Path] = im
+									}
+								}
+								// Build fully-qualified sidecar wrapper type name in the specs package.
+								sidecarType := fmt.Sprintf("%s.%s", specsAlias, toolSidecar.TypeName)
+								serviceResRef := t.MethodResultTypeRef
+								// Body: wrap the entire method result into the lone sidecar field
+								// using the already-generated Init<GoName>ToolResult helper to
+								// convert the service result into the specs-level result type.
+								body := fmt.Sprintf(
+									"out = &%s{\n\t%s: Init%sToolResult(in),\n}\n",
+									sidecarType,
+									codegen.Goify(fieldName, true),
+									codegen.Goify(t.Name, true),
+								)
+								fns = append(fns, transformFuncData{
+									Name:          "Init" + codegen.Goify(t.Name, true) + "SidecarFromMethodResult",
+									ParamTypeRef:  serviceResRef,
+									ResultTypeRef: "*" + sidecarType,
+									Body:          body,
+									Helpers:       nil,
+								})
+								wrapHandled = true
+								break
 							}
-							key := h.Name + "|" + h.ParamTypeRef + "|" + h.ResultTypeRef
-							if _, ok := helperKeys[key]; ok {
-								continue
-							}
-							helperKeys[key] = struct{}{}
-							fileHelpers = append(fileHelpers, h)
 						}
-						metaRef := scope.GoFullTypeRef(metaAttr, specsAlias)
-						serviceResRef := t.MethodResultTypeRef
-						fns = append(fns, transformFuncData{
-							Name:          "Init" + codegen.Goify(t.Name, true) + "SidecarFromMethodResult",
-							ParamTypeRef:  serviceResRef,
-							ResultTypeRef: metaRef,
-							Body:          body,
-							Helpers:       nil,
-						})
+					}
+				}
+				if !wrapHandled {
+					if err := codegen.IsCompatible(t.MethodResultAttr.Type, t.Sidecar.Type, "in", "out"); err == nil {
+						for _, im := range gatherAttributeImports(agent.Genpkg, t.MethodResultAttr) {
+							if im != nil && im.Path != "" {
+								extraImports[im.Path] = im
+							}
+						}
+						for _, im := range gatherAttributeImports(agent.Genpkg, t.Sidecar) {
+							if im != nil && im.Path != "" {
+								extraImports[im.Path] = im
+							}
+						}
+						srcCtx := codegen.NewAttributeContextForConversion(false, false, false, svcAlias, scope)
+						// Build a local alias user type for the sidecar. Do not propagate struct:pkg:path
+						// from the base attribute so initializers/casts use the specs package alias.
+						var metaBase *goaexpr.AttributeExpr
+						if ut, ok := t.Sidecar.Type.(goaexpr.UserType); ok && ut != nil {
+							metaBase = ut.Attribute()
+						} else {
+							metaBase = t.Sidecar
+						}
+						dupMeta := *metaBase
+						if dupMeta.Meta != nil {
+							delete(dupMeta.Meta, "struct:pkg:path")
+						}
+						rewrittenMeta := rewriteNestedLocalUserTypes(&dupMeta)
+						metaUT := &goaexpr.UserTypeExpr{AttributeExpr: rewrittenMeta, TypeName: toolSidecar.TypeName}
+						metaAttr := &goaexpr.AttributeExpr{Type: metaUT}
+						tgtCtx := codegen.NewAttributeContextForConversion(false, false, false, specsAlias, scope)
+						body, helpers, err := codegen.GoTransform(t.MethodResultAttr, metaAttr, "in", "out", srcCtx, tgtCtx, "", false)
+						if err == nil && body != "" {
+							for _, h := range helpers {
+								if h == nil {
+									continue
+								}
+								key := h.Name + "|" + h.ParamTypeRef + "|" + h.ResultTypeRef
+								if _, ok := helperKeys[key]; ok {
+									continue
+								}
+								helperKeys[key] = struct{}{}
+								fileHelpers = append(fileHelpers, h)
+							}
+							metaRef := scope.GoFullTypeRef(metaAttr, specsAlias)
+							serviceResRef := t.MethodResultTypeRef
+							fns = append(fns, transformFuncData{
+								Name:          "Init" + codegen.Goify(t.Name, true) + "SidecarFromMethodResult",
+								ParamTypeRef:  serviceResRef,
+								ResultTypeRef: metaRef,
+								Body:          body,
+								Helpers:       nil,
+							})
+						}
 					}
 				}
 			}
@@ -843,7 +863,13 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 // from all specs/<toolset> packages into a single package for convenience.
 func agentSpecsAggregatorFile(agent *AgentData) *codegen.File {
 	// Build import list: runtime + per-toolset packages
-	imports := []*codegen.ImportSpec{{Path: "sort"}, {Path: "goa.design/goa-ai/runtime/agent/policy"}, {Path: "goa.design/goa-ai/runtime/agent/tools"}}
+	imports := []*codegen.ImportSpec{
+		{Path: "embed", Name: "_"},
+		{Path: "encoding/json"},
+		{Path: "sort"},
+		{Path: "goa.design/goa-ai/runtime/agent/policy"},
+		{Path: "goa.design/goa-ai/runtime/agent/tools"},
+	}
 	added := make(map[string]struct{})
 	toolsets := make([]*ToolsetData, 0, len(agent.AllToolsets))
 	for _, ts := range agent.AllToolsets {
@@ -892,6 +918,13 @@ func agentConfigFile(agent *AgentData) *codegen.File {
 	imports := []*codegen.ImportSpec{
 		{Path: "errors"},
 		{Path: "goa.design/goa-ai/runtime/agent/planner"},
+	}
+	// Import model client when a compress-history policy is configured so the
+	// generated config can reference model.Client in the HistoryModel field.
+	if agent.RunPolicy.History != nil && agent.RunPolicy.History.Mode == "compress" {
+		imports = append(imports,
+			&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/model", Name: "model"},
+		)
 	}
 	// Determine whether fmt is needed. The config Validate() uses fmt.Errorf for
 	// missing method-backed toolset dependencies and for MCP callers.
@@ -1249,6 +1282,7 @@ func serviceExecutorFiles(agent *AgentData) []*codegen.File {
 		}
 		imports := []*codegen.ImportSpec{
 			{Path: "context"},
+			{Path: "encoding/json"},
 			{Path: "errors"},
 			{Path: "fmt"},
 			{Path: "strings"},

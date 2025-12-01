@@ -58,6 +58,12 @@ type (
 		// InjectedFields are fields marked as infrastructure-only.
 		InjectedFields []string
 
+		// BoundedResult indicates that this tool's result is intended to be a
+		// bounded view over a potentially larger data set. It is set by the
+		// BoundedResult DSL helper and propagated into tool metadata so runtimes
+		// and services can enforce and surface bounds consistently.
+		BoundedResult bool
+
 		bindServiceName string
 		bindMethodName  string
 	}

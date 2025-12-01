@@ -129,6 +129,25 @@ Each entry contains the canonical tool ID with full JSON Schemas:
 Schemas derive from the same DSL as your generated specs and codecs. If schema generation fails,
 `goa gen` fails fast—no silent drift between runtime contracts and the JSON catalogue.
 
+### Bounded Tool Results and Bounds Metadata
+
+Some tools naturally return large lists, graphs, or time‑series windows. Goa‑AI lets you mark these
+as **bounded views** so that services remain responsible for trimming while the runtime enforces and
+surfaces the contract:
+
+- Use the DSL helper `BoundedResult()` inside a `Tool` to declare that its result is a bounded view
+  over a larger data set.
+- Codegen propagates this into the generated `tools.ToolSpec` (`BoundedResult: true`) and extends
+  the generated result alias type with a `Bounds *agent.Bounds` field (JSON `bounds` property) so
+  models and `tool_schemas.json` see canonical truncation metadata.
+- Generated result types also implement the `agent.BoundedResult` interface via a
+  `ResultBounds() agent.Bounds` method; the runtime derives a small, provider‑agnostic
+  `agent.Bounds` struct for each bounded result
+  and attaches it to planner results, hook events, streams, and memory events.
+- For tools marked `BoundedResult`, the runtime enforces that bounds metadata is present and that
+  any untruncated result stays under a configurable JSON size limit; trimming logic stays entirely
+  in service code.
+
 ## Your First Agent in Five Minutes
 
 ### 1. Design (design/design.go)
@@ -165,6 +184,10 @@ var _ = Service("orchestrator", func() {
 		RunPolicy(func() {
 			DefaultCaps(MaxToolCalls(2), MaxConsecutiveFailedToolCalls(1))
 			TimeBudget("15s")
+			History(func() {
+				// For long sessions, summarize older turns and keep the last 10.
+				Compress(30, 10)
+			})
 		})
 	})
 })
@@ -226,7 +249,8 @@ func main() {
 	rt := runtime.New() // in‑memory engine by default
 
 	if err := chat.RegisterChatAgent(context.Background(), rt, chat.ChatAgentConfig{
-		Planner: &StubPlanner{},
+		Planner:      &StubPlanner{},
+		HistoryModel: myHistoryModelClient, // required when using Compress history
 	}); err != nil {
 		panic(err)
 	}

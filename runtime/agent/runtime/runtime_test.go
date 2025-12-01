@@ -190,7 +190,7 @@ func TestConsecutiveFailureBreaker(t *testing.T) {
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 		Policy:              RunPolicy{MaxConsecutiveFailedToolCalls: 1},
-	}, input, base, initial, nil, initialCaps(RunPolicy{MaxConsecutiveFailedToolCalls: 1}), time.Time{}, 2, nil, nil, nil, 0)
+	}, input, base, initial, nil, initialCaps(RunPolicy{MaxConsecutiveFailedToolCalls: 1}), time.Time{}, 2, "", nil, nil, 0)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "consecutive failed tool call cap exceeded")
 }
@@ -302,7 +302,7 @@ func TestTimeBudgetExceeded(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, nil, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, wfCtx.Now().Add(-time.Second), 2, nil, nil, nil, 0)
+	}, input, base, initial, nil, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, wfCtx.Now().Add(-time.Second), 2, "", nil, nil, 0)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "time budget exceeded")
 }
@@ -479,7 +479,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, parentInput, base, initial, nil, policy.CapsState{MaxToolCalls: 3, RemainingToolCalls: 3}, time.Time{}, 2, &turnSequencer{turnID: parentInput.TurnID}, nil, nil, 0)
+	}, parentInput, base, initial, nil, policy.CapsState{MaxToolCalls: 3, RemainingToolCalls: 3}, time.Time{}, 2, parentInput.TurnID, nil, nil, 0)
 	require.NoError(t, err)
 
 	// Assert ToolCallUpdatedEvent emitted twice with counts 2 then 3 referencing parent tool call id
@@ -563,8 +563,7 @@ func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 		{Name: tools.Ident("child1")},
 		{Name: tools.Ident("child2")},
 	}
-	seq := &turnSequencer{turnID: "turn-1"}
-	_, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "run-1", "agent-1", &run.Context{}, calls, 0, seq, tracker, time.Time{})
+	_, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "run-1", "agent-1", &run.Context{}, calls, 0, "turn-1", tracker, time.Time{})
 	require.NoError(t, err)
 
 	var update *hooks.ToolCallUpdatedEvent
@@ -687,7 +686,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 		caps,
 		time.Time{},
 		2,
-		nil,
+		"",
 		nil,
 		nil,
 		0,

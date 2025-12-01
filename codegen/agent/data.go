@@ -194,6 +194,25 @@ type (
 		// OnMissingFields controls behavior when validation indicates missing fields.
 		// Allowed: "finalize" | "await_clarification" | "resume". Empty means unspecified.
 		OnMissingFields string
+		// History captures conversational history management configuration (if any).
+		// When nil, no history policy is configured and callers retain full history.
+		History *HistoryData
+	}
+
+	// HistoryData represents the configured history policy for an agent. It encodes
+	// either a KeepRecentTurns sliding window or a Compress policy; at most one mode
+	// is set for a given agent.
+	HistoryData struct {
+		// Mode is "keep_recent" or "compress".
+		Mode string
+		// KeepRecent is the number of recent turns to retain when Mode == "keep_recent".
+		KeepRecent int
+		// TriggerAt is the number of turns that must accumulate before compression
+		// triggers when Mode == "compress".
+		TriggerAt int
+		// CompressKeepRecent is the number of recent turns to retain in full fidelity
+		// when Mode == "compress".
+		CompressKeepRecent int
 	}
 
 	// CapsData captures per-run resource limits that restrict agent tool usage.
@@ -447,6 +466,12 @@ type (
 
 		// InjectedFields contains the names of fields marked for injection via DSL.
 		InjectedFields []string
+
+		// BoundedResult indicates that this tool's result is declared as a bounded
+		// view over a potentially larger data set (set via the BoundedResult DSL
+		// helper). Codegen and services can use this flag to attach and enforce
+		// truncation metadata consistently.
+		BoundedResult bool
 
 		// PassthroughService is the Goa service name for deterministic forwarding
 		// when this tool is part of an exported toolset.
@@ -906,6 +931,15 @@ func newRunPolicyData(expr *agentsExpr.RunPolicyExpr) RunPolicyData {
 		InterruptsAllowed: expr.InterruptsAllowed,
 		OnMissingFields:   expr.OnMissingFields,
 	}
+	if expr.History != nil {
+		h := &HistoryData{
+			Mode:              string(expr.History.Mode),
+			KeepRecent:        expr.History.KeepRecent,
+			TriggerAt:         expr.History.TriggerAt,
+			CompressKeepRecent: expr.History.CompressKeepRecent,
+		}
+		rp.History = h
+	}
 	if expr.DefaultCaps != nil {
 		rp.Caps = CapsData{
 			MaxToolCalls:                  expr.DefaultCaps.MaxToolCalls,
@@ -1124,6 +1158,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		CallHintTemplate:   expr.CallHintTemplate,
 		ResultHintTemplate: expr.ResultHintTemplate,
 		InjectedFields:     expr.InjectedFields,
+		BoundedResult:      expr.BoundedResult,
 	}
 	if expr.ExportPassthrough != nil {
 		tool.PassthroughService = expr.ExportPassthrough.TargetService

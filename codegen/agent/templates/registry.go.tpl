@@ -78,6 +78,15 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
             OnMissingFields: agentsruntime.MissingFieldsResume,
             {{- end }}
 {{- end }}
+{{- if .RunPolicy.History }}
+            History: func() agentsruntime.HistoryPolicy {
+            {{- if eq .RunPolicy.History.Mode "keep_recent" }}
+                return agentsruntime.KeepRecentTurns({{ .RunPolicy.History.KeepRecent }})
+            {{- else if eq .RunPolicy.History.Mode "compress" }}
+                return agentsruntime.Compress({{ .RunPolicy.History.TriggerAt }}, {{ .RunPolicy.History.CompressKeepRecent }}, cfg.HistoryModel)
+            {{- end }}
+            }(),
+{{- end }}
         },
     }); err != nil {
         return err

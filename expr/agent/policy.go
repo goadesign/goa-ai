@@ -31,6 +31,9 @@ type (
 		// missing fields.  Allowed values: "finalize" |
 		// "await_clarification" | "resume". Empty means unspecified.
 		OnMissingFields string
+		// History configures how the runtime prunes or compresses
+		// conversational history before planner invocations.
+		History *HistoryExpr
 	}
 
 	// CapsExpr defines per-run limits on agent tool usage.
@@ -45,6 +48,40 @@ type (
 		// consecutive tool failures before the run is terminated.
 		MaxConsecutiveFailedToolCall int
 	}
+
+	// HistoryMode identifies which history policy is configured on an agent.
+	HistoryMode string
+
+	// HistoryExpr captures the design-time configuration for history
+	// management. It encodes either a KeepRecentTurns or Compress
+	// policy; at most one mode may be set.
+	HistoryExpr struct {
+		eval.DSLFunc
+
+		// Policy is the run policy expression this history configuration
+		// belongs to.
+		Policy *RunPolicyExpr
+		// Mode selects the history strategy.
+		Mode HistoryMode
+		// KeepRecent is the number of recent turns to retain when
+		// ModeKeepRecent is selected.
+		KeepRecent int
+		// TriggerAt is the number of turns that must accumulate before
+		// compression triggers when ModeCompress is selected.
+		TriggerAt int
+		// CompressKeepRecent is the number of recent turns to retain in
+		// full fidelity when ModeCompress is selected.
+		CompressKeepRecent int
+	}
+)
+
+const (
+	// HistoryModeKeepRecent configures a sliding-window policy that
+	// retains only the most recent N turns.
+	HistoryModeKeepRecent HistoryMode = "keep_recent"
+	// HistoryModeCompress configures a summarization policy that
+	// compresses older turns once a trigger threshold is reached.
+	HistoryModeCompress HistoryMode = "compress"
 )
 
 // EvalName returns a descriptive identifier for error reporting.
@@ -66,7 +103,37 @@ func (r *RunPolicyExpr) Validate() error {
 			verr.Add(r, "OnMissingFields(\"await_clarification\") requires InterruptsAllowed(true)")
 		}
 	}
+	if r.History != nil {
+		switch r.History.Mode {
+		case "":
+			verr.Add(r.History, "history policy must specify a mode")
+		case HistoryModeKeepRecent:
+			if r.History.KeepRecent <= 0 {
+				verr.Add(r.History, "KeepRecentTurns requires a positive turn count")
+			}
+		case HistoryModeCompress:
+			if r.History.TriggerAt <= 0 {
+				verr.Add(r.History, "Compress requires TriggerAt > 0")
+			}
+			if r.History.CompressKeepRecent < 0 {
+				verr.Add(r.History, "Compress requires keepRecent >= 0")
+			}
+			if r.History.CompressKeepRecent >= r.History.TriggerAt {
+				verr.Add(r.History, "Compress keepRecent must be less than TriggerAt")
+			}
+		default:
+			verr.Add(r.History, "unknown history mode %q", r.History.Mode)
+		}
+	}
 	return verr
+}
+
+// EvalName returns a descriptive identifier for error reporting.
+func (h *HistoryExpr) EvalName() string {
+	if h == nil || h.Policy == nil || h.Policy.Agent == nil {
+		return "history policy"
+	}
+	return fmt.Sprintf("history policy for agent %q", h.Policy.Agent.Name)
 }
 
 // EvalName returns a descriptive identifier for error reporting.

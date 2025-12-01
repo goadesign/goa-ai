@@ -483,7 +483,7 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 				nestedRunCtx.RunID,
 				cfg.AgentID,
 			),
-			nil,
+			"",
 		)
 		if cfg.Route.ID != "" {
 			// Child-workflow composition: provider owns planning/tools.

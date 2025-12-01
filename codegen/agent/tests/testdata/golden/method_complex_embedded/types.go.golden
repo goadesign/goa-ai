@@ -7,13 +7,11 @@
 package profiles
 
 type (
-
 	// UpsertPayload defines the JSON payload for the profiles.upsert tool.
 	UpsertPayload = struct {
 		// Profile
 		Profile *Profile `json:"profile"`
 	}
-
 	// UpsertResult defines the JSON result for the profiles.upsert tool.
 	UpsertResult = struct {
 		// Identifier
@@ -23,7 +21,6 @@ type (
 		// Address
 		Address *Address `json:"address"`
 	}
-
 	// Address is a helper type materialized for nested references.
 	Address = struct {
 		// Street
@@ -31,7 +28,6 @@ type (
 		// City
 		City string `json:"city"`
 	}
-
 	// Profile is a helper type materialized for nested references.
 	Profile = struct {
 		// Identifier
@@ -41,18 +37,15 @@ type (
 		// Address
 		Address *Address
 	}
-
 	// UpsertArgs is a helper type materialized for nested references.
 	UpsertArgs = struct {
 		// Profile
 		Profile *Profile
 	}
-
 	// UpsertPayloadJSON2 is a helper type for JSON decode-body.
 	UpsertPayloadJSON2 struct {
 		Profile *UpsertPayloadJSONProfileJSON2 `json:"profile"`
 	}
-
 	// UpsertPayloadJSONProfileJSON2 is a helper type for JSON decode-body.
 	UpsertPayloadJSONProfileJSON2 struct {
 		// Identifier
@@ -61,7 +54,6 @@ type (
 		Name    *string                                   `json:"name"`
 		Address *UpsertPayloadJSONProfileJSONAddressJSON2 `json:"address"`
 	}
-
 	// UpsertPayloadJSONProfileJSONAddressJSON2 is a helper type for JSON decode-body.
 	UpsertPayloadJSONProfileJSONAddressJSON2 struct {
 		// Street

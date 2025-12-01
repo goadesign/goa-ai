@@ -7,7 +7,6 @@
 package ops
 
 type (
-
 	// EchoPayloadJSON2 is a helper type for JSON decode-body.
 	EchoPayloadJSON2 struct {
 		// text to echo
