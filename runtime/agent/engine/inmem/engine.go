@@ -20,6 +20,7 @@ type (
 		mu         sync.RWMutex
 		workflows  map[string]engine.WorkflowDefinition
 		activities map[string]inmemActivity
+		statuses   map[string]engine.RunStatus // tracks workflow status by runID
 	}
 
 	childHandle struct {
@@ -66,7 +67,9 @@ type (
 // development, tests, and simple single-process runs. It is not deterministic
 // or replay-safe and should not be used for production workloads.
 func New() engine.Engine {
-	return &eng{}
+	return &eng{
+		statuses: make(map[string]engine.RunStatus),
+	}
 }
 
 func (e *eng) RegisterWorkflow(ctx context.Context, def engine.WorkflowDefinition) error {
@@ -148,6 +151,14 @@ func (e *eng) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest
 
 	h := &handle{done: make(chan struct{}), wfCtx: wctx}
 
+	// Track workflow as running
+	e.mu.Lock()
+	if e.statuses == nil {
+		e.statuses = make(map[string]engine.RunStatus)
+	}
+	e.statuses[req.ID] = engine.RunStatusRunning
+	e.mu.Unlock()
+
 	go func() {
 		defer close(h.done)
 		res, err := def.Handler(wctx, req.Input)
@@ -155,6 +166,18 @@ func (e *eng) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest
 		h.result = res
 		h.err = err
 		h.mu.Unlock()
+		// Update status based on completion
+		e.mu.Lock()
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				e.statuses[req.ID] = engine.RunStatusCanceled
+			} else {
+				e.statuses[req.ID] = engine.RunStatusFailed
+			}
+		} else {
+			e.statuses[req.ID] = engine.RunStatusCompleted
+		}
+		e.mu.Unlock()
 	}()
 
 	return h, nil
@@ -225,6 +248,21 @@ func (h *handle) Cancel(ctx context.Context) error {
 	// In-memory: best-effort cancellation via context cancellation is not wired.
 	// Return nil to match no-op behavior.
 	return nil
+}
+
+// QueryRunStatus returns the current lifecycle status for a workflow execution
+// by checking the in-memory status map.
+func (e *eng) QueryRunStatus(ctx context.Context, runID string) (engine.RunStatus, error) {
+	if runID == "" {
+		return "", fmt.Errorf("run id is required")
+	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	status, ok := e.statuses[runID]
+	if !ok {
+		return "", engine.ErrWorkflowNotFound
+	}
+	return status, nil
 }
 
 func (w *wfCtx) Context() context.Context   { return w.ctx }

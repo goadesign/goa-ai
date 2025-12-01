@@ -6,9 +6,33 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent/api"
+)
+
+// RunStatus represents the lifecycle state of a workflow execution.
+type RunStatus string
+
+const (
+	// RunStatusPending indicates the workflow has been accepted but not started yet.
+	RunStatusPending RunStatus = "pending"
+	// RunStatusRunning indicates the workflow is actively executing.
+	RunStatusRunning RunStatus = "running"
+	// RunStatusCompleted indicates the workflow finished successfully.
+	RunStatusCompleted RunStatus = "completed"
+	// RunStatusFailed indicates the workflow failed permanently.
+	RunStatusFailed RunStatus = "failed"
+	// RunStatusCanceled indicates the workflow was canceled externally.
+	RunStatusCanceled RunStatus = "canceled"
+	// RunStatusPaused indicates execution is paused awaiting external intervention.
+	RunStatusPaused RunStatus = "paused"
+)
+
+var (
+	// ErrWorkflowNotFound indicates that no workflow execution exists for the given identifier.
+	ErrWorkflowNotFound = errors.New("workflow not found")
 )
 
 type (
@@ -32,6 +56,11 @@ type (
 		// instance. Returns an error if the workflow name is not registered, the ID
 		// conflicts with a running workflow, or if scheduling fails.
 		StartWorkflow(ctx context.Context, req WorkflowStartRequest) (WorkflowHandle, error)
+
+		// QueryRunStatus returns the current lifecycle status for a workflow execution
+		// identified by runID. The engine is the source of truth for workflow status.
+		// Returns an error if the run does not exist or if querying fails.
+		QueryRunStatus(ctx context.Context, runID string) (RunStatus, error)
 	}
 
 	// Signaler provides direct signaling by workflow ID/run ID without relying on
