@@ -345,6 +345,10 @@ func (s *stubEngine) StartWorkflow(ctx context.Context, req engine.WorkflowStart
 	return noopWorkflowHandle{}, nil
 }
 
+func (s *stubEngine) QueryRunStatus(context.Context, string) (engine.RunStatus, error) {
+	return engine.RunStatusCompleted, nil
+}
+
 type noopWorkflowHandle struct{}
 
 func (noopWorkflowHandle) Wait(context.Context) (*api.RunOutput, error) { return &api.RunOutput{}, nil }

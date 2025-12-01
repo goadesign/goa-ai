@@ -468,6 +468,31 @@ func (e *Engine) TemporalClient() client.Client {
 	return e.client
 }
 
+// QueryRunStatus returns the current lifecycle status for a workflow execution
+// by querying Temporal. The runID parameter is the workflow execution ID
+// (Temporal WorkflowID). This queries the latest run for that workflow.
+func (e *Engine) QueryRunStatus(ctx context.Context, runID string) (engine.RunStatus, error) {
+	if runID == "" {
+		return "", fmt.Errorf("run id is required")
+	}
+	desc, err := e.client.DescribeWorkflowExecution(ctx, runID, "")
+	if err != nil {
+		// Treat failures to describe as a missing workflow for the purposes of
+		// coarse-grained status. Callers surface this as run.ErrNotFound.
+		return "", engine.ErrWorkflowNotFound
+	}
+	info := desc.GetWorkflowExecutionInfo()
+	if info == nil {
+		return engine.RunStatusPending, nil
+	}
+	// When CloseTime is unset, the execution is still running. Any non-nil
+	// CloseTime indicates a terminal state (completed/failed/canceled/etc.).
+	if info.GetCloseTime() == nil {
+		return engine.RunStatusRunning, nil
+	}
+	return engine.RunStatusCompleted, nil
+}
+
 func (e *Engine) ensureWorkersStarted() {
 	e.mu.Lock()
 	if e.workersStarted {

@@ -718,6 +718,71 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 							helperKeys[key] = struct{}{}
 							fileHelpers = append(fileHelpers, h)
 						}
+						// For bounded tools whose result type exposes the simple cardinality
+						// fields (returned, total, truncated, refinement_hint), append a small
+						// semantic postlude that initializes the canonical Bounds helper
+						// field from those individual fields on out. The canonical bounds
+						// shape is synthesized in specs_builder.go and is represented in the
+						// generated result type as:
+						//
+						//   Bounds *struct {
+						//       Returned       int
+						//       Total          *int
+						//       Truncated      bool
+						//       RefinementHint *string
+						//   }
+						//
+						// More complex bounded results (for example, multi-dimensional views
+						// such as GetTimeSeriesResult with ReturnedSeries/ReturnedSamples)
+						// cannot be derived generically; those tools must populate Bounds
+						// explicitly via their service result shapes instead.
+						if t.BoundedResult && toolResult.ImplementsBounds {
+							obj := goaexpr.AsObject(baseAttr.Type)
+							hasReturned := false
+							hasTotal := false
+							hasTruncated := false
+							hasHint := false
+							if obj != nil {
+								for _, nat := range *obj {
+									switch nat.Name {
+									case "returned", "Returned":
+										hasReturned = true
+									case "total", "Total":
+										hasTotal = true
+									case "truncated", "Truncated":
+										hasTruncated = true
+									case "refinement_hint", "RefinementHint":
+										hasHint = true
+									}
+								}
+							}
+							if hasReturned && hasTotal && hasTruncated && hasHint {
+								boundsBody := `
+    if out != nil {
+        bounds := &struct {
+            Returned       int
+            Total          *int
+            Truncated      bool
+            RefinementHint *string
+        }{}
+        if out.Returned != nil {
+            bounds.Returned = *out.Returned
+        }
+        if out.Total != nil {
+            bounds.Total = out.Total
+        }
+        if out.Truncated != nil {
+            bounds.Truncated = *out.Truncated
+        }
+        if out.RefinementHint != nil {
+            bounds.RefinementHint = out.RefinementHint
+        }
+        out.Bounds = bounds
+    }
+`
+								body += boundsBody
+							}
+						}
 						// Compute correct result type reference (including composites) and qualify with specs alias.
 						resRef := scope.GoFullTypeRef(targetAttr, specsAlias)
 						// Use precomputed fully-qualified service result ref to handle external imports (e.g., types.*).

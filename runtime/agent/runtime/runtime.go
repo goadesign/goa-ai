@@ -1159,23 +1159,60 @@ func (r *Runtime) ProvideToolResults(ctx context.Context, rs interrupt.ToolResul
 }
 
 // RunStatus returns the coarse-grained lifecycle status for the given run by
-// delegating to the configured run store. When no record exists for the given
-// run ID, RunStatus returns run.ErrNotFound.
+// querying the engine as the source of truth. When no record exists for the
+// given run ID, RunStatus returns run.ErrNotFound.
+//
+// If a RunStore is configured, RunStatus also applies a simple staleness
+// heuristic for "running" runs: when the stored run metadata reports an
+// UpdatedAt timestamp older than a fixed threshold, the run is treated as
+// failed. This prevents callers from being blocked indefinitely by workflows
+// that are logically stuck (for example, waiting on a failed child workflow)
+// even though the engine still reports them as running.
 func (r *Runtime) RunStatus(ctx context.Context, runID string) (run.Status, error) {
 	if strings.TrimSpace(runID) == "" {
 		return "", fmt.Errorf("run id is required")
 	}
-	if r.RunStore == nil {
-		return "", fmt.Errorf("run store not configured")
-	}
-	rec, err := r.RunStore.Load(ctx, runID)
+	engineStatus, err := r.Engine.QueryRunStatus(ctx, runID)
 	if err != nil {
+		if errors.Is(err, engine.ErrWorkflowNotFound) {
+			return "", run.ErrNotFound
+		}
 		return "", err
 	}
-	if rec.RunID == "" {
-		return "", run.ErrNotFound
+
+	// Map engine.RunStatus to run.Status
+	var status run.Status
+	switch engineStatus {
+	case engine.RunStatusPending, engine.RunStatusRunning, engine.RunStatusPaused:
+		status = run.StatusRunning
+	case engine.RunStatusCompleted:
+		status = run.StatusCompleted
+	case engine.RunStatusFailed:
+		status = run.StatusFailed
+	case engine.RunStatusCanceled:
+		status = run.StatusCanceled
+	default:
+		status = run.Status(string(engineStatus))
 	}
-	return rec.Status, nil
+
+	// When the engine reports a running status, optionally consult the RunStore
+	// (if configured) to detect obviously stale runs based on UpdatedAt. This
+	// keeps the runtime as the single source of truth for run lifecycle while
+	// allowing stuck executions to surface as failures for callers.
+	if status == run.StatusRunning && r.RunStore != nil {
+		const staleAfter = 5 * time.Minute
+
+		rec, rerr := r.RunStore.Load(ctx, runID)
+		if rerr != nil {
+			r.logWarn(ctx, "run record load failed", rerr, "run_id", runID)
+		} else if !rec.UpdatedAt.IsZero() {
+			if age := time.Since(rec.UpdatedAt); age > staleAfter {
+				return run.StatusFailed, nil
+			}
+		}
+	}
+
+	return status, nil
 }
 
 // addToolsetLocked registers a toolset and its specs without acquiring the lock.
