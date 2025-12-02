@@ -412,12 +412,32 @@ func (c *Client) effectiveTemperature(requested float32) float32 {
 	return c.temp
 }
 
-func encodeMessages(
-	ctx context.Context,
-	msgs []*model.Message,
-	nameMap map[string]string,
-	cacheAfterSystem bool,
-) ([]brtypes.Message, []brtypes.SystemContentBlock, error) {
+func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[string]string, cacheAfterSystem bool) ([]brtypes.Message, []brtypes.SystemContentBlock, error) {
+	// toolUseIDMap tracks a per-request mapping from canonical tool_use IDs used
+	// in transcripts (which may be long or contain slashes) to provider-safe
+	// IDs that conform to Bedrock constraints ([a-zA-Z0-9_-]+, <=64 chars). The
+	// mapping is local to this encode pass; it is not persisted or surfaced to
+	// callers. This ensures we never send internal correlation IDs (for example,
+	// long RunID-based strings) as Bedrock toolUseId values.
+	toolUseIDMap := make(map[string]string)
+	nextToolUseID := 0
+
+	toolUseIDFor := func(canonical string) string {
+		if canonical == "" {
+			return ""
+		}
+		if isProviderSafeToolUseID(canonical) {
+			return canonical
+		}
+		if id, ok := toolUseIDMap[canonical]; ok {
+			return id
+		}
+		nextToolUseID++
+		id := fmt.Sprintf("t%d", nextToolUseID)
+		toolUseIDMap[canonical] = id
+		return id
+	}
+
 	conversation := make([]brtypes.Message, 0, len(msgs))
 	system := make([]brtypes.SystemContentBlock, 0, len(msgs))
 	for _, m := range msgs {
@@ -486,15 +506,18 @@ func encodeMessages(
 					tb.Name = aws.String(sanitized)
 				}
 				if v.ID != "" {
-					tb.ToolUseId = aws.String(v.ID)
+					if id := toolUseIDFor(v.ID); id != "" {
+						tb.ToolUseId = aws.String(id)
+					}
 				}
 				tb.Input = toDocument(ctx, v.Input)
 				blocks = append(blocks, &brtypes.ContentBlockMemberToolUse{Value: tb})
 			case model.ToolResultPart:
 				// Bedrock expects tool_result blocks in user messages, correlated to a prior tool_use.
 				// Encode content as text when Content is a string; otherwise as a JSON document.
-				tr := brtypes.ToolResultBlock{
-					ToolUseId: aws.String(v.ToolUseID),
+				tr := brtypes.ToolResultBlock{}
+				if id := toolUseIDFor(v.ToolUseID); id != "" {
+					tr.ToolUseId = aws.String(id)
 				}
 				if s, ok := v.Content.(string); ok {
 					tr.Content = []brtypes.ToolResultContentBlock{
@@ -726,6 +749,31 @@ func toDocument(ctx context.Context, schema any) document.Interface {
 	default:
 		return lazyDocument(v)
 	}
+}
+
+// isProviderSafeToolUseID reports whether id conforms to Bedrock's documented
+// toolUseId constraints: pattern [a-zA-Z0-9_-]+ and length <= 64. The check is
+// intentionally strict so internal correlation IDs (for example, run-scoped
+// paths containing slashes) are never forwarded directly to the provider.
+func isProviderSafeToolUseID(id string) bool {
+	if id == "" {
+		return false
+	}
+	if len(id) > 64 {
+		return false
+	}
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '_':
+		case r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string]string) (*model.Response, error) {

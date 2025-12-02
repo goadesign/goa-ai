@@ -20,7 +20,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 )
 
-// Type declarations
 type (
 	// Part is the canonical provider‑precise content fragment stored by the ledger.
 	// Implementations must be one of ThinkingPart, TextPart, ToolUsePart, or
@@ -72,6 +71,15 @@ type (
 		IsError bool
 	}
 
+	// ToolResultSpec describes a single tool_result block for appending user
+	// messages in a turn. It is used by AppendUserToolResults to build a single
+	// user message containing multiple tool_result parts.
+	ToolResultSpec struct {
+		ToolUseID string
+		Content   any
+		IsError   bool
+	}
+
 	// Message groups ordered parts under a role for the provider conversation.
 	Message struct {
 		// Role is one of "assistant", "user", or "system".
@@ -94,252 +102,11 @@ type (
 	}
 )
 
-func (ThinkingPart) isPart()   {}
-func (TextPart) isPart()       {}
-func (ToolUsePart) isPart()    {}
-func (ToolResultPart) isPart() {}
-
-// UnmarshalJSON customizes Message decoding so that Parts (which contain
-// interface implementations) can be reconstructed from stored JSON.
-func (m *Message) UnmarshalJSON(data []byte) error {
-	type alias struct {
-		Role  string            `json:"Role"`  //nolint:tagliatelle
-		Parts []json.RawMessage `json:"Parts"` //nolint:tagliatelle
-		Meta  map[string]any    `json:"Meta"`  //nolint:tagliatelle
-	}
-	var tmp alias
-	if err := json.Unmarshal(data, &tmp); err != nil {
-		return err
-	}
-	m.Role = tmp.Role
-	m.Meta = tmp.Meta
-	if len(tmp.Parts) == 0 {
-		m.Parts = nil
-		return nil
-	}
-	m.Parts = make([]Part, 0, len(tmp.Parts))
-	for i, raw := range tmp.Parts {
-		part, err := decodeLedgerPart(raw)
-		if err != nil {
-			return fmt.Errorf("decode parts[%d]: %w", i, err)
-		}
-		m.Parts = append(m.Parts, part)
-	}
-	return nil
-}
-
-func decodeLedgerPart(raw json.RawMessage) (Part, error) {
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &obj); err != nil {
-		var text string
-		if errText := json.Unmarshal(raw, &text); errText == nil {
-			return TextPart{Text: text}, nil
-		}
-		return nil, fmt.Errorf("decode part object: %w", err)
-	}
-	if len(obj) == 0 {
-		return nil, errors.New("empty part payload")
-	}
-
-	if hasAnyKey(obj, "Signature", "Redacted", "Index", "Final") {
-		var thinking ThinkingPart
-		if err := json.Unmarshal(raw, &thinking); err != nil {
-			return nil, fmt.Errorf("decode ThinkingPart: %w", err)
-		}
-		return thinking, nil
-	}
-
-	if _, ok := obj["ToolUseID"]; ok {
-		var result ToolResultPart
-		if err := json.Unmarshal(raw, &result); err != nil {
-			return nil, fmt.Errorf("decode ToolResultPart: %w", err)
-		}
-		if result.ToolUseID == "" {
-			return nil, errors.New("ToolResultPart requires ToolUseID")
-		}
-		return result, nil
-	}
-
-	if _, ok := obj["Name"]; ok {
-		var use ToolUsePart
-		if err := json.Unmarshal(raw, &use); err != nil {
-			return nil, fmt.Errorf("decode ToolUsePart: %w", err)
-		}
-		if use.Name == "" {
-			return nil, errors.New("ToolUsePart requires Name")
-		}
-		return use, nil
-	}
-
-	if _, ok := obj["Text"]; ok {
-		var text TextPart
-		if err := json.Unmarshal(raw, &text); err != nil {
-			return nil, fmt.Errorf("decode TextPart: %w", err)
-		}
-		return text, nil
-	}
-
-	return nil, errors.New("unknown part shape")
-}
-
-func hasAnyKey(obj map[string]json.RawMessage, keys ...string) bool {
-	for _, k := range keys {
-		if _, ok := obj[k]; ok {
-			return true
-		}
-	}
-	return false
-}
-
 // NewLedger constructs an empty Ledger ready to record a turn transcript.
 func NewLedger() *Ledger {
 	return &Ledger{
 		messages: make([]Message, 0, 8),
 	}
-}
-
-// ToolResultSpec describes a single tool_result block for appending user
-// messages in a turn. It is used by AppendUserToolResults to build a single
-// user message containing multiple tool_result parts.
-type ToolResultSpec struct {
-	ToolUseID string
-	Content   any
-	IsError   bool
-}
-
-// AppendThinking records a structured thinking block and ensures it appears at
-// the head of the current assistant message. When a message is not yet open,
-// a new assistant message is started.
-func (l *Ledger) AppendThinking(tp ThinkingPart) {
-	if l.current == nil {
-		l.current = &Message{Role: "assistant", Parts: make([]Part, 0, 2)}
-	}
-	// Ensure all thinking parts stay at the head of the message.
-	// Insert this block directly after any existing leading thinking parts.
-	if len(l.current.Parts) == 0 {
-		l.current.Parts = append(l.current.Parts, tp)
-		return
-	}
-	// Find the end of the leading thinking run (may be zero).
-	i := 0
-	for i < len(l.current.Parts) {
-		if _, ok := l.current.Parts[i].(ThinkingPart); ok {
-			i++
-			continue
-		}
-		break
-	}
-	// Insert tp at position i (which may be 0 to prepend).
-	l.current.Parts = append(l.current.Parts[:i], append([]Part{tp}, l.current.Parts[i:]...)...)
-}
-
-// AppendText appends assistant text to the current assistant message. When no
-// assistant message is open, a new one is started.
-func (l *Ledger) AppendText(text string) {
-	if text == "" {
-		return
-	}
-	if l.current == nil {
-		l.current = &Message{Role: "assistant", Parts: make([]Part, 0, 1)}
-	}
-	l.current.Parts = append(l.current.Parts, TextPart{Text: text})
-}
-
-// DeclareToolUse appends a tool_use to the current assistant message. The
-// caller is responsible for flushing the assistant message at the end of the
-// turn so that subsequent user tool_result messages can correlate to the full
-// set of tool_use blocks.
-func (l *Ledger) DeclareToolUse(id, name string, args any) {
-	if l.current == nil {
-		l.current = &Message{Role: "assistant", Parts: make([]Part, 0, 1)}
-	}
-	l.current.Parts = append(l.current.Parts, ToolUsePart{ID: id, Name: name, Args: args})
-}
-
-func (l *Ledger) flushAssistant() {
-	if l.current == nil || len(l.current.Parts) == 0 {
-		l.current = nil
-		return
-	}
-	l.messages = append(l.messages, *l.current)
-	l.current = nil
-}
-
-// FlushAssistant finalizes the current assistant message (if any) and appends
-// it to the ledger. It is safe to call when no assistant message is open.
-func (l *Ledger) FlushAssistant() {
-	l.flushAssistant()
-}
-
-// AppendUserToolResults appends a single user message containing tool_result
-// parts for the provided specs, preserving their order. Specs with empty
-// ToolUseID are ignored.
-func (l *Ledger) AppendUserToolResults(results []ToolResultSpec) {
-	if len(results) == 0 {
-		return
-	}
-	parts := make([]Part, 0, len(results))
-	for _, r := range results {
-		if r.ToolUseID == "" {
-			continue
-		}
-		parts = append(parts, ToolResultPart(r))
-	}
-	if len(parts) == 0 {
-		return
-	}
-	l.messages = append(l.messages, Message{
-		Role:  "user",
-		Parts: parts,
-	})
-}
-
-// BuildMessages flushes the current assistant (if any) and converts the ledger
-// to provider‑agnostic model messages suitable for provider adapters.
-func (l *Ledger) BuildMessages() []*model.Message {
-	// Flush any open assistant.
-	l.flushAssistant()
-	if len(l.messages) == 0 {
-		return nil
-	}
-	out := make([]*model.Message, 0, len(l.messages))
-	for i := range l.messages {
-		m := l.messages[i]
-		msg := &model.Message{
-			Role:  model.ConversationRole(m.Role),
-			Parts: make([]model.Part, 0, len(m.Parts)),
-			Meta:  m.Meta,
-		}
-		for _, p := range m.Parts {
-			switch v := p.(type) {
-			case ThinkingPart:
-				if len(v.Redacted) > 0 {
-					msg.Parts = append(msg.Parts, model.ThinkingPart{
-						Redacted: append([]byte(nil), v.Redacted...),
-						Index:    v.Index,
-						Final:    v.Final,
-					})
-				} else if v.Text != "" && v.Signature != "" {
-					msg.Parts = append(msg.Parts, model.ThinkingPart{
-						Text:      v.Text,
-						Signature: v.Signature,
-						Index:     v.Index,
-						Final:     v.Final,
-					})
-				}
-			case TextPart:
-				msg.Parts = append(msg.Parts, model.TextPart{Text: v.Text})
-			case ToolUsePart:
-				msg.Parts = append(msg.Parts, model.ToolUsePart{ID: v.ID, Name: v.Name, Input: v.Args})
-			case ToolResultPart:
-				msg.Parts = append(msg.Parts, model.ToolResultPart{ToolUseID: v.ToolUseID, Content: v.Content, IsError: v.IsError})
-			}
-		}
-		if len(msg.Parts) > 0 {
-			out = append(out, msg)
-		}
-	}
-	return out
 }
 
 // FromModelMessages constructs a ledger initialized with the provided assistant
@@ -374,17 +141,6 @@ func FromModelMessages(msgs []*model.Message) *Ledger {
 		}
 	}
 	return led
-}
-
-// IsEmpty reports whether the ledger currently holds any committed or pending parts.
-func (l *Ledger) IsEmpty() bool {
-	if l == nil {
-		return true
-	}
-	if l.current != nil && len(l.current.Parts) > 0 {
-		return false
-	}
-	return len(l.messages) == 0
 }
 
 // ValidateBedrock verifies critical Bedrock constraints when thinking is enabled:
@@ -569,4 +325,281 @@ func BuildMessagesFromEvents(events []memory.Event) []*model.Message {
 		l.AppendUserToolResults(ordered)
 	}
 	return l.BuildMessages()
+}
+
+// UnmarshalJSON customizes Message decoding so that Parts (which contain
+// interface implementations) can be reconstructed from stored JSON.
+func (m *Message) UnmarshalJSON(data []byte) error {
+	type alias struct {
+		Role  string            `json:"Role"`  //nolint:tagliatelle
+		Parts []json.RawMessage `json:"Parts"` //nolint:tagliatelle
+		Meta  map[string]any    `json:"Meta"`  //nolint:tagliatelle
+	}
+	var tmp alias
+	if err := json.Unmarshal(data, &tmp); err != nil {
+		return err
+	}
+	m.Role = tmp.Role
+	m.Meta = tmp.Meta
+	if len(tmp.Parts) == 0 {
+		m.Parts = nil
+		return nil
+	}
+	m.Parts = make([]Part, 0, len(tmp.Parts))
+	for i, raw := range tmp.Parts {
+		part, err := decodeLedgerPart(raw)
+		if err != nil {
+			return fmt.Errorf("decode parts[%d]: %w", i, err)
+		}
+		m.Parts = append(m.Parts, part)
+	}
+	return nil
+}
+
+// AppendThinking records a structured thinking block and ensures it appears at
+// the head of the current assistant message. When a message is not yet open,
+// a new assistant message is started.
+func (l *Ledger) AppendThinking(tp ThinkingPart) {
+	if l.current == nil {
+		l.current = &Message{Role: "assistant", Parts: make([]Part, 0, 2)}
+	}
+	// Ensure all thinking parts stay at the head of the message.
+	// Insert this block directly after any existing leading thinking parts.
+	if len(l.current.Parts) == 0 {
+		l.current.Parts = append(l.current.Parts, tp)
+		return
+	}
+	// Find the end of the leading thinking run (may be zero).
+	i := 0
+	for i < len(l.current.Parts) {
+		if _, ok := l.current.Parts[i].(ThinkingPart); ok {
+			i++
+			continue
+		}
+		break
+	}
+	// Insert tp at position i (which may be 0 to prepend).
+	l.current.Parts = append(
+		l.current.Parts[:i],
+		append(
+			[]Part{
+				tp,
+			},
+			l.current.Parts[i:]...,
+		)...,
+	)
+}
+
+// AppendText appends assistant text to the current assistant message. When no
+// assistant message is open, a new one is started.
+func (l *Ledger) AppendText(text string) {
+	if text == "" {
+		return
+	}
+	if l.current == nil {
+		l.current = &Message{Role: "assistant", Parts: make([]Part, 0, 1)}
+	}
+	l.current.Parts = append(l.current.Parts, TextPart{Text: text})
+}
+
+// DeclareToolUse appends a tool_use to the current assistant message. The
+// caller is responsible for flushing the assistant message at the end of the
+// turn so that subsequent user tool_result messages can correlate to the full
+// set of tool_use blocks.
+func (l *Ledger) DeclareToolUse(id, name string, args any) {
+	if l.current == nil {
+		l.current = &Message{Role: "assistant", Parts: make([]Part, 0, 1)}
+	}
+	l.current.Parts = append(l.current.Parts, ToolUsePart{
+		ID:   id,
+		Name: name,
+		Args: args,
+	})
+}
+
+// FlushAssistant finalizes the current assistant message (if any) and appends
+// it to the ledger. It is safe to call when no assistant message is open.
+func (l *Ledger) FlushAssistant() {
+	l.flushAssistant()
+}
+
+// AppendUserToolResults appends a single user message containing tool_result
+// parts for the provided specs, preserving their order. Specs with empty
+// ToolUseID are ignored.
+func (l *Ledger) AppendUserToolResults(results []ToolResultSpec) {
+	if len(results) == 0 {
+		return
+	}
+	parts := make([]Part, 0, len(results))
+	for _, r := range results {
+		if r.ToolUseID == "" {
+			continue
+		}
+		parts = append(parts, ToolResultPart(r))
+	}
+	if len(parts) == 0 {
+		return
+	}
+	l.messages = append(l.messages, Message{Role: "user", Parts: parts})
+}
+
+// BuildMessages flushes the current assistant (if any) and converts the ledger
+// to provider‑agnostic model messages suitable for provider adapters.
+func (l *Ledger) BuildMessages() []*model.Message {
+	// Flush any open assistant.
+	l.flushAssistant()
+	if len(l.messages) == 0 {
+		return nil
+	}
+	out := make([]*model.Message, 0, len(l.messages))
+	for i := range l.messages {
+		m := l.messages[i]
+		msg := &model.Message{
+			Role:  model.ConversationRole(m.Role),
+			Parts: make([]model.Part, 0, len(m.Parts)),
+			Meta:  m.Meta,
+		}
+		for _, p := range m.Parts {
+			switch v := p.(type) {
+			case ThinkingPart:
+				if len(v.Redacted) > 0 {
+					msg.Parts = append(
+						msg.Parts,
+						model.ThinkingPart{
+							Redacted: append([]byte(nil), v.Redacted...),
+							Index:    v.Index,
+							Final:    v.Final,
+						},
+					)
+				} else if v.Text != "" && v.Signature != "" {
+					msg.Parts = append(
+						msg.Parts,
+						model.ThinkingPart{
+							Text:      v.Text,
+							Signature: v.Signature,
+							Index:     v.Index,
+							Final:     v.Final,
+						},
+					)
+				}
+			case TextPart:
+				msg.Parts = append(
+					msg.Parts,
+					model.TextPart{
+						Text: v.Text,
+					},
+				)
+			case ToolUsePart:
+				msg.Parts = append(
+					msg.Parts,
+					model.ToolUsePart{
+						ID:    v.ID,
+						Name:  v.Name,
+						Input: v.Args,
+					},
+				)
+			case ToolResultPart:
+				msg.Parts = append(
+					msg.Parts,
+					model.ToolResultPart{
+						ToolUseID: v.ToolUseID,
+						Content:   v.Content,
+						IsError:   v.IsError,
+					},
+				)
+			}
+		}
+		if len(msg.Parts) > 0 {
+			out = append(out, msg)
+		}
+	}
+	return out
+}
+
+// IsEmpty reports whether the ledger currently holds any committed or pending parts.
+func (l *Ledger) IsEmpty() bool {
+	if l == nil {
+		return true
+	}
+	if l.current != nil && len(l.current.Parts) > 0 {
+		return false
+	}
+	return len(l.messages) == 0
+}
+
+func decodeLedgerPart(raw json.RawMessage) (Part, error) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		var text string
+		if errText := json.Unmarshal(raw, &text); errText == nil {
+			return TextPart{Text: text}, nil
+		}
+		return nil, fmt.Errorf("decode part object: %w", err)
+	}
+	if len(obj) == 0 {
+		return nil, errors.New("empty part payload")
+	}
+
+	if hasAnyKey(obj, "Signature", "Redacted", "Index", "Final") {
+		var thinking ThinkingPart
+		if err := json.Unmarshal(raw, &thinking); err != nil {
+			return nil, fmt.Errorf("decode ThinkingPart: %w", err)
+		}
+		return thinking, nil
+	}
+
+	if _, ok := obj["ToolUseID"]; ok {
+		var result ToolResultPart
+		if err := json.Unmarshal(raw, &result); err != nil {
+			return nil, fmt.Errorf("decode ToolResultPart: %w", err)
+		}
+		if result.ToolUseID == "" {
+			return nil, errors.New("ToolResultPart requires ToolUseID")
+		}
+		return result, nil
+	}
+
+	if _, ok := obj["Name"]; ok {
+		var use ToolUsePart
+		if err := json.Unmarshal(raw, &use); err != nil {
+			return nil, fmt.Errorf("decode ToolUsePart: %w", err)
+		}
+		if use.Name == "" {
+			return nil, errors.New("ToolUsePart requires Name")
+		}
+		return use, nil
+	}
+
+	if _, ok := obj["Text"]; ok {
+		var text TextPart
+		if err := json.Unmarshal(raw, &text); err != nil {
+			return nil, fmt.Errorf("decode TextPart: %w", err)
+		}
+		return text, nil
+	}
+
+	return nil, errors.New("unknown part shape")
+}
+
+func hasAnyKey(obj map[string]json.RawMessage, keys ...string) bool {
+	for _, k := range keys {
+		if _, ok := obj[k]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (ThinkingPart) isPart()   {}
+func (TextPart) isPart()       {}
+func (ToolUsePart) isPart()    {}
+func (ToolResultPart) isPart() {}
+
+func (l *Ledger) flushAssistant() {
+	if l.current == nil || len(l.current.Parts) == 0 {
+		l.current = nil
+		return
+	}
+	l.messages = append(l.messages, *l.current)
+	l.current = nil
 }
