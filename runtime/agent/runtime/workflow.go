@@ -636,7 +636,7 @@ func (r *Runtime) runLoop(
 					aggregatedToolResults,
 					cloneToolResults(rs.Results)...,
 				)
-				r.appendUserToolResults(base, awaitCalls, lastToolResults, led)
+				r.appendUserToolResults(ctx, base, awaitCalls, lastToolResults, led)
 
 				// Set running and emit resumed
 				r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{
@@ -807,7 +807,7 @@ func (r *Runtime) runLoop(
 		caps.RemainingToolCalls = decrementCap(caps.RemainingToolCalls, len(allowed))
 		// Append user tool_result message and update ledger in the same order as
 		// the assistant tool_use declarations for this turn.
-		r.appendUserToolResults(base, allowed, vals, led)
+		r.appendUserToolResults(ctx, base, allowed, vals, led)
 		if failures(vals) > 0 {
 			caps.RemainingConsecutiveFailedToolCalls = decrementCap(
 				caps.RemainingConsecutiveFailedToolCalls, failures(vals),
@@ -1445,6 +1445,11 @@ func (r *Runtime) executeToolCalls(
 			if v, decErr := r.unmarshalToolValue(ctx, info.call.Name, out.Payload, false); decErr == nil {
 				decoded = v
 			} else {
+				// Log decode failure details for bounded tools to help diagnose bounds extraction issues
+				spec, isBounded := r.toolSpec(info.call.Name)
+				if isBounded && spec.BoundedResult {
+					r.logger.Warn(ctx, "decode failed for bounded tool, falling back to raw JSON", "tool", info.call.Name, "decode_err", decErr, "json", string(out.Payload))
+				}
 				decoded = out.Payload
 			}
 		}
@@ -1458,6 +1463,12 @@ func (r *Runtime) executeToolCalls(
 		}
 		if b := deriveBounds(decoded); b != nil {
 			toolRes.Bounds = b
+		} else {
+			// Log when bounds extraction fails for bounded tools
+			spec, isBounded := r.toolSpec(info.call.Name)
+			if isBounded && spec.BoundedResult {
+				r.logger.Warn(ctx, "failed to extract bounds from decoded result", "tool", info.call.Name, "result_type", fmt.Sprintf("%T", decoded))
+			}
 		}
 		var toolErr *planner.ToolError
 		if out.Error != "" {
@@ -1840,6 +1851,7 @@ func (r *Runtime) executeGroupedToolCalls(
 // assistant tool_use IDs from the allowed calls slice so that provider
 // handshakes remain deterministic regardless of execution timing.
 func (r *Runtime) appendUserToolResults(
+	ctx context.Context,
 	base *planner.PlanInput,
 	allowed []planner.ToolRequest,
 	vals []*planner.ToolResult,
@@ -1865,7 +1877,7 @@ func (r *Runtime) appendUserToolResults(
 		if !ok || tr == nil || tr.ToolCallID == "" {
 			continue
 		}
-		r.enforceBoundedResultContract(tr)
+		r.enforceBoundedResultContract(ctx, tr)
 		part := model.ToolResultPart{
 			ToolUseID: tr.ToolCallID,
 			Content:   tr.Result,
@@ -1892,7 +1904,7 @@ func (r *Runtime) appendUserToolResults(
 // their specs also surface a consistent Bounds contract on their results. This
 // method never computes subsets or truncation itself; it only enforces that
 // domain services applied their own caps and signalled them correctly.
-func (r *Runtime) enforceBoundedResultContract(tr *planner.ToolResult) {
+func (r *Runtime) enforceBoundedResultContract(ctx context.Context, tr *planner.ToolResult) {
 	if tr == nil {
 		return
 	}
@@ -1906,8 +1918,29 @@ func (r *Runtime) enforceBoundedResultContract(tr *planner.ToolResult) {
 	if tr.Error != nil || tr.Result == nil {
 		return
 	}
+	// Best-effort recovery for cases where Bounds was not populated by the
+	// tool implementation. Prefer the typed BoundedResult contract when the
+	// decoded result implements it, and fall back to JSON inspection only
+	// when the result is a raw JSON value. This keeps boundedness metadata
+	// attached even when callers passed through json.RawMessage.
 	if tr.Bounds == nil {
-		panic(fmt.Sprintf("bounded tool %q produced result without Bounds metadata (result type %T)", tr.Name, tr.Result))
+		if b := deriveBounds(tr.Result); b != nil {
+			tr.Bounds = b
+		} else if raw, ok := tr.Result.(json.RawMessage); ok {
+			if b, err := decodeBoundsFromJSON(raw); err == nil && b != nil {
+				tr.Bounds = b
+			} else if err != nil && r.logger != nil {
+				r.logger.Warn(ctx, "failed to derive bounds from raw JSON result", "tool", tr.Name, "err", err)
+			}
+		}
+	}
+	if tr.Bounds == nil {
+		// Log detailed diagnostics before panicking.
+		jsonStr := ""
+		if raw, ok := tr.Result.(json.RawMessage); ok {
+			jsonStr = string(raw)
+		}
+		panic(fmt.Sprintf("bounded tool %q produced result without Bounds metadata (result type %T, json: %s)", tr.Name, tr.Result, jsonStr))
 	}
 	// When the tool reports truncation, we trust the domain caps and do not
 	// apply size-based enforcement here.
@@ -1943,6 +1976,66 @@ func deriveBounds(result any) *agent.Bounds {
 		return nil
 	}
 	return br.ResultBounds()
+}
+
+// decodeBoundsFromJSON attempts to derive agent.Bounds metadata from a raw JSON
+// tool result. It prefers an embedded "bounds" object when present and falls
+// back to top-level returned/total/truncated/refinement_hint fields. A nil
+// return value indicates that no bounds metadata could be derived.
+func decodeBoundsFromJSON(raw json.RawMessage) (*agent.Bounds, error) {
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("empty result for bounded tool")
+	}
+	type boundsJSON struct {
+		Returned       int     `json:"returned"`
+		Total          *int    `json:"total"`
+		Truncated      bool    `json:"truncated"`
+		RefinementHint *string `json:"refinement_hint"`
+	}
+	type carrier struct {
+		Returned       *int        `json:"returned"`
+		Total          *int        `json:"total"`
+		Truncated      *bool       `json:"truncated"`
+		RefinementHint *string     `json:"refinement_hint"`
+		Bounds         *boundsJSON `json:"bounds"`
+	}
+	var c carrier
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return nil, fmt.Errorf("decode bounded result: %w", err)
+	}
+	if c.Bounds != nil {
+		hint := ""
+		if c.Bounds.RefinementHint != nil {
+			hint = *c.Bounds.RefinementHint
+		}
+		return &agent.Bounds{
+			Returned:       c.Bounds.Returned,
+			Total:          c.Bounds.Total,
+			Truncated:      c.Bounds.Truncated,
+			RefinementHint: hint,
+		}, nil
+	}
+	if c.Returned == nil && c.Total == nil && c.Truncated == nil && c.RefinementHint == nil {
+		return nil, fmt.Errorf("missing bounds metadata")
+	}
+	returned := 0
+	if c.Returned != nil {
+		returned = *c.Returned
+	}
+	truncated := false
+	if c.Truncated != nil {
+		truncated = *c.Truncated
+	}
+	hint := ""
+	if c.RefinementHint != nil {
+		hint = *c.RefinementHint
+	}
+	return &agent.Bounds{
+		Returned:       returned,
+		Total:          c.Total,
+		Truncated:      truncated,
+		RefinementHint: hint,
+	}, nil
 }
 
 // hardProtectionIfNeeded emits a protection event and signals finalization when

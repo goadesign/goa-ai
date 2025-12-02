@@ -426,7 +426,7 @@ func (r *Runtime) unmarshalToolValue(ctx context.Context, toolName tools.Ident, 
 			// codecs and the concrete payload/result JSON. Log a warning so
 			// callers that fall back to raw JSON (e.g. for observability) still
 			// surface a precise error for debugging.
-			r.logger.Warn(ctx, "tool codec decode failed", "tool", toolName, "payload", payload, "err", err)
+			r.logger.Warn(ctx, "tool codec decode failed", "tool", toolName, "payload", payload, "err", err, "json", string(raw))
 			return nil, err
 		}
 		return v, nil
