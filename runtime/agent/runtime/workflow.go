@@ -1907,7 +1907,7 @@ func (r *Runtime) enforceBoundedResultContract(tr *planner.ToolResult) {
 		return
 	}
 	if tr.Bounds == nil {
-		panic(fmt.Sprintf("bounded tool %q produced result without Bounds metadata", tr.Name))
+		panic(fmt.Sprintf("bounded tool %q produced result without Bounds metadata (result type %T)", tr.Name, tr.Result))
 	}
 	// When the tool reports truncation, we trust the domain caps and do not
 	// apply size-based enforcement here.

@@ -4,12 +4,13 @@ import (
 	goaexpr "goa.design/goa/v3/expr"
 )
 
-// cloneWithJSONTags returns a deep copy of the provided attribute where any
-// top-level object fields are guaranteed to carry json struct tags that match
-// their original field names.
+// cloneWithJSONTags returns a deep copy of the provided attribute where all
+// object fields (including nested objects) are guaranteed to carry json struct
+// tags that match their original field names.
 //
-// The function is intentionally conservative:
-//   - It only decorates the immediate object fields for the given attribute.
+// The function recursively decorates:
+//   - Immediate object fields for the given attribute.
+//   - Nested object fields within inline struct definitions.
 //   - Existing struct:tag:json metadata is preserved so DSL authors can
 //     override tags explicitly using Meta or design-specific helpers.
 //   - Non-object attributes are returned as-is.
@@ -17,6 +18,9 @@ import (
 // This helper is used when materializing tool payload/result alias types so
 // that the generated structs serialize according to the tool schema even when
 // the underlying design types were authored without explicit JSON tag metadata.
+// Recursive handling ensures that synthesized nested types (such as the bounds
+// helper struct on bounded tool results) also serialize with lowercase keys
+// matching the JSON schema.
 func cloneWithJSONTags(att *goaexpr.AttributeExpr) *goaexpr.AttributeExpr {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return att
@@ -26,9 +30,21 @@ func cloneWithJSONTags(att *goaexpr.AttributeExpr) *goaexpr.AttributeExpr {
 	// expressions used by other generators.
 	cloned := goaexpr.DupAtt(att)
 
-	obj := goaexpr.AsObject(cloned.Type)
+	addJSONTagsRecursive(cloned)
+
+	return cloned
+}
+
+// addJSONTagsRecursive walks the attribute tree and ensures all object fields
+// carry json struct tags matching their original field names.
+func addJSONTagsRecursive(att *goaexpr.AttributeExpr) {
+	if att == nil || att.Type == nil {
+		return
+	}
+
+	obj := goaexpr.AsObject(att.Type)
 	if obj == nil {
-		return cloned
+		return
 	}
 
 	for _, nat := range *obj {
@@ -42,9 +58,9 @@ func cloneWithJSONTags(att *goaexpr.AttributeExpr) *goaexpr.AttributeExpr {
 		if _, ok := nat.Attribute.Meta["struct:tag:json"]; !ok {
 			nat.Attribute.Meta["struct:tag:json"] = []string{nat.Name}
 		}
+		// Recurse into nested objects to handle inline struct fields.
+		addJSONTagsRecursive(nat.Attribute)
 	}
-
-	return cloned
 }
 
 
