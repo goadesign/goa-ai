@@ -760,10 +760,10 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 								boundsBody := `
     if out != nil {
         bounds := &struct {
-            Returned       int
-            Total          *int
-            Truncated      bool
-            RefinementHint *string
+            Returned       int     ` + "`json:\"returned\"`" + `
+            Total          *int    ` + "`json:\"total\"`" + `
+            Truncated      bool    ` + "`json:\"truncated\"`" + `
+            RefinementHint *string ` + "`json:\"refinement_hint\"`" + `
         }{}
         if out.Returned != nil {
             bounds.Returned = *out.Returned

@@ -87,6 +87,16 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
             {{- end }}
             }(),
 {{- end }}
+{{- if or .RunPolicy.Cache.AfterSystem .RunPolicy.Cache.AfterTools }}
+            Cache: agentsruntime.CachePolicy{
+            {{- if .RunPolicy.Cache.AfterSystem }}
+                AfterSystem: true,
+            {{- end }}
+            {{- if .RunPolicy.Cache.AfterTools }}
+                AfterTools: true,
+            {{- end }}
+            },
+{{- end }}
         },
     }); err != nil {
         return err

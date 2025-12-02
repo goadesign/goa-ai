@@ -165,21 +165,22 @@ type (
 		Method string
 	}
 
-	// RunPolicyData represents the runtime execution constraints and resource limits
-	// configured for an agent via the DSL RunPolicy expression. It defines per-run
-	// boundaries for execution time, tool usage, and interrupt handling.
+	// RunPolicyData represents the runtime execution constraints and resource
+	// limits configured for an agent via the DSL RunPolicy expression. It
+	// defines per-run boundaries for execution time, tool usage, and interrupt
+	// handling.
 	//
-	// The policy is transformed from RunPolicyExpr during agent data construction
-	// (newRunPolicyData) and is embedded in AgentData for template access. Generated
-	// code uses these values to configure the runtime's policy enforcement (see
-	// agents/runtime/policy package).
+	// The policy is transformed from RunPolicyExpr during agent data
+	// construction (newRunPolicyData) and is embedded in AgentData for
+	// template access. Generated code uses these values to configure the
+	// runtime's policy enforcement (see agents/runtime/policy package).
 	//
-	// Zero-valued fields indicate no limit: TimeBudget = 0 means unlimited execution
-	// time, and zero caps mean no resource restrictions. Templates use these values
-	// to generate registration and validation logic.
+	// Zero-valued fields indicate no limit: TimeBudget = 0 means unlimited
+	// execution time, and zero caps mean no resource restrictions. Templates
+	// use these values to generate registration and validation logic.
 	//
-	// The policy is enforced by the agent runtime during workflow execution, not at
-	// code generation time.
+	// The policy is enforced by the agent runtime during workflow execution,
+	// not at code generation time.
 	RunPolicyData struct {
 		// TimeBudget is the maximum wall-clock time allocated to the run.
 		TimeBudget time.Duration
@@ -191,41 +192,58 @@ type (
 		InterruptsAllowed bool
 		// Caps enumerates max tool-call limits.
 		Caps CapsData
-		// OnMissingFields controls behavior when validation indicates missing fields.
-		// Allowed: "finalize" | "await_clarification" | "resume". Empty means unspecified.
+		// OnMissingFields controls behavior when validation indicates missing
+		// fields. Allowed: "finalize" | "await_clarification" | "resume".
+		// Empty means unspecified.
 		OnMissingFields string
-		// History captures conversational history management configuration (if any).
-		// When nil, no history policy is configured and callers retain full history.
+		// History captures conversational history management configuration (if
+		// any). When nil, no history policy is configured and callers retain
+		// full history.
 		History *HistoryData
+		// Cache captures prompt caching configuration (if any). Zero value
+		// means no cache policy is configured and providers should not emit
+		// cache checkpoints unless explicit CacheCheckpointPart messages are
+		// present in requests.
+		Cache CacheData
 	}
 
-	// HistoryData represents the configured history policy for an agent. It encodes
-	// either a KeepRecentTurns sliding window or a Compress policy; at most one mode
-	// is set for a given agent.
+	// HistoryData represents the configured history policy for an agent. It
+	// encodes either a KeepRecentTurns sliding window or a Compress policy; at
+	// most one mode is set for a given agent.
 	HistoryData struct {
 		// Mode is "keep_recent" or "compress".
 		Mode string
-		// KeepRecent is the number of recent turns to retain when Mode == "keep_recent".
+		// KeepRecent is the number of recent turns to retain when Mode ==
+		// "keep_recent".
 		KeepRecent int
-		// TriggerAt is the number of turns that must accumulate before compression
-		// triggers when Mode == "compress".
+		// TriggerAt is the number of turns that must accumulate before
+		// compression triggers when Mode == "compress".
 		TriggerAt int
-		// CompressKeepRecent is the number of recent turns to retain in full fidelity
-		// when Mode == "compress".
+		// CompressKeepRecent is the number of recent turns to retain in full
+		// fidelity when Mode == "compress".
 		CompressKeepRecent int
 	}
 
-	// CapsData captures per-run resource limits that restrict agent tool usage.
-	// It prevents runaway execution and excessive resource consumption by capping
-	// the number of tool invocations and consecutive failures allowed within a
-	// single agent run.
+	// CacheData represents the configured prompt caching policy for an agent.
+	// Zero-value means no cache policy is configured.
+	CacheData struct {
+		// AfterSystem places a cache checkpoint after all system messages.
+		AfterSystem bool
+		// AfterTools places a cache checkpoint after tool definitions.
+		AfterTools bool
+	}
+
+	// CapsData captures per-run resource limits that restrict agent tool
+	// usage. It prevents runaway execution and excessive resource consumption
+	// by capping the number of tool invocations and consecutive failures
+	// allowed within a single agent run.
 	//
-	// Zero values indicate no cap is enforced. These limits are transformed from
-	// CapsExpr during policy data construction and are enforced by the runtime
-	// policy engine, not at generation time.
+	// Zero values indicate no cap is enforced. These limits are transformed
+	// from CapsExpr during policy data construction and are enforced by the
+	// runtime policy engine, not at generation time.
 	//
-	// The runtime increments counters for each tool call and failure, terminating
-	// the agent run with an error if caps are exceeded.
+	// The runtime increments counters for each tool call and failure,
+	// terminating the agent run with an error if caps are exceeded.
 	CapsData struct {
 		// MaxToolCalls caps the number of tool invocations per run (0 = unlimited).
 		MaxToolCalls int
@@ -933,12 +951,18 @@ func newRunPolicyData(expr *agentsExpr.RunPolicyExpr) RunPolicyData {
 	}
 	if expr.History != nil {
 		h := &HistoryData{
-			Mode:              string(expr.History.Mode),
-			KeepRecent:        expr.History.KeepRecent,
-			TriggerAt:         expr.History.TriggerAt,
+			Mode:               string(expr.History.Mode),
+			KeepRecent:         expr.History.KeepRecent,
+			TriggerAt:          expr.History.TriggerAt,
 			CompressKeepRecent: expr.History.CompressKeepRecent,
 		}
 		rp.History = h
+	}
+	if expr.Cache != nil {
+		rp.Cache = CacheData{
+			AfterSystem: expr.Cache.AfterSystem,
+			AfterTools:  expr.Cache.AfterTools,
+		}
 	}
 	if expr.DefaultCaps != nil {
 		rp.Caps = CapsData{

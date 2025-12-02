@@ -8,8 +8,8 @@ import (
 )
 
 type (
-	// RunPolicyExpr defines runtime execution and resource constraints for
-	// a single agent.
+	// RunPolicyExpr defines runtime execution and resource constraints for a
+	// single agent.
 	RunPolicyExpr struct {
 		eval.DSLFunc
 
@@ -34,6 +34,8 @@ type (
 		// History configures how the runtime prunes or compresses
 		// conversational history before planner invocations.
 		History *HistoryExpr
+		// Cache configures prompt caching hints for planner/model calls.
+		Cache *CacheExpr
 	}
 
 	// CapsExpr defines per-run limits on agent tool usage.
@@ -69,9 +71,23 @@ type (
 		// TriggerAt is the number of turns that must accumulate before
 		// compression triggers when ModeCompress is selected.
 		TriggerAt int
-		// CompressKeepRecent is the number of recent turns to retain in
-		// full fidelity when ModeCompress is selected.
+		// CompressKeepRecent is the number of recent turns to retain in full
+		// fidelity when ModeCompress is selected.
 		CompressKeepRecent int
+	}
+
+	// CacheExpr captures the design-time configuration for prompt caching
+	// behavior. Zero-value means no cache policy is configured.
+	CacheExpr struct {
+		eval.DSLFunc
+
+		// Policy is the run policy expression this cache configuration
+		// belongs to.
+		Policy *RunPolicyExpr
+		// AfterSystem places a cache checkpoint after all system messages.
+		AfterSystem bool
+		// AfterTools places a cache checkpoint after tool definitions.
+		AfterTools bool
 	}
 )
 
@@ -134,6 +150,14 @@ func (h *HistoryExpr) EvalName() string {
 		return "history policy"
 	}
 	return fmt.Sprintf("history policy for agent %q", h.Policy.Agent.Name)
+}
+
+// EvalName returns a descriptive identifier for error reporting.
+func (c *CacheExpr) EvalName() string {
+	if c == nil || c.Policy == nil || c.Policy.Agent == nil {
+		return "cache policy"
+	}
+	return fmt.Sprintf("cache policy for agent %q", c.Policy.Agent.Name)
 }
 
 // EvalName returns a descriptive identifier for error reporting.
