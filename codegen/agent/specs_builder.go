@@ -21,6 +21,7 @@
 package codegen
 
 import (
+	"encoding/json"
 	"fmt"
 	"path"
 	"sort"
@@ -98,6 +99,10 @@ type (
 		// empty, no schema is available or the type cannot be represented as
 		// a JSON schema.
 		SchemaJSON []byte
+		// ExampleJSON holds a canonical example JSON document for this type when
+		// available. For payloads, it is derived from Goa examples and can be used
+		// by runtimes to surface concrete examples in retry hints or UI prompts.
+		ExampleJSON []byte
 		// Typed codec variable name (e.g., "MyToolPayloadCodec").
 		ExportedCodec string
 		// Untyped codec variable name (e.g., "myToolPayloadCodec").
@@ -716,6 +721,14 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 		return nil, err
 	}
 
+	// Example JSON for payload types (optional). We intentionally derive examples
+	// only for payloads so runtimes can guide callers toward schema-compliant
+	// inputs when decode fails.
+	var exampleBytes []byte
+	if usage == usagePayload {
+		exampleBytes = exampleForAttribute(att)
+	}
+
 	doc := fmt.Sprintf("%s defines the JSON %s for the %s tool.", typeName, usage, tool.QualifiedName)
 	info := &typeData{
 		Key:           key,
@@ -723,6 +736,7 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 		Doc:           doc,
 		Def:           defLine,
 		SchemaJSON:    schemaBytes,
+		ExampleJSON:   exampleBytes,
 		ExportedCodec: typeName + "Codec",
 		GenericCodec:  lowerCamel(typeName) + "Codec",
 		MarshalFunc:   "Marshal" + typeName,
@@ -2020,6 +2034,30 @@ func schemaForAttribute(att *goaexpr.AttributeExpr) ([]byte, error) {
 		return b, err
 	}
 	return b, nil
+}
+
+// exampleForAttribute produces a minimal JSON example for the given attribute
+// using Goa's example generator. When no meaningful example can be derived it
+// returns nil so callers can distinguish between "no example" and an empty
+// object.
+func exampleForAttribute(att *goaexpr.AttributeExpr) []byte {
+	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+		return nil
+	}
+	gen := &goaexpr.ExampleGenerator{Randomizer: goaexpr.NewDeterministicRandomizer()}
+	v := att.Example(gen)
+	if v == nil {
+		return nil
+	}
+	data, err := json.Marshal(v)
+	if err != nil || len(data) == 0 {
+		return nil
+	}
+	// Treat "{}" as a non-informative example and omit it.
+	if string(data) == "{}" {
+		return nil
+	}
+	return data
 }
 
 // joinImportPath constructs a full import path by joining the generation package
