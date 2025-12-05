@@ -32,9 +32,11 @@ var Specs = []tools.ToolSpec{
             Name: {{ if .Payload }}{{ printf "%q" .Payload.TypeName }}{{ else }}""{{ end }},
             {{- if .Payload }}
             Schema: {{- if gt (len .Payload.SchemaJSON) 0 }}[]byte({{ printf "%q" .Payload.SchemaJSON }}){{ else }}nil{{ end }},
+            ExampleJSON: {{- if gt (len .Payload.ExampleJSON) 0 }}[]byte({{ printf "%q" .Payload.ExampleJSON }}){{ else }}nil{{ end }},
             Codec:  {{ .Payload.GenericCodec }},
             {{- else }}
             Schema: nil,
+            ExampleJSON: nil,
             Codec:  tools.JSONCodec[any]{},
             {{- end }}
         },

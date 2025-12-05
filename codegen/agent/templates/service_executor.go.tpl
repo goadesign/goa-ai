@@ -255,12 +255,12 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             }
         }
 
-        // Build final tool result. For tools that declare a typed sidecar, we
-        // derive it from the concrete service method result via generated
-        // transforms and attach it as a non-model artifact.
+        // Build final tool result. For tools that declare a typed artifact
+        // sidecar, we derive it from the concrete service method result via
+        // generated transforms and attach it as a non-model artifact.
         {{- $hasSidecar := false }}
         {{- range .Toolset.Tools }}
-            {{- if and .IsMethodBacked .Sidecar }}
+            {{- if and .IsMethodBacked .Artifact }}
                 {{- $hasSidecar = true }}
             {{- end }}
         {{- end }}
@@ -268,14 +268,14 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
         var artifacts []*planner.Artifact
         switch call.Name {
         {{- range .Toolset.Tools }}
-        {{- if and .IsMethodBacked .Sidecar }}
+        {{- if and .IsMethodBacked .Artifact }}
         case tools.Ident({{ printf "%q" .QualifiedName }}):
             if mr, ok := methodOut.({{ .MethodResultTypeRef }}); ok {
                 if sc := Init{{ goify .Name true }}SidecarFromMethodResult(mr); sc != nil {
                     artifacts = append(
                         artifacts,
                         &planner.Artifact{
-                            Kind:       {{ printf "%q" .SidecarKind }},
+                            Kind:       {{ printf "%q" .ArtifactKind }},
                             Data:       sc,
                             SourceTool: call.Name,
                         },

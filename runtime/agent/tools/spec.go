@@ -45,6 +45,11 @@ type (
 		Name string
 		// Schema contains the JSON schema definition rendered at code generation time.
 		Schema []byte
+		// ExampleJSON optionally contains a canonical example JSON document for this
+		// type. When present on payload types, runtimes and planners can surface it
+		// in retry hints or await-clarification prompts to guide callers toward a
+		// schema-compliant shape.
+		ExampleJSON []byte
 		// Codec serializes and deserializes values matching the type.
 		Codec JSONCodec[any]
 	}

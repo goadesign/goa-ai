@@ -26,9 +26,10 @@ var Specs = []tools.ToolSpec{
 		Tags:          []string{},
 		BoundedResult: false,
 		Payload: tools.TypeSpec{
-			Name:   "AddPayload",
-			Schema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"AddPayload\",\"type\":\"object\",\"properties\":{\"left\":{\"type\":\"integer\",\"description\":\"Left operand\",\"example\":1056967519,\"format\":\"int32\"},\"right\":{\"type\":\"integer\",\"description\":\"Right operand\",\"example\":1084554470,\"format\":\"int32\"}},\"example\":{\"left\":1051318795,\"right\":1835081150},\"required\":[\"left\",\"right\"]}"),
-			Codec:  addPayloadCodec,
+			Name:        "AddPayload",
+			Schema:      []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"AddPayload\",\"type\":\"object\",\"properties\":{\"left\":{\"type\":\"integer\",\"description\":\"Left operand\",\"example\":1056967519,\"format\":\"int32\"},\"right\":{\"type\":\"integer\",\"description\":\"Right operand\",\"example\":1084554470,\"format\":\"int32\"}},\"example\":{\"left\":1051318795,\"right\":1835081150},\"required\":[\"left\",\"right\"]}"),
+			ExampleJSON: []byte("{\"left\":1,\"right\":1}"),
+			Codec:       addPayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:   "AddResult",
