@@ -85,10 +85,6 @@ func (e ValidationError) Descriptions() map[string]string {
 	return out
 }
 
-// newValidationError converts a goa.ServiceError (possibly merged) into a
-// ValidationError with structured FieldIssue entries. It trims any leading
-// "body." from field names for conciseness.
-
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
 	switch name {
@@ -109,8 +105,8 @@ func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 	}
 }
 
-// SidecarCodec returns the generic codec for the named tool sidecar when declared.
-func SidecarCodec(name string) (*tools.JSONCodec[any], bool) {
+// ArtifactCodec returns the generic codec for the named tool artifact when declared.
+func ArtifactCodec(name string) (*tools.JSONCodec[any], bool) {
 	switch name {
 	default:
 		return nil, false

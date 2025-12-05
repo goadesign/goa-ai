@@ -368,28 +368,30 @@ func Return(val any, args ...any) {
 	tool.Return = toolDSL(tool, "Return", val, args...)
 }
 
-// Sidecar defines the typed sidecar schema for a tool result. Use Sidecar
+// Artifact defines the typed artifact schema for a tool result. Use Artifact
 // inside a Tool DSL to declare structured data that is attached to
-// planner.ToolResult.Sidecar but never sent to the model provider.
+// planner.ToolResult.Artifacts but never sent to the model provider.
 //
-// Sidecar follows the same patterns as Args/Return and Goa's Payload/Result:
+// Artifact follows the same patterns as Args/Return and Goa's Payload/Result:
 // it accepts either:
 //   - A function to define an inline object schema with Attribute() calls
 //   - A Goa user type (Type, ResultType, etc.) to reuse existing type definitions
-//   - A primitive type (String, Int, etc.) for simple single-value sidecar data
+//   - A primitive type (String, Int, etc.) for simple single-value artifact data
 //
 // Typical usage is to attach full-fidelity artifacts that back a bounded
 // model-facing result. For example:
 //
 //	Tool("get_time_series", "Get Time Series", func() {
-//	    Args(AtlasGetTimeSeriesToolArgs)
-//	    Return(AtlasGetTimeSeriesToolReturn)
-//	    Sidecar(AtlasGetTimeSeriesSidecar)
+//	    Args(GetTimeSeriesToolArgs)
+//	    Return(GetTimeSeriesToolReturn)
+//	    Artifact("time_series", GetTimeSeriesSidecar)
 //	})
 //
-// If Sidecar is not called, the tool has no declared sidecar type and
-// runtimes continue to use untyped map[string]any metadata.
-func Sidecar(val any, args ...any) {
+func Artifact(kind string, val any, args ...any) {
+	if kind == "" {
+		eval.ReportError("artifact kind must be non-empty")
+		return
+	}
 	if len(args) > 2 {
 		eval.TooManyArgError()
 		return
@@ -400,6 +402,7 @@ func Sidecar(val any, args ...any) {
 		return
 	}
 	tool.Sidecar = toolDSL(tool, "Sidecar", val, args...)
+	tool.SidecarKind = kind
 }
 
 // CallHintTemplate configures a display template for tool invocations. The

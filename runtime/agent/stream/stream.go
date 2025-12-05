@@ -168,10 +168,17 @@ type (
 
 	// UsagePayload describes token usage details.
 	UsagePayload struct {
-		Model        string
-		InputTokens  int
+		// Model is the provider model identifier when available
+		// (for example, "gpt-4o" or "claude-3-opus").
+		Model string
+		// InputTokens is the number of prompt tokens consumed by the
+		// model for this invocation.
+		InputTokens int
+		// OutputTokens is the number of completion tokens produced by
+		// the model for this invocation.
 		OutputTokens int
-		TotalTokens  int
+		// TotalTokens is the sum of input and output tokens.
+		TotalTokens int
 	}
 
 	// AssistantReplyPayload is the typed wire payload for assistant reply events.
@@ -243,8 +250,8 @@ type (
 		Extra map[string]any `json:"extra,omitempty"`
 	}
 
-	// ToolEndPayload carries the result metadata for a completed tool invocation. This
-	// structure is JSON-serialized when sent over the wire (SSE, WebSocket, Pulse).
+	// ToolEndPayload carries the result metadata for a completed tool invocation.
+	// This structure is JSON-serialized when sent over the wire (SSE, WebSocket, Pulse).
 	ToolEndPayload struct {
 		// ToolCallID uniquely identifies the tool invocation that completed. Clients use this
 		// to correlate with the original ToolStart event, enabling UIs to match completion
@@ -260,23 +267,24 @@ type (
 		// "weather.search.forecast"). Matches the ToolName from ToolStart. Useful for
 		// displaying tool names in result summaries and correlating with tool metadata.
 		ToolName string `json:"tool_name"`
-		// Result contains the tool's output payload. This is the structured data returned
-		// by the tool on success. Nil if the tool failed (check Error field). Clients
-		// display this as the tool's answer or pass it to downstream processing.
+		// Result contains the tool's output payload. This is the structured data
+		// returned by the tool on success. Nil if the tool failed (check Error
+		// field). Clients display this as the tool's answer or pass it to
+		// downstream processing.
 		Result any `json:"result,omitempty"`
 		// ResultPreview is a concise, user-facing summary of the tool result rendered from
 		// DSL-authored templates when available. It is intended for UI ribbons and summaries
 		// (for example, "Device list ready" or "Found 3 critical alarms").
 		ResultPreview string `json:"result_preview,omitempty"`
-		// Bounds, when non-nil, describes how the tool result has been bounded relative to
-		// the full underlying data set (for example, list/window/graph caps). It is supplied
-		// by tool implementations and surfaced for observability; the runtime does not
-		// modify it.
+		// Bounds, when non-nil, describes how the tool result has been bounded
+		// relative to the full underlying data set (for example, list/window/
+		// graph caps). It is supplied by tool implementations and surfaced for
+		// observability; the runtime does not modify it.
 		Bounds *agent.Bounds `json:"bounds,omitempty"`
-		// Sidecar carries rich, non-provider data attached to the tool result. It is
-		// never serialized into model provider requests and is intended for UI artifacts
-		// and observability consumers.
-		Sidecar map[string]any `json:"sidecar,omitempty"`
+		// Artifacts carries rich, non-provider data attached to the tool result.
+		// Artifacts are never serialized into model provider requests and are
+		// intended for UI artifacts and observability consumers.
+		Artifacts []ArtifactPayload `json:"artifacts,omitempty"`
 		// Duration is the wall-clock execution time for the tool activity, including any
 		// queuing delay, retries, and processing time. Clients can display this in
 		// performance dashboards or debug panels to identify slow tools.
@@ -296,6 +304,39 @@ type (
 		Extra map[string]any `json:"extra,omitempty"`
 	}
 
+	// ArtifactPayload describes a single artifact attached to a tool result.
+	// It is the wire-level representation of planner.Artifact.
+	ArtifactPayload struct {
+		// Kind identifies the logical shape of this artifact
+		// (for example, "atlas.time_series").
+		Kind string `json:"kind"`
+		// Data contains the artifact payload. It must be JSON-serializable.
+		Data any `json:"data"`
+		// SourceTool is the fully-qualified tool identifier that produced this
+		// artifact (for example, "atlas.read.get_time_series").
+		SourceTool string `json:"source_tool"`
+		// RunLink, when present, links this artifact to a nested agent run
+		// that produced it.
+		RunLink *RunLinkPayload `json:"run_link,omitempty"`
+	}
+
+	// RunLinkPayload describes a link to a nested agent run for streaming.
+	RunLinkPayload struct {
+		// RunID is the workflow execution identifier of the child run.
+		RunID string `json:"run_id"`
+		// AgentID is the identifier of the child agent that executed
+		// the nested run.
+		AgentID agent.Ident `json:"agent_id"`
+		// ParentRunID is the run identifier of the parent workflow
+		// that launched this child run. It may be empty when the
+		// child has no recorded parent.
+		ParentRunID string `json:"parent_run_id,omitempty"`
+		// ParentToolCallID is the tool call identifier on the parent
+		// run that triggered this child run. It may be empty when the
+		// linkage is not available.
+		ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
+	}
+
 	// AwaitClarificationPayload describes a human clarification request.
 	AwaitClarificationPayload struct {
 		ID             string         `json:"id"`
@@ -307,15 +348,25 @@ type (
 
 	// AwaitExternalToolsPayload describes external tool requests to be provided by callers.
 	AwaitExternalToolsPayload struct {
-		ID    string             `json:"id"`
+		// ID correlates this await with a subsequent provide_tool_results
+		// call from the orchestrator or UI.
+		ID string `json:"id"`
+		// Items enumerates the external tool calls that must be satisfied
+		// before the run can resume.
 		Items []AwaitToolPayload `json:"items"`
 	}
 
 	// AwaitToolPayload describes a single external tool call to be satisfied.
 	AwaitToolPayload struct {
-		ToolName   string `json:"tool_name"`
+		// ToolName is the fully qualified identifier of the external tool
+		// that must be executed (for example, "atlas.read.get_time_series").
+		ToolName string `json:"tool_name"`
+		// ToolCallID optionally carries a caller-assigned identifier used
+		// to correlate the provided result with this request.
 		ToolCallID string `json:"tool_call_id,omitempty"`
-		Payload    any    `json:"payload,omitempty"`
+		// Payload contains the JSON-serializable arguments for the external
+		// tool. It may be omitted when the tool takes no parameters.
+		Payload any `json:"payload,omitempty"`
 	}
 
 	// ToolUpdatePayload describes a non-terminal update to a tool call, typically used
@@ -368,9 +419,17 @@ type (
 
 	// AgentRunStartedPayload describes an agent-as-tool child run link.
 	AgentRunStartedPayload struct {
-		ToolName     string      `json:"tool_name"`
-		ToolCallID   string      `json:"tool_call_id"`
-		ChildRunID   string      `json:"child_run_id"`
+		// ToolName is the fully qualified identifier of the parent tool
+		// that launched the child agent run.
+		ToolName string `json:"tool_name"`
+		// ToolCallID identifies the parent tool call associated with the
+		// child run. UIs use this to attach child run links to tool cards.
+		ToolCallID string `json:"tool_call_id"`
+		// ChildRunID is the workflow execution identifier of the nested
+		// agent run.
+		ChildRunID string `json:"child_run_id"`
+		// ChildAgentID is the identifier of the agent that executed the
+		// child run.
 		ChildAgentID agent.Ident `json:"child_agent_id"`
 	}
 

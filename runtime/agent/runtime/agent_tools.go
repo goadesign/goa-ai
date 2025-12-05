@@ -167,6 +167,7 @@ func NewAgentToolsetRegistration(rt *Runtime, cfg AgentToolConfig) ToolsetRegist
 		TaskQueue:   cfg.TaskQueue,
 		Inline:      true,
 		Execute:     defaultAgentToolExecute(rt, cfg),
+		AgentTool:   &cfg,
 	}
 }
 
@@ -183,6 +184,21 @@ type ChildCall struct {
 	Status     string // "ok" | "error"
 	Result     any
 	Error      error
+}
+
+// attachRunLink stamps the parent tool result and any attached artifacts with
+// a run handle linking to the nested agent run that produced them.
+func attachRunLink(result *planner.ToolResult, handle *run.Handle) {
+	if result == nil || handle == nil {
+		return
+	}
+	result.RunLink = handle
+	for i := range result.Artifacts {
+		if result.Artifacts[i] == nil || result.Artifacts[i].RunLink != nil {
+			continue
+		}
+		result.Artifacts[i].RunLink = handle
+	}
 }
 
 // Finalizer produces the parent tool_result for nested agent executions.
@@ -389,87 +405,11 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 		if wfCtx == nil {
 			return nil, fmt.Errorf("workflow context not found")
 		}
-		// Decode payload for prompt/template rendering. Prefer tool codecs when
-		// specs are registered, otherwise fall back to generic JSON decoding.
-		var promptPayload any
-		if len(call.Payload) > 0 {
-			if _, ok := rt.ToolSpec(call.Name); ok {
-				if val, err := rt.unmarshalToolValue(wfCtx.Context(), call.Name, call.Payload, true); err == nil {
-					promptPayload = val
-				}
-			}
-			if promptPayload == nil {
-				var generic any
-				if err := json.Unmarshal(call.Payload, &generic); err == nil {
-					promptPayload = generic
-				} else {
-					promptPayload = call.Payload
-				}
-			}
+		messages, nestedRunCtx, err := rt.buildAgentChildRequest(wfCtx.Context(), &cfg, call)
+		if err != nil {
+			return nil, err
 		}
-		// Build messages: optional agent system prompt, then the per-tool user message
-		var messages []*model.Message
-		if cfg.SystemPrompt != "" {
-			if m := newTextAgentMessage(model.ConversationRoleSystem, cfg.SystemPrompt); m != nil {
-				messages = []*model.Message{m}
-			}
-		}
-
-		// Build per-tool user message via template if present, otherwise fall
-		// back to text/prompt/payload. Skip appending when the content is empty
-		// or a meaningless JSON shell (\"{}\" / \"null\").
-		var userContent string
-		if tmpl := cfg.Templates[call.Name]; tmpl != nil {
-			var b strings.Builder
-			if err := tmpl.Execute(&b, promptPayload); err != nil {
-				return nil, fmt.Errorf(
-					"render tool template for %s: %w",
-					call.Name, err,
-				)
-			}
-			userContent = b.String()
-		} else if txt, ok := cfg.Texts[call.Name]; ok {
-			userContent = txt
-		} else {
-			// Default: build from payload via PromptBuilder or JSON/string fallback
-			if cfg.Prompt != nil {
-				userContent = cfg.Prompt(call.Name, promptPayload)
-			} else {
-				userContent = PayloadToString(promptPayload)
-			}
-		}
-		switch userContent {
-		case "{}", "null":
-			// Append an empty user message to preserve turn semantics.
-			messages = append(messages, &model.Message{Role: model.ConversationRoleUser})
-		default:
-			if m := newTextAgentMessage(model.ConversationRoleUser, userContent); m != nil {
-				messages = append(messages, m)
-			} else {
-				// No text content; still append an empty user message.
-				messages = append(messages, &model.Message{Role: model.ConversationRoleUser})
-			}
-		}
-
-		// Build nested run context from explicit ToolRequest fields
-		nestedRunCtx := run.Context{
-			Tool:             call.Name,
-			RunID:            NestedRunID(call.RunID, call.Name),
-			SessionID:        call.SessionID,
-			TurnID:           call.TurnID,
-			ParentToolCallID: call.ToolCallID,
-			ParentRunID:      call.RunID,
-			ParentAgentID:    call.AgentID,
-		}
-		// Strong contract: record the canonical JSON args using the tool codec.
-		// marshalToolValue returns a defensive copy for json.RawMessage, so this
-		// never double-encodes.
-		if argsJSON, err := rt.marshalToolValue(wfCtx.Context(), call.Name, call.Payload, true); err == nil && len(argsJSON) > 0 {
-			nestedRunCtx.ToolArgs = argsJSON
-		}
-
 		var outPtr *RunOutput
-		var err error
 		// Emit a parent-scope link event so consumers can discover the child
 		// agent run associated with this agent-as-tool invocation.
 		rt.publishHook(
@@ -494,131 +434,263 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 		if err != nil {
 			return nil, fmt.Errorf("execute agent: %w", err)
 		}
+		return rt.adaptAgentChildOutput(ctx, &cfg, call, nestedRunCtx, outPtr)
+	}
+}
 
-		if outPtr == nil {
-			return nil, fmt.Errorf("execute agent returned no output")
+// buildAgentChildRequest constructs the nested agent messages and run context for an
+// agent-as-tool invocation based on the tool call and configuration. It decodes the
+// payload for prompt/template rendering and records canonical JSON args for the child.
+func (r *Runtime) buildAgentChildRequest(
+	ctx context.Context,
+	cfg *AgentToolConfig,
+	call *planner.ToolRequest,
+) ([]*model.Message, run.Context, error) {
+	var zeroCtx run.Context
+	if cfg == nil {
+		return nil, zeroCtx, fmt.Errorf("agent tool config is required")
+	}
+	if call == nil {
+		return nil, zeroCtx, fmt.Errorf("tool request is nil")
+	}
+
+	// Decode payload for prompt/template rendering. Prefer tool codecs when
+	// specs are registered, otherwise fall back to generic JSON decoding.
+	var promptPayload any
+	if len(call.Payload) > 0 {
+		if _, ok := r.ToolSpec(call.Name); ok {
+			if val, err := r.unmarshalToolValue(ctx, call.Name, call.Payload, true); err == nil {
+				promptPayload = val
+			}
 		}
-		// Aggregation path: assemble parent tool_result from child results.
-		if cfg.Finalizer != nil {
-			// Build children from the nested run's ToolEvents (last turn results).
-			children := make([]ChildCall, 0, len(outPtr.ToolEvents))
-			for _, ev := range outPtr.ToolEvents {
-				if ev == nil {
-					continue
-				}
-				status := "ok"
-				if ev.Error != nil {
-					status = "error"
-				}
-				children = append(children, ChildCall{
+		if promptPayload == nil {
+			var generic any
+			if err := json.Unmarshal(call.Payload, &generic); err == nil {
+				promptPayload = generic
+			} else {
+				promptPayload = call.Payload
+			}
+		}
+	}
+
+	// Build messages: optional agent system prompt, then the per-tool user message.
+	var messages []*model.Message
+	if cfg.SystemPrompt != "" {
+		if m := newTextAgentMessage(model.ConversationRoleSystem, cfg.SystemPrompt); m != nil {
+			messages = []*model.Message{m}
+		}
+	}
+
+	// Build per-tool user message via template if present, otherwise fall
+	// back to text/prompt/payload. Skip appending when the content is empty
+	// or a meaningless JSON shell ("{}" / "null").
+	var userContent string
+	if tmpl := cfg.Templates[call.Name]; tmpl != nil {
+		var b strings.Builder
+		if err := tmpl.Execute(&b, promptPayload); err != nil {
+			return nil, zeroCtx, fmt.Errorf(
+				"render tool template for %s: %w",
+				call.Name, err,
+			)
+		}
+		userContent = b.String()
+	} else if txt, ok := cfg.Texts[call.Name]; ok {
+		userContent = txt
+	} else {
+		// Default: build from payload via PromptBuilder or JSON/string fallback.
+		if cfg.Prompt != nil {
+			userContent = cfg.Prompt(call.Name, promptPayload)
+		} else {
+			userContent = PayloadToString(promptPayload)
+		}
+	}
+	switch userContent {
+	case "{}", "null":
+		// Append an empty user message to preserve turn semantics.
+		messages = append(messages, &model.Message{Role: model.ConversationRoleUser})
+	default:
+		if m := newTextAgentMessage(model.ConversationRoleUser, userContent); m != nil {
+			messages = append(messages, m)
+		} else {
+			// No text content; still append an empty user message.
+			messages = append(messages, &model.Message{Role: model.ConversationRoleUser})
+		}
+	}
+
+	// Build nested run context from explicit ToolRequest fields.
+	nestedRunCtx := run.Context{
+		Tool:             call.Name,
+		RunID:            NestedRunID(call.RunID, call.Name),
+		SessionID:        call.SessionID,
+		TurnID:           call.TurnID,
+		ParentToolCallID: call.ToolCallID,
+		ParentRunID:      call.RunID,
+		ParentAgentID:    call.AgentID,
+	}
+	// Strong contract: record the canonical JSON args using the tool codec.
+	// marshalToolValue returns a defensive copy for json.RawMessage, so this
+	// never double-encodes.
+	if argsJSON, err := r.marshalToolValue(ctx, call.Name, call.Payload, true); err == nil && len(argsJSON) > 0 {
+		nestedRunCtx.ToolArgs = argsJSON
+	}
+
+	return messages, nestedRunCtx, nil
+}
+
+// adaptAgentChildOutput converts a nested agent RunOutput into a planner.ToolResult,
+// applying optional Finalizer/JSONOnly aggregation and attaching a run link so
+// callers can correlate parent tool calls with child runs.
+func (r *Runtime) adaptAgentChildOutput(
+	ctx context.Context,
+	cfg *AgentToolConfig,
+	call *planner.ToolRequest,
+	nestedRunCtx run.Context,
+	outPtr *RunOutput,
+) (*planner.ToolResult, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("agent tool config is required")
+	}
+	if call == nil {
+		return nil, fmt.Errorf("tool request is nil")
+	}
+	if outPtr == nil {
+		return nil, fmt.Errorf("execute agent returned no output")
+	}
+
+	// Aggregation path: assemble parent tool_result from child results.
+	if cfg.Finalizer != nil {
+		// Build children from the nested run's ToolEvents (last turn results).
+		children := make([]ChildCall, 0, len(outPtr.ToolEvents))
+		for _, ev := range outPtr.ToolEvents {
+			if ev == nil {
+				continue
+			}
+			status := "ok"
+			if ev.Error != nil {
+				status = "error"
+			}
+			children = append(
+				children,
+				ChildCall{
 					ToolName:   ev.Name,
 					ToolCallID: ev.ToolCallID,
 					Status:     status,
 					Result:     ev.Result,
 					Error:      ev.Error,
-				})
-			}
-			parent := ParentCall{
-				ToolName:   call.Name,
-				ToolCallID: call.ToolCallID,
-			}
-			invoker := finalizerToolInvokerFromContext(ctx, call)
-			input := FinalizerInput{
-				Parent:   parent,
-				Children: children,
-				Invoke:   invoker,
-			}
-			tr, aerr := cfg.Finalizer.Finalize(ctx, input)
-			if aerr == nil && tr.Result != nil {
-				// Ensure correlation fields are set so inline results can be
-				// matched back to the originating call during merging.
-				tr.Name = call.Name
-				tr.ToolCallID = call.ToolCallID
-				// Record child count so the runtime can detect empty-child agent-tools.
-				tr.ChildrenCount = len(outPtr.ToolEvents)
-				tr.RunLink = &run.Handle{
-					RunID:            nestedRunCtx.RunID,
-					AgentID:          cfg.AgentID,
-					ParentRunID:      nestedRunCtx.ParentRunID,
-					ParentToolCallID: nestedRunCtx.ParentToolCallID,
-				}
-				return &tr, nil
-			}
+				},
+			)
 		}
-		// JSON-only structured result default: aggregate child results into a structured payload
-		// instead of returning the nested agent's final prose. This produces a consistent,
-		// schema-like output across service-backed and agent-as-tool paths.
-		if cfg.JSONOnly {
-			// If exactly one child tool result exists, pass its result through; otherwise
-			// merge/wrap results. Bedrock requires toolResult.json to be an object, not an array.
-			var payload any
-			switch n := len(outPtr.ToolEvents); {
-			case n == 1 && outPtr.ToolEvents[0] != nil:
-				payload = outPtr.ToolEvents[0].Result
-			case n > 1:
-				aggregateKey := cfg.AggregateKeys[call.Name]
-				payload = aggregateChildResults(outPtr.ToolEvents, aggregateKey)
-			default:
-				// No child tools: return the final message text to avoid empty payloads
-				if outPtr.Final != nil {
-					payload = agentMessageText(outPtr.Final)
-				}
-			}
-			// Aggregate telemetry similar to ConvertRunOutputToToolResult
-			var tel *telemetry.ToolTelemetry
-			if len(outPtr.ToolEvents) > 0 {
-				var totalTokens int
-				var totalDurationMs int64
-				for _, ev := range outPtr.ToolEvents {
-					if ev == nil || ev.Telemetry == nil {
-						continue
-					}
-					totalTokens += ev.Telemetry.TokensUsed
-					totalDurationMs += ev.Telemetry.DurationMs
-				}
-				if totalTokens > 0 || totalDurationMs > 0 {
-					tel = &telemetry.ToolTelemetry{
-						TokensUsed: totalTokens,
-						DurationMs: totalDurationMs,
-					}
-				}
-			}
-			// If all children failed, propagate an error; else success with aggregated payload.
-			var errCount int
-			var lastErr error
-			for _, ev := range outPtr.ToolEvents {
-				if ev != nil && ev.Error != nil {
-					errCount++
-					lastErr = ev.Error
-				}
-			}
-			tr := &planner.ToolResult{
-				Name:       call.Name,
-				ToolCallID: call.ToolCallID,
-				Result:     payload,
-				Telemetry:  tel,
-			}
+		parent := ParentCall{
+			ToolName:   call.Name,
+			ToolCallID: call.ToolCallID,
+		}
+		invoker := finalizerToolInvokerFromContext(ctx, call)
+		input := FinalizerInput{
+			Parent:   parent,
+			Children: children,
+			Invoke:   invoker,
+		}
+		tr, aerr := cfg.Finalizer.Finalize(ctx, input)
+		if aerr == nil && tr.Result != nil {
+			// Ensure correlation fields are set so inline results can be
+			// matched back to the originating call during merging.
+			tr.Name = call.Name
+			tr.ToolCallID = call.ToolCallID
+			// Record child count so the runtime can detect empty-child agent-tools.
 			tr.ChildrenCount = len(outPtr.ToolEvents)
-			tr.RunLink = &run.Handle{
+			tr.Artifacts = append(
+				tr.Artifacts,
+				aggregateArtifacts(outPtr.ToolEvents)...,
+			)
+			handle := &run.Handle{
 				RunID:            nestedRunCtx.RunID,
 				AgentID:          cfg.AgentID,
 				ParentRunID:      nestedRunCtx.ParentRunID,
 				ParentToolCallID: nestedRunCtx.ParentToolCallID,
 			}
-			if errCount > 0 && errCount == len(outPtr.ToolEvents) {
-				tr.Error = planner.NewToolErrorWithCause("agent-tool: all nested tools failed", lastErr)
-			}
-			return tr, nil
+			attachRunLink(&tr, handle)
+			return &tr, nil
 		}
-		result := ConvertRunOutputToToolResult(call.Name, *outPtr)
-		result.RunLink = &run.Handle{
+	}
+
+	// JSON-only structured result default: aggregate child results into a structured payload
+	// instead of returning the nested agent's final prose. This produces a consistent,
+	// schema-like output across service-backed and agent-as-tool paths.
+	if cfg.JSONOnly {
+		// If exactly one child tool result exists, pass its result through; otherwise
+		// merge/wrap results. Bedrock requires toolResult.json to be an object, not an array.
+		var payload any
+		switch n := len(outPtr.ToolEvents); {
+		case n == 1 && outPtr.ToolEvents[0] != nil:
+			payload = outPtr.ToolEvents[0].Result
+		case n > 1:
+			aggregateKey := cfg.AggregateKeys[call.Name]
+			payload = aggregateChildResults(outPtr.ToolEvents, aggregateKey)
+		default:
+			// No child tools: return the final message text to avoid empty payloads.
+			if outPtr.Final != nil {
+				payload = agentMessageText(outPtr.Final)
+			}
+		}
+		// Aggregate telemetry similar to ConvertRunOutputToToolResult.
+		var tel *telemetry.ToolTelemetry
+		if len(outPtr.ToolEvents) > 0 {
+			var totalTokens int
+			var totalDurationMs int64
+			for _, ev := range outPtr.ToolEvents {
+				if ev == nil || ev.Telemetry == nil {
+					continue
+				}
+				totalTokens += ev.Telemetry.TokensUsed
+				totalDurationMs += ev.Telemetry.DurationMs
+			}
+			if totalTokens > 0 || totalDurationMs > 0 {
+				tel = &telemetry.ToolTelemetry{
+					TokensUsed: totalTokens,
+					DurationMs: totalDurationMs,
+				}
+			}
+		}
+		// If all children failed, propagate an error; else success with aggregated payload.
+		var errCount int
+		var lastErr error
+		for _, ev := range outPtr.ToolEvents {
+			if ev != nil && ev.Error != nil {
+				errCount++
+				lastErr = ev.Error
+			}
+		}
+		tr := &planner.ToolResult{
+			Name:       call.Name,
+			ToolCallID: call.ToolCallID,
+			Result:     payload,
+			Telemetry:  tel,
+			Artifacts:  aggregateArtifacts(outPtr.ToolEvents),
+		}
+		tr.ChildrenCount = len(outPtr.ToolEvents)
+		handle := &run.Handle{
 			RunID:            nestedRunCtx.RunID,
 			AgentID:          cfg.AgentID,
 			ParentRunID:      nestedRunCtx.ParentRunID,
 			ParentToolCallID: nestedRunCtx.ParentToolCallID,
 		}
-		return &result, nil
+		attachRunLink(tr, handle)
+		if errCount > 0 && errCount == len(outPtr.ToolEvents) {
+			tr.Error = planner.NewToolErrorWithCause("agent-tool: all nested tools failed", lastErr)
+		}
+		return tr, nil
 	}
+
+	result := ConvertRunOutputToToolResult(call.Name, *outPtr)
+	result.ToolCallID = call.ToolCallID
+	handle := &run.Handle{
+		RunID:            nestedRunCtx.RunID,
+		AgentID:          cfg.AgentID,
+		ParentRunID:      nestedRunCtx.ParentRunID,
+		ParentToolCallID: nestedRunCtx.ParentToolCallID,
+	}
+	attachRunLink(&result, handle)
+	return &result, nil
 }
 
 // aggregateChildResults merges multiple child tool results into a single object.

@@ -41,13 +41,13 @@ func rewriteNestedLocalUserTypes(att *goaexpr.AttributeExpr) *goaexpr.AttributeE
 		default:
 			return att
 		}
+		if base == nil || base.Type == nil {
+			panic(fmt.Sprintf("agent/generate: user type %q has nil attribute/type (dt=%T)", name, dt))
+		}
 		// Recurse into the underlying attribute, do not propagate struct:pkg:path.
-		var dup goaexpr.AttributeExpr
-		if base != nil {
-			dup = *base
-			if dup.Meta != nil {
-				delete(dup.Meta, "struct:pkg:path")
-			}
+		dup := *base
+		if dup.Meta != nil {
+			delete(dup.Meta, "struct:pkg:path")
 		}
 		return &goaexpr.AttributeExpr{Type: &goaexpr.UserTypeExpr{
 			AttributeExpr: rewriteNestedLocalUserTypes(&dup),
@@ -63,10 +63,10 @@ func rewriteNestedLocalUserTypes(att *goaexpr.AttributeExpr) *goaexpr.AttributeE
 	case *goaexpr.Object:
 		obj := &goaexpr.Object{}
 		for _, nat := range *dt {
-			var dup *goaexpr.AttributeExpr
-			if nat.Attribute != nil {
-				dup = rewriteNestedLocalUserTypes(nat.Attribute)
+			if nat == nil || nat.Attribute == nil || nat.Attribute.Type == nil {
+				panic(fmt.Sprintf("agent/generate: object field %q in %T has nil attribute/type", nat.Name, dt))
 			}
+			dup := rewriteNestedLocalUserTypes(nat.Attribute)
 			*obj = append(*obj, &goaexpr.NamedAttributeExpr{
 				Name:      nat.Name,
 				Attribute: dup,
@@ -190,6 +190,14 @@ func Generate(genpkg string, roots []eval.Root, files []*codegen.File) ([]*codeg
 	}
 
 	var generated []*codegen.File
+	// Emit service-level JSON helpers and transform stubs for tool payload and
+	// result user types that live in struct:pkg:path locator packages. These
+	// helpers are co-located with the owning service/types packages so Goa's
+	// union representation remains encapsulated there.
+	if svcFiles := serviceToolCodecFiles(data); len(svcFiles) > 0 {
+		generated = append(generated, svcFiles...)
+	}
+
 	for _, svc := range data.Services {
 		for _, agent := range svc.Agents {
 			afiles := agentFiles(agent)
@@ -335,7 +343,12 @@ func agentPerToolsetSpecsFiles(agent *AgentData) []*codegen.File {
 		if pure := data.pureTypes(); len(pure) > 0 {
 			sections := []*codegen.SectionTemplate{
 				codegen.Header(agent.StructName+" tool types", ts.SpecsPackageName, data.typeImports()),
-				{Name: "tool-spec-types", Source: agentsTemplates.Read(toolTypesFileT), Data: toolTypesFileData{Types: pure}},
+				{
+					Name:    "tool-spec-types",
+					Source:  agentsTemplates.Read(toolTypesFileT),
+					Data:    toolTypesFileData{Types: pure},
+					FuncMap: templateFuncMap(),
+				},
 			}
 			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, "types.go"), SectionTemplates: sections})
 		}
@@ -810,12 +823,12 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 				}
 			}
 			// Init<GoName>SidecarFromMethodResult: service method result -> sidecar (specs)
-			if toolSidecar != nil && t.Sidecar != nil && t.Sidecar.Type != goaexpr.Empty && t.MethodResultAttr != nil && t.MethodResultAttr.Type != goaexpr.Empty {
+			if toolSidecar != nil && t.Artifact != nil && t.Artifact.Type != goaexpr.Empty && t.MethodResultAttr != nil && t.MethodResultAttr.Type != goaexpr.Empty {
 				wrapHandled := false
 				// Fast-path: if the sidecar user type is a single-field wrapper whose
 				// field type matches the method result type, synthesize a direct
 				// wrapper transform instead of relying on structural field matches.
-				if ut, ok := t.Sidecar.Type.(goaexpr.UserType); ok && ut != nil {
+				if ut, ok := t.Artifact.Type.(goaexpr.UserType); ok && ut != nil {
 					if obj := goaexpr.AsObject(ut.Attribute().Type); obj != nil && len(*obj) == 1 {
 						// Check the lone field is assignable from the method result type.
 						for _, natt := range *obj {
@@ -827,7 +840,7 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 										extraImports[im.Path] = im
 									}
 								}
-								for _, im := range gatherAttributeImports(agent.Genpkg, t.Sidecar) {
+								for _, im := range gatherAttributeImports(agent.Genpkg, t.Artifact) {
 									if im != nil && im.Path != "" {
 										extraImports[im.Path] = im
 									}
@@ -867,13 +880,13 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 					}
 				}
 				if !wrapHandled {
-					if err := codegen.IsCompatible(t.MethodResultAttr.Type, t.Sidecar.Type, "in", "out"); err == nil {
+					if err := codegen.IsCompatible(t.MethodResultAttr.Type, t.Artifact.Type, "in", "out"); err == nil {
 						for _, im := range gatherAttributeImports(agent.Genpkg, t.MethodResultAttr) {
 							if im != nil && im.Path != "" {
 								extraImports[im.Path] = im
 							}
 						}
-						for _, im := range gatherAttributeImports(agent.Genpkg, t.Sidecar) {
+						for _, im := range gatherAttributeImports(agent.Genpkg, t.Artifact) {
 							if im != nil && im.Path != "" {
 								extraImports[im.Path] = im
 							}
@@ -882,10 +895,10 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 						// Build a local alias user type for the sidecar. Do not propagate struct:pkg:path
 						// from the base attribute so initializers/casts use the specs package alias.
 						var metaBase *goaexpr.AttributeExpr
-						if ut, ok := t.Sidecar.Type.(goaexpr.UserType); ok && ut != nil {
+						if ut, ok := t.Artifact.Type.(goaexpr.UserType); ok && ut != nil {
 							metaBase = ut.Attribute()
 						} else {
-							metaBase = t.Sidecar
+							metaBase = t.Artifact
 						}
 						dupMeta := *metaBase
 						if dupMeta.Meta != nil {

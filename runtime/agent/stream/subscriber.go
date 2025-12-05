@@ -196,13 +196,33 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		if !s.profile.ToolEnd {
 			return nil
 		}
+		var artifacts []ArtifactPayload
+		if len(evt.Artifacts) > 0 {
+			artifacts = make([]ArtifactPayload, 0, len(evt.Artifacts))
+			for _, a := range evt.Artifacts {
+				ap := ArtifactPayload{
+					Kind:       a.Kind,
+					Data:       a.Data,
+					SourceTool: string(a.SourceTool),
+				}
+				if a.RunLink != nil {
+					ap.RunLink = &RunLinkPayload{
+						RunID:            a.RunLink.RunID,
+						AgentID:          a.RunLink.AgentID,
+						ParentRunID:      a.RunLink.ParentRunID,
+						ParentToolCallID: a.RunLink.ParentToolCallID,
+					}
+				}
+				artifacts = append(artifacts, ap)
+			}
+		}
 		payload := ToolEndPayload{
 			ToolCallID:       evt.ToolCallID,
 			ParentToolCallID: evt.ParentToolCallID,
 			ToolName:         string(evt.ToolName),
 			Result:           evt.Result,
 			Bounds:           evt.Bounds,
-			Sidecar:          evt.Sidecar,
+			Artifacts:        artifacts,
 			Duration:         evt.Duration,
 			Telemetry:        evt.Telemetry,
 			Error:            evt.Error,

@@ -219,9 +219,9 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 			best = json.RawMessage(b)
 		}
 		return &ToolOutput{
-			Payload: best,
-			Sidecar: result.Sidecar,
-			Error:   encErr.Error(),
+			Payload:   best,
+			Artifacts: result.Artifacts,
+			Error:     encErr.Error(),
 		}, nil
 	}
 	// Apply optional result adapter after encoding.
@@ -232,7 +232,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	}
 	out := &ToolOutput{
 		Payload:   enc,
-		Sidecar:   result.Sidecar,
+		Artifacts: result.Artifacts,
 		Telemetry: result.Telemetry,
 	}
 	if result.Error != nil {

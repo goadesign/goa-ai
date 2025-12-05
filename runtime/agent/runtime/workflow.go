@@ -31,13 +31,6 @@ const (
 	// Minimal viable grace period for finalization. If remaining time is
 	// less than or equal to this value, the runtime should finalize with a user-facing message.
 	defaultFinalizerGrace = 10 * time.Second
-
-	// maxUntruncatedBoundedResultBytes is the maximum JSON byte length allowed
-	// for a tool result declared as a bounded view when Bounds.Truncated is
-	// false. Exceeding this limit indicates that the service failed to apply
-	// its own domain caps and must be treated as a hard runtime bug rather
-	// than silently streaming a very large payload back to the model.
-	maxUntruncatedBoundedResultBytes = 64 * 1024
 )
 
 type (
@@ -51,6 +44,22 @@ type (
 		// call is the original tool request that was submitted for execution.
 		call planner.ToolRequest
 		// startTime records when the activity was scheduled, used to calculate tool duration.
+		startTime time.Time
+	}
+
+	// agentChildFutureInfo bundles a child workflow handle with its associated
+	// agent-as-tool call metadata so the runtime can fan in results after
+	// concurrent child execution.
+	agentChildFutureInfo struct {
+		// handle is the child workflow handle returned by StartChildWorkflow.
+		handle engine.ChildWorkflowHandle
+		// call is the original agent-as-tool request submitted for execution.
+		call planner.ToolRequest
+		// cfg carries the agent-tool configuration used to adapt RunOutput.
+		cfg *AgentToolConfig
+		// nestedRun describes the nested agent run context (run IDs, parents).
+		nestedRun run.Context
+		// startTime records when the child workflow was started.
 		startTime time.Time
 	}
 
@@ -1229,9 +1238,11 @@ func (r *Runtime) executeToolCalls(
 	}
 
 	// Decide per-call execution path (inline vs activity) by toolset.
-	// Inline toolsets run synchronously within the workflow loop (agent-as-tool child workflows).
-	// Others schedule activities and collect futures. Results are returned in call order.
+	// Inline toolsets execute within the workflow loop (agent-as-tool child workflows
+	// and other inline tools). Service-backed toolsets schedule activities and collect
+	// futures. Results are returned in call order.
 	futures := make([]futureInfo, 0, len(calls))
+	childFutures := make([]agentChildFutureInfo, 0, len(calls))
 	discoveredIDs := make([]string, 0, len(calls))
 	inlineResults := make(map[string]*planner.ToolResult, len(calls))
 	for i, call := range calls {
@@ -1275,7 +1286,8 @@ func (r *Runtime) executeToolCalls(
 			turnID,
 		)
 
-		// Inline path: agent-as-tool executes within workflow (starts child workflow inside Execute).
+		// Inline path: execute agent-as-tool toolsets via child workflows, and other
+		// inline toolsets synchronously within the workflow loop.
 		if hasTS && ts.Inline {
 			// Apply optional payload adapter before inline execution so agent-tools
 			// see the same normalized payload shape as service-backed tools.
@@ -1298,8 +1310,72 @@ func (r *Runtime) executeToolCalls(
 				call.Payload = raw
 				calls[i].Payload = raw
 			}
+
+			// Agent-as-tool: start child workflows concurrently and fan in results later.
+			if spec.IsAgentTool {
+				messages, nestedRunCtx, err := r.buildAgentChildRequest(ctx, ts.AgentTool, &call)
+				if err != nil {
+					return nil, err
+				}
+				// Emit a parent-scope link event so consumers can discover the child run.
+				r.publishHook(
+					wfCtx.Context(),
+					hooks.NewAgentRunStartedEvent(
+						call.RunID,
+						call.AgentID,
+						call.SessionID,
+						call.Name,
+						call.ToolCallID,
+						nestedRunCtx.RunID,
+						ts.AgentTool.AgentID,
+					),
+					"",
+				)
+				route := ts.AgentTool.Route
+				if route.ID == "" || route.WorkflowName == "" || route.DefaultTaskQueue == "" {
+					return nil, fmt.Errorf("agent tool route is incomplete for %s", call.Name)
+				}
+				input := RunInput{
+					AgentID:          route.ID,
+					RunID:            nestedRunCtx.RunID,
+					SessionID:        nestedRunCtx.SessionID,
+					TurnID:           nestedRunCtx.TurnID,
+					ParentToolCallID: nestedRunCtx.ParentToolCallID,
+					ParentRunID:      nestedRunCtx.ParentRunID,
+					ParentAgentID:    nestedRunCtx.ParentAgentID,
+					Tool:             nestedRunCtx.Tool,
+					ToolArgs:         nestedRunCtx.ToolArgs,
+					Labels:           nestedRunCtx.Labels,
+					Messages:         messages,
+				}
+				handle, err := wfCtx.StartChildWorkflow(
+					wfCtx.Context(),
+					engine.ChildWorkflowRequest{
+						ID:        input.RunID,
+						Workflow:  route.WorkflowName,
+						TaskQueue: route.DefaultTaskQueue,
+						Input:     &input,
+					},
+				)
+				if err != nil {
+					return nil, fmt.Errorf("failed to start agent child workflow for %s: %w", call.Name, err)
+				}
+				childFutures = append(childFutures, agentChildFutureInfo{
+					handle:    handle,
+					call:      call,
+					cfg:       ts.AgentTool,
+					nestedRun: nestedRunCtx,
+					startTime: wfCtx.Now(),
+				})
+				if parentTracker != nil {
+					discoveredIDs = append(discoveredIDs, call.ToolCallID)
+				}
+				continue
+			}
+
+			// Non-agent inline toolset: execute synchronously via the registered executor.
 			start := wfCtx.Now()
-			// Attach workflow context so agent-tool executor can start a child workflow.
+			// Attach workflow context so the executor can use workflow operations.
 			ctxInline := engine.WithWorkflowContext(ctx, wfCtx)
 			ctxInline = withFinalizerInvokerFactory(ctxInline, &finalizerInvokerFactory{
 				runtime:         r,
@@ -1316,9 +1392,7 @@ func (r *Runtime) executeToolCalls(
 				return nil, fmt.Errorf("inline tool %q returned nil result", call.Name)
 			}
 			// Derive Bounds from the decoded result when the result type implements
-			// agent.BoundedResult and the executor did not populate Bounds
-			// explicitly. This keeps truncation metadata attached even when
-			// executors only set the typed result value.
+			// agent.BoundedResult and the executor did not populate Bounds explicitly.
 			if result.Bounds == nil {
 				if b := deriveBounds(result.Result); b != nil {
 					result.Bounds = b
@@ -1341,7 +1415,7 @@ func (r *Runtime) executeToolCalls(
 					call.ParentToolCallID,
 					result.Result,
 					result.Bounds,
-					result.Sidecar,
+					result.Artifacts,
 					duration,
 					result.Telemetry,
 					toolErr,
@@ -1457,7 +1531,7 @@ func (r *Runtime) executeToolCalls(
 		toolRes := &planner.ToolResult{
 			Name:       info.call.Name,
 			Result:     decoded,
-			Sidecar:    out.Sidecar,
+			Artifacts:  out.Artifacts,
 			ToolCallID: info.call.ToolCallID,
 			Telemetry:  out.Telemetry,
 		}
@@ -1494,7 +1568,7 @@ func (r *Runtime) executeToolCalls(
 				parentID,
 				decoded,
 				toolRes.Bounds,
-				out.Sidecar,
+				out.Artifacts,
 				duration,
 				out.Telemetry,
 				toolErr,
@@ -1503,6 +1577,58 @@ func (r *Runtime) executeToolCalls(
 		)
 
 		activityByID[info.call.ToolCallID] = toolRes
+	}
+
+	// Collect agent-as-tool child workflow results.
+	if len(childFutures) > 0 {
+		ctxWithInvoker := withFinalizerInvokerFactory(ctx, &finalizerInvokerFactory{
+			runtime:         r,
+			wfCtx:           wfCtx,
+			activityName:    activityName,
+			activityOptions: toolActOptions,
+			agentID:         agentID,
+		})
+		for _, info := range childFutures {
+			outPtr, err := info.handle.Get(wfCtx.Context())
+			if err != nil {
+				return nil, fmt.Errorf("agent tool %q failed: %w", info.call.Name, err)
+			}
+			tr, err := r.adaptAgentChildOutput(ctxWithInvoker, info.cfg, &info.call, info.nestedRun, outPtr)
+			if err != nil {
+				return nil, err
+			}
+
+			duration := wfCtx.Now().Sub(info.startTime)
+			var toolErr *planner.ToolError
+			if tr.Error != nil {
+				toolErr = tr.Error
+			}
+
+			parentID := info.call.ParentToolCallID
+			if parentID == "" && runCtx != nil {
+				parentID = runCtx.ParentToolCallID
+			}
+			r.publishHook(
+				ctx,
+				hooks.NewToolResultReceivedEvent(
+					eventRunID,
+					eventAgentID,
+					sessionID,
+					info.call.Name,
+					info.call.ToolCallID,
+					parentID,
+					tr.Result,
+					tr.Bounds,
+					tr.Artifacts,
+					duration,
+					tr.Telemetry,
+					toolErr,
+				),
+				turnID,
+			)
+
+			inlineResults[info.call.ToolCallID] = tr
+		}
 	}
 
 	// Merge results following original call order (inline or activity)
@@ -1935,30 +2061,24 @@ func (r *Runtime) enforceBoundedResultContract(ctx context.Context, tr *planner.
 		}
 	}
 	if tr.Bounds == nil {
-		// Log detailed diagnostics before panicking.
-		jsonStr := ""
-		if raw, ok := tr.Result.(json.RawMessage); ok {
-			jsonStr = string(raw)
+		// Bounds metadata is missing even after best-effort derivation. This is
+		// a contract violation by the bounded tool implementation or its
+		// adapter, but panicking is too disruptive in practice. Log diagnostics
+		// and proceed with an empty Bounds value so callers still see a
+		// well-formed planner.ToolResult.
+		if r.logger != nil {
+			_, implements := tr.Result.(agent.BoundedResult)
+			_, isRaw := tr.Result.(json.RawMessage)
+			r.logger.Error(ctx,
+				"bounded tool result missing Bounds; proceeding with empty bounds",
+				"tool", tr.Name,
+				"result_type", fmt.Sprintf("%T", tr.Result),
+				"implements_bounded_result", implements,
+				"is_raw_json", isRaw,
+			)
 		}
-		panic(fmt.Sprintf("bounded tool %q produced result without Bounds metadata (result type %T, json: %s)", tr.Name, tr.Result, jsonStr))
-	}
-	// When the tool reports truncation, we trust the domain caps and do not
-	// apply size-based enforcement here.
-	if tr.Bounds.Truncated {
+		tr.Bounds = &agent.Bounds{}
 		return
-	}
-	// Fail fast when a bounded tool reports an untruncated result that exceeds
-	// the configured size limit. This surfaces a clear service bug instead of
-	// silently streaming a very large payload back to the model.
-	data, err := json.Marshal(tr.Result)
-	if err != nil {
-		panic(fmt.Sprintf("failed to encode bounded tool %q result for size check: %v", tr.Name, err))
-	}
-	if len(data) > maxUntruncatedBoundedResultBytes {
-		panic(fmt.Sprintf(
-			"bounded tool %q produced untruncated result of %d bytes (limit %d); "+
-				"services must apply domain caps and set Bounds.Truncated=true for large views",
-			tr.Name, len(data), maxUntruncatedBoundedResultBytes))
 	}
 }
 

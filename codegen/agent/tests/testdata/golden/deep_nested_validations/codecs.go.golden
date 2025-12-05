@@ -198,8 +198,8 @@ func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 	}
 }
 
-// SidecarCodec returns the generic codec for the named tool sidecar when declared.
-func SidecarCodec(name string) (*tools.JSONCodec[any], bool) {
+// ArtifactCodec returns the generic codec for the named tool artifact when declared.
+func ArtifactCodec(name string) (*tools.JSONCodec[any], bool) {
 	switch name {
 	default:
 		return nil, false

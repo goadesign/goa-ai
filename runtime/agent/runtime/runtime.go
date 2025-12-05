@@ -280,6 +280,12 @@ type (
 		// TelemetryBuilder can be provided to build or enrich telemetry consistently
 		// across transports. When set, the runtime may invoke it with timing/context.
 		TelemetryBuilder func(ctx context.Context, meta ToolCallMeta, tool tools.Ident, start, end time.Time, extras map[string]any) *telemetry.ToolTelemetry
+
+		// AgentTool, when non-nil, carries configuration for agent-as-tool toolsets.
+		// It is populated by NewAgentToolsetRegistration so the workflow runtime can
+		// start nested agent runs directly (fan-out/fan-in) without relying on the
+		// synchronous Execute callback.
+		AgentTool *AgentToolConfig
 	}
 
 	// RunPolicy configures per-agent runtime behavior (caps, time budgets, interrupts).
