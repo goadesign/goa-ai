@@ -40,7 +40,7 @@ func TestExecuteToolActivity_DecodeInExecutor_PassesRaw(t *testing.T) {
 					},
 				},
 			},
-			Result:      tools.TypeSpec{Name: "R"},
+			Result: tools.TypeSpec{Name: "R"},
 			IsAgentTool: false,
 		}},
 	}

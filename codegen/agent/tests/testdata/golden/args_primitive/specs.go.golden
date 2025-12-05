@@ -26,9 +26,10 @@ var Specs = []tools.ToolSpec{
 		Tags:          []string{},
 		BoundedResult: false,
 		Payload: tools.TypeSpec{
-			Name:   "EchoPayload",
-			Schema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
-			Codec:  echoPayloadCodec,
+			Name:        "EchoPayload",
+			Schema:      []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
+			ExampleJSON: []byte("\"abc123\""),
+			Codec:       echoPayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:   "EchoResult",

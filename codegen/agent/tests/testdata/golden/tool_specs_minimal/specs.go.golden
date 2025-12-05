@@ -26,9 +26,10 @@ var Specs = []tools.ToolSpec{
 		Tags:          []string{},
 		BoundedResult: false,
 		Payload: tools.TypeSpec{
-			Name:   "SummarizeDocPayload",
-			Schema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"SummarizePayload\",\"type\":\"object\",\"properties\":{\"doc_id\":{\"type\":\"string\",\"description\":\"Document identifier\",\"example\":\"Magnam asperiores dolorum.\"}},\"example\":{\"doc_id\":\"Est ut.\"},\"required\":[\"doc_id\"]}"),
-			Codec:  summarizeDocPayloadCodec,
+			Name:        "SummarizeDocPayload",
+			Schema:      []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"SummarizePayload\",\"type\":\"object\",\"properties\":{\"doc_id\":{\"type\":\"string\",\"description\":\"Document identifier\",\"example\":\"Magnam asperiores dolorum.\"}},\"example\":{\"doc_id\":\"Est ut.\"},\"required\":[\"doc_id\"]}"),
+			ExampleJSON: []byte("{\"doc_id\":\"abc123\"}"),
+			Codec:       summarizeDocPayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:   "SummarizeDocResult",
