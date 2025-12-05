@@ -257,7 +257,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
 
         // Build final tool result. For tools that declare a typed sidecar, we
         // derive it from the concrete service method result via generated
-        // transforms and attach it so it's never sent to the model provider.
+        // transforms and attach it as a non-model artifact.
         {{- $hasSidecar := false }}
         {{- range .Toolset.Tools }}
             {{- if and .IsMethodBacked .Sidecar }}
@@ -265,29 +265,30 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             {{- end }}
         {{- end }}
         {{- if $hasSidecar }}
-        var sidecar map[string]any
+        var artifacts []*planner.Artifact
         switch call.Name {
         {{- range .Toolset.Tools }}
         {{- if and .IsMethodBacked .Sidecar }}
         case tools.Ident({{ printf "%q" .QualifiedName }}):
             if mr, ok := methodOut.({{ .MethodResultTypeRef }}); ok {
                 if sc := Init{{ goify .Name true }}SidecarFromMethodResult(mr); sc != nil {
-                    data, err := {{ $.Toolset.SpecsPackageName }}.Marshal{{ goify .Name true }}Sidecar(*sc)
-                    if err != nil {
-                        return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
-                    }
-                    if err := json.Unmarshal(data, &sidecar); err != nil {
-                        return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
-                    }
+                    artifacts = append(
+                        artifacts,
+                        &planner.Artifact{
+                            Kind:       {{ printf "%q" .SidecarKind }},
+                            Data:       sc,
+                            SourceTool: call.Name,
+                        },
+                    )
                 }
             }
         {{- end }}
         {{- end }}
         }
         return &planner.ToolResult{
-            Name:    call.Name,
-            Result:  result,
-            Sidecar: sidecar,
+            Name:      call.Name,
+            Result:    result,
+            Artifacts: artifacts,
         }, nil
         {{- else }}
         return &planner.ToolResult{

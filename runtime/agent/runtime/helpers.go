@@ -529,6 +529,30 @@ func stampEventWithTurnID(evt hooks.Event, turnID string) {
 	}
 }
 
+// aggregateArtifacts flattens artifacts from child tool results into a single
+// slice for a parent tool result. Artifacts inherit the child tool name as
+// SourceTool when it is not already set.
+func aggregateArtifacts(events []*planner.ToolResult) []*planner.Artifact {
+	if len(events) == 0 {
+		return nil
+	}
+	var arts []*planner.Artifact
+	for _, ev := range events {
+		for _, a := range ev.Artifacts {
+			art := *a
+			cp := art
+			if cp.SourceTool == "" {
+				cp.SourceTool = ev.Name
+			}
+			arts = append(arts, &cp)
+		}
+	}
+	if len(arts) == 0 {
+		return nil
+	}
+	return arts
+}
+
 // ConvertRunOutputToToolResult converts a RunOutput (from ExecuteAgentInline) into
 // a planner.ToolResult. This helper is used by generated Execute functions for
 // agent-tools to adapt the nested agent's output into the ToolResult format expected
@@ -551,8 +575,9 @@ func ConvertRunOutputToToolResult(toolName tools.Ident, output RunOutput) planne
 		resultContent = agentMessageText(output.Final)
 	}
 	result := planner.ToolResult{
-		Name:   toolName,
-		Result: resultContent,
+		Name:      toolName,
+		Result:    resultContent,
+		Artifacts: aggregateArtifacts(output.ToolEvents),
 	}
 	// Record child count for agent-as-tool detection in the runtime.
 	result.ChildrenCount = len(output.ToolEvents)

@@ -109,6 +109,24 @@ and `ExecuteToolActivityHandler`.
 Tool payloads and results follow a strict, JSON‑first contract across providers,
 planners, and the runtime:
 
+- **Canonical home for types and codecs**
+  - Goa designs declare tool payload/result user types (often with `Meta("struct:pkg:path")`)
+    that Goa core generates into a **service/types locator package** (for example
+    `gen/types` or `gen/<service>`).
+  - Goa‑ai treats those user types as the single source of truth: tool payload and
+    result structs are **not re‑defined** in agent packages. Generated agent code
+    aliases the service user types instead.
+  - JSON helper types (`{Type, Value}` objects for unions and server‑body style
+    helpers for request/response shapes) and the corresponding
+    marshal/unmarshal/transform helpers are generated into the **same package as the
+    user types and union carriers/wrappers**. This lets the helpers rely on Goa’s
+    native `OneOf` representation (anonymous interfaces + wrapper aliases) without
+    exporting new union interfaces or carrier types.
+  - Agent/tool specs packages under `gen/<service>/agents/<agent>/specs/<toolset>`
+    expose `tools.JSONCodec` values whose `ToJSON`/`FromJSON` functions **delegate
+    to those service‑level helpers**. Specs code stays schema‑focused: it describes
+    shapes and wiring but does not own payload/result structs or union logic.
+
 - **Canonical JSON between provider, planner, and runtime**
   - Provider adapters (Bedrock, OpenAI, etc.) emit `model.ToolCall.Payload` as
     `json.RawMessage` containing the tool arguments JSON.
@@ -154,14 +172,14 @@ planners, and the runtime:
     - generates a `ResultBounds() agent.Bounds` method so result types implement
       the `agent.BoundedResult` interface.
   - When a bounded tool result is decoded, the runtime derives `*agent.Bounds`
-    only from the `agent.BoundedResult` interface implemented by the result
-    type and attaches the derived pointer to `planner.ToolResult.Bounds`, hook
-    events, stream `ToolEnd` payloads, and memory events.
-  - For tools marked `BoundedResult`, the runtime enforces that `Bounds` are
-    present and that any untruncated result (`Bounds.Truncated == false`) stays
-    below a configured JSON size limit. Violations panic fast rather than
-    silently streaming very large payloads to the model; trimming logic remains
-    entirely in service code.
+    from the `agent.BoundedResult` interface implemented by the result type (or,
+    as a fallback, from JSON `bounds` / cardinality fields) and attaches the
+    derived pointer to `planner.ToolResult.Bounds`, hook events, stream `ToolEnd`
+    payloads, and memory events.
+  - For tools marked `BoundedResult`, the runtime **does not** impose any size
+    limits or truncate results itself. Services are responsible for applying
+    domain‑specific caps and setting `Bounds.Truncated` and other fields
+    appropriately; goa‑ai simply propagates whatever the tool reports.
 
 ## Pause & Resume
 
@@ -839,35 +857,41 @@ no additional wiring.
 ## Inline Agent Composition (Cross‑Process)
 
 Inline means “part of the same workflow history,” not “in‑process.” The parent
-workflow orchestrates the nested agent by scheduling that agent’s Plan/Resume
-activities (and its tools) on the nested agent’s queues. The engine routes those
-activities to whichever worker registered them (possibly in another process), but
-the parent workflow maintains a single deterministic history and a single stream
-of ToolStart/ToolResult events.
+workflow orchestrates nested agents by starting child workflows for agent‑as‑tool
+calls while keeping a single deterministic history and a single stream of
+ToolStart/ToolResult events from the parent’s point of view.
 
 Key points:
 
 - JSON once: carry canonical JSON (`json.RawMessage`) over boundaries and decode
   exactly once at the tool boundary using generated codecs.
 - Activities only: no network I/O or planner calls inside workflow code. All I/O
-  happens in activities (`PlanStartActivity`, `PlanResumeActivity`, `ExecuteToolActivity`).
-- Piggyback and conventions: provider metadata piggybacks on toolset registration
-  (agent‑as‑tool), and `ExecuteAgentInline` falls back to conventions for
-  workflow/activity names and default queue when needed. No separate route API.
-- Inline toolsets: toolsets that represent “agent‑as‑tool” are marked `Inline` and
-  their generated `Execute` uses `ExecuteAgentInline` to run the nested agent.
+  happens in activities (`PlanStartActivity`, `PlanResumeActivity`, `ExecuteToolActivity`)
+  or in nested child workflows started by the parent.
+- Piggyback and conventions: provider metadata piggybacks on agent‑tool
+  registration via `AgentToolConfig.Route` (workflow + queue). Generated
+  agent‑tool helpers call `runtime.NewAgentToolsetRegistration`, and the runtime
+  uses that route to start child workflows directly from the parent tool loop.
+  No separate route registry API is required.
+- Inline toolsets (agent‑as‑tool): toolsets that represent nested agents are
+  marked `Inline` and carry an `AgentToolConfig`. For each planner turn, the
+  runtime fans out all allowed agent‑tool calls as child workflows in parallel
+  and fans their results back in `tool_call_id` order before the next
+  Plan/Resume step.
 
-Runtime API:
+Runtime API (lower‑level):
 
-- `ExecuteAgentInline(wfCtx, agentID, messages, nestedCtx)`: orchestrate the nested
-  agent via activities and run its full plan/execute/resume loop inline.
+- `ExecuteAgentChildWithRoute(wfCtx, route, messages, nestedCtx)`: orchestrates
+  the nested agent as a child workflow given explicit route metadata. Generated
+  agent‑tool registrations use this under the hood; most applications call
+  `NewAgentToolsetRegistration` instead of invoking it directly.
 
 Codegen additions:
 
-- Consumers: when DSL declares a dependency on an exported toolset, generate code to
-  `RegisterToolset` with an inline agent‑tool registration that calls
-  `ExecuteAgentInline`. Provider metadata piggybacks on the toolset registration;
-  conventions are used as fallback.
+- Consumers: when DSL declares a dependency on an exported toolset, codegen
+  emits an inline agent‑tool registration that calls
+  `runtime.NewAgentToolsetRegistration`. Provider metadata piggybacks on the
+  toolset registration; conventions are used as fallback.
 
 Streaming:
 

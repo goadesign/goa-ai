@@ -24,15 +24,18 @@ import (
 
 // testWorkflowContext is a lightweight engine.WorkflowContext implementation used by tests.
 type testWorkflowContext struct {
-	ctx           context.Context
-	lastRequest   engine.ActivityRequest
-	asyncResult   any
-	signals       map[string]*testSignalChannel
-	sigMu         sync.Mutex
-	planResult    *planner.PlanResult
-	hasPlanResult bool
-	barrier       chan struct{}
-	runtime       *Runtime // optional runtime for child workflow execution
+	ctx                context.Context
+	lastRequest        engine.ActivityRequest
+	asyncResult        any
+	signals            map[string]*testSignalChannel
+	sigMu              sync.Mutex
+	planResult         *planner.PlanResult
+	hasPlanResult      bool
+	barrier            chan struct{}
+	runtime            *Runtime // optional runtime for child workflow execution
+	childRequests      []engine.ChildWorkflowRequest
+	firstChildGetCount int
+	sawFirstChildGet   bool
 }
 
 func (t *testWorkflowContext) Context() context.Context   { return t.ctx }
@@ -47,6 +50,7 @@ func (t *testWorkflowContext) SetQueryHandler(name string, handler any) error {
 }
 
 func (t *testWorkflowContext) StartChildWorkflow(ctx context.Context, req engine.ChildWorkflowRequest) (engine.ChildWorkflowHandle, error) {
+	t.childRequests = append(t.childRequests, req)
 	return &testChildHandle{
 		runtime: t.runtime,
 		request: req,
@@ -404,6 +408,12 @@ type testChildHandle struct {
 }
 
 func (h *testChildHandle) Get(ctx context.Context) (*api.RunOutput, error) {
+	if tw, ok := h.wfCtx.(*testWorkflowContext); ok {
+		if !tw.sawFirstChildGet {
+			tw.sawFirstChildGet = true
+			tw.firstChildGetCount = len(tw.childRequests)
+		}
+	}
 	if h.runtime != nil && h.request.Input != nil {
 		// Execute the nested agent workflow
 		return h.runtime.ExecuteWorkflow(h.wfCtx, h.request.Input)

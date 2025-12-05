@@ -71,14 +71,32 @@ type ToolRequest struct {
 	ParentToolCallID string
 }
 
+// Artifact carries non-model data produced alongside a tool result.
+// Artifacts are not sent to model providers; they are surfaced to
+// hooks, streams, and UIs for rich visualization and provenance.
+type Artifact struct {
+	// Kind identifies the logical shape of this artifact
+	// (for example, "atlas.time_series" or "atlas.control_narrative").
+	// UIs dispatch renderers based on Kind.
+	Kind string
+	// Data contains the artifact payload. It must be JSON-serializable.
+	Data any
+	// SourceTool is the fully-qualified tool identifier that produced
+	// this artifact. It is used for provenance and debugging.
+	SourceTool tools.Ident
+	// RunLink links this artifact to a nested agent run when it was
+	// produced by an agent-as-tool. Nil for service-backed tools.
+	RunLink *run.Handle
+}
+
 // ToolResult captures the outcome of a tool invocation.
 type ToolResult struct {
 	Name   tools.Ident
 	Result any
-	// Sidecar carries arbitrary non-model data produced alongside the tool
-	// result (for example, UI artifacts or policy annotations).  It is not
-	// sent to model providers.
-	Sidecar map[string]any
+	// Artifacts carries non-model data produced alongside the tool
+	// result (for example, UI artifacts or policy annotations). Artifacts
+	// are never sent to model providers.
+	Artifacts []*Artifact
 	// Bounds, when non-nil, describes how the result has been bounded relative
 	// to the full underlying data set (for example, list/window/graph caps).
 	// Tool implementations and adapters populate this field; the runtime and

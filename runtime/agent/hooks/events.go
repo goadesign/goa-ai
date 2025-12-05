@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
 	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
@@ -196,9 +197,9 @@ type (
 		// implementations and surfaced for observability; the runtime does not
 		// modify it.
 		Bounds *agent.Bounds
-		// Sidecar holds rich, non-provider data attached to the tool result.
-		// It is never serialized into model provider requests.
-		Sidecar map[string]any
+		// Artifacts holds rich, non-provider data attached to the tool result.
+		// Artifacts are never serialized into model provider requests.
+		Artifacts []*planner.Artifact
 		// Duration is the wall-clock execution time for the tool activity.
 		Duration time.Duration
 		// Telemetry holds structured observability metadata (tokens, model, retries).
@@ -623,7 +624,7 @@ func NewToolResultReceivedEvent(
 	toolCallID, parentToolCallID string,
 	result any,
 	bounds *agent.Bounds,
-	sidecar map[string]any,
+	artifacts []*planner.Artifact,
 	duration time.Duration,
 	telemetry *telemetry.ToolTelemetry,
 	err *toolerrors.ToolError,
@@ -637,7 +638,7 @@ func NewToolResultReceivedEvent(
 		ToolName:         toolName,
 		Result:           result,
 		Bounds:           bounds,
-		Sidecar:          sidecar,
+		Artifacts:        artifacts,
 		Duration:         duration,
 		Telemetry:        telemetry,
 		Error:            err,

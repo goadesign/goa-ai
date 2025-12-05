@@ -33,12 +33,16 @@ type (
 		// Return defines the output result schema for this tool.
 		Return *goaexpr.AttributeExpr
 
-		// Sidecar defines the optional typed sidecar schema for this tool.
+		// Sidecar defines the optional typed artifact schema for this tool.
 		// Sidecar data is never sent to the model provider; it is attached to
-		// planner.ToolResult.Sidecar only and surfaced to UIs or policy
+		// planner.ToolResult.Artifacts only and surfaced to UIs or policy
 		// engines as auxiliary data (for example, full-fidelity artifacts
 		// alongside bounded model-facing results).
 		Sidecar *goaexpr.AttributeExpr
+		// SidecarKind identifies the logical kind of the sidecar artifact
+		// (for example, "atlas.time_series"). When empty, codegen derives a
+		// default from the tool identifier.
+		SidecarKind string
 
 		// Toolset is the toolset expression that owns this tool.
 		Toolset *ToolsetExpr

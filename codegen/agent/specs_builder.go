@@ -158,6 +158,27 @@ type (
 		// When true, templates emit a Bounds() method on the result alias type so
 		// runtimes can rely on the interface rather than reflection.
 		ImplementsBounds bool
+		// UseServiceCodec indicates that the generated typed and generic codecs
+		// should delegate marshal/unmarshal to service-level helpers in the
+		// locator package (for example, types.MarshalDiagnosisUpdatePayload)
+		// instead of inlining JSON helper and transform logic in the specs
+		// package. This is enabled only for payload types whose underlying user
+		// type is placed via struct:pkg:path and whose attribute graph does not
+		// contain unions.
+		UseServiceCodec bool
+		// ServiceCodecPkgAlias is the import alias for the locator package that
+		// owns the payload/result user type (for example, "types").
+		ServiceCodecPkgAlias string
+		// ServiceCodecTypeName is the name of the service user type for which
+		// the service-level helpers are generated (for example,
+		// "DiagnosisUpdatePayload").
+		ServiceCodecTypeName string
+		// ServiceMarshalFunc is the fully qualified name of the service-level
+		// marshal helper (for example, "types.MarshalDiagnosisUpdatePayload").
+		ServiceMarshalFunc string
+		// ServiceUnmarshalFunc is the fully qualified name of the service-level
+		// unmarshal helper (for example, "types.UnmarshalDiagnosisUpdatePayload").
+		ServiceUnmarshalFunc string
 	}
 
 	// toolSpecBuilder walks tool types and generates corresponding type metadata,
@@ -217,8 +238,8 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 			return nil, err
 		}
 		var sidecar *typeData
-		if tool.Sidecar != nil && tool.Sidecar.Type != goaexpr.Empty {
-			sidecar, err = builder.typeFor(tool, tool.Sidecar, usageSidecar)
+		if tool.Artifact != nil && tool.Artifact.Type != goaexpr.Empty {
+			sidecar, err = builder.typeFor(tool, tool.Artifact, usageSidecar)
 			if err != nil {
 				return nil, err
 			}
@@ -302,6 +323,122 @@ func (d *toolSpecsData) needsGoaImport() bool {
 		}
 	}
 	return false
+}
+
+// validationCodeWithContext wraps goa ValidationCode so that any panic carries
+// enough context (tool name, usage, and local context) to pinpoint generator
+// bugs. It does not attempt to recover; violations are treated as hard errors.
+func validationCodeWithContext(
+	att *goaexpr.AttributeExpr,
+	put goaexpr.UserType,
+	attCtx *codegen.AttributeContext,
+	req, alias, view bool,
+	target string,
+	tool *ToolData,
+	usage typeUsage,
+	ctx string,
+) string {
+	defer func() {
+		if r := recover(); r != nil {
+			panic(fmt.Sprintf(
+				"agent/specs_builder: ValidationCode panic for tool %q (usage=%s, ctx=%s, target=%s): %v",
+				tool.QualifiedName,
+				usage,
+				ctx,
+				target,
+				r,
+			))
+		}
+	}()
+	return codegen.ValidationCode(att, put, attCtx, req, alias, view, target)
+}
+
+// assertNoNilTypes walks the given attribute and panics when it encounters a
+// nil AttributeExpr or a nil Type. It also follows user types so that synthetic
+// helpers respect the same invariants as Goa-evaluated DSL:
+//
+//  1. Every AttributeExpr has a non-nil Type.
+//  2. Every user type has a non-nil AttributeExpr with a non-nil Type.
+//
+// Violations are treated as generator bugs and must be fixed at the
+// construction site rather than papered over with defensive checks.
+func assertNoNilTypes(att *goaexpr.AttributeExpr, tool *ToolData, usage typeUsage, ctx string) {
+	if att == nil {
+		panic(fmt.Sprintf(
+			"agent/specs_builder: nil AttributeExpr for tool %q (usage=%s, ctx=%s)",
+			tool.QualifiedName,
+			usage,
+			ctx,
+		))
+	}
+	seen := make(map[*goaexpr.AttributeExpr]struct{})
+	var walk func(prefix string, a *goaexpr.AttributeExpr)
+	walk = func(prefix string, a *goaexpr.AttributeExpr) {
+		if a == nil {
+			panic(fmt.Sprintf(
+				"agent/specs_builder: nil AttributeExpr at %q for tool %q (usage=%s, ctx=%s)",
+				prefix,
+				tool.QualifiedName,
+				usage,
+				ctx,
+			))
+		}
+		if _, ok := seen[a]; ok {
+			return
+		}
+		seen[a] = struct{}{}
+		if a.Type == nil {
+			panic(fmt.Sprintf(
+				"agent/specs_builder: nil Type at %q for tool %q (usage=%s, ctx=%s)",
+				prefix,
+				tool.QualifiedName,
+				usage,
+				ctx,
+			))
+		}
+		switch dt := a.Type.(type) {
+		case goaexpr.UserType:
+			uat := dt.Attribute()
+			if uat == nil || uat.Type == nil {
+				panic(fmt.Sprintf(
+					"agent/specs_builder: user type %T with nil attribute/type at %q for tool %q (usage=%s, ctx=%s)",
+					dt,
+					prefix,
+					tool.QualifiedName,
+					usage,
+					ctx,
+				))
+			}
+			walk(prefix, uat)
+		case *goaexpr.Object:
+			for _, nat := range *dt {
+				if nat == nil {
+					panic(fmt.Sprintf(
+						"agent/specs_builder: nil NamedAttributeExpr in object at %q for tool %q (usage=%s, ctx=%s)",
+						prefix,
+						tool.QualifiedName,
+						usage,
+						ctx,
+					))
+				}
+				name := nat.Name
+				path := name
+				if prefix != "" {
+					path = prefix + "." + name
+				}
+				walk(path, nat.Attribute)
+			}
+		case *goaexpr.Array:
+			walk(prefix+"[]", dt.ElemType)
+		case *goaexpr.Map:
+			walk(prefix+"{}", dt.ElemType)
+		case *goaexpr.Union:
+			for n, v := range dt.Values {
+				walk(fmt.Sprintf("%s#%d", prefix, n), v.Attribute)
+			}
+		}
+	}
+	walk("", att)
 }
 
 func (d *toolSpecsData) needsUnicodeImport() bool {
@@ -509,6 +646,10 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 			att = &dup
 		}
 	}
+	// Enforce core invariants early: attributes must have a non-nil Type and
+	// user types must always carry a non-nil AttributeExpr. Violations are
+	// treated as generator bugs and must be fixed at the construction site.
+	assertNoNilTypes(att, tool, usage, "tool-attr")
 	typeName := codegen.Goify(tool.Name, true)
 	switch usage {
 	case usagePayload:
@@ -520,6 +661,33 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	}
 
 	scope := b.scopeForTool(tool)
+
+	// Detect whether this type is a service-located user type whose codecs
+	// should be delegated to helpers generated in the locator package instead
+	// of being inlined in the specs package. Delegation is currently enabled
+	// only for payload types whose underlying user type is placed via
+	// struct:pkg:path and whose attribute graph does not contain unions.
+	var (
+		useServiceCodec      bool
+		serviceCodecPkgAlias string
+		serviceCodecTypeName string
+		serviceImport        *codegen.ImportSpec
+	)
+	if usage == usagePayload {
+		if ut, ok := att.Type.(goaexpr.UserType); ok && ut != nil {
+			if loc := codegen.UserTypeLocation(ut); loc != nil && loc.RelImportPath != "" && !attributeHasUnion(att) {
+				serviceCodecPkgAlias = loc.PackageName()
+				serviceCodecTypeName = ut.Name()
+				if serviceCodecPkgAlias != "" && serviceCodecTypeName != "" {
+					useServiceCodec = true
+					serviceImport = &codegen.ImportSpec{
+						Name: serviceCodecPkgAlias,
+						Path: joinImportPath(b.genpkg, loc.RelImportPath),
+					}
+				}
+			}
+		}
+	}
 
 	// Stable cache key: reference for service-alias, otherwise deterministic name
 	key := stableTypeKey(tool, usage)
@@ -573,14 +741,30 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 		MarshalArg:    "v",
 		UnmarshalArg:  "v",
 	}
+	// Attach service-level codec metadata when delegation is enabled.
+	if useServiceCodec {
+		info.UseServiceCodec = true
+		info.ServiceCodecPkgAlias = serviceCodecPkgAlias
+		info.ServiceCodecTypeName = serviceCodecTypeName
+		if serviceCodecPkgAlias != "" && serviceCodecTypeName != "" {
+			info.ServiceMarshalFunc = serviceCodecPkgAlias + ".Marshal" + serviceCodecTypeName
+			info.ServiceUnmarshalFunc = serviceCodecPkgAlias + ".Unmarshal" + serviceCodecTypeName
+		}
+		if serviceImport != nil {
+			info.ServiceImport = serviceImport
+		}
+	}
 	// For tool payloads, untyped codecs should return pointers.
 	// Record pointer intent via the flag; templates will render "*" where needed
 	// using Goa NameScope-derived base references (no string surgery here).
 	if usage == usagePayload {
 		info.Pointer = true
 	}
-	// Populate JSON validation and field descriptions for payload types only.
-	if usage == usagePayload {
+	// Populate JSON validation and field descriptions for payload types only
+	// when codecs are owned by the specs package. Service-located payloads
+	// that delegate to service-level helpers do not need specs-local JSON
+	// helpers or validation.
+	if usage == usagePayload && !info.UseServiceCodec {
 		// Do not generate standalone validation for the final payload type.
 		info.ValidateFunc = ""
 		info.Validation = ""
@@ -597,6 +781,7 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 		// 1) JSON decode-body type: materialize a single named user type for the
 		// root body with inline nested objects (no separate nested user types).
 		jsonRoot, jsonDefs := b.materializeJSONUserTypes(jsonAttr, typeName+"JSON", scope)
+		assertNoNilTypes(jsonRoot.Attribute(), tool, usage, "json-root")
 		// Compute the final public name for the root JSON type so that
 		// references in codecs match the emitted type name in types.go.
 		// JSON helper types are emitted in the current package; use GoTypeName
@@ -607,6 +792,7 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 
 		// Emit the JSON root type as a standalone declaration.
 		for _, jut := range jsonDefs {
+			assertNoNilTypes(jut.Attribute(), tool, usage, "json-helper")
 			// Ensure JSON helper fields carry struct tag metadata so GoTypeDef
 			// can emit json tags that match the original field names (including
 			// underscores). Without this, names like "device_aliases" will not
@@ -637,19 +823,19 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 			// Generate standalone validator for this JSON helper user type so
 			// root validators that call Validate<Helper> compile.
 			httpctx := codegen.NewAttributeContext(true, false, false, "", scope)
-			vcode := codegen.ValidationCode(jut.Attribute(), nil, httpctx, true, false, false, "body")
+			vcode := validationCodeWithContext(jut.Attribute(), jut, httpctx, true, false, false, "body", tool, usage, "json-helper:"+gname)
 			td := &typeData{
-				Key:           "json:" + gname,
-				TypeName:      gname,
-				Doc:           gname + " is a helper type for JSON decode-body.",
-				Def:           def,
-				FullRef:       ref,
-				NeedType:      true,
-				TypeImports:   gatherAttributeImports(b.genpkg, jut.Attribute()),
-				ValidateFunc:  "Validate" + gname,
-				Validation:    vcode,
-				ValidationSrc: strings.Split(vcode, "\n"),
+				Key:          "json:" + gname,
+				TypeName:     gname,
+				Doc:          gname + " is a helper type for JSON decode-body.",
+				Def:          def,
+				FullRef:      ref,
+				NeedType:     true,
+				TypeImports:  gatherAttributeImports(b.genpkg, jut.Attribute()),
+				ValidateFunc: "Validate" + gname,
+				Validation:   vcode,
 			}
+			td.ValidationSrc = strings.Split(vcode, "\n")
 			if _, exists := b.types[td.Key]; !exists {
 				b.types[td.Key] = td
 			}
@@ -657,7 +843,7 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 
 		// 2) Validation against JSON body using HTTP server-like AttributeContext
 		httpctx := codegen.NewAttributeContext(true, false, false, "", scope)
-		jv := codegen.ValidationCode(jsonRoot.Attribute(), nil, httpctx, true, false, false, "raw")
+		jv := validationCodeWithContext(jsonRoot.Attribute(), jsonRoot, httpctx, true, false, false, "raw", tool, usage, "json-root")
 		if jv != "" {
 			info.JSONValidation = jv
 			info.JSONValidationSrc = strings.Split(jv, "\n")
@@ -669,37 +855,68 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 		if att.Type == goaexpr.Empty {
 			info.TransformBody = "v := &" + typeName + "{}"
 		} else {
-			// Synthesize source and target user types from the underlying base attribute
-			// so we don't create recursive self-references.
-			baseAttr := att
-			if ut, ok := att.Type.(goaexpr.UserType); ok && ut != nil {
-				baseAttr = ut.Attribute()
-			}
-			// Treat empty payloads as empty objects for transforms so Goa emits
-			// '&<TypeName>{}' rather than '&Empty{}' in generated code.
-			if baseAttr.Type == goaexpr.Empty {
-				baseAttr = &goaexpr.AttributeExpr{Type: &goaexpr.Object{}}
-			}
-			srcUT := jsonRoot
-			srcAttr := &goaexpr.AttributeExpr{Type: srcUT}
-			var tgtAttr *goaexpr.AttributeExpr
-			if u2, ok := att.Type.(goaexpr.UserType); ok && u2 != nil {
-				// Transform directly into the declared user type (external or local)
-				tgtAttr = &goaexpr.AttributeExpr{Type: u2}
+			// When the payload (or any of its nested attributes) contains a union,
+			// avoid relying on Goa's generic GoTransform helpers to materialize
+			// the union carrier interfaces across packages. Union carrier
+			// interfaces are implemented with unexported methods in their owning
+			// package (e.g., types.updateVal), so cross‑package helpers that
+			// attempt to name the interface type (Update, Action, ...) cannot
+			// compile. Instead, build a small, purpose‑built transform that
+			// aligns with Goa HTTP behavior by:
+			//
+			//   1. Decoding into Type/Value JSON helpers for union fields.
+			//   2. Constructing the external payload/container user type directly.
+			//   3. Assigning concrete union member values to the container's
+			//      interface field (e.g., types.DiagnosisSectionUpdate.Update)
+			//      inside that package's struct, which remains the only place
+			//      where the anonymous interface type is referenced.
+			//
+			// This mirrors the HTTP constructors such as NewMethodBodyUnionUnion
+			// without exposing the union value interfaces themselves in the
+			// tool_specs package.
+			if attributeHasUnion(att) {
+				body := b.buildUnionPayloadTransform(scope, jsonRoot, att)
+				if body != "" {
+					info.TransformBody = body
+					// Union-aware payload transforms currently emit all logic
+					// inline in the main transform body to avoid cross-package
+					// helpers that would need to name anonymous union carrier
+					// interfaces. No additional TransformHelpers are required.
+					info.TransformHelpers = nil
+				}
 			} else {
-				// Synthesize a local user type name for anonymous payloads
-				tgtUT := &goaexpr.UserTypeExpr{AttributeExpr: baseAttr, TypeName: typeName}
-				tgtAttr = &goaexpr.AttributeExpr{Type: tgtUT}
-			}
-			// Use the service scope so helper names/types resolved by transforms
-			// match the emitted JSON helper type names (avoid JSON2 suffix skew).
-			srcCtx := codegen.NewAttributeContext(true, false, false, "", scope)
-			tgtCtx := codegen.NewAttributeContext(false, false, true, "", scope)
-			body, helpers, err := codegen.GoTransform(srcAttr, tgtAttr, "raw", "v", srcCtx, tgtCtx, "payload", true)
-			if err == nil && body != "" {
-				info.TransformBody = body
-				if len(helpers) > 0 {
-					info.TransformHelpers = helpers
+				// Synthesize source and target user types from the underlying base attribute
+				// so we don't create recursive self-references.
+				baseAttr := att
+				if ut, ok := att.Type.(goaexpr.UserType); ok && ut != nil {
+					baseAttr = ut.Attribute()
+				}
+				// Treat empty payloads as empty objects for transforms so Goa emits
+				// '&<TypeName>{}' rather than '&Empty{}' in generated code.
+				if baseAttr.Type == goaexpr.Empty {
+					baseAttr = &goaexpr.AttributeExpr{Type: &goaexpr.Object{}}
+				}
+				srcUT := jsonRoot
+				srcAttr := &goaexpr.AttributeExpr{Type: srcUT}
+				var tgtAttr *goaexpr.AttributeExpr
+				if u2, ok := att.Type.(goaexpr.UserType); ok && u2 != nil {
+					// Transform directly into the declared user type (external or local)
+					tgtAttr = &goaexpr.AttributeExpr{Type: u2}
+				} else {
+					// Synthesize a local user type name for anonymous payloads
+					tgtUT := &goaexpr.UserTypeExpr{AttributeExpr: baseAttr, TypeName: typeName}
+					tgtAttr = &goaexpr.AttributeExpr{Type: tgtUT}
+				}
+				// Use the service scope so helper names/types resolved by transforms
+				// match the emitted JSON helper type names (avoid JSON2 suffix skew).
+				srcCtx := codegen.NewAttributeContext(true, false, false, "", scope)
+				tgtCtx := codegen.NewAttributeContext(false, false, true, "", scope)
+				body, helpers, err := codegen.GoTransform(srcAttr, tgtAttr, "raw", "v", srcCtx, tgtCtx, "payload", true)
+				if err == nil && body != "" {
+					info.TransformBody = body
+					if len(helpers) > 0 {
+						info.TransformHelpers = helpers
+					}
 				}
 			}
 		}
@@ -747,11 +964,11 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	// Also ensure any nested service-local user types are materialized locally so
 	// unqualified references inside composite shapes compile.
 	b.ensureNestedLocalTypes(scope, tt)
-	// Collect validators for all unique user types referenced within payloads so
-	// nested validations do not rely on external packages to provide local
+	// Collect validators for all unique user types referenced within payloads
+	// so nested validations do not rely on external packages to provide local
 	// Validate<Name> functions.
 	if usage == usagePayload {
-		b.collectUserTypeValidators(scope, tt)
+		b.collectUserTypeValidators(scope, tool, usage, tt)
 	}
 	return info, nil
 }
@@ -774,6 +991,334 @@ func isEmptyStruct(att *goaexpr.AttributeExpr) bool {
 	default:
 		return false
 	}
+}
+
+// buildUnionPayloadTransform constructs a JSON -> payload transform body for
+// tool payloads that contain Goa OneOf/union fields. It avoids emitting
+// cross‑package helpers that attempt to name the anonymous union carrier
+// interfaces (e.g., Update, Action) which are implemented with unexported
+// methods in their owning package and therefore cannot be referenced safely
+// from the tool_specs package.
+//
+// The implementation is intentionally conservative and currently supports a
+// common, HTTP-style union pattern:
+//
+//   - Root payload is a user type whose underlying type is an object.
+//   - The object contains primitive (or primitive alias) fields.
+//   - The object may contain one or more fields that are arrays of union
+//     carrier user types (for example, a slice of section-update structs),
+//     where each carrier has a single union field encoded as a Type/Value
+//     discriminator pair in the JSON helper object.
+//
+// When these conditions are not met, the function returns an empty body and
+// lets the caller fall back to Goa's generic GoTransform logic.
+func (b *toolSpecBuilder) buildUnionPayloadTransform(scope *codegen.NameScope, jsonRoot *goaexpr.UserTypeExpr, att *goaexpr.AttributeExpr) string {
+	ut, ok := att.Type.(goaexpr.UserType)
+	if !ok {
+		return ""
+	}
+	rootObj := goaexpr.AsObject(ut.Attribute().Type)
+	if rootObj == nil {
+		return ""
+	}
+	jsonObj := goaexpr.AsObject(jsonRoot.Attribute().Type)
+	if jsonObj == nil {
+		return ""
+	}
+
+	// Index JSON helper fields by their original DSL names.
+	jsonFields := make(map[string]*goaexpr.NamedAttributeExpr, len(*jsonObj))
+	for _, nat := range *jsonObj {
+		if nat == nil {
+			continue
+		}
+		jsonFields[nat.Name] = nat
+	}
+
+	// Compute the fully-qualified payload type name for struct literals.
+	tgtAttr := &goaexpr.AttributeExpr{Type: ut}
+	svcAlias := servicePkgAlias(b.service)
+	tgtCtx := codegen.NewAttributeContext(false, false, true, svcAlias, scope)
+	payloadTypeName := tgtCtx.Scope.Name(tgtAttr, tgtCtx.Pkg(tgtAttr), false, tgtCtx.UseDefault)
+
+	var (
+		buf              strings.Builder
+		unionArrayFields []struct {
+			fieldName    string
+			jsonElemAttr *goaexpr.AttributeExpr
+			carrierAttr  *goaexpr.AttributeExpr
+			unionAttr    *goaexpr.Union
+		}
+	)
+
+	// Build struct literal for the payload, handling primitives directly and
+	// deferring union-backed arrays to a post-initialization block.
+	buf.WriteString("v := &")
+	buf.WriteString(payloadTypeName)
+	buf.WriteString("{\n")
+
+	rattr := ut.Attribute()
+	var required map[string]struct{}
+	if rattr.Validation != nil && len(rattr.Validation.Required) > 0 {
+		required = make(map[string]struct{}, len(rattr.Validation.Required))
+		for _, name := range rattr.Validation.Required {
+			required[name] = struct{}{}
+		}
+	}
+
+	for _, nat := range *rootObj {
+		if nat == nil || nat.Attribute == nil {
+			continue
+		}
+		jf := jsonFields[nat.Name]
+		if jf == nil || jf.Attribute == nil {
+			// If we can't find a matching JSON field, bail out and let the
+			// generic GoTransform path handle this payload.
+			return ""
+		}
+		fieldName := codegen.GoifyAtt(nat.Attribute, nat.Name, true)
+		switch dt := nat.Attribute.Type.(type) {
+		case goaexpr.Primitive:
+			// Required primitives are represented as pointers in the JSON helper
+			// and validated before transform; rely on that contract and assign
+			// via direct dereference (no additional defensive checks here).
+			if _, ok := required[nat.Name]; ok {
+				buf.WriteString("\t")
+				buf.WriteString(fieldName)
+				buf.WriteString(": *raw.")
+				buf.WriteString(fieldName)
+				buf.WriteString(",\n")
+				continue
+			}
+			// Optional primitives: copy pointer value if non-nil.
+			buf.WriteString("\t")
+			buf.WriteString(fieldName)
+			buf.WriteString(": ")
+			buf.WriteString("func() ")
+			buf.WriteString(scope.GoTypeRef(nat.Attribute))
+			buf.WriteString(" {\n")
+			buf.WriteString("\t\tif raw.")
+			buf.WriteString(fieldName)
+			buf.WriteString(" == nil {\n")
+			buf.WriteString("\t\t\tvar zero ")
+			buf.WriteString(scope.GoTypeRef(nat.Attribute))
+			buf.WriteString("\n\t\t\treturn zero\n\t\t}\n")
+			buf.WriteString("\t\treturn *raw.")
+			buf.WriteString(fieldName)
+			buf.WriteString("\n\t}(),\n")
+		case goaexpr.UserType:
+			// Treat alias user types over primitives like primitives. More
+			// complex user types fall back to the generic GoTransform path.
+			if goaexpr.IsPrimitive(dt.Attribute().Type) {
+				if _, ok := required[nat.Name]; ok {
+					buf.WriteString("\t")
+					buf.WriteString(fieldName)
+					buf.WriteString(": ")
+					buf.WriteString(tgtCtx.Scope.Ref(nat.Attribute, tgtCtx.Pkg(nat.Attribute)))
+					buf.WriteString("(*raw.")
+					buf.WriteString(fieldName)
+					buf.WriteString("),\n")
+					continue
+				}
+				buf.WriteString("\t")
+				buf.WriteString(fieldName)
+				buf.WriteString(": ")
+				buf.WriteString("func() ")
+				buf.WriteString(tgtCtx.Scope.Ref(nat.Attribute, tgtCtx.Pkg(nat.Attribute)))
+				buf.WriteString(" {\n")
+				buf.WriteString("\t\tif raw.")
+				buf.WriteString(fieldName)
+				buf.WriteString(" == nil {\n")
+				buf.WriteString("\t\t\tvar zero ")
+				buf.WriteString(tgtCtx.Scope.Ref(nat.Attribute, tgtCtx.Pkg(nat.Attribute)))
+				buf.WriteString("\n\t\t\treturn zero\n\t\t}\n")
+				buf.WriteString("\t\treturn ")
+				buf.WriteString(tgtCtx.Scope.Ref(nat.Attribute, tgtCtx.Pkg(nat.Attribute)))
+				buf.WriteString("(*raw.")
+				buf.WriteString(fieldName)
+				buf.WriteString(")\n\t}(),\n")
+				continue
+			}
+			// Non-primitive user types introduce more complex transforms (and
+			// may themselves contain unions); delegate these to GoTransform by
+			// refusing the union-specific fast path.
+			return ""
+		case *goaexpr.Array:
+			// Detect arrays whose element user type contains a union and record
+			// them for a post-init loop using a Type/Value discriminator.
+			if !attributeHasUnion(nat.Attribute) {
+				// Non-union arrays are left to the generic GoTransform path to
+				// avoid re-implementing its full semantics here.
+				return ""
+			}
+			jsonArr := goaexpr.AsArray(jf.Attribute.Type)
+			if jsonArr == nil {
+				return ""
+			}
+			jsonElemAttr := jsonArr.ElemType
+
+			carrierUT, ok := dt.ElemType.Type.(goaexpr.UserType)
+			if !ok {
+				return ""
+			}
+			carrierObj := goaexpr.AsObject(carrierUT.Attribute().Type)
+			if carrierObj == nil {
+				return ""
+			}
+			// Expect a single union field within the carrier (e.g., "update",
+			// "action").
+			var unionAttr *goaexpr.Union
+			for _, cn := range *carrierObj {
+				if cn == nil || cn.Attribute == nil {
+					continue
+				}
+				if u, ok := cn.Attribute.Type.(*goaexpr.Union); ok {
+					unionAttr = u
+					break
+				}
+			}
+			if unionAttr == nil {
+				return ""
+			}
+
+			unionArrayFields = append(unionArrayFields, struct {
+				fieldName    string
+				jsonElemAttr *goaexpr.AttributeExpr
+				carrierAttr  *goaexpr.AttributeExpr
+				unionAttr    *goaexpr.Union
+			}{
+				fieldName:    fieldName,
+				jsonElemAttr: jsonElemAttr,
+				carrierAttr:  dt.ElemType,
+				unionAttr:    unionAttr,
+			})
+			// Defer slice allocation and population to the post-init block.
+		default:
+			// Any additional composite shapes are left to the generic
+			// GoTransform path.
+			return ""
+		}
+	}
+	buf.WriteString("}\n")
+
+	// Emit per-field loops that materialize arrays of union carriers by
+	// decoding the Type/Value JSON helpers into the concrete union members and
+	// assigning them to the carrier's interface field.
+	for _, f := range unionArrayFields {
+		// Compute element type reference for the carrier pointer (e.g.,
+		// *types.DiagnosisSectionUpdate).
+		elemRef := tgtCtx.Scope.Ref(f.carrierAttr, tgtCtx.Pkg(f.carrierAttr))
+		buf.WriteString("v.")
+		buf.WriteString(f.fieldName)
+		buf.WriteString(" = make([]")
+		buf.WriteString(elemRef)
+		buf.WriteString(", len(raw.")
+		buf.WriteString(f.fieldName)
+		buf.WriteString("))\n")
+		buf.WriteString("for i, val := range raw.")
+		buf.WriteString(f.fieldName)
+		buf.WriteString(" {\n")
+		buf.WriteString("\tif val == nil {\n")
+		buf.WriteString("\t\tv.")
+		buf.WriteString(f.fieldName)
+		buf.WriteString("[i] = nil\n\t\tcontinue\n\t}\n")
+		buf.WriteString("\tupd := &")
+		buf.WriteString(tgtCtx.Scope.Ref(f.carrierAttr, tgtCtx.Pkg(f.carrierAttr))[1:]) // strip leading '*'
+		buf.WriteString("{}\n")
+
+		// JSON element is expected to be a user type wrapping an object that
+		// carries the union helper field (e.g., "update", "action").
+		jsonElemUT, ok := f.jsonElemAttr.Type.(*goaexpr.UserTypeExpr)
+		if !ok {
+			return ""
+		}
+		jsonElemObj := goaexpr.AsObject(jsonElemUT.Attribute().Type)
+		if jsonElemObj == nil {
+			return ""
+		}
+		var unionHelperField string
+		for _, jn := range *jsonElemObj {
+			if jn == nil || jn.Attribute == nil {
+				continue
+			}
+			// The JSON helper element wraps the union discriminator in a
+			// dedicated user type (Type/Value object). We don't need to
+			// re-detect the union here; simply pick the first user type field,
+			// which corresponds to the original union field (e.g., "update",
+			// "action").
+			if _, ok := jn.Attribute.Type.(*goaexpr.UserTypeExpr); ok {
+				unionHelperField = codegen.GoifyAtt(jn.Attribute, jn.Name, true)
+				break
+			}
+		}
+		if unionHelperField == "" {
+			return ""
+		}
+
+		buf.WriteString("\tif val.")
+		buf.WriteString(unionHelperField)
+		buf.WriteString(" != nil {\n")
+		buf.WriteString("\t\tswitch *val.")
+		buf.WriteString(unionHelperField)
+		buf.WriteString(".Type {\n")
+		for _, v := range f.unionAttr.Values {
+			if v == nil || v.Attribute == nil {
+				continue
+			}
+			caseName := v.Name
+			// Default to the union member type reference as computed by Goa.
+			targetRef := tgtCtx.Scope.Ref(v.Attribute, tgtCtx.Pkg(v.Attribute))
+			// Special-case list section updates: the union carrier uses
+			// wrapper types (e.g., UpdateRecommendations) that alias the
+			// shared ListSectionUpdate shape so that the same underlying
+			// type can participate in multiple union variants. When the
+			// union value type name is ListSectionUpdate, rewrite the target
+			// type to the corresponding wrapper alias:
+			//
+			//   <Prefix><CaseName>  where
+			//     Prefix   = Goify(union.TypeName, true)    (e.g., "Update")
+			//     CaseName = Goify(value.Name, true)        (e.g., "Recommendations")
+			//
+			// yielding types like types.UpdateRecommendations which implement
+			// the interface with the unexported updateVal method inside the
+			// owning package.
+			if ut, ok := v.Attribute.Type.(goaexpr.UserType); ok && ut != nil {
+				if uexpr, ok := ut.(*goaexpr.UserTypeExpr); ok && uexpr != nil {
+					if uexpr.TypeName == "ListSectionUpdate" {
+						prefix := codegen.Goify(f.unionAttr.Name(), true)
+						wrapper := prefix + codegen.Goify(caseName, true)
+						pkg := tgtCtx.Pkg(v.Attribute)
+						if pkg != "" {
+							targetRef = pkg + "." + wrapper
+						} else {
+							targetRef = wrapper
+						}
+					}
+				}
+			}
+			buf.WriteString("\t\tcase ")
+			buf.WriteString(fmt.Sprintf("%q", caseName))
+			buf.WriteString(":\n")
+			buf.WriteString("\t\t\tvar uv ")
+			buf.WriteString(targetRef)
+			buf.WriteString("\n")
+			buf.WriteString("\t\t\tjson.Unmarshal([]byte(*val.")
+			buf.WriteString(unionHelperField)
+			buf.WriteString(".Value), &uv)\n")
+			buf.WriteString("\t\t\tupd.")
+			// The carrier interface field name matches the union name.
+			buf.WriteString(codegen.Goify(f.unionAttr.Name(), true))
+			buf.WriteString(" = uv\n")
+		}
+		buf.WriteString("\t\t}\n")
+		buf.WriteString("\t}\n")
+		buf.WriteString("\tv.")
+		buf.WriteString(f.fieldName)
+		buf.WriteString("[i] = upd\n")
+		buf.WriteString("}\n")
+	}
+
+	return buf.String()
 }
 
 // materialize builds the concrete type definition line, its effective attribute
@@ -1024,6 +1569,48 @@ func (b *toolSpecBuilder) materializeJSONUserTypes(att *goaexpr.AttributeExpr, b
 				return build(dt.Attribute(), name)
 			}
 			return a
+		case *goaexpr.Union:
+			// Represent union fields in JSON helpers using the canonical
+			// Type/Value discriminator object so that GoTransform can map
+			// between the JSON object and the service union type using the
+			// built‑in union <-> object transforms.
+			//
+			// The synthesized user type has the shape:
+			//
+			//   type <Name> struct {
+			//       Type  string `json:"type"`
+			//       Value string `json:"value"`
+			//   }
+			//
+			// and applies a Required(Type, Value) validation. This mirrors the
+			// UnionUserType pattern used in Goa's union transform tests.
+			obj := &goaexpr.Object{
+				&goaexpr.NamedAttributeExpr{
+					Name: "type",
+					Attribute: &goaexpr.AttributeExpr{
+						Type: goaexpr.String,
+					},
+				},
+				&goaexpr.NamedAttributeExpr{
+					Name: "value",
+					Attribute: &goaexpr.AttributeExpr{
+						Type: goaexpr.String,
+					},
+				},
+			}
+			ut := &goaexpr.UserTypeExpr{
+				AttributeExpr: &goaexpr.AttributeExpr{
+					Type: obj,
+					Validation: &goaexpr.ValidationExpr{
+						Required: []string{"type", "value"},
+					},
+				},
+				// Use a stable, readable name derived from the payload
+				// path so helper and transform names remain deterministic.
+				TypeName: scope.Unique(codegen.Goify(name+"Union", true)),
+			}
+			defs = append(defs, ut)
+			return &goaexpr.AttributeExpr{Type: ut}
 		case *goaexpr.Object:
 			if ut, ok := visited[dt]; ok {
 				return &goaexpr.AttributeExpr{Type: ut}
@@ -1125,11 +1712,55 @@ func buildFieldDescriptions(att *goaexpr.AttributeExpr) map[string]string {
 	return out
 }
 
-// collectUserTypeValidators walks the attribute graph and generates validator entries
-// for each unique user type encountered that yields non-empty validation code. The
-// generated entries are validator-only (no codecs), and allow Validate<Name>() to be
-// called from top-level payload validators.
-func (b *toolSpecBuilder) collectUserTypeValidators(scope *codegen.NameScope, att *goaexpr.AttributeExpr) {
+// attributeHasUnion reports whether the provided attribute (or any of its
+// nested children) contains a union type. It follows user types, arrays,
+// maps, and objects to detect unions anywhere in the graph.
+func attributeHasUnion(att *goaexpr.AttributeExpr) bool {
+	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+		return false
+	}
+	seen := make(map[*goaexpr.AttributeExpr]struct{})
+	var walk func(a *goaexpr.AttributeExpr) bool
+	walk = func(a *goaexpr.AttributeExpr) bool {
+		if a == nil || a.Type == nil || a.Type == goaexpr.Empty {
+			return false
+		}
+		if _, ok := seen[a]; ok {
+			return false
+		}
+		seen[a] = struct{}{}
+		switch dt := a.Type.(type) {
+		case *goaexpr.Union:
+			return true
+		case goaexpr.UserType:
+			return walk(dt.Attribute())
+		case *goaexpr.Array:
+			return walk(dt.ElemType)
+		case *goaexpr.Map:
+			if walk(dt.KeyType) {
+				return true
+			}
+			return walk(dt.ElemType)
+		case *goaexpr.Object:
+			for _, nat := range *dt {
+				if nat == nil {
+					continue
+				}
+				if walk(nat.Attribute) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return walk(att)
+}
+
+// collectUserTypeValidators walks the attribute graph and generates validator
+// entries for each unique user type encountered that yields non-empty
+// validation code. The generated entries are validator-only (no codecs), and
+// allow Validate<Name>() to be called from top-level payload validators.
+func (b *toolSpecBuilder) collectUserTypeValidators(scope *codegen.NameScope, tool *ToolData, usage typeUsage, att *goaexpr.AttributeExpr) {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return
 	}
@@ -1141,6 +1772,18 @@ func (b *toolSpecBuilder) collectUserTypeValidators(scope *codegen.NameScope, at
 		ut, ok := a.Type.(goaexpr.UserType)
 		if !ok || ut == nil {
 			return nil
+		}
+		// Skip validator generation for external user types whose underlying
+		// attributes contain unions. Goa already represents these unions in the
+		// owning package using unexported discriminator interfaces, and
+		// regenerating validators here would require helper wrapper types that
+		// do not exist in the specs package (leading to impossible type
+		// switches and undefined identifiers). Nested union member types still
+		// receive validators via their own user type entries.
+		if loc := codegen.UserTypeLocation(ut); loc != nil && loc.RelImportPath != "" {
+			if attributeHasUnion(ut.Attribute()) {
+				return nil
+			}
 		}
 		// Emit standalone validators for all encountered user types so that
 		// payload validators can call into Validate<Type> for nested members
@@ -1165,6 +1808,18 @@ func (b *toolSpecBuilder) collectUserTypeValidators(scope *codegen.NameScope, at
 			if strings.HasSuffix(uexpr.TypeName, "ToolPayload") {
 				return nil
 			}
+			// Skip validators for local helper types with unexported names
+			// (e.g., actionAppend). These helpers are aliases over existing
+			// shapes used as nested elements; top-level payload validators
+			// already cover their fields, and emitting standalone validators
+			// would either be no-ops or introduce undefined identifiers when
+			// no corresponding alias type exists in the specs package.
+			if len(uexpr.TypeName) > 0 {
+				c := uexpr.TypeName[0]
+				if c >= 'a' && c <= 'z' {
+					return nil
+				}
+			}
 		}
 		// Generate validation code for the user type attribute itself. For
 		// alias user types, ask Goa to cast to the underlying base type by
@@ -1175,7 +1830,7 @@ func (b *toolSpecBuilder) collectUserTypeValidators(scope *codegen.NameScope, at
 			// Use default value semantics for primitives where defaults are present so
 			// optional alias/value fields validate as values (not pointers).
 			attCtx := codegen.NewAttributeContext(false, false, true, "", scope)
-			vcode = codegen.ValidationCode(ut.Attribute(), nil, attCtx, true, goaexpr.IsAlias(ut), false, "body")
+			vcode = validationCodeWithContext(ut.Attribute(), ut, attCtx, true, goaexpr.IsAlias(ut), false, "body", tool, usage, "validator:"+ut.ID())
 		}
 		// Emit a validator entry even if vcode is empty because Goa-generated
 		// parent validators may still call Validate<Type> for nested user types

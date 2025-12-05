@@ -7,8 +7,8 @@ var (
     {{- end }}
     // {{ .ExportedCodec }} serializes values of type {{ if .Pointer }}*{{ end }}{{ .FullRef }} to canonical JSON.
     {{ .ExportedCodec }} = tools.JSONCodec[{{ if .Pointer }}*{{ end }}{{ .FullRef }}]{
-        ToJSON:   {{ .MarshalFunc }},
-        FromJSON: {{ .UnmarshalFunc }},
+        ToJSON:   {{ if and .UseServiceCodec .ServiceMarshalFunc }}{{ .ServiceMarshalFunc }}{{ else }}{{ .MarshalFunc }}{{ end }},
+        FromJSON: {{ if and .UseServiceCodec .ServiceUnmarshalFunc }}{{ .ServiceUnmarshalFunc }}{{ else }}{{ .UnmarshalFunc }}{{ end }},
     }
     {{- $printed = true }}
     {{- end }}
@@ -24,13 +24,21 @@ var (
         ToJSON: func(v any) ([]byte, error) {
             // Prefer typed marshal when the value matches the expected type.
             if typed, ok := v.({{ if .Pointer }}*{{ end }}{{ .FullRef }}); ok {
+                {{- if and .UseServiceCodec .ServiceMarshalFunc }}
+                return {{ .ServiceMarshalFunc }}(typed)
+                {{- else }}
                 return {{ .MarshalFunc }}(typed)
+                {{- end }}
             }
             // Fallback: marshal structurally compatible values directly.
             return json.Marshal(v)
         },
         FromJSON: func(data []byte) (any, error) {
+            {{- if and .UseServiceCodec .ServiceUnmarshalFunc }}
+            return {{ .ServiceUnmarshalFunc }}(data)
+            {{- else }}
             return {{ .UnmarshalFunc }}(data)
+            {{- end }}
         },
     }
     {{- $printed = true }}
@@ -86,10 +94,10 @@ func (e ValidationError) Descriptions() map[string]string {
     }
     return out
 }
+{{- if $hasValidation }}
 // newValidationError converts a goa.ServiceError (possibly merged) into a
 // ValidationError with structured FieldIssue entries. It trims any leading
 // "body." from field names for conciseness.
-{{- if $hasValidation }}
 func newValidationError(err error) error {
     if err == nil {
         return nil
@@ -173,8 +181,8 @@ func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
     }
 }
 
-// SidecarCodec returns the generic codec for the named tool sidecar when declared.
-func SidecarCodec(name string) (*tools.JSONCodec[any], bool) {
+// ArtifactCodec returns the generic codec for the named tool artifact when declared.
+func ArtifactCodec(name string) (*tools.JSONCodec[any], bool) {
     switch name {
 {{- range .Tools }}
     {{- if .Sidecar }}
@@ -187,56 +195,8 @@ func SidecarCodec(name string) (*tools.JSONCodec[any], bool) {
     }
 }
 
-{{- /* Per-tool sidecar helpers for planner.ToolResult.Sidecar */ -}}
-{{- range .Tools }}
-    {{- if .Sidecar }}
-// Get{{ goify .Name true }}Sidecar decodes the ToolResult.Sidecar map into the
-// typed {{ .Sidecar.TypeName }} value. It returns nil when no sidecar is present.
-func Get{{ goify .Name true }}Sidecar(res *planner.ToolResult) (*{{ .Sidecar.FullRef }}, error) {
-    if res == nil || len(res.Sidecar) == 0 {
-        return nil, nil
-    }
-    data, err := json.Marshal(res.Sidecar)
-    if err != nil {
-        return nil, err
-    }
-    v, err := {{ .Sidecar.UnmarshalFunc }}(data)
-    if err != nil {
-        return nil, err
-    }
-    return &v, nil
-}
-
-// Set{{ goify .Name true }}Sidecar encodes the typed sidecar onto the ToolResult.Sidecar
-// map, merging with any existing entries.
-func Set{{ goify .Name true }}Sidecar(res *planner.ToolResult, sc *{{ .Sidecar.FullRef }}) error {
-    if res == nil || sc == nil {
-        return nil
-    }
-    data, err := {{ .Sidecar.MarshalFunc }}(*sc)
-    if err != nil {
-        return err
-    }
-    // Decode back into a map to merge with any existing metadata entries.
-    tmp := make(map[string]any)
-    if len(data) > 0 {
-        if err := json.Unmarshal(data, &tmp); err != nil {
-            return err
-        }
-    }
-    if res.Sidecar == nil {
-        res.Sidecar = make(map[string]any, len(tmp))
-    }
-    for k, v := range tmp {
-        res.Sidecar[k] = v
-    }
-    return nil
-}
-    {{- end }}
-{{- end }}
-
 {{- range .Types }}
-    {{- if .GenerateCodec }}
+    {{- if and .GenerateCodec (not .UseServiceCodec) }}
 // {{ .MarshalFunc }} serializes {{ if .Pointer }}*{{ end }}{{ .FullRef }} into JSON.
 func {{ .MarshalFunc }}(v {{ if .Pointer }}*{{ end }}{{ .FullRef }}) ([]byte, error) {
     {{- if .Pointer }}

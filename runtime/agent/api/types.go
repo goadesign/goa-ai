@@ -197,7 +197,7 @@ type ToolInput struct {
 // ToolOutput is returned by tool executors after invoking the tool implementation.
 type ToolOutput struct {
 	Payload   json.RawMessage
-	Sidecar   map[string]any
+	Artifacts []*planner.Artifact
 	Telemetry *telemetry.ToolTelemetry
 	Error     string
 	RetryHint *planner.RetryHint
