@@ -1,0 +1,369 @@
+# Implementation Plan
+
+- [x] 1. Goa Framework Changes
+  - [x] 1.1 Add SecurityHolder interface to Goa expr package
+    - Add `SecurityHolder` interface with `AddSecurityRequirement(*SecurityExpr)` method
+    - Update `Security()` DSL function to check for interface
+    - _Requirements: 1.2_
+  - [x] 1.2 Add URLHolder interface to Goa expr package
+    - Add `URLHolder` interface with `SetURL(string)` method
+    - Update `URL()` DSL function to check for interface
+    - _Requirements: 1.1_
+  - [x] 1.3 Write unit tests for Goa interface extensions
+    - Test that custom expression types can implement SecurityHolder
+    - Test that custom expression types can implement URLHolder
+    - _Requirements: 1.1, 1.2_
+
+- [x] 2. Expression Types
+  - [x] 2.1 Create RegistryExpr in expr/agent/registry.go
+    - Define RegistryExpr struct with Name, Description, URL, APIVersion, Requirements, SyncInterval, CacheTTL, Timeout, RetryPolicy, Federation fields
+    - Implement SecurityHolder interface
+    - Implement URLHolder interface
+    - Implement eval.Expression interface (EvalName, Prepare, Validate, Finalize)
+    - _Requirements: 1.1, 1.2_
+  - [x] 2.2 Write property test for RegistryExpr
+    - **Property 1: Tool Schema Round-Trip Consistency**
+    - **Validates: Requirements 9.3**
+  - [x] 2.3 Create ProviderExpr in expr/agent/provider.go
+    - Define ProviderKind enum (Local, MCP, Registry)
+    - Define ProviderExpr struct with Kind, MCPService, MCPToolset, Registry, ToolsetName, Version fields
+    - _Requirements: 10.1, 10.2, 10.3_
+  - [x] 2.4 Create FederationExpr in expr/agent/federation.go
+    - Define FederationExpr struct with Include, Exclude patterns
+    - _Requirements: 5.1_
+  - [x] 2.5 Update ToolsetExpr with Provider field
+    - Add Provider *ProviderExpr field
+    - Add PublishTo []*RegistryExpr field
+    - Remove deprecated External, MCPService, MCPToolset fields
+    - Update Prepare/Validate to handle provider resolution
+    - _Requirements: 10.4_
+  - [x] 2.6 Update Root expression to track registries
+    - Add Registries []*RegistryExpr to agent Root
+    - _Requirements: 1.1_
+  - [x] 2.7 Write unit tests for expression types
+    - Test RegistryExpr validation (URL required, valid durations)
+    - Test ProviderExpr kind detection
+    - Test ToolsetExpr provider resolution
+    - _Requirements: 1.1, 10.1, 10.2, 10.3_
+
+- [x] 3. DSL Functions
+  - [x] 3.1 Create dsl/registry.go with Registry DSL
+    - Implement Registry(name, fn) top-level function
+    - Implement APIVersion(version) function
+    - Implement Timeout(duration) function
+    - Implement Retry(maxRetries, backoff) function
+    - Implement SyncInterval(duration) function
+    - Implement CacheTTL(duration) function
+    - _Requirements: 1.1, 1.2_
+  - [x] 3.2 Implement Federation DSL functions
+    - Implement Federation(fn) function
+    - Implement Include(patterns...) function
+    - Implement Exclude(patterns...) function
+    - _Requirements: 5.1_
+  - [x] 3.3 Implement FromMCP provider option
+    - Implement FromMCP(service, toolset) returning *ProviderExpr
+    - Update Toolset() to accept provider option
+    - _Requirements: 10.2_
+  - [x] 3.4 Implement FromRegistry provider option
+    - Implement FromRegistry(registry, toolset) returning *ProviderExpr
+    - Implement Version(version) for version pinning
+    - _Requirements: 10.3_
+  - [x] 3.5 Implement PublishTo for Export
+    - Implement PublishTo(registry) function inside Export context
+    - _Requirements: 3.1, 11.2_
+  - [x] 3.6 Rename MCPServer to MCP
+    - Rename MCPServer function to MCP
+    - Add deprecation error for MCPServer usage
+    - _Requirements: Breaking Changes_
+  - [x] 3.7 Remove MCPTool (Tool is unified)
+    - Add deprecation error for MCPTool usage
+    - Verify Tool works in Method context
+    - _Requirements: Breaking Changes_
+  - [x] 3.8 Remove MCPToolset
+    - Add deprecation error for MCPToolset usage
+    - _Requirements: 10.5_
+  - [x] 3.9 Write property test for unified toolset model
+    - **Property 11: Provider-Agnostic Specs Generation**
+    - **Validates: Requirements 10.4, 11.1**
+  - [x] 3.10 Write unit tests for DSL functions
+    - Test Registry declaration with all options
+    - Test FromMCP and FromRegistry provider options
+    - Test PublishTo inside Export
+    - Test deprecation errors for removed functions
+    - _Requirements: 1.1, 10.1, 10.2, 10.3, 10.5_
+
+- [x] 4. Checkpoint - Make sure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 5. Code Generation - Registry Client
+  - [x] 5.1 Create registry client generator
+    - Generate gen/<svc>/registry/<name>/client.go
+    - Generate typed client with ListToolsets, GetToolset, Search, Register, Deregister, Heartbeat methods
+    - Generate auth provider integration based on security scheme
+    - _Requirements: 1.1, 1.2_
+  - [x] 5.2 Generate registry client options
+    - Generate Option type and functional options
+    - Generate WithTimeout, WithRetry, WithCache options
+    - _Requirements: 1.1_
+  - [x] 5.3 Write unit tests for registry client generation
+    - Test generated client has correct methods
+    - Test auth provider integration
+    - _Requirements: 1.1, 1.2_
+
+- [x] 6. Code Generation - Tool Specs for Registry Toolsets
+  - [x] 6.1 Update tool specs generator for registry provider
+    - Generate placeholder specs for registry-backed toolsets
+    - Generate runtime discovery code that populates specs at startup
+    - _Requirements: 2.1, 11.1_
+  - [x] 6.2 Generate schema validation code
+    - Generate validation functions using registry-provided schemas
+    - _Requirements: 2.2_
+  - [x] 6.3 Write property test for schema validation
+    - **Property 7: Schema Validation Rejects Invalid Payloads**
+    - **Validates: Requirements 2.2**
+  - [x] 6.4 Write unit tests for registry tool specs generation
+    - Test generated specs structure matches local toolsets
+    - _Requirements: 11.1_
+
+- [x] 7. Code Generation - A2A Agent Card
+  - [x] 7.1 Create A2A agent card generator
+    - Generate gen/<svc>/agents/<agent>/a2a/card.go
+    - Generate AgentCard struct with A2A-compliant fields
+    - Generate Skill struct for tool-to-skill mapping
+    - Generate BuildAgentCard function
+    - _Requirements: 13.1, 13.2_
+  - [ ] 7.2 Write property test for A2A agent card conformance
+    - **Property 4: A2A Agent Card Conformance**
+    - **Validates: Requirements 13.1**
+  - [x] 7.3 Write property test for tool-to-skill mapping
+    - **Property 5: Tool-to-Skill Mapping Completeness**
+    - **Validates: Requirements 13.2**
+  - [x] 7.4 Generate security scheme mapping
+    - Map Goa security schemes to A2A security schemes
+    - _Requirements: 13.3_
+  - [x] 7.5 Write property test for security scheme mapping
+    - **Property 6: Security Scheme Mapping**
+    - **Validates: Requirements 13.3**
+  - [x] 7.6 Write unit tests for A2A card generation
+    - Test card contains required fields
+    - Test skills are generated from exported tools
+    - _Requirements: 13.1, 13.2, 13.3_
+
+- [x] 8. Code Generation - A2A Client
+  - [x] 8.1 Create A2A client generator
+    - Generate gen/<svc>/agents/<agent>/a2a/client.go
+    - Generate A2AClient struct
+    - Generate SendTask and SendTaskStreaming methods
+    - _Requirements: 14.2, 14.4_
+  - [ ]* 8.2 Write unit tests for A2A client generation
+    - Test client methods are generated
+    - _Requirements: 14.2_
+
+- [x] 9. Checkpoint - Make sure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 10. Runtime - Registry Manager
+  - [x] 10.1 Create runtime/registry/manager.go
+    - Implement Manager struct with registries map, cache, logger, metrics
+    - Implement AddRegistry method
+    - Implement DiscoverToolset method
+    - Implement Search method
+    - _Requirements: 1.3, 4.1_
+  - [x] 10.2 Write property test for catalog merge
+    - **Property 2: Registry Catalog Merge Preserves Tools**
+    - **Validates: Requirements 1.3**
+  - [x] 10.3 Implement sync loop
+    - Implement StartSync and StopSync methods
+    - Implement periodic refresh based on SyncInterval
+    - _Requirements: 2.3, 5.3_
+  - [x] 10.4 Implement federation sync
+    - Implement federation import with Include/Exclude filtering
+    - Tag federated items with origin
+    - _Requirements: 5.1, 5.2_
+  - [x] 10.5 Write property test for federation origin tagging
+    - **Property 8: Federation Origin Tagging**
+    - **Validates: Requirements 5.2**
+  - [x] 10.6 Write unit tests for registry manager
+    - Test toolset discovery
+    - Test search functionality
+    - Test sync loop
+    - _Requirements: 1.3, 2.1, 4.1_
+
+- [x] 11. Runtime - Schema Cache
+  - [x] 11.1 Create runtime/registry/cache.go
+    - Define Cache interface with Get, Set, Delete methods
+    - Implement MemoryCache
+    - _Requirements: 8.1_
+  - [x] 11.2 Implement cache fallback on unavailability
+    - Return cached data when registry unavailable
+    - Emit warning event
+    - _Requirements: 8.2_
+  - [x] 11.3 Write property test for cache fallback
+    - **Property 3: Cache Fallback on Unavailability**
+    - **Validates: Requirements 1.4, 8.2**
+  - [x] 11.4 Implement background refresh
+    - Refresh cache in background when TTL expires
+    - _Requirements: 8.3_
+  - [x] 11.5 Write unit tests for schema cache
+    - Test cache get/set/delete
+    - Test TTL expiration
+    - Test fallback behavior
+    - _Requirements: 8.1, 8.2, 8.3_
+
+- [x] 12. Code Generation - A2A Service (follows MCP pattern)
+  - [x] 12.1 Create A2A expression builder in codegen/agent/a2a_expr_builder.go
+    - Build synthetic Goa service expression for A2A protocol methods
+    - Define SendTask, SendTaskSubscribe, GetTask, CancelTask methods
+    - Follow same pattern as codegen/mcp/mcp_expr_builder.go
+    - _Requirements: 13.4_
+  - [x] 12.2 Create A2A adapter generator in codegen/agent/a2a_adapter.go
+    - Generate adapter that maps A2A protocol to agent runtime
+    - Implement SendTask by calling runtime.MustClient(agentID).Run()
+    - Convert A2A TaskMessage to agent input messages
+    - Convert agent output to A2A TaskResponse
+    - Follow same pattern as codegen/mcp/adapter_generator.go
+    - _Requirements: 13.4_
+  - [x] 12.3 Integrate A2A codegen into agent generate.go
+    - Add a2aServiceFiles() function similar to MCP's generateMCPServiceCode()
+    - Generate A2A service only for agents with exported toolsets
+    - Use Goa's JSON-RPC codegen for HTTP/SSE transport
+    - _Requirements: 13.4_
+  - [x] 12.4 Create A2A templates
+    - Create templates/a2a_adapter.go.tpl for adapter code
+    - Create templates/a2a_types.go.tpl for A2A protocol types
+    - Reuse patterns from MCP templates where applicable
+    - _Requirements: 13.4_
+  - [x] 12.5 Write property test for A2A task routing
+    - **Property 12: A2A Task Routing**
+    - **Validates: Requirements 13.4**
+  - [x] 12.6 Write unit tests for A2A service generation
+    - Test generated service has correct methods
+    - Test adapter routes to agent runtime
+    - _Requirements: 13.4_
+
+- [x] 13. A2A Client (already generated in task 8)
+  - [x] 13.1 Review A2A client generator
+    - The A2A client is already generated in task 8.1
+    - Verify SendTask properly formats JSON-RPC requests
+    - Verify SendTaskStreaming handles SSE responses correctly
+    - _Requirements: 14.2, 14.4_
+  - [x] 13.2 Verify authentication handling
+    - Auth provider types are already generated based on agent card security schemes
+    - Verify auth is properly wired to HTTP requests
+    - _Requirements: 14.5_
+  - [x] 13.3 Write unit tests for A2A client
+    - Test task invocation
+    - Test streaming responses
+    - Test authentication
+    - _Requirements: 14.2, 14.4, 14.5_
+
+- [x] 14. Runtime - Observability Integration
+  - [x] 14.1 Add registry operation logging
+    - Emit structured log events for all registry operations
+    - Include operation type, duration, outcome
+    - _Requirements: 6.1_
+  - [x] 14.2 Add registry metrics
+    - Record latency, success rate, cache hit ratio
+    - _Requirements: 6.2_
+  - [x] 14.3 Add trace context propagation
+    - Propagate trace context in registry HTTP calls
+    - _Requirements: 6.3_
+  - [ ]* 14.4 Write unit tests for observability
+    - Test log events are emitted
+    - Test metrics are recorded
+    - _Requirements: 6.1, 6.2, 6.3_
+
+- [x] 15. Checkpoint - Make sure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 16. Schema Serialization - Use Goa's JSON Schema Directly
+  - [x] 16.1 Remove custom schema package
+    - Delete `runtime/registry/schema/` directory entirely
+    - Use `goa.design/goa/v3/http/codegen/openapi.Schema` directly wherever JSON Schema is needed
+    - Use Goa's `TypeSchema()` and `AttributeTypeSchema()` for converting Goa expressions to JSON Schema
+    - _Requirements: 9.1, 9.2_
+
+- [x] 17. Search Functionality
+  - [x] 17.1 Implement semantic search client
+    - Call registry semantic search API
+    - Parse relevance-scored results
+    - _Requirements: 4.1, 4.2_
+  - [x] 17.2 Write property test for search results
+    - **Property 9: Search Returns Required Fields**
+    - **Validates: Requirements 4.2**
+  - [x] 17.3 Write property test for empty search
+    - **Property 10: Empty Search Returns Empty Set**
+    - **Validates: Requirements 4.3**
+  - [x] 17.4 Implement keyword fallback
+    - Fall back to keyword search when semantic not supported
+    - _Requirements: 4.4_
+  - [x] 17.5 Write unit tests for search
+    - Test semantic search parsing
+    - Test keyword fallback
+    - _Requirements: 4.1, 4.2, 4.3, 4.4_
+
+- [x] 18. Registration and Heartbeat
+  - [x] 18.1 Implement agent registration
+    - Register agent card with registry
+    - _Requirements: 3.1_
+  - [x] 18.2 Implement heartbeat loop
+    - Maintain registration with periodic heartbeat
+    - _Requirements: 3.3_
+  - [x] 18.3 Implement graceful deregistration
+    - Deregister on shutdown
+    - _Requirements: 3.4_
+  - [x] 18.4 Write unit tests for registration
+    - Test registration flow
+    - Test heartbeat
+    - Test deregistration
+    - _Requirements: 3.1, 3.3, 3.4_
+
+- [x] 19. DSL File Reorganization
+  - [x] 19.1 Move Tool functions to dsl/tool.go
+    - Move Tool, Args, Return, Artifact, Tags, BindTo, Inject, ToolTitle, CallHintTemplate, ResultHintTemplate, BoundedResult
+    - _Requirements: DSL File Organization_
+  - [x] 19.2 Create dsl/history.go
+    - Move History, Cache, Compress, KeepRecentTurns, AfterSystem, AfterTools
+    - _Requirements: DSL File Organization_
+  - [x] 19.3 Update dsl/toolset.go
+    - Keep Toolset, FromMCP, FromRegistry, ToolsetDescription, Version
+    - Remove MCPToolset
+    - _Requirements: DSL File Organization_
+  - [x] 19.4 Update dsl/mcp.go
+    - Rename MCPServer to MCP
+    - Remove MCPTool
+    - _Requirements: DSL File Organization_
+
+- [x] 20. Code Generation Optimization - Static Specialization
+  - [x] 20.1 Refactor A2A card generation to static literals
+    - Generate static `agentCardTemplate` variable with all skills, security schemes, capabilities
+    - Generate thin `AgentCard(baseURL string)` function that copies template and sets URL
+    - Remove `buildSkills()`, `buildSecuritySchemes()`, `buildSecurityRequirements()` runtime functions
+    - _Requirements: 16.1, 16.2_
+  - [x] 20.2 Refactor registry client to static URL paths
+    - Generate static URL path constants (e.g., `const toolsetsPath = "/v1/toolsets/"`)
+    - Replace `url.JoinPath()` calls with string concatenation using static paths
+    - _Requirements: 16.4_
+  - [x] 20.3 Generate type-specific payload validators
+    - For local toolsets with known schemas, generate specialized validation functions
+    - Generate `Validate<ToolName>Payload(p *<PayloadType>) error` with direct field checks
+    - Keep generic schema validation only for registry-discovered tools
+    - _Requirements: 16.3_
+  - [x] 20.4 Generate only required auth provider types
+    - Analyze security schemes used in design
+    - Generate only the auth types actually referenced (bearer, apiKey, basic, oauth2)
+    - Remove unused auth provider code paths
+    - _Requirements: 16.5_
+  - [x] 20.5 Create minimal runtime constructs for dynamic behavior
+    - Move generic schema validation to `runtime/schema/validate.go` for registry-discovered tools only
+    - Keep `runtime/registry/cache.go` for dynamic caching
+    - Keep `runtime/registry/manager.go` for dynamic discovery
+    - _Requirements: 16.6_
+  - [x] 20.6 Write unit tests for static generation
+    - Test generated agent card is a static literal
+    - Test generated URLs use static paths
+    - Test generated validators are type-specific
+    - _Requirements: 16.1, 16.2, 16.3, 16.4_
+
+- [x] 21. Final Checkpoint - Make sure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.

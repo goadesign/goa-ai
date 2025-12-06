@@ -25,9 +25,9 @@ func TestExternalMCPToolset_SelfContainedTypes(t *testing.T) {
 
 	design := func() {
 		API("svc", func() {})
-		// Provider service referenced by MCPToolset
+		// Provider service referenced by FromMCP
 		Service("assistant", func() {})
-		assistantSuite := MCPToolset("assistant", "assistant-mcp")
+		assistantSuite := Toolset(FromMCP("assistant", "assistant-mcp"))
 		Service("svc", func() {
 			Agent("a", "", func() {
 				Use(assistantSuite)

@@ -17,27 +17,29 @@ type (
 		// use globally unique names so tooling can treat toolset IDs as simple
 		// names.
 		Name string
+
 		// Description provides a human-readable explanation of the
 		// toolset's purpose.
 		Description string
+
 		// Tags are labels for categorizing and filtering this toolset.
 		Tags []string
+
 		// Agent is the agent expression that owns this toolset, if any.
 		// When nil, the toolset is either top-level or attached to a
 		// service export.
 		Agent *AgentExpr
+
 		// Tools is the collection of tool expressions in this toolset.
 		Tools []*ToolExpr
-		// External indicates whether this toolset is provided by an
-		// external MCP server.
-		External bool
-		// MCPService is the Goa service name that owns the MCPServer(...)
-		// definition backing this external toolset.
-		MCPService string
-		// MCPToolset is the MCP server name for this external toolset. It
-		// corresponds to MCPExpr.Name and also becomes the provider-owned
-		// toolset name surfaced to agents.
-		MCPToolset string
+
+		// Provider configures the source/executor for this toolset.
+		// When nil, the toolset is local with inline schemas.
+		Provider *ProviderExpr
+
+		// PublishTo specifies registries where this toolset should be
+		// published when exported.
+		PublishTo []*RegistryExpr
 
 		// Origin references the original defining toolset when this toolset
 		// is a reference/alias (e.g., consumed under Uses or via AgentToolset).
@@ -59,15 +61,33 @@ func (t *ToolsetExpr) WalkSets(walk eval.SetWalker) {
 // Validate performs semantic checks on the toolset expression.
 func (t *ToolsetExpr) Validate() error {
 	verr := new(eval.ValidationErrors)
-	if t.External {
-		if t.MCPToolset == "" {
-			verr.Add(t, "MCP server name is required; set it via MCPServer(\"<name>\", ...) on the provider service")
-		}
-		if t.MCPService != "" {
-			if goaexpr.Root.Service(t.MCPService) == nil {
-				verr.Add(t, "MCP FromService could not resolve service %q", t.MCPService)
+
+	// Validate provider configuration.
+	if t.Provider != nil {
+		switch t.Provider.Kind {
+		case ProviderMCP:
+			if t.Provider.MCPToolset == "" {
+				verr.Add(t, "MCP server name is required; set it via FromMCP(service, toolset)")
 			}
+			if t.Provider.MCPService != "" {
+				if goaexpr.Root.Service(t.Provider.MCPService) == nil {
+					verr.Add(t, "FromMCP could not resolve service %q", t.Provider.MCPService)
+				}
+			}
+		case ProviderRegistry:
+			if t.Provider.Registry == nil {
+				verr.Add(t, "registry is required for FromRegistry provider")
+			}
+			if t.Provider.ToolsetName == "" {
+				verr.Add(t, "toolset name is required for FromRegistry provider")
+			}
+		case ProviderLocal:
+			// Local toolsets have inline schemas; no additional validation needed.
 		}
+	}
+
+	if len(verr.Errors) == 0 {
+		return nil
 	}
 	return verr
 }

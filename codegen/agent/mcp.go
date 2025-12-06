@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	agentsExpr "goa.design/goa-ai/expr/agent"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -26,13 +27,13 @@ import (
 // may choose to populate tools from inline tool declarations (custom external
 // MCP).
 func populateMCPToolset(ts *ToolsetData) bool {
-	if ts.Expr == nil || !ts.Expr.External {
+	if ts.Expr == nil || ts.Expr.Provider == nil || ts.Expr.Provider.Kind != agentsExpr.ProviderMCP {
 		return false
 	}
 	if mcpexpr.Root == nil {
 		return false
 	}
-	mcp := mcpexpr.Root.ServiceMCP(ts.Expr.MCPService, ts.Expr.MCPToolset)
+	mcp := mcpexpr.Root.ServiceMCP(ts.Expr.Provider.MCPService, ts.Expr.Provider.MCPToolset)
 	if mcp == nil {
 		return false
 	}

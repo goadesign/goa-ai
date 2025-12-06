@@ -5,13 +5,13 @@ import (
 	. "goa.design/goa/v3/dsl"
 )
 
-// MCPDSL references an external MCP toolset using the MCPToolset DSL.
+// MCPDSL references an external MCP toolset using the Toolset with FromMCP DSL.
 func MCPDSL() func() {
 	return func() {
 		API("alpha", func() {})
-		// Provider service referenced by MCPToolset
+		// Provider service referenced by FromMCP
 		Service("calc", func() {})
-		var CalcCore = MCPToolset("calc", "core")
+		var CalcCore = Toolset(FromMCP("calc", "core"))
 		Service("alpha", func() {
 			Agent("scribe", "Doc helper", func() {
 				Use(CalcCore)

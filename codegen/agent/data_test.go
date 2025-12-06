@@ -110,6 +110,9 @@ func TestGenerateProducesFiles(t *testing.T) {
 	require.Contains(t, paths, "gen/calc/agents/scribe/registry.go")
 	require.Contains(t, paths, "gen/calc/agents/scribe/specs/specs.go")
 	require.Contains(t, paths, "gen/calc/agents/scribe/agenttools/docs_export/helpers.go")
+	// A2A files are generated for agents with exported toolsets
+	require.Contains(t, paths, "gen/calc/agents/scribe/a2a/card.go")
+	require.Contains(t, paths, "gen/calc/agents/scribe/a2a/client.go")
 }
 
 func runAgentDesign(t *testing.T) []eval.Root {

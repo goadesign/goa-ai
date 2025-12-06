@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path"
 
+	"goa.design/goa-ai/codegen/shared"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/expr"
@@ -299,7 +300,7 @@ func (g *adapterGenerator) buildToolAdapters() []*ToolAdapter {
 		if hasRealPayload {
 			adapter.PayloadType = g.getTypeReference(tool.Method.Payload)
 			// Generate a minimal JSON Schema for MCP tools/list
-			adapter.InputSchema = toJSONSchema(tool.Method.Payload)
+			adapter.InputSchema = shared.ToJSONSchema(tool.Method.Payload)
 			// Collect simple validations for adapter-side checks
 			req, enums, enumPtr := g.collectTopLevelValidations(tool.Method.Payload)
 			adapter.RequiredFields = req

@@ -208,7 +208,7 @@ func TestAgentToolsetCrossServiceReference(t *testing.T) {
 func TestProviderInference_LocalAndMCP(t *testing.T) {
 	runDSL(t, func() {
 		API("test", func() {})
-		var SearchSuite = MCPToolset("svc", "search")
+		var SearchSuite = Toolset(FromMCP("svc", "search"))
 		Service("svc", func() {
 			Agent("a", "desc", func() {
 				Use("local", func() { Tool("x", "", func() {}) })
@@ -222,10 +222,13 @@ func TestProviderInference_LocalAndMCP(t *testing.T) {
 	// Order matches declaration: local then MCP.
 	local := a.Used.Toolsets[0]
 	mcp := a.Used.Toolsets[1]
-	require.False(t, local.External)
-	require.True(t, mcp.External)
-	require.Equal(t, "svc", mcp.MCPService)
-	require.Equal(t, "search", mcp.MCPToolset)
+	// Local toolset has no Provider (or Provider.Kind != ProviderMCP)
+	require.True(t, local.Provider == nil || local.Provider.Kind != agentsexpr.ProviderMCP)
+	// MCP toolset has Provider with ProviderMCP kind
+	require.NotNil(t, mcp.Provider)
+	require.Equal(t, agentsexpr.ProviderMCP, mcp.Provider.Kind)
+	require.Equal(t, "svc", mcp.Provider.MCPService)
+	require.Equal(t, "search", mcp.Provider.MCPToolset)
 }
 
 func runDSL(t *testing.T, dsl func()) {

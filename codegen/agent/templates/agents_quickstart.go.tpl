@@ -23,7 +23,7 @@ Here’s a map of what Goa-AI just built for you based on your `design/*.go` fil
         * **Uses Toolsets:**
             {{- if .UsedToolsets }}
             {{- range .UsedToolsets }}
-            * `{{ .QualifiedName }}`{{ if .Expr.External }} (from remote MCP service `{{ .Expr.MCPService }}.{{ .Name }}`){{ end }}
+            * `{{ .QualifiedName }}`{{ if isMCPBacked . }} (from remote MCP service `{{ mcpService . }}.{{ .Name }}`){{ end }}
             {{- end }}
             {{- else }}*none*
             {{- end }}
@@ -344,7 +344,7 @@ cfg := <agentpkg>.<AgentConfig>{
 * **Tools this agent can USE:**
 {{- if .UsedToolsets }}
 {{- range .UsedToolsets }}
-* **`{{ .QualifiedName }}`** {{ if .Expr.External }}(MCP Suite: `{{ .Expr.MCPService }}.{{ .Name }}`){{ end }}
+* **`{{ .QualifiedName }}`** {{ if isMCPBacked . }}(MCP Suite: `{{ mcpService . }}.{{ .Name }}`){{ end }}
 {{- if .Tools }}
 {{- range .Tools }}
 * **Tool: `{{ .QualifiedName }}`**

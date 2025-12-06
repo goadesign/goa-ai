@@ -16,6 +16,9 @@ type RootExpr struct {
 	// Toolsets is the collection of all standalone toolset expressions not
 	// owned by an agent.
 	Toolsets []*ToolsetExpr
+	// Registries is the collection of all registry expressions defined
+	// in the design.
+	Registries []*RegistryExpr
 	// DisableAgentDocs controls whether agent-specific documentation
 	// generation is suppressed.
 	DisableAgentDocs bool
@@ -48,6 +51,11 @@ func (r *RootExpr) Packages() []string {
 
 // WalkSets exposes the nested expressions to the eval engine.
 func (r *RootExpr) WalkSets(walk eval.SetWalker) {
+	// Walk registries first since toolsets may reference them.
+	if len(r.Registries) > 0 {
+		walk(eval.ToExpressionSet(r.Registries))
+	}
+
 	walk(eval.ToExpressionSet(r.Agents))
 
 	var groups eval.ExpressionSet
@@ -97,7 +105,8 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 }
 
 // Validate enforces repository-wide invariants that require a view of all
-// agent and toolset declarations. In particular:
+// agent, toolset, and registry declarations. In particular:
+//   - Registry names must be globally unique.
 //   - Defining toolsets (Origin == nil) must use globally unique names so
 //     they can serve as stable identifiers.
 //   - Tool names must be unique within a defining toolset (Origin == nil)
@@ -105,6 +114,20 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 //     derived as "toolset.tool".
 func (r *RootExpr) Validate() error {
 	verr := new(eval.ValidationErrors)
+
+	// Validate registry name uniqueness.
+	registries := make(map[string]*RegistryExpr)
+	for _, reg := range r.Registries {
+		if reg == nil || reg.Name == "" {
+			continue
+		}
+		if other, dup := registries[reg.Name]; dup {
+			verr.Add(reg, "registry name %q duplicates a registry declared in %s", reg.Name, other.EvalName())
+			continue
+		}
+		registries[reg.Name] = reg
+	}
+
 	toolsets := make(map[string]*ToolsetExpr)
 	recordToolset := func(ts *ToolsetExpr) {
 		if ts == nil {

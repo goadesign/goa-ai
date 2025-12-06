@@ -7,14 +7,14 @@ import (
 	goaexpr "goa.design/goa/v3/expr"
 )
 
-// MCPServer enables Model Context Protocol (MCP) support for the current service.
+// MCP enables Model Context Protocol (MCP) support for the current service.
 // It configures the service to expose tools, resources, and prompts via the MCP
-// protocol. Once enabled, use Resource, MCPTool, and related DSL functions within
-// service methods to define MCP capabilities.
+// protocol. Once enabled, use Resource, Tool (in Method context), and related
+// DSL functions within service methods to define MCP capabilities.
 //
-// MCPServer must appear in a Service expression.
+// MCP must appear in a Service expression.
 //
-// MCPServer takes two required arguments and an optional list of configuration
+// MCP takes two required arguments and an optional list of configuration
 // functions:
 //   - name: the MCP server name (used in MCP handshake)
 //   - version: the server version string
@@ -23,7 +23,7 @@ import (
 // Example:
 //
 //	Service("calculator", func() {
-//	    MCPServer("calc", "1.0.0", ProtocolVersion("2025-06-18"))
+//	    MCP("calc", "1.0.0", ProtocolVersion("2025-06-18"))
 //	    Method("add", func() {
 //	        Payload(func() {
 //	            Attribute("a", Int)
@@ -32,10 +32,10 @@ import (
 //	        Result(func() {
 //	            Attribute("sum", Int)
 //	        })
-//	        MCPTool("add", "Add two numbers")
+//	        Tool("add", "Add two numbers")
 //	    })
 //	})
-func MCPServer(name, version string, opts ...func(*exprmcp.MCPExpr)) {
+func MCP(name, version string, opts ...func(*exprmcp.MCPExpr)) {
 	svc, ok := eval.Current().(*goaexpr.ServiceExpr)
 	if !ok {
 		eval.IncompatibleDSL()
@@ -53,14 +53,14 @@ func MCPServer(name, version string, opts ...func(*exprmcp.MCPExpr)) {
 }
 
 // ProtocolVersion configures the MCP protocol version supported by the server.
-// It returns a configuration function for use with MCPServer.
+// It returns a configuration function for use with MCP.
 //
 // ProtocolVersion takes a single argument which is the protocol version string.
 //
 // Example:
 //
 //	Service("calculator", func() {
-//	    MCPServer("calc", "1.0.0", ProtocolVersion("2025-06-18"))
+//	    MCP("calc", "1.0.0", ProtocolVersion("2025-06-18"))
 //	})
 func ProtocolVersion(version string) func(*exprmcp.MCPExpr) {
 	return func(m *exprmcp.MCPExpr) { m.ProtocolVersion = version }
@@ -156,7 +156,7 @@ func WatchableResource(name, uri, mimeType string) {
 // Example:
 //
 //	Service("assistant", func() {
-//	    MCPServer("assistant", "1.0")
+//	    MCP("assistant", "1.0")
 //	    StaticPrompt("greeting", "Friendly greeting",
 //	        "system", "You are a helpful assistant",
 //	        "user", "Hello!")
@@ -213,53 +213,6 @@ func DynamicPrompt(name, description string) {
 	if r := exprmcp.Root; r != nil {
 		r.RegisterDynamicPrompt(svc, prompt)
 	}
-}
-
-// MCPTool marks the current method as an MCP tool. The method's payload becomes
-// the tool input schema and the method's result becomes the tool output schema.
-// Streaming methods produce streaming tool responses.
-//
-// MCPTool must appear in a Method expression within a service that has MCP enabled.
-//
-// MCPTool takes two arguments:
-//   - name: the tool identifier (used by MCP clients)
-//   - description: human-readable tool description shown to LLMs
-//
-// Example:
-//
-//	Method("search", func() {
-//	    Payload(func() {
-//	        Attribute("query", String)
-//	        Attribute("limit", Int)
-//	    })
-//	    Result(func() {
-//	        Attribute("results", ArrayOf(String))
-//	    })
-//	    MCPTool("search", "Search documents by query")
-//	})
-func MCPTool(name, description string) {
-	parent := eval.Current()
-	method, isMethod := parent.(*goaexpr.MethodExpr)
-	if !isMethod {
-		eval.IncompatibleDSL()
-		return
-	}
-	svc := method.Service
-	var mcp *exprmcp.MCPExpr
-	if r := exprmcp.Root; r != nil {
-		mcp = r.GetMCP(svc)
-	}
-	if mcp == nil {
-		eval.IncompatibleDSL()
-		return
-	}
-	t := &exprmcp.ToolExpr{
-		Name:        name,
-		Description: description,
-		Method:      method,
-		InputSchema: method.Payload,
-	}
-	mcp.Tools = append(mcp.Tools, t)
 }
 
 // Notification marks the current method as an MCP notification sender. The
