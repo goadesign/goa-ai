@@ -3,6 +3,7 @@ package codegen
 import (
 	"strings"
 
+	agentsExpr "goa.design/goa-ai/expr/agent"
 	goacodegen "goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -16,6 +17,22 @@ func templateFuncMap() map[string]any {
 		"trimPrefix": strings.TrimPrefix,
 		"trimSuffix": strings.TrimSuffix,
 		"ToLower":    strings.ToLower,
+		// isAPIKey reports whether the scheme kind is APIKeyKind.
+		"isAPIKey": func(kind goaexpr.SchemeKind) bool {
+			return kind == goaexpr.APIKeyKind
+		},
+		// isOAuth2 reports whether the scheme kind is OAuth2Kind.
+		"isOAuth2": func(kind goaexpr.SchemeKind) bool {
+			return kind == goaexpr.OAuth2Kind
+		},
+		// isJWT reports whether the scheme kind is JWTKind.
+		"isJWT": func(kind goaexpr.SchemeKind) bool {
+			return kind == goaexpr.JWTKind
+		},
+		// isBasicAuth reports whether the scheme kind is BasicAuthKind.
+		"isBasicAuth": func(kind goaexpr.SchemeKind) bool {
+			return kind == goaexpr.BasicAuthKind
+		},
 		// hasMethodBackedTools reports whether the given toolset contains at
 		// least one method-backed tool (bound to a Goa service method).
 		"hasMethodBackedTools": func(ts *ToolsetData) bool {
@@ -41,6 +58,17 @@ func templateFuncMap() map[string]any {
 				}
 			}
 			return false
+		},
+		// isMCPBacked reports whether the given toolset is backed by an MCP server.
+		"isMCPBacked": func(ts *ToolsetData) bool {
+			return ts != nil && ts.Expr != nil && ts.Expr.Provider != nil && ts.Expr.Provider.Kind == agentsExpr.ProviderMCP
+		},
+		// mcpService returns the MCP service name for an MCP-backed toolset.
+		"mcpService": func(ts *ToolsetData) string {
+			if ts == nil || ts.Expr == nil || ts.Expr.Provider == nil {
+				return ""
+			}
+			return ts.Expr.Provider.MCPService
 		},
 		// simpleField reports whether the named field on the given attribute
 		// resolves to a simple assignable type between packages: primitives

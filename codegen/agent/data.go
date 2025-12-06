@@ -143,6 +143,10 @@ type (
 		// Each entry captures the helper import/path information required to register
 		// the toolset with the runtime at agent registration time.
 		MCPToolsets []*MCPToolsetMeta
+		// RegistryToolsets lists the distinct registry-backed toolsets referenced via
+		// FromRegistry provider. Each entry captures the registry client import/path
+		// information required to discover and register the toolset at runtime.
+		RegistryToolsets []*RegistryToolsetMeta
 		// Runtime captures derived workflow/activity data used by templates.
 		Runtime RuntimeData
 		// Methods contains the routing strategies for agent methods.
@@ -335,11 +339,18 @@ type (
 		// MCP describes the external MCP helper metadata when this toolset references
 		// an MCP server/toolset.
 		MCP *MCPToolsetMeta
+		// Registry describes the registry metadata when this toolset is sourced
+		// from a registry via FromRegistry provider.
+		Registry *RegistryToolsetMeta
 		// NeedsAdapter indicates whether any method-backed tool in this toolset
 		// requires an adapter for payload or result mapping (i.e., the tool
 		// payload/result do not alias the bound method types). When false, the
 		// generated service toolset can bypass adapters entirely.
 		NeedsAdapter bool
+		// IsRegistryBacked indicates whether this toolset is sourced from a
+		// registry. When true, tool schemas are resolved at runtime via the
+		// registry client rather than being generated at compile time.
+		IsRegistryBacked bool
 	}
 
 	// MCPToolsetMeta captures the information required to register an external MCP
@@ -361,6 +372,25 @@ type (
 		HelperFunc string
 		// ConstName is the generated Go identifier for the toolset ID constant.
 		ConstName string
+	}
+
+	// RegistryToolsetMeta captures the information required to register a
+	// registry-backed toolset with the runtime. Registry toolsets defer schema
+	// resolution to runtime discovery, generating placeholder specs that are
+	// populated when the agent starts.
+	RegistryToolsetMeta struct {
+		// RegistryName is the name of the registry source.
+		RegistryName string
+		// ToolsetName is the name of the toolset in the registry.
+		ToolsetName string
+		// Version is the optional version pin for the toolset.
+		Version string
+		// QualifiedName is the canonical toolset identifier.
+		QualifiedName string
+		// RegistryClientImportPath is the Go import path for the registry client.
+		RegistryClientImportPath string
+		// RegistryClientAlias is the import alias for the registry client.
+		RegistryClientAlias string
 	}
 
 	// ToolData captures metadata about an individual tool, including its DSL
@@ -905,18 +935,29 @@ func newAgentData(
 
 	if len(agent.AllToolsets) > 0 {
 		mcpMap := make(map[string]*MCPToolsetMeta)
+		regMap := make(map[string]*RegistryToolsetMeta)
 		for _, ts := range agent.AllToolsets {
-			if ts.MCP == nil {
-				continue
+			if ts.MCP != nil {
+				if _, ok := mcpMap[ts.MCP.QualifiedName]; !ok {
+					mcpMap[ts.MCP.QualifiedName] = ts.MCP
+				}
 			}
-			if _, ok := mcpMap[ts.MCP.QualifiedName]; !ok {
-				mcpMap[ts.MCP.QualifiedName] = ts.MCP
+			if ts.Registry != nil {
+				if _, ok := regMap[ts.Registry.QualifiedName]; !ok {
+					regMap[ts.Registry.QualifiedName] = ts.Registry
+				}
 			}
 		}
 		for _, meta := range mcpMap {
 			agent.MCPToolsets = append(agent.MCPToolsets, meta)
 		}
 		slices.SortFunc(agent.MCPToolsets, func(a, b *MCPToolsetMeta) int {
+			return strings.Compare(a.QualifiedName, b.QualifiedName)
+		})
+		for _, meta := range regMap {
+			agent.RegistryToolsets = append(agent.RegistryToolsets, meta)
+		}
+		slices.SortFunc(agent.RegistryToolsets, func(a, b *RegistryToolsetMeta) int {
 			return strings.Compare(a.QualifiedName, b.QualifiedName)
 		})
 	}
@@ -1009,8 +1050,8 @@ func newToolsetData(
 	sourceService := agent.Service
 
 	// If this is an MCP toolset, use the service name from the MCP service.
-	if expr.External && servicesData != nil && expr.MCPService != "" {
-		if svc := servicesData.Get(expr.MCPService); svc != nil {
+	if expr.Provider != nil && expr.Provider.Kind == agentsExpr.ProviderMCP && servicesData != nil && expr.Provider.MCPService != "" {
+		if svc := servicesData.Get(expr.Provider.MCPService); svc != nil {
 			sourceService = svc
 		}
 	}
@@ -1027,7 +1068,8 @@ func newToolsetData(
 	}
 	// If this is a method-backed toolset, prefer the service referenced by the
 	// first bound method (BindTo) when present.
-	if !expr.External && servicesData != nil && len(expr.Tools) > 0 {
+	isMCPBacked := expr.Provider != nil && expr.Provider.Kind == agentsExpr.ProviderMCP
+	if !isMCPBacked && servicesData != nil && len(expr.Tools) > 0 {
 		if svcName := expr.Tools[0].BoundServiceName(); svcName != "" {
 			if svc := servicesData.Get(svcName); svc != nil {
 				sourceService = svc
@@ -1037,8 +1079,8 @@ func newToolsetData(
 	sourceServiceName := serviceName
 	if sourceService != nil && sourceService.Name != "" {
 		sourceServiceName = sourceService.Name
-	} else if expr.MCPService != "" {
-		sourceServiceName = expr.MCPService
+	} else if expr.Provider != nil && expr.Provider.MCPService != "" {
+		sourceServiceName = expr.Provider.MCPService
 	}
 	var imports map[string]*codegen.ImportSpec
 	if sourceService != nil {
@@ -1049,7 +1091,7 @@ func newToolsetData(
 	// it under the consumer namespace to prevent collisions. When the toolset is
 	// exported by another agent (Origin set and different service), reuse the
 	// provider's canonical name so callers see consistent identifiers end-to-end.
-	if kind == ToolsetKindUsed && !expr.External {
+	if kind == ToolsetKindUsed && !isMCPBacked {
 		if originServiceName == "" || originServiceName == agent.Service.Name {
 			qualifiedName = fmt.Sprintf("%s.%s", sourceServiceName, expr.Name)
 		}
@@ -1085,23 +1127,48 @@ func newToolsetData(
 		ts.AgentToolsImportPath = path.Join(agent.ImportPath, "agenttools", toolsetSlug)
 	}
 
-	if expr.External {
-		if expr.MCPToolset != "" {
-			ts.Name = expr.MCPToolset
+	// Handle toolset based on provider type.
+	switch {
+	case expr.Provider != nil && expr.Provider.Kind == agentsExpr.ProviderRegistry:
+		ts.IsRegistryBacked = true
+		regName := ""
+		if expr.Provider.Registry != nil {
+			regName = expr.Provider.Registry.Name
 		}
-		if expr.MCPService != "" {
-			ts.SourceServiceName = expr.MCPService
+		regPkgName := codegen.SnakeCase(regName)
+		regClientImport := path.Join(agent.Genpkg, agent.Service.PathName, "registry", regPkgName)
+		regClientAlias := "reg" + codegen.Goify(regName, false)
+		ts.Registry = &RegistryToolsetMeta{
+			RegistryName:             regName,
+			ToolsetName:              expr.Provider.ToolsetName,
+			Version:                  expr.Provider.Version,
+			QualifiedName:            ts.QualifiedName,
+			RegistryClientImportPath: regClientImport,
+			RegistryClientAlias:      regClientAlias,
 		}
-		helperPkg := "mcp_" + codegen.SnakeCase(expr.MCPService)
+		// Registry toolsets have no compile-time tools; they are discovered at runtime.
+		// The Tools slice remains empty; specs generation will create placeholder
+		// structures that are populated via runtime discovery.
+
+	case isMCPBacked:
+		mcpService := expr.Provider.MCPService
+		mcpToolset := expr.Provider.MCPToolset
+		if mcpToolset != "" {
+			ts.Name = mcpToolset
+		}
+		if mcpService != "" {
+			ts.SourceServiceName = mcpService
+		}
+		helperPkg := "mcp_" + codegen.SnakeCase(mcpService)
 		helperImport := path.Join(agent.Genpkg, helperPkg)
-		helperAlias := "mcp" + codegen.Goify(expr.MCPService, false)
+		helperAlias := "mcp" + codegen.Goify(mcpService, false)
 		helperFunc := fmt.Sprintf("Register%s%sToolset",
-			codegen.Goify(expr.MCPService, true), codegen.Goify(expr.MCPToolset, true))
+			codegen.Goify(mcpService, true), codegen.Goify(mcpToolset, true))
 		constName := fmt.Sprintf("%s%s%sToolsetID",
-			agent.GoName, codegen.Goify(expr.MCPService, true), codegen.Goify(expr.MCPToolset, true))
+			agent.GoName, codegen.Goify(mcpService, true), codegen.Goify(mcpToolset, true))
 		ts.MCP = &MCPToolsetMeta{
-			ServiceName:      expr.MCPService,
-			SuiteName:        expr.MCPToolset,
+			ServiceName:      mcpService,
+			SuiteName:        mcpToolset,
 			QualifiedName:    ts.QualifiedName,
 			HelperImportPath: helperImport,
 			HelperAlias:      helperAlias,
@@ -1120,7 +1187,8 @@ func newToolsetData(
 				return strings.Compare(a.Name, b.Name)
 			})
 		}
-	} else {
+
+	default:
 		for _, toolExpr := range expr.Tools {
 			tool := newToolData(ts, toolExpr, servicesData)
 			ts.Tools = append(ts.Tools, tool)

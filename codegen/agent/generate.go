@@ -199,6 +199,11 @@ func Generate(genpkg string, roots []eval.Root, files []*codegen.File) ([]*codeg
 	}
 
 	for _, svc := range data.Services {
+		// Emit registry client packages for declared registries.
+		if regFiles := registryClientFiles(genpkg, svc); len(regFiles) > 0 {
+			generated = append(generated, regFiles...)
+		}
+
 		for _, agent := range svc.Agents {
 			afiles := agentFiles(agent)
 			generated = append(generated, afiles...)
@@ -297,6 +302,14 @@ func agentFiles(agent *AgentData) []*codegen.File {
 	files = append(files, usedToolsFiles(agent)...)
 	// Emit default service executor factories for method-backed Used toolsets.
 	files = append(files, serviceExecutorFiles(agent)...)
+	// Compute A2A security data once for all A2A generators.
+	a2aSecurity := buildA2ASecurityDataFromAgent(agent)
+	// Emit A2A agent card for agents with exported toolsets.
+	files = append(files, a2aCardFiles(agent, a2aSecurity)...)
+	// Emit A2A client for invoking external A2A agents.
+	files = append(files, a2aClientFiles(agent, a2aSecurity)...)
+	// Emit A2A service for agents with exported toolsets (follows MCP pattern).
+	files = append(files, a2aServiceFiles(agent.Genpkg, agent, a2aSecurity)...)
 
 	var filtered []*codegen.File
 	for _, f := range files {
@@ -317,6 +330,22 @@ func agentPerToolsetSpecsFiles(agent *AgentData) []*codegen.File {
 	var out []*codegen.File
 	emitted := make(map[string]struct{})
 	for _, ts := range agent.AllToolsets {
+		// Handle registry-backed toolsets separately - they have no compile-time tools
+		// but need runtime discovery code.
+		if ts.IsRegistryBacked && ts.Registry != nil {
+			if ts.SpecsDir == "" {
+				continue
+			}
+			if _, dup := emitted[ts.SpecsDir]; dup {
+				continue
+			}
+			emitted[ts.SpecsDir] = struct{}{}
+			// Generate registry toolset specs with runtime discovery
+			regFiles := registryToolsetSpecsFiles(agent, ts)
+			out = append(out, regFiles...)
+			continue
+		}
+
 		if len(ts.Tools) == 0 || ts.SpecsDir == "" {
 			continue
 		}
@@ -374,6 +403,61 @@ func agentPerToolsetSpecsFiles(agent *AgentData) []*codegen.File {
 			// Specs-level transforms are no longer generated; mapping is explicit in adapters.
 		}
 	}
+	return out
+}
+
+// registryToolsetSpecsFileData holds template data for registry toolset specs.
+type registryToolsetSpecsFileData struct {
+	PackageName   string
+	QualifiedName string
+	ServiceName   string
+	Registry      *RegistryToolsetMeta
+}
+
+// registryToolsetSpecsFiles generates the specs files for a registry-backed toolset.
+// Unlike local toolsets, registry toolsets have no compile-time tool definitions;
+// instead, they generate placeholder structures and runtime discovery code that
+// populates the specs when the agent starts.
+func registryToolsetSpecsFiles(agent *AgentData, ts *ToolsetData) []*codegen.File {
+	if ts == nil || ts.Registry == nil || ts.SpecsDir == "" {
+		return nil
+	}
+
+	var out []*codegen.File
+
+	data := registryToolsetSpecsFileData{
+		PackageName:   ts.SpecsPackageName,
+		QualifiedName: ts.QualifiedName,
+		ServiceName:   ts.ServiceName,
+		Registry:      ts.Registry,
+	}
+
+	// specs.go - contains runtime discovery and validation code
+	specImports := []*codegen.ImportSpec{
+		{Path: "context"},
+		{Path: "encoding/json"},
+		{Path: "fmt"},
+		{Path: "regexp"},
+		{Path: "sort"},
+		{Path: "strings"},
+		{Path: "sync"},
+		{Path: "goa.design/goa-ai/runtime/agent/policy"},
+		{Path: "goa.design/goa-ai/runtime/agent/tools"},
+	}
+	specSections := []*codegen.SectionTemplate{
+		codegen.Header(agent.StructName+" registry toolset specs", ts.SpecsPackageName, specImports),
+		{
+			Name:    "registry-toolset-specs",
+			Source:  agentsTemplates.Read(registryToolsetSpecsFileT),
+			Data:    data,
+			FuncMap: templateFuncMap(),
+		},
+	}
+	out = append(out, &codegen.File{
+		Path:             filepath.Join(ts.SpecsDir, "specs.go"),
+		SectionTemplates: specSections,
+	})
+
 	return out
 }
 
@@ -1094,7 +1178,7 @@ func agentRegistryFile(agent *AgentData) *codegen.File {
 	// fmt needed for error messages in registry (used in both MCP and Used toolsets paths)
 	hasExternal := false
 	for _, ts := range agent.AllToolsets {
-		if ts.Expr != nil && ts.Expr.External {
+		if ts.Expr != nil && ts.Expr.Provider != nil && ts.Expr.Provider.Kind == agentsExpr.ProviderMCP {
 			hasExternal = true
 			break
 		}
@@ -1109,19 +1193,19 @@ func agentRegistryFile(agent *AgentData) *codegen.File {
 				break
 			}
 		}
-		if ts.Expr != nil && ts.Expr.External {
+		if ts.Expr != nil && ts.Expr.Provider != nil && ts.Expr.Provider.Kind == agentsExpr.ProviderMCP {
 			needs = true
 		}
 		if needs && ts.PackageImportPath != "" {
 			imports = append(imports, &codegen.ImportSpec{Path: ts.PackageImportPath, Name: ts.PackageName})
 		}
 	}
-	// Import tools when non-external Used toolsets are present without agenttools
+	// Import tools when non-MCP Used toolsets are present without agenttools
 	// helpers; registry templates use tools.Ident for DSL-provided call/result
 	// hint templates on these method-backed toolsets.
 	needsTools := false
 	for _, ts := range agent.UsedToolsets {
-		if ts.Expr != nil && ts.Expr.External {
+		if ts.Expr != nil && ts.Expr.Provider != nil && ts.Expr.Provider.Kind == agentsExpr.ProviderMCP {
 			continue
 		}
 		if ts.AgentToolsImportPath != "" {
@@ -1263,12 +1347,12 @@ func agentToolsConsumerFiles(agent *AgentData) []*codegen.File {
 	return files
 }
 
-// mcpExecutorFiles emits per-external-toolset MCP executors that adapt runtime
+// mcpExecutorFiles emits per-MCP-backed-toolset MCP executors that adapt runtime
 // ToolCallExecutor to an mcpruntime.Caller using generated codecs.
 func mcpExecutorFiles(agent *AgentData) []*codegen.File {
 	out := make([]*codegen.File, 0, len(agent.AllToolsets))
 	for _, ts := range agent.AllToolsets {
-		if ts.Expr == nil || !ts.Expr.External {
+		if ts.Expr == nil || ts.Expr.Provider == nil || ts.Expr.Provider.Kind != agentsExpr.ProviderMCP {
 			continue
 		}
 		data := serviceToolsetFileData{PackageName: ts.PackageName, Agent: agent, Toolset: ts}

@@ -61,7 +61,7 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 	}); err != nil {
 		return err
 	}
-	// Register external MCP toolsets using local executors and callers from config.
+	// Register MCP-backed toolsets using local executors and callers from config.
 	if cfg.MCPCallers == nil {
 		return fmt.Errorf("mcp callers are required for agent %s", "alpha.scribe")
 	}

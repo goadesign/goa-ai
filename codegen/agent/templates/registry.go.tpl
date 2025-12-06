@@ -103,12 +103,12 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
     }
 
     {{- if .HasExternalMCP }}
-    // Register external MCP toolsets using local executors and callers from config.
+    // Register MCP-backed toolsets using local executors and callers from config.
     if cfg.MCPCallers == nil {
         return fmt.Errorf("mcp callers are required for agent %s", {{ printf "%q" .ID }})
     }
     {{- range .AllToolsets }}
-    {{- if and .Expr (eq .Expr.External true) }}
+    {{- if isMCPBacked . }}
     {
         caller := cfg.MCPCallers[{{ .MCP.ConstName }}]
         if caller == nil {
@@ -157,18 +157,18 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
 
 {{- $had := false -}}
 {{- range .UsedToolsets }}
-{{- if and (not (and .Expr .Expr.External)) (eq .AgentToolsImportPath "") }}
+{{- if and (not (isMCPBacked .)) (eq .AgentToolsImportPath "") }}
 {{- $had = true -}}
 {{- end }}
 {{- end }}
 {{- if $had }}
-// RegisterUsedToolsets registers all non-external Used toolsets for this agent.
+// RegisterUsedToolsets registers all non-MCP Used toolsets for this agent.
 // Provide executors via typed options for each required toolset.
 //
 // Example:
 //   err := RegisterUsedToolsets(ctx, rt,
 {{- range .UsedToolsets }}
-{{- if and (not (and .Expr .Expr.External)) (eq .AgentToolsImportPath "") }}
+{{- if and (not (isMCPBacked .)) (eq .AgentToolsImportPath "") }}
 //       With{{ goify .PathName true }}Executor(exec),
 {{- end }}
 {{- end }}
@@ -183,9 +183,9 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
             o(execs)
         }
     }
-    // Register non-external used toolsets that are not provided by agent-as-tool exports.
+    // Register non-MCP used toolsets that are not provided by agent-as-tool exports.
     {{- range .UsedToolsets }}
-    {{- if and (not (and .Expr .Expr.External)) (eq .AgentToolsImportPath "") }}
+    {{- if and (not (isMCPBacked .)) (eq .AgentToolsImportPath "") }}
     {
         const toolsetID = {{ printf "%q" .QualifiedName }}
         exec := execs[toolsetID]
@@ -267,7 +267,7 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
 }
 
     {{- range .UsedToolsets }}
-    {{- if and (not (and .Expr .Expr.External)) (eq .AgentToolsImportPath "") }}
+    {{- if and (not (isMCPBacked .)) (eq .AgentToolsImportPath "") }}
 // With{{ goify .PathName true }}Executor associates an executor for {{ .QualifiedName }}.
 func With{{ goify .PathName true }}Executor(exec agentsruntime.ToolCallExecutor) func(map[string]agentsruntime.ToolCallExecutor) {
     return func(m map[string]agentsruntime.ToolCallExecutor) {

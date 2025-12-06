@@ -49,3 +49,7 @@ linters:
       - gql/*
       - mocks/*
       - codegen/agents/tests/testscenarios/*
+    rules:
+      - linters:
+          - dupl
+        path: _test\.go

@@ -145,19 +145,20 @@ func (b *mcpExprBuilder) buildCapabilitiesType() *expr.AttributeExpr {
 	// Client-side capabilities removed: SamplingCapability, RootsCapability
 
 	// Create ServerCapabilities type with references to capability types
+	types := b.Types()
 	return b.getOrCreateType("ServerCapabilities", func() *expr.AttributeExpr {
 		return &expr.AttributeExpr{
 			Type: &expr.Object{
 				{Name: "tools", Attribute: &expr.AttributeExpr{
-					Type:        b.types["ToolsCapability"],
+					Type:        types["ToolsCapability"],
 					Description: "Tool capabilities",
 				}},
 				{Name: "resources", Attribute: &expr.AttributeExpr{
-					Type:        b.types["ResourcesCapability"],
+					Type:        types["ResourcesCapability"],
 					Description: "Resource capabilities",
 				}},
 				{Name: "prompts", Attribute: &expr.AttributeExpr{
-					Type:        b.types["PromptsCapability"],
+					Type:        types["PromptsCapability"],
 					Description: "Prompt capabilities",
 				}},
 				// sampling, roots removed

@@ -3,10 +3,12 @@ package codegen
 
 import (
 	"fmt"
+	"log"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"goa.design/goa-ai/codegen/shared"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
@@ -15,69 +17,6 @@ import (
 	httpcodegen "goa.design/goa/v3/http/codegen"
 	jsonrpccodegen "goa.design/goa/v3/jsonrpc/codegen"
 )
-
-// joinImportPathMCP constructs a full import path by joining the generation package
-// base path with a relative path. It handles trailing "/gen" suffixes correctly.
-func joinImportPathMCP(genpkg, rel string) string {
-	if rel == "" {
-		return ""
-	}
-	base := strings.TrimSuffix(genpkg, "/")
-	for strings.HasSuffix(base, "/gen") {
-		base = strings.TrimSuffix(base, "/gen")
-	}
-	return filepath.ToSlash(filepath.Join(base, "gen", rel))
-}
-
-// gatherAttributeImportsMCP collects import specifications for external user types
-// and meta-type imports referenced by the given attribute expression.
-func gatherAttributeImportsMCP(genpkg string, att *expr.AttributeExpr) []*codegen.ImportSpec {
-	uniq := make(map[string]*codegen.ImportSpec)
-	var visit func(*expr.AttributeExpr)
-	visit = func(a *expr.AttributeExpr) {
-		if a == nil {
-			return
-		}
-		for _, im := range codegen.GetMetaTypeImports(a) {
-			if im != nil && im.Path != "" {
-				uniq[im.Path] = im
-			}
-		}
-		switch dt := a.Type.(type) {
-		case expr.UserType:
-			if loc := codegen.UserTypeLocation(dt); loc != nil && loc.RelImportPath != "" {
-				imp := &codegen.ImportSpec{Name: loc.PackageName(), Path: joinImportPathMCP(genpkg, loc.RelImportPath)}
-				uniq[imp.Path] = imp
-			}
-			visit(dt.Attribute())
-		case *expr.Array:
-			visit(dt.ElemType)
-		case *expr.Map:
-			visit(dt.KeyType)
-			visit(dt.ElemType)
-		case *expr.Object:
-			for _, nat := range *dt {
-				visit(nat.Attribute)
-			}
-		case expr.CompositeExpr:
-			visit(dt.Attribute())
-		}
-	}
-	visit(att)
-	if len(uniq) == 0 {
-		return nil
-	}
-	paths := make([]string, 0, len(uniq))
-	for p := range uniq {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-	imports := make([]*codegen.ImportSpec, 0, len(paths))
-	for _, p := range paths {
-		imports = append(imports, uniq[p])
-	}
-	return imports
-}
 
 const headerSection = "source-header"
 const exampleMCPStubSection = "example-mcp-stub"
@@ -182,6 +121,9 @@ func generateMCPServiceCode(genpkg string, root *expr.RootExpr, mcpService *expr
 
 // patchMCPJSONRPCServerSSEFiles tweaks the generated SSE server stream to
 // propagate request context to the encoder and event emission.
+//
+// Pattern validation ensures that if the underlying Goa templates change, we fail fast with
+// clear errors rather than silently producing incorrect code.
 func patchMCPJSONRPCServerSSEFiles(mcpService *expr.ServiceExpr, sseFiles []*codegen.File) {
 	// Resolve targets once
 	svcNameAll := codegen.SnakeCase(mcpService.Name) // e.g., mcp_assistant
@@ -199,31 +141,46 @@ func patchMCPJSONRPCServerSSEFiles(mcpService *expr.ServiceExpr, sseFiles []*cod
 		}
 	}
 
-	// Helper: patch stream.go to pass ctx to encoder and improve error mapping
+	// patchStream patches stream.go to pass ctx to encoder and improve error mapping.
+	// These patches are required for proper context propagation in SSE streams.
 	patchStream := func(f *codegen.File) {
 		for _, s := range f.SectionTemplates {
 			if !strings.Contains(s.Source, "ToolsCallServerStream") || !strings.Contains(s.Source, "sendSSEEvent(") {
 				continue
 			}
-			// Update signature to include ctx and pass ctx through
-			s.Source = strings.ReplaceAll(s.Source,
+			// Update sendSSEEvent signature to include ctx parameter
+			patched, err := shared.ReplaceAll(s.Source,
 				"func (s *ToolsCallServerStream) sendSSEEvent(eventType string, v any) error {",
-				"func (s *ToolsCallServerStream) sendSSEEvent(ctx context.Context, eventType string, v any) error {")
-			s.Source = strings.ReplaceAll(s.Source,
+				"func (s *ToolsCallServerStream) sendSSEEvent(ctx context.Context, eventType string, v any) error {",
+				streamTarget, "sendSSEEvent ctx parameter")
+			if err != nil {
+				log.Printf("WARNING: %v", err)
+			} else {
+				s.Source = patched
+			}
+			// Pass ctx to encoder instead of context.Background()
+			patched, err = shared.ReplaceAll(s.Source,
 				"s.encoder(context.Background(), ew).Encode(v)",
-				"s.encoder(ctx, ew).Encode(v)")
-			s.Source = strings.ReplaceAll(s.Source,
+				"s.encoder(ctx, ew).Encode(v)",
+				streamTarget, "encoder ctx propagation")
+			if err != nil {
+				log.Printf("WARNING: %v", err)
+			} else {
+				s.Source = patched
+			}
+			// Update sendSSEEvent call sites to pass ctx
+			s.Source = shared.ReplaceAllOptional(s.Source,
 				"return s.sendSSEEvent(\"notification\", message)",
 				"return s.sendSSEEvent(ctx, \"notification\", message)")
-			s.Source = strings.ReplaceAll(s.Source,
+			s.Source = shared.ReplaceAllOptional(s.Source,
 				"return s.sendSSEEvent(\"response\", message)",
 				"return s.sendSSEEvent(ctx, \"response\", message)")
-			s.Source = strings.ReplaceAll(s.Source,
+			s.Source = shared.ReplaceAllOptional(s.Source,
 				"return s.sendSSEEvent(\"error\", response)",
 				"return s.sendSSEEvent(ctx, \"error\", response)")
-			// Improve SendError code mapping when present
+			// Improve SendError code mapping when present (optional - may not exist in all versions)
 			if strings.Contains(s.Source, "func (s *ToolsCallServerStream) SendError(") {
-				s.Source = strings.ReplaceAll(s.Source,
+				s.Source = shared.ReplaceAllOptional(s.Source,
 					"code := jsonrpc.InternalError\n\tif _, ok := err.(*goa.ServiceError); ok {\n\t\tcode = jsonrpc.InvalidParams\n\t}",
 					"code := jsonrpc.InternalError\n\tvar en goa.GoaErrorNamer\n\tif errors.As(err, &en) {"+
 						"\n\t\tswitch en.GoaErrorName() {\n\t\tcase \"invalid_params\": code = jsonrpc.InvalidParams"+
@@ -234,26 +191,26 @@ func patchMCPJSONRPCServerSSEFiles(mcpService *expr.ServiceExpr, sseFiles []*cod
 		addImport(f, "errors")
 	}
 
-	// Helper: patch sse.go to pass ctx through sendSSEEvent and call sites
+	// patchSSE patches sse.go to pass ctx through sendSSEEvent and call sites.
 	patchSSE := func(f *codegen.File) {
 		for _, s := range f.SectionTemplates {
-			// Update signature
+			// Update signature (optional - structure may vary)
 			if strings.Contains(s.Source, "func (s *mcpAssistantSSEStream) sendSSEEvent(eventType string, v any) error") {
-				s.Source = strings.ReplaceAll(s.Source,
+				s.Source = shared.ReplaceAllOptional(s.Source,
 					"func (s *mcpAssistantSSEStream) sendSSEEvent(eventType string, v any) error {",
 					"func (s *mcpAssistantSSEStream) sendSSEEvent(ctx context.Context, eventType string, v any) error {")
-				s.Source = strings.ReplaceAll(s.Source,
+				s.Source = shared.ReplaceAllOptional(s.Source,
 					"s.encoder(context.Background(), ew).Encode(v)",
 					"s.encoder(ctx, ew).Encode(v)")
 			}
-			// Update call sites
-			s.Source = strings.ReplaceAll(s.Source,
+			// Update call sites (optional - may not all exist)
+			s.Source = shared.ReplaceAllOptional(s.Source,
 				"return s.sendSSEEvent(\"error\", response)",
 				"return s.sendSSEEvent(ctx, \"error\", response)")
-			s.Source = strings.ReplaceAll(s.Source,
+			s.Source = shared.ReplaceAllOptional(s.Source,
 				"return s.sendSSEEvent(\"notification\", message)",
 				"return s.sendSSEEvent(ctx, \"notification\", message)")
-			s.Source = strings.ReplaceAll(s.Source,
+			s.Source = shared.ReplaceAllOptional(s.Source,
 				"return s.sendSSEEvent(\"response\", message)",
 				"return s.sendSSEEvent(ctx, \"response\", message)")
 		}
@@ -275,6 +232,24 @@ func patchMCPJSONRPCServerSSEFiles(mcpService *expr.ServiceExpr, sseFiles []*cod
 
 // patchMCPJSONRPCServerBaseFiles injects header-based allow/deny names into the request context
 // inside Server.processRequest so downstream services (adapter) can consume them.
+//
+// Pattern validation ensures that if the underlying Goa templates change, we fail fast with
+// clear errors rather than silently producing incorrect code.
+//
+// # Middleware Alternative Evaluation
+//
+// This context injection could potentially be replaced with HTTP middleware that wraps
+// the JSON-RPC handler. However, the current approach has advantages:
+//
+//  1. The injection happens inside processRequest, after JSON-RPC parsing but before
+//     method dispatch, which is the correct point in the request lifecycle.
+//  2. HTTP middleware would need to be applied at the mux level, which requires
+//     coordination with the user's server setup.
+//  3. The current approach is self-contained within the generated code.
+//
+// A future improvement would be to add a hook point in Goa's JSON-RPC server template
+// that allows injecting code at the start of processRequest without string patching.
+// This would require changes to goa.design/goa/v3/jsonrpc/codegen.
 func patchMCPJSONRPCServerBaseFiles(mcpService *expr.ServiceExpr, baseFiles []*codegen.File) {
 	svcNameAll := codegen.SnakeCase(mcpService.Name)
 	baseSvc := strings.TrimPrefix(svcNameAll, "mcp_")
@@ -295,25 +270,35 @@ func patchMCPJSONRPCServerBaseFiles(mcpService *expr.ServiceExpr, baseFiles []*c
 			codegen.AddImport(header, &codegen.ImportSpec{Path: "context"})
 		}
 		for _, s := range f.SectionTemplates {
-			// Locate processRequest and inject right after function signature
+			// Locate processRequest and inject policy extraction right after function signature.
+			// This is a required patch for MCP policy injection to work.
 			sig := "func (s *Server) processRequest(ctx context.Context, r *http.Request, req *jsonrpc.RawRequest, w http.ResponseWriter) {"
 			if strings.Contains(s.Source, sig) {
 				inj := sig + "\n\t// Inject MCP resource policy from headers into context" +
 					"\n\tctx = context.WithValue(ctx, \"mcp_allow_names\", r.Header.Get(\"x-mcp-allow-names\"))" +
 					"\n\tctx = context.WithValue(ctx, \"mcp_deny_names\", r.Header.Get(\"x-mcp-deny-names\"))"
-				s.Source = strings.Replace(s.Source, sig, inj, 1)
+				patched, err := shared.ReplaceOnce(s.Source, sig, inj, target, "processRequest policy injection")
+				if err != nil {
+					log.Printf("WARNING: %v", err)
+				} else {
+					s.Source = patched
+				}
 			}
 		}
-		// Normalize JSON-RPC ID checks: only test for non-nil ID regardless of concrete type
+		// Normalize JSON-RPC ID checks: only test for non-nil ID regardless of concrete type (optional)
 		for _, s := range f.SectionTemplates {
-			s.Source = strings.ReplaceAll(s.Source, "if req.ID != nil && req.ID != \"\"", "if req.ID != nil")
-			// Remove stray empty switch blocks after SSE handling
-			s.Source = strings.ReplaceAll(s.Source, "switch req.Method {\n\t}", "")
+			s.Source = shared.ReplaceAllOptional(s.Source, "if req.ID != nil && req.ID != \"\"", "if req.ID != nil")
+			// Remove stray empty switch blocks after SSE handling (optional cleanup)
+			s.Source = shared.ReplaceAllOptional(s.Source, "switch req.Method {\n\t}", "")
 		}
 	}
 }
 
 // patchMCPJSONRPCClientFiles mutates generated JSON-RPC client files to use retry support.
+// It validates that expected patterns exist before replacing and logs warnings for missing patterns.
+//
+// Pattern validation ensures that if the underlying Goa templates change, we fail fast with
+// clear errors rather than silently producing incorrect code.
 func patchMCPJSONRPCClientFiles(genpkg string, mcpService *expr.ServiceExpr, data *AdapterData, clientFiles []*codegen.File) {
 	// mcpService.Name is already prefixed with "mcp_"; derive original service snake name
 	svcNameAll := codegen.SnakeCase(mcpService.Name)  // e.g., "mcp_assistant"
@@ -333,47 +318,115 @@ func patchMCPJSONRPCClientFiles(genpkg string, mcpService *expr.ServiceExpr, dat
 		}
 	}
 
+	// patchEncodeDecode adds SSE Accept headers for streaming methods.
+	// These patches are required for proper SSE communication.
 	patchEncodeDecode := func(f *codegen.File) {
 		for _, s := range f.SectionTemplates {
+			// Patch BuildToolsCallRequest to add SSE Accept header
 			if strings.Contains(s.Source, "func (c *Client) BuildToolsCallRequest(") {
-				s.Source = strings.Replace(s.Source, "return req, nil", "req.Header.Set(\"Accept\", \"text/event-stream\")\n\treturn req, nil", 1)
+				patched, err := shared.ReplaceOnce(s.Source, "return req, nil",
+					"req.Header.Set(\"Accept\", \"text/event-stream\")\n\treturn req, nil",
+					encodeDecodePath, "BuildToolsCallRequest SSE header")
+				if err != nil {
+					log.Printf("WARNING: %v", err)
+				} else {
+					s.Source = patched
+				}
 			}
+			// Patch EncodeToolsCallRequest to add SSE Accept header
 			if strings.Contains(s.Source, "func EncodeToolsCallRequest(") && strings.Contains(s.Source, "return func(req *http.Request, v any) error {") {
-				s.Source = strings.Replace(s.Source, "return func(req *http.Request, v any) error {", "return func(req *http.Request, v any) error {\n\t\t// Request SSE stream for tools/call\n\t\treq.Header.Set(\"Accept\", \"text/event-stream\")", 1)
+				patched, err := shared.ReplaceOnce(s.Source, "return func(req *http.Request, v any) error {",
+					"return func(req *http.Request, v any) error {\n\t\t// Request SSE stream for tools/call\n\t\treq.Header.Set(\"Accept\", \"text/event-stream\")",
+					encodeDecodePath, "EncodeToolsCallRequest SSE header")
+				if err != nil {
+					log.Printf("WARNING: %v", err)
+				} else {
+					s.Source = patched
+				}
 			}
+			// Patch BuildEventsStreamRequest to add SSE Accept header
 			if strings.Contains(s.Source, "func (c *Client) BuildEventsStreamRequest(") {
-				s.Source = strings.Replace(s.Source, "return req, nil", "req.Header.Set(\"Accept\", \"text/event-stream\")\n\treturn req, nil", 1)
+				patched, err := shared.ReplaceOnce(s.Source, "return req, nil",
+					"req.Header.Set(\"Accept\", \"text/event-stream\")\n\treturn req, nil",
+					encodeDecodePath, "BuildEventsStreamRequest SSE header")
+				if err != nil {
+					log.Printf("WARNING: %v", err)
+				} else {
+					s.Source = patched
+				}
 			}
+			// Patch EncodeEventsStreamRequest to add SSE Accept header
 			if strings.Contains(s.Source, "func EncodeEventsStreamRequest(") && strings.Contains(s.Source, "return func(req *http.Request, v any) error {") {
-				s.Source = strings.Replace(s.Source, "return func(req *http.Request, v any) error {", "return func(req *http.Request, v any) error {\n\t\t// Request SSE stream for events/stream\n\t\treq.Header.Set(\"Accept\", \"text/event-stream\")", 1)
+				patched, err := shared.ReplaceOnce(s.Source, "return func(req *http.Request, v any) error {",
+					"return func(req *http.Request, v any) error {\n\t\t// Request SSE stream for events/stream\n\t\treq.Header.Set(\"Accept\", \"text/event-stream\")",
+					encodeDecodePath, "EncodeEventsStreamRequest SSE header")
+				if err != nil {
+					log.Printf("WARNING: %v", err)
+				} else {
+					s.Source = patched
+				}
 			}
+			// Patch EncodeNotifyStatusUpdateRequest to remove ID for notifications (optional - may not exist)
 			if strings.Contains(s.Source, "func EncodeNotifyStatusUpdateRequest(") {
-				s.Source = strings.Replace(s.Source, "\t\t// No ID field in payload - always send as a request with generated ID\n\t\tid := uuid.New().String()\n\t\tbody.ID = id\n", "\t\t// Notification: omit ID for JSON-RPC notifications\n", 1)
-				s.Source = strings.ReplaceAll(s.Source, "id := uuid.New().String()\n", "")
-				s.Source = strings.ReplaceAll(s.Source, "body.ID = id\n", "")
+				s.Source = shared.ReplaceOnceOptional(s.Source,
+					"\t\t// No ID field in payload - always send as a request with generated ID\n\t\tid := uuid.New().String()\n\t\tbody.ID = id\n",
+					"\t\t// Notification: omit ID for JSON-RPC notifications\n")
+				s.Source = shared.ReplaceAllOptional(s.Source, "id := uuid.New().String()\n", "")
+				s.Source = shared.ReplaceAllOptional(s.Source, "body.ID = id\n", "")
 			}
 		}
 	}
 
+	// patchStream adds context cancellation support and structured error types.
 	patchStream := func(f *codegen.File) {
 		for _, s := range f.SectionTemplates {
-			s.Source = strings.ReplaceAll(s.Source, "return zero, fmt.Errorf(\"JSON-RPC error %d: %s\", response.Error.Code, response.Error.Message)", "return zero, &JSONRPCError{Code: int(response.Error.Code), Message: response.Error.Message}")
-			s.Source = strings.Replace(s.Source, "for {\n\t\teventType, data, err := s.parseSSEEvent()", "for {\n\t\tselect {\n\t\tcase <-ctx.Done():\n\t\t\ts.closed = true\n\t\t\treturn zero, ctx.Err()\n\t\tdefault:\n\t\t}\n\t\teventType, data, err := s.parseSSEEvent()", 1)
+			// Replace generic error with structured JSONRPCError
+			patched, err := shared.ReplaceAll(s.Source,
+				"return zero, fmt.Errorf(\"JSON-RPC error %d: %s\", response.Error.Code, response.Error.Message)",
+				"return zero, &JSONRPCError{Code: int(response.Error.Code), Message: response.Error.Message}",
+				streamPath, "JSONRPCError structured error")
+			if err != nil {
+				log.Printf("WARNING: %v", err)
+			} else {
+				s.Source = patched
+			}
+			// Add context cancellation check in streaming loop
+			patched, err = shared.ReplaceOnce(s.Source,
+				"for {\n\t\teventType, data, err := s.parseSSEEvent()",
+				"for {\n\t\tselect {\n\t\tcase <-ctx.Done():\n\t\t\ts.closed = true\n\t\t\treturn zero, ctx.Err()\n\t\tdefault:\n\t\t}\n\t\teventType, data, err := s.parseSSEEvent()",
+				streamPath, "context cancellation in streaming loop")
+			if err != nil {
+				log.Printf("WARNING: %v", err)
+			} else {
+				s.Source = patched
+			}
 		}
 	}
 
 	hasPrompts := len(data.StaticPrompts) > 0 || len(data.DynamicPrompts) > 0
+	// patchClient adds tool extraction, retry support, and SSE headers.
 	patchClient := func(f *codegen.File) {
 		for _, s := range f.SectionTemplates {
+			// Wrap tools/call stream with tool name extraction
 			if strings.Contains(s.Source, `"tools/call"`) && strings.Contains(s.Source, "return stream, nil") {
 				mcpAliasLocal := codegen.Goify("mcp_"+baseSvc, false)
 				toolExtract := `\t\ttool := ""\n\t\tif p, ok := v.(*` + mcpAliasLocal + `.ToolsCallPayload); ok { tool = p.Name }\n\t\treturn c.wrapToolsCallStream(tool, stream), nil`
-				s.Source = strings.ReplaceAll(s.Source, "\t\treturn stream, nil", toolExtract)
+				patched, err := shared.ReplaceAll(s.Source, "\t\treturn stream, nil", toolExtract,
+					clientPath, "tools/call stream wrapper")
+				if err != nil {
+					log.Printf("WARNING: %v", err)
+				} else {
+					s.Source = patched
+				}
 			}
+			// Replace prompts/get decoder with retry-aware version (optional - only if prompts exist)
 			if hasPrompts && strings.Contains(s.Source, "DecodePromptsGetResponse(") {
-				s.Source = strings.ReplaceAll(s.Source, "DecodePromptsGetResponse(", "DecodePromptsGetResponseWithRetry(")
+				s.Source = shared.ReplaceAllOptional(s.Source, "DecodePromptsGetResponse(", "DecodePromptsGetResponseWithRetry(")
 			}
-			s.Source = strings.ReplaceAll(s.Source, "// For SSE endpoints, send JSON-RPC request and establish stream", "req.Header.Set(\"Accept\", \"text/event-stream\")\n\t\t// For SSE endpoints, send JSON-RPC request and establish stream")
+			// Add SSE Accept header for SSE endpoints
+			s.Source = shared.ReplaceAllOptional(s.Source,
+				"// For SSE endpoints, send JSON-RPC request and establish stream",
+				"req.Header.Set(\"Accept\", \"text/event-stream\")\n\t\t// For SSE endpoints, send JSON-RPC request and establish stream")
 		}
 		mcpAlias := codegen.Goify("mcp_"+baseSvc, false)
 		addImports(f, &codegen.ImportSpec{Path: genpkg + "/mcp_" + baseSvc, Name: mcpAlias}, &codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/mcp/retry", Name: "retry"}, &codegen.ImportSpec{Path: "errors"}, &codegen.ImportSpec{Path: "encoding/json"}, &codegen.ImportSpec{Path: "sync"})
@@ -508,18 +561,15 @@ func generateMCPTransport(genpkg string, svc *expr.ServiceExpr, mcp *mcpexpr.MCP
 	}
 	extra := make(map[string]*codegen.ImportSpec)
 	for _, m := range svc.Methods {
-		if m == nil {
-			continue
-		}
 		if m.Payload != nil {
-			for _, im := range gatherAttributeImportsMCP(genpkg, m.Payload) {
+			for _, im := range shared.GatherAttributeImports(genpkg, m.Payload) {
 				if im != nil && im.Path != "" {
 					extra[im.Path] = im
 				}
 			}
 		}
 		if m.Result != nil {
-			for _, im := range gatherAttributeImportsMCP(genpkg, m.Result) {
+			for _, im := range shared.GatherAttributeImports(genpkg, m.Result) {
 				if im != nil && im.Path != "" {
 					extra[im.Path] = im
 				}

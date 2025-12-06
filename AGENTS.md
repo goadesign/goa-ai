@@ -73,12 +73,11 @@
   → Public methods → Private funcs → Private methods. No commented‑out code;
   delete dead code.
 - Additional style: Prefer `any` over `interface{}` in new code. Use multi‑line
-  `if` blocks; target ~80 columns where practical. For long struct/composite
-  literals, one field per line with trailing commas; closing brace on its own
-  line. In general content between curly braces must be on multiple lines.
-  Curly braces style: always place a newline immediately after `{` and before
-  `}` for blocks and composite literals (no single‑line blocks or literals),
-  including empty blocks. Example:
+`if` blocks. For long struct/composite literals, one field per line with
+trailing commas; closing brace on its own line. In general content between curly
+braces must be on multiple lines.  Curly braces style: always place a newline
+immediately after `{` and before `}` for blocks and composite literals (no
+single‑line blocks or literals), including empty blocks. Example:
   
       // Good
       type T struct {
@@ -86,14 +85,20 @@
       }
       v := T{
           A: 1,
+          B: 2,
+          C: "long value that is a long text",
       }
+      w := U{ A: 1 } // short literal
       if cond {
           do()
       }
       
       // Avoid
       type T struct { A int }
-      v := T{ A: 1 }
+      v := T{ A: 1, B: 2, C: "long value that is a long text"}
+      w := U{ 
+        A: 1
+      }
       if cond { do() }
 - Documentation: Every exported type, function, and struct field must have a Go
   stdlib GoDoc-quality comment that explains its contract to someone with no prior
@@ -114,6 +119,64 @@
   `testify`). Name tests `TestXxx`; keep unit tests fast/deterministic. Run `go
   test -race -vet=off ./...` (or `make test`) locally and avoid coverage
   regressions.
+
+## Codegen: Partial Evaluation Principle
+
+Code generation should apply **partial evaluation**: if something is known
+statically at generation time, evaluate it then rather than generating code
+that evaluates it at runtime.
+
+### What to avoid in generated code
+
+- **Runtime loops over static collections**: If you know the items at generation
+  time, unroll the loop in the template. Don't generate `for _, item := range items`.
+- **Runtime conditionals on static conditions**: If you know the branch at
+  generation time, only emit the relevant code. Don't generate `if hasFeature { ... }`.
+- **Generic algorithms that inspect structure at runtime**: If the algorithm's
+  behavior depends on expression structure, generate the specialized algorithm
+  directly.
+
+### Examples
+
+**Bad** — generating a runtime loop when iterations are known:
+```go
+// Template loops at runtime
+for _, skill := range a.skills {
+    process(skill)
+}
+```
+
+**Good** — unroll at generation time:
+```go
+// Template: {{- range .Skills }}
+// Generated: specific code per skill, no loop
+process(Skill{ID: "skill1", Name: "Query"})
+process(Skill{ID: "skill2", Name: "Analyze"})
+```
+
+**Bad** — generating a runtime conditional when branch is known:
+```go
+// Generated
+if a.hasSecuritySchemes {
+    buildSecuritySchemes()
+}
+```
+
+**Good** — only emit code if condition is true:
+```go
+// Template: {{- if .HasSecuritySchemes }}
+// Generated: security code only appears if agent has security schemes
+```
+
+### When dynamic code is necessary
+
+For truly dynamic behavior (e.g., request handlers that must dispatch based on
+runtime input), prefer:
+1. Create a **runtime library** with configurable constructs
+2. Generate code that **configures** those constructs with agent-specific data
+3. The library handles common logic; generated code provides configuration
+
+This avoids generating N copies of similar code with slight variations.
 
 ## Codegen: Handling Types Elegantly (Goa Scopes, Refs, and Locators)
 
@@ -329,6 +392,24 @@ For transforms helpers (specs/<toolset>/transforms.go):
    `expr.Root.Services` and `Service.Methods` do not contain nil entries;
    avoid `nil` checks when iterating them. Prefer fail-fast code that relies on
    Goa invariants—unexpected states are bugs and must surface loudly.
+
+### Function Signature Formatting
+
+- Keep function signatures on a single line when they fit within ~80 columns.
+- Do NOT split parameters across multiple lines with trailing commas like:
+  ```go
+  // Bad
+  func (b *Builder) GetOrCreateType(
+      name string,
+      builder func() *expr.AttributeExpr,
+  ) *expr.UserTypeExpr {
+  ```
+- Instead, keep parameters on one line:
+  ```go
+  // Good
+  func (b *Builder) GetOrCreateType(name string, builder func() *expr.AttributeExpr) *expr.UserTypeExpr {
+  ```
+- Only split to multiple lines when the signature genuinely exceeds ~100 columns and cannot be reasonably shortened.
 
 ### Files and Style Clarifications
 
