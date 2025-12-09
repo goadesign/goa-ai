@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"strings"
 
 	"goa.design/goa-ai/codegen/shared"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
@@ -186,7 +187,7 @@ func (g *adapterGenerator) buildAdapterData() *AdapterData {
 		MCPVersion:          g.mcp.Version,
 		ProtocolVersion:     g.mcp.ProtocolVersion,
 		Package:             codegen.SnakeCase(g.originalService.Name),
-		MCPPackage:          "mcp" + codegen.SnakeCase(g.originalService.Name),
+		MCPPackage:          "mcp" + strings.ToLower(codegen.Goify(g.originalService.Name, false)),
 		ServiceJSONRPCAlias: codegen.SnakeCase(g.originalService.Name) + "jsonrpc",
 		ImportPath:          g.genpkg,
 		Tools:               g.buildToolAdapters(),
