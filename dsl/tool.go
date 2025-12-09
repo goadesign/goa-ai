@@ -411,29 +411,6 @@ func Inject(names ...string) {
 	tool.InjectedFields = append(tool.InjectedFields, names...)
 }
 
-// ToolTitle sets a human-friendly display title for the current tool. If not
-// specified, the generated code derives a title from the tool name by converting
-// snake_case or kebab-case to Title Case.
-//
-// ToolTitle must appear in a Tool expression.
-//
-// ToolTitle takes a single string argument.
-//
-// Example:
-//
-//	Tool("web_search", "Search the web", func() {
-//	    ToolTitle("Web Search")
-//	    Args(func() { ... })
-//	})
-func ToolTitle(s string) {
-	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
-	if !ok {
-		eval.IncompatibleDSL()
-		return
-	}
-	tool.Title = s
-}
-
 // CallHintTemplate configures a display template for tool invocations. The
 // template is rendered with the tool's payload to produce a concise hint shown
 // during execution. Templates are compiled with missingkey=error.
@@ -514,6 +491,38 @@ func BoundedResult() {
 		return
 	}
 	tool.BoundedResult = true
+}
+
+// ResultReminder configures a static system reminder that is injected into the
+// conversation after the tool result is returned. Use this to provide
+// backstage guidance to the model about how to interpret or present the
+// result to the user.
+//
+// The reminder text is automatically wrapped in <system-reminder> tags by
+// the runtime. Do not include the tags in the text.
+//
+// This DSL function is for static, design-time reminders that apply every time
+// the tool is called. For dynamic reminders that depend on runtime state or
+// tool result content, use PlannerContext.AddReminder() in your planner
+// implementation instead. Dynamic reminders support rate limiting, per-run
+// caps, and can be added or removed based on runtime conditions.
+//
+// ResultReminder must appear in a Tool expression.
+//
+// Example:
+//
+//	Tool("get_time_series", "Get Time Series", func() {
+//	    Args(GetTimeSeriesToolArgs)
+//	    Return(GetTimeSeriesToolReturn)
+//	    ResultReminder("The user sees a rendered graph of this data.")
+//	})
+func ResultReminder(s string) {
+	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	tool.ResultReminder = s
 }
 
 // toolDSL mirrors Goa's method DSL helpers to define tool shapes.

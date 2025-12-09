@@ -47,6 +47,8 @@ type (
 		Add(ctx context.Context, event string, payload []byte) (string, error)
 		// NewSink creates a Pulse sink (consumer group) on this stream for reading events.
 		NewSink(ctx context.Context, name string, opts ...streamopts.Sink) (Sink, error)
+		// Destroy deletes the entire stream and all its messages from Redis.
+		Destroy(ctx context.Context) error
 	}
 
 	// Sink mirrors the subset of goa.design/pulse streaming sinks required by the subscriber.
@@ -138,6 +140,11 @@ func (h *handle) NewSink(ctx context.Context, name string, opts ...streamopts.Si
 		return nil, err
 	}
 	return &sinkAdapter{Sink: sink}, nil
+}
+
+// Destroy deletes the entire stream and all its messages from Redis.
+func (h *handle) Destroy(ctx context.Context) error {
+	return h.stream.Destroy(ctx)
 }
 
 // sinkAdapter adapts streaming.Sink to the Sink interface, making Close match

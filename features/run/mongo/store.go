@@ -4,35 +4,21 @@ import (
 	"context"
 	"errors"
 
-	clientsmongo "goa.design/goa-ai/features/run/mongo/clients/mongo"
+	mongoc "goa.design/goa-ai/features/run/mongo/clients/mongo"
 	"goa.design/goa-ai/runtime/agent/run"
 )
 
-// Options configures the Mongo-backed session store.
-type Options struct {
-	Client clientsmongo.Client
-}
-
 // Store implements run.Store by delegating to the Mongo client.
 type Store struct {
-	client clientsmongo.Client
+	client mongoc.Client
 }
 
 // NewStore builds a Store using the provided client.
-func NewStore(opts Options) (*Store, error) {
-	if opts.Client == nil {
+func NewStore(client mongoc.Client) (*Store, error) {
+	if client == nil {
 		return nil, errors.New("client is required")
 	}
-	return &Store{client: opts.Client}, nil
-}
-
-// NewStoreFromMongo instantiates the Store by constructing the underlying client.
-func NewStoreFromMongo(opts clientsmongo.Options) (*Store, error) {
-	client, err := clientsmongo.New(opts)
-	if err != nil {
-		return nil, err
-	}
-	return NewStore(Options{Client: client})
+	return &Store{client: client}, nil
 }
 
 // Upsert stores the provided run metadata.

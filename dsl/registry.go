@@ -22,7 +22,7 @@ import (
 //   - Description: sets a human-readable description
 //   - APIVersion: sets the registry API version (defaults to "v1")
 //   - Security: references Goa security schemes for authentication
-//   - RegistryTimeout: sets HTTP request timeout
+//   - Timeout: sets HTTP request timeout
 //   - Retry: configures retry policy for failed requests
 //   - SyncInterval: sets how often to refresh the catalog
 //   - CacheTTL: sets local cache duration
@@ -35,7 +35,7 @@ import (
 //	    URL("https://registry.corp.internal")
 //	    APIVersion("v1")
 //	    Security(CorpAPIKey)
-//	    RegistryTimeout("30s")
+//	    Timeout("30s")
 //	    Retry(3, "1s")
 //	    SyncInterval("5m")
 //	    CacheTTL("1h")
@@ -95,32 +95,6 @@ func APIVersion(version string) {
 		return
 	}
 	reg.APIVersion = version
-}
-
-// RegistryTimeout sets the HTTP request timeout for registry operations.
-//
-// RegistryTimeout must appear in a Registry expression.
-//
-// RegistryTimeout takes a duration string (e.g., "30s", "1m", "500ms").
-//
-// Example:
-//
-//	Registry("corp", func() {
-//	    URL("https://registry.corp.internal")
-//	    RegistryTimeout("30s")
-//	})
-func RegistryTimeout(duration string) {
-	reg, ok := eval.Current().(*agentsexpr.RegistryExpr)
-	if !ok {
-		eval.IncompatibleDSL()
-		return
-	}
-	d, err := time.ParseDuration(duration)
-	if err != nil {
-		eval.ReportError("invalid timeout duration %q: %s", duration, err)
-		return
-	}
-	reg.Timeout = d
 }
 
 // Retry configures the retry policy for failed registry requests.

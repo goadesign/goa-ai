@@ -58,8 +58,8 @@ APIs. Runs survive restarts, scale horizontally, and replay deterministically.
 
 ### Powerful Composition (Agent‑as‑Tool)
 
-One agent exports a toolset; another consumes it. The nested agent executes inline within the same
-workflow history—single transaction, unified debugging, elegant composition.
+One agent exports a toolset; another consumes it. The nested agent executes as a child workflow
+within the parent—unified history, linked streams, elegant composition.
 
 ### External Tools (MCP Toolsets)
 
@@ -70,6 +70,8 @@ handling, retries, and tracing baked in.
 
 Configure a memory store and stream sink once. The runtime automatically persists transcripts,
 publishes real‑time events, and instruments everything with OTEL‑aware logging, metrics, and traces.
+
+---
 
 ## Toolsets: Where the Magic Happens
 
@@ -147,6 +149,24 @@ surfaces the contract:
 - For tools marked `BoundedResult`, the runtime enforces that bounds metadata is present and that
   any untruncated result stays under a configurable JSON size limit; trimming logic stays entirely
   in service code.
+
+### Tool Artifacts (Sidecar Data)
+
+Tools can attach rich, non‑model data alongside their results using the `Artifact` DSL:
+
+```go
+Tool("get_time_series", "Get Time Series", func() {
+    Args(GetTimeSeriesToolArgs)
+    Return(GetTimeSeriesToolReturn)
+    Artifact("time_series", GetTimeSeriesSidecar) // Full-fidelity data for UIs
+})
+```
+
+Artifacts flow through hooks and streams to UIs but are never sent to model providers. This
+separation keeps model context lean while enabling rich visualizations (charts, tables, maps) on
+the client.
+
+---
 
 ## Your First Agent in Five Minutes
 
@@ -256,12 +276,13 @@ func main() {
 	}
 
 	client := chat.NewClient(rt) // generated, typed
-	out, err := client.Run(context.Background(),
+	out, err := client.Run(
+		context.Background(),
+		"session-1",
 		[]*model.Message{{
 			Role:  model.ConversationRoleUser,
 			Parts: []model.Part{model.TextPart{Text: "Say hi"}},
 		}},
-		runtime.WithSessionID("session-1"),
 	)
 	if err != nil {
 		panic(err)
@@ -285,6 +306,8 @@ rt := runtime.New(runtime.WithEngine(temporalEngine))
 ```
 
 Then use `Start/Wait` for asynchronous runs with task queues, memos, and search attributes.
+
+---
 
 ## Under the Hood
 
@@ -312,7 +335,7 @@ Per‑turn enforcement of:
 | Type                | How It Works                                                                         |
 |---------------------|--------------------------------------------------------------------------------------|
 | **Native toolsets** | Your implementations + generated codecs = typed, validated tools                     |
-| **Agent‑as‑tool**   | `ExecuteAgentInline` runs a nested agent deterministically within the same workflow  |
+| **Agent‑as‑tool**   | Child workflow executes the nested agent with linked streams and unified history     |
 | **MCP toolsets**    | Generated wrappers handle JSON schemas, transport (HTTP/SSE/stdio), retries, tracing |
 
 MCP callers in `runtime/mcp` support multiple transports:
@@ -388,6 +411,397 @@ separate from memory transcripts:
 
 Configure via `runtime.WithRunStore(store)`.
 
+---
+
+## DSL Reference
+
+The DSL package (`goa-ai/dsl`) provides declarative functions for defining agents, toolsets,
+policies, and MCP servers within Goa service designs.
+
+### Agent Definition
+
+| Function | Purpose |
+|----------|---------|
+| `Agent(name, description, func())` | Define an agent within a Service |
+| `Use(value, func()?)` | Consume a toolset (by name, expression, or provider) |
+| `Export(value, func()?)` | Export a toolset for other agents to consume |
+| `DisableAgentDocs()` | Skip AGENTS_QUICKSTART.md generation |
+
+### Tool Definition
+
+| Function | Purpose |
+|----------|---------|
+| `Tool(name, description?, func()?)` | Define a tool within a toolset or mark a method as MCP tool |
+| `Args(type)` | Define tool input schema (inline func, user type, or primitive) |
+| `Return(type)` | Define tool output schema |
+| `Artifact(kind, type)` | Attach non-model sidecar data to results |
+| `Tags(...)` | Attach metadata labels for filtering/categorization |
+| `BindTo(method)` or `BindTo(service, method)` | Bind tool to service method implementation |
+| `Inject(fields...)` | Mark fields as infrastructure-only (hidden from LLM) |
+| `CallHintTemplate(template)` | Display template for tool invocations |
+| `ResultHintTemplate(template)` | Display template for tool results |
+| `BoundedResult()` | Mark result as a bounded view over larger data |
+
+### Toolset Definition
+
+| Function | Purpose |
+|----------|---------|
+| `Toolset(name, func())` | Define a named toolset with tools |
+| `FromMCP(service, toolset)` | Configure toolset backed by MCP server |
+| `FromRegistry(registry, toolset)` | Configure toolset sourced from registry |
+| `AgentToolset(service, agent, toolset)` | Reference toolset exported by another agent |
+
+### Run Policy
+
+| Function | Purpose |
+|----------|---------|
+| `RunPolicy(func())` | Define execution constraints for an agent |
+| `DefaultCaps(opts...)` | Configure resource limits |
+| `MaxToolCalls(n)` | Cap total tool invocations per run |
+| `MaxConsecutiveFailedToolCalls(n)` | Cap sequential failures before aborting |
+| `TimeBudget(duration)` | Set maximum execution duration |
+| `InterruptsAllowed(bool)` | Enable/disable user interruptions |
+| `OnMissingFields(action)` | Configure validation behavior |
+
+### History Management
+
+| Function | Purpose |
+|----------|---------|
+| `History(func())` | Configure conversation history management |
+| `KeepRecentTurns(n)` | Retain only the most recent N turns |
+| `Compress(triggerAt, keepRecent)` | Summarize older turns when threshold reached |
+
+### Prompt Caching
+
+| Function | Purpose |
+|----------|---------|
+| `Cache(func())` | Configure prompt cache checkpoint placement |
+| `AfterSystem()` | Place checkpoint after system messages |
+| `AfterTools()` | Place checkpoint after tool definitions |
+
+### Registry & Federation
+
+| Function | Purpose |
+|----------|---------|
+| `Registry(name, func()?)` | Declare a registry source for tool discovery |
+| `URL(string)` | Set registry endpoint URL |
+| `APIVersion(string)` | Set registry API version |
+| `Retry(maxRetries, backoff)` | Configure retry policy |
+| `SyncInterval(duration)` | Set catalog refresh interval |
+| `CacheTTL(duration)` | Set local cache duration |
+| `Federation(func())` | Configure external registry import |
+| `Include(patterns...)` | Glob patterns for namespaces to import |
+| `Exclude(patterns...)` | Glob patterns for namespaces to skip |
+| `PublishTo(registry)` | Configure registry publication for exported toolset |
+
+### MCP Server Definition
+
+| Function | Purpose |
+|----------|---------|
+| `MCP(name, version, opts...)` | Enable MCP support for a service |
+| `ProtocolVersion(string)` | Configure MCP protocol version |
+| `Resource(name, uri, mimeType)` | Mark method as MCP resource provider |
+| `WatchableResource(name, uri, mimeType)` | Mark method as subscribable MCP resource |
+| `StaticPrompt(name, desc, messages...)` | Add static prompt template |
+| `DynamicPrompt(name, desc)` | Mark method as dynamic prompt generator |
+| `Notification(name, desc)` | Mark method as MCP notification sender |
+| `Subscription(resourceName)` | Mark method as subscription handler |
+| `SubscriptionMonitor(name)` | Mark method as SSE subscription monitor |
+
+---
+
+## Runtime API Reference
+
+### Runtime Construction
+
+```go
+// Create runtime with functional options
+rt := runtime.New(
+    runtime.WithEngine(temporalEngine),
+    runtime.WithMemoryStore(memoryMongo),
+    runtime.WithRunStore(runMongo),
+    runtime.WithPolicy(basicPolicy),
+    runtime.WithStream(pulseSink),
+    runtime.WithHooks(hookBus),
+    runtime.WithLogger(logger),
+    runtime.WithMetrics(metrics),
+    runtime.WithTracer(tracer),
+    runtime.WithWorker(agentID, runtime.WorkerConfig{Queue: "custom"}),
+)
+```
+
+### Agent Registration
+
+```go
+// Register generated agent (typically called by generated code)
+err := rt.RegisterAgent(ctx, runtime.AgentRegistration{
+    ID:       agent.Ident("service.agent"),
+    Planner:  myPlanner,
+    Workflow: workflow,
+    Toolsets: toolsets,
+    Policy:   policy,
+    // ... activity names and options
+})
+
+// Register external toolset
+err := rt.RegisterToolset(runtime.ToolsetRegistration{
+    Name:    "custom.tools",
+    Execute: customExecutor,
+    Specs:   toolSpecs,
+})
+
+// Register model client for planner use
+err := rt.RegisterModel("default", bedrockClient)
+```
+
+### Agent Client
+
+```go
+// Get client for registered agent
+client, err := rt.Client(agent.Ident("service.agent"))
+// or panic variant:
+client := rt.MustClient(agent.Ident("service.agent"))
+
+// Get client for remote agent (workers elsewhere)
+client, err := rt.ClientFor(runtime.AgentRoute{
+    ID:               agent.Ident("service.agent"),
+    WorkflowName:     "ServiceAgentWorkflow",
+    DefaultTaskQueue: "service.agent",
+})
+
+// Synchronous run
+out, err := client.Run(ctx, "session-1", messages,
+    runtime.WithRunID("custom-id"),
+    runtime.WithLabels(map[string]string{"env": "prod"}),
+    runtime.WithTaskQueue("priority"),
+    runtime.WithRunTimeBudget(5*time.Minute),
+    runtime.WithPerTurnMaxToolCalls(10),
+    runtime.WithAllowedTags([]string{"safe"}),
+)
+
+// Asynchronous run
+handle, err := client.Start(ctx, "session-1", messages)
+// ... later
+out, err := handle.Wait(ctx)
+```
+
+### Run Control
+
+```go
+// Cancel a running workflow
+err := rt.CancelRun(ctx, runID)
+
+// Pause for human intervention
+err := rt.PauseRun(ctx, interrupt.PauseRequest{
+    RunID:       runID,
+    Reason:      "approval_required",
+    RequestedBy: "policy_engine",
+})
+
+// Resume after intervention
+err := rt.ResumeRun(ctx, interrupt.ResumeRequest{
+    RunID:  runID,
+    Notes:  "Approved by admin",
+})
+
+// Provide clarification for awaiting run
+err := rt.ProvideClarification(ctx, interrupt.ClarificationAnswer{
+    RunID:   runID,
+    Message: "The user meant X",
+})
+
+// Provide external tool results
+err := rt.ProvideToolResults(ctx, interrupt.ToolResultsSet{
+    RunID:   runID,
+    Results: []interrupt.ToolResult{{...}},
+})
+
+// Query run status
+status, err := rt.RunStatus(ctx, runID)
+```
+
+### Introspection
+
+```go
+// List registered agents and toolsets
+agents := rt.ListAgents()
+toolsets := rt.ListToolsets()
+
+// Get tool spec by name
+spec, ok := rt.ToolSpec(tools.Ident("toolset.tool"))
+
+// Get all tool specs for an agent
+specs := rt.ToolSpecsForAgent(agent.Ident("service.agent"))
+
+// Get parsed tool schema
+schema, ok := rt.ToolSchema(tools.Ident("toolset.tool"))
+```
+
+### Streaming
+
+```go
+// Per-run streaming (filters by runID)
+closeFn, err := rt.SubscribeRun(ctx, runID, mySink)
+defer closeFn()
+```
+
+---
+
+## Planner Interface
+
+Planners are the decision-makers: they analyze messages and return either tool calls to execute
+or a final assistant response.
+
+```go
+type Planner interface {
+    PlanStart(ctx context.Context, input *PlanInput) (*PlanResult, error)
+    PlanResume(ctx context.Context, input *PlanResumeInput) (*PlanResult, error)
+}
+```
+
+### PlanInput / PlanResumeInput
+
+```go
+type PlanInput struct {
+    Messages   []*model.Message    // Conversation history
+    RunContext run.Context         // Run metadata (IDs, caps, labels)
+    Agent      PlannerContext      // Runtime services (memory, logger, models)
+    Events     PlannerEvents       // Streaming event emitters
+    Reminders  []reminder.Reminder // Active system reminders for this turn
+}
+
+type PlanResumeInput struct {
+    Messages    []*model.Message
+    RunContext  run.Context
+    Agent       PlannerContext
+    Events      PlannerEvents
+    ToolResults []*ToolResult      // Results from previous tool calls
+    Finalize    *Termination       // Non-nil when runtime forces finalization
+    Reminders   []reminder.Reminder
+}
+```
+
+### PlanResult
+
+```go
+type PlanResult struct {
+    ToolCalls     []ToolRequest    // Tools to execute
+    FinalResponse *FinalResponse   // Terminal assistant message
+    Streamed      bool             // True if text already streamed via Events
+    Await         *Await           // Pause for human input
+    RetryHint     *RetryHint       // Guidance after failures
+    Notes         []PlannerAnnotation // Intermediate reasoning
+}
+```
+
+### PlannerContext
+
+Access runtime services from within planners:
+
+```go
+type PlannerContext interface {
+    ID() agent.Ident
+    RunID() string
+    Memory() memory.Reader
+    Logger() telemetry.Logger
+    Metrics() telemetry.Metrics
+    Tracer() telemetry.Tracer
+    State() AgentState                    // Ephemeral per-run state
+    ModelClient(id string) (model.Client, bool)
+    AddReminder(r reminder.Reminder)      // Register guidance for future turns
+    RemoveReminder(id string)             // Clear outdated guidance
+}
+```
+
+### PlannerEvents
+
+Stream updates during planning:
+
+```go
+type PlannerEvents interface {
+    AssistantChunk(ctx context.Context, text string)
+    PlannerThinkingBlock(ctx context.Context, block model.ThinkingPart)
+    PlannerThought(ctx context.Context, note string, labels map[string]string)
+    UsageDelta(ctx context.Context, usage model.TokenUsage)
+}
+```
+
+---
+
+## System Reminders
+
+Deliver structured, rate-limited guidance to models without polluting user conversations:
+
+```go
+// Register a reminder from your planner
+input.Agent.AddReminder(reminder.Reminder{
+    ID:              "search.truncated",
+    Text:            "Results are truncated. Consider narrowing your query.",
+    Priority:        reminder.TierGuidance,
+    Attachment:      reminder.Attachment{Kind: reminder.AttachmentUserTurn},
+    MinTurnsBetween: 2,
+})
+```
+
+Reminders are automatically wrapped in `<system-reminder>` tags and injected at appropriate points
+in the conversation. Use priority tiers to ensure critical guidance is never suppressed:
+
+| Tier | Purpose |
+|------|---------|
+| `TierSafety` | Highest priority (P0). Never dropped by policy. |
+| `TierGuidance` | Workflow suggestions (P2). First to be suppressed under budgets. |
+
+---
+
+## Model Client Interface
+
+Provider-agnostic model interactions:
+
+```go
+type Client interface {
+    Complete(ctx context.Context, req *Request) (*Response, error)
+    Stream(ctx context.Context, req *Request) (Streamer, error)
+}
+
+type Streamer interface {
+    Recv() (Chunk, error)
+    Close() error
+    Metadata() map[string]any
+}
+```
+
+### Message Types
+
+Messages are structured as typed parts:
+
+| Part Type | Purpose |
+|-----------|---------|
+| `TextPart` | Plain text content |
+| `ThinkingPart` | Provider-issued reasoning (text, signature, or redacted) |
+| `ToolUsePart` | Assistant's tool invocation declaration |
+| `ToolResultPart` | Tool result provided to the model |
+| `CacheCheckpointPart` | Cache boundary marker |
+
+### Request Options
+
+```go
+type Request struct {
+    RunID       string
+    Model       string           // Provider-specific model ID
+    ModelClass  ModelClass       // Or family: "high-reasoning", "default", "small"
+    Messages    []*Message
+    Temperature float32
+    Tools       []*ToolDefinition
+    ToolChoice  *ToolChoice      // auto/none/any/tool
+    MaxTokens   int
+    Stream      bool
+    Thinking    *ThinkingOptions // Enable provider reasoning
+    Cache       *CacheOptions    // Prompt caching
+}
+```
+
+---
+
 ## Best Practices
 
 **Design first** — Put all agent and tool schemas in the DSL. Add examples and validations. Let
@@ -412,6 +826,8 @@ history, unified debugging.
 Use `specs.AdvertisedSpecs()` from `gen/<svc>/agents/<agent>/specs` to pass tool specs to the model.
 This keeps IDs and schemas aligned with your design and eliminates manual lists.
 
+---
+
 ## Temporal Runtime Flow (Deep Dive)
 
 For those who want the full picture of how execution flows through the system.
@@ -420,22 +836,31 @@ For those who want the full picture of how execution flows through the system.
 
 Use the generated `NewClient(rt)` to get a `runtime.AgentClient`, then:
 
-- **Synchronous**: `Run(ctx, []*model.Message, ...runtime.RunOption)` — start and wait
-- **Asynchronous**: `Start(ctx, ...opts)` → `engine.WorkflowHandle` → `Wait/Signal/Cancel`
+- **Synchronous**: `Run(ctx, sessionID, messages, ...opts)` — start and wait
+- **Asynchronous**: `Start(ctx, sessionID, messages, ...opts)` → `engine.WorkflowHandle` → `Wait/Signal/Cancel`
 
-**RunOptions** let you configure per‑run behavior:
+The `sessionID` argument is required and must be a non-empty, non-whitespace string.
 
-| Option                              | Purpose                      |
-|-------------------------------------|------------------------------|
-| `WithSessionID(string)`             | Required session identifier  |
-| `WithTaskQueue(string)`             | Route to specific workers    |
-| `WithMemo(map[string]any)`          | Attach metadata              |
-| `WithSearchAttributes(map[string]any)` | Enable queries            |
-| `WithPerTurnMaxToolCalls(int)`      | Override DSL defaults        |
-| `WithRunMaxToolCalls(int)`          | Cap total tool calls         |
-| `WithRunTimeBudget(duration)`       | Set time limits              |
-| `WithRestrictToTool(tools.Ident)`   | Limit available tools        |
-| `WithAllowedTags([]string)`         | Filter by tags               |
+**RunOptions** let you configure per‑run behavior beyond the required `sessionID`:
+
+| Option                                  | Purpose                      |
+|-----------------------------------------|------------------------------|
+| `WithRunID(string)`                     | Set custom run identifier    |
+| `WithTurnID(string)`                    | Set conversational turn ID   |
+| `WithLabels(map[string]string)`         | Attach metadata labels       |
+| `WithMetadata(map[string]any)`          | Attach arbitrary metadata    |
+| `WithTaskQueue(string)`                 | Route to specific workers    |
+| `WithMemo(map[string]any)`              | Attach workflow memo         |
+| `WithSearchAttributes(map[string]any)`  | Enable queries               |
+| `WithPerTurnMaxToolCalls(int)`          | Override DSL defaults        |
+| `WithRunMaxToolCalls(int)`              | Cap total tool calls         |
+| `WithRunTimeBudget(duration)`           | Set time limits              |
+| `WithRunFinalizerGrace(duration)`       | Reserve time for final message |
+| `WithRunInterruptsAllowed(bool)`        | Enable human-in-the-loop     |
+| `WithRestrictToTool(tools.Ident)`       | Limit available tools        |
+| `WithAllowedTags([]string)`             | Filter by tags               |
+| `WithDeniedTags([]string)`              | Exclude by tags              |
+| `WithTiming(Timing)`                    | Set multiple timing overrides |
 
 ### 2. Engine Start
 
@@ -479,7 +904,7 @@ The engine invokes the workflow handler, which calls `rt.ExecuteWorkflow`.
 | Path         | When           | How                                                               |
 |--------------|----------------|-------------------------------------------------------------------|
 | **Activity** | Default        | JSON‑encode via codec, schedule `ExecuteToolActivity`, collect futures |
-| **Inline**   | Agent‑as‑tool  | Execute synchronously in workflow context, publish results directly |
+| **Child**    | Agent‑as‑tool  | Execute as child workflow via `ExecuteAgentChildWithRoute`        |
 
 `ExecuteToolActivity` decodes payloads, calls the toolset's `Execute`, re‑encodes results.
 Validation errors become structured `planner.RetryHint` for planners.
@@ -494,16 +919,17 @@ Validation errors become structured `planner.RetryHint` for planners.
 
 The runtime sets final status and returns to the client.
 
-## Agent‑as‑Tool: Inline Composition
+---
+
+## Agent‑as‑Tool: Child Workflow Composition
 
 Exported toolsets get first‑class helpers for registering agents as tools. Nested agents execute
-inline within the parent workflow history.
+as child workflows, enabling linked streams and unified history.
 
 ### Generated Provider Helpers
 
 - **Tool IDs** (fully qualified) and type aliases for codecs
-- **`New<Agent>ToolsetRegistration(rt *runtime.Runtime)`** — creates registration with `Inline: true`
-  and strong‑contract routing
+- **`New<Agent>ToolsetRegistration(rt *runtime.Runtime)`** — creates registration with routing info
 - **`NewRegistration(rt, systemPrompt, ...runtime.AgentToolOption)`** — configure per‑tool
   text/templates
 - **Typed call builders** like `New<Tool>Call(args, ...CallOption)`
@@ -511,25 +937,22 @@ inline within the parent workflow history.
 ### Runtime Behavior
 
 1. Consumer registers with `rt.RegisterToolset(reg)`
-2. When the runtime sees an `Inline` toolset call:
-   - Publishes a scheduled event
-   - Injects `engine.WorkflowContext` into `ctx`
-   - Calls the toolset's `Execute`
-3. The executor builds messages from the payload (with optional templates) and calls:
-   - `rt.ExecuteAgentInline` (local agent), or
-   - `rt.ExecuteAgentInlineWithRoute` (cross‑process)
-4. Nested agent runs full plan/execute/resume inline
-5. Results adapt back to `planner.ToolResult` for the parent
+2. When the runtime sees a toolset call with `AgentTool` config:
+   - Publishes `AgentRunStartedEvent` linking parent to child
+   - Starts child workflow via `ExecuteAgentChildWithRoute`
+   - Child runs full plan/execute/resume loop
+3. Results flow back through `ToolResult` with `RunLink` for correlation
 
 ### Key Types
 
 | Type                                   | Purpose                                          |
 |----------------------------------------|--------------------------------------------------|
-| `runtime.ToolsetRegistration`          | Name, Specs, Execute, TaskQueue, Inline flag     |
+| `runtime.ToolsetRegistration`          | Name, Specs, Execute, TaskQueue, AgentTool       |
 | `runtime.AgentRoute`                   | ID, WorkflowName, DefaultTaskQueue               |
-| `runtime.AgentToolConfig`              | AgentID or Route, activity names, prompts, templates |
-| `runtime.NewAgentToolsetRegistration`  | Build inline registrations                       |
-| `runtime.ExecuteAgentInline[WithRoute]`| Execute nested runs                              |
+| `runtime.AgentToolConfig`              | Route, activity names, prompts, templates        |
+| `runtime.ExecuteAgentChildWithRoute`   | Execute nested child workflow                    |
+
+---
 
 ## Integration Points
 
@@ -558,11 +981,13 @@ inline within the parent workflow history.
 - `runtime.AgentClient` with `Run/Start`
 - `engine.Engine`, `engine.WorkflowDefinition`, `engine.ActivityDefinition`, `engine.WorkflowHandle`
 - Activities: `PlanStartActivity`, `PlanResumeActivity`, `ExecuteToolActivity`
-- Inline composition: `runtime.ExecuteAgentInline`, `runtime.ExecuteAgentInlineWithRoute`
+- Child composition: `runtime.ExecuteAgentChildWithRoute`
 - Tool infrastructure: `tools.ToolSpec`, `tools.JSONCodec`
 - Tool errors: `toolerrors.ToolError` for structured error reporting
 - Hooks: `hooks.Bus`, `hooks.Subscriber`, `hooks.Event` for runtime observability
 - Interrupts: `interrupt.Controller` for pause/resume signal handling
+
+---
 
 ## Streaming for UIs
 
@@ -576,7 +1001,7 @@ type MySink struct{}
 func (s *MySink) Send(ctx context.Context, event stream.Event) error {
     // Handle: assistant_reply, planner_thought, tool_start, 
     //         tool_update, tool_end, await_clarification, 
-    //         await_external_tools, usage
+    //         await_external_tools, usage, workflow, agent_run_started
     return nil
 }
 
@@ -609,10 +1034,30 @@ sub, _ := bridge.Register(rt.Bus, sink)
 defer sub.Close()
 ```
 
+### Stream Profiles
+
+Control which events reach different audiences:
+
+```go
+// Default profile emits all events, links child runs
+profile := stream.DefaultProfile()
+
+// User chat: same as default
+profile := stream.UserChatProfile()
+
+// Debug: flattens child events into parent stream
+profile := stream.AgentDebugProfile()
+
+// Metrics: only usage and workflow events
+profile := stream.MetricsProfile()
+```
+
 **Tips**:
 
 - Stream events are structured, not pre‑encoded—JSON‑encode for transport
 - For cross‑process UIs, wire a message bus sink (e.g., Pulse) via `WithStream`
+
+---
 
 ## Learn More
 
@@ -634,7 +1079,9 @@ defer sub.Close()
 | `features/stream/pulse`  | Pulse message bus sink for real‑time streaming         |
 | `features/model/bedrock` | AWS Bedrock model client (Claude, etc.)                |
 | `features/model/openai`  | OpenAI‑compatible model client                         |
+| `features/model/anthropic` | Anthropic API model client                           |
 | `features/model/gateway` | Remote model gateway for centralized model serving     |
+| `features/model/middleware` | Model client middleware (rate limiting, etc.)       |
 | `features/policy/basic`  | Basic policy engine for tool filtering and caps        |
 
 ---

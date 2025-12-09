@@ -12,6 +12,12 @@ import (
 	jsonrpccodegen "goa.design/goa/v3/jsonrpc/codegen"
 )
 
+// a2aPackageName returns the Go package name for an A2A service.
+// It uses Goify to match Goa's package naming convention (removes underscores).
+func a2aPackageName(agentName string) string {
+	return strings.ToLower(codegen.Goify("a2a_"+agentName, false))
+}
+
 // A2ASecurityData holds security scheme information for A2A generation.
 // This is computed once and passed to all A2A generators.
 type A2ASecurityData struct {
@@ -96,9 +102,14 @@ func a2aServiceFiles(genpkg string, agent *AgentData, security *A2ASecurityData)
 	adapterFiles := generateA2AAdapter(genpkg, agent, adapterData)
 	files = append(files, adapterFiles...)
 
-	// Generate registration helper for runtime registration
+	// Generate static configuration (ServerConfig/ProviderConfig) for this agent.
 	if regFile := a2aRegisterFile(adapterData); regFile != nil {
 		files = append(files, regFile)
+	}
+
+	// Generate server stub that constructs runtime/a2a.Server from the config.
+	if stubFile := a2aServerStubFile(adapterData); stubFile != nil {
+		files = append(files, stubFile)
 	}
 
 	return files
@@ -120,7 +131,7 @@ func buildA2AAdapterData(agent *AgentData, security *A2ASecurityData) *A2AAdapte
 	data := &A2AAdapterData{
 		Agent:           agent,
 		A2AServiceName:  "a2a_" + agent.Name,
-		A2APackage:      "a2a" + codegen.SnakeCase(agent.Name),
+		A2APackage:      a2aPackageName(agent.Name),
 		ProtocolVersion: "1.0",
 		Skills:          make([]*A2ASkillData, 0),
 		Security:        security,
@@ -183,11 +194,11 @@ func generateA2AServiceCode(genpkg string, root *expr.RootExpr, a2aService *expr
 }
 
 // generateA2AAdapter generates the adapter that maps A2A protocol to agent runtime.
-func generateA2AAdapter(genpkg string, agent *AgentData, data *A2AAdapterData) []*codegen.File {
+func generateA2AAdapter(_ string, agent *AgentData, data *A2AAdapterData) []*codegen.File {
 	var files []*codegen.File
 
 	agentName := codegen.SnakeCase(agent.Name)
-	pkgName := "a2a" + agentName
+	pkgName := a2aPackageName(agent.Name)
 
 	// Generate adapter_server.go with modular template sections
 	adapterPath := filepath.Join(codegen.Gendir, "a2a_"+agentName, "adapter_server.go")
@@ -197,7 +208,7 @@ func generateA2AAdapter(genpkg string, agent *AgentData, data *A2AAdapterData) [
 		{Path: "fmt"},
 		{Path: "sync"},
 		{Path: "time"},
-		{Path: genpkg + "/a2a_" + agentName, Name: pkgName},
+		// Note: No import for the A2A service package since the adapter is in the same package
 		{Path: "goa.design/goa-ai/runtime/agent", Name: "agentruntime"},
 	}
 

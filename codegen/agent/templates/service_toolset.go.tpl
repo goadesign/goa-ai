@@ -50,11 +50,13 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}ToolsetRegistration
         {{- range .Toolset.Tools }}
         {{- if .CallHintTemplate }}
         if callRaw == nil { callRaw = make(map[tools.Ident]string) }
-        callRaw[tools.Ident({{ printf "%q" .Name }})] = {{ printf "%q" .CallHintTemplate }}
+        // Use the canonical tool identifier so hints align with Specs and runtime events.
+        callRaw[tools.Ident({{ printf "%q" .QualifiedName }})] = {{ printf "%q" .CallHintTemplate }}
         {{- end }}
         {{- if .ResultHintTemplate }}
         if resultRaw == nil { resultRaw = make(map[tools.Ident]string) }
-        resultRaw[tools.Ident({{ printf "%q" .Name }})] = {{ printf "%q" .ResultHintTemplate }}
+        // Use the canonical tool identifier so hints align with Specs and runtime events.
+        resultRaw[tools.Ident({{ printf "%q" .QualifiedName }})] = {{ printf "%q" .ResultHintTemplate }}
         {{- end }}
         {{- end }}
         if len(callRaw) > 0 {

@@ -4,6 +4,6 @@
 //
 // Command:
 
-package a2atest_agent
+package a2atestagent
 
 const DefaultProtocolVersion = "1.0"

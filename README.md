@@ -13,53 +13,72 @@
   <a href="/LICENSE"><img alt="Software License" src="https://img.shields.io/badge/license-MIT-brightgreen.svg?style=for-the-badge"></a>
 </p>
 
-# Goa-AI: Design-First Agentic Systems in Go
+<h1 align="center">Design-First AI Agents in Go</h1>
 
-**📚 [Full Documentation](https://goa.design/docs/8-goa-ai/)** · **🚀 [Getting Started](https://goa.design/docs/8-goa-ai/1-getting-started/)** · **💡 [Tutorials](https://goa.design/docs/8-goa-ai/3-tutorials/)**
+<p align="center">
+  <b>Define your agents in code. Generate the infrastructure. Execute with confidence.</b>
+</p>
 
-Build intelligent, tool-wielding agents with the confidence of strong types and the power of durable execution. Goa-AI brings the design-first philosophy you love from [Goa](https://goa.design) to the world of AI agents—declare your agents, toolsets, and policies in a clean DSL, and let code generation handle the rest.
+<p align="center">
+  <a href="https://goa.design/docs/8-goa-ai/">📚 Documentation</a> ·
+  <a href="https://goa.design/docs/8-goa-ai/2-getting-started/">🚀 Quickstart</a> ·
+  <a href="https://goa.design/docs/8-goa-ai/3-tutorials/">💡 Tutorials</a> ·
+  <a href="#quick-start">⚡ Try It Now</a>
+</p>
 
-No more hand-rolled JSON schemas. No more brittle tool wiring. No more wondering if your agent will survive a restart. Just elegant designs that compile into production-grade systems.
+---
 
-## Why Goa-AI?
+## Stop Writing Fragile Agent Code
 
-| Challenge | How Goa-AI Helps |
-|---|---|
-| **Zero-Glue Tooling** | Bind agents directly to existing Goa services with `BindTo`. No adapters, no glue code, just instant tools. |
-| **LLM workflows feel fragile** | Type-safe tool payloads with validations and examples—no ad-hoc JSON guessing games |
-| **Long-running agents crash** | Durable orchestration via Temporal with automatic retries, time budgets, and deterministic replay |
-| **Composing agents is messy** | First-class agent-as-tool composition, even across processes, with unified history |
-| **Schema drift haunts you** | Generated codecs and registries keep everything in sync—change the DSL, regenerate, done |
-| **Observability is an afterthought** | Built-in streaming, transcripts, logs, metrics, and traces from day one |
-| **MCP integration is manual** | Generated wrappers turn MCP servers into typed toolsets automatically |
+Building AI agents shouldn't mean wrestling with JSON schemas, debugging brittle tool wiring, or losing progress when processes crash. Yet that's what most frameworks offer—imperative code scattered across files, no contracts, and "good luck" when things break.
 
-## The Mental Model
+**Goa-AI takes a different approach.** Define your agents, tools, and policies in a typed DSL. Let code generation handle the infrastructure. Run on a durable engine that survives failures. What you get:
+
+| Pain Point | Goa-AI Solution |
+|------------|-----------------|
+| **Hand-rolled JSON schemas** | Type-safe tool definitions with validations—schemas generated automatically |
+| **Brittle tool wiring** | `BindTo` connects tools directly to Goa service methods. Zero glue code |
+| **Agents that crash and lose state** | Temporal-backed durable execution with automatic retries |
+| **Messy multi-agent composition** | First-class agent-as-tool with unified history and run trees |
+| **Schema drift between components** | Single source of truth: DSL → generated codecs → runtime validation |
+| **Observability as afterthought** | Built-in streaming, transcripts, traces, and metrics from day one |
+| **Manual MCP integration** | Generated wrappers turn MCP servers into typed toolsets |
+| **Cross-platform agent silos** | A2A runtime caller for invoking agents on other platforms |
+| **Toolsets scattered across services** | Clustered registry for dynamic discovery and health-monitored invocation |
+
+---
+
+## How It Works
 
 ```
-Define Intent → Generate Infrastructure → Execute Reliably
+     ┌─────────────────┐        ┌─────────────────┐        ┌─────────────────┐
+     │    1. DESIGN    │   →    │   2. GENERATE   │   →    │   3. EXECUTE    │
+     │                 │        │                 │        │                 │
+     │  Agent DSL      │        │  Tool specs     │        │  Plan/Execute   │
+     │  Tool schemas   │        │  Codecs         │        │  Policy checks  │
+     │  Policies       │        │  Workflows      │        │  Streaming      │
+     │  MCP bindings   │        │  Registries     │        │  Memory         │
+     └─────────────────┘        └─────────────────┘        └─────────────────┘
+           design/                    gen/                    runtime/
 ```
 
-Think of it as a pipeline from intention to execution:
+1. **Design** — Express intent in Go: agents, tools, policies. Version-controlled, type-checked, reviewable.
 
-1. **Define Intent** (`dsl`) — Express what you want: agents, tools, policies. Clean, declarative, version-controlled.
+2. **Generate** — `goa gen` produces everything: tool specs with JSON schemas, type-safe codecs, workflow definitions, registry helpers. Never edit `gen/`—regenerate on change.
 
-2. **Generate Infrastructure** (`codegen`) — Transform your design into typed Go packages: tool specs, codecs, workflow definitions, registry helpers. Lives under `gen/`—never edit by hand.
+3. **Execute** — The runtime runs your agents: plan/execute loops, policy enforcement, memory persistence, event streaming. Swap engines (in-memory → Temporal) without changing agent code.
 
-3. **Execute Reliably** (`runtime`) — The workhorse that executes your agents: plan/execute loops, policy enforcement, memory, sessions, streaming, telemetry, and MCP integration.
-
-4. **Engine** — Swap backends without changing code. In-memory for fast iteration; Temporal for production durability.
-
-5. **Features** — Plug in what you need: Mongo for memory/sessions/runs, Pulse for real-time streams, Bedrock/OpenAI/Gateway model clients, rate limiting, policy engines.
+---
 
 ## Quick Start
 
-### 1. Install Goa & Goa-AI
+### Install
+
 ```bash
 go install goa.design/goa/v3/cmd/goa@latest
-go get goa.design/goa-ai
 ```
 
-### 2. Define Your Agent
+### Define an Agent
 
 Create `design/design.go`:
 
@@ -71,45 +90,47 @@ import (
     . "goa.design/goa-ai/dsl"
 )
 
-var _ = API("orchestrator", func() {})
-
-var Ask = Type("Ask", func() {
-    Attribute("question", String, "User question")
-    Example(map[string]any{"question": "What is the capital of Japan?"})
-    Required("question")
-})
-
-var Answer = Type("Answer", func() {
-    Attribute("text", String, "Answer text")
-    Required("text")
-})
-
-var _ = Service("orchestrator", func() {
-    Agent("chat", "Friendly Q&A agent", func() {
-        Use("helpers", func() {
-            Tool("answer", "Answer a simple question", func() {
-                Args(Ask)
-                Return(Answer)
+var _ = Service("demo", func() {
+    Agent("assistant", "A helpful assistant", func() {
+        Use("weather", func() {
+            Tool("get_weather", "Get current weather for a city", func() {
+                Args(func() {
+                    Attribute("city", String, "City name", func() {
+                        MinLength(2)
+                        Example("Tokyo")
+                    })
+                    Required("city")
+                })
+                Return(func() {
+                    Attribute("temperature", Int, "Temperature in Celsius")
+                    Attribute("conditions", String, "Weather description")
+                    Required("temperature", "conditions")
+                })
             })
-        })
-        RunPolicy(func() {
-            DefaultCaps(MaxToolCalls(8), MaxConsecutiveFailedToolCalls(2))
-            TimeBudget("2m")
         })
     })
 })
 ```
 
-### 3. Generate Code
+### Generate
+
 ```bash
-goa gen example.com/assistant/design
+mkdir myagent && cd myagent
+go mod init myagent
+go get goa.design/goa/v3@latest goa.design/goa-ai@latest
+
+# Create design/design.go with the code above
+
+goa gen myagent/design
 ```
 
-This produces agent packages under `gen/orchestrator/agents/...`, tool codecs/specs, planner configs, and Temporal activities.
+Generated artifacts in `gen/`:
+- **Tool specs** with JSON schemas for LLM function calling
+- **Type-safe codecs** for payload/result serialization
+- **Agent registration helpers** and typed clients
+- **Workflow definitions** for durable execution
 
-> **Note:** After generation, a contextual guide named `AGENTS_QUICKSTART.md` is written at the module root to summarize what was generated and how to use it. To opt out, call `DisableAgentDocs()` inside your API DSL.
-
-### 4. Wire the Runtime
+### Run
 
 ```go
 package main
@@ -118,430 +139,494 @@ import (
     "context"
     "fmt"
 
-    chat "example.com/assistant/gen/orchestrator/agents/chat"
+    assistant "myagent/gen/demo/agents/assistant"
     "goa.design/goa-ai/runtime/agent/model"
     "goa.design/goa-ai/runtime/agent/planner"
     "goa.design/goa-ai/runtime/agent/runtime"
 )
 
-// StubPlanner is a minimal planner (implementation omitted, see AGENTS_QUICKSTART.md)
-type StubPlanner struct{}
-
-func (p *StubPlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
-    return &planner.PlanResult{
-        FinalResponse: &planner.FinalResponse{
-            Message: &model.Message{
-                Role:  model.ConversationRoleAssistant,
-                Parts: []model.Part{model.TextPart{Text: "Hello!"}},
-            },
-        },
-    }, nil
-}
-
-func (p *StubPlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
-    return nil, nil
-}
-
 func main() {
-    rt := runtime.New() // in-memory engine by default
+    ctx := context.Background()
+    rt := runtime.New() // in-memory engine, zero dependencies
 
-    // 1. Register the agent
-    chat.RegisterChatAgent(context.Background(), rt, chat.ChatAgentConfig{
-        Planner: &StubPlanner{},
+    // Register the agent with a planner (decision-maker) and executor (tool runner)
+    assistant.RegisterAssistantAgent(ctx, rt, assistant.AssistantAgentConfig{
+        Planner:  &MyPlanner{},   // Calls LLM to decide: tools or final answer?
+        Executor: &MyExecutor{},  // Runs tool logic when planner requests it
     })
 
-    // 2. Run it!
-    client := chat.NewClient(rt)
-    out, _ := client.Run(context.Background(), []*model.Message{{
+    // Run with a user message
+    client := assistant.NewClient(rt)
+    out, _ := client.Run(ctx, []*model.Message{{
         Role:  model.ConversationRoleUser,
-        Parts: []model.Part{model.TextPart{Text: "Say hi"}},
+        Parts: []model.Part{model.TextPart{Text: "What's the weather in Paris?"}},
     }})
 
     fmt.Println("RunID:", out.RunID)
+    // → Agent calls get_weather tool, receives result, synthesizes response
 }
 ```
 
-## Debuggable by Design
+> **Planner + Executor pattern**: Planners decide *what* (final answer or which tools). Executors decide *how* (tool implementation). The runtime handles the loop, policy enforcement, and state.
 
-Agents are notoriously hard to debug. Goa-AI makes it transparent.
+---
 
-- **Transcript Ledger**: Every thinking block, tool call, and result is recorded in exact provider order.
-- **Distributed Tracing**: Trace a decision from **Thinking → Tool Call → Result → Final Answer** without grepping logs.
-- **Structured Logs**: No more parsing raw text. Get structured events for every state change.
+## Core Concepts
 
-```go
-// Enable the Clue telemetry stack
-rt := runtime.New(runtime.Options{
-    Logger:  telemetry.NewClueLogger(),
-    Metrics: telemetry.NewClueMetrics(),
-    Tracer:  telemetry.NewClueTracer(),
-})
-```
+### Toolsets: What Agents Can Do
 
-## Architecture Overview
-
-| Layer | Responsibility |
-| --- | --- |
-| **DSL (`dsl`)** | Define agents, toolsets, policies, MCP suites inside Goa services. |
-| **Codegen (`codegen/agent`, `codegen/mcp`)** | Emit tool codecs/specs, registries, Temporal workflows, activity handlers, MCP helpers. |
-| **Runtime (`runtime/agent`, `runtime/mcp`)** | Durable plan/execute loop with policy enforcement, memory/session stores, hook bus, telemetry, MCP callers. |
-| **Engine (`runtime/agent/engine`)** | Abstract workflow API; Temporal adapter ships with OTEL interceptors, auto-start workers, and context propagation. |
-| **Features (`features/*`)** | Optional modules (Mongo memory/session, Pulse stream sink, MCP callers, Bedrock/OpenAI model clients, rate limiting, policy engine). |
-
-## Toolsets: Where the Magic Happens
-
-Toolsets are the heart of Goa-AI. They define what your agents can do, with full type safety and validation.
-
-### Defining Tools
-
-The simplest approach: define tool schemas inline with `Args` and `Return`. You provide the executor implementation.
+Toolsets are collections of capabilities your agents can invoke. Define them with full type safety:
 
 ```go
-var _ = Service("orchestrator", func() {
-    Agent("assistant", "Helpful assistant", func() {
-        Use("utils", func() {
-            Tool("summarize", "Summarize text content", func() {
-                Args(func() {
-                    Attribute("text", String, "Text to summarize")
-                    Required("text")
+Agent("assistant", "Document assistant", func() {
+    Use("docs", func() {
+        Tool("search", "Search documents", func() {
+            Args(func() {
+                Attribute("query", String, "Search query", func() {
+                    MinLength(1)
+                    MaxLength(500)
                 })
-                Return(func() {
-                    Attribute("summary", String, "Condensed summary")
+                Attribute("limit", Int, "Max results", func() {
+                    Minimum(1)
+                    Maximum(100)
+                    Default(10)
                 })
+                Required("query")
             })
+            Return(ArrayOf(Document))
         })
     })
 })
 ```
 
-### Binding Tools to Service Methods with `BindTo`
+**What you get:**
+- JSON Schema for LLM function calling (auto-generated)
+- Validation at boundaries—invalid calls get retry hints, not crashes
+- Type-safe Go structs for payloads and results
 
-Have existing Goa service methods? Bind tools directly to them—your service logic becomes instantly available to LLMs with zero glue code.
+### BindTo: Zero-Glue Service Integration
+
+Already have Goa services? Bind tools directly to methods:
 
 ```go
-var _ = Service("documents", func() {
-    // Your existing Goa service method
-    Method("search", func() {
-        Payload(func() {
-            Attribute("query", String, "Search query")
-            Attribute("session_id", String, "Session identifier")
-            Required("query", "session_id")
-        })
-        Result(func() {
-            Attribute("results", ArrayOf(Document))
-            Attribute("total", Int)
-        })
+// Your existing Goa service method
+Method("search_documents", func() {
+    Payload(func() {
+        Attribute("query", String)
+        Attribute("session_id", String) // Infrastructure field
+        Required("query", "session_id")
     })
+    Result(ArrayOf(Document))
+})
 
-    Agent("assistant", "Document search assistant", func() {
-        Use("doc-tools", func() {
-            Tool("search_docs", "Search documents by query", func() {
-                // Tool schema can differ from method payload
-                Args(func() {
-                    Attribute("query", String, "What to search for")
-                    Required("query")
-                })
-                Return(func() {
-                    Attribute("results", ArrayOf(Document))
-                })
-                // Bind to the service method - codegen handles the mapping
-                BindTo("search")
-                // Hide infrastructure fields from the LLM
-                Inject("session_id")
+Agent("assistant", "Document assistant", func() {
+    Use("docs", func() {
+        Tool("search", "Search documents", func() {
+            Args(func() {
+                Attribute("query", String, "What to search for")
+                Required("query")
             })
+            Return(ArrayOf(Document))
+            BindTo("search_documents")  // Auto-generated transform
+            Inject("session_id")         // Hidden from LLM, filled at runtime
         })
     })
 })
 ```
 
-**What `BindTo` gives you:**
-- **Schema flexibility**: Tool Args/Return can differ from method Payload/Result
-- **Auto-generated transforms**: Codegen creates type-safe mappers between tool and method types
-- **Field injection**: Use `Inject` to hide infrastructure fields (session IDs, auth tokens) from the LLM
-- **Validation at boundaries**: Method payload validation still applies, errors become retry hints
+**BindTo gives you:**
+- Schema flexibility—tool args can differ from method payload
+- Auto-generated type-safe transforms between tool and service types
+- Field injection for infrastructure concerns (auth, session IDs)
+- Method validation still applies; errors become retry hints
 
-### Tool Implementation Patterns
+### Agent Composition: Agents as Tools
 
-Goa-AI supports four ways to implement tools, each optimized for different scenarios. The framework generates the boilerplate; you focus on business logic.
-
-| Pattern | DSL | What Codegen Generates | You Implement |
-|---------|-----|------------------------|---------------|
-| **Inline tools** | `Tool` with `Args`/`Return` | Specs, codecs, JSON schemas | Custom executor via `RegisterUsedToolsets` |
-| **Method-bound** | `Tool` + `BindTo` | Specs, codecs, transforms, executor factory | Wire service client to generated executor |
-| **Agent-as-tool** | `Export` + `Use` | Provider helpers, consumer registration, inline execution | Planner for the nested agent |
-| **MCP tools** | `MCPToolset` + `Use` | MCP executor, caller wiring | Provide `mcpruntime.Caller` in config |
-
-**Inline tools** give you maximum flexibility—define any schema and implement the executor however you like. Great for tools that don't map to existing services or need custom logic.
-
-**Method-bound tools** are the sweet spot for most projects. You already have Goa services with validated payloads and results; `BindTo` lets agents call them directly. Codegen handles the type mapping, and `Inject` keeps infrastructure fields (session IDs, auth tokens) hidden from the LLM.
-
-**Agent-as-tool** enables hierarchical agent architectures. A specialist agent (data analyst, code reviewer, researcher) can be invoked as a tool by an orchestrator. The nested agent runs inline in the same workflow—single transaction, unified history, no network hops
-required.
-
-**MCP tools** integrate external Model Context Protocol servers. Define the schema once, and Goa-AI generates typed wrappers with retry logic, tracing, and transport handling (HTTP, SSE, stdio).
-
-All patterns produce the same artifacts:
-- **Type-safe payload/result structs** under `gen/<svc>/agents/<agent>/specs/<toolset>/`
-- **JSON codecs** with `PayloadCodec(toolID)` and `ResultCodec(toolID)`
-- **Tool schemas JSON** at `gen/<svc>/agents/<agent>/specs/tool_schemas.json`
-
-### Agent-as-Tool (Composable Agents)
-
-Define tools in an `Export` block, and other agents can `Use` them seamlessly. Nested agents execute inline within the parent workflow history—single transaction, unified debugging, elegant composition.
+Agents can invoke other agents. Define specialist agents, compose them into orchestrators:
 
 ```go
-// Provider agent exports a toolset
-Agent("data-analyst", "Expert at data queries", func() {
-    Export("analysis", func() {
-        Tool("analyze", "Deep analysis of datasets", func() {
-            Args(AnalysisRequest)
-            Return(AnalysisResult)
+// Specialist agent exports tools
+Agent("researcher", "Research specialist", func() {
+    Export("research", func() {
+        Tool("deep_search", "Comprehensive research", func() {
+            Args(ResearchQuery)
+            Return(ResearchResult)
         })
     })
 })
 
-// Consumer agent uses it as a tool
-Agent("orchestrator", "Main chat agent", func() {
-    Use(AgentToolset("service", "data-analyst", "analysis"))
+// Orchestrator uses the specialist
+Agent("coordinator", "Main coordinator", func() {
+    Use(AgentToolset("svc", "researcher", "research"))
+    // coordinator can now call "research.deep_search" as a tool
 })
 ```
 
-### Universal MCP Adapter
+**Agent-as-tool runs inline**: The child agent executes within the parent's workflow—single transaction, unified history. The parent receives a `ToolResult` with a `RunLink` handle to the child run for debugging and UI rendering.
 
-Goa-AI is a two-way MCP bridge. **Write once, run anywhere.** Your logic runs as a service method, an agent tool, or an MCP server—simultaneously.
+### Policies: Guardrails for Production
 
-**1. Consuming MCP:** Import any MCP server as a typed toolset.
+Set limits on what agents can do:
 
 ```go
-// Use an external MCP server as a toolset
-var AssistantSuite = MCPToolset("assistant", "assistant-mcp")
-
-Agent("chat", "Chat agent with MCP tools", func() {
-    Use(AssistantSuite)
+Agent("assistant", "Production assistant", func() {
+    RunPolicy(func() {
+        DefaultCaps(
+            MaxToolCalls(20),                    // Total tools per run
+            MaxConsecutiveFailedToolCalls(3),   // Failures before abort
+        )
+        TimeBudget("5m")        // Wall-clock limit
+        InterruptsAllowed(true) // Enable pause/resume
+    })
 })
 ```
 
-**2. Serving MCP:** Expose your Goa service as an MCP server automatically.
+Policies are enforced by the runtime—not just suggestions.
+
+---
+
+## Streaming: Real-Time Visibility
+
+Agents are notoriously opaque. Goa-AI streams typed events throughout execution:
+
+```go
+// Receive events as they happen
+type MySink struct{}
+
+func (s *MySink) Send(ctx context.Context, event stream.Event) error {
+    switch e := event.(type) {
+    case *stream.ToolStart:
+        fmt.Printf("🔧 Starting: %s\n", e.Data.ToolName)
+    case *stream.ToolEnd:
+        fmt.Printf("✅ Completed: %s\n", e.Data.ToolName)
+    case *stream.AssistantReply:
+        fmt.Print(e.Data.Text) // Stream text as it arrives
+    case *stream.PlannerThought:
+        fmt.Printf("💭 %s\n", e.Data.Content)
+    }
+    return nil
+}
+
+func (s *MySink) Close(ctx context.Context) error { return nil }
+
+// Wire to runtime
+rt := runtime.New(runtime.WithStream(&MySink{}))
+
+// Or subscribe to a specific run
+stop, _ := rt.SubscribeRun(ctx, runID, &MySink{})
+defer stop()
+```
+
+**Stream profiles** filter events for different audiences:
+- `UserChatProfile()` — End-user chat UIs with nested agent cards
+- `AgentDebugProfile()` — Flattened debug view with full event firehose
+- `MetricsProfile()` — Usage and workflow events only for telemetry
+
+---
+
+## Durable Execution
+
+The in-memory engine is great for development. For production, swap in Temporal:
+
+```go
+import (
+    "go.temporal.io/sdk/client"
+    runtimeTemporal "goa.design/goa-ai/runtime/agent/engine/temporal"
+)
+
+func main() {
+    // Production engine: Temporal for durability
+    eng, _ := runtimeTemporal.New(runtimeTemporal.Options{
+        ClientOptions: &client.Options{
+            HostPort:  "localhost:7233",
+            Namespace: "default",
+        },
+        WorkerOptions: runtimeTemporal.WorkerOptions{
+            TaskQueue: "my-agents",
+        },
+    })
+    defer eng.Close()
+
+    rt := runtime.New(runtime.WithEngine(eng))
+    // ... register agents, same as before
+}
+```
+
+**What Temporal gives you:**
+- **Crash recovery** — Workers restart; runs resume from last checkpoint
+- **Automatic retries** — Failed tools retry without re-calling the LLM
+- **Rate limit handling** — Exponential backoff absorbs API throttling
+- **Deployment safety** — Rolling deploys don't lose in-flight work
+
+Your agent code doesn't change. Just swap the engine.
+
+---
+
+## MCP Integration
+
+Goa-AI is a two-way MCP bridge.
+
+**Consume MCP servers as typed toolsets:**
+
+```go
+var FilesystemTools = Toolset(FromMCP("filesystem", "filesystem-mcp"))
+
+Agent("assistant", "File assistant", func() {
+    Use(FilesystemTools)
+})
+```
+
+**Expose your services as MCP servers:**
 
 ```go
 Service("calculator", func() {
-    MCPServer("calc", "1.0.0") // Expose service as MCP server
+    MCP("calc", "1.0.0") // Enable MCP protocol
+
     Method("add", func() {
         Payload(func() { Attribute("a", Int); Attribute("b", Int) })
         Result(Int)
-        MCPTool("add", "Add two numbers") // Export this method as an MCP tool
+        Tool("add", "Add two numbers") // Export as MCP tool
     })
 })
 ```
 
-### Tool Schemas JSON
+Generated wrappers handle transport (HTTP, SSE, stdio), retries, and tracing.
 
-Every agent gets a backend-agnostic JSON catalogue at `gen/<service>/agents/<agent>/specs/tool_schemas.json`:
+---
 
-```json
-{
-  "tools": [
-    {
-      "id": "toolset.tool",
-      "service": "orchestrator",
-      "toolset": "helpers",
-      "title": "Answer a simple question",
-      "description": "Answer a simple question",
-      "payload": { "name": "Ask", "schema": { /* JSON Schema */ } },
-      "result": { "name": "Answer", "schema": { /* JSON Schema */ } }
-    }
-  ]
+## A2A Protocol: Cross-Platform Agent Interoperability
+
+**A2A** (Agent-to-Agent) is Google's open standard for agent interoperability. Goa-AI includes runtime primitives for A2A communication:
+
+```go
+// The a2a.Caller interface for invoking external A2A agents
+type Caller interface {
+    SendTask(ctx context.Context, req SendTaskRequest) (SendTaskResponse, error)
+}
+
+// Request/response types for A2A task invocation
+type SendTaskRequest struct {
+    Suite   string          // A2A agent identifier
+    Skill   string          // Skill to invoke
+    Payload json.RawMessage // JSON arguments
 }
 ```
 
-## The Plan → Execute → Resume Loop
+The `runtime/a2a` package provides:
+- **Caller interface** — Contract for A2A transport implementations
+- **Retry policies** — Configurable exponential backoff with jitter
+- **Error types** — JSON-RPC error codes per A2A spec
 
-1. **Start** — The runtime spins up a workflow for your agent (in-memory or Temporal)
-2. **Plan** — Your planner's `PlanStart` receives the conversation and decides: final answer or tool calls?
-3. **Execute** — Tool calls run through generated codecs, validated and type-safe
-4. **Resume** — `PlanResume` gets tool results; the loop continues until a final response or policy limits hit
-5. **Stream** — Events flow to UIs; transcripts persist if configured
+Transport implementations (HTTP SSE, JSON-RPC) satisfy the `Caller` interface, enabling generated toolset adapters to invoke external A2A agents.
 
-### Policies Keep Things Sane
+**A2A vs MCP:**
 
-Per-turn enforcement of:
-- Maximum tool calls
-- Consecutive failure limits
-- Time budgets
-- Tool allowlists via policy engines
+| | A2A | MCP |
+|---|-----|-----|
+| **Focus** | Agent-to-agent collaboration | Tool server integration |
+| **Model** | Task lifecycle with streaming | Stateless tool calls |
+| **Discovery** | Agent Cards with skills | Server capabilities |
+| **Use case** | Multi-agent workflows | Connecting tool servers |
 
-### System Reminders: Backstage Guidance for Models
+---
 
-Deliver structured, rate-limited guidance to models without polluting user conversations:
+## Internal Tool Registry: Cross-Process Discovery
 
-```go
-// Register a reminder from your planner
-input.Agent.AddReminder(reminder.Reminder{
-    ID:       "search.truncated",
-    Text:     "Results are truncated. Consider narrowing your query.",
-    Priority: reminder.TierCorrect,
-    Attachment: reminder.Attachment{Kind: reminder.AttachmentUserTurn},
-    MinTurnsBetween: 2,
-})
+When toolsets live in separate services that scale independently, you need dynamic discovery. The **Internal Tool Registry** is a clustered gateway that enables toolset discovery and invocation across process boundaries.
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Agent 1   │     │   Agent 2   │     │   Agent N   │
+└──────┬──────┘     └──────┬──────┘     └──────┬──────┘
+       │                   │                   │
+       └───────────────────┼───────────────────┘
+                           │ gRPC
+                    ┌──────▼──────┐
+                    │  Registry   │◄──── Cluster (same Name + Redis)
+                    │   Nodes     │
+                    └──────┬──────┘
+                           │ Pulse Streams
+       ┌───────────────────┼───────────────────┐
+       │                   │                   │
+┌──────▼──────┐     ┌──────▼──────┐     ┌──────▼──────┐
+│  Provider 1 │     │  Provider 2 │     │  Provider N │
+│  (Toolset)  │     │  (Toolset)  │     │  (Toolset)  │
+└─────────────┘     └─────────────┘     └─────────────┘
 ```
 
-Reminders are automatically wrapped in `<system-reminder>` tags and injected at appropriate points in the conversation. Use priority tiers (`TierSafety`, `TierCorrect`, `TierGuidance`) to ensure critical guidance is never suppressed. See [System Reminders docs](https://goa.design/docs/8-goa-ai/3-concepts/11-system-reminders/) for details.
-
-### Three Flavors of Tool Execution
-
-| Type                | How It Works                                                                         |
-|---------------------|--------------------------------------------------------------------------------------|
-| **Native toolsets** | Your implementations + generated codecs = typed, validated tools                     |
-| **Agent-as-tool**   | Nested agent runs inline within the same workflow history                            |
-| **MCP toolsets**    | Generated wrappers handle JSON schemas, transport (HTTP/SSE/stdio), retries, tracing |
-
-## Human-in-the-Loop
-
-Agents can pause mid-run to request human input or external tool results:
+**Run a registry node:**
 
 ```go
-// Pause a run for human review
-rt.PauseRun(ctx, interrupt.PauseRequest{
-    RunID:       "session-1-run-1",
-    Reason:      "human_review",
-    RequestedBy: "policy-engine",
+reg, _ := registry.New(ctx, registry.Config{
+    Redis: redisClient,
+    Name:  "my-registry",  // Nodes with same name form a cluster
 })
 
-// Resume after approval
-rt.ResumeRun(ctx, interrupt.ResumeRequest{
-    RunID:  "session-1-run-1",
-    Notes:  "Reviewer approved",
-})
+// Blocks until shutdown
+reg.Run(ctx, ":9090")
 ```
 
-The workflow loop drains pause/resume signals via the interrupt controller, updates the run store, and emits `run_paused` / `run_resumed` hook events so Pulse subscribers stay in sync.
+Or use the binary:
 
-## Streaming for UIs
+```bash
+# Single node
+REDIS_URL=localhost:6379 go run ./registry/cmd/registry
 
-Push real-time events to WebSocket/SSE or a message bus for live agent experiences.
-
-```go
-// Global broadcast (all runs)
-sink := &MySink{}
-rt := runtime.New(runtime.WithStream(sink))
-
-// Per-run streaming (per UI tab)
-closeFn, err := rt.SubscribeRun(ctx, runID, sink)
-defer closeFn()
+# Multi-node cluster (run on different hosts)
+REGISTRY_NAME=prod REGISTRY_ADDR=:9090 REDIS_URL=redis:6379 ./registry
+REGISTRY_NAME=prod REGISTRY_ADDR=:9091 REDIS_URL=redis:6379 ./registry
 ```
 
-The hook bus publishes structured events (`tool_start`, `tool_result`, `assistant_message`, `planner_thought`, ...) that memory stores persist and stream sinks carry to real-time UIs.
+**What clustering gives you:**
+- **Shared registrations** — Toolsets registered on any node are visible everywhere
+- **Coordinated health checks** — Distributed tickers ensure exactly one node pings at a time
+- **Automatic failover** — Connect to any node; they all serve identical state
+- **Horizontal scaling** — Add nodes to handle more gRPC connections
 
-## Provider-Precise Transcript Ledger
+---
 
-Long-running agents need to rebuild provider payloads exactly—thinking blocks, tool calls, and results in the precise order providers expect. The **transcript ledger** solves this:
+## Production Configuration
 
-- **Provider fidelity**: Preserves the exact ordering required by providers (thinking → tool_use → tool_result)
-- **Deterministic replay**: Stateless API safe for Temporal workflow replay
-- **Provider-agnostic storage**: JSON-friendly format converts to/from provider formats at edges
-- **Minimal footprint**: Stores only what's needed to rebuild payloads, nothing more
-
-The runtime automatically maintains the ledger, so planners get correct message history without manual bookkeeping.
-
-## Automatic Thinking/Event Capture
-
-By default, planners no longer need to emit streaming events. The runtime decorates the per-turn `model.Client` returned by `AgentContext.ModelClient(id)` so:
-
-- Streaming `Recv()` calls automatically publish assistant text and thinking blocks to the runtime bus
-- Unary `Complete()` emits assistant text and usage once at the end
-- The Bedrock client validates message ordering when thinking is enabled and fails fast with a precise error instead of a provider 400
-
-This means planners only pass new messages (system/user/tool_result) and the `RunID`; rehydration of prior provider-ready messages is handled by the runtime.
-
-## Feature Modules
-
-| Package                  | Purpose                                                |
-|--------------------------|--------------------------------------------------------|
-| `features/memory/mongo`  | Mongo-backed memory store for transcripts              |
-| `features/session/mongo` | Mongo-backed session store for multi-turn state        |
-| `features/run/mongo`     | Mongo-backed run store for run metadata                |
-| `features/stream/pulse`  | Pulse message bus sink for real-time streaming         |
-| `features/model/bedrock` | AWS Bedrock model client (Claude, etc.)                |
-| `features/model/openai`  | OpenAI-compatible model client                         |
-| `features/model/gateway` | Remote model gateway for centralized model serving     |
-| `features/policy/basic`  | Basic policy engine for tool filtering and caps        |
-
-## Start Simple, Scale Infinite
-
-Goa-AI runs anywhere. Start with the in-memory engine on your laptop. When you're ready for production, swap in Temporal, Mongo, and Pulse without changing your agent logic.
-
-**Production Wiring Example:**
+A fully-wired production setup:
 
 ```go
 func main() {
-    // 1. Durable Engine (Temporal)
-    temporalEng, _ := runtimeTemporal.New(runtimeTemporal.Options{
-        ClientOptions: &client.Options{HostPort: "127.0.0.1:7233", Namespace: "default"},
-        WorkerOptions: runtimeTemporal.WorkerOptions{TaskQueue: "orchestrator.chat"},
+    // Durable execution
+    eng, _ := runtimeTemporal.New(runtimeTemporal.Options{
+        ClientOptions: &client.Options{HostPort: "temporal:7233"},
+        WorkerOptions: runtimeTemporal.WorkerOptions{TaskQueue: "agents"},
     })
-    defer temporalEng.Close()
+    defer eng.Close()
 
-    // 2. Persistence & Streaming
+    // Persistence
     mongoClient := newMongoClient()
     redisClient := newRedisClient()
-    pulseSink, _ := pulse.NewSink(pulse.Options{Client: redisClient})
 
-    // 3. Production Runtime
-    rt := runtime.New(runtime.Options{
-        Engine:      temporalEng,
-        MemoryStore: memorymongo.New(mongoClient),
-        RunStore:    runmongo.New(mongoClient),
-        Stream:      pulseSink,
-        Policy:      basicpolicy.New(),
-        Logger:      telemetry.NewClueLogger(),
-        Metrics:     telemetry.NewClueMetrics(),
-        Tracer:      telemetry.NewClueTracer(),
+    // Model provider
+    modelClient, _ := bedrock.New(bedrock.Options{
+        Region: "us-east-1",
+        Model:  "anthropic.claude-sonnet-4-20250514-v1:0",
     })
 
+    // Streaming
+    pulseSink, _ := pulse.NewSink(pulse.Options{Client: redisClient})
+
+    // Wire it all together
+    rt := runtime.New(
+        runtime.WithEngine(eng),
+        runtime.WithMemoryStore(memorymongo.New(mongoClient)),
+        runtime.WithRunStore(runmongo.New(mongoClient)),
+        runtime.WithStream(pulseSink),
+        runtime.WithModelClient("claude", modelClient),
+        runtime.WithPolicy(basicpolicy.New()),
+        runtime.WithLogger(telemetry.NewClueLogger()),
+        runtime.WithMetrics(telemetry.NewClueMetrics()),
+        runtime.WithTracer(telemetry.NewClueTracer()),
+    )
+
+    // Register agents
     chat.RegisterChatAgent(ctx, rt, chat.ChatAgentConfig{
-        Planner:        newChatPlanner(),
-        PromptProvider: chat.NewPromptProvider(),
+        Planner: newChatPlanner(),
     })
 
     // Workers poll and execute; clients submit runs from anywhere
 }
 ```
 
+---
+
+## Feature Modules
+
+| Package | Purpose |
+|---------|---------|
+| **Model Providers** | |
+| `features/model/bedrock` | AWS Bedrock (Claude, Titan, etc.) |
+| `features/model/openai` | OpenAI-compatible APIs |
+| `features/model/gateway` | Remote model gateway for centralized serving |
+| **Persistence** | |
+| `features/memory/mongo` | Transcript storage |
+| `features/session/mongo` | Session state |
+| `features/run/mongo` | Run metadata and search |
+| **Streaming & Integration** | |
+| `features/stream/pulse` | Pulse (Redis Streams) for real-time events |
+| `features/policy/basic` | Policy engine for tool filtering |
+| `registry` | Clustered gateway for cross-process toolset discovery |
+| `runtime/a2a` | A2A protocol primitives (caller interface, retry policies) |
+
+---
+
+## Human-in-the-Loop
+
+Pause runs for human review, resume when ready:
+
+```go
+// Pause a run
+rt.PauseRun(ctx, interrupt.PauseRequest{
+    RunID:  "run-123",
+    Reason: "requires_approval",
+})
+
+// Resume after review
+rt.ResumeRun(ctx, interrupt.ResumeRequest{
+    RunID: "run-123",
+    Notes: "Approved by reviewer",
+})
+```
+
+The runtime updates run state and emits `run_paused`/`run_resumed` events for UI synchronization.
+
+---
+
 ## Best Practices
 
-**Design first** — Put all agent and tool schemas in the DSL. Add examples and validations. Let codegen own schemas and codecs.
+**Design first** — Put all schemas in the DSL. Add examples and validations. Let codegen own the infrastructure.
 
-**Never hand-encode** — Use generated codecs and clients everywhere. Avoid `json.Marshal`/`Unmarshal` for tool payloads.
+**Never hand-encode** — Use generated codecs everywhere. Avoid `json.Marshal` for tool payloads.
 
-**Keep planners focused** — Planners decide *what* (final answer vs. which tools). Tool implementations handle *how*.
+**Keep planners focused** — Planners decide *what* (which tools or final answer). Tool implementations handle *how*.
 
-**Split client from worker** — Register agents on workers; use generated typed clients from other processes to submit runs.
-
-**Compose with export/use** — Prefer agent-as-tool over brittle cross-service contracts. Single history, unified debugging.
+**Compose with agent-as-tool** — Prefer nested agents over brittle cross-service contracts. Single history, unified debugging.
 
 **Regenerate often** — DSL change → `goa gen` → lint/test → run. Never edit `gen/` manually.
 
-## Learning Resources
+---
 
-| Topic           | Resource                                               |
-|-----------------|--------------------------------------------------------|
-| DSL reference   | [`docs/dsl.md`](docs/dsl.md)                           |
-| Runtime guide   | [`docs/runtime.md`](docs/runtime.md)                   |
-| Overview        | [`docs/overview.md`](docs/overview.md)                 |
-| MCP integration | `codegen/mcp` and `runtime/mcp`                        |
-| Features        | `features/*` (memory, session, run, stream, model clients) |
-| Integration tests | `integration_tests/tests` (scenarios auto-run with `go test ./...`) |
+## Documentation
+
+| Guide | What You'll Learn |
+|-------|-------------------|
+| [Quickstart](https://goa.design/docs/8-goa-ai/quickstart/) | Installation and first agent in 10 minutes |
+| [DSL Reference](https://goa.design/docs/8-goa-ai/dsl-reference/) | Complete DSL: agents, toolsets, policies, MCP |
+| [Runtime](https://goa.design/docs/8-goa-ai/runtime/) | Plan/execute loop, engines, memory stores |
+| [Toolsets](https://goa.design/docs/8-goa-ai/toolsets/) | Service-backed tools, transforms, executors |
+| [Agent Composition](https://goa.design/docs/8-goa-ai/agent-composition/) | Agent-as-tool, run trees, streaming topology |
+| [MCP Integration](https://goa.design/docs/8-goa-ai/mcp-integration/) | MCP servers, transports, generated wrappers |
+| [A2A Protocol](https://goa.design/docs/8-goa-ai/a2a/) | Cross-platform agent interoperability |
+| [Registry](https://goa.design/docs/8-goa-ai/registry/) | Clustered toolset discovery and invocation |
+| [Production](https://goa.design/docs/8-goa-ai/production/) | Temporal setup, streaming UI, model providers |
+
+**In-repo references:**
+- [`docs/runtime.md`](docs/runtime.md) — Runtime architecture deep-dive
+- [`docs/dsl.md`](docs/dsl.md) — DSL design patterns
+- [`docs/overview.md`](docs/overview.md) — System overview
+
+---
 
 ## Requirements
 
-- Go 1.24+
-- Goa v3.22.2+
-- Temporal SDK v1.37.0 (adapter auto-wires OTEL interceptors)
-- MongoDB & Redis/Pulse (default memory + stream implementations; optional via feature modules)
+- **Go 1.24+**
+- **Goa v3.22.2+** — `go install goa.design/goa/v3/cmd/goa@latest`
+- **Temporal** (optional) — For durable execution in production
+- **MongoDB** (optional) — Default memory/session/run store implementation
+- **Redis** (optional) — For Pulse streaming and registry clustering
+
+---
 
 ## Contributing
 
-Issues and PRs are welcome! Please include a Goa design, failing test, or clear reproduction steps. See `AGENTS.md` for repository-specific guidelines.
+Issues and PRs welcome! Include a Goa design, failing test, or clear reproduction steps. See [`AGENTS.md`](AGENTS.md) for repository guidelines.
+
+---
 
 ## License
 
@@ -549,4 +634,6 @@ MIT License © Raphael Simon & [Goa community](https://goa.design).
 
 ---
 
-*Build agents that are a joy to develop and a breeze to operate. Welcome to Goa-AI.*
+<p align="center">
+  <i>Build agents that are a joy to develop and a breeze to operate.</i>
+</p>

@@ -92,13 +92,13 @@ func TestAgentCardIsStaticLiteral(t *testing.T) {
 	require.Contains(t, cardContent, `Tags:        []string{"analytics", "data"}`,
 		"skill tags should be static literals")
 
-	// Verify the AgentCard function only sets the URL field
-	require.Contains(t, cardContent, "func AgentCard(baseURL string) *AgentCard",
-		"AgentCard function should exist")
+	// Verify the GetAgentCard function only sets the URL field
+	require.Contains(t, cardContent, "func GetAgentCard(baseURL string) *AgentCard",
+		"GetAgentCard function should exist")
 	require.Contains(t, cardContent, "card := agentCardTemplate",
-		"AgentCard should copy the static template")
+		"GetAgentCard should copy the static template")
 	require.Contains(t, cardContent, "card.URL = baseURL",
-		"AgentCard should only set the URL field")
+		"GetAgentCard should only set the URL field")
 
 	// Verify no runtime builder functions exist
 	require.NotContains(t, cardContent, "func buildSkills()",

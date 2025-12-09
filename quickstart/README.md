@@ -111,9 +111,10 @@ func main() {
 
     // 3) Run it using the generated typed client
     client := chat.NewClient(rt)
-    out, err := client.Run(context.Background(),
+    out, err := client.Run(
+        context.Background(),
+        "session-1",
         []model.Message{{Role: "user", Content: "Say hi"}},
-        runtime.WithSessionID("session-1"),
     )
     if err != nil { panic(err) }
     fmt.Println("RunID:", out.RunID)

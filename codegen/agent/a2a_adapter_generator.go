@@ -34,7 +34,7 @@ func (g *a2aAdapterGenerator) BuildAdapterData(security *A2ASecurityData) *A2AAd
 	return &A2AAdapterData{
 		Agent:           g.agent,
 		A2AServiceName:  "a2a_" + g.agent.Name,
-		A2APackage:      "a2a" + codegen.SnakeCase(g.agent.Name),
+		A2APackage:      a2aPackageName(g.agent.Name),
 		ProtocolVersion: "1.0",
 		Skills:          g.BuildSkillData(),
 		Security:        security,
@@ -43,9 +43,19 @@ func (g *a2aAdapterGenerator) BuildAdapterData(security *A2ASecurityData) *A2AAd
 
 // BuildSkillData creates skill data from exported tools with computed type references.
 func (g *a2aAdapterGenerator) BuildSkillData() []*A2ASkillData {
+	return g.buildSkillDataFromToolsets(g.agent.ExportedToolsets)
+}
+
+// buildSkillDataFromToolsets creates skill data from the given toolsets. It is
+// shared by provider-side and consumer-side generators so that SkillConfig
+// metadata (IDs, schemas, examples) is derived in a single place.
+func (g *a2aAdapterGenerator) buildSkillDataFromToolsets(toolsets []*ToolsetData) []*A2ASkillData {
 	skills := make([]*A2ASkillData, 0)
 
-	for _, ts := range g.agent.ExportedToolsets {
+	for _, ts := range toolsets {
+		if ts == nil || len(ts.Tools) == 0 {
+			continue
+		}
 		for _, tool := range ts.Tools {
 			skill := &A2ASkillData{
 				ID:          tool.QualifiedName,
@@ -57,8 +67,8 @@ func (g *a2aAdapterGenerator) BuildSkillData() []*A2ASkillData {
 				skill.Name = tool.Name
 			}
 
-			// Compute type references using NameScope helpers
-			// ToolData uses Args for payload and Return for result
+			// Compute type references using NameScope helpers.
+			// ToolData uses Args for payload and Return for result.
 			if tool.Args.Type != expr.Empty {
 				skill.PayloadTypeRef = g.getTypeReference(tool.Args)
 				skill.InputSchema = g.toJSONSchema(tool.Args)

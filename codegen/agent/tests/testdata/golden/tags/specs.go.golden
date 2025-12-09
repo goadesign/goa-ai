@@ -11,7 +11,7 @@ import (
 	"encoding/json"
 	helpers "goa.design/goa-ai/alpha/tools/helpers"
 	"goa.design/goa-ai/runtime/agent/policy"
-	"goa.design/goa-ai/runtime/agent/tools"
+	tools "goa.design/goa-ai/runtime/agent/tools"
 	"sort"
 )
 

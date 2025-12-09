@@ -62,7 +62,7 @@ func TestStartRunSetsWorkflowName(t *testing.T) {
 		},
 	}
 	client := rt.MustClient(agent.Ident("service.agent"))
-	_, err := client.Start(context.Background(), nil, WithSessionID("sess-1"))
+	_, err := client.Start(context.Background(), "sess-1", nil)
 	require.NoError(t, err)
 	require.Equal(t, "service.workflow", eng.last.Workflow)
 }
@@ -80,15 +80,15 @@ func TestStartRunRequiresSessionID(t *testing.T) {
 	}
 	// Empty session ID
 	client := rt.MustClient(agent.Ident("service.agent"))
-	_, err := client.Start(context.Background(), nil)
+	_, err := client.Start(context.Background(), "", nil)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrMissingSessionID)
 	// Whitespace session ID
-	_, err = client.Start(context.Background(), nil, WithSessionID("  \t  "))
+	_, err = client.Start(context.Background(), "  \t  ", nil)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrMissingSessionID)
 	// Valid session ID
-	_, err = client.Start(context.Background(), nil, WithSessionID("s1"))
+	_, err = client.Start(context.Background(), "s1", nil)
 	require.NoError(t, err)
 }
 
@@ -108,9 +108,11 @@ func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 	memo := map[string]any{"wf": "name"}
 	sa := map[string]any{"SessionID": "s1"}
 
-	in := RunInput{AgentID: "service.agent"}
+	in := RunInput{
+		AgentID:   "service.agent",
+		SessionID: "sess-1",
+	}
 	for _, o := range []RunOption{
-		WithSessionID("sess-1"),
 		WithTurnID("turn-1"),
 		WithMetadata(meta),
 		WithTaskQueue("custom.q"),
@@ -120,9 +122,15 @@ func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 		o(&in)
 	}
 	client := rt.MustClient(agent.Ident("service.agent"))
-	_, err := client.Start(context.Background(), nil,
-		WithSessionID(in.SessionID), WithTurnID(in.TurnID), WithMetadata(in.Metadata),
-		WithTaskQueue(in.WorkflowOptions.TaskQueue), WithMemo(in.WorkflowOptions.Memo), WithSearchAttributes(in.WorkflowOptions.SearchAttributes),
+	_, err := client.Start(
+		context.Background(),
+		in.SessionID,
+		nil,
+		WithTurnID(in.TurnID),
+		WithMetadata(in.Metadata),
+		WithTaskQueue(in.WorkflowOptions.TaskQueue),
+		WithMemo(in.WorkflowOptions.Memo),
+		WithSearchAttributes(in.WorkflowOptions.SearchAttributes),
 	)
 	require.NoError(t, err)
 
@@ -218,11 +226,7 @@ func TestStartRunForwardsWorkflowOptions(t *testing.T) {
 		},
 	}
 	client := rt.MustClient(agent.Ident("service.agent"))
-	_, err := client.Start(context.Background(), nil,
-		WithSessionID(in.SessionID),
-		WithRunID(in.RunID),
-		WithWorkflowOptions(in.WorkflowOptions),
-	)
+	_, err := client.Start(context.Background(), in.SessionID, nil, WithRunID(in.RunID), WithWorkflowOptions(in.WorkflowOptions))
 	require.NoError(t, err)
 	require.Equal(t, "customq", eng.last.TaskQueue)
 	require.Equal(t, in.RunID, eng.last.ID)
@@ -262,7 +266,7 @@ func TestRegisterAgentAfterFirstRunIsRejected(t *testing.T) {
 	require.NoError(t, err)
 
 	// First run closes registration
-	_, err = rt.MustClient(agent.Ident("service.agent")).Start(context.Background(), nil, WithSessionID("sess-1"))
+	_, err = rt.MustClient(agent.Ident("service.agent")).Start(context.Background(), "sess-1", nil)
 	require.NoError(t, err)
 
 	// Registering a new agent afterwards is rejected

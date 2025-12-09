@@ -45,6 +45,12 @@ type (
 		// is a reference/alias (e.g., consumed under Uses or via AgentToolset).
 		// When nil, this toolset is the defining origin.
 		Origin *ToolsetExpr
+
+		// A2A holds optional A2A configuration for this toolset when it is
+		// exported via the A2A protocol. It is populated by the A2A DSL
+		// helper and validated at the root level to ensure it only appears
+		// on exported toolsets.
+		A2A *A2AExpr
 	}
 )
 
@@ -53,9 +59,31 @@ func (t *ToolsetExpr) EvalName() string {
 	return fmt.Sprintf("toolset %q", t.Name)
 }
 
+// SetDescription implements expr.DescriptionHolder, allowing the Description()
+// DSL function to set the toolset description.
+func (t *ToolsetExpr) SetDescription(d string) {
+	t.Description = d
+}
+
+// SetVersion implements expr.VersionHolder, allowing the Version() DSL
+// function to set the toolset version. Version is only valid for
+// registry-backed toolsets.
+func (t *ToolsetExpr) SetVersion(v string) {
+	if t.Provider == nil || t.Provider.Kind != ProviderRegistry {
+		// Validation will catch this; just store it for now
+		if t.Provider == nil {
+			t.Provider = &ProviderExpr{}
+		}
+	}
+	t.Provider.Version = v
+}
+
 // WalkSets exposes the nested expressions to the eval engine.
 func (t *ToolsetExpr) WalkSets(walk eval.SetWalker) {
 	walk(eval.ToExpressionSet(t.Tools))
+	if t.A2A != nil {
+		walk(eval.ExpressionSet{t.A2A})
+	}
 }
 
 // Validate performs semantic checks on the toolset expression.

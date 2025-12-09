@@ -27,7 +27,9 @@ const AgentID agent.Ident = "alpha.scribe"
 // Tool IDs for this exported toolset (globally unique). Use these typed
 // constants as keys for per-tool configuration maps (e.g., SystemPrompts).
 const (
-	Find tools.Ident = "find"
+	// Find is the canonical tool identifier for search.find.
+	// Tool IDs are always fully-qualified "<toolset>.<tool>" strings.
+	Find tools.Ident = "search.find"
 )
 
 // Type aliases and codec re-exports for convenience. These aliases preserve exact

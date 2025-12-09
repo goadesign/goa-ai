@@ -87,10 +87,10 @@ var agentCardTemplate = AgentCard{
 	{{- end }}
 }
 
-// AgentCard returns an A2A-compliant agent card for the {{ .Agent.GoName }} agent.
+// GetAgentCard returns an A2A-compliant agent card for the {{ .Agent.GoName }} agent.
 // The baseURL parameter should be the HTTP endpoint where the agent is accessible.
 // This function copies the static template and sets only the URL field.
-func AgentCard(baseURL string) *AgentCard {
+func GetAgentCard(baseURL string) *AgentCard {
 	card := agentCardTemplate
 	card.URL = baseURL
 	return &card

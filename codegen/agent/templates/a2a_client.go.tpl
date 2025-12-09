@@ -20,104 +20,6 @@ type A2AAuthProvider interface {
 	// ApplyAuth adds authentication to the request.
 	ApplyAuth(req *http.Request) error
 }
-
-// TaskRequest represents an A2A task request.
-type TaskRequest struct {
-	// ID is the unique task identifier.
-	ID string `json:"id"`
-	// Message contains the task message.
-	Message *TaskMessage `json:"message"`
-	// SessionID is an optional session identifier for multi-turn conversations.
-	SessionID string `json:"sessionId,omitempty"`
-	// Metadata contains optional task metadata.
-	Metadata map[string]any `json:"metadata,omitempty"`
-}
-
-// TaskMessage represents a message in an A2A task.
-type TaskMessage struct {
-	// Role is the message role (e.g., "user", "assistant").
-	Role string `json:"role"`
-	// Parts contains the message content parts.
-	Parts []*MessagePart `json:"parts"`
-}
-
-// MessagePart represents a part of a message.
-type MessagePart struct {
-	// Type is the part type (e.g., "text", "data").
-	Type string `json:"type"`
-	// Text is the text content (when Type is "text").
-	Text string `json:"text,omitempty"`
-	// Data is structured data content (when Type is "data").
-	Data any `json:"data,omitempty"`
-}
-
-// TaskResponse represents an A2A task response.
-type TaskResponse struct {
-	// ID is the task identifier.
-	ID string `json:"id"`
-	// Status is the task status.
-	Status *TaskStatus `json:"status"`
-	// Artifacts contains the task output artifacts.
-	Artifacts []*Artifact `json:"artifacts,omitempty"`
-	// History contains the conversation history.
-	History []*TaskMessage `json:"history,omitempty"`
-	// Metadata contains optional response metadata.
-	Metadata map[string]any `json:"metadata,omitempty"`
-}
-
-// TaskStatus represents the status of an A2A task.
-type TaskStatus struct {
-	// State is the task state (e.g., "completed", "failed", "working").
-	State string `json:"state"`
-	// Message is an optional status message.
-	Message *TaskMessage `json:"message,omitempty"`
-	// Timestamp is when the status was updated.
-	Timestamp string `json:"timestamp,omitempty"`
-}
-
-// Artifact represents an output artifact from a task.
-type Artifact struct {
-	// Name is the artifact name.
-	Name string `json:"name,omitempty"`
-	// Description describes the artifact.
-	Description string `json:"description,omitempty"`
-	// Parts contains the artifact content parts.
-	Parts []*MessagePart `json:"parts"`
-	// Index is the artifact index.
-	Index int `json:"index,omitempty"`
-	// Append indicates if this artifact appends to a previous one.
-	Append bool `json:"append,omitempty"`
-	// LastChunk indicates if this is the last chunk of a streaming artifact.
-	LastChunk bool `json:"lastChunk,omitempty"`
-	// Metadata contains optional artifact metadata.
-	Metadata map[string]any `json:"metadata,omitempty"`
-}
-
-// TaskEvent represents a streaming event from an A2A task.
-type TaskEvent struct {
-	// Type is the event type (e.g., "status", "artifact", "message").
-	Type string `json:"type"`
-	// TaskID is the task identifier.
-	TaskID string `json:"taskId"`
-	// Status is present for status events.
-	Status *TaskStatus `json:"status,omitempty"`
-	// Artifact is present for artifact events.
-	Artifact *Artifact `json:"artifact,omitempty"`
-	// Message is present for message events.
-	Message *TaskMessage `json:"message,omitempty"`
-	// Final indicates if this is the final event.
-	Final bool `json:"final,omitempty"`
-}
-
-// A2AError represents an error from an A2A agent.
-type A2AError struct {
-	// Code is the error code.
-	Code int `json:"code"`
-	// Message is the error message.
-	Message string `json:"message"`
-	// Data contains optional error data.
-	Data any `json:"data,omitempty"`
-}
 {{- if .HasSecuritySchemes }}
 {{- range .SecuritySchemes }}
 {{- if eq .Type "http" }}
@@ -410,10 +312,6 @@ func (c *A2AClient) SendTaskStreaming(ctx context.Context, skillID string, input
 	return events, nil
 }
 
-// Error implements the error interface.
-func (e *A2AError) Error() string {
-	return fmt.Sprintf("a2a error (code %d): %s", e.Code, e.Message)
-}
 {{- if .HasSecuritySchemes }}
 {{- range .SecuritySchemes }}
 {{- if eq .Type "http" }}
@@ -498,7 +396,7 @@ func (c *A2AClient) streamEvents(ctx context.Context, resp *http.Response, taskI
 						State: "failed",
 						Message: &TaskMessage{
 							Role:  "system",
-							Parts: []*MessagePart{{"{"}}Type: "text", Text: err.Error()}},
+							Parts: []*MessagePart{{"{{"}}Type: "text", Text: err.Error(){{"}}"}},
 						},
 					},
 					Final: true,

@@ -9,7 +9,7 @@ import (
 	codegen "goa.design/goa-ai/codegen/agent"
 	. "goa.design/goa-ai/dsl"
 	agentsExpr "goa.design/goa-ai/expr/agent"
-	goadsl "goa.design/goa/v3/dsl"
+	. "goa.design/goa/v3/dsl"
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -29,20 +29,20 @@ func TestA2ACardContainsRequiredFields(t *testing.T) {
 	require.NoError(t, eval.Register(agentsExpr.Root))
 
 	design := func() {
-		goadsl.API("a2a_card_test", func() {})
+		API("a2a_card_test", func() {})
 
 		localTools := Toolset("local_tools", func() {
 			Tool("analyze", "Analyze data", func() {
 				Args(func() {
-					goadsl.Attribute("input", goadsl.String, "Input data")
+					Attribute("input", String, "Input data")
 				})
 				Return(func() {
-					goadsl.Attribute("result", goadsl.String, "Analysis result")
+					Attribute("result", String, "Analysis result")
 				})
 			})
 		})
 
-		goadsl.Service("a2a_card_test", func() {
+		Service("a2a_card_test", func() {
 			Agent("test-agent", "Test agent for A2A card generation", func() {
 				Use(localTools)
 				Export(localTools)
@@ -78,8 +78,8 @@ func TestA2ACardContainsRequiredFields(t *testing.T) {
 	require.Contains(t, cardContent, "DefaultOutputModes:")
 	require.Contains(t, cardContent, "Skills:")
 
-	// Verify AgentCard function is generated
-	require.Contains(t, cardContent, "func AgentCard(baseURL string) *AgentCard")
+	// Verify GetAgentCard function is generated
+	require.Contains(t, cardContent, "func GetAgentCard(baseURL string) *AgentCard")
 	require.Contains(t, cardContent, "card.URL = baseURL")
 }
 
@@ -97,32 +97,32 @@ func TestA2ACardSkillsFromExportedTools(t *testing.T) {
 	require.NoError(t, eval.Register(agentsExpr.Root))
 
 	design := func() {
-		goadsl.API("skills_test", func() {})
+		API("skills_test", func() {})
 
 		dataTools := Toolset("data_tools", func() {
-			ToolsetDescription("Data processing tools")
+			Description("Data processing tools")
 			Tool("summarize", "Summarize text documents", func() {
 				Tags("nlp", "summarization")
 				Args(func() {
-					goadsl.Attribute("text", goadsl.String, "Text to summarize")
+					Attribute("text", String, "Text to summarize")
 				})
 				Return(func() {
-					goadsl.Attribute("summary", goadsl.String, "Summary")
+					Attribute("summary", String, "Summary")
 				})
 			})
 			Tool("translate", "Translate text between languages", func() {
 				Tags("nlp", "translation")
 				Args(func() {
-					goadsl.Attribute("text", goadsl.String, "Text to translate")
-					goadsl.Attribute("target_lang", goadsl.String, "Target language")
+					Attribute("text", String, "Text to translate")
+					Attribute("target_lang", String, "Target language")
 				})
 				Return(func() {
-					goadsl.Attribute("translated", goadsl.String, "Translated text")
+					Attribute("translated", String, "Translated text")
 				})
 			})
 		})
 
-		goadsl.Service("skills_test", func() {
+		Service("skills_test", func() {
 			Agent("data-agent", "Data processing agent", func() {
 				Use(dataTools)
 				Export(dataTools)
@@ -176,22 +176,22 @@ func TestA2ACardSecuritySchemes(t *testing.T) {
 	testSetup(t)
 
 	design := func() {
-		goadsl.API("security_test", func() {})
+		API("security_test", func() {})
 
-		jwtScheme := goadsl.JWTSecurity("jwt_auth", func() {
-			goadsl.Description("JWT authentication")
+		jwtScheme := JWTSecurity("jwt_auth", func() {
+			Description("JWT authentication")
 		})
 
 		secureTools := Toolset("secure_tools", func() {
 			Tool("secure_action", "Perform secure action", func() {
 				Args(func() {
-					goadsl.Attribute("data", goadsl.String, "Data")
+					Attribute("data", String, "Data")
 				})
 			})
 		})
 
-		goadsl.Service("security_test", func() {
-			goadsl.Security(jwtScheme)
+		Service("security_test", func() {
+			Security(jwtScheme)
 			Agent("secure-agent", "Secure agent", func() {
 				Use(secureTools)
 				Export(secureTools)
@@ -230,17 +230,17 @@ func TestA2ACardTypesFileGenerated(t *testing.T) {
 	require.NoError(t, eval.Register(agentsExpr.Root))
 
 	design := func() {
-		goadsl.API("types_test", func() {})
+		API("types_test", func() {})
 
 		tools := Toolset("action_tools", func() {
 			Tool("action", "Perform action", func() {
 				Args(func() {
-					goadsl.Attribute("input", goadsl.String, "Input")
+					Attribute("input", String, "Input")
 				})
 			})
 		})
 
-		goadsl.Service("types_test", func() {
+		Service("types_test", func() {
 			Agent("types-agent", "Types test agent", func() {
 				Use(tools)
 				Export(tools)
@@ -309,17 +309,17 @@ func TestA2ACardNoExportsNoGeneration(t *testing.T) {
 	require.NoError(t, eval.Register(agentsExpr.Root))
 
 	design := func() {
-		goadsl.API("no_export_test", func() {})
+		API("no_export_test", func() {})
 
 		tools := Toolset("action_tools", func() {
 			Tool("action", "Perform action", func() {
 				Args(func() {
-					goadsl.Attribute("input", goadsl.String, "Input")
+					Attribute("input", String, "Input")
 				})
 			})
 		})
 
-		goadsl.Service("no_export_test", func() {
+		Service("no_export_test", func() {
 			Agent("no-export-agent", "Agent without exports", func() {
 				Use(tools)
 				// No Export() - agent only consumes tools
@@ -357,12 +357,12 @@ func TestA2ACardMultipleToolsets(t *testing.T) {
 	require.NoError(t, eval.Register(agentsExpr.Root))
 
 	design := func() {
-		goadsl.API("multi_toolset_test", func() {})
+		API("multi_toolset_test", func() {})
 
 		dataTools := Toolset("data_tools", func() {
 			Tool("query", "Query data", func() {
 				Args(func() {
-					goadsl.Attribute("sql", goadsl.String, "SQL query")
+					Attribute("sql", String, "SQL query")
 				})
 			})
 		})
@@ -370,13 +370,13 @@ func TestA2ACardMultipleToolsets(t *testing.T) {
 		adminTools := Toolset("admin_tools", func() {
 			Tool("configure", "Configure settings", func() {
 				Args(func() {
-					goadsl.Attribute("key", goadsl.String, "Config key")
-					goadsl.Attribute("value", goadsl.String, "Config value")
+					Attribute("key", String, "Config key")
+					Attribute("value", String, "Config value")
 				})
 			})
 		})
 
-		goadsl.Service("multi_toolset_test", func() {
+		Service("multi_toolset_test", func() {
 			Agent("multi-agent", "Agent with multiple toolsets", func() {
 				Use(dataTools)
 				Use(adminTools)
@@ -422,22 +422,22 @@ func TestA2ACardAPIKeySecurityScheme(t *testing.T) {
 	testSetup(t)
 
 	design := func() {
-		goadsl.API("apikey_card_test", func() {})
+		API("apikey_card_test", func() {})
 
-		apiKeyScheme := goadsl.APIKeySecurity("api_key", func() {
-			goadsl.Description("API key authentication")
+		apiKeyScheme := APIKeySecurity("api_key", func() {
+			Description("API key authentication")
 		})
 
 		tools := Toolset("action_tools", func() {
 			Tool("action", "Perform action", func() {
 				Args(func() {
-					goadsl.Attribute("input", goadsl.String, "Input")
+					Attribute("input", String, "Input")
 				})
 			})
 		})
 
-		goadsl.Service("apikey_card_test", func() {
-			goadsl.Security(apiKeyScheme)
+		Service("apikey_card_test", func() {
+			Security(apiKeyScheme)
 			Agent("apikey-agent", "API key secured agent", func() {
 				Use(tools)
 				Export(tools)
@@ -472,27 +472,27 @@ func TestA2ACardOAuth2SecurityScheme(t *testing.T) {
 	require.NoError(t, eval.Register(agentsExpr.Root))
 
 	design := func() {
-		goadsl.API("oauth2_card_test", func() {})
+		API("oauth2_card_test", func() {})
 
-		oauth2Scheme := goadsl.OAuth2Security("oauth2_auth", func() {
-			goadsl.ClientCredentialsFlow(
+		oauth2Scheme := OAuth2Security("oauth2_auth", func() {
+			ClientCredentialsFlow(
 				"https://auth.example.com/oauth/token",
 				"",
 			)
-			goadsl.Scope("read", "Read access")
-			goadsl.Scope("write", "Write access")
+			Scope("read", "Read access")
+			Scope("write", "Write access")
 		})
 
 		tools := Toolset("action_tools", func() {
 			Tool("action", "Perform action", func() {
 				Args(func() {
-					goadsl.Attribute("input", goadsl.String, "Input")
+					Attribute("input", String, "Input")
 				})
 			})
 		})
 
-		goadsl.Service("oauth2_card_test", func() {
-			goadsl.Security(oauth2Scheme)
+		Service("oauth2_card_test", func() {
+			Security(oauth2Scheme)
 			Agent("oauth2-agent", "OAuth2 secured agent", func() {
 				Use(tools)
 				Export(tools)
@@ -535,22 +535,22 @@ func TestA2ACardBasicAuthSecurityScheme(t *testing.T) {
 	testSetup(t)
 
 	design := func() {
-		goadsl.API("basic_card_test", func() {})
+		API("basic_card_test", func() {})
 
-		basicScheme := goadsl.BasicAuthSecurity("basic_auth", func() {
-			goadsl.Description("Basic authentication")
+		basicScheme := BasicAuthSecurity("basic_auth", func() {
+			Description("Basic authentication")
 		})
 
 		tools := Toolset("action_tools", func() {
 			Tool("action", "Perform action", func() {
 				Args(func() {
-					goadsl.Attribute("input", goadsl.String, "Input")
+					Attribute("input", String, "Input")
 				})
 			})
 		})
 
-		goadsl.Service("basic_card_test", func() {
-			goadsl.Security(basicScheme)
+		Service("basic_card_test", func() {
+			Security(basicScheme)
 			Agent("basic-agent", "Basic auth secured agent", func() {
 				Use(tools)
 				Export(tools)

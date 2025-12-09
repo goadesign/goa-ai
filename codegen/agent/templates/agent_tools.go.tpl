@@ -11,7 +11,10 @@ const AgentID agent.Ident = {{ printf "%q" .Toolset.Agent.ID }}
 // constants as keys for per-tool configuration maps (e.g., SystemPrompts).
 const (
 {{- range .Toolset.Tools }}
-    {{ .ConstName }} tools.Ident = {{ printf "%q" .Name }}
+    // {{ .ConstName }} is the canonical tool identifier for {{ .QualifiedName }}.
+    // Tool IDs are always the fully-qualified "<toolset>.<tool>" form so they
+    // match Specs entries, planner requests, and runtime stream events exactly.
+    {{ .ConstName }} tools.Ident = {{ printf "%q" .QualifiedName }}
 {{- end }}
 )
 

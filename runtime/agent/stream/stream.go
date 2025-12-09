@@ -179,6 +179,10 @@ type (
 		OutputTokens int
 		// TotalTokens is the sum of input and output tokens.
 		TotalTokens int
+		// CacheReadTokens is tokens read from prompt cache (reduced cost).
+		CacheReadTokens int
+		// CacheWriteTokens is tokens written to prompt cache.
+		CacheWriteTokens int
 	}
 
 	// AssistantReplyPayload is the typed wire payload for assistant reply events.

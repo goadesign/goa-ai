@@ -64,3 +64,6 @@ run-example:
 
 gen-example:
 	cd example/complete && goa gen example.com/assistant/design
+
+gen-registry:
+	goa gen goa.design/goa-ai/registry/design -o registry

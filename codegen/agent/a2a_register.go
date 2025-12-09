@@ -8,7 +8,7 @@ import (
 )
 
 type (
-	// A2ARegisterData drives generation of runtime registration helpers for A2A agents.
+	// A2ARegisterData drives generation of static A2A configuration for agents.
 	A2ARegisterData struct {
 		// Package is the package name for the generated file.
 		Package string
@@ -45,8 +45,8 @@ type (
 	}
 )
 
-// a2aRegisterFile generates the registration helper file for an A2A agent.
-// This mirrors MCP's registerFile pattern.
+// a2aRegisterFile generates the static configuration file for an A2A agent.
+// It contains the ServerConfig and ProviderConfig variables used at runtime.
 func a2aRegisterFile(data *A2AAdapterData) *codegen.File {
 	if data == nil || len(data.Skills) == 0 {
 		return nil
@@ -59,12 +59,12 @@ func a2aRegisterFile(data *A2AAdapterData) *codegen.File {
 	}
 
 	agentName := codegen.SnakeCase(data.Agent.Name)
-	path := filepath.Join(codegen.Gendir, "a2a_"+agentName, "register.go")
+	path := filepath.Join(codegen.Gendir, "a2a_"+agentName, "config.go")
 
 	sections := []*codegen.SectionTemplate{
 		{
-			Name:   "a2a-register",
-			Source: agentsTemplates.Read(a2aRegisterFileT),
+			Name:   "a2a-config",
+			Source: agentsTemplates.Read(a2aConfigFileT),
 			Data:   regData,
 		},
 	}

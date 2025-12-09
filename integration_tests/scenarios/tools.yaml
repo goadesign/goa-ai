@@ -33,7 +33,9 @@ scenarios:
                   type: object
                   required: [ "text" ]
                   properties:
-                    text: { type: string }
+                    text:
+                      type: string
+                      description: "Input text to analyze"
 
   - name: tool_analyze_sentiment
     defaults:

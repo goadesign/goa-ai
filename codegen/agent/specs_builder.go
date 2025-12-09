@@ -81,6 +81,9 @@ type (
 		// view over a potentially larger data set (set via the BoundedResult DSL
 		// helper). It is propagated into ToolSpec for runtime consumers.
 		BoundedResult bool
+		// ResultReminder is an optional system reminder injected into the
+		// conversation after the tool result is returned.
+		ResultReminder string
 	}
 
 	// typeData holds all metadata needed to generate a type definition, schema,
@@ -263,6 +266,7 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 			Result:            result,
 			Sidecar:           sidecar,
 			BoundedResult:     tool.BoundedResult,
+			ResultReminder:    tool.ResultReminder,
 		}
 		data.addTool(entry)
 	}

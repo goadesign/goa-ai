@@ -27,6 +27,12 @@ type (
 		// DSL helper and propagated into specs so runtimes and services can enforce
 		// and surface truncation metadata consistently.
 		BoundedResult bool
+		// ResultReminder is an optional system reminder injected into the
+		// conversation after the tool result is returned. It provides backstage
+		// guidance to the model about how to interpret or present the result
+		// (for example, "The user sees a rendered graph of this data"). The
+		// runtime wraps this text in <system-reminder> tags.
+		ResultReminder string
 		// Payload describes the request schema for the tool.
 		Payload TypeSpec
 		// Result describes the response schema for the tool.

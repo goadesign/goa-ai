@@ -8,21 +8,79 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 )
 
-// AgentClient provides a narrow interface to run a specific agent.
+// AgentClient provides a typed interface for running a specific agent. Generated
+// code produces NewClient functions that return AgentClient implementations bound
+// to a particular agent's route information.
+//
+// SessionID is a required positional argument. Every run must belong to a session,
+// which groups related runs for memory accumulation and conversation tracking. The
+// runtime rejects empty or whitespace-only session IDs at the start of execution.
+//
+// The two methods serve different use cases:
+//   - Run: Blocks until the workflow completes and returns the final output. Use
+//     this for request/response patterns where the caller waits for the result.
+//   - Start: Returns immediately with a workflow handle for asynchronous interaction.
+//     Use this when you need to stream events, cancel the run, or wait with a
+//     custom timeout.
+//
+// Example usage:
+//
+//	client := chat.NewClient(rt)
+//
+//	// Synchronous run
+//	out, err := client.Run(ctx, "session-1", messages)
+//
+//	// Asynchronous run
+//	handle, err := client.Start(ctx, "session-1", messages)
+//	if err != nil {
+//	    return err
+//	}
+//	// Subscribe to events, then wait
+//	out, err := handle.Wait(ctx)
 type AgentClient interface {
-	Run(ctx context.Context, messages []*model.Message, opts ...RunOption) (*RunOutput, error)
-	Start(ctx context.Context, messages []*model.Message, opts ...RunOption) (engine.WorkflowHandle, error)
+	// Run starts a workflow and blocks until it completes, returning the final
+	// output containing the assistant message, tool events, and usage data.
+	// Returns an error if the workflow fails or is canceled.
+	Run(ctx context.Context, sessionID string, messages []*model.Message, opts ...RunOption) (*RunOutput, error)
+
+	// Start launches the workflow asynchronously and returns a handle for
+	// interaction. Callers use the handle to wait for completion, send signals,
+	// or cancel execution. The handle remains valid until the workflow terminates.
+	Start(ctx context.Context, sessionID string, messages []*model.Message, opts ...RunOption) (engine.WorkflowHandle, error)
 }
 
 // AgentRoute carries the minimum metadata a caller needs to construct an
 // AgentClient without registering the agent locally. This enables remote
-// caller processes to start workflows when workers are registered elsewhere.
+// caller processes (API gateways, CLIs, orchestrators) to start workflows
+// when workers are registered in separate processes.
+//
+// Generated code embeds route information in NewClient functions, so most
+// callers never construct AgentRoute manually. Use ClientFor or MustClientFor
+// when you need to target a specific queue or workflow name dynamically.
+//
+// Example:
+//
+//	// From generated code (preferred)
+//	client := chat.NewClient(rt)
+//
+//	// Manual route construction (advanced)
+//	route := runtime.AgentRoute{
+//	    ID:               agent.Ident("service.chat"),
+//	    WorkflowName:     "ChatWorkflow",
+//	    DefaultTaskQueue: "orchestrator.chat",
+//	}
+//	client := rt.MustClientFor(route)
 type AgentRoute struct {
-	// ID is the fully qualified agent identifier.
+	// ID is the fully qualified agent identifier (e.g., "service.chat").
+	// This must match the ID used during agent registration on workers.
 	ID agent.Ident
+
 	// WorkflowName is the workflow definition name registered by workers.
+	// Generated code derives this from the agent DSL (e.g., "ChatWorkflow").
 	WorkflowName string
+
 	// DefaultTaskQueue is the queue workers listen on for this agent.
+	// This can be overridden per-run using WithTaskQueue.
 	DefaultTaskQueue string
 }
 
@@ -81,12 +139,14 @@ type agentClient struct {
 
 func (c *agentClient) Run(
 	ctx context.Context,
+	sessionID string,
 	messages []*model.Message,
 	opts ...RunOption,
 ) (*RunOutput, error) {
 	in := RunInput{
-		AgentID:  c.id,
-		Messages: messages,
+		AgentID:   c.id,
+		SessionID: sessionID,
+		Messages:  messages,
 	}
 	for _, o := range opts {
 		if o != nil {
@@ -102,12 +162,14 @@ func (c *agentClient) Run(
 
 func (c *agentClient) Start(
 	ctx context.Context,
+	sessionID string,
 	messages []*model.Message,
 	opts ...RunOption,
 ) (engine.WorkflowHandle, error) {
 	in := RunInput{
-		AgentID:  c.id,
-		Messages: messages,
+		AgentID:   c.id,
+		SessionID: sessionID,
+		Messages:  messages,
 	}
 	for _, o := range opts {
 		if o != nil {
@@ -124,12 +186,14 @@ type agentClientRoute struct {
 
 func (c *agentClientRoute) Run(
 	ctx context.Context,
+	sessionID string,
 	messages []*model.Message,
 	opts ...RunOption,
 ) (*RunOutput, error) {
 	in := RunInput{
-		AgentID:  c.route.ID,
-		Messages: messages,
+		AgentID:   c.route.ID,
+		SessionID: sessionID,
+		Messages:  messages,
 	}
 	for _, o := range opts {
 		if o != nil {
@@ -145,12 +209,14 @@ func (c *agentClientRoute) Run(
 
 func (c *agentClientRoute) Start(
 	ctx context.Context,
+	sessionID string,
 	messages []*model.Message,
 	opts ...RunOption,
 ) (engine.WorkflowHandle, error) {
 	in := RunInput{
-		AgentID:  c.route.ID,
-		Messages: messages,
+		AgentID:   c.route.ID,
+		SessionID: sessionID,
+		Messages:  messages,
 	}
 	for _, o := range opts {
 		if o != nil {
@@ -159,5 +225,3 @@ func (c *agentClientRoute) Start(
 	}
 	return c.r.startRunWithRoute(ctx, &in, c.route)
 }
-
-

@@ -13,6 +13,8 @@ const (
 	ProviderMCP
 	// ProviderRegistry indicates a toolset sourced from a registry.
 	ProviderRegistry
+	// ProviderA2A indicates a toolset backed by a remote A2A provider.
+	ProviderA2A
 )
 
 // String returns a human-readable representation of the provider kind.
@@ -24,6 +26,8 @@ func (k ProviderKind) String() string {
 		return "mcp"
 	case ProviderRegistry:
 		return "registry"
+	case ProviderA2A:
+		return "a2a"
 	default:
 		return fmt.Sprintf("unknown(%d)", k)
 	}
@@ -32,7 +36,7 @@ func (k ProviderKind) String() string {
 // ProviderExpr captures the provider configuration for a toolset,
 // specifying where tool schemas come from and how tools are executed.
 type ProviderExpr struct {
-	// Kind identifies the provider type (local, MCP, or registry).
+	// Kind identifies the provider type (local, MCP, registry, or A2A).
 	Kind ProviderKind
 	// MCPService is the Goa service name that owns the MCP server
 	// definition. Used when Kind is ProviderMCP.
@@ -49,6 +53,14 @@ type ProviderExpr struct {
 	// Version pins the toolset to a specific version.
 	// Used when Kind is ProviderRegistry.
 	Version string
+
+	// A2ASuite is the A2A suite identifier for the remote provider.
+	// Used when Kind is ProviderA2A.
+	A2ASuite string
+
+	// A2AURL is the base URL for the remote A2A provider.
+	// Used when Kind is ProviderA2A.
+	A2AURL string
 }
 
 // EvalName returns a descriptive identifier for error reporting.
@@ -64,6 +76,8 @@ func (p *ProviderExpr) EvalName() string {
 			regName = p.Registry.Name
 		}
 		return fmt.Sprintf("registry provider (registry=%q, toolset=%q)", regName, p.ToolsetName)
+	case ProviderA2A:
+		return fmt.Sprintf("A2A provider (suite=%q, url=%q)", p.A2ASuite, p.A2AURL)
 	default:
 		return "local provider"
 	}

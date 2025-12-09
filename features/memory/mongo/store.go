@@ -9,31 +9,17 @@ import (
 	"goa.design/goa-ai/runtime/agent/memory"
 )
 
-// Options configures the Store wrapper.
-type Options struct {
-	Client clientsmongo.Client
-}
-
 // Store implements memory.Store by delegating to the Mongo client.
 type Store struct {
 	client clientsmongo.Client
 }
 
 // NewStore builds a Mongo-backed memory store using the provided client.
-func NewStore(opts Options) (*Store, error) {
-	if opts.Client == nil {
+func NewStore(client clientsmongo.Client) (*Store, error) {
+	if client == nil {
 		return nil, errors.New("client is required")
 	}
-	return &Store{client: opts.Client}, nil
-}
-
-// NewStoreFromMongo is a helper that instantiates the underlying client using the given options.
-func NewStoreFromMongo(opts clientsmongo.Options) (*Store, error) {
-	client, err := clientsmongo.New(opts)
-	if err != nil {
-		return nil, err
-	}
-	return NewStore(Options{Client: client})
+	return &Store{client: client}, nil
 }
 
 // LoadRun loads the snapshot for the given agent/run.

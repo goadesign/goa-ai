@@ -12,7 +12,7 @@ import (
 )
 
 func TestNewStoreRequiresClient(t *testing.T) {
-	_, err := NewStore(Options{})
+	_, err := NewStore(nil)
 	require.EqualError(t, err, "client is required")
 }
 
@@ -25,7 +25,7 @@ func TestLoadRunDelegatesToClient(t *testing.T) {
 		return expected, nil
 	})
 
-	store, err := NewStore(Options{Client: mockClient})
+	store, err := NewStore(mockClient)
 	require.NoError(t, err)
 
 	actual, err := store.LoadRun(context.Background(), "agent", "run")
@@ -36,7 +36,7 @@ func TestLoadRunDelegatesToClient(t *testing.T) {
 
 func TestAppendEventsSkipsEmpty(t *testing.T) {
 	mockClient := mockmongo.NewClient(t)
-	store, err := NewStore(Options{Client: mockClient})
+	store, err := NewStore(mockClient)
 	require.NoError(t, err)
 
 	err = store.AppendEvents(context.Background(), "agent", "run")
@@ -53,7 +53,7 @@ func TestAppendEventsDelegates(t *testing.T) {
 		require.Equal(t, memory.EventToolCall, events[0].Type)
 		return nil
 	})
-	store, err := NewStore(Options{Client: mockClient})
+	store, err := NewStore(mockClient)
 	require.NoError(t, err)
 
 	err = store.AppendEvents(context.Background(), "agent", "run", memory.Event{Type: memory.EventToolCall})
@@ -61,7 +61,7 @@ func TestAppendEventsDelegates(t *testing.T) {
 	require.False(t, mockClient.HasMore())
 }
 
-func TestNewStoreFromMongoValidatesOptions(t *testing.T) {
-	_, err := NewStoreFromMongo(clientsmongo.Options{})
+func TestNewClientValidatesOptions(t *testing.T) {
+	_, err := clientsmongo.New(clientsmongo.Options{})
 	require.EqualError(t, err, "mongo client is required")
 }
