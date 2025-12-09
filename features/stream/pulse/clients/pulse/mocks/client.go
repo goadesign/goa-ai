@@ -32,6 +32,7 @@ type (
 
 	StreamAddFunc     func(ctx context.Context, event string, payload []byte) (string, error)
 	StreamNewSinkFunc func(ctx context.Context, name string, opts ...options.Sink) (pulse.Sink, error)
+	StreamDestroyFunc func(ctx context.Context) error
 
 	Sink struct {
 		m *mock.Mock
@@ -129,6 +130,23 @@ func (m *Stream) NewSink(ctx context.Context, name string, opts ...options.Sink)
 	m.t.Helper()
 	m.t.Error("unexpected NewSink call")
 	return nil, nil
+}
+
+func (m *Stream) AddDestroy(f StreamDestroyFunc) {
+	m.m.Add("Destroy", f)
+}
+
+func (m *Stream) SetDestroy(f StreamDestroyFunc) {
+	m.m.Set("Destroy", f)
+}
+
+func (m *Stream) Destroy(ctx context.Context) error {
+	if f := m.m.Next("Destroy"); f != nil {
+		return f.(StreamDestroyFunc)(ctx)
+	}
+	m.t.Helper()
+	m.t.Error("unexpected Destroy call")
+	return nil
 }
 
 func (m *Stream) HasMore() bool {

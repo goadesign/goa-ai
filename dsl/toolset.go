@@ -90,6 +90,8 @@ func Toolset(args ...any) *agentsexpr.ToolsetExpr {
 			name = provider.MCPToolset
 		case agentsexpr.ProviderRegistry:
 			name = provider.ToolsetName
+		case agentsexpr.ProviderA2A:
+			name = provider.A2ASuite
 		}
 	}
 
@@ -154,10 +156,10 @@ func FromMCP(service, toolset string) *agentsexpr.ProviderExpr {
 //
 //	var RegistryTools = Toolset("my-tools", FromRegistry(CorpRegistry, "data-tools"))
 //
-// For version pinning, use the ToolsetVersion DSL inside the Toolset:
+// For version pinning, use the Version DSL inside the Toolset:
 //
 //	var PinnedTools = Toolset(FromRegistry(CorpRegistry, "data-tools"), func() {
-//	    ToolsetVersion("1.2.3")
+//	    Version("1.2.3")
 //	})
 func FromRegistry(registry *agentsexpr.RegistryExpr, toolset string) *agentsexpr.ProviderExpr {
 	if registry == nil {
@@ -175,52 +177,34 @@ func FromRegistry(registry *agentsexpr.RegistryExpr, toolset string) *agentsexpr
 	}
 }
 
-// ToolsetVersion pins a registry-backed toolset to a specific version.
+// FromA2A configures a toolset to be backed by a remote A2A provider. Use
+// FromA2A as a provider option when declaring a Toolset.
 //
-// ToolsetVersion must appear in a Toolset expression that uses FromRegistry.
-//
-// Example:
-//
-//	var PinnedTools = Toolset("stable-tools", FromRegistry(CorpRegistry, "data-tools"), func() {
-//	    ToolsetVersion("1.2.3")
-//	})
-func ToolsetVersion(version string) {
-	ts, ok := eval.Current().(*agentsexpr.ToolsetExpr)
-	if !ok {
-		eval.IncompatibleDSL()
-		return
-	}
-	if ts.Provider == nil {
-		eval.ReportError("Version requires a provider; use FromRegistry")
-		return
-	}
-	if ts.Provider.Kind != agentsexpr.ProviderRegistry {
-		eval.ReportError("Version is only valid for registry-backed toolsets")
-		return
-	}
-	ts.Provider.Version = version
-}
-
-// ToolsetDescription sets a human-readable description for the current toolset.
-// This description can help document the toolset's purpose and capabilities.
-//
-// ToolsetDescription must appear in a Toolset expression.
-//
-// ToolsetDescription takes a single string argument.
+// FromA2A takes:
+//   - suite: A2A suite identifier for the remote agent (for example, "svc.agent.tools")
+//   - url:   base URL for the remote A2A server
 //
 // Example:
 //
-//	Toolset("data-tools", func() {
-//	    ToolsetDescription("Tools for data processing and analysis")
-//	    Tool("analyze", "Analyze dataset", func() { ... })
-//	})
-func ToolsetDescription(s string) {
-	ts, ok := eval.Current().(*agentsexpr.ToolsetExpr)
-	if !ok {
-		eval.IncompatibleDSL()
-		return
+//	var RemoteTools = Toolset(FromA2A("svc.agent.tools", "https://provider.example.com"))
+//
+// Or with an explicit name:
+//
+//	var RemoteTools = Toolset("remote-tools", FromA2A("svc.agent.tools", "https://provider.example.com"))
+func FromA2A(suite, url string) *agentsexpr.ProviderExpr {
+	if suite == "" {
+		eval.ReportError("FromA2A requires non-empty suite identifier")
+		return nil
 	}
-	ts.Description = s
+	if url == "" {
+		eval.ReportError("FromA2A requires non-empty URL")
+		return nil
+	}
+	return &agentsexpr.ProviderExpr{
+		Kind:     agentsexpr.ProviderA2A,
+		A2ASuite: suite,
+		A2AURL:   url,
+	}
 }
 
 // buildToolsetExpr constructs a ToolsetExpr from a value and DSL function.

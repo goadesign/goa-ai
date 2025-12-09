@@ -453,6 +453,65 @@ func TestA2AClientOptionsGenerated(t *testing.T) {
 	require.Contains(t, clientContent, "ApplyAuth(req *http.Request) error")
 }
 
+// TestA2AClientStreamEventsErrorHandling verifies that the generated A2A client
+// streamEvents method has correct struct literal syntax for error handling.
+// This test guards against a regression where the MessagePart struct literal
+// was missing the inner braces ({{Type: ...}} instead of {Type: ...}).
+func TestA2AClientStreamEventsErrorHandling(t *testing.T) {
+	eval.Reset()
+	goaexpr.Root = new(goaexpr.RootExpr)
+	goaexpr.GeneratedResultTypes = new(goaexpr.ResultTypesRoot)
+	require.NoError(t, eval.Register(goaexpr.Root))
+	require.NoError(t, eval.Register(goaexpr.GeneratedResultTypes))
+
+	agentsExpr.Root = &agentsExpr.RootExpr{}
+	require.NoError(t, eval.Register(agentsExpr.Root))
+
+	design := func() {
+		goadsl.API("a2a_stream_error_test", func() {})
+
+		tools := Toolset("stream_tools", func() {
+			Tool("action", "Perform action", func() {
+				Args(func() {
+					goadsl.Attribute("input", goadsl.String, "Input")
+				})
+			})
+		})
+
+		goadsl.Service("a2a_stream_error_test", func() {
+			Agent("stream-agent", "Agent for streaming error handling", func() {
+				Use(tools)
+				Export(tools)
+			})
+		})
+	}
+	require.True(t, eval.Execute(design, nil), eval.Context.Error())
+	require.NoError(t, eval.RunDSL())
+
+	files, err := codegen.Generate("example.com/a2a_stream_error", []eval.Root{goaexpr.Root, agentsExpr.Root}, nil)
+	require.NoError(t, err)
+
+	var clientContent string
+	expectedPath := filepath.ToSlash("gen/a2a_stream_error_test/agents/stream_agent/a2a/client.go")
+	for _, f := range files {
+		if filepath.ToSlash(f.Path) == expectedPath {
+			var buf bytes.Buffer
+			for _, s := range f.SectionTemplates {
+				require.NoError(t, s.Write(&buf))
+			}
+			clientContent = buf.String()
+			break
+		}
+	}
+	require.NotEmpty(t, clientContent, "expected generated client.go at %s", expectedPath)
+
+	// Verify the struct literal syntax is correct in error handling
+	// The correct syntax is []*MessagePart{{Type: "text", Text: ...}}
+	// NOT []*MessagePart{Type: "text", Text: ...} (which is invalid Go)
+	require.Contains(t, clientContent, `Parts: []*MessagePart{{Type: "text", Text: err.Error()}}`,
+		"struct literal inside slice should have double braces")
+}
+
 // TestA2AClientJSONRPCTypesGenerated verifies that the generated A2A client
 // contains JSON-RPC request/response types.
 // **Validates: Requirements 14.2**

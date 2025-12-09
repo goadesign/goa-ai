@@ -134,7 +134,7 @@ func TestRegistryFullConfiguration(t *testing.T) {
 			URL("https://registry.corp.internal")
 			APIVersion("v2")
 			Security(apiKey)
-			RegistryTimeout("30s")
+			Timeout("30s")
 			Retry(3, "1s")
 			SyncInterval("5m")
 			CacheTTL("1h")
@@ -231,7 +231,7 @@ func TestFromRegistryWithVersion(t *testing.T) {
 		})
 
 		Toolset(FromRegistry(reg, "data-tools"), func() {
-			ToolsetVersion("1.2.3")
+			Version("1.2.3")
 		})
 	})
 
@@ -340,6 +340,15 @@ func TestFromRegistryProviderExpr(t *testing.T) {
 	})
 }
 
+// TestFromA2AProviderExpr verifies FromA2A creates an A2A provider expression.
+func TestFromA2AProviderExpr(t *testing.T) {
+	provider := FromA2A("svc.agent.tools", "https://provider.example.com")
+	require.NotNil(t, provider)
+	require.Equal(t, agentsexpr.ProviderA2A, provider.Kind)
+	require.Equal(t, "svc.agent.tools", provider.A2ASuite)
+	require.Equal(t, "https://provider.example.com", provider.A2AURL)
+}
+
 // TestRegistryMinimalConfiguration verifies Registry works with minimal config.
 func TestRegistryMinimalConfiguration(t *testing.T) {
 	runDSL(t, func() {
@@ -397,11 +406,11 @@ func TestFederationExcludeOnly(t *testing.T) {
 	require.Equal(t, []string{"experimental/*", "deprecated/*"}, reg.Federation.Exclude)
 }
 
-// TestToolsetWithDescription verifies ToolsetDescription works.
+// TestToolsetWithDescription verifies Description works inside Toolset.
 func TestToolsetWithDescription(t *testing.T) {
 	runDSL(t, func() {
 		Toolset("described-toolset", func() {
-			ToolsetDescription("A toolset with a description")
+			Description("A toolset with a description")
 			Tool("tool1", "A tool", func() {})
 		})
 	})

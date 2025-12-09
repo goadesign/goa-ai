@@ -1,6 +1,32 @@
 // Package planner defines the contracts between user-provided planners and the
-// goa-ai runtime. Planners decide which tools to call (or when to answer
-// directly) based on the current messages, run context, and planner events.
+// goa-ai runtime. Planners are the decision-makers in agent execution: they
+// analyze conversation history and either request tool calls or produce a final
+// assistant response.
+//
+// The runtime invokes planners through two entry points:
+//   - PlanStart: Called once at run start with the initial messages
+//   - PlanResume: Called after each batch of tool calls with their results
+//
+// Planners have read-only access to runtime services (memory, models, telemetry)
+// through PlannerContext, and can emit streaming events through PlannerEvents.
+// The runtime handles workflow orchestration, policy enforcement, and tool
+// execution; planners focus purely on decision-making.
+//
+// Implementing a Planner:
+//
+//	type MyPlanner struct{}
+//
+//	func (p *MyPlanner) PlanStart(ctx context.Context, input *PlanInput) (*PlanResult, error) {
+//	    // Analyze input.Messages and decide:
+//	    // - Return tool calls: &PlanResult{ToolCalls: [...]}
+//	    // - Return final answer: &PlanResult{FinalResponse: &FinalResponse{...}}
+//	    // - Request clarification: &PlanResult{Await: &Await{Clarification: ...}}
+//	}
+//
+//	func (p *MyPlanner) PlanResume(ctx context.Context, input *PlanResumeInput) (*PlanResult, error) {
+//	    // Process input.ToolResults and decide next step
+//	    // The Finalize field is non-nil when runtime forces termination
+//	}
 package planner
 
 import (
@@ -16,10 +42,31 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-// Planner is the agent decision maker: it analyzes messages and returns either
-// tool calls to execute or a final assistant response.
+// Planner is the core decision-making interface for agents. Each agent has exactly
+// one planner that determines how the agent responds to user messages.
+//
+// The contract is deliberately simple: receive context, return a decision. The
+// runtime handles everything else—workflow execution, tool scheduling, policy
+// enforcement, memory persistence, and event streaming.
+//
+// Thread safety: A single Planner instance may be invoked concurrently for
+// different runs. Implementations must be safe for concurrent use. Avoid
+// storing per-run state in the Planner struct; use PlannerContext.State() for
+// ephemeral per-run data if needed.
+//
+// Error handling: Errors returned from PlanStart or PlanResume terminate the
+// run with a failed status. Use RetryHint in PlanResult to communicate
+// recoverable failures (like validation errors) without terminating.
 type Planner interface {
+	// PlanStart receives the initial messages and returns the first decision.
+	// This is called exactly once at the start of each run.
 	PlanStart(ctx context.Context, input *PlanInput) (*PlanResult, error)
+
+	// PlanResume receives messages plus tool results from the previous turn.
+	// This is called after each batch of tool executions until the planner
+	// returns a FinalResponse or the runtime terminates due to policy limits.
+	// When the runtime forces termination (caps exhausted, time budget expired),
+	// the Finalize field is set and the planner should produce a final response.
 	PlanResume(ctx context.Context, input *PlanResumeInput) (*PlanResult, error)
 }
 

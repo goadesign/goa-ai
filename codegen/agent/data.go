@@ -525,6 +525,11 @@ type (
 		// truncation metadata consistently.
 		BoundedResult bool
 
+		// ResultReminder is an optional system reminder injected into the
+		// conversation after the tool result is returned. It provides backstage
+		// guidance to the model about how to interpret or present the result.
+		ResultReminder string
+
 		// PassthroughService is the Goa service name for deterministic forwarding
 		// when this tool is part of an exported toolset.
 		PassthroughService string
@@ -1256,6 +1261,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		ResultHintTemplate: expr.ResultHintTemplate,
 		InjectedFields:     expr.InjectedFields,
 		BoundedResult:      expr.BoundedResult,
+		ResultReminder:     expr.ResultReminder,
 	}
 	if expr.ExportPassthrough != nil {
 		tool.PassthroughService = expr.ExportPassthrough.TargetService

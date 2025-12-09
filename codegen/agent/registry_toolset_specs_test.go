@@ -1,17 +1,17 @@
 package codegen_test
 
 import (
-"bytes"
-"path/filepath"
-"testing"
+	"bytes"
+	"path/filepath"
+	"testing"
 
-"github.com/stretchr/testify/require"
-codegen "goa.design/goa-ai/codegen/agent"
-. "goa.design/goa-ai/dsl"
-agentsExpr "goa.design/goa-ai/expr/agent"
-goadsl "goa.design/goa/v3/dsl"
-"goa.design/goa/v3/eval"
-goaexpr "goa.design/goa/v3/expr"
+	"github.com/stretchr/testify/require"
+	codegen "goa.design/goa-ai/codegen/agent"
+	. "goa.design/goa-ai/dsl"
+	agentsExpr "goa.design/goa-ai/expr/agent"
+	goadsl "goa.design/goa/v3/dsl"
+	"goa.design/goa/v3/eval"
+	goaexpr "goa.design/goa/v3/expr"
 )
 
 // TestRegistryToolsetSpecsStructure verifies that registry-backed toolsets
@@ -101,7 +101,7 @@ func TestRegistryToolsetSpecsMetadata(t *testing.T) {
 		})
 
 		pinnedTools := Toolset("pinned-tools", FromRegistry(testRegistry, "enterprise-tools"), func() {
-			ToolsetVersion("1.2.3")
+			goadsl.Version("1.2.3")
 		})
 
 		goadsl.Service("meta_test", func() {

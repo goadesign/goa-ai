@@ -200,7 +200,7 @@ func TestRegistrationCompletenessMetadataPreserved(t *testing.T) {
 	properties.TestingRun(t)
 }
 
-// TestRegistrationFileGeneration verifies that the registration file is generated.
+// TestRegistrationFileGeneration verifies that the configuration file is generated.
 // **Feature: a2a-codegen-refactor, Property 11: Registration Completeness**
 // **Validates: Requirements 7.2**
 func TestRegistrationFileGeneration(t *testing.T) {
@@ -208,7 +208,7 @@ func TestRegistrationFileGeneration(t *testing.T) {
 	parameters.MinSuccessfulTests = 100
 	properties := gopter.NewProperties(parameters)
 
-	properties.Property("registration file is generated for agents with skills", prop.ForAll(
+	properties.Property("configuration file is generated for agents with skills", prop.ForAll(
 		func(toolNames []string) bool {
 			if len(toolNames) == 0 {
 				return true
@@ -220,18 +220,18 @@ func TestRegistrationFileGeneration(t *testing.T) {
 			adapterGen := newA2AAdapterGenerator("example.com/test/gen", agent)
 			adapterData := adapterGen.BuildAdapterData(security)
 
-			regFile := a2aRegisterFile(adapterData)
-			if regFile == nil {
+			cfgFile := a2aRegisterFile(adapterData)
+			if cfgFile == nil {
 				return false
 			}
 
 			// Verify file path
-			if !strings.Contains(regFile.Path, "register.go") {
+			if !strings.Contains(cfgFile.Path, "config.go") {
 				return false
 			}
 
 			// Verify sections exist
-			if len(regFile.SectionTemplates) == 0 {
+			if len(cfgFile.SectionTemplates) == 0 {
 				return false
 			}
 

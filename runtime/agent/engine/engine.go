@@ -1,7 +1,65 @@
-// Package engine defines the workflow engine abstractions and adapters for
-// durable execution backends. It provides a pluggable interface so generated
-// code can target Temporal, custom engines, or in-memory implementations
-// without modification.
+// Package engine defines workflow engine abstractions for durable agent
+// execution. It provides pluggable interfaces so generated code and the runtime
+// can target Temporal, in-memory, or custom backends without modification.
+//
+// # Core Abstractions
+//
+// The package defines several key interfaces:
+//
+//   - Engine: Registers workflows and activities, starts workflow executions.
+//     The runtime calls Engine methods during agent registration and run submission.
+//
+//   - WorkflowContext: Provides deterministic operations inside workflow handlers.
+//     Generated workflow code uses this to schedule activities, handle signals,
+//     and start child workflows. Implementations must ensure replay-safe behavior.
+//
+//   - WorkflowHandle: Represents a running workflow. Callers use handles to wait
+//     for completion, send signals, or cancel execution.
+//
+//   - Future: Represents a pending activity result. Enables parallel execution
+//     by allowing workflows to launch multiple activities and collect results later.
+//
+//   - SignalChannel: Delivers external signals to workflows in a deterministic way.
+//     Used for pause/resume, clarification answers, and external tool results.
+//
+// # Available Implementations
+//
+// Two engine implementations ship with goa-ai:
+//
+//   - temporal: Production-grade durable execution backed by Temporal. Supports
+//     workflow replay, long-running execution, and distributed workers.
+//
+//   - inmem: In-memory synchronous execution for development and testing.
+//     No durability, no workers, runs immediately in the caller's goroutine.
+//
+// # Determinism Requirements
+//
+// Workflow handlers run in a deterministic environment where the same inputs
+// and history must produce the same outputs. WorkflowContext enforces this by:
+//
+//   - Providing Now() instead of time.Now() for workflow time
+//   - Requiring activities for all I/O operations
+//   - Using replay-safe signal channels
+//
+// Activities (planner calls, tool execution) are NOT deterministic and can
+// perform arbitrary I/O. The engine records activity inputs/outputs and replays
+// them during workflow recovery.
+//
+// # Usage Pattern
+//
+//	// Create engine (Temporal for production)
+//	eng, _ := temporal.New(temporal.Options{...})
+//	defer eng.Close()
+//
+//	// Create runtime with engine
+//	rt := runtime.New(runtime.WithEngine(eng))
+//
+//	// Register agents (registers workflows/activities on engine)
+//	chat.RegisterChatAgent(ctx, rt, chat.ChatAgentConfig{...})
+//
+//	// Start runs (submits workflows to engine)
+//	client := chat.NewClient(rt)
+//	out, _ := client.Run(ctx, "session-1", messages)
 package engine
 
 import (

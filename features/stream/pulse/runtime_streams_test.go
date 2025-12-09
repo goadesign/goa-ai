@@ -88,6 +88,10 @@ func (f *fakeStream) NewSink(ctx context.Context, name string, opts ...streamopt
 	return f.sink, nil
 }
 
+func (f *fakeStream) Destroy(ctx context.Context) error {
+	return nil
+}
+
 type fakeSink struct {
 	events chan *streaming.Event
 	closed bool

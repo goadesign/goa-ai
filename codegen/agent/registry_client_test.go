@@ -21,7 +21,7 @@ func TestRegistryClientGeneratesCorrectMethods(t *testing.T) {
 		corpRegistry := Registry("corp-registry", func() {
 			goadsl.URL("https://registry.corp.internal")
 			APIVersion("v1")
-			RegistryTimeout("30s")
+			goadsl.Timeout("30s")
 			Retry(3, "1s")
 			SyncInterval("5m")
 			CacheTTL("1h")

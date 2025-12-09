@@ -6,7 +6,7 @@ require (
 	github.com/google/uuid v1.6.0
 	goa.design/clue v1.2.3
 	goa.design/goa-ai v0.0.0
-	goa.design/goa/v3 v3.23.2
+	goa.design/goa/v3 v3.23.3
 )
 
 require (

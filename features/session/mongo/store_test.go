@@ -12,7 +12,7 @@ import (
 )
 
 func TestNewStoreRequiresClient(t *testing.T) {
-	_, err := NewStore(Options{})
+	_, err := NewStore(nil)
 	require.EqualError(t, err, "client is required")
 }
 
@@ -23,7 +23,7 @@ func TestUpsertDelegatesToClient(t *testing.T) {
 		require.Equal(t, run, r)
 		return nil
 	})
-	store, err := NewStore(Options{Client: mockClient})
+	store, err := NewStore(mockClient)
 	require.NoError(t, err)
 
 	require.NoError(t, store.Upsert(context.Background(), run))
@@ -37,7 +37,7 @@ func TestLoadDelegatesToClient(t *testing.T) {
 		require.Equal(t, "run", runID)
 		return expected, nil
 	})
-	store, err := NewStore(Options{Client: mockClient})
+	store, err := NewStore(mockClient)
 	require.NoError(t, err)
 
 	actual, err := store.Load(context.Background(), "run")
@@ -46,7 +46,7 @@ func TestLoadDelegatesToClient(t *testing.T) {
 	require.False(t, mockClient.HasMore())
 }
 
-func TestNewStoreFromMongoValidatesOptions(t *testing.T) {
-	_, err := NewStoreFromMongo(clientsmongo.Options{})
+func TestNewClientValidatesOptions(t *testing.T) {
+	_, err := clientsmongo.New(clientsmongo.Options{})
 	require.EqualError(t, err, "mongo client is required")
 }

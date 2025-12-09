@@ -368,6 +368,10 @@ type (
 		OutputTokens int
 		// TotalTokens is InputTokens + OutputTokens.
 		TotalTokens int
+		// CacheReadTokens is tokens read from prompt cache (reduced cost).
+		CacheReadTokens int
+		// CacheWriteTokens is tokens written to prompt cache.
+		CacheWriteTokens int
 	}
 
 	// HardProtectionEvent signals that the runtime applied a hard protection to
@@ -670,15 +674,19 @@ func NewUsageEvent(
 	sessionID string,
 	input,
 	output,
-	total int,
+	total,
+	cacheRead,
+	cacheWrite int,
 ) *UsageEvent {
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
 	return &UsageEvent{
-		baseEvent:    be,
-		InputTokens:  input,
-		OutputTokens: output,
-		TotalTokens:  total,
+		baseEvent:        be,
+		InputTokens:      input,
+		OutputTokens:     output,
+		TotalTokens:      total,
+		CacheReadTokens:  cacheRead,
+		CacheWriteTokens: cacheWrite,
 	}
 }
 

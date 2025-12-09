@@ -58,7 +58,11 @@ func (e *runtimePlannerEvents) UsageDelta(ctx context.Context, usage model.Token
 	if e == nil || e.rt == nil || e.rt.Bus == nil {
 		return
 	}
-	_ = e.rt.Bus.Publish(ctx, hooks.NewUsageEvent(e.runID, e.agentID, e.sessionID, usage.InputTokens, usage.OutputTokens, usage.TotalTokens))
+	_ = e.rt.Bus.Publish(ctx, hooks.NewUsageEvent(
+		e.runID, e.agentID, e.sessionID,
+		usage.InputTokens, usage.OutputTokens, usage.TotalTokens,
+		usage.CacheReadTokens, usage.CacheWriteTokens,
+	))
 }
 
 func (e *runtimePlannerEvents) PlannerThinkingBlock(ctx context.Context, block model.ThinkingPart) {

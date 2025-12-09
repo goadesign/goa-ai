@@ -204,6 +204,12 @@ func Generate(genpkg string, roots []eval.Root, files []*codegen.File) ([]*codeg
 			generated = append(generated, regFiles...)
 		}
 
+		// Emit consumer-side A2A helper packages for FromA2A providers used by
+		// any agent under this service.
+		if a2aFiles := a2aConsumerFiles(genpkg, svc); len(a2aFiles) > 0 {
+			generated = append(generated, a2aFiles...)
+		}
+
 		for _, agent := range svc.Agents {
 			afiles := agentFiles(agent)
 			generated = append(generated, afiles...)
@@ -1052,12 +1058,13 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 // from all specs/<toolset> packages into a single package for convenience.
 func agentSpecsAggregatorFile(agent *AgentData) *codegen.File {
 	// Build import list: runtime + per-toolset packages
+	// Always alias runtime tools to avoid conflicts with toolsets named "tools"
 	imports := []*codegen.ImportSpec{
 		{Path: "embed", Name: "_"},
 		{Path: "encoding/json"},
 		{Path: "sort"},
 		{Path: "goa.design/goa-ai/runtime/agent/policy"},
-		{Path: "goa.design/goa-ai/runtime/agent/tools"},
+		{Path: "goa.design/goa-ai/runtime/agent/tools", Name: "tools"},
 	}
 	added := make(map[string]struct{})
 	toolsets := make([]*ToolsetData, 0, len(agent.AllToolsets))
@@ -1068,9 +1075,17 @@ func agentSpecsAggregatorFile(agent *AgentData) *codegen.File {
 		if _, ok := added[ts.SpecsImportPath]; ok {
 			continue
 		}
-		imports = append(imports, &codegen.ImportSpec{Path: ts.SpecsImportPath, Name: ts.SpecsPackageName})
+		// Alias toolset package to avoid conflicts with runtime tools package
+		alias := ts.SpecsPackageName
+		if alias == "tools" {
+			alias = ts.SpecsPackageName + "specs"
+		}
+		imports = append(imports, &codegen.ImportSpec{Path: ts.SpecsImportPath, Name: alias})
 		added[ts.SpecsImportPath] = struct{}{}
-		toolsets = append(toolsets, ts)
+		// Update toolset data with the alias for template use
+		tsCopy := *ts
+		tsCopy.SpecsPackageName = alias
+		toolsets = append(toolsets, &tsCopy)
 	}
 	if len(toolsets) == 0 {
 		return nil

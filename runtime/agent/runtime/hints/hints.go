@@ -71,9 +71,6 @@ func RegisterResultHints(m map[tools.Ident]*template.Template) {
 func FormatCallHint(id tools.Ident, payload any) string {
 	mu.RLock()
 	tmpl := callHints[id]
-	if tmpl == nil {
-		tmpl = callHints[tools.Ident(id.Tool())]
-	}
 	mu.RUnlock()
 	if tmpl == nil {
 		return ""
@@ -90,9 +87,6 @@ func FormatCallHint(id tools.Ident, payload any) string {
 func FormatResultHint(id tools.Ident, result any) string {
 	mu.RLock()
 	tmpl := resultHints[id]
-	if tmpl == nil {
-		tmpl = resultHints[tools.Ident(id.Tool())]
-	}
 	mu.RUnlock()
 	if tmpl == nil {
 		return ""

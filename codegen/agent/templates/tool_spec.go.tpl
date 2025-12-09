@@ -28,6 +28,9 @@ var Specs = []tools.ToolSpec{
         AgentID:     {{ printf "%q" .ExportingAgentID }},
         {{- end }}
         BoundedResult: {{ if .BoundedResult }}true{{ else }}false{{ end }},
+        {{- if .ResultReminder }}
+        ResultReminder: {{ printf "%q" .ResultReminder }},
+        {{- end }}
         Payload: tools.TypeSpec{
             Name: {{ if .Payload }}{{ printf "%q" .Payload.TypeName }}{{ else }}""{{ end }},
             {{- if .Payload }}

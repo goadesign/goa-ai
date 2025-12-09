@@ -1976,6 +1976,10 @@ func (r *Runtime) executeGroupedToolCalls(
 // executed tools and updates the ledger. Tool results are ordered to match the
 // assistant tool_use IDs from the allowed calls slice so that provider
 // handshakes remain deterministic regardless of execution timing.
+//
+// If any tool has a ResultReminder configured in its spec, a system message
+// with the reminder text is appended after the tool results to provide
+// backstage guidance to the model.
 func (r *Runtime) appendUserToolResults(
 	ctx context.Context,
 	base *planner.PlanInput,
@@ -1998,6 +2002,7 @@ func (r *Runtime) appendUserToolResults(
 	// assistant tool_use declaration order.
 	parts := make([]model.Part, 0, len(resultsByID))
 	specs := make([]transcript.ToolResultSpec, 0, len(resultsByID))
+	var reminders []string
 	for _, call := range allowed {
 		tr, ok := resultsByID[call.ToolCallID]
 		if !ok || tr == nil || tr.ToolCallID == "" {
@@ -2015,6 +2020,10 @@ func (r *Runtime) appendUserToolResults(
 			Content:   tr.Result,
 			IsError:   tr.Error != nil,
 		})
+		// Collect result reminders from tool specs.
+		if spec, ok := r.toolSpec(tr.Name); ok && spec.ResultReminder != "" {
+			reminders = append(reminders, spec.ResultReminder)
+		}
 	}
 	if len(parts) == 0 {
 		return
@@ -2024,6 +2033,20 @@ func (r *Runtime) appendUserToolResults(
 		Parts: parts,
 	})
 	led.AppendUserToolResults(specs)
+	// Inject result reminders as a system message after tool results.
+	if len(reminders) > 0 {
+		var reminderText string
+		for i, rem := range reminders {
+			if i > 0 {
+				reminderText += "\n\n"
+			}
+			reminderText += "<system-reminder>" + rem + "</system-reminder>"
+		}
+		base.Messages = append(base.Messages, &model.Message{
+			Role:  model.ConversationRoleSystem,
+			Parts: []model.Part{model.TextPart{Text: reminderText}},
+		})
+	}
 }
 
 // enforceBoundedResultContract validates that tools declared as bounded in

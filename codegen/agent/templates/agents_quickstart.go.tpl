@@ -121,10 +121,10 @@ func main() {
     client := {{ (index (index .Services 0).Agents 0).PackageName }}.NewClient(rt)
     out, err := client.Run(
         context.Background(),
+        "my-first-session",
         []*model.Message{
 			{ Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "Hi there!"}} },
 		},
-        runtime.WithSessionID("my-first-session"), // A session ID is required!
     )
     if err != nil {
 		panic(err)
@@ -159,12 +159,12 @@ Here are the detailed cheat sheets for each agent you designed.
     * **Synchronous (wait for result):**
         ```go
         client := {{ .PackageName }}.NewClient(rt)
-        out, err := client.Run(ctx, messages, runtime.WithSessionID(sessionID))
+        out, err := client.Run(ctx, sessionID, messages)
         ```
     * **Asynchronous (get a handle):**
         ```go
         client := {{ .PackageName }}.NewClient(rt)
-        handle, err := client.Start(ctx, messages, runtime.WithSessionID(sessionID))
+        handle, err := client.Start(ctx, sessionID, messages)
         ```
 * **Workflow Name:** `{{ .Runtime.Workflow.Name }}` (Queue: `{{ .Runtime.Workflow.Queue }}`)
 

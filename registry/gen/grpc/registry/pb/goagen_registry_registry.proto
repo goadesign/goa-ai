@@ -1,0 +1,187 @@
+// Code generated with goa v3.23.1, DO NOT EDIT.
+//
+// registry protocol buffer definition
+//
+// Command:
+// $ goa gen goa.design/goa-ai/registry/design -o registry
+
+syntax = "proto3";
+
+package registry;
+
+option go_package = "/registrypb";
+import "google/protobuf/any.proto";
+
+// Internal tool registry gateway for toolset discovery and tool invocation
+service Registry {
+	// Register a toolset with the registry
+	rpc Register (RegisterRequest) returns (RegisterResponse);
+	// Unregister a toolset from the registry
+	rpc Unregister (UnregisterRequest) returns (UnregisterResponse);
+	// Emit a tool execution result to the result stream
+	rpc EmitToolResult (EmitToolResultRequest) returns (EmitToolResultResponse);
+	// Respond to a health check ping
+	rpc Pong (PongRequest) returns (PongResponse);
+	// List all registered toolsets with optional tag filtering
+	rpc ListToolsets (ListToolsetsRequest) returns (ListToolsetsResponse);
+	// Get a specific toolset by name including all tool schemas
+	rpc GetToolset (GetToolsetRequest) returns (GetToolsetResponse);
+	// Search toolsets by keyword matching name, description, or tags
+	rpc Search (SearchRequest) returns (SearchResponse);
+	// Invoke a tool through the registry gateway
+	rpc CallTool (CallToolRequest) returns (CallToolResponse);
+}
+
+message RegisterRequest {
+	// Unique name for the toolset
+	string name = 1;
+	// Human-readable description of the toolset
+	optional string description = 2;
+	// Semantic version of the toolset
+	optional string version = 3;
+	// Tags for categorization and filtering
+	repeated string tags = 4;
+	// Tool definitions with their schemas
+	repeated ToolSchema tools = 5;
+}
+// Tool schema for registration
+message ToolSchema {
+	// Tool identifier
+	string name = 1;
+	// Human-readable description
+	optional string description = 2;
+	// JSON Schema for tool input parameters
+	bytes input_schema = 3;
+	// JSON Schema for tool output (optional)
+	optional bytes output_schema = 4;
+}
+
+message RegisterResponse {
+	// Pulse stream identifier for receiving tool requests
+	string stream_id = 1;
+	// ISO 8601 timestamp of registration
+	string registered_at = 2;
+}
+
+message UnregisterRequest {
+	// Name of the toolset to unregister
+	string name = 1;
+}
+
+message UnregisterResponse {
+}
+
+message EmitToolResultRequest {
+	// Unique identifier for the tool invocation
+	string tool_use_id = 1;
+	// Tool execution result (JSON-serializable)
+	optional google.protobuf.Any result = 2;
+	// Error details if execution failed
+	ToolError error = 3;
+}
+// Error details from tool execution
+message ToolError {
+	// Error code
+	string code = 1;
+	// Error message
+	string message_ = 2;
+}
+
+message EmitToolResultResponse {
+}
+
+message PongRequest {
+	// ID of the ping being acknowledged
+	string ping_id = 1;
+	// Name of the toolset responding
+	string toolset = 2;
+}
+
+message PongResponse {
+}
+
+message ListToolsetsRequest {
+	// Filter by tags (all must match)
+	repeated string tags = 1;
+}
+
+message ListToolsetsResponse {
+	// List of registered toolsets
+	repeated ToolsetInfo toolsets = 1;
+}
+// Toolset metadata for listing and search results
+message ToolsetInfo {
+	// Unique name for the toolset
+	string name = 1;
+	// Human-readable description
+	optional string description = 2;
+	// Semantic version
+	optional string version = 3;
+	// Tags for categorization
+	repeated string tags = 4;
+	// Number of tools in the toolset
+	sint32 tool_count = 5;
+	// ISO 8601 registration timestamp
+	string registered_at = 6;
+}
+
+message GetToolsetRequest {
+	// Name of the toolset to retrieve
+	string name = 1;
+}
+
+message GetToolsetResponse {
+	// Unique name for the toolset
+	string name = 1;
+	// Human-readable description
+	optional string description = 2;
+	// Semantic version
+	optional string version = 3;
+	// Tags for categorization
+	repeated string tags = 4;
+	// Tool definitions
+	repeated Tool tools = 5;
+	// Pulse stream identifier
+	string stream_id = 6;
+	// ISO 8601 registration timestamp
+	string registered_at = 7;
+}
+// Tool definition with input and output schemas
+message Tool {
+	// Tool identifier
+	string name = 1;
+	// Human-readable description
+	optional string description = 2;
+	// JSON Schema for tool input parameters
+	bytes input_schema = 3;
+	// JSON Schema for tool output (optional)
+	optional bytes output_schema = 4;
+}
+
+message SearchRequest {
+	// Search query string
+	string query = 1;
+}
+
+message SearchResponse {
+	// Matching toolsets
+	repeated ToolsetInfo toolsets = 1;
+}
+
+message CallToolRequest {
+	// Name of the toolset containing the tool
+	string toolset = 1;
+	// Name of the tool to invoke
+	string tool = 2;
+	// Tool input payload (must match tool's input schema)
+	optional google.protobuf.Any payload = 3;
+}
+
+message CallToolResponse {
+	// Unique identifier for this invocation
+	string tool_use_id = 1;
+	// Tool execution result
+	optional google.protobuf.Any result = 2;
+	// Error details if execution failed
+	ToolError error = 3;
+}

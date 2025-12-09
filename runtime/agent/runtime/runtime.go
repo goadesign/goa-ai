@@ -22,7 +22,7 @@
 //	rt := runtime.New(runtime.Options{ Engine: temporalEngine, ... })
 //	_ = rt.RegisterAgent(ctx, agentReg)
 //	client := rt.MustClient(agent.Ident("service.agent"))
-//	out, err := client.Run(ctx, messages, runtime.WithSessionID("s1"))
+//	out, err := client.Run(ctx, "s1", messages)
 package runtime
 
 import (
@@ -370,18 +370,14 @@ var (
 	ErrRegistrationClosed  = errors.New("registration closed after first run")
 )
 
-// RunOption configures the RunInput constructed by RunAgent and StartAgent.
-// Options allow callers to set optional fields without building RunInput directly.
+// RunOption configures optional fields on RunInput for Run and Start. Required
+// values such as SessionID are positional arguments on AgentClient methods and
+// must not be set via RunOption.
 type RunOption func(*RunInput)
 
 // WithRunID sets the RunID on the constructed RunInput.
 func WithRunID(id string) RunOption {
 	return func(in *RunInput) { in.RunID = id }
-}
-
-// WithSessionID sets the SessionID on the constructed RunInput.
-func WithSessionID(id string) RunOption {
-	return func(in *RunInput) { in.SessionID = id }
 }
 
 // WithLabels merges the provided labels into the constructed RunInput.

@@ -129,3 +129,14 @@ func (r *RegistryExpr) Validate() error {
 func (r *RegistryExpr) Finalize() {
 	// Nothing to finalize currently; defaults are set in Prepare.
 }
+
+// SetTimeout implements expr.TimeoutHolder, allowing the Timeout() DSL
+// function to set the registry timeout.
+func (r *RegistryExpr) SetTimeout(duration string) error {
+	d, err := time.ParseDuration(duration)
+	if err != nil {
+		return err
+	}
+	r.Timeout = d
+	return nil
+}

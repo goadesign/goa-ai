@@ -68,6 +68,14 @@ type (
 		// and services can enforce and surface bounds consistently.
 		BoundedResult bool
 
+		// ResultReminder is an optional system reminder that is injected into
+		// the conversation after the tool result is returned. It provides
+		// backstage guidance to the model about how to interpret or present
+		// the result (for example, "The user sees a rendered graph of this
+		// data"). The reminder is wrapped in <system-reminder> tags by the
+		// runtime.
+		ResultReminder string
+
 		bindServiceName string
 		bindMethodName  string
 	}
@@ -196,4 +204,10 @@ func (t *ToolExpr) Finalize() {
 // BoundServiceName returns the service name specified via BindTo, if any.
 func (t *ToolExpr) BoundServiceName() string {
 	return t.bindServiceName
+}
+
+// SetTitle implements expr.TitleHolder, allowing the Title() DSL function
+// to set the tool title.
+func (t *ToolExpr) SetTitle(title string) {
+	t.Title = title
 }

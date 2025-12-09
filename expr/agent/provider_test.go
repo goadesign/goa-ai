@@ -14,6 +14,7 @@ func TestProviderKind_String(t *testing.T) {
 		{ProviderLocal, "local"},
 		{ProviderMCP, "mcp"},
 		{ProviderRegistry, "registry"},
+		{ProviderA2A, "a2a"},
 		{ProviderKind(99), "unknown(99)"},
 	}
 
@@ -62,6 +63,15 @@ func TestProviderExpr_EvalName(t *testing.T) {
 			want: `registry provider (registry="", toolset="data-tools")`,
 		},
 		{
+			name: "A2A provider",
+			provider: &ProviderExpr{
+				Kind:     ProviderA2A,
+				A2ASuite: "svc.agent.tools",
+				A2AURL:   "https://example.com/a2a",
+			},
+			want: `A2A provider (suite="svc.agent.tools", url="https://example.com/a2a")`,
+		},
+		{
 			name:     "unknown kind defaults to local",
 			provider: &ProviderExpr{Kind: ProviderKind(99)},
 			want:     "local provider",
@@ -97,5 +107,14 @@ func TestProviderExpr_KindDetection(t *testing.T) {
 			ToolsetName: "tools",
 		}
 		require.Equal(t, ProviderRegistry, p.Kind)
+	})
+
+	t.Run("A2A provider has ProviderA2A kind", func(t *testing.T) {
+		p := &ProviderExpr{
+			Kind:     ProviderA2A,
+			A2ASuite: "svc.agent.tools",
+			A2AURL:   "https://example.com/a2a",
+		}
+		require.Equal(t, ProviderA2A, p.Kind)
 	})
 }
