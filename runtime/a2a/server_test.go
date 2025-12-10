@@ -14,6 +14,13 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+// Test constants for task states and IDs.
+const (
+	testTaskID        = "task"
+	testStateFailed   = "failed"
+	testStateComplete = "completed"
+)
+
 type (
 	testClient struct {
 		out any
@@ -49,7 +56,7 @@ func TestTasksSendResponseProperty(t *testing.T) {
 	properties.Property("TasksSend returns matching ID and state", prop.ForAll(
 		func(taskID string, fail bool) bool {
 			if taskID == "" {
-				taskID = "task"
+				taskID = testTaskID
 			}
 
 			var out any = "ok"
@@ -107,9 +114,9 @@ func TestTasksSendResponseProperty(t *testing.T) {
 				return false
 			}
 			if fail {
-				return resp.Status.State == "failed"
+				return resp.Status.State == testStateFailed
 			}
-			return resp.Status.State == "completed"
+			return resp.Status.State == testStateComplete
 		},
 		gen.AlphaString(),
 		gen.Bool(),
@@ -135,7 +142,7 @@ func TestTasksSendSubscribeEventSequenceProperty(t *testing.T) {
 	properties.Property("TasksSendSubscribe emits expected event sequence", prop.ForAll(
 		func(taskID string, fail bool) bool {
 			if taskID == "" {
-				taskID = "task"
+				taskID = testTaskID
 			}
 
 			var out any = "ok"
@@ -189,7 +196,7 @@ func TestTasksSendSubscribeEventSequenceProperty(t *testing.T) {
 				if last.Type != "error" || last.Status == nil {
 					return false
 				}
-				return last.Status.State == "failed" && last.Final
+				return last.Status.State == testStateFailed && last.Final
 			}
 
 			if len(events) != 3 {
@@ -202,7 +209,7 @@ func TestTasksSendSubscribeEventSequenceProperty(t *testing.T) {
 			if last.Type != "status" || last.Status == nil {
 				return false
 			}
-			return last.Status.State == "completed" && last.Final
+			return last.Status.State == testStateComplete && last.Final
 		},
 		gen.AlphaString(),
 		gen.Bool(),

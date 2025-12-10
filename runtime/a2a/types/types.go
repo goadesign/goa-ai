@@ -1,3 +1,8 @@
+// Package types defines the A2A protocol data types used for task management,
+// message exchange, and agent discovery. Field names use camelCase JSON tags
+// to conform to the A2A protocol specification.
+//
+//nolint:tagliatelle // A2A protocol specification requires camelCase JSON field names
 package types
 
 import "encoding/json"

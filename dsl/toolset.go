@@ -317,6 +317,9 @@ func AgentToolset(service, agent, toolset string) *agentsexpr.ToolsetExpr {
 
 // UseAgentToolset is an alias for AgentToolset. Prefer AgentToolset in new
 // designs; this alias exists for readability in some codebases.
+//
+// Deprecated: Use AgentToolset instead. This function will be removed in a
+// future release.
 func UseAgentToolset(service, agent, toolset string) *agentsexpr.ToolsetExpr {
 	ts := AgentToolset(service, agent, toolset)
 	if ts == nil {

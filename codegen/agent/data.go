@@ -1301,13 +1301,9 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 			if md.PayloadLoc != nil && md.PayloadLoc.PackageName() != "" {
 				tool.MethodPayloadTypeRef = md.PayloadRef
 			} else {
-				if sd.Scope != nil {
-					tool.MethodPayloadTypeRef = sd.Scope.GoFullTypeRef(me.Payload, sd.PkgName)
-				}
-				if tool.MethodPayloadTypeRef == "" && md.Payload != "" && sd.PkgName != "" {
-					// Fallback to pkg-qualified type name if scope resolution is unavailable.
-					tool.MethodPayloadTypeRef = "*" + sd.PkgName + "." + md.Payload
-				}
+				// Use Goa's NameScope to compute the fully-qualified type reference.
+				// sd.Scope is guaranteed non-nil by Goa's service data construction.
+				tool.MethodPayloadTypeRef = sd.Scope.GoFullTypeRef(me.Payload, sd.PkgName)
 			}
 		}
 		if me != nil && me.Result.Type != goaexpr.Empty {
@@ -1315,12 +1311,9 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 			if md.ResultLoc != nil && md.ResultLoc.PackageName() != "" {
 				tool.MethodResultTypeRef = md.ResultRef
 			} else {
-				if sd.Scope != nil {
-					tool.MethodResultTypeRef = sd.Scope.GoFullTypeRef(me.Result, sd.PkgName)
-				}
-				if tool.MethodResultTypeRef == "" && md.Result != "" && sd.PkgName != "" {
-					tool.MethodResultTypeRef = "*" + sd.PkgName + "." + md.Result
-				}
+				// Use Goa's NameScope to compute the fully-qualified type reference.
+				// sd.Scope is guaranteed non-nil by Goa's service data construction.
+				tool.MethodResultTypeRef = sd.Scope.GoFullTypeRef(me.Result, sd.PkgName)
 			}
 		}
 		// Capture user type locations when specified via struct:pkg:path.

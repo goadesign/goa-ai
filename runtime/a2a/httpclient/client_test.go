@@ -3,7 +3,6 @@ package httpclient
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -21,20 +20,30 @@ func TestSendTaskSuccess(t *testing.T) {
 	var captured rpcRequest
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "POST", r.Method)
-		require.Equal(t, "application/json", r.Header.Get("Content-Type"))
+		if r.Method != "POST" {
+			http.Error(w, "expected POST", http.StatusMethodNotAllowed)
+			return
+		}
+		if r.Header.Get("Content-Type") != "application/json" {
+			http.Error(w, "expected application/json", http.StatusBadRequest)
+			return
+		}
 
 		defer func() { _ = r.Body.Close() }()
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&captured))
-		require.Equal(t, "2.0", captured.JSONRPC)
-		require.Equal(t, "tasks/send", captured.Method)
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 
 		resp := rpcResponse{
 			JSONRPC: "2.0",
 			Result:  json.RawMessage(`{"ok":true}`),
 			ID:      captured.ID,
 		}
-		require.NoError(t, json.NewEncoder(w).Encode(&resp))
+		if err := json.NewEncoder(w).Encode(&resp); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	})
 
 	server := httptest.NewServer(handler)
@@ -77,7 +86,10 @@ func TestSendTaskJSONRPCErrorMapping(t *testing.T) {
 			},
 			ID: 1,
 		}
-		require.NoError(t, json.NewEncoder(w).Encode(&resp))
+		if err := json.NewEncoder(w).Encode(&resp); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	})
 
 	server := httptest.NewServer(handler)
@@ -94,7 +106,7 @@ func TestSendTaskJSONRPCErrorMapping(t *testing.T) {
 	require.Error(t, err)
 
 	var a2aErr *a2a.Error
-	require.True(t, errors.As(err, &a2aErr))
+	require.ErrorAs(t, err, &a2aErr)
 	require.Equal(t, a2a.JSONRPCInvalidParams, a2aErr.Code)
 	require.Equal(t, "invalid params", a2aErr.Message)
 }
@@ -115,7 +127,10 @@ func TestWithHeaderAndBearerToken(t *testing.T) {
 			Result:  json.RawMessage(`{}`),
 			ID:      1,
 		}
-		require.NoError(t, json.NewEncoder(w).Encode(&resp))
+		if err := json.NewEncoder(w).Encode(&resp); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	})
 
 	server := httptest.NewServer(handler)

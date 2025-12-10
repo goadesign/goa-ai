@@ -109,6 +109,13 @@ func (t *ToolsetExpr) Validate() error {
 			if t.Provider.ToolsetName == "" {
 				verr.Add(t, "toolset name is required for FromRegistry provider")
 			}
+		case ProviderA2A:
+			if t.Provider.A2ASuite == "" {
+				verr.Add(t, "A2A suite is required; set it via FromA2A(suite, url)")
+			}
+			if t.Provider.A2AURL == "" {
+				verr.Add(t, "A2A URL is required; set it via FromA2A(suite, url)")
+			}
 		case ProviderLocal:
 			// Local toolsets have inline schemas; no additional validation needed.
 		}

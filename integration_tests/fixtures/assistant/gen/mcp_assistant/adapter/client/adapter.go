@@ -67,7 +67,7 @@ func NewEndpoints(
 		// Call MCP tools/call via transport endpoint (SSE stream)
 		streamAny, err := mcpC.ToolsCall()(ctx, &mcpAssistant.ToolsCallPayload{Name: "analyze_sentiment", Arguments: args})
 		if err != nil {
-			prompt := retry.BuildRepairPrompt("tools/call:analyze_sentiment", err.Error(), "{\"text\":\"abc123\"}", "{\"$ref\":\"#/$defs/AnalyzeSentimentPayload\",\"required\":[\"text\"]}")
+			prompt := retry.BuildRepairPrompt("tools/call:analyze_sentiment", err.Error(), "{\"text\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to analyze\"}},\"additionalProperties\":false}")
 			return nil, &retry.RetryableError{Prompt: prompt, Cause: err}
 		}
 		stream, ok := streamAny.(*mcpAssistantjsonrpcc.ToolsCallClientStream)
@@ -81,13 +81,13 @@ func NewEndpoints(
 				break
 			}
 			if recvErr != nil {
-				prompt := retry.BuildRepairPrompt("tools/call:analyze_sentiment", recvErr.Error(), "{\"text\":\"abc123\"}", "{\"$ref\":\"#/$defs/AnalyzeSentimentPayload\",\"required\":[\"text\"]}")
+				prompt := retry.BuildRepairPrompt("tools/call:analyze_sentiment", recvErr.Error(), "{\"text\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to analyze\"}},\"additionalProperties\":false}")
 				return nil, &retry.RetryableError{Prompt: prompt, Cause: recvErr}
 			}
 			r = ev
 		}
 		if r == nil || r.Content == nil || len(r.Content) == 0 || r.Content[0] == nil || r.Content[0].Text == nil {
-			prompt := retry.BuildRepairPrompt("tools/call:analyze_sentiment", "empty MCP tool response", "{\"text\":\"abc123\"}", "{\"$ref\":\"#/$defs/AnalyzeSentimentPayload\",\"required\":[\"text\"]}")
+			prompt := retry.BuildRepairPrompt("tools/call:analyze_sentiment", "empty MCP tool response", "{\"text\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to analyze\"}},\"additionalProperties\":false}")
 			return nil, &retry.RetryableError{Prompt: prompt, Cause: fmt.Errorf("empty MCP tool response for analyze_sentiment")}
 		}
 		// Build JSON-RPC response envelope and decode using Goa-generated decoder
@@ -125,7 +125,7 @@ func NewEndpoints(
 		// Call MCP tools/call via transport endpoint (SSE stream)
 		streamAny, err := mcpC.ToolsCall()(ctx, &mcpAssistant.ToolsCallPayload{Name: "extract_keywords", Arguments: args})
 		if err != nil {
-			prompt := retry.BuildRepairPrompt("tools/call:extract_keywords", err.Error(), "{\"text\":\"abc123\"}", "{\"$ref\":\"#/$defs/ExtractKeywordsPayload\",\"required\":[\"text\"]}")
+			prompt := retry.BuildRepairPrompt("tools/call:extract_keywords", err.Error(), "{\"text\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text\"}},\"additionalProperties\":false}")
 			return nil, &retry.RetryableError{Prompt: prompt, Cause: err}
 		}
 		stream, ok := streamAny.(*mcpAssistantjsonrpcc.ToolsCallClientStream)
@@ -139,13 +139,13 @@ func NewEndpoints(
 				break
 			}
 			if recvErr != nil {
-				prompt := retry.BuildRepairPrompt("tools/call:extract_keywords", recvErr.Error(), "{\"text\":\"abc123\"}", "{\"$ref\":\"#/$defs/ExtractKeywordsPayload\",\"required\":[\"text\"]}")
+				prompt := retry.BuildRepairPrompt("tools/call:extract_keywords", recvErr.Error(), "{\"text\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text\"}},\"additionalProperties\":false}")
 				return nil, &retry.RetryableError{Prompt: prompt, Cause: recvErr}
 			}
 			r = ev
 		}
 		if r == nil || r.Content == nil || len(r.Content) == 0 || r.Content[0] == nil || r.Content[0].Text == nil {
-			prompt := retry.BuildRepairPrompt("tools/call:extract_keywords", "empty MCP tool response", "{\"text\":\"abc123\"}", "{\"$ref\":\"#/$defs/ExtractKeywordsPayload\",\"required\":[\"text\"]}")
+			prompt := retry.BuildRepairPrompt("tools/call:extract_keywords", "empty MCP tool response", "{\"text\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text\"}},\"additionalProperties\":false}")
 			return nil, &retry.RetryableError{Prompt: prompt, Cause: fmt.Errorf("empty MCP tool response for extract_keywords")}
 		}
 		// Build JSON-RPC response envelope and decode using Goa-generated decoder
@@ -183,7 +183,7 @@ func NewEndpoints(
 		// Call MCP tools/call via transport endpoint (SSE stream)
 		streamAny, err := mcpC.ToolsCall()(ctx, &mcpAssistant.ToolsCallPayload{Name: "summarize_text", Arguments: args})
 		if err != nil {
-			prompt := retry.BuildRepairPrompt("tools/call:summarize_text", err.Error(), "{\"text\":\"abc123\"}", "{\"$ref\":\"#/$defs/SummarizeTextPayload\",\"required\":[\"text\"]}")
+			prompt := retry.BuildRepairPrompt("tools/call:summarize_text", err.Error(), "{\"text\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to summarize\"}},\"additionalProperties\":false}")
 			return nil, &retry.RetryableError{Prompt: prompt, Cause: err}
 		}
 		stream, ok := streamAny.(*mcpAssistantjsonrpcc.ToolsCallClientStream)
@@ -197,13 +197,13 @@ func NewEndpoints(
 				break
 			}
 			if recvErr != nil {
-				prompt := retry.BuildRepairPrompt("tools/call:summarize_text", recvErr.Error(), "{\"text\":\"abc123\"}", "{\"$ref\":\"#/$defs/SummarizeTextPayload\",\"required\":[\"text\"]}")
+				prompt := retry.BuildRepairPrompt("tools/call:summarize_text", recvErr.Error(), "{\"text\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to summarize\"}},\"additionalProperties\":false}")
 				return nil, &retry.RetryableError{Prompt: prompt, Cause: recvErr}
 			}
 			r = ev
 		}
 		if r == nil || r.Content == nil || len(r.Content) == 0 || r.Content[0] == nil || r.Content[0].Text == nil {
-			prompt := retry.BuildRepairPrompt("tools/call:summarize_text", "empty MCP tool response", "{\"text\":\"abc123\"}", "{\"$ref\":\"#/$defs/SummarizeTextPayload\",\"required\":[\"text\"]}")
+			prompt := retry.BuildRepairPrompt("tools/call:summarize_text", "empty MCP tool response", "{\"text\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to summarize\"}},\"additionalProperties\":false}")
 			return nil, &retry.RetryableError{Prompt: prompt, Cause: fmt.Errorf("empty MCP tool response for summarize_text")}
 		}
 		// Build JSON-RPC response envelope and decode using Goa-generated decoder
@@ -241,7 +241,7 @@ func NewEndpoints(
 		// Call MCP tools/call via transport endpoint (SSE stream)
 		streamAny, err := mcpC.ToolsCall()(ctx, &mcpAssistant.ToolsCallPayload{Name: "search", Arguments: args})
 		if err != nil {
-			prompt := retry.BuildRepairPrompt("tools/call:search", err.Error(), "{\"limit\":1,\"query\":\"abc123\"}", "{\"$ref\":\"#/$defs/SearchPayload\",\"required\":[\"query\"]}")
+			prompt := retry.BuildRepairPrompt("tools/call:search", err.Error(), "{\"limit\":1,\"query\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"query\"],\"properties\":{\"limit\":{\"type\":\"integer\",\"description\":\"Maximum number of results\"},\"query\":{\"type\":\"string\",\"description\":\"Search query\"}},\"additionalProperties\":false}")
 			return nil, &retry.RetryableError{Prompt: prompt, Cause: err}
 		}
 		stream, ok := streamAny.(*mcpAssistantjsonrpcc.ToolsCallClientStream)
@@ -255,13 +255,13 @@ func NewEndpoints(
 				break
 			}
 			if recvErr != nil {
-				prompt := retry.BuildRepairPrompt("tools/call:search", recvErr.Error(), "{\"limit\":1,\"query\":\"abc123\"}", "{\"$ref\":\"#/$defs/SearchPayload\",\"required\":[\"query\"]}")
+				prompt := retry.BuildRepairPrompt("tools/call:search", recvErr.Error(), "{\"limit\":1,\"query\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"query\"],\"properties\":{\"limit\":{\"type\":\"integer\",\"description\":\"Maximum number of results\"},\"query\":{\"type\":\"string\",\"description\":\"Search query\"}},\"additionalProperties\":false}")
 				return nil, &retry.RetryableError{Prompt: prompt, Cause: recvErr}
 			}
 			r = ev
 		}
 		if r == nil || r.Content == nil || len(r.Content) == 0 || r.Content[0] == nil || r.Content[0].Text == nil {
-			prompt := retry.BuildRepairPrompt("tools/call:search", "empty MCP tool response", "{\"limit\":1,\"query\":\"abc123\"}", "{\"$ref\":\"#/$defs/SearchPayload\",\"required\":[\"query\"]}")
+			prompt := retry.BuildRepairPrompt("tools/call:search", "empty MCP tool response", "{\"limit\":1,\"query\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"query\"],\"properties\":{\"limit\":{\"type\":\"integer\",\"description\":\"Maximum number of results\"},\"query\":{\"type\":\"string\",\"description\":\"Search query\"}},\"additionalProperties\":false}")
 			return nil, &retry.RetryableError{Prompt: prompt, Cause: fmt.Errorf("empty MCP tool response for search")}
 		}
 		// Build JSON-RPC response envelope and decode using Goa-generated decoder
@@ -299,7 +299,7 @@ func NewEndpoints(
 		// Call MCP tools/call via transport endpoint (SSE stream)
 		streamAny, err := mcpC.ToolsCall()(ctx, &mcpAssistant.ToolsCallPayload{Name: "execute_code", Arguments: args})
 		if err != nil {
-			prompt := retry.BuildRepairPrompt("tools/call:execute_code", err.Error(), "{\"code\":\"abc123\",\"language\":\"javascript\"}", "{\"$ref\":\"#/$defs/ExecuteCodePayload\",\"required\":[\"language\",\"code\"]}")
+			prompt := retry.BuildRepairPrompt("tools/call:execute_code", err.Error(), "{\"code\":\"abc123\",\"language\":\"javascript\"}", "{\"type\":\"object\",\"required\":[\"language\",\"code\"],\"properties\":{\"code\":{\"type\":\"string\",\"description\":\"Code to execute\"},\"language\":{\"type\":\"string\",\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"]}},\"additionalProperties\":false}")
 			return nil, &retry.RetryableError{Prompt: prompt, Cause: err}
 		}
 		stream, ok := streamAny.(*mcpAssistantjsonrpcc.ToolsCallClientStream)
@@ -313,13 +313,13 @@ func NewEndpoints(
 				break
 			}
 			if recvErr != nil {
-				prompt := retry.BuildRepairPrompt("tools/call:execute_code", recvErr.Error(), "{\"code\":\"abc123\",\"language\":\"javascript\"}", "{\"$ref\":\"#/$defs/ExecuteCodePayload\",\"required\":[\"language\",\"code\"]}")
+				prompt := retry.BuildRepairPrompt("tools/call:execute_code", recvErr.Error(), "{\"code\":\"abc123\",\"language\":\"javascript\"}", "{\"type\":\"object\",\"required\":[\"language\",\"code\"],\"properties\":{\"code\":{\"type\":\"string\",\"description\":\"Code to execute\"},\"language\":{\"type\":\"string\",\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"]}},\"additionalProperties\":false}")
 				return nil, &retry.RetryableError{Prompt: prompt, Cause: recvErr}
 			}
 			r = ev
 		}
 		if r == nil || r.Content == nil || len(r.Content) == 0 || r.Content[0] == nil || r.Content[0].Text == nil {
-			prompt := retry.BuildRepairPrompt("tools/call:execute_code", "empty MCP tool response", "{\"code\":\"abc123\",\"language\":\"javascript\"}", "{\"$ref\":\"#/$defs/ExecuteCodePayload\",\"required\":[\"language\",\"code\"]}")
+			prompt := retry.BuildRepairPrompt("tools/call:execute_code", "empty MCP tool response", "{\"code\":\"abc123\",\"language\":\"javascript\"}", "{\"type\":\"object\",\"required\":[\"language\",\"code\"],\"properties\":{\"code\":{\"type\":\"string\",\"description\":\"Code to execute\"},\"language\":{\"type\":\"string\",\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"]}},\"additionalProperties\":false}")
 			return nil, &retry.RetryableError{Prompt: prompt, Cause: fmt.Errorf("empty MCP tool response for execute_code")}
 		}
 		// Build JSON-RPC response envelope and decode using Goa-generated decoder
@@ -357,7 +357,7 @@ func NewEndpoints(
 		// Call MCP tools/call via transport endpoint (SSE stream)
 		streamAny, err := mcpC.ToolsCall()(ctx, &mcpAssistant.ToolsCallPayload{Name: "process_batch", Arguments: args})
 		if err != nil {
-			prompt := retry.BuildRepairPrompt("tools/call:process_batch", err.Error(), "{\"blob\":\"abc123\",\"format\":\"text\",\"items\":[\"abc123\"],\"mimeType\":\"abc123\",\"uri\":\"abc123\"}", "{\"$ref\":\"#/$defs/ProcessBatchPayload\",\"required\":[\"items\"]}")
+			prompt := retry.BuildRepairPrompt("tools/call:process_batch", err.Error(), "{\"blob\":\"abc123\",\"format\":\"text\",\"items\":[\"abc123\"],\"mimeType\":\"abc123\",\"uri\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"blob\":{\"type\":\"string\",\"description\":\"Base64 blob\"},\"format\":{\"type\":\"string\",\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"]},\"items\":{\"type\":\"array\",\"description\":\"Items to process\",\"items\":{\"type\":\"string\"}},\"mimeType\":{\"type\":\"string\",\"description\":\"MIME type\"},\"uri\":{\"type\":\"string\",\"description\":\"Resource URI\"}},\"additionalProperties\":false}")
 			return nil, &retry.RetryableError{Prompt: prompt, Cause: err}
 		}
 		stream, ok := streamAny.(*mcpAssistantjsonrpcc.ToolsCallClientStream)
@@ -371,13 +371,13 @@ func NewEndpoints(
 				break
 			}
 			if recvErr != nil {
-				prompt := retry.BuildRepairPrompt("tools/call:process_batch", recvErr.Error(), "{\"blob\":\"abc123\",\"format\":\"text\",\"items\":[\"abc123\"],\"mimeType\":\"abc123\",\"uri\":\"abc123\"}", "{\"$ref\":\"#/$defs/ProcessBatchPayload\",\"required\":[\"items\"]}")
+				prompt := retry.BuildRepairPrompt("tools/call:process_batch", recvErr.Error(), "{\"blob\":\"abc123\",\"format\":\"text\",\"items\":[\"abc123\"],\"mimeType\":\"abc123\",\"uri\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"blob\":{\"type\":\"string\",\"description\":\"Base64 blob\"},\"format\":{\"type\":\"string\",\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"]},\"items\":{\"type\":\"array\",\"description\":\"Items to process\",\"items\":{\"type\":\"string\"}},\"mimeType\":{\"type\":\"string\",\"description\":\"MIME type\"},\"uri\":{\"type\":\"string\",\"description\":\"Resource URI\"}},\"additionalProperties\":false}")
 				return nil, &retry.RetryableError{Prompt: prompt, Cause: recvErr}
 			}
 			r = ev
 		}
 		if r == nil || r.Content == nil || len(r.Content) == 0 || r.Content[0] == nil || r.Content[0].Text == nil {
-			prompt := retry.BuildRepairPrompt("tools/call:process_batch", "empty MCP tool response", "{\"blob\":\"abc123\",\"format\":\"text\",\"items\":[\"abc123\"],\"mimeType\":\"abc123\",\"uri\":\"abc123\"}", "{\"$ref\":\"#/$defs/ProcessBatchPayload\",\"required\":[\"items\"]}")
+			prompt := retry.BuildRepairPrompt("tools/call:process_batch", "empty MCP tool response", "{\"blob\":\"abc123\",\"format\":\"text\",\"items\":[\"abc123\"],\"mimeType\":\"abc123\",\"uri\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"blob\":{\"type\":\"string\",\"description\":\"Base64 blob\"},\"format\":{\"type\":\"string\",\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"]},\"items\":{\"type\":\"array\",\"description\":\"Items to process\",\"items\":{\"type\":\"string\"}},\"mimeType\":{\"type\":\"string\",\"description\":\"MIME type\"},\"uri\":{\"type\":\"string\",\"description\":\"Resource URI\"}},\"additionalProperties\":false}")
 			return nil, &retry.RetryableError{Prompt: prompt, Cause: fmt.Errorf("empty MCP tool response for process_batch")}
 		}
 		// Build JSON-RPC response envelope and decode using Goa-generated decoder

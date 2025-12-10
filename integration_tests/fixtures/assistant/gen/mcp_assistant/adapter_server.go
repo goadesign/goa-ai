@@ -270,32 +270,32 @@ func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*Tools
 		{
 			Name:        "analyze_sentiment",
 			Description: stringPtr("Analyze sentiment of text"),
-			InputSchema: json.RawMessage(`{"$ref":"#/$defs/AnalyzeSentimentPayload","required":["text"]}`),
+			InputSchema: json.RawMessage(`{"type":"object","required":["text"],"properties":{"text":{"type":"string","description":"Input text to analyze"}},"additionalProperties":false}`),
 		},
 		{
 			Name:        "extract_keywords",
 			Description: stringPtr("Extract keywords from text"),
-			InputSchema: json.RawMessage(`{"$ref":"#/$defs/ExtractKeywordsPayload","required":["text"]}`),
+			InputSchema: json.RawMessage(`{"type":"object","required":["text"],"properties":{"text":{"type":"string","description":"Input text"}},"additionalProperties":false}`),
 		},
 		{
 			Name:        "summarize_text",
 			Description: stringPtr("Summarize text"),
-			InputSchema: json.RawMessage(`{"$ref":"#/$defs/SummarizeTextPayload","required":["text"]}`),
+			InputSchema: json.RawMessage(`{"type":"object","required":["text"],"properties":{"text":{"type":"string","description":"Input text to summarize"}},"additionalProperties":false}`),
 		},
 		{
 			Name:        "search",
 			Description: stringPtr("Search knowledge base"),
-			InputSchema: json.RawMessage(`{"$ref":"#/$defs/SearchPayload","required":["query"]}`),
+			InputSchema: json.RawMessage(`{"type":"object","required":["query"],"properties":{"limit":{"type":"integer","description":"Maximum number of results"},"query":{"type":"string","description":"Search query"}},"additionalProperties":false}`),
 		},
 		{
 			Name:        "execute_code",
 			Description: stringPtr("Execute code"),
-			InputSchema: json.RawMessage(`{"$ref":"#/$defs/ExecuteCodePayload","required":["language","code"]}`),
+			InputSchema: json.RawMessage(`{"type":"object","required":["language","code"],"properties":{"code":{"type":"string","description":"Code to execute"},"language":{"type":"string","description":"Language to execute","enum":["python","javascript"]}},"additionalProperties":false}`),
 		},
 		{
 			Name:        "process_batch",
 			Description: stringPtr("Process a batch of items"),
-			InputSchema: json.RawMessage(`{"$ref":"#/$defs/ProcessBatchPayload","required":["items"]}`),
+			InputSchema: json.RawMessage(`{"type":"object","required":["items"],"properties":{"blob":{"type":"string","description":"Base64 blob"},"format":{"type":"string","description":"Output format","enum":["json","text","blob","uri"]},"items":{"type":"array","description":"Items to process","items":{"type":"string"}},"mimeType":{"type":"string","description":"MIME type"},"uri":{"type":"string","description":"Resource URI"}},"additionalProperties":false}`),
 		},
 	}
 	res := &ToolsListResult{Tools: tools}

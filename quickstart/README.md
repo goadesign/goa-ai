@@ -82,6 +82,7 @@ import (
     "fmt"
 
     chat "example.com/quickstart/gen/orchestrator/agents/chat"
+    "goa.design/goa-ai/runtime/agent/model"
     "goa.design/goa-ai/runtime/agent/planner"
     "goa.design/goa-ai/runtime/agent/runtime"
 )
@@ -89,15 +90,26 @@ import (
 // A tiny planner: always replies, no tools (great for first run)
 type StubPlanner struct{}
 
-func (p *StubPlanner) PlanStart(ctx context.Context, in planner.PlanInput) (planner.PlanResult, error) {
-    return planner.PlanResult{FinalResponse: &planner.FinalResponse{
-        Message: model.Message{Role: "assistant", Content: "Hello from Goa‑AI!"},
-    }}, nil
+func (p *StubPlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
+    return &planner.PlanResult{
+        FinalResponse: &planner.FinalResponse{
+            Message: &model.Message{
+                Role:  model.ConversationRoleAssistant,
+                Parts: []model.Part{model.TextPart{Text: "Hello from Goa‑AI!"}},
+            },
+        },
+    }, nil
 }
-func (p *StubPlanner) PlanResume(ctx context.Context, in planner.PlanResumeInput) (planner.PlanResult, error) {
-    return planner.PlanResult{FinalResponse: &planner.FinalResponse{
-        Message: model.Message{Role: "assistant", Content: "Done."},
-    }}, nil
+
+func (p *StubPlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
+    return &planner.PlanResult{
+        FinalResponse: &planner.FinalResponse{
+            Message: &model.Message{
+                Role:  model.ConversationRoleAssistant,
+                Parts: []model.Part{model.TextPart{Text: "Done."}},
+            },
+        },
+    }, nil
 }
 
 func main() {
@@ -114,11 +126,22 @@ func main() {
     out, err := client.Run(
         context.Background(),
         "session-1",
-        []model.Message{{Role: "user", Content: "Say hi"}},
+        []*model.Message{
+            {
+                Role:  model.ConversationRoleUser,
+                Parts: []model.Part{model.TextPart{Text: "Say hi"}},
+            },
+        },
     )
-    if err != nil { panic(err) }
+    if err != nil {
+        panic(err)
+    }
     fmt.Println("RunID:", out.RunID)
-    fmt.Println("Assistant:", out.Content)
+    if out.Final != nil && len(out.Final.Parts) > 0 {
+        if tp, ok := out.Final.Parts[0].(model.TextPart); ok {
+            fmt.Println("Assistant:", tp.Text)
+        }
+    }
 }
 ```
 
@@ -160,8 +183,8 @@ finalizer := runtime.ToolResultFinalizer(
                 filtered = append(filtered, child)
             }
         }
-        facts.Children = filtered
-        return facts, nil
+        summary.Children = filtered
+        return summary, nil
     },
 )
 

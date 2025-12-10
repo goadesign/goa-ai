@@ -80,7 +80,9 @@ type (
 	}
 
 	// TaskState represents the state of an active task managed by the server.
+	// It is safe for concurrent use by multiple goroutines.
 	TaskState struct {
+		mu sync.RWMutex
 		// Status is the most recent task status snapshot.
 		Status *types.TaskStatus
 		// Cancel is the cancellation function for the underlying execution, if any.
@@ -118,6 +120,8 @@ type (
 // NewServer creates an A2A server with the given configuration. By default it
 // uses an in-memory TaskStore; use WithTaskStore to provide a different
 // implementation.
+//
+//nolint:unparam // error return reserved for future validation
 func NewServer(rt agentruntime.Client, baseURL string, cfg ServerConfig, opts ...ServerOption) (*Server, error) {
 	s := &Server{
 		rt:      rt,
@@ -164,18 +168,22 @@ func (s *Server) TasksSend(ctx context.Context, p *types.SendTaskPayload) (*type
 
 	out, err := s.rt.Run(taskCtx, messages)
 	if err != nil {
+		state.mu.Lock()
 		state.Status = &types.TaskStatus{
 			State:     "failed",
 			Message:   errorMessage(err),
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 		}
+		state.mu.Unlock()
 		return errorResponse(p.ID, err), nil
 	}
 
+	state.mu.Lock()
 	state.Status = &types.TaskStatus{
 		State:     "completed",
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
+	state.mu.Unlock()
 	return successResponse(p.ID, out), nil
 }
 
@@ -200,17 +208,22 @@ func (s *Server) TasksSendSubscribe(ctx context.Context, p *types.SendTaskPayloa
 	}
 	defer s.store.Delete(p.ID)
 
-	if err := stream.Send(ctx, statusEvent(p.ID, state.Status)); err != nil {
+	state.mu.RLock()
+	initialStatus := state.Status
+	state.mu.RUnlock()
+	if err := stream.Send(ctx, statusEvent(p.ID, initialStatus)); err != nil {
 		return err
 	}
 
 	out, err := s.rt.Run(taskCtx, messages)
 	if err != nil {
+		state.mu.Lock()
 		state.Status = &types.TaskStatus{
 			State:     "failed",
 			Message:   errorMessage(err),
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 		}
+		state.mu.Unlock()
 		return stream.Send(ctx, errorEvent(p.ID, err))
 	}
 
@@ -218,31 +231,42 @@ func (s *Server) TasksSendSubscribe(ctx context.Context, p *types.SendTaskPayloa
 		return err
 	}
 
+	state.mu.Lock()
 	state.Status = &types.TaskStatus{
 		State:     "completed",
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
-	return stream.Send(ctx, statusEvent(p.ID, state.Status))
+	finalStatus := state.Status
+	state.mu.Unlock()
+	return stream.Send(ctx, statusEvent(p.ID, finalStatus))
 }
 
 // TasksGet implements the tasks/get A2A method.
-func (s *Server) TasksGet(ctx context.Context, p *types.GetTaskPayload) (*types.TaskResponse, error) {
+//
+//nolint:unparam // error return is part of the A2A interface contract
+func (s *Server) TasksGet(_ context.Context, p *types.GetTaskPayload) (*types.TaskResponse, error) {
 	state, ok := s.store.Load(p.ID)
 	if !ok {
 		return errorResponse(p.ID, fmt.Errorf("task not found")), nil
 	}
+	state.mu.RLock()
+	status := copyTaskStatus(state.Status)
+	state.mu.RUnlock()
 	return &types.TaskResponse{
 		ID:     p.ID,
-		Status: state.Status,
+		Status: status,
 	}, nil
 }
 
 // TasksCancel implements the tasks/cancel A2A method.
-func (s *Server) TasksCancel(ctx context.Context, p *types.CancelTaskPayload) (*types.TaskResponse, error) {
+//
+//nolint:unparam // error return is part of the A2A interface contract
+func (s *Server) TasksCancel(_ context.Context, p *types.CancelTaskPayload) (*types.TaskResponse, error) {
 	state, ok := s.store.Load(p.ID)
 	if !ok {
 		return errorResponse(p.ID, fmt.Errorf("task not found")), nil
 	}
+	state.mu.Lock()
 	if state.Cancel != nil {
 		state.Cancel()
 	}
@@ -250,14 +274,18 @@ func (s *Server) TasksCancel(ctx context.Context, p *types.CancelTaskPayload) (*
 		State:     "canceled",
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
+	status := copyTaskStatus(state.Status)
+	state.mu.Unlock()
 	return &types.TaskResponse{
 		ID:     p.ID,
-		Status: state.Status,
+		Status: status,
 	}, nil
 }
 
 // AgentCard implements the agent/card A2A method.
-func (s *Server) AgentCard(ctx context.Context) (*types.AgentCardResponse, error) {
+//
+//nolint:unparam // error return is part of the A2A interface contract
+func (s *Server) AgentCard(_ context.Context) (*types.AgentCardResponse, error) {
 	skills := make([]*types.Skill, 0, len(s.config.Skills))
 	for _, sk := range s.config.Skills {
 		skills = append(skills, &types.Skill{
@@ -280,7 +308,7 @@ func (s *Server) AgentCard(ctx context.Context) (*types.AgentCardResponse, error
 		SecuritySchemes:    s.config.Security.Schemes,
 	}
 
-	return (*types.AgentCardResponse)(card), nil
+	return card, nil
 }
 
 // newInMemoryTaskStore creates a new in-memory TaskStore implementation.
@@ -435,3 +463,58 @@ func errorMessage(err error) *types.TaskMessage {
 }
 
 func ptrString(s string) *string { return &s }
+
+// copyTaskStatus creates a deep copy of a TaskStatus to avoid races when
+// returning status snapshots.
+func copyTaskStatus(s *types.TaskStatus) *types.TaskStatus {
+	if s == nil {
+		return nil
+	}
+	cp := &types.TaskStatus{
+		State:     s.State,
+		Timestamp: s.Timestamp,
+	}
+	if s.Message != nil {
+		cp.Message = copyTaskMessage(s.Message)
+	}
+	return cp
+}
+
+// copyTaskMessage creates a deep copy of a TaskMessage.
+func copyTaskMessage(m *types.TaskMessage) *types.TaskMessage {
+	if m == nil {
+		return nil
+	}
+	cp := &types.TaskMessage{
+		Role:  m.Role,
+		Parts: make([]*types.MessagePart, len(m.Parts)),
+	}
+	for i, p := range m.Parts {
+		cp.Parts[i] = copyMessagePart(p)
+	}
+	return cp
+}
+
+// copyMessagePart creates a deep copy of a MessagePart.
+func copyMessagePart(p *types.MessagePart) *types.MessagePart {
+	if p == nil {
+		return nil
+	}
+	cp := &types.MessagePart{
+		Type: p.Type,
+	}
+	if p.Text != nil {
+		cp.Text = ptrString(*p.Text)
+	}
+	if len(p.Data) > 0 {
+		cp.Data = make([]byte, len(p.Data))
+		copy(cp.Data, p.Data)
+	}
+	if p.MIMEType != nil {
+		cp.MIMEType = ptrString(*p.MIMEType)
+	}
+	if p.URI != nil {
+		cp.URI = ptrString(*p.URI)
+	}
+	return cp
+}

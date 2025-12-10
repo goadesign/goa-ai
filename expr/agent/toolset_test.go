@@ -128,6 +128,49 @@ func TestToolsetExpr_Validate_ProviderLocal(t *testing.T) {
 	})
 }
 
+func TestToolsetExpr_Validate_ProviderA2A(t *testing.T) {
+	t.Run("valid A2A provider", func(t *testing.T) {
+		ts := &ToolsetExpr{
+			Name: "a2a-tools",
+			Provider: &ProviderExpr{
+				Kind:     ProviderA2A,
+				A2ASuite: "svc.agent.tools",
+				A2AURL:   "https://example.com/a2a",
+			},
+		}
+		err := ts.Validate()
+		require.NoError(t, err)
+	})
+
+	t.Run("A2A provider missing suite", func(t *testing.T) {
+		ts := &ToolsetExpr{
+			Name: "a2a-tools",
+			Provider: &ProviderExpr{
+				Kind:     ProviderA2A,
+				A2ASuite: "",
+				A2AURL:   "https://example.com/a2a",
+			},
+		}
+		err := ts.Validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "A2A suite is required")
+	})
+
+	t.Run("A2A provider missing URL", func(t *testing.T) {
+		ts := &ToolsetExpr{
+			Name: "a2a-tools",
+			Provider: &ProviderExpr{
+				Kind:     ProviderA2A,
+				A2ASuite: "svc.agent.tools",
+				A2AURL:   "",
+			},
+		}
+		err := ts.Validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "A2A URL is required")
+	})
+}
+
 func TestToolsetExpr_ProviderResolution(t *testing.T) {
 	t.Run("toolset without provider is local", func(t *testing.T) {
 		ts := &ToolsetExpr{Name: "local"}

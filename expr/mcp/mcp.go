@@ -339,3 +339,18 @@ func (m *MessageExpr) EvalName() string {
 func (d *DynamicPromptExpr) EvalName() string {
 	return "MCP dynamic prompt " + d.Name
 }
+
+// EvalName returns the name used for evaluation.
+func (n *NotificationExpr) EvalName() string {
+	return "MCP notification " + n.Name
+}
+
+// EvalName returns the name used for evaluation.
+func (s *SubscriptionExpr) EvalName() string {
+	return "MCP subscription for resource " + s.ResourceName
+}
+
+// EvalName returns the name used for evaluation.
+func (s *SubscriptionMonitorExpr) EvalName() string {
+	return "MCP subscription monitor " + s.Name
+}

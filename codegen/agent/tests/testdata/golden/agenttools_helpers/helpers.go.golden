@@ -28,7 +28,8 @@ const AgentID agent.Ident = "alpha.scribe"
 // constants as keys for per-tool configuration maps (e.g., SystemPrompts).
 const (
 	// Find is the canonical tool identifier for search.find.
-	// Tool IDs are always fully-qualified "<toolset>.<tool>" strings.
+	// Tool IDs are always the fully-qualified "<toolset>.<tool>" form so they
+	// match Specs entries, planner requests, and runtime stream events exactly.
 	Find tools.Ident = "search.find"
 )
 

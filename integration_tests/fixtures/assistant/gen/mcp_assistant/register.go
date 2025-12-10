@@ -23,7 +23,7 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Description: "Analyze sentiment of text",
 		Payload: tools.TypeSpec{
 			Name:   "*assistant.AnalyzeSentimentPayload",
-			Schema: []byte("{\"$ref\":\"#/$defs/AnalyzeSentimentPayload\",\"required\":[\"text\"]}"),
+			Schema: []byte("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to analyze\"}},\"additionalProperties\":false}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					return json.Marshal(v)
@@ -67,7 +67,7 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Description: "Extract keywords from text",
 		Payload: tools.TypeSpec{
 			Name:   "*assistant.ExtractKeywordsPayload",
-			Schema: []byte("{\"$ref\":\"#/$defs/ExtractKeywordsPayload\",\"required\":[\"text\"]}"),
+			Schema: []byte("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text\"}},\"additionalProperties\":false}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					return json.Marshal(v)
@@ -111,7 +111,7 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Description: "Summarize text",
 		Payload: tools.TypeSpec{
 			Name:   "*assistant.SummarizeTextPayload",
-			Schema: []byte("{\"$ref\":\"#/$defs/SummarizeTextPayload\",\"required\":[\"text\"]}"),
+			Schema: []byte("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to summarize\"}},\"additionalProperties\":false}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					return json.Marshal(v)
@@ -155,7 +155,7 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Description: "Search knowledge base",
 		Payload: tools.TypeSpec{
 			Name:   "*assistant.SearchPayload",
-			Schema: []byte("{\"$ref\":\"#/$defs/SearchPayload\",\"required\":[\"query\"]}"),
+			Schema: []byte("{\"type\":\"object\",\"required\":[\"query\"],\"properties\":{\"limit\":{\"type\":\"integer\",\"description\":\"Maximum number of results\"},\"query\":{\"type\":\"string\",\"description\":\"Search query\"}},\"additionalProperties\":false}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					return json.Marshal(v)
@@ -199,7 +199,7 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Description: "Execute code",
 		Payload: tools.TypeSpec{
 			Name:   "*assistant.ExecuteCodePayload",
-			Schema: []byte("{\"$ref\":\"#/$defs/ExecuteCodePayload\",\"required\":[\"language\",\"code\"]}"),
+			Schema: []byte("{\"type\":\"object\",\"required\":[\"language\",\"code\"],\"properties\":{\"code\":{\"type\":\"string\",\"description\":\"Code to execute\"},\"language\":{\"type\":\"string\",\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"]}},\"additionalProperties\":false}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					return json.Marshal(v)
@@ -243,7 +243,7 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Description: "Process a batch of items",
 		Payload: tools.TypeSpec{
 			Name:   "*assistant.ProcessBatchPayload",
-			Schema: []byte("{\"$ref\":\"#/$defs/ProcessBatchPayload\",\"required\":[\"items\"]}"),
+			Schema: []byte("{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"blob\":{\"type\":\"string\",\"description\":\"Base64 blob\"},\"format\":{\"type\":\"string\",\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"]},\"items\":{\"type\":\"array\",\"description\":\"Items to process\",\"items\":{\"type\":\"string\"}},\"mimeType\":{\"type\":\"string\",\"description\":\"MIME type\"},\"uri\":{\"type\":\"string\",\"description\":\"Resource URI\"}},\"additionalProperties\":false}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					return json.Marshal(v)
@@ -389,22 +389,22 @@ func AssistantAssistantMcpToolsetRetryHint(toolName tools.Ident, err error) *pla
 			var schemaJSON, example string
 			switch key {
 			case "analyze_sentiment":
-				schemaJSON = "{\"$ref\":\"#/$defs/AnalyzeSentimentPayload\",\"required\":[\"text\"]}"
+				schemaJSON = "{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to analyze\"}},\"additionalProperties\":false}"
 				example = "{\"text\":\"abc123\"}"
 			case "extract_keywords":
-				schemaJSON = "{\"$ref\":\"#/$defs/ExtractKeywordsPayload\",\"required\":[\"text\"]}"
+				schemaJSON = "{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text\"}},\"additionalProperties\":false}"
 				example = "{\"text\":\"abc123\"}"
 			case "summarize_text":
-				schemaJSON = "{\"$ref\":\"#/$defs/SummarizeTextPayload\",\"required\":[\"text\"]}"
+				schemaJSON = "{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to summarize\"}},\"additionalProperties\":false}"
 				example = "{\"text\":\"abc123\"}"
 			case "search":
-				schemaJSON = "{\"$ref\":\"#/$defs/SearchPayload\",\"required\":[\"query\"]}"
+				schemaJSON = "{\"type\":\"object\",\"required\":[\"query\"],\"properties\":{\"limit\":{\"type\":\"integer\",\"description\":\"Maximum number of results\"},\"query\":{\"type\":\"string\",\"description\":\"Search query\"}},\"additionalProperties\":false}"
 				example = "{\"limit\":1,\"query\":\"abc123\"}"
 			case "execute_code":
-				schemaJSON = "{\"$ref\":\"#/$defs/ExecuteCodePayload\",\"required\":[\"language\",\"code\"]}"
+				schemaJSON = "{\"type\":\"object\",\"required\":[\"language\",\"code\"],\"properties\":{\"code\":{\"type\":\"string\",\"description\":\"Code to execute\"},\"language\":{\"type\":\"string\",\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"]}},\"additionalProperties\":false}"
 				example = "{\"code\":\"abc123\",\"language\":\"javascript\"}"
 			case "process_batch":
-				schemaJSON = "{\"$ref\":\"#/$defs/ProcessBatchPayload\",\"required\":[\"items\"]}"
+				schemaJSON = "{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"blob\":{\"type\":\"string\",\"description\":\"Base64 blob\"},\"format\":{\"type\":\"string\",\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"]},\"items\":{\"type\":\"array\",\"description\":\"Items to process\",\"items\":{\"type\":\"string\"}},\"mimeType\":{\"type\":\"string\",\"description\":\"MIME type\"},\"uri\":{\"type\":\"string\",\"description\":\"Resource URI\"}},\"additionalProperties\":false}"
 				example = "{\"blob\":\"abc123\",\"format\":\"text\",\"items\":[\"abc123\"],\"mimeType\":\"abc123\",\"uri\":\"abc123\"}"
 			}
 			prompt := retry.BuildRepairPrompt("tools/call:"+key, rpcErr.Message, example, schemaJSON)

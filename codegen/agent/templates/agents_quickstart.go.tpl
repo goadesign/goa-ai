@@ -396,6 +396,8 @@ if err := rt.RegisterToolset(reg); err != nil { panic(err) }
 * **Interrupts (Human-in-the-Loop):** If your policy allows it, you can pause and resume agent runs with `rt.PauseRun()` and `rt.ResumeRun()`.
 * **Policies & Caps:** The `RunPolicy` in your design (max tool calls, time budgets) is automatically enforced by the runtime.
 * **Persistence & Observability:** The `runtime.New` function accepts `runtime.Options` to configure production-grade components like a Temporal engine, MongoDB for memory, and telemetry hooks.
+* **Registries & Discovery:** When you declare registries and `FromRegistry(...)` toolsets in your DSL, Goa-AI generates typed registry HTTP clients under `gen/<svc>/registry/<name>/` plus per-toolset specs helpers (with `DiscoverAndPopulate`, `Specs`, and `RegistryToolsetID`) so you can discover tools at runtime and register executors using `runtime.ToolsetRegistration`.
+* **A2A (Agent-to-Agent over HTTP):** For agents that export toolsets, Goa-AI also emits an A2A JSON-RPC server (`gen/a2a_<agent>/…`) and a small A2A client/helper layer in `runtime/a2a` (and its `httpclient` package) so other services can discover providers via registries and invoke them as tools without sharing a codebase.
 
 ```go
 // Example of production-ready runtime options

@@ -1,3 +1,5 @@
+// Package httpclient provides an HTTP-based A2A client implementation that
+// communicates with A2A servers using JSON-RPC over HTTP.
 package httpclient
 
 import (
@@ -84,6 +86,8 @@ func WithBearerToken(token string) Option {
 
 // New constructs a new Client implementing a2a.Caller. The endpoint must point
 // to the A2A JSON-RPC URL (for example, "https://host.example.com/a2a").
+//
+//nolint:unparam // error return reserved for future validation
 func New(endpoint string, opts ...Option) (*Client, error) {
 	if endpoint == "" {
 		endpoint = "http://127.0.0.1:8080/a2a"
@@ -121,7 +125,7 @@ func (c *Client) SendTask(ctx context.Context, req a2a.SendTaskRequest) (a2a.Sen
 	params := map[string]any{
 		"suite":   req.Suite,
 		"skill":   req.Skill,
-		"payload": json.RawMessage(req.Payload),
+		"payload": req.Payload,
 	}
 	rpcReq := rpcRequest{
 		JSONRPC: "2.0",

@@ -3,27 +3,23 @@ package shared
 
 import (
 	"encoding/json"
-	"sync"
 
 	"goa.design/goa/v3/expr"
-	"goa.design/goa/v3/http/codegen/openapi"
 )
 
-// schemaLock protects access to the global openapi.Definitions map
-// since it's not thread-safe.
-var schemaLock sync.Mutex
-
-// minimalAPI is a minimal API expression used for schema generation.
-// It provides an ExampleGenerator which is required by Goa's openapi package.
-var minimalAPI = &expr.APIExpr{
-	Name:             "schema",
-	ExampleGenerator: &expr.ExampleGenerator{Randomizer: expr.NewDeterministicRandomizer()},
-}
+// JSON Schema type constants.
+const (
+	jsonTypeObject  = "object"
+	jsonTypeArray   = "array"
+	jsonTypeString  = "string"
+	jsonTypeInteger = "integer"
+	jsonTypeNumber  = "number"
+	jsonTypeBoolean = "boolean"
+)
 
 // ToJSONSchema returns a compact JSON Schema for the given Goa attribute.
-// It uses Goa's openapi package for schema generation, which provides
-// comprehensive support for all Goa types including primitives, objects,
-// arrays, maps, unions, and user types.
+// It generates inline schemas without $ref references, which is required
+// for MCP and A2A protocols that expect fully resolved schemas.
 //
 // This function is shared between MCP and A2A code generation.
 func ToJSONSchema(attr *expr.AttributeExpr) string {
@@ -31,27 +27,144 @@ func ToJSONSchema(attr *expr.AttributeExpr) string {
 		return `{"type":"object","additionalProperties":false}`
 	}
 
-	// Lock to protect the global Definitions map in openapi package
-	schemaLock.Lock()
-	defer schemaLock.Unlock()
-
-	// Save and restore definitions to avoid pollution between calls
-	oldDefs := openapi.Definitions
-	openapi.Definitions = make(map[string]*openapi.Schema)
-	defer func() { openapi.Definitions = oldDefs }()
-
-	// Use Goa's openapi package to generate the schema
-	schema := openapi.AttributeTypeSchema(minimalAPI, attr)
-
-	// For objects without explicit additionalProperties, set to false
-	// for stricter validation (MCP/A2A tools expect exact schemas)
-	if schema.Type == openapi.Object && schema.AdditionalProperties == nil {
-		schema.AdditionalProperties = false
-	}
-
+	schema := buildInlineSchema(attr)
 	b, err := json.Marshal(schema)
 	if err != nil {
 		return `{"type":"object","additionalProperties":false}`
 	}
 	return string(b)
+}
+
+// inlineSchema represents a JSON Schema without $ref references.
+// Field names use camelCase per JSON Schema specification.
+//
+//nolint:tagliatelle // JSON Schema specification requires camelCase field names
+type inlineSchema struct {
+	Type                 string                   `json:"type,omitempty"`
+	Description          string                   `json:"description,omitempty"`
+	Required             []string                 `json:"required,omitempty"`
+	Properties           map[string]*inlineSchema `json:"properties,omitempty"`
+	Items                *inlineSchema            `json:"items,omitempty"`
+	AdditionalProperties any                      `json:"additionalProperties,omitempty"`
+	Enum                 []any                    `json:"enum,omitempty"`
+	Default              any                      `json:"default,omitempty"`
+	Minimum              *float64                 `json:"minimum,omitempty"`
+	Maximum              *float64                 `json:"maximum,omitempty"`
+	MinLength            *int                     `json:"minLength,omitempty"`
+	MaxLength            *int                     `json:"maxLength,omitempty"`
+	Pattern              string                   `json:"pattern,omitempty"`
+	Format               string                   `json:"format,omitempty"`
+	MinItems             *int                     `json:"minItems,omitempty"`
+	MaxItems             *int                     `json:"maxItems,omitempty"`
+}
+
+// buildInlineSchema creates a JSON Schema from a Goa attribute without $ref.
+func buildInlineSchema(attr *expr.AttributeExpr) *inlineSchema {
+	if attr == nil || attr.Type == nil {
+		return &inlineSchema{Type: jsonTypeObject, AdditionalProperties: false}
+	}
+
+	schema := &inlineSchema{
+		Description: attr.Description,
+	}
+
+	// Handle default value
+	if attr.DefaultValue != nil {
+		schema.Default = attr.DefaultValue
+	}
+
+	// Handle validations
+	if v := attr.Validation; v != nil {
+		if len(v.Values) > 0 {
+			schema.Enum = v.Values
+		}
+		if v.Minimum != nil {
+			schema.Minimum = v.Minimum
+		}
+		if v.Maximum != nil {
+			schema.Maximum = v.Maximum
+		}
+		if v.MinLength != nil {
+			schema.MinLength = v.MinLength
+		}
+		if v.MaxLength != nil {
+			schema.MaxLength = v.MaxLength
+		}
+		if v.Pattern != "" {
+			schema.Pattern = v.Pattern
+		}
+		if v.Format != "" {
+			schema.Format = string(v.Format)
+		}
+	}
+
+	switch t := attr.Type.(type) {
+	case expr.Primitive:
+		schema.Type = primitiveToJSONType(t)
+	case *expr.Array:
+		schema.Type = jsonTypeArray
+		if t.ElemType != nil {
+			schema.Items = buildInlineSchema(t.ElemType)
+		}
+		if v := attr.Validation; v != nil {
+			if v.MinLength != nil {
+				schema.MinItems = v.MinLength
+				schema.MinLength = nil
+			}
+			if v.MaxLength != nil {
+				schema.MaxItems = v.MaxLength
+				schema.MaxLength = nil
+			}
+		}
+	case *expr.Map:
+		schema.Type = jsonTypeObject
+		if t.ElemType != nil {
+			schema.AdditionalProperties = buildInlineSchema(t.ElemType)
+		} else {
+			schema.AdditionalProperties = true
+		}
+	case *expr.Object:
+		schema.Type = jsonTypeObject
+		schema.Properties = make(map[string]*inlineSchema)
+		for _, nat := range *t {
+			schema.Properties[nat.Name] = buildInlineSchema(nat.Attribute)
+		}
+		schema.AdditionalProperties = false
+		// Collect required fields
+		if attr.Validation != nil && len(attr.Validation.Required) > 0 {
+			schema.Required = attr.Validation.Required
+		}
+	case *expr.UserTypeExpr:
+		// Inline the user type's attribute
+		return buildInlineSchema(t.Attribute())
+	case *expr.ResultTypeExpr:
+		// Inline the result type's attribute
+		return buildInlineSchema(t.Attribute())
+	default:
+		// Fallback for unknown types
+		schema.Type = jsonTypeObject
+		schema.AdditionalProperties = false
+	}
+
+	return schema
+}
+
+// primitiveToJSONType converts a Goa primitive type to JSON Schema type.
+func primitiveToJSONType(p expr.Primitive) string {
+	switch p {
+	case expr.Boolean:
+		return jsonTypeBoolean
+	case expr.Int, expr.Int32, expr.Int64, expr.UInt, expr.UInt32, expr.UInt64:
+		return jsonTypeInteger
+	case expr.Float32, expr.Float64:
+		return jsonTypeNumber
+	case expr.String:
+		return jsonTypeString
+	case expr.Bytes:
+		return jsonTypeString
+	case expr.Any:
+		return jsonTypeObject
+	default:
+		return jsonTypeString
+	}
 }

@@ -1,23 +1,6 @@
 // Option configures a registry client.
 type Option func(*Client)
 
-// CacheConfig configures local caching behavior.
-type CacheConfig struct {
-	// TTL is the cache time-to-live.
-	TTL time.Duration
-	// Store is the cache storage backend.
-	Store CacheStore
-}
-
-// CacheStore is the interface for cache storage backends.
-type CacheStore interface {
-	// Get retrieves a cached value.
-	Get(key string) ([]byte, bool)
-	// Set stores a value in the cache.
-	Set(key string, value []byte, ttl time.Duration)
-	// Delete removes a value from the cache.
-	Delete(key string)
-}
 {{- if .SecuritySchemes }}
 {{- range .SecuritySchemes }}
 {{- if isAPIKey .Kind }}
@@ -103,15 +86,6 @@ func WithEndpoint(endpoint string) Option {
 	}
 }
 
-// WithCache configures caching for the client.
-func WithCache(cfg CacheConfig) Option {
-	return func(c *Client) {
-		// Cache configuration is stored but actual caching is implemented
-		// by wrapping the client methods. This is a placeholder for the
-		// runtime cache integration.
-		_ = cfg
-	}
-}
 {{- if .SecuritySchemes }}
 {{- range .SecuritySchemes }}
 {{- if isAPIKey .Kind }}

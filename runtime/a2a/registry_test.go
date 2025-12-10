@@ -72,7 +72,7 @@ func TestValidateAgentCardConsistencyProperty(t *testing.T) {
 			}
 
 			cfg := ProviderConfig{
-				Suite: "svc.agent.tools",
+				Suite:  "svc.agent.tools",
 				Skills: make([]SkillConfig, 0, len(unique)),
 			}
 			card := &registry.AgentCard{
@@ -186,7 +186,7 @@ func TestRegisterProviderFromCard(t *testing.T) {
 	err = RegisterProviderFromCard(context.Background(), nil, caller, cfg, card)
 	var regErr *RegistrationError
 	require.Error(t, err)
-	require.True(t, errors.As(err, &regErr))
+	require.ErrorAs(t, err, &regErr)
 	require.Equal(t, cfg.Suite, regErr.Suite)
 	require.Equal(t, card.URL, regErr.URL)
 }
@@ -210,5 +210,3 @@ func dedupeNonEmpty(in []string) []string {
 	}
 	return out
 }
-
-

@@ -250,3 +250,207 @@ func runDSL(t *testing.T, dsl func()) {
 	require.True(t, eval.Execute(dsl, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
 }
+
+// TestPassthroughWithServiceAndMethodNames verifies Passthrough works with
+// service name and method name strings.
+func TestPassthroughWithServiceAndMethodNames(t *testing.T) {
+	runDSL(t, func() {
+		API("test", func() {})
+		Service("logging", func() {
+			Method("LogMessage", func() {
+				Payload(String)
+				Result(String)
+			})
+			Agent("agent", "desc", func() {
+				Export("logging-tools", func() {
+					Tool("log_message", "Log a message", func() {
+						Args(String)
+						Return(String)
+						Passthrough("log_message", "logging", "LogMessage")
+					})
+				})
+			})
+		})
+	})
+
+	require.Len(t, agentsexpr.Root.Agents, 1)
+	a := agentsexpr.Root.Agents[0]
+	require.NotNil(t, a.Exported)
+	require.Len(t, a.Exported.Toolsets, 1)
+	ts := a.Exported.Toolsets[0]
+	require.Len(t, ts.Tools, 1)
+	tool := ts.Tools[0]
+	require.NotNil(t, tool.ExportPassthrough, "Passthrough should set ExportPassthrough")
+	require.Equal(t, "logging", tool.ExportPassthrough.TargetService)
+	require.Equal(t, "LogMessage", tool.ExportPassthrough.TargetMethod)
+}
+
+// TestPassthroughWithMethodExpr verifies Passthrough works with a MethodExpr reference.
+func TestPassthroughWithMethodExpr(t *testing.T) {
+	runDSL(t, func() {
+		API("test", func() {})
+		Service("logging", func() {
+			var logMethod *goaexpr.MethodExpr
+			Method("LogMessage", func() {
+				Payload(String)
+				Result(String)
+			})
+			// Get the method expression after it's created
+			logMethod = goaexpr.Root.Service("logging").Method("LogMessage")
+			Agent("agent", "desc", func() {
+				Export("logging-tools", func() {
+					Tool("log_message", "Log a message", func() {
+						Args(String)
+						Return(String)
+						Passthrough("log_message", logMethod)
+					})
+				})
+			})
+		})
+	})
+
+	require.Len(t, agentsexpr.Root.Agents, 1)
+	a := agentsexpr.Root.Agents[0]
+	require.NotNil(t, a.Exported)
+	require.Len(t, a.Exported.Toolsets, 1)
+	ts := a.Exported.Toolsets[0]
+	require.Len(t, ts.Tools, 1)
+	tool := ts.Tools[0]
+	require.NotNil(t, tool.ExportPassthrough, "Passthrough should set ExportPassthrough")
+	require.Equal(t, "logging", tool.ExportPassthrough.TargetService)
+	require.Equal(t, "LogMessage", tool.ExportPassthrough.TargetMethod)
+}
+
+// TestTimingConfiguration verifies Timing DSL with Budget, Plan, and Tools.
+func TestTimingConfiguration(t *testing.T) {
+	runDSL(t, func() {
+		API("test", func() {})
+		Service("svc", func() {
+			Agent("agent", "desc", func() {
+				RunPolicy(func() {
+					Timing(func() {
+						Budget("10m")
+						Plan("45s")
+						Tools("2m")
+					})
+				})
+			})
+		})
+	})
+
+	require.Len(t, agentsexpr.Root.Agents, 1)
+	policy := agentsexpr.Root.Agents[0].RunPolicy
+	require.NotNil(t, policy)
+	require.Equal(t, 10*time.Minute, policy.TimeBudget)
+	require.Equal(t, 45*time.Second, policy.PlanTimeout)
+	require.Equal(t, 2*time.Minute, policy.ToolTimeout)
+}
+
+// TestHistoryKeepRecentTurns verifies History with KeepRecentTurns.
+func TestHistoryKeepRecentTurns(t *testing.T) {
+	runDSL(t, func() {
+		API("test", func() {})
+		Service("svc", func() {
+			Agent("agent", "desc", func() {
+				RunPolicy(func() {
+					History(func() {
+						KeepRecentTurns(20)
+					})
+				})
+			})
+		})
+	})
+
+	require.Len(t, agentsexpr.Root.Agents, 1)
+	policy := agentsexpr.Root.Agents[0].RunPolicy
+	require.NotNil(t, policy)
+	require.NotNil(t, policy.History)
+	require.Equal(t, agentsexpr.HistoryModeKeepRecent, policy.History.Mode)
+	require.Equal(t, 20, policy.History.KeepRecent)
+}
+
+// TestHistoryCompress verifies History with Compress.
+func TestHistoryCompress(t *testing.T) {
+	runDSL(t, func() {
+		API("test", func() {})
+		Service("svc", func() {
+			Agent("agent", "desc", func() {
+				RunPolicy(func() {
+					History(func() {
+						Compress(30, 10)
+					})
+				})
+			})
+		})
+	})
+
+	require.Len(t, agentsexpr.Root.Agents, 1)
+	policy := agentsexpr.Root.Agents[0].RunPolicy
+	require.NotNil(t, policy)
+	require.NotNil(t, policy.History)
+	require.Equal(t, agentsexpr.HistoryModeCompress, policy.History.Mode)
+	require.Equal(t, 30, policy.History.TriggerAt)
+	require.Equal(t, 10, policy.History.CompressKeepRecent)
+}
+
+// TestCacheConfiguration verifies Cache with AfterSystem and AfterTools.
+func TestCacheConfiguration(t *testing.T) {
+	runDSL(t, func() {
+		API("test", func() {})
+		Service("svc", func() {
+			Agent("agent", "desc", func() {
+				RunPolicy(func() {
+					Cache(func() {
+						AfterSystem()
+						AfterTools()
+					})
+				})
+			})
+		})
+	})
+
+	require.Len(t, agentsexpr.Root.Agents, 1)
+	policy := agentsexpr.Root.Agents[0].RunPolicy
+	require.NotNil(t, policy)
+	require.NotNil(t, policy.Cache)
+	require.True(t, policy.Cache.AfterSystem)
+	require.True(t, policy.Cache.AfterTools)
+}
+
+// TestInterruptsAllowed verifies InterruptsAllowed DSL.
+func TestInterruptsAllowed(t *testing.T) {
+	runDSL(t, func() {
+		API("test", func() {})
+		Service("svc", func() {
+			Agent("agent", "desc", func() {
+				RunPolicy(func() {
+					InterruptsAllowed(true)
+				})
+			})
+		})
+	})
+
+	require.Len(t, agentsexpr.Root.Agents, 1)
+	policy := agentsexpr.Root.Agents[0].RunPolicy
+	require.NotNil(t, policy)
+	require.True(t, policy.InterruptsAllowed)
+}
+
+// TestOnMissingFields verifies OnMissingFields DSL.
+func TestOnMissingFields(t *testing.T) {
+	runDSL(t, func() {
+		API("test", func() {})
+		Service("svc", func() {
+			Agent("agent", "desc", func() {
+				RunPolicy(func() {
+					OnMissingFields("await_clarification")
+				})
+			})
+		})
+	})
+
+	require.Len(t, agentsexpr.Root.Agents, 1)
+	policy := agentsexpr.Root.Agents[0].RunPolicy
+	require.NotNil(t, policy)
+	require.Equal(t, "await_clarification", policy.OnMissingFields)
+}

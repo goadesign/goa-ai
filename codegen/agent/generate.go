@@ -935,9 +935,15 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 										extraImports[im.Path] = im
 									}
 								}
-								// Build fully-qualified sidecar wrapper type name in the
-								// specs package.
-								sidecarType := fmt.Sprintf("%s.%s", specsAlias, toolSidecar.TypeName)
+								// Build a synthetic user type for the sidecar so we can use
+								// GoFullTypeRef to compute the proper type reference with
+								// correct pointer semantics (no string surgery).
+								sidecarUT := &goaexpr.UserTypeExpr{
+									AttributeExpr: t.Artifact,
+									TypeName:      toolSidecar.TypeName,
+								}
+								sidecarAttr := &goaexpr.AttributeExpr{Type: sidecarUT}
+								sidecarRef := scope.GoFullTypeRef(sidecarAttr, specsAlias)
 								// Use the same logic as Init<GoName>ToolResult for the
 								// method result parameter type so aliasing remains
 								// consistent across transforms.
@@ -950,16 +956,18 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 								// Body: wrap the entire method result into the lone sidecar field
 								// using the already-generated Init<GoName>ToolResult helper to
 								// convert the service result into the specs-level result type.
+								// Use GoFullTypeName to get the qualified type name for the struct literal.
+								sidecarTypeName := scope.GoFullTypeName(sidecarAttr, specsAlias)
 								body := fmt.Sprintf(
 									"out = &%s{\n\t%s: Init%sToolResult(in),\n}\n",
-									sidecarType,
+									sidecarTypeName,
 									codegen.Goify(fieldName, true),
 									codegen.Goify(t.Name, true),
 								)
 								fns = append(fns, transformFuncData{
 									Name:          "Init" + codegen.Goify(t.Name, true) + "SidecarFromMethodResult",
 									ParamTypeRef:  serviceResRef,
-									ResultTypeRef: "*" + sidecarType,
+									ResultTypeRef: sidecarRef,
 									Body:          body,
 									Helpers:       nil,
 								})

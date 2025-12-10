@@ -49,7 +49,7 @@ func a2aConsumerFiles(genpkg string, svc *ServiceAgentsData) []*codegen.File {
 		return nil
 	}
 
-	var files []*codegen.File
+	files := make([]*codegen.File, 0, len(pkgs)*2) // 2 files per package: config.go and caller.go
 	for _, data := range pkgs {
 		// config.go (ProviderConfig)
 		configSections := []*codegen.SectionTemplate{
@@ -88,9 +88,6 @@ func buildA2AConsumerConfigData(genpkg string, svc *ServiceAgentsData) []*A2ACon
 	bySuite := make(map[string]*A2AConsumerConfigData)
 
 	for _, agent := range svc.Agents {
-		if len(agent.UsedToolsets) == 0 {
-			continue
-		}
 		for _, ts := range agent.UsedToolsets {
 			if ts == nil || ts.Expr == nil || ts.Expr.Provider == nil {
 				continue

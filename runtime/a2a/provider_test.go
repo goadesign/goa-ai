@@ -16,6 +16,9 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+// Test constants for skill IDs.
+const testSkillID = "tools.echo"
+
 type recordingCaller struct {
 	lastReq SendTaskRequest
 	resp    SendTaskResponse
@@ -65,7 +68,7 @@ func TestToolRequestToSendTaskRequestProperty(t *testing.T) {
 				suite = "svc.agent.tools"
 			}
 			if skillID == "" {
-				skillID = "tools.echo"
+				skillID = testSkillID
 			}
 			fullID := tools.Ident(skillID)
 
@@ -163,7 +166,7 @@ func TestErrorToRetryHintProperty(t *testing.T) {
 	properties.Property("invalid params error produces retry hint", prop.ForAll(
 		func(skillID, schema, example, message string) bool {
 			if skillID == "" {
-				skillID = "tools.echo"
+				skillID = testSkillID
 			}
 			if schema == "" {
 				schema = `{"type":"object"}`
@@ -213,7 +216,7 @@ func TestErrorToRetryHintProperty(t *testing.T) {
 	properties.Property("method not found error produces tool unavailable hint", prop.ForAll(
 		func(skillID, message string) bool {
 			if skillID == "" {
-				skillID = "tools.echo"
+				skillID = testSkillID
 			}
 			if message == "" {
 				message = "not found"
@@ -244,7 +247,7 @@ func TestErrorToRetryHintProperty(t *testing.T) {
 	properties.Property("DefaultRetryHint looks up skill by ident", prop.ForAll(
 		func(skillID string) bool {
 			if skillID == "" {
-				skillID = "tools.echo"
+				skillID = testSkillID
 			}
 			id := tools.Ident(skillID)
 			skill := SkillConfig{ID: skillID}
@@ -283,7 +286,7 @@ func TestRegisterProviderValidation(t *testing.T) {
 	cfg.Suite = "svc.agent.tools"
 	cfg.Skills = []SkillConfig{
 		{
-			ID:          "tools.echo",
+			ID:          testSkillID,
 			Description: "echo",
 			Payload: tools.TypeSpec{
 				Name: "Payload",

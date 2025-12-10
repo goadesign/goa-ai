@@ -667,7 +667,10 @@ func (r *Runtime) runLoop(
 				)
 
 				// Advance to PlanResume immediately without executing internal tools.
-				resumeReq := r.buildNextResumeRequest(base, lastToolResults, &nextAttempt)
+				resumeReq, err2 := r.buildNextResumeRequest(base, lastToolResults, &nextAttempt)
+				if err2 != nil {
+					return nil, err2
+				}
 				resOutput, err2 := r.runPlanActivity(
 					wfCtx,
 					reg.ResumeActivityName,
@@ -843,7 +846,10 @@ func (r *Runtime) runLoop(
 			return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, turnID, planner.TerminationReasonFailureCap, deadline)
 		}
 
-		resumeReq := r.buildNextResumeRequest(base, lastToolResults, &nextAttempt)
+		resumeReq, rerr := r.buildNextResumeRequest(base, lastToolResults, &nextAttempt)
+		if rerr != nil {
+			return nil, rerr
+		}
 		resOutput, rerr := r.runPlanActivity(wfCtx, reg.ResumeActivityName, resumeOpts, resumeReq, deadline)
 		if rerr != nil {
 			return nil, rerr
@@ -2227,15 +2233,17 @@ func (r *Runtime) buildNextResumeRequest(
 	base *planner.PlanInput,
 	lastToolResults []*planner.ToolResult,
 	nextAttempt *int,
-) PlanActivityInput {
+) (PlanActivityInput, error) {
 	resumeCtx := base.RunContext
 	resumeCtx.Attempt = *nextAttempt
 	*nextAttempt++
 	plannerMsgs := cloneMessages(base.Messages)
 	if err := transcript.ValidateBedrock(plannerMsgs, false); err != nil {
 		// Fail fast rather than sending an invalid sequence to the provider.
-		// This surfaces a clear runtime/ledger bug to the caller.
-		panic(fmt.Sprintf("invalid Bedrock transcript for run %s: %v", base.RunContext.RunID, err))
+		// This surfaces a clear runtime/ledger bug to the caller while allowing
+		// the workflow to terminate cleanly instead of timing out at the engine
+		// layer.
+		return PlanActivityInput{}, fmt.Errorf("invalid Bedrock transcript for run %s: %w", base.RunContext.RunID, err)
 	}
 	return PlanActivityInput{
 		AgentID:     base.Agent.ID(),
@@ -2243,7 +2251,7 @@ func (r *Runtime) buildNextResumeRequest(
 		Messages:    plannerMsgs,
 		RunContext:  resumeCtx,
 		ToolResults: lastToolResults,
-	}
+	}, nil
 }
 
 // recordRunStatus upserts run metadata to the store if configured.
