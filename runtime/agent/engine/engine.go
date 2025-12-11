@@ -148,6 +148,17 @@ type (
 	// deterministic with respect to activity results.
 	WorkflowFunc func(ctx WorkflowContext, input *api.RunInput) (*api.RunOutput, error)
 
+	// ReplayAwareContext marks a context that knows whether the underlying
+	// workflow is currently replaying history. Engines may return a context
+	// implementing this interface from WorkflowContext.Context so that downstream
+	// code (runtime, subscribers, stream sinks) can suppress side effects during
+	// Temporal history replay.
+	ReplayAwareContext interface {
+		context.Context
+		// IsReplaying reports whether the workflow is currently replaying history.
+		IsReplaying() bool
+	}
+
 	// WorkflowContext exposes engine operations to workflow handlers within the
 	// deterministic execution environment of a workflow. It wraps engine-specific
 	// contexts (Temporal workflow.Context, in-memory contexts, etc.) and provides

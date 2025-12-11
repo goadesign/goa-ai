@@ -27,3 +27,5 @@ func TestTaskRoundTrip(t *testing.T) {
 	require.NotNil(t, decoded.Status)
 	require.Equal(t, orig.Status.State, decoded.Status.State)
 }
+
+

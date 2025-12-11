@@ -1,12 +1,3 @@
-package {{ .Package }}
-
-import (
-	"encoding/json"
-
-	a2a "goa.design/goa-ai/runtime/a2a"
-	"goa.design/goa-ai/runtime/agent/tools"
-)
-
 // {{ .AgentGoName }}ServerConfig contains static configuration for the A2A server.
 var {{ .AgentGoName }}ServerConfig = a2a.ServerConfig{
 	Suite:            {{ printf "%q" .SuiteQualifiedName }},
@@ -28,13 +19,11 @@ var {{ .AgentGoName }}ServerConfig = a2a.ServerConfig{
 			ID:          {{ printf "%q" .QualifiedName }},
 			Description: {{ printf "%q" .Description }},
 			Payload: tools.TypeSpec{
-				Name:   {{ printf "%q" .PayloadType }},
-				Schema: []byte({{ printf "%q" .InputSchema }}),
+				Name:        {{ printf "%q" .PayloadType }},
+				Schema:      []byte({{ printf "%q" .InputSchema }}),
 				ExampleJSON: []byte({{ printf "%q" .ExampleArgs }}),
 				Codec: tools.JSONCodec[any]{
-					ToJSON: func(v any) ([]byte, error) {
-						return json.Marshal(v)
-					},
+					ToJSON: json.Marshal,
 					FromJSON: func(data []byte) (any, error) {
 						if len(data) == 0 {
 							return nil, nil
@@ -50,9 +39,7 @@ var {{ .AgentGoName }}ServerConfig = a2a.ServerConfig{
 			Result: tools.TypeSpec{
 				Name: {{ printf "%q" .ResultType }},
 				Codec: tools.JSONCodec[any]{
-					ToJSON: func(v any) ([]byte, error) {
-						return json.Marshal(v)
-					},
+					ToJSON: json.Marshal,
 					FromJSON: func(data []byte) (any, error) {
 						if len(data) == 0 {
 							return nil, nil
@@ -80,5 +67,4 @@ var {{ .AgentGoName }}A2AProviderConfig = a2a.ProviderConfig{
 	Suite:  {{ printf "%q" .SuiteQualifiedName }},
 	Skills: {{ .AgentGoName }}ServerConfig.Skills,
 }
-
 

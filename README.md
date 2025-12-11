@@ -396,28 +396,49 @@ Generated wrappers handle transport (HTTP, SSE, stdio), retries, and tracing.
 
 ## A2A Protocol: Cross-Platform Agent Interoperability
 
-**A2A** (Agent-to-Agent) is Google's open standard for agent interoperability. Goa-AI includes runtime primitives for A2A communication:
+**A2A** (Agent-to-Agent) is Google's open standard for agent interoperability. Goa-AI supports both consuming remote A2A agents and exposing agents as A2A providers.
+
+### Consuming A2A Agents
+
+Use `FromA2A` to configure a toolset backed by a remote A2A provider:
 
 ```go
-// The a2a.Caller interface for invoking external A2A agents
-type Caller interface {
-    SendTask(ctx context.Context, req SendTaskRequest) (SendTaskResponse, error)
-}
+// A2A-backed toolset
+var RemoteTools = Toolset(FromA2A("svc.agent.tools", "https://provider.example.com"))
 
-// Request/response types for A2A task invocation
-type SendTaskRequest struct {
-    Suite   string          // A2A agent identifier
-    Skill   string          // Skill to invoke
-    Payload json.RawMessage // JSON arguments
-}
+Agent("orchestrator", "Main coordinator", func() {
+    Use(RemoteTools)
+})
 ```
+
+### Exposing Agents via A2A
+
+Configure A2A settings for exported toolsets:
+
+```go
+Agent("specialist", "Domain expert", func() {
+    Export("analysis", func() {
+        Tool("analyze", "Perform analysis", func() {
+            Args(AnalysisRequest)
+            Return(AnalysisResult)
+        })
+        A2A(func() {
+            Suite("custom.suite.id")  // Override default suite identifier
+            A2APath("/custom-a2a")    // Override HTTP path
+            A2AVersion("1.1")         // Override protocol version
+        })
+    })
+})
+```
+
+### Runtime Primitives
 
 The `runtime/a2a` package provides:
 - **Caller interface** — Contract for A2A transport implementations
+- **Provider registration** — Expose agents as A2A providers
+- **HTTP client** — HTTP transport implementation
 - **Retry policies** — Configurable exponential backoff with jitter
 - **Error types** — JSON-RPC error codes per A2A spec
-
-Transport implementations (HTTP SSE, JSON-RPC) satisfy the `Caller` interface, enabling generated toolset adapters to invoke external A2A agents.
 
 **A2A vs MCP:**
 
@@ -542,7 +563,9 @@ func main() {
 | **Model Providers** | |
 | `features/model/bedrock` | AWS Bedrock (Claude, Titan, etc.) |
 | `features/model/openai` | OpenAI-compatible APIs |
+| `features/model/anthropic` | Direct Anthropic Claude API |
 | `features/model/gateway` | Remote model gateway for centralized serving |
+| `features/model/middleware` | Rate limiting, logging, metrics middleware |
 | **Persistence** | |
 | `features/memory/mongo` | Transcript storage |
 | `features/session/mongo` | Session state |
@@ -552,6 +575,7 @@ func main() {
 | `features/policy/basic` | Policy engine for tool filtering |
 | `registry` | Clustered gateway for cross-process toolset discovery |
 | `runtime/a2a` | A2A protocol primitives (caller interface, retry policies) |
+| `runtime/mcp` | MCP callers (stdio, HTTP, SSE) for tool server integration |
 
 ---
 

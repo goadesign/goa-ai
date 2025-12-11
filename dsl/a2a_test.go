@@ -142,3 +142,5 @@ func TestA2AFullConfiguration(t *testing.T) {
 	require.Equal(t, "/api/a2a", ts.A2A.Path)
 	require.Equal(t, "2.5", ts.A2A.Version)
 }
+
+

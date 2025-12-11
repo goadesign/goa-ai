@@ -50,6 +50,9 @@ var MCPTools = Toolset("assistant", FromMCP("assistant-service", "assistant-mcp"
 
 // Registry-backed toolset (discovered at runtime)
 var RegistryTools = Toolset("enterprise", FromRegistry(CorpRegistry, "data-tools"))
+
+// A2A-backed toolset (remote A2A provider)
+var A2ATools = Toolset(FromA2A("svc.agent.tools", "https://provider.example.com"))
 ```
 
 All toolsets are first-class citizens—agents use `Use(toolset)` uniformly regardless of provider.

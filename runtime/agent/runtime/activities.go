@@ -129,6 +129,17 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	// Forbid agent-as-tool execution from activities. Agent-tools must execute inside
 	// the workflow thread so child workflows can be started legally.
 	if spec, ok := r.toolSpec(req.ToolName); ok && spec.IsAgentTool {
+		// When the provider agent attempts to execute its own agent-as-tool via
+		// ExecuteToolActivity, surface a precise error so callers fix the planner
+		// tool list instead of routing through activities.
+		if string(req.AgentID) == spec.AgentID {
+			return nil, fmt.Errorf(
+				"agent %q attempted to execute its own agent-as-tool %q via ExecuteToolActivity; "+
+					"agent-as-tools must run inline in workflow context and must not be exposed to the provider's planner tool list",
+				req.AgentID,
+				req.ToolName,
+			)
+		}
 		return nil, fmt.Errorf("agent-as-tool %q must run in workflow context", req.ToolName)
 	}
 	sName := req.ToolsetName
