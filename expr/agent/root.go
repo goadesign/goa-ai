@@ -1,8 +1,6 @@
 package agent
 
 import (
-	"fmt"
-
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -106,58 +104,6 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 	}
 }
 
-// Prepare applies cross-expression defaults after all DSLs have executed and
-// before validation runs. It is responsible for computing derived values that
-// are needed by validators and generators.
-func (r *RootExpr) Prepare() {
-	// Default A2A configuration for exported toolsets. Defaults are:
-	//   - Suite:   "<service>.<agent>.<toolset>" for agent-level exports,
-	//              "<service>.<toolset>" for service-level exports when unset.
-	//   - Path:    "/a2a" when unset.
-	//   - Version: "1.0" when unset.
-
-	// Agent-level exports.
-	for _, a := range r.Agents {
-		if a.Exported == nil {
-			continue
-		}
-		for _, ts := range a.Exported.Toolsets {
-			if ts.A2A == nil {
-				continue
-			}
-			a2a := ts.A2A
-			if a2a.Suite == "" && a.Service != nil {
-				a2a.Suite = fmt.Sprintf("%s.%s.%s", a.Service.Name, a.Name, ts.Name)
-			}
-			if a2a.Path == "" {
-				a2a.Path = "/a2a"
-			}
-			if a2a.Version == "" {
-				a2a.Version = "1.0"
-			}
-		}
-	}
-
-	// Service-level exports.
-	for _, se := range r.ServiceExports {
-		for _, ts := range se.Toolsets {
-			if ts.A2A == nil {
-				continue
-			}
-			a2a := ts.A2A
-			if a2a.Suite == "" && se.Service != nil {
-				a2a.Suite = fmt.Sprintf("%s.%s", se.Service.Name, ts.Name)
-			}
-			if a2a.Path == "" {
-				a2a.Path = "/a2a"
-			}
-			if a2a.Version == "" {
-				a2a.Version = "1.0"
-			}
-		}
-	}
-}
-
 // Validate enforces repository-wide invariants that require a view of all
 // agent, toolset, and registry declarations. In particular:
 //   - Registry names must be globally unique.
@@ -236,8 +182,6 @@ func (r *RootExpr) Validate() error {
 		}
 	}
 
-	// A2A configuration: enforce that A2A is only present on exported toolsets
-	// (agent-level or service-level). Defaults are applied in Prepare.
 	exported := make(map[*ToolsetExpr]struct{})
 
 	// Agent-level exports.
@@ -254,32 +198,6 @@ func (r *RootExpr) Validate() error {
 	for _, se := range r.ServiceExports {
 		for _, ts := range se.Toolsets {
 			exported[ts] = struct{}{}
-		}
-	}
-
-	// Enforce that only exported toolsets carry A2A configuration.
-	checkA2A := func(ts *ToolsetExpr) {
-		if ts.A2A == nil {
-			return
-		}
-		if _, ok := exported[ts]; !ok {
-			verr.Add(ts, "A2A configuration is only valid on exported toolsets; move A2A() to an Export block")
-		}
-	}
-
-	for _, ts := range r.Toolsets {
-		checkA2A(ts)
-	}
-	for _, a := range r.Agents {
-		if a.Used != nil {
-			for _, ts := range a.Used.Toolsets {
-				checkA2A(ts)
-			}
-		}
-		if a.Exported != nil {
-			for _, ts := range a.Exported.Toolsets {
-				checkA2A(ts)
-			}
 		}
 	}
 

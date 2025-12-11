@@ -340,15 +340,6 @@ func TestFromRegistryProviderExpr(t *testing.T) {
 	})
 }
 
-// TestFromA2AProviderExpr verifies FromA2A creates an A2A provider expression.
-func TestFromA2AProviderExpr(t *testing.T) {
-	provider := FromA2A("svc.agent.tools", "https://provider.example.com")
-	require.NotNil(t, provider)
-	require.Equal(t, agentsexpr.ProviderA2A, provider.Kind)
-	require.Equal(t, "svc.agent.tools", provider.A2ASuite)
-	require.Equal(t, "https://provider.example.com", provider.A2AURL)
-}
-
 // TestRegistryMinimalConfiguration verifies Registry works with minimal config.
 func TestRegistryMinimalConfiguration(t *testing.T) {
 	runDSL(t, func() {

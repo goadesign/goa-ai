@@ -45,12 +45,6 @@ type (
 		// is a reference/alias (e.g., consumed under Uses or via AgentToolset).
 		// When nil, this toolset is the defining origin.
 		Origin *ToolsetExpr
-
-		// A2A holds optional A2A configuration for this toolset when it is
-		// exported via the A2A protocol. It is populated by the A2A DSL
-		// helper and validated at the root level to ensure it only appears
-		// on exported toolsets.
-		A2A *A2AExpr
 	}
 )
 
@@ -81,9 +75,6 @@ func (t *ToolsetExpr) SetVersion(v string) {
 // WalkSets exposes the nested expressions to the eval engine.
 func (t *ToolsetExpr) WalkSets(walk eval.SetWalker) {
 	walk(eval.ToExpressionSet(t.Tools))
-	if t.A2A != nil {
-		walk(eval.ExpressionSet{t.A2A})
-	}
 }
 
 // Validate performs semantic checks on the toolset expression.
@@ -108,13 +99,6 @@ func (t *ToolsetExpr) Validate() error {
 			}
 			if t.Provider.ToolsetName == "" {
 				verr.Add(t, "toolset name is required for FromRegistry provider")
-			}
-		case ProviderA2A:
-			if t.Provider.A2ASuite == "" {
-				verr.Add(t, "A2A suite is required; set it via FromA2A(suite, url)")
-			}
-			if t.Provider.A2AURL == "" {
-				verr.Add(t, "A2A URL is required; set it via FromA2A(suite, url)")
 			}
 		case ProviderLocal:
 			// Local toolsets have inline schemas; no additional validation needed.

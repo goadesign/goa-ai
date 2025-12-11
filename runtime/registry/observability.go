@@ -29,12 +29,8 @@ const (
 	OpGetToolset OperationType = "get_toolset"
 	// OpSync is the operation type for registry synchronization.
 	OpSync OperationType = "sync"
-	// OpRegister is the operation type for agent registration.
+	// OpRegister is the operation type for adding a registry to the manager.
 	OpRegister OperationType = "register"
-	// OpDeregister is the operation type for agent deregistration.
-	OpDeregister OperationType = "deregister"
-	// OpHeartbeat is the operation type for heartbeat operations.
-	OpHeartbeat OperationType = "heartbeat"
 	// OpCacheGet is the operation type for cache get operations.
 	OpCacheGet OperationType = "cache_get"
 	// OpCacheSet is the operation type for cache set operations.

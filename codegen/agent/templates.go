@@ -7,18 +7,6 @@ import (
 )
 
 const (
-	a2aAdapterCoreFileT        = "a2a_adapter_core"
-	a2aAdapterTasksFileT       = "a2a_adapter_tasks"
-	a2aAdapterCardFileT        = "a2a_adapter_card"
-	a2aConfigFileT             = "a2a_config"
-	a2aServerStubFileT         = "a2a_server_stub"
-	a2aConsumerConfigFileT     = "a2a_consumer_config"
-	a2aConsumerCallerFileT     = "a2a_consumer_caller"
-	a2aAuthFileT               = "a2a_auth"
-	a2aCardFileT               = "a2a_card"
-	a2aClientFileT             = "a2a_client"
-	a2aRegisterFileT           = "a2a_register"
-	a2aTypesFileT              = "a2a_types"
 	agentFileT                 = "agent"
 	agentToolsFileT            = "agent_tools"
 	agentToolsConsumerT        = "agent_tools_consumer"

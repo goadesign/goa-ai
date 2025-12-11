@@ -43,7 +43,6 @@ Building AI agents shouldn't mean wrestling with JSON schemas, debugging brittle
 | **Schema drift between components** | Single source of truth: DSL → generated codecs → runtime validation |
 | **Observability as afterthought** | Built-in streaming, transcripts, traces, and metrics from day one |
 | **Manual MCP integration** | Generated wrappers turn MCP servers into typed toolsets |
-| **Cross-platform agent silos** | A2A runtime caller for invoking agents on other platforms |
 | **Toolsets scattered across services** | Clustered registry for dynamic discovery and health-monitored invocation |
 
 ---
@@ -394,63 +393,6 @@ Generated wrappers handle transport (HTTP, SSE, stdio), retries, and tracing.
 
 ---
 
-## A2A Protocol: Cross-Platform Agent Interoperability
-
-**A2A** (Agent-to-Agent) is Google's open standard for agent interoperability. Goa-AI supports both consuming remote A2A agents and exposing agents as A2A providers.
-
-### Consuming A2A Agents
-
-Use `FromA2A` to configure a toolset backed by a remote A2A provider:
-
-```go
-// A2A-backed toolset
-var RemoteTools = Toolset(FromA2A("svc.agent.tools", "https://provider.example.com"))
-
-Agent("orchestrator", "Main coordinator", func() {
-    Use(RemoteTools)
-})
-```
-
-### Exposing Agents via A2A
-
-Configure A2A settings for exported toolsets:
-
-```go
-Agent("specialist", "Domain expert", func() {
-    Export("analysis", func() {
-        Tool("analyze", "Perform analysis", func() {
-            Args(AnalysisRequest)
-            Return(AnalysisResult)
-        })
-        A2A(func() {
-            Suite("custom.suite.id")  // Override default suite identifier
-            A2APath("/custom-a2a")    // Override HTTP path
-            A2AVersion("1.1")         // Override protocol version
-        })
-    })
-})
-```
-
-### Runtime Primitives
-
-The `runtime/a2a` package provides:
-- **Caller interface** — Contract for A2A transport implementations
-- **Provider registration** — Expose agents as A2A providers
-- **HTTP client** — HTTP transport implementation
-- **Retry policies** — Configurable exponential backoff with jitter
-- **Error types** — JSON-RPC error codes per A2A spec
-
-**A2A vs MCP:**
-
-| | A2A | MCP |
-|---|-----|-----|
-| **Focus** | Agent-to-agent collaboration | Tool server integration |
-| **Model** | Task lifecycle with streaming | Stateless tool calls |
-| **Discovery** | Agent Cards with skills | Server capabilities |
-| **Use case** | Multi-agent workflows | Connecting tool servers |
-
----
-
 ## Internal Tool Registry: Cross-Process Discovery
 
 When toolsets live in separate services that scale independently, you need dynamic discovery. The **Internal Tool Registry** is a clustered gateway that enables toolset discovery and invocation across process boundaries.
@@ -574,7 +516,6 @@ func main() {
 | `features/stream/pulse` | Pulse (Redis Streams) for real-time events |
 | `features/policy/basic` | Policy engine for tool filtering |
 | `registry` | Clustered gateway for cross-process toolset discovery |
-| `runtime/a2a` | A2A protocol primitives (caller interface, retry policies) |
 | `runtime/mcp` | MCP callers (stdio, HTTP, SSE) for tool server integration |
 
 ---
@@ -625,7 +566,6 @@ The runtime updates run state and emits `run_paused`/`run_resumed` events for UI
 | [Toolsets](https://goa.design/docs/8-goa-ai/toolsets/) | Service-backed tools, transforms, executors |
 | [Agent Composition](https://goa.design/docs/8-goa-ai/agent-composition/) | Agent-as-tool, run trees, streaming topology |
 | [MCP Integration](https://goa.design/docs/8-goa-ai/mcp-integration/) | MCP servers, transports, generated wrappers |
-| [A2A Protocol](https://goa.design/docs/8-goa-ai/a2a/) | Cross-platform agent interoperability |
 | [Registry](https://goa.design/docs/8-goa-ai/registry/) | Clustered toolset discovery and invocation |
 | [Production](https://goa.design/docs/8-goa-ai/production/) | Temporal setup, streaming UI, model providers |
 

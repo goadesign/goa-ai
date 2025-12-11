@@ -23,10 +23,8 @@ func (c *testConfig) Capabilities() map[string]any { return c.capabilities }
 func (c *testConfig) Name() string                 { return c.name }
 
 // TestProtocolConfigPathUsage verifies Property 15: Protocol Config Path Usage.
-// **Feature: a2a-codegen-refactor, Property 15: Protocol Config Path Usage**
 // *For any* protocol configuration with a specified JSON-RPC path, all generated
 // routes should use that exact path.
-// **Validates: Requirements 13.2**
 func TestProtocolConfigPathUsage(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -77,10 +75,8 @@ func TestProtocolConfigPathUsage(t *testing.T) {
 }
 
 // TestCapabilityInclusion verifies Property 16: Capability Inclusion.
-// **Feature: a2a-codegen-refactor, Property 16: Capability Inclusion**
 // *For any* protocol configuration with specified capabilities, the configuration
 // should return all specified capabilities.
-// **Validates: Requirements 13.3**
 func TestCapabilityInclusion(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -125,7 +121,6 @@ func TestCapabilityInclusion(t *testing.T) {
 func genValidJSONRPCPath() gopter.Gen {
 	return gen.OneConstOf(
 		"/rpc",
-		"/a2a",
 		"/mcp",
 		"/api/v1/jsonrpc",
 		"/services/protocol",

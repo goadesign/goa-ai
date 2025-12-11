@@ -24,7 +24,7 @@ test: tools
 
 # Run integration tests (scenarios under integration_tests/)
 itest: tools
-	$(GO) test -race -vet=off ./integration_tests/...
+	$(GO) test -race -vet=off -parallel 1 ./integration_tests/...
 
 ci: build lint test
 

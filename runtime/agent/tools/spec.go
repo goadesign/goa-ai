@@ -1,5 +1,24 @@
 package tools
 
+import "encoding/json"
+
+// AnyJSONCodec is a pre-built codec for the `any` type. It uses standard JSON
+// marshaling/unmarshaling and is suitable for integrations where the concrete
+// type is not known at compile time.
+var AnyJSONCodec = JSONCodec[any]{
+	ToJSON: json.Marshal,
+	FromJSON: func(data []byte) (any, error) {
+		if len(data) == 0 {
+			return nil, nil
+		}
+		var out any
+		if err := json.Unmarshal(data, &out); err != nil {
+			return nil, err
+		}
+		return out, nil
+	},
+}
+
 type (
 	// ToolSpec enumerates the metadata and JSON codecs for a tool.
 	ToolSpec struct {

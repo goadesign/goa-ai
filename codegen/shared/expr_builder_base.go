@@ -1,5 +1,5 @@
 // Package shared provides common infrastructure for protocol code generation
-// shared between A2A and MCP implementations.
+// shared between MCP implementations.
 package shared
 
 import (
@@ -9,7 +9,7 @@ import (
 
 type (
 	// ProtocolExprBuilderBase provides common expression building functionality
-	// shared between MCP and A2A protocol implementations.
+	// shared between MCP protocol implementations.
 	ProtocolExprBuilderBase struct {
 		types      map[string]*expr.UserTypeExpr
 		insertKeys []string // tracks insertion order for deterministic iteration

@@ -468,8 +468,6 @@ func regenerateExample(t *testing.T, exampleRoot string) error {
 }
 
 // buildServerBinary compiles the server binary once for fast parallel test starts.
-//
-//nolint:dupl // intentionally similar to buildA2AServerBinary in a2a_runner.go for test isolation
 func buildServerBinary(exampleRoot string) (string, error) {
 	serverBinMu.Lock()
 	defer serverBinMu.Unlock()

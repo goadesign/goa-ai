@@ -12,10 +12,8 @@ import (
 )
 
 // TestPatchFailureDetectionProperty verifies Property 17: Template Patch Failure Detection.
-// **Feature: a2a-codegen-refactor, Property 17: Template Patch Failure Detection**
 // *For any* expected template pattern that is not found during patching, the system
 // should return a clear error rather than silently producing incorrect code.
-// **Validates: Requirements 11.5**
 func TestPatchFailureDetectionProperty(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -122,8 +120,6 @@ func TestPatchFailureDetectionProperty(t *testing.T) {
 }
 
 // TestValidatePatternExistsProperty verifies pattern validation behavior.
-// **Feature: a2a-codegen-refactor, Property 17: Template Patch Failure Detection**
-// **Validates: Requirements 11.5**
 func TestValidatePatternExistsProperty(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -162,8 +158,6 @@ func TestValidatePatternExistsProperty(t *testing.T) {
 }
 
 // TestApplyPatchesProperty verifies batch patch application behavior.
-// **Feature: a2a-codegen-refactor, Property 17: Template Patch Failure Detection**
-// **Validates: Requirements 11.5**
 func TestApplyPatchesProperty(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -220,8 +214,6 @@ func TestApplyPatchesProperty(t *testing.T) {
 }
 
 // TestPatchErrorMessageProperty verifies error messages are informative.
-// **Feature: a2a-codegen-refactor, Property 17: Template Patch Failure Detection**
-// **Validates: Requirements 11.5**
 func TestPatchErrorMessageProperty(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100

@@ -221,16 +221,6 @@ when agents execute on different workers.
 | `PublishTo(registry)` | Inside `Toolset` (in `Export`) | Configures registry publication |
 | `Version(version)` | Inside `Toolset` (with `FromRegistry`) | Pins toolset version |
 
-### A2A Functions
-
-| Function | Context | Purpose |
-|----------|---------|---------|
-| `FromA2A(suite, url)` | Argument to `Toolset` | Configure toolset backed by remote A2A provider |
-| `A2A(func())` | Inside `Export` toolset | Configure A2A-specific settings for export |
-| `Suite(id)` | Inside `A2A` | Override default A2A suite identifier |
-| `A2APath(path)` | Inside `A2A` | Override default A2A HTTP path (default: "/a2a") |
-| `A2AVersion(version)` | Inside `A2A` | Override A2A protocol version (default: "1.0") |
-
 ---
 
 ## Agent, Use, and Export
@@ -930,48 +920,6 @@ var AnthropicRegistry = Registry("anthropic", func() {
 Multiple security schemes can be added by calling `Security()` multiple times.
 
 ---
-
-## A2A Protocol
-
-A2A (Agent-to-Agent) is Google's open standard for agent interoperability. Goa-AI supports
-both consuming remote A2A agents and exposing agents as A2A providers.
-
-### A2A-Backed Toolsets
-
-Use `FromA2A` to configure a toolset backed by a remote A2A provider:
-
-```go
-// Basic A2A-backed toolset (name derived from suite)
-var RemoteTools = Toolset(FromA2A("svc.agent.tools", "https://provider.example.com"))
-
-// With explicit name
-var RemoteTools = Toolset("remote-tools", FromA2A("svc.agent.tools", "https://provider.example.com"))
-
-// Use in an agent
-Agent("orchestrator", "Main coordinator", func() {
-    Use(RemoteTools)
-})
-```
-
-### A2A Export Configuration
-
-Configure A2A-specific settings for exported toolsets using the `A2A` block:
-
-```go
-Agent("specialist", "Domain expert", func() {
-    Export("analysis", func() {
-        Tool("analyze", "Perform deep analysis", func() {
-            Args(AnalysisRequest)
-            Return(AnalysisResult)
-        })
-        A2A(func() {
-            Suite("custom.suite.identifier")  // Override default suite ID
-            A2APath("/custom-a2a")            // Override HTTP path (default: "/a2a")
-            A2AVersion("1.1")                 // Override protocol version (default: "1.0")
-        })
-    })
-})
-```
 
 The default suite identifier is derived from `<service>.<agent>.<toolset>`. Use `Suite()` to
 override when you need a specific identifier for cross-platform compatibility.
