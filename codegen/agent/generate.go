@@ -636,17 +636,17 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 		if err != nil || data == nil {
 			continue
 		}
-		// Resolve service import alias/path for method types
+		// Resolve service import alias/path for method types. Use a NameScope to
+		// guarantee alias uniqueness within this file (for example, when the
+		// service and toolset packages are both named "todos").
 		svcAlias := servicePkgAlias(svc)
 		svcImport := joinImportPath(agent.Genpkg, svc.PathName)
-		// Use the actual specs package name so GoTransform qualifier matches (e.g., atlas_read).
 		specsAlias := ts.SpecsPackageName
 		specsImportPath := ts.SpecsImportPath
-		// Avoid alias collisions when the toolset package name matches the service
-		// package name (for example, service "todos" with toolset "todos").
-		if svcAlias == specsAlias {
-			svcAlias += "svc"
-		}
+		aliasScope := codegen.NewNameScope()
+		svcAlias = aliasScope.Unique(svcAlias)
+		// Prefer a deterministic "specs" suffix when the base alias collides.
+		specsAlias = aliasScope.Unique(specsAlias, "specs")
 
 		// Single NameScope per emitted file to ensure consistent, conflict‑free refs
 		scope := codegen.NewNameScope()
@@ -692,7 +692,7 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 						}
 					}
 					// Do not force pointer semantics; let Goa default rules apply
-					srcCtx := codegen.NewAttributeContextForConversion(false, false, false, ts.SpecsPackageName, scope)
+					srcCtx := codegen.NewAttributeContextForConversion(false, false, false, specsAlias, scope)
 					tgtCtx := codegen.NewAttributeContextForConversion(false, false, false, svcAlias, scope)
 					body, helpers, err := codegen.GoTransform(t.Args, t.MethodPayloadAttr, "in", "out", srcCtx, tgtCtx, "", false)
 					if err == nil && body != "" {
@@ -723,12 +723,20 @@ func internalAdapterTransformsFiles(agent *AgentData) []*codegen.File {
 						}
 						localArgAttr := &goaexpr.AttributeExpr{Type: &goaexpr.UserTypeExpr{AttributeExpr: &dupArg, TypeName: toolPayload.TypeName}}
 						paramRef := scope.GoFullTypeRef(localArgAttr, specsAlias)
-						// Compute fully-qualified service payload ref using the service
-						// alias so that the result type always matches the service
-						// package, even when the toolset package name matches the
-						// service package name (e.g., service "todos" with toolset
-						// "todos").
-						serviceRef := scope.GoFullTypeRef(t.MethodPayloadAttr, svcAlias)
+						// Compute fully-qualified service payload ref for the bound method
+						// payload using the precomputed MethodPayloadTypeRef derived from
+						// Goa's service metadata (sd.Scope.GoFullTypeRef). This avoids any
+						// string rewriting of type references and keeps transforms aligned
+						// with the actual service method signature.
+						serviceRef := t.MethodPayloadTypeRef
+						if serviceRef == "" {
+							panic(fmt.Sprintf(
+								"agent codegen: missing MethodPayloadTypeRef for method-backed tool %q (service %q, method %q)",
+								t.QualifiedName,
+								svc.Name,
+								t.MethodGoName,
+							))
+						}
 						fns = append(fns, transformFuncData{
 							Name:          "Init" + codegen.Goify(t.Name, true) + "MethodPayload",
 							ParamTypeRef:  paramRef,
@@ -1450,46 +1458,51 @@ func serviceExecutorFiles(agent *AgentData) []*codegen.File {
 		if ts.Expr == nil || len(ts.Tools) == 0 {
 			continue
 		}
+		svc := ts.SourceService
+		if svc == nil {
+			svc = agent.Service
+		}
+		// Use a NameScope to guarantee unique import aliases for the service client
+		// and specs packages within this file (for example, service "todos" with
+		// toolset "todos"). Keep the service alias derived from the original
+		// package name so precomputed method type references remain valid and
+		// assign a distinct alias to the specs package when needed.
+		aliasScope := codegen.NewNameScope()
 		svcAlias := ""
-		svcPkgName := ""
-		if svc := ts.SourceService; svc != nil {
-			svcAlias = servicePkgAlias(svc)
-			svcPkgName = svc.PkgName
-			// Avoid alias collisions when the toolset specs package name matches
-			// the service package name (for example, service "todos" with toolset
-			// "todos").
-			if svcAlias == ts.SpecsPackageName {
-				svcAlias += "svc"
-			}
+		if svc != nil {
+			svcAlias = aliasScope.Unique(servicePkgAlias(svc))
 		}
-		// Ensure method payload/result type refs use the same alias as the
-		// imported service client package (svcAlias) so assertions in the
-		// executor compile even when the specs package shares the original
-		// service PkgName (e.g., "todos").
-		if svcAlias != "" && svcPkgName != "" {
-			oldPrefix := svcPkgName + "."
-			newPrefix := svcAlias + "."
-			for _, t := range ts.Tools {
-				if t.MethodPayloadTypeRef != "" {
-					t.MethodPayloadTypeRef = strings.ReplaceAll(
-						t.MethodPayloadTypeRef,
-						oldPrefix,
-						newPrefix,
-					)
+		specsAlias := aliasScope.Unique(ts.SpecsPackageName, "specs")
+		// Gather additional imports required by method payload/result types so
+		// that type assertions in the executor (for example, args.(*types.Foo))
+		// compile even when the payload/result types live in external packages
+		// such as the shared gen/types module.
+		extraImports := make(map[string]*codegen.ImportSpec)
+		for _, t := range ts.Tools {
+			if !t.IsMethodBacked {
+				continue
+			}
+			for _, im := range gatherAttributeImports(agent.Genpkg, t.MethodPayloadAttr) {
+				if im != nil && im.Path != "" {
+					extraImports[im.Path] = im
 				}
-				if t.MethodResultTypeRef != "" {
-					t.MethodResultTypeRef = strings.ReplaceAll(
-						t.MethodResultTypeRef,
-						oldPrefix,
-						newPrefix,
-					)
+			}
+			for _, im := range gatherAttributeImports(agent.Genpkg, t.MethodResultAttr) {
+				if im != nil && im.Path != "" {
+					extraImports[im.Path] = im
 				}
 			}
 		}
+
+		// Use a local copy of the toolset so we can override the SpecsPackageName
+		// alias for this file without affecting other generated artifacts.
+		tsCopy := *ts
+		tsCopy.SpecsPackageName = specsAlias
+
 		data := serviceToolsetFileData{
 			PackageName:     ts.PackageName,
 			Agent:           agent,
-			Toolset:         ts,
+			Toolset:         &tsCopy,
 			ServicePkgAlias: svcAlias,
 		}
 		imports := []*codegen.ImportSpec{
@@ -1501,14 +1514,29 @@ func serviceExecutorFiles(agent *AgentData) []*codegen.File {
 			{Path: "goa.design/goa-ai/runtime/agent/planner"},
 			{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "runtime"},
 			{Path: "goa.design/goa-ai/runtime/agent/tools"},
-			{Path: ts.SpecsImportPath, Name: ts.SpecsPackageName},
+			{Path: ts.SpecsImportPath, Name: specsAlias},
 		}
-		if svc := ts.SourceService; svc != nil {
+		if svc != nil {
 			// Import the service client package (e.g. gen/atlas_data)
 			clientPath := filepath.Join(agent.Genpkg, svc.PathName)
 			// Check for slash/backslash issues if Genpkg has slashes
 			clientPath = strings.ReplaceAll(clientPath, "\\", "/")
 			imports = append(imports, &codegen.ImportSpec{Path: clientPath, Name: svcAlias})
+			// Avoid duplicating the client import when also discovered via
+			// gatherAttributeImports on method payload/result types.
+			delete(extraImports, clientPath)
+		}
+		// Append any remaining external imports needed for payload/result
+		// types (for example, the shared gen/types package).
+		for _, im := range extraImports {
+			if im == nil || im.Path == "" {
+				continue
+			}
+			// Specs and service client imports are already in the list.
+			if im.Path == ts.SpecsImportPath {
+				continue
+			}
+			imports = append(imports, im)
 		}
 		sections := []*codegen.SectionTemplate{
 			codegen.Header(ts.Name+" service executor", ts.PackageName, imports),

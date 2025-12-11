@@ -174,6 +174,8 @@ func regenerateA2AExample(t *testing.T, exampleRoot string) error {
 }
 
 // buildA2AServerBinary compiles the A2A server binary.
+//
+//nolint:dupl // intentionally similar to buildServerBinary in runner.go for test isolation
 func buildA2AServerBinary(exampleRoot string) (string, error) {
 	a2aServerBinMu.Lock()
 	defer a2aServerBinMu.Unlock()
@@ -193,6 +195,7 @@ func buildA2AServerBinary(exampleRoot string) (string, error) {
 		binPath := tmpFile.Name()
 		_ = tmpFile.Close()
 
+		//nolint:gosec // launching 'go build' for test server is expected
 		buildCmd := exec.CommandContext(context.Background(), "go", "build", "-o", binPath, ".")
 		buildCmd.Dir = cmdPath
 		out, err := buildCmd.CombinedOutput()
@@ -257,6 +260,7 @@ func (r *A2ARunner) startServer(t *testing.T) error {
 		return err
 	}
 
+	//nolint:gosec // launching pre-compiled test server binary
 	cmd := exec.CommandContext(context.Background(), binPath, "-http-port", port)
 	cmd.Env = os.Environ()
 
@@ -354,7 +358,7 @@ func (r *A2ARunner) ping() error {
 }
 
 // runSteps executes A2A test steps.
-func (r *A2ARunner) runSteps(t *testing.T, steps []Step, defaults *Defaults, pre *Pre) {
+func (r *A2ARunner) runSteps(t *testing.T, steps []Step, _ *Defaults, _ *Pre) {
 	for _, st := range steps {
 		method := a2aMethodFromOp(st.Op)
 
@@ -518,7 +522,8 @@ func (r *A2ARunner) executeA2ASSE(method string, input map[string]any, spec *Str
 
 // getA2AFreePort finds an available port.
 func getA2AFreePort() (string, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	var lc net.ListenConfig
+	l, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		return "", fmt.Errorf("listen for free port: %w", err)
 	}

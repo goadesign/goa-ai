@@ -152,3 +152,5 @@ func TestWithHeaderAndBearerToken(t *testing.T) {
 	require.Equal(t, "Bearer secret-token", authHeader)
 	require.Equal(t, "apikey", apiKey)
 }
+
+

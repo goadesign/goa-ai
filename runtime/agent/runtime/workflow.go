@@ -174,10 +174,10 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 			phase = run.PhaseCompleted
 		}
 		// Use a fresh context with timeout for terminal events. The workflow
-		// context may be cancelled (e.g., user requested cancellation) but we
-		// still need to publish the terminal phase so downstream consumers
-		// (session stores, UIs) can update their state and allow new runs.
-		termCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		// engine supplies a replay-aware context so subscribers can avoid
+		// re-applying side effects during history replay while still allowing
+		// session stores and UIs to observe a single terminal phase.
+		termCtx, cancel := context.WithTimeout(wfCtx.Context(), 10*time.Second)
 		defer cancel()
 		r.publishHook(
 			termCtx,

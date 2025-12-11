@@ -438,9 +438,10 @@ policies, and MCP servers within Goa service designs.
 | `Tags(...)` | Attach metadata labels for filtering/categorization |
 | `BindTo(method)` or `BindTo(service, method)` | Bind tool to service method implementation |
 | `Inject(fields...)` | Mark fields as infrastructure-only (hidden from LLM) |
-| `CallHintTemplate(template)` | Display template for tool invocations |
-| `ResultHintTemplate(template)` | Display template for tool results |
-| `BoundedResult()` | Mark result as a bounded view over larger data |
+| `CallHintTemplate(tmpl)` | Go template for call display hint |
+| `ResultHintTemplate(tmpl)` | Go template for result display hint |
+| `BoundedResult()` | Mark result as bounded view over larger data |
+| `ResultReminder(text)` | Static system reminder injected after tool result |
 
 ### Toolset Definition
 
@@ -449,7 +450,10 @@ policies, and MCP servers within Goa service designs.
 | `Toolset(name, func())` | Define a named toolset with tools |
 | `FromMCP(service, toolset)` | Configure toolset backed by MCP server |
 | `FromRegistry(registry, toolset)` | Configure toolset sourced from registry |
+| `FromA2A(suite, url)` | Configure toolset backed by remote A2A provider |
 | `AgentToolset(service, agent, toolset)` | Reference toolset exported by another agent |
+| `Description(text)` | Set toolset description |
+| `Version(version)` | Pin registry-backed toolset version |
 
 ### Run Policy
 
@@ -493,6 +497,18 @@ policies, and MCP servers within Goa service designs.
 | `Include(patterns...)` | Glob patterns for namespaces to import |
 | `Exclude(patterns...)` | Glob patterns for namespaces to skip |
 | `PublishTo(registry)` | Configure registry publication for exported toolset |
+| `Timeout(duration)` | Set HTTP request timeout |
+| `Security(scheme)` | Reference Goa security scheme for auth |
+
+### A2A Protocol
+
+| Function | Purpose |
+|----------|---------|
+| `FromA2A(suite, url)` | Configure toolset backed by remote A2A provider |
+| `A2A(func())` | Configure A2A-specific settings for export |
+| `Suite(id)` | Override default A2A suite identifier |
+| `A2APath(path)` | Override default A2A HTTP path |
+| `A2AVersion(version)` | Override A2A protocol version |
 
 ### MCP Server Definition
 

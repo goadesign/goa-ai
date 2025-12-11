@@ -61,7 +61,18 @@ func a2aRegisterFile(data *A2AAdapterData) *codegen.File {
 	agentName := codegen.SnakeCase(data.Agent.Name)
 	path := filepath.Join(codegen.Gendir, "a2a_"+agentName, "config.go")
 
+	imports := []*codegen.ImportSpec{
+		{Path: "encoding/json"},
+		{Path: "goa.design/goa-ai/runtime/a2a", Name: "a2a"},
+		{Path: "goa.design/goa-ai/runtime/agent/tools"},
+	}
+
 	sections := []*codegen.SectionTemplate{
+		codegen.Header(
+			fmt.Sprintf("A2A server configuration for %s agent", data.Agent.Name),
+			regData.Package,
+			imports,
+		),
 		{
 			Name:   "a2a-config",
 			Source: agentsTemplates.Read(a2aConfigFileT),
@@ -69,7 +80,10 @@ func a2aRegisterFile(data *A2AAdapterData) *codegen.File {
 		},
 	}
 
-	return &codegen.File{Path: path, SectionTemplates: sections}
+	return &codegen.File{
+		Path:             path,
+		SectionTemplates: sections,
+	}
 }
 
 // buildA2ARegisterData creates registration data from adapter data.

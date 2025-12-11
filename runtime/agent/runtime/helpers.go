@@ -305,6 +305,12 @@ func (r *Runtime) publishHook(ctx context.Context, evt hooks.Event, turnID strin
 	if r.Bus == nil {
 		return
 	}
+	// Suppress hook publication during workflow history replay so that
+	// subscribers (stream sinks, persistence, metrics) do not re-apply
+	// side effects when Temporal replays workflow code.
+	if rac, ok := ctx.(engine.ReplayAwareContext); ok && rac.IsReplaying() {
+		return
+	}
 	// Stamp the event with turn ID if provided
 	if turnID != "" {
 		stampEventWithTurnID(evt, turnID)

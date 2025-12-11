@@ -23,6 +23,15 @@ type temporalWorkflowContext struct {
 	baseCtx    context.Context
 }
 
+type replayContext struct {
+	context.Context
+	replay bool
+}
+
+func (c *replayContext) IsReplaying() bool {
+	return c.replay
+}
+
 // NewWorkflowContext adapts a Temporal workflow.Context into the goa-ai
 // engine.WorkflowContext used by the runtime. This is useful when calling
 // runtime helpers (e.g., ExecuteAgentInline) from workflows that are not
@@ -64,7 +73,10 @@ func (w *temporalWorkflowContext) Context() context.Context {
 	}
 	ctx = context.WithValue(ctx, workflowIDKey, w.workflowID)
 	ctx = context.WithValue(ctx, runIDKey, w.runID)
-	return ctx
+	return &replayContext{
+		Context: ctx,
+		replay:  workflow.IsReplaying(w.ctx),
+	}
 }
 
 func (w *temporalWorkflowContext) SetQueryHandler(name string, handler any) error {

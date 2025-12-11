@@ -22,3 +22,5 @@ func ExtractTelemetry(resp SendTaskResponse) *telemetry.ToolTelemetry {
 		Extra: map[string]any{"structured": structured},
 	}
 }
+
+

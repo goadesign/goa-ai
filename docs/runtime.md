@@ -1170,9 +1170,134 @@ type Tracer interface {
 | `features/stream/pulse` | Pulse message bus sink |
 | `features/model/bedrock` | AWS Bedrock model client |
 | `features/model/openai` | OpenAI-compatible model client |
+| `features/model/anthropic` | Direct Anthropic Claude API client |
 | `features/model/gateway` | Remote model gateway client |
 | `features/model/middleware` | Rate limiting, logging, metrics |
 | `features/policy/basic` | Basic policy engine |
+
+---
+
+## MCP Callers
+
+The `runtime/mcp` package provides three caller implementations for different MCP server
+transports.
+
+### StdioCaller
+
+Spawns an MCP server as a subprocess and communicates via stdin/stdout:
+
+```go
+import "goa.design/goa-ai/runtime/mcp"
+
+caller, err := mcp.NewStdioCaller(mcp.StdioOptions{
+    Command: "npx",
+    Args:    []string{"-y", "@modelcontextprotocol/server-filesystem"},
+    Env:     []string{"HOME=" + os.Getenv("HOME")},
+})
+if err != nil {
+    log.Fatal(err)
+}
+defer caller.Close()
+```
+
+### HTTPCaller
+
+HTTP POST to MCP endpoints:
+
+```go
+caller := mcp.NewHTTPCaller("https://mcp-server.example.com/mcp")
+```
+
+### SSECaller
+
+Server-Sent Events for streaming MCP responses:
+
+```go
+caller := mcp.NewSSECaller(mcp.SSEOptions{
+    URL: "https://mcp-server.example.com/sse",
+})
+```
+
+All callers implement the `mcp.Caller` interface and include automatic retry via
+`runtime/mcp/retry`.
+
+---
+
+## Stream Profiles
+
+Stream profiles control which events reach different audiences. Use profiles to filter
+events for specific use cases.
+
+| Profile | Purpose | Events Included |
+|---------|---------|-----------------|
+| `DefaultProfile()` | All events, child runs linked | All event types |
+| `UserChatProfile()` | End-user chat UIs | Same as default |
+| `AgentDebugProfile()` | Debug view with flattened child runs | All events, children flattened |
+| `MetricsProfile()` | Telemetry and monitoring | `usage`, `workflow` only |
+
+```go
+import "goa.design/goa-ai/runtime/agent/stream"
+
+// Get a profile
+profile := stream.AgentDebugProfile()
+
+// Profiles are used internally by stream subscribers
+// to filter events before delivery
+```
+
+---
+
+## Tool Errors
+
+The `runtime/agent/toolerrors` package provides structured error types for tool execution
+failures that integrate with the planner retry system.
+
+```go
+import "goa.design/goa-ai/runtime/agent/toolerrors"
+
+// Create a tool error with retry hint
+err := toolerrors.New(
+    toolerrors.WithMessage("Database connection failed"),
+    toolerrors.WithRetryable(true),
+    toolerrors.WithHint("Check database connectivity and retry"),
+)
+
+// Check if error is retryable
+if toolerrors.IsRetryable(err) {
+    // Handle retry logic
+}
+
+// Tool errors are automatically converted to planner.RetryHint
+// for planners to handle gracefully
+```
+
+---
+
+## Model Middleware
+
+The `features/model/middleware` package provides middleware for model clients.
+
+### Adaptive Rate Limiter
+
+Apply adaptive rate limiting to handle provider throttling:
+
+```go
+import mdlmw "goa.design/goa-ai/features/model/middleware"
+
+rl := mdlmw.NewAdaptiveRateLimiter(
+    ctx,
+    throughputMap,     // *rmap.Map for cluster-wide state (nil for local)
+    "bedrock:sonnet",  // Model family key
+    80_000,            // Initial TPM (tokens per minute)
+    1_000_000,         // Max TPM
+)
+
+limitedClient := rl.Middleware()(rawClient)
+rt.RegisterModel("bedrock", limitedClient)
+```
+
+The rate limiter automatically adjusts throughput based on provider responses and
+handles 429 (rate limited) errors with exponential backoff.
 
 ---
 

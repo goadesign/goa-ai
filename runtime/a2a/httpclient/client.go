@@ -171,3 +171,5 @@ func (c *Client) SendTask(ctx context.Context, req a2a.SendTaskRequest) (a2a.Sen
 		Result: rpcResp.Result,
 	}, nil
 }
+
+

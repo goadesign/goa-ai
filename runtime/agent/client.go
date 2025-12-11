@@ -12,3 +12,5 @@ type Client interface {
 	// the adapter implementation.
 	Run(ctx context.Context, messages []any) (any, error)
 }
+
+
