@@ -76,36 +76,6 @@ type SearchResult struct {
 	Origin string `json:"origin,omitempty"`
 }
 
-// AgentCard contains metadata about an agent for registration.
-type AgentCard struct {
-	// ProtocolVersion is the A2A protocol version.
-	ProtocolVersion string `json:"protocolVersion"`
-	// Name is the agent identifier.
-	Name string `json:"name"`
-	// Description explains what the agent does.
-	Description string `json:"description,omitempty"`
-	// URL is the agent's endpoint.
-	URL string `json:"url"`
-	// Version is the agent version.
-	Version string `json:"version,omitempty"`
-	// Capabilities lists agent capabilities.
-	Capabilities map[string]any `json:"capabilities,omitempty"`
-	// Skills lists the agent's skills.
-	Skills []*Skill `json:"skills,omitempty"`
-}
-
-// Skill represents an agent skill (tool capability).
-type Skill struct {
-	// ID is the skill identifier.
-	ID string `json:"id"`
-	// Name is the human-readable name.
-	Name string `json:"name"`
-	// Description explains what the skill does.
-	Description string `json:"description,omitempty"`
-	// Tags are metadata tags.
-	Tags []string `json:"tags,omitempty"`
-}
-
 // AuthProvider provides authentication credentials for registry requests.
 type AuthProvider interface {
 	// ApplyAuth adds authentication to the request.

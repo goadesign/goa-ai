@@ -19,9 +19,9 @@ const (
 
 // ToJSONSchema returns a compact JSON Schema for the given Goa attribute.
 // It generates inline schemas without $ref references, which is required
-// for MCP and A2A protocols that expect fully resolved schemas.
+// for MCP protocols that expect fully resolved schemas.
 //
-// This function is shared between MCP and A2A code generation.
+// This function is shared between MCP code generation.
 func ToJSONSchema(attr *expr.AttributeExpr) string {
 	if attr == nil || attr.Type == nil || attr.Type == expr.Empty {
 		return `{"type":"object","additionalProperties":false}`

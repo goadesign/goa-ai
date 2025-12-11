@@ -10,10 +10,8 @@ import (
 )
 
 // TestImportPathResolutionConsistency verifies Property 14: Import Path Resolution Consistency.
-// **Feature: a2a-codegen-refactor, Property 14: Import Path Resolution Consistency**
-// *For any* external user type referenced in both MCP and A2A contexts, the resolved
+// *For any* external user type referenced in both MCP contexts, the resolved
 // import path should be identical.
-// **Validates: Requirements 12.4**
 func TestImportPathResolutionConsistency(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -36,8 +34,6 @@ func TestImportPathResolutionConsistency(t *testing.T) {
 }
 
 // TestImportPathHandlesGenSuffix verifies that /gen suffixes are handled correctly.
-// **Feature: a2a-codegen-refactor, Property 14: Import Path Resolution Consistency**
-// **Validates: Requirements 12.4**
 func TestImportPathHandlesGenSuffix(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -61,8 +57,6 @@ func TestImportPathHandlesGenSuffix(t *testing.T) {
 }
 
 // TestImportPathContainsGen verifies that result always contains /gen/.
-// **Feature: a2a-codegen-refactor, Property 14: Import Path Resolution Consistency**
-// **Validates: Requirements 12.4**
 func TestImportPathContainsGen(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -82,8 +76,6 @@ func TestImportPathContainsGen(t *testing.T) {
 }
 
 // TestImportPathEmptyRelReturnsEmpty verifies empty rel returns empty string.
-// **Feature: a2a-codegen-refactor, Property 14: Import Path Resolution Consistency**
-// **Validates: Requirements 12.4**
 func TestImportPathEmptyRelReturnsEmpty(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100

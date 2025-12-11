@@ -56,36 +56,6 @@ type SearchResult struct {
 	Origin string `json:"origin,omitempty"`
 }
 
-// AgentCard contains metadata about an agent for registration.
-type AgentCard struct {
-	// ProtocolVersion is the A2A protocol version.
-	ProtocolVersion string `json:"protocolVersion"`
-	// Name is the agent identifier.
-	Name string `json:"name"`
-	// Description explains what the agent does.
-	Description string `json:"description,omitempty"`
-	// URL is the agent's endpoint.
-	URL string `json:"url"`
-	// Version is the agent version.
-	Version string `json:"version,omitempty"`
-	// Capabilities lists agent capabilities.
-	Capabilities map[string]any `json:"capabilities,omitempty"`
-	// Skills lists the agent's skills.
-	Skills []*Skill `json:"skills,omitempty"`
-}
-
-// Skill represents an agent skill (tool capability).
-type Skill struct {
-	// ID is the skill identifier.
-	ID string `json:"id"`
-	// Name is the human-readable name.
-	Name string `json:"name"`
-	// Description explains what the skill does.
-	Description string `json:"description,omitempty"`
-	// Tags are metadata tags.
-	Tags []string `json:"tags,omitempty"`
-}
-
 // AuthProvider provides authentication credentials for registry requests.
 type AuthProvider interface {
 	// ApplyAuth adds authentication to the request.
@@ -147,8 +117,6 @@ const (
 	pathSemanticSearch = "/{{ .APIVersion }}/search/semantic"
 	// pathCapabilities is the path for capabilities endpoint.
 	pathCapabilities = "/{{ .APIVersion }}/capabilities"
-	// pathAgents is the base path for agent operations.
-	pathAgents = "/{{ .APIVersion }}/agents"
 )
 
 // NewClient creates a new registry client with the given options.
@@ -269,32 +237,6 @@ func (c *Client) Capabilities() SearchCapabilities {
 	// Merge remote capabilities (keyword search is always true)
 	remoteCaps.KeywordSearch = true
 	return remoteCaps
-}
-
-// Register registers an agent card with the registry.
-func (c *Client) Register(ctx context.Context, card *AgentCard) error {
-	u := c.endpoint + pathAgents
-
-	body, err := json.Marshal(card)
-	if err != nil {
-		return fmt.Errorf("marshaling agent card: %w", err)
-	}
-
-	return c.doRequest(ctx, http.MethodPost, u, body, nil)
-}
-
-// Deregister removes an agent from the registry.
-func (c *Client) Deregister(ctx context.Context, agentID string) error {
-	u := c.endpoint + pathAgents + "/" + agentID
-
-	return c.doRequest(ctx, http.MethodDelete, u, nil, nil)
-}
-
-// Heartbeat sends a heartbeat to maintain agent registration.
-func (c *Client) Heartbeat(ctx context.Context, agentID string) error {
-	u := c.endpoint + pathAgents + "/" + agentID + "/heartbeat"
-
-	return c.doRequest(ctx, http.MethodPost, u, nil, nil)
 }
 
 // doRequest performs an HTTP request with retry logic.

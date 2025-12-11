@@ -202,9 +202,8 @@ func TestTypes(t *testing.T) {
 
 // TestPrepareAndValidate verifies the PrepareAndValidate method.
 // Note: Full integration testing of PrepareAndValidate is done through the
-// A2A and MCP expression builders which construct complete root expressions.
+// MCP expression builders which construct complete root expressions.
 // These unit tests focus on the method's contract: restoring global state.
-// **Validates: Requirements 10.1**
 func TestPrepareAndValidate(t *testing.T) {
 	t.Run("restores original expr.Root after execution", func(t *testing.T) {
 		builder := NewProtocolExprBuilderBase()
@@ -246,10 +245,8 @@ func TestPrepareAndValidate(t *testing.T) {
 }
 
 // TestDeterministicUserTypeCollection verifies Property 1: Deterministic User Type Collection.
-// **Feature: a2a-codegen-refactor, Property 1: Deterministic User Type Collection**
 // *For any* set of user types registered with an expression builder, collecting them
 // should always produce the same ordered list regardless of insertion order.
-// **Validates: Requirements 1.5**
 func TestDeterministicUserTypeCollection(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
@@ -305,8 +302,6 @@ func TestDeterministicUserTypeCollection(t *testing.T) {
 }
 
 // TestCollectUserTypesAlphabeticalOrder verifies that types are sorted alphabetically.
-// **Feature: a2a-codegen-refactor, Property 1: Deterministic User Type Collection**
-// **Validates: Requirements 1.5**
 func TestCollectUserTypesAlphabeticalOrder(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100

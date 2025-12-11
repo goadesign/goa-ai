@@ -204,16 +204,9 @@ func Generate(genpkg string, roots []eval.Root, files []*codegen.File) ([]*codeg
 			generated = append(generated, regFiles...)
 		}
 
-		// Emit consumer-side A2A helper packages for FromA2A providers used by
-		// any agent under this service.
-		if a2aFiles := a2aConsumerFiles(genpkg, svc); len(a2aFiles) > 0 {
-			generated = append(generated, a2aFiles...)
-		}
-
 		for _, agent := range svc.Agents {
 			afiles := agentFiles(agent)
 			generated = append(generated, afiles...)
-			// Adapter stubs are only generated during the `goa example` phase.
 		}
 	}
 
@@ -308,14 +301,6 @@ func agentFiles(agent *AgentData) []*codegen.File {
 	files = append(files, usedToolsFiles(agent)...)
 	// Emit default service executor factories for method-backed Used toolsets.
 	files = append(files, serviceExecutorFiles(agent)...)
-	// Compute A2A security data once for all A2A generators.
-	a2aSecurity := buildA2ASecurityDataFromAgent(agent)
-	// Emit A2A agent card for agents with exported toolsets.
-	files = append(files, a2aCardFiles(agent, a2aSecurity)...)
-	// Emit A2A client for invoking external A2A agents.
-	files = append(files, a2aClientFiles(agent, a2aSecurity)...)
-	// Emit A2A service for agents with exported toolsets (follows MCP pattern).
-	files = append(files, a2aServiceFiles(agent.Genpkg, agent, a2aSecurity)...)
 
 	var filtered []*codegen.File
 	for _, f := range files {

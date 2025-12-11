@@ -59,8 +59,6 @@
 //   - Middleware/interceptor patterns for context injection
 //   - Goa's AddImport helper for import manipulation
 //
-// See Requirements 11.1-11.5 in the a2a-codegen-refactor spec for details.
-//
 // ## Middleware Pattern Evaluation
 //
 // Context injection (e.g., policy headers) could potentially use HTTP middleware

@@ -1,13 +1,12 @@
 # Goa-AI: Design-First Agentic Systems
 
-Build intelligent agents, MCP servers, and registry-integrated toolsets from your Goa designs. This plugin extends Goa with agent orchestration, MCP protocol support, centralized registries, and A2A cross-platform communication.
+Build intelligent agents, MCP servers, and registry-integrated toolsets from your Goa designs. This plugin extends Goa with agent orchestration, MCP protocol support and centralized registries.
 
 ## What you get
 
 - **Agents**: Durable plan/execute loops with policy enforcement, memory, and streaming
 - **MCP**: Endpoints mapped from your Goa service (tools, resources, prompts) with JSON-RPC/SSE transport
 - **Registries**: Centralized tool catalogs with federation, caching, and semantic search
-- **A2A Protocol**: Cross-platform agent discovery and invocation via A2A agent cards
 - **Unified Toolsets**: Single `Toolset` construct with providers (local, MCP, registry)
 
 ## How it works
@@ -19,7 +18,6 @@ For each service annotated with agents or MCP, the plugin:
    - Service layer via `codegen/service` (service, endpoints, client)
    - JSON-RPC transport via `jsonrpc/codegen` (server, client, types; SSE when streaming)
    - Agent workflows, activities, and tool specs via `codegen/agent`
-   - Registry clients and A2A cards via `codegen/agent`
 3. Applies small, deterministic transformations so files land under appropriate paths.
 
 We compose on top of Goa—no forks, minimal templates, and predictable output.
@@ -29,7 +27,6 @@ We compose on top of Goa—no forks, minimal templates, and predictable output.
 - Agent packages: `gen/<svc>/agents/<agent>/`
 - Tool specs: `gen/<svc>/agents/<agent>/specs/`
 - MCP service: `gen/mcp_<service>/`
-- A2A service: `gen/a2a_<agent>/`
 - Registry clients: `gen/<svc>/registry/<name>/`
 
 ## Unified Toolset Model
@@ -50,9 +47,6 @@ var MCPTools = Toolset("assistant", FromMCP("assistant-service", "assistant-mcp"
 
 // Registry-backed toolset (discovered at runtime)
 var RegistryTools = Toolset("enterprise", FromRegistry(CorpRegistry, "data-tools"))
-
-// A2A-backed toolset (remote A2A provider)
-var A2ATools = Toolset(FromA2A("svc.agent.tools", "https://provider.example.com"))
 ```
 
 All toolsets are first-class citizens—agents use `Use(toolset)` uniformly regardless of provider.
@@ -88,28 +82,6 @@ var AnthropicRegistry = Registry("anthropic", func() {
 - **Schema Cache** (`runtime/registry/cache.go`): TTL-based caching with fallback
 - **Federation Sync**: Periodic catalog synchronization from external registries
 - **Search**: Semantic and keyword-based tool discovery
-
-## A2A Protocol Support
-
-Agents with `Export` and `PublishTo` automatically generate A2A-compliant artifacts:
-
-### Generated A2A Artifacts
-
-- **Agent Card**: Protocol version, name, description, URL, capabilities, skills, security schemes
-- **A2A Service**: Goa service with A2A JSON-RPC methods (`tasks/send`, `tasks/sendSubscribe`)
-- **A2A Adapter**: Maps A2A tasks to agent runtime
-
-### A2A Service Pattern
-
-The A2A service follows the same pattern as MCP server support:
-
-| Aspect | MCP Server | A2A Agent |
-|--------|-----------|-----------|
-| Protocol | MCP JSON-RPC | A2A JSON-RPC |
-| Methods | `tools/call`, `resources/read`, etc. | `tasks/send`, `tasks/sendSubscribe`, etc. |
-| Routes to | Service methods (via adapter) | Agent runtime (via `runtime.MustClient`) |
-| Streaming | SSE for `tools/call` | SSE for `tasks/sendSubscribe` |
-| Codegen | `codegen/mcp/` | `codegen/agent/a2a_*.go` |
 
 ## MCP Server Definition
 
@@ -172,7 +144,6 @@ The `goa example` phase generates application-owned scaffold under `internal/age
 
 - Resource policy: use deny/allow lists to constrain which URIs can be read
 - Registry authentication: use Goa security schemes (`APIKeySecurity`, `OAuth2Security`, etc.)
-- A2A security: agent cards include security schemes for cross-platform authentication
 - Logging: avoid logging sensitive payloads and results in production
 
 ## Error code mapping
@@ -188,4 +159,4 @@ The adapter maps Goa `ServiceError` with name `invalid_params` to JSON-RPC `-326
 
 ## Summary
 
-This plugin gives you agents, MCP, registries, and A2A with familiar Goa patterns, minimal surface area, and a directory layout that feels natural. It's accurate, easy to maintain, and designed to evolve alongside Goa.
+This plugin gives you agents, MCP, and registries with familiar Goa patterns, minimal surface area, and a directory layout that feels natural. It's accurate, easy to maintain, and designed to evolve alongside Goa.

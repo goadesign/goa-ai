@@ -90,8 +90,6 @@ func Toolset(args ...any) *agentsexpr.ToolsetExpr {
 			name = provider.MCPToolset
 		case agentsexpr.ProviderRegistry:
 			name = provider.ToolsetName
-		case agentsexpr.ProviderA2A:
-			name = provider.A2ASuite
 		}
 	}
 
@@ -174,36 +172,6 @@ func FromRegistry(registry *agentsexpr.RegistryExpr, toolset string) *agentsexpr
 		Kind:        agentsexpr.ProviderRegistry,
 		Registry:    registry,
 		ToolsetName: toolset,
-	}
-}
-
-// FromA2A configures a toolset to be backed by a remote A2A provider. Use
-// FromA2A as a provider option when declaring a Toolset.
-//
-// FromA2A takes:
-//   - suite: A2A suite identifier for the remote agent (for example, "svc.agent.tools")
-//   - url:   base URL for the remote A2A server
-//
-// Example:
-//
-//	var RemoteTools = Toolset(FromA2A("svc.agent.tools", "https://provider.example.com"))
-//
-// Or with an explicit name:
-//
-//	var RemoteTools = Toolset("remote-tools", FromA2A("svc.agent.tools", "https://provider.example.com"))
-func FromA2A(suite, url string) *agentsexpr.ProviderExpr {
-	if suite == "" {
-		eval.ReportError("FromA2A requires non-empty suite identifier")
-		return nil
-	}
-	if url == "" {
-		eval.ReportError("FromA2A requires non-empty URL")
-		return nil
-	}
-	return &agentsexpr.ProviderExpr{
-		Kind:     agentsexpr.ProviderA2A,
-		A2ASuite: suite,
-		A2AURL:   url,
 	}
 }
 
