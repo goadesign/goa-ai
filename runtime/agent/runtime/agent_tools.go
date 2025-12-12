@@ -520,7 +520,7 @@ func (r *Runtime) buildAgentChildRequest(
 	// Build nested run context from explicit ToolRequest fields.
 	nestedRunCtx := run.Context{
 		Tool:             call.Name,
-		RunID:            NestedRunID(call.RunID, call.Name),
+		RunID:            NestedRunIDForToolCall(call.RunID, call.Name, call.ToolCallID),
 		SessionID:        call.SessionID,
 		TurnID:           call.TurnID,
 		ParentToolCallID: call.ToolCallID,
