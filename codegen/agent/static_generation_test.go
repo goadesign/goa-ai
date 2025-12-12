@@ -72,8 +72,6 @@ func TestRegistryClientStaticURLPaths(t *testing.T) {
 		"pathSemanticSearch should be a static constant with v2 API version")
 	require.Contains(t, clientContent, `pathCapabilities = "/v2/capabilities"`,
 		"pathCapabilities should be a static constant with v2 API version")
-	require.Contains(t, clientContent, `pathAgents = "/v2/agents"`,
-		"pathAgents should be a static constant with v2 API version")
 
 	// Verify methods use static path constants instead of url.JoinPath
 	require.NotContains(t, clientContent, "url.JoinPath",

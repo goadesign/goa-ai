@@ -12,8 +12,7 @@ import (
 
 // TestRegistryClientGeneratesCorrectMethods verifies that the generated registry
 // client contains all required methods: ListToolsets, GetToolset, Search,
-// SemanticSearch, Register, Deregister, Heartbeat.
-// **Validates: Requirements 1.1**
+// SemanticSearch.
 func TestRegistryClientGeneratesCorrectMethods(t *testing.T) {
 	design := func() {
 		goadsl.API("client_methods_test", func() {})
@@ -44,7 +43,6 @@ func TestRegistryClientGeneratesCorrectMethods(t *testing.T) {
 
 // TestRegistryClientAPIKeyAuth verifies that API key authentication is properly
 // generated when a registry uses APIKeySecurity.
-// **Validates: Requirements 1.2**
 func TestRegistryClientAPIKeyAuth(t *testing.T) {
 	design := func() {
 		goadsl.API("apikey_auth_test", func() {})
@@ -75,7 +73,6 @@ func TestRegistryClientAPIKeyAuth(t *testing.T) {
 
 // TestRegistryClientOAuth2Auth verifies that OAuth2 authentication is properly
 // generated when a registry uses OAuth2Security.
-// **Validates: Requirements 1.2**
 func TestRegistryClientOAuth2Auth(t *testing.T) {
 	design := func() {
 		goadsl.API("oauth2_auth_test", func() {})
@@ -110,7 +107,6 @@ func TestRegistryClientOAuth2Auth(t *testing.T) {
 
 // TestRegistryClientJWTAuth verifies that JWT authentication is properly
 // generated when a registry uses JWTSecurity.
-// **Validates: Requirements 1.2**
 func TestRegistryClientJWTAuth(t *testing.T) {
 	design := func() {
 		goadsl.API("jwt_auth_test", func() {})
@@ -141,7 +137,6 @@ func TestRegistryClientJWTAuth(t *testing.T) {
 
 // TestRegistryClientBasicAuth verifies that Basic authentication is properly
 // generated when a registry uses BasicAuthSecurity.
-// **Validates: Requirements 1.2**
 func TestRegistryClientBasicAuth(t *testing.T) {
 	design := func() {
 		goadsl.API("basic_auth_test", func() {})
@@ -172,7 +167,6 @@ func TestRegistryClientBasicAuth(t *testing.T) {
 
 // TestRegistryClientOptions verifies that the generated options file contains
 // all required option functions.
-// **Validates: Requirements 1.1**
 func TestRegistryClientOptions(t *testing.T) {
 	design := func() {
 		goadsl.API("options_test", func() {})
@@ -198,7 +192,6 @@ func TestRegistryClientOptions(t *testing.T) {
 
 // TestRegistryClientDataTypes verifies that the generated client contains
 // all required data types for registry operations.
-// **Validates: Requirements 1.1**
 func TestRegistryClientDataTypes(t *testing.T) {
 	design := func() {
 		goadsl.API("types_test", func() {})
