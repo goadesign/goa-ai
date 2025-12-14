@@ -779,6 +779,7 @@ func (r *Runtime) runLoop(
 			r.logger.Error(ctx, "ERROR - No tools allowed for execution after filtering", "candidates", len(result.ToolCalls))
 			return nil, errors.New("no tools allowed for execution")
 		}
+
 		r.logger.Info(ctx, "Executing allowed tool calls", "count", len(allowed))
 		if parentTracker != nil {
 			ids := collectToolCallIDs(allowed)
@@ -800,14 +801,26 @@ func (r *Runtime) runLoop(
 		// Enforce per-turn and remaining caps and stamp metadata.
 		allowed = r.capAllowedCalls(allowed, input, caps)
 		allowed = r.prepareAllowedCallsMetadata(base, allowed, parentTracker)
+
+		toExecute, deniedResults, cerr := r.confirmToolsIfNeeded(wfCtx, input, base, allowed, turnID, ctrl)
+		if cerr != nil {
+			return nil, cerr
+		}
+		transcriptMsgs := turnTranscript
+
 		// Record assistant turn (thinking/text from transcript plus declared tool_use).
-		r.recordAssistantTurn(base, turnTranscript, allowed, led)
+		r.recordAssistantTurn(base, transcriptMsgs, allowed, led)
+
 		// Group calls by timeout and execute.
-		grouped, timeouts := r.groupToolCallsByTimeout(allowed, input, toolOpts.Timeout)
+		grouped, timeouts := r.groupToolCallsByTimeout(toExecute, input, toolOpts.Timeout)
 		vals, err := r.executeGroupedToolCalls(
 			wfCtx, reg, base, result.ExpectedChildren, turnID, parentTracker, deadline,
 			grouped, timeouts, toolOpts,
 		)
+		if err != nil {
+			return nil, err
+		}
+		vals, err = mergeToolResultsByCallID(allowed, vals, deniedResults)
 		if err != nil {
 			return nil, err
 		}

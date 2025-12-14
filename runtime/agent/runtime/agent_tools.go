@@ -617,20 +617,57 @@ func (r *Runtime) adaptAgentChildOutput(
 	// instead of returning the nested agent's final prose. This produces a consistent,
 	// schema-like output across service-backed and agent-as-tool paths.
 	if cfg.JSONOnly {
-		// If exactly one child tool result exists, pass its result through; otherwise
-		// merge/wrap results. Bedrock requires toolResult.json to be an object, not an array.
-		var payload any
+		// Strong contract: JSONOnly does not guess or "best-effort" map child tool results
+		// into the parent tool schema. The parent tool result must be valid for the
+		// parent tool's declared result codec, otherwise we return a tool error so the
+		// owning registration can provide an explicit Finalizer.
+		var (
+			payload any
+			aggErr  error
+		)
 		switch n := len(outPtr.ToolEvents); {
 		case n == 1 && outPtr.ToolEvents[0] != nil:
-			payload = outPtr.ToolEvents[0].Result
+			// Validate by round-tripping through the parent tool codec. This ensures that
+			// result hint templates and UIs always see the parent tool's schema shape.
+			raw, err := r.marshalToolValue(ctx, call.Name, outPtr.ToolEvents[0].Result, false)
+			if err != nil {
+				aggErr = err
+				break
+			}
+			typed, err := r.unmarshalToolValue(ctx, call.Name, raw, false)
+			if err != nil {
+				aggErr = err
+				break
+			}
+			payload = typed
 		case n > 1:
 			aggregateKey := cfg.AggregateKeys[call.Name]
-			payload = aggregateChildResults(outPtr.ToolEvents, aggregateKey)
-		default:
-			// No child tools: return the final message text to avoid empty payloads.
-			if outPtr.Final != nil {
-				payload = agentMessageText(outPtr.Final)
+			if aggregateKey == "" {
+				aggErr = fmt.Errorf(
+					"JSONOnly cannot aggregate %d child results for %s without an explicit Finalizer or AggregateKey",
+					n,
+					call.Name,
+				)
+				break
 			}
+			merged, err := mergeByKeyFromChildResults(ctx, r, outPtr.ToolEvents, aggregateKey)
+			if err != nil {
+				aggErr = err
+				break
+			}
+			aggRaw, err := json.Marshal(map[string]any{aggregateKey: merged})
+			if err != nil {
+				aggErr = err
+				break
+			}
+			typed, err := r.unmarshalToolValue(ctx, call.Name, json.RawMessage(aggRaw), false)
+			if err != nil {
+				aggErr = err
+				break
+			}
+			payload = typed
+		default:
+			aggErr = fmt.Errorf("JSONOnly produced no child results for %s", call.Name)
 		}
 		// Aggregate telemetry similar to ConvertRunOutputToToolResult.
 		var tel *telemetry.ToolTelemetry
@@ -675,6 +712,13 @@ func (r *Runtime) adaptAgentChildOutput(
 			ParentToolCallID: nestedRunCtx.ParentToolCallID,
 		}
 		attachRunLink(tr, handle)
+		if aggErr != nil {
+			tr.Error = planner.NewToolErrorWithCause(
+				"agent-tool: JSONOnly aggregation failed (tool result schema mismatch; missing finalizer?)",
+				aggErr,
+			)
+			return tr, nil
+		}
 		if errCount > 0 && errCount == len(outPtr.ToolEvents) {
 			tr.Error = planner.NewToolErrorWithCause("agent-tool: all nested tools failed", lastErr)
 		}
@@ -691,36 +735,6 @@ func (r *Runtime) adaptAgentChildOutput(
 	}
 	attachRunLink(&result, handle)
 	return &result, nil
-}
-
-// aggregateChildResults merges multiple child tool results into a single object.
-// When aggregateKey is set and all children have that key with array values, the
-// arrays are merged. Otherwise, results are wrapped under aggregateKey (or "results"
-// if empty). This ensures Bedrock compatibility (toolResult.json must be an object).
-func aggregateChildResults(events []*planner.ToolResult, aggregateKey string) any {
-	items := make([]any, 0, len(events))
-	for _, ev := range events {
-		if ev == nil {
-			continue
-		}
-		items = append(items, ev.Result)
-	}
-	if len(items) == 0 {
-		return map[string]any{}
-	}
-	key := aggregateKey
-	if key == "" {
-		key = "results"
-	}
-	// Try to merge arrays under aggregateKey if all children have it.
-	if aggregateKey != "" {
-		merged, ok := mergeByKey(items, aggregateKey)
-		if ok {
-			return map[string]any{aggregateKey: merged}
-		}
-	}
-	// Fallback: wrap all results under key.
-	return map[string]any{key: items}
 }
 
 // mergeByKey extracts the array value under key from each item and merges them.
@@ -743,4 +757,27 @@ func mergeByKey(items []any, key string) ([]any, bool) {
 		merged = append(merged, arr...)
 	}
 	return merged, true
+}
+
+func mergeByKeyFromChildResults(ctx context.Context, rt *Runtime, events []*planner.ToolResult, key string) ([]any, error) {
+	items := make([]any, 0, len(events))
+	for _, ev := range events {
+		raw, err := rt.marshalToolValue(ctx, ev.Name, ev.Result, false)
+		if err != nil {
+			return nil, err
+		}
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return nil, err
+		}
+		items = append(items, m)
+	}
+	if len(items) == 0 {
+		return nil, fmt.Errorf("no child results to merge")
+	}
+	merged, ok := mergeByKey(items, key)
+	if !ok {
+		return nil, fmt.Errorf("child results do not all contain %q array", key)
+	}
+	return merged, nil
 }

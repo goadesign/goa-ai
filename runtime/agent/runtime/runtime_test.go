@@ -215,7 +215,6 @@ func TestStartRunForwardsWorkflowOptions(t *testing.T) {
 		tracer:  telemetry.NoopTracer{},
 	}
 	in := RunInput{
-		AgentID:   "service.agent",
 		RunID:     "run-x",
 		SessionID: "sess-1",
 		WorkflowOptions: &WorkflowOptions{
@@ -447,7 +446,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 				wf = wfCtx
 			}
 			msgs := []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "go"}}}}
-			nestedCtx := run.Context{RunID: NestedRunID(call.RunID, call.Name), SessionID: call.SessionID, TurnID: call.TurnID, ParentToolCallID: call.ToolCallID}
+			nestedCtx := run.Context{RunID: NestedRunIDForToolCall(call.RunID, call.Name, call.ToolCallID), SessionID: call.SessionID, TurnID: call.TurnID, ParentToolCallID: call.ToolCallID}
 			// Inject nested agent registration into runtime for lookup
 			rt.mu.Lock()
 			rt.agents = map[agent.Ident]AgentRegistration{"nested.agent": nestedReg}

@@ -129,6 +129,11 @@ type (
 		// planners. It is internal to the runtime; planners interact with it
 		// via PlannerContext.
 		reminders *reminder.Engine
+
+		// toolConfirmation configures runtime-enforced confirmation for selected tools.
+		// It is used to require explicit operator approval before executing certain tools.
+		// See ToolConfirmationConfig for details.
+		toolConfirmation *ToolConfirmationConfig
 	}
 
 	// Options configures the Runtime instance. All fields are optional except Engine
@@ -158,6 +163,11 @@ type (
 		// an entry, the runtime uses a default worker configuration. Engines
 		// that do not poll (in-memory) ignore this map.
 		Workers map[agent.Ident]WorkerConfig
+
+		// ToolConfirmation configures runtime-enforced confirmation overrides for selected
+		// tools (for example, requiring explicit operator approval before executing
+		// additional tools that are not marked with design-time Confirmation).
+		ToolConfirmation *ToolConfirmationConfig
 	}
 
 	// RuntimeOption configures the runtime via functional options passed to NewWith.
@@ -575,6 +585,11 @@ func WithDeniedTags(tags []string) RunOption {
 // newFromOptions constructs a Runtime using the provided options. Internal helper
 // used by the public New(...RuntimeOption) constructor.
 func newFromOptions(opts Options) *Runtime {
+	if opts.ToolConfirmation != nil {
+		if err := opts.ToolConfirmation.validate(); err != nil {
+			panic(err)
+		}
+	}
 	bus := opts.Hooks
 	if bus == nil {
 		bus = hooks.NewBus()
@@ -596,24 +611,25 @@ func newFromOptions(opts Options) *Runtime {
 		tracer = telemetry.NoopTracer{}
 	}
 	rt := &Runtime{
-		Engine:         eng,
-		Memory:         opts.MemoryStore,
-		Policy:         opts.Policy,
-		RunStore:       opts.RunStore,
-		Bus:            bus,
-		Stream:         opts.Stream,
-		logger:         logger,
-		metrics:        metrics,
-		tracer:         tracer,
-		agents:         make(map[agent.Ident]AgentRegistration),
-		toolsets:       make(map[string]ToolsetRegistration),
-		toolSpecs:      make(map[tools.Ident]tools.ToolSpec),
-		toolSchemas:    make(map[string]map[string]any),
-		models:         make(map[string]model.Client),
-		runHandles:     make(map[string]engine.WorkflowHandle),
-		agentToolSpecs: make(map[agent.Ident][]tools.ToolSpec),
-		workers:        opts.Workers,
-		reminders:      reminder.NewEngine(),
+		Engine:           eng,
+		Memory:           opts.MemoryStore,
+		Policy:           opts.Policy,
+		RunStore:         opts.RunStore,
+		Bus:              bus,
+		Stream:           opts.Stream,
+		logger:           logger,
+		metrics:          metrics,
+		tracer:           tracer,
+		agents:           make(map[agent.Ident]AgentRegistration),
+		toolsets:         make(map[string]ToolsetRegistration),
+		toolSpecs:        make(map[tools.Ident]tools.ToolSpec),
+		toolSchemas:      make(map[string]map[string]any),
+		models:           make(map[string]model.Client),
+		runHandles:       make(map[string]engine.WorkflowHandle),
+		agentToolSpecs:   make(map[agent.Ident][]tools.ToolSpec),
+		workers:          opts.Workers,
+		reminders:        reminder.NewEngine(),
+		toolConfirmation: opts.ToolConfirmation,
 	}
 	if rt.Memory != nil {
 		memSub := hooks.SubscriberFunc(func(ctx context.Context, event hooks.Event) error {
@@ -738,6 +754,11 @@ func WithMetrics(m telemetry.Metrics) RuntimeOption { return func(o *Options) { 
 
 // WithTracer sets the tracer.
 func WithTracer(t telemetry.Tracer) RuntimeOption { return func(o *Options) { o.Tracer = t } }
+
+// WithToolConfirmation configures runtime-enforced confirmation for selected tools.
+func WithToolConfirmation(cfg *ToolConfirmationConfig) RuntimeOption {
+	return func(o *Options) { o.ToolConfirmation = cfg }
+}
 
 // WithWorker configures the worker for a specific agent. Engines that support
 // worker polling use this configuration to bind the agent to a specific queue.
@@ -1175,6 +1196,21 @@ func (r *Runtime) ProvideToolResults(ctx context.Context, rs interrupt.ToolResul
 		return fmt.Errorf("run %q not found", rs.RunID)
 	}
 	return handle.Signal(ctx, interrupt.SignalProvideToolResults, rs)
+}
+
+// ProvideConfirmation sends a typed confirmation decision to a waiting run.
+func (r *Runtime) ProvideConfirmation(ctx context.Context, dec interrupt.ConfirmationDecision) error {
+	if strings.TrimSpace(dec.RunID) == "" {
+		return errors.New("run id is required")
+	}
+	if s, ok := r.Engine.(engine.Signaler); ok {
+		return s.SignalByID(ctx, dec.RunID, "", interrupt.SignalProvideConfirmation, dec)
+	}
+	handle, ok := r.workflowHandle(dec.RunID)
+	if !ok {
+		return fmt.Errorf("run %q not found", dec.RunID)
+	}
+	return handle.Signal(ctx, interrupt.SignalProvideConfirmation, dec)
 }
 
 // RunStatus returns the coarse-grained lifecycle status for the given run by

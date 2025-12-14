@@ -238,16 +238,8 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	}
 	enc, encErr := r.marshalToolValue(ctx, req.ToolName, result.Result, false)
 	if encErr != nil {
-		// Result could not be encoded. Forward best-effort JSON and no retry hint.
-		var best json.RawMessage
-		if b, e := json.Marshal(result.Result); e == nil {
-			best = json.RawMessage(b)
-		}
-		return &ToolOutput{
-			Payload:   best,
-			Artifacts: result.Artifacts,
-			Error:     encErr.Error(),
-		}, nil
+		// Tool result is not valid for its declared schema. This is a contract violation.
+		return nil, fmt.Errorf("tool result encode %s: %w", req.ToolName, encErr)
 	}
 	// Apply optional result adapter after encoding.
 	if reg.ResultAdapter != nil && len(enc) > 0 {

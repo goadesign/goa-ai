@@ -76,6 +76,11 @@ type (
 		// runtime.
 		ResultReminder string
 
+		// Confirmation configures design-time confirmation requirements for this tool.
+		// When non-nil, the runtime requests an external confirmation before executing
+		// the tool (unless runtime overrides supersede the confirmation).
+		Confirmation *ToolConfirmationExpr
+
 		bindServiceName string
 		bindMethodName  string
 	}
@@ -154,6 +159,7 @@ func (t *ToolExpr) Validate() error {
 
 func (t *ToolExpr) validateShapes() error {
 	verr := new(eval.ValidationErrors)
+	validateToolConfirmation(t, verr)
 	check := func(where string, att *goaexpr.AttributeExpr) {
 		if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 			return

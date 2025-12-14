@@ -1,6 +1,6 @@
 // Package interrupt provides workflow signal handling for pausing and resuming
 // agent runs. It exposes a Controller that workflows can use to react to
-// external pause/resume requests via Temporal signals.
+// external pause/resume requests via workflow engine signals.
 package interrupt
 
 import (
@@ -10,6 +10,89 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+)
+
+type (
+	// PauseRequest carries metadata attached to a pause signal.
+	PauseRequest struct {
+		// RunID identifies the run to pause.
+		RunID string
+		// Reason describes why the run is being paused (for example, "user_requested").
+		Reason string
+		// RequestedBy identifies the logical actor requesting the pause (for example, a user
+		// ID, service name, or "policy_engine").
+		RequestedBy string
+		// Labels carries optional key-value metadata associated with the pause request.
+		Labels map[string]string
+		// Metadata carries arbitrary structured data attached to the pause request.
+		Metadata map[string]any
+	}
+
+	// ResumeRequest carries metadata attached to a resume signal.
+	ResumeRequest struct {
+		// RunID identifies the run to resume.
+		RunID string
+		// Notes carries optional human-readable context provided when resuming the run.
+		Notes string
+		// RequestedBy identifies the logical actor requesting the resume.
+		RequestedBy string
+		// Labels carries optional key-value metadata associated with the resume request.
+		Labels map[string]string
+		// Messages allows human or policy actors to inject new conversational messages
+		// before the planner resumes execution.
+		Messages []*model.Message
+	}
+
+	// ClarificationAnswer carries a typed answer for a paused clarification request.
+	ClarificationAnswer struct {
+		// RunID identifies the run associated with the clarification.
+		RunID string
+		// ID is the clarification await identifier.
+		ID string
+		// Answer is the free-form clarification text provided by the actor.
+		Answer string
+		// Labels carries optional metadata associated with the clarification answer.
+		Labels map[string]string
+	}
+
+	// ConfirmationDecision carries a typed decision for a confirmation await.
+	ConfirmationDecision struct {
+		// RunID identifies the run associated with the confirmation.
+		RunID string
+		// ID is the confirmation await identifier.
+		ID string
+		// Approved is true when the operator approved the pending action.
+		Approved bool
+		// RequestedBy identifies the logical actor that provided the decision.
+		RequestedBy string
+		// Labels carries optional metadata associated with the decision.
+		Labels map[string]string
+		// Metadata carries arbitrary structured data for audit trails (for example,
+		// ticket IDs or justification codes).
+		Metadata map[string]any
+	}
+
+	// ToolResultsSet carries results for an external tools await request.
+	ToolResultsSet struct {
+		// RunID identifies the run associated with the external tool results.
+		RunID string
+		// ID is the await identifier corresponding to the original AwaitExternalTools event.
+		ID string
+		// Results contains the tool results provided by an external system.
+		Results []*planner.ToolResult
+		// RetryHints optionally provides hints associated with failures.
+		RetryHints []*planner.RetryHint
+	}
+
+	// Controller drains runtime interrupt signals and exposes helpers the
+	// workflow loop can call to react to pause/resume and await requests.
+	Controller struct {
+		pauseCh   engine.SignalChannel
+		resumeCh  engine.SignalChannel
+		clarifyCh engine.SignalChannel
+		resultsCh engine.SignalChannel
+		confirmCh engine.SignalChannel
+	}
 )
 
 const (
@@ -22,37 +105,8 @@ const (
 	SignalProvideClarification = "goaai.runtime.provide.clarification"
 	// SignalProvideToolResults delivers external tool results to a waiting run.
 	SignalProvideToolResults = "goaai.runtime.provide.toolresults"
-)
-
-type (
-	// PauseRequest carries metadata attached to a pause signal.
-	PauseRequest struct {
-		RunID       string
-		Reason      string
-		RequestedBy string
-		Labels      map[string]string
-		Metadata    map[string]any
-	}
-
-	// ResumeRequest carries metadata attached to a resume signal.
-	ResumeRequest struct {
-		RunID       string
-		Notes       string
-		RequestedBy string
-		Labels      map[string]string
-		// Messages allows human or policy actors to inject new conversational
-		// messages before the planner resumes execution.
-		Messages []*model.Message
-	}
-
-	// Controller drains runtime interrupt signals and exposes helpers the
-	// workflow loop can call to react to pause/resume requests.
-	Controller struct {
-		pauseCh   engine.SignalChannel
-		resumeCh  engine.SignalChannel
-		clarifyCh engine.SignalChannel
-		resultsCh engine.SignalChannel
-	}
+	// SignalProvideConfirmation delivers a ConfirmationDecision to a waiting run.
+	SignalProvideConfirmation = "goaai.runtime.provide.confirmation"
 )
 
 // NewController builds a controller wired to the workflow context signals.
@@ -62,6 +116,7 @@ func NewController(wfCtx engine.WorkflowContext) *Controller {
 		resumeCh:  wfCtx.SignalChannel(SignalResume),
 		clarifyCh: wfCtx.SignalChannel(SignalProvideClarification),
 		resultsCh: wfCtx.SignalChannel(SignalProvideToolResults),
+		confirmCh: wfCtx.SignalChannel(SignalProvideConfirmation),
 	}
 }
 
@@ -90,23 +145,6 @@ func (c *Controller) WaitResume(ctx context.Context) (ResumeRequest, error) {
 	return req, nil
 }
 
-// ClarificationAnswer carries a typed answer for a paused clarification request.
-type ClarificationAnswer struct {
-	RunID  string
-	ID     string
-	Answer string
-	Labels map[string]string
-}
-
-// ToolResultsSet carries results for an external tools await request.
-type ToolResultsSet struct {
-	RunID   string
-	ID      string
-	Results []*planner.ToolResult
-	// RetryHints optionally provides hints associated with failures.
-	RetryHints []*planner.RetryHint
-}
-
 // WaitProvideClarification blocks until a clarification answer is delivered.
 func (c *Controller) WaitProvideClarification(ctx context.Context) (ClarificationAnswer, error) {
 	if c == nil || c.clarifyCh == nil {
@@ -129,4 +167,16 @@ func (c *Controller) WaitProvideToolResults(ctx context.Context) (ToolResultsSet
 		return ToolResultsSet{}, err
 	}
 	return rs, nil
+}
+
+// WaitProvideConfirmation blocks until a confirmation decision is delivered.
+func (c *Controller) WaitProvideConfirmation(ctx context.Context) (ConfirmationDecision, error) {
+	if c == nil || c.confirmCh == nil {
+		return ConfirmationDecision{}, errors.New("interrupt: confirmation channel unavailable")
+	}
+	var dec ConfirmationDecision
+	if err := c.confirmCh.Receive(ctx, &dec); err != nil {
+		return ConfirmationDecision{}, err
+	}
+	return dec, nil
 }

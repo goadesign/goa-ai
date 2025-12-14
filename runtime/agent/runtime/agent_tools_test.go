@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"testing"
 
+	"fmt"
 	"github.com/stretchr/testify/require"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -212,4 +214,126 @@ func TestToolResultFinalizerMissingInvoker(t *testing.T) {
 		Parent: ParentCall{ToolName: "ada.method"},
 	})
 	require.Error(t, err)
+}
+
+func TestJSONOnly_NoFinalizer_IncompatibleChildResultSchema_ReturnsToolError(t *testing.T) {
+	rt := &Runtime{
+		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
+		logger:    telemetry.NoopLogger{},
+		metrics:   telemetry.NoopMetrics{},
+		tracer:    telemetry.NoopTracer{},
+	}
+
+	type ParentResult struct {
+		OK bool `json:"ok"`
+	}
+
+	parent := tools.ToolSpec{
+		Name: tools.Ident("test.parent"),
+		Payload: tools.TypeSpec{
+			Codec: tools.AnyJSONCodec,
+		},
+		Result: tools.TypeSpec{
+			Codec: tools.JSONCodec[any]{
+				ToJSON: func(v any) ([]byte, error) {
+					// Strict: only accept the declared parent result type.
+					s, ok := v.(ParentResult)
+					if !ok {
+						return nil, fmt.Errorf("expected ParentResult, got %T", v)
+					}
+					return json.Marshal(s)
+				},
+				FromJSON: func(data []byte) (any, error) {
+					var out ParentResult
+					if err := json.Unmarshal(data, &out); err != nil {
+						return nil, err
+					}
+					return out, nil
+				},
+			},
+		},
+	}
+	rt.toolSpecs[parent.Name] = parent
+
+	cfg := &AgentToolConfig{
+		AgentID:  "test.agent",
+		JSONOnly: true,
+	}
+	call := &planner.ToolRequest{
+		Name:       parent.Name,
+		ToolCallID: "toolcall",
+		RunID:      "run",
+		SessionID:  "sess",
+	}
+	out := &RunOutput{
+		ToolEvents: []*planner.ToolResult{
+			{
+				Name:   tools.Ident("test.child"),
+				Result: map[string]any{"x": "y"},
+			},
+		},
+	}
+
+	tr, err := rt.adaptAgentChildOutput(context.Background(), cfg, call, run.Context{RunID: "child-run"}, out)
+	require.NoError(t, err)
+	require.NotNil(t, tr)
+	require.NotNil(t, tr.Error)
+	require.Contains(t, tr.Error.Message, "JSONOnly aggregation failed")
+}
+
+func TestJSONOnly_NoFinalizer_MultiChildWithoutAggregateKey_ReturnsToolError(t *testing.T) {
+	rt := &Runtime{
+		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
+		logger:    telemetry.NoopLogger{},
+		metrics:   telemetry.NoopMetrics{},
+		tracer:    telemetry.NoopTracer{},
+	}
+
+	type ParentResult struct {
+		Events []string `json:"events"`
+	}
+
+	parent := tools.ToolSpec{
+		Name: tools.Ident("test.parent_multi"),
+		Payload: tools.TypeSpec{
+			Codec: tools.AnyJSONCodec,
+		},
+		Result: tools.TypeSpec{
+			Codec: tools.JSONCodec[any]{
+				ToJSON: json.Marshal,
+				FromJSON: func(data []byte) (any, error) {
+					var out ParentResult
+					if err := json.Unmarshal(data, &out); err != nil {
+						return nil, err
+					}
+					return out, nil
+				},
+			},
+		},
+	}
+	rt.toolSpecs[parent.Name] = parent
+
+	cfg := &AgentToolConfig{
+		AgentID:  "test.agent",
+		JSONOnly: true,
+		// No AggregateKeys configured.
+	}
+	call := &planner.ToolRequest{
+		Name:       parent.Name,
+		ToolCallID: "toolcall",
+		RunID:      "run",
+		SessionID:  "sess",
+	}
+	out := &RunOutput{
+		ToolEvents: []*planner.ToolResult{
+			{Name: tools.Ident("child1"), Result: map[string]any{"events": []any{"a"}}},
+			{Name: tools.Ident("child2"), Result: map[string]any{"events": []any{"b"}}},
+		},
+	}
+
+	tr, err := rt.adaptAgentChildOutput(context.Background(), cfg, call, run.Context{RunID: "child-run"}, out)
+	require.NoError(t, err)
+	require.NotNil(t, tr)
+	require.NotNil(t, tr.Error)
+	require.Contains(t, tr.Error.Message, "JSONOnly aggregation failed")
 }

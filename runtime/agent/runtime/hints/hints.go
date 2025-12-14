@@ -131,7 +131,7 @@ func CompileHintTemplates(raw map[tools.Ident]string, extra template.FuncMap) (m
 		if src == "" {
 			continue
 		}
-		tmpl, err := template.New(string(id)).Funcs(funcs).Parse(src)
+		tmpl, err := template.New(string(id)).Option("missingkey=error").Funcs(funcs).Parse(src)
 		if err != nil {
 			return nil, fmt.Errorf("compile hint for %s: %w", id, err)
 		}

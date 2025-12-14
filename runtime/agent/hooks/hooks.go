@@ -69,6 +69,9 @@ const (
 	// AwaitClarification fires when the planner requests a human clarification.
 	AwaitClarification EventType = "await_clarification"
 
+	// AwaitConfirmation fires when the runtime requests operator confirmation.
+	AwaitConfirmation EventType = "await_confirmation"
+
 	// AwaitExternalTools fires when the planner requests external tools to run out-of-band.
 	AwaitExternalTools EventType = "await_external_tools"
 

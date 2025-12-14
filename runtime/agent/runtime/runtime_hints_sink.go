@@ -55,8 +55,8 @@ func (h *hintingSink) Close(ctx context.Context) error {
 }
 
 // decodePayload turns a canonical JSON payload into a typed value using the
-// runtime's tool codecs when available. On failure it falls back to a generic
-// map or the original payload.
+// runtime's tool codecs. If decoding fails, it returns nil so callers do not
+// compute best-effort hints from an untyped payload.
 func (h *hintingSink) decodePayload(ctx context.Context, tool tools.Ident, payload any) any {
 	if payload == nil {
 		return nil
@@ -94,11 +94,5 @@ func (h *hintingSink) decodePayload(ctx context.Context, tool tools.Ident, paylo
 	if err == nil {
 		return val
 	}
-
-	// Fallback: decode into generic map/slice for best-effort hints.
-	var generic any
-	if err := json.Unmarshal(raw, &generic); err == nil {
-		return generic
-	}
-	return payload
+	return nil
 }

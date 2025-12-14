@@ -31,6 +31,13 @@ var Specs = []tools.ToolSpec{
         {{- if .ResultReminder }}
         ResultReminder: {{ printf "%q" .ResultReminder }},
         {{- end }}
+        {{- if .Confirmation }}
+        Confirmation: &tools.ConfirmationSpec{
+            Title: {{ printf "%q" .Confirmation.Title }},
+            PromptTemplate: {{ printf "%q" .Confirmation.PromptTemplate }},
+            DeniedResultTemplate: {{ printf "%q" .Confirmation.DeniedResultTemplate }},
+        },
+        {{- end }}
         Payload: tools.TypeSpec{
             Name: {{ if .Payload }}{{ printf "%q" .Payload.TypeName }}{{ else }}""{{ end }},
             {{- if .Payload }}

@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"goa.design/goa-ai/runtime/agent/hooks"
 	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
@@ -113,6 +114,22 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Base: Base{t: EventAwaitClarification, r: evt.RunID(), s: evt.SessionID(), p: payload},
 			Data: payload,
 		})
+	case *hooks.AwaitConfirmationEvent:
+		if !s.profile.AwaitConfirmation {
+			return nil
+		}
+		payload := AwaitConfirmationPayload{
+			ID:        evt.ID,
+			Title:     evt.Title,
+			Prompt:    evt.Prompt,
+			ToolName:  string(evt.ToolName),
+			ToolCallID: evt.ToolCallID,
+			Payload:   evt.Payload,
+		}
+		return s.sink.Send(ctx, AwaitConfirmation{
+			Base: Base{t: EventAwaitConfirmation, r: evt.RunID(), s: evt.SessionID(), p: payload},
+			Data: payload,
+		})
 	case *hooks.AwaitExternalToolsEvent:
 		if !s.profile.AwaitExternalTools {
 			return nil
@@ -198,10 +215,25 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		if !s.profile.ToolEnd {
 			return nil
 		}
+		if evt.ToolCallID == "" {
+			return errors.New("stream: tool_end missing tool_call_id")
+		}
+		if evt.ToolName == "" {
+			return errors.New("stream: tool_end missing tool_name")
+		}
+		if evt.Error == nil && evt.Result == nil {
+			return fmt.Errorf("stream: tool_end %s missing result (success without result)", evt.ToolName)
+		}
 		var artifacts []ArtifactPayload
 		if len(evt.Artifacts) > 0 {
 			artifacts = make([]ArtifactPayload, 0, len(evt.Artifacts))
 			for _, a := range evt.Artifacts {
+				if a.Kind == "" {
+					return fmt.Errorf("stream: tool_end %s has artifact with empty kind", evt.ToolName)
+				}
+				if a.SourceTool == "" {
+					return fmt.Errorf("stream: tool_end %s has artifact %q with empty source_tool", evt.ToolName, a.Kind)
+				}
 				ap := ArtifactPayload{
 					Kind:       a.Kind,
 					Data:       a.Data,
