@@ -658,9 +658,89 @@ Callers provide results via:
 err := rt.ProvideToolResults(ctx, interrupt.ToolResultsSet{
     RunID:   "run-123",
     ID:      "external-1",
-    Results: []*planner.ToolResult{{...}},
+    Results: []*planner.ToolResult{
+        {
+            ToolCallID: "toolcall-1",
+            Name:       "chat.ask_question.ask_question",
+            Result:     json.RawMessage(`{"answers":[{"question_id":"...","selected_ids":["approve"]}]}`),
+        },
+    },
 })
 ```
+
+### Tool Confirmation (Design-Time + Runtime Overrides)
+
+Goa-AI supports **runtime-enforced** confirmation gates for sensitive tools.
+
+There are two ways to enable confirmation:
+
+- **Design-time (recommended, common case):** declare `Confirmation(...)` inside a tool DSL.
+  Codegen stores the confirmation policy in the generated `tools.ToolSpec.Confirmation`.
+- **Runtime (dynamic/override):** supply `runtime.WithToolConfirmation(...)` when constructing the
+  runtime. This can require confirmation for additional tools and/or override the design-time behavior
+  for specific tool IDs.
+
+At execution time, the workflow:
+
+- Emits an out-of-band confirmation request (using `AwaitConfirmation`) before executing the
+  target tool call.
+- Waits for a user approval/denial decision.
+- Executes the tool only when approved.
+- When denied, synthesizes a **schema-compliant** tool result (so the transcript remains valid and
+  the planner can react to the denial deterministically).
+
+**Confirmation protocol**
+
+The runtime uses a runtime-owned confirmation protocol to obtain an explicit approval/denial
+decision before executing a confirmed tool.
+
+- **Await payload** (hook + stream event):
+
+  ```json
+  {
+    "id": "...",
+    "title": "...",
+    "prompt": "...",
+    "tool_name": "atlas.commands.change_setpoint",
+    "tool_call_id": "toolcall-1",
+    "payload": { "...": "canonical tool arguments (JSON)" }
+  }
+  ```
+
+- **Provide decision** (using `ProvideConfirmation`):
+
+  ```go
+  err := rt.ProvideConfirmation(ctx, interrupt.ConfirmationDecision{
+      RunID:       "run-123",
+      ID:         "await-1",
+      Approved:    true,              // or false
+      RequestedBy: "user:123",        // optional, for audit
+      Labels:      map[string]string{"source": "front-ui"},
+      Metadata:    map[string]any{"ticket_id": "INC-42"},
+  })
+  ```
+
+Consumers should treat confirmation as a **runtime protocol**, not as a user-defined tool:
+
+- Use the accompanying `RunPaused` reason (`await_confirmation`) to decide when to display a confirmation UI.
+- Do not couple UI behavior to a specific confirmation tool name; treat it as an internal transport detail.
+
+This keeps the runtime generic: any UI/system can implement a compatible confirmation transport.
+
+**Runtime validation**
+
+The runtime treats confirmation as a boundary and validates:
+
+- The confirmation `ID` matches the pending await identifier when provided.
+- The decision object is well-formed (non-empty `RunID`, boolean `Approved` value).
+
+Notes:
+
+- Confirmation templates (`PromptTemplate` and `DeniedResultTemplate`) are Go `text/template` strings
+  executed with `missingkey=error`. In addition to the standard template functions (e.g. `printf`),
+  Goa-AI provides:
+  - `json v` → JSON encodes `v` (useful for optional pointer fields or embedding structured values).
+  - `quote s` → returns a Go-escaped quoted string (like `fmt.Sprintf("%q", s)`).
 
 ---
 

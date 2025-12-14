@@ -52,6 +52,10 @@ type (
 		// (for example, "The user sees a rendered graph of this data"). The
 		// runtime wraps this text in <system-reminder> tags.
 		ResultReminder string
+		// Confirmation configures design-time confirmation requirements for this tool.
+		// When set, runtimes may request explicit out-of-band user confirmation before
+		// executing the tool. Runtime configuration can override or extend this policy.
+		Confirmation *ConfirmationSpec
 		// Payload describes the request schema for the tool.
 		Payload TypeSpec
 		// Result describes the response schema for the tool.
@@ -62,6 +66,25 @@ type (
 		// for artifacts and other UI- or policy-facing data that ride alongside
 		// the model-visible payload/result.
 		Sidecar *TypeSpec
+	}
+
+	// ConfirmationSpec declares the confirmation protocol for a tool.
+	// It is emitted by goa-ai codegen when a tool uses Confirmation in the DSL.
+	//
+	// Confirmation uses a runtime-owned confirmation transport (typically an
+	// ask_question-style external interaction) to obtain an approve/deny decision
+	// from a human operator. Tool authors only configure templates and optional
+	// display title; the runtime owns how confirmation is requested and how the
+	// decision is delivered back to the run.
+	ConfirmationSpec struct {
+		// Title is an optional title shown in the confirmation UI (when supported).
+		Title string
+		// PromptTemplate is rendered with the tool payload to produce the prompt.
+		PromptTemplate string
+		// DeniedResultTemplate is rendered with the tool payload to produce JSON for
+		// the denied tool result. The rendered JSON must decode with the tool result
+		// codec so consumers observe a schema-compliant tool_result.
+		DeniedResultTemplate string
 	}
 
 	// TypeSpec describes the payload or result schema for a tool.

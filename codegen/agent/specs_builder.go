@@ -84,6 +84,8 @@ type (
 		// ResultReminder is an optional system reminder injected into the
 		// conversation after the tool result is returned.
 		ResultReminder string
+		// Confirmation configures design-time confirmation requirements for this tool.
+		Confirmation *ToolConfirmationData
 	}
 
 	// typeData holds all metadata needed to generate a type definition, schema,
@@ -267,6 +269,7 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 			Sidecar:           sidecar,
 			BoundedResult:     tool.BoundedResult,
 			ResultReminder:    tool.ResultReminder,
+			Confirmation:      tool.Confirmation,
 		}
 		data.addTool(entry)
 	}

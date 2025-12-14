@@ -150,6 +150,44 @@ when agents execute on different workers.
 | `ResultHintTemplate(tmpl)` | Inside `Tool` | Go template for result display hint |
 | `BoundedResult()` | Inside `Tool` | Marks result as bounded view over larger data |
 | `ResultReminder(text)` | Inside `Tool` | Static system reminder injected after tool result |
+| `Confirmation(dsl)` | Inside `Tool` | Declares that tool execution must be explicitly approved out-of-band |
+
+### Tool Confirmation (Human-in-the-Loop)
+
+Some tools represent **irreversible** or **operator-sensitive** actions (writes, deletes, commands).
+Use `Confirmation` to declare that a tool must be approved out-of-band before execution.
+
+At code generation time, Goa-AI records the confirmation policy in the generated `tools.ToolSpec`.
+At runtime, the workflow emits a confirmation `AwaitConfirmation` request and only executes the tool
+after an explicit approval is provided.
+
+Example:
+
+```go
+Tool("dangerous_write", "Write a stateful change", func() {
+    Args(DangerousWriteArgs)
+    Return(DangerousWriteResult)
+    Confirmation(func() {
+        Title("Confirm change")
+        PromptTemplate(`Approve write: set {{ .Key }} to {{ .Value }}`)
+        DeniedResultTemplate(`{"summary":"Cancelled","key":"{{ .Key }}"}`)
+    })
+})
+```
+
+Notes:
+
+- The runtime owns how confirmation is requested. The built-in confirmation protocol uses a dedicated
+  `AwaitConfirmation` await and a `ProvideConfirmation` decision call. See `docs/runtime.md` for the
+  expected payloads and flow.
+- Confirmation templates (`PromptTemplate` and `DeniedResultTemplate`) are Go `text/template` strings
+  executed with `missingkey=error`. In addition to the standard template functions (e.g. `printf`),
+  Goa-AI provides:
+  - `json v` → JSON encodes `v` (useful for optional pointer fields or embedding structured values).
+  - `quote s` → returns a Go-escaped quoted string (like `fmt.Sprintf("%q", s)`).
+- Design-time confirmation is the **common case** (“this tool always needs approval”), but runtimes
+  can also require confirmation dynamically for additional tools via `runtime.WithToolConfirmation(...)`
+  (see runtime docs).
 
 ### Policy Functions
 

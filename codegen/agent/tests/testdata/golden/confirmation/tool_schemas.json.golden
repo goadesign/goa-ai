@@ -1,0 +1,72 @@
+{
+  "tools": [
+    {
+      "confirmation": {
+        "denied_result_template": "{\"summary\":\"Cancelled\",\"key\":\"{{ .Key }}\"}",
+        "prompt_template": "Approve write: set {{ .Key }} to {{ .Value }}",
+        "title": "Confirm change"
+      },
+      "description": "Write a stateful change",
+      "id": "atlas.commands.dangerous_write",
+      "payload": {
+        "name": "DangerousWritePayload",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "example": {
+            "key": "Animi magnam repellat et.",
+            "value": "Et expedita dignissimos."
+          },
+          "properties": {
+            "key": {
+              "description": "Key to update.",
+              "example": "Et iusto ex.",
+              "type": "string"
+            },
+            "value": {
+              "description": "New value.",
+              "example": "Ipsam quia repudiandae quibusdam.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "key",
+            "value"
+          ],
+          "title": "DangerousWriteArgs",
+          "type": "object"
+        }
+      },
+      "result": {
+        "name": "DangerousWriteResult",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "example": {
+            "key": "Ea deleniti rem quis in omnis nisi.",
+            "summary": "Et illo."
+          },
+          "properties": {
+            "key": {
+              "description": "Key that was updated.",
+              "example": "Qui temporibus enim placeat officiis quas.",
+              "type": "string"
+            },
+            "summary": {
+              "description": "Summary of the update.",
+              "example": "Fuga sit suscipit culpa est inventore.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "summary",
+            "key"
+          ],
+          "title": "DangerousWriteResult",
+          "type": "object"
+        }
+      },
+      "service": "alpha",
+      "title": "Dangerous Write",
+      "toolset": "alpha.atlas.commands"
+    }
+  ]
+}

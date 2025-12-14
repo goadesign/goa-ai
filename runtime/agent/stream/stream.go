@@ -210,6 +210,12 @@ type (
 		Data AwaitClarificationPayload
 	}
 
+	// AwaitConfirmation streams an operator confirmation request from the runtime.
+	AwaitConfirmation struct {
+		Base
+		Data AwaitConfirmationPayload
+	}
+
 	// AwaitExternalTools streams a request for external tool execution.
 	AwaitExternalTools struct {
 		Base
@@ -350,6 +356,22 @@ type (
 		ExampleInput   map[string]any `json:"example_input,omitempty"`
 	}
 
+	// AwaitConfirmationPayload describes an operator confirmation request.
+	AwaitConfirmationPayload struct {
+		// ID correlates this await with a subsequent confirmation decision.
+		ID string `json:"id"`
+		// Title is an optional display title for the confirmation UI.
+		Title string `json:"title,omitempty"`
+		// Prompt is the operator-facing confirmation prompt.
+		Prompt string `json:"prompt"`
+		// ToolName identifies the tool that requires confirmation.
+		ToolName string `json:"tool_name"`
+		// ToolCallID is the tool_call_id for the pending tool call.
+		ToolCallID string `json:"tool_call_id"`
+		// Payload contains the canonical JSON arguments for the pending tool call.
+		Payload any `json:"payload,omitempty"`
+	}
+
 	// AwaitExternalToolsPayload describes external tool requests to be provided by callers.
 	AwaitExternalToolsPayload struct {
 		// ID correlates this await with a subsequent provide_tool_results
@@ -457,6 +479,8 @@ type (
 		ToolEnd bool
 		// AwaitClarification controls emission of await_clarification events.
 		AwaitClarification bool
+		// AwaitConfirmation controls emission of await_confirmation events.
+		AwaitConfirmation bool
 		// AwaitExternalTools controls emission of await_external_tools events.
 		AwaitExternalTools bool
 		// Usage controls emission of usage events.
@@ -493,6 +517,7 @@ func DefaultProfile() StreamProfile {
 		ToolUpdate:         true,
 		ToolEnd:            true,
 		AwaitClarification: true,
+		AwaitConfirmation:  true,
 		AwaitExternalTools: true,
 		Usage:              true,
 		Workflow:           true,
@@ -565,6 +590,9 @@ const (
 
 	// EventAwaitClarification streams when a planner requests human clarification.
 	EventAwaitClarification EventType = "await_clarification"
+
+	// EventAwaitConfirmation streams when the runtime requests operator confirmation.
+	EventAwaitConfirmation EventType = "await_confirmation"
 
 	// EventAwaitExternalTools streams when a planner requests external tool execution.
 	EventAwaitExternalTools EventType = "await_external_tools"

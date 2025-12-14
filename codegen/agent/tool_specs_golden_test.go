@@ -1,6 +1,7 @@
 package codegen_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"path/filepath"
 	"testing"
@@ -111,9 +112,11 @@ func TestToolSchemasJSONEmitted(t *testing.T) {
 	var payload string
 	for _, f := range files {
 		if filepath.ToSlash(f.Path) == filepath.ToSlash("gen/orchestrator/agents/chat/specs/tool_schemas.json") {
+			var buf bytes.Buffer
 			for _, s := range f.SectionTemplates {
-				payload += s.Source
+				require.NoError(t, s.Write(&buf))
 			}
+			payload = buf.String()
 			break
 		}
 	}

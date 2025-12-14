@@ -94,6 +94,7 @@
 //   - [CallHintTemplate] configures call display hint template
 //   - [ResultHintTemplate] configures result display hint template
 //   - [BoundedResult] marks result as a bounded view over larger data
+//   - [Confirmation] declares that a tool must be confirmed out-of-band before execution
 //
 // Policy Functions:
 //   - [RunPolicy] configures execution constraints
