@@ -6,11 +6,11 @@
 
 <p align="center">
   <a href="https://github.com/goadesign/goa-ai/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/goadesign/goa-ai?style=for-the-badge"></a>
-  <a href="https://goa.design/docs/8-goa-ai/"><img alt="Documentation" src="https://img.shields.io/badge/docs-goa.design-blue.svg?style=for-the-badge"></a>
+  <a href="https://goa.design/docs/2-goa-ai/"><img alt="Documentation" src="https://img.shields.io/badge/docs-goa.design-blue.svg?style=for-the-badge"></a>
   <a href="https://pkg.go.dev/goa.design/goa-ai"><img alt="Go Doc" src="https://img.shields.io/badge/godoc-reference-blue.svg?style=for-the-badge"></a>
   <a href="https://github.com/goadesign/goa-ai/actions/workflows/ci.yml"><img alt="GitHub Action: CI" src="https://img.shields.io/github/actions/workflow/status/goadesign/goa-ai/ci.yml?branch=main&style=for-the-badge"></a>
   <a href="https://goreportcard.com/report/goa.design/goa-ai"><img alt="Go Report Card" src="https://goreportcard.com/badge/goa.design/goa-ai?style=for-the-badge"></a>
-  <a href="/LICENSE"><img alt="Software License" src="https://img.shields.io/badge/license-MIT-brightgreen.svg?style=for-the-badge"></a>
+  <a href="LICENSE"><img alt="Software License" src="https://img.shields.io/badge/license-MIT-brightgreen.svg?style=for-the-badge"></a>
 </p>
 
 <h1 align="center">Design-First AI Agents in Go</h1>
@@ -20,9 +20,9 @@
 </p>
 
 <p align="center">
-  <a href="https://goa.design/docs/8-goa-ai/">📚 Documentation</a> ·
-  <a href="https://goa.design/docs/8-goa-ai/2-getting-started/">🚀 Quickstart</a> ·
-  <a href="https://goa.design/docs/8-goa-ai/3-tutorials/">💡 Tutorials</a> ·
+  <a href="https://goa.design/docs/2-goa-ai/">📚 Documentation</a> ·
+  <a href="https://goa.design/docs/2-goa-ai/quickstart/">🚀 Quickstart</a> ·
+  <a href="https://goa.design/docs/2-goa-ai/testing/">🧪 Testing</a> ·
   <a href="#quick-start">⚡ Try It Now</a>
 </p>
 
@@ -560,14 +560,14 @@ The runtime updates run state and emits `run_paused`/`run_resumed` events for UI
 
 | Guide | What You'll Learn |
 |-------|-------------------|
-| [Quickstart](https://goa.design/docs/8-goa-ai/quickstart/) | Installation and first agent in 10 minutes |
-| [DSL Reference](https://goa.design/docs/8-goa-ai/dsl-reference/) | Complete DSL: agents, toolsets, policies, MCP |
-| [Runtime](https://goa.design/docs/8-goa-ai/runtime/) | Plan/execute loop, engines, memory stores |
-| [Toolsets](https://goa.design/docs/8-goa-ai/toolsets/) | Service-backed tools, transforms, executors |
-| [Agent Composition](https://goa.design/docs/8-goa-ai/agent-composition/) | Agent-as-tool, run trees, streaming topology |
-| [MCP Integration](https://goa.design/docs/8-goa-ai/mcp-integration/) | MCP servers, transports, generated wrappers |
-| [Registry](https://goa.design/docs/8-goa-ai/registry/) | Clustered toolset discovery and invocation |
-| [Production](https://goa.design/docs/8-goa-ai/production/) | Temporal setup, streaming UI, model providers |
+| [Quickstart](https://goa.design/docs/2-goa-ai/quickstart/) | Installation and first agent in 10 minutes |
+| [DSL Reference](https://goa.design/docs/2-goa-ai/dsl-reference/) | Complete DSL: agents, toolsets, policies, MCP |
+| [Runtime](https://goa.design/docs/2-goa-ai/runtime/) | Plan/execute loop, engines, memory stores |
+| [Toolsets](https://goa.design/docs/2-goa-ai/toolsets/) | Service-backed tools, transforms, executors |
+| [Agent Composition](https://goa.design/docs/2-goa-ai/agent-composition/) | Agent-as-tool, run trees, streaming topology |
+| [MCP Integration](https://goa.design/docs/2-goa-ai/mcp-integration/) | MCP servers, transports, generated wrappers |
+| [Registry](https://goa.design/docs/2-goa-ai/registry/) | Clustered toolset discovery and invocation |
+| [Production](https://goa.design/docs/2-goa-ai/production/) | Temporal setup, streaming UI, model providers |
 
 **In-repo references:**
 - [`docs/runtime.md`](docs/runtime.md) — Runtime architecture deep-dive
