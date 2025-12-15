@@ -1,4 +1,6 @@
 prompts.txt
 cover.out
 agents/.DS_Store
+.cache/
 .kiro/
+quickstart/orchestrator

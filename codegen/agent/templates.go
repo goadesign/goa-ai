@@ -11,6 +11,7 @@ const (
 	agentToolsFileT            = "agent_tools"
 	agentToolsConsumerT        = "agent_tools_consumer"
 	bootstrapInternalT         = "bootstrap_internal"
+	cmdMainT                   = "cmd_main"
 	exampleExecutorStubT       = "example_executor_stub"
 	configFileT                = "config"
 	plannerInternalStubT       = "planner_internal_stub"

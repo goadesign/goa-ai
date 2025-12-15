@@ -16,10 +16,11 @@
 //   - WorkflowHandle: Represents a running workflow. Callers use handles to wait
 //     for completion, send signals, or cancel execution.
 //
-//   - Future: Represents a pending activity result. Enables parallel execution
-//     by allowing workflows to launch multiple activities and collect results later.
+//   - Future[T]: Represents a pending activity result. Enables parallel execution
+//     by allowing workflows to launch multiple activities and collect results later,
+//     without reflection-based assignment.
 //
-//   - SignalChannel: Delivers external signals to workflows in a deterministic way.
+//   - Receiver[T]: Delivers typed signals to workflows in a deterministic way.
 //     Used for pause/resume, clarification answers, and external tool results.
 //
 // # Available Implementations
@@ -101,6 +102,11 @@ type (
 		// RegisterWorkflow registers a workflow definition with the engine.
 		RegisterWorkflow(ctx context.Context, def WorkflowDefinition) error
 
+		// RegisterHookActivity registers a typed activity that publishes workflow-emitted
+		// hook events outside of the deterministic workflow thread. The activity accepts
+		// *api.HookActivityInput and returns an error.
+		RegisterHookActivity(ctx context.Context, name string, opts ActivityOptions, fn func(context.Context, *api.HookActivityInput) error) error
+
 		// RegisterPlannerActivity registers a typed planner activity (PlanStart or
 		// PlanResume) that accepts *api.PlanActivityInput and returns *api.PlanActivityOutput.
 		RegisterPlannerActivity(ctx context.Context, name string, opts ActivityOptions, fn func(context.Context, *api.PlanActivityInput) (*api.PlanActivityOutput, error)) error
@@ -148,27 +154,16 @@ type (
 	// deterministic with respect to activity results.
 	WorkflowFunc func(ctx WorkflowContext, input *api.RunInput) (*api.RunOutput, error)
 
-	// ReplayAwareContext marks a context that knows whether the underlying
-	// workflow is currently replaying history. Engines may return a context
-	// implementing this interface from WorkflowContext.Context so that downstream
-	// code (runtime, subscribers, stream sinks) can suppress side effects during
-	// Temporal history replay.
-	ReplayAwareContext interface {
-		context.Context
-		// IsReplaying reports whether the workflow is currently replaying history.
-		IsReplaying() bool
-	}
-
 	// WorkflowContext exposes engine operations to workflow handlers within the
 	// deterministic execution environment of a workflow. It wraps engine-specific
 	// contexts (Temporal workflow.Context, in-memory contexts, etc.) and provides
 	// a uniform API for activity execution, signal handling, and observability.
 	//
 	// Implementations must ensure deterministic replay: operations that interact
-	// with the workflow engine (ExecuteActivity, SignalChannel) must produce
-	// deterministic results when replayed. Direct I/O, random number generation,
-	// or system time access within workflows violates determinism and causes
-	// workflow failures.
+	// with the workflow engine (planner/tool activities and signal receivers)
+	// must produce deterministic results when replayed. Direct I/O, random number
+	// generation, or system time access within workflows violates determinism and
+	// causes workflow failures.
 	//
 	// Thread-safety: WorkflowContext is bound to a single workflow execution and
 	// must not be shared across goroutines. Activity and signal operations are
@@ -195,21 +190,38 @@ type (
 		// and run-level correlation.
 		RunID() string
 
-		// ExecuteActivity schedules an activity for execution and waits for its result.
-		// The result parameter is populated with the activity's return value. Returns
-		// an error if the activity fails after retries or if scheduling fails.
-		ExecuteActivity(ctx context.Context, req ActivityRequest, result any) error
+		// PublishHook schedules the runtime hook activity and waits for completion.
+		// Implementations must run hook publishing outside of the deterministic workflow
+		// thread (e.g., via activities in Temporal) so subscribers can perform I/O.
+		PublishHook(ctx context.Context, call HookActivityCall) error
 
-		// ExecuteActivityAsync schedules an activity without blocking and returns a Future.
-		// The Future can be resolved later via Get() to retrieve the result. This enables
-		// parallel execution of multiple activities. Returns an error only if the activity
-		// cannot be scheduled (e.g., invalid request); execution errors are returned via Future.Get().
-		ExecuteActivityAsync(ctx context.Context, req ActivityRequest) (Future, error)
+		// ExecutePlannerActivity schedules a planner activity (PlanStart/PlanResume)
+		// and blocks until it completes. Planner activities are executed outside the
+		// deterministic workflow thread and may perform I/O.
+		ExecutePlannerActivity(ctx context.Context, call PlannerActivityCall) (*api.PlanActivityOutput, error)
 
-		// SignalChannel returns a channel for the given signal name. Workflow code can
-		// poll or block on this channel to react to external events (pause/resume, human
-		// inputs, etc.) delivered via the workflow engine's signaling mechanism.
-		SignalChannel(name string) SignalChannel
+		// ExecuteToolActivity schedules a tool execution activity and blocks until it
+		// completes. This is useful for sequential execution (finalizers, single tools).
+		ExecuteToolActivity(ctx context.Context, call ToolActivityCall) (*api.ToolOutput, error)
+
+		// ExecuteToolActivityAsync schedules a tool execution activity and returns a Future
+		// so workflows can run multiple tools concurrently and collect results later.
+		ExecuteToolActivityAsync(ctx context.Context, call ToolActivityCall) (Future[*api.ToolOutput], error)
+
+		// PauseRequests returns a typed receiver for pause signals.
+		PauseRequests() Receiver[api.PauseRequest]
+
+		// ResumeRequests returns a typed receiver for resume signals.
+		ResumeRequests() Receiver[api.ResumeRequest]
+
+		// ClarificationAnswers returns a typed receiver for clarification answers.
+		ClarificationAnswers() Receiver[api.ClarificationAnswer]
+
+		// ExternalToolResults returns a typed receiver for external tool results.
+		ExternalToolResults() Receiver[api.ToolResultsSet]
+
+		// ConfirmationDecisions returns a typed receiver for tool confirmation decisions.
+		ConfirmationDecisions() Receiver[api.ConfirmationDecision]
 
 		// Now returns the current workflow time in a deterministic manner. Implementations
 		// must return a time source that is replay-safe (e.g., Temporal's workflow.Now).
@@ -224,8 +236,8 @@ type (
 
 	// Future represents a pending activity result that will become available after
 	// the activity completes. Futures enable parallel activity execution: workflows
-	// can launch multiple activities via ExecuteActivityAsync and collect results
-	// later using Get(), which blocks until the activity finishes.
+	// can launch multiple tool activities and collect results later using Get(),
+	// which blocks until the activity finishes.
 	//
 	// Thread-safety: Futures are bound to a single workflow execution and must not
 	// be shared across workflow executions. Calling Get() multiple times is safe
@@ -234,15 +246,29 @@ type (
 	// Lifecycle: Valid from creation until the workflow completes. Get() must be
 	// called before the workflow exits; abandoned futures leak workflow resources
 	// in some engines. IsReady() enables polling without blocking.
-	Future interface {
-		// Get blocks until the activity completes and populates result with the return value.
-		// Returns an error if the activity fails after retries or if result deserialization fails.
-		// Calling Get multiple times on the same Future returns the same result/error.
-		Get(ctx context.Context, result any) error
+	Future[T any] interface {
+		// Get blocks until the activity completes and returns the typed result.
+		// Calling Get multiple times on the same Future returns the same value/error.
+		Get(ctx context.Context) (T, error)
 
 		// IsReady returns true if the activity has completed (success or failure) and Get()
 		// will not block. This allows workflows to poll or implement custom waiting strategies.
 		IsReady() bool
+	}
+
+	// Receiver exposes typed workflow signal delivery in an engine-agnostic way.
+	// Implementations wrap engine-specific channels (Temporal signal channels,
+	// in-process Go channels, etc.) and provide blocking and non-blocking receive
+	// helpers so workflow code can react to external events deterministically.
+	Receiver[T any] interface {
+		// Receive blocks until a signal value is delivered and returns it.
+		// Implementations should respect ctx when possible; for engines that do not
+		// support context cancellation, Receive may ignore ctx and rely on workflow
+		// cancellation semantics instead.
+		Receive(ctx context.Context) (T, error)
+
+		// ReceiveAsync attempts to receive a signal without blocking.
+		ReceiveAsync() (T, bool)
 	}
 
 	// ActivityOptions configures retry and timeouts for an activity.
@@ -256,6 +282,45 @@ type (
 		// Timeout bounds the total activity execution time, including retries. Zero
 		// means no timeout (not recommended for production).
 		Timeout time.Duration
+	}
+
+	// HookActivityCall describes a single invocation of the runtime hook publishing
+	// activity from inside workflow code.
+	HookActivityCall struct {
+		// Name identifies the registered hook activity.
+		Name string
+
+		// Input is the typed payload passed to the activity handler.
+		Input *api.HookActivityInput
+
+		// Options overrides the registered activity defaults for this invocation.
+		Options ActivityOptions
+	}
+
+	// PlannerActivityCall describes a single invocation of a PlanStart/PlanResume
+	// activity from inside workflow code.
+	PlannerActivityCall struct {
+		// Name identifies the registered planner activity.
+		Name string
+
+		// Input is the typed payload passed to the activity handler.
+		Input *api.PlanActivityInput
+
+		// Options overrides the registered activity defaults for this invocation.
+		Options ActivityOptions
+	}
+
+	// ToolActivityCall describes a single invocation of a tool execution activity
+	// from inside workflow code.
+	ToolActivityCall struct {
+		// Name identifies the registered execute_tool activity.
+		Name string
+
+		// Input is the typed payload passed to the activity handler.
+		Input *api.ToolInput
+
+		// Options overrides the registered activity defaults for this invocation.
+		Options ActivityOptions
 	}
 
 	// WorkflowStartRequest describes how to launch a workflow execution. Generated
@@ -287,23 +352,6 @@ type (
 		RetryPolicy RetryPolicy
 	}
 
-	// ActivityRequest contains the info needed to schedule an activity from a workflow.
-	// Workflows construct these when calling ExecuteActivity.
-	ActivityRequest struct {
-		// Name identifies the activity to execute (must match a registered name).
-		Name string
-		// Input is the payload passed to the activity handler.
-		Input any
-		// Queue optionally overrides the queue for this invocation. If empty, inherits
-		// from the activity registration or workflow queue.
-		Queue string
-		// RetryPolicy controls retry behavior for the scheduled activity. If zero-valued,
-		// uses the policy from the activity registration.
-		RetryPolicy RetryPolicy
-		// Timeout bounds the activity execution time. Zero means no timeout.
-		Timeout time.Duration
-	}
-
 	// WorkflowHandle allows callers to interact with a running workflow. Returned
 	// by Engine.StartWorkflow, it provides methods to wait for completion, send
 	// signals, or cancel execution.
@@ -333,21 +381,6 @@ type (
 		// BackoffCoefficient multiplies the delay after each retry. Values < 1 are treated
 		// as 1 (constant backoff). A value of 2 provides exponential backoff.
 		BackoffCoefficient float64
-	}
-
-	// SignalChannel exposes workflow signal delivery in an engine-agnostic way.
-	// Implementations wrap engine-specific channels (Temporal signal channels,
-	// in-process Go channels, etc.) and provide blocking and non-blocking receive
-	// helpers so workflow code can react to external events deterministically.
-	SignalChannel interface {
-		// Receive blocks until a signal value is delivered and decodes it into dest.
-		// Implementations should respect ctx when possible; for engines that do not
-		// support context cancellation, Receive may ignore ctx and rely on workflow
-		// cancellation semantics instead.
-		Receive(ctx context.Context, dest any) error
-		// ReceiveAsync attempts to receive a signal without blocking. It returns true
-		// when a value was written into dest, or false if no signal was available.
-		ReceiveAsync(dest any) bool
 	}
 
 	// ChildWorkflowRequest describes a child workflow to start from within an

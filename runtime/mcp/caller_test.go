@@ -6,8 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -26,40 +26,78 @@ const (
 
 func init() { otel.SetTextMapPropagator(propagation.TraceContext{}) }
 
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func httpResponse(status int, headers http.Header, body []byte) *http.Response {
+	if headers == nil {
+		headers = make(http.Header)
+	}
+	return &http.Response{
+		StatusCode: status,
+		Header:     headers,
+		Body:       io.NopCloser(bytes.NewReader(body)),
+	}
+}
+
 func TestHTTPCallerCallTool(t *testing.T) {
 	t.Parallel()
 	var traceHeader string
 	var metaTrace string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req rpcRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		switch req.Method {
-		case rpcMethodInitialize:
-			resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"capabilities":{}}`)}
-			_ = json.NewEncoder(w).Encode(resp)
-		case rpcMethodToolsCall:
-			traceHeader = r.Header.Get("Traceparent")
-			if params, ok := req.Params.(map[string]any); ok {
-				if meta, ok := params["_meta"].(map[string]any); ok {
-					if tp, ok := meta["traceparent"].(string); ok {
-						metaTrace = tp
+	client := &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				return nil, err
+			}
+			if err := r.Body.Close(); err != nil {
+				return nil, err
+			}
+			var req rpcRequest
+			if err := json.Unmarshal(body, &req); err != nil {
+				return nil, err
+			}
+			switch req.Method {
+			case rpcMethodInitialize:
+				resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"capabilities":{}}`)}
+				data, err := json.Marshal(resp)
+				if err != nil {
+					return nil, err
+				}
+				headers := http.Header{
+					"Content-Type": []string{"application/json"},
+				}
+				return httpResponse(http.StatusOK, headers, data), nil
+			case rpcMethodToolsCall:
+				traceHeader = r.Header.Get("Traceparent")
+				if params, ok := req.Params.(map[string]any); ok {
+					if meta, ok := params["_meta"].(map[string]any); ok {
+						if tp, ok := meta["traceparent"].(string); ok {
+							metaTrace = tp
+						}
 					}
 				}
+				resultJSON := `{"content":[{"type":"text","text":"{\"ok\":true}","mimeType":"application/json"}],"isError":false}`
+				resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(resultJSON)}
+				data, err := json.Marshal(resp)
+				if err != nil {
+					return nil, err
+				}
+				headers := http.Header{
+					"Content-Type": []string{"application/json"},
+				}
+				return httpResponse(http.StatusOK, headers, data), nil
+			default:
+				return httpResponse(http.StatusBadRequest, nil, []byte("unknown method")), nil
 			}
-			resultJSON := `{"content":[{"type":"text","text":"{\"ok\":true}","mimeType":"application/json"}],"isError":false}`
-			resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(resultJSON)}
-			_ = json.NewEncoder(w).Encode(resp)
-		default:
-			http.Error(w, "unknown method", http.StatusBadRequest)
-		}
-	}))
-	defer srv.Close()
+		}),
+	}
 
 	ctx, expectedTrace := contextWithTrace()
-	caller, err := NewHTTPCaller(ctx, HTTPOptions{Endpoint: srv.URL})
+	caller, err := NewHTTPCaller(ctx, HTTPOptions{Endpoint: "http://mcp.test/rpc", Client: client})
 	require.NoError(t, err)
 	req := CallRequest{Suite: "svc.ts", Tool: "search", Payload: json.RawMessage(`{"query":"hi"}`)}
 	resp, err := caller.CallTool(ctx, req)
@@ -73,41 +111,64 @@ func TestSSECallerCallTool(t *testing.T) {
 	t.Parallel()
 	var traceHeader string
 	var metaTrace string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req rpcRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		switch req.Method {
-		case rpcMethodInitialize:
-			resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"capabilities":{}}`)}
-			_ = json.NewEncoder(w).Encode(resp)
-		case rpcMethodToolsCall:
-			traceHeader = r.Header.Get("Traceparent")
-			if params, ok := req.Params.(map[string]any); ok {
-				if meta, ok := params["_meta"].(map[string]any); ok {
-					if tp, ok := meta["traceparent"].(string); ok {
-						metaTrace = tp
+	client := &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				return nil, err
+			}
+			if err := r.Body.Close(); err != nil {
+				return nil, err
+			}
+			var req rpcRequest
+			if err := json.Unmarshal(body, &req); err != nil {
+				return nil, err
+			}
+			switch req.Method {
+			case rpcMethodInitialize:
+				resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"capabilities":{}}`)}
+				data, err := json.Marshal(resp)
+				if err != nil {
+					return nil, err
+				}
+				headers := http.Header{
+					"Content-Type": []string{"application/json"},
+				}
+				return httpResponse(http.StatusOK, headers, data), nil
+			case rpcMethodToolsCall:
+				traceHeader = r.Header.Get("Traceparent")
+				if params, ok := req.Params.(map[string]any); ok {
+					if meta, ok := params["_meta"].(map[string]any); ok {
+						if tp, ok := meta["traceparent"].(string); ok {
+							metaTrace = tp
+						}
 					}
 				}
+				resultJSON := `{"content":[{"type":"text","text":"{\"ok\":true}","mimeType":"application/json"}],"isError":false}`
+				rpcResp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(resultJSON)}
+				data, err := json.Marshal(rpcResp)
+				if err != nil {
+					return nil, err
+				}
+				var sse bytes.Buffer
+				if _, err := fmt.Fprintln(&sse, "event: response"); err != nil {
+					return nil, err
+				}
+				if _, err := fmt.Fprintf(&sse, "data: %s\n\n", bytes.TrimSpace(data)); err != nil {
+					return nil, err
+				}
+				headers := http.Header{
+					"Content-Type": []string{"text/event-stream"},
+				}
+				return httpResponse(http.StatusOK, headers, sse.Bytes()), nil
+			default:
+				return httpResponse(http.StatusBadRequest, nil, []byte("unknown method")), nil
 			}
-			w.Header().Set("Content-Type", "text/event-stream")
-			flusher, _ := w.(http.Flusher)
-			resultJSON := `{"content":[{"type":"text","text":"{\"ok\":true}","mimeType":"application/json"}],"isError":false}`
-			resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(resultJSON)}
-			data, _ := json.Marshal(resp)
-			_, _ = fmt.Fprintf(w, "event: response\n")
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", bytes.TrimSpace(data))
-			flusher.Flush()
-		default:
-			http.Error(w, "unknown method", http.StatusBadRequest)
-		}
-	}))
-	defer srv.Close()
+		}),
+	}
 
 	ctx, expectedTrace := contextWithTrace()
-	caller, err := NewSSECaller(ctx, HTTPOptions{Endpoint: srv.URL})
+	caller, err := NewSSECaller(ctx, HTTPOptions{Endpoint: "http://mcp.test/rpc", Client: client})
 	require.NoError(t, err)
 	req := CallRequest{Suite: "svc.ts", Tool: "search", Payload: json.RawMessage(`{"query":"hi"}`)}
 	resp, err := caller.CallTool(ctx, req)
@@ -127,7 +188,11 @@ func TestStdioCallerCallTool(t *testing.T) {
 		InitTimeout: time.Second,
 	})
 	require.NoError(t, err)
-	defer func() { _ = caller.Close() }()
+	defer func() {
+		if err := caller.Close(); err != nil {
+			t.Logf("caller close error: %v", err)
+		}
+	}()
 	resp, err := caller.CallTool(ctx, CallRequest{Suite: "svc.ts", Tool: "meta", Payload: json.RawMessage(`"noop"`)})
 	require.NoError(t, err)
 	var result string

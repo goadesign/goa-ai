@@ -28,9 +28,9 @@ func TestExecuteToolActivity_DecodeInExecutor_PassesRaw(t *testing.T) {
 			return &planner.ToolResult{Name: tools.Ident("svc.ts.tool"), Result: map[string]any{"ok": true}}, nil
 		},
 		Specs: []tools.ToolSpec{{
-			Name:        tools.Ident("svc.ts.tool"),
-			Service:     "svc",
-			Toolset:     "ts",
+			Name:    tools.Ident("svc.ts.tool"),
+			Service: "svc",
+			Toolset: "ts",
 			Payload: tools.TypeSpec{
 				Name: "P",
 				Codec: tools.JSONCodec[any]{
@@ -40,7 +40,7 @@ func TestExecuteToolActivity_DecodeInExecutor_PassesRaw(t *testing.T) {
 					},
 				},
 			},
-			Result: tools.TypeSpec{Name: "R"},
+			Result:      tools.TypeSpec{Name: "R"},
 			IsAgentTool: false,
 		}},
 	}

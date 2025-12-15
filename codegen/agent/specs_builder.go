@@ -57,6 +57,9 @@ type (
 	toolEntry struct {
 		// Qualified tool name used in runtime lookups (e.g., "toolset.tool").
 		Name string
+		// ConstName is the Go constant identifier for this tool's ID, computed
+		// using the name scope to ensure uniqueness within the package.
+		ConstName string
 		// Title is the human-friendly display title.
 		Title string
 		// Service name that owns the tool.
@@ -254,9 +257,24 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 				return nil, err
 			}
 		}
+		// Compute the constant name deterministically using the same logic as
+		// the original template: prefer payload type name (trimmed), else
+		// result type name (trimmed), else goify tool name. Note: The constant
+		// name is already registered in helperScope by buildTypeInfo() so that
+		// ensureNestedLocalTypes can avoid collisions with it.
+		var constName string
+		switch {
+		case payload != nil && payload.TypeName != "":
+			constName = strings.TrimSuffix(payload.TypeName, "Payload")
+		case result != nil && result.TypeName != "":
+			constName = strings.TrimSuffix(result.TypeName, "Result")
+		default:
+			constName = codegen.Goify(tool.Name, true)
+		}
 		entry := &toolEntry{
 			// Name is the qualified tool ID used at runtime (toolset.tool).
 			Name:              tool.QualifiedName,
+			ConstName:         constName,
 			Title:             tool.Title,
 			Service:           serviceName(tool),
 			Toolset:           toolsetName(tool),
@@ -982,9 +1000,15 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	if _, exists := b.types[nameKey]; !exists {
 		b.types[nameKey] = info
 	}
+	// Pre-register the tool constant name in the helperScope to avoid collisions
+	// with helper types materialized by ensureNestedLocalTypes. The template
+	// (tool_spec.go.tpl) derives the constant name by trimming Payload/Result
+	// suffixes from the type name.
+	constName := strings.TrimSuffix(strings.TrimSuffix(typeName, "Payload"), "Result")
+	b.helperScope.Unique(constName)
 	// Also ensure any nested service-local user types are materialized locally so
 	// unqualified references inside composite shapes compile.
-	b.ensureNestedLocalTypes(scope, tt)
+	b.ensureNestedLocalTypes(b.helperScope, tt)
 	// Collect validators for all unique user types referenced within payloads
 	// so nested validations do not rely on external packages to provide local
 	// Validate<Name> functions.
@@ -1549,7 +1573,18 @@ func (b *toolSpecBuilder) ensureNestedLocalTypes(scope *codegen.NameScope, att *
 		if name == "" {
 			return nil
 		}
-		key := "name:" + name
+		// If the type name already exists in the current specs file (for example the
+		// top-level tool payload/result alias), do not emit a duplicate helper type.
+		if _, exists := b.types["name:"+name]; exists {
+			return nil
+		}
+		// Use HashedUnique to ensure stable, deterministic naming: the same
+		// user type always gets the same unique name even across multiple calls.
+		// When the base name collides with pre-registered tool constant names
+		// (which are derived by trimming Payload/Result suffixes), HashedUnique
+		// will automatically append a suffix to make it unique.
+		uniqueName := scope.HashedUnique(ut, name)
+		key := "name:" + uniqueName
 		if _, exists := b.types[key]; exists {
 			return nil
 		}
@@ -1559,10 +1594,10 @@ func (b *toolSpecBuilder) ensureNestedLocalTypes(scope *codegen.NameScope, att *
 		comp := scope.GoTypeDef(ut.Attribute(), false, true)
 		td := &typeData{
 			Key:         key,
-			TypeName:    name,
-			Doc:         name + " is a helper type materialized for nested references.",
-			Def:         name + " = " + comp,
-			FullRef:     name,
+			TypeName:    uniqueName,
+			Doc:         uniqueName + " is a helper type materialized for nested references.",
+			Def:         uniqueName + " = " + comp,
+			FullRef:     uniqueName,
 			NeedType:    true,
 			TypeImports: gatherAttributeImports(b.genpkg, ut.Attribute()),
 		}

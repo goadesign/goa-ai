@@ -59,6 +59,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 	return &PlanActivityOutput{
 		Result:     result,
 		Transcript: events.exportTranscript(),
+		Usage:      events.exportUsage(),
 	}, nil
 }
 
@@ -106,6 +107,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	return &PlanActivityOutput{
 		Result:     result,
 		Transcript: events.exportTranscript(),
+		Usage:      events.exportUsage(),
 	}, nil
 }
 
@@ -150,7 +152,9 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		}
 		sName = spec.Toolset
 	}
+	r.mu.RLock()
 	reg, ok := r.toolsets[sName]
+	r.mu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("toolset %q is not registered", sName)
 	}
@@ -217,6 +221,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		Name:             req.ToolName,
 		Payload:          raw,
 		RunID:            req.RunID,
+		AgentID:          req.AgentID,
 		SessionID:        req.SessionID,
 		TurnID:           req.TurnID,
 		ParentToolCallID: req.ParentToolCallID,
@@ -429,7 +434,10 @@ func (r *Runtime) plannerContext(ctx context.Context, input *PlanActivityInput, 
 	if !ok {
 		return nil, nil, fmt.Errorf("agent %q is not registered", input.AgentID)
 	}
-	reader := r.memoryReader(ctx, string(input.AgentID), input.RunID)
+	reader, err := r.memoryReader(ctx, string(input.AgentID), input.RunID)
+	if err != nil {
+		return nil, nil, err
+	}
 	agentCtx := newAgentContext(agentContextOptions{
 		runtime: r,
 		agentID: input.AgentID,

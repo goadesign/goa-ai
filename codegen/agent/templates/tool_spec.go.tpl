@@ -1,20 +1,14 @@
 // Tool IDs for this toolset.
 const (
 {{- range .Tools }}
-    {{- if .Payload }}
-    {{ trimSuffix .Payload.TypeName "Payload" }} tools.Ident = {{ printf "%q" .Name }}
-    {{- else if .Result }}
-    {{ trimSuffix .Result.TypeName "Result" }} tools.Ident = {{ printf "%q" .Name }}
-    {{- else }}
-    {{ goify .Name true }} tools.Ident = {{ printf "%q" .Name }}
-    {{- end }}
+    {{ .ConstName }} tools.Ident = {{ printf "%q" .Name }}
 {{- end }}
 )
 
 var Specs = []tools.ToolSpec{
 {{- range .Tools }}
     {
-        Name:        {{ if .Payload }}{{ trimSuffix .Payload.TypeName "Payload" }}{{ else if .Result }}{{ trimSuffix .Result.TypeName "Result" }}{{ else }}{{ goify .Name true }}{{ end }},
+        Name:        {{ .ConstName }},
         Service:     {{ printf "%q" .Service }},
         Toolset:     {{ printf "%q" .Toolset }},
         Description: {{ printf "%q" .Description }},
@@ -73,7 +67,7 @@ var (
     metadata   = []policy.ToolMetadata{
     {{- range .Tools }}
         {
-            ID:          {{ if .Payload }}{{ trimSuffix .Payload.TypeName "Payload" }}{{ else if .Result }}{{ trimSuffix .Result.TypeName "Result" }}{{ else }}{{ goify .Name true }}{{ end }},
+            ID:          {{ .ConstName }},
             Title:       {{ printf "%q" .Title }},
             Description: {{ printf "%q" .Description }},
             Tags: []string{

@@ -32,7 +32,20 @@ func TestPolicyAllowlistTrimsToolExecution(t *testing.T) {
 			}, nil
 		}}}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{"allowed": newAnyJSONSpec("allowed", "svc.tools"), "blocked": newAnyJSONSpec("blocked", "svc.tools")}
-	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "done"}}}}}, hasPlanResult: true}
+	wfCtx := &testWorkflowContext{
+		ctx:         context.Background(),
+		hookRuntime: rt,
+		asyncResult: ToolOutput{Payload: []byte("null")},
+		planResult: &planner.PlanResult{
+			FinalResponse: &planner.FinalResponse{
+				Message: &model.Message{
+					Role:  "assistant",
+					Parts: []model.Part{model.TextPart{Text: "done"}},
+				},
+			},
+		},
+		hasPlanResult: true,
+	}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("allowed")}, {Name: tools.Ident("blocked")}}}
@@ -41,7 +54,7 @@ func TestPolicyAllowlistTrimsToolExecution(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, nil, policy.CapsState{MaxToolCalls: 5, RemainingToolCalls: 5}, time.Time{}, 2, "turn-1", nil, nil, 0)
+	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{MaxToolCalls: 5, RemainingToolCalls: 5}, time.Time{}, 2, "turn-1", nil, nil, 0)
 	require.NoError(t, err)
 	require.Len(t, out.ToolEvents, 1)
 	require.Equal(t, tools.Ident("allowed"), out.ToolEvents[0].Name)

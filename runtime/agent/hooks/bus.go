@@ -69,11 +69,12 @@ type (
 	// a thread-safe registry of subscribers and fans out events to all
 	// registered subscribers synchronously.
 	bus struct {
-		// mu protects concurrent access to the subscribers map.
+		// mu protects concurrent access to subs.
 		mu sync.RWMutex
-		// subscribers maps subscription handles to their subscriber implementations.
-		// The subscription pointer is used as the key to enable efficient removal.
-		subscribers map[*subscription]Subscriber
+
+		// subs holds active subscriptions in registration order. Entries are set
+		// to nil on Close; Publish snapshots and skips nils.
+		subs []*subscription
 	}
 
 	// subscription represents an active registration on the bus. It holds
@@ -82,6 +83,8 @@ type (
 	subscription struct {
 		// bus is the parent bus this subscription belongs to.
 		bus *bus
+		// sub is the concrete subscriber implementation.
+		sub Subscriber
 		// once ensures Close is idempotent and thread-safe.
 		once sync.Once
 	}
@@ -107,7 +110,9 @@ type (
 //
 //	bus.Publish(ctx, hooks.Event{Type: hooks.WorkflowStarted})
 func NewBus() Bus {
-	return &bus{subscribers: make(map[*subscription]Subscriber)}
+	return &bus{
+		subs: make([]*subscription, 0, 8),
+	}
 }
 
 // Publish delivers the event to every currently registered subscriber in
@@ -126,9 +131,12 @@ func NewBus() Bus {
 // method, allowing subscribers to respect cancellation and deadlines.
 func (b *bus) Publish(ctx context.Context, event Event) error {
 	b.mu.RLock()
-	subs := make([]Subscriber, 0, len(b.subscribers))
-	for _, sub := range b.subscribers {
-		subs = append(subs, sub)
+	subs := make([]Subscriber, 0, len(b.subs))
+	for _, s := range b.subs {
+		if s == nil || s.sub == nil {
+			continue
+		}
+		subs = append(subs, s.sub)
 	}
 	b.mu.RUnlock()
 	for _, sub := range subs {
@@ -159,9 +167,12 @@ func (b *bus) Register(sub Subscriber) (Subscription, error) {
 	if sub == nil {
 		return nil, errors.New("subscriber is required")
 	}
-	s := &subscription{bus: b}
+	s := &subscription{
+		bus: b,
+		sub: sub,
+	}
 	b.mu.Lock()
-	b.subscribers[s] = sub
+	b.subs = append(b.subs, s)
 	b.mu.Unlock()
 	return s, nil
 }
@@ -178,7 +189,12 @@ func (b *bus) Register(sub Subscriber) (Subscription, error) {
 func (s *subscription) Close() error {
 	s.once.Do(func() {
 		s.bus.mu.Lock()
-		delete(s.bus.subscribers, s)
+		for i := range s.bus.subs {
+			if s.bus.subs[i] == s {
+				s.bus.subs[i] = nil
+				break
+			}
+		}
 		s.bus.mu.Unlock()
 	})
 	return nil

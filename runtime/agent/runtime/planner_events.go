@@ -10,19 +10,40 @@ import (
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
-// runtimePlannerEvents implements planner.PlannerEvents by publishing to the runtime bus
-// and capturing thinking/text into a per-turn provider ledger.
+// runtimePlannerEvents implements planner.PlannerEvents for runtime plan
+// activities.
+//
+// It serves two purposes:
+//   - Publish hook events (streaming / persistence / observability) via the runtime bus.
+//   - Capture thinking/text into a per-turn transcript ledger and aggregate token usage
+//     for deterministic workflow consumption.
+//
+// The planner (or model wrapper) may emit events while streaming; methods therefore
+// take a mutex to allow concurrent calls without corrupting the ledger or usage totals.
 type runtimePlannerEvents struct {
-	rt         *Runtime
-	agentID    agent.Ident
-	runID      string
-	sessionID  string
+	rt        *Runtime
+	agentID   agent.Ident
+	runID     string
+	sessionID string
 
 	mu  sync.Mutex
 	led *transcript.Ledger
+
+	usage model.TokenUsage
 }
 
+// newPlannerEvents constructs a planner event sink that publishes to rt.Bus and
+// records a provider transcript.
+//
+// The runtime requires a hook bus. If rt.Bus is nil, this panics to surface an
+// invalid runtime configuration early.
 func newPlannerEvents(rt *Runtime, agentID agent.Ident, runID, sessionID string) *runtimePlannerEvents {
+	if rt == nil {
+		panic("runtime: planner events runtime is nil")
+	}
+	if rt.Bus == nil {
+		panic("runtime: planner events hook bus is nil")
+	}
 	return &runtimePlannerEvents{
 		rt:        rt,
 		agentID:   agentID,
@@ -33,66 +54,62 @@ func newPlannerEvents(rt *Runtime, agentID agent.Ident, runID, sessionID string)
 }
 
 func (e *runtimePlannerEvents) AssistantChunk(ctx context.Context, text string) {
-	if e == nil || text == "" {
+	if text == "" {
 		return
 	}
 	e.mu.Lock()
-	if e.led != nil {
-		e.led.AppendText(text)
-	}
+	e.led.AppendText(text)
 	e.mu.Unlock()
-	if e.rt == nil || e.rt.Bus == nil {
-		return
+	if err := e.rt.Bus.Publish(ctx, hooks.NewAssistantMessageEvent(e.runID, e.agentID, e.sessionID, text, nil)); err != nil {
+		e.rt.logWarn(ctx, "hook publish failed", err, "event", hooks.AssistantMessage)
 	}
-	_ = e.rt.Bus.Publish(ctx, hooks.NewAssistantMessageEvent(e.runID, e.agentID, e.sessionID, text, nil))
 }
 
 func (e *runtimePlannerEvents) PlannerThought(ctx context.Context, note string, labels map[string]string) {
-	if e == nil || e.rt == nil || e.rt.Bus == nil || note == "" {
+	if note == "" {
 		return
 	}
-	_ = e.rt.Bus.Publish(ctx, hooks.NewPlannerNoteEvent(e.runID, e.agentID, e.sessionID, note, labels))
+	if err := e.rt.Bus.Publish(ctx, hooks.NewPlannerNoteEvent(e.runID, e.agentID, e.sessionID, note, labels)); err != nil {
+		e.rt.logWarn(ctx, "hook publish failed", err, "event", hooks.PlannerNote)
+	}
 }
 
 func (e *runtimePlannerEvents) UsageDelta(ctx context.Context, usage model.TokenUsage) {
-	if e == nil || e.rt == nil || e.rt.Bus == nil {
-		return
-	}
-	_ = e.rt.Bus.Publish(ctx, hooks.NewUsageEvent(
+	e.mu.Lock()
+	e.usage = addTokenUsage(e.usage, usage)
+	e.mu.Unlock()
+
+	if err := e.rt.Bus.Publish(ctx, hooks.NewUsageEvent(
 		e.runID, e.agentID, e.sessionID,
 		usage.InputTokens, usage.OutputTokens, usage.TotalTokens,
 		usage.CacheReadTokens, usage.CacheWriteTokens,
-	))
+	)); err != nil {
+		e.rt.logWarn(ctx, "hook publish failed", err, "event", hooks.Usage)
+	}
 }
 
 func (e *runtimePlannerEvents) PlannerThinkingBlock(ctx context.Context, block model.ThinkingPart) {
-	if e == nil {
-		return
-	}
 	e.mu.Lock()
-	if e.led != nil {
-		e.led.AppendThinking(toTranscriptThinking(block))
-	}
+	e.led.AppendThinking(toTranscriptThinking(block))
 	e.mu.Unlock()
-	if e.rt == nil || e.rt.Bus == nil {
-		return
-	}
-	_ = e.rt.Bus.Publish(ctx, hooks.NewThinkingBlockEvent(
+	if err := e.rt.Bus.Publish(ctx, hooks.NewThinkingBlockEvent(
 		e.runID, e.agentID, e.sessionID,
 		block.Text, block.Signature, block.Redacted, block.Index, block.Final,
-	))
+	)); err != nil {
+		e.rt.logWarn(ctx, "hook publish failed", err, "event", hooks.ThinkingBlock)
+	}
 }
 
 func (e *runtimePlannerEvents) exportTranscript() []*model.Message {
-	if e == nil {
-		return nil
-	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.led == nil {
-		return nil
-	}
 	return e.led.BuildMessages()
+}
+
+func (e *runtimePlannerEvents) exportUsage() model.TokenUsage {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.usage
 }
 
 func toTranscriptThinking(block model.ThinkingPart) transcript.ThinkingPart {

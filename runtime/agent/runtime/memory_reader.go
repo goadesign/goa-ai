@@ -1,36 +1,85 @@
 package runtime
 
-import "goa.design/goa-ai/runtime/agent/memory"
+import (
+	"context"
 
-// emptyMemoryReader implements memory.Reader over an empty snapshot.
+	"goa.design/goa-ai/runtime/agent/memory"
+)
+
+// memoryReader returns a read-only view of the persisted memory for the given run.
+//
+// When a Memory store is configured, the reader is backed by a snapshot loaded from
+// the store and copied so planners cannot mutate shared state. When no Memory store
+// is configured, the reader is empty.
+func (r *Runtime) memoryReader(ctx context.Context, agentID, runID string) (memory.Reader, error) {
+	if r.Memory == nil {
+		return emptyMemoryReader{}, nil
+	}
+	snapshot, err := r.Memory.LoadRun(ctx, agentID, runID)
+	if err != nil {
+		return nil, err
+	}
+	return newMemoryReader(snapshot.Events), nil
+}
+
 type emptyMemoryReader struct{}
 
-func (emptyMemoryReader) Events() []memory.Event                         { return nil }
-func (emptyMemoryReader) FilterByType(t memory.EventType) []memory.Event { return nil }
-func (emptyMemoryReader) Latest(t memory.EventType) (memory.Event, bool) {
+func (emptyMemoryReader) Events() []memory.Event {
+	return nil
+}
+
+func (emptyMemoryReader) FilterByType(memory.EventType) []memory.Event {
+	return nil
+}
+
+func (emptyMemoryReader) Latest(memory.EventType) (memory.Event, bool) {
 	return memory.Event{}, false
 }
 
-// newMemoryReader creates a memory.Reader over a static list of events.
-type sliceMemoryReader struct{ events []memory.Event }
-
-func newMemoryReader(events []memory.Event) memory.Reader { return sliceMemoryReader{events: events} }
-func (r sliceMemoryReader) Events() []memory.Event {
-	return append([]memory.Event(nil), r.events...)
+type memorySnapshotReader struct {
+	events []memory.Event
 }
-func (r sliceMemoryReader) FilterByType(t memory.EventType) []memory.Event {
+
+// newMemoryReader constructs a snapshot-backed reader from the given events.
+// The returned reader always owns its slice; callers may mutate their input slice
+// after calling this function without affecting the reader.
+func newMemoryReader(events []memory.Event) memory.Reader {
+	if len(events) == 0 {
+		return emptyMemoryReader{}
+	}
+	cp := make([]memory.Event, len(events))
+	copy(cp, events)
+	return &memorySnapshotReader{
+		events: cp,
+	}
+}
+
+func (r *memorySnapshotReader) Events() []memory.Event {
 	if len(r.events) == 0 {
 		return nil
+	}
+	cp := make([]memory.Event, len(r.events))
+	copy(cp, r.events)
+	return cp
 }
+
+func (r *memorySnapshotReader) FilterByType(t memory.EventType) []memory.Event {
+	if len(r.events) == 0 {
+		return nil
+	}
 	out := make([]memory.Event, 0, len(r.events))
-	for _, e := range r.events {
-		if e.Type == t {
-			out = append(out, e)
+	for _, evt := range r.events {
+		if evt.Type == t {
+			out = append(out, evt)
 		}
 	}
 	return out
 }
-func (r sliceMemoryReader) Latest(t memory.EventType) (memory.Event, bool) {
+
+func (r *memorySnapshotReader) Latest(t memory.EventType) (memory.Event, bool) {
+	if len(r.events) == 0 {
+		return memory.Event{}, false
+	}
 	for i := len(r.events) - 1; i >= 0; i-- {
 		if r.events[i].Type == t {
 			return r.events[i], true
@@ -38,5 +87,3 @@ func (r sliceMemoryReader) Latest(t memory.EventType) (memory.Event, bool) {
 	}
 	return memory.Event{}, false
 }
-
-

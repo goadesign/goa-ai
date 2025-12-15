@@ -97,19 +97,20 @@ var Specs = []tools.ToolSpec{
 
 Use these constants anywhere you need to reference tools.
 
-### Cross‑Process Inline Composition (Auto‑Wiring)
+### Agent‑as‑Tool Composition (Child Workflows)
 
 When agent A "uses" a toolset exported by agent B, Goa‑AI wires composition automatically:
 
-- The exporter (agent B) package includes a generated `Register<Agent>Route(ctx, rt)` function
-  that registers route‑only metadata.
-- The consumer (agent A) registry calls `Register<AgentB>Route(ctx, rt)` and registers an inline
-  agent‑tool `ToolsetRegistration`. The generated Execute function calls
-  `runtime.ExecuteAgentInline` so the nested agent runs as part of the parent workflow history.
-- Payloads and results remain canonical JSON across boundaries and are decoded exactly once.
+- The exporter (agent B) package includes a generated `agenttools` package with typed tool IDs and
+  `NewRegistration(rt, systemPrompt, ...runtime.AgentToolOption)` helpers.
+- The consumer registers the returned `runtime.ToolsetRegistration` with its runtime. The consumer
+  does not need the exporter’s planner locally; it only needs routing metadata.
+- At runtime, invoking an exported tool starts the exporter agent as a **child workflow** using the
+  generated route metadata. The parent emits `AgentRunStarted` and the returned `ToolResult`
+  includes a `RunLink` handle to the child run.
 
-This yields a single deterministic workflow and unified `tool_start`/`tool_result` events, even
-when agents execute on different workers.
+Each run has its own event stream. Stream profiles select which event kinds are emitted to
+different audiences and link child runs via run handles rather than flattening run identity.
 
 ---
 

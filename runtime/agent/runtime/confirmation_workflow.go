@@ -13,7 +13,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/run"
 )
 
 func (r *Runtime) confirmToolsIfNeeded(wfCtx engine.WorkflowContext, input *RunInput, base *planner.PlanInput, allowed []planner.ToolRequest, turnID string, ctrl *interrupt.Controller) (toExecute []planner.ToolRequest, denied []*planner.ToolResult, err error) {
@@ -53,7 +52,7 @@ func (r *Runtime) confirmToolsIfNeeded(wfCtx engine.WorkflowContext, input *RunI
 		// Publish await + pause. Confirmation is a runtime protocol boundary.
 		r.publishHook(ctx, hooks.NewAwaitConfirmationEvent(
 			base.RunContext.RunID,
-			base.Agent.ID(),
+			input.AgentID,
 			base.RunContext.SessionID,
 			awaitID,
 			title,
@@ -64,7 +63,7 @@ func (r *Runtime) confirmToolsIfNeeded(wfCtx engine.WorkflowContext, input *RunI
 		), turnID)
 		r.publishHook(ctx, hooks.NewRunPausedEvent(
 			base.RunContext.RunID,
-			base.Agent.ID(),
+			input.AgentID,
 			base.RunContext.SessionID,
 			"await_confirmation",
 			"runtime",
@@ -81,14 +80,6 @@ func (r *Runtime) confirmToolsIfNeeded(wfCtx engine.WorkflowContext, input *RunI
 		}
 
 		approved := dec.Approved
-		r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{
-			"resumed_by":        "confirmation",
-			"await_id":          awaitID,
-			"tool_name":         call.Name,
-			"tool_call_id":      call.ToolCallID,
-			"decision":          approved,
-			"approved":          approved,
-		})
 
 		labels := map[string]string{
 			"resumed_by":   "confirmation",
@@ -99,10 +90,10 @@ func (r *Runtime) confirmToolsIfNeeded(wfCtx engine.WorkflowContext, input *RunI
 
 		r.publishHook(ctx, hooks.NewRunResumedEvent(
 			base.RunContext.RunID,
-			base.Agent.ID(),
+			input.AgentID,
 			base.RunContext.SessionID,
 			"confirmation",
-			input.RunID,
+			dec.RequestedBy,
 			labels,
 			0,
 		), turnID)

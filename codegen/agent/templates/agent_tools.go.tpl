@@ -114,7 +114,7 @@ func NewRegistration(
         Name:         {{ printf "%q" .Toolset.QualifiedName }},
         TaskQueue:    {{ printf "%q" .Toolset.TaskQueue }},
         SystemPrompt: systemPrompt,
-        // Strong-contract routing for cross-process inline composition
+        // Strong-contract routing for cross-process child workflow composition
         Route: runtime.AgentRoute{
 			ID:              AgentID,
 			WorkflowName:    {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Name }},

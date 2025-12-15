@@ -14,7 +14,7 @@ survive a restart. Just elegant designs that compile into production‑grade sys
 |--------------------------------------|---------------------------------------------------------------------|
 | **LLM workflows feel fragile**       | Type‑safe tool payloads with validations and examples—no ad‑hoc JSON guessing games |
 | **Long‑running agents crash**        | Durable orchestration with automatic retries, time budgets, and deterministic replay |
-| **Composing agents is messy**        | First‑class agent‑as‑tool composition, even across processes, with unified history |
+| **Composing agents is messy**        | First‑class agent‑as‑tool composition, even across processes, with run trees and linked streams |
 | **Schema drift haunts you**          | Generated codecs and registries keep everything in sync—change the DSL, regenerate, done |
 | **Observability is an afterthought** | Built‑in streaming, transcripts, logs, metrics, and traces from day one |
 | **MCP integration is manual**        | Generated wrappers turn MCP servers into typed toolsets automatically |
@@ -59,7 +59,7 @@ APIs. Runs survive restarts, scale horizontally, and replay deterministically.
 ### Powerful Composition (Agent‑as‑Tool)
 
 One agent exports a toolset; another consumes it. The nested agent executes as a child workflow
-within the parent—unified history, linked streams, elegant composition.
+and forms a run tree with linked streams—clean composition without flattening run identity.
 
 ### External Tools (MCP Toolsets)
 
@@ -335,7 +335,7 @@ Per‑turn enforcement of:
 | Type                | How It Works                                                                         |
 |---------------------|--------------------------------------------------------------------------------------|
 | **Native toolsets** | Your implementations + generated codecs = typed, validated tools                     |
-| **Agent‑as‑tool**   | Child workflow executes the nested agent with linked streams and unified history     |
+| **Agent‑as‑tool**   | Child workflow executes the nested agent with linked streams and run links           |
 | **MCP toolsets**    | Generated wrappers handle JSON schemas, transport (HTTP/SSE/stdio), retries, tracing |
 
 MCP callers in `runtime/mcp` support multiple transports:
@@ -929,7 +929,7 @@ The runtime sets final status and returns to the client.
 ## Agent‑as‑Tool: Child Workflow Composition
 
 Exported toolsets get first‑class helpers for registering agents as tools. Nested agents execute
-as child workflows, enabling linked streams and unified history.
+as child workflows, enabling linked streams and run links.
 
 ### Generated Provider Helpers
 
@@ -1050,7 +1050,7 @@ profile := stream.DefaultProfile()
 // User chat: same as default
 profile := stream.UserChatProfile()
 
-// Debug: flattens child events into parent stream
+// Debug: verbose (child runs are linked, not flattened)
 profile := stream.AgentDebugProfile()
 
 // Metrics: only usage and workflow events

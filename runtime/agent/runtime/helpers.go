@@ -62,7 +62,9 @@ func nestedRunIDSuffix(toolCallID string) string {
 	}
 	// Otherwise, hash to keep workflow IDs bounded and safe for Temporal.
 	h := fnv.New64a()
-	_, _ = h.Write([]byte(toolCallID))
+	if _, err := h.Write([]byte(toolCallID)); err != nil {
+		panic(fmt.Errorf("hash tool call id: %w", err))
+	}
 	return fmt.Sprintf("call-%016x", h.Sum64())
 }
 
@@ -156,25 +158,6 @@ func newTextAgentMessage(role model.ConversationRole, text string) *model.Messag
 	}
 }
 
-// generateParentToolCallID creates a deterministic parent ToolCallID suitable
-// for agent-as-tool invocations when the parent ID is not supplied.
-// generateParentToolCallID is currently unused.
-// func generateParentToolCallID(runID, turnID, toolName string) string {
-//     if runID == "" {
-//         runID = unknownID
-//     }
-//     if toolName == "" {
-//         toolName = "tool"
-//     }
-//     safeTool := strings.ReplaceAll(toolName, ".", "-")
-//     tid := turnID
-//     if tid == "" {
-//         tid = "no-turn"
-//     }
-//     // Suffix with 'p' to avoid collisions with batch indices.
-//     return strings.Join([]string{runID, tid, safeTool, "p"}, "/")
-// }
-
 // isZeroRetryPolicy checks if a retry policy is effectively zero (no retries configured).
 func isZeroRetryPolicy(policy engine.RetryPolicy) bool {
 	return policy.MaxAttempts == 0 && policy.InitialInterval == 0 && policy.BackoffCoefficient == 0
@@ -227,6 +210,16 @@ func cloneToolResults(src []*planner.ToolResult) []*planner.ToolResult {
 		out = append(out, &cp)
 	}
 	return out
+}
+
+func addTokenUsage(current, delta model.TokenUsage) model.TokenUsage {
+	return model.TokenUsage{
+		InputTokens:      current.InputTokens + delta.InputTokens,
+		OutputTokens:     current.OutputTokens + delta.OutputTokens,
+		TotalTokens:      current.TotalTokens + delta.TotalTokens,
+		CacheReadTokens:  current.CacheReadTokens + delta.CacheReadTokens,
+		CacheWriteTokens: current.CacheWriteTokens + delta.CacheWriteTokens,
+	}
 }
 
 func mergeLabels(dst map[string]string, src map[string]string) map[string]string {
@@ -324,27 +317,30 @@ func (r *Runtime) logWarn(ctx context.Context, msg string, err error, kv ...any)
 	}
 }
 
-// publishHook publishes an event to the hook bus. If publishing fails, logs a
-// warning. If the bus is nil, this is a no-op. The sequencer parameter is optional;
-// if nil, events are published without turn tracking. If provided, events are stamped
-// with turnID and auto-incremented sequence numbers for deterministic ordering.
+// publishHook emits a runtime hook event.
 //
-// Note: This implementation stamps events using reflection to update the embedded
-// baseEvent fields. A future enhancement could update event constructors to accept
-// turn tracking parameters directly for a cleaner implementation.
+// If ctx carries an engine.WorkflowContext (via engine.WithWorkflowContext), the
+// runtime schedules a hook activity so subscribers can perform I/O outside of
+// deterministic workflow execution. Outside workflows, publishHook publishes
+// directly to the hook bus.
 func (r *Runtime) publishHook(ctx context.Context, evt hooks.Event, turnID string) {
-	if r.Bus == nil {
+	if wfCtx := engine.WorkflowContextFromContext(ctx); wfCtx != nil {
+		in, err := newHookActivityInput(evt, turnID)
+		if err != nil {
+			r.logWarn(ctx, "hook activity creation failed", err, "event", evt.Type())
+			return
+		}
+		if err := wfCtx.PublishHook(ctx, engine.HookActivityCall{
+			Name:  hookActivityName,
+			Input: in,
+		}); err != nil {
+			r.logWarn(ctx, "hook activity failed", err, "event", evt.Type())
+		}
 		return
 	}
-	// Suppress hook publication during workflow history replay so that
-	// subscribers (stream sinks, persistence, metrics) do not re-apply
-	// side effects when Temporal replays workflow code.
-	if rac, ok := ctx.(engine.ReplayAwareContext); ok && rac.IsReplaying() {
-		return
-	}
-	// Stamp the event with turn ID if provided
+
 	if turnID != "" {
-		stampEventWithTurnID(evt, turnID)
+		stampHookEventTurnID(evt, turnID)
 	}
 	if err := r.Bus.Publish(ctx, evt); err != nil {
 		r.logWarn(ctx, "hook publish failed", err, "event", evt.Type())
@@ -496,6 +492,7 @@ func defaultToolTitle(id tools.Ident) string {
 	return b.String()
 }
 
+// lastSegment returns the last segment of a string after the last separator.
 func lastSegment(s string, sep rune) string {
 	for i := len(s) - 1; i >= 0; i-- {
 		if rune(s[i]) == sep {
@@ -527,45 +524,6 @@ func filterToolCalls(calls []planner.ToolRequest, allowed []tools.Ident) []plann
 	return filtered
 }
 
-// stampEventWithTurnID updates the baseEvent fields in an event with the turn ID.
-// This uses a type switch to explicitly handle each event type in a type-safe manner
-// without reflection. The compiler will catch if we add new event types and forget
-// to handle them here.
-func stampEventWithTurnID(evt hooks.Event, turnID string) {
-	// Type switch to access and update the embedded baseEvent in each concrete event type.
-	// This is explicit, type-safe, and the compiler will help us maintain it.
-	switch e := evt.(type) {
-	case *hooks.RunStartedEvent:
-		e.SetTurnID(turnID)
-	case *hooks.RunCompletedEvent:
-		e.SetTurnID(turnID)
-	case *hooks.ToolCallScheduledEvent:
-		e.SetTurnID(turnID)
-	case *hooks.ToolResultReceivedEvent:
-		e.SetTurnID(turnID)
-	case *hooks.ToolCallUpdatedEvent:
-		e.SetTurnID(turnID)
-	case *hooks.PlannerNoteEvent:
-		e.SetTurnID(turnID)
-	case *hooks.AssistantMessageEvent:
-		e.SetTurnID(turnID)
-	case *hooks.RetryHintIssuedEvent:
-		e.SetTurnID(turnID)
-	case *hooks.MemoryAppendedEvent:
-		e.SetTurnID(turnID)
-	case *hooks.PolicyDecisionEvent:
-		e.SetTurnID(turnID)
-	case *hooks.AwaitClarificationEvent:
-		e.SetTurnID(turnID)
-	case *hooks.AwaitExternalToolsEvent:
-		e.SetTurnID(turnID)
-	case *hooks.RunPhaseChangedEvent:
-		e.SetTurnID(turnID)
-	case *hooks.AgentRunStartedEvent:
-		e.SetTurnID(turnID)
-	}
-}
-
 // aggregateArtifacts flattens artifacts from child tool results into a single
 // slice for a parent tool result. Artifacts inherit the child tool name as
 // SourceTool when it is not already set.
@@ -590,10 +548,8 @@ func aggregateArtifacts(events []*planner.ToolResult) []*planner.Artifact {
 	return arts
 }
 
-// ConvertRunOutputToToolResult converts a RunOutput (from ExecuteAgentInline) into
-// a planner.ToolResult. This helper is used by generated Execute functions for
-// agent-tools to adapt the nested agent's output into the ToolResult format expected
-// by the ToolsetRegistration.Execute signature.
+// ConvertRunOutputToToolResult converts a nested agent RunOutput into a
+// planner.ToolResult suitable for returning from an agent-as-tool executor.
 //
 // The final assistant message content is extracted as the tool result payload (string).
 // Telemetry from all nested tool executions is aggregated into a single ToolTelemetry

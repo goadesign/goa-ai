@@ -49,7 +49,27 @@ Here’s a map of what Goa-AI just built for you based on your `design/*.go` fil
 
 ## 2. 🚀 The 3-Step Liftoff: Your First Agent Run
 
-Let's get an agent running in just a few lines of code, without worrying about servers or HTTP yet. This is the fastest way to see your agent in action.
+The fastest way to run your agent is using the generated example scaffolding.
+
+### Quick Start (Recommended)
+
+```bash
+# 1. Generate code and example files
+goa gen <module>/design
+goa example <module>/design
+
+# 2. Run the generated example
+go run ./cmd/<service>/
+```
+
+This generates:
+- `internal/agents/bootstrap/bootstrap.go` — Wires runtime and registers agents
+- `internal/agents/<agent>/planner/planner.go` — Stub planner (edit to connect your LLM)
+- `cmd/<service>/main.go` — Example main that uses the bootstrap
+
+### Understanding the Generated Code
+
+The generated `cmd/<service>/main.go` uses the bootstrap to run your agents. Here's what it does under the hood:
 
 ```go
 package main

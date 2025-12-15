@@ -59,8 +59,8 @@ func TestSubscribeRunFiltersByRunID(t *testing.T) {
 	defer stop()
 
 	// Publish events for two runs; only run-1 should be forwarded
-	_ = rt.Bus.Publish(context.Background(), hooks.NewAssistantMessageEvent("run-1", "agent", "", "hi", nil))
-	_ = rt.Bus.Publish(context.Background(), hooks.NewAssistantMessageEvent("run-2", "agent", "", "skip", nil))
+	require.NoError(t, rt.Bus.Publish(context.Background(), hooks.NewAssistantMessageEvent("run-1", "agent", "", "hi", nil)))
+	require.NoError(t, rt.Bus.Publish(context.Background(), hooks.NewAssistantMessageEvent("run-2", "agent", "", "skip", nil)))
 
 	require.Len(t, sink.events, 1)
 	require.Equal(t, "run-1", sink.events[0].RunID())
