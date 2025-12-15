@@ -119,12 +119,12 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			return nil
 		}
 		payload := AwaitConfirmationPayload{
-			ID:        evt.ID,
-			Title:     evt.Title,
-			Prompt:    evt.Prompt,
-			ToolName:  string(evt.ToolName),
+			ID:         evt.ID,
+			Title:      evt.Title,
+			Prompt:     evt.Prompt,
+			ToolName:   string(evt.ToolName),
 			ToolCallID: evt.ToolCallID,
-			Payload:   evt.Payload,
+			Payload:    evt.Payload,
 		}
 		return s.sink.Send(ctx, AwaitConfirmation{
 			Base: Base{t: EventAwaitConfirmation, r: evt.RunID(), s: evt.SessionID(), p: payload},

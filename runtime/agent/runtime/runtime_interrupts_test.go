@@ -34,10 +34,11 @@ func TestRunLoopPauseResumeEmitsEvents_Barriered(t *testing.T) {
 		tools.Ident("tool"): newAnyJSONSpec("tool", "svc.ts"),
 	}
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, barrier: make(chan struct{}, 1)}
+	wfCtx.ensureSignals()
 	go func() {
 		// enqueue pause/resume before allowing async completion
-		wfCtx.SignalChannel(interrupt.SignalPause).(*testSignalChannel).ch <- interrupt.PauseRequest{RunID: "run-1", Reason: "human"}
-		wfCtx.SignalChannel(interrupt.SignalResume).(*testSignalChannel).ch <- interrupt.ResumeRequest{RunID: "run-1", Notes: "resume"}
+		wfCtx.pauseCh <- interrupt.PauseRequest{RunID: "run-1", Reason: "human"}
+		wfCtx.resumeCh <- interrupt.ResumeRequest{RunID: "run-1", Notes: "resume"}
 		time.Sleep(5 * time.Millisecond)
 		wfCtx.barrier <- struct{}{}
 	}()
@@ -52,6 +53,6 @@ func TestRunLoopPauseResumeEmitsEvents_Barriered(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, nil, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, "turn-1", nil, ctrl, 0)
+	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, "turn-1", nil, ctrl, 0)
 	require.NoError(t, err)
 }

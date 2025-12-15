@@ -39,7 +39,7 @@ Building AI agents shouldn't mean wrestling with JSON schemas, debugging brittle
 | **Hand-rolled JSON schemas** | Type-safe tool definitions with validations—schemas generated automatically |
 | **Brittle tool wiring** | `BindTo` connects tools directly to Goa service methods. Zero glue code |
 | **Agents that crash and lose state** | Temporal-backed durable execution with automatic retries |
-| **Messy multi-agent composition** | First-class agent-as-tool with unified history and run trees |
+| **Messy multi-agent composition** | First-class agent-as-tool with run trees and run links |
 | **Schema drift between components** | Single source of truth: DSL → generated codecs → runtime validation |
 | **Observability as afterthought** | Built-in streaming, transcripts, traces, and metrics from day one |
 | **Manual MCP integration** | Generated wrappers turn MCP servers into typed toolsets |
@@ -261,7 +261,7 @@ Agent("coordinator", "Main coordinator", func() {
 })
 ```
 
-**Agent-as-tool runs inline**: The child agent executes within the parent's workflow—single transaction, unified history. The parent receives a `ToolResult` with a `RunLink` handle to the child run for debugging and UI rendering.
+**Agent-as-tool runs as a child workflow**: The nested agent executes in its own run. The parent receives a `ToolResult` with a `RunLink` handle to the child run, and streaming emits an `AgentRunStarted` link event so UIs can render nested runs without flattening.
 
 ### Policies: Guardrails for Production
 
@@ -318,7 +318,7 @@ defer stop()
 
 **Stream profiles** filter events for different audiences:
 - `UserChatProfile()` — End-user chat UIs with nested agent cards
-- `AgentDebugProfile()` — Flattened debug view with full event firehose
+- `AgentDebugProfile()` — Verbose debug view with linked child runs
 - `MetricsProfile()` — Usage and workflow events only for telemetry
 
 ---

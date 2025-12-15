@@ -125,5 +125,3 @@ func TestExecuteToolActivity_DecodeErrorRetryHint(t *testing.T) {
 	require.Equal(t, []string{"summary"}, out.RetryHint.MissingFields)
 	require.NotNil(t, out.RetryHint.ExampleInput)
 }
-
-

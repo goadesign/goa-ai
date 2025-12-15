@@ -1,0 +1,53 @@
+{
+  "tools": [
+    {
+      "id": "helpers.answer",
+      "service": "orchestrator",
+      "toolset": "orchestrator.helpers",
+      "title": "Answer",
+      "description": "Answer a simple question",
+      "payload": {
+        "name": "AnswerPayload",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "AskPayload",
+          "type": "object",
+          "properties": {
+            "question": {
+              "type": "string",
+              "description": "User question to answer",
+              "example": "Iusto incidunt et sint."
+            }
+          },
+          "example": {
+            "question": "What is the capital of Japan?"
+          },
+          "required": [
+            "question"
+          ]
+        }
+      },
+      "result": {
+        "name": "AnswerResult",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "Answer",
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "description": "Answer text",
+              "example": "Delectus eveniet ad accusantium magnam saepe nulla."
+            }
+          },
+          "example": {
+            "text": "Ipsa et reprehenderit distinctio id nobis."
+          },
+          "required": [
+            "text"
+          ]
+        }
+      }
+    }
+  ]
+}

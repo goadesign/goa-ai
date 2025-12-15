@@ -1,7 +1,19 @@
-# Example: Inline Composition Across Processes
+# Example: Agent-as-Tool Composition Across Processes (Child Workflows)
 
-This example shows how a consumer agent composes an exporter agent inline while
-workers run in separate processes.
+This example shows how a consumer agent invokes tools exported by a provider agent
+running on a different worker process.
+
+Key semantics:
+
+- The nested agent executes as a **child workflow** with its own `RunID`.
+- The parent run emits an `AgentRunStarted` link event and receives a `ToolResult`
+  containing a `RunLink` handle to the child run.
+- Streams are **per-run**; UIs can subscribe to the child run via the run link to
+  render nested execution without flattening run identity.
+
+## Provider Worker Process
+
+Register the provider agent and run a worker on its workflow/task queue:
 
 ```go
 package main
@@ -10,31 +22,59 @@ import (
     "context"
 
     exporter "example.com/gen/exporter/agents/exporter"
+    "goa.design/goa-ai/runtime/agent/runtime"
+)
+
+func main() {
+    rt := runtime.New(/* Temporal worker engine configured for exporter queues */)
+
+    if err := exporter.RegisterExporter(context.Background(), rt, exporter.ExporterConfig{
+        Planner: newExporterPlanner(),
+    }); err != nil {
+        panic(err)
+    }
+
+    // Start worker per engine integration...
+}
+```
+
+## Consumer Worker Process
+
+Register the provider’s exported toolset with the consumer runtime, then register
+the consumer agent:
+
+```go
+package main
+
+import (
+    "context"
+
+    exporteragenttools "example.com/gen/exporter/agents/exporter/agenttools"
     consumer "example.com/gen/consumer/agents/consumer"
     "goa.design/goa-ai/runtime/agent/runtime"
 )
 
 func main() {
-    rt := runtime.New(/* engine with worker/client configured */)
+    rt := runtime.New(/* Temporal worker engine configured for consumer queues */)
 
-    // In the consumer worker process:
-    // 1) Register exporter route-only metadata (no planner locally)
-    _ = exporter.RegisterExporterRoute(context.Background(), rt)
+    reg, err := exporteragenttools.NewRegistration(
+        rt,
+        "You are a data expert.",
+        runtime.WithTextAll(exporteragenttools.ToolIDs, "Handle: {{ . }}"),
+    )
+    if err != nil {
+        panic(err)
+    }
+    if err := rt.RegisterToolset(reg); err != nil {
+        panic(err)
+    }
 
-    // 2) Register the exported toolset as inline agent-tool
-    reg := exporter.NewExporterToolsetRegistration(rt)
-    reg.Inline = true
-    _ = rt.RegisterToolset(reg)
+    if err := consumer.RegisterConsumer(context.Background(), rt, consumer.ConsumerConfig{
+        Planner: newConsumerPlanner(),
+    }); err != nil {
+        panic(err)
+    }
 
-    // 3) Register consumer agent (with its own planner)
-    _ = consumer.RegisterConsumer(context.Background(), rt, consumer.ConsumerConfig{Planner: myPlanner})
-
-    // Start workers per engine integration...
+    // Start worker per engine integration...
 }
 ```
-
-At runtime the consumer’s `ExecuteAgentInline` schedules the exporter’s `Plan` and
-`Resume` activities on the exporter queue. Temporal routes those to the exporter
-workers; the parent workflow maintains a single history and a single stream of
-`tool_start` / `tool_result` events.
-

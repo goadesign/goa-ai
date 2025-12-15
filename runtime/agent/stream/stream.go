@@ -459,13 +459,9 @@ type (
 		ChildAgentID agent.Ident `json:"child_agent_id"`
 	}
 
-	// ChildStreamPolicy controls how child runs are projected into a given
-	// audience's stream.
-	ChildStreamPolicy int
-
 	// StreamProfile describes which event kinds are emitted for a particular
-	// audience and how child runs are treated. Profiles are applied by the
-	// Subscriber when mapping hook events → stream events.
+	// audience. Profiles are applied by the Subscriber when mapping hook events
+	// → stream events.
 	StreamProfile struct {
 		// Assistant controls assistant reply emission.
 		Assistant bool
@@ -489,21 +485,7 @@ type (
 		Workflow bool
 		// AgentRuns controls emission of agent_run_started events.
 		AgentRuns bool
-		// ChildPolicy controls how child runs are projected (off, flatten, linked).
-		ChildPolicy ChildStreamPolicy
 	}
-)
-
-const (
-	// ChildStreamPolicyOff hides child runs from this audience; only parent
-	// tool calls and results are visible.
-	ChildStreamPolicyOff ChildStreamPolicy = iota
-	// ChildStreamPolicyFlatten projects child events into the parent run
-	// stream for this audience, approximating the legacy firehose behavior.
-	ChildStreamPolicyFlatten
-	// ChildStreamPolicyLinked emits link events to child runs instead of
-	// flattening their events into the parent stream.
-	ChildStreamPolicyLinked
 )
 
 // DefaultProfile returns a StreamProfile that emits all event kinds and
@@ -522,7 +504,6 @@ func DefaultProfile() StreamProfile {
 		Usage:              true,
 		Workflow:           true,
 		AgentRuns:          true,
-		ChildPolicy:        ChildStreamPolicyLinked,
 	}
 }
 
@@ -535,21 +516,18 @@ func UserChatProfile() StreamProfile {
 }
 
 // AgentDebugProfile returns a verbose profile intended for operational and
-// debugging views. It flattens child runs into the parent stream while still
-// emitting AgentRunStarted links for precise correlation.
+// debugging views. Child runs are linked via AgentRunStarted events and are not
+// flattened into the parent stream.
 func AgentDebugProfile() StreamProfile {
-	p := DefaultProfile()
-	p.ChildPolicy = ChildStreamPolicyFlatten
-	return p
+	return DefaultProfile()
 }
 
 // MetricsProfile returns a profile that emits only usage and workflow events,
 // suitable for metrics/telemetry pipelines.
 func MetricsProfile() StreamProfile {
 	return StreamProfile{
-		Usage:       true,
-		Workflow:    true,
-		ChildPolicy: ChildStreamPolicyOff,
+		Usage:    true,
+		Workflow: true,
 	}
 }
 

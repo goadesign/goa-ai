@@ -15,6 +15,7 @@ type (
 	RunInput           = api.RunInput
 	PlanActivityInput  = api.PlanActivityInput
 	PlanActivityOutput = api.PlanActivityOutput
+	HookActivityInput  = api.HookActivityInput
 	ToolInput          = api.ToolInput
 	ToolOutput         = api.ToolOutput
 
@@ -119,21 +120,22 @@ func (e *ActivityToolExecutor) Execute(ctx context.Context, wfCtx engine.Workflo
 	if input == nil {
 		return nil, errors.New("tool input is required")
 	}
-	req := engine.ActivityRequest{
+	future, err := wfCtx.ExecuteToolActivityAsync(ctx, engine.ToolActivityCall{
 		Name:  e.activityName,
-		Queue: e.queue,
 		Input: input,
-	}
-
-	future, err := wfCtx.ExecuteActivityAsync(ctx, req)
+		Options: engine.ActivityOptions{
+			Queue: e.queue,
+		},
+	})
 	if err != nil {
 		return nil, err
 	}
-
-	var result ToolOutput
-	if err := future.Get(ctx, &result); err != nil {
+	out, err := future.Get(ctx)
+	if err != nil {
 		return nil, err
 	}
-
-	return &result, nil
+	if out == nil {
+		return nil, errors.New("tool activity returned nil output")
+	}
+	return out, nil
 }

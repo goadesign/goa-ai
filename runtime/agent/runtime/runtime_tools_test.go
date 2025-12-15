@@ -49,7 +49,7 @@ func TestToolsetTaskQueueOverrideUsed(t *testing.T) {
 		return &planner.ToolResult{
 			Name: call.Name,
 		}, nil
-	}}}}
+	}}}, Bus: noopHooks{}}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{"child": newAnyJSONSpec("child", "svc.export")}
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, hasPlanResult: true}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
@@ -60,12 +60,11 @@ func TestToolsetTaskQueueOverrideUsed(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, nil, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, "", nil, nil, 0)
+	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, "", nil, nil, 0)
 	require.NoError(t, err)
-	require.Equal(t, "q1", wfCtx.lastRequest.Queue)
-	ti, ok := wfCtx.lastRequest.Input.(ToolInput)
-	require.True(t, ok, "expected ToolInput in lastRequest.Input")
-	require.Equal(t, "svc.export", ti.ToolsetName)
+	require.Equal(t, "q1", wfCtx.lastToolCall.Options.Queue)
+	require.NotNil(t, wfCtx.lastToolCall.Input)
+	require.Equal(t, "svc.export", wfCtx.lastToolCall.Input.ToolsetName)
 }
 
 func TestPreserveModelProvidedToolCallID(t *testing.T) {
@@ -73,7 +72,7 @@ func TestPreserveModelProvidedToolCallID(t *testing.T) {
 		// Ensure the ID provided by the planner/model flows into the executor unchanged
 		require.Equal(t, "model-123", call.ToolCallID)
 		return &planner.ToolResult{Name: call.Name}, nil
-	}}}}
+	}}}, Bus: noopHooks{}}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{"tool": newAnyJSONSpec("tool", "svc.ts")}
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, hasPlanResult: true}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
@@ -85,12 +84,11 @@ func TestPreserveModelProvidedToolCallID(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, nil, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, "", nil, nil, 0)
+	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, "", nil, nil, 0)
 	require.NoError(t, err)
 	// Activity input should carry the same ID
-	ti, ok := wfCtx.lastRequest.Input.(ToolInput)
-	require.True(t, ok)
-	require.Equal(t, "model-123", ti.ToolCallID)
+	require.NotNil(t, wfCtx.lastToolCall.Input)
+	require.Equal(t, "model-123", wfCtx.lastToolCall.Input.ToolCallID)
 }
 
 func TestActivityToolExecutorExecute(t *testing.T) {
@@ -117,12 +115,18 @@ func TestRunLoopPauseResumeEmitsEvents(t *testing.T) {
 		}}},
 	}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{"tool": newAnyJSONSpec("tool", "svc.ts")}
-	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, barrier: make(chan struct{}, 1)}
+	wfCtx := &testWorkflowContext{
+		ctx:         context.Background(),
+		hookRuntime: rt,
+		asyncResult: ToolOutput{Payload: []byte("null")},
+		barrier:     make(chan struct{}, 1),
+	}
+	wfCtx.ensureSignals()
 	// Allow tests to enqueue pause/resume before async completes
 	go func() {
 		time.Sleep(5 * time.Millisecond)
-		wfCtx.SignalChannel(interrupt.SignalPause).(*testSignalChannel).ch <- interrupt.PauseRequest{RunID: "run-1", Reason: "human"}
-		wfCtx.SignalChannel(interrupt.SignalResume).(*testSignalChannel).ch <- interrupt.ResumeRequest{RunID: "run-1", Notes: "resume"}
+		wfCtx.pauseCh <- interrupt.PauseRequest{RunID: "run-1", Reason: "human"}
+		wfCtx.resumeCh <- interrupt.ResumeRequest{RunID: "run-1", Notes: "resume"}
 		wfCtx.barrier <- struct{}{}
 	}()
 	wfCtx.hasPlanResult = true
@@ -136,7 +140,7 @@ func TestRunLoopPauseResumeEmitsEvents(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, nil, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, "turn-1", nil, ctrl, 0)
+	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, "turn-1", nil, ctrl, 0)
 	require.NoError(t, err)
 	var sawPause, sawResume bool
 	for _, evt := range recorder.events {
@@ -151,7 +155,7 @@ func TestRunLoopPauseResumeEmitsEvents(t *testing.T) {
 	require.True(t, sawResume)
 }
 
-func TestServiceToolEventsUseParentRunContext(t *testing.T) {
+func TestServiceToolEventsUseChildRunContext(t *testing.T) {
 	recorder := &recordingHooks{}
 	rt := &Runtime{
 		Bus:     recorder,
@@ -167,6 +171,7 @@ func TestServiceToolEventsUseParentRunContext(t *testing.T) {
 	}
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
+		hookRuntime: rt,
 		asyncResult: ToolOutput{Payload: []byte("null")},
 	}
 	parentCtx := &run.Context{
@@ -192,13 +197,13 @@ func TestServiceToolEventsUseParentRunContext(t *testing.T) {
 		}
 	}
 	require.NotNil(t, scheduled, "expected ToolCallScheduledEvent")
-	require.Equal(t, "parent-run", scheduled.RunID())
-	require.Equal(t, "chat.agent", scheduled.AgentID())
+	require.Equal(t, "child-run", scheduled.RunID())
+	require.Equal(t, "ada.agent", scheduled.AgentID())
 	require.Equal(t, "tool-parent", scheduled.ParentToolCallID)
 
 	require.NotNil(t, resultEvt, "expected ToolResultReceivedEvent")
-	require.Equal(t, "parent-run", resultEvt.RunID())
-	require.Equal(t, "chat.agent", resultEvt.AgentID())
+	require.Equal(t, "child-run", resultEvt.RunID())
+	require.Equal(t, "ada.agent", resultEvt.AgentID())
 	require.Equal(t, "tool-parent", resultEvt.ParentToolCallID)
 }
 
@@ -229,7 +234,8 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 		tools.Ident("ada.get_time_series"): newAnyJSONSpec("ada.get_time_series", "ada.tools"),
 	}
 	wfCtx := &testWorkflowContext{
-		ctx: context.Background(),
+		ctx:         context.Background(),
+		hookRuntime: rt,
 		planResult: &planner.PlanResult{
 			FinalResponse: &planner.FinalResponse{
 				Message: &model.Message{
@@ -261,6 +267,7 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 		base,
 		initial,
 		nil,
+		model.TokenUsage{},
 		policy.CapsState{MaxToolCalls: 2, RemainingToolCalls: 2},
 		time.Time{},
 		2,

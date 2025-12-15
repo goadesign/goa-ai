@@ -103,7 +103,9 @@ func (i *finalizerToolInvoker) Invoke(ctx context.Context, tool tools.Ident, pay
 	i.counter++
 
 	if spec.IsAgentTool {
+		i.factory.runtime.mu.RLock()
 		reg, ok := i.factory.runtime.toolsets[spec.Toolset]
+		i.factory.runtime.mu.RUnlock()
 		if !ok {
 			return nil, fmt.Errorf("finalizer tool invoker: toolset %q not registered", spec.Toolset)
 		}
@@ -118,9 +120,19 @@ func (i *finalizerToolInvoker) Invoke(ctx context.Context, tool tools.Ident, pay
 		return result, nil
 	}
 
-	req := engine.ActivityRequest{
+	callOpts := i.factory.activityOptions
+	if callOpts.Queue == "" {
+		i.factory.runtime.mu.RLock()
+		reg, ok := i.factory.runtime.toolsets[spec.Toolset]
+		i.factory.runtime.mu.RUnlock()
+		if ok && reg.TaskQueue != "" {
+			callOpts.Queue = reg.TaskQueue
+		}
+	}
+
+	out, err := i.factory.wfCtx.ExecuteToolActivity(ctx, engine.ToolActivityCall{
 		Name: i.factory.activityName,
-		Input: ToolInput{
+		Input: &ToolInput{
 			AgentID:          parent.AgentID,
 			RunID:            parent.RunID,
 			ToolsetName:      spec.Toolset,
@@ -131,34 +143,22 @@ func (i *finalizerToolInvoker) Invoke(ctx context.Context, tool tools.Ident, pay
 			TurnID:           parent.TurnID,
 			ParentToolCallID: parent.ParentToolCallID,
 		},
-	}
-	if opt := i.factory.activityOptions; opt.Timeout > 0 {
-		req.Timeout = opt.Timeout
-	}
-	if opt := i.factory.activityOptions; opt.Queue != "" {
-		req.Queue = opt.Queue
-	}
-	if opt := i.factory.activityOptions; !isZeroRetryPolicy(opt.RetryPolicy) {
-		req.RetryPolicy = opt.RetryPolicy
-	}
-	if req.Queue == "" {
-		if reg, ok := i.factory.runtime.toolsets[spec.Toolset]; ok && reg.TaskQueue != "" {
-			req.Queue = reg.TaskQueue
-		}
-	}
-
-	var out ToolOutput
-	if err := i.factory.wfCtx.ExecuteActivity(ctx, req, &out); err != nil {
+		Options: callOpts,
+	})
+	if err != nil {
 		return nil, err
+	}
+	if out == nil {
+		return nil, errors.New("finalizer tool invoker: tool activity returned nil output")
 	}
 
 	var decoded any
 	if len(out.Payload) > 0 {
-		if v, decErr := i.factory.runtime.unmarshalToolValue(ctx, tool, out.Payload, false); decErr == nil {
-			decoded = v
-		} else {
-			decoded = out.Payload
+		v, decErr := i.factory.runtime.unmarshalToolValue(ctx, tool, out.Payload, false)
+		if decErr != nil {
+			return nil, fmt.Errorf("finalizer tool %q result decode failed (tool_call_id=%s): %w", tool, call.ToolCallID, decErr)
 		}
+		decoded = v
 	}
 
 	result := &planner.ToolResult{

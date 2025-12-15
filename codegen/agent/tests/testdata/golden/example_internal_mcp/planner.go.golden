@@ -8,6 +8,7 @@ package planner
 
 import (
 	"context"
+	model "goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 )
 

@@ -2,6 +2,7 @@ package temporal
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"go.temporal.io/sdk/temporal"
@@ -23,22 +24,13 @@ type temporalWorkflowContext struct {
 	baseCtx    context.Context
 }
 
-type replayContext struct {
-	context.Context
-	replay bool
-}
-
-func (c *replayContext) IsReplaying() bool {
-	return c.replay
-}
-
 // NewWorkflowContext adapts a Temporal workflow.Context into the goa-ai
 // engine.WorkflowContext used by the runtime. This is useful when calling
-// runtime helpers (e.g., ExecuteAgentInline) from workflows that are not
+// runtime helpers (e.g., ExecuteAgentChildWithRoute) from workflows that are not
 // started via the goa-ai engine but run in the same Temporal worker.
 //
 // The returned WorkflowContext uses the engine defaults for activity options
-// (queue, timeouts, retry) when invoking activities via ExecuteActivity.
+// (queue, timeouts, retry) when invoking typed planner/tool/hook activities.
 func NewWorkflowContext(e *Engine, ctx workflow.Context) engine.WorkflowContext {
 	return newTemporalWorkflowContext(e, ctx)
 }
@@ -73,10 +65,7 @@ func (w *temporalWorkflowContext) Context() context.Context {
 	}
 	ctx = context.WithValue(ctx, workflowIDKey, w.workflowID)
 	ctx = context.WithValue(ctx, runIDKey, w.runID)
-	return &replayContext{
-		Context: ctx,
-		replay:  workflow.IsReplaying(w.ctx),
-	}
+	return engine.WithWorkflowContext(ctx, w)
 }
 
 func (w *temporalWorkflowContext) SetQueryHandler(name string, handler any) error {
@@ -91,19 +80,93 @@ func (w *temporalWorkflowContext) RunID() string {
 	return w.runID
 }
 
-func (w *temporalWorkflowContext) ExecuteActivity(ctx context.Context, req engine.ActivityRequest, result any) error {
-	actx := workflow.WithActivityOptions(w.ctx, w.activityOptionsFor(req))
-	fut := workflow.ExecuteActivity(actx, req.Name, req.Input)
-	return fut.Get(w.ctx, result)
+func (w *temporalWorkflowContext) PublishHook(ctx context.Context, call engine.HookActivityCall) error {
+	if call.Name == "" {
+		return errors.New("hook activity name is required")
+	}
+	if call.Input == nil {
+		return errors.New("hook activity input is required")
+	}
+	actx := workflow.WithActivityOptions(w.ctx, w.activityOptionsFor(call.Name, call.Options))
+	fut := workflow.ExecuteActivity(actx, call.Name, call.Input)
+	var ignored struct{}
+	return fut.Get(actx, &ignored)
 }
 
-func (w *temporalWorkflowContext) ExecuteActivityAsync(
-	ctx context.Context,
-	req engine.ActivityRequest,
-) (engine.Future, error) {
-	actx := workflow.WithActivityOptions(w.ctx, w.activityOptionsFor(req))
-	fut := workflow.ExecuteActivity(actx, req.Name, req.Input)
-	return &temporalFuture{future: fut, ctx: actx}, nil
+func (w *temporalWorkflowContext) ExecutePlannerActivity(ctx context.Context, call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
+	if call.Name == "" {
+		return nil, errors.New("planner activity name is required")
+	}
+	if call.Input == nil {
+		return nil, errors.New("planner activity input is required")
+	}
+	actx := workflow.WithActivityOptions(w.ctx, w.activityOptionsFor(call.Name, call.Options))
+	fut := workflow.ExecuteActivity(actx, call.Name, call.Input)
+	var out *api.PlanActivityOutput
+	if err := fut.Get(actx, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (w *temporalWorkflowContext) ExecuteToolActivity(ctx context.Context, call engine.ToolActivityCall) (*api.ToolOutput, error) {
+	fut, err := w.ExecuteToolActivityAsync(ctx, call)
+	if err != nil {
+		return nil, err
+	}
+	return fut.Get(ctx)
+}
+
+func (w *temporalWorkflowContext) ExecuteToolActivityAsync(ctx context.Context, call engine.ToolActivityCall) (engine.Future[*api.ToolOutput], error) {
+	if call.Name == "" {
+		return nil, errors.New("tool activity name is required")
+	}
+	if call.Input == nil {
+		return nil, errors.New("tool activity input is required")
+	}
+	actx := workflow.WithActivityOptions(w.ctx, w.activityOptionsFor(call.Name, call.Options))
+	fut := workflow.ExecuteActivity(actx, call.Name, call.Input)
+	return &temporalFuture[*api.ToolOutput]{future: fut, ctx: actx}, nil
+}
+
+func (w *temporalWorkflowContext) PauseRequests() engine.Receiver[api.PauseRequest] {
+	ch := workflow.GetSignalChannel(w.ctx, api.SignalPause)
+	return &temporalReceiver[api.PauseRequest]{
+		ctx: w.ctx,
+		ch:  ch,
+	}
+}
+
+func (w *temporalWorkflowContext) ResumeRequests() engine.Receiver[api.ResumeRequest] {
+	ch := workflow.GetSignalChannel(w.ctx, api.SignalResume)
+	return &temporalReceiver[api.ResumeRequest]{
+		ctx: w.ctx,
+		ch:  ch,
+	}
+}
+
+func (w *temporalWorkflowContext) ClarificationAnswers() engine.Receiver[api.ClarificationAnswer] {
+	ch := workflow.GetSignalChannel(w.ctx, api.SignalProvideClarification)
+	return &temporalReceiver[api.ClarificationAnswer]{
+		ctx: w.ctx,
+		ch:  ch,
+	}
+}
+
+func (w *temporalWorkflowContext) ExternalToolResults() engine.Receiver[api.ToolResultsSet] {
+	ch := workflow.GetSignalChannel(w.ctx, api.SignalProvideToolResults)
+	return &temporalReceiver[api.ToolResultsSet]{
+		ctx: w.ctx,
+		ch:  ch,
+	}
+}
+
+func (w *temporalWorkflowContext) ConfirmationDecisions() engine.Receiver[api.ConfirmationDecision] {
+	ch := workflow.GetSignalChannel(w.ctx, api.SignalProvideConfirmation)
+	return &temporalReceiver[api.ConfirmationDecision]{
+		ctx: w.ctx,
+		ch:  ch,
+	}
 }
 
 func (w *temporalWorkflowContext) Logger() telemetry.Logger {
@@ -122,18 +185,10 @@ func (w *temporalWorkflowContext) Now() time.Time {
 	return workflow.Now(w.ctx)
 }
 
-func (w *temporalWorkflowContext) SignalChannel(name string) engine.SignalChannel {
-	ch := workflow.GetSignalChannel(w.ctx, name)
-	return &temporalSignalChannel{
-		ctx: w.ctx,
-		ch:  ch,
-	}
-}
+func (w *temporalWorkflowContext) activityOptionsFor(name string, override engine.ActivityOptions) workflow.ActivityOptions {
+	defaults := w.engine.activityDefaultsFor(name)
 
-func (w *temporalWorkflowContext) activityOptionsFor(req engine.ActivityRequest) workflow.ActivityOptions {
-	defaults := w.engine.activityDefaultsFor(req.Name)
-
-	queue := req.Queue
+	queue := override.Queue
 	if queue == "" {
 		queue = defaults.Queue
 	}
@@ -141,7 +196,7 @@ func (w *temporalWorkflowContext) activityOptionsFor(req engine.ActivityRequest)
 		queue = w.engine.defaultQueue
 	}
 
-	timeout := req.Timeout
+	timeout := override.Timeout
 	if timeout == 0 {
 		timeout = defaults.Timeout
 	}
@@ -149,7 +204,7 @@ func (w *temporalWorkflowContext) activityOptionsFor(req engine.ActivityRequest)
 		timeout = time.Minute
 	}
 
-	retry := mergeRetryPolicies(defaults.RetryPolicy, req.RetryPolicy)
+	retry := mergeRetryPolicies(defaults.RetryPolicy, override.RetryPolicy)
 
 	return workflow.ActivityOptions{
 		StartToCloseTimeout: timeout,
@@ -200,31 +255,44 @@ func (h *temporalChildHandle) RunID() string {
 	return h.runID
 }
 
-type temporalFuture struct {
+type temporalFuture[T any] struct {
 	future workflow.Future
 	ctx    workflow.Context
 }
 
-func (f *temporalFuture) Get(_ context.Context, result any) error {
-	return f.future.Get(f.ctx, result)
+func (f *temporalFuture[T]) Get(_ context.Context) (T, error) {
+	var out T
+	if err := f.future.Get(f.ctx, &out); err != nil {
+		return out, err
+	}
+	return out, nil
 }
 
-func (f *temporalFuture) IsReady() bool {
+func (f *temporalFuture[T]) IsReady() bool {
 	return f.future.IsReady()
 }
 
-type temporalSignalChannel struct {
+type temporalReceiver[T any] struct {
 	ctx workflow.Context
 	ch  workflow.ReceiveChannel
 }
 
-func (c *temporalSignalChannel) Receive(_ context.Context, dest any) error {
-	c.ch.Receive(c.ctx, dest)
-	return nil
+func (r *temporalReceiver[T]) Receive(ctx context.Context) (T, error) {
+	if err := ctx.Err(); err != nil {
+		var zero T
+		return zero, err
+	}
+	var out T
+	r.ch.Receive(r.ctx, &out)
+	return out, nil
 }
 
-func (c *temporalSignalChannel) ReceiveAsync(dest any) bool {
-	return c.ch.ReceiveAsync(dest)
+func (r *temporalReceiver[T]) ReceiveAsync() (T, bool) {
+	var out T
+	if ok := r.ch.ReceiveAsync(&out); ok {
+		return out, true
+	}
+	return out, false
 }
 
 func (e *Engine) activityDefaultsFor(name string) engine.ActivityOptions {

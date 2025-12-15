@@ -20,7 +20,9 @@
 // Example usage: use AgentClient for execution.
 //
 //	rt := runtime.New(runtime.Options{ Engine: temporalEngine, ... })
-//	_ = rt.RegisterAgent(ctx, agentReg)
+//	if err := rt.RegisterAgent(ctx, agentReg); err != nil {
+//		log.Fatal(err)
+//	}
 //	client := rt.MustClient(agent.Ident("service.agent"))
 //	out, err := client.Run(ctx, "s1", messages)
 package runtime
@@ -118,12 +120,10 @@ type (
 		// workers (not supported by some engines).
 		registrationClosed bool
 
-		// routes stores route-only registrations for agents that are executed
-		// inline but whose planners live in other processes. These provide
-		// activity names/options and policy/spec metadata so ExecuteAgentInline
-		// can orchestrate nested planning via activities across processes.
-		// routes removed: inline composition now piggybacks on toolset
-		// registration and conventions; no explicit route registry.
+		// hookActivityRegistered tracks whether the runtime hook activity has
+		// been registered with the engine.
+		hookActivityRegistered bool
+
 		// reminders manages run-scoped system reminders used for backstage
 		// guidance (safety, correctness, workflow) injected into prompts by
 		// planners. It is internal to the runtime; planners interact with it
@@ -209,8 +209,8 @@ type (
 		// ExecuteToolActivity is the logical name of the registered ExecuteTool activity.
 		ExecuteToolActivity string
 		// ExecuteToolActivityOptions describes retry/timeout/queue for the ExecuteTool activity.
-		// Strong-contract scheduling: when set, these options are applied to all tool activities
-		// scheduled by this agent (including nested inline agent runs via ExecuteAgentInlineWithRoute).
+		// When set, these options are applied to all service-backed tool activities
+		// scheduled by this agent. Agent-as-tool executions run as child workflows.
 		ExecuteToolActivityOptions engine.ActivityOptions
 		// Specs provides JSON codecs for every tool declared in the agent design.
 		Specs []tools.ToolSpec
@@ -223,14 +223,9 @@ type (
 	// tools in the toolset. Codegen auto-generates registrations for service-based
 	// tools and agent-tools; users provide registrations for custom/server-side tools.
 	//
-	// The Execute function is the core dispatch mechanism - it receives tool name
-	// and JSON payload, and returns JSON result. This uniform interface allows:
-	//   - Service-based tools: codegen generates Execute calling service clients
-	//   - Agent-tools: codegen generates Execute calling ExecuteAgentInline
-	//   - Custom tools: users provide Execute with their implementation
-	//
-	// This pattern eliminates runtime type detection - all dispatch happens at
-	// build time via codegen, and activities simply call toolset.Execute.
+	// The Execute function is the core dispatch mechanism for toolsets that run
+	// inside activities or other non-workflow contexts. For inline toolsets, the
+	// runtime may invoke Execute directly from the workflow loop.
 	ToolsetRegistration struct {
 		// Name is the qualified toolset name (e.g., "service.toolset_name").
 		Name string
@@ -245,8 +240,9 @@ type (
 		// Returns a ToolResult containing the payload, telemetry, errors, and retry hints.
 		//
 		// For service-based tools, codegen generates this function to call service clients.
-		// For agent-tools (Exports), codegen generates this to call ExecuteAgentInline
-		// and convert RunOutput to ToolResult.
+		// For agent-tools (Exports), generated registrations set Inline=true and
+		// populate AgentTool so the workflow runtime can start nested agents as child
+		// workflows and adapt their RunOutput into a ToolResult.
 		// For custom/server-side tools, users provide their own implementation.
 		Execute func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error)
 
@@ -631,6 +627,12 @@ func newFromOptions(opts Options) *Runtime {
 		reminders:        reminder.NewEngine(),
 		toolConfirmation: opts.ToolConfirmation,
 	}
+	if rt.RunStore != nil {
+		runSub := hooks.SubscriberFunc(rt.handleRunStoreEvent)
+		if _, err := bus.Register(runSub); err != nil {
+			rt.logger.Warn(context.Background(), "failed to register run store subscriber", "err", err)
+		}
+	}
 	if rt.Memory != nil {
 		memSub := hooks.SubscriberFunc(func(ctx context.Context, event hooks.Event) error {
 			var memEvent memory.Event
@@ -811,6 +813,9 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	if r.Engine == nil {
 		return ErrEngineNotConfigured
 	}
+	if err := r.ensureHookActivityRegistered(ctx); err != nil {
+		return err
+	}
 
 	// Apply per-agent worker overrides before engine registration.
 	if cfg, ok := r.workers[reg.ID]; ok {
@@ -884,10 +889,35 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	return nil
 }
 
+func (r *Runtime) ensureHookActivityRegistered(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.hookActivityRegistered {
+		return nil
+	}
+	opts := engine.ActivityOptions{
+		Timeout: 15 * time.Second,
+		RetryPolicy: engine.RetryPolicy{
+			MaxAttempts: 1,
+		},
+	}
+	if err := r.Engine.RegisterHookActivity(ctx, hookActivityName, opts, r.hookActivity); err != nil {
+		return err
+	}
+	r.hookActivityRegistered = true
+	return nil
+}
+
 // RegisterToolset registers a toolset outside of agent registration. Useful for
 // feature modules that expose shared toolsets. Returns an error if required fields
 // (Name, Execute) are missing.
 func (r *Runtime) RegisterToolset(ts ToolsetRegistration) error {
+	r.mu.RLock()
+	if r.registrationClosed {
+		r.mu.RUnlock()
+		return ErrRegistrationClosed
+	}
+	r.mu.RUnlock()
 	if ts.Name == "" {
 		return errors.New("toolset name is required")
 	}
@@ -907,13 +937,6 @@ func (r *Runtime) RegisterToolset(ts ToolsetRegistration) error {
 	}
 	return nil
 }
-
-// RegisterAgentRoute registers route-only metadata for an agent so that
-// ExecuteAgentInline can orchestrate the agent via activities even when the
-// planner is not locally registered. Safe to call multiple times; later calls
-// replace previous metadata.
-// RegisterAgentRoute removed: toolset registration piggybacks provider metadata
-// and conventions are used as fallback for activity names/queues.
 
 // RegisterModel registers a ModelClient by identifier for planner lookup. Planners
 // can retrieve registered models via AgentContext.ModelClient(). Returns an error
@@ -1065,7 +1088,9 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	if strings.TrimSpace(input.SessionID) == "" {
 		return nil, ErrMissingSessionID
 	}
-	r.recordRunStatus(ctx, input, run.StatusPending, nil)
+	if r.RunStore != nil {
+		r.recordRunStatus(ctx, input, run.StatusPending, nil)
+	}
 	req := engine.WorkflowStartRequest{
 		ID:        input.RunID,
 		Workflow:  workflowName,
@@ -1409,6 +1434,9 @@ func (r *Runtime) OverridePolicy(agentID agent.Ident, delta RunPolicy) error {
 // SubscribeRun registers a filtered stream subscriber for the given runID and returns
 // a function that closes the subscription and the sink.
 func (r *Runtime) SubscribeRun(ctx context.Context, runID string, sink stream.Sink) (func(), error) {
+	if r.logger == nil {
+		r.logger = telemetry.NoopLogger{}
+	}
 	// Reuse the standard stream subscriber and filter by run ID.
 	sub, err := stream.NewSubscriber(sink)
 	if err != nil {
@@ -1425,8 +1453,12 @@ func (r *Runtime) SubscribeRun(ctx context.Context, runID string, sink stream.Si
 		return nil, err
 	}
 	closeFn := func() {
-		_ = s.Close()
-		_ = sink.Close(ctx)
+		if err := s.Close(); err != nil {
+			r.logger.Error(ctx, "failed to close run subscription", "run_id", runID, "err", err)
+		}
+		if err := sink.Close(ctx); err != nil {
+			r.logger.Error(ctx, "failed to close run sink", "run_id", runID, "err", err)
+		}
 	}
 	return closeFn, nil
 }

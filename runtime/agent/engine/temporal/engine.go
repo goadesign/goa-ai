@@ -255,6 +255,16 @@ func (e *Engine) RegisterWorkflow(_ context.Context, def engine.WorkflowDefiniti
 	return nil
 }
 
+// RegisterHookActivity registers a typed hook activity with the Temporal engine.
+// Hook activities publish workflow-emitted hook events outside of deterministic
+// workflow code. The activity accepts *api.HookActivityInput and returns an error.
+func (e *Engine) RegisterHookActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.HookActivityInput) error) error {
+	wrapped := func(ctx context.Context, in *api.HookActivityInput) error {
+		return fn(e.injectWorkflowContextIntoActivity(ctx), in)
+	}
+	return e.registerActivityWithCtx(name, opts, wrapped)
+}
+
 // RegisterPlannerActivity registers a typed planner activity
 // (PlanStart/PlanResume) with the Temporal engine. It binds a Go function that
 // accepts *api.PlanActivityInput and returns *api.PlanActivityOutput to a

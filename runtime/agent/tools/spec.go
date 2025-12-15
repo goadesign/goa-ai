@@ -33,13 +33,13 @@ type (
 		Description string
 		// Tags carries optional metadata labels used by policy or UI layers.
 		Tags []string
-		// IsAgentTool indicates this tool is an agent-as-tool (inline execution).
-		// When true, the tool is executed by calling ExecuteAgentInline instead of
-		// scheduling a workflow activity. Set by codegen when processing Exports blocks.
+		// IsAgentTool indicates this tool is implemented by an agent (agent-as-tool).
+		// When true, the runtime executes the tool by starting the provider agent as a
+		// child workflow from within the parent workflow loop. Set by codegen when
+		// processing Exports blocks.
 		IsAgentTool bool
 		// AgentID is the fully qualified agent identifier (e.g., "service.agent_name").
-		// Only set when IsAgentTool is true. Used to look up the agent registration
-		// for inline execution.
+		// Only set when IsAgentTool is true.
 		AgentID string
 		// BoundedResult indicates that this tool's result is declared as a bounded
 		// view over a potentially larger data set. It is set via the BoundedResult

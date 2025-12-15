@@ -36,11 +36,9 @@ type (
 	AgentToolConfig struct {
 		// AgentID is the fully qualified identifier of the nested agent.
 		AgentID agent.Ident
-		// Route provides strong-contract routing metadata for cross-process inline
-		// execution. When set, the runtime uses this route (workflow + queue) and
-		// the provided activity names to orchestrate the nested agent. When empty,
-		// inline execution must rely on a locally registered agent; otherwise the
-		// runtime returns an error (no fallbacks).
+		// Route provides the routing metadata used to start the nested agent as a
+		// child workflow. Route must be set; agent-as-tool execution does not fall
+		// back to local agent registration.
 		Route AgentRoute
 		// PlanActivityName is the fully-qualified plan activity name for the nested agent.
 		PlanActivityName string
@@ -455,21 +453,21 @@ func (r *Runtime) buildAgentChildRequest(
 	}
 
 	// Decode payload for prompt/template rendering. Prefer tool codecs when
-	// specs are registered, otherwise fall back to generic JSON decoding.
+	// specs are registered; otherwise decode as generic JSON.
 	var promptPayload any
 	if len(call.Payload) > 0 {
 		if _, ok := r.ToolSpec(call.Name); ok {
-			if val, err := r.unmarshalToolValue(ctx, call.Name, call.Payload, true); err == nil {
-				promptPayload = val
+			val, err := r.unmarshalToolValue(ctx, call.Name, call.Payload, true)
+			if err != nil {
+				return nil, zeroCtx, fmt.Errorf("decode agent tool payload for %s: %w", call.Name, err)
 			}
-		}
-		if promptPayload == nil {
+			promptPayload = val
+		} else {
 			var generic any
-			if err := json.Unmarshal(call.Payload, &generic); err == nil {
-				promptPayload = generic
-			} else {
-				promptPayload = call.Payload
+			if err := json.Unmarshal(call.Payload, &generic); err != nil {
+				return nil, zeroCtx, fmt.Errorf("decode agent tool payload for %s: %w", call.Name, err)
 			}
+			promptPayload = generic
 		}
 	}
 

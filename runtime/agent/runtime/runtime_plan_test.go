@@ -38,9 +38,9 @@ func TestRunPlanActivityUsesOptions(t *testing.T) {
 	}
 	_, err := rt.runPlanActivity(wf, "calc.agent.plan", opts, PlanActivityInput{}, time.Time{})
 	require.NoError(t, err)
-	require.Equal(t, opts.Queue, wf.lastRequest.Queue)
-	require.Equal(t, opts.Timeout, wf.lastRequest.Timeout)
-	require.Equal(t, opts.RetryPolicy, wf.lastRequest.RetryPolicy)
+	require.Equal(t, opts.Queue, wf.lastPlannerCall.Options.Queue)
+	require.Equal(t, opts.Timeout, wf.lastPlannerCall.Options.Timeout)
+	require.Equal(t, opts.RetryPolicy, wf.lastPlannerCall.Options.RetryPolicy)
 }
 
 func TestPlanStartActivityInvokesPlanner(t *testing.T) {

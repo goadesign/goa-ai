@@ -751,6 +751,12 @@ Notes:
 The runtime publishes events to an internal bus (`hooks.Bus`). Default subscribers
 handle memory persistence and stream forwarding.
 
+**Determinism note:** When using a durable workflow engine (e.g., Temporal),
+workflow code must be deterministic and must not trigger external I/O. The
+runtime therefore routes workflow-emitted hook events through a dedicated hook
+activity (`runtime.publish_hook`), which publishes to the bus outside the
+workflow thread. Activities and other non-workflow code publish directly.
+
 **Event types:**
 
 | Event | When |
@@ -821,7 +827,7 @@ stream.DefaultProfile()
 // User chat view (default for most UIs)
 stream.UserChatProfile()
 
-// Debug view with child runs flattened
+// Debug view (all events; child runs linked)
 stream.AgentDebugProfile()
 
 // Metrics only (usage, workflow)
@@ -1153,6 +1159,7 @@ specs := rt.ToolSpecsForAgent(agent.Ident("service.chat"))
 ```go
 type Engine interface {
     RegisterWorkflow(ctx, def WorkflowDefinition) error
+    RegisterHookActivity(ctx, name, opts, fn) error
     RegisterPlannerActivity(ctx, name, opts, fn) error
     RegisterExecuteToolActivity(ctx, name, opts, fn) error
     StartWorkflow(ctx, req WorkflowStartRequest) (WorkflowHandle, error)
@@ -1170,9 +1177,15 @@ type WorkflowContext interface {
     WorkflowID() string
     RunID() string
     Now() time.Time  // Deterministic time
-    ExecuteActivity(ctx, req, result) error
-    ExecuteActivityAsync(ctx, req) (Future, error)
-    SignalChannel(name string) SignalChannel
+    PublishHook(ctx, call) error
+    ExecutePlannerActivity(ctx, call) (*api.PlanActivityOutput, error)
+    ExecuteToolActivity(ctx, call) (*api.ToolOutput, error)
+    ExecuteToolActivityAsync(ctx, call) (Future[*api.ToolOutput], error)
+    PauseRequests() Receiver[api.PauseRequest]
+    ResumeRequests() Receiver[api.ResumeRequest]
+    ClarificationAnswers() Receiver[api.ClarificationAnswer]
+    ExternalToolResults() Receiver[api.ToolResultsSet]
+    ConfirmationDecisions() Receiver[api.ConfirmationDecision]
     StartChildWorkflow(ctx, req) (ChildWorkflowHandle, error)
     SetQueryHandler(name, handler) error
 }
@@ -1312,7 +1325,7 @@ events for specific use cases.
 |---------|---------|-----------------|
 | `DefaultProfile()` | All events, child runs linked | All event types |
 | `UserChatProfile()` | End-user chat UIs | Same as default |
-| `AgentDebugProfile()` | Debug view with flattened child runs | All events, children flattened |
+| `AgentDebugProfile()` | Debug view | All event types |
 | `MetricsProfile()` | Telemetry and monitoring | `usage`, `workflow` only |
 
 ```go

@@ -3,6 +3,7 @@ package codegen
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -249,6 +250,9 @@ func GenerateExample(genpkg string, roots []eval.Root, files []*codegen.File) ([
 		if f := emitInternalBootstrap(svc, moduleBase); f != nil {
 			files = append(files, f)
 		}
+		if f := emitCmdMain(svc, moduleBase, files); f != nil {
+			files = append(files, f)
+		}
 		for _, ag := range svc.Agents {
 			if f := emitPlannerInternalStub(moduleBase, ag); f != nil {
 				files = append(files, f)
@@ -311,9 +315,11 @@ func agentFiles(agent *AgentData) []*codegen.File {
 	return filtered
 }
 
-// agentRouteRegisterFile emits Register<Agent>Route(ctx, rt) so caller processes
-// can register route-only metadata and enable ExecuteAgentInline across processes.
-// agentRouteRegisterFile removed: routes piggyback on toolset registration.
+// agentRouteRegisterFile emits Register<Agent>Route(ctx, rt) so caller processes can
+// register route-only metadata for cross-process composition.
+//
+// agentRouteRegisterFile removed: agent-tools embed strong-contract route metadata in
+// their generated toolset registrations, so no separate route registry is required.
 
 // agentPerToolsetSpecsFiles emits types/codecs/specs under specs/<toolset>/ using
 // short, tool-local type names to avoid collisions between toolsets.
@@ -508,16 +514,23 @@ func agentSpecsJSONFile(agent *AgentData) *codegen.File {
 		Schema json.RawMessage `json:"schema,omitempty"`
 	}
 
+	type confirmationSchema struct {
+		Title                string `json:"title,omitempty"`
+		PromptTemplate       string `json:"prompt_template"`
+		DeniedResultTemplate string `json:"denied_result_template"`
+	}
+
 	type toolSchema struct {
-		ID          string      `json:"id"`
-		Service     string      `json:"service"`
-		Toolset     string      `json:"toolset"`
-		Title       string      `json:"title,omitempty"`
-		Description string      `json:"description,omitempty"`
-		Tags        []string    `json:"tags,omitempty"`
-		Payload     *typeSchema `json:"payload,omitempty"`
-		Result      *typeSchema `json:"result,omitempty"`
-		Sidecar     *typeSchema `json:"sidecar,omitempty"`
+		ID           string              `json:"id"`
+		Service      string              `json:"service"`
+		Toolset      string              `json:"toolset"`
+		Title        string              `json:"title,omitempty"`
+		Description  string              `json:"description,omitempty"`
+		Tags         []string            `json:"tags,omitempty"`
+		Confirmation *confirmationSchema `json:"confirmation,omitempty"`
+		Payload      *typeSchema         `json:"payload,omitempty"`
+		Result       *typeSchema         `json:"result,omitempty"`
+		Sidecar      *typeSchema         `json:"sidecar,omitempty"`
 	}
 
 	out := struct {
@@ -574,6 +587,14 @@ func agentSpecsJSONFile(agent *AgentData) *codegen.File {
 			entry.Sidecar = &ts
 		}
 
+		if c := t.Confirmation; c != nil {
+			entry.Confirmation = &confirmationSchema{
+				Title:                c.Title,
+				PromptTemplate:       c.PromptTemplate,
+				DeniedResultTemplate: c.DeniedResultTemplate,
+			}
+		}
+
 		out.Tools = append(out.Tools, entry)
 	}
 
@@ -591,7 +612,8 @@ func agentSpecsJSONFile(agent *AgentData) *codegen.File {
 	sections := []*codegen.SectionTemplate{
 		{
 			Name:   "tool-schemas-json",
-			Source: string(payload),
+			Source: "{{ . }}",
+			Data:   string(payload),
 		},
 	}
 	path := filepath.Join(agent.Dir, "specs", "tool_schemas.json")
@@ -1611,6 +1633,7 @@ func emitPlannerInternalStub(_ string, ag *AgentData) *codegen.File {
 	}
 	imports := []*codegen.ImportSpec{
 		{Path: "context"},
+		{Path: "goa.design/goa-ai/runtime/agent/model", Name: "model"},
 		{Path: "goa.design/goa-ai/runtime/agent/planner"},
 	}
 	sections := []*codegen.SectionTemplate{
@@ -1701,4 +1724,65 @@ func quickstartReadmeFile(data *GeneratorData) *codegen.File {
 		},
 	}
 	return &codegen.File{Path: "AGENTS_QUICKSTART.md", SectionTemplates: sections}
+}
+
+// emitCmdMain patches cmd/<service>/main.go for agent-only designs.
+// If goa core generated a main.go file (found in files), it replaces the sections
+// with agent-specific content that uses the generated bootstrap. If no main.go
+// exists in files, it creates a new one.
+func emitCmdMain(svc *ServiceAgentsData, moduleBase string, files []*codegen.File) *codegen.File {
+	if svc == nil || len(svc.Agents) == 0 {
+		return nil
+	}
+	mainPath := filepath.Join("cmd", svc.Service.PathName, "main.go")
+
+	// Find existing main.go from files (goa core may have generated it)
+	var file *codegen.File
+	for _, f := range files {
+		if f.Path == mainPath {
+			file = f
+			break
+		}
+	}
+
+	// Build imports for agent main
+	imports := []*codegen.ImportSpec{
+		{Path: "context"},
+		{Path: "fmt"},
+		{Path: "log"},
+		{Path: filepath.ToSlash(filepath.Join(moduleBase, "internal", "agents", "bootstrap"))},
+		{Path: "goa.design/goa-ai/runtime/agent/model", Name: "model"},
+	}
+	for _, ag := range svc.Agents {
+		imports = append(imports, &codegen.ImportSpec{Path: ag.ImportPath, Name: ag.PackageName})
+	}
+
+	agentSection := &codegen.SectionTemplate{
+		Name:    "cmd-main",
+		Source:  agentsTemplates.Read(cmdMainT),
+		Data:    struct{ Agents []*AgentData }{Agents: svc.Agents},
+		FuncMap: templateFuncMap(),
+	}
+
+	if file != nil {
+		// Replace the existing file's sections with agent-specific content
+		file.SectionTemplates = []*codegen.SectionTemplate{
+			codegen.Header("Example main for "+svc.Service.Name, "main", imports),
+			agentSection,
+		}
+		return nil // Already in files, no need to return a new file
+	}
+
+	// No existing file - check filesystem and create new if needed
+	if _, err := os.Stat(mainPath); !os.IsNotExist(err) {
+		return nil // file already exists on disk, skip it
+	}
+
+	return &codegen.File{
+		Path: mainPath,
+		SectionTemplates: []*codegen.SectionTemplate{
+			codegen.Header("Example main for "+svc.Service.Name, "main", imports),
+			agentSection,
+		},
+	}
 }

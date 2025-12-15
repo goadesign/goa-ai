@@ -393,6 +393,17 @@ type (
 		RegistryClientAlias string
 	}
 
+	// ToolConfirmationData captures design-time confirmation requirements for a tool.
+	ToolConfirmationData struct {
+		// Title is an optional UI title shown when prompting for confirmation.
+		Title string
+		// PromptTemplate is a Go text/template rendered with the tool payload.
+		PromptTemplate string
+		// DeniedResultTemplate is a Go text/template rendered with the tool payload.
+		// The template must render valid JSON for the tool result type.
+		DeniedResultTemplate string
+	}
+
 	// ToolData captures metadata about an individual tool, including its DSL
 	// declaration, type information, and code generation directives. Tools are
 	// the atomic units of agent capability, representing functions that can be
@@ -529,6 +540,9 @@ type (
 		// conversation after the tool result is returned. It provides backstage
 		// guidance to the model about how to interpret or present the result.
 		ResultReminder string
+
+		// Confirmation configures design-time confirmation requirements for this tool.
+		Confirmation *ToolConfirmationData
 
 		// PassthroughService is the Goa service name for deterministic forwarding
 		// when this tool is part of an exported toolset.
@@ -1262,6 +1276,13 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		InjectedFields:     expr.InjectedFields,
 		BoundedResult:      expr.BoundedResult,
 		ResultReminder:     expr.ResultReminder,
+	}
+	if expr.Confirmation != nil {
+		tool.Confirmation = &ToolConfirmationData{
+			Title:                expr.Confirmation.Title,
+			PromptTemplate:       expr.Confirmation.PromptTemplate,
+			DeniedResultTemplate: expr.Confirmation.DeniedResultTemplate,
+		}
 	}
 	if expr.ExportPassthrough != nil {
 		tool.PassthroughService = expr.ExportPassthrough.TargetService

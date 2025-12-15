@@ -60,154 +60,73 @@ var _ = Service("orchestrator", func() {
 })
 ```
 
-## 3) Generate code
+## 3) Generate code and example
 
-```
+```bash
 goa gen example.com/quickstart/design
 goa example example.com/quickstart/design
 ```
 
-This creates the generated tree under `gen/` and runnable examples under `cmd/orchestrator`.
+This creates:
+- **`gen/`** - Generated code (never edit by hand)
+- **`cmd/orchestrator/main.go`** - Runnable example using the bootstrap
+- **`internal/agents/bootstrap/bootstrap.go`** - Wires runtime and registers agents
+- **`internal/agents/chat/planner/planner.go`** - Stub planner (edit to connect your LLM)
 
-## 4) Add the tiniest planner + runner (cmd/demo/main.go)
+## 4) Run the generated example
 
-This wires the runtime and runs a single turn. By default, the runtime uses an
-in-memory engine so you can run without Temporal during development.
-
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-
-    chat "example.com/quickstart/gen/orchestrator/agents/chat"
-    "goa.design/goa-ai/runtime/agent/model"
-    "goa.design/goa-ai/runtime/agent/planner"
-    "goa.design/goa-ai/runtime/agent/runtime"
-)
-
-// A tiny planner: always replies, no tools (great for first run)
-type StubPlanner struct{}
-
-func (p *StubPlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
-    return &planner.PlanResult{
-        FinalResponse: &planner.FinalResponse{
-            Message: &model.Message{
-                Role:  model.ConversationRoleAssistant,
-                Parts: []model.Part{model.TextPart{Text: "Hello from Goa‑AI!"}},
-            },
-        },
-    }, nil
-}
-
-func (p *StubPlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
-    return &planner.PlanResult{
-        FinalResponse: &planner.FinalResponse{
-            Message: &model.Message{
-                Role:  model.ConversationRoleAssistant,
-                Parts: []model.Part{model.TextPart{Text: "Done."}},
-            },
-        },
-    }, nil
-}
-
-func main() {
-    // 1) Runtime (uses in-memory engine by default)
-    rt := runtime.New()
-
-    // 2) Register generated agent with our planner
-    if err := chat.RegisterChatAgent(context.Background(), rt, chat.ChatAgentConfig{Planner: &StubPlanner{}}); err != nil {
-        panic(err)
-    }
-
-    // 3) Run it using the generated typed client
-    client := chat.NewClient(rt)
-    out, err := client.Run(
-        context.Background(),
-        "session-1",
-        []*model.Message{
-            {
-                Role:  model.ConversationRoleUser,
-                Parts: []model.Part{model.TextPart{Text: "Say hi"}},
-            },
-        },
-    )
-    if err != nil {
-        panic(err)
-    }
-    fmt.Println("RunID:", out.RunID)
-    if out.Final != nil && len(out.Final.Parts) > 0 {
-        if tp, ok := out.Final.Parts[0].(model.TextPart); ok {
-            fmt.Println("Assistant:", tp.Text)
-        }
-    }
-}
+```bash
+go run ./cmd/orchestrator
 ```
 
-## 5) (Optional) Start Temporal dev (one‑liner)
+Expected output:
 
 ```
+RunID: orchestrator-chat-...
+Assistant: Hello from example planner.
+```
+
+The generated example uses the in-memory engine, so no Temporal is needed for development.
+
+## 5) (Optional) Connect to Temporal for production
+
+For production, start Temporal and configure the runtime:
+
+```bash
+# Start Temporal dev server
 docker run --rm -d --name temporal-dev -p 7233:7233 temporalio/auto-setup:latest
 ```
 
-Alternatively, install Temporalite or point the client to an existing cluster.
-
-To use Temporal instead of the in-memory engine, construct the engine and pass
-it to `runtime.New(runtime.Options{Engine: eng})`. The rest of the code remains
-identical.
-
-### Tool-based aggregation example
-
-Agent-as-tool composition often needs to collapse multiple child tool results into a single parent tool_result. The runtime now exposes `ToolResultFinalizer` plus a reusable payload helper so you can implement this pattern without bespoke glue:
+Then modify the bootstrap to use the Temporal engine:
 
 ```go
-import (
-    "goa.design/goa-ai/runtime/agent/runtime"
-    "goa.design/goa-ai/runtime/agent/tools"
-)
+import "goa.design/goa-ai/runtime/agent/engine/temporal"
 
-allowlist := map[tools.Ident]struct{}{
-    tools.Ident("atlas.read.get_device_snapshot"): {},
-    tools.Ident("atlas.read.get_time_series"):     {},
+eng, _ := temporal.New(temporal.Options{...})
+rt := agentsruntime.New(agentsruntime.WithEngine(eng))
+```
+
+## 6) Customize the planner
+
+Edit `internal/agents/chat/planner/planner.go` to connect your LLM:
+
+```go
+func (p *examplePlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
+    // 1. Get LLM client from runtime
+    // mc, _ := in.Agent.ModelClient("openai")
+    
+    // 2. Build prompt from in.Messages
+    
+    // 3. Decide: call tools or give final response
+    return &planner.PlanResult{
+        FinalResponse: &planner.FinalResponse{
+            Message: &model.Message{
+                Role:  model.ConversationRoleAssistant,
+                Parts: []model.Part{model.TextPart{Text: "Your response here"}},
+            },
+        },
+    }, nil
 }
-
-finalizer := runtime.ToolResultFinalizer(
-    tools.Ident("ada.aggregate.finalize_result"),
-    func(ctx context.Context, in runtime.FinalizerInput) (any, error) {
-        summary := runtime.BuildAggregationSummary(in)
-        // Optionally prune children by tool name / status before sending to the tool
-        filtered := summary.Children[:0]
-        for _, child := range summary.Children {
-            if _, ok := allowlist[child.Tool]; ok {
-                filtered = append(filtered, child)
-            }
-        }
-        summary.Children = filtered
-        return summary, nil
-    },
-)
-
-reg := runtime.NewAgentToolsetRegistration(rt, runtime.AgentToolConfig{
-    AgentID:  agentID,
-    Finalizer: finalizer,
-    JSONOnly: true,
-})
-```
-
-The finalizer uses the runtime-provided `ToolInvoker` under the hood, so the aggregation tool executes deterministically via the same `execute_tool` activity pipeline as any other service-backed tool.
-
-## 6) Run the demo
-
-```
-go run ./cmd/demo
-```
-
-Expected output (similar):
-
-```
-RunID: orchestrator.chat-...
-Assistant: Hello from Goa‑AI!
 ```
 
 ## (Optional) HTTP / JSON‑RPC server

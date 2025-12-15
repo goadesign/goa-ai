@@ -2,18 +2,14 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/interrupt"
-	"goa.design/goa-ai/runtime/agent/memory"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -35,12 +31,12 @@ const (
 
 type (
 	// futureInfo bundles a Future with its associated tool call metadata for parallel execution.
-	// When tools are launched asynchronously via ExecuteActivityAsync, we need to track the
+	// When tools are launched asynchronously via ExecuteToolActivityAsync, we need to track the
 	// future handle alongside the original call details and start time so we can correlate
 	// results and measure duration when collecting completed activities.
 	futureInfo struct {
-		// future is the engine Future returned by ExecuteActivityAsync for this tool call.
-		future engine.Future
+		// future is the typed engine Future for this tool call.
+		future engine.Future[*ToolOutput]
 		// call is the original tool request that was submitted for execution.
 		call planner.ToolRequest
 		// startTime records when the activity was scheduled, used to calculate tool duration.
@@ -67,11 +63,6 @@ type (
 	// (agent-as-tool pattern). As the planner discovers new child tools across iterations,
 	// the tracker maintains the unique set of discovered IDs and triggers update events
 	// when the count increases. This enables UI progress tracking ("3 of 5 complete").
-	//
-	// NOTE: This infrastructure is currently unused and reserved for future implementation
-	// of nested agent-as-tool workflows where tools run their own internal planning loops
-	// and dynamically discover child tools across multiple iterations. The struct and
-	// methods are defined now to support future codegen and maintain API stability.
 	childTracker struct {
 		// parentToolCallID identifies the parent tool (usually an agent-as-tool invocation).
 		parentToolCallID string
@@ -115,15 +106,6 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	}
 	r.logger.Info(wfCtx.Context(), "Agent found, executing plan activity", "agent_id", input.AgentID)
 	ctrl := interrupt.NewController(wfCtx)
-	reader := r.memoryReader(wfCtx.Context(), string(input.AgentID), input.RunID)
-	agentCtx := newAgentContext(agentContextOptions{
-		runtime: r,
-		agentID: input.AgentID,
-		runID:   input.RunID,
-		memory:  reader,
-		turnID:  input.TurnID,
-		cache:   reg.Policy.Cache,
-	})
 	runCtx := run.Context{
 		RunID:            input.RunID,
 		SessionID:        input.SessionID,
@@ -149,7 +131,6 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, run.PhasePrompted),
 		turnID,
 	)
-	r.recordRunStatus(wfCtx.Context(), input, run.StatusRunning, nil)
 	// Track final run outcome for RunCompletedEvent so streaming and observability
 	// see accurate success/failed/canceled status instead of always "success".
 	const (
@@ -194,8 +175,6 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	planInput := &planner.PlanInput{
 		Messages:   input.Messages,
 		RunContext: runCtx,
-		Agent:      agentCtx,
-		Events:     newPlannerEvents(r, input.AgentID, input.RunID, input.SessionID),
 	}
 	// Compute deadlines before the initial Plan so it cannot outlive the run window.
 	var (
@@ -271,18 +250,12 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		} else {
 			finalStatus = runStatusFailed
 		}
-		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{
-			"error": err.Error(),
-		})
 		return nil, err
 	}
 	if firstOutput == nil || firstOutput.Result == nil {
 		r.logger.Error(wfCtx.Context(), "Plan activity returned nil result")
 		finalErr = fmt.Errorf("CRITICAL: Plan activity returned nil PlanResult")
 		finalStatus = runStatusFailed
-		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{
-			"error": "CRITICAL: Plan activity returned nil PlanResult",
-		})
 		return nil, finalErr
 	}
 	result := firstOutput.Result
@@ -291,9 +264,6 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	if len(result.ToolCalls) == 0 && result.FinalResponse == nil && result.Await == nil {
 		finalErr = fmt.Errorf("CRITICAL: PlanResult has no ToolCalls, FinalResponse, or Await - this should never happen")
 		finalStatus = runStatusFailed
-		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{
-			"error": "CRITICAL: PlanResult has no ToolCalls, FinalResponse, or Await",
-		})
 		return nil, finalErr
 	}
 	// CRITICAL: If ToolCalls is empty but planner returned them, serialization may have failed
@@ -333,6 +303,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		planInput,
 		firstOutput.Result,
 		firstOutput.Transcript,
+		firstOutput.Usage,
 		caps,
 		hardDeadline,
 		nextAttempt,
@@ -348,15 +319,11 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		} else {
 			finalStatus = runStatusFailed
 		}
-		r.recordRunStatus(wfCtx.Context(), input, run.StatusFailed, map[string]any{
-			"error": err.Error(),
-		})
 		return nil, err
 	}
 	// Successful completion.
 	finalStatus = runStatusSuccess
 	finalErr = nil
-	r.recordRunStatus(wfCtx.Context(), input, run.StatusCompleted, nil)
 	return out, nil
 }
 
@@ -369,6 +336,7 @@ func (r *Runtime) runLoop(
 	base *planner.PlanInput,
 	initialResult *planner.PlanResult,
 	initialTranscript []*model.Message,
+	initialUsage model.TokenUsage,
 	caps policy.CapsState,
 	deadline time.Time,
 	nextAttempt int,
@@ -384,14 +352,7 @@ func (r *Runtime) runLoop(
 	if r.logger == nil {
 		r.logger = telemetry.NoopLogger{}
 	}
-	// Aggregate usage during the run via a temporary subscriber.
-	var aggUsage model.TokenUsage
-	usageSub := r.registerUsageAggregator(ctx, input.RunID, string(input.AgentID), &aggUsage)
-	if usageSub != nil {
-		defer func() {
-			_ = usageSub.Close()
-		}()
-	}
+	aggUsage := initialUsage
 	if initialResult == nil {
 		return nil, fmt.Errorf("CRITICAL: runLoop initial PlanResult is nil")
 	}
@@ -404,16 +365,18 @@ func (r *Runtime) runLoop(
 	// Initialize provider transcript ledger for this run/turn.
 	led := transcript.FromModelMessages(turnTranscript)
 	// Expose provider-ready messages via a workflow query for external rehydration.
-	_ = wfCtx.SetQueryHandler("ledger_messages", func() ([]*model.Message, error) {
+	if err := wfCtx.SetQueryHandler("ledger_messages", func() ([]*model.Message, error) {
 		return led.BuildMessages(), nil
-	})
+	}); err != nil {
+		return nil, err
+	}
 	// Derive per-run overrides for Resume and Tools.
 	resumeOpts := reg.ResumeActivityOptions
-	if input != nil && input.Policy != nil && input.Policy.PlanTimeout > 0 {
+	if input.Policy != nil && input.Policy.PlanTimeout > 0 {
 		resumeOpts.Timeout = input.Policy.PlanTimeout
 	}
 	toolOpts := reg.ExecuteToolActivityOptions
-	if input != nil && input.Policy != nil && input.Policy.ToolTimeout > 0 {
+	if input.Policy != nil && input.Policy.ToolTimeout > 0 {
 		toolOpts.Timeout = input.Policy.ToolTimeout
 	}
 	if toolOpts.Timeout == 0 {
@@ -431,21 +394,21 @@ func (r *Runtime) runLoop(
 			now := wfCtx.Now()
 			remaining := deadline.Sub(now)
 			if finalizerGrace > 0 && remaining <= finalizerGrace {
-				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
+				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
 			}
 			if finalizerGrace == 0 && remaining <= minActivityTimeout {
 				// No configured grace; avoid scheduling work that cannot complete meaningfully.
-				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
+				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
 			}
 			if remaining <= 0 {
 				// Time budget fully exhausted (including grace): try to finalize.
 				// This may still race with engine TTLs, but provides a best-effort reply.
-				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
+				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
 			}
 		}
 		if !deadline.IsZero() && wfCtx.Now().After(deadline) {
 			// Redundant guard; kept for clarity with prior semantics.
-			return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
+			return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
 		}
 		// Handle Await: publish await event, pause and wait for external input.
 		if result.Await != nil {
@@ -463,7 +426,7 @@ func (r *Runtime) runLoop(
 				c := result.Await.Clarification
 				r.publishHook(ctx, hooks.NewAwaitClarificationEvent(
 					base.RunContext.RunID,
-					base.Agent.ID(),
+					input.AgentID,
 					base.RunContext.SessionID,
 					c.ID,
 					c.Question,
@@ -483,7 +446,7 @@ func (r *Runtime) runLoop(
 				}
 				r.publishHook(ctx, hooks.NewAwaitExternalToolsEvent(
 					base.RunContext.RunID,
-					base.Agent.ID(),
+					input.AgentID,
 					base.RunContext.SessionID,
 					e.ID,
 					items,
@@ -491,7 +454,7 @@ func (r *Runtime) runLoop(
 			}
 			r.publishHook(ctx, hooks.NewRunPausedEvent(
 				base.RunContext.RunID,
-				base.Agent.ID(),
+				input.AgentID,
 				base.RunContext.SessionID,
 				reason,
 				"runtime",
@@ -515,15 +478,12 @@ func (r *Runtime) runLoop(
 						Parts: []model.Part{model.TextPart{Text: ans.Answer}},
 					})
 				}
-				// Set running and emit resumed
-				r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{
-					"resumed_by": "clarification",
-				})
+				// Emit resumed and continue planning.
 				r.publishHook(
 					ctx,
 					hooks.NewRunResumedEvent(
 						base.RunContext.RunID,
-						base.Agent.ID(),
+						input.AgentID,
 						base.RunContext.SessionID,
 						"clarification_provided",
 						ans.RunID,
@@ -537,7 +497,7 @@ func (r *Runtime) runLoop(
 				resumeCtx.Attempt = nextAttempt
 				nextAttempt++
 				resumeReq := PlanActivityInput{
-					AgentID:     base.Agent.ID(),
+					AgentID:     input.AgentID,
 					RunID:       base.RunContext.RunID,
 					Messages:    base.Messages,
 					RunContext:  resumeCtx,
@@ -551,6 +511,7 @@ func (r *Runtime) runLoop(
 				if resOutput == nil || resOutput.Result == nil {
 					return nil, fmt.Errorf("plan resume activity returned nil result after clarification")
 				}
+				aggUsage = addTokenUsage(aggUsage, resOutput.Usage)
 				result = resOutput.Result
 				turnTranscript = resOutput.Transcript
 				led = transcript.FromModelMessages(turnTranscript)
@@ -613,6 +574,12 @@ func (r *Runtime) runLoop(
 							tr.Name,
 						)
 					}
+					if _, ok := expectedIDs[tr.ToolCallID]; !ok {
+						return nil, fmt.Errorf(
+							"await_external_tools: unexpected tool result for tool_call_id %q",
+							tr.ToolCallID,
+						)
+					}
 					if _, dup := seen[tr.ToolCallID]; dup {
 						return nil, fmt.Errorf(
 							"await_external_tools: duplicate result for tool_call_id %q",
@@ -628,35 +595,40 @@ func (r *Runtime) runLoop(
 						len(seen),
 					)
 				}
-				for id := range seen {
-					if _, ok := expectedIDs[id]; !ok {
-						return nil, fmt.Errorf(
-							"await_external_tools: unexpected tool result for tool_call_id %q",
-							id,
-						)
-					}
-				}
 
 				// Feed results into next PlanResume turn directly and record them
 				// in the transcript so the provider sees a canonical tool_use →
 				// tool_result handshake, consistent with internal tools.
 				lastToolResults = rs.Results
+				for _, tr := range lastToolResults {
+					if tr == nil {
+						continue
+					}
+					if spec, ok := r.toolSpec(tr.Name); ok && spec.BoundedResult && tr.Error == nil && tr.Bounds == nil {
+						b := deriveBounds(tr.Result)
+						if b == nil {
+							return nil, fmt.Errorf(
+								"bounded tool %q external result missing bounds (tool_call_id=%s, type=%T)",
+								tr.Name,
+								tr.ToolCallID,
+								tr.Result,
+							)
+						}
+						tr.Bounds = b
+					}
+				}
 				aggregatedToolResults = append(
 					aggregatedToolResults,
 					cloneToolResults(rs.Results)...,
 				)
-				r.appendUserToolResults(ctx, base, awaitCalls, lastToolResults, led)
+				r.appendUserToolResults(base, awaitCalls, lastToolResults, led)
 
-				// Set running and emit resumed
-				r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{
-					"resumed_by": "tool_results",
-					"results":    len(lastToolResults),
-				})
+				// Emit resumed and continue planning.
 				r.publishHook(
 					ctx,
 					hooks.NewRunResumedEvent(
 						base.RunContext.RunID,
-						base.Agent.ID(),
+						input.AgentID,
 						base.RunContext.SessionID,
 						"tool_results_provided",
 						input.RunID,
@@ -667,7 +639,7 @@ func (r *Runtime) runLoop(
 				)
 
 				// Advance to PlanResume immediately without executing internal tools.
-				resumeReq, err2 := r.buildNextResumeRequest(base, lastToolResults, &nextAttempt)
+				resumeReq, err2 := r.buildNextResumeRequest(input.AgentID, base, lastToolResults, &nextAttempt)
 				if err2 != nil {
 					return nil, err2
 				}
@@ -684,6 +656,7 @@ func (r *Runtime) runLoop(
 				if resOutput == nil || resOutput.Result == nil {
 					return nil, fmt.Errorf("plan resume activity returned nil result after tool results")
 				}
+				aggUsage = addTokenUsage(aggUsage, resOutput.Usage)
 				result = resOutput.Result
 				turnTranscript = resOutput.Transcript
 				led = transcript.FromModelMessages(turnTranscript)
@@ -711,7 +684,7 @@ func (r *Runtime) runLoop(
 					ctx,
 					hooks.NewAssistantMessageEvent(
 						base.RunContext.RunID,
-						base.Agent.ID(),
+						input.AgentID,
 						base.RunContext.SessionID,
 						agentMessageText(finalMsg),
 						nil,
@@ -724,7 +697,7 @@ func (r *Runtime) runLoop(
 					ctx,
 					hooks.NewPlannerNoteEvent(
 						base.RunContext.RunID,
-						base.Agent.ID(),
+						input.AgentID,
 						base.RunContext.SessionID,
 						note.Text,
 						note.Labels,
@@ -737,7 +710,7 @@ func (r *Runtime) runLoop(
 				notes[i] = &result.Notes[i]
 			}
 			return &RunOutput{
-				AgentID:    base.Agent.ID(),
+				AgentID:    input.AgentID,
 				RunID:      base.RunContext.RunID,
 				Final:      finalMsg,
 				ToolEvents: aggregatedToolResults,
@@ -748,7 +721,7 @@ func (r *Runtime) runLoop(
 
 		if caps.RemainingToolCalls == 0 && caps.MaxToolCalls > 0 {
 			// Tool cap exhausted: request a final tool-free response from the planner.
-			return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, turnID, planner.TerminationReasonToolCap, deadline)
+			return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonToolCap, deadline)
 		}
 		if !deadline.IsZero() && wfCtx.Now().After(deadline) {
 			// Time budget exceeded after evaluating caps/policy
@@ -758,6 +731,7 @@ func (r *Runtime) runLoop(
 				input,
 				base,
 				aggregatedToolResults,
+				aggUsage,
 				nextAttempt,
 				turnID,
 				planner.TerminationReasonTimeBudget,
@@ -784,11 +758,14 @@ func (r *Runtime) runLoop(
 		if parentTracker != nil {
 			ids := collectToolCallIDs(allowed)
 			if len(ids) > 0 && parentTracker.registerDiscovered(ids) {
+				if base.RunContext.ParentRunID == "" || base.RunContext.ParentAgentID == "" {
+					return nil, fmt.Errorf("nested run is missing parent run context")
+				}
 				r.publishHook(
 					ctx,
 					hooks.NewToolCallUpdatedEvent(
-						base.RunContext.RunID,
-						base.Agent.ID(),
+						base.RunContext.ParentRunID,
+						base.RunContext.ParentAgentID,
 						base.RunContext.SessionID,
 						parentTracker.parentToolCallID,
 						parentTracker.currentTotal(),
@@ -800,7 +777,7 @@ func (r *Runtime) runLoop(
 		}
 		// Enforce per-turn and remaining caps and stamp metadata.
 		allowed = r.capAllowedCalls(allowed, input, caps)
-		allowed = r.prepareAllowedCallsMetadata(base, allowed, parentTracker)
+		allowed = r.prepareAllowedCallsMetadata(input.AgentID, base, allowed, parentTracker)
 
 		toExecute, deniedResults, cerr := r.confirmToolsIfNeeded(wfCtx, input, base, allowed, turnID, ctrl)
 		if cerr != nil {
@@ -814,7 +791,7 @@ func (r *Runtime) runLoop(
 		// Group calls by timeout and execute.
 		grouped, timeouts := r.groupToolCallsByTimeout(toExecute, input, toolOpts.Timeout)
 		vals, err := r.executeGroupedToolCalls(
-			wfCtx, reg, base, result.ExpectedChildren, turnID, parentTracker, deadline,
+			wfCtx, reg, input.AgentID, base, result.ExpectedChildren, turnID, parentTracker, deadline,
 			grouped, timeouts, toolOpts,
 		)
 		if err != nil {
@@ -832,21 +809,21 @@ func (r *Runtime) runLoop(
 		caps.RemainingToolCalls = decrementCap(caps.RemainingToolCalls, len(allowed))
 		// Append user tool_result message and update ledger in the same order as
 		// the assistant tool_use declarations for this turn.
-		r.appendUserToolResults(ctx, base, allowed, vals, led)
+		r.appendUserToolResults(base, allowed, vals, led)
 		if failures(vals) > 0 {
 			caps.RemainingConsecutiveFailedToolCalls = decrementCap(
 				caps.RemainingConsecutiveFailedToolCalls, failures(vals),
 			)
 			if caps.MaxConsecutiveFailedToolCalls > 0 && caps.RemainingConsecutiveFailedToolCalls <= 0 {
 				// Consecutive failure cap exhausted: request finalization.
-				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, turnID, planner.TerminationReasonFailureCap, deadline)
+				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonFailureCap, deadline)
 			}
 		} else if caps.MaxConsecutiveFailedToolCalls > 0 {
 			caps.RemainingConsecutiveFailedToolCalls = caps.MaxConsecutiveFailedToolCalls
 		}
 
 		// Apply missing-fields policy if configured. The helper may finalize or pause/resume.
-		if out, err := r.handleMissingFieldsPolicy(wfCtx, reg, input, base, vals, aggregatedToolResults, &nextAttempt, turnID, ctrl); err != nil {
+		if out, err := r.handleMissingFieldsPolicy(wfCtx, reg, input, base, vals, aggregatedToolResults, aggUsage, &nextAttempt, turnID, ctrl); err != nil {
 			return nil, err
 		} else if out != nil {
 			return out, nil
@@ -855,11 +832,11 @@ func (r *Runtime) runLoop(
 		// Hard protection: If this turn executed agent-as-tool calls
 		// and they produced zero child tool calls in total, do not
 		// resume. Finalize immediately to avoid loops.
-		if r.hardProtectionIfNeeded(ctx, base, vals, turnID) {
-			return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, nextAttempt, turnID, planner.TerminationReasonFailureCap, deadline)
+		if r.hardProtectionIfNeeded(ctx, input.AgentID, base, vals, turnID) {
+			return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonFailureCap, deadline)
 		}
 
-		resumeReq, rerr := r.buildNextResumeRequest(base, lastToolResults, &nextAttempt)
+		resumeReq, rerr := r.buildNextResumeRequest(input.AgentID, base, lastToolResults, &nextAttempt)
 		if rerr != nil {
 			return nil, rerr
 		}
@@ -870,6 +847,7 @@ func (r *Runtime) runLoop(
 		if resOutput == nil || resOutput.Result == nil {
 			return nil, fmt.Errorf("plan activity returned nil result on resume")
 		}
+		aggUsage = addTokenUsage(aggUsage, resOutput.Usage)
 		result = resOutput.Result
 		turnTranscript = resOutput.Transcript
 		led = transcript.FromModelMessages(turnTranscript)
@@ -898,6 +876,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 	base *planner.PlanInput,
 	results []*planner.ToolResult,
 	allResults []*planner.ToolResult,
+	aggUsage model.TokenUsage,
 	nextAttempt *int,
 	turnID string,
 	ctrl *interrupt.Controller,
@@ -928,7 +907,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 	}
 	switch reg.Policy.OnMissingFields {
 	case MissingFieldsFinalize:
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, allResults, *nextAttempt, turnID, planner.TerminationReasonFailureCap, time.Time{})
+		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, allResults, aggUsage, *nextAttempt, turnID, planner.TerminationReasonFailureCap, time.Time{})
 		return out, err
 	case MissingFieldsAwaitClarification:
 		// Generate deterministic await ID for correlation safety.
@@ -939,7 +918,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 		}
 		r.publishHook(ctx, hooks.NewAwaitClarificationEvent(
 			base.RunContext.RunID,
-			base.Agent.ID(),
+			input.AgentID,
 			base.RunContext.SessionID,
 			awaitID,
 			mf.ClarifyingQuestion,
@@ -951,7 +930,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 			ctx,
 			hooks.NewRunPausedEvent(
 				base.RunContext.RunID,
-				base.Agent.ID(),
+				input.AgentID,
 				base.RunContext.SessionID,
 				"await_clarification",
 				"runtime",
@@ -974,12 +953,9 @@ func (r *Runtime) handleMissingFieldsPolicy(
 				Parts: []model.Part{model.TextPart{Text: ans.Answer}},
 			})
 		}
-		r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{
-			"resumed_by": "clarification",
-		})
 		r.publishHook(ctx, hooks.NewRunResumedEvent(
 			base.RunContext.RunID,
-			base.Agent.ID(),
+			input.AgentID,
 			base.RunContext.SessionID,
 			"clarification_provided",
 			input.RunID,
@@ -1001,6 +977,7 @@ func (r *Runtime) finalizeWithPlanner(
 	input *RunInput,
 	base *planner.PlanInput,
 	allToolResults []*planner.ToolResult,
+	aggUsage model.TokenUsage,
 	nextAttempt int,
 	turnID string,
 	reason planner.TerminationReason,
@@ -1016,7 +993,7 @@ func (r *Runtime) finalizeWithPlanner(
 		ctx,
 		hooks.NewRunPhaseChangedEvent(
 			base.RunContext.RunID,
-			base.Agent.ID(),
+			input.AgentID,
 			base.RunContext.SessionID,
 			run.PhaseSynthesizing,
 		),
@@ -1046,7 +1023,7 @@ func (r *Runtime) finalizeWithPlanner(
 	// Signal zero remaining duration for any prompt engineering that uses MaxDuration
 	resumeCtx.MaxDuration = "0s"
 	req := PlanActivityInput{
-		AgentID:     base.Agent.ID(),
+		AgentID:     input.AgentID,
 		RunID:       base.RunContext.RunID,
 		Messages:    messages,
 		RunContext:  resumeCtx,
@@ -1058,7 +1035,7 @@ func (r *Runtime) finalizeWithPlanner(
 		ctx,
 		hooks.NewRunPausedEvent(
 			base.RunContext.RunID,
-			base.Agent.ID(),
+			input.AgentID,
 			base.RunContext.SessionID,
 			"finalize",
 			"runtime",
@@ -1067,13 +1044,11 @@ func (r *Runtime) finalizeWithPlanner(
 		),
 		turnID,
 	)
-	r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{"resumed_by": "finalize"})
-	// Use base.RunContext.RunID for resilience when input is nil.
 	r.publishHook(
 		ctx,
 		hooks.NewRunResumedEvent(
 			base.RunContext.RunID,
-			base.Agent.ID(),
+			input.AgentID,
 			base.RunContext.SessionID,
 			"finalize",
 			base.RunContext.RunID,
@@ -1099,7 +1074,7 @@ func (r *Runtime) finalizeWithPlanner(
 
 	// Apply run-level Plan timeout override to Resume if present.
 	resumeOpts := reg.ResumeActivityOptions
-	if input != nil && input.Policy != nil && input.Policy.PlanTimeout > 0 {
+	if input.Policy != nil && input.Policy.PlanTimeout > 0 {
 		resumeOpts.Timeout = input.Policy.PlanTimeout
 	}
 	output, err := r.runPlanActivity(wfCtx, reg.ResumeActivityName, resumeOpts, req, hardDeadline)
@@ -1110,6 +1085,7 @@ func (r *Runtime) finalizeWithPlanner(
 	if output == nil || output.Result == nil || output.Result.FinalResponse == nil {
 		return nil, fmt.Errorf("%s", reasonText)
 	}
+	aggUsage = addTokenUsage(aggUsage, output.Usage)
 	finalMsg := output.Result.FinalResponse.Message
 	if output.Result.Streamed && agentMessageText(finalMsg) == "" {
 		if text := transcriptText(output.Transcript); text != "" {
@@ -1121,7 +1097,7 @@ func (r *Runtime) finalizeWithPlanner(
 			ctx,
 			hooks.NewAssistantMessageEvent(
 				base.RunContext.RunID,
-				base.Agent.ID(),
+				input.AgentID,
 				base.RunContext.SessionID,
 				agentMessageText(finalMsg),
 				nil,
@@ -1134,7 +1110,7 @@ func (r *Runtime) finalizeWithPlanner(
 			ctx,
 			hooks.NewPlannerNoteEvent(
 				base.RunContext.RunID,
-				base.Agent.ID(),
+				input.AgentID,
 				base.RunContext.SessionID,
 				note.Text,
 				note.Labels,
@@ -1147,12 +1123,12 @@ func (r *Runtime) finalizeWithPlanner(
 		notes[i] = &output.Result.Notes[i]
 	}
 	return &RunOutput{
-		AgentID:    base.Agent.ID(),
+		AgentID:    input.AgentID,
 		RunID:      base.RunContext.RunID,
 		Final:      finalMsg,
 		ToolEvents: allToolResults,
 		Notes:      notes,
-		// Usage aggregation continues to be recorded by the surrounding loop
+		Usage:      &aggUsage,
 	}, nil
 }
 
@@ -1173,9 +1149,6 @@ func (r *Runtime) handleInterrupts(
 		if !ok {
 			break
 		}
-		r.recordRunStatus(ctx, input, run.StatusPaused, map[string]any{
-			"reason": req.Reason,
-		})
 		r.publishHook(
 			ctx,
 			hooks.NewRunPausedEvent(
@@ -1199,9 +1172,6 @@ func (r *Runtime) handleInterrupts(
 		}
 		base.RunContext.Attempt = *nextAttempt
 		*nextAttempt++
-		r.recordRunStatus(ctx, input, run.StatusRunning, map[string]any{
-			"resumed_by": resumeReq.RequestedBy,
-		})
 		r.publishHook(
 			ctx,
 			hooks.NewRunResumedEvent(
@@ -1243,17 +1213,9 @@ func (r *Runtime) executeToolCalls(
 	hardDeadline time.Time,
 ) ([]*planner.ToolResult, error) {
 	ctx := wfCtx.Context()
-	eventRunID := runID
-	eventAgentID := agentID
 	sessionID := ""
 	if runCtx != nil {
 		sessionID = runCtx.SessionID
-		if runCtx.ParentRunID != "" {
-			eventRunID = runCtx.ParentRunID
-		}
-		if runCtx.ParentAgentID != "" {
-			eventAgentID = runCtx.ParentAgentID
-		}
 	}
 
 	// Decide per-call execution path (inline vs activity) by toolset.
@@ -1282,7 +1244,9 @@ func (r *Runtime) executeToolCalls(
 		if !hasSpec {
 			return nil, fmt.Errorf("unknown tool %q", call.Name)
 		}
+		r.mu.RLock()
 		ts, hasTS := r.toolsets[spec.Toolset]
+		r.mu.RUnlock()
 
 		// Prepare scheduled event (queue filled only for activity execution)
 		queue := ""
@@ -1292,8 +1256,8 @@ func (r *Runtime) executeToolCalls(
 		r.publishHook(
 			ctx,
 			hooks.NewToolCallScheduledEvent(
-				eventRunID,
-				eventAgentID,
+				runID,
+				agentID,
 				sessionID,
 				call.Name,
 				call.ToolCallID,
@@ -1417,6 +1381,14 @@ func (r *Runtime) executeToolCalls(
 					result.Bounds = b
 				}
 			}
+			if spec.BoundedResult && result.Error == nil && result.Bounds == nil {
+				return nil, fmt.Errorf(
+					"bounded tool %q returned result without bounds (tool_call_id=%s, type=%T)",
+					call.Name,
+					call.ToolCallID,
+					result.Result,
+				)
+			}
 			// Publish result event for observability parity with activities.
 			duration := wfCtx.Now().Sub(start)
 			var toolErr *planner.ToolError
@@ -1426,8 +1398,8 @@ func (r *Runtime) executeToolCalls(
 			r.publishHook(
 				ctx,
 				hooks.NewToolResultReceivedEvent(
-					eventRunID,
-					eventAgentID,
+					runID,
+					agentID,
 					sessionID,
 					call.Name,
 					call.ToolCallID,
@@ -1449,24 +1421,18 @@ func (r *Runtime) executeToolCalls(
 		}
 
 		// Activity path (service-backed tools).
-		req := engine.ActivityRequest{
-			Name: activityName,
-			Input: ToolInput{
-				AgentID:          agentID,
-				RunID:            runID,
-				ToolsetName:      spec.Toolset,
-				ToolName:         call.Name,
-				ToolCallID:       call.ToolCallID,
-				Payload:          call.Payload,
-				SessionID:        call.SessionID,
-				TurnID:           call.TurnID,
-				ParentToolCallID: call.ParentToolCallID,
-			},
+		toolInput := ToolInput{
+			AgentID:          agentID,
+			RunID:            runID,
+			ToolsetName:      spec.Toolset,
+			ToolName:         call.Name,
+			ToolCallID:       call.ToolCallID,
+			Payload:          call.Payload,
+			SessionID:        call.SessionID,
+			TurnID:           call.TurnID,
+			ParentToolCallID: call.ParentToolCallID,
 		}
-		// Apply strong-contract execute_tool options first
-		if toolActOptions.Queue != "" {
-			req.Queue = toolActOptions.Queue
-		}
+		callOpts := toolActOptions
 		// Apply timeout: start with configured, then cap to remaining time to hard deadline.
 		timeout := toolActOptions.Timeout
 		if !hardDeadline.IsZero() {
@@ -1477,20 +1443,19 @@ func (r *Runtime) executeToolCalls(
 				}
 			}
 		}
-		if timeout > 0 {
-			req.Timeout = timeout
-		}
-		if !isZeroRetryPolicy(toolActOptions.RetryPolicy) {
-			req.RetryPolicy = toolActOptions.RetryPolicy
-		}
+		callOpts.Timeout = timeout
 		// If no queue specified via options, allow explicit toolset TaskQueue to set it
 		// for service-backed toolsets only. Agent-as-tool (Inline) must execute on the
 		// parent agent's queue so the provider is started as a child workflow by the
 		// ExecuteTool activity handler.
-		if req.Queue == "" && hasTS && !ts.Inline && ts.TaskQueue != "" {
-			req.Queue = ts.TaskQueue
+		if callOpts.Queue == "" && hasTS && !ts.Inline && ts.TaskQueue != "" {
+			callOpts.Queue = ts.TaskQueue
 		}
-		future, err := wfCtx.ExecuteActivityAsync(ctx, req)
+		future, err := wfCtx.ExecuteToolActivityAsync(ctx, engine.ToolActivityCall{
+			Name:    activityName,
+			Input:   &toolInput,
+			Options: callOpts,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to schedule tool %q: %w", call.Name, err)
 		}
@@ -1505,11 +1470,14 @@ func (r *Runtime) executeToolCalls(
 	}
 
 	if parentTracker != nil && parentTracker.registerDiscovered(discoveredIDs) && parentTracker.needsUpdate() {
+		if runCtx == nil || runCtx.ParentRunID == "" || runCtx.ParentAgentID == "" {
+			return nil, fmt.Errorf("nested tool tracker requires parent run context")
+		}
 		r.publishHook(
 			ctx,
 			hooks.NewToolCallUpdatedEvent(
-				eventRunID,
-				eventAgentID,
+				runCtx.ParentRunID,
+				runCtx.ParentAgentID,
 				sessionID,
 				parentTracker.parentToolCallID,
 				parentTracker.currentTotal(),
@@ -1524,27 +1492,24 @@ func (r *Runtime) executeToolCalls(
 	// Collect activity results
 	activityByID := make(map[string]*planner.ToolResult, len(futures))
 	for _, info := range futures {
-		var out ToolOutput
-		if err := info.future.Get(ctx, &out); err != nil {
+		out, err := info.future.Get(ctx)
+		if err != nil {
 			return nil, fmt.Errorf("tool %q failed: %w", info.call.Name, err)
+		}
+		if out == nil {
+			return nil, fmt.Errorf("tool %q returned nil output", info.call.Name)
 		}
 
 		duration := wfCtx.Now().Sub(info.startTime)
-		// Decode tool result. If decoding fails (mismatch with generated result
-		// type), do not abort the workflow. Forward the raw payload to preserve
-		// observability and allow clients to render best‑effort data.
+		// Decode tool result using the registered codec. Decode failures are
+		// contract violations and must surface immediately.
 		var decoded any
 		if len(out.Payload) > 0 {
-			if v, decErr := r.unmarshalToolValue(ctx, info.call.Name, out.Payload, false); decErr == nil {
-				decoded = v
-			} else {
-				// Log decode failure details for bounded tools to help diagnose bounds extraction issues
-				spec, isBounded := r.toolSpec(info.call.Name)
-				if isBounded && spec.BoundedResult {
-					r.logger.Warn(ctx, "decode failed for bounded tool, falling back to raw JSON", "tool", info.call.Name, "decode_err", decErr, "json", string(out.Payload))
-				}
-				decoded = out.Payload
+			v, decErr := r.unmarshalToolValue(ctx, info.call.Name, out.Payload, false)
+			if decErr != nil {
+				return nil, fmt.Errorf("tool %q result decode failed (tool_call_id=%s): %w", info.call.Name, info.call.ToolCallID, decErr)
 			}
+			decoded = v
 		}
 
 		toolRes := &planner.ToolResult{
@@ -1554,14 +1519,19 @@ func (r *Runtime) executeToolCalls(
 			ToolCallID: info.call.ToolCallID,
 			Telemetry:  out.Telemetry,
 		}
-		if b := deriveBounds(decoded); b != nil {
-			toolRes.Bounds = b
-		} else {
-			// Log when bounds extraction fails for bounded tools
-			spec, isBounded := r.toolSpec(info.call.Name)
-			if isBounded && spec.BoundedResult {
-				r.logger.Warn(ctx, "failed to extract bounds from decoded result", "tool", info.call.Name, "result_type", fmt.Sprintf("%T", decoded))
+		if spec, ok := r.toolSpec(info.call.Name); ok && spec.BoundedResult && out.Error == "" {
+			b := deriveBounds(decoded)
+			if b == nil {
+				return nil, fmt.Errorf(
+					"bounded tool %q returned result without bounds (tool_call_id=%s, type=%T)",
+					info.call.Name,
+					info.call.ToolCallID,
+					decoded,
+				)
 			}
+			toolRes.Bounds = b
+		} else if b := deriveBounds(decoded); b != nil {
+			toolRes.Bounds = b
 		}
 		var toolErr *planner.ToolError
 		if out.Error != "" {
@@ -1579,8 +1549,8 @@ func (r *Runtime) executeToolCalls(
 		r.publishHook(
 			ctx,
 			hooks.NewToolResultReceivedEvent(
-				eventRunID,
-				eventAgentID,
+				runID,
+				agentID,
 				sessionID,
 				info.call.Name,
 				info.call.ToolCallID,
@@ -1622,6 +1592,18 @@ func (r *Runtime) executeToolCalls(
 			if tr.Error != nil {
 				toolErr = tr.Error
 			}
+			if spec, ok := r.toolSpec(info.call.Name); ok && spec.BoundedResult && toolErr == nil && tr.Bounds == nil {
+				b := deriveBounds(tr.Result)
+				if b == nil {
+					return nil, fmt.Errorf(
+						"bounded tool %q returned result without bounds (tool_call_id=%s, type=%T)",
+						info.call.Name,
+						info.call.ToolCallID,
+						tr.Result,
+					)
+				}
+				tr.Bounds = b
+			}
 
 			parentID := info.call.ParentToolCallID
 			if parentID == "" && runCtx != nil {
@@ -1630,8 +1612,8 @@ func (r *Runtime) executeToolCalls(
 			r.publishHook(
 				ctx,
 				hooks.NewToolResultReceivedEvent(
-					eventRunID,
-					eventAgentID,
+					runID,
+					agentID,
 					sessionID,
 					info.call.Name,
 					info.call.ToolCallID,
@@ -1660,8 +1642,7 @@ func (r *Runtime) executeToolCalls(
 			results = append(results, ir)
 			continue
 		}
-		// Should not happen; defensive: keep order consistent even if missing.
-		r.logWarn(ctx, "missing tool result for call", fmt.Errorf("no result"), "tool", call.Name, "tool_call_id", call.ToolCallID)
+		return nil, fmt.Errorf("missing tool result for %q (%s)", call.Name, call.ToolCallID)
 	}
 
 	return results, nil
@@ -1672,14 +1653,7 @@ func (r *Runtime) runPlanActivity(wfCtx engine.WorkflowContext, activityName str
 	if activityName == "" {
 		return nil, errors.New("plan activity not registered")
 	}
-	var out PlanActivityOutput
-	req := engine.ActivityRequest{
-		Name:  activityName,
-		Input: input,
-	}
-	if options.Queue != "" {
-		req.Queue = options.Queue
-	}
+	callOpts := options
 	// Apply timeout: start with configured, then cap to remaining time to hard deadline.
 	timeout := options.Timeout
 	if !hardDeadline.IsZero() {
@@ -1690,14 +1664,18 @@ func (r *Runtime) runPlanActivity(wfCtx engine.WorkflowContext, activityName str
 			}
 		}
 	}
-	if timeout > 0 {
-		req.Timeout = timeout
-	}
-	if !isZeroRetryPolicy(options.RetryPolicy) {
-		req.RetryPolicy = options.RetryPolicy
-	}
-	if err := wfCtx.ExecuteActivity(wfCtx.Context(), req, &out); err != nil {
+	callOpts.Timeout = timeout
+
+	out, err := wfCtx.ExecutePlannerActivity(wfCtx.Context(), engine.PlannerActivityCall{
+		Name:    activityName,
+		Input:   &input,
+		Options: callOpts,
+	})
+	if err != nil {
 		return nil, err
+	}
+	if out == nil {
+		return nil, fmt.Errorf("CRITICAL: runPlanActivity received nil PlanActivityOutput")
 	}
 	if out.Result == nil {
 		return nil, fmt.Errorf("CRITICAL: runPlanActivity received nil PlanResult")
@@ -1714,7 +1692,7 @@ func (r *Runtime) runPlanActivity(wfCtx engine.WorkflowContext, activityName str
 		"await",
 		out.Result.Await != nil,
 	)
-	return &out, nil
+	return out, nil
 }
 
 // applyPerRunOverrides filters candidate tool calls using per-run overrides:
@@ -1798,12 +1776,11 @@ func (r *Runtime) applyRuntimePolicy(
 		allowed = filterToolCalls(allowed, decision.AllowedTools)
 	}
 	caps = mergeCaps(caps, decision.Caps)
-	r.recordPolicyDecision(ctx, input, decision)
 	r.publishHook(
 		ctx,
 		hooks.NewPolicyDecisionEvent(
 			base.RunContext.RunID,
-			base.Agent.ID(),
+			input.AgentID,
 			base.RunContext.SessionID,
 			decision.AllowedTools,
 			caps,
@@ -1817,7 +1794,7 @@ func (r *Runtime) applyRuntimePolicy(
 
 // capAllowedCalls applies per-turn and remaining caps to the allowed set.
 func (r *Runtime) capAllowedCalls(allowed []planner.ToolRequest, input *RunInput, caps policy.CapsState) []planner.ToolRequest {
-	if input != nil && input.Policy != nil && input.Policy.PerTurnMaxToolCalls > 0 && len(allowed) > input.Policy.PerTurnMaxToolCalls {
+	if input.Policy != nil && input.Policy.PerTurnMaxToolCalls > 0 && len(allowed) > input.Policy.PerTurnMaxToolCalls {
 		allowed = allowed[:input.Policy.PerTurnMaxToolCalls]
 	}
 	if caps.MaxToolCalls > 0 && caps.RemainingToolCalls < len(allowed) {
@@ -1828,13 +1805,13 @@ func (r *Runtime) capAllowedCalls(allowed []planner.ToolRequest, input *RunInput
 
 // prepareAllowedCallsMetadata stamps run/session/turn IDs and deterministic tool
 // call IDs on allowed calls. It also fills parentToolCallID when tracking children.
-func (r *Runtime) prepareAllowedCallsMetadata(base *planner.PlanInput, allowed []planner.ToolRequest, parentTracker *childTracker) []planner.ToolRequest {
+func (r *Runtime) prepareAllowedCallsMetadata(agentID agent.Ident, base *planner.PlanInput, allowed []planner.ToolRequest, parentTracker *childTracker) []planner.ToolRequest {
 	for i := range allowed {
 		if allowed[i].RunID == "" {
 			allowed[i].RunID = base.RunContext.RunID
 		}
-		if allowed[i].AgentID == "" && base.Agent != nil {
-			allowed[i].AgentID = base.Agent.ID()
+		if allowed[i].AgentID == "" {
+			allowed[i].AgentID = agentID
 		}
 		if allowed[i].SessionID == "" {
 			allowed[i].SessionID = base.RunContext.SessionID
@@ -1913,481 +1890,4 @@ func cloneMessages(msgs []*model.Message) []*model.Message {
 		})
 	}
 	return out
-}
-
-// groupToolCallsByTimeout buckets calls by per-tool timeout override (with '*' prefix support)
-// or falls back to the default timeout when no per-tool override applies.
-func (r *Runtime) groupToolCallsByTimeout(
-	allowed []planner.ToolRequest,
-	input *RunInput,
-	defaultTimeout time.Duration,
-) ([][]planner.ToolRequest, []time.Duration) {
-	var grouped [][]planner.ToolRequest
-	var timeouts []time.Duration
-	if input != nil && input.Policy != nil && len(input.Policy.PerToolTimeout) > 0 {
-		buckets := make(map[time.Duration][]planner.ToolRequest)
-		resolve := func(name tools.Ident) (time.Duration, bool) {
-			for k, v := range input.Policy.PerToolTimeout {
-				kn := string(k)
-				n := string(name)
-				if strings.HasSuffix(kn, "*") {
-					prefix := strings.TrimSuffix(kn, "*")
-					if strings.HasPrefix(n, prefix) {
-						return v, true
-					}
-				} else if kn == n {
-					return v, true
-				}
-			}
-			return 0, false
-		}
-		for _, call := range allowed {
-			if to, ok := resolve(call.Name); ok && to > 0 {
-				buckets[to] = append(buckets[to], call)
-			} else {
-				buckets[defaultTimeout] = append(buckets[defaultTimeout], call)
-			}
-		}
-		for to, calls := range buckets {
-			grouped = append(grouped, calls)
-			timeouts = append(timeouts, to)
-		}
-	} else {
-		grouped = [][]planner.ToolRequest{allowed}
-		timeouts = []time.Duration{defaultTimeout}
-	}
-	return grouped, timeouts
-}
-
-// executeGroupedToolCalls runs groups of tool calls with their respective timeouts
-// and returns all results in the original group order.
-func (r *Runtime) executeGroupedToolCalls(
-	wfCtx engine.WorkflowContext,
-	reg AgentRegistration,
-	base *planner.PlanInput,
-	expectedChildren int,
-	turnID string,
-	parentTracker *childTracker,
-	deadline time.Time,
-	grouped [][]planner.ToolRequest,
-	timeouts []time.Duration,
-	toolOpts engine.ActivityOptions,
-) ([]*planner.ToolResult, error) {
-	var out []*planner.ToolResult
-	for i := range grouped {
-		opt := toolOpts
-		if timeouts[i] > 0 {
-			opt.Timeout = timeouts[i]
-		}
-		sub, err := r.executeToolCalls(
-			wfCtx, reg.ExecuteToolActivity, opt, base.RunContext.RunID, base.Agent.ID(),
-			&base.RunContext, grouped[i], expectedChildren, turnID, parentTracker, deadline,
-		)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, sub...)
-	}
-	return out, nil
-}
-
-// appendUserToolResults appends a user message with tool_result blocks for the
-// executed tools and updates the ledger. Tool results are ordered to match the
-// assistant tool_use IDs from the allowed calls slice so that provider
-// handshakes remain deterministic regardless of execution timing.
-//
-// If any tool has a ResultReminder configured in its spec, a system message
-// with the reminder text is appended after the tool results to provide
-// backstage guidance to the model.
-func (r *Runtime) appendUserToolResults(
-	ctx context.Context,
-	base *planner.PlanInput,
-	allowed []planner.ToolRequest,
-	vals []*planner.ToolResult,
-	led *transcript.Ledger,
-) {
-	if len(vals) == 0 {
-		return
-	}
-	// Index results by ToolCallID for quick lookup.
-	resultsByID := make(map[string]*planner.ToolResult, len(vals))
-	for _, tr := range vals {
-		if tr == nil || tr.ToolCallID == "" {
-			continue
-		}
-		resultsByID[tr.ToolCallID] = tr
-	}
-	// Order results by allowed tool call IDs so tool_result blocks follow the
-	// assistant tool_use declaration order.
-	parts := make([]model.Part, 0, len(resultsByID))
-	specs := make([]transcript.ToolResultSpec, 0, len(resultsByID))
-	var reminders []string
-	for _, call := range allowed {
-		tr, ok := resultsByID[call.ToolCallID]
-		if !ok || tr == nil || tr.ToolCallID == "" {
-			continue
-		}
-		r.enforceBoundedResultContract(ctx, tr)
-		part := model.ToolResultPart{
-			ToolUseID: tr.ToolCallID,
-			Content:   tr.Result,
-			IsError:   tr.Error != nil,
-		}
-		parts = append(parts, part)
-		specs = append(specs, transcript.ToolResultSpec{
-			ToolUseID: tr.ToolCallID,
-			Content:   tr.Result,
-			IsError:   tr.Error != nil,
-		})
-		// Collect result reminders from tool specs.
-		if spec, ok := r.toolSpec(tr.Name); ok && spec.ResultReminder != "" {
-			reminders = append(reminders, spec.ResultReminder)
-		}
-	}
-	if len(parts) == 0 {
-		return
-	}
-	base.Messages = append(base.Messages, &model.Message{
-		Role:  model.ConversationRoleUser,
-		Parts: parts,
-	})
-	led.AppendUserToolResults(specs)
-	// Inject result reminders as a system message after tool results.
-	if len(reminders) > 0 {
-		var reminderText string
-		for i, rem := range reminders {
-			if i > 0 {
-				reminderText += "\n\n"
-			}
-			reminderText += "<system-reminder>" + rem + "</system-reminder>"
-		}
-		base.Messages = append(base.Messages, &model.Message{
-			Role:  model.ConversationRoleSystem,
-			Parts: []model.Part{model.TextPart{Text: reminderText}},
-		})
-	}
-}
-
-// enforceBoundedResultContract validates that tools declared as bounded in
-// their specs also surface a consistent Bounds contract on their results. This
-// method never computes subsets or truncation itself; it only enforces that
-// domain services applied their own caps and signalled them correctly.
-func (r *Runtime) enforceBoundedResultContract(ctx context.Context, tr *planner.ToolResult) {
-	if tr == nil {
-		return
-	}
-	spec, ok := r.toolSpec(tr.Name)
-	if !ok || !spec.BoundedResult {
-		return
-	}
-	// When a bounded tool fails or produces no result, there is no bounded view
-	// to validate. Errors are surfaced via ToolError and are not subject to
-	// bounds enforcement.
-	if tr.Error != nil || tr.Result == nil {
-		return
-	}
-	// Best-effort recovery for cases where Bounds was not populated by the
-	// tool implementation. Prefer the typed BoundedResult contract when the
-	// decoded result implements it, and fall back to JSON inspection only
-	// when the result is a raw JSON value. This keeps boundedness metadata
-	// attached even when callers passed through json.RawMessage.
-	if tr.Bounds == nil {
-		if b := deriveBounds(tr.Result); b != nil {
-			tr.Bounds = b
-		} else if raw, ok := tr.Result.(json.RawMessage); ok {
-			if b, err := decodeBoundsFromJSON(raw); err == nil && b != nil {
-				tr.Bounds = b
-			} else if err != nil && r.logger != nil {
-				r.logger.Warn(ctx, "failed to derive bounds from raw JSON result", "tool", tr.Name, "err", err)
-			}
-		}
-	}
-	if tr.Bounds == nil {
-		// Bounds metadata is missing even after best-effort derivation. This is
-		// a contract violation by the bounded tool implementation or its
-		// adapter, but panicking is too disruptive in practice. Log diagnostics
-		// and proceed with an empty Bounds value so callers still see a
-		// well-formed planner.ToolResult.
-		if r.logger != nil {
-			_, implements := tr.Result.(agent.BoundedResult)
-			_, isRaw := tr.Result.(json.RawMessage)
-			r.logger.Error(ctx,
-				"bounded tool result missing Bounds; proceeding with empty bounds",
-				"tool", tr.Name,
-				"result_type", fmt.Sprintf("%T", tr.Result),
-				"implements_bounded_result", implements,
-				"is_raw_json", isRaw,
-			)
-		}
-		tr.Bounds = &agent.Bounds{}
-		return
-	}
-}
-
-// deriveBounds extracts Bounds metadata from a decoded tool result when the
-// result type implements agent.BoundedResult. It returns nil only when the
-// value does not implement the interface or when ResultBounds() returns nil.
-// A zero-value Bounds (Returned=0, Total=nil, Truncated=false, RefinementHint="")
-// is valid metadata indicating no truncation occurred and is returned as-is.
-func deriveBounds(result any) *agent.Bounds {
-	if result == nil {
-		return nil
-	}
-	br, ok := result.(agent.BoundedResult)
-	if !ok || br == nil {
-		return nil
-	}
-	return br.ResultBounds()
-}
-
-// decodeBoundsFromJSON attempts to derive agent.Bounds metadata from a raw JSON
-// tool result. It prefers an embedded "bounds" object when present and falls
-// back to top-level returned/total/truncated/refinement_hint fields. A nil
-// return value indicates that no bounds metadata could be derived.
-func decodeBoundsFromJSON(raw json.RawMessage) (*agent.Bounds, error) {
-	if len(raw) == 0 {
-		return nil, fmt.Errorf("empty result for bounded tool")
-	}
-	type boundsJSON struct {
-		Returned       int     `json:"returned"`
-		Total          *int    `json:"total"`
-		Truncated      bool    `json:"truncated"`
-		RefinementHint *string `json:"refinement_hint"`
-	}
-	type carrier struct {
-		Returned       *int        `json:"returned"`
-		Total          *int        `json:"total"`
-		Truncated      *bool       `json:"truncated"`
-		RefinementHint *string     `json:"refinement_hint"`
-		Bounds         *boundsJSON `json:"bounds"`
-	}
-	var c carrier
-	if err := json.Unmarshal(raw, &c); err != nil {
-		return nil, fmt.Errorf("decode bounded result: %w", err)
-	}
-	if c.Bounds != nil {
-		hint := ""
-		if c.Bounds.RefinementHint != nil {
-			hint = *c.Bounds.RefinementHint
-		}
-		return &agent.Bounds{
-			Returned:       c.Bounds.Returned,
-			Total:          c.Bounds.Total,
-			Truncated:      c.Bounds.Truncated,
-			RefinementHint: hint,
-		}, nil
-	}
-	if c.Returned == nil && c.Total == nil && c.Truncated == nil && c.RefinementHint == nil {
-		return nil, fmt.Errorf("missing bounds metadata")
-	}
-	returned := 0
-	if c.Returned != nil {
-		returned = *c.Returned
-	}
-	truncated := false
-	if c.Truncated != nil {
-		truncated = *c.Truncated
-	}
-	hint := ""
-	if c.RefinementHint != nil {
-		hint = *c.RefinementHint
-	}
-	return &agent.Bounds{
-		Returned:       returned,
-		Total:          c.Total,
-		Truncated:      truncated,
-		RefinementHint: hint,
-	}, nil
-}
-
-// hardProtectionIfNeeded emits a protection event and signals finalization when
-// agent-as-tool calls produced no child tool calls.
-func (r *Runtime) hardProtectionIfNeeded(
-	ctx context.Context,
-	base *planner.PlanInput,
-	vals []*planner.ToolResult,
-	turnID string,
-) bool {
-	var agentToolCount int
-	var totalChildren int
-	toolNames := make([]tools.Ident, 0, len(vals))
-	for _, tr := range vals {
-		if spec, ok := r.toolSpec(tr.Name); ok && spec.IsAgentTool {
-			agentToolCount++
-			toolNames = append(toolNames, tr.Name)
-			if tr.ChildrenCount > 0 {
-				totalChildren += tr.ChildrenCount
-			}
-		}
-	}
-	if agentToolCount > 0 && totalChildren == 0 {
-		r.publishHook(
-			ctx,
-			hooks.NewHardProtectionEvent(
-				base.RunContext.RunID,
-				base.Agent.ID(),
-				base.RunContext.SessionID,
-				"agent_tool_no_children",
-				agentToolCount,
-				totalChildren,
-				toolNames,
-			),
-			turnID,
-		)
-		return true
-	}
-	return false
-}
-
-// buildNextResumeRequest converts the base plan input into provider-ready
-// messages, validates constraints for thinking-enabled paths, and builds the
-// next PlanActivityInput.
-func (r *Runtime) buildNextResumeRequest(
-	base *planner.PlanInput,
-	lastToolResults []*planner.ToolResult,
-	nextAttempt *int,
-) (PlanActivityInput, error) {
-	resumeCtx := base.RunContext
-	resumeCtx.Attempt = *nextAttempt
-	*nextAttempt++
-	plannerMsgs := cloneMessages(base.Messages)
-	if err := transcript.ValidateBedrock(plannerMsgs, false); err != nil {
-		// Fail fast rather than sending an invalid sequence to the provider.
-		// This surfaces a clear runtime/ledger bug to the caller while allowing
-		// the workflow to terminate cleanly instead of timing out at the engine
-		// layer.
-		return PlanActivityInput{}, fmt.Errorf("invalid Bedrock transcript for run %s: %w", base.RunContext.RunID, err)
-	}
-	return PlanActivityInput{
-		AgentID:     base.Agent.ID(),
-		RunID:       base.RunContext.RunID,
-		Messages:    plannerMsgs,
-		RunContext:  resumeCtx,
-		ToolResults: lastToolResults,
-	}, nil
-}
-
-// recordRunStatus upserts run metadata to the store if configured.
-func (r *Runtime) recordRunStatus(ctx context.Context, input *RunInput, status run.Status, meta map[string]any) {
-	if r.RunStore == nil {
-		return
-	}
-	rec := run.Record{
-		AgentID:   input.AgentID,
-		RunID:     input.RunID,
-		SessionID: input.SessionID,
-		TurnID:    input.TurnID,
-		Status:    status,
-		StartedAt: time.Now(),
-		UpdatedAt: time.Now(),
-		Labels:    cloneLabels(input.Labels),
-		Metadata:  meta,
-	}
-	if err := r.RunStore.Upsert(ctx, rec); err != nil {
-		r.logWarn(ctx, "run record upsert failed", err)
-	}
-}
-
-func (r *Runtime) recordPolicyDecision(ctx context.Context, input *RunInput, decision policy.Decision) {
-	if r.RunStore == nil {
-		return
-	}
-	rec, err := r.RunStore.Load(ctx, input.RunID)
-	if err != nil {
-		r.logWarn(ctx, "run record load failed", err, "run_id", input.RunID)
-		return
-	}
-	now := time.Now()
-	if rec.RunID == "" {
-		rec.AgentID = input.AgentID
-		rec.RunID = input.RunID
-		rec.SessionID = input.SessionID
-		rec.TurnID = input.TurnID
-		rec.StartedAt = now
-	}
-	if rec.StartedAt.IsZero() {
-		rec.StartedAt = now
-	}
-	rec.AgentID = input.AgentID
-	rec.SessionID = input.SessionID
-	rec.TurnID = input.TurnID
-	rec.Status = run.StatusRunning
-	rec.UpdatedAt = now
-	rec.Labels = mergeLabels(rec.Labels, input.Labels)
-
-	entry := map[string]any{
-		"caps":      decision.Caps,
-		"timestamp": now.UTC(),
-	}
-	if len(decision.AllowedTools) > 0 {
-		entry["allowed_tools"] = decision.AllowedTools
-	}
-	if len(decision.Labels) > 0 {
-		entry["labels"] = cloneLabels(decision.Labels)
-	}
-	if len(decision.Metadata) > 0 {
-		entry["metadata"] = cloneMetadata(decision.Metadata)
-	}
-	if decision.DisableTools {
-		entry["disable_tools"] = true
-	}
-
-	meta := cloneMetadata(rec.Metadata)
-	meta = appendPolicyDecisionMetadata(meta, entry)
-	rec.Metadata = meta
-
-	if err := r.RunStore.Upsert(ctx, rec); err != nil {
-		r.logWarn(ctx, "policy decision upsert failed", err)
-	}
-}
-
-// registerUsageAggregator subscribes to Usage events for a specific run/agent and
-// aggregates token usage into the provided accumulator. Returns a subscription
-// handle that should be closed by the caller. If the bus is nil or registration
-// fails, returns nil.
-func (r *Runtime) registerUsageAggregator(
-	ctx context.Context,
-	runID string,
-	agentID string,
-	agg *model.TokenUsage,
-) hooks.Subscription {
-	if r.Bus == nil {
-		return nil
-	}
-	sub, err := r.Bus.Register(hooks.SubscriberFunc(func(c context.Context, evt hooks.Event) error {
-		if evt.RunID() != runID || evt.AgentID() != agentID {
-			return nil
-		}
-		if u, ok := evt.(*hooks.UsageEvent); ok {
-			*agg = model.TokenUsage{
-				InputTokens:  agg.InputTokens + u.InputTokens,
-				OutputTokens: agg.OutputTokens + u.OutputTokens,
-				TotalTokens:  agg.TotalTokens + u.TotalTokens,
-			}
-		}
-		return nil
-	}))
-	if err != nil {
-		r.logWarn(ctx, "usage subscriber register failed", err)
-		return nil
-	}
-	return sub
-}
-
-// memoryReader loads the run snapshot from the memory store and wraps it in a Reader.
-func (r *Runtime) memoryReader(ctx context.Context, agentID, runID string) memory.Reader {
-	if r.Memory == nil {
-		return emptyMemoryReader{}
-	}
-	snapshot, err := r.Memory.LoadRun(ctx, agentID, runID)
-	if err != nil {
-		return emptyMemoryReader{}
-	}
-	return newMemoryReader(snapshot.Events)
-}
-
-// generateRunID creates a unique run identifier by combining the agent ID and a UUID.
-func generateRunID(agentID string) string {
-	prefix := strings.ReplaceAll(agentID, ".", "-")
-	return fmt.Sprintf("%s-%s", prefix, uuid.NewString())
 }

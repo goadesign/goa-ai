@@ -50,8 +50,10 @@
 // WorkflowContext that exposes only deterministic operations:
 //
 //   - Now() returns workflow time (not wall clock)
-//   - ExecuteActivity and ExecuteActivityAsync schedule activities
-//   - SignalChannel returns deterministic signal receivers
+//   - PublishHook schedules hook publishing outside the workflow thread
+//   - ExecutePlannerActivity runs planner activities
+//   - ExecuteToolActivity/ExecuteToolActivityAsync run tool activities
+//   - PauseRequests/ResumeRequests/... return typed signal receivers
 //   - StartChildWorkflow starts nested workflows
 //
 // Planners and tool executors run inside activities, which are not constrained

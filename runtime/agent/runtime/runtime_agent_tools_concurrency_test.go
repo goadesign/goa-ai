@@ -63,8 +63,9 @@ func TestExecuteToolCalls_AgentToolsFanOut(t *testing.T) {
 	rt.toolSpecs[tool2] = spec2
 
 	wfCtx := &testWorkflowContext{
-		ctx:     context.Background(),
-		runtime: nil, // child handle Get will not execute a real nested workflow
+		ctx:         context.Background(),
+		hookRuntime: rt,
+		runtime:     nil, // child handle Get will not execute a real nested workflow
 	}
 
 	runCtx := &run.Context{
@@ -126,5 +127,3 @@ func TestExecuteToolCalls_AgentToolsFanOut(t *testing.T) {
 	require.Equal(t, calls[0].ToolCallID, toolEnds[0].ToolCallID)
 	require.Equal(t, calls[1].ToolCallID, toolEnds[1].ToolCallID)
 }
-
-

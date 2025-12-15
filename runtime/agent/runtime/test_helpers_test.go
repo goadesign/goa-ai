@@ -13,7 +13,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
-	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -24,281 +23,361 @@ import (
 
 // testWorkflowContext is a lightweight engine.WorkflowContext implementation used by tests.
 type testWorkflowContext struct {
-	ctx                context.Context
-	lastRequest        engine.ActivityRequest
-	asyncResult        any
-	signals            map[string]*testSignalChannel
-	sigMu              sync.Mutex
-	planResult         *planner.PlanResult
-	hasPlanResult      bool
-	barrier            chan struct{}
-	runtime            *Runtime // optional runtime for child workflow execution
+	ctx context.Context
+
+	lastHookCall    engine.HookActivityCall
+	lastPlannerCall engine.PlannerActivityCall
+	lastToolCall    engine.ToolActivityCall
+
+	asyncResult ToolOutput
+
+	sigMu         sync.Mutex
+	pauseCh       chan api.PauseRequest
+	resumeCh      chan api.ResumeRequest
+	clarifyCh     chan api.ClarificationAnswer
+	toolResultsCh chan api.ToolResultsSet
+	confirmCh     chan api.ConfirmationDecision
+
+	planResult    *planner.PlanResult
+	hasPlanResult bool
+	barrier       chan struct{}
+	hookRuntime   *Runtime // optional runtime for hook activity execution
+	runtime       *Runtime // optional runtime for activity execution (plan/resume/execute)
+	childRuntime  *Runtime // optional runtime for child workflow execution
+
 	childRequests      []engine.ChildWorkflowRequest
 	firstChildGetCount int
 	sawFirstChildGet   bool
 }
 
-func (t *testWorkflowContext) Context() context.Context   { return t.ctx }
-func (t *testWorkflowContext) WorkflowID() string         { return "wf" }
-func (t *testWorkflowContext) RunID() string              { return "run" }
-func (t *testWorkflowContext) Logger() telemetry.Logger   { return telemetry.NoopLogger{} }
-func (t *testWorkflowContext) Metrics() telemetry.Metrics { return telemetry.NoopMetrics{} }
-func (t *testWorkflowContext) Tracer() telemetry.Tracer   { return telemetry.NoopTracer{} }
-func (t *testWorkflowContext) Now() time.Time             { return time.Unix(0, 0) }
+func (t *testWorkflowContext) Context() context.Context {
+	if t.ctx == nil {
+		panic("testWorkflowContext.ctx is nil")
+	}
+	return engine.WithWorkflowContext(t.ctx, t)
+}
+
+func (t *testWorkflowContext) WorkflowID() string {
+	return "wf"
+}
+
+func (t *testWorkflowContext) RunID() string {
+	return "run"
+}
+
+func (t *testWorkflowContext) Now() time.Time {
+	return time.Unix(0, 0)
+}
+
 func (t *testWorkflowContext) SetQueryHandler(name string, handler any) error {
 	return nil
 }
 
 func (t *testWorkflowContext) StartChildWorkflow(ctx context.Context, req engine.ChildWorkflowRequest) (engine.ChildWorkflowHandle, error) {
 	t.childRequests = append(t.childRequests, req)
+	childRT := t.childRuntime
+	if childRT == nil {
+		childRT = t.runtime
+	}
 	return &testChildHandle{
-		runtime: t.runtime,
+		runtime: childRT,
 		request: req,
 		wfCtx:   t,
 	}, nil
 }
 
-func (t *testWorkflowContext) SignalChannel(name string) engine.SignalChannel {
-	t.sigMu.Lock()
-	defer t.sigMu.Unlock()
-	if t.signals == nil {
-		t.signals = make(map[string]*testSignalChannel)
+func (t *testWorkflowContext) PublishHook(ctx context.Context, call engine.HookActivityCall) error {
+	t.lastHookCall = call
+	hookRT := t.hookRuntime
+	if hookRT == nil {
+		hookRT = t.runtime
 	}
-	ch, ok := t.signals[name]
-	if !ok {
-		ch = &testSignalChannel{ch: make(chan any, 1)}
-		t.signals[name] = ch
+	if hookRT == nil {
+		return nil
 	}
-	return ch
+	if call.Name != hookActivityName {
+		return fmt.Errorf("unexpected hook activity name %q", call.Name)
+	}
+	return hookRT.hookActivity(ctx, call.Input)
 }
 
-func (t *testWorkflowContext) routeActivity(ctx context.Context, req engine.ActivityRequest) (any, error) {
-	switch req.Name {
+func (t *testWorkflowContext) ExecutePlannerActivity(ctx context.Context, call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
+	t.lastPlannerCall = call
+	switch call.Name {
 	case "plan", "nested.plan":
-		if input, ok := req.Input.(*PlanActivityInput); ok {
-			return t.runtime.PlanStartActivity(ctx, input)
-		} else if input, ok := req.Input.(PlanActivityInput); ok {
-			return t.runtime.PlanStartActivity(ctx, &input)
+		if t.runtime != nil {
+			return t.runtime.PlanStartActivity(ctx, call.Input)
 		}
 	case "resume", "nested.resume":
-		if input, ok := req.Input.(*PlanActivityInput); ok {
-			return t.runtime.PlanResumeActivity(ctx, input)
-		} else if input, ok := req.Input.(PlanActivityInput); ok {
-			return t.runtime.PlanResumeActivity(ctx, &input)
+		if t.runtime != nil {
+			return t.runtime.PlanResumeActivity(ctx, call.Input)
 		}
+	}
+
+	var result *planner.PlanResult
+	if t.hasPlanResult {
+		result = t.planResult
+	}
+	return &PlanActivityOutput{
+		Result:     result,
+		Transcript: nil,
+	}, nil
+}
+
+func (t *testWorkflowContext) ExecuteToolActivity(ctx context.Context, call engine.ToolActivityCall) (*api.ToolOutput, error) {
+	fut, err := t.ExecuteToolActivityAsync(ctx, call)
+	if err != nil {
+		return nil, err
+	}
+	return fut.Get(ctx)
+}
+
+func (t *testWorkflowContext) ExecuteToolActivityAsync(ctx context.Context, call engine.ToolActivityCall) (engine.Future[*api.ToolOutput], error) {
+	t.lastToolCall = call
+
+	fut := &testToolFuture{
+		barrier: t.barrier,
+	}
+
+	switch call.Name {
 	case "execute", "nested.execute":
-		if input, ok := req.Input.(*ToolInput); ok {
-			return t.runtime.ExecuteToolActivity(ctx, input)
-		} else if input, ok := req.Input.(ToolInput); ok {
-			return t.runtime.ExecuteToolActivity(ctx, &input)
+		if t.runtime != nil {
+			fut.result, fut.err = t.runtime.ExecuteToolActivity(ctx, call.Input)
+			return fut, nil
 		}
 	}
-	return nil, nil
-}
 
-func (t *testWorkflowContext) ExecuteActivity(ctx context.Context, req engine.ActivityRequest, result any) error {
-	if t.lastRequest.Name == "" {
-		t.lastRequest = req
-	}
-	// If runtime is available, route activities through runtime methods
-	if t.runtime != nil {
-		actResult, err := t.routeActivity(ctx, req)
-		if err != nil {
-			return err
-		}
-		if actResult != nil {
-			return copyActivityResult(result, actResult)
-		}
-	}
-	if out, ok := result.(*PlanActivityOutput); ok {
-		var res *planner.PlanResult
-		if t.hasPlanResult {
-			res = t.planResult
-		}
-		*out = PlanActivityOutput{Result: res, Transcript: nil}
-	}
-	return nil
-}
-
-func (t *testWorkflowContext) ExecuteActivityAsync(ctx context.Context, req engine.ActivityRequest) (engine.Future, error) {
-	t.lastRequest = req
-	// If runtime is available, route activities through runtime methods
-	if t.runtime != nil {
-		// Execute activity synchronously but store result/error in Future to match engine semantics
-		// Execution errors go in the Future; scheduling always succeeds (returns nil error)
-		f := &testFuture{barrier: t.barrier}
-		result, err := t.routeActivity(ctx, req)
-		if err != nil {
-			f.err = err
-		} else {
-			f.result = result
-		}
-		return f, nil
-	}
 	result := t.asyncResult
-	if result == nil {
-		result = PlanActivityOutput{Result: &planner.PlanResult{}, Transcript: nil}
-	}
-	return &testFuture{result: result, barrier: t.barrier}, nil
+	fut.result = &result
+	return fut, nil
 }
 
-type testFuture struct {
-	result  any
+func (t *testWorkflowContext) PauseRequests() engine.Receiver[api.PauseRequest] {
+	t.ensureSignals()
+	return testReceiver[api.PauseRequest]{ch: t.pauseCh}
+}
+
+func (t *testWorkflowContext) ResumeRequests() engine.Receiver[api.ResumeRequest] {
+	t.ensureSignals()
+	return testReceiver[api.ResumeRequest]{ch: t.resumeCh}
+}
+
+func (t *testWorkflowContext) ClarificationAnswers() engine.Receiver[api.ClarificationAnswer] {
+	t.ensureSignals()
+	return testReceiver[api.ClarificationAnswer]{ch: t.clarifyCh}
+}
+
+func (t *testWorkflowContext) ExternalToolResults() engine.Receiver[api.ToolResultsSet] {
+	t.ensureSignals()
+	return testReceiver[api.ToolResultsSet]{ch: t.toolResultsCh}
+}
+
+func (t *testWorkflowContext) ConfirmationDecisions() engine.Receiver[api.ConfirmationDecision] {
+	t.ensureSignals()
+	return testReceiver[api.ConfirmationDecision]{ch: t.confirmCh}
+}
+
+func (t *testWorkflowContext) ensureSignals() {
+	t.sigMu.Lock()
+	defer t.sigMu.Unlock()
+	if t.pauseCh == nil {
+		t.pauseCh = make(chan api.PauseRequest, 1)
+	}
+	if t.resumeCh == nil {
+		t.resumeCh = make(chan api.ResumeRequest, 1)
+	}
+	if t.clarifyCh == nil {
+		t.clarifyCh = make(chan api.ClarificationAnswer, 1)
+	}
+	if t.toolResultsCh == nil {
+		t.toolResultsCh = make(chan api.ToolResultsSet, 1)
+	}
+	if t.confirmCh == nil {
+		t.confirmCh = make(chan api.ConfirmationDecision, 1)
+	}
+}
+
+type testToolFuture struct {
+	result  *api.ToolOutput
 	err     error
 	barrier chan struct{}
 }
 
-func (f *testFuture) Get(ctx context.Context, result any) error {
-	if f.err != nil {
-		return f.err
-	}
+func (f *testToolFuture) Get(ctx context.Context) (*api.ToolOutput, error) {
 	if f.barrier != nil {
-		<-f.barrier
-	}
-	switch out := result.(type) {
-	case *PlanActivityOutput:
-		if res, ok := f.result.(PlanActivityOutput); ok {
-			*out = res
-		}
-	case *ToolOutput:
-		if res, ok := f.result.(ToolOutput); ok {
-			*out = res
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-f.barrier:
 		}
 	}
-	return nil
+	return f.result, f.err
 }
 
-func (f *testFuture) IsReady() bool { return true }
+func (f *testToolFuture) IsReady() bool {
+	return true
+}
 
-type testSignalChannel struct{ ch chan any }
+type testReceiver[T any] struct{ ch chan T }
 
-func (s *testSignalChannel) Receive(ctx context.Context, dest any) error {
+func (r testReceiver[T]) Receive(ctx context.Context) (T, error) {
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
-	case val := <-s.ch:
-		copySignalValue(dest, val)
-		return nil
+		var zero T
+		return zero, ctx.Err()
+	case val := <-r.ch:
+		return val, nil
 	}
 }
 
-func (s *testSignalChannel) ReceiveAsync(dest any) bool {
+func (r testReceiver[T]) ReceiveAsync() (T, bool) {
 	select {
-	case val := <-s.ch:
-		copySignalValue(dest, val)
-		return true
+	case val := <-r.ch:
+		return val, true
 	default:
-		return false
-	}
-}
-
-func copySignalValue(dest any, value any) {
-	switch out := dest.(type) {
-	case *interrupt.PauseRequest:
-		if req, ok := value.(interrupt.PauseRequest); ok {
-			*out = req
-		}
-	case *interrupt.ResumeRequest:
-		if req, ok := value.(interrupt.ResumeRequest); ok {
-			*out = req
-		}
+		var zero T
+		return zero, false
 	}
 }
 
 // routeWorkflowContext routes activity execution through registered handlers so tests can call
 // runtime helpers without standing up a workflow engine.
 type routeWorkflowContext struct {
-	ctx     context.Context
-	runID   string
-	routes  map[string]testActivityDef
-	lastReq engine.ActivityRequest
-	signals map[string]*testSignalChannel
-	sigMu   sync.Mutex
-	runtime *Runtime // optional runtime for child workflow execution
+	ctx   context.Context
+	runID string
+
+	plannerRoutes map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error)
+	toolRoutes    map[string]func(context.Context, *ToolInput) (*ToolOutput, error)
+
+	lastHookCall    engine.HookActivityCall
+	lastPlannerCall engine.PlannerActivityCall
+	lastToolCall    engine.ToolActivityCall
+
+	sigMu         sync.Mutex
+	pauseCh       chan api.PauseRequest
+	resumeCh      chan api.ResumeRequest
+	clarifyCh     chan api.ClarificationAnswer
+	toolResultsCh chan api.ToolResultsSet
+	confirmCh     chan api.ConfirmationDecision
+
+	hookRuntime  *Runtime // optional runtime for hook activity execution
+	childRuntime *Runtime // optional runtime for child workflow execution
 }
 
-type testActivityDef struct {
-	Handler func(context.Context, any) (any, error)
+func (r *routeWorkflowContext) Context() context.Context {
+	if r.ctx == nil {
+		panic("routeWorkflowContext.ctx is nil")
+	}
+	return engine.WithWorkflowContext(r.ctx, r)
 }
 
-func (r *routeWorkflowContext) Context() context.Context   { return r.ctx }
-func (r *routeWorkflowContext) WorkflowID() string         { return "wf" }
-func (r *routeWorkflowContext) RunID() string              { return r.runID }
-func (r *routeWorkflowContext) Logger() telemetry.Logger   { return telemetry.NoopLogger{} }
-func (r *routeWorkflowContext) Metrics() telemetry.Metrics { return telemetry.NoopMetrics{} }
-func (r *routeWorkflowContext) Tracer() telemetry.Tracer   { return telemetry.NoopTracer{} }
-func (r *routeWorkflowContext) Now() time.Time             { return time.Unix(0, 0) }
+func (r *routeWorkflowContext) WorkflowID() string {
+	return "wf"
+}
+
+func (r *routeWorkflowContext) RunID() string {
+	return r.runID
+}
+
+func (r *routeWorkflowContext) Now() time.Time {
+	return time.Unix(0, 0)
+}
+
 func (r *routeWorkflowContext) SetQueryHandler(name string, handler any) error {
 	return nil
 }
 
 func (r *routeWorkflowContext) StartChildWorkflow(ctx context.Context, req engine.ChildWorkflowRequest) (engine.ChildWorkflowHandle, error) {
 	return &testChildHandle{
-		runtime: r.runtime,
+		runtime: r.childRuntime,
 		request: req,
 		wfCtx:   r,
 	}, nil
 }
 
-func (r *routeWorkflowContext) SignalChannel(name string) engine.SignalChannel {
-	r.sigMu.Lock()
-	defer r.sigMu.Unlock()
-	if r.signals == nil {
-		r.signals = make(map[string]*testSignalChannel)
+func (r *routeWorkflowContext) PublishHook(ctx context.Context, call engine.HookActivityCall) error {
+	r.lastHookCall = call
+	if call.Name != hookActivityName {
+		return fmt.Errorf("unexpected hook activity name %q", call.Name)
 	}
-	ch, ok := r.signals[name]
-	if !ok {
-		ch = &testSignalChannel{ch: make(chan any, 1)}
-		r.signals[name] = ch
-	}
-	return ch
-}
-
-func (r *routeWorkflowContext) ExecuteActivity(ctx context.Context, req engine.ActivityRequest, result any) error {
-	r.lastReq = req
-	def, ok := r.routes[req.Name]
-	if !ok {
+	if r.hookRuntime == nil {
 		return nil
 	}
-	out, err := def.Handler(ctx, req.Input)
-	if err != nil {
-		return err
-	}
-	return copyActivityResult(result, out)
+	return r.hookRuntime.hookActivity(ctx, call.Input)
 }
 
-func (r *routeWorkflowContext) ExecuteActivityAsync(ctx context.Context, req engine.ActivityRequest) (engine.Future, error) {
-	r.lastReq = req
-	def, ok := r.routes[req.Name]
+func (r *routeWorkflowContext) ExecutePlannerActivity(ctx context.Context, call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
+	r.lastPlannerCall = call
+	handler, ok := r.plannerRoutes[call.Name]
 	if !ok {
-		return &testFuture{}, nil
+		return nil, fmt.Errorf("no planner route for activity %q", call.Name)
 	}
-	out, err := def.Handler(ctx, req.Input)
-	return &testFuture{result: out, err: err}, nil
+	return handler(ctx, call.Input)
 }
 
-func copyActivityResult(dst any, src any) error {
-	switch out := dst.(type) {
-	case *PlanActivityOutput:
-		switch v := src.(type) {
-		case *PlanActivityOutput:
-			*out = *v
-		case PlanActivityOutput:
-			*out = v
-		default:
-			return fmt.Errorf("runtime: unexpected plan output type %T", src)
-		}
-	case *ToolOutput:
-		switch v := src.(type) {
-		case *ToolOutput:
-			*out = *v
-		case ToolOutput:
-			*out = v
-		default:
-			return fmt.Errorf("runtime: unexpected tool output type %T", src)
-		}
+func (r *routeWorkflowContext) ExecuteToolActivity(ctx context.Context, call engine.ToolActivityCall) (*api.ToolOutput, error) {
+	fut, err := r.ExecuteToolActivityAsync(ctx, call)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	return fut.Get(ctx)
+}
+
+func (r *routeWorkflowContext) ExecuteToolActivityAsync(ctx context.Context, call engine.ToolActivityCall) (engine.Future[*api.ToolOutput], error) {
+	r.lastToolCall = call
+	handler, ok := r.toolRoutes[call.Name]
+	if !ok {
+		return nil, fmt.Errorf("no tool route for activity %q", call.Name)
+	}
+
+	fut := &testToolFuture{}
+	fut.result, fut.err = handler(ctx, call.Input)
+	return fut, nil
+}
+
+func (r *routeWorkflowContext) PauseRequests() engine.Receiver[api.PauseRequest] {
+	r.ensureSignals()
+	return testReceiver[api.PauseRequest]{ch: r.pauseCh}
+}
+
+func (r *routeWorkflowContext) ResumeRequests() engine.Receiver[api.ResumeRequest] {
+	r.ensureSignals()
+	return testReceiver[api.ResumeRequest]{ch: r.resumeCh}
+}
+
+func (r *routeWorkflowContext) ClarificationAnswers() engine.Receiver[api.ClarificationAnswer] {
+	r.ensureSignals()
+	return testReceiver[api.ClarificationAnswer]{ch: r.clarifyCh}
+}
+
+func (r *routeWorkflowContext) ExternalToolResults() engine.Receiver[api.ToolResultsSet] {
+	r.ensureSignals()
+	return testReceiver[api.ToolResultsSet]{ch: r.toolResultsCh}
+}
+
+func (r *routeWorkflowContext) ConfirmationDecisions() engine.Receiver[api.ConfirmationDecision] {
+	r.ensureSignals()
+	return testReceiver[api.ConfirmationDecision]{ch: r.confirmCh}
+}
+
+func (r *routeWorkflowContext) ensureSignals() {
+	r.sigMu.Lock()
+	defer r.sigMu.Unlock()
+	if r.pauseCh == nil {
+		r.pauseCh = make(chan api.PauseRequest, 1)
+	}
+	if r.resumeCh == nil {
+		r.resumeCh = make(chan api.ResumeRequest, 1)
+	}
+	if r.clarifyCh == nil {
+		r.clarifyCh = make(chan api.ClarificationAnswer, 1)
+	}
+	if r.toolResultsCh == nil {
+		r.toolResultsCh = make(chan api.ToolResultsSet, 1)
+	}
+	if r.confirmCh == nil {
+		r.confirmCh = make(chan api.ConfirmationDecision, 1)
+	}
 }
 
 type stubPlanner struct {
@@ -338,6 +417,9 @@ func (h *stubWorkflowHandle) Cancel(context.Context) error { return nil }
 type stubEngine struct{ last engine.WorkflowStartRequest }
 
 func (s *stubEngine) RegisterWorkflow(context.Context, engine.WorkflowDefinition) error { return nil }
+func (s *stubEngine) RegisterHookActivity(context.Context, string, engine.ActivityOptions, func(context.Context, *api.HookActivityInput) error) error {
+	return nil
+}
 func (s *stubEngine) RegisterPlannerActivity(context.Context, string, engine.ActivityOptions, func(context.Context, *api.PlanActivityInput) (*api.PlanActivityOutput, error)) error {
 	return nil
 }
