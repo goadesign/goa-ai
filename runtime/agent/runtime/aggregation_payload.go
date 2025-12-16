@@ -6,6 +6,7 @@ import "goa.design/goa-ai/runtime/agent/tools"
 type AggregationSummary struct {
 	Method     tools.Ident        `json:"method"`
 	ToolCallID string             `json:"tool_call_id,omitempty"`
+	Payload    any                `json:"payload,omitempty"`
 	Children   []AggregationChild `json:"children"`
 }
 
@@ -22,6 +23,7 @@ func BuildAggregationSummary(input FinalizerInput) AggregationSummary {
 	summary := AggregationSummary{
 		Method:     input.Parent.ToolName,
 		ToolCallID: input.Parent.ToolCallID,
+		Payload:    input.Parent.Payload,
 		Children:   make([]AggregationChild, 0, len(input.Children)),
 	}
 	for _, child := range input.Children {

@@ -171,8 +171,13 @@ func NewAgentToolsetRegistration(rt *Runtime, cfg AgentToolConfig) ToolsetRegist
 
 // ParentCall identifies the parent tool call in an agent-as-tool execution.
 type ParentCall struct {
-	ToolName   tools.Ident
+	// ToolName is the fully-qualified identifier of the parent tool.
+	ToolName tools.Ident
+	// ToolCallID is the provider/tool-call correlation identifier for this tool invocation.
 	ToolCallID string
+	// Payload is the decoded tool payload for the parent call when available.
+	// It is nil when the parent tool had an empty payload.
+	Payload any
 }
 
 // ChildCall summarizes a child tool outcome from a nested run used for aggregation.
@@ -564,8 +569,10 @@ func (r *Runtime) adaptAgentChildOutput(
 				continue
 			}
 			status := "ok"
+			var childErr error
 			if ev.Error != nil {
 				status = "error"
+				childErr = ev.Error
 			}
 			children = append(
 				children,
@@ -574,13 +581,32 @@ func (r *Runtime) adaptAgentChildOutput(
 					ToolCallID: ev.ToolCallID,
 					Status:     status,
 					Result:     ev.Result,
-					Error:      ev.Error,
+					Error:      childErr,
 				},
 			)
 		}
+
+		var parentPayload any
+		if len(call.Payload) > 0 {
+			if _, ok := r.ToolSpec(call.Name); ok {
+				val, err := r.unmarshalToolValue(ctx, call.Name, call.Payload, true)
+				if err != nil {
+					return nil, fmt.Errorf("decode parent tool payload for %s: %w", call.Name, err)
+				}
+				parentPayload = val
+			} else {
+				var generic any
+				if err := json.Unmarshal(call.Payload, &generic); err != nil {
+					return nil, fmt.Errorf("decode parent tool payload for %s: %w", call.Name, err)
+				}
+				parentPayload = generic
+			}
+		}
+
 		parent := ParentCall{
 			ToolName:   call.Name,
 			ToolCallID: call.ToolCallID,
+			Payload:    parentPayload,
 		}
 		invoker := finalizerToolInvokerFromContext(ctx, call)
 		input := FinalizerInput{
