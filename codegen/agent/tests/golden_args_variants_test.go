@@ -33,3 +33,15 @@ func TestGolden_Args_UserType(t *testing.T) {
 	assertGoldenGo(t, "args_usertype", "codecs.go.golden", codecs)
 	assertGoldenGo(t, "args_usertype", "specs.go.golden", specs)
 }
+
+func TestGolden_Args_UnionSumTypes(t *testing.T) {
+	files := buildAndGenerate(t, testscenarios.ArgsUnionSumTypes())
+	types := fileContent(t, files, "gen/alpha/tools/union/types.go")
+	unions := fileContent(t, files, "gen/alpha/tools/union/unions.go")
+	codecs := fileContent(t, files, "gen/alpha/tools/union/codecs.go")
+	specs := fileContent(t, files, "gen/alpha/tools/union/specs.go")
+	assertGoldenGo(t, "args_union_sum_types", "types.go.golden", types)
+	assertGoldenGo(t, "args_union_sum_types", "unions.go.golden", unions)
+	assertGoldenGo(t, "args_union_sum_types", "codecs.go.golden", codecs)
+	assertGoldenGo(t, "args_union_sum_types", "specs.go.golden", specs)
+}

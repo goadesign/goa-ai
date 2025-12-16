@@ -4,18 +4,18 @@
 
 // Tool IDs (globally unique). Use these constants in planner tool calls.
 const (
-{{- range .Toolset.Tools }}
-    {{ .ConstName }} tools.Ident = {{ printf "%q" .QualifiedName }}
+{{- range .Tools }}
+    {{ .ConstName }} tools.Ident = {{ printf "%q" .Name }}
 {{- end }}
 )
 
 // Type aliases and codec re-exports for convenience.
-{{- range .Toolset.Tools }}
-type {{ goify .Name true }}Payload = {{ $.Toolset.SpecsPackageName }}specs.{{ goify .Name true }}Payload
-var {{ goify .Name true }}PayloadCodec = {{ $.Toolset.SpecsPackageName }}specs.{{ goify .Name true }}PayloadCodec
-{{- if .HasResult }}
-type {{ goify .Name true }}Result  = {{ $.Toolset.SpecsPackageName }}specs.{{ goify .Name true }}Result
-var {{ goify .Name true }}ResultCodec  = {{ $.Toolset.SpecsPackageName }}specs.{{ goify .Name true }}ResultCodec
+{{- range .Tools }}
+type {{ .GoName }}Payload = {{ $.Toolset.SpecsPackageName }}specs.{{ .Payload.TypeName }}
+var {{ .GoName }}PayloadCodec = {{ $.Toolset.SpecsPackageName }}specs.{{ .Payload.ExportedCodec }}
+{{- if .Result }}
+type {{ .GoName }}Result  = {{ $.Toolset.SpecsPackageName }}specs.{{ .Result.TypeName }}
+var {{ .GoName }}ResultCodec  = {{ $.Toolset.SpecsPackageName }}specs.{{ .Result.ExportedCodec }}
 {{- end }}
 {{- end }}
 
@@ -35,13 +35,13 @@ func WithToolCallID(id string) CallOption {
 
 // Typed tool-call helpers (one per tool). These ensure use of the generated tool ID
 // and accept typed payloads matching tool schemas.
-{{- range .Toolset.Tools }}
-// New{{ goify .Name true }}Call builds a planner.ToolRequest for {{ .QualifiedName }}.
-func New{{ goify .Name true }}Call(args *{{ goify .Name true }}Payload, opts ...CallOption) planner.ToolRequest {
+{{- range .Tools }}
+// New{{ .GoName }}Call builds a planner.ToolRequest for {{ .Name }}.
+func New{{ .GoName }}Call(args *{{ .GoName }}Payload, opts ...CallOption) planner.ToolRequest {
     var payload []byte
     if args != nil {
         // Encode typed payloads into canonical JSON using the generated codec.
-        b, err := {{ goify .Name true }}PayloadCodec.ToJSON(args)
+        b, err := {{ .GoName }}PayloadCodec.ToJSON(args)
         if err != nil {
             panic(err)
         }

@@ -110,6 +110,3 @@ func TestInjectMessages(t *testing.T) {
 		t.Fatalf("expected third message to be user, got %q", out[2].Role)
 	}
 }
-
-
-

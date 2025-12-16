@@ -168,4 +168,3 @@ func TestSignalTypedDelivery(t *testing.T) {
 		t.Fatalf("workflow failed: %v", err)
 	}
 }
-

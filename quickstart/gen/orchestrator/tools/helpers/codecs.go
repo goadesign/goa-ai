@@ -60,6 +60,9 @@ var (
 var AnswerPayloadFieldDescs = map[string]string{
 	"question": "User question to answer",
 }
+var AnswerResultFieldDescs = map[string]string{
+	"text": "Answer text",
+}
 
 // ValidationError wraps a validation failure and exposes issues that callers
 // can use to build retry hints. It implements error and an Issues() accessor.
@@ -139,7 +142,36 @@ func enrichAnswerPayloadValidationError(err error) error {
 	ve.descriptions = m
 	return ve
 }
+func enrichAnswerResultValidationError(err error) error {
+	ve, ok := err.(*ValidationError)
+	if !ok || ve == nil {
+		return err
+	}
+	if len(ve.issues) == 0 {
+		return err
+	}
+	m := make(map[string]string)
+	for _, is := range ve.issues {
+		if d, ok := AnswerResultFieldDescs[is.Field]; ok && d != "" {
+			m[is.Field] = d
+		}
+	}
+	ve.descriptions = m
+	return ve
+}
 func enrichAnswerPayloadJSON2ValidationError(err error) error {
+	ve, ok := err.(*ValidationError)
+	if !ok || ve == nil {
+		return err
+	}
+	if len(ve.issues) == 0 {
+		return err
+	}
+	m := make(map[string]string)
+	ve.descriptions = m
+	return ve
+}
+func enrichAnswerResultJSON2ValidationError(err error) error {
 	ve, ok := err.(*ValidationError)
 	if !ok || ve == nil {
 		return err
@@ -208,7 +240,7 @@ func UnmarshalAnswerPayload(data []byte) (*AnswerPayload, error) {
 		return nil, err
 	}
 	// Transform into final type
-	v := &AskPayload{
+	v := &AnswerPayload{
 		Question: *raw.Question,
 	}
 	return v, nil
@@ -225,12 +257,25 @@ func UnmarshalAnswerResult(data []byte) (AnswerResult, error) {
 	if len(data) == 0 {
 		return zero, fmt.Errorf("answerResult JSON is empty")
 	}
-	// Non-payload types: simple decode
-	var v AnswerResult
-	if err := json.Unmarshal(data, &v); err != nil {
+	// Decode into JSON body (server body style) then transform.
+	// Note: Agent used-tools perform lenient decode (no required-field validation here).
+	var raw AnswerResultJSON2
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return zero, fmt.Errorf("decode answerResult: %w", err)
 	}
-	return v, nil
+	var err error
+	if raw.Text == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("text", "raw"))
+	}
+	if err != nil {
+		err = newValidationError(err)
+		return zero, err
+	}
+	// Transform into final type
+	v := &AnswerResult{
+		Text: *raw.Text,
+	}
+	return *v, nil
 }
 
 // Transform helpers
@@ -239,6 +284,14 @@ func UnmarshalAnswerResult(data []byte) (AnswerResult, error) {
 func ValidateAnswerPayloadJSON2(body *AnswerPayloadJSON2) (err error) {
 	if body.Question == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("question", "body"))
+	}
+	return
+}
+
+// ValidateAnswerResultJSON2 validates values of type *AnswerResultJSON2.
+func ValidateAnswerResultJSON2(body *AnswerResultJSON2) (err error) {
+	if body.Text == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
 	}
 	return
 }

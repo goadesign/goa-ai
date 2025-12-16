@@ -9,6 +9,3 @@ import "goa.design/goa-ai/runtime/agent/tools"
 type RetryHintProvider interface {
 	RetryHint(tool tools.Ident) *RetryHint
 }
-
-
-

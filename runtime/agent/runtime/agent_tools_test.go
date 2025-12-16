@@ -3,9 +3,11 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"fmt"
+
 	"github.com/stretchr/testify/require"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -336,4 +338,35 @@ func TestJSONOnly_NoFinalizer_MultiChildWithoutAggregateKey_ReturnsToolError(t *
 	require.NotNil(t, tr)
 	require.NotNil(t, tr.Error)
 	require.Contains(t, tr.Error.Message, "JSONOnly aggregation failed")
+}
+
+func TestJSONOnly_FinalizerError_Propagates(t *testing.T) {
+	rt := &Runtime{
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+	}
+	cfg := &AgentToolConfig{
+		AgentID:  "test.agent",
+		JSONOnly: true,
+		Finalizer: FinalizerFunc(func(context.Context, FinalizerInput) (planner.ToolResult, error) {
+			return planner.ToolResult{}, errors.New("boom")
+		}),
+	}
+	call := &planner.ToolRequest{
+		Name:       tools.Ident("test.parent"),
+		ToolCallID: "toolcall",
+		RunID:      "run",
+		SessionID:  "sess",
+	}
+	out := &RunOutput{
+		ToolEvents: []*planner.ToolResult{
+			{Name: tools.Ident("child"), Result: map[string]any{"x": "y"}},
+		},
+	}
+	tr, err := rt.adaptAgentChildOutput(context.Background(), cfg, call, run.Context{RunID: "child-run"}, out)
+	require.NoError(t, err)
+	require.NotNil(t, tr)
+	require.NotNil(t, tr.Error)
+	require.Contains(t, tr.Error.Message, "agent-tool: finalizer failed")
 }

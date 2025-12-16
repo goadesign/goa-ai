@@ -59,6 +59,9 @@ var AddPayloadFieldDescs = map[string]string{
 	"left":  "Left operand",
 	"right": "Right operand",
 }
+var AddResultFieldDescs = map[string]string{
+	"sum": "Sum",
+}
 
 // ValidationError wraps a validation failure and exposes issues that callers
 // can use to build retry hints. It implements error and an Issues() accessor.
@@ -138,7 +141,36 @@ func enrichAddPayloadValidationError(err error) error {
 	ve.descriptions = m
 	return ve
 }
+func enrichAddResultValidationError(err error) error {
+	ve, ok := err.(*ValidationError)
+	if !ok || ve == nil {
+		return err
+	}
+	if len(ve.issues) == 0 {
+		return err
+	}
+	m := make(map[string]string)
+	for _, is := range ve.issues {
+		if d, ok := AddResultFieldDescs[is.Field]; ok && d != "" {
+			m[is.Field] = d
+		}
+	}
+	ve.descriptions = m
+	return ve
+}
 func enrichAddPayloadJSON2ValidationError(err error) error {
+	ve, ok := err.(*ValidationError)
+	if !ok || ve == nil {
+		return err
+	}
+	if len(ve.issues) == 0 {
+		return err
+	}
+	m := make(map[string]string)
+	ve.descriptions = m
+	return ve
+}
+func enrichAddResultJSON2ValidationError(err error) error {
 	ve, ok := err.(*ValidationError)
 	if !ok || ve == nil {
 		return err
@@ -228,12 +260,25 @@ func UnmarshalAddResult(data []byte) (AddResult, error) {
 	if len(data) == 0 {
 		return zero, fmt.Errorf("addResult JSON is empty")
 	}
-	// Non-payload types: simple decode
-	var v AddResult
-	if err := json.Unmarshal(data, &v); err != nil {
+	// Decode into JSON body (server body style) then transform.
+	// Note: Agent used-tools perform lenient decode (no required-field validation here).
+	var raw AddResultJSON2
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return zero, fmt.Errorf("decode addResult: %w", err)
 	}
-	return v, nil
+	var err error
+	if raw.Sum == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("sum", "raw"))
+	}
+	if err != nil {
+		err = newValidationError(err)
+		return zero, err
+	}
+	// Transform into final type
+	v := &AddResult{
+		Sum: *raw.Sum,
+	}
+	return *v, nil
 }
 
 // Transform helpers
@@ -251,6 +296,14 @@ func ValidateAddPayloadJSON2(body *AddPayloadJSON2) (err error) {
 	}
 	if body.Right == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("right", "body"))
+	}
+	return
+}
+
+// ValidateAddResultJSON2 validates values of type *AddResultJSON2.
+func ValidateAddResultJSON2(body *AddResultJSON2) (err error) {
+	if body.Sum == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("sum", "body"))
 	}
 	return
 }

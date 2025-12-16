@@ -10,22 +10,22 @@ const AgentID agent.Ident = {{ printf "%q" .Toolset.Agent.ID }}
 // Tool IDs for this exported toolset (globally unique). Use these typed
 // constants as keys for per-tool configuration maps (e.g., SystemPrompts).
 const (
-{{- range .Toolset.Tools }}
-    // {{ .ConstName }} is the canonical tool identifier for {{ .QualifiedName }}.
+{{- range .Tools }}
+    // {{ .ConstName }} is the canonical tool identifier for {{ .Name }}.
     // Tool IDs are always the fully-qualified "<toolset>.<tool>" form so they
     // match Specs entries, planner requests, and runtime stream events exactly.
-    {{ .ConstName }} tools.Ident = {{ printf "%q" .QualifiedName }}
+    {{ .ConstName }} tools.Ident = {{ printf "%q" .Name }}
 {{- end }}
 )
 
 // Type aliases and codec re-exports for convenience. These aliases preserve exact
 // type identity while allowing callers to avoid importing the specs package.
-{{- range .Toolset.Tools }}
-type {{ goify .Name true }}Payload = {{ $.Toolset.SpecsPackageName }}specs.{{ goify .Name true }}Payload
-type {{ goify .Name true }}Result  = {{ $.Toolset.SpecsPackageName }}specs.{{ goify .Name true }}Result
+{{- range .Tools }}
+type {{ .GoName }}Payload = {{ $.Toolset.SpecsPackageName }}specs.{{ .Payload.TypeName }}
+type {{ .GoName }}Result  = {{ $.Toolset.SpecsPackageName }}specs.{{ .Result.TypeName }}
 
-var {{ goify .Name true }}PayloadCodec = {{ $.Toolset.SpecsPackageName }}specs.{{ goify .Name true }}PayloadCodec
-var {{ goify .Name true }}ResultCodec  = {{ $.Toolset.SpecsPackageName }}specs.{{ goify .Name true }}ResultCodec
+var {{ .GoName }}PayloadCodec = {{ $.Toolset.SpecsPackageName }}specs.{{ .Payload.ExportedCodec }}
+var {{ .GoName }}ResultCodec  = {{ $.Toolset.SpecsPackageName }}specs.{{ .Result.ExportedCodec }}
 {{- end }}
 
 // New{{ .Toolset.Agent.GoName }}ToolsetRegistration creates a toolset registration for the {{ .Toolset.Agent.Name }} agent.

@@ -22,12 +22,12 @@ const (
 	registryToolsetSpecsFileT  = "registry_toolset_specs"
 	mcpExecutorFileT           = "mcp_executor"
 	serviceExecutorFileT       = "service_executor"
-	serviceCodecsFileT         = "service_codecs"
 	toolCodecsFileT            = "tool_codecs"
 	toolSpecFileT              = "tool_spec"
 	toolSpecsAggregateT        = "specs_aggregate"
 	toolTransformsFileT        = "tool_transforms"
 	toolTypesFileT             = "tool_types"
+	toolUnionTypesFileT        = "tool_union_types"
 	usedToolsFileT             = "used_tools"
 )
 

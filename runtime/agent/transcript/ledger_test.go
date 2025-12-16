@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/memory"
+	"goa.design/goa-ai/runtime/agent/model"
 )
 
 func TestLedger_BuildAndValidate(t *testing.T) {
@@ -131,4 +131,3 @@ func TestBuildMessagesFromEvents_ParentToolOnly(t *testing.T) {
 		t.Fatalf("second role = %s, want user", msgs[1].Role)
 	}
 }
-

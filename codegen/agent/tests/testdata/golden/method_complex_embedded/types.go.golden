@@ -43,11 +43,11 @@ type (
 		Profile *Profile
 	}
 	// UpsertPayloadJSON2 is a helper type for JSON decode-body.
-	UpsertPayloadJSON2 struct {
+	UpsertPayloadJSON2 = struct {
 		Profile *UpsertPayloadJSONProfileJSON2 `json:"profile"`
 	}
 	// UpsertPayloadJSONProfileJSON2 is a helper type for JSON decode-body.
-	UpsertPayloadJSONProfileJSON2 struct {
+	UpsertPayloadJSONProfileJSON2 = struct {
 		// Identifier
 		ID *string `json:"id"`
 		// Name
@@ -55,7 +55,22 @@ type (
 		Address *UpsertPayloadJSONProfileJSONAddressJSON2 `json:"address"`
 	}
 	// UpsertPayloadJSONProfileJSONAddressJSON2 is a helper type for JSON decode-body.
-	UpsertPayloadJSONProfileJSONAddressJSON2 struct {
+	UpsertPayloadJSONProfileJSONAddressJSON2 = struct {
+		// Street
+		Street *string `json:"street"`
+		// City
+		City *string `json:"city"`
+	}
+	// UpsertResultJSON2 is a helper type for JSON decode-body.
+	UpsertResultJSON2 = struct {
+		// Identifier
+		ID *string `json:"id"`
+		// Name
+		Name    *string                       `json:"name"`
+		Address *UpsertResultJSONAddressJSON2 `json:"address"`
+	}
+	// UpsertResultJSONAddressJSON2 is a helper type for JSON decode-body.
+	UpsertResultJSONAddressJSON2 = struct {
 		// Street
 		Street *string `json:"street"`
 		// City

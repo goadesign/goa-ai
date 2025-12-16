@@ -7,8 +7,8 @@ var (
     {{- end }}
     // {{ .ExportedCodec }} serializes values of type {{ if .Pointer }}*{{ end }}{{ .FullRef }} to canonical JSON.
     {{ .ExportedCodec }} = tools.JSONCodec[{{ if .Pointer }}*{{ end }}{{ .FullRef }}]{
-        ToJSON:   {{ if and .UseServiceCodec .ServiceMarshalFunc }}{{ .ServiceMarshalFunc }}{{ else }}{{ .MarshalFunc }}{{ end }},
-        FromJSON: {{ if and .UseServiceCodec .ServiceUnmarshalFunc }}{{ .ServiceUnmarshalFunc }}{{ else }}{{ .UnmarshalFunc }}{{ end }},
+        ToJSON:   {{ .MarshalFunc }},
+        FromJSON: {{ .UnmarshalFunc }},
     }
     {{- $printed = true }}
     {{- end }}
@@ -24,21 +24,13 @@ var (
         ToJSON: func(v any) ([]byte, error) {
             // Prefer typed marshal when the value matches the expected type.
             if typed, ok := v.({{ if .Pointer }}*{{ end }}{{ .FullRef }}); ok {
-                {{- if and .UseServiceCodec .ServiceMarshalFunc }}
-                return {{ .ServiceMarshalFunc }}(typed)
-                {{- else }}
                 return {{ .MarshalFunc }}(typed)
-                {{- end }}
             }
             // Fallback: marshal structurally compatible values directly.
             return json.Marshal(v)
         },
         FromJSON: func(data []byte) (any, error) {
-            {{- if and .UseServiceCodec .ServiceUnmarshalFunc }}
-            return {{ .ServiceUnmarshalFunc }}(data)
-            {{- else }}
             return {{ .UnmarshalFunc }}(data)
-            {{- end }}
         },
     }
     {{- $printed = true }}
@@ -196,7 +188,7 @@ func ArtifactCodec(name string) (*tools.JSONCodec[any], bool) {
 }
 
 {{- range .Types }}
-    {{- if and .GenerateCodec (not .UseServiceCodec) }}
+    {{- if .GenerateCodec }}
 // {{ .MarshalFunc }} serializes {{ if .Pointer }}*{{ end }}{{ .FullRef }} into JSON.
 func {{ .MarshalFunc }}(v {{ if .Pointer }}*{{ end }}{{ .FullRef }}) ([]byte, error) {
     {{- if .Pointer }}
@@ -224,7 +216,7 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
         {{- end }}
         {{- end }}
     }
-    {{- if eq .Usage "payload" }}
+    {{- if .JSONRef }}
     // Decode into JSON body (server body style) then transform.
     // Note: Agent used-tools perform lenient decode (no required-field validation here).
     var raw {{ .JSONRef }}
@@ -261,8 +253,9 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
     {{- if .TransformBody }}
     {{ .TransformBody }}
     {{- else }}
-    // Fallback: direct assignment if shapes are identical
-    v := {{ if .Pointer }}*{{ end }}{{ .FullRef }}(raw)
+    // Fallback: direct conversion when shapes are identical.
+    res := {{ .FullRef }}(raw)
+    v := &res
     {{- end }}
     {{- if .Pointer }}
     return v, nil

@@ -589,7 +589,27 @@ func (r *Runtime) adaptAgentChildOutput(
 			Invoke:   invoker,
 		}
 		tr, aerr := cfg.Finalizer.Finalize(ctx, input)
-		if aerr == nil && tr.Result != nil {
+		if aerr != nil {
+			// Strong contract: if a toolset provides an explicit Finalizer, it owns
+			// producing a schema-correct parent tool_result. Falling back to JSONOnly
+			// here would mask the true cause and yield misleading errors.
+			result := &planner.ToolResult{
+				Name:          call.Name,
+				ToolCallID:    call.ToolCallID,
+				Error:         planner.NewToolErrorWithCause("agent-tool: finalizer failed", aerr),
+				Artifacts:     aggregateArtifacts(outPtr.ToolEvents),
+				ChildrenCount: len(outPtr.ToolEvents),
+			}
+			handle := &run.Handle{
+				RunID:            nestedRunCtx.RunID,
+				AgentID:          cfg.AgentID,
+				ParentRunID:      nestedRunCtx.ParentRunID,
+				ParentToolCallID: nestedRunCtx.ParentToolCallID,
+			}
+			attachRunLink(result, handle)
+			return result, nil
+		}
+		if tr.Result != nil {
 			// Ensure correlation fields are set so inline results can be
 			// matched back to the originating call during merging.
 			tr.Name = call.Name

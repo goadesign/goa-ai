@@ -37,6 +37,3 @@ func TestTranslateResponse_UsageIncludesCacheTokens(t *testing.T) {
 	require.Equal(t, int(cacheRead), resp.Usage.CacheReadTokens)
 	require.Equal(t, int(cacheWrite), resp.Usage.CacheWriteTokens)
 }
-
-
-

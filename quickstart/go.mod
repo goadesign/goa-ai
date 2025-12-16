@@ -4,7 +4,7 @@ go 1.25.5
 
 require (
 	goa.design/goa-ai v0.24.0
-	goa.design/goa/v3 v3.23.4
+	goa.design/goa/v3 v3.23.5-0.20251216171136-b96be649577b
 )
 
 require (
@@ -54,7 +54,5 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace goa.design/goa/v3 => /Users/raphael/src/goa
 
 replace goa.design/goa-ai => /Users/raphael/src/goa-ai

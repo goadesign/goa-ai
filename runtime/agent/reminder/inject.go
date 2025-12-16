@@ -164,5 +164,3 @@ func cloneMessage(msg *model.Message) *model.Message {
 		Meta:  meta,
 	}
 }
-
-

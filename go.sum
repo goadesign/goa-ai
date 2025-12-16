@@ -484,8 +484,8 @@ go.uber.org/multierr v1.6.0/go.mod h1:cdWPpRnG4AhwMwsgIHip0KRBQjJy5kYEpYjJxpXp9i
 go.uber.org/zap v1.17.0/go.mod h1:MXVU+bhUf/A7Xi2HNOnopQOrmycQ5Ih87HtOu4q5SSo=
 goa.design/clue v1.2.3 h1:ho2TkqaLjdt0/fA2ouwQSwPbq75RLI/2o5/4xYxyCj4=
 goa.design/clue v1.2.3/go.mod h1:7/L931m3SrOfxebASs4/R3QP71K/4JUzUTol8mtk7wQ=
-goa.design/goa/v3 v3.23.4 h1:7d9IAtyC8aP9bAvTdY+YPQaScpoZRd/paDH3PSXaxbM=
-goa.design/goa/v3 v3.23.4/go.mod h1:da3W585WfJe9gT+hJCbP8YFB9yc4gmuCwB0MvkbwhXk=
+goa.design/goa/v3 v3.23.5-0.20251216171136-b96be649577b h1:fhsP0TjYQHePvd6xT3M5ndFE9gR5WQUdMwmZ3D/Hjrw=
+goa.design/goa/v3 v3.23.5-0.20251216171136-b96be649577b/go.mod h1:da3W585WfJe9gT+hJCbP8YFB9yc4gmuCwB0MvkbwhXk=
 goa.design/pulse v1.4.3 h1:KBrr3BD2EH3APREzFAfWyC5g7Jul+9hKIr4cHQfxuFU=
 goa.design/pulse v1.4.3/go.mod h1:KKWFXkNK9voK6tMl/6qmU8Mh0zRDCQl+SXg1tcdcHeQ=
 golang.org/x/crypto v0.0.0-20181029021203-45a5f77698d3/go.mod h1:6SG95UA2DQfeDnfUPMdvaQW0Q7yPrPDi9nlGo2tz2b4=

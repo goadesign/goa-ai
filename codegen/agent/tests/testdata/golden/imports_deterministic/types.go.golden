@@ -13,4 +13,14 @@ type (
 	StorePayload = types.Doc
 	// StoreResult defines the JSON result for the docs.store tool.
 	StoreResult = types.Doc
+	// StorePayloadJSON2 is a helper type for JSON decode-body.
+	StorePayloadJSON2 = struct {
+		// Identifier
+		ID *string `json:"id"`
+	}
+	// StoreResultJSON2 is a helper type for JSON decode-body.
+	StoreResultJSON2 = struct {
+		// Identifier
+		ID *string `json:"id"`
+	}
 )

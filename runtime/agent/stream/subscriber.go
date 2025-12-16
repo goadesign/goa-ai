@@ -317,6 +317,9 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Phase:  phase,
 			Status: evt.Status,
 		}
+		if evt.Error != nil {
+			payload.Error = evt.Error.Error()
+		}
 		return s.sink.Send(ctx, Workflow{
 			Base: Base{t: EventWorkflow, r: evt.RunID(), s: evt.SessionID(), p: payload},
 			Data: payload,

@@ -32,10 +32,3 @@ func TestToolsetNamedTools(t *testing.T) {
 	require.Contains(t, specsContent, "package specs")
 	require.Contains(t, specsContent, "func init()")
 }
-
-
-
-
-
-
-

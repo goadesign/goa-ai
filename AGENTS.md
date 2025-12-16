@@ -48,16 +48,14 @@
 - Never manually edit `gen/` — always regenerate.
 
 ## Testing Guidelines
-- Frameworks: standard `testing`, `testify/require` in integration tests.
+- Frameworks: standard `testing`, `testify/assert` and `testify/require`.
 - Place new e2e scenarios under `integration_tests/scenarios/*.yaml` and wire in `tests/`.
 - Aim for coverage on: tools, resources, prompts, initialization, and errors.
 - Useful env vars: `TEST_FILTER`, `TEST_DEBUG`, `TEST_KEEP_GENERATED`, `TEST_SERVER_URL` (see `integration_tests/README.md`).
 
 ### Unit Test Assertions
-- Prefer `t.Errorf` over `t.Fatalf` so the test reports multiple failures where
-  safe. Reserve `t.Fatalf` for cases where continuing would panic or
-  meaningfully corrupt subsequent assertions (e.g., required setup failed and
-  state is unusable).
+- Use `testify/assert` for assertions when possible so tests report multiple failures.
+- Use `testify/require` only when the test cannot proceed if the assertion fails (e.g., nil checks before dereferencing, setup failures that make subsequent assertions meaningless).
 
 ## Commit & Pull Requests
 - Commits: imperative and scoped (e.g., “Refactor adapter stream bridge”, “Fix tools/list schema”).

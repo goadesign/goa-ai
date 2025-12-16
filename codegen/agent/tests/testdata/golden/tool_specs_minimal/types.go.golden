@@ -18,9 +18,14 @@ type (
 		Title string `json:"title"`
 	}
 	// SummarizeDocPayloadJSON2 is a helper type for JSON decode-body.
-	SummarizeDocPayloadJSON2 struct {
+	SummarizeDocPayloadJSON2 = struct {
 		// Document identifier
 		DocID *string `json:"doc_id"`
+	}
+	// SummarizeDocResultJSON2 is a helper type for JSON decode-body.
+	SummarizeDocResultJSON2 = struct {
+		// Title
+		Title *string `json:"title"`
 	}
 	// SummarizePayload is a helper type materialized for nested references.
 	SummarizePayload = struct {
@@ -30,6 +35,6 @@ type (
 	// SummarizeResult is a helper type materialized for nested references.
 	SummarizeResult = struct {
 		// Title
-		Title string
+		Title string `json:"title"`
 	}
 )

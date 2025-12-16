@@ -62,6 +62,13 @@ var ValidatePayloadFieldDescs = map[string]string{
 	"child.mid":        "Middle value",
 	"root":             "Root value",
 }
+var ValidateResultFieldDescs = map[string]string{
+	"child":            "Child L2",
+	"child.child":      "Child L3",
+	"child.child.leaf": "Leaf value",
+	"child.mid":        "Middle value",
+	"root":             "Root value",
+}
 
 // ValidationError wraps a validation failure and exposes issues that callers
 // can use to build retry hints. It implements error and an Issues() accessor.
@@ -141,6 +148,23 @@ func enrichValidatePayloadValidationError(err error) error {
 	ve.descriptions = m
 	return ve
 }
+func enrichValidateResultValidationError(err error) error {
+	ve, ok := err.(*ValidationError)
+	if !ok || ve == nil {
+		return err
+	}
+	if len(ve.issues) == 0 {
+		return err
+	}
+	m := make(map[string]string)
+	for _, is := range ve.issues {
+		if d, ok := ValidateResultFieldDescs[is.Field]; ok && d != "" {
+			m[is.Field] = d
+		}
+	}
+	ve.descriptions = m
+	return ve
+}
 func enrichValidatePayloadJSON2ValidationError(err error) error {
 	ve, ok := err.(*ValidationError)
 	if !ok || ve == nil {
@@ -166,6 +190,42 @@ func enrichValidatePayloadJSONChildJSON2ValidationError(err error) error {
 	return ve
 }
 func enrichValidatePayloadJSONChildJSONChildJSON2ValidationError(err error) error {
+	ve, ok := err.(*ValidationError)
+	if !ok || ve == nil {
+		return err
+	}
+	if len(ve.issues) == 0 {
+		return err
+	}
+	m := make(map[string]string)
+	ve.descriptions = m
+	return ve
+}
+func enrichValidateResultJSON2ValidationError(err error) error {
+	ve, ok := err.(*ValidationError)
+	if !ok || ve == nil {
+		return err
+	}
+	if len(ve.issues) == 0 {
+		return err
+	}
+	m := make(map[string]string)
+	ve.descriptions = m
+	return ve
+}
+func enrichValidateResultJSONChildJSON2ValidationError(err error) error {
+	ve, ok := err.(*ValidationError)
+	if !ok || ve == nil {
+		return err
+	}
+	if len(ve.issues) == 0 {
+		return err
+	}
+	m := make(map[string]string)
+	ve.descriptions = m
+	return ve
+}
+func enrichValidateResultJSONChildJSONChildJSON2ValidationError(err error) error {
 	ve, ok := err.(*ValidationError)
 	if !ok || ve == nil {
 		return err
@@ -242,7 +302,7 @@ func UnmarshalValidatePayload(data []byte) (*ValidatePayload, error) {
 		return nil, err
 	}
 	// Transform into final type
-	v := &Level1{
+	v := &ValidatePayload{
 		Root: *raw.Root,
 	}
 	v.Child = payloadValidatePayloadJSONChildJSON2ToLevel2(raw.Child)
@@ -260,12 +320,34 @@ func UnmarshalValidateResult(data []byte) (ValidateResult, error) {
 	if len(data) == 0 {
 		return zero, fmt.Errorf("validateResult JSON is empty")
 	}
-	// Non-payload types: simple decode
-	var v ValidateResult
-	if err := json.Unmarshal(data, &v); err != nil {
+	// Decode into JSON body (server body style) then transform.
+	// Note: Agent used-tools perform lenient decode (no required-field validation here).
+	var raw ValidateResultJSON2
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return zero, fmt.Errorf("decode validateResult: %w", err)
 	}
-	return v, nil
+	var err error
+	if raw.Root == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("root", "raw"))
+	}
+	if raw.Child == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("child", "raw"))
+	}
+	if raw.Child != nil {
+		if err2 := ValidateValidateResultJSONChildJSON2(raw.Child); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if err != nil {
+		err = newValidationError(err)
+		return zero, err
+	}
+	// Transform into final type
+	v := &ValidateResult{
+		Root: *raw.Root,
+	}
+	v.Child = resultValidateResultJSONChildJSON2ToLevel2(raw.Child)
+	return *v, nil
 }
 
 // Transform helpers
@@ -279,6 +361,23 @@ func payloadValidatePayloadJSONChildJSON2ToLevel2(v *ValidatePayloadJSONChildJSO
 	return
 }
 func payloadValidatePayloadJSONChildJSONChildJSON2ToLevel3(v *ValidatePayloadJSONChildJSONChildJSON2) (out *Level3) {
+	res := &Level3{
+		Leaf: *v.Leaf,
+	}
+
+	out = res
+	return
+}
+func resultValidateResultJSONChildJSON2ToLevel2(v *ValidateResultJSONChildJSON2) (out *Level2) {
+	res := &Level2{
+		Mid: *v.Mid,
+	}
+	res.Child = resultValidateResultJSONChildJSONChildJSON2ToLevel3(v.Child)
+
+	out = res
+	return
+}
+func resultValidateResultJSONChildJSONChildJSON2ToLevel3(v *ValidateResultJSONChildJSONChildJSON2) (out *Level3) {
 	res := &Level3{
 		Leaf: *v.Leaf,
 	}
@@ -348,6 +447,46 @@ func ValidateValidatePayloadJSONChildJSON2(body *ValidatePayloadJSONChildJSON2) 
 
 // ValidateValidatePayloadJSONChildJSONChildJSON2 validates values of type *ValidatePayloadJSONChildJSONChildJSON2.
 func ValidateValidatePayloadJSONChildJSONChildJSON2(body *ValidatePayloadJSONChildJSONChildJSON2) (err error) {
+	if body.Leaf == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("leaf", "body"))
+	}
+	return
+}
+
+// ValidateValidateResultJSON2 validates values of type *ValidateResultJSON2.
+func ValidateValidateResultJSON2(body *ValidateResultJSON2) (err error) {
+	if body.Root == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("root", "body"))
+	}
+	if body.Child == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("child", "body"))
+	}
+	if body.Child != nil {
+		if err2 := ValidateValidateResultJSONChildJSON2(body.Child); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateValidateResultJSONChildJSON2 validates values of type *ValidateResultJSONChildJSON2.
+func ValidateValidateResultJSONChildJSON2(body *ValidateResultJSONChildJSON2) (err error) {
+	if body.Mid == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("mid", "body"))
+	}
+	if body.Child == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("child", "body"))
+	}
+	if body.Child != nil {
+		if err2 := ValidateValidateResultJSONChildJSONChildJSON2(body.Child); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateValidateResultJSONChildJSONChildJSON2 validates values of type *ValidateResultJSONChildJSONChildJSON2.
+func ValidateValidateResultJSONChildJSONChildJSON2(body *ValidateResultJSONChildJSONChildJSON2) (err error) {
 	if body.Leaf == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("leaf", "body"))
 	}

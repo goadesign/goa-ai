@@ -18,15 +18,20 @@ type (
 		// Answer text
 		Text string `json:"text"`
 	}
-	// Answer3 is a helper type materialized for nested references.
-	Answer3 = struct {
+	// Answer2 is a helper type materialized for nested references.
+	Answer2 = struct {
 		// Answer text
-		Text string
+		Text string `json:"text"`
 	}
 	// AnswerPayloadJSON2 is a helper type for JSON decode-body.
-	AnswerPayloadJSON2 struct {
+	AnswerPayloadJSON2 = struct {
 		// User question to answer
 		Question *string `json:"question"`
+	}
+	// AnswerResultJSON2 is a helper type for JSON decode-body.
+	AnswerResultJSON2 = struct {
+		// Answer text
+		Text *string `json:"text"`
 	}
 	// AskPayload is a helper type materialized for nested references.
 	AskPayload = struct {

@@ -441,6 +441,9 @@ type (
 		// on terminal updates derived from RunCompletedEvent and may be
 		// empty for non-terminal phase transitions.
 		Status string `json:"status,omitempty"`
+		// Error is the terminal error string when the run fails or is canceled.
+		// It is populated only on terminal updates derived from RunCompletedEvent.
+		Error string `json:"error,omitempty"`
 	}
 
 	// AgentRunStartedPayload describes an agent-as-tool child run link.

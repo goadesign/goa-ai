@@ -59,6 +59,10 @@ var StorePayloadFieldDescs = map[string]string{
 	"id":    "Identifier",
 	"title": "Title",
 }
+var StoreResultFieldDescs = map[string]string{
+	"id":    "Identifier",
+	"title": "Title",
+}
 
 // ValidationError wraps a validation failure and exposes issues that callers
 // can use to build retry hints. It implements error and an Issues() accessor.
@@ -138,7 +142,36 @@ func enrichStorePayloadValidationError(err error) error {
 	ve.descriptions = m
 	return ve
 }
+func enrichStoreResultValidationError(err error) error {
+	ve, ok := err.(*ValidationError)
+	if !ok || ve == nil {
+		return err
+	}
+	if len(ve.issues) == 0 {
+		return err
+	}
+	m := make(map[string]string)
+	for _, is := range ve.issues {
+		if d, ok := StoreResultFieldDescs[is.Field]; ok && d != "" {
+			m[is.Field] = d
+		}
+	}
+	ve.descriptions = m
+	return ve
+}
 func enrichStorePayloadJSON2ValidationError(err error) error {
+	ve, ok := err.(*ValidationError)
+	if !ok || ve == nil {
+		return err
+	}
+	if len(ve.issues) == 0 {
+		return err
+	}
+	m := make(map[string]string)
+	ve.descriptions = m
+	return ve
+}
+func enrichStoreResultJSON2ValidationError(err error) error {
 	ve, ok := err.(*ValidationError)
 	if !ok || ve == nil {
 		return err
@@ -210,7 +243,7 @@ func UnmarshalStorePayload(data []byte) (*StorePayload, error) {
 		return nil, err
 	}
 	// Transform into final type
-	v := &DocStoreArgs{
+	v := &StorePayload{
 		ID:    *raw.ID,
 		Title: *raw.Title,
 	}
@@ -228,12 +261,26 @@ func UnmarshalStoreResult(data []byte) (StoreResult, error) {
 	if len(data) == 0 {
 		return zero, fmt.Errorf("storeResult JSON is empty")
 	}
-	// Non-payload types: simple decode
-	var v StoreResult
-	if err := json.Unmarshal(data, &v); err != nil {
+	// Decode into JSON body (server body style) then transform.
+	// Note: Agent used-tools perform lenient decode (no required-field validation here).
+	var raw StoreResultJSON2
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return zero, fmt.Errorf("decode storeResult: %w", err)
 	}
-	return v, nil
+	var err error
+	if raw.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "raw"))
+	}
+	if err != nil {
+		err = newValidationError(err)
+		return zero, err
+	}
+	// Transform into final type
+	v := &StoreResult{
+		ID:    *raw.ID,
+		Title: raw.Title,
+	}
+	return *v, nil
 }
 
 // Transform helpers
@@ -251,6 +298,14 @@ func ValidateStorePayloadJSON2(body *StorePayloadJSON2) (err error) {
 	}
 	if body.Title == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("title", "body"))
+	}
+	return
+}
+
+// ValidateStoreResultJSON2 validates values of type *StoreResultJSON2.
+func ValidateStoreResultJSON2(body *StoreResultJSON2) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
 	}
 	return
 }

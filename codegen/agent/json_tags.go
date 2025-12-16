@@ -62,5 +62,3 @@ func addJSONTagsRecursive(att *goaexpr.AttributeExpr) {
 		addJSONTagsRecursive(nat.Attribute)
 	}
 }
-
-

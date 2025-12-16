@@ -58,6 +58,9 @@ var (
 var SummarizeDocPayloadFieldDescs = map[string]string{
 	"doc_id": "Document identifier",
 }
+var SummarizeDocResultFieldDescs = map[string]string{
+	"title": "Title",
+}
 
 // ValidationError wraps a validation failure and exposes issues that callers
 // can use to build retry hints. It implements error and an Issues() accessor.
@@ -137,7 +140,36 @@ func enrichSummarizeDocPayloadValidationError(err error) error {
 	ve.descriptions = m
 	return ve
 }
+func enrichSummarizeDocResultValidationError(err error) error {
+	ve, ok := err.(*ValidationError)
+	if !ok || ve == nil {
+		return err
+	}
+	if len(ve.issues) == 0 {
+		return err
+	}
+	m := make(map[string]string)
+	for _, is := range ve.issues {
+		if d, ok := SummarizeDocResultFieldDescs[is.Field]; ok && d != "" {
+			m[is.Field] = d
+		}
+	}
+	ve.descriptions = m
+	return ve
+}
 func enrichSummarizeDocPayloadJSON2ValidationError(err error) error {
+	ve, ok := err.(*ValidationError)
+	if !ok || ve == nil {
+		return err
+	}
+	if len(ve.issues) == 0 {
+		return err
+	}
+	m := make(map[string]string)
+	ve.descriptions = m
+	return ve
+}
+func enrichSummarizeDocResultJSON2ValidationError(err error) error {
 	ve, ok := err.(*ValidationError)
 	if !ok || ve == nil {
 		return err
@@ -206,7 +238,7 @@ func UnmarshalSummarizeDocPayload(data []byte) (*SummarizeDocPayload, error) {
 		return nil, err
 	}
 	// Transform into final type
-	v := &SummarizePayload{
+	v := &SummarizeDocPayload{
 		DocID: *raw.DocID,
 	}
 	return v, nil
@@ -223,12 +255,25 @@ func UnmarshalSummarizeDocResult(data []byte) (SummarizeDocResult, error) {
 	if len(data) == 0 {
 		return zero, fmt.Errorf("summarizeDocResult JSON is empty")
 	}
-	// Non-payload types: simple decode
-	var v SummarizeDocResult
-	if err := json.Unmarshal(data, &v); err != nil {
+	// Decode into JSON body (server body style) then transform.
+	// Note: Agent used-tools perform lenient decode (no required-field validation here).
+	var raw SummarizeDocResultJSON2
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return zero, fmt.Errorf("decode summarizeDocResult: %w", err)
 	}
-	return v, nil
+	var err error
+	if raw.Title == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("title", "raw"))
+	}
+	if err != nil {
+		err = newValidationError(err)
+		return zero, err
+	}
+	// Transform into final type
+	v := &SummarizeDocResult{
+		Title: *raw.Title,
+	}
+	return *v, nil
 }
 
 // Transform helpers
@@ -237,6 +282,14 @@ func UnmarshalSummarizeDocResult(data []byte) (SummarizeDocResult, error) {
 func ValidateSummarizeDocPayloadJSON2(body *SummarizeDocPayloadJSON2) (err error) {
 	if body.DocID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("doc_id", "body"))
+	}
+	return
+}
+
+// ValidateSummarizeDocResultJSON2 validates values of type *SummarizeDocResultJSON2.
+func ValidateSummarizeDocResultJSON2(body *SummarizeDocResultJSON2) (err error) {
+	if body.Title == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("title", "body"))
 	}
 	return
 }
