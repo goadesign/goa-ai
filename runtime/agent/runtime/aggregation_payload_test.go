@@ -19,7 +19,7 @@ func TestBuildAggregationSummary(t *testing.T) {
 			{ToolName: tools.Ident("child.err"), Error: planner.NewToolError("failed")},
 		},
 	}
-	summary := BuildAggregationSummary(input)
+	summary := BuildAggregationSummary(&input)
 	require.Equal(t, tools.Ident("ada.method"), summary.Method)
 	require.Equal(t, "parent-123", summary.ToolCallID)
 	require.Len(t, summary.Children, 2)

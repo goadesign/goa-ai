@@ -344,7 +344,7 @@ func TestConvertRunOutputToToolResult(t *testing.T) {
 				{Telemetry: &telemetry.ToolTelemetry{TokensUsed: 5, DurationMs: 50, Model: "m1"}},
 			},
 		}
-		tr := ConvertRunOutputToToolResult("parent.tool", out)
+		tr := ConvertRunOutputToToolResult("parent.tool", &out)
 		require.Nil(t, tr.Error)
 		require.NotNil(t, tr.Telemetry)
 		require.Equal(t, 15, tr.Telemetry.TokensUsed)
@@ -360,7 +360,7 @@ func TestConvertRunOutputToToolResult(t *testing.T) {
 				{Error: planner.NewToolError("e2")},
 			},
 		}
-		tr := ConvertRunOutputToToolResult("parent.tool", out)
+		tr := ConvertRunOutputToToolResult("parent.tool", &out)
 		require.Error(t, tr.Error)
 	})
 }
@@ -478,7 +478,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 			if outPtr == nil {
 				return nil, fmt.Errorf("nil nested output")
 			}
-			result := ConvertRunOutputToToolResult(call.Name, *outPtr)
+			result := ConvertRunOutputToToolResult(call.Name, outPtr)
 			return &result, nil
 		},
 	}

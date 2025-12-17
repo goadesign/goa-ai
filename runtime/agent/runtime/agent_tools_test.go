@@ -184,7 +184,7 @@ func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 }
 
 func TestToolResultFinalizerInvokesTool(t *testing.T) {
-	finalizer := ToolResultFinalizer("svc.aggregate.finalize", func(_ context.Context, input FinalizerInput) (any, error) {
+	finalizer := ToolResultFinalizer("svc.aggregate.finalize", func(_ context.Context, input *FinalizerInput) (any, error) {
 		return map[string]any{"parent": input.Parent.ToolName}, nil
 	})
 	input := FinalizerInput{
@@ -203,16 +203,16 @@ func TestToolResultFinalizerInvokesTool(t *testing.T) {
 			}, nil
 		}),
 	}
-	result, err := finalizer.Finalize(context.Background(), input)
+	result, err := finalizer.Finalize(context.Background(), &input)
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"status": "ok"}, result.Result)
 }
 
 func TestToolResultFinalizerMissingInvoker(t *testing.T) {
-	finalizer := ToolResultFinalizer("svc.aggregate.finalize", func(context.Context, FinalizerInput) (any, error) {
+	finalizer := ToolResultFinalizer("svc.aggregate.finalize", func(context.Context, *FinalizerInput) (any, error) {
 		return map[string]any{}, nil
 	})
-	_, err := finalizer.Finalize(context.Background(), FinalizerInput{
+	_, err := finalizer.Finalize(context.Background(), &FinalizerInput{
 		Parent: ParentCall{ToolName: "ada.method"},
 	})
 	require.Error(t, err)
@@ -349,8 +349,8 @@ func TestJSONOnly_FinalizerError_Propagates(t *testing.T) {
 	cfg := &AgentToolConfig{
 		AgentID:  "test.agent",
 		JSONOnly: true,
-		Finalizer: FinalizerFunc(func(context.Context, FinalizerInput) (planner.ToolResult, error) {
-			return planner.ToolResult{}, errors.New("boom")
+		Finalizer: FinalizerFunc(func(context.Context, *FinalizerInput) (*planner.ToolResult, error) {
+			return nil, errors.New("boom")
 		}),
 	}
 	call := &planner.ToolRequest{
