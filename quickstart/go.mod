@@ -55,4 +55,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace goa.design/goa-ai => /Users/raphael/src/goa-ai
+replace goa.design/goa-ai => ..
