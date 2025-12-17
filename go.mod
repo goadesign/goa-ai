@@ -1,6 +1,6 @@
 module goa.design/goa-ai
 
-go 1.24.5
+go 1.25.5
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.19.0

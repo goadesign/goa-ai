@@ -16,7 +16,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.x'
+          go-version: '1.25.x'
           cache: true
           cache-dependency-path: go.sum
 
@@ -33,6 +33,12 @@ jobs:
       - name: Install developer tools
         run: |
           make tools
+
+      - name: Install Goa CLI
+        run: |
+          go install goa.design/goa/v3/cmd/goa@latest
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
       - name: Lint (golangci-lint v2)
         run: |
           golangci-lint run --timeout=5m
@@ -51,7 +57,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.x'
+          go-version: '1.25.x'
           cache: true
           cache-dependency-path: go.sum
 
