@@ -261,7 +261,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Telemetry:        evt.Telemetry,
 			Error:            evt.Error,
 		}
-		if preview := clampPreview(rthints.FormatResultHint(evt.ToolName, evt.Result)); preview != "" {
+		if preview := clampPreview(evt.ResultPreview); preview != "" {
 			payload.ResultPreview = preview
 		}
 		return s.sink.Send(ctx, ToolEnd{

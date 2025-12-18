@@ -205,7 +205,7 @@ func decodeHookActivityEvent(input *HookActivityInput) (hooks.Event, error) {
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", hooks.ToolResultReceived, err)
 		}
-		return hooks.NewToolResultReceivedEvent(input.RunID, input.AgentID, input.SessionID, p.ToolName, p.ToolCallID, p.ParentToolCallID, p.Result, p.Bounds, p.Artifacts, p.Duration, p.Telemetry, p.Error), nil
+		return hooks.NewToolResultReceivedEvent(input.RunID, input.AgentID, input.SessionID, p.ToolName, p.ToolCallID, p.ParentToolCallID, p.Result, p.ResultPreview, p.Bounds, p.Artifacts, p.Duration, p.Telemetry, p.Error), nil
 
 	case hooks.PolicyDecision:
 		var p hooks.PolicyDecisionEvent
