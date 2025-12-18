@@ -108,7 +108,7 @@ func (r *Runtime) confirmToolsIfNeeded(wfCtx engine.WorkflowContext, input *RunI
 		// Publish a result event for the denied tool call so subscribers/UI
 		// see a resolved tool call without counting it as a failure.
 		r.publishHook(ctx, hooks.NewToolCallScheduledEvent(call.RunID, call.AgentID, call.SessionID, call.Name, call.ToolCallID, call.Payload, "", call.ParentToolCallID, 0), turnID)
-		r.publishHook(ctx, hooks.NewToolResultReceivedEvent(call.RunID, call.AgentID, call.SessionID, call.Name, call.ToolCallID, call.ParentToolCallID, deniedResult, nil, nil, 0, nil, nil), turnID)
+		r.publishHook(ctx, hooks.NewToolResultReceivedEvent(call.RunID, call.AgentID, call.SessionID, call.Name, call.ToolCallID, call.ParentToolCallID, deniedResult, formatResultPreview(call.Name, deniedResult), nil, nil, 0, nil, nil), turnID)
 
 		denied = append(denied, &planner.ToolResult{
 			Name:       call.Name,

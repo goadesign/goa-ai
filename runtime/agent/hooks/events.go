@@ -192,6 +192,11 @@ type (
 		ToolName tools.Ident
 		// Result contains the tool's output payload. Nil if Error is set.
 		Result any
+		// ResultPreview is a concise, user-facing summary of the tool result rendered
+		// from the registered ResultHintTemplate for this tool. It is computed by
+		// the runtime while the result is still strongly typed so downstream
+		// subscribers do not need to re-render templates from JSON-decoded maps.
+		ResultPreview string
 		// Bounds, when non-nil, describes how the tool result has been bounded
 		// relative to the full underlying data set. It is supplied by tool
 		// implementations and surfaced for observability; the runtime does not
@@ -587,7 +592,7 @@ func NewToolCallScheduledEvent(runID string, agentID agent.Ident, sessionID stri
 // NewToolResultReceivedEvent constructs a ToolResultReceivedEvent. Result and
 // err capture the tool outcome; duration is the wall-clock execution time;
 // telemetry carries structured observability metadata (nil if not collected).
-func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID, parentToolCallID string, result any, bounds *agent.Bounds, artifacts []*planner.Artifact, duration time.Duration, telemetry *telemetry.ToolTelemetry, err *toolerrors.ToolError) *ToolResultReceivedEvent {
+func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID, parentToolCallID string, result any, resultPreview string, bounds *agent.Bounds, artifacts []*planner.Artifact, duration time.Duration, telemetry *telemetry.ToolTelemetry, err *toolerrors.ToolError) *ToolResultReceivedEvent {
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
 	return &ToolResultReceivedEvent{
@@ -596,6 +601,7 @@ func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID str
 		ParentToolCallID: parentToolCallID,
 		ToolName:         toolName,
 		Result:           result,
+		ResultPreview:    resultPreview,
 		Bounds:           bounds,
 		Artifacts:        artifacts,
 		Duration:         duration,
