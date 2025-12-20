@@ -997,48 +997,47 @@ boundaries.
 
 For each service/agent combination, `goa gen` produces:
 
-### 1. Agent Package (`gen/<svc>/agents/<agent>/`)
+### Agent Package (`gen/<svc>/agents/<agent>/`)
 
 - `agent.go` — registers workflows/activities/toolsets; exports `const AgentID agent.Ident`
 - `workflow.go` — implements the durable run loop
 - `activities.go` — thin wrappers calling runtime activities
 - `config.go` — runtime options bundle; includes `MCPCallers` map when MCP toolsets are used
 
-### 2. Tool Specs (`specs/`)
+### Toolset Owner Packages (`gen/<svc>/toolsets/<toolset>/`)
 
-- `types.go`, `codecs.go`, `specs.go` — payload/result structs, codecs, registry entries
+Generated once per defining toolset (the owner), and imported by all consumers.
 
-### 3. Agent Tool Exports (`agenttools/`)
+- `types.go` — tool-local payload/result/sidecar Go types
+- `codecs.go` — canonical JSON codecs for payload/result/sidecar
+- `specs.go` — `[]tools.ToolSpec` entries for the toolset
+- `transforms.go` — method-backed transforms when `BindTo` is used and shapes are compatible
 
-- Helper constructors for exported toolsets
-- Typed tool identifiers as `tools.Ident` constants
+### Agent Specs (`specs/`)
 
-### 4. MCP Helpers (`gen/mcp_<service>/`)
+The agent package contains an aggregated tool catalog used by planners/runtime.
 
-- `register.go` — `Register<Service><Suite>Toolset` functions
-- `client/caller.go` — `NewCaller` helper for Goa-generated MCP clients
+- `specs.go` — aggregated `[]tools.ToolSpec` for all `Use`d toolsets
+- `tool_schemas.json` — backend-agnostic JSON catalog (payload/result JSON Schemas)
 
-### 5. Tool Schemas JSON
+Tool schemas are also written to:
 
-Every agent gets a backend-agnostic JSON catalogue at
-`gen/<service>/agents/<agent>/specs/tool_schemas.json`:
-
-```json
-{
-  "tools": [
-    {
-      "id": "toolset.tool",
-      "service": "orchestrator",
-      "toolset": "helpers",
-      "title": "Answer a simple question",
-      "description": "Answer a simple question",
-      "tags": ["chat"],
-      "payload": { "name": "Ask", "schema": { /* JSON Schema */ } },
-      "result": { "name": "Answer", "schema": { /* JSON Schema */ } }
-    }
-  ]
-}
+```text
+gen/<service>/agents/<agent>/specs/tool_schemas.json
 ```
+
+### Agent Tool Exports (`exports/<export>/`)
+
+Generated when an agent exports toolsets (agent-as-tool). Export packages provide:
+
+- Typed tool identifiers (`tools.Ident` constants)
+- Alias payload/result types and codecs
+- Registration helpers (for providers) and consumer wiring helpers
+
+### MCP Packages
+
+When a service declares MCP (`MCP(...)`), `goa gen` emits JSON-RPC client/server code under
+`gen/jsonrpc/<service>/...` and runtime registration helpers in the service package.
 
 ---
 
