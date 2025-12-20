@@ -101,6 +101,12 @@ func getRedis(t *testing.T) *redis.Client {
 // The default is 5s which causes slow test cleanup.
 func testNodeOpts() []pool.NodeOption {
 	return []pool.NodeOption{
+		// Use small TTLs so worker disappearance and job failover are prompt and
+		// reliable in CI. Defaults (workerTTL=30s, ackGracePeriod=20s) make the
+		// failover tests nondeterministic at typical timeouts.
+		pool.WithWorkerTTL(1 * time.Second),
+		pool.WithAckGracePeriod(200 * time.Millisecond),
+		pool.WithWorkerShutdownTTL(2 * time.Second),
 		pool.WithJobSinkBlockDuration(100 * time.Millisecond),
 	}
 }
@@ -132,13 +138,13 @@ func TestMultiNodeRegistrationSync(t *testing.T) {
 	defer healthMap.Unsubscribe(healthEvents)
 
 	// Create two pool nodes simulating two gateway instances.
-	node1, err := pool.AddNode(ctx, "pool-"+t.Name(), rdb, testNodeOpts()...)
+	node1, err := pool.AddNode(ctx, "pool-"+t.Name()+"-node1", rdb, testNodeOpts()...)
 	if err != nil {
 		t.Fatalf("failed to create node1: %v", err)
 	}
 	defer func() { _ = node1.Close(ctx) }()
 
-	node2, err := pool.AddNode(ctx, "pool-"+t.Name(), rdb, testNodeOpts()...)
+	node2, err := pool.AddNode(ctx, "pool-"+t.Name()+"-node2", rdb, testNodeOpts()...)
 	if err != nil {
 		t.Fatalf("failed to create node2: %v", err)
 	}
@@ -231,13 +237,13 @@ func TestMultiNodeUnregistrationSync(t *testing.T) {
 	registryEvents := registryMap.Subscribe()
 	defer registryMap.Unsubscribe(registryEvents)
 
-	node1, err := pool.AddNode(ctx, "pool-"+t.Name(), rdb, testNodeOpts()...)
+	node1, err := pool.AddNode(ctx, "pool-"+t.Name()+"-node1", rdb, testNodeOpts()...)
 	if err != nil {
 		t.Fatalf("failed to create node1: %v", err)
 	}
 	defer func() { _ = node1.Close(ctx) }()
 
-	node2, err := pool.AddNode(ctx, "pool-"+t.Name(), rdb, testNodeOpts()...)
+	node2, err := pool.AddNode(ctx, "pool-"+t.Name()+"-node2", rdb, testNodeOpts()...)
 	if err != nil {
 		t.Fatalf("failed to create node2: %v", err)
 	}
@@ -340,7 +346,7 @@ func TestNewNodeSyncsExistingToolsets(t *testing.T) {
 	registryEvents := registryMap.Subscribe()
 	defer registryMap.Unsubscribe(registryEvents)
 
-	node1, err := pool.AddNode(ctx, "pool-"+t.Name(), rdb, testNodeOpts()...)
+	node1, err := pool.AddNode(ctx, "pool-"+t.Name()+"-node1", rdb, testNodeOpts()...)
 	if err != nil {
 		t.Fatalf("failed to create node1: %v", err)
 	}
@@ -374,7 +380,7 @@ func TestNewNodeSyncsExistingToolsets(t *testing.T) {
 	}
 
 	// Now create a second node (simulating a new gateway joining).
-	node2, err := pool.AddNode(ctx, "pool-"+t.Name(), rdb, testNodeOpts()...)
+	node2, err := pool.AddNode(ctx, "pool-"+t.Name()+"-node2", rdb, testNodeOpts()...)
 	if err != nil {
 		t.Fatalf("failed to create node2: %v", err)
 	}
@@ -423,12 +429,12 @@ func TestPingsContinueAfterNodeFailure(t *testing.T) {
 	registryEvents := registryMap.Subscribe()
 	defer registryMap.Unsubscribe(registryEvents)
 
-	node1, err := pool.AddNode(ctx, "pool-"+t.Name(), rdb, testNodeOpts()...)
+	node1, err := pool.AddNode(ctx, "pool-"+t.Name()+"-node1", rdb, testNodeOpts()...)
 	if err != nil {
 		t.Fatalf("failed to create node1: %v", err)
 	}
 
-	node2, err := pool.AddNode(ctx, "pool-"+t.Name(), rdb, testNodeOpts()...)
+	node2, err := pool.AddNode(ctx, "pool-"+t.Name()+"-node2", rdb, testNodeOpts()...)
 	if err != nil {
 		t.Fatalf("failed to create node2: %v", err)
 	}
