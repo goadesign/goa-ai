@@ -451,6 +451,29 @@ func (r *Runtime) runLoop(
 					e.ID,
 					items,
 				), turnID)
+				// Emit tool_call events for external tools so streaming/persistence
+				// consumers see the same tool_use → tool_result lifecycle as internal
+				// tools. These are not activities; queue/duration are empty/zero.
+				for _, it := range e.Items {
+					if it.ToolCallID == "" {
+						continue
+					}
+					r.publishHook(
+						ctx,
+						hooks.NewToolCallScheduledEvent(
+							base.RunContext.RunID,
+							input.AgentID,
+							base.RunContext.SessionID,
+							it.Name,
+							it.ToolCallID,
+							it.Payload,
+							"",
+							"",
+							0,
+						),
+						turnID,
+					)
+				}
 			}
 			r.publishHook(ctx, hooks.NewRunPausedEvent(
 				base.RunContext.RunID,
@@ -622,6 +645,34 @@ func (r *Runtime) runLoop(
 					cloneToolResults(rs.Results)...,
 				)
 				r.appendUserToolResults(base, awaitCalls, lastToolResults, led)
+
+				// Emit tool_result events for external tools now that results have
+				// been provided. This mirrors internal tool completion so streams and
+				// persistence can attach artifacts and summaries consistently.
+				for _, tr := range lastToolResults {
+					if tr == nil {
+						continue
+					}
+					r.publishHook(
+						ctx,
+						hooks.NewToolResultReceivedEvent(
+							base.RunContext.RunID,
+							input.AgentID,
+							base.RunContext.SessionID,
+							tr.Name,
+							tr.ToolCallID,
+							"",
+							tr.Result,
+							formatResultPreview(tr.Name, tr.Result),
+							tr.Bounds,
+							nil,
+							0,
+							nil,
+							tr.Error,
+						),
+						turnID,
+					)
+				}
 
 				// Emit resumed and continue planning.
 				r.publishHook(
@@ -1389,6 +1440,9 @@ func (r *Runtime) executeToolCalls(
 					result.Result,
 				)
 			}
+			if err := requireArtifacts(spec, call.ToolCallID, result.Error == nil, result.Artifacts); err != nil {
+				return nil, err
+			}
 			// Publish result event for observability parity with activities.
 			duration := wfCtx.Now().Sub(start)
 			var toolErr *planner.ToolError
@@ -1539,6 +1593,11 @@ func (r *Runtime) executeToolCalls(
 			toolErr = planner.NewToolError(out.Error)
 			toolRes.Error = toolErr
 		}
+		if spec, ok := r.toolSpec(info.call.Name); ok {
+			if err := requireArtifacts(spec, info.call.ToolCallID, toolErr == nil, out.Artifacts); err != nil {
+				return nil, err
+			}
+		}
 		if out.RetryHint != nil {
 			toolRes.RetryHint = out.RetryHint
 		}
@@ -1605,6 +1664,11 @@ func (r *Runtime) executeToolCalls(
 					)
 				}
 				tr.Bounds = b
+			}
+			if spec, ok := r.toolSpec(info.call.Name); ok {
+				if err := requireArtifacts(spec, info.call.ToolCallID, toolErr == nil, tr.Artifacts); err != nil {
+					return nil, err
+				}
 			}
 
 			parentID := info.call.ParentToolCallID

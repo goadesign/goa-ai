@@ -7,7 +7,7 @@
 package search
 
 import (
-	searchspecs "goa.design/goa-ai/alpha/tools/search"
+	searchspecs "goa.design/goa-ai/alpha/agents/scribe/exports/search"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
 	runtime "goa.design/goa-ai/runtime/agent/runtime"

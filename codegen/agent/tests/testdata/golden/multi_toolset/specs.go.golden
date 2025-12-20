@@ -9,8 +9,8 @@ package specs
 import (
 	_ "embed"
 	"encoding/json"
-	math "goa.design/goa-ai/alpha/tools/math"
-	ops "goa.design/goa-ai/alpha/tools/ops"
+	math "goa.design/goa-ai/alpha/toolsets/math"
+	ops "goa.design/goa-ai/alpha/toolsets/ops"
 	"goa.design/goa-ai/runtime/agent/policy"
 	tools "goa.design/goa-ai/runtime/agent/tools"
 	"sort"

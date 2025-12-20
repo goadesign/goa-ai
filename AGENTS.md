@@ -102,6 +102,10 @@ single‑line blocks or literals), including empty blocks. Example:
   stdlib GoDoc-quality comment that explains its contract to someone with no prior
   context. Treat this like stdlib documentation—clarify when/how callers should
   use the API and what each field/config represents.
+- Non-trivial functions (especially generator functions that build/return `*codegen.File`
+  or perform ownership/IR resolution) must also have a brief header comment
+  documenting intent, inputs, key invariants, and when the function returns `nil`
+  or does nothing. Trivial one-liners and obvious helpers may omit comments.
 - Generator edits MUST be section‑driven and guard‑first: check section name
   early and `continue` (`if s.Name != "target" { continue }`), then mutate. Avoid
   redundant `s.Source == ""` checks.

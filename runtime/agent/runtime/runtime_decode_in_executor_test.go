@@ -14,7 +14,7 @@ import (
 // toolset registration sets DecodeInExecutor=true, ExecuteToolActivity forwards
 // the raw JSON payload to the executor without pre-decoding.
 func TestExecuteToolActivity_DecodeInExecutor_PassesRaw(t *testing.T) {
-	rt := &Runtime{toolsets: make(map[string]ToolsetRegistration)}
+	rt := New()
 	// Register a toolset with DecodeInExecutor enabled.
 	called := false
 	decoded := false
@@ -25,7 +25,7 @@ func TestExecuteToolActivity_DecodeInExecutor_PassesRaw(t *testing.T) {
 			called = true
 			// Payload must be raw JSON to honor decode-in-executor contract.
 			require.JSONEq(t, `{"x":1}`, string(call.Payload))
-			return &planner.ToolResult{Name: tools.Ident("svc.ts.tool"), Result: map[string]any{"ok": true}}, nil
+			return &planner.ToolResult{Name: tools.Ident("svc.ts.tool"), Result: json.RawMessage(`{"ok":true}`)}, nil
 		},
 		Specs: []tools.ToolSpec{{
 			Name:    tools.Ident("svc.ts.tool"),
@@ -40,7 +40,20 @@ func TestExecuteToolActivity_DecodeInExecutor_PassesRaw(t *testing.T) {
 					},
 				},
 			},
-			Result:      tools.TypeSpec{Name: "R"},
+			Result: tools.TypeSpec{
+				Name: "R",
+				Codec: tools.JSONCodec[any]{
+					ToJSON: func(v any) ([]byte, error) {
+						if raw, ok := v.(json.RawMessage); ok {
+							return raw, nil
+						}
+						return json.Marshal(v)
+					},
+					FromJSON: func(data []byte) (any, error) {
+						return json.RawMessage(data), nil
+					},
+				},
+			},
 			IsAgentTool: false,
 		}},
 	}

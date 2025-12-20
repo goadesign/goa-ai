@@ -12,7 +12,7 @@ import (
 	"encoding/json"
 	"sort"
 
-	helpers "example.com/quickstart/gen/orchestrator/tools/helpers"
+	helpers "example.com/quickstart/gen/orchestrator/toolsets/helpers"
 	"goa.design/goa-ai/runtime/agent/policy"
 	tools "goa.design/goa-ai/runtime/agent/tools"
 )

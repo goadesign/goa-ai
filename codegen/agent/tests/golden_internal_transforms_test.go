@@ -12,8 +12,8 @@ import (
 // include the expected helper function names for payload/result mapping.
 func TestInternalTransforms_EmitHelpers(t *testing.T) {
 	files := buildAndGenerate(t, testscenarios.MethodSimpleCompatible())
-	// gen/<service>/agents/<agent>/<toolset>/transforms.go
-	p := filepath.ToSlash("gen/svc/agents/scribe/lookup/transforms.go")
+	// gen/<service>/toolsets/<toolset>/transforms.go
+	p := filepath.ToSlash("gen/svc/toolsets/lookup/transforms.go")
 	content := fileContent(t, files, p)
 	// Function names follow Init<GoName><Suffix> convention where GoName is Goified tool name.
 	if !strings.Contains(content, "adapter transforms") {

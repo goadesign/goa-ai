@@ -548,6 +548,30 @@ func aggregateArtifacts(events []*planner.ToolResult) []*planner.Artifact {
 	return arts
 }
 
+// requireArtifacts enforces the contract that tools that declare a Sidecar schema
+// (typically via the Artifact DSL) must emit at least one artifact on success.
+func requireArtifacts(spec tools.ToolSpec, toolCallID string, success bool, artifacts []*planner.Artifact) error {
+	if spec.Sidecar == nil || !success {
+		return nil
+	}
+	if len(artifacts) > 0 {
+		return nil
+	}
+	sidecarName := ""
+	if spec.Sidecar != nil {
+		sidecarName = spec.Sidecar.Name
+	}
+	if sidecarName == "" {
+		sidecarName = "<unknown>"
+	}
+	return fmt.Errorf(
+		"tool %q declared sidecar %q but returned success without artifacts (tool_call_id=%s)",
+		spec.Name,
+		sidecarName,
+		toolCallID,
+	)
+}
+
 // ConvertRunOutputToToolResult converts a nested agent RunOutput into a
 // planner.ToolResult suitable for returning from an agent-as-tool executor.
 //

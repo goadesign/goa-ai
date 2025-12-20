@@ -62,6 +62,9 @@ func Generate(genpkg string, roots []eval.Root, files []*codegen.File) ([]*codeg
 
 	var generated []*codegen.File
 
+	// Emit owner-scoped toolset specs/codecs once per defining toolset.
+	generated = append(generated, toolsetSpecsFiles(data)...)
+
 	for _, svc := range data.Services {
 		// Emit registry client packages for declared registries.
 		if regFiles := registryClientFiles(genpkg, svc); len(regFiles) > 0 {
@@ -585,6 +588,11 @@ func serviceExecutorFiles(agent *AgentData) []*codegen.File {
 					extraImports[im.Path] = im
 				}
 			}
+			for _, im := range gatherAttributeImports(agent.Genpkg, t.Artifact) {
+				if im != nil && im.Path != "" {
+					extraImports[im.Path] = im
+				}
+			}
 		}
 
 		// Use a local copy of the toolset so we can override the SpecsPackageName
@@ -598,6 +606,16 @@ func serviceExecutorFiles(agent *AgentData) []*codegen.File {
 			Toolset:         &tsCopy,
 			ServicePkgAlias: svcAlias,
 		}
+		needsSharedTypes := false
+		for _, t := range ts.Tools {
+			if t == nil || !t.IsMethodBacked {
+				continue
+			}
+			if strings.Contains(t.MethodPayloadTypeRef, "types.") || strings.Contains(t.MethodResultTypeRef, "types.") {
+				needsSharedTypes = true
+				break
+			}
+		}
 		imports := []*codegen.ImportSpec{
 			{Path: "context"},
 			{Path: "encoding/json"},
@@ -608,6 +626,11 @@ func serviceExecutorFiles(agent *AgentData) []*codegen.File {
 			{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "runtime"},
 			{Path: "goa.design/goa-ai/runtime/agent/tools"},
 			{Path: ts.SpecsImportPath, Name: specsAlias},
+		}
+		if needsSharedTypes {
+			typesPath := filepath.ToSlash(filepath.Join(agent.Genpkg, "types"))
+			imports = append(imports, &codegen.ImportSpec{Path: typesPath})
+			delete(extraImports, typesPath)
 		}
 		if svc != nil {
 			// Import the service client package (e.g. gen/atlas_data)

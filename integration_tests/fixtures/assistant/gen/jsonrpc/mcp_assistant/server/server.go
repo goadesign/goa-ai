@@ -205,9 +205,6 @@ func (s *Server) handleBatch(w http.ResponseWriter, r *http.Request) {
 
 // ProcessRequest processes a single JSON-RPC request.
 func (s *Server) processRequest(ctx context.Context, r *http.Request, req *jsonrpc.RawRequest, w http.ResponseWriter) {
-	// Inject MCP resource policy from headers into context
-	ctx = context.WithValue(ctx, "mcp_allow_names", r.Header.Get("x-mcp-allow-names"))
-	ctx = context.WithValue(ctx, "mcp_deny_names", r.Header.Get("x-mcp-deny-names"))
 	if req.JSONRPC != "2.0" {
 		s.encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidRequest, "Invalid request", nil)
 		return
@@ -354,13 +351,41 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 } // Mount configures the mux to serve the JSON-RPC mcp_assistant service methods.
 func Mount(mux goahttp.Muxer, h *Server) {
-	// Mixed transports: mount unified handler that negotiates HTTP vs SSE by Accept header
-	mux.Handle("POST", "/rpc", h.ServeHTTP)
+	// Mixed transports: mount unified handler that negotiates HTTP vs SSE by Accept header.
+	//
+	// MCP policy headers are propagated via request context so the service
+	// implementation can enforce per-request allow/deny lists.
+	mux.Handle("POST", "/rpc", withMCPPolicyHeaders(h.ServeHTTP))
 }
 
 // Mount configures the mux to serve the JSON-RPC mcp_assistant service methods.
 func (s *Server) Mount(mux goahttp.Muxer) {
 	Mount(mux, s)
+}
+
+// withMCPPolicyHeaders propagates MCP policy header values into the request context.
+//
+// The MCP adapter enforces resource allow/deny policies based on context values:
+//   - "mcp_allow_names" (CSV list of resource names)
+//   - "mcp_deny_names"  (CSV list of resource names)
+//
+// This helper maps those values from the corresponding HTTP headers:
+//   - x-mcp-allow-names
+//   - x-mcp-deny-names
+//
+// It is installed by the JSON-RPC Mount functions so consumers do not need
+// to patch example servers or wire middleware manually.
+func withMCPPolicyHeaders(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		if allow := r.Header.Get("x-mcp-allow-names"); allow != "" {
+			ctx = context.WithValue(ctx, "mcp_allow_names", allow)
+		}
+		if deny := r.Header.Get("x-mcp-deny-names"); deny != "" {
+			ctx = context.WithValue(ctx, "mcp_deny_names", deny)
+		}
+		next(w, r.WithContext(ctx))
+	}
 }
 
 // NewInitializeHandler creates a JSON-RPC handler which calls the
@@ -379,7 +404,7 @@ func NewInitializeHandler(
 		params, err := decodeParams(r, req)
 		if err != nil {
 			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil {
+			if req.ID != nil && req.ID != "" {
 				code := jsonrpc.InternalError
 				if _, ok := err.(*goa.ServiceError); ok {
 					code = jsonrpc.InvalidParams
@@ -394,7 +419,7 @@ func NewInitializeHandler(
 		res, err := endpoint(ctx, params)
 		if err != nil {
 			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil {
+			if req.ID != nil && req.ID != "" {
 				var en goa.GoaErrorNamer
 				if !errors.As(err, &en) {
 					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
@@ -457,7 +482,7 @@ func NewPingHandler(
 		res, err := endpoint(ctx, nil)
 		if err != nil {
 			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil {
+			if req.ID != nil && req.ID != "" {
 				var en goa.GoaErrorNamer
 				if !errors.As(err, &en) {
 					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
@@ -521,7 +546,7 @@ func NewToolsListHandler(
 		params, err := decodeParams(r, req)
 		if err != nil {
 			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil {
+			if req.ID != nil && req.ID != "" {
 				code := jsonrpc.InternalError
 				if _, ok := err.(*goa.ServiceError); ok {
 					code = jsonrpc.InvalidParams
@@ -536,7 +561,7 @@ func NewToolsListHandler(
 		res, err := endpoint(ctx, params)
 		if err != nil {
 			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil {
+			if req.ID != nil && req.ID != "" {
 				var en goa.GoaErrorNamer
 				if !errors.As(err, &en) {
 					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
@@ -607,7 +632,7 @@ func NewToolsCallHandler(
 		params, err := decodeParams(r, req)
 		if err != nil {
 			// Send error via SSE (JSON-RPC error event) to match SSE transport semantics
-			if req.ID != nil {
+			if req.ID != nil && req.ID != "" {
 				strm.SendError(ctx, jsonrpc.IDToString(req.ID), err)
 			}
 			return nil
@@ -618,7 +643,7 @@ func NewToolsCallHandler(
 		}
 		if _, err := endpoint(ctx, v); err != nil {
 			// Send error response via SSE with proper JSON-RPC code mapping
-			if req.ID != nil {
+			if req.ID != nil && req.ID != "" {
 				var en goa.GoaErrorNamer
 				if errors.As(err, &en) {
 					switch en.GoaErrorName() {
@@ -657,7 +682,7 @@ func NewResourcesListHandler(
 		params, err := decodeParams(r, req)
 		if err != nil {
 			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil {
+			if req.ID != nil && req.ID != "" {
 				code := jsonrpc.InternalError
 				if _, ok := err.(*goa.ServiceError); ok {
 					code = jsonrpc.InvalidParams
@@ -672,7 +697,7 @@ func NewResourcesListHandler(
 		res, err := endpoint(ctx, params)
 		if err != nil {
 			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil {
+			if req.ID != nil && req.ID != "" {
 				var en goa.GoaErrorNamer
 				if !errors.As(err, &en) {
 					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
@@ -736,7 +761,7 @@ func NewResourcesReadHandler(
 		params, err := decodeParams(r, req)
 		if err != nil {
 			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil {
+			if req.ID != nil && req.ID != "" {
 				code := jsonrpc.InternalError
 				if _, ok := err.(*goa.ServiceError); ok {
 					code = jsonrpc.InvalidParams
@@ -751,7 +776,7 @@ func NewResourcesReadHandler(
 		res, err := endpoint(ctx, params)
 		if err != nil {
 			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil {
+			if req.ID != nil && req.ID != "" {
 				var en goa.GoaErrorNamer
 				if !errors.As(err, &en) {
 					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
@@ -815,7 +840,7 @@ func NewResourcesSubscribeHandler(
 		params, err := decodeParams(r, req)
 		if err != nil {
 			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil {
+			if req.ID != nil && req.ID != "" {
 				code := jsonrpc.InternalError
 				if _, ok := err.(*goa.ServiceError); ok {
 					code = jsonrpc.InvalidParams
@@ -830,7 +855,7 @@ func NewResourcesSubscribeHandler(
 		_, err = endpoint(ctx, params)
 		if err != nil {
 			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil {
+			if req.ID != nil && req.ID != "" {
 				var en goa.GoaErrorNamer
 				if !errors.As(err, &en) {
 					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
@@ -885,7 +910,7 @@ func NewResourcesUnsubscribeHandler(
 		params, err := decodeParams(r, req)
 		if err != nil {
 			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil {
+			if req.ID != nil && req.ID != "" {
 				code := jsonrpc.InternalError
 				if _, ok := err.(*goa.ServiceError); ok {
 					code = jsonrpc.InvalidParams
@@ -900,7 +925,7 @@ func NewResourcesUnsubscribeHandler(
 		_, err = endpoint(ctx, params)
 		if err != nil {
 			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil {
+			if req.ID != nil && req.ID != "" {
 				var en goa.GoaErrorNamer
 				if !errors.As(err, &en) {
 					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
@@ -955,7 +980,7 @@ func NewPromptsListHandler(
 		params, err := decodeParams(r, req)
 		if err != nil {
 			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil {
+			if req.ID != nil && req.ID != "" {
 				code := jsonrpc.InternalError
 				if _, ok := err.(*goa.ServiceError); ok {
 					code = jsonrpc.InvalidParams
@@ -970,7 +995,7 @@ func NewPromptsListHandler(
 		res, err := endpoint(ctx, params)
 		if err != nil {
 			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil {
+			if req.ID != nil && req.ID != "" {
 				var en goa.GoaErrorNamer
 				if !errors.As(err, &en) {
 					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
@@ -1034,7 +1059,7 @@ func NewPromptsGetHandler(
 		params, err := decodeParams(r, req)
 		if err != nil {
 			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil {
+			if req.ID != nil && req.ID != "" {
 				code := jsonrpc.InternalError
 				if _, ok := err.(*goa.ServiceError); ok {
 					code = jsonrpc.InvalidParams
@@ -1049,7 +1074,7 @@ func NewPromptsGetHandler(
 		res, err := endpoint(ctx, params)
 		if err != nil {
 			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil {
+			if req.ID != nil && req.ID != "" {
 				var en goa.GoaErrorNamer
 				if !errors.As(err, &en) {
 					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
@@ -1113,7 +1138,7 @@ func NewNotifyStatusUpdateHandler(
 		params, err := decodeParams(r, req)
 		if err != nil {
 			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil {
+			if req.ID != nil && req.ID != "" {
 				code := jsonrpc.InternalError
 				if _, ok := err.(*goa.ServiceError); ok {
 					code = jsonrpc.InvalidParams
@@ -1128,7 +1153,7 @@ func NewNotifyStatusUpdateHandler(
 		_, err = endpoint(ctx, params)
 		if err != nil {
 			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil {
+			if req.ID != nil && req.ID != "" {
 				var en goa.GoaErrorNamer
 				if !errors.As(err, &en) {
 					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
@@ -1191,7 +1216,7 @@ func NewEventsStreamHandler(
 		}
 		if _, err := endpoint(ctx, v); err != nil {
 			// Send error response via SSE with proper JSON-RPC code mapping
-			if req.ID != nil {
+			if req.ID != nil && req.ID != "" {
 				var en goa.GoaErrorNamer
 				if errors.As(err, &en) {
 					switch en.GoaErrorName() {

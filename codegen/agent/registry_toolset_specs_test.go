@@ -53,7 +53,7 @@ func TestRegistryToolsetSpecsStructure(t *testing.T) {
 	require.NoError(t, err)
 
 	var specsContent string
-	expectedPath := filepath.ToSlash("gen/registry_test/tools/data_tools/specs.go")
+	expectedPath := filepath.ToSlash("gen/registry_test/toolsets/data_tools/specs.go")
 	for _, f := range files {
 		if filepath.ToSlash(f.Path) == expectedPath {
 			var buf bytes.Buffer
@@ -117,7 +117,7 @@ func TestRegistryToolsetSpecsMetadata(t *testing.T) {
 	require.NoError(t, err)
 
 	var specsContent string
-	expectedPath := filepath.ToSlash("gen/meta_test/tools/pinned_tools/specs.go")
+	expectedPath := filepath.ToSlash("gen/meta_test/toolsets/pinned_tools/specs.go")
 	for _, f := range files {
 		if filepath.ToSlash(f.Path) == expectedPath {
 			var buf bytes.Buffer

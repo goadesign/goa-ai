@@ -12,17 +12,17 @@ import (
 // with the specs package alias while preserving external package qualifiers for nested types.
 func TestGolden_InternalTransforms_Qualification(t *testing.T) {
 	files := buildAndGenerate(t, testscenarios.MethodExternalAlias())
-	// gen/<service>/agents/<agent>/<toolset>/transforms.go
-	p := filepath.ToSlash("gen/alpha/agents/scribe/svcset/transforms.go")
+	// gen/<service>/toolsets/<toolset>/transforms.go
+	p := filepath.ToSlash("gen/alpha/toolsets/svcset/transforms.go")
 	content := fileContent(t, files, p)
 
 	// Top-level transform function should exist for the tool result.
 	if !strings.Contains(content, "func InitFetchToolResult(") {
 		t.Fatalf("expected InitFetchToolResult helper in %s", p)
 	}
-	// The initializer must use the specs package alias (svcset).
-	if !strings.Contains(content, "&svcset.") {
-		t.Fatalf("expected specs-qualified initializer in %s", p)
+	// The initializer must use the local specs package type name (no external qualifier).
+	if !strings.Contains(content, "&FetchResult{") {
+		t.Fatalf("expected local alias initializer in %s", p)
 	}
 
 	// Must not incorrectly qualify the alias with the external package.

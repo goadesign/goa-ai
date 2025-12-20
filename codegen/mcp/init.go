@@ -9,5 +9,4 @@ import (
 func init() {
 	goacodegen.RegisterPluginFirst("mcp", "gen", PrepareServices, Generate)
 	goacodegen.RegisterPlugin("mcp", "example", PrepareExample, ModifyExampleFiles)
-	goacodegen.RegisterPluginLast("mcp-cli", "gen", nil, PatchCLIToUseMCPAdapter)
 }

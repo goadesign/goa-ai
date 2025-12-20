@@ -235,6 +235,11 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	if result == nil {
 		return nil, errors.New("tool execution returned nil result")
 	}
+	if spec, ok := r.toolSpec(req.ToolName); ok {
+		if err := requireArtifacts(spec, req.ToolCallID, result.Error == nil, result.Artifacts); err != nil {
+			return nil, err
+		}
+	}
 	// Enrich or build telemetry via registration builder when available.
 	if reg.TelemetryBuilder != nil {
 		if tel := reg.TelemetryBuilder(ctx, meta, req.ToolName, start, time.Now(), nil); tel != nil && result.Telemetry == nil {
@@ -450,7 +455,7 @@ func (r *Runtime) plannerContext(ctx context.Context, input *PlanActivityInput, 
 	return &reg, agentCtx, nil
 }
 
-// marshalToolValue encodes a tool value using the registered codec or standard JSON.
+// marshalToolValue encodes a tool value using the registered codec.
 func (r *Runtime) marshalToolValue(ctx context.Context, toolName tools.Ident, value any, payload bool) (json.RawMessage, error) {
 	if value == nil {
 		return nil, nil
@@ -462,8 +467,9 @@ func (r *Runtime) marshalToolValue(ctx context.Context, toolName tools.Ident, va
 	//     or a JSON []byte) to defer decoding to an executor (e.g., agent‑as‑tool
 	//     DecodeInExecutor=true) or to avoid lossy/expensive round‑trips.
 	//   - Re‑encoding already‑encoded JSON wastes CPU and can change formatting.
-	//   - For non‑JSON []byte or typed values, we fall through to the tool codec
-	//     (or json.Marshal as a last resort) to produce the canonical encoding.
+	//   - For non‑JSON []byte or typed values, we fall through to the generated
+	//     tool codec to produce the canonical encoding. If the caller needs to
+	//     bypass codecs, they must pass pre-encoded JSON.
 	switch v := value.(type) {
 	case json.RawMessage:
 		if len(v) == 0 {
@@ -483,12 +489,8 @@ func (r *Runtime) marshalToolValue(ctx context.Context, toolName tools.Ident, va
 	}
 	codec, ok := r.toolCodec(toolName, payload)
 	if !ok || codec.ToJSON == nil {
-		data, err := json.Marshal(value)
-		if err != nil {
-			r.logger.Warn(ctx, "tool fallback encode failed", "tool", toolName, "payload", payload, "err", err)
-			return nil, err
-		}
-		return json.RawMessage(data), nil
+		r.logger.Error(ctx, "no codec found for tool", "tool", toolName, "payload", payload)
+		return nil, fmt.Errorf("no codec found for tool %s", toolName)
 	}
 	data, err := codec.ToJSON(value)
 	if err != nil {

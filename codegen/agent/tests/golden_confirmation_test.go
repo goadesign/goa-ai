@@ -12,7 +12,7 @@ func TestGolden_Confirmation(t *testing.T) {
 	files := buildAndGenerate(t, testscenarios.ConfirmationDSL())
 
 	// Toolset-local tool specs must carry ConfirmationSpec.
-	specs := fileContent(t, files, "gen/alpha/tools/atlas_commands/specs.go")
+	specs := fileContent(t, files, "gen/alpha/toolsets/atlas_commands/specs.go")
 	assertGoldenGo(t, "confirmation", "specs.go.golden", specs)
 
 	// Agent tool catalogue must surface confirmation metadata for UIs.
