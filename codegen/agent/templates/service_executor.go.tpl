@@ -179,7 +179,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                  methodIn = toolArgs
                  {{- else }}
                  // Call generated transform
-                 methodIn = Init{{ goify .Name true }}MethodPayload(toolArgs.(*{{ $.Toolset.SpecsPackageName }}.{{ .ConstName }}Payload))
+                 methodIn = {{ $.Toolset.SpecsPackageName }}.Init{{ goify .Name true }}MethodPayload(toolArgs.(*{{ $.Toolset.SpecsPackageName }}.{{ .ConstName }}Payload))
                  {{- end }}
              {{- end }}
              {{- end }}
@@ -246,7 +246,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                 {{- if .ResultAliasesMethod }}
                 result = methodOut
                 {{- else }}
-                result = Init{{ goify .Name true }}ToolResult(methodOut.({{ .MethodResultTypeRef }}))
+                result = {{ $.Toolset.SpecsPackageName }}.Init{{ goify .Name true }}ToolResult(methodOut.({{ .MethodResultTypeRef }}))
                 {{- end }}
             {{- end }}
             {{- end }}
@@ -271,7 +271,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
         {{- if and .IsMethodBacked .Artifact }}
         case tools.Ident({{ printf "%q" .QualifiedName }}):
             if mr, ok := methodOut.({{ .MethodResultTypeRef }}); ok {
-                if sc := Init{{ goify .Name true }}SidecarFromMethodResult(mr); sc != nil {
+                if sc := {{ $.Toolset.SpecsPackageName }}.Init{{ goify .Name true }}SidecarFromMethodResult(mr); sc != nil {
                     artifacts = append(
                         artifacts,
                         &planner.Artifact{

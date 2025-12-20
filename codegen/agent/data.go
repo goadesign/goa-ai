@@ -7,8 +7,8 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode"
 
+	"goa.design/goa-ai/codegen/naming"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa/v3/codegen"
@@ -754,83 +754,8 @@ func buildGeneratorData(genpkg string, roots []eval.Root) (*GeneratorData, error
 			return strings.Compare(a.Name, b.Name)
 		})
 	}
-
-	// Reuse provider specs and agenttools metadata for Used toolsets within the same
-	// design:
-	// If a toolset is exported by an agent, point consumer Used toolsets with the
-	// same qualified name to the provider's specs import/package and skip emitting
-	// duplicate specs in the consumer by clearing SpecsDir. When the provider also
-	// emits agent-as-tool helpers (AgentToolsImportPath), propagate that import
-	// information so consumers can reference provider-side agenttools helpers.
-	type specsRef struct {
-		importPath        string
-		packageName       string
-		agentToolsImport  string
-		agentToolsPackage string
-		qualifiedName     string
-		sourceServiceName string
-		sourceService     *service.Data
-		sourceServiceImps map[string]*codegen.ImportSpec
-	}
-	exported := make(map[string]specsRef)
-	exportedByName := make(map[string]specsRef)
-	for _, svc := range services {
-		for _, ag := range svc.Agents {
-			for _, ts := range ag.ExportedToolsets {
-				if ts == nil || ts.SpecsImportPath == "" || ts.SpecsPackageName == "" {
-					continue
-				}
-				ref := specsRef{
-					importPath:        ts.SpecsImportPath,
-					packageName:       ts.SpecsPackageName,
-					agentToolsImport:  ts.AgentToolsImportPath,
-					agentToolsPackage: ts.AgentToolsPackage,
-					qualifiedName:     ts.QualifiedName,
-					sourceServiceName: ts.SourceServiceName,
-					sourceService:     ts.SourceService,
-					sourceServiceImps: ts.SourceServiceImports,
-				}
-				exported[ts.QualifiedName] = ref
-				exportedByName[ts.Name] = ref
-			}
-		}
-	}
-	if len(exported) > 0 {
-		for _, svc := range services {
-			for _, ag := range svc.Agents {
-				for _, ts := range ag.UsedToolsets {
-					ref, ok := exported[ts.QualifiedName]
-					if !ok {
-						if alt, okName := exportedByName[ts.Name]; okName {
-							ref = alt
-							ok = true
-							ts.QualifiedName = alt.qualifiedName
-						}
-					}
-					if ok {
-						ts.SpecsImportPath = ref.importPath
-						ts.SpecsPackageName = ref.packageName
-						// Prevent per-toolset emission under the consumer by clearing SpecsDir.
-						ts.SpecsDir = ""
-						if ref.sourceServiceName != "" {
-							ts.SourceServiceName = ref.sourceServiceName
-						}
-						if ref.sourceService != nil {
-							ts.SourceService = ref.sourceService
-						}
-						if len(ref.sourceServiceImps) > 0 {
-							ts.SourceServiceImports = ref.sourceServiceImps
-						}
-						// Propagate provider agenttools helpers so consumer agents can import
-						// and call provider-side agent-as-tool registrations.
-						if ref.agentToolsImport != "" {
-							ts.AgentToolsImportPath = ref.agentToolsImport
-							ts.AgentToolsPackage = ref.agentToolsPackage
-						}
-					}
-				}
-			}
-		}
+	if err := assignToolsetOwnership(genpkg, roots, services); err != nil {
+		return nil, err
 	}
 
 	return &GeneratorData{Genpkg: genpkg, Services: services}, nil
@@ -846,20 +771,20 @@ func newAgentData(
 	configType := goName + "AgentConfig"
 	structName := goName + "Agent"
 
-	agentSlug := sanitizeToken(agentExpr.Name, "agent")
+	agentSlug := naming.SanitizeToken(agentExpr.Name, "agent")
 	agentDir := filepath.Join(codegen.Gendir, svc.PathName, "agents", agentSlug)
 	agentImport := path.Join(genpkg, svc.PathName, "agents", agentSlug)
 
 	workflowFunc := goName + "Workflow"
 	workflowVar := goName + "WorkflowDefinition"
-	workflowName := joinIdentifier(svc.Name, agentExpr.Name, "workflow")
-	workflowQueue := queueName(svc.PathName, agentSlug, "workflow")
+	workflowName := naming.Identifier(svc.Name, agentExpr.Name, "workflow")
+	workflowQueue := naming.QueueName(svc.PathName, agentSlug, "workflow")
 
 	agent := &AgentData{
 		Genpkg:                genpkg,
 		Name:                  agentExpr.Name,
 		Description:           agentExpr.Description,
-		ID:                    joinIdentifier(svc.Name, agentExpr.Name),
+		ID:                    naming.Identifier(svc.Name, agentExpr.Name),
 		GoName:                goName,
 		Slug:                  agentSlug,
 		Service:               svc,
@@ -1062,9 +987,9 @@ func newToolsetData(
 	kind ToolsetKind,
 	servicesData *service.ServicesData,
 ) *ToolsetData {
-	toolsetSlug := sanitizeToken(expr.Name, "toolset")
+	toolsetSlug := naming.SanitizeToken(expr.Name, "toolset")
 	serviceName := agent.Service.Name
-	queue := queueName(agent.Service.PathName, agent.Slug, toolsetSlug, "tasks")
+	queue := naming.QueueName(agent.Service.PathName, agent.Slug, toolsetSlug, "tasks")
 	qualifiedName := expr.Name
 	sourceService := agent.Service
 
@@ -1119,7 +1044,7 @@ func newToolsetData(
 	ts := &ToolsetData{
 		Expr:              expr,
 		Name:              expr.Name,
-		Title:             humanizeTitle(expr.Name),
+		Title:             naming.HumanizeTitle(expr.Name),
 		Description:       expr.Description,
 		Tags:              slices.Clone(expr.Tags),
 		ServiceName:       serviceName,
@@ -1136,8 +1061,10 @@ func newToolsetData(
 		PackageImportPath:    path.Join(agent.ImportPath, toolsetSlug),
 		Dir:                  filepath.Join(agent.Dir, toolsetSlug),
 		SpecsPackageName:     toolsetSlug,
-		SpecsImportPath:      path.Join(agent.Genpkg, agent.Service.PathName, "tools", toolsetSlug),
-		SpecsDir:             filepath.Join(codegen.Gendir, agent.Service.PathName, "tools", toolsetSlug),
+		// SpecsImportPath/SpecsDir are assigned after building the complete design
+		// so ownership can be resolved deterministically (service-owned vs agent-exported).
+		SpecsImportPath: "",
+		SpecsDir:        "",
 	}
 
 	if kind == ToolsetKindExported {
@@ -1262,7 +1189,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		ConstName:          codegen.Goify(expr.Name, true),
 		Description:        expr.Description,
 		QualifiedName:      qualified,
-		Title:              humanizeTitle(defaultString(expr.Title, expr.Name)),
+		Title:              naming.HumanizeTitle(defaultString(expr.Title, expr.Name)),
 		Tags:               slices.Clone(expr.Tags),
 		Args:               expr.Args,
 		Return:             expr.Return,
@@ -1367,7 +1294,7 @@ func mustFindMethodExpr(root *goaexpr.RootExpr, serviceName, methodName string) 
 func newActivity(agent *AgentData, kind ActivityKind, logicalSuffix string, queue string) ActivityArtifact {
 	funcName := fmt.Sprintf("%s%sActivity", agent.GoName, logicalSuffix)
 	definitionVar := fmt.Sprintf("%s%sActivityDefinition", agent.GoName, logicalSuffix)
-	name := joinIdentifier(agent.Service.Name, agent.Name, strings.ToLower(logicalSuffix))
+	name := naming.Identifier(agent.Service.Name, agent.Name, strings.ToLower(logicalSuffix))
 	artifact := ActivityArtifact{
 		Name:          name,
 		FuncName:      funcName,
@@ -1393,79 +1320,7 @@ func plannerActivityRetryPolicy() engine.RetryPolicy {
 	}
 }
 
-func sanitizeToken(name, fallback string) string {
-	s := strings.ToLower(codegen.SnakeCase(name))
-	s = strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
-			return r
-		}
-		return '_'
-	}, s)
-	s = strings.Trim(s, "_")
-	for strings.Contains(s, "__") {
-		s = strings.ReplaceAll(s, "__", "_")
-	}
-	if s == "" {
-		return fallback
-	}
-	return s
-}
-
-func queueName(parts ...string) string {
-	sanitized := make([]string, 0, len(parts))
-	for _, part := range parts {
-		token := sanitizeToken(part, "queue")
-		if token != "" {
-			sanitized = append(sanitized, token)
-		}
-	}
-	if len(sanitized) == 0 {
-		return "queue"
-	}
-	return strings.Join(sanitized, "_")
-}
-
-func joinIdentifier(parts ...string) string {
-	sanitized := make([]string, 0, len(parts))
-	for _, part := range parts {
-		token := sanitizeToken(part, "segment")
-		if token != "" {
-			sanitized = append(sanitized, token)
-		}
-	}
-	if len(sanitized) == 0 {
-		return "agent"
-	}
-	return strings.Join(sanitized, ".")
-}
-
-// humanizeTitle converts a slug-like name (snake_case, kebab-case, dotted)
-// into a simple Title Case string. It is intentionally conservative and does
-// not attempt natural language capitalization beyond first letters.
-func humanizeTitle(s string) string {
-	if s == "" {
-		return s
-	}
-	// use last segment after '.' when present
-	if i := strings.LastIndexByte(s, '.'); i >= 0 && i+1 < len(s) {
-		s = s[i+1:]
-	}
-	s = strings.ReplaceAll(s, "_", " ")
-	s = strings.ReplaceAll(s, "-", " ")
-	parts := strings.Fields(s)
-	for i := range parts {
-		if len(parts[i]) == 0 {
-			continue
-		}
-		r := []rune(parts[i])
-		r[0] = unicode.ToUpper(r[0])
-		for j := 1; j < len(r); j++ {
-			r[j] = unicode.ToLower(r[j])
-		}
-		parts[i] = string(r)
-	}
-	return strings.Join(parts, " ")
-}
+// Naming helpers moved to codegen/naming.
 
 func defaultString(val, fallback string) string {
 	if val != "" {

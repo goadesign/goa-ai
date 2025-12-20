@@ -9,7 +9,7 @@ package specs
 import (
 	_ "embed"
 	"encoding/json"
-	shared "goa.design/goa-ai/alpha/tools/shared"
+	shared "goa.design/goa-ai/alpha/toolsets/shared"
 	"goa.design/goa-ai/runtime/agent/policy"
 	tools "goa.design/goa-ai/runtime/agent/tools"
 	"sort"

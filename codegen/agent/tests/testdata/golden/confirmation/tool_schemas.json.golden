@@ -13,18 +13,18 @@
         "schema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "example": {
-            "key": "Animi magnam repellat et.",
-            "value": "Et expedita dignissimos."
+            "key": "Est aut recusandae enim fuga.",
+            "value": "Commodi molestias dignissimos."
           },
           "properties": {
             "key": {
               "description": "Key to update.",
-              "example": "Et iusto ex.",
+              "example": "Aut vel consectetur ducimus minus.",
               "type": "string"
             },
             "value": {
               "description": "New value.",
-              "example": "Ipsam quia repudiandae quibusdam.",
+              "example": "Occaecati non aliquam et laudantium.",
               "type": "string"
             }
           },
@@ -41,18 +41,18 @@
         "schema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "example": {
-            "key": "Ea deleniti rem quis in omnis nisi.",
-            "summary": "Et illo."
+            "key": "Iure consequatur quia ex odit animi dolorum.",
+            "summary": "Blanditiis sed quae."
           },
           "properties": {
             "key": {
               "description": "Key that was updated.",
-              "example": "Qui temporibus enim placeat officiis quas.",
+              "example": "Rerum laudantium enim perspiciatis est vitae.",
               "type": "string"
             },
             "summary": {
               "description": "Summary of the update.",
-              "example": "Fuga sit suscipit culpa est inventore.",
+              "example": "Nulla saepe qui iure qui.",
               "type": "string"
             }
           },

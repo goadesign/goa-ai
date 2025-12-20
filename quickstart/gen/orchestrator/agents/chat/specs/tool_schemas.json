@@ -16,7 +16,7 @@
             "question": {
               "type": "string",
               "description": "User question to answer",
-              "example": "Iusto incidunt et sint."
+              "example": "Odit error assumenda dolores eveniet consequatur."
             }
           },
           "example": {
@@ -37,11 +37,11 @@
             "text": {
               "type": "string",
               "description": "Answer text",
-              "example": "Delectus eveniet ad accusantium magnam saepe nulla."
+              "example": "Incidunt id."
             }
           },
           "example": {
-            "text": "Ipsa et reprehenderit distinctio id nobis."
+            "text": "Nemo ut possimus impedit facilis tempora ut."
           },
           "required": [
             "text"

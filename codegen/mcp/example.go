@@ -2,7 +2,6 @@
 package codegen
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -453,71 +452,4 @@ func renderCLIDoJSONRPC(services []cliServiceTemplateData) string {
 
 func methodCommandName(name string) string {
 	return strings.ReplaceAll(codegen.SnakeCase(name), "_", "-")
-}
-
-// PatchCLIToUseMCPAdapter rewrites the generated service CLI support code to instantiate
-// the MCP adapter client instead of the original JSON-RPC service client.
-func PatchCLIToUseMCPAdapter(_ string, _ []eval.Root, files []*codegen.File) ([]*codegen.File, error) {
-	for _, f := range files {
-		// Target generated CLI support under gen/jsonrpc/cli/<service>/cli.go
-		p := filepath.ToSlash(f.Path)
-		if !strings.Contains(p, "/jsonrpc/cli/") || !strings.HasSuffix(p, "/cli.go") {
-			continue
-		}
-		// Extract service snake from path segment after /jsonrpc/cli/
-		svc := ""
-		if idx := strings.Index(p, "/jsonrpc/cli/"); idx >= 0 {
-			rest := p[idx+len("/jsonrpc/cli/"):]
-			if j := strings.Index(rest, "/"); j > 0 {
-				svc = rest[:j]
-			}
-		}
-		if svc == "" {
-			continue
-		}
-		// 1) Find header and add adapter import via AddImport
-		var header *codegen.SectionTemplate
-		for _, s := range f.SectionTemplates {
-			if s.Name == "source-header" {
-				header = s
-				break
-			}
-		}
-		if header == nil {
-			return files, fmt.Errorf("header not found in %s", f.Path)
-		}
-		var origAlias string
-		// Inspect existing imports to locate the original JSON-RPC client import
-		var imps []*codegen.ImportSpec
-		if data, ok := header.Data.(map[string]any); ok {
-			if imv, ok2 := data["Imports"]; ok2 {
-				if specs, ok3 := imv.([]*codegen.ImportSpec); ok3 {
-					imps = specs
-				}
-			}
-		}
-		for _, spec := range imps {
-			if strings.HasSuffix(spec.Path, "/gen/jsonrpc/"+svc+"/client") {
-				baseModule := strings.TrimSuffix(spec.Path, "/gen/jsonrpc/"+svc+"/client")
-				adapterPath := baseModule + "/gen/mcp_" + svc + "/adapter/client"
-				codegen.AddImport(header, &codegen.ImportSpec{Path: adapterPath, Name: "mcpac"})
-				origAlias = spec.Name
-				break
-			}
-		}
-		// 2) Replace constructor call to use the adapter client
-		if origAlias == "" {
-			// Fallback to conventional alias used by Goa: <service> + "c"
-			origAlias = svc + "c"
-		}
-		if origAlias != "" {
-			for _, s := range f.SectionTemplates {
-				if s.Name == "source-header" {
-					continue
-				}
-				s.Source = strings.ReplaceAll(s.Source, "c := "+origAlias+".NewClient(", "c := mcpac.NewClient(")
-			}
-		}
-	}
-	return files, nil
 }

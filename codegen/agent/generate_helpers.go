@@ -2,90 +2,10 @@ package codegen
 
 import (
 	"fmt"
-	"strings"
 
 	"goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
 )
-
-func parseSidecarArtifactTypeName(def string) (string, bool) {
-	const needle = "Artifact *"
-	i := strings.Index(def, needle)
-	if i < 0 {
-		return "", false
-	}
-	s := def[i+len(needle):]
-	// Consume identifier chars.
-	j := 0
-	for j < len(s) {
-		c := s[j]
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' {
-			j++
-			continue
-		}
-		break
-	}
-	if j == 0 {
-		return "", false
-	}
-	return s[:j], true
-}
-
-func rewriteCollidingNestedUserTypes(att *goaexpr.AttributeExpr, scope *codegen.NameScope, types map[string]*typeData) *goaexpr.AttributeExpr {
-	if att == nil || att.Type == nil || att.Type == goaexpr.Empty || scope == nil || types == nil {
-		return att
-	}
-	cloned := goaexpr.DupAtt(att)
-	_ = codegen.Walk(cloned, func(a *goaexpr.AttributeExpr) error {
-		if a == nil || a.Type == nil || a.Type == goaexpr.Empty {
-			return nil
-		}
-		ut, ok := a.Type.(goaexpr.UserType)
-		if !ok || ut == nil {
-			return nil
-		}
-		// Skip types that specify an external package location.
-		if loc := codegen.UserTypeLocation(ut); loc != nil && loc.RelImportPath != "" {
-			return nil
-		}
-		var baseName string
-		switch u := ut.(type) {
-		case *goaexpr.UserTypeExpr:
-			baseName = codegen.Goify(u.TypeName, true)
-		case *goaexpr.ResultTypeExpr:
-			baseName = codegen.Goify(u.TypeName, true)
-		default:
-			return nil
-		}
-		if baseName == "" {
-			return nil
-		}
-		existing, exists := types["name:"+baseName]
-		if !exists || existing == nil || !existing.IsToolType {
-			return nil
-		}
-		comp := scope.GoTypeDef(ut.Attribute(), false, true)
-		if existing.Def == baseName+" = "+comp || existing.Def == baseName+" "+comp {
-			return nil
-		}
-		uniqueName := scope.HashedUnique(ut, baseName)
-		if uniqueName == baseName {
-			uniqueName = scope.Unique(baseName)
-		}
-		switch u := ut.(type) {
-		case *goaexpr.UserTypeExpr:
-			uu := *u
-			uu.TypeName = uniqueName
-			a.Type = &uu
-		case *goaexpr.ResultTypeExpr:
-			uu := *u
-			uu.TypeName = uniqueName
-			a.Type = &uu
-		}
-		return nil
-	})
-	return cloned
-}
 
 // rewriteNestedLocalUserTypes walks the attribute and replaces service-local user
 // types (types without an explicit struct:pkg:path locator) with local user types

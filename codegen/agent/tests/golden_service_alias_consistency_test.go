@@ -33,6 +33,6 @@ func TestGolden_ServiceAlias_Consistency(t *testing.T) {
 	})
 
 	// Compare generated codecs.go under tools/docs against golden.
-	codecs := fileContent(t, files, "gen/atlas_data_agent/tools/docs/codecs.go")
+	codecs := fileContent(t, files, "gen/atlas_data_agent/toolsets/docs/codecs.go")
 	assertGoldenGo(t, "service_alias_consistency", "codecs.go.golden", codecs)
 }

@@ -9,7 +9,7 @@ package specs
 import (
 	_ "embed"
 	"encoding/json"
-	helpers "goa.design/goa-ai/alpha/tools/helpers"
+	helpers "goa.design/goa-ai/alpha/toolsets/helpers"
 	"goa.design/goa-ai/runtime/agent/policy"
 	tools "goa.design/goa-ai/runtime/agent/tools"
 	"sort"

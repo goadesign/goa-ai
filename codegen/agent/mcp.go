@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"goa.design/goa-ai/codegen/naming"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	goaexpr "goa.design/goa/v3/expr"
@@ -53,7 +54,7 @@ func populateMCPToolset(ts *ToolsetData) bool {
 			Return:      result,
 			Toolset:     ts,
 		}
-		td.Title = humanizeTitle(tool.Name)
+		td.Title = naming.HumanizeTitle(tool.Name)
 		td.QualifiedName = fmt.Sprintf("%s.%s", ts.Name, tool.Name)
 		ts.Tools = append(ts.Tools, td)
 	}

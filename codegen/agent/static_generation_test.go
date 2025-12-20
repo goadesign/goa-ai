@@ -180,7 +180,7 @@ func TestTypeSpecificValidatorsGenerated(t *testing.T) {
 
 	// Look for the specs file which should contain validation functions
 	var specsContent string
-	expectedPath := filepath.ToSlash("gen/validator_test/tools/query_tools/specs.go")
+	expectedPath := filepath.ToSlash("gen/validator_test/toolsets/query_tools/specs.go")
 	for _, f := range files {
 		if filepath.ToSlash(f.Path) == expectedPath {
 			var buf bytes.Buffer
