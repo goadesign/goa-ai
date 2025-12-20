@@ -83,7 +83,7 @@ implementations. The DSL keeps everything symmetric with `Toolset`, `Tool`, `Bin
 
 Declare tools with `Toolset("name", func() { ... })`. Bind them to Goa service methods or provide
 custom executors. Codegen produces per‑toolset specs, types, and codecs under
-`gen/<service>/tools/<toolset>/`.
+`gen/<service>/toolsets/<toolset>/`.
 
 Agents that `Use` these toolsets get typed call builders and executor factories—just wire up your
 service client and go.
@@ -115,7 +115,7 @@ Each entry contains the canonical tool ID with full JSON Schemas:
 {
   "tools": [
     {
-      "id": "toolset.tool",
+      "id": "<service>.<toolset>.<tool>",
       "service": "orchestrator",
       "toolset": "helpers",
       "title": "Answer a simple question",
@@ -143,12 +143,17 @@ surfaces the contract:
   the generated result alias type with a `Bounds *agent.Bounds` field (JSON `bounds` property) so
   models and `tool_schemas.json` see canonical truncation metadata.
 - Generated result types also implement the `agent.BoundedResult` interface via a
-  `ResultBounds() agent.Bounds` method; the runtime derives a small, provider‑agnostic
+  `ResultBounds() *agent.Bounds` method; the runtime derives a small, provider‑agnostic
   `agent.Bounds` struct for each bounded result
   and attaches it to planner results, hook events, streams, and memory events.
 - For tools marked `BoundedResult`, the runtime enforces that bounds metadata is present and that
   any untruncated result stays under a configurable JSON size limit; trimming logic stays entirely
   in service code.
+
+For bounded tools, bounds metadata is a hard contract:
+
+- `Returned` and `Truncated` must always be present.
+- `Returned == 0` means “empty result” → `Total == 0` and `Truncated == false`.
 
 ### Tool Artifacts (Sidecar Data)
 
