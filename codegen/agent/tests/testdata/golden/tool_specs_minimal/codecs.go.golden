@@ -21,8 +21,8 @@ var (
 		ToJSON:   MarshalSummarizeDocPayload,
 		FromJSON: UnmarshalSummarizeDocPayload,
 	}
-	// SummarizeDocResultCodec serializes values of type SummarizeDocResult to canonical JSON.
-	SummarizeDocResultCodec = tools.JSONCodec[SummarizeDocResult]{
+	// SummarizeDocResultCodec serializes values of type *SummarizeDocResult to canonical JSON.
+	SummarizeDocResultCodec = tools.JSONCodec[*SummarizeDocResult]{
 		ToJSON:   MarshalSummarizeDocResult,
 		FromJSON: UnmarshalSummarizeDocResult,
 	}
@@ -33,22 +33,20 @@ var (
 			if typed, ok := v.(*SummarizeDocPayload); ok {
 				return MarshalSummarizeDocPayload(typed)
 			}
-			// Fallback: marshal structurally compatible values directly.
-			return json.Marshal(v)
+			return nil, fmt.Errorf("invalid value type for *SummarizeDocPayload: %T", v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalSummarizeDocPayload(data)
 		},
 	}
-	// summarizeDocResultCodec provides an untyped codec for SummarizeDocResult.
+	// summarizeDocResultCodec provides an untyped codec for *SummarizeDocResult.
 	summarizeDocResultCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
 			// Prefer typed marshal when the value matches the expected type.
-			if typed, ok := v.(SummarizeDocResult); ok {
+			if typed, ok := v.(*SummarizeDocResult); ok {
 				return MarshalSummarizeDocResult(typed)
 			}
-			// Fallback: marshal structurally compatible values directly.
-			return json.Marshal(v)
+			return nil, fmt.Errorf("invalid value type for *SummarizeDocResult: %T", v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalSummarizeDocResult(data)
@@ -244,22 +242,24 @@ func UnmarshalSummarizeDocPayload(data []byte) (*SummarizeDocPayload, error) {
 	return v, nil
 }
 
-// MarshalSummarizeDocResult serializes SummarizeDocResult into JSON.
-func MarshalSummarizeDocResult(v SummarizeDocResult) ([]byte, error) {
+// MarshalSummarizeDocResult serializes *SummarizeDocResult into JSON.
+func MarshalSummarizeDocResult(v *SummarizeDocResult) ([]byte, error) {
+	if v == nil {
+		return nil, fmt.Errorf("summarizeDocResult is nil")
+	}
 	return json.Marshal(v)
 }
 
-// UnmarshalSummarizeDocResult deserializes JSON into SummarizeDocResult.
-func UnmarshalSummarizeDocResult(data []byte) (SummarizeDocResult, error) {
-	var zero SummarizeDocResult
+// UnmarshalSummarizeDocResult deserializes JSON into *SummarizeDocResult.
+func UnmarshalSummarizeDocResult(data []byte) (*SummarizeDocResult, error) {
 	if len(data) == 0 {
-		return zero, fmt.Errorf("summarizeDocResult JSON is empty")
+		return nil, fmt.Errorf("summarizeDocResult JSON is empty")
 	}
 	// Decode into JSON body (server body style) then transform.
 	// Note: Agent used-tools perform lenient decode (no required-field validation here).
 	var raw SummarizeDocResultJSON2
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return zero, fmt.Errorf("decode summarizeDocResult: %w", err)
+		return nil, fmt.Errorf("decode summarizeDocResult: %w", err)
 	}
 	var err error
 	if raw.Title == nil {
@@ -267,13 +267,13 @@ func UnmarshalSummarizeDocResult(data []byte) (SummarizeDocResult, error) {
 	}
 	if err != nil {
 		err = newValidationError(err)
-		return zero, err
+		return nil, err
 	}
 	// Transform into final type
 	v := &SummarizeDocResult{
 		Title: *raw.Title,
 	}
-	return *v, nil
+	return v, nil
 }
 
 // Transform helpers

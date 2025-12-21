@@ -72,18 +72,36 @@ type Planner interface {
 
 // PlannerContext exposes runtime services to planners.
 type PlannerContext interface {
+	// ID returns the agent identifier for the run currently being planned.
 	ID() agent.Ident
+
+	// RunID returns the run identifier for the run currently being planned.
 	RunID() string
+
+	// Memory returns a read-only view of the configured memory store.
 	Memory() memory.Reader
+
+	// Logger returns the run-scoped logger.
 	Logger() telemetry.Logger
+
+	// Metrics returns the metrics emitter for the run.
 	Metrics() telemetry.Metrics
+
+	// Tracer returns the distributed tracer for the run.
 	Tracer() telemetry.Tracer
+
+	// State returns ephemeral per-run storage for planner-local state.
 	State() AgentState
+
+	// ModelClient returns the model client configured for the given model ID.
+	// The boolean result is false when the requested model is not configured.
 	ModelClient(id string) (model.Client, bool)
+
 	// AddReminder registers or updates a run-scoped system reminder. Planners use
 	// this to surface structured, rate-limited guidance (for example, “review
 	// open todos”) without baking prompt text directly into planner logic.
 	AddReminder(r reminder.Reminder)
+
 	// RemoveReminder clears a previously registered reminder by ID. Planners call
 	// this when the conditions for a reminder no longer hold so future turns and
 	// prompts stop surfacing outdated guidance.
@@ -92,29 +110,65 @@ type PlannerContext interface {
 
 // AgentState provides ephemeral, per-run state storage for planners.
 type AgentState interface {
+	// Get returns the value stored under key, if any.
 	Get(key string) (any, bool)
+
+	// Set stores value under key for the duration of the run.
 	Set(key string, value any)
+
+	// Keys returns all currently stored keys.
 	Keys() []string
 }
 
 // PlannerEvents allows planners to emit streaming updates that the runtime
 // captures in its provider ledger and publishes to subscribers.
 type PlannerEvents interface {
+	// AssistantChunk emits an assistant text delta. Use this for incremental
+	// streaming output instead of returning a full FinalResponse at the end.
 	AssistantChunk(ctx context.Context, text string)
+
+	// PlannerThinkingBlock emits a structured thinking block (for models that
+	// support rich thinking parts) for debugging/trace visibility.
 	PlannerThinkingBlock(ctx context.Context, block model.ThinkingPart)
+
+	// PlannerThought emits a planner note with optional labels for debugging.
 	PlannerThought(ctx context.Context, note string, labels map[string]string)
+
+	// UsageDelta reports incremental token usage for the current planning phase.
 	UsageDelta(ctx context.Context, usage model.TokenUsage)
 }
 
 // ToolRequest describes a tool invocation requested by the planner.
 type ToolRequest struct {
-	Name             tools.Ident
-	Payload          json.RawMessage
-	AgentID          agent.Ident
-	RunID            string
-	SessionID        string
-	TurnID           string
-	ToolCallID       string
+	// Name is the fully-qualified tool identifier (for example, "atlas.read.get_time_series").
+	Name tools.Ident
+
+	// Payload is the canonical JSON payload for the tool call.
+	Payload json.RawMessage
+
+	// ArtifactsMode is the normalized per-call artifacts toggle selected by the
+	// caller (typically the model) via the reserved `artifacts` payload field.
+	// Valid values are tools.ArtifactsModeAuto, tools.ArtifactsModeOn, and
+	// tools.ArtifactsModeOff. When empty, the caller did not specify a mode.
+	ArtifactsMode tools.ArtifactsMode
+
+	// AgentID is the identifier of the agent that issued this tool request.
+	AgentID agent.Ident
+
+	// RunID is the identifier of the run that owns this tool call.
+	RunID string
+
+	// SessionID is the logical session identifier (for example, a chat conversation).
+	SessionID string
+
+	// TurnID identifies the conversational turn that produced this tool call.
+	TurnID string
+
+	// ToolCallID uniquely identifies this tool invocation for correlation across events.
+	ToolCallID string
+
+	// ParentToolCallID is the identifier of the parent tool call when this invocation
+	// is nested (for example, a tool launched by an agent-as-tool).
 	ParentToolCallID string
 }
 
@@ -126,11 +180,14 @@ type Artifact struct {
 	// (for example, "atlas.time_series" or "atlas.control_narrative").
 	// UIs dispatch renderers based on Kind.
 	Kind string
+
 	// Data contains the artifact payload. It must be JSON-serializable.
 	Data any
+
 	// SourceTool is the fully-qualified tool identifier that produced
 	// this artifact. It is used for provenance and debugging.
 	SourceTool tools.Ident
+
 	// RunLink links this artifact to a nested agent run when it was
 	// produced by an agent-as-tool. Nil for service-backed tools.
 	RunLink *run.Handle
@@ -138,22 +195,40 @@ type Artifact struct {
 
 // ToolResult captures the outcome of a tool invocation.
 type ToolResult struct {
-	Name   tools.Ident
+	// Name is the fully-qualified tool identifier that produced this result.
+	Name tools.Ident
+
+	// Result is the decoded tool result value. Its concrete type depends on the
+	// tool's result schema and codec.
 	Result any
+
 	// Artifacts carries non-model data produced alongside the tool
 	// result (for example, UI artifacts or policy annotations). Artifacts
 	// are never sent to model providers.
 	Artifacts []*Artifact
+
 	// Bounds, when non-nil, describes how the result has been bounded relative
 	// to the full underlying data set (for example, list/window/graph caps).
 	// Tool implementations and adapters populate this field; the runtime and
 	// sinks surface it but never mutate or derive it.
-	Bounds        *agent.Bounds
-	Error         *ToolError
-	RetryHint     *RetryHint
-	Telemetry     *telemetry.ToolTelemetry
-	ToolCallID    string
+	Bounds *agent.Bounds
+
+	// Error is the structured tool error, when the tool execution failed.
+	Error *ToolError
+
+	// RetryHint is optional structured guidance for recovering from tool failures.
+	RetryHint *RetryHint
+
+	// Telemetry contains tool execution metrics (duration, token usage, model).
+	Telemetry *telemetry.ToolTelemetry
+
+	// ToolCallID is the correlation identifier for this tool invocation.
+	ToolCallID string
+
+	// ChildrenCount records how many nested tool results were observed when this
+	// result came from an agent-as-tool execution.
 	ChildrenCount int
+
 	// RunLink, when non-nil, links this result to a nested agent run that
 	// was executed as an agent-as-tool. For service-backed tools this field
 	// is nil. Callers can use RunLink to subscribe to or display the child
@@ -164,77 +239,136 @@ type ToolResult struct {
 // RetryHint communicates planner guidance after tool failures so policy engines
 // and UIs can react. See policy.RetryHint for the runtime-converted form.
 type RetryHint struct {
-	Reason             RetryReason
-	Tool               tools.Ident
-	RestrictToTool     bool
-	MissingFields      []string
-	ExampleInput       map[string]any
-	PriorInput         map[string]any
+	// Reason classifies the retry hint for policy/UX decisions.
+	Reason RetryReason
+
+	// Tool is the tool identifier associated with this hint.
+	Tool tools.Ident
+
+	// RestrictToTool instructs callers to retry only the specified tool.
+	RestrictToTool bool
+
+	// MissingFields lists required fields that were missing or invalid.
+	MissingFields []string
+
+	// ExampleInput is an example payload (as a JSON object) to guide callers.
+	ExampleInput map[string]any
+
+	// PriorInput is the payload (as a JSON object) that caused the failure when
+	// available, to assist interactive repair flows.
+	PriorInput map[string]any
+
+	// ClarifyingQuestion is a natural-language question to ask the user to obtain
+	// the missing or corrected information.
 	ClarifyingQuestion string
-	Message            string
+
+	// Message is an optional additional explanation for the caller.
+	Message string
 }
 
 // FinalResponse contains the assistant message that concludes the run.
 type FinalResponse struct {
+	// Message is the assistant message returned to the user.
 	Message *model.Message
 }
 
 // PlannerAnnotation is a free-form planner note with optional labels.
 type PlannerAnnotation struct {
-	Text   string
+	// Text is the note content.
+	Text string
+
+	// Labels are optional structured tags for tooling/debugging.
 	Labels map[string]string
 }
 
 // Await describes a pause point awaiting user/system input.
 type Await struct {
+	// Clarification requests missing information from the user.
 	Clarification *AwaitClarification
+
+	// ExternalTools requests out-of-band tool results to be provided by the caller.
 	ExternalTools *AwaitExternalTools
 }
 
 // AwaitClarification requests missing information from the user.
 type AwaitClarification struct {
-	ID               string
-	Question         string
-	MissingFields    []string
-	RestrictToTool   tools.Ident
-	ExampleInput     map[string]any
+	// ID uniquely identifies this clarification request.
+	ID string
+
+	// Question is the user-facing question to ask.
+	Question string
+
+	// MissingFields lists missing or invalid fields the user must supply.
+	MissingFields []string
+
+	// RestrictToTool optionally binds the clarification to a single tool.
+	RestrictToTool tools.Ident
+
+	// ExampleInput is an example payload (as a JSON object) to guide the user.
+	ExampleInput map[string]any
+
+	// ClarifyingPrompt is an optional prompt to use when building follow-up messages.
 	ClarifyingPrompt string
 }
 
 // AwaitExternalTools requests external tool results (provided out-of-band).
 type AwaitExternalTools struct {
-	ID    string
+	// ID uniquely identifies this external-tools request.
+	ID string
+
+	// Items describes the tool calls that the caller must satisfy.
 	Items []AwaitToolItem
 }
 
 // AwaitToolItem describes one requested external tool call.
 type AwaitToolItem struct {
-	Name       tools.Ident
+	// Name is the tool identifier to invoke externally.
+	Name tools.Ident
+
+	// ToolCallID correlates the provided result with this requested call.
 	ToolCallID string
-	Payload    json.RawMessage
+
+	// Payload is the canonical JSON payload for the external tool call.
+	Payload json.RawMessage
 }
 
 // TerminationReason indicates why the runtime forced finalization.
 type TerminationReason string
 
 const (
+	// TerminationReasonTimeBudget indicates the run exceeded its time budget.
 	TerminationReasonTimeBudget TerminationReason = "time_budget"
-	TerminationReasonToolCap    TerminationReason = "tool_cap"
+
+	// TerminationReasonToolCap indicates the run exceeded its allowed tool call count.
+	TerminationReasonToolCap TerminationReason = "tool_cap"
+
+	// TerminationReasonFailureCap indicates the run exceeded its allowed consecutive failure count.
 	TerminationReasonFailureCap TerminationReason = "failure_cap"
 )
 
 // Termination carries a runtime-initiated finalize request.
 type Termination struct {
-	Reason  TerminationReason
+	// Reason explains which policy cap triggered termination.
+	Reason TerminationReason
+
+	// Message is optional additional context suitable for logging or diagnostics.
 	Message string
 }
 
 // PlanInput carries the initial messages and context into PlanStart.
 type PlanInput struct {
-	Messages   []*model.Message
+	// Messages is the full conversation history at run start.
+	Messages []*model.Message
+
+	// RunContext contains durable identifiers and links for the run.
 	RunContext run.Context
-	Agent      PlannerContext
-	Events     PlannerEvents
+
+	// Agent provides access to runtime services (models, memory, telemetry).
+	Agent PlannerContext
+
+	// Events allows planners to emit streaming updates.
+	Events PlannerEvents
+
 	// Reminders contains the active system reminders for this planner turn.
 	// Callers should treat this slice as read-only and rely on
 	// PlannerContext.AddReminder to register new reminders for future turns.
@@ -243,27 +377,51 @@ type PlanInput struct {
 
 // PlanResumeInput carries messages plus recent tool results into PlanResume.
 type PlanResumeInput struct {
-	Messages    []*model.Message
-	RunContext  run.Context
-	Agent       PlannerContext
-	Events      PlannerEvents
+	// Messages is the full conversation history including the most recent tool_use/tool_result blocks.
+	Messages []*model.Message
+
+	// RunContext contains durable identifiers and links for the run.
+	RunContext run.Context
+
+	// Agent provides access to runtime services (models, memory, telemetry).
+	Agent PlannerContext
+
+	// Events allows planners to emit streaming updates.
+	Events PlannerEvents
+
+	// ToolResults are the results produced by the previous tool batch.
 	ToolResults []*ToolResult
-	Finalize    *Termination
+
+	// Finalize is non-nil when the runtime forces termination and requests a final response.
+	Finalize *Termination
+
 	// Reminders contains the active system reminders for this planner turn.
 	Reminders []reminder.Reminder
 }
 
 // PlanResult is the planner's decision for the next step.
 type PlanResult struct {
-	ToolCalls     []ToolRequest
+	// ToolCalls are the tool invocations the runtime should execute next.
+	ToolCalls []ToolRequest
+
+	// FinalResponse ends the run with a final assistant message.
 	FinalResponse *FinalResponse
+
 	// Streamed reports whether assistant text for this result has already been
 	// streamed via PlannerEvents.AssistantChunk. When true, runtimes should
 	// avoid emitting an additional full AssistantMessageEvent for the
 	// FinalResponse to prevent duplicate assistant messages.
-	Streamed         bool
-	Await            *Await
-	RetryHint        *RetryHint
+	Streamed bool
+
+	// Await requests the runtime to pause the run and wait for additional input.
+	Await *Await
+
+	// RetryHint provides structured guidance for recovering from failures without terminating.
+	RetryHint *RetryHint
+
+	// ExpectedChildren is an optional hint for how many nested tool results a planner expects.
 	ExpectedChildren int
-	Notes            []PlannerAnnotation
+
+	// Notes are optional planner annotations surfaced to subscribers.
+	Notes []PlannerAnnotation
 }

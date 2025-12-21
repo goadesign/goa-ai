@@ -1,6 +1,7 @@
 package transcript
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -129,5 +130,64 @@ func TestBuildMessagesFromEvents_ParentToolOnly(t *testing.T) {
 	}
 	if msgs[1].Role != model.ConversationRoleUser {
 		t.Fatalf("second role = %s, want user", msgs[1].Role)
+	}
+}
+
+func TestBuildMessagesFromEvents_ToolErrorIncludesErrorContent(t *testing.T) {
+	events := []memory.Event{
+		{
+			Type:      memory.EventAssistantMessage,
+			Timestamp: time.Now(),
+			Data: map[string]any{
+				"message": "calling tool",
+			},
+		},
+		{
+			Type:      memory.EventToolCall,
+			Timestamp: time.Now(),
+			Data: map[string]any{
+				"tool_call_id": "tc-1",
+				"tool_name":    "svc.tool",
+				"payload":      map[string]any{"q": 1},
+			},
+		},
+		{
+			Type:      memory.EventToolResult,
+			Timestamp: time.Now(),
+			Data: map[string]any{
+				"tool_call_id": "tc-1",
+				"tool_name":    "svc.tool",
+				"result":       nil,
+				"error": map[string]any{
+					"Message": "access denied: missing controlleddevices.write privilege",
+				},
+			},
+		},
+	}
+
+	msgs := BuildMessagesFromEvents(events)
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	}
+	if msgs[1].Role != model.ConversationRoleUser {
+		t.Fatalf("second role = %s, want user", msgs[1].Role)
+	}
+	if len(msgs[1].Parts) != 1 {
+		t.Fatalf("expected 1 user part, got %d", len(msgs[1].Parts))
+	}
+	tr, ok := msgs[1].Parts[0].(model.ToolResultPart)
+	if !ok {
+		t.Fatalf("expected ToolResultPart, got %T", msgs[1].Parts[0])
+	}
+	if !tr.IsError {
+		t.Fatalf("expected IsError=true")
+	}
+	want := map[string]any{
+		"error": map[string]any{
+			"Message": "access denied: missing controlleddevices.write privilege",
+		},
+	}
+	if !reflect.DeepEqual(tr.Content, want) {
+		t.Fatalf("content mismatch:\n got: %#v\nwant: %#v", tr.Content, want)
 	}
 }

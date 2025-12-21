@@ -21,8 +21,8 @@ var (
 		ToJSON:   MarshalEchoPayload,
 		FromJSON: UnmarshalEchoPayload,
 	}
-	// EchoResultCodec serializes values of type EchoResult to canonical JSON.
-	EchoResultCodec = tools.JSONCodec[EchoResult]{
+	// EchoResultCodec serializes values of type *EchoResult to canonical JSON.
+	EchoResultCodec = tools.JSONCodec[*EchoResult]{
 		ToJSON:   MarshalEchoResult,
 		FromJSON: UnmarshalEchoResult,
 	}
@@ -33,22 +33,20 @@ var (
 			if typed, ok := v.(*EchoPayload); ok {
 				return MarshalEchoPayload(typed)
 			}
-			// Fallback: marshal structurally compatible values directly.
-			return json.Marshal(v)
+			return nil, fmt.Errorf("invalid value type for *EchoPayload: %T", v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalEchoPayload(data)
 		},
 	}
-	// echoResultCodec provides an untyped codec for EchoResult.
+	// echoResultCodec provides an untyped codec for *EchoResult.
 	echoResultCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
 			// Prefer typed marshal when the value matches the expected type.
-			if typed, ok := v.(EchoResult); ok {
+			if typed, ok := v.(*EchoResult); ok {
 				return MarshalEchoResult(typed)
 			}
-			// Fallback: marshal structurally compatible values directly.
-			return json.Marshal(v)
+			return nil, fmt.Errorf("invalid value type for *EchoResult: %T", v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalEchoResult(data)
@@ -263,22 +261,24 @@ func UnmarshalEchoPayload(data []byte) (*EchoPayload, error) {
 	return v, nil
 }
 
-// MarshalEchoResult serializes EchoResult into JSON.
-func MarshalEchoResult(v EchoResult) ([]byte, error) {
+// MarshalEchoResult serializes *EchoResult into JSON.
+func MarshalEchoResult(v *EchoResult) ([]byte, error) {
+	if v == nil {
+		return nil, fmt.Errorf("echoResult is nil")
+	}
 	return json.Marshal(v)
 }
 
-// UnmarshalEchoResult deserializes JSON into EchoResult.
-func UnmarshalEchoResult(data []byte) (EchoResult, error) {
-	var zero EchoResult
+// UnmarshalEchoResult deserializes JSON into *EchoResult.
+func UnmarshalEchoResult(data []byte) (*EchoResult, error) {
 	if len(data) == 0 {
-		return zero, fmt.Errorf("echoResult JSON is empty")
+		return nil, fmt.Errorf("echoResult JSON is empty")
 	}
 	// Decode into JSON body (server body style) then transform.
 	// Note: Agent used-tools perform lenient decode (no required-field validation here).
 	var raw EchoResultJSON2
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return zero, fmt.Errorf("decode echoResult: %w", err)
+		return nil, fmt.Errorf("decode echoResult: %w", err)
 	}
 	var err error
 	if raw.ID == nil {
@@ -289,7 +289,7 @@ func UnmarshalEchoResult(data []byte) (EchoResult, error) {
 	}
 	if err != nil {
 		err = newValidationError(err)
-		return zero, err
+		return nil, err
 	}
 	// Transform into final type
 	v := &EchoResult{
@@ -311,7 +311,7 @@ func UnmarshalEchoResult(data []byte) (EchoResult, error) {
 		u.SetText((ValueText)(obj))
 		v.Value = u
 	}
-	return *v, nil
+	return v, nil
 }
 
 // Transform helpers

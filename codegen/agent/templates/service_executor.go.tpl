@@ -272,14 +272,13 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
         case tools.Ident({{ printf "%q" .QualifiedName }}):
             if mr, ok := methodOut.({{ .MethodResultTypeRef }}); ok {
                 if sc := {{ $.Toolset.SpecsPackageName }}.Init{{ goify .Name true }}SidecarFromMethodResult(mr); sc != nil {
-                    artifacts = append(
-                        artifacts,
-                        &planner.Artifact{
+                    artifacts = []*planner.Artifact{
+                        {
                             Kind:       {{ printf "%q" .ArtifactKind }},
                             Data:       sc,
                             SourceTool: call.Name,
                         },
-                    )
+                    }
                 }
             }
         {{- end }}

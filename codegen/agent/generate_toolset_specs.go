@@ -149,7 +149,6 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, "codecs.go"), SectionTemplates: codecsSections})
 			// specs.go
 			specImports := []*codegen.ImportSpec{
-				{Path: "sort"},
 				{Path: "goa.design/goa-ai/runtime/agent/policy"},
 				{Path: "goa.design/goa-ai/runtime/agent/tools"},
 			}

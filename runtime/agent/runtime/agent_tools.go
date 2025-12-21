@@ -100,6 +100,9 @@ type (
 		// Payload is the decoded tool payload for the parent call when available.
 		// It is nil when the parent tool had an empty payload.
 		Payload any
+		// ArtifactsMode is the normalized per-call artifacts toggle selected by
+		// the caller via the reserved `artifacts` payload field.
+		ArtifactsMode tools.ArtifactsMode
 	}
 
 	// ChildCall summarizes a child tool outcome from a nested run used for aggregation.
@@ -614,9 +617,10 @@ func (r *Runtime) adaptWithFinalizer(ctx context.Context, cfg *AgentToolConfig, 
 	}
 
 	parent := ParentCall{
-		ToolName:   call.Name,
-		ToolCallID: call.ToolCallID,
-		Payload:    parentPayload,
+		ToolName:      call.Name,
+		ToolCallID:    call.ToolCallID,
+		Payload:       parentPayload,
+		ArtifactsMode: call.ArtifactsMode,
 	}
 	invoker := finalizerToolInvokerFromContext(ctx, call)
 	input := FinalizerInput{

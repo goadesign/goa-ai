@@ -150,9 +150,6 @@ func agentSpecsAggregatorFile(agent *AgentData) *codegen.File {
 	// Build import list: runtime + per-toolset packages
 	// Always alias runtime tools to avoid conflicts with toolsets named "tools"
 	imports := []*codegen.ImportSpec{
-		{Path: "embed", Name: "_"},
-		{Path: "encoding/json"},
-		{Path: "sort"},
 		{Path: "goa.design/goa-ai/runtime/agent/policy"},
 		{Path: "goa.design/goa-ai/runtime/agent/tools", Name: "tools"},
 	}

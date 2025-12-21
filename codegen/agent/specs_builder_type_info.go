@@ -1,9 +1,14 @@
 package codegen
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 
+	runtimetools "goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -176,7 +181,15 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	ptr := aliasIsPointer || strings.HasPrefix(fullRef, "*")
 
 	// JSON schema from effective attribute
-	schemaBytes, err := schemaForAttribute(tt)
+	schemaAttr := tt
+	var err error
+	if usage == usagePayload && tool.Artifact != nil && tool.Artifact.Type != goaexpr.Empty {
+		schemaAttr, err = schemaAttributeWithArtifactsToggle(tool, tt)
+		if err != nil {
+			return nil, err
+		}
+	}
+	schemaBytes, err := schemaForAttribute(schemaAttr)
 	if err != nil {
 		return nil, err
 	}
@@ -216,10 +229,24 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 		MarshalArg:    "v",
 		UnmarshalArg:  "v",
 	}
+	if usage == usagePayload && len(exampleBytes) > 0 {
+		if eg, ok := exampleInputGoExpr(exampleBytes); ok {
+			info.ExampleInputGo = eg
+		}
+	}
 	// For tool payloads, untyped codecs should return pointers.
 	// Record pointer intent via the flag; templates will render "*" where needed
 	// using Goa NameScope-derived base references (no string surgery here).
 	if usage == usagePayload {
+		info.Pointer = true
+	}
+	// For tool results and sidecars, prefer pointers for object-shaped types.
+	//
+	// Tool result and sidecar values are typically produced by generated transforms
+	// and service executors via address-taking composite literals (e.g. &T{...}).
+	// Using pointer codecs makes the tool contract explicit and prevents accidental
+	// fallback marshaling of unrelated service method types.
+	if (usage == usageResult || usage == usageSidecar) && goaexpr.AsObject(baseAttr.Type) != nil {
 		info.Pointer = true
 	}
 	// Populate JSON-body helpers (HTTP server body style) for payload, result,
@@ -398,6 +425,136 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 		b.collectUserTypeValidators(scope, tool, usage, tt)
 	}
 	return info, nil
+}
+
+func schemaAttributeWithArtifactsToggle(tool *ToolData, att *goaexpr.AttributeExpr) (*goaexpr.AttributeExpr, error) {
+	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+		return att, nil
+	}
+	if ut, ok := att.Type.(goaexpr.UserType); ok {
+		base := ut.Attribute()
+		mod, err := addArtifactsToggleToObjectAttribute(tool, base)
+		if err != nil {
+			return nil, err
+		}
+		dup := *att
+		dup.Type = ut.Dup(mod)
+		return &dup, nil
+	}
+	return addArtifactsToggleToObjectAttribute(tool, att)
+}
+
+func addArtifactsToggleToObjectAttribute(tool *ToolData, att *goaexpr.AttributeExpr) (*goaexpr.AttributeExpr, error) {
+	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+		return att, nil
+	}
+	obj := goaexpr.AsObject(att.Type)
+	if obj == nil {
+		return nil, fmt.Errorf(
+			"tool %q declares artifacts but payload is not an object; artifact toggles require an object payload",
+			tool.QualifiedName,
+		)
+	}
+	for _, na := range *obj {
+		if na != nil && na.Name == "artifacts" {
+			return att, nil
+		}
+	}
+
+	dup := *att
+	dupObj := make(goaexpr.Object, 0, len(*obj)+1)
+	dupObj = append(dupObj, *obj...)
+	dupObj = append(dupObj, &goaexpr.NamedAttributeExpr{
+		Name: "artifacts",
+		Attribute: &goaexpr.AttributeExpr{
+			Type:        goaexpr.String,
+			Description: "Controls whether UI artifacts are produced for this tool call. Valid values: \"auto\", \"on\", \"off\".",
+			Validation: &goaexpr.ValidationExpr{
+				Values: []any{
+					string(runtimetools.ArtifactsModeAuto),
+					string(runtimetools.ArtifactsModeOn),
+					string(runtimetools.ArtifactsModeOff),
+				},
+			},
+		},
+	})
+	dup.Type = &dupObj
+	return &dup, nil
+}
+
+func exampleInputGoExpr(exampleJSON []byte) (string, bool) {
+	trimmed := bytes.TrimSpace(exampleJSON)
+	if len(trimmed) == 0 || !json.Valid(trimmed) {
+		return "", false
+	}
+	dec := json.NewDecoder(bytes.NewReader(trimmed))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return "", false
+	}
+	m, ok := v.(map[string]any)
+	if !ok || len(m) == 0 {
+		return "", false
+	}
+	return goLiteralForAny(m), true
+}
+
+func goLiteralForAny(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return "nil"
+	case bool:
+		// Keep primitive formatting aligned with Goa's codegen helpers which
+		// use fmt's Go-syntax formatting (%#v) when emitting literals (see
+		// goa.design/goa/v3/codegen/validation.go:toSlice).
+		return fmt.Sprintf("%#v", x)
+	case string:
+		return fmt.Sprintf("%#v", x)
+	case json.Number:
+		if i, err := x.Int64(); err == nil {
+			return fmt.Sprintf("%#v", i)
+		}
+		if f, err := x.Float64(); err == nil {
+			return fmt.Sprintf("%#v", f)
+		}
+		return fmt.Sprintf("%#v", x.String())
+	case float64:
+		return fmt.Sprintf("%#v", x)
+	case []any:
+		if len(x) == 0 {
+			return "[]any{}"
+		}
+		elems := make([]string, len(x))
+		for i, v := range x {
+			elems[i] = goLiteralForAny(v)
+		}
+		return fmt.Sprintf("[]any{%s}", strings.Join(elems, ", "))
+	case map[string]any:
+		if len(x) == 0 {
+			return "map[string]any{}"
+		}
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var b strings.Builder
+		b.WriteString("map[string]any{")
+		for i, k := range keys {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(fmt.Sprintf("%#v", k))
+			b.WriteString(": ")
+			b.WriteString(goLiteralForAny(x[k]))
+		}
+		b.WriteString("}")
+		return b.String()
+	default:
+		// Best-effort: stringify unknown decoded values.
+		return strconv.Quote(fmt.Sprintf("%v", x))
+	}
 }
 
 // isEmptyStruct reports whether the provided attribute ultimately resolves to

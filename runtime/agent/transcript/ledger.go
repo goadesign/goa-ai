@@ -254,13 +254,28 @@ func BuildMessagesFromEvents(events []memory.Event) []*model.Message {
 				if v, ok2 := m["tool_call_id"].(string); ok2 {
 					id = v
 				}
-				var content any
-				if v, ok2 := m["result"]; ok2 {
-					content = v
-				}
 				var isErr bool
+				var terr any
 				if v, ok2 := m["error"]; ok2 && v != nil {
 					isErr = true
+					terr = v
+				}
+				var result any
+				if v, ok2 := m["result"]; ok2 {
+					result = v
+				}
+				content := result
+				if isErr {
+					if result == nil {
+						content = map[string]any{
+							"error": terr,
+						}
+					} else {
+						content = map[string]any{
+							"result": result,
+							"error":  terr,
+						}
+					}
 				}
 				if id != "" {
 					pendingResults = append(pendingResults, ToolResultSpec{

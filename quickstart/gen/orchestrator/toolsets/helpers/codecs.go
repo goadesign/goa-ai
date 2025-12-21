@@ -23,8 +23,8 @@ var (
 		ToJSON:   MarshalAnswerPayload,
 		FromJSON: UnmarshalAnswerPayload,
 	}
-	// AnswerResultCodec serializes values of type AnswerResult to canonical JSON.
-	AnswerResultCodec = tools.JSONCodec[AnswerResult]{
+	// AnswerResultCodec serializes values of type *AnswerResult to canonical JSON.
+	AnswerResultCodec = tools.JSONCodec[*AnswerResult]{
 		ToJSON:   MarshalAnswerResult,
 		FromJSON: UnmarshalAnswerResult,
 	}
@@ -35,22 +35,20 @@ var (
 			if typed, ok := v.(*AnswerPayload); ok {
 				return MarshalAnswerPayload(typed)
 			}
-			// Fallback: marshal structurally compatible values directly.
-			return json.Marshal(v)
+			return nil, fmt.Errorf("invalid value type for *AnswerPayload: %T", v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalAnswerPayload(data)
 		},
 	}
-	// answerResultCodec provides an untyped codec for AnswerResult.
+	// answerResultCodec provides an untyped codec for *AnswerResult.
 	answerResultCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
 			// Prefer typed marshal when the value matches the expected type.
-			if typed, ok := v.(AnswerResult); ok {
+			if typed, ok := v.(*AnswerResult); ok {
 				return MarshalAnswerResult(typed)
 			}
-			// Fallback: marshal structurally compatible values directly.
-			return json.Marshal(v)
+			return nil, fmt.Errorf("invalid value type for *AnswerResult: %T", v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalAnswerResult(data)
@@ -246,22 +244,24 @@ func UnmarshalAnswerPayload(data []byte) (*AnswerPayload, error) {
 	return v, nil
 }
 
-// MarshalAnswerResult serializes AnswerResult into JSON.
-func MarshalAnswerResult(v AnswerResult) ([]byte, error) {
+// MarshalAnswerResult serializes *AnswerResult into JSON.
+func MarshalAnswerResult(v *AnswerResult) ([]byte, error) {
+	if v == nil {
+		return nil, fmt.Errorf("answerResult is nil")
+	}
 	return json.Marshal(v)
 }
 
-// UnmarshalAnswerResult deserializes JSON into AnswerResult.
-func UnmarshalAnswerResult(data []byte) (AnswerResult, error) {
-	var zero AnswerResult
+// UnmarshalAnswerResult deserializes JSON into *AnswerResult.
+func UnmarshalAnswerResult(data []byte) (*AnswerResult, error) {
 	if len(data) == 0 {
-		return zero, fmt.Errorf("answerResult JSON is empty")
+		return nil, fmt.Errorf("answerResult JSON is empty")
 	}
 	// Decode into JSON body (server body style) then transform.
 	// Note: Agent used-tools perform lenient decode (no required-field validation here).
 	var raw AnswerResultJSON2
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return zero, fmt.Errorf("decode answerResult: %w", err)
+		return nil, fmt.Errorf("decode answerResult: %w", err)
 	}
 	var err error
 	if raw.Text == nil {
@@ -269,13 +269,13 @@ func UnmarshalAnswerResult(data []byte) (AnswerResult, error) {
 	}
 	if err != nil {
 		err = newValidationError(err)
-		return zero, err
+		return nil, err
 	}
 	// Transform into final type
 	v := &AnswerResult{
 		Text: *raw.Text,
 	}
-	return *v, nil
+	return v, nil
 }
 
 // Transform helpers

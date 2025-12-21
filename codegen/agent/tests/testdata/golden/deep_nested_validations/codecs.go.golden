@@ -21,8 +21,8 @@ var (
 		ToJSON:   MarshalValidatePayload,
 		FromJSON: UnmarshalValidatePayload,
 	}
-	// ValidateResultCodec serializes values of type ValidateResult to canonical JSON.
-	ValidateResultCodec = tools.JSONCodec[ValidateResult]{
+	// ValidateResultCodec serializes values of type *ValidateResult to canonical JSON.
+	ValidateResultCodec = tools.JSONCodec[*ValidateResult]{
 		ToJSON:   MarshalValidateResult,
 		FromJSON: UnmarshalValidateResult,
 	}
@@ -33,22 +33,20 @@ var (
 			if typed, ok := v.(*ValidatePayload); ok {
 				return MarshalValidatePayload(typed)
 			}
-			// Fallback: marshal structurally compatible values directly.
-			return json.Marshal(v)
+			return nil, fmt.Errorf("invalid value type for *ValidatePayload: %T", v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalValidatePayload(data)
 		},
 	}
-	// validateResultCodec provides an untyped codec for ValidateResult.
+	// validateResultCodec provides an untyped codec for *ValidateResult.
 	validateResultCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
 			// Prefer typed marshal when the value matches the expected type.
-			if typed, ok := v.(ValidateResult); ok {
+			if typed, ok := v.(*ValidateResult); ok {
 				return MarshalValidateResult(typed)
 			}
-			// Fallback: marshal structurally compatible values directly.
-			return json.Marshal(v)
+			return nil, fmt.Errorf("invalid value type for *ValidateResult: %T", v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalValidateResult(data)
@@ -309,22 +307,24 @@ func UnmarshalValidatePayload(data []byte) (*ValidatePayload, error) {
 	return v, nil
 }
 
-// MarshalValidateResult serializes ValidateResult into JSON.
-func MarshalValidateResult(v ValidateResult) ([]byte, error) {
+// MarshalValidateResult serializes *ValidateResult into JSON.
+func MarshalValidateResult(v *ValidateResult) ([]byte, error) {
+	if v == nil {
+		return nil, fmt.Errorf("validateResult is nil")
+	}
 	return json.Marshal(v)
 }
 
-// UnmarshalValidateResult deserializes JSON into ValidateResult.
-func UnmarshalValidateResult(data []byte) (ValidateResult, error) {
-	var zero ValidateResult
+// UnmarshalValidateResult deserializes JSON into *ValidateResult.
+func UnmarshalValidateResult(data []byte) (*ValidateResult, error) {
 	if len(data) == 0 {
-		return zero, fmt.Errorf("validateResult JSON is empty")
+		return nil, fmt.Errorf("validateResult JSON is empty")
 	}
 	// Decode into JSON body (server body style) then transform.
 	// Note: Agent used-tools perform lenient decode (no required-field validation here).
 	var raw ValidateResultJSON2
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return zero, fmt.Errorf("decode validateResult: %w", err)
+		return nil, fmt.Errorf("decode validateResult: %w", err)
 	}
 	var err error
 	if raw.Root == nil {
@@ -340,14 +340,14 @@ func UnmarshalValidateResult(data []byte) (ValidateResult, error) {
 	}
 	if err != nil {
 		err = newValidationError(err)
-		return zero, err
+		return nil, err
 	}
 	// Transform into final type
 	v := &ValidateResult{
 		Root: *raw.Root,
 	}
 	v.Child = resultValidateResultJSONChildJSON2ToLevel2(raw.Child)
-	return *v, nil
+	return v, nil
 }
 
 // Transform helpers

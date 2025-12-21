@@ -30,7 +30,7 @@ func TestToolsetNamedTools(t *testing.T) {
 
 	// Verify the generated code is syntactically valid by checking structure
 	require.Contains(t, specsContent, "package specs")
-	require.Contains(t, specsContent, "func init()")
+	require.Contains(t, specsContent, "func Spec(")
 }
 
 

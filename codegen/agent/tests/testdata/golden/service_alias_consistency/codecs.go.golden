@@ -21,8 +21,8 @@ var (
 		ToJSON:   MarshalReadPayload,
 		FromJSON: UnmarshalReadPayload,
 	}
-	// ReadResultCodec serializes values of type ReadResult to canonical JSON.
-	ReadResultCodec = tools.JSONCodec[ReadResult]{
+	// ReadResultCodec serializes values of type *ReadResult to canonical JSON.
+	ReadResultCodec = tools.JSONCodec[*ReadResult]{
 		ToJSON:   MarshalReadResult,
 		FromJSON: UnmarshalReadResult,
 	}
@@ -33,22 +33,20 @@ var (
 			if typed, ok := v.(*ReadPayload); ok {
 				return MarshalReadPayload(typed)
 			}
-			// Fallback: marshal structurally compatible values directly.
-			return json.Marshal(v)
+			return nil, fmt.Errorf("invalid value type for *ReadPayload: %T", v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalReadPayload(data)
 		},
 	}
-	// readResultCodec provides an untyped codec for ReadResult.
+	// readResultCodec provides an untyped codec for *ReadResult.
 	readResultCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
 			// Prefer typed marshal when the value matches the expected type.
-			if typed, ok := v.(ReadResult); ok {
+			if typed, ok := v.(*ReadResult); ok {
 				return MarshalReadResult(typed)
 			}
-			// Fallback: marshal structurally compatible values directly.
-			return json.Marshal(v)
+			return nil, fmt.Errorf("invalid value type for *ReadResult: %T", v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalReadResult(data)
@@ -244,22 +242,24 @@ func UnmarshalReadPayload(data []byte) (*ReadPayload, error) {
 	return v, nil
 }
 
-// MarshalReadResult serializes ReadResult into JSON.
-func MarshalReadResult(v ReadResult) ([]byte, error) {
+// MarshalReadResult serializes *ReadResult into JSON.
+func MarshalReadResult(v *ReadResult) ([]byte, error) {
+	if v == nil {
+		return nil, fmt.Errorf("readResult is nil")
+	}
 	return json.Marshal(v)
 }
 
-// UnmarshalReadResult deserializes JSON into ReadResult.
-func UnmarshalReadResult(data []byte) (ReadResult, error) {
-	var zero ReadResult
+// UnmarshalReadResult deserializes JSON into *ReadResult.
+func UnmarshalReadResult(data []byte) (*ReadResult, error) {
 	if len(data) == 0 {
-		return zero, fmt.Errorf("readResult JSON is empty")
+		return nil, fmt.Errorf("readResult JSON is empty")
 	}
 	// Decode into JSON body (server body style) then transform.
 	// Note: Agent used-tools perform lenient decode (no required-field validation here).
 	var raw ReadResultJSON2
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return zero, fmt.Errorf("decode readResult: %w", err)
+		return nil, fmt.Errorf("decode readResult: %w", err)
 	}
 	var err error
 	if raw.ID == nil {
@@ -267,13 +267,13 @@ func UnmarshalReadResult(data []byte) (ReadResult, error) {
 	}
 	if err != nil {
 		err = newValidationError(err)
-		return zero, err
+		return nil, err
 	}
 	// Transform into final type
 	v := &ReadResult{
 		ID: *raw.ID,
 	}
-	return *v, nil
+	return v, nil
 }
 
 // Transform helpers

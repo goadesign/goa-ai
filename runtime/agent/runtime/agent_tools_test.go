@@ -354,10 +354,11 @@ func TestJSONOnly_FinalizerError_Propagates(t *testing.T) {
 		}),
 	}
 	call := &planner.ToolRequest{
-		Name:       tools.Ident("test.parent"),
-		ToolCallID: "toolcall",
-		RunID:      "run",
-		SessionID:  "sess",
+		Name:          tools.Ident("test.parent"),
+		ToolCallID:    "toolcall",
+		RunID:         "run",
+		SessionID:     "sess",
+		ArtifactsMode: tools.ArtifactsModeAuto,
 	}
 	out := &RunOutput{
 		ToolEvents: []*planner.ToolResult{
@@ -369,4 +370,36 @@ func TestJSONOnly_FinalizerError_Propagates(t *testing.T) {
 	require.NotNil(t, tr)
 	require.NotNil(t, tr.Error)
 	require.Contains(t, tr.Error.Message, "agent-tool: finalizer failed")
+}
+
+func TestAgentToolFinalizerInput_ContainsArtifactsMode(t *testing.T) {
+	rt := &Runtime{
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+	}
+	cfg := &AgentToolConfig{
+		AgentID:  "test.agent",
+		JSONOnly: true,
+		Finalizer: FinalizerFunc(func(_ context.Context, input *FinalizerInput) (*planner.ToolResult, error) {
+			require.Equal(t, tools.ArtifactsModeOff, input.Parent.ArtifactsMode)
+			return &planner.ToolResult{Name: input.Parent.ToolName}, nil
+		}),
+	}
+	call := &planner.ToolRequest{
+		Name:          tools.Ident("test.parent"),
+		ToolCallID:    "toolcall",
+		RunID:         "run",
+		SessionID:     "sess",
+		ArtifactsMode: tools.ArtifactsModeOff,
+	}
+	out := &RunOutput{
+		ToolEvents: []*planner.ToolResult{
+			{Name: tools.Ident("child"), Result: map[string]any{"x": "y"}},
+		},
+	}
+	tr, err := rt.adaptAgentChildOutput(context.Background(), cfg, call, run.Context{RunID: "child-run"}, out)
+	require.NoError(t, err)
+	require.NotNil(t, tr)
+	require.Equal(t, tools.Ident("test.parent"), tr.Name)
 }

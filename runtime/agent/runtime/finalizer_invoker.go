@@ -153,7 +153,7 @@ func (i *finalizerToolInvoker) Invoke(ctx context.Context, tool tools.Ident, pay
 	}
 
 	var decoded any
-	if len(out.Payload) > 0 {
+	if out.Error == "" && hasNonNullJSON(out.Payload) {
 		v, decErr := i.factory.runtime.unmarshalToolValue(ctx, tool, out.Payload, false)
 		if decErr != nil {
 			return nil, fmt.Errorf("finalizer tool %q result decode failed (tool_call_id=%s): %w", tool, call.ToolCallID, decErr)

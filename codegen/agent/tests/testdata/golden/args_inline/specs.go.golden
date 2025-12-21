@@ -9,7 +9,6 @@ package math
 import (
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/tools"
-	"sort"
 )
 
 // Tool IDs for this toolset.
@@ -18,18 +17,24 @@ const (
 )
 
 var Specs = []tools.ToolSpec{
-	{
-		Name:          Add,
-		Service:       "alpha",
-		Toolset:       "alpha.math",
-		Description:   "Add",
-		Tags:          []string{},
-		BoundedResult: false,
+	SpecAdd,
+}
+
+var (
+	SpecAdd = tools.ToolSpec{
+		Name:                Add,
+		Service:             "alpha",
+		Toolset:             "alpha.math",
+		Description:         "Add",
+		ArtifactDescription: "",
+		Tags:                []string{},
+		BoundedResult:       false,
 		Payload: tools.TypeSpec{
 			Name:        "AddPayload",
 			Schema:      []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"AddPayload\",\"type\":\"object\",\"properties\":{\"left\":{\"type\":\"integer\",\"description\":\"Left operand\",\"example\":1056967519,\"format\":\"int32\"},\"right\":{\"type\":\"integer\",\"description\":\"Right operand\",\"example\":1084554470,\"format\":\"int32\"}},\"example\":{\"left\":1051318795,\"right\":1835081150},\"required\":[\"left\",\"right\"]}"),
 			ExampleJSON: []byte("{\"left\":1,\"right\":1}"),
-			Codec:       addPayloadCodec,
+			ExampleInput: map[string]any{"left": 1, "right": 1},
+			Codec:        addPayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:   "AddResult",
@@ -37,12 +42,11 @@ var Specs = []tools.ToolSpec{
 			Codec:  addResultCodec,
 		},
 		Sidecar: nil,
-	},
-}
+	}
+)
 
 var (
-	specIndex = make(map[tools.Ident]*tools.ToolSpec, len(Specs))
-	metadata  = []policy.ToolMetadata{
+	metadata = []policy.ToolMetadata{
 		{
 			ID:          Add,
 			Title:       "Add",
@@ -50,52 +54,47 @@ var (
 			Tags:        []string{},
 		},
 	}
-)
-
-func init() {
-	for i := range Specs {
-		spec := &Specs[i]
-		specIndex[spec.Name] = spec
+	names = []tools.Ident{
+		Add,
 	}
-}
+)
 
 // Names returns the identifiers of all generated tools.
 func Names() []tools.Ident {
-	names := make([]tools.Ident, 0, len(specIndex))
-	for name := range specIndex {
-		names = append(names, name)
-	}
-	sort.Slice(names, func(i, j int) bool { return string(names[i]) < string(names[j]) })
 	return names
 }
 
 // Spec returns the specification for the named tool if present.
 func Spec(name tools.Ident) (*tools.ToolSpec, bool) {
-	spec, ok := specIndex[name]
-	return spec, ok
+	switch name {
+	case Add:
+		return &SpecAdd, true
+	default:
+		return nil, false
+	}
 }
 
 // PayloadSchema returns the JSON schema for the named tool payload.
 func PayloadSchema(name tools.Ident) ([]byte, bool) {
-	spec, ok := specIndex[name]
-	if !ok {
+	switch name {
+	case Add:
+		return SpecAdd.Payload.Schema, true
+	default:
 		return nil, false
 	}
-	return spec.Payload.Schema, true
 }
 
 // ResultSchema returns the JSON schema for the named tool result.
 func ResultSchema(name tools.Ident) ([]byte, bool) {
-	spec, ok := specIndex[name]
-	if !ok {
+	switch name {
+	case Add:
+		return SpecAdd.Result.Schema, true
+	default:
 		return nil, false
 	}
-	return spec.Result.Schema, true
 }
 
 // Metadata exposes policy metadata for the generated tools.
 func Metadata() []policy.ToolMetadata {
-	out := make([]policy.ToolMetadata, len(metadata))
-	copy(out, metadata)
-	return out
+	return metadata
 }

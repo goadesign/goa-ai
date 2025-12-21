@@ -22,8 +22,8 @@ var (
 		ToJSON:   MarshalStorePayload,
 		FromJSON: UnmarshalStorePayload,
 	}
-	// StoreResultCodec serializes values of type StoreResult to canonical JSON.
-	StoreResultCodec = tools.JSONCodec[StoreResult]{
+	// StoreResultCodec serializes values of type *StoreResult to canonical JSON.
+	StoreResultCodec = tools.JSONCodec[*StoreResult]{
 		ToJSON:   MarshalStoreResult,
 		FromJSON: UnmarshalStoreResult,
 	}
@@ -34,22 +34,20 @@ var (
 			if typed, ok := v.(*StorePayload); ok {
 				return MarshalStorePayload(typed)
 			}
-			// Fallback: marshal structurally compatible values directly.
-			return json.Marshal(v)
+			return nil, fmt.Errorf("invalid value type for *StorePayload: %T", v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalStorePayload(data)
 		},
 	}
-	// storeResultCodec provides an untyped codec for StoreResult.
+	// storeResultCodec provides an untyped codec for *StoreResult.
 	storeResultCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
 			// Prefer typed marshal when the value matches the expected type.
-			if typed, ok := v.(StoreResult); ok {
+			if typed, ok := v.(*StoreResult); ok {
 				return MarshalStoreResult(typed)
 			}
-			// Fallback: marshal structurally compatible values directly.
-			return json.Marshal(v)
+			return nil, fmt.Errorf("invalid value type for *StoreResult: %T", v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalStoreResult(data)
@@ -245,22 +243,24 @@ func UnmarshalStorePayload(data []byte) (*StorePayload, error) {
 	return v, nil
 }
 
-// MarshalStoreResult serializes StoreResult into JSON.
-func MarshalStoreResult(v StoreResult) ([]byte, error) {
+// MarshalStoreResult serializes *StoreResult into JSON.
+func MarshalStoreResult(v *StoreResult) ([]byte, error) {
+	if v == nil {
+		return nil, fmt.Errorf("storeResult is nil")
+	}
 	return json.Marshal(v)
 }
 
-// UnmarshalStoreResult deserializes JSON into StoreResult.
-func UnmarshalStoreResult(data []byte) (StoreResult, error) {
-	var zero StoreResult
+// UnmarshalStoreResult deserializes JSON into *StoreResult.
+func UnmarshalStoreResult(data []byte) (*StoreResult, error) {
 	if len(data) == 0 {
-		return zero, fmt.Errorf("storeResult JSON is empty")
+		return nil, fmt.Errorf("storeResult JSON is empty")
 	}
 	// Decode into JSON body (server body style) then transform.
 	// Note: Agent used-tools perform lenient decode (no required-field validation here).
 	var raw StoreResultJSON2
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return zero, fmt.Errorf("decode storeResult: %w", err)
+		return nil, fmt.Errorf("decode storeResult: %w", err)
 	}
 	var err error
 	if raw.ID == nil {
@@ -268,13 +268,13 @@ func UnmarshalStoreResult(data []byte) (StoreResult, error) {
 	}
 	if err != nil {
 		err = newValidationError(err)
-		return zero, err
+		return nil, err
 	}
 	// Transform into final type
 	v := &StoreResult{
 		ID: *raw.ID,
 	}
-	return *v, nil
+	return v, nil
 }
 
 // Transform helpers

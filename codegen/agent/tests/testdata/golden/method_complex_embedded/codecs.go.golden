@@ -21,8 +21,8 @@ var (
 		ToJSON:   MarshalUpsertPayload,
 		FromJSON: UnmarshalUpsertPayload,
 	}
-	// UpsertResultCodec serializes values of type UpsertResult to canonical JSON.
-	UpsertResultCodec = tools.JSONCodec[UpsertResult]{
+	// UpsertResultCodec serializes values of type *UpsertResult to canonical JSON.
+	UpsertResultCodec = tools.JSONCodec[*UpsertResult]{
 		ToJSON:   MarshalUpsertResult,
 		FromJSON: UnmarshalUpsertResult,
 	}
@@ -33,22 +33,20 @@ var (
 			if typed, ok := v.(*UpsertPayload); ok {
 				return MarshalUpsertPayload(typed)
 			}
-			// Fallback: marshal structurally compatible values directly.
-			return json.Marshal(v)
+			return nil, fmt.Errorf("invalid value type for *UpsertPayload: %T", v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalUpsertPayload(data)
 		},
 	}
-	// upsertResultCodec provides an untyped codec for UpsertResult.
+	// upsertResultCodec provides an untyped codec for *UpsertResult.
 	upsertResultCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
 			// Prefer typed marshal when the value matches the expected type.
-			if typed, ok := v.(UpsertResult); ok {
+			if typed, ok := v.(*UpsertResult); ok {
 				return MarshalUpsertResult(typed)
 			}
-			// Fallback: marshal structurally compatible values directly.
-			return json.Marshal(v)
+			return nil, fmt.Errorf("invalid value type for *UpsertResult: %T", v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalUpsertResult(data)
@@ -293,22 +291,24 @@ func UnmarshalUpsertPayload(data []byte) (*UpsertPayload, error) {
 	return v, nil
 }
 
-// MarshalUpsertResult serializes UpsertResult into JSON.
-func MarshalUpsertResult(v UpsertResult) ([]byte, error) {
+// MarshalUpsertResult serializes *UpsertResult into JSON.
+func MarshalUpsertResult(v *UpsertResult) ([]byte, error) {
+	if v == nil {
+		return nil, fmt.Errorf("upsertResult is nil")
+	}
 	return json.Marshal(v)
 }
 
-// UnmarshalUpsertResult deserializes JSON into UpsertResult.
-func UnmarshalUpsertResult(data []byte) (UpsertResult, error) {
-	var zero UpsertResult
+// UnmarshalUpsertResult deserializes JSON into *UpsertResult.
+func UnmarshalUpsertResult(data []byte) (*UpsertResult, error) {
 	if len(data) == 0 {
-		return zero, fmt.Errorf("upsertResult JSON is empty")
+		return nil, fmt.Errorf("upsertResult JSON is empty")
 	}
 	// Decode into JSON body (server body style) then transform.
 	// Note: Agent used-tools perform lenient decode (no required-field validation here).
 	var raw UpsertResultJSON2
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return zero, fmt.Errorf("decode upsertResult: %w", err)
+		return nil, fmt.Errorf("decode upsertResult: %w", err)
 	}
 	var err error
 	if raw.ID == nil {
@@ -324,7 +324,7 @@ func UnmarshalUpsertResult(data []byte) (UpsertResult, error) {
 	}
 	if err != nil {
 		err = newValidationError(err)
-		return zero, err
+		return nil, err
 	}
 	// Transform into final type
 	v := &UpsertResult{
@@ -332,7 +332,7 @@ func UnmarshalUpsertResult(data []byte) (UpsertResult, error) {
 		Name: raw.Name,
 	}
 	v.Address = resultUpsertResultJSONAddressJSON2ToAddress(raw.Address)
-	return *v, nil
+	return v, nil
 }
 
 // Transform helpers

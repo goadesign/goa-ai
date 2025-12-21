@@ -162,13 +162,22 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	// Apply optional payload adapter before decoding. Payloads are canonical
 	// JSON (json.RawMessage) along the planner/runtime boundary; adapters may
 	// normalize them before validation or execution.
+	mode := req.ArtifactsMode
 	raw := req.Payload
+	if mode == "" {
+		var err error
+		mode, raw, err = extractArtifactsMode(req.Payload)
+		if err != nil {
+			return nil, err
+		}
+	}
 	meta := ToolCallMeta{
 		RunID:            req.RunID,
 		SessionID:        req.SessionID,
 		TurnID:           req.TurnID,
 		ToolCallID:       req.ToolCallID,
 		ParentToolCallID: req.ParentToolCallID,
+		ArtifactsMode:    mode,
 	}
 	if reg.PayloadAdapter != nil && len(raw) > 0 {
 		if adapted, err := reg.PayloadAdapter(ctx, meta, req.ToolName, raw); err == nil && len(adapted) > 0 {
@@ -220,6 +229,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	call := planner.ToolRequest{
 		Name:             req.ToolName,
 		Payload:          raw,
+		ArtifactsMode:    mode,
 		RunID:            req.RunID,
 		AgentID:          req.AgentID,
 		SessionID:        req.SessionID,
@@ -235,9 +245,15 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	if result == nil {
 		return nil, errors.New("tool execution returned nil result")
 	}
-	if spec, ok := r.toolSpec(req.ToolName); ok {
-		if err := requireArtifacts(spec, req.ToolCallID, result.Error == nil, result.Artifacts); err != nil {
-			return nil, err
+	artifactsEnabled := !artifactsDisabled(mode)
+	if !artifactsEnabled {
+		result.Artifacts = nil
+	}
+	if artifactsEnabled {
+		if spec, ok := r.toolSpec(req.ToolName); ok {
+			if err := requireArtifacts(spec, req.ToolCallID, result.Error == nil, result.Artifacts); err != nil {
+				return nil, err
+			}
 		}
 	}
 	// Enrich or build telemetry via registration builder when available.
@@ -379,12 +395,8 @@ func buildRetryHintFromDecodeError(err error, toolName tools.Ident, spec *tools.
 	}
 
 	var example map[string]any
-	if spec != nil && len(spec.Payload.ExampleJSON) > 0 {
-		if err := json.Unmarshal(spec.Payload.ExampleJSON, &example); err == nil && len(example) == 0 {
-			// Leave example nil when decoding produced an empty map to avoid
-			// surfacing a meaningless "{}" example.
-			example = nil
-		}
+	if spec != nil && len(spec.Payload.ExampleInput) > 0 {
+		example = spec.Payload.ExampleInput
 	}
 
 	return &planner.RetryHint{

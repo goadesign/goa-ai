@@ -9,7 +9,6 @@ package helpers
 import (
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/tools"
-	"sort"
 )
 
 // Tool IDs for this toolset.
@@ -18,18 +17,24 @@ const (
 )
 
 var Specs = []tools.ToolSpec{
-	{
-		Name:          SummarizeDoc,
-		Service:       "calc",
-		Toolset:       "calc.helpers",
-		Description:   "Summarize a document",
-		Tags:          []string{},
-		BoundedResult: false,
+	SpecSummarizeDoc,
+}
+
+var (
+	SpecSummarizeDoc = tools.ToolSpec{
+		Name:                SummarizeDoc,
+		Service:             "calc",
+		Toolset:             "calc.helpers",
+		Description:         "Summarize a document",
+		ArtifactDescription: "",
+		Tags:                []string{},
+		BoundedResult:       false,
 		Payload: tools.TypeSpec{
 			Name:        "SummarizeDocPayload",
 			Schema:      []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"SummarizePayload\",\"type\":\"object\",\"properties\":{\"doc_id\":{\"type\":\"string\",\"description\":\"Document identifier\",\"example\":\"Magnam asperiores dolorum.\"}},\"example\":{\"doc_id\":\"Est ut.\"},\"required\":[\"doc_id\"]}"),
 			ExampleJSON: []byte("{\"doc_id\":\"abc123\"}"),
-			Codec:       summarizeDocPayloadCodec,
+			ExampleInput: map[string]any{"doc_id": "abc123"},
+			Codec:        summarizeDocPayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:   "SummarizeDocResult",
@@ -37,12 +42,11 @@ var Specs = []tools.ToolSpec{
 			Codec:  summarizeDocResultCodec,
 		},
 		Sidecar: nil,
-	},
-}
+	}
+)
 
 var (
-	specIndex = make(map[tools.Ident]*tools.ToolSpec, len(Specs))
-	metadata  = []policy.ToolMetadata{
+	metadata = []policy.ToolMetadata{
 		{
 			ID:          SummarizeDoc,
 			Title:       "Summarize Doc",
@@ -50,52 +54,47 @@ var (
 			Tags:        []string{},
 		},
 	}
-)
-
-func init() {
-	for i := range Specs {
-		spec := &Specs[i]
-		specIndex[spec.Name] = spec
+	names = []tools.Ident{
+		SummarizeDoc,
 	}
-}
+)
 
 // Names returns the identifiers of all generated tools.
 func Names() []tools.Ident {
-	names := make([]tools.Ident, 0, len(specIndex))
-	for name := range specIndex {
-		names = append(names, name)
-	}
-	sort.Slice(names, func(i, j int) bool { return string(names[i]) < string(names[j]) })
 	return names
 }
 
 // Spec returns the specification for the named tool if present.
 func Spec(name tools.Ident) (*tools.ToolSpec, bool) {
-	spec, ok := specIndex[name]
-	return spec, ok
+	switch name {
+	case SummarizeDoc:
+		return &SpecSummarizeDoc, true
+	default:
+		return nil, false
+	}
 }
 
 // PayloadSchema returns the JSON schema for the named tool payload.
 func PayloadSchema(name tools.Ident) ([]byte, bool) {
-	spec, ok := specIndex[name]
-	if !ok {
+	switch name {
+	case SummarizeDoc:
+		return SpecSummarizeDoc.Payload.Schema, true
+	default:
 		return nil, false
 	}
-	return spec.Payload.Schema, true
 }
 
 // ResultSchema returns the JSON schema for the named tool result.
 func ResultSchema(name tools.Ident) ([]byte, bool) {
-	spec, ok := specIndex[name]
-	if !ok {
+	switch name {
+	case SummarizeDoc:
+		return SpecSummarizeDoc.Result.Schema, true
+	default:
 		return nil, false
 	}
-	return spec.Result.Schema, true
 }
 
 // Metadata exposes policy metadata for the generated tools.
 func Metadata() []policy.ToolMetadata {
-	out := make([]policy.ToolMetadata, len(metadata))
-	copy(out, metadata)
-	return out
+	return metadata
 }
