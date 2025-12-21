@@ -644,7 +644,7 @@ func (r *Runtime) runLoop(
 					aggregatedToolResults,
 					cloneToolResults(rs.Results)...,
 				)
-				r.appendUserToolResults(base, awaitCalls, lastToolResults, led)
+				r.appendUserToolResults(base, awaitCalls, lastToolResults, led, nil)
 
 				// Emit tool_result events for external tools now that results have
 				// been provided. This mirrors internal tool completion so streams and
@@ -839,8 +839,31 @@ func (r *Runtime) runLoop(
 		// Record assistant turn (thinking/text from transcript plus declared tool_use).
 		r.recordAssistantTurn(base, transcriptMsgs, allowed, led)
 
+		// Normalize artifacts toggles for execution while preserving the original
+		// tool_use payloads in the transcript. We strip the reserved `artifacts`
+		// field from execution payloads and track the per-call mode by tool_call_id
+		// so enforcement, artifact dropping, and reminders can behave consistently.
+		artifactsModeByCallID := make(map[string]tools.ArtifactsMode, len(toExecute))
+		execCalls := make([]planner.ToolRequest, len(toExecute))
+		for i := range toExecute {
+			call := toExecute[i]
+			if call.ToolCallID == "" {
+				call.ToolCallID = generateDeterministicToolCallID(base.RunContext.RunID, call.TurnID, call.Name, i)
+			}
+			mode, stripped, err := extractArtifactsMode(call.Payload)
+			if err != nil {
+				return nil, err
+			}
+			call.ArtifactsMode = mode
+			if mode != "" {
+				artifactsModeByCallID[call.ToolCallID] = mode
+			}
+			call.Payload = stripped
+			execCalls[i] = call
+		}
+
 		// Group calls by timeout and execute.
-		grouped, timeouts := r.groupToolCallsByTimeout(toExecute, input, toolOpts.Timeout)
+		grouped, timeouts := r.groupToolCallsByTimeout(execCalls, input, toolOpts.Timeout)
 		vals, err := r.executeGroupedToolCalls(
 			wfCtx, reg, input.AgentID, base, result.ExpectedChildren, turnID, parentTracker, deadline,
 			grouped, timeouts, toolOpts,
@@ -860,7 +883,7 @@ func (r *Runtime) runLoop(
 		caps.RemainingToolCalls = decrementCap(caps.RemainingToolCalls, len(allowed))
 		// Append user tool_result message and update ledger in the same order as
 		// the assistant tool_use declarations for this turn.
-		r.appendUserToolResults(base, allowed, vals, led)
+		r.appendUserToolResults(base, allowed, vals, led, artifactsModeByCallID)
 		if failures(vals) > 0 {
 			caps.RemainingConsecutiveFailedToolCalls = decrementCap(
 				caps.RemainingConsecutiveFailedToolCalls, failures(vals),
@@ -1277,6 +1300,7 @@ func (r *Runtime) executeToolCalls(
 	childFutures := make([]agentChildFutureInfo, 0, len(calls))
 	discoveredIDs := make([]string, 0, len(calls))
 	inlineResults := make(map[string]*planner.ToolResult, len(calls))
+	artifactsModeByCallID := make(map[string]tools.ArtifactsMode, len(calls))
 	for i, call := range calls {
 		if call.ToolCallID == "" {
 			call.ToolCallID = generateDeterministicToolCallID(runID, call.TurnID, call.Name, i)
@@ -1290,6 +1314,22 @@ func (r *Runtime) executeToolCalls(
 			call.ParentToolCallID = runCtx.ParentToolCallID
 			calls[i] = call
 		}
+
+		mode := call.ArtifactsMode
+		stripped := call.Payload
+		if mode == "" {
+			var err error
+			mode, stripped, err = extractArtifactsMode(call.Payload)
+			if err != nil {
+				return nil, err
+			}
+		}
+		call.ArtifactsMode = mode
+		if mode != "" {
+			artifactsModeByCallID[call.ToolCallID] = mode
+		}
+		call.Payload = stripped
+		calls[i] = call
 
 		spec, hasSpec := r.toolSpec(call.Name)
 		if !hasSpec {
@@ -1333,6 +1373,7 @@ func (r *Runtime) executeToolCalls(
 					TurnID:           call.TurnID,
 					ToolCallID:       call.ToolCallID,
 					ParentToolCallID: call.ParentToolCallID,
+					ArtifactsMode:    call.ArtifactsMode,
 				}
 				if adapted, err := ts.PayloadAdapter(ctx, meta, call.Name, raw); err == nil && len(adapted) > 0 {
 					raw = adapted
@@ -1440,8 +1481,14 @@ func (r *Runtime) executeToolCalls(
 					result.Result,
 				)
 			}
-			if err := requireArtifacts(spec, call.ToolCallID, result.Error == nil, result.Artifacts); err != nil {
-				return nil, err
+			enabled := !artifactsDisabled(artifactsModeByCallID[call.ToolCallID])
+			if !enabled {
+				result.Artifacts = nil
+			}
+			if enabled {
+				if err := requireArtifacts(spec, call.ToolCallID, result.Error == nil, result.Artifacts); err != nil {
+					return nil, err
+				}
 			}
 			// Publish result event for observability parity with activities.
 			duration := wfCtx.Now().Sub(start)
@@ -1483,6 +1530,7 @@ func (r *Runtime) executeToolCalls(
 			ToolName:         call.Name,
 			ToolCallID:       call.ToolCallID,
 			Payload:          call.Payload,
+			ArtifactsMode:    call.ArtifactsMode,
 			SessionID:        call.SessionID,
 			TurnID:           call.TurnID,
 			ParentToolCallID: call.ParentToolCallID,
@@ -1559,7 +1607,7 @@ func (r *Runtime) executeToolCalls(
 		// Decode tool result using the registered codec. Decode failures are
 		// contract violations and must surface immediately.
 		var decoded any
-		if len(out.Payload) > 0 {
+		if out.Error == "" && hasNonNullJSON(out.Payload) {
 			v, decErr := r.unmarshalToolValue(ctx, info.call.Name, out.Payload, false)
 			if decErr != nil {
 				return nil, fmt.Errorf("tool %q result decode failed (tool_call_id=%s): %w", info.call.Name, info.call.ToolCallID, decErr)
@@ -1594,8 +1642,14 @@ func (r *Runtime) executeToolCalls(
 			toolRes.Error = toolErr
 		}
 		if spec, ok := r.toolSpec(info.call.Name); ok {
-			if err := requireArtifacts(spec, info.call.ToolCallID, toolErr == nil, out.Artifacts); err != nil {
-				return nil, err
+			enabled := !artifactsDisabled(artifactsModeByCallID[info.call.ToolCallID])
+			if !enabled {
+				toolRes.Artifacts = nil
+			}
+			if enabled {
+				if err := requireArtifacts(spec, info.call.ToolCallID, toolErr == nil, toolRes.Artifacts); err != nil {
+					return nil, err
+				}
 			}
 		}
 		if out.RetryHint != nil {
@@ -1666,8 +1720,14 @@ func (r *Runtime) executeToolCalls(
 				tr.Bounds = b
 			}
 			if spec, ok := r.toolSpec(info.call.Name); ok {
-				if err := requireArtifacts(spec, info.call.ToolCallID, toolErr == nil, tr.Artifacts); err != nil {
-					return nil, err
+				enabled := !artifactsDisabled(artifactsModeByCallID[info.call.ToolCallID])
+				if !enabled {
+					tr.Artifacts = nil
+				}
+				if enabled {
+					if err := requireArtifacts(spec, info.call.ToolCallID, toolErr == nil, tr.Artifacts); err != nil {
+						return nil, err
+					}
 				}
 			}
 

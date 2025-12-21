@@ -7,11 +7,18 @@ const (
 
 var Specs = []tools.ToolSpec{
 {{- range .Tools }}
-    {
+    Spec{{ .ConstName }},
+{{- end }}
+}
+
+var (
+{{- range .Tools }}
+    Spec{{ .ConstName }} = tools.ToolSpec{
         Name:        {{ .ConstName }},
         Service:     {{ printf "%q" .Service }},
         Toolset:     {{ printf "%q" .Toolset }},
         Description: {{ printf "%q" .Description }},
+        ArtifactDescription: {{ printf "%q" .ArtifactDescription }},
         Tags: []string{
         {{- range .Tags }}
             {{ printf "%q" . }},
@@ -37,10 +44,12 @@ var Specs = []tools.ToolSpec{
             {{- if .Payload }}
             Schema: {{- if gt (len .Payload.SchemaJSON) 0 }}[]byte({{ printf "%q" .Payload.SchemaJSON }}){{ else }}nil{{ end }},
             ExampleJSON: {{- if gt (len .Payload.ExampleJSON) 0 }}[]byte({{ printf "%q" .Payload.ExampleJSON }}){{ else }}nil{{ end }},
+            ExampleInput: {{- if .Payload.ExampleInputGo }}{{ .Payload.ExampleInputGo }}{{ else }}nil{{ end }},
             Codec:  {{ .Payload.GenericCodec }},
             {{- else }}
             Schema: nil,
             ExampleJSON: nil,
+            ExampleInput: nil,
             Codec:  tools.JSONCodec[any]{},
             {{- end }}
         },
@@ -58,12 +67,11 @@ var Specs = []tools.ToolSpec{
             Schema: {{- if gt (len .Sidecar.SchemaJSON) 0 }}[]byte({{ printf "%q" .Sidecar.SchemaJSON }}){{ else }}nil{{ end }},
             Codec:  {{ .Sidecar.GenericCodec }},
         },{{ else }}nil,{{ end }}
-    },
+    }
 {{- end }}
-}
+)
 
 var (
-    specIndex = make(map[tools.Ident]*tools.ToolSpec, len(Specs))
     metadata   = []policy.ToolMetadata{
     {{- range .Tools }}
         {
@@ -78,54 +86,57 @@ var (
         },
     {{- end }}
     }
-)
-
-func init() {
-    for i := range Specs {
-        spec := &Specs[i]
-        specIndex[spec.Name] = spec
+    names = []tools.Ident{
+    {{- range .Tools }}
+        {{ .ConstName }},
+    {{- end }}
     }
-}
+)
 
 // Names returns the identifiers of all generated tools.
 func Names() []tools.Ident {
-    names := make([]tools.Ident, 0, len(specIndex))
-    for name := range specIndex {
-        names = append(names, name)
-    }
-    sort.Slice(names, func(i, j int) bool { return string(names[i]) < string(names[j]) })
     return names
 }
 
 // Spec returns the specification for the named tool if present.
 func Spec(name tools.Ident) (*tools.ToolSpec, bool) {
-    spec, ok := specIndex[name]
-    return spec, ok
+    switch name {
+    {{- range .Tools }}
+    case {{ .ConstName }}:
+        return &Spec{{ .ConstName }}, true
+    {{- end }}
+    default:
+        return nil, false
+    }
 }
 
 // PayloadSchema returns the JSON schema for the named tool payload.
 func PayloadSchema(name tools.Ident) ([]byte, bool) {
-    spec, ok := specIndex[name]
-    if !ok {
+    switch name {
+    {{- range .Tools }}
+    case {{ .ConstName }}:
+        return Spec{{ .ConstName }}.Payload.Schema, true
+    {{- end }}
+    default:
         return nil, false
     }
-    return spec.Payload.Schema, true
 }
 
 // ResultSchema returns the JSON schema for the named tool result.
 func ResultSchema(name tools.Ident) ([]byte, bool) {
-    spec, ok := specIndex[name]
-    if !ok {
+    switch name {
+    {{- range .Tools }}
+    case {{ .ConstName }}:
+        return Spec{{ .ConstName }}.Result.Schema, true
+    {{- end }}
+    default:
         return nil, false
     }
-    return spec.Result.Schema, true
 }
 
 // Metadata exposes policy metadata for the generated tools.
 func Metadata() []policy.ToolMetadata {
-    out := make([]policy.ToolMetadata, len(metadata))
-    copy(out, metadata)
-    return out
+    return metadata
 }
 
 

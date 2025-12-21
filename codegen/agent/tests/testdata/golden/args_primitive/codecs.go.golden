@@ -32,8 +32,7 @@ var (
 			if typed, ok := v.(*EchoPayload); ok {
 				return MarshalEchoPayload(typed)
 			}
-			// Fallback: marshal structurally compatible values directly.
-			return json.Marshal(v)
+			return nil, fmt.Errorf("invalid value type for *EchoPayload: %T", v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalEchoPayload(data)
@@ -46,8 +45,7 @@ var (
 			if typed, ok := v.(EchoResult); ok {
 				return MarshalEchoResult(typed)
 			}
-			// Fallback: marshal structurally compatible values directly.
-			return json.Marshal(v)
+			return nil, fmt.Errorf("invalid value type for EchoResult: %T", v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalEchoResult(data)

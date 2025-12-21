@@ -7,98 +7,49 @@
 package specs
 
 import (
-	_ "embed"
-	"encoding/json"
 	helpers "goa.design/goa-ai/alpha/toolsets/helpers"
 	"goa.design/goa-ai/runtime/agent/policy"
 	tools "goa.design/goa-ai/runtime/agent/tools"
-	"sort"
 )
 
 var (
-	// Specs aggregates tool specs from all toolset packages.
-	Specs = make([]tools.ToolSpec, 0)
-	// metadata aggregates tool metadata from all toolset packages.
-	metadata = make([]policy.ToolMetadata, 0)
+	// Specs is the static list of tool specs exported by this agent.
+	Specs = []tools.ToolSpec{
+		helpers.SpecSummarize,
+	}
+
+	// metadata is the static list of policy metadata exported by this agent.
+	metadata = []policy.ToolMetadata{
+		{
+			ID:          tools.Ident("helpers.summarize"),
+			Title:       "Summarize",
+			Description: "Summarize a document",
+			Tags: []string{
+				"nlp",
+				"summarization",
+			},
+		},
+	}
+
+	// names is the static list of exported tool identifiers.
+	names = []tools.Ident{
+		helpers.Summarize,
+	}
 )
 
-//go:embed tool_schemas.json
-var toolSchemasJSON []byte
-
-type embeddedTypeSchema struct {
-	Name   string          `json:"name"`
-	Schema json.RawMessage `json:"schema,omitempty"`
-}
-
-type embeddedToolSchema struct {
-	ID      string              `json:"id"`
-	Payload *embeddedTypeSchema `json:"payload,omitempty"`
-	Result  *embeddedTypeSchema `json:"result,omitempty"`
-	Sidecar *embeddedTypeSchema `json:"sidecar,omitempty"`
-}
-
-type embeddedCatalog struct {
-	Tools []embeddedToolSchema `json:"tools"`
-}
-
-func init() {
-	// helpers toolset
-	Specs = append(Specs, helpers.Specs...)
-	metadata = append(metadata, helpers.Metadata()...)
-	sort.Slice(Specs, func(i, j int) bool {
-		return string(Specs[i].Name) < string(Specs[j].Name)
-	})
-
-	// Hydrate schemas from embedded tool_schemas.json so Specs carries the
-	// same canonical JSON Schemas advertised to UIs and other consumers.
-	if len(toolSchemasJSON) == 0 {
-		return
-	}
-	var cat embeddedCatalog
-	if err := json.Unmarshal(toolSchemasJSON, &cat); err != nil || len(cat.Tools) == 0 {
-		return
-	}
-	byID := make(map[tools.Ident]embeddedToolSchema, len(cat.Tools))
-	for _, t := range cat.Tools {
-		id := tools.Ident(t.ID)
-		byID[id] = t
-	}
-	for i := range Specs {
-		s := &Specs[i]
-		ts, ok := byID[s.Name]
-		if !ok {
-			continue
-		}
-		if ts.Payload != nil && len(ts.Payload.Schema) > 0 {
-			s.Payload.Schema = append([]byte(nil), ts.Payload.Schema...)
-		}
-		if ts.Result != nil && len(ts.Result.Schema) > 0 {
-			s.Result.Schema = append([]byte(nil), ts.Result.Schema...)
-		}
-		if ts.Sidecar != nil && len(ts.Sidecar.Schema) > 0 && s.Sidecar != nil {
-			s.Sidecar.Schema = append([]byte(nil), ts.Sidecar.Schema...)
-		}
-	}
-}
-
-// Names returns sorted tool identifiers for all aggregated toolsets.
+// Names returns the tool identifiers exported by this agent.
 func Names() []tools.Ident {
-	names := make([]tools.Ident, 0, len(Specs))
-	for _, s := range Specs {
-		names = append(names, s.Name)
-	}
-	sort.Slice(names, func(i, j int) bool { return string(names[i]) < string(names[j]) })
 	return names
 }
 
 // Spec returns the specification for the named tool if present.
 func Spec(name tools.Ident) (*tools.ToolSpec, bool) {
-	for i := range Specs {
-		if Specs[i].Name == name {
-			return &Specs[i], true
-		}
+	switch name {
+	case tools.Ident("helpers.summarize"):
+		return &helpers.SpecSummarize, true
+	default:
+		return nil, false
 	}
-	return nil, false
 }
 
 // PayloadSchema returns the JSON schema for the named tool payload.
@@ -118,16 +69,11 @@ func ResultSchema(name tools.Ident) ([]byte, bool) {
 }
 
 // AdvertisedSpecs returns the full list of tool specs to advertise to the model.
-// A copy is returned to preserve the internal ordering and avoid external mutation.
 func AdvertisedSpecs() []tools.ToolSpec {
-	out := make([]tools.ToolSpec, len(Specs))
-	copy(out, Specs)
-	return out
+	return Specs
 }
 
 // Metadata exposes policy metadata for the aggregated tools.
 func Metadata() []policy.ToolMetadata {
-	out := make([]policy.ToolMetadata, len(metadata))
-	copy(out, metadata)
-	return out
+	return metadata
 }

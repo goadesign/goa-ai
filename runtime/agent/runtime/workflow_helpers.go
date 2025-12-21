@@ -120,6 +120,95 @@ func (r *Runtime) executeGroupedToolCalls(
 	return out, nil
 }
 
+// sidecarDescription returns a human-facing description for the tool's
+// artifact sidecar when available. It uses the ArtifactDescription metadata
+// computed at code generation time from the Artifact DSL.
+func (r *Runtime) sidecarDescription(name tools.Ident) string {
+	spec, ok := r.toolSpec(name)
+	if !ok {
+		return ""
+	}
+	return spec.ArtifactDescription
+}
+
+// buildArtifactProducedReminders derives artifact-aware reminders for artifacts
+// that were actually produced in this turn. It returns reminder bodies without
+// <system-reminder> wrappers; callers are responsible for wrapping.
+func (r *Runtime) buildArtifactProducedReminders(results []*planner.ToolResult) []string {
+	if len(results) == 0 {
+		return nil
+	}
+	seenKinds := make(map[string]struct{})
+	var out []string
+	for _, tr := range results {
+		if tr == nil || len(tr.Artifacts) == 0 {
+			continue
+		}
+		for _, art := range tr.Artifacts {
+			if art == nil || art.Kind == "" {
+				continue
+			}
+			if _, exists := seenKinds[art.Kind]; exists {
+				continue
+			}
+			// Prefer the declaring tool (SourceTool) when available so that
+			// descriptions align with the tool that attached the artifact.
+			desc := ""
+			if art.SourceTool != "" {
+				desc = r.sidecarDescription(art.SourceTool)
+			}
+			// Fallback to the current tool when SourceTool is not present.
+			if desc == "" {
+				desc = r.sidecarDescription(tr.Name)
+			}
+			if desc == "" {
+				continue
+			}
+			out = append(out, fmt.Sprintf("The user sees: %s", desc))
+			seenKinds[art.Kind] = struct{}{}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (r *Runtime) buildArtifactDisabledReminders(allowed []planner.ToolRequest, resultsByID map[string]*planner.ToolResult, artifactsModeByCallID map[string]tools.ArtifactsMode) []string {
+	if len(allowed) == 0 || len(resultsByID) == 0 || len(artifactsModeByCallID) == 0 {
+		return nil
+	}
+	seen := make(map[tools.Ident]struct{})
+	out := make([]string, 0, len(allowed))
+	for _, call := range allowed {
+		if call.ToolCallID == "" {
+			continue
+		}
+		if !artifactsDisabled(artifactsModeByCallID[call.ToolCallID]) {
+			continue
+		}
+		tr := resultsByID[call.ToolCallID]
+		if tr == nil || tr.Error != nil {
+			continue
+		}
+		if _, dup := seen[call.Name]; dup {
+			continue
+		}
+		desc := r.sidecarDescription(call.Name)
+		if desc == "" {
+			continue
+		}
+		out = append(out, fmt.Sprintf("Artifacts were disabled for this tool call. You can re-run with artifacts enabled to show: %s", desc))
+		seen[call.Name] = struct{}{}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Strings(out)
+	return out
+}
+
 // appendUserToolResults appends a user message with tool_result blocks for the
 // executed tools and updates the ledger. Tool results are ordered to match the
 // assistant tool_use IDs from the allowed calls slice so that provider
@@ -128,7 +217,13 @@ func (r *Runtime) executeGroupedToolCalls(
 // If any tool has a ResultReminder configured in its spec, a system message
 // with the reminder text is appended after the tool results to provide
 // backstage guidance to the model.
-func (r *Runtime) appendUserToolResults(base *planner.PlanInput, allowed []planner.ToolRequest, vals []*planner.ToolResult, led *transcript.Ledger) {
+func (r *Runtime) appendUserToolResults(
+	base *planner.PlanInput,
+	allowed []planner.ToolRequest,
+	vals []*planner.ToolResult,
+	led *transcript.Ledger,
+	artifactsModeByCallID map[string]tools.ArtifactsMode,
+) {
 	if len(vals) == 0 {
 		return
 	}
@@ -148,14 +243,15 @@ func (r *Runtime) appendUserToolResults(base *planner.PlanInput, allowed []plann
 		if !ok || tr == nil || tr.ToolCallID == "" {
 			continue
 		}
+		content := toolResultContent(tr)
 		parts = append(parts, model.ToolResultPart{
 			ToolUseID: tr.ToolCallID,
-			Content:   tr.Result,
+			Content:   content,
 			IsError:   tr.Error != nil,
 		})
 		specs = append(specs, transcript.ToolResultSpec{
 			ToolUseID: tr.ToolCallID,
-			Content:   tr.Result,
+			Content:   content,
 			IsError:   tr.Error != nil,
 		})
 		if spec, ok := r.toolSpec(tr.Name); ok && spec.ResultReminder != "" {
@@ -172,6 +268,15 @@ func (r *Runtime) appendUserToolResults(base *planner.PlanInput, allowed []plann
 	})
 	led.AppendUserToolResults(specs)
 
+	// Derive artifact-aware reminders from produced artifacts using the
+	// sidecar schema descriptions so the model learns what the user sees.
+	if artRems := r.buildArtifactProducedReminders(vals); len(artRems) > 0 {
+		reminders = append(reminders, artRems...)
+	}
+	if disabled := r.buildArtifactDisabledReminders(allowed, resultsByID, artifactsModeByCallID); len(disabled) > 0 {
+		reminders = append(reminders, disabled...)
+	}
+
 	if len(reminders) > 0 {
 		var reminderText strings.Builder
 		for i, rem := range reminders {
@@ -186,6 +291,24 @@ func (r *Runtime) appendUserToolResults(base *planner.PlanInput, allowed []plann
 			Role:  model.ConversationRoleSystem,
 			Parts: []model.Part{model.TextPart{Text: reminderText.String()}},
 		})
+	}
+}
+
+func toolResultContent(tr *planner.ToolResult) any {
+	if tr == nil {
+		return nil
+	}
+	if tr.Error == nil {
+		return tr.Result
+	}
+	if tr.Result == nil {
+		return map[string]any{
+			"error": tr.Error,
+		}
+	}
+	return map[string]any{
+		"result": tr.Result,
+		"error":  tr.Error,
 	}
 }
 

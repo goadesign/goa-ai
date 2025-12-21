@@ -52,6 +52,7 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 			Service:           serviceName(tool),
 			Toolset:           toolsetName(tool),
 			Description:       tool.Description,
+			ArtifactDescription: tool.ArtifactDescription,
 			Tags:              tool.Tags,
 			IsExportedByAgent: tool.IsExportedByAgent,
 			ExportingAgentID:  tool.ExportingAgentID,

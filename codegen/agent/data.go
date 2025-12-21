@@ -453,6 +453,12 @@ type (
 		// schema (for example, "atlas.time_series"). When empty, codegen uses
 		// the tool's qualified name.
 		ArtifactKind string
+		// ArtifactDescription describes what this tool's artifact represents to
+		// the user when rendered in a UI. It is derived from the artifact
+		// attribute (or its underlying user type) and propagated into ToolSpec
+		// so runtimes can build artifact-aware reminders without inspecting
+		// JSON schemas at runtime.
+		ArtifactDescription string
 		// MethodPayloadAttr is the Goa attribute for the bound service payload
 		// (resolved user type). Used to generate default payload adapters.
 		MethodPayloadAttr *goaexpr.AttributeExpr
@@ -1185,24 +1191,25 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 	}
 
 	tool := &ToolData{
-		Name:               expr.Name,
-		ConstName:          codegen.Goify(expr.Name, true),
-		Description:        expr.Description,
-		QualifiedName:      qualified,
-		Title:              naming.HumanizeTitle(defaultString(expr.Title, expr.Name)),
-		Tags:               slices.Clone(expr.Tags),
-		Args:               expr.Args,
-		Return:             expr.Return,
-		Artifact:           expr.Sidecar,
-		ArtifactKind:       defaultString(expr.SidecarKind, qualified),
-		Toolset:            ts,
-		IsExportedByAgent:  isExported,
-		ExportingAgentID:   exportingAgentID,
-		CallHintTemplate:   expr.CallHintTemplate,
-		ResultHintTemplate: expr.ResultHintTemplate,
-		InjectedFields:     expr.InjectedFields,
-		BoundedResult:      expr.BoundedResult,
-		ResultReminder:     expr.ResultReminder,
+		Name:                expr.Name,
+		ConstName:           codegen.Goify(expr.Name, true),
+		Description:         expr.Description,
+		QualifiedName:       qualified,
+		Title:               naming.HumanizeTitle(defaultString(expr.Title, expr.Name)),
+		Tags:                slices.Clone(expr.Tags),
+		Args:                expr.Args,
+		Return:              expr.Return,
+		Artifact:            expr.Sidecar,
+		ArtifactKind:        defaultString(expr.SidecarKind, qualified),
+		ArtifactDescription: artifactDescription(expr.Sidecar),
+		Toolset:             ts,
+		IsExportedByAgent:   isExported,
+		ExportingAgentID:    exportingAgentID,
+		CallHintTemplate:    expr.CallHintTemplate,
+		ResultHintTemplate:  expr.ResultHintTemplate,
+		InjectedFields:      expr.InjectedFields,
+		BoundedResult:       expr.BoundedResult,
+		ResultReminder:      expr.ResultReminder,
 	}
 	if expr.Confirmation != nil {
 		tool.Confirmation = &ToolConfirmationData{
@@ -1279,6 +1286,27 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		}
 	}
 	return tool
+}
+
+// artifactDescription returns a human-facing description for the tool sidecar
+// attribute. It prefers the attribute Description set in the Artifact DSL
+// block and falls back to the underlying user type description when needed.
+func artifactDescription(att *goaexpr.AttributeExpr) string {
+	if att == nil {
+		return ""
+	}
+	if att.Description != "" {
+		return att.Description
+	}
+	ut, ok := att.Type.(goaexpr.UserType)
+	if !ok || ut == nil {
+		return ""
+	}
+	uattr := ut.Attribute()
+	if uattr == nil {
+		return ""
+	}
+	return uattr.Description
 }
 
 // mustFindMethodExpr locates the Goa method expression for the given service and method names.

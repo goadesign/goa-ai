@@ -26,8 +26,7 @@ var (
             if typed, ok := v.({{ if .Pointer }}*{{ end }}{{ .FullRef }}); ok {
                 return {{ .MarshalFunc }}(typed)
             }
-            // Fallback: marshal structurally compatible values directly.
-            return json.Marshal(v)
+            return nil, fmt.Errorf("invalid value type for {{ if .Pointer }}*{{ end }}{{ .FullRef }}: %T", v)
         },
         FromJSON: func(data []byte) (any, error) {
             return {{ .UnmarshalFunc }}(data)

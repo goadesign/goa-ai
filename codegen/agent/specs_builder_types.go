@@ -49,6 +49,11 @@ type (
 		Toolset string
 		// Tool description for documentation and LLM context.
 		Description string
+		// ArtifactDescription is the human-facing description of the tool's
+		// artifact sidecar, derived from the Artifact DSL. It describes what
+		// the user sees in the UI and is propagated into ToolSpec so runtimes
+		// can build artifact-aware reminders without inspecting JSON schemas.
+		ArtifactDescription string
 		// Classification tags for policy and filtering.
 		Tags []string
 		// Whether this tool is exported by an agent (agent-as-tool).
@@ -92,6 +97,10 @@ type (
 		// available. For payloads, it is derived from Goa examples and can be used
 		// by runtimes to surface concrete examples in retry hints or UI prompts.
 		ExampleJSON []byte
+		// ExampleInputGo is a Go expression that evaluates to a map[string]any
+		// representing an example payload. It is only populated for payload
+		// examples that are JSON objects.
+		ExampleInputGo string
 		// Typed codec variable name (e.g., "MyToolPayloadCodec").
 		ExportedCodec string
 		// Untyped codec variable name (e.g., "myToolPayloadCodec").

@@ -21,8 +21,8 @@ var (
 		ToJSON:   MarshalAddPayload,
 		FromJSON: UnmarshalAddPayload,
 	}
-	// AddResultCodec serializes values of type AddResult to canonical JSON.
-	AddResultCodec = tools.JSONCodec[AddResult]{
+	// AddResultCodec serializes values of type *AddResult to canonical JSON.
+	AddResultCodec = tools.JSONCodec[*AddResult]{
 		ToJSON:   MarshalAddResult,
 		FromJSON: UnmarshalAddResult,
 	}
@@ -33,22 +33,20 @@ var (
 			if typed, ok := v.(*AddPayload); ok {
 				return MarshalAddPayload(typed)
 			}
-			// Fallback: marshal structurally compatible values directly.
-			return json.Marshal(v)
+			return nil, fmt.Errorf("invalid value type for *AddPayload: %T", v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalAddPayload(data)
 		},
 	}
-	// addResultCodec provides an untyped codec for AddResult.
+	// addResultCodec provides an untyped codec for *AddResult.
 	addResultCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
 			// Prefer typed marshal when the value matches the expected type.
-			if typed, ok := v.(AddResult); ok {
+			if typed, ok := v.(*AddResult); ok {
 				return MarshalAddResult(typed)
 			}
-			// Fallback: marshal structurally compatible values directly.
-			return json.Marshal(v)
+			return nil, fmt.Errorf("invalid value type for *AddResult: %T", v)
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalAddResult(data)
@@ -249,22 +247,24 @@ func UnmarshalAddPayload(data []byte) (*AddPayload, error) {
 	return v, nil
 }
 
-// MarshalAddResult serializes AddResult into JSON.
-func MarshalAddResult(v AddResult) ([]byte, error) {
+// MarshalAddResult serializes *AddResult into JSON.
+func MarshalAddResult(v *AddResult) ([]byte, error) {
+	if v == nil {
+		return nil, fmt.Errorf("addResult is nil")
+	}
 	return json.Marshal(v)
 }
 
-// UnmarshalAddResult deserializes JSON into AddResult.
-func UnmarshalAddResult(data []byte) (AddResult, error) {
-	var zero AddResult
+// UnmarshalAddResult deserializes JSON into *AddResult.
+func UnmarshalAddResult(data []byte) (*AddResult, error) {
 	if len(data) == 0 {
-		return zero, fmt.Errorf("addResult JSON is empty")
+		return nil, fmt.Errorf("addResult JSON is empty")
 	}
 	// Decode into JSON body (server body style) then transform.
 	// Note: Agent used-tools perform lenient decode (no required-field validation here).
 	var raw AddResultJSON2
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return zero, fmt.Errorf("decode addResult: %w", err)
+		return nil, fmt.Errorf("decode addResult: %w", err)
 	}
 	var err error
 	if raw.Sum == nil {
@@ -272,13 +272,13 @@ func UnmarshalAddResult(data []byte) (AddResult, error) {
 	}
 	if err != nil {
 		err = newValidationError(err)
-		return zero, err
+		return nil, err
 	}
 	// Transform into final type
 	v := &AddResult{
 		Sum: *raw.Sum,
 	}
-	return *v, nil
+	return v, nil
 }
 
 // Transform helpers

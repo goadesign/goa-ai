@@ -8,8 +8,6 @@
 package helpers
 
 import (
-	"sort"
-
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -20,18 +18,24 @@ const (
 )
 
 var Specs = []tools.ToolSpec{
-	{
-		Name:          Answer,
-		Service:       "orchestrator",
-		Toolset:       "orchestrator.helpers",
-		Description:   "Answer a simple question",
-		Tags:          []string{},
-		BoundedResult: false,
+	SpecAnswer,
+}
+
+var (
+	SpecAnswer = tools.ToolSpec{
+		Name:                Answer,
+		Service:             "orchestrator",
+		Toolset:             "orchestrator.helpers",
+		Description:         "Answer a simple question",
+		ArtifactDescription: "",
+		Tags:                []string{},
+		BoundedResult:       false,
 		Payload: tools.TypeSpec{
-			Name:        "AnswerPayload",
-			Schema:      []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"AskPayload\",\"type\":\"object\",\"properties\":{\"question\":{\"type\":\"string\",\"description\":\"User question to answer\",\"example\":\"Labore natus exercitationem et omnis.\"}},\"example\":{\"question\":\"What is the capital of Japan?\"},\"required\":[\"question\"]}"),
-			ExampleJSON: []byte("{\"question\":\"What is the capital of Japan?\"}"),
-			Codec:       answerPayloadCodec,
+			Name:         "AnswerPayload",
+			Schema:       []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"AskPayload\",\"type\":\"object\",\"properties\":{\"question\":{\"type\":\"string\",\"description\":\"User question to answer\",\"example\":\"Labore natus exercitationem et omnis.\"}},\"example\":{\"question\":\"What is the capital of Japan?\"},\"required\":[\"question\"]}"),
+			ExampleJSON:  []byte("{\"question\":\"What is the capital of Japan?\"}"),
+			ExampleInput: map[string]any{"question": "What is the capital of Japan?"},
+			Codec:        answerPayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:   "AnswerResult",
@@ -39,12 +43,11 @@ var Specs = []tools.ToolSpec{
 			Codec:  answerResultCodec,
 		},
 		Sidecar: nil,
-	},
-}
+	}
+)
 
 var (
-	specIndex = make(map[tools.Ident]*tools.ToolSpec, len(Specs))
-	metadata  = []policy.ToolMetadata{
+	metadata = []policy.ToolMetadata{
 		{
 			ID:          Answer,
 			Title:       "Answer",
@@ -52,52 +55,47 @@ var (
 			Tags:        []string{},
 		},
 	}
-)
-
-func init() {
-	for i := range Specs {
-		spec := &Specs[i]
-		specIndex[spec.Name] = spec
+	names = []tools.Ident{
+		Answer,
 	}
-}
+)
 
 // Names returns the identifiers of all generated tools.
 func Names() []tools.Ident {
-	names := make([]tools.Ident, 0, len(specIndex))
-	for name := range specIndex {
-		names = append(names, name)
-	}
-	sort.Slice(names, func(i, j int) bool { return string(names[i]) < string(names[j]) })
 	return names
 }
 
 // Spec returns the specification for the named tool if present.
 func Spec(name tools.Ident) (*tools.ToolSpec, bool) {
-	spec, ok := specIndex[name]
-	return spec, ok
+	switch name {
+	case Answer:
+		return &SpecAnswer, true
+	default:
+		return nil, false
+	}
 }
 
 // PayloadSchema returns the JSON schema for the named tool payload.
 func PayloadSchema(name tools.Ident) ([]byte, bool) {
-	spec, ok := specIndex[name]
-	if !ok {
+	switch name {
+	case Answer:
+		return SpecAnswer.Payload.Schema, true
+	default:
 		return nil, false
 	}
-	return spec.Payload.Schema, true
 }
 
 // ResultSchema returns the JSON schema for the named tool result.
 func ResultSchema(name tools.Ident) ([]byte, bool) {
-	spec, ok := specIndex[name]
-	if !ok {
+	switch name {
+	case Answer:
+		return SpecAnswer.Result.Schema, true
+	default:
 		return nil, false
 	}
-	return spec.Result.Schema, true
 }
 
 // Metadata exposes policy metadata for the generated tools.
 func Metadata() []policy.ToolMetadata {
-	out := make([]policy.ToolMetadata, len(metadata))
-	copy(out, metadata)
-	return out
+	return metadata
 }

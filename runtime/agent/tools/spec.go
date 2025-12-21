@@ -46,6 +46,12 @@ type (
 		// DSL helper and propagated into specs so runtimes and services can enforce
 		// and surface truncation metadata consistently.
 		BoundedResult bool
+		// ArtifactDescription describes what the tool's artifact sidecar
+		// represents to the user when rendered (for example, "Time-series
+		// chart rendered in the chat UI"). It is derived from the Artifact
+		// DSL and propagated via codegen so runtimes can build artifact-aware
+		// reminders without inspecting JSON schemas at runtime.
+		ArtifactDescription string
 		// ResultReminder is an optional system reminder injected into the
 		// conversation after the tool result is returned. It provides backstage
 		// guidance to the model about how to interpret or present the result
@@ -98,6 +104,10 @@ type (
 		// in retry hints or await-clarification prompts to guide callers toward a
 		// schema-compliant shape.
 		ExampleJSON []byte
+		// ExampleInput is an optional parsed example payload. When present, it is a
+		// JSON-object example represented as a map and can be attached to retry hints
+		// without runtime JSON unmarshaling.
+		ExampleInput map[string]any
 		// Codec serializes and deserializes values matching the type.
 		Codec JSONCodec[any]
 	}

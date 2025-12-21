@@ -68,6 +68,12 @@ type (
 		// invocation is a child (for example a tool launched by an agent-tool).
 		// UIs and subscribers use it to reconstruct the call tree.
 		ParentToolCallID string
+
+		// ArtifactsMode is the normalized per-call artifacts toggle selected by
+		// the caller via the reserved `artifacts` payload field. Valid values are
+		// tools.ArtifactsModeAuto, tools.ArtifactsModeOn, and tools.ArtifactsModeOff.
+		// When empty, the caller did not specify a mode.
+		ArtifactsMode tools.ArtifactsMode
 	}
 
 	// ToolCallExecutor executes a tool call and returns a planner.ToolResult. This

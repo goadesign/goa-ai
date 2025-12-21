@@ -242,6 +242,17 @@ func Return(val any, args ...any) {
 // inside a Tool DSL to declare structured data that is attached to
 // planner.ToolResult.Artifacts but never sent to the model provider.
 //
+// Model awareness
+//
+// The artifact schema Description (set via the optional description argument or
+// within the artifact DSL block) must describe what the user sees when the
+// artifact is rendered in the UI (chart, card, timeline, etc.). The runtime uses
+// this description to automatically inject post-tool system reminders for the
+// model so it can naturally reference the rendered UI. When artifacts are
+// disabled for a tool call (via the standard `artifacts` payload toggle), the
+// runtime can also inject a reminder that the tool may be re-run with artifacts
+// enabled to show the described UI.
+//
 // Artifact follows the same patterns as Args/Return and Goa's Payload/Result:
 // it accepts either:
 //   - A function to define an inline object schema with Attribute() calls
