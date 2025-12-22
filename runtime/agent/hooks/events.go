@@ -363,6 +363,25 @@ type (
 		Payload json.RawMessage
 	}
 
+	// ToolAuthorizationEvent indicates an operator provided an explicit approval
+	// or denial decision for a pending tool call. This is emitted immediately when
+	// the decision is received so subscribers can record a durable audit trail and
+	// UIs can render an approval record independent of tool execution.
+	ToolAuthorizationEvent struct {
+		baseEvent
+		// ToolName identifies the tool that was authorized.
+		ToolName tools.Ident
+		// ToolCallID is the tool_call_id for the pending tool call.
+		ToolCallID string
+		// Approved reports whether the operator approved execution.
+		Approved bool
+		// Summary is a deterministic, human-facing description of what was approved.
+		Summary string
+		// ApprovedBy identifies the actor that provided the decision, formatted as
+		// "<principal_type>:<principal_id>".
+		ApprovedBy string
+	}
+
 	// AwaitExternalToolsEvent indicates the planner requested external tool execution.
 	AwaitExternalToolsEvent struct {
 		baseEvent
@@ -529,6 +548,20 @@ func NewAwaitConfirmationEvent(runID string, agentID agent.Ident, sessionID, id,
 	}
 }
 
+// NewToolAuthorizationEvent constructs a ToolAuthorizationEvent for a pending tool call.
+func NewToolAuthorizationEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID string, approved bool, summary, approvedBy string) *ToolAuthorizationEvent {
+	be := newBaseEvent(runID, agentID)
+	be.sessionID = sessionID
+	return &ToolAuthorizationEvent{
+		baseEvent:  be,
+		ToolName:   toolName,
+		ToolCallID: toolCallID,
+		Approved:   approved,
+		Summary:    summary,
+		ApprovedBy: approvedBy,
+	}
+}
+
 // NewAwaitExternalToolsEvent constructs an AwaitExternalToolsEvent.
 func NewAwaitExternalToolsEvent(runID string, agentID agent.Ident, sessionID, id string, items []AwaitToolItem) *AwaitExternalToolsEvent {
 	// ensure copy
@@ -561,6 +594,9 @@ func (e *AwaitClarificationEvent) Type() EventType { return AwaitClarification }
 
 // Type implements Event for AwaitConfirmationEvent.
 func (e *AwaitConfirmationEvent) Type() EventType { return AwaitConfirmation }
+
+// Type implements Event for ToolAuthorizationEvent.
+func (e *ToolAuthorizationEvent) Type() EventType { return ToolAuthorization }
 
 // Type implements Event for AwaitExternalToolsEvent.
 func (e *AwaitExternalToolsEvent) Type() EventType { return AwaitExternalTools }

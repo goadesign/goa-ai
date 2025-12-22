@@ -75,6 +75,10 @@ const (
 	// AwaitExternalTools fires when the planner requests external tools to run out-of-band.
 	AwaitExternalTools EventType = "await_external_tools"
 
+	// ToolAuthorization fires when an operator provides an explicit approval/denial
+	// decision for a pending tool call.
+	ToolAuthorization EventType = "tool_authorization"
+
 	// RunResumed fires when a previously paused run resumes execution.
 	RunResumed EventType = "run_resumed"
 

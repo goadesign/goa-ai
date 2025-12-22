@@ -79,6 +79,10 @@ func (r *Runtime) confirmToolsIfNeeded(wfCtx engine.WorkflowContext, input *RunI
 			return nil, nil, fmt.Errorf("unexpected confirmation id %q (expected %q)", dec.ID, awaitID)
 		}
 
+		if strings.TrimSpace(dec.RequestedBy) == "" {
+			return nil, nil, fmt.Errorf("confirmation decision missing requested_by for %q (%s)", call.Name, call.ToolCallID)
+		}
+
 		approved := dec.Approved
 
 		labels := map[string]string{
@@ -87,6 +91,17 @@ func (r *Runtime) confirmToolsIfNeeded(wfCtx engine.WorkflowContext, input *RunI
 			"tool_call_id": call.ToolCallID,
 		}
 		maps.Copy(labels, dec.Labels)
+
+		r.publishHook(ctx, hooks.NewToolAuthorizationEvent(
+			base.RunContext.RunID,
+			input.AgentID,
+			base.RunContext.SessionID,
+			call.Name,
+			call.ToolCallID,
+			approved,
+			plan.Prompt,
+			dec.RequestedBy,
+		), turnID)
 
 		r.publishHook(ctx, hooks.NewRunResumedEvent(
 			base.RunContext.RunID,

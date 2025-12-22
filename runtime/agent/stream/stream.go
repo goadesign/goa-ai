@@ -222,6 +222,29 @@ type (
 		Data AwaitExternalToolsPayload
 	}
 
+	// ToolAuthorization streams an operator authorization decision (approve/deny)
+	// for a pending tool call. It is emitted when the runtime receives the decision,
+	// before tool execution begins (if approved).
+	ToolAuthorization struct {
+		Base
+		Data ToolAuthorizationPayload
+	}
+
+	// ToolAuthorizationPayload describes an operator authorization decision.
+	ToolAuthorizationPayload struct {
+		// ToolName identifies the tool that was authorized.
+		ToolName string `json:"tool_name"`
+		// ToolCallID is the tool_call_id for the pending tool call.
+		ToolCallID string `json:"tool_call_id"`
+		// Approved reports whether the operator approved execution.
+		Approved bool `json:"approved"`
+		// Summary is a deterministic, human-facing description of what was approved.
+		Summary string `json:"summary"`
+		// ApprovedBy identifies the actor that provided the decision, formatted as
+		// "<principal_type>:<principal_id>".
+		ApprovedBy string `json:"approved_by"`
+	}
+
 	// ToolStartPayload carries the metadata for a scheduled tool invocation. This
 	// structure is JSON-serialized when sent over the wire (SSE, WebSocket, Pulse).
 	ToolStartPayload struct {
@@ -482,6 +505,8 @@ type (
 		AwaitConfirmation bool
 		// AwaitExternalTools controls emission of await_external_tools events.
 		AwaitExternalTools bool
+		// ToolAuthorization controls emission of tool_authorization events.
+		ToolAuthorization bool
 		// Usage controls emission of usage events.
 		Usage bool
 		// Workflow controls emission of workflow lifecycle events.
@@ -504,6 +529,7 @@ func DefaultProfile() StreamProfile {
 		AwaitClarification: true,
 		AwaitConfirmation:  true,
 		AwaitExternalTools: true,
+		ToolAuthorization:  true,
 		Usage:              true,
 		Workflow:           true,
 		AgentRuns:          true,
@@ -577,6 +603,10 @@ const (
 
 	// EventAwaitExternalTools streams when a planner requests external tool execution.
 	EventAwaitExternalTools EventType = "await_external_tools"
+
+	// EventToolAuthorization streams when an operator provides an explicit
+	// approval/denial decision for a pending tool call.
+	EventToolAuthorization EventType = "tool_authorization"
 
 	// EventUsage streams token usage details.
 	EventUsage EventType = "usage"

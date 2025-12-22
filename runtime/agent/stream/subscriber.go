@@ -147,6 +147,21 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Base: Base{t: EventAwaitExternalTools, r: evt.RunID(), s: evt.SessionID(), p: payload},
 			Data: payload,
 		})
+	case *hooks.ToolAuthorizationEvent:
+		if !s.profile.ToolAuthorization {
+			return nil
+		}
+		payload := ToolAuthorizationPayload{
+			ToolName:   string(evt.ToolName),
+			ToolCallID: evt.ToolCallID,
+			Approved:   evt.Approved,
+			Summary:    evt.Summary,
+			ApprovedBy: evt.ApprovedBy,
+		}
+		return s.sink.Send(ctx, ToolAuthorization{
+			Base: Base{t: EventToolAuthorization, r: evt.RunID(), s: evt.SessionID(), p: payload},
+			Data: payload,
+		})
 	case *hooks.ToolCallScheduledEvent:
 		if !s.profile.ToolStart {
 			return nil
