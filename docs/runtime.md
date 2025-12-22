@@ -727,6 +727,28 @@ Consumers should treat confirmation as a **runtime protocol**, not as a user-def
 
 This keeps the runtime generic: any UI/system can implement a compatible confirmation transport.
 
+### Tool authorization events
+
+When a decision is provided via `ProvideConfirmation`, the runtime emits a first-class authorization event:
+
+- **Hook event**: `hooks.ToolAuthorization`
+- **Stream event type**: `tool_authorization`
+
+This event is emitted exactly once per confirmed tool call and captures the durable authorization record:
+
+- `tool_name`: the tool being authorized
+- `tool_call_id`: the tool call identifier
+- `approved`: true/false decision
+- `summary`: deterministic runtime-rendered summary (derived from the confirmation prompt)
+- `approved_by`: copied from `interrupt.ConfirmationDecision.RequestedBy` and intended to be a stable principal identifier (for example, `user:<id>`)
+
+The event is emitted immediately after the decision is received:
+
+- **Approved**: emitted before the tool executes.
+- **Denied**: emitted before the denied tool result is synthesized.
+
+Consumers (UIs, audit stores, session recorders) should rely on `tool_authorization` for “who/when/what” rather than inferring authorization from tool results.
+
 **Runtime validation**
 
 The runtime treats confirmation as a boundary and validates:

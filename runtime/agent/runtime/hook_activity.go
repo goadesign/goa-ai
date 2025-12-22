@@ -156,6 +156,13 @@ func decodeHookActivityEvent(input *HookActivityInput) (hooks.Event, error) {
 		}
 		return hooks.NewAwaitExternalToolsEvent(input.RunID, input.AgentID, input.SessionID, p.ID, p.Items), nil
 
+	case hooks.ToolAuthorization:
+		var p hooks.ToolAuthorizationEvent
+		if err := json.Unmarshal(input.Payload, &p); err != nil {
+			return nil, fmt.Errorf("decode %s payload: %w", hooks.ToolAuthorization, err)
+		}
+		return hooks.NewToolAuthorizationEvent(input.RunID, input.AgentID, input.SessionID, p.ToolName, p.ToolCallID, p.Approved, p.Summary, p.ApprovedBy), nil
+
 	case hooks.AssistantMessage:
 		var p hooks.AssistantMessageEvent
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
