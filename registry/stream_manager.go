@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
+	"goa.design/goa-ai/runtime/toolregistry"
 )
 
 // StreamManager manages Pulse streams for toolset communication.
@@ -27,21 +28,7 @@ type StreamManager interface {
 	RemoveStream(toolset string)
 
 	// PublishToolCall publishes a tool call message to the toolset's stream.
-	PublishToolCall(ctx context.Context, toolset string, msg *ToolCallMessage) error
-}
-
-// ToolCallMessage represents a message published to toolset streams.
-type ToolCallMessage struct {
-	// Type is the message type: "call" or "ping".
-	Type string `json:"type"`
-	// ToolUseID is the unique identifier for tool invocations.
-	ToolUseID string `json:"tool_use_id,omitempty"`
-	// PingID is the unique identifier for health check pings.
-	PingID string `json:"ping_id,omitempty"`
-	// Tool is the name of the tool to invoke.
-	Tool string `json:"tool,omitempty"`
-	// Payload is the tool input payload.
-	Payload json.RawMessage `json:"payload,omitempty"`
+	PublishToolCall(ctx context.Context, toolset string, msg toolregistry.ToolCallMessage) error
 }
 
 // streamManager is the default implementation of StreamManager.
@@ -110,7 +97,7 @@ func (m *streamManager) RemoveStream(toolset string) {
 // PublishToolCall publishes a tool call message to the toolset's stream.
 // It lazily creates a local stream handle if one doesn't exist, enabling
 // cross-node tool invocation where the toolset was registered on a different node.
-func (m *streamManager) PublishToolCall(ctx context.Context, toolset string, msg *ToolCallMessage) error {
+func (m *streamManager) PublishToolCall(ctx context.Context, toolset string, msg toolregistry.ToolCallMessage) error {
 	// Use GetOrCreateStream to handle cross-node scenarios where the toolset
 	// was registered on a different gateway node.
 	stream, _, err := m.GetOrCreateStream(ctx, toolset)
@@ -123,37 +110,9 @@ func (m *streamManager) PublishToolCall(ctx context.Context, toolset string, msg
 		return fmt.Errorf("marshal tool call message: %w", err)
 	}
 
-	_, err = stream.Add(ctx, msg.Type, payload)
+	_, err = stream.Add(ctx, string(msg.Type), payload)
 	if err != nil {
 		return fmt.Errorf("publish to stream: %w", err)
 	}
 	return nil
-}
-
-// MessageTypeCall is the message type for tool invocations.
-const MessageTypeCall = "call"
-
-// MessageTypePing is the message type for health check pings.
-const MessageTypePing = "ping"
-
-// NewToolCallMessage creates a ToolCallMessage for invoking a tool.
-// The toolUseID uniquely identifies this invocation for result correlation.
-// The tool parameter specifies which tool to invoke within the toolset.
-// The payload contains the tool input parameters as JSON.
-func NewToolCallMessage(toolUseID, tool string, payload json.RawMessage) *ToolCallMessage {
-	return &ToolCallMessage{
-		Type:      MessageTypeCall,
-		ToolUseID: toolUseID,
-		Tool:      tool,
-		Payload:   payload,
-	}
-}
-
-// NewPingMessage creates a ToolCallMessage for health check pings.
-// The pingID uniquely identifies this ping for pong correlation.
-func NewPingMessage(pingID string) *ToolCallMessage {
-	return &ToolCallMessage{
-		Type:   MessageTypePing,
-		PingID: pingID,
-	}
 }

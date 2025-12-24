@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"testing"
 
+	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/toolregistry"
+
 	"github.com/leanovate/gopter"
 	"github.com/leanovate/gopter/gen"
 	"github.com/leanovate/gopter/prop"
@@ -28,10 +31,10 @@ func TestToolCallMessageStructure(t *testing.T) {
 			}
 
 			// Create the message
-			msg := NewToolCallMessage(toolUseID, tool, payload)
+			msg := toolregistry.NewToolCallMessage(toolUseID, tools.Ident(tool), payload, nil)
 
 			// Verify message type is "call"
-			if msg.Type != MessageTypeCall {
+			if msg.Type != toolregistry.MessageTypeCall {
 				return false
 			}
 
@@ -41,7 +44,7 @@ func TestToolCallMessageStructure(t *testing.T) {
 			}
 
 			// Verify tool name is set correctly
-			if msg.Tool != tool {
+			if string(msg.Tool) != tool {
 				return false
 			}
 
@@ -65,10 +68,10 @@ func TestToolCallMessageStructure(t *testing.T) {
 	properties.Property("NewPingMessage creates message with correct structure", prop.ForAll(
 		func(pingID string) bool {
 			// Create the ping message
-			msg := NewPingMessage(pingID)
+			msg := toolregistry.NewPingMessage(pingID)
 
 			// Verify message type is "ping"
-			if msg.Type != MessageTypePing {
+			if msg.Type != toolregistry.MessageTypePing {
 				return false
 			}
 
@@ -106,7 +109,7 @@ func TestToolCallMessageStructure(t *testing.T) {
 			}
 
 			// Create and serialize the message
-			msg := NewToolCallMessage(toolUseID, tool, payload)
+			msg := toolregistry.NewToolCallMessage(toolUseID, tools.Ident(tool), payload, nil)
 			serialized, err := json.Marshal(msg)
 			if err != nil {
 				return false
@@ -119,7 +122,7 @@ func TestToolCallMessageStructure(t *testing.T) {
 			}
 
 			// Verify required fields are present
-			if decoded["type"] != MessageTypeCall {
+			if decoded["type"] != string(toolregistry.MessageTypeCall) {
 				return false
 			}
 			if decoded["tool_use_id"] != toolUseID {

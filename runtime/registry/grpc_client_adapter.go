@@ -78,9 +78,12 @@ func convertGetToolsetResponse(pb *registrypb.GetToolsetResponse) *ToolsetSchema
 	tools := make([]*ToolSchema, len(pb.GetTools()))
 	for i, t := range pb.GetTools() {
 		tools[i] = &ToolSchema{
-			Name:        t.GetName(),
-			Description: t.GetDescription(),
-			InputSchema: t.GetInputSchema(),
+			Name:          t.GetName(),
+			Description:   t.GetDescription(),
+			Tags:          t.GetTags(),
+			PayloadSchema: t.GetPayloadSchema(),
+			ResultSchema:  t.GetResultSchema(),
+			SidecarSchema: t.GetSidecarSchema(),
 		}
 	}
 	return &ToolsetSchema{

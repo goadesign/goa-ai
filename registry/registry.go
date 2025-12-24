@@ -43,7 +43,7 @@ import (
 	grpcserver "goa.design/goa-ai/registry/gen/grpc/registry/server"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/registry/store"
-	"goa.design/goa-ai/registry/store/memory"
+	"goa.design/goa-ai/registry/store/replicated"
 	"goa.design/pulse/pool"
 	"goa.design/pulse/rmap"
 	"google.golang.org/grpc"
@@ -54,15 +54,14 @@ type (
 	// It manages all components required for multi-node operation including
 	// Pulse streams, replicated maps, and distributed tickers.
 	Registry struct {
-		service             *Service
-		pulseClient         clientspulse.Client
-		healthMap           *rmap.Map
-		registryMap         *rmap.Map
-		poolNode            *pool.Node
-		healthTracker       HealthTracker
-		streamManager       StreamManager
-		resultStreamManager ResultStreamManager
-		redis               *redis.Client
+		service       *Service
+		pulseClient   clientspulse.Client
+		healthMap     *rmap.Map
+		registryMap   *rmap.Map
+		poolNode      *pool.Node
+		healthTracker HealthTracker
+		streamManager StreamManager
+		redis         *redis.Client
 	}
 
 	// Config configures the registry service.
@@ -70,7 +69,7 @@ type (
 		// Redis is the Redis client for Pulse operations. Required.
 		Redis *redis.Client
 		// Store is the persistence layer for toolset metadata.
-		// Defaults to an in-memory store if not provided.
+		// Defaults to a replicated-map backed store if not provided.
 		Store store.Store
 		// Name is the registry name used to derive Pulse resource names.
 		// Multiple nodes with the same Name and Redis connection form a cluster,
@@ -91,8 +90,9 @@ type (
 		// Defaults to 3 if not provided.
 		MissedPingThreshold int
 		// ResultStreamMappingTTL is the TTL for tool_use_id to stream_id mappings.
-		// Defaults to 5 minutes if not provided.
-		ResultStreamMappingTTL time.Duration
+		// ResultStreamTTL is the TTL for per-call result streams in Redis.
+		// Defaults to 15 minutes if not provided.
+		ResultStreamTTL time.Duration
 		// PoolNodeOptions are additional options for the Pulse pool node.
 		PoolNodeOptions []pool.NodeOption
 	}
@@ -148,19 +148,6 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 	// Create stream manager.
 	streamManager := NewStreamManager(pulseClient)
 
-	// Create result stream manager.
-	resultStreamManager, err := NewResultStreamManager(ResultStreamManagerOptions{
-		Client:     pulseClient,
-		Redis:      cfg.Redis,
-		MappingTTL: cfg.ResultStreamMappingTTL,
-	})
-	if err != nil {
-		healthMap.Close()
-		registryMap.Close()
-		closeErr := poolNode.Close(ctx)
-		return nil, errors.Join(fmt.Errorf("create result stream manager: %w", err), closeErr)
-	}
-
 	// Build health tracker options.
 	var healthOpts []HealthTrackerOption
 	if cfg.PingInterval > 0 {
@@ -179,18 +166,20 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 		return nil, errors.Join(fmt.Errorf("create health tracker: %w", err), closeErr)
 	}
 
-	// Use in-memory store if none provided.
+	// Use replicated store if none provided.
 	st := cfg.Store
 	if st == nil {
-		st = memory.New()
+		st = replicated.New(registryMap)
 	}
 
 	// Create the service.
 	service, err := NewService(ServiceOptions{
-		Store:               st,
-		StreamManager:       streamManager,
-		HealthTracker:       healthTracker,
-		ResultStreamManager: resultStreamManager,
+		Store:           st,
+		StreamManager:   streamManager,
+		HealthTracker:   healthTracker,
+		PulseClient:     pulseClient,
+		Redis:           cfg.Redis,
+		ResultStreamTTL: cfg.ResultStreamTTL,
 	})
 	if err != nil {
 		htCloseErr := healthTracker.Close()
@@ -201,15 +190,14 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 	}
 
 	return &Registry{
-		service:             service,
-		pulseClient:         pulseClient,
-		healthMap:           healthMap,
-		registryMap:         registryMap,
-		poolNode:            poolNode,
-		healthTracker:       healthTracker,
-		streamManager:       streamManager,
-		resultStreamManager: resultStreamManager,
-		redis:               cfg.Redis,
+		service:       service,
+		pulseClient:   pulseClient,
+		healthMap:     healthMap,
+		registryMap:   registryMap,
+		poolNode:      poolNode,
+		healthTracker: healthTracker,
+		streamManager: streamManager,
+		redis:         cfg.Redis,
 	}, nil
 }
 

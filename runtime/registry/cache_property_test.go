@@ -442,9 +442,9 @@ func genToolSchemaForCache() gopter.Gen {
 		genAlphaStringWithMax(50),
 	).Map(func(vals []any) *ToolSchema {
 		return &ToolSchema{
-			Name:        vals[0].(string),
-			Description: vals[1].(string),
-			InputSchema: []byte(`{"type":"object"}`),
+			Name:          vals[0].(string),
+			Description:   vals[1].(string),
+			PayloadSchema: []byte(`{"type":"object"}`),
 		}
 	})
 }

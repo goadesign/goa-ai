@@ -8,20 +8,28 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/registry/store"
 	"goa.design/goa-ai/registry/store/memory"
+	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/toolregistry"
 )
 
 type (
 	// Service implements the registry service interface.
 	// It provides toolset registration, discovery, and tool invocation capabilities.
 	Service struct {
-		store               store.Store
-		streamManager       StreamManager
-		healthTracker       HealthTracker
-		resultStreamManager ResultStreamManager
+		store         store.Store
+		streamManager StreamManager
+		healthTracker HealthTracker
+
+		pulseClient       clientspulse.Client
+		rdb               *redis.Client
+		resultStreamTTL   time.Duration
 	}
 
 	// ServiceOptions configures the registry service.
@@ -33,8 +41,13 @@ type (
 		StreamManager StreamManager
 		// HealthTracker tracks provider health status.
 		HealthTracker HealthTracker
-		// ResultStreamManager manages temporary result streams.
-		ResultStreamManager ResultStreamManager
+		// PulseClient creates/opens Pulse streams. Required for CallTool.
+		PulseClient clientspulse.Client
+		// Redis is used to set TTLs on result streams. Required for CallTool.
+		Redis *redis.Client
+		// ResultStreamTTL controls how long result streams live in Redis.
+		// When zero, defaults to 15 minutes.
+		ResultStreamTTL time.Duration
 	}
 )
 
@@ -53,14 +66,23 @@ func NewService(opts ServiceOptions) (*Service, error) {
 	if opts.HealthTracker == nil {
 		return nil, fmt.Errorf("health tracker is required")
 	}
-	if opts.ResultStreamManager == nil {
-		return nil, fmt.Errorf("result stream manager is required")
+	if opts.PulseClient == nil {
+		return nil, fmt.Errorf("pulse client is required")
+	}
+	if opts.Redis == nil {
+		return nil, fmt.Errorf("redis client is required")
+	}
+	ttl := opts.ResultStreamTTL
+	if ttl == 0 {
+		ttl = 15 * time.Minute
 	}
 	return &Service{
-		store:               st,
-		streamManager:       opts.StreamManager,
-		healthTracker:       opts.HealthTracker,
-		resultStreamManager: opts.ResultStreamManager,
+		store:           st,
+		streamManager:   opts.StreamManager,
+		healthTracker:   opts.HealthTracker,
+		pulseClient:     opts.PulseClient,
+		rdb:             opts.Redis,
+		resultStreamTTL: ttl,
 	}, nil
 }
 
@@ -79,19 +101,7 @@ func (s *Service) Register(ctx context.Context, p *genregistry.RegisterPayload) 
 		return nil, fmt.Errorf("create stream for toolset: %w", err)
 	}
 
-	// Record registration timestamp.
 	registeredAt := time.Now().UTC().Format(time.RFC3339)
-
-	// Convert tools from ToolSchema to Tool.
-	tools := make([]*genregistry.Tool, len(p.Tools))
-	for i, ts := range p.Tools {
-		tools[i] = &genregistry.Tool{
-			Name:         ts.Name,
-			Description:  ts.Description,
-			InputSchema:  ts.InputSchema,
-			OutputSchema: ts.OutputSchema,
-		}
-	}
 
 	// Build the toolset for storage.
 	toolset := &genregistry.Toolset{
@@ -99,7 +109,7 @@ func (s *Service) Register(ctx context.Context, p *genregistry.RegisterPayload) 
 		Description:  p.Description,
 		Version:      p.Version,
 		Tags:         p.Tags,
-		Tools:        tools,
+		Tools:        p.Tools,
 		StreamID:     streamID,
 		RegisteredAt: registeredAt,
 	}
@@ -123,14 +133,26 @@ func (s *Service) Register(ctx context.Context, p *genregistry.RegisterPayload) 
 // validateToolSchemas validates that all tool schemas are valid JSON Schema.
 func validateToolSchemas(tools []*genregistry.ToolSchema) error {
 	for _, tool := range tools {
-		if len(tool.InputSchema) == 0 {
-			return fmt.Errorf("tool %q: input schema is required", tool.Name)
+		if tool == nil {
+			return fmt.Errorf("tool schema is nil")
 		}
-		if !json.Valid(tool.InputSchema) {
-			return fmt.Errorf("tool %q: input schema is not valid JSON", tool.Name)
+		if tool.Name == "" {
+			return fmt.Errorf("tool schema missing name")
 		}
-		if len(tool.OutputSchema) > 0 && !json.Valid(tool.OutputSchema) {
-			return fmt.Errorf("tool %q: output schema is not valid JSON", tool.Name)
+		if len(tool.PayloadSchema) == 0 {
+			return fmt.Errorf("tool %q: payload schema is required", tool.Name)
+		}
+		if len(tool.ResultSchema) == 0 {
+			return fmt.Errorf("tool %q: result schema is required", tool.Name)
+		}
+		if !json.Valid(tool.PayloadSchema) {
+			return fmt.Errorf("tool %q: payload schema is not valid JSON", tool.Name)
+		}
+		if !json.Valid(tool.ResultSchema) {
+			return fmt.Errorf("tool %q: result schema is not valid JSON", tool.Name)
+		}
+		if len(tool.SidecarSchema) > 0 && !json.Valid(tool.SidecarSchema) {
+			return fmt.Errorf("tool %q: sidecar schema is not valid JSON", tool.Name)
 		}
 	}
 	return nil
@@ -154,31 +176,6 @@ func (s *Service) Unregister(ctx context.Context, p *genregistry.UnregisterPaylo
 
 	// Remove the stream tracking (does not destroy the underlying stream).
 	s.streamManager.RemoveStream(p.Name)
-
-	return nil
-}
-
-// EmitToolResult publishes a tool execution result to the result stream.
-// This is called by providers to deliver results back to the waiting gateway.
-// **Validates: Requirements 4.1, 4.2, 4.3**
-func (s *Service) EmitToolResult(ctx context.Context, p *genregistry.EmitToolResultPayload) error {
-	// Build the result message.
-	var msg *ToolResultMessage
-	if p.Error != nil {
-		msg = NewToolResultErrorMessage(p.ToolUseID, p.Error.Code, p.Error.Message)
-	} else {
-		// Marshal the result to JSON.
-		resultBytes, err := json.Marshal(p.Result)
-		if err != nil {
-			return fmt.Errorf("marshal result: %w", err)
-		}
-		msg = NewToolResultMessage(p.ToolUseID, resultBytes)
-	}
-
-	// Publish to the result stream.
-	if err := s.resultStreamManager.PublishResult(ctx, p.ToolUseID, msg); err != nil {
-		return fmt.Errorf("publish result: %w", err)
-	}
 
 	return nil
 }
@@ -255,13 +252,9 @@ func (s *Service) Search(ctx context.Context, p *genregistry.SearchPayload) (*ge
 	}, nil
 }
 
-// DefaultCallToolTimeout is the default timeout for tool invocations.
-const DefaultCallToolTimeout = 30 * time.Second
-
 // CallTool invokes a tool through the registry gateway.
-// It validates the payload against the tool's input schema, checks provider health,
-// publishes the request to the toolset stream, and waits for a result.
-// **Validates: Requirements 9.1, 9.2, 9.3, 9.4, 9.5**
+// It validates the payload against the tool's payload schema, checks provider health,
+// creates the per-call result stream, and publishes the request to the toolset stream.
 func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) (*genregistry.CallToolResult, error) {
 	// 1. Get the toolset to validate the tool exists and get its schema.
 	toolset, err := s.store.GetToolset(ctx, p.Toolset)
@@ -273,7 +266,7 @@ func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) 
 	}
 
 	// 2. Find the tool within the toolset.
-	var tool *genregistry.Tool
+	var tool *genregistry.ToolSchema
 	for _, t := range toolset.Tools {
 		if t.Name == p.Tool {
 			tool = t
@@ -284,8 +277,8 @@ func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) 
 		return nil, genregistry.MakeNotFound(fmt.Errorf("tool %q not found in toolset %q", p.Tool, p.Toolset))
 	}
 
-	// 3. Validate payload against tool's input schema.
-	if err := validatePayloadAgainstSchema(p.Payload, tool.InputSchema); err != nil {
+	// 3. Validate payload against tool's payload schema.
+	if err := validatePayloadJSONAgainstSchema(p.PayloadJSON, tool.PayloadSchema); err != nil {
 		return nil, genregistry.MakeValidationError(fmt.Errorf("payload validation failed: %w", err))
 	}
 
@@ -294,67 +287,37 @@ func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) 
 		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("no healthy providers for toolset %q", p.Toolset))
 	}
 
-	// 5. Create result stream and get tool_use_id.
-	_, toolUseID, _, err := s.resultStreamManager.CreateResultStream(ctx)
+	toolUseID := uuid.New().String()
+	resultStreamID := toolregistry.ResultStreamID(toolUseID)
+	resultStream, err := s.pulseClient.Stream(resultStreamID)
 	if err != nil {
-		return nil, fmt.Errorf("create result stream: %w", err)
+		return nil, fmt.Errorf("open result stream %q: %w", resultStreamID, err)
+	}
+	if _, err := resultStream.Add(ctx, "init", []byte("{}")); err != nil {
+		return nil, fmt.Errorf("initialize result stream %q: %w", resultStreamID, err)
+	}
+	if err := s.setResultStreamTTL(ctx, resultStreamID); err != nil {
+		return nil, err
 	}
 
-	// 6. Set TTL on the result stream for automatic cleanup.
-	// Non-fatal: TTL will eventually clean up if this fails.
-	_ = s.resultStreamManager.SetTTL(ctx, toolUseID, DefaultCallToolTimeout*2)
-
-	// 7. Marshal payload to JSON for the stream message.
-	payloadBytes, err := json.Marshal(p.Payload)
-	if err != nil {
-		// Cleanup the result stream on error.
-		_ = s.resultStreamManager.DestroyResultStream(ctx, toolUseID)
-		return nil, fmt.Errorf("marshal payload: %w", err)
+	meta := toolregistry.ToolCallMeta{
+		RunID:            p.Meta.RunID,
+		SessionID:        p.Meta.SessionID,
+		TurnID:           derefString(p.Meta.TurnID),
+		ToolCallID:       derefString(p.Meta.ToolCallID),
+		ParentToolCallID: derefString(p.Meta.ParentToolCallID),
 	}
-
-	// 8. Publish request to toolset stream.
-	msg := NewToolCallMessage(toolUseID, p.Tool, payloadBytes)
+	msg := toolregistry.NewToolCallMessage(toolUseID, tools.Ident(p.Tool), json.RawMessage(p.PayloadJSON), &meta)
 	if err := s.streamManager.PublishToolCall(ctx, p.Toolset, msg); err != nil {
-		// Cleanup the result stream on error.
-		_ = s.resultStreamManager.DestroyResultStream(ctx, toolUseID)
 		return nil, fmt.Errorf("publish tool call: %w", err)
 	}
-
-	// 9. Wait for result with timeout.
-	resultMsg, err := s.resultStreamManager.WaitForResult(ctx, toolUseID, WaitForResultOptions{
-		Timeout: DefaultCallToolTimeout,
-	})
-	if err != nil {
-		if errors.Is(err, ErrTimeout) {
-			return nil, genregistry.MakeTimeout(fmt.Errorf("tool invocation timed out after %v", DefaultCallToolTimeout))
-		}
-		return nil, fmt.Errorf("wait for result: %w", err)
-	}
-
-	// 10. Build and return the result.
-	result := &genregistry.CallToolResult{
-		ToolUseID: toolUseID,
-	}
-
-	if resultMsg.Error != nil {
-		result.Error = &genregistry.ToolError{
-			Code:    resultMsg.Error.Code,
-			Message: resultMsg.Error.Message,
-		}
-	} else if len(resultMsg.Result) > 0 {
-		// Unmarshal the result JSON into any.
-		var resultAny any
-		if err := json.Unmarshal(resultMsg.Result, &resultAny); err != nil {
-			return nil, fmt.Errorf("unmarshal result: %w", err)
-		}
-		result.Result = resultAny
-	}
-
-	return result, nil
+	return &genregistry.CallToolResult{
+		ToolUseID:      toolUseID,
+		ResultStreamID: resultStreamID,
+	}, nil
 }
 
-// validatePayloadAgainstSchema validates a payload against a JSON Schema.
-func validatePayloadAgainstSchema(payload any, schemaBytes []byte) error {
+func validatePayloadJSONAgainstSchema(payloadJSON []byte, schemaBytes []byte) error {
 	if len(schemaBytes) == 0 {
 		return nil // No schema to validate against
 	}
@@ -363,6 +326,11 @@ func validatePayloadAgainstSchema(payload any, schemaBytes []byte) error {
 	var schemaDoc any
 	if err := json.Unmarshal(schemaBytes, &schemaDoc); err != nil {
 		return fmt.Errorf("unmarshal schema: %w", err)
+	}
+
+	var payloadDoc any
+	if err := json.Unmarshal(payloadJSON, &payloadDoc); err != nil {
+		return fmt.Errorf("unmarshal payload: %w", err)
 	}
 
 	// Compile the schema.
@@ -376,9 +344,28 @@ func validatePayloadAgainstSchema(payload any, schemaBytes []byte) error {
 	}
 
 	// Validate the payload.
-	if err := schema.Validate(payload); err != nil {
+	if err := schema.Validate(payloadDoc); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func (s *Service) setResultStreamTTL(ctx context.Context, streamID string) error {
+	key := fmt.Sprintf("pulse:stream:%s", streamID)
+	ok, err := s.rdb.Expire(ctx, key, s.resultStreamTTL).Result()
+	if err != nil {
+		return fmt.Errorf("set result stream TTL: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("set result stream TTL: stream key %q missing", key)
+	}
+	return nil
+}
+
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

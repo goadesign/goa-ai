@@ -12,6 +12,7 @@ import (
 	"github.com/leanovate/gopter/gen"
 	"github.com/leanovate/gopter/prop"
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
+	"goa.design/goa-ai/runtime/toolregistry"
 	"goa.design/pulse/pool"
 	"goa.design/pulse/rmap"
 )
@@ -83,7 +84,9 @@ func TestUnhealthyToolsetFastFailure(t *testing.T) {
 			stalenessThreshold := time.Duration(missedPingThreshold+1) * pingInterval
 			staleTime := time.Now().Add(-stalenessThreshold - time.Second)
 			key := "registry:health:" + toolsetName
-			_, _ = healthMap.Set(ctx, key, fmt.Sprintf("%d", staleTime.UnixNano()))
+			if _, err := healthMap.Set(ctx, key, fmt.Sprintf("%d", staleTime.UnixNano())); err != nil {
+				return false
+			}
 
 			// Should be unhealthy because the timestamp is stale.
 			return !tracker.IsHealthy(toolsetName)
@@ -155,7 +158,9 @@ func TestPongRestoresHealthyStatus(t *testing.T) {
 			// stalenessThreshold = (2 + 1) * 100ms = 300ms
 			staleTime := time.Now().Add(-500 * time.Millisecond)
 			key := "registry:health:" + toolsetName
-			_, _ = healthMap.Set(ctx, key, fmt.Sprintf("%d", staleTime.UnixNano()))
+			if _, err := healthMap.Set(ctx, key, fmt.Sprintf("%d", staleTime.UnixNano())); err != nil {
+				return false
+			}
 
 			// Wait for the set to propagate.
 			select {
@@ -192,12 +197,12 @@ func TestPongRestoresHealthyStatus(t *testing.T) {
 
 type mockStreamManager struct {
 	mu       sync.RWMutex
-	messages map[string][]*ToolCallMessage
+	messages map[string][]toolregistry.ToolCallMessage
 }
 
 func newMockStreamManager() *mockStreamManager {
 	return &mockStreamManager{
-		messages: make(map[string][]*ToolCallMessage),
+		messages: make(map[string][]toolregistry.ToolCallMessage),
 	}
 }
 
@@ -211,7 +216,7 @@ func (m *mockStreamManager) GetStream(toolset string) clientspulse.Stream {
 
 func (m *mockStreamManager) RemoveStream(toolset string) {}
 
-func (m *mockStreamManager) PublishToolCall(ctx context.Context, toolset string, msg *ToolCallMessage) error {
+func (m *mockStreamManager) PublishToolCall(ctx context.Context, toolset string, msg toolregistry.ToolCallMessage) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.messages[toolset] = append(m.messages[toolset], msg)

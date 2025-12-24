@@ -20,7 +20,7 @@ func TestMemoryCacheGetSetDelete(t *testing.T) {
 		Description: "A test toolset",
 		Version:     "1.0.0",
 		Tools: []*ToolSchema{
-			{Name: "tool1", Description: "Tool 1", InputSchema: []byte(`{"type":"object"}`)},
+			{Name: "tool1", Description: "Tool 1", PayloadSchema: []byte(`{"type":"object"}`)},
 		},
 	}
 
