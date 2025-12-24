@@ -1,6 +1,7 @@
 package codegen
 
 import (
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -13,6 +14,12 @@ type registryToolsetSpecsFileData struct {
 	QualifiedName string
 	ServiceName   string
 	Registry      *RegistryToolsetMeta
+}
+
+type toolProviderFileData struct {
+	PackageName    string
+	ServiceTypeRef string
+	Tools          []*ToolData
 }
 
 // toolsetSpecsFiles emits toolset-owned packages (types, unions, codecs, specs,
@@ -162,9 +169,55 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 		if f := toolsetAdapterTransformsFile(data.Genpkg, ts); f != nil {
 			out = append(out, f)
 		}
+		if f := toolsetProviderFile(data.Genpkg, ts); f != nil {
+			out = append(out, f)
+		}
 	}
 
 	return out
+}
+
+func toolsetProviderFile(genpkg string, ts *ToolsetData) *codegen.File {
+	if ts == nil || ts.SpecsDir == "" || ts.SourceService == nil || ts.IsRegistryBacked {
+		return nil
+	}
+	hasMethods := false
+	for _, t := range ts.Tools {
+		if t != nil && t.IsMethodBacked {
+			hasMethods = true
+			break
+		}
+	}
+	if !hasMethods {
+		return nil
+	}
+	serviceImportPath := joinImportPath(genpkg, ts.SourceService.PathName)
+	if serviceImportPath == "" {
+		return nil
+	}
+	imports := []*codegen.ImportSpec{
+		codegen.SimpleImport("context"),
+		codegen.SimpleImport("fmt"),
+		{Path: "goa.design/goa-ai/runtime/toolregistry"},
+		{Name: ts.SourceService.PkgName, Path: serviceImportPath},
+	}
+	sections := []*codegen.SectionTemplate{
+		codegen.Header(ts.Name+" tool provider", ts.SpecsPackageName, imports),
+		{
+			Name:    "tool-provider",
+			Source:  agentsTemplates.Read(toolProviderFileT),
+			Data: toolProviderFileData{
+				PackageName:    ts.SpecsPackageName,
+				ServiceTypeRef: fmt.Sprintf("%s.Service", ts.SourceService.PkgName),
+				Tools:          ts.Tools,
+			},
+			FuncMap: templateFuncMap(),
+		},
+	}
+	return &codegen.File{
+		Path:             filepath.Join(ts.SpecsDir, "provider.go"),
+		SectionTemplates: sections,
+	}
 }
 
 func toolsetRegistrySpecsFiles(ts *ToolsetData) []*codegen.File {

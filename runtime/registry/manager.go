@@ -96,8 +96,14 @@ type (
 		Name string
 		// Description explains what the tool does.
 		Description string
-		// InputSchema is the JSON Schema for tool input.
-		InputSchema []byte
+		// Tags are optional metadata tags for discovery and filtering.
+		Tags []string
+		// PayloadSchema is the JSON Schema for tool input.
+		PayloadSchema []byte
+		// ResultSchema is the JSON Schema for tool output.
+		ResultSchema []byte
+		// SidecarSchema is the JSON Schema for tool sidecar (UI-only), when present.
+		SidecarSchema []byte
 	}
 
 	// SearchResult contains a single search result from the registry.

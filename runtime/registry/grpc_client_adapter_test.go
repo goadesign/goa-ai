@@ -29,10 +29,6 @@ func (m *mockGRPCRegistryClient) Unregister(_ context.Context, _ *registrypb.Unr
 	return nil, nil
 }
 
-func (m *mockGRPCRegistryClient) EmitToolResult(_ context.Context, _ *registrypb.EmitToolResultRequest, _ ...grpc.CallOption) (*registrypb.EmitToolResultResponse, error) {
-	return nil, nil
-}
-
 func (m *mockGRPCRegistryClient) Pong(_ context.Context, _ *registrypb.PongRequest, _ ...grpc.CallOption) (*registrypb.PongResponse, error) {
 	return nil, nil
 }
@@ -142,11 +138,11 @@ func TestGRPCClientAdapter_GetToolset(t *testing.T) {
 				Description: &desc,
 				Version:     &version,
 				Tags:        []string{"tag1"},
-				Tools: []*registrypb.Tool{
+				Tools: []*registrypb.ToolSchema{
 					{
-						Name:        "test-tool",
-						Description: &toolDesc,
-						InputSchema: []byte(`{"type":"object"}`),
+						Name:          "test-tool",
+						Description:   &toolDesc,
+						PayloadSchema: []byte(`{"type":"object"}`),
 					},
 				},
 			},
@@ -169,8 +165,8 @@ func TestGRPCClientAdapter_GetToolset(t *testing.T) {
 		if schema.Tools[0].Name != "test-tool" {
 			t.Errorf("Tool Name: got %q, want %q", schema.Tools[0].Name, "test-tool")
 		}
-		if string(schema.Tools[0].InputSchema) != `{"type":"object"}` {
-			t.Errorf("Tool InputSchema: got %q", string(schema.Tools[0].InputSchema))
+		if string(schema.Tools[0].PayloadSchema) != `{"type":"object"}` {
+			t.Errorf("Tool PayloadSchema: got %q", string(schema.Tools[0].PayloadSchema))
 		}
 	})
 
@@ -286,11 +282,11 @@ func TestGRPCClientAdapter_IntegrationWithManager(t *testing.T) {
 			Name:        "integration-toolset",
 			Description: &desc,
 			Version:     &version,
-			Tools: []*registrypb.Tool{
+			Tools: []*registrypb.ToolSchema{
 				{
-					Name:        "integration-tool",
-					Description: &toolDesc,
-					InputSchema: []byte(`{"type":"string"}`),
+					Name:          "integration-tool",
+					Description:   &toolDesc,
+					PayloadSchema: []byte(`{"type":"string"}`),
 				},
 			},
 		},

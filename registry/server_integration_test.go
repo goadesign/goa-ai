@@ -21,6 +21,7 @@ const (
 	testToolsetName = "data-tools"
 	errNotFound     = "not_found"
 	errValidation   = "validation_error"
+	errInvalidLen   = "invalid_length"
 )
 
 // TestServerIntegration tests the full gRPC server stack using Goa's generated
@@ -51,7 +52,8 @@ func TestServerIntegration(t *testing.T) {
 
 	t.Run("register and list", func(t *testing.T) {
 		desc := "Data processing tools"
-		version := "1.0.0"
+		rawVersion := "1.0.0"
+		version := genregistry.SemVer(rawVersion)
 
 		// Register a toolset.
 		regResult, err := client.Register(ctx, &genregistry.RegisterPayload{
@@ -61,9 +63,10 @@ func TestServerIntegration(t *testing.T) {
 			Tags:        []string{"data", "etl"},
 			Tools: []*genregistry.ToolSchema{
 				{
-					Name:        "transform",
-					Description: strPtr("Transform data"),
-					InputSchema: []byte(`{"type":"object","properties":{"input":{"type":"string"}}}`),
+					Name:          "transform",
+					Description:   strPtr("Transform data"),
+					PayloadSchema: []byte(`{"type":"object","properties":{"input":{"type":"string"}}}`),
+					ResultSchema:  []byte(`{"type":"object"}`),
 				},
 			},
 		})
@@ -142,8 +145,9 @@ func TestServerIntegration(t *testing.T) {
 			Tags:        []string{"analytics", "reporting"},
 			Tools: []*genregistry.ToolSchema{
 				{
-					Name:        "report",
-					InputSchema: []byte(`{"type":"object"}`),
+					Name:          "report",
+					PayloadSchema: []byte(`{"type":"object"}`),
+					ResultSchema:  []byte(`{"type":"object"}`),
 				},
 			},
 		})
@@ -251,8 +255,9 @@ func TestServerMultiNodeSync(t *testing.T) {
 		Tags:        []string{"shared"},
 		Tools: []*genregistry.ToolSchema{
 			{
-				Name:        "shared-tool",
-				InputSchema: []byte(`{"type":"object"}`),
+				Name:          "shared-tool",
+				PayloadSchema: []byte(`{"type":"object"}`),
+				ResultSchema:  []byte(`{"type":"object"}`),
 			},
 		},
 	})
@@ -327,8 +332,9 @@ func TestServerValidationErrors(t *testing.T) {
 			Name: "bad-schema-tools",
 			Tools: []*genregistry.ToolSchema{
 				{
-					Name:        "bad-tool",
-					InputSchema: []byte(`{not valid json`),
+					Name:          "bad-tool",
+					PayloadSchema: []byte(`{not valid json`),
+					ResultSchema:  []byte(`{"type":"object"}`),
 				},
 			},
 		})
@@ -349,8 +355,9 @@ func TestServerValidationErrors(t *testing.T) {
 			Name: "empty-schema-tools",
 			Tools: []*genregistry.ToolSchema{
 				{
-					Name:        "empty-tool",
-					InputSchema: []byte{},
+					Name:          "empty-tool",
+					PayloadSchema: []byte{},
+					ResultSchema:  []byte(`{"type":"object"}`),
 				},
 			},
 		})
@@ -361,8 +368,8 @@ func TestServerValidationErrors(t *testing.T) {
 		if !errors.As(err, &svcErr) {
 			t.Fatalf("expected ServiceError, got %T: %v", err, err)
 		}
-		if svcErr.Name != errValidation {
-			t.Errorf("expected %q, got %q", errValidation, svcErr.Name)
+		if svcErr.Name != errInvalidLen {
+			t.Errorf("expected %q, got %q", errInvalidLen, svcErr.Name)
 		}
 	})
 }
@@ -400,7 +407,6 @@ func startServerAndClient(t *testing.T, reg *Registry) *genregistry.Client {
 	return genregistry.NewClient(
 		grpcCli.Register(),
 		grpcCli.Unregister(),
-		grpcCli.EmitToolResult(),
 		grpcCli.Pong(),
 		grpcCli.ListToolsets(),
 		grpcCli.GetToolset(),

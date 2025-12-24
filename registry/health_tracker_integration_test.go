@@ -12,6 +12,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
+	"goa.design/goa-ai/runtime/toolregistry"
 	"goa.design/pulse/pool"
 	"goa.design/pulse/rmap"
 )
@@ -549,8 +550,8 @@ func (m *pingCountingStreamManager) GetStream(toolset string) clientspulse.Strea
 
 func (m *pingCountingStreamManager) RemoveStream(toolset string) {}
 
-func (m *pingCountingStreamManager) PublishToolCall(ctx context.Context, toolset string, msg *ToolCallMessage) error {
-	if msg.Type == MessageTypePing {
+func (m *pingCountingStreamManager) PublishToolCall(ctx context.Context, toolset string, msg toolregistry.ToolCallMessage) error {
+	if msg.Type == toolregistry.MessageTypePing {
 		m.mu.Lock()
 		m.messages[toolset]++
 		m.mu.Unlock()

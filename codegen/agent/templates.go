@@ -24,6 +24,7 @@ const (
 	serviceExecutorFileT       = "service_executor"
 	toolCodecsFileT            = "tool_codecs"
 	toolSpecFileT              = "tool_spec"
+	toolProviderFileT          = "tool_provider"
 	toolSpecsAggregateT        = "specs_aggregate"
 	toolTransformsFileT        = "tool_transforms"
 	toolTypesFileT             = "tool_types"

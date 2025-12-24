@@ -4,3 +4,4 @@ agents/.DS_Store
 .cache/
 .kiro/
 quickstart/orchestrator
+/gen/

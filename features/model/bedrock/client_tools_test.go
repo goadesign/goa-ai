@@ -2,6 +2,7 @@ package bedrock
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -140,29 +141,29 @@ func TestSanitizeToolName_StripsNamespaces(t *testing.T) {
 		want string
 	}{
 		{
-			name: "ada toolset",
+			name: "ada toolset preserves namespace",
 			in:   "ada.get_application_status",
-			want: "get_application_status",
+			want: "ada_get_application_status",
 		},
 		{
-			name: "ada time series",
+			name: "ada time series preserves namespace",
 			in:   "ada.get_time_series",
-			want: "get_time_series",
+			want: "ada_get_time_series",
 		},
 		{
-			name: "chat atlas read subset",
+			name: "chat atlas read subset preserves full canonical id",
 			in:   "atlas.read.chat.chat_get_user_details",
-			want: "get_user_details",
+			want: "atlas_read_chat_chat_get_user_details",
 		},
 		{
-			name: "chat emit toolset",
+			name: "chat emit toolset preserves namespace",
 			in:   "chat.emit.ask_clarifying_question",
-			want: "ask_clarifying_question",
+			want: "chat_emit_ask_clarifying_question",
 		},
 		{
-			name: "todos toolset",
+			name: "todos toolset preserves namespace",
 			in:   "todos.todos.update_todos",
-			want: "update_todos",
+			want: "todos_todos_update_todos",
 		},
 		{
 			name: "plain name passthrough",
@@ -177,4 +178,23 @@ func TestSanitizeToolName_StripsNamespaces(t *testing.T) {
 			require.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestSanitizeToolName_NoCollisionsAcrossToolsets(t *testing.T) {
+	a := sanitizeToolName("atlas.read.explain_control_logic")
+	b := sanitizeToolName("ada.explain_control_logic")
+
+	require.NotEmpty(t, a)
+	require.NotEmpty(t, b)
+	require.NotEqual(t, a, b)
+}
+
+func TestSanitizeToolName_TruncatesWithStableHashSuffix(t *testing.T) {
+	in := "atlas.read.chat." + strings.Repeat("very_long_segment_", 10) + "tool"
+	got := sanitizeToolName(in)
+
+	require.NotEmpty(t, got)
+	require.LessOrEqual(t, len(got), 64)
+	require.Regexp(t, `_[0-9a-f]{8}$`, got)
+	require.Equal(t, got, sanitizeToolName(in))
 }

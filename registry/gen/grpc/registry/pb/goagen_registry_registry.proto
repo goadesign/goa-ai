@@ -1,4 +1,4 @@
-// Code generated with goa v3.23.1, DO NOT EDIT.
+// Code generated with goa v3.23.4, DO NOT EDIT.
 //
 // registry protocol buffer definition
 //
@@ -7,10 +7,9 @@
 
 syntax = "proto3";
 
-package registry;
+package goa_ai_registry;
 
-option go_package = "/registrypb";
-import "google/protobuf/any.proto";
+option go_package = "/goa_ai_registrypb";
 
 // Internal tool registry gateway for toolset discovery and tool invocation
 service Registry {
@@ -18,8 +17,6 @@ service Registry {
 	rpc Register (RegisterRequest) returns (RegisterResponse);
 	// Unregister a toolset from the registry
 	rpc Unregister (UnregisterRequest) returns (UnregisterResponse);
-	// Emit a tool execution result to the result stream
-	rpc EmitToolResult (EmitToolResultRequest) returns (EmitToolResultResponse);
 	// Respond to a health check ping
 	rpc Pong (PongRequest) returns (PongResponse);
 	// List all registered toolsets with optional tag filtering
@@ -28,7 +25,9 @@ service Registry {
 	rpc GetToolset (GetToolsetRequest) returns (GetToolsetResponse);
 	// Search toolsets by keyword matching name, description, or tags
 	rpc Search (SearchRequest) returns (SearchResponse);
-	// Invoke a tool through the registry gateway
+	// Initiate a tool call by publishing a tool call message to the toolset
+// request stream and returning the tool use identifier and result stream
+// identifier.
 	rpc CallTool (CallToolRequest) returns (CallToolResponse);
 }
 
@@ -37,23 +36,27 @@ message RegisterRequest {
 	string name = 1;
 	// Human-readable description of the toolset
 	optional string description = 2;
-	// Semantic version of the toolset
+	// Semantic version of the toolset.
 	optional string version = 3;
 	// Tags for categorization and filtering
 	repeated string tags = 4;
 	// Tool definitions with their schemas
 	repeated ToolSchema tools = 5;
 }
-// Tool schema for registration
+// Tool schema declaration for registration with the tool registry gateway.
 message ToolSchema {
-	// Tool identifier
+	// Globally unique tool identifier of the form "toolset.tool".
 	string name = 1;
-	// Human-readable description
+	// Human-readable description of what the tool does.
 	optional string description = 2;
-	// JSON Schema for tool input parameters
-	bytes input_schema = 3;
-	// JSON Schema for tool output (optional)
-	optional bytes output_schema = 4;
+	// Optional tags used for policy, routing, or UI filtering.
+	repeated string tags = 3;
+	// Canonical JSON schema for the tool payload.
+	bytes payload_schema = 4;
+	// Canonical JSON schema for the tool result.
+	bytes result_schema = 5;
+	// Canonical JSON schema for the tool sidecar (UI-only), when present.
+	optional bytes sidecar_schema = 6;
 }
 
 message RegisterResponse {
@@ -69,25 +72,6 @@ message UnregisterRequest {
 }
 
 message UnregisterResponse {
-}
-
-message EmitToolResultRequest {
-	// Unique identifier for the tool invocation
-	string tool_use_id = 1;
-	// Tool execution result (JSON-serializable)
-	optional google.protobuf.Any result = 2;
-	// Error details if execution failed
-	ToolError error = 3;
-}
-// Error details from tool execution
-message ToolError {
-	// Error code
-	string code = 1;
-	// Error message
-	string message_ = 2;
-}
-
-message EmitToolResultResponse {
 }
 
 message PongRequest {
@@ -115,7 +99,7 @@ message ToolsetInfo {
 	string name = 1;
 	// Human-readable description
 	optional string description = 2;
-	// Semantic version
+	// Semantic version of the toolset.
 	optional string version = 3;
 	// Tags for categorization
 	repeated string tags = 4;
@@ -135,27 +119,16 @@ message GetToolsetResponse {
 	string name = 1;
 	// Human-readable description
 	optional string description = 2;
-	// Semantic version
+	// Semantic version of the toolset.
 	optional string version = 3;
 	// Tags for categorization
 	repeated string tags = 4;
-	// Tool definitions
-	repeated Tool tools = 5;
+	// Tool schemas included in the toolset.
+	repeated ToolSchema tools = 5;
 	// Pulse stream identifier
 	string stream_id = 6;
 	// ISO 8601 registration timestamp
 	string registered_at = 7;
-}
-// Tool definition with input and output schemas
-message Tool {
-	// Tool identifier
-	string name = 1;
-	// Human-readable description
-	optional string description = 2;
-	// JSON Schema for tool input parameters
-	bytes input_schema = 3;
-	// JSON Schema for tool output (optional)
-	optional bytes output_schema = 4;
 }
 
 message SearchRequest {
@@ -169,19 +142,36 @@ message SearchResponse {
 }
 
 message CallToolRequest {
-	// Name of the toolset containing the tool
+	// Toolset registration identifier used for routing (for example,
+// "atlas_data.atlas.read").
 	string toolset = 1;
-	// Name of the tool to invoke
+	// Globally unique tool identifier of the form "toolset.tool" (for example,
+// "atlas.read.get_time_series").
 	string tool = 2;
-	// Tool input payload (must match tool's input schema)
-	optional google.protobuf.Any payload = 3;
+	// Canonical JSON payload for the tool call. Must validate against the
+// registered payload schema.
+	bytes payload_json = 3;
+	// Execution metadata propagated alongside the tool call.
+	ToolCallMeta meta = 4;
+}
+// Context metadata propagated alongside tool calls for routing, correlation,
+// and domain injection (for example, session-scoped data access).
+message ToolCallMeta {
+	// Run identifier for the agent execution that issued this tool call.
+	string run_id = 1;
+	// Chat session identifier used to scope tool behavior and persistence.
+	string session_id = 2;
+	// Turn identifier within the session.
+	optional string turn_id = 3;
+	// Tool call identifier used for correlation with model provider tool calls.
+	optional string tool_call_id = 4;
+	// Parent tool call identifier when the tool call is nested.
+	optional string parent_tool_call_id = 5;
 }
 
 message CallToolResponse {
 	// Unique identifier for this invocation
 	string tool_use_id = 1;
-	// Tool execution result
-	optional google.protobuf.Any result = 2;
-	// Error details if execution failed
-	ToolError error = 3;
+	// Pulse stream identifier that will receive the tool result message.
+	string result_stream_id = 2;
 }

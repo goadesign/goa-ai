@@ -7,6 +7,8 @@ package bedrock
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -665,66 +667,88 @@ func encodeTools(
 
 // sanitizeToolName maps a canonical tool identifier to characters allowed by
 // the Bedrock constraint [a-zA-Z0-9_-]+ by replacing any disallowed rune with
-// '_'. The mapping must be reversible within a single request; callers rely on
-// encodeTools to build a collision-free sanitized → canonical name map.
+// '_'. Unlike OpenAI-style providers, Bedrock imposes stricter constraints on
+// tool names and some models/providers surface only the tool name string in tool
+// use blocks.
 //
-// Canonical tool identifiers follow the pattern "toolset.tool". To keep tool
-// names concise and avoid redundant prefixes in provider-facing configs, this
-// helper derives the base name from the segment after the final '.' and, when
-// present, strips a "<toolset_suffix>_" prefix. For example:
+// Contract:
+//   - The mapping must be deterministic and collision-free within a request.
+//   - The mapping must preserve namespace information from canonical IDs so two
+//     different tools cannot sanitize to the same provider-visible name.
 //
-//   - "ada.get_application_status"          → "get_application_status"
-//   - "atlas.read.chat.chat_get_user_details" → "get_user_details"
-//   - "chat.emit.ask_clarifying_question"  → "ask_clarifying_question"
+// Canonical tool identifiers use dot-separated namespaces (e.g. "toolset.tool"
+// or "atlas.read.get_time_series"). We keep the full canonical ID, replace '.'
+// with '_', and apply the Bedrock rune constraint. If the sanitized name would
+// exceed Bedrock's documented 64-character limit, we truncate and append a short
+// stable hash suffix derived from the canonical ID.
 func sanitizeToolName(in string) string {
 	if in == "" {
-		return in
+		return ""
 	}
-	// Derive base name from the final segment (after the last '.').
-	base := in
-	if idx := strings.LastIndex(in, "."); idx >= 0 && idx+1 < len(in) {
-		base = in[idx+1:]
+	const maxLen = 64
+	const hashLen = 8
 
-		// When the tool name is prefixed with the last toolset segment plus "_",
-		// drop that redundant prefix. This turns patterns like
-		// "atlas.read.chat.chat_get_user_details" into "get_user_details".
-		if idx > 0 {
-			if lastDot := strings.LastIndex(in[:idx], "."); lastDot >= 0 && lastDot+1 < idx {
-				toolsetSuffix := in[lastDot+1 : idx]
-				prefix := toolsetSuffix + "_"
-				if strings.HasPrefix(base, prefix) && len(base) > len(prefix) {
-					base = base[len(prefix):]
-				}
+	// Fast path: if all runes are already allowed after mapping '.' to '_', keep
+	// the string allocation-free.
+	allowed := true
+	for _, r := range in {
+		if r == '.' {
+			r = '_'
+		}
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '_':
+		case r == '-':
+		default:
+			allowed = false
+		}
+		if !allowed {
+			break
+		}
+	}
+
+	var sanitized string
+	if allowed {
+		sanitized = strings.ReplaceAll(in, ".", "_")
+	} else {
+		out := make([]rune, 0, len(in))
+		for _, r := range in {
+			if r == '.' {
+				r = '_'
+			}
+			switch {
+			case r >= 'a' && r <= 'z':
+				out = append(out, r)
+			case r >= 'A' && r <= 'Z':
+				out = append(out, r)
+			case r >= '0' && r <= '9':
+				out = append(out, r)
+			case r == '_' || r == '-':
+				out = append(out, r)
+			default:
+				out = append(out, '_')
 			}
 		}
+		sanitized = string(out)
 	}
-	// Fast path: if all runes are allowed, return as-is.
-	allowed := true
-	for _, r := range base {
-		if (r >= 'a' && r <= 'z') ||
-			(r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') ||
-			r == '_' || r == '-' {
-			continue
-		}
-		allowed = false
-		break
+
+	if len(sanitized) <= maxLen {
+		return sanitized
 	}
-	if allowed {
-		return base
+
+	// Truncate and append a stable hash suffix to keep names within Bedrock's
+	// documented 64-character limit while preserving uniqueness.
+	sum := sha256.Sum256([]byte(in))
+	suffix := hex.EncodeToString(sum[:])[:hashLen]
+
+	// Reserve "_" + hashLen at the end.
+	prefixLen := maxLen - (1 + hashLen)
+	if prefixLen < 1 {
+		prefixLen = 1
 	}
-	out := make([]rune, 0, len(base))
-	for _, r := range base {
-		if (r >= 'a' && r <= 'z') ||
-			(r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') ||
-			r == '_' || r == '-' {
-			out = append(out, r)
-		} else {
-			out = append(out, '_')
-		}
-	}
-	return string(out)
+	return sanitized[:prefixLen] + "_" + suffix
 }
 
 func toDocument(ctx context.Context, schema any) document.Interface {

@@ -8,7 +8,6 @@ import (
 	"reflect"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/leanovate/gopter"
 	"github.com/leanovate/gopter/gen"
@@ -18,6 +17,7 @@ import (
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/registry/store/memory"
+	"goa.design/goa-ai/runtime/toolregistry"
 )
 
 // TestRegistrationIdempotence verifies Property 2: Registration idempotence.
@@ -26,6 +26,12 @@ import (
 // the second metadata being stored, and the stream ID should remain the same.
 // **Validates: Requirements 2.2, 2.5**
 func TestRegistrationIdempotence(t *testing.T) {
+	rdb := getRedis(t)
+	pulseClient, err := clientspulse.New(clientspulse.Options{Redis: rdb})
+	if err != nil {
+		t.Fatalf("create pulse client: %v", err)
+	}
+
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
 	properties := gopter.NewProperties(parameters)
@@ -40,14 +46,14 @@ func TestRegistrationIdempotence(t *testing.T) {
 			// Create mock dependencies.
 			mockSM := newMockStreamManagerForService()
 			mockHT := newMockHealthTracker()
-			mockRSM := newMockResultStreamManagerForService()
 
 			// Create the service.
 			svc, err := NewService(ServiceOptions{
-				Store:               store,
-				StreamManager:       mockSM,
-				HealthTracker:       mockHT,
-				ResultStreamManager: mockRSM,
+				Store:         store,
+				StreamManager: mockSM,
+				HealthTracker: mockHT,
+				PulseClient:   pulseClient,
+				Redis:         rdb,
 			})
 			if err != nil {
 				return false
@@ -139,12 +145,17 @@ func genRegisterPayload(name string) gopter.Gen {
 		genTagsForService(),
 		genToolSchemaSlice(),
 	).Map(func(vals []any) *genregistry.RegisterPayload {
-		var desc, version *string
+		var (
+			desc    *string
+			version *genregistry.SemVer
+		)
 		if vals[0] != nil {
 			desc = vals[0].(*string)
 		}
 		if vals[1] != nil {
-			version = vals[1].(*string)
+			raw := vals[1].(*string)
+			v := genregistry.SemVer(*raw)
+			version = &v
 		}
 		return &genregistry.RegisterPayload{
 			Name:        name,
@@ -200,10 +211,10 @@ func genToolSchema() gopter.Gen {
 			desc = vals[1].(*string)
 		}
 		return &genregistry.ToolSchema{
-			Name:         vals[0].(string),
-			Description:  desc,
-			InputSchema:  vals[2].([]byte),
-			OutputSchema: vals[3].([]byte),
+			Name:          vals[0].(string),
+			Description:   desc,
+			PayloadSchema: vals[2].([]byte),
+			ResultSchema:  vals[3].([]byte),
 		}
 	})
 }
@@ -229,7 +240,7 @@ func genSchemaForService() gopter.Gen {
 }
 
 // stringPtrEqualForService checks if two string pointers are equal.
-func stringPtrEqualForService(a, b *string) bool {
+func stringPtrEqualForService[T ~string](a, b *T) bool {
 	if a == nil && b == nil {
 		return true
 	}
@@ -258,6 +269,12 @@ func stringSliceEqualForService(a, b []string) bool {
 // CallTool should reject with a validation error.
 // **Validates: Requirements 9.2**
 func TestCallToolPayloadValidation(t *testing.T) {
+	rdb := getRedis(t)
+	pulseClient, err := clientspulse.New(clientspulse.Options{Redis: rdb})
+	if err != nil {
+		t.Fatalf("create pulse client: %v", err)
+	}
+
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
 	properties := gopter.NewProperties(parameters)
@@ -275,14 +292,14 @@ func TestCallToolPayloadValidation(t *testing.T) {
 			// Create mock dependencies.
 			mockSM := newMockStreamManagerForService()
 			mockHT := newMockHealthTracker() // Always healthy
-			mockRSM := newMockResultStreamManagerForService()
 
 			// Create the service.
 			svc, err := NewService(ServiceOptions{
-				Store:               store,
-				StreamManager:       mockSM,
-				HealthTracker:       mockHT,
-				ResultStreamManager: mockRSM,
+				Store:         store,
+				StreamManager: mockSM,
+				HealthTracker: mockHT,
+				PulseClient:   pulseClient,
+				Redis:         rdb,
 			})
 			if err != nil {
 				return false
@@ -290,9 +307,13 @@ func TestCallToolPayloadValidation(t *testing.T) {
 
 			// Call the tool with an invalid payload.
 			_, err = svc.CallTool(ctx, &genregistry.CallToolPayload{
-				Toolset: tc.toolset.Name,
-				Tool:    tc.toolName,
-				Payload: tc.invalidPayload,
+				Toolset:     tc.toolset.Name,
+				Tool:        tc.toolName,
+				PayloadJSON: tc.invalidPayload,
+				Meta: &genregistry.ToolCallMeta{
+					RunID:     "test-run",
+					SessionID: "test-session",
+				},
 			})
 
 			// Should return a validation error.
@@ -317,7 +338,7 @@ func TestCallToolPayloadValidation(t *testing.T) {
 type payloadValidationTestCase struct {
 	toolset        *genregistry.Toolset
 	toolName       string
-	invalidPayload any
+	invalidPayload json.RawMessage
 }
 
 // genPayloadValidationTestCase generates test cases with toolsets and invalid payloads.
@@ -330,22 +351,22 @@ func genPayloadValidationTestCase() gopter.Gen {
 		schemaType := arr[0].(string)
 		toolsetName := arr[1].(string)
 
-		return genInvalidPayloadForSchema(schemaType).Map(func(invalidPayload any) payloadValidationTestCase {
+		return genInvalidPayloadForSchema(schemaType).Map(func(invalidPayload json.RawMessage) payloadValidationTestCase {
 			// Create a tool with the schema.
 			schema := schemaForType(schemaType)
 			toolName := "test-tool"
 			desc := "A test tool"
 
-			tool := &genregistry.Tool{
-				Name:        toolName,
-				Description: &desc,
-				InputSchema: schema,
+			tool := &genregistry.ToolSchema{
+				Name:          toolName,
+				Description:   &desc,
+				PayloadSchema: schema,
 			}
 
 			// Create the toolset.
 			toolset := &genregistry.Toolset{
 				Name:         toolsetName,
-				Tools:        []*genregistry.Tool{tool},
+				Tools:        []*genregistry.ToolSchema{tool},
 				StreamID:     "toolset:" + toolsetName + ":requests",
 				RegisteredAt: "2024-01-15T10:30:00Z",
 			}
@@ -398,40 +419,40 @@ func genInvalidPayloadForSchema(schemaType string) gopter.Gen {
 	case "object-required":
 		// Generate objects missing required fields or with wrong types.
 		return gen.OneConstOf(
-			map[string]any{"name": "test"},                    // Missing "count"
-			map[string]any{"count": 42},                       // Missing "name"
-			map[string]any{},                                  // Missing both
-			map[string]any{"name": 123, "count": 42},          // Wrong type for "name"
-			map[string]any{"name": "test", "count": "string"}, // Wrong type for "count"
+			json.RawMessage(`{"name":"test"}`),
+			json.RawMessage(`{"count":42}`),
+			json.RawMessage(`{}`),
+			json.RawMessage(`{"name":123,"count":42}`),
+			json.RawMessage(`{"name":"test","count":"string"}`),
 		)
 	case "string":
 		// Generate non-string values.
 		return gen.OneConstOf(
-			42,
-			true,
-			[]string{"array"},
-			map[string]any{"key": "value"},
+			json.RawMessage(`42`),
+			json.RawMessage(`true`),
+			json.RawMessage(`["array"]`),
+			json.RawMessage(`{"key":"value"}`),
 		)
 	case "integer":
 		// Generate non-integer values.
 		return gen.OneConstOf(
-			"string",
-			true,
-			[]int{1, 2, 3},
-			map[string]any{"key": "value"},
-			3.14, // Float, not integer
+			json.RawMessage(`"string"`),
+			json.RawMessage(`true`),
+			json.RawMessage(`[1,2,3]`),
+			json.RawMessage(`{"key":"value"}`),
+			json.RawMessage(`3.14`),
 		)
 	case "array-of-strings":
 		// Generate non-arrays or arrays with wrong item types.
 		return gen.OneConstOf(
-			"not-an-array",
-			42,
-			[]int{1, 2, 3},                 // Array of integers, not strings
-			map[string]any{"key": "value"}, // Object, not array
-			[]any{"string", 42},            // Mixed types
+			json.RawMessage(`"not-an-array"`),
+			json.RawMessage(`42`),
+			json.RawMessage(`[1,2,3]`),
+			json.RawMessage(`{"key":"value"}`),
+			json.RawMessage(`["string",42]`),
 		)
 	default:
-		return gen.OneConstOf("invalid")
+		return gen.OneConstOf(json.RawMessage(`"invalid"`))
 	}
 }
 
@@ -440,12 +461,12 @@ func genInvalidPayloadForSchema(schemaType string) gopter.Gen {
 // mockStreamManagerForService is a mock StreamManager for service tests.
 type mockStreamManagerForService struct {
 	mu       sync.RWMutex
-	messages map[string][]*ToolCallMessage
+	messages map[string][]toolregistry.ToolCallMessage
 }
 
 func newMockStreamManagerForService() *mockStreamManagerForService {
 	return &mockStreamManagerForService{
-		messages: make(map[string][]*ToolCallMessage),
+		messages: make(map[string][]toolregistry.ToolCallMessage),
 	}
 }
 
@@ -459,7 +480,7 @@ func (m *mockStreamManagerForService) GetStream(toolset string) clientspulse.Str
 
 func (m *mockStreamManagerForService) RemoveStream(toolset string) {}
 
-func (m *mockStreamManagerForService) PublishToolCall(ctx context.Context, toolset string, msg *ToolCallMessage) error {
+func (m *mockStreamManagerForService) PublishToolCall(ctx context.Context, toolset string, msg toolregistry.ToolCallMessage) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.messages[toolset] = append(m.messages[toolset], msg)
@@ -497,64 +518,18 @@ func (m *mockHealthTracker) Close() error {
 
 var _ HealthTracker = (*mockHealthTracker)(nil)
 
-// mockResultStreamManagerForService is a mock ResultStreamManager for service tests.
-type mockResultStreamManagerForService struct {
-	mu           sync.Mutex
-	streams      map[string]bool
-	toolUseIDSeq int
-}
-
-func newMockResultStreamManagerForService() *mockResultStreamManagerForService {
-	return &mockResultStreamManagerForService{
-		streams: make(map[string]bool),
-	}
-}
-
-func (m *mockResultStreamManagerForService) CreateResultStream(ctx context.Context) (clientspulse.Stream, string, string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.toolUseIDSeq++
-	toolUseID := fmt.Sprintf("mock-tool-use-%d", m.toolUseIDSeq)
-	streamID := "result:" + toolUseID
-	m.streams[toolUseID] = true
-	return nil, toolUseID, streamID, nil
-}
-
-func (m *mockResultStreamManagerForService) GetResultStream(ctx context.Context, toolUseID string) (clientspulse.Stream, error) {
-	return nil, nil
-}
-
-func (m *mockResultStreamManagerForService) DestroyResultStream(ctx context.Context, toolUseID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.streams, toolUseID)
-	return nil
-}
-
-func (m *mockResultStreamManagerForService) SetTTL(ctx context.Context, toolUseID string, ttl time.Duration) error {
-	return nil
-}
-
-func (m *mockResultStreamManagerForService) WaitForResult(ctx context.Context, toolUseID string, opts WaitForResultOptions) (*ToolResultMessage, error) {
-	// Return a mock result.
-	return &ToolResultMessage{
-		ToolUseID: toolUseID,
-		Result:    json.RawMessage(`{"status":"ok"}`),
-	}, nil
-}
-
-func (m *mockResultStreamManagerForService) PublishResult(ctx context.Context, toolUseID string, msg *ToolResultMessage) error {
-	return nil
-}
-
-var _ ResultStreamManager = (*mockResultStreamManagerForService)(nil)
-
 // TestUnregisterRemovesFromListing verifies Property 4: Unregister removes from listing.
 // **Feature: internal-tool-registry, Property 4: Unregister removes from listing**
 // *For any* registered toolset, unregistering it should cause it to no longer
 // appear in ListToolsets results.
 // **Validates: Requirements 5.1, 6.1**
 func TestUnregisterRemovesFromListing(t *testing.T) {
+	rdb := getRedis(t)
+	pulseClient, err := clientspulse.New(clientspulse.Options{Redis: rdb})
+	if err != nil {
+		t.Fatalf("create pulse client: %v", err)
+	}
+
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
 	properties := gopter.NewProperties(parameters)
@@ -569,14 +544,14 @@ func TestUnregisterRemovesFromListing(t *testing.T) {
 			// Create mock dependencies.
 			mockSM := newMockStreamManagerForService()
 			mockHT := newMockHealthTracker()
-			mockRSM := newMockResultStreamManagerForService()
 
 			// Create the service.
 			svc, err := NewService(ServiceOptions{
-				Store:               store,
-				StreamManager:       mockSM,
-				HealthTracker:       mockHT,
-				ResultStreamManager: mockRSM,
+				Store:         store,
+				StreamManager: mockSM,
+				HealthTracker: mockHT,
+				PulseClient:   pulseClient,
+				Redis:         rdb,
 			})
 			if err != nil {
 				return false
@@ -696,6 +671,12 @@ func containsToolsetInfo(infos []*genregistry.ToolsetInfo, name string) bool {
 // should fail with a validation error.
 // **Validates: Requirements 2.3**
 func TestInvalidSchemaRejection(t *testing.T) {
+	rdb := getRedis(t)
+	pulseClient, err := clientspulse.New(clientspulse.Options{Redis: rdb})
+	if err != nil {
+		t.Fatalf("create pulse client: %v", err)
+	}
+
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
 	properties := gopter.NewProperties(parameters)
@@ -710,14 +691,14 @@ func TestInvalidSchemaRejection(t *testing.T) {
 			// Create mock dependencies.
 			mockSM := newMockStreamManagerForService()
 			mockHT := newMockHealthTracker()
-			mockRSM := newMockResultStreamManagerForService()
 
 			// Create the service.
 			svc, err := NewService(ServiceOptions{
-				Store:               store,
-				StreamManager:       mockSM,
-				HealthTracker:       mockHT,
-				ResultStreamManager: mockRSM,
+				Store:         store,
+				StreamManager: mockSM,
+				HealthTracker: mockHT,
+				PulseClient:   pulseClient,
+				Redis:         rdb,
 			})
 			if err != nil {
 				return false
@@ -761,7 +742,8 @@ func genInvalidSchemaTestCase() gopter.Gen {
 
 		return genInvalidToolSchema(invalidType).Map(func(tools []*genregistry.ToolSchema) invalidSchemaTestCase {
 			desc := "A test toolset"
-			version := "1.0.0"
+			rawVersion := "1.0.0"
+			version := genregistry.SemVer(rawVersion)
 			return invalidSchemaTestCase{
 				payload: &genregistry.RegisterPayload{
 					Name:        toolsetName,
@@ -800,40 +782,40 @@ func genInvalidToolSchema(invalidType string) gopter.Gen {
 			// Empty input schema (required but missing).
 			return []*genregistry.ToolSchema{
 				{
-					Name:         toolName,
-					Description:  &desc,
-					InputSchema:  []byte{}, // Empty
-					OutputSchema: []byte(`{"type":"object"}`),
+					Name:          toolName,
+					Description:   &desc,
+					PayloadSchema: []byte{}, // Empty
+					ResultSchema:  []byte(`{"type":"object"}`),
 				},
 			}
 		case "invalid-json-input":
 			// Invalid JSON in input schema.
 			return []*genregistry.ToolSchema{
 				{
-					Name:         toolName,
-					Description:  &desc,
-					InputSchema:  []byte(`{not valid json`),
-					OutputSchema: []byte(`{"type":"object"}`),
+					Name:          toolName,
+					Description:   &desc,
+					PayloadSchema: []byte(`{not valid json`),
+					ResultSchema:  []byte(`{"type":"object"}`),
 				},
 			}
 		case "invalid-json-output":
 			// Invalid JSON in output schema.
 			return []*genregistry.ToolSchema{
 				{
-					Name:         toolName,
-					Description:  &desc,
-					InputSchema:  []byte(`{"type":"object"}`),
-					OutputSchema: []byte(`{not valid json`),
+					Name:          toolName,
+					Description:   &desc,
+					PayloadSchema: []byte(`{"type":"object"}`),
+					ResultSchema:  []byte(`{not valid json`),
 				},
 			}
 		default:
 			// Fallback to empty input schema.
 			return []*genregistry.ToolSchema{
 				{
-					Name:         toolName,
-					Description:  &desc,
-					InputSchema:  []byte{},
-					OutputSchema: nil,
+					Name:          toolName,
+					Description:   &desc,
+					PayloadSchema: []byte{},
+					ResultSchema:  nil,
 				},
 			}
 		}
@@ -845,6 +827,12 @@ func genInvalidToolSchema(invalidType string) gopter.Gen {
 // *For any* toolset name that is not registered, unregistering should return a not-found error.
 // **Validates: Requirements 5.2, 7.2**
 func TestUnregisterNonExistentReturnsNotFound(t *testing.T) {
+	rdb := getRedis(t)
+	pulseClient, err := clientspulse.New(clientspulse.Options{Redis: rdb})
+	if err != nil {
+		t.Fatalf("create pulse client: %v", err)
+	}
+
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
 	properties := gopter.NewProperties(parameters)
@@ -859,14 +847,14 @@ func TestUnregisterNonExistentReturnsNotFound(t *testing.T) {
 			// Create mock dependencies.
 			mockSM := newMockStreamManagerForService()
 			mockHT := newMockHealthTracker()
-			mockRSM := newMockResultStreamManagerForService()
 
 			// Create the service.
 			svc, err := NewService(ServiceOptions{
-				Store:               store,
-				StreamManager:       mockSM,
-				HealthTracker:       mockHT,
-				ResultStreamManager: mockRSM,
+				Store:         store,
+				StreamManager: mockSM,
+				HealthTracker: mockHT,
+				PulseClient:   pulseClient,
+				Redis:         rdb,
 			})
 			if err != nil {
 				return false

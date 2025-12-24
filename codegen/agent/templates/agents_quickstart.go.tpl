@@ -326,6 +326,48 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
 }
 ```
 
+{{- if hasServiceSideProviders . }}
+---
+
+#### Service-Side Tool Providers (Registry-Routed Execution)
+
+When a toolset is **method-backed** (a tool is declared via `BindTo(...)`) and the toolset is owned by a service, Goa-AI also generates a **tool provider**:
+
+- `gen/<service>/toolsets/<toolset>/provider.go`
+
+The provider implements `HandleToolCall(ctx, msg)` which:
+
+- Decodes the incoming tool payload JSON using the generated payload codec
+- Builds the Goa method payload (using the generated transforms)
+- Calls the bound service method
+- Encodes the tool result JSON (and optional artifact/sidecar) using the generated result codec
+
+To serve tool calls from the registry gateway, run the provider loop inside the owning service process:
+
+```go
+// cmd/<service>/main.go (or your service bootstrap)
+handler := <toolsetpkg>.NewProvider(svcImpl)
+go func() {
+    err := toolprovider.Serve(ctx, pulseClient, toolsetID, handler, toolprovider.Options{
+        Pong: func(ctx context.Context, pingID string) error {
+            return registryClient.Pong(ctx, &registry.PongPayload{
+                PingID:  pingID,
+                Toolset: toolsetID,
+            })
+        },
+    })
+    if err != nil {
+        panic(err)
+    }
+}()
+```
+
+Notes:
+
+- The registry publishes tool calls to the deterministic stream `toolset:<toolsetID>:requests` and providers publish results to `result:<toolUseID>`.
+- Providers are generated only when the toolset has at least one **method-backed** tool (and the toolset is not registry-backed).
+{{- end }}
+
 #### Connecting to Remote Services (MCP)
 
 If your agent uses tools from another service via MCP (`Use(MCPToolset(...))`):

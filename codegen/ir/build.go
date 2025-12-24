@@ -267,6 +267,24 @@ func selectOwner(def *agentsExpr.ToolsetExpr, refs []toolsetRef, servicesByName 
 		}, nil
 	}
 
+	serviceExports := make([]toolsetRef, 0, len(refs))
+	for _, r := range refs {
+		if r.kind == toolsetRefServiceExpo {
+			serviceExports = append(serviceExports, r)
+		}
+	}
+	if len(serviceExports) > 0 {
+		slices.SortFunc(serviceExports, func(a, b toolsetRef) int {
+			return strings.Compare(a.serviceName, b.serviceName)
+		})
+		r := serviceExports[0]
+		return Owner{
+			Kind:            OwnerKindService,
+			ServiceName:     r.serviceName,
+			ServicePathName: r.servicePathName,
+		}, nil
+	}
+
 	if len(refs) == 0 {
 		return Owner{}, fmt.Errorf("toolset %q has no owning references", def.Name)
 	}

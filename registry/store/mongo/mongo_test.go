@@ -312,23 +312,29 @@ func toolsetsEqual(a, b *genregistry.Toolset) bool {
 	return true
 }
 
-func toolsEqual(a, b *genregistry.Tool) bool {
+func toolsEqual(a, b *genregistry.ToolSchema) bool {
 	if a.Name != b.Name {
 		return false
 	}
 	if !stringPtrEqual(a.Description, b.Description) {
 		return false
 	}
-	if !reflect.DeepEqual(a.InputSchema, b.InputSchema) {
+	if !stringSliceEqual(a.Tags, b.Tags) {
 		return false
 	}
-	if !reflect.DeepEqual(a.OutputSchema, b.OutputSchema) {
+	if !reflect.DeepEqual(a.PayloadSchema, b.PayloadSchema) {
+		return false
+	}
+	if !reflect.DeepEqual(a.ResultSchema, b.ResultSchema) {
+		return false
+	}
+	if !reflect.DeepEqual(a.SidecarSchema, b.SidecarSchema) {
 		return false
 	}
 	return true
 }
 
-func stringPtrEqual(a, b *string) bool {
+func stringPtrEqual[T ~string](a, b *T) bool {
 	if a == nil && b == nil {
 		return true
 	}
@@ -403,19 +409,24 @@ func genToolset() gopter.Gen {
 		genStreamID(),
 		genTimestamp(),
 	).Map(func(vals []any) *genregistry.Toolset {
-		var desc, version *string
+		var (
+			desc    *string
+			version *genregistry.SemVer
+		)
 		if vals[1] != nil {
 			desc = vals[1].(*string)
 		}
 		if vals[2] != nil {
-			version = vals[2].(*string)
+			raw := vals[2].(*string)
+			v := genregistry.SemVer(*raw)
+			version = &v
 		}
 		return &genregistry.Toolset{
 			Name:         vals[0].(string),
 			Description:  desc,
 			Version:      version,
 			Tags:         vals[3].([]string),
-			Tools:        vals[4].([]*genregistry.Tool),
+			Tools:        vals[4].([]*genregistry.ToolSchema),
 			StreamID:     vals[5].(string),
 			RegisteredAt: vals[6].(string),
 		}
@@ -458,20 +469,29 @@ func genSearchQuery() gopter.Gen {
 }
 
 func genToolSlice() gopter.Gen {
-	return gen.SliceOfN(3, genTool()).Map(func(tools []*genregistry.Tool) []*genregistry.Tool { return tools })
+	return gen.SliceOfN(3, genTool()).Map(func(tools []*genregistry.ToolSchema) []*genregistry.ToolSchema { return tools })
 }
 
 func genTool() gopter.Gen {
-	return gopter.CombineGens(genToolName(), genOptionalString(), genSchema(), genSchema()).Map(func(vals []any) *genregistry.Tool {
+	return gopter.CombineGens(
+		genToolName(),
+		genOptionalString(),
+		genTags(),
+		genSchema(),
+		genSchema(),
+		genSchema(),
+	).Map(func(vals []any) *genregistry.ToolSchema {
 		var desc *string
 		if vals[1] != nil {
 			desc = vals[1].(*string)
 		}
-		return &genregistry.Tool{
-			Name:         vals[0].(string),
-			Description:  desc,
-			InputSchema:  vals[2].([]byte),
-			OutputSchema: vals[3].([]byte),
+		return &genregistry.ToolSchema{
+			Name:          vals[0].(string),
+			Description:   desc,
+			Tags:          vals[2].([]string),
+			PayloadSchema: vals[3].([]byte),
+			ResultSchema:  vals[4].([]byte),
+			SidecarSchema: vals[5].([]byte),
 		}
 	})
 }

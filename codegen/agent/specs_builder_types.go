@@ -54,6 +54,9 @@ type (
 		// the user sees in the UI and is propagated into ToolSpec so runtimes
 		// can build artifact-aware reminders without inspecting JSON schemas.
 		ArtifactDescription string
+		// ArtifactKind is the emitted artifact kind when the tool declares a
+		// sidecar via the Artifact DSL (for example, "atlas.time_series").
+		ArtifactKind string
 		// Classification tags for policy and filtering.
 		Tags []string
 		// Whether this tool is exported by an agent (agent-as-tool).

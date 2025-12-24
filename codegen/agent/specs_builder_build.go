@@ -43,6 +43,10 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 				return nil, err
 			}
 		}
+		artifactKind := ""
+		if sidecar != nil {
+			artifactKind = tool.ArtifactKind
+		}
 		entry := &toolEntry{
 			// Name is the qualified tool ID used at runtime (toolset.tool).
 			Name:              tool.QualifiedName,
@@ -53,6 +57,7 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 			Toolset:           toolsetName(tool),
 			Description:       tool.Description,
 			ArtifactDescription: tool.ArtifactDescription,
+			ArtifactKind:        artifactKind,
 			Tags:              tool.Tags,
 			IsExportedByAgent: tool.IsExportedByAgent,
 			ExportingAgentID:  tool.ExportingAgentID,

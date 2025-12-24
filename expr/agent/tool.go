@@ -146,6 +146,7 @@ func (t *ToolExpr) Validate() error {
 	desired := codegen.Goify(t.bindMethodName, true)
 	for _, m := range svc.Methods {
 		if codegen.Goify(m.Name, true) == desired {
+			validateInjectedFields(t, m, verr)
 			if err := t.validateShapes(); err != nil {
 				verr.AddError(t, err)
 				return verr
@@ -155,6 +156,84 @@ func (t *ToolExpr) Validate() error {
 	}
 	verr.Add(t, "service method %q not found in service %q", t.bindMethodName, svc.Name)
 	return verr
+}
+
+func validateInjectedFields(t *ToolExpr, m *goaexpr.MethodExpr, verr *eval.ValidationErrors) {
+	if t == nil || len(t.InjectedFields) == 0 {
+		return
+	}
+	if m == nil || m.Payload == nil || m.Payload.Type == nil || m.Payload.Type == goaexpr.Empty {
+		verr.Add(t, "Inject requires a non-empty bound method payload")
+		return
+	}
+
+	att := m.Payload
+	if ut, ok := att.Type.(goaexpr.UserType); ok && ut != nil {
+		att = ut.Attribute()
+	}
+	obj, ok := att.Type.(*goaexpr.Object)
+	if !ok || obj == nil {
+		verr.Add(t, "Inject requires the bound method payload to be an object")
+		return
+	}
+
+	required := make(map[string]struct{})
+	if att.Validation != nil {
+		for _, r := range att.Validation.Required {
+			required[r] = struct{}{}
+		}
+	}
+
+	seen := make(map[string]struct{})
+	for _, name := range t.InjectedFields {
+		if name == "" {
+			verr.Add(t, "Inject requires non-empty field names")
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			verr.Add(t, "Inject field %q is declared more than once", name)
+			continue
+		}
+		seen[name] = struct{}{}
+
+		if !isSupportedInjectedField(name) {
+			verr.Add(t, "Inject field %q is not supported (supported: %s)", name, supportedInjectedFieldsList())
+			continue
+		}
+
+		var field *goaexpr.NamedAttributeExpr
+		for _, na := range *obj {
+			if na.Name == name {
+				field = na
+				break
+			}
+		}
+		if field == nil || field.Attribute == nil || field.Attribute.Type == nil || field.Attribute.Type == goaexpr.Empty {
+			verr.Add(t, "Inject field %q does not exist on bound method payload", name)
+			continue
+		}
+		if _, ok := required[name]; !ok {
+			verr.Add(t, "Inject field %q must be required on the bound method payload", name)
+			continue
+		}
+		if field.Attribute.Type != goaexpr.String {
+			verr.Add(t, "Inject field %q must be a String on the bound method payload", name)
+			continue
+		}
+	}
+}
+
+func isSupportedInjectedField(name string) bool {
+	switch name {
+	case "run_id", "session_id", "turn_id", "tool_call_id", "parent_tool_call_id":
+		return true
+	default:
+		return false
+	}
+}
+
+func supportedInjectedFieldsList() string {
+	return `"run_id", "session_id", "turn_id", "tool_call_id", "parent_tool_call_id"`
 }
 
 func (t *ToolExpr) validateShapes() error {

@@ -5,6 +5,7 @@
 //
 //   - memory: In-memory store for development and testing
 //   - mongo: MongoDB store for production persistence
+//   - replicated: Pulse replicated map (rmap) store backed by Redis
 //
 // To add a new implementation, create a subpackage that implements the Store
 // interface and returns store.ErrNotFound for missing toolsets.

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"goa.design/goa-ai/runtime/toolregistry"
 	"goa.design/pulse/pool"
 	"goa.design/pulse/rmap"
 )
@@ -190,7 +191,7 @@ func (h *healthTracker) StartPingLoop(ctx context.Context, toolset string) error
 	_, _ = h.healthMap.SetIfNotExists(ctx, healthK, strconv.FormatInt(ts, 10))
 
 	// Start local ticker (other nodes will do the same via watchRegistryChanges).
-	return h.startLocalTicker(ctx, toolset)
+	return h.startLocalTicker(toolset)
 }
 
 func (h *healthTracker) StopPingLoop(ctx context.Context, toolset string) {
@@ -264,7 +265,7 @@ func (h *healthTracker) syncWithRegistry() {
 	for toolset := range registered {
 		if _, ok := h.tickers[toolset]; !ok {
 			// Use background context since this is triggered by map changes.
-			_ = h.startLocalTickerLocked(context.Background(), toolset)
+			_ = h.startLocalTickerLocked(toolset)
 		}
 	}
 
@@ -277,27 +278,30 @@ func (h *healthTracker) syncWithRegistry() {
 }
 
 // startLocalTicker starts a distributed ticker for a toolset on this node.
-func (h *healthTracker) startLocalTicker(ctx context.Context, toolset string) error {
+func (h *healthTracker) startLocalTicker(toolset string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.startLocalTickerLocked(ctx, toolset)
+	return h.startLocalTickerLocked(toolset)
 }
 
-func (h *healthTracker) startLocalTickerLocked(ctx context.Context, toolset string) error {
+func (h *healthTracker) startLocalTickerLocked(toolset string) error {
 	if _, ok := h.tickers[toolset]; ok {
 		return nil
 	}
 
+	// Use a fresh context for the ping loop that's only cancelled when we explicitly stop.
+	// This ensures the loop survives even if the caller ctx (e.g., an RPC request context)
+	// is canceled as soon as the request completes.
+	loopCtx, cancel := context.WithCancel(context.Background())
+
 	// Create a distributed ticker - only one node in the pool will receive ticks.
 	tickerName := fmt.Sprintf("registry:ping:%s", toolset)
-	ticker, err := h.poolNode.NewTicker(ctx, tickerName, h.pingInterval)
+	ticker, err := h.poolNode.NewTicker(loopCtx, tickerName, h.pingInterval)
 	if err != nil {
+		cancel()
 		return fmt.Errorf("create distributed ticker: %w", err)
 	}
 
-	// Use a fresh context for the ping loop that's only cancelled when we explicitly stop.
-	// This ensures the loop survives even if the original ctx is cancelled.
-	loopCtx, cancel := context.WithCancel(context.Background())
 	h.tickers[toolset] = ticker
 	h.cancels[toolset] = cancel
 	go h.runPingLoop(loopCtx, toolset, ticker)
@@ -351,6 +355,6 @@ func (h *healthTracker) runPingLoop(ctx context.Context, toolset string, ticker 
 
 func (h *healthTracker) sendPing(ctx context.Context, toolset string) {
 	pingID := uuid.New().String()
-	msg := NewPingMessage(pingID)
+	msg := toolregistry.NewPingMessage(pingID)
 	_ = h.streamManager.PublishToolCall(ctx, toolset, msg)
 }

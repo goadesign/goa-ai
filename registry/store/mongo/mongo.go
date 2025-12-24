@@ -40,10 +40,12 @@ type toolsetDocument struct {
 
 // toolDocument is the MongoDB document representation of a Tool.
 type toolDocument struct {
-	Name         string  `bson:"name"`
-	Description  *string `bson:"description,omitempty"`
-	InputSchema  []byte  `bson:"input_schema"`
-	OutputSchema []byte  `bson:"output_schema,omitempty"`
+	Name         string   `bson:"name"`
+	Description  *string  `bson:"description,omitempty"`
+	Tags         []string `bson:"tags,omitempty"`
+	PayloadSchema []byte  `bson:"payload_schema"`
+	ResultSchema  []byte  `bson:"result_schema"`
+	SidecarSchema []byte  `bson:"sidecar_schema,omitempty"`
 }
 
 // New creates a new MongoDB store using the provided collection.
@@ -157,11 +159,18 @@ func toDocument(ts *genregistry.Toolset) *toolsetDocument {
 	tools := make([]toolDocument, len(ts.Tools))
 	for i, t := range ts.Tools {
 		tools[i] = toolDocument{
-			Name:         t.Name,
-			Description:  t.Description,
-			InputSchema:  t.InputSchema,
-			OutputSchema: t.OutputSchema,
+			Name:          t.Name,
+			Description:   t.Description,
+			Tags:          t.Tags,
+			PayloadSchema: t.PayloadSchema,
+			ResultSchema:  t.ResultSchema,
+			SidecarSchema: t.SidecarSchema,
 		}
+	}
+	var version *string
+	if ts.Version != nil {
+		v := string(*ts.Version)
+		version = &v
 	}
 	// Ensure tags is never nil for MongoDB $all queries
 	tags := ts.Tags
@@ -171,7 +180,7 @@ func toDocument(ts *genregistry.Toolset) *toolsetDocument {
 	return &toolsetDocument{
 		Name:         ts.Name,
 		Description:  ts.Description,
-		Version:      ts.Version,
+		Version:      version,
 		Tags:         tags,
 		Tools:        tools,
 		StreamID:     ts.StreamID,
@@ -181,19 +190,26 @@ func toDocument(ts *genregistry.Toolset) *toolsetDocument {
 
 // fromDocument converts a MongoDB document to a Toolset.
 func fromDocument(doc *toolsetDocument) *genregistry.Toolset {
-	tools := make([]*genregistry.Tool, len(doc.Tools))
+	tools := make([]*genregistry.ToolSchema, len(doc.Tools))
 	for i, t := range doc.Tools {
-		tools[i] = &genregistry.Tool{
-			Name:         t.Name,
-			Description:  t.Description,
-			InputSchema:  t.InputSchema,
-			OutputSchema: t.OutputSchema,
+		tools[i] = &genregistry.ToolSchema{
+			Name:          t.Name,
+			Description:   t.Description,
+			Tags:          t.Tags,
+			PayloadSchema: t.PayloadSchema,
+			ResultSchema:  t.ResultSchema,
+			SidecarSchema: t.SidecarSchema,
 		}
+	}
+	var version *genregistry.SemVer
+	if doc.Version != nil {
+		v := genregistry.SemVer(*doc.Version)
+		version = &v
 	}
 	return &genregistry.Toolset{
 		Name:         doc.Name,
 		Description:  doc.Description,
-		Version:      doc.Version,
+		Version:      version,
 		Tags:         doc.Tags,
 		Tools:        tools,
 		StreamID:     doc.StreamID,
