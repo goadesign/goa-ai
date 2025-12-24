@@ -21,8 +21,8 @@ import (
 	smithy "github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 
-	"goa.design/clue/log"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
@@ -72,6 +72,10 @@ type Options struct {
 	// for streaming calls. When zero or negative, the client omits
 	// budget_tokens so Bedrock uses its own default budget.
 	ThinkingBudget int
+
+	// Logger is used for non-fatal diagnostics inside the Bedrock adapter.
+	// When nil, defaults to a no-op logger.
+	Logger telemetry.Logger
 }
 
 // Client implements model.Client on top of AWS Bedrock Converse.
@@ -84,6 +88,7 @@ type Client struct {
 	temp         float32
 	think        int
 	ledger       ledgerSource
+	logger       telemetry.Logger
 }
 
 // ledgerSource provides provider-ready messages for a given run when available.
@@ -126,6 +131,10 @@ func New(aws *bedrockruntime.Client, opts Options, ledger ledgerSource) (*Client
 	if thinkBudget <= 0 {
 		thinkBudget = defaultThinkingBudget
 	}
+	logger := opts.Logger
+	if logger == nil {
+		logger = telemetry.NewNoopLogger()
+	}
 	c := &Client{
 		runtime:      opts.Runtime,
 		ledger:       ledger,
@@ -135,6 +144,7 @@ func New(aws *bedrockruntime.Client, opts Options, ledger ledgerSource) (*Client
 		maxTok:       maxTokens,
 		temp:         opts.Temperature,
 		think:        thinkBudget,
+		logger:       logger,
 	}
 	return c, nil
 }
@@ -222,7 +232,7 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*reque
 	// Build tool configuration and name maps before encoding messages so tool_use
 	// names can reuse the exact sanitized identifiers. encodeTools is the single
 	// source of truth for name sanitization.
-	toolConfig, canonToSan, sanToCanon, err := encodeTools(ctx, req.Tools, req.ToolChoice, cacheAfterTools)
+	toolConfig, canonToSan, sanToCanon, err := encodeTools(ctx, req.Tools, req.ToolChoice, cacheAfterTools, c.logger)
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +246,7 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*reque
 			req.RunID,
 		)
 	}
-	messages, system, err := encodeMessages(ctx, merged, canonToSan, cacheAfterSystem)
+	messages, system, err := encodeMessages(ctx, merged, canonToSan, cacheAfterSystem, c.logger)
 	if err != nil {
 		return nil, err
 	}
@@ -414,7 +424,7 @@ func (c *Client) effectiveTemperature(requested float32) float32 {
 	return c.temp
 }
 
-func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[string]string, cacheAfterSystem bool) ([]brtypes.Message, []brtypes.SystemContentBlock, error) {
+func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[string]string, cacheAfterSystem bool, logger telemetry.Logger) ([]brtypes.Message, []brtypes.SystemContentBlock, error) {
 	// toolUseIDMap tracks a per-request mapping from canonical tool_use IDs used
 	// in transcripts (which may be long or contain slashes) to provider-safe
 	// IDs that conform to Bedrock constraints ([a-zA-Z0-9_-]+, <=64 chars). The
@@ -512,7 +522,7 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 						tb.ToolUseId = aws.String(id)
 					}
 				}
-				tb.Input = toDocument(ctx, v.Input)
+				tb.Input = toDocument(ctx, v.Input, logger)
 				blocks = append(blocks, &brtypes.ContentBlockMemberToolUse{Value: tb})
 			case model.ToolResultPart:
 				// Bedrock expects tool_result blocks in user messages, correlated to a prior tool_use.
@@ -526,7 +536,7 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 						&brtypes.ToolResultContentBlockMemberText{Value: s},
 					}
 				} else {
-					doc := toDocument(ctx, v.Content)
+					doc := toDocument(ctx, v.Content, logger)
 					tr.Content = []brtypes.ToolResultContentBlock{
 						&brtypes.ToolResultContentBlockMemberJson{Value: doc},
 					}
@@ -569,6 +579,7 @@ func encodeTools(
 	defs []*model.ToolDefinition,
 	choice *model.ToolChoice,
 	cacheAfterTools bool,
+	logger telemetry.Logger,
 ) (*brtypes.ToolConfiguration, map[string]string, map[string]string, error) {
 	if len(defs) == 0 {
 		if choice == nil {
@@ -601,7 +612,7 @@ func encodeTools(
 		if def.Description == "" {
 			return nil, nil, nil, fmt.Errorf("bedrock: tool %q is missing description", canonical)
 		}
-		schemaDoc := toDocument(ctx, def.InputSchema)
+		schemaDoc := toDocument(ctx, def.InputSchema, logger)
 		spec := brtypes.ToolSpecification{
 			Name:        aws.String(sanitized),
 			Description: aws.String(def.Description),
@@ -751,7 +762,10 @@ func sanitizeToolName(in string) string {
 	return sanitized[:prefixLen] + "_" + suffix
 }
 
-func toDocument(ctx context.Context, schema any) document.Interface {
+func toDocument(ctx context.Context, schema any, logger telemetry.Logger) document.Interface {
+	if logger == nil {
+		logger = telemetry.NewNoopLogger()
+	}
 	if schema == nil {
 		m := map[string]any{"type": "object"}
 		return lazyDocument(m)
@@ -765,8 +779,13 @@ func toDocument(ctx context.Context, schema any) document.Interface {
 			return lazyDocument(map[string]any{"type": "object"})
 		}
 		if err := json.Unmarshal(v, &decoded); err != nil {
-			log.Error(ctx, err, log.KV{K: "component", V: "inference-engine"},
-				log.KV{K: "event", V: "failed to unmarshal schema"})
+			logger.Error(
+				ctx,
+				"failed to unmarshal schema",
+				"component", "inference-engine",
+				"event", "unmarshal_schema_failed",
+				"err", err,
+			)
 			return lazyDocument(map[string]any{"type": "object"})
 		}
 		return lazyDocument(decoded)

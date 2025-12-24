@@ -989,6 +989,7 @@ func (r *Runtime) NewBedrockModelClient(awsrt *bedrockruntime.Client, cfg Bedroc
 		MaxTokens:      cfg.MaxTokens,
 		ThinkingBudget: cfg.ThinkingBudget,
 		Temperature:    cfg.Temperature,
+		Logger:         r.logger,
 	}
 	if eng, ok := r.Engine.(*engtemporal.Engine); ok {
 		return bedrock.New(awsrt, opts, bedrock.NewTemporalLedgerSource(eng.TemporalClient()))

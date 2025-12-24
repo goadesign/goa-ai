@@ -9,7 +9,12 @@ import (
 	"fmt"
 
 	pulseclients "goa.design/goa-ai/features/stream/pulse/clients/pulse"
+	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/toolregistry"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type (
@@ -32,6 +37,11 @@ type (
 		// Pong acknowledges health pings emitted by the registry gateway.
 		// Providers must supply this to participate in health tracking.
 		Pong func(ctx context.Context, pingID string) error
+
+		// Logger is used for provider internal logging. When nil, defaults to a noop logger.
+		Logger telemetry.Logger
+		// Tracer is used for provider spans. When nil, defaults to a noop tracer.
+		Tracer telemetry.Tracer
 	}
 )
 
@@ -58,6 +68,14 @@ func Serve(ctx context.Context, pulse pulseclients.Client, toolset string, handl
 	if opts.Pong == nil {
 		return fmt.Errorf("pong handler is required")
 	}
+	logger := opts.Logger
+	if logger == nil {
+		logger = telemetry.NewNoopLogger()
+	}
+	tracer := opts.Tracer
+	if tracer == nil {
+		tracer = telemetry.NewNoopTracer()
+	}
 
 	streamID := toolregistry.ToolsetStreamID(toolset)
 	stream, err := pulse.Stream(streamID)
@@ -70,6 +88,15 @@ func Serve(ctx context.Context, pulse pulseclients.Client, toolset string, handl
 	}
 	defer sink.Close(ctx)
 
+	logger.Debug(
+		ctx,
+		"tool-registry provider subscribed",
+		"component", "tool-registry-provider",
+		"toolset", toolset,
+		"stream_id", streamID,
+		"sink", sinkName,
+	)
+
 	events := sink.Subscribe()
 	for {
 		select {
@@ -81,6 +108,16 @@ func Serve(ctx context.Context, pulse pulseclients.Client, toolset string, handl
 			}
 			var msg toolregistry.ToolCallMessage
 			if err := json.Unmarshal(ev.Payload, &msg); err != nil {
+				logger.Error(
+					ctx,
+					"unmarshal toolset message failed",
+					"component", "tool-registry-provider",
+					"toolset", toolset,
+					"stream_id", streamID,
+					"event_id", ev.ID,
+					"event_name", ev.EventName,
+					"err", err,
+				)
 				if ackErr := sink.Ack(ctx, ev); ackErr != nil {
 					return fmt.Errorf("ack malformed toolset event: %w", ackErr)
 				}
@@ -111,23 +148,76 @@ func Serve(ctx context.Context, pulse pulseclients.Client, toolset string, handl
 				continue
 			}
 
-			res, err := handler.HandleToolCall(ctx, msg)
+			callCtx := toolregistry.ExtractTraceContext(ctx, msg.TraceParent, msg.TraceState, msg.Baggage)
+			callCtx, span := tracer.Start(
+				callCtx,
+				"toolregistry.handle",
+				trace.WithSpanKind(trace.SpanKindConsumer),
+				trace.WithAttributes(
+					attribute.String("messaging.system", "pulse"),
+					attribute.String("messaging.destination.name", streamID),
+					attribute.String("messaging.operation", "process"),
+					attribute.String("messaging.message.id", ev.ID),
+					attribute.String("toolregistry.toolset", toolset),
+					attribute.String("toolregistry.tool_use_id", msg.ToolUseID),
+					attribute.String("toolregistry.tool", msg.Tool.String()),
+					attribute.String("toolregistry.stream_id", streamID),
+					attribute.String("toolregistry.event_id", ev.ID),
+				),
+			)
+
+			res, err := handler.HandleToolCall(callCtx, msg)
 			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, "handle tool call")
+				logger.Error(
+					callCtx,
+					"tool call handler failed",
+					"component", "tool-registry-provider",
+					"toolset", toolset,
+					"tool_use_id", msg.ToolUseID,
+					"tool", msg.Tool,
+					"err", err,
+				)
 				res = toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "execution_failed", err.Error())
 			}
 
 			resultStreamID := toolregistry.ResultStreamID(msg.ToolUseID)
 			resultStream, streamErr := pulse.Stream(resultStreamID)
 			if streamErr != nil {
+				span.RecordError(streamErr)
+				span.SetStatus(codes.Error, "open result stream")
+				span.End()
 				return fmt.Errorf("open result stream %q: %w", resultStreamID, streamErr)
 			}
 			payload, marshalErr := json.Marshal(res)
 			if marshalErr != nil {
+				span.RecordError(marshalErr)
+				span.SetStatus(codes.Error, "marshal tool result")
+				span.End()
 				return fmt.Errorf("marshal tool result: %w", marshalErr)
 			}
-			if _, addErr := resultStream.Add(ctx, resultEventType, payload); addErr != nil {
+			if _, addErr := resultStream.Add(callCtx, resultEventType, payload); addErr != nil {
+				span.RecordError(addErr)
+				span.SetStatus(codes.Error, "publish tool result")
+				logger.Error(
+					callCtx,
+					"publish tool result failed",
+					"component", "tool-registry-provider",
+					"toolset", toolset,
+					"tool_use_id", msg.ToolUseID,
+					"tool", msg.Tool,
+					"result_stream_id", resultStreamID,
+					"err", addErr,
+				)
+				span.End()
 				return fmt.Errorf("publish tool result to %q: %w", resultStreamID, addErr)
 			}
+			span.AddEvent(
+				"toolregistry.tool_result_published",
+				"toolregistry.result_stream_id", resultStreamID,
+			)
+			span.End()
 			if ackErr := sink.Ack(ctx, ev); ackErr != nil {
 				return fmt.Errorf("ack tool call event: %w", ackErr)
 			}

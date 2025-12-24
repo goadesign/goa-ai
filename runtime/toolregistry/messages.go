@@ -32,6 +32,17 @@ type (
 		Tool      tools.Ident         `json:"tool,omitempty"`
 		Payload   json.RawMessage     `json:"payload,omitempty"`
 		Meta      *ToolCallMeta       `json:"meta,omitempty"`
+
+		// TraceParent and TraceState carry W3C Trace Context headers for distributed
+		// tracing across Pulse boundaries. These fields are optional and may be empty.
+		// When set, consumers should extract them into their context before starting
+		// spans for handling the tool call.
+		TraceParent string `json:"traceparent,omitempty"`
+		TraceState  string `json:"tracestate,omitempty"`
+
+		// Baggage carries the W3C baggage header when the global propagator includes
+		// baggage propagation (common for OTEL setups). Optional.
+		Baggage string `json:"baggage,omitempty"`
 	}
 
 	// ToolResultMessage is published to a per-call result stream. The gateway never
@@ -102,5 +113,3 @@ func NewToolResultErrorMessage(toolUseID, code, message string) ToolResultMessag
 		},
 	}
 }
-
-

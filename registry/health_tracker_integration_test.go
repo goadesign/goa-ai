@@ -138,14 +138,15 @@ func TestMultiNodeRegistrationSync(t *testing.T) {
 	healthEvents := healthMap.Subscribe()
 	defer healthMap.Unsubscribe(healthEvents)
 
-	// Create two pool nodes simulating two gateway instances.
-	node1, err := pool.AddNode(ctx, "pool-"+t.Name()+"-node1", rdb, testNodeOpts()...)
+	// Create two pool nodes in the same pool simulating two gateway instances.
+	poolName := "pool-" + t.Name()
+	node1, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
 	if err != nil {
 		t.Fatalf("failed to create node1: %v", err)
 	}
 	defer func() { _ = node1.Close(ctx) }()
 
-	node2, err := pool.AddNode(ctx, "pool-"+t.Name()+"-node2", rdb, testNodeOpts()...)
+	node2, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
 	if err != nil {
 		t.Fatalf("failed to create node2: %v", err)
 	}
@@ -238,13 +239,14 @@ func TestMultiNodeUnregistrationSync(t *testing.T) {
 	registryEvents := registryMap.Subscribe()
 	defer registryMap.Unsubscribe(registryEvents)
 
-	node1, err := pool.AddNode(ctx, "pool-"+t.Name()+"-node1", rdb, testNodeOpts()...)
+	poolName := "pool-" + t.Name()
+	node1, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
 	if err != nil {
 		t.Fatalf("failed to create node1: %v", err)
 	}
 	defer func() { _ = node1.Close(ctx) }()
 
-	node2, err := pool.AddNode(ctx, "pool-"+t.Name()+"-node2", rdb, testNodeOpts()...)
+	node2, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
 	if err != nil {
 		t.Fatalf("failed to create node2: %v", err)
 	}
@@ -347,7 +349,8 @@ func TestNewNodeSyncsExistingToolsets(t *testing.T) {
 	registryEvents := registryMap.Subscribe()
 	defer registryMap.Unsubscribe(registryEvents)
 
-	node1, err := pool.AddNode(ctx, "pool-"+t.Name()+"-node1", rdb, testNodeOpts()...)
+	poolName := "pool-" + t.Name()
+	node1, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
 	if err != nil {
 		t.Fatalf("failed to create node1: %v", err)
 	}
@@ -381,7 +384,7 @@ func TestNewNodeSyncsExistingToolsets(t *testing.T) {
 	}
 
 	// Now create a second node (simulating a new gateway joining).
-	node2, err := pool.AddNode(ctx, "pool-"+t.Name()+"-node2", rdb, testNodeOpts()...)
+	node2, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
 	if err != nil {
 		t.Fatalf("failed to create node2: %v", err)
 	}
@@ -430,12 +433,13 @@ func TestPingsContinueAfterNodeFailure(t *testing.T) {
 	registryEvents := registryMap.Subscribe()
 	defer registryMap.Unsubscribe(registryEvents)
 
-	node1, err := pool.AddNode(ctx, "pool-"+t.Name()+"-node1", rdb, testNodeOpts()...)
+	poolName := "pool-" + t.Name()
+	node1, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
 	if err != nil {
 		t.Fatalf("failed to create node1: %v", err)
 	}
 
-	node2, err := pool.AddNode(ctx, "pool-"+t.Name()+"-node2", rdb, testNodeOpts()...)
+	node2, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
 	if err != nil {
 		t.Fatalf("failed to create node2: %v", err)
 	}
@@ -563,7 +567,6 @@ func (m *pingCountingStreamManager) PublishToolCall(ctx context.Context, toolset
 	return nil
 }
 
-//nolint:unparam // toolset parameter kept for API consistency
 func (m *pingCountingStreamManager) getPingCount(toolset string) int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

@@ -172,6 +172,33 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 		st = replicated.New(registryMap)
 	}
 
+	// Ensure ping loops exist for all persisted toolsets on startup.
+	//
+	// The authoritative source of registered toolsets is the store. The health
+	// tracker also maintains a "registry:toolsets:" membership index for
+	// cross-node coordination, but that index can be missing (e.g., after process
+	// restarts) while the store remains intact. Re-registering ping loops here
+	// ensures health checks resume without requiring providers to re-register.
+	if toolsets, err := st.ListToolsets(ctx, nil); err != nil {
+		healthMap.Close()
+		registryMap.Close()
+		htCloseErr := healthTracker.Close()
+		poolCloseErr := poolNode.Close(ctx)
+		pulseCloseErr := pulseClient.Close(ctx)
+		return nil, errors.Join(fmt.Errorf("list toolsets for health tracking: %w", err), htCloseErr, poolCloseErr, pulseCloseErr)
+	} else {
+		for _, ts := range toolsets {
+			if err := healthTracker.StartPingLoop(ctx, ts.Name); err != nil {
+				healthMap.Close()
+				registryMap.Close()
+				htCloseErr := healthTracker.Close()
+				poolCloseErr := poolNode.Close(ctx)
+				pulseCloseErr := pulseClient.Close(ctx)
+				return nil, errors.Join(fmt.Errorf("start health ping loop for toolset %q: %w", ts.Name, err), htCloseErr, poolCloseErr, pulseCloseErr)
+			}
+		}
+	}
+
 	// Create the service.
 	service, err := NewService(ServiceOptions{
 		Store:           st,

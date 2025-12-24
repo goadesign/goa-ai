@@ -32,7 +32,7 @@ func TestEncodeMessages_ReencodeTranscriptOrder(t *testing.T) {
 	nameMap := map[string]string{
 		"search_assets": "search_assets",
 	}
-	conv, system, err := encodeMessages(ctx, msgs, nameMap, false)
+	conv, system, err := encodeMessages(ctx, msgs, nameMap, false, nil)
 	if err != nil {
 		t.Fatalf("encodeMessages error: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestEncodeMessages_FailsOnUnknownToolUse(t *testing.T) {
 	nameMap := map[string]string{
 		"atlas.read.some_other_tool": "some_other_tool",
 	}
-	_, _, err := encodeMessages(ctx, msgs, nameMap, false)
+	_, _, err := encodeMessages(ctx, msgs, nameMap, false, nil)
 	if err == nil {
 		t.Fatal("expected error for unknown tool_use, got nil")
 	}
@@ -119,7 +119,7 @@ func TestEncodeMessages_AppendsSystemCacheCheckpoint(t *testing.T) {
 			},
 		},
 	}
-	conv, system, err := encodeMessages(ctx, msgs, map[string]string{}, true)
+	conv, system, err := encodeMessages(ctx, msgs, map[string]string{}, true, nil)
 	if err != nil {
 		t.Fatalf("encodeMessages error: %v", err)
 	}

@@ -9,6 +9,11 @@ import (
 
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	"goa.design/goa-ai/runtime/toolregistry"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // StreamManager manages Pulse streams for toolset communication.
@@ -100,19 +105,60 @@ func (m *streamManager) RemoveStream(toolset string) {
 func (m *streamManager) PublishToolCall(ctx context.Context, toolset string, msg toolregistry.ToolCallMessage) error {
 	// Use GetOrCreateStream to handle cross-node scenarios where the toolset
 	// was registered on a different gateway node.
-	stream, _, err := m.GetOrCreateStream(ctx, toolset)
+	stream, streamID, err := m.GetOrCreateStream(ctx, toolset)
 	if err != nil {
 		return fmt.Errorf("get stream for toolset %q: %w", toolset, err)
 	}
 
+	if msg.Type == toolregistry.MessageTypeCall {
+		tracer := otel.Tracer("goa.design/goa-ai/registry")
+		var span trace.Span
+		ctx, span = tracer.Start(
+			ctx,
+			"toolregistry.publish",
+			trace.WithSpanKind(trace.SpanKindProducer),
+			trace.WithAttributes(
+				attribute.String("messaging.system", "pulse"),
+				attribute.String("messaging.destination.name", streamID),
+				attribute.String("messaging.operation", "publish"),
+				attribute.String("toolregistry.toolset", toolset),
+				attribute.String("toolregistry.tool_use_id", msg.ToolUseID),
+				attribute.String("toolregistry.tool", msg.Tool.String()),
+				attribute.String("toolregistry.stream_id", streamID),
+			),
+		)
+		defer span.End()
+
+		msg.TraceParent, msg.TraceState, msg.Baggage = toolregistry.InjectTraceContext(ctx)
+		if msg.TraceParent != "" {
+			span.SetAttributes(attribute.Bool("toolregistry.trace_injected", true))
+		}
+	}
+
 	payload, err := json.Marshal(msg)
 	if err != nil {
+		if msg.Type == toolregistry.MessageTypeCall {
+			span := trace.SpanFromContext(ctx)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "marshal tool call message")
+		}
 		return fmt.Errorf("marshal tool call message: %w", err)
 	}
 
-	_, err = stream.Add(ctx, string(msg.Type), payload)
+	eventID, err := stream.Add(ctx, string(msg.Type), payload)
 	if err != nil {
+		if msg.Type == toolregistry.MessageTypeCall {
+			span := trace.SpanFromContext(ctx)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "publish to stream")
+		}
 		return fmt.Errorf("publish to stream: %w", err)
+	}
+	if msg.Type == toolregistry.MessageTypeCall {
+		trace.SpanFromContext(ctx).AddEvent(
+			"toolregistry.tool_call_published",
+			trace.WithAttributes(attribute.String("toolregistry.event_id", eventID)),
+		)
 	}
 	return nil
 }

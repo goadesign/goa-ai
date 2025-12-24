@@ -20,7 +20,7 @@ func TestEncodeTools_NoChoice(t *testing.T) {
 			Description: "Search",
 			InputSchema: map[string]any{"type": "object"},
 		},
-	}, nil, false)
+	}, nil, false, nil)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	require.Len(t, cfg.Tools, 1)
@@ -38,7 +38,7 @@ func TestEncodeTools_ModeAny(t *testing.T) {
 			Description: "Search",
 			InputSchema: map[string]any{"type": "object"},
 		},
-	}, &model.ToolChoice{Mode: model.ToolChoiceModeAny}, false)
+	}, &model.ToolChoice{Mode: model.ToolChoiceModeAny}, false, nil)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	require.Len(t, cfg.Tools, 1)
@@ -61,7 +61,7 @@ func TestEncodeTools_ModeTool(t *testing.T) {
 	}, &model.ToolChoice{
 		Mode: model.ToolChoiceModeTool,
 		Name: "lookup",
-	}, false)
+	}, false, nil)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	require.Len(t, cfg.Tools, 1)
@@ -83,7 +83,7 @@ func TestEncodeTools_ModeNonePreservesConfig(t *testing.T) {
 			Description: "Search",
 			InputSchema: map[string]any{"type": "object"},
 		},
-	}, &model.ToolChoice{Mode: model.ToolChoiceModeNone}, false)
+	}, &model.ToolChoice{Mode: model.ToolChoiceModeNone}, false, nil)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	require.Len(t, cfg.Tools, 1)
@@ -95,7 +95,7 @@ func TestEncodeTools_ModeNonePreservesConfig(t *testing.T) {
 func TestEncodeTools_ChoiceWithoutToolsErrors(t *testing.T) {
 	ctx := context.Background()
 
-	_, _, _, err := encodeTools(ctx, nil, &model.ToolChoice{Mode: model.ToolChoiceModeAny}, false)
+	_, _, _, err := encodeTools(ctx, nil, &model.ToolChoice{Mode: model.ToolChoiceModeAny}, false, nil)
 	require.Error(t, err)
 }
 
@@ -108,7 +108,7 @@ func TestEncodeTools_AppendsCacheCheckpoint(t *testing.T) {
 			Description: "Search",
 			InputSchema: map[string]any{"type": "object"},
 		},
-	}, nil, true)
+	}, nil, true, nil)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	require.Len(t, cfg.Tools, 2, "expected tool spec + cache checkpoint")

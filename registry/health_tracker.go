@@ -5,10 +5,12 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/toolregistry"
 	"goa.design/pulse/pool"
 	"goa.design/pulse/rmap"
@@ -54,6 +56,7 @@ type (
 	healthTrackerOptions struct {
 		pingInterval        time.Duration
 		missedPingThreshold int
+		logger              telemetry.Logger
 	}
 
 	healthTracker struct {
@@ -64,6 +67,7 @@ type (
 		pingInterval        time.Duration
 		missedPingThreshold int
 		stalenessThreshold  time.Duration
+		logger              telemetry.Logger
 
 		mu      sync.RWMutex
 		tickers map[string]*pool.Ticker
@@ -100,6 +104,12 @@ func WithMissedPingThreshold(n int) HealthTrackerOption {
 	}
 }
 
+func WithHealthLogger(l telemetry.Logger) HealthTrackerOption {
+	return func(o *healthTrackerOptions) {
+		o.logger = l
+	}
+}
+
 // NewHealthTracker creates a new HealthTracker.
 // streamManager is used to publish ping messages to toolset streams.
 // healthMap is the Pulse replicated map for storing health state (last pong timestamps).
@@ -122,9 +132,14 @@ func NewHealthTracker(streamManager StreamManager, healthMap, registryMap *rmap.
 	options := &healthTrackerOptions{
 		pingInterval:        DefaultPingInterval,
 		missedPingThreshold: DefaultMissedPingThreshold,
+		logger:              telemetry.NewNoopLogger(),
 	}
 	for _, opt := range opts {
 		opt(options)
+	}
+	logger := options.logger
+	if logger == nil {
+		logger = telemetry.NewNoopLogger()
 	}
 
 	// Staleness threshold = (missedPingThreshold + 1) * pingInterval
@@ -139,6 +154,7 @@ func NewHealthTracker(streamManager StreamManager, healthMap, registryMap *rmap.
 		pingInterval:        options.pingInterval,
 		missedPingThreshold: options.missedPingThreshold,
 		stalenessThreshold:  stalenessThreshold,
+		logger:              logger,
 		tickers:             make(map[string]*pool.Ticker),
 		cancels:             make(map[string]context.CancelFunc),
 		closeCh:             make(chan struct{}),
@@ -188,10 +204,30 @@ func (h *healthTracker) StartPingLoop(ctx context.Context, toolset string) error
 
 	// Initialize health with current timestamp so toolset starts healthy.
 	healthK := healthKey(toolset)
-	_, _ = h.healthMap.SetIfNotExists(ctx, healthK, strconv.FormatInt(ts, 10))
+	if _, err := h.healthMap.Set(ctx, healthK, strconv.FormatInt(ts, 10)); err != nil {
+		return fmt.Errorf("initialize health: %w", err)
+	}
 
-	// Start local ticker (other nodes will do the same via watchRegistryChanges).
-	return h.startLocalTicker(toolset)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	// (Re)start local ticker.
+	//
+	// In production we observed that a node can keep a stale *pool.Ticker in-memory
+	// even after the shared ticker-map entry has been deleted remotely (e.g., by a
+	// different node). In that case, the local ticker stops but the health tracker
+	// still thinks it is running and will not recreate it, causing pings to stop.
+	//
+	// We solve this by explicitly closing the local ticker instance (without
+	// deleting the shared entry) and recreating it on every StartPingLoop.
+	if cancel, ok := h.cancels[toolset]; ok {
+		cancel()
+		delete(h.cancels, toolset)
+	}
+	if ticker, ok := h.tickers[toolset]; ok {
+		ticker.Close()
+		delete(h.tickers, toolset)
+	}
+	return h.startLocalTickerLocked(toolset)
 }
 
 func (h *healthTracker) StopPingLoop(ctx context.Context, toolset string) {
@@ -265,7 +301,9 @@ func (h *healthTracker) syncWithRegistry() {
 	for toolset := range registered {
 		if _, ok := h.tickers[toolset]; !ok {
 			// Use background context since this is triggered by map changes.
-			_ = h.startLocalTickerLocked(toolset)
+			if err := h.startLocalTickerLocked(toolset); err != nil {
+				h.logger.Error(context.Background(), "start ticker failed", "event", "start_ticker_failed", "toolset", toolset, "err", err)
+			}
 		}
 	}
 
@@ -275,13 +313,6 @@ func (h *healthTracker) syncWithRegistry() {
 			h.stopLocalTickerLocked(toolset)
 		}
 	}
-}
-
-// startLocalTicker starts a distributed ticker for a toolset on this node.
-func (h *healthTracker) startLocalTicker(toolset string) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.startLocalTickerLocked(toolset)
 }
 
 func (h *healthTracker) startLocalTickerLocked(toolset string) error {
@@ -336,10 +367,10 @@ func registryKey(toolset string) string {
 }
 
 func toolsetFromRegistryKey(key string) string {
-	if len(key) > len(registryKeyPrefix) {
-		return key[len(registryKeyPrefix):]
+	if !strings.HasPrefix(key, registryKeyPrefix) {
+		return ""
 	}
-	return ""
+	return strings.TrimPrefix(key, registryKeyPrefix)
 }
 
 func (h *healthTracker) runPingLoop(ctx context.Context, toolset string, ticker *pool.Ticker) {
@@ -356,5 +387,7 @@ func (h *healthTracker) runPingLoop(ctx context.Context, toolset string, ticker 
 func (h *healthTracker) sendPing(ctx context.Context, toolset string) {
 	pingID := uuid.New().String()
 	msg := toolregistry.NewPingMessage(pingID)
-	_ = h.streamManager.PublishToolCall(ctx, toolset, msg)
+	if err := h.streamManager.PublishToolCall(ctx, toolset, msg); err != nil {
+		h.logger.Error(context.Background(), "publish ping failed", "event", "publish_ping_failed", "toolset", toolset, "ping_id", pingID, "err", err)
+	}
 }

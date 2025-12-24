@@ -66,6 +66,9 @@ func (c *simplePlannerContext) ModelClient(id string) (model.Client, bool) {
 	if c.cache.AfterSystem || c.cache.AfterTools {
 		cli = newCacheConfiguredClient(cli, c.cache)
 	}
+	// Wrap with tracing so model invocations are always visible in traces, including
+	// full stream lifetimes when streaming is used.
+	cli = newTracedClient(cli, c.rt.tracer, c.rt.logger, id)
 	return cli, true
 }
 
