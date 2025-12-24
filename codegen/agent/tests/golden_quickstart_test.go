@@ -36,6 +36,7 @@ func TestQuickstart_Renders_Minimal(t *testing.T) {
 	require.Contains(t, content, "client := scribe.NewClient(rt)")
 	require.Contains(t, content, "[]*model.Message{")
 	require.Contains(t, content, "## 4. 🧠 The Planner:")
+	require.NotContains(t, content, "Service-Side Tool Providers (Registry-Routed Execution)")
 }
 
 func TestQuickstart_Disabled(t *testing.T) {
@@ -55,4 +56,13 @@ func TestQuickstart_Disabled(t *testing.T) {
 	for _, f := range files {
 		require.NotEqual(t, "AGENTS_QUICKSTART.md", f.Path, "AGENTS_QUICKSTART.md should not be generated when DisableAgentDocs is set")
 	}
+}
+
+func TestQuickstart_IncludesProvidersSection_WhenGenerated(t *testing.T) {
+	files := buildAndGenerate(t, testscenarios.ServiceToolsetBindSelf())
+
+	content := fileContent(t, files, "AGENTS_QUICKSTART.md")
+	require.NotEmpty(t, content)
+	require.Contains(t, content, "Service-Side Tool Providers (Registry-Routed Execution)")
+	require.Contains(t, content, "gen/<service>/toolsets/<toolset>/provider.go")
 }

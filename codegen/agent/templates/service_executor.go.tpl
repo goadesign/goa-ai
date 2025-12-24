@@ -177,9 +177,22 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
              case tools.Ident({{ printf "%q" .QualifiedName }}):
                  {{- if .PayloadAliasesMethod }}
                  methodIn = toolArgs
+                 {{- if .InjectedFields }}
+                 p := methodIn.({{ .MethodPayloadTypeRef }})
+                 {{- range .InjectedFields }}
+                 p.{{ goify . true }} = meta.{{ goify . true }}
+                 {{- end }}
+                 methodIn = p
+                 {{- end }}
                  {{- else }}
                  // Call generated transform
-                 methodIn = {{ $.Toolset.SpecsPackageName }}.Init{{ goify .Name true }}MethodPayload(toolArgs.(*{{ $.Toolset.SpecsPackageName }}.{{ .ConstName }}Payload))
+                 p := {{ $.Toolset.SpecsPackageName }}.Init{{ goify .Name true }}MethodPayload(toolArgs.(*{{ $.Toolset.SpecsPackageName }}.{{ .ConstName }}Payload))
+                 {{- if .InjectedFields }}
+                 {{- range .InjectedFields }}
+                 p.{{ goify . true }} = meta.{{ goify . true }}
+                 {{- end }}
+                 {{- end }}
+                 methodIn = p
                  {{- end }}
              {{- end }}
              {{- end }}
@@ -193,24 +206,6 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             if err := inj.Inject(ctx, methodIn, meta); err != nil {
                  return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
             }
-        }
-
-        // Handle declared Injected fields
-        switch call.Name {
-        {{- range .Toolset.Tools }}
-        {{- if and .IsMethodBacked .InjectedFields }}
-        case tools.Ident({{ printf "%q" .QualifiedName }}):
-            {{- if .MethodPayloadTypeRef }}
-            if p, ok := methodIn.({{ .MethodPayloadTypeRef }}); ok {
-                {{- range .InjectedFields }}
-                {{- if eq . "session_id" }}
-                p.SessionID = meta.SessionID
-                {{- end }}
-                {{- end }}
-            }
-            {{- end }}
-        {{- end }}
-        {{- end }}
         }
 
         // Invoke caller

@@ -456,6 +456,43 @@ reg := helpers.NewHelpersToolsetRegistration(serviceClient)
 rt.RegisterToolset(reg)
 ```
 
+### Registry-Routed Provider Execution (Service-Side)
+
+Goa-AI supports cross-process tool invocation via the **Internal Tool Registry**. In this mode:
+
+- The registry validates payload JSON against the tool schema and publishes tool calls to a deterministic Pulse stream: `toolset:<toolsetID>:requests`
+- A **provider loop** runs inside the toolset-owning service process, subscribes to the toolset stream, executes the tool, and publishes the result to `result:<toolUseID>`
+
+For method-backed service toolsets, codegen emits a provider adapter at:
+
+- `gen/<service>/toolsets/<toolset>/provider.go`
+
+That generated provider implements a dispatcher that decodes the tool payload JSON using generated codecs, adapts into the Goa method payload (via generated transforms), calls the bound method, and re-encodes the tool result JSON (and optional artifacts/sidecars).
+
+To run it, wire the generated provider into the runtime provider loop:
+
+```go
+handler := toolsetpkg.NewProvider(serviceImpl)
+go func() {
+    err := toolprovider.Serve(ctx, pulseClient, toolsetID, handler, toolprovider.Options{
+        Pong: func(ctx context.Context, pingID string) error {
+            return registryClient.Pong(ctx, &registry.PongPayload{
+                PingID:  pingID,
+                Toolset: toolsetID,
+            })
+        },
+    })
+    if err != nil {
+        panic(err)
+    }
+}()
+```
+
+This integration is intentionally split:
+
+- **Registry gateway**: validates payloads, tracks provider health, creates per-call result streams, and returns `tool_use_id`
+- **Service provider loop**: executes tools using the generated provider adapters and publishes results
+
 **Inline tools** — Custom executor implementation:
 
 ```go

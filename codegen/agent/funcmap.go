@@ -46,6 +46,36 @@ func templateFuncMap() map[string]any {
 			}
 			return false
 		},
+		// hasServiceSideProviders reports whether the generator emitted at least one
+		// service-side tool provider (specs/<toolset>/provider.go). Providers are
+		// generated only for service-owned toolsets that contain at least one
+		// method-backed tool and are not registry-backed.
+		"hasServiceSideProviders": func(data *GeneratorData) bool {
+			if data == nil || len(data.Services) == 0 {
+				return false
+			}
+			for _, svc := range data.Services {
+				if svc == nil || len(svc.Agents) == 0 {
+					continue
+				}
+				for _, ag := range svc.Agents {
+					if ag == nil || len(ag.AllToolsets) == 0 {
+						continue
+					}
+					for _, ts := range ag.AllToolsets {
+						if ts == nil || ts.SpecsDir == "" || ts.SourceService == nil || ts.IsRegistryBacked {
+							continue
+						}
+						for _, t := range ts.Tools {
+							if t != nil && t.IsMethodBacked {
+								return true
+							}
+						}
+					}
+				}
+			}
+			return false
+		},
 		// hasExportedTools reports whether the given toolset contains at least
 		// one tool exported by an agent (agent-as-tool pattern).
 		"hasExportedTools": func(ts *ToolsetData) bool {

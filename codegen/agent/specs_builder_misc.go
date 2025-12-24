@@ -318,15 +318,18 @@ func (b *toolSpecBuilder) collectUserTypeValidators(scope *codegen.NameScope, to
 	})
 }
 
-// serviceName returns the service name for a tool, preferring the toolset's
-// explicit ServiceName, then falling back to the agent's service name.
+// serviceName returns the declaring service name for a tool.
+//
+// Tool specs are provider-owned: they should identify the service that
+// declares/implements the toolset, not the consuming agent service that happens
+// to reference it.
 func serviceName(tool *ToolData) string {
 	ts := tool.Toolset
+	if ts.SourceServiceName != "" {
+		return ts.SourceServiceName
+	}
 	if ts.ServiceName != "" {
 		return ts.ServiceName
-	}
-	if ts.Agent != nil {
-		return ts.Agent.Service.Name
 	}
 	return ""
 }
