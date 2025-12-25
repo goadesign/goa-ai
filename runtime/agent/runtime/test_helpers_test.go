@@ -48,6 +48,8 @@ type testWorkflowContext struct {
 	childRequests      []engine.ChildWorkflowRequest
 	firstChildGetCount int
 	sawFirstChildGet   bool
+
+	toolFutures map[string]*controlledToolFuture
 }
 
 func (t *testWorkflowContext) Context() context.Context {
@@ -67,6 +69,24 @@ func (t *testWorkflowContext) RunID() string {
 
 func (t *testWorkflowContext) Now() time.Time {
 	return time.Unix(0, 0)
+}
+
+func (t *testWorkflowContext) Await(ctx context.Context, condition func() bool) error {
+	if condition == nil {
+		return fmt.Errorf("await condition is required")
+	}
+	ticker := time.NewTicker(1 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if condition() {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func (t *testWorkflowContext) SetQueryHandler(name string, handler any) error {
@@ -134,6 +154,12 @@ func (t *testWorkflowContext) ExecuteToolActivity(ctx context.Context, call engi
 
 func (t *testWorkflowContext) ExecuteToolActivityAsync(ctx context.Context, call engine.ToolActivityCall) (engine.Future[*api.ToolOutput], error) {
 	t.lastToolCall = call
+
+	if call.Input != nil && call.Input.ToolCallID != "" && len(t.toolFutures) > 0 {
+		if fut, ok := t.toolFutures[call.Input.ToolCallID]; ok && fut != nil {
+			return fut, nil
+		}
+	}
 
 	fut := &testToolFuture{
 		barrier: t.barrier,
@@ -218,6 +244,36 @@ func (f *testToolFuture) IsReady() bool {
 	return true
 }
 
+type controlledToolFuture struct {
+	ready chan struct{}
+	out   *api.ToolOutput
+	err   error
+}
+
+func (f *controlledToolFuture) Get(ctx context.Context) (*api.ToolOutput, error) {
+	if f == nil {
+		return nil, fmt.Errorf("nil future")
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-f.ready:
+		return f.out, f.err
+	}
+}
+
+func (f *controlledToolFuture) IsReady() bool {
+	if f == nil {
+		return true
+	}
+	select {
+	case <-f.ready:
+		return true
+	default:
+		return false
+	}
+}
+
 type testReceiver[T any] struct{ ch chan T }
 
 func (r testReceiver[T]) Receive(ctx context.Context) (T, error) {
@@ -281,6 +337,24 @@ func (r *routeWorkflowContext) RunID() string {
 
 func (r *routeWorkflowContext) Now() time.Time {
 	return time.Unix(0, 0)
+}
+
+func (r *routeWorkflowContext) Await(ctx context.Context, condition func() bool) error {
+	if condition == nil {
+		return fmt.Errorf("await condition is required")
+	}
+	ticker := time.NewTicker(1 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if condition() {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func (r *routeWorkflowContext) SetQueryHandler(name string, handler any) error {

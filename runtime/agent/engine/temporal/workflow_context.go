@@ -185,6 +185,16 @@ func (w *temporalWorkflowContext) Now() time.Time {
 	return workflow.Now(w.ctx)
 }
 
+func (w *temporalWorkflowContext) Await(ctx context.Context, condition func() bool) error {
+	if condition == nil {
+		return errors.New("await condition is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return workflow.Await(w.ctx, condition)
+}
+
 func (w *temporalWorkflowContext) activityOptionsFor(name string, override engine.ActivityOptions) workflow.ActivityOptions {
 	defaults := w.engine.activityDefaultsFor(name)
 
