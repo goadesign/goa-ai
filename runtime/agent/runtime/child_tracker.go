@@ -6,6 +6,17 @@ package runtime
 // event emission (e.g., "3 of 5 tool calls completed") for more expressive agent toolchains.
 //
 // For details on main workflow execution logic, see workflow.go.
+type childTracker struct {
+	// parentToolCallID identifies the parent tool (usually an agent-as-tool invocation).
+	parentToolCallID string
+	// discovered maps tool call IDs to struct{} for efficient membership checking.
+	// The map size is the current expected children total.
+	discovered map[string]struct{}
+	// lastExpectedTotal is the count last reported via ToolCallUpdatedEvent.
+	// We only emit update events when len(discovered) > lastExpectedTotal.
+	lastExpectedTotal int
+}
+
 func newChildTracker(parentToolCallID string) *childTracker {
 	return &childTracker{
 		parentToolCallID: parentToolCallID,

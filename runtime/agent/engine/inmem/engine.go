@@ -348,6 +348,24 @@ func (w *wfCtx) Now() time.Time {
 	return time.Now()
 }
 
+func (w *wfCtx) Await(ctx context.Context, condition func() bool) error {
+	if condition == nil {
+		return errors.New("await condition is required")
+	}
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if condition() {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 // SetQueryHandler is a no-op for the in-memory engine.
 func (w *wfCtx) SetQueryHandler(name string, handler any) error {
 	return nil

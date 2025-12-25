@@ -227,6 +227,13 @@ type (
 		// must return a time source that is replay-safe (e.g., Temporal's workflow.Now).
 		Now() time.Time
 
+		// Await blocks until condition returns true, or ctx is done.
+		//
+		// Condition must be deterministic and side-effect free. A typical use is to
+		// wait on a set of Futures using IsReady() without draining them in a fixed
+		// order (e.g., "wait until any tool future completes").
+		Await(ctx context.Context, condition func() bool) error
+
 		// StartChildWorkflow starts a child workflow execution and returns a handle
 		// to await its completion or cancel it. Implementations should honor the
 		// provided workflow name, task queue and timeouts without requiring local
