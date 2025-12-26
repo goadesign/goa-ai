@@ -224,7 +224,8 @@ func (b *toolSpecBuilder) ensureNestedLocalTypes(scope *codegen.NameScope, att *
 		if name == "" {
 			return nil
 		}
-		comp := scope.GoTypeDef(ut.Attribute(), false, true)
+		// Clone with JSON tags for comparison since existing types include tags.
+		comp := scope.GoTypeDef(cloneWithJSONTags(ut.Attribute()), false, true)
 		// If a type with the same name already exists (e.g., the top-level tool
 		// payload/result alias), only emit a nested helper when the shapes differ.
 		// This avoids spurious <Name>2 helpers while still allowing disambiguation
@@ -299,7 +300,8 @@ func (b *toolSpecBuilder) renameCollidingNestedUserTypes(att *goaexpr.AttributeE
 		if !exists || existing == nil || !existing.IsToolType {
 			return nil
 		}
-		comp := scope.GoTypeDef(ut.Attribute(), false, true)
+		// Clone with JSON tags for comparison since existing types include tags.
+		comp := scope.GoTypeDef(cloneWithJSONTags(ut.Attribute()), false, true)
 		if existing.Def == baseName+" = "+comp || existing.Def == baseName+" "+comp {
 			return nil
 		}

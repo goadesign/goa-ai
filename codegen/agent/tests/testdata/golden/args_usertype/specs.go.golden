@@ -30,9 +30,9 @@ var (
 		Tags:                []string{},
 		BoundedResult:       false,
 		Payload: tools.TypeSpec{
-			Name:        "StorePayload",
-			Schema:      []byte("{\"$defs\":{\"Doc\":{\"title\":\"Doc\",\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Identifier\",\"example\":\"Dignissimos quo illum.\"},\"title\":{\"type\":\"string\",\"description\":\"Title\",\"example\":\"Nemo quia.\"}},\"example\":{\"id\":\"Consequatur reprehenderit.\",\"title\":\"Molestiae velit quam amet cupiditate non.\"},\"required\":[\"id\",\"title\"]}},\"$ref\":\"#/$defs/Doc\",\"required\":[\"title\"]}"),
-			ExampleJSON: []byte("{\"id\":\"abc123\",\"title\":\"abc123\"}"),
+			Name:         "StorePayload",
+			Schema:       []byte("{\"$defs\":{\"Doc\":{\"title\":\"Doc\",\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Identifier\",\"example\":\"Dignissimos quo illum.\"},\"title\":{\"type\":\"string\",\"description\":\"Title\",\"example\":\"Nemo quia.\"}},\"example\":{\"id\":\"Consequatur reprehenderit.\",\"title\":\"Molestiae velit quam amet cupiditate non.\"},\"required\":[\"id\",\"title\"]}},\"$ref\":\"#/$defs/Doc\",\"required\":[\"title\"]}"),
+			ExampleJSON:  []byte("{\"id\":\"abc123\",\"title\":\"abc123\"}"),
 			ExampleInput: map[string]any{"id": "abc123", "title": "abc123"},
 			Codec:        storePayloadCodec,
 		},
