@@ -73,7 +73,11 @@ func normalizeToolCall(
 	artifactsModeByCallID map[string]tools.ArtifactsMode,
 ) (planner.ToolRequest, error) {
 	if call.ToolCallID == "" {
-		call.ToolCallID = generateDeterministicToolCallID(runID, call.TurnID, call.Name, i)
+		attempt := 0
+		if runCtx != nil {
+			attempt = runCtx.Attempt
+		}
+		call.ToolCallID = generateDeterministicToolCallID(runID, call.TurnID, attempt, call.Name, i)
 	}
 	if parentTracker != nil && call.ParentToolCallID == "" {
 		call.ParentToolCallID = parentTracker.parentToolCallID

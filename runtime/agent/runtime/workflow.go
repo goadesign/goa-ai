@@ -802,7 +802,13 @@ func (r *Runtime) runLoop(
 		for i := range toExecute {
 			call := toExecute[i]
 			if call.ToolCallID == "" {
-				call.ToolCallID = generateDeterministicToolCallID(base.RunContext.RunID, call.TurnID, call.Name, i)
+				call.ToolCallID = generateDeterministicToolCallID(
+					base.RunContext.RunID,
+					call.TurnID,
+					base.RunContext.Attempt,
+					call.Name,
+					i,
+				)
 			}
 			mode, stripped, err := extractArtifactsMode(call.Payload)
 			if err != nil {
@@ -1390,7 +1396,7 @@ func (r *Runtime) prepareAllowedCallsMetadata(agentID agent.Ident, base *planner
 		}
 		if allowed[i].ToolCallID == "" {
 			allowed[i].ToolCallID = generateDeterministicToolCallID(
-				base.RunContext.RunID, base.RunContext.TurnID, allowed[i].Name, i,
+				base.RunContext.RunID, base.RunContext.TurnID, base.RunContext.Attempt, allowed[i].Name, i,
 			)
 		}
 		if parentTracker != nil && allowed[i].ParentToolCallID == "" {
