@@ -269,7 +269,14 @@ func (h *healthTracker) Close() error {
 			cancel()
 		}
 		for _, ticker := range h.tickers {
-			ticker.Stop()
+			// Close stops the ticker locally without deleting the shared
+			// ticker-map entry.
+			//
+			// This is critical for distributed tickers: on shutdown/restart (or
+			// rolling updates), a single node must not delete the shared entry
+			// since that would stop pings for all nodes and can leave the cluster
+			// with no active pinger.
+			ticker.Close()
 		}
 		h.tickers = make(map[string]*pool.Ticker)
 		h.cancels = make(map[string]context.CancelFunc)
