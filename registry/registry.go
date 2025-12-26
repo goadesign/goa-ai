@@ -44,6 +44,7 @@ import (
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/registry/store"
 	"goa.design/goa-ai/registry/store/replicated"
+	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/pulse/pool"
 	"goa.design/pulse/rmap"
 	"google.golang.org/grpc"
@@ -82,6 +83,9 @@ type (
 		//
 		// Defaults to "registry" if not provided.
 		Name string
+		// Logger receives health tracker logs (pings, transitions, failures).
+		// When nil, health tracking logs are suppressed.
+		Logger telemetry.Logger
 		// PingInterval is the interval between health check pings.
 		// Defaults to 10 seconds if not provided.
 		PingInterval time.Duration
@@ -155,6 +159,9 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 	}
 	if cfg.MissedPingThreshold > 0 {
 		healthOpts = append(healthOpts, WithMissedPingThreshold(cfg.MissedPingThreshold))
+	}
+	if cfg.Logger != nil {
+		healthOpts = append(healthOpts, WithHealthLogger(cfg.Logger))
 	}
 
 	// Create health tracker.

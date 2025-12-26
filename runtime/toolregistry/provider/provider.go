@@ -127,6 +127,16 @@ func Serve(ctx context.Context, pulse pulseclients.Client, toolset string, handl
 			case toolregistry.MessageTypePing:
 				if msg.PingID != "" {
 					if err := opts.Pong(ctx, msg.PingID); err != nil {
+						logger.Error(
+							ctx,
+							"pong failed",
+							"component", "tool-registry-provider",
+							"toolset", toolset,
+							"stream_id", streamID,
+							"event_id", ev.ID,
+							"ping_id", msg.PingID,
+							"err", err,
+						)
 						return fmt.Errorf("pong: %w", err)
 					}
 				}
