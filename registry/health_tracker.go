@@ -73,6 +73,10 @@ type (
 		tickers map[string]*pool.Ticker
 		cancels map[string]context.CancelFunc
 
+		stateMu              sync.Mutex
+		lastObservedHealthy  map[string]bool
+		lastObservedPongNano map[string]int64
+
 		closeOnce sync.Once
 		closeCh   chan struct{}
 	}
@@ -147,17 +151,19 @@ func NewHealthTracker(streamManager StreamManager, healthMap, registryMap *rmap.
 	stalenessThreshold := time.Duration(options.missedPingThreshold+1) * options.pingInterval
 
 	h := &healthTracker{
-		streamManager:       streamManager,
-		healthMap:           healthMap,
-		registryMap:         registryMap,
-		poolNode:            node,
-		pingInterval:        options.pingInterval,
-		missedPingThreshold: options.missedPingThreshold,
-		stalenessThreshold:  stalenessThreshold,
-		logger:              logger,
-		tickers:             make(map[string]*pool.Ticker),
-		cancels:             make(map[string]context.CancelFunc),
-		closeCh:             make(chan struct{}),
+		streamManager:        streamManager,
+		healthMap:            healthMap,
+		registryMap:          registryMap,
+		poolNode:             node,
+		pingInterval:         options.pingInterval,
+		missedPingThreshold:  options.missedPingThreshold,
+		stalenessThreshold:   stalenessThreshold,
+		logger:               logger,
+		tickers:              make(map[string]*pool.Ticker),
+		cancels:              make(map[string]context.CancelFunc),
+		lastObservedHealthy:  make(map[string]bool),
+		lastObservedPongNano: make(map[string]int64),
+		closeCh:              make(chan struct{}),
 	}
 
 	// Start watching for registry changes from other nodes.
@@ -233,14 +239,23 @@ func (h *healthTracker) StartPingLoop(ctx context.Context, toolset string) error
 func (h *healthTracker) StopPingLoop(ctx context.Context, toolset string) {
 	// Remove from registry map - this notifies all nodes.
 	key := registryKey(toolset)
-	_, _ = h.registryMap.Delete(ctx, key)
+	if _, err := h.registryMap.Delete(ctx, key); err != nil {
+		h.logger.Error(ctx, "unregister toolset failed", "component", "tool-registry-health", "toolset", toolset, "key", key, "err", err)
+	}
 
 	// Clean up health state.
 	healthK := healthKey(toolset)
-	_, _ = h.healthMap.Delete(ctx, healthK)
+	if _, err := h.healthMap.Delete(ctx, healthK); err != nil {
+		h.logger.Error(ctx, "delete toolset health failed", "component", "tool-registry-health", "toolset", toolset, "key", healthK, "err", err)
+	}
 
 	// Stop local ticker (other nodes will do the same via watchRegistryChanges).
 	h.stopLocalTicker(toolset)
+
+	h.stateMu.Lock()
+	delete(h.lastObservedHealthy, toolset)
+	delete(h.lastObservedPongNano, toolset)
+	h.stateMu.Unlock()
 }
 
 func (h *healthTracker) Close() error {
@@ -379,6 +394,7 @@ func (h *healthTracker) runPingLoop(ctx context.Context, toolset string, ticker 
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			h.observeHealth(ctx, toolset)
 			h.sendPing(ctx, toolset)
 		}
 	}
@@ -388,6 +404,76 @@ func (h *healthTracker) sendPing(ctx context.Context, toolset string) {
 	pingID := uuid.New().String()
 	msg := toolregistry.NewPingMessage(pingID)
 	if err := h.streamManager.PublishToolCall(ctx, toolset, msg); err != nil {
-		h.logger.Error(context.Background(), "publish ping failed", "event", "publish_ping_failed", "toolset", toolset, "ping_id", pingID, "err", err)
+		h.logger.Error(
+			context.Background(),
+			"publish ping failed",
+			"event", "publish_ping_failed",
+			"component", "tool-registry-health",
+			"toolset", toolset,
+			"ping_id", pingID,
+			"err", err,
+		)
+	}
+}
+
+func (h *healthTracker) observeHealth(ctx context.Context, toolset string) {
+	key := healthKey(toolset)
+	val, ok := h.healthMap.Get(key)
+	if !ok {
+		h.noteHealth(ctx, toolset, false, 0, "missing_health_entry")
+		return
+	}
+	ts, err := strconv.ParseInt(val, 10, 64)
+	if err != nil {
+		h.logger.Error(ctx, "parse pong timestamp failed", "component", "tool-registry-health", "toolset", toolset, "value", val, "err", err)
+		h.noteHealth(ctx, toolset, false, 0, "invalid_health_timestamp")
+		return
+	}
+	lastPong := time.Unix(0, ts)
+	age := time.Since(lastPong)
+	h.noteHealth(ctx, toolset, age <= h.stalenessThreshold, ts, "ok")
+}
+
+func (h *healthTracker) noteHealth(ctx context.Context, toolset string, healthy bool, lastPongNano int64, reason string) {
+	h.stateMu.Lock()
+	defer h.stateMu.Unlock()
+
+	prevHealthy, hasPrev := h.lastObservedHealthy[toolset]
+	prevPong := h.lastObservedPongNano[toolset]
+
+	h.lastObservedHealthy[toolset] = healthy
+	if lastPongNano != 0 {
+		h.lastObservedPongNano[toolset] = lastPongNano
+	}
+
+	if !hasPrev {
+		return
+	}
+	if prevHealthy == healthy && prevPong == lastPongNano {
+		return
+	}
+
+	now := time.Now()
+	var lastPong time.Time
+	if lastPongNano != 0 {
+		lastPong = time.Unix(0, lastPongNano)
+	} else if prevPong != 0 {
+		lastPong = time.Unix(0, prevPong)
+	}
+
+	if prevHealthy && !healthy {
+		h.logger.Warn(
+			ctx,
+			"toolset became unhealthy",
+			"component", "tool-registry-health",
+			"toolset", toolset,
+			"reason", reason,
+			"staleness_threshold", h.stalenessThreshold.String(),
+			"ping_interval", h.pingInterval.String(),
+			"missed_ping_threshold", h.missedPingThreshold,
+			"last_pong", lastPong.UTC().Format(time.RFC3339Nano),
+			"age_since_last_pong", now.Sub(lastPong).String(),
+		)
+		return
 	}
 }
