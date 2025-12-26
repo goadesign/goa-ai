@@ -274,6 +274,11 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 		// 1) JSON decode-body type: materialize a single named user type for the
 		// root body with inline nested objects (no separate nested user types).
 		jsonRoot, jsonDefs := b.materializeJSONUserTypes(jsonAttr, typeName+"JSON", scope)
+		// Ensure any union sum types referenced by the JSON helper graph are
+		// emitted in unions.go. JSON helper types may include locally materialized
+		// unions (e.g., type/value carriers) that do not exist in the target
+		// package otherwise.
+		b.collectUnionSumTypes(scope, &goaexpr.AttributeExpr{Type: jsonRoot})
 		assertNoNilTypes(jsonRoot.Attribute(), tool, usage, "json-root")
 		// Compute the final public name for the root JSON type so that
 		// references in codecs match the emitted type name in types.go.

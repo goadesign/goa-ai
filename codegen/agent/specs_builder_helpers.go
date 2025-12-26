@@ -49,3 +49,24 @@ func fixTransformHelperSignatures(helpers []*codegen.TransformFunctionData) []*c
 	}
 	return helpers
 }
+
+func dedupTransformHelpers(types []*typeData) {
+	seen := make(map[string]struct{})
+	for _, td := range types {
+		if td == nil || len(td.TransformHelpers) == 0 {
+			continue
+		}
+		out := td.TransformHelpers[:0]
+		for _, h := range td.TransformHelpers {
+			if h == nil || h.Name == "" {
+				continue
+			}
+			if _, ok := seen[h.Name]; ok {
+				continue
+			}
+			seen[h.Name] = struct{}{}
+			out = append(out, h)
+		}
+		td.TransformHelpers = out
+	}
+}

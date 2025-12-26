@@ -35,9 +35,9 @@ var (
 			DeniedResultTemplate: "{\"summary\":\"Cancelled\",\"key\":\"{{ .Key }}\"}",
 		},
 		Payload: tools.TypeSpec{
-			Name:        "DangerousWritePayload",
-			Schema:      []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"DangerousWriteArgs\",\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"Key to update.\",\"example\":\"Dignissimos quo illum.\"},\"value\":{\"type\":\"string\",\"description\":\"New value.\",\"example\":\"Nemo quia.\"}},\"example\":{\"key\":\"Consequatur reprehenderit.\",\"value\":\"Molestiae velit quam amet cupiditate non.\"},\"required\":[\"key\",\"value\"]}"),
-			ExampleJSON: []byte("{\"key\":\"abc123\",\"value\":\"abc123\"}"),
+			Name:         "DangerousWritePayload",
+			Schema:       []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"DangerousWriteArgs\",\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"Key to update.\",\"example\":\"Dignissimos quo illum.\"},\"value\":{\"type\":\"string\",\"description\":\"New value.\",\"example\":\"Nemo quia.\"}},\"example\":{\"key\":\"Consequatur reprehenderit.\",\"value\":\"Molestiae velit quam amet cupiditate non.\"},\"required\":[\"key\",\"value\"]}"),
+			ExampleJSON:  []byte("{\"key\":\"abc123\",\"value\":\"abc123\"}"),
 			ExampleInput: map[string]any{"key": "abc123", "value": "abc123"},
 			Codec:        dangerousWritePayloadCodec,
 		},
