@@ -86,9 +86,14 @@ func nestedRunIDSuffix(toolCallID string) string {
 }
 
 // generateDeterministicToolCallID creates a replay-safe tool-call ID using the
-// run ID, optional turn ID, sanitized tool name, and the deterministic index of
-// the tool within the current batch.
-func generateDeterministicToolCallID(runID, turnID string, toolName tools.Ident, index int) string {
+// run ID, optional turn ID, attempt counter, sanitized tool name, and the
+// deterministic index of the tool within the current batch.
+//
+// Attempt is required to avoid ID collisions when the same run executes multiple
+// tool batches within a single logical turn (for example when callers set TurnID
+// to a constant run identifier). The runtime increments Attempt on each planner
+// iteration so generated IDs remain unique within the run.
+func generateDeterministicToolCallID(runID, turnID string, attempt int, toolName tools.Ident, index int) string {
 	if runID == "" {
 		runID = unknownID
 	}
@@ -96,12 +101,12 @@ func generateDeterministicToolCallID(runID, turnID string, toolName tools.Ident,
 		toolName = "tool"
 	}
 	safeTool := strings.ReplaceAll(string(toolName), ".", "-")
-	// Format: <runID>/<turnID|no-turn>/<tool>/<index>
+	// Format: <runID>/<turnID|no-turn>/attempt-<attempt>/<tool>/<index>
 	tid := turnID
 	if tid == "" {
 		tid = "no-turn"
 	}
-	return strings.Join([]string{runID, tid, safeTool, strconv.Itoa(index)}, "/")
+	return strings.Join([]string{runID, tid, fmt.Sprintf("attempt-%d", attempt), safeTool, strconv.Itoa(index)}, "/")
 }
 
 // generateDeterministicAwaitID creates a replay-safe await identifier using the runID,

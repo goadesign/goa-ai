@@ -98,7 +98,7 @@ func (i *finalizerToolInvoker) Invoke(ctx context.Context, tool tools.Ident, pay
 		TurnID:           parent.TurnID,
 		ParentToolCallID: parent.ParentToolCallID,
 		AgentID:          parent.AgentID,
-		ToolCallID:       generateDeterministicToolCallID(parent.RunID, parent.TurnID, tool, i.counter),
+		ToolCallID:       generateDeterministicToolCallID(parent.RunID, parent.TurnID, 1, tool, i.counter),
 	}
 	i.counter++
 
