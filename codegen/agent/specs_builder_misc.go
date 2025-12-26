@@ -30,6 +30,40 @@ func (b *toolSpecBuilder) materializeJSONUserTypes(att *goaexpr.AttributeExpr, b
 				return build(dt.Attribute(), name)
 			}
 			return a
+		case *goaexpr.Union:
+			// Materialize union member objects as JSON helper user types so the
+			// server-body style AttributeContext (Pointer=true) matches the actual
+			// decoded Go shape. Without this, unions that reference external user
+			// types will produce GoTransform helpers that incorrectly dereference
+			// non-pointer struct fields (e.g., *actual.DeviceAlias).
+			u := &goaexpr.Union{TypeName: dt.TypeName}
+			for _, nat := range dt.Values {
+				fieldName := codegen.Goify(nat.Name, true)
+				childName := name + fieldName + "JSON"
+				ca := build(nat.Attribute, childName)
+				u.Values = append(u.Values, &goaexpr.NamedAttributeExpr{Name: nat.Name, Attribute: ca})
+			}
+			// Preserve struct tags when present so downstream type materialization
+			// (e.g., nested helper aliases) retains explicit JSON field naming.
+			// Drop struct:pkg:* locator metadata so synthesized helper types remain
+			// local to the specs package.
+			dup := *a
+			dup.Type = u
+			if len(dup.Meta) > 0 {
+				meta := make(map[string][]string, len(dup.Meta))
+				for k, v := range dup.Meta {
+					if strings.HasPrefix(k, "struct:pkg:") {
+						continue
+					}
+					meta[k] = v
+				}
+				if len(meta) == 0 {
+					dup.Meta = nil
+				} else {
+					dup.Meta = meta
+				}
+			}
+			return &dup
 		case *goaexpr.Object:
 			if ut, ok := visited[dt]; ok {
 				return &goaexpr.AttributeExpr{Type: ut}

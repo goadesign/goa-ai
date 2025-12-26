@@ -35,12 +35,12 @@ type (
 		// Name
 		Name *string `json:"name"`
 		// Address
-		Address *Address
+		Address *Address `json:"address"`
 	}
 	// UpsertArgs is a helper type materialized for nested references.
 	UpsertArgs = struct {
 		// Profile
-		Profile *Profile
+		Profile *Profile `json:"profile"`
 	}
 	// UpsertPayloadJSON2 is a helper type for JSON decode-body.
 	UpsertPayloadJSON2 = struct {

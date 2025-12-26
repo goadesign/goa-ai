@@ -47,7 +47,7 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 	}
 
 	type specCandidate struct {
-		agent  *AgentData
+		agent   *AgentData
 		toolset *ToolsetData
 	}
 	candidatesByDir := make(map[string][]specCandidate)
@@ -58,7 +58,7 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 					continue
 				}
 				candidatesByDir[ts.SpecsDir] = append(candidatesByDir[ts.SpecsDir], specCandidate{
-					agent:  ag,
+					agent:   ag,
 					toolset: ts,
 				})
 			}
@@ -143,13 +143,15 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, "unions.go"), SectionTemplates: unionSections})
 		}
 		if len(specsData.tools) > 0 {
+			types := specsData.typesList()
+			dedupTransformHelpers(types)
 			// codecs.go
 			codecsSections := []*codegen.SectionTemplate{
 				codegen.Header(ts.Name+" tool codecs", ts.SpecsPackageName, specsData.codecsImports()),
 				{
 					Name:    "tool-spec-codecs",
 					Source:  agentsTemplates.Read(toolCodecsFileT),
-					Data:    toolCodecsFileData{Types: specsData.typesList(), Tools: specsData.tools},
+					Data:    toolCodecsFileData{Types: types, Tools: specsData.tools},
 					FuncMap: templateFuncMap(),
 				},
 			}
@@ -204,8 +206,8 @@ func toolsetProviderFile(genpkg string, ts *ToolsetData) *codegen.File {
 	sections := []*codegen.SectionTemplate{
 		codegen.Header(ts.Name+" tool provider", ts.SpecsPackageName, imports),
 		{
-			Name:    "tool-provider",
-			Source:  agentsTemplates.Read(toolProviderFileT),
+			Name:   "tool-provider",
+			Source: agentsTemplates.Read(toolProviderFileT),
 			Data: toolProviderFileData{
 				PackageName:    ts.SpecsPackageName,
 				ServiceTypeRef: fmt.Sprintf("%s.Service", ts.SourceService.PkgName),
@@ -239,8 +241,8 @@ func toolsetRegistrySpecsFiles(ts *ToolsetData) []*codegen.File {
 	sections := []*codegen.SectionTemplate{
 		codegen.Header(ts.Name+" registry toolset specs", ts.SpecsPackageName, specImports),
 		{
-			Name:    "registry-toolset-specs",
-			Source:  agentsTemplates.Read(registryToolsetSpecsFileT),
+			Name:   "registry-toolset-specs",
+			Source: agentsTemplates.Read(registryToolsetSpecsFileT),
 			Data: registryToolsetSpecsFileData{
 				PackageName:   ts.SpecsPackageName,
 				QualifiedName: ts.QualifiedName,
@@ -257,5 +259,3 @@ func toolsetRegistrySpecsFiles(ts *ToolsetData) []*codegen.File {
 		},
 	}
 }
-
-
