@@ -537,6 +537,128 @@ drainLoop:
 	}
 }
 
+// TestPingsContinueAfterPeerTrackerClose verifies that gracefully closing a
+// health tracker on one node does not stop the shared distributed ticker for
+// other nodes.
+//
+// Regression: HealthTracker.Close used to call (*pool.Ticker).Stop, which deletes
+// the shared ticker-map entry and can stop pings cluster-wide during rolling
+// updates.
+func TestPingsContinueAfterPeerTrackerClose(t *testing.T) {
+	rdb := getRedis(t)
+	ctx := context.Background()
+
+	healthMap, err := rmap.Join(ctx, "health-"+t.Name(), rdb)
+	if err != nil {
+		t.Fatalf("failed to create health map: %v", err)
+	}
+	defer healthMap.Close()
+
+	registryMap, err := rmap.Join(ctx, "registry-"+t.Name(), rdb)
+	if err != nil {
+		t.Fatalf("failed to create registry map: %v", err)
+	}
+	defer registryMap.Close()
+
+	registryEvents := registryMap.Subscribe()
+	defer registryMap.Unsubscribe(registryEvents)
+
+	poolName := "pool-" + t.Name()
+	node1, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
+	if err != nil {
+		t.Fatalf("failed to create node1: %v", err)
+	}
+	defer func() { _ = node1.Close(ctx) }()
+
+	node2, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
+	if err != nil {
+		t.Fatalf("failed to create node2: %v", err)
+	}
+	defer func() { _ = node2.Close(ctx) }()
+
+	mockSM := &pingCountingStreamManager{
+		messages: make(map[string]int),
+		pingCh:   make(chan string, 100),
+	}
+
+	// Create tracker2 FIRST so it's ready to receive registry events.
+	tracker2, err := NewHealthTracker(
+		mockSM,
+		healthMap,
+		registryMap,
+		node2,
+		WithPingInterval(50*time.Millisecond),
+		WithMissedPingThreshold(2),
+	)
+	if err != nil {
+		t.Fatalf("failed to create tracker2: %v", err)
+	}
+	defer func() { _ = tracker2.Close() }()
+
+	tracker1, err := NewHealthTracker(
+		mockSM,
+		healthMap,
+		registryMap,
+		node1,
+		WithPingInterval(50*time.Millisecond),
+		WithMissedPingThreshold(2),
+	)
+	if err != nil {
+		t.Fatalf("failed to create tracker1: %v", err)
+	}
+
+	toolset := "peer-close-toolset"
+	if err := tracker1.StartPingLoop(ctx, toolset); err != nil {
+		_ = tracker1.Close()
+		t.Fatalf("failed to start ping loop: %v", err)
+	}
+
+	// Wait for registration event (tracker2 will sync and create its ticker).
+	select {
+	case <-registryEvents:
+	case <-time.After(5 * time.Second):
+		_ = tracker1.Close()
+		t.Fatal("timeout waiting for registration event")
+	}
+
+	// Wait for at least 2 pings to ensure the distributed ticker is working.
+	for range 2 {
+		select {
+		case <-mockSM.pingCh:
+		case <-time.After(5 * time.Second):
+			_ = tracker1.Close()
+			t.Fatal("timeout waiting for pings before peer close")
+		}
+	}
+
+	pingCountBefore := mockSM.getPingCount(toolset)
+
+	// Gracefully close tracker1 (simulating rolling update shutdown).
+	if err := tracker1.Close(); err != nil {
+		t.Fatalf("failed to close tracker1: %v", err)
+	}
+
+	// Pings should continue from the remaining node.
+	for range 3 {
+		select {
+		case <-mockSM.pingCh:
+		case <-time.After(10 * time.Second):
+			t.Fatalf(
+				"timeout waiting for pings after peer close (before=%d, current=%d)",
+				pingCountBefore,
+				mockSM.getPingCount(toolset),
+			)
+		}
+	}
+	if mockSM.getPingCount(toolset) <= pingCountBefore {
+		t.Fatalf(
+			"expected ping count to increase after peer close: before=%d after=%d",
+			pingCountBefore,
+			mockSM.getPingCount(toolset),
+		)
+	}
+}
+
 // pingCountingStreamManager counts pings per toolset and signals via channel.
 type pingCountingStreamManager struct {
 	mu       sync.RWMutex
