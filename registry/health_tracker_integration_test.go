@@ -488,6 +488,8 @@ func TestPingsContinueAfterNodeFailure(t *testing.T) {
 		t.Fatal("timeout waiting for registration event")
 	}
 
+	requireLocalTickerParticipation(t, tracker2, "failover-toolset")
+
 	// Wait for at least 2 pings to ensure the distributed ticker is working.
 	for range 2 {
 		select {
@@ -621,24 +623,7 @@ func TestPingsContinueAfterPeerTrackerClose(t *testing.T) {
 		t.Fatal("timeout waiting for registration event")
 	}
 
-	// Deterministically ensure tracker2 processed the registry entry and started
-	// its local distributed ticker participation before we close tracker1.
-	//
-	// The tracker receives registry events asynchronously, and observing a map
-	// event from this test does not guarantee tracker2 has already synced.
-	ht2, ok := tracker2.(*healthTracker)
-	if !ok {
-		_ = tracker1.Close()
-		t.Fatalf("unexpected tracker2 type %T", tracker2)
-	}
-	ht2.syncWithRegistry()
-	ht2.mu.Lock()
-	_, hasTicker := ht2.tickers[toolset]
-	ht2.mu.Unlock()
-	if !hasTicker {
-		_ = tracker1.Close()
-		t.Fatalf("tracker2 did not start local ticker for %q", toolset)
-	}
+	requireLocalTickerParticipation(t, tracker2, toolset)
 
 	// Wait for at least 2 pings to ensure the distributed ticker is working.
 	for range 2 {
@@ -675,6 +660,26 @@ func TestPingsContinueAfterPeerTrackerClose(t *testing.T) {
 			pingCountBefore,
 			mockSM.getPingCount(toolset),
 		)
+	}
+}
+
+func requireLocalTickerParticipation(t *testing.T, tracker HealthTracker, toolset string) {
+	t.Helper()
+
+	ht, ok := tracker.(*healthTracker)
+	if !ok {
+		t.Fatalf("unexpected health tracker type %T", tracker)
+	}
+
+	// The tracker receives registry events asynchronously, and observing a map
+	// event from the test does not guarantee the tracker has already synced.
+	ht.syncWithRegistry()
+
+	ht.mu.Lock()
+	_, hasTicker := ht.tickers[toolset]
+	ht.mu.Unlock()
+	if !hasTicker {
+		t.Fatalf("health tracker did not start local ticker for %q", toolset)
 	}
 }
 

@@ -82,6 +82,8 @@ func TestPingsSurviveReregisterAndFailover(t *testing.T) {
 		t.Fatalf("failed to start ping loop: %v", err)
 	}
 
+	requireLocalTickerParticipation(t, tracker2, toolset)
+
 	// Wait for pings.
 	for range 3 {
 		select {
