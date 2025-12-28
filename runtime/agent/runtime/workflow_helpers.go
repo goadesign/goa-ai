@@ -257,6 +257,20 @@ func (r *Runtime) appendUserToolResults(
 		if spec, ok := r.toolSpec(tr.Name); ok && spec.ResultReminder != "" {
 			reminders = append(reminders, spec.ResultReminder)
 		}
+		if rem := retryHintReminder(tr); rem != "" {
+			reminders = append(reminders, rem)
+		}
+		if spec, ok := r.toolSpec(tr.Name); ok {
+			cursorField := ""
+			if spec.Paging != nil {
+				cursorField = spec.Paging.CursorField
+			}
+			if rem := boundsReminder(tr, cursorField); rem != "" {
+				reminders = append(reminders, rem)
+			}
+		} else if rem := boundsReminder(tr, ""); rem != "" {
+			reminders = append(reminders, rem)
+		}
 	}
 	if len(parts) == 0 {
 		return

@@ -17,6 +17,9 @@ func (b *toolSpecBuilder) materialize(typeName string, att *goaexpr.AttributeExp
 		// always have a valid type reference. Using an alias keeps
 		// pointer/value semantics straightforward and avoids generating
 		// unnecessary struct declarations.
+		if defineType {
+			return att, typeName + " struct{}", typeName, nil
+		}
 		return att, typeName + " = struct{}", typeName, nil
 	}
 
@@ -33,7 +36,11 @@ func (b *toolSpecBuilder) materialize(typeName string, att *goaexpr.AttributeExp
 			// alias to ensure the reference is properly qualified in generated code.
 			pkg := loc.PackageName()
 			rhs := scope.GoTypeDefWithTargetPkg(att, false, true, pkg)
-			defLine = typeName + " = " + rhs
+			if defineType {
+				defLine = typeName + " " + rhs
+			} else {
+				defLine = typeName + " = " + rhs
+			}
 			// Refer to the alias type name within the local specs package.
 			fullRef = typeName
 			break
@@ -47,7 +54,11 @@ func (b *toolSpecBuilder) materialize(typeName string, att *goaexpr.AttributeExp
 		// user types referenced by the composite are materialized locally by
 		// ensureNestedLocalTypes.
 		rhs := scope.GoTypeDef(cloneWithJSONTags(dt.Attribute()), false, true)
-		defLine = typeName + " = " + rhs
+		if defineType {
+			defLine = typeName + " " + rhs
+		} else {
+			defLine = typeName + " = " + rhs
+		}
 		fullRef = typeName
 	case *goaexpr.Array:
 		// Build alias to composite; if self-referential, introduce element helper.

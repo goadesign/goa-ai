@@ -542,6 +542,10 @@ type (
 		// truncation metadata consistently.
 		BoundedResult bool
 
+		// Paging describes cursor-based pagination fields for this tool when configured
+		// via Cursor and NextCursor in the BoundedResult sub-DSL.
+		Paging *ToolPagingData
+
 		// ResultReminder is an optional system reminder injected into the
 		// conversation after the tool result is returned. It provides backstage
 		// guidance to the model about how to interpret or present the result.
@@ -556,6 +560,11 @@ type (
 		// PassthroughMethod is the Goa method name for deterministic forwarding
 		// when this tool is part of an exported toolset.
 		PassthroughMethod string
+	}
+
+	ToolPagingData struct {
+		CursorField     string
+		NextCursorField string
 	}
 
 	// RuntimeData contains the workflow and activity artifacts generated for an agent,
@@ -1209,6 +1218,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		ResultHintTemplate:  expr.ResultHintTemplate,
 		InjectedFields:      expr.InjectedFields,
 		BoundedResult:       expr.BoundedResult,
+		Paging:              pagingData(expr.Paging),
 		ResultReminder:      expr.ResultReminder,
 	}
 	if expr.Confirmation != nil {
@@ -1288,6 +1298,16 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 	return tool
 }
 
+func pagingData(p *agentsExpr.ToolPagingExpr) *ToolPagingData {
+	if p == nil {
+		return nil
+	}
+	return &ToolPagingData{
+		CursorField:     p.CursorField,
+		NextCursorField: p.NextCursorField,
+	}
+}
+
 // artifactDescription returns a human-facing description for the tool sidecar
 // attribute. It prefers the attribute Description set in the Artifact DSL
 // block and falls back to the underlying user type description when needed.
@@ -1335,7 +1355,10 @@ func newActivity(agent *AgentData, kind ActivityKind, logicalSuffix string, queu
 		artifact.RetryPolicy = plannerActivityRetryPolicy()
 		artifact.Timeout = defaultPlannerActivityTimeout
 	case ActivityKindExecuteTool:
-		// ExecuteTool activity has no default timeout or retry policy
+		// ExecuteTool activities do not retry by default: tool failures should be
+		// addressed by the planner (fix inputs), and timeouts should not restart
+		// the same operation from scratch.
+		artifact.RetryPolicy = engine.RetryPolicy{MaxAttempts: 1}
 	}
 	return artifact
 }

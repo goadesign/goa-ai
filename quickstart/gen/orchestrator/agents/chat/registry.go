@@ -58,9 +58,13 @@ func RegisterChatAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ChatA
 				BackoffCoefficient: 2,
 			},
 		},
-		ExecuteToolActivity:        "orchestrator.chat.executetool",
-		ExecuteToolActivityOptions: engine.ActivityOptions{},
-		Specs:                      specs.Specs,
+		ExecuteToolActivity: "orchestrator.chat.executetool",
+		ExecuteToolActivityOptions: engine.ActivityOptions{
+			RetryPolicy: engine.RetryPolicy{
+				MaxAttempts: 1,
+			},
+		},
+		Specs: specs.Specs,
 		Policy: agentsruntime.RunPolicy{
 			MaxToolCalls:                  2,
 			MaxConsecutiveFailedToolCalls: 1,

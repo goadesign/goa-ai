@@ -50,6 +50,8 @@ type testWorkflowContext struct {
 	sawFirstChildGet   bool
 
 	toolFutures map[string]*controlledToolFuture
+
+	controlledChildHandles chan *controlledChildHandle
 }
 
 func (t *testWorkflowContext) Context() context.Context {
@@ -95,6 +97,14 @@ func (t *testWorkflowContext) SetQueryHandler(name string, handler any) error {
 
 func (t *testWorkflowContext) StartChildWorkflow(ctx context.Context, req engine.ChildWorkflowRequest) (engine.ChildWorkflowHandle, error) {
 	t.childRequests = append(t.childRequests, req)
+	if t.controlledChildHandles != nil {
+		h := &controlledChildHandle{
+			ready: make(chan struct{}),
+			out:   &api.RunOutput{},
+		}
+		t.controlledChildHandles <- h
+		return h, nil
+	}
 	childRT := t.childRuntime
 	if childRT == nil {
 		childRT = t.runtime
@@ -273,6 +283,40 @@ func (f *controlledToolFuture) IsReady() bool {
 		return false
 	}
 }
+
+type controlledChildHandle struct {
+	ready chan struct{}
+	out   *api.RunOutput
+	err   error
+}
+
+func (h *controlledChildHandle) Get(ctx context.Context) (*api.RunOutput, error) {
+	if h == nil {
+		return nil, fmt.Errorf("nil child handle")
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-h.ready:
+		return h.out, h.err
+	}
+}
+
+func (h *controlledChildHandle) IsReady() bool {
+	if h == nil {
+		return true
+	}
+	select {
+	case <-h.ready:
+		return true
+	default:
+		return false
+	}
+}
+
+func (h *controlledChildHandle) Cancel(ctx context.Context) error { return nil }
+
+func (h *controlledChildHandle) RunID() string { return "" }
 
 type testReceiver[T any] struct{ ch chan T }
 
@@ -529,10 +573,19 @@ func newTestRuntimeWithPlanner(agentID agent.Ident, pl planner.Planner) *Runtime
 	}
 }
 
-type recordingHooks struct{ events []hooks.Event }
+type recordingHooks struct {
+	mu     sync.Mutex
+	events []hooks.Event
+	ch     chan hooks.Event
+}
 
 func (r *recordingHooks) Publish(ctx context.Context, event hooks.Event) error {
+	r.mu.Lock()
 	r.events = append(r.events, event)
+	r.mu.Unlock()
+	if r.ch != nil {
+		r.ch <- event
+	}
 	return nil
 }
 
@@ -575,6 +628,12 @@ func (h *testChildHandle) Get(ctx context.Context) (*api.RunOutput, error) {
 		return h.runtime.ExecuteWorkflow(h.wfCtx, h.request.Input)
 	}
 	return &api.RunOutput{}, nil
+}
+
+func (h *testChildHandle) IsReady() bool {
+	// Test child handles complete synchronously when Get is invoked.
+	// We return true so callers can treat them as ready when draining.
+	return true
 }
 func (h *testChildHandle) Cancel(ctx context.Context) error { return nil }
 func (h *testChildHandle) RunID() string                    { return "" }

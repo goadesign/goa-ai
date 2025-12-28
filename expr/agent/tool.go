@@ -68,6 +68,11 @@ type (
 		// and services can enforce and surface bounds consistently.
 		BoundedResult bool
 
+		// Paging optionally describes cursor-based pagination for this tool.
+		// When set, codegen and runtimes can surface paging-aware guidance and
+		// fill Bounds.NextCursor from the configured result field.
+		Paging *ToolPagingExpr
+
 		// ResultReminder is an optional system reminder that is injected into
 		// the conversation after the tool result is returned. It provides
 		// backstage guidance to the model about how to interpret or present
@@ -83,6 +88,18 @@ type (
 
 		bindServiceName string
 		bindMethodName  string
+	}
+
+	// ToolPagingExpr identifies the cursor field names used by a cursor-paged tool.
+	// Field names refer to the tool payload and tool result schemas respectively.
+	// The values carried by these fields are opaque cursors.
+	ToolPagingExpr struct {
+		// CursorField is the name of the optional String field in the tool payload
+		// that carries the paging cursor for retrieving the next page.
+		CursorField string
+		// NextCursorField is the name of the optional String field in the tool result
+		// that carries the cursor for the next page.
+		NextCursorField string
 	}
 
 	// ToolPassthroughExpr defines deterministic forwarding for an exported tool.
@@ -259,10 +276,61 @@ func (t *ToolExpr) validateShapes() error {
 	check("Args", t.Args)
 	check("Return", t.Return)
 	check("Sidecar", t.Sidecar)
+	validatePagingShape(t, verr)
 	if len(verr.Errors) == 0 {
 		return nil
 	}
 	return verr
+}
+
+func validatePagingShape(tool *ToolExpr, verr *eval.ValidationErrors) {
+	if tool == nil || verr == nil || tool.Paging == nil {
+		return
+	}
+	if !tool.BoundedResult {
+		verr.Add(tool, "Paging configuration requires BoundedResult()")
+		return
+	}
+	validatePagingField := func(where string, att *goaexpr.AttributeExpr, name string) {
+		if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+			verr.Add(tool, "%s must be non-empty when configuring paging", where)
+			return
+		}
+
+		field := att.Find(name)
+		if field == nil || field.Type == nil || field.Type == goaexpr.Empty {
+			verr.Add(tool, "%s must define an optional String field named %q when configuring paging", where, name)
+			return
+		}
+		if field.Type != goaexpr.String {
+			verr.Add(tool, "%s field %q must be a String when configuring paging", where, name)
+			return
+		}
+
+		root := att
+		if ut, ok := att.Type.(goaexpr.UserType); ok && ut != nil {
+			root = ut.Attribute()
+		}
+		if root != nil && root.Validation != nil {
+			for _, req := range root.Validation.Required {
+				if req == name {
+					verr.Add(tool, "%s field %q must be optional when configuring paging", where, name)
+					return
+				}
+			}
+		}
+	}
+
+	if tool.Paging.CursorField == "" {
+		verr.Add(tool, "Cursor() is required when configuring paging")
+		return
+	}
+	if tool.Paging.NextCursorField == "" {
+		verr.Add(tool, "NextCursor() is required when configuring paging")
+		return
+	}
+	validatePagingField("Args", tool.Args, tool.Paging.CursorField)
+	validatePagingField("Return", tool.Return, tool.Paging.NextCursorField)
 }
 
 // Finalize resolves and assigns the bound method after successful validation.

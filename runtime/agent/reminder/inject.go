@@ -96,11 +96,21 @@ func injectBeforeLastUser(msgs []*model.Message, rems []Reminder) []*model.Messa
 		out = append(out, m)
 		return out
 	}
-	// Insert immediately before the last user message.
+	// Bedrock constraint: assistant tool_use must be immediately followed by a
+	// user tool_result message. Tool results are encoded as user messages, but
+	// they are not a "user turn" and must not be separated from the preceding
+	// tool_use by injected system reminders.
+	//
+	// If the last user message contains tool_result blocks, inject after it
+	// rather than before it.
+	insertAt := lastUser
+	if messageHasToolResult(msgs[lastUser]) {
+		insertAt = lastUser + 1
+	}
 	out := make([]*model.Message, 0, len(msgs)+1)
-	out = append(out, msgs[:lastUser]...)
+	out = append(out, msgs[:insertAt]...)
 	out = append(out, m)
-	out = append(out, msgs[lastUser:]...)
+	out = append(out, msgs[insertAt:]...)
 	return out
 }
 
@@ -163,4 +173,16 @@ func cloneMessage(msg *model.Message) *model.Message {
 		Parts: parts,
 		Meta:  meta,
 	}
+}
+
+func messageHasToolResult(msg *model.Message) bool {
+	if msg == nil || msg.Role != model.ConversationRoleUser {
+		return false
+	}
+	for _, p := range msg.Parts {
+		if _, ok := p.(model.ToolResultPart); ok {
+			return true
+		}
+	}
+	return false
 }

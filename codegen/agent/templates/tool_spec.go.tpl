@@ -29,6 +29,12 @@ var (
         AgentID:     {{ printf "%q" .ExportingAgentID }},
         {{- end }}
         BoundedResult: {{ if .BoundedResult }}true{{ else }}false{{ end }},
+        {{- if .Paging }}
+        Paging: &tools.PagingSpec{
+            CursorField: {{ printf "%q" .Paging.CursorField }},
+            NextCursorField: {{ printf "%q" .Paging.NextCursorField }},
+        },
+        {{- end }}
         {{- if .ResultReminder }}
         ResultReminder: {{ printf "%q" .ResultReminder }},
         {{- end }}
