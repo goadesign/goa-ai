@@ -625,19 +625,31 @@ func TestPingsContinueAfterPeerTrackerClose(t *testing.T) {
 	// its local distributed ticker participation before we close tracker1.
 	//
 	// The tracker receives registry events asynchronously, and observing a map
-	// event from this test does not guarantee tracker2 has already synced.
+	// event from this test does not guarantee tracker2 has already synced. Avoid
+	// forcing a sync here: wait for the local ticker to appear to exercise the
+	// real async event path.
 	ht2, ok := tracker2.(*healthTracker)
 	if !ok {
 		_ = tracker1.Close()
 		t.Fatalf("unexpected tracker2 type %T", tracker2)
 	}
-	ht2.syncWithRegistry()
-	ht2.mu.Lock()
-	_, hasTicker := ht2.tickers[toolset]
-	ht2.mu.Unlock()
-	if !hasTicker {
-		_ = tracker1.Close()
-		t.Fatalf("tracker2 did not start local ticker for %q", toolset)
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
+	for {
+		ht2.mu.Lock()
+		_, hasTicker := ht2.tickers[toolset]
+		ht2.mu.Unlock()
+		if hasTicker {
+			break
+		}
+		select {
+		case <-poll.C:
+		case <-deadline.C:
+			_ = tracker1.Close()
+			t.Fatalf("tracker2 did not start local ticker for %q", toolset)
+		}
 	}
 
 	// Wait for at least 2 pings to ensure the distributed ticker is working.
