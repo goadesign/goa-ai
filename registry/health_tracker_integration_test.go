@@ -621,6 +621,25 @@ func TestPingsContinueAfterPeerTrackerClose(t *testing.T) {
 		t.Fatal("timeout waiting for registration event")
 	}
 
+	// Deterministically ensure tracker2 processed the registry entry and started
+	// its local distributed ticker participation before we close tracker1.
+	//
+	// The tracker receives registry events asynchronously, and observing a map
+	// event from this test does not guarantee tracker2 has already synced.
+	ht2, ok := tracker2.(*healthTracker)
+	if !ok {
+		_ = tracker1.Close()
+		t.Fatalf("unexpected tracker2 type %T", tracker2)
+	}
+	ht2.syncWithRegistry()
+	ht2.mu.Lock()
+	_, hasTicker := ht2.tickers[toolset]
+	ht2.mu.Unlock()
+	if !hasTicker {
+		_ = tracker1.Close()
+		t.Fatalf("tracker2 did not start local ticker for %q", toolset)
+	}
+
 	// Wait for at least 2 pings to ensure the distributed ticker is working.
 	for range 2 {
 		select {
