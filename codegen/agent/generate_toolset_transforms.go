@@ -164,9 +164,6 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 				tgtCtx := codegen.NewAttributeContextForConversion(false, false, false, "", scope)
 				body, helpers, err := codegen.GoTransform(t.MethodResultAttr, targetAttr, "in", "out", srcCtx, tgtCtx, "", false)
 				if err == nil && body != "" {
-					if t.BoundedResult {
-						body += boundedToolResultBoundsInit(t.QualifiedName)
-					}
 					for _, h := range helpers {
 						if h == nil {
 							continue
@@ -306,28 +303,6 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 		Path:             filepath.Join(ts.SpecsDir, "transforms.go"),
 		SectionTemplates: sections,
 	}
-}
-
-func boundedToolResultBoundsInit(qualifiedName string) string {
-	// This snippet is appended to method-backed Init<GoName>ToolResult transforms
-	// for bounded tools.
-	//
-	// Contract:
-	//   - Returned and Truncated must always be populated by the service.
-	//   - Returned==0 represents an empty result; in that case Total must be 0 and
-	//     Truncated must be false.
-	//   - Bounds is always present on bounded tool results so the runtime can rely
-	//     on agent.BoundedResult without any boundary fallbacks.
-	//
-	// Violations are treated as bugs in the service implementation and must fail
-	// fast so producers are fixed.
-	return fmt.Sprintf(
-		"\n\tif out.Returned == nil {\n\t\tpanic(%q)\n\t}\n\tif out.Truncated == nil {\n\t\tpanic(%q)\n\t}\n\tif *out.Returned == 0 {\n\t\tif out.Total == nil || *out.Total != 0 {\n\t\t\tpanic(%q)\n\t\t}\n\t\tif *out.Truncated {\n\t\t\tpanic(%q)\n\t\t}\n\t}\n\tout.Bounds = &struct {\n\t\tReturned       int     `json:\"returned\"`\n\t\tTotal          *int    `json:\"total\"`\n\t\tTruncated      bool    `json:\"truncated\"`\n\t\tRefinementHint *string `json:\"refinement_hint\"`\n\t}{\n\t\tReturned:       *out.Returned,\n\t\tTotal:          out.Total,\n\t\tTruncated:      *out.Truncated,\n\t\tRefinementHint: out.RefinementHint,\n\t}\n",
-		qualifiedName+": bounded tool result missing returned",
-		qualifiedName+": bounded tool result missing truncated",
-		qualifiedName+": bounded tool result returned=0 but total is not 0",
-		qualifiedName+": bounded tool result returned=0 but truncated=true",
-	)
 }
 
 func uniqueImportAlias(used map[string]struct{}, base string) string {

@@ -65,56 +65,6 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	if tool == nil || tool.Toolset == nil {
 		return nil, fmt.Errorf("invalid tool metadata: nil tool or toolset")
 	}
-	// For bounded tool results, extend the effective attribute with a canonical
-	// bounds field. This ensures:
-	//
-	//   - JSON schemas and tool_schemas.json expose a standard "bounds" property.
-	//   - Generated result alias types include a Bounds helper field with
-	//     non-pointer Returned/Truncated fields and optional Total/RefinementHint,
-	//     which in turn enables a simple, uniform implementation of
-	//     agent.BoundedResult.
-	if usage == usageResult && tool.BoundedResult && att != nil && att.Type != goaexpr.Empty {
-		if obj := goaexpr.AsObject(att.Type); obj != nil {
-			// Avoid mutating the shared design expression; work on a shallow copy of
-			// the attribute and its object.
-			dup := *att
-			// Synthesize an attribute for the canonical bounds metadata. The
-			// underlying schema is a small object with required returned/truncated
-			// and optional total/refinement_hint fields so the generated helper
-			// struct uses non-pointer fields for required data.
-			boundsAttr := &goaexpr.AttributeExpr{
-				Type: &goaexpr.Object{
-					&goaexpr.NamedAttributeExpr{
-						Name:      "returned",
-						Attribute: &goaexpr.AttributeExpr{Type: goaexpr.Int},
-					},
-					&goaexpr.NamedAttributeExpr{
-						Name:      "total",
-						Attribute: &goaexpr.AttributeExpr{Type: goaexpr.Int},
-					},
-					&goaexpr.NamedAttributeExpr{
-						Name:      "truncated",
-						Attribute: &goaexpr.AttributeExpr{Type: goaexpr.Boolean},
-					},
-					&goaexpr.NamedAttributeExpr{
-						Name:      "refinement_hint",
-						Attribute: &goaexpr.AttributeExpr{Type: goaexpr.String},
-					},
-				},
-				Validation: &goaexpr.ValidationExpr{
-					Required: []string{"returned", "truncated"},
-				},
-			}
-			boundsObj := make(goaexpr.Object, 0, len(*obj)+1)
-			boundsObj = append(boundsObj, *obj...)
-			boundsObj = append(boundsObj, &goaexpr.NamedAttributeExpr{
-				Name:      "bounds",
-				Attribute: boundsAttr,
-			})
-			dup.Type = &boundsObj
-			att = &dup
-		}
-	}
 	// Enforce core invariants early: attributes must have a non-nil Type and
 	// user types must always carry a non-nil AttributeExpr. Violations are
 	// treated as generator bugs and must be fixed at the construction site.
@@ -392,6 +342,11 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	// (deriveBounds) when enforcing bounded-view contracts.
 	if usage == usageResult && tool.BoundedResult {
 		info.ImplementsBounds = true
+		if tool.Paging != nil && tool.Paging.NextCursorField != "" {
+			if att.Find(tool.Paging.NextCursorField) != nil {
+				info.NextCursorGoField = codegen.Goify(tool.Paging.NextCursorField, true)
+			}
+		}
 		// Force pointer semantics for bounded results so codecs return
 		// *<ResultType>. This ensures decoded values implement the
 		// agent.BoundedResult interface (which has a pointer receiver) and

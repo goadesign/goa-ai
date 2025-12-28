@@ -63,6 +63,7 @@ func TestBuildGeneratorData(t *testing.T) {
 	require.Equal(t, "ScribeExecuteToolActivityDefinition", agent.Runtime.Activities[2].DefinitionVar)
 	require.Empty(t, agent.Runtime.Activities[2].Queue)
 	require.Zero(t, agent.Runtime.Activities[2].Timeout)
+	require.Equal(t, 1, agent.Runtime.Activities[2].RetryPolicy.MaxAttempts)
 	require.NotNil(t, agent.Runtime.ExecuteTool)
 	require.Equal(t, "calc.scribe.executetool", agent.Runtime.ExecuteTool.Name)
 	require.NotNil(t, agent.Runtime.PlanActivity)

@@ -54,8 +54,12 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 				BackoffCoefficient: 2,
 			},
 		},
-		ExecuteToolActivity:        "alpha.scribe.executetool",
-		ExecuteToolActivityOptions: engine.ActivityOptions{},
+		ExecuteToolActivity: "alpha.scribe.executetool",
+		ExecuteToolActivityOptions: engine.ActivityOptions{
+			RetryPolicy: engine.RetryPolicy{
+				MaxAttempts: 1,
+			},
+		},
 		Specs:                      nil,
 		Policy:                     agentsruntime.RunPolicy{},
 	}); err != nil {

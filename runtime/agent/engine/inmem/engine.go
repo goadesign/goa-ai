@@ -250,6 +250,18 @@ func (c *childHandle) Get(ctx context.Context) (*api.RunOutput, error) {
 	return c.h.Wait(ctx)
 }
 
+func (c *childHandle) IsReady() bool {
+	if h, ok := c.h.(*handle); ok {
+		select {
+		case <-h.done:
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
 func (c *childHandle) Cancel(ctx context.Context) error {
 	return c.h.Cancel(ctx)
 }

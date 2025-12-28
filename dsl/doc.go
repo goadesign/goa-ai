@@ -94,6 +94,8 @@
 //   - [CallHintTemplate] configures call display hint template
 //   - [ResultHintTemplate] configures result display hint template
 //   - [BoundedResult] marks result as a bounded view over larger data
+//   - [Cursor] declares which payload field carries a paging cursor (optional)
+//   - [NextCursor] declares which result field carries the next-page cursor (optional)
 //   - [Confirmation] declares that a tool must be confirmed out-of-band before execution
 //
 // Policy Functions:
@@ -171,7 +173,10 @@
 // transforms and keep tool schemas decoupled from method signatures.
 //
 // Mark bounded results: Tools returning potentially large data should use
-// BoundedResult() so the runtime can track truncation metadata.
+// BoundedResult() so the runtime can track truncation metadata. BoundedResult
+// enforces a canonical bounded-result shape by adding the standard bounds
+// fields (returned/total/truncated/refinement_hint) when they are not declared
+// explicitly.
 //
 // For complete documentation and examples, see docs/dsl.md in the repository.
 package dsl

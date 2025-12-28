@@ -149,9 +149,43 @@ different audiences and link child runs via run handles rather than flattening r
 | `Inject(fields...)` | Inside `Tool` | Marks fields as server-injected (hidden from LLM) |
 | `CallHintTemplate(tmpl)` | Inside `Tool` | Go template for call display hint |
 | `ResultHintTemplate(tmpl)` | Inside `Tool` | Go template for result display hint |
-| `BoundedResult()` | Inside `Tool` | Marks result as bounded view over larger data |
+| `BoundedResult(dsl?)` | Inside `Tool` | Marks result as bounded view over larger data; optional sub-DSL can declare paging cursor fields |
+| `Cursor(name)` | Inside `BoundedResult(func() { ... })` | Declares which payload field carries the paging cursor (optional) |
+| `NextCursor(name)` | Inside `BoundedResult(func() { ... })` | Declares which result field carries the next-page cursor (optional) |
 | `ResultReminder(text)` | Inside `Tool` | Static system reminder injected after tool result |
 | `Confirmation(dsl)` | Inside `Tool` | Declares that tool execution must be explicitly approved out-of-band |
+
+### Bounded results (returned / total / truncated / refinement_hint)
+
+`BoundedResult` exists so tools can return a bounded view (caps, window clamping, downsampling)
+while the runtime can reliably detect truncation and guide the planner.
+
+Canonical bounds fields:
+
+- `returned` (**required**, Int)
+- `truncated` (**required**, Boolean)
+- `total` (optional, Int)
+- `refinement_hint` (optional, String)
+
+Authoring rule (no hybrids):
+
+- Either declare **none** of these fields and let `BoundedResult()` add all of them, or
+- Declare **all** of them with the correct types/requiredness.
+
+### Pagination (cursor / next_cursor)
+
+Tools that return potentially large datasets should support cursor-based pagination when practical.
+Cursor-paged tools identify the two paging fields in their own payload/result schemas:
+
+- **payload cursor field** (declared via `Cursor("field_name")`)
+- **result next-cursor field** (declared via `NextCursor("field_name")`)
+
+Contract:
+
+- Treat cursors as **opaque**: do not parse, modify, or synthesize them.
+- When paging, keep **all other arguments unchanged**; only set the payload cursor field.
+- Paged tools should also be `BoundedResult(...)` tools and surface truncation metadata
+  (returned/total/truncated/refinement hints) alongside results.
 
 ### Tool Confirmation (Human-in-the-Loop)
 
@@ -643,7 +677,6 @@ Template variables use Go field names (e.g., `.Query`, `.Limit`), not JSON keys.
 `BoundedResult` marks a tool's result as a bounded view over potentially larger data. When set:
 
 - Generated `tools.ToolSpec` has `BoundedResult: true`
-- Result type includes a `Bounds *agent.Bounds` field
 - Generated `ResultBounds()` method implements `agent.BoundedResult`
 - Runtime attaches bounds metadata to hook events and streams
 
@@ -655,7 +688,8 @@ Tool("list_devices", "List devices in scope", func() {
 })
 ```
 
-Services are responsible for trimming and setting `Bounds.Truncated`, `Bounds.Total`, etc.
+Services are responsible for trimming and setting the canonical bounds fields on the tool result
+(`returned`, `total`, `truncated`, `refinement_hint`).
 
 ### Tags
 

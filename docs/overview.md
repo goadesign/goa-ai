@@ -140,8 +140,9 @@ surfaces the contract:
 - Use the DSL helper `BoundedResult()` inside a `Tool` to declare that its result is a bounded view
   over a larger data set.
 - Codegen propagates this into the generated `tools.ToolSpec` (`BoundedResult: true`) and extends
-  the generated result alias type with a `Bounds *agent.Bounds` field (JSON `bounds` property) so
-  models and `tool_schemas.json` see canonical truncation metadata.
+  the generated result alias type with a `ResultBounds() *agent.Bounds` method so runtimes can
+  derive a small, provider‑agnostic `agent.Bounds` struct for each bounded result without
+  inspecting tool-specific fields at runtime.
 - Generated result types also implement the `agent.BoundedResult` interface via a
   `ResultBounds() *agent.Bounds` method; the runtime derives a small, provider‑agnostic
   `agent.Bounds` struct for each bounded result

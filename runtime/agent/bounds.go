@@ -8,12 +8,15 @@ package agent
 // Returned reports how many items or points are present in the bounded view.
 // Total, when non-nil, reports the best-effort total before truncation.
 // Truncated indicates whether any caps were applied (length, window, depth).
+// NextCursor, when non-nil, is an opaque cursor that can be used to fetch the
+// next page of results when Truncated is true.
 // RefinementHint provides short, human-readable guidance on how to narrow or
 // refine the query when Truncated is true.
 type Bounds struct {
 	Returned       int
 	Total          *int
 	Truncated      bool
+	NextCursor     *string
 	RefinementHint string
 }
 

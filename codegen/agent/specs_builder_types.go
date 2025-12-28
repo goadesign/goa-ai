@@ -73,6 +73,8 @@ type (
 		// view over a potentially larger data set (set via the BoundedResult DSL
 		// helper). It is propagated into ToolSpec for runtime consumers.
 		BoundedResult bool
+		// Paging describes cursor-based pagination fields for this tool when configured.
+		Paging *ToolPagingData
 		// ResultReminder is an optional system reminder injected into the
 		// conversation after the tool result is returned.
 		ResultReminder string
@@ -171,6 +173,11 @@ type (
 		// When true, templates emit a Bounds() method on the result alias type so
 		// runtimes can rely on the interface rather than reflection.
 		ImplementsBounds bool
+
+		// HasNextCursor reports whether the tool result type declares a top-level
+		// cursor field for paging. When non-empty, ResultBounds includes Bounds.NextCursor
+		// from the corresponding result field.
+		NextCursorGoField string
 	}
 
 	// toolSpecBuilder walks tool types and generates corresponding type metadata,

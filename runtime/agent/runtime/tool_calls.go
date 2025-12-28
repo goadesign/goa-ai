@@ -564,50 +564,73 @@ func (r *Runtime) collectAgentChildResults(
 		agentID:         agentID,
 	})
 	out := make(map[string]*planner.ToolResult, len(children))
-	for _, info := range children {
-		outPtr, err := info.handle.Get(wfCtx.Context())
-		if err != nil {
-			return nil, fmt.Errorf("agent tool %q failed: %w", info.call.Name, err)
-		}
-		tr, err := r.adaptAgentChildOutput(ctxWithInvoker, info.cfg, &info.call, info.nestedRun, outPtr)
-		if err != nil {
+	pending := append([]agentChildFutureInfo(nil), children...)
+	for len(pending) > 0 {
+		if err := wfCtx.Await(ctx, func() bool {
+			for _, info := range pending {
+				if info.handle.IsReady() {
+					return true
+				}
+			}
+			return false
+		}); err != nil {
 			return nil, err
 		}
 
-		duration := wfCtx.Now().Sub(info.startTime)
-		var toolErr *planner.ToolError
-		if tr.Error != nil {
-			toolErr = tr.Error
-		}
-		spec, ok := r.toolSpec(info.call.Name)
-		if !ok {
-			return nil, fmt.Errorf("unknown tool %q", info.call.Name)
-		}
-		if err := r.enforceToolResultContracts(spec, info.call, toolErr, tr, artifactsModeByCallID); err != nil {
-			return nil, err
-		}
+		i := 0
+		for i < len(pending) {
+			info := pending[i]
+			if !info.handle.IsReady() {
+				i++
+				continue
+			}
+			pending[i] = pending[len(pending)-1]
+			pending = pending[:len(pending)-1]
 
-		parentID := parentToolCallID(info.call, runCtx)
-		r.publishHook(
-			ctx,
-			hooks.NewToolResultReceivedEvent(
-				runID,
-				agentID,
-				sessionID,
-				info.call.Name,
-				info.call.ToolCallID,
-				parentID,
-				tr.Result,
-				formatResultPreview(info.call.Name, tr.Result),
-				tr.Bounds,
-				tr.Artifacts,
-				duration,
-				tr.Telemetry,
-				toolErr,
-			),
-			turnID,
-		)
-		out[info.call.ToolCallID] = tr
+			outPtr, err := info.handle.Get(wfCtx.Context())
+			if err != nil {
+				return nil, fmt.Errorf("agent tool %q failed: %w", info.call.Name, err)
+			}
+			tr, err := r.adaptAgentChildOutput(ctxWithInvoker, info.cfg, &info.call, info.nestedRun, outPtr)
+			if err != nil {
+				return nil, err
+			}
+
+			duration := wfCtx.Now().Sub(info.startTime)
+			var toolErr *planner.ToolError
+			if tr.Error != nil {
+				toolErr = tr.Error
+			}
+			spec, ok := r.toolSpec(info.call.Name)
+			if !ok {
+				return nil, fmt.Errorf("unknown tool %q", info.call.Name)
+			}
+			if err := r.enforceToolResultContracts(spec, info.call, toolErr, tr, artifactsModeByCallID); err != nil {
+				return nil, err
+			}
+
+			parentID := parentToolCallID(info.call, runCtx)
+			r.publishHook(
+				ctx,
+				hooks.NewToolResultReceivedEvent(
+					runID,
+					agentID,
+					sessionID,
+					info.call.Name,
+					info.call.ToolCallID,
+					parentID,
+					tr.Result,
+					formatResultPreview(info.call.Name, tr.Result),
+					tr.Bounds,
+					tr.Artifacts,
+					duration,
+					tr.Telemetry,
+					toolErr,
+				),
+				turnID,
+			)
+			out[info.call.ToolCallID] = tr
+		}
 	}
 	return out, nil
 }

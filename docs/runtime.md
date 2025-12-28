@@ -533,7 +533,10 @@ type ToolCallMeta struct {
 ### Bounded Results
 
 Tools that return partial views of larger datasets should use the `BoundedResult`
-DSL helper. This adds bounds metadata to results:
+DSL helper. This enforces a canonical bounded-result contract:
+bounded tools must expose the standard bounds fields on their result schema
+(`returned`, `total`, `truncated`, `refinement_hint`), and the runtime surfaces
+those semantics via `ToolResult.Bounds` and hook/stream events.
 
 ```go
 type Bounds struct {

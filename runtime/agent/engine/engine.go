@@ -411,6 +411,9 @@ type (
 	ChildWorkflowHandle interface {
 		// Get waits for child completion and returns the typed result.
 		Get(ctx context.Context) (*api.RunOutput, error)
+		// IsReady returns true if the child workflow has completed (success or failure)
+		// and Get() will not block.
+		IsReady() bool
 		// Cancel requests cancellation of the child workflow execution.
 		Cancel(ctx context.Context) error
 		// RunID returns the engine-assigned run identifier of the child.

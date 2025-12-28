@@ -17,21 +17,24 @@ type (
 {{- if $t.ImplementsBounds }}
 
 // ResultBounds implements the agent.BoundedResult interface for {{ $t.TypeName }}.
-// It maps the embedded bounds helper struct to the canonical agent.Bounds
-// contract. A nil Bounds field means no bounds metadata.
+// It maps the tool result fields to the canonical agent.Bounds contract.
 func (v *{{ $t.TypeName }}) ResultBounds() *agent.Bounds {
-	if v == nil || v.Bounds == nil {
+	if v == nil {
 		return nil
 	}
-	b := v.Bounds
 	hint := ""
-	if b.RefinementHint != nil {
-		hint = *b.RefinementHint
+	if v.RefinementHint != nil {
+		hint = *v.RefinementHint
 	}
+	var next *string
+    {{- if $t.NextCursorGoField }}
+	next = v.{{ $t.NextCursorGoField }}
+    {{- end }}
 	return &agent.Bounds{
-		Returned:       b.Returned,
-		Total:          b.Total,
-		Truncated:      b.Truncated,
+		Returned:       v.Returned,
+		Total:          v.Total,
+		Truncated:      v.Truncated,
+		NextCursor:     next,
 		RefinementHint: hint,
 	}
 }

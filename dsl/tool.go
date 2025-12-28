@@ -242,7 +242,7 @@ func Return(val any, args ...any) {
 // inside a Tool DSL to declare structured data that is attached to
 // planner.ToolResult.Artifacts but never sent to the model provider.
 //
-// Model awareness
+// # Model awareness
 //
 // The artifact schema Description (set via the optional description argument or
 // within the artifact DSL block) must describe what the user sees when the
@@ -476,32 +476,45 @@ func ResultHintTemplate(s string) {
 }
 
 // BoundedResult marks the current tool's result as a bounded view over a
-// potentially larger data set. It is a lightweight contract that tells the
-// runtime and services that this tool:
+// potentially larger data set. Bounded tools must surface truncation metadata
+// (returned/total/truncated/hints) alongside their result so runtimes can guide
+// planners and users when results are partial.
 //
-//   - Applies domain-aware caps (limits, window clamping, depth bounds), and
-//   - Should surface truncation metadata (returned/total/truncated/hints)
-//     alongside its result.
+// BoundedResult may optionally include a DSL function to configure boundedness
+// details. For example, cursor-based pagination fields can be declared via
+// Cursor and NextCursor inside the optional DSL block:
 //
-// BoundedResult does not change the tool schema by itself; it annotates the
-// tool so codegen and services can attach and enforce bounds in a uniform way.
+//	Tool("search", "Search docs", func() {
+//	    Args(SearchArgs)
+//	    Return(SearchResult)
+//	    BoundedResult(func() {
+//	        Cursor("cursor")
+//	        NextCursor("next_cursor")
+//	    })
+//	})
+//
+// Cursor-based pagination contract:
+//
+//   - Cursor values are opaque.
+//   - When paging, callers must keep all other parameters unchanged and only set
+//     the payload cursor field to the value returned by the result next-cursor field.
 //
 // BoundedResult must appear in a Tool expression.
-//
-// Example:
-//
-//	Tool("list_devices", "List devices", func() {
-//	    Args(AtlasListDevicesToolArgs)
-//	    Return(AtlasListDevicesToolReturn)
-//	    BoundedResult()
-//	})
-func BoundedResult() {
+func BoundedResult(fns ...func()) {
+	if len(fns) > 1 {
+		eval.TooManyArgError()
+		return
+	}
 	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
 	if !ok {
 		eval.IncompatibleDSL()
 		return
 	}
 	tool.BoundedResult = true
+	if len(fns) == 1 {
+		eval.Execute(fns[0], tool)
+	}
+	ensureBoundedResultShape(tool)
 }
 
 // ResultReminder configures a static system reminder that is injected into the

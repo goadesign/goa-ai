@@ -253,6 +253,10 @@ func (h *temporalChildHandle) Get(_ context.Context) (*api.RunOutput, error) {
 	return &out, nil
 }
 
+func (h *temporalChildHandle) IsReady() bool {
+	return h.future.IsReady()
+}
+
 func (h *temporalChildHandle) Cancel(_ context.Context) error {
 	if h.cancel != nil {
 		h.cancel()

@@ -76,6 +76,19 @@ func TestInjectMessages(t *testing.T) {
 				model.TextPart{Text: "user question"},
 			},
 		},
+		{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{
+				model.ThinkingPart{Text: "thinking", Signature: "sig", Final: true},
+				model.ToolUsePart{ID: "tu1", Name: "tool", Input: map[string]any{"q": "x"}},
+			},
+		},
+		{
+			Role: model.ConversationRoleUser,
+			Parts: []model.Part{
+				model.ToolResultPart{ToolUseID: "tu1", Content: map[string]any{"ok": true}},
+			},
+		},
 	}
 	rems := []Reminder{
 		{
@@ -97,16 +110,22 @@ func TestInjectMessages(t *testing.T) {
 	}
 
 	out := InjectMessages(msgs, rems)
-	if len(out) != 3 {
-		t.Fatalf("expected 3 messages after injection, got %d", len(out))
+	if len(out) != 5 {
+		t.Fatalf("expected 5 messages after injection, got %d", len(out))
 	}
 	if out[0].Role != model.ConversationRoleSystem {
 		t.Fatalf("expected first message to be system, got %q", out[0].Role)
 	}
-	if out[1].Role != model.ConversationRoleSystem {
-		t.Fatalf("expected second message to be injected system, got %q", out[1].Role)
+	if out[1].Role != model.ConversationRoleUser {
+		t.Fatalf("expected second message to be user, got %q", out[1].Role)
 	}
-	if out[2].Role != model.ConversationRoleUser {
-		t.Fatalf("expected third message to be user, got %q", out[2].Role)
+	if out[2].Role != model.ConversationRoleAssistant {
+		t.Fatalf("expected third message to be assistant, got %q", out[2].Role)
+	}
+	if out[3].Role != model.ConversationRoleUser {
+		t.Fatalf("expected fourth message to be tool_result user message, got %q", out[3].Role)
+	}
+	if out[4].Role != model.ConversationRoleSystem {
+		t.Fatalf("expected fifth message to be injected system, got %q", out[4].Role)
 	}
 }
