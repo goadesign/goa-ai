@@ -65,7 +65,7 @@ func TestExecuteToolCalls_ChildTrackerUpdateEmittedOnIncrease(t *testing.T) {
 	}
 
 	// First batch discovers 2 child IDs => one update event with total=2.
-	_, err := rt.executeToolCalls(
+	_, _, err := rt.executeToolCalls(
 		wfCtx,
 		"execute",
 		engine.ActivityOptions{},
@@ -81,7 +81,7 @@ func TestExecuteToolCalls_ChildTrackerUpdateEmittedOnIncrease(t *testing.T) {
 	require.NoError(t, err)
 
 	// Second batch discovers no new IDs => no additional update event.
-	_, err = rt.executeToolCalls(
+	_, _, err = rt.executeToolCalls(
 		wfCtx,
 		"execute",
 		engine.ActivityOptions{},
@@ -97,7 +97,7 @@ func TestExecuteToolCalls_ChildTrackerUpdateEmittedOnIncrease(t *testing.T) {
 	require.NoError(t, err)
 
 	// Third batch discovers a new ID => second update event with total=3.
-	_, err = rt.executeToolCalls(
+	_, _, err = rt.executeToolCalls(
 		wfCtx,
 		"execute",
 		engine.ActivityOptions{},

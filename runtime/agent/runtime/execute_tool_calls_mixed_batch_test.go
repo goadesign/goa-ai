@@ -81,12 +81,13 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 	}
 
 	type out struct {
-		results []*planner.ToolResult
-		err     error
+		results  []*planner.ToolResult
+		timedOut bool
+		err      error
 	}
 	done := make(chan out, 1)
 	go func() {
-		results, err := rt.executeToolCalls(
+		results, timedOut, err := rt.executeToolCalls(
 			wfCtx,
 			"execute",
 			engine.ActivityOptions{},
@@ -99,7 +100,7 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 			nil,
 			time.Time{},
 		)
-		done <- out{results: results, err: err}
+		done <- out{results: results, timedOut: timedOut, err: err}
 	}()
 
 	// Inline result is emitted during dispatch. Now control activity readiness to ensure

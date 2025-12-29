@@ -52,6 +52,11 @@ type testWorkflowContext struct {
 	toolFutures map[string]*controlledToolFuture
 
 	controlledChildHandles chan *controlledChildHandle
+
+	// parent points to the original context when this is a derived context from WithCancel.
+	// Test assertions can use the parent to inspect lastToolCall even when the call was
+	// scheduled on a child context.
+	parent *testWorkflowContext
 }
 
 func (t *testWorkflowContext) Context() context.Context {
@@ -69,8 +74,44 @@ func (t *testWorkflowContext) RunID() string {
 	return "run"
 }
 
+func (t *testWorkflowContext) WithCancel() (engine.WorkflowContext, func()) {
+	if t.ctx == nil {
+		panic("testWorkflowContext.ctx is nil")
+	}
+	cctx, cancel := context.WithCancel(t.ctx)
+	sub := *t
+	sub.ctx = cctx
+	// Point to root so lastToolCall updates are visible to tests that inspect the original.
+	if t.parent != nil {
+		sub.parent = t.parent
+	} else {
+		sub.parent = t
+	}
+	return &sub, cancel
+}
+
 func (t *testWorkflowContext) Now() time.Time {
 	return time.Unix(0, 0)
+}
+
+func (t *testWorkflowContext) NewTimer(ctx context.Context, d time.Duration) (engine.Future[time.Time], error) {
+	now := time.Now()
+	if d <= 0 {
+		fut := &controlledTimeFuture{ready: make(chan struct{}), v: now}
+		close(fut.ready)
+		return fut, nil
+	}
+	fireAt := now.Add(d)
+	fut := &controlledTimeFuture{ready: make(chan struct{}), v: fireAt}
+	go func() {
+		defer close(fut.ready)
+		select {
+		case <-ctx.Done():
+			fut.err = ctx.Err()
+		case <-time.After(d):
+		}
+	}()
+	return fut, nil
 }
 
 func (t *testWorkflowContext) Await(ctx context.Context, condition func() bool) error {
@@ -97,6 +138,10 @@ func (t *testWorkflowContext) SetQueryHandler(name string, handler any) error {
 
 func (t *testWorkflowContext) StartChildWorkflow(ctx context.Context, req engine.ChildWorkflowRequest) (engine.ChildWorkflowHandle, error) {
 	t.childRequests = append(t.childRequests, req)
+	// Also update parent if this is a derived context so tests can track from root.
+	if t.parent != nil {
+		t.parent.childRequests = append(t.parent.childRequests, req)
+	}
 	if t.controlledChildHandles != nil {
 		h := &controlledChildHandle{
 			ready: make(chan struct{}),
@@ -164,6 +209,10 @@ func (t *testWorkflowContext) ExecuteToolActivity(ctx context.Context, call engi
 
 func (t *testWorkflowContext) ExecuteToolActivityAsync(ctx context.Context, call engine.ToolActivityCall) (engine.Future[*api.ToolOutput], error) {
 	t.lastToolCall = call
+	// Also update parent if this is a derived context, so tests can inspect from the root.
+	if t.parent != nil {
+		t.parent.lastToolCall = call
+	}
 
 	if call.Input != nil && call.Input.ToolCallID != "" && len(t.toolFutures) > 0 {
 		if fut, ok := t.toolFutures[call.Input.ToolCallID]; ok && fut != nil {
@@ -230,6 +279,30 @@ func (t *testWorkflowContext) ensureSignals() {
 	}
 	if t.confirmCh == nil {
 		t.confirmCh = make(chan api.ConfirmationDecision, 1)
+	}
+}
+
+type controlledTimeFuture struct {
+	ready chan struct{}
+	v     time.Time
+	err   error
+}
+
+func (f *controlledTimeFuture) Get(ctx context.Context) (time.Time, error) {
+	select {
+	case <-ctx.Done():
+		return time.Time{}, ctx.Err()
+	case <-f.ready:
+		return f.v, f.err
+	}
+}
+
+func (f *controlledTimeFuture) IsReady() bool {
+	select {
+	case <-f.ready:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -379,8 +452,38 @@ func (r *routeWorkflowContext) RunID() string {
 	return r.runID
 }
 
+func (r *routeWorkflowContext) WithCancel() (engine.WorkflowContext, func()) {
+	if r.ctx == nil {
+		panic("routeWorkflowContext.ctx is nil")
+	}
+	cctx, cancel := context.WithCancel(r.ctx)
+	sub := *r
+	sub.ctx = cctx
+	return &sub, cancel
+}
+
 func (r *routeWorkflowContext) Now() time.Time {
 	return time.Unix(0, 0)
+}
+
+func (r *routeWorkflowContext) NewTimer(ctx context.Context, d time.Duration) (engine.Future[time.Time], error) {
+	now := time.Now()
+	if d <= 0 {
+		fut := &controlledTimeFuture{ready: make(chan struct{}), v: now}
+		close(fut.ready)
+		return fut, nil
+	}
+	fireAt := now.Add(d)
+	fut := &controlledTimeFuture{ready: make(chan struct{}), v: fireAt}
+	go func() {
+		defer close(fut.ready)
+		select {
+		case <-ctx.Done():
+			fut.err = ctx.Err()
+		case <-time.After(d):
+		}
+	}()
+	return fut, nil
 }
 
 func (r *routeWorkflowContext) Await(ctx context.Context, condition func() bool) error {
@@ -621,6 +724,11 @@ func (h *testChildHandle) Get(ctx context.Context) (*api.RunOutput, error) {
 		if !tw.sawFirstChildGet {
 			tw.sawFirstChildGet = true
 			tw.firstChildGetCount = len(tw.childRequests)
+		}
+		// Also update parent if this is a derived context.
+		if tw.parent != nil && !tw.parent.sawFirstChildGet {
+			tw.parent.sawFirstChildGet = true
+			tw.parent.firstChildGetCount = len(tw.childRequests)
 		}
 	}
 	if h.runtime != nil && h.request.Input != nil {

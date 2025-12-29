@@ -185,6 +185,16 @@ func (w *temporalWorkflowContext) Now() time.Time {
 	return workflow.Now(w.ctx)
 }
 
+func (w *temporalWorkflowContext) NewTimer(ctx context.Context, d time.Duration) (engine.Future[time.Time], error) {
+	now := workflow.Now(w.ctx)
+	if d <= 0 {
+		return immediateFuture[time.Time]{v: now}, nil
+	}
+	fireAt := now.Add(d)
+	fut := workflow.NewTimer(w.ctx, d)
+	return &temporalTimerFuture{future: fut, ctx: w.ctx, fireAt: fireAt}, nil
+}
+
 func (w *temporalWorkflowContext) Await(ctx context.Context, condition func() bool) error {
 	if condition == nil {
 		return errors.New("await condition is required")
@@ -193,6 +203,24 @@ func (w *temporalWorkflowContext) Await(ctx context.Context, condition func() bo
 		return err
 	}
 	return workflow.Await(w.ctx, condition)
+}
+
+func (w *temporalWorkflowContext) WithCancel() (engine.WorkflowContext, func()) {
+	cctx, cancel := workflow.WithCancel(w.ctx)
+	return &temporalWorkflowContext{
+			engine:     w.engine,
+			ctx:        cctx,
+			workflowID: w.workflowID,
+			runID:      w.runID,
+			logger:     w.logger,
+			metrics:    w.metrics,
+			tracer:     w.tracer,
+			baseCtx:    w.baseCtx,
+		}, func() {
+			if cancel != nil {
+				cancel()
+			}
+		}
 }
 
 func (w *temporalWorkflowContext) activityOptionsFor(name string, override engine.ActivityOptions) workflow.ActivityOptions {
@@ -284,6 +312,40 @@ func (f *temporalFuture[T]) Get(_ context.Context) (T, error) {
 
 func (f *temporalFuture[T]) IsReady() bool {
 	return f.future.IsReady()
+}
+
+type temporalTimerFuture struct {
+	future workflow.Future
+	ctx    workflow.Context
+	fireAt time.Time
+}
+
+func (f *temporalTimerFuture) Get(_ context.Context) (time.Time, error) {
+	var ignored struct{}
+	if err := f.future.Get(f.ctx, &ignored); err != nil {
+		return time.Time{}, err
+	}
+	return f.fireAt, nil
+}
+
+func (f *temporalTimerFuture) IsReady() bool {
+	return f.future.IsReady()
+}
+
+type immediateFuture[T any] struct {
+	v T
+}
+
+func (f immediateFuture[T]) Get(ctx context.Context) (T, error) {
+	if err := ctx.Err(); err != nil {
+		var zero T
+		return zero, err
+	}
+	return f.v, nil
+}
+
+func (f immediateFuture[T]) IsReady() bool {
+	return true
 }
 
 type temporalReceiver[T any] struct {

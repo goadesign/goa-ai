@@ -113,6 +113,60 @@ func parentToolCallID(call planner.ToolRequest, runCtx *run.Context) string {
 	return ""
 }
 
+// synthesizeToolError creates a ToolResult from an execution error and publishes
+// the corresponding ToolResultReceived event. This is used when activity or
+// child workflow execution fails (e.g., timeout) and we want to convert the
+// error into a tool result rather than failing the workflow.
+func (r *Runtime) synthesizeToolError(
+	ctx context.Context,
+	call planner.ToolRequest,
+	err error,
+	errMsg string,
+	runID string,
+	agentID agent.Ident,
+	sessionID string,
+	runCtx *run.Context,
+	artifactsModeByCallID map[string]tools.ArtifactsMode,
+	duration time.Duration,
+	turnID string,
+) (*planner.ToolResult, error) {
+	toolErr := planner.NewToolErrorWithCause(errMsg, err)
+	toolRes := &planner.ToolResult{
+		Name:       call.Name,
+		ToolCallID: call.ToolCallID,
+		Error:      toolErr,
+	}
+	spec, ok := r.toolSpec(call.Name)
+	if !ok {
+		return nil, fmt.Errorf("unknown tool %q", call.Name)
+	}
+	if err := r.enforceToolResultContracts(spec, call, toolErr, toolRes, artifactsModeByCallID); err != nil {
+		return nil, err
+	}
+
+	parentID := parentToolCallID(call, runCtx)
+	r.publishHook(
+		ctx,
+		hooks.NewToolResultReceivedEvent(
+			runID,
+			agentID,
+			sessionID,
+			call.Name,
+			call.ToolCallID,
+			parentID,
+			nil,
+			formatResultPreview(call.Name, nil),
+			toolRes.Bounds,
+			nil,
+			duration,
+			nil,
+			toolErr,
+		),
+		turnID,
+	)
+	return toolRes, nil
+}
+
 func (r *Runtime) enforceToolResultContracts(
 	spec tools.ToolSpec,
 	call planner.ToolRequest,
@@ -177,12 +231,12 @@ func (r *Runtime) publishToolCallScheduled(
 	)
 }
 
-func computeToolActivityOptions(wfCtx engine.WorkflowContext, base engine.ActivityOptions, hardDeadline time.Time) engine.ActivityOptions {
+func computeToolActivityOptions(wfCtx engine.WorkflowContext, base engine.ActivityOptions, finishBy time.Time) engine.ActivityOptions {
 	callOpts := base
 	timeout := base.Timeout
-	if !hardDeadline.IsZero() {
+	if !finishBy.IsZero() {
 		now := wfCtx.Now()
-		if rem := hardDeadline.Sub(now); rem > 0 {
+		if rem := finishBy.Sub(now); rem > 0 {
 			if timeout == 0 || timeout > rem {
 				timeout = rem
 			}
@@ -203,7 +257,7 @@ func (r *Runtime) dispatchToolCalls(
 	expectedChildren int,
 	turnID string,
 	parentTracker *childTracker,
-	hardDeadline time.Time,
+	finishBy time.Time,
 ) (*toolCallBatch, error) {
 	ctx := wfCtx.Context()
 	sessionID := ""
@@ -389,7 +443,7 @@ func (r *Runtime) dispatchToolCalls(
 			TurnID:           call.TurnID,
 			ParentToolCallID: call.ParentToolCallID,
 		}
-		callOpts := computeToolActivityOptions(wfCtx, toolActOptions, hardDeadline)
+		callOpts := computeToolActivityOptions(wfCtx, toolActOptions, finishBy)
 		if callOpts.Queue == "" && hasTS && !ts.Inline && ts.TaskQueue != "" {
 			callOpts.Queue = ts.TaskQueue
 		}
@@ -445,12 +499,16 @@ func (r *Runtime) collectActivityResultsAsComplete(
 	futures []futureInfo,
 	artifactsModeByCallID map[string]tools.ArtifactsMode,
 	turnID string,
-) (map[string]*planner.ToolResult, error) {
+	finalizeTimer engine.Future[time.Time],
+) (map[string]*planner.ToolResult, []futureInfo, bool, error) {
 	ctx := wfCtx.Context()
 	activityByID := make(map[string]*planner.ToolResult, len(futures))
 	pending := append([]futureInfo(nil), futures...)
 	for len(pending) > 0 {
 		if err := wfCtx.Await(ctx, func() bool {
+			if finalizeTimer != nil && finalizeTimer.IsReady() {
+				return true
+			}
 			for _, info := range pending {
 				if info.future.IsReady() {
 					return true
@@ -458,7 +516,7 @@ func (r *Runtime) collectActivityResultsAsComplete(
 			}
 			return false
 		}); err != nil {
-			return nil, err
+			return nil, nil, false, err
 		}
 
 		i := 0
@@ -473,10 +531,19 @@ func (r *Runtime) collectActivityResultsAsComplete(
 
 			out, err := info.future.Get(ctx)
 			if err != nil {
-				return nil, fmt.Errorf("tool %q failed: %w", info.call.Name, err)
+				duration := wfCtx.Now().Sub(info.startTime)
+				toolRes, synthErr := r.synthesizeToolError(
+					ctx, info.call, err, "tool activity failed",
+					runID, agentID, sessionID, runCtx, artifactsModeByCallID, duration, turnID,
+				)
+				if synthErr != nil {
+					return nil, nil, false, synthErr
+				}
+				activityByID[info.call.ToolCallID] = toolRes
+				continue
 			}
 			if out == nil {
-				return nil, fmt.Errorf("tool %q returned nil output", info.call.Name)
+				return nil, nil, false, fmt.Errorf("tool %q returned nil output", info.call.Name)
 			}
 
 			duration := wfCtx.Now().Sub(info.startTime)
@@ -484,7 +551,7 @@ func (r *Runtime) collectActivityResultsAsComplete(
 			if out.Error == "" && hasNonNullJSON(out.Payload) {
 				v, decErr := r.unmarshalToolValue(ctx, info.call.Name, out.Payload, false)
 				if decErr != nil {
-					return nil, fmt.Errorf("tool %q result decode failed (tool_call_id=%s): %w", info.call.Name, info.call.ToolCallID, decErr)
+					return nil, nil, false, fmt.Errorf("tool %q result decode failed (tool_call_id=%s): %w", info.call.Name, info.call.ToolCallID, decErr)
 				}
 				decoded = v
 			}
@@ -498,7 +565,7 @@ func (r *Runtime) collectActivityResultsAsComplete(
 			}
 			spec, ok := r.toolSpec(info.call.Name)
 			if !ok {
-				return nil, fmt.Errorf("unknown tool %q", info.call.Name)
+				return nil, nil, false, fmt.Errorf("unknown tool %q", info.call.Name)
 			}
 			var toolErr *planner.ToolError
 			if out.Error != "" {
@@ -506,7 +573,7 @@ func (r *Runtime) collectActivityResultsAsComplete(
 				toolRes.Error = toolErr
 			}
 			if err := r.enforceToolResultContracts(spec, info.call, toolErr, toolRes, artifactsModeByCallID); err != nil {
-				return nil, err
+				return nil, nil, false, err
 			}
 			if out.RetryHint != nil {
 				toolRes.RetryHint = out.RetryHint
@@ -535,8 +602,11 @@ func (r *Runtime) collectActivityResultsAsComplete(
 
 			activityByID[info.call.ToolCallID] = toolRes
 		}
+		if finalizeTimer != nil && finalizeTimer.IsReady() && len(pending) > 0 {
+			return activityByID, pending, true, nil
+		}
 	}
-	return activityByID, nil
+	return activityByID, nil, false, nil
 }
 
 func (r *Runtime) collectAgentChildResults(
@@ -550,10 +620,11 @@ func (r *Runtime) collectAgentChildResults(
 	children []agentChildFutureInfo,
 	artifactsModeByCallID map[string]tools.ArtifactsMode,
 	turnID string,
-) (map[string]*planner.ToolResult, error) {
+	finalizeTimer engine.Future[time.Time],
+) (map[string]*planner.ToolResult, []agentChildFutureInfo, bool, error) {
 	ctx := wfCtx.Context()
 	if len(children) == 0 {
-		return map[string]*planner.ToolResult{}, nil
+		return map[string]*planner.ToolResult{}, nil, false, nil
 	}
 
 	ctxWithInvoker := withFinalizerInvokerFactory(ctx, &finalizerInvokerFactory{
@@ -567,6 +638,9 @@ func (r *Runtime) collectAgentChildResults(
 	pending := append([]agentChildFutureInfo(nil), children...)
 	for len(pending) > 0 {
 		if err := wfCtx.Await(ctx, func() bool {
+			if finalizeTimer != nil && finalizeTimer.IsReady() {
+				return true
+			}
 			for _, info := range pending {
 				if info.handle.IsReady() {
 					return true
@@ -574,7 +648,7 @@ func (r *Runtime) collectAgentChildResults(
 			}
 			return false
 		}); err != nil {
-			return nil, err
+			return nil, nil, false, err
 		}
 
 		i := 0
@@ -589,11 +663,20 @@ func (r *Runtime) collectAgentChildResults(
 
 			outPtr, err := info.handle.Get(wfCtx.Context())
 			if err != nil {
-				return nil, fmt.Errorf("agent tool %q failed: %w", info.call.Name, err)
+				duration := wfCtx.Now().Sub(info.startTime)
+				toolRes, synthErr := r.synthesizeToolError(
+					ctx, info.call, err, "agent tool execution failed",
+					runID, agentID, sessionID, runCtx, artifactsModeByCallID, duration, turnID,
+				)
+				if synthErr != nil {
+					return nil, nil, false, synthErr
+				}
+				out[info.call.ToolCallID] = toolRes
+				continue
 			}
 			tr, err := r.adaptAgentChildOutput(ctxWithInvoker, info.cfg, &info.call, info.nestedRun, outPtr)
 			if err != nil {
-				return nil, err
+				return nil, nil, false, err
 			}
 
 			duration := wfCtx.Now().Sub(info.startTime)
@@ -603,10 +686,10 @@ func (r *Runtime) collectAgentChildResults(
 			}
 			spec, ok := r.toolSpec(info.call.Name)
 			if !ok {
-				return nil, fmt.Errorf("unknown tool %q", info.call.Name)
+				return nil, nil, false, fmt.Errorf("unknown tool %q", info.call.Name)
 			}
 			if err := r.enforceToolResultContracts(spec, info.call, toolErr, tr, artifactsModeByCallID); err != nil {
-				return nil, err
+				return nil, nil, false, err
 			}
 
 			parentID := parentToolCallID(info.call, runCtx)
@@ -631,8 +714,11 @@ func (r *Runtime) collectAgentChildResults(
 			)
 			out[info.call.ToolCallID] = tr
 		}
+		if finalizeTimer != nil && finalizeTimer.IsReady() && len(pending) > 0 {
+			return out, pending, true, nil
+		}
 	}
-	return out, nil
+	return out, nil, false, nil
 }
 
 func mergeToolResultsInCallOrder(calls []planner.ToolRequest, activityByID, inlineByID map[string]*planner.ToolResult) ([]*planner.ToolResult, error) {
@@ -669,16 +755,95 @@ func (r *Runtime) executeToolCalls(
 	expectedChildren int,
 	turnID string,
 	parentTracker *childTracker,
-	hardDeadline time.Time,
-) ([]*planner.ToolResult, error) {
+	finishBy time.Time,
+) ([]*planner.ToolResult, bool, error) {
 	ctx := wfCtx.Context()
 	sessionID := ""
 	if runCtx != nil {
 		sessionID = runCtx.SessionID
 	}
 
+	if !finishBy.IsZero() && !wfCtx.Now().Before(finishBy) {
+		const cancelMsg = "canceled: time budget reached"
+		artifactsModeByCallID := make(map[string]tools.ArtifactsMode, len(calls))
+		results := make([]*planner.ToolResult, 0, len(calls))
+		for i, call := range calls {
+			normalized, err := normalizeToolCall(call, i, runID, runCtx, parentTracker, artifactsModeByCallID)
+			if err != nil {
+				return nil, false, err
+			}
+			call = normalized
+			spec, ok := r.toolSpec(call.Name)
+			if !ok {
+				return nil, false, fmt.Errorf("unknown tool %q", call.Name)
+			}
+			queue := ""
+			r.mu.RLock()
+			ts, hasTS := r.toolsets[spec.Toolset]
+			r.mu.RUnlock()
+			if hasTS && ts.TaskQueue != "" {
+				queue = ts.TaskQueue
+			}
+			r.publishToolCallScheduled(ctx, runID, agentID, sessionID, call, queue, expectedChildren, turnID)
+
+			toolErr := planner.NewToolError(cancelMsg)
+			tr := &planner.ToolResult{
+				Name:       call.Name,
+				ToolCallID: call.ToolCallID,
+				Error:      toolErr,
+			}
+			if err := r.enforceToolResultContracts(spec, call, toolErr, tr, artifactsModeByCallID); err != nil {
+				return nil, false, err
+			}
+			parentID := parentToolCallID(call, runCtx)
+			r.publishHook(
+				ctx,
+				hooks.NewToolResultReceivedEvent(
+					runID,
+					agentID,
+					sessionID,
+					call.Name,
+					call.ToolCallID,
+					parentID,
+					nil,
+					formatResultPreview(call.Name, nil),
+					tr.Bounds,
+					nil,
+					0,
+					nil,
+					toolErr,
+				),
+				turnID,
+			)
+			results = append(results, tr)
+		}
+		return results, true, nil
+	}
+
+	execWfCtx, cancelExec := wfCtx.WithCancel()
+	execCanceled := false
+	cancelExecOnce := func() {
+		if execCanceled {
+			return
+		}
+		execCanceled = true
+		if cancelExec != nil {
+			cancelExec()
+		}
+	}
+
+	var finalizeTimer engine.Future[time.Time]
+	if !finishBy.IsZero() {
+		d := finishBy.Sub(wfCtx.Now())
+		t, err := wfCtx.NewTimer(ctx, d)
+		if err != nil {
+			return nil, false, err
+		}
+		finalizeTimer = t
+	}
+
 	batch, err := r.dispatchToolCalls(
-		wfCtx,
+		execWfCtx,
 		activityName,
 		toolActOptions,
 		runID,
@@ -688,17 +853,19 @@ func (r *Runtime) executeToolCalls(
 		expectedChildren,
 		turnID,
 		parentTracker,
-		hardDeadline,
+		finishBy,
 	)
 	if err != nil {
-		return nil, err
+		cancelExecOnce()
+		return nil, false, err
 	}
 
 	if err := r.maybePublishChildTrackerUpdate(ctx, runCtx, sessionID, parentTracker, batch.discoveredIDs, turnID); err != nil {
-		return nil, err
+		cancelExecOnce()
+		return nil, false, err
 	}
 
-	activityByID, err := r.collectActivityResultsAsComplete(
+	activityByID, pendingActs, timedOutActs, err := r.collectActivityResultsAsComplete(
 		wfCtx,
 		runID,
 		agentID,
@@ -707,12 +874,14 @@ func (r *Runtime) executeToolCalls(
 		batch.futures,
 		batch.artifactsModeByCallID,
 		turnID,
+		finalizeTimer,
 	)
 	if err != nil {
-		return nil, err
+		cancelExecOnce()
+		return nil, false, err
 	}
 
-	childByID, err := r.collectAgentChildResults(
+	childByID, pendingChildren, timedOutChildren, err := r.collectAgentChildResults(
 		wfCtx,
 		activityName,
 		toolActOptions,
@@ -723,13 +892,127 @@ func (r *Runtime) executeToolCalls(
 		batch.childFutures,
 		batch.artifactsModeByCallID,
 		turnID,
+		finalizeTimer,
 	)
 	if err != nil {
-		return nil, err
+		cancelExecOnce()
+		return nil, false, err
 	}
+
+	timedOut := timedOutActs || timedOutChildren
+	if timedOut {
+		cancelExecOnce()
+	}
+
 	for id, tr := range childByID {
 		batch.inlineByID[id] = tr
 	}
 
-	return mergeToolResultsInCallOrder(batch.calls, activityByID, batch.inlineByID)
+	if timedOut {
+		const cancelMsg = "canceled: time budget reached"
+
+		for _, info := range pendingChildren {
+			if info.handle != nil {
+				if err := info.handle.Cancel(ctx); err != nil {
+					return nil, false, err
+				}
+			}
+		}
+
+		// Synthesize tool results for in-flight activities/children so the planner sees a
+		// complete tool_use → tool_result handshake even when we stop waiting to finalize.
+		for _, info := range pendingActs {
+			if info.call.ToolCallID == "" {
+				continue
+			}
+			if _, ok := activityByID[info.call.ToolCallID]; ok {
+				continue
+			}
+			toolErr := planner.NewToolError(cancelMsg)
+			tr := &planner.ToolResult{
+				Name:       info.call.Name,
+				ToolCallID: info.call.ToolCallID,
+				Error:      toolErr,
+			}
+			spec, ok := r.toolSpec(info.call.Name)
+			if !ok {
+				return nil, false, fmt.Errorf("unknown tool %q", info.call.Name)
+			}
+			if err := r.enforceToolResultContracts(spec, info.call, toolErr, tr, batch.artifactsModeByCallID); err != nil {
+				return nil, false, err
+			}
+			duration := wfCtx.Now().Sub(info.startTime)
+			parentID := parentToolCallID(info.call, runCtx)
+			r.publishHook(
+				ctx,
+				hooks.NewToolResultReceivedEvent(
+					runID,
+					agentID,
+					sessionID,
+					info.call.Name,
+					info.call.ToolCallID,
+					parentID,
+					nil,
+					formatResultPreview(info.call.Name, nil),
+					tr.Bounds,
+					nil,
+					duration,
+					nil,
+					toolErr,
+				),
+				turnID,
+			)
+			activityByID[info.call.ToolCallID] = tr
+		}
+
+		for _, info := range pendingChildren {
+			if info.call.ToolCallID == "" {
+				continue
+			}
+			if _, ok := batch.inlineByID[info.call.ToolCallID]; ok {
+				continue
+			}
+			toolErr := planner.NewToolError(cancelMsg)
+			tr := &planner.ToolResult{
+				Name:       info.call.Name,
+				ToolCallID: info.call.ToolCallID,
+				Error:      toolErr,
+			}
+			spec, ok := r.toolSpec(info.call.Name)
+			if !ok {
+				return nil, false, fmt.Errorf("unknown tool %q", info.call.Name)
+			}
+			if err := r.enforceToolResultContracts(spec, info.call, toolErr, tr, batch.artifactsModeByCallID); err != nil {
+				return nil, false, err
+			}
+			duration := wfCtx.Now().Sub(info.startTime)
+			parentID := parentToolCallID(info.call, runCtx)
+			r.publishHook(
+				ctx,
+				hooks.NewToolResultReceivedEvent(
+					runID,
+					agentID,
+					sessionID,
+					info.call.Name,
+					info.call.ToolCallID,
+					parentID,
+					nil,
+					formatResultPreview(info.call.Name, nil),
+					tr.Bounds,
+					nil,
+					duration,
+					nil,
+					toolErr,
+				),
+				turnID,
+			)
+			batch.inlineByID[info.call.ToolCallID] = tr
+		}
+	}
+
+	merged, err := mergeToolResultsInCallOrder(batch.calls, activityByID, batch.inlineByID)
+	if err != nil {
+		return nil, false, err
+	}
+	return merged, timedOut, nil
 }
