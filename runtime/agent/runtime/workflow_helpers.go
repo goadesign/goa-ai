@@ -97,27 +97,31 @@ func (r *Runtime) executeGroupedToolCalls(
 	expectedChildren int,
 	turnID string,
 	parentTracker *childTracker,
-	deadline time.Time,
+	finishBy time.Time,
 	grouped [][]planner.ToolRequest,
 	timeouts []time.Duration,
 	toolOpts engine.ActivityOptions,
-) ([]*planner.ToolResult, error) {
+) ([]*planner.ToolResult, bool, error) {
 	var out []*planner.ToolResult
+	timedOutAny := false
 	for i := range grouped {
 		opt := toolOpts
 		if timeouts[i] > 0 {
 			opt.Timeout = timeouts[i]
 		}
-		sub, err := r.executeToolCalls(
+		sub, timedOut, err := r.executeToolCalls(
 			wfCtx, reg.ExecuteToolActivity, opt, base.RunContext.RunID, agentID,
-			&base.RunContext, grouped[i], expectedChildren, turnID, parentTracker, deadline,
+			&base.RunContext, grouped[i], expectedChildren, turnID, parentTracker, finishBy,
 		)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		out = append(out, sub...)
+		if timedOut {
+			timedOutAny = true
+		}
 	}
-	return out, nil
+	return out, timedOutAny, nil
 }
 
 // sidecarDescription returns a human-facing description for the tool's

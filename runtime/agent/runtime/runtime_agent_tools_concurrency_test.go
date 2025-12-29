@@ -91,7 +91,7 @@ func TestExecuteToolCalls_AgentToolsFanOut(t *testing.T) {
 		},
 	}
 
-	results, err := rt.executeToolCalls(
+	results, _, err := rt.executeToolCalls(
 		wfCtx,
 		"execute",
 		engine.ActivityOptions{},

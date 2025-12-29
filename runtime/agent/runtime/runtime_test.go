@@ -588,7 +588,7 @@ func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 		ParentAgentID:    "agent-parent",
 		ParentToolCallID: "parent-123",
 	}
-	_, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "run-1", "agent-1", childCtx, calls, 0, "turn-1", tracker, time.Time{})
+	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "run-1", "agent-1", childCtx, calls, 0, "turn-1", tracker, time.Time{})
 	require.NoError(t, err)
 
 	var update *hooks.ToolCallUpdatedEvent

@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -67,7 +68,7 @@ func TestExecuteToolCalls_ServiceToolsPublishResultsAsComplete(t *testing.T) {
 		close(futSlow.ready)
 	}()
 
-	results, err := rt.executeToolCalls(
+	results, _, err := rt.executeToolCalls(
 		wfCtx,
 		"execute",
 		engine.ActivityOptions{},
@@ -99,4 +100,72 @@ func TestExecuteToolCalls_ServiceToolsPublishResultsAsComplete(t *testing.T) {
 	require.Equal(t, callSlow.ToolCallID, ends[1].ToolCallID)
 
 	// If the goroutine deadlocked, executeToolCalls would never return.
+}
+
+func TestExecuteToolCalls_ServiceToolErrorDoesNotAbortRun(t *testing.T) {
+	recorder := &recordingHooks{}
+	rt := &Runtime{
+		Bus:     recorder,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		toolsets: map[string]ToolsetRegistration{
+			"svc.tools": {},
+		},
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			tools.Ident("svc.tools.fail"): newAnyJSONSpec("svc.tools.fail", "svc.tools"),
+		},
+	}
+
+	wfCtx := &testWorkflowContext{
+		ctx:         context.Background(),
+		hookRuntime: rt,
+		toolFutures: map[string]*controlledToolFuture{},
+	}
+
+	callFail := planner.ToolRequest{
+		Name:       tools.Ident("svc.tools.fail"),
+		RunID:      "run-1",
+		SessionID:  "sess-1",
+		TurnID:     "turn-1",
+		ToolCallID: "call-fail",
+	}
+
+	futFail := &controlledToolFuture{
+		ready: make(chan struct{}),
+		err:   errors.New("activity start-to-close timeout"),
+	}
+	wfCtx.toolFutures[callFail.ToolCallID] = futFail
+	close(futFail.ready)
+
+	results, _, err := rt.executeToolCalls(
+		wfCtx,
+		"execute",
+		engine.ActivityOptions{},
+		"run-1",
+		agent.Ident("agent-1"),
+		&run.Context{RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"},
+		[]planner.ToolRequest{callFail},
+		0,
+		"turn-1",
+		nil,
+		time.Time{},
+	)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.NotNil(t, results[0].Error)
+	require.Equal(t, "tool activity failed", results[0].Error.Message)
+	require.NotNil(t, results[0].Error.Cause)
+	require.Equal(t, "activity start-to-close timeout", results[0].Error.Cause.Message)
+
+	var ends []*hooks.ToolResultReceivedEvent
+	for _, evt := range recorder.events {
+		if e, ok := evt.(*hooks.ToolResultReceivedEvent); ok {
+			ends = append(ends, e)
+		}
+	}
+	require.Len(t, ends, 1)
+	require.Equal(t, callFail.ToolCallID, ends[0].ToolCallID)
+	require.NotNil(t, ends[0].Error)
+	require.Equal(t, "tool activity failed", ends[0].Error.Message)
 }

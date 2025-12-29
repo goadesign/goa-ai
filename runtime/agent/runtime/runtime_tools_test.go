@@ -50,9 +50,9 @@ func TestExecuteToolActivityRequiresArtifactsWhenSidecarDeclared(t *testing.T) {
 			"svc.ts": {
 				Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 					return &planner.ToolResult{
-						Name:      call.Name,
+						Name:       call.Name,
 						ToolCallID: call.ToolCallID,
-						Result:    map[string]any{"ok": true},
+						Result:     map[string]any{"ok": true},
 					}, nil
 				},
 			},
@@ -208,7 +208,7 @@ func TestServiceToolEventsUseChildRunContext(t *testing.T) {
 		Name:       tools.Ident("atlas.read.atlas_get_time_series"),
 		ToolCallID: "child-call",
 	}}
-	_, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "child-run", "ada.agent", parentCtx, calls, 0, "turn-1", nil, time.Time{})
+	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "child-run", "ada.agent", parentCtx, calls, 0, "turn-1", nil, time.Time{})
 	require.NoError(t, err)
 
 	var scheduled *hooks.ToolCallScheduledEvent

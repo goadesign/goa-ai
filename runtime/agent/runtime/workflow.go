@@ -824,8 +824,16 @@ func (r *Runtime) runLoop(
 
 		// Group calls by timeout and execute.
 		grouped, timeouts := r.groupToolCallsByTimeout(execCalls, input, toolOpts.Timeout)
-		vals, err := r.executeGroupedToolCalls(
-			wfCtx, reg, input.AgentID, base, result.ExpectedChildren, turnID, parentTracker, deadline,
+		finishBy := time.Time{}
+		if !deadline.IsZero() {
+			reserve := finalizerGrace
+			if reserve == 0 {
+				reserve = minActivityTimeout
+			}
+			finishBy = deadline.Add(-reserve)
+		}
+		vals, timedOut, err := r.executeGroupedToolCalls(
+			wfCtx, reg, input.AgentID, base, result.ExpectedChildren, turnID, parentTracker, finishBy,
 			grouped, timeouts, toolOpts,
 		)
 		if err != nil {
@@ -838,12 +846,15 @@ func (r *Runtime) runLoop(
 		// Directly use pointer results for the planner input.
 		lastToolResults = vals
 		aggregatedToolResults = append(aggregatedToolResults, cloneToolResults(vals)...)
-		// Decrement cap by the number of tool calls executed, not the number of results returned.
-		// This ensures the cap is properly decremented even if some results are missing.
-		caps.RemainingToolCalls = decrementCap(caps.RemainingToolCalls, len(allowed))
 		// Append user tool_result message and update ledger in the same order as
 		// the assistant tool_use declarations for this turn.
 		r.appendUserToolResults(base, allowed, vals, led, artifactsModeByCallID)
+		if timedOut {
+			return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
+		}
+		// Decrement cap by the number of tool calls executed, not the number of results returned.
+		// This ensures the cap is properly decremented even if some results are missing.
+		caps.RemainingToolCalls = decrementCap(caps.RemainingToolCalls, len(allowed))
 		if failures(vals) > 0 {
 			caps.RemainingConsecutiveFailedToolCalls = decrementCap(
 				caps.RemainingConsecutiveFailedToolCalls, failures(vals),

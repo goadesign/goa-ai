@@ -414,6 +414,15 @@ func (l *Ledger) AppendText(text string) {
 	if l.current == nil {
 		l.current = &Message{Role: "assistant", Parts: make([]Part, 0, 1)}
 	}
+	// Coalesce sequential text deltas to avoid storing one part per chunk.
+	// This preserves provider-visible ordering while reducing workflow state size.
+	if n := len(l.current.Parts); n > 0 {
+		if last, ok := l.current.Parts[n-1].(TextPart); ok {
+			last.Text += text
+			l.current.Parts[n-1] = last
+			return
+		}
+	}
 	l.current.Parts = append(l.current.Parts, TextPart{Text: text})
 }
 

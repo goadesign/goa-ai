@@ -227,6 +227,15 @@ type (
 		// must return a time source that is replay-safe (e.g., Temporal's workflow.Now).
 		Now() time.Time
 
+		// NewTimer returns a Future that becomes ready after the given duration elapses
+		// in workflow time. This is the engine-agnostic primitive for waking up on time
+		// without polling.
+		//
+		// Implementations must schedule a deterministic timer (e.g., Temporal's
+		// workflow.NewTimer). A non-positive duration should produce a Future that is
+		// already ready.
+		NewTimer(ctx context.Context, d time.Duration) (Future[time.Time], error)
+
 		// Await blocks until condition returns true, or ctx is done.
 		//
 		// Condition must be deterministic and side-effect free. A typical use is to
@@ -239,6 +248,15 @@ type (
 		// provided workflow name, task queue and timeouts without requiring local
 		// registration lookups in the parent process.
 		StartChildWorkflow(ctx context.Context, req ChildWorkflowRequest) (ChildWorkflowHandle, error)
+
+		// WithCancel returns a derived WorkflowContext whose cancellation can be
+		// triggered independently of the parent workflow scope. This is used to
+		// cooperatively cancel in-flight activities/child workflows when the runtime
+		// needs to finalize (e.g., time budget reached).
+		//
+		// In deterministic engines, this must map to a workflow-level cancel scope
+		// (e.g., Temporal's workflow.WithCancel).
+		WithCancel() (WorkflowContext, func())
 	}
 
 	// Future represents a pending activity result that will become available after
