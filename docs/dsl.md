@@ -155,6 +155,20 @@ different audiences and link child runs via run handles rather than flattening r
 | `ResultReminder(text)` | Inside `Tool` | Static system reminder injected after tool result |
 | `Confirmation(dsl)` | Inside `Tool` | Declares that tool execution must be explicitly approved out-of-band |
 
+### Tool payload defaults (Feature)
+
+Tool payload defaults follow Goa’s request‑style semantics:
+
+- Codecs decode JSON into helper “decode‑body” structs with pointer fields to distinguish **missing**
+  from **zero**.
+- Codecs then transform helper → final payload using Goa’s transform generator, which injects
+  default values deterministically.
+- As a result, optional primitive fields with defaults are emitted as **value fields** (non‑pointers)
+  in the final tool payload type.
+
+See [`docs/tool_payload_defaults.md`](tool_payload_defaults.md) for the complete contract and the
+generator invariants.
+
 ### Bounded results (returned / total / truncated / refinement_hint)
 
 `BoundedResult` exists so tools can return a bounded view (caps, window clamping, downsampling)

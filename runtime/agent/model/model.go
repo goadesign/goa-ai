@@ -22,12 +22,31 @@ type (
 		isPart()
 	}
 
+	// ImageFormat identifies the on-wire format of an image part.
+	//
+	// Provider adapters may support only a subset of formats. Callers should
+	// normalize uploads to one of the supported formats before constructing an
+	// ImagePart.
+	ImageFormat string
+
 	// TextPart is a plain text content block in a message.
 	//
 	// Text is emitted as-is to the UI or consumer when the message is rendered.
 	TextPart struct {
 		// Text is the human-readable content for this part.
 		Text string
+	}
+
+	// ImagePart carries image bytes attached to a user message.
+	//
+	// Image parts are intended for multimodal models. Provider adapters fail fast
+	// when images are used in unsupported roles or for unsupported model families.
+	ImagePart struct {
+		// Format identifies the encoding of Bytes (e.g., "png").
+		Format ImageFormat
+
+		// Bytes contains the raw image bytes for the declared format.
+		Bytes []byte
 	}
 
 	// ThinkingPart represents provider-issued reasoning content.
@@ -370,6 +389,20 @@ const (
 )
 
 const (
+	// ImageFormatPNG identifies a PNG-encoded image.
+	ImageFormatPNG ImageFormat = "png"
+
+	// ImageFormatJPEG identifies a JPEG-encoded image.
+	ImageFormatJPEG ImageFormat = "jpeg"
+
+	// ImageFormatGIF identifies a GIF-encoded image.
+	ImageFormatGIF ImageFormat = "gif"
+
+	// ImageFormatWEBP identifies a WebP-encoded image.
+	ImageFormatWEBP ImageFormat = "webp"
+)
+
+const (
 	// ModelClassHighReasoning selects a high-reasoning model family.
 	ModelClassHighReasoning ModelClass = "high-reasoning"
 
@@ -390,6 +423,8 @@ var ErrStreamingUnsupported = errors.New("model: streaming not supported")
 var ErrRateLimited = errors.New("model: rate limited")
 
 func (TextPart) isPart() {}
+
+func (ImagePart) isPart() {}
 
 func (ThinkingPart) isPart() {}
 

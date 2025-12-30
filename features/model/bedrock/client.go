@@ -497,6 +497,33 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 				if v.Text != "" {
 					blocks = append(blocks, &brtypes.ContentBlockMemberText{Value: v.Text})
 				}
+			case model.ImagePart:
+				// Bedrock supports image blocks only for user messages (Claude multimodal).
+				if m.Role != model.ConversationRoleUser {
+					return nil, nil, fmt.Errorf(
+						"bedrock: image parts are only supported in user messages (role=%s)",
+						m.Role,
+					)
+				}
+				var format brtypes.ImageFormat
+				switch v.Format {
+				case model.ImageFormatPNG:
+					format = brtypes.ImageFormatPng
+				case model.ImageFormatJPEG:
+					format = brtypes.ImageFormatJpeg
+				case model.ImageFormatGIF:
+					format = brtypes.ImageFormatGif
+				case model.ImageFormatWEBP:
+					format = brtypes.ImageFormatWebp
+				default:
+					return nil, nil, fmt.Errorf("bedrock: unsupported image format %q", v.Format)
+				}
+				blocks = append(blocks, &brtypes.ContentBlockMemberImage{
+					Value: brtypes.ImageBlock{
+						Format: format,
+						Source: &brtypes.ImageSourceMemberBytes{Value: v.Bytes},
+					},
+				})
 			case model.ToolUsePart:
 				// Encode assistant-declared tool_use with optional ID and JSON input.
 				tb := brtypes.ToolUseBlock{}

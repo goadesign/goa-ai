@@ -230,6 +230,24 @@ Start ──► PlanStart ──► Tool Calls? ──► Execute Tools ──�
 - **Tool results flow through codecs.** The runtime decodes results centrally and
   provides typed values to planners and hooks.
 
+### Tool payload codecs and defaults (Feature)
+
+Tool payloads are decoded using a Goa‑style two‑step model:
+
+1. **Decode JSON into a helper “decode‑body” type** with pointer fields, so the codec can
+   distinguish **missing** from **zero** and return precise validation issues.
+2. **Transform helper → final payload** using Goa’s `codegen.GoTransform`.
+
+For tool payloads, the generated payload struct uses **default‑aware field shapes**:
+optional primitives with defaults become **values** (non‑pointers). During step (2), Goa’s transform
+generator injects defaults when helper fields are nil.
+
+This is a hard codegen contract: any generated transforms that read tool payload fields must use
+matching AttributeContext default semantics, or the generated code may contain invalid nil checks or
+assignments and fail to compile.
+
+See [`docs/tool_payload_defaults.md`](tool_payload_defaults.md) for the full contract.
+
 ---
 
 ## Planner Contract

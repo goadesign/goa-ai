@@ -11,7 +11,17 @@ import (
 
 // materialize computes the Go type definition (or alias), its fully-qualified
 // reference, and required imports for the given attribute.
-func (b *toolSpecBuilder) materialize(typeName string, att *goaexpr.AttributeExpr, scope *codegen.NameScope, defineType bool) (tt *goaexpr.AttributeExpr, defLine string, fullRef string, imports []*codegen.ImportSpec) {
+//
+// useDefault controls default-value pointer elision for primitive fields in
+// object types (see goa expr.AttributeExpr.IsPrimitivePointer).
+//
+// This is a correctness contract, not a cosmetic choice:
+// when useDefault=true, defaulted optional primitives become values (non-pointers)
+// and Goa's `codegen.GoTransform` can safely inject defaults during
+// raw(JSON helper) -> payload transformation. Any downstream transform that reads
+// the payload fields must use a matching AttributeContext (UseDefault=true), or
+// Goa will generate nil checks / dereferences against non-pointer fields.
+func (b *toolSpecBuilder) materialize(typeName string, att *goaexpr.AttributeExpr, scope *codegen.NameScope, defineType bool, useDefault bool) (tt *goaexpr.AttributeExpr, defLine string, fullRef string, imports []*codegen.ImportSpec) {
 	if att.Type == goaexpr.Empty {
 		// Synthesize a concrete, named empty payload type so templates
 		// always have a valid type reference. Using an alias keeps
@@ -124,9 +134,8 @@ func (b *toolSpecBuilder) materialize(typeName string, att *goaexpr.AttributeExp
 	case *goaexpr.Object, goaexpr.CompositeExpr:
 		// Alias to inline struct definition using Goa's type def helper without
 		// service package qualification so nested service user types are
-		// referenced locally. Do not apply default-based pointer elision here so
-		// validation pointer semantics stay aligned with generated field types.
-		rhs := scope.GoTypeDef(cloneWithJSONTags(att), false, false)
+		// referenced locally.
+		rhs := scope.GoTypeDef(cloneWithJSONTags(att), false, useDefault)
 		if defineType {
 			// Emit a concrete struct type so callers can attach methods (for
 			// example, agent.BoundedResult on bounded tool result types).

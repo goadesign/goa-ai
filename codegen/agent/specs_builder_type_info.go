@@ -121,8 +121,18 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	// defined type (rather than an alias) so that codegen can attach the
 	// agent.BoundedResult interface via a method on the result type.
 	defineType := usage == usageResult && tool.BoundedResult
-	// Materialize definition and type reference
-	tt, defLine, fullRef, imports := b.materialize(typeName, att, scope, defineType)
+	// Materialize definition and type reference.
+	//
+	// For tool payloads, follow Goa's request default semantics (useDefault=true):
+	// optional primitive fields with defaults are emitted as values (not pointers).
+	//
+	// This is required for correctness because our codecs decode into a JSON helper
+	// type with pointer fields and then use `codegen.GoTransform` to produce the
+	// final payload. Goa's default injection logic assumes the *target* field is a
+	// value when a default exists; if the target field were a pointer, Goa would
+	// generate invalid assignments (value -> *T) and/or nil checks on value fields.
+	useDefault := usage == usagePayload
+	tt, defLine, fullRef, imports := b.materialize(typeName, att, scope, defineType, useDefault)
 	// Collect any union sum types referenced by this tool type so the toolset
 	// package can emit their definitions once.
 	b.collectUnionSumTypes(scope, tt)
@@ -307,8 +317,15 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 			tgtAttr := &goaexpr.AttributeExpr{Type: toolUT}
 			// Use the same NameScope used for emitting JSON helper types so that
 			// GoTransform references match the generated type names.
+			//
+			// Follow Goa's decode-body model:
+			// - The JSON helper uses pointer fields so we can distinguish missing vs zero.
+			// - The final tool payload applies default semantics (UseDefault=true),
+			//   turning defaulted optional primitives into values and letting GoTransform
+			//   inject defaults when raw fields are nil.
 			srcCtx := codegen.NewAttributeContext(true, false, false, "", scope)
-			tgtCtx := codegen.NewAttributeContext(false, false, true, "", scope)
+			tgtUseDefault := usage == usagePayload
+			tgtCtx := codegen.NewAttributeContext(false, false, tgtUseDefault, "", scope)
 			typeRef := tgtCtx.Scope.Ref(tgtAttr, tgtCtx.Pkg(tgtAttr))
 			if strings.HasPrefix(typeRef, "*") {
 				body, helpers, err := codegen.GoTransform(srcAttr, tgtAttr, "raw", "v", srcCtx, tgtCtx, string(usage), true)

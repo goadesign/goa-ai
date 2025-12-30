@@ -32,6 +32,19 @@ func (p TextPart) MarshalJSON() ([]byte, error) {
 	})
 }
 
+// MarshalJSON encodes ImagePart with a Kind discriminator so decode logic can
+// reconstruct multimodal content blocks precisely.
+func (p ImagePart) MarshalJSON() ([]byte, error) {
+	type alias ImagePart
+	return json.Marshal(struct {
+		Kind string `json:"Kind"` //nolint:tagliatelle // Kind discriminator is intentionally upper-cased for compatibility.
+		alias
+	}{
+		Kind:  "image",
+		alias: alias(p),
+	})
+}
+
 // MarshalJSON encodes ToolUsePart with a Kind discriminator so decode logic can
 // reconstruct tool_use blocks precisely.
 func (p ToolUsePart) MarshalJSON() ([]byte, error) {
