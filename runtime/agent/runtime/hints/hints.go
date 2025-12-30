@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"text/template"
+	"time"
 
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -113,6 +114,23 @@ func CompileHintTemplates(raw map[tools.Ident]string, extra template.FuncMap) (m
 			}
 			return 0
 		},
+		// since returns the integer number of seconds between two timestamps:
+		// to - from.
+		//
+		// It accepts RFC3339 timestamp strings (including timezone offsets) and
+		// time.Time values. When parsing fails, it returns 0 so hint rendering
+		// can continue.
+		"since": func(from, to any) int64 {
+			a, ok := parseTimestamp(from)
+			if !ok {
+				return 0
+			}
+			b, ok := parseTimestamp(to)
+			if !ok {
+				return 0
+			}
+			return int64(b.Sub(a).Seconds())
+		},
 		"truncate": func(s string, n int) string {
 			if n <= 0 {
 				return ""
@@ -138,4 +156,35 @@ func CompileHintTemplates(raw map[tools.Ident]string, extra template.FuncMap) (m
 		out[id] = tmpl
 	}
 	return out, nil
+}
+
+func parseTimestamp(v any) (time.Time, bool) {
+	switch t := v.(type) {
+	case time.Time:
+		return t, true
+	case *time.Time:
+		if t == nil {
+			return time.Time{}, false
+		}
+		return *t, true
+	case string:
+		if t == "" {
+			return time.Time{}, false
+		}
+		ts, err := time.Parse(time.RFC3339, t)
+		if err != nil {
+			return time.Time{}, false
+		}
+		return ts, true
+	default:
+		s := fmt.Sprint(v)
+		if s == "" {
+			return time.Time{}, false
+		}
+		ts, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return time.Time{}, false
+		}
+		return ts, true
+	}
 }
