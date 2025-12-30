@@ -58,6 +58,18 @@ func decodeMessagePart(raw json.RawMessage) (Part, error) {
 			return nil, fmt.Errorf("decode Kind: %w", err)
 		}
 		switch kind {
+		case "image":
+			var img ImagePart
+			if err := json.Unmarshal(raw, &img); err != nil {
+				return nil, fmt.Errorf("decode ImagePart: %w", err)
+			}
+			if img.Format == "" {
+				return nil, errors.New("ImagePart requires Format")
+			}
+			if len(img.Bytes) == 0 {
+				return nil, errors.New("ImagePart requires Bytes")
+			}
+			return img, nil
 		case "thinking":
 			var thinking ThinkingPart
 			if err := json.Unmarshal(raw, &thinking); err != nil {

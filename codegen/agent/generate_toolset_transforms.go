@@ -99,8 +99,15 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 						TypeName:      toolPayload.TypeName,
 					},
 				}
-				srcCtx := codegen.NewAttributeContextForConversion(false, false, false, "", scope)
-				tgtCtx := codegen.NewAttributeContextForConversion(false, false, false, svcAlias, scope)
+				// Tool payload types follow Goa request semantics for defaults:
+				// defaulted optional primitives are emitted as values (non-pointers).
+				//
+				// This must match the tool payload type materialization in
+				// specs_builder_type_info.go / specs_builder_materialize.go; otherwise Goa's
+				// GoTransform will emit nil checks or dereferences against non-pointer
+				// fields and the generated transforms.go will not compile.
+				srcCtx := codegen.NewAttributeContextForConversion(false, false, true, "", scope)
+				tgtCtx := codegen.NewAttributeContextForConversion(false, false, true, svcAlias, scope)
 				body, helpers, err := codegen.GoTransform(localArgAttr, t.MethodPayloadAttr, "in", "out", srcCtx, tgtCtx, "", false)
 				if err == nil && body != "" {
 					for _, h := range helpers {
@@ -152,7 +159,7 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 					}
 				}
 
-				srcCtx := codegen.NewAttributeContextForConversion(false, false, false, svcAlias, scope)
+				srcCtx := codegen.NewAttributeContextForConversion(false, false, true, svcAlias, scope)
 				dupRes := *baseAttr
 				if dupRes.Meta != nil {
 					delete(dupRes.Meta, "struct:pkg:path")
@@ -206,7 +213,7 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 					}
 				}
 
-				srcCtx := codegen.NewAttributeContextForConversion(false, false, false, svcAlias, scope)
+				srcCtx := codegen.NewAttributeContextForConversion(false, false, true, svcAlias, scope)
 				var metaBase *expr.AttributeExpr
 				if ut, ok := t.Artifact.Type.(expr.UserType); ok && ut != nil {
 					metaBase = ut.Attribute()

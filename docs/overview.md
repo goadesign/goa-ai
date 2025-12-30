@@ -172,6 +172,15 @@ Artifacts flow through hooks and streams to UIs but are never sent to model prov
 separation keeps model context lean while enabling rich visualizations (charts, tables, maps) on
 the client.
 
+### Tool Payload Defaults (Feature)
+
+Goa‑AI applies Goa‑style default semantics to **tool payloads**. Codecs decode into pointer‑field
+JSON helper types (to distinguish missing vs zero) and then transform into the final payload type
+using `codegen.GoTransform`, which injects default values deterministically.
+
+See [`docs/tool_payload_defaults.md`](tool_payload_defaults.md) for the full contract and the codegen
+invariants generator maintainers must keep consistent.
+
 ---
 
 ## Your First Agent in Five Minutes
