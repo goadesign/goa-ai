@@ -91,9 +91,13 @@ func (s *bedrockStreamer) Metadata() map[string]any {
 
 func (s *bedrockStreamer) run() {
 	defer close(s.chunks)
-	defer func() { _ = s.stream.Close() }()
+	defer func() {
+		if err := s.stream.Close(); err != nil {
+			s.setErr(err)
+		}
+	}()
 
-	processor := newChunkProcessor(s.emitChunk, s.recordUsage, s.toolNameMap)
+	processor := newChunkProcessor(s.emitChunk, s.recordUsage, s.recordCitations, s.toolNameMap)
 	events := s.stream.Events()
 
 	for {
@@ -104,7 +108,7 @@ func (s *bedrockStreamer) run() {
 		case event, ok := <-events:
 			if !ok {
 				if err := s.stream.Err(); err != nil {
-					s.setErr(err)
+					s.setErr(wrapBedrockError("converse_stream.recv", err))
 				} else if err := s.ctx.Err(); err != nil {
 					s.setErr(err)
 				} else {
@@ -138,6 +142,21 @@ func (s *bedrockStreamer) recordUsage(usage model.TokenUsage) {
 	s.metaMu.Unlock()
 }
 
+func (s *bedrockStreamer) recordCitations(citations []model.Citation) {
+	if len(citations) == 0 {
+		return
+	}
+	s.metaMu.Lock()
+	if s.metadata == nil {
+		s.metadata = make(map[string]any)
+	}
+	if prev, ok := s.metadata["citations"].([]model.Citation); ok && len(prev) > 0 {
+		citations = append(prev, citations...)
+	}
+	s.metadata["citations"] = citations
+	s.metaMu.Unlock()
+}
+
 func (s *bedrockStreamer) setErr(err error) {
 	s.errMu.Lock()
 	defer s.errMu.Unlock()
@@ -158,6 +177,7 @@ func (s *bedrockStreamer) err() error {
 type chunkProcessor struct {
 	emit        func(model.Chunk) error
 	recordUsage func(model.TokenUsage)
+	recordCites func([]model.Citation)
 
 	toolBlocks map[int]*toolBuffer
 	// reasoningBlocks accumulates reasoning content per content index until stop.
@@ -166,10 +186,16 @@ type chunkProcessor struct {
 	toolNameMap map[string]string
 }
 
-func newChunkProcessor(emit func(model.Chunk) error, recordUsage func(model.TokenUsage), nameMap map[string]string) *chunkProcessor {
+func newChunkProcessor(
+	emit func(model.Chunk) error,
+	recordUsage func(model.TokenUsage),
+	recordCites func([]model.Citation),
+	nameMap map[string]string,
+) *chunkProcessor {
 	return &chunkProcessor{
 		emit:            emit,
 		recordUsage:     recordUsage,
+		recordCites:     recordCites,
 		toolBlocks:      make(map[int]*toolBuffer),
 		reasoningBlocks: make(map[int]*reasoningBuffer),
 		toolNameMap:     nameMap,
@@ -227,6 +253,16 @@ func (p *chunkProcessor) Handle(event any) error {
 					Meta:  map[string]any{"content_index": idx},
 				},
 			})
+		case *brtypes.ContentBlockDeltaMemberCitation:
+			if p.recordCites == nil {
+				return nil
+			}
+			citation := translateCitationDelta(delta.Value)
+			if citation.Title == "" && citation.Source == "" && citation.Location == (model.CitationLocation{}) && len(citation.SourceContent) == 0 {
+				return nil
+			}
+			p.recordCites([]model.Citation{citation})
+			return nil
 		case *brtypes.ContentBlockDeltaMemberReasoningContent:
 			// Initialize/lookup buffer for this content index.
 			rb := p.reasoningBlocks[idx]
@@ -401,6 +437,74 @@ func decodeToolPayload(raw string) json.RawMessage {
 		return nil
 	}
 	return json.RawMessage(data)
+}
+
+func translateCitationDelta(delta brtypes.CitationsDelta) model.Citation {
+	out := model.Citation{
+		Location:      translateCitationLocationDelta(delta.Location),
+		SourceContent: translateCitationSourceContentDelta(delta.SourceContent),
+	}
+	if delta.Title != nil {
+		out.Title = *delta.Title
+	}
+	if delta.Source != nil {
+		out.Source = *delta.Source
+	}
+	return out
+}
+
+func translateCitationLocationDelta(loc brtypes.CitationLocation) model.CitationLocation {
+	switch v := loc.(type) {
+	case *brtypes.CitationLocationMemberDocumentChar:
+		return model.CitationLocation{
+			DocumentChar: &model.DocumentCharLocation{
+				DocumentIndex: int32Value(v.Value.DocumentIndex),
+				Start:         int32Value(v.Value.Start),
+				End:           int32Value(v.Value.End),
+			},
+		}
+	case *brtypes.CitationLocationMemberDocumentChunk:
+		return model.CitationLocation{
+			DocumentChunk: &model.DocumentChunkLocation{
+				DocumentIndex: int32Value(v.Value.DocumentIndex),
+				Start:         int32Value(v.Value.Start),
+				End:           int32Value(v.Value.End),
+			},
+		}
+	case *brtypes.CitationLocationMemberDocumentPage:
+		return model.CitationLocation{
+			DocumentPage: &model.DocumentPageLocation{
+				DocumentIndex: int32Value(v.Value.DocumentIndex),
+				Start:         int32Value(v.Value.Start),
+				End:           int32Value(v.Value.End),
+			},
+		}
+	default:
+		return model.CitationLocation{}
+	}
+}
+
+func translateCitationSourceContentDelta(contents []brtypes.CitationSourceContentDelta) []string {
+	if len(contents) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(contents))
+	for _, content := range contents {
+		if content.Text != nil && *content.Text != "" {
+			out = append(out, *content.Text)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func int32Value(ptr *int32) int {
+	if ptr == nil {
+		return 0
+	}
+	return int(*ptr)
 }
 
 func normalizeToolName(name string) string {

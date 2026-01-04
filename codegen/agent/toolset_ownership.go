@@ -106,5 +106,3 @@ func assignToolsetOwnership(genpkg string, roots []eval.Root, services []*Servic
 	}
 	return nil
 }
-
-

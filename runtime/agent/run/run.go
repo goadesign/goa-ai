@@ -40,10 +40,8 @@
 package run
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
-	"time"
 
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -125,39 +123,6 @@ type (
 		ParentToolCallID string
 	}
 
-	// Record captures persistent metadata associated with an agent run execution.
-	// This is the durable record stored for observability and lifecycle tracking.
-	// Each record represents a single workflow invocation and can be associated
-	// with a session via SessionID for grouping related runs (e.g., multi-turn
-	// conversations).
-	Record struct {
-		// AgentID identifies which agent processed the run.
-		AgentID agent.Ident
-		// RunID is the durable workflow run identifier (workflow execution ID).
-		RunID string
-		// SessionID associates related runs into a conversation thread (optional).
-		SessionID string
-		// TurnID identifies the conversational turn within the session (optional).
-		// May be shared across multiple runs if a turn is interrupted and resumed.
-		TurnID string
-		// Status indicates the current lifecycle state.
-		Status Status
-		// StartedAt records when the run began.
-		StartedAt time.Time
-		// UpdatedAt records when the run metadata was last updated.
-		UpdatedAt time.Time
-		// Labels stores caller- or policy-provided labels.
-		Labels map[string]string
-		// Metadata stores implementation-specific metadata (e.g., error codes).
-		Metadata map[string]any
-	}
-
-	// Store persists run metadata for observability and lookup.
-	Store interface {
-		Upsert(ctx context.Context, record Record) error
-		Load(ctx context.Context, runID string) (Record, error)
-	}
-
 	// Status represents the coarse-grained lifecycle state of a run.
 	Status string
 
@@ -170,9 +135,7 @@ type (
 )
 
 var (
-	// ErrNotFound indicates that no run record exists for the given identifier.
-	// Callers use this to distinguish between missing runs and other failures
-	// when querying run status or metadata.
+	// ErrNotFound indicates the requested run does not exist.
 	ErrNotFound = errors.New("run not found")
 )
 

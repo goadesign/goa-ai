@@ -13,5 +13,3 @@ func ToolsetStreamID(toolset string) string {
 func ResultStreamID(toolUseID string) string {
 	return fmt.Sprintf("result:%s", toolUseID)
 }
-
-

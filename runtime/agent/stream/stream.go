@@ -467,6 +467,19 @@ type (
 		// Error is the terminal error string when the run fails or is canceled.
 		// It is populated only on terminal updates derived from RunCompletedEvent.
 		Error string `json:"error,omitempty"`
+		// ErrorProvider identifies the model provider when the terminal error was
+		// caused by a provider failure (for example, "bedrock").
+		ErrorProvider string `json:"error_provider,omitempty"`
+		// ErrorOperation identifies the provider operation when available.
+		ErrorOperation string `json:"error_operation,omitempty"`
+		// ErrorKind classifies provider failures into a small set of stable categories.
+		ErrorKind string `json:"error_kind,omitempty"`
+		// ErrorCode is the provider-specific error code when available.
+		ErrorCode string `json:"error_code,omitempty"`
+		// HTTPStatus is the provider HTTP status code when available.
+		HTTPStatus int `json:"http_status,omitempty"`
+		// Retryable reports whether retrying may succeed without changing the request.
+		Retryable bool `json:"retryable"`
 	}
 
 	// AgentRunStartedPayload describes an agent-as-tool child run link.

@@ -630,10 +630,16 @@ func (r *Runtime) adaptWithFinalizer(ctx context.Context, cfg *AgentToolConfig, 
 	}
 	tr, err := cfg.Finalizer.Finalize(ctx, &input)
 	if err != nil {
+		msg := fmt.Sprintf(
+			"agent-tool: finalizer failed for %s (child_run_id=%s): %v",
+			call.Name,
+			handle.RunID,
+			err,
+		)
 		result := &planner.ToolResult{
 			Name:          call.Name,
 			ToolCallID:    call.ToolCallID,
-			Error:         planner.NewToolErrorWithCause("agent-tool: finalizer failed", err),
+			Error:         planner.NewToolErrorWithCause(msg, err),
 			Artifacts:     aggregateArtifacts(outPtr.ToolEvents),
 			ChildrenCount: len(outPtr.ToolEvents),
 		}

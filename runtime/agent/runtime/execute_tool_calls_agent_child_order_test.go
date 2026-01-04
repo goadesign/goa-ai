@@ -10,6 +10,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
+	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 
@@ -19,13 +20,14 @@ import (
 func TestExecuteToolCalls_AgentToolsPublishResultsAsComplete(t *testing.T) {
 	recorder := &recordingHooks{ch: make(chan hooks.Event, 64)}
 	rt := &Runtime{
-		agents:    make(map[agent.Ident]AgentRegistration),
-		toolsets:  make(map[string]ToolsetRegistration),
-		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
-		logger:    telemetry.NoopLogger{},
-		metrics:   telemetry.NoopMetrics{},
-		tracer:    telemetry.NoopTracer{},
-		Bus:       recorder,
+		agents:        make(map[agent.Ident]AgentRegistration),
+		toolsets:      make(map[string]ToolsetRegistration),
+		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+		Bus:           recorder,
 	}
 
 	cfg := AgentToolConfig{

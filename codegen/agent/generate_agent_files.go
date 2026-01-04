@@ -211,5 +211,3 @@ func agentSpecsJSONFile(agent *AgentData) *codegen.File {
 		SectionTemplates: sections,
 	}
 }
-
-

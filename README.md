@@ -310,10 +310,6 @@ func (s *MySink) Close(ctx context.Context) error { return nil }
 
 // Wire to runtime
 rt := runtime.New(runtime.WithStream(&MySink{}))
-
-// Or subscribe to a specific run
-stop, _ := rt.SubscribeRun(ctx, runID, &MySink{})
-defer stop()
 ```
 
 **Stream profiles** filter events for different audiences:
@@ -478,7 +474,6 @@ func main() {
     rt := runtime.New(
         runtime.WithEngine(eng),
         runtime.WithMemoryStore(memorymongo.New(mongoClient)),
-        runtime.WithRunStore(runmongo.New(mongoClient)),
         runtime.WithStream(pulseSink),
         runtime.WithModelClient("claude", modelClient),
         runtime.WithPolicy(basicpolicy.New()),
@@ -511,7 +506,6 @@ func main() {
 | **Persistence** | |
 | `features/memory/mongo` | Transcript storage |
 | `features/session/mongo` | Session state |
-| `features/run/mongo` | Run metadata and search |
 | **Streaming & Integration** | |
 | `features/stream/pulse` | Pulse (Redis Streams) for real-time events |
 | `features/policy/basic` | Policy engine for tool filtering |

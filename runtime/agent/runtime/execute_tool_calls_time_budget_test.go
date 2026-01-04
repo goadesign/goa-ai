@@ -11,6 +11,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
+	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -18,10 +19,11 @@ import (
 func TestExecuteToolCalls_CancelsInFlightToolsWhenTimeBudgetReached(t *testing.T) {
 	recorder := &recordingHooks{}
 	rt := &Runtime{
-		Bus:     recorder,
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
+		Bus:           recorder,
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {},
 		},

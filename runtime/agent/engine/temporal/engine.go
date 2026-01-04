@@ -402,10 +402,10 @@ func (e *Engine) Close() error {
 // operations (e.g., starting child workflows for agent-as-tool).
 func (e *Engine) injectWorkflowContextIntoActivity(ctx context.Context) context.Context {
 	info := activity.GetInfo(ctx)
-	with := ctx
+	with := engine.WithActivityContext(ctx)
 	if v, ok := e.workflowContexts.Load(info.WorkflowExecution.RunID); ok {
 		if wf, ok2 := v.(engine.WorkflowContext); ok2 {
-			with = engine.WithWorkflowContext(ctx, wf)
+			with = engine.WithWorkflowContext(with, wf)
 		}
 	}
 	return with

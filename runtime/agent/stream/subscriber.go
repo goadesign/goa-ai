@@ -329,8 +329,14 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			}
 		}
 		payload := WorkflowPayload{
-			Phase:  phase,
-			Status: evt.Status,
+			Phase:          phase,
+			Status:         evt.Status,
+			ErrorProvider:  evt.ErrorProvider,
+			ErrorOperation: evt.ErrorOperation,
+			ErrorKind:      evt.ErrorKind,
+			ErrorCode:      evt.ErrorCode,
+			HTTPStatus:     evt.HTTPStatus,
+			Retryable:      evt.Retryable,
 		}
 		if evt.Error != nil {
 			payload.Error = evt.Error.Error()

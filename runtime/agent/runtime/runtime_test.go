@@ -19,7 +19,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
-	runinmem "goa.design/goa-ai/runtime/agent/run/inmem"
+	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -368,10 +368,11 @@ func TestConvertRunOutputToToolResult(t *testing.T) {
 func TestAgentAsToolNestedUpdates(t *testing.T) {
 	recorder := &recordingHooks{}
 	rt := &Runtime{
-		Bus:     recorder,
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
+		Bus:           recorder,
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
 	}
 
 	// Register nested tools toolset used by nested agent
@@ -568,10 +569,11 @@ func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 			tools.Ident("child1"): newAnyJSONSpec("child1", "svc.export"),
 			tools.Ident("child2"): newAnyJSONSpec("child2", "svc.export"),
 		},
-		Bus:     recorder,
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
+		Bus:           recorder,
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
 	}
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
@@ -604,7 +606,6 @@ func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 }
 
 func TestRuntimePublishesPolicyDecision(t *testing.T) {
-	store := runinmem.New()
 	bus := hooks.NewBus()
 	decision := policy.Decision{
 		AllowedTools: []tools.Ident{tools.Ident("search")},
@@ -620,9 +621,8 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 		},
 	}
 	rt := &Runtime{
-		Policy:   &stubPolicyEngine{decision: decision},
-		RunStore: store,
-		Bus:      bus,
+		Policy: &stubPolicyEngine{decision: decision},
+		Bus:    bus,
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {
 				Metadata: policy.ToolMetadata{
@@ -634,21 +634,14 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
 			"search": newAnyJSONSpec("search", "svc.tools"),
 		},
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
-		models:  make(map[string]model.Client),
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+		models:        make(map[string]model.Client),
 	}
 
 	var policyEvent *hooks.PolicyDecisionEvent
-	storeSub, err := bus.Register(hooks.SubscriberFunc(rt.handleRunStoreEvent))
-	require.NoError(t, err)
-	defer func() {
-		if err := storeSub.Close(); err != nil {
-			t.Logf("subscriber close error: %v", err)
-		}
-	}()
-
 	sub, err := bus.Register(hooks.SubscriberFunc(func(ctx context.Context, evt hooks.Event) error {
 		if e, ok := evt.(*hooks.PolicyDecisionEvent); ok {
 			policyEvent = e
@@ -742,17 +735,4 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 	require.Equal(t, decision.Metadata, policyEvent.Metadata)
 	require.Equal(t, decision.Caps, policyEvent.Caps)
 	require.Equal(t, decision.Labels, policyEvent.Labels)
-
-	rec, err := store.Load(context.Background(), input.RunID)
-	require.NoError(t, err)
-	require.Equal(t, "acme", rec.Labels["tenant"])
-	require.Equal(t, "basic", rec.Labels["policy_engine"])
-	meta, ok := rec.Metadata[policyDecisionMetadataKey].([]map[string]any)
-	require.True(t, ok)
-	require.Len(t, meta, 1)
-	entry := meta[0]
-	require.Equal(t, decision.Caps, entry["caps"])
-	require.Equal(t, decision.Metadata, entry["metadata"])
-	require.Equal(t, []tools.Ident{tools.Ident("search")}, entry["allowed_tools"])
-	require.NotNil(t, entry["timestamp"])
 }

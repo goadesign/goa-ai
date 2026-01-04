@@ -361,7 +361,6 @@ if err := rt.RegisterToolset(reg); err != nil { panic(err) }
 rt := runtime.New(runtime.Options{
     // Engine: myTemporalEngine,
     // MemoryStore: myMongoMemoryStore,
-    // RunStore: myMongoRunStore,
     // Stream: myEventStreamSink,
 })
 ```

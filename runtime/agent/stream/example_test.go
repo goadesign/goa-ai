@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"goa.design/goa-ai/runtime/agent/hooks"
+	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 	"goa.design/goa-ai/runtime/agent/stream"
 	streambridge "goa.design/goa-ai/runtime/agent/stream/bridge"
@@ -27,7 +28,10 @@ func Example_broadcast() {
 	sink := &collectSink{}
 
 	// Wire sink into the runtime; subscriber is auto-registered.
-	rt := agentsruntime.New(agentsruntime.WithStream(sink))
+	rt := agentsruntime.New(
+		agentsruntime.WithRunEventStore(runloginmem.New()),
+		agentsruntime.WithStream(sink),
+	)
 
 	// Publish a user-facing hook event; the stream subscriber forwards it.
 	_ = rt.Bus.Publish(ctx, hooks.NewAssistantMessageEvent("run-1", "svc.agent", "", "hello", nil))

@@ -39,7 +39,7 @@ func TestBuildRetryHintFromDecodeError_UnmarshalTypeError(t *testing.T) {
 				"summary": map[string]any{
 					"summary": "Headline",
 				},
-				"recommendations": []any{"Do X"},
+				"recommendations":      []any{"Do X"},
 				"requires_remediation": true,
 			},
 		},
@@ -89,12 +89,12 @@ func TestExecuteToolActivity_DecodeErrorRetryHint(t *testing.T) {
 				Service: "svc",
 				Toolset: "svc.ts",
 				Payload: tools.TypeSpec{
-					Name:        "P",
+					Name: "P",
 					ExampleInput: map[string]any{
 						"summary": map[string]any{
 							"summary": "Headline",
 						},
-						"recommendations": []any{"Do X"},
+						"recommendations":      []any{"Do X"},
 						"requires_remediation": true,
 					},
 					Codec: tools.JSONCodec[any]{

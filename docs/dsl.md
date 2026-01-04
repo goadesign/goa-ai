@@ -597,6 +597,19 @@ Tool("get_time_series", "Get time series data", func() {
 Artifacts are attached to `planner.ToolResult.Artifacts` and accessible via stream events,
 but never included in prompts to the LLM.
 
+#### Controlling artifact emission (`artifacts` + `ArtifactsDefault`)
+
+Tools that declare an `Artifact` automatically accept a reserved payload field named `artifacts`
+with values `"auto"`, `"on"`, and `"off"`:
+
+- `"on"`: request UI artifacts when available.
+- `"off"`: suppress UI artifacts for this call.
+- `"auto"` (or omitted): use the tool’s default behavior.
+
+Use `ArtifactsDefault("off")` inside the tool DSL to make artifacts opt-in by default when `"auto"`
+or omission is used. This is useful for tools whose artifacts are only appropriate when the user
+explicitly asked for a visualization.
+
 ### BindTo (Service Method Binding)
 
 `BindTo` associates a tool with a Goa service method implementation. This enables tools to
@@ -1095,7 +1108,6 @@ When a service declares MCP (`MCP(...)`), `goa gen` emits JSON-RPC client/server
 rt := runtime.New(
     runtime.WithEngine(temporalClient),
     runtime.WithMemoryStore(mongoStore),
-    runtime.WithRunStore(runStore),
 )
 
 if err := chat.RegisterChatAgent(ctx, rt, chat.ChatAgentConfig{

@@ -11,6 +11,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
+	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -18,11 +19,12 @@ import (
 func TestPolicyAllowlistTrimsToolExecution(t *testing.T) {
 	recorder := &recordingHooks{}
 	rt := &Runtime{
-		Bus:     recorder,
-		Policy:  &stubPolicyEngine{decision: policy.Decision{AllowedTools: []tools.Ident{tools.Ident("allowed")}}},
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
+		Bus:           recorder,
+		Policy:        &stubPolicyEngine{decision: policy.Decision{AllowedTools: []tools.Ident{tools.Ident("allowed")}}},
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
 	}
 	rt.toolsets = map[string]ToolsetRegistration{"svc.tools": {
 		Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {

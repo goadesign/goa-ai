@@ -16,7 +16,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
-	runinmem "goa.design/goa-ai/runtime/agent/run/inmem"
+	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -664,15 +664,15 @@ func (noopWorkflowHandle) Cancel(context.Context) error                 { return
 
 func newTestRuntimeWithPlanner(agentID agent.Ident, pl planner.Planner) *Runtime {
 	return &Runtime{
-		agents:    map[agent.Ident]AgentRegistration{agentID: {Planner: pl}},
-		toolsets:  make(map[string]ToolsetRegistration),
-		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
-		logger:    telemetry.NoopLogger{},
-		metrics:   telemetry.NoopMetrics{},
-		tracer:    telemetry.NoopTracer{},
-		Bus:       noopHooks{},
-		models:    make(map[string]model.Client),
-		RunStore:  runinmem.New(),
+		agents:        map[agent.Ident]AgentRegistration{agentID: {Planner: pl}},
+		toolsets:      make(map[string]ToolsetRegistration),
+		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+		Bus:           noopHooks{},
+		models:        make(map[string]model.Client),
 	}
 }
 

@@ -40,12 +40,12 @@ type toolsetDocument struct {
 
 // toolDocument is the MongoDB document representation of a Tool.
 type toolDocument struct {
-	Name         string   `bson:"name"`
-	Description  *string  `bson:"description,omitempty"`
-	Tags         []string `bson:"tags,omitempty"`
-	PayloadSchema []byte  `bson:"payload_schema"`
-	ResultSchema  []byte  `bson:"result_schema"`
-	SidecarSchema []byte  `bson:"sidecar_schema,omitempty"`
+	Name          string   `bson:"name"`
+	Description   *string  `bson:"description,omitempty"`
+	Tags          []string `bson:"tags,omitempty"`
+	PayloadSchema []byte   `bson:"payload_schema"`
+	ResultSchema  []byte   `bson:"result_schema"`
+	SidecarSchema []byte   `bson:"sidecar_schema,omitempty"`
 }
 
 // New creates a new MongoDB store using the provided collection.

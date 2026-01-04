@@ -31,6 +31,8 @@ func TestChunkProcessor_MetadataUsageIncludesCacheTokens(t *testing.T) {
 		func(u model.TokenUsage) {
 			recordedUsage = u
 		},
+		func([]model.Citation) {
+		},
 		map[string]string{},
 	)
 

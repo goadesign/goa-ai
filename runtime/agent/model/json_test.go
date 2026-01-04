@@ -24,6 +24,9 @@ func TestPartMarshalJSONIncludesKind(t *testing.T) {
 			kind: "thinking",
 		},
 		{name: "text", part: TextPart{Text: "hello"}, kind: "text"},
+		{name: "image", part: ImagePart{Format: ImageFormatPNG, Bytes: []byte{0x01}}, kind: "image"},
+		{name: "document", part: DocumentPart{Name: "doc", Format: DocumentFormatTXT, Text: "hello"}, kind: "document"},
+		{name: "citations", part: CitationsPart{Text: "supported", Citations: []Citation{{Title: "t"}}}, kind: "citations"},
 		{name: "tool_use", part: ToolUsePart{Name: "search", Input: map[string]any{"q": "golang"}}, kind: "tool_use"},
 		{name: "tool_result", part: ToolResultPart{ToolUseID: "tu", Content: map[string]any{"hits": 1}}, kind: "tool_result"},
 		{name: "cache_checkpoint", part: CacheCheckpointPart{}, kind: "cache_checkpoint"},
@@ -98,4 +101,30 @@ func TestDecodeEmptyObjectReturnsError(t *testing.T) {
 	_, err := decodeMessagePart([]byte(`{}`))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "empty part payload")
+}
+
+func TestDocumentPartDecodeRejectsInvalidSources(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload string
+	}{
+		{
+			name:    "missing_source",
+			payload: `{"Kind":"document","Name":"doc"}`,
+		},
+		{
+			name:    "multiple_sources",
+			payload: `{"Kind":"document","Name":"doc","Text":"a","URI":"s3://b/doc.pdf"}`,
+		},
+		{
+			name:    "empty_chunk",
+			payload: `{"Kind":"document","Name":"doc","Chunks":[""]}`,
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := decodeMessagePart([]byte(tt.payload))
+			require.Error(t, err)
+		})
+	}
 }

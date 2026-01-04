@@ -1,6 +1,8 @@
 package dsl
 
 import (
+	"strings"
+
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
 
@@ -283,6 +285,36 @@ func Artifact(kind string, val any, args ...any) {
 	}
 	tool.Sidecar = toolDSL(tool, "Sidecar", val, args...)
 	tool.SidecarKind = kind
+}
+
+// ArtifactsDefault configures the default behavior for emitting sidecar artifacts
+// when the caller does not explicitly request a mode via the reserved `artifacts`
+// payload field (or sets it to "auto").
+//
+// Valid values are:
+//   - "on": emit artifacts by default (when the tool produces them)
+//   - "off": do not emit artifacts unless the caller explicitly sets `artifacts:"on"`
+//
+// ArtifactsDefault must appear in a Tool expression. It is only meaningful for
+// tools that declare an Artifact.
+func ArtifactsDefault(mode string) {
+	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	if tool.Sidecar == nil || tool.Sidecar.Type == nil || tool.Sidecar.Type == goaexpr.Empty {
+		eval.ReportError("ArtifactsDefault requires the tool to declare an Artifact")
+		return
+	}
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "on":
+		tool.ArtifactsDefault = "on"
+	case "off":
+		tool.ArtifactsDefault = "off"
+	default:
+		eval.ReportError("ArtifactsDefault mode must be \"on\" or \"off\"")
+	}
 }
 
 // Tags attaches metadata labels to a tool for categorization and filtering. Tags

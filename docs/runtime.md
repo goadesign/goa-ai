@@ -109,7 +109,6 @@ func main() {
     // MongoDB stores for persistence
     mongoClient := newMongoClient()
     memStore := memorymongo.New(mongoClient)
-    runStore := runmongo.New(mongoClient)
 
     // Pulse sink for real-time streaming
     pulseSink, _ := pulse.NewSink(pulse.Options{Client: newPulseClient()})
@@ -118,7 +117,6 @@ func main() {
     rt := runtime.New(
         runtime.WithEngine(temporalEng),
         runtime.WithMemoryStore(memStore),
-        runtime.WithRunStore(runStore),
         runtime.WithStream(pulseSink),
         runtime.WithPolicy(basicpolicy.New()),
         runtime.WithLogger(telemetry.NewClueLogger()),
@@ -150,7 +148,6 @@ Create a runtime using `runtime.New()` with functional options:
 rt := runtime.New(
     runtime.WithEngine(engine),          // Workflow backend (required for production)
     runtime.WithMemoryStore(store),      // Transcript persistence
-    runtime.WithRunStore(store),         // Run metadata persistence
     runtime.WithStream(sink),            // Real-time event streaming
     runtime.WithPolicy(engine),          // Policy enforcement
     runtime.WithHooks(bus),              // Custom event bus (rare)
@@ -167,7 +164,6 @@ When options are omitted, the runtime uses sensible defaults:
 |--------|---------|
 | Engine | In-memory (synchronous, non-durable) |
 | MemoryStore | None (transcripts not persisted) |
-| RunStore | None (run metadata not persisted) |
 | Stream | None (no external event delivery) |
 | Policy | None (all tools allowed, caps from agent registration) |
 | Hooks | In-process bus |
@@ -914,20 +910,6 @@ stream.AgentDebugProfile()
 stream.MetricsProfile()
 ```
 
-### Per-Run Subscriptions
-
-Subscribe to a specific run's events:
-
-```go
-closeFn, err := rt.SubscribeRun(ctx, "run-123", &mySink{})
-if err != nil {
-    return err
-}
-defer closeFn()
-```
-
----
-
 ## Policy Enforcement
 
 Policy engines decide which tools are available each turn and enforce caps.
@@ -1024,26 +1006,6 @@ type Store interface {
 
 The runtime automatically subscribes to hooks and persists events when a memory
 store is configured.
-
-### Run Store
-
-Tracks run metadata for observability:
-
-```go
-type Store interface {
-    Upsert(ctx context.Context, record Record) error
-    Load(ctx context.Context, runID string) (Record, error)
-}
-```
-
-### Run Status
-
-Query run status (engine is source of truth):
-
-```go
-status, err := rt.RunStatus(ctx, "run-123")
-// Returns: StatusPending, StatusRunning, StatusCompleted, StatusFailed, StatusCanceled
-```
 
 ### Run Phases
 
@@ -1338,7 +1300,6 @@ type Tracer interface {
 | Package | Purpose |
 |---------|---------|
 | `features/memory/mongo` | MongoDB-backed memory store |
-| `features/run/mongo` | MongoDB-backed run store |
 | `features/session/mongo` | MongoDB-backed session store |
 | `features/stream/pulse` | Pulse message bus sink |
 | `features/model/bedrock` | AWS Bedrock model client |

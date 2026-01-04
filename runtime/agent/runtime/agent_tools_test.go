@@ -15,6 +15,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
+	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -47,12 +48,13 @@ func firstText(m *model.Message) string {
 
 func TestAgentTool_DefaultsFromPayload(t *testing.T) {
 	rt := &Runtime{
-		agents:  make(map[agent.Ident]AgentRegistration),
-		Engine:  engineinmem.New(),
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
-		Bus:     noopHooks{},
+		agents:        make(map[agent.Ident]AgentRegistration),
+		Engine:        engineinmem.New(),
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+		Bus:           noopHooks{},
 	}
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
@@ -95,12 +97,13 @@ func TestAgentTool_DefaultsFromPayload(t *testing.T) {
 
 func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 	rt := &Runtime{
-		agents:  make(map[agent.Ident]AgentRegistration),
-		Engine:  engineinmem.New(),
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
-		Bus:     noopHooks{},
+		agents:        make(map[agent.Ident]AgentRegistration),
+		Engine:        engineinmem.New(),
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+		Bus:           noopHooks{},
 	}
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
@@ -141,12 +144,13 @@ func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 
 func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 	rt := &Runtime{
-		agents:  make(map[agent.Ident]AgentRegistration),
-		Engine:  engineinmem.New(),
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
-		Bus:     noopHooks{},
+		agents:        make(map[agent.Ident]AgentRegistration),
+		Engine:        engineinmem.New(),
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+		Bus:           noopHooks{},
 	}
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
@@ -220,10 +224,11 @@ func TestToolResultFinalizerMissingInvoker(t *testing.T) {
 
 func TestJSONOnly_NoFinalizer_IncompatibleChildResultSchema_ReturnsToolError(t *testing.T) {
 	rt := &Runtime{
-		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
-		logger:    telemetry.NoopLogger{},
-		metrics:   telemetry.NoopMetrics{},
-		tracer:    telemetry.NoopTracer{},
+		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
 	}
 
 	type ParentResult struct {
@@ -285,10 +290,11 @@ func TestJSONOnly_NoFinalizer_IncompatibleChildResultSchema_ReturnsToolError(t *
 
 func TestJSONOnly_NoFinalizer_MultiChildWithoutAggregateKey_ReturnsToolError(t *testing.T) {
 	rt := &Runtime{
-		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
-		logger:    telemetry.NoopLogger{},
-		metrics:   telemetry.NoopMetrics{},
-		tracer:    telemetry.NoopTracer{},
+		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
 	}
 
 	type ParentResult struct {
@@ -342,9 +348,10 @@ func TestJSONOnly_NoFinalizer_MultiChildWithoutAggregateKey_ReturnsToolError(t *
 
 func TestJSONOnly_FinalizerError_Propagates(t *testing.T) {
 	rt := &Runtime{
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
 	}
 	cfg := &AgentToolConfig{
 		AgentID:  "test.agent",
@@ -374,9 +381,10 @@ func TestJSONOnly_FinalizerError_Propagates(t *testing.T) {
 
 func TestAgentToolFinalizerInput_ContainsArtifactsMode(t *testing.T) {
 	rt := &Runtime{
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
 	}
 	cfg := &AgentToolConfig{
 		AgentID:  "test.agent",

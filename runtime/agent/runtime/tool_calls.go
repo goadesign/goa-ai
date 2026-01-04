@@ -192,14 +192,8 @@ func (r *Runtime) enforceToolResultContracts(
 			tr.Result,
 		)
 	}
-	enabled := !artifactsDisabled(artifactsModeByCallID[call.ToolCallID])
-	if !enabled {
+	if artifactsDisabled(artifactsModeByCallID[call.ToolCallID]) {
 		tr.Artifacts = nil
-	}
-	if enabled {
-		if err := requireArtifacts(spec, call.ToolCallID, toolErr == nil, tr.Artifacts); err != nil {
-			return err
-		}
 	}
 	return nil
 }

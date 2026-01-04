@@ -6,8 +6,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	ir "goa.design/goa-ai/codegen/ir"
-	. "goa.design/goa-ai/dsl"
 	"goa.design/goa-ai/codegen/testhelpers"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -147,5 +147,3 @@ func TestBuild_ToolsetOwnership_ExportWins(t *testing.T) {
 	require.Equal(t, "provider", ts.Owner.AgentName)
 	require.NotEmpty(t, ts.Owner.AgentSlug)
 }
-
-

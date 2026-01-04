@@ -265,14 +265,16 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
         {{- range .Toolset.Tools }}
         {{- if and .IsMethodBacked .Artifact }}
         case tools.Ident({{ printf "%q" .QualifiedName }}):
-            if mr, ok := methodOut.({{ .MethodResultTypeRef }}); ok {
-                if sc := {{ $.Toolset.SpecsPackageName }}.Init{{ goify .Name true }}SidecarFromMethodResult(mr); sc != nil {
-                    artifacts = []*planner.Artifact{
-                        {
-                            Kind:       {{ printf "%q" .ArtifactKind }},
-                            Data:       sc,
-                            SourceTool: call.Name,
-                        },
+            if toolArtifactsEnabled(call.ArtifactsMode, {{ if .ArtifactsDefaultOn }}true{{ else }}false{{ end }}) {
+                if mr, ok := methodOut.({{ .MethodResultTypeRef }}); ok {
+                    if sc := {{ $.Toolset.SpecsPackageName }}.Init{{ goify .Name true }}SidecarFromMethodResult(mr); sc != nil {
+                        artifacts = []*planner.Artifact{
+                            {
+                                Kind:       {{ printf "%q" .ArtifactKind }},
+                                Data:       sc,
+                                SourceTool: call.Name,
+                            },
+                        }
                     }
                 }
             }
@@ -292,3 +294,20 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
         {{- end }}
     })
 }
+
+{{- if $hasSidecar }}
+
+func toolArtifactsEnabled(mode tools.ArtifactsMode, defaultOn bool) bool {
+	switch mode {
+	case tools.ArtifactsModeOn:
+		return true
+	case tools.ArtifactsModeOff:
+		return false
+	case tools.ArtifactsModeAuto, "":
+		return defaultOn
+	default:
+		return defaultOn
+	}
+}
+
+{{- end }}

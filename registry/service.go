@@ -27,9 +27,9 @@ type (
 		streamManager StreamManager
 		healthTracker HealthTracker
 
-		pulseClient       clientspulse.Client
-		rdb               *redis.Client
-		resultStreamTTL   time.Duration
+		pulseClient     clientspulse.Client
+		rdb             *redis.Client
+		resultStreamTTL time.Duration
 	}
 
 	// ServiceOptions configures the registry service.

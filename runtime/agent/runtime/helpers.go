@@ -20,8 +20,7 @@ import (
 )
 
 const (
-	policyDecisionMetadataKey = "policy_decisions"
-	unknownID                 = "unknown"
+	unknownID = "unknown"
 )
 
 // hasNonNullJSON reports whether raw contains a non-empty JSON value other than
@@ -267,38 +266,6 @@ func mergeLabels(dst map[string]string, src map[string]string) map[string]string
 
 // handlesToIDs removed: policy uses []tools.Ident directly.
 
-// appendPolicyDecisionMetadata appends a policy decision entry to meta under
-// the reserved policyDecisionMetadataKey. It accepts multiple historical shapes
-// for the existing value to preserve behavior across upgrades.
-func appendPolicyDecisionMetadata(meta map[string]any, entry map[string]any) map[string]any {
-	if entry == nil {
-		return meta
-	}
-	if meta == nil {
-		meta = make(map[string]any)
-	}
-	switch current := meta[policyDecisionMetadataKey].(type) {
-	case []map[string]any:
-		meta[policyDecisionMetadataKey] = append(current, entry)
-	case []any:
-		list := make([]map[string]any, 0, len(current)+1)
-		for _, v := range current {
-			if m, ok := v.(map[string]any); ok {
-				list = append(list, m)
-			}
-		}
-		list = append(list, entry)
-		meta[policyDecisionMetadataKey] = list
-	case map[string]any:
-		meta[policyDecisionMetadataKey] = []map[string]any{current, entry}
-	case nil:
-		meta[policyDecisionMetadataKey] = []map[string]any{entry}
-	default:
-		meta[policyDecisionMetadataKey] = []map[string]any{entry}
-	}
-	return meta
-}
-
 func toPolicyRetryHint(hint *planner.RetryHint) *policy.RetryHint {
 	if hint == nil {
 		return nil
@@ -350,33 +317,45 @@ func (r *Runtime) logWarn(ctx context.Context, msg string, err error, kv ...any)
 	}
 }
 
-// publishHook emits a runtime hook event.
+// publishHookErr emits a runtime hook event and returns an error on failure.
 //
-// If ctx carries an engine.WorkflowContext (via engine.WithWorkflowContext), the
-// runtime schedules a hook activity so subscribers can perform I/O outside of
-// deterministic workflow execution. Outside workflows, publishHook publishes
-// directly to the hook bus.
-func (r *Runtime) publishHook(ctx context.Context, evt hooks.Event, turnID string) {
-	if wfCtx := engine.WorkflowContextFromContext(ctx); wfCtx != nil {
-		in, err := newHookActivityInput(evt, turnID)
-		if err != nil {
-			r.logWarn(ctx, "hook activity creation failed", err, "event", evt.Type())
-			return
-		}
-		if err := wfCtx.PublishHook(ctx, engine.HookActivityCall{
+// When called from workflow code (ctx carries engine.WorkflowContext), publishHookErr
+// schedules the runtime hook activity. Outside workflows, it calls the hook
+// activity directly. In both cases, the hook activity is responsible for
+// appending the event to the canonical run log before publishing to the bus.
+//
+// This function exists because runtime hook emission is semantically split:
+//   - Run event log append is canonical and must succeed (hard correctness invariant).
+//   - Hook bus publish is best-effort and must not fail the workflow (used for live UX).
+//
+// Callers in non-workflow/server code should prefer publishHookErr and propagate
+// the error. Workflow loop code may choose to treat failures as fatal via
+// publishHook (panic) to avoid silent divergence.
+func (r *Runtime) publishHookErr(ctx context.Context, evt hooks.Event, turnID string) error {
+	in, err := hooks.EncodeToHookInput(evt, turnID)
+	if err != nil {
+		return err
+	}
+	if wfCtx := engine.WorkflowContextFromContext(ctx); wfCtx != nil && !engine.IsActivityContext(ctx) {
+		return wfCtx.PublishHook(ctx, engine.HookActivityCall{
 			Name:  hookActivityName,
 			Input: in,
-		}); err != nil {
-			r.logWarn(ctx, "hook activity failed", err, "event", evt.Type())
-		}
-		return
+		})
 	}
+	return r.hookActivity(ctx, in)
+}
 
-	if turnID != "" {
-		stampHookEventTurnID(evt, turnID)
-	}
-	if err := r.Bus.Publish(ctx, evt); err != nil {
-		r.logWarn(ctx, "hook publish failed", err, "event", evt.Type())
+// publishHook emits a runtime hook event and panics on failure.
+//
+// Panicking is appropriate when used from deterministic workflow code: it fails
+// the workflow run immediately so the engine can retry or surface the failure.
+//
+// Note that bus publish failures do not cause publishHookErr to return an error;
+// only failures to encode, dispatch the hook activity, or append to the canonical
+// run log are considered fatal.
+func (r *Runtime) publishHook(ctx context.Context, evt hooks.Event, turnID string) {
+	if err := r.publishHookErr(ctx, evt, turnID); err != nil {
+		panic(err)
 	}
 }
 
@@ -622,30 +601,6 @@ func extractArtifactsMode(raw json.RawMessage) (tools.ArtifactsMode, json.RawMes
 		return "", raw, fmt.Errorf("strip artifacts mode: %w", err)
 	}
 	return normalizeArtifactsMode(modeVal), stripped, nil
-}
-
-// requireArtifacts enforces the contract that tools that declare a Sidecar schema
-// (typically via the Artifact DSL) must emit at least one artifact on success.
-func requireArtifacts(spec tools.ToolSpec, toolCallID string, success bool, artifacts []*planner.Artifact) error {
-	if spec.Sidecar == nil || !success {
-		return nil
-	}
-	if len(artifacts) > 0 {
-		return nil
-	}
-	sidecarName := ""
-	if spec.Sidecar != nil {
-		sidecarName = spec.Sidecar.Name
-	}
-	if sidecarName == "" {
-		sidecarName = "<unknown>"
-	}
-	return fmt.Errorf(
-		"tool %q declared sidecar %q but returned success without artifacts (tool_call_id=%s)",
-		spec.Name,
-		sidecarName,
-		toolCallID,
-	)
 }
 
 // ConvertRunOutputToToolResult converts a nested agent RunOutput into a

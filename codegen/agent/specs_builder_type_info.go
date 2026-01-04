@@ -445,7 +445,7 @@ func addArtifactsToggleToObjectAttribute(tool *ToolData, att *goaexpr.AttributeE
 		Name: "artifacts",
 		Attribute: &goaexpr.AttributeExpr{
 			Type:        goaexpr.String,
-			Description: "Controls whether UI artifacts are produced for this tool call. Valid values: \"auto\", \"on\", \"off\".",
+			Description: "Controls whether UI artifacts are produced for this tool call. Set to \"on\" to request artifacts, \"off\" to suppress, or omit/\"auto\" to use the tool default.",
 			Validation: &goaexpr.ValidationExpr{
 				Values: []any{
 					string(runtimetools.ArtifactsModeAuto),

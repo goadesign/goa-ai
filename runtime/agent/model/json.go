@@ -70,12 +70,48 @@ func decodeMessagePart(raw json.RawMessage) (Part, error) {
 				return nil, errors.New("ImagePart requires Bytes")
 			}
 			return img, nil
+		case "document":
+			var doc DocumentPart
+			if err := json.Unmarshal(raw, &doc); err != nil {
+				return nil, fmt.Errorf("decode DocumentPart: %w", err)
+			}
+			if doc.Name == "" {
+				return nil, errors.New("DocumentPart requires Name")
+			}
+			sourceCount := 0
+			if len(doc.Bytes) > 0 {
+				sourceCount++
+			}
+			if doc.Text != "" {
+				sourceCount++
+			}
+			if len(doc.Chunks) > 0 {
+				sourceCount++
+			}
+			if doc.URI != "" {
+				sourceCount++
+			}
+			if sourceCount != 1 {
+				return nil, errors.New("DocumentPart requires exactly one of Bytes, Text, Chunks, or URI")
+			}
+			for i, chunk := range doc.Chunks {
+				if chunk == "" {
+					return nil, fmt.Errorf("DocumentPart requires non-empty Chunks[%d]", i)
+				}
+			}
+			return doc, nil
 		case "thinking":
 			var thinking ThinkingPart
 			if err := json.Unmarshal(raw, &thinking); err != nil {
 				return nil, fmt.Errorf("decode ThinkingPart: %w", err)
 			}
 			return thinking, nil
+		case "citations":
+			var citations CitationsPart
+			if err := json.Unmarshal(raw, &citations); err != nil {
+				return nil, fmt.Errorf("decode CitationsPart: %w", err)
+			}
+			return citations, nil
 		case "tool_result":
 			var result ToolResultPart
 			if err := json.Unmarshal(raw, &result); err != nil {

@@ -459,6 +459,12 @@ type (
 		// so runtimes can build artifact-aware reminders without inspecting
 		// JSON schemas at runtime.
 		ArtifactDescription string
+		// ArtifactsDefaultOn controls the default emission behavior for artifacts
+		// when the caller does not explicitly set the reserved `artifacts` mode
+		// (or sets it to "auto"). When true, executors may attach artifacts by
+		// default; when false, artifacts are attached only when explicitly
+		// requested via `artifacts:"on"`.
+		ArtifactsDefaultOn bool
 		// MethodPayloadAttr is the Goa attribute for the bound service payload
 		// (resolved user type). Used to generate default payload adapters.
 		MethodPayloadAttr *goaexpr.AttributeExpr
@@ -1211,6 +1217,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		Artifact:            expr.Sidecar,
 		ArtifactKind:        defaultString(expr.SidecarKind, qualified),
 		ArtifactDescription: artifactDescription(expr.Sidecar),
+		ArtifactsDefaultOn:  expr.ArtifactsDefault != "off",
 		Toolset:             ts,
 		IsExportedByAgent:   isExported,
 		ExportingAgentID:    exportingAgentID,

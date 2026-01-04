@@ -46,10 +46,10 @@ type (
 		// DSL helper and propagated into specs so runtimes and services can enforce
 		// and surface truncation metadata consistently.
 		BoundedResult bool
-			// Paging optionally describes cursor-based pagination fields for this tool.
-			// When set, runtimes can generate paging-aware reminders and UIs can
-			// render consistent paging affordances without inspecting schemas.
-			Paging *PagingSpec
+		// Paging optionally describes cursor-based pagination fields for this tool.
+		// When set, runtimes can generate paging-aware reminders and UIs can
+		// render consistent paging affordances without inspecting schemas.
+		Paging *PagingSpec
 		// ArtifactDescription describes what the tool's artifact sidecar
 		// represents to the user when rendered (for example, "Time-series
 		// chart rendered in the chat UI"). It is derived from the Artifact
@@ -78,16 +78,16 @@ type (
 		Sidecar *TypeSpec
 	}
 
-		// PagingSpec describes cursor-based pagination for a tool.
-		// Field names refer to the tool payload/result schemas.
-		PagingSpec struct {
-			// CursorField is the name of the optional String field in the tool payload
-			// used to request subsequent pages.
-			CursorField string
-			// NextCursorField is the name of the optional String field in the tool result
-			// that carries the cursor for the next page.
-			NextCursorField string
-		}
+	// PagingSpec describes cursor-based pagination for a tool.
+	// Field names refer to the tool payload/result schemas.
+	PagingSpec struct {
+		// CursorField is the name of the optional String field in the tool payload
+		// used to request subsequent pages.
+		CursorField string
+		// NextCursorField is the name of the optional String field in the tool result
+		// that carries the cursor for the next page.
+		NextCursorField string
+	}
 
 	// ConfirmationSpec declares the confirmation protocol for a tool.
 	// It is emitted by goa-ai codegen when a tool uses Confirmation in the DSL.

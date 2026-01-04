@@ -12,7 +12,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
-	runinmem "goa.design/goa-ai/runtime/agent/run/inmem"
+	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 
@@ -25,16 +25,16 @@ import (
 func TestExecuteToolCalls_AgentToolsFanOut(t *testing.T) {
 	recorder := &recordingHooks{}
 	rt := &Runtime{
-		agents:    make(map[agent.Ident]AgentRegistration),
-		toolsets:  make(map[string]ToolsetRegistration),
-		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
-		logger:    telemetry.NoopLogger{},
-		metrics:   telemetry.NoopMetrics{},
-		tracer:    telemetry.NoopTracer{},
-		Bus:       recorder,
-		models:    make(map[string]model.Client),
-		RunStore:  runinmem.New(),
-		Policy:    &stubPolicyEngine{decision: policy.Decision{Caps: policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 10}}},
+		agents:        make(map[agent.Ident]AgentRegistration),
+		toolsets:      make(map[string]ToolsetRegistration),
+		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+		Bus:           recorder,
+		models:        make(map[string]model.Client),
+		Policy:        &stubPolicyEngine{decision: policy.Decision{Caps: policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 10}}},
 	}
 
 	cfg := AgentToolConfig{

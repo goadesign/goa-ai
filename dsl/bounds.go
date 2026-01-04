@@ -42,5 +42,3 @@ func NextCursor(field string) {
 	}
 	tool.Paging.NextCursorField = field
 }
-
-

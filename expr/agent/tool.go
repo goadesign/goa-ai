@@ -44,6 +44,12 @@ type (
 		// default from the tool identifier.
 		SidecarKind string
 
+		// ArtifactsDefault controls whether sidecar artifacts are produced when
+		// the caller does not explicitly set the reserved `artifacts` mode (or
+		// sets it to "auto"). Valid values are "on" and "off". When empty, the
+		// default is "on".
+		ArtifactsDefault string
+
 		// Toolset is the toolset expression that owns this tool.
 		Toolset *ToolsetExpr
 

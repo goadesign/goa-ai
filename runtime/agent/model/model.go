@@ -29,6 +29,13 @@ type (
 	// ImagePart.
 	ImageFormat string
 
+	// DocumentFormat identifies the on-wire format (extension) of a document part.
+	//
+	// Provider adapters may support only a subset of formats. Callers should
+	// normalize uploads to one of the supported formats before constructing a
+	// DocumentPart.
+	DocumentFormat string
+
 	// TextPart is a plain text content block in a message.
 	//
 	// Text is emitted as-is to the UI or consumer when the message is rendered.
@@ -47,6 +54,103 @@ type (
 
 		// Bytes contains the raw image bytes for the declared format.
 		Bytes []byte
+	}
+
+	// DocumentPart carries document content attached to a user message.
+	//
+	// Documents are intended for models that support document inputs and citation
+	// generation. Exactly one of Bytes, Text, Chunks, or URI must be provided.
+	DocumentPart struct {
+		// Name is a short neutral identifier for the document (for example, "spec").
+		Name string
+
+		// Format identifies the document format/extension (for example, "pdf", "txt", "md").
+		Format DocumentFormat
+
+		// Bytes carries the raw document bytes when the document is provided as an upload.
+		Bytes []byte
+
+		// Text carries the document content when the document is provided as a single text blob.
+		Text string
+
+		// Chunks carries the document content split into logical chunks when citations
+		// should reference chunk indices rather than character spans.
+		Chunks []string
+
+		// URI locates the document externally when the document should not be
+		// embedded in the request payload (for example, "s3://bucket/key.pdf").
+		//
+		// Provider adapters fail fast when URI schemes are not supported.
+		URI string
+
+		// Context is optional contextual information about how the document should be
+		// interpreted by the model when generating citations.
+		Context string
+
+		// Cite requests provider-native citations when supported.
+		Cite bool
+	}
+
+	// CitationsPart is a generated content block paired with citation metadata.
+	//
+	// Providers may emit this part instead of a TextPart when citation generation
+	// is enabled.
+	CitationsPart struct {
+		// Text is the generated content supported by Citations.
+		Text string
+
+		// Citations reference the source documents that informed Text.
+		Citations []Citation
+	}
+
+	// Citation links generated content back to a specific location in a source document.
+	Citation struct {
+		// Title is the source document title/identifier when available.
+		Title string
+
+		// Source is a provider-specific source identifier when available.
+		Source string
+
+		// Location identifies where in the source document the cited content can be found.
+		Location CitationLocation
+
+		// SourceContent is the cited excerpt from the source document when provided.
+		SourceContent []string
+	}
+
+	// CitationLocation identifies where cited content can be found within a document.
+	//
+	// Exactly one of DocumentChar, DocumentChunk, or DocumentPage should be set when present.
+	CitationLocation struct {
+		// DocumentChar identifies a character span within a source document.
+		DocumentChar *DocumentCharLocation
+
+		// DocumentChunk identifies a range of chunks within a source document.
+		DocumentChunk *DocumentChunkLocation
+
+		// DocumentPage identifies a page within a source document.
+		DocumentPage *DocumentPageLocation
+	}
+
+	// DocumentCharLocation identifies a character span within a document.
+	DocumentCharLocation struct {
+		DocumentIndex int
+		Start         int
+		End           int
+	}
+
+	// DocumentChunkLocation identifies a chunk range within a document.
+	DocumentChunkLocation struct {
+		DocumentIndex int
+		Start         int
+		End           int
+	}
+
+	// DocumentPageLocation identifies a page number within a document.
+	DocumentPageLocation struct {
+		DocumentIndex int
+		Start         int
+		End           int
 	}
 
 	// ThinkingPart represents provider-issued reasoning content.
@@ -403,6 +507,35 @@ const (
 )
 
 const (
+	// DocumentFormatPDF identifies a PDF document.
+	DocumentFormatPDF DocumentFormat = "pdf"
+
+	// DocumentFormatCSV identifies a CSV document.
+	DocumentFormatCSV DocumentFormat = "csv"
+
+	// DocumentFormatDOC identifies a legacy Microsoft Word document.
+	DocumentFormatDOC DocumentFormat = "doc"
+
+	// DocumentFormatDOCX identifies a Microsoft Word document.
+	DocumentFormatDOCX DocumentFormat = "docx"
+
+	// DocumentFormatXLS identifies a legacy Microsoft Excel document.
+	DocumentFormatXLS DocumentFormat = "xls"
+
+	// DocumentFormatXLSX identifies a Microsoft Excel document.
+	DocumentFormatXLSX DocumentFormat = "xlsx"
+
+	// DocumentFormatHTML identifies an HTML document.
+	DocumentFormatHTML DocumentFormat = "html"
+
+	// DocumentFormatTXT identifies a plain text document.
+	DocumentFormatTXT DocumentFormat = "txt"
+
+	// DocumentFormatMD identifies a Markdown document.
+	DocumentFormatMD DocumentFormat = "md"
+)
+
+const (
 	// ModelClassHighReasoning selects a high-reasoning model family.
 	ModelClassHighReasoning ModelClass = "high-reasoning"
 
@@ -425,6 +558,10 @@ var ErrRateLimited = errors.New("model: rate limited")
 func (TextPart) isPart() {}
 
 func (ImagePart) isPart() {}
+
+func (DocumentPart) isPart() {}
+
+func (CitationsPart) isPart() {}
 
 func (ThinkingPart) isPart() {}
 

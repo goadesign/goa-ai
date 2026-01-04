@@ -6,24 +6,25 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
+	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
-
-	"github.com/stretchr/testify/require"
 )
 
 func TestExecuteToolCalls_ServiceToolsPublishResultsAsComplete(t *testing.T) {
 	recorder := &recordingHooks{}
 	rt := &Runtime{
-		Bus:     recorder,
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
+		Bus:           recorder,
+		RunEventStore: runloginmem.New(),
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {},
 		},
@@ -105,10 +106,11 @@ func TestExecuteToolCalls_ServiceToolsPublishResultsAsComplete(t *testing.T) {
 func TestExecuteToolCalls_ServiceToolErrorDoesNotAbortRun(t *testing.T) {
 	recorder := &recordingHooks{}
 	rt := &Runtime{
-		Bus:     recorder,
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
+		Bus:           recorder,
+		RunEventStore: runloginmem.New(),
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {},
 		},

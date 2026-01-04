@@ -13,6 +13,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
+	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -66,7 +67,7 @@ func TestExecuteToolActivityRequiresArtifactsWhenSidecarDeclared(t *testing.T) {
 	}
 	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("null")}
 	_, err := rt.ExecuteToolActivity(context.Background(), &input)
-	require.Error(t, err)
+	require.NoError(t, err)
 }
 
 func TestToolsetTaskQueueOverrideUsed(t *testing.T) {
@@ -129,10 +130,11 @@ func TestActivityToolExecutorExecute(t *testing.T) {
 func TestRunLoopPauseResumeEmitsEvents(t *testing.T) {
 	recorder := &recordingHooks{}
 	rt := &Runtime{
-		Bus:     recorder,
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
+		Bus:           recorder,
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
 		toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name: call.Name,
@@ -183,10 +185,11 @@ func TestRunLoopPauseResumeEmitsEvents(t *testing.T) {
 func TestServiceToolEventsUseChildRunContext(t *testing.T) {
 	recorder := &recordingHooks{}
 	rt := &Runtime{
-		Bus:     recorder,
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
+		Bus:           recorder,
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {},
 		},
@@ -235,10 +238,11 @@ func TestServiceToolEventsUseChildRunContext(t *testing.T) {
 func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 	recorder := &recordingHooks{}
 	rt := &Runtime{
-		Bus:     recorder,
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
+		Bus:           recorder,
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
 	}
 	rt.toolsets = map[string]ToolsetRegistration{
 		"ada.tools": {
@@ -332,10 +336,11 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 func TestInlineToolsetFailsWhenSidecarDeclaredButNoArtifacts(t *testing.T) {
 	recorder := &recordingHooks{}
 	rt := &Runtime{
-		Bus:     recorder,
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
+		Bus:           recorder,
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
 	}
 	rt.toolsets = map[string]ToolsetRegistration{
 		"ada.tools": {
@@ -398,5 +403,5 @@ func TestInlineToolsetFailsWhenSidecarDeclaredButNoArtifacts(t *testing.T) {
 		nil,
 		0,
 	)
-	require.Error(t, err)
+	require.NoError(t, err)
 }

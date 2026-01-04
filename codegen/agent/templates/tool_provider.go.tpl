@@ -52,23 +52,23 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 		}
 {{- if .Artifact }}
 		sidecar := Init{{ .ConstName }}SidecarFromMethodResult(methodOut)
-		if sidecar == nil {
-			return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "internal_error", "tool declared an artifact but produced none"), nil
-		}
-		sidecarJSON, err := {{ .ConstName }}SidecarCodec.ToJSON(sidecar)
-		if err != nil {
-			return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "encode_failed", err.Error()), nil
-		}
-		return toolregistry.NewToolResultMessage(
-			msg.ToolUseID,
-			resultJSON,
-			[]toolregistry.Artifact{
-				{
-					Kind: {{ printf "%q" .ArtifactKind }},
-					Data: sidecarJSON,
+		if sidecar != nil {
+			sidecarJSON, err := {{ .ConstName }}SidecarCodec.ToJSON(sidecar)
+			if err != nil {
+				return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "encode_failed", err.Error()), nil
+			}
+			return toolregistry.NewToolResultMessage(
+				msg.ToolUseID,
+				resultJSON,
+				[]toolregistry.Artifact{
+					{
+						Kind: {{ printf "%q" .ArtifactKind }},
+						Data: sidecarJSON,
+					},
 				},
-			},
-		), nil
+			), nil
+		}
+		return toolregistry.NewToolResultMessage(msg.ToolUseID, resultJSON, nil), nil
 {{- else }}
 		return toolregistry.NewToolResultMessage(msg.ToolUseID, resultJSON, nil), nil
 {{- end }}

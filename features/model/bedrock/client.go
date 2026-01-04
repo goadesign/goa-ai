@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
@@ -162,7 +163,7 @@ func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Respo
 		if isRateLimited(err) {
 			return nil, fmt.Errorf("%w: %w", model.ErrRateLimited, err)
 		}
-		return nil, fmt.Errorf("bedrock converse: %w", err)
+		return nil, wrapBedrockError("converse", err)
 	}
 	return translateResponse(output, parts.toolNameProvToCanonical)
 }
@@ -181,7 +182,7 @@ func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer
 		if isRateLimited(err) {
 			return nil, fmt.Errorf("%w: %w", model.ErrRateLimited, err)
 		}
-		return nil, fmt.Errorf("bedrock converse stream: %w", err)
+		return nil, wrapBedrockError("converse_stream", err)
 	}
 	stream := out.GetStream()
 	if stream == nil {
@@ -410,6 +411,69 @@ func isRateLimited(err error) bool {
 	return false
 }
 
+func wrapBedrockError(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if isRateLimited(err) {
+		pe := model.NewProviderError(
+			"bedrock",
+			operation,
+			429,
+			model.ProviderErrorKindRateLimited,
+			"rate_limited",
+			"",
+			"",
+			true,
+			err,
+		)
+		return errors.Join(model.ErrRateLimited, pe)
+	}
+
+	var (
+		status int
+		code   string
+		msg    string
+	)
+
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		code = apiErr.ErrorCode()
+		msg = apiErr.ErrorMessage()
+	}
+	var respErr *smithyhttp.ResponseError
+	if errors.As(err, &respErr) {
+		status = respErr.HTTPStatusCode()
+	}
+
+	kind := model.ProviderErrorKindUnknown
+	retryable := false
+	switch {
+	case status == 400:
+		kind = model.ProviderErrorKindInvalidRequest
+	case status == 401 || status == 403:
+		kind = model.ProviderErrorKindAuth
+	case status == 429:
+		kind = model.ProviderErrorKindRateLimited
+		retryable = true
+	case status >= 500 && status <= 599:
+		kind = model.ProviderErrorKindUnavailable
+		retryable = true
+	}
+
+	return model.NewProviderError(
+		"bedrock",
+		operation,
+		status,
+		kind,
+		code,
+		msg,
+		"",
+		retryable,
+		err,
+	)
+}
+
 func (c *Client) effectiveMaxTokens(requested int) int {
 	if requested > 0 {
 		return requested
@@ -434,6 +498,13 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 	toolUseIDMap := make(map[string]string)
 	nextToolUseID := 0
 
+	// docNameMap ensures provider-safe document names are stable and unique
+	// within a single request. Bedrock enforces strict filename rules for
+	// document blocks; we sanitize user-provided names and suffix duplicates.
+	docNameMap := make(map[string]string)
+	usedDocNames := make(map[string]struct{})
+	nextDocNameID := 0
+
 	toolUseIDFor := func(canonical string) string {
 		if canonical == "" {
 			return ""
@@ -448,6 +519,33 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 		id := fmt.Sprintf("t%d", nextToolUseID)
 		toolUseIDMap[canonical] = id
 		return id
+	}
+
+	docNameFor := func(original string) string {
+		if original == "" {
+			return "document"
+		}
+		if v, ok := docNameMap[original]; ok {
+			return v
+		}
+		base := sanitizeDocumentName(original)
+		if base == "" {
+			base = "document"
+		}
+		name := base
+		if _, ok := usedDocNames[name]; ok {
+			for {
+				nextDocNameID++
+				candidate := fmt.Sprintf("%s (%d)", base, nextDocNameID)
+				if _, exists := usedDocNames[candidate]; !exists {
+					name = candidate
+					break
+				}
+			}
+		}
+		usedDocNames[name] = struct{}{}
+		docNameMap[original] = name
+		return name
 	}
 
 	conversation := make([]brtypes.Message, 0, len(msgs))
@@ -465,6 +563,8 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 					system = append(system, &brtypes.SystemContentBlockMemberCachePoint{
 						Value: brtypes.CachePointBlock{Type: brtypes.CachePointTypeDefault},
 					})
+				case model.DocumentPart:
+					return nil, nil, errors.New("bedrock: document parts are not supported in system messages")
 				}
 			}
 			continue
@@ -524,6 +624,61 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 						Source: &brtypes.ImageSourceMemberBytes{Value: v.Bytes},
 					},
 				})
+			case model.DocumentPart:
+				// Bedrock supports document blocks for user messages.
+				if m.Role != model.ConversationRoleUser {
+					return nil, nil, fmt.Errorf(
+						"bedrock: document parts are only supported in user messages (role=%s)",
+						m.Role,
+					)
+				}
+				if v.Name == "" {
+					return nil, nil, errors.New("bedrock: document part requires Name")
+				}
+				var source brtypes.DocumentSource
+				isS3Source := false
+				switch {
+				case len(v.Bytes) > 0:
+					source = &brtypes.DocumentSourceMemberBytes{Value: v.Bytes}
+				case len(v.Chunks) > 0:
+					chunks := make([]brtypes.DocumentContentBlock, 0, len(v.Chunks))
+					for i, chunk := range v.Chunks {
+						if chunk == "" {
+							return nil, nil, fmt.Errorf("bedrock: document part requires non-empty Chunks[%d]", i)
+						}
+						chunks = append(chunks, &brtypes.DocumentContentBlockMemberText{Value: chunk})
+					}
+					source = &brtypes.DocumentSourceMemberContent{Value: chunks}
+				case v.URI != "":
+					isS3Source = true
+					if !strings.HasPrefix(v.URI, "s3://") {
+						return nil, nil, fmt.Errorf("bedrock: document URI scheme not supported: %q", v.URI)
+					}
+					s3 := brtypes.S3Location{
+						Uri: aws.String(v.URI),
+					}
+					source = &brtypes.DocumentSourceMemberS3Location{Value: s3}
+				case v.Text != "":
+					source = &brtypes.DocumentSourceMemberText{Value: v.Text}
+				default:
+					return nil, nil, errors.New("bedrock: document part requires one of Bytes, Text, Chunks, or URI")
+				}
+				doc := brtypes.DocumentBlock{
+					Name:   aws.String(docNameFor(v.Name)),
+					Source: source,
+				}
+				if v.Format != "" {
+					doc.Format = brtypes.DocumentFormat(v.Format)
+				}
+				// Bedrock disallows S3Location as a source when citations are enabled.
+				// When the caller requests citations, we honor it only for inline sources.
+				if v.Cite && !isS3Source {
+					doc.Citations = &brtypes.CitationsConfig{Enabled: aws.Bool(true)}
+				}
+				if v.Context != "" {
+					doc.Context = aws.String(v.Context)
+				}
+				blocks = append(blocks, &brtypes.ContentBlockMemberDocument{Value: doc})
 			case model.ToolUsePart:
 				// Encode assistant-declared tool_use with optional ID and JSON input.
 				tb := brtypes.ToolUseBlock{}
@@ -789,6 +944,42 @@ func sanitizeToolName(in string) string {
 	return sanitized[:prefixLen] + "_" + suffix
 }
 
+// sanitizeDocumentName maps an arbitrary user-provided document name (typically a
+// filename) to a value that conforms to Bedrock's document name constraints:
+// - allowed characters: alphanumerics, whitespace, hyphens, parentheses, square brackets
+// - no more than one consecutive whitespace character
+//
+// The result is trimmed and may be empty if the input contains no usable runes.
+func sanitizeDocumentName(in string) string {
+	if in == "" {
+		return ""
+	}
+	var out []rune
+	out = make([]rune, 0, len(in))
+	prevSpace := false
+	for _, r := range in {
+		// Allowed:
+		// - letters/digits
+		// - whitespace (collapsed)
+		// - '-', '(', ')', '[', ']'
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			out = append(out, r)
+			prevSpace = false
+		case r == '-' || r == '(' || r == ')' || r == '[' || r == ']':
+			out = append(out, r)
+			prevSpace = false
+		case unicode.IsSpace(r):
+			if prevSpace {
+				continue
+			}
+			out = append(out, ' ')
+			prevSpace = true
+		}
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func toDocument(ctx context.Context, schema any, logger telemetry.Logger) document.Interface {
 	if logger == nil {
 		logger = telemetry.NewNoopLogger()
@@ -862,6 +1053,15 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 					Role:  "assistant",
 					Parts: []model.Part{model.TextPart{Text: v.Value}},
 				})
+			case *brtypes.ContentBlockMemberCitationsContent:
+				part := translateCitationsContent(v.Value)
+				if part.Text == "" && len(part.Citations) == 0 {
+					continue
+				}
+				resp.Content = append(resp.Content, model.Message{
+					Role:  "assistant",
+					Parts: []model.Part{part},
+				})
 			case *brtypes.ContentBlockMemberToolUse:
 				payload := decodeDocument(v.Value.Input)
 				name := ""
@@ -914,6 +1114,86 @@ func decodeDocument(doc document.Interface) json.RawMessage {
 		return nil
 	}
 	return json.RawMessage(data)
+}
+
+func translateCitationsContent(block brtypes.CitationsContentBlock) model.CitationsPart {
+	var b strings.Builder
+	for _, content := range block.Content {
+		if v, ok := content.(*brtypes.CitationGeneratedContentMemberText); ok {
+			b.WriteString(v.Value)
+		}
+	}
+	citations := make([]model.Citation, 0, len(block.Citations))
+	for _, c := range block.Citations {
+		citations = append(citations, translateCitation(c))
+	}
+	return model.CitationsPart{
+		Text:      b.String(),
+		Citations: citations,
+	}
+}
+
+func translateCitation(c brtypes.Citation) model.Citation {
+	out := model.Citation{
+		Location:      translateCitationLocation(c.Location),
+		SourceContent: translateCitationSourceContent(c.SourceContent),
+	}
+	if c.Title != nil {
+		out.Title = *c.Title
+	}
+	if c.Source != nil {
+		out.Source = *c.Source
+	}
+	return out
+}
+
+func translateCitationLocation(loc brtypes.CitationLocation) model.CitationLocation {
+	switch v := loc.(type) {
+	case *brtypes.CitationLocationMemberDocumentChar:
+		return model.CitationLocation{
+			DocumentChar: &model.DocumentCharLocation{
+				DocumentIndex: int(ptrValue(v.Value.DocumentIndex)),
+				Start:         int(ptrValue(v.Value.Start)),
+				End:           int(ptrValue(v.Value.End)),
+			},
+		}
+	case *brtypes.CitationLocationMemberDocumentChunk:
+		return model.CitationLocation{
+			DocumentChunk: &model.DocumentChunkLocation{
+				DocumentIndex: int(ptrValue(v.Value.DocumentIndex)),
+				Start:         int(ptrValue(v.Value.Start)),
+				End:           int(ptrValue(v.Value.End)),
+			},
+		}
+	case *brtypes.CitationLocationMemberDocumentPage:
+		return model.CitationLocation{
+			DocumentPage: &model.DocumentPageLocation{
+				DocumentIndex: int(ptrValue(v.Value.DocumentIndex)),
+				Start:         int(ptrValue(v.Value.Start)),
+				End:           int(ptrValue(v.Value.End)),
+			},
+		}
+	default:
+		return model.CitationLocation{}
+	}
+}
+
+func translateCitationSourceContent(contents []brtypes.CitationSourceContent) []string {
+	if len(contents) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(contents))
+	for _, content := range contents {
+		if v, ok := content.(*brtypes.CitationSourceContentMemberText); ok {
+			if v.Value != "" {
+				out = append(out, v.Value)
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func ptrValue[T ~int32 | ~int64](ptr *T) T {

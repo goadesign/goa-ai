@@ -25,11 +25,14 @@ type runtimePlannerEvents struct {
 	agentID   agent.Ident
 	runID     string
 	sessionID string
+	turnID    string
 
 	mu  sync.Mutex
 	led *transcript.Ledger
 
 	usage model.TokenUsage
+
+	hookErr error
 }
 
 // newPlannerEvents constructs a planner event sink that publishes to rt.Bus and
@@ -37,7 +40,7 @@ type runtimePlannerEvents struct {
 //
 // The runtime requires a hook bus. If rt.Bus is nil, this panics to surface an
 // invalid runtime configuration early.
-func newPlannerEvents(rt *Runtime, agentID agent.Ident, runID, sessionID string) *runtimePlannerEvents {
+func newPlannerEvents(rt *Runtime, agentID agent.Ident, runID, sessionID, turnID string) *runtimePlannerEvents {
 	if rt == nil {
 		panic("runtime: planner events runtime is nil")
 	}
@@ -49,6 +52,7 @@ func newPlannerEvents(rt *Runtime, agentID agent.Ident, runID, sessionID string)
 		agentID:   agentID,
 		runID:     runID,
 		sessionID: sessionID,
+		turnID:    turnID,
 		led:       transcript.NewLedger(),
 	}
 }
@@ -60,18 +64,14 @@ func (e *runtimePlannerEvents) AssistantChunk(ctx context.Context, text string) 
 	e.mu.Lock()
 	e.led.AppendText(text)
 	e.mu.Unlock()
-	if err := e.rt.Bus.Publish(ctx, hooks.NewAssistantMessageEvent(e.runID, e.agentID, e.sessionID, text, nil)); err != nil {
-		e.rt.logWarn(ctx, "hook publish failed", err, "event", hooks.AssistantMessage)
-	}
+	e.publish(ctx, hooks.NewAssistantMessageEvent(e.runID, e.agentID, e.sessionID, text, nil))
 }
 
 func (e *runtimePlannerEvents) PlannerThought(ctx context.Context, note string, labels map[string]string) {
 	if note == "" {
 		return
 	}
-	if err := e.rt.Bus.Publish(ctx, hooks.NewPlannerNoteEvent(e.runID, e.agentID, e.sessionID, note, labels)); err != nil {
-		e.rt.logWarn(ctx, "hook publish failed", err, "event", hooks.PlannerNote)
-	}
+	e.publish(ctx, hooks.NewPlannerNoteEvent(e.runID, e.agentID, e.sessionID, note, labels))
 }
 
 func (e *runtimePlannerEvents) UsageDelta(ctx context.Context, usage model.TokenUsage) {
@@ -79,25 +79,21 @@ func (e *runtimePlannerEvents) UsageDelta(ctx context.Context, usage model.Token
 	e.usage = addTokenUsage(e.usage, usage)
 	e.mu.Unlock()
 
-	if err := e.rt.Bus.Publish(ctx, hooks.NewUsageEvent(
+	e.publish(ctx, hooks.NewUsageEvent(
 		e.runID, e.agentID, e.sessionID,
 		usage.InputTokens, usage.OutputTokens, usage.TotalTokens,
 		usage.CacheReadTokens, usage.CacheWriteTokens,
-	)); err != nil {
-		e.rt.logWarn(ctx, "hook publish failed", err, "event", hooks.Usage)
-	}
+	))
 }
 
 func (e *runtimePlannerEvents) PlannerThinkingBlock(ctx context.Context, block model.ThinkingPart) {
 	e.mu.Lock()
 	e.led.AppendThinking(toTranscriptThinking(block))
 	e.mu.Unlock()
-	if err := e.rt.Bus.Publish(ctx, hooks.NewThinkingBlockEvent(
+	e.publish(ctx, hooks.NewThinkingBlockEvent(
 		e.runID, e.agentID, e.sessionID,
 		block.Text, block.Signature, block.Redacted, block.Index, block.Final,
-	)); err != nil {
-		e.rt.logWarn(ctx, "hook publish failed", err, "event", hooks.ThinkingBlock)
-	}
+	))
 }
 
 func (e *runtimePlannerEvents) exportTranscript() []*model.Message {
@@ -110,6 +106,25 @@ func (e *runtimePlannerEvents) exportUsage() model.TokenUsage {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.usage
+}
+
+func (e *runtimePlannerEvents) hookError() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.hookErr
+}
+
+func (e *runtimePlannerEvents) publish(ctx context.Context, evt hooks.Event) {
+	if e.hookError() != nil {
+		return
+	}
+	if err := e.rt.publishHookErr(ctx, evt, e.turnID); err != nil {
+		e.mu.Lock()
+		if e.hookErr == nil {
+			e.hookErr = err
+		}
+		e.mu.Unlock()
+	}
 }
 
 func toTranscriptThinking(block model.ThinkingPart) transcript.ThinkingPart {

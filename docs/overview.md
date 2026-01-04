@@ -415,19 +415,6 @@ conversation needed to rebuild model payloads exactly:
 Use the ledger when you need deterministic conversation replay or provider‑specific payload
 reconstruction.
 
-### Run Store
-
-The run store (`runtime/agent/run`) persists run metadata (status, timestamps, agent ID, session)
-separate from memory transcripts:
-
-- **Interface**: `run.Store` with `Upsert` and `Load`
-- **In‑memory**: `run/inmem` for development
-- **Mongo**: `features/run/mongo` for production persistence
-
-Configure via `runtime.WithRunStore(store)`.
-
----
-
 ## DSL Reference
 
 The DSL package (`goa-ai/dsl`) provides declarative functions for defining agents, toolsets,
@@ -539,7 +526,6 @@ policies, and MCP servers within Goa service designs.
 rt := runtime.New(
     runtime.WithEngine(temporalEngine),
     runtime.WithMemoryStore(memoryMongo),
-    runtime.WithRunStore(runMongo),
     runtime.WithPolicy(basicPolicy),
     runtime.WithStream(pulseSink),
     runtime.WithHooks(hookBus),
@@ -636,8 +622,6 @@ err := rt.ProvideToolResults(ctx, interrupt.ToolResultsSet{
     Results: []interrupt.ToolResult{{...}},
 })
 
-// Query run status
-status, err := rt.RunStatus(ctx, runID)
 ```
 
 ### Introspection
@@ -660,9 +644,6 @@ schema, ok := rt.ToolSchema(tools.Ident("toolset.tool"))
 ### Streaming
 
 ```go
-// Per-run streaming (filters by runID)
-closeFn, err := rt.SubscribeRun(ctx, runID, mySink)
-defer closeFn()
 ```
 
 ---
@@ -980,7 +961,7 @@ as child workflows, enabling linked streams and run links.
 
 - Implement `planner.Planner` (`PlanStart`, `PlanResume`)
 - Provide tool executors via `runtime.ToolCallExecutor`
-- Configure runtime: `runtime.New(WithEngine, WithMemoryStore, WithRunStore, WithHooks, WithStream,
+- Configure runtime: `runtime.New(WithEngine, WithMemoryStore, WithHooks, WithStream,
   WithLogger, WithMetrics, WithTracer, WithWorker)`
 - Register models: `rt.RegisterModel("model-id", client)`
 - Submit runs via generated clients
@@ -1037,14 +1018,6 @@ sink := &MySink{}
 rt := runtime.New(runtime.WithStream(sink))
 ```
 
-### Per‑Run Streaming (Per UI Tab)
-
-```go
-closeFn, err := rt.SubscribeRun(ctx, runID, sink)
-if err != nil { /* handle */ }
-defer closeFn() // unsubscribes and closes
-```
-
 ### Manual Bridge (Direct Bus Access)
 
 ```go
@@ -1095,7 +1068,6 @@ profile := stream.MetricsProfile()
 |--------------------------|--------------------------------------------------------|
 | `features/memory/mongo`  | Mongo‑backed memory store for transcripts              |
 | `features/session/mongo` | Mongo‑backed session store for multi‑turn state        |
-| `features/run/mongo`     | Mongo‑backed run store for run metadata                |
 | `features/stream/pulse`  | Pulse message bus sink for real‑time streaming         |
 | `features/model/bedrock` | AWS Bedrock model client (Claude, etc.)                |
 | `features/model/openai`  | OpenAI‑compatible model client                         |

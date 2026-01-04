@@ -14,8 +14,7 @@
 //
 // The Runtime is thread-safe and can be used concurrently to register agents
 // and execute workflows. Production deployments typically configure the Runtime
-// with MongoDB-backed stores (features/memory/mongo, features/run/mongo) and
-// Temporal as the workflow engine.
+// with a durable workflow engine (Temporal) and a durable memory store.
 //
 // Example usage: use AgentClient for execution.
 //
@@ -51,6 +50,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/reminder"
 	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/runlog"
+	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -86,8 +87,8 @@ type (
 		Memory memory.Store
 		// Policy evaluates allowlists and caps per planner turn.
 		Policy policy.Engine
-		// RunStore tracks run metadata for observability.
-		RunStore run.Store
+		// RunEventStore is the canonical append-only run event log.
+		RunEventStore runlog.Store
 		// Bus is the bus used for streaming runtime events.
 		Bus hooks.Bus
 		// Stream publishes planner/tool/assistant events to the caller.
@@ -146,8 +147,8 @@ type (
 		MemoryStore memory.Store
 		// Policy evaluates allowlists and caps per planner turn.
 		Policy policy.Engine
-		// RunStore tracks run metadata for observability.
-		RunStore run.Store
+		// RunEventStore is the canonical append-only run event log.
+		RunEventStore runlog.Store
 		// Hooks is the Pulse-backed bus used for streaming runtime events.
 		Hooks hooks.Bus
 		// Stream publishes planner/tool/assistant events to the caller.
@@ -606,11 +607,14 @@ func newFromOptions(opts Options) *Runtime {
 	if tracer == nil {
 		tracer = telemetry.NoopTracer{}
 	}
+	if opts.RunEventStore == nil {
+		opts.RunEventStore = runloginmem.New()
+	}
 	rt := &Runtime{
 		Engine:           eng,
 		Memory:           opts.MemoryStore,
 		Policy:           opts.Policy,
-		RunStore:         opts.RunStore,
+		RunEventStore:    opts.RunEventStore,
 		Bus:              bus,
 		Stream:           opts.Stream,
 		logger:           logger,
@@ -626,12 +630,6 @@ func newFromOptions(opts Options) *Runtime {
 		workers:          opts.Workers,
 		reminders:        reminder.NewEngine(),
 		toolConfirmation: opts.ToolConfirmation,
-	}
-	if rt.RunStore != nil {
-		runSub := hooks.SubscriberFunc(rt.handleRunStoreEvent)
-		if _, err := bus.Register(runSub); err != nil {
-			rt.logger.Warn(context.Background(), "failed to register run store subscriber", "err", err)
-		}
 	}
 	if rt.Memory != nil {
 		memSub := hooks.SubscriberFunc(func(ctx context.Context, event hooks.Event) error {
@@ -736,8 +734,8 @@ func WithEngine(e engine.Engine) RuntimeOption { return func(o *Options) { o.Eng
 // WithMemoryStore sets the memory store.
 func WithMemoryStore(m memory.Store) RuntimeOption { return func(o *Options) { o.MemoryStore = m } }
 
-// WithRunStore sets the run metadata store.
-func WithRunStore(s run.Store) RuntimeOption { return func(o *Options) { o.RunStore = s } }
+// WithRunEventStore sets the canonical run event store.
+func WithRunEventStore(s runlog.Store) RuntimeOption { return func(o *Options) { o.RunEventStore = s } }
 
 // WithPolicy sets the policy engine.
 func WithPolicy(p policy.Engine) RuntimeOption { return func(o *Options) { o.Policy = p } }
@@ -1089,9 +1087,6 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	if strings.TrimSpace(input.SessionID) == "" {
 		return nil, ErrMissingSessionID
 	}
-	if r.RunStore != nil {
-		r.recordRunStatus(ctx, input, run.StatusPending, nil)
-	}
 	req := engine.WorkflowStartRequest{
 		ID:        input.RunID,
 		Workflow:  workflowName,
@@ -1239,61 +1234,32 @@ func (r *Runtime) ProvideConfirmation(ctx context.Context, dec interrupt.Confirm
 	return handle.Signal(ctx, interrupt.SignalProvideConfirmation, dec)
 }
 
-// RunStatus returns the coarse-grained lifecycle status for the given run by
-// querying the engine as the source of truth. When no record exists for the
-// given run ID, RunStatus returns run.ErrNotFound.
-//
-// If a RunStore is configured, RunStatus also applies a simple staleness
-// heuristic for "running" runs: when the stored run metadata reports an
-// UpdatedAt timestamp older than a fixed threshold, the run is treated as
-// failed. This prevents callers from being blocked indefinitely by workflows
-// that are logically stuck (for example, waiting on a failed child workflow)
-// even though the engine still reports them as running.
-func (r *Runtime) RunStatus(ctx context.Context, runID string) (run.Status, error) {
-	if strings.TrimSpace(runID) == "" {
-		return "", fmt.Errorf("run id is required")
-	}
-	engineStatus, err := r.Engine.QueryRunStatus(ctx, runID)
-	if err != nil {
-		if errors.Is(err, engine.ErrWorkflowNotFound) {
-			return "", run.ErrNotFound
+// ListRunEvents returns a forward page of canonical run events for the given run.
+func (r *Runtime) ListRunEvents(ctx context.Context, runID, cursor string, limit int) (runlog.Page, error) {
+	return r.RunEventStore.List(ctx, runID, cursor, limit)
+}
+
+// GetRunSnapshot derives a compact snapshot of the run state by replaying the
+// canonical run log.
+func (r *Runtime) GetRunSnapshot(ctx context.Context, runID string) (*run.Snapshot, error) {
+	const pageSize = 512
+
+	var (
+		cursor = ""
+		events []*runlog.Event
+	)
+	for {
+		page, err := r.RunEventStore.List(ctx, runID, cursor, pageSize)
+		if err != nil {
+			return nil, err
 		}
-		return "", err
-	}
-
-	// Map engine.RunStatus to run.Status
-	var status run.Status
-	switch engineStatus {
-	case engine.RunStatusPending, engine.RunStatusRunning, engine.RunStatusPaused:
-		status = run.StatusRunning
-	case engine.RunStatusCompleted:
-		status = run.StatusCompleted
-	case engine.RunStatusFailed:
-		status = run.StatusFailed
-	case engine.RunStatusCanceled:
-		status = run.StatusCanceled
-	default:
-		status = run.Status(string(engineStatus))
-	}
-
-	// When the engine reports a running status, optionally consult the RunStore
-	// (if configured) to detect obviously stale runs based on UpdatedAt. This
-	// keeps the runtime as the single source of truth for run lifecycle while
-	// allowing stuck executions to surface as failures for callers.
-	if status == run.StatusRunning && r.RunStore != nil {
-		const staleAfter = 5 * time.Minute
-
-		rec, rerr := r.RunStore.Load(ctx, runID)
-		if rerr != nil {
-			r.logWarn(ctx, "run record load failed", rerr, "run_id", runID)
-		} else if !rec.UpdatedAt.IsZero() {
-			if age := time.Since(rec.UpdatedAt); age > staleAfter {
-				return run.StatusFailed, nil
-			}
+		events = append(events, page.Events...)
+		if page.NextCursor == "" {
+			break
 		}
+		cursor = page.NextCursor
 	}
-
-	return status, nil
+	return newRunSnapshot(events)
 }
 
 // addToolsetLocked registers a toolset and its specs without acquiring the lock.
@@ -1430,38 +1396,6 @@ func (r *Runtime) OverridePolicy(agentID agent.Ident, delta RunPolicy) error {
 	}
 	r.agents[agentID] = reg
 	return nil
-}
-
-// SubscribeRun registers a filtered stream subscriber for the given runID and returns
-// a function that closes the subscription and the sink.
-func (r *Runtime) SubscribeRun(ctx context.Context, runID string, sink stream.Sink) (func(), error) {
-	if r.logger == nil {
-		r.logger = telemetry.NoopLogger{}
-	}
-	// Reuse the standard stream subscriber and filter by run ID.
-	sub, err := stream.NewSubscriber(sink)
-	if err != nil {
-		return nil, err
-	}
-	filtered := hooks.SubscriberFunc(func(c context.Context, evt hooks.Event) error {
-		if evt.RunID() != runID {
-			return nil
-		}
-		return sub.HandleEvent(c, evt)
-	})
-	s, err := r.Bus.Register(filtered)
-	if err != nil {
-		return nil, err
-	}
-	closeFn := func() {
-		if err := s.Close(); err != nil {
-			r.logger.Error(ctx, "failed to close run subscription", "run_id", runID, "err", err)
-		}
-		if err := sink.Close(ctx); err != nil {
-			r.logger.Error(ctx, "failed to close run sink", "run_id", runID, "err", err)
-		}
-	}
-	return closeFn, nil
 }
 
 func (r *Runtime) storeWorkflowHandle(runID string, handle engine.WorkflowHandle) {

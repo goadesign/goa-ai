@@ -2,9 +2,11 @@ package hooks
 
 import (
 	"encoding/json"
+	"errors"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -76,6 +78,20 @@ type (
 		Status string
 		// Error contains any terminal error that halted the run. Nil on success.
 		Error error
+		// ErrorProvider identifies the model provider when the terminal error was
+		// caused by a provider failure (for example, "bedrock").
+		ErrorProvider string
+		// ErrorOperation identifies the provider operation when available.
+		ErrorOperation string
+		// ErrorKind classifies provider failures into a small set of stable categories
+		// suitable for retry and UX decisions (for example, "auth" or "invalid_request").
+		ErrorKind string
+		// ErrorCode is the provider-specific error code when available.
+		ErrorCode string
+		// HTTPStatus is the provider HTTP status code when available.
+		HTTPStatus int
+		// Retryable reports whether retrying may succeed without changing the request.
+		Retryable bool
 		// Phase captures the terminal phase for the run. For successful runs this
 		// is typically PhaseCompleted; failures map to PhaseFailed; cancellations
 		// map to PhaseCanceled.
@@ -453,12 +469,22 @@ func NewRunStartedEvent(runID string, agentID agent.Ident, runContext run.Contex
 func NewRunCompletedEvent(runID string, agentID agent.Ident, sessionID, status string, phase run.Phase, err error) *RunCompletedEvent {
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
-	return &RunCompletedEvent{
+	out := &RunCompletedEvent{
 		baseEvent: be,
 		Status:    status,
 		Phase:     phase,
 		Error:     err,
 	}
+	var pe *model.ProviderError
+	if errors.As(err, &pe) {
+		out.ErrorProvider = pe.Provider()
+		out.ErrorOperation = pe.Operation()
+		out.ErrorKind = string(pe.Kind())
+		out.ErrorCode = pe.Code()
+		out.HTTPStatus = pe.HTTPStatus()
+		out.Retryable = pe.Retryable()
+	}
+	return out
 }
 
 // NewAgentRunStartedEvent constructs an AgentRunStartedEvent for the given

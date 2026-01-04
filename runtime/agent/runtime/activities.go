@@ -27,7 +27,7 @@ import (
 // agent context with memory access and delegates to the planner's PlanStart
 // implementation.
 func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
-	events := newPlannerEvents(r, input.AgentID, input.RunID, input.RunContext.SessionID)
+	events := newPlannerEvents(r, input.AgentID, input.RunID, input.RunContext.SessionID, input.RunContext.TurnID)
 	reg, agentCtx, err := r.plannerContext(ctx, input, events)
 	if err != nil {
 		return nil, err
@@ -56,6 +56,9 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 		return nil, err
 	}
 	r.logger.Info(ctx, "PlanStartActivity returning PlanResult", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil, "await", result.Await != nil)
+	if err := events.hookError(); err != nil {
+		return nil, err
+	}
 	return &PlanActivityOutput{
 		Result:     result,
 		Transcript: events.exportTranscript(),
@@ -74,7 +77,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 // execution to produce the next plan. The activity creates an agent context
 // with memory access and delegates to the planner's PlanResume implementation.
 func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
-	events := newPlannerEvents(r, input.AgentID, input.RunID, input.RunContext.SessionID)
+	events := newPlannerEvents(r, input.AgentID, input.RunID, input.RunContext.SessionID, input.RunContext.TurnID)
 	reg, agentCtx, err := r.plannerContext(ctx, input, events)
 	if err != nil {
 		return nil, err
@@ -102,6 +105,9 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 				map[string]string{"code": "rate_limited"},
 			)
 		}
+		return nil, err
+	}
+	if err := events.hookError(); err != nil {
 		return nil, err
 	}
 	return &PlanActivityOutput{
@@ -248,13 +254,6 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	artifactsEnabled := !artifactsDisabled(mode)
 	if !artifactsEnabled {
 		result.Artifacts = nil
-	}
-	if artifactsEnabled {
-		if spec, ok := r.toolSpec(req.ToolName); ok {
-			if err := requireArtifacts(spec, req.ToolCallID, result.Error == nil, result.Artifacts); err != nil {
-				return nil, err
-			}
-		}
 	}
 	// Enrich or build telemetry via registration builder when available.
 	if reg.TelemetryBuilder != nil {
