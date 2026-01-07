@@ -507,6 +507,41 @@ This integration is intentionally split:
 - **Registry gateway**: validates payloads, tracks provider health, creates per-call result streams, and returns `tool_use_id`
 - **Service provider loop**: executes tools using the generated provider adapters and publishes results
 
+### Registry-Routed Execution (Agent/Consumer Side)
+
+On the consumer side (an agent calling registry-routed toolsets), the runtime needs a `ToolCallExecutor` that:
+
+- calls the registry gateway to publish the tool request and get a `(tool_use_id, result_stream_id)`, then
+- subscribes to the per-call result stream and decodes the result using the compiled tool specs/codecs.
+
+Goa-AI provides a reusable executor implementation in `runtime/toolregistry/executor` that implements `runtime.ToolCallExecutor`:
+
+```go
+import (
+    toolregexec "goa.design/goa-ai/runtime/toolregistry/executor"
+)
+
+exec := toolregexec.New(registryClient, pulseClient, specs)
+
+// Use exec.Execute as the executor for registry-backed toolsets.
+```
+
+The registry wire protocol and deterministic stream IDs are defined in `runtime/toolregistry`:
+
+- Toolset request stream: `toolset:<toolsetID>:requests`
+- Per-call result stream: `result:<toolUseID>`
+
+### Registry discovery & catalog sync (runtime/registry)
+
+If you need runtime discovery of toolsets and schemas (e.g., tool catalogs that change without a `goa gen`),
+use the client-side components in `runtime/registry`:
+
+- `GRPCClientAdapter`: wraps a generated gRPC registry client into a `RegistryClient` interface
+- `Manager`: multi-registry discovery with caching and periodic sync (`StartSync`/`StopSync`)
+- `SearchClient`: cross-registry search with semantic-first + keyword fallback when supported
+
+These are client-side helpers. The standalone registry service implementation lives under `goa-ai/registry`.
+
 **Inline tools** — Custom executor implementation:
 
 ```go
@@ -1405,6 +1440,23 @@ caller := mcp.NewSSECaller(mcp.SSEOptions{
 
 All callers implement the `mcp.Caller` interface and include automatic retry via
 `runtime/mcp/retry`.
+
+### Server-initiated events (Broadcaster)
+
+Generated MCP adapters can stream server-initiated events (notifications, resource updates) to multiple
+subscribers via `mcp.Broadcaster`. The default in-memory implementation is:
+
+```go
+b := mcp.NewChannelBroadcaster(128, true) // (buf, drop)
+sub, _ := b.Subscribe(ctx)
+defer sub.Close()
+```
+
+### Repair prompts for invalid params (retry.RetryableError)
+
+When an MCP server reports invalid parameters and a structured repair prompt is available, generated
+clients may return `retry.RetryableError` with a deterministic `Prompt`. This is intended for LLM-driven
+correction: the model returns JSON-only corrected params, which are decoded into the operation payload and retried.
 
 ---
 
