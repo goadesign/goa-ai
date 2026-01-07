@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"unicode"
 
@@ -30,6 +31,7 @@ import (
 
 const (
 	defaultThinkingBudget = 16384
+	bedrockProviderName   = "bedrock"
 )
 
 // RuntimeClient mirrors the subset of the AWS Bedrock runtime client required
@@ -412,21 +414,8 @@ func isRateLimited(err error) bool {
 }
 
 func wrapBedrockError(operation string, err error) error {
-	if err == nil {
-		return nil
-	}
 	if isRateLimited(err) {
-		pe := model.NewProviderError(
-			"bedrock",
-			operation,
-			429,
-			model.ProviderErrorKindRateLimited,
-			"rate_limited",
-			"",
-			"",
-			true,
-			err,
-		)
+		pe := model.NewProviderError(bedrockProviderName, operation, http.StatusTooManyRequests, model.ProviderErrorKindRateLimited, "rate_limited", "", "", true, err)
 		return errors.Join(model.ErrRateLimited, pe)
 	}
 
@@ -449,29 +438,19 @@ func wrapBedrockError(operation string, err error) error {
 	kind := model.ProviderErrorKindUnknown
 	retryable := false
 	switch {
-	case status == 400:
+	case status == http.StatusBadRequest:
 		kind = model.ProviderErrorKindInvalidRequest
-	case status == 401 || status == 403:
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
 		kind = model.ProviderErrorKindAuth
-	case status == 429:
+	case status == http.StatusTooManyRequests:
 		kind = model.ProviderErrorKindRateLimited
 		retryable = true
-	case status >= 500 && status <= 599:
+	case status >= http.StatusInternalServerError && status <= http.StatusNetworkAuthenticationRequired:
 		kind = model.ProviderErrorKindUnavailable
 		retryable = true
 	}
 
-	return model.NewProviderError(
-		"bedrock",
-		operation,
-		status,
-		kind,
-		code,
-		msg,
-		"",
-		retryable,
-		err,
-	)
+	return model.NewProviderError(bedrockProviderName, operation, status, kind, code, msg, "", retryable, err)
 }
 
 func (c *Client) effectiveMaxTokens(requested int) int {
@@ -504,49 +483,6 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 	docNameMap := make(map[string]string)
 	usedDocNames := make(map[string]struct{})
 	nextDocNameID := 0
-
-	toolUseIDFor := func(canonical string) string {
-		if canonical == "" {
-			return ""
-		}
-		if isProviderSafeToolUseID(canonical) {
-			return canonical
-		}
-		if id, ok := toolUseIDMap[canonical]; ok {
-			return id
-		}
-		nextToolUseID++
-		id := fmt.Sprintf("t%d", nextToolUseID)
-		toolUseIDMap[canonical] = id
-		return id
-	}
-
-	docNameFor := func(original string) string {
-		if original == "" {
-			return "document"
-		}
-		if v, ok := docNameMap[original]; ok {
-			return v
-		}
-		base := sanitizeDocumentName(original)
-		if base == "" {
-			base = "document"
-		}
-		name := base
-		if _, ok := usedDocNames[name]; ok {
-			for {
-				nextDocNameID++
-				candidate := fmt.Sprintf("%s (%d)", base, nextDocNameID)
-				if _, exists := usedDocNames[candidate]; !exists {
-					name = candidate
-					break
-				}
-			}
-		}
-		usedDocNames[name] = struct{}{}
-		docNameMap[original] = name
-		return name
-	}
 
 	conversation := make([]brtypes.Message, 0, len(msgs))
 	system := make([]brtypes.SystemContentBlock, 0, len(msgs))
@@ -664,7 +600,7 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 					return nil, nil, errors.New("bedrock: document part requires one of Bytes, Text, Chunks, or URI")
 				}
 				doc := brtypes.DocumentBlock{
-					Name:   aws.String(docNameFor(v.Name)),
+					Name:   aws.String(docNameFor(v.Name, docNameMap, usedDocNames, &nextDocNameID)),
 					Source: source,
 				}
 				if v.Format != "" {
@@ -700,7 +636,7 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 					tb.Name = aws.String(sanitized)
 				}
 				if v.ID != "" {
-					if id := toolUseIDFor(v.ID); id != "" {
+					if id := toolUseIDFor(v.ID, toolUseIDMap, &nextToolUseID); id != "" {
 						tb.ToolUseId = aws.String(id)
 					}
 				}
@@ -710,7 +646,7 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 				// Bedrock expects tool_result blocks in user messages, correlated to a prior tool_use.
 				// Encode content as text when Content is a string; otherwise as a JSON document.
 				tr := brtypes.ToolResultBlock{}
-				if id := toolUseIDFor(v.ToolUseID); id != "" {
+				if id := toolUseIDFor(v.ToolUseID, toolUseIDMap, &nextToolUseID); id != "" {
 					tr.ToolUseId = aws.String(id)
 				}
 				if s, ok := v.Content.(string); ok {
@@ -978,6 +914,49 @@ func sanitizeDocumentName(in string) string {
 		}
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func toolUseIDFor(canonical string, toolUseIDMap map[string]string, nextToolUseID *int) string {
+	if canonical == "" {
+		return ""
+	}
+	if isProviderSafeToolUseID(canonical) {
+		return canonical
+	}
+	if id, ok := toolUseIDMap[canonical]; ok {
+		return id
+	}
+	*nextToolUseID++
+	id := fmt.Sprintf("t%d", *nextToolUseID)
+	toolUseIDMap[canonical] = id
+	return id
+}
+
+func docNameFor(original string, docNameMap map[string]string, usedDocNames map[string]struct{}, nextDocNameID *int) string {
+	if original == "" {
+		return "document"
+	}
+	if v, ok := docNameMap[original]; ok {
+		return v
+	}
+	base := sanitizeDocumentName(original)
+	if base == "" {
+		base = "document"
+	}
+	name := base
+	if _, ok := usedDocNames[name]; ok {
+		for {
+			*nextDocNameID++
+			candidate := fmt.Sprintf("%s (%d)", base, *nextDocNameID)
+			if _, exists := usedDocNames[candidate]; !exists {
+				name = candidate
+				break
+			}
+		}
+	}
+	usedDocNames[name] = struct{}{}
+	docNameMap[original] = name
+	return name
 }
 
 func toDocument(ctx context.Context, schema any, logger telemetry.Logger) document.Interface {

@@ -464,9 +464,13 @@ type (
 		// on terminal updates derived from RunCompletedEvent and may be
 		// empty for non-terminal phase transitions.
 		Status string `json:"status,omitempty"`
-		// Error is the terminal error string when the run fails or is canceled.
-		// It is populated only on terminal updates derived from RunCompletedEvent.
+		// Error is a user-safe error message intended to be displayed directly
+		// to end users. It is populated only on failures and is empty on success
+		// and cancellations.
 		Error string `json:"error,omitempty"`
+		// DebugError is a raw error string intended for logs and diagnostics. It
+		// may contain infrastructure details and should not be rendered in UIs.
+		DebugError string `json:"debug_error,omitempty"`
 		// ErrorProvider identifies the model provider when the terminal error was
 		// caused by a provider failure (for example, "bedrock").
 		ErrorProvider string `json:"error_provider,omitempty"`

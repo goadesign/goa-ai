@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -82,6 +83,46 @@ func TestStreamSubscriber_WorkflowFromRunCompleted(t *testing.T) {
 	require.Equal(t, EventWorkflow, wf.Type())
 	require.Equal(t, "completed", wf.Data.Phase)
 	require.Equal(t, "success", wf.Data.Status)
+}
+
+func TestStreamSubscriber_WorkflowFromRunCompleted_FailedHasPublicAndDebugErrors(t *testing.T) {
+	sink := &mockSink{}
+	sub, err := NewSubscriber(sink)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	pe := model.NewProviderError("bedrock", "converse_stream", 429, model.ProviderErrorKindRateLimited, "rate_limited", "", "", true, context.DeadlineExceeded)
+	evt := hooks.NewRunCompletedEvent("r1", agent.Ident("agent1"), "", "failed", run.PhaseFailed, pe)
+	require.NoError(t, sub.HandleEvent(ctx, evt))
+
+	require.Len(t, sink.events, 1)
+	wf, ok := sink.events[0].(Workflow)
+	require.True(t, ok)
+	require.Equal(t, "failed", wf.Data.Phase)
+	require.Equal(t, "failed", wf.Data.Status)
+	require.NotEmpty(t, wf.Data.Error)
+	require.NotEmpty(t, wf.Data.DebugError)
+	require.Equal(t, "bedrock", wf.Data.ErrorProvider)
+	require.Equal(t, "rate_limited", wf.Data.ErrorKind)
+	require.True(t, wf.Data.Retryable)
+}
+
+func TestStreamSubscriber_WorkflowFromRunCompleted_CanceledHasNoError(t *testing.T) {
+	sink := &mockSink{}
+	sub, err := NewSubscriber(sink)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	evt := hooks.NewRunCompletedEvent("r1", agent.Ident("agent1"), "", "canceled", run.PhaseCanceled, context.Canceled)
+	require.NoError(t, sub.HandleEvent(ctx, evt))
+
+	require.Len(t, sink.events, 1)
+	wf, ok := sink.events[0].(Workflow)
+	require.True(t, ok)
+	require.Equal(t, "canceled", wf.Data.Phase)
+	require.Equal(t, "canceled", wf.Data.Status)
+	require.Empty(t, wf.Data.Error)
+	require.NotEmpty(t, wf.Data.DebugError)
 }
 
 func TestStreamSubscriber_WorkflowFromRunPhaseChanged(t *testing.T) {

@@ -122,6 +122,30 @@ The generated `MCPAdapterOptions` provides configuration hooks:
 
 No custom streaming templates. When your methods stream, Goa's JSON-RPC generator emits the SSE stack. We simply adjust paths/imports so it lives under the MCP tree.
 
+## Agent run lifecycle streaming contract
+
+The runtime emits a single terminal lifecycle event per run via `hooks.RunCompletedEvent`.
+The stream subscriber translates it into a `workflow` stream event (`stream.WorkflowPayload`)
+that UIs and stream bridges can consume without heuristics.
+
+- **Terminal status**
+  - `status="success"` → `phase="completed"`
+  - `status="failed"` → `phase="failed"`
+  - `status="canceled"` → `phase="canceled"`
+
+- **Cancellation is not an error**
+  - For `status="canceled"`, the stream payload **must not** include a user-facing `error`.
+  - Consumers should treat cancellation as a terminal, non-error end state.
+
+- **Failures are structured**
+  - For `status="failed"`, the stream payload includes:
+    - `error_kind`: stable classifier for UX/decisioning (provider kinds like `rate_limited`, `unavailable`, or runtime kinds like `timeout`/`internal`)
+    - `retryable`: whether retrying may succeed without changing input
+    - `error`: **user-safe** message suitable for direct display
+    - `debug_error`: raw error string for logs/diagnostics (not for UI)
+
+This keeps consumers simple: render `error`, gate “Retry” on `retryable`, and treat `canceled` as non-error.
+
 ## Tool Input Schema
 
 For each tool with a non-empty payload, the plugin derives a compact JSON Schema from the Goa attribute and exposes it in `tools/list` under `inputSchema`. This uses Goa's `openapi.Schema` type for complete JSON Schema draft 2020-12 support.

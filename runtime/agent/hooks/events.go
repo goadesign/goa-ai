@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"time"
@@ -14,6 +15,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/toolerrors"
 	"goa.design/goa-ai/runtime/agent/tools"
+
+	"go.temporal.io/sdk/temporal"
 )
 
 type (
@@ -76,6 +79,10 @@ type (
 		baseEvent
 		// Status indicates the final outcome: "success", "failed", or "canceled".
 		Status string
+		// PublicError is a user-safe, deterministic summary of the terminal failure.
+		// It is empty on success and cancellations. On failures, it is populated
+		// and is intended to be rendered directly in UIs without additional parsing.
+		PublicError string
 		// Error contains any terminal error that halted the run. Nil on success.
 		Error error
 		// ErrorProvider identifies the model provider when the terminal error was
@@ -451,6 +458,14 @@ type (
 	}
 )
 
+const (
+	// ErrorKindTimeout indicates the run failed because a required operation timed out.
+	ErrorKindTimeout = "timeout"
+
+	// ErrorKindInternal indicates the run failed for an unclassified reason.
+	ErrorKindInternal = "internal"
+)
+
 // NewRunStartedEvent constructs a RunStartedEvent with the current
 // timestamp. RunContext and Input capture the initial run state.
 func NewRunStartedEvent(runID string, agentID agent.Ident, runContext run.Context, input any) *RunStartedEvent {
@@ -475,6 +490,9 @@ func NewRunCompletedEvent(runID string, agentID agent.Ident, sessionID, status s
 		Phase:     phase,
 		Error:     err,
 	}
+	if err == nil {
+		return out
+	}
 	var pe *model.ProviderError
 	if errors.As(err, &pe) {
 		out.ErrorProvider = pe.Provider()
@@ -483,7 +501,19 @@ func NewRunCompletedEvent(runID string, agentID agent.Ident, sessionID, status s
 		out.ErrorCode = pe.Code()
 		out.HTTPStatus = pe.HTTPStatus()
 		out.Retryable = pe.Retryable()
+		if status == "failed" {
+			out.PublicError = providerPublicError(pe)
+		}
+		return out
 	}
+
+	// Cancellation is terminal but non-error for UX purposes.
+	if status != "failed" {
+		return out
+	}
+
+	out.ErrorKind, out.PublicError = classifyNonProviderFailure(err)
+	out.Retryable = true // Non-provider failures are always retryable.
 	return out
 }
 
@@ -776,6 +806,31 @@ func NewMemoryAppendedEvent(runID string, agentID agent.Ident, sessionID string,
 	return &MemoryAppendedEvent{
 		baseEvent:  be,
 		EventCount: eventCount,
+	}
+}
+
+func classifyNonProviderFailure(err error) (kind, publicError string) {
+	var te *temporal.TimeoutError
+	if errors.As(err, &te) || errors.Is(err, context.DeadlineExceeded) {
+		return ErrorKindTimeout, PublicErrorTimeout
+	}
+	return ErrorKindInternal, PublicErrorInternal
+}
+
+func providerPublicError(pe *model.ProviderError) string {
+	switch pe.Kind() {
+	case model.ProviderErrorKindRateLimited:
+		return PublicErrorProviderRateLimited
+	case model.ProviderErrorKindUnavailable:
+		return PublicErrorProviderUnavailable
+	case model.ProviderErrorKindInvalidRequest:
+		return PublicErrorProviderInvalidRequest
+	case model.ProviderErrorKindAuth:
+		return PublicErrorProviderAuth
+	case model.ProviderErrorKindUnknown:
+		return PublicErrorProviderUnknown
+	default:
+		return PublicErrorProviderDefault
 	}
 }
 

@@ -150,6 +150,10 @@ func NewHealthTracker(streamManager StreamManager, healthMap, registryMap *rmap.
 	// This gives providers enough time to respond before being marked unhealthy.
 	stalenessThreshold := time.Duration(options.missedPingThreshold+1) * options.pingInterval
 
+	// Subscribe before spawning goroutine to avoid race: if a registry event
+	// arrives before the goroutine calls Subscribe(), the event is missed.
+	registryEvents := registryMap.Subscribe()
+
 	h := &healthTracker{
 		streamManager:        streamManager,
 		healthMap:            healthMap,
@@ -167,7 +171,7 @@ func NewHealthTracker(streamManager StreamManager, healthMap, registryMap *rmap.
 	}
 
 	// Start watching for registry changes from other nodes.
-	go h.watchRegistryChanges()
+	go h.watchRegistryChanges(registryEvents)
 
 	// Sync with existing registered toolsets.
 	h.syncExistingToolsets()
@@ -284,10 +288,11 @@ func (h *healthTracker) Close() error {
 	return nil
 }
 
-// watchRegistryChanges subscribes to the registry map and reacts to changes
-// from other nodes.
-func (h *healthTracker) watchRegistryChanges() {
-	events := h.registryMap.Subscribe()
+// watchRegistryChanges reacts to registry map changes from other nodes.
+// The events channel must be obtained via registryMap.Subscribe() before
+// calling this method to avoid missing events that arrive between tracker
+// construction and goroutine startup.
+func (h *healthTracker) watchRegistryChanges(events <-chan rmap.EventKind) {
 	defer h.registryMap.Unsubscribe(events)
 
 	for {

@@ -95,8 +95,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	finalStatus := runStatusSuccess
 	var finalErr error
 	defer func() {
-		// Emit a terminal phase change before RunCompleted so streams see the
-		// final phase alongside the completion event.
+		// Compute the terminal phase for the completion event.
 		var phase run.Phase
 		switch finalStatus {
 		case runStatusSuccess:
@@ -112,13 +111,14 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		// engine supplies a replay-aware context so subscribers can avoid
 		// re-applying side effects during history replay while still allowing
 		// session stores and UIs to observe a single terminal phase.
+		//
+		// Emit only RunCompletedEvent (which carries both status and phase).
+		// Emitting a separate RunPhaseChangedEvent before RunCompleted causes
+		// two terminal workflow events to reach subscribers, which can trigger
+		// race conditions in frontends that close streams on the first
+		// terminal event.
 		termCtx, cancel := context.WithTimeout(wfCtx.Context(), 10*time.Second)
 		defer cancel()
-		r.publishHook(
-			termCtx,
-			hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, phase),
-			turnID,
-		)
 		r.publishHook(
 			termCtx,
 			hooks.NewRunCompletedEvent(input.RunID, input.AgentID, input.SessionID, finalStatus, phase, finalErr),

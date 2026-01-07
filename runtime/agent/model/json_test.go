@@ -34,13 +34,23 @@ func TestPartMarshalJSONIncludesKind(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			raw, err := json.Marshal(tt.part)
+			raw, err := json.Marshal(Message{
+				Role:  ConversationRoleUser,
+				Parts: []Part{tt.part},
+			})
 			require.NoError(t, err)
 			var obj map[string]json.RawMessage
 			require.NoError(t, json.Unmarshal(raw, &obj))
 
+			var parts []json.RawMessage
+			require.NoError(t, json.Unmarshal(obj["Parts"], &parts))
+			require.Len(t, parts, 1)
+
+			var partObj map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(parts[0], &partObj))
+
 			var kind string
-			require.NoError(t, json.Unmarshal(obj["Kind"], &kind))
+			require.NoError(t, json.Unmarshal(partObj["Kind"], &kind))
 			require.Equal(t, tt.kind, kind)
 		})
 	}
@@ -84,13 +94,23 @@ func TestThinkingPartRoundTripPreservesSignature(t *testing.T) {
 func TestCacheCheckpointPartRoundTrip(t *testing.T) {
 	orig := CacheCheckpointPart{}
 
-	raw, err := json.Marshal(orig)
+	raw, err := json.Marshal(Message{
+		Role:  ConversationRoleUser,
+		Parts: []Part{orig},
+	})
 	require.NoError(t, err)
 
-	// Verify it emits a Kind discriminator, not an empty object.
-	require.JSONEq(t, `{"Kind":"cache_checkpoint"}`, string(raw))
+	var obj map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &obj))
 
-	part, err := decodeMessagePart(raw)
+	var parts []json.RawMessage
+	require.NoError(t, json.Unmarshal(obj["Parts"], &parts))
+	require.Len(t, parts, 1)
+
+	// Verify it emits a Kind discriminator, not an empty object.
+	require.JSONEq(t, `{"Kind":"cache_checkpoint"}`, string(parts[0]))
+
+	part, err := decodeMessagePart(parts[0])
 	require.NoError(t, err)
 
 	_, ok := part.(CacheCheckpointPart)

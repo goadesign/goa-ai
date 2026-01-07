@@ -9,6 +9,41 @@ import (
 	"fmt"
 )
 
+// MarshalJSON encodes a Message while preserving the concrete Part types stored
+// in Parts via an explicit Kind discriminator.
+//
+// This ensures round-trips through JSON do not lose type information when Parts
+// are stored as an interface slice.
+func (m Message) MarshalJSON() ([]byte, error) {
+	type alias struct {
+		Role  ConversationRole `json:"Role"`  //nolint:tagliatelle
+		Parts []any            `json:"Parts"` //nolint:tagliatelle
+		Meta  map[string]any   `json:"Meta"`  //nolint:tagliatelle
+	}
+	if len(m.Parts) == 0 {
+		return json.Marshal(alias{
+			Role:  m.Role,
+			Parts: nil,
+			Meta:  m.Meta,
+		})
+	}
+
+	parts := make([]any, 0, len(m.Parts))
+	for i, p := range m.Parts {
+		enc, err := encodeMessagePart(p)
+		if err != nil {
+			return nil, fmt.Errorf("encode parts[%d]: %w", i, err)
+		}
+		parts = append(parts, enc)
+	}
+
+	return json.Marshal(alias{
+		Role:  m.Role,
+		Parts: parts,
+		Meta:  m.Meta,
+	})
+}
+
 // UnmarshalJSON decodes a Message while materializing concrete Part
 // implementations stored in the Parts slice.
 func (m *Message) UnmarshalJSON(data []byte) error {
@@ -36,6 +71,75 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 		m.Parts = append(m.Parts, part)
 	}
 	return nil
+}
+
+func encodeMessagePart(p Part) (any, error) {
+	switch v := p.(type) {
+	case ThinkingPart:
+		return struct {
+			Kind string `json:"Kind"` //nolint:tagliatelle // Kind discriminator is intentionally upper-cased for compatibility.
+			ThinkingPart
+		}{
+			Kind:         "thinking",
+			ThinkingPart: v,
+		}, nil
+	case TextPart:
+		return struct {
+			Kind string `json:"Kind"` //nolint:tagliatelle // Kind discriminator is intentionally upper-cased for compatibility.
+			TextPart
+		}{
+			Kind:     "text",
+			TextPart: v,
+		}, nil
+	case ImagePart:
+		return struct {
+			Kind string `json:"Kind"` //nolint:tagliatelle // Kind discriminator is intentionally upper-cased for compatibility.
+			ImagePart
+		}{
+			Kind:      "image",
+			ImagePart: v,
+		}, nil
+	case DocumentPart:
+		return struct {
+			Kind string `json:"Kind"` //nolint:tagliatelle // Kind discriminator is intentionally upper-cased for compatibility.
+			DocumentPart
+		}{
+			Kind:         "document",
+			DocumentPart: v,
+		}, nil
+	case CitationsPart:
+		return struct {
+			Kind string `json:"Kind"` //nolint:tagliatelle // Kind discriminator is intentionally upper-cased for compatibility.
+			CitationsPart
+		}{
+			Kind:          "citations",
+			CitationsPart: v,
+		}, nil
+	case ToolUsePart:
+		return struct {
+			Kind string `json:"Kind"` //nolint:tagliatelle // Kind discriminator is intentionally upper-cased for compatibility.
+			ToolUsePart
+		}{
+			Kind:        "tool_use",
+			ToolUsePart: v,
+		}, nil
+	case ToolResultPart:
+		return struct {
+			Kind string `json:"Kind"` //nolint:tagliatelle // Kind discriminator is intentionally upper-cased for compatibility.
+			ToolResultPart
+		}{
+			Kind:           "tool_result",
+			ToolResultPart: v,
+		}, nil
+	case CacheCheckpointPart:
+		return struct {
+			Kind string `json:"Kind"` //nolint:tagliatelle // Kind discriminator is intentionally upper-cased for compatibility.
+		}{
+			Kind: "cache_checkpoint",
+		}, nil
+	default:
+		return nil, fmt.Errorf("unknown part type %T", p)
+	}
 }
 
 func decodeMessagePart(raw json.RawMessage) (Part, error) {
