@@ -579,6 +579,19 @@ type ToolCallMeta struct {
 }
 ```
 
+### Artifacts (reserved `"artifacts"` payload field)
+
+Tools can optionally produce **artifacts** (UI/policy-facing data that is never sent to model providers).
+The runtime supports a per-call artifacts toggle via a reserved top-level tool payload field:
+
+- `{"artifacts":"auto"}` — use the tool default
+- `{"artifacts":"on"}` — force artifacts on (when the tool supports them)
+- `{"artifacts":"off"}` — force artifacts off (runtime drops artifacts even if produced)
+
+The runtime strips the reserved `"artifacts"` field from the execution payload before decoding, and records the
+normalized value on the tool call metadata (`ArtifactsMode`). Tool payload schemas must not define a top-level
+property named `"artifacts"`.
+
 ### Bounded Results
 
 Tools that return partial views of larger datasets should use the `BoundedResult`
