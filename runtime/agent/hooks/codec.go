@@ -15,6 +15,7 @@ type (
 	runCompletedPayload struct {
 		Status         string    `json:"status"`
 		Phase          run.Phase `json:"phase"`
+		PublicError    string    `json:"public_error,omitempty"`
 		Error          string    `json:"error,omitempty"`
 		ErrorProvider  string    `json:"error_provider,omitempty"`
 		ErrorOperation string    `json:"error_operation,omitempty"`
@@ -38,6 +39,7 @@ func EncodeToHookInput(evt Event, turnID string) (*ActivityInput, error) {
 		p := runCompletedPayload{
 			Status:         e.Status,
 			Phase:          e.Phase,
+			PublicError:    e.PublicError,
 			ErrorProvider:  e.ErrorProvider,
 			ErrorOperation: e.ErrorOperation,
 			ErrorKind:      e.ErrorKind,
@@ -113,6 +115,7 @@ func DecodeFromHookInput(input *ActivityInput) (Event, error) {
 			runErr = errors.New(p.Error)
 		}
 		rc := NewRunCompletedEvent(input.RunID, input.AgentID, input.SessionID, p.Status, p.Phase, runErr)
+		rc.PublicError = p.PublicError
 		rc.ErrorProvider = p.ErrorProvider
 		rc.ErrorOperation = p.ErrorOperation
 		rc.ErrorKind = p.ErrorKind

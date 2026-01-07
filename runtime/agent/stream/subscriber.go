@@ -10,6 +10,13 @@ import (
 	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 )
 
+// RunCompletedEvent.Status values emitted by the workflow runtime.
+const (
+	completionStatusSuccess  = "success"
+	completionStatusFailed   = "failed"
+	completionStatusCanceled = "canceled"
+)
+
 type (
 	// Subscriber receives runtime events and forwards certain ones to a
 	// stream.Sink, such as a WebSocket, SSE, or message bus. It acts as a
@@ -319,12 +326,12 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		phase := string(evt.Phase)
 		if phase == "" {
 			switch evt.Status {
-			case "success":
-				phase = "completed"
-			case "failed":
-				phase = "failed"
-			case "canceled":
-				phase = "canceled"
+			case completionStatusSuccess:
+				phase = string(run.PhaseCompleted)
+			case completionStatusFailed:
+				phase = string(run.PhaseFailed)
+			case completionStatusCanceled:
+				phase = string(run.PhaseCanceled)
 			default:
 				phase = evt.Status
 			}
@@ -340,7 +347,10 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Retryable:      evt.Retryable,
 		}
 		if evt.Error != nil {
-			payload.Error = evt.Error.Error()
+			payload.DebugError = evt.Error.Error()
+		}
+		if evt.Status == completionStatusFailed {
+			payload.Error = evt.PublicError
 		}
 		return s.sink.Send(ctx, Workflow{
 			Base: Base{t: EventWorkflow, r: evt.RunID(), s: evt.SessionID(), p: payload},
