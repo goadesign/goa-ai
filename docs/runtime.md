@@ -889,7 +889,7 @@ type Sink interface {
 | `await_clarification` | `AwaitClarificationPayload` |
 | `await_external_tools` | `AwaitExternalToolsPayload` |
 | `usage` | `UsagePayload` (input_tokens, output_tokens) |
-| `workflow` | `WorkflowPayload` (phase, status) |
+| `workflow` | `WorkflowPayload` (phase, status, error_kind, retryable, error, debug_error) |
 | `agent_run_started` | `AgentRunStartedPayload` (child run link) |
 
 ### Stream Profiles
@@ -909,6 +909,36 @@ stream.AgentDebugProfile()
 // Metrics only (usage, workflow)
 stream.MetricsProfile()
 ```
+
+### Workflow payload contract (phases, terminal status, and errors)
+
+The runtime emits:
+
+- `RunPhaseChanged` hook events for **non-terminal** phase transitions (`planning`, `executing_tools`, `synthesizing`, etc.)
+- a single `RunCompleted` hook event per run for the **terminal** lifecycle state
+
+The stream subscriber translates these into `workflow` stream events:
+
+- **Non-terminal updates** (from `RunPhaseChanged`): `phase` only.
+- **Terminal update** (from `RunCompleted`): `status` + terminal `phase`.
+
+Terminal status mapping:
+
+- `status="success"` → `phase="completed"`
+- `status="failed"` → `phase="failed"`
+- `status="canceled"` → `phase="canceled"`
+
+Cancellation is not an error:
+
+- For `status="canceled"`, the workflow payload must not include a user-facing `error`.
+
+Failures are structured:
+
+- For `status="failed"`, the workflow payload includes:
+  - `error_kind`: stable classifier (provider kinds like `rate_limited`, `unavailable`, or runtime kinds like `timeout`/`internal`)
+  - `retryable`: whether retrying may succeed without changing input
+  - `error`: **user-safe** message suitable for direct display
+  - `debug_error`: raw error string for logs/diagnostics (not for UI)
 
 ## Policy Enforcement
 
@@ -1006,6 +1036,26 @@ type Store interface {
 
 The runtime automatically subscribes to hooks and persists events when a memory
 store is configured.
+
+### Run event store (runlog.Store)
+
+The runtime also maintains a canonical, append-only run event log used for
+introspection, audit/debug UIs, and deriving compact `run.Snapshot` values.
+
+```go
+type Store interface {
+    Append(ctx context.Context, e *runlog.Event) error
+    List(ctx context.Context, runID string, cursor string, limit int) (runlog.Page, error)
+}
+```
+
+The runtime exposes:
+
+- `Runtime.ListRunEvents(ctx, runID, cursor, limit)` for cursor-paginated listing
+- `Runtime.GetRunSnapshot(ctx, runID)` for a compact snapshot derived from replaying the run log
+
+Configure the store via `runtime.WithRunEventStore(...)`. If not set, the runtime
+defaults to an in-memory implementation (`runtime/agent/runlog/inmem`).
 
 ### Run Phases
 
@@ -1300,6 +1350,7 @@ type Tracer interface {
 | Package | Purpose |
 |---------|---------|
 | `features/memory/mongo` | MongoDB-backed memory store |
+| `features/runlog/mongo` | MongoDB-backed run event log store |
 | `features/session/mongo` | MongoDB-backed session store |
 | `features/stream/pulse` | Pulse message bus sink |
 | `features/model/bedrock` | AWS Bedrock model client |

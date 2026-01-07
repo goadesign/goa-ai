@@ -41,7 +41,7 @@ Think of it as a pipeline from intention to execution:
 4. **Engine** (`runtime/agent/engine`) — Swap backends without changing code. In‑memory for fast
    iteration; Temporal for production durability.
 
-5. **Features** (`features/*`) — Plug in what you need: Mongo for memory/sessions/runs, Pulse for
+5. **Features** (`features/*`) — Plug in what you need: Mongo for memory/sessions/run event logs, Pulse for
    real‑time streams, Bedrock/OpenAI/Gateway model clients, policy engines.
 
 ## Ways to Work
@@ -1067,6 +1067,7 @@ profile := stream.MetricsProfile()
 | Package                  | Purpose                                                |
 |--------------------------|--------------------------------------------------------|
 | `features/memory/mongo`  | Mongo‑backed memory store for transcripts              |
+| `features/runlog/mongo`  | Mongo‑backed run event log store for run introspection |
 | `features/session/mongo` | Mongo‑backed session store for multi‑turn state        |
 | `features/stream/pulse`  | Pulse message bus sink for real‑time streaming         |
 | `features/model/bedrock` | AWS Bedrock model client (Claude, etc.)                |
