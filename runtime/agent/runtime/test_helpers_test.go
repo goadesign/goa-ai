@@ -59,6 +59,13 @@ type testWorkflowContext struct {
 	parent *testWorkflowContext
 }
 
+func (t *testWorkflowContext) root() *testWorkflowContext {
+	if t.parent != nil {
+		return t.parent
+	}
+	return t
+}
+
 func (t *testWorkflowContext) Context() context.Context {
 	if t.ctx == nil {
 		panic("testWorkflowContext.ctx is nil")
@@ -79,15 +86,32 @@ func (t *testWorkflowContext) WithCancel() (engine.WorkflowContext, func()) {
 		panic("testWorkflowContext.ctx is nil")
 	}
 	cctx, cancel := context.WithCancel(t.ctx)
-	sub := *t
-	sub.ctx = cctx
-	// Point to root so lastToolCall updates are visible to tests that inspect the original.
-	if t.parent != nil {
-		sub.parent = t.parent
-	} else {
-		sub.parent = t
+	root := t.root()
+	sub := &testWorkflowContext{
+		ctx: cctx,
+
+		lastHookCall:    t.lastHookCall,
+		lastPlannerCall: t.lastPlannerCall,
+		lastToolCall:    t.lastToolCall,
+
+		asyncResult: t.asyncResult,
+
+		planResult:    t.planResult,
+		hasPlanResult: t.hasPlanResult,
+		barrier:       t.barrier,
+		hookRuntime:   t.hookRuntime,
+		runtime:       t.runtime,
+		childRuntime:  t.childRuntime,
+
+		childRequests:      t.childRequests,
+		firstChildGetCount: t.firstChildGetCount,
+		sawFirstChildGet:   t.sawFirstChildGet,
+
+		toolFutures:            t.toolFutures,
+		controlledChildHandles: t.controlledChildHandles,
+		parent:                 root,
 	}
-	return &sub, cancel
+	return sub, cancel
 }
 
 func (t *testWorkflowContext) Now() time.Time {
@@ -238,28 +262,33 @@ func (t *testWorkflowContext) ExecuteToolActivityAsync(ctx context.Context, call
 }
 
 func (t *testWorkflowContext) PauseRequests() engine.Receiver[api.PauseRequest] {
-	t.ensureSignals()
-	return testReceiver[api.PauseRequest]{ch: t.pauseCh}
+	root := t.root()
+	root.ensureSignals()
+	return testReceiver[api.PauseRequest]{ch: root.pauseCh}
 }
 
 func (t *testWorkflowContext) ResumeRequests() engine.Receiver[api.ResumeRequest] {
-	t.ensureSignals()
-	return testReceiver[api.ResumeRequest]{ch: t.resumeCh}
+	root := t.root()
+	root.ensureSignals()
+	return testReceiver[api.ResumeRequest]{ch: root.resumeCh}
 }
 
 func (t *testWorkflowContext) ClarificationAnswers() engine.Receiver[api.ClarificationAnswer] {
-	t.ensureSignals()
-	return testReceiver[api.ClarificationAnswer]{ch: t.clarifyCh}
+	root := t.root()
+	root.ensureSignals()
+	return testReceiver[api.ClarificationAnswer]{ch: root.clarifyCh}
 }
 
 func (t *testWorkflowContext) ExternalToolResults() engine.Receiver[api.ToolResultsSet] {
-	t.ensureSignals()
-	return testReceiver[api.ToolResultsSet]{ch: t.toolResultsCh}
+	root := t.root()
+	root.ensureSignals()
+	return testReceiver[api.ToolResultsSet]{ch: root.toolResultsCh}
 }
 
 func (t *testWorkflowContext) ConfirmationDecisions() engine.Receiver[api.ConfirmationDecision] {
-	t.ensureSignals()
-	return testReceiver[api.ConfirmationDecision]{ch: t.confirmCh}
+	root := t.root()
+	root.ensureSignals()
+	return testReceiver[api.ConfirmationDecision]{ch: root.confirmCh}
 }
 
 func (t *testWorkflowContext) ensureSignals() {
@@ -435,6 +464,15 @@ type routeWorkflowContext struct {
 
 	hookRuntime  *Runtime // optional runtime for hook activity execution
 	childRuntime *Runtime // optional runtime for child workflow execution
+
+	parent *routeWorkflowContext
+}
+
+func (r *routeWorkflowContext) root() *routeWorkflowContext {
+	if r.parent != nil {
+		return r.parent
+	}
+	return r
 }
 
 func (r *routeWorkflowContext) Context() context.Context {
@@ -457,9 +495,24 @@ func (r *routeWorkflowContext) WithCancel() (engine.WorkflowContext, func()) {
 		panic("routeWorkflowContext.ctx is nil")
 	}
 	cctx, cancel := context.WithCancel(r.ctx)
-	sub := *r
-	sub.ctx = cctx
-	return &sub, cancel
+	root := r.root()
+	sub := &routeWorkflowContext{
+		ctx:   cctx,
+		runID: r.runID,
+
+		plannerRoutes: r.plannerRoutes,
+		toolRoutes:    r.toolRoutes,
+
+		lastHookCall:    r.lastHookCall,
+		lastPlannerCall: r.lastPlannerCall,
+		lastToolCall:    r.lastToolCall,
+
+		hookRuntime:  r.hookRuntime,
+		childRuntime: r.childRuntime,
+
+		parent: root,
+	}
+	return sub, cancel
 }
 
 func (r *routeWorkflowContext) Now() time.Time {
@@ -557,28 +610,33 @@ func (r *routeWorkflowContext) ExecuteToolActivityAsync(ctx context.Context, cal
 }
 
 func (r *routeWorkflowContext) PauseRequests() engine.Receiver[api.PauseRequest] {
-	r.ensureSignals()
-	return testReceiver[api.PauseRequest]{ch: r.pauseCh}
+	root := r.root()
+	root.ensureSignals()
+	return testReceiver[api.PauseRequest]{ch: root.pauseCh}
 }
 
 func (r *routeWorkflowContext) ResumeRequests() engine.Receiver[api.ResumeRequest] {
-	r.ensureSignals()
-	return testReceiver[api.ResumeRequest]{ch: r.resumeCh}
+	root := r.root()
+	root.ensureSignals()
+	return testReceiver[api.ResumeRequest]{ch: root.resumeCh}
 }
 
 func (r *routeWorkflowContext) ClarificationAnswers() engine.Receiver[api.ClarificationAnswer] {
-	r.ensureSignals()
-	return testReceiver[api.ClarificationAnswer]{ch: r.clarifyCh}
+	root := r.root()
+	root.ensureSignals()
+	return testReceiver[api.ClarificationAnswer]{ch: root.clarifyCh}
 }
 
 func (r *routeWorkflowContext) ExternalToolResults() engine.Receiver[api.ToolResultsSet] {
-	r.ensureSignals()
-	return testReceiver[api.ToolResultsSet]{ch: r.toolResultsCh}
+	root := r.root()
+	root.ensureSignals()
+	return testReceiver[api.ToolResultsSet]{ch: root.toolResultsCh}
 }
 
 func (r *routeWorkflowContext) ConfirmationDecisions() engine.Receiver[api.ConfirmationDecision] {
-	r.ensureSignals()
-	return testReceiver[api.ConfirmationDecision]{ch: r.confirmCh}
+	root := r.root()
+	root.ensureSignals()
+	return testReceiver[api.ConfirmationDecision]{ch: root.confirmCh}
 }
 
 func (r *routeWorkflowContext) ensureSignals() {

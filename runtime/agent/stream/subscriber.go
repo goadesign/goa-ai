@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/run"
 	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 )
 
@@ -347,6 +348,11 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		})
 	case *hooks.RunPhaseChangedEvent:
 		if !s.profile.Workflow {
+			return nil
+		}
+		// Terminal lifecycle is streamed via RunCompletedEvent (which also carries status).
+		// Avoid emitting a second terminal workflow event for the same run.
+		if evt.Phase == run.PhaseCompleted || evt.Phase == run.PhaseFailed || evt.Phase == run.PhaseCanceled {
 			return nil
 		}
 		payload := WorkflowPayload{
