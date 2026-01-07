@@ -507,6 +507,41 @@ This integration is intentionally split:
 - **Registry gateway**: validates payloads, tracks provider health, creates per-call result streams, and returns `tool_use_id`
 - **Service provider loop**: executes tools using the generated provider adapters and publishes results
 
+### Registry-Routed Execution (Agent/Consumer Side)
+
+On the consumer side (an agent calling registry-routed toolsets), the runtime needs a `ToolCallExecutor` that:
+
+- calls the registry gateway to publish the tool request and get a `(tool_use_id, result_stream_id)`, then
+- subscribes to the per-call result stream and decodes the result using the compiled tool specs/codecs.
+
+Goa-AI provides a reusable executor implementation in `runtime/toolregistry/executor` that implements `runtime.ToolCallExecutor`:
+
+```go
+import (
+    toolregexec "goa.design/goa-ai/runtime/toolregistry/executor"
+)
+
+exec := toolregexec.New(registryClient, pulseClient, specs)
+
+// Use exec.Execute as the executor for registry-backed toolsets.
+```
+
+The registry wire protocol and deterministic stream IDs are defined in `runtime/toolregistry`:
+
+- Toolset request stream: `toolset:<toolsetID>:requests`
+- Per-call result stream: `result:<toolUseID>`
+
+### Registry discovery & catalog sync (runtime/registry)
+
+If you need runtime discovery of toolsets and schemas (e.g., tool catalogs that change without a `goa gen`),
+use the client-side components in `runtime/registry`:
+
+- `GRPCClientAdapter`: wraps a generated gRPC registry client into a `RegistryClient` interface
+- `Manager`: multi-registry discovery with caching and periodic sync (`StartSync`/`StopSync`)
+- `SearchClient`: cross-registry search with semantic-first + keyword fallback when supported
+
+These are client-side helpers. The standalone registry service implementation lives under `goa-ai/registry`.
+
 **Inline tools** — Custom executor implementation:
 
 ```go
@@ -543,6 +578,19 @@ type ToolCallMeta struct {
     ParentToolCallID string  // Parent tool call (for agent-as-tool)
 }
 ```
+
+### Artifacts (reserved `"artifacts"` payload field)
+
+Tools can optionally produce **artifacts** (UI/policy-facing data that is never sent to model providers).
+The runtime supports a per-call artifacts toggle via a reserved top-level tool payload field:
+
+- `{"artifacts":"auto"}` — use the tool default
+- `{"artifacts":"on"}` — force artifacts on (when the tool supports them)
+- `{"artifacts":"off"}` — force artifacts off (runtime drops artifacts even if produced)
+
+The runtime strips the reserved `"artifacts"` field from the execution payload before decoding, and records the
+normalized value on the tool call metadata (`ArtifactsMode`). Tool payload schemas must not define a top-level
+property named `"artifacts"`.
 
 ### Bounded Results
 
@@ -889,7 +937,7 @@ type Sink interface {
 | `await_clarification` | `AwaitClarificationPayload` |
 | `await_external_tools` | `AwaitExternalToolsPayload` |
 | `usage` | `UsagePayload` (input_tokens, output_tokens) |
-| `workflow` | `WorkflowPayload` (phase, status) |
+| `workflow` | `WorkflowPayload` (phase, status, error_kind, retryable, error, debug_error) |
 | `agent_run_started` | `AgentRunStartedPayload` (child run link) |
 
 ### Stream Profiles
@@ -909,6 +957,36 @@ stream.AgentDebugProfile()
 // Metrics only (usage, workflow)
 stream.MetricsProfile()
 ```
+
+### Workflow payload contract (phases, terminal status, and errors)
+
+The runtime emits:
+
+- `RunPhaseChanged` hook events for **non-terminal** phase transitions (`planning`, `executing_tools`, `synthesizing`, etc.)
+- a single `RunCompleted` hook event per run for the **terminal** lifecycle state
+
+The stream subscriber translates these into `workflow` stream events:
+
+- **Non-terminal updates** (from `RunPhaseChanged`): `phase` only.
+- **Terminal update** (from `RunCompleted`): `status` + terminal `phase`.
+
+Terminal status mapping:
+
+- `status="success"` → `phase="completed"`
+- `status="failed"` → `phase="failed"`
+- `status="canceled"` → `phase="canceled"`
+
+Cancellation is not an error:
+
+- For `status="canceled"`, the workflow payload must not include a user-facing `error`.
+
+Failures are structured:
+
+- For `status="failed"`, the workflow payload includes:
+  - `error_kind`: stable classifier (provider kinds like `rate_limited`, `unavailable`, or runtime kinds like `timeout`/`internal`)
+  - `retryable`: whether retrying may succeed without changing input
+  - `error`: **user-safe** message suitable for direct display
+  - `debug_error`: raw error string for logs/diagnostics (not for UI)
 
 ## Policy Enforcement
 
@@ -1006,6 +1084,26 @@ type Store interface {
 
 The runtime automatically subscribes to hooks and persists events when a memory
 store is configured.
+
+### Run event store (runlog.Store)
+
+The runtime also maintains a canonical, append-only run event log used for
+introspection, audit/debug UIs, and deriving compact `run.Snapshot` values.
+
+```go
+type Store interface {
+    Append(ctx context.Context, e *runlog.Event) error
+    List(ctx context.Context, runID string, cursor string, limit int) (runlog.Page, error)
+}
+```
+
+The runtime exposes:
+
+- `Runtime.ListRunEvents(ctx, runID, cursor, limit)` for cursor-paginated listing
+- `Runtime.GetRunSnapshot(ctx, runID)` for a compact snapshot derived from replaying the run log
+
+Configure the store via `runtime.WithRunEventStore(...)`. If not set, the runtime
+defaults to an in-memory implementation (`runtime/agent/runlog/inmem`).
 
 ### Run Phases
 
@@ -1300,6 +1398,7 @@ type Tracer interface {
 | Package | Purpose |
 |---------|---------|
 | `features/memory/mongo` | MongoDB-backed memory store |
+| `features/runlog/mongo` | MongoDB-backed run event log store |
 | `features/session/mongo` | MongoDB-backed session store |
 | `features/stream/pulse` | Pulse message bus sink |
 | `features/model/bedrock` | AWS Bedrock model client |
@@ -1354,6 +1453,23 @@ caller := mcp.NewSSECaller(mcp.SSEOptions{
 
 All callers implement the `mcp.Caller` interface and include automatic retry via
 `runtime/mcp/retry`.
+
+### Server-initiated events (Broadcaster)
+
+Generated MCP adapters can stream server-initiated events (notifications, resource updates) to multiple
+subscribers via `mcp.Broadcaster`. The default in-memory implementation is:
+
+```go
+b := mcp.NewChannelBroadcaster(128, true) // (buf, drop)
+sub, _ := b.Subscribe(ctx)
+defer sub.Close()
+```
+
+### Repair prompts for invalid params (retry.RetryableError)
+
+When an MCP server reports invalid parameters and a structured repair prompt is available, generated
+clients may return `retry.RetryableError` with a deterministic `Prompt`. This is intended for LLM-driven
+correction: the model returns JSON-only corrected params, which are decoded into the operation payload and retried.
 
 ---
 

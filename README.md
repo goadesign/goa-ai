@@ -575,7 +575,7 @@ The runtime updates run state and emits `run_paused`/`run_resumed` events for UI
 - **Go 1.24+**
 - **Goa v3.22.2+** — `go install goa.design/goa/v3/cmd/goa@latest`
 - **Temporal** (optional) — For durable execution in production
-- **MongoDB** (optional) — Default memory/session/run store implementation
+- **MongoDB** (optional) — Default memory/session/run event log store implementation
 - **Redis** (optional) — For Pulse streaming and registry clustering
 
 ---
