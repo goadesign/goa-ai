@@ -100,9 +100,25 @@ docker run --rm -d --name temporal-dev -p 7233:7233 temporalio/auto-setup:latest
 Then modify the bootstrap to use the Temporal engine:
 
 ```go
-import "goa.design/goa-ai/runtime/agent/engine/temporal"
+import (
+    "goa.design/goa-ai/runtime/agent/engine/temporal"
+    "go.temporal.io/sdk/client"
 
-eng, _ := temporal.New(temporal.Options{...})
+    // Your generated tool specs aggregate.
+    // The generated package exposes: func Spec(tools.Ident) (*tools.ToolSpec, bool)
+    specs "<module>/gen/<service>/agents/<agent>/specs"
+)
+
+eng, _ := temporal.New(temporal.Options{
+    ClientOptions: &client.Options{
+        HostPort:      "127.0.0.1:7233",
+        Namespace:     "default",
+        DataConverter: temporal.NewAgentDataConverter(specs.Spec),
+    },
+    WorkerOptions: temporal.WorkerOptions{
+        TaskQueue: "<service>_<agent>_workflow",
+    },
+})
 rt := agentsruntime.New(agentsruntime.WithEngine(eng))
 ```
 

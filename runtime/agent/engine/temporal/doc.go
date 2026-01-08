@@ -19,6 +19,10 @@
 //	    ClientOptions: &client.Options{
 //	        HostPort:  "temporal:7233",
 //	        Namespace: "default",
+//	        // Required: preserve concrete tool results across workflow history replay.
+//	        // Pass the generated tool specs aggregate for the agent(s) hosted by this runtime.
+//	        // Example: specs "<module>/gen/<service>/agents/<agent>/specs"
+//	        // DataConverter: temporal.NewAgentDataConverter(specs.Spec),
 //	    },
 //	    WorkerOptions: temporal.WorkerOptions{
 //	        TaskQueue:              "orchestrator.chat",

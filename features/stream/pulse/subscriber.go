@@ -107,10 +107,12 @@ func (s *Subscriber) Subscribe(
 	}
 	events := make(chan stream.Event, s.buffer)
 	errs := make(chan error, 1)
+	done := make(chan struct{})
 	runCtx, cancel := context.WithCancel(ctx)
-	go s.consume(runCtx, sink, events, errs)
+	go s.consume(runCtx, sink, events, errs, done)
 	cancelFunc := func() {
 		cancel()
+		<-done
 		sink.Close(context.Background())
 	}
 	return events, errs, cancelFunc, nil
@@ -120,7 +122,8 @@ func (s *Subscriber) Subscribe(
 // on the out channel. It acks each event after successful emission. Closes both
 // channels when ctx is canceled or when the sink channel closes. Sends errors
 // on the errs channel if decoding or acking fails, then returns.
-func (s *Subscriber) consume(ctx context.Context, sink clientspulse.Sink, out chan<- stream.Event, errs chan<- error) {
+func (s *Subscriber) consume(ctx context.Context, sink clientspulse.Sink, out chan<- stream.Event, errs chan<- error, done chan<- struct{}) {
+	defer close(done)
 	defer close(out)
 	defer close(errs)
 	ch := sink.Subscribe()
