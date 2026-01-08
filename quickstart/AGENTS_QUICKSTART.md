@@ -354,6 +354,7 @@ if err := rt.RegisterToolset(reg); err != nil { panic(err) }
 * **Interrupts (Human-in-the-Loop):** If your policy allows it, you can pause and resume agent runs with `rt.PauseRun()` and `rt.ResumeRun()`.
 * **Policies & Caps:** The `RunPolicy` in your design (max tool calls, time budgets) is automatically enforced by the runtime.
 * **Persistence & Observability:** The `runtime.New` function accepts `runtime.Options` to configure production-grade components like a Temporal engine, MongoDB for memory, and telemetry hooks.
+* **Temporal DataConverter (required):** When you use the Temporal engine, configure the Temporal client with `temporal.NewAgentDataConverter(...)` so `planner.ToolResult.Result` remains the **concrete generated type** across workflow history replay (instead of `map[string]any`).
 * **Registries & Discovery:** When you declare registries and `FromRegistry(...)` toolsets in your DSL, Goa-AI generates typed registry HTTP clients under `gen/<svc>/registry/<name>/` plus per-toolset specs helpers (with `DiscoverAndPopulate`, `Specs`, and `RegistryToolsetID`) so you can discover tools at runtime and register executors using `runtime.ToolsetRegistration`.
 
 ```go
@@ -363,6 +364,34 @@ rt := runtime.New(runtime.Options{
     // MemoryStore: myMongoMemoryStore,
     // Stream: myEventStreamSink,
 })
+```
+
+Example: constructing a Temporal engine with the required DataConverter:
+
+```go
+import (
+    "goa.design/goa-ai/runtime/agent/engine/temporal"
+    "go.temporal.io/sdk/client"
+
+    // Your generated tool specs aggregate.
+    // The generated package exposes: func Spec(tools.Ident) (*tools.ToolSpec, bool)
+    specs "<module>/gen/<service>/agents/<agent>/specs"
+)
+
+eng, err := temporal.New(temporal.Options{
+    ClientOptions: &client.Options{
+        HostPort:      "127.0.0.1:7233",
+        Namespace:     "default",
+        DataConverter: temporal.NewAgentDataConverter(specs.Spec),
+    },
+    WorkerOptions: temporal.WorkerOptions{
+        TaskQueue: "<service>_<agent>_workflow",
+    },
+})
+if err != nil {
+    panic(err)
+}
+defer eng.Close()
 ```
 
 ---
