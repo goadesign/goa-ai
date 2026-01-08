@@ -264,8 +264,13 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 						nat.Attribute.Meta = make(map[string][]string)
 					}
 					// Only set when no tag is present so DSL authors can override it.
+					//
+					// Use json:name so Goa can append ",omitempty" based on Required(...)
+					// at the parent object boundary.
 					if _, ok := nat.Attribute.Meta["struct:tag:json"]; !ok {
-						nat.Attribute.Meta["struct:tag:json"] = []string{nat.Name}
+						if _, ok := nat.Attribute.Meta["struct:tag:json:name"]; !ok {
+							nat.Attribute.Meta["struct:tag:json:name"] = []string{nat.Name}
+						}
 					}
 				}
 			}

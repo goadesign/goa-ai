@@ -17,7 +17,7 @@ type (
 		// Identifier
 		ID string `json:"id"`
 		// Name
-		Name *string `json:"name"`
+		Name *string `json:"name,omitempty"`
 		// Address
 		Address *Address `json:"address"`
 	}
@@ -33,7 +33,7 @@ type (
 		// Identifier
 		ID string `json:"id"`
 		// Name
-		Name *string `json:"name"`
+		Name *string `json:"name,omitempty"`
 		// Address
 		Address *Address `json:"address"`
 	}
@@ -51,7 +51,7 @@ type (
 		// Identifier
 		ID *string `json:"id"`
 		// Name
-		Name    *string                                   `json:"name"`
+		Name    *string                                   `json:"name,omitempty"`
 		Address *UpsertPayloadJSONProfileJSONAddressJSON2 `json:"address"`
 	}
 	// UpsertPayloadJSONProfileJSONAddressJSON2 is a helper type for JSON decode-body.
@@ -66,7 +66,7 @@ type (
 		// Identifier
 		ID *string `json:"id"`
 		// Name
-		Name    *string                       `json:"name"`
+		Name    *string                       `json:"name,omitempty"`
 		Address *UpsertResultJSONAddressJSON2 `json:"address"`
 	}
 	// UpsertResultJSONAddressJSON2 is a helper type for JSON decode-body.

@@ -60,8 +60,8 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 				MaxAttempts: 1,
 			},
 		},
-		Specs:                      nil,
-		Policy:                     agentsruntime.RunPolicy{},
+		Specs:  nil,
+		Policy: agentsruntime.RunPolicy{},
 	}); err != nil {
 		return err
 	}

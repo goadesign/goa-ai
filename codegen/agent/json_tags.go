@@ -54,9 +54,18 @@ func addJSONTagsRecursive(att *goaexpr.AttributeExpr) {
 		if nat.Attribute.Meta == nil {
 			nat.Attribute.Meta = make(goaexpr.MetaExpr)
 		}
-		// Only set the json tag when no explicit tag was provided in the DSL.
+		// Only set the json name when no explicit json tag metadata was provided
+		// in the DSL.
+		//
+		// Use "struct:tag:json:name" (not "struct:tag:json") so Goa can append
+		// ",omitempty" automatically for fields that are not required by their
+		// parent object. This prevents optional pointer/slice/map fields from
+		// being marshaled as `"field": null`, which violates non-nullable JSON
+		// Schema contracts enforced by the registry gateway.
 		if _, ok := nat.Attribute.Meta["struct:tag:json"]; !ok {
-			nat.Attribute.Meta["struct:tag:json"] = []string{nat.Name}
+			if _, ok := nat.Attribute.Meta["struct:tag:json:name"]; !ok {
+				nat.Attribute.Meta["struct:tag:json:name"] = []string{nat.Name}
+			}
 		}
 		// Recurse into nested objects to handle inline struct fields.
 		addJSONTagsRecursive(nat.Attribute)
