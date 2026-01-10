@@ -174,15 +174,15 @@ func TestSanitizeToolName_StripsNamespaces(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			got := sanitizeToolName(tt.in)
+			got := SanitizeToolName(tt.in)
 			require.Equal(t, tt.want, got)
 		})
 	}
 }
 
 func TestSanitizeToolName_NoCollisionsAcrossToolsets(t *testing.T) {
-	a := sanitizeToolName("atlas.read.explain_control_logic")
-	b := sanitizeToolName("ada.explain_control_logic")
+	a := SanitizeToolName("atlas.read.explain_control_logic")
+	b := SanitizeToolName("ada.explain_control_logic")
 
 	require.NotEmpty(t, a)
 	require.NotEmpty(t, b)
@@ -191,10 +191,10 @@ func TestSanitizeToolName_NoCollisionsAcrossToolsets(t *testing.T) {
 
 func TestSanitizeToolName_TruncatesWithStableHashSuffix(t *testing.T) {
 	in := "atlas.read.chat." + strings.Repeat("very_long_segment_", 10) + "tool"
-	got := sanitizeToolName(in)
+	got := SanitizeToolName(in)
 
 	require.NotEmpty(t, got)
 	require.LessOrEqual(t, len(got), 64)
 	require.Regexp(t, `_[0-9a-f]{8}$`, got)
-	require.Equal(t, got, sanitizeToolName(in))
+	require.Equal(t, got, SanitizeToolName(in))
 }

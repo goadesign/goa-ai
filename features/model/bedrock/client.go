@@ -7,8 +7,6 @@ package bedrock
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -718,7 +716,7 @@ func encodeTools(
 		if canonical == "" {
 			continue
 		}
-		sanitized := sanitizeToolName(canonical)
+		sanitized := SanitizeToolName(canonical)
 		if prev, ok := sanToCanon[sanitized]; ok && prev != canonical {
 			return nil, nil, nil, fmt.Errorf(
 				"bedrock: tool name %q sanitizes to %q which collides with %q",
@@ -780,7 +778,7 @@ func encodeTools(
 		if !hasToolDefinition(defs, choice.Name) {
 			return nil, nil, nil, fmt.Errorf("bedrock: tool choice name %q does not match any tool", choice.Name)
 		}
-		sanitized := sanitizeToolName(choice.Name)
+		sanitized := SanitizeToolName(choice.Name)
 		if canonical, ok := sanToCanon[sanitized]; !ok || canonical != choice.Name {
 			return nil, nil, nil, fmt.Errorf("bedrock: tool choice name %q does not match any tool", choice.Name)
 		}
@@ -792,92 +790,6 @@ func encodeTools(
 	}
 
 	return &cfg, canonToSan, sanToCanon, nil
-}
-
-// sanitizeToolName maps a canonical tool identifier to characters allowed by
-// the Bedrock constraint [a-zA-Z0-9_-]+ by replacing any disallowed rune with
-// '_'. Unlike OpenAI-style providers, Bedrock imposes stricter constraints on
-// tool names and some models/providers surface only the tool name string in tool
-// use blocks.
-//
-// Contract:
-//   - The mapping must be deterministic and collision-free within a request.
-//   - The mapping must preserve namespace information from canonical IDs so two
-//     different tools cannot sanitize to the same provider-visible name.
-//
-// Canonical tool identifiers use dot-separated namespaces (e.g. "toolset.tool"
-// or "atlas.read.get_time_series"). We keep the full canonical ID, replace '.'
-// with '_', and apply the Bedrock rune constraint. If the sanitized name would
-// exceed Bedrock's documented 64-character limit, we truncate and append a short
-// stable hash suffix derived from the canonical ID.
-func sanitizeToolName(in string) string {
-	if in == "" {
-		return ""
-	}
-	const maxLen = 64
-	const hashLen = 8
-
-	// Fast path: if all runes are already allowed after mapping '.' to '_', keep
-	// the string allocation-free.
-	allowed := true
-	for _, r := range in {
-		if r == '.' {
-			r = '_'
-		}
-		switch {
-		case r >= 'a' && r <= 'z':
-		case r >= 'A' && r <= 'Z':
-		case r >= '0' && r <= '9':
-		case r == '_':
-		case r == '-':
-		default:
-			allowed = false
-		}
-		if !allowed {
-			break
-		}
-	}
-
-	var sanitized string
-	if allowed {
-		sanitized = strings.ReplaceAll(in, ".", "_")
-	} else {
-		out := make([]rune, 0, len(in))
-		for _, r := range in {
-			if r == '.' {
-				r = '_'
-			}
-			switch {
-			case r >= 'a' && r <= 'z':
-				out = append(out, r)
-			case r >= 'A' && r <= 'Z':
-				out = append(out, r)
-			case r >= '0' && r <= '9':
-				out = append(out, r)
-			case r == '_' || r == '-':
-				out = append(out, r)
-			default:
-				out = append(out, '_')
-			}
-		}
-		sanitized = string(out)
-	}
-
-	if len(sanitized) <= maxLen {
-		return sanitized
-	}
-
-	// Truncate and append a stable hash suffix to keep names within Bedrock's
-	// documented 64-character limit while preserving uniqueness.
-	sum := sha256.Sum256([]byte(in))
-	suffix := hex.EncodeToString(sum[:])[:hashLen]
-
-	// Reserve "_" + hashLen at the end.
-	prefixLen := maxLen - (1 + hashLen)
-	if prefixLen < 1 {
-		prefixLen = 1
-	}
-	return sanitized[:prefixLen] + "_" + suffix
 }
 
 // sanitizeDocumentName maps an arbitrary user-provided document name (typically a
