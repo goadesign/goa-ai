@@ -653,19 +653,21 @@ func (r *Runtime) adaptWithFinalizer(ctx context.Context, cfg *AgentToolConfig, 
 		attachRunLink(&result, handle)
 		return &result, nil
 	}
-	if tr.Result != nil || tr.Error != nil {
-		tr.Name = call.Name
-		tr.ToolCallID = call.ToolCallID
-		tr.ChildrenCount = len(outPtr.ToolEvents)
-		tr.Artifacts = append(tr.Artifacts, aggregateArtifacts(outPtr.ToolEvents)...)
-		attachRunLink(tr, handle)
-		return tr, nil
+
+	// Finalizer returned an empty tool result; fall through to default conversion.
+	if tr.Result == nil && tr.Error == nil {
+		result := ConvertRunOutputToToolResult(call.Name, outPtr)
+		result.ToolCallID = call.ToolCallID
+		attachRunLink(&result, handle)
+		return &result, nil
 	}
-	// Finalizer returned empty result, fall through to default conversion.
-	result := ConvertRunOutputToToolResult(call.Name, outPtr)
-	result.ToolCallID = call.ToolCallID
-	attachRunLink(&result, handle)
-	return &result, nil
+
+	tr.Name = call.Name
+	tr.ToolCallID = call.ToolCallID
+	tr.ChildrenCount = len(outPtr.ToolEvents)
+	tr.Artifacts = append(tr.Artifacts, aggregateArtifacts(outPtr.ToolEvents)...)
+	attachRunLink(tr, handle)
+	return tr, nil
 }
 
 // adaptWithJSONOnly aggregates child results into a structured JSON payload.

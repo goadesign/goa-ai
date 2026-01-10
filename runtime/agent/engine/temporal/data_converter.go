@@ -428,7 +428,7 @@ func encodeToolResultWire(specFn func(aitools.Ident) (*aitools.ToolSpec, bool), 
 		ChildrenCount: tr.ChildrenCount,
 		RunLink:       tr.RunLink,
 	}
-	if tr.Error != nil || tr.Result == nil {
+	if tr.Result == nil {
 		return w, nil
 	}
 	spec, ok := specFn(tr.Name)
