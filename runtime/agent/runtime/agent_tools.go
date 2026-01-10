@@ -646,7 +646,14 @@ func (r *Runtime) adaptWithFinalizer(ctx context.Context, cfg *AgentToolConfig, 
 		attachRunLink(result, handle)
 		return result, nil
 	}
-	if tr.Result != nil {
+	if tr == nil {
+		// Finalizer returned no tool result; fall through to default conversion.
+		result := ConvertRunOutputToToolResult(call.Name, outPtr)
+		result.ToolCallID = call.ToolCallID
+		attachRunLink(&result, handle)
+		return &result, nil
+	}
+	if tr.Result != nil || tr.Error != nil {
 		tr.Name = call.Name
 		tr.ToolCallID = call.ToolCallID
 		tr.ChildrenCount = len(outPtr.ToolEvents)

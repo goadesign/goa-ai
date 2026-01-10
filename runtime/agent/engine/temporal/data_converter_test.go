@@ -6,60 +6,95 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.temporal.io/sdk/converter"
-	"goa.design/goa-ai/runtime/agent"
-	"goa.design/goa-ai/runtime/agent/api"
+
 	"goa.design/goa-ai/runtime/agent/planner"
-	aitools "goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-func TestNewAgentDataConverter_RehydratesRunOutputToolEvents(t *testing.T) {
-	type result struct {
+func TestNewAgentDataConverter_RoundTripsToolResult(t *testing.T) {
+	type testResult struct {
 		Value string `json:"value"`
 	}
 
-	toolName := aitools.Ident("test.tool")
-	specFn := func(id aitools.Ident) (*aitools.ToolSpec, bool) {
+	toolName := tools.Ident("test.tool")
+	specFn := func(id tools.Ident) (*tools.ToolSpec, bool) {
 		if id != toolName {
 			return nil, false
 		}
-		return &aitools.ToolSpec{
+		return &tools.ToolSpec{
 			Name: toolName,
-			Result: aitools.TypeSpec{
-				Codec: aitools.JSONCodec[any]{
+			Result: tools.TypeSpec{
+				Codec: tools.JSONCodec[any]{
+					ToJSON: func(v any) ([]byte, error) {
+						if typed, ok := v.(*testResult); ok {
+							return json.Marshal(typed)
+						}
+						return nil, assert.AnError
+					},
 					FromJSON: func(data []byte) (any, error) {
-						var r result
-						if err := json.Unmarshal(data, &r); err != nil {
+						var out testResult
+						if err := json.Unmarshal(data, &out); err != nil {
 							return nil, err
 						}
-						return r, nil
+						return &out, nil
 					},
 				},
 			},
 		}, true
 	}
 
-	base := converter.NewJSONPayloadConverter()
-	payload, err := base.ToPayload(api.RunOutput{
-		AgentID: agent.Ident("agent.test"),
-		RunID:   "run-1",
-		ToolEvents: []*planner.ToolResult{
-			{
-				Name:   toolName,
-				Result: result{Value: "ok"},
-			},
-		},
+	dc := NewAgentDataConverter(specFn)
+	p, err := dc.ToPayload(&planner.ToolResult{
+		Name:   toolName,
+		Result: &testResult{Value: "ok"},
 	})
 	require.NoError(t, err)
 
-	dc := NewAgentDataConverter(specFn)
-	var decoded *api.RunOutput
-	require.NoError(t, dc.FromPayload(payload, &decoded))
+	var decoded *planner.ToolResult
+	require.NoError(t, dc.FromPayload(p, &decoded))
 	require.NotNil(t, decoded)
-	require.Len(t, decoded.ToolEvents, 1)
 
-	got := decoded.ToolEvents[0].Result
-	r, ok := got.(result)
-	require.True(t, ok, "expected decoded tool result to be concrete type, got %T", got)
-	assert.Equal(t, "ok", r.Value)
+	out, ok := decoded.Result.(*testResult)
+	require.True(t, ok, "expected decoded tool result to be *testResult, got %T", decoded.Result)
+	assert.Equal(t, "ok", out.Value)
+}
+
+func TestNewAgentDataConverter_RejectsJSONStringifiedToolResult(t *testing.T) {
+	type testResult struct {
+		Value string `json:"value"`
+	}
+
+	toolName := tools.Ident("test.tool")
+	specFn := func(id tools.Ident) (*tools.ToolSpec, bool) {
+		if id != toolName {
+			return nil, false
+		}
+		return &tools.ToolSpec{
+			Name: toolName,
+			Result: tools.TypeSpec{
+				Codec: tools.JSONCodec[any]{
+					ToJSON: func(v any) ([]byte, error) {
+						if typed, ok := v.(*testResult); ok {
+							return json.Marshal(typed)
+						}
+						return nil, assert.AnError
+					},
+					FromJSON: func(data []byte) (any, error) {
+						var out testResult
+						if err := json.Unmarshal(data, &out); err != nil {
+							return nil, err
+						}
+						return &out, nil
+					},
+				},
+			},
+		}, true
+	}
+
+	dc := NewAgentDataConverter(specFn)
+	_, err := dc.ToPayload(&planner.ToolResult{
+		Name:   toolName,
+		Result: `{"value":"ok"}`,
+	})
+	require.Error(t, err)
 }

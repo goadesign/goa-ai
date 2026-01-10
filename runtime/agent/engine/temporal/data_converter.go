@@ -107,6 +107,45 @@ func NewAgentDataConverter(spec func(aitools.Ident) (*aitools.ToolSpec, bool)) c
 	)
 }
 
+func (c *agentJSONPayloadConverter) ToPayload(value any) (*commonpb.Payload, error) {
+	switch v := value.(type) {
+	case *api.RunOutput:
+		w, err := encodeRunOutputWire(c.spec, v)
+		if err != nil {
+			return nil, err
+		}
+		return c.JSONPayloadConverter.ToPayload(w)
+	case api.RunOutput:
+		return c.ToPayload(&v)
+	case *api.PlanActivityInput:
+		w, err := encodePlanActivityInputWire(c.spec, v)
+		if err != nil {
+			return nil, err
+		}
+		return c.JSONPayloadConverter.ToPayload(w)
+	case api.PlanActivityInput:
+		return c.ToPayload(&v)
+	case *api.ToolResultsSet:
+		w, err := encodeToolResultsSetWire(c.spec, v)
+		if err != nil {
+			return nil, err
+		}
+		return c.JSONPayloadConverter.ToPayload(w)
+	case api.ToolResultsSet:
+		return c.ToPayload(&v)
+	case *planner.ToolResult:
+		w, err := encodeToolResultWire(c.spec, v)
+		if err != nil {
+			return nil, err
+		}
+		return c.JSONPayloadConverter.ToPayload(w)
+	case planner.ToolResult:
+		return c.ToPayload(&v)
+	default:
+		return c.JSONPayloadConverter.ToPayload(value)
+	}
+}
+
 func (c *agentJSONPayloadConverter) FromPayload(p *commonpb.Payload, valuePtr any) error {
 	switch valuePtr.(type) {
 	case **api.RunOutput:
@@ -308,4 +347,101 @@ func decodeToolResultWire(specFn func(aitools.Ident) (*aitools.ToolSpec, bool), 
 		ChildrenCount: w.ChildrenCount,
 		RunLink:       w.RunLink,
 	}, nil
+}
+
+func encodeRunOutputWire(specFn func(aitools.Ident) (*aitools.ToolSpec, bool), in *api.RunOutput) (*runOutputWire, error) {
+	if in == nil {
+		return nil, fmt.Errorf("temporal: run output is nil")
+	}
+	events := make([]toolResultWire, 0, len(in.ToolEvents))
+	for _, tr := range in.ToolEvents {
+		w, err := encodeToolResultWire(specFn, tr)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, *w)
+	}
+	return &runOutputWire{
+		AgentID:    in.AgentID,
+		RunID:      in.RunID,
+		Final:      in.Final,
+		ToolEvents: events,
+		Notes:      in.Notes,
+		Usage:      in.Usage,
+	}, nil
+}
+
+func encodePlanActivityInputWire(specFn func(aitools.Ident) (*aitools.ToolSpec, bool), in *api.PlanActivityInput) (*planActivityInputWire, error) {
+	if in == nil {
+		return nil, fmt.Errorf("temporal: plan activity input is nil")
+	}
+	results := make([]toolResultWire, 0, len(in.ToolResults))
+	for _, tr := range in.ToolResults {
+		w, err := encodeToolResultWire(specFn, tr)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, *w)
+	}
+	return &planActivityInputWire{
+		AgentID:     in.AgentID,
+		RunID:       in.RunID,
+		Messages:    in.Messages,
+		RunContext:  in.RunContext,
+		ToolResults: results,
+		Finalize:    in.Finalize,
+	}, nil
+}
+
+func encodeToolResultsSetWire(specFn func(aitools.Ident) (*aitools.ToolSpec, bool), in *api.ToolResultsSet) (*toolResultsSetWire, error) {
+	if in == nil {
+		return nil, fmt.Errorf("temporal: tool results set is nil")
+	}
+	results := make([]toolResultWire, 0, len(in.Results))
+	for _, tr := range in.Results {
+		w, err := encodeToolResultWire(specFn, tr)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, *w)
+	}
+	return &toolResultsSetWire{
+		RunID:      in.RunID,
+		ID:         in.ID,
+		Results:    results,
+		RetryHints: in.RetryHints,
+	}, nil
+}
+
+func encodeToolResultWire(specFn func(aitools.Ident) (*aitools.ToolSpec, bool), tr *planner.ToolResult) (*toolResultWire, error) {
+	if tr == nil {
+		return &toolResultWire{}, nil
+	}
+	w := &toolResultWire{
+		Name:          tr.Name,
+		Artifacts:     tr.Artifacts,
+		Bounds:        tr.Bounds,
+		Error:         tr.Error,
+		RetryHint:     tr.RetryHint,
+		Telemetry:     tr.Telemetry,
+		ToolCallID:    tr.ToolCallID,
+		ChildrenCount: tr.ChildrenCount,
+		RunLink:       tr.RunLink,
+	}
+	if tr.Error != nil || tr.Result == nil {
+		return w, nil
+	}
+	spec, ok := specFn(tr.Name)
+	if !ok || spec == nil {
+		return nil, fmt.Errorf("temporal: unknown tool spec for result %s", tr.Name)
+	}
+	if spec.Result.Codec.ToJSON == nil {
+		return nil, fmt.Errorf("temporal: missing result codec for %s", tr.Name)
+	}
+	raw, err := spec.Result.Codec.ToJSON(tr.Result)
+	if err != nil {
+		return nil, fmt.Errorf("temporal: encode %s tool result: %w", tr.Name, err)
+	}
+	w.Result = json.RawMessage(raw)
+	return w, nil
 }

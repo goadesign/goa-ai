@@ -89,10 +89,6 @@ func SanitizeToolName(in string) string {
 	suffix := hex.EncodeToString(sum[:])[:hashLen]
 
 	// Reserve "_" + hashLen at the end.
-	prefixLen := maxLen - (1 + hashLen)
-	if prefixLen < 1 {
-		prefixLen = 1
-	}
+	prefixLen := max(maxLen-(1+hashLen), 1)
 	return sanitized[:prefixLen] + "_" + suffix
 }
-

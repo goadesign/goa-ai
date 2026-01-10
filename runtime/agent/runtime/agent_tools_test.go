@@ -379,6 +379,48 @@ func TestJSONOnly_FinalizerError_Propagates(t *testing.T) {
 	require.Contains(t, tr.Error.Message, "agent-tool: finalizer failed")
 }
 
+func TestAgentToolFinalizer_ReturnsErrorOnlyToolResult(t *testing.T) {
+	rt := &Runtime{
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+	}
+	cfg := &AgentToolConfig{
+		AgentID:  "test.agent",
+		JSONOnly: true,
+		Finalizer: FinalizerFunc(func(context.Context, *FinalizerInput) (*planner.ToolResult, error) {
+			return &planner.ToolResult{
+				Error: planner.NewToolError("nope"),
+			}, nil
+		}),
+	}
+	call := &planner.ToolRequest{
+		Name:          tools.Ident("test.parent"),
+		ToolCallID:    "toolcall",
+		RunID:         "run",
+		SessionID:     "sess",
+		ArtifactsMode: tools.ArtifactsModeAuto,
+	}
+	out := &RunOutput{
+		Final: &model.Message{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "fallback prose"}},
+		},
+		ToolEvents: []*planner.ToolResult{
+			{Name: tools.Ident("child"), Result: map[string]any{"x": "y"}},
+		},
+	}
+
+	tr, err := rt.adaptAgentChildOutput(context.Background(), cfg, call, run.Context{RunID: "child-run"}, out)
+	require.NoError(t, err)
+	require.NotNil(t, tr)
+	require.NotNil(t, tr.Error)
+	require.Equal(t, "nope", tr.Error.Message)
+	require.Nil(t, tr.Result)
+	require.Equal(t, tools.Ident("test.parent"), tr.Name)
+}
+
 func TestAgentToolFinalizerInput_ContainsArtifactsMode(t *testing.T) {
 	rt := &Runtime{
 		logger:        telemetry.NoopLogger{},
