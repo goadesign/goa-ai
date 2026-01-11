@@ -34,6 +34,16 @@ func TestGolden_Args_UserType(t *testing.T) {
 	assertGoldenGo(t, "args_usertype", "specs.go.golden", specs)
 }
 
+func TestGolden_Args_LocatedNestedUserType(t *testing.T) {
+	files := buildAndGenerate(t, testscenarios.ArgsLocatedNestedUserType())
+	types := fileContent(t, files, "gen/alpha/toolsets/progress/types.go")
+	codecs := fileContent(t, files, "gen/alpha/toolsets/progress/codecs.go")
+	specs := fileContent(t, files, "gen/alpha/toolsets/progress/specs.go")
+	assertGoldenGo(t, "args_located_nested_usertype", "types.go.golden", types)
+	assertGoldenGo(t, "args_located_nested_usertype", "codecs.go.golden", codecs)
+	assertGoldenGo(t, "args_located_nested_usertype", "specs.go.golden", specs)
+}
+
 func TestGolden_Args_UnionSumTypes(t *testing.T) {
 	files := buildAndGenerate(t, testscenarios.ArgsUnionSumTypes())
 	types := fileContent(t, files, "gen/alpha/toolsets/union/types.go")
