@@ -13,6 +13,21 @@ import (
 	goaexpr "goa.design/goa/v3/expr"
 )
 
+func locatedUserTypePackage(att *goaexpr.AttributeExpr) string {
+	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+		return ""
+	}
+	ut, ok := att.Type.(goaexpr.UserType)
+	if !ok || ut == nil {
+		return ""
+	}
+	loc := codegen.UserTypeLocation(ut)
+	if loc == nil || loc.RelImportPath == "" {
+		return ""
+	}
+	return loc.PackageName()
+}
+
 // scopeForTool returns the NameScope used to derive all type and helper names
 // for the specs package being generated.
 func (b *toolSpecBuilder) scopeForTool() *codegen.NameScope {
@@ -92,6 +107,9 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	// to the tool-facing name, because payload and result may both alias the
 	// same underlying type hash but must remain distinct tool types.
 	att = b.renameCollidingNestedUserTypes(att, scope)
+	if pkg := locatedUserTypePackage(att); pkg != "" {
+		att = propagateStructPkgMetaToNestedUserTypes(att, pkg)
+	}
 	baseAttr := att
 	if ut, ok := att.Type.(goaexpr.UserType); ok && ut != nil {
 		baseAttr = ut.Attribute()
