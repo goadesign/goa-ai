@@ -50,7 +50,7 @@ func (r *Runtime) confirmToolsIfNeeded(wfCtx engine.WorkflowContext, input *RunI
 			title = "Confirm command"
 		}
 		// Publish await + pause. Confirmation is a runtime protocol boundary.
-		r.publishHook(ctx, hooks.NewAwaitConfirmationEvent(
+		if err := r.publishHook(ctx, hooks.NewAwaitConfirmationEvent(
 			base.RunContext.RunID,
 			input.AgentID,
 			base.RunContext.SessionID,
@@ -60,8 +60,10 @@ func (r *Runtime) confirmToolsIfNeeded(wfCtx engine.WorkflowContext, input *RunI
 			call.Name,
 			call.ToolCallID,
 			call.Payload,
-		), turnID)
-		r.publishHook(ctx, hooks.NewRunPausedEvent(
+		), turnID); err != nil {
+			return nil, nil, err
+		}
+		if err := r.publishHook(ctx, hooks.NewRunPausedEvent(
 			base.RunContext.RunID,
 			input.AgentID,
 			base.RunContext.SessionID,
@@ -69,7 +71,9 @@ func (r *Runtime) confirmToolsIfNeeded(wfCtx engine.WorkflowContext, input *RunI
 			"runtime",
 			nil,
 			nil,
-		), turnID)
+		), turnID); err != nil {
+			return nil, nil, err
+		}
 
 		dec, err := ctrl.WaitProvideConfirmation(ctx)
 		if err != nil {
@@ -92,7 +96,7 @@ func (r *Runtime) confirmToolsIfNeeded(wfCtx engine.WorkflowContext, input *RunI
 		}
 		maps.Copy(labels, dec.Labels)
 
-		r.publishHook(ctx, hooks.NewToolAuthorizationEvent(
+		if err := r.publishHook(ctx, hooks.NewToolAuthorizationEvent(
 			base.RunContext.RunID,
 			input.AgentID,
 			base.RunContext.SessionID,
@@ -101,9 +105,11 @@ func (r *Runtime) confirmToolsIfNeeded(wfCtx engine.WorkflowContext, input *RunI
 			approved,
 			plan.Prompt,
 			dec.RequestedBy,
-		), turnID)
+		), turnID); err != nil {
+			return nil, nil, err
+		}
 
-		r.publishHook(ctx, hooks.NewRunResumedEvent(
+		if err := r.publishHook(ctx, hooks.NewRunResumedEvent(
 			base.RunContext.RunID,
 			input.AgentID,
 			base.RunContext.SessionID,
@@ -111,7 +117,9 @@ func (r *Runtime) confirmToolsIfNeeded(wfCtx engine.WorkflowContext, input *RunI
 			dec.RequestedBy,
 			labels,
 			0,
-		), turnID)
+		), turnID); err != nil {
+			return nil, nil, err
+		}
 
 		if approved {
 			toExecute = append(toExecute, call)
@@ -122,8 +130,44 @@ func (r *Runtime) confirmToolsIfNeeded(wfCtx engine.WorkflowContext, input *RunI
 
 		// Publish a result event for the denied tool call so subscribers/UI
 		// see a resolved tool call without counting it as a failure.
-		r.publishHook(ctx, hooks.NewToolCallScheduledEvent(call.RunID, call.AgentID, call.SessionID, call.Name, call.ToolCallID, call.Payload, "", call.ParentToolCallID, 0), turnID)
-		r.publishHook(ctx, hooks.NewToolResultReceivedEvent(call.RunID, call.AgentID, call.SessionID, call.Name, call.ToolCallID, call.ParentToolCallID, deniedResult, formatResultPreview(call.Name, deniedResult), nil, nil, 0, nil, nil), turnID)
+		if err := r.publishHook(
+			ctx,
+			hooks.NewToolCallScheduledEvent(
+				call.RunID,
+				call.AgentID,
+				call.SessionID,
+				call.Name,
+				call.ToolCallID,
+				call.Payload,
+				"",
+				call.ParentToolCallID,
+				0,
+			),
+			turnID,
+		); err != nil {
+			return nil, nil, err
+		}
+		if err := r.publishHook(
+			ctx,
+			hooks.NewToolResultReceivedEvent(
+				call.RunID,
+				call.AgentID,
+				call.SessionID,
+				call.Name,
+				call.ToolCallID,
+				call.ParentToolCallID,
+				deniedResult,
+				formatResultPreview(call.Name, deniedResult),
+				nil,
+				nil,
+				0,
+				nil,
+				nil,
+			),
+			turnID,
+		); err != nil {
+			return nil, nil, err
+		}
 
 		denied = append(denied, &planner.ToolResult{
 			Name:       call.Name,

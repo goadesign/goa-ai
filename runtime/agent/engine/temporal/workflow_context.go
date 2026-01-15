@@ -266,6 +266,20 @@ func (w *temporalWorkflowContext) StartChildWorkflow(ctx context.Context, req en
 	return &temporalChildHandle{future: fut, ctx: cctx, cancel: cancel}, nil
 }
 
+func (w *temporalWorkflowContext) Detached() engine.WorkflowContext {
+	dctx, _ := workflow.NewDisconnectedContext(w.ctx)
+	return &temporalWorkflowContext{
+		engine:     w.engine,
+		ctx:        dctx,
+		workflowID: w.workflowID,
+		runID:      w.runID,
+		logger:     w.logger,
+		metrics:    w.metrics,
+		tracer:     w.tracer,
+		baseCtx:    w.baseCtx,
+	}
+}
+
 type temporalChildHandle struct {
 	future workflow.ChildWorkflowFuture
 	ctx    workflow.Context

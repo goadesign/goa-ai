@@ -383,6 +383,13 @@ func (w *wfCtx) StartChildWorkflow(ctx context.Context, req engine.ChildWorkflow
 	return &childHandle{h: h}, nil
 }
 
+func (w *wfCtx) Detached() engine.WorkflowContext {
+	cctx := context.WithoutCancel(w.ctx)
+	sub := *w
+	sub.ctx = cctx
+	return &sub
+}
+
 func (w *wfCtx) WithCancel() (engine.WorkflowContext, func()) {
 	cctx, cancel := context.WithCancel(w.ctx)
 	sub := *w

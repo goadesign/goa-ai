@@ -74,17 +74,21 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	}
 	// Get turn ID for event stamping
 	turnID := input.TurnID
-	r.publishHook(
+	if err := r.publishHook(
 		wfCtx.Context(),
 		hooks.NewRunStartedEvent(input.RunID, input.AgentID, runCtx, *input),
 		turnID,
-	)
+	); err != nil {
+		return nil, err
+	}
 	// Initial phase: input has been received and planning is about to begin.
-	r.publishHook(
+	if err := r.publishHook(
 		wfCtx.Context(),
 		hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, run.PhasePrompted),
 		turnID,
-	)
+	); err != nil {
+		return nil, err
+	}
 	// Track final run outcome for RunCompletedEvent so streaming and observability
 	// see accurate success/failed/canceled status instead of always "success".
 	const (
@@ -117,13 +121,16 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		// two terminal workflow events to reach subscribers, which can trigger
 		// race conditions in frontends that close streams on the first
 		// terminal event.
-		termCtx, cancel := context.WithTimeout(wfCtx.Context(), 10*time.Second)
+		detached := wfCtx.Detached()
+		termCtx, cancel := context.WithTimeout(detached.Context(), 10*time.Second)
 		defer cancel()
-		r.publishHook(
+		if err := r.publishHookErr(
 			termCtx,
 			hooks.NewRunCompletedEvent(input.RunID, input.AgentID, input.SessionID, finalStatus, phase, finalErr),
 			turnID,
-		)
+		); err != nil {
+			r.logWarn(termCtx, "run completed hook failed", err, "run_id", input.RunID, "agent_id", input.AgentID)
+		}
 	}()
 
 	planInput := &planner.PlanInput{
@@ -190,11 +197,19 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		)
 	}
 	// Transition into planning before invoking the planner activity.
-	r.publishHook(
+	if err := r.publishHook(
 		wfCtx.Context(),
 		hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, run.PhasePlanning),
 		turnID,
-	)
+	); err != nil {
+		finalErr = err
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			finalStatus = runStatusCanceled
+		} else {
+			finalStatus = runStatusFailed
+		}
+		return nil, err
+	}
 	firstOutput, err := r.runPlanActivity(wfCtx, reg.PlanActivityName, planOpts, startReq, hardDeadline)
 	if err != nil {
 		r.logger.Error(wfCtx.Context(), "Plan activity failed", "error", err)
@@ -245,11 +260,19 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		parentTracker = newChildTracker(planInput.RunContext.ParentToolCallID)
 	}
 	// Enter tool execution phase for the main run loop.
-	r.publishHook(
+	if err := r.publishHook(
 		wfCtx.Context(),
 		hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, run.PhaseExecutingTools),
 		turnID,
-	)
+	); err != nil {
+		finalErr = err
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			finalStatus = runStatusCanceled
+		} else {
+			finalStatus = runStatusFailed
+		}
+		return nil, err
+	}
 	out, err := r.runLoop(
 		wfCtx,
 		reg,
@@ -378,7 +401,7 @@ func (r *Runtime) runLoop(
 			// If planner provided structured await info, emit a typed await event first.
 			if result.Await.Clarification != nil {
 				c := result.Await.Clarification
-				r.publishHook(ctx, hooks.NewAwaitClarificationEvent(
+				if err := r.publishHook(ctx, hooks.NewAwaitClarificationEvent(
 					base.RunContext.RunID,
 					input.AgentID,
 					base.RunContext.SessionID,
@@ -387,7 +410,9 @@ func (r *Runtime) runLoop(
 					c.MissingFields,
 					c.RestrictToTool,
 					c.ExampleInput,
-				), turnID)
+				), turnID); err != nil {
+					return nil, err
+				}
 			} else if result.Await.ExternalTools != nil {
 				e := result.Await.ExternalTools
 				items := make([]hooks.AwaitToolItem, 0, len(e.Items))
@@ -398,13 +423,15 @@ func (r *Runtime) runLoop(
 						Payload:    it.Payload,
 					})
 				}
-				r.publishHook(ctx, hooks.NewAwaitExternalToolsEvent(
+				if err := r.publishHook(ctx, hooks.NewAwaitExternalToolsEvent(
 					base.RunContext.RunID,
 					input.AgentID,
 					base.RunContext.SessionID,
 					e.ID,
 					items,
-				), turnID)
+				), turnID); err != nil {
+					return nil, err
+				}
 				// Emit tool_call events for external tools so streaming/persistence
 				// consumers see the same tool_use → tool_result lifecycle as internal
 				// tools. These are not activities; queue/duration are empty/zero.
@@ -412,7 +439,7 @@ func (r *Runtime) runLoop(
 					if it.ToolCallID == "" {
 						continue
 					}
-					r.publishHook(
+					if err := r.publishHook(
 						ctx,
 						hooks.NewToolCallScheduledEvent(
 							base.RunContext.RunID,
@@ -426,10 +453,12 @@ func (r *Runtime) runLoop(
 							0,
 						),
 						turnID,
-					)
+					); err != nil {
+						return nil, err
+					}
 				}
 			}
-			r.publishHook(ctx, hooks.NewRunPausedEvent(
+			if err := r.publishHook(ctx, hooks.NewRunPausedEvent(
 				base.RunContext.RunID,
 				input.AgentID,
 				base.RunContext.SessionID,
@@ -437,7 +466,9 @@ func (r *Runtime) runLoop(
 				"runtime",
 				nil,
 				nil,
-			), turnID)
+			), turnID); err != nil {
+				return nil, err
+			}
 			// Block until the appropriate provide signal arrives.
 			if result.Await.Clarification != nil {
 				ans, err := ctrl.WaitProvideClarification(ctx)
@@ -456,7 +487,7 @@ func (r *Runtime) runLoop(
 					})
 				}
 				// Emit resumed and continue planning.
-				r.publishHook(
+				if err := r.publishHook(
 					ctx,
 					hooks.NewRunResumedEvent(
 						base.RunContext.RunID,
@@ -468,7 +499,9 @@ func (r *Runtime) runLoop(
 						1,
 					),
 					turnID,
-				)
+				); err != nil {
+					return nil, err
+				}
 				// Immediately PlanResume
 				resumeCtx := base.RunContext
 				resumeCtx.Attempt = nextAttempt
@@ -607,7 +640,7 @@ func (r *Runtime) runLoop(
 					if tr == nil {
 						continue
 					}
-					r.publishHook(
+					if err := r.publishHook(
 						ctx,
 						hooks.NewToolResultReceivedEvent(
 							base.RunContext.RunID,
@@ -625,11 +658,13 @@ func (r *Runtime) runLoop(
 							tr.Error,
 						),
 						turnID,
-					)
+					); err != nil {
+						return nil, err
+					}
 				}
 
 				// Emit resumed and continue planning.
-				r.publishHook(
+				if err := r.publishHook(
 					ctx,
 					hooks.NewRunResumedEvent(
 						base.RunContext.RunID,
@@ -641,7 +676,9 @@ func (r *Runtime) runLoop(
 						0,
 					),
 					turnID,
-				)
+				); err != nil {
+					return nil, err
+				}
 
 				// Advance to PlanResume immediately without executing internal tools.
 				resumeReq, err2 := r.buildNextResumeRequest(input.AgentID, base, lastToolResults, &nextAttempt)
@@ -685,7 +722,7 @@ func (r *Runtime) runLoop(
 				}
 			}
 			if !result.Streamed {
-				r.publishHook(
+				if err := r.publishHook(
 					ctx,
 					hooks.NewAssistantMessageEvent(
 						base.RunContext.RunID,
@@ -695,10 +732,12 @@ func (r *Runtime) runLoop(
 						nil,
 					),
 					turnID,
-				)
+				); err != nil {
+					return nil, err
+				}
 			}
 			for _, note := range result.Notes {
-				r.publishHook(
+				if err := r.publishHook(
 					ctx,
 					hooks.NewPlannerNoteEvent(
 						base.RunContext.RunID,
@@ -708,7 +747,9 @@ func (r *Runtime) runLoop(
 						note.Labels,
 					),
 					turnID,
-				)
+				); err != nil {
+					return nil, err
+				}
 			}
 			notes := make([]*planner.PlannerAnnotation, len(result.Notes))
 			for i := range result.Notes {
@@ -766,7 +807,7 @@ func (r *Runtime) runLoop(
 				if base.RunContext.ParentRunID == "" || base.RunContext.ParentAgentID == "" {
 					return nil, fmt.Errorf("nested run is missing parent run context")
 				}
-				r.publishHook(
+				if err := r.publishHook(
 					ctx,
 					hooks.NewToolCallUpdatedEvent(
 						base.RunContext.ParentRunID,
@@ -776,7 +817,9 @@ func (r *Runtime) runLoop(
 						parentTracker.currentTotal(),
 					),
 					turnID,
-				)
+				); err != nil {
+					return nil, err
+				}
 				parentTracker.markUpdated()
 			}
 		}
@@ -877,7 +920,11 @@ func (r *Runtime) runLoop(
 		// Hard protection: If this turn executed agent-as-tool calls
 		// and they produced zero child tool calls in total, do not
 		// resume. Finalize immediately to avoid loops.
-		if r.hardProtectionIfNeeded(ctx, input.AgentID, base, vals, turnID) {
+		protected, err := r.hardProtectionIfNeeded(ctx, input.AgentID, base, vals, turnID)
+		if err != nil {
+			return nil, err
+		}
+		if protected {
 			return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonFailureCap, deadline)
 		}
 
@@ -961,7 +1008,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 		if mf.RestrictToTool {
 			restrict = mf.Tool
 		}
-		r.publishHook(ctx, hooks.NewAwaitClarificationEvent(
+		if err := r.publishHook(ctx, hooks.NewAwaitClarificationEvent(
 			base.RunContext.RunID,
 			input.AgentID,
 			base.RunContext.SessionID,
@@ -970,8 +1017,10 @@ func (r *Runtime) handleMissingFieldsPolicy(
 			mf.MissingFields,
 			restrict,
 			mf.ExampleInput,
-		), turnID)
-		r.publishHook(
+		), turnID); err != nil {
+			return nil, err
+		}
+		if err := r.publishHook(
 			ctx,
 			hooks.NewRunPausedEvent(
 				base.RunContext.RunID,
@@ -983,7 +1032,9 @@ func (r *Runtime) handleMissingFieldsPolicy(
 				nil,
 			),
 			turnID,
-		)
+		); err != nil {
+			return nil, err
+		}
 		ans, err := ctrl.WaitProvideClarification(ctx)
 		if err != nil {
 			return nil, err
@@ -998,7 +1049,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 				Parts: []model.Part{model.TextPart{Text: ans.Answer}},
 			})
 		}
-		r.publishHook(ctx, hooks.NewRunResumedEvent(
+		if err := r.publishHook(ctx, hooks.NewRunResumedEvent(
 			base.RunContext.RunID,
 			input.AgentID,
 			base.RunContext.SessionID,
@@ -1006,7 +1057,9 @@ func (r *Runtime) handleMissingFieldsPolicy(
 			input.RunID,
 			ans.Labels,
 			1,
-		), turnID)
+		), turnID); err != nil {
+			return nil, err
+		}
 		return nil, nil
 	case MissingFieldsResume:
 		return nil, nil
@@ -1034,7 +1087,7 @@ func (r *Runtime) finalizeWithPlanner(
 	ctx := wfCtx.Context()
 	// Transition to synthesizing phase while we obtain a final answer without
 	// scheduling additional tools.
-	r.publishHook(
+	if err := r.publishHook(
 		ctx,
 		hooks.NewRunPhaseChangedEvent(
 			base.RunContext.RunID,
@@ -1043,7 +1096,9 @@ func (r *Runtime) finalizeWithPlanner(
 			run.PhaseSynthesizing,
 		),
 		turnID,
-	)
+	); err != nil {
+		return nil, err
+	}
 	// Prepare a brief message to steer planners that incorporate system messages.
 	var hint string
 	switch reason {
@@ -1076,7 +1131,7 @@ func (r *Runtime) finalizeWithPlanner(
 		Finalize:    &planner.Termination{Reason: reason, Message: hint},
 	}
 	// Emit a pause/resume pair to indicate a finalization turn began.
-	r.publishHook(
+	if err := r.publishHook(
 		ctx,
 		hooks.NewRunPausedEvent(
 			base.RunContext.RunID,
@@ -1088,8 +1143,10 @@ func (r *Runtime) finalizeWithPlanner(
 			nil,
 		),
 		turnID,
-	)
-	r.publishHook(
+	); err != nil {
+		return nil, err
+	}
+	if err := r.publishHook(
 		ctx,
 		hooks.NewRunResumedEvent(
 			base.RunContext.RunID,
@@ -1101,7 +1158,9 @@ func (r *Runtime) finalizeWithPlanner(
 			0,
 		),
 		turnID,
-	)
+	); err != nil {
+		return nil, err
+	}
 
 	// Human‑readable reason strings for error contexts when finalization fails.
 	reasonText := func() string {
@@ -1138,7 +1197,7 @@ func (r *Runtime) finalizeWithPlanner(
 		}
 	}
 	if !output.Result.Streamed {
-		r.publishHook(
+		if err := r.publishHook(
 			ctx,
 			hooks.NewAssistantMessageEvent(
 				base.RunContext.RunID,
@@ -1148,10 +1207,12 @@ func (r *Runtime) finalizeWithPlanner(
 				nil,
 			),
 			turnID,
-		)
+		); err != nil {
+			return nil, err
+		}
 	}
 	for _, note := range output.Result.Notes {
-		r.publishHook(
+		if err := r.publishHook(
 			ctx,
 			hooks.NewPlannerNoteEvent(
 				base.RunContext.RunID,
@@ -1161,7 +1222,9 @@ func (r *Runtime) finalizeWithPlanner(
 				note.Labels,
 			),
 			turnID,
-		)
+		); err != nil {
+			return nil, err
+		}
 	}
 	notes := make([]*planner.PlannerAnnotation, len(output.Result.Notes))
 	for i := range output.Result.Notes {
@@ -1194,7 +1257,7 @@ func (r *Runtime) handleInterrupts(
 		if !ok {
 			break
 		}
-		r.publishHook(
+		if err := r.publishHook(
 			ctx,
 			hooks.NewRunPausedEvent(
 				input.RunID,
@@ -1206,7 +1269,9 @@ func (r *Runtime) handleInterrupts(
 				req.Metadata,
 			),
 			turnID,
-		)
+		); err != nil {
+			return err
+		}
 
 		resumeReq, err := ctrl.WaitResume(ctx)
 		if err != nil {
@@ -1217,7 +1282,7 @@ func (r *Runtime) handleInterrupts(
 		}
 		base.RunContext.Attempt = *nextAttempt
 		*nextAttempt++
-		r.publishHook(
+		if err := r.publishHook(
 			ctx,
 			hooks.NewRunResumedEvent(
 				input.RunID,
@@ -1229,7 +1294,9 @@ func (r *Runtime) handleInterrupts(
 				len(resumeReq.Messages),
 			),
 			turnID,
-		)
+		); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -1362,7 +1429,7 @@ func (r *Runtime) applyRuntimePolicy(
 		allowed = filterToolCalls(allowed, decision.AllowedTools)
 	}
 	caps = mergeCaps(caps, decision.Caps)
-	r.publishHook(
+	if err := r.publishHook(
 		ctx,
 		hooks.NewPolicyDecisionEvent(
 			base.RunContext.RunID,
@@ -1374,7 +1441,9 @@ func (r *Runtime) applyRuntimePolicy(
 			cloneMetadata(decision.Metadata),
 		),
 		turnID,
-	)
+	); err != nil {
+		return nil, caps, err
+	}
 	return allowed, caps, nil
 }
 

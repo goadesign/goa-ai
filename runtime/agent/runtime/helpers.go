@@ -345,18 +345,13 @@ func (r *Runtime) publishHookErr(ctx context.Context, evt hooks.Event, turnID st
 	return r.hookActivity(ctx, in)
 }
 
-// publishHook emits a runtime hook event and panics on failure.
-//
-// Panicking is appropriate when used from deterministic workflow code: it fails
-// the workflow run immediately so the engine can retry or surface the failure.
+// publishHook emits a runtime hook event and returns an error on failure.
 //
 // Note that bus publish failures do not cause publishHookErr to return an error;
 // only failures to encode, dispatch the hook activity, or append to the canonical
 // run log are considered fatal.
-func (r *Runtime) publishHook(ctx context.Context, evt hooks.Event, turnID string) {
-	if err := r.publishHookErr(ctx, evt, turnID); err != nil {
-		panic(err)
-	}
+func (r *Runtime) publishHook(ctx context.Context, evt hooks.Event, turnID string) error {
+	return r.publishHookErr(ctx, evt, turnID)
 }
 
 // initialCaps constructs the initial caps state from the agent's run policy.

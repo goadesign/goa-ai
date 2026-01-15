@@ -81,6 +81,40 @@ func (t *testWorkflowContext) RunID() string {
 	return "run"
 }
 
+func (t *testWorkflowContext) Detached() engine.WorkflowContext {
+	if t.ctx == nil {
+		panic("testWorkflowContext.ctx is nil")
+	}
+	cctx := context.WithoutCancel(t.ctx)
+	root := t.root()
+	sub := &testWorkflowContext{
+		ctx: cctx,
+
+		lastHookCall:    t.lastHookCall,
+		lastPlannerCall: t.lastPlannerCall,
+		lastToolCall:    t.lastToolCall,
+
+		asyncResult: t.asyncResult,
+
+		planResult:    t.planResult,
+		hasPlanResult: t.hasPlanResult,
+		barrier:       t.barrier,
+		hookRuntime:   t.hookRuntime,
+		runtime:       t.runtime,
+		childRuntime:  t.childRuntime,
+
+		childRequests:      t.childRequests,
+		firstChildGetCount: t.firstChildGetCount,
+		sawFirstChildGet:   t.sawFirstChildGet,
+
+		toolFutures: t.toolFutures,
+
+		controlledChildHandles: t.controlledChildHandles,
+		parent:                 root,
+	}
+	return sub
+}
+
 func (t *testWorkflowContext) WithCancel() (engine.WorkflowContext, func()) {
 	if t.ctx == nil {
 		panic("testWorkflowContext.ctx is nil")
@@ -488,6 +522,31 @@ func (r *routeWorkflowContext) WorkflowID() string {
 
 func (r *routeWorkflowContext) RunID() string {
 	return r.runID
+}
+
+func (r *routeWorkflowContext) Detached() engine.WorkflowContext {
+	if r.ctx == nil {
+		panic("routeWorkflowContext.ctx is nil")
+	}
+	cctx := context.WithoutCancel(r.ctx)
+	root := r.root()
+	sub := &routeWorkflowContext{
+		ctx:   cctx,
+		runID: r.runID,
+
+		plannerRoutes: r.plannerRoutes,
+		toolRoutes:    r.toolRoutes,
+
+		lastHookCall:    r.lastHookCall,
+		lastPlannerCall: r.lastPlannerCall,
+		lastToolCall:    r.lastToolCall,
+
+		hookRuntime:  r.hookRuntime,
+		childRuntime: r.childRuntime,
+
+		parent: root,
+	}
+	return sub
 }
 
 func (r *routeWorkflowContext) WithCancel() (engine.WorkflowContext, func()) {

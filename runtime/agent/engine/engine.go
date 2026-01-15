@@ -249,6 +249,14 @@ type (
 		// registration lookups in the parent process.
 		StartChildWorkflow(ctx context.Context, req ChildWorkflowRequest) (ChildWorkflowHandle, error)
 
+		// Detached returns a derived WorkflowContext whose cancellation is disconnected
+		// from the parent workflow scope.
+		//
+		// This is intended for cleanup/terminal work (e.g., emitting RunCompleted
+		// hooks) that should still be attempted even when the main workflow context is
+		// canceled.
+		Detached() WorkflowContext
+
 		// WithCancel returns a derived WorkflowContext whose cancellation can be
 		// triggered independently of the parent workflow scope. This is used to
 		// cooperatively cancel in-flight activities/child workflows when the runtime

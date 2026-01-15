@@ -690,11 +690,12 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 		hasPlanResult: true,
 	}
 
-	rt.publishHook(
+	err = rt.publishHook(
 		wfCtx.Context(),
 		hooks.NewRunStartedEvent(input.RunID, input.AgentID, base.RunContext, input),
 		input.TurnID,
 	)
+	require.NoError(t, err)
 
 	initial := &planner.PlanResult{
 		ToolCalls: []planner.ToolRequest{

@@ -381,7 +381,7 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 		if err != nil {
 			return nil, err
 		}
-		rt.publishHook(
+		if err := rt.publishHook(
 			wfCtx.Context(),
 			hooks.NewAgentRunStartedEvent(
 				call.RunID,
@@ -393,7 +393,9 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 				cfg.AgentID,
 			),
 			"",
-		)
+		); err != nil {
+			return nil, err
+		}
 		outPtr, err := rt.ExecuteAgentChildWithRoute(wfCtx, cfg.Route, messages, nestedRunCtx)
 		if err != nil {
 			return nil, fmt.Errorf("execute agent: %w", err)
