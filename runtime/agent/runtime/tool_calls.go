@@ -145,7 +145,7 @@ func (r *Runtime) synthesizeToolError(
 	}
 
 	parentID := parentToolCallID(call, runCtx)
-	r.publishHook(
+	if err := r.publishHook(
 		ctx,
 		hooks.NewToolResultReceivedEvent(
 			runID,
@@ -163,7 +163,9 @@ func (r *Runtime) synthesizeToolError(
 			toolErr,
 		),
 		turnID,
-	)
+	); err != nil {
+		return nil, err
+	}
 	return toolRes, nil
 }
 
@@ -207,8 +209,8 @@ func (r *Runtime) publishToolCallScheduled(
 	queue string,
 	expectedChildren int,
 	turnID string,
-) {
-	r.publishHook(
+) error {
+	return r.publishHook(
 		ctx,
 		hooks.NewToolCallScheduledEvent(
 			runID,
@@ -288,7 +290,9 @@ func (r *Runtime) dispatchToolCalls(
 		if hasTS && ts.TaskQueue != "" {
 			queue = ts.TaskQueue
 		}
-		r.publishToolCallScheduled(ctx, runID, agentID, sessionID, call, queue, expectedChildren, turnID)
+		if err := r.publishToolCallScheduled(ctx, runID, agentID, sessionID, call, queue, expectedChildren, turnID); err != nil {
+			return nil, err
+		}
 
 		// Inline toolsets execute within the workflow loop.
 		if hasTS && ts.Inline {
@@ -319,7 +323,7 @@ func (r *Runtime) dispatchToolCalls(
 				if err != nil {
 					return nil, err
 				}
-				r.publishHook(
+				if err := r.publishHook(
 					wfCtx.Context(),
 					hooks.NewAgentRunStartedEvent(
 						call.RunID,
@@ -331,7 +335,9 @@ func (r *Runtime) dispatchToolCalls(
 						ts.AgentTool.AgentID,
 					),
 					"",
-				)
+				); err != nil {
+					return nil, err
+				}
 				route := ts.AgentTool.Route
 				if route.ID == "" || route.WorkflowName == "" || route.DefaultTaskQueue == "" {
 					return nil, fmt.Errorf("agent tool route is incomplete for %s", call.Name)
@@ -398,7 +404,7 @@ func (r *Runtime) dispatchToolCalls(
 			if err := r.enforceToolResultContracts(spec, call, toolErr, result, b.artifactsModeByCallID); err != nil {
 				return nil, err
 			}
-			r.publishHook(
+			if err := r.publishHook(
 				ctx,
 				hooks.NewToolResultReceivedEvent(
 					runID,
@@ -416,7 +422,9 @@ func (r *Runtime) dispatchToolCalls(
 					toolErr,
 				),
 				turnID,
-			)
+			); err != nil {
+				return nil, err
+			}
 			b.inlineByID[call.ToolCallID] = result
 			if parentTracker != nil {
 				b.discoveredIDs = append(b.discoveredIDs, call.ToolCallID)
@@ -469,7 +477,7 @@ func (r *Runtime) maybePublishChildTrackerUpdate(ctx context.Context, runCtx *ru
 	if runCtx == nil || runCtx.ParentRunID == "" || runCtx.ParentAgentID == "" {
 		return fmt.Errorf("nested tool tracker requires parent run context")
 	}
-	r.publishHook(
+	if err := r.publishHook(
 		ctx,
 		hooks.NewToolCallUpdatedEvent(
 			runCtx.ParentRunID,
@@ -479,7 +487,9 @@ func (r *Runtime) maybePublishChildTrackerUpdate(ctx context.Context, runCtx *ru
 			parentTracker.currentTotal(),
 		),
 		turnID,
-	)
+	); err != nil {
+		return err
+	}
 	parentTracker.markUpdated()
 	return nil
 }
@@ -574,7 +584,7 @@ func (r *Runtime) collectActivityResultsAsComplete(
 			}
 
 			parentID := parentToolCallID(info.call, runCtx)
-			r.publishHook(
+			if err := r.publishHook(
 				ctx,
 				hooks.NewToolResultReceivedEvent(
 					runID,
@@ -592,7 +602,9 @@ func (r *Runtime) collectActivityResultsAsComplete(
 					toolErr,
 				),
 				turnID,
-			)
+			); err != nil {
+				return nil, nil, false, err
+			}
 
 			activityByID[info.call.ToolCallID] = toolRes
 		}
@@ -687,7 +699,7 @@ func (r *Runtime) collectAgentChildResults(
 			}
 
 			parentID := parentToolCallID(info.call, runCtx)
-			r.publishHook(
+			if err := r.publishHook(
 				ctx,
 				hooks.NewToolResultReceivedEvent(
 					runID,
@@ -705,7 +717,9 @@ func (r *Runtime) collectAgentChildResults(
 					toolErr,
 				),
 				turnID,
-			)
+			); err != nil {
+				return nil, nil, false, err
+			}
 			out[info.call.ToolCallID] = tr
 		}
 		if finalizeTimer != nil && finalizeTimer.IsReady() && len(pending) > 0 {
@@ -778,7 +792,9 @@ func (r *Runtime) executeToolCalls(
 			if hasTS && ts.TaskQueue != "" {
 				queue = ts.TaskQueue
 			}
-			r.publishToolCallScheduled(ctx, runID, agentID, sessionID, call, queue, expectedChildren, turnID)
+			if err := r.publishToolCallScheduled(ctx, runID, agentID, sessionID, call, queue, expectedChildren, turnID); err != nil {
+				return nil, false, err
+			}
 
 			toolErr := planner.NewToolError(cancelMsg)
 			tr := &planner.ToolResult{
@@ -790,7 +806,7 @@ func (r *Runtime) executeToolCalls(
 				return nil, false, err
 			}
 			parentID := parentToolCallID(call, runCtx)
-			r.publishHook(
+			if err := r.publishHook(
 				ctx,
 				hooks.NewToolResultReceivedEvent(
 					runID,
@@ -808,7 +824,9 @@ func (r *Runtime) executeToolCalls(
 					toolErr,
 				),
 				turnID,
-			)
+			); err != nil {
+				return nil, false, err
+			}
 			results = append(results, tr)
 		}
 		return results, true, nil
@@ -937,7 +955,7 @@ func (r *Runtime) executeToolCalls(
 			}
 			duration := wfCtx.Now().Sub(info.startTime)
 			parentID := parentToolCallID(info.call, runCtx)
-			r.publishHook(
+			if err := r.publishHook(
 				ctx,
 				hooks.NewToolResultReceivedEvent(
 					runID,
@@ -955,7 +973,9 @@ func (r *Runtime) executeToolCalls(
 					toolErr,
 				),
 				turnID,
-			)
+			); err != nil {
+				return nil, false, err
+			}
 			activityByID[info.call.ToolCallID] = tr
 		}
 
@@ -981,7 +1001,7 @@ func (r *Runtime) executeToolCalls(
 			}
 			duration := wfCtx.Now().Sub(info.startTime)
 			parentID := parentToolCallID(info.call, runCtx)
-			r.publishHook(
+			if err := r.publishHook(
 				ctx,
 				hooks.NewToolResultReceivedEvent(
 					runID,
@@ -999,7 +1019,9 @@ func (r *Runtime) executeToolCalls(
 					toolErr,
 				),
 				turnID,
-			)
+			); err != nil {
+				return nil, false, err
+			}
 			batch.inlineByID[info.call.ToolCallID] = tr
 		}
 	}

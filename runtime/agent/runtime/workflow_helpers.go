@@ -354,7 +354,7 @@ func (r *Runtime) hardProtectionIfNeeded(
 	base *planner.PlanInput,
 	vals []*planner.ToolResult,
 	turnID string,
-) bool {
+) (bool, error) {
 	var agentToolCount int
 	var totalChildren int
 	toolNames := make([]tools.Ident, 0, len(vals))
@@ -368,7 +368,7 @@ func (r *Runtime) hardProtectionIfNeeded(
 		}
 	}
 	if agentToolCount > 0 && totalChildren == 0 {
-		r.publishHook(
+		if err := r.publishHook(
 			ctx,
 			hooks.NewHardProtectionEvent(
 				base.RunContext.RunID,
@@ -380,10 +380,12 @@ func (r *Runtime) hardProtectionIfNeeded(
 				toolNames,
 			),
 			turnID,
-		)
-		return true
+		); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
-	return false
+	return false, nil
 }
 
 // buildNextResumeRequest converts the base plan input into provider-ready
