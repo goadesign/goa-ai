@@ -300,6 +300,15 @@ type (
 		// cancellation semantics instead.
 		Receive(ctx context.Context) (T, error)
 
+		// ReceiveWithTimeout blocks until a signal value is delivered or the timeout
+		// elapses and returns an error. A non-positive timeout must return
+		// context.DeadlineExceeded immediately.
+		//
+		// This method is required so workflow code can enforce global run deadlines
+		// while awaiting external signals (pause/resume, confirmations, clarifications,
+		// external tool results) without relying on engine-level timeouts.
+		ReceiveWithTimeout(ctx context.Context, timeout time.Duration) (T, error)
+
 		// ReceiveAsync attempts to receive a signal without blocking.
 		ReceiveAsync() (T, bool)
 	}

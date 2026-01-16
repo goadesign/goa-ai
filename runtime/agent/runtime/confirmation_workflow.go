@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
 	"text/template"
+	"time"
 
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -15,7 +17,12 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 )
 
-func (r *Runtime) confirmToolsIfNeeded(wfCtx engine.WorkflowContext, input *RunInput, base *planner.PlanInput, allowed []planner.ToolRequest, turnID string, ctrl *interrupt.Controller) (toExecute []planner.ToolRequest, denied []*planner.ToolResult, err error) {
+// confirmToolsIfNeeded emits an await_confirmation protocol boundary for any tool call
+// that requires explicit user approval and returns the subset of calls to execute.
+//
+// When hardDeadline is set, the await is bounded to the remaining time and returns
+// context.DeadlineExceeded when the deadline is reached.
+func (r *Runtime) confirmToolsIfNeeded(wfCtx engine.WorkflowContext, input *RunInput, base *planner.PlanInput, allowed []planner.ToolRequest, turnID string, ctrl *interrupt.Controller, hardDeadline time.Time) (toExecute []planner.ToolRequest, denied []*planner.ToolResult, err error) {
 	if len(allowed) == 0 {
 		return allowed, nil, nil
 	}
@@ -75,8 +82,60 @@ func (r *Runtime) confirmToolsIfNeeded(wfCtx engine.WorkflowContext, input *RunI
 			return nil, nil, err
 		}
 
-		dec, err := ctrl.WaitProvideConfirmation(ctx)
+		timeout, ok := timeoutUntil(hardDeadline, wfCtx.Now())
+		if !ok {
+			if err := r.publishHook(ctx, hooks.NewRunResumedEvent(
+				base.RunContext.RunID,
+				input.AgentID,
+				base.RunContext.SessionID,
+				"confirmation_timeout",
+				"runtime",
+				map[string]string{
+					"resumed_by":   "confirmation_timeout",
+					"tool_name":    call.Name.String(),
+					"tool_call_id": call.ToolCallID,
+				},
+				0,
+			), turnID); err != nil {
+				return nil, nil, err
+			}
+			return nil, nil, context.DeadlineExceeded
+		}
+		dec, err := ctrl.WaitProvideConfirmation(ctx, timeout)
 		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				if err := r.publishHook(ctx, hooks.NewRunResumedEvent(
+					base.RunContext.RunID,
+					input.AgentID,
+					base.RunContext.SessionID,
+					"confirmation_timeout",
+					"runtime",
+					map[string]string{
+						"resumed_by":   "confirmation_timeout",
+						"tool_name":    call.Name.String(),
+						"tool_call_id": call.ToolCallID,
+					},
+					0,
+				), turnID); err != nil {
+					return nil, nil, err
+				}
+				return nil, nil, err
+			}
+			if err2 := r.publishHook(ctx, hooks.NewRunResumedEvent(
+				base.RunContext.RunID,
+				input.AgentID,
+				base.RunContext.SessionID,
+				"confirmation_error",
+				"runtime",
+				map[string]string{
+					"resumed_by":   "confirmation_error",
+					"tool_name":    call.Name.String(),
+					"tool_call_id": call.ToolCallID,
+				},
+				0,
+			), turnID); err2 != nil {
+				return nil, nil, err2
+			}
 			return nil, nil, err
 		}
 		if dec.ID != "" && dec.ID != awaitID {
