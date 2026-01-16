@@ -19,44 +19,85 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-// timeoutReceiver is a test receiver that deterministically times out without blocking.
-type timeoutReceiver[T any] struct{}
+type timeoutConfirmationReceiver struct{}
 
-func (timeoutReceiver[T]) Receive(ctx context.Context) (T, error) {
+func (timeoutConfirmationReceiver) Receive(ctx context.Context) (api.ConfirmationDecision, error) {
 	<-ctx.Done()
-	return *new(T), ctx.Err()
+	return api.ConfirmationDecision{}, ctx.Err()
 }
 
-func (timeoutReceiver[T]) ReceiveWithTimeout(ctx context.Context, timeout time.Duration) (T, error) {
+func (timeoutConfirmationReceiver) ReceiveWithTimeout(ctx context.Context, timeout time.Duration) (api.ConfirmationDecision, error) {
 	if err := ctx.Err(); err != nil {
-		return *new(T), err
+		return api.ConfirmationDecision{}, err
 	}
 	if timeout <= 0 {
-		return *new(T), context.DeadlineExceeded
+		return api.ConfirmationDecision{}, context.DeadlineExceeded
 	}
-	return *new(T), context.DeadlineExceeded
+	return api.ConfirmationDecision{}, context.DeadlineExceeded
 }
 
-func (timeoutReceiver[T]) ReceiveAsync() (T, bool) {
-	return *new(T), false
+func (timeoutConfirmationReceiver) ReceiveAsync() (api.ConfirmationDecision, bool) {
+	return api.ConfirmationDecision{}, false
+}
+
+type timeoutClarificationReceiver struct{}
+
+func (timeoutClarificationReceiver) Receive(ctx context.Context) (api.ClarificationAnswer, error) {
+	<-ctx.Done()
+	return api.ClarificationAnswer{}, ctx.Err()
+}
+
+func (timeoutClarificationReceiver) ReceiveWithTimeout(ctx context.Context, timeout time.Duration) (api.ClarificationAnswer, error) {
+	if err := ctx.Err(); err != nil {
+		return api.ClarificationAnswer{}, err
+	}
+	if timeout <= 0 {
+		return api.ClarificationAnswer{}, context.DeadlineExceeded
+	}
+	return api.ClarificationAnswer{}, context.DeadlineExceeded
+}
+
+func (timeoutClarificationReceiver) ReceiveAsync() (api.ClarificationAnswer, bool) {
+	return api.ClarificationAnswer{}, false
+}
+
+type timeoutResumeReceiver struct{}
+
+func (timeoutResumeReceiver) Receive(ctx context.Context) (api.ResumeRequest, error) {
+	<-ctx.Done()
+	return api.ResumeRequest{}, ctx.Err()
+}
+
+func (timeoutResumeReceiver) ReceiveWithTimeout(ctx context.Context, timeout time.Duration) (api.ResumeRequest, error) {
+	if err := ctx.Err(); err != nil {
+		return api.ResumeRequest{}, err
+	}
+	if timeout <= 0 {
+		return api.ResumeRequest{}, context.DeadlineExceeded
+	}
+	return api.ResumeRequest{}, context.DeadlineExceeded
+}
+
+func (timeoutResumeReceiver) ReceiveAsync() (api.ResumeRequest, bool) {
+	return api.ResumeRequest{}, false
 }
 
 type confirmationTimeoutWorkflowContext struct{ *testWorkflowContext }
 
 func (w *confirmationTimeoutWorkflowContext) ConfirmationDecisions() engine.Receiver[api.ConfirmationDecision] {
-	return timeoutReceiver[api.ConfirmationDecision]{}
+	return timeoutConfirmationReceiver{}
 }
 
 type clarificationTimeoutWorkflowContext struct{ *testWorkflowContext }
 
 func (w *clarificationTimeoutWorkflowContext) ClarificationAnswers() engine.Receiver[api.ClarificationAnswer] {
-	return timeoutReceiver[api.ClarificationAnswer]{}
+	return timeoutClarificationReceiver{}
 }
 
 type resumeTimeoutWorkflowContext struct{ *testWorkflowContext }
 
 func (w *resumeTimeoutWorkflowContext) ResumeRequests() engine.Receiver[api.ResumeRequest] {
-	return timeoutReceiver[api.ResumeRequest]{}
+	return timeoutResumeReceiver{}
 }
 
 func pauseResumeSequence(evts []hooks.Event) []string {
