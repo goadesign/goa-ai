@@ -1,12 +1,19 @@
 package runtime
 
+// workflow.go implements the durable plan/tool loop executed inside a workflow engine.
+//
+// Contract:
+// - The workflow loop is deterministic and replay-safe: timeouts use workflow time.
+// - The loop publishes lifecycle and tool events via hooks for streaming and persistence.
+// - Helper methods in sibling workflow_*.go files are invoked by this loop; callers should
+//   not call them directly outside of workflow execution.
+
 import (
 	"context"
 	"errors"
 	"fmt"
 	"time"
 
-	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/interrupt"
@@ -362,7 +369,7 @@ func (r *Runtime) runLoop(
 	var lastToolResults []*planner.ToolResult
 	var aggregatedToolResults []*planner.ToolResult
 	for {
-		if err := r.handleInterrupts(wfCtx, input, base, turnID, ctrl, &nextAttempt); err != nil {
+		if err := r.handleInterrupts(wfCtx, input, base, turnID, ctrl, &nextAttempt, deadline); err != nil {
 			return nil, err
 		}
 		// When a hard deadline is set, stop scheduling new work when the remaining time
@@ -471,8 +478,15 @@ func (r *Runtime) runLoop(
 			}
 			// Block until the appropriate provide signal arrives.
 			if result.Await.Clarification != nil {
-				ans, err := ctrl.WaitProvideClarification(ctx)
+				timeout, ok := timeoutUntil(deadline, wfCtx.Now())
+				if !ok {
+					return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
+				}
+				ans, err := ctrl.WaitProvideClarification(ctx, timeout)
 				if err != nil {
+					if errors.Is(err, context.DeadlineExceeded) {
+						return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
+					}
 					return nil, err
 				}
 				// Validate await ID when provided
@@ -559,8 +573,15 @@ func (r *Runtime) runLoop(
 				}
 				r.recordAssistantTurn(base, turnTranscript, awaitCalls, led)
 
-				rs, err := ctrl.WaitProvideToolResults(ctx)
+				timeout, ok := timeoutUntil(deadline, wfCtx.Now())
+				if !ok {
+					return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
+				}
+				rs, err := ctrl.WaitProvideToolResults(ctx, timeout)
 				if err != nil {
+					if errors.Is(err, context.DeadlineExceeded) {
+						return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
+					}
 					return nil, err
 				}
 				// Validate await ID when provided
@@ -827,8 +848,11 @@ func (r *Runtime) runLoop(
 		allowed = r.capAllowedCalls(allowed, input, caps)
 		allowed = r.prepareAllowedCallsMetadata(input.AgentID, base, allowed, parentTracker)
 
-		toExecute, deniedResults, cerr := r.confirmToolsIfNeeded(wfCtx, input, base, allowed, turnID, ctrl)
+		toExecute, deniedResults, cerr := r.confirmToolsIfNeeded(wfCtx, input, base, allowed, turnID, ctrl, deadline)
 		if cerr != nil {
+			if errors.Is(cerr, context.DeadlineExceeded) {
+				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
+			}
 			return nil, cerr
 		}
 		transcriptMsgs := turnTranscript
@@ -911,7 +935,7 @@ func (r *Runtime) runLoop(
 		}
 
 		// Apply missing-fields policy if configured. The helper may finalize or pause/resume.
-		if out, err := r.handleMissingFieldsPolicy(wfCtx, reg, input, base, vals, aggregatedToolResults, aggUsage, &nextAttempt, turnID, ctrl); err != nil {
+		if out, err := r.handleMissingFieldsPolicy(wfCtx, reg, input, base, vals, aggregatedToolResults, aggUsage, &nextAttempt, turnID, ctrl, deadline); err != nil {
 			return nil, err
 		} else if out != nil {
 			return out, nil
@@ -946,603 +970,15 @@ func (r *Runtime) runLoop(
 	}
 }
 
-// handleMissingFieldsPolicy inspects tool results for a RetryHint indicating missing
-// required fields and applies the agent RunPolicy.OnMissingFields behavior:
-//
-//   - MissingFieldsFinalize: immediately finalize by requesting a tool-free final answer
-//     from the planner. Returns a non-nil RunOutput to short-circuit the loop.
-//   - MissingFieldsAwaitClarification: when durable (interrupt controller present), emit
-//     an await_clarification event and pause the run. On resume, appends the user answer
-//     as a message to the base PlanInput so the next turn can proceed. Returns handled=true.
-//   - MissingFieldsResume (or unspecified): do nothing; the planner will see RetryHints
-//     and may choose how to proceed. Returns handled=false.
-//
-// The function returns:
-//   - out: non-nil only when finalization occurred
-//   - handled: true when a pause/resume cycle was performed
-//   - err: any error encountered while pausing/resuming
-func (r *Runtime) handleMissingFieldsPolicy(
-	wfCtx engine.WorkflowContext,
-	reg AgentRegistration,
-	input *RunInput,
-	base *planner.PlanInput,
-	results []*planner.ToolResult,
-	allResults []*planner.ToolResult,
-	aggUsage model.TokenUsage,
-	nextAttempt *int,
-	turnID string,
-	ctrl *interrupt.Controller,
-) (*RunOutput, error) {
-	if ctrl == nil || reg.Policy.OnMissingFields == "" {
-		return nil, nil
+// timeoutUntil returns the remaining duration until deadline, relative to now.
+// The ok result is false when deadline is non-zero and has already elapsed.
+func timeoutUntil(deadline, now time.Time) (time.Duration, bool) {
+	if deadline.IsZero() {
+		return 0, true
 	}
-	ctx := wfCtx.Context()
-	// Find first result with missing-fields hint and capture tool context.
-	var (
-		mf          *planner.RetryHint
-		triggerTool tools.Ident
-		triggerCall string
-	)
-	for _, tr := range results {
-		if tr == nil || tr.RetryHint == nil {
-			continue
-		}
-		if tr.RetryHint.Reason == planner.RetryReasonMissingFields || len(tr.RetryHint.MissingFields) > 0 {
-			mf = tr.RetryHint
-			triggerTool = tr.Name
-			triggerCall = tr.ToolCallID
-			break
-		}
+	rem := deadline.Sub(now)
+	if rem <= 0 {
+		return 0, false
 	}
-	if mf == nil {
-		return nil, nil
-	}
-	switch reg.Policy.OnMissingFields {
-	case MissingFieldsFinalize:
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, allResults, aggUsage, *nextAttempt, turnID, planner.TerminationReasonFailureCap, time.Time{})
-		return out, err
-	case MissingFieldsAwaitClarification:
-		// Generate deterministic await ID for correlation safety.
-		awaitID := generateDeterministicAwaitID(base.RunContext.RunID, base.RunContext.TurnID, triggerTool, triggerCall)
-		var restrict tools.Ident
-		if mf.RestrictToTool {
-			restrict = mf.Tool
-		}
-		if err := r.publishHook(ctx, hooks.NewAwaitClarificationEvent(
-			base.RunContext.RunID,
-			input.AgentID,
-			base.RunContext.SessionID,
-			awaitID,
-			mf.ClarifyingQuestion,
-			mf.MissingFields,
-			restrict,
-			mf.ExampleInput,
-		), turnID); err != nil {
-			return nil, err
-		}
-		if err := r.publishHook(
-			ctx,
-			hooks.NewRunPausedEvent(
-				base.RunContext.RunID,
-				input.AgentID,
-				base.RunContext.SessionID,
-				"await_clarification",
-				"runtime",
-				nil,
-				nil,
-			),
-			turnID,
-		); err != nil {
-			return nil, err
-		}
-		ans, err := ctrl.WaitProvideClarification(ctx)
-		if err != nil {
-			return nil, err
-		}
-		// Validate correlation when ID is present on the answer.
-		if ans.ID != "" && ans.ID != awaitID {
-			return nil, fmt.Errorf("unexpected await ID for clarification")
-		}
-		if ans.Answer != "" {
-			base.Messages = append(base.Messages, &model.Message{
-				Role:  model.ConversationRoleUser,
-				Parts: []model.Part{model.TextPart{Text: ans.Answer}},
-			})
-		}
-		if err := r.publishHook(ctx, hooks.NewRunResumedEvent(
-			base.RunContext.RunID,
-			input.AgentID,
-			base.RunContext.SessionID,
-			"clarification_provided",
-			input.RunID,
-			ans.Labels,
-			1,
-		), turnID); err != nil {
-			return nil, err
-		}
-		return nil, nil
-	case MissingFieldsResume:
-		return nil, nil
-	default:
-		return nil, nil
-	}
-}
-
-// finalizeWithPlanner asks the planner for a tool-free final response and returns it as RunOutput.
-func (r *Runtime) finalizeWithPlanner(
-	wfCtx engine.WorkflowContext,
-	reg AgentRegistration,
-	input *RunInput,
-	base *planner.PlanInput,
-	allToolResults []*planner.ToolResult,
-	aggUsage model.TokenUsage,
-	nextAttempt int,
-	turnID string,
-	reason planner.TerminationReason,
-	hardDeadline time.Time,
-) (*RunOutput, error) {
-	if base == nil {
-		return nil, errors.New("base plan input is required")
-	}
-	ctx := wfCtx.Context()
-	// Transition to synthesizing phase while we obtain a final answer without
-	// scheduling additional tools.
-	if err := r.publishHook(
-		ctx,
-		hooks.NewRunPhaseChangedEvent(
-			base.RunContext.RunID,
-			input.AgentID,
-			base.RunContext.SessionID,
-			run.PhaseSynthesizing,
-		),
-		turnID,
-	); err != nil {
-		return nil, err
-	}
-	// Prepare a brief message to steer planners that incorporate system messages.
-	var hint string
-	switch reason {
-	case planner.TerminationReasonTimeBudget:
-		hint = "Time budget reached. Provide the best possible final answer now. Do not call any tools."
-	case planner.TerminationReasonToolCap:
-		hint = "Tool budget exhausted. Provide the best possible final answer now. Do not call any tools."
-	case planner.TerminationReasonFailureCap:
-		hint = "Too many tool failures. Provide the best possible final answer now. Do not call any tools."
-	default:
-		hint = "Provide the best possible final answer now. Do not call any tools."
-	}
-	messages := base.Messages
-	if hint != "" {
-		messages = append(messages, &model.Message{
-			Role:  model.ConversationRoleSystem,
-			Parts: []model.Part{model.TextPart{Text: hint}},
-		})
-	}
-	resumeCtx := base.RunContext
-	resumeCtx.Attempt = nextAttempt
-	// Signal zero remaining duration for any prompt engineering that uses MaxDuration
-	resumeCtx.MaxDuration = "0s"
-	req := PlanActivityInput{
-		AgentID:     input.AgentID,
-		RunID:       base.RunContext.RunID,
-		Messages:    messages,
-		RunContext:  resumeCtx,
-		ToolResults: allToolResults,
-		Finalize:    &planner.Termination{Reason: reason, Message: hint},
-	}
-	// Emit a pause/resume pair to indicate a finalization turn began.
-	if err := r.publishHook(
-		ctx,
-		hooks.NewRunPausedEvent(
-			base.RunContext.RunID,
-			input.AgentID,
-			base.RunContext.SessionID,
-			"finalize",
-			"runtime",
-			map[string]string{"reason": string(reason)},
-			nil,
-		),
-		turnID,
-	); err != nil {
-		return nil, err
-	}
-	if err := r.publishHook(
-		ctx,
-		hooks.NewRunResumedEvent(
-			base.RunContext.RunID,
-			input.AgentID,
-			base.RunContext.SessionID,
-			"finalize",
-			base.RunContext.RunID,
-			nil,
-			0,
-		),
-		turnID,
-	); err != nil {
-		return nil, err
-	}
-
-	// Human‑readable reason strings for error contexts when finalization fails.
-	reasonText := func() string {
-		switch reason {
-		case planner.TerminationReasonTimeBudget:
-			return "time budget exceeded"
-		case planner.TerminationReasonToolCap:
-			return "tool call cap exceeded"
-		case planner.TerminationReasonFailureCap:
-			return "consecutive failed tool call cap exceeded"
-		default:
-			return "finalization failed"
-		}
-	}()
-
-	// Apply run-level Plan timeout override to Resume if present.
-	resumeOpts := reg.ResumeActivityOptions
-	if input.Policy != nil && input.Policy.PlanTimeout > 0 {
-		resumeOpts.Timeout = input.Policy.PlanTimeout
-	}
-	output, err := r.runPlanActivity(wfCtx, reg.ResumeActivityName, resumeOpts, req, hardDeadline)
-	if err != nil {
-		// Surface the termination reason prominently; include underlying error for observability.
-		return nil, fmt.Errorf("%s: %w", reasonText, err)
-	}
-	if output == nil || output.Result == nil || output.Result.FinalResponse == nil {
-		return nil, fmt.Errorf("%s", reasonText)
-	}
-	aggUsage = addTokenUsage(aggUsage, output.Usage)
-	finalMsg := output.Result.FinalResponse.Message
-	if output.Result.Streamed && agentMessageText(finalMsg) == "" {
-		if text := transcriptText(output.Transcript); text != "" {
-			finalMsg = newTextAgentMessage(model.ConversationRoleAssistant, text)
-		}
-	}
-	if !output.Result.Streamed {
-		if err := r.publishHook(
-			ctx,
-			hooks.NewAssistantMessageEvent(
-				base.RunContext.RunID,
-				input.AgentID,
-				base.RunContext.SessionID,
-				agentMessageText(finalMsg),
-				nil,
-			),
-			turnID,
-		); err != nil {
-			return nil, err
-		}
-	}
-	for _, note := range output.Result.Notes {
-		if err := r.publishHook(
-			ctx,
-			hooks.NewPlannerNoteEvent(
-				base.RunContext.RunID,
-				input.AgentID,
-				base.RunContext.SessionID,
-				note.Text,
-				note.Labels,
-			),
-			turnID,
-		); err != nil {
-			return nil, err
-		}
-	}
-	notes := make([]*planner.PlannerAnnotation, len(output.Result.Notes))
-	for i := range output.Result.Notes {
-		notes[i] = &output.Result.Notes[i]
-	}
-	return &RunOutput{
-		AgentID:    input.AgentID,
-		RunID:      base.RunContext.RunID,
-		Final:      finalMsg,
-		ToolEvents: allToolResults,
-		Notes:      notes,
-		Usage:      &aggUsage,
-	}, nil
-}
-
-func (r *Runtime) handleInterrupts(
-	wfCtx engine.WorkflowContext,
-	input *RunInput,
-	base *planner.PlanInput,
-	turnID string,
-	ctrl *interrupt.Controller,
-	nextAttempt *int,
-) error {
-	if ctrl == nil {
-		return nil
-	}
-	ctx := wfCtx.Context()
-	for {
-		req, ok := ctrl.PollPause()
-		if !ok {
-			break
-		}
-		if err := r.publishHook(
-			ctx,
-			hooks.NewRunPausedEvent(
-				input.RunID,
-				input.AgentID,
-				input.SessionID,
-				req.Reason,
-				req.RequestedBy,
-				req.Labels,
-				req.Metadata,
-			),
-			turnID,
-		); err != nil {
-			return err
-		}
-
-		resumeReq, err := ctrl.WaitResume(ctx)
-		if err != nil {
-			return err
-		}
-		if len(resumeReq.Messages) > 0 {
-			base.Messages = append(base.Messages, resumeReq.Messages...)
-		}
-		base.RunContext.Attempt = *nextAttempt
-		*nextAttempt++
-		if err := r.publishHook(
-			ctx,
-			hooks.NewRunResumedEvent(
-				input.RunID,
-				input.AgentID,
-				input.SessionID,
-				resumeReq.Notes,
-				resumeReq.RequestedBy,
-				resumeReq.Labels,
-				len(resumeReq.Messages),
-			),
-			turnID,
-		); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// runPlanActivity schedules a plan/resume activity with the configured options.
-func (r *Runtime) runPlanActivity(wfCtx engine.WorkflowContext, activityName string, options engine.ActivityOptions, input PlanActivityInput, hardDeadline time.Time) (*PlanActivityOutput, error) {
-	if activityName == "" {
-		return nil, errors.New("plan activity not registered")
-	}
-	callOpts := options
-	// Apply timeout: start with configured, then cap to remaining time to hard deadline.
-	timeout := options.Timeout
-	if !hardDeadline.IsZero() {
-		now := wfCtx.Now()
-		if rem := hardDeadline.Sub(now); rem > 0 {
-			if timeout == 0 || timeout > rem {
-				timeout = rem
-			}
-		}
-	}
-	callOpts.Timeout = timeout
-
-	out, err := wfCtx.ExecutePlannerActivity(wfCtx.Context(), engine.PlannerActivityCall{
-		Name:    activityName,
-		Input:   &input,
-		Options: callOpts,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if out == nil {
-		return nil, fmt.Errorf("CRITICAL: runPlanActivity received nil PlanActivityOutput")
-	}
-	if out.Result == nil {
-		return nil, fmt.Errorf("CRITICAL: runPlanActivity received nil PlanResult")
-	}
-	if len(out.Result.ToolCalls) == 0 && out.Result.FinalResponse == nil && out.Result.Await == nil {
-		return nil, fmt.Errorf("CRITICAL: runPlanActivity received PlanResult with no ToolCalls, FinalResponse, or Await")
-	}
-	r.logger.Info(wfCtx.Context(),
-		"runPlanActivity received PlanResult",
-		"tool_calls",
-		len(out.Result.ToolCalls),
-		"final_response",
-		out.Result.FinalResponse != nil,
-		"await",
-		out.Result.Await != nil,
-	)
-	return out, nil
-}
-
-// applyPerRunOverrides filters candidate tool calls using per-run overrides:
-// RestrictToTool and tag allow/deny lists. Returns the filtered slice.
-func (r *Runtime) applyPerRunOverrides(
-	ctx context.Context,
-	input *RunInput,
-	candidates []planner.ToolRequest,
-) []planner.ToolRequest {
-	if input == nil || input.Policy == nil || len(candidates) == 0 {
-		return candidates
-	}
-	ov := input.Policy
-	if ov.RestrictToTool == "" && len(ov.AllowedTags) == 0 && len(ov.DeniedTags) == 0 {
-		return candidates
-	}
-	r.logger.Info(ctx, "Applying per-run policy overrides", "restrict_to_tool", ov.RestrictToTool, "allowed_tags", ov.AllowedTags, "denied_tags", ov.DeniedTags)
-	metas := r.toolMetadata(candidates)
-	filtered := make([]planner.ToolRequest, 0, len(candidates))
-	for i, call := range candidates {
-		if ov.RestrictToTool != "" && call.Name != ov.RestrictToTool {
-			r.logger.Info(ctx, "Tool filtered by RestrictToTool", "tool", call.Name)
-			continue
-		}
-		ok := true
-		if len(ov.AllowedTags) > 0 || len(ov.DeniedTags) > 0 {
-			tags := metas[i].Tags
-			if len(ov.AllowedTags) > 0 && !hasIntersection(tags, ov.AllowedTags) {
-				r.logger.Info(ctx, "Tool filtered by AllowedTags", "tool", call.Name, "tags", tags, "required", ov.AllowedTags)
-				ok = false
-			}
-			if ok && len(ov.DeniedTags) > 0 && hasIntersection(tags, ov.DeniedTags) {
-				r.logger.Info(ctx, "Tool filtered by DeniedTags", "tool", call.Name, "tags", tags, "denied", ov.DeniedTags)
-				ok = false
-			}
-		}
-		if ok {
-			filtered = append(filtered, call)
-		}
-	}
-	r.logger.Info(ctx, "After per-run policy filtering", "candidates", len(filtered))
-	return filtered
-}
-
-// applyRuntimePolicy applies the runtime policy (if configured) to the provided
-// candidates, returning the allowed set and updated caps. It also records and
-// publishes the policy decision.
-func (r *Runtime) applyRuntimePolicy(
-	ctx context.Context,
-	base *planner.PlanInput,
-	input *RunInput,
-	candidates []planner.ToolRequest,
-	caps policy.CapsState,
-	turnID string,
-	retry *planner.RetryHint,
-) ([]planner.ToolRequest, policy.CapsState, error) {
-	if r.Policy == nil {
-		return candidates, caps, nil
-	}
-	r.logger.Info(ctx, "Applying runtime policy decision")
-	decision, err := r.Policy.Decide(ctx, policy.Input{
-		RunContext:    base.RunContext,
-		Tools:         r.toolMetadata(candidates),
-		RetryHint:     toPolicyRetryHint(retry),
-		RemainingCaps: caps,
-		Requested:     toolHandles(candidates),
-		Labels:        base.RunContext.Labels,
-	})
-	if err != nil {
-		return nil, caps, err
-	}
-	if len(decision.Labels) > 0 {
-		base.RunContext.Labels = mergeLabels(base.RunContext.Labels, decision.Labels)
-		input.Labels = mergeLabels(input.Labels, decision.Labels)
-	}
-	if decision.DisableTools {
-		return nil, caps, errors.New("tool execution disabled by policy")
-	}
-	allowed := candidates
-	if len(decision.AllowedTools) > 0 {
-		allowed = filterToolCalls(allowed, decision.AllowedTools)
-	}
-	caps = mergeCaps(caps, decision.Caps)
-	if err := r.publishHook(
-		ctx,
-		hooks.NewPolicyDecisionEvent(
-			base.RunContext.RunID,
-			input.AgentID,
-			base.RunContext.SessionID,
-			decision.AllowedTools,
-			caps,
-			cloneLabels(decision.Labels),
-			cloneMetadata(decision.Metadata),
-		),
-		turnID,
-	); err != nil {
-		return nil, caps, err
-	}
-	return allowed, caps, nil
-}
-
-// capAllowedCalls applies per-turn and remaining caps to the allowed set.
-func (r *Runtime) capAllowedCalls(allowed []planner.ToolRequest, input *RunInput, caps policy.CapsState) []planner.ToolRequest {
-	if input.Policy != nil && input.Policy.PerTurnMaxToolCalls > 0 && len(allowed) > input.Policy.PerTurnMaxToolCalls {
-		allowed = allowed[:input.Policy.PerTurnMaxToolCalls]
-	}
-	if caps.MaxToolCalls > 0 && caps.RemainingToolCalls < len(allowed) {
-		allowed = allowed[:caps.RemainingToolCalls]
-	}
-	return allowed
-}
-
-// prepareAllowedCallsMetadata stamps run/session/turn IDs and deterministic tool
-// call IDs on allowed calls. It also fills parentToolCallID when tracking children.
-func (r *Runtime) prepareAllowedCallsMetadata(agentID agent.Ident, base *planner.PlanInput, allowed []planner.ToolRequest, parentTracker *childTracker) []planner.ToolRequest {
-	for i := range allowed {
-		if allowed[i].RunID == "" {
-			allowed[i].RunID = base.RunContext.RunID
-		}
-		if allowed[i].AgentID == "" {
-			allowed[i].AgentID = agentID
-		}
-		if allowed[i].SessionID == "" {
-			allowed[i].SessionID = base.RunContext.SessionID
-		}
-		if allowed[i].TurnID == "" {
-			allowed[i].TurnID = base.RunContext.TurnID
-		}
-		if allowed[i].ToolCallID == "" {
-			allowed[i].ToolCallID = generateDeterministicToolCallID(
-				base.RunContext.RunID, base.RunContext.TurnID, base.RunContext.Attempt, allowed[i].Name, i,
-			)
-		}
-		if parentTracker != nil && allowed[i].ParentToolCallID == "" {
-			allowed[i].ParentToolCallID = parentTracker.parentToolCallID
-		}
-	}
-	return allowed
-}
-
-// recordAssistantTurn merges streamed transcript parts with the declared tool calls
-// and appends the resulting assistant messages to the conversation state.
-func (r *Runtime) recordAssistantTurn(base *planner.PlanInput, transcriptMsgs []*model.Message, allowed []planner.ToolRequest, led *transcript.Ledger) {
-	if led == nil {
-		led = transcript.NewLedger()
-	}
-	if len(transcriptMsgs) == 0 && len(allowed) == 0 {
-		return
-	}
-	for _, call := range allowed {
-		led.DeclareToolUse(call.ToolCallID, string(call.Name), call.Payload)
-	}
-	// Flush a single assistant message capturing the full turn (thinking/text
-	// plus all tool_use blocks) so the next user message can correlate to the
-	// complete set of tool_use IDs.
-	led.FlushAssistant()
-	messages := cloneMessages(transcriptMsgs)
-	target := findAssistantMessage(messages)
-	if target == nil {
-		target = &model.Message{Role: model.ConversationRoleAssistant}
-		messages = append(messages, target)
-	}
-	for _, call := range allowed {
-		target.Parts = append(target.Parts, model.ToolUsePart{
-			ID:    call.ToolCallID,
-			Name:  string(call.Name),
-			Input: call.Payload,
-		})
-	}
-	base.Messages = append(base.Messages, messages...)
-}
-
-func findAssistantMessage(msgs []*model.Message) *model.Message {
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i] != nil && msgs[i].Role == model.ConversationRoleAssistant {
-			return msgs[i]
-		}
-	}
-	return nil
-}
-
-func cloneMessages(msgs []*model.Message) []*model.Message {
-	if len(msgs) == 0 {
-		return nil
-	}
-	out := make([]*model.Message, 0, len(msgs))
-	for _, msg := range msgs {
-		if msg == nil {
-			continue
-		}
-		parts := make([]model.Part, len(msg.Parts))
-		copy(parts, msg.Parts)
-		out = append(out, &model.Message{
-			Role:  msg.Role,
-			Parts: parts,
-			Meta:  cloneMetadata(msg.Meta),
-		})
-	}
-	return out
+	return rem, true
 }

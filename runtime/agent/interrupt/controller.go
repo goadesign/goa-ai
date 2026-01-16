@@ -5,6 +5,7 @@ package interrupt
 
 import (
 	"context"
+	"time"
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -67,22 +68,49 @@ func (c *Controller) PollPause() (PauseRequest, bool) {
 	return c.pauseCh.ReceiveAsync()
 }
 
-// WaitResume blocks until a resume request is delivered.
-func (c *Controller) WaitResume(ctx context.Context) (ResumeRequest, error) {
+// WaitResume blocks until a resume request is delivered or the timeout elapses.
+//
+// When timeout is <= 0, WaitResume blocks until a resume request is delivered or
+// ctx is done.
+func (c *Controller) WaitResume(ctx context.Context, timeout time.Duration) (ResumeRequest, error) {
+	if timeout > 0 {
+		return c.resumeCh.ReceiveWithTimeout(ctx, timeout)
+	}
 	return c.resumeCh.Receive(ctx)
 }
 
-// WaitProvideClarification blocks until a clarification answer is delivered.
-func (c *Controller) WaitProvideClarification(ctx context.Context) (ClarificationAnswer, error) {
+// WaitProvideClarification blocks until a clarification answer is delivered or
+// the timeout elapses.
+//
+// When timeout is <= 0, WaitProvideClarification blocks until an answer is
+// delivered or ctx is done.
+func (c *Controller) WaitProvideClarification(ctx context.Context, timeout time.Duration) (ClarificationAnswer, error) {
+	if timeout > 0 {
+		return c.clarifyCh.ReceiveWithTimeout(ctx, timeout)
+	}
 	return c.clarifyCh.Receive(ctx)
 }
 
-// WaitProvideToolResults blocks until external tool results are delivered.
-func (c *Controller) WaitProvideToolResults(ctx context.Context) (ToolResultsSet, error) {
+// WaitProvideToolResults blocks until external tool results are delivered or
+// the timeout elapses.
+//
+// When timeout is <= 0, WaitProvideToolResults blocks until results are
+// delivered or ctx is done.
+func (c *Controller) WaitProvideToolResults(ctx context.Context, timeout time.Duration) (ToolResultsSet, error) {
+	if timeout > 0 {
+		return c.resultsCh.ReceiveWithTimeout(ctx, timeout)
+	}
 	return c.resultsCh.Receive(ctx)
 }
 
-// WaitProvideConfirmation blocks until a confirmation decision is delivered.
-func (c *Controller) WaitProvideConfirmation(ctx context.Context) (ConfirmationDecision, error) {
+// WaitProvideConfirmation blocks until a confirmation decision is delivered or
+// the timeout elapses.
+//
+// When timeout is <= 0, WaitProvideConfirmation blocks until a decision is
+// delivered or ctx is done.
+func (c *Controller) WaitProvideConfirmation(ctx context.Context, timeout time.Duration) (ConfirmationDecision, error) {
+	if timeout > 0 {
+		return c.confirmCh.ReceiveWithTimeout(ctx, timeout)
+	}
 	return c.confirmCh.Receive(ctx)
 }

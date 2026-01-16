@@ -245,9 +245,14 @@ func (w *temporalWorkflowContext) activityOptionsFor(name string, override engin
 	retry := mergeRetryPolicies(defaults.RetryPolicy, override.RetryPolicy)
 
 	return workflow.ActivityOptions{
-		StartToCloseTimeout: timeout,
-		TaskQueue:           queue,
-		RetryPolicy:         convertRetryPolicy(retry),
+		// Bound both queue wait time and execution time to the effective timeout.
+		// Without ScheduleToStartTimeout, a workflow can block until its run timeout
+		// when workers are unavailable, preventing deterministic deadline handling
+		// in the runtime.
+		ScheduleToStartTimeout: timeout,
+		StartToCloseTimeout:    timeout,
+		TaskQueue:              queue,
+		RetryPolicy:            convertRetryPolicy(retry),
 	}
 }
 
@@ -367,6 +372,11 @@ type temporalReceiver[T any] struct {
 	ch  workflow.ReceiveChannel
 }
 
+// Receive blocks until a signal value is delivered and returns it.
+//
+// Temporal ignores the provided ctx for signal delivery (signals are received on
+// the workflow context), but we still honor ctx cancellation before blocking so
+// callers can enforce workflow-level deadlines deterministically.
 func (r *temporalReceiver[T]) Receive(ctx context.Context) (T, error) {
 	if err := ctx.Err(); err != nil {
 		var zero T
@@ -377,6 +387,53 @@ func (r *temporalReceiver[T]) Receive(ctx context.Context) (T, error) {
 	return out, nil
 }
 
+// ReceiveWithTimeout blocks until a signal value is delivered or the timeout
+// elapses and returns context.DeadlineExceeded.
+//
+// This is implemented using a workflow timer so it is replay-safe and allows
+// runtime code to enforce global run budgets while awaiting external signals.
+func (r *temporalReceiver[T]) ReceiveWithTimeout(ctx context.Context, timeout time.Duration) (T, error) {
+	if err := ctx.Err(); err != nil {
+		var zero T
+		return zero, err
+	}
+	if timeout <= 0 {
+		var zero T
+		return zero, context.DeadlineExceeded
+	}
+
+	var (
+		out      T
+		got      bool
+		timedOut bool
+	)
+
+	timerCtx, cancel := workflow.WithCancel(r.ctx)
+	timer := workflow.NewTimer(timerCtx, timeout)
+	sel := workflow.NewSelector(r.ctx)
+	sel.AddReceive(r.ch, func(c workflow.ReceiveChannel, _ bool) {
+		cancel()
+		c.Receive(r.ctx, &out)
+		got = true
+	})
+	sel.AddFuture(timer, func(workflow.Future) {
+		timedOut = true
+	})
+	sel.Select(r.ctx)
+	cancel()
+
+	if got {
+		return out, nil
+	}
+	if timedOut {
+		var zero T
+		return zero, context.DeadlineExceeded
+	}
+	var zero T
+	return zero, errors.New("temporal receiver: select returned without signal or timeout")
+}
+
+// ReceiveAsync attempts to receive a signal value without blocking.
 func (r *temporalReceiver[T]) ReceiveAsync() (T, bool) {
 	var out T
 	if ok := r.ch.ReceiveAsync(&out); ok {

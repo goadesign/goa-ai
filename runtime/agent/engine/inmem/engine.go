@@ -540,6 +540,7 @@ func (w *wfCtx) ConfirmationDecisions() engine.Receiver[api.ConfirmationDecision
 	return receiver[api.ConfirmationDecision]{ch: w.confirmCh}
 }
 
+// Receive blocks until a signal value is delivered and returns it.
 func (r receiver[T]) Receive(ctx context.Context) (T, error) {
 	select {
 	case <-ctx.Done():
@@ -550,6 +551,32 @@ func (r receiver[T]) Receive(ctx context.Context) (T, error) {
 	}
 }
 
+// ReceiveWithTimeout blocks until a signal value is delivered or the timeout
+// elapses and returns context.DeadlineExceeded.
+func (r receiver[T]) ReceiveWithTimeout(ctx context.Context, timeout time.Duration) (T, error) {
+	if err := ctx.Err(); err != nil {
+		var zero T
+		return zero, err
+	}
+	if timeout <= 0 {
+		var zero T
+		return zero, context.DeadlineExceeded
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		var zero T
+		return zero, ctx.Err()
+	case <-timer.C:
+		var zero T
+		return zero, context.DeadlineExceeded
+	case val := <-r.ch:
+		return val, nil
+	}
+}
+
+// ReceiveAsync attempts to receive a signal value without blocking.
 func (r receiver[T]) ReceiveAsync() (T, bool) {
 	select {
 	case val := <-r.ch:

@@ -8,6 +8,7 @@ import (
 	"maps"
 	"strings"
 	"text/template"
+	"time"
 
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -15,7 +16,12 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 )
 
-func (r *Runtime) confirmToolsIfNeeded(wfCtx engine.WorkflowContext, input *RunInput, base *planner.PlanInput, allowed []planner.ToolRequest, turnID string, ctrl *interrupt.Controller) (toExecute []planner.ToolRequest, denied []*planner.ToolResult, err error) {
+// confirmToolsIfNeeded emits an await_confirmation protocol boundary for any tool call
+// that requires explicit user approval and returns the subset of calls to execute.
+//
+// When hardDeadline is set, the await is bounded to the remaining time and returns
+// context.DeadlineExceeded when the deadline is reached.
+func (r *Runtime) confirmToolsIfNeeded(wfCtx engine.WorkflowContext, input *RunInput, base *planner.PlanInput, allowed []planner.ToolRequest, turnID string, ctrl *interrupt.Controller, hardDeadline time.Time) (toExecute []planner.ToolRequest, denied []*planner.ToolResult, err error) {
 	if len(allowed) == 0 {
 		return allowed, nil, nil
 	}
@@ -75,7 +81,11 @@ func (r *Runtime) confirmToolsIfNeeded(wfCtx engine.WorkflowContext, input *RunI
 			return nil, nil, err
 		}
 
-		dec, err := ctrl.WaitProvideConfirmation(ctx)
+		timeout, ok := timeoutUntil(hardDeadline, wfCtx.Now())
+		if !ok {
+			return nil, nil, context.DeadlineExceeded
+		}
+		dec, err := ctrl.WaitProvideConfirmation(ctx, timeout)
 		if err != nil {
 			return nil, nil, err
 		}

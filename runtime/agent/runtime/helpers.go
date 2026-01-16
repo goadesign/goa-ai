@@ -21,6 +21,11 @@ import (
 
 const (
 	unknownID = "unknown"
+	// maxHookPayloadBytes is a safety bound on the serialized hook payload passed
+	// across the workflow/activity boundary. Exceeding Temporal's payload limit
+	// terminates the workflow task; failing early keeps failures explicit and
+	// debuggable.
+	maxHookPayloadBytes = 1_000_000
 )
 
 // hasNonNullJSON reports whether raw contains a non-empty JSON value other than
@@ -335,6 +340,9 @@ func (r *Runtime) publishHookErr(ctx context.Context, evt hooks.Event, turnID st
 	in, err := hooks.EncodeToHookInput(evt, turnID)
 	if err != nil {
 		return err
+	}
+	if len(in.Payload) > maxHookPayloadBytes {
+		return fmt.Errorf("hook payload too large for %s: %d bytes (limit %d)", string(evt.Type()), len(in.Payload), maxHookPayloadBytes)
 	}
 	if wfCtx := engine.WorkflowContextFromContext(ctx); wfCtx != nil && !engine.IsActivityContext(ctx) {
 		return wfCtx.PublishHook(ctx, engine.HookActivityCall{

@@ -466,6 +466,30 @@ func (r testReceiver[T]) Receive(ctx context.Context) (T, error) {
 	}
 }
 
+// ReceiveWithTimeout blocks until a value is delivered or the timeout elapses.
+func (r testReceiver[T]) ReceiveWithTimeout(ctx context.Context, timeout time.Duration) (T, error) {
+	if err := ctx.Err(); err != nil {
+		var zero T
+		return zero, err
+	}
+	if timeout <= 0 {
+		var zero T
+		return zero, context.DeadlineExceeded
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		var zero T
+		return zero, ctx.Err()
+	case <-timer.C:
+		var zero T
+		return zero, context.DeadlineExceeded
+	case val := <-r.ch:
+		return val, nil
+	}
+}
+
 func (r testReceiver[T]) ReceiveAsync() (T, bool) {
 	select {
 	case val := <-r.ch:
