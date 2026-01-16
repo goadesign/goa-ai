@@ -23,25 +23,22 @@ import (
 type timeoutReceiver[T any] struct{}
 
 func (timeoutReceiver[T]) Receive(ctx context.Context) (T, error) {
-	var zero T
 	<-ctx.Done()
-	return zero, ctx.Err()
+	return *new(T), ctx.Err()
 }
 
 func (timeoutReceiver[T]) ReceiveWithTimeout(ctx context.Context, timeout time.Duration) (T, error) {
-	var zero T
 	if err := ctx.Err(); err != nil {
-		return zero, err
+		return *new(T), err
 	}
 	if timeout <= 0 {
-		return zero, context.DeadlineExceeded
+		return *new(T), context.DeadlineExceeded
 	}
-	return zero, context.DeadlineExceeded
+	return *new(T), context.DeadlineExceeded
 }
 
 func (timeoutReceiver[T]) ReceiveAsync() (T, bool) {
-	var zero T
-	return zero, false
+	return *new(T), false
 }
 
 type confirmationTimeoutWorkflowContext struct{ *testWorkflowContext }
