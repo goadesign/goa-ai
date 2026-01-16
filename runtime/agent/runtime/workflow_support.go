@@ -232,12 +232,57 @@ func (r *Runtime) handleInterrupts(
 
 		timeout, ok := timeoutUntil(hardDeadline, wfCtx.Now())
 		if !ok {
+			if err := r.publishHook(
+				ctx,
+				hooks.NewRunResumedEvent(
+					input.RunID,
+					input.AgentID,
+					input.SessionID,
+					"deadline_exceeded",
+					"runtime",
+					map[string]string{"resumed_by": "deadline_exceeded"},
+					0,
+				),
+				turnID,
+			); err != nil {
+				return err
+			}
 			return nil
 		}
 		resumeReq, err := ctrl.WaitResume(ctx, timeout)
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
+				if err := r.publishHook(
+					ctx,
+					hooks.NewRunResumedEvent(
+						input.RunID,
+						input.AgentID,
+						input.SessionID,
+						"deadline_exceeded",
+						"runtime",
+						map[string]string{"resumed_by": "deadline_exceeded"},
+						0,
+					),
+					turnID,
+				); err != nil {
+					return err
+				}
 				return nil
+			}
+			if err2 := r.publishHook(
+				ctx,
+				hooks.NewRunResumedEvent(
+					input.RunID,
+					input.AgentID,
+					input.SessionID,
+					"resume_error",
+					"runtime",
+					map[string]string{"resumed_by": "resume_error"},
+					0,
+				),
+				turnID,
+			); err2 != nil {
+				return err2
 			}
 			return err
 		}
@@ -357,12 +402,66 @@ func (r *Runtime) handleMissingFieldsPolicy(
 		}
 		timeout, ok := timeoutUntil(hardDeadline, wfCtx.Now())
 		if !ok {
+			if err := r.publishHook(
+				ctx,
+				hooks.NewRunResumedEvent(
+					base.RunContext.RunID,
+					input.AgentID,
+					base.RunContext.SessionID,
+					"clarification_timeout",
+					"runtime",
+					map[string]string{
+						"resumed_by": "clarification_timeout",
+						"await_id":   awaitID,
+					},
+					0,
+				),
+				turnID,
+			); err != nil {
+				return nil, err
+			}
 			return r.finalizeWithPlanner(wfCtx, reg, input, base, allResults, aggUsage, *nextAttempt, turnID, planner.TerminationReasonTimeBudget, hardDeadline)
 		}
 		ans, err := ctrl.WaitProvideClarification(ctx, timeout)
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
+				if err := r.publishHook(
+					ctx,
+					hooks.NewRunResumedEvent(
+						base.RunContext.RunID,
+						input.AgentID,
+						base.RunContext.SessionID,
+						"clarification_timeout",
+						"runtime",
+						map[string]string{
+							"resumed_by": "clarification_timeout",
+							"await_id":   awaitID,
+						},
+						0,
+					),
+					turnID,
+				); err != nil {
+					return nil, err
+				}
 				return r.finalizeWithPlanner(wfCtx, reg, input, base, allResults, aggUsage, *nextAttempt, turnID, planner.TerminationReasonTimeBudget, hardDeadline)
+			}
+			if err2 := r.publishHook(
+				ctx,
+				hooks.NewRunResumedEvent(
+					base.RunContext.RunID,
+					input.AgentID,
+					base.RunContext.SessionID,
+					"clarification_error",
+					"runtime",
+					map[string]string{
+						"resumed_by": "clarification_error",
+						"await_id":   awaitID,
+					},
+					0,
+				),
+				turnID,
+			); err2 != nil {
+				return nil, err2
 			}
 			return nil, err
 		}

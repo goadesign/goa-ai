@@ -480,11 +480,39 @@ func (r *Runtime) runLoop(
 			if result.Await.Clarification != nil {
 				timeout, ok := timeoutUntil(deadline, wfCtx.Now())
 				if !ok {
+					if err := r.publishHook(ctx, hooks.NewRunResumedEvent(
+						base.RunContext.RunID,
+						input.AgentID,
+						base.RunContext.SessionID,
+						"await_timeout",
+						"runtime",
+						map[string]string{
+							"resumed_by": "await_timeout",
+							"await":      reason,
+						},
+						0,
+					), turnID); err != nil {
+						return nil, err
+					}
 					return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
 				}
 				ans, err := ctrl.WaitProvideClarification(ctx, timeout)
 				if err != nil {
 					if errors.Is(err, context.DeadlineExceeded) {
+						if err := r.publishHook(ctx, hooks.NewRunResumedEvent(
+							base.RunContext.RunID,
+							input.AgentID,
+							base.RunContext.SessionID,
+							"await_timeout",
+							"runtime",
+							map[string]string{
+								"resumed_by": "await_timeout",
+								"await":      reason,
+							},
+							0,
+						), turnID); err != nil {
+							return nil, err
+						}
 						return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
 					}
 					return nil, err
@@ -575,11 +603,39 @@ func (r *Runtime) runLoop(
 
 				timeout, ok := timeoutUntil(deadline, wfCtx.Now())
 				if !ok {
+					if err := r.publishHook(ctx, hooks.NewRunResumedEvent(
+						base.RunContext.RunID,
+						input.AgentID,
+						base.RunContext.SessionID,
+						"await_timeout",
+						"runtime",
+						map[string]string{
+							"resumed_by": "await_timeout",
+							"await":      reason,
+						},
+						0,
+					), turnID); err != nil {
+						return nil, err
+					}
 					return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
 				}
 				rs, err := ctrl.WaitProvideToolResults(ctx, timeout)
 				if err != nil {
 					if errors.Is(err, context.DeadlineExceeded) {
+						if err := r.publishHook(ctx, hooks.NewRunResumedEvent(
+							base.RunContext.RunID,
+							input.AgentID,
+							base.RunContext.SessionID,
+							"await_timeout",
+							"runtime",
+							map[string]string{
+								"resumed_by": "await_timeout",
+								"await":      reason,
+							},
+							0,
+						), turnID); err != nil {
+							return nil, err
+						}
 						return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
 					}
 					return nil, err
