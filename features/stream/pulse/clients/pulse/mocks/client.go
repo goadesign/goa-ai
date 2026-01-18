@@ -22,7 +22,7 @@ type (
 		t *testing.T
 	}
 
-	ClientStreamFunc func(name string) (pulse.Stream, error)
+	ClientStreamFunc func(name string, opts ...options.Stream) (pulse.Stream, error)
 	ClientCloseFunc  func(ctx context.Context) error
 
 	Stream struct {
@@ -60,9 +60,9 @@ func (m *Client) SetStream(f ClientStreamFunc) {
 	m.m.Set("Stream", f)
 }
 
-func (m *Client) Stream(name string) (pulse.Stream, error) {
+func (m *Client) Stream(name string, opts ...options.Stream) (pulse.Stream, error) {
 	if f := m.m.Next("Stream"); f != nil {
-		return f.(ClientStreamFunc)(name)
+		return f.(ClientStreamFunc)(name, opts...)
 	}
 	m.t.Helper()
 	m.t.Error("unexpected Stream call")

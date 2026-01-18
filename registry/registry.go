@@ -212,7 +212,6 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 		StreamManager:   streamManager,
 		HealthTracker:   healthTracker,
 		PulseClient:     pulseClient,
-		Redis:           cfg.Redis,
 		ResultStreamTTL: cfg.ResultStreamTTL,
 	})
 	if err != nil {

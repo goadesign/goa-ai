@@ -11,13 +11,14 @@ import (
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	mockpulse "goa.design/goa-ai/features/stream/pulse/clients/pulse/mocks"
 	"goa.design/goa-ai/runtime/agent/stream"
+	streamopts "goa.design/pulse/streaming/options"
 )
 
 func TestSendPublishesEnvelope(t *testing.T) {
 	cli := mockpulse.NewClient(t)
 	str := mockpulse.NewStream(t)
 
-	cli.AddStream(func(name string) (clientspulse.Stream, error) {
+	cli.AddStream(func(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
 		require.Equal(t, "run/run-123", name)
 		return str, nil
 	})
@@ -52,7 +53,7 @@ func TestOnPublishedCalled(t *testing.T) {
 	cli := mockpulse.NewClient(t)
 	str := mockpulse.NewStream(t)
 
-	cli.AddStream(func(name string) (clientspulse.Stream, error) {
+	cli.AddStream(func(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
 		require.Equal(t, "run/run-123", name)
 		return str, nil
 	})
@@ -97,7 +98,7 @@ func TestOnPublishedErrorPropagates(t *testing.T) {
 	cli := mockpulse.NewClient(t)
 	str := mockpulse.NewStream(t)
 
-	cli.AddStream(func(name string) (clientspulse.Stream, error) {
+	cli.AddStream(func(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
 		return str, nil
 	})
 	str.AddAdd(func(ctx context.Context, event string, payload []byte) (string, error) {
@@ -125,7 +126,7 @@ func TestOnPublishedErrorPropagates(t *testing.T) {
 func TestCustomStreamID(t *testing.T) {
 	cli := mockpulse.NewClient(t)
 	str := mockpulse.NewStream(t)
-	cli.AddStream(func(name string) (clientspulse.Stream, error) {
+	cli.AddStream(func(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
 		require.Equal(t, "custom/run-1", name)
 		return str, nil
 	})
@@ -157,7 +158,7 @@ func TestSendRequiresRunID(t *testing.T) {
 
 func TestStreamCreationError(t *testing.T) {
 	cli := mockpulse.NewClient(t)
-	cli.AddStream(func(name string) (clientspulse.Stream, error) {
+	cli.AddStream(func(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
 		return nil, errors.New("boom")
 	})
 	sink, err := NewSink(Options{Client: cli})
@@ -175,7 +176,7 @@ func TestStreamCreationError(t *testing.T) {
 func TestAddError(t *testing.T) {
 	cli := mockpulse.NewClient(t)
 	str := mockpulse.NewStream(t)
-	cli.AddStream(func(name string) (clientspulse.Stream, error) {
+	cli.AddStream(func(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
 		return str, nil
 	})
 	str.AddAdd(func(ctx context.Context, event string, payload []byte) (string, error) {

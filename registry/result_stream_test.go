@@ -135,7 +135,7 @@ func newMockPulseClient() *mockPulseClient {
 	}
 }
 
-func (c *mockPulseClient) Stream(name string) (clientspulse.Stream, error) {
+func (c *mockPulseClient) Stream(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	stream := &mockPulseStream{
@@ -393,7 +393,7 @@ func newMockPulseClientWithCapture() *mockPulseClientWithCapture {
 	}
 }
 
-func (c *mockPulseClientWithCapture) Stream(name string) (clientspulse.Stream, error) {
+func (c *mockPulseClientWithCapture) Stream(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	stream := &mockPulseStreamWithCapture{

@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
+	streamopts "goa.design/pulse/streaming/options"
 )
 
 type (
@@ -35,10 +36,6 @@ type (
 		// DestroyResultStream destroys the result stream for a tool use ID.
 		// This should be called after receiving a result or on timeout.
 		DestroyResultStream(ctx context.Context, toolUseID string) error
-
-		// SetTTL sets the TTL on the result stream's Redis key.
-		// This is called after stream creation to configure automatic expiry.
-		SetTTL(ctx context.Context, toolUseID string, ttl time.Duration) error
 
 		// WaitForResult subscribes to the result stream and waits for a result.
 		// It returns the result message or an error if the timeout is reached.
@@ -73,8 +70,11 @@ type (
 	ResultStreamManagerOptions struct {
 		// Client is the Pulse client for creating streams.
 		Client clientspulse.Client
-		// Redis is the Redis client for storing mappings and setting TTL.
+		// Redis is the Redis client for storing tool_use_id → stream_id mappings.
 		Redis *redis.Client
+		// ResultStreamTTL is the TTL configured on per-call result streams. Defaults
+		// to 15 minutes when zero.
+		ResultStreamTTL time.Duration
 		// MappingTTL is the TTL for tool_use_id to stream_id mappings in Redis.
 		// Defaults to 5 minutes if not specified.
 		MappingTTL time.Duration
@@ -82,16 +82,20 @@ type (
 
 	// resultStreamManager is the default implementation of ResultStreamManager.
 	resultStreamManager struct {
-		client     clientspulse.Client
-		rdb        *redis.Client
-		mappingTTL time.Duration
-		mu         sync.RWMutex
-		streams    map[string]clientspulse.Stream // local cache keyed by tool_use_id
+		client          clientspulse.Client
+		rdb             *redis.Client
+		resultStreamTTL time.Duration
+		mappingTTL      time.Duration
+		mu              sync.RWMutex
+		streams         map[string]clientspulse.Stream // local cache keyed by tool_use_id
 	}
 )
 
 // DefaultMappingTTL is the default TTL for tool_use_id to stream_id mappings.
 const DefaultMappingTTL = 5 * time.Minute
+
+// DefaultResultStreamTTL is the default TTL for per-call result streams.
+const DefaultResultStreamTTL = 15 * time.Minute
 
 // NewResultStreamManager creates a new ResultStreamManager.
 func NewResultStreamManager(opts ResultStreamManagerOptions) (ResultStreamManager, error) {
@@ -101,15 +105,20 @@ func NewResultStreamManager(opts ResultStreamManagerOptions) (ResultStreamManage
 	if opts.Redis == nil {
 		return nil, fmt.Errorf("redis client is required")
 	}
+	resultStreamTTL := opts.ResultStreamTTL
+	if resultStreamTTL == 0 {
+		resultStreamTTL = DefaultResultStreamTTL
+	}
 	mappingTTL := opts.MappingTTL
 	if mappingTTL == 0 {
 		mappingTTL = DefaultMappingTTL
 	}
 	return &resultStreamManager{
-		client:     opts.Client,
-		rdb:        opts.Redis,
-		mappingTTL: mappingTTL,
-		streams:    make(map[string]clientspulse.Stream),
+		client:          opts.Client,
+		rdb:             opts.Redis,
+		resultStreamTTL: resultStreamTTL,
+		mappingTTL:      mappingTTL,
+		streams:         make(map[string]clientspulse.Stream),
 	}, nil
 }
 
@@ -123,18 +132,12 @@ func redisKeyForMapping(toolUseID string) string {
 	return fmt.Sprintf("registry:result-stream:%s", toolUseID)
 }
 
-// redisKeyForStream returns the Redis key for a Pulse stream.
-// Pulse uses the prefix "pulse:stream:" for stream keys.
-func redisKeyForStream(streamID string) string {
-	return fmt.Sprintf("pulse:stream:%s", streamID)
-}
-
 // CreateResultStream creates a temporary result stream for a tool invocation.
 func (m *resultStreamManager) CreateResultStream(ctx context.Context) (clientspulse.Stream, string, string, error) {
 	toolUseID := uuid.New().String()
 	streamID := resultStreamIDForToolUse(toolUseID)
 
-	stream, err := m.client.Stream(streamID)
+	stream, err := m.client.Stream(streamID, streamopts.WithStreamTTL(m.resultStreamTTL))
 	if err != nil {
 		return nil, "", "", fmt.Errorf("create result stream: %w", err)
 	}
@@ -216,16 +219,6 @@ func (m *resultStreamManager) DestroyResultStream(ctx context.Context, toolUseID
 	}
 	if err := stream.Destroy(ctx); err != nil {
 		return fmt.Errorf("destroy result stream: %w", err)
-	}
-	return nil
-}
-
-// SetTTL sets the TTL on the result stream's Redis key.
-func (m *resultStreamManager) SetTTL(ctx context.Context, toolUseID string, ttl time.Duration) error {
-	streamID := resultStreamIDForToolUse(toolUseID)
-	key := redisKeyForStream(streamID)
-	if err := m.rdb.Expire(ctx, key, ttl).Err(); err != nil {
-		return fmt.Errorf("set TTL on result stream: %w", err)
 	}
 	return nil
 }
