@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	toolhttp "goa.design/goa-ai/atlas_data_agent/toolsets/docs/http"
 	"goa.design/goa-ai/runtime/agent/tools"
 	goa "goa.design/goa/v3/pkg"
 	"strings"
@@ -155,30 +156,6 @@ func enrichReadResultValidationError(err error) error {
 	ve.descriptions = m
 	return ve
 }
-func enrichReadPayloadJSON2ValidationError(err error) error {
-	ve, ok := err.(*ValidationError)
-	if !ok || ve == nil {
-		return err
-	}
-	if len(ve.issues) == 0 {
-		return err
-	}
-	m := make(map[string]string)
-	ve.descriptions = m
-	return ve
-}
-func enrichReadResultJSON2ValidationError(err error) error {
-	ve, ok := err.(*ValidationError)
-	if !ok || ve == nil {
-		return err
-	}
-	if len(ve.issues) == 0 {
-		return err
-	}
-	m := make(map[string]string)
-	ve.descriptions = m
-	return ve
-}
 
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
@@ -213,7 +190,13 @@ func MarshalReadPayload(v *ReadPayload) ([]byte, error) {
 	if v == nil {
 		return nil, fmt.Errorf("readPayload is nil")
 	}
-	return json.Marshal(v)
+	in := v
+	_ = in
+	var out *toolhttp.ReadPayloadTransport
+	out = &toolhttp.ReadPayloadTransport{
+		ID: &in.ID,
+	}
+	return json.Marshal(out)
 }
 
 // UnmarshalReadPayload deserializes JSON into *ReadPayload.
@@ -221,25 +204,22 @@ func UnmarshalReadPayload(data []byte) (*ReadPayload, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("readPayload JSON is empty")
 	}
-	// Decode into JSON body (server body style) then transform.
-	// Note: Agent used-tools perform lenient decode (no required-field validation here).
-	var raw ReadPayloadJSON2
-	if err := json.Unmarshal(data, &raw); err != nil {
+	var tv toolhttp.ReadPayloadTransport
+	if err := json.Unmarshal(data, &tv); err != nil {
 		return nil, fmt.Errorf("decode readPayload: %w", err)
 	}
-	var err error
-	if raw.ID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("id", "raw"))
-	}
-	if err != nil {
+	if err := toolhttp.ValidateReadPayloadTransport(&tv); err != nil {
 		err = newValidationError(err)
+		err = enrichReadPayloadValidationError(err)
 		return nil, err
 	}
-	// Transform into final type
-	v := &ReadPayload{
-		ID: *raw.ID,
+	in := &tv
+	_ = in
+	var out *ReadPayload
+	out = &ReadPayload{
+		ID: *in.ID,
 	}
-	return v, nil
+	return out, nil
 }
 
 // MarshalReadResult serializes *ReadResult into JSON.
@@ -247,7 +227,13 @@ func MarshalReadResult(v *ReadResult) ([]byte, error) {
 	if v == nil {
 		return nil, fmt.Errorf("readResult is nil")
 	}
-	return json.Marshal(v)
+	in := v
+	_ = in
+	var out *toolhttp.ReadResultTransport
+	out = &toolhttp.ReadResultTransport{
+		ID: &in.ID,
+	}
+	return json.Marshal(out)
 }
 
 // UnmarshalReadResult deserializes JSON into *ReadResult.
@@ -255,47 +241,20 @@ func UnmarshalReadResult(data []byte) (*ReadResult, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("readResult JSON is empty")
 	}
-	// Decode into JSON body (server body style) then transform.
-	// Note: Agent used-tools perform lenient decode (no required-field validation here).
-	var raw ReadResultJSON2
-	if err := json.Unmarshal(data, &raw); err != nil {
+	var tv toolhttp.ReadResultTransport
+	if err := json.Unmarshal(data, &tv); err != nil {
 		return nil, fmt.Errorf("decode readResult: %w", err)
 	}
-	var err error
-	if raw.ID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("id", "raw"))
-	}
-	if err != nil {
+	if err := toolhttp.ValidateReadResultTransport(&tv); err != nil {
 		err = newValidationError(err)
+		err = enrichReadResultValidationError(err)
 		return nil, err
 	}
-	// Transform into final type
-	v := &ReadResult{
-		ID: *raw.ID,
+	in := &tv
+	_ = in
+	var out *ReadResult
+	out = &ReadResult{
+		ID: *in.ID,
 	}
-	return v, nil
-}
-
-// Transform helpers
-
-// ValidateDoc validates values of type *Doc.
-func ValidateDoc(body *Doc) (err error) {
-
-	return
-}
-
-// ValidateReadPayloadJSON2 validates values of type *ReadPayloadJSON2.
-func ValidateReadPayloadJSON2(body *ReadPayloadJSON2) (err error) {
-	if body.ID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
-	}
-	return
-}
-
-// ValidateReadResultJSON2 validates values of type *ReadResultJSON2.
-func ValidateReadResultJSON2(body *ReadResultJSON2) (err error) {
-	if body.ID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
-	}
-	return
+	return out, nil
 }

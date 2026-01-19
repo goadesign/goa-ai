@@ -110,6 +110,71 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 		if err != nil || specsData == nil {
 			continue
 		}
+
+		const (
+			transportDirName  = "http"
+			transportPkgName  = "http"
+			transportPkgAlias = "toolhttp"
+		)
+
+		// http/types.go (+ unions) transport-only package used by codecs for decode+validation.
+		transportTypes := make([]*typeData, 0)
+		for _, td := range specsData.typesList() {
+			if td != nil && td.TransportDef != "" {
+				transportTypes = append(transportTypes, td)
+			}
+		}
+		if len(transportTypes) > 0 && ts.SpecsImportPath != "" {
+			timports := specsData.transportTypeImports()
+			transportSections := []*codegen.SectionTemplate{
+				codegen.Header(ts.Name+" tool transport types", transportPkgName, timports),
+				{
+					Name:    "tool-transport-types",
+					Source:  agentsTemplates.Read(toolTransportTypesFileT),
+					Data:    toolTransportTypesFileData{Types: transportTypes},
+					FuncMap: templateFuncMap(),
+				},
+			}
+			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, transportDirName, "types.go"), SectionTemplates: transportSections})
+			// http/validate.go
+			validateImports := []*codegen.ImportSpec{
+				codegen.SimpleImport("encoding/json"),
+				codegen.SimpleImport("fmt"),
+				codegen.GoaImport(""),
+			}
+			validateImports = append(validateImports, timports...)
+			if specsData.needsUnicodeImport() {
+				validateImports = append(validateImports, codegen.SimpleImport("unicode/utf8"))
+			}
+			validateSections := []*codegen.SectionTemplate{
+				codegen.Header(ts.Name+" tool transport validators", transportPkgName, validateImports),
+				{
+					Name:    "tool-transport-validate",
+					Source:  agentsTemplates.Read(toolTransportValidateFileT),
+					Data:    toolTransportTypesFileData{Types: transportTypes},
+					FuncMap: templateFuncMap(),
+				},
+			}
+			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, transportDirName, "validate.go"), SectionTemplates: validateSections})
+			if len(specsData.TransportUnions) > 0 {
+				unionImports := []*codegen.ImportSpec{
+					codegen.SimpleImport("encoding/json"),
+					codegen.SimpleImport("fmt"),
+					codegen.GoaImport(""),
+				}
+				unionImports = append(unionImports, timports...)
+				unionSections := []*codegen.SectionTemplate{
+					codegen.Header(ts.Name+" tool transport union types", transportPkgName, unionImports),
+					{
+						Name:    "tool-transport-union-types",
+						Source:  agentsTemplates.Read(toolUnionTypesFileT),
+						Data:    toolUnionTypesFileData{Unions: specsData.TransportUnions},
+						FuncMap: templateFuncMap(),
+					},
+				}
+				out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, transportDirName, "unions.go"), SectionTemplates: unionSections})
+			}
+		}
 		// types.go
 		if pure := specsData.pureTypes(); len(pure) > 0 {
 			sections := []*codegen.SectionTemplate{
@@ -144,14 +209,24 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 		}
 		if len(specsData.tools) > 0 {
 			types := specsData.typesList()
-			dedupTransformHelpers(types)
 			// codecs.go
+			codecImports := specsData.codecsImports()
+			// Inject tool transport package import (must be before strings import to
+			// preserve golden import ordering).
+			if ts.SpecsImportPath != "" {
+				transportImport := &codegen.ImportSpec{Name: transportPkgAlias, Path: ts.SpecsImportPath + "/" + transportDirName}
+				if len(codecImports) > 0 && codecImports[len(codecImports)-1].Path == "strings" {
+					codecImports = append(codecImports[:len(codecImports)-1], append([]*codegen.ImportSpec{transportImport}, codecImports[len(codecImports)-1:]...)...)
+				} else {
+					codecImports = append(codecImports, transportImport)
+				}
+			}
 			codecsSections := []*codegen.SectionTemplate{
-				codegen.Header(ts.Name+" tool codecs", ts.SpecsPackageName, specsData.codecsImports()),
+				codegen.Header(ts.Name+" tool codecs", ts.SpecsPackageName, codecImports),
 				{
 					Name:    "tool-spec-codecs",
 					Source:  agentsTemplates.Read(toolCodecsFileT),
-					Data:    toolCodecsFileData{Types: types, Tools: specsData.tools},
+					Data:    toolCodecsFileData{Types: types, Tools: specsData.tools, Helpers: specsData.CodecTransformHelpers},
 					FuncMap: templateFuncMap(),
 				},
 			}

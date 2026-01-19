@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	toolhttp "goa.design/goa-ai/alpha/toolsets/union/http"
 	"goa.design/goa-ai/runtime/agent/tools"
 	goa "goa.design/goa/v3/pkg"
 	"strings"
@@ -155,30 +156,6 @@ func enrichEchoResultValidationError(err error) error {
 	ve.descriptions = m
 	return ve
 }
-func enrichEchoPayloadJSON2ValidationError(err error) error {
-	ve, ok := err.(*ValidationError)
-	if !ok || ve == nil {
-		return err
-	}
-	if len(ve.issues) == 0 {
-		return err
-	}
-	m := make(map[string]string)
-	ve.descriptions = m
-	return ve
-}
-func enrichEchoResultJSON2ValidationError(err error) error {
-	ve, ok := err.(*ValidationError)
-	if !ok || ve == nil {
-		return err
-	}
-	if len(ve.issues) == 0 {
-		return err
-	}
-	m := make(map[string]string)
-	ve.descriptions = m
-	return ve
-}
 
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
@@ -213,7 +190,29 @@ func MarshalEchoPayload(v *EchoPayload) ([]byte, error) {
 	if v == nil {
 		return nil, fmt.Errorf("echoPayload is nil")
 	}
-	return json.Marshal(v)
+	in := v
+	_ = in
+	var out *toolhttp.EchoPayloadTransport
+	out = &toolhttp.EchoPayloadTransport{
+		ID: &in.ID,
+	}
+	switch string(in.Value.Kind()) {
+	case "number":
+		actual, _ := in.Value.AsNumber()
+		obj := toolhttp.ValueNumberTransport(actual)
+
+		u := out.Value
+		u.SetNumber((toolhttp.ValueNumberTransport)(obj))
+		out.Value = u
+	case "text":
+		actual, _ := in.Value.AsText()
+		obj := toolhttp.ValueTextTransport(actual)
+
+		u := out.Value
+		u.SetText((toolhttp.ValueTextTransport)(obj))
+		out.Value = u
+	}
+	return json.Marshal(out)
 }
 
 // UnmarshalEchoPayload deserializes JSON into *EchoPayload.
@@ -221,44 +220,38 @@ func UnmarshalEchoPayload(data []byte) (*EchoPayload, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("echoPayload JSON is empty")
 	}
-	// Decode into JSON body (server body style) then transform.
-	// Note: Agent used-tools perform lenient decode (no required-field validation here).
-	var raw EchoPayloadJSON2
-	if err := json.Unmarshal(data, &raw); err != nil {
+	var tv toolhttp.EchoPayloadTransport
+	if err := json.Unmarshal(data, &tv); err != nil {
 		return nil, fmt.Errorf("decode echoPayload: %w", err)
 	}
-	var err error
-	if raw.ID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("id", "raw"))
-	}
-	if raw.Value.Kind() == "" {
-		err = goa.MergeErrors(err, goa.MissingFieldError("value", "raw"))
-	}
-	if err != nil {
+	if err := toolhttp.ValidateEchoPayloadTransport(&tv); err != nil {
 		err = newValidationError(err)
+		err = enrichEchoPayloadValidationError(err)
 		return nil, err
 	}
-	// Transform into final type
-	v := &EchoPayload{
-		ID: *raw.ID,
+	in := &tv
+	_ = in
+	var out *EchoPayload
+	out = &EchoPayload{
+		ID: *in.ID,
 	}
-	switch string(raw.Value.Kind()) {
+	switch string(in.Value.Kind()) {
 	case "number":
-		actual, _ := raw.Value.AsNumber()
-		obj := actual
+		actual, _ := in.Value.AsNumber()
+		obj := ValueNumber2(actual)
 
-		u := v.Value
-		u.SetNumber((ValueNumber)(obj))
-		v.Value = u
+		u := out.Value
+		u.SetNumber((ValueNumber2)(obj))
+		out.Value = u
 	case "text":
-		actual, _ := raw.Value.AsText()
-		obj := actual
+		actual, _ := in.Value.AsText()
+		obj := ValueText2(actual)
 
-		u := v.Value
-		u.SetText((ValueText)(obj))
-		v.Value = u
+		u := out.Value
+		u.SetText((ValueText2)(obj))
+		out.Value = u
 	}
-	return v, nil
+	return out, nil
 }
 
 // MarshalEchoResult serializes *EchoResult into JSON.
@@ -266,7 +259,29 @@ func MarshalEchoResult(v *EchoResult) ([]byte, error) {
 	if v == nil {
 		return nil, fmt.Errorf("echoResult is nil")
 	}
-	return json.Marshal(v)
+	in := v
+	_ = in
+	var out *toolhttp.EchoResultTransport
+	out = &toolhttp.EchoResultTransport{
+		ID: &in.ID,
+	}
+	switch string(in.Value.Kind()) {
+	case "number":
+		actual, _ := in.Value.AsNumber()
+		obj := toolhttp.ValueNumberTransport(actual)
+
+		u := out.Value
+		u.SetNumber((toolhttp.ValueNumberTransport)(obj))
+		out.Value = u
+	case "text":
+		actual, _ := in.Value.AsText()
+		obj := toolhttp.ValueTextTransport(actual)
+
+		u := out.Value
+		u.SetText((toolhttp.ValueTextTransport)(obj))
+		out.Value = u
+	}
+	return json.Marshal(out)
 }
 
 // UnmarshalEchoResult deserializes JSON into *EchoResult.
@@ -274,74 +289,36 @@ func UnmarshalEchoResult(data []byte) (*EchoResult, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("echoResult JSON is empty")
 	}
-	// Decode into JSON body (server body style) then transform.
-	// Note: Agent used-tools perform lenient decode (no required-field validation here).
-	var raw EchoResultJSON2
-	if err := json.Unmarshal(data, &raw); err != nil {
+	var tv toolhttp.EchoResultTransport
+	if err := json.Unmarshal(data, &tv); err != nil {
 		return nil, fmt.Errorf("decode echoResult: %w", err)
 	}
-	var err error
-	if raw.ID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("id", "raw"))
-	}
-	if raw.Value.Kind() == "" {
-		err = goa.MergeErrors(err, goa.MissingFieldError("value", "raw"))
-	}
-	if err != nil {
+	if err := toolhttp.ValidateEchoResultTransport(&tv); err != nil {
 		err = newValidationError(err)
+		err = enrichEchoResultValidationError(err)
 		return nil, err
 	}
-	// Transform into final type
-	v := &EchoResult{
-		ID: *raw.ID,
+	in := &tv
+	_ = in
+	var out *EchoResult
+	out = &EchoResult{
+		ID: *in.ID,
 	}
-	switch string(raw.Value.Kind()) {
+	switch string(in.Value.Kind()) {
 	case "number":
-		actual, _ := raw.Value.AsNumber()
-		obj := actual
+		actual, _ := in.Value.AsNumber()
+		obj := ValueNumber2(actual)
 
-		u := v.Value
-		u.SetNumber((ValueNumber)(obj))
-		v.Value = u
+		u := out.Value
+		u.SetNumber((ValueNumber2)(obj))
+		out.Value = u
 	case "text":
-		actual, _ := raw.Value.AsText()
-		obj := actual
+		actual, _ := in.Value.AsText()
+		obj := ValueText2(actual)
 
-		u := v.Value
-		u.SetText((ValueText)(obj))
-		v.Value = u
+		u := out.Value
+		u.SetText((ValueText2)(obj))
+		out.Value = u
 	}
-	return v, nil
-}
-
-// Transform helpers
-
-// ValidateEchoPayloadJSON2 validates values of type *EchoPayloadJSON2.
-func ValidateEchoPayloadJSON2(body *EchoPayloadJSON2) (err error) {
-	if body.ID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
-	}
-	if body.Value.Kind() == "" {
-		err = goa.MergeErrors(err, goa.MissingFieldError("value", "body"))
-	}
-	return
-}
-
-// ValidateEchoResultJSON2 validates values of type *EchoResultJSON2.
-func ValidateEchoResultJSON2(body *EchoResultJSON2) (err error) {
-	if body.ID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
-	}
-	if body.Value.Kind() == "" {
-		err = goa.MergeErrors(err, goa.MissingFieldError("value", "body"))
-	}
-	return
-}
-
-// ValidateUnionPayload validates values of type *UnionPayload.
-func ValidateUnionPayload(body *UnionPayload) (err error) {
-	if body.Value.Kind() == "" {
-		err = goa.MergeErrors(err, goa.MissingFieldError("value", "body"))
-	}
-	return
+	return out, nil
 }

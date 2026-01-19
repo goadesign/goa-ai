@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	toolhttp "goa.design/goa-ai/alpha/toolsets/math/http"
 	"goa.design/goa-ai/runtime/agent/tools"
 	goa "goa.design/goa/v3/pkg"
 	"strings"
@@ -156,30 +157,6 @@ func enrichAddResultValidationError(err error) error {
 	ve.descriptions = m
 	return ve
 }
-func enrichAddPayloadJSON2ValidationError(err error) error {
-	ve, ok := err.(*ValidationError)
-	if !ok || ve == nil {
-		return err
-	}
-	if len(ve.issues) == 0 {
-		return err
-	}
-	m := make(map[string]string)
-	ve.descriptions = m
-	return ve
-}
-func enrichAddResultJSON2ValidationError(err error) error {
-	ve, ok := err.(*ValidationError)
-	if !ok || ve == nil {
-		return err
-	}
-	if len(ve.issues) == 0 {
-		return err
-	}
-	m := make(map[string]string)
-	ve.descriptions = m
-	return ve
-}
 
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
@@ -214,7 +191,14 @@ func MarshalAddPayload(v *AddPayload) ([]byte, error) {
 	if v == nil {
 		return nil, fmt.Errorf("addPayload is nil")
 	}
-	return json.Marshal(v)
+	in := v
+	_ = in
+	var out *toolhttp.AddPayloadTransport
+	out = &toolhttp.AddPayloadTransport{
+		Left:  &in.Left,
+		Right: &in.Right,
+	}
+	return json.Marshal(out)
 }
 
 // UnmarshalAddPayload deserializes JSON into *AddPayload.
@@ -222,29 +206,23 @@ func UnmarshalAddPayload(data []byte) (*AddPayload, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("addPayload JSON is empty")
 	}
-	// Decode into JSON body (server body style) then transform.
-	// Note: Agent used-tools perform lenient decode (no required-field validation here).
-	var raw AddPayloadJSON2
-	if err := json.Unmarshal(data, &raw); err != nil {
+	var tv toolhttp.AddPayloadTransport
+	if err := json.Unmarshal(data, &tv); err != nil {
 		return nil, fmt.Errorf("decode addPayload: %w", err)
 	}
-	var err error
-	if raw.Left == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("left", "raw"))
-	}
-	if raw.Right == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("right", "raw"))
-	}
-	if err != nil {
+	if err := toolhttp.ValidateAddPayloadTransport(&tv); err != nil {
 		err = newValidationError(err)
+		err = enrichAddPayloadValidationError(err)
 		return nil, err
 	}
-	// Transform into final type
-	v := &AddPayload{
-		Left:  *raw.Left,
-		Right: *raw.Right,
+	in := &tv
+	_ = in
+	var out *AddPayload
+	out = &AddPayload{
+		Left:  *in.Left,
+		Right: *in.Right,
 	}
-	return v, nil
+	return out, nil
 }
 
 // MarshalAddResult serializes *AddResult into JSON.
@@ -252,7 +230,13 @@ func MarshalAddResult(v *AddResult) ([]byte, error) {
 	if v == nil {
 		return nil, fmt.Errorf("addResult is nil")
 	}
-	return json.Marshal(v)
+	in := v
+	_ = in
+	var out *toolhttp.AddResultTransport
+	out = &toolhttp.AddResultTransport{
+		Sum: &in.Sum,
+	}
+	return json.Marshal(out)
 }
 
 // UnmarshalAddResult deserializes JSON into *AddResult.
@@ -260,50 +244,20 @@ func UnmarshalAddResult(data []byte) (*AddResult, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("addResult JSON is empty")
 	}
-	// Decode into JSON body (server body style) then transform.
-	// Note: Agent used-tools perform lenient decode (no required-field validation here).
-	var raw AddResultJSON2
-	if err := json.Unmarshal(data, &raw); err != nil {
+	var tv toolhttp.AddResultTransport
+	if err := json.Unmarshal(data, &tv); err != nil {
 		return nil, fmt.Errorf("decode addResult: %w", err)
 	}
-	var err error
-	if raw.Sum == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("sum", "raw"))
-	}
-	if err != nil {
+	if err := toolhttp.ValidateAddResultTransport(&tv); err != nil {
 		err = newValidationError(err)
+		err = enrichAddResultValidationError(err)
 		return nil, err
 	}
-	// Transform into final type
-	v := &AddResult{
-		Sum: *raw.Sum,
+	in := &tv
+	_ = in
+	var out *AddResult
+	out = &AddResult{
+		Sum: *in.Sum,
 	}
-	return v, nil
-}
-
-// Transform helpers
-
-// ValidateAddPayload validates values of type *AddPayload.
-func ValidateAddPayload(body *AddPayload) (err error) {
-
-	return
-}
-
-// ValidateAddPayloadJSON2 validates values of type *AddPayloadJSON2.
-func ValidateAddPayloadJSON2(body *AddPayloadJSON2) (err error) {
-	if body.Left == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("left", "body"))
-	}
-	if body.Right == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("right", "body"))
-	}
-	return
-}
-
-// ValidateAddResultJSON2 validates values of type *AddResultJSON2.
-func ValidateAddResultJSON2(body *AddResultJSON2) (err error) {
-	if body.Sum == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("sum", "body"))
-	}
-	return
+	return out, nil
 }

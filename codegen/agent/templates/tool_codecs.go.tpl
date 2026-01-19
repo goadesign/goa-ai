@@ -48,10 +48,10 @@ var {{ .TypeName }}FieldDescs = map[string]string{
 {{- end }}
 {{- end }}
 
-{{- /* Compute whether any type has validation to gate helper emission */ -}}
+{{- /* Compute whether any type has transport validation to gate helper emission */ -}}
 {{- $hasValidation := false }}
 {{- range .Types }}
-    {{- if or .Validation .JSONValidation }}
+    {{- if .TransportValidationSrc }}
         {{- $hasValidation = true }}
     {{- end }}
 {{- end }}
@@ -121,7 +121,7 @@ func newValidationError(err error) error {
 
 {{- /* Per-type enrichment attaching descriptions for any type with validation (payload or non-payload) */ -}}
 {{- range .Types }}
-{{- if and (or .Validation .JSONValidation) .NeedType }}
+{{- if and .FieldDescs .TransportValidationSrc (ne (index .TransportValidationSrc 0) "") }}
 func enrich{{ .TypeName }}ValidationError(err error) error {
     ve, ok := err.(*ValidationError)
     if !ok || ve == nil {
@@ -195,7 +195,15 @@ func {{ .MarshalFunc }}(v {{ if .Pointer }}*{{ end }}{{ .FullRef }}) ([]byte, er
         return nil, fmt.Errorf("{{ .NilError }}")
     }
     {{- end }}
+    {{- if and .TransportTypeName .Pointer }}
+    in := v
+    _ = in
+    var out *toolhttp.{{ .TransportTypeName }}
+{{ .EncodeTransform }}
+    return json.Marshal(out)
+    {{- else }}
     return json.Marshal(v)
+    {{- end }}
 }
 
 // {{ .UnmarshalFunc }} deserializes JSON into {{ if .Pointer }}*{{ end }}{{ .FullRef }}.
@@ -215,55 +223,27 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
         {{- end }}
         {{- end }}
     }
-    {{- if .JSONRef }}
-    // Decode into JSON body (server body style) then transform.
-    // Note: Agent used-tools perform lenient decode (no required-field validation here).
-    var raw {{ .JSONRef }}
-    if err := json.Unmarshal(data, &raw); err != nil {
-        {{- if .Pointer }}
+    {{- if and .TransportTypeName .Pointer }}
+    var tv toolhttp.{{ .TransportTypeName }}
+    if err := json.Unmarshal(data, &tv); err != nil {
         return nil, fmt.Errorf("{{ .DecodeError }}: %w", err)
-        {{- else }}
-        return zero, fmt.Errorf("{{ .DecodeError }}: %w", err)
-        {{- end }}
     }
-    {{- if .JSONValidationSrc }}
-    var err error
-    {{- range .JSONValidationSrc }}
-    {{ . }}
-    {{- end }}
-    if err != nil {
+    {{- if .TransportValidationSrc }}
+    if err := toolhttp.Validate{{ .TransportTypeName }}(&tv); err != nil {
         err = newValidationError(err)
-        {{- if and (or .Validation .JSONValidation) .NeedType }}
-        {{- if .Pointer }}
+        {{- if .FieldDescs }}
+        err = enrich{{ .TypeName }}ValidationError(err)
+        {{- end }}
         return nil, err
-        {{- else }}
-        return zero, err
-        {{- end }}
-        {{- else }}
-        {{- if .Pointer }}
-        return nil, fmt.Errorf("{{ .DecodeError }}: %w", err)
-        {{- else }}
-        return zero, fmt.Errorf("{{ .DecodeError }}: %w", err)
-        {{- end }}
-        {{- end }}
     }
     {{- end }}
-    // Transform into final type
-    {{- if .TransformBody }}
-    {{ .TransformBody }}
+    in := &tv
+    _ = in
+    var out *{{ .FullRef }}
+{{ .DecodeTransform }}
+    return out, nil
     {{- else }}
-    // Fallback: direct conversion when shapes are identical.
-    res := {{ .FullRef }}(raw)
-    v := &res
-    {{- end }}
-    {{- if .Pointer }}
-    return v, nil
-    {{- else }}
-    return *v, nil
-    {{- end }}
-    {{- else }}
-    // Non-payload types: simple decode
-    var v {{ if .Pointer }}*{{ end }}{{ .FullRef }}
+    var v {{ .FullRef }}
     if err := json.Unmarshal(data, &v); err != nil {
         {{- if .Pointer }}
         return nil, fmt.Errorf("{{ .DecodeError }}: %w", err)
@@ -271,35 +251,23 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
         return zero, fmt.Errorf("{{ .DecodeError }}: %w", err)
         {{- end }}
     }
+        {{- if .Pointer }}
+    return &v, nil
+        {{- else }}
     return v, nil
-    {{- end }}
-}
-    {{- end }}
-{{- end }}
-
-// Transform helpers
-{{- range .Types }}
-    {{- range .TransformHelpers }}
-func {{ .Name }}(v {{ .ParamTypeRef }}) (out {{ .ResultTypeRef }}) {
-{{ .Code }}
-    out = res
-    return
-}
-    {{- end }}
-{{- end }}
-
-{{- /* Emit standalone validators for embedded user types that require them. */ -}}
-{{- range .Types }}
-    {{- if and (not .GenerateCodec) .ValidateFunc }}
-
-// {{ .ValidateFunc }} validates values of type {{ .FullRef }}.
-func {{ .ValidateFunc }}(body {{ .FullRef }}) (err error) {
-    {{- if .ValidationSrc }}
-        {{- range .ValidationSrc }}
-    {{ . }}
         {{- end }}
     {{- end }}
-    return
 }
     {{- end }}
+{{- end }}
+
+{{- if .Helpers }}
+// Helper transform functions
+{{- range .Helpers }}
+func {{ .Name }}(v {{ .ParamTypeRef }}) {{ .ResultTypeRef }} {
+{{ .Code }}
+    return res
+}
+
+{{- end }}
 {{- end }}

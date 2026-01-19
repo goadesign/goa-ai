@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	toolhttp "goa.design/goa-ai/alpha/toolsets/profiles/http"
 	"goa.design/goa-ai/runtime/agent/tools"
 	goa "goa.design/goa/v3/pkg"
 	"strings"
@@ -164,66 +165,6 @@ func enrichUpsertResultValidationError(err error) error {
 	ve.descriptions = m
 	return ve
 }
-func enrichUpsertPayloadJSON2ValidationError(err error) error {
-	ve, ok := err.(*ValidationError)
-	if !ok || ve == nil {
-		return err
-	}
-	if len(ve.issues) == 0 {
-		return err
-	}
-	m := make(map[string]string)
-	ve.descriptions = m
-	return ve
-}
-func enrichUpsertPayloadJSONProfileJSON2ValidationError(err error) error {
-	ve, ok := err.(*ValidationError)
-	if !ok || ve == nil {
-		return err
-	}
-	if len(ve.issues) == 0 {
-		return err
-	}
-	m := make(map[string]string)
-	ve.descriptions = m
-	return ve
-}
-func enrichUpsertPayloadJSONProfileJSONAddressJSON2ValidationError(err error) error {
-	ve, ok := err.(*ValidationError)
-	if !ok || ve == nil {
-		return err
-	}
-	if len(ve.issues) == 0 {
-		return err
-	}
-	m := make(map[string]string)
-	ve.descriptions = m
-	return ve
-}
-func enrichUpsertResultJSON2ValidationError(err error) error {
-	ve, ok := err.(*ValidationError)
-	if !ok || ve == nil {
-		return err
-	}
-	if len(ve.issues) == 0 {
-		return err
-	}
-	m := make(map[string]string)
-	ve.descriptions = m
-	return ve
-}
-func enrichUpsertResultJSONAddressJSON2ValidationError(err error) error {
-	ve, ok := err.(*ValidationError)
-	if !ok || ve == nil {
-		return err
-	}
-	if len(ve.issues) == 0 {
-		return err
-	}
-	m := make(map[string]string)
-	ve.descriptions = m
-	return ve
-}
 
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
@@ -258,7 +199,12 @@ func MarshalUpsertPayload(v *UpsertPayload) ([]byte, error) {
 	if v == nil {
 		return nil, fmt.Errorf("upsertPayload is nil")
 	}
-	return json.Marshal(v)
+	in := v
+	_ = in
+	var out *toolhttp.UpsertPayloadTransport
+	out = &toolhttp.UpsertPayloadTransport{}
+	out.Profile = encodeProfileToToolhttpProfileTransport(in.Profile)
+	return json.Marshal(out)
 }
 
 // UnmarshalUpsertPayload deserializes JSON into *UpsertPayload.
@@ -266,29 +212,21 @@ func UnmarshalUpsertPayload(data []byte) (*UpsertPayload, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("upsertPayload JSON is empty")
 	}
-	// Decode into JSON body (server body style) then transform.
-	// Note: Agent used-tools perform lenient decode (no required-field validation here).
-	var raw UpsertPayloadJSON2
-	if err := json.Unmarshal(data, &raw); err != nil {
+	var tv toolhttp.UpsertPayloadTransport
+	if err := json.Unmarshal(data, &tv); err != nil {
 		return nil, fmt.Errorf("decode upsertPayload: %w", err)
 	}
-	var err error
-	if raw.Profile == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("profile", "raw"))
-	}
-	if raw.Profile != nil {
-		if err2 := ValidateUpsertPayloadJSONProfileJSON2(raw.Profile); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
-	}
-	if err != nil {
+	if err := toolhttp.ValidateUpsertPayloadTransport(&tv); err != nil {
 		err = newValidationError(err)
+		err = enrichUpsertPayloadValidationError(err)
 		return nil, err
 	}
-	// Transform into final type
-	v := &UpsertPayload{}
-	v.Profile = payloadUpsertPayloadJSONProfileJSON2ToProfile(raw.Profile)
-	return v, nil
+	in := &tv
+	_ = in
+	var out *UpsertPayload
+	out = &UpsertPayload{}
+	out.Profile = decodeToolhttpProfileTransportToProfile(in.Profile)
+	return out, nil
 }
 
 // MarshalUpsertResult serializes *UpsertResult into JSON.
@@ -296,7 +234,15 @@ func MarshalUpsertResult(v *UpsertResult) ([]byte, error) {
 	if v == nil {
 		return nil, fmt.Errorf("upsertResult is nil")
 	}
-	return json.Marshal(v)
+	in := v
+	_ = in
+	var out *toolhttp.UpsertResultTransport
+	out = &toolhttp.UpsertResultTransport{
+		ID:   &in.ID,
+		Name: in.Name,
+	}
+	out.Address = encodeAddressToToolhttpAddressTransport(in.Address)
+	return json.Marshal(out)
 }
 
 // UnmarshalUpsertResult deserializes JSON into *UpsertResult.
@@ -304,157 +250,58 @@ func UnmarshalUpsertResult(data []byte) (*UpsertResult, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("upsertResult JSON is empty")
 	}
-	// Decode into JSON body (server body style) then transform.
-	// Note: Agent used-tools perform lenient decode (no required-field validation here).
-	var raw UpsertResultJSON2
-	if err := json.Unmarshal(data, &raw); err != nil {
+	var tv toolhttp.UpsertResultTransport
+	if err := json.Unmarshal(data, &tv); err != nil {
 		return nil, fmt.Errorf("decode upsertResult: %w", err)
 	}
-	var err error
-	if raw.ID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("id", "raw"))
-	}
-	if raw.Address == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("address", "raw"))
-	}
-	if raw.Address != nil {
-		if err2 := ValidateUpsertResultJSONAddressJSON2(raw.Address); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
-	}
-	if err != nil {
+	if err := toolhttp.ValidateUpsertResultTransport(&tv); err != nil {
 		err = newValidationError(err)
+		err = enrichUpsertResultValidationError(err)
 		return nil, err
 	}
-	// Transform into final type
-	v := &UpsertResult{
-		ID:   *raw.ID,
-		Name: raw.Name,
+	in := &tv
+	_ = in
+	var out *UpsertResult
+	out = &UpsertResult{
+		ID:   *in.ID,
+		Name: in.Name,
 	}
-	v.Address = resultUpsertResultJSONAddressJSON2ToAddress(raw.Address)
-	return v, nil
+	out.Address = decodeToolhttpAddressTransportToAddress(in.Address)
+	return out, nil
 }
 
-// Transform helpers
-func payloadUpsertPayloadJSONProfileJSON2ToProfile(v *UpsertPayloadJSONProfileJSON2) (out *Profile) {
+// Helper transform functions
+func decodeToolhttpProfileTransportToProfile(v *toolhttp.ProfileTransport) *Profile {
 	res := &Profile{
 		ID:   *v.ID,
 		Name: v.Name,
 	}
-	res.Address = payloadUpsertPayloadJSONProfileJSONAddressJSON2ToAddress(v.Address)
+	res.Address = decodeToolhttpAddressTransportToAddress(v.Address)
 
-	out = res
-	return
+	return res
 }
-func payloadUpsertPayloadJSONProfileJSONAddressJSON2ToAddress(v *UpsertPayloadJSONProfileJSONAddressJSON2) (out *Address) {
+func decodeToolhttpAddressTransportToAddress(v *toolhttp.AddressTransport) *Address {
 	res := &Address{
 		Street: *v.Street,
 		City:   *v.City,
 	}
 
-	out = res
-	return
+	return res
 }
-func resultUpsertResultJSONAddressJSON2ToAddress(v *UpsertResultJSONAddressJSON2) (out *Address) {
-	res := &Address{
-		Street: *v.Street,
-		City:   *v.City,
+func encodeProfileToToolhttpProfileTransport(v *Profile) *toolhttp.ProfileTransport {
+	res := &toolhttp.ProfileTransport{
+		ID:   &v.ID,
+		Name: v.Name,
 	}
+	res.Address = encodeAddressToToolhttpAddressTransport(v.Address)
 
-	out = res
-	return
+	return res
 }
+func encodeAddressToToolhttpAddressTransport(v *Address) *toolhttp.AddressTransport {
+	res := &toolhttp.AddressTransport{
+		Street: &v.Street,
+		City:   &v.City,
+	}
 
-// ValidateAddress validates values of type *Address.
-func ValidateAddress(body *Address) (err error) {
-
-	return
-}
-
-// ValidateProfile validates values of type *Profile.
-func ValidateProfile(body *Profile) (err error) {
-	if body.Address == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("address", "body"))
-	}
-	return
-}
-
-// ValidateUpsertArgs validates values of type *UpsertArgs.
-func ValidateUpsertArgs(body *UpsertArgs) (err error) {
-	if body.Profile == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("profile", "body"))
-	}
-	if body.Profile != nil {
-		if err2 := ValidateProfile(body.Profile); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
-	}
-	return
-}
-
-// ValidateUpsertPayloadJSON2 validates values of type *UpsertPayloadJSON2.
-func ValidateUpsertPayloadJSON2(body *UpsertPayloadJSON2) (err error) {
-	if body.Profile == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("profile", "body"))
-	}
-	if body.Profile != nil {
-		if err2 := ValidateUpsertPayloadJSONProfileJSON2(body.Profile); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
-	}
-	return
-}
-
-// ValidateUpsertPayloadJSONProfileJSON2 validates values of type *UpsertPayloadJSONProfileJSON2.
-func ValidateUpsertPayloadJSONProfileJSON2(body *UpsertPayloadJSONProfileJSON2) (err error) {
-	if body.ID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
-	}
-	if body.Address == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("address", "body"))
-	}
-	if body.Address != nil {
-		if err2 := ValidateUpsertPayloadJSONProfileJSONAddressJSON2(body.Address); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
-	}
-	return
-}
-
-// ValidateUpsertPayloadJSONProfileJSONAddressJSON2 validates values of type *UpsertPayloadJSONProfileJSONAddressJSON2.
-func ValidateUpsertPayloadJSONProfileJSONAddressJSON2(body *UpsertPayloadJSONProfileJSONAddressJSON2) (err error) {
-	if body.Street == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("street", "body"))
-	}
-	if body.City == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("city", "body"))
-	}
-	return
-}
-
-// ValidateUpsertResultJSON2 validates values of type *UpsertResultJSON2.
-func ValidateUpsertResultJSON2(body *UpsertResultJSON2) (err error) {
-	if body.ID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
-	}
-	if body.Address == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("address", "body"))
-	}
-	if body.Address != nil {
-		if err2 := ValidateUpsertResultJSONAddressJSON2(body.Address); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
-	}
-	return
-}
-
-// ValidateUpsertResultJSONAddressJSON2 validates values of type *UpsertResultJSONAddressJSON2.
-func ValidateUpsertResultJSONAddressJSON2(body *UpsertResultJSONAddressJSON2) (err error) {
-	if body.Street == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("street", "body"))
-	}
-	if body.City == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("city", "body"))
-	}
-	return
+	return res
 }

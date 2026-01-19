@@ -18,6 +18,11 @@ import (
 // user types. For each user type, if it is not already part of goaexpr.Root.Types,
 // it is appended and marked with the "type:generate:force" meta so core codegen
 // generates it even when not directly used by a service method payload/result.
+//
+// This function must not synthesize additional user types (for example, union
+// branch aliases). Goa's generators already emit all required union helpers when
+// the containing user types are forced for generation; injecting synthetic alias
+// user types can create duplicate names and broken references across packages.
 func Prepare(_ string, _ []eval.Root) error {
 	if agentsExpr.Root == nil {
 		return nil
@@ -50,6 +55,12 @@ func Prepare(_ string, _ []eval.Root) error {
 					}
 				}
 
+				// Preserve the unmodified shapes for dependency forcing. Tool schemas
+				// may hide injected fields, but code generation must still force
+				// generation of all Go types required by the original design.
+				argsForForce := t.Args
+				returnForForce := t.Return
+
 				// Handle injected fields by hiding them from JSON (LLM view)
 				if len(t.InjectedFields) > 0 {
 					t.Args = flattenAndHide(t.Args, t.InjectedFields)
@@ -57,8 +68,12 @@ func Prepare(_ string, _ []eval.Root) error {
 
 				// Walk Args and Return shapes only. Goa will generate method
 				// payloads and results as part of service generation.
-				collectAndForceTypes(t.Args, existingByID, existingByName)
-				collectAndForceTypes(t.Return, existingByID, existingByName)
+				if err := collectAndForceTypes(argsForForce, existingByID, existingByName); err != nil {
+					return err
+				}
+				if err := collectAndForceTypes(returnForForce, existingByID, existingByName); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -122,20 +137,21 @@ func flattenAndHide(att *goaexpr.AttributeExpr, injected []string) *goaexpr.Attr
 // encountered user types are marked with the "type:generate:force" meta and
 // present in goaexpr.Root.Types. The walk recurses into user type attributes
 // as well (including alias bases and extended bases) using a visited set.
-func collectAndForceTypes(att *goaexpr.AttributeExpr, existingByID, existingByName map[string]struct{}) {
+func collectAndForceTypes(att *goaexpr.AttributeExpr, existingByID, existingByName map[string]struct{}) error {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
-		return
+		return nil
 	}
 	visited := make(map[string]struct{})
-	var walkUT func(ut goaexpr.UserType)
-	walkUT = func(ut goaexpr.UserType) {
+	var walkUT func(ut goaexpr.UserType) error
+	walkUT = func(ut goaexpr.UserType) error {
 		if ut == nil {
-			return
+			return nil
 		}
 		if _, seen := visited[ut.ID()]; seen {
-			return
+			return nil
 		}
 		visited[ut.ID()] = struct{}{}
+
 		// Mark for generation across services. Preserve any existing meta.
 		ut.Attribute().AddMeta("type:generate:force")
 		if _, ok := existingByID[ut.ID()]; !ok {
@@ -143,26 +159,64 @@ func collectAndForceTypes(att *goaexpr.AttributeExpr, existingByID, existingByNa
 			existingByID[ut.ID()] = struct{}{}
 			existingByName[ut.Name()] = struct{}{}
 		}
-		// Recurse into the user type attribute to catch nested user types,
-		// alias bases, and extended bases.
-		_ = gcodegen.Walk(ut.Attribute(), func(a *goaexpr.AttributeExpr) error {
+
+		// Recurse into the user type attribute to catch nested user types as well as
+		// dependencies captured via attribute bases/references and union branches.
+		if err := gcodegen.Walk(ut.Attribute(), func(a *goaexpr.AttributeExpr) error {
 			if a == nil || a.Type == nil || a.Type == goaexpr.Empty {
 				return nil
 			}
-			if nut, ok := a.Type.(goaexpr.UserType); ok && nut != nil {
-				walkUT(nut)
-			}
-			return nil
-		})
+			return walkAttributeDependencyTypes(a, walkUT)
+		}); err != nil {
+			return err
+		}
+
+		return nil
 	}
 
-	_ = gcodegen.Walk(att, func(a *goaexpr.AttributeExpr) error {
+	if err := gcodegen.Walk(att, func(a *goaexpr.AttributeExpr) error {
 		if a == nil || a.Type == nil || a.Type == goaexpr.Empty {
 			return nil
 		}
-		if ut, ok := a.Type.(goaexpr.UserType); ok && ut != nil {
-			walkUT(ut)
-		}
+		return walkAttributeDependencyTypes(a, walkUT)
+	}); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func walkAttributeDependencyTypes(att *goaexpr.AttributeExpr, walkUT func(goaexpr.UserType) error) error {
+	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return nil
-	})
+	}
+
+	// Primary type reference.
+	if ut, ok := att.Type.(goaexpr.UserType); ok && ut != nil {
+		if err := walkUT(ut); err != nil {
+			return err
+		}
+	}
+
+	// Bases and references may carry user types even when att.Type is a primitive.
+	for _, dt := range att.Bases {
+		ut, ok := dt.(goaexpr.UserType)
+		if !ok || ut == nil {
+			continue
+		}
+		if err := walkUT(ut); err != nil {
+			return err
+		}
+	}
+	for _, dt := range att.References {
+		ut, ok := dt.(goaexpr.UserType)
+		if !ok || ut == nil {
+			continue
+		}
+		if err := walkUT(ut); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	toolhttp "goa.design/goa-ai/alpha/toolsets/progress/http"
 	types "goa.design/goa-ai/gen/types"
 	"goa.design/goa-ai/runtime/agent/tools"
 	goa "goa.design/goa/v3/pkg"
@@ -138,18 +139,6 @@ func enrichSetStepStatusPayloadValidationError(err error) error {
 	ve.descriptions = m
 	return ve
 }
-func enrichSetStepStatusPayloadJSON2ValidationError(err error) error {
-	ve, ok := err.(*ValidationError)
-	if !ok || ve == nil {
-		return err
-	}
-	if len(ve.issues) == 0 {
-		return err
-	}
-	m := make(map[string]string)
-	ve.descriptions = m
-	return ve
-}
 
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
@@ -184,7 +173,16 @@ func MarshalSetStepStatusPayload(v *SetStepStatusPayload) ([]byte, error) {
 	if v == nil {
 		return nil, fmt.Errorf("setStepStatusPayload is nil")
 	}
-	return json.Marshal(v)
+	in := v
+	_ = in
+	var out *toolhttp.SetStepStatusPayloadTransport
+	out = &toolhttp.SetStepStatusPayloadTransport{
+		StepID: &in.StepID,
+		Note:   in.Note,
+	}
+	status := toolhttp.StatusTransport(in.Status)
+	out.Status = &status
+	return json.Marshal(out)
 }
 
 // UnmarshalSetStepStatusPayload deserializes JSON into *SetStepStatusPayload.
@@ -192,35 +190,24 @@ func UnmarshalSetStepStatusPayload(data []byte) (*SetStepStatusPayload, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("setStepStatusPayload JSON is empty")
 	}
-	// Decode into JSON body (server body style) then transform.
-	// Note: Agent used-tools perform lenient decode (no required-field validation here).
-	var raw SetStepStatusPayloadJSON2
-	if err := json.Unmarshal(data, &raw); err != nil {
+	var tv toolhttp.SetStepStatusPayloadTransport
+	if err := json.Unmarshal(data, &tv); err != nil {
 		return nil, fmt.Errorf("decode setStepStatusPayload: %w", err)
 	}
-	var err error
-	if raw.StepID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("step_id", "raw"))
-	}
-	if raw.Status == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("status", "raw"))
-	}
-	if raw.Status != nil {
-		if !(string(*raw.Status) == "pending" || string(*raw.Status) == "in_progress" || string(*raw.Status) == "completed" || string(*raw.Status) == "blocked") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("raw.status", string(*raw.Status), []any{"pending", "in_progress", "completed", "blocked"}))
-		}
-	}
-	if err != nil {
+	if err := toolhttp.ValidateSetStepStatusPayloadTransport(&tv); err != nil {
 		err = newValidationError(err)
+		err = enrichSetStepStatusPayloadValidationError(err)
 		return nil, err
 	}
-	// Transform into final type
-	v := &SetStepStatusPayload{
-		StepID: *raw.StepID,
-		Status: types.Status(*raw.Status),
-		Note:   raw.Note,
+	in := &tv
+	_ = in
+	var out *SetStepStatusPayload
+	out = &SetStepStatusPayload{
+		StepID: *in.StepID,
+		Status: Status(*in.Status),
+		Note:   in.Note,
 	}
-	return v, nil
+	return out, nil
 }
 
 // MarshalSetStepStatusResult serializes *SetStepStatusResult into JSON.
@@ -228,7 +215,11 @@ func MarshalSetStepStatusResult(v *SetStepStatusResult) ([]byte, error) {
 	if v == nil {
 		return nil, fmt.Errorf("setStepStatusResult is nil")
 	}
-	return json.Marshal(v)
+	in := v
+	_ = in
+	var out *toolhttp.SetStepStatusResultTransport
+	out = &toolhttp.SetStepStatusResultTransport{}
+	return json.Marshal(out)
 }
 
 // UnmarshalSetStepStatusResult deserializes JSON into *SetStepStatusResult.
@@ -236,53 +227,13 @@ func UnmarshalSetStepStatusResult(data []byte) (*SetStepStatusResult, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("setStepStatusResult JSON is empty")
 	}
-	// Decode into JSON body (server body style) then transform.
-	// Note: Agent used-tools perform lenient decode (no required-field validation here).
-	var raw SetStepStatusResultJSON2
-	if err := json.Unmarshal(data, &raw); err != nil {
+	var tv toolhttp.SetStepStatusResultTransport
+	if err := json.Unmarshal(data, &tv); err != nil {
 		return nil, fmt.Errorf("decode setStepStatusResult: %w", err)
 	}
-	// Transform into final type
-	v := &SetStepStatusResult{}
-	return v, nil
-}
-
-// Transform helpers
-
-// ValidateSetStepStatusPayloadJSON2 validates values of type *SetStepStatusPayloadJSON2.
-func ValidateSetStepStatusPayloadJSON2(body *SetStepStatusPayloadJSON2) (err error) {
-	if body.StepID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("step_id", "body"))
-	}
-	if body.Status == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
-	}
-	if body.Status != nil {
-		if !(string(*body.Status) == "pending" || string(*body.Status) == "in_progress" || string(*body.Status) == "completed" || string(*body.Status) == "blocked") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", string(*body.Status), []any{"pending", "in_progress", "completed", "blocked"}))
-		}
-	}
-	return
-}
-
-// ValidateSetStepStatusResultJSON2 validates values of type *SetStepStatusResultJSON2.
-func ValidateSetStepStatusResultJSON2(body *SetStepStatusResultJSON2) (err error) {
-
-	return
-}
-
-// ValidateStatus validates values of type types.Status.
-func ValidateStatus(body types.Status) (err error) {
-	if !(string(body) == "pending" || string(body) == "in_progress" || string(body) == "completed" || string(body) == "blocked") {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("body", string(body), []any{"pending", "in_progress", "completed", "blocked"}))
-	}
-	return
-}
-
-// ValidateStatusChangedEvent validates values of type *types.StatusChangedEvent.
-func ValidateStatusChangedEvent(body *types.StatusChangedEvent) (err error) {
-	if !(string(body.Status) == "pending" || string(body.Status) == "in_progress" || string(body.Status) == "completed" || string(body.Status) == "blocked") {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", string(body.Status), []any{"pending", "in_progress", "completed", "blocked"}))
-	}
-	return
+	in := &tv
+	_ = in
+	var out *SetStepStatusResult
+	out = &SetStepStatusResult{}
+	return out, nil
 }

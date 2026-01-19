@@ -12,19 +12,15 @@
         "name": "DangerousWritePayload",
         "schema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "example": {
-            "key": "Est aut recusandae enim fuga.",
-            "value": "Commodi molestias dignissimos."
-          },
           "properties": {
             "key": {
               "description": "Key to update.",
-              "example": "Aut vel consectetur ducimus minus.",
+              "example": "Et iusto ex.",
               "type": "string"
             },
             "value": {
               "description": "New value.",
-              "example": "Occaecati non aliquam et laudantium.",
+              "example": "Ipsam quia repudiandae quibusdam.",
               "type": "string"
             }
           },
@@ -32,7 +28,6 @@
             "key",
             "value"
           ],
-          "title": "DangerousWriteArgs",
           "type": "object"
         }
       },
@@ -40,19 +35,15 @@
         "name": "DangerousWriteResult",
         "schema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "example": {
-            "key": "Iure consequatur quia ex odit animi dolorum.",
-            "summary": "Blanditiis sed quae."
-          },
           "properties": {
             "key": {
               "description": "Key that was updated.",
-              "example": "Rerum laudantium enim perspiciatis est vitae.",
+              "example": "Et expedita dignissimos.",
               "type": "string"
             },
             "summary": {
               "description": "Summary of the update.",
-              "example": "Nulla saepe qui iure qui.",
+              "example": "Animi magnam repellat et.",
               "type": "string"
             }
           },
@@ -60,7 +51,6 @@
             "summary",
             "key"
           ],
-          "title": "DangerousWriteResult",
           "type": "object"
         }
       },

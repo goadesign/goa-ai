@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	toolhttp "goa.design/goa-ai/calc/toolsets/helpers/http"
 	"goa.design/goa-ai/runtime/agent/tools"
 	goa "goa.design/goa/v3/pkg"
 	"strings"
@@ -155,30 +156,6 @@ func enrichSummarizeDocResultValidationError(err error) error {
 	ve.descriptions = m
 	return ve
 }
-func enrichSummarizeDocPayloadJSON2ValidationError(err error) error {
-	ve, ok := err.(*ValidationError)
-	if !ok || ve == nil {
-		return err
-	}
-	if len(ve.issues) == 0 {
-		return err
-	}
-	m := make(map[string]string)
-	ve.descriptions = m
-	return ve
-}
-func enrichSummarizeDocResultJSON2ValidationError(err error) error {
-	ve, ok := err.(*ValidationError)
-	if !ok || ve == nil {
-		return err
-	}
-	if len(ve.issues) == 0 {
-		return err
-	}
-	m := make(map[string]string)
-	ve.descriptions = m
-	return ve
-}
 
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
@@ -213,7 +190,13 @@ func MarshalSummarizeDocPayload(v *SummarizeDocPayload) ([]byte, error) {
 	if v == nil {
 		return nil, fmt.Errorf("summarizeDocPayload is nil")
 	}
-	return json.Marshal(v)
+	in := v
+	_ = in
+	var out *toolhttp.SummarizeDocPayloadTransport
+	out = &toolhttp.SummarizeDocPayloadTransport{
+		DocID: &in.DocID,
+	}
+	return json.Marshal(out)
 }
 
 // UnmarshalSummarizeDocPayload deserializes JSON into *SummarizeDocPayload.
@@ -221,25 +204,22 @@ func UnmarshalSummarizeDocPayload(data []byte) (*SummarizeDocPayload, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("summarizeDocPayload JSON is empty")
 	}
-	// Decode into JSON body (server body style) then transform.
-	// Note: Agent used-tools perform lenient decode (no required-field validation here).
-	var raw SummarizeDocPayloadJSON2
-	if err := json.Unmarshal(data, &raw); err != nil {
+	var tv toolhttp.SummarizeDocPayloadTransport
+	if err := json.Unmarshal(data, &tv); err != nil {
 		return nil, fmt.Errorf("decode summarizeDocPayload: %w", err)
 	}
-	var err error
-	if raw.DocID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("doc_id", "raw"))
-	}
-	if err != nil {
+	if err := toolhttp.ValidateSummarizeDocPayloadTransport(&tv); err != nil {
 		err = newValidationError(err)
+		err = enrichSummarizeDocPayloadValidationError(err)
 		return nil, err
 	}
-	// Transform into final type
-	v := &SummarizeDocPayload{
-		DocID: *raw.DocID,
+	in := &tv
+	_ = in
+	var out *SummarizeDocPayload
+	out = &SummarizeDocPayload{
+		DocID: *in.DocID,
 	}
-	return v, nil
+	return out, nil
 }
 
 // MarshalSummarizeDocResult serializes *SummarizeDocResult into JSON.
@@ -247,7 +227,13 @@ func MarshalSummarizeDocResult(v *SummarizeDocResult) ([]byte, error) {
 	if v == nil {
 		return nil, fmt.Errorf("summarizeDocResult is nil")
 	}
-	return json.Marshal(v)
+	in := v
+	_ = in
+	var out *toolhttp.SummarizeDocResultTransport
+	out = &toolhttp.SummarizeDocResultTransport{
+		Title: &in.Title,
+	}
+	return json.Marshal(out)
 }
 
 // UnmarshalSummarizeDocResult deserializes JSON into *SummarizeDocResult.
@@ -255,47 +241,20 @@ func UnmarshalSummarizeDocResult(data []byte) (*SummarizeDocResult, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("summarizeDocResult JSON is empty")
 	}
-	// Decode into JSON body (server body style) then transform.
-	// Note: Agent used-tools perform lenient decode (no required-field validation here).
-	var raw SummarizeDocResultJSON2
-	if err := json.Unmarshal(data, &raw); err != nil {
+	var tv toolhttp.SummarizeDocResultTransport
+	if err := json.Unmarshal(data, &tv); err != nil {
 		return nil, fmt.Errorf("decode summarizeDocResult: %w", err)
 	}
-	var err error
-	if raw.Title == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("title", "raw"))
-	}
-	if err != nil {
+	if err := toolhttp.ValidateSummarizeDocResultTransport(&tv); err != nil {
 		err = newValidationError(err)
+		err = enrichSummarizeDocResultValidationError(err)
 		return nil, err
 	}
-	// Transform into final type
-	v := &SummarizeDocResult{
-		Title: *raw.Title,
+	in := &tv
+	_ = in
+	var out *SummarizeDocResult
+	out = &SummarizeDocResult{
+		Title: *in.Title,
 	}
-	return v, nil
-}
-
-// Transform helpers
-
-// ValidateSummarizeDocPayloadJSON2 validates values of type *SummarizeDocPayloadJSON2.
-func ValidateSummarizeDocPayloadJSON2(body *SummarizeDocPayloadJSON2) (err error) {
-	if body.DocID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("doc_id", "body"))
-	}
-	return
-}
-
-// ValidateSummarizeDocResultJSON2 validates values of type *SummarizeDocResultJSON2.
-func ValidateSummarizeDocResultJSON2(body *SummarizeDocResultJSON2) (err error) {
-	if body.Title == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("title", "body"))
-	}
-	return
-}
-
-// ValidateSummarizePayload validates values of type *SummarizePayload.
-func ValidateSummarizePayload(body *SummarizePayload) (err error) {
-
-	return
+	return out, nil
 }

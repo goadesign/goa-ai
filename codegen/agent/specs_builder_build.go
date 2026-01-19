@@ -73,6 +73,8 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 	}
 	data.Scope = builder.helperScope
 	data.Unions = builder.unionTypes()
+	data.TransportUnions = builder.transportUnionTypes()
+	data.CodecTransformHelpers = builder.codecTransformHelpers
 	// Add any additional nested/local types in a deterministic order.
 	if len(builder.types) > 0 {
 		infos := make([]*typeData, 0, len(builder.types))
@@ -136,7 +138,7 @@ func (d *toolSpecsData) pureTypes() []*typeData {
 // (validation helpers).
 func (d *toolSpecsData) needsGoaImport() bool {
 	for _, info := range d.order {
-		if info.Validation != "" || info.JSONValidation != "" {
+		if strings.TrimSpace(strings.Join(info.TransportValidationSrc, "\n")) != "" {
 			return true
 		}
 	}
@@ -262,8 +264,7 @@ func assertNoNilTypes(att *goaexpr.AttributeExpr, tool *ToolData, usage typeUsag
 // needsUnicodeImport reports whether generated validations reference unicode/utf8.
 func (d *toolSpecsData) needsUnicodeImport() bool {
 	for _, info := range d.order {
-		if (info.Validation != "" && strings.Contains(info.Validation, "utf8.")) ||
-			(info.JSONValidation != "" && strings.Contains(info.JSONValidation, "utf8.")) {
+		if strings.Contains(strings.Join(info.TransportValidationSrc, "\n"), "utf8.") {
 			return true
 		}
 	}
@@ -366,4 +367,29 @@ func (d *toolSpecsData) codecsImports() []*codegen.ImportSpec {
 	// Keep strings import last to match golden expectations.
 	base = append(base, codegen.SimpleImport("strings"))
 	return base
+}
+
+func (d *toolSpecsData) transportTypeImports() []*codegen.ImportSpec {
+	uniq := make(map[string]*codegen.ImportSpec)
+	for _, info := range d.order {
+		for _, im := range info.TransportImports {
+			if im == nil || im.Path == "" {
+				continue
+			}
+			uniq[im.Path] = im
+		}
+	}
+	if len(uniq) == 0 {
+		return nil
+	}
+	paths := make([]string, 0, len(uniq))
+	for p := range uniq {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	imports := make([]*codegen.ImportSpec, 0, len(paths))
+	for _, p := range paths {
+		imports = append(imports, uniq[p])
+	}
+	return imports
 }

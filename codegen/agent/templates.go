@@ -27,6 +27,8 @@ const (
 	toolProviderFileT          = "tool_provider"
 	toolSpecsAggregateT        = "specs_aggregate"
 	toolTransformsFileT        = "tool_transforms"
+	toolTransportTypesFileT    = "tool_transport_types"
+	toolTransportValidateFileT = "tool_transport_validate"
 	toolTypesFileT             = "tool_types"
 	toolUnionTypesFileT        = "tool_union_types"
 	usedToolsFileT             = "used_tools"

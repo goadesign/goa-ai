@@ -13,21 +13,6 @@ import (
 	goaexpr "goa.design/goa/v3/expr"
 )
 
-func locatedUserTypePackage(att *goaexpr.AttributeExpr) string {
-	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
-		return ""
-	}
-	ut, ok := att.Type.(goaexpr.UserType)
-	if !ok || ut == nil {
-		return ""
-	}
-	loc := codegen.UserTypeLocation(ut)
-	if loc == nil || loc.RelImportPath == "" {
-		return ""
-	}
-	return loc.PackageName()
-}
-
 // scopeForTool returns the NameScope used to derive all type and helper names
 // for the specs package being generated.
 func (b *toolSpecBuilder) scopeForTool() *codegen.NameScope {
@@ -106,10 +91,6 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	// We intentionally do NOT bind design user types (like a shared Doc type)
 	// to the tool-facing name, because payload and result may both alias the
 	// same underlying type hash but must remain distinct tool types.
-	att = b.renameCollidingNestedUserTypes(att, scope)
-	if pkg := locatedUserTypePackage(att); pkg != "" {
-		att = propagateStructPkgMetaToNestedUserTypes(att, pkg)
-	}
 	baseAttr := att
 	if ut, ok := att.Type.(goaexpr.UserType); ok && ut != nil {
 		baseAttr = ut.Attribute()
@@ -139,18 +120,14 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	// defined type (rather than an alias) so that codegen can attach the
 	// agent.BoundedResult interface via a method on the result type.
 	defineType := usage == usageResult && tool.BoundedResult
-	// Materialize definition and type reference.
-	//
-	// For tool payloads, follow Goa's request default semantics (useDefault=true):
-	// optional primitive fields with defaults are emitted as values (not pointers).
-	//
-	// This is required for correctness because our codecs decode into a JSON helper
-	// type with pointer fields and then use `codegen.GoTransform` to produce the
-	// final payload. Goa's default injection logic assumes the *target* field is a
-	// value when a default exists; if the target field were a pointer, Goa would
-	// generate invalid assignments (value -> *T) and/or nil checks on value fields.
-	useDefault := usage == usagePayload
-	tt, defLine, fullRef, imports := b.materialize(typeName, att, scope, defineType, useDefault)
+	// Materialize the PUBLIC tool-facing type as a service-level shape:
+	// required fields are non-pointers; defaults behave normally.
+	const (
+		publicPtr      = false
+		publicDefaults = true
+	)
+	att = b.ensureNestedLocalTypes(scope, att, publicPtr, publicDefaults)
+	tt, defLine, fullRef, imports := b.materialize(typeName, att, scope, defineType, publicPtr, publicDefaults)
 	// Collect any union sum types referenced by this tool type so the toolset
 	// package can emit their definitions once.
 	b.collectUnionSumTypes(scope, tt)
@@ -158,14 +135,24 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	aliasIsPointer := strings.Contains(defLine, "= *")
 	ptr := aliasIsPointer || strings.HasPrefix(fullRef, "*")
 
-	// JSON schema from effective attribute
-	schemaAttr := tt
+	// Internal transport type used only by codecs for JSON decode+validation.
+	// This is the actual JSON contract (schema property names + missing detection).
+	transportTypeName := typeName + "Transport"
+	transportAttr := cloneWithJSONTags(tt)
+	transportAttr = b.ensureNestedLocalTransportTypes(scope, transportAttr)
+	// Collect union sum types as they appear in the transport graph (after
+	// localization). These are emitted into the toolset-local http package.
+	b.collectTransportUnionSumTypes(scope, transportAttr)
+
+	// JSON schema from transport attribute
+	schemaAttr := transportAttr
 	var err error
 	if usage == usagePayload && tool.Artifact != nil && tool.Artifact.Type != goaexpr.Empty {
-		schemaAttr, err = schemaAttributeWithArtifactsToggle(tool, tt)
+		schemaAttr, err = schemaAttributeWithArtifactsToggle(tool, schemaAttr)
 		if err != nil {
 			return nil, err
 		}
+		normalizeTransportAttrRecursive(schemaAttr)
 	}
 	schemaBytes, err := schemaForAttribute(schemaAttr)
 	if err != nil {
@@ -181,31 +168,88 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	}
 
 	doc := fmt.Sprintf("%s defines the JSON %s for the %s tool.", typeName, usage, tool.QualifiedName)
+	transportDef := transportTypeName + " " + scope.GoTypeDef(schemaAttr, true, false)
+	transportImports := gatherAttributeImports(b.genpkg, schemaAttr)
+	httpctx := codegen.NewAttributeContext(!goaexpr.IsPrimitive(schemaAttr.Type), false, false, "", scope)
+	transportValidation := validationCodeWithContext(schemaAttr, nil, httpctx, true, false, false, "body", tool, usage, "transport")
+	var transportValidationSrc []string
+	if strings.TrimSpace(transportValidation) != "" {
+		transportValidationSrc = strings.Split(transportValidation, "\n")
+	}
+
+	src := &goaexpr.AttributeExpr{
+		Type: &goaexpr.UserTypeExpr{
+			AttributeExpr: schemaAttr,
+			TypeName:      transportTypeName,
+		},
+	}
+	dst := &goaexpr.AttributeExpr{
+		Type: &goaexpr.UserTypeExpr{
+			// Public tool types are local to the specs package: strip any root
+			// struct:pkg:* locator metadata inherited from the *source* design type.
+			// This is a shallow operation: nested shared types (e.g. gen/types) keep
+			// their locators and remain qualified correctly.
+			AttributeExpr: stripStructPkgMeta(tt),
+			TypeName:      typeName,
+		},
+	}
+	srcCtx := codegen.NewAttributeContextForConversion(true, false, false, "toolhttp", scope)
+	tgtCtx := codegen.NewAttributeContextForConversion(false, false, true, "", scope)
+	decodeBody, decodeHelpers, err := codegen.GoTransform(src, dst, "in", "out", srcCtx, tgtCtx, "decode", false)
+	if err != nil {
+		return nil, err
+	}
+	encSrcCtx := codegen.NewAttributeContextForConversion(false, false, true, "", scope)
+	encTgtCtx := codegen.NewAttributeContextForConversion(true, false, false, "toolhttp", scope)
+	encodeBody, encodeHelpers, err := codegen.GoTransform(dst, src, "in", "out", encSrcCtx, encTgtCtx, "encode", false)
+	if err != nil {
+		return nil, err
+	}
+	for _, h := range append(decodeHelpers, encodeHelpers...) {
+		if h == nil {
+			continue
+		}
+		key := h.Name + "|" + h.ParamTypeRef + "|" + h.ResultTypeRef
+		if _, ok := b.codecTransformHelperKeys[key]; ok {
+			continue
+		}
+		b.codecTransformHelperKeys[key] = struct{}{}
+		b.codecTransformHelpers = append(b.codecTransformHelpers, h)
+	}
 	info := &typeData{
-		Key:           key,
-		TypeName:      typeName,
-		Doc:           doc,
-		Def:           defLine,
-		SchemaJSON:    schemaBytes,
-		ExampleJSON:   exampleBytes,
-		ExportedCodec: typeName + "Codec",
-		GenericCodec:  lowerCamel(typeName) + "Codec",
-		MarshalFunc:   "Marshal" + typeName,
-		UnmarshalFunc: "Unmarshal" + typeName,
-		ValidateFunc:  "Validate" + typeName,
-		FullRef:       fullRef,
-		NeedType:      defLine != "",
-		IsToolType:    usage == usagePayload || usage == usageResult || usage == usageSidecar,
-		NilError:      fmt.Sprintf("%s is nil", lowerCamel(typeName)),
-		DecodeError:   fmt.Sprintf("decode %s", lowerCamel(typeName)),
-		ValidateError: fmt.Sprintf("validate %s", lowerCamel(typeName)),
-		EmptyError:    fmt.Sprintf("%s JSON is empty", lowerCamel(typeName)),
-		Usage:         usage,
-		TypeImports:   imports,
-		GenerateCodec: true,
-		Pointer:       ptr,
-		MarshalArg:    "v",
-		UnmarshalArg:  "v",
+		Key:                    key,
+		TypeName:               typeName,
+		Doc:                    doc,
+		Def:                    defLine,
+		SchemaJSON:             schemaBytes,
+		ExampleJSON:            exampleBytes,
+		ExportedCodec:          typeName + "Codec",
+		GenericCodec:           lowerCamel(typeName) + "Codec",
+		MarshalFunc:            "Marshal" + typeName,
+		UnmarshalFunc:          "Unmarshal" + typeName,
+		ValidateFunc:           "",
+		FullRef:                fullRef,
+		NeedType:               defLine != "",
+		IsToolType:             usage == usagePayload || usage == usageResult || usage == usageSidecar,
+		PublicType:             dst,
+		NilError:               fmt.Sprintf("%s is nil", lowerCamel(typeName)),
+		DecodeError:            fmt.Sprintf("decode %s", lowerCamel(typeName)),
+		ValidateError:          fmt.Sprintf("validate %s", lowerCamel(typeName)),
+		EmptyError:             fmt.Sprintf("%s JSON is empty", lowerCamel(typeName)),
+		Usage:                  usage,
+		TypeImports:            imports,
+		GenerateCodec:          true,
+		Pointer:                ptr,
+		MarshalArg:             "v",
+		UnmarshalArg:           "v",
+		TransportTypeName:      transportTypeName,
+		TransportDef:           transportDef,
+		TransportImports:       transportImports,
+		TransportValidationSrc: transportValidationSrc,
+		TransportTypeRef:       scope.GoTypeRef(src),
+		TransportPointer:       strings.HasPrefix(scope.GoTypeRef(src), "*"),
+		DecodeTransform:        decodeBody,
+		EncodeTransform:        encodeBody,
 	}
 	if usage == usagePayload && len(exampleBytes) > 0 {
 		if eg, ok := exampleInputGoExpr(exampleBytes); ok {
@@ -227,153 +271,14 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	if (usage == usageResult || usage == usageSidecar) && goaexpr.AsObject(baseAttr.Type) != nil {
 		info.Pointer = true
 	}
-	// Populate JSON-body helpers (HTTP server body style) for payload, result,
-	// and sidecar types unless delegating to service-level codecs. This keeps
-	// tool JSON aligned with Goa HTTP behavior (including union Type/Value
-	// encoding) and avoids encoding/json limitations with union carrier
-	// interfaces.
-	needJSONBody := usage == usagePayload || usage == usageResult || usage == usageSidecar
-	if needJSONBody {
-		// Do not generate standalone validation for the final payload type.
-		if usage == usagePayload {
-			info.ValidateFunc = ""
-			info.Validation = ""
-			info.ValidationSrc = nil
-			// Accept empty JSON for payloads that are empty structs (no fields).
-			if isEmptyStruct(att) {
-				info.AcceptEmpty = true
-			}
-		}
-		// Build JSON decode-body types uniformly, treating Empty as an empty object.
-		jsonAttr := att
-		if att.Type == goaexpr.Empty {
-			jsonAttr = &goaexpr.AttributeExpr{Type: &goaexpr.Object{}}
-		}
-		// 1) JSON decode-body type: materialize a single named user type for the
-		// root body with inline nested objects (no separate nested user types).
-		jsonRoot, jsonDefs := b.materializeJSONUserTypes(jsonAttr, typeName+"JSON", scope)
-		// Ensure any union sum types referenced by the JSON helper graph are
-		// emitted in unions.go. JSON helper types may include locally materialized
-		// unions (e.g., type/value carriers) that do not exist in the target
-		// package otherwise.
-		b.collectUnionSumTypes(scope, &goaexpr.AttributeExpr{Type: jsonRoot})
-		assertNoNilTypes(jsonRoot.Attribute(), tool, usage, "json-root")
-		// Compute the final public name for the root JSON type so that
-		// references in codecs match the emitted type name in types.go.
-		// JSON helper types are emitted in the current package; use GoTypeName
-		// so names are unqualified when no package is needed.
-		jsonRootPublic := scope.GoTypeName(&goaexpr.AttributeExpr{Type: jsonRoot})
-		info.JSONTypeName = jsonRootPublic
-		info.JSONRef = jsonRootPublic
-
-		// Emit the JSON root type as a standalone declaration.
-		for _, jut := range jsonDefs {
-			assertNoNilTypes(jut.Attribute(), tool, usage, "json-helper")
-			// Ensure JSON helper fields carry struct tag metadata so GoTypeDef
-			// can emit json tags that match the original field names (including
-			// underscores). Without this, names like "device_aliases" will not
-			// populate fields such as DeviceAliases correctly.
-			if obj := goaexpr.AsObject(jut.Attribute().Type); obj != nil {
-				for _, nat := range *obj {
-					if nat == nil || nat.Attribute == nil {
-						continue
-					}
-					if nat.Attribute.Meta == nil {
-						nat.Attribute.Meta = make(map[string][]string)
-					}
-					// Only set when no tag is present so DSL authors can override it.
-					//
-					// Use json:name so Goa can append ",omitempty" based on Required(...)
-					// at the parent object boundary.
-					if _, ok := nat.Attribute.Meta["struct:tag:json"]; !ok {
-						if _, ok := nat.Attribute.Meta["struct:tag:json:name"]; !ok {
-							nat.Attribute.Meta["struct:tag:json:name"] = []string{nat.Name}
-						}
-					}
-				}
-			}
-
-			// Use Goa scope to compute the final public name, which guarantees
-			// consistency with references produced by GoTypeDef/GoTypeName.
-			// Helper JSON types are local to the specs package; use GoTypeName
-			// to keep names unqualified.
-			jattr := &goaexpr.AttributeExpr{Type: jut}
-			gname := scope.GoTypeName(jattr)
-			def := gname + " = " + scope.GoTypeDef(jut.Attribute(), true, false)
-			ref := scope.GoTypeRef(jattr)
-			// Generate standalone validator for this JSON helper user type so
-			// root validators that call Validate<Helper> compile.
-			httpctx := codegen.NewAttributeContext(true, false, false, "", scope)
-			vcode := validationCodeWithContext(jut.Attribute(), jut, httpctx, true, false, false, "body", tool, usage, "json-helper:"+gname)
-			td := &typeData{
-				Key:          "json:" + gname,
-				TypeName:     gname,
-				Doc:          gname + " is a helper type for JSON decode-body.",
-				Def:          def,
-				FullRef:      ref,
-				NeedType:     true,
-				TypeImports:  gatherAttributeImports(b.genpkg, jut.Attribute()),
-				ValidateFunc: "Validate" + gname,
-				Validation:   vcode,
-			}
-			td.ValidationSrc = strings.Split(vcode, "\n")
-			if _, exists := b.types[td.Key]; !exists {
-				b.types[td.Key] = td
-			}
-		}
-
-		// 2) Validation against JSON body using HTTP server-like AttributeContext
-		httpctx := codegen.NewAttributeContext(true, false, false, "", scope)
-		jv := validationCodeWithContext(jsonRoot.Attribute(), jsonRoot, httpctx, true, false, false, "raw", tool, usage, "json-root")
-		if jv != "" {
-			info.JSONValidation = jv
-			info.JSONValidationSrc = strings.Split(jv, "\n")
-		}
-
-		// 3) Transform raw(JSON) -> final type.
-		// For empty payloads/results, emit a direct initializer to the local alias
-		// to avoid Goa's transform generating '&Empty{}'.
-		if att.Type == goaexpr.Empty {
-			info.TransformBody = "v := &" + typeName + "{}"
-		} else {
-			srcAttr := &goaexpr.AttributeExpr{Type: jsonRoot}
-			tgtAttr := &goaexpr.AttributeExpr{Type: toolUT}
-			// Use the same NameScope used for emitting JSON helper types so that
-			// GoTransform references match the generated type names.
-			//
-			// Follow Goa's decode-body model:
-			// - The JSON helper uses pointer fields so we can distinguish missing vs zero.
-			// - The final tool payload applies default semantics (UseDefault=true),
-			//   turning defaulted optional primitives into values and letting GoTransform
-			//   inject defaults when raw fields are nil.
-			srcCtx := codegen.NewAttributeContext(true, false, false, "", scope)
-			tgtUseDefault := usage == usagePayload
-			tgtCtx := codegen.NewAttributeContext(false, false, tgtUseDefault, "", scope)
-			typeRef := tgtCtx.Scope.Ref(tgtAttr, tgtCtx.Pkg(tgtAttr))
-			if strings.HasPrefix(typeRef, "*") {
-				body, helpers, err := codegen.GoTransform(srcAttr, tgtAttr, "raw", "v", srcCtx, tgtCtx, string(usage), true)
-				if err == nil && body != "" {
-					info.TransformBody = body
-					if len(helpers) > 0 {
-						info.TransformHelpers = fixTransformHelperSignatures(helpers)
-					}
-				}
-			} else {
-				body, helpers, err := codegen.GoTransform(srcAttr, tgtAttr, "raw", "res", srcCtx, tgtCtx, string(usage), true)
-				if err == nil && body != "" {
-					body += "\nv := &res"
-					info.TransformBody = body
-					if len(helpers) > 0 {
-						info.TransformHelpers = fixTransformHelperSignatures(helpers)
-					}
-				}
-			}
-		}
-
-		// Keep field descriptions for validation error enrichment
-		if fdesc := buildFieldDescriptions(tt); len(fdesc) > 0 {
-			info.FieldDescs = fdesc
-		}
+	// Validation is performed on the internal transport type during Unmarshal.
+	// Accept empty JSON for payloads that are empty structs (no fields).
+	if usage == usagePayload && isEmptyStruct(att) {
+		info.AcceptEmpty = true
+	}
+	// Keep field descriptions for validation error enrichment.
+	if fdesc := buildFieldDescriptions(schemaAttr); len(fdesc) > 0 {
+		info.FieldDescs = fdesc
 	}
 	// For bounded tool results, mark the type as implementing agent.BoundedResult
 	// so templates can emit a simple ResultBounds method that exposes the
@@ -414,15 +319,6 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	nameKey := "name:" + typeName
 	if _, exists := b.types[nameKey]; !exists {
 		b.types[nameKey] = info
-	}
-	// Also ensure any nested service-local user types are materialized locally so
-	// unqualified references inside composite shapes compile.
-	b.ensureNestedLocalTypes(scope, tt)
-	// Collect validators for all unique user types referenced within payloads
-	// so nested validations do not rely on external packages to provide local
-	// Validate<Name> functions.
-	if usage == usagePayload {
-		b.collectUserTypeValidators(scope, tool, usage, tt)
 	}
 	return info, nil
 }

@@ -10,17 +10,13 @@
         "name": "AnswerPayload",
         "schema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "title": "AskPayload",
           "type": "object",
           "properties": {
             "question": {
               "type": "string",
               "description": "User question to answer",
-              "example": "Odit error assumenda dolores eveniet consequatur."
+              "example": "Delectus eveniet ad accusantium magnam saepe nulla."
             }
-          },
-          "example": {
-            "question": "What is the capital of Japan?"
           },
           "required": [
             "question"
@@ -31,17 +27,13 @@
         "name": "AnswerResult",
         "schema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "title": "Answer",
           "type": "object",
           "properties": {
             "text": {
               "type": "string",
               "description": "Answer text",
-              "example": "Incidunt id."
+              "example": "Ipsa et reprehenderit distinctio id nobis."
             }
-          },
-          "example": {
-            "text": "Nemo ut possimus impedit facilis tempora ut."
           },
           "required": [
             "text"

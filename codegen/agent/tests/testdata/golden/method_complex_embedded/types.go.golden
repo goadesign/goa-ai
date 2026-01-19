@@ -10,70 +10,31 @@ type (
 	// UpsertPayload defines the JSON payload for the profiles.upsert tool.
 	UpsertPayload = struct {
 		// Profile
-		Profile *Profile `json:"profile"`
+		Profile *Profile
 	}
 	// UpsertResult defines the JSON result for the profiles.upsert tool.
 	UpsertResult = struct {
 		// Identifier
-		ID string `json:"id"`
+		ID string
 		// Name
-		Name *string `json:"name,omitempty"`
+		Name *string
 		// Address
-		Address *Address `json:"address"`
+		Address *Address
 	}
 	// Address is a helper type materialized for nested references.
 	Address = struct {
 		// Street
-		Street string `json:"street"`
+		Street string
 		// City
-		City string `json:"city"`
+		City string
 	}
 	// Profile is a helper type materialized for nested references.
 	Profile = struct {
 		// Identifier
-		ID string `json:"id"`
+		ID string
 		// Name
-		Name *string `json:"name,omitempty"`
+		Name *string
 		// Address
-		Address *Address `json:"address"`
-	}
-	// UpsertArgs is a helper type materialized for nested references.
-	UpsertArgs = struct {
-		// Profile
-		Profile *Profile `json:"profile"`
-	}
-	// UpsertPayloadJSON2 is a helper type for JSON decode-body.
-	UpsertPayloadJSON2 = struct {
-		Profile *UpsertPayloadJSONProfileJSON2 `json:"profile"`
-	}
-	// UpsertPayloadJSONProfileJSON2 is a helper type for JSON decode-body.
-	UpsertPayloadJSONProfileJSON2 = struct {
-		// Identifier
-		ID *string `json:"id"`
-		// Name
-		Name    *string                                   `json:"name,omitempty"`
-		Address *UpsertPayloadJSONProfileJSONAddressJSON2 `json:"address"`
-	}
-	// UpsertPayloadJSONProfileJSONAddressJSON2 is a helper type for JSON decode-body.
-	UpsertPayloadJSONProfileJSONAddressJSON2 = struct {
-		// Street
-		Street *string `json:"street"`
-		// City
-		City *string `json:"city"`
-	}
-	// UpsertResultJSON2 is a helper type for JSON decode-body.
-	UpsertResultJSON2 = struct {
-		// Identifier
-		ID *string `json:"id"`
-		// Name
-		Name    *string                       `json:"name,omitempty"`
-		Address *UpsertResultJSONAddressJSON2 `json:"address"`
-	}
-	// UpsertResultJSONAddressJSON2 is a helper type for JSON decode-body.
-	UpsertResultJSONAddressJSON2 = struct {
-		// Street
-		Street *string `json:"street"`
-		// City
-		City *string `json:"city"`
+		Address *Address
 	}
 )

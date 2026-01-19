@@ -20,9 +20,16 @@ type (
 		Unions []*service.UnionTypeData
 	}
 
+	toolTransportTypesFileData struct {
+		Types []*typeData
+	}
+
 	toolCodecsFileData struct {
 		Types []*typeData
 		Tools []*toolEntry
+		// Helpers contains a file-level, de-duplicated list of helper transform
+		// functions referenced by codec-local conversions (transport <-> public).
+		Helpers []*codegen.TransformFunctionData
 	}
 
 	toolSpecsAggregateData struct {
