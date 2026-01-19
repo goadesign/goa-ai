@@ -3,6 +3,7 @@ package codegen
 import (
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
+	goaexpr "goa.design/goa/v3/expr"
 )
 
 type (
@@ -24,6 +25,16 @@ type (
 		// Unions contains the sum-type unions required by any generated tool types
 		// in this specs package.
 		Unions []*service.UnionTypeData
+		// TransportUnions contains the sum-type unions required by any generated
+		// transport types in the toolset-local http package. These must be derived
+		// from the transport attribute graph (after localization) so they do not
+		// leak service `gen/types` references into tool JSON.
+		TransportUnions []*service.UnionTypeData
+		// CodecTransformHelpers contains helper functions produced by Goa's
+		// GoTransform when generating codec-local conversions (transport <-> public).
+		// These are emitted once per package to support recursive types without
+		// duplicating helper declarations.
+		CodecTransformHelpers []*codegen.TransformFunctionData
 		// Scope captures the name scope used to materialize nested local types for
 		// this toolset. It is reused by other generator passes (e.g., adapter
 		// transforms) to compute type references that match the specs package.
@@ -118,6 +129,11 @@ type (
 		ValidateFunc string
 		// Validation code body.
 		Validation string
+		// PublicType is the Goa expression for the tool-facing public type as it
+		// exists in the specs package. It is used by other generator passes (for
+		// example, adapter transforms) to ensure a single source of truth for the
+		// tool type shape and local naming.
+		PublicType *goaexpr.AttributeExpr
 		// Fully-qualified type reference with pointer prefix (e.g., "*MyType" or "MyType").
 		FullRef string
 		// Whether the type is a pointer.
@@ -128,6 +144,30 @@ type (
 		UnmarshalArg string
 		// Validation code split into lines for template rendering.
 		ValidationSrc []string
+		// TransportTypeName is the private Go type name used for the internal
+		// server-body transport representation of this tool type. It is used only
+		// by codecs to decode/validate JSON with missing-field detection.
+		TransportTypeName string
+		// TransportDef is the Go type definition for the internal transport type.
+		TransportDef string
+		// TransportImports are the imports required by the transport type
+		// definition. These are used to generate the toolset-local http package.
+		TransportImports []*codegen.ImportSpec
+		// TransportValidationSrc is validation code (as lines) that validates a
+		// pointer to the transport type (variable name: "body").
+		TransportValidationSrc []string
+		// TransportTypeRef is the reference type used by Validate{{TransportTypeName}}.
+		// It matches Goa's conventions: pointers for composite types, values for
+		// primitive/alias types.
+		TransportTypeRef string
+		// TransportPointer reports whether TransportTypeRef is a pointer type.
+		TransportPointer bool
+		// DecodeTransform is Go code that initializes "out" (public type) from "in"
+		// (transport type) using Goa's GoTransform conventions.
+		DecodeTransform string
+		// EncodeTransform is Go code that initializes "out" (transport type) from "in"
+		// (public type) using Goa's GoTransform conventions.
+		EncodeTransform string
 		// Whether to generate a type definition.
 		NeedType bool
 		// IsToolType is true when this entry represents a top-level tool-facing
@@ -157,18 +197,6 @@ type (
 		// treated as the zero value (only for payloads). This is true for
 		// payload types that are empty structs (no fields).
 		AcceptEmpty bool
-		// JSON decode-body support. When enabled, codecs decode into a JSON-body
-		// helper type (HTTP server body style) and then transform into the final
-		// payload/result type. Helper types use pointers for primitives so the
-		// codec can distinguish "missing" from zero values and return structured
-		// validation issues.
-		JSONTypeName      string
-		JSONDef           string
-		JSONRef           string
-		JSONValidation    string
-		JSONValidationSrc []string
-		TransformBody     string
-		TransformHelpers  []*codegen.TransformFunctionData
 		// ImplementsBounds indicates that this type implements agent.BoundedResult.
 		// When true, templates emit a Bounds() method on the result alias type so
 		// runtimes can rely on the interface rather than reflection.
@@ -202,6 +230,13 @@ type (
 		// unions accumulates all union sum types referenced by generated tool
 		// payload/result/sidecar types in this specs package, indexed by union hash.
 		unions map[string]*service.UnionTypeData
+		// transportUnions accumulates all union sum types referenced by transport
+		// helper graphs emitted into the toolset-local http package.
+		transportUnions map[string]*service.UnionTypeData
+		// codecTransformHelpers accumulates unique GoTransform helper functions
+		// required by codec-local conversions (transport <-> public).
+		codecTransformHelpers    []*codegen.TransformFunctionData
+		codecTransformHelperKeys map[string]struct{}
 	}
 
 	typeUsage string

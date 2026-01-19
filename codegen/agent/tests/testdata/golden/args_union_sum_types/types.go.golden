@@ -10,32 +10,14 @@ type (
 	// EchoPayload defines the JSON payload for the union.echo tool.
 	EchoPayload = struct {
 		// Request identifier
-		ID    string `json:"id"`
-		Value Value  `json:"value"`
+		ID    string
+		Value Value
 	}
 	// EchoResult defines the JSON result for the union.echo tool.
 	EchoResult = struct {
 		// Request identifier
-		ID    string `json:"id"`
-		Value Value  `json:"value"`
-	}
-	// EchoPayloadJSON2 is a helper type for JSON decode-body.
-	EchoPayloadJSON2 = struct {
-		// Request identifier
-		ID    *string `json:"id"`
-		Value Value   `json:"value"`
-	}
-	// EchoResultJSON2 is a helper type for JSON decode-body.
-	EchoResultJSON2 = struct {
-		// Request identifier
-		ID    *string `json:"id"`
-		Value Value   `json:"value"`
-	}
-	// UnionPayload is a helper type materialized for nested references.
-	UnionPayload = struct {
-		// Request identifier
-		ID    string `json:"id"`
-		Value Value  `json:"value"`
+		ID    string
+		Value Value
 	}
 	// ValueNumber is a helper type materialized for nested references.
 	ValueNumber = int32

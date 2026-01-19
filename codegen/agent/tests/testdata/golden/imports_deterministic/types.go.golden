@@ -10,17 +10,13 @@ import types "goa.design/goa-ai/gen/example.com/mod/gen/types"
 
 type (
 	// StorePayload defines the JSON payload for the docs.store tool.
-	StorePayload = types.Doc
-	// StoreResult defines the JSON result for the docs.store tool.
-	StoreResult = types.Doc
-	// StorePayloadJSON2 is a helper type for JSON decode-body.
-	StorePayloadJSON2 = struct {
+	StorePayload = struct {
 		// Identifier
-		ID *string `json:"id"`
+		ID string
 	}
-	// StoreResultJSON2 is a helper type for JSON decode-body.
-	StoreResultJSON2 = struct {
+	// StoreResult defines the JSON result for the docs.store tool.
+	StoreResult = struct {
 		// Identifier
-		ID *string `json:"id"`
+		ID string
 	}
 )

@@ -10,31 +10,11 @@ type (
 	// SummarizeDocPayload defines the JSON payload for the helpers.summarize_doc tool.
 	SummarizeDocPayload = struct {
 		// Document identifier
-		DocID string `json:"doc_id"`
+		DocID string
 	}
 	// SummarizeDocResult defines the JSON result for the helpers.summarize_doc tool.
 	SummarizeDocResult = struct {
 		// Title
-		Title string `json:"title"`
-	}
-	// SummarizeDocPayloadJSON2 is a helper type for JSON decode-body.
-	SummarizeDocPayloadJSON2 = struct {
-		// Document identifier
-		DocID *string `json:"doc_id"`
-	}
-	// SummarizeDocResultJSON2 is a helper type for JSON decode-body.
-	SummarizeDocResultJSON2 = struct {
-		// Title
-		Title *string `json:"title"`
-	}
-	// SummarizePayload is a helper type materialized for nested references.
-	SummarizePayload = struct {
-		// Document identifier
-		DocID string `json:"doc_id"`
-	}
-	// SummarizeResult is a helper type materialized for nested references.
-	SummarizeResult = struct {
-		// Title
-		Title string `json:"title"`
+		Title string
 	}
 )

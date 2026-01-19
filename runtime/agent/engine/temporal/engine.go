@@ -151,7 +151,6 @@ type Engine struct {
 	activityOptions map[string]engine.ActivityOptions
 
 	workflowContexts sync.Map // runID -> engine.WorkflowContext
-	baseContexts     sync.Map // runID -> context.Context
 }
 
 // New constructs a Temporal engine adapter. Either Client or ClientOptions must
@@ -242,7 +241,7 @@ func (e *Engine) RegisterWorkflow(_ context.Context, def engine.WorkflowDefiniti
 
 	bundle.registerWorkflow(def.Name, func(tctx workflow.Context, input *api.RunInput) (*api.RunOutput, error) {
 		wfCtx := newTemporalWorkflowContext(e, tctx)
-		defer e.releaseWorkflowContext(wfCtx.RunID())
+		defer e.releaseWorkflowContext(wfCtx.runID)
 		return def.Handler(wfCtx, input)
 	})
 
@@ -356,7 +355,6 @@ func (e *Engine) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequ
 	if err != nil {
 		return nil, err
 	}
-	e.baseContexts.Store(run.GetRunID(), context.WithoutCancel(ctx))
 
 	return &workflowHandle{
 		run:    run,
@@ -532,19 +530,6 @@ func (e *Engine) releaseWorkflowContext(runID string) {
 		return
 	}
 	e.workflowContexts.Delete(runID)
-	e.baseContexts.Delete(runID)
-}
-
-func (e *Engine) workflowBaseContext(runID string) context.Context {
-	if runID == "" {
-		return nil
-	}
-	if base, ok := e.baseContexts.Load(runID); ok {
-		if ctx, ok := base.(context.Context); ok {
-			return ctx
-		}
-	}
-	return nil
 }
 
 // WorkerController manages worker lifecycle (start/stop) for all task queues
@@ -671,11 +656,11 @@ type workflowHandle struct {
 }
 
 func (h *workflowHandle) Wait(ctx context.Context) (*api.RunOutput, error) {
-	var out api.RunOutput
+	var out *api.RunOutput
 	if err := h.run.Get(ctx, &out); err != nil {
 		return nil, err
 	}
-	return &out, nil
+	return out, nil
 }
 
 func (h *workflowHandle) Signal(ctx context.Context, name string, payload any) error {

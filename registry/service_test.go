@@ -53,7 +53,6 @@ func TestRegistrationIdempotence(t *testing.T) {
 				StreamManager: mockSM,
 				HealthTracker: mockHT,
 				PulseClient:   pulseClient,
-				Redis:         rdb,
 			})
 			if err != nil {
 				return false
@@ -299,7 +298,6 @@ func TestCallToolPayloadValidation(t *testing.T) {
 				StreamManager: mockSM,
 				HealthTracker: mockHT,
 				PulseClient:   pulseClient,
-				Redis:         rdb,
 			})
 			if err != nil {
 				return false
@@ -551,7 +549,6 @@ func TestUnregisterRemovesFromListing(t *testing.T) {
 				StreamManager: mockSM,
 				HealthTracker: mockHT,
 				PulseClient:   pulseClient,
-				Redis:         rdb,
 			})
 			if err != nil {
 				return false
@@ -698,7 +695,6 @@ func TestInvalidSchemaRejection(t *testing.T) {
 				StreamManager: mockSM,
 				HealthTracker: mockHT,
 				PulseClient:   pulseClient,
-				Redis:         rdb,
 			})
 			if err != nil {
 				return false
@@ -854,7 +850,6 @@ func TestUnregisterNonExistentReturnsNotFound(t *testing.T) {
 				StreamManager: mockSM,
 				HealthTracker: mockHT,
 				PulseClient:   pulseClient,
-				Redis:         rdb,
 			})
 			if err != nil {
 				return false

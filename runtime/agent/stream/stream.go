@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/toolerrors"
 )
@@ -216,6 +217,13 @@ type (
 		Data AwaitConfirmationPayload
 	}
 
+	// AwaitQuestions streams a structured multiple-choice prompt that must be
+	// answered out-of-band before the run can resume.
+	AwaitQuestions struct {
+		Base
+		Data AwaitQuestionsPayload
+	}
+
 	// AwaitExternalTools streams a request for external tool execution.
 	AwaitExternalTools struct {
 		Base
@@ -327,6 +335,10 @@ type (
 		// Nil if no telemetry was collected. Clients use this for cost tracking, performance
 		// monitoring, and compliance reporting.
 		Telemetry *telemetry.ToolTelemetry `json:"telemetry,omitempty"`
+		// RetryHint carries structured guidance for recovering from tool failures.
+		// When present, clients can ask the user a clarifying question and retry
+		// the tool call deterministically.
+		RetryHint *planner.RetryHint `json:"retry_hint,omitempty"`
 		// Error contains any error returned by the tool execution. Nil on success. When
 		// non-nil, Result is nil and this field contains structured error details (code,
 		// message, retryability). Clients display error messages and may implement retry UIs.
@@ -393,6 +405,35 @@ type (
 		ToolCallID string `json:"tool_call_id"`
 		// Payload contains the canonical JSON arguments for the pending tool call.
 		Payload any `json:"payload,omitempty"`
+	}
+
+	// AwaitQuestionsPayload describes a structured multiple-choice prompt that must
+	// be answered out-of-band (typically by a UI) and resumed via ProvideToolResults.
+	AwaitQuestionsPayload struct {
+		// ID correlates this await with a subsequent provide_tool_results call.
+		ID string `json:"id"`
+		// ToolName identifies the tool awaiting user answers.
+		ToolName string `json:"tool_name"`
+		// ToolCallID correlates the provided result with this requested call.
+		ToolCallID string `json:"tool_call_id"`
+		// Title is an optional display title for the questions UI.
+		Title *string `json:"title,omitempty"`
+		// Questions are the structured questions to present to the user.
+		Questions []AwaitQuestionPayload `json:"questions"`
+	}
+
+	// AwaitQuestionPayload describes a single multiple-choice question.
+	AwaitQuestionPayload struct {
+		ID            string                       `json:"id"`
+		Prompt        string                       `json:"prompt"`
+		Options       []AwaitQuestionOptionPayload `json:"options"`
+		AllowMultiple bool                         `json:"allow_multiple,omitempty"`
+	}
+
+	// AwaitQuestionOptionPayload describes a selectable answer option.
+	AwaitQuestionOptionPayload struct {
+		ID    string `json:"id"`
+		Label string `json:"label"`
 	}
 
 	// AwaitExternalToolsPayload describes external tool requests to be provided by callers.
@@ -520,6 +561,8 @@ type (
 		AwaitClarification bool
 		// AwaitConfirmation controls emission of await_confirmation events.
 		AwaitConfirmation bool
+		// AwaitQuestions controls emission of await_questions events.
+		AwaitQuestions bool
 		// AwaitExternalTools controls emission of await_external_tools events.
 		AwaitExternalTools bool
 		// ToolAuthorization controls emission of tool_authorization events.
@@ -545,6 +588,7 @@ func DefaultProfile() StreamProfile {
 		ToolEnd:            true,
 		AwaitClarification: true,
 		AwaitConfirmation:  true,
+		AwaitQuestions:     true,
 		AwaitExternalTools: true,
 		ToolAuthorization:  true,
 		Usage:              true,
@@ -617,6 +661,9 @@ const (
 
 	// EventAwaitConfirmation streams when the runtime requests operator confirmation.
 	EventAwaitConfirmation EventType = "await_confirmation"
+
+	// EventAwaitQuestions streams when a planner requests structured multiple-choice input.
+	EventAwaitQuestions EventType = "await_questions"
 
 	// EventAwaitExternalTools streams when a planner requests external tool execution.
 	EventAwaitExternalTools EventType = "await_external_tools"

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
@@ -17,6 +16,7 @@ import (
 	"goa.design/goa-ai/registry/store/memory"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/toolregistry"
+	streamopts "goa.design/pulse/streaming/options"
 )
 
 type (
@@ -28,7 +28,6 @@ type (
 		healthTracker HealthTracker
 
 		pulseClient     clientspulse.Client
-		rdb             *redis.Client
 		resultStreamTTL time.Duration
 	}
 
@@ -43,8 +42,6 @@ type (
 		HealthTracker HealthTracker
 		// PulseClient creates/opens Pulse streams. Required for CallTool.
 		PulseClient clientspulse.Client
-		// Redis is used to set TTLs on result streams. Required for CallTool.
-		Redis *redis.Client
 		// ResultStreamTTL controls how long result streams live in Redis.
 		// When zero, defaults to 15 minutes.
 		ResultStreamTTL time.Duration
@@ -69,9 +66,6 @@ func NewService(opts ServiceOptions) (*Service, error) {
 	if opts.PulseClient == nil {
 		return nil, fmt.Errorf("pulse client is required")
 	}
-	if opts.Redis == nil {
-		return nil, fmt.Errorf("redis client is required")
-	}
 	ttl := opts.ResultStreamTTL
 	if ttl == 0 {
 		ttl = 15 * time.Minute
@@ -81,7 +75,6 @@ func NewService(opts ServiceOptions) (*Service, error) {
 		streamManager:   opts.StreamManager,
 		healthTracker:   opts.HealthTracker,
 		pulseClient:     opts.PulseClient,
-		rdb:             opts.Redis,
 		resultStreamTTL: ttl,
 	}, nil
 }
@@ -289,15 +282,12 @@ func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) 
 
 	toolUseID := uuid.New().String()
 	resultStreamID := toolregistry.ResultStreamID(toolUseID)
-	resultStream, err := s.pulseClient.Stream(resultStreamID)
+	resultStream, err := s.pulseClient.Stream(resultStreamID, streamopts.WithStreamTTL(s.resultStreamTTL))
 	if err != nil {
 		return nil, fmt.Errorf("open result stream %q: %w", resultStreamID, err)
 	}
 	if _, err := resultStream.Add(ctx, "init", []byte("{}")); err != nil {
 		return nil, fmt.Errorf("initialize result stream %q: %w", resultStreamID, err)
-	}
-	if err := s.setResultStreamTTL(ctx, resultStreamID); err != nil {
-		return nil, err
 	}
 
 	meta := toolregistry.ToolCallMeta{
@@ -348,18 +338,6 @@ func validatePayloadJSONAgainstSchema(payloadJSON []byte, schemaBytes []byte) er
 		return err
 	}
 
-	return nil
-}
-
-func (s *Service) setResultStreamTTL(ctx context.Context, streamID string) error {
-	key := fmt.Sprintf("pulse:stream:%s", streamID)
-	ok, err := s.rdb.Expire(ctx, key, s.resultStreamTTL).Result()
-	if err != nil {
-		return fmt.Errorf("set result stream TTL: %w", err)
-	}
-	if !ok {
-		return fmt.Errorf("set result stream TTL: stream key %q missing", key)
-	}
 	return nil
 }
 

@@ -58,6 +58,8 @@ func (r *Runtime) finalizeWithPlanner(
 	switch reason {
 	case planner.TerminationReasonTimeBudget:
 		hint = "Time budget reached. Provide the best possible final answer now. Do not call any tools."
+	case planner.TerminationReasonAwaitTimeout:
+		hint = "Timed out while waiting for user input. Provide the best possible final answer now. Do not call any tools."
 	case planner.TerminationReasonToolCap:
 		hint = "Tool budget exhausted. Provide the best possible final answer now. Do not call any tools."
 	case planner.TerminationReasonFailureCap:
@@ -65,7 +67,38 @@ func (r *Runtime) finalizeWithPlanner(
 	default:
 		hint = "Provide the best possible final answer now. Do not call any tools."
 	}
-	messages := base.Messages
+	messages := cloneMessages(base.Messages)
+	// When finalizing, ensure the message history ends in a valid state for the
+	// provider. If the last message was an assistant turn with tool_use (e.g.
+	// because we timed out waiting for external results), we must append a
+	// user message with error results for those tools before requesting the
+	// final tool-free response.
+	if len(messages) > 0 {
+		last := messages[len(messages)-1]
+		if last.Role == model.ConversationRoleAssistant {
+			var unanswered []model.ToolUsePart
+			for _, p := range last.Parts {
+				if tu, ok := p.(model.ToolUsePart); ok {
+					unanswered = append(unanswered, tu)
+				}
+			}
+			if len(unanswered) > 0 {
+				parts := make([]model.Part, 0, len(unanswered))
+				for _, tu := range unanswered {
+					parts = append(parts, model.ToolResultPart{
+						ToolUseID: tu.ID,
+						Content:   "Request timed out while waiting for user input.",
+						IsError:   true,
+					})
+				}
+				messages = append(messages, &model.Message{
+					Role:  model.ConversationRoleUser,
+					Parts: parts,
+				})
+			}
+		}
+	}
+
 	if hint != "" {
 		messages = append(messages, &model.Message{
 			Role:  model.ConversationRoleSystem,
@@ -121,6 +154,8 @@ func (r *Runtime) finalizeWithPlanner(
 		switch reason {
 		case planner.TerminationReasonTimeBudget:
 			return "time budget exceeded"
+		case planner.TerminationReasonAwaitTimeout:
+			return "await timed out"
 		case planner.TerminationReasonToolCap:
 			return "tool call cap exceeded"
 		case planner.TerminationReasonFailureCap:
@@ -195,7 +230,7 @@ func (r *Runtime) finalizeWithPlanner(
 }
 
 // handleInterrupts drains pause signals and blocks until a resume signal arrives.
-// When hardDeadline is reached, it returns nil so the caller can finalize cleanly.
+// When budgetDeadline is reached, it returns nil so the caller can finalize cleanly.
 func (r *Runtime) handleInterrupts(
 	wfCtx engine.WorkflowContext,
 	input *RunInput,
@@ -203,7 +238,7 @@ func (r *Runtime) handleInterrupts(
 	turnID string,
 	ctrl *interrupt.Controller,
 	nextAttempt *int,
-	hardDeadline time.Time,
+	budgetDeadline time.Time,
 ) error {
 	if ctrl == nil {
 		return nil
@@ -230,7 +265,7 @@ func (r *Runtime) handleInterrupts(
 			return err
 		}
 
-		timeout, ok := timeoutUntil(hardDeadline, wfCtx.Now())
+		timeout, ok := timeoutUntil(budgetDeadline, wfCtx.Now())
 		if !ok {
 			if err := r.publishHook(
 				ctx,
@@ -336,6 +371,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 	nextAttempt *int,
 	turnID string,
 	ctrl *interrupt.Controller,
+	budgetDeadline time.Time,
 	hardDeadline time.Time,
 ) (*RunOutput, error) {
 	if ctrl == nil || reg.Policy.OnMissingFields == "" {
@@ -400,7 +436,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 		); err != nil {
 			return nil, err
 		}
-		timeout, ok := timeoutUntil(hardDeadline, wfCtx.Now())
+		timeout, ok := timeoutUntil(budgetDeadline, wfCtx.Now())
 		if !ok {
 			if err := r.publishHook(
 				ctx,
@@ -420,7 +456,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 			); err != nil {
 				return nil, err
 			}
-			return r.finalizeWithPlanner(wfCtx, reg, input, base, allResults, aggUsage, *nextAttempt, turnID, planner.TerminationReasonTimeBudget, hardDeadline)
+			return r.finalizeWithPlanner(wfCtx, reg, input, base, allResults, aggUsage, *nextAttempt, turnID, planner.TerminationReasonAwaitTimeout, hardDeadline)
 		}
 		ans, err := ctrl.WaitProvideClarification(ctx, timeout)
 		if err != nil {
@@ -443,7 +479,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 				); err != nil {
 					return nil, err
 				}
-				return r.finalizeWithPlanner(wfCtx, reg, input, base, allResults, aggUsage, *nextAttempt, turnID, planner.TerminationReasonTimeBudget, hardDeadline)
+				return r.finalizeWithPlanner(wfCtx, reg, input, base, allResults, aggUsage, *nextAttempt, turnID, planner.TerminationReasonAwaitTimeout, hardDeadline)
 			}
 			if err2 := r.publishHook(
 				ctx,

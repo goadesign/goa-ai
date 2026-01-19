@@ -10,19 +10,16 @@ import types "goa.design/goa-ai/gen/types"
 
 type (
 	// SetStepStatusPayload defines the JSON payload for the progress.set_step_status tool.
-	SetStepStatusPayload = types.StatusChangedEvent
+	SetStepStatusPayload = struct {
+		// Step identifier.
+		StepID string
+		// New step status.
+		Status Status
+		// Optional note about progress.
+		Note *string
+	}
 	// SetStepStatusResult defines the JSON result for the progress.set_step_status tool.
 	SetStepStatusResult = struct{}
-	// SetStepStatusPayloadJSON2 is a helper type for JSON decode-body.
-	SetStepStatusPayloadJSON2 = struct {
-		// Step identifier.
-		StepID *string `json:"step_id"`
-		// New step status.
-		Status *types.Status `json:"status"`
-		// Optional note about progress.
-		Note *string `json:"note,omitempty"`
-	}
-	// SetStepStatusResultJSON2 is a helper type for JSON decode-body.
-	SetStepStatusResultJSON2 = struct {
-	}
+	// Status is a helper type materialized for nested references.
+	Status = string
 )

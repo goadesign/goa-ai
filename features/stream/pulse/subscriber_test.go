@@ -30,7 +30,7 @@ func TestSubscribeEmitsEvents(t *testing.T) {
 	})
 	sinkMock.AddClose(func(ctx context.Context) {})
 
-	client.AddStream(func(name string) (clientspulse.Stream, error) {
+	client.AddStream(func(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
 		require.Equal(t, "run/run-123", name)
 		return streamMock, nil
 	})
@@ -69,7 +69,7 @@ func TestSubscribeDecoderError(t *testing.T) {
 	sinkMock := mockpulse.NewSink(t)
 	eventCh := make(chan *streaming.Event, 1)
 
-	client.AddStream(func(name string) (clientspulse.Stream, error) { return streamMock, nil })
+	client.AddStream(func(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) { return streamMock, nil })
 	streamMock.AddNewSink(func(ctx context.Context, name string, opts ...streamopts.Sink) (clientspulse.Sink, error) {
 		return sinkMock, nil
 	})

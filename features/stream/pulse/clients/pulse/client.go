@@ -24,6 +24,11 @@ type (
 		Redis *redis.Client
 		// StreamMaxLen bounds the number of entries kept per stream. Zero uses Pulse defaults.
 		StreamMaxLen int
+		// StreamOptions returns additional stream options to apply when opening a stream.
+		// It is invoked once per Stream call with the stream name.
+		//
+		// Returning nil means "no additional options".
+		StreamOptions func(name string) []streamopts.Stream
 		// OperationTimeout bounds individual Add operations. Zero means no timeout.
 		OperationTimeout time.Duration
 	}
@@ -33,7 +38,7 @@ type (
 	// to stream operations.
 	Client interface {
 		// Stream returns a handle to the named Pulse stream, creating it if needed.
-		Stream(name string) (Stream, error)
+		Stream(name string, opts ...streamopts.Stream) (Stream, error)
 		// Close releases resources owned by the client. Callers typically own the Redis
 		// connection and may provide a no-op implementation.
 		Close(ctx context.Context) error
@@ -65,9 +70,10 @@ type (
 
 // client wraps a Redis connection and provides stream access.
 type client struct {
-	redis   *redis.Client
-	maxLen  int
-	timeout time.Duration
+	redis        *redis.Client
+	maxLen       int
+	streamOptsFn func(name string) []streamopts.Stream
+	timeout      time.Duration
 }
 
 // New constructs a Pulse client backed by the provided Redis connection. The
@@ -78,15 +84,16 @@ func New(opts Options) (Client, error) {
 		return nil, errors.New("redis client is required")
 	}
 	return &client{
-		redis:   opts.Redis,
-		maxLen:  opts.StreamMaxLen,
-		timeout: opts.OperationTimeout,
+		redis:        opts.Redis,
+		maxLen:       opts.StreamMaxLen,
+		streamOptsFn: opts.StreamOptions,
+		timeout:      opts.OperationTimeout,
 	}, nil
 }
 
 // Stream returns a handle to the named Pulse stream, creating it if it doesn't
 // exist. Returns an error if the name is empty or if stream creation fails.
-func (c *client) Stream(name string) (Stream, error) {
+func (c *client) Stream(name string, opts ...streamopts.Stream) (Stream, error) {
 	if name == "" {
 		return nil, errors.New("stream name is required")
 	}
@@ -94,6 +101,10 @@ func (c *client) Stream(name string) (Stream, error) {
 	if c.maxLen > 0 {
 		streamOptions = append(streamOptions, streamopts.WithStreamMaxLen(c.maxLen))
 	}
+	if c.streamOptsFn != nil {
+		streamOptions = append(streamOptions, c.streamOptsFn(name)...)
+	}
+	streamOptions = append(streamOptions, opts...)
 	str, err := streaming.NewStream(name, c.redis, streamOptions...)
 	if err != nil {
 		return nil, fmt.Errorf("create pulse stream: %w", err)

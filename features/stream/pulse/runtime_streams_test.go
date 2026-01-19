@@ -62,7 +62,7 @@ type fakeClient struct {
 	lastStream string
 }
 
-func (f *fakeClient) Stream(name string) (clientspulse.Stream, error) {
+func (f *fakeClient) Stream(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
 	f.lastStream = name
 	return f.stream, nil
 }

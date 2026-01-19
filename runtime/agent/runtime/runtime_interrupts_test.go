@@ -53,6 +53,6 @@ func TestRunLoopPauseResumeEmitsEvents_Barriered(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, "turn-1", nil, ctrl, 0)
+	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, time.Time{}, 2, "turn-1", nil, ctrl, 0)
 	require.NoError(t, err)
 }

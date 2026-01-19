@@ -212,12 +212,6 @@ func (h *healthTracker) StartPingLoop(ctx context.Context, toolset string) error
 		return fmt.Errorf("register toolset: %w", err)
 	}
 
-	// Initialize health with current timestamp so toolset starts healthy.
-	healthK := healthKey(toolset)
-	if _, err := h.healthMap.Set(ctx, healthK, strconv.FormatInt(ts, 10)); err != nil {
-		return fmt.Errorf("initialize health: %w", err)
-	}
-
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	// (Re)start local ticker.

@@ -36,7 +36,10 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 		return nil
 	}
 
-	scope := codegen.NewNameScope()
+	scope := specs.Scope
+	if scope == nil {
+		panic(fmt.Sprintf("agent codegen: nil specs NameScope for toolset %q", ts.QualifiedName))
+	}
 
 	svcAlias := servicePkgAlias(svc)
 	svcImport := joinImportPath(genpkg, svc.PathName)
@@ -68,44 +71,22 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 			}
 		}
 
-		// Init<GoName>MethodPayload: tool payload (specs) -> service method payload
-		if toolPayload != nil && t.Args != nil && t.Args.Type != expr.Empty && t.MethodPayloadAttr != nil && t.MethodPayloadAttr.Type != expr.Empty {
+		// Init<GoName>MethodPayload: tool payload (specs, public type) -> service method payload
+		if toolPayload != nil && toolPayload.PublicType != nil && t.Args != nil && t.Args.Type != expr.Empty && t.MethodPayloadAttr != nil && t.MethodPayloadAttr.Type != expr.Empty {
 			if err := codegen.IsCompatible(t.Args.Type, t.MethodPayloadAttr.Type, "in", "out"); err == nil {
 				for _, im := range gatherAttributeImports(genpkg, t.MethodPayloadAttr) {
 					if im != nil && im.Path != "" {
 						extraImports[im.Path] = im
 					}
 				}
-				for _, im := range gatherAttributeImports(genpkg, t.Args) {
+				for _, im := range gatherAttributeImports(genpkg, toolPayload.PublicType) {
 					if im != nil && im.Path != "" {
 						extraImports[im.Path] = im
 					}
 				}
 
-				// Build a local alias user type for the tool payload.
-				var argBase *expr.AttributeExpr
-				if ut, ok := t.Args.Type.(expr.UserType); ok && ut != nil {
-					argBase = ut.Attribute()
-				} else {
-					argBase = t.Args
-				}
-				dupArg := *argBase
-				if dupArg.Meta != nil {
-					delete(dupArg.Meta, "struct:pkg:path")
-				}
-				localArgAttr := &expr.AttributeExpr{
-					Type: &expr.UserTypeExpr{
-						AttributeExpr: &dupArg,
-						TypeName:      toolPayload.TypeName,
-					},
-				}
-				// Tool payload types follow Goa request semantics for defaults:
-				// defaulted optional primitives are emitted as values (non-pointers).
-				//
-				// This must match the tool payload type materialization in
-				// specs_builder_type_info.go / specs_builder_materialize.go; otherwise Goa's
-				// GoTransform will emit nil checks or dereferences against non-pointer
-				// fields and the generated transforms.go will not compile.
+				localArgAttr := toolPayload.PublicType
+				// Both the tool payload and service payload are service-level shapes.
 				srcCtx := codegen.NewAttributeContextForConversion(false, false, true, "", scope)
 				tgtCtx := codegen.NewAttributeContextForConversion(false, false, true, svcAlias, scope)
 				body, helpers, err := codegen.GoTransform(localArgAttr, t.MethodPayloadAttr, "in", "out", srcCtx, tgtCtx, "", false)
@@ -137,8 +118,8 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 			}
 		}
 
-		// Init<GoName>ToolResult: service method result -> tool result (specs)
-		if toolResult != nil && t.Return != nil && t.Return.Type != expr.Empty && t.MethodResultAttr != nil && t.MethodResultAttr.Type != expr.Empty {
+		// Init<GoName>ToolResult: service method result -> tool result (specs, public type)
+		if toolResult != nil && toolResult.PublicType != nil && t.Return != nil && t.Return.Type != expr.Empty && t.MethodResultAttr != nil && t.MethodResultAttr.Type != expr.Empty {
 			// Use the TOOL Return shape as the base target shape so server-only fields
 			// present only on the service result are not exposed in the tool result.
 			var baseAttr *expr.AttributeExpr
@@ -160,15 +141,8 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 				}
 
 				srcCtx := codegen.NewAttributeContextForConversion(false, false, true, svcAlias, scope)
-				dupRes := *baseAttr
-				if dupRes.Meta != nil {
-					delete(dupRes.Meta, "struct:pkg:path")
-				}
-				// Rewrite nested service-local user types to reference local specs aliases.
-				rewritten := rewriteNestedLocalUserTypes(&dupRes)
-				targetUT := &expr.UserTypeExpr{AttributeExpr: rewritten, TypeName: toolResult.TypeName}
-				targetAttr := &expr.AttributeExpr{Type: targetUT}
-				tgtCtx := codegen.NewAttributeContextForConversion(false, false, false, "", scope)
+				targetAttr := toolResult.PublicType
+				tgtCtx := codegen.NewAttributeContextForConversion(false, false, true, "", scope)
 				body, helpers, err := codegen.GoTransform(t.MethodResultAttr, targetAttr, "in", "out", srcCtx, tgtCtx, "", false)
 				if err == nil && body != "" {
 					for _, h := range helpers {
@@ -199,35 +173,23 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 			}
 		}
 
-		// Init<GoName>SidecarFromMethodResult: service method result -> sidecar (specs)
-		if toolSidecar != nil && t.Artifact != nil && t.Artifact.Type != expr.Empty && t.MethodResultAttr != nil && t.MethodResultAttr.Type != expr.Empty {
+		// Init<GoName>SidecarFromMethodResult: service method result -> sidecar (specs, public type)
+		if toolSidecar != nil && toolSidecar.PublicType != nil && t.Artifact != nil && t.Artifact.Type != expr.Empty && t.MethodResultAttr != nil && t.MethodResultAttr.Type != expr.Empty {
 			if err := codegen.IsCompatible(t.MethodResultAttr.Type, t.Artifact.Type, "in", "out"); err == nil {
 				for _, im := range gatherAttributeImports(genpkg, t.MethodResultAttr) {
 					if im != nil && im.Path != "" {
 						extraImports[im.Path] = im
 					}
 				}
-				for _, im := range gatherAttributeImports(genpkg, t.Artifact) {
+				for _, im := range gatherAttributeImports(genpkg, toolSidecar.PublicType) {
 					if im != nil && im.Path != "" {
 						extraImports[im.Path] = im
 					}
 				}
 
 				srcCtx := codegen.NewAttributeContextForConversion(false, false, true, svcAlias, scope)
-				var metaBase *expr.AttributeExpr
-				if ut, ok := t.Artifact.Type.(expr.UserType); ok && ut != nil {
-					metaBase = ut.Attribute()
-				} else {
-					metaBase = t.Artifact
-				}
-				dupMeta := *metaBase
-				if dupMeta.Meta != nil {
-					delete(dupMeta.Meta, "struct:pkg:path")
-				}
-				rewrittenMeta := rewriteNestedLocalUserTypes(&dupMeta)
-				metaUT := &expr.UserTypeExpr{AttributeExpr: rewrittenMeta, TypeName: toolSidecar.TypeName}
-				metaAttr := &expr.AttributeExpr{Type: metaUT}
-				tgtCtx := codegen.NewAttributeContextForConversion(false, false, false, "", scope)
+				metaAttr := toolSidecar.PublicType
+				tgtCtx := codegen.NewAttributeContextForConversion(false, false, true, "", scope)
 				body, helpers, err := codegen.GoTransform(t.MethodResultAttr, metaAttr, "in", "out", srcCtx, tgtCtx, "", false)
 				if err == nil && body != "" {
 					for _, h := range helpers {

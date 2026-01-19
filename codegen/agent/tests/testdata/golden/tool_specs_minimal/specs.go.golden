@@ -31,14 +31,14 @@ var (
 		BoundedResult:       false,
 		Payload: tools.TypeSpec{
 			Name:         "SummarizeDocPayload",
-			Schema:       []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"SummarizePayload\",\"type\":\"object\",\"properties\":{\"doc_id\":{\"type\":\"string\",\"description\":\"Document identifier\",\"example\":\"Magnam asperiores dolorum.\"}},\"example\":{\"doc_id\":\"Est ut.\"},\"required\":[\"doc_id\"]}"),
+			Schema:       []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"doc_id\":{\"type\":\"string\",\"description\":\"Document identifier\",\"example\":\"Magnam asperiores dolorum.\"}},\"required\":[\"doc_id\"]}"),
 			ExampleJSON:  []byte("{\"doc_id\":\"abc123\"}"),
 			ExampleInput: map[string]any{"doc_id": "abc123"},
 			Codec:        summarizeDocPayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:   "SummarizeDocResult",
-			Schema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"SummarizeResult\",\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"description\":\"Title\",\"example\":\"Eos qui exercitationem sed non.\"}},\"example\":{\"title\":\"Recusandae mollitia corporis.\"},\"required\":[\"title\"]}"),
+			Schema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"description\":\"Title\",\"example\":\"Est ut.\"}},\"required\":[\"title\"]}"),
 			Codec:  summarizeDocResultCodec,
 		},
 		Sidecar: nil,

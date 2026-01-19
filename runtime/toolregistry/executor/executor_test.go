@@ -101,7 +101,7 @@ type fakePulseClient struct {
 	stream   pulse.Stream
 }
 
-func (c fakePulseClient) Stream(name string) (pulse.Stream, error) {
+func (c fakePulseClient) Stream(name string, _ ...streamopts.Stream) (pulse.Stream, error) {
 	if name != c.streamID {
 		return nil, assert.AnError
 	}

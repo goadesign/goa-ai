@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	toolhttp "goa.design/goa-ai/alpha/toolsets/ops/http"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"strings"
 )
@@ -116,7 +117,11 @@ func MarshalEchoPayload(v *EchoPayload) ([]byte, error) {
 	if v == nil {
 		return nil, fmt.Errorf("echoPayload is nil")
 	}
-	return json.Marshal(v)
+	in := v
+	_ = in
+	var out *toolhttp.EchoPayloadTransport
+	out = toolhttp.EchoPayloadTransport(in)
+	return json.Marshal(out)
 }
 
 // UnmarshalEchoPayload deserializes JSON into *EchoPayload.
@@ -124,16 +129,15 @@ func UnmarshalEchoPayload(data []byte) (*EchoPayload, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("echoPayload JSON is empty")
 	}
-	// Decode into JSON body (server body style) then transform.
-	// Note: Agent used-tools perform lenient decode (no required-field validation here).
-	var raw EchoPayloadJSON2
-	if err := json.Unmarshal(data, &raw); err != nil {
+	var tv toolhttp.EchoPayloadTransport
+	if err := json.Unmarshal(data, &tv); err != nil {
 		return nil, fmt.Errorf("decode echoPayload: %w", err)
 	}
-	// Transform into final type
-	res := EchoPayload(raw)
-	v := &res
-	return v, nil
+	in := &tv
+	_ = in
+	var out *EchoPayload
+	out = EchoPayload(in)
+	return out, nil
 }
 
 // MarshalEchoResult serializes EchoResult into JSON.
@@ -147,28 +151,9 @@ func UnmarshalEchoResult(data []byte) (EchoResult, error) {
 	if len(data) == 0 {
 		return zero, fmt.Errorf("echoResult JSON is empty")
 	}
-	// Decode into JSON body (server body style) then transform.
-	// Note: Agent used-tools perform lenient decode (no required-field validation here).
-	var raw EchoResultJSON2
-	if err := json.Unmarshal(data, &raw); err != nil {
+	var v EchoResult
+	if err := json.Unmarshal(data, &v); err != nil {
 		return zero, fmt.Errorf("decode echoResult: %w", err)
 	}
-	// Transform into final type
-	res := EchoResult(raw)
-	v := &res
-	return *v, nil
-}
-
-// Transform helpers
-
-// ValidateEchoPayloadJSON2 validates values of type EchoPayloadJSON2.
-func ValidateEchoPayloadJSON2(body EchoPayloadJSON2) (err error) {
-
-	return
-}
-
-// ValidateEchoResultJSON2 validates values of type EchoResultJSON2.
-func ValidateEchoResultJSON2(body EchoResultJSON2) (err error) {
-
-	return
+	return v, nil
 }

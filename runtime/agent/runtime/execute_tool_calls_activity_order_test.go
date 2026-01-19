@@ -69,19 +69,7 @@ func TestExecuteToolCalls_ServiceToolsPublishResultsAsComplete(t *testing.T) {
 		close(futSlow.ready)
 	}()
 
-	results, _, err := rt.executeToolCalls(
-		wfCtx,
-		"execute",
-		engine.ActivityOptions{},
-		"run-1",
-		agent.Ident("agent-1"),
-		&run.Context{RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"},
-		[]planner.ToolRequest{callSlow, callFast},
-		0,
-		"turn-1",
-		nil,
-		time.Time{},
-	)
+	results, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("agent-1"), &run.Context{RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}, []planner.ToolRequest{callSlow, callFast}, 0, nil, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 
@@ -140,19 +128,7 @@ func TestExecuteToolCalls_ServiceToolErrorDoesNotAbortRun(t *testing.T) {
 	wfCtx.toolFutures[callFail.ToolCallID] = futFail
 	close(futFail.ready)
 
-	results, _, err := rt.executeToolCalls(
-		wfCtx,
-		"execute",
-		engine.ActivityOptions{},
-		"run-1",
-		agent.Ident("agent-1"),
-		&run.Context{RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"},
-		[]planner.ToolRequest{callFail},
-		0,
-		"turn-1",
-		nil,
-		time.Time{},
-	)
+	results, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("agent-1"), &run.Context{RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}, []planner.ToolRequest{callFail}, 0, nil, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	require.NotNil(t, results[0].Error)

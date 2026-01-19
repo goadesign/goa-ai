@@ -131,12 +131,9 @@ func TestMultiNodeRegistrationSync(t *testing.T) {
 	}
 	defer registryMap.Close()
 
-	// Subscribe to both registry and health changes before creating trackers.
+	// Subscribe to registry changes before creating trackers.
 	registryEvents := registryMap.Subscribe()
 	defer registryMap.Unsubscribe(registryEvents)
-
-	healthEvents := healthMap.Subscribe()
-	defer healthMap.Unsubscribe(healthEvents)
 
 	// Create two pool nodes in the same pool simulating two gateway instances.
 	poolName := "pool-" + t.Name()
@@ -186,28 +183,22 @@ func TestMultiNodeRegistrationSync(t *testing.T) {
 		t.Fatalf("failed to start ping loop: %v", err)
 	}
 
-	// Wait for both registry and health change events.
-	// StartPingLoop updates both maps, so we need to wait for both.
-	gotRegistryEvent := false
-	gotHealthEvent := false
-	timeout := time.After(5 * time.Second)
-	for !gotRegistryEvent || !gotHealthEvent {
-		select {
-		case <-registryEvents:
-			gotRegistryEvent = true
-		case <-healthEvents:
-			gotHealthEvent = true
-		case <-timeout:
-			t.Fatalf("timeout waiting for events (registry=%v, health=%v)", gotRegistryEvent, gotHealthEvent)
-		}
+	// Wait for the registry event and for the peer node to start local ticker
+	// participation for this toolset.
+	select {
+	case <-registryEvents:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for registry event")
 	}
+	waitForTicker(t, tracker2, "test-toolset")
 
-	// Both nodes should see the toolset as healthy.
-	if !tracker1.IsHealthy("test-toolset") {
-		t.Error("tracker1 should see toolset as healthy")
+	// A toolset is healthy only after a provider Pong; StartPingLoop must not
+	// treat registration as provider liveness.
+	if tracker1.IsHealthy("test-toolset") {
+		t.Error("tracker1 should see toolset as unhealthy before any pong")
 	}
-	if !tracker2.IsHealthy("test-toolset") {
-		t.Error("tracker2 should see toolset as healthy")
+	if tracker2.IsHealthy("test-toolset") {
+		t.Error("tracker2 should see toolset as unhealthy before any pong")
 	}
 
 	// Verify the toolset is in the registry map.
@@ -404,10 +395,36 @@ func TestNewNodeSyncsExistingToolsets(t *testing.T) {
 	}
 	defer func() { _ = tracker2.Close() }()
 
-	// New node should immediately see the existing toolset as healthy
-	// (synced during NewHealthTracker via syncExistingToolsets).
-	if !tracker2.IsHealthy("existing-toolset") {
-		t.Error("tracker2 should see existing toolset as healthy after sync")
+	waitForTicker(t, tracker2, "existing-toolset")
+	if tracker2.IsHealthy("existing-toolset") {
+		t.Error("tracker2 should see existing toolset as unhealthy before any pong")
+	}
+}
+
+func waitForTicker(t *testing.T, tracker HealthTracker, toolset string) {
+	t.Helper()
+
+	ht, ok := tracker.(*healthTracker)
+	if !ok {
+		t.Fatalf("unexpected tracker type %T", tracker)
+	}
+
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
+	for {
+		ht.mu.Lock()
+		_, hasTicker := ht.tickers[toolset]
+		ht.mu.Unlock()
+		if hasTicker {
+			return
+		}
+		select {
+		case <-poll.C:
+		case <-deadline.C:
+			t.Fatalf("tracker did not start local ticker for %q", toolset)
+		}
 	}
 }
 

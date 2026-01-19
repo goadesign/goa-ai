@@ -22,8 +22,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
-	"goa.design/goa-ai/runtime/agent/tools"
-	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 const (
@@ -166,6 +164,20 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		default:
 			grace = defaultFinalizerGrace
 		}
+		// Finalization requires at least one planner resume activity. Ensure the
+		// grace period can accommodate that activity's timeout; otherwise we can
+		// deterministically hit the engine run timeout while finalizing.
+		resumeTimeout := reg.ResumeActivityOptions.Timeout
+		if input.Policy != nil && input.Policy.PlanTimeout > 0 {
+			resumeTimeout = input.Policy.PlanTimeout
+		}
+		if resumeTimeout == 0 {
+			// Keep this aligned with the Temporal engine default activity timeout.
+			resumeTimeout = time.Minute
+		}
+		if grace < resumeTimeout {
+			grace = resumeTimeout
+		}
 		if timeBudget > 0 {
 			budgetDeadline = wfCtx.Now().Add(timeBudget)
 			hardDeadline = budgetDeadline.Add(grace)
@@ -289,6 +301,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		firstOutput.Transcript,
 		firstOutput.Usage,
 		caps,
+		budgetDeadline,
 		hardDeadline,
 		nextAttempt,
 		turnID,
@@ -322,7 +335,8 @@ func (r *Runtime) runLoop(
 	initialTranscript []*model.Message,
 	initialUsage model.TokenUsage,
 	caps policy.CapsState,
-	deadline time.Time,
+	budgetDeadline time.Time,
+	hardDeadline time.Time,
 	nextAttempt int,
 	turnID string,
 	parentTracker *childTracker,
@@ -336,7 +350,6 @@ func (r *Runtime) runLoop(
 	if r.logger == nil {
 		r.logger = telemetry.NoopLogger{}
 	}
-	aggUsage := initialUsage
 	if initialResult == nil {
 		return nil, fmt.Errorf("CRITICAL: runLoop initial PlanResult is nil")
 	}
@@ -344,13 +357,10 @@ func (r *Runtime) runLoop(
 		return nil, fmt.Errorf("CRITICAL: runLoop initial PlanResult has no ToolCalls, FinalResponse, or Await")
 	}
 	r.logger.Info(ctx, "runLoop starting iteration", "tool_calls", len(initialResult.ToolCalls), "final_response", initialResult.FinalResponse != nil, "await", initialResult.Await != nil)
-	result := initialResult
-	turnTranscript := initialTranscript
-	// Initialize provider transcript ledger for this run/turn.
-	led := transcript.FromModelMessages(turnTranscript)
+	st := newRunLoopState(initialResult, initialTranscript, initialUsage, caps, nextAttempt)
 	// Expose provider-ready messages via a workflow query for external rehydration.
 	if err := wfCtx.SetQueryHandler("ledger_messages", func() ([]*model.Message, error) {
-		return led.BuildMessages(), nil
+		return st.Ledger.BuildMessages(), nil
 	}); err != nil {
 		return nil, err
 	}
@@ -366,664 +376,26 @@ func (r *Runtime) runLoop(
 	if toolOpts.Timeout == 0 {
 		toolOpts.Timeout = 2 * time.Minute
 	}
-	var lastToolResults []*planner.ToolResult
-	var aggregatedToolResults []*planner.ToolResult
-	for {
-		if err := r.handleInterrupts(wfCtx, input, base, turnID, ctrl, &nextAttempt, deadline); err != nil {
-			return nil, err
-		}
-		// When a hard deadline is set, stop scheduling new work when the remaining time
-		// is less than or equal to the grace period; request finalization instead.
-		if !deadline.IsZero() {
-			now := wfCtx.Now()
-			remaining := deadline.Sub(now)
-			if finalizerGrace > 0 && remaining <= finalizerGrace {
-				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
-			}
-			if finalizerGrace == 0 && remaining <= minActivityTimeout {
-				// No configured grace; avoid scheduling work that cannot complete meaningfully.
-				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
-			}
-			if remaining <= 0 {
-				// Time budget fully exhausted (including grace): try to finalize.
-				// This may still race with engine TTLs, but provides a best-effort reply.
-				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
-			}
-		}
-		if !deadline.IsZero() && wfCtx.Now().After(deadline) {
-			// Redundant guard; kept for clarity with prior semantics.
-			return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
-		}
-		// Handle Await: publish await event, pause and wait for external input.
-		if result.Await != nil {
-			r.logger.Info(ctx, "PlanResult has Await, handling await")
-			if ctrl == nil {
-				return nil, errors.New("await not supported in inline runs")
-			}
-			// Publish paused event with a reason.
-			reason := "await_external"
-			if result.Await.Clarification != nil {
-				reason = "await_clarification"
-			}
-			// If planner provided structured await info, emit a typed await event first.
-			if result.Await.Clarification != nil {
-				c := result.Await.Clarification
-				if err := r.publishHook(ctx, hooks.NewAwaitClarificationEvent(
-					base.RunContext.RunID,
-					input.AgentID,
-					base.RunContext.SessionID,
-					c.ID,
-					c.Question,
-					c.MissingFields,
-					c.RestrictToTool,
-					c.ExampleInput,
-				), turnID); err != nil {
-					return nil, err
-				}
-			} else if result.Await.ExternalTools != nil {
-				e := result.Await.ExternalTools
-				items := make([]hooks.AwaitToolItem, 0, len(e.Items))
-				for _, it := range e.Items {
-					items = append(items, hooks.AwaitToolItem{
-						ToolName:   it.Name,
-						ToolCallID: it.ToolCallID,
-						Payload:    it.Payload,
-					})
-				}
-				if err := r.publishHook(ctx, hooks.NewAwaitExternalToolsEvent(
-					base.RunContext.RunID,
-					input.AgentID,
-					base.RunContext.SessionID,
-					e.ID,
-					items,
-				), turnID); err != nil {
-					return nil, err
-				}
-				// Emit tool_call events for external tools so streaming/persistence
-				// consumers see the same tool_use → tool_result lifecycle as internal
-				// tools. These are not activities; queue/duration are empty/zero.
-				for _, it := range e.Items {
-					if it.ToolCallID == "" {
-						continue
-					}
-					if err := r.publishHook(
-						ctx,
-						hooks.NewToolCallScheduledEvent(
-							base.RunContext.RunID,
-							input.AgentID,
-							base.RunContext.SessionID,
-							it.Name,
-							it.ToolCallID,
-							it.Payload,
-							"",
-							"",
-							0,
-						),
-						turnID,
-					); err != nil {
-						return nil, err
-					}
-				}
-			}
-			if err := r.publishHook(ctx, hooks.NewRunPausedEvent(
-				base.RunContext.RunID,
-				input.AgentID,
-				base.RunContext.SessionID,
-				reason,
-				"runtime",
-				nil,
-				nil,
-			), turnID); err != nil {
-				return nil, err
-			}
-			// Block until the appropriate provide signal arrives.
-			if result.Await.Clarification != nil {
-				timeout, ok := timeoutUntil(deadline, wfCtx.Now())
-				if !ok {
-					if err := r.publishHook(ctx, hooks.NewRunResumedEvent(
-						base.RunContext.RunID,
-						input.AgentID,
-						base.RunContext.SessionID,
-						"await_timeout",
-						"runtime",
-						map[string]string{
-							"resumed_by": "await_timeout",
-							"await":      reason,
-						},
-						0,
-					), turnID); err != nil {
-						return nil, err
-					}
-					return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
-				}
-				ans, err := ctrl.WaitProvideClarification(ctx, timeout)
-				if err != nil {
-					if errors.Is(err, context.DeadlineExceeded) {
-						if err := r.publishHook(ctx, hooks.NewRunResumedEvent(
-							base.RunContext.RunID,
-							input.AgentID,
-							base.RunContext.SessionID,
-							"await_timeout",
-							"runtime",
-							map[string]string{
-								"resumed_by": "await_timeout",
-								"await":      reason,
-							},
-							0,
-						), turnID); err != nil {
-							return nil, err
-						}
-						return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
-					}
-					return nil, err
-				}
-				// Validate await ID when provided
-				if c := result.Await.Clarification; c != nil && c.ID != "" && ans.ID != "" && ans.ID != c.ID {
-					return nil, errors.New("unexpected await ID for clarification")
-				}
-				// Append the answer as a user message and continue planning.
-				if ans.Answer != "" {
-					base.Messages = append(base.Messages, &model.Message{
-						Role:  model.ConversationRoleUser,
-						Parts: []model.Part{model.TextPart{Text: ans.Answer}},
-					})
-				}
-				// Emit resumed and continue planning.
-				if err := r.publishHook(
-					ctx,
-					hooks.NewRunResumedEvent(
-						base.RunContext.RunID,
-						input.AgentID,
-						base.RunContext.SessionID,
-						"clarification_provided",
-						ans.RunID,
-						ans.Labels,
-						1,
-					),
-					turnID,
-				); err != nil {
-					return nil, err
-				}
-				// Immediately PlanResume
-				resumeCtx := base.RunContext
-				resumeCtx.Attempt = nextAttempt
-				nextAttempt++
-				resumeReq := PlanActivityInput{
-					AgentID:     input.AgentID,
-					RunID:       base.RunContext.RunID,
-					Messages:    base.Messages,
-					RunContext:  resumeCtx,
-					ToolResults: nil,
-				}
-				var err2 error
-				resOutput, err2 := r.runPlanActivity(wfCtx, reg.ResumeActivityName, resumeOpts, resumeReq, deadline)
-				if err2 != nil {
-					return nil, err2
-				}
-				if resOutput == nil || resOutput.Result == nil {
-					return nil, fmt.Errorf("plan resume activity returned nil result after clarification")
-				}
-				aggUsage = addTokenUsage(aggUsage, resOutput.Usage)
-				result = resOutput.Result
-				turnTranscript = resOutput.Transcript
-				led = transcript.FromModelMessages(turnTranscript)
-				continue
-			} else if result.Await.ExternalTools != nil {
-				// Record the assistant turn (including tool_use blocks) before
-				// waiting for external tool results. This ensures that when the
-				// planner resumes, base.Messages contains the assistant's tool_use
-				// declarations that correspond to the tool_result blocks we'll add.
-				e := result.Await.ExternalTools
-				if len(e.Items) == 0 {
-					return nil, errors.New("await_external_tools: no items in await")
-				}
-				awaitCalls := make([]planner.ToolRequest, 0, len(e.Items))
-				expectedIDs := make(map[string]struct{}, len(e.Items))
-				for _, it := range e.Items {
-					if it.ToolCallID == "" {
-						return nil, fmt.Errorf(
-							"await_external_tools: missing tool_call_id for external tool %q",
-							it.Name,
-						)
-					}
-					if _, dup := expectedIDs[it.ToolCallID]; dup {
-						return nil, fmt.Errorf(
-							"await_external_tools: duplicate awaited tool_call_id %q",
-							it.ToolCallID,
-						)
-					}
-					expectedIDs[it.ToolCallID] = struct{}{}
-					awaitCalls = append(awaitCalls, planner.ToolRequest{
-						Name:       it.Name,
-						ToolCallID: it.ToolCallID,
-						Payload:    it.Payload,
-					})
-				}
-				r.recordAssistantTurn(base, turnTranscript, awaitCalls, led)
 
-				timeout, ok := timeoutUntil(deadline, wfCtx.Now())
-				if !ok {
-					if err := r.publishHook(ctx, hooks.NewRunResumedEvent(
-						base.RunContext.RunID,
-						input.AgentID,
-						base.RunContext.SessionID,
-						"await_timeout",
-						"runtime",
-						map[string]string{
-							"resumed_by": "await_timeout",
-							"await":      reason,
-						},
-						0,
-					), turnID); err != nil {
-						return nil, err
-					}
-					return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
-				}
-				rs, err := ctrl.WaitProvideToolResults(ctx, timeout)
-				if err != nil {
-					if errors.Is(err, context.DeadlineExceeded) {
-						if err := r.publishHook(ctx, hooks.NewRunResumedEvent(
-							base.RunContext.RunID,
-							input.AgentID,
-							base.RunContext.SessionID,
-							"await_timeout",
-							"runtime",
-							map[string]string{
-								"resumed_by": "await_timeout",
-								"await":      reason,
-							},
-							0,
-						), turnID); err != nil {
-							return nil, err
-						}
-						return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
-					}
-					return nil, err
-				}
-				// Validate await ID when provided
-				if e.ID != "" && rs.ID != "" && rs.ID != e.ID {
-					return nil, errors.New("unexpected await ID for external tools")
-				}
-				// Enforce strong contracts on external tool results: all results
-				// must carry non-empty tool_call_id values that exactly match the
-				// awaited tool_use IDs (no extras, no omissions, no duplicates).
-				if len(rs.Results) == 0 {
-					return nil, errors.New("await_external_tools: no tool results provided")
-				}
-				seen := make(map[string]struct{}, len(rs.Results))
-				for _, tr := range rs.Results {
-					if tr == nil {
-						return nil, errors.New("await_external_tools: nil tool result")
-					}
-					if tr.ToolCallID == "" {
-						return nil, fmt.Errorf(
-							"await_external_tools: result for tool %q missing tool_call_id",
-							tr.Name,
-						)
-					}
-					if _, ok := expectedIDs[tr.ToolCallID]; !ok {
-						return nil, fmt.Errorf(
-							"await_external_tools: unexpected tool result for tool_call_id %q",
-							tr.ToolCallID,
-						)
-					}
-					if _, dup := seen[tr.ToolCallID]; dup {
-						return nil, fmt.Errorf(
-							"await_external_tools: duplicate result for tool_call_id %q",
-							tr.ToolCallID,
-						)
-					}
-					seen[tr.ToolCallID] = struct{}{}
-				}
-				if len(seen) != len(expectedIDs) {
-					return nil, fmt.Errorf(
-						"await_external_tools: tool result ids did not match awaited tool_use ids (awaited=%d, got=%d)",
-						len(expectedIDs),
-						len(seen),
-					)
-				}
-
-				// Feed results into next PlanResume turn directly and record them
-				// in the transcript so the provider sees a canonical tool_use →
-				// tool_result handshake, consistent with internal tools.
-				lastToolResults = rs.Results
-				for _, tr := range lastToolResults {
-					if tr == nil {
-						continue
-					}
-					if spec, ok := r.toolSpec(tr.Name); ok && spec.BoundedResult && tr.Error == nil && tr.Bounds == nil {
-						b := deriveBounds(tr.Result)
-						if b == nil {
-							return nil, fmt.Errorf(
-								"bounded tool %q external result missing bounds (tool_call_id=%s, type=%T)",
-								tr.Name,
-								tr.ToolCallID,
-								tr.Result,
-							)
-						}
-						tr.Bounds = b
-					}
-				}
-				aggregatedToolResults = append(
-					aggregatedToolResults,
-					cloneToolResults(rs.Results)...,
-				)
-				r.appendUserToolResults(base, awaitCalls, lastToolResults, led, nil)
-
-				// Emit tool_result events for external tools now that results have
-				// been provided. This mirrors internal tool completion so streams and
-				// persistence can attach artifacts and summaries consistently.
-				for _, tr := range lastToolResults {
-					if tr == nil {
-						continue
-					}
-					if err := r.publishHook(
-						ctx,
-						hooks.NewToolResultReceivedEvent(
-							base.RunContext.RunID,
-							input.AgentID,
-							base.RunContext.SessionID,
-							tr.Name,
-							tr.ToolCallID,
-							"",
-							tr.Result,
-							formatResultPreview(tr.Name, tr.Result),
-							tr.Bounds,
-							nil,
-							0,
-							nil,
-							tr.Error,
-						),
-						turnID,
-					); err != nil {
-						return nil, err
-					}
-				}
-
-				// Emit resumed and continue planning.
-				if err := r.publishHook(
-					ctx,
-					hooks.NewRunResumedEvent(
-						base.RunContext.RunID,
-						input.AgentID,
-						base.RunContext.SessionID,
-						"tool_results_provided",
-						input.RunID,
-						nil,
-						0,
-					),
-					turnID,
-				); err != nil {
-					return nil, err
-				}
-
-				// Advance to PlanResume immediately without executing internal tools.
-				resumeReq, err2 := r.buildNextResumeRequest(input.AgentID, base, lastToolResults, &nextAttempt)
-				if err2 != nil {
-					return nil, err2
-				}
-				resOutput, err2 := r.runPlanActivity(
-					wfCtx,
-					reg.ResumeActivityName,
-					resumeOpts,
-					resumeReq,
-					deadline,
-				)
-				if err2 != nil {
-					return nil, err2
-				}
-				if resOutput == nil || resOutput.Result == nil {
-					return nil, fmt.Errorf("plan resume activity returned nil result after tool results")
-				}
-				aggUsage = addTokenUsage(aggUsage, resOutput.Usage)
-				result = resOutput.Result
-				turnTranscript = resOutput.Transcript
-				led = transcript.FromModelMessages(turnTranscript)
-				continue
-			}
-		}
-
-		r.logger.Info(ctx, "Checking result.ToolCalls", "len", len(result.ToolCalls))
-
-		if len(result.ToolCalls) == 0 {
-			r.logger.Info(ctx, "No tool calls, checking FinalResponse")
-			if result.FinalResponse == nil {
-				r.logger.Error(ctx, "ERROR - Neither tool calls nor final response!")
-				// CRITICAL: This error will be visible in workflow failure logs
-				return nil, fmt.Errorf("CRITICAL: planner returned neither tool calls nor final response - ToolCalls=%d, FinalResponse=%v, Await=%v", len(result.ToolCalls), result.FinalResponse != nil, result.Await != nil)
-			}
-			finalMsg := result.FinalResponse.Message
-			if result.Streamed && agentMessageText(finalMsg) == "" {
-				if text := transcriptText(turnTranscript); text != "" {
-					finalMsg = newTextAgentMessage(model.ConversationRoleAssistant, text)
-				}
-			}
-			if !result.Streamed {
-				if err := r.publishHook(
-					ctx,
-					hooks.NewAssistantMessageEvent(
-						base.RunContext.RunID,
-						input.AgentID,
-						base.RunContext.SessionID,
-						agentMessageText(finalMsg),
-						nil,
-					),
-					turnID,
-				); err != nil {
-					return nil, err
-				}
-			}
-			for _, note := range result.Notes {
-				if err := r.publishHook(
-					ctx,
-					hooks.NewPlannerNoteEvent(
-						base.RunContext.RunID,
-						input.AgentID,
-						base.RunContext.SessionID,
-						note.Text,
-						note.Labels,
-					),
-					turnID,
-				); err != nil {
-					return nil, err
-				}
-			}
-			notes := make([]*planner.PlannerAnnotation, len(result.Notes))
-			for i := range result.Notes {
-				notes[i] = &result.Notes[i]
-			}
-			return &RunOutput{
-				AgentID:    input.AgentID,
-				RunID:      base.RunContext.RunID,
-				Final:      finalMsg,
-				ToolEvents: aggregatedToolResults,
-				Notes:      notes,
-				Usage:      &aggUsage,
-			}, nil
-		}
-
-		if caps.RemainingToolCalls == 0 && caps.MaxToolCalls > 0 {
-			// Tool cap exhausted: request a final tool-free response from the planner.
-			return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonToolCap, deadline)
-		}
-		if !deadline.IsZero() && wfCtx.Now().After(deadline) {
-			// Time budget exceeded after evaluating caps/policy
-			return r.finalizeWithPlanner(
-				wfCtx,
-				reg,
-				input,
-				base,
-				aggregatedToolResults,
-				aggUsage,
-				nextAttempt,
-				turnID,
-				planner.TerminationReasonTimeBudget,
-				deadline,
-			)
-		}
-		// Start with candidate tool calls from the planner.
-		candidates := result.ToolCalls
-
-		r.logger.Info(ctx, "Workflow received tool calls from planner", "count", len(candidates))
-		// Apply per-run overrides (restrict tool and tag filters) before policy decision.
-		candidates = r.applyPerRunOverrides(ctx, input, candidates)
-		// Apply runtime policy if configured.
-		allowed, caps, err := r.applyRuntimePolicy(ctx, base, input, candidates, caps, turnID, result.RetryHint)
-		if err != nil {
-			return nil, err
-		}
-		if len(allowed) == 0 {
-			r.logger.Error(ctx, "ERROR - No tools allowed for execution after filtering", "candidates", len(result.ToolCalls))
-			return nil, errors.New("no tools allowed for execution")
-		}
-
-		r.logger.Info(ctx, "Executing allowed tool calls", "count", len(allowed))
-		if parentTracker != nil {
-			ids := collectToolCallIDs(allowed)
-			if len(ids) > 0 && parentTracker.registerDiscovered(ids) {
-				if base.RunContext.ParentRunID == "" || base.RunContext.ParentAgentID == "" {
-					return nil, fmt.Errorf("nested run is missing parent run context")
-				}
-				if err := r.publishHook(
-					ctx,
-					hooks.NewToolCallUpdatedEvent(
-						base.RunContext.ParentRunID,
-						base.RunContext.ParentAgentID,
-						base.RunContext.SessionID,
-						parentTracker.parentToolCallID,
-						parentTracker.currentTotal(),
-					),
-					turnID,
-				); err != nil {
-					return nil, err
-				}
-				parentTracker.markUpdated()
-			}
-		}
-		// Enforce per-turn and remaining caps and stamp metadata.
-		allowed = r.capAllowedCalls(allowed, input, caps)
-		allowed = r.prepareAllowedCallsMetadata(input.AgentID, base, allowed, parentTracker)
-
-		toExecute, deniedResults, cerr := r.confirmToolsIfNeeded(wfCtx, input, base, allowed, turnID, ctrl, deadline)
-		if cerr != nil {
-			if errors.Is(cerr, context.DeadlineExceeded) {
-				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
-			}
-			return nil, cerr
-		}
-		transcriptMsgs := turnTranscript
-
-		// Record assistant turn (thinking/text from transcript plus declared tool_use).
-		r.recordAssistantTurn(base, transcriptMsgs, allowed, led)
-
-		// Normalize artifacts toggles for execution while preserving the original
-		// tool_use payloads in the transcript. We strip the reserved `artifacts`
-		// field from execution payloads and track the per-call mode by tool_call_id
-		// so enforcement, artifact dropping, and reminders can behave consistently.
-		artifactsModeByCallID := make(map[string]tools.ArtifactsMode, len(toExecute))
-		execCalls := make([]planner.ToolRequest, len(toExecute))
-		for i := range toExecute {
-			call := toExecute[i]
-			if call.ToolCallID == "" {
-				call.ToolCallID = generateDeterministicToolCallID(
-					base.RunContext.RunID,
-					call.TurnID,
-					base.RunContext.Attempt,
-					call.Name,
-					i,
-				)
-			}
-			mode, stripped, err := extractArtifactsMode(call.Payload)
-			if err != nil {
-				return nil, err
-			}
-			call.ArtifactsMode = mode
-			if mode != "" {
-				artifactsModeByCallID[call.ToolCallID] = mode
-			}
-			call.Payload = stripped
-			execCalls[i] = call
-		}
-
-		// Group calls by timeout and execute.
-		grouped, timeouts := r.groupToolCallsByTimeout(execCalls, input, toolOpts.Timeout)
-		finishBy := time.Time{}
-		if !deadline.IsZero() {
-			reserve := finalizerGrace
-			if reserve == 0 {
-				reserve = minActivityTimeout
-			}
-			finishBy = deadline.Add(-reserve)
-		}
-		vals, timedOut, err := r.executeGroupedToolCalls(
-			wfCtx, reg, input.AgentID, base, result.ExpectedChildren, turnID, parentTracker, finishBy,
-			grouped, timeouts, toolOpts,
-		)
-		if err != nil {
-			return nil, err
-		}
-		vals, err = mergeToolResultsByCallID(allowed, vals, deniedResults)
-		if err != nil {
-			return nil, err
-		}
-		// Directly use pointer results for the planner input.
-		lastToolResults = vals
-		aggregatedToolResults = append(aggregatedToolResults, cloneToolResults(vals)...)
-		// Append user tool_result message and update ledger in the same order as
-		// the assistant tool_use declarations for this turn.
-		r.appendUserToolResults(base, allowed, vals, led, artifactsModeByCallID)
-		if timedOut {
-			return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonTimeBudget, deadline)
-		}
-		// Decrement cap by the number of tool calls executed, not the number of results returned.
-		// This ensures the cap is properly decremented even if some results are missing.
-		caps.RemainingToolCalls = decrementCap(caps.RemainingToolCalls, len(allowed))
-		if failures(vals) > 0 {
-			caps.RemainingConsecutiveFailedToolCalls = decrementCap(
-				caps.RemainingConsecutiveFailedToolCalls, failures(vals),
-			)
-			if caps.MaxConsecutiveFailedToolCalls > 0 && caps.RemainingConsecutiveFailedToolCalls <= 0 {
-				// Consecutive failure cap exhausted: request finalization.
-				return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonFailureCap, deadline)
-			}
-		} else if caps.MaxConsecutiveFailedToolCalls > 0 {
-			caps.RemainingConsecutiveFailedToolCalls = caps.MaxConsecutiveFailedToolCalls
-		}
-
-		// Apply missing-fields policy if configured. The helper may finalize or pause/resume.
-		if out, err := r.handleMissingFieldsPolicy(wfCtx, reg, input, base, vals, aggregatedToolResults, aggUsage, &nextAttempt, turnID, ctrl, deadline); err != nil {
-			return nil, err
-		} else if out != nil {
-			return out, nil
-		}
-
-		// Hard protection: If this turn executed agent-as-tool calls
-		// and they produced zero child tool calls in total, do not
-		// resume. Finalize immediately to avoid loops.
-		protected, err := r.hardProtectionIfNeeded(ctx, input.AgentID, base, vals, turnID)
-		if err != nil {
-			return nil, err
-		}
-		if protected {
-			return r.finalizeWithPlanner(wfCtx, reg, input, base, aggregatedToolResults, aggUsage, nextAttempt, turnID, planner.TerminationReasonFailureCap, deadline)
-		}
-
-		resumeReq, rerr := r.buildNextResumeRequest(input.AgentID, base, lastToolResults, &nextAttempt)
-		if rerr != nil {
-			return nil, rerr
-		}
-		resOutput, rerr := r.runPlanActivity(wfCtx, reg.ResumeActivityName, resumeOpts, resumeReq, deadline)
-		if rerr != nil {
-			return nil, rerr
-		}
-		if resOutput == nil || resOutput.Result == nil {
-			return nil, fmt.Errorf("plan activity returned nil result on resume")
-		}
-		aggUsage = addTokenUsage(aggUsage, resOutput.Usage)
-		result = resOutput.Result
-		turnTranscript = resOutput.Transcript
-		led = transcript.FromModelMessages(turnTranscript)
-	}
+	loop := newWorkflowLoop(
+		r,
+		wfCtx,
+		reg,
+		input,
+		base,
+		st,
+		turnID,
+		ctrl,
+		parentTracker,
+		runDeadlines{
+			Budget:         budgetDeadline,
+			Hard:           hardDeadline,
+			FinalizerGrace: finalizerGrace,
+		},
+		resumeOpts,
+		toolOpts,
+	)
+	return loop.run()
 }
 
 // timeoutUntil returns the remaining duration until deadline, relative to now.

@@ -61,7 +61,7 @@ func TestServe_RespondsToPingWhileToolCallInFlight(t *testing.T) {
 	})
 
 	client := mockpulse.NewClient(t)
-	client.SetStream(func(name string) (pulse.Stream, error) {
+	client.SetStream(func(name string, _ ...streamopts.Stream) (pulse.Stream, error) {
 		switch name {
 		case toolsetStreamID:
 			return toolsetStream, nil
@@ -180,7 +180,7 @@ func TestServe_RespondsToPingWhenQueueIsFull(t *testing.T) {
 	})
 
 	client := mockpulse.NewClient(t)
-	client.SetStream(func(name string) (pulse.Stream, error) {
+	client.SetStream(func(name string, _ ...streamopts.Stream) (pulse.Stream, error) {
 		switch name {
 		case toolsetStreamID:
 			return toolsetStream, nil

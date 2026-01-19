@@ -86,7 +86,7 @@ func TestToolsetTaskQueueOverrideUsed(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, "", nil, nil, 0)
+	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, time.Time{}, 2, "", nil, nil, 0)
 	require.NoError(t, err)
 	require.Equal(t, "q1", wfCtx.lastToolCall.Options.Queue)
 	require.NotNil(t, wfCtx.lastToolCall.Input)
@@ -110,7 +110,7 @@ func TestPreserveModelProvidedToolCallID(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, "", nil, nil, 0)
+	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, time.Time{}, 2, "", nil, nil, 0)
 	require.NoError(t, err)
 	// Activity input should carry the same ID
 	require.NotNil(t, wfCtx.lastToolCall.Input)
@@ -167,7 +167,7 @@ func TestRunLoopPauseResumeEmitsEvents(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, 2, "turn-1", nil, ctrl, 0)
+	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, time.Time{}, 2, "turn-1", nil, ctrl, 0)
 	require.NoError(t, err)
 	var sawPause, sawResume bool
 	for _, evt := range recorder.events {
@@ -203,6 +203,9 @@ func TestServiceToolEventsUseChildRunContext(t *testing.T) {
 		asyncResult: ToolOutput{Payload: []byte("null")},
 	}
 	parentCtx := &run.Context{
+		RunID:            "child-run",
+		SessionID:        "session-1",
+		TurnID:           "turn-1",
 		ParentRunID:      "parent-run",
 		ParentAgentID:    "chat.agent",
 		ParentToolCallID: "tool-parent",
@@ -211,7 +214,7 @@ func TestServiceToolEventsUseChildRunContext(t *testing.T) {
 		Name:       tools.Ident("atlas.read.atlas_get_time_series"),
 		ToolCallID: "child-call",
 	}}
-	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "child-run", "ada.agent", parentCtx, calls, 0, "turn-1", nil, time.Time{})
+	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "ada.agent", parentCtx, calls, 0, nil, time.Time{})
 	require.NoError(t, err)
 
 	var scheduled *hooks.ToolCallScheduledEvent
@@ -298,6 +301,7 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 		nil,
 		model.TokenUsage{},
 		policy.CapsState{MaxToolCalls: 2, RemainingToolCalls: 2},
+		time.Time{},
 		time.Time{},
 		2,
 		input.TurnID,
@@ -396,6 +400,7 @@ func TestInlineToolsetFailsWhenSidecarDeclaredButNoArtifacts(t *testing.T) {
 		nil,
 		model.TokenUsage{},
 		policy.CapsState{MaxToolCalls: 2, RemainingToolCalls: 2},
+		time.Time{},
 		time.Time{},
 		2,
 		input.TurnID,

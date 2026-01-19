@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	toolhttp "goa.design/goa-ai/alpha/toolsets/deep/http"
 	"goa.design/goa-ai/runtime/agent/tools"
 	goa "goa.design/goa/v3/pkg"
 	"strings"
@@ -163,78 +164,6 @@ func enrichValidateResultValidationError(err error) error {
 	ve.descriptions = m
 	return ve
 }
-func enrichValidatePayloadJSON2ValidationError(err error) error {
-	ve, ok := err.(*ValidationError)
-	if !ok || ve == nil {
-		return err
-	}
-	if len(ve.issues) == 0 {
-		return err
-	}
-	m := make(map[string]string)
-	ve.descriptions = m
-	return ve
-}
-func enrichValidatePayloadJSONChildJSON2ValidationError(err error) error {
-	ve, ok := err.(*ValidationError)
-	if !ok || ve == nil {
-		return err
-	}
-	if len(ve.issues) == 0 {
-		return err
-	}
-	m := make(map[string]string)
-	ve.descriptions = m
-	return ve
-}
-func enrichValidatePayloadJSONChildJSONChildJSON2ValidationError(err error) error {
-	ve, ok := err.(*ValidationError)
-	if !ok || ve == nil {
-		return err
-	}
-	if len(ve.issues) == 0 {
-		return err
-	}
-	m := make(map[string]string)
-	ve.descriptions = m
-	return ve
-}
-func enrichValidateResultJSON2ValidationError(err error) error {
-	ve, ok := err.(*ValidationError)
-	if !ok || ve == nil {
-		return err
-	}
-	if len(ve.issues) == 0 {
-		return err
-	}
-	m := make(map[string]string)
-	ve.descriptions = m
-	return ve
-}
-func enrichValidateResultJSONChildJSON2ValidationError(err error) error {
-	ve, ok := err.(*ValidationError)
-	if !ok || ve == nil {
-		return err
-	}
-	if len(ve.issues) == 0 {
-		return err
-	}
-	m := make(map[string]string)
-	ve.descriptions = m
-	return ve
-}
-func enrichValidateResultJSONChildJSONChildJSON2ValidationError(err error) error {
-	ve, ok := err.(*ValidationError)
-	if !ok || ve == nil {
-		return err
-	}
-	if len(ve.issues) == 0 {
-		return err
-	}
-	m := make(map[string]string)
-	ve.descriptions = m
-	return ve
-}
 
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
@@ -269,7 +198,14 @@ func MarshalValidatePayload(v *ValidatePayload) ([]byte, error) {
 	if v == nil {
 		return nil, fmt.Errorf("validatePayload is nil")
 	}
-	return json.Marshal(v)
+	in := v
+	_ = in
+	var out *toolhttp.ValidatePayloadTransport
+	out = &toolhttp.ValidatePayloadTransport{
+		Root: &in.Root,
+	}
+	out.Child = encodeLevel2ToToolhttpLevel2Transport(in.Child)
+	return json.Marshal(out)
 }
 
 // UnmarshalValidatePayload deserializes JSON into *ValidatePayload.
@@ -277,34 +213,23 @@ func UnmarshalValidatePayload(data []byte) (*ValidatePayload, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("validatePayload JSON is empty")
 	}
-	// Decode into JSON body (server body style) then transform.
-	// Note: Agent used-tools perform lenient decode (no required-field validation here).
-	var raw ValidatePayloadJSON2
-	if err := json.Unmarshal(data, &raw); err != nil {
+	var tv toolhttp.ValidatePayloadTransport
+	if err := json.Unmarshal(data, &tv); err != nil {
 		return nil, fmt.Errorf("decode validatePayload: %w", err)
 	}
-	var err error
-	if raw.Root == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("root", "raw"))
-	}
-	if raw.Child == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("child", "raw"))
-	}
-	if raw.Child != nil {
-		if err2 := ValidateValidatePayloadJSONChildJSON2(raw.Child); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
-	}
-	if err != nil {
+	if err := toolhttp.ValidateValidatePayloadTransport(&tv); err != nil {
 		err = newValidationError(err)
+		err = enrichValidatePayloadValidationError(err)
 		return nil, err
 	}
-	// Transform into final type
-	v := &ValidatePayload{
-		Root: *raw.Root,
+	in := &tv
+	_ = in
+	var out *ValidatePayload
+	out = &ValidatePayload{
+		Root: *in.Root,
 	}
-	v.Child = payloadValidatePayloadJSONChildJSON2ToLevel2(raw.Child)
-	return v, nil
+	out.Child = decodeToolhttpLevel2TransportToLevel2(in.Child)
+	return out, nil
 }
 
 // MarshalValidateResult serializes *ValidateResult into JSON.
@@ -312,7 +237,14 @@ func MarshalValidateResult(v *ValidateResult) ([]byte, error) {
 	if v == nil {
 		return nil, fmt.Errorf("validateResult is nil")
 	}
-	return json.Marshal(v)
+	in := v
+	_ = in
+	var out *toolhttp.ValidateResultTransport
+	out = &toolhttp.ValidateResultTransport{
+		Root: &in.Root,
+	}
+	out.Child = encodeLevel2ToToolhttpLevel2Transport(in.Child)
+	return json.Marshal(out)
 }
 
 // UnmarshalValidateResult deserializes JSON into *ValidateResult.
@@ -320,175 +252,53 @@ func UnmarshalValidateResult(data []byte) (*ValidateResult, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("validateResult JSON is empty")
 	}
-	// Decode into JSON body (server body style) then transform.
-	// Note: Agent used-tools perform lenient decode (no required-field validation here).
-	var raw ValidateResultJSON2
-	if err := json.Unmarshal(data, &raw); err != nil {
+	var tv toolhttp.ValidateResultTransport
+	if err := json.Unmarshal(data, &tv); err != nil {
 		return nil, fmt.Errorf("decode validateResult: %w", err)
 	}
-	var err error
-	if raw.Root == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("root", "raw"))
-	}
-	if raw.Child == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("child", "raw"))
-	}
-	if raw.Child != nil {
-		if err2 := ValidateValidateResultJSONChildJSON2(raw.Child); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
-	}
-	if err != nil {
+	if err := toolhttp.ValidateValidateResultTransport(&tv); err != nil {
 		err = newValidationError(err)
+		err = enrichValidateResultValidationError(err)
 		return nil, err
 	}
-	// Transform into final type
-	v := &ValidateResult{
-		Root: *raw.Root,
+	in := &tv
+	_ = in
+	var out *ValidateResult
+	out = &ValidateResult{
+		Root: *in.Root,
 	}
-	v.Child = resultValidateResultJSONChildJSON2ToLevel2(raw.Child)
-	return v, nil
+	out.Child = decodeToolhttpLevel2TransportToLevel2(in.Child)
+	return out, nil
 }
 
-// Transform helpers
-func payloadValidatePayloadJSONChildJSON2ToLevel2(v *ValidatePayloadJSONChildJSON2) (out *Level2) {
+// Helper transform functions
+func decodeToolhttpLevel2TransportToLevel2(v *toolhttp.Level2Transport) *Level2 {
 	res := &Level2{
 		Mid: *v.Mid,
 	}
-	res.Child = payloadValidatePayloadJSONChildJSONChildJSON2ToLevel3(v.Child)
+	res.Child = decodeToolhttpLevel3TransportToLevel3(v.Child)
 
-	out = res
-	return
+	return res
 }
-func payloadValidatePayloadJSONChildJSONChildJSON2ToLevel3(v *ValidatePayloadJSONChildJSONChildJSON2) (out *Level3) {
+func decodeToolhttpLevel3TransportToLevel3(v *toolhttp.Level3Transport) *Level3 {
 	res := &Level3{
 		Leaf: *v.Leaf,
 	}
 
-	out = res
-	return
+	return res
 }
-func resultValidateResultJSONChildJSON2ToLevel2(v *ValidateResultJSONChildJSON2) (out *Level2) {
-	res := &Level2{
-		Mid: *v.Mid,
+func encodeLevel2ToToolhttpLevel2Transport(v *Level2) *toolhttp.Level2Transport {
+	res := &toolhttp.Level2Transport{
+		Mid: &v.Mid,
 	}
-	res.Child = resultValidateResultJSONChildJSONChildJSON2ToLevel3(v.Child)
+	res.Child = encodeLevel3ToToolhttpLevel3Transport(v.Child)
 
-	out = res
-	return
+	return res
 }
-func resultValidateResultJSONChildJSONChildJSON2ToLevel3(v *ValidateResultJSONChildJSONChildJSON2) (out *Level3) {
-	res := &Level3{
-		Leaf: *v.Leaf,
+func encodeLevel3ToToolhttpLevel3Transport(v *Level3) *toolhttp.Level3Transport {
+	res := &toolhttp.Level3Transport{
+		Leaf: &v.Leaf,
 	}
 
-	out = res
-	return
-}
-
-// ValidateLevel1 validates values of type *Level1.
-func ValidateLevel1(body *Level1) (err error) {
-	if body.Child == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("child", "body"))
-	}
-	if body.Child != nil {
-		if err2 := ValidateLevel2(body.Child); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
-	}
-	return
-}
-
-// ValidateLevel2 validates values of type *Level2.
-func ValidateLevel2(body *Level2) (err error) {
-	if body.Child == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("child", "body"))
-	}
-	return
-}
-
-// ValidateLevel3 validates values of type *Level3.
-func ValidateLevel3(body *Level3) (err error) {
-
-	return
-}
-
-// ValidateValidatePayloadJSON2 validates values of type *ValidatePayloadJSON2.
-func ValidateValidatePayloadJSON2(body *ValidatePayloadJSON2) (err error) {
-	if body.Root == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("root", "body"))
-	}
-	if body.Child == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("child", "body"))
-	}
-	if body.Child != nil {
-		if err2 := ValidateValidatePayloadJSONChildJSON2(body.Child); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
-	}
-	return
-}
-
-// ValidateValidatePayloadJSONChildJSON2 validates values of type *ValidatePayloadJSONChildJSON2.
-func ValidateValidatePayloadJSONChildJSON2(body *ValidatePayloadJSONChildJSON2) (err error) {
-	if body.Mid == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("mid", "body"))
-	}
-	if body.Child == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("child", "body"))
-	}
-	if body.Child != nil {
-		if err2 := ValidateValidatePayloadJSONChildJSONChildJSON2(body.Child); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
-	}
-	return
-}
-
-// ValidateValidatePayloadJSONChildJSONChildJSON2 validates values of type *ValidatePayloadJSONChildJSONChildJSON2.
-func ValidateValidatePayloadJSONChildJSONChildJSON2(body *ValidatePayloadJSONChildJSONChildJSON2) (err error) {
-	if body.Leaf == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("leaf", "body"))
-	}
-	return
-}
-
-// ValidateValidateResultJSON2 validates values of type *ValidateResultJSON2.
-func ValidateValidateResultJSON2(body *ValidateResultJSON2) (err error) {
-	if body.Root == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("root", "body"))
-	}
-	if body.Child == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("child", "body"))
-	}
-	if body.Child != nil {
-		if err2 := ValidateValidateResultJSONChildJSON2(body.Child); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
-	}
-	return
-}
-
-// ValidateValidateResultJSONChildJSON2 validates values of type *ValidateResultJSONChildJSON2.
-func ValidateValidateResultJSONChildJSON2(body *ValidateResultJSONChildJSON2) (err error) {
-	if body.Mid == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("mid", "body"))
-	}
-	if body.Child == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("child", "body"))
-	}
-	if body.Child != nil {
-		if err2 := ValidateValidateResultJSONChildJSONChildJSON2(body.Child); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
-	}
-	return
-}
-
-// ValidateValidateResultJSONChildJSONChildJSON2 validates values of type *ValidateResultJSONChildJSONChildJSON2.
-func ValidateValidateResultJSONChildJSONChildJSON2(body *ValidateResultJSONChildJSONChildJSON2) (err error) {
-	if body.Leaf == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("leaf", "body"))
-	}
-	return
+	return res
 }

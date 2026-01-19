@@ -307,8 +307,12 @@ func Compress(triggerAt, keepRecent int, client model.Client, opts ...CompressOp
 }
 
 // parseTurns groups messages into logical turns. A turn starts with a User
-// message and includes all subsequent messages until the next User message.
-// This preserves tool use/result chains within their originating turn.
+// message (query) and includes all subsequent messages (assistant responses
+// and tool result exchanges) until the next User query message.
+//
+// To preserve tool call/result integrity, User messages containing only
+// tool_result parts are treated as continuations of the current turn rather
+// than the start of a new turn.
 func parseTurns(msgs []*model.Message) []turn {
 	if len(msgs) == 0 {
 		return nil
@@ -318,7 +322,14 @@ func parseTurns(msgs []*model.Message) []turn {
 	var current turn
 
 	for _, m := range msgs {
-		if m.Role == model.ConversationRoleUser {
+		if m == nil {
+			continue
+		}
+		// A User message starts a new turn UNLESS it contains only tool results,
+		// in which case it is a continuation of the prior assistant turn.
+		isNewTurn := m.Role == model.ConversationRoleUser && !isToolResultOnly(m)
+
+		if isNewTurn {
 			// Start of a new turn - save previous if non-empty
 			if len(current.messages) > 0 {
 				turns = append(turns, current)
@@ -336,6 +347,19 @@ func parseTurns(msgs []*model.Message) []turn {
 	}
 
 	return turns
+}
+
+// isToolResultOnly reports whether a message contains only tool_result parts.
+func isToolResultOnly(m *model.Message) bool {
+	if m == nil || m.Role != model.ConversationRoleUser || len(m.Parts) == 0 {
+		return false
+	}
+	for _, p := range m.Parts {
+		if _, ok := p.(model.ToolResultPart); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // formatMessage converts a message to a readable string for summarization.

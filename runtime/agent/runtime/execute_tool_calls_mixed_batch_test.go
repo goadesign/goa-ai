@@ -89,19 +89,7 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 	}
 	done := make(chan out, 1)
 	go func() {
-		results, timedOut, err := rt.executeToolCalls(
-			wfCtx,
-			"execute",
-			engine.ActivityOptions{},
-			runCtx.RunID,
-			agent.Ident("agent-1"),
-			runCtx,
-			calls,
-			0,
-			runCtx.TurnID,
-			nil,
-			time.Time{},
-		)
+		results, timedOut, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("agent-1"), runCtx, calls, 0, nil, time.Time{})
 		done <- out{results: results, timedOut: timedOut, err: err}
 	}()
 

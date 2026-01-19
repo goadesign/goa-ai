@@ -471,32 +471,30 @@ func (r *Runtime) marshalToolValue(ctx context.Context, toolName tools.Ident, va
 	if value == nil {
 		return nil, nil
 	}
-	// Preserve raw JSON payloads/results without re-encoding.
-	// Rationale:
-	//   - The runtime is tool‑agnostic and does not import generated payload
-	//     types. Callers may legitimately pass pre‑encoded JSON (json.RawMessage
-	//     or a JSON []byte) to defer decoding to an executor (e.g., agent‑as‑tool
-	//     DecodeInExecutor=true) or to avoid lossy/expensive round‑trips.
-	//   - Re‑encoding already‑encoded JSON wastes CPU and can change formatting.
-	//   - For non‑JSON []byte or typed values, we fall through to the generated
-	//     tool codec to produce the canonical encoding. If the caller needs to
-	//     bypass codecs, they must pass pre-encoded JSON.
-	switch v := value.(type) {
-	case json.RawMessage:
-		if len(v) == 0 {
-			return nil, nil
+	if payload {
+		// Payloads are JSON across the planner/runtime boundary. Keep the ability to
+		// forward/record canonical bytes without forcing a decode+re-encode cycle.
+		switch v := value.(type) {
+		case json.RawMessage:
+			if len(v) == 0 {
+				return nil, nil
+			}
+			return append(json.RawMessage(nil), v...), nil
+		case []byte:
+			if len(v) == 0 {
+				return nil, nil
+			}
+			if json.Valid(v) {
+				return json.RawMessage(append([]byte(nil), v...)), nil
+			}
 		}
-		// Return a defensive copy.
-		return append(json.RawMessage(nil), v...), nil
-	case []byte:
-		if len(v) == 0 {
-			return nil, nil
+	} else {
+		// Tool results must be typed Go values so the generated codec is the sole
+		// authority for canonical JSON and schema alignment.
+		switch value.(type) {
+		case json.RawMessage, []byte:
+			return nil, fmt.Errorf("tool %s result must be a typed Go value, got %T", toolName, value)
 		}
-		if json.Valid(v) {
-			// Treat as already-encoded JSON; return a defensive copy.
-			return json.RawMessage(append([]byte(nil), v...)), nil
-		}
-		// Fall through to codec/json.Marshal for non-JSON []byte values.
 	}
 	codec, ok := r.toolCodec(toolName, payload)
 	if !ok || codec.ToJSON == nil {
