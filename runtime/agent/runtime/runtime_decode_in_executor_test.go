@@ -18,14 +18,14 @@ func TestExecuteToolActivity_DecodeInExecutor_PassesRaw(t *testing.T) {
 	// Register a toolset with DecodeInExecutor enabled.
 	called := false
 	decoded := false
-	rt.toolsets["svc.ts"] = ToolsetRegistration{
+	ts := ToolsetRegistration{
 		Name:             "svc.ts",
 		DecodeInExecutor: true,
 		Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 			called = true
 			// Payload must be raw JSON to honor decode-in-executor contract.
 			require.JSONEq(t, `{"x":1}`, string(call.Payload))
-			return &planner.ToolResult{Name: tools.Ident("svc.ts.tool"), Result: json.RawMessage(`{"ok":true}`)}, nil
+			return &planner.ToolResult{Name: tools.Ident("svc.ts.tool"), Result: map[string]any{"ok": true}}, nil
 		},
 		Specs: []tools.ToolSpec{{
 			Name:    tools.Ident("svc.ts.tool"),
@@ -43,20 +43,22 @@ func TestExecuteToolActivity_DecodeInExecutor_PassesRaw(t *testing.T) {
 			Result: tools.TypeSpec{
 				Name: "R",
 				Codec: tools.JSONCodec[any]{
-					ToJSON: func(v any) ([]byte, error) {
-						if raw, ok := v.(json.RawMessage); ok {
-							return raw, nil
-						}
-						return json.Marshal(v)
-					},
+					ToJSON: json.Marshal,
 					FromJSON: func(data []byte) (any, error) {
-						return json.RawMessage(data), nil
+						var m map[string]any
+						if err := json.Unmarshal(data, &m); err != nil {
+							return nil, err
+						}
+						return m, nil
 					},
 				},
 			},
 			IsAgentTool: false,
 		}},
 	}
+	rt.mu.Lock()
+	rt.addToolsetLocked(ts)
+	rt.mu.Unlock()
 
 	// Call ExecuteToolActivity with a pre-encoded payload; it should flow through.
 	raw := json.RawMessage(`{"x":1}`)

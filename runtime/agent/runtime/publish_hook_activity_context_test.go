@@ -263,14 +263,12 @@ func TestExecuteWorkflow_TerminalHookUsesDetachedContext(t *testing.T) {
 	}
 
 	_, err := rt.ExecuteWorkflow(wfCtx, &RunInput{
-		AgentID:    agent.Ident("agent"),
-		RunID:      testRunID,
-		SessionID:  testSessionID,
-		TurnID:     "turn-1",
+		AgentID:   agent.Ident("agent"),
+		RunID:     testRunID,
+		SessionID: testSessionID,
+		TurnID:    "turn-1",
 	})
 	require.ErrorIs(t, err, context.Canceled)
 	require.True(t, wfCtx.state.detachedCalled, "expected terminal emission to use Detached workflow context")
 	require.True(t, wfCtx.state.terminalSent, "expected RunCompleted hook emission to succeed via Detached context")
 }
-
-

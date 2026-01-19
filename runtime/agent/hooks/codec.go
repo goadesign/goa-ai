@@ -138,6 +138,23 @@ func DecodeFromHookInput(input *ActivityInput) (Event, error) {
 		}
 		evt = NewAwaitClarificationEvent(input.RunID, input.AgentID, input.SessionID, p.ID, p.Question, p.MissingFields, p.RestrictToTool, p.ExampleInput)
 
+	case AwaitQuestions:
+		var p AwaitQuestionsEvent
+		if err := json.Unmarshal(input.Payload, &p); err != nil {
+			return nil, fmt.Errorf("decode %s payload: %w", AwaitQuestions, err)
+		}
+		evt = NewAwaitQuestionsEvent(
+			input.RunID,
+			input.AgentID,
+			input.SessionID,
+			p.ID,
+			p.ToolName,
+			p.ToolCallID,
+			p.Payload,
+			p.Title,
+			p.Questions,
+		)
+
 	case AwaitConfirmation:
 		var p AwaitConfirmationEvent
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
@@ -208,7 +225,23 @@ func DecodeFromHookInput(input *ActivityInput) (Event, error) {
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", ToolResultReceived, err)
 		}
-		evt = NewToolResultReceivedEvent(input.RunID, input.AgentID, input.SessionID, p.ToolName, p.ToolCallID, p.ParentToolCallID, p.Result, p.ResultPreview, p.Bounds, p.Artifacts, p.Duration, p.Telemetry, p.Error)
+		evt = NewToolResultReceivedEvent(
+			input.RunID,
+			input.AgentID,
+			input.SessionID,
+			p.ToolName,
+			p.ToolCallID,
+			p.ParentToolCallID,
+			p.Result,
+			p.ResultJSON,
+			p.ResultPreview,
+			p.Bounds,
+			p.Artifacts,
+			p.Duration,
+			p.Telemetry,
+			p.RetryHint,
+			p.Error,
+		)
 
 	case PolicyDecision:
 		var p PolicyDecisionEvent

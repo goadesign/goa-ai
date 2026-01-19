@@ -435,6 +435,10 @@ func encodeToolResultWire(specFn func(aitools.Ident) (*aitools.ToolSpec, bool), 
 	if !ok || spec == nil {
 		return nil, fmt.Errorf("temporal: unknown tool spec for result %s", tr.Name)
 	}
+	switch tr.Result.(type) {
+	case json.RawMessage, []byte:
+		return nil, fmt.Errorf("temporal: encode %s tool result: result must be a typed Go value, got %T", tr.Name, tr.Result)
+	}
 	if spec.Result.Codec.ToJSON == nil {
 		return nil, fmt.Errorf("temporal: missing result codec for %s", tr.Name)
 	}

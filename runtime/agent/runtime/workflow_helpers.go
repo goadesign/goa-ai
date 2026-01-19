@@ -95,7 +95,6 @@ func (r *Runtime) executeGroupedToolCalls(
 	agentID agent.Ident,
 	base *planner.PlanInput,
 	expectedChildren int,
-	turnID string,
 	parentTracker *childTracker,
 	finishBy time.Time,
 	grouped [][]planner.ToolRequest,
@@ -109,10 +108,7 @@ func (r *Runtime) executeGroupedToolCalls(
 		if timeouts[i] > 0 {
 			opt.Timeout = timeouts[i]
 		}
-		sub, timedOut, err := r.executeToolCalls(
-			wfCtx, reg.ExecuteToolActivity, opt, base.RunContext.RunID, agentID,
-			&base.RunContext, grouped[i], expectedChildren, turnID, parentTracker, finishBy,
-		)
+		sub, timedOut, err := r.executeToolCalls(wfCtx, reg.ExecuteToolActivity, opt, agentID, &base.RunContext, grouped[i], expectedChildren, parentTracker, finishBy)
 		if err != nil {
 			return nil, false, err
 		}

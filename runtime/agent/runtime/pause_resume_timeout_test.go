@@ -174,6 +174,7 @@ func TestRunLoopConfirmationTimeoutBalancesPauseResume(t *testing.T) {
 		model.TokenUsage{},
 		policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1},
 		deadline,
+		deadline,
 		2,
 		"turn-1",
 		nil,
@@ -252,6 +253,7 @@ func TestMissingFieldsClarificationTimeoutBalancesPauseResume(t *testing.T) {
 		&nextAttempt,
 		"turn-1",
 		ctrl,
+		deadline,
 		deadline,
 	)
 	require.NoError(t, err)

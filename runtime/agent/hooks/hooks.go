@@ -69,6 +69,9 @@ const (
 	// AwaitClarification fires when the planner requests a human clarification.
 	AwaitClarification EventType = "await_clarification"
 
+	// AwaitQuestions fires when the planner requests structured multiple-choice user input.
+	AwaitQuestions EventType = "await_questions"
+
 	// AwaitConfirmation fires when the runtime requests operator confirmation.
 	AwaitConfirmation EventType = "await_confirmation"
 

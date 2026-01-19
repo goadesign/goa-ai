@@ -138,6 +138,37 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Base: Base{t: EventAwaitConfirmation, r: evt.RunID(), s: evt.SessionID(), p: payload},
 			Data: payload,
 		})
+	case *hooks.AwaitQuestionsEvent:
+		if !s.profile.AwaitQuestions {
+			return nil
+		}
+		qs := make([]AwaitQuestionPayload, 0, len(evt.Questions))
+		for _, q := range evt.Questions {
+			opts := make([]AwaitQuestionOptionPayload, 0, len(q.Options))
+			for _, o := range q.Options {
+				opts = append(opts, AwaitQuestionOptionPayload{
+					ID:    o.ID,
+					Label: o.Label,
+				})
+			}
+			qs = append(qs, AwaitQuestionPayload{
+				ID:            q.ID,
+				Prompt:        q.Prompt,
+				AllowMultiple: q.AllowMultiple,
+				Options:       opts,
+			})
+		}
+		payload := AwaitQuestionsPayload{
+			ID:         evt.ID,
+			ToolName:   string(evt.ToolName),
+			ToolCallID: evt.ToolCallID,
+			Title:      evt.Title,
+			Questions:  qs,
+		}
+		return s.sink.Send(ctx, AwaitQuestions{
+			Base: Base{t: EventAwaitQuestions, r: evt.RunID(), s: evt.SessionID(), p: payload},
+			Data: payload,
+		})
 	case *hooks.AwaitExternalToolsEvent:
 		if !s.profile.AwaitExternalTools {
 			return nil
@@ -244,7 +275,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		if evt.ToolName == "" {
 			return errors.New("stream: tool_end missing tool_name")
 		}
-		if evt.Error == nil && evt.Result == nil {
+		if evt.Error == nil && len(evt.ResultJSON) == 0 {
 			return fmt.Errorf("stream: tool_end %s missing result (success without result)", evt.ToolName)
 		}
 		var artifacts []ArtifactPayload
@@ -277,11 +308,12 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			ToolCallID:       evt.ToolCallID,
 			ParentToolCallID: evt.ParentToolCallID,
 			ToolName:         string(evt.ToolName),
-			Result:           evt.Result,
+			Result:           evt.ResultJSON,
 			Bounds:           evt.Bounds,
 			Artifacts:        artifacts,
 			Duration:         evt.Duration,
 			Telemetry:        evt.Telemetry,
+			RetryHint:        evt.RetryHint,
 			Error:            evt.Error,
 		}
 		if preview := clampPreview(evt.ResultPreview); preview != "" {

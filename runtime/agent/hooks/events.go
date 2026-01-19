@@ -215,6 +215,12 @@ type (
 		ToolName tools.Ident
 		// Result contains the tool's output payload. Nil if Error is set.
 		Result any
+		// ResultJSON contains the canonical JSON encoding of Result as produced
+		// by the tool's generated result codec.
+		//
+		// This is used by stream sinks and persistence layers that must serialize
+		// tool results without relying on `encoding/json` and Go field names.
+		ResultJSON json.RawMessage
 		// ResultPreview is a concise, user-facing summary of the tool result rendered
 		// from the registered ResultHintTemplate for this tool. It is computed by
 		// the runtime while the result is still strongly typed so downstream
@@ -233,6 +239,11 @@ type (
 		// Telemetry holds structured observability metadata (tokens, model, retries).
 		// Nil if no telemetry was collected.
 		Telemetry *telemetry.ToolTelemetry
+		// RetryHint carries structured guidance for recovering from tool failures.
+		// It is typically populated for validation/repair flows (missing fields,
+		// invalid arguments) and surfaced to clients so they can prompt the user
+		// and retry deterministically.
+		RetryHint *planner.RetryHint
 		// Error contains any error returned by the tool execution. Nil on success.
 		Error *toolerrors.ToolError
 	}
@@ -384,6 +395,38 @@ type (
 		ToolCallID string
 		// Payload is the canonical JSON arguments for the pending tool call.
 		Payload json.RawMessage
+	}
+
+	// AwaitQuestionsEvent indicates the planner requested structured multiple-choice
+	// answers to be provided out-of-band (typically by a UI) before the run can resume.
+	AwaitQuestionsEvent struct {
+		baseEvent
+		// ID correlates this await with a subsequent ProvideToolResults.
+		ID string
+		// ToolName identifies the tool awaiting user answers.
+		ToolName tools.Ident
+		// ToolCallID correlates the provided result with this requested call.
+		ToolCallID string
+		// Payload is the canonical JSON arguments for the awaited tool call.
+		Payload json.RawMessage
+		// Title is an optional display title for the questions UI.
+		Title *string
+		// Questions are the structured questions to present to the user.
+		Questions []AwaitQuestion
+	}
+
+	// AwaitQuestion describes a single multiple-choice question.
+	AwaitQuestion struct {
+		ID            string
+		Prompt        string
+		Options       []AwaitQuestionOption
+		AllowMultiple bool
+	}
+
+	// AwaitQuestionOption describes a selectable answer option.
+	AwaitQuestionOption struct {
+		ID    string
+		Label string
 	}
 
 	// ToolAuthorizationEvent indicates an operator provided an explicit approval
@@ -632,6 +675,32 @@ func NewAwaitExternalToolsEvent(runID string, agentID agent.Ident, sessionID, id
 	}
 }
 
+// NewAwaitQuestionsEvent constructs an AwaitQuestionsEvent for a structured questions prompt.
+func NewAwaitQuestionsEvent(runID string, agentID agent.Ident, sessionID, id string, toolName tools.Ident, toolCallID string, payload json.RawMessage, title *string, questions []AwaitQuestion) *AwaitQuestionsEvent {
+	qcopy := make([]AwaitQuestion, 0, len(questions))
+	for _, q := range questions {
+		opts := make([]AwaitQuestionOption, len(q.Options))
+		copy(opts, q.Options)
+		qcopy = append(qcopy, AwaitQuestion{
+			ID:            q.ID,
+			Prompt:        q.Prompt,
+			AllowMultiple: q.AllowMultiple,
+			Options:       opts,
+		})
+	}
+	be := newBaseEvent(runID, agentID)
+	be.sessionID = sessionID
+	return &AwaitQuestionsEvent{
+		baseEvent:  be,
+		ID:         id,
+		ToolName:   toolName,
+		ToolCallID: toolCallID,
+		Payload:    payload,
+		Title:      title,
+		Questions:  qcopy,
+	}
+}
+
 // NewPolicyDecisionEvent constructs a PolicyDecisionEvent with the provided metadata.
 func NewPolicyDecisionEvent(runID string, agentID agent.Ident, sessionID string, allowed []tools.Ident, caps policy.CapsState, labels map[string]string, metadata map[string]any) *PolicyDecisionEvent {
 	be := newBaseEvent(runID, agentID)
@@ -653,6 +722,9 @@ func (e *AwaitConfirmationEvent) Type() EventType { return AwaitConfirmation }
 
 // Type implements Event for ToolAuthorizationEvent.
 func (e *ToolAuthorizationEvent) Type() EventType { return ToolAuthorization }
+
+// Type implements Event for AwaitQuestionsEvent.
+func (e *AwaitQuestionsEvent) Type() EventType { return AwaitQuestions }
 
 // Type implements Event for AwaitExternalToolsEvent.
 func (e *AwaitExternalToolsEvent) Type() EventType { return AwaitExternalTools }
@@ -684,7 +756,7 @@ func NewToolCallScheduledEvent(runID string, agentID agent.Ident, sessionID stri
 // NewToolResultReceivedEvent constructs a ToolResultReceivedEvent. Result and
 // err capture the tool outcome; duration is the wall-clock execution time;
 // telemetry carries structured observability metadata (nil if not collected).
-func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID, parentToolCallID string, result any, resultPreview string, bounds *agent.Bounds, artifacts []*planner.Artifact, duration time.Duration, telemetry *telemetry.ToolTelemetry, err *toolerrors.ToolError) *ToolResultReceivedEvent {
+func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID, parentToolCallID string, result any, resultJSON json.RawMessage, resultPreview string, bounds *agent.Bounds, artifacts []*planner.Artifact, duration time.Duration, telemetry *telemetry.ToolTelemetry, retryHint *planner.RetryHint, err *toolerrors.ToolError) *ToolResultReceivedEvent {
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
 	return &ToolResultReceivedEvent{
@@ -693,11 +765,13 @@ func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID str
 		ParentToolCallID: parentToolCallID,
 		ToolName:         toolName,
 		Result:           result,
+		ResultJSON:       resultJSON,
 		ResultPreview:    resultPreview,
 		Bounds:           bounds,
 		Artifacts:        artifacts,
 		Duration:         duration,
 		Telemetry:        telemetry,
+		RetryHint:        retryHint,
 		Error:            err,
 	}
 }

@@ -1097,20 +1097,35 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	// Use agent/run policy when available and cap by a hard maximum.
 	{
 		const hardCap = 15 * time.Minute
-		const headroom = 5 * time.Second
+		// Headroom ensures the workflow can publish terminal events and complete
+		// deterministic cleanup even when finalization runs right up to the deadline.
+		const headroom = 30 * time.Second
 		var (
 			policyBudget time.Duration
 			grace        time.Duration
+			resumeTO     time.Duration
 		)
 		if input.Policy != nil && input.Policy.TimeBudget > 0 {
 			policyBudget = input.Policy.TimeBudget
 			grace = input.Policy.FinalizerGrace
+			resumeTO = input.Policy.PlanTimeout
 		} else if reg, ok := r.agentByID(input.AgentID); ok {
 			policyBudget = reg.Policy.TimeBudget
 			grace = reg.Policy.FinalizerGrace
+			resumeTO = reg.ResumeActivityOptions.Timeout
+			if input.Policy != nil && input.Policy.PlanTimeout > 0 {
+				resumeTO = input.Policy.PlanTimeout
+			}
 		}
 		if grace == 0 {
 			grace = defaultFinalizerGrace
+		}
+		if resumeTO == 0 {
+			// Keep this aligned with the Temporal engine default activity timeout.
+			resumeTO = time.Minute
+		}
+		if grace < resumeTO {
+			grace = resumeTO
 		}
 		req.RunTimeout = hardCap
 		if policyBudget > 0 {

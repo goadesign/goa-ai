@@ -286,6 +286,9 @@ type Await struct {
 	// Clarification requests missing information from the user.
 	Clarification *AwaitClarification
 
+	// Questions requests structured multiple-choice answers from the user.
+	Questions *AwaitQuestions
+
 	// ExternalTools requests out-of-band tool results to be provided by the caller.
 	ExternalTools *AwaitExternalTools
 }
@@ -309,6 +312,55 @@ type AwaitClarification struct {
 
 	// ClarifyingPrompt is an optional prompt to use when building follow-up messages.
 	ClarifyingPrompt string
+}
+
+// AwaitQuestions requests structured multiple-choice answers from the user.
+//
+// Contract: AwaitQuestions represents a single paused tool invocation that must
+// be satisfied out-of-band by the caller (typically a UI) and resumed via the
+// runtime's ProvideToolResults mechanism using ToolCallID.
+type AwaitQuestions struct {
+	// ID uniquely identifies this questions request.
+	ID string
+
+	// ToolName identifies the tool awaiting user answers (for example, "chat.ask_question.ask_question").
+	ToolName tools.Ident
+
+	// ToolCallID correlates the provided result with this requested call.
+	ToolCallID string
+
+	// Payload is the canonical JSON payload for the awaited tool call.
+	Payload json.RawMessage
+
+	// Title is an optional display title for the questions form.
+	Title *string
+
+	// Questions enumerates the questions to present to the user.
+	Questions []AwaitQuestion
+}
+
+// AwaitQuestion describes a single multiple-choice question.
+type AwaitQuestion struct {
+	// ID uniquely identifies this question within the prompt.
+	ID string
+
+	// Prompt is the user-facing question text.
+	Prompt string
+
+	// Options enumerates the selectable answers.
+	Options []AwaitQuestionOption
+
+	// AllowMultiple reports whether multiple options may be selected.
+	AllowMultiple bool
+}
+
+// AwaitQuestionOption describes a selectable answer option for a question.
+type AwaitQuestionOption struct {
+	// ID uniquely identifies this option within the question.
+	ID string
+
+	// Label is the user-facing option label.
+	Label string
 }
 
 // AwaitExternalTools requests external tool results (provided out-of-band).
@@ -338,6 +390,10 @@ type TerminationReason string
 const (
 	// TerminationReasonTimeBudget indicates the run exceeded its time budget.
 	TerminationReasonTimeBudget TerminationReason = "time_budget"
+
+	// TerminationReasonAwaitTimeout indicates the run timed out while awaiting
+	// external input (e.g., user clarification, confirmations, or external tool results).
+	TerminationReasonAwaitTimeout TerminationReason = "await_timeout"
 
 	// TerminationReasonToolCap indicates the run exceeded its allowed tool call count.
 	TerminationReasonToolCap TerminationReason = "tool_cap"

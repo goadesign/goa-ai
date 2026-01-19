@@ -206,6 +206,10 @@ func (r *Runtime) confirmToolsIfNeeded(wfCtx engine.WorkflowContext, input *RunI
 		); err != nil {
 			return nil, nil, err
 		}
+		resultJSON, err := r.marshalToolValue(ctx, call.Name, deniedResult, false)
+		if err != nil {
+			return nil, nil, fmt.Errorf("encode %s denied tool result for streaming: %w", call.Name, err)
+		}
 		if err := r.publishHook(
 			ctx,
 			hooks.NewToolResultReceivedEvent(
@@ -216,10 +220,12 @@ func (r *Runtime) confirmToolsIfNeeded(wfCtx engine.WorkflowContext, input *RunI
 				call.ToolCallID,
 				call.ParentToolCallID,
 				deniedResult,
+				resultJSON,
 				formatResultPreview(call.Name, deniedResult),
 				nil,
 				nil,
 				0,
+				nil,
 				nil,
 				nil,
 			),
