@@ -147,15 +147,39 @@ func (c *agentJSONPayloadConverter) ToPayload(value any) (*commonpb.Payload, err
 }
 
 func (c *agentJSONPayloadConverter) FromPayload(p *commonpb.Payload, valuePtr any) error {
-	switch valuePtr.(type) {
+	switch v := valuePtr.(type) {
 	case **api.RunOutput:
 		return decodeRunOutput(c.spec, p, valuePtr)
+	case *api.RunOutput:
+		if v == nil {
+			return fmt.Errorf("temporal: run output decoder got nil *api.RunOutput")
+		}
+		ptr := v
+		return decodeRunOutput(c.spec, p, &ptr)
 	case **api.PlanActivityInput:
 		return decodePlanActivityInput(c.spec, p, valuePtr)
+	case *api.PlanActivityInput:
+		if v == nil {
+			return fmt.Errorf("temporal: plan activity input decoder got nil *api.PlanActivityInput")
+		}
+		ptr := v
+		return decodePlanActivityInput(c.spec, p, &ptr)
 	case **api.ToolResultsSet:
 		return decodeToolResultsSet(c.spec, p, valuePtr)
+	case *api.ToolResultsSet:
+		if v == nil {
+			return fmt.Errorf("temporal: tool results set decoder got nil *api.ToolResultsSet")
+		}
+		ptr := v
+		return decodeToolResultsSet(c.spec, p, &ptr)
 	case **planner.ToolResult:
 		return decodeToolResult(c.spec, p, valuePtr)
+	case *planner.ToolResult:
+		if v == nil {
+			return fmt.Errorf("temporal: tool result decoder got nil *planner.ToolResult")
+		}
+		ptr := v
+		return decodeToolResult(c.spec, p, &ptr)
 	default:
 		return c.JSONPayloadConverter.FromPayload(p, valuePtr)
 	}
