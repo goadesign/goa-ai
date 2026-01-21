@@ -78,6 +78,17 @@ func TestQuickstartGeneratesAndRuns(t *testing.T) {
 		t.Logf("goa example output:\n%s", out)
 	})
 
+	// Step 2b: Ensure module sums include dependencies pulled in by generated code.
+	// This is required when tests run with module updates disabled (e.g. GOFLAGS=-mod=readonly).
+	t.Run("go_mod_tidy", func(t *testing.T) {
+		cmd := exec.CommandContext(ctx, "go", "mod", "tidy")
+		cmd.Dir = quickstartDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("go mod tidy failed: %v\nOutput:\n%s", err, out)
+		}
+	})
+
 	// Step 3: Verify compilation
 	t.Run("go_build", func(t *testing.T) {
 		cmd := exec.CommandContext(ctx, "go", "build", "./cmd/...")

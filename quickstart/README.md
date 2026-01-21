@@ -113,6 +113,8 @@ eng, _ := temporal.New(temporal.Options{
     ClientOptions: &client.Options{
         HostPort:      "127.0.0.1:7233",
         Namespace:     "default",
+        // Required: enforce goa-ai's workflow boundary contract.
+        // Tool results/artifacts cross boundaries as canonical JSON bytes (api.ToolEvent/api.ToolArtifact).
         DataConverter: temporal.NewAgentDataConverter(specs.Spec),
     },
     WorkerOptions: temporal.WorkerOptions{

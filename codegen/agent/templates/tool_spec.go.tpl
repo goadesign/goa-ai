@@ -24,9 +24,23 @@ var (
             {{ printf "%q" . }},
         {{- end }}
         },
+        {{- if .MetaPairs }}
+        Meta: map[string][]string{
+        {{- range .MetaPairs }}
+            {{ printf "%q" .Key }}: []string{
+            {{- range .Values }}
+                {{ printf "%q" . }},
+            {{- end }}
+            },
+        {{- end }}
+        },
+        {{- end }}
         {{- if .IsExportedByAgent }}
         IsAgentTool: true,
         AgentID:     {{ printf "%q" .ExportingAgentID }},
+        {{- end }}
+        {{- if .TerminalRun }}
+        TerminalRun: true,
         {{- end }}
         BoundedResult: {{ if .BoundedResult }}true{{ else }}false{{ end }},
         {{- if .Paging }}

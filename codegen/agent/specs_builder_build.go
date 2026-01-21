@@ -2,6 +2,7 @@ package codegen
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -47,6 +48,7 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 		if sidecar != nil {
 			artifactKind = tool.ArtifactKind
 		}
+		metaPairs := toolMetaPairs(tool.Meta)
 		entry := &toolEntry{
 			// Name is the qualified tool ID used at runtime (toolset.tool).
 			Name:                tool.QualifiedName,
@@ -59,12 +61,15 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 			ArtifactDescription: tool.ArtifactDescription,
 			ArtifactKind:        artifactKind,
 			Tags:                tool.Tags,
+			Meta:                tool.Meta,
+			MetaPairs:           metaPairs,
 			IsExportedByAgent:   tool.IsExportedByAgent,
 			ExportingAgentID:    tool.ExportingAgentID,
 			Payload:             payload,
 			Result:              result,
 			Sidecar:             sidecar,
 			BoundedResult:       tool.BoundedResult,
+			TerminalRun:         tool.TerminalRun,
 			Paging:              tool.Paging,
 			ResultReminder:      tool.ResultReminder,
 			Confirmation:        tool.Confirmation,
@@ -90,6 +95,25 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 		return data.tools[i].Name < data.tools[j].Name
 	})
 	return data, nil
+}
+
+func toolMetaPairs(meta map[string][]string) []toolMetaPair {
+	if len(meta) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(meta))
+	for k := range meta {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]toolMetaPair, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, toolMetaPair{
+			Key:    k,
+			Values: slices.Clone(meta[k]),
+		})
+	}
+	return out
 }
 
 // addTool adds the tool entry and its types to the specs data.

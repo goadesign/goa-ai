@@ -70,6 +70,12 @@ type (
 		ArtifactKind string
 		// Classification tags for policy and filtering.
 		Tags []string
+		// Meta carries arbitrary design-time metadata attached to the tool via DSL.
+		// Keys map to one or more values, matching Goa's meta conventions.
+		Meta map[string][]string
+		// MetaPairs is a deterministic representation of Meta for templates that
+		// need stable ordering in emitted Go source.
+		MetaPairs []toolMetaPair
 		// Whether this tool is exported by an agent (agent-as-tool).
 		IsExportedByAgent bool
 		// ID of the agent that exports this tool.
@@ -84,6 +90,9 @@ type (
 		// view over a potentially larger data set (set via the BoundedResult DSL
 		// helper). It is propagated into ToolSpec for runtime consumers.
 		BoundedResult bool
+		// TerminalRun indicates this tool should terminate the run immediately after
+		// execution (no follow-up plan/resume/finalization turn).
+		TerminalRun bool
 		// Paging describes cursor-based pagination fields for this tool when configured.
 		Paging *ToolPagingData
 		// ResultReminder is an optional system reminder injected into the
@@ -91,6 +100,11 @@ type (
 		ResultReminder string
 		// Confirmation configures design-time confirmation requirements for this tool.
 		Confirmation *ToolConfirmationData
+	}
+
+	toolMetaPair struct {
+		Key    string
+		Values []string
 	}
 
 	// typeData holds all metadata needed to generate a type definition, schema,

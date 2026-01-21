@@ -440,6 +440,9 @@ type (
 		Title string
 		// Tags holds optional metadata tags supplied in the DSL.
 		Tags []string
+		// Meta carries arbitrary design-time metadata attached to the tool via DSL.
+		// Keys map to one or more values, matching Goa's meta conventions.
+		Meta map[string][]string
 		// Args is the Goa attribute describing the tool payload.
 		Args *goaexpr.AttributeExpr
 		// Return is the Goa attribute describing the tool result.
@@ -547,6 +550,10 @@ type (
 		// helper). Codegen and services can use this flag to attach and enforce
 		// truncation metadata consistently.
 		BoundedResult bool
+
+		// TerminalRun indicates that once this tool executes, the runtime should
+		// complete the run immediately (no follow-up PlanResume/finalize turn).
+		TerminalRun bool
 
 		// Paging describes cursor-based pagination fields for this tool when configured
 		// via Cursor and NextCursor in the BoundedResult sub-DSL.
@@ -1212,6 +1219,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		QualifiedName:       qualified,
 		Title:               naming.HumanizeTitle(defaultString(expr.Title, expr.Name)),
 		Tags:                slices.Clone(expr.Tags),
+		Meta:                map[string][]string(expr.Meta),
 		Args:                expr.Args,
 		Return:              expr.Return,
 		Artifact:            expr.Sidecar,
@@ -1225,6 +1233,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		ResultHintTemplate:  expr.ResultHintTemplate,
 		InjectedFields:      expr.InjectedFields,
 		BoundedResult:       expr.BoundedResult,
+		TerminalRun:         expr.TerminalRun,
 		Paging:              pagingData(expr.Paging),
 		ResultReminder:      expr.ResultReminder,
 	}

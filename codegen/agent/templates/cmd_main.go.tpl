@@ -15,6 +15,12 @@ func main() {
 
 	// Example: run the first registered agent with a simple message.
 	// Replace this with your own CLI, HTTP server, or integration.
+	// Sessions are first-class: create a session explicitly before starting runs.
+	// Creating an already-active session is idempotent.
+	if _, err := rt.CreateSession(ctx, "demo-session"); err != nil {
+		log.Fatalf("failed to create session: %v", err)
+	}
+
 {{ range .Agents }}
 	{
 		client := {{ .PackageName }}.NewClient(rt)

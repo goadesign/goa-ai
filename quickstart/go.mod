@@ -3,8 +3,8 @@ module example.com/quickstart
 go 1.25.5
 
 require (
-	goa.design/goa-ai v0.24.0
-	goa.design/goa/v3 v3.24.0
+	goa.design/goa-ai v0.42.0
+	goa.design/goa/v3 v3.24.2-0.20260119182226-484f505f75e0
 )
 
 require (
