@@ -33,6 +33,20 @@ type (
 		Description string
 		// Tags carries optional metadata labels used by policy or UI layers.
 		Tags []string
+		// Meta carries arbitrary design-time metadata attached to the tool via DSL.
+		//
+		// Meta is intended for downstream consumers (policy engines, UIs, orchestration
+		// layers) that need structured tool annotations without requiring runtime
+		// design introspection. Code generation emits Meta only when present.
+		Meta map[string][]string
+		// TerminalRun indicates that once this tool executes in a run, the runtime
+		// terminates the run immediately after publishing the tool result(s), without
+		// requesting a follow-up planner PlanResume/finalization turn.
+		//
+		// This is intended for tools whose result is the user-facing terminal output
+		// (for example, a final report renderer) and should not be followed by extra
+		// model narration.
+		TerminalRun bool
 		// IsAgentTool indicates this tool is implemented by an agent (agent-as-tool).
 		// When true, the runtime executes the tool by starting the provider agent as a
 		// child workflow from within the parent workflow loop. Set by codegen when

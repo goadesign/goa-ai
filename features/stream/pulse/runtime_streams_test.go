@@ -32,7 +32,7 @@ func TestRuntimeStreamsSubscriberUsesClient(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	events, errs, stop, err := sub.Subscribe(ctx, "run/test")
+	events, errs, stop, err := sub.Subscribe(ctx, "session/test")
 	if err != nil {
 		cancel()
 		require.FailNowf(t, "subscribe", "subscribe error: %v", err)

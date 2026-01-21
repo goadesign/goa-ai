@@ -9,6 +9,7 @@ import (
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -33,7 +34,7 @@ func TestStreamSubscriber(t *testing.T) {
 	sub, err := NewSubscriber(sink)
 	require.NoError(t, err)
 	ctx := context.Background()
-	evt := hooks.NewAssistantMessageEvent("r1", agent.Ident("agent1"), "", "hello", nil)
+	evt := hooks.NewAssistantMessageEvent("r1", agent.Ident("agent1"), "session-1", "hello", nil)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 	require.Len(t, sink.events, 1)
 	require.Equal(t, EventAssistantReply, sink.events[0].Type())
@@ -47,7 +48,7 @@ func TestStreamSubscriber_ToolStart(t *testing.T) {
 	sub, err := NewSubscriber(sink)
 	require.NoError(t, err)
 	ctx := context.Background()
-	evt := hooks.NewToolCallScheduledEvent("r1", agent.Ident("agent1"), "", tools.Ident("svc.tool"), "call-1", json.RawMessage(`{"q":1}`), "queue", "", 0)
+	evt := hooks.NewToolCallScheduledEvent("r1", agent.Ident("agent1"), "session-1", tools.Ident("svc.tool"), "call-1", json.RawMessage(`{"q":1}`), "queue", "", 0)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 	require.Len(t, sink.events, 1)
 	require.Equal(t, EventToolStart, sink.events[0].Type())
@@ -55,12 +56,73 @@ func TestStreamSubscriber_ToolStart(t *testing.T) {
 	require.True(t, ok)
 }
 
+func TestStreamSubscriber_ToolEnd_RejectsNonCanonicalArtifactData(t *testing.T) {
+	sink := &mockSink{}
+	sub, err := NewSubscriber(sink)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	evt := hooks.NewToolResultReceivedEvent(
+		"r1",
+		agent.Ident("agent1"),
+		"session-1",
+		tools.Ident("svc.tool"),
+		"call-1",
+		"",
+		nil,
+		nil,
+		"",
+		nil,
+		[]*planner.Artifact{
+			{
+				Kind:       "svc.artifact",
+				SourceTool: tools.Ident("svc.tool"),
+				Data:       "not json bytes",
+			},
+		},
+		0,
+		nil,
+		nil,
+		nil,
+	)
+	require.Error(t, sub.HandleEvent(ctx, evt))
+	require.Empty(t, sink.events)
+}
+
+func TestStreamSubscriber_ToolEnd_AllowsMissingResult(t *testing.T) {
+	sink := &mockSink{}
+	sub, err := NewSubscriber(sink)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	evt := hooks.NewToolResultReceivedEvent(
+		"r1",
+		agent.Ident("agent1"),
+		"session-1",
+		tools.Ident("svc.tool"),
+		"call-1",
+		"",
+		nil,
+		nil,
+		"",
+		nil,
+		nil,
+		0,
+		nil,
+		nil,
+		nil,
+	)
+	require.NoError(t, sub.HandleEvent(ctx, evt))
+	require.Len(t, sink.events, 1)
+	require.Equal(t, EventToolEnd, sink.events[0].Type())
+}
+
 func TestStreamSubscriber_ToolUpdate(t *testing.T) {
 	sink := &mockSink{}
 	sub, err := NewSubscriber(sink)
 	require.NoError(t, err)
 	ctx := context.Background()
-	evt := hooks.NewToolCallUpdatedEvent("r1", agent.Ident("agent1"), "", "parent-1", 3)
+	evt := hooks.NewToolCallUpdatedEvent("r1", agent.Ident("agent1"), "session-1", "parent-1", 3)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 	require.Len(t, sink.events, 1)
 	require.Equal(t, EventToolUpdate, sink.events[0].Type())
@@ -75,14 +137,18 @@ func TestStreamSubscriber_WorkflowFromRunCompleted(t *testing.T) {
 	sub, err := NewSubscriber(sink)
 	require.NoError(t, err)
 	ctx := context.Background()
-	evt := hooks.NewRunCompletedEvent("r1", agent.Ident("agent1"), "", "success", run.PhaseCompleted, nil)
+	evt := hooks.NewRunCompletedEvent("r1", agent.Ident("agent1"), "session-1", "success", run.PhaseCompleted, nil)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
-	require.Len(t, sink.events, 1)
+	require.Len(t, sink.events, 2)
 	wf, ok := sink.events[0].(Workflow)
 	require.True(t, ok)
 	require.Equal(t, EventWorkflow, wf.Type())
 	require.Equal(t, "completed", wf.Data.Phase)
 	require.Equal(t, "success", wf.Data.Status)
+	end, ok := sink.events[1].(RunStreamEnd)
+	require.True(t, ok)
+	require.Equal(t, EventRunStreamEnd, end.Type())
+	require.Equal(t, "r1", end.RunID())
 }
 
 func TestStreamSubscriber_WorkflowFromRunCompleted_FailedHasPublicAndDebugErrors(t *testing.T) {
@@ -92,10 +158,10 @@ func TestStreamSubscriber_WorkflowFromRunCompleted_FailedHasPublicAndDebugErrors
 	ctx := context.Background()
 
 	pe := model.NewProviderError("bedrock", "converse_stream", 429, model.ProviderErrorKindRateLimited, "rate_limited", "", "", true, context.DeadlineExceeded)
-	evt := hooks.NewRunCompletedEvent("r1", agent.Ident("agent1"), "", "failed", run.PhaseFailed, pe)
+	evt := hooks.NewRunCompletedEvent("r1", agent.Ident("agent1"), "session-1", "failed", run.PhaseFailed, pe)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 
-	require.Len(t, sink.events, 1)
+	require.Len(t, sink.events, 2)
 	wf, ok := sink.events[0].(Workflow)
 	require.True(t, ok)
 	require.Equal(t, "failed", wf.Data.Phase)
@@ -105,6 +171,7 @@ func TestStreamSubscriber_WorkflowFromRunCompleted_FailedHasPublicAndDebugErrors
 	require.Equal(t, "bedrock", wf.Data.ErrorProvider)
 	require.Equal(t, "rate_limited", wf.Data.ErrorKind)
 	require.True(t, wf.Data.Retryable)
+	require.Equal(t, EventRunStreamEnd, sink.events[1].Type())
 }
 
 func TestStreamSubscriber_WorkflowFromRunCompleted_CanceledHasNoError(t *testing.T) {
@@ -113,16 +180,17 @@ func TestStreamSubscriber_WorkflowFromRunCompleted_CanceledHasNoError(t *testing
 	require.NoError(t, err)
 	ctx := context.Background()
 
-	evt := hooks.NewRunCompletedEvent("r1", agent.Ident("agent1"), "", "canceled", run.PhaseCanceled, context.Canceled)
+	evt := hooks.NewRunCompletedEvent("r1", agent.Ident("agent1"), "session-1", "canceled", run.PhaseCanceled, context.Canceled)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 
-	require.Len(t, sink.events, 1)
+	require.Len(t, sink.events, 2)
 	wf, ok := sink.events[0].(Workflow)
 	require.True(t, ok)
 	require.Equal(t, "canceled", wf.Data.Phase)
 	require.Equal(t, "canceled", wf.Data.Status)
 	require.Empty(t, wf.Data.Error)
 	require.NotEmpty(t, wf.Data.DebugError)
+	require.Equal(t, EventRunStreamEnd, sink.events[1].Type())
 }
 
 func TestStreamSubscriber_WorkflowFromRunPhaseChanged(t *testing.T) {
@@ -130,7 +198,7 @@ func TestStreamSubscriber_WorkflowFromRunPhaseChanged(t *testing.T) {
 	sub, err := NewSubscriber(sink)
 	require.NoError(t, err)
 	ctx := context.Background()
-	evt := hooks.NewRunPhaseChangedEvent("r1", agent.Ident("agent1"), "", run.PhasePlanning)
+	evt := hooks.NewRunPhaseChangedEvent("r1", agent.Ident("agent1"), "session-1", run.PhasePlanning)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 	require.Len(t, sink.events, 1)
 	wf, ok := sink.events[0].(Workflow)
@@ -147,7 +215,7 @@ func TestStreamSubscriber_ThinkingBlock_StructuredFinalHasNoDelta(t *testing.T) 
 	ctx := context.Background()
 
 	// Structured provider reasoning block with final=true and signature populated.
-	evt := hooks.NewThinkingBlockEvent("run-1", agent.Ident("agent-1"), "", "full reasoning text", "sig-123", nil, 0, true)
+	evt := hooks.NewThinkingBlockEvent("run-1", agent.Ident("agent-1"), "session-1", "full reasoning text", "sig-123", nil, 0, true)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 
 	require.Len(t, sink.events, 1)
@@ -169,7 +237,7 @@ func TestStreamSubscriber_ThinkingBlock_StructuredNonFinalDelta(t *testing.T) {
 	ctx := context.Background()
 
 	// Non-final unsigned block should be treated as a delta.
-	evt := hooks.NewThinkingBlockEvent("run-1", agent.Ident("agent-1"), "", "partial", "", nil, 0, false)
+	evt := hooks.NewThinkingBlockEvent("run-1", agent.Ident("agent-1"), "session-1", "partial", "", nil, 0, false)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 
 	require.Len(t, sink.events, 1)
@@ -182,13 +250,13 @@ func TestStreamSubscriber_ThinkingBlock_StructuredNonFinalDelta(t *testing.T) {
 	require.Equal(t, "partial", th.Data.Note)
 }
 
-func TestStreamSubscriber_AgentRunStarted(t *testing.T) {
+func TestStreamSubscriber_ChildRunLinked(t *testing.T) {
 	sink := &mockSink{}
 	sub, err := NewSubscriber(sink)
 	require.NoError(t, err)
 	ctx := context.Background()
 
-	evt := hooks.NewAgentRunStartedEvent(
+	evt := hooks.NewChildRunLinkedEvent(
 		"parent-run",
 		agent.Ident("parent.agent"),
 		"session-1",
@@ -200,9 +268,9 @@ func TestStreamSubscriber_AgentRunStarted(t *testing.T) {
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 
 	require.Len(t, sink.events, 1)
-	ar, ok := sink.events[0].(AgentRunStarted)
+	ar, ok := sink.events[0].(ChildRunLinked)
 	require.True(t, ok)
-	require.Equal(t, EventAgentRunStarted, ar.Type())
+	require.Equal(t, EventChildRunLinked, ar.Type())
 	require.Equal(t, "parent-run", ar.RunID())
 	require.Equal(t, "svc.agent.ada", ar.Data.ToolName)
 	require.Equal(t, "parent-call", ar.Data.ToolCallID)
@@ -219,8 +287,8 @@ func TestStreamSubscriber_MultipleRunsPreserveRunID(t *testing.T) {
 	// Parent and child runs must retain distinct RunIDs in the stream. The
 	// subscriber never rewrites run identities; higher-level projections that
 	// want a flattened view are expected to build it on top.
-	parent := hooks.NewRunPhaseChangedEvent("parent-run", agent.Ident("parent.agent"), "", run.PhasePlanning)
-	child := hooks.NewRunPhaseChangedEvent("child-run", agent.Ident("child.agent"), "", run.PhasePlanning)
+	parent := hooks.NewRunPhaseChangedEvent("parent-run", agent.Ident("parent.agent"), "session-1", run.PhasePlanning)
+	child := hooks.NewRunPhaseChangedEvent("child-run", agent.Ident("child.agent"), "session-1", run.PhasePlanning)
 
 	require.NoError(t, sub.HandleEvent(ctx, parent))
 	require.NoError(t, sub.HandleEvent(ctx, child))
@@ -228,4 +296,38 @@ func TestStreamSubscriber_MultipleRunsPreserveRunID(t *testing.T) {
 	require.Len(t, sink.events, 2)
 	require.Equal(t, "parent-run", sink.events[0].RunID())
 	require.Equal(t, "child-run", sink.events[1].RunID())
+}
+
+func TestStreamSubscriber_ToolEndPrecedesRunStreamEnd(t *testing.T) {
+	sink := &mockSink{}
+	sub, err := NewSubscriber(sink)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	toolEnd := hooks.NewToolResultReceivedEvent(
+		"r1",
+		agent.Ident("agent1"),
+		"session-1",
+		tools.Ident("svc.tool"),
+		"call-1",
+		"",
+		nil,
+		json.RawMessage(`{"ok":true}`),
+		"",
+		nil,
+		nil,
+		0,
+		nil,
+		nil,
+		nil,
+	)
+	require.NoError(t, sub.HandleEvent(ctx, toolEnd))
+
+	completed := hooks.NewRunCompletedEvent("r1", agent.Ident("agent1"), "session-1", "success", run.PhaseCompleted, nil)
+	require.NoError(t, sub.HandleEvent(ctx, completed))
+
+	require.Len(t, sink.events, 3)
+	require.Equal(t, EventToolEnd, sink.events[0].Type())
+	require.Equal(t, EventWorkflow, sink.events[1].Type())
+	require.Equal(t, EventRunStreamEnd, sink.events[2].Type())
 }

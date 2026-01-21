@@ -625,8 +625,8 @@ nested agents execute as child workflows with their own run IDs and event stream
 2. Runtime identifies it as an agent-tool via `ToolSpec.IsAgentTool`
 3. Runtime starts child workflow using `AgentToolConfig.Route`
 4. Child agent executes its own plan/execute loop
-5. Runtime aggregates child results into parent `ToolResult`
-6. `AgentRunStarted` event links parent and child for streaming
+5. Runtime returns a parent `ToolResult` derived from the child run output (final text and/or finalizer output, plus aggregated telemetry). **Artifacts are not propagated to the parent tool result**; they remain attached to the child tool events.
+6. `ChildRunLinked` event links parent and child for streaming
 
 ### Configuration
 
@@ -757,14 +757,15 @@ return &planner.PlanResult{
 Callers provide results via:
 
 ```go
-err := rt.ProvideToolResults(ctx, interrupt.ToolResultsSet{
-    RunID:   "run-123",
-    ID:      "external-1",
-    Results: []*planner.ToolResult{
+err := rt.ProvideToolResults(ctx, &api.ToolResultsSet{
+    RunID: "run-123",
+    ID:    "external-1",
+    Results: []*api.ToolEvent{
         {
             ToolCallID: "toolcall-1",
-            Name:       "chat.ask_question.ask_question",
-            Result:     json.RawMessage(`{"answers":[{"question_id":"...","selected_ids":["approve"]}]}`),
+            Name:       tools.Ident("chat.ask_question.ask_question"),
+            // Contract: canonical JSON bytes matching the tool's Return schema.
+            Result: json.RawMessage(`{"answers":[{"question_id":"...","selected_ids":["approve"]}]}`),
         },
     },
 })
@@ -897,7 +898,7 @@ workflow thread. Activities and other non-workflow code publish directly.
 | `AwaitClarification` / `AwaitExternalTools` | Pause requests |
 | `PolicyDecision` | Policy evaluation result |
 | `Usage` | Token usage report |
-| `AgentRunStarted` | Agent-as-tool child run link |
+| `ChildRunLinked` | Agent-as-tool child run link |
 
 ### Custom Subscribers
 
@@ -938,7 +939,7 @@ type Sink interface {
 | `await_external_tools` | `AwaitExternalToolsPayload` |
 | `usage` | `UsagePayload` (input_tokens, output_tokens) |
 | `workflow` | `WorkflowPayload` (phase, status, error_kind, retryable, error, debug_error) |
-| `agent_run_started` | `AgentRunStartedPayload` (child run link) |
+| `child_run_linked` | `ChildRunLinkedPayload` (child run link) |
 
 ### Stream Profiles
 
@@ -1521,6 +1522,37 @@ if toolerrors.IsRetryable(err) {
 // for planners to handle gracefully
 ```
 
+### Validation Issues and Retry Hints
+
+Tool calls can fail because the input payload is missing fields, violates constraints,
+or has the wrong JSON shape. When that happens, callers generally need actionable,
+field-level feedback rather than a generic failure string.
+
+Goa‑AI supports two complementary paths that produce `planner.RetryHint`:
+
+1. **Decode‑time validation (generated codecs)**  
+   The generated tool codec validates the tool JSON payload before execution.
+   If validation fails, the codec returns a generated validation error that exposes
+   structured issues (`Issues() []*tools.FieldIssue`) and descriptions. The runtime
+   converts these into `planner.RetryHint` automatically (missing fields, enum values,
+   etc.).
+
+2. **Execution‑time validation (service / tool provider errors)**  
+   When a tool provider calls a bound service method, the method may return a Goa
+   validation error (for example `goa.MissingFieldError`, `goa.InvalidLengthError`, …).
+   Providers should surface these as **structured validation issues** in the tool result
+   message so consumers can build a `RetryHint` without parsing error strings.
+
+   - **Provider behavior (generated)**: generated providers call
+     `toolregistry.ValidationIssues(err)` and, when issues are present, emit an error
+     result that includes them.
+   - **Wire protocol**: tool result errors may include `issues` (`[]FieldIssue`).
+   - **Consumer behavior**: registry executors convert `issues` into a `RetryHint`
+     (e.g., `missing_fields`) and attach the tool spec example input when available.
+
+This keeps the contract strong and deterministic: validation stays at boundaries,
+and “what to retry with” is computed from structured data, not heuristics.
+
 ---
 
 ## Model Middleware
@@ -1580,10 +1612,12 @@ rt := runtime.New(
     runtime.WithStream(streams.Sink()),
 )
 
-// Subscribe to run events
+// Subscribe to session events
 sub, _ := streams.NewSubscriber(pulsestream.SubscriberOptions{SinkName: "ui"})
-events, errs, cancel, _ := sub.Subscribe(ctx, "run/run-123")
+events, errs, cancel, _ := sub.Subscribe(ctx, "session/session-123")
 defer cancel()
+
+// Consume until you observe `type=="run_stream_end"` for the active run ID.
 ```
 
 ### Custom Tool Executor
@@ -1679,5 +1713,5 @@ var ErrRateLimited = errors.New("model: rate limited")
 | **Bounds** | Metadata describing how a tool result was truncated or limited. |
 | **Hook** | Internal event emitted for observability (memory, streaming, telemetry). |
 | **Stream Event** | Client-facing event delivered via Sink (tool progress, assistant replies). |
-| **Finalizer** | Aggregates child results into parent tool result for agent-as-tool. |
+| **Finalizer** | Aggregates child results into parent tool result for agent-as-tool (does not propagate artifacts). |
 | **Reminder** | Structured backstage guidance injected into planner prompts. |

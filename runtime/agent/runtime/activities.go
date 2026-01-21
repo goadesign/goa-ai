@@ -82,6 +82,10 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err != nil {
 		return nil, err
 	}
+	toolResults, err := r.decodeToolEvents(ctx, input.ToolResults)
+	if err != nil {
+		return nil, err
+	}
 	var rems []reminder.Reminder
 	if r.reminders != nil {
 		rems = r.reminders.Snapshot(input.RunID)
@@ -92,7 +96,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		RunContext:  input.RunContext,
 		Agent:       agentCtx,
 		Events:      events,
-		ToolResults: input.ToolResults,
+		ToolResults: toolResults,
 		Finalize:    input.Finalize,
 		Reminders:   rems,
 	}
@@ -255,6 +259,13 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	if !artifactsEnabled {
 		result.Artifacts = nil
 	}
+
+	encodedArtifacts, err := r.encodeToolArtifacts(req.ToolName, result.Artifacts)
+	if err != nil {
+		// Artifacts must be encoded before crossing the workflow/activity boundary.
+		// This is a contract violation, not a user-facing tool error.
+		return nil, err
+	}
 	// Enrich or build telemetry via registration builder when available.
 	if reg.TelemetryBuilder != nil {
 		if tel := reg.TelemetryBuilder(ctx, meta, req.ToolName, start, time.Now(), nil); tel != nil && result.Telemetry == nil {
@@ -274,7 +285,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	}
 	out := &ToolOutput{
 		Payload:   enc,
-		Artifacts: result.Artifacts,
+		Artifacts: encodedArtifacts,
 		Telemetry: result.Telemetry,
 	}
 	if result.Error != nil {
@@ -282,6 +293,40 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	}
 	if result.RetryHint != nil {
 		out.RetryHint = result.RetryHint
+	}
+	return out, nil
+}
+
+func (r *Runtime) encodeToolArtifacts(toolName tools.Ident, artifacts []*planner.Artifact) ([]*ToolArtifact, error) {
+	if len(artifacts) == 0 {
+		return nil, nil
+	}
+	spec, ok := r.toolSpec(toolName)
+	if !ok {
+		return nil, fmt.Errorf("unknown tool %q", toolName)
+	}
+	if spec.Sidecar == nil || spec.Sidecar.Codec.ToJSON == nil {
+		return nil, fmt.Errorf("tool %q produced artifacts but has no sidecar codec", toolName)
+	}
+	out := make([]*ToolArtifact, 0, len(artifacts))
+	for _, a := range artifacts {
+		if a == nil {
+			return nil, fmt.Errorf("CRITICAL: tool %q returned nil artifact entry", toolName)
+		}
+		switch a.Data.(type) {
+		case json.RawMessage, []byte:
+			return nil, fmt.Errorf("tool %q artifact data must be a typed Go value, got %T", toolName, a.Data)
+		}
+		raw, err := spec.Sidecar.Codec.ToJSON(a.Data)
+		if err != nil {
+			return nil, fmt.Errorf("encode tool artifact for %s (%s): %w", toolName, a.Kind, err)
+		}
+		out = append(out, &ToolArtifact{
+			Kind:       a.Kind,
+			Data:       json.RawMessage(raw),
+			SourceTool: toolName,
+			RunLink:    a.RunLink,
+		})
 	}
 	return out, nil
 }

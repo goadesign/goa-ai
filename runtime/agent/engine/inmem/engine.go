@@ -43,11 +43,11 @@ type (
 		runID string
 		eng   *eng
 
-		pauseCh       chan api.PauseRequest
-		resumeCh      chan api.ResumeRequest
-		clarifyCh     chan api.ClarificationAnswer
-		toolResultsCh chan api.ToolResultsSet
-		confirmCh     chan api.ConfirmationDecision
+		pauseCh       chan *api.PauseRequest
+		resumeCh      chan *api.ResumeRequest
+		clarifyCh     chan *api.ClarificationAnswer
+		toolResultsCh chan *api.ToolResultsSet
+		confirmCh     chan *api.ConfirmationDecision
 	}
 
 	// handle is the in-memory implementation of engine.WorkflowHandle.
@@ -213,11 +213,11 @@ func (e *eng) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest
 		runID: req.ID,
 		eng:   e,
 
-		pauseCh:       make(chan api.PauseRequest, 1),
-		resumeCh:      make(chan api.ResumeRequest, 1),
-		clarifyCh:     make(chan api.ClarificationAnswer, 1),
-		toolResultsCh: make(chan api.ToolResultsSet, 1),
-		confirmCh:     make(chan api.ConfirmationDecision, 1),
+		pauseCh:       make(chan *api.PauseRequest, 1),
+		resumeCh:      make(chan *api.ResumeRequest, 1),
+		clarifyCh:     make(chan *api.ClarificationAnswer, 1),
+		toolResultsCh: make(chan *api.ToolResultsSet, 1),
+		confirmCh:     make(chan *api.ConfirmationDecision, 1),
 	}
 
 	h := &handle{done: make(chan struct{}), wfCtx: wctx}
@@ -268,6 +268,12 @@ func (e *eng) QueryRunStatus(_ context.Context, runID string) (engine.RunStatus,
 	return status, nil
 }
 
+func (e *eng) CancelByID(_ context.Context, _ string) error {
+	// In-memory: best-effort cancellation is not wired. The runtime may use this
+	// in tests; returning nil preserves no-op semantics.
+	return nil
+}
+
 func (h *handle) Wait(ctx context.Context) (*api.RunOutput, error) {
 	select {
 	case <-ctx.Done():
@@ -282,35 +288,35 @@ func (h *handle) Wait(ctx context.Context) (*api.RunOutput, error) {
 func (h *handle) Signal(ctx context.Context, name string, payload any) error {
 	switch name {
 	case api.SignalPause:
-		req, ok := payload.(api.PauseRequest)
+		req, ok := payload.(*api.PauseRequest)
 		if !ok {
 			return fmt.Errorf("signal %q expects api.PauseRequest, got %T", name, payload)
 		}
 		return sendSignal(ctx, h.done, h.wfCtx.pauseCh, req)
 
 	case api.SignalResume:
-		req, ok := payload.(api.ResumeRequest)
+		req, ok := payload.(*api.ResumeRequest)
 		if !ok {
 			return fmt.Errorf("signal %q expects api.ResumeRequest, got %T", name, payload)
 		}
 		return sendSignal(ctx, h.done, h.wfCtx.resumeCh, req)
 
 	case api.SignalProvideClarification:
-		req, ok := payload.(api.ClarificationAnswer)
+		req, ok := payload.(*api.ClarificationAnswer)
 		if !ok {
 			return fmt.Errorf("signal %q expects api.ClarificationAnswer, got %T", name, payload)
 		}
 		return sendSignal(ctx, h.done, h.wfCtx.clarifyCh, req)
 
 	case api.SignalProvideToolResults:
-		req, ok := payload.(api.ToolResultsSet)
+		req, ok := payload.(*api.ToolResultsSet)
 		if !ok {
 			return fmt.Errorf("signal %q expects api.ToolResultsSet, got %T", name, payload)
 		}
 		return sendSignal(ctx, h.done, h.wfCtx.toolResultsCh, req)
 
 	case api.SignalProvideConfirmation:
-		req, ok := payload.(api.ConfirmationDecision)
+		req, ok := payload.(*api.ConfirmationDecision)
 		if !ok {
 			return fmt.Errorf("signal %q expects api.ConfirmationDecision, got %T", name, payload)
 		}
@@ -520,24 +526,24 @@ func (w *wfCtx) ExecuteToolActivityAsync(ctx context.Context, call engine.ToolAc
 	return fut, nil
 }
 
-func (w *wfCtx) PauseRequests() engine.Receiver[api.PauseRequest] {
-	return receiver[api.PauseRequest]{ch: w.pauseCh}
+func (w *wfCtx) PauseRequests() engine.Receiver[*api.PauseRequest] {
+	return receiver[*api.PauseRequest]{ch: w.pauseCh}
 }
 
-func (w *wfCtx) ResumeRequests() engine.Receiver[api.ResumeRequest] {
-	return receiver[api.ResumeRequest]{ch: w.resumeCh}
+func (w *wfCtx) ResumeRequests() engine.Receiver[*api.ResumeRequest] {
+	return receiver[*api.ResumeRequest]{ch: w.resumeCh}
 }
 
-func (w *wfCtx) ClarificationAnswers() engine.Receiver[api.ClarificationAnswer] {
-	return receiver[api.ClarificationAnswer]{ch: w.clarifyCh}
+func (w *wfCtx) ClarificationAnswers() engine.Receiver[*api.ClarificationAnswer] {
+	return receiver[*api.ClarificationAnswer]{ch: w.clarifyCh}
 }
 
-func (w *wfCtx) ExternalToolResults() engine.Receiver[api.ToolResultsSet] {
-	return receiver[api.ToolResultsSet]{ch: w.toolResultsCh}
+func (w *wfCtx) ExternalToolResults() engine.Receiver[*api.ToolResultsSet] {
+	return receiver[*api.ToolResultsSet]{ch: w.toolResultsCh}
 }
 
-func (w *wfCtx) ConfirmationDecisions() engine.Receiver[api.ConfirmationDecision] {
-	return receiver[api.ConfirmationDecision]{ch: w.confirmCh}
+func (w *wfCtx) ConfirmationDecisions() engine.Receiver[*api.ConfirmationDecision] {
+	return receiver[*api.ConfirmationDecision]{ch: w.confirmCh}
 }
 
 // Receive blocks until a signal value is delivered and returns it.

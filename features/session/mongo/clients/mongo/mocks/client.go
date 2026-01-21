@@ -8,6 +8,7 @@ package mockmongo
 import (
 	"context"
 	"testing"
+	"time"
 
 	"goa.design/clue/mock"
 
@@ -21,10 +22,14 @@ type (
 		t *testing.T
 	}
 
-	ClientNameFunc      func() string
-	ClientPingFunc      func(p0 context.Context) error
-	ClientUpsertRunFunc func(ctx context.Context, run session.Run) error
-	ClientLoadRunFunc   func(ctx context.Context, runID string) (session.Run, error)
+	ClientNameFunc              func() string
+	ClientPingFunc              func(p0 context.Context) error
+	ClientCreateSessionFunc     func(ctx context.Context, sessionID string, createdAt time.Time) (session.Session, error)
+	ClientLoadSessionFunc       func(ctx context.Context, sessionID string) (session.Session, error)
+	ClientEndSessionFunc        func(ctx context.Context, sessionID string, endedAt time.Time) (session.Session, error)
+	ClientUpsertRunFunc         func(ctx context.Context, run session.RunMeta) error
+	ClientLoadRunFunc           func(ctx context.Context, runID string) (session.RunMeta, error)
+	ClientListRunsBySessionFunc func(ctx context.Context, sessionID string, statuses []session.RunStatus) ([]session.RunMeta, error)
 )
 
 func NewClient(t *testing.T) *Client {
@@ -69,6 +74,57 @@ func (m *Client) Ping(p0 context.Context) error {
 	return nil
 }
 
+func (m *Client) AddCreateSession(f ClientCreateSessionFunc) {
+	m.m.Add("CreateSession", f)
+}
+
+func (m *Client) SetCreateSession(f ClientCreateSessionFunc) {
+	m.m.Set("CreateSession", f)
+}
+
+func (m *Client) CreateSession(ctx context.Context, sessionID string, createdAt time.Time) (session.Session, error) {
+	if f := m.m.Next("CreateSession"); f != nil {
+		return f.(ClientCreateSessionFunc)(ctx, sessionID, createdAt)
+	}
+	m.t.Helper()
+	m.t.Error("unexpected CreateSession call")
+	return session.Session{}, nil
+}
+
+func (m *Client) AddLoadSession(f ClientLoadSessionFunc) {
+	m.m.Add("LoadSession", f)
+}
+
+func (m *Client) SetLoadSession(f ClientLoadSessionFunc) {
+	m.m.Set("LoadSession", f)
+}
+
+func (m *Client) LoadSession(ctx context.Context, sessionID string) (session.Session, error) {
+	if f := m.m.Next("LoadSession"); f != nil {
+		return f.(ClientLoadSessionFunc)(ctx, sessionID)
+	}
+	m.t.Helper()
+	m.t.Error("unexpected LoadSession call")
+	return session.Session{}, nil
+}
+
+func (m *Client) AddEndSession(f ClientEndSessionFunc) {
+	m.m.Add("EndSession", f)
+}
+
+func (m *Client) SetEndSession(f ClientEndSessionFunc) {
+	m.m.Set("EndSession", f)
+}
+
+func (m *Client) EndSession(ctx context.Context, sessionID string, endedAt time.Time) (session.Session, error) {
+	if f := m.m.Next("EndSession"); f != nil {
+		return f.(ClientEndSessionFunc)(ctx, sessionID, endedAt)
+	}
+	m.t.Helper()
+	m.t.Error("unexpected EndSession call")
+	return session.Session{}, nil
+}
+
 func (m *Client) AddUpsertRun(f ClientUpsertRunFunc) {
 	m.m.Add("UpsertRun", f)
 }
@@ -77,7 +133,7 @@ func (m *Client) SetUpsertRun(f ClientUpsertRunFunc) {
 	m.m.Set("UpsertRun", f)
 }
 
-func (m *Client) UpsertRun(ctx context.Context, run session.Run) error {
+func (m *Client) UpsertRun(ctx context.Context, run session.RunMeta) error {
 	if f := m.m.Next("UpsertRun"); f != nil {
 		return f.(ClientUpsertRunFunc)(ctx, run)
 	}
@@ -94,13 +150,30 @@ func (m *Client) SetLoadRun(f ClientLoadRunFunc) {
 	m.m.Set("LoadRun", f)
 }
 
-func (m *Client) LoadRun(ctx context.Context, runID string) (session.Run, error) {
+func (m *Client) LoadRun(ctx context.Context, runID string) (session.RunMeta, error) {
 	if f := m.m.Next("LoadRun"); f != nil {
 		return f.(ClientLoadRunFunc)(ctx, runID)
 	}
 	m.t.Helper()
 	m.t.Error("unexpected LoadRun call")
-	return session.Run{}, nil
+	return session.RunMeta{}, nil
+}
+
+func (m *Client) AddListRunsBySession(f ClientListRunsBySessionFunc) {
+	m.m.Add("ListRunsBySession", f)
+}
+
+func (m *Client) SetListRunsBySession(f ClientListRunsBySessionFunc) {
+	m.m.Set("ListRunsBySession", f)
+}
+
+func (m *Client) ListRunsBySession(ctx context.Context, sessionID string, statuses []session.RunStatus) ([]session.RunMeta, error) {
+	if f := m.m.Next("ListRunsBySession"); f != nil {
+		return f.(ClientListRunsBySessionFunc)(ctx, sessionID, statuses)
+	}
+	m.t.Helper()
+	m.t.Error("unexpected ListRunsBySession call")
+	return nil, nil
 }
 
 func (m *Client) HasMore() bool {

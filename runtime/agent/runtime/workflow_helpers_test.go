@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -26,7 +27,7 @@ func TestAppendUserToolResults_IncludesErrorInToolResultContent(t *testing.T) {
 		Error:      planner.NewToolError("access denied: missing controlleddevices.write privilege"),
 	}
 
-	rt.appendUserToolResults(base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, led, nil)
+	require.NoError(t, rt.appendUserToolResults(base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, led, nil))
 
 	require.Len(t, base.Messages, 1)
 	require.Equal(t, model.ConversationRoleUser, base.Messages[0].Role)
@@ -48,7 +49,18 @@ func TestAppendUserToolResults_IncludesErrorInToolResultContent(t *testing.T) {
 }
 
 func TestAppendUserToolResults_IncludesResultAndErrorWhenBothPresent(t *testing.T) {
-	rt := &Runtime{}
+	rt := &Runtime{
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			tools.Ident("atlas.commands.change_setpoint"): {
+				Name: tools.Ident("atlas.commands.change_setpoint"),
+				Result: tools.TypeSpec{
+					Codec: tools.JSONCodec[any]{
+						ToJSON: json.Marshal,
+					},
+				},
+			},
+		},
+	}
 	base := &planner.PlanInput{}
 	led := transcript.NewLedger()
 
@@ -63,7 +75,7 @@ func TestAppendUserToolResults_IncludesResultAndErrorWhenBothPresent(t *testing.
 		Error:      planner.NewToolError("permission denied"),
 	}
 
-	rt.appendUserToolResults(base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, led, nil)
+	require.NoError(t, rt.appendUserToolResults(base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, led, nil))
 
 	require.Len(t, base.Messages, 1)
 	part, ok := base.Messages[0].Parts[0].(model.ToolResultPart)
@@ -72,7 +84,11 @@ func TestAppendUserToolResults_IncludesResultAndErrorWhenBothPresent(t *testing.
 
 	content, ok := part.Content.(map[string]any)
 	require.True(t, ok)
-	require.Equal(t, map[string]any{"ok": false}, content["result"])
+	rawResult, ok := content["result"].(json.RawMessage)
+	require.True(t, ok)
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(rawResult, &decoded))
+	require.Equal(t, map[string]any{"ok": false}, decoded)
 
 	errVal, ok := content["error"].(*planner.ToolError)
 	require.True(t, ok)
@@ -80,7 +96,18 @@ func TestAppendUserToolResults_IncludesResultAndErrorWhenBothPresent(t *testing.
 }
 
 func TestAppendUserToolResults_AppendsBoundsReminderAfterToolResults(t *testing.T) {
-	rt := &Runtime{}
+	rt := &Runtime{
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			tools.Ident("atlas.read.list_devices"): {
+				Name: tools.Ident("atlas.read.list_devices"),
+				Result: tools.TypeSpec{
+					Codec: tools.JSONCodec[any]{
+						ToJSON: json.Marshal,
+					},
+				},
+			},
+		},
+	}
 	base := &planner.PlanInput{}
 	led := transcript.NewLedger()
 
@@ -101,7 +128,7 @@ func TestAppendUserToolResults_AppendsBoundsReminderAfterToolResults(t *testing.
 		},
 	}
 
-	rt.appendUserToolResults(base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, led, nil)
+	require.NoError(t, rt.appendUserToolResults(base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, led, nil))
 
 	require.Len(t, base.Messages, 2)
 	require.Equal(t, model.ConversationRoleUser, base.Messages[0].Role)
@@ -137,7 +164,7 @@ func TestAppendUserToolResults_AppendsRetryHintReminderAfterToolResults(t *testi
 		},
 	}
 
-	rt.appendUserToolResults(base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, led, nil)
+	require.NoError(t, rt.appendUserToolResults(base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, led, nil))
 
 	require.Len(t, base.Messages, 2)
 	require.Equal(t, model.ConversationRoleUser, base.Messages[0].Role)

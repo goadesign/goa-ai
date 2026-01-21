@@ -6,7 +6,7 @@ running on a different worker process.
 Key semantics:
 
 - The nested agent executes as a **child workflow** with its own `RunID`.
-- The parent run emits an `AgentRunStarted` link event and receives a `ToolResult`
+- The parent run emits a `ChildRunLinked` link event and receives a `ToolResult`
   containing a `RunLink` handle to the child run.
 - Streams are **per-run**; UIs can subscribe to the child run via the run link to
   render nested execution without flattening run identity.

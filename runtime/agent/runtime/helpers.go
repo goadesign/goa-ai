@@ -391,16 +391,33 @@ func decrementCap(current int, delta int) int {
 	return result
 }
 
-// failures counts the number of tool results with non-nil errors.
-func failures(results []*planner.ToolResult) int {
+// capFailures counts tool failures that should decrement the consecutive-failure cap.
+//
+// Contract:
+//   - "missing_fields" and "invalid_arguments" failures are considered recoverable
+//     contract errors when surfaced with a RetryHint; they should not immediately
+//     trip the run-level failure cap before the planner gets a chance to retry with
+//     corrected inputs (typically guided by the retry-hint system reminder).
+func capFailures(results []*planner.ToolResult) int {
 	count := 0
 	for _, res := range results {
-		if res == nil {
+		if res == nil || res.Error == nil {
 			continue
 		}
-		if res.Error != nil {
-			count++
+		if h := res.RetryHint; h != nil {
+			switch h.Reason {
+			case planner.RetryReasonMissingFields, planner.RetryReasonInvalidArguments:
+				continue
+			case planner.RetryReasonMalformedResponse,
+				planner.RetryReasonTimeout,
+				planner.RetryReasonRateLimited,
+				planner.RetryReasonToolUnavailable:
+				// Count towards the consecutive-failure cap.
+			default:
+				panic(fmt.Sprintf("runtime: unknown retry reason %q", h.Reason))
+			}
 		}
+		count++
 	}
 	return count
 }
@@ -539,30 +556,6 @@ func filterToolCalls(calls []planner.ToolRequest, allowed []tools.Ident) []plann
 	return filtered
 }
 
-// aggregateArtifacts flattens artifacts from child tool results into a single
-// slice for a parent tool result. Artifacts inherit the child tool name as
-// SourceTool when it is not already set.
-func aggregateArtifacts(events []*planner.ToolResult) []*planner.Artifact {
-	if len(events) == 0 {
-		return nil
-	}
-	var arts []*planner.Artifact
-	for _, ev := range events {
-		for _, a := range ev.Artifacts {
-			art := *a
-			cp := art
-			if cp.SourceTool == "" {
-				cp.SourceTool = ev.Name
-			}
-			arts = append(arts, &cp)
-		}
-	}
-	if len(arts) == 0 {
-		return nil
-	}
-	return arts
-}
-
 // artifactsDisabled reports whether the artifacts mode explicitly disables
 // artifact emission for a tool call.
 func artifactsDisabled(mode tools.ArtifactsMode) bool {
@@ -613,6 +606,11 @@ func extractArtifactsMode(raw json.RawMessage) (tools.ArtifactsMode, json.RawMes
 // Telemetry from all nested tool executions is aggregated into a single ToolTelemetry
 // summary, enabling proper cost/token tracking across agent-as-tool boundaries.
 //
+// Artifacts are intentionally NOT propagated to the parent tool result. Artifacts must
+// remain attached to the tool events that produced them so that:
+//   - only tools that declare a sidecar schema/codec can emit artifacts, and
+//   - UIs can render artifacts at the correct tool result node in nested tool trees.
+//
 // Error propagation: If the nested agent executed tools and ALL of them failed, the
 // ToolResult.Error field is set with a summary. This allows the parent planner to
 // react appropriately (retry, skip, or abort) rather than treating a failed nested
@@ -626,9 +624,8 @@ func ConvertRunOutputToToolResult(toolName tools.Ident, output *RunOutput) plann
 		resultContent = agentMessageText(output.Final)
 	}
 	result := planner.ToolResult{
-		Name:      toolName,
-		Result:    resultContent,
-		Artifacts: aggregateArtifacts(output.ToolEvents),
+		Name:   toolName,
+		Result: resultContent,
 	}
 	// Record child count for agent-as-tool detection in the runtime.
 	result.ChildrenCount = len(output.ToolEvents)

@@ -675,6 +675,13 @@ func (e *Engine) SignalByID(ctx context.Context, workflowID, runID, name string,
 	return e.client.SignalWorkflow(ctx, workflowID, runID, name, payload)
 }
 
+func (e *Engine) CancelByID(ctx context.Context, runID string) error {
+	if runID == "" {
+		return fmt.Errorf("run id is required")
+	}
+	return e.client.CancelWorkflow(ctx, runID, "")
+}
+
 func (h *workflowHandle) Cancel(ctx context.Context) error {
 	return h.client.CancelWorkflow(ctx, h.run.GetID(), h.run.GetRunID())
 }

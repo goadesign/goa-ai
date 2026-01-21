@@ -51,10 +51,10 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 
 		//nolint:exhaustive // Snapshot intentionally derives state from a small subset of events.
 		switch e.Type {
-		case hooks.AgentRunStarted:
-			var p hooks.AgentRunStartedEvent
+		case hooks.ChildRunLinked:
+			var p hooks.ChildRunLinkedEvent
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				return nil, fmt.Errorf("decode %s payload: %w", hooks.AgentRunStarted, err)
+				return nil, fmt.Errorf("decode %s payload: %w", hooks.ChildRunLinked, err)
 			}
 			s.ChildRuns = append(s.ChildRuns, &run.ChildRunLink{
 				ToolName:     p.ToolName,
@@ -162,9 +162,20 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 			tc.ExpectedChildrenTotal = p.ExpectedChildrenTotal
 
 		case hooks.ToolResultReceived:
-			var p hooks.ToolResultReceivedEvent
-			if err := json.Unmarshal(e.Payload, &p); err != nil {
+			decoded, err := hooks.DecodeFromHookInput(&hooks.ActivityInput{
+				Type:      hooks.ToolResultReceived,
+				RunID:     e.RunID,
+				AgentID:   e.AgentID,
+				SessionID: e.SessionID,
+				TurnID:    e.TurnID,
+				Payload:   e.Payload,
+			})
+			if err != nil {
 				return nil, fmt.Errorf("decode %s payload: %w", hooks.ToolResultReceived, err)
+			}
+			p, ok := decoded.(*hooks.ToolResultReceivedEvent)
+			if !ok {
+				return nil, fmt.Errorf("decode %s payload: unexpected event type %T", hooks.ToolResultReceived, decoded)
 			}
 			tc, ok := toolCalls[p.ToolCallID]
 			if !ok {
@@ -192,11 +203,11 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 			s.Phase = p.Phase
 			s.Await = nil
 			switch p.Status {
-			case "success":
+			case runStatusSuccess:
 				s.Status = run.StatusCompleted
-			case "failed":
+			case runStatusFailed:
 				s.Status = run.StatusFailed
-			case "canceled":
+			case runStatusCanceled:
 				s.Status = run.StatusCanceled
 			default:
 				return nil, fmt.Errorf("unsupported run completion status %q", p.Status)

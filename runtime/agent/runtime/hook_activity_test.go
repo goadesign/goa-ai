@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/runlog"
+	"goa.design/goa-ai/runtime/agent/session"
+	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 )
 
 type recordingRunlog struct {
@@ -35,6 +38,7 @@ func TestHookActivityAppendsBeforePublish(t *testing.T) {
 
 	rl := &recordingRunlog{}
 	bus := hooks.NewBus()
+	store := sessioninmem.New()
 
 	var published hooks.Event
 	sub, err := bus.Register(hooks.SubscriberFunc(func(ctx context.Context, evt hooks.Event) error {
@@ -47,7 +51,22 @@ func TestHookActivityAppendsBeforePublish(t *testing.T) {
 	rt := &Runtime{
 		RunEventStore: rl,
 		Bus:           bus,
+		SessionStore:  store,
 	}
+
+	now := time.Now().UTC()
+	_, err = store.CreateSession(context.Background(), "sess-1", now)
+	require.NoError(t, err)
+	require.NoError(t, store.UpsertRun(context.Background(), session.RunMeta{
+		AgentID:   "svc.agent",
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		Status:    session.RunStatusPending,
+		StartedAt: now,
+		UpdatedAt: now,
+		Labels:    nil,
+		Metadata:  nil,
+	}))
 
 	input, err := hooks.EncodeToHookInput(hooks.NewPlannerNoteEvent("run-1", "svc.agent", "sess-1", "note", nil), "turn-1")
 	require.NoError(t, err)
@@ -68,6 +87,7 @@ func TestHookActivityAppendFailureAbortsPublish(t *testing.T) {
 	appendErr := errors.New("append failed")
 	rl := &recordingRunlog{err: appendErr}
 	bus := hooks.NewBus()
+	store := sessioninmem.New()
 
 	var published hooks.Event
 	sub, err := bus.Register(hooks.SubscriberFunc(func(ctx context.Context, evt hooks.Event) error {
@@ -80,7 +100,22 @@ func TestHookActivityAppendFailureAbortsPublish(t *testing.T) {
 	rt := &Runtime{
 		RunEventStore: rl,
 		Bus:           bus,
+		SessionStore:  store,
 	}
+
+	now := time.Now().UTC()
+	_, err = store.CreateSession(context.Background(), "sess-1", now)
+	require.NoError(t, err)
+	require.NoError(t, store.UpsertRun(context.Background(), session.RunMeta{
+		AgentID:   "svc.agent",
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		Status:    session.RunStatusPending,
+		StartedAt: now,
+		UpdatedAt: now,
+		Labels:    nil,
+		Metadata:  nil,
+	}))
 
 	input, err := hooks.EncodeToHookInput(hooks.NewPlannerNoteEvent("run-1", "svc.agent", "sess-1", "note", nil), "turn-1")
 	require.NoError(t, err)

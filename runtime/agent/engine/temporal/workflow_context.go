@@ -223,41 +223,41 @@ func (w *temporalWorkflowContext) ExecuteToolActivityAsync(ctx context.Context, 
 	return &temporalFuture[*api.ToolOutput]{future: fut, ctx: actx}, nil
 }
 
-func (w *temporalWorkflowContext) PauseRequests() engine.Receiver[api.PauseRequest] {
+func (w *temporalWorkflowContext) PauseRequests() engine.Receiver[*api.PauseRequest] {
 	ch := workflow.GetSignalChannel(w.ctx, api.SignalPause)
-	return &temporalReceiver[api.PauseRequest]{
+	return &temporalReceiver[*api.PauseRequest]{
 		ctx: w.ctx,
 		ch:  ch,
 	}
 }
 
-func (w *temporalWorkflowContext) ResumeRequests() engine.Receiver[api.ResumeRequest] {
+func (w *temporalWorkflowContext) ResumeRequests() engine.Receiver[*api.ResumeRequest] {
 	ch := workflow.GetSignalChannel(w.ctx, api.SignalResume)
-	return &temporalReceiver[api.ResumeRequest]{
+	return &temporalReceiver[*api.ResumeRequest]{
 		ctx: w.ctx,
 		ch:  ch,
 	}
 }
 
-func (w *temporalWorkflowContext) ClarificationAnswers() engine.Receiver[api.ClarificationAnswer] {
+func (w *temporalWorkflowContext) ClarificationAnswers() engine.Receiver[*api.ClarificationAnswer] {
 	ch := workflow.GetSignalChannel(w.ctx, api.SignalProvideClarification)
-	return &temporalReceiver[api.ClarificationAnswer]{
+	return &temporalReceiver[*api.ClarificationAnswer]{
 		ctx: w.ctx,
 		ch:  ch,
 	}
 }
 
-func (w *temporalWorkflowContext) ExternalToolResults() engine.Receiver[api.ToolResultsSet] {
+func (w *temporalWorkflowContext) ExternalToolResults() engine.Receiver[*api.ToolResultsSet] {
 	ch := workflow.GetSignalChannel(w.ctx, api.SignalProvideToolResults)
-	return &temporalReceiver[api.ToolResultsSet]{
+	return &temporalReceiver[*api.ToolResultsSet]{
 		ctx: w.ctx,
 		ch:  ch,
 	}
 }
 
-func (w *temporalWorkflowContext) ConfirmationDecisions() engine.Receiver[api.ConfirmationDecision] {
+func (w *temporalWorkflowContext) ConfirmationDecisions() engine.Receiver[*api.ConfirmationDecision] {
 	ch := workflow.GetSignalChannel(w.ctx, api.SignalProvideConfirmation)
-	return &temporalReceiver[api.ConfirmationDecision]{
+	return &temporalReceiver[*api.ConfirmationDecision]{
 		ctx: w.ctx,
 		ch:  ch,
 	}

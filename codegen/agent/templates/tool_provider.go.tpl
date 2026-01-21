@@ -32,6 +32,9 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 	case {{ .ConstName }}:
 		args, err := {{ .ConstName }}PayloadCodec.FromJSON(msg.Payload)
 		if err != nil {
+			if issues := toolregistry.ValidationIssues(err); len(issues) > 0 {
+				return toolregistry.NewToolResultErrorMessageWithIssues(msg.ToolUseID, "invalid_arguments", err.Error(), issues), nil
+			}
 			return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "invalid_arguments", err.Error()), nil
 		}
 		methodIn := Init{{ .ConstName }}MethodPayload(args)
@@ -42,6 +45,9 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 {{- end }}
 		methodOut, err := p.svc.{{ .MethodGoName }}(ctx, methodIn)
 		if err != nil {
+			if issues := toolregistry.ValidationIssues(err); len(issues) > 0 {
+				return toolregistry.NewToolResultErrorMessageWithIssues(msg.ToolUseID, "invalid_arguments", err.Error(), issues), nil
+			}
 			return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "execution_failed", err.Error()), nil
 		}
 {{- if .HasResult }}

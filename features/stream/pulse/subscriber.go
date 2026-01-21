@@ -87,7 +87,7 @@ func NewSubscriber(opts SubscriberOptions) (*Subscriber, error) {
 //
 // Usage:
 //
-//	events, errs, cancel, err := sub.Subscribe(ctx, "run/abc123")
+//	events, errs, cancel, err := sub.Subscribe(ctx, "session/abc123")
 //	defer cancel()
 //	for evt := range events {
 //	    // process event

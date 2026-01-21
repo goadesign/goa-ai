@@ -569,13 +569,15 @@ Content rules:
 - Agent-as-tool always executes in a real child run. When a nested agent is
   invoked, the runtime:
   - creates a new workflow run with its own `RunID` and `run.Handle`,
-  - emits an `AgentRunStarted` hook/stream event in the parent run that carries
+  - emits a `ChildRunLinked` hook/stream event in the parent run that carries
     a `run.Handle` link to the child (run ID, agent ID, parent run/tool IDs),
   - sets `ToolResult.RunLink` on the parent tool result so finalizers and
     planners can correlate structured results with the child run.
 - The runtime no longer flattens or suppresses child tool events globally.
   Visibility is controlled by `stream.StreamProfile`, which selects event
-  kinds per audience (chat vs debug vs metrics). All profiles operate on
-  per‑run streams linked via `AgentRunStarted` events; if you need a flattened,
-  firehose‑style projection for debugging, build it as a separate subscriber
-  on top of the per‑run model rather than changing the core runtime behavior.
+  kinds per audience (chat vs debug vs metrics). Profiles operate on a
+  session-owned stream (`session/<session_id>`) and use `ChildRunLinked`
+  links plus `run_stream_end` markers to let consumers terminate per-run
+  streaming without timers. If you need a flattened, firehose‑style projection
+  for debugging, build it as a separate subscriber on top of the per‑session
+  stream rather than changing the core runtime behavior.

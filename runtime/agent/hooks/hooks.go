@@ -139,9 +139,9 @@ const (
 	// canceled). Payload is a RunPhaseChangedEvent.
 	RunPhaseChanged EventType = "run_phase_changed"
 
-	// AgentRunStarted fires in the parent run when an agent-as-tool child run
-	// starts. Payload is an AgentRunStartedEvent.
-	AgentRunStarted EventType = "agent_run_started"
+	// ChildRunLinked links a parent run/tool call to a spawned child agent run.
+	// Payload is a ChildRunLinkedEvent.
+	ChildRunLinked EventType = "child_run_linked"
 )
 
 // HandleEvent implements Subscriber by invoking the function.

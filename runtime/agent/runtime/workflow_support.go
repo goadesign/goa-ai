@@ -109,12 +109,16 @@ func (r *Runtime) finalizeWithPlanner(
 	resumeCtx.Attempt = nextAttempt
 	// Signal zero remaining duration for any prompt engineering that uses MaxDuration.
 	resumeCtx.MaxDuration = "0s"
+	toolResults, err := r.encodeToolEvents(ctx, allToolResults)
+	if err != nil {
+		return nil, err
+	}
 	req := PlanActivityInput{
 		AgentID:     input.AgentID,
 		RunID:       base.RunContext.RunID,
 		Messages:    messages,
 		RunContext:  resumeCtx,
-		ToolResults: allToolResults,
+		ToolResults: toolResults,
 		Finalize:    &planner.Termination{Reason: reason, Message: hint},
 	}
 	// Emit a pause/resume pair to indicate a finalization turn began.
@@ -219,11 +223,16 @@ func (r *Runtime) finalizeWithPlanner(
 	for i := range output.Result.Notes {
 		notes[i] = &output.Result.Notes[i]
 	}
+	toolEvents, err := r.encodeToolEvents(ctx, allToolResults)
+	if err != nil {
+		return nil, err
+	}
+
 	return &RunOutput{
 		AgentID:    input.AgentID,
 		RunID:      base.RunContext.RunID,
 		Final:      finalMsg,
-		ToolEvents: allToolResults,
+		ToolEvents: toolEvents,
 		Notes:      notes,
 		Usage:      &aggUsage,
 	}, nil
@@ -248,6 +257,9 @@ func (r *Runtime) handleInterrupts(
 		req, ok := ctrl.PollPause()
 		if !ok {
 			break
+		}
+		if req == nil {
+			return errors.New("pause: received nil pause request")
 		}
 		if err := r.publishHook(
 			ctx,
@@ -320,6 +332,9 @@ func (r *Runtime) handleInterrupts(
 				return err2
 			}
 			return err
+		}
+		if resumeReq == nil {
+			return errors.New("resume: received nil resume request")
 		}
 		if len(resumeReq.Messages) > 0 {
 			base.Messages = append(base.Messages, resumeReq.Messages...)
@@ -500,6 +515,9 @@ func (r *Runtime) handleMissingFieldsPolicy(
 				return nil, err2
 			}
 			return nil, err
+		}
+		if ans == nil {
+			return nil, errors.New("await_clarification: received nil clarification answer")
 		}
 		// Validate correlation when ID is present on the answer.
 		if ans.ID != "" && ans.ID != awaitID {

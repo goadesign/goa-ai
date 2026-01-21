@@ -10,12 +10,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 	agent "goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
+	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -55,6 +57,7 @@ func TestAgentTool_DefaultsFromPayload(t *testing.T) {
 		tracer:        telemetry.NoopTracer{},
 		RunEventStore: runloginmem.New(),
 		Bus:           noopHooks{},
+		SessionStore:  sessioninmem.New(),
 	}
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
@@ -104,6 +107,7 @@ func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 		tracer:        telemetry.NoopTracer{},
 		RunEventStore: runloginmem.New(),
 		Bus:           noopHooks{},
+		SessionStore:  sessioninmem.New(),
 	}
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
@@ -151,6 +155,7 @@ func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 		tracer:        telemetry.NoopTracer{},
 		RunEventStore: runloginmem.New(),
 		Bus:           noopHooks{},
+		SessionStore:  sessioninmem.New(),
 	}
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
@@ -273,10 +278,10 @@ func TestJSONOnly_NoFinalizer_IncompatibleChildResultSchema_ReturnsToolError(t *
 		SessionID:  "sess",
 	}
 	out := &RunOutput{
-		ToolEvents: []*planner.ToolResult{
+		ToolEvents: []*api.ToolEvent{
 			{
 				Name:   tools.Ident("test.child"),
-				Result: map[string]any{"x": "y"},
+				Result: json.RawMessage(`"bad"`),
 			},
 		},
 	}
@@ -333,9 +338,9 @@ func TestJSONOnly_NoFinalizer_MultiChildWithoutAggregateKey_ReturnsToolError(t *
 		SessionID:  "sess",
 	}
 	out := &RunOutput{
-		ToolEvents: []*planner.ToolResult{
-			{Name: tools.Ident("child1"), Result: map[string]any{"events": []any{"a"}}},
-			{Name: tools.Ident("child2"), Result: map[string]any{"events": []any{"b"}}},
+		ToolEvents: []*api.ToolEvent{
+			{Name: tools.Ident("child1"), Result: json.RawMessage(`{"events":["a"]}`)},
+			{Name: tools.Ident("child2"), Result: json.RawMessage(`{"events":["b"]}`)},
 		},
 	}
 
@@ -368,8 +373,8 @@ func TestJSONOnly_FinalizerError_Propagates(t *testing.T) {
 		ArtifactsMode: tools.ArtifactsModeAuto,
 	}
 	out := &RunOutput{
-		ToolEvents: []*planner.ToolResult{
-			{Name: tools.Ident("child"), Result: map[string]any{"x": "y"}},
+		ToolEvents: []*api.ToolEvent{
+			{Name: tools.Ident("child")},
 		},
 	}
 	tr, err := rt.adaptAgentChildOutput(context.Background(), cfg, call, run.Context{RunID: "child-run"}, out)
@@ -407,8 +412,8 @@ func TestAgentToolFinalizer_ReturnsErrorOnlyToolResult(t *testing.T) {
 			Role:  model.ConversationRoleAssistant,
 			Parts: []model.Part{model.TextPart{Text: "fallback prose"}},
 		},
-		ToolEvents: []*planner.ToolResult{
-			{Name: tools.Ident("child"), Result: map[string]any{"x": "y"}},
+		ToolEvents: []*api.ToolEvent{
+			{Name: tools.Ident("child")},
 		},
 	}
 
@@ -444,8 +449,8 @@ func TestAgentToolFinalizerInput_ContainsArtifactsMode(t *testing.T) {
 		ArtifactsMode: tools.ArtifactsModeOff,
 	}
 	out := &RunOutput{
-		ToolEvents: []*planner.ToolResult{
-			{Name: tools.Ident("child"), Result: map[string]any{"x": "y"}},
+		ToolEvents: []*api.ToolEvent{
+			{Name: tools.Ident("child")},
 		},
 	}
 	tr, err := rt.adaptAgentChildOutput(context.Background(), cfg, call, run.Context{RunID: "child-run"}, out)

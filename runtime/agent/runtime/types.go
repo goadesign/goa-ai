@@ -18,6 +18,7 @@ type (
 	HookActivityInput  = api.HookActivityInput
 	ToolInput          = api.ToolInput
 	ToolOutput         = api.ToolOutput
+	ToolArtifact       = api.ToolArtifact
 
 	// WorkflowOptions mirrors the subset of engine start options we expose through
 	// the runtime. Memo/SearchAttributes follow Temporal semantics but remain generic

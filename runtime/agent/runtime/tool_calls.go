@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"time"
 
 	agent "goa.design/goa-ai/runtime/agent"
@@ -189,8 +190,68 @@ func (r *Runtime) enforceToolResultContracts(spec tools.ToolSpec, call planner.T
 
 func (e *toolBatchExec) publishToolResultReceived(ctx context.Context, call planner.ToolRequest, tr *planner.ToolResult, resultJSON json.RawMessage, duration time.Duration) error {
 	parentID := parentToolCallID(call, e.runCtx)
+	if err := e.r.normalizeToolArtifacts(ctx, call.Name, tr); err != nil {
+		return err
+	}
 	ev := hooks.NewToolResultReceivedEvent(e.runID, e.agentID, e.sessionID, call.Name, call.ToolCallID, parentID, tr.Result, resultJSON, formatResultPreview(call.Name, tr.Result), tr.Bounds, tr.Artifacts, duration, tr.Telemetry, tr.RetryHint, tr.Error)
 	return e.r.publishHook(ctx, ev, e.turnID)
+}
+
+func (r *Runtime) normalizeToolArtifacts(ctx context.Context, toolName tools.Ident, tr *planner.ToolResult) error {
+	if tr == nil || len(tr.Artifacts) == 0 {
+		return nil
+	}
+	spec, ok := r.toolSpec(toolName)
+	if !ok {
+		return fmt.Errorf("unknown tool %q", toolName)
+	}
+	if spec.Sidecar == nil || spec.Sidecar.Codec.ToJSON == nil || spec.Sidecar.Codec.FromJSON == nil {
+		return fmt.Errorf("tool %q produced artifacts but has no sidecar codec", toolName)
+	}
+	for _, a := range tr.Artifacts {
+		if a == nil {
+			return fmt.Errorf("CRITICAL: tool %q returned nil artifact entry", toolName)
+		}
+		switch v := a.Data.(type) {
+		case json.RawMessage:
+			decoded, err := spec.Sidecar.Codec.FromJSON(v)
+			if err != nil {
+				return fmt.Errorf("decode tool artifact for %s (%s): %w", toolName, a.Kind, err)
+			}
+			canonical, err := spec.Sidecar.Codec.ToJSON(decoded)
+			if err != nil {
+				r.logger.Warn(ctx, "tool artifact encode failed", "tool", toolName, "kind", a.Kind, "err", err)
+				return fmt.Errorf("encode tool artifact for %s (%s): %w", toolName, a.Kind, err)
+			}
+			a.Data = json.RawMessage(canonical)
+			continue
+		case []byte:
+			if len(v) == 0 {
+				continue
+			}
+			if !json.Valid(v) {
+				return fmt.Errorf("decode tool artifact for %s (%s): invalid JSON bytes", toolName, a.Kind)
+			}
+			decoded, err := spec.Sidecar.Codec.FromJSON(v)
+			if err != nil {
+				return fmt.Errorf("decode tool artifact for %s (%s): %w", toolName, a.Kind, err)
+			}
+			canonical, err := spec.Sidecar.Codec.ToJSON(decoded)
+			if err != nil {
+				r.logger.Warn(ctx, "tool artifact encode failed", "tool", toolName, "kind", a.Kind, "err", err)
+				return fmt.Errorf("encode tool artifact for %s (%s): %w", toolName, a.Kind, err)
+			}
+			a.Data = json.RawMessage(canonical)
+			continue
+		}
+		raw, err := spec.Sidecar.Codec.ToJSON(a.Data)
+		if err != nil {
+			r.logger.Warn(ctx, "tool artifact encode failed", "tool", toolName, "kind", a.Kind, "err", err)
+			return fmt.Errorf("encode tool artifact for %s (%s): %w", toolName, a.Kind, err)
+		}
+		a.Data = json.RawMessage(raw)
+	}
+	return nil
 }
 
 func (e *toolBatchExec) publishToolCallScheduled(ctx context.Context, call planner.ToolRequest, queue string) error {
@@ -322,7 +383,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 					}
 					continue
 				}
-				if err := e.r.publishHook(wfCtx.Context(), hooks.NewAgentRunStartedEvent(call.RunID, call.AgentID, call.SessionID, call.Name, call.ToolCallID, nestedRunCtx.RunID, ts.AgentTool.AgentID), ""); err != nil {
+				if err := e.r.publishHook(wfCtx.Context(), hooks.NewChildRunLinkedEvent(call.RunID, call.AgentID, call.SessionID, call.Name, call.ToolCallID, nestedRunCtx.RunID, ts.AgentTool.AgentID), ""); err != nil {
 					return nil, err
 				}
 				route := ts.AgentTool.Route
@@ -509,7 +570,7 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 			toolRes := &planner.ToolResult{
 				Name:       info.call.Name,
 				Result:     decoded,
-				Artifacts:  out.Artifacts,
+				Artifacts:  decodeToolArtifacts(out.Artifacts),
 				ToolCallID: info.call.ToolCallID,
 				Telemetry:  out.Telemetry,
 			}
@@ -526,7 +587,17 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 				return nil, nil, false, err
 			}
 			if out.RetryHint != nil {
-				toolRes.RetryHint = out.RetryHint
+				h := *out.RetryHint
+				if len(h.ExampleInput) == 0 && len(spec.Payload.ExampleInput) > 0 {
+					h.ExampleInput = maps.Clone(spec.Payload.ExampleInput)
+				}
+				if len(h.PriorInput) == 0 && len(info.call.Payload) > 0 {
+					var prior map[string]any
+					if err := json.Unmarshal(info.call.Payload, &prior); err == nil && len(prior) > 0 {
+						h.PriorInput = prior
+					}
+				}
+				toolRes.RetryHint = &h
 			}
 
 			var resultJSON json.RawMessage
@@ -547,6 +618,27 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 		}
 	}
 	return activityByID, nil, false, nil
+}
+
+func decodeToolArtifacts(in []*ToolArtifact) []*planner.Artifact {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]*planner.Artifact, 0, len(in))
+	for _, a := range in {
+		if a == nil {
+			continue
+		}
+		out = append(out, &planner.Artifact{
+			Kind:       a.Kind,
+			Data:       a.Data,
+			SourceTool: a.SourceTool,
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, children []agentChildFutureInfo, finalizeTimer engine.Future[time.Time]) (map[string]*planner.ToolResult, []agentChildFutureInfo, bool, error) {

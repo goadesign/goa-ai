@@ -581,6 +581,20 @@ func ResultReminder(s string) {
 	tool.ResultReminder = s
 }
 
+// TerminalRun marks the current tool as terminal for the run: after the tool
+// executes, the runtime should complete the run immediately without requesting
+// a follow-up planner PlanResume/finalization turn.
+//
+// TerminalRun must appear in a Tool expression.
+func TerminalRun() {
+	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	tool.TerminalRun = true
+}
+
 // toolDSL mirrors Goa's method DSL helpers to define tool shapes.
 func toolDSL(m *agentsexpr.ToolExpr, suffix string, p any, args ...any) *goaexpr.AttributeExpr {
 	var (

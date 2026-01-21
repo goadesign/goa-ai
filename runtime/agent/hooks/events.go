@@ -149,10 +149,10 @@ type (
 		MessageCount int
 	}
 
-	// AgentRunStartedEvent fires in the parent run when an agent-as-tool
-	// child run is started. It links the parent tool call to the child
-	// agent run for streaming and observability.
-	AgentRunStartedEvent struct {
+	// ChildRunLinkedEvent links a parent run/tool call to a spawned child agent run.
+	// It is emitted on the parent run and allows consumers to correlate child-run
+	// events without flattening them into the parent.
+	ChildRunLinkedEvent struct {
 		baseEvent
 		// ToolName is the canonical tool identifier for the parent tool.
 		ToolName tools.Ident
@@ -560,12 +560,12 @@ func NewRunCompletedEvent(runID string, agentID agent.Ident, sessionID, status s
 	return out
 }
 
-// NewAgentRunStartedEvent constructs an AgentRunStartedEvent for the given
-// parent run, tool, and child run identifiers.
-func NewAgentRunStartedEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID, childRunID string, childAgentID agent.Ident) *AgentRunStartedEvent {
+// NewChildRunLinkedEvent constructs a ChildRunLinkedEvent for the given parent
+// run, tool call, and child run identifiers.
+func NewChildRunLinkedEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID, childRunID string, childAgentID agent.Ident) *ChildRunLinkedEvent {
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
-	return &AgentRunStartedEvent{
+	return &ChildRunLinkedEvent{
 		baseEvent:    be,
 		ToolName:     toolName,
 		ToolCallID:   toolCallID,
@@ -963,4 +963,4 @@ func (e *PolicyDecisionEvent) Type() EventType     { return PolicyDecision }
 func (e *UsageEvent) Type() EventType              { return Usage }
 func (e *HardProtectionEvent) Type() EventType     { return HardProtectionTriggered }
 func (e *RunPhaseChangedEvent) Type() EventType    { return RunPhaseChanged }
-func (e *AgentRunStartedEvent) Type() EventType    { return AgentRunStarted }
+func (e *ChildRunLinkedEvent) Type() EventType     { return ChildRunLinked }

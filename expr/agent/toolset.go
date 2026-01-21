@@ -25,6 +25,10 @@ type (
 		// Tags are labels for categorizing and filtering this toolset.
 		Tags []string
 
+		// Meta carries arbitrary design-time metadata attached to the toolset via DSL.
+		// Keys map to one or more values, matching Goa's Meta conventions.
+		Meta goaexpr.MetaExpr
+
 		// Agent is the agent expression that owns this toolset, if any.
 		// When nil, the toolset is either top-level or attached to a
 		// service export.
@@ -47,6 +51,25 @@ type (
 		Origin *ToolsetExpr
 	}
 )
+
+// AddMeta adds metadata to the toolset expression.
+//
+// This method exists so Goa's standard Meta DSL helper can attach metadata to
+// goa-ai agent toolset expressions without goa-ai introducing a parallel Meta DSL.
+func (t *ToolsetExpr) AddMeta(name string, value ...string) {
+	if t.Meta == nil {
+		t.Meta = make(goaexpr.MetaExpr)
+	}
+	t.Meta[name] = append(t.Meta[name], value...)
+}
+
+// DeleteMeta removes the metadata entry identified by name.
+//
+// This method exists so Goa's standard RemoveMeta DSL helper can remove metadata
+// from goa-ai agent toolset expressions.
+func (t *ToolsetExpr) DeleteMeta(name string) {
+	delete(t.Meta, name)
+}
 
 // EvalName is part of eval.Expression allowing descriptive error messages.
 func (t *ToolsetExpr) EvalName() string {

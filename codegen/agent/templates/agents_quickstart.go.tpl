@@ -138,6 +138,9 @@ func main() {
     // 3. Run it!
     // Let's invoke our first agent and see what it says using AgentClient.
     fmt.Println("🚀 Invoking agent...")
+    if _, err := rt.CreateSession(context.Background(), "my-first-session"); err != nil {
+        panic(err)
+    }
     client := {{ (index (index .Services 0).Agents 0).PackageName }}.NewClient(rt)
     out, err := client.Run(
         context.Background(),
@@ -176,6 +179,7 @@ Here are the detailed cheat sheets for each agent you designed.
 * **Config Struct:** `{{ .StructName }}Config`
 * **Register Function:** `Register{{ .StructName }}(ctx, rt, cfg)`
 * **How to Run:**
+    * **Sessions are first-class:** call `rt.CreateSession(ctx, sessionID)` once before you start any runs under that session ID.
     * **Synchronous (wait for result):**
         ```go
         client := {{ .PackageName }}.NewClient(rt)
@@ -294,12 +298,6 @@ import (
 )
 
 func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*planner.ToolResult, error) {
-    if call == nil {
-        return &planner.ToolResult{Error: planner.NewToolError("tool request is nil")}, nil
-    }
-    if meta == nil {
-        return &planner.ToolResult{Error: planner.NewToolError("tool call meta is nil")}, nil
-    }
     switch call.Name {
     case "<svc>.<toolset>.<tool>":
         // Decode payload using generated codec
@@ -315,9 +313,13 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
         // typedArgs := args.(*specs.<ToolPayload>)
         // Optionally use transforms: mp, _ := specs.ToMethodPayload_<Tool>(typedArgs)
         // Call your service client, map result via specs.ToToolReturn_<Tool>
+        // Or build a typed tool return directly:
+        // res := &specs.<ToolReturn>{Status: "ok"}
         return &planner.ToolResult{
 			Name:   call.Name,
-			Result: map[string]any{"status": "ok"},
+			Result: &specs.<ToolReturn>{
+				Status: "ok",
+			},
 		}, nil
     }
     return &planner.ToolResult{
@@ -454,11 +456,13 @@ if err := rt.RegisterToolset(reg); err != nil { panic(err) }
 
 ## 8. Ready for Prime Time: Advanced Features 🔭
 
-* **Asynchronous Runs & Streaming:** Use `client.Start()` to get a workflow handle. This is great for long-running tasks or streaming updates back to a UI.
+* **Sessions & Runs:** Sessions are explicit. Create them with `rt.CreateSession(ctx, sessionID)` and end them with `rt.DeleteSession(ctx, sessionID)`. Runs (`client.Run`/`client.Start`) require an active session.
+* **Session-Owned Streaming (for UIs):** In production, stream consumers should attach to the **session-owned stream** (`session/<session_id>`) and filter by `run_id`. Close SSE when you observe a `run_stream_end` event for the attached run ID. Nested agent runs emit `child_run_linked` links and their own `run_stream_end`; parent runs only emit `run_stream_end` after all child runs have ended.
+* **Asynchronous Runs:** Use `client.Start()` to get a workflow handle. This is great for long-running tasks, cancellation, and non-interactive integrations.
 * **Interrupts (Human-in-the-Loop):** If your policy allows it, you can pause and resume agent runs with `rt.PauseRun()` and `rt.ResumeRun()`.
 * **Policies & Caps:** The `RunPolicy` in your design (max tool calls, time budgets) is automatically enforced by the runtime.
 * **Persistence & Observability:** The `runtime.New` function accepts `runtime.Options` to configure production-grade components like a Temporal engine, MongoDB for memory, and telemetry hooks.
-* **Temporal DataConverter (required):** When you use the Temporal engine, configure the Temporal client with `temporal.NewAgentDataConverter(...)` so `planner.ToolResult.Result` remains the **concrete generated type** across workflow history replay (instead of `map[string]any`).
+* **Temporal DataConverter (required):** When you use the Temporal engine, configure the Temporal client with `temporal.NewAgentDataConverter(...)` to enforce goa‑ai's boundary contract: tool results and artifacts cross workflow boundaries as canonical JSON bytes (`api.ToolEvent` / `api.ToolArtifact`), and `planner.ToolResult` is rejected if it ever tries to cross a Temporal boundary.
 * **Registries & Discovery:** When you declare registries and `FromRegistry(...)` toolsets in your DSL, Goa-AI generates typed registry HTTP clients under `gen/<svc>/registry/<name>/` plus per-toolset specs helpers (with `DiscoverAndPopulate`, `Specs`, and `RegistryToolsetID`) so you can discover tools at runtime and register executors using `runtime.ToolsetRegistration`.
 
 ```go
@@ -486,6 +490,8 @@ eng, err := temporal.New(temporal.Options{
     ClientOptions: &client.Options{
         HostPort:      "127.0.0.1:7233",
         Namespace:     "default",
+        // Required: enforce goa-ai's workflow boundary contract.
+        // Tool results/artifacts cross boundaries as canonical JSON bytes (api.ToolEvent/api.ToolArtifact).
         DataConverter: temporal.NewAgentDataConverter(specs.Spec),
     },
     WorkerOptions: temporal.WorkerOptions{
@@ -516,6 +522,8 @@ defer eng.Close()
     * **Fix:** Check that `Register<AgentName>(...)` was called successfully for that agent before you tried to run it.
 * **Error: "session id is required"**
     * **Fix:** Always provide a unique, non-empty string for the `sessionID` when calling `agent.Run(...)`.
+* **Error: "session not found"**
+    * **Fix:** Sessions are explicit—call `rt.CreateSession(ctx, sessionID)` once before starting runs under that session ID.
 * **Error: "mcp caller is required for <suite>"**
     * **Fix:** Your agent's config is missing an entry in the `MCPCallers` map for the specified toolset ID. See section 5.
 * **Agent-as-Tool isn't working?**

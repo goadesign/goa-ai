@@ -1,31 +1,36 @@
-// Package session defines session and run tracking primitives.
+// Package session defines durable session lifecycle and run metadata primitives.
+//
+// A Session is the first-class conversational container. Runs must always belong
+// to a session. Session lifecycle is explicit: sessions are created and ended
+// independently of run/workflow lifecycle.
 package session
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
 type (
-	// RunContext carries execution metadata for the current run invocation.
-	// It is passed through the system during workflow execution and contains
-	// the identifiers, labels, and constraints active for this specific
-	// invocation attempt.
-	RunContext struct {
-		// RunID uniquely identifies the durable workflow run.
-		RunID string
-		// Attempt counts how many times the run has been attempted/resumed.
-		Attempt int
-		// Labels carries caller-provided metadata (tenant, priority, etc.).
-		Labels map[string]string
-		// MaxDuration encodes the wall-clock budget remaining (string form for prompts/telemetry).
-		MaxDuration string
+	// Session captures durable session lifecycle state.
+	//
+	// Contract:
+	// - Session IDs are stable and caller-provided (typically owned by an application).
+	// - Sessions are created explicitly (CreateSession) and ended explicitly (EndSession).
+	// - Ended sessions are terminal: new runs must not start under an ended session.
+	Session struct {
+		// ID is the durable identifier of the session.
+		ID string
+		// Status is the current session lifecycle state.
+		Status SessionStatus
+		// CreatedAt records when the session was created.
+		CreatedAt time.Time
+		// EndedAt is set when the session is ended.
+		EndedAt *time.Time
 	}
 
-	// Run captures persistent metadata associated with an agent execution.
-	// This is the record stored in the session store for observability and
-	// run lifecycle tracking.
-	Run struct {
+	// RunMeta captures persistent metadata associated with a run execution.
+	RunMeta struct {
 		// AgentID identifies which agent processed the run.
 		AgentID string
 		// RunID is the durable workflow run identifier.
@@ -33,7 +38,7 @@ type (
 		// SessionID associates related runs (e.g., chat sessions).
 		SessionID string
 		// Status indicates the current lifecycle state.
-		Status Status
+		Status RunStatus
 		// StartedAt records when the run began.
 		StartedAt time.Time
 		// UpdatedAt records when the run metadata was last updated.
@@ -44,25 +49,66 @@ type (
 		Metadata map[string]any
 	}
 
-	// Store persists run metadata for observability and lookup.
+	// Store persists session lifecycle state and run metadata.
+	//
+	// Store implementations must be durable: failures are surfaced to callers so
+	// workflows can fail fast when session/run metadata is unavailable.
 	Store interface {
-		Upsert(ctx context.Context, run Run) error
-		Load(ctx context.Context, runID string) (Run, error)
+		// CreateSession creates (or returns) an active session.
+		//
+		// Contract:
+		// - Idempotent for active sessions: returns the existing session.
+		// - Returns ErrSessionEnded when the session exists but is terminal.
+		CreateSession(ctx context.Context, sessionID string, createdAt time.Time) (Session, error)
+		// LoadSession loads an existing session.
+		// Returns ErrSessionNotFound when the session does not exist.
+		LoadSession(ctx context.Context, sessionID string) (Session, error)
+		// EndSession ends a session and returns its terminal state.
+		// Idempotent: ending an already-ended session returns the stored session.
+		EndSession(ctx context.Context, sessionID string, endedAt time.Time) (Session, error)
+
+		// UpsertRun inserts or updates run metadata.
+		UpsertRun(ctx context.Context, run RunMeta) error
+		// LoadRun loads run metadata. Returns ErrRunNotFound when missing.
+		LoadRun(ctx context.Context, runID string) (RunMeta, error)
+		// ListRunsBySession lists runs for the given session. When statuses is
+		// non-empty, only runs whose status matches one of the provided values
+		// are returned.
+		ListRunsBySession(ctx context.Context, sessionID string, statuses []RunStatus) ([]RunMeta, error)
 	}
 
-	// Status represents the lifecycle state of a run.
-	Status string
+	// SessionStatus represents the lifecycle state of a session.
+	SessionStatus string
+
+	// RunStatus represents the lifecycle state of a run.
+	RunStatus string
 )
 
 const (
-	// StatusPending indicates the run has been accepted but not started yet.
-	StatusPending Status = "pending"
-	// StatusRunning indicates the run is actively executing.
-	StatusRunning Status = "running"
-	// StatusCompleted indicates the run finished successfully.
-	StatusCompleted Status = "completed"
-	// StatusFailed indicates the run failed permanently.
-	StatusFailed Status = "failed"
-	// StatusCanceled indicates the run was canceled externally.
-	StatusCanceled Status = "canceled"
+	// StatusActive indicates the session is open for new runs.
+	StatusActive SessionStatus = "active"
+	// StatusEnded indicates the session is terminal and must not accept new runs.
+	StatusEnded SessionStatus = "ended"
+
+	// RunStatusPending indicates the run has been accepted but not started yet.
+	RunStatusPending RunStatus = "pending"
+	// RunStatusRunning indicates the run is actively executing.
+	RunStatusRunning RunStatus = "running"
+	// RunStatusPaused indicates the run is waiting for external input (pause/await).
+	RunStatusPaused RunStatus = "paused"
+	// RunStatusCompleted indicates the run finished successfully.
+	RunStatusCompleted RunStatus = "completed"
+	// RunStatusFailed indicates the run failed permanently.
+	RunStatusFailed RunStatus = "failed"
+	// RunStatusCanceled indicates the run was canceled externally.
+	RunStatusCanceled RunStatus = "canceled"
+)
+
+var (
+	// ErrSessionNotFound indicates a session does not exist in the store.
+	ErrSessionNotFound = errors.New("session not found")
+	// ErrSessionEnded indicates a session exists but is ended.
+	ErrSessionEnded = errors.New("session ended")
+	// ErrRunNotFound indicates run metadata does not exist in the store.
+	ErrRunNotFound = errors.New("run not found")
 )

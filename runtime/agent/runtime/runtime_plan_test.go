@@ -7,11 +7,13 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 func TestRunPlanActivityUsesOptions(t *testing.T) {
@@ -64,11 +66,12 @@ func TestPlanStartActivityInvokesPlanner(t *testing.T) {
 
 func TestPlanResumeActivityPassesToolResults(t *testing.T) {
 	called := false
-	toolResults := []*planner.ToolResult{{Name: "svc.ts.tool"}}
+	toolResults := []*api.ToolEvent{{Name: "svc.ts.tool"}}
 	pl := &stubPlanner{resume: func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
 		called = true
 		require.NotNil(t, input)
-		require.Equal(t, toolResults, input.ToolResults)
+		require.Len(t, input.ToolResults, 1)
+		require.Equal(t, tools.Ident("svc.ts.tool"), input.ToolResults[0].Name)
 		require.Equal(t, 3, input.RunContext.Attempt)
 		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: "svc.other.tool"}}}, nil
 	}}

@@ -13,28 +13,28 @@ import (
 
 type (
 	// PauseRequest carries metadata attached to a pause signal.
-	PauseRequest = api.PauseRequest
+	PauseRequest = *api.PauseRequest
 
 	// ResumeRequest carries metadata attached to a resume signal.
-	ResumeRequest = api.ResumeRequest
+	ResumeRequest = *api.ResumeRequest
 
 	// ClarificationAnswer carries a typed answer for a paused clarification request.
-	ClarificationAnswer = api.ClarificationAnswer
+	ClarificationAnswer = *api.ClarificationAnswer
 
 	// ConfirmationDecision carries a typed decision for a confirmation await.
-	ConfirmationDecision = api.ConfirmationDecision
+	ConfirmationDecision = *api.ConfirmationDecision
 
 	// ToolResultsSet carries results for an external tools await request.
-	ToolResultsSet = api.ToolResultsSet
+	ToolResultsSet = *api.ToolResultsSet
 
 	// Controller drains runtime interrupt signals and exposes helpers the
 	// workflow loop can call to react to pause/resume and await requests.
 	Controller struct {
-		pauseCh   engine.Receiver[api.PauseRequest]
-		resumeCh  engine.Receiver[api.ResumeRequest]
-		clarifyCh engine.Receiver[api.ClarificationAnswer]
-		resultsCh engine.Receiver[api.ToolResultsSet]
-		confirmCh engine.Receiver[api.ConfirmationDecision]
+		pauseCh   engine.Receiver[*api.PauseRequest]
+		resumeCh  engine.Receiver[*api.ResumeRequest]
+		clarifyCh engine.Receiver[*api.ClarificationAnswer]
+		resultsCh engine.Receiver[*api.ToolResultsSet]
+		confirmCh engine.Receiver[*api.ConfirmationDecision]
 	}
 )
 

@@ -2,6 +2,7 @@ package stream
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -275,9 +276,6 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		if evt.ToolName == "" {
 			return errors.New("stream: tool_end missing tool_name")
 		}
-		if evt.Error == nil && len(evt.ResultJSON) == 0 {
-			return fmt.Errorf("stream: tool_end %s missing result (success without result)", evt.ToolName)
-		}
 		var artifacts []ArtifactPayload
 		if len(evt.Artifacts) > 0 {
 			artifacts = make([]ArtifactPayload, 0, len(evt.Artifacts))
@@ -290,8 +288,16 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 				}
 				ap := ArtifactPayload{
 					Kind:       a.Kind,
-					Data:       a.Data,
+					Data:       nil,
 					SourceTool: string(a.SourceTool),
+				}
+				switch v := a.Data.(type) {
+				case json.RawMessage:
+					ap.Data = append([]byte(nil), v...)
+				case []byte:
+					ap.Data = append([]byte(nil), v...)
+				default:
+					return fmt.Errorf("stream: tool_end %s has non-canonical artifact %q data type %T", evt.ToolName, a.Kind, a.Data)
 				}
 				if a.RunLink != nil {
 					ap.RunLink = &RunLinkPayload{
@@ -335,18 +341,18 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Base: Base{t: EventToolUpdate, r: evt.RunID(), s: evt.SessionID(), p: up},
 			Data: up,
 		})
-	case *hooks.AgentRunStartedEvent:
-		if !s.profile.AgentRuns {
+	case *hooks.ChildRunLinkedEvent:
+		if !s.profile.ChildRuns {
 			return nil
 		}
-		payload := AgentRunStartedPayload{
+		payload := ChildRunLinkedPayload{
 			ToolName:     string(evt.ToolName),
 			ToolCallID:   evt.ToolCallID,
 			ChildRunID:   evt.ChildRunID,
 			ChildAgentID: evt.ChildAgentID,
 		}
-		return s.sink.Send(ctx, AgentRunStarted{
-			Base: Base{t: EventAgentRunStarted, r: evt.RunID(), s: evt.SessionID(), p: payload},
+		return s.sink.Send(ctx, ChildRunLinked{
+			Base: Base{t: EventChildRunLinked, r: evt.RunID(), s: evt.SessionID(), p: payload},
 			Data: payload,
 		})
 	case *hooks.RunCompletedEvent:
@@ -384,9 +390,15 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		if evt.Status == completionStatusFailed {
 			payload.Error = evt.PublicError
 		}
-		return s.sink.Send(ctx, Workflow{
+		if err := s.sink.Send(ctx, Workflow{
 			Base: Base{t: EventWorkflow, r: evt.RunID(), s: evt.SessionID(), p: payload},
 			Data: payload,
+		}); err != nil {
+			return err
+		}
+		return s.sink.Send(ctx, RunStreamEnd{
+			Base: Base{t: EventRunStreamEnd, r: evt.RunID(), s: evt.SessionID(), p: RunStreamEndPayload{}},
+			Data: RunStreamEndPayload{},
 		})
 	case *hooks.RunPhaseChangedEvent:
 		if !s.profile.Workflow {

@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -223,9 +224,9 @@ func (r *Runtime) appendUserToolResults(
 	vals []*planner.ToolResult,
 	led *transcript.Ledger,
 	artifactsModeByCallID map[string]tools.ArtifactsMode,
-) {
+) error {
 	if len(vals) == 0 {
-		return
+		return nil
 	}
 	resultsByID := make(map[string]*planner.ToolResult, len(vals))
 	for _, tr := range vals {
@@ -243,7 +244,10 @@ func (r *Runtime) appendUserToolResults(
 		if !ok || tr == nil || tr.ToolCallID == "" {
 			continue
 		}
-		content := toolResultContent(tr)
+		content, err := r.toolResultContent(tr)
+		if err != nil {
+			return err
+		}
 		parts = append(parts, model.ToolResultPart{
 			ToolUseID: tr.ToolCallID,
 			Content:   content,
@@ -273,7 +277,7 @@ func (r *Runtime) appendUserToolResults(
 		}
 	}
 	if len(parts) == 0 {
-		return
+		return nil
 	}
 
 	base.Messages = append(base.Messages, &model.Message{
@@ -306,24 +310,44 @@ func (r *Runtime) appendUserToolResults(
 			Parts: []model.Part{model.TextPart{Text: reminderText.String()}},
 		})
 	}
+	return nil
 }
 
-func toolResultContent(tr *planner.ToolResult) any {
+func (r *Runtime) toolResultContent(tr *planner.ToolResult) (any, error) {
 	if tr == nil {
-		return nil
+		return nil, nil
 	}
 	if tr.Error == nil {
-		return tr.Result
+		if tr.Result == nil {
+			return nil, nil
+		}
+		spec, ok := r.toolSpec(tr.Name)
+		if !ok || spec.Result.Codec.ToJSON == nil {
+			return nil, fmt.Errorf("runtime: missing result codec for %s", tr.Name)
+		}
+		raw, err := spec.Result.Codec.ToJSON(tr.Result)
+		if err != nil {
+			return nil, fmt.Errorf("runtime: encode tool_result for %s: %w", tr.Name, err)
+		}
+		return json.RawMessage(raw), nil
 	}
 	if tr.Result == nil {
 		return map[string]any{
 			"error": tr.Error,
-		}
+		}, nil
+	}
+	spec, ok := r.toolSpec(tr.Name)
+	if !ok || spec.Result.Codec.ToJSON == nil {
+		return nil, fmt.Errorf("runtime: missing result codec for %s", tr.Name)
+	}
+	raw, err := spec.Result.Codec.ToJSON(tr.Result)
+	if err != nil {
+		return nil, fmt.Errorf("runtime: encode tool_result for %s: %w", tr.Name, err)
 	}
 	return map[string]any{
-		"result": tr.Result,
+		"result": json.RawMessage(raw),
 		"error":  tr.Error,
-	}
+	}, nil
 }
 
 // deriveBounds extracts Bounds metadata from a decoded tool result when the
@@ -387,6 +411,7 @@ func (r *Runtime) hardProtectionIfNeeded(
 // buildNextResumeRequest converts the base plan input into provider-ready
 // messages and builds the next PlanActivityInput.
 func (r *Runtime) buildNextResumeRequest(
+	ctx context.Context,
 	agentID agent.Ident,
 	base *planner.PlanInput,
 	lastToolResults []*planner.ToolResult,
@@ -399,11 +424,15 @@ func (r *Runtime) buildNextResumeRequest(
 	if err := transcript.ValidateBedrock(plannerMsgs, false); err != nil {
 		return PlanActivityInput{}, fmt.Errorf("invalid Bedrock transcript for run %s: %w", base.RunContext.RunID, err)
 	}
+	toolResults, err := r.encodeToolEvents(ctx, lastToolResults)
+	if err != nil {
+		return PlanActivityInput{}, err
+	}
 	return PlanActivityInput{
 		AgentID:     agentID,
 		RunID:       base.RunContext.RunID,
 		Messages:    plannerMsgs,
 		RunContext:  resumeCtx,
-		ToolResults: lastToolResults,
+		ToolResults: toolResults,
 	}, nil
 }

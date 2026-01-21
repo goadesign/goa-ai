@@ -617,9 +617,16 @@ err := rt.ProvideClarification(ctx, interrupt.ClarificationAnswer{
 })
 
 // Provide external tool results
-err := rt.ProvideToolResults(ctx, interrupt.ToolResultsSet{
-    RunID:   runID,
-    Results: []interrupt.ToolResult{{...}},
+err := rt.ProvideToolResults(ctx, &api.ToolResultsSet{
+    RunID: runID,
+    ID:    "external-1",
+    Results: []*api.ToolEvent{
+        {
+            ToolCallID: "tc-ext-1",
+            Name:       tools.Ident("external.fetch"),
+            Result:     json.RawMessage(`{"status":"ok"}`),
+        },
+    },
 })
 
 ```
@@ -910,6 +917,20 @@ The engine invokes the workflow handler, which calls `rt.ExecuteWorkflow`.
 `ExecuteToolActivity` decodes payloads, calls the toolset's `Execute`, re‑encodes results.
 Validation errors become structured `planner.RetryHint` for planners.
 
+#### Validation Errors → RetryHint
+
+Goa‑AI produces retry hints from validation failures in two places:
+
+- **Codec validation (decode‑time)**: generated tool codecs validate JSON payloads before
+  execution. When validation fails, the runtime extracts structured `FieldIssue` entries
+  (missing fields, invalid enum values, length/range constraints) and converts them into
+  `planner.RetryHint` so planners/UIs can ask for the missing/corrected fields.
+
+- **Provider/service validation (execution‑time)**: tool providers may call a bound service
+  method that returns a Goa validation error. Providers should include structured field
+  issues in the tool result message (instead of only returning a string error) so registry
+  consumers can build the same `RetryHint` deterministically.
+
 ### 6. Completion
 
 `runLoop` returns `*runtime.RunOutput` containing:
@@ -939,7 +960,7 @@ as child workflows, enabling linked streams and run links.
 
 1. Consumer registers with `rt.RegisterToolset(reg)`
 2. When the runtime sees a toolset call with `AgentTool` config:
-   - Publishes `AgentRunStartedEvent` linking parent to child
+   - Publishes `ChildRunLinkedEvent` linking parent to child
    - Starts child workflow via `ExecuteAgentChildWithRoute`
    - Child runs full plan/execute/resume loop
 3. Results flow back through `ToolResult` with `RunLink` for correlation
@@ -1002,7 +1023,7 @@ type MySink struct{}
 func (s *MySink) Send(ctx context.Context, event stream.Event) error {
     // Handle: assistant_reply, planner_thought, tool_start, 
     //         tool_update, tool_end, await_clarification, 
-    //         await_external_tools, usage, workflow, agent_run_started
+    //         await_external_tools, usage, workflow, child_run_linked
     return nil
 }
 

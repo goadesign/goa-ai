@@ -116,6 +116,7 @@ func agentSpecsJSONFile(agent *AgentData) *codegen.File {
 		Title        string              `json:"title,omitempty"`
 		Description  string              `json:"description,omitempty"`
 		Tags         []string            `json:"tags,omitempty"`
+		Meta         map[string][]string `json:"meta,omitempty"`
 		Confirmation *confirmationSchema `json:"confirmation,omitempty"`
 		Payload      *typeSchema         `json:"payload,omitempty"`
 		Result       *typeSchema         `json:"result,omitempty"`
@@ -144,6 +145,15 @@ func agentSpecsJSONFile(agent *AgentData) *codegen.File {
 			tags := make([]string, len(t.Tags))
 			copy(tags, t.Tags)
 			entry.Tags = tags
+		}
+		if len(t.Meta) > 0 {
+			meta := make(map[string][]string, len(t.Meta))
+			for k, vals := range t.Meta {
+				cpy := make([]string, len(vals))
+				copy(cpy, vals)
+				meta[k] = cpy
+			}
+			entry.Meta = meta
 		}
 
 		if td := t.Payload; td != nil && td.TypeName != "" {

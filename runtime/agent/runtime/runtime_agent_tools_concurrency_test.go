@@ -13,6 +13,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
+	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 
@@ -35,6 +36,7 @@ func TestExecuteToolCalls_AgentToolsFanOut(t *testing.T) {
 		Bus:           recorder,
 		models:        make(map[string]model.Client),
 		Policy:        &stubPolicyEngine{decision: policy.Decision{Caps: policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 10}}},
+		SessionStore:  sessioninmem.New(),
 	}
 
 	cfg := AgentToolConfig{
