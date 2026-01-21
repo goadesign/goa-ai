@@ -274,8 +274,10 @@ func toolsetProviderFile(genpkg string, ts *ToolsetData) *codegen.File {
 	}
 	imports := []*codegen.ImportSpec{
 		codegen.SimpleImport("context"),
+		codegen.SimpleImport("errors"),
 		codegen.SimpleImport("fmt"),
 		{Path: "goa.design/goa-ai/runtime/toolregistry"},
+		{Name: "goa", Path: "goa.design/goa/v3/pkg"},
 		{Name: ts.SourceService.PkgName, Path: serviceImportPath},
 	}
 	sections := []*codegen.SectionTemplate{
