@@ -20,6 +20,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
+	"goa.design/goa-ai/runtime/agent/session"
+	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -47,10 +49,11 @@ func (p *nestedPlannerStub) PlanResume(ctx context.Context, in *planner.PlanResu
 func TestStartRunSetsWorkflowName(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
-		Engine:  eng,
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
+		Engine:       eng,
+		logger:       telemetry.NoopLogger{},
+		metrics:      telemetry.NoopMetrics{},
+		tracer:       telemetry.NoopTracer{},
+		SessionStore: sessioninmem.New(),
 		agents: map[agent.Ident]AgentRegistration{
 			"service.agent": {
 				ID: "service.agent",
@@ -62,7 +65,11 @@ func TestStartRunSetsWorkflowName(t *testing.T) {
 		},
 	}
 	client := rt.MustClient(agent.Ident("service.agent"))
-	_, err := client.Start(context.Background(), "sess-1", nil)
+	sess, err := rt.CreateSession(context.Background(), "sess-1")
+	require.NoError(t, err)
+	require.Equal(t, "sess-1", sess.ID)
+	require.Equal(t, session.StatusActive, sess.Status)
+	_, err = client.Start(context.Background(), "sess-1", nil)
 	require.NoError(t, err)
 	require.Equal(t, "service.workflow", eng.last.Workflow)
 }
@@ -70,10 +77,11 @@ func TestStartRunSetsWorkflowName(t *testing.T) {
 func TestStartRunRequiresSessionID(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
-		Engine:  eng,
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
+		Engine:       eng,
+		logger:       telemetry.NoopLogger{},
+		metrics:      telemetry.NoopMetrics{},
+		tracer:       telemetry.NoopTracer{},
+		SessionStore: sessioninmem.New(),
 		agents: map[agent.Ident]AgentRegistration{
 			"service.agent": {ID: "service.agent", Workflow: engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "q"}},
 		},
@@ -88,6 +96,8 @@ func TestStartRunRequiresSessionID(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrMissingSessionID)
 	// Valid session ID
+	_, err = rt.CreateSession(context.Background(), "s1")
+	require.NoError(t, err)
 	_, err = client.Start(context.Background(), "s1", nil)
 	require.NoError(t, err)
 }
@@ -95,10 +105,12 @@ func TestStartRunRequiresSessionID(t *testing.T) {
 func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
-		Engine:  eng,
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
+		Engine:       eng,
+		logger:       telemetry.NoopLogger{},
+		metrics:      telemetry.NoopMetrics{},
+		tracer:       telemetry.NoopTracer{},
+		SessionStore: sessioninmem.New(),
+		runHandles:   make(map[string]engine.WorkflowHandle),
 		agents: map[agent.Ident]AgentRegistration{
 			"service.agent": {ID: "service.agent", Workflow: engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "q"}},
 		},
@@ -106,7 +118,7 @@ func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 
 	meta := map[string]any{"source": "test"}
 	memo := map[string]any{"wf": "name"}
-	sa := map[string]any{"SessionID": "s1"}
+	sa := map[string]any{"SessionID": "sess-1"}
 
 	in := RunInput{
 		AgentID:   "service.agent",
@@ -122,7 +134,9 @@ func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 		o(&in)
 	}
 	client := rt.MustClient(agent.Ident("service.agent"))
-	_, err := client.Start(
+	_, err := rt.CreateSession(context.Background(), in.SessionID)
+	require.NoError(t, err)
+	_, err = client.Start(
 		context.Background(),
 		in.SessionID,
 		nil,
@@ -154,7 +168,7 @@ func TestRuntimePauseRunSignalsWorkflow(t *testing.T) {
 	handle := &stubWorkflowHandle{}
 	rt.storeWorkflowHandle("run-1", handle)
 
-	req := interrupt.PauseRequest{RunID: "run-1", Reason: "human_review"}
+	req := &api.PauseRequest{RunID: "run-1", Reason: "human_review"}
 	require.NoError(t, rt.PauseRun(context.Background(), req))
 	require.Equal(t, interrupt.SignalPause, handle.lastSignal)
 }
@@ -166,7 +180,7 @@ func TestRuntimeResumeRunSignalsWorkflow(t *testing.T) {
 	handle := &stubWorkflowHandle{}
 	rt.storeWorkflowHandle("run-1", handle)
 
-	req := interrupt.ResumeRequest{RunID: "run-1", Notes: "resume"}
+	req := &api.ResumeRequest{RunID: "run-1", Notes: "resume"}
 	require.NoError(t, rt.ResumeRun(context.Background(), req))
 	require.Equal(t, interrupt.SignalResume, handle.lastSignal)
 }
@@ -207,7 +221,9 @@ func TestConsecutiveFailureBreaker(t *testing.T) {
 func TestStartRunForwardsWorkflowOptions(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
-		Engine: eng,
+		Engine:       eng,
+		SessionStore: sessioninmem.New(),
+		runHandles:   make(map[string]engine.WorkflowHandle),
 		agents: map[agent.Ident]AgentRegistration{
 			"service.agent": {ID: "service.agent", Workflow: engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "defaultq"}},
 		},
@@ -226,12 +242,17 @@ func TestStartRunForwardsWorkflowOptions(t *testing.T) {
 		},
 	}
 	client := rt.MustClient(agent.Ident("service.agent"))
-	_, err := client.Start(context.Background(), in.SessionID, nil, WithRunID(in.RunID), WithWorkflowOptions(in.WorkflowOptions))
+	_, err := rt.CreateSession(context.Background(), in.SessionID)
+	require.NoError(t, err)
+	_, err = client.Start(context.Background(), in.SessionID, nil, WithRunID(in.RunID), WithWorkflowOptions(in.WorkflowOptions))
 	require.NoError(t, err)
 	require.Equal(t, "customq", eng.last.TaskQueue)
 	require.Equal(t, in.RunID, eng.last.ID)
 	require.Equal(t, in.WorkflowOptions.Memo, eng.last.Memo)
-	require.Equal(t, in.WorkflowOptions.SearchAttributes, eng.last.SearchAttributes)
+	require.Equal(t, map[string]any{
+		"SessionID": in.SessionID,
+		"sa":        "x",
+	}, eng.last.SearchAttributes)
 	require.Equal(t, 5, eng.last.RetryPolicy.MaxAttempts)
 	require.Equal(t, 5*time.Second, eng.last.RetryPolicy.InitialInterval)
 	require.InEpsilon(t, 1.5, eng.last.RetryPolicy.BackoffCoefficient, 1e-9)
@@ -241,12 +262,14 @@ func TestRegisterAgentAfterFirstRunIsRejected(t *testing.T) {
 	t.Parallel()
 	eng := &stubEngine{}
 	rt := &Runtime{
-		Engine:   eng,
-		logger:   telemetry.NoopLogger{},
-		metrics:  telemetry.NoopMetrics{},
-		tracer:   telemetry.NoopTracer{},
-		agents:   make(map[agent.Ident]AgentRegistration),
-		toolsets: make(map[string]ToolsetRegistration),
+		Engine:       eng,
+		logger:       telemetry.NoopLogger{},
+		metrics:      telemetry.NoopMetrics{},
+		tracer:       telemetry.NoopTracer{},
+		SessionStore: sessioninmem.New(),
+		runHandles:   make(map[string]engine.WorkflowHandle),
+		agents:       make(map[agent.Ident]AgentRegistration),
+		toolsets:     make(map[string]ToolsetRegistration),
 	}
 	// Register initial agent so we can start a run
 	err := rt.RegisterAgent(context.Background(), AgentRegistration{
@@ -266,6 +289,8 @@ func TestRegisterAgentAfterFirstRunIsRejected(t *testing.T) {
 	require.NoError(t, err)
 
 	// First run closes registration
+	_, err = rt.CreateSession(context.Background(), "sess-1")
+	require.NoError(t, err)
 	_, err = rt.MustClient(agent.Ident("service.agent")).Start(context.Background(), "sess-1", nil)
 	require.NoError(t, err)
 
@@ -339,7 +364,7 @@ func TestConvertRunOutputToToolResult(t *testing.T) {
 	t.Run("aggregates_telemetry_without_error", func(t *testing.T) {
 		out := RunOutput{
 			Final: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "final"}}},
-			ToolEvents: []*planner.ToolResult{
+			ToolEvents: []*api.ToolEvent{
 				{Telemetry: &telemetry.ToolTelemetry{TokensUsed: 10, DurationMs: 100, Model: "m1"}},
 				{Telemetry: &telemetry.ToolTelemetry{TokensUsed: 5, DurationMs: 50, Model: "m1"}},
 			},
@@ -355,7 +380,7 @@ func TestConvertRunOutputToToolResult(t *testing.T) {
 	t.Run("propagates_error_when_all_nested_fail", func(t *testing.T) {
 		out := RunOutput{
 			Final: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "final"}}},
-			ToolEvents: []*planner.ToolResult{
+			ToolEvents: []*api.ToolEvent{
 				{Error: planner.NewToolError("e1")},
 				{Error: planner.NewToolError("e2")},
 			},
@@ -373,7 +398,11 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 		metrics:       telemetry.NoopMetrics{},
 		tracer:        telemetry.NoopTracer{},
 		RunEventStore: runloginmem.New(),
+		SessionStore:  sessioninmem.New(),
+		runHandles:    make(map[string]engine.WorkflowHandle),
 	}
+	_, err := rt.CreateSession(context.Background(), "session-1")
+	require.NoError(t, err)
 
 	// Register nested tools toolset used by nested agent
 	rt.toolsets = map[string]ToolsetRegistration{
@@ -490,11 +519,11 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 	rt.mu.Unlock()
 
 	// Parent run requests a single agent-tool invocation
-	parentInput := &RunInput{AgentID: "parent.agent", RunID: "run-parent", TurnID: "turn-1"}
-	base := &planner.PlanInput{RunContext: run.Context{RunID: parentInput.RunID, TurnID: parentInput.TurnID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: parentInput.AgentID, runID: parentInput.RunID})}
+	parentInput := &RunInput{AgentID: "parent.agent", RunID: "run-parent", SessionID: "session-1", TurnID: "turn-1"}
+	base := &planner.PlanInput{RunContext: run.Context{RunID: parentInput.RunID, SessionID: parentInput.SessionID, TurnID: parentInput.TurnID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: parentInput.AgentID, runID: parentInput.RunID})}
 	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("invoke")}}}
 
-	_, err := rt.runLoop(wfCtx, AgentRegistration{
+	_, err = rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  parentInput.AgentID,
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
@@ -642,6 +671,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 		tracer:        telemetry.NoopTracer{},
 		RunEventStore: runloginmem.New(),
 		models:        make(map[string]model.Client),
+		SessionStore:  sessioninmem.New(),
 	}
 
 	var policyEvent *hooks.PolicyDecisionEvent
@@ -667,6 +697,8 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 			"tenant": "acme",
 		},
 	}
+	_, sessionErr := rt.CreateSession(context.Background(), input.SessionID)
+	require.NoError(t, sessionErr)
 
 	base := &planner.PlanInput{
 		Messages: []*model.Message{

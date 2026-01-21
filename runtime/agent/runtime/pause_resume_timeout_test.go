@@ -15,88 +15,90 @@ import (
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
+	"goa.design/goa-ai/runtime/agent/session"
+	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type timeoutConfirmationReceiver struct{}
 
-func (timeoutConfirmationReceiver) Receive(ctx context.Context) (api.ConfirmationDecision, error) {
+func (timeoutConfirmationReceiver) Receive(ctx context.Context) (*api.ConfirmationDecision, error) {
 	<-ctx.Done()
-	return api.ConfirmationDecision{}, ctx.Err()
+	return nil, ctx.Err()
 }
 
-func (timeoutConfirmationReceiver) ReceiveWithTimeout(ctx context.Context, timeout time.Duration) (api.ConfirmationDecision, error) {
+func (timeoutConfirmationReceiver) ReceiveWithTimeout(ctx context.Context, timeout time.Duration) (*api.ConfirmationDecision, error) {
 	if err := ctx.Err(); err != nil {
-		return api.ConfirmationDecision{}, err
+		return nil, err
 	}
 	if timeout <= 0 {
-		return api.ConfirmationDecision{}, context.DeadlineExceeded
+		return nil, context.DeadlineExceeded
 	}
-	return api.ConfirmationDecision{}, context.DeadlineExceeded
+	return nil, context.DeadlineExceeded
 }
 
-func (timeoutConfirmationReceiver) ReceiveAsync() (api.ConfirmationDecision, bool) {
-	return api.ConfirmationDecision{}, false
+func (timeoutConfirmationReceiver) ReceiveAsync() (*api.ConfirmationDecision, bool) {
+	return nil, false
 }
 
 type timeoutClarificationReceiver struct{}
 
-func (timeoutClarificationReceiver) Receive(ctx context.Context) (api.ClarificationAnswer, error) {
+func (timeoutClarificationReceiver) Receive(ctx context.Context) (*api.ClarificationAnswer, error) {
 	<-ctx.Done()
-	return api.ClarificationAnswer{}, ctx.Err()
+	return nil, ctx.Err()
 }
 
-func (timeoutClarificationReceiver) ReceiveWithTimeout(ctx context.Context, timeout time.Duration) (api.ClarificationAnswer, error) {
+func (timeoutClarificationReceiver) ReceiveWithTimeout(ctx context.Context, timeout time.Duration) (*api.ClarificationAnswer, error) {
 	if err := ctx.Err(); err != nil {
-		return api.ClarificationAnswer{}, err
+		return nil, err
 	}
 	if timeout <= 0 {
-		return api.ClarificationAnswer{}, context.DeadlineExceeded
+		return nil, context.DeadlineExceeded
 	}
-	return api.ClarificationAnswer{}, context.DeadlineExceeded
+	return nil, context.DeadlineExceeded
 }
 
-func (timeoutClarificationReceiver) ReceiveAsync() (api.ClarificationAnswer, bool) {
-	return api.ClarificationAnswer{}, false
+func (timeoutClarificationReceiver) ReceiveAsync() (*api.ClarificationAnswer, bool) {
+	return nil, false
 }
 
 type timeoutResumeReceiver struct{}
 
-func (timeoutResumeReceiver) Receive(ctx context.Context) (api.ResumeRequest, error) {
+func (timeoutResumeReceiver) Receive(ctx context.Context) (*api.ResumeRequest, error) {
 	<-ctx.Done()
-	return api.ResumeRequest{}, ctx.Err()
+	return nil, ctx.Err()
 }
 
-func (timeoutResumeReceiver) ReceiveWithTimeout(ctx context.Context, timeout time.Duration) (api.ResumeRequest, error) {
+func (timeoutResumeReceiver) ReceiveWithTimeout(ctx context.Context, timeout time.Duration) (*api.ResumeRequest, error) {
 	if err := ctx.Err(); err != nil {
-		return api.ResumeRequest{}, err
+		return nil, err
 	}
 	if timeout <= 0 {
-		return api.ResumeRequest{}, context.DeadlineExceeded
+		return nil, context.DeadlineExceeded
 	}
-	return api.ResumeRequest{}, context.DeadlineExceeded
+	return nil, context.DeadlineExceeded
 }
 
-func (timeoutResumeReceiver) ReceiveAsync() (api.ResumeRequest, bool) {
-	return api.ResumeRequest{}, false
+func (timeoutResumeReceiver) ReceiveAsync() (*api.ResumeRequest, bool) {
+	return nil, false
 }
 
 type confirmationTimeoutWorkflowContext struct{ *testWorkflowContext }
 
-func (w *confirmationTimeoutWorkflowContext) ConfirmationDecisions() engine.Receiver[api.ConfirmationDecision] {
+func (w *confirmationTimeoutWorkflowContext) ConfirmationDecisions() engine.Receiver[*api.ConfirmationDecision] {
 	return timeoutConfirmationReceiver{}
 }
 
 type clarificationTimeoutWorkflowContext struct{ *testWorkflowContext }
 
-func (w *clarificationTimeoutWorkflowContext) ClarificationAnswers() engine.Receiver[api.ClarificationAnswer] {
+func (w *clarificationTimeoutWorkflowContext) ClarificationAnswers() engine.Receiver[*api.ClarificationAnswer] {
 	return timeoutClarificationReceiver{}
 }
 
 type resumeTimeoutWorkflowContext struct{ *testWorkflowContext }
 
-func (w *resumeTimeoutWorkflowContext) ResumeRequests() engine.Receiver[api.ResumeRequest] {
+func (w *resumeTimeoutWorkflowContext) ResumeRequests() engine.Receiver[*api.ResumeRequest] {
 	return timeoutResumeReceiver{}
 }
 
@@ -113,11 +115,27 @@ func pauseResumeSequence(evts []hooks.Event) []string {
 	return seq
 }
 
+func seedRunMeta(t *testing.T, rt *Runtime, input *RunInput) {
+	t.Helper()
+	now := time.Now().UTC()
+	_, err := rt.SessionStore.CreateSession(context.Background(), input.SessionID, now)
+	require.NoError(t, err)
+	require.NoError(t, rt.SessionStore.UpsertRun(context.Background(), session.RunMeta{
+		AgentID:   string(input.AgentID),
+		RunID:     input.RunID,
+		SessionID: input.SessionID,
+		Status:    session.RunStatusRunning,
+		StartedAt: now,
+		UpdatedAt: now,
+	}))
+}
+
 func TestRunLoopConfirmationTimeoutBalancesPauseResume(t *testing.T) {
 	recorder := &recordingHooks{}
 	rt := &Runtime{
 		Bus:           recorder,
 		RunEventStore: runloginmem.New(),
+		SessionStore:  sessioninmem.New(),
 		logger:        telemetry.NoopLogger{},
 		metrics:       telemetry.NoopMetrics{},
 		tracer:        telemetry.NoopTracer{},
@@ -148,6 +166,7 @@ func TestRunLoopConfirmationTimeoutBalancesPauseResume(t *testing.T) {
 	wfCtx := &confirmationTimeoutWorkflowContext{testWorkflowContext: baseCtx}
 
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1", SessionID: "sess-1"}
+	seedRunMeta(t, rt, input)
 	base := &planner.PlanInput{
 		RunContext: run.Context{
 			RunID:     input.RunID,
@@ -185,8 +204,8 @@ func TestRunLoopConfirmationTimeoutBalancesPauseResume(t *testing.T) {
 	require.NotNil(t, out)
 
 	require.Equal(t, []string{
-		"pause:await_confirmation",
-		"resume:confirmation_timeout",
+		"pause:await_queue",
+		"resume:await_timeout",
 		"pause:finalize",
 		"resume:finalize",
 	}, pauseResumeSequence(recorder.events))
@@ -197,6 +216,7 @@ func TestMissingFieldsClarificationTimeoutBalancesPauseResume(t *testing.T) {
 	rt := &Runtime{
 		Bus:           recorder,
 		RunEventStore: runloginmem.New(),
+		SessionStore:  sessioninmem.New(),
 		logger:        telemetry.NoopLogger{},
 		metrics:       telemetry.NoopMetrics{},
 		tracer:        telemetry.NoopTracer{},
@@ -217,6 +237,7 @@ func TestMissingFieldsClarificationTimeoutBalancesPauseResume(t *testing.T) {
 	ctrl := interrupt.NewController(wfCtx)
 
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1", SessionID: "sess-1"}
+	seedRunMeta(t, rt, input)
 	base := &planner.PlanInput{
 		RunContext: run.Context{
 			RunID:     input.RunID,
@@ -272,6 +293,7 @@ func TestHandleInterruptsTimeoutBalancesPauseResume(t *testing.T) {
 	rt := &Runtime{
 		Bus:           recorder,
 		RunEventStore: runloginmem.New(),
+		SessionStore:  sessioninmem.New(),
 		logger:        telemetry.NoopLogger{},
 		metrics:       telemetry.NoopMetrics{},
 		tracer:        telemetry.NoopTracer{},
@@ -282,12 +304,13 @@ func TestHandleInterruptsTimeoutBalancesPauseResume(t *testing.T) {
 		hookRuntime: rt,
 	}
 	baseCtx.ensureSignals()
-	baseCtx.pauseCh <- api.PauseRequest{RunID: "run-1", Reason: "human", RequestedBy: "user"}
+	baseCtx.pauseCh <- &api.PauseRequest{RunID: "run-1", Reason: "human", RequestedBy: "user"}
 
 	wfCtx := &resumeTimeoutWorkflowContext{testWorkflowContext: baseCtx}
 	ctrl := interrupt.NewController(wfCtx)
 
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1", SessionID: "sess-1"}
+	seedRunMeta(t, rt, input)
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID, SessionID: input.SessionID, TurnID: "turn-1"}}
 	nextAttempt := 2
 	deadline := wfCtx.Now().Add(1 * time.Hour)

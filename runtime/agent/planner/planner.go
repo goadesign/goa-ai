@@ -20,7 +20,7 @@
 //	    // Analyze input.Messages and decide:
 //	    // - Return tool calls: &PlanResult{ToolCalls: [...]}
 //	    // - Return final answer: &PlanResult{FinalResponse: &FinalResponse{...}}
-//	    // - Request clarification: &PlanResult{Await: &Await{Clarification: ...}}
+//	    // - Request external input: &PlanResult{Await: NewAwait(AwaitClarificationItem(...))}
 //	}
 //
 //	func (p *MyPlanner) PlanResume(ctx context.Context, input *PlanResumeInput) (*PlanResult, error) {
@@ -281,16 +281,57 @@ type PlannerAnnotation struct {
 	Labels map[string]string
 }
 
-// Await describes a pause point awaiting user/system input.
+// Await describes one or more external-input prompts that must be satisfied
+// before the runtime resumes planning.
+//
+// Contract:
+//   - Await is a single barrier per planner result: the runtime pauses once for
+//     the full await set.
+//   - Await.Items preserves order. Callers may present items as a wizard; the
+//     runtime resumes planning only after all items are satisfied.
+//   - Items may mix kinds (clarification, questions, external tools).
 type Await struct {
-	// Clarification requests missing information from the user.
+	Items []AwaitItem
+}
+
+// AwaitItemKind identifies the kind of external input required.
+type AwaitItemKind string
+
+const (
+	AwaitItemKindClarification AwaitItemKind = "clarification"
+	AwaitItemKindQuestions     AwaitItemKind = "questions"
+	AwaitItemKindExternalTools AwaitItemKind = "external_tools"
+)
+
+// AwaitItem describes one external-input prompt.
+//
+// Exactly one payload field must be set and must match Kind.
+type AwaitItem struct {
+	Kind AwaitItemKind
+
 	Clarification *AwaitClarification
-
-	// Questions requests structured multiple-choice answers from the user.
-	Questions *AwaitQuestions
-
-	// ExternalTools requests out-of-band tool results to be provided by the caller.
+	Questions     *AwaitQuestions
 	ExternalTools *AwaitExternalTools
+}
+
+// NewAwait constructs an Await barrier with items in the given order.
+func NewAwait(items ...AwaitItem) *Await {
+	return &Await{Items: items}
+}
+
+// AwaitClarificationItem constructs a clarification await item.
+func AwaitClarificationItem(c *AwaitClarification) AwaitItem {
+	return AwaitItem{Kind: AwaitItemKindClarification, Clarification: c}
+}
+
+// AwaitQuestionsItem constructs a questions await item.
+func AwaitQuestionsItem(q *AwaitQuestions) AwaitItem {
+	return AwaitItem{Kind: AwaitItemKindQuestions, Questions: q}
+}
+
+// AwaitExternalToolsItem constructs an external-tools await item.
+func AwaitExternalToolsItem(e *AwaitExternalTools) AwaitItem {
+	return AwaitItem{Kind: AwaitItemKindExternalTools, ExternalTools: e}
 }
 
 // AwaitClarification requests missing information from the user.

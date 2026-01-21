@@ -4,6 +4,10 @@ package toolregistry
 
 import (
 	"encoding/json"
+	"errors"
+	"strings"
+
+	goa "goa.design/goa/v3/pkg"
 
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -65,6 +69,9 @@ type (
 	ToolError struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
+		// Issues optionally carries structured field-level validation issues.
+		// When present, consumers can build a RetryHint without parsing Message.
+		Issues []*tools.FieldIssue `json:"issues,omitempty"`
 	}
 )
 
@@ -111,5 +118,112 @@ func NewToolResultErrorMessage(toolUseID, code, message string) ToolResultMessag
 			Code:    code,
 			Message: message,
 		},
+	}
+}
+
+// NewToolResultErrorMessageWithIssues constructs an error tool result message that
+// includes structured validation issues for building retry hints.
+func NewToolResultErrorMessageWithIssues(toolUseID, code, message string, issues []*tools.FieldIssue) ToolResultMessage {
+	out := NewToolResultErrorMessage(toolUseID, code, message)
+	if out.Error == nil {
+		return out
+	}
+	if len(issues) == 0 {
+		return out
+	}
+	out.Error.Issues = cloneFieldIssues(issues)
+	return out
+}
+
+// ValidationIssues extracts structured field-level validation issues from err.
+//
+// It supports two common sources:
+//   - Generated tool-codec validation errors that expose Issues() []*tools.FieldIssue
+//   - Goa ServiceErrors (possibly merged) that use Goa validation error names
+//     (missing_field, invalid_length, etc.) and populate ServiceError.Field.
+//
+// ValidationIssues returns nil when err does not represent a field-level validation failure.
+func ValidationIssues(err error) []*tools.FieldIssue {
+	if err == nil {
+		return nil
+	}
+
+	var ip interface {
+		Issues() []*tools.FieldIssue
+	}
+	if errors.As(err, &ip) {
+		return cloneFieldIssues(ip.Issues())
+	}
+
+	var se *goa.ServiceError
+	if !errors.As(err, &se) {
+		return nil
+	}
+
+	hist := se.History()
+	if len(hist) == 0 {
+		return nil
+	}
+
+	issues := make([]*tools.FieldIssue, 0, len(hist))
+	for _, h := range hist {
+		if h == nil {
+			continue
+		}
+		if !isGoaValidationConstraint(h.Name) {
+			continue
+		}
+		if h.Field == nil || *h.Field == "" {
+			continue
+		}
+		field := *h.Field
+		field = strings.TrimPrefix(field, "body.")
+		if field == "" {
+			continue
+		}
+		issues = append(issues, &tools.FieldIssue{
+			Field:      field,
+			Constraint: h.Name,
+		})
+	}
+	if len(issues) == 0 {
+		return nil
+	}
+	return issues
+}
+
+func cloneFieldIssues(in []*tools.FieldIssue) []*tools.FieldIssue {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]*tools.FieldIssue, 0, len(in))
+	for _, is := range in {
+		if is == nil {
+			continue
+		}
+		cp := *is
+		if len(cp.Allowed) > 0 {
+			cp.Allowed = append([]string(nil), cp.Allowed...)
+		}
+		out = append(out, &cp)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func isGoaValidationConstraint(name string) bool {
+	switch name {
+	case goa.InvalidFieldType,
+		goa.MissingField,
+		goa.InvalidEnumValue,
+		goa.InvalidFormat,
+		goa.InvalidPattern,
+		goa.InvalidRange,
+		goa.InvalidLength:
+		return true
+	default:
+		return false
 	}
 }

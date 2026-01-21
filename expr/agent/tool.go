@@ -27,6 +27,10 @@ type (
 		// Tags are labels for categorizing and filtering this tool.
 		Tags []string
 
+		// Meta carries arbitrary design-time metadata attached to the tool via DSL.
+		// Keys map to one or more values, matching Goa's Meta conventions.
+		Meta goaexpr.MetaExpr
+
 		// Args defines the input parameter schema for this tool.
 		Args *goaexpr.AttributeExpr
 
@@ -74,6 +78,11 @@ type (
 		// and services can enforce and surface bounds consistently.
 		BoundedResult bool
 
+		// TerminalRun indicates that once this tool executes, the runtime should
+		// terminate the run immediately without requesting a follow-up planner
+		// PlanResume/finalization turn. It is set via the TerminalRun DSL helper.
+		TerminalRun bool
+
 		// Paging optionally describes cursor-based pagination for this tool.
 		// When set, codegen and runtimes can surface paging-aware guidance and
 		// fill Bounds.NextCursor from the configured result field.
@@ -114,6 +123,25 @@ type (
 		TargetMethod  string
 	}
 )
+
+// AddMeta adds metadata to the tool expression.
+//
+// This method exists so Goa's standard Meta DSL helper can attach metadata to
+// goa-ai agent tool expressions without goa-ai introducing a parallel Meta DSL.
+func (t *ToolExpr) AddMeta(name string, value ...string) {
+	if t.Meta == nil {
+		t.Meta = make(goaexpr.MetaExpr)
+	}
+	t.Meta[name] = append(t.Meta[name], value...)
+}
+
+// DeleteMeta removes the metadata entry identified by name.
+//
+// This method exists so Goa's standard RemoveMeta DSL helper can remove metadata
+// from goa-ai agent tool expressions.
+func (t *ToolExpr) DeleteMeta(name string) {
+	delete(t.Meta, name)
+}
 
 // EvalName implements eval.Expression.
 func (t *ToolExpr) EvalName() string {

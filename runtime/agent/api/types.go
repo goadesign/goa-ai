@@ -161,13 +161,61 @@ type (
 		Final *model.Message
 
 		// ToolEvents captures all tool results emitted before completion in execution order.
-		ToolEvents []*planner.ToolResult
+		//
+		// Contract:
+		// - ToolEvents must be workflow-boundary safe. Do not embed planner.ToolResult here:
+		//   planner.ToolResult contains `any` fields (Result, Artifact.Data) which Temporal will
+		//   rehydrate as map[string]any in parent workflows, breaking sidecar codecs and
+		//   eliminating strong typing at the boundary.
+		ToolEvents []*ToolEvent
 
 		// Notes aggregates planner annotations produced during the final turn.
 		Notes []*planner.PlannerAnnotation
 
 		// Usage aggregates model-reported token usage during the run when available.
 		Usage *model.TokenUsage
+	}
+
+	// ToolEvent is the workflow-boundary safe representation of a tool result emitted by a run.
+	//
+	// Contract:
+	// - Result and Artifacts.Data are canonical JSON bytes, not decoded Go values.
+	// - Runtimes must decode these bytes using the registered tool codec/sidecar codec.
+	// - This is required for agent-as-tool: child workflow outputs cross a workflow boundary,
+	//   and `any` fields would otherwise rehydrate as map[string]any.
+	ToolEvent struct {
+		// Name is the fully-qualified tool identifier that produced this result.
+		Name tools.Ident
+
+		// Result is the canonical JSON result payload encoded using the tool result codec.
+		Result json.RawMessage
+
+		// Artifacts contains sideband UI artifacts produced alongside the tool result.
+		Artifacts []*ToolArtifact
+
+		// Bounds, when non-nil, describes how the result has been bounded relative
+		// to the full underlying data set (for example, list/window/graph caps).
+		Bounds *agent.Bounds
+
+		// Error is the structured tool error when tool execution failed.
+		Error *planner.ToolError
+
+		// RetryHint is optional structured guidance for recovering from tool failures.
+		RetryHint *planner.RetryHint
+
+		// Telemetry contains tool execution metrics (duration, token usage, model).
+		Telemetry *telemetry.ToolTelemetry
+
+		// ToolCallID is the correlation identifier for this tool invocation.
+		ToolCallID string
+
+		// ChildrenCount records how many nested tool results were observed when this
+		// result came from an agent-as-tool execution.
+		ChildrenCount int
+
+		// RunLink links this tool result to a nested agent run when it was produced by
+		// an agent-as-tool. Nil for service-backed tools.
+		RunLink *run.Handle
 	}
 
 	// PlanActivityInput carries the planner input for PlanStart and PlanResume activities.
@@ -185,7 +233,15 @@ type (
 		RunContext run.Context
 
 		// ToolResults are the tool results produced by the previous turn (if any).
-		ToolResults []*planner.ToolResult
+		//
+		// Contract:
+		// - This field crosses the workflow/activity boundary. It must not embed
+		//   planner.ToolResult because planner.ToolResult contains `any` fields that
+		//   engine data converters may rehydrate as map[string]any, breaking tool
+		//   result and sidecar codecs.
+		// - Results must be encoded with the tool's generated result codec and stored
+		//   as canonical JSON bytes.
+		ToolResults []*ToolEvent
 
 		// Finalize requests a final turn with no further tool calls.
 		Finalize *planner.Termination
@@ -246,7 +302,15 @@ type (
 		Payload json.RawMessage
 
 		// Artifacts contains sideband UI artifacts produced alongside the tool result.
-		Artifacts []*planner.Artifact
+		//
+		// Boundary contract:
+		// This field crosses workflow/activity boundaries. It must not contain `any`
+		// payloads because engine data converters will rehydrate interface values as
+		// map/slice types, losing the tool's compiled sidecar schema.
+		//
+		// Providers must encode artifacts using the tool sidecar codec and store the
+		// canonical JSON bytes here.
+		Artifacts []*ToolArtifact
 
 		// Telemetry contains execution timing and provider usage metadata when available.
 		Telemetry *telemetry.ToolTelemetry
@@ -256,6 +320,22 @@ type (
 
 		// RetryHint provides structured retry guidance when execution failed due to invalid payloads.
 		RetryHint *planner.RetryHint
+	}
+
+	// ToolArtifact is a tool-produced artifact payload that crosses workflow/activity boundaries.
+	//
+	// Data is the canonical JSON encoding produced by the tool's sidecar codec.
+	// Consumers may decode it using the sidecar codec for the originating tool.
+	ToolArtifact struct {
+		// Kind identifies the logical artifact shape (e.g., "atlas.topology").
+		Kind string `json:"kind"`
+		// Data contains the artifact payload as canonical JSON bytes.
+		Data json.RawMessage `json:"data"`
+		// SourceTool is the fully-qualified tool identifier that produced this artifact.
+		SourceTool tools.Ident `json:"source_tool"`
+		// RunLink links this artifact to a nested agent run when it was produced by an
+		// agent-as-tool. Nil for service-backed tools.
+		RunLink *run.Handle `json:"run_link,omitempty"`
 	}
 
 	// PauseRequest carries metadata attached to a pause signal.
@@ -340,7 +420,14 @@ type (
 		ID string
 
 		// Results contains the tool results provided by an external system.
-		Results []*planner.ToolResult
+		//
+		// Contract:
+		// - This field crosses a workflow signal boundary. It must be wire-safe and must
+		//   not embed planner.ToolResult (which contains `any`).
+		// - Results must be encoded with the tool's generated result codec and stored
+		//   as canonical JSON bytes. Artifacts (if any) must be encoded with the tool's
+		//   sidecar codec.
+		Results []*ToolEvent
 
 		// RetryHints optionally provides hints associated with failures.
 		RetryHints []*planner.RetryHint

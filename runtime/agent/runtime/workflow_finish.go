@@ -80,12 +80,40 @@ func (r *Runtime) finishWithoutToolCalls(
 		notes[i] = &result.Notes[i]
 	}
 
+	toolEvents, err := r.encodeToolEvents(ctx, st.ToolEvents)
+	if err != nil {
+		return nil, err
+	}
+
 	return &RunOutput{
 		AgentID:    input.AgentID,
 		RunID:      base.RunContext.RunID,
 		Final:      finalMsg,
-		ToolEvents: st.ToolEvents,
+		ToolEvents: toolEvents,
 		Notes:      notes,
+		Usage:      &st.AggUsage,
+	}, nil
+}
+
+// finishAfterTerminalToolCalls completes the run after a tool turn whose executed
+// tools are declared terminal (ToolSpec.TerminalRun). It returns a RunOutput with
+// tool events but does not publish an assistant message event or request any
+// follow-up PlanResume/finalization turn.
+func (r *Runtime) finishAfterTerminalToolCalls(
+	ctx context.Context,
+	input *RunInput,
+	base *planner.PlanInput,
+	st *runLoopState,
+) (*RunOutput, error) {
+	toolEvents, err := r.encodeToolEvents(ctx, st.ToolEvents)
+	if err != nil {
+		return nil, err
+	}
+	return &RunOutput{
+		AgentID:    input.AgentID,
+		RunID:      base.RunContext.RunID,
+		Final:      &model.Message{Role: model.ConversationRoleAssistant},
+		ToolEvents: toolEvents,
 		Usage:      &st.AggUsage,
 	}, nil
 }

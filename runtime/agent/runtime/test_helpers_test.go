@@ -17,6 +17,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
+	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -32,11 +33,11 @@ type testWorkflowContext struct {
 	asyncResult ToolOutput
 
 	sigMu         sync.Mutex
-	pauseCh       chan api.PauseRequest
-	resumeCh      chan api.ResumeRequest
-	clarifyCh     chan api.ClarificationAnswer
-	toolResultsCh chan api.ToolResultsSet
-	confirmCh     chan api.ConfirmationDecision
+	pauseCh       chan *api.PauseRequest
+	resumeCh      chan *api.ResumeRequest
+	clarifyCh     chan *api.ClarificationAnswer
+	toolResultsCh chan *api.ToolResultsSet
+	confirmCh     chan *api.ConfirmationDecision
 
 	planResult    *planner.PlanResult
 	hasPlanResult bool
@@ -295,53 +296,53 @@ func (t *testWorkflowContext) ExecuteToolActivityAsync(ctx context.Context, call
 	return fut, nil
 }
 
-func (t *testWorkflowContext) PauseRequests() engine.Receiver[api.PauseRequest] {
+func (t *testWorkflowContext) PauseRequests() engine.Receiver[*api.PauseRequest] {
 	root := t.root()
 	root.ensureSignals()
-	return testReceiver[api.PauseRequest]{ch: root.pauseCh}
+	return testReceiver[*api.PauseRequest]{ch: root.pauseCh}
 }
 
-func (t *testWorkflowContext) ResumeRequests() engine.Receiver[api.ResumeRequest] {
+func (t *testWorkflowContext) ResumeRequests() engine.Receiver[*api.ResumeRequest] {
 	root := t.root()
 	root.ensureSignals()
-	return testReceiver[api.ResumeRequest]{ch: root.resumeCh}
+	return testReceiver[*api.ResumeRequest]{ch: root.resumeCh}
 }
 
-func (t *testWorkflowContext) ClarificationAnswers() engine.Receiver[api.ClarificationAnswer] {
+func (t *testWorkflowContext) ClarificationAnswers() engine.Receiver[*api.ClarificationAnswer] {
 	root := t.root()
 	root.ensureSignals()
-	return testReceiver[api.ClarificationAnswer]{ch: root.clarifyCh}
+	return testReceiver[*api.ClarificationAnswer]{ch: root.clarifyCh}
 }
 
-func (t *testWorkflowContext) ExternalToolResults() engine.Receiver[api.ToolResultsSet] {
+func (t *testWorkflowContext) ExternalToolResults() engine.Receiver[*api.ToolResultsSet] {
 	root := t.root()
 	root.ensureSignals()
-	return testReceiver[api.ToolResultsSet]{ch: root.toolResultsCh}
+	return testReceiver[*api.ToolResultsSet]{ch: root.toolResultsCh}
 }
 
-func (t *testWorkflowContext) ConfirmationDecisions() engine.Receiver[api.ConfirmationDecision] {
+func (t *testWorkflowContext) ConfirmationDecisions() engine.Receiver[*api.ConfirmationDecision] {
 	root := t.root()
 	root.ensureSignals()
-	return testReceiver[api.ConfirmationDecision]{ch: root.confirmCh}
+	return testReceiver[*api.ConfirmationDecision]{ch: root.confirmCh}
 }
 
 func (t *testWorkflowContext) ensureSignals() {
 	t.sigMu.Lock()
 	defer t.sigMu.Unlock()
 	if t.pauseCh == nil {
-		t.pauseCh = make(chan api.PauseRequest, 1)
+		t.pauseCh = make(chan *api.PauseRequest, 1)
 	}
 	if t.resumeCh == nil {
-		t.resumeCh = make(chan api.ResumeRequest, 1)
+		t.resumeCh = make(chan *api.ResumeRequest, 1)
 	}
 	if t.clarifyCh == nil {
-		t.clarifyCh = make(chan api.ClarificationAnswer, 1)
+		t.clarifyCh = make(chan *api.ClarificationAnswer, 1)
 	}
 	if t.toolResultsCh == nil {
-		t.toolResultsCh = make(chan api.ToolResultsSet, 1)
+		t.toolResultsCh = make(chan *api.ToolResultsSet, 1)
 	}
 	if t.confirmCh == nil {
-		t.confirmCh = make(chan api.ConfirmationDecision, 1)
+		t.confirmCh = make(chan *api.ConfirmationDecision, 1)
 	}
 }
 
@@ -514,11 +515,11 @@ type routeWorkflowContext struct {
 	lastToolCall    engine.ToolActivityCall
 
 	sigMu         sync.Mutex
-	pauseCh       chan api.PauseRequest
-	resumeCh      chan api.ResumeRequest
-	clarifyCh     chan api.ClarificationAnswer
-	toolResultsCh chan api.ToolResultsSet
-	confirmCh     chan api.ConfirmationDecision
+	pauseCh       chan *api.PauseRequest
+	resumeCh      chan *api.ResumeRequest
+	clarifyCh     chan *api.ClarificationAnswer
+	toolResultsCh chan *api.ToolResultsSet
+	confirmCh     chan *api.ConfirmationDecision
 
 	hookRuntime  *Runtime // optional runtime for hook activity execution
 	childRuntime *Runtime // optional runtime for child workflow execution
@@ -692,53 +693,53 @@ func (r *routeWorkflowContext) ExecuteToolActivityAsync(ctx context.Context, cal
 	return fut, nil
 }
 
-func (r *routeWorkflowContext) PauseRequests() engine.Receiver[api.PauseRequest] {
+func (r *routeWorkflowContext) PauseRequests() engine.Receiver[*api.PauseRequest] {
 	root := r.root()
 	root.ensureSignals()
-	return testReceiver[api.PauseRequest]{ch: root.pauseCh}
+	return testReceiver[*api.PauseRequest]{ch: root.pauseCh}
 }
 
-func (r *routeWorkflowContext) ResumeRequests() engine.Receiver[api.ResumeRequest] {
+func (r *routeWorkflowContext) ResumeRequests() engine.Receiver[*api.ResumeRequest] {
 	root := r.root()
 	root.ensureSignals()
-	return testReceiver[api.ResumeRequest]{ch: root.resumeCh}
+	return testReceiver[*api.ResumeRequest]{ch: root.resumeCh}
 }
 
-func (r *routeWorkflowContext) ClarificationAnswers() engine.Receiver[api.ClarificationAnswer] {
+func (r *routeWorkflowContext) ClarificationAnswers() engine.Receiver[*api.ClarificationAnswer] {
 	root := r.root()
 	root.ensureSignals()
-	return testReceiver[api.ClarificationAnswer]{ch: root.clarifyCh}
+	return testReceiver[*api.ClarificationAnswer]{ch: root.clarifyCh}
 }
 
-func (r *routeWorkflowContext) ExternalToolResults() engine.Receiver[api.ToolResultsSet] {
+func (r *routeWorkflowContext) ExternalToolResults() engine.Receiver[*api.ToolResultsSet] {
 	root := r.root()
 	root.ensureSignals()
-	return testReceiver[api.ToolResultsSet]{ch: root.toolResultsCh}
+	return testReceiver[*api.ToolResultsSet]{ch: root.toolResultsCh}
 }
 
-func (r *routeWorkflowContext) ConfirmationDecisions() engine.Receiver[api.ConfirmationDecision] {
+func (r *routeWorkflowContext) ConfirmationDecisions() engine.Receiver[*api.ConfirmationDecision] {
 	root := r.root()
 	root.ensureSignals()
-	return testReceiver[api.ConfirmationDecision]{ch: root.confirmCh}
+	return testReceiver[*api.ConfirmationDecision]{ch: root.confirmCh}
 }
 
 func (r *routeWorkflowContext) ensureSignals() {
 	r.sigMu.Lock()
 	defer r.sigMu.Unlock()
 	if r.pauseCh == nil {
-		r.pauseCh = make(chan api.PauseRequest, 1)
+		r.pauseCh = make(chan *api.PauseRequest, 1)
 	}
 	if r.resumeCh == nil {
-		r.resumeCh = make(chan api.ResumeRequest, 1)
+		r.resumeCh = make(chan *api.ResumeRequest, 1)
 	}
 	if r.clarifyCh == nil {
-		r.clarifyCh = make(chan api.ClarificationAnswer, 1)
+		r.clarifyCh = make(chan *api.ClarificationAnswer, 1)
 	}
 	if r.toolResultsCh == nil {
-		r.toolResultsCh = make(chan api.ToolResultsSet, 1)
+		r.toolResultsCh = make(chan *api.ToolResultsSet, 1)
 	}
 	if r.confirmCh == nil {
-		r.confirmCh = make(chan api.ConfirmationDecision, 1)
+		r.confirmCh = make(chan *api.ConfirmationDecision, 1)
 	}
 }
 
@@ -811,6 +812,7 @@ func newTestRuntimeWithPlanner(agentID agent.Ident, pl planner.Planner) *Runtime
 		logger:        telemetry.NoopLogger{},
 		metrics:       telemetry.NoopMetrics{},
 		tracer:        telemetry.NoopTracer{},
+		SessionStore:  sessioninmem.New(),
 		RunEventStore: runloginmem.New(),
 		Bus:           noopHooks{},
 		models:        make(map[string]model.Client),

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -37,8 +38,8 @@ func TestRunLoopPauseResumeEmitsEvents_Barriered(t *testing.T) {
 	wfCtx.ensureSignals()
 	go func() {
 		// enqueue pause/resume before allowing async completion
-		wfCtx.pauseCh <- interrupt.PauseRequest{RunID: "run-1", Reason: "human"}
-		wfCtx.resumeCh <- interrupt.ResumeRequest{RunID: "run-1", Notes: "resume"}
+		wfCtx.pauseCh <- &api.PauseRequest{RunID: "run-1", Reason: "human"}
+		wfCtx.resumeCh <- &api.ResumeRequest{RunID: "run-1", Notes: "resume"}
 		time.Sleep(5 * time.Millisecond)
 		wfCtx.barrier <- struct{}{}
 	}()

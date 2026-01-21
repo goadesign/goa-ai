@@ -27,14 +27,14 @@ func Example_broadcast() {
 	ctx := context.Background()
 	sink := &collectSink{}
 
-	// Wire sink into the runtime; subscriber is auto-registered.
-	rt := agentsruntime.New(
-		agentsruntime.WithRunEventStore(runloginmem.New()),
-		agentsruntime.WithStream(sink),
-	)
+	rt := agentsruntime.New(agentsruntime.WithRunEventStore(runloginmem.New()))
 
-	// Publish a user-facing hook event; the stream subscriber forwards it.
-	_ = rt.Bus.Publish(ctx, hooks.NewAssistantMessageEvent("run-1", "svc.agent", "", "hello", nil))
+	// Attach a subscriber that forwards user-facing hook events to the sink.
+	sub, _ := streambridge.Register(rt.Bus, sink)
+	defer func() { _ = sub.Close() }()
+
+	// Publish a user-facing hook event; the subscriber forwards it.
+	_ = rt.Bus.Publish(ctx, hooks.NewAssistantMessageEvent("run-1", "svc.agent", "session-1", "hello", nil))
 
 	// The sink received a typed stream event.
 	fmt.Println(sink.events[0].Type())

@@ -52,6 +52,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
+	"goa.design/goa-ai/runtime/agent/session"
+	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -85,6 +87,8 @@ type (
 		Engine engine.Engine
 		// MemoryStore persists run transcripts and annotations.
 		Memory memory.Store
+		// SessionStore persists session lifecycle state and run metadata.
+		SessionStore session.Store
 		// Policy evaluates allowlists and caps per planner turn.
 		Policy policy.Engine
 		// RunEventStore is the canonical append-only run event log.
@@ -93,6 +97,9 @@ type (
 		Bus hooks.Bus
 		// Stream publishes planner/tool/assistant events to the caller.
 		Stream stream.Sink
+		// streamSubscriber forwards hook events to Stream. It is invoked from
+		// hookActivity so stream emission can be made fatal while a session is active.
+		streamSubscriber *stream.Subscriber
 
 		logger  telemetry.Logger
 		metrics telemetry.Metrics
@@ -145,6 +152,8 @@ type (
 		Engine engine.Engine
 		// MemoryStore persists run transcripts and annotations.
 		MemoryStore memory.Store
+		// SessionStore persists session lifecycle state and run metadata.
+		SessionStore session.Store
 		// Policy evaluates allowlists and caps per planner turn.
 		Policy policy.Engine
 		// RunEventStore is the canonical append-only run event log.
@@ -610,9 +619,13 @@ func newFromOptions(opts Options) *Runtime {
 	if opts.RunEventStore == nil {
 		opts.RunEventStore = runloginmem.New()
 	}
+	if opts.SessionStore == nil {
+		opts.SessionStore = sessioninmem.New()
+	}
 	rt := &Runtime{
 		Engine:           eng,
 		Memory:           opts.MemoryStore,
+		SessionStore:     opts.SessionStore,
 		Policy:           opts.Policy,
 		RunEventStore:    opts.RunEventStore,
 		Bus:              bus,
@@ -630,6 +643,95 @@ func newFromOptions(opts Options) *Runtime {
 		workers:          opts.Workers,
 		reminders:        reminder.NewEngine(),
 		toolConfirmation: opts.ToolConfirmation,
+	}
+	if rt.SessionStore != nil {
+		sessionSub := hooks.SubscriberFunc(func(ctx context.Context, event hooks.Event) error {
+			var (
+				status   session.RunStatus
+				metadata map[string]any
+			)
+			ts := time.UnixMilli(event.Timestamp()).UTC()
+			switch evt := event.(type) {
+			case *hooks.RunStartedEvent:
+				status = session.RunStatusRunning
+				return rt.SessionStore.UpsertRun(ctx, session.RunMeta{
+					AgentID:   evt.AgentID(),
+					RunID:     evt.RunID(),
+					SessionID: evt.SessionID(),
+					Status:    status,
+					UpdatedAt: ts,
+					Labels:    evt.RunContext.Labels,
+					Metadata:  nil,
+					StartedAt: time.Time{},
+				})
+			case *hooks.RunPausedEvent:
+				status = session.RunStatusPaused
+				return rt.SessionStore.UpsertRun(ctx, session.RunMeta{
+					AgentID:   evt.AgentID(),
+					RunID:     evt.RunID(),
+					SessionID: evt.SessionID(),
+					Status:    status,
+					UpdatedAt: ts,
+					Labels:    evt.Labels,
+					Metadata:  evt.Metadata,
+				})
+			case *hooks.RunResumedEvent:
+				status = session.RunStatusRunning
+				return rt.SessionStore.UpsertRun(ctx, session.RunMeta{
+					AgentID:   evt.AgentID(),
+					RunID:     evt.RunID(),
+					SessionID: evt.SessionID(),
+					Status:    status,
+					UpdatedAt: ts,
+					Labels:    evt.Labels,
+				})
+			case *hooks.RunCompletedEvent:
+				switch evt.Status {
+				case "success":
+					status = session.RunStatusCompleted
+				case "failed":
+					status = session.RunStatusFailed
+				case "canceled":
+					status = session.RunStatusCanceled
+				default:
+					return fmt.Errorf("unexpected run completed status %q", evt.Status)
+				}
+				if evt.PublicError != "" {
+					metadata = map[string]any{
+						"public_error": evt.PublicError,
+					}
+					if evt.ErrorProvider != "" {
+						metadata["error_provider"] = evt.ErrorProvider
+					}
+					if evt.ErrorOperation != "" {
+						metadata["error_operation"] = evt.ErrorOperation
+					}
+					if evt.ErrorKind != "" {
+						metadata["error_kind"] = evt.ErrorKind
+					}
+					if evt.ErrorCode != "" {
+						metadata["error_code"] = evt.ErrorCode
+					}
+					if evt.HTTPStatus != 0 {
+						metadata["http_status"] = evt.HTTPStatus
+					}
+					metadata["retryable"] = evt.Retryable
+				}
+				return rt.SessionStore.UpsertRun(ctx, session.RunMeta{
+					AgentID:   evt.AgentID(),
+					RunID:     evt.RunID(),
+					SessionID: evt.SessionID(),
+					Status:    status,
+					UpdatedAt: ts,
+					Metadata:  metadata,
+				})
+			default:
+				return nil
+			}
+		})
+		if _, err := bus.Register(sessionSub); err != nil {
+			rt.logger.Warn(context.Background(), "failed to register session subscriber", "err", err)
+		}
 	}
 	if rt.Memory != nil {
 		memSub := hooks.SubscriberFunc(func(ctx context.Context, event hooks.Event) error {
@@ -708,8 +810,8 @@ func newFromOptions(opts Options) *Runtime {
 		streamSub, err := stream.NewSubscriber(newHintingSink(rt, rt.Stream))
 		if err != nil {
 			rt.logger.Warn(context.Background(), "failed to create stream subscriber", "err", err)
-		} else if _, err := bus.Register(streamSub); err != nil {
-			rt.logger.Warn(context.Background(), "failed to register stream subscriber", "err", err)
+		} else {
+			rt.streamSubscriber = streamSub
 		}
 	}
 	return rt
@@ -733,6 +835,9 @@ func WithEngine(e engine.Engine) RuntimeOption { return func(o *Options) { o.Eng
 
 // WithMemoryStore sets the memory store.
 func WithMemoryStore(m memory.Store) RuntimeOption { return func(o *Options) { o.MemoryStore = m } }
+
+// WithSessionStore sets the session store.
+func WithSessionStore(s session.Store) RuntimeOption { return func(o *Options) { o.SessionStore = s } }
 
 // WithRunEventStore sets the canonical run event store.
 func WithRunEventStore(s runlog.Store) RuntimeOption { return func(o *Options) { o.RunEventStore = s } }
@@ -1087,6 +1192,13 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	if strings.TrimSpace(input.SessionID) == "" {
 		return nil, ErrMissingSessionID
 	}
+	sess, err := r.SessionStore.LoadSession(ctx, input.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	if sess.Status == session.StatusEnded {
+		return nil, session.ErrSessionEnded
+	}
 	req := engine.WorkflowStartRequest{
 		ID:        input.RunID,
 		Workflow:  workflowName,
@@ -1150,6 +1262,26 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 			req.RetryPolicy = rp
 		}
 	}
+	if req.SearchAttributes == nil {
+		req.SearchAttributes = make(map[string]any, 1)
+	}
+	if v, ok := req.SearchAttributes["SessionID"]; ok && v != input.SessionID {
+		return nil, fmt.Errorf("workflow search attribute SessionID=%v does not match session id %q", v, input.SessionID)
+	}
+	req.SearchAttributes["SessionID"] = input.SessionID
+	now := time.Now().UTC()
+	if err := r.SessionStore.UpsertRun(ctx, session.RunMeta{
+		AgentID:   string(input.AgentID),
+		RunID:     input.RunID,
+		SessionID: input.SessionID,
+		Status:    session.RunStatusPending,
+		StartedAt: now,
+		UpdatedAt: now,
+		Labels:    cloneLabels(input.Labels),
+		Metadata:  cloneMetadata(input.Metadata),
+	}); err != nil {
+		return nil, err
+	}
 	handle, err := r.Engine.StartWorkflow(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrWorkflowStartFailed, err)
@@ -1175,6 +1307,9 @@ func (r *Runtime) CancelRun(ctx context.Context, runID string) error {
 // PauseRun requests the underlying workflow to pause via the standard pause signal.
 // Returns an error if the run is unknown or signaling fails.
 func (r *Runtime) PauseRun(ctx context.Context, req interrupt.PauseRequest) error {
+	if req == nil {
+		return errors.New("pause request is required")
+	}
 	if req.RunID == "" {
 		return errors.New("run id is required")
 	}
@@ -1191,6 +1326,9 @@ func (r *Runtime) PauseRun(ctx context.Context, req interrupt.PauseRequest) erro
 // ResumeRun notifies the workflow that execution can continue. The resume payload
 // can include optional annotations/messages for the planner to consume.
 func (r *Runtime) ResumeRun(ctx context.Context, req interrupt.ResumeRequest) error {
+	if req == nil {
+		return errors.New("resume request is required")
+	}
 	if req.RunID == "" {
 		return errors.New("run id is required")
 	}
@@ -1206,6 +1344,9 @@ func (r *Runtime) ResumeRun(ctx context.Context, req interrupt.ResumeRequest) er
 
 // ProvideClarification sends a typed clarification answer to a waiting run.
 func (r *Runtime) ProvideClarification(ctx context.Context, ans interrupt.ClarificationAnswer) error {
+	if ans == nil {
+		return errors.New("clarification answer is required")
+	}
 	if ans.RunID == "" {
 		return errors.New("run id is required")
 	}
@@ -1221,6 +1362,9 @@ func (r *Runtime) ProvideClarification(ctx context.Context, ans interrupt.Clarif
 
 // ProvideToolResults sends a set of external tool results to a waiting run.
 func (r *Runtime) ProvideToolResults(ctx context.Context, rs interrupt.ToolResultsSet) error {
+	if rs == nil {
+		return errors.New("tool results set is required")
+	}
 	if rs.RunID == "" {
 		return errors.New("run id is required")
 	}
@@ -1236,6 +1380,9 @@ func (r *Runtime) ProvideToolResults(ctx context.Context, rs interrupt.ToolResul
 
 // ProvideConfirmation sends a typed confirmation decision to a waiting run.
 func (r *Runtime) ProvideConfirmation(ctx context.Context, dec interrupt.ConfirmationDecision) error {
+	if dec == nil {
+		return errors.New("confirmation decision is required")
+	}
 	if strings.TrimSpace(dec.RunID) == "" {
 		return errors.New("run id is required")
 	}

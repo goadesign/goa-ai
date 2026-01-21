@@ -94,13 +94,6 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	); err != nil {
 		return nil, err
 	}
-	// Track final run outcome for RunCompletedEvent so streaming and observability
-	// see accurate success/failed/canceled status instead of always "success".
-	const (
-		runStatusSuccess  = "success"
-		runStatusFailed   = "failed"
-		runStatusCanceled = "canceled"
-	)
 	finalStatus := runStatusSuccess
 	var finalErr error
 	defer func() {

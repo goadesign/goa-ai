@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 
 	pulsec "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -237,6 +239,9 @@ func (e *Executor) decodeToolResult(spec *tools.ToolSpec, tool tools.Ident, tool
 	}
 	if msg.Error != nil {
 		out.Error = planner.NewToolError(msg.Error.Message)
+		if hint := buildRetryHintFromIssues(tool, spec, msg.Error.Issues); hint != nil {
+			out.RetryHint = hint
+		}
 		return out
 	}
 	if spec.Result.Codec.FromJSON != nil {
@@ -262,6 +267,79 @@ func (e *Executor) decodeToolResult(spec *tools.ToolSpec, tool tools.Ident, tool
 			})
 		}
 		out.Artifacts = arts
+	}
+	return out
+}
+
+func buildRetryHintFromIssues(toolName tools.Ident, spec *tools.ToolSpec, issues []*tools.FieldIssue) *planner.RetryHint {
+	if len(issues) == 0 {
+		return nil
+	}
+	fields := make([]string, 0, len(issues))
+	missing := make([]string, 0, len(issues))
+	for _, is := range issues {
+		if is == nil || is.Field == "" {
+			continue
+		}
+		fields = append(fields, is.Field)
+		if is.Constraint == "missing_field" {
+			missing = append(missing, is.Field)
+		}
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+	fields = uniqueStrings(fields)
+	missing = uniqueStrings(missing)
+	sort.Strings(fields)
+	sort.Strings(missing)
+
+	question := buildClarifyingQuestion(toolName, missing, fields)
+	var example map[string]any
+	if spec != nil && len(spec.Payload.ExampleInput) > 0 {
+		example = spec.Payload.ExampleInput
+	}
+	reason := planner.RetryReasonInvalidArguments
+	if len(missing) > 0 {
+		reason = planner.RetryReasonMissingFields
+	}
+	return &planner.RetryHint{
+		Reason:             reason,
+		Tool:               toolName,
+		MissingFields:      missing,
+		ExampleInput:       example,
+		ClarifyingQuestion: question,
+	}
+}
+
+func buildClarifyingQuestion(toolName tools.Ident, missing, fields []string) string {
+	if len(missing) == 2 && missing[0] == "query" && missing[1] == "requested_signals" {
+		return "I need additional information to run " + toolName.String() + ". Please provide either `query` (a short description) or `requested_signals` (a non-empty list of signal names) and resend the tool call."
+	}
+	if len(missing) > 0 {
+		return "I need additional information to run " + toolName.String() + ". Please provide: " + strings.Join(missing, ", ") + "."
+	}
+	return "I could not run " + toolName.String() + " due to invalid arguments. Please correct: " + strings.Join(fields, ", ") + " and resend the tool call."
+}
+
+func uniqueStrings(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

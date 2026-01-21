@@ -15,6 +15,7 @@ package stream
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
@@ -159,13 +160,52 @@ type (
 		Data WorkflowPayload
 	}
 
-	// AgentRunStarted streams a link between a parent run/tool and a child
-	// agent run. This allows clients to render nested agent cards and attach
-	// to child streams on demand.
-	AgentRunStarted struct {
+	// ChildRunLinked links a parent run/tool call to a spawned child agent run.
+	// This allows consumers to attach to child-run streams on demand without
+	// flattening child events into the parent.
+	ChildRunLinked struct {
 		Base
-		Data AgentRunStartedPayload
+		Data ChildRunLinkedPayload
 	}
+
+	// SessionStreamStarted is emitted when a session-scoped stream is created and
+	// ready to accept events. It exists to materialize the underlying stream so
+	// consumers can subscribe immediately without racing stream creation.
+	SessionStreamStarted struct {
+		Base
+		Data SessionStreamStartedPayload
+	}
+
+	// SessionStreamStartedPayload is the typed wire payload for SessionStreamStarted.
+	// It is intentionally empty: SessionID is carried on the envelope/Base.
+	SessionStreamStartedPayload struct{}
+
+	// SessionStreamEnd is emitted when a session-scoped stream has ended. After this
+	// event, no further events are expected to appear in the session stream.
+	SessionStreamEnd struct {
+		Base
+		Data SessionStreamEndPayload
+	}
+
+	// SessionStreamEndPayload is the typed wire payload for SessionStreamEnd.
+	// It is intentionally empty: SessionID is carried on the envelope/Base.
+	SessionStreamEndPayload struct{}
+
+	// RunStreamEnd is an explicit stream boundary marker for a run.
+	//
+	// Contract:
+	// - For a given run, RunStreamEnd must be emitted after all stream-visible events
+	//   for that run (notably tool_end events).
+	// - Consumers use this marker to terminate stream consumption for a run without
+	//   relying on timers or workflow-engine status signals.
+	RunStreamEnd struct {
+		Base
+		Data RunStreamEndPayload
+	}
+
+	// RunStreamEndPayload is the typed wire payload for RunStreamEnd.
+	// It is intentionally empty: RunID and SessionID are carried on the envelope/Base.
+	RunStreamEndPayload struct{}
 
 	// UsagePayload describes token usage details.
 	UsagePayload struct {
@@ -265,9 +305,10 @@ type (
 		// or icons in progress indicators.
 		ToolName string `json:"tool_name"`
 		// Payload contains the structured tool arguments (JSON-serializable) for this call.
-		// It is not pre-encoded; stream sinks are responsible for encoding it for transport.
-		// Nil when no arguments were provided. Suitable for UIs/tests to inspect or log.
-		Payload any `json:"payload,omitempty"`
+		// It is the canonical tool payload JSON produced by the tool payload codec.
+		// It is never decoded into Go structs for streaming to avoid schema drift
+		// from untagged Go fields.
+		Payload json.RawMessage `json:"payload,omitempty"`
 		// DisplayHint is a human-facing one-line description of the in-flight tool work,
 		// rendered from DSL-authored templates when available. Suitable for progress lanes
 		// and tool ribbons (for example, "Listing devices of kind VAV").
@@ -309,10 +350,9 @@ type (
 		// displaying tool names in result summaries and correlating with tool metadata.
 		ToolName string `json:"tool_name"`
 		// Result contains the tool's output payload. This is the structured data
-		// returned by the tool on success. Nil if the tool failed (check Error
-		// field). Clients display this as the tool's answer or pass it to
-		// downstream processing.
-		Result any `json:"result,omitempty"`
+		// returned by the tool on success. It is the canonical JSON encoding
+		// produced by the tool result codec. Nil when the tool failed.
+		Result json.RawMessage `json:"result,omitempty"`
 		// ResultPreview is a concise, user-facing summary of the tool result rendered from
 		// DSL-authored templates when available. It is intended for UI ribbons and summaries
 		// (for example, "Device list ready" or "Found 3 critical alarms").
@@ -355,8 +395,9 @@ type (
 		// Kind identifies the logical shape of this artifact
 		// (for example, "atlas.time_series").
 		Kind string `json:"kind"`
-		// Data contains the artifact payload. It must be JSON-serializable.
-		Data any `json:"data"`
+		// Data contains the artifact payload as canonical JSON bytes (typically
+		// produced by the tool sidecar codec). It is never decoded for streaming.
+		Data json.RawMessage `json:"data"`
 		// SourceTool is the fully-qualified tool identifier that produced this
 		// artifact (for example, "atlas.read.get_time_series").
 		SourceTool string `json:"source_tool"`
@@ -404,7 +445,7 @@ type (
 		// ToolCallID is the tool_call_id for the pending tool call.
 		ToolCallID string `json:"tool_call_id"`
 		// Payload contains the canonical JSON arguments for the pending tool call.
-		Payload any `json:"payload,omitempty"`
+		Payload json.RawMessage `json:"payload,omitempty"`
 	}
 
 	// AwaitQuestionsPayload describes a structured multiple-choice prompt that must
@@ -456,7 +497,7 @@ type (
 		ToolCallID string `json:"tool_call_id,omitempty"`
 		// Payload contains the JSON-serializable arguments for the external
 		// tool. It may be omitted when the tool takes no parameters.
-		Payload any `json:"payload,omitempty"`
+		Payload json.RawMessage `json:"payload,omitempty"`
 	}
 
 	// ToolUpdatePayload describes a non-terminal update to a tool call, typically used
@@ -527,8 +568,8 @@ type (
 		Retryable bool `json:"retryable"`
 	}
 
-	// AgentRunStartedPayload describes an agent-as-tool child run link.
-	AgentRunStartedPayload struct {
+	// ChildRunLinkedPayload describes an agent-as-tool child run link.
+	ChildRunLinkedPayload struct {
 		// ToolName is the fully qualified identifier of the parent tool
 		// that launched the child agent run.
 		ToolName string `json:"tool_name"`
@@ -571,13 +612,13 @@ type (
 		Usage bool
 		// Workflow controls emission of workflow lifecycle events.
 		Workflow bool
-		// AgentRuns controls emission of agent_run_started events.
-		AgentRuns bool
+		// ChildRuns controls emission of child_run_linked events.
+		ChildRuns bool
 	}
 )
 
 // DefaultProfile returns a StreamProfile that emits all event kinds and
-// links child runs via AgentRunStarted events without flattening them into
+// links child runs via ChildRunLinked events without flattening them into
 // the parent stream.
 func DefaultProfile() StreamProfile {
 	return StreamProfile{
@@ -593,20 +634,20 @@ func DefaultProfile() StreamProfile {
 		ToolAuthorization:  true,
 		Usage:              true,
 		Workflow:           true,
-		AgentRuns:          true,
+		ChildRuns:          true,
 	}
 }
 
 // UserChatProfile returns a profile suitable for end-user chat views. It emits
 // assistant replies, tool start/end/update, awaits, usage, workflow, and
-// agent_run_started links, and keeps child runs on their own streams so UIs
+// child_run_linked links, and keeps child runs on their own streams so UIs
 // can attach on demand.
 func UserChatProfile() StreamProfile {
 	return DefaultProfile()
 }
 
 // AgentDebugProfile returns a verbose profile intended for operational and
-// debugging views. Child runs are linked via AgentRunStarted events and are not
+// debugging views. Child runs are linked via ChildRunLinked events and are not
 // flattened into the parent stream.
 func AgentDebugProfile() StreamProfile {
 	return DefaultProfile()
@@ -678,8 +719,17 @@ const (
 	// EventWorkflow streams lifecycle phases for the run (e.g., completed).
 	EventWorkflow EventType = "workflow"
 
-	// EventAgentRunStarted streams when an agent-as-tool child run is started.
-	EventAgentRunStarted EventType = "agent_run_started"
+	// EventChildRunLinked links a parent tool call to a spawned child agent run.
+	EventChildRunLinked EventType = "child_run_linked"
+
+	// EventSessionStreamStarted marks that a session stream has been created.
+	EventSessionStreamStarted EventType = "session_stream_started"
+
+	// EventSessionStreamEnd marks that a session stream has ended.
+	EventSessionStreamEnd EventType = "session_stream_end"
+
+	// EventRunStreamEnd marks the end of stream-visible events for a run.
+	EventRunStreamEnd EventType = "run_stream_end"
 )
 
 // NewBase constructs a Base event with the given type, run ID, optional

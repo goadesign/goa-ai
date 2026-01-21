@@ -11,6 +11,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
+	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 
@@ -28,6 +29,7 @@ func TestExecuteToolCalls_AgentToolsPublishResultsAsComplete(t *testing.T) {
 		tracer:        telemetry.NoopTracer{},
 		RunEventStore: runloginmem.New(),
 		Bus:           recorder,
+		SessionStore:  sessioninmem.New(),
 	}
 
 	cfg := AgentToolConfig{

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/interrupt"
@@ -14,6 +15,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
+	"goa.design/goa-ai/runtime/agent/session"
+	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -135,6 +138,7 @@ func TestRunLoopPauseResumeEmitsEvents(t *testing.T) {
 		metrics:       telemetry.NoopMetrics{},
 		tracer:        telemetry.NoopTracer{},
 		RunEventStore: runloginmem.New(),
+		SessionStore:  sessioninmem.New(),
 		toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name: call.Name,
@@ -152,22 +156,33 @@ func TestRunLoopPauseResumeEmitsEvents(t *testing.T) {
 	// Allow tests to enqueue pause/resume before async completes
 	go func() {
 		time.Sleep(5 * time.Millisecond)
-		wfCtx.pauseCh <- interrupt.PauseRequest{RunID: "run-1", Reason: "human"}
-		wfCtx.resumeCh <- interrupt.ResumeRequest{RunID: "run-1", Notes: "resume"}
+		wfCtx.pauseCh <- &api.PauseRequest{RunID: "run-1", Reason: "human"}
+		wfCtx.resumeCh <- &api.ResumeRequest{RunID: "run-1", Notes: "resume"}
 		wfCtx.barrier <- struct{}{}
 	}()
 	wfCtx.hasPlanResult = true
 	wfCtx.planResult = &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}
-	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
-	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
+	input := &RunInput{AgentID: "svc.agent", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
+	_, err := rt.CreateSession(context.Background(), input.SessionID)
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	require.NoError(t, rt.SessionStore.UpsertRun(context.Background(), session.RunMeta{
+		AgentID:   string(input.AgentID),
+		RunID:     input.RunID,
+		SessionID: input.SessionID,
+		Status:    session.RunStatusRunning,
+		StartedAt: now,
+		UpdatedAt: now,
+	}))
+	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("tool")}}}
 	ctrl := interrupt.NewController(wfCtx)
-	_, err := rt.runLoop(wfCtx, AgentRegistration{
+	_, err = rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  input.AgentID,
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, time.Time{}, 2, "turn-1", nil, ctrl, 0)
+	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, time.Time{}, 2, input.TurnID, nil, ctrl, 0)
 	require.NoError(t, err)
 	var sawPause, sawResume bool
 	for _, evt := range recorder.events {

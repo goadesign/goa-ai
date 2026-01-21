@@ -4,9 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/telemetry"
+	"goa.design/goa-ai/runtime/agent/toolerrors"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
@@ -27,6 +32,28 @@ type (
 
 	turnIDSetter interface {
 		SetTurnID(string)
+	}
+
+	toolResultReceivedPayload struct {
+		ToolCallID       string                   `json:"tool_call_id"`
+		ParentToolCallID string                   `json:"parent_tool_call_id,omitempty"`
+		ToolName         tools.Ident              `json:"tool_name"`
+		Result           any                      `json:"result,omitempty"`
+		ResultJSON       json.RawMessage          `json:"result_json,omitempty"`
+		ResultPreview    string                   `json:"result_preview,omitempty"`
+		Bounds           *agent.Bounds            `json:"bounds,omitempty"`
+		Artifacts        []toolArtifactPayload    `json:"artifacts,omitempty"`
+		Duration         time.Duration            `json:"duration"`
+		Telemetry        *telemetry.ToolTelemetry `json:"telemetry,omitempty"`
+		RetryHint        *planner.RetryHint       `json:"retry_hint,omitempty"`
+		Error            *toolerrors.ToolError    `json:"error,omitempty"`
+	}
+
+	toolArtifactPayload struct {
+		Kind       string          `json:"kind"`
+		Data       json.RawMessage `json:"data"`
+		SourceTool tools.Ident     `json:"source_tool"`
+		RunLink    *run.Handle     `json:"run_link,omitempty"`
 	}
 )
 
@@ -53,6 +80,40 @@ func EncodeToHookInput(evt Event, turnID string) (*ActivityInput, error) {
 		b, err := json.Marshal(p)
 		if err != nil {
 			return nil, fmt.Errorf("marshal run completed payload: %w", err)
+		}
+		payload = b
+	case *ToolResultReceivedEvent:
+		p := toolResultReceivedPayload{
+			ToolCallID:       e.ToolCallID,
+			ParentToolCallID: e.ParentToolCallID,
+			ToolName:         e.ToolName,
+			Result:           e.Result,
+			ResultJSON:       e.ResultJSON,
+			ResultPreview:    e.ResultPreview,
+			Bounds:           e.Bounds,
+			Duration:         e.Duration,
+			Telemetry:        e.Telemetry,
+			RetryHint:        e.RetryHint,
+			Error:            e.Error,
+		}
+		if len(e.Artifacts) > 0 {
+			p.Artifacts = make([]toolArtifactPayload, 0, len(e.Artifacts))
+			for _, a := range e.Artifacts {
+				raw, ok := a.Data.(json.RawMessage)
+				if !ok {
+					return nil, fmt.Errorf("marshal tool result payload: artifact %q has non-raw JSON data %T", a.Kind, a.Data)
+				}
+				p.Artifacts = append(p.Artifacts, toolArtifactPayload{
+					Kind:       a.Kind,
+					Data:       append(json.RawMessage(nil), raw...),
+					SourceTool: a.SourceTool,
+					RunLink:    a.RunLink,
+				})
+			}
+		}
+		b, err := json.Marshal(p)
+		if err != nil {
+			return nil, fmt.Errorf("marshal tool result payload: %w", err)
 		}
 		payload = b
 	default:
@@ -124,12 +185,12 @@ func DecodeFromHookInput(input *ActivityInput) (Event, error) {
 		rc.Retryable = p.Retryable
 		evt = rc
 
-	case AgentRunStarted:
-		var p AgentRunStartedEvent
+	case ChildRunLinked:
+		var p ChildRunLinkedEvent
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
-			return nil, fmt.Errorf("decode %s payload: %w", AgentRunStarted, err)
+			return nil, fmt.Errorf("decode %s payload: %w", ChildRunLinked, err)
 		}
-		evt = NewAgentRunStartedEvent(input.RunID, input.AgentID, input.SessionID, p.ToolName, p.ToolCallID, p.ChildRunID, p.ChildAgentID)
+		evt = NewChildRunLinkedEvent(input.RunID, input.AgentID, input.SessionID, p.ToolName, p.ToolCallID, p.ChildRunID, p.ChildAgentID)
 
 	case AwaitClarification:
 		var p AwaitClarificationEvent
@@ -221,9 +282,28 @@ func DecodeFromHookInput(input *ActivityInput) (Event, error) {
 		evt = NewToolCallUpdatedEvent(input.RunID, input.AgentID, input.SessionID, p.ToolCallID, p.ExpectedChildrenTotal)
 
 	case ToolResultReceived:
-		var p ToolResultReceivedEvent
+		// ToolResultReceivedEvent contains artifacts with Data typed as `any`.
+		// When decoding from JSON, `encoding/json` will rehydrate artifact.Data as
+		// map[string]any, which breaks downstream stream consumers that require
+		// canonical JSON bytes (json.RawMessage).
+		//
+		// Decode through a wire payload that preserves artifact JSON bytes and then
+		// rebuild planner.Artifact values with Data set to json.RawMessage.
+		var p toolResultReceivedPayload
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", ToolResultReceived, err)
+		}
+		var artifacts []*planner.Artifact
+		if len(p.Artifacts) > 0 {
+			artifacts = make([]*planner.Artifact, 0, len(p.Artifacts))
+			for _, a := range p.Artifacts {
+				artifacts = append(artifacts, &planner.Artifact{
+					Kind:       a.Kind,
+					Data:       append(json.RawMessage(nil), a.Data...),
+					SourceTool: a.SourceTool,
+					RunLink:    a.RunLink,
+				})
+			}
 		}
 		evt = NewToolResultReceivedEvent(
 			input.RunID,
@@ -236,7 +316,7 @@ func DecodeFromHookInput(input *ActivityInput) (Event, error) {
 			p.ResultJSON,
 			p.ResultPreview,
 			p.Bounds,
-			p.Artifacts,
+			artifacts,
 			p.Duration,
 			p.Telemetry,
 			p.RetryHint,

@@ -13,7 +13,6 @@ package runtime
 //   Await.ExternalTools handshake (execute internal tools first, then pause).
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -100,77 +99,16 @@ func (r *Runtime) handleToolTurn(
 	allowed = r.capAllowedCalls(allowed, input, st.Caps)
 	allowed = r.prepareAllowedCallsMetadata(input.AgentID, base, allowed, parentTracker)
 
-	toExecute, deniedResults, cerr := r.confirmToolsIfNeeded(wfCtx, input, base, allowed, turnID, ctrl, budgetDeadline)
-	if cerr != nil {
-		if errors.Is(cerr, context.DeadlineExceeded) {
-			out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonTimeBudget, hardDeadline)
-			return out, err
-		}
-		return nil, cerr
+	toExecute, confirmations, err := r.splitConfirmationCalls(ctx, base, allowed)
+	if err != nil {
+		return nil, err
 	}
-
-	declaredCalls := allowed
-	var awaitExpectedIDs map[string]struct{}
-	if result.Await != nil {
-		if result.Await.Clarification != nil {
-			return nil, errors.New("planner returned both tool calls and await clarification")
-		}
-		if result.Await.ExternalTools != nil && result.Await.Questions != nil {
-			return nil, errors.New("planner returned multiple await kinds with tool calls")
-		}
-		if result.Await.Questions != nil {
-			q := result.Await.Questions
-			if q.ToolCallID == "" {
-				return nil, errors.New("await_questions: missing tool_call_id")
-			}
-			awaitExpectedIDs = map[string]struct{}{
-				q.ToolCallID: {},
-			}
-			awaitCalls := []planner.ToolRequest{
-				{
-					Name:       q.ToolName,
-					ToolCallID: q.ToolCallID,
-					Payload:    q.Payload,
-				},
-			}
-			declaredCalls = make([]planner.ToolRequest, 0, len(allowed)+len(awaitCalls))
-			declaredCalls = append(declaredCalls, allowed...)
-			declaredCalls = append(declaredCalls, awaitCalls...)
-		}
-		if result.Await.ExternalTools != nil {
-			e := result.Await.ExternalTools
-			if len(e.Items) == 0 {
-				return nil, errors.New("await_external_tools: no items in await")
-			}
-			awaitCalls := make([]planner.ToolRequest, 0, len(e.Items))
-			awaitExpectedIDs = make(map[string]struct{}, len(e.Items))
-			for _, it := range e.Items {
-				if it.ToolCallID == "" {
-					return nil, fmt.Errorf(
-						"await_external_tools: missing tool_call_id for external tool %q",
-						it.Name,
-					)
-				}
-				if _, dup := awaitExpectedIDs[it.ToolCallID]; dup {
-					return nil, fmt.Errorf(
-						"await_external_tools: duplicate awaited tool_call_id %q",
-						it.ToolCallID,
-					)
-				}
-				awaitExpectedIDs[it.ToolCallID] = struct{}{}
-				awaitCalls = append(awaitCalls, planner.ToolRequest{
-					Name:       it.Name,
-					ToolCallID: it.ToolCallID,
-					Payload:    it.Payload,
-				})
-			}
-			declaredCalls = make([]planner.ToolRequest, 0, len(allowed)+len(awaitCalls))
-			declaredCalls = append(declaredCalls, allowed...)
-			declaredCalls = append(declaredCalls, awaitCalls...)
-		}
+	if len(confirmations) > 0 && ctrl == nil {
+		return nil, fmt.Errorf("confirmation required but interrupts are not available")
 	}
-
-	r.recordAssistantTurn(base, st.Transcript, declaredCalls, st.Ledger)
+	if len(toExecute) > 0 {
+		r.recordAssistantTurn(base, st.Transcript, toExecute, st.Ledger)
+	}
 
 	artifactsModeByCallID := make(map[string]tools.ArtifactsMode, len(toExecute))
 	execCalls := make([]planner.ToolRequest, len(toExecute))
@@ -204,25 +142,58 @@ func (r *Runtime) handleToolTurn(
 	if err != nil {
 		return nil, err
 	}
-	vals, err = mergeToolResultsByCallID(allowed, vals, deniedResults)
-	if err != nil {
-		return nil, err
-	}
 	lastToolResults := vals
 	st.ToolEvents = append(st.ToolEvents, cloneToolResults(vals)...)
-	if result.Await == nil {
-		r.appendUserToolResults(base, allowed, vals, st.Ledger, artifactsModeByCallID)
+	if err := r.appendUserToolResults(base, toExecute, vals, st.Ledger, artifactsModeByCallID); err != nil {
+		return nil, err
 	}
 	if timedOut {
 		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonTimeBudget, hardDeadline)
 		return out, err
 	}
 
+	terminal, err := r.executedTerminalRunTool(vals)
+	if err != nil {
+		return nil, err
+	}
+	if terminal {
+		return r.finishAfterTerminalToolCalls(ctx, input, base, st)
+	}
+
 	st.Caps.RemainingToolCalls = decrementCap(st.Caps.RemainingToolCalls, len(allowed))
-	if failures(vals) > 0 {
+	if len(confirmations) > 0 || (result.Await != nil && len(result.Await.Items) > 0) {
+		items := []planner.AwaitItem(nil)
+		if result.Await != nil {
+			items = result.Await.Items
+		}
+		out, err := r.handleAwaitQueue(
+			wfCtx,
+			reg,
+			input,
+			base,
+			st,
+			resumeOpts,
+			toolOpts,
+			result.ExpectedChildren,
+			parentTracker,
+			ctrl,
+			budgetDeadline,
+			hardDeadline,
+			finalizerGrace,
+			turnID,
+			confirmations,
+			items,
+			lastToolResults,
+		)
+		if err != nil {
+			return nil, err
+		}
+		return out, nil
+	}
+	if capFailures(vals) > 0 {
 		st.Caps.RemainingConsecutiveFailedToolCalls = decrementCap(
 			st.Caps.RemainingConsecutiveFailedToolCalls,
-			failures(vals),
+			capFailures(vals),
 		)
 		if st.Caps.MaxConsecutiveFailedToolCalls > 0 && st.Caps.RemainingConsecutiveFailedToolCalls <= 0 {
 			out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonFailureCap, hardDeadline)
@@ -230,14 +201,6 @@ func (r *Runtime) handleToolTurn(
 		}
 	} else if st.Caps.MaxConsecutiveFailedToolCalls > 0 {
 		st.Caps.RemainingConsecutiveFailedToolCalls = st.Caps.MaxConsecutiveFailedToolCalls
-	}
-
-	if result.Await != nil {
-		out, err := r.handleAwaitAfterTools(wfCtx, reg, input, base, result.Await, declaredCalls, awaitExpectedIDs, artifactsModeByCallID, vals, st, resumeOpts, ctrl, budgetDeadline, hardDeadline, turnID)
-		if err != nil {
-			return nil, err
-		}
-		return out, nil
 	}
 
 	if out, err := r.handleMissingFieldsPolicy(wfCtx, reg, input, base, vals, st.ToolEvents, st.AggUsage, &st.NextAttempt, turnID, ctrl, budgetDeadline, hardDeadline); err != nil {
@@ -255,7 +218,7 @@ func (r *Runtime) handleToolTurn(
 		return out, err
 	}
 
-	resumeReq, err := r.buildNextResumeRequest(input.AgentID, base, lastToolResults, &st.NextAttempt)
+	resumeReq, err := r.buildNextResumeRequest(ctx, input.AgentID, base, lastToolResults, &st.NextAttempt)
 	if err != nil {
 		return nil, err
 	}
@@ -271,4 +234,20 @@ func (r *Runtime) handleToolTurn(
 	st.Transcript = resOutput.Transcript
 	st.Ledger = transcript.FromModelMessages(st.Transcript)
 	return nil, nil
+}
+
+func (r *Runtime) executedTerminalRunTool(results []*planner.ToolResult) (bool, error) {
+	for _, tr := range results {
+		if tr == nil {
+			continue
+		}
+		spec, ok := r.toolSpec(tr.Name)
+		if !ok {
+			return false, fmt.Errorf("unknown tool %q", tr.Name)
+		}
+		if spec.TerminalRun {
+			return true, nil
+		}
+	}
+	return false, nil
 }

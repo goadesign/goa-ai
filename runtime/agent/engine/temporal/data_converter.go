@@ -11,18 +11,23 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
-	"goa.design/goa-ai/runtime/agent/telemetry"
 	aitools "goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
-	// agentJSONPayloadConverter wraps Temporal's JSON payload converter and
-	// rehydrates planner.ToolResult.Result using the tool's generated result codec.
+	// agentJSONPayloadConverter wraps Temporal's JSON payload converter for goa-ai
+	// workflow payloads.
 	//
 	// Temporal's default JSON converter decodes `any` fields as JSON-shaped values
-	// (map[string]any, []any, float64, ...). This violates the goa-ai contract that
-	// planner.ToolResult.Result contains the concrete generated result type produced
-	// by the tool's result codec.
+	// (map[string]any, []any, float64, ...). goa-ai forbids `any` across
+	// workflow/activity/signal boundaries: tool results and artifacts must cross
+	// boundaries as canonical JSON bytes (`api.ToolEvent` / `api.ToolArtifact`).
+	//
+	// This converter exists to:
+	//   - Preserve encoding/json's default field-name behavior for existing workflow
+	//     histories (no JSON tags in wire structs).
+	//   - Fail fast when code attempts to send `planner.ToolResult` across a Temporal
+	//     boundary (it must be wrapped/encoded as `api.ToolEvent`).
 	//
 	// This converter operates under the same encoding as the default JSON payload
 	// converter so that existing workflow history continues to decode correctly.
@@ -42,7 +47,7 @@ type (
 		RunID       string
 		Messages    []*model.Message
 		RunContext  run.Context
-		ToolResults []toolResultWire
+		ToolResults []*api.ToolEvent
 		Finalize    *planner.Termination
 	}
 
@@ -51,48 +56,37 @@ type (
 		AgentID    agent.Ident
 		RunID      string
 		Final      *model.Message
-		ToolEvents []toolResultWire
+		ToolEvents []*api.ToolEvent
 		Notes      []*planner.PlannerAnnotation
 		Usage      *model.TokenUsage
-	}
-
-	toolResultWire struct {
-		// See planActivityInputWire: these names match Temporal's default JSON encoding.
-		Name          aitools.Ident
-		Result        json.RawMessage
-		Artifacts     []*planner.Artifact
-		Bounds        *agent.Bounds
-		Error         *planner.ToolError
-		RetryHint     *planner.RetryHint
-		Telemetry     *telemetry.ToolTelemetry
-		ToolCallID    string
-		ChildrenCount int
-		RunLink       *run.Handle
 	}
 
 	toolResultsSetWire struct {
 		// See planActivityInputWire: these names match Temporal's default JSON encoding.
 		RunID      string
 		ID         string
-		Results    []toolResultWire
+		Results    []*api.ToolEvent
 		RetryHints []*planner.RetryHint
 	}
 )
 
-// NewAgentDataConverter returns a Temporal data converter that preserves concrete
-// tool result types across activity/workflow boundaries.
+// NewAgentDataConverter returns a Temporal data converter that enforces goa-ai
+// workflow boundary contracts.
 //
 // Temporal's default JSON payload converter decodes `any` fields as JSON-shaped
-// values (map[string]any, []any, float64, ...). This breaks the goa-ai contract
-// that planner.ToolResult.Result contains the concrete generated result type
-// produced by the tool's result codec.
+// values (map[string]any, []any, float64, ...). goa-ai forbids `any` across
+// workflow/activity/signal boundaries: it must be represented as canonical JSON
+// bytes (json.RawMessage) and decoded back into typed Go values using the tool's
+// generated codecs at the execution boundary (activities), not inside workflow
+// serialization.
 //
-// The returned converter installs custom payload converters for goa-ai API
-// payloads that carry planner.ToolResult values (notably api.PlanActivityInput
-// and api.RunOutput). These converters decode ToolResult.Result back into the
-// concrete generated Go type using the tool's generated result codec.
+// This converter:
+//   - Provides stable encoding/decoding for goa-ai API envelopes.
+//   - Fails fast if planner.ToolResult crosses a Temporal boundary (use
+//     api.ToolEvent instead).
 //
-// spec must return the ToolSpec for a tool name known to the agent runtime.
+// spec is accepted for API compatibility; the current boundary-safe envelopes
+// carry JSON bytes directly and do not require spec lookup during conversion.
 func NewAgentDataConverter(spec func(aitools.Ident) (*aitools.ToolSpec, bool)) converter.DataConverter {
 	base := converter.NewJSONPayloadConverter()
 	return converter.NewCompositeDataConverter(
@@ -110,7 +104,7 @@ func NewAgentDataConverter(spec func(aitools.Ident) (*aitools.ToolSpec, bool)) c
 func (c *agentJSONPayloadConverter) ToPayload(value any) (*commonpb.Payload, error) {
 	switch v := value.(type) {
 	case *api.RunOutput:
-		w, err := encodeRunOutputWire(c.spec, v)
+		w, err := encodeRunOutputWire(v)
 		if err != nil {
 			return nil, err
 		}
@@ -118,7 +112,7 @@ func (c *agentJSONPayloadConverter) ToPayload(value any) (*commonpb.Payload, err
 	case api.RunOutput:
 		return c.ToPayload(&v)
 	case *api.PlanActivityInput:
-		w, err := encodePlanActivityInputWire(c.spec, v)
+		w, err := encodePlanActivityInputWire(v)
 		if err != nil {
 			return nil, err
 		}
@@ -126,60 +120,28 @@ func (c *agentJSONPayloadConverter) ToPayload(value any) (*commonpb.Payload, err
 	case api.PlanActivityInput:
 		return c.ToPayload(&v)
 	case *api.ToolResultsSet:
-		w, err := encodeToolResultsSetWire(c.spec, v)
+		w, err := encodeToolResultsSetWire(v)
 		if err != nil {
 			return nil, err
 		}
 		return c.JSONPayloadConverter.ToPayload(w)
 	case api.ToolResultsSet:
 		return c.ToPayload(&v)
-	case *planner.ToolResult:
-		w, err := encodeToolResultWire(c.spec, v)
-		if err != nil {
-			return nil, err
-		}
-		return c.JSONPayloadConverter.ToPayload(w)
-	case planner.ToolResult:
-		return c.ToPayload(&v)
+	case *planner.ToolResult, planner.ToolResult:
+		return nil, fmt.Errorf("temporal: planner.ToolResult must not cross workflow boundaries (use api.ToolEvent)")
 	default:
 		return c.JSONPayloadConverter.ToPayload(value)
 	}
 }
 
 func (c *agentJSONPayloadConverter) FromPayload(p *commonpb.Payload, valuePtr any) error {
-	switch v := valuePtr.(type) {
+	switch valuePtr.(type) {
 	case **api.RunOutput:
-		return decodeRunOutput(c.spec, p, valuePtr)
-	case *api.RunOutput:
-		if v == nil {
-			return fmt.Errorf("temporal: run output decoder got nil *api.RunOutput")
-		}
-		ptr := v
-		return decodeRunOutput(c.spec, p, &ptr)
+		return decodeRunOutput(p, valuePtr)
 	case **api.PlanActivityInput:
-		return decodePlanActivityInput(c.spec, p, valuePtr)
-	case *api.PlanActivityInput:
-		if v == nil {
-			return fmt.Errorf("temporal: plan activity input decoder got nil *api.PlanActivityInput")
-		}
-		ptr := v
-		return decodePlanActivityInput(c.spec, p, &ptr)
+		return decodePlanActivityInput(p, valuePtr)
 	case **api.ToolResultsSet:
-		return decodeToolResultsSet(c.spec, p, valuePtr)
-	case *api.ToolResultsSet:
-		if v == nil {
-			return fmt.Errorf("temporal: tool results set decoder got nil *api.ToolResultsSet")
-		}
-		ptr := v
-		return decodeToolResultsSet(c.spec, p, &ptr)
-	case **planner.ToolResult:
-		return decodeToolResult(c.spec, p, valuePtr)
-	case *planner.ToolResult:
-		if v == nil {
-			return fmt.Errorf("temporal: tool result decoder got nil *planner.ToolResult")
-		}
-		ptr := v
-		return decodeToolResult(c.spec, p, &ptr)
+		return decodeToolResultsSet(p, valuePtr)
 	default:
 		return c.JSONPayloadConverter.FromPayload(p, valuePtr)
 	}
@@ -192,284 +154,118 @@ func decodeJSONPayload(p *commonpb.Payload, dst any) error {
 	return json.Unmarshal(p.Data, dst)
 }
 
-func decodeRunOutput(specFn func(aitools.Ident) (*aitools.ToolSpec, bool), p *commonpb.Payload, valuePtr any) error {
+func decodeTarget[T any](valuePtr any, label, typeName string) (*T, error) {
+	switch v := valuePtr.(type) {
+	case **T:
+		if v == nil {
+			return nil, fmt.Errorf("temporal: %s decoder got nil **%s", label, typeName)
+		}
+		if *v == nil {
+			*v = new(T)
+		}
+		if *v == nil {
+			return nil, fmt.Errorf("temporal: %s is nil", label)
+		}
+		return *v, nil
+	default:
+		return nil, fmt.Errorf("temporal: %s decoder requires **%s, got %T", label, typeName, valuePtr)
+	}
+}
+
+func decodeRunOutput(p *commonpb.Payload, valuePtr any) error {
 	var w runOutputWire
 	if err := decodeJSONPayload(p, &w); err != nil {
 		return err
 	}
 
-	events := make([]*planner.ToolResult, 0, len(w.ToolEvents))
-	for _, trw := range w.ToolEvents {
-		tr, err := decodeToolResultWire(specFn, trw)
-		if err != nil {
-			return err
-		}
-		events = append(events, tr)
-	}
-
-	var dst *api.RunOutput
-	switch v := valuePtr.(type) {
-	case **api.RunOutput:
-		if v == nil {
-			return fmt.Errorf("temporal: run output decoder got nil **api.RunOutput")
-		}
-		if *v == nil {
-			*v = &api.RunOutput{}
-		}
-		dst = *v
-	default:
-		return fmt.Errorf("temporal: run output decoder requires **api.RunOutput, got %T", valuePtr)
-	}
-	if dst == nil {
-		return fmt.Errorf("temporal: run output is nil")
+	dst, err := decodeTarget[api.RunOutput](valuePtr, "run output", "api.RunOutput")
+	if err != nil {
+		return err
 	}
 
 	dst.AgentID = w.AgentID
 	dst.RunID = w.RunID
 	dst.Final = w.Final
-	dst.ToolEvents = events
+	dst.ToolEvents = w.ToolEvents
 	dst.Notes = w.Notes
 	dst.Usage = w.Usage
 	return nil
 }
 
-func decodePlanActivityInput(specFn func(aitools.Ident) (*aitools.ToolSpec, bool), p *commonpb.Payload, valuePtr any) error {
+func decodePlanActivityInput(p *commonpb.Payload, valuePtr any) error {
 	var w planActivityInputWire
 	if err := decodeJSONPayload(p, &w); err != nil {
 		return err
 	}
 
-	results := make([]*planner.ToolResult, 0, len(w.ToolResults))
-	for _, trw := range w.ToolResults {
-		tr, err := decodeToolResultWire(specFn, trw)
-		if err != nil {
-			return err
-		}
-		results = append(results, tr)
-	}
-
-	var dst *api.PlanActivityInput
-	switch v := valuePtr.(type) {
-	case **api.PlanActivityInput:
-		if v == nil {
-			return fmt.Errorf("temporal: plan activity input decoder got nil **api.PlanActivityInput")
-		}
-		if *v == nil {
-			*v = &api.PlanActivityInput{}
-		}
-		dst = *v
-	default:
-		return fmt.Errorf("temporal: plan activity input decoder requires **api.PlanActivityInput, got %T", valuePtr)
-	}
-	if dst == nil {
-		return fmt.Errorf("temporal: plan activity input is nil")
+	dst, err := decodeTarget[api.PlanActivityInput](valuePtr, "plan activity input", "api.PlanActivityInput")
+	if err != nil {
+		return err
 	}
 
 	dst.AgentID = w.AgentID
 	dst.RunID = w.RunID
 	dst.Messages = w.Messages
 	dst.RunContext = w.RunContext
-	dst.ToolResults = results
+	dst.ToolResults = w.ToolResults
 	dst.Finalize = w.Finalize
 	return nil
 }
 
-func decodeToolResultsSet(specFn func(aitools.Ident) (*aitools.ToolSpec, bool), p *commonpb.Payload, valuePtr any) error {
+func decodeToolResultsSet(p *commonpb.Payload, valuePtr any) error {
 	var w toolResultsSetWire
 	if err := decodeJSONPayload(p, &w); err != nil {
 		return err
 	}
 
-	results := make([]*planner.ToolResult, 0, len(w.Results))
-	for _, trw := range w.Results {
-		tr, err := decodeToolResultWire(specFn, trw)
-		if err != nil {
-			return err
-		}
-		results = append(results, tr)
-	}
-
-	var dst *api.ToolResultsSet
-	switch v := valuePtr.(type) {
-	case **api.ToolResultsSet:
-		if v == nil {
-			return fmt.Errorf("temporal: tool results set decoder got nil **api.ToolResultsSet")
-		}
-		if *v == nil {
-			*v = &api.ToolResultsSet{}
-		}
-		dst = *v
-	default:
-		return fmt.Errorf("temporal: tool results set decoder requires **api.ToolResultsSet, got %T", valuePtr)
-	}
-	if dst == nil {
-		return fmt.Errorf("temporal: tool results set is nil")
-	}
-
-	dst.RunID = w.RunID
-	dst.ID = w.ID
-	dst.Results = results
-	dst.RetryHints = w.RetryHints
-	return nil
-}
-
-func decodeToolResult(specFn func(aitools.Ident) (*aitools.ToolSpec, bool), p *commonpb.Payload, valuePtr any) error {
-	var w toolResultWire
-	if err := decodeJSONPayload(p, &w); err != nil {
-		return err
-	}
-
-	tr, err := decodeToolResultWire(specFn, w)
+	dst, err := decodeTarget[api.ToolResultsSet](valuePtr, "tool results set", "api.ToolResultsSet")
 	if err != nil {
 		return err
 	}
 
-	var dst *planner.ToolResult
-	switch v := valuePtr.(type) {
-	case **planner.ToolResult:
-		if v == nil {
-			return fmt.Errorf("temporal: tool result decoder got nil **planner.ToolResult")
-		}
-		if *v == nil {
-			*v = &planner.ToolResult{}
-		}
-		dst = *v
-	default:
-		return fmt.Errorf("temporal: tool result decoder requires **planner.ToolResult, got %T", valuePtr)
-	}
-	if dst == nil {
-		return fmt.Errorf("temporal: tool result is nil")
-	}
-
-	*dst = *tr
+	dst.RunID = w.RunID
+	dst.ID = w.ID
+	dst.Results = w.Results
+	dst.RetryHints = w.RetryHints
 	return nil
 }
 
-func decodeToolResultWire(specFn func(aitools.Ident) (*aitools.ToolSpec, bool), w toolResultWire) (*planner.ToolResult, error) {
-	var decoded any
-	if w.Error == nil && len(w.Result) > 0 {
-		spec, ok := specFn(w.Name)
-		if !ok || spec == nil {
-			return nil, fmt.Errorf("temporal: unknown tool spec for result %s", w.Name)
-		}
-		res, err := spec.Result.Codec.FromJSON(w.Result)
-		if err != nil {
-			return nil, fmt.Errorf("temporal: decode %s tool result: %w", w.Name, err)
-		}
-		decoded = res
-	}
-
-	return &planner.ToolResult{
-		Name:          w.Name,
-		Result:        decoded,
-		Artifacts:     w.Artifacts,
-		Bounds:        w.Bounds,
-		Error:         w.Error,
-		RetryHint:     w.RetryHint,
-		Telemetry:     w.Telemetry,
-		ToolCallID:    w.ToolCallID,
-		ChildrenCount: w.ChildrenCount,
-		RunLink:       w.RunLink,
-	}, nil
-}
-
-func encodeRunOutputWire(specFn func(aitools.Ident) (*aitools.ToolSpec, bool), in *api.RunOutput) (*runOutputWire, error) {
+func encodeRunOutputWire(in *api.RunOutput) (*runOutputWire, error) {
 	if in == nil {
 		return nil, fmt.Errorf("temporal: run output is nil")
-	}
-	events := make([]toolResultWire, 0, len(in.ToolEvents))
-	for _, tr := range in.ToolEvents {
-		w, err := encodeToolResultWire(specFn, tr)
-		if err != nil {
-			return nil, err
-		}
-		events = append(events, *w)
 	}
 	return &runOutputWire{
 		AgentID:    in.AgentID,
 		RunID:      in.RunID,
 		Final:      in.Final,
-		ToolEvents: events,
+		ToolEvents: in.ToolEvents,
 		Notes:      in.Notes,
 		Usage:      in.Usage,
 	}, nil
 }
 
-func encodePlanActivityInputWire(specFn func(aitools.Ident) (*aitools.ToolSpec, bool), in *api.PlanActivityInput) (*planActivityInputWire, error) {
+func encodePlanActivityInputWire(in *api.PlanActivityInput) (*planActivityInputWire, error) {
 	if in == nil {
 		return nil, fmt.Errorf("temporal: plan activity input is nil")
-	}
-	results := make([]toolResultWire, 0, len(in.ToolResults))
-	for _, tr := range in.ToolResults {
-		w, err := encodeToolResultWire(specFn, tr)
-		if err != nil {
-			return nil, err
-		}
-		results = append(results, *w)
 	}
 	return &planActivityInputWire{
 		AgentID:     in.AgentID,
 		RunID:       in.RunID,
 		Messages:    in.Messages,
 		RunContext:  in.RunContext,
-		ToolResults: results,
+		ToolResults: in.ToolResults,
 		Finalize:    in.Finalize,
 	}, nil
 }
 
-func encodeToolResultsSetWire(specFn func(aitools.Ident) (*aitools.ToolSpec, bool), in *api.ToolResultsSet) (*toolResultsSetWire, error) {
+func encodeToolResultsSetWire(in *api.ToolResultsSet) (*toolResultsSetWire, error) {
 	if in == nil {
 		return nil, fmt.Errorf("temporal: tool results set is nil")
-	}
-	results := make([]toolResultWire, 0, len(in.Results))
-	for _, tr := range in.Results {
-		w, err := encodeToolResultWire(specFn, tr)
-		if err != nil {
-			return nil, err
-		}
-		results = append(results, *w)
 	}
 	return &toolResultsSetWire{
 		RunID:      in.RunID,
 		ID:         in.ID,
-		Results:    results,
+		Results:    in.Results,
 		RetryHints: in.RetryHints,
 	}, nil
-}
-
-func encodeToolResultWire(specFn func(aitools.Ident) (*aitools.ToolSpec, bool), tr *planner.ToolResult) (*toolResultWire, error) {
-	if tr == nil {
-		return &toolResultWire{}, nil
-	}
-	w := &toolResultWire{
-		Name:          tr.Name,
-		Artifacts:     tr.Artifacts,
-		Bounds:        tr.Bounds,
-		Error:         tr.Error,
-		RetryHint:     tr.RetryHint,
-		Telemetry:     tr.Telemetry,
-		ToolCallID:    tr.ToolCallID,
-		ChildrenCount: tr.ChildrenCount,
-		RunLink:       tr.RunLink,
-	}
-	if tr.Result == nil {
-		return w, nil
-	}
-	spec, ok := specFn(tr.Name)
-	if !ok || spec == nil {
-		return nil, fmt.Errorf("temporal: unknown tool spec for result %s", tr.Name)
-	}
-	switch tr.Result.(type) {
-	case json.RawMessage, []byte:
-		return nil, fmt.Errorf("temporal: encode %s tool result: result must be a typed Go value, got %T", tr.Name, tr.Result)
-	}
-	if spec.Result.Codec.ToJSON == nil {
-		return nil, fmt.Errorf("temporal: missing result codec for %s", tr.Name)
-	}
-	raw, err := spec.Result.Codec.ToJSON(tr.Result)
-	if err != nil {
-		return nil, fmt.Errorf("temporal: encode %s tool result: %w", tr.Name, err)
-	}
-	w.Result = json.RawMessage(raw)
-	return w, nil
 }

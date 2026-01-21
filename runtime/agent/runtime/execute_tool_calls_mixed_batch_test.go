@@ -11,6 +11,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
+	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 
@@ -49,6 +50,7 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 		tracer:        telemetry.NoopTracer{},
 		RunEventStore: runloginmem.New(),
 		Bus:           recorder,
+		SessionStore:  sessioninmem.New(),
 	}
 
 	// Register the agent toolset that maps svc.agenttools.* to child workflows.

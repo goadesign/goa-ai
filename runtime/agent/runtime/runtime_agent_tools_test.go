@@ -13,6 +13,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
+	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -26,6 +27,7 @@ func setupTestAgentWithPlanner(plannerFn func(context.Context, *planner.PlanInpu
 		tracer:        telemetry.NoopTracer{},
 		RunEventStore: runloginmem.New(),
 		Bus:           noopHooks{},
+		SessionStore:  sessioninmem.New(),
 	}
 	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
@@ -65,10 +67,13 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 
 	exec := defaultAgentToolExecute(rt, cfg)
 	call := planner.ToolRequest{
-		Name:    tools.Ident("tool"),
-		RunID:   "run",
-		Payload: json.RawMessage(`{"x":"world"}`),
+		Name:      tools.Ident("tool"),
+		RunID:     "run",
+		SessionID: "sess-1",
+		Payload:   json.RawMessage(`{"x":"world"}`),
 	}
+	_, err := rt.CreateSession(context.Background(), call.SessionID)
+	require.NoError(t, err)
 	res, err := exec(ctx, &call)
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -114,7 +119,9 @@ func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
 		Texts: map[tools.Ident]string{"tool": "just text"},
 	}
 	exec := defaultAgentToolExecute(rt, cfg)
-	call := planner.ToolRequest{Name: tools.Ident("tool"), RunID: "run"}
+	call := planner.ToolRequest{Name: tools.Ident("tool"), RunID: "run", SessionID: "sess-1"}
+	_, err := rt.CreateSession(context.Background(), call.SessionID)
+	require.NoError(t, err)
 	res, err := exec(ctx, &call)
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -146,7 +153,9 @@ func TestDefaultAgentToolExecute_DefaultsWhenMissingContent(t *testing.T) {
 		},
 	}
 	exec := defaultAgentToolExecute(rt, cfg)
-	call := planner.ToolRequest{Name: tools.Ident("tool"), RunID: "run"}
+	call := planner.ToolRequest{Name: tools.Ident("tool"), RunID: "run", SessionID: "sess-1"}
+	_, err := rt.CreateSession(context.Background(), call.SessionID)
+	require.NoError(t, err)
 	res, err := exec(ctx, &call)
 	require.NoError(t, err)
 	require.NotNil(t, res)

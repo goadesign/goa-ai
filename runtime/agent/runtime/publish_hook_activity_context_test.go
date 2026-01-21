@@ -60,23 +60,23 @@ func (panicWorkflowContext) ExecuteToolActivityAsync(ctx context.Context, call e
 	return nil, nil
 }
 
-func (panicWorkflowContext) PauseRequests() engine.Receiver[api.PauseRequest] {
+func (panicWorkflowContext) PauseRequests() engine.Receiver[*api.PauseRequest] {
 	return nil
 }
 
-func (panicWorkflowContext) ResumeRequests() engine.Receiver[api.ResumeRequest] {
+func (panicWorkflowContext) ResumeRequests() engine.Receiver[*api.ResumeRequest] {
 	return nil
 }
 
-func (panicWorkflowContext) ClarificationAnswers() engine.Receiver[api.ClarificationAnswer] {
+func (panicWorkflowContext) ClarificationAnswers() engine.Receiver[*api.ClarificationAnswer] {
 	return nil
 }
 
-func (panicWorkflowContext) ExternalToolResults() engine.Receiver[api.ToolResultsSet] {
+func (panicWorkflowContext) ExternalToolResults() engine.Receiver[*api.ToolResultsSet] {
 	return nil
 }
 
-func (panicWorkflowContext) ConfirmationDecisions() engine.Receiver[api.ConfirmationDecision] {
+func (panicWorkflowContext) ConfirmationDecisions() engine.Receiver[*api.ConfirmationDecision] {
 	return nil
 }
 
@@ -198,23 +198,23 @@ func (w *cancelOnPlannerWorkflowContext) ExecuteToolActivityAsync(ctx context.Co
 	return nil, errors.New("unexpected tool activity")
 }
 
-func (w *cancelOnPlannerWorkflowContext) PauseRequests() engine.Receiver[api.PauseRequest] {
+func (w *cancelOnPlannerWorkflowContext) PauseRequests() engine.Receiver[*api.PauseRequest] {
 	return nil
 }
 
-func (w *cancelOnPlannerWorkflowContext) ResumeRequests() engine.Receiver[api.ResumeRequest] {
+func (w *cancelOnPlannerWorkflowContext) ResumeRequests() engine.Receiver[*api.ResumeRequest] {
 	return nil
 }
 
-func (w *cancelOnPlannerWorkflowContext) ClarificationAnswers() engine.Receiver[api.ClarificationAnswer] {
+func (w *cancelOnPlannerWorkflowContext) ClarificationAnswers() engine.Receiver[*api.ClarificationAnswer] {
 	return nil
 }
 
-func (w *cancelOnPlannerWorkflowContext) ExternalToolResults() engine.Receiver[api.ToolResultsSet] {
+func (w *cancelOnPlannerWorkflowContext) ExternalToolResults() engine.Receiver[*api.ToolResultsSet] {
 	return nil
 }
 
-func (w *cancelOnPlannerWorkflowContext) ConfirmationDecisions() engine.Receiver[api.ConfirmationDecision] {
+func (w *cancelOnPlannerWorkflowContext) ConfirmationDecisions() engine.Receiver[*api.ConfirmationDecision] {
 	return nil
 }
 

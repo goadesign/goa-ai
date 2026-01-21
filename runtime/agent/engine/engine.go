@@ -138,6 +138,17 @@ type (
 		SignalByID(ctx context.Context, workflowID, runID, name string, payload any) error
 	}
 
+	// Canceler provides workflow cancellation by workflow ID without requiring
+	// in-process workflow handles. Engines that support out-of-process cancellation
+	// (for example, Temporal) should implement this so callers can cancel runs
+	// across process restarts.
+	Canceler interface {
+		// CancelByID requests cancellation of the workflow identified by runID.
+		// Implementations may ignore runID vs workflowID distinctions when the
+		// runtime uses a single identifier for both.
+		CancelByID(ctx context.Context, runID string) error
+	}
+
 	// WorkflowDefinition binds a workflow handler to a logical name and default queue.
 	WorkflowDefinition struct {
 		// Name is the logical identifier registered with the engine (e.g., "AgentWorkflow").
@@ -209,19 +220,19 @@ type (
 		ExecuteToolActivityAsync(ctx context.Context, call ToolActivityCall) (Future[*api.ToolOutput], error)
 
 		// PauseRequests returns a typed receiver for pause signals.
-		PauseRequests() Receiver[api.PauseRequest]
+		PauseRequests() Receiver[*api.PauseRequest]
 
 		// ResumeRequests returns a typed receiver for resume signals.
-		ResumeRequests() Receiver[api.ResumeRequest]
+		ResumeRequests() Receiver[*api.ResumeRequest]
 
 		// ClarificationAnswers returns a typed receiver for clarification answers.
-		ClarificationAnswers() Receiver[api.ClarificationAnswer]
+		ClarificationAnswers() Receiver[*api.ClarificationAnswer]
 
 		// ExternalToolResults returns a typed receiver for external tool results.
-		ExternalToolResults() Receiver[api.ToolResultsSet]
+		ExternalToolResults() Receiver[*api.ToolResultsSet]
 
 		// ConfirmationDecisions returns a typed receiver for tool confirmation decisions.
-		ConfirmationDecisions() Receiver[api.ConfirmationDecision]
+		ConfirmationDecisions() Receiver[*api.ConfirmationDecision]
 
 		// Now returns the current workflow time in a deterministic manner. Implementations
 		// must return a time source that is replay-safe (e.g., Temporal's workflow.Now).

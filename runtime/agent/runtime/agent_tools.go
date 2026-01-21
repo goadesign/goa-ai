@@ -10,6 +10,7 @@ import (
 	"text/template"
 
 	agent "goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -383,7 +384,7 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 		}
 		if err := rt.publishHook(
 			wfCtx.Context(),
-			hooks.NewAgentRunStartedEvent(
+			hooks.NewChildRunLinkedEvent(
 				call.RunID,
 				call.AgentID,
 				call.SessionID,
@@ -438,15 +439,11 @@ func mergeByKey(items []any, key string) ([]any, bool) {
 	return merged, true
 }
 
-func mergeByKeyFromChildResults(ctx context.Context, rt *Runtime, events []*planner.ToolResult, key string) ([]any, error) {
+func mergeByKeyFromChildResults(events []*api.ToolEvent, key string) ([]any, error) {
 	items := make([]any, 0, len(events))
 	for _, ev := range events {
-		raw, err := rt.marshalToolValue(ctx, ev.Name, ev.Result, false)
-		if err != nil {
-			return nil, err
-		}
 		var m map[string]any
-		if err := json.Unmarshal(raw, &m); err != nil {
+		if err := json.Unmarshal(ev.Result, &m); err != nil {
 			return nil, err
 		}
 		items = append(items, m)
@@ -529,13 +526,14 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 
 	// Build nested run context from explicit ToolRequest fields.
 	nestedRunCtx := run.Context{
-		Tool:             call.Name,
-		RunID:            NestedRunIDForToolCall(call.RunID, call.Name, call.ToolCallID),
-		SessionID:        call.SessionID,
-		TurnID:           call.TurnID,
-		ParentToolCallID: call.ToolCallID,
-		ParentRunID:      call.RunID,
-		ParentAgentID:    call.AgentID,
+		Tool:                call.Name,
+		RunID:               NestedRunIDForToolCall(call.RunID, call.Name, call.ToolCallID),
+		SessionID:           call.SessionID,
+		TurnID:              call.TurnID,
+		ParentToolCallID:    call.ToolCallID,
+		ParentRunID:         call.RunID,
+		ParentAgentID:       call.AgentID,
+		ParentArtifactsMode: call.ArtifactsMode,
 	}
 	// Record the canonical JSON args using the tool codec. marshalToolValue
 	// returns a defensive copy for json.RawMessage, so this never double-encodes.
@@ -583,20 +581,24 @@ func (r *Runtime) adaptAgentChildOutput(ctx context.Context, cfg *AgentToolConfi
 func (r *Runtime) adaptWithFinalizer(ctx context.Context, cfg *AgentToolConfig, call *planner.ToolRequest, outPtr *RunOutput, handle *run.Handle) (*planner.ToolResult, error) {
 	children := make([]ChildCall, 0, len(outPtr.ToolEvents))
 	for _, ev := range outPtr.ToolEvents {
-		if ev == nil {
-			continue
-		}
 		status := "ok"
 		var childErr error
 		if ev.Error != nil {
 			status = "error"
 			childErr = ev.Error
 		}
+		// Child tool results cross a workflow boundary as canonical JSON bytes.
+		// Do not decode here: the parent runtime is not guaranteed to have the tool
+		// codec for the nested agent's internal tools.
+		var childResult any
+		if hasNonNullJSON(ev.Result) {
+			childResult = ev.Result
+		}
 		children = append(children, ChildCall{
 			ToolName:   ev.Name,
 			ToolCallID: ev.ToolCallID,
 			Status:     status,
-			Result:     ev.Result,
+			Result:     childResult,
 			Error:      childErr,
 		})
 	}
@@ -642,7 +644,6 @@ func (r *Runtime) adaptWithFinalizer(ctx context.Context, cfg *AgentToolConfig, 
 			Name:          call.Name,
 			ToolCallID:    call.ToolCallID,
 			Error:         planner.NewToolErrorWithCause(msg, err),
-			Artifacts:     aggregateArtifacts(outPtr.ToolEvents),
 			ChildrenCount: len(outPtr.ToolEvents),
 		}
 		attachRunLink(result, handle)
@@ -667,7 +668,6 @@ func (r *Runtime) adaptWithFinalizer(ctx context.Context, cfg *AgentToolConfig, 
 	tr.Name = call.Name
 	tr.ToolCallID = call.ToolCallID
 	tr.ChildrenCount = len(outPtr.ToolEvents)
-	tr.Artifacts = append(tr.Artifacts, aggregateArtifacts(outPtr.ToolEvents)...)
 	attachRunLink(tr, handle)
 	return tr, nil
 }
@@ -684,12 +684,11 @@ func (r *Runtime) adaptWithJSONOnly(ctx context.Context, cfg *AgentToolConfig, c
 	case n == 1 && outPtr.ToolEvents[0] != nil:
 		// Validate by round-tripping through the parent tool codec. This ensures
 		// that result hint templates and UIs always see the parent tool's schema shape.
-		raw, err := r.marshalToolValue(ctx, call.Name, outPtr.ToolEvents[0].Result, false)
-		if err != nil {
-			aggErr = err
+		if !hasNonNullJSON(outPtr.ToolEvents[0].Result) {
+			aggErr = fmt.Errorf("JSONOnly produced empty child result for %s", call.Name)
 			break
 		}
-		typed, err := r.unmarshalToolValue(ctx, call.Name, raw, false)
+		typed, err := r.unmarshalToolValue(ctx, call.Name, outPtr.ToolEvents[0].Result, false)
 		if err != nil {
 			aggErr = err
 			break
@@ -704,7 +703,7 @@ func (r *Runtime) adaptWithJSONOnly(ctx context.Context, cfg *AgentToolConfig, c
 			)
 			break
 		}
-		merged, err := mergeByKeyFromChildResults(ctx, r, outPtr.ToolEvents, aggregateKey)
+		merged, err := mergeByKeyFromChildResults(outPtr.ToolEvents, aggregateKey)
 		if err != nil {
 			aggErr = err
 			break
@@ -758,7 +757,6 @@ func (r *Runtime) adaptWithJSONOnly(ctx context.Context, cfg *AgentToolConfig, c
 		ToolCallID:    call.ToolCallID,
 		Result:        payload,
 		Telemetry:     tel,
-		Artifacts:     aggregateArtifacts(outPtr.ToolEvents),
 		ChildrenCount: len(outPtr.ToolEvents),
 	}
 	attachRunLink(tr, handle)

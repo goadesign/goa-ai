@@ -136,6 +136,9 @@ func TestSignalTypedDelivery(t *testing.T) {
 			if err2 != nil {
 				return nil, err2
 			}
+			if req == nil {
+				t.Fatal("pause request is nil")
+			}
 			if req.RunID != "test-run-1" || req.Reason != "human" {
 				t.Errorf("unexpected pause request: %+v", req)
 			}
@@ -155,7 +158,7 @@ func TestSignalTypedDelivery(t *testing.T) {
 		t.Fatalf("start workflow: %v", err)
 	}
 
-	err = handle.Signal(ctx, api.SignalPause, api.PauseRequest{
+	err = handle.Signal(ctx, api.SignalPause, &api.PauseRequest{
 		RunID:  "test-run-1",
 		Reason: "human",
 	})
