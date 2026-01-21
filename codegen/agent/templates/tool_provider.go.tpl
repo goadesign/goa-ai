@@ -9,6 +9,19 @@ type (
 	}
 )
 
+func toolErrorCode(err error) string {
+	var se *goa.ServiceError
+	if errors.As(err, &se) {
+		if se.Timeout {
+			return "timeout"
+		}
+		if se.Name != "" {
+			return se.Name
+		}
+	}
+	return "execution_failed"
+}
+
 // NewProvider returns a Provider for the toolset.
 func NewProvider(svc {{ .ServiceTypeRef }}) *Provider {
 	if svc == nil {
@@ -48,7 +61,7 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 			if issues := toolregistry.ValidationIssues(err); len(issues) > 0 {
 				return toolregistry.NewToolResultErrorMessageWithIssues(msg.ToolUseID, "invalid_arguments", err.Error(), issues), nil
 			}
-			return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "execution_failed", err.Error()), nil
+			return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, toolErrorCode(err), err.Error()), nil
 		}
 {{- if .HasResult }}
 		result := Init{{ .ConstName }}ToolResult(methodOut)

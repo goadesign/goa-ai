@@ -241,6 +241,8 @@ func (e *Executor) decodeToolResult(spec *tools.ToolSpec, tool tools.Ident, tool
 		out.Error = planner.NewToolError(msg.Error.Message)
 		if hint := buildRetryHintFromIssues(tool, spec, msg.Error.Issues); hint != nil {
 			out.RetryHint = hint
+		} else if hint := retryHintFromToolErrorCode(tool, msg.Error.Code); hint != nil {
+			out.RetryHint = hint
 		}
 		return out
 	}
@@ -269,6 +271,25 @@ func (e *Executor) decodeToolResult(spec *tools.ToolSpec, tool tools.Ident, tool
 		out.Artifacts = arts
 	}
 	return out
+}
+
+func retryHintFromToolErrorCode(tool tools.Ident, code string) *planner.RetryHint {
+	switch code {
+	case "invalid_input":
+		// Service-level invalid_input errors should surface as invalid input to callers.
+		// We reuse the invalid_arguments retry reason so downstream UIs classify the
+		// failure correctly (invalid_input vs internal) without adding new wire fields.
+		return &planner.RetryHint{
+			Reason: planner.RetryReasonInvalidArguments,
+			Tool:   tool,
+		}
+	case "timeout":
+		return &planner.RetryHint{
+			Reason: planner.RetryReasonTimeout,
+			Tool:   tool,
+		}
+	}
+	return nil
 }
 
 func buildRetryHintFromIssues(toolName tools.Ident, spec *tools.ToolSpec, issues []*tools.FieldIssue) *planner.RetryHint {
