@@ -261,7 +261,7 @@ Agent("coordinator", "Main coordinator", func() {
 })
 ```
 
-**Agent-as-tool runs as a child workflow**: The nested agent executes in its own run. The parent receives a `ToolResult` with a `RunLink` handle to the child run, and streaming emits an `AgentRunStarted` link event so UIs can render nested runs without flattening.
+**Agent-as-tool runs as a child workflow**: The nested agent executes in its own run. The parent receives a `ToolResult` with a `RunLink` handle to the child run, and streaming emits a `ChildRunLinked` link event so UIs can render nested runs without flattening.
 
 ### Policies: Guardrails for Production
 

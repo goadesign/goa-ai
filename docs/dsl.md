@@ -106,7 +106,7 @@ When agent A "uses" a toolset exported by agent B, Goa‑AI wires composition au
 - The consumer registers the returned `runtime.ToolsetRegistration` with its runtime. The consumer
   does not need the exporter’s planner locally; it only needs routing metadata.
 - At runtime, invoking an exported tool starts the exporter agent as a **child workflow** using the
-  generated route metadata. The parent emits `AgentRunStarted` and the returned `ToolResult`
+  generated route metadata. The parent emits `ChildRunLinked` and the returned `ToolResult`
   includes a `RunLink` handle to the child run.
 
 Each run has its own event stream. Stream profiles select which event kinds are emitted to
