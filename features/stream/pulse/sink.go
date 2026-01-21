@@ -20,7 +20,8 @@ type (
 	Options struct {
 		// Client is the Pulse client used to publish events. Required.
 		Client pulse.Client
-		// StreamID derives the target Pulse stream from an event. Defaults to `run/<RunID>`.
+		// StreamID derives the target Pulse stream from an event. Defaults to
+		// `session/<SessionID>`.
 		StreamID func(stream.Event) (string, error)
 		// MarshalEnvelope allows overriding the envelope serialization (primarily for tests).
 		MarshalEnvelope func(envelope) ([]byte, error)
@@ -138,13 +139,13 @@ func (s *Sink) Close(ctx context.Context) error {
 	return s.client.Close(ctx)
 }
 
-// defaultStreamID derives the Pulse stream name from the event's RunID.
-// Returns an error if the RunID is empty.
+// defaultStreamID derives the Pulse stream name from the event's SessionID.
+// Returns an error if the SessionID is empty.
 func defaultStreamID(event stream.Event) (string, error) {
-	if event.RunID() == "" {
-		return "", errors.New("stream event missing run id")
+	if event.SessionID() == "" {
+		return "", errors.New("stream event missing session id")
 	}
-	return fmt.Sprintf("run/%s", event.RunID()), nil
+	return fmt.Sprintf("session/%s", event.SessionID()), nil
 }
 
 // defaultMarshal serializes an envelope to JSON.

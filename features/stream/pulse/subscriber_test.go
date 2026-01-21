@@ -31,7 +31,7 @@ func TestSubscribeEmitsEvents(t *testing.T) {
 	sinkMock.AddClose(func(ctx context.Context) {})
 
 	client.AddStream(func(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
-		require.Equal(t, "run/run-123", name)
+		require.Equal(t, "session/session-123", name)
 		return streamMock, nil
 	})
 	streamMock.AddNewSink(func(ctx context.Context, name string, opts ...streamopts.Sink) (clientspulse.Sink, error) {
@@ -42,15 +42,16 @@ func TestSubscribeEmitsEvents(t *testing.T) {
 	sub, err := NewSubscriber(SubscriberOptions{Client: client, Buffer: 2})
 	require.NoError(t, err)
 
-	events, errs, cancel, err := sub.Subscribe(ctx, "run/run-123")
+	events, errs, cancel, err := sub.Subscribe(ctx, "session/session-123")
 	require.NoError(t, err)
 	defer cancel()
 
 	payload, _ := json.Marshal(map[string]any{
-		"type":      "assistant_reply",
-		"run_id":    "run-123",
-		"timestamp": time.Now(),
-		"payload":   map[string]string{"chunk": "hi"},
+		"type":       "assistant_reply",
+		"run_id":     "run-123",
+		"session_id": "session-123",
+		"timestamp":  time.Now(),
+		"payload":    map[string]string{"chunk": "hi"},
 	})
 	eventCh <- &streaming.Event{ID: "1-0", Payload: payload}
 	close(eventCh)
@@ -84,7 +85,7 @@ func TestSubscribeDecoderError(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events, errs, cancel, err := sub.Subscribe(context.Background(), "run/run-1")
+	events, errs, cancel, err := sub.Subscribe(context.Background(), "session/session-1")
 	require.NoError(t, err)
 	defer cancel()
 	eventCh <- &streaming.Event{Payload: []byte("{}")}

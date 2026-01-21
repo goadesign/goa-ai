@@ -19,7 +19,7 @@ func TestSendPublishesEnvelope(t *testing.T) {
 	str := mockpulse.NewStream(t)
 
 	cli.AddStream(func(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
-		require.Equal(t, "run/run-123", name)
+		require.Equal(t, "session/session-123", name)
 		return str, nil
 	})
 	const lastID = "1-0"
@@ -29,6 +29,7 @@ func TestSendPublishesEnvelope(t *testing.T) {
 		require.NoError(t, json.Unmarshal(payload, &env))
 		require.Equal(t, "run-123", env.RunID)
 		require.Equal(t, "tool_end", env.Type)
+		require.Equal(t, "session-123", env.SessionID)
 		body, ok := env.Payload.(map[string]any)
 		require.True(t, ok)
 		res, ok := body["result"].(map[string]any)
@@ -40,9 +41,9 @@ func TestSendPublishesEnvelope(t *testing.T) {
 	sink, err := NewSink(Options{Client: cli})
 	require.NoError(t, err)
 
-	endPayload := stream.ToolEndPayload{Result: map[string]string{"status": "ok"}}
+	endPayload := stream.ToolEndPayload{Result: json.RawMessage(`{"status":"ok"}`)}
 	err = sink.Send(context.Background(), stream.ToolEnd{
-		Base: stream.NewBase(stream.EventToolEnd, "run-123", "", endPayload),
+		Base: stream.NewBase(stream.EventToolEnd, "run-123", "session-123", endPayload),
 		Data: endPayload,
 	})
 	require.NoError(t, err)
@@ -54,7 +55,7 @@ func TestOnPublishedCalled(t *testing.T) {
 	str := mockpulse.NewStream(t)
 
 	cli.AddStream(func(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
-		require.Equal(t, "run/run-123", name)
+		require.Equal(t, "session/session-123", name)
 		return str, nil
 	})
 	str.AddAdd(func(ctx context.Context, event string, payload []byte) (string, error) {
@@ -82,15 +83,15 @@ func TestOnPublishedCalled(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	endPayload := stream.ToolEndPayload{Result: map[string]string{"status": "ok"}}
+	endPayload := stream.ToolEndPayload{Result: json.RawMessage(`{"status":"ok"}`)}
 	err = sink.Send(context.Background(), stream.ToolEnd{
-		Base: stream.NewBase(stream.EventToolEnd, "run-123", "", endPayload),
+		Base: stream.NewBase(stream.EventToolEnd, "run-123", "session-123", endPayload),
 		Data: endPayload,
 	})
 	require.NoError(t, err)
 	require.True(t, called)
 	require.Equal(t, "42-0", gotID)
-	require.Equal(t, "run/run-123", gotStream)
+	require.Equal(t, "session/session-123", gotStream)
 	require.Equal(t, stream.EventToolEnd, gotEvent.Type())
 }
 
@@ -116,7 +117,7 @@ func TestOnPublishedErrorPropagates(t *testing.T) {
 	err = sink.Send(
 		context.Background(),
 		stream.AssistantReply{
-			Base: stream.NewBase(stream.EventAssistantReply, "r", "", stream.AssistantReplyPayload{Text: "ok"}),
+			Base: stream.NewBase(stream.EventAssistantReply, "r", "s", stream.AssistantReplyPayload{Text: "ok"}),
 			Data: stream.AssistantReplyPayload{Text: "ok"},
 		},
 	)
@@ -143,17 +144,17 @@ func TestCustomStreamID(t *testing.T) {
 	require.NoError(t, sink.Send(
 		context.Background(),
 		stream.PlannerThought{
-			Base: stream.NewBase(stream.EventPlannerThought, "run-1", "", stream.PlannerThoughtPayload{Note: "n"}),
+			Base: stream.NewBase(stream.EventPlannerThought, "run-1", "s", stream.PlannerThoughtPayload{Note: "n"}),
 			Data: stream.PlannerThoughtPayload{Note: "n"},
 		},
 	))
 }
 
-func TestSendRequiresRunID(t *testing.T) {
+func TestSendRequiresSessionID(t *testing.T) {
 	sink, err := NewSink(Options{Client: mockpulse.NewClient(t)})
 	require.NoError(t, err)
 	err = sink.Send(context.Background(), stream.AssistantReply{Data: stream.AssistantReplyPayload{Text: "hi"}})
-	require.EqualError(t, err, "stream event missing run id")
+	require.EqualError(t, err, "stream event missing session id")
 }
 
 func TestStreamCreationError(t *testing.T) {
@@ -166,7 +167,7 @@ func TestStreamCreationError(t *testing.T) {
 	err = sink.Send(
 		context.Background(),
 		stream.AssistantReply{
-			Base: stream.NewBase(stream.EventAssistantReply, "r", "", stream.AssistantReplyPayload{Text: "ok"}),
+			Base: stream.NewBase(stream.EventAssistantReply, "r", "s", stream.AssistantReplyPayload{Text: "ok"}),
 			Data: stream.AssistantReplyPayload{Text: "ok"},
 		},
 	)
@@ -187,7 +188,7 @@ func TestAddError(t *testing.T) {
 	err = sink.Send(
 		context.Background(),
 		stream.AssistantReply{
-			Base: stream.NewBase(stream.EventAssistantReply, "r", "", stream.AssistantReplyPayload{Text: "ok"}),
+			Base: stream.NewBase(stream.EventAssistantReply, "r", "s", stream.AssistantReplyPayload{Text: "ok"}),
 			Data: stream.AssistantReplyPayload{Text: "ok"},
 		},
 	)
