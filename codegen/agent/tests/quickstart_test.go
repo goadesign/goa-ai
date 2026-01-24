@@ -25,16 +25,34 @@ func TestQuickstartGeneratesAndRuns(t *testing.T) {
 	// Get the quickstart directory path (relative to repo root)
 	_, thisFile, _, _ := runtime.Caller(0)
 	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
-	quickstartDir := filepath.Join(repoRoot, "quickstart")
+	quickstartSrcDir := filepath.Join(repoRoot, "quickstart")
 
 	// Check required preconditions
-	designPath := filepath.Join(quickstartDir, "design", "design.go")
+	designPath := filepath.Join(quickstartSrcDir, "design", "design.go")
 	if _, err := os.Stat(designPath); os.IsNotExist(err) {
 		t.Skipf("quickstart design not found at %s, skipping integration test", designPath)
 	}
-	goModPath := filepath.Join(quickstartDir, "go.mod")
+	goModPath := filepath.Join(quickstartSrcDir, "go.mod")
 	if _, err := os.Stat(goModPath); os.IsNotExist(err) {
 		t.Skipf("quickstart go.mod not found at %s, skipping integration test", goModPath)
+	}
+
+	// Copy quickstart into a temp workspace so tests never mutate the repo tree.
+	quickstartDir := filepath.Join(t.TempDir(), "quickstart")
+	if err := copyDir(quickstartSrcDir, quickstartDir); err != nil {
+		t.Fatalf("copy quickstart fixture: %v", err)
+	}
+
+	// The quickstart module uses a relative replace for goa-ai (=> ..) so it can
+	// be generated and run from the repo tree. Once copied into a temp dir, that
+	// relative path no longer points at the repo root. Rewrite it to an absolute
+	// replace so `goa gen` and `go mod tidy` can resolve the local goa-ai module.
+	{
+		cmd := exec.Command("go", "mod", "edit", "-replace", "goa.design/goa-ai="+repoRoot)
+		cmd.Dir = quickstartDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("rewrite quickstart replace failed: %v\nOutput:\n%s", err, out)
+		}
 	}
 
 	// Ensure we have a clean state (remove generated files that aren't committed)
@@ -55,6 +73,18 @@ func TestQuickstartGeneratesAndRuns(t *testing.T) {
 	}
 
 	ctx := context.Background()
+
+	// Step 0: Ensure the module graph is tidy before running goa. The goa CLI
+	// compiles the design package via `go list`, which fails when the module has
+	// pending sum updates.
+	t.Run("go_mod_tidy_pre", func(t *testing.T) {
+		cmd := exec.CommandContext(ctx, "go", "mod", "tidy")
+		cmd.Dir = quickstartDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("go mod tidy failed: %v\nOutput:\n%s", err, out)
+		}
+	})
 
 	// Step 1: Run goa gen
 	t.Run("goa_gen", func(t *testing.T) {
@@ -128,4 +158,38 @@ func TestQuickstartDesignExists(t *testing.T) {
 	if _, err := os.Stat(designPath); os.IsNotExist(err) {
 		t.Fatalf("design file not found at %s", designPath)
 	}
+}
+
+func copyDir(src, dst string) error {
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode())
+	})
 }

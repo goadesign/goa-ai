@@ -15,8 +15,8 @@ import (
 // Value is a sum-type union.
 type Value struct {
 	kind   ValueKind
-	Number ValueNumber2
-	Text   ValueText2
+	Number ValueNumber
+	Text   ValueText
 }
 
 // ValueKind enumerates the union variants for Value.
@@ -35,7 +35,7 @@ func (u Value) Kind() ValueKind {
 }
 
 // NewValueNumber constructs a Value with the number branch set.
-func NewValueNumber(v ValueNumber2) Value {
+func NewValueNumber(v ValueNumber) Value {
 	return Value{
 		kind:   ValueKindNumber,
 		Number: v,
@@ -43,7 +43,7 @@ func NewValueNumber(v ValueNumber2) Value {
 }
 
 // AsNumber returns the value of the number branch if set.
-func (u Value) AsNumber() (_ ValueNumber2, ok bool) {
+func (u Value) AsNumber() (_ ValueNumber, ok bool) {
 	if u.kind != ValueKindNumber {
 		return
 	}
@@ -51,13 +51,13 @@ func (u Value) AsNumber() (_ ValueNumber2, ok bool) {
 }
 
 // SetNumber sets the number branch of the union.
-func (u *Value) SetNumber(v ValueNumber2) {
+func (u *Value) SetNumber(v ValueNumber) {
 	u.kind = ValueKindNumber
 	u.Number = v
 }
 
 // NewValueText constructs a Value with the text branch set.
-func NewValueText(v ValueText2) Value {
+func NewValueText(v ValueText) Value {
 	return Value{
 		kind: ValueKindText,
 		Text: v,
@@ -65,7 +65,7 @@ func NewValueText(v ValueText2) Value {
 }
 
 // AsText returns the value of the text branch if set.
-func (u Value) AsText() (_ ValueText2, ok bool) {
+func (u Value) AsText() (_ ValueText, ok bool) {
 	if u.kind != ValueKindText {
 		return
 	}
@@ -73,7 +73,7 @@ func (u Value) AsText() (_ ValueText2, ok bool) {
 }
 
 // SetText sets the text branch of the union.
-func (u *Value) SetText(v ValueText2) {
+func (u *Value) SetText(v ValueText) {
 	u.kind = ValueKindText
 	u.Text = v
 }
@@ -134,14 +134,14 @@ func (u *Value) UnmarshalJSON(data []byte) error {
 	}
 	switch raw.Type {
 	case string(ValueKindNumber):
-		var v ValueNumber2
+		var v ValueNumber
 		if err := json.Unmarshal(raw.Value, &v); err != nil {
 			return err
 		}
 		u.kind = ValueKindNumber
 		u.Number = v
 	case string(ValueKindText):
-		var v ValueText2
+		var v ValueText
 		if err := json.Unmarshal(raw.Value, &v); err != nil {
 			return err
 		}
