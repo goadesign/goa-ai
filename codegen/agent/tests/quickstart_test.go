@@ -48,10 +48,15 @@ func TestQuickstartGeneratesAndRuns(t *testing.T) {
 	// relative path no longer points at the repo root. Rewrite it to an absolute
 	// replace so `goa gen` and `go mod tidy` can resolve the local goa-ai module.
 	{
-		cmd := exec.Command("go", "mod", "edit", "-replace", "goa.design/goa-ai="+repoRoot)
-		cmd.Dir = quickstartDir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("rewrite quickstart replace failed: %v\nOutput:\n%s", err, out)
+		modPath := filepath.Join(quickstartDir, "go.mod")
+		//nolint:gosec // Test helper reads a trusted fixture file.
+		raw, err := os.ReadFile(modPath)
+		if err != nil {
+			t.Fatalf("read quickstart go.mod: %v", err)
+		}
+		updated := strings.ReplaceAll(string(raw), "replace goa.design/goa-ai => ..", "replace goa.design/goa-ai => "+repoRoot)
+		if err := os.WriteFile(modPath, []byte(updated), 0o600); err != nil {
+			t.Fatalf("write quickstart go.mod: %v", err)
 		}
 	}
 
@@ -161,7 +166,7 @@ func TestQuickstartDesignExists(t *testing.T) {
 }
 
 func copyDir(src, dst string) error {
-	if err := os.MkdirAll(dst, 0o755); err != nil {
+	if err := os.MkdirAll(dst, 0o750); err != nil {
 		return err
 	}
 	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
@@ -177,17 +182,18 @@ func copyDir(src, dst string) error {
 		}
 		target := filepath.Join(dst, rel)
 		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
+			return os.MkdirAll(target, 0o750)
 		}
 		info, err := d.Info()
 		if err != nil {
 			return err
 		}
+		//nolint:gosec // Test helper copies trusted fixture files.
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
 			return err
 		}
 		return os.WriteFile(target, data, info.Mode())
