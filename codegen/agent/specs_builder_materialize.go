@@ -246,7 +246,6 @@ func (b *toolSpecBuilder) ensureNestedLocalTypes(scope *codegen.NameScope, att *
 			return nil
 		}
 
-		uniqueName := scope.HashedUnique(ut, name)
 		id := ut.ID()
 		if id != "" {
 			if cached, ok := localByID[id]; ok && cached != nil {
@@ -257,12 +256,21 @@ func (b *toolSpecBuilder) ensureNestedLocalTypes(scope *codegen.NameScope, att *
 		base := stripStructPkgMeta(goaexpr.DupAtt(ut.Attribute()))
 		local := &goaexpr.UserTypeExpr{
 			AttributeExpr: base,
-			TypeName:      uniqueName,
+			// IMPORTANT (Goa-style): do not pre-reserve a helper name using the
+			// *source* user type as the NameScope key. NameScope keys user types by
+			// their hash (which includes the type name). If we reserve "Foo" under
+			// the hash for the design user type, later references to the *helper*
+			// user type (a distinct hash) become "Foo2" while the emitted definition
+			// stays "Foo", producing undefined identifiers in generated code.
+			//
+			// Instead, set the helper's own base name and let NameScope derive the
+			// final symbol for both references and emitted definitions.
+			TypeName: name,
 		}
 		if id != "" {
 			localByID[id] = local
 		}
-		localsByName[uniqueName] = local
+		localsByName[ut.Hash()] = local
 		a.Type = local
 		return nil
 	})
@@ -270,7 +278,8 @@ func (b *toolSpecBuilder) ensureNestedLocalTypes(scope *codegen.NameScope, att *
 	// Emit local nested helpers after the attribute graph has been fully rewritten.
 	// This guarantees helper defs reference other local helpers (not external
 	// service packages like `gen/types`).
-	for name, ut := range localsByName {
+	for _, ut := range localsByName {
+		name := scope.GoTypeName(&goaexpr.AttributeExpr{Type: ut})
 		key := "name:" + name
 		if _, exists := b.types[key]; exists {
 			continue

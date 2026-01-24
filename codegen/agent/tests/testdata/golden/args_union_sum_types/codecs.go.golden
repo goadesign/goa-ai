@@ -238,17 +238,17 @@ func UnmarshalEchoPayload(data []byte) (*EchoPayload, error) {
 	switch string(in.Value.Kind()) {
 	case "number":
 		actual, _ := in.Value.AsNumber()
-		obj := ValueNumber2(actual)
+		obj := ValueNumber(actual)
 
 		u := out.Value
-		u.SetNumber((ValueNumber2)(obj))
+		u.SetNumber((ValueNumber)(obj))
 		out.Value = u
 	case "text":
 		actual, _ := in.Value.AsText()
-		obj := ValueText2(actual)
+		obj := ValueText(actual)
 
 		u := out.Value
-		u.SetText((ValueText2)(obj))
+		u.SetText((ValueText)(obj))
 		out.Value = u
 	}
 	return out, nil
@@ -307,17 +307,17 @@ func UnmarshalEchoResult(data []byte) (*EchoResult, error) {
 	switch string(in.Value.Kind()) {
 	case "number":
 		actual, _ := in.Value.AsNumber()
-		obj := ValueNumber2(actual)
+		obj := ValueNumber(actual)
 
 		u := out.Value
-		u.SetNumber((ValueNumber2)(obj))
+		u.SetNumber((ValueNumber)(obj))
 		out.Value = u
 	case "text":
 		actual, _ := in.Value.AsText()
-		obj := ValueText2(actual)
+		obj := ValueText(actual)
 
 		u := out.Value
-		u.SetText((ValueText2)(obj))
+		u.SetText((ValueText)(obj))
 		out.Value = u
 	}
 	return out, nil
