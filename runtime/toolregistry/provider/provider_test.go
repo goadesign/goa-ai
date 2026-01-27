@@ -3,9 +3,11 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	pulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	mockpulse "goa.design/goa-ai/features/stream/pulse/clients/pulse/mocks"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -21,6 +23,8 @@ type blockingHandler struct {
 	unblock  chan struct{}
 	callSeen atomic.Bool
 }
+
+const pulseAddEventID = "0-0"
 
 func (h *blockingHandler) HandleToolCall(ctx context.Context, msg toolregistry.ToolCallMessage) (toolregistry.ToolResultMessage, error) {
 	if !h.callSeen.Swap(true) {
@@ -57,7 +61,7 @@ func TestServe_RespondsToPingWhileToolCallInFlight(t *testing.T) {
 	resultStream := mockpulse.NewStream(t)
 	resultStream.SetAdd(func(_ context.Context, _ string, _ []byte) (string, error) {
 		adds.Add(1)
-		return "0-0", nil
+		return pulseAddEventID, nil
 	})
 
 	client := mockpulse.NewClient(t)
@@ -176,7 +180,7 @@ func TestServe_RespondsToPingWhenQueueIsFull(t *testing.T) {
 	resultStream := mockpulse.NewStream(t)
 	resultStream.SetAdd(func(_ context.Context, _ string, _ []byte) (string, error) {
 		adds.Add(1)
-		return "0-0", nil
+		return pulseAddEventID, nil
 	})
 
 	client := mockpulse.NewClient(t)
@@ -275,5 +279,118 @@ func TestServe_RespondsToPingWhenQueueIsFull(t *testing.T) {
 		t.Fatal("Serve did not stop")
 	case <-errc:
 		// The server should stop on context cancellation.
+	}
+}
+
+type outputDeltaHandler struct {
+	errc chan error
+}
+
+func (h *outputDeltaHandler) HandleToolCall(ctx context.Context, msg toolregistry.ToolCallMessage) (toolregistry.ToolResultMessage, error) {
+	pub, ok := toolregistry.OutputDeltaPublisherFromContext(ctx)
+	if !ok {
+		select {
+		case h.errc <- errors.New("missing output delta publisher in context"):
+		default:
+		}
+		return toolregistry.NewToolResultMessage(msg.ToolUseID, json.RawMessage(`{"ok":true}`), nil), nil
+	}
+	if err := pub.PublishToolOutputDelta(ctx, "stdout", "hello\n"); err != nil {
+		select {
+		case h.errc <- err:
+		default:
+		}
+	}
+	return toolregistry.NewToolResultMessage(msg.ToolUseID, json.RawMessage(`{"ok":true}`), nil), nil
+}
+
+func TestServe_PublishesOutputDeltaToResultStream(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const toolset = "test.toolset"
+	toolsetStreamID := toolregistry.ToolsetStreamID(toolset)
+
+	eventsCh := make(chan *streaming.Event, 10)
+
+	sink := mockpulse.NewSink(t)
+	sink.SetSubscribe(func() <-chan *streaming.Event { return eventsCh })
+	sink.SetAck(func(_ context.Context, _ *streaming.Event) error { return nil })
+	sink.SetClose(func(_ context.Context) {})
+
+	toolsetStream := mockpulse.NewStream(t)
+	toolsetStream.SetNewSink(func(_ context.Context, _ string, _ ...streamopts.Sink) (pulse.Sink, error) {
+		return sink, nil
+	})
+
+	addEvents := make(chan string, 8)
+	resultStream := mockpulse.NewStream(t)
+	resultStream.SetAdd(func(_ context.Context, event string, _ []byte) (string, error) {
+		addEvents <- event
+		return pulseAddEventID, nil
+	})
+
+	client := mockpulse.NewClient(t)
+	client.SetStream(func(name string, _ ...streamopts.Stream) (pulse.Stream, error) {
+		switch name {
+		case toolsetStreamID:
+			return toolsetStream, nil
+		default:
+			return resultStream, nil
+		}
+	})
+
+	handlerErrs := make(chan error, 1)
+	h := &outputDeltaHandler{errc: handlerErrs}
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- Serve(ctx, client, toolset, h, Options{
+			Pong: func(_ context.Context, _ string) error { return nil },
+		})
+	}()
+
+	call := toolregistry.NewToolCallMessage(
+		"tooluse_1",
+		tools.Ident("toolset.tool"),
+		json.RawMessage(`{"x":1}`),
+		&toolregistry.ToolCallMeta{RunID: "r1", SessionID: "s1"},
+	)
+	callPayload, err := json.Marshal(call)
+	require.NoError(t, err)
+	eventsCh <- &streaming.Event{ID: "1-0", EventName: "call", Payload: callPayload}
+
+	seen := map[string]int{}
+	deadline := time.After(2 * time.Second)
+	for len(seen) < 2 {
+		select {
+		case ev := <-addEvents:
+			seen[ev] += 1
+		case <-deadline:
+			t.Fatalf("timed out waiting for result stream events, saw=%v", seen)
+		}
+	}
+
+	select {
+	case err := <-handlerErrs:
+		if err != nil {
+			t.Fatalf("handler delta publish failed: %v", err)
+		}
+	default:
+	}
+	if seen[toolregistry.OutputDeltaEventKey] < 1 {
+		t.Fatalf("expected at least 1 %q event, saw=%v", toolregistry.OutputDeltaEventKey, seen)
+	}
+	if seen["result"] < 1 {
+		t.Fatalf("expected at least 1 %q event, saw=%v", "result", seen)
+	}
+
+	cancel()
+	select {
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve did not stop")
+	case <-errc:
 	}
 }

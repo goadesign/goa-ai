@@ -12,6 +12,7 @@ import (
 	pulsec "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/runtime"
+	aistream "goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/toolregistry"
@@ -40,6 +41,8 @@ type (
 
 		sinkName       string
 		resultEventKey string
+		outputDeltaKey string
+		streamSink     aistream.Sink
 
 		logger telemetry.Logger
 		tracer telemetry.Tracer
@@ -48,24 +51,43 @@ type (
 	Option func(*Executor)
 )
 
+// WithSinkName sets the Pulse sink/consumer-group name used when subscribing to
+// per-call result streams. Callers should use a stable name across restarts so
+// pending entries are not orphaned in Redis.
 func WithSinkName(name string) Option {
 	return func(e *Executor) {
 		e.sinkName = name
 	}
 }
 
+// WithResultEventKey sets the Pulse event name used for canonical ToolResultMessage
+// payloads on per-call result streams.
 func WithResultEventKey(key string) Option {
 	return func(e *Executor) {
 		e.resultEventKey = key
 	}
 }
 
+// WithStreamSink configures the executor to forward best-effort tool output delta
+// frames into the provided stream sink while it waits for the canonical tool
+// result message. This does not affect tool execution semantics: the final tool
+// result remains authoritative.
+func WithStreamSink(sink aistream.Sink) Option {
+	return func(e *Executor) {
+		e.streamSink = sink
+	}
+}
+
+// WithLogger configures the executor logger. When nil, the executor uses a noop
+// logger.
 func WithLogger(logger telemetry.Logger) Option {
 	return func(e *Executor) {
 		e.logger = logger
 	}
 }
 
+// WithTracer configures the executor tracer. When nil, the executor uses a noop
+// tracer.
 func WithTracer(tracer telemetry.Tracer) Option {
 	return func(e *Executor) {
 		e.tracer = tracer
@@ -79,6 +101,7 @@ func New(client Client, pulse pulsec.Client, specs SpecLookup, opts ...Option) *
 		specs:          specs,
 		sinkName:       "agent",
 		resultEventKey: "result",
+		outputDeltaKey: toolregistry.OutputDeltaEventKey,
 		logger:         telemetry.NewNoopLogger(),
 		tracer:         telemetry.NewNoopTracer(),
 	}
@@ -134,6 +157,7 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 			attribute.String("toolregistry.parent_tool_call_id", meta.ParentToolCallID),
 			attribute.String("toolregistry.sink", e.sinkName),
 			attribute.String("toolregistry.result_event_key", e.resultEventKey),
+			attribute.String("toolregistry.output_delta_key", e.outputDeltaKey),
 		),
 	)
 	defer span.End()
@@ -187,6 +211,53 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 				span.RecordError(fmt.Errorf("tool result stream subscription closed"))
 				span.SetStatus(codes.Error, "tool result stream subscription closed")
 				return nil, fmt.Errorf("tool result stream subscription closed")
+			}
+			if ev.EventName == e.outputDeltaKey {
+				var msg toolregistry.ToolOutputDeltaMessage
+				if err := json.Unmarshal(ev.Payload, &msg); err != nil {
+					span.RecordError(err)
+					if ackErr := sink.Ack(ctx, ev); ackErr != nil {
+						return nil, fmt.Errorf("ack malformed tool output delta message: %w", ackErr)
+					}
+					continue
+				}
+				if msg.ToolUseID != toolUseID {
+					if err := sink.Ack(ctx, ev); err != nil {
+						return nil, fmt.Errorf("ack unrelated tool output delta message: %w", err)
+					}
+					continue
+				}
+				if err := sink.Ack(ctx, ev); err != nil {
+					span.RecordError(err)
+					span.SetStatus(codes.Error, "ack tool output delta message failed")
+					return nil, fmt.Errorf("ack tool output delta message: %w", err)
+				}
+
+				if e.streamSink != nil {
+					p := aistream.ToolOutputDeltaPayload{
+						ToolCallID:       meta.ToolCallID,
+						ParentToolCallID: meta.ParentToolCallID,
+						ToolName:         call.Name.String(),
+						Stream:           msg.Stream,
+						Delta:            msg.Delta,
+					}
+					ev := aistream.ToolOutputDelta{
+						Base: aistream.NewBase(aistream.EventToolOutputDelta, meta.RunID, meta.SessionID, p),
+						Data: p,
+					}
+					if err := e.streamSink.Send(ctx, ev); err != nil {
+						span.RecordError(err)
+						e.logger.Error(
+							ctx,
+							"publish tool output delta failed",
+							"component", "tool-registry-executor",
+							"tool_use_id", toolUseID,
+							"tool", call.Name,
+							"err", err,
+						)
+					}
+				}
+				continue
 			}
 			if ev.EventName != e.resultEventKey {
 				if err := sink.Ack(ctx, ev); err != nil {

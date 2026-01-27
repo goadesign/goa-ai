@@ -148,6 +148,17 @@ type (
 		Data ToolCallArgsDeltaPayload
 	}
 
+	// ToolOutputDelta streams an incremental tool output fragment while the tool
+	// is still running.
+	//
+	// Contract:
+	//   - This is a best-effort UX signal. Consumers may ignore it entirely.
+	//   - The canonical tool output is still emitted via ToolEnd.
+	ToolOutputDelta struct {
+		Base
+		Data ToolOutputDeltaPayload
+	}
+
 	// ToolEnd streams when a tool activity completes with either a result or error. Clients
 	// receive this to update tool status, close progress indicators, display results or errors,
 	// and track tool execution metrics. Every ToolStart event eventually produces a ToolEnd.
@@ -532,6 +543,22 @@ type (
 		Delta string `json:"delta"`
 	}
 
+	// ToolOutputDeltaPayload describes a streamed tool output fragment.
+	ToolOutputDeltaPayload struct {
+		// ToolCallID identifies the tool call producing the output.
+		ToolCallID string `json:"tool_call_id"`
+		// ParentToolCallID optionally identifies the parent tool call when the tool
+		// was invoked as part of an agent-as-tool run.
+		ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
+		// ToolName is the canonical tool identifier for this delta stream.
+		ToolName string `json:"tool_name"`
+		// Stream identifies which logical output channel produced the delta
+		// (for example, "stdout", "stderr", "log", "progress").
+		Stream string `json:"stream"`
+		// Delta is the raw output fragment emitted by the tool.
+		Delta string `json:"delta"`
+	}
+
 	// Base provides a default implementation of Event. Embed this struct in concrete
 	// event types to inherit the Type(), RunID(), SessionID(), and Payload() methods.
 	// All stream event types (AssistantReply, ToolStart, etc.) embed Base to avoid
@@ -726,6 +753,10 @@ const (
 	// emitted via EventToolStart (tool_start) and the final tool call/tool_end
 	// events.
 	EventToolCallArgsDelta EventType = "tool_call_args_delta"
+
+	// EventToolOutputDelta streams an incremental tool output fragment while the
+	// tool is running.
+	EventToolOutputDelta EventType = "tool_output_delta"
 
 	// EventAssistantReply streams incremental assistant message content as the planner
 	// produces the final response. Clients receive text chunks that can be displayed

@@ -58,6 +58,22 @@ type (
 		Error     *ToolError      `json:"error,omitempty"`
 	}
 
+	// ToolOutputDeltaMessage is published to a per-call result stream while a tool
+	// is still running. It streams partial output to consumers for improved UX
+	// (live output panels) without changing the final ToolResultMessage.
+	//
+	// Contract:
+	//   - This is best-effort and may be dropped by consumers.
+	//   - Deltas are not persisted by default; the canonical output remains the
+	//     final tool result payload.
+	ToolOutputDeltaMessage struct {
+		ToolUseID string `json:"tool_use_id"`
+		// Stream identifies which logical output channel produced the delta
+		// (for example, "stdout", "stderr", "log", "progress").
+		Stream string `json:"stream"`
+		Delta  string `json:"delta"`
+	}
+
 	// Artifact is a tool-produced artifact payload published alongside results.
 	// Artifacts are never sent to model providers; they are UI/policy-facing data.
 	Artifact struct {
@@ -80,6 +96,10 @@ const (
 	MessageTypeCall ToolCallMessageType = "call"
 	// MessageTypePing indicates a health ping message on a toolset stream.
 	MessageTypePing ToolCallMessageType = "ping"
+
+	// OutputDeltaEventKey is the Pulse event name used to publish best-effort tool
+	// output delta messages to a per-call result stream.
+	OutputDeltaEventKey = "output_delta"
 )
 
 // NewToolCallMessage constructs a tool invocation message.
@@ -107,6 +127,15 @@ func NewToolResultMessage(toolUseID string, result json.RawMessage, artifacts []
 		ToolUseID: toolUseID,
 		Result:    result,
 		Artifacts: artifacts,
+	}
+}
+
+// NewToolOutputDeltaMessage constructs a tool output delta message.
+func NewToolOutputDeltaMessage(toolUseID string, stream string, delta string) ToolOutputDeltaMessage {
+	return ToolOutputDeltaMessage{
+		ToolUseID: toolUseID,
+		Stream:    stream,
+		Delta:     delta,
 	}
 }
 
