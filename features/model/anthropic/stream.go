@@ -197,17 +197,21 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 		start := ev.ContentBlock.AsAny()
 		if toolUse, ok := start.(sdk.ToolUseBlock); ok {
 			tb := &toolBuffer{}
-			if toolUse.Name != "" {
-				raw := toolUse.Name
-				canonical, ok := p.toolNameMap[raw]
-				if !ok {
-					return fmt.Errorf(
-						"anthropic stream: tool name %q not in reverse map; expected canonical tool ID",
-						raw,
-					)
-				}
-				tb.name = canonical
+			if toolUse.ID == "" {
+				return fmt.Errorf("anthropic stream: tool use block missing id")
 			}
+			if toolUse.Name == "" {
+				return fmt.Errorf("anthropic stream: tool use block %q missing name", toolUse.ID)
+			}
+			raw := toolUse.Name
+			canonical, ok := p.toolNameMap[raw]
+			if !ok {
+				return fmt.Errorf(
+					"anthropic stream: tool name %q not in reverse map; expected canonical tool ID",
+					raw,
+				)
+			}
+			tb.name = canonical
 			tb.id = toolUse.ID
 			p.toolBlocks[idx] = tb
 			return nil
@@ -237,7 +241,10 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			if tb := p.toolBlocks[idx]; tb != nil {
 				tb.fragments = append(tb.fragments, delta.PartialJSON)
 				if tb.id == "" {
-					return nil
+					return fmt.Errorf("anthropic stream: tool JSON delta missing tool call id")
+				}
+				if tb.name == "" {
+					return fmt.Errorf("anthropic stream: tool JSON delta missing tool name for id %q", tb.id)
 				}
 				return p.emit(model.Chunk{
 					Type: model.ChunkTypeToolCallDelta,
