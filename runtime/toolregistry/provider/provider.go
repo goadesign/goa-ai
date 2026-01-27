@@ -81,7 +81,33 @@ type (
 		// Tracer is used for provider spans. When nil, defaults to a noop tracer.
 		Tracer telemetry.Tracer
 	}
+
+	// pulseOutputDeltaPublisher publishes best-effort tool output fragments to the
+	// tool call's per-call result stream (`result:<tool_use_id>`).
+	//
+	// Contract:
+	//   - This is a UX-only signal: consumers may drop deltas without affecting
+	//     correctness.
+	//   - The canonical tool output remains the final ToolResultMessage published
+	//     under the result event key.
+	pulseOutputDeltaPublisher struct {
+		stream    pulseclients.Stream
+		toolUseID string
+	}
 )
+
+func (p *pulseOutputDeltaPublisher) PublishToolOutputDelta(ctx context.Context, stream string, delta string) error {
+	msg := toolregistry.NewToolOutputDeltaMessage(p.toolUseID, stream, delta)
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("marshal tool output delta: %w", err)
+	}
+	_, err = p.stream.Add(ctx, toolregistry.OutputDeltaEventKey, payload)
+	if err != nil {
+		return fmt.Errorf("publish tool output delta: %w", err)
+	}
+	return nil
+}
 
 // Serve subscribes to the toolset request stream and dispatches tool call
 // messages to handler. It publishes tool results to per-call result streams.
@@ -219,6 +245,21 @@ func Serve(ctx context.Context, pulse pulseclients.Client, toolset string, handl
 						),
 					)
 
+					resultStreamID := toolregistry.ResultStreamID(item.msg.ToolUseID)
+					resultStream, streamErr := pulse.Stream(resultStreamID)
+					if streamErr != nil {
+						span.RecordError(streamErr)
+						span.SetStatus(codes.Error, "open result stream")
+						span.End()
+						signalErr(fmt.Errorf("open result stream %q: %w", resultStreamID, streamErr))
+						return
+					}
+
+					callCtx = toolregistry.WithOutputDeltaPublisher(callCtx, &pulseOutputDeltaPublisher{
+						stream:    resultStream,
+						toolUseID: item.msg.ToolUseID,
+					})
+
 					res, err := handler.HandleToolCall(callCtx, item.msg)
 					if err != nil {
 						span.RecordError(err)
@@ -235,15 +276,6 @@ func Serve(ctx context.Context, pulse pulseclients.Client, toolset string, handl
 						res = toolregistry.NewToolResultErrorMessage(item.msg.ToolUseID, "execution_failed", err.Error())
 					}
 
-					resultStreamID := toolregistry.ResultStreamID(item.msg.ToolUseID)
-					resultStream, streamErr := pulse.Stream(resultStreamID)
-					if streamErr != nil {
-						span.RecordError(streamErr)
-						span.SetStatus(codes.Error, "open result stream")
-						span.End()
-						signalErr(fmt.Errorf("open result stream %q: %w", resultStreamID, streamErr))
-						return
-					}
 					payload, marshalErr := json.Marshal(res)
 					if marshalErr != nil {
 						span.RecordError(marshalErr)

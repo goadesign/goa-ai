@@ -10,6 +10,7 @@ import (
 	"goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	"goa.design/goa-ai/runtime/agent/planner"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
+	aistream "goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/toolregistry"
 	"goa.design/pulse/streaming"
@@ -71,6 +72,98 @@ func TestExecutorUsesOldestStartForResultStreamSink(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, res)
 	assert.Equal(t, tools.Ident("todos.update_todos"), res.Name)
+}
+
+type captureSink struct {
+	events []aistream.Event
+}
+
+func (s *captureSink) Send(ctx context.Context, event aistream.Event) error {
+	s.events = append(s.events, event)
+	return nil
+}
+
+func (s *captureSink) Close(ctx context.Context) error {
+	return nil
+}
+
+func TestExecutorForwardsOutputDelta(t *testing.T) {
+	t.Parallel()
+
+	const (
+		toolUseID       = "tooluse-123"
+		resultStreamID  = "result:" + toolUseID
+		resultEventName = "result"
+	)
+
+	specs := fakeSpecs{
+		spec: &tools.ToolSpec{
+			Name:          "todos.update_todos",
+			Toolset:       "todos.todos",
+			Result:        tools.TypeSpec{},
+			Payload:       tools.TypeSpec{},
+			Sidecar:       nil,
+			BoundedResult: false,
+		},
+	}
+
+	delta := toolregistry.NewToolOutputDeltaMessage(toolUseID, "stdout", "hi\n")
+	stream := &fakeStream{
+		t:             t,
+		requiredStart: "0",
+		events: []*streaming.Event{
+			{
+				ID:        "1-0",
+				EventName: toolregistry.OutputDeltaEventKey,
+				Payload:   mustJSON(t, delta),
+			},
+			{
+				ID:        "2-0",
+				EventName: resultEventName,
+				Payload: mustJSON(t, toolregistry.ToolResultMessage{
+					ToolUseID: toolUseID,
+					Result:    json.RawMessage(`{}`),
+				}),
+			},
+		},
+	}
+	pc := fakePulseClient{
+		streamID: resultStreamID,
+		stream:   stream,
+	}
+
+	sink := &captureSink{}
+	exec := New(
+		fakeRegistryClient{
+			toolUseID:      toolUseID,
+			resultStreamID: resultStreamID,
+		},
+		pc,
+		specs,
+		WithResultEventKey(resultEventName),
+		WithStreamSink(sink),
+	)
+
+	res, err := exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
+		RunID:      "run",
+		SessionID:  "sess",
+		ToolCallID: "toolcall-1",
+	}, &planner.ToolRequest{
+		Name:    "todos.update_todos",
+		Payload: []byte(`{}`),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	require.Len(t, sink.events, 1)
+	ev, ok := sink.events[0].(aistream.ToolOutputDelta)
+	require.True(t, ok)
+	assert.Equal(t, aistream.EventToolOutputDelta, ev.Type())
+	assert.Equal(t, "run", ev.RunID())
+	assert.Equal(t, "sess", ev.SessionID())
+	assert.Equal(t, "toolcall-1", ev.Data.ToolCallID)
+	assert.Equal(t, "stdout", ev.Data.Stream)
+	assert.Equal(t, "hi\n", ev.Data.Delta)
 }
 
 type fakeRegistryClient struct {
