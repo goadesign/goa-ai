@@ -57,15 +57,15 @@ func (r *Runtime) finalizeWithPlanner(
 	var hint string
 	switch reason {
 	case planner.TerminationReasonTimeBudget:
-		hint = "Time budget reached. Provide the best possible final answer now. Do not call any tools."
+		hint = "FINALIZE NOW: time budget reached.\n\n- Provide the best possible final answer using ONLY the information already available in the conversation and tool results.\n- Do NOT call any tools.\n- Do NOT say you will call tools or that you will \"try\" another approach.\n- If additional tool calls would be needed, explain what you would have retrieved and how it would change the answer, then provide the best provisional answer."
 	case planner.TerminationReasonAwaitTimeout:
-		hint = "Timed out while waiting for user input. Provide the best possible final answer now. Do not call any tools."
+		hint = "FINALIZE NOW: timed out while waiting for user input.\n\n- Provide the best possible final answer using ONLY the information already available in the conversation and tool results.\n- Do NOT call any tools.\n- Do NOT ask follow-up questions.\n- If user input would materially change the answer, state the missing information explicitly and give the best provisional answer."
 	case planner.TerminationReasonToolCap:
-		hint = "Tool budget exhausted. Provide the best possible final answer now. Do not call any tools."
+		hint = "FINALIZE NOW: tool budget exhausted.\n\n- Provide the best possible final answer using ONLY the information already available in the conversation and tool results.\n- Do NOT call any tools.\n- Do NOT say you will call tools.\n- If further tool calls would be needed, describe them briefly and provide the best provisional answer."
 	case planner.TerminationReasonFailureCap:
-		hint = "Too many tool failures. Provide the best possible final answer now. Do not call any tools."
+		hint = "FINALIZE NOW: too many tool failures.\n\n- Provide the best possible final answer using ONLY the information already available in the conversation and tool results.\n- Do NOT call any tools.\n- Do NOT say you will call tools.\n- If tools failed due to invalid arguments, summarize the failure and provide a corrected plan/payload shape (without actually calling tools), then provide the best provisional answer."
 	default:
-		hint = "Provide the best possible final answer now. Do not call any tools."
+		hint = "FINALIZE NOW.\n\n- Provide the best possible final answer using ONLY the information already available in the conversation and tool results.\n- Do NOT call any tools.\n- Do NOT say you will call tools.\n- If more work is needed, describe it succinctly and provide the best provisional answer."
 	}
 	messages := cloneMessages(base.Messages)
 	// When finalizing, ensure the message history ends in a valid state for the
