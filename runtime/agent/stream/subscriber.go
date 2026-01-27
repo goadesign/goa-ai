@@ -30,6 +30,7 @@ type (
 	// The following hook events are streamed to clients:
 	//   - AssistantMessage      → EventAssistantReply
 	//   - PlannerNote           → EventPlannerThought
+	//   - ToolCallArgsDelta     → EventToolCallArgsDelta (optional)
 	//   - ToolCallScheduled     → EventToolStart
 	//   - ToolCallUpdated       → EventToolUpdate
 	//   - ToolResultReceived    → EventToolEnd
@@ -82,6 +83,7 @@ func NewSubscriberWithProfile(sink Sink, profile StreamProfile) (*Subscriber, er
 // Event translation:
 //   - AssistantMessage → EventAssistantReply
 //   - PlannerNote → EventPlannerThought
+//   - ToolCallArgsDelta → EventToolCallArgsDelta (optional)
 //   - ToolCallScheduled → EventToolStart
 //   - ToolCallUpdated → EventToolUpdate
 //   - ToolResultReceived → EventToolEnd
@@ -200,6 +202,22 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		}
 		return s.sink.Send(ctx, ToolAuthorization{
 			Base: Base{t: EventToolAuthorization, r: evt.RunID(), s: evt.SessionID(), p: payload},
+			Data: payload,
+		})
+	case *hooks.ToolCallArgsDeltaEvent:
+		if !s.profile.ToolCallArgsDelta {
+			return nil
+		}
+		if evt.ToolCallID == "" || evt.Delta == "" {
+			return nil
+		}
+		payload := ToolCallArgsDeltaPayload{
+			ToolCallID: evt.ToolCallID,
+			ToolName:   string(evt.ToolName),
+			Delta:      evt.Delta,
+		}
+		return s.sink.Send(ctx, ToolCallArgsDelta{
+			Base: Base{t: EventToolCallArgsDelta, r: evt.RunID(), s: evt.SessionID(), p: payload},
 			Data: payload,
 		})
 	case *hooks.ToolCallScheduledEvent:

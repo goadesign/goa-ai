@@ -83,6 +83,11 @@ func ConsumeStream(ctx context.Context, streamer model.Streamer, ev PlannerEvent
 				Payload:    chunk.ToolCall.Payload,
 				ToolCallID: chunk.ToolCall.ID,
 			})
+		case model.ChunkTypeToolCallDelta:
+			if chunk.ToolCallDelta == nil || chunk.ToolCallDelta.ID == "" || chunk.ToolCallDelta.Delta == "" {
+				continue
+			}
+			ev.ToolCallArgsDelta(ctx, chunk.ToolCallDelta.ID, chunk.ToolCallDelta.Name, chunk.ToolCallDelta.Delta)
 		case model.ChunkTypeUsage:
 			if chunk.UsageDelta != nil {
 				summary.Usage = addUsage(summary.Usage, *chunk.UsageDelta)

@@ -7,6 +7,7 @@ import (
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
@@ -65,6 +66,13 @@ func (e *runtimePlannerEvents) AssistantChunk(ctx context.Context, text string) 
 	e.led.AppendText(text)
 	e.mu.Unlock()
 	e.publish(ctx, hooks.NewAssistantMessageEvent(e.runID, e.agentID, e.sessionID, text, nil))
+}
+
+func (e *runtimePlannerEvents) ToolCallArgsDelta(ctx context.Context, toolCallID string, toolName tools.Ident, delta string) {
+	if toolCallID == "" || delta == "" {
+		return
+	}
+	e.publish(ctx, hooks.NewToolCallArgsDeltaEvent(e.runID, e.agentID, e.sessionID, toolCallID, toolName, delta))
 }
 
 func (e *runtimePlannerEvents) PlannerThought(ctx context.Context, note string, labels map[string]string) {

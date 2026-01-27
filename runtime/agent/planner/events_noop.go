@@ -7,6 +7,7 @@ import (
 	"context"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 // NoopEvents returns a PlannerEvents implementation that discards all events.
@@ -18,7 +19,9 @@ func NoopEvents() PlannerEvents {
 
 type noopEvents struct{}
 
-func (noopEvents) AssistantChunk(ctx context.Context, text string)                           {}
+func (noopEvents) AssistantChunk(ctx context.Context, text string) {}
+func (noopEvents) ToolCallArgsDelta(ctx context.Context, toolCallID string, toolName tools.Ident, delta string) {
+}
 func (noopEvents) PlannerThinkingBlock(ctx context.Context, block model.ThinkingPart)        {}
 func (noopEvents) PlannerThought(ctx context.Context, note string, labels map[string]string) {}
 func (noopEvents) UsageDelta(ctx context.Context, usage model.TokenUsage)                    {}

@@ -192,6 +192,13 @@ func DecodeFromHookInput(input *ActivityInput) (Event, error) {
 		}
 		evt = NewChildRunLinkedEvent(input.RunID, input.AgentID, input.SessionID, p.ToolName, p.ToolCallID, p.ChildRunID, p.ChildAgentID)
 
+	case ToolCallArgsDelta:
+		var p ToolCallArgsDeltaEvent
+		if err := json.Unmarshal(input.Payload, &p); err != nil {
+			return nil, fmt.Errorf("decode %s payload: %w", ToolCallArgsDelta, err)
+		}
+		evt = NewToolCallArgsDeltaEvent(input.RunID, input.AgentID, input.SessionID, p.ToolCallID, p.ToolName, p.Delta)
+
 	case AwaitClarification:
 		var p AwaitClarificationEvent
 		if err := json.Unmarshal(input.Payload, &p); err != nil {

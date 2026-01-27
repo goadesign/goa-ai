@@ -261,6 +261,25 @@ type (
 		ExpectedChildrenTotal int
 	}
 
+	// ToolCallArgsDeltaEvent fires when a provider streams an incremental tool-call
+	// argument fragment while constructing the final tool input JSON.
+	//
+	// Contract:
+	//   - This event is best-effort and may be ignored or dropped entirely.
+	//   - Delta is not guaranteed to be valid JSON on its own.
+	//   - The canonical tool payload is still emitted via ToolCallScheduledEvent
+	//     and ToolResultReceivedEvent (and, at the model boundary, the finalized
+	//     tool call chunk).
+	ToolCallArgsDeltaEvent struct {
+		baseEvent
+		// ToolCallID is the provider-issued identifier for the tool call.
+		ToolCallID string
+		// ToolName is the canonical tool identifier when known.
+		ToolName tools.Ident
+		// Delta is a raw JSON fragment emitted while streaming tool input JSON.
+		Delta string
+	}
+
 	// PlannerNoteEvent fires when the planner emits an annotation or
 	// intermediate thought during execution.
 	PlannerNoteEvent struct {
@@ -788,6 +807,18 @@ func NewToolCallUpdatedEvent(runID string, agentID agent.Ident, sessionID string
 	}
 }
 
+// NewToolCallArgsDeltaEvent constructs a ToolCallArgsDeltaEvent.
+func NewToolCallArgsDeltaEvent(runID string, agentID agent.Ident, sessionID string, toolCallID string, toolName tools.Ident, delta string) *ToolCallArgsDeltaEvent {
+	be := newBaseEvent(runID, agentID)
+	be.sessionID = sessionID
+	return &ToolCallArgsDeltaEvent{
+		baseEvent:  be,
+		ToolCallID: toolCallID,
+		ToolName:   toolName,
+		Delta:      delta,
+	}
+}
+
 // NewUsageEvent constructs a UsageEvent with the provided details.
 func NewUsageEvent(runID string, agentID agent.Ident, sessionID string, input, output, total, cacheRead, cacheWrite int) *UsageEvent {
 	be := newBaseEvent(runID, agentID)
@@ -954,6 +985,7 @@ func (e *RunResumedEvent) Type() EventType         { return RunResumed }
 func (e *ToolCallScheduledEvent) Type() EventType  { return ToolCallScheduled }
 func (e *ToolResultReceivedEvent) Type() EventType { return ToolResultReceived }
 func (e *ToolCallUpdatedEvent) Type() EventType    { return ToolCallUpdated }
+func (e *ToolCallArgsDeltaEvent) Type() EventType  { return ToolCallArgsDelta }
 func (e *PlannerNoteEvent) Type() EventType        { return PlannerNote }
 func (e *AssistantMessageEvent) Type() EventType   { return AssistantMessage }
 func (e *ThinkingBlockEvent) Type() EventType      { return ThinkingBlock }
