@@ -215,21 +215,23 @@ func (p *chunkProcessor) Handle(event any) error {
 		if start := ev.Value.Start; start != nil {
 			if toolUse, ok := start.(*brtypes.ContentBlockStartMemberToolUse); ok {
 				tb := &toolBuffer{}
-				if toolUse.Value.Name != nil {
-					raw := *toolUse.Value.Name
-					name := normalizeToolName(raw)
-					canonical, ok := p.toolNameMap[name]
-					if !ok {
-						return fmt.Errorf(
-							"bedrock stream: tool name %q not in reverse map (raw: %q); expected canonical tool ID",
-							name, raw,
-						)
-					}
-					tb.name = canonical
+				if toolUse.Value.ToolUseId == nil || *toolUse.Value.ToolUseId == "" {
+					return fmt.Errorf("bedrock stream: tool use block missing tool_use_id")
 				}
-				if toolUse.Value.ToolUseId != nil {
-					tb.id = *toolUse.Value.ToolUseId
+				tb.id = *toolUse.Value.ToolUseId
+				if toolUse.Value.Name == nil || *toolUse.Value.Name == "" {
+					return fmt.Errorf("bedrock stream: tool use block %q missing name", tb.id)
 				}
+				raw := *toolUse.Value.Name
+				name := normalizeToolName(raw)
+				canonical, ok := p.toolNameMap[name]
+				if !ok {
+					return fmt.Errorf(
+						"bedrock stream: tool name %q not in reverse map (raw: %q); expected canonical tool ID",
+						name, raw,
+					)
+				}
+				tb.name = canonical
 				p.toolBlocks[idx] = tb
 				return nil
 			}
@@ -308,7 +310,10 @@ func (p *chunkProcessor) Handle(event any) error {
 				fragment := *delta.Value.Input
 				tb.fragments = append(tb.fragments, fragment)
 				if tb.id == "" {
-					return nil
+					return fmt.Errorf("bedrock stream: tool JSON delta missing tool call id")
+				}
+				if tb.name == "" {
+					return fmt.Errorf("bedrock stream: tool JSON delta missing tool name for id %q", tb.id)
 				}
 				return p.emit(model.Chunk{
 					Type: model.ChunkTypeToolCallDelta,
