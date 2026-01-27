@@ -236,6 +236,17 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			}
 			if tb := p.toolBlocks[idx]; tb != nil {
 				tb.fragments = append(tb.fragments, delta.PartialJSON)
+				if tb.id == "" {
+					return nil
+				}
+				return p.emit(model.Chunk{
+					Type: model.ChunkTypeToolCallDelta,
+					ToolCallDelta: &model.ToolCallDelta{
+						Name:  tools.Ident(tb.name),
+						ID:    tb.id,
+						Delta: delta.PartialJSON,
+					},
+				})
 			}
 			return nil
 		case sdk.ThinkingDelta:

@@ -305,7 +305,19 @@ func (p *chunkProcessor) Handle(event any) error {
 			}
 		case *brtypes.ContentBlockDeltaMemberToolUse:
 			if tb := p.toolBlocks[idx]; tb != nil && delta.Value.Input != nil {
-				tb.fragments = append(tb.fragments, *delta.Value.Input)
+				fragment := *delta.Value.Input
+				tb.fragments = append(tb.fragments, fragment)
+				if tb.id == "" {
+					return nil
+				}
+				return p.emit(model.Chunk{
+					Type: model.ChunkTypeToolCallDelta,
+					ToolCallDelta: &model.ToolCallDelta{
+						Name:  tools.Ident(tb.name),
+						ID:    tb.id,
+						Delta: fragment,
+					},
+				})
 			}
 			return nil
 		}

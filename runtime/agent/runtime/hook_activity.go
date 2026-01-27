@@ -35,20 +35,27 @@ func (r *Runtime) hookActivity(ctx context.Context, input *HookActivityInput) er
 	if err != nil {
 		return err
 	}
-	if err := r.RunEventStore.Append(ctx, &runlog.Event{
-		RunID:     input.RunID,
-		AgentID:   input.AgentID,
-		SessionID: input.SessionID,
-		TurnID:    input.TurnID,
-		Type:      input.Type,
-		Payload:   append([]byte(nil), input.Payload...),
-		Timestamp: time.UnixMilli(evt.Timestamp()).UTC(),
-	}); err != nil {
-		return err
-	}
+	// Tool call argument deltas are best-effort UX signals. They are intentionally
+	// excluded from the canonical run event log to avoid bloating durable history.
+	//
+	// Consumers must treat ToolCallArgsDelta as optional; the canonical tool
+	// payload is still emitted via tool_start/tool_end and the finalized tool call.
+	if input.Type != hooks.ToolCallArgsDelta {
+		if err := r.RunEventStore.Append(ctx, &runlog.Event{
+			RunID:     input.RunID,
+			AgentID:   input.AgentID,
+			SessionID: input.SessionID,
+			TurnID:    input.TurnID,
+			Type:      input.Type,
+			Payload:   append([]byte(nil), input.Payload...),
+			Timestamp: time.UnixMilli(evt.Timestamp()).UTC(),
+		}); err != nil {
+			return err
+		}
 
-	if err := r.updateRunMetaFromHookEvent(ctx, evt); err != nil {
-		return err
+		if err := r.updateRunMetaFromHookEvent(ctx, evt); err != nil {
+			return err
+		}
 	}
 
 	if r.streamSubscriber != nil {
@@ -63,8 +70,12 @@ func (r *Runtime) hookActivity(ctx context.Context, input *HookActivityInput) er
 		}
 	}
 
-	if err := r.Bus.Publish(ctx, evt); err != nil {
-		r.logWarn(ctx, "hook publish failed", err, "event", evt.Type())
+	// Tool call argument deltas are streaming-only; they do not participate in
+	// derived stores like memory.
+	if input.Type != hooks.ToolCallArgsDelta {
+		if err := r.Bus.Publish(ctx, evt); err != nil {
+			r.logWarn(ctx, "hook publish failed", err, "event", evt.Type())
+		}
 	}
 	return nil
 }

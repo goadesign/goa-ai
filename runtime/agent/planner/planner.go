@@ -127,6 +127,22 @@ type PlannerEvents interface {
 	// streaming output instead of returning a full FinalResponse at the end.
 	AssistantChunk(ctx context.Context, text string)
 
+	// ToolCallArgsDelta emits an incremental tool-call argument fragment as the
+	// model streams tool input JSON.
+	//
+	// Naming note:
+	//   - AssistantChunk streams user-visible assistant text in chunks.
+	//   - ToolCallArgsDelta streams non-canonical argument fragments; we call it
+	//     a delta because fragments are not guaranteed to be valid JSON boundaries
+	//     and are strictly optional to consume.
+	//
+	// Contract:
+	//   - This is a best-effort UX signal. Consumers may ignore it entirely.
+	//   - Deltas are not guaranteed to be valid JSON on their own.
+	//   - The canonical tool payload is still delivered via the final tool call
+	//     (model.ChunkTypeToolCall) and the runtime's tool_start event.
+	ToolCallArgsDelta(ctx context.Context, toolCallID string, toolName tools.Ident, delta string)
+
 	// PlannerThinkingBlock emits a structured thinking block (for models that
 	// support rich thinking parts) for debugging/trace visibility.
 	PlannerThinkingBlock(ctx context.Context, block model.ThinkingPart)

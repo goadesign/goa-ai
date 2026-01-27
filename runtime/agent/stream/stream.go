@@ -135,6 +135,19 @@ type (
 		Data ToolUpdatePayload
 	}
 
+	// ToolCallArgsDelta streams an incremental tool-call argument fragment as the
+	// provider constructs the final tool input JSON.
+	//
+	// Contract:
+	//   - This is a best-effort UX signal. Consumers may ignore it entirely.
+	//   - Delta fragments are not guaranteed to be valid JSON on their own.
+	//   - The canonical tool payload is still emitted via ToolStartPayload.Payload
+	//     and the final tool call completion events.
+	ToolCallArgsDelta struct {
+		Base
+		Data ToolCallArgsDeltaPayload
+	}
+
 	// ToolEnd streams when a tool activity completes with either a result or error. Clients
 	// receive this to update tool status, close progress indicators, display results or errors,
 	// and track tool execution metrics. Every ToolStart event eventually produces a ToolEnd.
@@ -509,6 +522,16 @@ type (
 		ExpectedChildrenTotal int `json:"expected_children_total"`
 	}
 
+	// ToolCallArgsDeltaPayload describes a streamed tool-call argument fragment.
+	ToolCallArgsDeltaPayload struct {
+		// ToolCallID identifies the tool call being streamed.
+		ToolCallID string `json:"tool_call_id"`
+		// ToolName is the canonical tool identifier when known.
+		ToolName string `json:"tool_name,omitempty"`
+		// Delta is the raw tool input JSON fragment emitted by the provider.
+		Delta string `json:"delta"`
+	}
+
 	// Base provides a default implementation of Event. Embed this struct in concrete
 	// event types to inherit the Type(), RunID(), SessionID(), and Payload() methods.
 	// All stream event types (AssistantReply, ToolStart, etc.) embed Base to avoid
@@ -596,6 +619,8 @@ type (
 		ToolStart bool
 		// ToolUpdate controls emission of tool_update events.
 		ToolUpdate bool
+		// ToolCallArgsDelta controls emission of tool_call_args_delta events.
+		ToolCallArgsDelta bool
 		// ToolEnd controls emission of tool_end events.
 		ToolEnd bool
 		// AwaitClarification controls emission of await_clarification events.
@@ -626,6 +651,7 @@ func DefaultProfile() StreamProfile {
 		Thoughts:           true,
 		ToolStart:          true,
 		ToolUpdate:         true,
+		ToolCallArgsDelta:  true,
 		ToolEnd:            true,
 		AwaitClarification: true,
 		AwaitConfirmation:  true,
@@ -690,6 +716,16 @@ const (
 	// ToolCallUpdatedEvent hooks fire. The payload carries the updated expected child
 	// count for progress tracking.
 	EventToolUpdate EventType = "tool_update"
+
+	// EventToolCallArgsDelta streams an incremental tool-call argument fragment as
+	// the model provider streams tool input JSON.
+	//
+	// Naming note: this is an args *delta* (not a tool call). Fragments are not
+	// guaranteed to be valid JSON boundaries and must not be treated as canonical.
+	// Consumers may ignore these events; the canonical tool payload is still
+	// emitted via EventToolStart (tool_start) and the final tool call/tool_end
+	// events.
+	EventToolCallArgsDelta EventType = "tool_call_args_delta"
 
 	// EventAssistantReply streams incremental assistant message content as the planner
 	// produces the final response. Clients receive text chunks that can be displayed

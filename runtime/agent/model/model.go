@@ -267,6 +267,28 @@ type (
 		ID string
 	}
 
+	// ToolCallDelta is an incremental tool-call payload fragment streamed by
+	// providers while they are still constructing the full tool input JSON.
+	//
+	// Contract:
+	//   - This is a best-effort UX signal. Consumers may ignore it entirely.
+	//   - The canonical tool payload remains ToolCall.Payload in the final
+	//     ChunkTypeToolCall emitted once the provider closes the tool block.
+	//   - Delta is not guaranteed to be valid JSON on its own; callers must treat
+	//     it as an opaque fragment suitable only for progressive UI previews.
+	ToolCallDelta struct {
+		// Name is the canonical tool identifier when known. It may be empty for
+		// early fragments depending on provider behavior.
+		Name tools.Ident
+
+		// ID is the provider-issued tool call identifier used to correlate all
+		// deltas and the final ToolCall payload.
+		ID string
+
+		// Delta is a raw JSON fragment emitted by the provider.
+		Delta string
+	}
+
 	// ToolChoiceMode controls how the model uses tools for a request.
 	//
 	// Not all providers support all modes. Provider adapters fail fast when a
@@ -378,6 +400,10 @@ type (
 		// ToolCall carries a single tool invocation when Type is ChunkTypeToolCall.
 		ToolCall *ToolCall
 
+		// ToolCallDelta carries an incremental tool-call payload fragment when Type
+		// is ChunkTypeToolCallDelta. It is strictly optional and may be ignored.
+		ToolCallDelta *ToolCallDelta
+
 		// UsageDelta reports incremental token usage when available.
 		UsageDelta *TokenUsage
 
@@ -481,6 +507,15 @@ const (
 
 	// ChunkTypeToolCall identifies a chunk carrying a tool invocation.
 	ChunkTypeToolCall = "tool_call"
+
+	// ChunkTypeToolCallDelta identifies a chunk carrying an incremental tool-call
+	// input JSON fragment.
+	//
+	// Naming note: this is a *delta* because fragments are not guaranteed to be
+	// valid JSON boundaries. It exists solely for progressive UI previews and is
+	// safe to ignore; the canonical tool payload is still emitted as
+	// ChunkTypeToolCall.
+	ChunkTypeToolCallDelta = "tool_call_delta"
 
 	// ChunkTypeThinking identifies a chunk carrying thinking content.
 	ChunkTypeThinking = "thinking"

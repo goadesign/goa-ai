@@ -89,6 +89,17 @@ const (
 	// execution. The Payload contains the tool name, arguments, and queue metadata.
 	ToolCallScheduled EventType = "tool_call_scheduled"
 
+	// ToolCallArgsDelta fires when a provider streams an incremental tool-call
+	// argument fragment while constructing the final tool input JSON.
+	//
+	// Naming note: This is an args *delta* (not a “tool call” in itself). The
+	// fragment may not be valid JSON and must not be treated as canonical.
+	//
+	// This event is best-effort and intended for streaming UX only. Consumers
+	// may ignore it entirely; the canonical tool payload is still emitted via
+	// ToolCallScheduled and the final tool call completion events.
+	ToolCallArgsDelta EventType = "tool_call_args_delta"
+
 	// ToolResultReceived fires when a tool activity completes and returns a
 	// result or error. The Payload contains the tool name, result, duration,
 	// and any execution errors.

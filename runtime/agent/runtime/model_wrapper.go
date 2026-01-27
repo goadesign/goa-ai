@@ -15,8 +15,11 @@ import (
 //     reports usage when available.
 //
 // Critical invariants:
-//   - Tool calls are NOT emitted here; those are already surfaced to planners
-//     via model.ChunkTypeToolCall and handled by the workflow loop.
+//   - Final tool calls are NOT emitted here; those are already surfaced to
+//     planners via model.ChunkTypeToolCall and handled by the workflow loop.
+//   - Tool call argument deltas MAY be emitted here as a best-effort UX signal
+//     (model.ChunkTypeToolCallDelta). Consumers may ignore them; the canonical
+//     tool payload remains the finalized tool call and the runtime tool_start.
 //   - Emission occurs in the planner activity context to keep ledger writes
 //     deterministic and scoped to the current turn.
 
@@ -81,14 +84,23 @@ type eventStream struct {
 	ctx    context.Context
 }
 
-// Recv forwards events for text/thinking/usage chunks. Tool calls are passed
-// through untouched for the planner/workflow to handle.
+// Recv forwards events for text/thinking/usage chunks.
+//
+// Contract:
+//   - Final tool calls are passed through untouched for the planner/workflow to
+//     handle.
+//   - Tool call argument deltas are forwarded as best-effort PlannerEvents for
+//     streaming UX; consumers may ignore them.
 func (s *eventStream) Recv() (model.Chunk, error) {
 	ch, err := s.inner.Recv()
 	if err != nil {
 		return ch, err
 	}
 	switch ch.Type {
+	case model.ChunkTypeToolCallDelta:
+		if ch.ToolCallDelta != nil {
+			s.events.ToolCallArgsDelta(s.ctx, ch.ToolCallDelta.ID, ch.ToolCallDelta.Name, ch.ToolCallDelta.Delta)
+		}
 	case model.ChunkTypeText:
 		if ch.Message != nil {
 			emitMessageContent(s.ctx, s.events, ch.Message)
