@@ -211,6 +211,9 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		if evt.ToolCallID == "" || evt.Delta == "" {
 			return nil
 		}
+		if evt.ToolName == "" {
+			return fmt.Errorf("tool_call_args_delta missing tool name for tool_call_id %q", evt.ToolCallID)
+		}
 		payload := ToolCallArgsDeltaPayload{
 			ToolCallID: evt.ToolCallID,
 			ToolName:   string(evt.ToolName),

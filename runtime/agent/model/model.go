@@ -277,8 +277,10 @@ type (
 	//   - Delta is not guaranteed to be valid JSON on its own; callers must treat
 	//     it as an opaque fragment suitable only for progressive UI previews.
 	ToolCallDelta struct {
-		// Name is the canonical tool identifier when known. It may be empty for
-		// early fragments depending on provider behavior.
+		// Name is the canonical tool identifier for this delta stream.
+		//
+		// Provider adapters MUST populate Name for every emitted delta so
+		// downstream consumers can render tool-specific previews deterministically.
 		Name tools.Ident
 
 		// ID is the provider-issued tool call identifier used to correlate all

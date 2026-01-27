@@ -526,8 +526,8 @@ type (
 	ToolCallArgsDeltaPayload struct {
 		// ToolCallID identifies the tool call being streamed.
 		ToolCallID string `json:"tool_call_id"`
-		// ToolName is the canonical tool identifier when known.
-		ToolName string `json:"tool_name,omitempty"`
+		// ToolName is the canonical tool identifier for this delta stream.
+		ToolName string `json:"tool_name"`
 		// Delta is the raw tool input JSON fragment emitted by the provider.
 		Delta string `json:"delta"`
 	}
