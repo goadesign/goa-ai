@@ -315,6 +315,9 @@ func (e *Executor) decodeToolResult(spec *tools.ToolSpec, tool tools.Ident, tool
 		} else if hint := retryHintFromToolErrorCode(tool, msg.Error.Code); hint != nil {
 			out.RetryHint = hint
 		}
+		if out.RetryHint != nil && out.RetryHint.ExampleInput == nil {
+			out.RetryHint.ExampleInput = cloneExampleInput(spec)
+		}
 		return out
 	}
 	if spec.Result.Codec.FromJSON != nil {
@@ -350,6 +353,14 @@ func retryHintFromToolErrorCode(tool tools.Ident, code string) *planner.RetryHin
 		// Service-level invalid_input errors should surface as invalid input to callers.
 		// We reuse the invalid_arguments retry reason so downstream UIs classify the
 		// failure correctly (invalid_input vs internal) without adding new wire fields.
+		return &planner.RetryHint{
+			Reason: planner.RetryReasonInvalidArguments,
+			Tool:   tool,
+		}
+	case "invalid_arguments":
+		// Tool-codec validation errors are surfaced by providers as invalid_arguments.
+		// These are always user-actionable: they indicate the payload did not satisfy
+		// the tool schema (missing fields, enum violations, range constraints, etc.).
 		return &planner.RetryHint{
 			Reason: planner.RetryReasonInvalidArguments,
 			Tool:   tool,
@@ -412,6 +423,39 @@ func buildClarifyingQuestion(toolName tools.Ident, missing, fields []string) str
 		return "I need additional information to run " + toolName.String() + ". Please provide: " + strings.Join(missing, ", ") + "."
 	}
 	return "I could not run " + toolName.String() + " due to invalid arguments. Please correct: " + strings.Join(fields, ", ") + " and resend the tool call."
+}
+
+func cloneExampleInput(spec *tools.ToolSpec) map[string]any {
+	if spec == nil || len(spec.Payload.ExampleInput) == 0 {
+		return nil
+	}
+	return cloneAnyMap(spec.Payload.ExampleInput)
+}
+
+func cloneAnyMap(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = cloneAny(v)
+	}
+	return out
+}
+
+func cloneAny(in any) any {
+	switch v := in.(type) {
+	case map[string]any:
+		return cloneAnyMap(v)
+	case []any:
+		out := make([]any, len(v))
+		for i := range v {
+			out[i] = cloneAny(v[i])
+		}
+		return out
+	default:
+		return in
+	}
 }
 
 func uniqueStrings(in []string) []string {
