@@ -21,6 +21,9 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 )
 
+const maxPlanToolResultBytes = 64 * 1024
+const resultOmittedReasonWorkflowBudget = "workflow_budget"
+
 // encodeToolEvents converts typed in-memory tool results into workflow-boundary safe
 // envelopes.
 //
@@ -52,6 +55,8 @@ func (r *Runtime) encodeToolEvents(ctx context.Context, events []*planner.ToolRe
 		out = append(out, &api.ToolEvent{
 			Name:          ev.Name,
 			Result:        result,
+			ResultBytes:   len(result),
+			ResultOmitted: false,
 			Artifacts:     arts,
 			Bounds:        ev.Bounds,
 			Error:         ev.Error,
@@ -60,6 +65,56 @@ func (r *Runtime) encodeToolEvents(ctx context.Context, events []*planner.ToolRe
 			ToolCallID:    ev.ToolCallID,
 			ChildrenCount: ev.ChildrenCount,
 			RunLink:       ev.RunLink,
+		})
+	}
+	return out, nil
+}
+
+// encodeToolEventsForPlanning converts tool results into workflow-boundary safe envelopes
+// suitable for PlanStart/PlanResume activity inputs.
+//
+// The planner resume inputs must remain small: the workflow loop is the control plane
+// and should not shuttle UI artifacts or large payloads across workflow/activity
+// boundaries. Full tool results and artifacts are persisted via hooks and returned in
+// RunOutput.ToolEvents for callers that need them.
+//
+// Contract:
+//   - Artifacts are always omitted.
+//   - Results larger than maxPlanToolResultBytes are omitted (Result=nil) and must be
+//     consumed via the provider transcript (tool_result parts) or via out-of-band
+//     persistence.
+func (r *Runtime) encodeToolEventsForPlanning(ctx context.Context, events []*planner.ToolResult) ([]*api.ToolEvent, error) {
+	if len(events) == 0 {
+		return nil, nil
+	}
+	out := make([]*api.ToolEvent, 0, len(events))
+	for _, ev := range events {
+		result, err := r.marshalToolValue(ctx, ev.Name, ev.Result, false)
+		if err != nil {
+			return nil, fmt.Errorf("encode tool result for %s: %w", ev.Name, err)
+		}
+		resultBytes := len(result)
+		omitted := false
+		omittedReason := ""
+		if len(result) > maxPlanToolResultBytes {
+			omitted = true
+			omittedReason = resultOmittedReasonWorkflowBudget
+			result = nil
+		}
+		out = append(out, &api.ToolEvent{
+			Name:                ev.Name,
+			Result:              result,
+			ResultBytes:         resultBytes,
+			ResultOmitted:       omitted,
+			ResultOmittedReason: omittedReason,
+			Artifacts:           nil,
+			Bounds:              ev.Bounds,
+			Error:               ev.Error,
+			RetryHint:           ev.RetryHint,
+			Telemetry:           ev.Telemetry,
+			ToolCallID:          ev.ToolCallID,
+			ChildrenCount:       ev.ChildrenCount,
+			RunLink:             ev.RunLink,
 		})
 	}
 	return out, nil
@@ -133,16 +188,19 @@ func (r *Runtime) decodeToolEvents(ctx context.Context, events []*api.ToolEvent)
 			decoded = val
 		}
 		tr := &planner.ToolResult{
-			Name:          ev.Name,
-			Result:        decoded,
-			Artifacts:     decodeToolEventArtifacts(ev.Artifacts),
-			Bounds:        ev.Bounds,
-			Error:         ev.Error,
-			RetryHint:     ev.RetryHint,
-			Telemetry:     ev.Telemetry,
-			ToolCallID:    ev.ToolCallID,
-			ChildrenCount: ev.ChildrenCount,
-			RunLink:       ev.RunLink,
+			Name:                ev.Name,
+			Result:              decoded,
+			ResultBytes:         ev.ResultBytes,
+			ResultOmitted:       ev.ResultOmitted,
+			ResultOmittedReason: ev.ResultOmittedReason,
+			Artifacts:           decodeToolEventArtifacts(ev.Artifacts),
+			Bounds:              ev.Bounds,
+			Error:               ev.Error,
+			RetryHint:           ev.RetryHint,
+			Telemetry:           ev.Telemetry,
+			ToolCallID:          ev.ToolCallID,
+			ChildrenCount:       ev.ChildrenCount,
+			RunLink:             ev.RunLink,
 		}
 		// Enforce artifact shape by round-tripping raw JSON through the sidecar codec.
 		if err := r.normalizeToolArtifacts(ctx, ev.Name, tr); err != nil {
