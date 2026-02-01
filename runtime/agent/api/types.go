@@ -190,6 +190,27 @@ type (
 		// Result is the canonical JSON result payload encoded using the tool result codec.
 		Result json.RawMessage
 
+		// ResultBytes is the size, in bytes, of the canonical JSON result payload
+		// produced by the runtime before any workflow-boundary trimming is applied.
+		//
+		// When ResultOmitted is true, ResultBytes reports the original size even though
+		// Result is nil.
+		ResultBytes int
+
+		// ResultOmitted indicates that the runtime intentionally omitted Result bytes
+		// from this envelope to satisfy workflow-boundary payload budgets.
+		//
+		// This is used in planner activity inputs: workflow orchestration must not
+		// shuttle large tool payloads. Full tool results remain available via hooks
+		// (memory/streams) and in RunOutput.ToolEvents.
+		ResultOmitted bool
+
+		// ResultOmittedReason provides a stable, machine-readable reason for omitting
+		// the result bytes. Empty when ResultOmitted is false.
+		//
+		// Example values: "workflow_budget".
+		ResultOmittedReason string
+
 		// Artifacts contains sideband UI artifacts produced alongside the tool result.
 		Artifacts []*ToolArtifact
 

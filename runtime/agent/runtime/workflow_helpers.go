@@ -17,6 +17,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
+const maxTranscriptToolResultBytes = 64 * 1024
+
 // groupToolCallsByTimeout buckets calls by per-tool timeout override (with `*`
 // suffix prefix-match support) or falls back to the default timeout when no
 // override applies.
@@ -329,6 +331,15 @@ func (r *Runtime) toolResultContent(tr *planner.ToolResult) (any, error) {
 		if err != nil {
 			return nil, fmt.Errorf("runtime: encode tool_result for %s: %w", tr.Name, err)
 		}
+		if len(raw) > maxTranscriptToolResultBytes {
+			return map[string]any{
+				"ok":        true,
+				"truncated": true,
+				"preview":   formatResultPreview(tr.Name, tr.Result),
+				"bounds":    tr.Bounds,
+				"note":      "Tool result omitted from transcript due to size. Use follow-up tools to narrow the request or rely on UI artifacts.",
+			}, nil
+		}
 		return json.RawMessage(raw), nil
 	}
 	if tr.Result == nil {
@@ -343,6 +354,16 @@ func (r *Runtime) toolResultContent(tr *planner.ToolResult) (any, error) {
 	raw, err := spec.Result.Codec.ToJSON(tr.Result)
 	if err != nil {
 		return nil, fmt.Errorf("runtime: encode tool_result for %s: %w", tr.Name, err)
+	}
+	if len(raw) > maxTranscriptToolResultBytes {
+		return map[string]any{
+			"ok":        false,
+			"truncated": true,
+			"preview":   formatResultPreview(tr.Name, tr.Result),
+			"bounds":    tr.Bounds,
+			"error":     tr.Error,
+			"note":      "Tool result omitted from transcript due to size. Use follow-up tools to narrow the request or rely on UI artifacts.",
+		}, nil
 	}
 	return map[string]any{
 		"result": json.RawMessage(raw),
@@ -424,15 +445,19 @@ func (r *Runtime) buildNextResumeRequest(
 	if err := transcript.ValidateBedrock(plannerMsgs, false); err != nil {
 		return PlanActivityInput{}, fmt.Errorf("invalid Bedrock transcript for run %s: %w", base.RunContext.RunID, err)
 	}
-	toolResults, err := r.encodeToolEvents(ctx, lastToolResults)
+	toolResults, err := r.encodeToolEventsForPlanning(ctx, lastToolResults)
 	if err != nil {
 		return PlanActivityInput{}, err
 	}
-	return PlanActivityInput{
+	out := PlanActivityInput{
 		AgentID:     agentID,
 		RunID:       base.RunContext.RunID,
 		Messages:    plannerMsgs,
 		RunContext:  resumeCtx,
 		ToolResults: toolResults,
-	}, nil
+	}
+	if err := enforcePlanActivityInputBudget(out); err != nil {
+		return PlanActivityInput{}, err
+	}
+	return out, nil
 }
