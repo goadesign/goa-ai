@@ -69,6 +69,7 @@ Additional formatting defaults (apply unless there is a strong reason not to):
 ### Documentation
 
 - Every exported type, function, method, and field must have a GoDoc comment explaining its contract—like Go stdlib documentation.
+- User-facing goa-ai changes (DSL surface, runtime semantics, codegen output) must be documented in the goa.design site docs under `content/en/docs/2-goa-ai/` (and translated pages updated when applicable).
 
 ### Safety & Forbidden Operations
 
