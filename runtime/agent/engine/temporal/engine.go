@@ -7,9 +7,11 @@ package temporal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
+	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	temporalotel "go.temporal.io/sdk/contrib/opentelemetry"
@@ -679,7 +681,14 @@ func (e *Engine) CancelByID(ctx context.Context, runID string) error {
 	if runID == "" {
 		return fmt.Errorf("run id is required")
 	}
-	return e.client.CancelWorkflow(ctx, runID, "")
+	if err := e.client.CancelWorkflow(ctx, runID, ""); err != nil {
+		var notFound *serviceerror.NotFound
+		if errors.As(err, &notFound) {
+			return engine.ErrWorkflowNotFound
+		}
+		return err
+	}
+	return nil
 }
 
 func (h *workflowHandle) Cancel(ctx context.Context) error {
