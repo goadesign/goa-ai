@@ -218,6 +218,27 @@ type ToolResult struct {
 	// tool's result schema and codec.
 	Result any
 
+	// ResultBytes is the size, in bytes, of the canonical JSON result payload when
+	// known. It is populated by the runtime when a tool result crosses a workflow
+	// boundary as an api.ToolEvent.
+	ResultBytes int
+
+	// ResultOmitted indicates that the runtime intentionally omitted the canonical
+	// JSON result payload from the workflow-boundary envelope to satisfy payload
+	// budgets. When true, Result is nil even though the tool produced a result.
+	//
+	// Planners must treat ResultOmitted as a control-plane constraint: use bounded
+	// transcript projections, out-of-band persistence, or follow-up tools to narrow
+	// the request rather than expecting full payloads to be carried in activity
+	// inputs.
+	ResultOmitted bool
+
+	// ResultOmittedReason provides a stable, machine-readable reason for omitting
+	// the result bytes. Empty when ResultOmitted is false.
+	//
+	// Example values: "workflow_budget".
+	ResultOmittedReason string
+
 	// Artifacts carries non-model data produced alongside the tool
 	// result (for example, UI artifacts or policy annotations). Artifacts
 	// are never sent to model providers.

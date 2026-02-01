@@ -109,7 +109,7 @@ func (r *Runtime) finalizeWithPlanner(
 	resumeCtx.Attempt = nextAttempt
 	// Signal zero remaining duration for any prompt engineering that uses MaxDuration.
 	resumeCtx.MaxDuration = "0s"
-	toolResults, err := r.encodeToolEvents(ctx, allToolResults)
+	toolResults, err := r.encodeToolEventsForPlanning(ctx, allToolResults)
 	if err != nil {
 		return nil, err
 	}
@@ -120,6 +120,9 @@ func (r *Runtime) finalizeWithPlanner(
 		RunContext:  resumeCtx,
 		ToolResults: toolResults,
 		Finalize:    &planner.Termination{Reason: reason, Message: hint},
+	}
+	if err := enforcePlanActivityInputBudget(req); err != nil {
+		return nil, err
 	}
 	// Emit a pause/resume pair to indicate a finalization turn began.
 	if err := r.publishHook(

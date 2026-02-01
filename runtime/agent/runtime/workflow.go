@@ -182,6 +182,11 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		Messages:   input.Messages,
 		RunContext: runCtx,
 	}
+	if err := enforcePlanActivityInputBudget(startReq); err != nil {
+		finalErr = err
+		finalStatus = runStatusFailed
+		return nil, err
+	}
 	// Apply run-level Plan timeout override when provided.
 	planOpts := reg.PlanActivityOptions
 	if input.Policy != nil && input.Policy.PlanTimeout > 0 {
