@@ -227,8 +227,8 @@ func (p *chunkProcessor) Handle(event any) error {
 				canonical, ok := p.toolNameMap[name]
 				if !ok {
 					return fmt.Errorf(
-						"bedrock stream: tool name %q not in reverse map (raw: %q); expected canonical tool ID",
-						name, raw,
+						"bedrock stream: tool name %q not in reverse map (raw: %q); expected canonical tool ID (%s)",
+						name, raw, reverseToolNameDiagnostics(p.toolNameMap, raw),
 					)
 				}
 				tb.name = canonical

@@ -962,8 +962,8 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 					canonical, ok := nameMap[key]
 					if !ok {
 						return nil, fmt.Errorf(
-							"bedrock: tool name %q not in reverse map (raw: %q); expected canonical tool ID",
-							key, raw,
+							"bedrock: tool name %q not in reverse map (raw: %q); expected canonical tool ID (%s)",
+							key, raw, reverseToolNameDiagnostics(nameMap, raw),
 						)
 					}
 					name = canonical
