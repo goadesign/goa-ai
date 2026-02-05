@@ -1252,7 +1252,6 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		return tool
 	}
 	tool.IsMethodBacked = true
-	tool.MethodGoName = codegen.Goify(expr.Method.Name, true)
 	// Populate exact payload/result type names using Goa service metadata.
 	if servicesData == nil || ts.SourceService == nil {
 		return tool
@@ -1262,9 +1261,10 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		return tool
 	}
 	for _, md := range sd.Methods {
-		if codegen.Goify(md.Name, true) != tool.MethodGoName {
+		if md.Name != expr.Method.Name {
 			continue
 		}
+		tool.MethodGoName = md.VarName
 		tool.MethodPayloadTypeName = md.Payload
 		tool.MethodResultTypeName = md.Result
 
@@ -1301,6 +1301,14 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		tool.MethodPayloadLoc = md.PayloadLoc
 		tool.MethodResultLoc = md.ResultLoc
 		break
+	}
+	if tool.MethodGoName == "" {
+		panic(fmt.Sprintf(
+			"method %q not found in service %q for tool %q",
+			expr.Method.Name,
+			ts.SourceService.Name,
+			tool.QualifiedName,
+		))
 	}
 	// Derive HasResult from tool.Return or bound method result.
 	tool.HasResult = (tool.Return != nil && tool.Return.Type != goaexpr.Empty) || (tool.MethodResultAttr != nil && tool.MethodResultAttr.Type != goaexpr.Empty)
