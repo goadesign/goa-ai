@@ -44,13 +44,15 @@ func newEventDecoratedClient(inner model.Client, events planner.PlannerEvents) m
 }
 
 // Complete delegates to the inner client, then emits usage and assistant
-// content (text + thinking) for the final response.
+// content (text + thinking) for the final response. If the adapter did not
+// stamp model identity, the wrapper fills it from the request.
 func (c *eventDecoratedClient) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
 	resp, err := c.inner.Complete(ctx, req)
 	if err != nil {
 		return resp, err
 	}
 	if (resp.Usage != model.TokenUsage{}) {
+		stampModelIdentity(&resp.Usage, req)
 		c.events.UsageDelta(ctx, resp.Usage)
 	}
 	for i := range resp.Content {
@@ -64,7 +66,8 @@ func (c *eventDecoratedClient) Complete(ctx context.Context, req *model.Request)
 }
 
 // Stream delegates to the inner client and returns a Streamer whose Recv()
-// emits PlannerEvents for assistant text, thinking blocks, and usage.
+// emits PlannerEvents for assistant text, thinking blocks, and usage. Model
+// identity from the request is captured so usage chunks can be attributed.
 func (c *eventDecoratedClient) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
 	st, err := c.inner.Stream(ctx, req)
 	if err != nil {
@@ -74,14 +77,18 @@ func (c *eventDecoratedClient) Stream(ctx context.Context, req *model.Request) (
 		inner:  st,
 		events: c.events,
 		ctx:    ctx,
+		req:    req,
 	}, nil
 }
 
 // eventStream decorates a model.Streamer to emit PlannerEvents for chunks.
+// It carries the original request so usage chunks can be attributed to the
+// requested model when the adapter did not stamp identity.
 type eventStream struct {
 	inner  model.Streamer
 	events planner.PlannerEvents
 	ctx    context.Context
+	req    *model.Request
 }
 
 // Recv forwards events for text/thinking/usage chunks.
@@ -114,6 +121,7 @@ func (s *eventStream) Recv() (model.Chunk, error) {
 		}
 	case model.ChunkTypeUsage:
 		if ch.UsageDelta != nil {
+			stampModelIdentity(ch.UsageDelta, s.req)
 			s.events.UsageDelta(s.ctx, *ch.UsageDelta)
 		}
 	}
@@ -185,6 +193,18 @@ func emitMessageContent(ctx context.Context, ev planner.PlannerEvents, msg *mode
 		if tp, ok := p.(model.TextPart); ok && tp.Text != "" {
 			ev.AssistantChunk(ctx, tp.Text)
 		}
+	}
+}
+
+// stampModelIdentity fills Model and ModelClass on usage when the adapter left
+// them empty. This ensures attribution is always present by the time usage
+// reaches the hook bus, using the request as the fallback source.
+func stampModelIdentity(usage *model.TokenUsage, req *model.Request) {
+	if usage.Model == "" && req.Model != "" {
+		usage.Model = req.Model
+	}
+	if usage.ModelClass == "" && req.ModelClass != "" {
+		usage.ModelClass = req.ModelClass
 	}
 }
 

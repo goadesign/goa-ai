@@ -87,11 +87,7 @@ func (e *runtimePlannerEvents) UsageDelta(ctx context.Context, usage model.Token
 	e.usage = addTokenUsage(e.usage, usage)
 	e.mu.Unlock()
 
-	e.publish(ctx, hooks.NewUsageEvent(
-		e.runID, e.agentID, e.sessionID,
-		usage.InputTokens, usage.OutputTokens, usage.TotalTokens,
-		usage.CacheReadTokens, usage.CacheWriteTokens,
-	))
+	e.publish(ctx, hooks.NewUsageEvent(e.runID, e.agentID, e.sessionID, usage))
 }
 
 func (e *runtimePlannerEvents) PlannerThinkingBlock(ctx context.Context, block model.ThinkingPart) {

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/toolerrors"
@@ -231,23 +232,12 @@ type (
 	// It is intentionally empty: RunID and SessionID are carried on the envelope/Base.
 	RunStreamEndPayload struct{}
 
-	// UsagePayload describes token usage details.
+	// UsagePayload describes token usage details with model attribution.
 	UsagePayload struct {
-		// Model is the provider model identifier when available
-		// (for example, "gpt-4o" or "claude-3-opus").
-		Model string
-		// InputTokens is the number of prompt tokens consumed by the
-		// model for this invocation.
-		InputTokens int
-		// OutputTokens is the number of completion tokens produced by
-		// the model for this invocation.
-		OutputTokens int
-		// TotalTokens is the sum of input and output tokens.
-		TotalTokens int
-		// CacheReadTokens is tokens read from prompt cache (reduced cost).
-		CacheReadTokens int
-		// CacheWriteTokens is tokens written to prompt cache.
-		CacheWriteTokens int
+		// TokenUsage contains the attributed token counts reported by the model
+		// adapter. Model and ModelClass identify the specific model that produced
+		// this delta.
+		model.TokenUsage
 	}
 
 	// AssistantReplyPayload is the typed wire payload for assistant reply events.

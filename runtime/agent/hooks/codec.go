@@ -356,18 +356,7 @@ func DecodeFromHookInput(input *ActivityInput) (Event, error) {
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", Usage, err)
 		}
-		out := NewUsageEvent(
-			input.RunID,
-			input.AgentID,
-			input.SessionID,
-			p.InputTokens,
-			p.OutputTokens,
-			p.TotalTokens,
-			p.CacheReadTokens,
-			p.CacheWriteTokens,
-		)
-		out.Model = p.Model
-		evt = out
+		evt = NewUsageEvent(input.RunID, input.AgentID, input.SessionID, p.TokenUsage)
 
 	case HardProtectionTriggered:
 		var p HardProtectionEvent

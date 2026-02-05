@@ -98,14 +98,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		if !s.profile.Usage {
 			return nil
 		}
-		payload := UsagePayload{
-			Model:            evt.Model,
-			InputTokens:      evt.InputTokens,
-			OutputTokens:     evt.OutputTokens,
-			TotalTokens:      evt.TotalTokens,
-			CacheReadTokens:  evt.CacheReadTokens,
-			CacheWriteTokens: evt.CacheWriteTokens,
-		}
+		payload := UsagePayload{TokenUsage: evt.TokenUsage}
 		return s.sink.Send(ctx, Usage{
 			Base: Base{t: EventUsage, r: evt.RunID(), s: evt.SessionID(), p: payload},
 			Data: payload,

@@ -311,8 +311,21 @@ type (
 		Name string
 	}
 
-	// TokenUsage tracks token counts for a model call.
+	// TokenUsage tracks token counts and model attribution for a single model
+	// invocation. The counts are additive; the identity fields (Model,
+	// ModelClass) describe the source of the delta and are not aggregated by
+	// addTokenUsage.
 	TokenUsage struct {
+		// Model is the provider-resolved model identifier that produced this
+		// usage (e.g., "us.anthropic.claude-sonnet-4-20250514-v1:0"). Set by
+		// the model adapter; empty when the adapter does not report it.
+		Model string
+
+		// ModelClass is the logical model family that was requested (e.g.,
+		// "default", "high-reasoning", "small"). Set by the model adapter
+		// from the original request.
+		ModelClass ModelClass
+
 		// InputTokens is the number of tokens consumed by inputs.
 		InputTokens int
 
