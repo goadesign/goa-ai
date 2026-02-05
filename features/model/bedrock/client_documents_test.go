@@ -112,7 +112,7 @@ func TestTranslateResponse_CitationsContentBlock(t *testing.T) {
 		},
 	}
 
-	resp, err := translateResponse(out, nil)
+	resp, err := translateResponse(out, nil, "", "")
 	require.NoError(t, err)
 	require.Len(t, resp.Content, 1)
 	require.Len(t, resp.Content[0].Parts, 1)

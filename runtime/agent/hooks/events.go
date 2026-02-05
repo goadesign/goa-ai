@@ -487,18 +487,10 @@ type (
 	// Emitted when the model stream reports usage deltas or a final summary.
 	UsageEvent struct {
 		baseEvent
-		// Model identifier when available (provider dependent).
-		Model string
-		// InputTokens is the number of prompt tokens consumed.
-		InputTokens int
-		// OutputTokens is the number of completion tokens produced.
-		OutputTokens int
-		// TotalTokens is InputTokens + OutputTokens.
-		TotalTokens int
-		// CacheReadTokens is tokens read from prompt cache (reduced cost).
-		CacheReadTokens int
-		// CacheWriteTokens is tokens written to prompt cache.
-		CacheWriteTokens int
+		// TokenUsage contains the attributed token counts reported by the model
+		// adapter. Model and ModelClass identify the specific model that produced
+		// this delta.
+		model.TokenUsage
 	}
 
 	// HardProtectionEvent signals that the runtime applied a hard protection to
@@ -819,17 +811,13 @@ func NewToolCallArgsDeltaEvent(runID string, agentID agent.Ident, sessionID stri
 	}
 }
 
-// NewUsageEvent constructs a UsageEvent with the provided details.
-func NewUsageEvent(runID string, agentID agent.Ident, sessionID string, input, output, total, cacheRead, cacheWrite int) *UsageEvent {
+// NewUsageEvent constructs a UsageEvent from an attributed usage snapshot.
+func NewUsageEvent(runID string, agentID agent.Ident, sessionID string, usage model.TokenUsage) *UsageEvent {
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
 	return &UsageEvent{
-		baseEvent:        be,
-		InputTokens:      input,
-		OutputTokens:     output,
-		TotalTokens:      total,
-		CacheReadTokens:  cacheRead,
-		CacheWriteTokens: cacheWrite,
+		baseEvent:  be,
+		TokenUsage: usage,
 	}
 }
 

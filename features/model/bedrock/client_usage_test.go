@@ -7,6 +7,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
+
+	"goa.design/goa-ai/runtime/agent/model"
 )
 
 func TestTranslateResponse_UsageIncludesCacheTokens(t *testing.T) {
@@ -28,7 +30,7 @@ func TestTranslateResponse_UsageIncludesCacheTokens(t *testing.T) {
 		},
 	}
 
-	resp, err := translateResponse(output, map[string]string{})
+	resp, err := translateResponse(output, map[string]string{}, "test-model", model.ModelClassDefault)
 	require.NoError(t, err)
 
 	require.Equal(t, int(inTokens), resp.Usage.InputTokens)
@@ -36,4 +38,6 @@ func TestTranslateResponse_UsageIncludesCacheTokens(t *testing.T) {
 	require.Equal(t, int(total), resp.Usage.TotalTokens)
 	require.Equal(t, int(cacheRead), resp.Usage.CacheReadTokens)
 	require.Equal(t, int(cacheWrite), resp.Usage.CacheWriteTokens)
+	require.Equal(t, "test-model", resp.Usage.Model)
+	require.Equal(t, model.ModelClassDefault, resp.Usage.ModelClass)
 }
