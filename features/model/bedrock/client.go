@@ -101,6 +101,7 @@ type ledgerSource interface {
 
 type requestParts struct {
 	modelID                 string
+	modelClass              model.ModelClass
 	messages                []brtypes.Message
 	system                  []brtypes.SystemContentBlock
 	toolConfig              *brtypes.ToolConfiguration
@@ -165,7 +166,7 @@ func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Respo
 		}
 		return nil, wrapBedrockError("converse", err)
 	}
-	return translateResponse(output, parts.toolNameProvToCanonical)
+	return translateResponse(output, parts.toolNameProvToCanonical, parts.modelID, parts.modelClass)
 }
 
 // Stream invokes the Bedrock ConverseStream API and adapts incremental events
@@ -188,7 +189,7 @@ func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer
 	if stream == nil {
 		return nil, errors.New("bedrock: stream output missing event stream")
 	}
-	return newBedrockStreamer(ctx, stream, parts.toolNameProvToCanonical), nil
+	return newBedrockStreamer(ctx, stream, parts.toolNameProvToCanonical, parts.modelID, parts.modelClass), nil
 }
 
 func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*requestParts, error) {
@@ -253,6 +254,7 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*reque
 	}
 	return &requestParts{
 		modelID:                 modelID,
+		modelClass:              req.ModelClass,
 		messages:                messages,
 		system:                  system,
 		toolConfig:              toolConfig,
@@ -928,7 +930,7 @@ func isProviderSafeToolUseID(id string) bool {
 	return true
 }
 
-func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string]string) (*model.Response, error) {
+func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string]string, modelID string, modelClass model.ModelClass) (*model.Response, error) {
 	if output == nil {
 		return nil, errors.New("bedrock: response is nil")
 	}
@@ -982,6 +984,8 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 	}
 	if usage := output.Usage; usage != nil {
 		resp.Usage = model.TokenUsage{
+			Model:            modelID,
+			ModelClass:       modelClass,
 			InputTokens:      int(ptrValue(usage.InputTokens)),
 			OutputTokens:     int(ptrValue(usage.OutputTokens)),
 			TotalTokens:      int(ptrValue(usage.TotalTokens)),

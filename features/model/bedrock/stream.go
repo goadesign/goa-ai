@@ -17,7 +17,8 @@ import (
 )
 
 // bedrockStreamer adapts a Bedrock ConverseStream event stream to the
-// model.Streamer interface.
+// model.Streamer interface. It stamps model attribution (modelID, modelClass)
+// onto usage chunks so downstream consumers can attribute token costs.
 type bedrockStreamer struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -32,9 +33,11 @@ type bedrockStreamer struct {
 	metaMu      sync.RWMutex
 	metadata    map[string]any
 	toolNameMap map[string]string
+	modelID     string
+	modelClass  model.ModelClass
 }
 
-func newBedrockStreamer(ctx context.Context, stream *bedrockruntime.ConverseStreamEventStream, nameMap map[string]string) model.Streamer {
+func newBedrockStreamer(ctx context.Context, stream *bedrockruntime.ConverseStreamEventStream, nameMap map[string]string, modelID string, modelClass model.ModelClass) model.Streamer {
 	cctx, cancel := context.WithCancel(ctx)
 	bs := &bedrockStreamer{
 		ctx:         cctx,
@@ -42,6 +45,8 @@ func newBedrockStreamer(ctx context.Context, stream *bedrockruntime.ConverseStre
 		stream:      stream,
 		chunks:      make(chan model.Chunk, 32),
 		toolNameMap: nameMap,
+		modelID:     modelID,
+		modelClass:  modelClass,
 	}
 	go bs.run()
 	return bs
@@ -97,7 +102,7 @@ func (s *bedrockStreamer) run() {
 		}
 	}()
 
-	processor := newChunkProcessor(s.emitChunk, s.recordUsage, s.recordCitations, s.toolNameMap)
+	processor := newChunkProcessor(s.emitChunk, s.recordUsage, s.recordCitations, s.toolNameMap, s.modelID, s.modelClass)
 	events := s.stream.Events()
 
 	for {
@@ -173,7 +178,9 @@ func (s *bedrockStreamer) err() error {
 	return s.finalErr
 }
 
-// chunkProcessor converts Bedrock streaming events into model.Chunks.
+// chunkProcessor converts Bedrock streaming events into model.Chunks. It
+// stamps model attribution onto usage chunks using the resolved model ID and
+// class provided at construction.
 type chunkProcessor struct {
 	emit        func(model.Chunk) error
 	recordUsage func(model.TokenUsage)
@@ -184,6 +191,8 @@ type chunkProcessor struct {
 	reasoningBlocks map[int]*reasoningBuffer
 
 	toolNameMap map[string]string
+	modelID     string
+	modelClass  model.ModelClass
 }
 
 func newChunkProcessor(
@@ -191,6 +200,8 @@ func newChunkProcessor(
 	recordUsage func(model.TokenUsage),
 	recordCites func([]model.Citation),
 	nameMap map[string]string,
+	modelID string,
+	modelClass model.ModelClass,
 ) *chunkProcessor {
 	return &chunkProcessor{
 		emit:            emit,
@@ -199,6 +210,8 @@ func newChunkProcessor(
 		toolBlocks:      make(map[int]*toolBuffer),
 		reasoningBlocks: make(map[int]*reasoningBuffer),
 		toolNameMap:     nameMap,
+		modelID:         modelID,
+		modelClass:      modelClass,
 	}
 }
 
@@ -406,6 +419,8 @@ func (p *chunkProcessor) Handle(event any) error {
 			cacheWrite = int(*t)
 		}
 		usage := model.TokenUsage{
+			Model:            p.modelID,
+			ModelClass:       p.modelClass,
 			InputTokens:      in,
 			OutputTokens:     out,
 			TotalTokens:      tot,
