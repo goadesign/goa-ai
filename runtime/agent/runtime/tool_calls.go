@@ -156,7 +156,7 @@ func (e *toolBatchExec) synthesizeToolError(ctx context.Context, call planner.To
 	}
 	spec, ok := e.r.toolSpec(call.Name)
 	if !ok {
-		return nil, fmt.Errorf("unknown tool %q", call.Name)
+		return e.synthesizeUnknownToolResult(ctx, call, duration)
 	}
 	if err := e.r.enforceToolResultContracts(spec, call, toolErr, toolRes, e.artifactsModeByCallID); err != nil {
 		return nil, err
@@ -166,6 +166,31 @@ func (e *toolBatchExec) synthesizeToolError(ctx context.Context, call planner.To
 		return nil, err
 	}
 	return toolRes, nil
+}
+
+// synthesizeUnknownToolResult converts an unregistered tool call into a tool error result.
+//
+// Provider adapters may surface hallucinated tool names (for example, when a model
+// echoes a tool it saw in prior context but that was not advertised in the current
+// request). This must not fail the workflow: the runtime returns a tool result error
+// with a RetryHint so the planner can resume and the model can recover.
+func (e *toolBatchExec) synthesizeUnknownToolResult(ctx context.Context, call planner.ToolRequest, duration time.Duration) (*planner.ToolResult, error) {
+	toolErr := planner.NewToolError(fmt.Sprintf("unknown tool %q", call.Name))
+	tr := &planner.ToolResult{
+		Name:       call.Name,
+		ToolCallID: call.ToolCallID,
+		Error:      toolErr,
+		RetryHint: &planner.RetryHint{
+			Reason:         planner.RetryReasonToolUnavailable,
+			Tool:           call.Name,
+			RestrictToTool: false,
+			Message:        "Tool name is not registered for this run. Choose a tool from the advertised tool list and call it with the exact JSON schema.",
+		},
+	}
+	if err := e.publishToolResultReceived(ctx, call, tr, nil, duration); err != nil {
+		return nil, err
+	}
+	return tr, nil
 }
 
 func (r *Runtime) enforceToolResultContracts(spec tools.ToolSpec, call planner.ToolRequest, toolErr *planner.ToolError, tr *planner.ToolResult, artifactsModeByCallID map[string]tools.ArtifactsMode) error {
@@ -295,7 +320,18 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 
 		spec, hasSpec := e.r.toolSpec(call.Name)
 		if !hasSpec {
-			return nil, fmt.Errorf("unknown tool %q", call.Name)
+			if err := e.publishToolCallScheduled(ctx, call, ""); err != nil {
+				return nil, err
+			}
+			tr, err := e.synthesizeUnknownToolResult(ctx, call, 0)
+			if err != nil {
+				return nil, err
+			}
+			b.inlineByID[call.ToolCallID] = tr
+			if e.parentTracker != nil {
+				b.discoveredIDs = append(b.discoveredIDs, call.ToolCallID)
+			}
+			continue
 		}
 		e.r.mu.RLock()
 		ts, hasTS := e.r.toolsets[spec.Toolset]
@@ -558,6 +594,16 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 			}
 
 			duration := wfCtx.Now().Sub(info.startTime)
+			spec, ok := e.r.toolSpec(info.call.Name)
+			if !ok {
+				tr, synthErr := e.synthesizeUnknownToolResult(ctx, info.call, duration)
+				if synthErr != nil {
+					return nil, nil, false, synthErr
+				}
+				activityByID[info.call.ToolCallID] = tr
+				continue
+			}
+
 			var decoded any
 			if out.Error == "" && hasNonNullJSON(out.Payload) {
 				v, decErr := e.r.unmarshalToolValue(ctx, info.call.Name, out.Payload, false)
@@ -573,10 +619,6 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 				Artifacts:  decodeToolArtifacts(out.Artifacts),
 				ToolCallID: info.call.ToolCallID,
 				Telemetry:  out.Telemetry,
-			}
-			spec, ok := e.r.toolSpec(info.call.Name)
-			if !ok {
-				return nil, nil, false, fmt.Errorf("unknown tool %q", info.call.Name)
 			}
 			var toolErr *planner.ToolError
 			if out.Error != "" {
@@ -703,7 +745,12 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 			}
 			spec, ok := e.r.toolSpec(info.call.Name)
 			if !ok {
-				return nil, nil, false, fmt.Errorf("unknown tool %q", info.call.Name)
+				tr, synthErr := e.synthesizeUnknownToolResult(ctx, info.call, duration)
+				if synthErr != nil {
+					return nil, nil, false, synthErr
+				}
+				out[info.call.ToolCallID] = tr
+				continue
 			}
 			if err := e.r.enforceToolResultContracts(spec, info.call, toolErr, tr, e.artifactsModeByCallID); err != nil {
 				return nil, nil, false, err
@@ -783,16 +830,15 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 				return nil, false, err
 			}
 			call = normalized
-			spec, ok := r.toolSpec(call.Name)
-			if !ok {
-				return nil, false, fmt.Errorf("unknown tool %q", call.Name)
-			}
 			queue := ""
-			r.mu.RLock()
-			ts, hasTS := r.toolsets[spec.Toolset]
-			r.mu.RUnlock()
-			if hasTS && ts.TaskQueue != "" {
-				queue = ts.TaskQueue
+			spec, ok := r.toolSpec(call.Name)
+			if ok {
+				r.mu.RLock()
+				ts, hasTS := r.toolsets[spec.Toolset]
+				r.mu.RUnlock()
+				if hasTS && ts.TaskQueue != "" {
+					queue = ts.TaskQueue
+				}
 			}
 			if err := exec.publishToolCallScheduled(ctx, call, queue); err != nil {
 				return nil, false, err
@@ -804,8 +850,10 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 				ToolCallID: call.ToolCallID,
 				Error:      toolErr,
 			}
-			if err := r.enforceToolResultContracts(spec, call, toolErr, tr, exec.artifactsModeByCallID); err != nil {
-				return nil, false, err
+			if ok {
+				if err := r.enforceToolResultContracts(spec, call, toolErr, tr, exec.artifactsModeByCallID); err != nil {
+					return nil, false, err
+				}
 			}
 			if err := exec.publishToolResultReceived(ctx, call, tr, nil, 0); err != nil {
 				return nil, false, err
@@ -894,11 +942,10 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 				Error:      toolErr,
 			}
 			spec, ok := r.toolSpec(info.call.Name)
-			if !ok {
-				return nil, false, fmt.Errorf("unknown tool %q", info.call.Name)
-			}
-			if err := r.enforceToolResultContracts(spec, info.call, toolErr, tr, exec.artifactsModeByCallID); err != nil {
-				return nil, false, err
+			if ok {
+				if err := r.enforceToolResultContracts(spec, info.call, toolErr, tr, exec.artifactsModeByCallID); err != nil {
+					return nil, false, err
+				}
 			}
 			duration := wfCtx.Now().Sub(info.startTime)
 			if err := exec.publishToolResultReceived(ctx, info.call, tr, nil, duration); err != nil {
@@ -921,11 +968,10 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 				Error:      toolErr,
 			}
 			spec, ok := r.toolSpec(info.call.Name)
-			if !ok {
-				return nil, false, fmt.Errorf("unknown tool %q", info.call.Name)
-			}
-			if err := r.enforceToolResultContracts(spec, info.call, toolErr, tr, exec.artifactsModeByCallID); err != nil {
-				return nil, false, err
+			if ok {
+				if err := r.enforceToolResultContracts(spec, info.call, toolErr, tr, exec.artifactsModeByCallID); err != nil {
+					return nil, false, err
+				}
 			}
 			duration := wfCtx.Now().Sub(info.startTime)
 			if err := exec.publishToolResultReceived(ctx, info.call, tr, nil, duration); err != nil {

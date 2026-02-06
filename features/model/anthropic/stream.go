@@ -204,14 +204,16 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 				return fmt.Errorf("anthropic stream: tool use block %q missing name", toolUse.ID)
 			}
 			raw := toolUse.Name
-			canonical, ok := p.toolNameMap[raw]
-			if !ok {
-				return fmt.Errorf(
-					"anthropic stream: tool name %q not in reverse map; expected canonical tool ID",
-					raw,
-				)
+			// Anthropic echoes the provider-visible tool name in tool_use blocks.
+			// When the model hallucinates a tool name that was not advertised in this
+			// request, the reverse map will not contain it. Surface the tool call
+			// as-is and let the runtime convert it into an "unknown tool" result so
+			// the model can recover on the next resume turn.
+			if canonical, ok := p.toolNameMap[raw]; ok {
+				tb.name = canonical
+			} else {
+				tb.name = raw
 			}
-			tb.name = canonical
 			tb.id = toolUse.ID
 			p.toolBlocks[idx] = tb
 			return nil

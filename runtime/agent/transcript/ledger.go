@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"goa.design/goa-ai/runtime/agent/memory"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -169,11 +170,14 @@ func ValidateBedrock(messages []*model.Message, thinkingEnabled bool) error {
 		}
 		if hasToolUse {
 			if len(m.Parts) == 0 {
-				return errors.New("bedrock: assistant message is empty where tool_use present")
+				return fmt.Errorf("bedrock: assistant message[%d] is empty where tool_use present", i)
 			}
 			if thinkingEnabled {
 				if _, ok := m.Parts[0].(model.ThinkingPart); !ok {
-					return errors.New("bedrock: assistant message with tool_use must start with thinking")
+					return fmt.Errorf(
+						"bedrock: assistant message[%d] with tool_use must start with thinking (parts: %s)",
+						i, summarizeParts(m.Parts),
+					)
 				}
 			}
 			// The very next message must be a user message containing tool_result
@@ -483,10 +487,20 @@ func (l *Ledger) BuildMessages() []*model.Message {
 			Parts: make([]model.Part, 0, len(m.Parts)),
 			Meta:  m.Meta,
 		}
+		// Track whether the source had thinking parts and whether any
+		// survived the provider-validity filter (text+signature or redacted).
+		// When the stream captured intermediate thinking text but the final
+		// signature was lost (e.g. Bedrock did not send SignatureDelta), we
+		// must still emit a redacted placeholder so the assistant message
+		// retains a leading ThinkingPart. Without this, downstream
+		// providers that require thinking before tool_use reject the message.
+		var hadThinking, emittedThinking bool
 		for _, p := range m.Parts {
 			switch v := p.(type) {
 			case ThinkingPart:
+				hadThinking = true
 				if len(v.Redacted) > 0 {
+					emittedThinking = true
 					msg.Parts = append(
 						msg.Parts,
 						model.ThinkingPart{
@@ -496,6 +510,7 @@ func (l *Ledger) BuildMessages() []*model.Message {
 						},
 					)
 				} else if v.Text != "" && v.Signature != "" {
+					emittedThinking = true
 					msg.Parts = append(
 						msg.Parts,
 						model.ThinkingPart{
@@ -532,6 +547,19 @@ func (l *Ledger) BuildMessages() []*model.Message {
 					},
 				)
 			}
+		}
+		// If the source message had thinking parts but none were valid
+		// enough to emit (signature lost during streaming), prepend a
+		// redacted placeholder. This preserves the thinking→content
+		// ordering contract required by providers like Bedrock.
+		if hadThinking && !emittedThinking {
+			msg.Parts = append(
+				[]model.Part{model.ThinkingPart{
+					Redacted: []byte("redacted"),
+					Final:    true,
+				}},
+				msg.Parts...,
+			)
 		}
 		if len(msg.Parts) > 0 {
 			out = append(out, msg)
@@ -626,4 +654,25 @@ func (l *Ledger) flushAssistant() {
 	}
 	l.messages = append(l.messages, *l.current)
 	l.current = nil
+}
+
+// summarizeParts returns a compact string showing the types of parts in a
+// message, e.g. "[thinking, text, tool_use, tool_use]". Used in diagnostics.
+func summarizeParts(parts []model.Part) string {
+	names := make([]string, len(parts))
+	for i, p := range parts {
+		switch p.(type) {
+		case model.ThinkingPart:
+			names[i] = "thinking"
+		case model.TextPart:
+			names[i] = "text"
+		case model.ToolUsePart:
+			names[i] = "tool_use"
+		case model.ToolResultPart:
+			names[i] = "tool_result"
+		default:
+			names[i] = fmt.Sprintf("%T", p)
+		}
+	}
+	return "[" + strings.Join(names, ", ") + "]"
 }

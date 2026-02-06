@@ -62,6 +62,11 @@ func (r *Runtime) handleToolTurn(
 	candidates := result.ToolCalls
 	r.logger.Info(ctx, "Workflow received tool calls from planner", "count", len(candidates))
 	candidates = r.applyPerRunOverrides(ctx, input, candidates)
+	var err error
+	candidates, err = r.rewriteUnknownToolCalls(candidates)
+	if err != nil {
+		return nil, err
+	}
 	allowed, nextCaps, err := r.applyRuntimePolicy(ctx, base, input, candidates, st.Caps, turnID, result.RetryHint)
 	if err != nil {
 		return nil, err

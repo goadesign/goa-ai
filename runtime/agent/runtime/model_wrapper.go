@@ -5,6 +5,7 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 // This file implements a per-turn model.Client decorator that emits runtime
@@ -167,6 +168,30 @@ func (c *cacheConfiguredClient) Stream(ctx context.Context, req *model.Request) 
 	return c.inner.Stream(ctx, req)
 }
 
+// toolUnavailableConfiguredClient ensures the runtime-owned tool_unavailable tool
+// is always present in tool-aware requests. Some providers require that any tool
+// referenced in tool_use history appears in the current request tool list.
+type toolUnavailableConfiguredClient struct {
+	inner model.Client
+}
+
+func newToolUnavailableConfiguredClient(inner model.Client) model.Client {
+	if inner == nil {
+		return nil
+	}
+	return &toolUnavailableConfiguredClient{inner: inner}
+}
+
+func (c *toolUnavailableConfiguredClient) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
+	ensureToolUnavailableDefinition(req)
+	return c.inner.Complete(ctx, req)
+}
+
+func (c *toolUnavailableConfiguredClient) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
+	ensureToolUnavailableDefinition(req)
+	return c.inner.Stream(ctx, req)
+}
+
 // applyCachePolicy populates Request.Cache from the agent CachePolicy when no
 // explicit CacheOptions are present on the request.
 func applyCachePolicy(req *model.Request, cache CachePolicy) {
@@ -180,6 +205,43 @@ func applyCachePolicy(req *model.Request, cache CachePolicy) {
 		AfterSystem: cache.AfterSystem,
 		AfterTools:  cache.AfterTools,
 	}
+}
+
+func ensureToolUnavailableDefinition(req *model.Request) {
+	if req == nil {
+		return
+	}
+	if !requestMayReferenceTools(req) {
+		return
+	}
+	name := tools.ToolUnavailable.String()
+	for _, def := range req.Tools {
+		if def != nil && def.Name == name {
+			return
+		}
+	}
+	req.Tools = append(req.Tools, toolUnavailableToolDefinition())
+}
+
+func requestMayReferenceTools(req *model.Request) bool {
+	if req == nil {
+		return false
+	}
+	if len(req.Tools) > 0 || req.ToolChoice != nil {
+		return true
+	}
+	for _, msg := range req.Messages {
+		if msg == nil {
+			continue
+		}
+		for _, part := range msg.Parts {
+			switch part.(type) {
+			case model.ToolUsePart, model.ToolResultPart:
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // emitMessageContent forwards assistant text and thinking parts from a message.
