@@ -644,6 +644,11 @@ func newFromOptions(opts Options) *Runtime {
 		reminders:        reminder.NewEngine(),
 		toolConfirmation: opts.ToolConfirmation,
 	}
+	// Install runtime-owned toolsets before any agent registration so planners
+	// and transcripts can rely on a stable tool vocabulary.
+	rt.mu.Lock()
+	rt.addToolsetLocked(toolUnavailableToolsetRegistration())
+	rt.mu.Unlock()
 	if rt.SessionStore != nil {
 		sessionSub := hooks.SubscriberFunc(func(ctx context.Context, event hooks.Event) error {
 			var (

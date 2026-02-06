@@ -2,11 +2,13 @@ package bedrock
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 // Ensures encodeMessages preserves transcript order and places reasoning before tool_use
@@ -103,6 +105,74 @@ func TestEncodeMessages_FailsOnUnknownToolUse(t *testing.T) {
 	}
 }
 
+func TestEncodeMessages_RewritesUnknownToolUseToToolUnavailable(t *testing.T) {
+	ctx := context.Background()
+	msgs := []*model.Message{
+		{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{
+				model.ToolUsePart{
+					ID:    "tu1",
+					Name:  "atlas_read_count_events",
+					Input: map[string]any{"from": "2026-02-06T00:00:00Z"},
+				},
+			},
+		},
+		{
+			Role: model.ConversationRoleUser,
+			Parts: []model.Part{
+				model.ToolResultPart{
+					ToolUseID: "tu1",
+					Content:   map[string]any{"error": "unknown tool"},
+					IsError:   true,
+				},
+			},
+		},
+	}
+	nameMap := map[string]string{
+		tools.ToolUnavailable.String(): SanitizeToolName(tools.ToolUnavailable.String()),
+	}
+	conv, _, err := encodeMessages(ctx, msgs, nameMap, false, nil)
+	if err != nil {
+		t.Fatalf("encodeMessages error: %v", err)
+	}
+	if len(conv) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(conv))
+	}
+	asst := conv[0]
+	if asst.Role != brtypes.ConversationRoleAssistant {
+		t.Fatalf("first role = %s, want assistant", asst.Role)
+	}
+	var toolUse *brtypes.ContentBlockMemberToolUse
+	for _, b := range asst.Content {
+		if v, ok := b.(*brtypes.ContentBlockMemberToolUse); ok {
+			toolUse = v
+			break
+		}
+	}
+	if toolUse == nil || toolUse.Value.Name == nil {
+		t.Fatalf("missing tool_use block name")
+	}
+	wantName := SanitizeToolName(tools.ToolUnavailable.String())
+	if got := *toolUse.Value.Name; got != wantName {
+		t.Fatalf("tool_use name = %q, want %q", got, wantName)
+	}
+	if toolUse.Value.Input == nil {
+		t.Fatalf("missing tool_use input")
+	}
+	raw, err := toolUse.Value.Input.MarshalSmithyDocument()
+	if err != nil {
+		t.Fatalf("marshal tool_use input: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("decode tool_use input: %v", err)
+	}
+	if got := decoded["requested_tool"]; got != "atlas_read_count_events" {
+		t.Fatalf("requested_tool = %#v, want %q", got, "atlas_read_count_events")
+	}
+}
+
 func TestEncodeMessages_AppendsSystemCacheCheckpoint(t *testing.T) {
 	ctx := context.Background()
 	msgs := []*model.Message{
@@ -134,5 +204,80 @@ func TestEncodeMessages_AppendsSystemCacheCheckpoint(t *testing.T) {
 	}
 	if _, ok := system[1].(*brtypes.SystemContentBlockMemberCachePoint); !ok {
 		t.Fatalf("second system block is not cache checkpoint")
+	}
+}
+
+func TestHealThinkingGaps(t *testing.T) {
+	tests := []struct {
+		name       string
+		msgs       []*model.Message
+		wantHealed bool // whether a redacted thinking part should be prepended
+	}{
+		{
+			name: "assistant with tool_use and no thinking gets healed",
+			msgs: []*model.Message{{
+				Role: model.ConversationRoleAssistant,
+				Parts: []model.Part{
+					model.TextPart{Text: "calling tool"},
+					model.ToolUsePart{ID: "tu1", Name: "search"},
+				},
+			}},
+			wantHealed: true,
+		},
+		{
+			name: "assistant with tool_use and existing thinking unchanged",
+			msgs: []*model.Message{{
+				Role: model.ConversationRoleAssistant,
+				Parts: []model.Part{
+					model.ThinkingPart{Text: "thought", Signature: "sig"},
+					model.TextPart{Text: "calling tool"},
+					model.ToolUsePart{ID: "tu1", Name: "search"},
+				},
+			}},
+			wantHealed: false,
+		},
+		{
+			name: "assistant without tool_use unchanged",
+			msgs: []*model.Message{{
+				Role: model.ConversationRoleAssistant,
+				Parts: []model.Part{
+					model.TextPart{Text: "just text"},
+				},
+			}},
+			wantHealed: false,
+		},
+		{
+			name: "user message with tool_result unchanged",
+			msgs: []*model.Message{{
+				Role: model.ConversationRoleUser,
+				Parts: []model.Part{
+					model.ToolResultPart{ToolUseID: "tu1", Content: "ok"},
+				},
+			}},
+			wantHealed: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origLen := len(tt.msgs[0].Parts)
+			healThinkingGaps(tt.msgs)
+			if tt.wantHealed {
+				if len(tt.msgs[0].Parts) != origLen+1 {
+					t.Fatalf("expected parts count %d, got %d", origLen+1, len(tt.msgs[0].Parts))
+				}
+				tp, ok := tt.msgs[0].Parts[0].(model.ThinkingPart)
+				if !ok {
+					t.Fatalf("expected ThinkingPart first, got %T", tt.msgs[0].Parts[0])
+				}
+				if len(tp.Redacted) == 0 {
+					t.Fatal("expected Redacted content in placeholder")
+				}
+				if !tp.Final {
+					t.Fatal("expected Final=true")
+				}
+			} else if len(tt.msgs[0].Parts) != origLen {
+				t.Fatalf("expected parts count unchanged at %d, got %d", origLen, len(tt.msgs[0].Parts))
+			}
+		})
 	}
 }
