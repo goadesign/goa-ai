@@ -268,14 +268,22 @@ func encodeMessages(msgs []*model.Message, nameMap map[string]string) ([]sdk.Mes
 				if v.Name == "" {
 					return nil, nil, errors.New("anthropic: tool_use part missing name")
 				}
-				sanitized, ok := nameMap[v.Name]
+				if sanitized, ok := nameMap[v.Name]; ok && sanitized != "" {
+					blocks = append(blocks, sdk.NewToolUseBlock(v.ID, v.Input, sanitized))
+					continue
+				}
+				unavailable := tools.ToolUnavailable.String()
+				sanitized, ok := nameMap[unavailable]
 				if !ok || sanitized == "" {
 					return nil, nil, fmt.Errorf(
-						"anthropic: tool_use in messages references %q which is not in the current tool configuration",
+						"anthropic: tool_use in messages references %q which is not in the current tool configuration and tool_unavailable is not available",
 						v.Name,
 					)
 				}
-				blocks = append(blocks, sdk.NewToolUseBlock(v.ID, v.Input, sanitized))
+				blocks = append(blocks, sdk.NewToolUseBlock(v.ID, map[string]any{
+					"requested_tool":    v.Name,
+					"requested_payload": v.Input,
+				}, sanitized))
 				continue
 			}
 			if v, ok := part.(model.ToolResultPart); ok {
@@ -518,14 +526,14 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 			name := ""
 			if block.Name != "" {
 				raw := block.Name
-				canonical, ok := nameMap[raw]
-				if !ok {
-					return nil, fmt.Errorf(
-						"anthropic: tool name %q not in reverse map; expected canonical tool ID",
-						raw,
-					)
+				// When the model hallucinates a tool name that was not advertised in
+				// this request, the reverse map will not contain it. Surface the tool
+				// call as-is and let the runtime return an "unknown tool" error result.
+				if canonical, ok := nameMap[raw]; ok {
+					name = canonical
+				} else {
+					name = raw
 				}
-				name = canonical
 			}
 			resp.ToolCalls = append(resp.ToolCalls, model.ToolCall{
 				Name:    tools.Ident(name),

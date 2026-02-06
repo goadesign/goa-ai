@@ -111,6 +111,7 @@ type requestParts struct {
 
 type thinkingConfig struct {
 	enable      bool
+	adaptive    bool // Opus 4.6+: use type:"adaptive" (no budget, interleaved is automatic)
 	interleaved bool
 	budget      int
 }
@@ -211,7 +212,15 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*reque
 		return nil, errors.New("bedrock: model identifier is required")
 	}
 	// Enforce provider constraints early when thinking is enabled.
-	if req.Thinking != nil && req.Thinking.Enable {
+	// Adaptive thinking (Opus 4.6+) lets the model skip thinking blocks
+	// entirely, so the thinking-first ordering rule does not apply.
+	thinkingEnabled := req.Thinking != nil && req.Thinking.Enable
+	if thinkingEnabled && !isAdaptiveThinkingModel(modelID) {
+		// Heal legacy or degraded messages before validation: if an
+		// assistant message has tool_use blocks but no leading thinking
+		// (e.g. the stream lost the signature delta), insert a redacted
+		// placeholder so the message satisfies Bedrock's ordering contract.
+		healThinkingGaps(merged)
 		if err := transcript.ValidateBedrock(merged, true); err != nil {
 			return nil, fmt.Errorf("bedrock: invalid message ordering with thinking enabled (run=%s, model=%s): %w", req.RunID, modelID, err)
 		}
@@ -312,17 +321,21 @@ func (c *Client) buildConverseStreamInput(parts *requestParts, req *model.Reques
 		input.ToolConfig = parts.toolConfig
 	}
 	if thinking.enable {
-		thinkingCfg := map[string]any{
-			"type": "enabled",
-		}
-		if thinking.budget > 0 {
-			thinkingCfg["budget_tokens"] = thinking.budget
-		}
-		fields := map[string]any{
-			"thinking": thinkingCfg,
-		}
-		if thinking.interleaved {
-			fields["anthropic_beta"] = []string{"interleaved-thinking-2025-05-14"}
+		fields := map[string]any{}
+		if thinking.adaptive {
+			// Opus 4.6+: adaptive thinking lets the model decide when and how
+			// deeply to reason. Interleaved thinking is automatic — no beta
+			// header required.
+			fields["thinking"] = map[string]any{"type": "adaptive"}
+		} else {
+			thinkingCfg := map[string]any{"type": "enabled"}
+			if thinking.budget > 0 {
+				thinkingCfg["budget_tokens"] = thinking.budget
+			}
+			fields["thinking"] = thinkingCfg
+			if thinking.interleaved {
+				fields["anthropic_beta"] = []string{"interleaved-thinking-2025-05-14"}
+			}
 		}
 		input.AdditionalModelRequestFields = document.NewLazyDocument(&fields)
 	}
@@ -339,6 +352,16 @@ func (c *Client) resolveThinking(req *model.Request, parts *requestParts) thinki
 	if parts.toolConfig == nil {
 		return thinkingConfig{}
 	}
+	// Opus 4.6 requires adaptive thinking: the model dynamically decides when
+	// and how deeply to reason. Interleaved thinking is automatic in adaptive
+	// mode — no beta header is needed. The legacy type:"enabled" + budget_tokens
+	// config is deprecated for Opus 4.6 and produces unreliable signatures.
+	if isAdaptiveThinkingModel(parts.modelID) {
+		return thinkingConfig{
+			enable:   true,
+			adaptive: true,
+		}
+	}
 	budget := req.Thinking.BudgetTokens
 	if budget <= 0 {
 		budget = c.think
@@ -350,18 +373,20 @@ func (c *Client) resolveThinking(req *model.Request, parts *requestParts) thinki
 	}
 }
 
-// validateThinkingPreconditions enforces provider contract: when thinking is
-// enabled, the most recent assistant message in the request must start with a
-// reasoningContent block, preceding tool_use/tool_result blocks. We fail fast
-// if this precondition is not satisfied, rather than relying on Bedrock to
-// reject the request.
-// Note: Bedrock interleaved-thinking requires reasoning to precede tool_use within the
-// same assistant message. We rely on upstream callers to provide structured thinking parts
-// (captured from prior turns) in Messages when tools are used so the encoder can place them
-// before tool_use content. We do not disable thinking automatically here.
+// Note on thinking preconditions:
+//
+// For legacy models (pre-Opus 4.6) with type:"enabled", Bedrock interleaved
+// thinking requires reasoning to precede tool_use within the same assistant
+// message. prepareRequest enforces this via transcript.ValidateBedrock.
+//
+// For adaptive thinking models (Opus 4.6+), thinking is optional — the model
+// may skip reasoning entirely on simple turns. The thinking-first ordering
+// rule does not apply, and the beta header is not needed.
 
 func (c *Client) streamOptions(thinking thinkingConfig) []func(*bedrockruntime.Options) {
-	if !thinking.enable {
+	if !thinking.enable || thinking.adaptive {
+		// Adaptive thinking (Opus 4.6+) does not require the interleaved
+		// thinking beta header — the capability is built into the model.
 		return nil
 	}
 	return []func(*bedrockruntime.Options){
@@ -619,28 +644,38 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 				// Encode assistant-declared tool_use with optional ID and JSON input.
 				tb := brtypes.ToolUseBlock{}
 				if v.Name != "" {
-					// Strong contract: tool_use names in messages must match tool
-					// definitions in the current request. Fail fast when a tool_use
-					// references an unknown tool - this indicates transcript
-					// contamination (e.g., ledger key collision between agent runs)
-					// or a missing tool definition.
-					sanitized, ok := nameMap[v.Name]
-					if !ok || sanitized == "" {
-						return nil, nil, fmt.Errorf(
-							"bedrock: tool_use in messages references %q which is not in "+
-								"the current tool configuration; ensure transcript and "+
-								"tool definitions are aligned (possible ledger contamination)",
-							v.Name,
-						)
+					// Contract: providers may require that every tool referenced in prior
+					// tool_use history appears in the current request tool list. When we
+					// encounter a tool_use that is not present in the current tool
+					// configuration (typically due to prior unknown-tool recovery), rewrite
+					// it to the runtime-owned tool_unavailable tool and embed the original
+					// name + payload inside its input.
+					if sanitized, ok := nameMap[v.Name]; ok && sanitized != "" {
+						tb.Name = aws.String(sanitized)
+					} else {
+						unavailable := tools.ToolUnavailable.String()
+						sanitized, ok := nameMap[unavailable]
+						if !ok || sanitized == "" {
+							return nil, nil, fmt.Errorf(
+								"bedrock: tool_use in messages references %q which is not in the current tool configuration and tool_unavailable is not available",
+								v.Name,
+							)
+						}
+						tb.Name = aws.String(sanitized)
+						tb.Input = toDocument(ctx, map[string]any{
+							"requested_tool":    v.Name,
+							"requested_payload": v.Input,
+						}, logger)
 					}
-					tb.Name = aws.String(sanitized)
 				}
 				if v.ID != "" {
 					if id := toolUseIDFor(v.ID, toolUseIDMap, &nextToolUseID); id != "" {
 						tb.ToolUseId = aws.String(id)
 					}
 				}
-				tb.Input = toDocument(ctx, v.Input, logger)
+				if tb.Input == nil {
+					tb.Input = toDocument(ctx, v.Input, logger)
+				}
 				blocks = append(blocks, &brtypes.ContentBlockMemberToolUse{Value: tb})
 			case model.ToolResultPart:
 				// Bedrock expects tool_result blocks in user messages, correlated to a prior tool_use.
@@ -930,6 +965,8 @@ func isProviderSafeToolUseID(id string) bool {
 	return true
 }
 
+// isProviderSafeToolName reports whether name conforms to Bedrock's documented tool
+// name constraints: pattern [a-zA-Z0-9_-]+ and length <= 64.
 func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string]string, modelID string, modelClass model.ModelClass) (*model.Response, error) {
 	if output == nil {
 		return nil, errors.New("bedrock: response is nil")
@@ -961,14 +998,16 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 				if v.Value.Name != nil {
 					raw := *v.Value.Name
 					key := normalizeToolName(raw)
-					canonical, ok := nameMap[key]
-					if !ok {
-						return nil, fmt.Errorf(
-							"bedrock: tool name %q not in reverse map (raw: %q); expected canonical tool ID",
-							key, raw,
-						)
+					// Bedrock tool_use blocks echo provider-visible names. When the model
+					// hallucinates a tool name that was not advertised in this request, the
+					// reverse map will not contain it. Surface the tool call as-is and let
+					// the runtime convert it into an "unknown tool" result so the model can
+					// recover on the next resume turn.
+					if canonical, ok := nameMap[key]; ok {
+						name = canonical
+					} else {
+						name = key
 					}
-					name = canonical
 				}
 				var id string
 				if v.Value.ToolUseId != nil {
@@ -1114,6 +1153,18 @@ func hasToolDefinition(defs []*model.ToolDefinition, name string) bool {
 	return false
 }
 
+// isAdaptiveThinkingModel reports whether modelID requires adaptive thinking
+// configuration. Starting with Opus 4.6, Anthropic deprecates the manual
+// type:"enabled" + budget_tokens config in favor of type:"adaptive", where the
+// model dynamically decides when and how deeply to reason. Interleaved thinking
+// is automatic in adaptive mode — no beta header is needed. Using the legacy
+// config with these models produces unreliable thinking signatures.
+func isAdaptiveThinkingModel(modelID string) bool {
+	// Bedrock model IDs use the form "global.anthropic.claude-opus-4-6-v1" or
+	// "anthropic.claude-opus-4-6-…". Match the "opus-4-6" segment.
+	return strings.Contains(modelID, "opus-4-6")
+}
+
 // isNovaModel reports whether the given model identifier refers to an Amazon
 // Nova family model. Nova models do not currently support tool-level cache
 // checkpoints in the tool configuration.
@@ -1141,4 +1192,37 @@ func messagesHaveToolBlocks(msgs []*model.Message) bool {
 		}
 	}
 	return false
+}
+
+// healThinkingGaps ensures every assistant message that contains tool_use
+// blocks begins with a ThinkingPart. When the Bedrock stream loses the
+// signature delta (transient API issue) or when legacy transcript data was
+// persisted before the BuildMessages fix, assistant messages can end up with
+// tool_use but no leading thinking — which violates Bedrock's strict ordering
+// contract. This function inserts a minimal redacted placeholder to satisfy
+// the constraint without altering the semantic content of the message.
+func healThinkingGaps(msgs []*model.Message) {
+	for _, m := range msgs {
+		if m.Role != model.ConversationRoleAssistant {
+			continue
+		}
+		var hasToolUse, hasThinking bool
+		for _, p := range m.Parts {
+			switch p.(type) {
+			case model.ToolUsePart:
+				hasToolUse = true
+			case model.ThinkingPart:
+				hasThinking = true
+			}
+		}
+		if hasToolUse && !hasThinking {
+			m.Parts = append(
+				[]model.Part{model.ThinkingPart{
+					Redacted: []byte("redacted"),
+					Final:    true,
+				}},
+				m.Parts...,
+			)
+		}
+	}
 }

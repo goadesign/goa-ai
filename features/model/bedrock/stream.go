@@ -237,14 +237,18 @@ func (p *chunkProcessor) Handle(event any) error {
 				}
 				raw := *toolUse.Value.Name
 				name := normalizeToolName(raw)
-				canonical, ok := p.toolNameMap[name]
-				if !ok {
-					return fmt.Errorf(
-						"bedrock stream: tool name %q not in reverse map (raw: %q); expected canonical tool ID",
-						name, raw,
-					)
+				// Bedrock tool_use blocks echo back the provider-visible tool name. The
+				// adapter normally translates that provider name back to the canonical
+				// tool ID via the per-request reverse map. When the model hallucinates a
+				// tool name that was not advertised in this request, the reverse map will
+				// not contain it. This is not a transport/protocol failure: it is normal
+				// model behavior and must be handled by the runtime as a tool error so
+				// the model can recover on the next resume turn.
+				if canonical, ok := p.toolNameMap[name]; ok {
+					tb.name = canonical
+				} else {
+					tb.name = name
 				}
-				tb.name = canonical
 				p.toolBlocks[idx] = tb
 				return nil
 			}

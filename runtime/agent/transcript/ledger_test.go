@@ -133,6 +133,111 @@ func TestBuildMessagesFromEvents_ParentToolOnly(t *testing.T) {
 	}
 }
 
+func TestBuildMessages_ThinkingSignatureLost(t *testing.T) {
+	// When the Bedrock stream emits intermediate thinking (text only, no
+	// signature) and the final signature delta is lost, BuildMessages must
+	// still include a redacted ThinkingPart placeholder so the assistant
+	// message satisfies the thinking→content ordering contract.
+	l := NewLedger()
+	// Append intermediate thinking: text but no signature (simulates lost delta).
+	l.AppendThinking(ThinkingPart{Text: "let me think about this", Index: 0, Final: false})
+	l.AppendText("calling tool")
+	l.DeclareToolUse("tu1", "search", map[string]any{"q": "test"})
+	l.FlushAssistant()
+	l.AppendUserToolResults([]ToolResultSpec{{
+		ToolUseID: "tu1",
+		Content:   map[string]any{"ok": true},
+	}})
+
+	msgs := l.BuildMessages()
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	}
+	// The assistant message must start with a redacted thinking placeholder.
+	asstMsg := msgs[0]
+	if asstMsg.Role != model.ConversationRoleAssistant {
+		t.Fatalf("first role = %s, want assistant", asstMsg.Role)
+	}
+	tp, ok := asstMsg.Parts[0].(model.ThinkingPart)
+	if !ok {
+		t.Fatalf("assistant first part should be ThinkingPart, got %T", asstMsg.Parts[0])
+	}
+	if len(tp.Redacted) == 0 {
+		t.Fatalf("expected redacted placeholder, got text=%q sig=%q", tp.Text, tp.Signature)
+	}
+	if !tp.Final {
+		t.Fatalf("expected Final=true on placeholder")
+	}
+	// Validate Bedrock should pass with the placeholder.
+	if err := ValidateBedrock(msgs, true); err != nil {
+		t.Fatalf("validate failed: %v", err)
+	}
+}
+
+func TestBuildMessages_NoThinkingNoop(t *testing.T) {
+	// When no thinking parts were present at all, BuildMessages should NOT
+	// inject a placeholder — thinking absence is normal for non-thinking models.
+	l := NewLedger()
+	l.AppendText("hello")
+	l.DeclareToolUse("tu1", "search", map[string]any{"q": "test"})
+	l.FlushAssistant()
+	l.AppendUserToolResults([]ToolResultSpec{{
+		ToolUseID: "tu1",
+		Content:   map[string]any{"ok": true},
+	}})
+
+	msgs := l.BuildMessages()
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	}
+	// First part should be text, not thinking.
+	if _, ok := msgs[0].Parts[0].(model.TextPart); !ok {
+		t.Fatalf("expected TextPart first, got %T", msgs[0].Parts[0])
+	}
+}
+
+func TestValidateBedrock_ErrorIncludesIndex(t *testing.T) {
+	// Verify that validation errors include the offending message index.
+	msgs := []*model.Message{
+		{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{
+				model.TextPart{Text: "calling tool"},
+				model.ToolUsePart{ID: "tu1", Name: "search"},
+			},
+		},
+		{
+			Role: model.ConversationRoleUser,
+			Parts: []model.Part{
+				model.ToolResultPart{ToolUseID: "tu1", Content: "ok"},
+			},
+		},
+	}
+	err := ValidateBedrock(msgs, true)
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !contains(err.Error(), "message[0]") {
+		t.Fatalf("error should include message index, got: %s", err.Error())
+	}
+	if !contains(err.Error(), "tool_use") {
+		t.Fatalf("error should include parts summary, got: %s", err.Error())
+	}
+}
+
+func contains(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || len(s) > 0 && containsSubstring(s, sub))
+}
+
+func containsSubstring(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
 func TestBuildMessagesFromEvents_ToolErrorIncludesErrorContent(t *testing.T) {
 	events := []memory.Event{
 		{
