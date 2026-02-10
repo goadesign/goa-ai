@@ -465,22 +465,21 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 	var zeroCtx run.Context
 
 	// Decode payload for prompt/template rendering. Prefer tool codecs when
-	// specs are registered; otherwise decode as generic JSON.
+	// specs are registered. Agent-as-tool payloads must be validated at the
+	// parent boundary; do not fall back to untyped JSON decoding.
 	var promptPayload any
 	if len(call.Payload) > 0 {
-		if _, ok := r.ToolSpec(call.Name); ok {
-			val, err := r.unmarshalToolValue(ctx, call.Name, call.Payload, true)
-			if err != nil {
-				return nil, zeroCtx, fmt.Errorf("decode agent tool payload for %s: %w", call.Name, err)
-			}
-			promptPayload = val
-		} else {
-			var generic any
-			if err := json.Unmarshal(call.Payload, &generic); err != nil {
-				return nil, zeroCtx, fmt.Errorf("decode agent tool payload for %s: %w", call.Name, err)
-			}
-			promptPayload = generic
+		if _, ok := r.ToolSpec(call.Name); !ok {
+			return nil, zeroCtx, fmt.Errorf(
+				"agent tool %s requires a registered ToolSpec for payload decoding (missing specs/codecs)",
+				call.Name,
+			)
 		}
+		val, err := r.unmarshalToolValue(ctx, call.Name, call.Payload, true)
+		if err != nil {
+			return nil, zeroCtx, fmt.Errorf("decode agent tool payload for %s: %w", call.Name, err)
+		}
+		promptPayload = val
 	}
 
 	// Build messages: optional agent system prompt, then the per-tool user message.

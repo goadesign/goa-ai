@@ -48,6 +48,24 @@ func TestExecuteToolActivityReturnsErrorAndHint(t *testing.T) {
 	require.Equal(t, planner.RetryReasonInvalidArguments, out.RetryHint.Reason)
 }
 
+func TestRegisterToolset_RejectsAgentToolsetWithoutSpecs(t *testing.T) {
+	rt := New()
+	reg := NewAgentToolsetRegistration(rt, AgentToolConfig{
+		AgentID: "svc.agent",
+		Name:    "svc.tools",
+		Route: AgentRoute{
+			ID:               "svc.agent",
+			WorkflowName:     "wf",
+			DefaultTaskQueue: "default",
+		},
+	})
+
+	err := rt.RegisterToolset(reg)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrInvalidConfig)
+	require.Contains(t, err.Error(), "requires tool specs")
+}
+
 func TestExecuteToolActivityRequiresArtifactsWhenSidecarDeclared(t *testing.T) {
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{

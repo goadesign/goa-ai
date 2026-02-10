@@ -51,6 +51,7 @@ func firstText(m *model.Message) string {
 func TestAgentTool_DefaultsFromPayload(t *testing.T) {
 	rt := &Runtime{
 		agents:        make(map[agent.Ident]AgentRegistration),
+		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
 		Engine:        engineinmem.New(),
 		logger:        telemetry.NoopLogger{},
 		metrics:       telemetry.NoopMetrics{},
@@ -89,6 +90,7 @@ func TestAgentTool_DefaultsFromPayload(t *testing.T) {
 		Name:      tools.Ident("svc.tools.do"),
 		Payload:   json.RawMessage(`"hello"`),
 	}
+	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	tr, err := reg.Execute(ctx, &call)
 	require.NoError(t, err)
 	require.NotNil(t, tr)
@@ -101,6 +103,7 @@ func TestAgentTool_DefaultsFromPayload(t *testing.T) {
 func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 	rt := &Runtime{
 		agents:        make(map[agent.Ident]AgentRegistration),
+		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
 		Engine:        engineinmem.New(),
 		logger:        telemetry.NoopLogger{},
 		metrics:       telemetry.NoopMetrics{},
@@ -138,6 +141,7 @@ func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 		Name:      tools.Ident("svc.tools.do"),
 		Payload:   json.RawMessage(`"hello"`),
 	}
+	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	tr, err := reg.Execute(ctx, &call)
 	require.NoError(t, err)
 	require.NotNil(t, tr)
@@ -149,6 +153,7 @@ func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 	rt := &Runtime{
 		agents:        make(map[agent.Ident]AgentRegistration),
+		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
 		Engine:        engineinmem.New(),
 		logger:        telemetry.NoopLogger{},
 		metrics:       telemetry.NoopMetrics{},
@@ -184,6 +189,7 @@ func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 		Name:      tools.Ident("svc.tools.do"),
 		Payload:   json.RawMessage(`"hello"`),
 	}
+	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	_, err := reg.Execute(ctx, &call)
 	require.NoError(t, err)
 	require.Len(t, pl.msgs, 2)
