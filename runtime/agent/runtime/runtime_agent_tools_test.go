@@ -22,6 +22,7 @@ import (
 func setupTestAgentWithPlanner(plannerFn func(context.Context, *planner.PlanInput) (*planner.PlanResult, error)) (*Runtime, context.Context) {
 	rt := &Runtime{
 		agents:        make(map[agent.Ident]AgentRegistration),
+		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
 		logger:        telemetry.NoopLogger{},
 		metrics:       telemetry.NoopMetrics{},
 		tracer:        telemetry.NoopTracer{},
@@ -72,6 +73,7 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 		SessionID: "sess-1",
 		Payload:   json.RawMessage(`{"x":"world"}`),
 	}
+	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	_, err := rt.CreateSession(context.Background(), call.SessionID)
 	require.NoError(t, err)
 	res, err := exec(ctx, &call)

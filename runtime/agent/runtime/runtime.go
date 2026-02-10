@@ -990,6 +990,10 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 		r.agentToolSpecs[reg.ID] = cp
 	}
 	for _, ts := range reg.Toolsets {
+		if err := validateAgentToolsetSpecs(ts); err != nil {
+			r.mu.Unlock()
+			return err
+		}
 		r.addToolsetLocked(ts)
 	}
 	r.mu.Unlock()
@@ -1032,6 +1036,9 @@ func (r *Runtime) RegisterToolset(ts ToolsetRegistration) error {
 	if ts.Execute == nil {
 		return errors.New("toolset execute function is required")
 	}
+	if err := validateAgentToolsetSpecs(ts); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.addToolsetLocked(ts)
@@ -1042,6 +1049,23 @@ func (r *Runtime) RegisterToolset(ts ToolsetRegistration) error {
 	}
 	if len(ts.ResultHints) > 0 {
 		rthints.RegisterResultHints(ts.ResultHints)
+	}
+	return nil
+}
+
+func validateAgentToolsetSpecs(ts ToolsetRegistration) error {
+	if ts.AgentTool == nil {
+		return nil
+	}
+	if len(ts.Specs) == 0 {
+		agentID := ""
+		if ts.AgentTool != nil {
+			agentID = string(ts.AgentTool.AgentID)
+		}
+		if agentID != "" {
+			return fmt.Errorf("%w: agent toolset %q (agent=%s) requires tool specs/codecs", ErrInvalidConfig, ts.Name, agentID)
+		}
+		return fmt.Errorf("%w: agent toolset %q requires tool specs/codecs", ErrInvalidConfig, ts.Name)
 	}
 	return nil
 }

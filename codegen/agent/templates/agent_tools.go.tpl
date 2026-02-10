@@ -57,6 +57,7 @@ func New{{ .Toolset.Agent.GoName }}ToolsetRegistration(rt *runtime.Runtime) runt
         ExecuteToolActivity: {{ printf "%q" .Toolset.Agent.Runtime.ExecuteTool.Name }},
     }
     reg := runtime.NewAgentToolsetRegistration(rt, cfg)
+    reg.Specs = {{ $.Toolset.SpecsPackageName }}specs.Specs
     // Install DSL-provided hint templates when present.
     {
         // Build maps only when at least one template exists to avoid overhead.
@@ -138,6 +139,7 @@ func NewRegistration(
         }
     }
     reg := runtime.NewAgentToolsetRegistration(rt, cfg)
+    reg.Specs = {{ $.Toolset.SpecsPackageName }}specs.Specs
     // Install DSL-provided hint templates when present.
     {
         // Build maps only when at least one template exists to avoid overhead.

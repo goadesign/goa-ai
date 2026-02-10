@@ -70,6 +70,7 @@ func NewScribeToolsetRegistration(rt *runtime.Runtime) runtime.ToolsetRegistrati
 		ExecuteToolActivity: "alpha.scribe.executetool",
 	}
 	reg := runtime.NewAgentToolsetRegistration(rt, cfg)
+	reg.Specs = searchspecs.Specs
 	// Install DSL-provided hint templates when present.
 	{
 		// Build maps only when at least one template exists to avoid overhead.
@@ -135,6 +136,7 @@ func NewRegistration(
 		}
 	}
 	reg := runtime.NewAgentToolsetRegistration(rt, cfg)
+	reg.Specs = searchspecs.Specs
 	// Install DSL-provided hint templates when present.
 	{
 		// Build maps only when at least one template exists to avoid overhead.
