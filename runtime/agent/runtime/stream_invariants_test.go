@@ -105,10 +105,10 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 		Name:     toolsetName,
 		JSONOnly: true,
 	})
+	agentTools.Specs = []tools.ToolSpec{
+		newAnyJSONSpec(invokeToolID, toolsetName),
+	}
 	require.NoError(t, rt.RegisterToolset(agentTools))
-	rt.mu.Lock()
-	rt.toolSpecs[invokeToolID] = newAnyJSONSpec(invokeToolID, toolsetName)
-	rt.mu.Unlock()
 
 	parentPlanner := &stubPlanner{
 		start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
