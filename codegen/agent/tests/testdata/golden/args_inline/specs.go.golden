@@ -22,13 +22,12 @@ var Specs = []tools.ToolSpec{
 
 var (
 	SpecAdd = tools.ToolSpec{
-		Name:                Add,
-		Service:             "alpha",
-		Toolset:             "alpha.math",
-		Description:         "Add",
-		ArtifactDescription: "",
-		Tags:                []string{},
-		BoundedResult:       false,
+		Name:          Add,
+		Service:       "alpha",
+		Toolset:       "alpha.math",
+		Description:   "Add",
+		Tags:          []string{},
+		BoundedResult: false,
 		Payload: tools.TypeSpec{
 			Name:         "AddPayload",
 			Schema:       []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"left\":{\"type\":\"integer\",\"description\":\"Left operand\",\"example\":1056967519,\"format\":\"int32\"},\"right\":{\"type\":\"integer\",\"description\":\"Right operand\",\"example\":1084554470,\"format\":\"int32\"}},\"required\":[\"left\",\"right\"]}"),
@@ -41,7 +40,6 @@ var (
 			Schema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"sum\":{\"type\":\"integer\",\"description\":\"Sum\",\"example\":1051318795,\"format\":\"int32\"}},\"required\":[\"sum\"]}"),
 			Codec:  addResultCodec,
 		},
-		Sidecar: nil,
 	}
 )
 

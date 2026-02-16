@@ -123,15 +123,18 @@ func (r *Runtime) executeGroupedToolCalls(
 	return out, timedOutAny, nil
 }
 
-// sidecarDescription returns a human-facing description for the tool's
-// artifact sidecar when available. It uses the ArtifactDescription metadata
-// computed at code generation time from the Artifact DSL.
+// sidecarDescription returns a human-facing description for optional server-data
+// attached as observer-facing artifacts when available.
 func (r *Runtime) sidecarDescription(name tools.Ident) string {
 	spec, ok := r.toolSpec(name)
 	if !ok {
 		return ""
 	}
-	return spec.ArtifactDescription
+	sd, ok := optionalServerDataSpec(spec)
+	if !ok {
+		return ""
+	}
+	return sd.Description
 }
 
 // buildArtifactProducedReminders derives artifact-aware reminders for artifacts
@@ -178,8 +181,8 @@ func (r *Runtime) buildArtifactProducedReminders(results []*planner.ToolResult) 
 	return out
 }
 
-func (r *Runtime) buildArtifactDisabledReminders(allowed []planner.ToolRequest, resultsByID map[string]*planner.ToolResult, artifactsModeByCallID map[string]tools.ArtifactsMode) []string {
-	if len(allowed) == 0 || len(resultsByID) == 0 || len(artifactsModeByCallID) == 0 {
+func (r *Runtime) buildArtifactDisabledReminders(allowed []planner.ToolRequest, resultsByID map[string]*planner.ToolResult, serverDataModeByCallID map[string]tools.ServerDataMode) []string {
+	if len(allowed) == 0 || len(resultsByID) == 0 || len(serverDataModeByCallID) == 0 {
 		return nil
 	}
 	seen := make(map[tools.Ident]struct{})
@@ -188,7 +191,7 @@ func (r *Runtime) buildArtifactDisabledReminders(allowed []planner.ToolRequest, 
 		if call.ToolCallID == "" {
 			continue
 		}
-		if !artifactsDisabled(artifactsModeByCallID[call.ToolCallID]) {
+		if !serverDataDisabled(serverDataModeByCallID[call.ToolCallID]) {
 			continue
 		}
 		tr := resultsByID[call.ToolCallID]
@@ -202,7 +205,7 @@ func (r *Runtime) buildArtifactDisabledReminders(allowed []planner.ToolRequest, 
 		if desc == "" {
 			continue
 		}
-		out = append(out, fmt.Sprintf("Artifacts were disabled for this tool call. You can re-run with artifacts enabled to show: %s", desc))
+		out = append(out, fmt.Sprintf("Optional server-data was disabled for this tool call. You can re-run with `server_data:\"on\"` to show: %s", desc))
 		seen[call.Name] = struct{}{}
 	}
 	if len(out) == 0 {
@@ -225,7 +228,7 @@ func (r *Runtime) appendUserToolResults(
 	allowed []planner.ToolRequest,
 	vals []*planner.ToolResult,
 	led *transcript.Ledger,
-	artifactsModeByCallID map[string]tools.ArtifactsMode,
+	artifactsModeByCallID map[string]tools.ServerDataMode,
 ) error {
 	if len(vals) == 0 {
 		return nil

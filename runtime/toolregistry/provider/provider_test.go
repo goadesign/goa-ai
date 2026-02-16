@@ -31,7 +31,7 @@ func (h *blockingHandler) HandleToolCall(ctx context.Context, msg toolregistry.T
 		close(h.started)
 	}
 	<-h.unblock
-	return toolregistry.NewToolResultMessage(msg.ToolUseID, json.RawMessage(`{"ok":true}`), nil), nil
+	return toolregistry.NewToolResultMessage(msg.ToolUseID, json.RawMessage(`{"ok":true}`)), nil
 }
 
 func TestServe_RespondsToPingWhileToolCallInFlight(t *testing.T) {
@@ -282,6 +282,132 @@ func TestServe_RespondsToPingWhenQueueIsFull(t *testing.T) {
 	}
 }
 
+func TestServe_DoesNotExitOnPongFailure(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const toolset = "test.toolset"
+	toolsetStreamID := toolregistry.ToolsetStreamID(toolset)
+
+	eventsCh := make(chan *streaming.Event, 10)
+
+	sink := mockpulse.NewSink(t)
+	sink.SetSubscribe(func() <-chan *streaming.Event { return eventsCh })
+	sink.SetAck(func(_ context.Context, _ *streaming.Event) error { return nil })
+	sink.SetClose(func(_ context.Context) {})
+
+	toolsetStream := mockpulse.NewStream(t)
+	toolsetStream.SetNewSink(func(_ context.Context, _ string, _ ...streamopts.Sink) (pulse.Sink, error) {
+		return sink, nil
+	})
+
+	var adds atomic.Int64
+	resultStream := mockpulse.NewStream(t)
+	resultStream.SetAdd(func(_ context.Context, _ string, _ []byte) (string, error) {
+		adds.Add(1)
+		return pulseAddEventID, nil
+	})
+
+	client := mockpulse.NewClient(t)
+	client.SetStream(func(name string, _ ...streamopts.Stream) (pulse.Stream, error) {
+		switch name {
+		case toolsetStreamID:
+			return toolsetStream, nil
+		default:
+			return resultStream, nil
+		}
+	})
+
+	h := &blockingHandler{
+		started: make(chan struct{}),
+		unblock: make(chan struct{}),
+	}
+
+	var attempts atomic.Int64
+	pongs := make(chan string, 10)
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- Serve(ctx, client, toolset, h, Options{
+			PongTimeout: 50 * time.Millisecond,
+			Pong: func(_ context.Context, pingID string) error {
+				pongs <- pingID
+				if attempts.Add(1) == 1 {
+					return errors.New("pong failed")
+				}
+				return nil
+			},
+		})
+	}()
+
+	// Send a ping that will fail Pong. Serve must not exit.
+	ping1 := toolregistry.NewPingMessage("ping_1")
+	ping1Payload, err := json.Marshal(ping1)
+	require.NoError(t, err)
+	eventsCh <- &streaming.Event{ID: "1-0", EventName: "ping", Payload: ping1Payload}
+
+	select {
+	case got := <-pongs:
+		require.Equal(t, "ping_1", got)
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected pong attempt for ping_1")
+	}
+	select {
+	case err := <-errc:
+		t.Fatalf("Serve exited unexpectedly: %v", err)
+	default:
+	}
+
+	// Send a second ping which should succeed.
+	ping2 := toolregistry.NewPingMessage("ping_2")
+	ping2Payload, err := json.Marshal(ping2)
+	require.NoError(t, err)
+	eventsCh <- &streaming.Event{ID: "2-0", EventName: "ping", Payload: ping2Payload}
+
+	select {
+	case got := <-pongs:
+		require.Equal(t, "ping_2", got)
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected pong attempt for ping_2")
+	}
+
+	// Send a tool call to prove the provider still executes calls after a failed Pong.
+	call := toolregistry.NewToolCallMessage(
+		"tooluse_1",
+		tools.Ident("toolset.tool"),
+		json.RawMessage(`{"x":1}`),
+		&toolregistry.ToolCallMeta{RunID: "r1", SessionID: "s1"},
+	)
+	callPayload, err := json.Marshal(call)
+	require.NoError(t, err)
+	eventsCh <- &streaming.Event{ID: "3-0", EventName: "call", Payload: callPayload}
+
+	select {
+	case <-h.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not start")
+	}
+	close(h.unblock)
+
+	deadline := time.After(2 * time.Second)
+	for adds.Load() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("expected at least 1 result publish")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	cancel()
+	select {
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve did not stop")
+	case <-errc:
+	}
+}
+
 type outputDeltaHandler struct {
 	errc chan error
 }
@@ -293,7 +419,7 @@ func (h *outputDeltaHandler) HandleToolCall(ctx context.Context, msg toolregistr
 		case h.errc <- errors.New("missing output delta publisher in context"):
 		default:
 		}
-		return toolregistry.NewToolResultMessage(msg.ToolUseID, json.RawMessage(`{"ok":true}`), nil), nil
+		return toolregistry.NewToolResultMessage(msg.ToolUseID, json.RawMessage(`{"ok":true}`)), nil
 	}
 	if err := pub.PublishToolOutputDelta(ctx, "stdout", "hello\n"); err != nil {
 		select {
@@ -301,7 +427,7 @@ func (h *outputDeltaHandler) HandleToolCall(ctx context.Context, msg toolregistr
 		default:
 		}
 	}
-	return toolregistry.NewToolResultMessage(msg.ToolUseID, json.RawMessage(`{"ok":true}`), nil), nil
+	return toolregistry.NewToolResultMessage(msg.ToolUseID, json.RawMessage(`{"ok":true}`)), nil
 }
 
 func TestServe_PublishesOutputDeltaToResultStream(t *testing.T) {

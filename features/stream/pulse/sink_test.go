@@ -17,6 +17,7 @@ import (
 func TestSendPublishesEnvelope(t *testing.T) {
 	cli := mockpulse.NewClient(t)
 	str := mockpulse.NewStream(t)
+	server := json.RawMessage(`[{"kind":"aura.evidence","data":[{"uri":"atlas://points/123","kind":"time_series"}]}]`)
 
 	cli.AddStream(func(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
 		require.Equal(t, "session/session-123", name)
@@ -25,11 +26,12 @@ func TestSendPublishesEnvelope(t *testing.T) {
 	const lastID = "1-0"
 	str.AddAdd(func(ctx context.Context, event string, payload []byte) (string, error) {
 		require.Equal(t, string(stream.EventToolEnd), event)
-		var env envelope
+		var env Envelope
 		require.NoError(t, json.Unmarshal(payload, &env))
 		require.Equal(t, "run-123", env.RunID)
 		require.Equal(t, "tool_end", env.Type)
 		require.Equal(t, "session-123", env.SessionID)
+		require.JSONEq(t, string(server), string(env.ServerData))
 		body, ok := env.Payload.(map[string]any)
 		require.True(t, ok)
 		res, ok := body["result"].(map[string]any)
@@ -43,8 +45,9 @@ func TestSendPublishesEnvelope(t *testing.T) {
 
 	endPayload := stream.ToolEndPayload{Result: json.RawMessage(`{"status":"ok"}`)}
 	err = sink.Send(context.Background(), stream.ToolEnd{
-		Base: stream.NewBase(stream.EventToolEnd, "run-123", "session-123", endPayload),
-		Data: endPayload,
+		Base:       stream.NewBase(stream.EventToolEnd, "run-123", "session-123", endPayload),
+		Data:       endPayload,
+		ServerData: append(json.RawMessage(nil), server...),
 	})
 	require.NoError(t, err)
 	require.False(t, str.HasMore())

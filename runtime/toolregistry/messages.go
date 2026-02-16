@@ -54,7 +54,14 @@ type (
 	ToolResultMessage struct {
 		ToolUseID string          `json:"tool_use_id"`
 		Result    json.RawMessage `json:"result_json,omitempty"`
-		Artifacts []Artifact      `json:"artifacts,omitempty"`
+		// Server carries server-only metadata about the tool execution that must not
+		// be serialized into model provider requests.
+		//
+		// This is the canonical home for any non-model payloads emitted alongside a
+		// tool result. Consumers may split it into more specific projections (e.g.
+		// UI artifacts vs persistence-only evidence) but the wire protocol keeps a
+		// single server-side envelope.
+		Server []*ServerDataItem `json:"server,omitempty"`
 		Error     *ToolError      `json:"error,omitempty"`
 	}
 
@@ -74,9 +81,9 @@ type (
 		Delta  string `json:"delta"`
 	}
 
-	// Artifact is a tool-produced artifact payload published alongside results.
-	// Artifacts are never sent to model providers; they are UI/policy-facing data.
-	Artifact struct {
+	// ServerDataItem is server-only tool output published alongside the canonical
+	// tool result JSON. Server data is never sent to model providers.
+	ServerDataItem struct {
 		Kind string          `json:"kind"`
 		Data json.RawMessage `json:"data"`
 	}
@@ -122,12 +129,19 @@ func NewPingMessage(pingID string) ToolCallMessage {
 }
 
 // NewToolResultMessage constructs a successful tool result message.
-func NewToolResultMessage(toolUseID string, result json.RawMessage, artifacts []Artifact) ToolResultMessage {
+func NewToolResultMessage(toolUseID string, result json.RawMessage) ToolResultMessage {
 	return ToolResultMessage{
 		ToolUseID: toolUseID,
 		Result:    result,
-		Artifacts: artifacts,
 	}
+}
+
+// NewToolResultMessageWithServer constructs a successful tool result message with
+// additional server-only metadata.
+func NewToolResultMessageWithServer(toolUseID string, result json.RawMessage, server []*ServerDataItem) ToolResultMessage {
+	out := NewToolResultMessage(toolUseID, result)
+	out.Server = server
+	return out
 }
 
 // NewToolOutputDeltaMessage constructs a tool output delta message.

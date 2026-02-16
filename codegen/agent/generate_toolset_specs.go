@@ -31,7 +31,7 @@ type toolProviderFileData struct {
 // agent-exported toolsets under `gen/<service>/agents/<agent>/exports/<toolset>`).
 //
 // For each distinct toolset package it emits:
-//   - `types.go` for tool payload/result/sidecar types (when any are needed)
+//   - `types.go` for tool payload/result/optional server-data types (when any are needed)
 //   - `unions.go` for sum-type unions referenced by the tool types (when any)
 //   - `codecs.go` for canonical JSON encoding/decoding and validation helpers
 //   - `specs.go` for runtime tool discovery metadata and schemas
@@ -259,10 +259,14 @@ func toolsetProviderFile(genpkg string, ts *ToolsetData) *codegen.File {
 		return nil
 	}
 	hasMethods := false
+	needsJSON := false
 	for _, t := range ts.Tools {
-		if t != nil && t.IsMethodBacked {
-			hasMethods = true
-			break
+		if t == nil || !t.IsMethodBacked {
+			continue
+		}
+		hasMethods = true
+		if len(t.AlwaysServerData) > 0 {
+			needsJSON = true
 		}
 	}
 	if !hasMethods {
@@ -274,12 +278,17 @@ func toolsetProviderFile(genpkg string, ts *ToolsetData) *codegen.File {
 	}
 	imports := []*codegen.ImportSpec{
 		codegen.SimpleImport("context"),
+	}
+	if needsJSON {
+		imports = append(imports, codegen.SimpleImport("encoding/json"))
+	}
+	imports = append(imports,
 		codegen.SimpleImport("errors"),
 		codegen.SimpleImport("fmt"),
-		{Path: "goa.design/goa-ai/runtime/toolregistry"},
-		{Name: "goa", Path: "goa.design/goa/v3/pkg"},
-		{Name: ts.SourceService.PkgName, Path: serviceImportPath},
-	}
+		&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/toolregistry"},
+		&codegen.ImportSpec{Name: "goa", Path: "goa.design/goa/v3/pkg"},
+		&codegen.ImportSpec{Name: ts.SourceService.PkgName, Path: serviceImportPath},
+	)
 	sections := []*codegen.SectionTemplate{
 		codegen.Header(ts.Name+" tool provider", ts.SpecsPackageName, imports),
 		{

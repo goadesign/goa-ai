@@ -24,7 +24,7 @@ type (
 		// `session/<SessionID>`.
 		StreamID func(stream.Event) (string, error)
 		// MarshalEnvelope allows overriding the envelope serialization (primarily for tests).
-		MarshalEnvelope func(envelope) ([]byte, error)
+		MarshalEnvelope func(Envelope) ([]byte, error)
 		// OnPublished, when set, is invoked after an event has been successfully
 		// written to the underlying Pulse stream. If it returns an error, Send
 		// fails and callers should treat the event as not fully emitted.
@@ -42,13 +42,18 @@ type (
 	// sinkOptions holds internal configuration derived from Options.
 	sinkOptions struct {
 		streamID        func(stream.Event) (string, error)
-		marshalEnvelope func(envelope) ([]byte, error)
+		marshalEnvelope func(Envelope) ([]byte, error)
 		onPublished     func(context.Context, PublishedEvent) error
 	}
 
-	// envelope wraps runtime events for transmission over Pulse streams.
+	// Envelope wraps runtime events for transmission over Pulse streams.
 	// It adds metadata and serializes the event content as JSON.
-	envelope struct {
+	//
+	// Envelope is part of the sink's public configuration surface to support
+	// callers that need to customize JSON serialization (e.g., for tests or
+	// transport interop). The sink always publishes an envelope as the value
+	// stored in Pulse; only the marshaler is customizable.
+	Envelope struct {
 		// Type identifies the event kind (e.g., "tool_end", "assistant_reply").
 		Type string `json:"type"`
 		// RunID links the event to a specific workflow execution.
@@ -59,6 +64,10 @@ type (
 		Timestamp time.Time `json:"timestamp"`
 		// Payload contains the event-specific data, if any.
 		Payload any `json:"payload,omitempty"`
+		// ServerData carries server-only metadata for events that support it
+		// (currently `tool_end`). It is never forwarded to model providers, but
+		// downstream subscribers (e.g., persistence drains) may consume it.
+		ServerData json.RawMessage `json:"server_data,omitempty"`
 	}
 
 	// PublishedEvent describes a runtime event that has been successfully
@@ -107,12 +116,18 @@ func (s *Sink) Send(ctx context.Context, event stream.Event) error {
 	if err != nil {
 		return err
 	}
-	env := envelope{
+	env := Envelope{
 		Type:      string(event.Type()),
 		RunID:     event.RunID(),
 		SessionID: event.SessionID(),
 		Timestamp: time.Now().UTC(),
 		Payload:   event.Payload(),
+	}
+	switch ev := event.(type) {
+	case stream.ToolEnd:
+		env.ServerData = ev.ServerData
+	case *stream.ToolEnd:
+		env.ServerData = ev.ServerData
 	}
 	payload, err := s.opts.marshalEnvelope(env)
 	if err != nil {
@@ -149,6 +164,6 @@ func defaultStreamID(event stream.Event) (string, error) {
 }
 
 // defaultMarshal serializes an envelope to JSON.
-func defaultMarshal(env envelope) ([]byte, error) {
+func defaultMarshal(env Envelope) ([]byte, error) {
 	return json.Marshal(env)
 }

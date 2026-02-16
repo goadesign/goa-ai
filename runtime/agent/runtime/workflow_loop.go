@@ -44,8 +44,10 @@ type (
 	}
 
 	runDeadlines struct {
-		// Budget is the run time budget deadline. It is used to bound awaits and
-		// interrupts (pause/resume) so the run can still finalize.
+		// Budget is the run time budget deadline for internal work (planner resume,
+		// tool execution, hooks). Time spent waiting on external input is explicitly
+		// paused via (*runDeadlines).pause so an operator response does not burn the
+		// run's time budget.
 		Budget time.Time
 
 		// Hard is the run deadline including finalizer grace. It is used to stop
@@ -93,6 +95,24 @@ func (d runDeadlines) finalizeReserve() time.Duration {
 		return d.FinalizerGrace
 	}
 	return minActivityTimeout
+}
+
+// pause extends the run deadlines by delta to account for time spent waiting on
+// external input (clarifications, confirmations, UI-provided tool results).
+//
+// Contract:
+// - delta must be derived from workflow time (wfCtx.Now()) so it is deterministic.
+// - When deadlines are zero (no time budget configured), this is a no-op.
+func (d *runDeadlines) pause(delta time.Duration) {
+	if delta <= 0 {
+		return
+	}
+	if !d.Budget.IsZero() {
+		d.Budget = d.Budget.Add(delta)
+	}
+	if !d.Hard.IsZero() {
+		d.Hard = d.Hard.Add(delta)
+	}
 }
 
 // shouldFinalize reports whether it is too late to schedule new work and the runtime
@@ -162,8 +182,7 @@ func (l *workflowLoop) run() (*RunOutput, error) {
 				l.st,
 				l.resumeOpts,
 				l.ctrl,
-				l.deadlines.Budget,
-				l.deadlines.Hard,
+				&l.deadlines,
 				l.turnID,
 			)
 			if err != nil {
@@ -189,9 +208,7 @@ func (l *workflowLoop) run() (*RunOutput, error) {
 			l.st,
 			l.resumeOpts,
 			l.toolOpts,
-			l.deadlines.Budget,
-			l.deadlines.Hard,
-			l.deadlines.FinalizerGrace,
+			&l.deadlines,
 			l.turnID,
 			l.parentTracker,
 			l.ctrl,

@@ -276,8 +276,22 @@ func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) 
 	}
 
 	// 4. Check provider health - return service_unavailable if unhealthy.
-	if !s.healthTracker.IsHealthy(p.Toolset) {
-		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("no healthy providers for toolset %q", p.Toolset))
+	h, err := s.healthTracker.Health(p.Toolset)
+	if err != nil {
+		return nil, fmt.Errorf("check toolset %q health: %w", p.Toolset, err)
+	}
+	if !h.Healthy {
+		lastPong := "missing"
+		if !h.LastPong.IsZero() {
+			lastPong = h.LastPong.UTC().Format(time.RFC3339Nano)
+		}
+		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
+			"no healthy providers for toolset %q (staleness_threshold=%s, last_pong=%s, age=%s)",
+			p.Toolset,
+			h.StalenessThreshold,
+			lastPong,
+			h.Age,
+		))
 	}
 
 	toolUseID := uuid.New().String()
