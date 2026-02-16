@@ -585,9 +585,11 @@ func serviceExecutorFiles(agent *AgentData) []*codegen.File {
 					extraImports[im.Path] = im
 				}
 			}
-			for _, im := range gatherAttributeImports(agent.Genpkg, t.Artifact) {
-				if im != nil && im.Path != "" {
-					extraImports[im.Path] = im
+			if t.OptionalServerData != nil {
+				for _, im := range gatherAttributeImports(agent.Genpkg, t.OptionalServerData.Schema) {
+					if im != nil && im.Path != "" {
+						extraImports[im.Path] = im
+					}
 				}
 			}
 		}
@@ -622,6 +624,7 @@ func serviceExecutorFiles(agent *AgentData) []*codegen.File {
 			{Path: "goa.design/goa-ai/runtime/agent/planner"},
 			{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "runtime"},
 			{Path: "goa.design/goa-ai/runtime/agent/tools"},
+			{Path: "goa.design/goa-ai/runtime/toolregistry"},
 			{Path: ts.SpecsImportPath, Name: specsAlias},
 		}
 		if needsSharedTypes {

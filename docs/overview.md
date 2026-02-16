@@ -156,21 +156,23 @@ For bounded tools, bounds metadata is a hard contract:
 - `Returned` and `Truncated` must always be present.
 - `Returned == 0` means “empty result” → `Total == 0` and `Truncated == false`.
 
-### Tool Artifacts (Sidecar Data)
+### Server Data (Sidecar Data)
 
-Tools can attach rich, non‑model data alongside their results using the `Artifact` DSL:
+Tools can attach rich, non‑model data alongside their results using the `ServerData` DSL:
 
 ```go
 Tool("get_time_series", "Get Time Series", func() {
     Args(GetTimeSeriesToolArgs)
     Return(GetTimeSeriesToolReturn)
-    Artifact("time_series", GetTimeSeriesSidecar) // Full-fidelity data for UIs
+    ServerData("atlas.time_series", GetTimeSeriesSidecar) // Full-fidelity data for observers (e.g., UIs)
+    ServerDataDefault("off")                             // Opt-in by default
 })
 ```
 
-Artifacts flow through hooks and streams to UIs but are never sent to model providers. This
-separation keeps model context lean while enabling rich visualizations (charts, tables, maps) on
-the client.
+Server-data is never sent to model providers. Optional server-data can be projected into
+observer-facing UI artifacts (charts, tables, maps) while keeping the model-facing tool result
+bounded and token-efficient. Always-on server-data is emitted/persisted server-side and is not
+treated as optional observer data.
 
 ### Tool Payload Defaults (Feature)
 
@@ -436,7 +438,8 @@ policies, and MCP servers within Goa service designs.
 | `Tool(name, description?, func()?)` | Define a tool within a toolset or mark a method as MCP tool |
 | `Args(type)` | Define tool input schema (inline func, user type, or primitive) |
 | `Return(type)` | Define tool output schema |
-| `Artifact(kind, type)` | Attach non-model sidecar data to results |
+| `ServerData(kind, type, func()?)` | Attach server-only data alongside results (never sent to models) |
+| `ServerDataDefault("on" \| "off")` | Default emission for optional server-data when `server_data` is omitted or `"auto"` |
 | `Tags(...)` | Attach metadata labels for filtering/categorization |
 | `BindTo(method)` or `BindTo(service, method)` | Bind tool to service method implementation |
 | `Inject(fields...)` | Mark fields as infrastructure-only (hidden from LLM) |

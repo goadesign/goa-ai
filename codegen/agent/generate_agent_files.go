@@ -120,7 +120,7 @@ func agentSpecsJSONFile(agent *AgentData) *codegen.File {
 		Confirmation *confirmationSchema `json:"confirmation,omitempty"`
 		Payload      *typeSchema         `json:"payload,omitempty"`
 		Result       *typeSchema         `json:"result,omitempty"`
-		Sidecar      *typeSchema         `json:"sidecar,omitempty"`
+		ServerData   *typeSchema         `json:"server_data,omitempty"`
 	}
 
 	out := struct {
@@ -176,14 +176,14 @@ func agentSpecsJSONFile(agent *AgentData) *codegen.File {
 			entry.Result = &ts
 		}
 
-		if td := t.Sidecar; td != nil && td.TypeName != "" {
+		if td := t.OptionalServerData; td != nil && td.TypeName != "" {
 			ts := typeSchema{
 				Name: td.TypeName,
 			}
 			if len(td.SchemaJSON) > 0 {
 				ts.Schema = json.RawMessage(td.SchemaJSON)
 			}
-			entry.Sidecar = &ts
+			entry.ServerData = &ts
 		}
 
 		if c := t.Confirmation; c != nil {

@@ -303,9 +303,9 @@ type (
 		// Payload is the canonical JSON payload for the tool call.
 		Payload json.RawMessage
 
-		// ArtifactsMode is the normalized per-call artifacts toggle selected by the caller via the reserved
-		// `artifacts` payload field. When empty, the caller did not specify a mode.
-		ArtifactsMode tools.ArtifactsMode
+		// ServerDataMode is the normalized per-call toggle selected by the caller via the reserved
+		// `server_data` payload field. When empty, the caller did not specify a mode.
+		ServerDataMode tools.ServerDataMode
 
 		// SessionID is the logical session identifier (for example, a chat conversation).
 		SessionID string
@@ -321,6 +321,15 @@ type (
 	ToolOutput struct {
 		// Payload is the tool result encoded as JSON. The runtime decodes it using the registered tool codec.
 		Payload json.RawMessage
+
+		// Server carries server-only metadata about the tool execution. It is never
+		// forwarded to model providers, but it must cross workflow/activity boundaries
+		// so in-process subscribers (persistence, metrics) can consume it.
+		//
+		// Contract:
+		//   - This is canonical JSON (typically a JSON array of server data items).
+		//   - Tool implementations may return nil when no server data is present.
+		Server json.RawMessage
 
 		// Artifacts contains sideband UI artifacts produced alongside the tool result.
 		//

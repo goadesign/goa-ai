@@ -18,7 +18,6 @@ var (
         Service:     {{ printf "%q" .Service }},
         Toolset:     {{ printf "%q" .Toolset }},
         Description: {{ printf "%q" .Description }},
-        ArtifactDescription: {{ printf "%q" .ArtifactDescription }},
         Tags: []string{
         {{- range .Tags }}
             {{ printf "%q" . }},
@@ -43,6 +42,21 @@ var (
         TerminalRun: true,
         {{- end }}
         BoundedResult: {{ if .BoundedResult }}true{{ else }}false{{ end }},
+        {{- if .ServerData }}
+        ServerData: []*tools.ServerDataSpec{
+        {{- range .ServerData }}
+            {
+                Kind: {{ printf "%q" .Kind }},
+                Mode: {{ printf "%q" .Mode }},
+                Description: {{ printf "%q" .Description }},
+                Codec: {{ .CodecExpr }},
+            },
+        {{- end }}
+        },
+        {{- end }}
+        {{- if .ServerDataDefault }}
+        ServerDataDefault: {{ printf "%q" .ServerDataDefault }},
+        {{- end }}
         {{- if .Paging }}
         Paging: &tools.PagingSpec{
             CursorField: {{ printf "%q" .Paging.CursorField }},
@@ -82,11 +96,6 @@ var (
             Codec:  tools.JSONCodec[any]{},
             {{- end }}
         },
-        Sidecar: {{- if .Sidecar }} &tools.TypeSpec{
-            Name: {{ printf "%q" .Sidecar.TypeName }},
-            Schema: {{- if gt (len .Sidecar.SchemaJSON) 0 }}[]byte({{ printf "%q" .Sidecar.SchemaJSON }}){{ else }}nil{{ end }},
-            Codec:  {{ .Sidecar.GenericCodec }},
-        },{{ else }}nil,{{ end }}
     }
 {{- end }}
 )

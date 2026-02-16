@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -48,6 +49,27 @@ func TestExecuteToolActivityReturnsErrorAndHint(t *testing.T) {
 	require.Equal(t, planner.RetryReasonInvalidArguments, out.RetryHint.Reason)
 }
 
+func TestExecuteToolActivityPropagatesServerData(t *testing.T) {
+	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		return &planner.ToolResult{
+			Name:       call.Name,
+			ToolCallID: call.ToolCallID,
+			Result:     map[string]any{"ok": true},
+			Server: json.RawMessage(
+				`[{"kind":"aura.evidence","data":[{"uri":"atlas://points/123","kind":"time_series"}]}]`,
+			),
+		}, nil
+	}}}}
+	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
+		tools.Ident("tool"): newAnyJSONSpec("tool", "svc.ts"),
+	}
+	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("null")}
+	out, err := rt.ExecuteToolActivity(context.Background(), &input)
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.JSONEq(t, `[{"kind":"aura.evidence","data":[{"uri":"atlas://points/123","kind":"time_series"}]}]`, string(out.Server))
+}
+
 func TestRegisterToolset_RejectsAgentToolsetWithoutSpecs(t *testing.T) {
 	rt := New()
 	reg := NewAgentToolsetRegistration(rt, AgentToolConfig{
@@ -81,8 +103,14 @@ func TestExecuteToolActivityRequiresArtifactsWhenSidecarDeclared(t *testing.T) {
 		},
 	}
 	spec := newAnyJSONSpec("tool", "svc.ts")
-	sidecar := tools.TypeSpec{Name: "tool_sidecar", Codec: tools.AnyJSONCodec}
-	spec.Sidecar = &sidecar
+	spec.ServerData = []*tools.ServerDataSpec{
+		{
+			Kind:        "tool.server_data",
+			Mode:        "optional",
+			Description: "Optional server-data",
+			Codec:       tools.AnyJSONCodec,
+		},
+	}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
 		tools.Ident("tool"): spec,
 	}
@@ -271,6 +299,52 @@ func TestServiceToolEventsUseChildRunContext(t *testing.T) {
 	require.Equal(t, "tool-parent", resultEvt.ParentToolCallID)
 }
 
+func TestServiceToolEventsPropagateServerData(t *testing.T) {
+	recorder := &recordingHooks{}
+	rt := &Runtime{
+		Bus:           recorder,
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+		toolsets: map[string]ToolsetRegistration{
+			"svc.tools": {},
+		},
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			tools.Ident("svc.tools.example"): newAnyJSONSpec("svc.tools.example", "svc.tools"),
+		},
+	}
+	server := json.RawMessage(`[{"kind":"aura.evidence","data":[{"uri":"atlas://points/123","kind":"time_series"}]}]`)
+	wfCtx := &testWorkflowContext{
+		ctx:         context.Background(),
+		hookRuntime: rt,
+		asyncResult: ToolOutput{Payload: []byte("null"), Server: server},
+	}
+	parentCtx := &run.Context{
+		RunID:            "child-run",
+		SessionID:        "session-1",
+		TurnID:           "turn-1",
+		ParentRunID:      "parent-run",
+		ParentAgentID:    "chat.agent",
+		ParentToolCallID: "tool-parent",
+	}
+	calls := []planner.ToolRequest{{
+		Name:       tools.Ident("svc.tools.example"),
+		ToolCallID: "child-call",
+	}}
+	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "ada.agent", parentCtx, calls, 0, nil, time.Time{})
+	require.NoError(t, err)
+
+	var resultEvt *hooks.ToolResultReceivedEvent
+	for _, evt := range recorder.events {
+		if e, ok := evt.(*hooks.ToolResultReceivedEvent); ok {
+			resultEvt = e
+		}
+	}
+	require.NotNil(t, resultEvt, "expected ToolResultReceivedEvent")
+	require.JSONEq(t, string(server), string(resultEvt.Server))
+}
+
 func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 	recorder := &recordingHooks{}
 	rt := &Runtime{
@@ -392,8 +466,14 @@ func TestInlineToolsetFailsWhenSidecarDeclaredButNoArtifacts(t *testing.T) {
 		},
 	}
 	spec := newAnyJSONSpec("ada.get_time_series", "ada.tools")
-	sidecar := tools.TypeSpec{Name: "ada_get_time_series_sidecar", Codec: tools.AnyJSONCodec}
-	spec.Sidecar = &sidecar
+	spec.ServerData = []*tools.ServerDataSpec{
+		{
+			Kind:        "ada.get_time_series.server_data",
+			Mode:        "optional",
+			Description: "Optional server-data",
+			Codec:       tools.AnyJSONCodec,
+		},
+	}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
 		tools.Ident("ada.get_time_series"): spec,
 	}

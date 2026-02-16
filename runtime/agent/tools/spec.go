@@ -64,12 +64,14 @@ type (
 		// When set, runtimes can generate paging-aware reminders and UIs can
 		// render consistent paging affordances without inspecting schemas.
 		Paging *PagingSpec
-		// ArtifactDescription describes what the tool's artifact sidecar
-		// represents to the user when rendered (for example, "Time-series
-		// chart rendered in the chat UI"). It is derived from the Artifact
-		// DSL and propagated via codegen so runtimes can build artifact-aware
-		// reminders without inspecting JSON schemas at runtime.
-		ArtifactDescription string
+		// ServerData enumerates server-only payloads emitted alongside the tool
+		// result. Server data is never sent to model providers.
+		ServerData []*ServerDataSpec
+		// ServerDataDefault controls whether optional server-data is produced by default
+		// when the caller does not explicitly set the reserved `server_data` mode
+		// (or sets it to "auto"). Valid values are "on" and "off". When empty,
+		// the default is "on".
+		ServerDataDefault string
 		// ResultReminder is an optional system reminder injected into the
 		// conversation after the tool result is returned. It provides backstage
 		// guidance to the model about how to interpret or present the result
@@ -84,12 +86,22 @@ type (
 		Payload TypeSpec
 		// Result describes the response schema for the tool.
 		Result TypeSpec
-		// Sidecar describes the optional typed sidecar schema for the tool.
-		// When present, Sidecar is attached to planner.ToolResult.Sidecar and
-		// never serialized into model provider requests. It is typically used
-		// for artifacts and other UI- or policy-facing data that ride alongside
-		// the model-visible payload/result.
-		Sidecar *TypeSpec
+	}
+
+	// ServerDataSpec describes one server-only payload emitted alongside a tool
+	// result. Server data is never sent to model providers.
+	ServerDataSpec struct {
+		// Kind identifies the server-data kind.
+		Kind string
+		// Mode controls emission semantics for this entry. Valid values are
+		// "optional" and "always".
+		Mode string
+		// Description describes what an observer sees when this payload is rendered.
+		// Only meaningful when Mode == "optional".
+		Description string
+		// Codec decodes the JSON payload for this server-data entry.
+		// Only meaningful when Mode == "optional".
+		Codec JSONCodec[any]
 	}
 
 	// PagingSpec describes cursor-based pagination for a tool.

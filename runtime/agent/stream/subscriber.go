@@ -340,8 +340,9 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			payload.ResultPreview = preview
 		}
 		return s.sink.Send(ctx, ToolEnd{
-			Base: Base{t: EventToolEnd, r: evt.RunID(), s: evt.SessionID(), p: payload},
-			Data: payload,
+			Base:   Base{t: EventToolEnd, r: evt.RunID(), s: evt.SessionID(), p: payload},
+			Data:   payload,
+			ServerData: append(json.RawMessage(nil), evt.Server...),
 		})
 	case *hooks.ToolCallUpdatedEvent:
 		if !s.profile.ToolUpdate {

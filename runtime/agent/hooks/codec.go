@@ -40,6 +40,7 @@ type (
 		ToolName         tools.Ident              `json:"tool_name"`
 		Result           any                      `json:"result,omitempty"`
 		ResultJSON       json.RawMessage          `json:"result_json,omitempty"`
+		Server           json.RawMessage          `json:"server,omitempty"`
 		ResultPreview    string                   `json:"result_preview,omitempty"`
 		Bounds           *agent.Bounds            `json:"bounds,omitempty"`
 		Artifacts        []toolArtifactPayload    `json:"artifacts,omitempty"`
@@ -89,6 +90,7 @@ func EncodeToHookInput(evt Event, turnID string) (*ActivityInput, error) {
 			ToolName:         e.ToolName,
 			Result:           e.Result,
 			ResultJSON:       e.ResultJSON,
+			Server:           e.Server,
 			ResultPreview:    e.ResultPreview,
 			Bounds:           e.Bounds,
 			Duration:         e.Duration,
@@ -321,6 +323,7 @@ func DecodeFromHookInput(input *ActivityInput) (Event, error) {
 			p.ParentToolCallID,
 			p.Result,
 			p.ResultJSON,
+			p.Server,
 			p.ResultPreview,
 			p.Bounds,
 			artifacts,

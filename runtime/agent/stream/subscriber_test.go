@@ -71,6 +71,7 @@ func TestStreamSubscriber_ToolEnd_RejectsNonCanonicalArtifactData(t *testing.T) 
 		"",
 		nil,
 		nil,
+		nil,
 		"",
 		nil,
 		[]*planner.Artifact{
@@ -102,6 +103,7 @@ func TestStreamSubscriber_ToolEnd_AllowsMissingResult(t *testing.T) {
 		tools.Ident("svc.tool"),
 		"call-1",
 		"",
+		nil,
 		nil,
 		nil,
 		"",
@@ -313,6 +315,7 @@ func TestStreamSubscriber_ToolEndPrecedesRunStreamEnd(t *testing.T) {
 		"",
 		nil,
 		json.RawMessage(`{"ok":true}`),
+		nil,
 		"",
 		nil,
 		nil,

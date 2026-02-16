@@ -37,22 +37,21 @@ type (
 		// Return defines the output result schema for this tool.
 		Return *goaexpr.AttributeExpr
 
-		// Sidecar defines the optional typed artifact schema for this tool.
-		// Sidecar data is never sent to the model provider; it is attached to
-		// planner.ToolResult.Artifacts only and surfaced to UIs or policy
-		// engines as auxiliary data (for example, full-fidelity artifacts
-		// alongside bounded model-facing results).
-		Sidecar *goaexpr.AttributeExpr
-		// SidecarKind identifies the logical kind of the sidecar artifact
-		// (for example, "atlas.time_series"). When empty, codegen derives a
-		// default from the tool identifier.
-		SidecarKind string
+		// ServerData declares server-only data emitted alongside the canonical tool
+		// result. Server data is never serialized into model provider requests.
+		//
+		// Contract:
+		//   - Optional entries are eligible for observer-facing rendering and may be
+		//     gated by a caller-provided toggle (see ServerDataDefault).
+		//   - Always entries are always emitted/persisted server-side and must never
+		//     be treated as optional observer data.
+		ServerData []*ServerDataExpr
 
-		// ArtifactsDefault controls whether sidecar artifacts are produced when
-		// the caller does not explicitly set the reserved `artifacts` mode (or
-		// sets it to "auto"). Valid values are "on" and "off". When empty, the
-		// default is "on".
-		ArtifactsDefault string
+		// ServerDataDefault controls whether optional server-data is produced when the
+		// caller does not explicitly set the reserved `server_data` mode (or sets
+		// it to "auto"). Valid values are "on" and "off". When empty, the default
+		// is "on".
+		ServerDataDefault string
 
 		// Toolset is the toolset expression that owns this tool.
 		Toolset *ToolsetExpr
@@ -103,6 +102,40 @@ type (
 
 		bindServiceName string
 		bindMethodName  string
+	}
+
+	// ServerDataExpr declares one server-only data item emitted alongside a tool
+	// result.
+	ServerDataExpr struct {
+		eval.DSLFunc
+
+		// Kind identifies the logical kind of this server data (for example,
+		// "atlas.time_series" for UI charts).
+		Kind string
+
+		// Mode controls emission semantics for this entry. Valid values are
+		// "optional" and "always".
+		Mode string
+
+		// Schema describes the typed payload when Mode == "optional".
+		// It must be nil/empty when Mode == "always".
+		Schema *goaexpr.AttributeExpr
+
+		// Source describes how to populate the server-data payload. It is required
+		// when Mode == "always".
+		Source *ServerDataSourceExpr
+
+		// Tool links this server-data declaration to its owning tool. It is set by
+		// the DSL layer and used for schema naming and validation.
+		Tool *ToolExpr
+	}
+
+	// ServerDataSourceExpr describes the producer-side source of a server-data
+	// payload.
+	ServerDataSourceExpr struct {
+		// MethodResultField names the bound method result field used as the source
+		// payload (for example, "Evidence").
+		MethodResultField string
 	}
 
 	// ToolPagingExpr identifies the cursor field names used by a cursor-paged tool.
@@ -161,6 +194,29 @@ func (t *ToolExpr) EvalName() string {
 	return fmt.Sprintf("tool %q in toolset %q", t.Name, ts)
 }
 
+// EvalName implements eval.Expression.
+func (s *ServerDataExpr) EvalName() string {
+	toolName := ""
+	toolsetName := ""
+	serviceName := ""
+	if s != nil && s.Tool != nil {
+		toolName = s.Tool.Name
+		if s.Tool.Toolset != nil {
+			toolsetName = s.Tool.Toolset.Name
+			if s.Tool.Toolset.Agent != nil && s.Tool.Toolset.Agent.Service != nil {
+				serviceName = s.Tool.Toolset.Agent.Service.Name
+			}
+		}
+	}
+	if serviceName != "" {
+		return fmt.Sprintf("server data %q for tool %q in toolset %q and service %q", s.Kind, toolName, toolsetName, serviceName)
+	}
+	if toolName != "" {
+		return fmt.Sprintf("server data %q for tool %q in toolset %q", s.Kind, toolName, toolsetName)
+	}
+	return fmt.Sprintf("server data %q", s.Kind)
+}
+
 // RecordBinding records the service and method names specified via the DSL.
 func (t *ToolExpr) RecordBinding(serviceName, methodName string) {
 	t.bindServiceName = serviceName
@@ -197,6 +253,7 @@ func (t *ToolExpr) Validate() error {
 	desired := codegen.Goify(t.bindMethodName, true)
 	for _, m := range svc.Methods {
 		if codegen.Goify(m.Name, true) == desired {
+			t.Method = m
 			validateInjectedFields(t, m, verr)
 			if err := t.validateShapes(); err != nil {
 				verr.AddError(t, err)
@@ -309,12 +366,68 @@ func (t *ToolExpr) validateShapes() error {
 	}
 	check("Args", t.Args)
 	check("Return", t.Return)
-	check("Sidecar", t.Sidecar)
+	validateServerDataShapes(t, verr, check)
 	validatePagingShape(t, verr)
 	if len(verr.Errors) == 0 {
 		return nil
 	}
 	return verr
+}
+
+func validateServerDataShapes(t *ToolExpr, verr *eval.ValidationErrors, check func(where string, att *goaexpr.AttributeExpr)) {
+	if t == nil || verr == nil {
+		return
+	}
+	if len(t.ServerData) == 0 {
+		if t.ServerDataDefault != "" {
+			verr.Add(t, "ServerDataDefault requires the tool to declare ServerData")
+		}
+		return
+	}
+	optionalCount := 0
+	for _, sd := range t.ServerData {
+		if sd == nil {
+			continue
+		}
+		if sd.Kind == "" {
+			verr.Add(t, "ServerData kind must be non-empty")
+			continue
+		}
+		switch sd.Mode {
+		case "", "optional":
+			optionalCount++
+			check("ServerData", sd.Schema)
+			if sd.Schema == nil || sd.Schema.Type == nil || sd.Schema.Type == goaexpr.Empty {
+				verr.Add(t, "ServerData(%q) in mode \"optional\" must declare a schema", sd.Kind)
+			}
+			if sd.Source != nil && sd.Source.MethodResultField != "" {
+				verr.Add(t, "ServerData(%q) in mode \"optional\" must not declare a source", sd.Kind)
+			}
+		case "always":
+			if sd.Schema != nil && sd.Schema.Type != nil && sd.Schema.Type != goaexpr.Empty {
+				verr.Add(t, "ServerData(%q) in mode \"always\" must not declare a schema", sd.Kind)
+			}
+			if sd.Source == nil || sd.Source.MethodResultField == "" {
+				verr.Add(t, "ServerData(%q) in mode \"always\" requires FromMethodResultField", sd.Kind)
+			}
+			if t.Method == nil {
+				verr.Add(t, "ServerData(%q) in mode \"always\" requires a bound method (BindTo)", sd.Kind)
+			}
+		default:
+			verr.Add(t, "ServerData(%q) has invalid mode %q (valid: \"optional\", \"always\")", sd.Kind, sd.Mode)
+		}
+	}
+	if optionalCount > 1 {
+		verr.Add(t, "Tool %q declares %d optional server-data entries; at most one is supported", t.Name, optionalCount)
+	}
+	if t.ServerDataDefault != "" && optionalCount == 0 {
+		verr.Add(t, "ServerDataDefault is only valid when the tool declares an optional ServerData entry")
+	}
+	switch t.ServerDataDefault {
+	case "", "on", "off":
+	default:
+		verr.Add(t, "ServerDataDefault mode must be \"on\" or \"off\"")
+	}
 }
 
 func validatePagingShape(tool *ToolExpr, verr *eval.ValidationErrors) {

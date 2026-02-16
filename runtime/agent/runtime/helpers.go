@@ -406,12 +406,11 @@ func capFailures(results []*planner.ToolResult) int {
 		}
 		if h := res.RetryHint; h != nil {
 			switch h.Reason {
-			case planner.RetryReasonMissingFields, planner.RetryReasonInvalidArguments:
+			case planner.RetryReasonMissingFields, planner.RetryReasonInvalidArguments, planner.RetryReasonToolUnavailable:
 				continue
 			case planner.RetryReasonMalformedResponse,
 				planner.RetryReasonTimeout,
-				planner.RetryReasonRateLimited,
-				planner.RetryReasonToolUnavailable:
+				planner.RetryReasonRateLimited:
 				// Count towards the consecutive-failure cap.
 			default:
 				panic(fmt.Sprintf("runtime: unknown retry reason %q", h.Reason))
@@ -556,25 +555,25 @@ func filterToolCalls(calls []planner.ToolRequest, allowed []tools.Ident) []plann
 	return filtered
 }
 
-// artifactsDisabled reports whether the artifacts mode explicitly disables
-// artifact emission for a tool call.
-func artifactsDisabled(mode tools.ArtifactsMode) bool {
-	return mode == tools.ArtifactsModeOff
+// serverDataDisabled reports whether the server-data mode explicitly disables
+// optional server-data emission for a tool call.
+func serverDataDisabled(mode tools.ServerDataMode) bool {
+	return mode == tools.ServerDataModeOff
 }
 
-// normalizeArtifactsMode canonicalizes the user-provided artifacts toggle.
+// normalizeServerDataMode canonicalizes the user-provided server-data toggle.
 // Valid values are "auto", "on", and "off". Unknown values return "".
-func normalizeArtifactsMode(raw string) tools.ArtifactsMode {
-	return tools.ParseArtifactsMode(raw)
+func normalizeServerDataMode(raw string) tools.ServerDataMode {
+	return tools.ParseServerDataMode(raw)
 }
 
-// extractArtifactsMode extracts the reserved "artifacts" field from a tool call
+// extractServerDataMode extracts the reserved "server_data" field from a tool call
 // payload (if present), returns its normalized value, and returns a copy of the
 // payload with the field removed.
 //
 // The function only attempts extraction for JSON objects; non-object payloads
 // are returned unchanged.
-func extractArtifactsMode(raw json.RawMessage) (tools.ArtifactsMode, json.RawMessage, error) {
+func extractServerDataMode(raw json.RawMessage) (tools.ServerDataMode, json.RawMessage, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || trimmed[0] != '{' {
 		return "", raw, nil
@@ -583,20 +582,20 @@ func extractArtifactsMode(raw json.RawMessage) (tools.ArtifactsMode, json.RawMes
 	if err := json.Unmarshal(trimmed, &obj); err != nil {
 		return "", raw, fmt.Errorf("decode tool payload JSON: %w", err)
 	}
-	field, ok := obj["artifacts"]
+	field, ok := obj["server_data"]
 	if !ok {
 		return "", raw, nil
 	}
 	var modeVal string
 	if err := json.Unmarshal(field, &modeVal); err != nil {
-		return "", raw, fmt.Errorf("decode artifacts mode: %w", err)
+		return "", raw, fmt.Errorf("decode server_data mode: %w", err)
 	}
-	delete(obj, "artifacts")
+	delete(obj, "server_data")
 	stripped, err := json.Marshal(obj)
 	if err != nil {
-		return "", raw, fmt.Errorf("strip artifacts mode: %w", err)
+		return "", raw, fmt.Errorf("strip server_data mode: %w", err)
 	}
-	return normalizeArtifactsMode(modeVal), stripped, nil
+	return normalizeServerDataMode(modeVal), stripped, nil
 }
 
 // ConvertRunOutputToToolResult converts a nested agent RunOutput into a

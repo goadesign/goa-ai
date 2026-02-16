@@ -172,11 +172,11 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	// Apply optional payload adapter before decoding. Payloads are canonical
 	// JSON (json.RawMessage) along the planner/runtime boundary; adapters may
 	// normalize them before validation or execution.
-	mode := req.ArtifactsMode
+	mode := req.ServerDataMode
 	raw := req.Payload
 	if mode == "" {
 		var err error
-		mode, raw, err = extractArtifactsMode(req.Payload)
+		mode, raw, err = extractServerDataMode(req.Payload)
 		if err != nil {
 			return nil, err
 		}
@@ -187,7 +187,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		TurnID:           req.TurnID,
 		ToolCallID:       req.ToolCallID,
 		ParentToolCallID: req.ParentToolCallID,
-		ArtifactsMode:    mode,
+		ServerDataMode:   mode,
 	}
 	if reg.PayloadAdapter != nil && len(raw) > 0 {
 		if adapted, err := reg.PayloadAdapter(ctx, meta, req.ToolName, raw); err == nil && len(adapted) > 0 {
@@ -239,7 +239,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	call := planner.ToolRequest{
 		Name:             req.ToolName,
 		Payload:          raw,
-		ArtifactsMode:    mode,
+		ServerDataMode:   mode,
 		RunID:            req.RunID,
 		AgentID:          req.AgentID,
 		SessionID:        req.SessionID,
@@ -255,8 +255,8 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	if result == nil {
 		return nil, errors.New("tool execution returned nil result")
 	}
-	artifactsEnabled := !artifactsDisabled(mode)
-	if !artifactsEnabled {
+	serverDataEnabled := !serverDataDisabled(mode)
+	if !serverDataEnabled {
 		result.Artifacts = nil
 	}
 
@@ -285,6 +285,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	}
 	out := &ToolOutput{
 		Payload:   enc,
+		Server:    result.Server,
 		Artifacts: encodedArtifacts,
 		Telemetry: result.Telemetry,
 	}
@@ -305,8 +306,9 @@ func (r *Runtime) encodeToolArtifacts(toolName tools.Ident, artifacts []*planner
 	if !ok {
 		return nil, fmt.Errorf("unknown tool %q", toolName)
 	}
-	if spec.Sidecar == nil || spec.Sidecar.Codec.ToJSON == nil {
-		return nil, fmt.Errorf("tool %q produced artifacts but has no sidecar codec", toolName)
+	sd, ok := optionalServerDataSpec(spec)
+	if !ok || sd.Codec.ToJSON == nil {
+		return nil, fmt.Errorf("tool %q produced artifacts but has no optional server-data codec", toolName)
 	}
 	out := make([]*ToolArtifact, 0, len(artifacts))
 	for _, a := range artifacts {
@@ -317,7 +319,7 @@ func (r *Runtime) encodeToolArtifacts(toolName tools.Ident, artifacts []*planner
 		case json.RawMessage, []byte:
 			return nil, fmt.Errorf("tool %q artifact data must be a typed Go value, got %T", toolName, a.Data)
 		}
-		raw, err := spec.Sidecar.Codec.ToJSON(a.Data)
+		raw, err := sd.Codec.ToJSON(a.Data)
 		if err != nil {
 			return nil, fmt.Errorf("encode tool artifact for %s (%s): %w", toolName, a.Kind, err)
 		}

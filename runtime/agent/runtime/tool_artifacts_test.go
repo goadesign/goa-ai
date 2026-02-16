@@ -11,7 +11,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-func TestRuntime_normalizeToolArtifacts_UsesSidecarCodec(t *testing.T) {
+func TestRuntime_normalizeToolArtifacts_UsesOptionalServerDataCodec(t *testing.T) {
 	var encoded bool
 	spec := tools.ToolSpec{
 		Name:    tools.Ident("svc.tool"),
@@ -28,21 +28,25 @@ func TestRuntime_normalizeToolArtifacts_UsesSidecarCodec(t *testing.T) {
 				ToJSON: json.Marshal,
 			},
 		},
-		Sidecar: &tools.TypeSpec{
-			Name: "S",
-			Codec: tools.JSONCodec[any]{
-				ToJSON: func(v any) ([]byte, error) {
-					encoded = true
-					return json.Marshal(map[string]any{
-						"sidecar_key": v,
-					})
-				},
-				FromJSON: func(data []byte) (any, error) {
-					var out any
-					if err := json.Unmarshal(data, &out); err != nil {
-						return nil, err
-					}
-					return out, nil
+		ServerData: []*tools.ServerDataSpec{
+			{
+				Kind:        "svc.artifact",
+				Mode:        "optional",
+				Description: "Optional server-data",
+				Codec: tools.JSONCodec[any]{
+					ToJSON: func(v any) ([]byte, error) {
+						encoded = true
+						return json.Marshal(map[string]any{
+							"sidecar_key": v,
+						})
+					},
+					FromJSON: func(data []byte) (any, error) {
+						var out any
+						if err := json.Unmarshal(data, &out); err != nil {
+							return nil, err
+						}
+						return out, nil
+					},
 				},
 			},
 		},
@@ -75,7 +79,7 @@ func TestRuntime_normalizeToolArtifacts_UsesSidecarCodec(t *testing.T) {
 	require.Contains(t, got, "sidecar_key")
 }
 
-func TestRuntime_normalizeToolArtifacts_FailsWithoutSidecarCodec(t *testing.T) {
+func TestRuntime_normalizeToolArtifacts_FailsWithoutOptionalServerDataCodec(t *testing.T) {
 	spec := newAnyJSONSpec("svc.tool", "svc.ts")
 	rt := &Runtime{
 		toolSpecs: map[tools.Ident]tools.ToolSpec{

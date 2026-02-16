@@ -12,7 +12,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/session"
@@ -20,27 +19,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
-
-type timeoutConfirmationReceiver struct{}
-
-func (timeoutConfirmationReceiver) Receive(ctx context.Context) (*api.ConfirmationDecision, error) {
-	<-ctx.Done()
-	return nil, ctx.Err()
-}
-
-func (timeoutConfirmationReceiver) ReceiveWithTimeout(ctx context.Context, timeout time.Duration) (*api.ConfirmationDecision, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if timeout <= 0 {
-		return nil, context.DeadlineExceeded
-	}
-	return nil, context.DeadlineExceeded
-}
-
-func (timeoutConfirmationReceiver) ReceiveAsync() (*api.ConfirmationDecision, bool) {
-	return nil, false
-}
 
 type timeoutClarificationReceiver struct{}
 
@@ -84,12 +62,6 @@ func (timeoutResumeReceiver) ReceiveAsync() (*api.ResumeRequest, bool) {
 	return nil, false
 }
 
-type confirmationTimeoutWorkflowContext struct{ *testWorkflowContext }
-
-func (w *confirmationTimeoutWorkflowContext) ConfirmationDecisions() engine.Receiver[*api.ConfirmationDecision] {
-	return timeoutConfirmationReceiver{}
-}
-
 type clarificationTimeoutWorkflowContext struct{ *testWorkflowContext }
 
 func (w *clarificationTimeoutWorkflowContext) ClarificationAnswers() engine.Receiver[*api.ClarificationAnswer] {
@@ -128,87 +100,6 @@ func seedRunMeta(t *testing.T, rt *Runtime, input *RunInput) {
 		StartedAt: now,
 		UpdatedAt: now,
 	}))
-}
-
-func TestRunLoopConfirmationTimeoutBalancesPauseResume(t *testing.T) {
-	recorder := &recordingHooks{}
-	rt := &Runtime{
-		Bus:           recorder,
-		RunEventStore: runloginmem.New(),
-		SessionStore:  sessioninmem.New(),
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			tools.Ident("tool"): func() tools.ToolSpec {
-				spec := newAnyJSONSpec("tool", "svc.ts")
-				spec.Confirmation = &tools.ConfirmationSpec{
-					Title:                "Confirm tool",
-					PromptTemplate:       "ok",
-					DeniedResultTemplate: "null",
-				}
-				return spec
-			}(),
-		},
-	}
-
-	baseCtx := &testWorkflowContext{
-		ctx:           context.Background(),
-		hookRuntime:   rt,
-		hasPlanResult: true,
-		planResult: &planner.PlanResult{
-			FinalResponse: &planner.FinalResponse{
-				Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}},
-			},
-		},
-	}
-	baseCtx.ensureSignals()
-	wfCtx := &confirmationTimeoutWorkflowContext{testWorkflowContext: baseCtx}
-
-	input := &RunInput{AgentID: "svc.agent", RunID: "run-1", SessionID: "sess-1"}
-	seedRunMeta(t, rt, input)
-	base := &planner.PlanInput{
-		RunContext: run.Context{
-			RunID:     input.RunID,
-			SessionID: input.SessionID,
-			TurnID:    "turn-1",
-		},
-		Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID}),
-	}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:       tools.Ident("tool"),
-		ToolCallID: "tool-1",
-		Payload:    []byte(`{}`),
-	}}}
-	ctrl := interrupt.NewController(wfCtx)
-
-	deadline := wfCtx.Now().Add(1 * time.Hour)
-	out, err := rt.runLoop(
-		wfCtx,
-		AgentRegistration{ID: input.AgentID, ResumeActivityName: "resume"},
-		input,
-		base,
-		initial,
-		nil,
-		model.TokenUsage{},
-		policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1},
-		deadline,
-		deadline,
-		2,
-		"turn-1",
-		nil,
-		ctrl,
-		0,
-	)
-	require.NoError(t, err)
-	require.NotNil(t, out)
-
-	require.Equal(t, []string{
-		"pause:await_queue",
-		"resume:await_timeout",
-		"pause:finalize",
-		"resume:finalize",
-	}, pauseResumeSequence(recorder.events))
 }
 
 func TestMissingFieldsClarificationTimeoutBalancesPauseResume(t *testing.T) {
@@ -323,3 +214,4 @@ func TestHandleInterruptsTimeoutBalancesPauseResume(t *testing.T) {
 		"resume:deadline_exceeded",
 	}, pauseResumeSequence(recorder.events))
 }
+

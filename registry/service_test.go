@@ -500,6 +500,10 @@ func (m *mockHealthTracker) RecordPong(ctx context.Context, toolset string) erro
 	return nil
 }
 
+func (m *mockHealthTracker) Health(toolset string) (ToolsetHealth, error) {
+	return ToolsetHealth{Healthy: m.healthy}, nil
+}
+
 func (m *mockHealthTracker) IsHealthy(toolset string) bool {
 	return m.healthy
 }

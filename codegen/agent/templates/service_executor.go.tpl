@@ -250,40 +250,77 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             }
         }
 
-        // Build final tool result. For tools that declare a typed artifact
-        // sidecar, we derive it from the concrete service method result via
-        // generated transforms and attach it as a non-model artifact.
-        {{- $hasSidecar := false }}
+        // Build final tool result. Server data is always recorded in ToolResult.Server
+        // (as an opaque JSON array of toolregistry.ServerDataItem) and optional
+        // server data is additionally decoded into ToolResult.Artifacts when enabled.
+        {{- $hasServerData := false }}
         {{- range .Toolset.Tools }}
-            {{- if and .IsMethodBacked .Artifact }}
-                {{- $hasSidecar = true }}
+            {{- if and .IsMethodBacked (or .OptionalServerData (gt (len .AlwaysServerData) 0)) }}
+                {{- $hasServerData = true }}
             {{- end }}
         {{- end }}
-        {{- if $hasSidecar }}
-        var artifacts []*planner.Artifact
+        {{- if $hasServerData }}
+        var (
+            serverItems []*toolregistry.ServerDataItem
+            artifacts   []*planner.Artifact
+        )
         switch call.Name {
         {{- range .Toolset.Tools }}
-        {{- if and .IsMethodBacked .Artifact }}
+        {{- if and .IsMethodBacked (or .OptionalServerData (gt (len .AlwaysServerData) 0)) }}
         case tools.Ident({{ printf "%q" .QualifiedName }}):
-            if toolArtifactsEnabled(call.ArtifactsMode, {{ if .ArtifactsDefaultOn }}true{{ else }}false{{ end }}) {
-                if mr, ok := methodOut.({{ .MethodResultTypeRef }}); ok {
-                    if sc := {{ $.Toolset.SpecsPackageName }}.Init{{ goify .Name true }}SidecarFromMethodResult(mr); sc != nil {
-                        artifacts = []*planner.Artifact{
-                            {
-                                Kind:       {{ printf "%q" .ArtifactKind }},
-                                Data:       sc,
-                                SourceTool: call.Name,
-                            },
-                        }
+            mr, ok := methodOut.({{ .MethodResultTypeRef }})
+            if !ok {
+                return &planner.ToolResult{
+                    Name:  call.Name,
+                    Error: planner.NewToolError(fmt.Sprintf("unexpected method result type for %q", call.Name)),
+                }, nil
+            }
+            {{- range .AlwaysServerData }}
+            alwaysJSON, err := json.Marshal(mr.{{ .MethodResultField }})
+            if err != nil {
+                return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
+            }
+            serverItems = append(serverItems, &toolregistry.ServerDataItem{
+                Kind: {{ printf "%q" .Kind }},
+                Data: alwaysJSON,
+            })
+            {{- end }}
+            {{- if .OptionalServerData }}
+            if tools.OptionalServerDataEnabled(call.ServerDataMode, {{ if .ServerDataDefaultOn }}true{{ else }}false{{ end }}) {
+                if sd := {{ $.Toolset.SpecsPackageName }}.Init{{ goify .Name true }}ServerDataFromMethodResult(mr); sd != nil {
+                    sdJSON, err := {{ $.Toolset.SpecsPackageName }}.{{ .ConstName }}ServerDataCodec.ToJSON(sd)
+                    if err != nil {
+                        return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
+                    }
+                    serverItems = append(serverItems, &toolregistry.ServerDataItem{
+                        Kind: {{ printf "%q" .OptionalServerData.Kind }},
+                        Data: sdJSON,
+                    })
+                    artifacts = []*planner.Artifact{
+                        {
+                            Kind:       {{ printf "%q" .OptionalServerData.Kind }},
+                            Data:       sd,
+                            SourceTool: call.Name,
+                        },
                     }
                 }
             }
+            {{- end }}
         {{- end }}
         {{- end }}
+        }
+        var server json.RawMessage
+        if len(serverItems) > 0 {
+            b, err := json.Marshal(serverItems)
+            if err != nil {
+                return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
+            }
+            server = b
         }
         return &planner.ToolResult{
             Name:      call.Name,
             Result:    result,
+            Server:    server,
             Artifacts: artifacts,
         }, nil
         {{- else }}
@@ -294,20 +331,3 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
         {{- end }}
     })
 }
-
-{{- if $hasSidecar }}
-
-func toolArtifactsEnabled(mode tools.ArtifactsMode, defaultOn bool) bool {
-	switch mode {
-	case tools.ArtifactsModeOn:
-		return true
-	case tools.ArtifactsModeOff:
-		return false
-	case tools.ArtifactsModeAuto, "":
-		return defaultOn
-	default:
-		return defaultOn
-	}
-}
-
-{{- end }}

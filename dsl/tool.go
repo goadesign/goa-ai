@@ -240,41 +240,46 @@ func Return(val any, args ...any) {
 	tool.Return = toolDSL(tool, "Return", val, args...)
 }
 
-// Artifact defines the typed artifact schema for a tool result. Use Artifact
-// inside a Tool DSL to declare structured data that is attached to
-// planner.ToolResult.Artifacts but never sent to the model provider.
+// ServerData declares server-only data emitted alongside a tool result. Server
+// data is never sent to the model provider; it exists for UIs, observability,
+// and persistence layers.
 //
-// # Model awareness
+// ServerData supports two modes:
+//   - Optional (default): typed payload that is emitted only when enabled for a
+//     tool call (see ServerDataDefault and the reserved `server_data` payload
+//     field). This is intended for observer-facing projections (for example, UI
+//     rendering or policy/telemetry attachments) and is never sent to models.
+//   - Always: server-only metadata that is always emitted/persisted and must
+//     never be treated as optional observer data.
 //
-// The artifact schema Description (set via the optional description argument or
-// within the artifact DSL block) must describe what the user sees when the
-// artifact is rendered in the UI (chart, card, timeline, etc.). The runtime uses
-// this description to automatically inject post-tool system reminders for the
-// model so it can naturally reference the rendered UI. When artifacts are
-// disabled for a tool call (via the standard `artifacts` payload toggle), the
-// runtime can also inject a reminder that the tool may be re-run with artifacts
-// enabled to show the described UI.
+// Usage patterns:
 //
-// Artifact follows the same patterns as Args/Return and Goa's Payload/Result:
-// it accepts either:
-//   - A function to define an inline object schema with Attribute() calls
-//   - A Goa user type (Type, ResultType, etc.) to reuse existing type definitions
-//   - A primitive type (String, Int, etc.) for simple single-value artifact data
-//
-// Typical usage is to attach full-fidelity artifacts that back a bounded
-// model-facing result. For example:
+// Optional server-data (typed, observer-facing):
 //
 //	Tool("get_time_series", "Get Time Series", func() {
 //	    Args(GetTimeSeriesToolArgs)
 //	    Return(GetTimeSeriesToolReturn)
-//	    Artifact("time_series", GetTimeSeriesSidecar)
+//	    ServerData("atlas.time_series", GetTimeSeriesSidecar, func() {
+//	        Description("Time-series chart rendered in the chat UI for the requested signals and time window.")
+//	    })
+//	    ServerDataDefault("off")
 //	})
-func Artifact(kind string, val any, args ...any) {
+//
+// Always-on server-data (method-backed source):
+//
+//	Tool("get_time_series", "Get Time Series", func() {
+//	    // ...
+//	    ServerData("aura.evidence", func() {
+//	        ModeAlways()
+//	        FromMethodResultField("Evidence")
+//	    })
+//	})
+func ServerData(kind string, args ...any) {
 	if kind == "" {
-		eval.ReportError("artifact kind must be non-empty")
+		eval.ReportError("ServerData kind must be non-empty")
 		return
 	}
-	if len(args) > 2 {
+	if len(args) > 3 {
 		eval.TooManyArgError()
 		return
 	}
@@ -283,38 +288,94 @@ func Artifact(kind string, val any, args ...any) {
 		eval.IncompatibleDSL()
 		return
 	}
-	tool.Sidecar = toolDSL(tool, "Sidecar", val, args...)
-	tool.SidecarKind = kind
+	sd := &agentsexpr.ServerDataExpr{
+		Kind: kind,
+		Mode: "optional",
+		Tool: tool,
+	}
+	if len(args) == 0 {
+		eval.ReportError("ServerData requires a schema type or a configuration block")
+		return
+	}
+	if f, ok := args[0].(func()); ok {
+		eval.Execute(f, sd)
+	} else {
+		sd.Schema = toolDSL(tool, "ServerData", args[0], args[1:]...)
+	}
+	tool.ServerData = append(tool.ServerData, sd)
 }
 
-// ArtifactsDefault configures the default behavior for emitting sidecar artifacts
-// when the caller does not explicitly request a mode via the reserved `artifacts`
-// payload field (or sets it to "auto").
+// ServerDataDefault configures the default behavior for emitting optional server-data
+// when the caller does not explicitly request a mode via the reserved
+// `server_data` payload field (or sets it to "auto").
 //
 // Valid values are:
-//   - "on": emit artifacts by default (when the tool produces them)
-//   - "off": do not emit artifacts unless the caller explicitly sets `artifacts:"on"`
+//   - "on": emit optional server-data by default (when the tool produces it)
+//   - "off": do not emit optional server-data unless the caller explicitly sets `server_data:"on"`
 //
-// ArtifactsDefault must appear in a Tool expression. It is only meaningful for
-// tools that declare an Artifact.
-func ArtifactsDefault(mode string) {
+// ServerDataDefault must appear in a Tool expression. It is only meaningful for
+// tools that declare optional ServerData.
+func ServerDataDefault(mode string) {
 	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
 	if !ok {
 		eval.IncompatibleDSL()
 		return
 	}
-	if tool.Sidecar == nil || tool.Sidecar.Type == nil || tool.Sidecar.Type == goaexpr.Empty {
-		eval.ReportError("ArtifactsDefault requires the tool to declare an Artifact")
-		return
-	}
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "on":
-		tool.ArtifactsDefault = "on"
+		tool.ServerDataDefault = "on"
 	case "off":
-		tool.ArtifactsDefault = "off"
+		tool.ServerDataDefault = "off"
 	default:
-		eval.ReportError("ArtifactsDefault mode must be \"on\" or \"off\"")
+		eval.ReportError("ServerDataDefault mode must be \"on\" or \"off\"")
 	}
+}
+
+// ModeAlways marks the current ServerData declaration as always-on server-only data.
+// Always-on server-data is never gated by caller toggles and must not declare a schema.
+func ModeAlways() {
+	sd, ok := eval.Current().(*agentsexpr.ServerDataExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	sd.Mode = "always"
+}
+
+// FromMethodResultField declares that the server-data payload is sourced from the
+// bound method result field.
+func FromMethodResultField(name string) {
+	if strings.TrimSpace(name) == "" {
+		eval.ReportError("FromMethodResultField requires a non-empty field name")
+		return
+	}
+	sd, ok := eval.Current().(*agentsexpr.ServerDataExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	sd.Source = &agentsexpr.ServerDataSourceExpr{
+		MethodResultField: name,
+	}
+}
+
+// Schema defines the typed payload schema for the current ServerData declaration.
+// It must appear within a ServerData configuration block.
+func Schema(val any, args ...any) {
+	if len(args) > 2 {
+		eval.TooManyArgError()
+		return
+	}
+	sd, ok := eval.Current().(*agentsexpr.ServerDataExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	if sd.Tool == nil {
+		eval.ReportError("Schema requires an owning Tool")
+		return
+	}
+	sd.Schema = toolDSL(sd.Tool, "ServerData", val, args...)
 }
 
 // Tags attaches metadata labels to a tool for categorization and filtering. Tags

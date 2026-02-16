@@ -60,14 +60,12 @@ type (
 		Toolset string
 		// Tool description for documentation and LLM context.
 		Description string
-		// ArtifactDescription is the human-facing description of the tool's
-		// artifact sidecar, derived from the Artifact DSL. It describes what
-		// the user sees in the UI and is propagated into ToolSpec so runtimes
-		// can build artifact-aware reminders without inspecting JSON schemas.
-		ArtifactDescription string
-		// ArtifactKind is the emitted artifact kind when the tool declares a
-		// sidecar via the Artifact DSL (for example, "atlas.time_series").
-		ArtifactKind string
+		// ServerData enumerates server-only payloads emitted alongside the tool
+		// result. Server data is never sent to model providers.
+		ServerData []*serverDataEntry
+		// ServerDataDefault is the default mode for optional server-data emission.
+		// Empty means default "on".
+		ServerDataDefault string
 		// Classification tags for policy and filtering.
 		Tags []string
 		// Meta carries arbitrary design-time metadata attached to the tool via DSL.
@@ -84,8 +82,8 @@ type (
 		Payload *typeData
 		// Type metadata for the tool's output result.
 		Result *typeData
-		// Type metadata for the optional tool sidecar payload.
-		Sidecar *typeData
+		// Type metadata for the optional server-data payload.
+		OptionalServerData *typeData
 		// BoundedResult indicates that this tool's result is declared as a bounded
 		// view over a potentially larger data set (set via the BoundedResult DSL
 		// helper). It is propagated into ToolSpec for runtime consumers.
@@ -100,6 +98,13 @@ type (
 		ResultReminder string
 		// Confirmation configures design-time confirmation requirements for this tool.
 		Confirmation *ToolConfirmationData
+	}
+
+	serverDataEntry struct {
+		Kind        string
+		Mode        string
+		Description string
+		CodecExpr   string
 	}
 
 	toolMetaPair struct {

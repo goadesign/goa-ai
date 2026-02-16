@@ -69,30 +69,38 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 		if err != nil {
 			return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "encode_failed", err.Error()), nil
 		}
-{{- if .Artifact }}
-		sidecar := Init{{ .ConstName }}SidecarFromMethodResult(methodOut)
-		if sidecar != nil {
-			sidecarJSON, err := {{ .ConstName }}SidecarCodec.ToJSON(sidecar)
+		var server []*toolregistry.ServerDataItem
+{{- $tool := . }}
+{{- range .ServerData }}
+{{- if eq .Mode "optional" }}
+		optionalData := Init{{ $tool.ConstName }}ServerDataFromMethodResult(methodOut)
+		if optionalData != nil {
+			optionalJSON, err := {{ $tool.ConstName }}ServerDataCodec.ToJSON(optionalData)
 			if err != nil {
 				return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "encode_failed", err.Error()), nil
 			}
-			return toolregistry.NewToolResultMessage(
-				msg.ToolUseID,
-				resultJSON,
-				[]toolregistry.Artifact{
-					{
-						Kind: {{ printf "%q" .ArtifactKind }},
-						Data: sidecarJSON,
-					},
-				},
-			), nil
+			server = append(server, &toolregistry.ServerDataItem{
+				Kind: {{ printf "%q" .Kind }},
+				Data: optionalJSON,
+			})
 		}
-		return toolregistry.NewToolResultMessage(msg.ToolUseID, resultJSON, nil), nil
-{{- else }}
-		return toolregistry.NewToolResultMessage(msg.ToolUseID, resultJSON, nil), nil
+{{- else if eq .Mode "always" }}
+		alwaysJSON, err := json.Marshal(methodOut.{{ .MethodResultField }})
+		if err != nil {
+			return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "encode_failed", err.Error()), nil
+		}
+		server = append(server, &toolregistry.ServerDataItem{
+			Kind: {{ printf "%q" .Kind }},
+			Data: alwaysJSON,
+		})
 {{- end }}
+{{- end }}
+		if len(server) > 0 {
+			return toolregistry.NewToolResultMessageWithServer(msg.ToolUseID, resultJSON, server), nil
+		}
+		return toolregistry.NewToolResultMessage(msg.ToolUseID, resultJSON), nil
 {{- else }}
-		return toolregistry.NewToolResultMessage(msg.ToolUseID, nil, nil), nil
+		return toolregistry.NewToolResultMessage(msg.ToolUseID, nil), nil
 {{- end }}
 {{- end }}
 {{- end }}
