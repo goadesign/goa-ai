@@ -376,7 +376,7 @@ func TestJSONOnly_FinalizerError_Propagates(t *testing.T) {
 		ToolCallID:    "toolcall",
 		RunID:         "run",
 		SessionID:     "sess",
-		ArtifactsMode: tools.ArtifactsModeAuto,
+		ServerDataMode: tools.ServerDataModeAuto,
 	}
 	out := &RunOutput{
 		ToolEvents: []*api.ToolEvent{
@@ -411,7 +411,7 @@ func TestAgentToolFinalizer_ReturnsErrorOnlyToolResult(t *testing.T) {
 		ToolCallID:    "toolcall",
 		RunID:         "run",
 		SessionID:     "sess",
-		ArtifactsMode: tools.ArtifactsModeAuto,
+		ServerDataMode: tools.ServerDataModeAuto,
 	}
 	out := &RunOutput{
 		Final: &model.Message{
@@ -432,7 +432,7 @@ func TestAgentToolFinalizer_ReturnsErrorOnlyToolResult(t *testing.T) {
 	require.Equal(t, tools.Ident("test.parent"), tr.Name)
 }
 
-func TestAgentToolFinalizerInput_ContainsArtifactsMode(t *testing.T) {
+func TestAgentToolFinalizerInput_ContainsServerDataMode(t *testing.T) {
 	rt := &Runtime{
 		logger:        telemetry.NoopLogger{},
 		metrics:       telemetry.NoopMetrics{},
@@ -443,7 +443,7 @@ func TestAgentToolFinalizerInput_ContainsArtifactsMode(t *testing.T) {
 		AgentID:  "test.agent",
 		JSONOnly: true,
 		Finalizer: FinalizerFunc(func(_ context.Context, input *FinalizerInput) (*planner.ToolResult, error) {
-			require.Equal(t, tools.ArtifactsModeOff, input.Parent.ArtifactsMode)
+			require.Equal(t, tools.ServerDataModeOff, input.Parent.ServerDataMode)
 			return &planner.ToolResult{Name: input.Parent.ToolName}, nil
 		}),
 	}
@@ -452,7 +452,7 @@ func TestAgentToolFinalizerInput_ContainsArtifactsMode(t *testing.T) {
 		ToolCallID:    "toolcall",
 		RunID:         "run",
 		SessionID:     "sess",
-		ArtifactsMode: tools.ArtifactsModeOff,
+		ServerDataMode: tools.ServerDataModeOff,
 	}
 	out := &RunOutput{
 		ToolEvents: []*api.ToolEvent{

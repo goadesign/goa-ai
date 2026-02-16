@@ -22,13 +22,12 @@ var Specs = []tools.ToolSpec{
 
 var (
 	SpecUpsert = tools.ToolSpec{
-		Name:                Upsert,
-		Service:             "alpha",
-		Toolset:             "alpha.profiles",
-		Description:         "Upsert a profile",
-		ArtifactDescription: "",
-		Tags:                []string{},
-		BoundedResult:       false,
+		Name:          Upsert,
+		Service:       "alpha",
+		Toolset:       "alpha.profiles",
+		Description:   "Upsert a profile",
+		Tags:          []string{},
+		BoundedResult: false,
 		Payload: tools.TypeSpec{
 			Name:         "UpsertPayload",
 			Schema:       []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"profile\":{\"$ref\":\"#/$defs/Profile\"}},\"$defs\":{\"Address\":{\"title\":\"Address\",\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\",\"description\":\"City\",\"example\":\"Velit maxime.\"},\"street\":{\"type\":\"string\",\"description\":\"Street\",\"example\":\"Amet distinctio aperiam eligendi.\"}},\"description\":\"Postal address\",\"example\":{\"city\":\"Ipsam quia repudiandae quibusdam.\",\"street\":\"Et iusto ex.\"},\"required\":[\"street\",\"city\"]},\"Profile\":{\"title\":\"Profile\",\"type\":\"object\",\"properties\":{\"address\":{\"$ref\":\"#/$defs/Address\"},\"id\":{\"type\":\"string\",\"description\":\"Identifier\",\"example\":\"Ea ut.\"},\"name\":{\"type\":\"string\",\"description\":\"Name\",\"example\":\"Vitae corrupti.\"}},\"description\":\"User profile\",\"example\":{\"address\":{\"city\":\"Qui temporibus enim placeat officiis quas.\",\"street\":\"Fuga sit suscipit culpa est inventore.\"},\"id\":\"Animi magnam repellat et.\",\"name\":\"Et expedita dignissimos.\"},\"required\":[\"id\",\"address\"]}},\"required\":[\"profile\"]}"),
@@ -41,7 +40,6 @@ var (
 			Schema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"address\":{\"$ref\":\"#/$defs/Address\"},\"id\":{\"type\":\"string\",\"description\":\"Identifier\",\"example\":\"Et illo.\"},\"name\":{\"type\":\"string\",\"description\":\"Name\",\"example\":\"Ea deleniti rem quis in omnis nisi.\"}},\"$defs\":{\"Address\":{\"title\":\"Address\",\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\",\"description\":\"City\",\"example\":\"Occaecati non aliquam et laudantium.\"},\"street\":{\"type\":\"string\",\"description\":\"Street\",\"example\":\"Aut vel consectetur ducimus minus.\"}},\"description\":\"Postal address\",\"example\":{\"city\":\"Commodi molestias dignissimos.\",\"street\":\"Est aut recusandae enim fuga.\"},\"required\":[\"street\",\"city\"]}},\"required\":[\"id\",\"address\"]}"),
 			Codec:  upsertResultCodec,
 		},
-		Sidecar: nil,
 	}
 )
 

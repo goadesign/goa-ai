@@ -54,11 +54,11 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 			continue
 		}
 
-		// Locate tool payload/result/sidecar type metadata by type name convention.
-		var toolPayload, toolResult, toolSidecar *typeData
+		// Locate tool payload/result/optional server-data type metadata by type name convention.
+		var toolPayload, toolResult, toolServerData *typeData
 		wantPayload := codegen.Goify(t.Name, true) + "Payload"
 		wantResult := codegen.Goify(t.Name, true) + "Result"
-		wantSidecar := codegen.Goify(t.Name, true) + "Sidecar"
+		wantServerData := codegen.Goify(t.Name, true) + "ServerData"
 		for _, td := range specs.typesList() {
 			if td.TypeName == wantPayload {
 				toolPayload = td
@@ -66,8 +66,8 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 			if td.TypeName == wantResult {
 				toolResult = td
 			}
-			if td.TypeName == wantSidecar {
-				toolSidecar = td
+			if td.TypeName == wantServerData {
+				toolServerData = td
 			}
 		}
 
@@ -173,22 +173,22 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 			}
 		}
 
-		// Init<GoName>SidecarFromMethodResult: service method result -> sidecar (specs, public type)
-		if toolSidecar != nil && toolSidecar.PublicType != nil && t.Artifact != nil && t.Artifact.Type != expr.Empty && t.MethodResultAttr != nil && t.MethodResultAttr.Type != expr.Empty {
-			if err := codegen.IsCompatible(t.MethodResultAttr.Type, t.Artifact.Type, "in", "out"); err == nil {
+		// Init<GoName>ServerDataFromMethodResult: service method result -> optional server-data (specs, public type)
+		if toolServerData != nil && toolServerData.PublicType != nil && t.OptionalServerData != nil && t.OptionalServerData.Schema != nil && t.OptionalServerData.Schema.Type != expr.Empty && t.MethodResultAttr != nil && t.MethodResultAttr.Type != expr.Empty {
+			if err := codegen.IsCompatible(t.MethodResultAttr.Type, t.OptionalServerData.Schema.Type, "in", "out"); err == nil {
 				for _, im := range gatherAttributeImports(genpkg, t.MethodResultAttr) {
 					if im != nil && im.Path != "" {
 						extraImports[im.Path] = im
 					}
 				}
-				for _, im := range gatherAttributeImports(genpkg, toolSidecar.PublicType) {
+				for _, im := range gatherAttributeImports(genpkg, toolServerData.PublicType) {
 					if im != nil && im.Path != "" {
 						extraImports[im.Path] = im
 					}
 				}
 
 				srcCtx := codegen.NewAttributeContextForConversion(false, false, true, svcAlias, scope)
-				metaAttr := toolSidecar.PublicType
+				metaAttr := toolServerData.PublicType
 				tgtCtx := codegen.NewAttributeContextForConversion(false, false, true, "", scope)
 				body, helpers, err := codegen.GoTransform(t.MethodResultAttr, metaAttr, "in", "out", srcCtx, tgtCtx, "", false)
 				if err == nil && body != "" {
@@ -206,7 +206,7 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 					metaRef := scope.GoFullTypeRef(metaAttr, "")
 					serviceResRef := t.MethodResultTypeRef
 					fns = append(fns, transformFuncData{
-						Name:          "Init" + codegen.Goify(t.Name, true) + "SidecarFromMethodResult",
+						Name:          "Init" + codegen.Goify(t.Name, true) + "ServerDataFromMethodResult",
 						ParamTypeRef:  serviceResRef,
 						ResultTypeRef: metaRef,
 						Body:          body,

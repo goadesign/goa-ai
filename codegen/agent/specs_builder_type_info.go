@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	runtimetools "goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -76,7 +75,7 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	case usageResult:
 		typeName += "Result"
 	case usageSidecar:
-		typeName += "Sidecar"
+		typeName += "ServerData"
 	}
 
 	scope := b.scopeForTool()
@@ -147,13 +146,6 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	// JSON schema from transport attribute
 	schemaAttr := transportAttr
 	var err error
-	if usage == usagePayload && tool.Artifact != nil && tool.Artifact.Type != goaexpr.Empty {
-		schemaAttr, err = schemaAttributeWithArtifactsToggle(tool, schemaAttr)
-		if err != nil {
-			return nil, err
-		}
-		normalizeTransportAttrRecursive(schemaAttr)
-	}
 	schemaBytes, err := schemaForAttribute(schemaAttr)
 	if err != nil {
 		return nil, err
@@ -323,60 +315,9 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	return info, nil
 }
 
-func schemaAttributeWithArtifactsToggle(tool *ToolData, att *goaexpr.AttributeExpr) (*goaexpr.AttributeExpr, error) {
-	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
-		return att, nil
-	}
-	if ut, ok := att.Type.(goaexpr.UserType); ok {
-		base := ut.Attribute()
-		mod, err := addArtifactsToggleToObjectAttribute(tool, base)
-		if err != nil {
-			return nil, err
-		}
-		dup := *att
-		dup.Type = ut.Dup(mod)
-		return &dup, nil
-	}
-	return addArtifactsToggleToObjectAttribute(tool, att)
-}
-
-func addArtifactsToggleToObjectAttribute(tool *ToolData, att *goaexpr.AttributeExpr) (*goaexpr.AttributeExpr, error) {
-	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
-		return att, nil
-	}
-	obj := goaexpr.AsObject(att.Type)
-	if obj == nil {
-		return nil, fmt.Errorf(
-			"tool %q declares artifacts but payload is not an object; artifact toggles require an object payload",
-			tool.QualifiedName,
-		)
-	}
-	for _, na := range *obj {
-		if na != nil && na.Name == "artifacts" {
-			return att, nil
-		}
-	}
-
-	dup := *att
-	dupObj := make(goaexpr.Object, 0, len(*obj)+1)
-	dupObj = append(dupObj, *obj...)
-	dupObj = append(dupObj, &goaexpr.NamedAttributeExpr{
-		Name: "artifacts",
-		Attribute: &goaexpr.AttributeExpr{
-			Type:        goaexpr.String,
-			Description: "Controls whether UI artifacts are produced for this tool call. Set to \"on\" to request artifacts, \"off\" to suppress, or omit/\"auto\" to use the tool default.",
-			Validation: &goaexpr.ValidationExpr{
-				Values: []any{
-					string(runtimetools.ArtifactsModeAuto),
-					string(runtimetools.ArtifactsModeOn),
-					string(runtimetools.ArtifactsModeOff),
-				},
-			},
-		},
-	})
-	dup.Type = &dupObj
-	return &dup, nil
-}
+// NOTE: The reserved `server_data` payload field is added by the runtime, not by
+// the generated tool schema. Tool payload schemas remain stable and do not
+// include runtime-reserved controls.
 
 func exampleInputGoExpr(exampleJSON []byte) (string, bool) {
 	trimmed := bytes.TrimSpace(exampleJSON)

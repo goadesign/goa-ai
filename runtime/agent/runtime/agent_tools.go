@@ -101,9 +101,9 @@ type (
 		// Payload is the decoded tool payload for the parent call when available.
 		// It is nil when the parent tool had an empty payload.
 		Payload any
-		// ArtifactsMode is the normalized per-call artifacts toggle selected by
-		// the caller via the reserved `artifacts` payload field.
-		ArtifactsMode tools.ArtifactsMode
+		// ServerDataMode is the normalized per-call toggle selected by the caller
+		// via the reserved `server_data` payload field.
+		ServerDataMode tools.ServerDataMode
 	}
 
 	// ChildCall summarizes a child tool outcome from a nested run used for aggregation.
@@ -532,7 +532,7 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 		ParentToolCallID:    call.ToolCallID,
 		ParentRunID:         call.RunID,
 		ParentAgentID:       call.AgentID,
-		ParentArtifactsMode: call.ArtifactsMode,
+		ParentServerDataMode: call.ServerDataMode,
 	}
 	// Record the canonical JSON args using the tool codec. marshalToolValue
 	// returns a defensive copy for json.RawMessage, so this never double-encodes.
@@ -623,7 +623,7 @@ func (r *Runtime) adaptWithFinalizer(ctx context.Context, cfg *AgentToolConfig, 
 		ToolName:      call.Name,
 		ToolCallID:    call.ToolCallID,
 		Payload:       parentPayload,
-		ArtifactsMode: call.ArtifactsMode,
+		ServerDataMode: call.ServerDataMode,
 	}
 	invoker := finalizerToolInvokerFromContext(ctx, call)
 	input := FinalizerInput{

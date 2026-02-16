@@ -169,6 +169,10 @@ type (
 		// access this field directly for type-safe field access (e.g., event.Data.Duration,
 		// event.Data.ToolCallID).
 		Data ToolEndPayload
+		// ServerData carries server-only metadata about the tool execution. It is not
+		// included in the event payload marshaled by sinks; it exists for in-process
+		// subscribers such as persistence layers.
+		ServerData json.RawMessage
 	}
 
 	// Usage reports token usage for a model invocation.

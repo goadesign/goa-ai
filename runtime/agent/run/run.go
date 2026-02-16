@@ -96,15 +96,16 @@ type (
 		// reparsing free-form messages.
 		ToolArgs json.RawMessage
 
-		// ParentArtifactsMode carries the resolved artifacts toggle for the parent tool
+		// ParentServerDataMode carries the resolved server-data toggle for the parent tool
 		// call that created this nested run (agent-as-tool). Empty for top-level runs.
 		//
 		// Contract:
-		// - When ParentArtifactsMode is "off", nested planners must not request UI artifacts
+		// - When ParentServerDataMode is "off", nested planners must not request UI artifacts
 		//   from child tools and runtimes may enforce suppression.
-		// - When ParentArtifactsMode is "on", nested planners may opt-in to UI artifacts
-		//   on a per-call basis by setting `artifacts:"on"` on artifact-capable tools.
-		ParentArtifactsMode tools.ArtifactsMode
+		// - When ParentServerDataMode is "on", nested planners may opt-in to optional
+		//   server-data on a per-call basis by setting `server_data:"on"` on tools that
+		//   declare optional server-data.
+		ParentServerDataMode tools.ServerDataMode
 
 		// Attempt counts how many times the run has been attempted/resumed.
 		Attempt int

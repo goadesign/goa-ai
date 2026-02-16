@@ -56,6 +56,20 @@ type (
 		// Providers must supply this to participate in health tracking.
 		Pong func(ctx context.Context, pingID string) error
 
+		// PongTimeout bounds how long Serve will wait for the Pong callback to
+		// return when handling a ping message.
+		//
+		// Contract:
+		//   - Ping messages exist solely for toolset health tracking; they are not part
+		//     of tool execution correctness.
+		//   - Pong failures must never crash the provider loop. If the registry is
+		//     temporarily unreachable, the toolset should be marked unhealthy by the
+		//     registry, and the provider should continue draining the stream so it can
+		//     recover without a restart loop.
+		//
+		// When 0, Serve defaults to a short value suitable for transient outages.
+		PongTimeout time.Duration
+
 		// MaxConcurrentToolCalls caps the number of tool calls executed
 		// concurrently by this provider (worker pool size).
 		//
@@ -139,6 +153,10 @@ func Serve(ctx context.Context, pulse pulseclients.Client, toolset string, handl
 	tracer := opts.Tracer
 	if tracer == nil {
 		tracer = telemetry.NewNoopTracer()
+	}
+	pongTimeout := opts.PongTimeout
+	if pongTimeout <= 0 {
+		pongTimeout = 2 * time.Second
 	}
 
 	maxConcurrent := opts.MaxConcurrentToolCalls
@@ -366,7 +384,10 @@ func Serve(ctx context.Context, pulse pulseclients.Client, toolset string, handl
 			switch msg.Type {
 			case toolregistry.MessageTypePing:
 				if msg.PingID != "" {
-					if err := opts.Pong(cancelCtx, msg.PingID); err != nil {
+					pongCtx, pongCancel := context.WithTimeout(cancelCtx, pongTimeout)
+					err := opts.Pong(pongCtx, msg.PingID)
+					pongCancel()
+					if err != nil {
 						logger.Error(
 							cancelCtx,
 							"pong failed",
@@ -377,7 +398,6 @@ func Serve(ctx context.Context, pulse pulseclients.Client, toolset string, handl
 							"ping_id", msg.PingID,
 							"err", err,
 						)
-						return fmt.Errorf("pong: %w", err)
 					}
 				}
 				if err := sink.Ack(cancelCtx, ev); err != nil {

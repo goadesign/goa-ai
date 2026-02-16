@@ -40,17 +40,20 @@ func (r *Runtime) waitAwaitConfirmation(
 	toolOpts engine.ActivityOptions,
 	expectedChildren int,
 	parentTracker *childTracker,
-	finishBy time.Time,
 	turnID string,
 	ctrl *interrupt.Controller,
-	timeout time.Duration,
+	deadlines *runDeadlines,
 	it confirmationAwait,
-	hardDeadline time.Time,
 ) ([]*planner.ToolResult, *RunOutput, error) {
-	dec, err := ctrl.WaitProvideConfirmation(ctx, timeout)
+	if deadlines == nil {
+		return nil, nil, errors.New("missing run deadlines")
+	}
+	waitStartedAt := wfCtx.Now()
+	dec, err := ctrl.WaitProvideConfirmation(ctx, 0)
 	if err != nil {
 		return nil, nil, err
 	}
+	deadlines.pause(wfCtx.Now().Sub(waitStartedAt))
 	if dec == nil {
 		return nil, nil, errors.New("await_confirmation: received nil confirmation decision")
 	}
@@ -114,6 +117,7 @@ func (r *Runtime) waitAwaitConfirmation(
 				it.call.ParentToolCallID,
 				deniedResult,
 				resultJSON,
+				nil,
 				formatResultPreview(it.call.Name, deniedResult),
 				nil,
 				nil,
@@ -145,14 +149,18 @@ func (r *Runtime) waitAwaitConfirmation(
 	if call.ToolCallID == "" {
 		call.ToolCallID = generateDeterministicToolCallID(base.RunContext.RunID, call.TurnID, base.RunContext.Attempt, call.Name, 0)
 	}
-	mode, stripped, err := extractArtifactsMode(call.Payload)
+	mode, stripped, err := extractServerDataMode(call.Payload)
 	if err != nil {
 		return nil, nil, err
 	}
-	call.ArtifactsMode = mode
+	call.ServerDataMode = mode
 	call.Payload = stripped
 
 	grouped, timeouts := r.groupToolCallsByTimeout([]planner.ToolRequest{call}, input, toolOpts.Timeout)
+	finishBy := time.Time{}
+	if !deadlines.Hard.IsZero() {
+		finishBy = deadlines.Hard.Add(-deadlines.finalizeReserve())
+	}
 	vals, timedOut, err := r.executeGroupedToolCalls(
 		wfCtx,
 		reg,
@@ -169,13 +177,13 @@ func (r *Runtime) waitAwaitConfirmation(
 		return nil, nil, err
 	}
 	st.ToolEvents = append(st.ToolEvents, cloneToolResults(vals)...)
-	if err := r.appendUserToolResults(base, []planner.ToolRequest{call}, vals, st.Ledger, map[string]tools.ArtifactsMode{
-		call.ToolCallID: call.ArtifactsMode,
+	if err := r.appendUserToolResults(base, []planner.ToolRequest{call}, vals, st.Ledger, map[string]tools.ServerDataMode{
+		call.ToolCallID: call.ServerDataMode,
 	}); err != nil {
 		return nil, nil, err
 	}
 	if timedOut {
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonTimeBudget, hardDeadline)
+		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonTimeBudget, deadlines.Hard)
 		return nil, out, err
 	}
 	return vals, nil, nil
@@ -192,9 +200,7 @@ func (r *Runtime) handleAwaitQueue(
 	expectedChildren int,
 	parentTracker *childTracker,
 	ctrl *interrupt.Controller,
-	budgetDeadline time.Time,
-	hardDeadline time.Time,
-	finalizerGrace time.Duration,
+	deadlines *runDeadlines,
 	turnID string,
 	confirmations []confirmationAwait,
 	items []planner.AwaitItem,
@@ -203,6 +209,9 @@ func (r *Runtime) handleAwaitQueue(
 	ctx := wfCtx.Context()
 	if ctrl == nil {
 		return nil, errors.New("await not supported in inline runs")
+	}
+	if deadlines == nil {
+		return nil, errors.New("missing run deadlines")
 	}
 	if len(confirmations) == 0 && len(items) == 0 {
 		return nil, errors.New("await: empty await queue")
@@ -245,32 +254,16 @@ func (r *Runtime) handleAwaitQueue(
 	); err != nil {
 		return nil, err
 	}
-
-	timeout, ok := timeoutUntil(budgetDeadline, wfCtx.Now())
-	if !ok {
-		out, err := r.finalizeAwaitTimeout(wfCtx, reg, input, base, st, turnID, hardDeadline, awaitReasonQueue)
-		return out, err
-	}
+	// While awaiting external input we do not apply a timeout. The workflow should
+	// remain blocked until the operator (or an external system) responds.
+	waitTimeout := time.Duration(0)
 
 	allToolResults := make([]*planner.ToolResult, 0, len(priorToolResults)+8)
 	allToolResults = append(allToolResults, priorToolResults...)
 
-	finishBy := time.Time{}
-	if !hardDeadline.IsZero() {
-		reserve := finalizerGrace
-		if reserve == 0 {
-			reserve = minActivityTimeout
-		}
-		finishBy = hardDeadline.Add(-reserve)
-	}
-
 	for _, it := range confirmations {
-		res, out, err := r.waitAwaitConfirmation(ctx, wfCtx, reg, input, base, st, toolOpts, expectedChildren, parentTracker, finishBy, turnID, ctrl, timeout, it, hardDeadline)
+		res, out, err := r.waitAwaitConfirmation(ctx, wfCtx, reg, input, base, st, toolOpts, expectedChildren, parentTracker, turnID, ctrl, deadlines, it)
 		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				out, ferr := r.finalizeAwaitTimeout(wfCtx, reg, input, base, st, turnID, hardDeadline, awaitReasonQueue)
-				return out, ferr
-			}
 			return nil, err
 		}
 		if out != nil {
@@ -282,12 +275,10 @@ func (r *Runtime) handleAwaitQueue(
 	}
 
 	for _, it := range items {
-		res, err := r.waitAwaitQueueItem(ctx, ctrl, input, base, st, turnID, timeout, it)
+		waitStartedAt := wfCtx.Now()
+		res, err := r.waitAwaitQueueItem(ctx, ctrl, input, base, st, turnID, waitTimeout, it)
+		deadlines.pause(wfCtx.Now().Sub(waitStartedAt))
 		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				out, ferr := r.finalizeAwaitTimeout(wfCtx, reg, input, base, st, turnID, hardDeadline, awaitReasonQueue)
-				return out, ferr
-			}
 			return nil, err
 		}
 		if len(res) > 0 {
@@ -301,14 +292,14 @@ func (r *Runtime) handleAwaitQueue(
 			capFailures(allToolResults),
 		)
 		if st.Caps.MaxConsecutiveFailedToolCalls > 0 && st.Caps.RemainingConsecutiveFailedToolCalls <= 0 {
-			out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonFailureCap, hardDeadline)
+			out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonFailureCap, deadlines.Hard)
 			return out, err
 		}
 	} else if st.Caps.MaxConsecutiveFailedToolCalls > 0 {
 		st.Caps.RemainingConsecutiveFailedToolCalls = st.Caps.MaxConsecutiveFailedToolCalls
 	}
 
-	if out, err := r.handleMissingFieldsPolicy(wfCtx, reg, input, base, allToolResults, st.ToolEvents, st.AggUsage, &st.NextAttempt, turnID, ctrl, budgetDeadline, hardDeadline); err != nil {
+	if out, err := r.handleMissingFieldsPolicy(wfCtx, reg, input, base, allToolResults, st.ToolEvents, st.AggUsage, &st.NextAttempt, turnID, ctrl, deadlines.Budget, deadlines.Hard); err != nil {
 		return nil, err
 	} else if out != nil {
 		return out, nil
@@ -319,7 +310,7 @@ func (r *Runtime) handleAwaitQueue(
 		return nil, err
 	}
 	if protected {
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonFailureCap, hardDeadline)
+		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonFailureCap, deadlines.Hard)
 		return out, err
 	}
 
@@ -339,7 +330,7 @@ func (r *Runtime) handleAwaitQueue(
 	if err != nil {
 		return nil, err
 	}
-	resOutput, err := r.runPlanActivity(wfCtx, reg.ResumeActivityName, resumeOpts, resumeReq, budgetDeadline)
+	resOutput, err := r.runPlanActivity(wfCtx, reg.ResumeActivityName, resumeOpts, resumeReq, deadlines.Budget)
 	if err != nil {
 		return nil, err
 	}
@@ -627,6 +618,7 @@ func (r *Runtime) consumeProvidedToolResults(ctx context.Context, input *RunInpu
 				"",
 				tr.Result,
 				resultJSON,
+				tr.Server,
 				formatResultPreview(tr.Name, tr.Result),
 				tr.Bounds,
 				tr.Artifacts,

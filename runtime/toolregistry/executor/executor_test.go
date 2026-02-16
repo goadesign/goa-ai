@@ -32,7 +32,6 @@ func TestExecutorUsesOldestStartForResultStreamSink(t *testing.T) {
 			Toolset:       "todos.todos",
 			Result:        tools.TypeSpec{},
 			Payload:       tools.TypeSpec{},
-			Sidecar:       nil,
 			BoundedResult: false,
 		},
 	}
@@ -102,7 +101,6 @@ func TestExecutorForwardsOutputDelta(t *testing.T) {
 			Toolset:       "todos.todos",
 			Result:        tools.TypeSpec{},
 			Payload:       tools.TypeSpec{},
-			Sidecar:       nil,
 			BoundedResult: false,
 		},
 	}

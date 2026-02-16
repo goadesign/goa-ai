@@ -144,7 +144,8 @@ different audiences and link child runs via run handles rather than flattening r
 | `Tool(name, description?, dsl?)` | Inside `Toolset` or `Method` | Declares a callable tool |
 | `Args(type)` | Inside `Tool` | Defines input parameter schema |
 | `Return(type)` | Inside `Tool` | Defines output result schema |
-| `Artifact(kind, type)` | Inside `Tool` | Defines typed artifact data (not sent to model) |
+| `ServerData(kind, type, dsl?)` | Inside `Tool` | Defines server-only data emitted alongside results (never sent to model providers) |
+| `ServerDataDefault("on" \| "off")` | Inside `Tool` | Default emission for optional server-data when `server_data` is omitted or `"auto"` |
 | `BindTo(method)` or `BindTo(service, method)` | Inside `Tool` | Binds tool to a Goa service method |
 | `Inject(fields...)` | Inside `Tool` | Marks fields as server-injected (hidden from LLM) |
 | `CallHintTemplate(tmpl)` | Inside `Tool` | Go template for call display hint |
@@ -581,34 +582,52 @@ Return(SearchResults)
 Return(Int)  // Single integer return
 ```
 
-### Artifact (Non-Model Data)
+### ServerData (Non-Model Data)
 
-`Artifact` defines structured data attached to tool results that is **not** sent to the model
-provider. Use it for full-fidelity data that backs a bounded model-facing result:
+`ServerData` defines structured data attached to tool results that is **not** sent to the model
+provider. Use it for full-fidelity data that backs a bounded model-facing result, or for
+server-only metadata that must be persisted alongside tool executions.
 
 ```go
 Tool("get_time_series", "Get time series data", func() {
     Args(GetTimeSeriesArgs)
     Return(GetTimeSeriesReturn)           // Model sees this (summary/bounded view)
-    Artifact("time_series", TimeSeriesData) // Full data for UI/downstream only
+    ServerData("atlas.time_series", TimeSeriesData) // Full data for UI/downstream only
+    ServerDataDefault("off")                        // Opt-in by default
 })
 ```
 
-Artifacts are attached to `planner.ToolResult.Artifacts` and accessible via stream events,
-but never included in prompts to the LLM.
+Server-data is never included in prompts to the LLM. Optional server-data may be projected into
+observer-facing UI artifacts (e.g., `planner.ToolResult.Artifacts` and stream events) while
+always-on server-data is intended for in-process subscribers such as persistence and telemetry.
 
-#### Controlling artifact emission (`artifacts` + `ArtifactsDefault`)
+#### Controlling optional server-data emission (`server_data` + `ServerDataDefault`)
 
-Tools that declare an `Artifact` automatically accept a reserved payload field named `artifacts`
+Tools that declare optional `ServerData` automatically accept a reserved payload field named `server_data`
 with values `"auto"`, `"on"`, and `"off"`:
 
-- `"on"`: request UI artifacts when available.
-- `"off"`: suppress UI artifacts for this call.
+- `"on"`: enable optional server-data for this call.
+- `"off"`: suppress optional server-data for this call.
 - `"auto"` (or omitted): use the tool’s default behavior.
 
-Use `ArtifactsDefault("off")` inside the tool DSL to make artifacts opt-in by default when `"auto"`
-or omission is used. This is useful for tools whose artifacts are only appropriate when the user
-explicitly asked for a visualization.
+Use `ServerDataDefault("off")` inside the tool DSL to make optional server-data opt-in by default when
+`"auto"` or omission is used. This is useful for tools whose observer-facing output is only appropriate
+when the user explicitly asked for a visualization.
+
+#### Always-on server-data (server-side persistence)
+
+When you need server-only metadata that must be emitted/persisted regardless of `server_data` toggles,
+declare an always-on ServerData entry:
+
+```go
+Tool("get_time_series", "Get time series data", func() {
+    // ...
+    ServerData("aura.evidence", func() {
+        ModeAlways()
+        FromMethodResultField("Evidence")
+    })
+})
+```
 
 ### BindTo (Service Method Binding)
 

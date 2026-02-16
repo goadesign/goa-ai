@@ -149,7 +149,7 @@ func stableTypeKey(tool *ToolData, usage typeUsage) string {
 	case usageResult:
 		tn += "Result"
 	case usageSidecar:
-		tn += "Sidecar"
+		tn += "ServerData"
 	}
 	scope := ""
 	if tool.Toolset != nil {

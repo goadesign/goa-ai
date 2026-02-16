@@ -30,6 +30,7 @@ func TestDecodeFromHookInput_ToolResultReceivedPreservesArtifactBytes(t *testing
 		"",
 		nil,
 		resultJSON,
+		nil,
 		"preview",
 		nil,
 		[]*planner.Artifact{

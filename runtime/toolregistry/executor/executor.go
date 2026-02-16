@@ -298,16 +298,21 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 				"toolregistry.result_stream_id", resultStreamID,
 			)
 			span.SetStatus(codes.Ok, "ok")
-			return e.decodeToolResult(spec, call.Name, meta.ToolCallID, msg), nil
+			return e.decodeToolResult(spec, call, meta.ToolCallID, msg), nil
 		}
 	}
 }
 
-func (e *Executor) decodeToolResult(spec *tools.ToolSpec, tool tools.Ident, toolCallID string, msg toolregistry.ToolResultMessage) *planner.ToolResult {
+func (e *Executor) decodeToolResult(spec *tools.ToolSpec, call *planner.ToolRequest, toolCallID string, msg toolregistry.ToolResultMessage) *planner.ToolResult {
+	tool := tools.Ident("")
+	if call != nil {
+		tool = call.Name
+	}
 	out := &planner.ToolResult{
 		Name:       tool,
 		ToolCallID: toolCallID,
 	}
+	out.Server = marshalServerDataItems(filterServerDataItems(spec, call, msg.Server))
 	if msg.Error != nil {
 		out.Error = planner.NewToolError(msg.Error.Message)
 		if hint := buildRetryHintFromIssues(tool, spec, msg.Error.Issues); hint != nil {
@@ -328,23 +333,96 @@ func (e *Executor) decodeToolResult(spec *tools.ToolSpec, tool tools.Ident, tool
 		}
 		out.Result = res
 	}
-	if spec.Sidecar != nil && spec.Sidecar.Codec.FromJSON != nil && len(msg.Artifacts) > 0 {
-		arts := make([]*planner.Artifact, 0, len(msg.Artifacts))
-		for _, a := range msg.Artifacts {
-			data, err := spec.Sidecar.Codec.FromJSON(a.Data)
-			if err != nil {
-				out.Error = planner.ToolErrorFromError(err)
-				return out
+	if sd := optionalServerDataSpec(spec); sd != nil && sd.Codec.FromJSON != nil && len(msg.Server) > 0 {
+		if tools.OptionalServerDataEnabled(call.ServerDataMode, spec.ServerDataDefault != "off") {
+			for _, item := range msg.Server {
+				if item == nil || item.Kind != sd.Kind || len(item.Data) == 0 {
+					continue
+				}
+				data, err := sd.Codec.FromJSON(item.Data)
+				if err != nil {
+					out.Error = planner.ToolErrorFromError(err)
+					return out
+				}
+				out.Artifacts = []*planner.Artifact{
+					{
+						Kind:       item.Kind,
+						Data:       data,
+						SourceTool: tool,
+					},
+				}
+				break
 			}
-			arts = append(arts, &planner.Artifact{
-				Kind:       a.Kind,
-				Data:       data,
-				SourceTool: tool,
-			})
 		}
-		out.Artifacts = arts
 	}
 	return out
+}
+
+func optionalServerDataSpec(spec *tools.ToolSpec) *tools.ServerDataSpec {
+	if spec == nil {
+		return nil
+	}
+	for _, sd := range spec.ServerData {
+		if sd != nil && sd.Mode == "optional" {
+			return sd
+		}
+	}
+	return nil
+}
+
+func filterServerDataItems(spec *tools.ToolSpec, call *planner.ToolRequest, items []*toolregistry.ServerDataItem) []*toolregistry.ServerDataItem {
+	if len(items) == 0 {
+		return nil
+	}
+	if spec == nil {
+		return cloneServerDataItems(items)
+	}
+	opt := optionalServerDataSpec(spec)
+	if opt == nil || call == nil || tools.OptionalServerDataEnabled(call.ServerDataMode, spec.ServerDataDefault != "off") {
+		return cloneServerDataItems(items)
+	}
+	out := make([]*toolregistry.ServerDataItem, 0, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		if item.Kind == opt.Kind {
+			continue
+		}
+		out = append(out, &toolregistry.ServerDataItem{
+			Kind: item.Kind,
+			Data: append(json.RawMessage(nil), item.Data...),
+		})
+	}
+	return out
+}
+
+func cloneServerDataItems(items []*toolregistry.ServerDataItem) []*toolregistry.ServerDataItem {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]*toolregistry.ServerDataItem, 0, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		out = append(out, &toolregistry.ServerDataItem{
+			Kind: item.Kind,
+			Data: append(json.RawMessage(nil), item.Data...),
+		})
+	}
+	return out
+}
+
+func marshalServerDataItems(items []*toolregistry.ServerDataItem) json.RawMessage {
+	if len(items) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(items)
+	if err != nil {
+		panic(fmt.Sprintf("toolregistry executor: marshal server-data items failed: %v", err))
+	}
+	return json.RawMessage(b)
 }
 
 func retryHintFromToolErrorCode(tool tools.Ident, code string) *planner.RetryHint {

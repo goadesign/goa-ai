@@ -37,42 +37,39 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 		if err != nil {
 			return nil, err
 		}
-		var sidecar *typeData
-		if tool.Artifact != nil && tool.Artifact.Type != goaexpr.Empty {
-			sidecar, err = builder.typeFor(tool, tool.Artifact, usageSidecar)
+		var optionalServerDataType *typeData
+		if tool.OptionalServerData != nil && tool.OptionalServerData.Schema != nil && tool.OptionalServerData.Schema.Type != goaexpr.Empty {
+			optionalServerDataType, err = builder.typeFor(tool, tool.OptionalServerData.Schema, usageSidecar)
 			if err != nil {
 				return nil, err
 			}
 		}
-		artifactKind := ""
-		if sidecar != nil {
-			artifactKind = tool.ArtifactKind
-		}
+		serverDataEntries := serverDataEntriesForTool(tool, optionalServerDataType)
 		metaPairs := toolMetaPairs(tool.Meta)
 		entry := &toolEntry{
 			// Name is the qualified tool ID used at runtime (toolset.tool).
-			Name:                tool.QualifiedName,
-			GoName:              goName,
-			ConstName:           constName,
-			Title:               tool.Title,
-			Service:             serviceName(tool),
-			Toolset:             toolsetName(tool),
-			Description:         tool.Description,
-			ArtifactDescription: tool.ArtifactDescription,
-			ArtifactKind:        artifactKind,
-			Tags:                tool.Tags,
-			Meta:                tool.Meta,
-			MetaPairs:           metaPairs,
-			IsExportedByAgent:   tool.IsExportedByAgent,
-			ExportingAgentID:    tool.ExportingAgentID,
-			Payload:             payload,
-			Result:              result,
-			Sidecar:             sidecar,
-			BoundedResult:       tool.BoundedResult,
-			TerminalRun:         tool.TerminalRun,
-			Paging:              tool.Paging,
-			ResultReminder:      tool.ResultReminder,
-			Confirmation:        tool.Confirmation,
+			Name:               tool.QualifiedName,
+			GoName:             goName,
+			ConstName:          constName,
+			Title:              tool.Title,
+			Service:            serviceName(tool),
+			Toolset:            toolsetName(tool),
+			Description:        tool.Description,
+			ServerData:         serverDataEntries,
+			ServerDataDefault:  serverDataDefault(tool),
+			Tags:               tool.Tags,
+			Meta:               tool.Meta,
+			MetaPairs:          metaPairs,
+			IsExportedByAgent:  tool.IsExportedByAgent,
+			ExportingAgentID:   tool.ExportingAgentID,
+			Payload:            payload,
+			Result:             result,
+			OptionalServerData: optionalServerDataType,
+			BoundedResult:      tool.BoundedResult,
+			TerminalRun:        tool.TerminalRun,
+			Paging:             tool.Paging,
+			ResultReminder:     tool.ResultReminder,
+			Confirmation:       tool.Confirmation,
 		}
 		data.addTool(entry)
 	}
@@ -121,8 +118,8 @@ func (d *toolSpecsData) addTool(entry *toolEntry) {
 	d.tools = append(d.tools, entry)
 	d.addType(entry.Payload)
 	d.addType(entry.Result)
-	if entry.Sidecar != nil {
-		d.addType(entry.Sidecar)
+	if entry.OptionalServerData != nil {
+		d.addType(entry.OptionalServerData)
 	}
 }
 
@@ -377,10 +374,10 @@ func (d *toolSpecsData) codecsImports() []*codegen.ImportSpec {
 			base = append(base, extra[p])
 		}
 	}
-	// Sidecar helpers depend on planner.ToolResult when any tool declares
-	// a sidecar type.
+	// Optional server-data helpers depend on planner.ToolResult when any tool declares
+	// a typed optional payload.
 	for _, t := range d.tools {
-		if t != nil && t.Sidecar != nil {
+		if t != nil && t.OptionalServerData != nil {
 			base = append(base, codegen.SimpleImport("goa.design/goa-ai/runtime/agent/planner"))
 			break
 		}
@@ -416,4 +413,48 @@ func (d *toolSpecsData) transportTypeImports() []*codegen.ImportSpec {
 		imports = append(imports, uniq[p])
 	}
 	return imports
+}
+
+func serverDataEntriesForTool(tool *ToolData, uiServerDataType *typeData) []*serverDataEntry {
+	if tool == nil || len(tool.ServerData) == 0 {
+		return nil
+	}
+	out := make([]*serverDataEntry, 0, len(tool.ServerData))
+	for _, sd := range tool.ServerData {
+		if sd == nil || strings.TrimSpace(sd.Kind) == "" {
+			continue
+		}
+		mode := strings.TrimSpace(sd.Mode)
+		if mode == "" {
+			mode = "optional"
+		}
+		entry := &serverDataEntry{
+			Kind:        sd.Kind,
+			Mode:        mode,
+			Description: sd.Description,
+		}
+		switch mode {
+		case "optional":
+			if uiServerDataType != nil {
+				entry.CodecExpr = uiServerDataType.GenericCodec
+			}
+		case "always":
+			entry.CodecExpr = "tools.JSONCodec[any]{}"
+		}
+		out = append(out, entry)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func serverDataDefault(tool *ToolData) string {
+	if tool == nil || tool.OptionalServerData == nil {
+		return ""
+	}
+	if tool.ServerDataDefaultOn {
+		return ""
+	}
+	return "off"
 }

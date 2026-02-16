@@ -22,13 +22,12 @@ var Specs = []tools.ToolSpec{
 
 var (
 	SpecEcho = tools.ToolSpec{
-		Name:                Echo,
-		Service:             "alpha",
-		Toolset:             "alpha.ops",
-		Description:         "Echo",
-		ArtifactDescription: "",
-		Tags:                []string{},
-		BoundedResult:       false,
+		Name:          Echo,
+		Service:       "alpha",
+		Toolset:       "alpha.ops",
+		Description:   "Echo",
+		Tags:          []string{},
+		BoundedResult: false,
 		Payload: tools.TypeSpec{
 			Name:         "EchoPayload",
 			Schema:       []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
@@ -41,7 +40,6 @@ var (
 			Schema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
 			Codec:  echoResultCodec,
 		},
-		Sidecar: nil,
 	}
 )
 
