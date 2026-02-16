@@ -22,13 +22,12 @@ var Specs = []tools.ToolSpec{
 
 var (
 	SpecSetStepStatus = tools.ToolSpec{
-		Name:                SetStepStatus,
-		Service:             "alpha",
-		Toolset:             "alpha.progress",
-		Description:         "Set step status",
-		ArtifactDescription: "",
-		Tags:                []string{},
-		BoundedResult:       false,
+		Name:          SetStepStatus,
+		Service:       "alpha",
+		Toolset:       "alpha.progress",
+		Description:   "Set step status",
+		Tags:          []string{},
+		BoundedResult: false,
 		Payload: tools.TypeSpec{
 			Name:         "SetStepStatusPayload",
 			Schema:       []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"note\":{\"type\":\"string\",\"description\":\"Optional note about progress.\",\"example\":\"Nemo quia.\"},\"status\":{\"$ref\":\"#/$defs/Status\"},\"step_id\":{\"type\":\"string\",\"description\":\"Step identifier.\",\"example\":\"Dignissimos quo illum.\"}},\"$defs\":{\"Status\":{\"title\":\"Status\",\"type\":\"string\",\"description\":\"Lifecycle status for a step.\",\"example\":\"in_progress\",\"enum\":[\"pending\",\"in_progress\",\"completed\",\"blocked\"]}},\"required\":[\"step_id\",\"status\"]}"),
@@ -41,7 +40,6 @@ var (
 			Schema: nil,
 			Codec:  setStepStatusResultCodec,
 		},
-		Sidecar: nil,
 	}
 )
 

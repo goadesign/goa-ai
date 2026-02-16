@@ -404,6 +404,22 @@ type (
 		DeniedResultTemplate string
 	}
 
+	// ServerDataData captures the code generation metadata for one server-only
+	// payload emitted alongside a tool result.
+	ServerDataData struct {
+		// Kind is the server-data kind identifier.
+		Kind string
+		// Mode is the emission mode: "optional" or "always".
+		Mode string
+		// Schema is the typed schema when Mode == "optional".
+		Schema *goaexpr.AttributeExpr
+		// Description describes the observer-facing rendering contract when Mode == "optional".
+		Description string
+		// MethodResultField is the bound method result field name when Mode == "always"
+		// and sourced from a method result field.
+		MethodResultField string
+	}
+
 	// ToolData captures metadata about an individual tool, including its DSL
 	// declaration, type information, and code generation directives. Tools are
 	// the atomic units of agent capability, representing functions that can be
@@ -447,27 +463,20 @@ type (
 		Args *goaexpr.AttributeExpr
 		// Return is the Goa attribute describing the tool result.
 		Return *goaexpr.AttributeExpr
-		// Artifact is the Goa attribute describing the optional typed artifact
-		// data attached to this tool. Artifact data is never sent to the model
-		// provider; it is exposed via planner.ToolResult.Artifacts and is
-		// typically used for artifacts such as full-fidelity results for UIs.
-		Artifact *goaexpr.AttributeExpr
-		// ArtifactKind is the logical artifact kind associated with the sidecar
-		// schema (for example, "atlas.time_series"). When empty, codegen uses
-		// the tool's qualified name.
-		ArtifactKind string
-		// ArtifactDescription describes what this tool's artifact represents to
-		// the user when rendered in a UI. It is derived from the artifact
-		// attribute (or its underlying user type) and propagated into ToolSpec
-		// so runtimes can build artifact-aware reminders without inspecting
-		// JSON schemas at runtime.
-		ArtifactDescription string
-		// ArtifactsDefaultOn controls the default emission behavior for artifacts
-		// when the caller does not explicitly set the reserved `artifacts` mode
-		// (or sets it to "auto"). When true, executors may attach artifacts by
-		// default; when false, artifacts are attached only when explicitly
-		// requested via `artifacts:"on"`.
-		ArtifactsDefaultOn bool
+		// ServerData enumerates server-only payloads emitted alongside the tool
+		// result. Server data is never sent to model providers.
+		ServerData []*ServerDataData
+		// OptionalServerData points at the optional server-data declaration when present.
+		// At most one optional server-data entry is supported per tool.
+		OptionalServerData *ServerDataData
+		// AlwaysServerData lists always-on server-data declarations.
+		AlwaysServerData []*ServerDataData
+		// ServerDataDefaultOn controls the default emission behavior for optional
+		// server-data when the caller does not explicitly set the reserved
+		// `server_data` mode (or sets it to "auto"). When true, executors may
+		// attach optional server-data by default; when false, optional server-data is
+		// attached only when explicitly requested via `server_data:"on"`.
+		ServerDataDefaultOn bool
 		// MethodPayloadAttr is the Goa attribute for the bound service payload
 		// (resolved user type). Used to generate default payload adapters.
 		MethodPayloadAttr *goaexpr.AttributeExpr
@@ -1213,29 +1222,29 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 	}
 
 	tool := &ToolData{
-		Name:                expr.Name,
-		ConstName:           codegen.Goify(expr.Name, true),
-		Description:         expr.Description,
-		QualifiedName:       qualified,
-		Title:               naming.HumanizeTitle(defaultString(expr.Title, expr.Name)),
-		Tags:                slices.Clone(expr.Tags),
-		Meta:                map[string][]string(expr.Meta),
-		Args:                expr.Args,
-		Return:              expr.Return,
-		Artifact:            expr.Sidecar,
-		ArtifactKind:        defaultString(expr.SidecarKind, qualified),
-		ArtifactDescription: artifactDescription(expr.Sidecar),
-		ArtifactsDefaultOn:  expr.ArtifactsDefault != "off",
-		Toolset:             ts,
-		IsExportedByAgent:   isExported,
-		ExportingAgentID:    exportingAgentID,
-		CallHintTemplate:    expr.CallHintTemplate,
-		ResultHintTemplate:  expr.ResultHintTemplate,
-		InjectedFields:      expr.InjectedFields,
-		BoundedResult:       expr.BoundedResult,
-		TerminalRun:         expr.TerminalRun,
-		Paging:              pagingData(expr.Paging),
-		ResultReminder:      expr.ResultReminder,
+		Name:               expr.Name,
+		ConstName:          codegen.Goify(expr.Name, true),
+		Description:        expr.Description,
+		QualifiedName:      qualified,
+		Title:              naming.HumanizeTitle(defaultString(expr.Title, expr.Name)),
+		Tags:               slices.Clone(expr.Tags),
+		Meta:               map[string][]string(expr.Meta),
+		Args:               expr.Args,
+		Return:             expr.Return,
+		Toolset:            ts,
+		IsExportedByAgent:  isExported,
+		ExportingAgentID:   exportingAgentID,
+		CallHintTemplate:   expr.CallHintTemplate,
+		ResultHintTemplate: expr.ResultHintTemplate,
+		InjectedFields:     expr.InjectedFields,
+		BoundedResult:      expr.BoundedResult,
+		TerminalRun:        expr.TerminalRun,
+		Paging:             pagingData(expr.Paging),
+		ResultReminder:     expr.ResultReminder,
+	}
+	tool.ServerData, tool.OptionalServerData, tool.AlwaysServerData = serverDataData(expr.ServerData, qualified)
+	if tool.OptionalServerData != nil {
+		tool.ServerDataDefaultOn = expr.ServerDataDefault != "off"
 	}
 	if expr.Confirmation != nil {
 		tool.Confirmation = &ToolConfirmationData{
@@ -1332,10 +1341,51 @@ func pagingData(p *agentsExpr.ToolPagingExpr) *ToolPagingData {
 	}
 }
 
-// artifactDescription returns a human-facing description for the tool sidecar
-// attribute. It prefers the attribute Description set in the Artifact DSL
-// block and falls back to the underlying user type description when needed.
-func artifactDescription(att *goaexpr.AttributeExpr) string {
+func serverDataData(exprs []*agentsExpr.ServerDataExpr, qualified string) ([]*ServerDataData, *ServerDataData, []*ServerDataData) {
+	if len(exprs) == 0 {
+		return nil, nil, nil
+	}
+	const (
+		serverDataModeOptional = "optional"
+		serverDataModeAlways   = "always"
+	)
+	out := make([]*ServerDataData, 0, len(exprs))
+	var optional *ServerDataData
+	var always []*ServerDataData
+	for _, sd := range exprs {
+		mode := sd.Mode
+		if mode == "" {
+			mode = serverDataModeOptional
+		}
+		item := &ServerDataData{
+			Kind: defaultString(sd.Kind, qualified),
+			Mode: mode,
+		}
+		switch mode {
+		case serverDataModeOptional:
+			item.Schema = sd.Schema
+			item.Description = serverDataDescription(sd.Schema)
+			optional = item
+		case serverDataModeAlways:
+			if sd.Source != nil {
+				item.MethodResultField = strings.TrimSpace(sd.Source.MethodResultField)
+			}
+			always = append(always, item)
+		default:
+			panic(fmt.Sprintf("unexpected server-data mode %q", mode))
+		}
+		out = append(out, item)
+	}
+	if len(out) == 0 {
+		return nil, nil, nil
+	}
+	return out, optional, always
+}
+
+// serverDataDescription returns a human-facing description for an optional server-data
+// schema attribute. It prefers the attribute Description set in the DSL and
+// falls back to the underlying user type description when needed.
+func serverDataDescription(att *goaexpr.AttributeExpr) string {
 	if att == nil {
 		return ""
 	}

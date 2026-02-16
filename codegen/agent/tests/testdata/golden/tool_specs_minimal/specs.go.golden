@@ -22,13 +22,12 @@ var Specs = []tools.ToolSpec{
 
 var (
 	SpecSummarizeDoc = tools.ToolSpec{
-		Name:                SummarizeDoc,
-		Service:             "calc",
-		Toolset:             "calc.helpers",
-		Description:         "Summarize a document",
-		ArtifactDescription: "",
-		Tags:                []string{},
-		BoundedResult:       false,
+		Name:          SummarizeDoc,
+		Service:       "calc",
+		Toolset:       "calc.helpers",
+		Description:   "Summarize a document",
+		Tags:          []string{},
+		BoundedResult: false,
 		Payload: tools.TypeSpec{
 			Name:         "SummarizeDocPayload",
 			Schema:       []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"doc_id\":{\"type\":\"string\",\"description\":\"Document identifier\",\"example\":\"Magnam asperiores dolorum.\"}},\"required\":[\"doc_id\"]}"),
@@ -41,7 +40,6 @@ var (
 			Schema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"description\":\"Title\",\"example\":\"Est ut.\"}},\"required\":[\"title\"]}"),
 			Codec:  summarizeDocResultCodec,
 		},
-		Sidecar: nil,
 	}
 )
 

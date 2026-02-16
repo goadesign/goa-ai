@@ -22,13 +22,12 @@ var Specs = []tools.ToolSpec{
 
 var (
 	SpecStore = tools.ToolSpec{
-		Name:                Store,
-		Service:             "alpha",
-		Toolset:             "alpha.docs",
-		Description:         "Store",
-		ArtifactDescription: "",
-		Tags:                []string{},
-		BoundedResult:       false,
+		Name:          Store,
+		Service:       "alpha",
+		Toolset:       "alpha.docs",
+		Description:   "Store",
+		Tags:          []string{},
+		BoundedResult: false,
 		Payload: tools.TypeSpec{
 			Name:         "StorePayload",
 			Schema:       []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Identifier\",\"example\":\"Dignissimos quo illum.\"},\"title\":{\"type\":\"string\",\"description\":\"Title\",\"example\":\"Nemo quia.\"}},\"required\":[\"id\",\"title\"]}"),
@@ -41,7 +40,6 @@ var (
 			Schema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Identifier\",\"example\":\"Consequatur reprehenderit.\"},\"title\":{\"type\":\"string\",\"description\":\"Title\",\"example\":\"Molestiae velit quam amet cupiditate non.\"}},\"required\":[\"id\"]}"),
 			Codec:  storeResultCodec,
 		},
-		Sidecar: nil,
 	}
 )
 

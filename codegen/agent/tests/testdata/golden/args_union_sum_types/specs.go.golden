@@ -22,13 +22,12 @@ var Specs = []tools.ToolSpec{
 
 var (
 	SpecEcho = tools.ToolSpec{
-		Name:                Echo,
-		Service:             "alpha",
-		Toolset:             "alpha.union",
-		Description:         "Echo union",
-		ArtifactDescription: "",
-		Tags:                []string{},
-		BoundedResult:       false,
+		Name:          Echo,
+		Service:       "alpha",
+		Toolset:       "alpha.union",
+		Description:   "Echo union",
+		Tags:          []string{},
+		BoundedResult: false,
 		Payload: tools.TypeSpec{
 			Name:         "EchoPayload",
 			Schema:       []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Request identifier\",\"example\":\"Dignissimos quo illum.\"},\"value\":{\"type\":\"object\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"number\",\"text\"]},\"value\":{\"anyOf\":[{\"$ref\":\"#/$defs/ValueNumberTransport\"},{\"$ref\":\"#/$defs/ValueTextTransport\"}]}},\"example\":693757780,\"required\":[\"type\",\"value\"]}},\"$defs\":{\"ValueNumberTransport\":{\"title\":\"ValueNumberTransport\",\"type\":\"integer\",\"description\":\"Numeric value\",\"example\":884537394,\"format\":\"int32\"},\"ValueTextTransport\":{\"title\":\"ValueTextTransport\",\"type\":\"string\",\"description\":\"Text value\",\"example\":\"Quia ratione consequatur.\"}},\"required\":[\"id\",\"value\"]}"),
@@ -41,7 +40,6 @@ var (
 			Schema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Request identifier\",\"example\":\"Velit quam amet cupiditate non eius ea.\"},\"value\":{\"type\":\"object\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"number\",\"text\"]},\"value\":{\"anyOf\":[{\"$ref\":\"#/$defs/ValueNumberTransport\"},{\"$ref\":\"#/$defs/ValueTextTransport\"}]}},\"example\":\"Distinctio aperiam eligendi aspernatur velit maxime.\",\"required\":[\"type\",\"value\"]}},\"$defs\":{\"ValueNumberTransport\":{\"title\":\"ValueNumberTransport\",\"type\":\"integer\",\"description\":\"Numeric value\",\"example\":1360408148,\"format\":\"int32\"},\"ValueTextTransport\":{\"title\":\"ValueTextTransport\",\"type\":\"string\",\"description\":\"Text value\",\"example\":\"Vitae corrupti.\"}},\"required\":[\"id\",\"value\"]}"),
 			Codec:  echoResultCodec,
 		},
-		Sidecar: nil,
 	}
 )
 

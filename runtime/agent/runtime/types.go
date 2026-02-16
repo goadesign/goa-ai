@@ -70,11 +70,11 @@ type (
 		// UIs and subscribers use it to reconstruct the call tree.
 		ParentToolCallID string
 
-		// ArtifactsMode is the normalized per-call artifacts toggle selected by
-		// the caller via the reserved `artifacts` payload field. Valid values are
-		// tools.ArtifactsModeAuto, tools.ArtifactsModeOn, and tools.ArtifactsModeOff.
+		// ServerDataMode is the normalized per-call toggle selected by the caller
+		// via the reserved `server_data` payload field. Valid values are
+		// tools.ServerDataModeAuto, tools.ServerDataModeOn, and tools.ServerDataModeOff.
 		// When empty, the caller did not specify a mode.
-		ArtifactsMode tools.ArtifactsMode
+		ServerDataMode tools.ServerDataMode
 	}
 
 	// ToolCallExecutor executes a tool call and returns a planner.ToolResult. This

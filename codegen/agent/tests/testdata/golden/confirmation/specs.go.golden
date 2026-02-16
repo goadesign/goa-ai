@@ -22,13 +22,12 @@ var Specs = []tools.ToolSpec{
 
 var (
 	SpecDangerousWrite = tools.ToolSpec{
-		Name:                DangerousWrite,
-		Service:             "alpha",
-		Toolset:             "alpha.atlas.commands",
-		Description:         "Write a stateful change",
-		ArtifactDescription: "",
-		Tags:                []string{},
-		BoundedResult:       false,
+		Name:          DangerousWrite,
+		Service:       "alpha",
+		Toolset:       "alpha.atlas.commands",
+		Description:   "Write a stateful change",
+		Tags:          []string{},
+		BoundedResult: false,
 		Confirmation: &tools.ConfirmationSpec{
 			Title:                "Confirm change",
 			PromptTemplate:       "Approve write: set {{ .Key }} to {{ .Value }}",
@@ -46,7 +45,6 @@ var (
 			Schema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"Key that was updated.\",\"example\":\"Molestiae velit quam amet cupiditate non.\"},\"summary\":{\"type\":\"string\",\"description\":\"Summary of the update.\",\"example\":\"Consequatur reprehenderit.\"}},\"required\":[\"summary\",\"key\"]}"),
 			Codec:  dangerousWriteResultCodec,
 		},
-		Sidecar: nil,
 	}
 )
 

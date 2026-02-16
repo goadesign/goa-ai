@@ -172,13 +172,14 @@ func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
     }
 }
 
-// ArtifactCodec returns the generic codec for the named tool artifact when declared.
-func ArtifactCodec(name string) (*tools.JSONCodec[any], bool) {
+// ServerDataCodec returns the generic codec for the named tool optional
+// server-data payload when declared.
+func ServerDataCodec(name string) (*tools.JSONCodec[any], bool) {
     switch name {
 {{- range .Tools }}
-    {{- if .Sidecar }}
+    {{- if .OptionalServerData }}
     case {{ printf "%q" .Name }}:
-        return &{{ .Sidecar.GenericCodec }}, true
+        return &{{ .OptionalServerData.GenericCodec }}, true
     {{- end }}
 {{- end }}
     default:

@@ -30,6 +30,15 @@ type (
 	// The distributed ticker ensures only one node sends pings at a time, with automatic
 	// failover if that node crashes.
 	HealthTracker interface {
+		// Health returns the current health state for a toolset.
+		//
+		// Contract:
+		//   - Health is derived from the last recorded Pong timestamp and the
+		//     configured staleness threshold.
+		//   - If the toolset has never ponged (or no entry exists), Health reports
+		//     Healthy=false with LastPong unset.
+		Health(toolset string) (ToolsetHealth, error)
+
 		// RecordPong records a pong response for a toolset.
 		// This updates the last pong timestamp in the shared health map.
 		RecordPong(ctx context.Context, toolset string) error
@@ -48,6 +57,18 @@ type (
 
 		// Close stops all ping loops and releases resources.
 		Close() error
+	}
+
+	// ToolsetHealth reports derived provider health for a toolset.
+	ToolsetHealth struct {
+		// Healthy reports whether a provider pong was received within the configured threshold.
+		Healthy bool
+		// LastPong is the timestamp of the last recorded pong when available.
+		LastPong time.Time
+		// Age is the duration since LastPong when available.
+		Age time.Duration
+		// StalenessThreshold is the configured maximum acceptable pong age.
+		StalenessThreshold time.Duration
 	}
 
 	// HealthTrackerOption configures optional settings for the health tracker.
@@ -189,18 +210,36 @@ func (h *healthTracker) RecordPong(ctx context.Context, toolset string) error {
 	return nil
 }
 
-func (h *healthTracker) IsHealthy(toolset string) bool {
+func (h *healthTracker) Health(toolset string) (ToolsetHealth, error) {
 	key := healthKey(toolset)
 	val, ok := h.healthMap.Get(key)
 	if !ok {
-		return false
+		return ToolsetHealth{
+			Healthy:            false,
+			StalenessThreshold: h.stalenessThreshold,
+		}, nil
 	}
 	ts, err := strconv.ParseInt(val, 10, 64)
 	if err != nil {
-		return false
+		return ToolsetHealth{}, fmt.Errorf("parse last pong timestamp for %q: %w", toolset, err)
 	}
 	lastPong := time.Unix(0, ts)
-	return time.Since(lastPong) <= h.stalenessThreshold
+	age := time.Since(lastPong)
+	healthy := age <= h.stalenessThreshold
+	return ToolsetHealth{
+		Healthy:            healthy,
+		LastPong:           lastPong,
+		Age:                age,
+		StalenessThreshold: h.stalenessThreshold,
+	}, nil
+}
+
+func (h *healthTracker) IsHealthy(toolset string) bool {
+	hh, err := h.Health(toolset)
+	if err != nil {
+		return false
+	}
+	return hh.Healthy
 }
 
 func (h *healthTracker) StartPingLoop(ctx context.Context, toolset string) error {

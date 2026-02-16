@@ -481,7 +481,7 @@ For method-backed service toolsets, codegen emits a provider adapter at:
 
 - `gen/<service>/toolsets/<toolset>/provider.go`
 
-That generated provider implements a dispatcher that decodes the tool payload JSON using generated codecs, adapts into the Goa method payload (via generated transforms), calls the bound method, and re-encodes the tool result JSON (and optional artifacts/sidecars).
+That generated provider implements a dispatcher that decodes the tool payload JSON using generated codecs, adapts into the Goa method payload (via generated transforms), calls the bound method, and re-encodes the tool result JSON together with any declared server-data (optional observer-facing server-data and always-on server-only metadata).
 
 To run it, wire the generated provider into the runtime provider loop:
 
@@ -579,18 +579,18 @@ type ToolCallMeta struct {
 }
 ```
 
-### Artifacts (reserved `"artifacts"` payload field)
+### Optional server-data (reserved `"server_data"` payload field)
 
-Tools can optionally produce **artifacts** (UI/policy-facing data that is never sent to model providers).
-The runtime supports a per-call artifacts toggle via a reserved top-level tool payload field:
+Tools can optionally produce **observer-facing server-data** (often projected into UI artifacts) that is never sent to model providers.
+The runtime supports a per-call optional server-data toggle via a reserved top-level tool payload field:
 
-- `{"artifacts":"auto"}` — use the tool default
-- `{"artifacts":"on"}` — force artifacts on (when the tool supports them)
-- `{"artifacts":"off"}` — force artifacts off (runtime drops artifacts even if produced)
+- `{"server_data":"auto"}` — use the tool default
+- `{"server_data":"on"}` — enable optional server-data (when the tool declares it)
+- `{"server_data":"off"}` — disable optional server-data for this call
 
-The runtime strips the reserved `"artifacts"` field from the execution payload before decoding, and records the
-normalized value on the tool call metadata (`ArtifactsMode`). Tool payload schemas must not define a top-level
-property named `"artifacts"`.
+The runtime strips the reserved `"server_data"` field from the execution payload before decoding, and records the
+normalized value on the tool call metadata (`ServerDataMode`). Tool payload schemas must not define a top-level
+property named `"server_data"`.
 
 ### Bounded Results
 

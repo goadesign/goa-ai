@@ -162,11 +162,11 @@ type ToolRequest struct {
 	// Payload is the canonical JSON payload for the tool call.
 	Payload json.RawMessage
 
-	// ArtifactsMode is the normalized per-call artifacts toggle selected by the
-	// caller (typically the model) via the reserved `artifacts` payload field.
-	// Valid values are tools.ArtifactsModeAuto, tools.ArtifactsModeOn, and
-	// tools.ArtifactsModeOff. When empty, the caller did not specify a mode.
-	ArtifactsMode tools.ArtifactsMode
+	// ServerDataMode is the normalized per-call toggle selected by the caller
+	// (typically the model) via the reserved `server_data` payload field.
+	// Valid values are tools.ServerDataModeAuto, tools.ServerDataModeOn, and
+	// tools.ServerDataModeOff. When empty, the caller did not specify a mode.
+	ServerDataMode tools.ServerDataMode
 
 	// AgentID is the identifier of the agent that issued this tool request.
 	AgentID agent.Ident
@@ -217,6 +217,13 @@ type ToolResult struct {
 	// Result is the decoded tool result value. Its concrete type depends on the
 	// tool's result schema and codec.
 	Result any
+
+	// Server carries server-only metadata emitted by tool providers (for example,
+	// evidence/provenance references) that must not be sent to model providers.
+	//
+	// This payload is treated as opaque JSON bytes by the runtime; sinks may use
+	// it for persistence and internal policy decisions.
+	Server json.RawMessage
 
 	// ResultBytes is the size, in bytes, of the canonical JSON result payload when
 	// known. It is populated by the runtime when a tool result crosses a workflow
