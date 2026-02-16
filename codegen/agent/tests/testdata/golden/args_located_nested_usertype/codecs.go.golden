@@ -205,7 +205,7 @@ func UnmarshalSetStepStatusPayload(data []byte) (*SetStepStatusPayload, error) {
 	var out *SetStepStatusPayload
 	out = &SetStepStatusPayload{
 		StepID: *in.StepID,
-		Status: Status(*in.Status),
+		Status: types.Status(*in.Status),
 		Note:   in.Note,
 	}
 	return out, nil

@@ -5,13 +5,14 @@ import (
 	. "goa.design/goa/v3/dsl"
 )
 
-// ArgsLocatedNestedUserType returns a DSL where the tool payload aliases a
-// user type placed via struct:pkg:path (e.g. `types.*`) and that type references
-// another user type without an explicit locator.
+// ArgsLocatedNestedUserType returns a DSL where the tool payload aliases a user
+// type placed via struct:pkg:path (e.g. `types.*`) and that type references
+// another user type.
 //
-// Goa generates both user types in the located package. Tool specs generation
-// must therefore reference the located nested type (e.g. `types.Status`)
-// rather than materializing a conflicting local helper type.
+// With newer Goa versions, types that are forced into a located package must
+// ensure their dependencies are explicitly located as well. This scenario
+// exercises codegen for a tool payload whose nested references live in a
+// non-default package.
 func ArgsLocatedNestedUserType() func() {
 	return func() {
 		API("alpha", func() {})
@@ -20,6 +21,7 @@ func ArgsLocatedNestedUserType() func() {
 			Description("Lifecycle status for a step.")
 			Enum("pending", "in_progress", "completed", "blocked")
 			Example("in_progress")
+			Meta("struct:pkg:path", "types")
 		})
 
 		var StatusChanged = Type("StatusChangedEvent", func() {
