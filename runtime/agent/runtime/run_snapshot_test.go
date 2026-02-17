@@ -47,7 +47,7 @@ func TestNewRunSnapshotDerivesToolStateAndCompletion(t *testing.T) {
 	events := []*runlog.Event{
 		mk(t0, hooks.NewRunPhaseChangedEvent(runID, agentID, sessionID, run.PhasePlanning)),
 		mk(t1, hooks.NewToolCallScheduledEvent(runID, agentID, sessionID, tools.Ident("svc.tools.search"), "call-1", []byte(`{"q":"x"}`), "q", "", 0)),
-		mk(t2, hooks.NewToolResultReceivedEvent(runID, agentID, sessionID, tools.Ident("svc.tools.search"), "call-1", "", nil, nil, nil, "", nil, nil, 250*time.Millisecond, nil, nil, toolerrors.New("boom"))),
+		mk(t2, hooks.NewToolResultReceivedEvent(runID, agentID, sessionID, tools.Ident("svc.tools.search"), "call-1", "", nil, nil, nil, "", nil, 250*time.Millisecond, nil, nil, toolerrors.New("boom"))),
 		mk(t3, hooks.NewRunCompletedEvent(runID, agentID, sessionID, "failed", run.PhaseFailed, nil)),
 	}
 

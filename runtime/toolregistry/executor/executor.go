@@ -29,7 +29,7 @@ type (
 		CallTool(ctx context.Context, toolset string, tool tools.Ident, payload []byte, meta toolregistry.ToolCallMeta) (toolUseID string, resultStreamID string, err error)
 	}
 
-	// SpecLookup resolves tool specifications for decoding results and artifacts.
+	// SpecLookup resolves tool specifications for decoding results and server data.
 	SpecLookup interface {
 		Spec(name tools.Ident) (*tools.ToolSpec, bool)
 	}
@@ -312,7 +312,7 @@ func (e *Executor) decodeToolResult(spec *tools.ToolSpec, call *planner.ToolRequ
 		Name:       tool,
 		ToolCallID: toolCallID,
 	}
-	out.Server = marshalServerDataItems(filterServerDataItems(spec, call, msg.Server))
+	out.ServerData = marshalServerDataItems(cloneServerDataItems(msg.ServerData))
 	if msg.Error != nil {
 		out.Error = planner.NewToolError(msg.Error.Message)
 		if hint := buildRetryHintFromIssues(tool, spec, msg.Error.Issues); hint != nil {
@@ -332,67 +332,6 @@ func (e *Executor) decodeToolResult(spec *tools.ToolSpec, call *planner.ToolRequ
 			return out
 		}
 		out.Result = res
-	}
-	if sd := optionalServerDataSpec(spec); sd != nil && sd.Codec.FromJSON != nil && len(msg.Server) > 0 {
-		if tools.OptionalServerDataEnabled(call.ServerDataMode, spec.ServerDataDefault != "off") {
-			for _, item := range msg.Server {
-				if item == nil || item.Kind != sd.Kind || len(item.Data) == 0 {
-					continue
-				}
-				data, err := sd.Codec.FromJSON(item.Data)
-				if err != nil {
-					out.Error = planner.ToolErrorFromError(err)
-					return out
-				}
-				out.Artifacts = []*planner.Artifact{
-					{
-						Kind:       item.Kind,
-						Data:       data,
-						SourceTool: tool,
-					},
-				}
-				break
-			}
-		}
-	}
-	return out
-}
-
-func optionalServerDataSpec(spec *tools.ToolSpec) *tools.ServerDataSpec {
-	if spec == nil {
-		return nil
-	}
-	for _, sd := range spec.ServerData {
-		if sd != nil && sd.Mode == "optional" {
-			return sd
-		}
-	}
-	return nil
-}
-
-func filterServerDataItems(spec *tools.ToolSpec, call *planner.ToolRequest, items []*toolregistry.ServerDataItem) []*toolregistry.ServerDataItem {
-	if len(items) == 0 {
-		return nil
-	}
-	if spec == nil {
-		return cloneServerDataItems(items)
-	}
-	opt := optionalServerDataSpec(spec)
-	if opt == nil || call == nil || tools.OptionalServerDataEnabled(call.ServerDataMode, spec.ServerDataDefault != "off") {
-		return cloneServerDataItems(items)
-	}
-	out := make([]*toolregistry.ServerDataItem, 0, len(items))
-	for _, item := range items {
-		if item == nil {
-			continue
-		}
-		if item.Kind == opt.Kind {
-			continue
-		}
-		out = append(out, &toolregistry.ServerDataItem{
-			Kind: item.Kind,
-			Data: append(json.RawMessage(nil), item.Data...),
-		})
 	}
 	return out
 }

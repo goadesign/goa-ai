@@ -43,11 +43,13 @@ func TestSendPublishesEnvelope(t *testing.T) {
 	sink, err := NewSink(Options{Client: cli})
 	require.NoError(t, err)
 
-	endPayload := stream.ToolEndPayload{Result: json.RawMessage(`{"status":"ok"}`)}
+	endPayload := stream.ToolEndPayload{
+		Result:     json.RawMessage(`{"status":"ok"}`),
+		ServerData: server,
+	}
 	err = sink.Send(context.Background(), stream.ToolEnd{
-		Base:       stream.NewBase(stream.EventToolEnd, "run-123", "session-123", endPayload),
-		Data:       endPayload,
-		ServerData: append(json.RawMessage(nil), server...),
+		Base: stream.NewBase(stream.EventToolEnd, "run-123", "session-123", endPayload),
+		Data: endPayload,
 	})
 	require.NoError(t, err)
 	require.False(t, str.HasMore())

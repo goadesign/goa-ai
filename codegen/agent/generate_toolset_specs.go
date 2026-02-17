@@ -265,8 +265,11 @@ func toolsetProviderFile(genpkg string, ts *ToolsetData) *codegen.File {
 			continue
 		}
 		hasMethods = true
-		if len(t.AlwaysServerData) > 0 {
-			needsJSON = true
+		for _, sd := range t.ServerData {
+			if sd != nil && sd.MethodResultField != "" {
+				needsJSON = true
+				break
+			}
 		}
 	}
 	if !hasMethods {

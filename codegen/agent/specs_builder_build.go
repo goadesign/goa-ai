@@ -37,14 +37,10 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 		if err != nil {
 			return nil, err
 		}
-		var optionalServerDataType *typeData
-		if tool.OptionalServerData != nil && tool.OptionalServerData.Schema != nil && tool.OptionalServerData.Schema.Type != goaexpr.Empty {
-			optionalServerDataType, err = builder.typeFor(tool, tool.OptionalServerData.Schema, usageSidecar)
-			if err != nil {
-				return nil, err
-			}
+		serverDataEntries, err := serverDataEntriesForTool(tool, builder)
+		if err != nil {
+			return nil, err
 		}
-		serverDataEntries := serverDataEntriesForTool(tool, optionalServerDataType)
 		metaPairs := toolMetaPairs(tool.Meta)
 		entry := &toolEntry{
 			// Name is the qualified tool ID used at runtime (toolset.tool).
@@ -56,7 +52,6 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 			Toolset:            toolsetName(tool),
 			Description:        tool.Description,
 			ServerData:         serverDataEntries,
-			ServerDataDefault:  serverDataDefault(tool),
 			Tags:               tool.Tags,
 			Meta:               tool.Meta,
 			MetaPairs:          metaPairs,
@@ -64,7 +59,6 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 			ExportingAgentID:   tool.ExportingAgentID,
 			Payload:            payload,
 			Result:             result,
-			OptionalServerData: optionalServerDataType,
 			BoundedResult:      tool.BoundedResult,
 			TerminalRun:        tool.TerminalRun,
 			Paging:             tool.Paging,
@@ -118,8 +112,11 @@ func (d *toolSpecsData) addTool(entry *toolEntry) {
 	d.tools = append(d.tools, entry)
 	d.addType(entry.Payload)
 	d.addType(entry.Result)
-	if entry.OptionalServerData != nil {
-		d.addType(entry.OptionalServerData)
+	for _, sd := range entry.ServerData {
+		if sd == nil {
+			continue
+		}
+		d.addType(sd.Type)
 	}
 }
 
@@ -374,14 +371,6 @@ func (d *toolSpecsData) codecsImports() []*codegen.ImportSpec {
 			base = append(base, extra[p])
 		}
 	}
-	// Optional server-data helpers depend on planner.ToolResult when any tool declares
-	// a typed optional payload.
-	for _, t := range d.tools {
-		if t != nil && t.OptionalServerData != nil {
-			base = append(base, codegen.SimpleImport("goa.design/goa-ai/runtime/agent/planner"))
-			break
-		}
-	}
 	if needsGoa {
 		base = append(base, codegen.GoaImport(""))
 	}
@@ -415,46 +404,30 @@ func (d *toolSpecsData) transportTypeImports() []*codegen.ImportSpec {
 	return imports
 }
 
-func serverDataEntriesForTool(tool *ToolData, uiServerDataType *typeData) []*serverDataEntry {
+func serverDataEntriesForTool(tool *ToolData, builder *toolSpecBuilder) ([]*serverDataEntry, error) {
 	if tool == nil || len(tool.ServerData) == 0 {
-		return nil
+		return nil, nil
 	}
 	out := make([]*serverDataEntry, 0, len(tool.ServerData))
 	for _, sd := range tool.ServerData {
 		if sd == nil || strings.TrimSpace(sd.Kind) == "" {
 			continue
 		}
-		mode := strings.TrimSpace(sd.Mode)
-		if mode == "" {
-			mode = "optional"
+		if sd.Schema == nil || sd.Schema.Type == nil || sd.Schema.Type == goaexpr.Empty {
+			return nil, fmt.Errorf("tool %q: ServerData(%q) missing schema", tool.QualifiedName, sd.Kind)
 		}
-		entry := &serverDataEntry{
+		td, err := builder.buildTypeInfo(tool, sd.Schema, usageSidecar, sd.Kind)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, &serverDataEntry{
 			Kind:        sd.Kind,
-			Mode:        mode,
 			Description: sd.Description,
-		}
-		switch mode {
-		case "optional":
-			if uiServerDataType != nil {
-				entry.CodecExpr = uiServerDataType.GenericCodec
-			}
-		case "always":
-			entry.CodecExpr = "tools.JSONCodec[any]{}"
-		}
-		out = append(out, entry)
+			Type:        td,
+		})
 	}
 	if len(out) == 0 {
-		return nil
+		return nil, nil
 	}
-	return out
-}
-
-func serverDataDefault(tool *ToolData) string {
-	if tool == nil || tool.OptionalServerData == nil {
-		return ""
-	}
-	if tool.ServerDataDefaultOn {
-		return ""
-	}
-	return "off"
+	return out, nil
 }

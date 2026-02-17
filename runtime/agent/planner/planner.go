@@ -162,12 +162,6 @@ type ToolRequest struct {
 	// Payload is the canonical JSON payload for the tool call.
 	Payload json.RawMessage
 
-	// ServerDataMode is the normalized per-call toggle selected by the caller
-	// (typically the model) via the reserved `server_data` payload field.
-	// Valid values are tools.ServerDataModeAuto, tools.ServerDataModeOn, and
-	// tools.ServerDataModeOff. When empty, the caller did not specify a mode.
-	ServerDataMode tools.ServerDataMode
-
 	// AgentID is the identifier of the agent that issued this tool request.
 	AgentID agent.Ident
 
@@ -188,27 +182,6 @@ type ToolRequest struct {
 	ParentToolCallID string
 }
 
-// Artifact carries non-model data produced alongside a tool result.
-// Artifacts are not sent to model providers; they are surfaced to
-// hooks, streams, and UIs for rich visualization and provenance.
-type Artifact struct {
-	// Kind identifies the logical shape of this artifact
-	// (for example, "atlas.time_series" or "atlas.control_narrative").
-	// UIs dispatch renderers based on Kind.
-	Kind string
-
-	// Data contains the artifact payload. It must be JSON-serializable.
-	Data any
-
-	// SourceTool is the fully-qualified tool identifier that produced
-	// this artifact. It is used for provenance and debugging.
-	SourceTool tools.Ident
-
-	// RunLink links this artifact to a nested agent run when it was
-	// produced by an agent-as-tool. Nil for service-backed tools.
-	RunLink *run.Handle
-}
-
 // ToolResult captures the outcome of a tool invocation.
 type ToolResult struct {
 	// Name is the fully-qualified tool identifier that produced this result.
@@ -218,12 +191,15 @@ type ToolResult struct {
 	// tool's result schema and codec.
 	Result any
 
-	// Server carries server-only metadata emitted by tool providers (for example,
-	// evidence/provenance references) that must not be sent to model providers.
+	// ServerData carries server-only data emitted by tool providers (for example,
+	// UI projections, evidence, or provenance records) that must not be sent to
+	// model providers.
 	//
-	// This payload is treated as opaque JSON bytes by the runtime; sinks may use
-	// it for persistence and internal policy decisions.
-	Server json.RawMessage
+	// Contract:
+	//   - This is canonical JSON bytes (typically a JSON array of server-data items).
+	//   - The runtime treats the payload as opaque bytes; sinks and UIs decode it
+	//     using the tool specs/codecs for the corresponding kinds.
+	ServerData json.RawMessage
 
 	// ResultBytes is the size, in bytes, of the canonical JSON result payload when
 	// known. It is populated by the runtime when a tool result crosses a workflow
@@ -245,11 +221,6 @@ type ToolResult struct {
 	//
 	// Example values: "workflow_budget".
 	ResultOmittedReason string
-
-	// Artifacts carries non-model data produced alongside the tool
-	// result (for example, UI artifacts or policy annotations). Artifacts
-	// are never sent to model providers.
-	Artifacts []*Artifact
 
 	// Bounds, when non-nil, describes how the result has been bounded relative
 	// to the full underlying data set (for example, list/window/graph caps).

@@ -185,15 +185,6 @@ func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 	}
 }
 
-// ServerDataCodec returns the generic codec for the named tool optional
-// server-data payload when declared.
-func ServerDataCodec(name string) (*tools.JSONCodec[any], bool) {
-	switch name {
-	default:
-		return nil, false
-	}
-}
-
 // MarshalValidatePayload serializes *ValidatePayload into JSON.
 func MarshalValidatePayload(v *ValidatePayload) ([]byte, error) {
 	if v == nil {

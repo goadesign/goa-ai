@@ -290,47 +290,13 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		if evt.ToolName == "" {
 			return errors.New("stream: tool_end missing tool_name")
 		}
-		var artifacts []ArtifactPayload
-		if len(evt.Artifacts) > 0 {
-			artifacts = make([]ArtifactPayload, 0, len(evt.Artifacts))
-			for _, a := range evt.Artifacts {
-				if a.Kind == "" {
-					return fmt.Errorf("stream: tool_end %s has artifact with empty kind", evt.ToolName)
-				}
-				if a.SourceTool == "" {
-					return fmt.Errorf("stream: tool_end %s has artifact %q with empty source_tool", evt.ToolName, a.Kind)
-				}
-				ap := ArtifactPayload{
-					Kind:       a.Kind,
-					Data:       nil,
-					SourceTool: string(a.SourceTool),
-				}
-				switch v := a.Data.(type) {
-				case json.RawMessage:
-					ap.Data = append([]byte(nil), v...)
-				case []byte:
-					ap.Data = append([]byte(nil), v...)
-				default:
-					return fmt.Errorf("stream: tool_end %s has non-canonical artifact %q data type %T", evt.ToolName, a.Kind, a.Data)
-				}
-				if a.RunLink != nil {
-					ap.RunLink = &RunLinkPayload{
-						RunID:            a.RunLink.RunID,
-						AgentID:          a.RunLink.AgentID,
-						ParentRunID:      a.RunLink.ParentRunID,
-						ParentToolCallID: a.RunLink.ParentToolCallID,
-					}
-				}
-				artifacts = append(artifacts, ap)
-			}
-		}
 		payload := ToolEndPayload{
 			ToolCallID:       evt.ToolCallID,
 			ParentToolCallID: evt.ParentToolCallID,
 			ToolName:         string(evt.ToolName),
 			Result:           evt.ResultJSON,
 			Bounds:           evt.Bounds,
-			Artifacts:        artifacts,
+			ServerData:       append(json.RawMessage(nil), evt.ServerData...),
 			Duration:         evt.Duration,
 			Telemetry:        evt.Telemetry,
 			RetryHint:        evt.RetryHint,
@@ -340,9 +306,8 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			payload.ResultPreview = preview
 		}
 		return s.sink.Send(ctx, ToolEnd{
-			Base:   Base{t: EventToolEnd, r: evt.RunID(), s: evt.SessionID(), p: payload},
-			Data:   payload,
-			ServerData: append(json.RawMessage(nil), evt.Server...),
+			Base: Base{t: EventToolEnd, r: evt.RunID(), s: evt.SessionID(), p: payload},
+			Data: payload,
 		})
 	case *hooks.ToolCallUpdatedEvent:
 		if !s.profile.ToolUpdate {

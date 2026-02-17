@@ -66,7 +66,7 @@ type (
 	//
 	// This exists to keep function signatures and call sites small and readable:
 	// the batch execution flow is conceptually a single operation, but it needs a
-	// lot of shared metadata (run IDs, timers, artifact mode bookkeeping) to be
+	// lot of shared metadata (run IDs, timers) to be
 	// propagated consistently to hooks and result contracts.
 	toolBatchExec struct {
 		r *Runtime
@@ -83,8 +83,6 @@ type (
 		expectedChildren int
 		parentTracker    *childTracker
 		finishBy         time.Time
-
-		serverDataModeByCallID map[string]tools.ServerDataMode
 	}
 )
 
@@ -97,7 +95,7 @@ func collectToolCallIDs(calls []planner.ToolRequest) []string {
 	return ids
 }
 
-func (e *toolBatchExec) normalizeToolCall(call planner.ToolRequest, i int) (planner.ToolRequest, error) {
+func (e *toolBatchExec) normalizeToolCall(call planner.ToolRequest, i int) planner.ToolRequest {
 	if call.SessionID == "" {
 		call.SessionID = e.sessionID
 	}
@@ -117,22 +115,7 @@ func (e *toolBatchExec) normalizeToolCall(call planner.ToolRequest, i int) (plan
 	if call.ParentToolCallID == "" && e.runCtx != nil && e.runCtx.ParentToolCallID != "" {
 		call.ParentToolCallID = e.runCtx.ParentToolCallID
 	}
-
-	mode := call.ServerDataMode
-	stripped := call.Payload
-	if mode == "" {
-		var err error
-		mode, stripped, err = extractServerDataMode(call.Payload)
-		if err != nil {
-			return planner.ToolRequest{}, err
-		}
-	}
-	call.ServerDataMode = mode
-	if mode != "" {
-		e.serverDataModeByCallID[call.ToolCallID] = mode
-	}
-	call.Payload = stripped
-	return call, nil
+	return call
 }
 
 func parentToolCallID(call planner.ToolRequest, runCtx *run.Context) string {
@@ -174,7 +157,7 @@ func (e *toolBatchExec) synthesizeToolError(ctx context.Context, call planner.To
 	if !ok {
 		return e.synthesizeUnknownToolResult(ctx, call, duration)
 	}
-	if err := e.r.enforceToolResultContracts(spec, call, toolErr, toolRes, e.serverDataModeByCallID); err != nil {
+	if err := e.r.enforceToolResultContracts(spec, call, toolErr, toolRes); err != nil {
 		return nil, err
 	}
 
@@ -209,7 +192,7 @@ func (e *toolBatchExec) synthesizeUnknownToolResult(ctx context.Context, call pl
 	return tr, nil
 }
 
-func (r *Runtime) enforceToolResultContracts(spec tools.ToolSpec, call planner.ToolRequest, toolErr *planner.ToolError, tr *planner.ToolResult, serverDataModeByCallID map[string]tools.ServerDataMode) error {
+func (r *Runtime) enforceToolResultContracts(spec tools.ToolSpec, call planner.ToolRequest, toolErr *planner.ToolError, tr *planner.ToolResult) error {
 	if tr == nil {
 		return fmt.Errorf("CRITICAL: nil tool result for %q (%s)", call.Name, call.ToolCallID)
 	}
@@ -223,86 +206,29 @@ func (r *Runtime) enforceToolResultContracts(spec tools.ToolSpec, call planner.T
 	if spec.BoundedResult && toolErr == nil && tr.Bounds == nil {
 		return fmt.Errorf("bounded tool %q returned result without bounds (tool_call_id=%s, type=%T)", call.Name, call.ToolCallID, tr.Result)
 	}
-	if serverDataDisabled(serverDataModeByCallID[call.ToolCallID]) {
-		tr.Artifacts = nil
-	}
 	return nil
 }
 
 func (e *toolBatchExec) publishToolResultReceived(ctx context.Context, call planner.ToolRequest, tr *planner.ToolResult, resultJSON json.RawMessage, duration time.Duration) error {
 	parentID := parentToolCallID(call, e.runCtx)
-	if err := e.r.normalizeToolArtifacts(ctx, call.Name, tr); err != nil {
-		return err
-	}
-	ev := hooks.NewToolResultReceivedEvent(e.runID, e.agentID, e.sessionID, call.Name, call.ToolCallID, parentID, tr.Result, resultJSON, tr.Server, formatResultPreview(call.Name, tr.Result), tr.Bounds, tr.Artifacts, duration, tr.Telemetry, tr.RetryHint, tr.Error)
+	ev := hooks.NewToolResultReceivedEvent(
+		e.runID,
+		e.agentID,
+		e.sessionID,
+		call.Name,
+		call.ToolCallID,
+		parentID,
+		tr.Result,
+		resultJSON,
+		tr.ServerData,
+		formatResultPreview(call.Name, tr.Result),
+		tr.Bounds,
+		duration,
+		tr.Telemetry,
+		tr.RetryHint,
+		tr.Error,
+	)
 	return e.r.publishHook(ctx, ev, e.turnID)
-}
-
-func (r *Runtime) normalizeToolArtifacts(ctx context.Context, toolName tools.Ident, tr *planner.ToolResult) error {
-	if tr == nil || len(tr.Artifacts) == 0 {
-		return nil
-	}
-	spec, ok := r.toolSpec(toolName)
-	if !ok {
-		return fmt.Errorf("unknown tool %q", toolName)
-	}
-	sd, ok := optionalServerDataSpec(spec)
-	if !ok || sd.Codec.ToJSON == nil || sd.Codec.FromJSON == nil {
-		return fmt.Errorf("tool %q produced artifacts but has no optional server-data codec", toolName)
-	}
-	for _, a := range tr.Artifacts {
-		if a == nil {
-			return fmt.Errorf("CRITICAL: tool %q returned nil artifact entry", toolName)
-		}
-		switch v := a.Data.(type) {
-		case json.RawMessage:
-			decoded, err := sd.Codec.FromJSON(v)
-			if err != nil {
-				return fmt.Errorf("decode tool artifact for %s (%s): %w", toolName, a.Kind, err)
-			}
-			canonical, err := sd.Codec.ToJSON(decoded)
-			if err != nil {
-				r.logger.Warn(ctx, "tool artifact encode failed", "tool", toolName, "kind", a.Kind, "err", err)
-				return fmt.Errorf("encode tool artifact for %s (%s): %w", toolName, a.Kind, err)
-			}
-			a.Data = json.RawMessage(canonical)
-			continue
-		case []byte:
-			if len(v) == 0 {
-				continue
-			}
-			if !json.Valid(v) {
-				return fmt.Errorf("decode tool artifact for %s (%s): invalid JSON bytes", toolName, a.Kind)
-			}
-			decoded, err := sd.Codec.FromJSON(v)
-			if err != nil {
-				return fmt.Errorf("decode tool artifact for %s (%s): %w", toolName, a.Kind, err)
-			}
-			canonical, err := sd.Codec.ToJSON(decoded)
-			if err != nil {
-				r.logger.Warn(ctx, "tool artifact encode failed", "tool", toolName, "kind", a.Kind, "err", err)
-				return fmt.Errorf("encode tool artifact for %s (%s): %w", toolName, a.Kind, err)
-			}
-			a.Data = json.RawMessage(canonical)
-			continue
-		}
-		raw, err := sd.Codec.ToJSON(a.Data)
-		if err != nil {
-			r.logger.Warn(ctx, "tool artifact encode failed", "tool", toolName, "kind", a.Kind, "err", err)
-			return fmt.Errorf("encode tool artifact for %s (%s): %w", toolName, a.Kind, err)
-		}
-		a.Data = json.RawMessage(raw)
-	}
-	return nil
-}
-
-func optionalServerDataSpec(spec tools.ToolSpec) (*tools.ServerDataSpec, bool) {
-	for _, sd := range spec.ServerData {
-		if sd != nil && sd.Mode == "optional" {
-			return sd, true
-		}
-	}
-	return nil, false
 }
 
 func (e *toolBatchExec) publishToolCallScheduled(ctx context.Context, call planner.ToolRequest, queue string) error {
@@ -337,11 +263,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 	}
 
 	for i, call := range calls {
-		normalized, err := e.normalizeToolCall(call, i)
-		if err != nil {
-			return nil, err
-		}
-		call = normalized
+		call = e.normalizeToolCall(call, i)
 		b.calls[i] = call
 
 		spec, hasSpec := e.r.toolSpec(call.Name)
@@ -381,7 +303,6 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 					TurnID:           call.TurnID,
 					ToolCallID:       call.ToolCallID,
 					ParentToolCallID: call.ParentToolCallID,
-					ServerDataMode:   call.ServerDataMode,
 				}
 				if adapted, err := ts.PayloadAdapter(ctx, meta, call.Name, raw); err == nil && len(adapted) > 0 {
 					raw = adapted
@@ -433,7 +354,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 						}
 					}
 					tr.RetryHint = hint
-					if err := e.r.enforceToolResultContracts(spec, call, toolErr, tr, e.serverDataModeByCallID); err != nil {
+					if err := e.r.enforceToolResultContracts(spec, call, toolErr, tr); err != nil {
 						return nil, err
 					}
 					if err := e.publishToolResultReceived(ctx, call, tr, nil, 0); err != nil {
@@ -503,7 +424,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 			if result.Error != nil {
 				toolErr = result.Error
 			}
-			if err := e.r.enforceToolResultContracts(spec, call, toolErr, result, e.serverDataModeByCallID); err != nil {
+			if err := e.r.enforceToolResultContracts(spec, call, toolErr, result); err != nil {
 				return nil, err
 			}
 			var resultJSON json.RawMessage
@@ -531,7 +452,6 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 			ToolName:         call.Name,
 			ToolCallID:       call.ToolCallID,
 			Payload:          call.Payload,
-			ServerDataMode:   call.ServerDataMode,
 			SessionID:        call.SessionID,
 			TurnID:           call.TurnID,
 			ParentToolCallID: call.ParentToolCallID,
@@ -642,8 +562,7 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 			toolRes := &planner.ToolResult{
 				Name:       info.call.Name,
 				Result:     decoded,
-				Server:     out.Server,
-				Artifacts:  decodeToolArtifacts(out.Artifacts),
+				ServerData: out.ServerData,
 				ToolCallID: info.call.ToolCallID,
 				Telemetry:  out.Telemetry,
 			}
@@ -652,7 +571,7 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 				toolErr = planner.NewToolError(out.Error)
 				toolRes.Error = toolErr
 			}
-			if err := e.r.enforceToolResultContracts(spec, info.call, toolErr, toolRes, e.serverDataModeByCallID); err != nil {
+			if err := e.r.enforceToolResultContracts(spec, info.call, toolErr, toolRes); err != nil {
 				return nil, nil, false, err
 			}
 			if out.RetryHint != nil {
@@ -687,27 +606,6 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 		}
 	}
 	return activityByID, nil, false, nil
-}
-
-func decodeToolArtifacts(in []*ToolArtifact) []*planner.Artifact {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]*planner.Artifact, 0, len(in))
-	for _, a := range in {
-		if a == nil {
-			continue
-		}
-		out = append(out, &planner.Artifact{
-			Kind:       a.Kind,
-			Data:       a.Data,
-			SourceTool: a.SourceTool,
-		})
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }
 
 func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, children []agentChildFutureInfo, finalizeTimer engine.Future[time.Time]) (map[string]*planner.ToolResult, []agentChildFutureInfo, bool, error) {
@@ -779,7 +677,7 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 				out[info.call.ToolCallID] = tr
 				continue
 			}
-			if err := e.r.enforceToolResultContracts(spec, info.call, toolErr, tr, e.serverDataModeByCallID); err != nil {
+			if err := e.r.enforceToolResultContracts(spec, info.call, toolErr, tr); err != nil {
 				return nil, nil, false, err
 			}
 
@@ -844,7 +742,6 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 		expectedChildren:       expectedChildren,
 		parentTracker:          parentTracker,
 		finishBy:               finishBy,
-		serverDataModeByCallID: make(map[string]tools.ServerDataMode, len(calls)),
 	}
 
 	ctx := wfCtx.Context()
@@ -852,11 +749,7 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 		const cancelMsg = "canceled: time budget reached"
 		results := make([]*planner.ToolResult, 0, len(calls))
 		for i, call := range calls {
-			normalized, err := exec.normalizeToolCall(call, i)
-			if err != nil {
-				return nil, false, err
-			}
-			call = normalized
+			call = exec.normalizeToolCall(call, i)
 			queue := ""
 			spec, ok := r.toolSpec(call.Name)
 			if ok {
@@ -878,7 +771,7 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 				Error:      toolErr,
 			}
 			if ok {
-				if err := r.enforceToolResultContracts(spec, call, toolErr, tr, exec.serverDataModeByCallID); err != nil {
+				if err := r.enforceToolResultContracts(spec, call, toolErr, tr); err != nil {
 					return nil, false, err
 				}
 			}
@@ -970,7 +863,7 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 			}
 			spec, ok := r.toolSpec(info.call.Name)
 			if ok {
-				if err := r.enforceToolResultContracts(spec, info.call, toolErr, tr, exec.serverDataModeByCallID); err != nil {
+				if err := r.enforceToolResultContracts(spec, info.call, toolErr, tr); err != nil {
 					return nil, false, err
 				}
 			}
@@ -996,7 +889,7 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 			}
 			spec, ok := r.toolSpec(info.call.Name)
 			if ok {
-				if err := r.enforceToolResultContracts(spec, info.call, toolErr, tr, exec.serverDataModeByCallID); err != nil {
+				if err := r.enforceToolResultContracts(spec, info.call, toolErr, tr); err != nil {
 					return nil, false, err
 				}
 			}

@@ -555,49 +555,6 @@ func filterToolCalls(calls []planner.ToolRequest, allowed []tools.Ident) []plann
 	return filtered
 }
 
-// serverDataDisabled reports whether the server-data mode explicitly disables
-// optional server-data emission for a tool call.
-func serverDataDisabled(mode tools.ServerDataMode) bool {
-	return mode == tools.ServerDataModeOff
-}
-
-// normalizeServerDataMode canonicalizes the user-provided server-data toggle.
-// Valid values are "auto", "on", and "off". Unknown values return "".
-func normalizeServerDataMode(raw string) tools.ServerDataMode {
-	return tools.ParseServerDataMode(raw)
-}
-
-// extractServerDataMode extracts the reserved "server_data" field from a tool call
-// payload (if present), returns its normalized value, and returns a copy of the
-// payload with the field removed.
-//
-// The function only attempts extraction for JSON objects; non-object payloads
-// are returned unchanged.
-func extractServerDataMode(raw json.RawMessage) (tools.ServerDataMode, json.RawMessage, error) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || trimmed[0] != '{' {
-		return "", raw, nil
-	}
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(trimmed, &obj); err != nil {
-		return "", raw, fmt.Errorf("decode tool payload JSON: %w", err)
-	}
-	field, ok := obj["server_data"]
-	if !ok {
-		return "", raw, nil
-	}
-	var modeVal string
-	if err := json.Unmarshal(field, &modeVal); err != nil {
-		return "", raw, fmt.Errorf("decode server_data mode: %w", err)
-	}
-	delete(obj, "server_data")
-	stripped, err := json.Marshal(obj)
-	if err != nil {
-		return "", raw, fmt.Errorf("strip server_data mode: %w", err)
-	}
-	return normalizeServerDataMode(modeVal), stripped, nil
-}
-
 // ConvertRunOutputToToolResult converts a nested agent RunOutput into a
 // planner.ToolResult suitable for returning from an agent-as-tool executor.
 //
@@ -605,10 +562,9 @@ func extractServerDataMode(raw json.RawMessage) (tools.ServerDataMode, json.RawM
 // Telemetry from all nested tool executions is aggregated into a single ToolTelemetry
 // summary, enabling proper cost/token tracking across agent-as-tool boundaries.
 //
-// Artifacts are intentionally NOT propagated to the parent tool result. Artifacts must
-// remain attached to the tool events that produced them so that:
-//   - only tools that declare a sidecar schema/codec can emit artifacts, and
-//   - UIs can render artifacts at the correct tool result node in nested tool trees.
+// Server data is intentionally NOT projected or merged into the parent tool result.
+// Server data must remain attached to the tool events that produced it so UIs and
+// sinks can render/ingest it at the correct node in nested tool trees.
 //
 // Error propagation: If the nested agent executed tools and ALL of them failed, the
 // ToolResult.Error field is set with a summary. This allows the parent planner to

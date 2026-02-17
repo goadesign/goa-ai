@@ -63,9 +63,6 @@ type (
 		// ServerData enumerates server-only payloads emitted alongside the tool
 		// result. Server data is never sent to model providers.
 		ServerData []*serverDataEntry
-		// ServerDataDefault is the default mode for optional server-data emission.
-		// Empty means default "on".
-		ServerDataDefault string
 		// Classification tags for policy and filtering.
 		Tags []string
 		// Meta carries arbitrary design-time metadata attached to the tool via DSL.
@@ -82,8 +79,6 @@ type (
 		Payload *typeData
 		// Type metadata for the tool's output result.
 		Result *typeData
-		// Type metadata for the optional server-data payload.
-		OptionalServerData *typeData
 		// BoundedResult indicates that this tool's result is declared as a bounded
 		// view over a potentially larger data set (set via the BoundedResult DSL
 		// helper). It is propagated into ToolSpec for runtime consumers.
@@ -102,9 +97,8 @@ type (
 
 	serverDataEntry struct {
 		Kind        string
-		Mode        string
 		Description string
-		CodecExpr   string
+		Type        *typeData
 	}
 
 	toolMetaPair struct {

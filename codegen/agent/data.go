@@ -409,14 +409,12 @@ type (
 	ServerDataData struct {
 		// Kind is the server-data kind identifier.
 		Kind string
-		// Mode is the emission mode: "optional" or "always".
-		Mode string
-		// Schema is the typed schema when Mode == "optional".
+		// Schema is the typed schema for the server-data payload.
 		Schema *goaexpr.AttributeExpr
-		// Description describes the observer-facing rendering contract when Mode == "optional".
+		// Description describes the observer-facing rendering contract.
 		Description string
-		// MethodResultField is the bound method result field name when Mode == "always"
-		// and sourced from a method result field.
+		// MethodResultField is the bound method result field name when the payload
+		// is sourced from a method result field.
 		MethodResultField string
 	}
 
@@ -466,17 +464,6 @@ type (
 		// ServerData enumerates server-only payloads emitted alongside the tool
 		// result. Server data is never sent to model providers.
 		ServerData []*ServerDataData
-		// OptionalServerData points at the optional server-data declaration when present.
-		// At most one optional server-data entry is supported per tool.
-		OptionalServerData *ServerDataData
-		// AlwaysServerData lists always-on server-data declarations.
-		AlwaysServerData []*ServerDataData
-		// ServerDataDefaultOn controls the default emission behavior for optional
-		// server-data when the caller does not explicitly set the reserved
-		// `server_data` mode (or sets it to "auto"). When true, executors may
-		// attach optional server-data by default; when false, optional server-data is
-		// attached only when explicitly requested via `server_data:"on"`.
-		ServerDataDefaultOn bool
 		// MethodPayloadAttr is the Goa attribute for the bound service payload
 		// (resolved user type). Used to generate default payload adapters.
 		MethodPayloadAttr *goaexpr.AttributeExpr
@@ -1242,10 +1229,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		Paging:             pagingData(expr.Paging),
 		ResultReminder:     expr.ResultReminder,
 	}
-	tool.ServerData, tool.OptionalServerData, tool.AlwaysServerData = serverDataData(expr.ServerData, qualified)
-	if tool.OptionalServerData != nil {
-		tool.ServerDataDefaultOn = expr.ServerDataDefault != "off"
-	}
+	tool.ServerData = serverDataData(expr.ServerData, qualified)
 	if expr.Confirmation != nil {
 		tool.Confirmation = &ToolConfirmationData{
 			Title:                expr.Confirmation.Title,
@@ -1341,45 +1325,29 @@ func pagingData(p *agentsExpr.ToolPagingExpr) *ToolPagingData {
 	}
 }
 
-func serverDataData(exprs []*agentsExpr.ServerDataExpr, qualified string) ([]*ServerDataData, *ServerDataData, []*ServerDataData) {
+func serverDataData(exprs []*agentsExpr.ServerDataExpr, qualified string) []*ServerDataData {
 	if len(exprs) == 0 {
-		return nil, nil, nil
+		return nil
 	}
-	const (
-		serverDataModeOptional = "optional"
-		serverDataModeAlways   = "always"
-	)
 	out := make([]*ServerDataData, 0, len(exprs))
-	var optional *ServerDataData
-	var always []*ServerDataData
 	for _, sd := range exprs {
-		mode := sd.Mode
-		if mode == "" {
-			mode = serverDataModeOptional
-		}
 		item := &ServerDataData{
 			Kind: defaultString(sd.Kind, qualified),
-			Mode: mode,
+			Schema: sd.Schema,
 		}
-		switch mode {
-		case serverDataModeOptional:
-			item.Schema = sd.Schema
+		item.Description = strings.TrimSpace(sd.Description)
+		if item.Description == "" {
 			item.Description = serverDataDescription(sd.Schema)
-			optional = item
-		case serverDataModeAlways:
-			if sd.Source != nil {
-				item.MethodResultField = strings.TrimSpace(sd.Source.MethodResultField)
-			}
-			always = append(always, item)
-		default:
-			panic(fmt.Sprintf("unexpected server-data mode %q", mode))
+		}
+		if sd.Source != nil {
+			item.MethodResultField = strings.TrimSpace(sd.Source.MethodResultField)
 		}
 		out = append(out, item)
 	}
 	if len(out) == 0 {
-		return nil, nil, nil
+		return nil
 	}
-	return out, optional, always
+	return out
 }
 
 // serverDataDescription returns a human-facing description for an optional server-data

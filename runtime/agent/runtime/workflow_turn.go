@@ -21,7 +21,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
@@ -116,22 +115,12 @@ func (r *Runtime) handleToolTurn(
 		r.recordAssistantTurn(base, st.Transcript, toExecute, st.Ledger)
 	}
 
-	serverDataModeByCallID := make(map[string]tools.ServerDataMode, len(toExecute))
 	execCalls := make([]planner.ToolRequest, len(toExecute))
 	for i := range toExecute {
 		call := toExecute[i]
 		if call.ToolCallID == "" {
 			call.ToolCallID = generateDeterministicToolCallID(base.RunContext.RunID, call.TurnID, base.RunContext.Attempt, call.Name, i)
 		}
-		mode, stripped, err := extractServerDataMode(call.Payload)
-		if err != nil {
-			return nil, err
-		}
-		call.ServerDataMode = mode
-		if mode != "" {
-			serverDataModeByCallID[call.ToolCallID] = mode
-		}
-		call.Payload = stripped
 		execCalls[i] = call
 	}
 
@@ -146,7 +135,7 @@ func (r *Runtime) handleToolTurn(
 	}
 	lastToolResults := vals
 	st.ToolEvents = append(st.ToolEvents, cloneToolResults(vals)...)
-	if err := r.appendUserToolResults(base, toExecute, vals, st.Ledger, serverDataModeByCallID); err != nil {
+	if err := r.appendUserToolResults(base, toExecute, vals, st.Ledger); err != nil {
 		return nil, err
 	}
 	if timedOut {

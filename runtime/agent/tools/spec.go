@@ -66,12 +66,11 @@ type (
 		Paging *PagingSpec
 		// ServerData enumerates server-only payloads emitted alongside the tool
 		// result. Server data is never sent to model providers.
+		//
+		// Each entry declares the schema and codec for the item data payload
+		// (`toolregistry.ServerDataItem.Data`) so runtimes and consumers can decode
+		// and validate it without runtime design introspection.
 		ServerData []*ServerDataSpec
-		// ServerDataDefault controls whether optional server-data is produced by default
-		// when the caller does not explicitly set the reserved `server_data` mode
-		// (or sets it to "auto"). Valid values are "on" and "off". When empty,
-		// the default is "on".
-		ServerDataDefault string
 		// ResultReminder is an optional system reminder injected into the
 		// conversation after the tool result is returned. It provides backstage
 		// guidance to the model about how to interpret or present the result
@@ -93,15 +92,10 @@ type (
 	ServerDataSpec struct {
 		// Kind identifies the server-data kind.
 		Kind string
-		// Mode controls emission semantics for this entry. Valid values are
-		// "optional" and "always".
-		Mode string
 		// Description describes what an observer sees when this payload is rendered.
-		// Only meaningful when Mode == "optional".
 		Description string
-		// Codec decodes the JSON payload for this server-data entry.
-		// Only meaningful when Mode == "optional".
-		Codec JSONCodec[any]
+		// Type describes the schema and JSON codec for this server-data payload.
+		Type TypeSpec
 	}
 
 	// PagingSpec describes cursor-based pagination for a tool.

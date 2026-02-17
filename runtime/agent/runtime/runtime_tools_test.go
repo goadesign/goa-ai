@@ -55,7 +55,7 @@ func TestExecuteToolActivityPropagatesServerData(t *testing.T) {
 			Name:       call.Name,
 			ToolCallID: call.ToolCallID,
 			Result:     map[string]any{"ok": true},
-			Server: json.RawMessage(
+			ServerData: json.RawMessage(
 				`[{"kind":"aura.evidence","data":[{"uri":"atlas://points/123","kind":"time_series"}]}]`,
 			),
 		}, nil
@@ -67,7 +67,7 @@ func TestExecuteToolActivityPropagatesServerData(t *testing.T) {
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	require.JSONEq(t, `[{"kind":"aura.evidence","data":[{"uri":"atlas://points/123","kind":"time_series"}]}]`, string(out.Server))
+	require.JSONEq(t, `[{"kind":"aura.evidence","data":[{"uri":"atlas://points/123","kind":"time_series"}]}]`, string(out.ServerData))
 }
 
 func TestRegisterToolset_RejectsAgentToolsetWithoutSpecs(t *testing.T) {
@@ -86,37 +86,6 @@ func TestRegisterToolset_RejectsAgentToolsetWithoutSpecs(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrInvalidConfig)
 	require.Contains(t, err.Error(), "requires tool specs")
-}
-
-func TestExecuteToolActivityRequiresArtifactsWhenSidecarDeclared(t *testing.T) {
-	rt := &Runtime{
-		toolsets: map[string]ToolsetRegistration{
-			"svc.ts": {
-				Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
-					return &planner.ToolResult{
-						Name:       call.Name,
-						ToolCallID: call.ToolCallID,
-						Result:     map[string]any{"ok": true},
-					}, nil
-				},
-			},
-		},
-	}
-	spec := newAnyJSONSpec("tool", "svc.ts")
-	spec.ServerData = []*tools.ServerDataSpec{
-		{
-			Kind:        "tool.server_data",
-			Mode:        "optional",
-			Description: "Optional server-data",
-			Codec:       tools.AnyJSONCodec,
-		},
-	}
-	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
-		tools.Ident("tool"): spec,
-	}
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("null")}
-	_, err := rt.ExecuteToolActivity(context.Background(), &input)
-	require.NoError(t, err)
 }
 
 func TestToolsetTaskQueueOverrideUsed(t *testing.T) {
@@ -318,7 +287,7 @@ func TestServiceToolEventsPropagateServerData(t *testing.T) {
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		hookRuntime: rt,
-		asyncResult: ToolOutput{Payload: []byte("null"), Server: server},
+		asyncResult: ToolOutput{Payload: []byte("null"), ServerData: server},
 	}
 	parentCtx := &run.Context{
 		RunID:            "child-run",
@@ -342,7 +311,7 @@ func TestServiceToolEventsPropagateServerData(t *testing.T) {
 		}
 	}
 	require.NotNil(t, resultEvt, "expected ToolResultReceivedEvent")
-	require.JSONEq(t, string(server), string(resultEvt.Server))
+	require.JSONEq(t, string(server), string(resultEvt.ServerData))
 }
 
 func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
@@ -442,84 +411,4 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 	require.Equal(t, tools.Ident("ada.get_time_series"), resultEvt.ToolName)
 	require.Equal(t, map[string]any{"ok": true}, resultEvt.Result)
 	require.Empty(t, resultEvt.ParentToolCallID)
-}
-
-func TestInlineToolsetFailsWhenSidecarDeclaredButNoArtifacts(t *testing.T) {
-	recorder := &recordingHooks{}
-	rt := &Runtime{
-		Bus:           recorder,
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-	}
-	rt.toolsets = map[string]ToolsetRegistration{
-		"ada.tools": {
-			Inline: true,
-			Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
-				return &planner.ToolResult{
-					Name:       call.Name,
-					ToolCallID: call.ToolCallID,
-					Result:     map[string]any{"ok": true},
-				}, nil
-			},
-		},
-	}
-	spec := newAnyJSONSpec("ada.get_time_series", "ada.tools")
-	spec.ServerData = []*tools.ServerDataSpec{
-		{
-			Kind:        "ada.get_time_series.server_data",
-			Mode:        "optional",
-			Description: "Optional server-data",
-			Codec:       tools.AnyJSONCodec,
-		},
-	}
-	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
-		tools.Ident("ada.get_time_series"): spec,
-	}
-	wfCtx := &testWorkflowContext{
-		ctx:         context.Background(),
-		hookRuntime: rt,
-		planResult: &planner.PlanResult{
-			FinalResponse: &planner.FinalResponse{
-				Message: &model.Message{
-					Role:  model.ConversationRoleAssistant,
-					Parts: []model.Part{model.TextPart{Text: "done"}},
-				},
-			},
-		},
-		hasPlanResult: true,
-	}
-	input := &RunInput{AgentID: "chat.agent", RunID: "run-inline", SessionID: "sess-1", TurnID: "turn-1"}
-	base := &planner.PlanInput{
-		RunContext: run.Context{RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID},
-		Agent:      newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID}),
-	}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:       tools.Ident("ada.get_time_series"),
-		ToolCallID: "tool-parent",
-	}}}
-	_, err := rt.runLoop(
-		wfCtx,
-		AgentRegistration{
-			ID:                  input.AgentID,
-			Planner:             &stubPlanner{},
-			ExecuteToolActivity: "execute",
-			ResumeActivityName:  "resume",
-		},
-		input,
-		base,
-		initial,
-		nil,
-		model.TokenUsage{},
-		policy.CapsState{MaxToolCalls: 2, RemainingToolCalls: 2},
-		time.Time{},
-		time.Time{},
-		2,
-		input.TurnID,
-		nil,
-		nil,
-		0,
-	)
-	require.NoError(t, err)
 }

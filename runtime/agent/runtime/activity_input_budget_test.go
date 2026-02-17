@@ -11,7 +11,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-func TestEncodeToolEventsForPlanningOmitsArtifactsAndLargeResults(t *testing.T) {
+func TestEncodeToolEventsForPlanningOmitsServerDataAndLargeResults(t *testing.T) {
 	rt := newTestRuntimeWithPlanner("service.agent.budget", &stubPlanner{})
 	name := tools.Ident("svc.ts.big")
 	rt.toolSpecs[name] = newAnyJSONSpec(name, "svc.ts")
@@ -22,12 +22,7 @@ func TestEncodeToolEventsForPlanningOmitsArtifactsAndLargeResults(t *testing.T) 
 		Result: map[string]any{
 			"blob": strings.Repeat("x", maxPlanToolResultBytes+1024),
 		},
-		Artifacts: []*planner.Artifact{
-			{
-				Kind: "artifact_kind",
-				Data: map[string]any{"ignored": true},
-			},
-		},
+		ServerData: []byte(`[{"kind":"test.kind","data":{"ignored":true}}]`),
 	}
 
 	events, err := rt.encodeToolEventsForPlanning(context.Background(), []*planner.ToolResult{tr})
@@ -38,7 +33,7 @@ func TestEncodeToolEventsForPlanningOmitsArtifactsAndLargeResults(t *testing.T) 
 	require.True(t, events[0].ResultOmitted)
 	require.Equal(t, resultOmittedReasonWorkflowBudget, events[0].ResultOmittedReason)
 	require.Greater(t, events[0].ResultBytes, maxPlanToolResultBytes)
-	require.Nil(t, events[0].Artifacts, "planning tool events must omit artifacts")
+	require.Nil(t, events[0].ServerData, "planning tool events must omit server data")
 }
 
 func TestToolResultContentTruncatesOversizedResults(t *testing.T) {

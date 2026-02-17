@@ -160,15 +160,6 @@ func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 	}
 }
 
-// ServerDataCodec returns the generic codec for the named tool optional
-// server-data payload when declared.
-func ServerDataCodec(name string) (*tools.JSONCodec[any], bool) {
-	switch name {
-	default:
-		return nil, false
-	}
-}
-
 // MarshalSetStepStatusPayload serializes *SetStepStatusPayload into JSON.
 func MarshalSetStepStatusPayload(v *SetStepStatusPayload) ([]byte, error) {
 	if v == nil {

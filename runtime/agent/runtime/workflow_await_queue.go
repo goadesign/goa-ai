@@ -24,7 +24,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
@@ -120,7 +119,6 @@ func (r *Runtime) waitAwaitConfirmation(
 				nil,
 				formatResultPreview(it.call.Name, deniedResult),
 				nil,
-				nil,
 				0,
 				nil,
 				nil,
@@ -138,7 +136,7 @@ func (r *Runtime) waitAwaitConfirmation(
 			Error:      nil,
 		}
 		st.ToolEvents = append(st.ToolEvents, cloneToolResults([]*planner.ToolResult{tr})...)
-		if err := r.appendUserToolResults(base, []planner.ToolRequest{it.call}, []*planner.ToolResult{tr}, st.Ledger, nil); err != nil {
+		if err := r.appendUserToolResults(base, []planner.ToolRequest{it.call}, []*planner.ToolResult{tr}, st.Ledger); err != nil {
 			return nil, nil, err
 		}
 		return []*planner.ToolResult{tr}, nil, nil
@@ -149,12 +147,6 @@ func (r *Runtime) waitAwaitConfirmation(
 	if call.ToolCallID == "" {
 		call.ToolCallID = generateDeterministicToolCallID(base.RunContext.RunID, call.TurnID, base.RunContext.Attempt, call.Name, 0)
 	}
-	mode, stripped, err := extractServerDataMode(call.Payload)
-	if err != nil {
-		return nil, nil, err
-	}
-	call.ServerDataMode = mode
-	call.Payload = stripped
 
 	grouped, timeouts := r.groupToolCallsByTimeout([]planner.ToolRequest{call}, input, toolOpts.Timeout)
 	finishBy := time.Time{}
@@ -177,9 +169,7 @@ func (r *Runtime) waitAwaitConfirmation(
 		return nil, nil, err
 	}
 	st.ToolEvents = append(st.ToolEvents, cloneToolResults(vals)...)
-	if err := r.appendUserToolResults(base, []planner.ToolRequest{call}, vals, st.Ledger, map[string]tools.ServerDataMode{
-		call.ToolCallID: call.ServerDataMode,
-	}); err != nil {
+	if err := r.appendUserToolResults(base, []planner.ToolRequest{call}, vals, st.Ledger); err != nil {
 		return nil, nil, err
 	}
 	if timedOut {
@@ -595,7 +585,7 @@ func (r *Runtime) consumeProvidedToolResults(ctx context.Context, input *RunInpu
 	// Record tool results in the run ledger and publish tool_result events for streaming.
 	st.ToolEvents = append(st.ToolEvents, cloneToolResults(decoded)...)
 
-	if err := r.appendUserToolResults(base, allowed, decoded, st.Ledger, nil); err != nil {
+	if err := r.appendUserToolResults(base, allowed, decoded, st.Ledger); err != nil {
 		return nil, err
 	}
 
@@ -618,10 +608,9 @@ func (r *Runtime) consumeProvidedToolResults(ctx context.Context, input *RunInpu
 				"",
 				tr.Result,
 				resultJSON,
-				tr.Server,
+				tr.ServerData,
 				formatResultPreview(tr.Name, tr.Result),
 				tr.Bounds,
-				tr.Artifacts,
 				0,
 				nil,
 				tr.RetryHint,
