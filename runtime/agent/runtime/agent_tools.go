@@ -109,6 +109,13 @@ type (
 		ToolCallID string
 		Status     string // "ok" | "error"
 		Result     any
+		// ServerData carries server-only data emitted alongside the tool result.
+		// It is never sent to model providers.
+		//
+		// Contract:
+		// - ServerData is canonical JSON bytes containing a list of server_data items.
+		// - Finalizers may decode ServerData items using tool-specific server_data codecs.
+		ServerData json.RawMessage
 		Error      error
 	}
 
@@ -516,13 +523,13 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 
 	// Build nested run context from explicit ToolRequest fields.
 	nestedRunCtx := run.Context{
-		Tool:                 call.Name,
-		RunID:                NestedRunIDForToolCall(call.RunID, call.Name, call.ToolCallID),
-		SessionID:            call.SessionID,
-		TurnID:               call.TurnID,
-		ParentToolCallID:     call.ToolCallID,
-		ParentRunID:          call.RunID,
-		ParentAgentID:        call.AgentID,
+		Tool:             call.Name,
+		RunID:            NestedRunIDForToolCall(call.RunID, call.Name, call.ToolCallID),
+		SessionID:        call.SessionID,
+		TurnID:           call.TurnID,
+		ParentToolCallID: call.ToolCallID,
+		ParentRunID:      call.RunID,
+		ParentAgentID:    call.AgentID,
 	}
 	// Record the canonical JSON args using the tool codec. marshalToolValue
 	// returns a defensive copy for json.RawMessage, so this never double-encodes.
@@ -586,11 +593,16 @@ func (r *Runtime) adaptWithFinalizer(ctx context.Context, cfg *AgentToolConfig, 
 		if hasNonNullJSON(ev.Result) {
 			childResult = ev.Result
 		}
+		var childServerData json.RawMessage
+		if hasNonNullJSON(ev.ServerData) {
+			childServerData = append(json.RawMessage(nil), ev.ServerData...)
+		}
 		children = append(children, ChildCall{
 			ToolName:   ev.Name,
 			ToolCallID: ev.ToolCallID,
 			Status:     status,
 			Result:     childResult,
+			ServerData: childServerData,
 			Error:      childErr,
 		})
 	}
@@ -613,9 +625,9 @@ func (r *Runtime) adaptWithFinalizer(ctx context.Context, cfg *AgentToolConfig, 
 	}
 
 	parent := ParentCall{
-		ToolName:       call.Name,
-		ToolCallID:     call.ToolCallID,
-		Payload:        parentPayload,
+		ToolName:   call.Name,
+		ToolCallID: call.ToolCallID,
+		Payload:    parentPayload,
 	}
 	invoker := finalizerToolInvokerFromContext(ctx, call)
 	input := FinalizerInput{
