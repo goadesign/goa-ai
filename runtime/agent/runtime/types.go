@@ -18,7 +18,6 @@ type (
 	HookActivityInput  = api.HookActivityInput
 	ToolInput          = api.ToolInput
 	ToolOutput         = api.ToolOutput
-	ToolArtifact       = api.ToolArtifact
 
 	// WorkflowOptions mirrors the subset of engine start options we expose through
 	// the runtime. Memo/SearchAttributes follow Temporal semantics but remain generic
@@ -70,11 +69,6 @@ type (
 		// UIs and subscribers use it to reconstruct the call tree.
 		ParentToolCallID string
 
-		// ServerDataMode is the normalized per-call toggle selected by the caller
-		// via the reserved `server_data` payload field. Valid values are
-		// tools.ServerDataModeAuto, tools.ServerDataModeOn, and tools.ServerDataModeOff.
-		// When empty, the caller did not specify a mode.
-		ServerDataMode tools.ServerDataMode
 	}
 
 	// ToolCallExecutor executes a tool call and returns a planner.ToolResult. This

@@ -47,15 +47,24 @@ var (
         {{- range .ServerData }}
             {
                 Kind: {{ printf "%q" .Kind }},
-                Mode: {{ printf "%q" .Mode }},
                 Description: {{ printf "%q" .Description }},
-                Codec: {{ .CodecExpr }},
+                Type: tools.TypeSpec{
+                    Name: {{ if .Type }}{{ printf "%q" .Type.TypeName }}{{ else }}""{{ end }},
+                    {{- if .Type }}
+                    Schema: {{- if gt (len .Type.SchemaJSON) 0 }}[]byte({{ printf "%q" .Type.SchemaJSON }}){{ else }}nil{{ end }},
+                    ExampleJSON: {{- if gt (len .Type.ExampleJSON) 0 }}[]byte({{ printf "%q" .Type.ExampleJSON }}){{ else }}nil{{ end }},
+                    ExampleInput: {{- if .Type.ExampleInputGo }}{{ .Type.ExampleInputGo }}{{ else }}nil{{ end }},
+                    Codec: {{ .Type.GenericCodec }},
+                    {{- else }}
+                    Schema: nil,
+                    ExampleJSON: nil,
+                    ExampleInput: nil,
+                    Codec: tools.JSONCodec[any]{},
+                    {{- end }}
+                },
             },
         {{- end }}
         },
-        {{- end }}
-        {{- if .ServerDataDefault }}
-        ServerDataDefault: {{ printf "%q" .ServerDataDefault }},
         {{- end }}
         {{- if .Paging }}
         Paging: &tools.PagingSpec{

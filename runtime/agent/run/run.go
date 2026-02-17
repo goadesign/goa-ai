@@ -96,17 +96,6 @@ type (
 		// reparsing free-form messages.
 		ToolArgs json.RawMessage
 
-		// ParentServerDataMode carries the resolved server-data toggle for the parent tool
-		// call that created this nested run (agent-as-tool). Empty for top-level runs.
-		//
-		// Contract:
-		// - When ParentServerDataMode is "off", nested planners must not request UI artifacts
-		//   from child tools and runtimes may enforce suppression.
-		// - When ParentServerDataMode is "on", nested planners may opt-in to optional
-		//   server-data on a per-call basis by setting `server_data:"on"` on tools that
-		//   declare optional server-data.
-		ParentServerDataMode tools.ServerDataMode
-
 		// Attempt counts how many times the run has been attempted/resumed.
 		Attempt int
 

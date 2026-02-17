@@ -54,14 +54,14 @@ type (
 	ToolResultMessage struct {
 		ToolUseID string          `json:"tool_use_id"`
 		Result    json.RawMessage `json:"result_json,omitempty"`
-		// Server carries server-only metadata about the tool execution that must not
-		// be serialized into model provider requests.
+		// ServerData carries server-only metadata about the tool execution that must
+		// not be serialized into model provider requests.
 		//
 		// This is the canonical home for any non-model payloads emitted alongside a
-		// tool result. Consumers may split it into more specific projections (e.g.
-		// UI artifacts vs persistence-only evidence) but the wire protocol keeps a
-		// single server-side envelope.
-		Server []*ServerDataItem `json:"server,omitempty"`
+		// tool result. Consumers may project it into different observer views (for
+		// example, UI render cards vs persistence-only evidence), but the wire
+		// protocol keeps a single server-side envelope.
+		ServerData []*ServerDataItem `json:"server_data,omitempty"`
 		Error     *ToolError      `json:"error,omitempty"`
 	}
 
@@ -136,11 +136,11 @@ func NewToolResultMessage(toolUseID string, result json.RawMessage) ToolResultMe
 	}
 }
 
-// NewToolResultMessageWithServer constructs a successful tool result message with
+// NewToolResultMessageWithServerData constructs a successful tool result message with
 // additional server-only metadata.
-func NewToolResultMessageWithServer(toolUseID string, result json.RawMessage, server []*ServerDataItem) ToolResultMessage {
+func NewToolResultMessageWithServerData(toolUseID string, result json.RawMessage, serverData []*ServerDataItem) ToolResultMessage {
 	out := NewToolResultMessage(toolUseID, result)
-	out.Server = server
+	out.ServerData = serverData
 	return out
 }
 

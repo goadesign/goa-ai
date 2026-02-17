@@ -585,8 +585,11 @@ func serviceExecutorFiles(agent *AgentData) []*codegen.File {
 					extraImports[im.Path] = im
 				}
 			}
-			if t.OptionalServerData != nil {
-				for _, im := range gatherAttributeImports(agent.Genpkg, t.OptionalServerData.Schema) {
+			for _, sd := range t.ServerData {
+				if sd == nil || sd.Schema == nil || sd.Schema.Type == nil {
+					continue
+				}
+				for _, im := range gatherAttributeImports(agent.Genpkg, sd.Schema) {
 					if im != nil && im.Path != "" {
 						extraImports[im.Path] = im
 					}

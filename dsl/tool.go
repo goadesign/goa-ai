@@ -240,46 +240,57 @@ func Return(val any, args ...any) {
 	tool.Return = toolDSL(tool, "Return", val, args...)
 }
 
-// ServerData declares server-only data emitted alongside a tool result. Server
-// data is never sent to the model provider; it exists for UIs, observability,
+// ServerData declares typed server-only data emitted alongside a tool result.
+// Server data is never sent to model providers; it exists for UIs, observability,
 // and persistence layers.
 //
-// ServerData supports two modes:
-//   - Optional (default): typed payload that is emitted only when enabled for a
-//     tool call (see ServerDataDefault and the reserved `server_data` payload
-//     field). This is intended for observer-facing projections (for example, UI
-//     rendering or policy/telemetry attachments) and is never sent to models.
-//   - Always: server-only metadata that is always emitted/persisted and must
-//     never be treated as optional observer data.
+// Each ServerData entry has:
+//   - a Kind identifier used by consumers (UIs, sinks) to dispatch decoders, and
+//   - a schema type, which goa-ai uses to generate a JSON codec so values remain
+//     workflow-safe (canonical JSON bytes) and can be decoded reliably by tools,
+//     runtimes, and downstream consumers.
+//
+// ServerData does not define emission policy. Tool implementations may emit or
+// omit server-data items depending on their own contracts. Consumers that need
+// “model-controlled” server-data should express it explicitly in the tool schema.
 //
 // Usage patterns:
 //
-// Optional server-data (typed, observer-facing):
+// Typed server-data (tool-implemented):
 //
 //	Tool("get_time_series", "Get Time Series", func() {
 //	    Args(GetTimeSeriesToolArgs)
 //	    Return(GetTimeSeriesToolReturn)
-//	    ServerData("atlas.time_series", GetTimeSeriesSidecar, func() {
-//	        Description("Time-series chart rendered in the chat UI for the requested signals and time window.")
-//	    })
-//	    ServerDataDefault("off")
+//	    ServerData("atlas.time_series", GetTimeSeriesSidecar)
 //	})
 //
-// Always-on server-data (method-backed source):
+// Typed server-data sourced from a bound method result field:
 //
 //	Tool("get_time_series", "Get Time Series", func() {
 //	    // ...
-//	    ServerData("aura.evidence", func() {
-//	        ModeAlways()
-//	        FromMethodResultField("Evidence")
+//	    BindTo("GetTimeSeries")
+//	    ServerData("aura.evidence", Evidence, func() {
+//	        Description("Evidence references emitted for persistence and downstream UIs.")
+//	        FromMethodResultField("evidence")
 //	    })
 //	})
-func ServerData(kind string, args ...any) {
+//
+// Typed server-data with a compact description:
+//
+//	Tool("get_time_series", "Get Time Series", func() {
+//	    // ...
+//	    ServerData("atlas.time_series", GetTimeSeriesSidecar, "Time-series chart rendered in the UI.")
+//	})
+func ServerData(kind string, schema any, args ...any) {
 	if kind == "" {
 		eval.ReportError("ServerData kind must be non-empty")
 		return
 	}
-	if len(args) > 3 {
+	if schema == nil {
+		eval.ReportError("ServerData(%q) requires a non-nil schema type", kind)
+		return
+	}
+	if len(args) > 1 {
 		eval.TooManyArgError()
 		return
 	}
@@ -290,56 +301,25 @@ func ServerData(kind string, args ...any) {
 	}
 	sd := &agentsexpr.ServerDataExpr{
 		Kind: kind,
-		Mode: "optional",
 		Tool: tool,
 	}
-	if len(args) == 0 {
-		eval.ReportError("ServerData requires a schema type or a configuration block")
-		return
+	sd.Schema = toolDSL(tool, "ServerData", schema)
+	if len(args) == 1 {
+		switch v := args[0].(type) {
+		case string:
+			sd.Description = v
+		case func():
+			eval.Execute(v, sd)
+		default:
+			eval.InvalidArgError("string or function", args[0])
+			return
+		}
 	}
-	if f, ok := args[0].(func()); ok {
-		eval.Execute(f, sd)
-	} else {
-		sd.Schema = toolDSL(tool, "ServerData", args[0], args[1:]...)
+	if sd.Schema == nil || sd.Schema.Type == nil || sd.Schema.Type == goaexpr.Empty {
+		eval.ReportError("ServerData(%q) requires a schema type", kind)
+		return
 	}
 	tool.ServerData = append(tool.ServerData, sd)
-}
-
-// ServerDataDefault configures the default behavior for emitting optional server-data
-// when the caller does not explicitly request a mode via the reserved
-// `server_data` payload field (or sets it to "auto").
-//
-// Valid values are:
-//   - "on": emit optional server-data by default (when the tool produces it)
-//   - "off": do not emit optional server-data unless the caller explicitly sets `server_data:"on"`
-//
-// ServerDataDefault must appear in a Tool expression. It is only meaningful for
-// tools that declare optional ServerData.
-func ServerDataDefault(mode string) {
-	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
-	if !ok {
-		eval.IncompatibleDSL()
-		return
-	}
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "on":
-		tool.ServerDataDefault = "on"
-	case "off":
-		tool.ServerDataDefault = "off"
-	default:
-		eval.ReportError("ServerDataDefault mode must be \"on\" or \"off\"")
-	}
-}
-
-// ModeAlways marks the current ServerData declaration as always-on server-only data.
-// Always-on server-data is never gated by caller toggles and must not declare a schema.
-func ModeAlways() {
-	sd, ok := eval.Current().(*agentsexpr.ServerDataExpr)
-	if !ok {
-		eval.IncompatibleDSL()
-		return
-	}
-	sd.Mode = "always"
 }
 
 // FromMethodResultField declares that the server-data payload is sourced from the
@@ -357,25 +337,6 @@ func FromMethodResultField(name string) {
 	sd.Source = &agentsexpr.ServerDataSourceExpr{
 		MethodResultField: name,
 	}
-}
-
-// Schema defines the typed payload schema for the current ServerData declaration.
-// It must appear within a ServerData configuration block.
-func Schema(val any, args ...any) {
-	if len(args) > 2 {
-		eval.TooManyArgError()
-		return
-	}
-	sd, ok := eval.Current().(*agentsexpr.ServerDataExpr)
-	if !ok {
-		eval.IncompatibleDSL()
-		return
-	}
-	if sd.Tool == nil {
-		eval.ReportError("Schema requires an owning Tool")
-		return
-	}
-	sd.Schema = toolDSL(sd.Tool, "ServerData", val, args...)
 }
 
 // Tags attaches metadata labels to a tool for categorization and filtering. Tags

@@ -101,9 +101,6 @@ type (
 		// Payload is the decoded tool payload for the parent call when available.
 		// It is nil when the parent tool had an empty payload.
 		Payload any
-		// ServerDataMode is the normalized per-call toggle selected by the caller
-		// via the reserved `server_data` payload field.
-		ServerDataMode tools.ServerDataMode
 	}
 
 	// ChildCall summarizes a child tool outcome from a nested run used for aggregation.
@@ -405,16 +402,10 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 	}
 }
 
-// attachRunLink stamps the parent tool result and any attached artifacts with
-// a run handle linking to the nested agent run that produced them.
+// attachRunLink stamps the parent tool result with a run handle linking to the
+// nested agent run that produced it.
 func attachRunLink(result *planner.ToolResult, handle *run.Handle) {
 	result.RunLink = handle
-	for i := range result.Artifacts {
-		if result.Artifacts[i].RunLink != nil {
-			continue
-		}
-		result.Artifacts[i].RunLink = handle
-	}
 }
 
 // mergeByKey extracts the array value under key from each item and merges them.
@@ -525,14 +516,13 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 
 	// Build nested run context from explicit ToolRequest fields.
 	nestedRunCtx := run.Context{
-		Tool:                call.Name,
-		RunID:               NestedRunIDForToolCall(call.RunID, call.Name, call.ToolCallID),
-		SessionID:           call.SessionID,
-		TurnID:              call.TurnID,
-		ParentToolCallID:    call.ToolCallID,
-		ParentRunID:         call.RunID,
-		ParentAgentID:       call.AgentID,
-		ParentServerDataMode: call.ServerDataMode,
+		Tool:                 call.Name,
+		RunID:                NestedRunIDForToolCall(call.RunID, call.Name, call.ToolCallID),
+		SessionID:            call.SessionID,
+		TurnID:               call.TurnID,
+		ParentToolCallID:     call.ToolCallID,
+		ParentRunID:          call.RunID,
+		ParentAgentID:        call.AgentID,
 	}
 	// Record the canonical JSON args using the tool codec. marshalToolValue
 	// returns a defensive copy for json.RawMessage, so this never double-encodes.
@@ -560,19 +550,22 @@ func (r *Runtime) adaptAgentChildOutput(ctx context.Context, cfg *AgentToolConfi
 
 	// Aggregation path: assemble parent tool_result from child results.
 	if cfg.Finalizer != nil {
-		return r.adaptWithFinalizer(ctx, cfg, call, outPtr, handle)
+		tr, err := r.adaptWithFinalizer(ctx, cfg, call, outPtr, handle)
+		return tr, err
 	}
 
 	// JSON-only structured result default: aggregate child results into a structured
 	// payload instead of returning the nested agent's final prose.
 	if cfg.JSONOnly {
-		return r.adaptWithJSONOnly(ctx, cfg, call, outPtr, handle)
+		tr := r.adaptWithJSONOnly(ctx, cfg, call, outPtr, handle)
+		return tr, nil
 	}
 
 	result := ConvertRunOutputToToolResult(call.Name, outPtr)
 	result.ToolCallID = call.ToolCallID
 	attachRunLink(&result, handle)
-	return &result, nil
+	tr := &result
+	return tr, nil
 }
 
 // adaptWithFinalizer applies the configured Finalizer to produce a parent tool_result
@@ -620,10 +613,9 @@ func (r *Runtime) adaptWithFinalizer(ctx context.Context, cfg *AgentToolConfig, 
 	}
 
 	parent := ParentCall{
-		ToolName:      call.Name,
-		ToolCallID:    call.ToolCallID,
-		Payload:       parentPayload,
-		ServerDataMode: call.ServerDataMode,
+		ToolName:       call.Name,
+		ToolCallID:     call.ToolCallID,
+		Payload:        parentPayload,
 	}
 	invoker := finalizerToolInvokerFromContext(ctx, call)
 	input := FinalizerInput{
@@ -674,7 +666,7 @@ func (r *Runtime) adaptWithFinalizer(ctx context.Context, cfg *AgentToolConfig, 
 // adaptWithJSONOnly aggregates child results into a structured JSON payload.
 // This produces a consistent, schema-like output across service-backed and
 // agent-as-tool paths.
-func (r *Runtime) adaptWithJSONOnly(ctx context.Context, cfg *AgentToolConfig, call *planner.ToolRequest, outPtr *RunOutput, handle *run.Handle) (*planner.ToolResult, error) {
+func (r *Runtime) adaptWithJSONOnly(ctx context.Context, cfg *AgentToolConfig, call *planner.ToolRequest, outPtr *RunOutput, handle *run.Handle) *planner.ToolResult {
 	var (
 		payload any
 		aggErr  error
@@ -764,10 +756,10 @@ func (r *Runtime) adaptWithJSONOnly(ctx context.Context, cfg *AgentToolConfig, c
 			"agent-tool: JSONOnly aggregation failed (tool result schema mismatch; missing finalizer?)",
 			aggErr,
 		)
-		return tr, nil
+		return tr
 	}
 	if errCount > 0 && errCount == len(outPtr.ToolEvents) {
 		tr.Error = planner.NewToolErrorWithCause("agent-tool: all nested tools failed", lastErr)
 	}
-	return tr, nil
+	return tr
 }

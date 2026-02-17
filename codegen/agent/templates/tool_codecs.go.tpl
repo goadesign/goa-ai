@@ -172,21 +172,6 @@ func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
     }
 }
 
-// ServerDataCodec returns the generic codec for the named tool optional
-// server-data payload when declared.
-func ServerDataCodec(name string) (*tools.JSONCodec[any], bool) {
-    switch name {
-{{- range .Tools }}
-    {{- if .OptionalServerData }}
-    case {{ printf "%q" .Name }}:
-        return &{{ .OptionalServerData.GenericCodec }}, true
-    {{- end }}
-{{- end }}
-    default:
-        return nil, false
-    }
-}
-
 {{- range .Types }}
     {{- if .GenerateCodec }}
 // {{ .MarshalFunc }} serializes {{ if .Pointer }}*{{ end }}{{ .FullRef }} into JSON.

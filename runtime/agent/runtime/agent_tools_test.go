@@ -372,11 +372,10 @@ func TestJSONOnly_FinalizerError_Propagates(t *testing.T) {
 		}),
 	}
 	call := &planner.ToolRequest{
-		Name:          tools.Ident("test.parent"),
-		ToolCallID:    "toolcall",
-		RunID:         "run",
-		SessionID:     "sess",
-		ServerDataMode: tools.ServerDataModeAuto,
+		Name:       tools.Ident("test.parent"),
+		ToolCallID: "toolcall",
+		RunID:      "run",
+		SessionID:  "sess",
 	}
 	out := &RunOutput{
 		ToolEvents: []*api.ToolEvent{
@@ -407,11 +406,10 @@ func TestAgentToolFinalizer_ReturnsErrorOnlyToolResult(t *testing.T) {
 		}),
 	}
 	call := &planner.ToolRequest{
-		Name:          tools.Ident("test.parent"),
-		ToolCallID:    "toolcall",
-		RunID:         "run",
-		SessionID:     "sess",
-		ServerDataMode: tools.ServerDataModeAuto,
+		Name:       tools.Ident("test.parent"),
+		ToolCallID: "toolcall",
+		RunID:      "run",
+		SessionID:  "sess",
 	}
 	out := &RunOutput{
 		Final: &model.Message{
@@ -432,7 +430,7 @@ func TestAgentToolFinalizer_ReturnsErrorOnlyToolResult(t *testing.T) {
 	require.Equal(t, tools.Ident("test.parent"), tr.Name)
 }
 
-func TestAgentToolFinalizerInput_ContainsServerDataMode(t *testing.T) {
+func TestAgentToolFinalizerInput_ContainsParentIdentity(t *testing.T) {
 	rt := &Runtime{
 		logger:        telemetry.NoopLogger{},
 		metrics:       telemetry.NoopMetrics{},
@@ -443,16 +441,16 @@ func TestAgentToolFinalizerInput_ContainsServerDataMode(t *testing.T) {
 		AgentID:  "test.agent",
 		JSONOnly: true,
 		Finalizer: FinalizerFunc(func(_ context.Context, input *FinalizerInput) (*planner.ToolResult, error) {
-			require.Equal(t, tools.ServerDataModeOff, input.Parent.ServerDataMode)
+			require.Equal(t, tools.Ident("test.parent"), input.Parent.ToolName)
+			require.Equal(t, "toolcall", input.Parent.ToolCallID)
 			return &planner.ToolResult{Name: input.Parent.ToolName}, nil
 		}),
 	}
 	call := &planner.ToolRequest{
-		Name:          tools.Ident("test.parent"),
-		ToolCallID:    "toolcall",
-		RunID:         "run",
-		SessionID:     "sess",
-		ServerDataMode: tools.ServerDataModeOff,
+		Name:       tools.Ident("test.parent"),
+		ToolCallID: "toolcall",
+		RunID:      "run",
+		SessionID:  "sess",
 	}
 	out := &RunOutput{
 		ToolEvents: []*api.ToolEvent{

@@ -9,7 +9,6 @@ import (
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
-	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -56,12 +55,13 @@ func TestStreamSubscriber_ToolStart(t *testing.T) {
 	require.True(t, ok)
 }
 
-func TestStreamSubscriber_ToolEnd_RejectsNonCanonicalArtifactData(t *testing.T) {
+func TestStreamSubscriber_ToolEnd_EmitsServerData(t *testing.T) {
 	sink := &mockSink{}
 	sub, err := NewSubscriber(sink)
 	require.NoError(t, err)
 	ctx := context.Background()
 
+	server := json.RawMessage(`[{"kind":"aura.evidence","data":[{"uri":"atlas://points/123"}]}]`)
 	evt := hooks.NewToolResultReceivedEvent(
 		"r1",
 		agent.Ident("agent1"),
@@ -71,23 +71,20 @@ func TestStreamSubscriber_ToolEnd_RejectsNonCanonicalArtifactData(t *testing.T) 
 		"",
 		nil,
 		nil,
-		nil,
+		server,
 		"",
 		nil,
-		[]*planner.Artifact{
-			{
-				Kind:       "svc.artifact",
-				SourceTool: tools.Ident("svc.tool"),
-				Data:       "not json bytes",
-			},
-		},
 		0,
 		nil,
 		nil,
 		nil,
 	)
-	require.Error(t, sub.HandleEvent(ctx, evt))
-	require.Empty(t, sink.events)
+	require.NoError(t, sub.HandleEvent(ctx, evt))
+	require.Len(t, sink.events, 1)
+	require.Equal(t, EventToolEnd, sink.events[0].Type())
+	end, ok := sink.events[0].(ToolEnd)
+	require.True(t, ok)
+	require.JSONEq(t, string(server), string(end.Data.ServerData))
 }
 
 func TestStreamSubscriber_ToolEnd_AllowsMissingResult(t *testing.T) {
@@ -107,7 +104,6 @@ func TestStreamSubscriber_ToolEnd_AllowsMissingResult(t *testing.T) {
 		nil,
 		nil,
 		"",
-		nil,
 		nil,
 		0,
 		nil,
@@ -317,7 +313,6 @@ func TestStreamSubscriber_ToolEndPrecedesRunStreamEnd(t *testing.T) {
 		json.RawMessage(`{"ok":true}`),
 		nil,
 		"",
-		nil,
 		nil,
 		0,
 		nil,

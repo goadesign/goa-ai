@@ -109,6 +109,12 @@ func agentSpecsJSONFile(agent *AgentData) *codegen.File {
 		DeniedResultTemplate string `json:"denied_result_template"`
 	}
 
+	type serverDataSchema struct {
+		Kind        string     `json:"kind"`
+		Description string     `json:"description,omitempty"`
+		Type        typeSchema `json:"type"`
+	}
+
 	type toolSchema struct {
 		ID           string              `json:"id"`
 		Service      string              `json:"service"`
@@ -120,7 +126,7 @@ func agentSpecsJSONFile(agent *AgentData) *codegen.File {
 		Confirmation *confirmationSchema `json:"confirmation,omitempty"`
 		Payload      *typeSchema         `json:"payload,omitempty"`
 		Result       *typeSchema         `json:"result,omitempty"`
-		ServerData   *typeSchema         `json:"server_data,omitempty"`
+		ServerData   []serverDataSchema  `json:"server_data,omitempty"`
 	}
 
 	out := struct {
@@ -176,14 +182,27 @@ func agentSpecsJSONFile(agent *AgentData) *codegen.File {
 			entry.Result = &ts
 		}
 
-		if td := t.OptionalServerData; td != nil && td.TypeName != "" {
-			ts := typeSchema{
-				Name: td.TypeName,
+		if len(t.ServerData) > 0 {
+			schemas := make([]serverDataSchema, 0, len(t.ServerData))
+			for _, sd := range t.ServerData {
+				if sd == nil || sd.Type == nil || sd.Type.TypeName == "" {
+					continue
+				}
+				ts := typeSchema{
+					Name: sd.Type.TypeName,
+				}
+				if len(sd.Type.SchemaJSON) > 0 {
+					ts.Schema = json.RawMessage(sd.Type.SchemaJSON)
+				}
+				schemas = append(schemas, serverDataSchema{
+					Kind:        sd.Kind,
+					Description: sd.Description,
+					Type:        ts,
+				})
 			}
-			if len(td.SchemaJSON) > 0 {
-				ts.Schema = json.RawMessage(td.SchemaJSON)
+			if len(schemas) > 0 {
+				entry.ServerData = schemas
 			}
-			entry.ServerData = &ts
 		}
 
 		if c := t.Confirmation; c != nil {

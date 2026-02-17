@@ -51,7 +51,7 @@ func (b *toolSpecBuilder) typeFor(tool *ToolData, att *goaexpr.AttributeExpr, us
 		att = &goaexpr.AttributeExpr{Type: &goaexpr.Object{}}
 	}
 
-	info, err := b.buildTypeInfo(tool, att, usage)
+	info, err := b.buildTypeInfo(tool, att, usage, "")
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +60,7 @@ func (b *toolSpecBuilder) typeFor(tool *ToolData, att *goaexpr.AttributeExpr, us
 
 // ensureType generates a standalone type definition and metadata for a tool's
 // payload or result using a simplified, mode-driven materialization policy.
-func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeExpr, usage typeUsage) (*typeData, error) {
+func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeExpr, usage typeUsage, qualifier string) (*typeData, error) {
 	if tool == nil || tool.Toolset == nil {
 		return nil, fmt.Errorf("invalid tool metadata: nil tool or toolset")
 	}
@@ -75,6 +75,9 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	case usageResult:
 		typeName += "Result"
 	case usageSidecar:
+		if qualifier != "" {
+			typeName += codegen.Goify(qualifier, true)
+		}
 		typeName += "ServerData"
 	}
 
@@ -105,7 +108,7 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	toolUT.TypeName = typeName
 
 	// Stable cache key: reference for service-alias, otherwise deterministic name
-	key := stableTypeKey(tool, usage)
+	key := stableTypeKey(tool, usage, qualifier)
 	if existing := b.types[key]; existing != nil {
 		return existing, nil
 	}

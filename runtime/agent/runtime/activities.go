@@ -172,22 +172,13 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	// Apply optional payload adapter before decoding. Payloads are canonical
 	// JSON (json.RawMessage) along the planner/runtime boundary; adapters may
 	// normalize them before validation or execution.
-	mode := req.ServerDataMode
 	raw := req.Payload
-	if mode == "" {
-		var err error
-		mode, raw, err = extractServerDataMode(req.Payload)
-		if err != nil {
-			return nil, err
-		}
-	}
 	meta := ToolCallMeta{
 		RunID:            req.RunID,
 		SessionID:        req.SessionID,
 		TurnID:           req.TurnID,
 		ToolCallID:       req.ToolCallID,
 		ParentToolCallID: req.ParentToolCallID,
-		ServerDataMode:   mode,
 	}
 	if reg.PayloadAdapter != nil && len(raw) > 0 {
 		if adapted, err := reg.PayloadAdapter(ctx, meta, req.ToolName, raw); err == nil && len(adapted) > 0 {
@@ -239,7 +230,6 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	call := planner.ToolRequest{
 		Name:             req.ToolName,
 		Payload:          raw,
-		ServerDataMode:   mode,
 		RunID:            req.RunID,
 		AgentID:          req.AgentID,
 		SessionID:        req.SessionID,
@@ -254,17 +244,6 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	}
 	if result == nil {
 		return nil, errors.New("tool execution returned nil result")
-	}
-	serverDataEnabled := !serverDataDisabled(mode)
-	if !serverDataEnabled {
-		result.Artifacts = nil
-	}
-
-	encodedArtifacts, err := r.encodeToolArtifacts(req.ToolName, result.Artifacts)
-	if err != nil {
-		// Artifacts must be encoded before crossing the workflow/activity boundary.
-		// This is a contract violation, not a user-facing tool error.
-		return nil, err
 	}
 	// Enrich or build telemetry via registration builder when available.
 	if reg.TelemetryBuilder != nil {
@@ -284,51 +263,15 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		}
 	}
 	out := &ToolOutput{
-		Payload:   enc,
-		Server:    result.Server,
-		Artifacts: encodedArtifacts,
-		Telemetry: result.Telemetry,
+		Payload:     enc,
+		ServerData:  result.ServerData,
+		Telemetry:   result.Telemetry,
 	}
 	if result.Error != nil {
 		out.Error = result.Error.Error()
 	}
 	if result.RetryHint != nil {
 		out.RetryHint = result.RetryHint
-	}
-	return out, nil
-}
-
-func (r *Runtime) encodeToolArtifacts(toolName tools.Ident, artifacts []*planner.Artifact) ([]*ToolArtifact, error) {
-	if len(artifacts) == 0 {
-		return nil, nil
-	}
-	spec, ok := r.toolSpec(toolName)
-	if !ok {
-		return nil, fmt.Errorf("unknown tool %q", toolName)
-	}
-	sd, ok := optionalServerDataSpec(spec)
-	if !ok || sd.Codec.ToJSON == nil {
-		return nil, fmt.Errorf("tool %q produced artifacts but has no optional server-data codec", toolName)
-	}
-	out := make([]*ToolArtifact, 0, len(artifacts))
-	for _, a := range artifacts {
-		if a == nil {
-			return nil, fmt.Errorf("CRITICAL: tool %q returned nil artifact entry", toolName)
-		}
-		switch a.Data.(type) {
-		case json.RawMessage, []byte:
-			return nil, fmt.Errorf("tool %q artifact data must be a typed Go value, got %T", toolName, a.Data)
-		}
-		raw, err := sd.Codec.ToJSON(a.Data)
-		if err != nil {
-			return nil, fmt.Errorf("encode tool artifact for %s (%s): %w", toolName, a.Kind, err)
-		}
-		out = append(out, &ToolArtifact{
-			Kind:       a.Kind,
-			Data:       json.RawMessage(raw),
-			SourceTool: toolName,
-			RunLink:    a.RunLink,
-		})
 	}
 	return out, nil
 }

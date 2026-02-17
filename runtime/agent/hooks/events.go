@@ -221,10 +221,10 @@ type (
 		// This is used by stream sinks and persistence layers that must serialize
 		// tool results without relying on `encoding/json` and Go field names.
 		ResultJSON json.RawMessage
-		// Server carries server-only metadata emitted by tool providers. This payload
+		// ServerData carries server-only data emitted by tool providers. This payload
 		// must not be serialized into model provider requests and is treated as opaque
 		// JSON bytes by the runtime.
-		Server json.RawMessage
+		ServerData json.RawMessage
 		// ResultPreview is a concise, user-facing summary of the tool result rendered
 		// from the registered ResultHintTemplate for this tool. It is computed by
 		// the runtime while the result is still strongly typed so downstream
@@ -235,9 +235,6 @@ type (
 		// implementations and surfaced for observability; the runtime does not
 		// modify it.
 		Bounds *agent.Bounds
-		// Artifacts holds rich, non-provider data attached to the tool result.
-		// Artifacts are never serialized into model provider requests.
-		Artifacts []*planner.Artifact
 		// Duration is the wall-clock execution time for the tool activity.
 		Duration time.Duration
 		// Telemetry holds structured observability metadata (tokens, model, retries).
@@ -771,7 +768,7 @@ func NewToolCallScheduledEvent(runID string, agentID agent.Ident, sessionID stri
 // NewToolResultReceivedEvent constructs a ToolResultReceivedEvent. Result and err
 // capture the tool outcome; duration is the wall-clock execution time; telemetry
 // carries structured observability metadata (nil if not collected).
-func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID, parentToolCallID string, result any, resultJSON, server json.RawMessage, resultPreview string, bounds *agent.Bounds, artifacts []*planner.Artifact, duration time.Duration, telemetry *telemetry.ToolTelemetry, retryHint *planner.RetryHint, err *toolerrors.ToolError) *ToolResultReceivedEvent {
+func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID, parentToolCallID string, result any, resultJSON, serverData json.RawMessage, resultPreview string, bounds *agent.Bounds, duration time.Duration, telemetry *telemetry.ToolTelemetry, retryHint *planner.RetryHint, err *toolerrors.ToolError) *ToolResultReceivedEvent {
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
 	return &ToolResultReceivedEvent{
@@ -781,10 +778,9 @@ func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID str
 		ToolName:         toolName,
 		Result:           result,
 		ResultJSON:       resultJSON,
-		Server:           server,
+		ServerData:       serverData,
 		ResultPreview:    resultPreview,
 		Bounds:           bounds,
-		Artifacts:        artifacts,
 		Duration:         duration,
 		Telemetry:        telemetry,
 		RetryHint:        retryHint,

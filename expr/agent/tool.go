@@ -37,21 +37,13 @@ type (
 		// Return defines the output result schema for this tool.
 		Return *goaexpr.AttributeExpr
 
-		// ServerData declares server-only data emitted alongside the canonical tool
-		// result. Server data is never serialized into model provider requests.
+		// ServerData declares typed server-only data emitted alongside the canonical
+		// tool result. Server data is never serialized into model provider requests.
 		//
-		// Contract:
-		//   - Optional entries are eligible for observer-facing rendering and may be
-		//     gated by a caller-provided toggle (see ServerDataDefault).
-		//   - Always entries are always emitted/persisted server-side and must never
-		//     be treated as optional observer data.
+		// Each entry declares a Kind identifier and a schema type. Code generation
+		// produces a JSON codec per entry so values can be marshaled into canonical
+		// JSON bytes and decoded reliably by runtimes and downstream consumers.
 		ServerData []*ServerDataExpr
-
-		// ServerDataDefault controls whether optional server-data is produced when the
-		// caller does not explicitly set the reserved `server_data` mode (or sets
-		// it to "auto"). Valid values are "on" and "off". When empty, the default
-		// is "on".
-		ServerDataDefault string
 
 		// Toolset is the toolset expression that owns this tool.
 		Toolset *ToolsetExpr
@@ -113,16 +105,16 @@ type (
 		// "atlas.time_series" for UI charts).
 		Kind string
 
-		// Mode controls emission semantics for this entry. Valid values are
-		// "optional" and "always".
-		Mode string
+		// Description is the observer-facing description of this server-data payload.
+		// It is typically used by UIs and sinks to explain rendering behavior.
+		Description string
 
-		// Schema describes the typed payload when Mode == "optional".
-		// It must be nil/empty when Mode == "always".
+		// Schema describes the typed payload. It must be non-empty.
 		Schema *goaexpr.AttributeExpr
 
-		// Source describes how to populate the server-data payload. It is required
-		// when Mode == "always".
+		// Source describes how to populate the server-data payload. When set,
+		// code generation uses it to derive the server-data payload from the tool's
+		// bound method result.
 		Source *ServerDataSourceExpr
 
 		// Tool links this server-data declaration to its owning tool. It is set by
@@ -215,6 +207,12 @@ func (s *ServerDataExpr) EvalName() string {
 		return fmt.Sprintf("server data %q for tool %q in toolset %q", s.Kind, toolName, toolsetName)
 	}
 	return fmt.Sprintf("server data %q", s.Kind)
+}
+
+// SetDescription implements goa.design/goa/v3/expr.DescriptionHolder so the Goa
+// Description DSL helper can be used inside ServerData configuration blocks.
+func (s *ServerDataExpr) SetDescription(d string) {
+	s.Description = d
 }
 
 // RecordBinding records the service and method names specified via the DSL.
@@ -379,12 +377,8 @@ func validateServerDataShapes(t *ToolExpr, verr *eval.ValidationErrors, check fu
 		return
 	}
 	if len(t.ServerData) == 0 {
-		if t.ServerDataDefault != "" {
-			verr.Add(t, "ServerDataDefault requires the tool to declare ServerData")
-		}
 		return
 	}
-	optionalCount := 0
 	for _, sd := range t.ServerData {
 		if sd == nil {
 			continue
@@ -393,40 +387,20 @@ func validateServerDataShapes(t *ToolExpr, verr *eval.ValidationErrors, check fu
 			verr.Add(t, "ServerData kind must be non-empty")
 			continue
 		}
-		switch sd.Mode {
-		case "", "optional":
-			optionalCount++
-			check("ServerData", sd.Schema)
-			if sd.Schema == nil || sd.Schema.Type == nil || sd.Schema.Type == goaexpr.Empty {
-				verr.Add(t, "ServerData(%q) in mode \"optional\" must declare a schema", sd.Kind)
-			}
-			if sd.Source != nil && sd.Source.MethodResultField != "" {
-				verr.Add(t, "ServerData(%q) in mode \"optional\" must not declare a source", sd.Kind)
-			}
-		case "always":
-			if sd.Schema != nil && sd.Schema.Type != nil && sd.Schema.Type != goaexpr.Empty {
-				verr.Add(t, "ServerData(%q) in mode \"always\" must not declare a schema", sd.Kind)
-			}
-			if sd.Source == nil || sd.Source.MethodResultField == "" {
-				verr.Add(t, "ServerData(%q) in mode \"always\" requires FromMethodResultField", sd.Kind)
-			}
-			if t.Method == nil {
-				verr.Add(t, "ServerData(%q) in mode \"always\" requires a bound method (BindTo)", sd.Kind)
-			}
-		default:
-			verr.Add(t, "ServerData(%q) has invalid mode %q (valid: \"optional\", \"always\")", sd.Kind, sd.Mode)
+		check("ServerData", sd.Schema)
+		if sd.Schema == nil || sd.Schema.Type == nil || sd.Schema.Type == goaexpr.Empty {
+			verr.Add(t, "ServerData(%q) must declare a schema type", sd.Kind)
 		}
-	}
-	if optionalCount > 1 {
-		verr.Add(t, "Tool %q declares %d optional server-data entries; at most one is supported", t.Name, optionalCount)
-	}
-	if t.ServerDataDefault != "" && optionalCount == 0 {
-		verr.Add(t, "ServerDataDefault is only valid when the tool declares an optional ServerData entry")
-	}
-	switch t.ServerDataDefault {
-	case "", "on", "off":
-	default:
-		verr.Add(t, "ServerDataDefault mode must be \"on\" or \"off\"")
+		if sd.Source != nil && sd.Source.MethodResultField != "" {
+			if t.Method == nil {
+				verr.Add(t, "ServerData(%q) with FromMethodResultField requires a bound method (BindTo)", sd.Kind)
+				continue
+			}
+			field := t.Method.Result.Find(sd.Source.MethodResultField)
+			if field == nil || field.Type == nil || field.Type == goaexpr.Empty {
+				verr.Add(t, "ServerData(%q) FromMethodResultField(%q) does not exist on method result", sd.Kind, sd.Source.MethodResultField)
+			}
+		}
 	}
 }
 

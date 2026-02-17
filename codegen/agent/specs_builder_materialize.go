@@ -138,7 +138,7 @@ func (b *toolSpecBuilder) materialize(typeName string, att *goaexpr.AttributeExp
 
 // stableTypeKey returns a deterministic cache key for the tool-facing type name
 // within a toolset scope.
-func stableTypeKey(tool *ToolData, usage typeUsage) string {
+func stableTypeKey(tool *ToolData, usage typeUsage, qualifier string) string {
 	if tool == nil {
 		return ""
 	}
@@ -149,6 +149,9 @@ func stableTypeKey(tool *ToolData, usage typeUsage) string {
 	case usageResult:
 		tn += "Result"
 	case usageSidecar:
+		if qualifier != "" {
+			tn += codegen.Goify(qualifier, true)
+		}
 		tn += "ServerData"
 	}
 	scope := ""

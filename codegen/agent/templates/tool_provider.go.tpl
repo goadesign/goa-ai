@@ -1,6 +1,6 @@
 type (
 	// Provider dispatches tool call messages to the bound Goa service methods and
-	// returns canonical JSON tool results and optional artifacts.
+	// returns canonical JSON tool results and typed server-only data.
 	//
 	// Provider is intended to run inside the toolset-owning service process,
 	// paired with a Pulse subscription loop (see runtime/toolregistry/provider).
@@ -72,31 +72,23 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 		var server []*toolregistry.ServerDataItem
 {{- $tool := . }}
 {{- range .ServerData }}
-{{- if eq .Mode "optional" }}
-		optionalData := Init{{ $tool.ConstName }}ServerDataFromMethodResult(methodOut)
-		if optionalData != nil {
-			optionalJSON, err := {{ $tool.ConstName }}ServerDataCodec.ToJSON(optionalData)
+{{- if .MethodResultField }}
+		{
+			dataJSON, err := json.Marshal(methodOut.{{ goify .MethodResultField true }})
 			if err != nil {
 				return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "encode_failed", err.Error()), nil
 			}
-			server = append(server, &toolregistry.ServerDataItem{
-				Kind: {{ printf "%q" .Kind }},
-				Data: optionalJSON,
-			})
+			if string(dataJSON) != "null" {
+				server = append(server, &toolregistry.ServerDataItem{
+					Kind: {{ printf "%q" .Kind }},
+					Data: dataJSON,
+				})
+			}
 		}
-{{- else if eq .Mode "always" }}
-		alwaysJSON, err := json.Marshal(methodOut.{{ .MethodResultField }})
-		if err != nil {
-			return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "encode_failed", err.Error()), nil
-		}
-		server = append(server, &toolregistry.ServerDataItem{
-			Kind: {{ printf "%q" .Kind }},
-			Data: alwaysJSON,
-		})
 {{- end }}
 {{- end }}
 		if len(server) > 0 {
-			return toolregistry.NewToolResultMessageWithServer(msg.ToolUseID, resultJSON, server), nil
+			return toolregistry.NewToolResultMessageWithServerData(msg.ToolUseID, resultJSON, server), nil
 		}
 		return toolregistry.NewToolResultMessage(msg.ToolUseID, resultJSON), nil
 {{- else }}

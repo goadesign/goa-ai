@@ -250,23 +250,30 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             }
         }
 
-        // Build final tool result. Server data is always recorded in ToolResult.Server
-        // (as an opaque JSON array of toolregistry.ServerDataItem) and optional
-        // server data is additionally decoded into ToolResult.Artifacts when enabled.
+        // Build final tool result. ServerData is recorded as canonical JSON bytes
+        // (an array of toolregistry.ServerDataItem) and never sent to model providers.
         {{- $hasServerData := false }}
         {{- range .Toolset.Tools }}
-            {{- if and .IsMethodBacked (or .OptionalServerData (gt (len .AlwaysServerData) 0)) }}
-                {{- $hasServerData = true }}
+            {{- if .IsMethodBacked }}
+                {{- range .ServerData }}
+                    {{- if .MethodResultField }}
+                        {{- $hasServerData = true }}
+                    {{- end }}
+                {{- end }}
             {{- end }}
         {{- end }}
         {{- if $hasServerData }}
-        var (
-            serverItems []*toolregistry.ServerDataItem
-            artifacts   []*planner.Artifact
-        )
+        var serverItems []*toolregistry.ServerDataItem
         switch call.Name {
         {{- range .Toolset.Tools }}
-        {{- if and .IsMethodBacked (or .OptionalServerData (gt (len .AlwaysServerData) 0)) }}
+        {{- if .IsMethodBacked }}
+            {{- $toolHasSource := false }}
+            {{- range .ServerData }}
+                {{- if .MethodResultField }}
+                    {{- $toolHasSource = true }}
+                {{- end }}
+            {{- end }}
+            {{- if $toolHasSource }}
         case tools.Ident({{ printf "%q" .QualifiedName }}):
             mr, ok := methodOut.({{ .MethodResultTypeRef }})
             if !ok {
@@ -275,53 +282,38 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                     Error: planner.NewToolError(fmt.Sprintf("unexpected method result type for %q", call.Name)),
                 }, nil
             }
-            {{- range .AlwaysServerData }}
-            alwaysJSON, err := json.Marshal(mr.{{ .MethodResultField }})
-            if err != nil {
-                return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
-            }
-            serverItems = append(serverItems, &toolregistry.ServerDataItem{
-                Kind: {{ printf "%q" .Kind }},
-                Data: alwaysJSON,
-            })
-            {{- end }}
-            {{- if .OptionalServerData }}
-            if tools.OptionalServerDataEnabled(call.ServerDataMode, {{ if .ServerDataDefaultOn }}true{{ else }}false{{ end }}) {
-                if sd := {{ $.Toolset.SpecsPackageName }}.Init{{ goify .Name true }}ServerDataFromMethodResult(mr); sd != nil {
-                    sdJSON, err := {{ $.Toolset.SpecsPackageName }}.{{ .ConstName }}ServerDataCodec.ToJSON(sd)
-                    if err != nil {
-                        return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
-                    }
+            {{- range .ServerData }}
+            {{- if .MethodResultField }}
+            {
+                dataJSON, err := json.Marshal(mr.{{ goify .MethodResultField true }})
+                if err != nil {
+                    return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
+                }
+                if string(dataJSON) != "null" {
                     serverItems = append(serverItems, &toolregistry.ServerDataItem{
-                        Kind: {{ printf "%q" .OptionalServerData.Kind }},
-                        Data: sdJSON,
+                        Kind: {{ printf "%q" .Kind }},
+                        Data: dataJSON,
                     })
-                    artifacts = []*planner.Artifact{
-                        {
-                            Kind:       {{ printf "%q" .OptionalServerData.Kind }},
-                            Data:       sd,
-                            SourceTool: call.Name,
-                        },
-                    }
                 }
             }
+            {{- end }}
+            {{- end }}
             {{- end }}
         {{- end }}
         {{- end }}
         }
-        var server json.RawMessage
+        var serverData json.RawMessage
         if len(serverItems) > 0 {
             b, err := json.Marshal(serverItems)
             if err != nil {
                 return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
             }
-            server = b
+            serverData = b
         }
         return &planner.ToolResult{
-            Name:      call.Name,
-            Result:    result,
-            Server:    server,
-            Artifacts: artifacts,
+            Name:       call.Name,
+            Result:     result,
+            ServerData: serverData,
         }, nil
         {{- else }}
         return &planner.ToolResult{

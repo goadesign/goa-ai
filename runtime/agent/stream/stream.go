@@ -169,10 +169,6 @@ type (
 		// access this field directly for type-safe field access (e.g., event.Data.Duration,
 		// event.Data.ToolCallID).
 		Data ToolEndPayload
-		// ServerData carries server-only metadata about the tool execution. It is not
-		// included in the event payload marshaled by sinks; it exists for in-process
-		// subscribers such as persistence layers.
-		ServerData json.RawMessage
 	}
 
 	// Usage reports token usage for a model invocation.
@@ -380,10 +376,10 @@ type (
 		// graph caps). It is supplied by tool implementations and surfaced for
 		// observability; the runtime does not modify it.
 		Bounds *agent.Bounds `json:"bounds,omitempty"`
-		// Artifacts carries rich, non-provider data attached to the tool result.
-		// Artifacts are never serialized into model provider requests and are
-		// intended for UI artifacts and observability consumers.
-		Artifacts []ArtifactPayload `json:"artifacts,omitempty"`
+		// ServerData carries server-only data emitted alongside the tool result.
+		// This payload is never sent to model providers; it exists for UIs and
+		// persistence layers.
+		ServerData json.RawMessage `json:"server_data,omitempty"`
 		// Duration is the wall-clock execution time for the tool activity, including any
 		// queuing delay, retries, and processing time. Clients can display this in
 		// performance dashboards or debug panels to identify slow tools.
@@ -405,23 +401,6 @@ type (
 		// transport- or domain-specific fields without breaking the wire contract.
 		// The runtime ignores its contents; sinks may include it when present.
 		Extra map[string]any `json:"extra,omitempty"`
-	}
-
-	// ArtifactPayload describes a single artifact attached to a tool result.
-	// It is the wire-level representation of planner.Artifact.
-	ArtifactPayload struct {
-		// Kind identifies the logical shape of this artifact
-		// (for example, "atlas.time_series").
-		Kind string `json:"kind"`
-		// Data contains the artifact payload as canonical JSON bytes (typically
-		// produced by the tool sidecar codec). It is never decoded for streaming.
-		Data json.RawMessage `json:"data"`
-		// SourceTool is the fully-qualified tool identifier that produced this
-		// artifact (for example, "atlas.read.get_time_series").
-		SourceTool string `json:"source_tool"`
-		// RunLink, when present, links this artifact to a nested agent run
-		// that produced it.
-		RunLink *RunLinkPayload `json:"run_link,omitempty"`
 	}
 
 	// RunLinkPayload describes a link to a nested agent run for streaming.

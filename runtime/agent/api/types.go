@@ -164,9 +164,9 @@ type (
 		//
 		// Contract:
 		// - ToolEvents must be workflow-boundary safe. Do not embed planner.ToolResult here:
-		//   planner.ToolResult contains `any` fields (Result, Artifact.Data) which Temporal will
-		//   rehydrate as map[string]any in parent workflows, breaking sidecar codecs and
-		//   eliminating strong typing at the boundary.
+		//   planner.ToolResult contains `any` fields (Result) which Temporal will
+		//   rehydrate as map[string]any in parent workflows, eliminating strong typing
+		//   at the boundary.
 		ToolEvents []*ToolEvent
 
 		// Notes aggregates planner annotations produced during the final turn.
@@ -179,8 +179,8 @@ type (
 	// ToolEvent is the workflow-boundary safe representation of a tool result emitted by a run.
 	//
 	// Contract:
-	// - Result and Artifacts.Data are canonical JSON bytes, not decoded Go values.
-	// - Runtimes must decode these bytes using the registered tool codec/sidecar codec.
+	// - Result and ServerData are canonical JSON bytes, not decoded Go values.
+	// - Runtimes must decode Result bytes using the registered tool result codec.
 	// - This is required for agent-as-tool: child workflow outputs cross a workflow boundary,
 	//   and `any` fields would otherwise rehydrate as map[string]any.
 	ToolEvent struct {
@@ -211,8 +211,9 @@ type (
 		// Example values: "workflow_budget".
 		ResultOmittedReason string
 
-		// Artifacts contains sideband UI artifacts produced alongside the tool result.
-		Artifacts []*ToolArtifact
+		// ServerData carries server-only data emitted alongside the tool result.
+		// It is never sent to model providers.
+		ServerData json.RawMessage
 
 		// Bounds, when non-nil, describes how the result has been bounded relative
 		// to the full underlying data set (for example, list/window/graph caps).
@@ -303,10 +304,6 @@ type (
 		// Payload is the canonical JSON payload for the tool call.
 		Payload json.RawMessage
 
-		// ServerDataMode is the normalized per-call toggle selected by the caller via the reserved
-		// `server_data` payload field. When empty, the caller did not specify a mode.
-		ServerDataMode tools.ServerDataMode
-
 		// SessionID is the logical session identifier (for example, a chat conversation).
 		SessionID string
 
@@ -322,25 +319,15 @@ type (
 		// Payload is the tool result encoded as JSON. The runtime decodes it using the registered tool codec.
 		Payload json.RawMessage
 
-		// Server carries server-only metadata about the tool execution. It is never
-		// forwarded to model providers, but it must cross workflow/activity boundaries
-		// so in-process subscribers (persistence, metrics) can consume it.
+		// ServerData carries server-only data emitted alongside the tool result. It is
+		// never forwarded to model providers, but it must cross workflow/activity
+		// boundaries so in-process subscribers (persistence, metrics, UIs) can
+		// consume it.
 		//
 		// Contract:
 		//   - This is canonical JSON (typically a JSON array of server data items).
 		//   - Tool implementations may return nil when no server data is present.
-		Server json.RawMessage
-
-		// Artifacts contains sideband UI artifacts produced alongside the tool result.
-		//
-		// Boundary contract:
-		// This field crosses workflow/activity boundaries. It must not contain `any`
-		// payloads because engine data converters will rehydrate interface values as
-		// map/slice types, losing the tool's compiled sidecar schema.
-		//
-		// Providers must encode artifacts using the tool sidecar codec and store the
-		// canonical JSON bytes here.
-		Artifacts []*ToolArtifact
+		ServerData json.RawMessage
 
 		// Telemetry contains execution timing and provider usage metadata when available.
 		Telemetry *telemetry.ToolTelemetry
@@ -350,22 +337,6 @@ type (
 
 		// RetryHint provides structured retry guidance when execution failed due to invalid payloads.
 		RetryHint *planner.RetryHint
-	}
-
-	// ToolArtifact is a tool-produced artifact payload that crosses workflow/activity boundaries.
-	//
-	// Data is the canonical JSON encoding produced by the tool's sidecar codec.
-	// Consumers may decode it using the sidecar codec for the originating tool.
-	ToolArtifact struct {
-		// Kind identifies the logical artifact shape (e.g., "atlas.topology").
-		Kind string `json:"kind"`
-		// Data contains the artifact payload as canonical JSON bytes.
-		Data json.RawMessage `json:"data"`
-		// SourceTool is the fully-qualified tool identifier that produced this artifact.
-		SourceTool tools.Ident `json:"source_tool"`
-		// RunLink links this artifact to a nested agent run when it was produced by an
-		// agent-as-tool. Nil for service-backed tools.
-		RunLink *run.Handle `json:"run_link,omitempty"`
 	}
 
 	// PauseRequest carries metadata attached to a pause signal.
@@ -455,8 +426,7 @@ type (
 		// - This field crosses a workflow signal boundary. It must be wire-safe and must
 		//   not embed planner.ToolResult (which contains `any`).
 		// - Results must be encoded with the tool's generated result codec and stored
-		//   as canonical JSON bytes. Artifacts (if any) must be encoded with the tool's
-		//   sidecar codec.
+		//   as canonical JSON bytes. ServerData must be stored as canonical JSON bytes.
 		Results []*ToolEvent
 
 		// RetryHints optionally provides hints associated with failures.
