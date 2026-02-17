@@ -132,6 +132,11 @@ type (
 		// been registered with the engine.
 		hookActivityRegistered bool
 
+		// hookActivityTimeout overrides the StartToClose timeout used for the
+		// hook publishing activity (`runtime.publish_hook`). Zero means use the
+		// runtime default.
+		hookActivityTimeout time.Duration
+
 		// reminders manages run-scoped system reminders used for backstage
 		// guidance (safety, correctness, workflow) injected into prompts by
 		// planners. It is internal to the runtime; planners interact with it
@@ -168,6 +173,11 @@ type (
 		Metrics telemetry.Metrics
 		// Tracer emits spans for planner/tool execution.
 		Tracer telemetry.Tracer
+
+		// HookActivityTimeout overrides the StartToClose timeout for the
+		// hook publishing activity (`runtime.publish_hook`). Zero means use the
+		// runtime default.
+		HookActivityTimeout time.Duration
 
 		// Workers provides per-agent worker configuration. If an agent lacks
 		// an entry, the runtime uses a default worker configuration. Engines
@@ -374,6 +384,7 @@ const (
 	defaultPlanActivityTimeout        = 30 * time.Second
 	defaultResumeActivityTimeout      = 30 * time.Second
 	defaultExecuteToolActivityTimeout = 2 * time.Minute
+	defaultHookActivityTimeout        = 15 * time.Second
 )
 
 var (
@@ -623,26 +634,27 @@ func newFromOptions(opts Options) *Runtime {
 		opts.SessionStore = sessioninmem.New()
 	}
 	rt := &Runtime{
-		Engine:           eng,
-		Memory:           opts.MemoryStore,
-		SessionStore:     opts.SessionStore,
-		Policy:           opts.Policy,
-		RunEventStore:    opts.RunEventStore,
-		Bus:              bus,
-		Stream:           opts.Stream,
-		logger:           logger,
-		metrics:          metrics,
-		tracer:           tracer,
-		agents:           make(map[agent.Ident]AgentRegistration),
-		toolsets:         make(map[string]ToolsetRegistration),
-		toolSpecs:        make(map[tools.Ident]tools.ToolSpec),
-		toolSchemas:      make(map[string]map[string]any),
-		models:           make(map[string]model.Client),
-		runHandles:       make(map[string]engine.WorkflowHandle),
-		agentToolSpecs:   make(map[agent.Ident][]tools.ToolSpec),
-		workers:          opts.Workers,
-		reminders:        reminder.NewEngine(),
-		toolConfirmation: opts.ToolConfirmation,
+		Engine:              eng,
+		Memory:              opts.MemoryStore,
+		SessionStore:        opts.SessionStore,
+		Policy:              opts.Policy,
+		RunEventStore:       opts.RunEventStore,
+		Bus:                 bus,
+		Stream:              opts.Stream,
+		hookActivityTimeout: opts.HookActivityTimeout,
+		logger:              logger,
+		metrics:             metrics,
+		tracer:              tracer,
+		agents:              make(map[agent.Ident]AgentRegistration),
+		toolsets:            make(map[string]ToolsetRegistration),
+		toolSpecs:           make(map[tools.Ident]tools.ToolSpec),
+		toolSchemas:         make(map[string]map[string]any),
+		models:              make(map[string]model.Client),
+		runHandles:          make(map[string]engine.WorkflowHandle),
+		agentToolSpecs:      make(map[agent.Ident][]tools.ToolSpec),
+		workers:             opts.Workers,
+		reminders:           reminder.NewEngine(),
+		toolConfirmation:    opts.ToolConfirmation,
 	}
 	// Install runtime-owned toolsets before any agent registration so planners
 	// and transcripts can rely on a stable tool vocabulary.
@@ -838,6 +850,19 @@ func New(opts ...RuntimeOption) *Runtime {
 // WithEngine sets the workflow engine.
 func WithEngine(e engine.Engine) RuntimeOption { return func(o *Options) { o.Engine = e } }
 
+// WithHookActivityTimeout sets the StartToClose timeout for the hook publishing
+// activity (`runtime.publish_hook`). This activity persists and streams hook
+// events emitted by workflow code, so its timeout bounds end-to-end hook
+// durability and stream continuity while a session is active.
+//
+// d must be greater than zero.
+func WithHookActivityTimeout(d time.Duration) RuntimeOption {
+	if d <= 0 {
+		panic("runtime: hook activity timeout must be greater than zero")
+	}
+	return func(o *Options) { o.HookActivityTimeout = d }
+}
+
 // WithMemoryStore sets the memory store.
 func WithMemoryStore(m memory.Store) RuntimeOption { return func(o *Options) { o.MemoryStore = m } }
 
@@ -1007,8 +1032,12 @@ func (r *Runtime) ensureHookActivityRegistered(ctx context.Context) error {
 	if r.hookActivityRegistered {
 		return nil
 	}
+	timeout := defaultHookActivityTimeout
+	if r.hookActivityTimeout > 0 {
+		timeout = r.hookActivityTimeout
+	}
 	opts := engine.ActivityOptions{
-		Timeout: 15 * time.Second,
+		Timeout: timeout,
 		RetryPolicy: engine.RetryPolicy{
 			MaxAttempts: 1,
 		},
