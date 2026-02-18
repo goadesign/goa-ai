@@ -111,6 +111,7 @@ func agentSpecsJSONFile(agent *AgentData) *codegen.File {
 
 	type serverDataSchema struct {
 		Kind        string     `json:"kind"`
+		Audience    string     `json:"audience"`
 		Description string     `json:"description,omitempty"`
 		Type        typeSchema `json:"type"`
 	}
@@ -196,6 +197,7 @@ func agentSpecsJSONFile(agent *AgentData) *codegen.File {
 				}
 				schemas = append(schemas, serverDataSchema{
 					Kind:        sd.Kind,
+					Audience:    sd.Audience,
 					Description: sd.Description,
 					Type:        ts,
 				})

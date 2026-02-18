@@ -105,6 +105,17 @@ type (
 		// "atlas.time_series" for UI charts).
 		Kind string
 
+		// Audience declares who this server-data payload is intended for.
+		//
+		// Contract:
+		//   - "timeline": persisted and eligible for UI rendering and transcript export.
+		//   - "internal": tool-composition attachment; not persisted or rendered.
+		//   - "evidence": provenance references; persisted separately from timeline cards.
+		//
+		// Audience is set by the DSL layer. When not explicitly configured, it
+		// defaults to "timeline".
+		Audience string
+
 		// Description is the observer-facing description of this server-data payload.
 		// It is typically used by UIs and sinks to explain rendering behavior.
 		Description string

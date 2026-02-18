@@ -97,6 +97,7 @@ type (
 
 	serverDataEntry struct {
 		Kind        string
+		Audience    string
 		Description string
 		Type        *typeData
 	}

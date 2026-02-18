@@ -47,6 +47,7 @@ var (
         {{- range .ServerData }}
             {
                 Kind: {{ printf "%q" .Kind }},
+                Audience: tools.ServerDataAudience({{ printf "%q" .Audience }}),
                 Description: {{ printf "%q" .Description }},
                 Type: tools.TypeSpec{
                     Name: {{ if .Type }}{{ printf "%q" .Type.TypeName }}{{ else }}""{{ end }},

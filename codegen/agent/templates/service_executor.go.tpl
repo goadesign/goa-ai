@@ -293,8 +293,9 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                 }
                 if string(dataJSON) != "null" {
                     serverItems = append(serverItems, &toolregistry.ServerDataItem{
-                        Kind: {{ printf "%q" .Kind }},
-                        Data: dataJSON,
+                        Kind:     {{ printf "%q" .Kind }},
+                        Audience: {{ printf "%q" .Audience }},
+                        Data:     dataJSON,
                     })
                 }
             }

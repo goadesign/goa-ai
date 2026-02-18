@@ -422,6 +422,7 @@ func serverDataEntriesForTool(tool *ToolData, builder *toolSpecBuilder) ([]*serv
 		}
 		out = append(out, &serverDataEntry{
 			Kind:        sd.Kind,
+			Audience:    sd.Audience,
 			Description: sd.Description,
 			Type:        td,
 		})

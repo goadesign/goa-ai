@@ -20,6 +20,12 @@ var AnyJSONCodec = JSONCodec[any]{
 }
 
 type (
+	// ServerDataAudience declares who a server-data payload is intended for.
+	//
+	// Audience is a routing contract for downstream consumers (timeline projection,
+	// UI renderers, persistence sinks). It is not sent to model providers.
+	ServerDataAudience string
+
 	// ToolSpec enumerates the metadata and JSON codecs for a tool.
 	ToolSpec struct {
 		// Name is the globally unique tool identifier (`toolset.tool`).
@@ -92,6 +98,13 @@ type (
 	ServerDataSpec struct {
 		// Kind identifies the server-data kind.
 		Kind string
+		// Audience declares who this server-data payload is intended for.
+		//
+		// Allowed values:
+		//   - "timeline": persisted and eligible for UI rendering and transcript export
+		//   - "internal": tool-composition attachment; not persisted or rendered
+		//   - "evidence": provenance references; persisted separately from timeline cards
+		Audience ServerDataAudience
 		// Description describes what an observer sees when this payload is rendered.
 		Description string
 		// Type describes the schema and JSON codec for this server-data payload.
@@ -154,4 +167,13 @@ type (
 		// FromJSON decodes the JSON payload into the typed value.
 		FromJSON func([]byte) (T, error)
 	}
+)
+
+const (
+	// AudienceTimeline indicates the payload is persisted and eligible for UI rendering.
+	AudienceTimeline ServerDataAudience = "timeline"
+	// AudienceInternal indicates the payload is an internal tool-composition attachment.
+	AudienceInternal ServerDataAudience = "internal"
+	// AudienceEvidence indicates the payload carries provenance references.
+	AudienceEvidence ServerDataAudience = "evidence"
 )

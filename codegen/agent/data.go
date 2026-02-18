@@ -409,6 +409,8 @@ type (
 	ServerDataData struct {
 		// Kind is the server-data kind identifier.
 		Kind string
+		// Audience declares who this payload is intended for ("timeline", "internal", "evidence").
+		Audience string
 		// Schema is the typed schema for the server-data payload.
 		Schema *goaexpr.AttributeExpr
 		// Description describes the observer-facing rendering contract.
@@ -1332,8 +1334,9 @@ func serverDataData(exprs []*agentsExpr.ServerDataExpr, qualified string) []*Ser
 	out := make([]*ServerDataData, 0, len(exprs))
 	for _, sd := range exprs {
 		item := &ServerDataData{
-			Kind: defaultString(sd.Kind, qualified),
-			Schema: sd.Schema,
+			Kind:     defaultString(sd.Kind, qualified),
+			Audience: sd.Audience,
+			Schema:   sd.Schema,
 		}
 		item.Description = strings.TrimSpace(sd.Description)
 		if item.Description == "" {

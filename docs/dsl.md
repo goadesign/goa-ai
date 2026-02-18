@@ -601,6 +601,34 @@ Server-data is never included in prompts to the LLM. Optional server-data may be
 observer-facing UI artifacts (e.g., `planner.ToolResult.Artifacts` and stream events) while
 always-on server-data is intended for in-process subscribers such as persistence and telemetry.
 
+#### Declaring a server-data audience (`Audience*`)
+
+Each `ServerData` entry declares an *audience* that downstream consumers use to route the payload
+without relying on kind naming conventions:
+
+- `"timeline"`: persisted and eligible for observer-facing projection (e.g., timeline/UI cards)
+- `"internal"`: tool-composition attachment; not persisted or rendered
+- `"evidence"`: provenance references; persisted separately from timeline cards
+
+Use the DSL helpers inside the `ServerData` block:
+
+```go
+Tool("get_time_series", "Get time series data", func() {
+    // ...
+    ServerData("atlas.time_series.chart_points", TimeSeriesChartPoints, func() {
+        Description("Chart-oriented points for downstream tool composition.")
+        AudienceInternal()
+        FromMethodResultField("ChartSidecar")
+    })
+    ServerData("aura.evidence", ArrayOf(Evidence), func() {
+        Description("Provenance references for server-side persistence.")
+        AudienceEvidence()
+        ModeAlways()
+        FromMethodResultField("Evidence")
+    })
+})
+```
+
 #### Controlling optional server-data emission (`server_data` + `ServerDataDefault`)
 
 Tools that declare optional `ServerData` automatically accept a reserved payload field named `server_data`

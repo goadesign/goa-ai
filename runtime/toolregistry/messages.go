@@ -84,8 +84,9 @@ type (
 	// ServerDataItem is server-only tool output published alongside the canonical
 	// tool result JSON. Server data is never sent to model providers.
 	ServerDataItem struct {
-		Kind string          `json:"kind"`
-		Data json.RawMessage `json:"data"`
+		Kind     string          `json:"kind"`
+		Audience string          `json:"audience"`
+		Data     json.RawMessage `json:"data"`
 	}
 
 	// ToolError is a structured tool error published by providers.

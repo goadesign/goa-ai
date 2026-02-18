@@ -81,8 +81,9 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 			}
 			if string(dataJSON) != "null" {
 				server = append(server, &toolregistry.ServerDataItem{
-					Kind: {{ printf "%q" .Kind }},
-					Data: dataJSON,
+					Kind:     {{ printf "%q" .Kind }},
+					Audience: {{ printf "%q" .Audience }},
+					Data:     dataJSON,
 				})
 			}
 		}

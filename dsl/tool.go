@@ -300,8 +300,9 @@ func ServerData(kind string, schema any, args ...any) {
 		return
 	}
 	sd := &agentsexpr.ServerDataExpr{
-		Kind: kind,
-		Tool: tool,
+		Kind:     kind,
+		Audience: string(ServerDataAudienceTimeline),
+		Tool:     tool,
 	}
 	sd.Schema = toolDSL(tool, "ServerData", schema)
 	if len(args) == 1 {
@@ -337,6 +338,65 @@ func FromMethodResultField(name string) {
 	sd.Source = &agentsexpr.ServerDataSourceExpr{
 		MethodResultField: name,
 	}
+}
+
+// ServerDataAudience declares who a server-data payload is intended for.
+type ServerDataAudience string
+
+const (
+	// AudienceTimeline indicates the payload is persisted and eligible for UI rendering.
+	ServerDataAudienceTimeline ServerDataAudience = "timeline"
+	// AudienceInternal indicates the payload is an internal tool-composition attachment.
+	ServerDataAudienceInternal ServerDataAudience = "internal"
+	// AudienceEvidence indicates the payload carries provenance references.
+	ServerDataAudienceEvidence ServerDataAudience = "evidence"
+)
+
+// Audience declares who this server-data payload is intended for.
+//
+// Audience is used by downstream consumers (timeline projection, UI renderers,
+// persistence sinks) to route server-data without relying on kind naming
+// conventions.
+//
+// Allowed values are:
+//   - "timeline": persisted and eligible for UI rendering and transcript export
+//   - "internal": tool-composition attachment; not persisted or rendered
+//   - "evidence": provenance references; persisted separately from timeline cards
+func Audience(value ServerDataAudience) {
+	if value == "" {
+		eval.ReportError("Audience value must be non-empty")
+		return
+	}
+	switch value {
+	case ServerDataAudienceTimeline, ServerDataAudienceInternal, ServerDataAudienceEvidence:
+	default:
+		eval.ReportError("Audience must be one of: ServerDataAudienceTimeline, ServerDataAudienceInternal, ServerDataAudienceEvidence")
+		return
+	}
+	sd, ok := eval.Current().(*agentsexpr.ServerDataExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	sd.Audience = string(value)
+}
+
+// AudienceTimeline declares that the current server-data payload is intended for
+// persistence and UI rendering in the session timeline.
+func AudienceTimeline() {
+	Audience(ServerDataAudienceTimeline)
+}
+
+// AudienceInternal declares that the current server-data payload is intended
+// only for downstream tool composition.
+func AudienceInternal() {
+	Audience(ServerDataAudienceInternal)
+}
+
+// AudienceEvidence declares that the current server-data payload carries
+// provenance references and should be persisted separately from timeline cards.
+func AudienceEvidence() {
+	Audience(ServerDataAudienceEvidence)
 }
 
 // Tags attaches metadata labels to a tool for categorization and filtering. Tags

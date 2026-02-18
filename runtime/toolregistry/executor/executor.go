@@ -346,8 +346,9 @@ func cloneServerDataItems(items []*toolregistry.ServerDataItem) []*toolregistry.
 			continue
 		}
 		out = append(out, &toolregistry.ServerDataItem{
-			Kind: item.Kind,
-			Data: append(json.RawMessage(nil), item.Data...),
+			Kind:     item.Kind,
+			Audience: item.Audience,
+			Data:     append(json.RawMessage(nil), item.Data...),
 		})
 	}
 	return out
