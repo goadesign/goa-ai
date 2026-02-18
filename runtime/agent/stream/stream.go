@@ -165,6 +165,11 @@ type (
 	// and track tool execution metrics. Every ToolStart event eventually produces a ToolEnd.
 	ToolEnd struct {
 		Base
+		// ServerData carries server-only metadata emitted alongside the tool result.
+		// It is not part of ToolEndPayload and is never serialized into the event
+		// payload. Sinks that support server-only sidecars (for example Pulse)
+		// may forward it out-of-band for UIs and persistence layers.
+		ServerData json.RawMessage `json:"-"`
 		// Data contains the structured result metadata for this tool completion. Clients
 		// access this field directly for type-safe field access (e.g., event.Data.Duration,
 		// event.Data.ToolCallID).
@@ -376,10 +381,6 @@ type (
 		// graph caps). It is supplied by tool implementations and surfaced for
 		// observability; the runtime does not modify it.
 		Bounds *agent.Bounds `json:"bounds,omitempty"`
-		// ServerData carries server-only data emitted alongside the tool result.
-		// This payload is never sent to model providers; it exists for UIs and
-		// persistence layers.
-		ServerData json.RawMessage `json:"server_data,omitempty"`
 		// Duration is the wall-clock execution time for the tool activity, including any
 		// queuing delay, retries, and processing time. Clients can display this in
 		// performance dashboards or debug panels to identify slow tools.

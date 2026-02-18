@@ -84,7 +84,7 @@ func TestStreamSubscriber_ToolEnd_EmitsServerData(t *testing.T) {
 	require.Equal(t, EventToolEnd, sink.events[0].Type())
 	end, ok := sink.events[0].(ToolEnd)
 	require.True(t, ok)
-	require.JSONEq(t, string(server), string(end.Data.ServerData))
+	require.JSONEq(t, string(server), string(end.ServerData))
 }
 
 func TestStreamSubscriber_ToolEnd_AllowsMissingResult(t *testing.T) {

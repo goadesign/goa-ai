@@ -44,12 +44,12 @@ func TestSendPublishesEnvelope(t *testing.T) {
 	require.NoError(t, err)
 
 	endPayload := stream.ToolEndPayload{
-		Result:     json.RawMessage(`{"status":"ok"}`),
-		ServerData: server,
+		Result: json.RawMessage(`{"status":"ok"}`),
 	}
 	err = sink.Send(context.Background(), stream.ToolEnd{
-		Base: stream.NewBase(stream.EventToolEnd, "run-123", "session-123", endPayload),
-		Data: endPayload,
+		Base:       stream.NewBase(stream.EventToolEnd, "run-123", "session-123", endPayload),
+		ServerData: server,
+		Data:       endPayload,
 	})
 	require.NoError(t, err)
 	require.False(t, str.HasMore())
@@ -90,14 +90,18 @@ func TestOnPublishedCalled(t *testing.T) {
 
 	endPayload := stream.ToolEndPayload{Result: json.RawMessage(`{"status":"ok"}`)}
 	err = sink.Send(context.Background(), stream.ToolEnd{
-		Base: stream.NewBase(stream.EventToolEnd, "run-123", "session-123", endPayload),
-		Data: endPayload,
+		Base:       stream.NewBase(stream.EventToolEnd, "run-123", "session-123", endPayload),
+		ServerData: json.RawMessage(`{"x":1}`),
+		Data:       endPayload,
 	})
 	require.NoError(t, err)
 	require.True(t, called)
 	require.Equal(t, "42-0", gotID)
 	require.Equal(t, "session/session-123", gotStream)
 	require.Equal(t, stream.EventToolEnd, gotEvent.Type())
+	end, ok := gotEvent.(stream.ToolEnd)
+	require.True(t, ok)
+	require.JSONEq(t, `{"x":1}`, string(end.ServerData))
 }
 
 func TestOnPublishedErrorPropagates(t *testing.T) {

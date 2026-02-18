@@ -125,15 +125,10 @@ func (s *Sink) Send(ctx context.Context, event stream.Event) error {
 	}
 	switch ev := event.(type) {
 	case stream.ToolEnd:
-		env.ServerData = ev.Data.ServerData
-		payload := ev.Data
-		payload.ServerData = nil
-		env.Payload = payload
+		env.ServerData = ev.ServerData
+		env.Payload = ev.Data
 	case *stream.ToolEnd:
-		env.ServerData = ev.Data.ServerData
-		payload := ev.Data
-		payload.ServerData = nil
-		env.Payload = payload
+		return fmt.Errorf("pulse sink: expected ToolEnd value, got *ToolEnd")
 	}
 	payload, err := s.opts.marshalEnvelope(env)
 	if err != nil {
