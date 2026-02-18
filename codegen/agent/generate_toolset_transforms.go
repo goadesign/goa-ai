@@ -168,6 +168,81 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 				}
 			}
 		}
+
+		// Init<GoName><Kind>ServerData: method result field -> server_data type.
+		for _, serverData := range t.ServerData {
+			if serverData == nil || serverData.MethodResultField == "" {
+				continue
+			}
+			sourceAttr := t.MethodResultAttr.Find(serverData.MethodResultField)
+			if sourceAttr == nil || sourceAttr.Type == nil || sourceAttr.Type == expr.Empty {
+				panic(fmt.Sprintf(
+					"agent codegen: server_data source field %q not found on method result for tool %q",
+					serverData.MethodResultField,
+					t.QualifiedName,
+				))
+			}
+			targetTypeName := codegen.Goify(t.Name, true) + codegen.Goify(serverData.Kind, true) + "ServerData"
+			targetAttr := findToolTypeAttribute(specs, targetTypeName)
+			if targetAttr == nil || targetAttr.Type == nil || targetAttr.Type == expr.Empty {
+				panic(fmt.Sprintf(
+					"agent codegen: server_data type %q not found for tool %q",
+					targetTypeName,
+					t.QualifiedName,
+				))
+			}
+			if err := codegen.IsCompatible(sourceAttr.Type, targetAttr.Type, "in", "out"); err != nil {
+				panic(fmt.Sprintf(
+					"agent codegen: incompatible server_data source for tool %q kind %q: %v",
+					t.QualifiedName,
+					serverData.Kind,
+					err,
+				))
+			}
+			for _, im := range gatherAttributeImports(genpkg, sourceAttr) {
+				if im != nil && im.Path != "" {
+					extraImports[im.Path] = im
+				}
+			}
+			for _, im := range gatherAttributeImports(genpkg, targetAttr) {
+				if im != nil && im.Path != "" {
+					extraImports[im.Path] = im
+				}
+			}
+
+			sourcePkg := typeRefDefaultPackage(svcAlias, sourceAttr)
+			srcCtx := codegen.NewAttributeContextForConversion(false, false, true, sourcePkg, scope)
+			tgtCtx := codegen.NewAttributeContextForConversion(false, false, true, "", scope)
+			body, helpers, err := codegen.GoTransform(sourceAttr, targetAttr, "in", "out", srcCtx, tgtCtx, "", false)
+			if err != nil || body == "" {
+				panic(fmt.Sprintf(
+					"agent codegen: failed to build server_data transform for tool %q kind %q: %v",
+					t.QualifiedName,
+					serverData.Kind,
+					err,
+				))
+			}
+			for _, h := range helpers {
+				if h == nil {
+					continue
+				}
+				key := h.Name + "|" + h.ParamTypeRef + "|" + h.ResultTypeRef
+				if _, ok := helperKeys[key]; ok {
+					continue
+				}
+				helperKeys[key] = struct{}{}
+				fileHelpers = append(fileHelpers, h)
+			}
+			paramRef := scope.GoFullTypeRef(sourceAttr, sourcePkg)
+			resultRef := scope.GoFullTypeRef(targetAttr, "")
+			fns = append(fns, transformFuncData{
+				Name:          "Init" + codegen.Goify(t.Name, true) + codegen.Goify(serverData.Kind, true) + "ServerData",
+				ParamTypeRef:  paramRef,
+				ResultTypeRef: resultRef,
+				Body:          body,
+				Helpers:       nil,
+			})
+		}
 	}
 
 	if len(fns) == 0 {
@@ -239,4 +314,23 @@ func uniqueImportAlias(used map[string]struct{}, base string) string {
 		}
 		alias = fmt.Sprintf("%s%d", base, i)
 	}
+}
+
+func findToolTypeAttribute(specs *toolSpecsData, typeName string) *expr.AttributeExpr {
+	for _, td := range specs.typesList() {
+		if td != nil && td.TypeName == typeName {
+			return td.PublicType
+		}
+	}
+	return nil
+}
+
+func typeRefDefaultPackage(defaultPkg string, att *expr.AttributeExpr) string {
+	if att == nil || att.Type == nil || att.Type == expr.Empty {
+		return defaultPkg
+	}
+	if loc := codegen.UserTypeLocation(att.Type); loc != nil && loc.PackageName() != "" {
+		return loc.PackageName()
+	}
+	return defaultPkg
 }

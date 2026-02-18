@@ -74,7 +74,8 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 {{- range .ServerData }}
 {{- if .MethodResultField }}
 		{
-			dataJSON, err := json.Marshal(methodOut.{{ goify .MethodResultField true }})
+			data := Init{{ $tool.ConstName }}{{ goify .Kind true }}ServerData(methodOut.{{ goify .MethodResultField true }})
+			dataJSON, err := {{ $tool.ConstName }}{{ goify .Kind true }}ServerDataCodec.ToJSON(data)
 			if err != nil {
 				return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "encode_failed", err.Error()), nil
 			}
