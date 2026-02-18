@@ -234,12 +234,14 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 			}
 			paramRef := scope.GoFullTypeRef(sourceAttr, sourcePkg)
 			resultRef := scope.GoFullTypeRef(targetAttr, "")
+			nilInputReturnsNil := serverDataSourceMayBeNil(t.MethodResultAttr, serverData.MethodResultField, sourceAttr)
 			fns = append(fns, transformFuncData{
-				Name:          "Init" + codegen.Goify(t.Name, true) + codegen.Goify(serverData.Kind, true) + "ServerData",
-				ParamTypeRef:  paramRef,
-				ResultTypeRef: resultRef,
-				Body:          body,
-				Helpers:       nil,
+				Name:               "Init" + codegen.Goify(t.Name, true) + codegen.Goify(serverData.Kind, true) + "ServerData",
+				ParamTypeRef:       paramRef,
+				ResultTypeRef:      resultRef,
+				NilInputReturnsNil: nilInputReturnsNil,
+				Body:               body,
+				Helpers:            nil,
 			})
 		}
 	}
@@ -332,4 +334,27 @@ func typeRefDefaultPackage(defaultPkg string, att *expr.AttributeExpr) string {
 		return loc.PackageName()
 	}
 	return defaultPkg
+}
+
+// serverDataSourceMayBeNil reports whether a method-result field can carry nil
+// at runtime and therefore requires a top-level nil guard in generated
+// server_data transforms.
+//
+// The decision follows Goa attribute semantics (requiredness + primitive
+// pointer rules) rather than rendered Go type strings:
+//   - optional non-primitive fields (objects, arrays, maps, unions, user types)
+//     are nillable;
+//   - optional primitive fields are nillable only when Goa models them as
+//     primitive pointers.
+func serverDataSourceMayBeNil(resultAttr *expr.AttributeExpr, field string, sourceAttr *expr.AttributeExpr) bool {
+	if resultAttr == nil || field == "" || sourceAttr == nil || sourceAttr.Type == nil || sourceAttr.Type == expr.Empty {
+		return false
+	}
+	if resultAttr.IsRequired(field) {
+		return false
+	}
+	if !expr.IsPrimitive(sourceAttr.Type) {
+		return true
+	}
+	return resultAttr.IsPrimitivePointer(field, false)
 }

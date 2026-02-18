@@ -1,6 +1,11 @@
 {{- range .Functions }}
 // {{ .Name }} converts {{ .ParamTypeRef }} to {{ .ResultTypeRef }}.
 func {{ .Name }}(in {{ .ParamTypeRef }}) {{ .ResultTypeRef }} {
+{{- if .NilInputReturnsNil }}
+    if in == nil {
+        return nil
+    }
+{{- end }}
     var out {{ .ResultTypeRef }}
 {{ .Body }}
     return out

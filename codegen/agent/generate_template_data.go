@@ -60,8 +60,12 @@ type (
 		Name          string
 		ParamTypeRef  string
 		ResultTypeRef string
-		Body          string
-		Helpers       []*codegen.TransformFunctionData
+		// NilInputReturnsNil indicates whether the generated transform must treat
+		// nil input as a valid empty value and return nil without attempting field
+		// conversion.
+		NilInputReturnsNil bool
+		Body               string
+		Helpers            []*codegen.TransformFunctionData
 	}
 
 	transformsFileData struct {
