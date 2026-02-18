@@ -168,7 +168,6 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 				}
 			}
 		}
-
 		// Init<GoName><Kind>ServerData: method result field -> server_data type.
 		for _, serverData := range t.ServerData {
 			if serverData == nil || serverData.MethodResultField == "" {
