@@ -178,7 +178,11 @@ func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 func {{ .MarshalFunc }}(v {{ if .Pointer }}*{{ end }}{{ .FullRef }}) ([]byte, error) {
     {{- if .Pointer }}
     if v == nil {
+        {{- if eq .Usage "sidecar" }}
+        return []byte("null"), nil
+        {{- else }}
         return nil, fmt.Errorf("{{ .NilError }}")
+        {{- end }}
     }
     {{- end }}
     {{- if and .TransportTypeName .Pointer }}
