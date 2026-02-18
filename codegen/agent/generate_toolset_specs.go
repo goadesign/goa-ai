@@ -259,18 +259,11 @@ func toolsetProviderFile(genpkg string, ts *ToolsetData) *codegen.File {
 		return nil
 	}
 	hasMethods := false
-	needsJSON := false
 	for _, t := range ts.Tools {
 		if t == nil || !t.IsMethodBacked {
 			continue
 		}
 		hasMethods = true
-		for _, sd := range t.ServerData {
-			if sd != nil && sd.MethodResultField != "" {
-				needsJSON = true
-				break
-			}
-		}
 	}
 	if !hasMethods {
 		return nil
@@ -281,9 +274,6 @@ func toolsetProviderFile(genpkg string, ts *ToolsetData) *codegen.File {
 	}
 	imports := []*codegen.ImportSpec{
 		codegen.SimpleImport("context"),
-	}
-	if needsJSON {
-		imports = append(imports, codegen.SimpleImport("encoding/json"))
 	}
 	imports = append(imports,
 		codegen.SimpleImport("errors"),
