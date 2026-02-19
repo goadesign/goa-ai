@@ -31,8 +31,8 @@ var (
 		Payload: tools.TypeSpec{
 			Name:         "EchoPayload",
 			Schema:       []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Request identifier\",\"example\":\"Dignissimos quo illum.\"},\"value\":{\"type\":\"object\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"number\",\"text\"]},\"value\":{\"anyOf\":[{\"$ref\":\"#/$defs/ValueNumberTransport\"},{\"$ref\":\"#/$defs/ValueTextTransport\"}]}},\"example\":693757780,\"required\":[\"type\",\"value\"]}},\"$defs\":{\"ValueNumberTransport\":{\"title\":\"ValueNumberTransport\",\"type\":\"integer\",\"description\":\"Numeric value\",\"example\":884537394,\"format\":\"int32\"},\"ValueTextTransport\":{\"title\":\"ValueTextTransport\",\"type\":\"string\",\"description\":\"Text value\",\"example\":\"Quia ratione consequatur.\"}},\"required\":[\"id\",\"value\"]}"),
-			ExampleJSON:  []byte("{\"id\":\"abc123\",\"value\":\"abc123\"}"),
-			ExampleInput: map[string]any{"id": "abc123", "value": "abc123"},
+			ExampleJSON:  []byte("{\"id\":\"abc123\",\"value\":{\"type\":\"text\",\"value\":\"abc123\"}}"),
+			ExampleInput: map[string]any{"id": "abc123", "value": map[string]any{"type": "text", "value": "abc123"}},
 			Codec:        echoPayloadCodec,
 		},
 		Result: tools.TypeSpec{

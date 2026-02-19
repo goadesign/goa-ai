@@ -159,7 +159,11 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	// inputs when decode fails.
 	var exampleBytes []byte
 	if usage == usagePayload {
-		exampleBytes = exampleForAttribute(att)
+		// Examples must reflect the JSON wire contract, not the public tool type.
+		// In particular, unions are encoded as canonical {type,value} objects in
+		// the transport graph; deriving examples from the public type produces a
+		// flattened shape that misleads callers and LLMs.
+		exampleBytes = exampleForAttribute(schemaAttr)
 	}
 
 	doc := fmt.Sprintf("%s defines the JSON %s for the %s tool.", typeName, usage, tool.QualifiedName)

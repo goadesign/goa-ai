@@ -2,6 +2,7 @@ package codegen
 
 import (
 	"encoding/json"
+	"fmt"
 	"path"
 	"sort"
 	"strings"
@@ -52,8 +53,19 @@ func buildFieldDescriptions(att *goaexpr.AttributeExpr) map[string]string {
 		case *goaexpr.Map:
 			walk(prefix, dt.ElemType)
 		case *goaexpr.Union:
+			// Unions marshal as a canonical {type,value} object. Field paths should
+			// reflect the actual wire contract to avoid misleading dotted paths like
+			// "block.text" that omit the "value" envelope.
+			valuePrefix := prefix
+			if valueKey := dt.GetValueKey(); valueKey != "" {
+				if valuePrefix != "" {
+					valuePrefix = valuePrefix + "." + valueKey
+				} else {
+					valuePrefix = valueKey
+				}
+			}
 			for _, v := range dt.Values {
-				walk(prefix, v.Attribute)
+				walk(valuePrefix, v.Attribute)
 			}
 		}
 	}
@@ -249,7 +261,20 @@ func exampleForAttribute(att *goaexpr.AttributeExpr) []byte {
 	if v == nil {
 		return nil
 	}
-	data, err := json.Marshal(v)
+
+	// Normalize to JSON-native shapes (map[string]any, []any, float64, string, bool)
+	// so downstream rewriting logic doesn't have to handle typed maps/slices that
+	// Goa's example generator may produce for single-field objects.
+	raw, err := json.Marshal(v)
+	if err != nil || len(raw) == 0 {
+		return nil
+	}
+	var normalized any
+	if err := json.Unmarshal(raw, &normalized); err != nil {
+		return nil
+	}
+	normalized = canonicalizeUnionExamples(att, normalized)
+	data, err := json.Marshal(normalized)
 	if err != nil || len(data) == 0 {
 		return nil
 	}
@@ -258,6 +283,147 @@ func exampleForAttribute(att *goaexpr.AttributeExpr) []byte {
 		return nil
 	}
 	return data
+}
+
+// canonicalizeUnionExamples rewrites Goa's "flattened" union examples into the
+// canonical JSON shape required by Goa-generated codecs: {type,value}.
+//
+// Goa's Union.Example returns only the selected branch value, which is useful
+// for documentation but misleading for tool specs where the runtime decoder
+// expects explicit discriminators. This helper preserves the structure produced
+// by the standard example generator and wraps only union nodes.
+func canonicalizeUnionExamples(att *goaexpr.AttributeExpr, example any) any {
+	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+		return example
+	}
+	switch dt := att.Type.(type) {
+	case goaexpr.UserType:
+		return canonicalizeUnionExamples(dt.Attribute(), example)
+	case *goaexpr.Object:
+		m, ok := example.(map[string]any)
+		if !ok {
+			return example
+		}
+		for k, v := range m {
+			child := att.Find(k)
+			m[k] = canonicalizeUnionExamples(child, v)
+		}
+		return m
+	case *goaexpr.Array:
+		s, ok := example.([]any)
+		if !ok {
+			return example
+		}
+		for i, v := range s {
+			s[i] = canonicalizeUnionExamples(dt.ElemType, v)
+		}
+		return s
+	case *goaexpr.Map:
+		m, ok := example.(map[string]any)
+		if !ok {
+			return example
+		}
+		for k, v := range m {
+			m[k] = canonicalizeUnionExamples(dt.ElemType, v)
+		}
+		return m
+	case *goaexpr.Union:
+		if example == nil || len(dt.Values) == 0 {
+			return example
+		}
+
+		var chosen *goaexpr.NamedAttributeExpr
+		chosen = pickUnionVariantForExample(dt, example)
+		if chosen == nil {
+			panic(fmt.Sprintf("agent/specs_builder: union example does not match any variant (type=%q)", dt.TypeName))
+		}
+
+		typeKey := dt.GetTypeKey()
+		if typeKey == "" {
+			typeKey = "type"
+		}
+		valueKey := dt.GetValueKey()
+		if valueKey == "" {
+			valueKey = "value"
+		}
+
+		return map[string]any{
+			typeKey:  chosen.Name,
+			valueKey: canonicalizeUnionExamples(chosen.Attribute, example),
+		}
+	default:
+		return example
+	}
+}
+
+func pickUnionVariantForExample(u *goaexpr.Union, example any) *goaexpr.NamedAttributeExpr {
+	// Prefer key-based matching for object-shaped unions: Goa emits object examples
+	// as map[string]any, but IsCompatible may not be able to match user type
+	// variants directly (it reasons about Go types, not JSON shapes).
+	if m, ok := example.(map[string]any); ok {
+		for _, nat := range u.Values {
+			if nat == nil || nat.Attribute == nil {
+				continue
+			}
+			if unionVariantMatchesObjectKeys(nat.Attribute, m) {
+				return nat
+			}
+		}
+	}
+
+	for _, nat := range u.Values {
+		if nat == nil || nat.Attribute == nil || nat.Attribute.Type == nil {
+			continue
+		}
+		attr := unwrapUserTypeAttr(nat.Attribute)
+		if attr == nil || attr.Type == nil {
+			continue
+		}
+		if attr.Type.IsCompatible(example) {
+			return nat
+		}
+	}
+
+	return nil
+}
+
+func unionVariantMatchesObjectKeys(att *goaexpr.AttributeExpr, example map[string]any) bool {
+	attr := unwrapUserTypeAttr(att)
+	if attr == nil {
+		return false
+	}
+	obj, ok := attr.Type.(*goaexpr.Object)
+	if !ok || obj == nil {
+		return false
+	}
+
+	fields := make(map[string]struct{}, len(*obj))
+	for _, nat := range *obj {
+		fields[nat.Name] = struct{}{}
+	}
+
+	for k := range example {
+		if _, ok := fields[k]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func unwrapUserTypeAttr(att *goaexpr.AttributeExpr) *goaexpr.AttributeExpr {
+	if att == nil || att.Type == nil {
+		return att
+	}
+	for {
+		ut, ok := att.Type.(goaexpr.UserType)
+		if !ok {
+			return att
+		}
+		att = ut.Attribute()
+		if att == nil || att.Type == nil {
+			return att
+		}
+	}
 }
 
 // joinImportPath constructs a full import path by joining the generation package
