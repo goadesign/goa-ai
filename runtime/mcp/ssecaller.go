@@ -43,7 +43,7 @@ func (c *SSECaller) CallTool(ctx context.Context, req CallRequest) (CallResponse
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
 	injectTraceHeaders(ctx, httpReq.Header)
-	resp, err := c.transport.client.Do(httpReq) //nolint:gosec // endpoint is URL-parsed and validated in newHTTPTransport
+	resp, err := c.transport.client.Do(httpReq)
 	if err != nil {
 		return CallResponse{}, err
 	}

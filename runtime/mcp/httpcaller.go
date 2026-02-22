@@ -120,7 +120,7 @@ func (t *httpTransport) call(ctx context.Context, method string, params any, res
 	}
 	req.Header.Set("Content-Type", "application/json")
 	injectTraceHeaders(ctx, req.Header)
-	resp, err := t.client.Do(req) //nolint:gosec // endpoint is URL-parsed and validated in newHTTPTransport
+	resp, err := t.client.Do(req)
 	if err != nil {
 		return err
 	}

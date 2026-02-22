@@ -321,8 +321,8 @@ func genTags() gopter.Gen {
 
 // genUniqueID generates a unique ID based on index.
 func genUniqueID(index int) string {
-	letterByte := byte('a') + byte(index%26) //nolint:gosec // index is bounded: 0..25, safe narrowing
-	digitByte := byte('0') + byte(index/26)  //nolint:gosec // index is bounded: 0..25, safe narrowing
+	letterByte := byte('a') + byte(index%26)
+	digitByte := byte('0') + byte(index/26) 
 	return "tool-" + string([]byte{letterByte}) + "-" + string([]byte{digitByte})
 }
 

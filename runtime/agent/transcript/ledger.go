@@ -185,7 +185,7 @@ func ValidateBedrock(messages []*model.Message, thinkingEnabled bool) error {
 			if i+1 >= len(messages) {
 				return errors.New("bedrock: expected user tool_result following assistant tool_use")
 			}
-			next := messages[i+1] //nolint:gosec // bounds checked on the line above
+			next := messages[i+1]
 			if next == nil || next.Role != model.ConversationRoleUser {
 				return errors.New("bedrock: expected user tool_result following assistant tool_use")
 			}
