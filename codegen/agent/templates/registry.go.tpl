@@ -118,8 +118,8 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
         // Build a runtime ToolsetRegistration inline to avoid exposing method/service adapters.
         reg := agentsruntime.ToolsetRegistration{
             Name: {{ printf "%q" .QualifiedName }},
-            // Provide the agent-wide specs; runtime de-duplicates tool specs across registrations.
-            Specs: {{ $.ToolSpecsPackage }}.Specs,
+            // Use the used-toolset specs package for strong-contract payload/result codecs.
+            Specs: {{ .SpecsPackageName }}.Specs,
             Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
                 if call == nil {
                     return nil, fmt.Errorf("tool request is nil")
@@ -191,7 +191,7 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
         exec := execs[toolsetID]
         reg := agentsruntime.ToolsetRegistration{
             Name:  toolsetID,
-            Specs: {{ $.ToolSpecsPackage }}.Specs,
+            Specs: {{ .SpecsPackageName }}.Specs,
             Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
                 if call == nil {
                     return nil, fmt.Errorf("tool request is nil")

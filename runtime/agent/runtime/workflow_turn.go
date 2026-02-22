@@ -192,7 +192,7 @@ func (r *Runtime) handleToolTurn(
 		st.Caps.RemainingConsecutiveFailedToolCalls = st.Caps.MaxConsecutiveFailedToolCalls
 	}
 
-	if out, err := r.handleMissingFieldsPolicy(wfCtx, reg, input, base, vals, st.ToolEvents, st.AggUsage, &st.NextAttempt, turnID, ctrl, deadlines.Budget, deadlines.Hard); err != nil {
+	if out, err := r.handleMissingFieldsPolicy(wfCtx, reg, input, base, vals, st.ToolEvents, st.AggUsage, &st.NextAttempt, turnID, ctrl, deadlines); err != nil {
 		return nil, err
 	} else if out != nil {
 		return out, nil

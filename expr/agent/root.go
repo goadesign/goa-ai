@@ -95,7 +95,11 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 		walk(eval.ToExpressionSet(toolsets))
 	}
 
-	var tools []*ToolExpr
+	total := 0
+	for _, ts := range toolsets {
+		total += len(ts.Tools)
+	}
+	tools := make([]*ToolExpr, 0, total)
 	for _, ts := range toolsets {
 		tools = append(tools, ts.Tools...)
 	}

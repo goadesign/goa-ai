@@ -1,7 +1,9 @@
 package codegen
 
 import (
+	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -322,11 +324,69 @@ func agentRegistryFile(agent *AgentData) *codegen.File {
 			&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/runtime/hints", Name: "hints"},
 		)
 	}
+	usedAliases := make(map[string]struct{})
+	for _, imp := range imports {
+		alias := imp.Name
+		if alias == "" {
+			alias = path.Base(imp.Path)
+		}
+		if alias == "" {
+			continue
+		}
+		usedAliases[alias] = struct{}{}
+	}
+	nextAlias := func(base string) string {
+		alias := base
+		if alias == "" {
+			alias = "specs"
+		}
+		if _, exists := usedAliases[alias]; !exists {
+			usedAliases[alias] = struct{}{}
+			return alias
+		}
+		suffix := 2
+		for {
+			candidate := fmt.Sprintf("%s%d", alias, suffix)
+			if _, exists := usedAliases[candidate]; !exists {
+				usedAliases[candidate] = struct{}{}
+				return candidate
+			}
+			suffix++
+		}
+	}
+	// RegisterAgent/RegisterUsedToolsets bind each used toolset registration to
+	// that toolset's own specs package so runtime codecs and hint templates use
+	// the canonical payload/result contracts.
+	usedSpecsImports := make(map[string]struct{})
+	usedSpecsAliases := make(map[string]string)
+	for _, ts := range agent.UsedToolsets {
+		if ts.AgentToolsImportPath != "" || ts.SpecsImportPath == "" || ts.SpecsPackageName == "" {
+			continue
+		}
+		alias, ok := usedSpecsAliases[ts.QualifiedName]
+		if !ok {
+			alias = nextAlias(ts.SpecsPackageName)
+			usedSpecsAliases[ts.QualifiedName] = alias
+		}
+		if _, seen := usedSpecsImports[ts.SpecsImportPath]; seen {
+			continue
+		}
+		imports = append(imports, &codegen.ImportSpec{
+			Path: ts.SpecsImportPath,
+			Name: alias,
+		})
+		usedSpecsImports[ts.SpecsImportPath] = struct{}{}
+	}
 	if needsTimeImport(agent) {
 		imports = append(imports, &codegen.ImportSpec{Path: "time"})
 	}
 	if len(agent.Tools) > 0 {
 		imports = append(imports, &codegen.ImportSpec{Path: agent.ToolSpecsImportPath, Name: agent.ToolSpecsPackage})
+	}
+	agentForRegistry := *agent
+	if len(usedSpecsAliases) > 0 {
+		agentForRegistry.UsedToolsets = cloneToolsetsWithSpecsAliases(agent.UsedToolsets, usedSpecsAliases)
+		agentForRegistry.AllToolsets = cloneToolsetsWithSpecsAliases(agent.AllToolsets, usedSpecsAliases)
 	}
 	sections := []*codegen.SectionTemplate{
 		codegen.Header(agent.StructName+" registry", agent.PackageName, imports),
@@ -336,7 +396,7 @@ func agentRegistryFile(agent *AgentData) *codegen.File {
 			Data: struct {
 				*AgentData
 				HasExternalMCP bool
-			}{AgentData: agent, HasExternalMCP: hasExternal},
+			}{AgentData: &agentForRegistry, HasExternalMCP: hasExternal},
 			FuncMap: templateFuncMap(),
 		},
 	}
@@ -344,6 +404,24 @@ func agentRegistryFile(agent *AgentData) *codegen.File {
 		Path:             filepath.Join(agent.Dir, "registry.go"),
 		SectionTemplates: sections,
 	}
+}
+
+func cloneToolsetsWithSpecsAliases(toolsets []*ToolsetData, aliases map[string]string) []*ToolsetData {
+	if len(toolsets) == 0 {
+		return toolsets
+	}
+	copies := make([]*ToolsetData, 0, len(toolsets))
+	for _, ts := range toolsets {
+		if ts == nil {
+			continue
+		}
+		tsCopy := *ts
+		if alias, ok := aliases[ts.QualifiedName]; ok {
+			tsCopy.SpecsPackageName = alias
+		}
+		copies = append(copies, &tsCopy)
+	}
+	return copies
 }
 
 func activityNeedsTime(act ActivityArtifact) bool {
@@ -764,13 +842,14 @@ func emitExecutorInternalStub(ag *AgentData, ts *ToolsetData) *codegen.File {
 	}
 	// Build imports: agent package for registration.
 	agentImport := &codegen.ImportSpec{Path: ag.ImportPath, Name: ag.PackageName}
-	imports := []*codegen.ImportSpec{
+	imports := make([]*codegen.ImportSpec, 0, 6)
+	imports = append(imports,
 		codegen.SimpleImport("context"),
 		codegen.SimpleImport("errors"),
 		agentImport,
-		{Path: "goa.design/goa-ai/runtime/agent/runtime"},
-		{Path: "goa.design/goa-ai/runtime/agent/planner"},
-	}
+		&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/runtime"},
+		&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/planner"},
+	)
 	// Import specs package for typed payloads and transforms.
 	specsAlias := ts.SpecsPackageName + "specs"
 	imports = append(imports, &codegen.ImportSpec{Path: ts.SpecsImportPath, Name: specsAlias})

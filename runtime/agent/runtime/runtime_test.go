@@ -102,6 +102,65 @@ func TestStartRunRequiresSessionID(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestStartRunCapsTimeoutFromPolicyBudget(t *testing.T) {
+	eng := &stubEngine{}
+	rt := &Runtime{
+		Engine:       eng,
+		logger:       telemetry.NoopLogger{},
+		metrics:      telemetry.NoopMetrics{},
+		tracer:       telemetry.NoopTracer{},
+		SessionStore: sessioninmem.New(),
+		agents: map[agent.Ident]AgentRegistration{
+			"service.agent": {
+				ID: "service.agent",
+				Workflow: engine.WorkflowDefinition{
+					Name:      "service.workflow",
+					TaskQueue: "svc.queue",
+				},
+				Policy: RunPolicy{
+					TimeBudget:     20 * time.Minute,
+					FinalizerGrace: 10 * time.Second,
+				},
+				ResumeActivityOptions: engine.ActivityOptions{
+					Timeout: 20 * time.Second,
+				},
+			},
+		},
+	}
+	client := rt.MustClient(agent.Ident("service.agent"))
+	_, err := rt.CreateSession(context.Background(), "sess-1")
+	require.NoError(t, err)
+	_, err = client.Start(context.Background(), "sess-1", nil)
+	require.NoError(t, err)
+	require.Equal(t, 15*time.Minute, eng.last.RunTimeout)
+}
+
+func TestStartRunUsesDefaultTimeoutWithoutPolicyBudget(t *testing.T) {
+	eng := &stubEngine{}
+	rt := &Runtime{
+		Engine:       eng,
+		logger:       telemetry.NoopLogger{},
+		metrics:      telemetry.NoopMetrics{},
+		tracer:       telemetry.NoopTracer{},
+		SessionStore: sessioninmem.New(),
+		agents: map[agent.Ident]AgentRegistration{
+			"service.agent": {
+				ID: "service.agent",
+				Workflow: engine.WorkflowDefinition{
+					Name:      "service.workflow",
+					TaskQueue: "svc.queue",
+				},
+			},
+		},
+	}
+	client := rt.MustClient(agent.Ident("service.agent"))
+	_, err := rt.CreateSession(context.Background(), "sess-1")
+	require.NoError(t, err)
+	_, err = client.Start(context.Background(), "sess-1", nil)
+	require.NoError(t, err)
+	require.Equal(t, 15*time.Minute, eng.last.RunTimeout)
+}
+
 func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{

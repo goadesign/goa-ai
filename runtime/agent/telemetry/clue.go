@@ -70,8 +70,10 @@ func (ClueLogger) Info(ctx context.Context, msg string, keyvals ...any) {
 
 // Warn emits a warning-level log message with structured key-value pairs.
 func (ClueLogger) Warn(ctx context.Context, msg string, keyvals ...any) {
-	fielders := []log.Fielder{log.KV{K: "msg", V: msg}, log.KV{K: "severity", V: "warning"}}
-	fielders = append(fielders, kvSliceToClue(keyvals)...)
+	clueKVs := kvSliceToClue(keyvals)
+	fielders := make([]log.Fielder, 0, 2+len(clueKVs))
+	fielders = append(fielders, log.KV{K: "msg", V: msg}, log.KV{K: "severity", V: "warning"})
+	fielders = append(fielders, clueKVs...)
 	log.Warn(ctx, fielders...)
 }
 

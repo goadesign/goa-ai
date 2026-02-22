@@ -373,7 +373,7 @@ func formatMessage(m *model.Message) string {
 		case model.TextPart:
 			sb.WriteString(v.Text)
 		case model.ToolUsePart:
-			sb.WriteString(fmt.Sprintf("[Tool Call: %s]", v.Name))
+			fmt.Fprintf(&sb, "[Tool Call: %s]", v.Name)
 		case model.ToolResultPart:
 			sb.WriteString("[Tool Result]")
 		case model.ThinkingPart:

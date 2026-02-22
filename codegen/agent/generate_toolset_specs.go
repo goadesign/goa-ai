@@ -156,13 +156,14 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 				},
 			}
 			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, transportDirName, "validate.go"), SectionTemplates: validateSections})
-			if len(specsData.TransportUnions) > 0 {
-				unionImports := []*codegen.ImportSpec{
-					codegen.SimpleImport("encoding/json"),
-					codegen.SimpleImport("fmt"),
-					codegen.GoaImport(""),
-				}
-				unionImports = append(unionImports, timports...)
+		if len(specsData.TransportUnions) > 0 {
+			unionImports := make([]*codegen.ImportSpec, 0, 3+len(timports))
+			unionImports = append(unionImports,
+				codegen.SimpleImport("encoding/json"),
+				codegen.SimpleImport("fmt"),
+				codegen.GoaImport(""),
+			)
+			unionImports = append(unionImports, timports...)
 				unionSections := []*codegen.SectionTemplate{
 					codegen.Header(ts.Name+" tool transport union types", transportPkgName, unionImports),
 					{
@@ -190,12 +191,14 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 		}
 		// unions.go
 		if len(specsData.Unions) > 0 {
-			unionImports := []*codegen.ImportSpec{
+			typeImports := specsData.typeImports()
+			unionImports := make([]*codegen.ImportSpec, 0, 3+len(typeImports))
+			unionImports = append(unionImports,
 				codegen.SimpleImport("encoding/json"),
 				codegen.SimpleImport("fmt"),
 				codegen.GoaImport(""),
-			}
-			unionImports = append(unionImports, specsData.typeImports()...)
+			)
+			unionImports = append(unionImports, typeImports...)
 			unionSections := []*codegen.SectionTemplate{
 				codegen.Header(ts.Name+" tool union types", ts.SpecsPackageName, unionImports),
 				{
@@ -272,10 +275,9 @@ func toolsetProviderFile(genpkg string, ts *ToolsetData) *codegen.File {
 	if serviceImportPath == "" {
 		return nil
 	}
-	imports := []*codegen.ImportSpec{
-		codegen.SimpleImport("context"),
-	}
+	imports := make([]*codegen.ImportSpec, 0, 6)
 	imports = append(imports,
+		codegen.SimpleImport("context"),
 		codegen.SimpleImport("errors"),
 		codegen.SimpleImport("fmt"),
 		&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/toolregistry"},

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	core "goa.design/goa-ai/alpha/agents/scribe/core"
+	core2 "goa.design/goa-ai/calc/toolsets/core"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/planner"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
@@ -78,8 +79,8 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 		// Build a runtime ToolsetRegistration inline to avoid exposing method/service adapters.
 		reg := agentsruntime.ToolsetRegistration{
 			Name: "core",
-			// Provide the agent-wide specs; runtime de-duplicates tool specs across registrations.
-			Specs: specs.Specs,
+			// Use the used-toolset specs package for strong-contract payload/result codecs.
+			Specs: core2.Specs,
 			Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 				if call == nil {
 					return nil, fmt.Errorf("tool request is nil")

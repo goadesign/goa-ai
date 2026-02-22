@@ -92,6 +92,8 @@ const (
 var (
 	// ErrWorkflowNotFound indicates that no workflow execution exists for the given identifier.
 	ErrWorkflowNotFound = errors.New("workflow not found")
+	// ErrWorkflowCompleted indicates that a workflow exists but no longer accepts signals.
+	ErrWorkflowCompleted = errors.New("workflow completed")
 )
 
 type (

@@ -666,7 +666,7 @@ func (h *workflowHandle) Wait(ctx context.Context) (*api.RunOutput, error) {
 }
 
 func (h *workflowHandle) Signal(ctx context.Context, name string, payload any) error {
-	return h.client.SignalWorkflow(ctx, h.run.GetID(), h.run.GetRunID(), name, payload)
+	return mapSignalError(h.client.SignalWorkflow(ctx, h.run.GetID(), h.run.GetRunID(), name, payload))
 }
 
 // SignalByID sends a signal to a workflow by its workflow ID/run ID directly.
@@ -674,7 +674,7 @@ func (e *Engine) SignalByID(ctx context.Context, workflowID, runID, name string,
 	if workflowID == "" {
 		return fmt.Errorf("workflow id is required")
 	}
-	return e.client.SignalWorkflow(ctx, workflowID, runID, name, payload)
+	return mapSignalError(e.client.SignalWorkflow(ctx, workflowID, runID, name, payload))
 }
 
 func (e *Engine) CancelByID(ctx context.Context, runID string) error {
@@ -693,4 +693,23 @@ func (e *Engine) CancelByID(ctx context.Context, runID string) error {
 
 func (h *workflowHandle) Cancel(ctx context.Context) error {
 	return h.client.CancelWorkflow(ctx, h.run.GetID(), h.run.GetRunID())
+}
+
+// mapSignalError normalizes Temporal signaling failures into engine-level
+// contract errors consumed by runtime callers.
+func mapSignalError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	var notFound *serviceerror.NotFound
+	if errors.As(err, &notFound) {
+		return engine.ErrWorkflowNotFound
+	}
+	var failedPrecondition *serviceerror.FailedPrecondition
+	if errors.As(err, &failedPrecondition) {
+		return engine.ErrWorkflowCompleted
+	}
+
+	return err
 }

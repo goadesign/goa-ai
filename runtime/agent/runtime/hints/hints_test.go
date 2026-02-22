@@ -76,3 +76,60 @@ func TestCompileHintTemplates_Since(t *testing.T) {
 		})
 	}
 }
+
+func TestCompileHintTemplates_HumanTime(t *testing.T) {
+	t.Parallel()
+
+	type testCase struct {
+		name string
+		in   any
+		want string
+	}
+
+	cases := []testCase{
+		{
+			name: "rfc3339_z",
+			in:   "2025-01-01T00:00:00Z",
+			want: "Jan 1, 12:00 AM",
+		},
+		{
+			name: "rfc3339_offset",
+			in:   "2025-01-01T00:00:00-08:00",
+			want: "Jan 1, 12:00 AM",
+		},
+		{
+			name: "invalid_falls_back_to_input",
+			in:   "not-a-time",
+			want: "not-a-time",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			raw := map[tools.Ident]string{
+				tools.Ident("t"): "{{ humanTime .At }}",
+			}
+			compiled, err := CompileHintTemplates(raw, template.FuncMap{})
+			if err != nil {
+				t.Fatalf("CompileHintTemplates error: %v", err)
+			}
+
+			tmpl := compiled[tools.Ident("t")]
+			if tmpl == nil {
+				t.Fatalf("expected compiled template")
+			}
+
+			var b strings.Builder
+			if err := tmpl.Execute(&b, map[string]any{
+				"At": tc.in,
+			}); err != nil {
+				t.Fatalf("Execute error: %v", err)
+			}
+			if got := strings.TrimSpace(b.String()); got != tc.want {
+				t.Fatalf("unexpected output: got %q want %q", got, tc.want)
+			}
+		})
+	}
+}

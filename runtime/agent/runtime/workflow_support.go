@@ -58,8 +58,6 @@ func (r *Runtime) finalizeWithPlanner(
 	switch reason {
 	case planner.TerminationReasonTimeBudget:
 		hint = "FINALIZE NOW: time budget reached.\n\n- Provide the best possible final answer using ONLY the information already available in the conversation and tool results.\n- Do NOT call any tools.\n- Do NOT say you will call tools or that you will \"try\" another approach.\n- If additional tool calls would be needed, explain what you would have retrieved and how it would change the answer, then provide the best provisional answer."
-	case planner.TerminationReasonAwaitTimeout:
-		hint = "FINALIZE NOW: timed out while waiting for user input.\n\n- Provide the best possible final answer using ONLY the information already available in the conversation and tool results.\n- Do NOT call any tools.\n- Do NOT ask follow-up questions.\n- If user input would materially change the answer, state the missing information explicitly and give the best provisional answer."
 	case planner.TerminationReasonToolCap:
 		hint = "FINALIZE NOW: tool budget exhausted.\n\n- Provide the best possible final answer using ONLY the information already available in the conversation and tool results.\n- Do NOT call any tools.\n- Do NOT say you will call tools.\n- If further tool calls would be needed, describe them briefly and provide the best provisional answer."
 	case planner.TerminationReasonFailureCap:
@@ -70,7 +68,7 @@ func (r *Runtime) finalizeWithPlanner(
 	messages := cloneMessages(base.Messages)
 	// When finalizing, ensure the message history ends in a valid state for the
 	// provider. If the last message was an assistant turn with tool_use (e.g.
-	// because we timed out waiting for external results), we must append a
+	// finalization happened while external results were still outstanding), append
 	// user message with error results for those tools before requesting the
 	// final tool-free response.
 	if len(messages) > 0 {
@@ -87,7 +85,7 @@ func (r *Runtime) finalizeWithPlanner(
 				for _, tu := range unanswered {
 					parts = append(parts, model.ToolResultPart{
 						ToolUseID: tu.ID,
-						Content:   "Request timed out while waiting for user input.",
+						Content:   "Finalized before a tool result was provided for this request.",
 						IsError:   true,
 					})
 				}
@@ -161,8 +159,6 @@ func (r *Runtime) finalizeWithPlanner(
 		switch reason {
 		case planner.TerminationReasonTimeBudget:
 			return "time budget exceeded"
-		case planner.TerminationReasonAwaitTimeout:
-			return "await timed out"
 		case planner.TerminationReasonToolCap:
 			return "tool call cap exceeded"
 		case planner.TerminationReasonFailureCap:
@@ -369,14 +365,13 @@ func (r *Runtime) handleInterrupts(
 //   - MissingFieldsFinalize: immediately finalize by requesting a tool-free final answer
 //     from the planner. Returns a non-nil RunOutput to short-circuit the loop.
 //   - MissingFieldsAwaitClarification: when durable (interrupt controller present), emit
-//     an await_clarification event and pause the run. On resume, appends the user answer
-//     as a message to the base PlanInput so the next turn can proceed. Returns handled=true.
+//     an await_clarification event, pause the run, and wait indefinitely for operator input.
+//     On resume, append the user answer to base PlanInput so the next turn can proceed.
 //   - MissingFieldsResume (or unspecified): do nothing; the planner will see RetryHints
 //     and may choose how to proceed. Returns handled=false.
 //
 // The function returns:
 //   - out: non-nil only when finalization occurred
-//   - handled: true when a pause/resume cycle was performed
 //   - err: any error encountered while pausing/resuming
 func (r *Runtime) handleMissingFieldsPolicy(
 	wfCtx engine.WorkflowContext,
@@ -389,8 +384,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 	nextAttempt *int,
 	turnID string,
 	ctrl *interrupt.Controller,
-	budgetDeadline time.Time,
-	hardDeadline time.Time,
+	deadlines *runDeadlines,
 ) (*RunOutput, error) {
 	if ctrl == nil || reg.Policy.OnMissingFields == "" {
 		return nil, nil
@@ -454,51 +448,16 @@ func (r *Runtime) handleMissingFieldsPolicy(
 		); err != nil {
 			return nil, err
 		}
-		timeout, ok := timeoutUntil(budgetDeadline, wfCtx.Now())
-		if !ok {
-			if err := r.publishHook(
-				ctx,
-				hooks.NewRunResumedEvent(
-					base.RunContext.RunID,
-					input.AgentID,
-					base.RunContext.SessionID,
-					"clarification_timeout",
-					"runtime",
-					map[string]string{
-						"resumed_by": "clarification_timeout",
-						"await_id":   awaitID,
-					},
-					0,
-				),
-				turnID,
-			); err != nil {
-				return nil, err
+		waitStartedAt := wfCtx.Now()
+		ans, err := ctrl.WaitProvideClarification(ctx, 0)
+		if deadlines != nil {
+			if delta := wfCtx.Now().Sub(waitStartedAt); delta > 0 {
+				// Awaiting clarification is external wait time; it must not consume run budget.
+				// Extend both deadlines so only active planner/tool execution counts.
+				deadlines.pause(delta)
 			}
-			return r.finalizeWithPlanner(wfCtx, reg, input, base, allResults, aggUsage, *nextAttempt, turnID, planner.TerminationReasonAwaitTimeout, hardDeadline)
 		}
-		ans, err := ctrl.WaitProvideClarification(ctx, timeout)
 		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				if err := r.publishHook(
-					ctx,
-					hooks.NewRunResumedEvent(
-						base.RunContext.RunID,
-						input.AgentID,
-						base.RunContext.SessionID,
-						"clarification_timeout",
-						"runtime",
-						map[string]string{
-							"resumed_by": "clarification_timeout",
-							"await_id":   awaitID,
-						},
-						0,
-					),
-					turnID,
-				); err != nil {
-					return nil, err
-				}
-				return r.finalizeWithPlanner(wfCtx, reg, input, base, allResults, aggUsage, *nextAttempt, turnID, planner.TerminationReasonAwaitTimeout, hardDeadline)
-			}
 			if err2 := r.publishHook(
 				ctx,
 				hooks.NewRunResumedEvent(

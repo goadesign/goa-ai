@@ -447,10 +447,6 @@ const (
 	// TerminationReasonTimeBudget indicates the run exceeded its time budget.
 	TerminationReasonTimeBudget TerminationReason = "time_budget"
 
-	// TerminationReasonAwaitTimeout indicates the run timed out while awaiting
-	// external input (e.g., user clarification, confirmations, or external tool results).
-	TerminationReasonAwaitTimeout TerminationReason = "await_timeout"
-
 	// TerminationReasonToolCap indicates the run exceeded its allowed tool call count.
 	TerminationReasonToolCap TerminationReason = "tool_cap"
 

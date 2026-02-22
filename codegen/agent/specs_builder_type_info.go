@@ -389,7 +389,7 @@ func goLiteralForAny(v any) string {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			b.WriteString(fmt.Sprintf("%#v", k))
+			fmt.Fprintf(&b, "%#v", k)
 			b.WriteString(": ")
 			b.WriteString(goLiteralForAny(x[k]))
 		}

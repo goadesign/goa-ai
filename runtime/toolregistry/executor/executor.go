@@ -5,9 +5,13 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
+	"os"
 	"sort"
 	"strings"
+	"time"
 
 	pulsec "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -49,6 +53,23 @@ type (
 	}
 
 	Option func(*Executor)
+
+	// sinkFailureDiagnostics captures stable, high-signal context for sink join
+	// failures so production incidents can be correlated across run/pod/node and
+	// quickly classified as DNS or generic network failures.
+	sinkFailureDiagnostics struct {
+		hostName               string
+		podName                string
+		nodeName               string
+		ctxHasDeadline         bool
+		ctxDeadlineRemainingMs int64
+		netTimeout             bool
+		dnsError               bool
+		dnsName                string
+		dnsServer              string
+		dnsIsTimeout           bool
+		dnsIsTemporary         bool
+	}
 )
 
 // WithSinkName sets the Pulse sink/consumer-group name used when subscribing to
@@ -192,6 +213,50 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 	// start at the oldest event to avoid missing an already-published result.
 	sink, err := stream.NewSink(ctx, e.sinkName, options.WithSinkStartAtOldest())
 	if err != nil {
+		diag := buildSinkFailureDiagnostics(ctx, err)
+		e.logger.Error(
+			ctx,
+			"toolregistry result stream sink create failed",
+			"component", "tool-registry-executor",
+			"toolset", toolsetID,
+			"tool", call.Name,
+			"tool_use_id", toolUseID,
+			"run_id", meta.RunID,
+			"session_id", meta.SessionID,
+			"turn_id", meta.TurnID,
+			"tool_call_id", meta.ToolCallID,
+			"result_stream_id", resultStreamID,
+			"sink", e.sinkName,
+			"host", diag.hostName,
+			"pod", diag.podName,
+			"node", diag.nodeName,
+			"ctx_has_deadline", diag.ctxHasDeadline,
+			"ctx_deadline_remaining_ms", diag.ctxDeadlineRemainingMs,
+			"net_timeout", diag.netTimeout,
+			"dns_error", diag.dnsError,
+			"dns_name", diag.dnsName,
+			"dns_server", diag.dnsServer,
+			"dns_timeout", diag.dnsIsTimeout,
+			"dns_temporary", diag.dnsIsTemporary,
+			"err", err,
+		)
+		span.AddEvent(
+			"toolregistry.result_sink_create_failed",
+			"toolregistry.result_stream_id", resultStreamID,
+			"toolregistry.sink", e.sinkName,
+			"toolregistry.error", err.Error(),
+			"toolregistry.host", diag.hostName,
+			"toolregistry.pod", diag.podName,
+			"toolregistry.node", diag.nodeName,
+			"toolregistry.ctx_has_deadline", diag.ctxHasDeadline,
+			"toolregistry.ctx_deadline_remaining_ms", diag.ctxDeadlineRemainingMs,
+			"toolregistry.net_timeout", diag.netTimeout,
+			"toolregistry.dns_error", diag.dnsError,
+			"toolregistry.dns_name", diag.dnsName,
+			"toolregistry.dns_server", diag.dnsServer,
+			"toolregistry.dns_timeout", diag.dnsIsTimeout,
+			"toolregistry.dns_temporary", diag.dnsIsTemporary,
+		)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "create sink for tool result stream failed")
 		return nil, fmt.Errorf("create sink %q for tool result stream %q: %w", e.sinkName, resultStreamID, err)
@@ -496,4 +561,49 @@ func uniqueStrings(in []string) []string {
 		return nil
 	}
 	return out
+}
+
+// buildSinkFailureDiagnostics extracts deterministic runtime context for sink
+// creation failures (deadline state, host identity, and net/DNS classification)
+// without mutating control flow.
+func buildSinkFailureDiagnostics(ctx context.Context, err error) sinkFailureDiagnostics {
+	diag := sinkFailureDiagnostics{
+		hostName: firstNonEmpty(os.Getenv("HOSTNAME"), "unknown"),
+		podName:  firstNonEmpty(os.Getenv("POD_NAME"), os.Getenv("HOSTNAME"), "unknown"),
+		nodeName: firstNonEmpty(os.Getenv("K8S_NODE_NAME"), os.Getenv("NODE_NAME"), "unknown"),
+	}
+	if host, hostErr := os.Hostname(); hostErr == nil && host != "" {
+		diag.hostName = host
+		if diag.podName == "unknown" {
+			diag.podName = host
+		}
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		diag.ctxHasDeadline = true
+		diag.ctxDeadlineRemainingMs = time.Until(deadline).Milliseconds()
+	}
+	var networkError net.Error
+	if errors.As(err, &networkError) {
+		diag.netTimeout = networkError.Timeout()
+	}
+	var dnsError *net.DNSError
+	if errors.As(err, &dnsError) {
+		diag.dnsError = true
+		diag.dnsName = dnsError.Name
+		diag.dnsServer = dnsError.Server
+		diag.dnsIsTimeout = dnsError.IsTimeout
+		diag.dnsIsTemporary = dnsError.IsTemporary
+	}
+	return diag
+}
+
+// firstNonEmpty returns the first non-empty string from values, or an empty
+// string if none are set.
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

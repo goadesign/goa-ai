@@ -1420,13 +1420,13 @@ func (r *Runtime) ProvideClarification(ctx context.Context, ans interrupt.Clarif
 		return errors.New("run id is required")
 	}
 	if s, ok := r.Engine.(engine.Signaler); ok {
-		return s.SignalByID(ctx, ans.RunID, "", interrupt.SignalProvideClarification, ans)
+		return r.mapAwaitSignalError(ctx, ans.RunID, s.SignalByID(ctx, ans.RunID, "", interrupt.SignalProvideClarification, ans))
 	}
 	handle, ok := r.workflowHandle(ans.RunID)
 	if !ok {
-		return fmt.Errorf("run %q not found", ans.RunID)
+		return r.mapAwaitSignalError(ctx, ans.RunID, engine.ErrWorkflowNotFound)
 	}
-	return handle.Signal(ctx, interrupt.SignalProvideClarification, ans)
+	return r.mapAwaitSignalError(ctx, ans.RunID, handle.Signal(ctx, interrupt.SignalProvideClarification, ans))
 }
 
 // ProvideToolResults sends a set of external tool results to a waiting run.
@@ -1438,13 +1438,13 @@ func (r *Runtime) ProvideToolResults(ctx context.Context, rs interrupt.ToolResul
 		return errors.New("run id is required")
 	}
 	if s, ok := r.Engine.(engine.Signaler); ok {
-		return s.SignalByID(ctx, rs.RunID, "", interrupt.SignalProvideToolResults, rs)
+		return r.mapAwaitSignalError(ctx, rs.RunID, s.SignalByID(ctx, rs.RunID, "", interrupt.SignalProvideToolResults, rs))
 	}
 	handle, ok := r.workflowHandle(rs.RunID)
 	if !ok {
-		return fmt.Errorf("run %q not found", rs.RunID)
+		return r.mapAwaitSignalError(ctx, rs.RunID, engine.ErrWorkflowNotFound)
 	}
-	return handle.Signal(ctx, interrupt.SignalProvideToolResults, rs)
+	return r.mapAwaitSignalError(ctx, rs.RunID, handle.Signal(ctx, interrupt.SignalProvideToolResults, rs))
 }
 
 // ProvideConfirmation sends a typed confirmation decision to a waiting run.
@@ -1456,13 +1456,62 @@ func (r *Runtime) ProvideConfirmation(ctx context.Context, dec interrupt.Confirm
 		return errors.New("run id is required")
 	}
 	if s, ok := r.Engine.(engine.Signaler); ok {
-		return s.SignalByID(ctx, dec.RunID, "", interrupt.SignalProvideConfirmation, dec)
+		return r.mapAwaitSignalError(ctx, dec.RunID, s.SignalByID(ctx, dec.RunID, "", interrupt.SignalProvideConfirmation, dec))
 	}
 	handle, ok := r.workflowHandle(dec.RunID)
 	if !ok {
-		return fmt.Errorf("run %q not found", dec.RunID)
+		return r.mapAwaitSignalError(ctx, dec.RunID, engine.ErrWorkflowNotFound)
 	}
-	return handle.Signal(ctx, interrupt.SignalProvideConfirmation, dec)
+	return r.mapAwaitSignalError(ctx, dec.RunID, handle.Signal(ctx, interrupt.SignalProvideConfirmation, dec))
+}
+
+// mapAwaitSignalError converts engine signal-delivery errors into typed runtime
+// await-resume errors that callers can classify with errors.Is/errors.As.
+func (r *Runtime) mapAwaitSignalError(ctx context.Context, runID string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, engine.ErrWorkflowCompleted) {
+		return &RunNotAwaitableError{
+			RunID:  runID,
+			Reason: RunNotAwaitableCompletedRun,
+			Cause:  err,
+		}
+	}
+	if !errors.Is(err, engine.ErrWorkflowNotFound) {
+		return err
+	}
+
+	status, statusErr := r.Engine.QueryRunStatus(ctx, runID)
+	if statusErr == nil {
+		if isTerminalRunStatus(status) {
+			return &RunNotAwaitableError{
+				RunID:  runID,
+				Reason: RunNotAwaitableCompletedRun,
+				Cause:  err,
+			}
+		}
+		return err
+	}
+	if errors.Is(statusErr, engine.ErrWorkflowNotFound) {
+		return &RunNotAwaitableError{
+			RunID:  runID,
+			Reason: RunNotAwaitableUnknownRun,
+			Cause:  err,
+		}
+	}
+	return fmt.Errorf("query run status after signal failure: %w", statusErr)
+}
+
+// isTerminalRunStatus reports whether the run lifecycle is permanently closed.
+func isTerminalRunStatus(status engine.RunStatus) bool {
+	switch status {
+	case engine.RunStatusCompleted, engine.RunStatusFailed, engine.RunStatusCanceled:
+		return true
+	case engine.RunStatusPending, engine.RunStatusRunning, engine.RunStatusPaused:
+		return false
+	}
+	return false
 }
 
 // ListRunEvents returns a forward page of canonical run events for the given run.

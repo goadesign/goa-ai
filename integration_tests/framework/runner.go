@@ -34,7 +34,7 @@ const (
 // Runner runs scenarios against the generated example server.
 type Runner struct {
 	server  *exec.Cmd
-	baseURL string
+	baseURL *url.URL
 	client  *http.Client
 
 	stdoutTail *ringBuffer
@@ -484,7 +484,7 @@ func buildServerBinary(exampleRoot string) (string, error) {
 			buildErr = fmt.Errorf("create temp file for binary: %w", err)
 			return
 		}
-		binPath := tmpFile.Name()
+		binPath := filepath.Clean(tmpFile.Name())
 		_ = tmpFile.Close()
 
 		// Build the server binary
@@ -500,12 +500,12 @@ func buildServerBinary(exampleRoot string) (string, error) {
 		buildCmd.Dir = cmdPath
 		out, err := buildCmd.CombinedOutput()
 		if err != nil {
-			_ = os.Remove(binPath)
+			_ = os.Remove(binPath) //nolint:gosec // binPath comes from os.CreateTemp; path is trusted
 			buildErr = fmt.Errorf("go build failed in %s: %w\n%s", cmdPath, err, string(out))
 			return
 		}
 		// Verify binary exists
-		if _, err := os.Stat(binPath); err != nil {
+		if _, err := os.Stat(binPath); err != nil { //nolint:gosec // binPath comes from os.CreateTemp; path is trusted
 			buildErr = fmt.Errorf("binary not found after build: %w", err)
 			return
 		}
@@ -528,11 +528,8 @@ func (r *Runner) startServer(t *testing.T) error {
 		}
 		u.RawQuery = ""
 		u.Fragment = ""
-		base := strings.TrimRight(u.String(), "/")
-		if base == "" {
-			return fmt.Errorf("invalid TEST_SERVER_URL %q", external)
-		}
-		r.baseURL = base
+		u.Path = strings.TrimRight(u.Path, "/")
+		r.baseURL = u
 		r.externalServer = true
 		return nil
 	}
@@ -540,7 +537,10 @@ func (r *Runner) startServer(t *testing.T) error {
 	if err != nil {
 		return err
 	}
-	r.baseURL = "http://localhost:" + port
+	r.baseURL, err = url.Parse("http://localhost:" + port)
+	if err != nil {
+		return fmt.Errorf("parse local server URL: %w", err)
+	}
 	exampleRoot := findExampleRoot()
 	if exampleRoot == "" {
 		return fmt.Errorf("could not locate example root")
@@ -651,9 +651,9 @@ func (r *Runner) stopServer() {
 func (r *Runner) ping() error {
 	// Send a minimal invalid JSON-RPC request that does not initialize state
 	b := []byte(`{"jsonrpc":"2.0","id":1}`)
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, r.baseURL+"/rpc", bytes.NewReader(b))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, r.baseURL.String()+"/rpc", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := r.client.Do(req)
+	resp, err := r.client.Do(req) //nolint:gosec // URL is validated as localhost at construction (r.baseURL)
 	if err != nil {
 		return err
 	}
@@ -781,7 +781,7 @@ func (r *Runner) runStepNonStreaming(
 			b, _ := json.Marshal(st.Input)
 			bodyArg = []string{"--body", string(b)}
 		}
-		cliArgs := []string{"run", "-C", cliPath, ".", "-url", r.baseURL, svc, subcmd}
+		cliArgs := []string{"run", "-C", cliPath, ".", "-url", r.baseURL.String(), svc, subcmd}
 		if len(bodyArg) > 0 {
 			cliArgs = append(cliArgs, bodyArg...)
 		}
@@ -887,7 +887,7 @@ func (r *Runner) executeJSONRPC(
 		reqObj["id"] = 1
 	}
 	body, _ := json.Marshal(reqObj)
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, r.baseURL+"/rpc", bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, r.baseURL.String()+"/rpc", bytes.NewReader(body))
 	for k, v := range headers {
 		// Special-case env vars to allow tests to set process env for the example server
 		if strings.HasPrefix(k, "MCP_") {
@@ -899,7 +899,7 @@ func (r *Runner) executeJSONRPC(
 	if req.Header.Get("Content-Type") == "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := r.client.Do(req)
+	resp, err := r.client.Do(req) //nolint:gosec // URL is validated as localhost at construction (r.baseURL)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -935,14 +935,14 @@ func (r *Runner) executeSSE(
 	}
 	reqObj := map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": input}
 	body, _ := json.Marshal(reqObj)
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, r.baseURL+"/rpc", bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, r.baseURL.String()+"/rpc", bytes.NewReader(body))
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
 	if req.Header.Get("Accept") == "" {
 		req.Header.Set("Accept", "text/event-stream")
 	}
-	resp, err := r.client.Do(req)
+	resp, err := r.client.Do(req) //nolint:gosec // URL is validated as localhost at construction (r.baseURL)
 	if err != nil {
 		return nil, err
 	}

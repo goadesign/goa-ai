@@ -20,27 +20,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-type timeoutClarificationReceiver struct{}
-
-func (timeoutClarificationReceiver) Receive(ctx context.Context) (*api.ClarificationAnswer, error) {
-	<-ctx.Done()
-	return nil, ctx.Err()
-}
-
-func (timeoutClarificationReceiver) ReceiveWithTimeout(ctx context.Context, timeout time.Duration) (*api.ClarificationAnswer, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if timeout <= 0 {
-		return nil, context.DeadlineExceeded
-	}
-	return nil, context.DeadlineExceeded
-}
-
-func (timeoutClarificationReceiver) ReceiveAsync() (*api.ClarificationAnswer, bool) {
-	return nil, false
-}
-
 type timeoutResumeReceiver struct{}
 
 func (timeoutResumeReceiver) Receive(ctx context.Context) (*api.ResumeRequest, error) {
@@ -60,12 +39,6 @@ func (timeoutResumeReceiver) ReceiveWithTimeout(ctx context.Context, timeout tim
 
 func (timeoutResumeReceiver) ReceiveAsync() (*api.ResumeRequest, bool) {
 	return nil, false
-}
-
-type clarificationTimeoutWorkflowContext struct{ *testWorkflowContext }
-
-func (w *clarificationTimeoutWorkflowContext) ClarificationAnswers() engine.Receiver[*api.ClarificationAnswer] {
-	return timeoutClarificationReceiver{}
 }
 
 type resumeTimeoutWorkflowContext struct{ *testWorkflowContext }
@@ -102,7 +75,7 @@ func seedRunMeta(t *testing.T, rt *Runtime, input *RunInput) {
 	}))
 }
 
-func TestMissingFieldsClarificationTimeoutBalancesPauseResume(t *testing.T) {
+func TestMissingFieldsClarificationAwaitResumesWhenProvided(t *testing.T) {
 	recorder := &recordingHooks{}
 	rt := &Runtime{
 		Bus:           recorder,
@@ -124,7 +97,7 @@ func TestMissingFieldsClarificationTimeoutBalancesPauseResume(t *testing.T) {
 		},
 	}
 	baseCtx.ensureSignals()
-	wfCtx := &clarificationTimeoutWorkflowContext{testWorkflowContext: baseCtx}
+	wfCtx := baseCtx
 	ctrl := interrupt.NewController(wfCtx)
 
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1", SessionID: "sess-1"}
@@ -147,6 +120,9 @@ func TestMissingFieldsClarificationTimeoutBalancesPauseResume(t *testing.T) {
 			ClarifyingQuestion: "provide field",
 		},
 	}}
+	baseCtx.clarifyCh <- &api.ClarificationAnswer{
+		Answer: "field=value",
+	}
 
 	nextAttempt := 2
 	deadline := wfCtx.Now().Add(1 * time.Hour)
@@ -165,17 +141,17 @@ func TestMissingFieldsClarificationTimeoutBalancesPauseResume(t *testing.T) {
 		&nextAttempt,
 		"turn-1",
 		ctrl,
-		deadline,
-		deadline,
+		&runDeadlines{Budget: deadline, Hard: deadline},
 	)
 	require.NoError(t, err)
-	require.NotNil(t, out)
+	require.Nil(t, out)
+	require.NotEmpty(t, base.Messages)
+	last := base.Messages[len(base.Messages)-1]
+	require.Equal(t, model.ConversationRoleUser, last.Role)
 
 	require.Equal(t, []string{
 		"pause:await_clarification",
-		"resume:clarification_timeout",
-		"pause:finalize",
-		"resume:finalize",
+		"resume:clarification_provided",
 	}, pauseResumeSequence(recorder.events))
 }
 
@@ -214,4 +190,3 @@ func TestHandleInterruptsTimeoutBalancesPauseResume(t *testing.T) {
 		"resume:deadline_exceeded",
 	}, pauseResumeSequence(recorder.events))
 }
-

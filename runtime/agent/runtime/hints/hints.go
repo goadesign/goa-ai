@@ -114,6 +114,18 @@ func CompileHintTemplates(raw map[tools.Ident]string, extra template.FuncMap) (m
 			}
 			return 0
 		},
+		// humanTime renders a timestamp for user-facing hints at minute precision.
+		// It accepts RFC3339 timestamp strings and time.Time values.
+		//
+		// When parsing fails, it returns fmt.Sprint(v) so hint rendering can
+		// continue while still surfacing the original value.
+		"humanTime": func(v any) string {
+			ts, ok := parseTimestamp(v)
+			if !ok {
+				return fmt.Sprint(v)
+			}
+			return ts.Format("Jan 2, 3:04 PM")
+		},
 		// since returns the integer number of seconds between two timestamps:
 		// to - from.
 		//

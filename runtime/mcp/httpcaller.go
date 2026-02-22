@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sync/atomic"
 	"time"
 )
@@ -59,10 +60,15 @@ type httpTransport struct {
 }
 
 func newHTTPTransport(ctx context.Context, opts HTTPOptions) (*httpTransport, error) {
-	endpoint := opts.Endpoint
-	if endpoint == "" {
-		endpoint = "http://127.0.0.1:8080/rpc"
+	rawEndpoint := opts.Endpoint
+	if rawEndpoint == "" {
+		rawEndpoint = "http://127.0.0.1:8080/rpc"
 	}
+	parsed, parseErr := url.Parse(rawEndpoint)
+	if parseErr != nil || parsed.Host == "" {
+		return nil, fmt.Errorf("mcp: invalid endpoint URL %q", rawEndpoint)
+	}
+	endpoint := parsed.String()
 	httpClient := opts.Client
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
@@ -114,7 +120,7 @@ func (t *httpTransport) call(ctx context.Context, method string, params any, res
 	}
 	req.Header.Set("Content-Type", "application/json")
 	injectTraceHeaders(ctx, req.Header)
-	resp, err := t.client.Do(req)
+	resp, err := t.client.Do(req) //nolint:gosec // endpoint is URL-parsed and validated in newHTTPTransport
 	if err != nil {
 		return err
 	}

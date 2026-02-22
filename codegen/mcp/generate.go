@@ -325,7 +325,7 @@ func generateMCPTransport(genpkg string, svc *expr.ServiceExpr, mcp *mcpexpr.MCP
 // generateMCPClientAdapter generates a client adapter that exposes the original
 // service endpoints while calling MCP JSON-RPC methods under the hood.
 func generateMCPClientAdapter(genpkg string, svc *expr.ServiceExpr, mcp *mcpexpr.MCPExpr, mapping *ServiceMethodMapping) []*codegen.File {
-	var files []*codegen.File
+	files := make([]*codegen.File, 0, 1)
 
 	svcName := codegen.SnakeCase(svc.Name)
 	// Match the package alias used elsewhere (strip underscores)

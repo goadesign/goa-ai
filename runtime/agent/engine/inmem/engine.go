@@ -617,7 +617,7 @@ func sendSignal[T any](ctx context.Context, done <-chan struct{}, ch chan<- T, p
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-done:
-		return errors.New("workflow completed")
+		return engine.ErrWorkflowCompleted
 	case ch <- payload:
 		return nil
 	}

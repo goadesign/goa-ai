@@ -182,10 +182,13 @@ func ValidateBedrock(messages []*model.Message, thinkingEnabled bool) error {
 			}
 			// The very next message must be a user message containing tool_result
 			// blocks that correspond to the tool_use IDs in this assistant message.
-			if i+1 >= len(messages) || messages[i+1] == nil || messages[i+1].Role != model.ConversationRoleUser {
+			if i+1 >= len(messages) {
 				return errors.New("bedrock: expected user tool_result following assistant tool_use")
 			}
-			next := messages[i+1]
+			next := messages[i+1] //nolint:gosec // bounds checked on the line above
+			if next == nil || next.Role != model.ConversationRoleUser {
+				return errors.New("bedrock: expected user tool_result following assistant tool_use")
+			}
 			// Collect tool_use IDs from assistant and tool_result IDs from user.
 			useIDs := make(map[string]struct{})
 			for _, p := range m.Parts {
