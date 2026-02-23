@@ -68,9 +68,14 @@
 //
 // # OpenTelemetry Integration
 //
-// The engine automatically installs OTEL interceptors on the Temporal client and
-// worker, propagating trace context through workflow and activity boundaries. No
-// additional configuration is needed when the runtime is configured with a Tracer.
+// The engine emits traces using a "trace domains" contract:
+//
+//   - Synchronous request handling (HTTP/gRPC) stays within a single trace tree.
+//   - Durable scheduling (Temporal) creates a new trace tree per activity
+//     execution and links it back to the initiating request trace via OTel links.
+//
+// This avoids long-lived traces that fragment in collectors/sampling pipelines
+// while preserving navigability across domains.
 //
 // # Query Handlers
 //

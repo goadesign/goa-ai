@@ -22,6 +22,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/telemetry"
+	"goa.design/goa-ai/runtime/temporaltrace"
 )
 
 // Options configures the Temporal engine adapter for registering workflows,
@@ -113,8 +114,9 @@ type InstrumentationOptions struct {
 	// failures) are automatically emitted.
 	DisableMetrics bool
 
-	// TracerOptions customize the OTEL tracing interceptor (span attributes, filters,
-	// etc.). Only used when DisableTracing is false. Refer to Temporal SDK OTEL docs.
+	// TracerOptions is retained for source compatibility but is ignored by the
+	// engine's trace-domain implementation. Traces are emitted by goa-ai's own
+	// activity interceptors (new-root spans + OTel links).
 	TracerOptions temporalotel.TracerOptions
 
 	// MetricsOptions customize the OTEL metrics handler (metric names, labels, etc.).
@@ -175,10 +177,7 @@ func New(opts Options) (*Engine, error) {
 		tracer = telemetry.NewNoopTracer()
 	}
 
-	inst, err := configureInstrumentation(opts.Instrumentation)
-	if err != nil {
-		return nil, err
-	}
+	inst := configureInstrumentation(opts.Instrumentation)
 
 	cli := opts.Client
 	closeClient := false
@@ -186,15 +185,13 @@ func New(opts Options) (*Engine, error) {
 		if opts.ClientOptions == nil {
 			return nil, fmt.Errorf("temporal engine: client options are required when Client is nil")
 		}
-		clientOpts := client.Options{}
-		if opts.ClientOptions != nil {
-			clientOpts = *opts.ClientOptions
-		}
+		clientOpts := *opts.ClientOptions
 		applyClientInstrumentation(&clientOpts, inst)
-		cli, err = client.NewLazyClient(clientOpts)
+		lazyClient, err := client.NewLazyClient(clientOpts)
 		if err != nil {
 			return nil, fmt.Errorf("temporal engine: create client: %w", err)
 		}
+		cli = lazyClient
 		closeClient = true
 	}
 
@@ -609,35 +606,37 @@ func (b *workerBundle) registerActivity(name string, fn any) {
 }
 
 type instrumentation struct {
-	tracer  interceptor.Interceptor
-	metrics client.MetricsHandler
+	contextPropagators []workflow.ContextPropagator
+	workerInterceptors []interceptor.WorkerInterceptor
+	metrics            client.MetricsHandler
 }
 
-func configureInstrumentation(opts InstrumentationOptions) (*instrumentation, error) {
+func configureInstrumentation(opts InstrumentationOptions) *instrumentation {
 	inst := &instrumentation{}
 	if !opts.DisableTracing {
-		tracer, err := temporalotel.NewTracingInterceptor(opts.TracerOptions)
-		if err != nil {
-			return nil, fmt.Errorf("temporal engine: configure tracing interceptor: %w", err)
-		}
-		inst.tracer = tracer
+		// Trace domain contract:
+		//   - Temporal activities emit new-root spans (new trace IDs).
+		//   - Upstream request traces are preserved via OTel links, not parenthood.
+		// We intentionally do not use Temporal's OTEL tracing interceptor: it
+		// propagates parent trace context through durable scheduling boundaries,
+		// which produces long-lived traces that fragment in downstream pipelines.
+		inst.contextPropagators = append(inst.contextPropagators, temporaltrace.NewLinkPropagator())
+		inst.workerInterceptors = append(inst.workerInterceptors, temporaltrace.NewActivityInterceptor())
 	}
 	if !opts.DisableMetrics {
 		inst.metrics = temporalotel.NewMetricsHandler(opts.MetricsOptions)
 	}
-	if inst.tracer == nil && inst.metrics == nil {
-		return nil, nil
+	if len(inst.contextPropagators) == 0 && len(inst.workerInterceptors) == 0 && inst.metrics == nil {
+		return nil
 	}
-	return inst, nil
+	return inst
 }
 
 func applyClientInstrumentation(opts *client.Options, inst *instrumentation) {
 	if inst == nil {
 		return
 	}
-	if inst.tracer != nil {
-		opts.Interceptors = append(opts.Interceptors, inst.tracer)
-	}
+	opts.ContextPropagators = append(opts.ContextPropagators, inst.contextPropagators...)
 	if inst.metrics != nil && opts.MetricsHandler == nil {
 		opts.MetricsHandler = inst.metrics
 	}
@@ -647,9 +646,7 @@ func applyWorkerInstrumentation(opts *worker.Options, inst *instrumentation) {
 	if inst == nil {
 		return
 	}
-	if inst.tracer != nil {
-		opts.Interceptors = append(opts.Interceptors, inst.tracer)
-	}
+	opts.Interceptors = append(opts.Interceptors, inst.workerInterceptors...)
 }
 
 type workflowHandle struct {
