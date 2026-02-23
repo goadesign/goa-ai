@@ -55,33 +55,34 @@ func (h *hintingSink) Close(ctx context.Context) error {
 }
 
 // decodePayload turns a canonical JSON payload into a typed value using the
-// runtime's tool codecs. If decoding fails, it returns nil so callers do not
-// compute best-effort hints from an untyped payload.
+// runtime's tool codecs.
+//
+// Contract:
+// - Tool payloads are canonical JSON values for the tool payload schema.
+// - A missing/empty payload is normalized to "{}" (empty object) so tools with
+//   empty payload schemas still render call hints deterministically.
+// - Hints are only rendered from typed payloads produced by registered codecs.
+//   If decode fails, this function returns nil.
 func (h *hintingSink) decodePayload(ctx context.Context, tool tools.Ident, payload any) any {
-	if payload == nil {
-		return nil
-	}
-
-	var raw json.RawMessage
+	raw := json.RawMessage("{}")
 	switch v := payload.(type) {
+	case nil:
+		// Keep canonical empty object.
 	case json.RawMessage:
-		if len(v) == 0 {
-			return nil
+		if len(v) > 0 {
+			raw = v
 		}
-		raw = v
 	case []byte:
-		if len(v) == 0 {
-			return nil
+		if len(v) > 0 {
+			raw = json.RawMessage(v)
 		}
-		raw = json.RawMessage(v)
 	case string:
 		if v == "" {
-			return nil
+			break
 		}
 		b := []byte(v)
 		if !json.Valid(b) {
-			// Not JSON; treat as already-typed scalar.
-			return v
+			return nil
 		}
 		raw = json.RawMessage(b)
 	default:
