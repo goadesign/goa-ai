@@ -68,7 +68,6 @@ type (
 		// invocation is a child (for example a tool launched by an agent-tool).
 		// UIs and subscribers use it to reconstruct the call tree.
 		ParentToolCallID string
-
 	}
 
 	// ToolCallExecutor executes a tool call and returns a planner.ToolResult. This

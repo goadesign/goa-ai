@@ -64,7 +64,7 @@ type (
 		// Messages carries the conversation history supplied by the caller.
 		Messages []*model.Message
 
-		// Labels contains caller-provided metadata (tenant, priority, etc.).
+		// Labels contains caller-provided metadata (account, priority, etc.).
 		Labels map[string]string
 
 		// Metadata allows orchestrators to attach arbitrary structured data.

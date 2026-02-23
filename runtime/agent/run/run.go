@@ -99,7 +99,7 @@ type (
 		// Attempt counts how many times the run has been attempted/resumed.
 		Attempt int
 
-		// Labels carries caller-provided metadata (tenant, priority, etc.).
+		// Labels carries caller-provided metadata (account, priority, etc.).
 		Labels map[string]string
 
 		// MaxDuration encodes the wall-clock budget remaining (string form for prompts/telemetry).

@@ -500,11 +500,13 @@ func buildServerBinary(exampleRoot string) (string, error) {
 		buildCmd.Dir = cmdPath
 		out, err := buildCmd.CombinedOutput()
 		if err != nil {
+			//nolint:gosec // binPath comes from os.CreateTemp and is controlled by this process.
 			_ = os.Remove(binPath)
 			buildErr = fmt.Errorf("go build failed in %s: %w\n%s", cmdPath, err, string(out))
 			return
 		}
 		// Verify binary exists
+		//nolint:gosec // binPath comes from os.CreateTemp and is controlled by this process.
 		if _, err := os.Stat(binPath); err != nil {
 			buildErr = fmt.Errorf("binary not found after build: %w", err)
 			return
@@ -653,6 +655,7 @@ func (r *Runner) ping() error {
 	b := []byte(`{"jsonrpc":"2.0","id":1}`)
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, r.baseURL.String()+"/rpc", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
+	//nolint:gosec // test harness targets local test server or explicit TEST_SERVER_URL.
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return err
@@ -899,6 +902,7 @@ func (r *Runner) executeJSONRPC(
 	if req.Header.Get("Content-Type") == "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	//nolint:gosec // test harness targets local test server or explicit TEST_SERVER_URL.
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return nil, nil, err
@@ -942,6 +946,7 @@ func (r *Runner) executeSSE(
 	if req.Header.Get("Accept") == "" {
 		req.Header.Set("Accept", "text/event-stream")
 	}
+	//nolint:gosec // test harness targets local test server or explicit TEST_SERVER_URL.
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return nil, err

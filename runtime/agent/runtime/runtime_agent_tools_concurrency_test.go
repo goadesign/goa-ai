@@ -47,6 +47,9 @@ func TestExecuteToolCalls_AgentToolsFanOut(t *testing.T) {
 			WorkflowName:     "nested.workflow",
 			DefaultTaskQueue: "q",
 		},
+		Prompt: func(id tools.Ident, payload any) string {
+			return "invoke"
+		},
 	}
 	reg := NewAgentToolsetRegistration(rt, cfg)
 	rt.toolsets[reg.Name] = reg

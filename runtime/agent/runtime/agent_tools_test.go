@@ -15,6 +15,7 @@ import (
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
@@ -48,7 +49,7 @@ func firstText(m *model.Message) string {
 	return ""
 }
 
-func TestAgentTool_DefaultsFromPayload(t *testing.T) {
+func TestAgentTool_MissingContentConfigurationFails(t *testing.T) {
 	rt := &Runtime{
 		agents:        make(map[agent.Ident]AgentRegistration),
 		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
@@ -72,7 +73,7 @@ func TestAgentTool_DefaultsFromPayload(t *testing.T) {
 		ExecuteToolActivity: "execute",
 	}))
 
-	// Build registration with no per-tool content: default uses PayloadToString
+	// Build registration with no per-tool content.
 	reg := NewAgentToolsetRegistration(rt, AgentToolConfig{
 		AgentID: agentID,
 		Route: AgentRoute{
@@ -84,6 +85,54 @@ func TestAgentTool_DefaultsFromPayload(t *testing.T) {
 	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
 	// String payload path (canonical JSON)
+	call := planner.ToolRequest{
+		RunID:     "r1",
+		SessionID: "s1",
+		Name:      tools.Ident("svc.tools.do"),
+		Payload:   json.RawMessage(`"hello"`),
+	}
+	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
+	tr, err := reg.Execute(ctx, &call)
+	require.Error(t, err)
+	require.Nil(t, tr)
+	require.Contains(t, err.Error(), "missing prompt content configuration")
+}
+
+func TestAgentTool_TextContent(t *testing.T) {
+	rt := &Runtime{
+		agents:        make(map[agent.Ident]AgentRegistration),
+		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
+		Engine:        engineinmem.New(),
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+		Bus:           noopHooks{},
+		SessionStore:  sessioninmem.New(),
+	}
+	const agentID = "svc.agent"
+	pl := &capturePlanner{}
+	require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{
+		ID:                  agentID,
+		Planner:             pl,
+		Workflow:            engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }},
+		PlanActivityName:    "plan",
+		ResumeActivityName:  "resume",
+		ExecuteToolActivity: "execute",
+	}))
+	reg := NewAgentToolsetRegistration(rt, AgentToolConfig{
+		AgentID: agentID,
+		Route: AgentRoute{
+			ID:               agent.Ident(agentID),
+			WorkflowName:     "wf",
+			DefaultTaskQueue: "default",
+		},
+		Texts: map[tools.Ident]string{
+			tools.Ident("svc.tools.do"): "hello",
+		},
+	})
+	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
+	ctx := engine.WithWorkflowContext(context.Background(), wf)
 	call := planner.ToolRequest{
 		RunID:     "r1",
 		SessionID: "s1",
@@ -130,7 +179,9 @@ func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 			DefaultTaskQueue: "default",
 		},
 		Prompt: func(_ tools.Ident, payload any) string {
-			return "PB:" + PayloadToString(payload)
+			text, err := PayloadToString(payload)
+			require.NoError(t, err)
+			return "PB:" + text
 		},
 	})
 	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
@@ -148,6 +199,12 @@ func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 	require.Equal(t, tools.Ident("svc.tools.do"), tr.Name)
 	require.Len(t, pl.msgs, 1)
 	require.Equal(t, "PB:hello", firstText(pl.msgs[0]))
+}
+
+func TestWithPromptSpecSetsPromptID(t *testing.T) {
+	cfg := AgentToolConfig{}
+	WithPromptSpec("svc.tools.do", "agent.tool.prompt")(&cfg)
+	require.Equal(t, prompt.Ident("agent.tool.prompt"), cfg.PromptSpecs["svc.tools.do"])
 }
 
 func TestAgentTool_SystemPromptPrepended(t *testing.T) {
@@ -180,6 +237,10 @@ func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 			DefaultTaskQueue: "default",
 		},
 		SystemPrompt: "SYS",
+		Prompt: func(id tools.Ident, payload any) string {
+			val, _ := payload.(string)
+			return val
+		},
 	})
 	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
@@ -204,7 +265,7 @@ func TestToolResultFinalizerInvokesTool(t *testing.T) {
 	})
 	input := FinalizerInput{
 		Parent: ParentCall{
-			ToolName:   "ada.method",
+			ToolName:   "child.method",
 			ToolCallID: "parent-call",
 		},
 		Children: []ChildCall{
@@ -212,7 +273,7 @@ func TestToolResultFinalizerInvokesTool(t *testing.T) {
 		},
 		Invoke: ToolInvokerFunc(func(ctx context.Context, tool tools.Ident, payload any) (*planner.ToolResult, error) {
 			require.Equal(t, tools.Ident("svc.aggregate.finalize"), tool)
-			require.Equal(t, map[string]any{"parent": tools.Ident("ada.method")}, payload)
+			require.Equal(t, map[string]any{"parent": tools.Ident("child.method")}, payload)
 			return &planner.ToolResult{
 				Result: map[string]any{"status": "ok"},
 			}, nil
@@ -228,7 +289,7 @@ func TestToolResultFinalizerMissingInvoker(t *testing.T) {
 		return map[string]any{}, nil
 	})
 	_, err := finalizer.Finalize(context.Background(), &FinalizerInput{
-		Parent: ParentCall{ToolName: "ada.method"},
+		Parent: ParentCall{ToolName: "child.method"},
 	})
 	require.Error(t, err)
 }

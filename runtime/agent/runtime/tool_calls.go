@@ -99,6 +99,9 @@ func (e *toolBatchExec) normalizeToolCall(call planner.ToolRequest, i int) plann
 	if call.SessionID == "" {
 		call.SessionID = e.sessionID
 	}
+	if len(call.Labels) == 0 && e.runCtx != nil && len(e.runCtx.Labels) > 0 {
+		call.Labels = cloneLabels(e.runCtx.Labels)
+	}
 	if call.TurnID == "" {
 		call.TurnID = e.turnID
 	}
@@ -731,17 +734,17 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 		return nil, false, fmt.Errorf("missing run context")
 	}
 	exec := &toolBatchExec{
-		r:                      r,
-		activityName:           activityName,
-		toolActOptions:         toolActOptions,
-		runID:                  runCtx.RunID,
-		agentID:                agentID,
-		sessionID:              runCtx.SessionID,
-		turnID:                 runCtx.TurnID,
-		runCtx:                 runCtx,
-		expectedChildren:       expectedChildren,
-		parentTracker:          parentTracker,
-		finishBy:               finishBy,
+		r:                r,
+		activityName:     activityName,
+		toolActOptions:   toolActOptions,
+		runID:            runCtx.RunID,
+		agentID:          agentID,
+		sessionID:        runCtx.SessionID,
+		turnID:           runCtx.TurnID,
+		runCtx:           runCtx,
+		expectedChildren: expectedChildren,
+		parentTracker:    parentTracker,
+		finishBy:         finishBy,
 	}
 
 	ctx := wfCtx.Context()

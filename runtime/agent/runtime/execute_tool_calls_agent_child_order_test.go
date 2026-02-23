@@ -18,6 +18,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const invokePromptText = "invoke"
+
 func TestExecuteToolCalls_AgentToolsPublishResultsAsComplete(t *testing.T) {
 	recorder := &recordingHooks{ch: make(chan hooks.Event, 64)}
 	rt := &Runtime{
@@ -39,6 +41,9 @@ func TestExecuteToolCalls_AgentToolsPublishResultsAsComplete(t *testing.T) {
 			ID:               agent.Ident("nested.agent"),
 			WorkflowName:     "nested.workflow",
 			DefaultTaskQueue: "q",
+		},
+		Prompt: func(id tools.Ident, payload any) string {
+			return invokePromptText
 		},
 	}
 	reg := NewAgentToolsetRegistration(rt, cfg)

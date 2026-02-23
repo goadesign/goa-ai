@@ -148,6 +148,7 @@ Create a runtime using `runtime.New()` with functional options:
 rt := runtime.New(
     runtime.WithEngine(engine),          // Workflow backend (required for production)
     runtime.WithMemoryStore(store),      // Transcript persistence
+    runtime.WithPromptStore(promptStore),// Scoped prompt overrides
     runtime.WithStream(sink),            // Real-time event streaming
     runtime.WithPolicy(engine),          // Policy enforcement
     runtime.WithHooks(bus),              // Custom event bus (rare)
@@ -164,10 +165,48 @@ When options are omitted, the runtime uses sensible defaults:
 |--------|---------|
 | Engine | In-memory (synchronous, non-durable) |
 | MemoryStore | None (transcripts not persisted) |
+| PromptStore | None (baseline prompt specs only, no scoped overrides) |
 | Stream | None (no external event delivery) |
 | Policy | None (all tools allowed, caps from agent registration) |
 | Hooks | In-process bus |
 | Logger/Metrics/Tracer | No-op implementations |
+
+### Prompt Registry and Overrides
+
+The runtime always initializes `Runtime.PromptRegistry`. Prompt management has two layers:
+
+- **Baseline specs**: register immutable `prompt.PromptSpec` definitions in memory.
+- **Scoped overrides**: optionally resolve `org/facility/session` overrides through `prompt.Store`
+  (`runtime.WithPromptStore(...)`).
+
+```go
+import (
+    promptmongo "goa.design/goa-ai/features/prompt/mongo"
+    clientmongo "goa.design/goa-ai/features/prompt/mongo/clients/mongo"
+    "goa.design/goa-ai/runtime/agent/prompt"
+)
+
+mongoClient, _ := clientmongo.New(clientmongo.Options{
+    Client:     rawMongoClient,
+    Database:   "aura",
+    Collection: "prompt_overrides",
+})
+promptStore, _ := promptmongo.NewStore(mongoClient)
+
+rt := runtime.New(
+    runtime.WithPromptStore(promptStore),
+)
+
+_ = rt.PromptRegistry.Register(prompt.PromptSpec{
+    ID:       "aura.chat.system",
+    AgentID:  "orchestrator.chat",
+    Role:     prompt.PromptRoleSystem,
+    Template: "You are {{ .AssistantName }}.",
+})
+```
+
+Render prompts from planners through `PlannerContext.RenderPrompt(...)`. The result includes rendered
+text and a versioned `PromptRef` for provenance.
 
 ### Two Deployment Patterns
 
@@ -313,6 +352,7 @@ type PlannerContext interface {
     Tracer() telemetry.Tracer             // Distributed tracing
     State() AgentState                    // Ephemeral per-run key-value store
     ModelClient(id string) (model.Client, bool)  // LLM client lookup
+    RenderPrompt(ctx context.Context, id string, data any) (*prompt.PromptContent, error)
     AddReminder(r reminder.Reminder)      // Register backstage guidance
     RemoveReminder(id string)             // Clear a reminder
 }
@@ -890,6 +930,7 @@ workflow thread. Activities and other non-workflow code publish directly.
 | `RunCompleted` | Run finishes (success, failed, canceled) |
 | `RunPaused` / `RunResumed` | Human-in-the-loop transitions |
 | `RunPhaseChanged` | Phase transitions (planning, executing_tools, etc.) |
+| `PromptRendered` | Runtime resolves and renders a prompt spec |
 | `ToolCallScheduled` | Tool activity scheduled |
 | `ToolResultReceived` | Tool completes |
 | `ToolCallUpdated` | Parent tool discovers more children |
@@ -930,6 +971,7 @@ type Sink interface {
 
 | Event | Payload |
 |-------|---------|
+| `prompt_rendered` | `PromptRenderedPayload` (`prompt_id`, `version`, `scope`) |
 | `tool_start` | `ToolStartPayload` (tool_call_id, tool_name, payload) |
 | `tool_end` | `ToolEndPayload` (result, error, duration, telemetry) |
 | `tool_update` | `ToolUpdatePayload` (expected_children_total) |
@@ -1226,6 +1268,23 @@ client, err := rt.NewBedrockModelClient(awsClient, runtime.BedrockConfig{
 })
 ```
 
+When planners render prompts through `RenderPrompt`, copy prompt provenance into model requests:
+
+```go
+content, err := input.Agent.RenderPrompt(ctx, "aura.chat.system", map[string]any{
+    "AssistantName": "Ops Assistant",
+})
+if err != nil {
+    return nil, err
+}
+
+resp, err := modelClient.Complete(ctx, &model.Request{
+    RunID:      input.RunContext.RunID,
+    Messages:   input.Messages,
+    PromptRefs: []prompt.PromptRef{content.Ref},
+})
+```
+
 ### Rate Limiting
 
 Apply adaptive rate limiting:
@@ -1399,6 +1458,7 @@ type Tracer interface {
 | Package | Purpose |
 |---------|---------|
 | `features/memory/mongo` | MongoDB-backed memory store |
+| `features/prompt/mongo` | MongoDB-backed prompt override store |
 | `features/runlog/mongo` | MongoDB-backed run event log store |
 | `features/session/mongo` | MongoDB-backed session store |
 | `features/stream/pulse` | Pulse message bus sink |

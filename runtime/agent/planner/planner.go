@@ -36,6 +36,7 @@ import (
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/memory"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/reminder"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -97,6 +98,12 @@ type PlannerContext interface {
 	// The boolean result is false when the requested model is not configured.
 	ModelClient(id string) (model.Client, bool)
 
+	// RenderPrompt resolves and renders a registered prompt by ID.
+	//
+	// Runtime applies prompt override precedence using the current run scope
+	// (session and labels) before rendering.
+	RenderPrompt(ctx context.Context, id prompt.Ident, data any) (*prompt.PromptContent, error)
+
 	// AddReminder registers or updates a run-scoped system reminder. Planners use
 	// this to surface structured, rate-limited guidance (for example, “review
 	// open todos”) without baking prompt text directly into planner logic.
@@ -156,7 +163,7 @@ type PlannerEvents interface {
 
 // ToolRequest describes a tool invocation requested by the planner.
 type ToolRequest struct {
-	// Name is the fully-qualified tool identifier (for example, "atlas.read.get_time_series").
+	// Name is the fully-qualified tool identifier (for example, "svc.read.get_time_series").
 	Name tools.Ident
 
 	// Payload is the canonical JSON payload for the tool call.
@@ -170,6 +177,10 @@ type ToolRequest struct {
 
 	// SessionID is the logical session identifier (for example, a chat conversation).
 	SessionID string
+
+	// Labels carries caller-defined run metadata dimensions used by runtime
+	// policies and prompt scoping.
+	Labels map[string]string
 
 	// TurnID identifies the conversational turn that produced this tool call.
 	TurnID string

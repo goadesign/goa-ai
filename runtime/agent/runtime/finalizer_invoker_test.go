@@ -44,7 +44,7 @@ func TestFinalizerToolInvokerRunsServiceTool(t *testing.T) {
 			AgentID:          "svc.agent",
 		},
 	}
-	res, err := invoker.Invoke(context.Background(), tools.Ident("svc.aggregate.finalize"), map[string]any{"method": "ada.method"})
+	res, err := invoker.Invoke(context.Background(), tools.Ident("svc.aggregate.finalize"), map[string]any{"method": "child.method"})
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.Equal(t, tools.Ident("svc.aggregate.finalize"), res.Name)

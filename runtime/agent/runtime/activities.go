@@ -263,9 +263,9 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		}
 	}
 	out := &ToolOutput{
-		Payload:     enc,
-		ServerData:  result.ServerData,
-		Telemetry:   result.Telemetry,
+		Payload:    enc,
+		ServerData: result.ServerData,
+		Telemetry:  result.Telemetry,
 	}
 	if result.Error != nil {
 		out.Error = result.Error.Error()
@@ -445,13 +445,15 @@ func (r *Runtime) plannerContext(ctx context.Context, input *PlanActivityInput, 
 		return nil, nil, err
 	}
 	agentCtx := newAgentContext(agentContextOptions{
-		runtime: r,
-		agentID: input.AgentID,
-		runID:   input.RunID,
-		memory:  reader,
-		turnID:  input.RunContext.TurnID,
-		events:  events,
-		cache:   reg.Policy.Cache,
+		runtime:   r,
+		agentID:   input.AgentID,
+		runID:     input.RunID,
+		memory:    reader,
+		sessionID: input.RunContext.SessionID,
+		labels:    input.RunContext.Labels,
+		turnID:    input.RunContext.TurnID,
+		events:    events,
+		cache:     reg.Policy.Cache,
 	})
 	return &reg, agentCtx, nil
 }

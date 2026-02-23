@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -59,8 +61,18 @@ type (
 		// text if present. Exactly one of Templates[id] or Texts[id] should be set
 		// per tool. Callers are responsible for ensuring full coverage across tools.
 		Texts map[tools.Ident]string
-		// Prompt builds a user message when neither text nor template is provided.
-		// When nil, the runtime falls back to PayloadToString(payload).
+		// PromptSpecs maps tool IDs to prompt registry IDs. When configured for a
+		// tool, runtime resolves and renders this prompt first and uses the rendered
+		// text as the nested agent user message.
+		//
+		// Rendering contract: the prompt template root data is the canonical payload
+		// JSON object produced by the tool payload codec (schema keys, e.g.
+		// snake_case). Templates must reference schema field names, not Go struct
+		// field names.
+		PromptSpecs map[tools.Ident]prompt.Ident
+		// Prompt builds a user message when no PromptSpec, template, or text is
+		// configured for a tool. When nil, runtime returns an error for missing
+		// tool prompt content.
 		Prompt PromptBuilder
 		// JSONOnly forces JSON-only parent tool_result emission for agent-as-tool.
 		// When true (default), the runtime ignores the nested agent's final prose and
@@ -169,6 +181,16 @@ func WithTemplate(id tools.Ident, t *template.Template) AgentToolOption {
 			c.Templates = make(map[tools.Ident]*template.Template)
 		}
 		c.Templates[id] = t
+	}
+}
+
+// WithPromptSpec configures a prompt registry ID for the given tool ID.
+func WithPromptSpec(id tools.Ident, promptID prompt.Ident) AgentToolOption {
+	return func(c *AgentToolConfig) {
+		if c.PromptSpecs == nil {
+			c.PromptSpecs = make(map[tools.Ident]prompt.Ident)
+		}
+		c.PromptSpecs[id] = promptID
 	}
 }
 
@@ -300,29 +322,32 @@ func ValidateAgentToolCoverage(texts map[tools.Ident]string, templates map[tools
 		if hasText && hasTpl {
 			return fmt.Errorf("tool %s configured as both text and template", id)
 		}
+		if !hasText && !hasTpl {
+			return fmt.Errorf("tool %s missing text/template content", id)
+		}
 	}
 	return nil
 }
 
 // PayloadToString converts a tool payload to a string for agent consumption.
 // Strings pass through as-is; structured payloads are marshaled to JSON.
-func PayloadToString(payload any) string {
+func PayloadToString(payload any) (string, error) {
 	switch v := payload.(type) {
 	case string:
-		return v
+		return v, nil
 	case json.RawMessage:
 		if len(v) == 0 {
-			return ""
+			return "", nil
 		}
-		return string(v)
+		return string(v), nil
 	case nil:
-		return ""
+		return "", nil
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Sprintf("%v", payload)
+		return "", fmt.Errorf("marshal payload as JSON: %w", err)
 	}
-	return string(b)
+	return string(b), nil
 }
 
 // PassThroughFinalizer returns a finalizer that leaves aggregation to the JSONOnly fallback.
@@ -488,11 +513,16 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 		}
 	}
 
-	// Build per-tool user message via template if present, otherwise fall
-	// back to text/prompt/payload. Skip appending when the content is empty
-	// or a meaningless JSON shell ("{}" / "null").
+	// Build per-tool user message using prompt specs first, then template, then
+	// text, then prompt builder.
 	var userContent string
-	if tmpl := cfg.Templates[call.Name]; tmpl != nil {
+	if promptID, ok := cfg.PromptSpecs[call.Name]; ok {
+		rendered, err := r.renderAgentToolPrompt(ctx, promptID, call, promptPayload)
+		if err != nil {
+			return nil, zeroCtx, fmt.Errorf("render prompt for %s: %w", call.Name, err)
+		}
+		userContent = rendered
+	} else if tmpl := cfg.Templates[call.Name]; tmpl != nil {
 		var b strings.Builder
 		if err := tmpl.Execute(&b, promptPayload); err != nil {
 			return nil, zeroCtx, fmt.Errorf("render tool template for %s: %w", call.Name, err)
@@ -501,24 +531,19 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 	} else if txt, ok := cfg.Texts[call.Name]; ok {
 		userContent = txt
 	} else {
-		// Default: build from payload via PromptBuilder or JSON/string fallback.
-		if cfg.Prompt != nil {
-			userContent = cfg.Prompt(call.Name, promptPayload)
-		} else {
-			userContent = PayloadToString(promptPayload)
+		if cfg.Prompt == nil {
+			return nil, zeroCtx, fmt.Errorf(
+				"agent tool %s is missing prompt content configuration; configure prompt spec, template, text, or prompt builder",
+				call.Name,
+			)
 		}
+		userContent = cfg.Prompt(call.Name, promptPayload)
 	}
-	switch userContent {
-	case "{}", "null":
-		// Append an empty user message to preserve turn semantics.
+	if m := newTextAgentMessage(model.ConversationRoleUser, userContent); m != nil {
+		messages = append(messages, m)
+	} else {
+		// No text content; still append an empty user message.
 		messages = append(messages, &model.Message{Role: model.ConversationRoleUser})
-	default:
-		if m := newTextAgentMessage(model.ConversationRoleUser, userContent); m != nil {
-			messages = append(messages, m)
-		} else {
-			// No text content; still append an empty user message.
-			messages = append(messages, &model.Message{Role: model.ConversationRoleUser})
-		}
 	}
 
 	// Build nested run context from explicit ToolRequest fields.
@@ -530,6 +555,7 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 		ParentToolCallID: call.ToolCallID,
 		ParentRunID:      call.RunID,
 		ParentAgentID:    call.AgentID,
+		Labels:           cloneLabels(call.Labels),
 	}
 	// Record the canonical JSON args using the tool codec. marshalToolValue
 	// returns a defensive copy for json.RawMessage, so this never double-encodes.
@@ -538,6 +564,75 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 	}
 
 	return messages, nestedRunCtx, nil
+}
+
+// renderAgentToolPrompt resolves and renders a configured prompt spec for one tool call.
+func (r *Runtime) renderAgentToolPrompt(ctx context.Context, promptID prompt.Ident, call *planner.ToolRequest, payload any) (string, error) {
+	if promptID == "" {
+		return "", errors.New("prompt id is required")
+	}
+	if r.PromptRegistry == nil {
+		return "", errors.New("prompt registry is not configured")
+	}
+	renderData, err := r.buildPromptTemplateData(ctx, call.Name, payload)
+	if err != nil {
+		return "", fmt.Errorf("build prompt template data for %s: %w", call.Name, err)
+	}
+	renderContext := withPromptRenderHookContext(ctx, PromptRenderHookContext{
+		RunID:     call.RunID,
+		AgentID:   call.AgentID,
+		SessionID: call.SessionID,
+		TurnID:    call.TurnID,
+	})
+	content, err := r.PromptRegistry.Render(renderContext, promptID, prompt.Scope{
+		SessionID: call.SessionID,
+		Labels:    cloneLabels(call.Labels),
+	}, renderData)
+	if err != nil {
+		return "", err
+	}
+	return content.Text, nil
+}
+
+// buildPromptTemplateData converts a typed tool payload into canonical prompt
+// template data.
+//
+// Contract:
+//   - Payload must be a typed Go value decoded by the generated payload codec.
+//   - Prompt templates render against the canonical JSON object produced by the
+//     same payload codec (schema keys, e.g. snake_case).
+//   - Non-object payload JSON shapes are rejected to keep the template contract
+//     explicit and deterministic.
+func (r *Runtime) buildPromptTemplateData(ctx context.Context, toolName tools.Ident, payload any) (map[string]any, error) {
+	if payload == nil {
+		return map[string]any{}, nil
+	}
+	switch payload.(type) {
+	case json.RawMessage, []byte:
+		return nil, fmt.Errorf("tool %s prompt payload must be a typed Go value, got %T", toolName, payload)
+	}
+	codec, ok := r.toolCodec(toolName, true)
+	if !ok || codec.ToJSON == nil {
+		r.logger.Error(ctx, "no codec found for tool", "tool", toolName, "payload", true)
+		return nil, fmt.Errorf("no codec found for tool %s", toolName)
+	}
+	raw, err := codec.ToJSON(payload)
+	if err != nil {
+		r.logger.Warn(ctx, "tool codec encode failed", "tool", toolName, "payload", true, "err", err)
+		return nil, err
+	}
+	if len(bytes.TrimSpace(raw)) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return map[string]any{}, nil
+	}
+	var decoded any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return nil, err
+	}
+	object, ok := decoded.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("tool %s prompt payload must render from a JSON object, got %T", toolName, decoded)
+	}
+	return object, nil
 }
 
 // adaptAgentChildOutput converts a nested agent RunOutput into a planner.ToolResult,

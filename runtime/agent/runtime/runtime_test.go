@@ -604,9 +604,9 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 
 func TestValidateAgentToolCoverage(t *testing.T) {
 	ids := []tools.Ident{"a", "b"}
-	// Missing both: allowed (defaults will be used)
+	// Missing both should fail.
 	err := ValidateAgentToolCoverage(nil, nil, ids)
-	require.NoError(t, err)
+	require.Error(t, err)
 
 	// Duplicate for A
 	err = ValidateAgentToolCoverage(
@@ -753,7 +753,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 		SessionID: "session-1",
 		TurnID:    "turn-1",
 		Labels: map[string]string{
-			"tenant": "acme",
+			"account": "acme",
 		},
 	}
 	_, sessionErr := rt.CreateSession(context.Background(), input.SessionID)

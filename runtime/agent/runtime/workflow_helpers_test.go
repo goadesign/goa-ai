@@ -18,7 +18,7 @@ func TestAppendUserToolResults_IncludesErrorInToolResultContent(t *testing.T) {
 	led := transcript.NewLedger()
 
 	call := planner.ToolRequest{
-		Name:       tools.Ident("atlas.commands.change_setpoint"),
+		Name:       tools.Ident("svc.commands.adjust_setpoint"),
 		ToolCallID: "tc-1",
 	}
 	tr := &planner.ToolResult{
@@ -51,8 +51,8 @@ func TestAppendUserToolResults_IncludesErrorInToolResultContent(t *testing.T) {
 func TestAppendUserToolResults_IncludesResultAndErrorWhenBothPresent(t *testing.T) {
 	rt := &Runtime{
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			tools.Ident("atlas.commands.change_setpoint"): {
-				Name: tools.Ident("atlas.commands.change_setpoint"),
+			tools.Ident("svc.commands.adjust_setpoint"): {
+				Name: tools.Ident("svc.commands.adjust_setpoint"),
 				Result: tools.TypeSpec{
 					Codec: tools.JSONCodec[any]{
 						ToJSON: json.Marshal,
@@ -65,7 +65,7 @@ func TestAppendUserToolResults_IncludesResultAndErrorWhenBothPresent(t *testing.
 	led := transcript.NewLedger()
 
 	call := planner.ToolRequest{
-		Name:       tools.Ident("atlas.commands.change_setpoint"),
+		Name:       tools.Ident("svc.commands.adjust_setpoint"),
 		ToolCallID: "tc-1",
 	}
 	tr := &planner.ToolResult{
@@ -98,8 +98,8 @@ func TestAppendUserToolResults_IncludesResultAndErrorWhenBothPresent(t *testing.
 func TestAppendUserToolResults_AppendsBoundsReminderAfterToolResults(t *testing.T) {
 	rt := &Runtime{
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			tools.Ident("atlas.read.list_devices"): {
-				Name: tools.Ident("atlas.read.list_devices"),
+			tools.Ident("svc.read.list_devices"): {
+				Name: tools.Ident("svc.read.list_devices"),
 				Result: tools.TypeSpec{
 					Codec: tools.JSONCodec[any]{
 						ToJSON: json.Marshal,
@@ -112,7 +112,7 @@ func TestAppendUserToolResults_AppendsBoundsReminderAfterToolResults(t *testing.
 	led := transcript.NewLedger()
 
 	call := planner.ToolRequest{
-		Name:       tools.Ident("atlas.read.list_devices"),
+		Name:       tools.Ident("svc.read.list_devices"),
 		ToolCallID: "tc-1",
 	}
 	cursor := "opaque-cursor"
@@ -146,7 +146,7 @@ func TestAppendUserToolResults_AppendsRetryHintReminderAfterToolResults(t *testi
 	led := transcript.NewLedger()
 
 	call := planner.ToolRequest{
-		Name:       tools.Ident("atlas.read.atlas_aggregate"),
+		Name:       tools.Ident("svc.read.aggregate"),
 		ToolCallID: "tc-1",
 	}
 	tr := &planner.ToolResult{
@@ -173,5 +173,5 @@ func TestAppendUserToolResults_AppendsRetryHintReminderAfterToolResults(t *testi
 	txt, ok := base.Messages[1].Parts[0].(model.TextPart)
 	require.True(t, ok)
 	require.Contains(t, txt.Text, "A tool call failed and provided a RetryHint.")
-	require.Contains(t, txt.Text, "Tool: atlas.read.atlas_aggregate")
+	require.Contains(t, txt.Text, "Tool: svc.read.aggregate")
 }
