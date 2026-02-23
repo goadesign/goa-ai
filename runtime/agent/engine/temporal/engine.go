@@ -177,10 +177,7 @@ func New(opts Options) (*Engine, error) {
 		tracer = telemetry.NewNoopTracer()
 	}
 
-	inst, err := configureInstrumentation(opts.Instrumentation)
-	if err != nil {
-		return nil, err
-	}
+	inst := configureInstrumentation(opts.Instrumentation)
 
 	cli := opts.Client
 	closeClient := false
@@ -188,15 +185,13 @@ func New(opts Options) (*Engine, error) {
 		if opts.ClientOptions == nil {
 			return nil, fmt.Errorf("temporal engine: client options are required when Client is nil")
 		}
-		clientOpts := client.Options{}
-		if opts.ClientOptions != nil {
-			clientOpts = *opts.ClientOptions
-		}
+		clientOpts := *opts.ClientOptions
 		applyClientInstrumentation(&clientOpts, inst)
-		cli, err = client.NewLazyClient(clientOpts)
+		lazyClient, err := client.NewLazyClient(clientOpts)
 		if err != nil {
 			return nil, fmt.Errorf("temporal engine: create client: %w", err)
 		}
+		cli = lazyClient
 		closeClient = true
 	}
 
@@ -616,7 +611,7 @@ type instrumentation struct {
 	metrics            client.MetricsHandler
 }
 
-func configureInstrumentation(opts InstrumentationOptions) (*instrumentation, error) {
+func configureInstrumentation(opts InstrumentationOptions) *instrumentation {
 	inst := &instrumentation{}
 	if !opts.DisableTracing {
 		// Trace domain contract:
@@ -632,9 +627,9 @@ func configureInstrumentation(opts InstrumentationOptions) (*instrumentation, er
 		inst.metrics = temporalotel.NewMetricsHandler(opts.MetricsOptions)
 	}
 	if len(inst.contextPropagators) == 0 && len(inst.workerInterceptors) == 0 && inst.metrics == nil {
-		return nil, nil
+		return nil
 	}
-	return inst, nil
+	return inst
 }
 
 func applyClientInstrumentation(opts *client.Options, inst *instrumentation) {
