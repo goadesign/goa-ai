@@ -131,6 +131,13 @@ func DecodeFromHookInput(input *ActivityInput) (Event, error) {
 		}
 		evt = NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, p.Phase)
 
+	case PromptRendered:
+		var p PromptRenderedEvent
+		if err := json.Unmarshal(input.Payload, &p); err != nil {
+			return nil, fmt.Errorf("decode %s payload: %w", PromptRendered, err)
+		}
+		evt = NewPromptRenderedEvent(input.RunID, input.AgentID, input.SessionID, p.PromptID, p.Version, p.Scope)
+
 	case RunPaused:
 		var p RunPausedEvent
 		if err := json.Unmarshal(input.Payload, &p); err != nil {

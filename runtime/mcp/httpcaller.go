@@ -120,6 +120,7 @@ func (t *httpTransport) call(ctx context.Context, method string, params any, res
 	}
 	req.Header.Set("Content-Type", "application/json")
 	injectTraceHeaders(ctx, req.Header)
+	// #nosec G704 -- endpoint is validated in newHTTPTransport before requests are sent.
 	resp, err := t.client.Do(req)
 	if err != nil {
 		return err

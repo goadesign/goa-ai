@@ -21,6 +21,7 @@ import (
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/toolerrors"
 )
@@ -76,7 +77,7 @@ type (
 
 		// RunID returns the unique workflow run identifier that produced this event. All
 		// events within a single run execution share the same run ID, enabling clients to
-		// filter or group events by run. This is critical for multi-tenant systems where
+		// filter or group events by run. This is critical for multi-account systems where
 		// a single Sink may multiplex events from multiple concurrent runs.
 		RunID() string
 
@@ -118,6 +119,13 @@ type (
 		// "Calling weather API to get forecast..."). This is human-readable text
 		// suitable for displaying in a UI thought bubble or debug panel.
 		Data PlannerThoughtPayload
+	}
+
+	// PromptRendered reports a rendered prompt reference and scope used by the
+	// runtime for prompt resolution.
+	PromptRendered struct {
+		Base
+		Data PromptRenderedPayload
 	}
 
 	// ToolStart streams when the runtime schedules a tool activity for execution. Clients
@@ -262,6 +270,13 @@ type (
 		Redacted     []byte `json:"redacted,omitempty"`
 		ContentIndex int    `json:"content_index,omitempty"`
 		Final        bool   `json:"final,omitempty"`
+	}
+
+	// PromptRenderedPayload describes one rendered prompt reference and scope.
+	PromptRenderedPayload struct {
+		PromptID string       `json:"prompt_id"`
+		Version  string       `json:"version"`
+		Scope    prompt.Scope `json:"scope"`
 	}
 
 	// AwaitClarification streams a human clarification request from the planner/runtime.
@@ -488,7 +503,7 @@ type (
 	// AwaitToolPayload describes a single external tool call to be satisfied.
 	AwaitToolPayload struct {
 		// ToolName is the fully qualified identifier of the external tool
-		// that must be executed (for example, "atlas.read.get_time_series").
+		// that must be executed (for example, "svc.read.get_time_series").
 		ToolName string `json:"tool_name"`
 		// ToolCallID optionally carries a caller-assigned identifier used
 		// to correlate the provided result with this request.
@@ -616,6 +631,8 @@ type (
 		Assistant bool
 		// Thoughts controls planner thought / thinking emission.
 		Thoughts bool
+		// PromptRendered controls emission of prompt_rendered events.
+		PromptRendered bool
 		// ToolStart controls emission of tool_start events.
 		ToolStart bool
 		// ToolUpdate controls emission of tool_update events.
@@ -650,6 +667,7 @@ func DefaultProfile() StreamProfile {
 	return StreamProfile{
 		Assistant:          true,
 		Thoughts:           true,
+		PromptRendered:     true,
 		ToolStart:          true,
 		ToolUpdate:         true,
 		ToolCallArgsDelta:  true,
@@ -698,6 +716,9 @@ const (
 	// intermediate planner thoughts before tool calls complete. Emitted by StreamSubscriber
 	// when PlannerNoteEvent hooks fire. The payload contains the planner's text annotation.
 	EventPlannerThought EventType = "planner_thought"
+
+	// EventPromptRendered streams prompt render references and scopes used by runtime prompt resolution.
+	EventPromptRendered EventType = "prompt_rendered"
 
 	// EventToolStart streams when a tool activity is scheduled for execution. Clients
 	// receive this before the tool executes, allowing UIs to display pending tool calls,

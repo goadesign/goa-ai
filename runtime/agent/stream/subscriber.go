@@ -8,7 +8,6 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/run"
-	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 )
 
 // RunCompletedEvent.Status values emitted by the workflow runtime.
@@ -30,6 +29,7 @@ type (
 	// The following hook events are streamed to clients:
 	//   - AssistantMessage      → EventAssistantReply
 	//   - PlannerNote           → EventPlannerThought
+	//   - PromptRendered        → EventPromptRendered
 	//   - ToolCallArgsDelta     → EventToolCallArgsDelta (optional)
 	//   - ToolCallScheduled     → EventToolStart
 	//   - ToolCallUpdated       → EventToolUpdate
@@ -83,6 +83,7 @@ func NewSubscriberWithProfile(sink Sink, profile StreamProfile) (*Subscriber, er
 // Event translation:
 //   - AssistantMessage → EventAssistantReply
 //   - PlannerNote → EventPlannerThought
+//   - PromptRendered → EventPromptRendered
 //   - ToolCallArgsDelta → EventToolCallArgsDelta (optional)
 //   - ToolCallScheduled → EventToolStart
 //   - ToolCallUpdated → EventToolUpdate
@@ -227,7 +228,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Queue:                 evt.Queue,
 			ParentToolCallID:      evt.ParentToolCallID,
 			ExpectedChildrenTotal: evt.ExpectedChildrenTotal,
-			DisplayHint:           rthints.FormatCallHint(evt.ToolName, evt.Payload),
+			DisplayHint:           evt.DisplayHint,
 		}
 		return s.sink.Send(ctx, ToolStart{
 			Base: Base{t: EventToolStart, r: evt.RunID(), s: evt.SessionID(), p: payload},
@@ -255,6 +256,19 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		}
 		return s.sink.Send(ctx, PlannerThought{
 			Base: Base{t: EventPlannerThought, r: evt.RunID(), s: evt.SessionID(), p: payload},
+			Data: payload,
+		})
+	case *hooks.PromptRenderedEvent:
+		if !s.profile.PromptRendered {
+			return nil
+		}
+		payload := PromptRenderedPayload{
+			PromptID: evt.PromptID.String(),
+			Version:  evt.Version,
+			Scope:    evt.Scope,
+		}
+		return s.sink.Send(ctx, PromptRendered{
+			Base: Base{t: EventPromptRendered, r: evt.RunID(), s: evt.SessionID(), p: payload},
 			Data: payload,
 		})
 	case *hooks.ThinkingBlockEvent:
@@ -339,20 +353,9 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		if !s.profile.Workflow {
 			return nil
 		}
-		// Prefer the terminal run phase when present; fall back to status for
-		// back-compat with older emitters/tests.
 		phase := string(evt.Phase)
 		if phase == "" {
-			switch evt.Status {
-			case completionStatusSuccess:
-				phase = string(run.PhaseCompleted)
-			case completionStatusFailed:
-				phase = string(run.PhaseFailed)
-			case completionStatusCanceled:
-				phase = string(run.PhaseCanceled)
-			default:
-				phase = evt.Status
-			}
+			return fmt.Errorf("run_completed event missing phase for run %s", evt.RunID())
 		}
 		payload := WorkflowPayload{
 			Phase:          phase,

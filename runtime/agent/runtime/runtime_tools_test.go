@@ -56,7 +56,7 @@ func TestExecuteToolActivityPropagatesServerData(t *testing.T) {
 			ToolCallID: call.ToolCallID,
 			Result:     map[string]any{"ok": true},
 			ServerData: json.RawMessage(
-				`[{"kind":"aura.evidence","data":[{"uri":"atlas://points/123","kind":"time_series"}]}]`,
+				`[{"kind":"example.evidence","data":[{"uri":"example://points/123","kind":"time_series"}]}]`,
 			),
 		}, nil
 	}}}}
@@ -67,7 +67,7 @@ func TestExecuteToolActivityPropagatesServerData(t *testing.T) {
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	require.JSONEq(t, `[{"kind":"aura.evidence","data":[{"uri":"atlas://points/123","kind":"time_series"}]}]`, string(out.ServerData))
+	require.JSONEq(t, `[{"kind":"example.evidence","data":[{"uri":"example://points/123","kind":"time_series"}]}]`, string(out.ServerData))
 }
 
 func TestRegisterToolset_RejectsAgentToolsetWithoutSpecs(t *testing.T) {
@@ -224,7 +224,7 @@ func TestServiceToolEventsUseChildRunContext(t *testing.T) {
 			"svc.tools": {},
 		},
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			tools.Ident("atlas.read.atlas_get_time_series"): newAnyJSONSpec("atlas.read.atlas_get_time_series", "svc.tools"),
+			tools.Ident("svc.tools.fetch_time_series"): newAnyJSONSpec("svc.tools.fetch_time_series", "svc.tools"),
 		},
 	}
 	wfCtx := &testWorkflowContext{
@@ -237,14 +237,14 @@ func TestServiceToolEventsUseChildRunContext(t *testing.T) {
 		SessionID:        "session-1",
 		TurnID:           "turn-1",
 		ParentRunID:      "parent-run",
-		ParentAgentID:    "chat.agent",
+		ParentAgentID:    "parent.agent",
 		ParentToolCallID: "tool-parent",
 	}
 	calls := []planner.ToolRequest{{
-		Name:       tools.Ident("atlas.read.atlas_get_time_series"),
+		Name:       tools.Ident("svc.tools.fetch_time_series"),
 		ToolCallID: "child-call",
 	}}
-	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "ada.agent", parentCtx, calls, 0, nil, time.Time{})
+	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "child.agent", parentCtx, calls, 0, nil, time.Time{})
 	require.NoError(t, err)
 
 	var scheduled *hooks.ToolCallScheduledEvent
@@ -259,12 +259,12 @@ func TestServiceToolEventsUseChildRunContext(t *testing.T) {
 	}
 	require.NotNil(t, scheduled, "expected ToolCallScheduledEvent")
 	require.Equal(t, "child-run", scheduled.RunID())
-	require.Equal(t, "ada.agent", scheduled.AgentID())
+	require.Equal(t, "child.agent", scheduled.AgentID())
 	require.Equal(t, "tool-parent", scheduled.ParentToolCallID)
 
 	require.NotNil(t, resultEvt, "expected ToolResultReceivedEvent")
 	require.Equal(t, "child-run", resultEvt.RunID())
-	require.Equal(t, "ada.agent", resultEvt.AgentID())
+	require.Equal(t, "child.agent", resultEvt.AgentID())
 	require.Equal(t, "tool-parent", resultEvt.ParentToolCallID)
 }
 
@@ -283,7 +283,7 @@ func TestServiceToolEventsPropagateServerData(t *testing.T) {
 			tools.Ident("svc.tools.example"): newAnyJSONSpec("svc.tools.example", "svc.tools"),
 		},
 	}
-	server := json.RawMessage(`[{"kind":"aura.evidence","data":[{"uri":"atlas://points/123","kind":"time_series"}]}]`)
+	server := json.RawMessage(`[{"kind":"example.evidence","data":[{"uri":"example://points/123","kind":"time_series"}]}]`)
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		hookRuntime: rt,
@@ -294,14 +294,14 @@ func TestServiceToolEventsPropagateServerData(t *testing.T) {
 		SessionID:        "session-1",
 		TurnID:           "turn-1",
 		ParentRunID:      "parent-run",
-		ParentAgentID:    "chat.agent",
+		ParentAgentID:    "parent.agent",
 		ParentToolCallID: "tool-parent",
 	}
 	calls := []planner.ToolRequest{{
 		Name:       tools.Ident("svc.tools.example"),
 		ToolCallID: "child-call",
 	}}
-	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "ada.agent", parentCtx, calls, 0, nil, time.Time{})
+	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "child.agent", parentCtx, calls, 0, nil, time.Time{})
 	require.NoError(t, err)
 
 	var resultEvt *hooks.ToolResultReceivedEvent
@@ -324,11 +324,11 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 		RunEventStore: runloginmem.New(),
 	}
 	rt.toolsets = map[string]ToolsetRegistration{
-		"ada.tools": {
+		"child.tools": {
 			Inline: true,
 			Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 				require.NotNil(t, call)
-				require.Equal(t, tools.Ident("ada.get_time_series"), call.Name)
+				require.Equal(t, tools.Ident("child.get_time_series"), call.Name)
 				require.Equal(t, "tool-parent", call.ToolCallID)
 				return &planner.ToolResult{
 					Name:       call.Name,
@@ -339,7 +339,7 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 		},
 	}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
-		tools.Ident("ada.get_time_series"): newAnyJSONSpec("ada.get_time_series", "ada.tools"),
+		tools.Ident("child.get_time_series"): newAnyJSONSpec("child.get_time_series", "child.tools"),
 	}
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
@@ -354,13 +354,13 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 		},
 		hasPlanResult: true,
 	}
-	input := &RunInput{AgentID: "chat.agent", RunID: "run-inline", SessionID: "sess-1", TurnID: "turn-1"}
+	input := &RunInput{AgentID: "parent.agent", RunID: "run-inline", SessionID: "sess-1", TurnID: "turn-1"}
 	base := &planner.PlanInput{
 		RunContext: run.Context{RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID},
 		Agent:      newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID}),
 	}
 	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:       tools.Ident("ada.get_time_series"),
+		Name:       tools.Ident("child.get_time_series"),
 		ToolCallID: "tool-parent",
 	}}}
 	_, err := rt.runLoop(
@@ -403,12 +403,12 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 	}
 	require.NotNil(t, scheduled, "expected ToolCallScheduledEvent for inline tool")
 	require.Equal(t, input.RunID, scheduled.RunID())
-	require.Equal(t, tools.Ident("ada.get_time_series"), scheduled.ToolName)
+	require.Equal(t, tools.Ident("child.get_time_series"), scheduled.ToolName)
 	require.Empty(t, scheduled.ParentToolCallID)
 
 	require.NotNil(t, resultEvt, "expected ToolResultReceivedEvent for inline tool")
 	require.Equal(t, input.RunID, resultEvt.RunID())
-	require.Equal(t, tools.Ident("ada.get_time_series"), resultEvt.ToolName)
+	require.Equal(t, tools.Ident("child.get_time_series"), resultEvt.ToolName)
 	require.Equal(t, map[string]any{"ok": true}, resultEvt.Result)
 	require.Empty(t, resultEvt.ParentToolCallID)
 }

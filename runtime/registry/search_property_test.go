@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -321,9 +322,9 @@ func genTags() gopter.Gen {
 
 // genUniqueID generates a unique ID based on index.
 func genUniqueID(index int) string {
-	letterByte := byte('a') + byte(index%26)
-	digitByte := byte('0') + byte(index/26) 
-	return "tool-" + string([]byte{letterByte}) + "-" + string([]byte{digitByte})
+	letter := 'a' + rune(index%26)
+	digits := index / 26
+	return fmt.Sprintf("tool-%c-%d", letter, digits)
 }
 
 // TestEmptySearchReturnsEmptySetProperty verifies Property 10: Empty Search Returns Empty Set.

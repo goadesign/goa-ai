@@ -41,8 +41,8 @@ Think of it as a pipeline from intention to execution:
 4. **Engine** (`runtime/agent/engine`) — Swap backends without changing code. In‑memory for fast
    iteration; Temporal for production durability.
 
-5. **Features** (`features/*`) — Plug in what you need: Mongo for memory/sessions/run event logs, Pulse for
-   real‑time streams, Bedrock/OpenAI/Gateway model clients, policy engines.
+5. **Features** (`features/*`) — Plug in what you need: Mongo for memory/sessions/run event logs and prompt
+   overrides, Pulse for real‑time streams, Bedrock/OpenAI/Gateway model clients, policy engines.
 
 ## Ways to Work
 
@@ -366,7 +366,7 @@ distributed tracing.
 
 ### Memory, Streaming & Telemetry
 
-The hook bus publishes events (`tool_start`, `tool_result`, `assistant_message`, ...) that:
+The hook bus publishes events (`tool_start`, `tool_result`, `assistant_message`, `prompt_rendered`, ...) that:
 
 - **Memory/session stores** (e.g., Mongo) subscribe to for transcript persistence
 - **Stream sinks** (e.g., Pulse) carry to real‑time UIs
@@ -719,6 +719,7 @@ type PlannerContext interface {
     Tracer() telemetry.Tracer
     State() AgentState                    // Ephemeral per-run state
     ModelClient(id string) (model.Client, bool)
+    RenderPrompt(ctx context.Context, id string, data any) (*prompt.PromptContent, error)
     AddReminder(r reminder.Reminder)      // Register guidance for future turns
     RemoveReminder(id string)             // Clear outdated guidance
 }
@@ -800,6 +801,7 @@ type Request struct {
     RunID       string
     Model       string           // Provider-specific model ID
     ModelClass  ModelClass       // Or family: "high-reasoning", "default", "small"
+    PromptRefs  []prompt.PromptRef // Rendered prompt provenance metadata
     Messages    []*Message
     Temperature float32
     Tools       []*ToolDefinition
@@ -810,6 +812,18 @@ type Request struct {
     Cache       *CacheOptions    // Prompt caching
 }
 ```
+
+### Prompt Management Contracts
+
+Prompt rendering is runtime-native and versioned:
+
+- Register immutable baseline prompts as `prompt.PromptSpec` in `Runtime.PromptRegistry`.
+- Optionally configure scoped overrides with `runtime.WithPromptStore(...)` using a `prompt.Store`
+  implementation (for example, `features/prompt/mongo`).
+- Render prompts from planners with `PlannerContext.RenderPrompt(...)`; rendered text includes a
+  `prompt.PromptRef` (`id`, `version`) for provenance.
+- Carry prompt provenance through model calls by setting `model.Request.PromptRefs`.
+- Observe render lifecycle through hook/stream `prompt_rendered` events.
 
 ---
 

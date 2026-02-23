@@ -11,7 +11,7 @@ import (
 func TestBuildAggregationSummary(t *testing.T) {
 	input := FinalizerInput{
 		Parent: ParentCall{
-			ToolName:   tools.Ident("ada.method"),
+			ToolName:   tools.Ident("child.method"),
 			ToolCallID: "parent-123",
 		},
 		Children: []ChildCall{
@@ -20,7 +20,7 @@ func TestBuildAggregationSummary(t *testing.T) {
 		},
 	}
 	summary := BuildAggregationSummary(&input)
-	require.Equal(t, tools.Ident("ada.method"), summary.Method)
+	require.Equal(t, tools.Ident("child.method"), summary.Method)
 	require.Equal(t, "parent-123", summary.ToolCallID)
 	require.Len(t, summary.Children, 2)
 	require.Equal(t, tools.Ident("child.ok"), summary.Children[0].Tool)

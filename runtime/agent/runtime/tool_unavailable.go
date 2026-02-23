@@ -54,7 +54,7 @@ func toolUnavailableToolsetRegistration() ToolsetRegistration {
 		Payload: tools.TypeSpec{
 			Name:        "ToolUnavailablePayload",
 			Schema:      mustMarshalToolUnavailableSchema(),
-			ExampleJSON: []byte(`{"requested_tool":"atlas_read_count_events","requested_payload":{"from":"2026-02-06T00:00:00Z"}}`),
+			ExampleJSON: []byte(`{"requested_tool":"svc_read_count_events","requested_payload":{"from":"2026-02-06T00:00:00Z"}}`),
 			Codec:       tools.AnyJSONCodec,
 		},
 		Result: tools.TypeSpec{

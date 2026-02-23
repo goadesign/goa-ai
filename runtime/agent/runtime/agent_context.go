@@ -1,43 +1,54 @@
 package runtime
 
 import (
+	"context"
+
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/memory"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/reminder"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 )
 
 // agentContextOptions configures construction of a planner.PlannerContext.
 type agentContextOptions struct {
-	runtime *Runtime
-	agentID agent.Ident
-	runID   string
-	memory  memory.Reader
-	turnID  string
-	events  planner.PlannerEvents
-	cache   CachePolicy
+	runtime   *Runtime
+	agentID   agent.Ident
+	runID     string
+	memory    memory.Reader
+	sessionID string
+	labels    map[string]string
+	turnID    string
+	events    planner.PlannerEvents
+	cache     CachePolicy
 }
 
 // simplePlannerContext is a minimal implementation of planner.PlannerContext.
 type simplePlannerContext struct {
-	rt    *Runtime
-	agent agent.Ident
-	runID string
-	mem   memory.Reader
-	ev    planner.PlannerEvents
-	cache CachePolicy
+	rt        *Runtime
+	agent     agent.Ident
+	runID     string
+	turnID    string
+	mem       memory.Reader
+	sessionID string
+	labels    map[string]string
+	ev        planner.PlannerEvents
+	cache     CachePolicy
 }
 
 func newAgentContext(opts agentContextOptions) planner.PlannerContext {
 	return &simplePlannerContext{
-		rt:    opts.runtime,
-		agent: opts.agentID,
-		runID: opts.runID,
-		mem:   opts.memory,
-		ev:    opts.events,
-		cache: opts.cache,
+		rt:        opts.runtime,
+		agent:     opts.agentID,
+		runID:     opts.runID,
+		turnID:    opts.turnID,
+		mem:       opts.memory,
+		sessionID: opts.sessionID,
+		labels:    cloneLabels(opts.labels),
+		ev:        opts.events,
+		cache:     opts.cache,
 	}
 }
 
@@ -73,6 +84,21 @@ func (c *simplePlannerContext) ModelClient(id string) (model.Client, bool) {
 	// full stream lifetimes when streaming is used.
 	cli = newTracedClient(cli, c.rt.tracer, c.rt.logger, id)
 	return cli, true
+}
+
+// RenderPrompt resolves and renders a prompt for the current run scope.
+func (c *simplePlannerContext) RenderPrompt(ctx context.Context, id prompt.Ident, data any) (*prompt.PromptContent, error) {
+	scope := prompt.Scope{
+		SessionID: c.sessionID,
+		Labels:    cloneLabels(c.labels),
+	}
+	renderContext := withPromptRenderHookContext(ctx, PromptRenderHookContext{
+		RunID:     c.runID,
+		AgentID:   c.agent,
+		SessionID: c.sessionID,
+		TurnID:    c.turnID,
+	})
+	return c.rt.PromptRegistry.Render(renderContext, id, scope, data)
 }
 
 func (c *simplePlannerContext) AddReminder(r reminder.Reminder) {

@@ -48,6 +48,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
+	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/reminder"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
@@ -87,6 +88,8 @@ type (
 		Engine engine.Engine
 		// MemoryStore persists run transcripts and annotations.
 		Memory memory.Store
+		// PromptRegistry resolves prompt specs and optional scoped overrides.
+		PromptRegistry *prompt.Registry
 		// SessionStore persists session lifecycle state and run metadata.
 		SessionStore session.Store
 		// Policy evaluates allowlists and caps per planner turn.
@@ -157,6 +160,9 @@ type (
 		Engine engine.Engine
 		// MemoryStore persists run transcripts and annotations.
 		MemoryStore memory.Store
+		// PromptStore resolves scoped prompt overrides. When nil, prompt rendering
+		// uses baseline registered PromptSpecs only.
+		PromptStore prompt.Store
 		// SessionStore persists session lifecycle state and run metadata.
 		SessionStore session.Store
 		// Policy evaluates allowlists and caps per planner turn.
@@ -636,6 +642,7 @@ func newFromOptions(opts Options) *Runtime {
 	rt := &Runtime{
 		Engine:              eng,
 		Memory:              opts.MemoryStore,
+		PromptRegistry:      prompt.NewRegistry(opts.PromptStore),
 		SessionStore:        opts.SessionStore,
 		Policy:              opts.Policy,
 		RunEventStore:       opts.RunEventStore,
@@ -656,6 +663,7 @@ func newFromOptions(opts Options) *Runtime {
 		reminders:           reminder.NewEngine(),
 		toolConfirmation:    opts.ToolConfirmation,
 	}
+	rt.PromptRegistry.SetObserver(rt.onPromptRendered)
 	// Install runtime-owned toolsets before any agent registration so planners
 	// and transcripts can rely on a stable tool vocabulary.
 	rt.mu.Lock()
@@ -865,6 +873,9 @@ func WithHookActivityTimeout(d time.Duration) RuntimeOption {
 
 // WithMemoryStore sets the memory store.
 func WithMemoryStore(m memory.Store) RuntimeOption { return func(o *Options) { o.MemoryStore = m } }
+
+// WithPromptStore sets the prompt override store.
+func WithPromptStore(s prompt.Store) RuntimeOption { return func(o *Options) { o.PromptStore = s } }
 
 // WithSessionStore sets the session store.
 func WithSessionStore(s session.Store) RuntimeOption { return func(o *Options) { o.SessionStore = s } }

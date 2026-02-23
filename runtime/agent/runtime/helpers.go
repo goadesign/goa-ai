@@ -10,11 +10,13 @@ import (
 	"strings"
 	"unicode"
 
+	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
+	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -27,6 +29,47 @@ const (
 	// debuggable.
 	maxHookPayloadBytes = 1_000_000
 )
+
+type (
+	// PromptRenderHookContext identifies one agent run turn for prompt_rendered
+	// hook emission.
+	//
+	// Callers that render prompts through Runtime.PromptRegistry outside planner
+	// contexts must stamp the render context with this metadata so runtime can
+	// append canonical prompt_rendered events to the run log.
+	PromptRenderHookContext struct {
+		RunID     string
+		AgentID   agent.Ident
+		SessionID string
+		TurnID    string
+	}
+
+	promptRenderHookContextKey struct{}
+)
+
+// WithPromptRenderHookContext returns ctx stamped with run metadata used by
+// runtime prompt observer callbacks to emit canonical prompt_rendered events.
+func WithPromptRenderHookContext(ctx context.Context, meta PromptRenderHookContext) context.Context {
+	return context.WithValue(ctx, promptRenderHookContextKey{}, meta)
+}
+
+// withPromptRenderHookContext returns a context stamped with runtime run metadata
+// used by onPromptRendered to publish canonical prompt_rendered hook events.
+func withPromptRenderHookContext(ctx context.Context, meta PromptRenderHookContext) context.Context {
+	return WithPromptRenderHookContext(ctx, meta)
+}
+
+// promptRenderHookContextFromContext extracts prompt-render hook metadata.
+func promptRenderHookContextFromContext(ctx context.Context) (PromptRenderHookContext, bool) {
+	if ctx == nil {
+		return PromptRenderHookContext{}, false
+	}
+	meta, ok := ctx.Value(promptRenderHookContextKey{}).(PromptRenderHookContext)
+	if !ok {
+		return PromptRenderHookContext{}, false
+	}
+	return meta, true
+}
 
 // hasNonNullJSON reports whether raw contains a non-empty JSON value other than
 // the literal `null`.
@@ -360,6 +403,39 @@ func (r *Runtime) publishHookErr(ctx context.Context, evt hooks.Event, turnID st
 // run log are considered fatal.
 func (r *Runtime) publishHook(ctx context.Context, evt hooks.Event, turnID string) error {
 	return r.publishHookErr(ctx, evt, turnID)
+}
+
+// onPromptRendered is the runtime-owned observer callback used by PromptRegistry.
+//
+// The registry must never publish directly to the hook bus. Runtime owns the
+// append-to-runlog-then-publish ordering through publishHookErr, and this callback
+// is the integration seam where prompt-render hook events are emitted.
+func (r *Runtime) onPromptRendered(ctx context.Context, event prompt.RenderEvent) {
+	meta, ok := promptRenderHookContextFromContext(ctx)
+	if !ok {
+		panic(fmt.Sprintf(
+			"runtime: prompt_rendered missing hook context (prompt_id=%s version=%s)",
+			event.PromptID,
+			event.Version,
+		))
+	}
+	hookEvent := hooks.NewPromptRenderedEvent(
+		meta.RunID,
+		meta.AgentID,
+		meta.SessionID,
+		event.PromptID,
+		event.Version,
+		event.Scope,
+	)
+	if err := r.publishHookErr(ctx, hookEvent, meta.TurnID); err != nil {
+		panic(fmt.Errorf(
+			"runtime: prompt_rendered hook publish failed (run_id=%s prompt_id=%s version=%s): %w",
+			meta.RunID,
+			event.PromptID,
+			event.Version,
+			err,
+		))
+	}
 }
 
 // initialCaps constructs the initial caps state from the agent's run policy.

@@ -10,6 +10,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
+	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/run"
 	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -172,6 +173,17 @@ type (
 		baseEvent
 		// Phase is the new lifecycle phase for the run.
 		Phase run.Phase
+	}
+
+	// PromptRenderedEvent fires when the runtime resolves and renders a prompt.
+	PromptRenderedEvent struct {
+		baseEvent
+		// PromptID identifies the rendered prompt specification.
+		PromptID prompt.Ident
+		// Version is the resolved prompt version used for rendering.
+		Version string
+		// Scope is the resolved override scope used during prompt resolution.
+		Scope prompt.Scope
 	}
 
 	// ToolCallScheduledEvent fires when the runtime schedules a tool activity
@@ -597,6 +609,18 @@ func NewRunPhaseChangedEvent(runID string, agentID agent.Ident, sessionID string
 	}
 }
 
+// NewPromptRenderedEvent constructs a PromptRenderedEvent for one rendered prompt.
+func NewPromptRenderedEvent(runID string, agentID agent.Ident, sessionID string, promptID prompt.Ident, version string, scope prompt.Scope) *PromptRenderedEvent {
+	be := newBaseEvent(runID, agentID)
+	be.sessionID = sessionID
+	return &PromptRenderedEvent{
+		baseEvent: be,
+		PromptID:  promptID,
+		Version:   version,
+		Scope:     scope,
+	}
+}
+
 // NewRunPausedEvent constructs a RunPausedEvent with provided metadata.
 func NewRunPausedEvent(runID string, agentID agent.Ident, sessionID, reason, requestedBy string, labels map[string]string, metadata map[string]any) *RunPausedEvent {
 	be := newBaseEvent(runID, agentID)
@@ -985,3 +1009,4 @@ func (e *UsageEvent) Type() EventType              { return Usage }
 func (e *HardProtectionEvent) Type() EventType     { return HardProtectionTriggered }
 func (e *RunPhaseChangedEvent) Type() EventType    { return RunPhaseChanged }
 func (e *ChildRunLinkedEvent) Type() EventType     { return ChildRunLinked }
+func (e *PromptRenderedEvent) Type() EventType     { return PromptRendered }

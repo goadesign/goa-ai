@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"goa.design/goa-ai/runtime/agent/prompt"
 )
 
 func TestPartMarshalJSONIncludesKind(t *testing.T) {
@@ -147,4 +149,27 @@ func TestDocumentPartDecodeRejectsInvalidSources(t *testing.T) {
 			require.Error(t, err)
 		})
 	}
+}
+
+func TestRequestJSONRoundTripPreservesPromptRefs(t *testing.T) {
+	original := &Request{
+		RunID: "run-123",
+		PromptRefs: []prompt.PromptRef{
+			{
+				ID:      "planner.system",
+				Version: "v1",
+			},
+			{
+				ID:      "planner.tool",
+				Version: "v3",
+			},
+		},
+	}
+
+	raw, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	var decoded Request
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	require.Equal(t, original.PromptRefs, decoded.PromptRefs)
 }

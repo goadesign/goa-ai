@@ -114,6 +114,21 @@ different audiences and link child runs via run handles rather than flattening r
 
 ---
 
+## Prompt Management in v1
+
+Goa-AI v1 does **not** define a mandatory prompt declaration DSL (`Prompt(...)`, `Prompts(...)`, etc.).
+Prompt management is intentionally runtime-driven:
+
+- Register baseline prompt specs via `Runtime.PromptRegistry.Register(prompt.PromptSpec{...})`.
+- Configure scoped overrides with `runtime.WithPromptStore(...)` (for example, Mongo prompt store).
+- Render prompts in planners using `PlannerContext.RenderPrompt(...)`.
+- For agent-as-tool registrations, map tool IDs to prompt IDs with `runtime.WithPromptSpec(...)`.
+
+This keeps prompt rollout and overrides operational (runtime/store level) while the DSL remains focused
+on agent/tool contracts.
+
+---
+
 ## Function Reference
 
 ### Agent Functions

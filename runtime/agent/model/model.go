@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 
+	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -352,6 +353,12 @@ type (
 
 		// ModelClass selects a model family when Model is not specified.
 		ModelClass ModelClass
+
+		// PromptRefs records the exact prompts and versions used to build this
+		// request. Runtime components and observers use this for provenance and
+		// auditing; provider adapters must treat it as metadata and must not
+		// translate it to provider wire payloads.
+		PromptRefs []prompt.PromptRef
 
 		// Messages is the ordered transcript provided to the model.
 		Messages []*Message

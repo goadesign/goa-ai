@@ -153,6 +153,10 @@ const (
 	// ChildRunLinked links a parent run/tool call to a spawned child agent run.
 	// Payload is a ChildRunLinkedEvent.
 	ChildRunLinked EventType = "child_run_linked"
+
+	// PromptRendered fires when the runtime resolves and renders a prompt
+	// template for a run.
+	PromptRendered EventType = "prompt_rendered"
 )
 
 // HandleEvent implements Subscriber by invoking the function.
