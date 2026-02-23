@@ -29,6 +29,22 @@ func CollectTypeInfoForTest(specs *toolSpecsData) map[string]string {
 	return out
 }
 
+// CollectTypeSchemasForTest returns a map of type name to JSON schema bytes for
+// all types captured in tool specs data.
+func CollectTypeSchemasForTest(specs *toolSpecsData) map[string][]byte {
+	out := make(map[string][]byte)
+	if specs == nil {
+		return out
+	}
+	for _, td := range specs.typesList() {
+		if len(td.SchemaJSON) == 0 {
+			continue
+		}
+		out[td.TypeName] = td.SchemaJSON
+	}
+	return out
+}
+
 // CollectTypeImportAliasesForTest returns the distinct import aliases used by
 // the given type (matched by substring on type name). It includes both the
 // direct Import (if any) and TypeImports collected during analysis.

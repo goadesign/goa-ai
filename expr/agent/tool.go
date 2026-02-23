@@ -465,8 +465,16 @@ func validatePagingShape(tool *ToolExpr, verr *eval.ValidationErrors) {
 	validatePagingField("Return", tool.Return, tool.Paging.NextCursorField)
 }
 
-// Finalize resolves and assigns the bound method after successful validation.
+// Finalize materializes tool shapes and resolves method bindings.
+//
+// Contract:
+//   - Args/Return are finalized before codegen so Extend-composed fields are
+//     materialized once at the expression layer.
+//   - Method bindings are resolved after validation and must be deterministic.
 func (t *ToolExpr) Finalize() {
+	finalizeToolShape(t.Args)
+	finalizeToolShape(t.Return)
+
 	if t.bindMethodName == "" {
 		return
 	}
@@ -484,6 +492,13 @@ func (t *ToolExpr) Finalize() {
 		}
 	}
 	panic(fmt.Sprintf("tool %q: method %q not found in service %q after successful validation", t.Name, t.bindMethodName, svc.Name))
+}
+
+func finalizeToolShape(att *goaexpr.AttributeExpr) {
+	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+		return
+	}
+	att.Finalize()
 }
 
 // BoundServiceName returns the service name specified via BindTo, if any.
