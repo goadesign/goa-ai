@@ -28,8 +28,9 @@ func TestLinkChildRunReturnsSessionMismatchError(t *testing.T) {
 
 	store := New()
 	now := time.Now().UTC()
-	_, err := store.CreateSession(context.Background(), "sess-1", now)
+	sess1, err := store.CreateSession(context.Background(), "sess-1", now)
 	require.NoError(t, err)
+	require.Equal(t, "sess-1", sess1.ID)
 	_, err = store.CreateSession(context.Background(), "sess-2", now)
 	require.NoError(t, err)
 	require.NoError(t, store.UpsertRun(context.Background(), session.RunMeta{
