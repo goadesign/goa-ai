@@ -2,7 +2,9 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/runlog"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 const (
@@ -109,6 +112,53 @@ func TestPublishHookErr_DoesNotUseWorkflowContextFromActivity(t *testing.T) {
 	ctx := engine.WithActivityContext(engine.WithWorkflowContext(context.Background(), panicWorkflowContext{}))
 	err := rt.publishHookErr(ctx, hooks.NewPlannerNoteEvent(testRunID, agent.Ident("agent"), testSessionID, "note", nil), "turn-1")
 	require.NoError(t, err)
+}
+
+func TestPublishHookErr_CompactsOversizedToolResultPayload(t *testing.T) {
+	store := runloginmem.New()
+	rt := &Runtime{
+		RunEventStore: store,
+		Bus:           noopHooks{},
+		logger:        telemetry.NoopLogger{},
+		tracer:        telemetry.NewNoopTracer(),
+	}
+	largeText := strings.Repeat("x", 600_000)
+	result := map[string]string{
+		"text": largeText,
+	}
+	resultJSON, err := json.Marshal(result)
+	require.NoError(t, err)
+	evt := hooks.NewToolResultReceivedEvent(
+		testRunID,
+		agent.Ident("agent"),
+		testSessionID,
+		tools.Ident("ratings.get_rated_turn_context"),
+		"call-1",
+		"",
+		result,
+		resultJSON,
+		nil,
+		"large result payload",
+		nil,
+		0,
+		nil,
+		nil,
+		nil,
+	)
+
+	err = rt.publishHookErr(context.Background(), evt, "turn-1")
+	require.NoError(t, err)
+
+	page, err := store.List(context.Background(), testRunID, "", 10)
+	require.NoError(t, err)
+	require.Len(t, page.Events, 1)
+	require.Equal(t, hooks.ToolResultReceived, page.Events[0].Type)
+	require.LessOrEqual(t, len(page.Events[0].Payload), maxHookPayloadBytes)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(page.Events[0].Payload, &payload))
+	_, hasResult := payload["result"]
+	require.False(t, hasResult, "oversized payload should drop duplicate result field")
 }
 
 type failingRunlogStore struct {

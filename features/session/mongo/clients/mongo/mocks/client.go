@@ -28,6 +28,7 @@ type (
 	ClientLoadSessionFunc       func(ctx context.Context, sessionID string) (session.Session, error)
 	ClientEndSessionFunc        func(ctx context.Context, sessionID string, endedAt time.Time) (session.Session, error)
 	ClientUpsertRunFunc         func(ctx context.Context, run session.RunMeta) error
+	ClientLinkChildRunFunc      func(ctx context.Context, parentRunID string, child session.RunMeta) error
 	ClientLoadRunFunc           func(ctx context.Context, runID string) (session.RunMeta, error)
 	ClientListRunsBySessionFunc func(ctx context.Context, sessionID string, statuses []session.RunStatus) ([]session.RunMeta, error)
 )
@@ -139,6 +140,23 @@ func (m *Client) UpsertRun(ctx context.Context, run session.RunMeta) error {
 	}
 	m.t.Helper()
 	m.t.Error("unexpected UpsertRun call")
+	return nil
+}
+
+func (m *Client) AddLinkChildRun(f ClientLinkChildRunFunc) {
+	m.m.Add("LinkChildRun", f)
+}
+
+func (m *Client) SetLinkChildRun(f ClientLinkChildRunFunc) {
+	m.m.Set("LinkChildRun", f)
+}
+
+func (m *Client) LinkChildRun(ctx context.Context, parentRunID string, child session.RunMeta) error {
+	if f := m.m.Next("LinkChildRun"); f != nil {
+		return f.(ClientLinkChildRunFunc)(ctx, parentRunID, child)
+	}
+	m.t.Helper()
+	m.t.Error("unexpected LinkChildRun call")
 	return nil
 }
 

@@ -9,6 +9,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"goa.design/goa-ai/runtime/agent/prompt"
 )
 
 type (
@@ -45,6 +47,18 @@ type (
 		UpdatedAt time.Time
 		// Labels stores caller- or policy-provided labels.
 		Labels map[string]string
+		// PromptRefs captures the unique prompt versions rendered during the run.
+		//
+		// The runtime appends to this slice when it observes PromptRendered hook
+		// events, de-duplicating by (prompt_id, version). This enables downstream
+		// consumers to correlate run outcomes with the exact prompt versions that
+		// were used without re-scanning the run event log.
+		PromptRefs []prompt.PromptRef
+		// ChildRunIDs captures direct child runs linked from this run.
+		//
+		// Child runs are produced by agent-as-tool execution. Consumers that need
+		// full prompt attribution should walk this graph to include descendants.
+		ChildRunIDs []string
 		// Metadata stores implementation-specific metadata (e.g., error codes).
 		Metadata map[string]any
 	}
@@ -69,6 +83,16 @@ type (
 
 		// UpsertRun inserts or updates run metadata.
 		UpsertRun(ctx context.Context, run RunMeta) error
+		// LinkChildRun links a child run to a parent run atomically.
+		//
+		// Contract:
+		// - parentRunID and child identifiers must be non-empty.
+		// - The parent run must already exist, otherwise ErrRunNotFound is returned.
+		// - Parent and child runs must belong to the same session.
+		// - Child linkage is idempotent (duplicate links are ignored).
+		// - The implementation must ensure no observer can observe a linked child ID
+		//   without a corresponding child run record.
+		LinkChildRun(ctx context.Context, parentRunID string, child RunMeta) error
 		// LoadRun loads run metadata. Returns ErrRunNotFound when missing.
 		LoadRun(ctx context.Context, runID string) (RunMeta, error)
 		// ListRunsBySession lists runs for the given session. When statuses is
@@ -111,4 +135,34 @@ var (
 	ErrSessionEnded = errors.New("session ended")
 	// ErrRunNotFound indicates run metadata does not exist in the store.
 	ErrRunNotFound = errors.New("run not found")
+	// ErrParentRunIDRequired indicates a child-link operation is missing parent run ID.
+	ErrParentRunIDRequired = errors.New("parent run id is required")
+	// ErrChildRunIDRequired indicates a child-link operation is missing child run ID.
+	ErrChildRunIDRequired = errors.New("child run id is required")
+	// ErrChildAgentIDRequired indicates a child-link operation is missing child agent ID.
+	ErrChildAgentIDRequired = errors.New("child agent id is required")
+	// ErrChildSessionIDRequired indicates a child-link operation is missing child session ID.
+	ErrChildSessionIDRequired = errors.New("child session id is required")
+	// ErrChildStatusRequired indicates a child-link operation is missing child run status.
+	ErrChildStatusRequired = errors.New("child status is required")
+	// ErrRunSessionMismatch indicates parent and child runs belong to different sessions.
+	ErrRunSessionMismatch = errors.New("parent and child runs must belong to the same session")
 )
+
+// ValidateChildRunLink validates required identifiers for Store.LinkChildRun input.
+func ValidateChildRunLink(parentRunID string, child RunMeta) error {
+	switch {
+	case parentRunID == "":
+		return ErrParentRunIDRequired
+	case child.RunID == "":
+		return ErrChildRunIDRequired
+	case child.AgentID == "":
+		return ErrChildAgentIDRequired
+	case child.SessionID == "":
+		return ErrChildSessionIDRequired
+	case child.Status == "":
+		return ErrChildStatusRequired
+	default:
+		return nil
+	}
+}

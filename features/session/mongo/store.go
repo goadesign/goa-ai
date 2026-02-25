@@ -42,6 +42,11 @@ func (s *Store) UpsertRun(ctx context.Context, run session.RunMeta) error {
 	return s.client.UpsertRun(ctx, run)
 }
 
+// LinkChildRun implements session.Store.
+func (s *Store) LinkChildRun(ctx context.Context, parentRunID string, child session.RunMeta) error {
+	return s.client.LinkChildRun(ctx, parentRunID, child)
+}
+
 // LoadRun implements session.Store.
 func (s *Store) LoadRun(ctx context.Context, runID string) (session.RunMeta, error) {
 	return s.client.LoadRun(ctx, runID)
