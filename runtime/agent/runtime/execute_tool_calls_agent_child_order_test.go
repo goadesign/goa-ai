@@ -72,6 +72,7 @@ func TestExecuteToolCalls_AgentToolsPublishResultsAsComplete(t *testing.T) {
 		SessionID: "session-1",
 		TurnID:    "turn-1",
 	}
+	seedParentRun(t, rt.SessionStore, runCtx.RunID, runCtx.SessionID)
 	calls := []planner.ToolRequest{
 		{
 			Name:       tool1,
@@ -100,8 +101,8 @@ func TestExecuteToolCalls_AgentToolsPublishResultsAsComplete(t *testing.T) {
 	}()
 
 	// StartChildWorkflow is called in call order; we can release the second child first.
-	h1 := <-childHandles
-	h2 := <-childHandles
+	h1 := waitForChildHandle(t, childHandles, "first child handle")
+	h2 := waitForChildHandle(t, childHandles, "second child handle")
 	close(h2.ready)
 	waitForToolResult(t, recorder.ch, calls[1].ToolCallID)
 	close(h1.ready)
@@ -137,5 +138,18 @@ func waitForToolResult(t *testing.T, ch <-chan hooks.Event, toolCallID string) {
 			require.Fail(t, "timed out waiting for ToolResultReceivedEvent", "tool_call_id=%s", toolCallID)
 			return
 		}
+	}
+}
+
+func waitForChildHandle(t *testing.T, ch <-chan *controlledChildHandle, label string) *controlledChildHandle {
+	t.Helper()
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	select {
+	case handle := <-ch:
+		return handle
+	case <-deadline.C:
+		require.Fail(t, "timed out waiting for child workflow handle", "label=%s", label)
+		return nil
 	}
 }

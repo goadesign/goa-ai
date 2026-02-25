@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"testing"
-
 	"fmt"
+	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	agent "goa.design/goa-ai/runtime/agent"
@@ -18,6 +18,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
+	"goa.design/goa-ai/runtime/agent/session"
 	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -47,6 +48,25 @@ func firstText(m *model.Message) string {
 		return tp.Text
 	}
 	return ""
+}
+
+// seedParentRun ensures runtime tests exercise agent-tool execution with a
+// persisted parent run contract. Child-run linkage now requires the parent run
+// to exist in the session store before hook events are processed.
+func seedParentRun(t *testing.T, store session.Store, runID, sessionID string) {
+	t.Helper()
+	now := time.Now().UTC()
+	_, err := store.CreateSession(context.Background(), sessionID, now)
+	require.NoError(t, err)
+	err = store.UpsertRun(context.Background(), session.RunMeta{
+		AgentID:   "test.parent",
+		RunID:     runID,
+		SessionID: sessionID,
+		Status:    session.RunStatusRunning,
+		StartedAt: now,
+		UpdatedAt: now,
+	})
+	require.NoError(t, err)
 }
 
 func TestAgentTool_MissingContentConfigurationFails(t *testing.T) {
@@ -140,6 +160,7 @@ func TestAgentTool_TextContent(t *testing.T) {
 		Payload:   json.RawMessage(`"hello"`),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
+	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
 	tr, err := reg.Execute(ctx, &call)
 	require.NoError(t, err)
 	require.NotNil(t, tr)
@@ -193,6 +214,7 @@ func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 		Payload:   json.RawMessage(`"hello"`),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
+	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
 	tr, err := reg.Execute(ctx, &call)
 	require.NoError(t, err)
 	require.NotNil(t, tr)
@@ -251,6 +273,7 @@ func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 		Payload:   json.RawMessage(`"hello"`),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
+	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
 	_, err := reg.Execute(ctx, &call)
 	require.NoError(t, err)
 	require.Len(t, pl.msgs, 2)

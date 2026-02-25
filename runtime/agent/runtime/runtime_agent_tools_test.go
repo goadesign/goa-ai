@@ -79,8 +79,7 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 		Payload:   json.RawMessage(`{"x":"world"}`),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
-	_, err := rt.CreateSession(context.Background(), call.SessionID)
-	require.NoError(t, err)
+	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
 	res, err := exec(ctx, &call)
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -127,8 +126,7 @@ func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
 	}
 	exec := defaultAgentToolExecute(rt, cfg)
 	call := planner.ToolRequest{Name: tools.Ident("tool"), RunID: "run", SessionID: "sess-1"}
-	_, err := rt.CreateSession(context.Background(), call.SessionID)
-	require.NoError(t, err)
+	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
 	res, err := exec(ctx, &call)
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -156,8 +154,7 @@ func TestDefaultAgentToolExecute_ReturnsErrorWhenMissingContent(t *testing.T) {
 	}
 	exec := defaultAgentToolExecute(rt, cfg)
 	call := planner.ToolRequest{Name: tools.Ident("tool"), RunID: "run", SessionID: "sess-1"}
-	_, err := rt.CreateSession(context.Background(), call.SessionID)
-	require.NoError(t, err)
+	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
 	res, err := exec(ctx, &call)
 	require.Nil(t, res)
 	require.Error(t, err)
@@ -224,8 +221,7 @@ func TestDefaultAgentToolExecute_PromptSpecPreferredOverTemplateTextPromptBuilde
 		Payload:   json.RawMessage(`{"x":"world"}`),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
-	_, err := rt.CreateSession(context.Background(), call.SessionID)
-	require.NoError(t, err)
+	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
 
 	res, err := exec(ctx, &call)
 	require.NoError(t, err)
@@ -269,10 +265,9 @@ func TestDefaultAgentToolExecute_PromptSpecMissingReturnsError(t *testing.T) {
 		SessionID: "sess-1",
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
-	_, err := rt.CreateSession(context.Background(), call.SessionID)
-	require.NoError(t, err)
+	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
 
-	_, err = exec(ctx, &call)
+	_, err := exec(ctx, &call)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "render prompt")
 }
@@ -341,10 +336,9 @@ func TestDefaultAgentToolExecute_PromptSpecRendersWithSchemaKeys(t *testing.T) {
 			call.Name: "agent.tool.prompt",
 		},
 	}
-	_, err := rt.CreateSession(context.Background(), call.SessionID)
-	require.NoError(t, err)
+	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
 	exec := defaultAgentToolExecute(rt, cfg)
-	_, err = exec(ctx, &call)
+	_, err := exec(ctx, &call)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	text, ok := got[0].Parts[0].(model.TextPart)
@@ -409,10 +403,9 @@ func TestDefaultAgentToolExecute_PromptSpecRejectsNonObjectPayloadShape(t *testi
 			call.Name: "agent.tool.prompt",
 		},
 	}
-	_, err := rt.CreateSession(context.Background(), call.SessionID)
-	require.NoError(t, err)
+	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
 	exec := defaultAgentToolExecute(rt, cfg)
-	_, err = exec(ctx, &call)
+	_, err := exec(ctx, &call)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "prompt payload must render from a JSON object")
 }
