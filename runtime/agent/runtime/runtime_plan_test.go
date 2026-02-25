@@ -3,6 +3,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -81,4 +82,90 @@ func TestPlanResumeActivityPassesToolResults(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, called)
 	require.Len(t, out.Result.ToolCalls, 1)
+}
+
+func TestPlanResumeActivityNormalizesEmptyRawJSONPayloads(t *testing.T) {
+	pl := &stubPlanner{
+		resume: func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			return &planner.PlanResult{
+				ToolCalls: []planner.ToolRequest{
+					{
+						Name:    "svc.other.tool",
+						Payload: json.RawMessage{},
+					},
+				},
+				Await: planner.NewAwait(
+					planner.AwaitQuestionsItem(&planner.AwaitQuestions{
+						ID:         "await-q",
+						ToolName:   "chat.ask_question.ask_question",
+						ToolCallID: "call-q",
+						Payload:    json.RawMessage{},
+					}),
+					planner.AwaitExternalToolsItem(&planner.AwaitExternalTools{
+						ID: "await-ext",
+						Items: []planner.AwaitToolItem{
+							{
+								Name:       "external.one",
+								ToolCallID: "call-ext",
+								Payload:    json.RawMessage{},
+							},
+						},
+					}),
+				),
+			}, nil
+		},
+	}
+	rt := newTestRuntimeWithPlanner("service.agent", pl)
+	input := PlanActivityInput{
+		AgentID:    "service.agent",
+		RunID:      "run-123",
+		RunContext: run.Context{RunID: "run-123"},
+	}
+	out, err := rt.PlanResumeActivity(context.Background(), &input)
+	require.NoError(t, err)
+	require.Len(t, out.Result.ToolCalls, 1)
+	require.Nil(t, out.Result.ToolCalls[0].Payload)
+	require.NotNil(t, out.Result.Await)
+	require.Len(t, out.Result.Await.Items, 2)
+	require.NotNil(t, out.Result.Await.Items[0].Questions)
+	require.Nil(t, out.Result.Await.Items[0].Questions.Payload)
+	require.NotNil(t, out.Result.Await.Items[1].ExternalTools)
+	require.Len(t, out.Result.Await.Items[1].ExternalTools.Items, 1)
+	require.Nil(t, out.Result.Await.Items[1].ExternalTools.Items[0].Payload)
+}
+
+func TestNormalizeTranscriptRawJSONNormalizesEmptyRawMessageValues(t *testing.T) {
+	messages := []*model.Message{
+		{
+			Role: "assistant",
+			Parts: []model.Part{
+				model.ToolUsePart{
+					ID:    "call-1",
+					Name:  "tool.one",
+					Input: json.RawMessage{},
+				},
+				model.ToolResultPart{
+					ToolUseID: "call-1",
+					Content: map[string]any{
+						"payload": json.RawMessage{},
+					},
+				},
+			},
+			Meta: map[string]any{
+				"raw": json.RawMessage{},
+			},
+		},
+	}
+
+	normalizeTranscriptRawJSON(messages)
+
+	toolUse, ok := messages[0].Parts[0].(model.ToolUsePart)
+	require.True(t, ok)
+	require.Nil(t, toolUse.Input)
+	toolResult, ok := messages[0].Parts[1].(model.ToolResultPart)
+	require.True(t, ok)
+	content, ok := toolResult.Content.(map[string]any)
+	require.True(t, ok)
+	require.Nil(t, content["payload"])
+	require.Nil(t, messages[0].Meta["raw"])
 }

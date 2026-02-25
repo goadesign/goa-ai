@@ -12,6 +12,7 @@ import (
 	mongodriver "go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
+	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/session"
 )
 
@@ -65,12 +66,14 @@ func TestCreateSessionIsIdempotent(t *testing.T) {
 func TestUpsertAndLoad(t *testing.T) {
 	client := mustNewTestClient()
 	run := session.RunMeta{
-		RunID:     "run-1",
-		AgentID:   "agent.chat",
-		SessionID: "sess-1",
-		Status:    session.RunStatusPending,
-		Labels:    map[string]string{"org": "demo"},
-		Metadata:  map[string]any{"reason": "test"},
+		RunID:       "run-1",
+		AgentID:     "agent.chat",
+		SessionID:   "sess-1",
+		Status:      session.RunStatusPending,
+		Labels:      map[string]string{"org": "demo"},
+		PromptRefs:  []prompt.PromptRef{{ID: prompt.Ident("prompt.a"), Version: "v1"}},
+		ChildRunIDs: []string{"run-2", "run-3"},
+		Metadata:    map[string]any{"reason": "test"},
 	}
 	err := client.UpsertRun(context.Background(), run)
 	require.NoError(t, err)
@@ -82,6 +85,8 @@ func TestUpsertAndLoad(t *testing.T) {
 	require.Equal(t, run.SessionID, stored.SessionID)
 	require.Equal(t, run.Status, stored.Status)
 	require.Equal(t, "demo", stored.Labels["org"])
+	require.Equal(t, []prompt.PromptRef{{ID: prompt.Ident("prompt.a"), Version: "v1"}}, stored.PromptRefs)
+	require.Equal(t, []string{"run-2", "run-3"}, stored.ChildRunIDs)
 
 	run.Status = session.RunStatusCompleted
 	time.Sleep(10 * time.Millisecond)
@@ -91,6 +96,72 @@ func TestUpsertAndLoad(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, session.RunStatusCompleted, updated.Status)
 	require.True(t, updated.UpdatedAt.After(updated.StartedAt) || updated.UpdatedAt.Equal(updated.StartedAt))
+}
+
+func TestLinkChildRun(t *testing.T) {
+	client := mustNewTestClient()
+	now := time.Now().UTC()
+	require.NoError(t, client.UpsertRun(context.Background(), session.RunMeta{
+		RunID:     "run-parent",
+		AgentID:   "agent.parent",
+		SessionID: "sess-1",
+		Status:    session.RunStatusRunning,
+		StartedAt: now,
+		UpdatedAt: now,
+	}))
+	require.NoError(t, client.LinkChildRun(context.Background(), "run-parent", session.RunMeta{
+		RunID:     "run-child",
+		AgentID:   "agent.child",
+		SessionID: "sess-1",
+		Status:    session.RunStatusPending,
+	}))
+	require.NoError(t, client.LinkChildRun(context.Background(), "run-parent", session.RunMeta{
+		RunID:     "run-child",
+		AgentID:   "agent.child",
+		SessionID: "sess-1",
+		Status:    session.RunStatusPending,
+	}))
+
+	parent, err := client.LoadRun(context.Background(), "run-parent")
+	require.NoError(t, err)
+	require.Equal(t, []string{"run-child"}, parent.ChildRunIDs)
+
+	child, err := client.LoadRun(context.Background(), "run-child")
+	require.NoError(t, err)
+	require.Equal(t, "agent.child", child.AgentID)
+	require.Equal(t, session.RunStatusPending, child.Status)
+}
+
+func TestLinkChildRunValidationError(t *testing.T) {
+	client := mustNewTestClient()
+	err := client.LinkChildRun(context.Background(), "", session.RunMeta{
+		RunID:     "run-child",
+		AgentID:   "agent.child",
+		SessionID: "sess-1",
+		Status:    session.RunStatusPending,
+	})
+	require.ErrorIs(t, err, session.ErrParentRunIDRequired)
+}
+
+func TestLinkChildRunSessionMismatchError(t *testing.T) {
+	client := mustNewTestClient()
+	now := time.Now().UTC()
+	require.NoError(t, client.UpsertRun(context.Background(), session.RunMeta{
+		RunID:     "run-parent",
+		AgentID:   "agent.parent",
+		SessionID: "sess-1",
+		Status:    session.RunStatusRunning,
+		StartedAt: now,
+		UpdatedAt: now,
+	}))
+
+	err := client.LinkChildRun(context.Background(), "run-parent", session.RunMeta{
+		RunID:     "run-child",
+		AgentID:   "agent.child",
+		SessionID: "sess-2",
+		Status:    session.RunStatusPending,
+	})
+	require.ErrorIs(t, err, session.ErrRunSessionMismatch)
 }
 
 func TestListRunsBySession(t *testing.T) {
@@ -246,6 +317,12 @@ func (c *fakeRunsCollection) UpdateOne(ctx context.Context, filter any, update a
 		}
 		if v, ok := set["metadata"].(map[string]any); ok {
 			doc.Metadata = v
+		}
+		if v, ok := set["prompt_refs"].([]prompt.PromptRef); ok {
+			doc.PromptRefs = v
+		}
+		if v, ok := set["child_run_ids"].([]string); ok {
+			doc.ChildRunIDs = v
 		}
 	default:
 		return nil, errors.New("unsupported $set payload")

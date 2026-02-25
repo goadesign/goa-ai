@@ -385,7 +385,10 @@ func (r *Runtime) publishHookErr(ctx context.Context, evt hooks.Event, turnID st
 		return err
 	}
 	if len(in.Payload) > maxHookPayloadBytes {
-		return fmt.Errorf("hook payload too large for %s: %d bytes (limit %d)", string(evt.Type()), len(in.Payload), maxHookPayloadBytes)
+		in, err = compactOversizedHookInput(evt, turnID)
+		if err != nil {
+			return err
+		}
 	}
 	if wfCtx := engine.WorkflowContextFromContext(ctx); wfCtx != nil && !engine.IsActivityContext(ctx) {
 		return wfCtx.PublishHook(ctx, engine.HookActivityCall{
@@ -394,6 +397,51 @@ func (r *Runtime) publishHookErr(ctx context.Context, evt hooks.Event, turnID st
 		})
 	}
 	return r.hookActivity(ctx, in)
+}
+
+// compactOversizedHookInput rewrites oversized hook payloads to preserve critical
+// metadata while dropping non-essential large blobs.
+//
+// ToolResultReceived payloads can include both a structured Go result and canonical
+// JSON bytes for the same payload. For large tool outputs this may exceed Temporal's
+// payload size limit and fail otherwise successful runs. We compact in stages:
+//  1. Drop duplicate Result (keep ResultJSON).
+//  2. Drop server-only data.
+//  3. Replace ResultJSON with a small truncation sentinel.
+func compactOversizedHookInput(evt hooks.Event, turnID string) (*hooks.ActivityInput, error) {
+	toolEvt, ok := evt.(*hooks.ToolResultReceivedEvent)
+	if !ok {
+		return nil, fmt.Errorf("hook payload too large for %s: cannot compact event type", string(evt.Type()))
+	}
+	compact := *toolEvt
+	compact.Result = nil
+	in, err := hooks.EncodeToHookInput(&compact, turnID)
+	if err != nil {
+		return nil, err
+	}
+	if len(in.Payload) <= maxHookPayloadBytes {
+		return in, nil
+	}
+	compact.ServerData = nil
+	in, err = hooks.EncodeToHookInput(&compact, turnID)
+	if err != nil {
+		return nil, err
+	}
+	if len(in.Payload) <= maxHookPayloadBytes {
+		return in, nil
+	}
+	compact.ResultJSON = json.RawMessage(`{"truncated":true,"reason":"hook_payload_too_large"}`)
+	if compact.ResultPreview == "" {
+		compact.ResultPreview = "Result omitted from run hooks because payload exceeded limits."
+	}
+	in, err = hooks.EncodeToHookInput(&compact, turnID)
+	if err != nil {
+		return nil, err
+	}
+	if len(in.Payload) <= maxHookPayloadBytes {
+		return in, nil
+	}
+	return nil, fmt.Errorf("hook payload too large for %s: %d bytes (limit %d)", string(evt.Type()), len(in.Payload), maxHookPayloadBytes)
 }
 
 // publishHook emits a runtime hook event and returns an error on failure.

@@ -80,6 +80,7 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 	}
 
 	runCtx := &run.Context{RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
+	seedParentRun(t, rt.SessionStore, runCtx.RunID, runCtx.SessionID)
 	calls := []planner.ToolRequest{
 		{Name: tools.Ident("inline.ts.inline"), RunID: runCtx.RunID, SessionID: runCtx.SessionID, TurnID: runCtx.TurnID, ToolCallID: "call-inline"},
 		{Name: tools.Ident("svc.tools.a1"), RunID: runCtx.RunID, SessionID: runCtx.SessionID, TurnID: runCtx.TurnID, ToolCallID: "call-a1"},
@@ -106,7 +107,7 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 	waitForToolResult(t, recorder.ch, "call-a1")
 
 	// Child result is collected after activities; release it last to avoid hanging.
-	child := <-childHandles
+	child := waitForChildHandle(t, childHandles, "mixed batch child handle")
 	close(child.ready)
 
 	got := <-done

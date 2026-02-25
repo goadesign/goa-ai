@@ -78,6 +78,7 @@ func TestExecuteToolCalls_AgentToolsFanOut(t *testing.T) {
 		SessionID: "session-1",
 		TurnID:    "turn-1",
 	}
+	seedParentRun(t, rt.SessionStore, runCtx.RunID, runCtx.SessionID)
 
 	calls := []planner.ToolRequest{
 		{

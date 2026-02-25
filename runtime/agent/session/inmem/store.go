@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/session"
 )
 
@@ -135,6 +136,45 @@ func (s *Store) UpsertRun(_ context.Context, run session.RunMeta) error {
 	return nil
 }
 
+// LinkChildRun implements session.Store.
+func (s *Store) LinkChildRun(_ context.Context, parentRunID string, child session.RunMeta) error {
+	if err := session.ValidateChildRunLink(parentRunID, child); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	parent, ok := s.runs[parentRunID]
+	if !ok {
+		return session.ErrRunNotFound
+	}
+	if parent.SessionID != child.SessionID {
+		return session.ErrRunSessionMismatch
+	}
+
+	now := time.Now().UTC()
+	existingChild, childExists := s.runs[child.RunID]
+	if childExists {
+		if existingChild.SessionID != parent.SessionID {
+			return session.ErrRunSessionMismatch
+		}
+		existingChild.UpdatedAt = now
+		s.runs[child.RunID] = cloneRunMeta(existingChild)
+	} else {
+		if child.StartedAt.IsZero() {
+			child.StartedAt = now
+		}
+		child.UpdatedAt = now
+		s.runs[child.RunID] = cloneRunMeta(child)
+	}
+
+	parent.UpdatedAt = now
+	parent.ChildRunIDs = appendUniqueRunID(parent.ChildRunIDs, child.RunID)
+	s.runs[parentRunID] = cloneRunMeta(parent)
+	return nil
+}
+
 // LoadRun implements session.Store.
 func (s *Store) LoadRun(_ context.Context, runID string) (session.RunMeta, error) {
 	if runID == "" {
@@ -195,6 +235,14 @@ func cloneRunMeta(in session.RunMeta) session.RunMeta {
 			out.Labels[k] = v
 		}
 	}
+	if len(in.PromptRefs) > 0 {
+		out.PromptRefs = make([]prompt.PromptRef, len(in.PromptRefs))
+		copy(out.PromptRefs, in.PromptRefs)
+	}
+	if len(in.ChildRunIDs) > 0 {
+		out.ChildRunIDs = make([]string, len(in.ChildRunIDs))
+		copy(out.ChildRunIDs, in.ChildRunIDs)
+	}
 	if len(in.Metadata) > 0 {
 		out.Metadata = make(map[string]any, len(in.Metadata))
 		for k, v := range in.Metadata {
@@ -202,4 +250,13 @@ func cloneRunMeta(in session.RunMeta) session.RunMeta {
 		}
 	}
 	return out
+}
+
+func appendUniqueRunID(runIDs []string, runID string) []string {
+	for _, current := range runIDs {
+		if current == runID {
+			return runIDs
+		}
+	}
+	return append(runIDs, runID)
 }

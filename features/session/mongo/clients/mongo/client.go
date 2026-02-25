@@ -15,6 +15,7 @@ import (
 
 	"goa.design/clue/health"
 
+	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/session"
 )
 
@@ -34,6 +35,7 @@ type Client interface {
 	EndSession(ctx context.Context, sessionID string, endedAt time.Time) (session.Session, error)
 
 	UpsertRun(ctx context.Context, run session.RunMeta) error
+	LinkChildRun(ctx context.Context, parentRunID string, child session.RunMeta) error
 	LoadRun(ctx context.Context, runID string) (session.RunMeta, error)
 	ListRunsBySession(ctx context.Context, sessionID string, statuses []session.RunStatus) ([]session.RunMeta, error)
 }
@@ -222,13 +224,15 @@ func (c *client) UpsertRun(ctx context.Context, run session.RunMeta) error {
 	filter := bson.M{"run_id": run.RunID}
 	update := bson.M{
 		"$set": bson.M{
-			"run_id":     doc.RunID,
-			"agent_id":   doc.AgentID,
-			"session_id": doc.SessionID,
-			"status":     doc.Status,
-			"updated_at": doc.UpdatedAt,
-			"labels":     doc.Labels,
-			"metadata":   doc.Metadata,
+			"run_id":        doc.RunID,
+			"agent_id":      doc.AgentID,
+			"session_id":    doc.SessionID,
+			"status":        doc.Status,
+			"updated_at":    doc.UpdatedAt,
+			"labels":        doc.Labels,
+			"prompt_refs":   doc.PromptRefs,
+			"child_run_ids": doc.ChildRunIDs,
+			"metadata":      doc.Metadata,
 		},
 		"$setOnInsert": bson.M{
 			"started_at": doc.StartedAt,
@@ -236,6 +240,62 @@ func (c *client) UpsertRun(ctx context.Context, run session.RunMeta) error {
 	}
 	_, err := c.runs.UpdateOne(ctx, filter, update, options.Update().SetUpsert(true))
 	return err
+}
+
+// LinkChildRun links a child run to a parent run atomically.
+func (c *client) LinkChildRun(ctx context.Context, parentRunID string, child session.RunMeta) error {
+	if err := session.ValidateChildRunLink(parentRunID, child); err != nil {
+		return err
+	}
+	if c.mongo == nil {
+		return c.linkChildRun(ctx, parentRunID, child)
+	}
+	sessionCtx, err := c.mongo.StartSession()
+	if err != nil {
+		return err
+	}
+	defer sessionCtx.EndSession(ctx)
+	_, err = sessionCtx.WithTransaction(ctx, func(txCtx mongodriver.SessionContext) (any, error) {
+		return nil, c.linkChildRun(txCtx, parentRunID, child)
+	})
+	return err
+}
+
+// linkChildRun applies the child-link mutation set under a single caller-owned
+// context (transactional or non-transactional).
+//
+// Contract:
+//   - Parent run must already exist.
+//   - Parent and child runs must belong to the same session.
+//   - Child run materialization and parent-child linkage are both persisted.
+func (c *client) linkChildRun(ctx context.Context, parentRunID string, child session.RunMeta) error {
+	parent, err := c.LoadRun(ctx, parentRunID)
+	if err != nil {
+		return err
+	}
+	if parent.SessionID != child.SessionID {
+		return session.ErrRunSessionMismatch
+	}
+
+	existingChild, err := c.LoadRun(ctx, child.RunID)
+	switch {
+	case err == nil:
+		if existingChild.SessionID != parent.SessionID {
+			return session.ErrRunSessionMismatch
+		}
+		if err := c.UpsertRun(ctx, existingChild); err != nil {
+			return err
+		}
+	case errors.Is(err, session.ErrRunNotFound):
+		if err := c.UpsertRun(ctx, child); err != nil {
+			return err
+		}
+	default:
+		return err
+	}
+
+	parent.ChildRunIDs = appendUniqueRunID(parent.ChildRunIDs, child.RunID)
+	return c.UpsertRun(ctx, parent)
 }
 
 func (c *client) LoadRun(ctx context.Context, runID string) (session.RunMeta, error) {
@@ -297,14 +357,16 @@ func (c *client) withTimeout(ctx context.Context) (context.Context, context.Canc
 }
 
 type runDocument struct {
-	RunID     string            `bson:"run_id"`
-	AgentID   string            `bson:"agent_id"`
-	SessionID string            `bson:"session_id,omitempty"`
-	Status    session.RunStatus `bson:"status"`
-	StartedAt time.Time         `bson:"started_at"`
-	UpdatedAt time.Time         `bson:"updated_at"`
-	Labels    map[string]string `bson:"labels,omitempty"`
-	Metadata  map[string]any    `bson:"metadata,omitempty"`
+	RunID       string             `bson:"run_id"`
+	AgentID     string             `bson:"agent_id"`
+	SessionID   string             `bson:"session_id,omitempty"`
+	Status      session.RunStatus  `bson:"status"`
+	StartedAt   time.Time          `bson:"started_at"`
+	UpdatedAt   time.Time          `bson:"updated_at"`
+	Labels      map[string]string  `bson:"labels,omitempty"`
+	PromptRefs  []prompt.PromptRef `bson:"prompt_refs,omitempty"`
+	ChildRunIDs []string           `bson:"child_run_ids,omitempty"`
+	Metadata    map[string]any     `bson:"metadata,omitempty"`
 }
 
 type sessionDocument struct {
@@ -317,27 +379,31 @@ type sessionDocument struct {
 
 func fromRunMeta(run session.RunMeta) runDocument {
 	return runDocument{
-		RunID:     run.RunID,
-		AgentID:   run.AgentID,
-		SessionID: run.SessionID,
-		Status:    run.Status,
-		StartedAt: run.StartedAt.UTC(),
-		UpdatedAt: run.UpdatedAt.UTC(),
-		Labels:    cloneLabels(run.Labels),
-		Metadata:  cloneMetadata(run.Metadata),
+		RunID:       run.RunID,
+		AgentID:     run.AgentID,
+		SessionID:   run.SessionID,
+		Status:      run.Status,
+		StartedAt:   run.StartedAt.UTC(),
+		UpdatedAt:   run.UpdatedAt.UTC(),
+		Labels:      cloneLabels(run.Labels),
+		PromptRefs:  clonePromptRefs(run.PromptRefs),
+		ChildRunIDs: cloneChildRunIDs(run.ChildRunIDs),
+		Metadata:    cloneMetadata(run.Metadata),
 	}
 }
 
 func (doc runDocument) toRunMeta() session.RunMeta {
 	return session.RunMeta{
-		RunID:     doc.RunID,
-		AgentID:   doc.AgentID,
-		SessionID: doc.SessionID,
-		Status:    doc.Status,
-		StartedAt: doc.StartedAt,
-		UpdatedAt: doc.UpdatedAt,
-		Labels:    cloneLabels(doc.Labels),
-		Metadata:  cloneMetadata(doc.Metadata),
+		RunID:       doc.RunID,
+		AgentID:     doc.AgentID,
+		SessionID:   doc.SessionID,
+		Status:      doc.Status,
+		StartedAt:   doc.StartedAt,
+		UpdatedAt:   doc.UpdatedAt,
+		Labels:      cloneLabels(doc.Labels),
+		PromptRefs:  clonePromptRefs(doc.PromptRefs),
+		ChildRunIDs: cloneChildRunIDs(doc.ChildRunIDs),
+		Metadata:    cloneMetadata(doc.Metadata),
 	}
 }
 
@@ -375,6 +441,34 @@ func cloneMetadata(src map[string]any) map[string]any {
 		dst[k] = v
 	}
 	return dst
+}
+
+// clonePromptRefs clones prompt refs to prevent callers mutating stored state.
+func clonePromptRefs(src []prompt.PromptRef) []prompt.PromptRef {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make([]prompt.PromptRef, len(src))
+	copy(dst, src)
+	return dst
+}
+
+func cloneChildRunIDs(src []string) []string {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make([]string, len(src))
+	copy(dst, src)
+	return dst
+}
+
+func appendUniqueRunID(runIDs []string, runID string) []string {
+	for _, current := range runIDs {
+		if current == runID {
+			return runIDs
+		}
+	}
+	return append(runIDs, runID)
 }
 
 func ensureIndexes(ctx context.Context, sessionsColl, runsColl collection) error {

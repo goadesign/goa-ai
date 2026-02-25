@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/session"
 )
@@ -108,17 +109,42 @@ func (r *Runtime) updateRunMetaFromHookEvent(ctx context.Context, evt hooks.Even
 		run.UpdatedAt = time.Now().UTC()
 		run.Labels = cloneLabels(e.RunContext.Labels)
 		return r.SessionStore.UpsertRun(ctx, run)
+	case *hooks.PromptRenderedEvent:
+		run, err := r.SessionStore.LoadRun(ctx, e.RunID())
+		if err != nil {
+			if errors.Is(err, session.ErrRunNotFound) {
+				now := time.Now().UTC()
+				return r.SessionStore.UpsertRun(ctx, session.RunMeta{
+					AgentID:   e.AgentID(),
+					RunID:     e.RunID(),
+					SessionID: e.SessionID(),
+					Status:    session.RunStatusRunning,
+					StartedAt: time.UnixMilli(e.Timestamp()).UTC(),
+					UpdatedAt: now,
+					Labels:    nil,
+					Metadata:  nil,
+					PromptRefs: []prompt.PromptRef{
+						{
+							ID:      e.PromptID,
+							Version: e.Version,
+						},
+					},
+				})
+			}
+			return err
+		}
+		run.UpdatedAt = time.Now().UTC()
+		run.PromptRefs = appendUniquePromptRef(run.PromptRefs, prompt.PromptRef{
+			ID:      e.PromptID,
+			Version: e.Version,
+		})
+		return r.SessionStore.UpsertRun(ctx, run)
 	case *hooks.ChildRunLinkedEvent:
-		now := time.Now().UTC()
-		return r.SessionStore.UpsertRun(ctx, session.RunMeta{
+		return r.SessionStore.LinkChildRun(ctx, e.RunID(), session.RunMeta{
 			AgentID:   string(e.ChildAgentID),
 			RunID:     e.ChildRunID,
 			SessionID: e.SessionID(),
 			Status:    session.RunStatusPending,
-			StartedAt: now,
-			UpdatedAt: now,
-			Labels:    nil,
-			Metadata:  nil,
 		})
 	case *hooks.RunPausedEvent:
 		return r.updateRunStatus(ctx, e.RunID(), session.RunStatusPaused)
@@ -148,4 +174,15 @@ func (r *Runtime) updateRunStatus(ctx context.Context, runID string, status sess
 	run.Status = status
 	run.UpdatedAt = time.Now().UTC()
 	return r.SessionStore.UpsertRun(ctx, run)
+}
+
+// appendUniquePromptRef appends ref only when it is not already present.
+// Uniqueness is defined by (prompt_id, version) and ordering is first-seen.
+func appendUniquePromptRef(existing []prompt.PromptRef, ref prompt.PromptRef) []prompt.PromptRef {
+	for _, cur := range existing {
+		if cur.ID == ref.ID && cur.Version == ref.Version {
+			return existing
+		}
+	}
+	return append(existing, ref)
 }

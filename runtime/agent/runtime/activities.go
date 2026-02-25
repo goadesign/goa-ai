@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -59,9 +60,12 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 	if err := events.hookError(); err != nil {
 		return nil, err
 	}
+	normalizePlanResultRawJSON(result)
+	transcript := events.exportTranscript()
+	normalizeTranscriptRawJSON(transcript)
 	return &PlanActivityOutput{
 		Result:     result,
-		Transcript: events.exportTranscript(),
+		Transcript: transcript,
 		Usage:      events.exportUsage(),
 	}, nil
 }
@@ -114,11 +118,96 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err := events.hookError(); err != nil {
 		return nil, err
 	}
+	normalizePlanResultRawJSON(result)
+	transcript := events.exportTranscript()
+	normalizeTranscriptRawJSON(transcript)
 	return &PlanActivityOutput{
 		Result:     result,
-		Transcript: events.exportTranscript(),
+		Transcript: transcript,
 		Usage:      events.exportUsage(),
 	}, nil
+}
+
+// normalizePlanResultRawJSON converts empty json.RawMessage values in planner
+// results to nil so workflow data converters can marshal the activity output.
+//
+// encoding/json rejects non-nil zero-length RawMessage values with
+// "unexpected end of JSON input". Provider adapters occasionally emit empty
+// payloads for no-arg tool calls, and those payloads must be normalized before
+// crossing workflow/activity boundaries.
+func normalizePlanResultRawJSON(result *planner.PlanResult) {
+	if result == nil {
+		return
+	}
+	if result.FinalResponse != nil && result.FinalResponse.Message != nil {
+		normalizeTranscriptRawJSON([]*model.Message{result.FinalResponse.Message})
+	}
+	for idx := range result.ToolCalls {
+		result.ToolCalls[idx].Payload = normalizeRawMessage(result.ToolCalls[idx].Payload)
+	}
+	if result.Await == nil {
+		return
+	}
+	for idx := range result.Await.Items {
+		item := &result.Await.Items[idx]
+		if item.Questions != nil {
+			item.Questions.Payload = normalizeRawMessage(item.Questions.Payload)
+		}
+		if item.ExternalTools == nil {
+			continue
+		}
+		for itemIdx := range item.ExternalTools.Items {
+			item.ExternalTools.Items[itemIdx].Payload = normalizeRawMessage(item.ExternalTools.Items[itemIdx].Payload)
+		}
+	}
+}
+
+func normalizeRawMessage(raw json.RawMessage) json.RawMessage {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil
+	}
+	return raw
+}
+
+func normalizeTranscriptRawJSON(messages []*model.Message) {
+	for msgIdx := range messages {
+		msg := messages[msgIdx]
+		if msg == nil {
+			continue
+		}
+		for partIdx, part := range msg.Parts {
+			switch value := part.(type) {
+			case model.ToolUsePart:
+				value.Input = normalizeAnyRawMessage(value.Input)
+				msg.Parts[partIdx] = value
+			case model.ToolResultPart:
+				value.Content = normalizeAnyRawMessage(value.Content)
+				msg.Parts[partIdx] = value
+			}
+		}
+		for key, value := range msg.Meta {
+			msg.Meta[key] = normalizeAnyRawMessage(value)
+		}
+	}
+}
+
+func normalizeAnyRawMessage(value any) any {
+	switch typed := value.(type) {
+	case json.RawMessage:
+		return normalizeRawMessage(typed)
+	case map[string]any:
+		for key, item := range typed {
+			typed[key] = normalizeAnyRawMessage(item)
+		}
+		return typed
+	case []any:
+		for idx, item := range typed {
+			typed[idx] = normalizeAnyRawMessage(item)
+		}
+		return typed
+	default:
+		return value
+	}
 }
 
 // ExecuteToolActivity runs a tool invocation as a workflow activity.
