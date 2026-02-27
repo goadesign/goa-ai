@@ -127,5 +127,5 @@ func TestRawJSONRoundTripWithEncodingJSON(t *testing.T) {
 
 func TestRawJSONRawMessageReturnsUnderlyingBytes(t *testing.T) {
 	value := RawJSON([]byte(`{"x":1}`))
-	require.Equal(t, json.RawMessage(`{"x":1}`), value.RawMessage())
+	require.JSONEq(t, `{"x":1}`, string(value.RawMessage()))
 }

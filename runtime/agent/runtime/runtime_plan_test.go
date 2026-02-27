@@ -126,16 +126,16 @@ func TestPlanResumeActivityPreservesEmptyRawJSONPayloads(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, out.Result.ToolCalls, 1)
 	require.NotNil(t, out.Result.ToolCalls[0].Payload)
-	require.Len(t, out.Result.ToolCalls[0].Payload, 0)
+	require.Empty(t, out.Result.ToolCalls[0].Payload)
 	require.NotNil(t, out.Result.Await)
 	require.Len(t, out.Result.Await.Items, 2)
 	require.NotNil(t, out.Result.Await.Items[0].Questions)
 	require.NotNil(t, out.Result.Await.Items[0].Questions.Payload)
-	require.Len(t, out.Result.Await.Items[0].Questions.Payload, 0)
+	require.Empty(t, out.Result.Await.Items[0].Questions.Payload)
 	require.NotNil(t, out.Result.Await.Items[1].ExternalTools)
 	require.Len(t, out.Result.Await.Items[1].ExternalTools.Items, 1)
 	require.NotNil(t, out.Result.Await.Items[1].ExternalTools.Items[0].Payload)
-	require.Len(t, out.Result.Await.Items[1].ExternalTools.Items[0].Payload, 0)
+	require.Empty(t, out.Result.Await.Items[1].ExternalTools.Items[0].Payload)
 }
 
 func TestNormalizeTranscriptRawJSONNormalizesEmptyRawMessageValues(t *testing.T) {
