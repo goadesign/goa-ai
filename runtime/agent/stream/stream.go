@@ -15,13 +15,13 @@ package stream
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/prompt"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/toolerrors"
 )
@@ -177,7 +177,7 @@ type (
 		// It is not part of ToolEndPayload and is never serialized into the event
 		// payload. Sinks that support server-only sidecars (for example Pulse)
 		// may forward it out-of-band for UIs and persistence layers.
-		ServerData json.RawMessage `json:"-"`
+		ServerData rawjson.RawJSON `json:"-"`
 		// Data contains the structured result metadata for this tool completion. Clients
 		// access this field directly for type-safe field access (e.g., event.Data.Duration,
 		// event.Data.ToolCallID).
@@ -342,7 +342,7 @@ type (
 		// It is the canonical tool payload JSON produced by the tool payload codec.
 		// It is never decoded into Go structs for streaming to avoid schema drift
 		// from untagged Go fields.
-		Payload json.RawMessage `json:"payload,omitempty"`
+		Payload rawjson.RawJSON `json:"payload,omitempty"`
 		// DisplayHint is a human-facing one-line description of the in-flight tool work,
 		// rendered from DSL-authored templates when available. Suitable for progress lanes
 		// and tool ribbons (for example, "Listing devices of kind VAV").
@@ -386,7 +386,7 @@ type (
 		// Result contains the tool's output payload. This is the structured data
 		// returned by the tool on success. It is the canonical JSON encoding
 		// produced by the tool result codec. Nil when the tool failed.
-		Result json.RawMessage `json:"result,omitempty"`
+		Result rawjson.RawJSON `json:"result,omitempty"`
 		// ResultPreview is a concise, user-facing summary of the tool result rendered from
 		// DSL-authored templates when available. It is intended for UI ribbons and summaries
 		// (for example, "Device list ready" or "Found 3 critical alarms").
@@ -458,7 +458,7 @@ type (
 		// ToolCallID is the tool_call_id for the pending tool call.
 		ToolCallID string `json:"tool_call_id"`
 		// Payload contains the canonical JSON arguments for the pending tool call.
-		Payload json.RawMessage `json:"payload,omitempty"`
+		Payload rawjson.RawJSON `json:"payload,omitempty"`
 	}
 
 	// AwaitQuestionsPayload describes a structured multiple-choice prompt that must
@@ -510,7 +510,7 @@ type (
 		ToolCallID string `json:"tool_call_id,omitempty"`
 		// Payload contains the JSON-serializable arguments for the external
 		// tool. It may be omitted when the tool takes no parameters.
-		Payload json.RawMessage `json:"payload,omitempty"`
+		Payload rawjson.RawJSON `json:"payload,omitempty"`
 	}
 
 	// ToolUpdatePayload describes a non-terminal update to a tool call, typically used

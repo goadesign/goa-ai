@@ -2,7 +2,6 @@ package stream
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -10,6 +9,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/prompt"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -48,7 +48,7 @@ func TestStreamSubscriber_ToolStart(t *testing.T) {
 	sub, err := NewSubscriber(sink)
 	require.NoError(t, err)
 	ctx := context.Background()
-	evt := hooks.NewToolCallScheduledEvent("r1", agent.Ident("agent1"), "session-1", tools.Ident("svc.tool"), "call-1", json.RawMessage(`{"q":1}`), "queue", "", 0)
+	evt := hooks.NewToolCallScheduledEvent("r1", agent.Ident("agent1"), "session-1", tools.Ident("svc.tool"), "call-1", rawjson.RawJSON([]byte(`{"q":1}`)), "queue", "", 0)
 	evt.DisplayHint = "custom display hint"
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 	require.Len(t, sink.events, 1)
@@ -64,7 +64,7 @@ func TestStreamSubscriber_ToolEnd_EmitsServerData(t *testing.T) {
 	require.NoError(t, err)
 	ctx := context.Background()
 
-	server := json.RawMessage(`[{"kind":"example.evidence","data":[{"uri":"example://points/123"}]}]`)
+	server := rawjson.RawJSON([]byte(`[{"kind":"example.evidence","data":[{"uri":"example://points/123"}]}]`))
 	evt := hooks.NewToolResultReceivedEvent(
 		"r1",
 		agent.Ident("agent1"),
@@ -367,7 +367,7 @@ func TestStreamSubscriber_ToolEndPrecedesRunStreamEnd(t *testing.T) {
 		"call-1",
 		"",
 		nil,
-		json.RawMessage(`{"ok":true}`),
+		rawjson.RawJSON([]byte(`{"ok":true}`)),
 		nil,
 		"",
 		nil,

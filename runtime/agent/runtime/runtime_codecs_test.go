@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -49,7 +50,7 @@ func TestExecuteToolActivity_UsesGeneratedCodecs(t *testing.T) {
 	}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{spec.Name: spec}
 
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: spec.Name, Payload: json.RawMessage("{}")}
+	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: spec.Name, Payload: rawjson.RawJSON([]byte("{}"))}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)

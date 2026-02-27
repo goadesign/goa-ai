@@ -17,6 +17,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -522,7 +523,7 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 				Parts: []model.Part{model.TextPart{Text: block.Text}},
 			})
 		case "tool_use":
-			payload := block.Input
+			payload := rawjson.RawJSON(block.Input)
 			name := ""
 			if block.Name != "" {
 				raw := block.Name

@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -121,7 +122,7 @@ func TestExecuteToolActivity_DecodeErrorRetryHint(t *testing.T) {
 		},
 	}
 
-	raw := json.RawMessage(`{"summary":"wrong"}`)
+	raw := rawjson.RawJSON([]byte(`{"summary":"wrong"}`))
 	input := ToolInput{
 		ToolsetName: "svc.ts",
 		ToolName:    tools.Ident("svc.ts.tool"),

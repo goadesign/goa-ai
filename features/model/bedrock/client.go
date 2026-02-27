@@ -22,6 +22,7 @@ import (
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
@@ -998,15 +999,15 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 				if v.Value.Name != nil {
 					raw := *v.Value.Name
 					key := normalizeToolName(raw)
-				// Bedrock tool_use blocks echo provider-visible names. When the model
-				// hallucinates a tool name that was not advertised in this request, the
-				// reverse map will not contain it. Surface the tool call as-is and let
-				// the runtime convert it into an "unknown tool" result so the model can
-				// recover on the next resume turn.
-				if canonical, ok := nameMap[key]; ok {
-					name = canonical
-				} else {
-					name = key
+					// Bedrock tool_use blocks echo provider-visible names. When the model
+					// hallucinates a tool name that was not advertised in this request, the
+					// reverse map will not contain it. Surface the tool call as-is and let
+					// the runtime convert it into an "unknown tool" result so the model can
+					// recover on the next resume turn.
+					if canonical, ok := nameMap[key]; ok {
+						name = canonical
+					} else {
+						name = key
 					}
 				}
 				var id string
@@ -1036,7 +1037,7 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 	return resp, nil
 }
 
-func decodeDocument(doc document.Interface) json.RawMessage {
+func decodeDocument(doc document.Interface) rawjson.RawJSON {
 	if doc == nil {
 		return nil
 	}
@@ -1047,7 +1048,7 @@ func decodeDocument(doc document.Interface) json.RawMessage {
 	if len(data) == 0 {
 		return nil
 	}
-	return json.RawMessage(data)
+	return rawjson.RawJSON(data)
 }
 
 func translateCitationsContent(block brtypes.CitationsContentBlock) model.CitationsPart {

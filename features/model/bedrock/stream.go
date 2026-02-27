@@ -13,6 +13,7 @@ import (
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -237,17 +238,17 @@ func (p *chunkProcessor) Handle(event any) error {
 				}
 				raw := *toolUse.Value.Name
 				name := normalizeToolName(raw)
-			// Bedrock tool_use blocks echo back the provider-visible tool name. The
-			// adapter normally translates that provider name back to the canonical
-			// tool ID via the per-request reverse map. When the model hallucinates a
-			// tool name that was not advertised in this request, the reverse map will
-			// not contain it. This is not a transport/protocol failure: it is normal
-			// model behavior and must be handled by the runtime as a tool error so
-			// the model can recover on the next resume turn.
-			if canonical, ok := p.toolNameMap[name]; ok {
-				tb.name = canonical
-			} else {
-				tb.name = name
+				// Bedrock tool_use blocks echo back the provider-visible tool name. The
+				// adapter normally translates that provider name back to the canonical
+				// tool ID via the per-request reverse map. When the model hallucinates a
+				// tool name that was not advertised in this request, the reverse map will
+				// not contain it. This is not a transport/protocol failure: it is normal
+				// model behavior and must be handled by the runtime as a tool error so
+				// the model can recover on the next resume turn.
+				if canonical, ok := p.toolNameMap[name]; ok {
+					tb.name = canonical
+				} else {
+					tb.name = name
 				}
 				p.toolBlocks[idx] = tb
 				return nil
@@ -463,16 +464,19 @@ func contentIndex(idx *int32) (int, error) {
 	return int(*idx), nil
 }
 
-func decodeToolPayload(raw string) json.RawMessage {
-	trimmed := raw
+func decodeToolPayload(raw string) rawjson.RawJSON {
+	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		trimmed = "{}"
+		return rawjson.RawJSON([]byte("{}"))
 	}
 	data := []byte(trimmed)
-	if len(data) == 0 {
-		return nil
+	if !json.Valid(data) {
+		// Tool payload fragments come from a model stream boundary and can be
+		// truncated when the provider stops on max_tokens. Return an empty object
+		// so tool schema validation can produce a structured tool error.
+		return rawjson.RawJSON([]byte("{}"))
 	}
-	return json.RawMessage(data)
+	return rawjson.RawJSON(data)
 }
 
 func translateCitationDelta(delta brtypes.CitationsDelta) model.Citation {

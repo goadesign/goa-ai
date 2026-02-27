@@ -6,11 +6,11 @@ package runlog
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 type (
@@ -33,7 +33,7 @@ type (
 		// Type is the hook event type.
 		Type hooks.EventType
 		// Payload is the canonical JSON-encoded payload for the event.
-		Payload json.RawMessage
+		Payload rawjson.RawJSON
 		// Timestamp is the event time.
 		Timestamp time.Time
 	}

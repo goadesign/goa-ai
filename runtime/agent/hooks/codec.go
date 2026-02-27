@@ -8,6 +8,7 @@ import (
 
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/toolerrors"
@@ -39,8 +40,8 @@ type (
 		ParentToolCallID string                   `json:"parent_tool_call_id,omitempty"`
 		ToolName         tools.Ident              `json:"tool_name"`
 		Result           any                      `json:"result,omitempty"`
-		ResultJSON       json.RawMessage          `json:"result_json,omitempty"`
-		ServerData       json.RawMessage          `json:"server_data,omitempty"`
+		ResultJSON       rawjson.RawJSON          `json:"result_json,omitempty"`
+		ServerData       rawjson.RawJSON          `json:"server_data,omitempty"`
 		ResultPreview    string                   `json:"result_preview,omitempty"`
 		Bounds           *agent.Bounds            `json:"bounds,omitempty"`
 		Duration         time.Duration            `json:"duration"`
@@ -53,7 +54,7 @@ type (
 // EncodeToHookInput creates a hook activity input envelope from a hook event for
 // serialization and transport to the hook activity.
 func EncodeToHookInput(evt Event, turnID string) (*ActivityInput, error) {
-	var payload json.RawMessage
+	var payload rawjson.RawJSON
 	switch e := evt.(type) {
 	case *RunCompletedEvent:
 		p := runCompletedPayload{
@@ -74,7 +75,7 @@ func EncodeToHookInput(evt Event, turnID string) (*ActivityInput, error) {
 		if err != nil {
 			return nil, fmt.Errorf("marshal run completed payload: %w", err)
 		}
-		payload = b
+		payload = rawjson.RawJSON(b)
 	case *ToolResultReceivedEvent:
 		p := toolResultReceivedPayload{
 			ToolCallID:       e.ToolCallID,
@@ -94,13 +95,13 @@ func EncodeToHookInput(evt Event, turnID string) (*ActivityInput, error) {
 		if err != nil {
 			return nil, fmt.Errorf("marshal tool result payload: %w", err)
 		}
-		payload = b
+		payload = rawjson.RawJSON(b)
 	default:
 		b, err := json.Marshal(evt)
 		if err != nil {
 			return nil, fmt.Errorf("marshal hook event payload %q: %w", evt.Type(), err)
 		}
-		payload = b
+		payload = rawjson.RawJSON(b)
 	}
 
 	return &ActivityInput{
