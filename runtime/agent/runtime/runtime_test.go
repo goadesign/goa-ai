@@ -102,6 +102,73 @@ func TestStartRunRequiresSessionID(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestOneShotRunDoesNotRequireSession(t *testing.T) {
+	eng := &stubEngine{}
+	rt := &Runtime{
+		Engine:     eng,
+		logger:     telemetry.NoopLogger{},
+		metrics:    telemetry.NoopMetrics{},
+		tracer:     telemetry.NoopTracer{},
+		runHandles: make(map[string]engine.WorkflowHandle),
+		agents: map[agent.Ident]AgentRegistration{
+			"service.agent": {
+				ID: "service.agent",
+				Workflow: engine.WorkflowDefinition{
+					Name:      "service.workflow",
+					TaskQueue: "q",
+				},
+			},
+		},
+	}
+	client := rt.MustClient(agent.Ident("service.agent"))
+	_, err := client.OneShotRun(
+		context.Background(),
+		nil,
+		WithRunID("run-oneshot-1"),
+		WithTurnID("turn-oneshot-1"),
+	)
+	require.NoError(t, err)
+	require.Equal(t, "service.workflow", eng.last.Workflow)
+	require.Equal(t, "run-oneshot-1", eng.last.ID)
+	in := eng.last.Input
+	require.Equal(t, "run-oneshot-1", in.RunID)
+	require.Equal(t, "turn-oneshot-1", in.TurnID)
+	require.Empty(t, in.SessionID)
+	if eng.last.SearchAttributes != nil {
+		_, ok := eng.last.SearchAttributes["SessionID"]
+		require.False(t, ok)
+	}
+}
+
+func TestOneShotRunRejectsSessionSearchAttribute(t *testing.T) {
+	eng := &stubEngine{}
+	rt := &Runtime{
+		Engine:  eng,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		agents: map[agent.Ident]AgentRegistration{
+			"service.agent": {
+				ID: "service.agent",
+				Workflow: engine.WorkflowDefinition{
+					Name:      "service.workflow",
+					TaskQueue: "q",
+				},
+			},
+		},
+	}
+	client := rt.MustClient(agent.Ident("service.agent"))
+	_, err := client.OneShotRun(
+		context.Background(),
+		nil,
+		WithSearchAttributes(map[string]any{
+			"SessionID": "sess-1",
+		}),
+	)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "SessionID is not allowed for one-shot runs")
+}
+
 func TestStartRunCapsTimeoutFromPolicyBudget(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
