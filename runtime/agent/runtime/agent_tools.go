@@ -558,10 +558,15 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 		ParentAgentID:    call.AgentID,
 		Labels:           cloneLabels(call.Labels),
 	}
-	// Record the canonical JSON args using the tool codec. marshalToolValue
-	// returns a defensive copy for json.RawMessage, so this never double-encodes.
-	if argsJSON, err := r.marshalToolValue(ctx, call.Name, call.Payload, true); err == nil && len(argsJSON) > 0 {
-		nestedRunCtx.ToolArgs = rawjson.RawJSON(argsJSON)
+	// Preserve the canonical payload bytes as child tool args.
+	//
+	// Contract:
+	//   - planner.ToolRequest.Payload is already canonical JSON at this boundary.
+	//   - Child run ToolArgs must be exactly the parent payload bytes.
+	//   - Re-encoding through payload codecs here is invalid because payload codecs
+	//     encode typed values, while this boundary carries canonical raw JSON.
+	if len(call.Payload) > 0 {
+		nestedRunCtx.ToolArgs = append(rawjson.RawJSON(nil), call.Payload...)
 	}
 
 	return messages, nestedRunCtx, nil

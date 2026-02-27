@@ -410,3 +410,44 @@ func TestDefaultAgentToolExecute_PromptSpecRejectsNonObjectPayloadShape(t *testi
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "prompt payload must render from a JSON object")
 }
+
+func TestBuildAgentChildRequest_PreservesCanonicalToolArgs(t *testing.T) {
+	rt := &Runtime{
+		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
+		logger:    telemetry.NoopLogger{},
+	}
+
+	toolName := tools.Ident("tool")
+	spec := newAnyJSONSpec(toolName, "svc.tools")
+	spec.Payload.Codec = tools.JSONCodec[any]{
+		ToJSON: func(v any) ([]byte, error) {
+			panic(fmt.Sprintf("payload codec ToJSON must not be called in child args handoff, got %T", v))
+		},
+		FromJSON: func(data []byte) (any, error) {
+			var decoded map[string]any
+			if err := json.Unmarshal(data, &decoded); err != nil {
+				return nil, err
+			}
+			return decoded, nil
+		},
+	}
+	rt.toolSpecs[toolName] = spec
+
+	payload := rawjson.RawJSON([]byte(`{"time_context":"last 48h","scope_context":{"type":"site","id":"s1"}}`))
+	call := &planner.ToolRequest{
+		Name:       toolName,
+		RunID:      "run-1",
+		ToolCallID: "tooluse_123",
+		SessionID:  "sess-1",
+		Payload:    payload,
+	}
+	cfg := &AgentToolConfig{
+		Texts: map[tools.Ident]string{
+			toolName: "use payload",
+		},
+	}
+
+	_, nestedRunCtx, err := rt.buildAgentChildRequest(context.Background(), cfg, call)
+	require.NoError(t, err)
+	require.Equal(t, payload, nestedRunCtx.ToolArgs)
+}
