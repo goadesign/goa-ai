@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -184,7 +183,7 @@ func TestHookActivity_EnrichesToolCallScheduledDisplayHintInRunlog(t *testing.T)
 	require.NoError(t, rt.hookActivity(context.Background(), input))
 	require.Len(t, rl.events, 1)
 	require.Equal(t, hooks.ToolCallScheduled, rl.events[0].Type)
-	require.True(t, strings.Contains(string(rl.events[0].Payload), "Checking hourly energy rates"))
+	require.Contains(t, string(rl.events[0].Payload), "Checking hourly energy rates")
 }
 
 func TestHookActivityAccumulatesPromptRefsOnRunMeta(t *testing.T) {

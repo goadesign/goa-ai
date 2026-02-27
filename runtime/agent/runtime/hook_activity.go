@@ -12,7 +12,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/runlog"
 	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/session"
-	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 // hookActivityName is the engine-registered activity that publishes hook events
@@ -102,7 +101,7 @@ func (r *Runtime) enrichToolCallScheduledHint(ctx context.Context, evt *hooks.To
 		return false
 	}
 	raw := normalizeHintPayloadJSON(evt.Payload.RawMessage())
-	typed, err := r.unmarshalToolValue(ctx, tools.Ident(evt.ToolName), raw, true)
+	typed, err := r.unmarshalToolValue(ctx, evt.ToolName, raw, true)
 	if err != nil || typed == nil {
 		return false
 	}
