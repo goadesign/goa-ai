@@ -14,11 +14,11 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 const maxPlanToolResultBytes = 64 * 1024
@@ -44,10 +44,10 @@ func (r *Runtime) encodeToolEvents(ctx context.Context, events []*planner.ToolRe
 		}
 		out = append(out, &api.ToolEvent{
 			Name:          ev.Name,
-			Result:        result,
+			Result:        rawjson.RawJSON(result),
 			ResultBytes:   len(result),
 			ResultOmitted: false,
-			ServerData:    append(json.RawMessage(nil), ev.ServerData...),
+			ServerData:    append(rawjson.RawJSON(nil), ev.ServerData...),
 			Bounds:        ev.Bounds,
 			Error:         ev.Error,
 			RetryHint:     ev.RetryHint,
@@ -93,7 +93,7 @@ func (r *Runtime) encodeToolEventsForPlanning(ctx context.Context, events []*pla
 		}
 		out = append(out, &api.ToolEvent{
 			Name:                ev.Name,
-			Result:              result,
+			Result:              rawjson.RawJSON(result),
 			ResultBytes:         resultBytes,
 			ResultOmitted:       omitted,
 			ResultOmittedReason: omittedReason,
@@ -125,8 +125,8 @@ func (r *Runtime) decodeToolEvents(ctx context.Context, events []*api.ToolEvent)
 			return nil, fmt.Errorf("CRITICAL: nil tool event entry")
 		}
 		var decoded any
-		if hasNonNullJSON(ev.Result) && ev.Error == nil {
-			val, err := r.unmarshalToolValue(ctx, ev.Name, ev.Result, false)
+		if hasNonNullJSON(ev.Result.RawMessage()) && ev.Error == nil {
+			val, err := r.unmarshalToolValue(ctx, ev.Name, ev.Result.RawMessage(), false)
 			if err != nil {
 				return nil, fmt.Errorf("decode tool result for %s: %w", ev.Name, err)
 			}
@@ -138,7 +138,7 @@ func (r *Runtime) decodeToolEvents(ctx context.Context, events []*api.ToolEvent)
 			ResultBytes:         ev.ResultBytes,
 			ResultOmitted:       ev.ResultOmitted,
 			ResultOmittedReason: ev.ResultOmittedReason,
-			ServerData:          append(json.RawMessage(nil), ev.ServerData...),
+			ServerData:          append(rawjson.RawJSON(nil), ev.ServerData...),
 			Bounds:              ev.Bounds,
 			Error:               ev.Error,
 			RetryHint:           ev.RetryHint,

@@ -15,6 +15,7 @@ import (
 
 	pulsec "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/runtime"
 	aistream "goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -419,7 +420,7 @@ func cloneServerDataItems(items []*toolregistry.ServerDataItem) []*toolregistry.
 	return out
 }
 
-func marshalServerDataItems(items []*toolregistry.ServerDataItem) json.RawMessage {
+func marshalServerDataItems(items []*toolregistry.ServerDataItem) rawjson.RawJSON {
 	if len(items) == 0 {
 		return nil
 	}
@@ -427,7 +428,7 @@ func marshalServerDataItems(items []*toolregistry.ServerDataItem) json.RawMessag
 	if err != nil {
 		panic(fmt.Sprintf("toolregistry executor: marshal server-data items failed: %v", err))
 	}
-	return json.RawMessage(b)
+	return rawjson.RawJSON(b)
 }
 
 func retryHintFromToolErrorCode(tool tools.Ident, code string) *planner.RetryHint {

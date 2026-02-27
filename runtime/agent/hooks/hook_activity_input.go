@@ -1,9 +1,8 @@
 package hooks
 
 import (
-	"encoding/json"
-
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 // ActivityInput describes a hook event emitted from workflow code and published by the
@@ -25,5 +24,5 @@ type ActivityInput struct {
 	TurnID string
 
 	// Payload holds event-specific fields encoded as JSON.
-	Payload json.RawMessage
+	Payload rawjson.RawJSON
 }

@@ -103,7 +103,7 @@ func (r *Runtime) confirmationPlan(ctx context.Context, call *planner.ToolReques
 		return nil, false, nil
 	}
 	c := spec.Confirmation
-	payloadVal, err := r.unmarshalToolValue(ctx, call.Name, call.Payload, true)
+	payloadVal, err := r.unmarshalToolValue(ctx, call.Name, call.Payload.RawMessage(), true)
 	if err != nil {
 		return nil, false, fmt.Errorf("decode payload for confirmation %q: %w", call.Name, err)
 	}

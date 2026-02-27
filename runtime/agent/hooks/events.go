@@ -2,7 +2,6 @@ package hooks
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/prompt"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -198,7 +198,7 @@ type (
 		// Payload contains the canonical JSON tool arguments for the scheduled tool.
 		// It is a json.RawMessage representing the tool payload object as seen by the
 		// runtime and codecs.
-		Payload json.RawMessage
+		Payload rawjson.RawJSON
 		// Queue is the activity queue name where the tool execution is scheduled.
 		Queue string
 		// ParentToolCallID optionally identifies the tool call that requested this tool.
@@ -232,11 +232,11 @@ type (
 		//
 		// This is used by stream sinks and persistence layers that must serialize
 		// tool results without relying on `encoding/json` and Go field names.
-		ResultJSON json.RawMessage
+		ResultJSON rawjson.RawJSON
 		// ServerData carries server-only data emitted by tool providers. This payload
 		// must not be serialized into model provider requests and is treated as opaque
 		// JSON bytes by the runtime.
-		ServerData json.RawMessage
+		ServerData rawjson.RawJSON
 		// ResultPreview is a concise, user-facing summary of the tool result rendered
 		// from the registered ResultHintTemplate for this tool. It is computed by
 		// the runtime while the result is still strongly typed so downstream
@@ -426,7 +426,7 @@ type (
 		// ToolCallID is the tool_call_id for the pending tool call.
 		ToolCallID string
 		// Payload is the canonical JSON arguments for the pending tool call.
-		Payload json.RawMessage
+		Payload rawjson.RawJSON
 	}
 
 	// AwaitQuestionsEvent indicates the planner requested structured multiple-choice
@@ -440,7 +440,7 @@ type (
 		// ToolCallID correlates the provided result with this requested call.
 		ToolCallID string
 		// Payload is the canonical JSON arguments for the awaited tool call.
-		Payload json.RawMessage
+		Payload rawjson.RawJSON
 		// Title is an optional display title for the questions UI.
 		Title *string
 		// Questions are the structured questions to present to the user.
@@ -493,7 +493,7 @@ type (
 	AwaitToolItem struct {
 		ToolName   tools.Ident
 		ToolCallID string
-		Payload    json.RawMessage
+		Payload    rawjson.RawJSON
 	}
 
 	// UsageEvent reports token usage for a model invocation within a run.
@@ -669,7 +669,7 @@ func NewAwaitClarificationEvent(runID string, agentID agent.Ident, sessionID, id
 }
 
 // NewAwaitConfirmationEvent constructs an AwaitConfirmationEvent with the provided details.
-func NewAwaitConfirmationEvent(runID string, agentID agent.Ident, sessionID, id, title, prompt string, toolName tools.Ident, toolCallID string, payload json.RawMessage) *AwaitConfirmationEvent {
+func NewAwaitConfirmationEvent(runID string, agentID agent.Ident, sessionID, id, title, prompt string, toolName tools.Ident, toolCallID string, payload rawjson.RawJSON) *AwaitConfirmationEvent {
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
 	return &AwaitConfirmationEvent{
@@ -712,7 +712,7 @@ func NewAwaitExternalToolsEvent(runID string, agentID agent.Ident, sessionID, id
 }
 
 // NewAwaitQuestionsEvent constructs an AwaitQuestionsEvent for a structured questions prompt.
-func NewAwaitQuestionsEvent(runID string, agentID agent.Ident, sessionID, id string, toolName tools.Ident, toolCallID string, payload json.RawMessage, title *string, questions []AwaitQuestion) *AwaitQuestionsEvent {
+func NewAwaitQuestionsEvent(runID string, agentID agent.Ident, sessionID, id string, toolName tools.Ident, toolCallID string, payload rawjson.RawJSON, title *string, questions []AwaitQuestion) *AwaitQuestionsEvent {
 	qcopy := make([]AwaitQuestion, 0, len(questions))
 	for _, q := range questions {
 		opts := make([]AwaitQuestionOption, len(q.Options))
@@ -768,12 +768,12 @@ func (e *AwaitExternalToolsEvent) Type() EventType { return AwaitExternalTools }
 // NewToolCallScheduledEvent constructs a ToolCallScheduledEvent. Payload is the
 // canonical JSON arguments for the scheduled tool; queue is the activity queue name.
 // ParentToolCallID and expectedChildren are optional (empty/0 for top-level calls).
-func NewToolCallScheduledEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID string, payload json.RawMessage, queue string, parentToolCallID string, expectedChildren int) *ToolCallScheduledEvent {
+func NewToolCallScheduledEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID string, payload rawjson.RawJSON, queue string, parentToolCallID string, expectedChildren int) *ToolCallScheduledEvent {
 	// Compute a best-effort call hint once at emit time so all subscribers can
 	// reuse it. The payload is the canonical JSON arguments; templates that
 	// depend on typed structs will be rerun by higher-level decorators (e.g.,
 	// the runtime hinting sink) when needed.
-	displayHint := rthints.FormatCallHint(toolName, payload)
+	displayHint := rthints.FormatCallHint(toolName, payload.RawMessage())
 
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
@@ -792,7 +792,7 @@ func NewToolCallScheduledEvent(runID string, agentID agent.Ident, sessionID stri
 // NewToolResultReceivedEvent constructs a ToolResultReceivedEvent. Result and err
 // capture the tool outcome; duration is the wall-clock execution time; telemetry
 // carries structured observability metadata (nil if not collected).
-func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID, parentToolCallID string, result any, resultJSON, serverData json.RawMessage, resultPreview string, bounds *agent.Bounds, duration time.Duration, telemetry *telemetry.ToolTelemetry, retryHint *planner.RetryHint, err *toolerrors.ToolError) *ToolResultReceivedEvent {
+func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID, parentToolCallID string, result any, resultJSON, serverData rawjson.RawJSON, resultPreview string, bounds *agent.Bounds, duration time.Duration, telemetry *telemetry.ToolTelemetry, retryHint *planner.RetryHint, err *toolerrors.ToolError) *ToolResultReceivedEvent {
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
 	return &ToolResultReceivedEvent{

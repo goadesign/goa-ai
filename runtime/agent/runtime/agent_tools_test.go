@@ -16,6 +16,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/prompt"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/session"
@@ -109,7 +110,7 @@ func TestAgentTool_MissingContentConfigurationFails(t *testing.T) {
 		RunID:     "r1",
 		SessionID: "s1",
 		Name:      tools.Ident("svc.tools.do"),
-		Payload:   json.RawMessage(`"hello"`),
+		Payload:   rawjson.RawJSON([]byte(`"hello"`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	tr, err := reg.Execute(ctx, &call)
@@ -157,7 +158,7 @@ func TestAgentTool_TextContent(t *testing.T) {
 		RunID:     "r1",
 		SessionID: "s1",
 		Name:      tools.Ident("svc.tools.do"),
-		Payload:   json.RawMessage(`"hello"`),
+		Payload:   rawjson.RawJSON([]byte(`"hello"`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -211,7 +212,7 @@ func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 		RunID:     "r1",
 		SessionID: "s1",
 		Name:      tools.Ident("svc.tools.do"),
-		Payload:   json.RawMessage(`"hello"`),
+		Payload:   rawjson.RawJSON([]byte(`"hello"`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -270,7 +271,7 @@ func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 		RunID:     "r1",
 		SessionID: "s1",
 		Name:      tools.Ident("svc.tools.do"),
-		Payload:   json.RawMessage(`"hello"`),
+		Payload:   rawjson.RawJSON([]byte(`"hello"`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -371,7 +372,7 @@ func TestJSONOnly_NoFinalizer_IncompatibleChildResultSchema_ReturnsToolError(t *
 		ToolEvents: []*api.ToolEvent{
 			{
 				Name:   tools.Ident("test.child"),
-				Result: json.RawMessage(`"bad"`),
+				Result: rawjson.RawJSON([]byte(`"bad"`)),
 			},
 		},
 	}
@@ -429,8 +430,8 @@ func TestJSONOnly_NoFinalizer_MultiChildWithoutAggregateKey_ReturnsToolError(t *
 	}
 	out := &RunOutput{
 		ToolEvents: []*api.ToolEvent{
-			{Name: tools.Ident("child1"), Result: json.RawMessage(`{"events":["a"]}`)},
-			{Name: tools.Ident("child2"), Result: json.RawMessage(`{"events":["b"]}`)},
+			{Name: tools.Ident("child1"), Result: rawjson.RawJSON([]byte(`{"events":["a"]}`))},
+			{Name: tools.Ident("child2"), Result: rawjson.RawJSON([]byte(`{"events":["b"]}`))},
 		},
 	}
 

@@ -305,13 +305,13 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
         {{- end }}
         {{- end }}
         }
-        var serverData json.RawMessage
+        var serverData rawjson.RawJSON
         if len(serverItems) > 0 {
             b, err := json.Marshal(serverItems)
             if err != nil {
                 return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
             }
-            serverData = b
+            serverData = rawjson.RawJSON(b)
         }
         return &planner.ToolResult{
             Name:       call.Name,

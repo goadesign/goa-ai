@@ -8,6 +8,7 @@ import (
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -92,7 +93,7 @@ func (i *finalizerToolInvoker) Invoke(ctx context.Context, tool tools.Ident, pay
 	}
 	call := planner.ToolRequest{
 		Name:             tool,
-		Payload:          raw,
+		Payload:          rawjson.RawJSON(raw),
 		RunID:            parent.RunID,
 		SessionID:        parent.SessionID,
 		TurnID:           parent.TurnID,
@@ -138,7 +139,7 @@ func (i *finalizerToolInvoker) Invoke(ctx context.Context, tool tools.Ident, pay
 			ToolsetName:      spec.Toolset,
 			ToolName:         tool,
 			ToolCallID:       call.ToolCallID,
-			Payload:          raw,
+			Payload:          rawjson.RawJSON(raw),
 			SessionID:        parent.SessionID,
 			TurnID:           parent.TurnID,
 			ParentToolCallID: parent.ParentToolCallID,
@@ -153,8 +154,8 @@ func (i *finalizerToolInvoker) Invoke(ctx context.Context, tool tools.Ident, pay
 	}
 
 	var decoded any
-	if out.Error == "" && hasNonNullJSON(out.Payload) {
-		v, decErr := i.factory.runtime.unmarshalToolValue(ctx, tool, out.Payload, false)
+	if out.Error == "" && hasNonNullJSON(out.Payload.RawMessage()) {
+		v, decErr := i.factory.runtime.unmarshalToolValue(ctx, tool, out.Payload.RawMessage(), false)
 		if decErr != nil {
 			return nil, fmt.Errorf("finalizer tool %q result decode failed (tool_call_id=%s): %w", tool, call.ToolCallID, decErr)
 		}

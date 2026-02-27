@@ -12,6 +12,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/reminder"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -60,14 +61,14 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 	if err := events.hookError(); err != nil {
 		return nil, err
 	}
-	normalizePlanResultRawJSON(result)
 	transcript := events.exportTranscript()
 	normalizeTranscriptRawJSON(transcript)
-	return &PlanActivityOutput{
+	out := &PlanActivityOutput{
 		Result:     result,
 		Transcript: transcript,
 		Usage:      events.exportUsage(),
-	}, nil
+	}
+	return out, nil
 }
 
 // PlanResumeActivity executes the planner's PlanResume method.
@@ -118,55 +119,14 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err := events.hookError(); err != nil {
 		return nil, err
 	}
-	normalizePlanResultRawJSON(result)
 	transcript := events.exportTranscript()
 	normalizeTranscriptRawJSON(transcript)
-	return &PlanActivityOutput{
+	out := &PlanActivityOutput{
 		Result:     result,
 		Transcript: transcript,
 		Usage:      events.exportUsage(),
-	}, nil
-}
-
-// normalizePlanResultRawJSON converts empty json.RawMessage values in planner
-// results to nil so workflow data converters can marshal the activity output.
-//
-// encoding/json rejects non-nil zero-length RawMessage values with
-// "unexpected end of JSON input". Provider adapters occasionally emit empty
-// payloads for no-arg tool calls, and those payloads must be normalized before
-// crossing workflow/activity boundaries.
-func normalizePlanResultRawJSON(result *planner.PlanResult) {
-	if result == nil {
-		return
 	}
-	if result.FinalResponse != nil && result.FinalResponse.Message != nil {
-		normalizeTranscriptRawJSON([]*model.Message{result.FinalResponse.Message})
-	}
-	for idx := range result.ToolCalls {
-		result.ToolCalls[idx].Payload = normalizeRawMessage(result.ToolCalls[idx].Payload)
-	}
-	if result.Await == nil {
-		return
-	}
-	for idx := range result.Await.Items {
-		item := &result.Await.Items[idx]
-		if item.Questions != nil {
-			item.Questions.Payload = normalizeRawMessage(item.Questions.Payload)
-		}
-		if item.ExternalTools == nil {
-			continue
-		}
-		for itemIdx := range item.ExternalTools.Items {
-			item.ExternalTools.Items[itemIdx].Payload = normalizeRawMessage(item.ExternalTools.Items[itemIdx].Payload)
-		}
-	}
-}
-
-func normalizeRawMessage(raw json.RawMessage) json.RawMessage {
-	if len(bytes.TrimSpace(raw)) == 0 {
-		return nil
-	}
-	return raw
+	return out, nil
 }
 
 func normalizeTranscriptRawJSON(messages []*model.Message) {
@@ -194,7 +154,10 @@ func normalizeTranscriptRawJSON(messages []*model.Message) {
 func normalizeAnyRawMessage(value any) any {
 	switch typed := value.(type) {
 	case json.RawMessage:
-		return normalizeRawMessage(typed)
+		if len(bytes.TrimSpace(typed)) == 0 {
+			return nil
+		}
+		return typed
 	case map[string]any:
 		for key, item := range typed {
 			typed[key] = normalizeAnyRawMessage(item)
@@ -270,8 +233,8 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		ParentToolCallID: req.ParentToolCallID,
 	}
 	if reg.PayloadAdapter != nil && len(raw) > 0 {
-		if adapted, err := reg.PayloadAdapter(ctx, meta, req.ToolName, raw); err == nil && len(adapted) > 0 {
-			raw = adapted
+		if adapted, err := reg.PayloadAdapter(ctx, meta, req.ToolName, raw.RawMessage()); err == nil && len(adapted) > 0 {
+			raw = rawjson.RawJSON(adapted)
 		} else if err != nil {
 			return &ToolOutput{Error: fmt.Sprintf("payload adapter failed: %v", err)}, nil
 		}
@@ -281,7 +244,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	// generated codecs so we can surface structured retry hints. Executors
 	// still receive the canonical JSON payload and may decode again as needed.
 	if !reg.DecodeInExecutor && len(raw) > 0 {
-		if _, decErr := r.unmarshalToolValue(ctx, req.ToolName, raw, true); decErr != nil {
+		if _, decErr := r.unmarshalToolValue(ctx, req.ToolName, raw.RawMessage(), true); decErr != nil {
 			// Build structured retry hints using generated ValidationError when present.
 			if fields, question, reason, ok := buildRetryHintFromValidation(decErr, req.ToolName); ok {
 				return &ToolOutput{
@@ -352,7 +315,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		}
 	}
 	out := &ToolOutput{
-		Payload:    enc,
+		Payload:    rawjson.RawJSON(enc),
 		ServerData: result.ServerData,
 		Telemetry:  result.Telemetry,
 	}

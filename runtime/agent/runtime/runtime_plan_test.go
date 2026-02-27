@@ -12,6 +12,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -84,14 +85,14 @@ func TestPlanResumeActivityPassesToolResults(t *testing.T) {
 	require.Len(t, out.Result.ToolCalls, 1)
 }
 
-func TestPlanResumeActivityNormalizesEmptyRawJSONPayloads(t *testing.T) {
+func TestPlanResumeActivityPreservesEmptyRawJSONPayloads(t *testing.T) {
 	pl := &stubPlanner{
 		resume: func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
 			return &planner.PlanResult{
 				ToolCalls: []planner.ToolRequest{
 					{
 						Name:    "svc.other.tool",
-						Payload: json.RawMessage{},
+						Payload: rawjson.RawJSON([]byte{}),
 					},
 				},
 				Await: planner.NewAwait(
@@ -99,7 +100,7 @@ func TestPlanResumeActivityNormalizesEmptyRawJSONPayloads(t *testing.T) {
 						ID:         "await-q",
 						ToolName:   "chat.ask_question.ask_question",
 						ToolCallID: "call-q",
-						Payload:    json.RawMessage{},
+						Payload:    rawjson.RawJSON([]byte{}),
 					}),
 					planner.AwaitExternalToolsItem(&planner.AwaitExternalTools{
 						ID: "await-ext",
@@ -107,7 +108,7 @@ func TestPlanResumeActivityNormalizesEmptyRawJSONPayloads(t *testing.T) {
 							{
 								Name:       "external.one",
 								ToolCallID: "call-ext",
-								Payload:    json.RawMessage{},
+								Payload:    rawjson.RawJSON([]byte{}),
 							},
 						},
 					}),
@@ -124,14 +125,17 @@ func TestPlanResumeActivityNormalizesEmptyRawJSONPayloads(t *testing.T) {
 	out, err := rt.PlanResumeActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.Len(t, out.Result.ToolCalls, 1)
-	require.Nil(t, out.Result.ToolCalls[0].Payload)
+	require.NotNil(t, out.Result.ToolCalls[0].Payload)
+	require.Empty(t, out.Result.ToolCalls[0].Payload)
 	require.NotNil(t, out.Result.Await)
 	require.Len(t, out.Result.Await.Items, 2)
 	require.NotNil(t, out.Result.Await.Items[0].Questions)
-	require.Nil(t, out.Result.Await.Items[0].Questions.Payload)
+	require.NotNil(t, out.Result.Await.Items[0].Questions.Payload)
+	require.Empty(t, out.Result.Await.Items[0].Questions.Payload)
 	require.NotNil(t, out.Result.Await.Items[1].ExternalTools)
 	require.Len(t, out.Result.Await.Items[1].ExternalTools.Items, 1)
-	require.Nil(t, out.Result.Await.Items[1].ExternalTools.Items[0].Payload)
+	require.NotNil(t, out.Result.Await.Items[1].ExternalTools.Items[0].Payload)
+	require.Empty(t, out.Result.Await.Items[1].ExternalTools.Items[0].Payload)
 }
 
 func TestNormalizeTranscriptRawJSONNormalizesEmptyRawMessageValues(t *testing.T) {

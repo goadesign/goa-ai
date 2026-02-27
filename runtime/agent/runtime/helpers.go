@@ -17,6 +17,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/prompt"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -430,7 +431,7 @@ func compactOversizedHookInput(evt hooks.Event, turnID string) (*hooks.ActivityI
 	if len(in.Payload) <= maxHookPayloadBytes {
 		return in, nil
 	}
-	compact.ResultJSON = json.RawMessage(`{"truncated":true,"reason":"hook_payload_too_large"}`)
+	compact.ResultJSON = rawjson.RawJSON([]byte(`{"truncated":true,"reason":"hook_payload_too_large"}`))
 	if compact.ResultPreview == "" {
 		compact.ResultPreview = "Result omitted from run hooks because payload exceeded limits."
 	}

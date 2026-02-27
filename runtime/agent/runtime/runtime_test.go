@@ -3,7 +3,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"testing"
 	"text/template"
@@ -18,6 +17,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/session"
@@ -795,7 +795,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 		ToolCalls: []planner.ToolRequest{
 			{
 				Name:    tools.Ident("search"),
-				Payload: json.RawMessage(`{"query":"status"}`),
+				Payload: rawjson.RawJSON([]byte(`{"query":"status"}`)),
 			},
 		},
 	}

@@ -13,6 +13,7 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -211,7 +212,7 @@ func translateResponse(resp openai.ChatCompletionResponse) *model.Response {
 	}
 }
 
-func parseToolArguments(raw string) json.RawMessage {
+func parseToolArguments(raw string) rawjson.RawJSON {
 	if raw == "" {
 		return nil
 	}
@@ -219,5 +220,5 @@ func parseToolArguments(raw string) json.RawMessage {
 	if len(data) == 0 {
 		return nil
 	}
-	return json.RawMessage(data)
+	return rawjson.RawJSON(data)
 }

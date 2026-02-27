@@ -31,12 +31,12 @@ package planner
 
 import (
 	"context"
-	"encoding/json"
 
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/memory"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/prompt"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/reminder"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -167,7 +167,7 @@ type ToolRequest struct {
 	Name tools.Ident
 
 	// Payload is the canonical JSON payload for the tool call.
-	Payload json.RawMessage
+	Payload rawjson.RawJSON
 
 	// AgentID is the identifier of the agent that issued this tool request.
 	AgentID agent.Ident
@@ -210,7 +210,7 @@ type ToolResult struct {
 	//   - This is canonical JSON bytes (typically a JSON array of server-data items).
 	//   - The runtime treats the payload as opaque bytes; sinks and UIs decode it
 	//     using the tool specs/codecs for the corresponding kinds.
-	ServerData json.RawMessage
+	ServerData rawjson.RawJSON
 
 	// ResultBytes is the size, in bytes, of the canonical JSON result payload when
 	// known. It is populated by the runtime when a tool result crosses a workflow
@@ -397,7 +397,7 @@ type AwaitQuestions struct {
 	ToolCallID string
 
 	// Payload is the canonical JSON payload for the awaited tool call.
-	Payload json.RawMessage
+	Payload rawjson.RawJSON
 
 	// Title is an optional display title for the questions form.
 	Title *string
@@ -448,7 +448,7 @@ type AwaitToolItem struct {
 	ToolCallID string
 
 	// Payload is the canonical JSON payload for the external tool call.
-	Payload json.RawMessage
+	Payload rawjson.RawJSON
 }
 
 // TerminationReason indicates why the runtime forced finalization.

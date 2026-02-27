@@ -11,6 +11,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -59,7 +60,7 @@ type (
 		// is an agent-as-tool execution. Nil for top-level runs. Nested agent planners
 		// can use this structured input to render method-specific prompts without
 		// reparsing free-form messages.
-		ToolArgs json.RawMessage
+		ToolArgs rawjson.RawJSON
 
 		// Messages carries the conversation history supplied by the caller.
 		Messages []*model.Message
@@ -188,7 +189,7 @@ type (
 		Name tools.Ident
 
 		// Result is the canonical JSON result payload encoded using the tool result codec.
-		Result json.RawMessage
+		Result rawjson.RawJSON
 
 		// ResultBytes is the size, in bytes, of the canonical JSON result payload
 		// produced by the runtime before any workflow-boundary trimming is applied.
@@ -213,7 +214,7 @@ type (
 
 		// ServerData carries server-only data emitted alongside the tool result.
 		// It is never sent to model providers.
-		ServerData json.RawMessage
+		ServerData rawjson.RawJSON
 
 		// Bounds, when non-nil, describes how the result has been bounded relative
 		// to the full underlying data set (for example, list/window/graph caps).
@@ -302,7 +303,7 @@ type (
 		ToolCallID string
 
 		// Payload is the canonical JSON payload for the tool call.
-		Payload json.RawMessage
+		Payload rawjson.RawJSON
 
 		// SessionID is the logical session identifier (for example, a chat conversation).
 		SessionID string
@@ -317,7 +318,7 @@ type (
 	// ToolOutput is returned by tool executors after invoking the tool implementation.
 	ToolOutput struct {
 		// Payload is the tool result encoded as JSON. The runtime decodes it using the registered tool codec.
-		Payload json.RawMessage
+		Payload rawjson.RawJSON
 
 		// ServerData carries server-only data emitted alongside the tool result. It is
 		// never forwarded to model providers, but it must cross workflow/activity
@@ -327,7 +328,7 @@ type (
 		// Contract:
 		//   - This is canonical JSON (typically a JSON array of server data items).
 		//   - Tool implementations may return nil when no server data is present.
-		ServerData json.RawMessage
+		ServerData rawjson.RawJSON
 
 		// Telemetry contains execution timing and provider usage metadata when available.
 		Telemetry *telemetry.ToolTelemetry
