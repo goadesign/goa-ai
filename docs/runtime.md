@@ -492,13 +492,31 @@ type ToolsetRegistration struct {
     Specs       []tools.ToolSpec           // JSON codecs and schemas
     TaskQueue   string                     // Optional queue override
     Inline      bool                       // Execute in workflow context
-    CallHints   map[tools.Ident]*template.Template   // Display hint templates
-    ResultHints map[tools.Ident]*template.Template   // Result preview templates
+    CallHints   map[tools.Ident]*template.Template   // Tool call DisplayHint templates (typed payload only)
+    ResultHints map[tools.Ident]*template.Template   // Tool result preview templates (typed result only)
     PayloadAdapter func(...)               // Pre-decode transformation
     ResultAdapter  func(...)               // Post-encode transformation
     AgentTool   *AgentToolConfig           // Agent-as-tool configuration
 }
 ```
+
+### Tool Call Display Hints (DisplayHint)
+
+The runtime can surface user-facing hints for tool calls (for example in UIs) via the `DisplayHint` field on
+hook + stream events.
+
+Contract:
+
+- Hook constructors do not render hints. Tool call scheduled events default to `DisplayHint==""`.
+- The runtime may enrich and persist a **durable default** hint at publish time by decoding the typed tool
+  payload using generated codecs and executing the `CallHintTemplate` (if registered).
+- When typed decoding fails or no template is registered, the runtime leaves `DisplayHint` empty. Hints are
+  never rendered against raw JSON bytes.
+- If a producer explicitly sets `DisplayHint` (non-empty) before publishing the hook event, the runtime treats
+  it as authoritative and does not overwrite it.
+
+For per-consumer wording changes, configure `runtime.WithHintOverrides` on the runtime. Overrides take precedence
+over DSL-authored templates for streamed `tool_start` events.
 
 ### Tool Implementation Patterns
 

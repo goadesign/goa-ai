@@ -12,7 +12,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
-	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/toolerrors"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -769,12 +768,6 @@ func (e *AwaitExternalToolsEvent) Type() EventType { return AwaitExternalTools }
 // canonical JSON arguments for the scheduled tool; queue is the activity queue name.
 // ParentToolCallID and expectedChildren are optional (empty/0 for top-level calls).
 func NewToolCallScheduledEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID string, payload rawjson.RawJSON, queue string, parentToolCallID string, expectedChildren int) *ToolCallScheduledEvent {
-	// Compute a best-effort call hint once at emit time so all subscribers can
-	// reuse it. The payload is the canonical JSON arguments; templates that
-	// depend on typed structs will be rerun by higher-level decorators (e.g.,
-	// the runtime hinting sink) when needed.
-	displayHint := rthints.FormatCallHint(toolName, payload.RawMessage())
-
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
 	return &ToolCallScheduledEvent{
@@ -785,7 +778,10 @@ func NewToolCallScheduledEvent(runID string, agentID agent.Ident, sessionID stri
 		Queue:                 queue,
 		ParentToolCallID:      parentToolCallID,
 		ExpectedChildrenTotal: expectedChildren,
-		DisplayHint:           displayHint,
+		// DisplayHint is computed by the runtime at publish time using typed payloads
+		// and registered templates. This keeps the contract strict: hints are never
+		// rendered against raw JSON bytes.
+		DisplayHint: "",
 	}
 }
 

@@ -65,6 +65,17 @@ import (
 )
 
 type (
+	// HintOverrideFunc can override the call hint for a tool invocation.
+	//
+	// Contract:
+	//   - Returning (hint, true) selects hint as the DisplayHint, even when a DSL
+	//     template exists.
+	//   - Returning ("", false) indicates no override applies and the runtime should
+	//     use its default behavior.
+	//   - The payload value is the typed payload decoded via the tool payload codec
+	//     when possible; it may be nil when decoding fails.
+	HintOverrideFunc func(ctx context.Context, tool tools.Ident, payload any) (hint string, ok bool)
+
 	// Runtime orchestrates agent workflows, policy enforcement, memory persistence,
 	// and event streaming. It serves as the central registry for agents, toolsets,
 	// and models. All public methods are thread-safe and can be called concurrently.
@@ -150,6 +161,8 @@ type (
 		// It is used to require explicit operator approval before executing certain tools.
 		// See ToolConfirmationConfig for details.
 		toolConfirmation *ToolConfirmationConfig
+
+		hintOverrides map[tools.Ident]HintOverrideFunc
 	}
 
 	// Options configures the Runtime instance. All fields are optional except Engine
@@ -194,6 +207,10 @@ type (
 		// tools (for example, requiring explicit operator approval before executing
 		// additional tools that are not marked with design-time Confirmation).
 		ToolConfirmation *ToolConfirmationConfig
+
+		// HintOverrides optionally overrides DSL-authored call hints for specific tools
+		// when streaming tool_start events.
+		HintOverrides map[tools.Ident]HintOverrideFunc
 	}
 
 	// RuntimeOption configures the runtime via functional options passed to NewWith.
@@ -662,6 +679,7 @@ func newFromOptions(opts Options) *Runtime {
 		workers:             opts.Workers,
 		reminders:           reminder.NewEngine(),
 		toolConfirmation:    opts.ToolConfirmation,
+		hintOverrides:       opts.HintOverrides,
 	}
 	rt.PromptRegistry.SetObserver(rt.onPromptRendered)
 	// Install runtime-owned toolsets before any agent registration so planners
@@ -904,6 +922,14 @@ func WithTracer(t telemetry.Tracer) RuntimeOption { return func(o *Options) { o.
 // WithToolConfirmation configures runtime-enforced confirmation for selected tools.
 func WithToolConfirmation(cfg *ToolConfirmationConfig) RuntimeOption {
 	return func(o *Options) { o.ToolConfirmation = cfg }
+}
+
+// WithHintOverrides configures per-tool call hint overrides.
+//
+// When provided, overrides take precedence over DSL-authored CallHint templates
+// when streaming tool_start events. Only tools present in the map are considered.
+func WithHintOverrides(m map[tools.Ident]HintOverrideFunc) RuntimeOption {
+	return func(o *Options) { o.HintOverrides = m }
 }
 
 // WithWorker configures the worker for a specific agent. Engines that support

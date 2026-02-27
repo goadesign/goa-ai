@@ -3,15 +3,20 @@ package runtime
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/prompt"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/runlog"
+	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/session"
 	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
+	"goa.design/goa-ai/runtime/agent/telemetry"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type recordingRunlog struct {
@@ -124,6 +129,62 @@ func TestHookActivityAppendFailureAbortsPublish(t *testing.T) {
 	err = rt.hookActivity(context.Background(), input)
 	require.ErrorIs(t, err, appendErr)
 	require.Nil(t, published)
+}
+
+func TestHookActivity_EnrichesToolCallScheduledDisplayHintInRunlog(t *testing.T) {
+	t.Parallel()
+
+	toolID := tools.Ident("runtime.hints.test.scheduled")
+	rthints.RegisterCallHint(toolID, mustTemplate(t, toolID, "Checking {{.Resolution}} energy rates"))
+
+	rl := &recordingRunlog{}
+	bus := hooks.NewBus()
+	store := sessioninmem.New()
+
+	rt := &Runtime{
+		RunEventStore: rl,
+		Bus:           bus,
+		SessionStore:  store,
+		logger:        telemetry.NoopLogger{},
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			toolID: newTypedHintSpec(toolID),
+		},
+	}
+
+	now := time.Now().UTC()
+	_, err := store.CreateSession(context.Background(), "sess-1", now)
+	require.NoError(t, err)
+	require.NoError(t, store.UpsertRun(context.Background(), session.RunMeta{
+		AgentID:   "svc.agent",
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		Status:    session.RunStatusPending,
+		StartedAt: now,
+		UpdatedAt: now,
+	}))
+
+	ev := hooks.NewToolCallScheduledEvent(
+		"run-1",
+		"svc.agent",
+		"sess-1",
+		toolID,
+		"call-1",
+		rawjson.RawJSON([]byte(`{"resolution":"hourly"}`)),
+		"queue",
+		"",
+		0,
+	)
+	// Hooks constructors do not render hints. The runtime fills in a durable default
+	// hint (when possible) using typed payloads at publish time.
+	require.Empty(t, ev.DisplayHint)
+
+	input, err := hooks.EncodeToHookInput(ev, "turn-1")
+	require.NoError(t, err)
+
+	require.NoError(t, rt.hookActivity(context.Background(), input))
+	require.Len(t, rl.events, 1)
+	require.Equal(t, hooks.ToolCallScheduled, rl.events[0].Type)
+	require.True(t, strings.Contains(string(rl.events[0].Payload), "Checking hourly energy rates"))
 }
 
 func TestHookActivityAccumulatesPromptRefsOnRunMeta(t *testing.T) {
