@@ -416,6 +416,7 @@ var (
 	ErrEngineNotConfigured = errors.New("runtime engine not configured")
 	ErrInvalidConfig       = errors.New("invalid configuration")
 	ErrMissingSessionID    = errors.New("session id is required")
+	ErrSessionNotAllowed   = errors.New("session id is not allowed")
 	ErrWorkflowStartFailed = errors.New("workflow start failed")
 	ErrRegistrationClosed  = errors.New("registration closed after first run")
 )
@@ -689,6 +690,9 @@ func newFromOptions(opts Options) *Runtime {
 	rt.mu.Unlock()
 	if rt.SessionStore != nil {
 		sessionSub := hooks.SubscriberFunc(func(ctx context.Context, event hooks.Event) error {
+			if event.SessionID() == "" {
+				return nil
+			}
 			var (
 				status   session.RunStatus
 				metadata map[string]any
@@ -1259,7 +1263,7 @@ func (r *Runtime) startRun(ctx context.Context, input *RunInput) (engine.Workflo
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrAgentNotFound, input.AgentID)
 	}
-	return r.startRunOn(ctx, input, reg.Workflow.Name, reg.Workflow.TaskQueue)
+	return r.startRunOn(ctx, input, reg.Workflow.Name, reg.Workflow.TaskQueue, true)
 }
 
 // startRunWithMeta launches the agent workflow using client-supplied metadata
@@ -1272,11 +1276,41 @@ func (r *Runtime) startRunWithRoute(ctx context.Context, input *RunInput, route 
 	if input.AgentID == "" {
 		input.AgentID = route.ID
 	}
-	return r.startRunOn(ctx, input, route.WorkflowName, route.DefaultTaskQueue)
+	return r.startRunOn(ctx, input, route.WorkflowName, route.DefaultTaskQueue, true)
 }
 
-// startRunOn contains common start logic for both locally-registered and remote-route clients.
-func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName, defaultQueue string) (engine.WorkflowHandle, error) {
+// startOneShotRun launches a one-shot workflow that does not belong to a session.
+func (r *Runtime) startOneShotRun(ctx context.Context, input *RunInput) (engine.WorkflowHandle, error) {
+	if input.AgentID == "" {
+		return nil, fmt.Errorf("%w: missing agent id", ErrAgentNotFound)
+	}
+	reg, ok := r.agentByID(input.AgentID)
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrAgentNotFound, input.AgentID)
+	}
+	return r.startRunOn(ctx, input, reg.Workflow.Name, reg.Workflow.TaskQueue, false)
+}
+
+// startOneShotRunWithRoute launches a one-shot workflow using client-supplied route metadata.
+func (r *Runtime) startOneShotRunWithRoute(ctx context.Context, input *RunInput, route AgentRoute) (engine.WorkflowHandle, error) {
+	if route.ID == "" || route.WorkflowName == "" {
+		return nil, fmt.Errorf("%w: missing route for agent client", ErrAgentNotFound)
+	}
+	if input.AgentID == "" {
+		input.AgentID = route.ID
+	}
+	return r.startRunOn(ctx, input, route.WorkflowName, route.DefaultTaskQueue, false)
+}
+
+// startRunOn contains common start logic for both locally-registered and
+// remote-route clients.
+//
+// When requireSession is true, the run must resolve to an active session and the
+// runtime writes pending RunMeta before starting the workflow.
+//
+// When requireSession is false, the run is one-shot: SessionID must stay empty,
+// no SessionStore writes are performed, and no SessionID search attribute is set.
+func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName, defaultQueue string, requireSession bool) (engine.WorkflowHandle, error) {
 	// Close registration on first run submission to avoid dynamic handler registration after workers may have started.
 	r.mu.Lock()
 	r.registrationClosed = true
@@ -1284,15 +1318,19 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	if input.RunID == "" {
 		input.RunID = generateRunID(string(input.AgentID))
 	}
-	if strings.TrimSpace(input.SessionID) == "" {
-		return nil, ErrMissingSessionID
-	}
-	sess, err := r.SessionStore.LoadSession(ctx, input.SessionID)
-	if err != nil {
-		return nil, err
-	}
-	if sess.Status == session.StatusEnded {
-		return nil, session.ErrSessionEnded
+	if requireSession {
+		if strings.TrimSpace(input.SessionID) == "" {
+			return nil, ErrMissingSessionID
+		}
+		sess, err := r.SessionStore.LoadSession(ctx, input.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		if sess.Status == session.StatusEnded {
+			return nil, session.ErrSessionEnded
+		}
+	} else if strings.TrimSpace(input.SessionID) != "" {
+		return nil, ErrSessionNotAllowed
 	}
 	req := engine.WorkflowStartRequest{
 		ID:        input.RunID,
@@ -1357,25 +1395,31 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 			req.RetryPolicy = rp
 		}
 	}
-	if req.SearchAttributes == nil {
-		req.SearchAttributes = make(map[string]any, 1)
-	}
-	if v, ok := req.SearchAttributes["SessionID"]; ok && v != input.SessionID {
-		return nil, fmt.Errorf("workflow search attribute SessionID=%v does not match session id %q", v, input.SessionID)
-	}
-	req.SearchAttributes["SessionID"] = input.SessionID
-	now := time.Now().UTC()
-	if err := r.SessionStore.UpsertRun(ctx, session.RunMeta{
-		AgentID:   string(input.AgentID),
-		RunID:     input.RunID,
-		SessionID: input.SessionID,
-		Status:    session.RunStatusPending,
-		StartedAt: now,
-		UpdatedAt: now,
-		Labels:    cloneLabels(input.Labels),
-		Metadata:  cloneMetadata(input.Metadata),
-	}); err != nil {
-		return nil, err
+	if requireSession {
+		if req.SearchAttributes == nil {
+			req.SearchAttributes = make(map[string]any, 1)
+		}
+		if v, ok := req.SearchAttributes["SessionID"]; ok && v != input.SessionID {
+			return nil, fmt.Errorf("workflow search attribute SessionID=%v does not match session id %q", v, input.SessionID)
+		}
+		req.SearchAttributes["SessionID"] = input.SessionID
+		now := time.Now().UTC()
+		if err := r.SessionStore.UpsertRun(ctx, session.RunMeta{
+			AgentID:   string(input.AgentID),
+			RunID:     input.RunID,
+			SessionID: input.SessionID,
+			Status:    session.RunStatusPending,
+			StartedAt: now,
+			UpdatedAt: now,
+			Labels:    cloneLabels(input.Labels),
+			Metadata:  cloneMetadata(input.Metadata),
+		}); err != nil {
+			return nil, err
+		}
+	} else if req.SearchAttributes != nil {
+		if _, ok := req.SearchAttributes["SessionID"]; ok {
+			return nil, fmt.Errorf("workflow search attribute SessionID is not allowed for one-shot runs")
+		}
 	}
 	handle, err := r.Engine.StartWorkflow(ctx, req)
 	if err != nil {

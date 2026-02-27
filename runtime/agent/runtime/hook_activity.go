@@ -31,6 +31,7 @@ const hookActivityName = "runtime.publish_hook"
 //     from the stream consumer's view.
 //   - After the session is ended, stream emission becomes a no-op to avoid
 //     "stream destroyed mid-run" turning into spurious run failures.
+//   - One-shot runs (empty SessionID) bypass SessionStore and stream sinks.
 //   - Publishing to the hook bus is best-effort. The bus drives derived storage
 //     (memory) and local observability, but it must not be allowed to corrupt or
 //     block the canonical transcript.
@@ -66,12 +67,18 @@ func (r *Runtime) hookActivity(ctx context.Context, input *HookActivityInput) er
 			return err
 		}
 
-		if err := r.updateRunMetaFromHookEvent(ctx, evt); err != nil {
-			return err
+		// Session-derived metadata exists only for sessionful runs. One-shot runs
+		// intentionally bypass SessionStore and keep canonical state in RunEventStore.
+		if input.SessionID != "" {
+			if err := r.updateRunMetaFromHookEvent(ctx, evt); err != nil {
+				return err
+			}
 		}
 	}
 
-	if r.streamSubscriber != nil {
+	// Streaming is explicitly session-scoped. One-shot runs (empty SessionID) are
+	// runlog-only and must never publish to stream sinks.
+	if input.SessionID != "" && r.streamSubscriber != nil {
 		sess, err := r.SessionStore.LoadSession(ctx, input.SessionID)
 		if err != nil {
 			return err
