@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -32,10 +33,20 @@ func (h *hintingSink) Send(ctx context.Context, ev stream.Event) error {
 	switch e := ev.(type) {
 	case stream.ToolStart:
 		data := e.Data
-		if data.DisplayHint == "" {
-			if typed := h.decodePayload(ctx, tools.Ident(data.ToolName), data.Payload); typed != nil {
-				if s := rthints.FormatCallHint(tools.Ident(data.ToolName), typed); s != "" {
-					data.DisplayHint = s
+
+		toolName := tools.Ident(data.ToolName)
+		override := h.rt.hintOverrides[toolName]
+		if data.DisplayHint == "" || override != nil {
+			if typed := h.decodePayload(ctx, toolName, data.Payload); typed != nil {
+				if override != nil {
+					if hint, ok := override(ctx, toolName, typed); ok {
+						data.DisplayHint = hint
+					}
+				}
+				if data.DisplayHint == "" {
+					if s := rthints.FormatCallHint(toolName, typed); s != "" {
+						data.DisplayHint = s
+					}
 				}
 			}
 		}
@@ -58,16 +69,20 @@ func (h *hintingSink) Close(ctx context.Context) error {
 // runtime's tool codecs.
 //
 // Contract:
-// - Tool payloads are canonical JSON values for the tool payload schema.
-// - A missing/empty payload is normalized to "{}" (empty object) so tools with
-//   empty payload schemas still render call hints deterministically.
-// - Hints are only rendered from typed payloads produced by registered codecs.
-//   If decode fails, this function returns nil.
+//   - Tool payloads are canonical JSON values for the tool payload schema.
+//   - A missing/empty payload is normalized to "{}" (empty object) so tools with
+//     empty payload schemas still render call hints deterministically.
+//   - Hints are only rendered from typed payloads produced by registered codecs.
+//     If decode fails, this function returns nil.
 func (h *hintingSink) decodePayload(ctx context.Context, tool tools.Ident, payload any) any {
 	raw := json.RawMessage("{}")
 	switch v := payload.(type) {
 	case nil:
 		// Keep canonical empty object.
+	case rawjson.RawJSON:
+		if len(v) > 0 {
+			raw = v.RawMessage()
+		}
 	case json.RawMessage:
 		if len(v) > 0 {
 			raw = v

@@ -2,11 +2,13 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"text/template"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -73,6 +75,100 @@ func TestHintingSinkRendersHintForNilAndEmptyPayload(t *testing.T) {
 			require.True(t, ok)
 			assert.Equal(t, "Checking active alarms", out.Data.DisplayHint)
 		})
+	}
+}
+
+func TestHintingSinkRendersHintForRawJSONPayload(t *testing.T) {
+	toolID := tools.Ident("runtime.hints.test.rawjson")
+	rthints.RegisterCallHint(toolID, mustTemplate(t, toolID, "Checking {{.Resolution}} energy rates"))
+
+	rt := &Runtime{
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			toolID: newTypedHintSpec(toolID),
+		},
+		logger: telemetry.NoopLogger{},
+	}
+
+	sink := &hintRecordingStreamSink{}
+	decorated := newHintingSink(rt, sink)
+	payload := stream.ToolStartPayload{
+		ToolCallID: "call-rawjson-1",
+		ToolName:   string(toolID),
+		Payload:    rawjson.RawJSON([]byte(`{"resolution":"hourly"}`)),
+	}
+	ev := stream.ToolStart{
+		Base: stream.NewBase(stream.EventToolStart, "run-1", "session-1", payload),
+		Data: payload,
+	}
+
+	require.NoError(t, decorated.Send(context.Background(), ev))
+	require.Len(t, sink.events, 1)
+
+	out, ok := sink.events[0].(stream.ToolStart)
+	require.True(t, ok)
+	assert.Equal(t, "Checking hourly energy rates", out.Data.DisplayHint)
+}
+
+func TestHintingSinkOverrideWins(t *testing.T) {
+	toolID := tools.Ident("runtime.hints.test.override")
+	rthints.RegisterCallHint(toolID, mustTemplate(t, toolID, "Checking {{.Resolution}} energy rates"))
+
+	rt := &Runtime{
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			toolID: newTypedHintSpec(toolID),
+		},
+		logger: telemetry.NoopLogger{},
+		hintOverrides: map[tools.Ident]HintOverrideFunc{
+			toolID: func(ctx context.Context, tool tools.Ident, payload any) (string, bool) {
+				return "Overridden hint", true
+			},
+		},
+	}
+
+	sink := &hintRecordingStreamSink{}
+	decorated := newHintingSink(rt, sink)
+	payload := stream.ToolStartPayload{
+		ToolCallID: "call-override-1",
+		ToolName:   string(toolID),
+		Payload:    rawjson.RawJSON([]byte(`{"resolution":"hourly"}`)),
+	}
+	ev := stream.ToolStart{
+		Base: stream.NewBase(stream.EventToolStart, "run-1", "session-1", payload),
+		Data: payload,
+	}
+
+	require.NoError(t, decorated.Send(context.Background(), ev))
+	require.Len(t, sink.events, 1)
+
+	out, ok := sink.events[0].(stream.ToolStart)
+	require.True(t, ok)
+	assert.Equal(t, "Overridden hint", out.Data.DisplayHint)
+}
+
+func newTypedHintSpec(name tools.Ident) tools.ToolSpec {
+	codec := tools.JSONCodec[any]{
+		ToJSON: json.Marshal,
+		FromJSON: func(data []byte) (any, error) {
+			var out struct {
+				Resolution string `json:"resolution"`
+			}
+			if err := json.Unmarshal(data, &out); err != nil {
+				return nil, err
+			}
+			return &out, nil
+		},
+	}
+	return tools.ToolSpec{
+		Name:    name,
+		Toolset: "runtime.hints",
+		Payload: tools.TypeSpec{
+			Name:  string(name) + "_payload",
+			Codec: codec,
+		},
+		Result: tools.TypeSpec{
+			Name:  string(name) + "_result",
+			Codec: codec,
+		},
 	}
 }
 

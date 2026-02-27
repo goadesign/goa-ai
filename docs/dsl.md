@@ -741,7 +741,9 @@ Tool("get_data", "Get user data", func() {
 
 ### Display Hint Templates
 
-`CallHintTemplate` and `ResultHintTemplate` configure Go templates for UI display:
+`CallHintTemplate` and `ResultHintTemplate` configure Go templates for UI display.
+These templates are rendered by the runtime against the tool's **typed** payload/result structs
+and surfaced via hook + stream events as `DisplayHint` (call) and result previews (result).
 
 ```go
 Tool("search", "Search documents", func() {
@@ -760,6 +762,21 @@ Tool("search", "Search documents", func() {
 
 Templates are compiled with `missingkey=error`. Keep hints concise (≤140 characters recommended).
 Template variables use Go field names (e.g., `.Query`, `.Limit`), not JSON keys.
+
+**Runtime contract:**
+
+- Tool call scheduled events default to `DisplayHint==""` at construction time. The runtime may enrich
+  and persist a **durable default** hint when it can decode the typed payload and execute the template.
+- If you set `DisplayHint` explicitly (non-empty) before publishing the hook event, the runtime treats it
+  as authoritative and will not overwrite it.
+- If typed decoding fails, the runtime leaves `DisplayHint` empty (strict contract: no rendering against
+  raw JSON bytes).
+
+**Per-consumer overrides (optional):**
+
+If you need a different hint for a specific deployment/consumer (e.g., UI wording), configure a runtime
+override via `runtime.WithHintOverrides`. Overrides take precedence over DSL templates for streamed
+`tool_start` events.
 
 ### BoundedResult
 

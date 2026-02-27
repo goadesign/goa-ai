@@ -443,8 +443,8 @@ policies, and MCP servers within Goa service designs.
 | `Tags(...)` | Attach metadata labels for filtering/categorization |
 | `BindTo(method)` or `BindTo(service, method)` | Bind tool to service method implementation |
 | `Inject(fields...)` | Mark fields as infrastructure-only (hidden from LLM) |
-| `CallHintTemplate(tmpl)` | Go template for call display hint |
-| `ResultHintTemplate(tmpl)` | Go template for result display hint |
+| `CallHintTemplate(tmpl)` | Go template for tool call `DisplayHint` (typed payload; rendered by runtime) |
+| `ResultHintTemplate(tmpl)` | Go template for tool result display (typed result; rendered by runtime) |
 | `BoundedResult()` | Mark result as bounded view over larger data |
 | `ResultReminder(text)` | Static system reminder injected after tool result |
 

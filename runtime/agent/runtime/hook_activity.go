@@ -1,13 +1,16 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/runlog"
+	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/session"
 )
 
@@ -36,6 +39,15 @@ func (r *Runtime) hookActivity(ctx context.Context, input *HookActivityInput) er
 	if err != nil {
 		return err
 	}
+	payload := append([]byte(nil), input.Payload...)
+	if e, ok := evt.(*hooks.ToolCallScheduledEvent); ok {
+		if enriched := r.enrichToolCallScheduledHint(ctx, e); enriched {
+			reencoded, err := hooks.EncodeToHookInput(e, input.TurnID)
+			if err == nil {
+				payload = append([]byte(nil), reencoded.Payload.RawMessage()...)
+			}
+		}
+	}
 	// Tool call argument deltas are best-effort UX signals. They are intentionally
 	// excluded from the canonical run event log to avoid bloating durable history.
 	//
@@ -48,7 +60,7 @@ func (r *Runtime) hookActivity(ctx context.Context, input *HookActivityInput) er
 			SessionID: input.SessionID,
 			TurnID:    input.TurnID,
 			Type:      input.Type,
-			Payload:   append([]byte(nil), input.Payload...),
+			Payload:   payload,
 			Timestamp: time.UnixMilli(evt.Timestamp()).UTC(),
 		}); err != nil {
 			return err
@@ -79,6 +91,33 @@ func (r *Runtime) hookActivity(ctx context.Context, input *HookActivityInput) er
 		}
 	}
 	return nil
+}
+
+func (r *Runtime) enrichToolCallScheduledHint(ctx context.Context, evt *hooks.ToolCallScheduledEvent) bool {
+	if evt == nil {
+		return false
+	}
+	if evt.DisplayHint != "" {
+		return false
+	}
+	raw := normalizeHintPayloadJSON(evt.Payload.RawMessage())
+	typed, err := r.unmarshalToolValue(ctx, evt.ToolName, raw, true)
+	if err != nil || typed == nil {
+		return false
+	}
+	if hint := rthints.FormatCallHint(evt.ToolName, typed); hint != "" {
+		evt.DisplayHint = hint
+		return true
+	}
+	return false
+}
+
+func normalizeHintPayloadJSON(raw json.RawMessage) json.RawMessage {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return json.RawMessage("{}")
+	}
+	return raw
 }
 
 func (r *Runtime) updateRunMetaFromHookEvent(ctx context.Context, evt hooks.Event) error {
