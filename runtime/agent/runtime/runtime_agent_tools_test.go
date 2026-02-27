@@ -15,6 +15,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/prompt"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -76,7 +77,7 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 		Name:      tools.Ident("tool"),
 		RunID:     "run",
 		SessionID: "sess-1",
-		Payload:   json.RawMessage(`{"x":"world"}`),
+		Payload:   rawjson.RawJSON([]byte(`{"x":"world"}`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -218,7 +219,7 @@ func TestDefaultAgentToolExecute_PromptSpecPreferredOverTemplateTextPromptBuilde
 		Name:      tools.Ident("tool"),
 		RunID:     "run",
 		SessionID: "sess-1",
-		Payload:   json.RawMessage(`{"x":"world"}`),
+		Payload:   rawjson.RawJSON([]byte(`{"x":"world"}`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -320,7 +321,7 @@ func TestDefaultAgentToolExecute_PromptSpecRendersWithSchemaKeys(t *testing.T) {
 		Name:      tools.Ident("tool"),
 		RunID:     "run",
 		SessionID: "sess-1",
-		Payload:   json.RawMessage(`{"time_context":"last 48h"}`),
+		Payload:   rawjson.RawJSON([]byte(`{"time_context":"last 48h"}`)),
 	}
 	spec := newAnyJSONSpec(call.Name, "svc.tools")
 	spec.Payload.Codec = codec
@@ -387,7 +388,7 @@ func TestDefaultAgentToolExecute_PromptSpecRejectsNonObjectPayloadShape(t *testi
 		Name:      tools.Ident("tool"),
 		RunID:     "run",
 		SessionID: "sess-1",
-		Payload:   json.RawMessage(`"last 48h"`),
+		Payload:   rawjson.RawJSON([]byte(`"last 48h"`)),
 	}
 	spec := newAnyJSONSpec(call.Name, "svc.tools")
 	spec.Payload.Codec = stringCodec

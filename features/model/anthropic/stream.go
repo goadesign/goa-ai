@@ -2,7 +2,6 @@ package anthropic
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +12,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -405,7 +405,7 @@ func (tb *thinkingBuffer) finalize(index int) *model.ThinkingPart {
 	return nil
 }
 
-func decodeToolPayload(raw string) json.RawMessage {
+func decodeToolPayload(raw string) rawjson.RawJSON {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		trimmed = "{}"
@@ -414,5 +414,5 @@ func decodeToolPayload(raw string) json.RawMessage {
 	if len(data) == 0 {
 		return nil
 	}
-	return json.RawMessage(data)
+	return rawjson.RawJSON(data)
 }

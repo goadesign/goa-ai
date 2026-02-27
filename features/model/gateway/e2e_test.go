@@ -2,12 +2,12 @@ package gateway
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"sync/atomic"
 	"testing"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 // --- Test helpers ---
@@ -45,7 +45,7 @@ func (p *captureProvider) Stream(_ context.Context, req *model.Request) (model.S
 			Type: model.ChunkTypeToolCall,
 			ToolCall: &model.ToolCall{
 				Name:    "emit_tool",
-				Payload: json.RawMessage(`{"k":"v"}`),
+				Payload: rawjson.RawJSON([]byte(`{"k":"v"}`)),
 			},
 		},
 		{Type: model.ChunkTypeUsage, UsageDelta: &model.TokenUsage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3}},

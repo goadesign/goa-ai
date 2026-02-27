@@ -40,10 +40,10 @@
 package run
 
 import (
-	"encoding/json"
 	"errors"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -94,7 +94,7 @@ type (
 		// is an agent-as-tool execution. Nil for top-level runs. Nested agent planners
 		// can use this structured input to render method-specific prompts without
 		// reparsing free-form messages.
-		ToolArgs json.RawMessage
+		ToolArgs rawjson.RawJSON
 
 		// Attempt counts how many times the run has been attempted/resumed.
 		Attempt int

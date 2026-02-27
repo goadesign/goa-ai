@@ -9,6 +9,7 @@ import (
 	"io"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 // StreamSummary aggregates the outcome of a streaming LLM invocation. Planners
@@ -80,7 +81,7 @@ func ConsumeStream(ctx context.Context, streamer model.Streamer, ev PlannerEvent
 			}
 			summary.ToolCalls = append(summary.ToolCalls, ToolRequest{
 				Name:       chunk.ToolCall.Name,
-				Payload:    chunk.ToolCall.Payload,
+				Payload:    rawjson.RawJSON(chunk.ToolCall.Payload),
 				ToolCallID: chunk.ToolCall.ID,
 			})
 		case model.ChunkTypeToolCallDelta:

@@ -696,6 +696,21 @@ func serviceExecutorFiles(agent *AgentData) []*codegen.File {
 				break
 			}
 		}
+		needsRawJSON := false
+		for _, t := range ts.Tools {
+			if t == nil || !t.IsMethodBacked {
+				continue
+			}
+			for _, sd := range t.ServerData {
+				if sd != nil && sd.MethodResultField != "" {
+					needsRawJSON = true
+					break
+				}
+			}
+			if needsRawJSON {
+				break
+			}
+		}
 		imports := []*codegen.ImportSpec{
 			{Path: "context"},
 			{Path: "encoding/json"},
@@ -707,6 +722,9 @@ func serviceExecutorFiles(agent *AgentData) []*codegen.File {
 			{Path: "goa.design/goa-ai/runtime/agent/tools"},
 			{Path: "goa.design/goa-ai/runtime/toolregistry"},
 			{Path: ts.SpecsImportPath, Name: specsAlias},
+		}
+		if needsRawJSON {
+			imports = append(imports, &codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/rawjson"})
 		}
 		if needsSharedTypes {
 			typesPath := filepath.ToSlash(filepath.Join(agent.Genpkg, "types"))

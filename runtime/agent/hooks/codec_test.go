@@ -1,13 +1,13 @@
 package hooks
 
 import (
-	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/prompt"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -18,8 +18,8 @@ func TestDecodeFromHookInput_ToolResultReceivedPreservesServerDataBytes(t *testi
 	toolName := tools.Ident("svc.tools.lookup")
 	toolCallID := "call-1"
 
-	resultJSON := json.RawMessage(`{"summary":"ok"}`)
-	serverData := json.RawMessage(`[{"kind":"example.topology","data":{"hello":"world","n":1}}]`)
+	resultJSON := rawjson.RawJSON([]byte(`{"summary":"ok"}`))
+	serverData := rawjson.RawJSON([]byte(`[{"kind":"example.topology","data":{"hello":"world","n":1}}]`))
 
 	ev := NewToolResultReceivedEvent(
 		runID,

@@ -1,13 +1,13 @@
 package temporal
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -27,7 +27,7 @@ func TestNewAgentDataConverter_DecodesToolResultsSetIntoSinglePointer(t *testing
 			{
 				Name:       toolName,
 				ToolCallID: "tooluse-123",
-				Result:     json.RawMessage(`{"value":"ok"}`),
+				Result:     rawjson.RawJSON([]byte(`{"value":"ok"}`)),
 			},
 		},
 	})

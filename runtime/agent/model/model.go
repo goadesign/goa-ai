@@ -5,10 +5,10 @@ package model
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
 	"goa.design/goa-ai/runtime/agent/prompt"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -259,10 +259,11 @@ type (
 
 		// Payload is the canonical JSON arguments supplied by the model.
 		//
-		// Provider adapters MUST populate this as a canonical json.RawMessage;
-		// planners and runtimes treat it as opaque JSON and rely on codecs for
-		// any schema-aware decoding.
-		Payload json.RawMessage
+		// Provider adapters MUST populate this as a valid JSON value. Planners and
+		// runtimes treat it as opaque JSON and rely on codecs for any schema-aware
+		// decoding. The RawJSON type exists to make workflow-boundary encoding safe
+		// (it normalizes empty payloads to JSON null).
+		Payload rawjson.RawJSON
 
 		// ID is an optional provider-issued identifier for the tool call.
 		ID string

@@ -10,6 +10,7 @@ import (
 
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	mockpulse "goa.design/goa-ai/features/stream/pulse/clients/pulse/mocks"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/stream"
 	streamopts "goa.design/pulse/streaming/options"
 )
@@ -17,7 +18,7 @@ import (
 func TestSendPublishesEnvelope(t *testing.T) {
 	cli := mockpulse.NewClient(t)
 	str := mockpulse.NewStream(t)
-	server := json.RawMessage(`[{"kind":"aura.evidence","data":[{"uri":"atlas://points/123","kind":"time_series"}]}]`)
+	server := rawjson.RawJSON([]byte(`[{"kind":"aura.evidence","data":[{"uri":"atlas://points/123","kind":"time_series"}]}]`))
 
 	cli.AddStream(func(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
 		require.Equal(t, "session/session-123", name)
@@ -44,7 +45,7 @@ func TestSendPublishesEnvelope(t *testing.T) {
 	require.NoError(t, err)
 
 	endPayload := stream.ToolEndPayload{
-		Result: json.RawMessage(`{"status":"ok"}`),
+		Result: rawjson.RawJSON([]byte(`{"status":"ok"}`)),
 	}
 	err = sink.Send(context.Background(), stream.ToolEnd{
 		Base:       stream.NewBase(stream.EventToolEnd, "run-123", "session-123", endPayload),
@@ -88,10 +89,10 @@ func TestOnPublishedCalled(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	endPayload := stream.ToolEndPayload{Result: json.RawMessage(`{"status":"ok"}`)}
+	endPayload := stream.ToolEndPayload{Result: rawjson.RawJSON([]byte(`{"status":"ok"}`))}
 	err = sink.Send(context.Background(), stream.ToolEnd{
 		Base:       stream.NewBase(stream.EventToolEnd, "run-123", "session-123", endPayload),
-		ServerData: json.RawMessage(`{"x":1}`),
+		ServerData: rawjson.RawJSON([]byte(`{"x":1}`)),
 		Data:       endPayload,
 	})
 	require.NoError(t, err)

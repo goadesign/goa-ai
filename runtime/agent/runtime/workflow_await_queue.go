@@ -13,7 +13,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -24,6 +23,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
@@ -115,7 +115,7 @@ func (r *Runtime) waitAwaitConfirmation(
 				it.call.ToolCallID,
 				it.call.ParentToolCallID,
 				deniedResult,
-				resultJSON,
+				rawjson.RawJSON(resultJSON),
 				nil,
 				formatResultPreview(it.call.Name, deniedResult),
 				nil,
@@ -593,7 +593,7 @@ func (r *Runtime) consumeProvidedToolResults(ctx context.Context, input *RunInpu
 		if tr == nil {
 			continue
 		}
-		var resultJSON json.RawMessage
+		var resultJSON rawjson.RawJSON
 		if i < len(rs.Results) {
 			resultJSON = rs.Results[i].Result
 		}

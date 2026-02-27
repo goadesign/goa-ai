@@ -17,6 +17,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/prompt"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -127,7 +128,7 @@ type (
 		// Contract:
 		// - ServerData is canonical JSON bytes containing a list of server_data items.
 		// - Finalizers may decode ServerData items using tool-specific server_data codecs.
-		ServerData json.RawMessage
+		ServerData rawjson.RawJSON
 		Error      error
 	}
 
@@ -498,7 +499,7 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 				call.Name,
 			)
 		}
-		val, err := r.unmarshalToolValue(ctx, call.Name, call.Payload, true)
+		val, err := r.unmarshalToolValue(ctx, call.Name, call.Payload.RawMessage(), true)
 		if err != nil {
 			return nil, zeroCtx, fmt.Errorf("decode agent tool payload for %s: %w", call.Name, err)
 		}
@@ -560,7 +561,7 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 	// Record the canonical JSON args using the tool codec. marshalToolValue
 	// returns a defensive copy for json.RawMessage, so this never double-encodes.
 	if argsJSON, err := r.marshalToolValue(ctx, call.Name, call.Payload, true); err == nil && len(argsJSON) > 0 {
-		nestedRunCtx.ToolArgs = argsJSON
+		nestedRunCtx.ToolArgs = rawjson.RawJSON(argsJSON)
 	}
 
 	return messages, nestedRunCtx, nil
@@ -685,12 +686,12 @@ func (r *Runtime) adaptWithFinalizer(ctx context.Context, cfg *AgentToolConfig, 
 		// Do not decode here: the parent runtime is not guaranteed to have the tool
 		// codec for the nested agent's internal tools.
 		var childResult any
-		if hasNonNullJSON(ev.Result) {
+		if hasNonNullJSON(ev.Result.RawMessage()) {
 			childResult = ev.Result
 		}
-		var childServerData json.RawMessage
-		if hasNonNullJSON(ev.ServerData) {
-			childServerData = append(json.RawMessage(nil), ev.ServerData...)
+		var childServerData rawjson.RawJSON
+		if hasNonNullJSON(ev.ServerData.RawMessage()) {
+			childServerData = append(rawjson.RawJSON(nil), ev.ServerData...)
 		}
 		children = append(children, ChildCall{
 			ToolName:   ev.Name,
@@ -705,7 +706,7 @@ func (r *Runtime) adaptWithFinalizer(ctx context.Context, cfg *AgentToolConfig, 
 	var parentPayload any
 	if len(call.Payload) > 0 {
 		if _, ok := r.ToolSpec(call.Name); ok {
-			val, err := r.unmarshalToolValue(ctx, call.Name, call.Payload, true)
+			val, err := r.unmarshalToolValue(ctx, call.Name, call.Payload.RawMessage(), true)
 			if err != nil {
 				return nil, fmt.Errorf("decode parent tool payload for %s: %w", call.Name, err)
 			}
@@ -782,11 +783,11 @@ func (r *Runtime) adaptWithJSONOnly(ctx context.Context, cfg *AgentToolConfig, c
 	case n == 1 && outPtr.ToolEvents[0] != nil:
 		// Validate by round-tripping through the parent tool codec. This ensures
 		// that result hint templates and UIs always see the parent tool's schema shape.
-		if !hasNonNullJSON(outPtr.ToolEvents[0].Result) {
+		if !hasNonNullJSON(outPtr.ToolEvents[0].Result.RawMessage()) {
 			aggErr = fmt.Errorf("JSONOnly produced empty child result for %s", call.Name)
 			break
 		}
-		typed, err := r.unmarshalToolValue(ctx, call.Name, outPtr.ToolEvents[0].Result, false)
+		typed, err := r.unmarshalToolValue(ctx, call.Name, outPtr.ToolEvents[0].Result.RawMessage(), false)
 		if err != nil {
 			aggErr = err
 			break

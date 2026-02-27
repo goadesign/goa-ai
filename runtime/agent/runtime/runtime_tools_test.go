@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/session"
@@ -55,9 +55,7 @@ func TestExecuteToolActivityPropagatesServerData(t *testing.T) {
 			Name:       call.Name,
 			ToolCallID: call.ToolCallID,
 			Result:     map[string]any{"ok": true},
-			ServerData: json.RawMessage(
-				`[{"kind":"example.evidence","data":[{"uri":"example://points/123","kind":"time_series"}]}]`,
-			),
+			ServerData: rawjson.RawJSON([]byte(`[{"kind":"example.evidence","data":[{"uri":"example://points/123","kind":"time_series"}]}]`)),
 		}, nil
 	}}}}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
@@ -283,7 +281,7 @@ func TestServiceToolEventsPropagateServerData(t *testing.T) {
 			tools.Ident("svc.tools.example"): newAnyJSONSpec("svc.tools.example", "svc.tools"),
 		},
 	}
-	server := json.RawMessage(`[{"kind":"example.evidence","data":[{"uri":"example://points/123","kind":"time_series"}]}]`)
+	server := rawjson.RawJSON([]byte(`[{"kind":"example.evidence","data":[{"uri":"example://points/123","kind":"time_series"}]}]`))
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		hookRuntime: rt,

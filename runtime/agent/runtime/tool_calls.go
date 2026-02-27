@@ -12,6 +12,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 	goa "goa.design/goa/v3/pkg"
@@ -222,7 +223,7 @@ func (e *toolBatchExec) publishToolResultReceived(ctx context.Context, call plan
 		call.ToolCallID,
 		parentID,
 		tr.Result,
-		resultJSON,
+		rawjson.RawJSON(resultJSON),
 		tr.ServerData,
 		formatResultPreview(call.Name, tr.Result),
 		tr.Bounds,
@@ -307,8 +308,8 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 					ToolCallID:       call.ToolCallID,
 					ParentToolCallID: call.ParentToolCallID,
 				}
-				if adapted, err := ts.PayloadAdapter(ctx, meta, call.Name, raw); err == nil && len(adapted) > 0 {
-					raw = adapted
+				if adapted, err := ts.PayloadAdapter(ctx, meta, call.Name, raw.RawMessage()); err == nil && len(adapted) > 0 {
+					raw = rawjson.RawJSON(adapted)
 				} else if err != nil {
 					return nil, fmt.Errorf("inline payload adapter failed for %s: %w", call.Name, err)
 				}
@@ -554,8 +555,8 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 			}
 
 			var decoded any
-			if out.Error == "" && hasNonNullJSON(out.Payload) {
-				v, decErr := e.r.unmarshalToolValue(ctx, info.call.Name, out.Payload, false)
+			if out.Error == "" && hasNonNullJSON(out.Payload.RawMessage()) {
+				v, decErr := e.r.unmarshalToolValue(ctx, info.call.Name, out.Payload.RawMessage(), false)
 				if decErr != nil {
 					return nil, nil, false, fmt.Errorf("tool %q result decode failed (tool_call_id=%s): %w", info.call.Name, info.call.ToolCallID, decErr)
 				}

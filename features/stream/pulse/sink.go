@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"goa.design/goa-ai/features/stream/pulse/clients/pulse"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/stream"
 )
 
@@ -67,7 +68,7 @@ type (
 		// ServerData carries server-only metadata for events that support it
 		// (currently `tool_end`). It is never forwarded to model providers, but
 		// downstream subscribers (e.g., persistence drains) may consume it.
-		ServerData json.RawMessage `json:"server_data,omitempty"`
+		ServerData rawjson.RawJSON `json:"server_data,omitempty"`
 	}
 
 	// PublishedEvent describes a runtime event that has been successfully
