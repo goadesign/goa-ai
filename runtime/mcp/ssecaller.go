@@ -43,7 +43,7 @@ func (c *SSECaller) CallTool(ctx context.Context, req CallRequest) (CallResponse
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
 	injectTraceHeaders(ctx, httpReq.Header)
-	//nolint:gosec // MCP endpoint is provided by the caller; transport must perform the request.
+	// #nosec G704 -- MCP endpoint is provided by the caller; transport must perform the request.
 	resp, err := c.transport.client.Do(httpReq)
 	if err != nil {
 		return CallResponse{}, err
