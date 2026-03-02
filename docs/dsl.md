@@ -122,7 +122,11 @@ Prompt management is intentionally runtime-driven:
 - Register baseline prompt specs via `Runtime.PromptRegistry.Register(prompt.PromptSpec{...})`.
 - Configure scoped overrides with `runtime.WithPromptStore(...)` (for example, Mongo prompt store).
 - Render prompts in planners using `PlannerContext.RenderPrompt(...)`.
-- For agent-as-tool registrations, map tool IDs to prompt IDs with `runtime.WithPromptSpec(...)`.
+- For agent-as-tool registrations, consumer-side prompt rendering is optional. If you need the
+  consumer to render a payload-only user message, you may map tool IDs to prompt IDs with
+  `runtime.WithPromptSpec(...)` (or provide templates/text). When no consumer-side content is
+  configured, the runtime uses the canonical JSON tool payload bytes as the nested user message,
+  and provider planners can render their own prompts with injected server-side context.
 
 This keeps prompt rollout and overrides operational (runtime/store level) while the DSL remains focused
 on agent/tool contracts.

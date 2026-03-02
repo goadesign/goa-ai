@@ -1,3 +1,16 @@
+// Package runtime provides the goa-ai runtime implementation.
+//
+// This file contains agent-as-tool support: a toolset registration that executes a
+// nested agent run and adapts its child tool results into a parent tool_result.
+//
+// Contract highlights:
+//   - The nested run context always carries the canonical JSON tool payload as
+//     RunContext.ToolArgs for provider planners to decode once and render
+//     method-specific prompts.
+//   - Consumer-side prompt rendering (PromptSpecs/Templates/Texts) is optional and
+//     must be payload-only: it cannot depend on provider-only server context.
+//   - When no consumer-side prompt content is configured, the runtime uses the
+//     canonical tool payload to construct the nested user message deterministically.
 package runtime
 
 import (
@@ -32,26 +45,17 @@ type (
 	// no explicit text or template is configured.
 	PromptBuilder func(id tools.Ident, payload any) string
 
-	// AgentToolConfig configures how an agent-tool executes.
+	// AgentToolContent configures the optional consumer-side rendering of the
+	// nested agent's initial user message.
 	//
-	// AgentID identifies the nested agent to execute. SystemPrompts optionally
-	// maps tool IDs (globally unique simple names) to system prompts that will
-	// be prepended to the nested agent messages for that tool.
-	AgentToolConfig struct {
-		// AgentID is the fully qualified identifier of the nested agent.
-		AgentID agent.Ident
-		// Route provides the routing metadata used to start the nested agent as a
-		// child workflow. Route must be set; agent-as-tool execution does not fall
-		// back to local agent registration.
-		Route AgentRoute
-		// PlanActivityName is the fully-qualified plan activity name for the nested agent.
-		PlanActivityName string
-		// ResumeActivityName is the fully-qualified resume activity name for the nested agent.
-		ResumeActivityName string
-		// ExecuteToolActivity is the fully-qualified execute_tool activity name for the nested agent.
-		ExecuteToolActivity string
-		// SystemPrompt, when non-empty, is prepended as a system message for all tools.
-		SystemPrompt string
+	// In most systems the provider planner owns prompt rendering and server-side
+	// context injection. In that model consumers should leave AgentToolContent
+	// empty and rely on the runtime default: the nested user message is the
+	// canonical JSON tool payload bytes.
+	//
+	// When consumer-side rendering is configured, it must be payload-only: it
+	// cannot depend on provider-only server context.
+	AgentToolContent struct {
 		// Templates maps tool IDs (globally unique) to compiled templates used to render
 		// the tool-specific user message from the tool payload. Templates MUST be
 		// provided for all tools in this toolset and are compiled with
@@ -72,9 +76,34 @@ type (
 		// field names.
 		PromptSpecs map[tools.Ident]prompt.Ident
 		// Prompt builds a user message when no PromptSpec, template, or text is
-		// configured for a tool. When nil, runtime returns an error for missing
-		// tool prompt content.
+		// configured for a tool.
 		Prompt PromptBuilder
+	}
+
+	// AgentToolConfig configures how an agent-tool executes.
+	//
+	// AgentID identifies the nested agent to execute. SystemPrompts optionally
+	// maps tool IDs (globally unique simple names) to system prompts that will
+	// be prepended to the nested agent messages for that tool.
+	AgentToolConfig struct {
+		// AgentID is the fully qualified identifier of the nested agent.
+		AgentID agent.Ident
+		// Route provides the routing metadata used to start the nested agent as a
+		// child workflow. Route must be set; agent-as-tool execution does not fall
+		// back to local agent registration.
+		Route AgentRoute
+		// PlanActivityName is the fully-qualified plan activity name for the nested agent.
+		PlanActivityName string
+		// ResumeActivityName is the fully-qualified resume activity name for the nested agent.
+		ResumeActivityName string
+		// ExecuteToolActivity is the fully-qualified execute_tool activity name for the nested agent.
+		ExecuteToolActivity string
+		// SystemPrompt, when non-empty, is prepended as a system message for all tools.
+		SystemPrompt string
+		// AgentToolContent configures optional consumer-side user message rendering.
+		// It is embedded so existing field selectors (cfg.Texts, cfg.PromptSpecs, …)
+		// remain valid, but callers are encouraged to treat it as an advanced knob.
+		AgentToolContent
 		// JSONOnly forces JSON-only parent tool_result emission for agent-as-tool.
 		// When true (default), the runtime ignores the nested agent's final prose and
 		// uses the aggregator output as the parent tool_result.
@@ -531,14 +560,17 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 		userContent = b.String()
 	} else if txt, ok := cfg.Texts[call.Name]; ok {
 		userContent = txt
-	} else {
-		if cfg.Prompt == nil {
-			return nil, zeroCtx, fmt.Errorf(
-				"agent tool %s is missing prompt content configuration; configure prompt spec, template, text, or prompt builder",
-				call.Name,
-			)
-		}
+	} else if cfg.Prompt != nil {
 		userContent = cfg.Prompt(call.Name, promptPayload)
+	} else if len(call.Payload) > 0 {
+		// Default: build a deterministic user message from the canonical payload.
+		//
+		// Contract:
+		//   - call.Payload is canonical JSON at this boundary (validated by tool codecs).
+		//   - Use the raw JSON bytes verbatim, preserving exact schema keys and shape.
+		//   - Consumer code that wants a natural-language projection for string payloads
+		//     must configure it explicitly via PromptSpecs/Templates/Texts/Prompt.
+		userContent = string(call.Payload.RawMessage())
 	}
 	if m := newTextAgentMessage(model.ConversationRoleUser, userContent); m != nil {
 		messages = append(messages, m)

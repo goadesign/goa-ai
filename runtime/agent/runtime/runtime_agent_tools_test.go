@@ -68,8 +68,10 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 			DefaultTaskQueue: "default",
 		},
 		SystemPrompt: "sys",
-		Templates:    map[tools.Ident]*template.Template{"tool": tmpl},
-		Texts:        map[tools.Ident]string{"tool": "fallback"},
+		AgentToolContent: AgentToolContent{
+			Templates: map[tools.Ident]*template.Template{"tool": tmpl},
+			Texts:     map[tools.Ident]string{"tool": "fallback"},
+		},
 	}
 
 	exec := defaultAgentToolExecute(rt, cfg)
@@ -123,7 +125,9 @@ func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
 			WorkflowName:     "wf",
 			DefaultTaskQueue: "default",
 		},
-		Texts: map[tools.Ident]string{"tool": "just text"},
+		AgentToolContent: AgentToolContent{
+			Texts: map[tools.Ident]string{"tool": "just text"},
+		},
 	}
 	exec := defaultAgentToolExecute(rt, cfg)
 	call := planner.ToolRequest{Name: tools.Ident("tool"), RunID: "run", SessionID: "sess-1"}
@@ -141,8 +145,12 @@ func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
 	}
 }
 
-func TestDefaultAgentToolExecute_ReturnsErrorWhenMissingContent(t *testing.T) {
+func TestDefaultAgentToolExecute_DefaultContentFromPayload(t *testing.T) {
+	var got []*model.Message
 	rt, ctx := setupTestAgentWithPlanner(func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+		if input != nil {
+			got = append([]*model.Message{}, input.Messages...)
+		}
 		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 	})
 	cfg := AgentToolConfig{
@@ -154,12 +162,21 @@ func TestDefaultAgentToolExecute_ReturnsErrorWhenMissingContent(t *testing.T) {
 		},
 	}
 	exec := defaultAgentToolExecute(rt, cfg)
-	call := planner.ToolRequest{Name: tools.Ident("tool"), RunID: "run", SessionID: "sess-1"}
+	call := planner.ToolRequest{
+		Name:      tools.Ident("tool"),
+		RunID:     "run",
+		SessionID: "sess-1",
+		Payload:   rawjson.RawJSON([]byte(`{"x":"world"}`)),
+	}
+	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
 	res, err := exec(ctx, &call)
-	require.Nil(t, res)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "missing prompt content configuration")
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t, "ok", res.Result)
+	require.Len(t, got, 1)
+	require.Equal(t, model.ConversationRoleUser, got[0].Role)
+	require.JSONEq(t, `{"x":"world"}`, firstText(got[0]))
 }
 
 func TestDefaultAgentToolExecute_PromptSpecPreferredOverTemplateTextPromptBuilder(t *testing.T) {
@@ -201,17 +218,19 @@ func TestDefaultAgentToolExecute_PromptSpecPreferredOverTemplateTextPromptBuilde
 			WorkflowName:     "wf",
 			DefaultTaskQueue: "default",
 		},
-		PromptSpecs: map[tools.Ident]prompt.Ident{
-			"tool": "agent.tool.prompt",
-		},
-		Templates: map[tools.Ident]*template.Template{
-			"tool": tmpl,
-		},
-		Texts: map[tools.Ident]string{
-			"tool": "from-text",
-		},
-		Prompt: func(id tools.Ident, payload any) string {
-			return "from-builder"
+		AgentToolContent: AgentToolContent{
+			PromptSpecs: map[tools.Ident]prompt.Ident{
+				"tool": "agent.tool.prompt",
+			},
+			Templates: map[tools.Ident]*template.Template{
+				"tool": tmpl,
+			},
+			Texts: map[tools.Ident]string{
+				"tool": "from-text",
+			},
+			Prompt: func(id tools.Ident, payload any) string {
+				return "from-builder"
+			},
 		},
 	}
 	exec := defaultAgentToolExecute(rt, cfg)
@@ -255,8 +274,10 @@ func TestDefaultAgentToolExecute_PromptSpecMissingReturnsError(t *testing.T) {
 			WorkflowName:     "wf",
 			DefaultTaskQueue: "default",
 		},
-		PromptSpecs: map[tools.Ident]prompt.Ident{
-			"tool": "missing.prompt",
+		AgentToolContent: AgentToolContent{
+			PromptSpecs: map[tools.Ident]prompt.Ident{
+				"tool": "missing.prompt",
+			},
 		},
 	}
 	exec := defaultAgentToolExecute(rt, cfg)
@@ -333,8 +354,10 @@ func TestDefaultAgentToolExecute_PromptSpecRendersWithSchemaKeys(t *testing.T) {
 			WorkflowName:     "wf",
 			DefaultTaskQueue: "default",
 		},
-		PromptSpecs: map[tools.Ident]prompt.Ident{
-			call.Name: "agent.tool.prompt",
+		AgentToolContent: AgentToolContent{
+			PromptSpecs: map[tools.Ident]prompt.Ident{
+				call.Name: "agent.tool.prompt",
+			},
 		},
 	}
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -400,8 +423,10 @@ func TestDefaultAgentToolExecute_PromptSpecRejectsNonObjectPayloadShape(t *testi
 			WorkflowName:     "wf",
 			DefaultTaskQueue: "default",
 		},
-		PromptSpecs: map[tools.Ident]prompt.Ident{
-			call.Name: "agent.tool.prompt",
+		AgentToolContent: AgentToolContent{
+			PromptSpecs: map[tools.Ident]prompt.Ident{
+				call.Name: "agent.tool.prompt",
+			},
 		},
 	}
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -442,8 +467,10 @@ func TestBuildAgentChildRequest_PreservesCanonicalToolArgs(t *testing.T) {
 		Payload:    payload,
 	}
 	cfg := &AgentToolConfig{
-		Texts: map[tools.Ident]string{
-			toolName: "use payload",
+		AgentToolContent: AgentToolContent{
+			Texts: map[tools.Ident]string{
+				toolName: "use payload",
+			},
 		},
 	}
 

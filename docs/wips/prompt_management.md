@@ -407,13 +407,13 @@ Update:
 Add:
 
 ```go
-func WithPromptSpec(id tools.Ident, promptID string) AgentToolOption
+func WithPromptSpec(id tools.Ident, promptID prompt.Ident) AgentToolOption
 ```
 
-and add map to config:
+and add map to agent-tool content config:
 
 ```go
-PromptSpecs map[tools.Ident]string
+PromptSpecs map[tools.Ident]prompt.Ident
 ```
 
 ### 10.2 Resolution behavior
@@ -424,7 +424,9 @@ During agent-as-tool execution:
    - resolve via prompt registry,
    - render using tool payload as `data`,
    - use rendered text as user prompt.
-2. Else fallback to current behavior (`Templates` -> `Texts` -> `PromptBuilder`).
+2. Else fallback to configured consumer-side content (`Templates` -> `Texts` -> `PromptBuilder`).
+3. When no consumer-side content is configured, use a deterministic default: the canonical JSON tool
+   payload bytes as the nested user message.
 
 This is additive and non-breaking.
 

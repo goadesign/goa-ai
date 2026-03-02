@@ -104,8 +104,10 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 		},
 		Name:     toolsetName,
 		JSONOnly: true,
-		Prompt: func(id tools.Ident, payload any) string {
-			return "invoke"
+		AgentToolContent: AgentToolContent{
+			Prompt: func(id tools.Ident, payload any) string {
+				return "invoke"
+			},
 		},
 	})
 	agentTools.Specs = []tools.ToolSpec{
