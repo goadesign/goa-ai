@@ -120,7 +120,8 @@ func (t *httpTransport) call(ctx context.Context, method string, params any, res
 	}
 	req.Header.Set("Content-Type", "application/json")
 	injectTraceHeaders(ctx, req.Header)
-		resp, err := t.client.Do(req)
+	//nolint:gosec // MCP endpoint is provided by the caller; transport must perform the request.
+	resp, err := t.client.Do(req)
 	if err != nil {
 		return err
 	}

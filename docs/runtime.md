@@ -697,8 +697,10 @@ reg := runtime.NewAgentToolsetRegistration(rt, runtime.AgentToolConfig{
         DefaultTaskQueue: "orchestrator.data-analyst",
     },
     SystemPrompt:    "You are a data analysis expert.",
-    Templates:       compiledTemplates,   // Per-tool user message templates
-    Texts:           textMessages,        // Alternative to templates
+    AgentToolContent: runtime.AgentToolContent{
+        Templates: compiledTemplates, // Per-tool user message templates (optional)
+        Texts:     textMessages,      // Alternative to templates (optional)
+    },
     JSONOnly:        true,                // Return structured results
     Finalizer:       myFinalizer,         // Custom result aggregation
 })
@@ -706,7 +708,10 @@ reg := runtime.NewAgentToolsetRegistration(rt, runtime.AgentToolConfig{
 
 ### Per-Tool Content
 
-Configure how tool payloads become nested agent prompts:
+Configure how tool payloads become the nested agent's initial user message.
+When you do not configure consumer-side content, the runtime uses a deterministic
+default: the canonical JSON tool payload bytes (verbatim) as the nested user
+message.
 
 ```go
 // Plain text for all tools
@@ -714,6 +719,9 @@ runtime.WithTextAll(toolIDs, "Process this: {{ . }}")
 
 // Template for specific tool
 runtime.WithTemplate(toolID, compiledTemplate)
+
+// PromptSpec for a tool (optional; payload-only)
+runtime.WithPromptSpec(toolID, "my.prompt.id")
 
 // Custom prompt builder
 cfg.Prompt = func(id tools.Ident, payload any) string {

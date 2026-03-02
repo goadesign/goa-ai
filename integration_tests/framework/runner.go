@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -485,7 +486,10 @@ func buildServerBinary(exampleRoot string) (string, error) {
 			return
 		}
 		binPath := filepath.Clean(tmpFile.Name())
-		_ = tmpFile.Close()
+		if err := tmpFile.Close(); err != nil {
+			buildErr = fmt.Errorf("close temp file for binary: %w", err)
+			return
+		}
 
 		// Build the server binary
 		//nolint:gosec // launching 'go build' test server is expected
@@ -500,11 +504,15 @@ func buildServerBinary(exampleRoot string) (string, error) {
 		buildCmd.Dir = cmdPath
 		out, err := buildCmd.CombinedOutput()
 		if err != nil {
-			_ = os.Remove(binPath)
 			buildErr = fmt.Errorf("go build failed in %s: %w\n%s", cmdPath, err, string(out))
+			//nolint:gosec // binPath is a temp file path from os.CreateTemp.
+			if rerr := os.Remove(binPath); rerr != nil {
+				buildErr = errors.Join(buildErr, fmt.Errorf("remove temp binary failed: %w", rerr))
+			}
 			return
 		}
 		// Verify binary exists
+		//nolint:gosec // binPath is a temp file path from os.CreateTemp.
 		if _, err := os.Stat(binPath); err != nil {
 			buildErr = fmt.Errorf("binary not found after build: %w", err)
 			return
@@ -653,6 +661,7 @@ func (r *Runner) ping() error {
 	b := []byte(`{"jsonrpc":"2.0","id":1}`)
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, r.baseURL.String()+"/rpc", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
+	//nolint:gosec // test runner always pings localhost (or a validated TEST_SERVER_URL)
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return err
@@ -899,6 +908,7 @@ func (r *Runner) executeJSONRPC(
 	if req.Header.Get("Content-Type") == "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	//nolint:gosec // test runner issues requests to localhost (or a validated TEST_SERVER_URL)
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return nil, nil, err
@@ -942,6 +952,7 @@ func (r *Runner) executeSSE(
 	if req.Header.Get("Accept") == "" {
 		req.Header.Set("Accept", "text/event-stream")
 	}
+	//nolint:gosec // test runner issues requests to localhost (or a validated TEST_SERVER_URL)
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return nil, err

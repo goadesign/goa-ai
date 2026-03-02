@@ -45,7 +45,7 @@ The following must already exist in goa-ai:
 - `features/prompt/mongo/*`
 - `runtime.WithPromptStore(...)`
 - `planner.PlannerContext.RenderPrompt(...)`
-- `WithPromptSpec(...)` for agent-tools
+- `WithPromptSpec(...)` for agent-tools (optional; payload-only consumer-side rendering)
 - `PromptRendered` hook/stream events
 - `model.Request.PromptRefs`
 

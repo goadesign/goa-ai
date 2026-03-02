@@ -42,8 +42,10 @@ func TestExecuteToolCalls_AgentToolsPublishResultsAsComplete(t *testing.T) {
 			WorkflowName:     "nested.workflow",
 			DefaultTaskQueue: "q",
 		},
-		Prompt: func(id tools.Ident, payload any) string {
-			return invokePromptText
+		AgentToolContent: AgentToolContent{
+			Prompt: func(id tools.Ident, payload any) string {
+				return invokePromptText
+			},
 		},
 	}
 	reg := NewAgentToolsetRegistration(rt, cfg)

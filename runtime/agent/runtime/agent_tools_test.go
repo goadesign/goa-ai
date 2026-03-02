@@ -70,7 +70,7 @@ func seedParentRun(t *testing.T, store session.Store, runID, sessionID string) {
 	require.NoError(t, err)
 }
 
-func TestAgentTool_MissingContentConfigurationFails(t *testing.T) {
+func TestAgentTool_DefaultContentFromPayload(t *testing.T) {
 	rt := &Runtime{
 		agents:        make(map[agent.Ident]AgentRegistration),
 		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
@@ -113,10 +113,13 @@ func TestAgentTool_MissingContentConfigurationFails(t *testing.T) {
 		Payload:   rawjson.RawJSON([]byte(`"hello"`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
+	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
 	tr, err := reg.Execute(ctx, &call)
-	require.Error(t, err)
-	require.Nil(t, tr)
-	require.Contains(t, err.Error(), "missing prompt content configuration")
+	require.NoError(t, err)
+	require.NotNil(t, tr)
+	require.Len(t, pl.msgs, 1)
+	require.Equal(t, model.ConversationRoleUser, pl.msgs[0].Role)
+	require.Equal(t, `"hello"`, firstText(pl.msgs[0]))
 }
 
 func TestAgentTool_TextContent(t *testing.T) {
@@ -148,8 +151,10 @@ func TestAgentTool_TextContent(t *testing.T) {
 			WorkflowName:     "wf",
 			DefaultTaskQueue: "default",
 		},
-		Texts: map[tools.Ident]string{
-			tools.Ident("svc.tools.do"): "hello",
+		AgentToolContent: AgentToolContent{
+			Texts: map[tools.Ident]string{
+				tools.Ident("svc.tools.do"): "hello",
+			},
 		},
 	})
 	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
@@ -200,10 +205,12 @@ func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 			WorkflowName:     "wf",
 			DefaultTaskQueue: "default",
 		},
-		Prompt: func(_ tools.Ident, payload any) string {
-			text, err := PayloadToString(payload)
-			require.NoError(t, err)
-			return "PB:" + text
+		AgentToolContent: AgentToolContent{
+			Prompt: func(_ tools.Ident, payload any) string {
+				text, err := PayloadToString(payload)
+				require.NoError(t, err)
+				return "PB:" + text
+			},
 		},
 	})
 	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
@@ -260,9 +267,11 @@ func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 			DefaultTaskQueue: "default",
 		},
 		SystemPrompt: "SYS",
-		Prompt: func(id tools.Ident, payload any) string {
-			val, _ := payload.(string)
-			return val
+		AgentToolContent: AgentToolContent{
+			Prompt: func(id tools.Ident, payload any) string {
+				val, _ := payload.(string)
+				return val
+			},
 		},
 	})
 	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
