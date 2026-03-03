@@ -2,6 +2,7 @@ package codegen
 
 import (
 	"path"
+	"sort"
 	"strings"
 
 	"goa.design/goa/v3/codegen"
@@ -281,7 +282,13 @@ func (b *toolSpecBuilder) ensureNestedLocalTypes(scope *codegen.NameScope, att *
 	// Emit local nested helpers after the attribute graph has been fully rewritten.
 	// This guarantees helper defs reference other local helpers (not external
 	// service packages like `gen/types`).
-	for _, ut := range localsByName {
+	localNames := make([]string, 0, len(localsByName))
+	for name := range localsByName {
+		localNames = append(localNames, name)
+	}
+	sort.Strings(localNames)
+	for _, localName := range localNames {
+		ut := localsByName[localName]
 		name := scope.GoTypeName(&goaexpr.AttributeExpr{Type: ut})
 		key := "name:" + name
 		if _, exists := b.types[key]; exists {
@@ -375,7 +382,13 @@ func (b *toolSpecBuilder) ensureNestedLocalTransportTypes(scope *codegen.NameSco
 		return nil
 	})
 
-	for _, ut := range localsByName {
+	localNames := make([]string, 0, len(localsByName))
+	for name := range localsByName {
+		localNames = append(localNames, name)
+	}
+	sort.Strings(localNames)
+	for _, localName := range localNames {
+		ut := localsByName[localName]
 		name := scope.GoTypeName(&goaexpr.AttributeExpr{Type: ut})
 		key := "transport:" + name
 		if _, exists := b.types[key]; exists {
