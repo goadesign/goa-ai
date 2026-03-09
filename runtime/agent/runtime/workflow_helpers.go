@@ -111,7 +111,7 @@ func (r *Runtime) executeGroupedToolCalls(
 		if timeouts[i] > 0 {
 			opt.Timeout = timeouts[i]
 		}
-		sub, timedOut, err := r.executeToolCalls(wfCtx, reg.ExecuteToolActivity, opt, agentID, &base.RunContext, grouped[i], expectedChildren, parentTracker, finishBy)
+		sub, timedOut, err := r.executeToolCalls(wfCtx, reg.ExecuteToolActivity, opt, agentID, &base.RunContext, base.Messages, grouped[i], expectedChildren, parentTracker, finishBy)
 		if err != nil {
 			return nil, false, err
 		}
@@ -330,13 +330,30 @@ func (r *Runtime) hardProtectionIfNeeded(
 	return false, nil
 }
 
+// appendToolOutputs records canonical planner tool outputs in run-loop state.
+//
+// Contract:
+//   - Calls must already have deterministic ToolCallIDs.
+//   - Results are matched back to calls by ToolCallID so await-provided results
+//     preserve the requested call order.
+func (r *Runtime) appendToolOutputs(ctx context.Context, st *runLoopState, calls []planner.ToolRequest, results []*planner.ToolResult) error {
+	if len(calls) == 0 {
+		return nil
+	}
+	outputs, err := r.buildPlannerToolOutputs(ctx, calls, results)
+	if err != nil {
+		return err
+	}
+	st.ToolOutputs = append(st.ToolOutputs, outputs...)
+	return nil
+}
+
 // buildNextResumeRequest converts the base plan input into provider-ready
 // messages and builds the next PlanActivityInput.
 func (r *Runtime) buildNextResumeRequest(
-	ctx context.Context,
 	agentID agent.Ident,
 	base *planner.PlanInput,
-	lastToolResults []*planner.ToolResult,
+	toolOutputs []*planner.ToolOutput,
 	nextAttempt *int,
 ) (PlanActivityInput, error) {
 	resumeCtx := base.RunContext
@@ -346,7 +363,7 @@ func (r *Runtime) buildNextResumeRequest(
 	if err := transcript.ValidateBedrock(plannerMsgs, false); err != nil {
 		return PlanActivityInput{}, fmt.Errorf("invalid Bedrock transcript for run %s: %w", base.RunContext.RunID, err)
 	}
-	toolResults, err := r.encodeToolEventsForPlanning(ctx, lastToolResults)
+	encodedToolOutputs, err := encodePlannerToolOutputs(toolOutputs)
 	if err != nil {
 		return PlanActivityInput{}, err
 	}
@@ -355,7 +372,7 @@ func (r *Runtime) buildNextResumeRequest(
 		RunID:       base.RunContext.RunID,
 		Messages:    plannerMsgs,
 		RunContext:  resumeCtx,
-		ToolResults: toolResults,
+		ToolOutputs: encodedToolOutputs,
 	}
 	if err := enforcePlanActivityInputBudget(out); err != nil {
 		return PlanActivityInput{}, err

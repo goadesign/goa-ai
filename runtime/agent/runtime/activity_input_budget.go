@@ -29,11 +29,11 @@ func enforcePlanActivityInputBudget(input PlanActivityInput) error {
 		return nil
 	}
 	return fmt.Errorf(
-		"runtime: plan activity input exceeds budget (%d > %d bytes, run_id=%s, messages=%d, tool_results=%d)",
+		"runtime: plan activity input exceeds budget (%d > %d bytes, run_id=%s, messages=%d, tool_outputs=%d)",
 		len(b),
 		maxPlanActivityInputBytes,
 		input.RunID,
 		len(input.Messages),
-		len(input.ToolResults),
+		len(input.ToolOutputs),
 	)
 }

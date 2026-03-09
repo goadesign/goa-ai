@@ -242,7 +242,7 @@ func TestServiceToolEventsUseChildRunContext(t *testing.T) {
 		Name:       tools.Ident("svc.tools.fetch_time_series"),
 		ToolCallID: "child-call",
 	}}
-	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "child.agent", parentCtx, calls, 0, nil, time.Time{})
+	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "child.agent", parentCtx, nil, calls, 0, nil, time.Time{})
 	require.NoError(t, err)
 
 	var scheduled *hooks.ToolCallScheduledEvent
@@ -299,7 +299,7 @@ func TestServiceToolEventsPropagateServerData(t *testing.T) {
 		Name:       tools.Ident("svc.tools.example"),
 		ToolCallID: "child-call",
 	}}
-	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "child.agent", parentCtx, calls, 0, nil, time.Time{})
+	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "child.agent", parentCtx, nil, calls, 0, nil, time.Time{})
 	require.NoError(t, err)
 
 	var resultEvt *hooks.ToolResultReceivedEvent

@@ -1,7 +1,7 @@
 // Package runtime provides the goa-ai runtime implementation.
 //
 // This file contains agent-as-tool support: a toolset registration that executes a
-// nested agent run and adapts its child tool results into a parent tool_result.
+// nested agent run and adapts its canonical run output into a parent tool_result.
 //
 // Contract highlights:
 //   - The nested run context always carries the canonical JSON tool payload as
@@ -32,7 +32,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
-	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -44,6 +43,10 @@ type (
 	// PromptBuilder builds a user message for a tool call from its payload when
 	// no explicit text or template is configured.
 	PromptBuilder func(id tools.Ident, payload any) string
+
+	// AgentToolValidator validates a nested agent-tool call after payload decoding
+	// and before the child run is started.
+	AgentToolValidator func(ctx context.Context, input *AgentToolValidationInput) *AgentToolValidationError
 
 	// AgentToolContent configures the optional consumer-side rendering of the
 	// nested agent's initial user message.
@@ -104,14 +107,10 @@ type (
 		// It is embedded so existing field selectors (cfg.Texts, cfg.PromptSpecs, …)
 		// remain valid, but callers are encouraged to treat it as an advanced knob.
 		AgentToolContent
-		// JSONOnly forces JSON-only parent tool_result emission for agent-as-tool.
-		// When true (default), the runtime ignores the nested agent's final prose and
-		// uses the aggregator output as the parent tool_result.
-		JSONOnly bool
-		// Finalizer, when set, executes once after the nested agent finishes to
-		// construct the parent tool_result from the child tool results of the nested run.
-		// If nil, the runtime falls back to ConvertRunOutputToToolResult.
-		Finalizer Finalizer
+		// PreChildValidator optionally validates the decoded payload and current
+		// transcript before starting the nested child run. Validation errors are
+		// surfaced as tool-scoped retry guidance instead of workflow failures.
+		PreChildValidator AgentToolValidator
 		// Name optionally sets the toolset registration name (qualified toolset id).
 		Name string
 		// Description optionally describes the toolset.
@@ -124,72 +123,87 @@ type (
 		// routing use the canonical name while the public name is preserved in parent
 		// stream events.
 		Aliases map[tools.Ident]tools.Ident
-		// AggregateKeys maps tool IDs to the JSON key for merging their child results.
-		// When a tool produces multiple child results (n > 1) and has an entry here:
-		//   - If each child result is an object containing that key with an array value,
-		//     the arrays are merged into a single array under that key.
-		//   - Otherwise, child results are wrapped: {key: [child1, child2, ...]}.
-		// When a tool is not in this map and n > 1, defaults to wrapping under "results".
-		// This ensures Bedrock compatibility (toolResult.json must be an object).
-		AggregateKeys map[tools.Ident]string
 	}
 
-	// ParentCall identifies the parent tool call in an agent-as-tool execution.
-	ParentCall struct {
-		// ToolName is the fully-qualified identifier of the parent tool.
-		ToolName tools.Ident
-		// ToolCallID is the provider/tool-call correlation identifier for this tool invocation.
-		ToolCallID string
-		// Payload is the decoded tool payload for the parent call when available.
-		// It is nil when the parent tool had an empty payload.
-		Payload any
+	// AgentToolValidationInput captures the data available to PreChildValidator.
+	AgentToolValidationInput struct {
+		Call      *planner.ToolRequest
+		Payload   any
+		Messages  []*model.Message
+		ParentRun *run.Context
 	}
 
-	// ChildCall summarizes a child tool outcome from a nested run used for aggregation.
-	ChildCall struct {
-		ToolName   tools.Ident
-		ToolCallID string
-		Status     string // "ok" | "error"
-		Result     any
-		// ServerData carries server-only data emitted alongside the tool result.
-		// It is never sent to model providers.
-		//
-		// Contract:
-		// - ServerData is canonical JSON bytes containing a list of server_data items.
-		// - Finalizers may decode ServerData items using tool-specific server_data codecs.
-		ServerData rawjson.RawJSON
-		Error      error
+	// AgentToolValidationError reports a tool-scoped validation failure at the
+	// agent-as-tool boundary.
+	//
+	// The runtime converts this error into an `invalid_arguments` tool result with
+	// structured retry guidance instead of failing the workflow.
+	AgentToolValidationError struct {
+		message      string
+		issues       []*tools.FieldIssue
+		descriptions map[string]string
 	}
-
-	// Finalizer produces the parent tool_result for nested agent executions.
-	Finalizer interface {
-		Finalize(ctx context.Context, input *FinalizerInput) (*planner.ToolResult, error)
-	}
-
-	// FinalizerFunc adapts a function to the Finalizer interface.
-	FinalizerFunc func(ctx context.Context, input *FinalizerInput) (*planner.ToolResult, error)
-
-	// FinalizerInput captures aggregation context for Finalize.
-	FinalizerInput struct {
-		Parent   ParentCall
-		Children []ChildCall
-		// Invoke executes additional tools deterministically during aggregation. It
-		// is nil when tool-based finalization is unavailable (e.g., service tools
-		// invoked outside a workflow context).
-		Invoke ToolInvoker
-	}
-
-	// ToolPayloadBuilder constructs the payload passed to a tool-based finalizer.
-	ToolPayloadBuilder func(ctx context.Context, input *FinalizerInput) (any, error)
-
-	// ToolInvoker executes registered tool calls on behalf of a finalizer.
-	ToolInvoker interface {
-		Invoke(ctx context.Context, tool tools.Ident, payload any) (*planner.ToolResult, error)
-	}
-
-	// ToolInvokerFunc adapts a function to ToolInvoker.
-	ToolInvokerFunc func(ctx context.Context, tool tools.Ident, payload any) (*planner.ToolResult, error)
 )
+
+// NewAgentToolValidationError constructs a structured validation error for an
+// agent-as-tool pre-child validator.
+func NewAgentToolValidationError(message string, issues []*tools.FieldIssue, descriptions map[string]string) *AgentToolValidationError {
+	return &AgentToolValidationError{
+		message:      message,
+		issues:       cloneFieldIssues(issues),
+		descriptions: cloneStringMap(descriptions),
+	}
+}
+
+// Error implements the error interface.
+func (e *AgentToolValidationError) Error() string {
+	return e.message
+}
+
+// Issues returns the structured field issues associated with this validation failure.
+func (e *AgentToolValidationError) Issues() []*tools.FieldIssue {
+	return cloneFieldIssues(e.issues)
+}
+
+// Descriptions returns optional human-readable descriptions for the invalid fields.
+func (e *AgentToolValidationError) Descriptions() map[string]string {
+	return cloneStringMap(e.descriptions)
+}
+
+func cloneFieldIssues(in []*tools.FieldIssue) []*tools.FieldIssue {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]*tools.FieldIssue, 0, len(in))
+	for _, issue := range in {
+		if issue == nil {
+			continue
+		}
+		clone := &tools.FieldIssue{
+			Field:      issue.Field,
+			Constraint: issue.Constraint,
+		}
+		if len(issue.Allowed) > 0 {
+			clone.Allowed = append([]string(nil), issue.Allowed...)
+		}
+		out = append(out, clone)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
 
 // WithText sets plain text content for the given tool ID. The runtime treats the
 // text as the user message for that tool. Exactly one of WithText or WithTemplate
@@ -245,19 +259,6 @@ func WithTemplateAll(ids []tools.Ident, t *template.Template) AgentToolOption {
 		for _, id := range ids {
 			c.Templates[id] = t
 		}
-	}
-}
-
-// WithAggregateKey sets the JSON key for merging multiple child results for the
-// given tool ID. When the tool produces n > 1 child results and each child has
-// an array under this key, the arrays are merged. Otherwise, results are wrapped
-// under this key.
-func WithAggregateKey(id tools.Ident, key string) AgentToolOption {
-	return func(c *AgentToolConfig) {
-		if c.AggregateKeys == nil {
-			c.AggregateKeys = make(map[tools.Ident]string)
-		}
-		c.AggregateKeys[id] = key
 	}
 }
 
@@ -380,50 +381,6 @@ func PayloadToString(payload any) (string, error) {
 	return string(b), nil
 }
 
-// PassThroughFinalizer returns a finalizer that leaves aggregation to the JSONOnly fallback.
-func PassThroughFinalizer() Finalizer {
-	return FinalizerFunc(func(context.Context, *FinalizerInput) (*planner.ToolResult, error) {
-		return &planner.ToolResult{}, nil
-	})
-}
-
-// ToolResultFinalizer returns a finalizer that delegates aggregation to a dedicated tool.
-// The builder constructs the tool payload from the parent/child calls; the configured
-// ToolInvoker executes the aggregation tool and the resulting ToolResult becomes the
-// parent tool_result (the runtime overwrites Name/ToolCallID for correlation).
-func ToolResultFinalizer(tool tools.Ident, builder ToolPayloadBuilder) Finalizer {
-	return FinalizerFunc(func(ctx context.Context, input *FinalizerInput) (*planner.ToolResult, error) {
-		if input.Invoke == nil {
-			return nil, fmt.Errorf("tool finalizer for %s: tool invoker unavailable", tool)
-		}
-		if tool == "" {
-			return nil, errors.New("tool finalizer: tool identifier is required")
-		}
-		if builder == nil {
-			return nil, errors.New("tool finalizer: payload builder is required")
-		}
-		payload, err := builder(ctx, input)
-		if err != nil {
-			return nil, err
-		}
-		result, err := input.Invoke.Invoke(ctx, tool, payload)
-		if err != nil {
-			return nil, err
-		}
-		return result, nil
-	})
-}
-
-// Finalize satisfies the Finalizer interface.
-func (f FinalizerFunc) Finalize(ctx context.Context, input *FinalizerInput) (*planner.ToolResult, error) {
-	return f(ctx, input)
-}
-
-// Invoke satisfies the ToolInvoker interface.
-func (f ToolInvokerFunc) Invoke(ctx context.Context, tool tools.Ident, payload any) (*planner.ToolResult, error) {
-	return f(ctx, tool, payload)
-}
-
 // defaultAgentToolExecute returns the standard Execute function for agent-as-tool
 // registrations. It converts the tool payload to messages (respecting per-tool
 // prompts), constructs a nested run context from the current tool call, starts
@@ -437,9 +394,14 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 		if cfg.Route.ID == "" {
 			return nil, fmt.Errorf("agent tool route is required")
 		}
-		messages, nestedRunCtx, err := rt.buildAgentChildRequest(wfCtx.Context(), &cfg, call)
+		parentRun := &run.Context{
+			RunID:     call.RunID,
+			SessionID: call.SessionID,
+			TurnID:    call.TurnID,
+		}
+		messages, nestedRunCtx, err := rt.buildAgentChildRequest(wfCtx.Context(), &cfg, call, nil, parentRun)
 		if err != nil {
-			return nil, err
+			return rt.agentToolRequestFailureResult(*call, err)
 		}
 		if err := rt.publishHook(
 			wfCtx.Context(),
@@ -464,57 +426,39 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 	}
 }
 
+func (r *Runtime) agentToolRequestFailureResult(call planner.ToolRequest, err error) (*planner.ToolResult, error) {
+	spec, ok := r.toolSpec(call.Name)
+	if !ok {
+		return nil, fmt.Errorf("agent tool %s requires a registered ToolSpec", call.Name)
+	}
+	hint := buildRetryHintFromAgentToolRequestError(err, call.Name, &spec)
+	if hint == nil {
+		return nil, err
+	}
+	toolErr := planner.NewToolError(err.Error())
+	result := &planner.ToolResult{
+		Name:       call.Name,
+		ToolCallID: call.ToolCallID,
+		Error:      toolErr,
+	}
+	hint.RestrictToTool = true
+	result.RetryHint = hint
+	if err := r.enforceToolResultContracts(spec, call, toolErr, result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // attachRunLink stamps the parent tool result with a run handle linking to the
 // nested agent run that produced it.
 func attachRunLink(result *planner.ToolResult, handle *run.Handle) {
 	result.RunLink = handle
 }
 
-// mergeByKey extracts the array value under key from each item and merges them.
-// Returns the merged slice and true if all items are objects with key containing arrays.
-func mergeByKey(items []any, key string) ([]any, bool) {
-	var merged []any
-	for _, item := range items {
-		obj, ok := item.(map[string]any)
-		if !ok {
-			return nil, false
-		}
-		val, exists := obj[key]
-		if !exists {
-			return nil, false
-		}
-		arr, ok := val.([]any)
-		if !ok {
-			return nil, false
-		}
-		merged = append(merged, arr...)
-	}
-	return merged, true
-}
-
-func mergeByKeyFromChildResults(events []*api.ToolEvent, key string) ([]any, error) {
-	items := make([]any, 0, len(events))
-	for _, ev := range events {
-		var m map[string]any
-		if err := json.Unmarshal(ev.Result, &m); err != nil {
-			return nil, err
-		}
-		items = append(items, m)
-	}
-	if len(items) == 0 {
-		return nil, fmt.Errorf("no child results to merge")
-	}
-	merged, ok := mergeByKey(items, key)
-	if !ok {
-		return nil, fmt.Errorf("child results do not all contain %q array", key)
-	}
-	return merged, nil
-}
-
 // buildAgentChildRequest constructs the nested agent messages and run context for an
 // agent-as-tool invocation based on the tool call and configuration. It decodes the
 // payload for prompt/template rendering and records canonical JSON args for the child.
-func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConfig, call *planner.ToolRequest) ([]*model.Message, run.Context, error) {
+func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConfig, call *planner.ToolRequest, messages []*model.Message, parentRun *run.Context) ([]*model.Message, run.Context, error) {
 	var zeroCtx run.Context
 
 	// Decode payload for prompt/template rendering. Prefer tool codecs when
@@ -534,12 +478,22 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 		}
 		promptPayload = val
 	}
+	if cfg.PreChildValidator != nil {
+		if err := cfg.PreChildValidator(ctx, &AgentToolValidationInput{
+			Call:      call,
+			Payload:   promptPayload,
+			Messages:  messages,
+			ParentRun: parentRun,
+		}); err != nil {
+			return nil, zeroCtx, err
+		}
+	}
 
 	// Build messages: optional agent system prompt, then the per-tool user message.
-	var messages []*model.Message
+	var childMessages []*model.Message
 	if cfg.SystemPrompt != "" {
 		if m := newTextAgentMessage(model.ConversationRoleSystem, cfg.SystemPrompt); m != nil {
-			messages = []*model.Message{m}
+			childMessages = []*model.Message{m}
 		}
 	}
 
@@ -573,10 +527,10 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 		userContent = string(call.Payload.RawMessage())
 	}
 	if m := newTextAgentMessage(model.ConversationRoleUser, userContent); m != nil {
-		messages = append(messages, m)
+		childMessages = append(childMessages, m)
 	} else {
 		// No text content; still append an empty user message.
-		messages = append(messages, &model.Message{Role: model.ConversationRoleUser})
+		childMessages = append(childMessages, &model.Message{Role: model.ConversationRoleUser})
 	}
 
 	// Build nested run context from explicit ToolRequest fields.
@@ -601,7 +555,7 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 		nestedRunCtx.ToolArgs = append(rawjson.RawJSON(nil), call.Payload...)
 	}
 
-	return messages, nestedRunCtx, nil
+	return childMessages, nestedRunCtx, nil
 }
 
 // renderAgentToolPrompt resolves and renders a configured prompt spec for one tool call.
@@ -673,9 +627,14 @@ func (r *Runtime) buildPromptTemplateData(ctx context.Context, toolName tools.Id
 	return object, nil
 }
 
-// adaptAgentChildOutput converts a nested agent RunOutput into a planner.ToolResult,
-// applying optional Finalizer/JSONOnly aggregation and attaching a run link so
-// callers can correlate parent tool calls with child runs.
+// adaptAgentChildOutput converts a nested agent RunOutput into a planner.ToolResult.
+//
+// Preference order:
+//   - Use the child-produced FinalToolResult when present.
+//   - Otherwise convert the child run output into the legacy prose-oriented
+//     planner.ToolResult shape.
+//
+// In all cases the returned ToolResult is linked back to the child run.
 func (r *Runtime) adaptAgentChildOutput(ctx context.Context, cfg *AgentToolConfig, call *planner.ToolRequest, nestedRunCtx run.Context, outPtr *RunOutput) (*planner.ToolResult, error) {
 	if outPtr == nil {
 		return nil, fmt.Errorf("execute agent returned no output")
@@ -688,16 +647,14 @@ func (r *Runtime) adaptAgentChildOutput(ctx context.Context, cfg *AgentToolConfi
 		ParentToolCallID: nestedRunCtx.ParentToolCallID,
 	}
 
-	// Aggregation path: assemble parent tool_result from child results.
-	if cfg.Finalizer != nil {
-		tr, err := r.adaptWithFinalizer(ctx, cfg, call, outPtr, handle)
-		return tr, err
-	}
-
-	// JSON-only structured result default: aggregate child results into a structured
-	// payload instead of returning the nested agent's final prose.
-	if cfg.JSONOnly {
-		tr := r.adaptWithJSONOnly(ctx, cfg, call, outPtr, handle)
+	if outPtr.FinalToolResult != nil {
+		tr, err := r.decodeAgentChildFinalToolResult(ctx, call, outPtr.FinalToolResult)
+		if err != nil {
+			return nil, err
+		}
+		tr.ToolCallID = call.ToolCallID
+		tr.ChildrenCount = len(outPtr.ToolEvents)
+		attachRunLink(tr, handle)
 		return tr, nil
 	}
 
@@ -708,203 +665,33 @@ func (r *Runtime) adaptAgentChildOutput(ctx context.Context, cfg *AgentToolConfi
 	return tr, nil
 }
 
-// adaptWithFinalizer applies the configured Finalizer to produce a parent tool_result
-// from child results. If the finalizer fails, returns an error result with the cause.
-func (r *Runtime) adaptWithFinalizer(ctx context.Context, cfg *AgentToolConfig, call *planner.ToolRequest, outPtr *RunOutput, handle *run.Handle) (*planner.ToolResult, error) {
-	children := make([]ChildCall, 0, len(outPtr.ToolEvents))
-	for _, ev := range outPtr.ToolEvents {
-		status := "ok"
-		var childErr error
-		if ev.Error != nil {
-			status = "error"
-			childErr = ev.Error
-		}
-		// Child tool results cross a workflow boundary as canonical JSON bytes.
-		// Do not decode here: the parent runtime is not guaranteed to have the tool
-		// codec for the nested agent's internal tools.
-		var childResult any
-		if hasNonNullJSON(ev.Result.RawMessage()) {
-			childResult = ev.Result
-		}
-		var childServerData rawjson.RawJSON
-		if hasNonNullJSON(ev.ServerData.RawMessage()) {
-			childServerData = append(rawjson.RawJSON(nil), ev.ServerData...)
-		}
-		children = append(children, ChildCall{
-			ToolName:   ev.Name,
-			ToolCallID: ev.ToolCallID,
-			Status:     status,
-			Result:     childResult,
-			ServerData: childServerData,
-			Error:      childErr,
-		})
+// decodeAgentChildFinalToolResult decodes the workflow-safe final tool-result
+// envelope emitted by a nested child run into the parent planner.ToolResult
+// shape.
+func (r *Runtime) decodeAgentChildFinalToolResult(ctx context.Context, call *planner.ToolRequest, event *api.ToolEvent) (*planner.ToolResult, error) {
+	if call == nil {
+		return nil, errors.New("agent-tool final result: tool call is required")
 	}
-
-	var parentPayload any
-	if len(call.Payload) > 0 {
-		if _, ok := r.ToolSpec(call.Name); ok {
-			val, err := r.unmarshalToolValue(ctx, call.Name, call.Payload.RawMessage(), true)
-			if err != nil {
-				return nil, fmt.Errorf("decode parent tool payload for %s: %w", call.Name, err)
-			}
-			parentPayload = val
-		} else {
-			var generic any
-			if err := json.Unmarshal(call.Payload, &generic); err != nil {
-				return nil, fmt.Errorf("decode parent tool payload for %s: %w", call.Name, err)
-			}
-			parentPayload = generic
-		}
+	if event == nil {
+		return nil, fmt.Errorf("agent-tool final result for %s: event is nil", call.Name)
 	}
-
-	parent := ParentCall{
-		ToolName:   call.Name,
-		ToolCallID: call.ToolCallID,
-		Payload:    parentPayload,
+	result := &planner.ToolResult{
+		Name:                call.Name,
+		ResultBytes:         event.ResultBytes,
+		ResultOmitted:       event.ResultOmitted,
+		ResultOmittedReason: event.ResultOmittedReason,
+		ServerData:          append(rawjson.RawJSON(nil), event.ServerData...),
+		Bounds:              event.Bounds,
+		Error:               event.Error,
+		RetryHint:           event.RetryHint,
+		Telemetry:           event.Telemetry,
 	}
-	invoker := finalizerToolInvokerFromContext(ctx, call)
-	input := FinalizerInput{
-		Parent:   parent,
-		Children: children,
-		Invoke:   invoker,
-	}
-	tr, err := cfg.Finalizer.Finalize(ctx, &input)
-	if err != nil {
-		msg := fmt.Sprintf(
-			"agent-tool: finalizer failed for %s (child_run_id=%s): %v",
-			call.Name,
-			handle.RunID,
-			err,
-		)
-		result := &planner.ToolResult{
-			Name:          call.Name,
-			ToolCallID:    call.ToolCallID,
-			Error:         planner.NewToolErrorWithCause(msg, err),
-			ChildrenCount: len(outPtr.ToolEvents),
-		}
-		attachRunLink(result, handle)
-		return result, nil
-	}
-	if tr == nil {
-		// Finalizer returned no tool result; fall through to default conversion.
-		result := ConvertRunOutputToToolResult(call.Name, outPtr)
-		result.ToolCallID = call.ToolCallID
-		attachRunLink(&result, handle)
-		return &result, nil
-	}
-
-	// Finalizer returned an empty tool result; fall through to default conversion.
-	if tr.Result == nil && tr.Error == nil {
-		result := ConvertRunOutputToToolResult(call.Name, outPtr)
-		result.ToolCallID = call.ToolCallID
-		attachRunLink(&result, handle)
-		return &result, nil
-	}
-
-	tr.Name = call.Name
-	tr.ToolCallID = call.ToolCallID
-	tr.ChildrenCount = len(outPtr.ToolEvents)
-	attachRunLink(tr, handle)
-	return tr, nil
-}
-
-// adaptWithJSONOnly aggregates child results into a structured JSON payload.
-// This produces a consistent, schema-like output across service-backed and
-// agent-as-tool paths.
-func (r *Runtime) adaptWithJSONOnly(ctx context.Context, cfg *AgentToolConfig, call *planner.ToolRequest, outPtr *RunOutput, handle *run.Handle) *planner.ToolResult {
-	var (
-		payload any
-		aggErr  error
-	)
-	switch n := len(outPtr.ToolEvents); {
-	case n == 1 && outPtr.ToolEvents[0] != nil:
-		// Validate by round-tripping through the parent tool codec. This ensures
-		// that result hint templates and UIs always see the parent tool's schema shape.
-		if !hasNonNullJSON(outPtr.ToolEvents[0].Result.RawMessage()) {
-			aggErr = fmt.Errorf("JSONOnly produced empty child result for %s", call.Name)
-			break
-		}
-		typed, err := r.unmarshalToolValue(ctx, call.Name, outPtr.ToolEvents[0].Result.RawMessage(), false)
+	if hasNonNullJSON(event.Result.RawMessage()) && event.Error == nil {
+		decoded, err := r.unmarshalToolValue(ctx, call.Name, event.Result.RawMessage(), false)
 		if err != nil {
-			aggErr = err
-			break
+			return nil, fmt.Errorf("decode final tool result for %s: %w", call.Name, err)
 		}
-		payload = typed
-	case n > 1:
-		aggregateKey := cfg.AggregateKeys[call.Name]
-		if aggregateKey == "" {
-			aggErr = fmt.Errorf(
-				"JSONOnly cannot aggregate %d child results for %s without an explicit Finalizer or AggregateKey",
-				n, call.Name,
-			)
-			break
-		}
-		merged, err := mergeByKeyFromChildResults(outPtr.ToolEvents, aggregateKey)
-		if err != nil {
-			aggErr = err
-			break
-		}
-		aggRaw, err := json.Marshal(map[string]any{aggregateKey: merged})
-		if err != nil {
-			aggErr = err
-			break
-		}
-		typed, err := r.unmarshalToolValue(ctx, call.Name, json.RawMessage(aggRaw), false)
-		if err != nil {
-			aggErr = err
-			break
-		}
-		payload = typed
-	default:
-		aggErr = fmt.Errorf("JSONOnly produced no child results for %s", call.Name)
+		result.Result = decoded
 	}
-
-	// Aggregate telemetry from child events.
-	var tel *telemetry.ToolTelemetry
-	if len(outPtr.ToolEvents) > 0 {
-		var totalTokens int
-		var totalDurationMs int64
-		for _, ev := range outPtr.ToolEvents {
-			if ev == nil || ev.Telemetry == nil {
-				continue
-			}
-			totalTokens += ev.Telemetry.TokensUsed
-			totalDurationMs += ev.Telemetry.DurationMs
-		}
-		if totalTokens > 0 || totalDurationMs > 0 {
-			tel = &telemetry.ToolTelemetry{
-				TokensUsed: totalTokens,
-				DurationMs: totalDurationMs,
-			}
-		}
-	}
-
-	// If all children failed, propagate an error; else success with aggregated payload.
-	var errCount int
-	var lastErr error
-	for _, ev := range outPtr.ToolEvents {
-		if ev != nil && ev.Error != nil {
-			errCount++
-			lastErr = ev.Error
-		}
-	}
-	tr := &planner.ToolResult{
-		Name:          call.Name,
-		ToolCallID:    call.ToolCallID,
-		Result:        payload,
-		Telemetry:     tel,
-		ChildrenCount: len(outPtr.ToolEvents),
-	}
-	attachRunLink(tr, handle)
-	if aggErr != nil {
-		tr.Error = planner.NewToolErrorWithCause(
-			"agent-tool: JSONOnly aggregation failed (tool result schema mismatch; missing finalizer?)",
-			aggErr,
-		)
-		return tr
-	}
-	if errCount > 0 && errCount == len(outPtr.ToolEvents) {
-		tr.Error = planner.NewToolErrorWithCause("agent-tool: all nested tools failed", lastErr)
-	}
-	return tr
+	return result, nil
 }

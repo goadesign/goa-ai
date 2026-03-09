@@ -179,6 +179,53 @@ func TestDefaultAgentToolExecute_DefaultContentFromPayload(t *testing.T) {
 	require.JSONEq(t, `{"x":"world"}`, firstText(got[0]))
 }
 
+func TestDefaultAgentToolExecute_PreChildValidatorReturnsToolResult(t *testing.T) {
+	rt, ctx := setupTestAgentWithPlanner(func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
+		t.Fatal("planner must not run when pre-child validation fails")
+		return nil, nil
+	})
+	cfg := AgentToolConfig{
+		AgentID: "svc.agent",
+		Route: AgentRoute{
+			ID:               agent.Ident("svc.agent"),
+			WorkflowName:     "wf",
+			DefaultTaskQueue: "default",
+		},
+		PreChildValidator: func(context.Context, *AgentToolValidationInput) *AgentToolValidationError {
+			return NewAgentToolValidationError(
+				"sources must come from prior evidence",
+				[]*tools.FieldIssue{
+					{
+						Field:      "sources",
+						Constraint: "invalid_format",
+					},
+				},
+				map[string]string{
+					"sources": "sources must come from prior evidence",
+				},
+			)
+		},
+	}
+	exec := defaultAgentToolExecute(rt, cfg)
+	call := planner.ToolRequest{
+		Name:      tools.Ident("tool"),
+		RunID:     "run",
+		SessionID: "sess-1",
+		Payload:   rawjson.RawJSON([]byte(`{"sources":["x"]}`)),
+	}
+	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
+	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
+
+	result, err := exec(ctx, &call)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Error)
+	require.NotNil(t, result.RetryHint)
+	require.Equal(t, planner.RetryReasonInvalidArguments, result.RetryHint.Reason)
+	require.Equal(t, []string{"sources"}, result.RetryHint.MissingFields)
+	require.True(t, result.RetryHint.RestrictToTool)
+}
+
 func TestDefaultAgentToolExecute_PromptSpecPreferredOverTemplateTextPromptBuilder(t *testing.T) {
 	var got []*model.Message
 	rt, ctx := setupTestAgentWithPlanner(func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
@@ -474,7 +521,7 @@ func TestBuildAgentChildRequest_PreservesCanonicalToolArgs(t *testing.T) {
 		},
 	}
 
-	_, nestedRunCtx, err := rt.buildAgentChildRequest(context.Background(), cfg, call)
+	_, nestedRunCtx, err := rt.buildAgentChildRequest(context.Background(), cfg, call, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, payload, nestedRunCtx.ToolArgs)
 }

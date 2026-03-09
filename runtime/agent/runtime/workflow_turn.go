@@ -51,11 +51,11 @@ func (r *Runtime) handleToolTurn(
 	}
 
 	if st.Caps.RemainingToolCalls == 0 && st.Caps.MaxToolCalls > 0 {
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonToolCap, deadlines.Hard)
+		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.ToolOutputs, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonToolCap, deadlines.Hard)
 		return out, err
 	}
 	if !deadlines.Budget.IsZero() && wfCtx.Now().After(deadlines.Budget) {
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonTimeBudget, deadlines.Hard)
+		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.ToolOutputs, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonTimeBudget, deadlines.Hard)
 		return out, err
 	}
 
@@ -135,11 +135,14 @@ func (r *Runtime) handleToolTurn(
 	}
 	lastToolResults := vals
 	st.ToolEvents = append(st.ToolEvents, cloneToolResults(vals)...)
+	if err := r.appendToolOutputs(ctx, st, toExecute, vals); err != nil {
+		return nil, err
+	}
 	if err := r.appendUserToolResults(base, toExecute, vals, st.Ledger); err != nil {
 		return nil, err
 	}
 	if timedOut {
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonTimeBudget, deadlines.Hard)
+		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.ToolOutputs, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonTimeBudget, deadlines.Hard)
 		return out, err
 	}
 
@@ -185,14 +188,14 @@ func (r *Runtime) handleToolTurn(
 			capFailures(vals),
 		)
 		if st.Caps.MaxConsecutiveFailedToolCalls > 0 && st.Caps.RemainingConsecutiveFailedToolCalls <= 0 {
-			out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonFailureCap, deadlines.Hard)
+			out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.ToolOutputs, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonFailureCap, deadlines.Hard)
 			return out, err
 		}
 	} else if st.Caps.MaxConsecutiveFailedToolCalls > 0 {
 		st.Caps.RemainingConsecutiveFailedToolCalls = st.Caps.MaxConsecutiveFailedToolCalls
 	}
 
-	if out, err := r.handleMissingFieldsPolicy(wfCtx, reg, input, base, vals, st.ToolEvents, st.AggUsage, &st.NextAttempt, turnID, ctrl, deadlines); err != nil {
+	if out, err := r.handleMissingFieldsPolicy(wfCtx, reg, input, base, vals, st.ToolEvents, st.ToolOutputs, st.AggUsage, &st.NextAttempt, turnID, ctrl, deadlines); err != nil {
 		return nil, err
 	} else if out != nil {
 		return out, nil
@@ -203,11 +206,11 @@ func (r *Runtime) handleToolTurn(
 		return nil, err
 	}
 	if protected {
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonFailureCap, deadlines.Hard)
+		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.ToolOutputs, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonFailureCap, deadlines.Hard)
 		return out, err
 	}
 
-	resumeReq, err := r.buildNextResumeRequest(ctx, input.AgentID, base, lastToolResults, &st.NextAttempt)
+	resumeReq, err := r.buildNextResumeRequest(input.AgentID, base, st.ToolOutputs, &st.NextAttempt)
 	if err != nil {
 		return nil, err
 	}

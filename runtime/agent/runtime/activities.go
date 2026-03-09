@@ -6,13 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/reminder"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/reminder"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -87,7 +88,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err != nil {
 		return nil, err
 	}
-	toolResults, err := r.decodeToolEvents(ctx, input.ToolResults)
+	toolOutputs, err := r.decodeToolOutputs(input.ToolOutputs)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +102,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		RunContext:  input.RunContext,
 		Agent:       agentCtx,
 		Events:      events,
-		ToolResults: toolResults,
+		ToolOutputs: toolOutputs,
 		Finalize:    input.Finalize,
 		Reminders:   rems,
 	}
@@ -303,7 +304,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 			result.Telemetry = tel
 		}
 	}
-	enc, encErr := r.marshalToolValue(ctx, req.ToolName, result.Result, false)
+	enc, encErr := r.marshalToolValue(ctx, req.ToolName, result.Result)
 	if encErr != nil {
 		// Tool result is not valid for its declared schema. This is a contract violation.
 		return nil, fmt.Errorf("tool result encode %s: %w", req.ToolName, encErr)
@@ -330,12 +331,11 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 
 // buildRetryHintFromValidation attempts to extract structured validation issues from
 // a generated ValidationError (emitted by tool codecs) and build a precise retry hint.
-// It returns (fields, question, reason, true) when successful; otherwise ok is false.
+// It returns the field anchors, a clarifying question, and the retry reason when
+// successful; otherwise ok is false.
 func buildRetryHintFromValidation(err error, toolName tools.Ident) ([]string, string, planner.RetryReason, bool) {
-	// Match generated ValidationError via method set (no concrete type import).
 	var ip interface {
 		Issues() []*tools.FieldIssue
-		Descriptions() map[string]string
 	}
 	if !errors.As(err, &ip) {
 		return nil, "", planner.RetryReasonInvalidArguments, false
@@ -344,17 +344,30 @@ func buildRetryHintFromValidation(err error, toolName tools.Ident) ([]string, st
 	if len(issues) == 0 {
 		return nil, "", planner.RetryReasonInvalidArguments, false
 	}
-	descs := ip.Descriptions()
-	missing := make([]string, 0)
+	var descs map[string]string
+	var described interface {
+		Descriptions() map[string]string
+	}
+	if errors.As(err, &described) {
+		descs = described.Descriptions()
+	}
 	fields := make([]string, 0, len(issues))
+	missing := make([]string, 0, len(issues))
 	for _, is := range issues {
 		if is.Field == "" {
 			continue
 		}
-		fields = append(fields, is.Field)
-		if is.Constraint == "missing_field" {
-			missing = append(missing, is.Field)
+		if !slices.Contains(fields, is.Field) {
+			fields = append(fields, is.Field)
 		}
+		if is.Constraint == "missing_field" {
+			if !slices.Contains(missing, is.Field) {
+				missing = append(missing, is.Field)
+			}
+		}
+	}
+	if len(fields) == 0 {
+		return nil, "", planner.RetryReasonInvalidArguments, false
 	}
 	// Build a concise, description-enriched question for up to three fields.
 	var question string
@@ -390,7 +403,7 @@ func buildRetryHintFromValidation(err error, toolName tools.Ident) ([]string, st
 	if len(missing) > 0 {
 		reason = planner.RetryReasonMissingFields
 	}
-	return missing, question, reason, true
+	return fields, question, reason, true
 }
 
 // buildRetryHintFromDecodeError examines JSON decode errors that occur before tool
@@ -447,6 +460,21 @@ func buildRetryHintFromDecodeError(err error, toolName tools.Ident, spec *tools.
 		ExampleInput:       example,
 		ClarifyingQuestion: question,
 	}
+}
+
+func buildRetryHintFromAgentToolRequestError(err error, toolName tools.Ident, spec *tools.ToolSpec) *planner.RetryHint {
+	if fields, question, reason, ok := buildRetryHintFromValidation(err, toolName); ok {
+		return &planner.RetryHint{
+			Reason:             reason,
+			Tool:               toolName,
+			MissingFields:      fields,
+			ClarifyingQuestion: question,
+		}
+	}
+	if hint := buildRetryHintFromDecodeError(err, toolName, spec); hint != nil {
+		return hint
+	}
+	return nil
 }
 
 // planStart invokes the planner's PlanStart method with tracing.
@@ -510,44 +538,25 @@ func (r *Runtime) plannerContext(ctx context.Context, input *PlanActivityInput, 
 	return &reg, agentCtx, nil
 }
 
-// marshalToolValue encodes a tool value using the registered codec.
-func (r *Runtime) marshalToolValue(ctx context.Context, toolName tools.Ident, value any, payload bool) (json.RawMessage, error) {
+// marshalToolValue encodes a tool result using the registered result codec.
+func (r *Runtime) marshalToolValue(ctx context.Context, toolName tools.Ident, value any) (json.RawMessage, error) {
 	if value == nil {
 		return nil, nil
 	}
-	if payload {
-		// Payloads are JSON across the planner/runtime boundary. Keep the ability to
-		// forward/record canonical bytes without forcing a decode+re-encode cycle.
-		switch v := value.(type) {
-		case json.RawMessage:
-			if len(v) == 0 {
-				return nil, nil
-			}
-			return append(json.RawMessage(nil), v...), nil
-		case []byte:
-			if len(v) == 0 {
-				return nil, nil
-			}
-			if json.Valid(v) {
-				return json.RawMessage(append([]byte(nil), v...)), nil
-			}
-		}
-	} else {
-		// Tool results must be typed Go values so the generated codec is the sole
-		// authority for canonical JSON and schema alignment.
-		switch value.(type) {
-		case json.RawMessage, []byte:
-			return nil, fmt.Errorf("tool %s result must be a typed Go value, got %T", toolName, value)
-		}
+	// Tool results must be typed Go values so the generated codec is the sole
+	// authority for canonical JSON and schema alignment.
+	switch value.(type) {
+	case json.RawMessage, []byte:
+		return nil, fmt.Errorf("tool %s result must be a typed Go value, got %T", toolName, value)
 	}
-	codec, ok := r.toolCodec(toolName, payload)
+	codec, ok := r.toolCodec(toolName, false)
 	if !ok || codec.ToJSON == nil {
-		r.logger.Error(ctx, "no codec found for tool", "tool", toolName, "payload", payload)
+		r.logger.Error(ctx, "no codec found for tool", "tool", toolName, "payload", false)
 		return nil, fmt.Errorf("no codec found for tool %s", toolName)
 	}
 	data, err := codec.ToJSON(value)
 	if err != nil {
-		r.logger.Warn(ctx, "tool codec encode failed", "tool", toolName, "payload", payload, "err", err)
+		r.logger.Warn(ctx, "tool codec encode failed", "tool", toolName, "payload", false, "err", err)
 		return nil, err
 	}
 	return json.RawMessage(data), nil

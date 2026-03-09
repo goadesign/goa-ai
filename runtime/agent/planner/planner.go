@@ -262,6 +262,53 @@ type ToolResult struct {
 	RunLink *run.Handle
 }
 
+// ToolOutput captures one executed tool call in a workflow-safe form suitable
+// for planner resume and finalization logic.
+//
+// Contract:
+//   - Payload is the canonical JSON input sent to the tool.
+//   - Result and ServerData are canonical JSON bytes produced by the tool.
+//   - This type must remain workflow-boundary safe; it intentionally does not
+//     carry decoded `any` values.
+type ToolOutput struct {
+	// Name is the fully-qualified tool identifier that was executed.
+	Name tools.Ident
+
+	// ToolCallID is the correlation identifier for this tool invocation.
+	ToolCallID string
+
+	// Payload is the canonical JSON payload passed to the tool.
+	Payload rawjson.RawJSON
+
+	// Result is the canonical JSON result payload encoded with the tool result codec.
+	Result rawjson.RawJSON
+
+	// ResultBytes is the size, in bytes, of the canonical JSON result payload when known.
+	ResultBytes int
+
+	// ResultOmitted indicates that the canonical JSON result payload was intentionally
+	// omitted to satisfy workflow payload budgets.
+	ResultOmitted bool
+
+	// ResultOmittedReason provides a stable, machine-readable reason for omission.
+	ResultOmittedReason string
+
+	// ServerData carries canonical server-only JSON emitted alongside the tool result.
+	ServerData rawjson.RawJSON
+
+	// Bounds describes how the result has been bounded relative to the full data set.
+	Bounds *agent.Bounds
+
+	// Error is the structured tool error, when the tool execution failed.
+	Error *ToolError
+
+	// RetryHint provides structured recovery guidance for tool-scoped failures.
+	RetryHint *RetryHint
+
+	// Telemetry contains execution metrics attributed to this tool output.
+	Telemetry *telemetry.ToolTelemetry
+}
+
 // RetryHint communicates planner guidance after tool failures so policy engines
 // and UIs can react. See policy.RetryHint for the runtime-converted form.
 type RetryHint struct {
@@ -296,6 +343,49 @@ type RetryHint struct {
 type FinalResponse struct {
 	// Message is the assistant message returned to the user.
 	Message *model.Message
+}
+
+// FinalToolResult contains the workflow-safe final tool result emitted by a
+// nested planner when it owns the parent tool contract directly.
+//
+// Contract:
+//   - Result is canonical JSON bytes for the parent tool's result schema.
+//   - This type must remain workflow-boundary safe; it intentionally does not
+//     carry a typed `any` result value.
+//   - Top-level planners normally leave this nil and return FinalResponse
+//     instead.
+type FinalToolResult struct {
+	// Result is the canonical JSON result payload encoded with the parent tool's
+	// result codec.
+	Result rawjson.RawJSON
+
+	// ServerData carries server-only data associated with the final tool result.
+	ServerData rawjson.RawJSON
+
+	// ResultBytes is the size, in bytes, of the canonical JSON result payload
+	// when known.
+	ResultBytes int
+
+	// ResultOmitted indicates that the canonical JSON result payload was
+	// intentionally omitted to satisfy workflow payload budgets.
+	ResultOmitted bool
+
+	// ResultOmittedReason provides a stable, machine-readable reason for omission.
+	ResultOmittedReason string
+
+	// Bounds describes how the result has been bounded relative to the full data
+	// set when applicable.
+	Bounds *agent.Bounds
+
+	// Error is the structured tool error, when the nested planner finalized with
+	// a tool-scoped failure.
+	Error *ToolError
+
+	// RetryHint provides structured recovery guidance for tool-scoped failures.
+	RetryHint *RetryHint
+
+	// Telemetry contains execution metrics attributed to the final tool result.
+	Telemetry *telemetry.ToolTelemetry
 }
 
 // PlannerAnnotation is a free-form planner note with optional labels.
@@ -494,7 +584,7 @@ type PlanInput struct {
 	Reminders []reminder.Reminder
 }
 
-// PlanResumeInput carries messages plus recent tool results into PlanResume.
+// PlanResumeInput carries messages plus execution history into PlanResume.
 type PlanResumeInput struct {
 	// Messages is the full conversation history including the most recent tool_use/tool_result blocks.
 	Messages []*model.Message
@@ -508,8 +598,12 @@ type PlanResumeInput struct {
 	// Events allows planners to emit streaming updates.
 	Events PlannerEvents
 
-	// ToolResults are the results produced by the previous tool batch.
-	ToolResults []*ToolResult
+	// ToolOutputs is the accumulated executed tool-call history for the run so far.
+	//
+	// This is the single truthful planner-facing execution-history boundary.
+	// Planners that need typed convenience views derive them locally from these
+	// canonical tool outputs instead of relying on a duplicate runtime field.
+	ToolOutputs []*ToolOutput
 
 	// Finalize is non-nil when the runtime forces termination and requests a final response.
 	Finalize *Termination
@@ -525,6 +619,10 @@ type PlanResult struct {
 
 	// FinalResponse ends the run with a final assistant message.
 	FinalResponse *FinalResponse
+
+	// FinalToolResult ends a nested agent run with a canonical parent tool result
+	// instead of an assistant message.
+	FinalToolResult *FinalToolResult
 
 	// Streamed reports whether assistant text for this result has already been
 	// streamed via PlannerEvents.AssistantChunk. When true, runtimes should

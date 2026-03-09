@@ -11,6 +11,7 @@ import (
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -80,6 +81,7 @@ type (
 		sessionID string
 		turnID    string
 		runCtx    *run.Context
+		messages  []*model.Message
 
 		expectedChildren int
 		parentTracker    *childTracker
@@ -321,44 +323,10 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 
 			// Agent-as-tool: start child workflows concurrently and fan in results later.
 			if spec.IsAgentTool {
-				messages, nestedRunCtx, err := e.r.buildAgentChildRequest(ctx, ts.AgentTool, &call)
+				messages, nestedRunCtx, err := e.r.buildAgentChildRequest(ctx, ts.AgentTool, &call, e.messages, e.runCtx)
 				if err != nil {
-					// Payload decoding / prompt rendering failures are tool-call contract
-					// violations (wrong JSON shape, missing required fields, etc.).
-					// Convert these into a tool result with a structured RetryHint rather
-					// than failing the workflow.
-					toolErr := planner.NewToolError(err.Error())
-					tr := &planner.ToolResult{
-						Name:       call.Name,
-						ToolCallID: call.ToolCallID,
-						Error:      toolErr,
-					}
-					var hint *planner.RetryHint
-					if _, question, _, ok := buildRetryHintFromValidation(err, call.Name); ok {
-						// Keep the retry flow fully model-driven (no await_clarification),
-						// but retain the validation-derived question and field anchors.
-						hint = &planner.RetryHint{
-							Reason:             planner.RetryReasonInvalidArguments,
-							Tool:               call.Name,
-							RestrictToTool:     true,
-							MissingFields:      nil,
-							ClarifyingQuestion: question,
-						}
-					} else {
-						var specPtr *tools.ToolSpec
-						if s, ok := e.r.toolSpec(call.Name); ok {
-							cp := s
-							specPtr = &cp
-						}
-						if h := buildRetryHintFromDecodeError(err, call.Name, specPtr); h != nil {
-							h.Reason = planner.RetryReasonInvalidArguments
-							h.MissingFields = nil
-							h.RestrictToTool = true
-							hint = h
-						}
-					}
-					tr.RetryHint = hint
-					if err := e.r.enforceToolResultContracts(spec, call, toolErr, tr); err != nil {
+					tr, err := e.r.agentToolRequestFailureResult(call, err)
+					if err != nil {
 						return nil, err
 					}
 					if err := e.publishToolResultReceived(ctx, call, tr, nil, 0); err != nil {
@@ -409,13 +377,6 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 
 			start := wfCtx.Now()
 			ctxInline := engine.WithWorkflowContext(ctx, wfCtx)
-			ctxInline = withFinalizerInvokerFactory(ctxInline, &finalizerInvokerFactory{
-				runtime:         e.r,
-				wfCtx:           wfCtx,
-				activityName:    e.activityName,
-				activityOptions: e.toolActOptions,
-				agentID:         e.agentID,
-			})
 			result, err := ts.Execute(ctxInline, &call)
 			if err != nil {
 				return nil, fmt.Errorf("inline tool %q failed: %w", call.Name, err)
@@ -433,7 +394,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 			}
 			var resultJSON json.RawMessage
 			if toolErr == nil {
-				resultJSON, err = e.r.marshalToolValue(ctx, call.Name, result.Result, false)
+				resultJSON, err = e.r.marshalToolValue(ctx, call.Name, result.Result)
 				if err != nil {
 					return nil, fmt.Errorf("encode %s tool result for streaming: %w", call.Name, err)
 				}
@@ -594,7 +555,7 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 
 			var resultJSON json.RawMessage
 			if toolErr == nil {
-				resultJSON, err = e.r.marshalToolValue(ctx, info.call.Name, decoded, false)
+				resultJSON, err = e.r.marshalToolValue(ctx, info.call.Name, decoded)
 				if err != nil {
 					return nil, nil, false, fmt.Errorf("encode %s tool result for streaming: %w", info.call.Name, err)
 				}
@@ -618,13 +579,6 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 		return map[string]*planner.ToolResult{}, nil, false, nil
 	}
 
-	ctxWithInvoker := withFinalizerInvokerFactory(ctx, &finalizerInvokerFactory{
-		runtime:         e.r,
-		wfCtx:           wfCtx,
-		activityName:    e.activityName,
-		activityOptions: e.toolActOptions,
-		agentID:         e.agentID,
-	})
 	out := make(map[string]*planner.ToolResult, len(children))
 	pending := append([]agentChildFutureInfo(nil), children...)
 	for len(pending) > 0 {
@@ -662,7 +616,7 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 				out[info.call.ToolCallID] = toolRes
 				continue
 			}
-			tr, err := e.r.adaptAgentChildOutput(ctxWithInvoker, info.cfg, &info.call, info.nestedRun, outPtr)
+			tr, err := e.r.adaptAgentChildOutput(ctx, info.cfg, &info.call, info.nestedRun, outPtr)
 			if err != nil {
 				return nil, nil, false, err
 			}
@@ -687,7 +641,7 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 
 			var resultJSON json.RawMessage
 			if toolErr == nil {
-				resultJSON, err = e.r.marshalToolValue(ctx, info.call.Name, tr.Result, false)
+				resultJSON, err = e.r.marshalToolValue(ctx, info.call.Name, tr.Result)
 				if err != nil {
 					return nil, nil, false, fmt.Errorf("encode %s tool result for streaming: %w", info.call.Name, err)
 				}
@@ -730,7 +684,7 @@ func mergeToolResultsInCallOrder(calls []planner.ToolRequest, activityByID, inli
 //
 // expectedChildren indicates how many child tools are expected to be discovered dynamically
 // by the tools in this batch (0 if not tracked).
-func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName string, toolActOptions engine.ActivityOptions, agentID agent.Ident, runCtx *run.Context, calls []planner.ToolRequest, expectedChildren int, parentTracker *childTracker, finishBy time.Time) ([]*planner.ToolResult, bool, error) {
+func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName string, toolActOptions engine.ActivityOptions, agentID agent.Ident, runCtx *run.Context, messages []*model.Message, calls []planner.ToolRequest, expectedChildren int, parentTracker *childTracker, finishBy time.Time) ([]*planner.ToolResult, bool, error) {
 	if runCtx == nil {
 		return nil, false, fmt.Errorf("missing run context")
 	}
@@ -743,6 +697,7 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 		sessionID:        runCtx.SessionID,
 		turnID:           runCtx.TurnID,
 		runCtx:           runCtx,
+		messages:         messages,
 		expectedChildren: expectedChildren,
 		parentTracker:    parentTracker,
 		finishBy:         finishBy,

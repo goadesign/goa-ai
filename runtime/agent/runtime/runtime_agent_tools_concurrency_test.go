@@ -99,7 +99,7 @@ func TestExecuteToolCalls_AgentToolsFanOut(t *testing.T) {
 		},
 	}
 
-	results, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("parent.agent"), runCtx, calls, 0, nil, time.Time{})
+	results, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("parent.agent"), runCtx, nil, calls, 0, nil, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 

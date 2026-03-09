@@ -102,8 +102,7 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 			WorkflowName:     "child.workflow",
 			DefaultTaskQueue: "default",
 		},
-		Name:     toolsetName,
-		JSONOnly: true,
+		Name: toolsetName,
 		AgentToolContent: AgentToolContent{
 			Prompt: func(id tools.Ident, payload any) string {
 				return "invoke"

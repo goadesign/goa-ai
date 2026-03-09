@@ -37,6 +37,10 @@ type (
 
 		// ToolEvents are the accumulated tool results emitted over the lifetime of this run.
 		ToolEvents []*planner.ToolResult
+
+		// ToolOutputs is the accumulated executed tool-call history emitted over
+		// the lifetime of this run.
+		ToolOutputs []*planner.ToolOutput
 	}
 )
 

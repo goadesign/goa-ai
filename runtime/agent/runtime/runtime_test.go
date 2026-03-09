@@ -102,6 +102,79 @@ func TestStartRunRequiresSessionID(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestFinishWithoutToolCalls_UsesPlannerFinalToolResult(t *testing.T) {
+	rt := &Runtime{
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+		Bus:           noopHooks{},
+	}
+	input := &RunInput{
+		AgentID:   "svc.agent",
+		SessionID: "sess-1",
+	}
+	base := &planner.PlanInput{
+		RunContext: run.Context{
+			RunID:     "run-1",
+			SessionID: "sess-1",
+			Tool:      "svc.tools.do",
+		},
+	}
+	st := &runLoopState{
+		Result: &planner.PlanResult{
+			FinalToolResult: &planner.FinalToolResult{
+				Result: rawjson.RawJSON([]byte(`{"status":"ok"}`)),
+			},
+		},
+	}
+
+	out, err := rt.finishWithoutToolCalls(context.Background(), input, base, st, "turn-1")
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.NotNil(t, out.FinalToolResult)
+	require.JSONEq(t, `{"status":"ok"}`, string(out.FinalToolResult.Result))
+}
+
+func TestFinishWithoutToolCallsRejectsDualTerminalOutputs(t *testing.T) {
+	rt := &Runtime{
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+		Bus:           noopHooks{},
+	}
+	input := &RunInput{
+		AgentID:   "svc.agent",
+		SessionID: "sess-1",
+	}
+	base := &planner.PlanInput{
+		RunContext: run.Context{
+			RunID:     "run-1",
+			SessionID: "sess-1",
+			Tool:      "svc.tools.do",
+		},
+	}
+	st := &runLoopState{
+		Result: &planner.PlanResult{
+			FinalResponse: &planner.FinalResponse{
+				Message: &model.Message{
+					Role:  model.ConversationRoleAssistant,
+					Parts: []model.Part{model.TextPart{Text: "done"}},
+				},
+			},
+			FinalToolResult: &planner.FinalToolResult{
+				Result: rawjson.RawJSON([]byte(`{"status":"ok"}`)),
+			},
+		},
+	}
+
+	out, err := rt.finishWithoutToolCalls(context.Background(), input, base, st, "turn-1")
+	require.Error(t, err)
+	require.Nil(t, out)
+	require.Contains(t, err.Error(), "both")
+}
+
 func TestOneShotRunDoesNotRequireSession(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
@@ -748,7 +821,7 @@ func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 		ParentAgentID:    "agent-parent",
 		ParentToolCallID: "parent-123",
 	}
-	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "agent-1", childCtx, calls, 0, tracker, time.Time{})
+	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "agent-1", childCtx, nil, calls, 0, tracker, time.Time{})
 	require.NoError(t, err)
 
 	var update *hooks.ToolCallUpdatedEvent

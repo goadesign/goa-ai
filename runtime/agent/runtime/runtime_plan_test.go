@@ -4,6 +4,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
@@ -66,23 +67,112 @@ func TestPlanStartActivityInvokesPlanner(t *testing.T) {
 	require.NotNil(t, out.Result.FinalResponse)
 }
 
-func TestPlanResumeActivityPassesToolResults(t *testing.T) {
+func TestPlannerBoundaryOmitsToolResultsField(t *testing.T) {
+	t.Parallel()
+
+	planResumeInputType := reflect.TypeOf(planner.PlanResumeInput{})
+	_, hasPlannerToolResults := planResumeInputType.FieldByName("ToolResults")
+	require.False(t, hasPlannerToolResults, "PlanResumeInput must expose ToolOutputs as its only execution-history field")
+
+	planActivityInputType := reflect.TypeOf(PlanActivityInput{})
+	_, hasActivityToolResults := planActivityInputType.FieldByName("ToolResults")
+	require.False(t, hasActivityToolResults, "PlanActivityInput must expose ToolOutputs as its only execution-history field")
+}
+
+func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 	called := false
-	toolResults := []*api.ToolEvent{{Name: "svc.ts.tool"}}
+	toolOutputs := []*api.ToolCallOutput{{
+		Name:       "svc.ts.tool",
+		ToolCallID: "call-1",
+		Payload:    rawjson.RawJSON([]byte(`{"from":"test"}`)),
+		Result:     rawjson.RawJSON([]byte(`{"status":"ok"}`)),
+		ServerData: rawjson.RawJSON([]byte(`[{"kind":"evidence"}]`)),
+	}}
 	pl := &stubPlanner{resume: func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
 		called = true
 		require.NotNil(t, input)
-		require.Len(t, input.ToolResults, 1)
-		require.Equal(t, tools.Ident("svc.ts.tool"), input.ToolResults[0].Name)
-		require.Equal(t, 3, input.RunContext.Attempt)
+		require.Len(t, input.ToolOutputs, 1)
+		require.Equal(t, tools.Ident("svc.ts.tool"), input.ToolOutputs[0].Name)
+		require.Equal(t, "call-1", input.ToolOutputs[0].ToolCallID)
+		require.JSONEq(t, `{"from":"test"}`, string(input.ToolOutputs[0].Payload))
+		require.JSONEq(t, `{"status":"ok"}`, string(input.ToolOutputs[0].Result))
+		require.JSONEq(t, `[{"kind":"evidence"}]`, string(input.ToolOutputs[0].ServerData))
 		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: "svc.other.tool"}}}, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
-	input := PlanActivityInput{AgentID: "service.agent", RunID: "run-123", RunContext: run.Context{RunID: "run-123", Attempt: 3}, ToolResults: toolResults}
+	input := PlanActivityInput{
+		AgentID:     "service.agent",
+		RunID:       "run-123",
+		RunContext:  run.Context{RunID: "run-123", Attempt: 3},
+		ToolOutputs: toolOutputs,
+	}
 	out, err := rt.PlanResumeActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.True(t, called)
 	require.Len(t, out.Result.ToolCalls, 1)
+}
+
+func TestBuildPlannerToolOutputsPreservesOmittedResultMetadata(t *testing.T) {
+	t.Parallel()
+
+	rt := &Runtime{
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			"svc.ts.tool": newAnyJSONSpec("svc.ts.tool", "svc.tools"),
+		},
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+	}
+
+	outputs, err := rt.buildPlannerToolOutputs(
+		context.Background(),
+		[]planner.ToolRequest{
+			{
+				Name:       "svc.ts.tool",
+				ToolCallID: "call-1",
+				Payload:    rawjson.RawJSON([]byte(`{"from":"test"}`)),
+			},
+		},
+		[]*planner.ToolResult{
+			{
+				Name:                "svc.ts.tool",
+				ToolCallID:          "call-1",
+				ResultOmitted:       true,
+				ResultOmittedReason: "workflow_budget",
+				ResultBytes:         12345,
+				ServerData:          rawjson.RawJSON([]byte(`[{"kind":"evidence"}]`)),
+			},
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, outputs, 1)
+	require.True(t, outputs[0].ResultOmitted)
+	require.Equal(t, "workflow_budget", outputs[0].ResultOmittedReason)
+	require.Equal(t, 12345, outputs[0].ResultBytes)
+	require.Empty(t, outputs[0].Result)
+	require.JSONEq(t, `[{"kind":"evidence"}]`, string(outputs[0].ServerData))
+}
+
+func TestBuildNextResumeRequestRejectsNilToolOutputEntry(t *testing.T) {
+	t.Parallel()
+
+	rt := &Runtime{}
+	base := &planner.PlanInput{
+		RunContext: run.Context{
+			RunID:     "run-123",
+			SessionID: "sess-1",
+		},
+	}
+	nextAttempt := 1
+
+	_, err := rt.buildNextResumeRequest(
+		"svc.agent",
+		base,
+		[]*planner.ToolOutput{nil},
+		&nextAttempt,
+	)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "nil tool output")
 }
 
 func TestPlanResumeActivityPreservesEmptyRawJSONPayloads(t *testing.T) {
