@@ -38,7 +38,7 @@ func (r *Runtime) encodeToolEvents(ctx context.Context, events []*planner.ToolRe
 	}
 	out := make([]*api.ToolEvent, 0, len(events))
 	for _, ev := range events {
-		result, err := r.marshalToolValue(ctx, ev.Name, ev.Result, false)
+		result, err := r.marshalToolValue(ctx, ev.Name, ev.Result)
 		if err != nil {
 			return nil, fmt.Errorf("encode tool result for %s: %w", ev.Name, err)
 		}
@@ -79,7 +79,7 @@ func (r *Runtime) encodeToolEventsForPlanning(ctx context.Context, events []*pla
 	}
 	out := make([]*api.ToolEvent, 0, len(events))
 	for _, ev := range events {
-		result, err := r.marshalToolValue(ctx, ev.Name, ev.Result, false)
+		result, err := r.marshalToolValue(ctx, ev.Name, ev.Result)
 		if err != nil {
 			return nil, fmt.Errorf("encode tool result for %s: %w", ev.Name, err)
 		}
@@ -106,6 +106,73 @@ func (r *Runtime) encodeToolEventsForPlanning(ctx context.Context, events []*pla
 			ChildrenCount:       ev.ChildrenCount,
 			RunLink:             ev.RunLink,
 		})
+	}
+	return out, nil
+}
+
+// buildPlannerToolOutputs converts executed tool calls plus their results into
+// planner ToolOutput values suitable for run-loop state.
+//
+// Contract:
+//   - Calls are emitted in canonical call order, keyed by ToolCallID.
+//   - Results may arrive in a different order (for example, externally provided
+//     await results); they are matched by ToolCallID, not slice position.
+//   - If a result was already omitted at an upstream truthful boundary, the
+//     original omission metadata is preserved without re-encoding synthetic bytes.
+func (r *Runtime) buildPlannerToolOutputs(ctx context.Context, calls []planner.ToolRequest, results []*planner.ToolResult) ([]*planner.ToolOutput, error) {
+	if len(calls) == 0 {
+		return nil, nil
+	}
+	if len(calls) != len(results) {
+		return nil, fmt.Errorf("encode tool outputs: calls/results length mismatch (%d != %d)", len(calls), len(results))
+	}
+	resultsByToolCallID := make(map[string]*planner.ToolResult, len(results))
+	for _, result := range results {
+		if result == nil {
+			return nil, fmt.Errorf("encode tool outputs: nil tool result")
+		}
+		if result.ToolCallID == "" {
+			return nil, fmt.Errorf("encode tool outputs: missing result tool_call_id for %s", result.Name)
+		}
+		if _, exists := resultsByToolCallID[result.ToolCallID]; exists {
+			return nil, fmt.Errorf("encode tool outputs: duplicate result tool_call_id %s", result.ToolCallID)
+		}
+		resultsByToolCallID[result.ToolCallID] = result
+	}
+	out := make([]*planner.ToolOutput, 0, len(calls))
+	for _, call := range calls {
+		if call.ToolCallID == "" {
+			return nil, fmt.Errorf("build planner tool outputs: missing call tool_call_id for %s", call.Name)
+		}
+		result, ok := resultsByToolCallID[call.ToolCallID]
+		if !ok {
+			return nil, fmt.Errorf("build planner tool outputs: missing result for tool_call_id %s", call.ToolCallID)
+		}
+		if result.Name != "" && result.Name != call.Name {
+			return nil, fmt.Errorf("build planner tool outputs: result name %s does not match call %s", result.Name, call.Name)
+		}
+		output := &planner.ToolOutput{
+			Name:                call.Name,
+			ToolCallID:          call.ToolCallID,
+			Payload:             append(rawjson.RawJSON(nil), call.Payload...),
+			ResultBytes:         result.ResultBytes,
+			ResultOmitted:       result.ResultOmitted,
+			ResultOmittedReason: result.ResultOmittedReason,
+			ServerData:          append(rawjson.RawJSON(nil), result.ServerData...),
+			Bounds:              result.Bounds,
+			Error:               result.Error,
+			RetryHint:           result.RetryHint,
+			Telemetry:           result.Telemetry,
+		}
+		if !result.ResultOmitted {
+			resultJSON, err := r.marshalToolValue(ctx, call.Name, result.Result)
+			if err != nil {
+				return nil, fmt.Errorf("build planner tool output result for %s: %w", call.Name, err)
+			}
+			output.Result = rawjson.RawJSON(resultJSON)
+			output.ResultBytes = len(resultJSON)
+		}
+		out = append(out, output)
 	}
 	return out, nil
 }
@@ -148,6 +215,64 @@ func (r *Runtime) decodeToolEvents(ctx context.Context, events []*api.ToolEvent)
 			RunLink:             ev.RunLink,
 		}
 		out = append(out, tr)
+	}
+	return out, nil
+}
+
+// decodeToolOutputs converts workflow-boundary tool output envelopes back into
+// planner ToolOutput values.
+func (r *Runtime) decodeToolOutputs(events []*api.ToolCallOutput) ([]*planner.ToolOutput, error) {
+	if len(events) == 0 {
+		return nil, nil
+	}
+	out := make([]*planner.ToolOutput, 0, len(events))
+	for _, ev := range events {
+		if ev == nil {
+			return nil, fmt.Errorf("CRITICAL: nil tool output entry")
+		}
+		out = append(out, &planner.ToolOutput{
+			Name:                ev.Name,
+			ToolCallID:          ev.ToolCallID,
+			Payload:             append(rawjson.RawJSON(nil), ev.Payload...),
+			Result:              append(rawjson.RawJSON(nil), ev.Result...),
+			ResultBytes:         ev.ResultBytes,
+			ResultOmitted:       ev.ResultOmitted,
+			ResultOmittedReason: ev.ResultOmittedReason,
+			ServerData:          append(rawjson.RawJSON(nil), ev.ServerData...),
+			Bounds:              ev.Bounds,
+			Error:               ev.Error,
+			RetryHint:           ev.RetryHint,
+			Telemetry:           ev.Telemetry,
+		})
+	}
+	return out, nil
+}
+
+// encodePlannerToolOutputs clones planner ToolOutput values into the
+// workflow-boundary safe api.ToolCallOutput shape used by plan activities.
+func encodePlannerToolOutputs(outputs []*planner.ToolOutput) ([]*api.ToolCallOutput, error) {
+	if len(outputs) == 0 {
+		return nil, nil
+	}
+	out := make([]*api.ToolCallOutput, 0, len(outputs))
+	for _, output := range outputs {
+		if output == nil {
+			return nil, fmt.Errorf("encode planner tool outputs: nil tool output")
+		}
+		out = append(out, &api.ToolCallOutput{
+			Name:                output.Name,
+			ToolCallID:          output.ToolCallID,
+			Payload:             append(rawjson.RawJSON(nil), output.Payload...),
+			Result:              append(rawjson.RawJSON(nil), output.Result...),
+			ResultBytes:         output.ResultBytes,
+			ResultOmitted:       output.ResultOmitted,
+			ResultOmittedReason: output.ResultOmittedReason,
+			ServerData:          append(rawjson.RawJSON(nil), output.ServerData...),
+			Bounds:              output.Bounds,
+			Error:               output.Error,
+			RetryHint:           output.RetryHint,
+			Telemetry:           output.Telemetry,
+		})
 	}
 	return out, nil
 }

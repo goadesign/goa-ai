@@ -6,8 +6,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -39,6 +41,48 @@ func TestNewAgentDataConverter_DecodesToolResultsSetIntoSinglePointer(t *testing
 	require.Len(t, decoded.Results, 1)
 	require.Equal(t, toolName, decoded.Results[0].Name)
 	require.JSONEq(t, `{"value":"ok"}`, string(decoded.Results[0].Result))
+}
+
+func TestNewAgentDataConverter_RoundTripsPlanActivityInputToolOutputs(t *testing.T) {
+	t.Parallel()
+
+	dc := NewAgentDataConverter(func(tools.Ident) (*tools.ToolSpec, bool) { return nil, false })
+	p, err := dc.ToPayload(&api.PlanActivityInput{
+		AgentID: "test.agent",
+		RunID:   "run-123",
+		Messages: []*model.Message{
+			{
+				Role: model.ConversationRoleUser,
+				Parts: []model.Part{
+					model.TextPart{Text: "hello"},
+				},
+			},
+		},
+		RunContext: run.Context{
+			RunID:   "run-123",
+			Attempt: 2,
+		},
+		ToolOutputs: []*api.ToolCallOutput{
+			{
+				Name:       "test.tool",
+				ToolCallID: "call-1",
+				Payload:    rawjson.RawJSON([]byte(`{"input":"ok"}`)),
+				Result:     rawjson.RawJSON([]byte(`{"output":"ok"}`)),
+				ServerData: rawjson.RawJSON([]byte(`[{"kind":"evidence"}]`)),
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	var decoded *api.PlanActivityInput
+	require.NoError(t, dc.FromPayload(p, &decoded))
+	require.NotNil(t, decoded)
+	require.Len(t, decoded.ToolOutputs, 1)
+	require.Equal(t, tools.Ident("test.tool"), decoded.ToolOutputs[0].Name)
+	require.Equal(t, "call-1", decoded.ToolOutputs[0].ToolCallID)
+	require.JSONEq(t, `{"input":"ok"}`, string(decoded.ToolOutputs[0].Payload))
+	require.JSONEq(t, `{"output":"ok"}`, string(decoded.ToolOutputs[0].Result))
+	require.JSONEq(t, `[{"kind":"evidence"}]`, string(decoded.ToolOutputs[0].ServerData))
 }
 
 func TestNewAgentDataConverter_RejectsJSONStringifiedToolResult(t *testing.T) {

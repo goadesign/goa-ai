@@ -101,7 +101,7 @@ func (r *Runtime) waitAwaitConfirmation(
 		); err != nil {
 			return nil, nil, err
 		}
-		resultJSON, err := r.marshalToolValue(ctx, it.call.Name, deniedResult, false)
+		resultJSON, err := r.marshalToolValue(ctx, it.call.Name, deniedResult)
 		if err != nil {
 			return nil, nil, fmt.Errorf("encode %s denied tool result for streaming: %w", it.call.Name, err)
 		}
@@ -136,6 +136,9 @@ func (r *Runtime) waitAwaitConfirmation(
 			Error:      nil,
 		}
 		st.ToolEvents = append(st.ToolEvents, cloneToolResults([]*planner.ToolResult{tr})...)
+		if err := r.appendToolOutputs(ctx, st, []planner.ToolRequest{it.call}, []*planner.ToolResult{tr}); err != nil {
+			return nil, nil, err
+		}
 		if err := r.appendUserToolResults(base, []planner.ToolRequest{it.call}, []*planner.ToolResult{tr}, st.Ledger); err != nil {
 			return nil, nil, err
 		}
@@ -169,11 +172,14 @@ func (r *Runtime) waitAwaitConfirmation(
 		return nil, nil, err
 	}
 	st.ToolEvents = append(st.ToolEvents, cloneToolResults(vals)...)
+	if err := r.appendToolOutputs(ctx, st, []planner.ToolRequest{call}, vals); err != nil {
+		return nil, nil, err
+	}
 	if err := r.appendUserToolResults(base, []planner.ToolRequest{call}, vals, st.Ledger); err != nil {
 		return nil, nil, err
 	}
 	if timedOut {
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonTimeBudget, deadlines.Hard)
+		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.ToolOutputs, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonTimeBudget, deadlines.Hard)
 		return nil, out, err
 	}
 	return vals, nil, nil
@@ -282,14 +288,14 @@ func (r *Runtime) handleAwaitQueue(
 			capFailures(allToolResults),
 		)
 		if st.Caps.MaxConsecutiveFailedToolCalls > 0 && st.Caps.RemainingConsecutiveFailedToolCalls <= 0 {
-			out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonFailureCap, deadlines.Hard)
+			out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.ToolOutputs, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonFailureCap, deadlines.Hard)
 			return out, err
 		}
 	} else if st.Caps.MaxConsecutiveFailedToolCalls > 0 {
 		st.Caps.RemainingConsecutiveFailedToolCalls = st.Caps.MaxConsecutiveFailedToolCalls
 	}
 
-	if out, err := r.handleMissingFieldsPolicy(wfCtx, reg, input, base, allToolResults, st.ToolEvents, st.AggUsage, &st.NextAttempt, turnID, ctrl, deadlines); err != nil {
+	if out, err := r.handleMissingFieldsPolicy(wfCtx, reg, input, base, allToolResults, st.ToolEvents, st.ToolOutputs, st.AggUsage, &st.NextAttempt, turnID, ctrl, deadlines); err != nil {
 		return nil, err
 	} else if out != nil {
 		return out, nil
@@ -300,7 +306,7 @@ func (r *Runtime) handleAwaitQueue(
 		return nil, err
 	}
 	if protected {
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonFailureCap, deadlines.Hard)
+		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.ToolOutputs, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonFailureCap, deadlines.Hard)
 		return out, err
 	}
 
@@ -316,7 +322,7 @@ func (r *Runtime) handleAwaitQueue(
 		return nil, err
 	}
 
-	resumeReq, err := r.buildNextResumeRequest(ctx, input.AgentID, base, allToolResults, &st.NextAttempt)
+	resumeReq, err := r.buildNextResumeRequest(input.AgentID, base, st.ToolOutputs, &st.NextAttempt)
 	if err != nil {
 		return nil, err
 	}
@@ -584,6 +590,9 @@ func (r *Runtime) consumeProvidedToolResults(ctx context.Context, input *RunInpu
 
 	// Record tool results in the run ledger and publish tool_result events for streaming.
 	st.ToolEvents = append(st.ToolEvents, cloneToolResults(decoded)...)
+	if err := r.appendToolOutputs(ctx, st, allowed, decoded); err != nil {
+		return nil, err
+	}
 
 	if err := r.appendUserToolResults(base, allowed, decoded, st.Ledger); err != nil {
 		return nil, err

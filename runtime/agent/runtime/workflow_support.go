@@ -29,6 +29,7 @@ func (r *Runtime) finalizeWithPlanner(
 	input *RunInput,
 	base *planner.PlanInput,
 	allToolResults []*planner.ToolResult,
+	allToolOutputs []*planner.ToolOutput,
 	aggUsage model.TokenUsage,
 	nextAttempt int,
 	turnID string,
@@ -107,7 +108,7 @@ func (r *Runtime) finalizeWithPlanner(
 	resumeCtx.Attempt = nextAttempt
 	// Signal zero remaining duration for any prompt engineering that uses MaxDuration.
 	resumeCtx.MaxDuration = "0s"
-	toolResults, err := r.encodeToolEventsForPlanning(ctx, allToolResults)
+	encodedToolOutputs, err := encodePlannerToolOutputs(allToolOutputs)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +117,7 @@ func (r *Runtime) finalizeWithPlanner(
 		RunID:       base.RunContext.RunID,
 		Messages:    messages,
 		RunContext:  resumeCtx,
-		ToolResults: toolResults,
+		ToolOutputs: encodedToolOutputs,
 		Finalize:    &planner.Termination{Reason: reason, Message: hint},
 	}
 	if err := enforcePlanActivityInputBudget(req); err != nil {
@@ -178,17 +179,23 @@ func (r *Runtime) finalizeWithPlanner(
 		// Surface the termination reason prominently; include underlying error for observability.
 		return nil, fmt.Errorf("%s: %w", reasonText, err)
 	}
-	if output == nil || output.Result == nil || output.Result.FinalResponse == nil {
+	if output == nil || output.Result == nil {
 		return nil, fmt.Errorf("%s", reasonText)
 	}
+	if err := validateTerminalPlanResult(output.Result); err != nil {
+		return nil, fmt.Errorf("%s: %w", reasonText, err)
+	}
 	aggUsage = addTokenUsage(aggUsage, output.Usage)
-	finalMsg := output.Result.FinalResponse.Message
-	if output.Result.Streamed && agentMessageText(finalMsg) == "" {
-		if text := transcriptText(output.Transcript); text != "" {
-			finalMsg = newTextAgentMessage(model.ConversationRoleAssistant, text)
+	var finalMsg *model.Message
+	if output.Result.FinalResponse != nil {
+		finalMsg = output.Result.FinalResponse.Message
+		if output.Result.Streamed && agentMessageText(finalMsg) == "" {
+			if text := transcriptText(output.Transcript); text != "" {
+				finalMsg = newTextAgentMessage(model.ConversationRoleAssistant, text)
+			}
 		}
 	}
-	if !output.Result.Streamed {
+	if output.Result.FinalResponse != nil && !output.Result.Streamed {
 		if err := r.publishHook(
 			ctx,
 			hooks.NewAssistantMessageEvent(
@@ -226,14 +233,16 @@ func (r *Runtime) finalizeWithPlanner(
 	if err != nil {
 		return nil, err
 	}
+	finalToolResult := finalToolResultEvent(base.RunContext.Tool, output.Result.FinalToolResult)
 
 	return &RunOutput{
-		AgentID:    input.AgentID,
-		RunID:      base.RunContext.RunID,
-		Final:      finalMsg,
-		ToolEvents: toolEvents,
-		Notes:      notes,
-		Usage:      &aggUsage,
+		AgentID:         input.AgentID,
+		RunID:           base.RunContext.RunID,
+		Final:           finalMsg,
+		FinalToolResult: finalToolResult,
+		ToolEvents:      toolEvents,
+		Notes:           notes,
+		Usage:           &aggUsage,
 	}, nil
 }
 
@@ -380,6 +389,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 	base *planner.PlanInput,
 	results []*planner.ToolResult,
 	allResults []*planner.ToolResult,
+	allToolOutputs []*planner.ToolOutput,
 	aggUsage model.TokenUsage,
 	nextAttempt *int,
 	turnID string,
@@ -400,7 +410,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 		if tr == nil || tr.RetryHint == nil {
 			continue
 		}
-		if tr.RetryHint.Reason == planner.RetryReasonMissingFields || len(tr.RetryHint.MissingFields) > 0 {
+		if tr.RetryHint.Reason == planner.RetryReasonMissingFields {
 			mf = tr.RetryHint
 			triggerTool = tr.Name
 			triggerCall = tr.ToolCallID
@@ -412,7 +422,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 	}
 	switch reg.Policy.OnMissingFields {
 	case MissingFieldsFinalize:
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, allResults, aggUsage, *nextAttempt, turnID, planner.TerminationReasonFailureCap, time.Time{})
+		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, allResults, allToolOutputs, aggUsage, *nextAttempt, turnID, planner.TerminationReasonFailureCap, time.Time{})
 		return out, err
 	case MissingFieldsAwaitClarification:
 		// Generate deterministic await ID for correlation safety.

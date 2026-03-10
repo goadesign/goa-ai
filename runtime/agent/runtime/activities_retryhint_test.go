@@ -41,7 +41,7 @@ func TestBuildRetryHint_InvalidEnum(t *testing.T) {
 	fields, q, reason, ok := buildRetryHintFromValidation(ferr, "svc.process")
 	require.True(t, ok)
 	require.Equal(t, planner.RetryReasonInvalidArguments, reason)
-	require.Empty(t, fields)
+	require.Equal(t, []string{"format"}, fields)
 	require.True(t, containsAll(q, []string{"format", "one of: a, b"}))
 }
 
@@ -57,7 +57,7 @@ func TestBuildRetryHint_LengthPatternFormat(t *testing.T) {
 	fields, q, reason, ok := buildRetryHintFromValidation(ferr, "svc.create")
 	require.True(t, ok)
 	require.Equal(t, planner.RetryReasonInvalidArguments, reason)
-	require.Empty(t, fields)
+	require.Equal(t, []string{"name", "email", "code"}, fields)
 	require.NotEmpty(t, q)
 	require.True(t, containsAll(q, []string{"name", "email", "code"}))
 }

@@ -161,6 +161,16 @@ type (
 		// Final is the assistant reply returned to the caller.
 		Final *model.Message
 
+		// FinalToolResult is the canonical parent tool_result for nested agent runs
+		// when the child planner/runtime owns the outer tool contract directly.
+		//
+		// Contract:
+		// - This uses the same workflow-safe envelope as ToolEvents because it also
+		//   crosses a workflow boundary.
+		// - Result bytes are canonical JSON for the parent tool's result schema.
+		// - Top-level runs normally leave this nil.
+		FinalToolResult *ToolEvent
+
 		// ToolEvents captures all tool results emitted before completion in execution order.
 		//
 		// Contract:
@@ -241,6 +251,55 @@ type (
 		RunLink *run.Handle
 	}
 
+	// ToolCallOutput is the workflow-boundary safe record of one executed tool call
+	// passed into planner resume/finalization activities.
+	//
+	// Contract:
+	// - Payload is the canonical JSON input sent to the tool.
+	// - Result and ServerData are canonical JSON bytes, not decoded Go values.
+	// - This preserves the exact executed tool boundary for planners that need
+	//   authoritative execution history.
+	ToolCallOutput struct {
+		// Name is the fully-qualified tool identifier that was executed.
+		Name tools.Ident
+
+		// ToolCallID is the correlation identifier for this tool invocation.
+		ToolCallID string
+
+		// Payload is the canonical JSON payload passed to the tool.
+		Payload rawjson.RawJSON
+
+		// Result is the canonical JSON result payload encoded using the tool result codec.
+		Result rawjson.RawJSON
+
+		// ResultBytes is the size, in bytes, of the canonical JSON result payload
+		// produced by the runtime before any workflow-boundary trimming is applied.
+		ResultBytes int
+
+		// ResultOmitted indicates that the runtime intentionally omitted Result bytes
+		// from this envelope to satisfy workflow-boundary payload budgets.
+		ResultOmitted bool
+
+		// ResultOmittedReason provides a stable, machine-readable reason for omitting
+		// the result bytes. Empty when ResultOmitted is false.
+		ResultOmittedReason string
+
+		// ServerData carries canonical server-only data emitted alongside the tool result.
+		ServerData rawjson.RawJSON
+
+		// Bounds describes how the result has been bounded relative to the full underlying data set.
+		Bounds *agent.Bounds
+
+		// Error is the structured tool error when tool execution failed.
+		Error *planner.ToolError
+
+		// RetryHint is optional structured guidance for recovering from tool failures.
+		RetryHint *planner.RetryHint
+
+		// Telemetry contains tool execution metrics (duration, token usage, model).
+		Telemetry *telemetry.ToolTelemetry
+	}
+
 	// PlanActivityInput carries the planner input for PlanStart and PlanResume activities.
 	PlanActivityInput struct {
 		// AgentID identifies which agent is being planned.
@@ -255,16 +314,13 @@ type (
 		// RunContext carries nested-run metadata (parent IDs, tool identifiers, etc.).
 		RunContext run.Context
 
-		// ToolResults are the tool results produced by the previous turn (if any).
+		// ToolOutputs is the accumulated executed tool-call history for the run so far.
 		//
 		// Contract:
-		// - This field crosses the workflow/activity boundary. It must not embed
-		//   planner.ToolResult because planner.ToolResult contains `any` fields that
-		//   engine data converters may rehydrate as map[string]any, breaking tool
-		//   result and sidecar codecs.
-		// - Results must be encoded with the tool's generated result codec and stored
-		//   as canonical JSON bytes.
-		ToolResults []*ToolEvent
+		// - This is the sole planner-facing execution-history field across the
+		//   workflow/activity boundary.
+		// - Entries preserve the canonical tool input, output, and server data bytes.
+		ToolOutputs []*ToolCallOutput
 
 		// Finalize requests a final turn with no further tool calls.
 		Finalize *planner.Termination

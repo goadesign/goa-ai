@@ -3,8 +3,6 @@ package runtime
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"testing"
 	"time"
 
@@ -292,108 +290,7 @@ func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 	require.Equal(t, "hello", firstText(pl.msgs[1]))
 }
 
-func TestToolResultFinalizerInvokesTool(t *testing.T) {
-	finalizer := ToolResultFinalizer("svc.aggregate.finalize", func(_ context.Context, input *FinalizerInput) (any, error) {
-		return map[string]any{"parent": input.Parent.ToolName}, nil
-	})
-	input := FinalizerInput{
-		Parent: ParentCall{
-			ToolName:   "child.method",
-			ToolCallID: "parent-call",
-		},
-		Children: []ChildCall{
-			{ToolName: "child", Status: "ok", Result: map[string]string{"foo": "bar"}},
-		},
-		Invoke: ToolInvokerFunc(func(ctx context.Context, tool tools.Ident, payload any) (*planner.ToolResult, error) {
-			require.Equal(t, tools.Ident("svc.aggregate.finalize"), tool)
-			require.Equal(t, map[string]any{"parent": tools.Ident("child.method")}, payload)
-			return &planner.ToolResult{
-				Result: map[string]any{"status": "ok"},
-			}, nil
-		}),
-	}
-	result, err := finalizer.Finalize(context.Background(), &input)
-	require.NoError(t, err)
-	require.Equal(t, map[string]any{"status": "ok"}, result.Result)
-}
-
-func TestToolResultFinalizerMissingInvoker(t *testing.T) {
-	finalizer := ToolResultFinalizer("svc.aggregate.finalize", func(context.Context, *FinalizerInput) (any, error) {
-		return map[string]any{}, nil
-	})
-	_, err := finalizer.Finalize(context.Background(), &FinalizerInput{
-		Parent: ParentCall{ToolName: "child.method"},
-	})
-	require.Error(t, err)
-}
-
-func TestJSONOnly_NoFinalizer_IncompatibleChildResultSchema_ReturnsToolError(t *testing.T) {
-	rt := &Runtime{
-		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-	}
-
-	type ParentResult struct {
-		OK bool `json:"ok"`
-	}
-
-	parent := tools.ToolSpec{
-		Name: tools.Ident("test.parent"),
-		Payload: tools.TypeSpec{
-			Codec: tools.AnyJSONCodec,
-		},
-		Result: tools.TypeSpec{
-			Codec: tools.JSONCodec[any]{
-				ToJSON: func(v any) ([]byte, error) {
-					// Strict: only accept the declared parent result type.
-					s, ok := v.(ParentResult)
-					if !ok {
-						return nil, fmt.Errorf("expected ParentResult, got %T", v)
-					}
-					return json.Marshal(s)
-				},
-				FromJSON: func(data []byte) (any, error) {
-					var out ParentResult
-					if err := json.Unmarshal(data, &out); err != nil {
-						return nil, err
-					}
-					return out, nil
-				},
-			},
-		},
-	}
-	rt.toolSpecs[parent.Name] = parent
-
-	cfg := &AgentToolConfig{
-		AgentID:  "test.agent",
-		JSONOnly: true,
-	}
-	call := &planner.ToolRequest{
-		Name:       parent.Name,
-		ToolCallID: "toolcall",
-		RunID:      "run",
-		SessionID:  "sess",
-	}
-	out := &RunOutput{
-		ToolEvents: []*api.ToolEvent{
-			{
-				Name:   tools.Ident("test.child"),
-				Result: rawjson.RawJSON([]byte(`"bad"`)),
-			},
-		},
-	}
-
-	tr, err := rt.adaptAgentChildOutput(context.Background(), cfg, call, run.Context{RunID: "child-run"}, out)
-	require.NoError(t, err)
-	require.NotNil(t, tr)
-	require.NotNil(t, tr.Error)
-	require.Contains(t, tr.Error.Message, "JSONOnly aggregation failed")
-}
-
-func TestJSONOnly_NoFinalizer_MultiChildWithoutAggregateKey_ReturnsToolError(t *testing.T) {
+func TestAgentTool_UsesFinalToolResultBeforeAggregation(t *testing.T) {
 	rt := &Runtime{
 		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
 		logger:        telemetry.NoopLogger{},
@@ -407,7 +304,7 @@ func TestJSONOnly_NoFinalizer_MultiChildWithoutAggregateKey_ReturnsToolError(t *
 	}
 
 	parent := tools.ToolSpec{
-		Name: tools.Ident("test.parent_multi"),
+		Name: tools.Ident("test.parent"),
 		Payload: tools.TypeSpec{
 			Codec: tools.AnyJSONCodec,
 		},
@@ -419,18 +316,14 @@ func TestJSONOnly_NoFinalizer_MultiChildWithoutAggregateKey_ReturnsToolError(t *
 					if err := json.Unmarshal(data, &out); err != nil {
 						return nil, err
 					}
-					return out, nil
+					return &out, nil
 				},
 			},
 		},
 	}
 	rt.toolSpecs[parent.Name] = parent
 
-	cfg := &AgentToolConfig{
-		AgentID:  "test.agent",
-		JSONOnly: true,
-		// No AggregateKeys configured.
-	}
+	cfg := &AgentToolConfig{AgentID: "test.agent"}
 	call := &planner.ToolRequest{
 		Name:       parent.Name,
 		ToolCallID: "toolcall",
@@ -438,121 +331,25 @@ func TestJSONOnly_NoFinalizer_MultiChildWithoutAggregateKey_ReturnsToolError(t *
 		SessionID:  "sess",
 	}
 	out := &RunOutput{
+		FinalToolResult: &api.ToolEvent{
+			Name:   parent.Name,
+			Result: rawjson.RawJSON([]byte(`{"events":["ok"]}`)),
+		},
 		ToolEvents: []*api.ToolEvent{
-			{Name: tools.Ident("child1"), Result: rawjson.RawJSON([]byte(`{"events":["a"]}`))},
-			{Name: tools.Ident("child2"), Result: rawjson.RawJSON([]byte(`{"events":["b"]}`))},
+			{
+				Name:   tools.Ident("test.child"),
+				Result: rawjson.RawJSON([]byte(`"bad"`)),
+			},
 		},
 	}
 
 	tr, err := rt.adaptAgentChildOutput(context.Background(), cfg, call, run.Context{RunID: "child-run"}, out)
 	require.NoError(t, err)
 	require.NotNil(t, tr)
-	require.NotNil(t, tr.Error)
-	require.Contains(t, tr.Error.Message, "JSONOnly aggregation failed")
-}
-
-func TestJSONOnly_FinalizerError_Propagates(t *testing.T) {
-	rt := &Runtime{
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-	}
-	cfg := &AgentToolConfig{
-		AgentID:  "test.agent",
-		JSONOnly: true,
-		Finalizer: FinalizerFunc(func(context.Context, *FinalizerInput) (*planner.ToolResult, error) {
-			return nil, errors.New("boom")
-		}),
-	}
-	call := &planner.ToolRequest{
-		Name:       tools.Ident("test.parent"),
-		ToolCallID: "toolcall",
-		RunID:      "run",
-		SessionID:  "sess",
-	}
-	out := &RunOutput{
-		ToolEvents: []*api.ToolEvent{
-			{Name: tools.Ident("child")},
-		},
-	}
-	tr, err := rt.adaptAgentChildOutput(context.Background(), cfg, call, run.Context{RunID: "child-run"}, out)
-	require.NoError(t, err)
-	require.NotNil(t, tr)
-	require.NotNil(t, tr.Error)
-	require.Contains(t, tr.Error.Message, "agent-tool: finalizer failed")
-}
-
-func TestAgentToolFinalizer_ReturnsErrorOnlyToolResult(t *testing.T) {
-	rt := &Runtime{
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-	}
-	cfg := &AgentToolConfig{
-		AgentID:  "test.agent",
-		JSONOnly: true,
-		Finalizer: FinalizerFunc(func(context.Context, *FinalizerInput) (*planner.ToolResult, error) {
-			return &planner.ToolResult{
-				Error: planner.NewToolError("nope"),
-			}, nil
-		}),
-	}
-	call := &planner.ToolRequest{
-		Name:       tools.Ident("test.parent"),
-		ToolCallID: "toolcall",
-		RunID:      "run",
-		SessionID:  "sess",
-	}
-	out := &RunOutput{
-		Final: &model.Message{
-			Role:  model.ConversationRoleAssistant,
-			Parts: []model.Part{model.TextPart{Text: "fallback prose"}},
-		},
-		ToolEvents: []*api.ToolEvent{
-			{Name: tools.Ident("child")},
-		},
-	}
-
-	tr, err := rt.adaptAgentChildOutput(context.Background(), cfg, call, run.Context{RunID: "child-run"}, out)
-	require.NoError(t, err)
-	require.NotNil(t, tr)
-	require.NotNil(t, tr.Error)
-	require.Equal(t, "nope", tr.Error.Message)
-	require.Nil(t, tr.Result)
-	require.Equal(t, tools.Ident("test.parent"), tr.Name)
-}
-
-func TestAgentToolFinalizerInput_ContainsParentIdentity(t *testing.T) {
-	rt := &Runtime{
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-	}
-	cfg := &AgentToolConfig{
-		AgentID:  "test.agent",
-		JSONOnly: true,
-		Finalizer: FinalizerFunc(func(_ context.Context, input *FinalizerInput) (*planner.ToolResult, error) {
-			require.Equal(t, tools.Ident("test.parent"), input.Parent.ToolName)
-			require.Equal(t, "toolcall", input.Parent.ToolCallID)
-			return &planner.ToolResult{Name: input.Parent.ToolName}, nil
-		}),
-	}
-	call := &planner.ToolRequest{
-		Name:       tools.Ident("test.parent"),
-		ToolCallID: "toolcall",
-		RunID:      "run",
-		SessionID:  "sess",
-	}
-	out := &RunOutput{
-		ToolEvents: []*api.ToolEvent{
-			{Name: tools.Ident("child")},
-		},
-	}
-	tr, err := rt.adaptAgentChildOutput(context.Background(), cfg, call, run.Context{RunID: "child-run"}, out)
-	require.NoError(t, err)
-	require.NotNil(t, tr)
-	require.Equal(t, tools.Ident("test.parent"), tr.Name)
+	require.Nil(t, tr.Error)
+	typed, ok := tr.Result.(*ParentResult)
+	require.True(t, ok)
+	require.Equal(t, []string{"ok"}, typed.Events)
+	require.NotNil(t, tr.RunLink)
+	require.Equal(t, "child-run", tr.RunLink.RunID)
 }

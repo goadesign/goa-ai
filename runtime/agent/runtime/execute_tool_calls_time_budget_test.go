@@ -45,7 +45,7 @@ func TestExecuteToolCalls_CancelsInFlightToolsWhenTimeBudgetReached(t *testing.T
 	}
 
 	finishBy := wfCtx.Now().Add(15 * time.Millisecond)
-	results, timedOut, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("agent-1"), runCtx, calls, 0, nil, finishBy)
+	results, timedOut, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("agent-1"), runCtx, nil, calls, 0, nil, finishBy)
 	require.NoError(t, err)
 	require.True(t, timedOut)
 	require.Len(t, results, 1)

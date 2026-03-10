@@ -98,7 +98,7 @@ func TestExecuteToolCalls_AgentToolsPublishResultsAsComplete(t *testing.T) {
 	}
 	done := make(chan out, 1)
 	go func() {
-		results, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("parent.agent"), runCtx, calls, 0, nil, time.Time{})
+		results, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("parent.agent"), runCtx, nil, calls, 0, nil, time.Time{})
 		done <- out{results: results, err: err}
 	}()
 

@@ -137,6 +137,7 @@ func TestMissingFieldsClarificationAwaitResumesWhenProvided(t *testing.T) {
 		base,
 		results,
 		results,
+		nil,
 		model.TokenUsage{},
 		&nextAttempt,
 		"turn-1",

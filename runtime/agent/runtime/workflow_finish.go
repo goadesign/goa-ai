@@ -12,9 +12,12 @@ import (
 	"context"
 	"fmt"
 
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 // finishWithoutToolCalls finalizes a plan result when the planner returned no
@@ -27,24 +30,29 @@ func (r *Runtime) finishWithoutToolCalls(
 	turnID string,
 ) (*RunOutput, error) {
 	result := st.Result
-	if result.FinalResponse == nil {
-		r.logger.Error(ctx, "ERROR - Neither tool calls nor final response!")
+	if err := validateTerminalPlanResult(result); err != nil {
+		r.logger.Error(ctx, "ERROR - invalid planner terminal result", "err", err)
 		return nil, fmt.Errorf(
-			"CRITICAL: planner returned neither tool calls nor final response - ToolCalls=%d, FinalResponse=%v, Await=%v",
+			"CRITICAL: %w - ToolCalls=%d, FinalResponse=%v, FinalToolResult=%v, Await=%v",
+			err,
 			len(result.ToolCalls),
 			result.FinalResponse != nil,
+			result.FinalToolResult != nil,
 			result.Await != nil,
 		)
 	}
 
-	finalMsg := result.FinalResponse.Message
-	if result.Streamed && agentMessageText(finalMsg) == "" {
-		if text := transcriptText(st.Transcript); text != "" {
-			finalMsg = newTextAgentMessage(model.ConversationRoleAssistant, text)
+	var finalMsg *model.Message
+	if result.FinalResponse != nil {
+		finalMsg = result.FinalResponse.Message
+		if result.Streamed && agentMessageText(finalMsg) == "" {
+			if text := transcriptText(st.Transcript); text != "" {
+				finalMsg = newTextAgentMessage(model.ConversationRoleAssistant, text)
+			}
 		}
 	}
 
-	if !result.Streamed {
+	if result.FinalResponse != nil && !result.Streamed {
 		if err := r.publishHook(
 			ctx,
 			hooks.NewAssistantMessageEvent(
@@ -85,14 +93,29 @@ func (r *Runtime) finishWithoutToolCalls(
 		return nil, err
 	}
 
+	finalToolResult := finalToolResultEvent(base.RunContext.Tool, result.FinalToolResult)
 	return &RunOutput{
-		AgentID:    input.AgentID,
-		RunID:      base.RunContext.RunID,
-		Final:      finalMsg,
-		ToolEvents: toolEvents,
-		Notes:      notes,
-		Usage:      &st.AggUsage,
+		AgentID:         input.AgentID,
+		RunID:           base.RunContext.RunID,
+		Final:           finalMsg,
+		FinalToolResult: finalToolResult,
+		ToolEvents:      toolEvents,
+		Notes:           notes,
+		Usage:           &st.AggUsage,
 	}, nil
+}
+
+func validateTerminalPlanResult(result *planner.PlanResult) error {
+	if result == nil {
+		return fmt.Errorf("planner returned nil terminal result")
+	}
+	if result.FinalResponse == nil && result.FinalToolResult == nil {
+		return fmt.Errorf("planner returned neither FinalResponse nor FinalToolResult")
+	}
+	if result.FinalResponse != nil && result.FinalToolResult != nil {
+		return fmt.Errorf("planner returned both FinalResponse and FinalToolResult")
+	}
+	return nil
 }
 
 // finishAfterTerminalToolCalls completes the run after a tool turn whose executed
@@ -116,4 +139,24 @@ func (r *Runtime) finishAfterTerminalToolCalls(
 		ToolEvents: toolEvents,
 		Usage:      &st.AggUsage,
 	}, nil
+}
+
+// finalToolResultEvent converts the planner-owned final tool-result envelope
+// into the workflow-safe api.ToolEvent shape stored on RunOutput.
+func finalToolResultEvent(toolName tools.Ident, result *planner.FinalToolResult) *api.ToolEvent {
+	if result == nil {
+		return nil
+	}
+	return &api.ToolEvent{
+		Name:                toolName,
+		Result:              append(rawjson.RawJSON(nil), result.Result...),
+		ResultBytes:         result.ResultBytes,
+		ResultOmitted:       result.ResultOmitted,
+		ResultOmittedReason: result.ResultOmittedReason,
+		ServerData:          append(rawjson.RawJSON(nil), result.ServerData...),
+		Bounds:              result.Bounds,
+		Error:               result.Error,
+		RetryHint:           result.RetryHint,
+		Telemetry:           result.Telemetry,
+	}
 }

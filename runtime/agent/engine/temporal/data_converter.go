@@ -47,18 +47,19 @@ type (
 		RunID       string
 		Messages    []*model.Message
 		RunContext  run.Context
-		ToolResults []*api.ToolEvent
+		ToolOutputs []*api.ToolCallOutput
 		Finalize    *planner.Termination
 	}
 
 	runOutputWire struct {
 		// See planActivityInputWire: these names match Temporal's default JSON encoding.
-		AgentID    agent.Ident
-		RunID      string
-		Final      *model.Message
-		ToolEvents []*api.ToolEvent
-		Notes      []*planner.PlannerAnnotation
-		Usage      *model.TokenUsage
+		AgentID         agent.Ident
+		RunID           string
+		Final           *model.Message
+		FinalToolResult *api.ToolEvent
+		ToolEvents      []*api.ToolEvent
+		Notes           []*planner.PlannerAnnotation
+		Usage           *model.TokenUsage
 	}
 
 	toolResultsSetWire struct {
@@ -186,6 +187,7 @@ func decodeRunOutput(p *commonpb.Payload, valuePtr any) error {
 	dst.AgentID = w.AgentID
 	dst.RunID = w.RunID
 	dst.Final = w.Final
+	dst.FinalToolResult = w.FinalToolResult
 	dst.ToolEvents = w.ToolEvents
 	dst.Notes = w.Notes
 	dst.Usage = w.Usage
@@ -207,7 +209,7 @@ func decodePlanActivityInput(p *commonpb.Payload, valuePtr any) error {
 	dst.RunID = w.RunID
 	dst.Messages = w.Messages
 	dst.RunContext = w.RunContext
-	dst.ToolResults = w.ToolResults
+	dst.ToolOutputs = w.ToolOutputs
 	dst.Finalize = w.Finalize
 	return nil
 }
@@ -235,12 +237,13 @@ func encodeRunOutputWire(in *api.RunOutput) (*runOutputWire, error) {
 		return nil, fmt.Errorf("temporal: run output is nil")
 	}
 	return &runOutputWire{
-		AgentID:    in.AgentID,
-		RunID:      in.RunID,
-		Final:      in.Final,
-		ToolEvents: in.ToolEvents,
-		Notes:      in.Notes,
-		Usage:      in.Usage,
+		AgentID:         in.AgentID,
+		RunID:           in.RunID,
+		Final:           in.Final,
+		FinalToolResult: in.FinalToolResult,
+		ToolEvents:      in.ToolEvents,
+		Notes:           in.Notes,
+		Usage:           in.Usage,
 	}, nil
 }
 
@@ -253,7 +256,7 @@ func encodePlanActivityInputWire(in *api.PlanActivityInput) (*planActivityInputW
 		RunID:       in.RunID,
 		Messages:    in.Messages,
 		RunContext:  in.RunContext,
-		ToolResults: in.ToolResults,
+		ToolOutputs: in.ToolOutputs,
 		Finalize:    in.Finalize,
 	}, nil
 }
