@@ -112,8 +112,8 @@ go.temporal.io/sdk/contrib/opentelemetry v0.7.0 h1:GSna1HP+1ibNXZ9xlVdQU2zFVqdt5
 go.temporal.io/sdk/contrib/opentelemetry v0.7.0/go.mod h1:oQJC6UIl3FbSYh4f2MlUAIYSE6FPw02X1Tw8/bOvfxg=
 goa.design/clue v1.2.4 h1:DW61SSoUJ+vcwvObvXm3nwAjIp6grUGmR4yboPY66zk=
 goa.design/clue v1.2.4/go.mod h1:6d4XOn7rcb5eHtLV4EBA0PCrTMDnHhrdHknNOefaMDw=
-goa.design/goa/v3 v3.25.0 h1:6WyjTqAjE9KAmBq/8Tbtr12ODmf+OpTvg5imI95x4/w=
-goa.design/goa/v3 v3.25.0/go.mod h1:VZ8CcXJRZh09ijtNJJS2gNyKufpmrM+Ul/Qy3viwcOU=
+goa.design/goa/v3 v3.25.4-0.20260223180114-8f7035a38f5d h1:5HQ19ZmWzlbag7TxmzpCivVfm+gKrgQg2DBET0vyR98=
+goa.design/goa/v3 v3.25.4-0.20260223180114-8f7035a38f5d/go.mod h1:VZ8CcXJRZh09ijtNJJS2gNyKufpmrM+Ul/Qy3viwcOU=
 golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2/go.mod h1:djNgcEr1/C05ACkg1iLfiJU5Ep61QUkGW8qpdssI0+w=
 golang.org/x/crypto v0.0.0-20191011191535-87dc89f01550/go.mod h1:yigFU9vqHzYiE8UmvKecakEJjdnWj3jj499lnFckfCI=
 golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9/go.mod h1:LzIPMQfyMNhhGPhUkYOs5KpL4U8rLKemX1yGLhDgUto=
