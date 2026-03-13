@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 
+	"goa.design/goa-ai/runtime/agent"
 	goa "goa.design/goa/v3/pkg"
 
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -54,6 +55,10 @@ type (
 	ToolResultMessage struct {
 		ToolUseID string          `json:"tool_use_id"`
 		Result    json.RawMessage `json:"result_json,omitempty"`
+		// Bounds carries canonical bounded-result metadata projected out-of-band
+		// from the semantic result payload when the tool declares a bounded-result
+		// contract.
+		Bounds *agent.Bounds `json:"bounds,omitempty"`
 		// ServerData carries server-only metadata about the tool execution that must
 		// not be serialized into model provider requests.
 		//
@@ -62,7 +67,7 @@ type (
 		// example, UI render cards vs persistence-only evidence), but the wire
 		// protocol keeps a single server-side envelope.
 		ServerData []*ServerDataItem `json:"server_data,omitempty"`
-		Error     *ToolError      `json:"error,omitempty"`
+		Error      *ToolError        `json:"error,omitempty"`
 	}
 
 	// ToolOutputDeltaMessage is published to a per-call result stream while a tool

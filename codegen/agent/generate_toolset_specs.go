@@ -156,14 +156,14 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 				},
 			}
 			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, transportDirName, "validate.go"), SectionTemplates: validateSections})
-		if len(specsData.TransportUnions) > 0 {
-			unionImports := make([]*codegen.ImportSpec, 0, 3+len(timports))
-			unionImports = append(unionImports,
-				codegen.SimpleImport("encoding/json"),
-				codegen.SimpleImport("fmt"),
-				codegen.GoaImport(""),
-			)
-			unionImports = append(unionImports, timports...)
+			if len(specsData.TransportUnions) > 0 {
+				unionImports := make([]*codegen.ImportSpec, 0, 3+len(timports))
+				unionImports = append(unionImports,
+					codegen.SimpleImport("encoding/json"),
+					codegen.SimpleImport("fmt"),
+					codegen.GoaImport(""),
+				)
+				unionImports = append(unionImports, timports...)
 				unionSections := []*codegen.SectionTemplate{
 					codegen.Header(ts.Name+" tool transport union types", transportPkgName, unionImports),
 					{
@@ -262,11 +262,16 @@ func toolsetProviderFile(genpkg string, ts *ToolsetData) *codegen.File {
 		return nil
 	}
 	hasMethods := false
+	hasBoundsProjection := false
 	for _, t := range ts.Tools {
 		if t == nil || !t.IsMethodBacked {
 			continue
 		}
 		hasMethods = true
+		if t.Bounds == nil || t.Bounds.Projection == nil || t.Bounds.Projection.Returned == nil || t.Bounds.Projection.Truncated == nil {
+			continue
+		}
+		hasBoundsProjection = true
 	}
 	if !hasMethods {
 		return nil
@@ -284,6 +289,9 @@ func toolsetProviderFile(genpkg string, ts *ToolsetData) *codegen.File {
 		&codegen.ImportSpec{Name: "goa", Path: "goa.design/goa/v3/pkg"},
 		&codegen.ImportSpec{Name: ts.SourceService.PkgName, Path: serviceImportPath},
 	)
+	if hasBoundsProjection {
+		imports = append(imports, &codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent"})
+	}
 	sections := []*codegen.SectionTemplate{
 		codegen.Header(ts.Name+" tool provider", ts.SpecsPackageName, imports),
 		{

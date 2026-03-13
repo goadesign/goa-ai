@@ -14,6 +14,7 @@ import (
 	"time"
 
 	pulsec "goa.design/goa-ai/features/stream/pulse/clients/pulse"
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/runtime"
@@ -378,6 +379,7 @@ func (e *Executor) decodeToolResult(spec *tools.ToolSpec, call *planner.ToolRequ
 		Name:       tool,
 		ToolCallID: toolCallID,
 	}
+	out.Bounds = cloneBounds(msg.Bounds)
 	out.ServerData = marshalServerDataItems(cloneServerDataItems(msg.ServerData))
 	if msg.Error != nil {
 		out.Error = planner.NewToolError(msg.Error.Message)
@@ -400,6 +402,24 @@ func (e *Executor) decodeToolResult(spec *tools.ToolSpec, call *planner.ToolRequ
 		out.Result = res
 	}
 	return out
+}
+
+// cloneBounds copies wire-level bounds metadata into executor-owned memory so
+// callers do not retain references to the decoded registry message.
+func cloneBounds(bounds *agent.Bounds) *agent.Bounds {
+	if bounds == nil {
+		return nil
+	}
+	c := *bounds
+	if bounds.Total != nil {
+		total := *bounds.Total
+		c.Total = &total
+	}
+	if bounds.NextCursor != nil {
+		next := *bounds.NextCursor
+		c.NextCursor = &next
+	}
+	return &c
 }
 
 func cloneServerDataItems(items []*toolregistry.ServerDataItem) []*toolregistry.ServerDataItem {

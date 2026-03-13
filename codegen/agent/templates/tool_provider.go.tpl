@@ -69,6 +69,9 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 		if err != nil {
 			return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "encode_failed", err.Error()), nil
 		}
+{{- if and .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
+		bounds := init{{ goify .Name true }}Bounds(methodOut)
+{{- end }}
 		var server []*toolregistry.ServerDataItem
 {{- $tool := . }}
 {{- range .ServerData }}
@@ -90,9 +93,22 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 {{- end }}
 {{- end }}
 		if len(server) > 0 {
-			return toolregistry.NewToolResultMessageWithServerData(msg.ToolUseID, resultJSON, server), nil
+			return toolregistry.ToolResultMessage{
+				ToolUseID: msg.ToolUseID,
+				Result:    resultJSON,
+{{- if and .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
+				Bounds:    bounds,
+{{- end }}
+				ServerData: server,
+			}, nil
 		}
-		return toolregistry.NewToolResultMessage(msg.ToolUseID, resultJSON), nil
+		return toolregistry.ToolResultMessage{
+			ToolUseID: msg.ToolUseID,
+			Result:    resultJSON,
+{{- if and .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
+			Bounds:    bounds,
+{{- end }}
+		}, nil
 {{- else }}
 		return toolregistry.NewToolResultMessage(msg.ToolUseID, nil), nil
 {{- end }}
@@ -102,5 +118,43 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 		return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "unknown_tool", fmt.Sprintf("unknown tool %q", msg.Tool)), nil
 	}
 }
+
+{{- range .Tools }}
+{{- if and .IsMethodBacked .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
+
+// init{{ goify .Name true }}Bounds projects canonical bounds metadata from the
+// bound method result.
+func init{{ goify .Name true }}Bounds(mr {{ .MethodResultTypeRef }}) *agent.Bounds {
+	bounds := &agent.Bounds{}
+	{{- with .Bounds.Projection.Returned }}
+	bounds.Returned = mr.{{ .Name }}
+	{{- end }}
+	{{- with .Bounds.Projection.Total }}
+		{{- if .Required }}
+	total := mr.{{ .Name }}
+	bounds.Total = &total
+		{{- else }}
+	bounds.Total = mr.{{ .Name }}
+		{{- end }}
+	{{- end }}
+	{{- with .Bounds.Projection.Truncated }}
+	bounds.Truncated = mr.{{ .Name }}
+	{{- end }}
+	{{- with .Bounds.Projection.NextCursor }}
+	bounds.NextCursor = mr.{{ .Name }}
+	{{- end }}
+	{{- with .Bounds.Projection.RefinementHint }}
+		{{- if .Required }}
+	bounds.RefinementHint = mr.{{ .Name }}
+		{{- else }}
+	if mr.{{ .Name }} != nil {
+		bounds.RefinementHint = *mr.{{ .Name }}
+	}
+		{{- end }}
+	{{- end }}
+	return bounds
+}
+{{- end }}
+{{- end }}
 
 
