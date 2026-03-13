@@ -802,6 +802,10 @@ func newFromOptions(opts Options) *Runtime {
 				}
 				return rt.Memory.AppendEvents(ctx, evt.AgentID(), evt.RunID(), memEvent)
 			case *hooks.ToolResultReceivedEvent:
+				errorMessage := ""
+				if evt.Error != nil {
+					errorMessage = evt.Error.Error()
+				}
 				memEvent = memory.Event{
 					Type:      memory.EventToolResult,
 					Timestamp: time.UnixMilli(evt.Timestamp()),
@@ -809,10 +813,11 @@ func newFromOptions(opts Options) *Runtime {
 						"tool_call_id":        evt.ToolCallID,
 						"parent_tool_call_id": evt.ParentToolCallID,
 						"tool_name":           evt.ToolName,
-						"result":              evt.Result,
+						"result_json":         string(evt.ResultJSON),
+						"preview":             evt.ResultPreview,
 						"bounds":              evt.Bounds,
 						"duration":            evt.Duration,
-						"error":               evt.Error,
+						"error_message":       errorMessage,
 					},
 				}
 				return rt.Memory.AppendEvents(ctx, evt.AgentID(), evt.RunID(), memEvent)

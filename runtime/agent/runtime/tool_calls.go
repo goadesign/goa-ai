@@ -198,10 +198,8 @@ func (e *toolBatchExec) synthesizeUnknownToolResult(ctx context.Context, call pl
 }
 
 func (r *Runtime) enforceToolResultContracts(spec tools.ToolSpec, call planner.ToolRequest, toolErr *planner.ToolError, tr *planner.ToolResult) error {
-	if tr == nil {
-		return fmt.Errorf("CRITICAL: nil tool result for %q (%s)", call.Name, call.ToolCallID)
-	}
-	return validateToolBoundsContract(spec, call, toolErr, tr.Bounds)
+	_ = toolErr
+	return validateToolResultContract(spec, call, tr)
 }
 
 func (e *toolBatchExec) publishToolResultReceived(ctx context.Context, call planner.ToolRequest, tr *planner.ToolResult, resultJSON rawjson.Message, duration time.Duration) error {

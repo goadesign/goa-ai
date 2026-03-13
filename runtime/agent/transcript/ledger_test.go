@@ -111,9 +111,8 @@ func TestBuildMessagesFromEvents_ParentToolOnly(t *testing.T) {
 			Data: map[string]any{
 				"tool_call_id": "tc-1",
 				"tool_name":    "svc.tool",
-				"result":       map[string]any{"ok": true},
+				"result_json":  `{"ok":true}`,
 				"duration":     time.Second,
-				"error":        nil,
 			},
 		},
 	}
@@ -130,6 +129,17 @@ func TestBuildMessagesFromEvents_ParentToolOnly(t *testing.T) {
 	}
 	if msgs[1].Role != model.ConversationRoleUser {
 		t.Fatalf("second role = %s, want user", msgs[1].Role)
+	}
+	tr, ok := msgs[1].Parts[0].(model.ToolResultPart)
+	if !ok {
+		t.Fatalf("expected ToolResultPart, got %T", msgs[1].Parts[0])
+	}
+	if tr.IsError {
+		t.Fatalf("expected IsError=false")
+	}
+	wantSuccess := map[string]any{"ok": true}
+	if !reflect.DeepEqual(tr.Content, wantSuccess) {
+		t.Fatalf("content mismatch:\n got: %#v\nwant: %#v", tr.Content, wantSuccess)
 	}
 }
 
@@ -260,12 +270,10 @@ func TestBuildMessagesFromEvents_ToolErrorIncludesErrorContent(t *testing.T) {
 			Type:      memory.EventToolResult,
 			Timestamp: time.Now(),
 			Data: map[string]any{
-				"tool_call_id": "tc-1",
-				"tool_name":    "svc.tool",
-				"result":       nil,
-				"error": map[string]any{
-					"Message": "access denied: missing controlleddevices.write privilege",
-				},
+				"tool_call_id":  "tc-1",
+				"tool_name":     "svc.tool",
+				"error_message": "access denied: missing controlleddevices.write privilege",
+				"duration":      time.Second,
 			},
 		},
 	}
@@ -287,12 +295,8 @@ func TestBuildMessagesFromEvents_ToolErrorIncludesErrorContent(t *testing.T) {
 	if !tr.IsError {
 		t.Fatalf("expected IsError=true")
 	}
-	want := map[string]any{
-		"error": map[string]any{
-			"Message": "access denied: missing controlleddevices.write privilege",
-		},
-	}
-	if !reflect.DeepEqual(tr.Content, want) {
+	want := "access denied: missing controlleddevices.write privilege"
+	if tr.Content != want {
 		t.Fatalf("content mismatch:\n got: %#v\nwant: %#v", tr.Content, want)
 	}
 }

@@ -17,8 +17,10 @@ import (
 	"fmt"
 	"strings"
 
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/memory"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 type (
@@ -263,29 +265,27 @@ func BuildMessagesFromEvents(events []memory.Event) []*model.Message {
 				if v, ok2 := m["tool_call_id"].(string); ok2 {
 					id = v
 				}
-				var isErr bool
-				var terr any
-				if v, ok2 := m["error"]; ok2 && v != nil {
-					isErr = true
-					terr = v
+				var resultJSON rawjson.Message
+				if v, ok2 := m["result_json"].(string); ok2 && v != "" {
+					resultJSON = rawjson.Message(v)
 				}
-				var result any
-				if v, ok2 := m["result"]; ok2 {
-					result = v
+				var preview string
+				if v, ok2 := m["preview"].(string); ok2 {
+					preview = v
 				}
-				content := result
-				if isErr {
-					if result == nil {
-						content = map[string]any{
-							"error": terr,
-						}
-					} else {
-						content = map[string]any{
-							"result": result,
-							"error":  terr,
-						}
-					}
+				var bounds *agent.Bounds
+				if v, ok2 := m["bounds"].(*agent.Bounds); ok2 {
+					bounds = v
 				}
+				var errorMessage string
+				if v, ok2 := m["error_message"].(string); ok2 {
+					errorMessage = v
+				}
+				content, err := ProjectToolResultContent(resultJSON, bounds, preview, errorMessage)
+				if err != nil {
+					panic(fmt.Sprintf("transcript: reconstruct tool_result %q: %v", id, err))
+				}
+				isErr := errorMessage != ""
 				if id != "" {
 					pendingResults = append(pendingResults, ToolResultSpec{
 						ToolUseID: id,

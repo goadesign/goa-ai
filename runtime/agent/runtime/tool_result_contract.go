@@ -11,16 +11,30 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-// validateToolBoundsContract enforces runtime-owned bounds invariants for one
-// tool result across all ingress paths (activity, inline, child, and provided).
+// validateToolResultContract enforces runtime-owned invariants for one tool
+// result across all ingress paths (activity, inline, child, and provided).
 //
 // Contract:
+//   - Tool results are never nil.
+//   - Result and Error are mutually exclusive.
 //   - Unbounded tools never carry bounds metadata.
 //   - Error results never carry bounds metadata.
 //   - Successful bounded results must carry bounds.
 //   - Truncated bounded results must provide continuation via next cursor or
 //     refinement hint.
 //   - next cursor is only valid for bounded tools with paging configured.
+func validateToolResultContract(spec tools.ToolSpec, call planner.ToolRequest, tr *planner.ToolResult) error {
+	if tr == nil {
+		return fmt.Errorf("CRITICAL: nil tool result for %q (%s)", call.Name, call.ToolCallID)
+	}
+	if tr.Result != nil && tr.Error != nil {
+		return fmt.Errorf("tool %q result is invalid: error and result are both set (tool_call_id=%s)", call.Name, call.ToolCallID)
+	}
+	return validateToolBoundsContract(spec, call, tr.Error, tr.Bounds)
+}
+
+// validateToolBoundsContract enforces the bounds-specific subset of the runtime
+// tool-result contract after the result/error shape has been validated.
 func validateToolBoundsContract(spec tools.ToolSpec, call planner.ToolRequest, toolErr *planner.ToolError, bounds *agent.Bounds) error {
 	if spec.Bounds == nil {
 		if bounds != nil {

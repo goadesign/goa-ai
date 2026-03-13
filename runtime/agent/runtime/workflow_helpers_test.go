@@ -2,10 +2,13 @@ package runtime
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/memory"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -36,19 +39,10 @@ func TestAppendUserToolResults_IncludesErrorInToolResultContent(t *testing.T) {
 	part, ok := base.Messages[0].Parts[0].(model.ToolResultPart)
 	require.True(t, ok)
 	require.True(t, part.IsError)
-
-	content, ok := part.Content.(map[string]any)
-	require.True(t, ok)
-
-	_, hasResult := content["result"]
-	require.False(t, hasResult)
-
-	errVal, ok := content["error"].(*planner.ToolError)
-	require.True(t, ok)
-	require.Equal(t, "access denied: missing controlleddevices.write privilege", errVal.Message)
+	require.Equal(t, "access denied: missing controlleddevices.write privilege", part.Content)
 }
 
-func TestAppendUserToolResults_IncludesResultAndErrorWhenBothPresent(t *testing.T) {
+func TestAppendUserToolResults_DecodesSuccessfulResultContent(t *testing.T) {
 	rt := &Runtime{
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
 			tools.Ident("svc.commands.adjust_setpoint"): {
@@ -71,8 +65,9 @@ func TestAppendUserToolResults_IncludesResultAndErrorWhenBothPresent(t *testing.
 	tr := &planner.ToolResult{
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,
-		Result:     map[string]any{"ok": false},
-		Error:      planner.NewToolError("permission denied"),
+		Result: map[string]any{
+			"ok": false,
+		},
 	}
 
 	require.NoError(t, rt.appendUserToolResults(base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, led))
@@ -80,19 +75,123 @@ func TestAppendUserToolResults_IncludesResultAndErrorWhenBothPresent(t *testing.
 	require.Len(t, base.Messages, 1)
 	part, ok := base.Messages[0].Parts[0].(model.ToolResultPart)
 	require.True(t, ok)
-	require.True(t, part.IsError)
-
+	require.False(t, part.IsError)
 	content, ok := part.Content.(map[string]any)
 	require.True(t, ok)
-	rawResult, ok := content["result"].(json.RawMessage)
-	require.True(t, ok)
-	var decoded map[string]any
-	require.NoError(t, json.Unmarshal(rawResult, &decoded))
-	require.Equal(t, map[string]any{"ok": false}, decoded)
+	require.Equal(t, map[string]any{"ok": false}, content)
+}
 
-	errVal, ok := content["error"].(*planner.ToolError)
-	require.True(t, ok)
-	require.Equal(t, "permission denied", errVal.Message)
+func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
+	rt := &Runtime{
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			tools.Ident("svc.commands.adjust_setpoint"): {
+				Name: tools.Ident("svc.commands.adjust_setpoint"),
+				Result: tools.TypeSpec{
+					Codec: tools.JSONCodec[any]{
+						ToJSON: json.Marshal,
+					},
+				},
+			},
+		},
+	}
+	call := planner.ToolRequest{
+		Name:       tools.Ident("svc.commands.adjust_setpoint"),
+		ToolCallID: "tc-1",
+	}
+
+	cases := []struct {
+		name string
+		tr   *planner.ToolResult
+	}{
+		{
+			name: "success",
+			tr: &planner.ToolResult{
+				Name:       call.Name,
+				ToolCallID: call.ToolCallID,
+				Result: map[string]any{
+					"ok": true,
+				},
+			},
+		},
+		{
+			name: "error",
+			tr: &planner.ToolResult{
+				Name:       call.Name,
+				ToolCallID: call.ToolCallID,
+				Error:      planner.NewToolError("permission denied"),
+			},
+		},
+		{
+			name: "omitted",
+			tr: &planner.ToolResult{
+				Name:       call.Name,
+				ToolCallID: call.ToolCallID,
+				Result: map[string]any{
+					"blob": strings.Repeat("x", transcript.MaxToolResultContentBytes+1024),
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base := &planner.PlanInput{}
+			led := transcript.NewLedger()
+
+			require.NoError(t, rt.appendUserToolResults(base, []planner.ToolRequest{call}, []*planner.ToolResult{tc.tr}, led))
+			require.Len(t, base.Messages, 1)
+
+			livePart, ok := base.Messages[0].Parts[0].(model.ToolResultPart)
+			require.True(t, ok)
+
+			resultJSON := ""
+			if tc.tr.Result != nil {
+				raw, err := rt.marshalToolValue(t.Context(), tc.tr.Name, tc.tr.Result, tc.tr.Bounds)
+				require.NoError(t, err)
+				resultJSON = string(raw)
+			}
+			errorMessage := ""
+			if tc.tr.Error != nil {
+				errorMessage = tc.tr.Error.Error()
+			}
+			replayed := transcript.BuildMessagesFromEvents([]memory.Event{
+				{
+					Type:      memory.EventAssistantMessage,
+					Timestamp: time.Now(),
+					Data: map[string]any{
+						"message": "calling tool",
+					},
+				},
+				{
+					Type:      memory.EventToolCall,
+					Timestamp: time.Now(),
+					Data: map[string]any{
+						"tool_call_id": call.ToolCallID,
+						"tool_name":    call.Name,
+						"payload":      map[string]any{"x": 1},
+					},
+				},
+				{
+					Type:      memory.EventToolResult,
+					Timestamp: time.Now(),
+					Data: map[string]any{
+						"tool_call_id":  call.ToolCallID,
+						"tool_name":     call.Name,
+						"result_json":   resultJSON,
+						"preview":       formatResultPreview(tc.tr.Name, tc.tr.Result, tc.tr.Bounds),
+						"bounds":        tc.tr.Bounds,
+						"error_message": errorMessage,
+					},
+				},
+			})
+			require.Len(t, replayed, 2)
+
+			replayPart, ok := replayed[1].Parts[0].(model.ToolResultPart)
+			require.True(t, ok)
+			require.Equal(t, livePart.IsError, replayPart.IsError)
+			require.Equal(t, livePart.Content, replayPart.Content)
+		})
+	}
 }
 
 func TestAppendUserToolResults_AppendsBoundsReminderAfterToolResults(t *testing.T) {

@@ -725,6 +725,24 @@ func TestConsumeProvidedToolResultsRejectsAmbiguousErrorAndResult(t *testing.T) 
 	require.Contains(t, err.Error(), "error and result are both set")
 }
 
+func TestEnforceToolResultContractsRejectsAmbiguousErrorAndResult(t *testing.T) {
+	rt := &Runtime{}
+	call := planner.ToolRequest{
+		Name:       tools.Ident("svc.tools.example"),
+		ToolCallID: "tool-call-1",
+	}
+	tr := &planner.ToolResult{
+		Name:       call.Name,
+		ToolCallID: call.ToolCallID,
+		Result:     map[string]any{"ok": true},
+		Error:      planner.NewToolError("failed"),
+	}
+
+	err := rt.enforceToolResultContracts(newAnyJSONSpec(call.Name, "svc.tools"), call, tr.Error, tr)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "error and result are both set")
+}
+
 func TestConsumeProvidedToolResultsRejectsTruncatedBoundsWithoutContinuation(t *testing.T) {
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{

@@ -319,7 +319,7 @@ type PlanResumeInput struct {
     RunContext  run.Context
     Agent       PlannerContext
     Events      PlannerEvents
-    ToolResults []*ToolResult         // Results from previous tool calls
+    ToolOutputs []*ToolOutput         // Results from previous tool calls
     Finalize    *Termination          // Non-nil when runtime forces finalization
     Reminders   []reminder.Reminder
 }
@@ -683,6 +683,16 @@ result-hint templates under `.Bounds`, hook events, and stream events. Services
 own truncation logic; the runtime only propagates and projects what tools
 report.
 
+Transcript-facing tool results use a stricter provider contract than execution
+boundaries:
+
+- canonical raw bytes live in `ToolOutput.Result`, `ToolResultReceivedEvent.ResultJSON`,
+  and durable memory-event `result_json`,
+- `model.ToolResultPart.Content` carries semantic provider-facing content only:
+  decoded JSON-compatible values on success or plain error text with `IsError=true`,
+- oversized successful transcript content projects to an explicit omission object:
+  `{"omitted":true,"reason":"size_limit","preview":"...","bounds":{...}}`.
+
 For method-backed `BindTo` tools, the bound service method result still needs to
 carry the canonical bounded fields so the generated executor can build
 `planner.ToolResult.Bounds` before runtime projection. Explicit tool-facing
@@ -869,6 +879,10 @@ Provided tool results are strict boundary inputs:
 - each item must be exactly one of: `Error` or non-null `Result`,
 - if the tool is bounded and successful, `Bounds` must be present and satisfy
   bounded-result invariants.
+
+Those rules apply only at execution/history boundaries. Once the runtime projects
+tool output into transcript messages, models never see raw `Result` bytes or
+structured Go error values.
 
 ### Tool Confirmation (Design-Time + Runtime Overrides)
 

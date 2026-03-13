@@ -9,6 +9,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 func TestEncodeToolEventsForPlanningOmitsServerDataAndLargeResults(t *testing.T) {
@@ -45,7 +46,7 @@ func TestToolResultContentTruncatesOversizedResults(t *testing.T) {
 		Name:       name,
 		ToolCallID: "tc-1",
 		Result: map[string]any{
-			"blob": strings.Repeat("x", maxTranscriptToolResultBytes+1024),
+			"blob": strings.Repeat("x", transcript.MaxToolResultContentBytes+1024),
 		},
 	}
 
@@ -53,10 +54,8 @@ func TestToolResultContentTruncatesOversizedResults(t *testing.T) {
 	require.NoError(t, err)
 	m, ok := content.(map[string]any)
 	require.True(t, ok, "oversized tool_result content must be projected, not raw JSON")
-	require.Equal(t, true, m["truncated"])
-	note, ok := m["note"].(string)
-	require.True(t, ok, "oversized tool_result projection must include a note")
-	require.NotEmpty(t, note)
+	require.Equal(t, true, m["omitted"])
+	require.Equal(t, "size_limit", m["reason"])
 }
 
 func TestEnforcePlanActivityInputBudgetFailsFast(t *testing.T) {

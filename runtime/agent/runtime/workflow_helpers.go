@@ -12,11 +12,10 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
-
-const maxTranscriptToolResultBytes = 64 * 1024
 
 // groupToolCallsByTimeout buckets calls by per-tool timeout override (with `*`
 // suffix prefix-match support) or falls back to the default timeout when no
@@ -219,48 +218,24 @@ func (r *Runtime) toolResultContent(tr *planner.ToolResult) (any, error) {
 	if tr == nil {
 		return nil, nil
 	}
-	if tr.Error == nil {
-		if tr.Result == nil {
-			return nil, nil
-		}
+	var resultJSON rawjson.Message
+	if tr.Result != nil {
 		raw, err := r.marshalToolValue(context.Background(), tr.Name, tr.Result, tr.Bounds)
 		if err != nil {
 			return nil, fmt.Errorf("runtime: encode tool_result for %s: %w", tr.Name, err)
 		}
-		if len(raw) > maxTranscriptToolResultBytes {
-			return map[string]any{
-				"ok":        true,
-				"truncated": true,
-				"preview":   formatResultPreview(tr.Name, tr.Result, tr.Bounds),
-				"bounds":    tr.Bounds,
-				"note":      "Tool result omitted from transcript due to size. Use follow-up tools to narrow the request or rely on observer-side rendering.",
-			}, nil
-		}
-		return raw, nil
+		resultJSON = rawjson.Message(raw)
 	}
-	if tr.Result == nil {
-		return map[string]any{
-			"error": tr.Error,
-		}, nil
+	errorMessage := ""
+	if tr.Error != nil {
+		errorMessage = tr.Error.Error()
 	}
-	raw, err := r.marshalToolValue(context.Background(), tr.Name, tr.Result, tr.Bounds)
-	if err != nil {
-		return nil, fmt.Errorf("runtime: encode tool_result for %s: %w", tr.Name, err)
-	}
-	if len(raw) > maxTranscriptToolResultBytes {
-		return map[string]any{
-			"ok":        false,
-			"truncated": true,
-			"preview":   formatResultPreview(tr.Name, tr.Result, tr.Bounds),
-			"bounds":    tr.Bounds,
-			"error":     tr.Error,
-			"note":      "Tool result omitted from transcript due to size. Use follow-up tools to narrow the request or rely on observer-side rendering.",
-		}, nil
-	}
-	return map[string]any{
-		"result": raw,
-		"error":  tr.Error,
-	}, nil
+	return transcript.ProjectToolResultContent(
+		resultJSON,
+		tr.Bounds,
+		formatResultPreview(tr.Name, tr.Result, tr.Bounds),
+		errorMessage,
+	)
 }
 
 // hardProtectionIfNeeded emits a protection event and signals finalization when
