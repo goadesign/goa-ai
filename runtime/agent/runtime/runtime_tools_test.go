@@ -151,6 +151,17 @@ func TestEnforceToolResultContractsRejectsTruncatedBoundsWithoutContinuation(t *
 	require.Contains(t, err.Error(), "truncated result without next_cursor or refinement_hint")
 }
 
+func TestEnforceToolResultContractsRejectsNilToolResultWithoutCriticalPrefix(t *testing.T) {
+	rt := &Runtime{}
+	spec := newAnyJSONSpec("tool", "svc.ts")
+	call := planner.ToolRequest{Name: "tool", ToolCallID: "tool-1"}
+
+	err := rt.enforceToolResultContracts(spec, call, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "nil tool result")
+	require.NotContains(t, err.Error(), "CRITICAL:")
+}
+
 func TestExecuteToolActivityPropagatesServerData(t *testing.T) {
 	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 		return &planner.ToolResult{

@@ -73,6 +73,23 @@ func TestRunPlanActivityAcceptsTerminalFinalToolResult(t *testing.T) {
 	require.JSONEq(t, `{"status":"ok"}`, string(out.Result.FinalToolResult.Result))
 }
 
+func TestRunPlanActivityRejectsNilPlanResultWithoutCriticalPrefix(t *testing.T) {
+	rt := &Runtime{
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Bus:     noopHooks{},
+	}
+	wf := &testWorkflowContext{
+		ctx: context.Background(),
+	}
+
+	_, err := rt.runPlanActivity(wf, "calc.agent.plan", engine.ActivityOptions{}, PlanActivityInput{}, time.Time{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "nil PlanResult")
+	require.NotContains(t, err.Error(), "CRITICAL:")
+}
+
 func TestPlanStartActivityInvokesPlanner(t *testing.T) {
 	called := false
 	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {

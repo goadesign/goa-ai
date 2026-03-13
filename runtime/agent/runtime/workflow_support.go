@@ -553,16 +553,16 @@ func (r *Runtime) runPlanActivity(
 		return nil, err
 	}
 	if out == nil {
-		return nil, fmt.Errorf("CRITICAL: runPlanActivity received nil PlanActivityOutput")
+		return nil, fmt.Errorf("runPlanActivity received nil PlanActivityOutput")
 	}
 	if out.Result == nil {
-		return nil, fmt.Errorf("CRITICAL: runPlanActivity received nil PlanResult")
+		return nil, fmt.Errorf("runPlanActivity received nil PlanResult")
 	}
 	if len(out.Result.ToolCalls) == 0 &&
 		out.Result.FinalResponse == nil &&
 		out.Result.FinalToolResult == nil &&
 		out.Result.Await == nil {
-		return nil, fmt.Errorf("CRITICAL: runPlanActivity received PlanResult with no ToolCalls, FinalResponse, FinalToolResult, or Await")
+		return nil, fmt.Errorf("runPlanActivity received PlanResult with no ToolCalls, FinalResponse, FinalToolResult, or Await")
 	}
 	r.logger.Info(wfCtx.Context(),
 		"runPlanActivity received PlanResult",

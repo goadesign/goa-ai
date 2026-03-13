@@ -25,7 +25,7 @@ import (
 //   - next cursor is only valid for bounded tools with paging configured.
 func validateToolResultContract(spec tools.ToolSpec, call planner.ToolRequest, tr *planner.ToolResult) error {
 	if tr == nil {
-		return fmt.Errorf("CRITICAL: nil tool result for %q (%s)", call.Name, call.ToolCallID)
+		return fmt.Errorf("nil tool result for %q (%s)", call.Name, call.ToolCallID)
 	}
 	if tr.Result != nil && tr.Error != nil {
 		return fmt.Errorf("tool %q result is invalid: error and result are both set (tool_call_id=%s)", call.Name, call.ToolCallID)

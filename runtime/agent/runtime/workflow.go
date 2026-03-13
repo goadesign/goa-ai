@@ -240,19 +240,19 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	}
 	if firstOutput == nil || firstOutput.Result == nil {
 		r.logger.Error(wfCtx.Context(), "Plan activity returned nil result")
-		finalErr = fmt.Errorf("CRITICAL: Plan activity returned nil PlanResult")
+		finalErr = fmt.Errorf("Plan activity returned nil PlanResult")
 		finalStatus = runStatusFailed
 		return nil, finalErr
 	}
 	result := firstOutput.Result
 	r.logger.Info(wfCtx.Context(), "Plan activity completed", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil)
-	// CRITICAL: Validate PlanResult structure - if planner returned ToolCalls, they should be present
+	// Validate PlanResult structure - if planner returned ToolCalls, they should be present.
 	if len(result.ToolCalls) == 0 && result.FinalResponse == nil && result.Await == nil {
-		finalErr = fmt.Errorf("CRITICAL: PlanResult has no ToolCalls, FinalResponse, or Await - this should never happen")
+		finalErr = fmt.Errorf("PlanResult has no ToolCalls, FinalResponse, or Await - this should never happen")
 		finalStatus = runStatusFailed
 		return nil, finalErr
 	}
-	// CRITICAL: If ToolCalls is empty but planner returned them, serialization may have failed
+	// If ToolCalls is empty but planner returned them, serialization may have failed.
 	if len(result.ToolCalls) == 0 && result.FinalResponse != nil {
 		r.logger.Info(wfCtx.Context(), "PlanResult has FinalResponse but no ToolCalls - workflow will return early")
 	}
@@ -349,10 +349,10 @@ func (r *Runtime) runLoop(
 		r.logger = telemetry.NoopLogger{}
 	}
 	if initialResult == nil {
-		return nil, fmt.Errorf("CRITICAL: runLoop initial PlanResult is nil")
+		return nil, fmt.Errorf("runLoop initial PlanResult is nil")
 	}
 	if len(initialResult.ToolCalls) == 0 && initialResult.FinalResponse == nil && initialResult.Await == nil {
-		return nil, fmt.Errorf("CRITICAL: runLoop initial PlanResult has no ToolCalls, FinalResponse, or Await")
+		return nil, fmt.Errorf("runLoop initial PlanResult has no ToolCalls, FinalResponse, or Await")
 	}
 	r.logger.Info(ctx, "runLoop starting iteration", "tool_calls", len(initialResult.ToolCalls), "final_response", initialResult.FinalResponse != nil, "await", initialResult.Await != nil)
 	st := newRunLoopState(initialResult, initialTranscript, initialUsage, caps, nextAttempt)

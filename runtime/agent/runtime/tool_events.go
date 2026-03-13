@@ -184,7 +184,7 @@ func (r *Runtime) decodeToolOutputs(events []*api.ToolCallOutput) ([]*planner.To
 	out := make([]*planner.ToolOutput, 0, len(events))
 	for _, ev := range events {
 		if ev == nil {
-			return nil, fmt.Errorf("CRITICAL: nil tool output entry")
+			return nil, fmt.Errorf("nil tool output entry")
 		}
 		out = append(out, &planner.ToolOutput{
 			Name:                ev.Name,
