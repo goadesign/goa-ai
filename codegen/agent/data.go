@@ -543,19 +543,14 @@ type (
 		// InjectedFields contains the names of fields marked for injection via DSL.
 		InjectedFields []string
 
-		// BoundedResult indicates that this tool's result is declared as a bounded
-		// view over a potentially larger data set (set via the BoundedResult DSL
-		// helper). Codegen and services can use this flag to attach and enforce
-		// truncation metadata consistently.
-		BoundedResult bool
+		// Bounds declares the out-of-band bounded-result contract for this tool.
+		// When non-nil, codegen emits runtime specs and method-result projection
+		// helpers without mutating the semantic result schema.
+		Bounds *ToolBoundsData
 
 		// TerminalRun indicates that once this tool executes, the runtime should
 		// complete the run immediately (no follow-up PlanResume/finalize turn).
 		TerminalRun bool
-
-		// Paging describes cursor-based pagination fields for this tool when configured
-		// via Cursor and NextCursor in the BoundedResult sub-DSL.
-		Paging *ToolPagingData
 
 		// ResultReminder is an optional system reminder injected into the
 		// conversation after the tool result is returned. It provides backstage
@@ -571,6 +566,33 @@ type (
 		// PassthroughMethod is the Goa method name for deterministic forwarding
 		// when this tool is part of an exported toolset.
 		PassthroughMethod string
+	}
+
+	// ToolBoundsData captures the generated bounded-result contract for a tool.
+	ToolBoundsData struct {
+		// Paging optionally describes cursor-based pagination for this bounded tool.
+		Paging *ToolPagingData
+		// Projection describes how a generated method-backed executor should project
+		// canonical bounds metadata from the bound method result.
+		Projection *ToolBoundsProjectionData
+	}
+
+	// ToolBoundsProjectionData describes canonical bounds fields projected from a
+	// bound service method result.
+	ToolBoundsProjectionData struct {
+		Returned       *ToolBoundsFieldData
+		Total          *ToolBoundsFieldData
+		Truncated      *ToolBoundsFieldData
+		NextCursor     *ToolBoundsFieldData
+		RefinementHint *ToolBoundsFieldData
+	}
+
+	// ToolBoundsFieldData describes one canonical bounds field on a method result.
+	ToolBoundsFieldData struct {
+		// Name is the Go field name on the bound method result.
+		Name string
+		// Required reports whether the field is required in the Goa design.
+		Required bool
 	}
 
 	ToolPagingData struct {
@@ -1226,9 +1248,8 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		CallHintTemplate:   expr.CallHintTemplate,
 		ResultHintTemplate: expr.ResultHintTemplate,
 		InjectedFields:     expr.InjectedFields,
-		BoundedResult:      expr.BoundedResult,
+		Bounds:             boundsData(expr.Bounds, expr.Method),
 		TerminalRun:        expr.TerminalRun,
-		Paging:             pagingData(expr.Paging),
 		ResultReminder:     expr.ResultReminder,
 	}
 	tool.ServerData = serverDataData(expr.ServerData, qualified)
@@ -1324,6 +1345,42 @@ func pagingData(p *agentsExpr.ToolPagingExpr) *ToolPagingData {
 	return &ToolPagingData{
 		CursorField:     p.CursorField,
 		NextCursorField: p.NextCursorField,
+	}
+}
+
+func boundsData(bounds *agentsExpr.ToolBoundsExpr, method *goaexpr.MethodExpr) *ToolBoundsData {
+	if bounds == nil {
+		return nil
+	}
+	data := &ToolBoundsData{
+		Paging: pagingData(bounds.Paging),
+	}
+	if method == nil {
+		return data
+	}
+	data.Projection = &ToolBoundsProjectionData{
+		Returned:       boundsFieldData(method.Result, "returned"),
+		Total:          boundsFieldData(method.Result, "total"),
+		Truncated:      boundsFieldData(method.Result, "truncated"),
+		RefinementHint: boundsFieldData(method.Result, "refinement_hint"),
+	}
+	if bounds.Paging != nil && bounds.Paging.NextCursorField != "" {
+		data.Projection.NextCursor = boundsFieldData(method.Result, bounds.Paging.NextCursorField)
+	}
+	return data
+}
+
+func boundsFieldData(result *goaexpr.AttributeExpr, name string) *ToolBoundsFieldData {
+	if result == nil || result.Type == nil || result.Type == goaexpr.Empty {
+		return nil
+	}
+	field := result.Find(name)
+	if field == nil || field.Type == nil || field.Type == goaexpr.Empty {
+		return nil
+	}
+	return &ToolBoundsFieldData{
+		Name:     codegen.Goify(name, true),
+		Required: result.IsRequired(name),
 	}
 }
 

@@ -22,12 +22,11 @@ var Specs = []tools.ToolSpec{
 
 var (
 	SpecSummarizeDoc = tools.ToolSpec{
-		Name:          SummarizeDoc,
-		Service:       "calc",
-		Toolset:       "calc.helpers",
-		Description:   "Summarize a document",
-		Tags:          []string{},
-		BoundedResult: false,
+		Name:        SummarizeDoc,
+		Service:     "calc",
+		Toolset:     "calc.helpers",
+		Description: "Summarize a document",
+		Tags:        []string{},
 		Payload: tools.TypeSpec{
 			Name:         "SummarizeDocPayload",
 			Schema:       []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"doc_id\":{\"type\":\"string\",\"description\":\"Document identifier\",\"example\":\"Magnam asperiores dolorum.\"}},\"required\":[\"doc_id\"]}"),

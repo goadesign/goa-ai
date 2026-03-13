@@ -250,6 +250,35 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             }
         }
 
+        {{- $hasBoundsProjection := false }}
+        {{- range .Toolset.Tools }}
+            {{- if and .IsMethodBacked .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
+                {{- $hasBoundsProjection = true }}
+            {{- end }}
+        {{- end }}
+        {{- if $hasBoundsProjection }}
+        var bounds *agent.Bounds
+        switch call.Name {
+        {{- range .Toolset.Tools }}
+        {{- if and .IsMethodBacked .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
+        case tools.Ident({{ printf "%q" .QualifiedName }}):
+            mr, ok := methodOut.({{ .MethodResultTypeRef }})
+            if !ok {
+                return &planner.ToolResult{
+                    Name:  call.Name,
+                    Error: planner.NewToolError(fmt.Sprintf("unexpected method result type for %q", call.Name)),
+                }, nil
+            }
+            nextBounds, e := init{{ goify .Name true }}Bounds(mr)
+            if e != nil {
+                return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(e)}, nil
+            }
+            bounds = nextBounds
+        {{- end }}
+        {{- end }}
+        }
+        {{- end }}
+
         // Build final tool result. ServerData is recorded as canonical JSON bytes
         // (an array of toolregistry.ServerDataItem) and never sent to model providers.
         {{- $hasServerData := false }}
@@ -305,24 +334,66 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
         {{- end }}
         {{- end }}
         }
-        var serverData rawjson.RawJSON
+        var serverData rawjson.Message
         if len(serverItems) > 0 {
             b, err := json.Marshal(serverItems)
             if err != nil {
                 return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
             }
-            serverData = rawjson.RawJSON(b)
+            serverData = rawjson.Message(b)
         }
         return &planner.ToolResult{
             Name:       call.Name,
             Result:     result,
+            Bounds:     {{ if $hasBoundsProjection }}bounds{{ else }}nil{{ end }},
             ServerData: serverData,
         }, nil
         {{- else }}
         return &planner.ToolResult{
             Name:   call.Name,
             Result: result,
+            Bounds: {{ if $hasBoundsProjection }}bounds{{ else }}nil{{ end }},
         }, nil
         {{- end }}
     })
 }
+
+{{- range .Toolset.Tools }}
+{{- if and .IsMethodBacked .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
+{{- $tool := . }}
+
+// init{{ goify .Name true }}Bounds projects canonical bounds metadata from the
+// bound method result. It fails when the service result violates the bounded
+// tool contract.
+func init{{ goify .Name true }}Bounds(mr {{ .MethodResultTypeRef }}) (*agent.Bounds, error) {
+    bounds := &agent.Bounds{}
+    {{- with .Bounds.Projection.Returned }}
+    bounds.Returned = mr.{{ .Name }}
+    {{- end }}
+    {{- with .Bounds.Projection.Total }}
+        {{- if .Required }}
+    total := mr.{{ .Name }}
+    bounds.Total = &total
+        {{- else }}
+    bounds.Total = mr.{{ .Name }}
+        {{- end }}
+    {{- end }}
+    {{- with .Bounds.Projection.Truncated }}
+    bounds.Truncated = mr.{{ .Name }}
+    {{- end }}
+    {{- with .Bounds.Projection.NextCursor }}
+    bounds.NextCursor = mr.{{ .Name }}
+    {{- end }}
+    {{- with .Bounds.Projection.RefinementHint }}
+        {{- if .Required }}
+    bounds.RefinementHint = mr.{{ .Name }}
+        {{- else }}
+    if mr.{{ .Name }} != nil {
+        bounds.RefinementHint = *mr.{{ .Name }}
+    }
+        {{- end }}
+    {{- end }}
+    return bounds, nil
+}
+{{- end }}
+{{- end }}

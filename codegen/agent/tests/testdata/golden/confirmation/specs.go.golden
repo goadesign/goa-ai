@@ -22,12 +22,11 @@ var Specs = []tools.ToolSpec{
 
 var (
 	SpecDangerousWrite = tools.ToolSpec{
-		Name:          DangerousWrite,
-		Service:       "alpha",
-		Toolset:       "alpha.atlas.commands",
-		Description:   "Write a stateful change",
-		Tags:          []string{},
-		BoundedResult: false,
+		Name:        DangerousWrite,
+		Service:     "alpha",
+		Toolset:     "alpha.atlas.commands",
+		Description: "Write a stateful change",
+		Tags:        []string{},
 		Confirmation: &tools.ConfirmationSpec{
 			Title:                "Confirm change",
 			PromptTemplate:       "Approve write: set {{ .Key }} to {{ .Value }}",

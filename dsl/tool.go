@@ -564,8 +564,14 @@ func CallHintTemplate(s string) {
 }
 
 // ResultHintTemplate configures a display template for tool results. The
-// template is rendered with the tool's result to produce a preview shown after
-// execution. Templates are compiled with missingkey=error.
+// template is rendered after execution to produce a concise preview.
+//
+// Result templates receive an explicit runtime-owned wrapper:
+//   - `.Result` is the tool's typed semantic result value.
+//   - `.Bounds` is the runtime-owned bounded-result metadata when the tool
+//     returned `planner.ToolResult.Bounds`, otherwise nil.
+//
+// Templates are compiled with missingkey=error.
 //
 // ResultHintTemplate must appear in a Tool expression.
 //
@@ -578,7 +584,7 @@ func CallHintTemplate(s string) {
 //	        Attribute("count", Int)
 //	        Attribute("results", ArrayOf(String))
 //	    })
-//	    ResultHintTemplate("Found {{ .Count }} results")
+//	    ResultHintTemplate("Found {{ .Result.Count }} results")
 //	})
 func ResultHintTemplate(s string) {
 	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
@@ -590,9 +596,12 @@ func ResultHintTemplate(s string) {
 }
 
 // BoundedResult marks the current tool's result as a bounded view over a
-// potentially larger data set. Bounded tools must surface truncation metadata
-// (returned/total/truncated/hints) alongside their result so runtimes can guide
-// planners and users when results are partial.
+// potentially larger data set. Bounded tools must return truncation metadata in
+// planner.ToolResult.Bounds so runtimes can guide planners and users when
+// results are partial. The semantic result shape remains fully domain-specific;
+// BoundedResult does not add or validate top-level result fields. Instead it
+// declares an explicit out-of-band bounds contract that codegen, runtimes, and
+// method-backed executors can honor consistently.
 //
 // BoundedResult may optionally include a DSL function to configure boundedness
 // details. For example, cursor-based pagination fields can be declared via
@@ -611,7 +620,7 @@ func ResultHintTemplate(s string) {
 //
 //   - Cursor values are opaque.
 //   - When paging, callers must keep all other parameters unchanged and only set
-//     the payload cursor field to the value returned by the result next-cursor field.
+//     the payload cursor field to the value returned in bounds as the next-page cursor.
 //
 // BoundedResult must appear in a Tool expression.
 func BoundedResult(fns ...func()) {
@@ -624,11 +633,13 @@ func BoundedResult(fns ...func()) {
 		eval.IncompatibleDSL()
 		return
 	}
-	tool.BoundedResult = true
-	if len(fns) == 1 {
-		eval.Execute(fns[0], tool)
+	if tool.Bounds == nil {
+		tool.Bounds = &agentsexpr.ToolBoundsExpr{Tool: tool}
 	}
-	ensureBoundedResultShape(tool)
+	tool.Bounds.Tool = tool
+	if len(fns) == 1 {
+		eval.Execute(fns[0], tool.Bounds)
+	}
 }
 
 // ResultReminder configures a static system reminder that is injected into the

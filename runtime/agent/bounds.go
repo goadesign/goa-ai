@@ -19,14 +19,3 @@ type Bounds struct {
 	NextCursor     *string
 	RefinementHint string
 }
-
-// BoundedResult is an optional interface implemented by tool result types that
-// expose boundedness metadata directly. When a decoded tool result implements
-// this interface, runtimes prefer it over heuristic field inspection so
-// services can provide precise bounds semantics.
-//
-// ResultBounds returns canonical bounds for the result. A nil return value
-// indicates the absence of any bounds metadata.
-type BoundedResult interface {
-	ResultBounds() *Bounds
-}

@@ -22,6 +22,9 @@ func TestGolden_ServerData_UsesGeneratedCodec(t *testing.T) {
 	require.Contains(t, executor, "ByIDAuraEvidenceServerDataCodec.ToJSON")
 	require.Contains(t, executor, "lookup.InitByIDAuraEvidenceServerData(mr.Evidence)")
 	require.NotContains(t, executor, "json.Marshal(mr.")
+	require.Contains(t, executor, "var serverData rawjson.Message")
+	require.Contains(t, executor, "serverData = rawjson.Message(b)")
+	require.NotContains(t, executor, "rawjson.RawJSON")
 }
 
 func generatedContentBySuffix(t *testing.T, files []*codegen.File, suffix string) string {

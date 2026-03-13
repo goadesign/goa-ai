@@ -117,8 +117,8 @@ func (b *toolSpecBuilder) materialize(typeName string, att *goaexpr.AttributeExp
 		// referenced locally.
 		rhs := scope.GoTypeDef(att, ptr, useDefault)
 		if defineType {
-			// Emit a concrete struct type so callers can attach methods (for
-			// example, agent.BoundedResult on bounded tool result types).
+			// Emit a concrete struct type when code generation needs a named
+			// definition instead of a type alias.
 			defLine = typeName + " " + rhs
 		} else {
 			defLine = typeName + " = " + rhs
