@@ -40,8 +40,8 @@ type (
 		ParentToolCallID string                   `json:"parent_tool_call_id,omitempty"`
 		ToolName         tools.Ident              `json:"tool_name"`
 		Result           any                      `json:"result,omitempty"`
-		ResultJSON       rawjson.RawJSON          `json:"result_json,omitempty"`
-		ServerData       rawjson.RawJSON          `json:"server_data,omitempty"`
+		ResultJSON       rawjson.Message          `json:"result_json,omitempty"`
+		ServerData       rawjson.Message          `json:"server_data,omitempty"`
 		ResultPreview    string                   `json:"result_preview,omitempty"`
 		Bounds           *agent.Bounds            `json:"bounds,omitempty"`
 		Duration         time.Duration            `json:"duration"`
@@ -54,7 +54,7 @@ type (
 // EncodeToHookInput creates a hook activity input envelope from a hook event for
 // serialization and transport to the hook activity.
 func EncodeToHookInput(evt Event, turnID string) (*ActivityInput, error) {
-	var payload rawjson.RawJSON
+	var payload rawjson.Message
 	switch e := evt.(type) {
 	case *RunCompletedEvent:
 		p := runCompletedPayload{
@@ -75,7 +75,7 @@ func EncodeToHookInput(evt Event, turnID string) (*ActivityInput, error) {
 		if err != nil {
 			return nil, fmt.Errorf("marshal run completed payload: %w", err)
 		}
-		payload = rawjson.RawJSON(b)
+		payload = rawjson.Message(b)
 	case *ToolResultReceivedEvent:
 		p := toolResultReceivedPayload{
 			ToolCallID:       e.ToolCallID,
@@ -95,13 +95,13 @@ func EncodeToHookInput(evt Event, turnID string) (*ActivityInput, error) {
 		if err != nil {
 			return nil, fmt.Errorf("marshal tool result payload: %w", err)
 		}
-		payload = rawjson.RawJSON(b)
+		payload = rawjson.Message(b)
 	default:
 		b, err := json.Marshal(evt)
 		if err != nil {
 			return nil, fmt.Errorf("marshal hook event payload %q: %w", evt.Type(), err)
 		}
-		payload = rawjson.RawJSON(b)
+		payload = rawjson.Message(b)
 	}
 
 	return &ActivityInput{

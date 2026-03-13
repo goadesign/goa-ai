@@ -122,7 +122,7 @@ func TestExecuteToolActivity_DecodeErrorRetryHint(t *testing.T) {
 		},
 	}
 
-	raw := rawjson.RawJSON([]byte(`{"summary":"wrong"}`))
+	raw := rawjson.Message([]byte(`{"summary":"wrong"}`))
 	input := ToolInput{
 		ToolsetName: "svc.ts",
 		ToolName:    tools.Ident("svc.ts.tool"),

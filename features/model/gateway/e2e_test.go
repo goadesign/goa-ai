@@ -45,7 +45,7 @@ func (p *captureProvider) Stream(_ context.Context, req *model.Request) (model.S
 			Type: model.ChunkTypeToolCall,
 			ToolCall: &model.ToolCall{
 				Name:    "emit_tool",
-				Payload: rawjson.RawJSON([]byte(`{"k":"v"}`)),
+				Payload: rawjson.Message([]byte(`{"k":"v"}`)),
 			},
 		},
 		{Type: model.ChunkTypeUsage, UsageDelta: &model.TokenUsage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3}},

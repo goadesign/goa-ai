@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -226,16 +227,16 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	// JSON (json.RawMessage) along the planner/runtime boundary; adapters may
 	// normalize them before validation or execution.
 	raw := req.Payload
-	meta := ToolCallMeta{
+	meta := toolCallMeta(planner.ToolRequest{
 		RunID:            req.RunID,
 		SessionID:        req.SessionID,
 		TurnID:           req.TurnID,
 		ToolCallID:       req.ToolCallID,
 		ParentToolCallID: req.ParentToolCallID,
-	}
+	})
 	if reg.PayloadAdapter != nil && len(raw) > 0 {
 		if adapted, err := reg.PayloadAdapter(ctx, meta, req.ToolName, raw.RawMessage()); err == nil && len(adapted) > 0 {
-			raw = rawjson.RawJSON(adapted)
+			raw = rawjson.Message(adapted)
 		} else if err != nil {
 			return &ToolOutput{Error: fmt.Sprintf("payload adapter failed: %v", err)}, nil
 		}
@@ -304,19 +305,13 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 			result.Telemetry = tel
 		}
 	}
-	enc, encErr := r.marshalToolValue(ctx, req.ToolName, result.Result)
-	if encErr != nil {
-		// Tool result is not valid for its declared schema. This is a contract violation.
-		return nil, fmt.Errorf("tool result encode %s: %w", req.ToolName, encErr)
-	}
-	// Apply optional result adapter after encoding.
-	if reg.ResultAdapter != nil && len(enc) > 0 {
-		if adapted, err := reg.ResultAdapter(ctx, meta, req.ToolName, enc); err == nil && len(adapted) > 0 {
-			enc = adapted
-		}
+	resultJSON, err := r.materializeToolResult(ctx, call, result)
+	if err != nil {
+		return nil, err
 	}
 	out := &ToolOutput{
-		Payload:    rawjson.RawJSON(enc),
+		Payload:    resultJSON,
+		Bounds:     result.Bounds,
 		ServerData: result.ServerData,
 		Telemetry:  result.Telemetry,
 	}
@@ -538,28 +533,24 @@ func (r *Runtime) plannerContext(ctx context.Context, input *PlanActivityInput, 
 	return &reg, agentCtx, nil
 }
 
-// marshalToolValue encodes a tool result using the registered result codec.
-func (r *Runtime) marshalToolValue(ctx context.Context, toolName tools.Ident, value any) (json.RawMessage, error) {
+// marshalToolValue encodes a tool result using the registered result codec and,
+// for bounded tools, projects canonical bounds metadata into the public JSON
+// contract emitted by the runtime.
+func (r *Runtime) marshalToolValue(ctx context.Context, toolName tools.Ident, value any, bounds *agent.Bounds) (json.RawMessage, error) {
 	if value == nil {
 		return nil, nil
 	}
-	// Tool results must be typed Go values so the generated codec is the sole
-	// authority for canonical JSON and schema alignment.
-	switch value.(type) {
-	case json.RawMessage, []byte:
-		return nil, fmt.Errorf("tool %s result must be a typed Go value, got %T", toolName, value)
-	}
-	codec, ok := r.toolCodec(toolName, false)
-	if !ok || codec.ToJSON == nil {
+	spec, ok := r.toolSpec(toolName)
+	if !ok {
 		r.logger.Error(ctx, "no codec found for tool", "tool", toolName, "payload", false)
 		return nil, fmt.Errorf("no codec found for tool %s", toolName)
 	}
-	data, err := codec.ToJSON(value)
+	projected, err := EncodeCanonicalToolResult(spec, value, bounds)
 	if err != nil {
-		r.logger.Warn(ctx, "tool codec encode failed", "tool", toolName, "payload", false, "err", err)
+		r.logger.Warn(ctx, "tool result encode failed", "tool", toolName, "payload", false, "err", err)
 		return nil, err
 	}
-	return json.RawMessage(data), nil
+	return json.RawMessage(projected), nil
 }
 
 // unmarshalToolValue decodes a tool value using the registered codec or standard JSON.

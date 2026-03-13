@@ -70,6 +70,18 @@ type (
 		ParentToolCallID string
 	}
 
+	// ResultMaterializer enriches a typed tool result before the runtime encodes
+	// and publishes it.
+	//
+	// Contract:
+	// - The runtime invokes materializers on both the normal execution path and
+	//   the externally provided-result await path.
+	// - Materializers may attach server-only sidecars to `result.ServerData` and
+	//   may normalize the typed semantic result before canonical encoding.
+	// - Materializers must be deterministic and must not perform I/O when they run
+	//   inside workflow code.
+	ResultMaterializer func(ctx context.Context, meta ToolCallMeta, call *planner.ToolRequest, result *planner.ToolResult) error
+
 	// ToolCallExecutor executes a tool call and returns a planner.ToolResult. This
 	// generic interface enables a uniform execution model across method-backed
 	// tools, MCP tools, and agent-tools. Registrations accept a ToolCallExecutor and

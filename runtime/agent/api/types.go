@@ -60,7 +60,7 @@ type (
 		// is an agent-as-tool execution. Nil for top-level runs. Nested agent planners
 		// can use this structured input to render method-specific prompts without
 		// reparsing free-form messages.
-		ToolArgs rawjson.RawJSON
+		ToolArgs rawjson.Message
 
 		// Messages carries the conversation history supplied by the caller.
 		Messages []*model.Message
@@ -199,7 +199,7 @@ type (
 		Name tools.Ident
 
 		// Result is the canonical JSON result payload encoded using the tool result codec.
-		Result rawjson.RawJSON
+		Result rawjson.Message
 
 		// ResultBytes is the size, in bytes, of the canonical JSON result payload
 		// produced by the runtime before any workflow-boundary trimming is applied.
@@ -224,7 +224,7 @@ type (
 
 		// ServerData carries server-only data emitted alongside the tool result.
 		// It is never sent to model providers.
-		ServerData rawjson.RawJSON
+		ServerData rawjson.Message
 
 		// Bounds, when non-nil, describes how the result has been bounded relative
 		// to the full underlying data set (for example, list/window/graph caps).
@@ -267,10 +267,10 @@ type (
 		ToolCallID string
 
 		// Payload is the canonical JSON payload passed to the tool.
-		Payload rawjson.RawJSON
+		Payload rawjson.Message
 
 		// Result is the canonical JSON result payload encoded using the tool result codec.
-		Result rawjson.RawJSON
+		Result rawjson.Message
 
 		// ResultBytes is the size, in bytes, of the canonical JSON result payload
 		// produced by the runtime before any workflow-boundary trimming is applied.
@@ -285,7 +285,7 @@ type (
 		ResultOmittedReason string
 
 		// ServerData carries canonical server-only data emitted alongside the tool result.
-		ServerData rawjson.RawJSON
+		ServerData rawjson.Message
 
 		// Bounds describes how the result has been bounded relative to the full underlying data set.
 		Bounds *agent.Bounds
@@ -359,7 +359,7 @@ type (
 		ToolCallID string
 
 		// Payload is the canonical JSON payload for the tool call.
-		Payload rawjson.RawJSON
+		Payload rawjson.Message
 
 		// SessionID is the logical session identifier (for example, a chat conversation).
 		SessionID string
@@ -374,7 +374,7 @@ type (
 	// ToolOutput is returned by tool executors after invoking the tool implementation.
 	ToolOutput struct {
 		// Payload is the tool result encoded as JSON. The runtime decodes it using the registered tool codec.
-		Payload rawjson.RawJSON
+		Payload rawjson.Message
 
 		// ServerData carries server-only data emitted alongside the tool result. It is
 		// never forwarded to model providers, but it must cross workflow/activity
@@ -384,7 +384,11 @@ type (
 		// Contract:
 		//   - This is canonical JSON (typically a JSON array of server data items).
 		//   - Tool implementations may return nil when no server data is present.
-		ServerData rawjson.RawJSON
+		ServerData rawjson.Message
+
+		// Bounds carries canonical bounded-result metadata across workflow/activity
+		// boundaries when the tool contract declares an out-of-band bounds channel.
+		Bounds *agent.Bounds
 
 		// Telemetry contains execution timing and provider usage metadata when available.
 		Telemetry *telemetry.ToolTelemetry
@@ -469,6 +473,38 @@ type (
 		Metadata map[string]any
 	}
 
+	// ProvidedToolResult carries one externally supplied tool result across the
+	// await-resume workflow boundary.
+	//
+	// Contract:
+	// - This is a raw input envelope from an external actor (for example, a UI or
+	//   bridge service), not the runtime's canonical `ToolEvent` representation.
+	// - Result bytes must use the tool's generated result codec and remain
+	//   canonical JSON, but server-only sidecars are never provided here; the
+	//   runtime materializes them after decoding.
+	ProvidedToolResult struct {
+		// Name is the fully-qualified tool identifier that produced this result.
+		Name tools.Ident
+
+		// ToolCallID correlates the result with the original awaited tool call.
+		ToolCallID string
+
+		// Result contains the external actor's canonical JSON payload for the tool
+		// result. Nil or `null` is allowed when the tool's result contract permits it.
+		Result rawjson.Message
+
+		// Bounds carries runtime-owned bounded-result metadata when the tool
+		// contract requires it.
+		Bounds *agent.Bounds
+
+		// Error is the structured tool failure, when the external tool execution failed.
+		Error *planner.ToolError
+
+		// RetryHint optionally provides structured guidance for recovering from a
+		// provided tool failure.
+		RetryHint *planner.RetryHint
+	}
+
 	// ToolResultsSet carries results for an external tools await request.
 	ToolResultsSet struct {
 		// RunID identifies the run associated with the external tool results.
@@ -481,13 +517,11 @@ type (
 		//
 		// Contract:
 		// - This field crosses a workflow signal boundary. It must be wire-safe and must
-		//   not embed planner.ToolResult (which contains `any`).
-		// - Results must be encoded with the tool's generated result codec and stored
-		//   as canonical JSON bytes. ServerData must be stored as canonical JSON bytes.
-		Results []*ToolEvent
-
-		// RetryHints optionally provides hints associated with failures.
-		RetryHints []*planner.RetryHint
+		//   not embed planner.ToolResult (which contains `any`) or the runtime-owned
+		//   `ToolEvent` envelope.
+		// - The runtime owns decoding, result materialization, canonicalization,
+		//   and server-side sidecar attachment after this signal is received.
+		Results []*ProvidedToolResult
 	}
 )
 

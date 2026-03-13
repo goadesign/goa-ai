@@ -443,7 +443,7 @@ func (r *Runtime) agentToolRequestFailureResult(call planner.ToolRequest, err er
 	}
 	hint.RestrictToTool = true
 	result.RetryHint = hint
-	if err := r.enforceToolResultContracts(spec, call, toolErr, result); err != nil {
+	if _, err := r.materializeToolResult(context.Background(), call, result); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -552,7 +552,7 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 	//   - Re-encoding through payload codecs here is invalid because payload codecs
 	//     encode typed values, while this boundary carries canonical raw JSON.
 	if len(call.Payload) > 0 {
-		nestedRunCtx.ToolArgs = append(rawjson.RawJSON(nil), call.Payload...)
+		nestedRunCtx.ToolArgs = append(rawjson.Message(nil), call.Payload...)
 	}
 
 	return childMessages, nestedRunCtx, nil
@@ -680,7 +680,7 @@ func (r *Runtime) decodeAgentChildFinalToolResult(ctx context.Context, call *pla
 		ResultBytes:         event.ResultBytes,
 		ResultOmitted:       event.ResultOmitted,
 		ResultOmittedReason: event.ResultOmittedReason,
-		ServerData:          append(rawjson.RawJSON(nil), event.ServerData...),
+		ServerData:          append(rawjson.Message(nil), event.ServerData...),
 		Bounds:              event.Bounds,
 		Error:               event.Error,
 		RetryHint:           event.RetryHint,

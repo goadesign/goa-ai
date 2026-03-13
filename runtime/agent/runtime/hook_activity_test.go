@@ -168,7 +168,7 @@ func TestHookActivity_EnrichesToolCallScheduledDisplayHintInRunlog(t *testing.T)
 		"sess-1",
 		toolID,
 		"call-1",
-		rawjson.RawJSON([]byte(`{"resolution":"hourly"}`)),
+		rawjson.Message([]byte(`{"resolution":"hourly"}`)),
 		"queue",
 		"",
 		0,

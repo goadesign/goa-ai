@@ -79,7 +79,7 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 		Name:      tools.Ident("tool"),
 		RunID:     "run",
 		SessionID: "sess-1",
-		Payload:   rawjson.RawJSON([]byte(`{"x":"world"}`)),
+		Payload:   rawjson.Message([]byte(`{"x":"world"}`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -166,7 +166,7 @@ func TestDefaultAgentToolExecute_DefaultContentFromPayload(t *testing.T) {
 		Name:      tools.Ident("tool"),
 		RunID:     "run",
 		SessionID: "sess-1",
-		Payload:   rawjson.RawJSON([]byte(`{"x":"world"}`)),
+		Payload:   rawjson.Message([]byte(`{"x":"world"}`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -211,7 +211,7 @@ func TestDefaultAgentToolExecute_PreChildValidatorReturnsToolResult(t *testing.T
 		Name:      tools.Ident("tool"),
 		RunID:     "run",
 		SessionID: "sess-1",
-		Payload:   rawjson.RawJSON([]byte(`{"sources":["x"]}`)),
+		Payload:   rawjson.Message([]byte(`{"sources":["x"]}`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -285,7 +285,7 @@ func TestDefaultAgentToolExecute_PromptSpecPreferredOverTemplateTextPromptBuilde
 		Name:      tools.Ident("tool"),
 		RunID:     "run",
 		SessionID: "sess-1",
-		Payload:   rawjson.RawJSON([]byte(`{"x":"world"}`)),
+		Payload:   rawjson.Message([]byte(`{"x":"world"}`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -389,7 +389,7 @@ func TestDefaultAgentToolExecute_PromptSpecRendersWithSchemaKeys(t *testing.T) {
 		Name:      tools.Ident("tool"),
 		RunID:     "run",
 		SessionID: "sess-1",
-		Payload:   rawjson.RawJSON([]byte(`{"time_context":"last 48h"}`)),
+		Payload:   rawjson.Message([]byte(`{"time_context":"last 48h"}`)),
 	}
 	spec := newAnyJSONSpec(call.Name, "svc.tools")
 	spec.Payload.Codec = codec
@@ -444,7 +444,7 @@ func TestDefaultAgentToolExecute_PromptSpecRejectsNonObjectPayloadShape(t *testi
 			return json.Marshal(typed)
 		},
 		FromJSON: func(data []byte) (any, error) {
-			if len(bytes.TrimSpace(data)) == 0 || string(bytes.TrimSpace(data)) == "null" {
+			if len(bytes.TrimSpace(data)) == 0 || string(bytes.TrimSpace(data)) == jsonNullLiteral {
 				return nil, nil
 			}
 			var decoded string
@@ -458,7 +458,7 @@ func TestDefaultAgentToolExecute_PromptSpecRejectsNonObjectPayloadShape(t *testi
 		Name:      tools.Ident("tool"),
 		RunID:     "run",
 		SessionID: "sess-1",
-		Payload:   rawjson.RawJSON([]byte(`"last 48h"`)),
+		Payload:   rawjson.Message([]byte(`"last 48h"`)),
 	}
 	spec := newAnyJSONSpec(call.Name, "svc.tools")
 	spec.Payload.Codec = stringCodec
@@ -505,7 +505,7 @@ func TestBuildAgentChildRequest_PreservesCanonicalToolArgs(t *testing.T) {
 	}
 	rt.toolSpecs[toolName] = spec
 
-	payload := rawjson.RawJSON([]byte(`{"time_context":"last 48h","scope_context":{"type":"site","id":"s1"}}`))
+	payload := rawjson.Message([]byte(`{"time_context":"last 48h","scope_context":{"type":"site","id":"s1"}}`))
 	call := &planner.ToolRequest{
 		Name:       toolName,
 		RunID:      "run-1",

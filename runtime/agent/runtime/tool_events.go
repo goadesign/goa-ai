@@ -9,8 +9,6 @@ package runtime
 //   rehydrate them as map[string]any, breaking tool codecs.
 // - encodeToolEvents converts typed tool results into api.ToolEvent values that
 //   only contain canonical JSON bytes plus structured metadata.
-// - decodeToolEvents converts api.ToolEvent values back into planner.ToolResult
-//   values by decoding Result bytes via the registered tool codec.
 
 import (
 	"context"
@@ -38,16 +36,16 @@ func (r *Runtime) encodeToolEvents(ctx context.Context, events []*planner.ToolRe
 	}
 	out := make([]*api.ToolEvent, 0, len(events))
 	for _, ev := range events {
-		result, err := r.marshalToolValue(ctx, ev.Name, ev.Result)
+		result, err := r.marshalToolValue(ctx, ev.Name, ev.Result, ev.Bounds)
 		if err != nil {
 			return nil, fmt.Errorf("encode tool result for %s: %w", ev.Name, err)
 		}
 		out = append(out, &api.ToolEvent{
 			Name:          ev.Name,
-			Result:        rawjson.RawJSON(result),
+			Result:        rawjson.Message(result),
 			ResultBytes:   len(result),
 			ResultOmitted: false,
-			ServerData:    append(rawjson.RawJSON(nil), ev.ServerData...),
+			ServerData:    append(rawjson.Message(nil), ev.ServerData...),
 			Bounds:        ev.Bounds,
 			Error:         ev.Error,
 			RetryHint:     ev.RetryHint,
@@ -79,7 +77,7 @@ func (r *Runtime) encodeToolEventsForPlanning(ctx context.Context, events []*pla
 	}
 	out := make([]*api.ToolEvent, 0, len(events))
 	for _, ev := range events {
-		result, err := r.marshalToolValue(ctx, ev.Name, ev.Result)
+		result, err := r.marshalToolValue(ctx, ev.Name, ev.Result, ev.Bounds)
 		if err != nil {
 			return nil, fmt.Errorf("encode tool result for %s: %w", ev.Name, err)
 		}
@@ -93,7 +91,7 @@ func (r *Runtime) encodeToolEventsForPlanning(ctx context.Context, events []*pla
 		}
 		out = append(out, &api.ToolEvent{
 			Name:                ev.Name,
-			Result:              rawjson.RawJSON(result),
+			Result:              rawjson.Message(result),
 			ResultBytes:         resultBytes,
 			ResultOmitted:       omitted,
 			ResultOmittedReason: omittedReason,
@@ -154,67 +152,25 @@ func (r *Runtime) buildPlannerToolOutputs(ctx context.Context, calls []planner.T
 		output := &planner.ToolOutput{
 			Name:                call.Name,
 			ToolCallID:          call.ToolCallID,
-			Payload:             append(rawjson.RawJSON(nil), call.Payload...),
+			Payload:             append(rawjson.Message(nil), call.Payload...),
 			ResultBytes:         result.ResultBytes,
 			ResultOmitted:       result.ResultOmitted,
 			ResultOmittedReason: result.ResultOmittedReason,
-			ServerData:          append(rawjson.RawJSON(nil), result.ServerData...),
+			ServerData:          append(rawjson.Message(nil), result.ServerData...),
 			Bounds:              result.Bounds,
 			Error:               result.Error,
 			RetryHint:           result.RetryHint,
 			Telemetry:           result.Telemetry,
 		}
 		if !result.ResultOmitted {
-			resultJSON, err := r.marshalToolValue(ctx, call.Name, result.Result)
+			resultJSON, err := r.marshalToolValue(ctx, call.Name, result.Result, result.Bounds)
 			if err != nil {
 				return nil, fmt.Errorf("build planner tool output result for %s: %w", call.Name, err)
 			}
-			output.Result = rawjson.RawJSON(resultJSON)
+			output.Result = rawjson.Message(resultJSON)
 			output.ResultBytes = len(resultJSON)
 		}
 		out = append(out, output)
-	}
-	return out, nil
-}
-
-// decodeToolEvents converts workflow-boundary tool event envelopes back into typed
-// planner tool results.
-//
-// Contract:
-//   - Result bytes are decoded via the registered tool result codec.
-func (r *Runtime) decodeToolEvents(ctx context.Context, events []*api.ToolEvent) ([]*planner.ToolResult, error) {
-	if len(events) == 0 {
-		return nil, nil
-	}
-	out := make([]*planner.ToolResult, 0, len(events))
-	for _, ev := range events {
-		if ev == nil {
-			return nil, fmt.Errorf("CRITICAL: nil tool event entry")
-		}
-		var decoded any
-		if hasNonNullJSON(ev.Result.RawMessage()) && ev.Error == nil {
-			val, err := r.unmarshalToolValue(ctx, ev.Name, ev.Result.RawMessage(), false)
-			if err != nil {
-				return nil, fmt.Errorf("decode tool result for %s: %w", ev.Name, err)
-			}
-			decoded = val
-		}
-		tr := &planner.ToolResult{
-			Name:                ev.Name,
-			Result:              decoded,
-			ResultBytes:         ev.ResultBytes,
-			ResultOmitted:       ev.ResultOmitted,
-			ResultOmittedReason: ev.ResultOmittedReason,
-			ServerData:          append(rawjson.RawJSON(nil), ev.ServerData...),
-			Bounds:              ev.Bounds,
-			Error:               ev.Error,
-			RetryHint:           ev.RetryHint,
-			Telemetry:           ev.Telemetry,
-			ToolCallID:          ev.ToolCallID,
-			ChildrenCount:       ev.ChildrenCount,
-			RunLink:             ev.RunLink,
-		}
-		out = append(out, tr)
 	}
 	return out, nil
 }
@@ -233,12 +189,12 @@ func (r *Runtime) decodeToolOutputs(events []*api.ToolCallOutput) ([]*planner.To
 		out = append(out, &planner.ToolOutput{
 			Name:                ev.Name,
 			ToolCallID:          ev.ToolCallID,
-			Payload:             append(rawjson.RawJSON(nil), ev.Payload...),
-			Result:              append(rawjson.RawJSON(nil), ev.Result...),
+			Payload:             append(rawjson.Message(nil), ev.Payload...),
+			Result:              append(rawjson.Message(nil), ev.Result...),
 			ResultBytes:         ev.ResultBytes,
 			ResultOmitted:       ev.ResultOmitted,
 			ResultOmittedReason: ev.ResultOmittedReason,
-			ServerData:          append(rawjson.RawJSON(nil), ev.ServerData...),
+			ServerData:          append(rawjson.Message(nil), ev.ServerData...),
 			Bounds:              ev.Bounds,
 			Error:               ev.Error,
 			RetryHint:           ev.RetryHint,
@@ -262,12 +218,12 @@ func encodePlannerToolOutputs(outputs []*planner.ToolOutput) ([]*api.ToolCallOut
 		out = append(out, &api.ToolCallOutput{
 			Name:                output.Name,
 			ToolCallID:          output.ToolCallID,
-			Payload:             append(rawjson.RawJSON(nil), output.Payload...),
-			Result:              append(rawjson.RawJSON(nil), output.Result...),
+			Payload:             append(rawjson.Message(nil), output.Payload...),
+			Result:              append(rawjson.Message(nil), output.Result...),
 			ResultBytes:         output.ResultBytes,
 			ResultOmitted:       output.ResultOmitted,
 			ResultOmittedReason: output.ResultOmittedReason,
-			ServerData:          append(rawjson.RawJSON(nil), output.ServerData...),
+			ServerData:          append(rawjson.Message(nil), output.ServerData...),
 			Bounds:              output.Bounds,
 			Error:               output.Error,
 			RetryHint:           output.RetryHint,

@@ -1037,7 +1037,7 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 	return resp, nil
 }
 
-func decodeDocument(doc document.Interface) rawjson.RawJSON {
+func decodeDocument(doc document.Interface) rawjson.Message {
 	if doc == nil {
 		return nil
 	}
@@ -1048,7 +1048,7 @@ func decodeDocument(doc document.Interface) rawjson.RawJSON {
 	if len(data) == 0 {
 		return nil
 	}
-	return rawjson.RawJSON(data)
+	return rawjson.Message(data)
 }
 
 func translateCitationsContent(block brtypes.CitationsContentBlock) model.CitationsPart {

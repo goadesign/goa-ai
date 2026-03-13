@@ -94,7 +94,7 @@ func TestHintingSinkRendersHintForRawJSONPayload(t *testing.T) {
 	payload := stream.ToolStartPayload{
 		ToolCallID: "call-rawjson-1",
 		ToolName:   string(toolID),
-		Payload:    rawjson.RawJSON([]byte(`{"resolution":"hourly"}`)),
+		Payload:    rawjson.Message([]byte(`{"resolution":"hourly"}`)),
 	}
 	ev := stream.ToolStart{
 		Base: stream.NewBase(stream.EventToolStart, "run-1", "session-1", payload),
@@ -130,7 +130,7 @@ func TestHintingSinkOverrideWins(t *testing.T) {
 	payload := stream.ToolStartPayload{
 		ToolCallID: "call-override-1",
 		ToolName:   string(toolID),
-		Payload:    rawjson.RawJSON([]byte(`{"resolution":"hourly"}`)),
+		Payload:    rawjson.Message([]byte(`{"resolution":"hourly"}`)),
 	}
 	ev := stream.ToolStart{
 		Base: stream.NewBase(stream.EventToolStart, "run-1", "session-1", payload),

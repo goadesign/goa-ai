@@ -420,7 +420,7 @@ func cloneServerDataItems(items []*toolregistry.ServerDataItem) []*toolregistry.
 	return out
 }
 
-func marshalServerDataItems(items []*toolregistry.ServerDataItem) rawjson.RawJSON {
+func marshalServerDataItems(items []*toolregistry.ServerDataItem) rawjson.Message {
 	if len(items) == 0 {
 		return nil
 	}
@@ -428,7 +428,7 @@ func marshalServerDataItems(items []*toolregistry.ServerDataItem) rawjson.RawJSO
 	if err != nil {
 		panic(fmt.Sprintf("toolregistry executor: marshal server-data items failed: %v", err))
 	}
-	return rawjson.RawJSON(b)
+	return rawjson.Message(b)
 }
 
 func retryHintFromToolErrorCode(tool tools.Ident, code string) *planner.RetryHint {

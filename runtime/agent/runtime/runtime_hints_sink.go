@@ -79,7 +79,7 @@ func (h *hintingSink) decodePayload(ctx context.Context, tool tools.Ident, paylo
 	switch v := payload.(type) {
 	case nil:
 		// Keep canonical empty object.
-	case rawjson.RawJSON:
+	case rawjson.Message:
 		if len(v) > 0 {
 			raw = v.RawMessage()
 		}

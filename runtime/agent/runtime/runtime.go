@@ -308,7 +308,9 @@ type (
 		CallHints map[tools.Ident]*template.Template
 
 		// ResultHints optionally provides precompiled templates for result previews
-		// keyed by tool ident. When present, RegisterToolset installs these in the
+		// keyed by tool ident. Templates receive the runtime-owned preview wrapper
+		// where semantic data is available under `.Result` and bounded metadata
+		// under `.Bounds`. When present, RegisterToolset installs these in the
 		// global hints registry so sinks can render concise result previews.
 		ResultHints map[tools.Ident]*template.Template
 
@@ -317,9 +319,10 @@ type (
 		// inline execution for Inline toolsets. When nil, no adaptation is applied.
 		PayloadAdapter func(ctx context.Context, meta ToolCallMeta, tool tools.Ident, raw json.RawMessage) (json.RawMessage, error)
 
-		// ResultAdapter normalizes encoded JSON results before they are published or
-		// returned to the caller. When nil, no adaptation is applied.
-		ResultAdapter func(ctx context.Context, meta ToolCallMeta, tool tools.Ident, raw json.RawMessage) (json.RawMessage, error)
+		// ResultMaterializer enriches typed tool results before the runtime encodes
+		// them for hooks, workflow boundaries, or callers. When nil, the runtime
+		// publishes the tool result exactly as produced by the executor.
+		ResultMaterializer ResultMaterializer
 
 		// DecodeInExecutor instructs the runtime to pass raw JSON payloads through to
 		// the executor without pre-decoding. The executor must decode using generated

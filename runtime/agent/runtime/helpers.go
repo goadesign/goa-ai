@@ -431,7 +431,7 @@ func compactOversizedHookInput(evt hooks.Event, turnID string) (*hooks.ActivityI
 	if len(in.Payload) <= maxHookPayloadBytes {
 		return in, nil
 	}
-	compact.ResultJSON = rawjson.RawJSON([]byte(`{"truncated":true,"reason":"hook_payload_too_large"}`))
+	compact.ResultJSON = rawjson.Message([]byte(`{"truncated":true,"reason":"hook_payload_too_large"}`))
 	if compact.ResultPreview == "" {
 		compact.ResultPreview = "Result omitted from run hooks because payload exceeded limits."
 	}

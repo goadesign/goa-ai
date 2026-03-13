@@ -124,7 +124,7 @@ func TestFinishWithoutToolCalls_UsesPlannerFinalToolResult(t *testing.T) {
 	st := &runLoopState{
 		Result: &planner.PlanResult{
 			FinalToolResult: &planner.FinalToolResult{
-				Result: rawjson.RawJSON([]byte(`{"status":"ok"}`)),
+				Result: rawjson.Message([]byte(`{"status":"ok"}`)),
 			},
 		},
 	}
@@ -164,7 +164,7 @@ func TestFinishWithoutToolCallsRejectsDualTerminalOutputs(t *testing.T) {
 				},
 			},
 			FinalToolResult: &planner.FinalToolResult{
-				Result: rawjson.RawJSON([]byte(`{"status":"ok"}`)),
+				Result: rawjson.Message([]byte(`{"status":"ok"}`)),
 			},
 		},
 	}
@@ -935,7 +935,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 		ToolCalls: []planner.ToolRequest{
 			{
 				Name:    tools.Ident("search"),
-				Payload: rawjson.RawJSON([]byte(`{"query":"status"}`)),
+				Payload: rawjson.Message([]byte(`{"query":"status"}`)),
 			},
 		},
 	}

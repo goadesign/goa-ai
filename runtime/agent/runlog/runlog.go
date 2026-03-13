@@ -33,7 +33,7 @@ type (
 		// Type is the hook event type.
 		Type hooks.EventType
 		// Payload is the canonical JSON-encoded payload for the event.
-		Payload rawjson.RawJSON
+		Payload rawjson.Message
 		// Timestamp is the event time.
 		Timestamp time.Time
 	}

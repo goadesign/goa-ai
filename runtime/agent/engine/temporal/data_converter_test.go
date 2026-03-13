@@ -25,11 +25,11 @@ func TestNewAgentDataConverter_DecodesToolResultsSetIntoSinglePointer(t *testing
 	p, err := dc.ToPayload(&api.ToolResultsSet{
 		RunID: "run-123",
 		ID:    "await-123",
-		Results: []*api.ToolEvent{
+		Results: []*api.ProvidedToolResult{
 			{
 				Name:       toolName,
 				ToolCallID: "tooluse-123",
-				Result:     rawjson.RawJSON([]byte(`{"value":"ok"}`)),
+				Result:     rawjson.Message([]byte(`{"value":"ok"}`)),
 			},
 		},
 	})
@@ -66,9 +66,9 @@ func TestNewAgentDataConverter_RoundTripsPlanActivityInputToolOutputs(t *testing
 			{
 				Name:       "test.tool",
 				ToolCallID: "call-1",
-				Payload:    rawjson.RawJSON([]byte(`{"input":"ok"}`)),
-				Result:     rawjson.RawJSON([]byte(`{"output":"ok"}`)),
-				ServerData: rawjson.RawJSON([]byte(`[{"kind":"evidence"}]`)),
+				Payload:    rawjson.Message([]byte(`{"input":"ok"}`)),
+				Result:     rawjson.Message([]byte(`{"output":"ok"}`)),
+				ServerData: rawjson.Message([]byte(`[{"kind":"evidence"}]`)),
 			},
 		},
 	})
