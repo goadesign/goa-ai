@@ -654,9 +654,11 @@ property named `"server_data"`.
 
 Tools that return partial views of larger datasets should use the `BoundedResult`
 DSL helper. This enforces a canonical bounded-result contract:
-bounded tools must expose the standard bounds fields on their result schema
-(`returned`, `total`, `truncated`, `refinement_hint`), and the runtime surfaces
-those semantics via `ToolResult.Bounds` and hook/stream events.
+bounded tools declare their contract in `tools.ToolSpec.Bounds`, successful
+executions must populate `planner.ToolResult.Bounds`, and the runtime projects
+the canonical bounds fields (`returned`, `total`, `truncated`,
+`refinement_hint`, and optional `next_cursor`) into the emitted result JSON and
+hook/stream payloads.
 
 ```go
 type Bounds struct {
@@ -667,8 +669,24 @@ type Bounds struct {
 }
 ```
 
-The runtime surfaces bounds via `ToolResult.Bounds`, hook events, and stream events.
-Services own truncation logic; the runtime only propagates what tools report.
+The runtime surfaces bounds via `ToolResult.Bounds`, encoded `tool_result` JSON,
+result-hint templates under `.Bounds`, hook events, and stream events. Services
+own truncation logic; the runtime only propagates and projects what tools
+report.
+
+For method-backed `BindTo` tools, the bound service method result still needs to
+carry the canonical bounded fields so the generated executor can build
+`planner.ToolResult.Bounds` before runtime projection. Explicit tool-facing
+`Return(...)` shapes must not duplicate those canonical fields. Within the bound
+method result, only `returned` and `truncated` may be required; `total`,
+`refinement_hint`, and `next_cursor` remain optional and are omitted from emitted
+JSON whenever runtime bounds omit them. `BoundedResult(...)` still owns the
+tool-facing contract exposed to models.
+
+When a service boundary must assemble canonical result JSON outside
+`ExecuteToolActivity` itself, use `runtime.EncodeCanonicalToolResult(...)`
+instead of calling the generated result codec and bounded-result projection
+helpers separately.
 
 ---
 

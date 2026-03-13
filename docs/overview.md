@@ -139,14 +139,12 @@ surfaces the contract:
 
 - Use the DSL helper `BoundedResult()` inside a `Tool` to declare that its result is a bounded view
   over a larger data set.
-- Codegen propagates this into the generated `tools.ToolSpec` (`BoundedResult: true`) and extends
-  the generated result alias type with a `ResultBounds() *agent.Bounds` method so runtimes can
-  derive a small, provider‑agnostic `agent.Bounds` struct for each bounded result without
-  inspecting tool-specific fields at runtime.
-- Generated result types also implement the `agent.BoundedResult` interface via a
-  `ResultBounds() *agent.Bounds` method; the runtime derives a small, provider‑agnostic
-  `agent.Bounds` struct for each bounded result
-  and attaches it to planner results, hook events, streams, and memory events.
+- Codegen propagates this into generated `tools.ToolSpec.Bounds` metadata and projects the canonical
+  bounded fields into the generated JSON result schema without forcing authored result types to
+  duplicate those fields.
+- Successful bounded tool executions must populate `planner.ToolResult.Bounds`; the runtime then
+  projects those bounds into model-visible result JSON and attaches the same provider‑agnostic
+  `agent.Bounds` struct to planner results, hook events, streams, and memory events.
 - For tools marked `BoundedResult`, the runtime enforces that bounds metadata is present and that
   any untruncated result stays under a configurable JSON size limit; trimming logic stays entirely
   in service code.
@@ -154,7 +152,7 @@ surfaces the contract:
 For bounded tools, bounds metadata is a hard contract:
 
 - `Returned` and `Truncated` must always be present.
-- `Returned == 0` means “empty result” → `Total == 0` and `Truncated == false`.
+- `Total`, `NextCursor`, and `RefinementHint` are optional and should only be set when known.
 
 ### Server Data (Sidecar Data)
 
@@ -444,7 +442,7 @@ policies, and MCP servers within Goa service designs.
 | `BindTo(method)` or `BindTo(service, method)` | Bind tool to service method implementation |
 | `Inject(fields...)` | Mark fields as infrastructure-only (hidden from LLM) |
 | `CallHintTemplate(tmpl)` | Go template for tool call `DisplayHint` (typed payload; rendered by runtime) |
-| `ResultHintTemplate(tmpl)` | Go template for tool result display (typed result; rendered by runtime) |
+| `ResultHintTemplate(tmpl)` | Go template for tool result display (`.Result` + optional `.Bounds`; rendered by runtime) |
 | `BoundedResult()` | Mark result as bounded view over larger data |
 | `ResultReminder(text)` | Static system reminder injected after tool result |
 
