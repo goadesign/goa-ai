@@ -59,9 +59,8 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 			ExportingAgentID:   tool.ExportingAgentID,
 			Payload:            payload,
 			Result:             result,
-			BoundedResult:      tool.BoundedResult,
+			Bounds:             tool.Bounds,
 			TerminalRun:        tool.TerminalRun,
-			Paging:             tool.Paging,
 			ResultReminder:     tool.ResultReminder,
 			Confirmation:       tool.Confirmation,
 		}

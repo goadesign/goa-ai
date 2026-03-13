@@ -18,8 +18,8 @@ func TestDecodeFromHookInput_ToolResultReceivedPreservesServerDataBytes(t *testi
 	toolName := tools.Ident("svc.tools.lookup")
 	toolCallID := "call-1"
 
-	resultJSON := rawjson.RawJSON([]byte(`{"summary":"ok"}`))
-	serverData := rawjson.RawJSON([]byte(`[{"kind":"example.topology","data":{"hello":"world","n":1}}]`))
+	resultJSON := rawjson.Message([]byte(`{"summary":"ok"}`))
+	serverData := rawjson.Message([]byte(`[{"kind":"example.topology","data":{"hello":"world","n":1}}]`))
 
 	ev := NewToolResultReceivedEvent(
 		runID,

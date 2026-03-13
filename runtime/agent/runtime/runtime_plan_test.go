@@ -48,6 +48,31 @@ func TestRunPlanActivityUsesOptions(t *testing.T) {
 	require.Equal(t, opts.RetryPolicy, wf.lastPlannerCall.Options.RetryPolicy)
 }
 
+func TestRunPlanActivityAcceptsTerminalFinalToolResult(t *testing.T) {
+	rt := &Runtime{
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Bus:     noopHooks{},
+	}
+	wf := &testWorkflowContext{
+		ctx:           context.Background(),
+		hasPlanResult: true,
+		planResult: &planner.PlanResult{
+			FinalToolResult: &planner.FinalToolResult{
+				Result: rawjson.Message([]byte(`{"status":"ok"}`)),
+			},
+		},
+	}
+
+	out, err := rt.runPlanActivity(wf, "calc.agent.plan", engine.ActivityOptions{}, PlanActivityInput{}, time.Time{})
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.NotNil(t, out.Result)
+	require.NotNil(t, out.Result.FinalToolResult)
+	require.JSONEq(t, `{"status":"ok"}`, string(out.Result.FinalToolResult.Result))
+}
+
 func TestPlanStartActivityInvokesPlanner(t *testing.T) {
 	called := false
 	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
@@ -84,9 +109,9 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 	toolOutputs := []*api.ToolCallOutput{{
 		Name:       "svc.ts.tool",
 		ToolCallID: "call-1",
-		Payload:    rawjson.RawJSON([]byte(`{"from":"test"}`)),
-		Result:     rawjson.RawJSON([]byte(`{"status":"ok"}`)),
-		ServerData: rawjson.RawJSON([]byte(`[{"kind":"evidence"}]`)),
+		Payload:    rawjson.Message([]byte(`{"from":"test"}`)),
+		Result:     rawjson.Message([]byte(`{"status":"ok"}`)),
+		ServerData: rawjson.Message([]byte(`[{"kind":"evidence"}]`)),
 	}}
 	pl := &stubPlanner{resume: func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
 		called = true
@@ -130,7 +155,7 @@ func TestBuildPlannerToolOutputsPreservesOmittedResultMetadata(t *testing.T) {
 			{
 				Name:       "svc.ts.tool",
 				ToolCallID: "call-1",
-				Payload:    rawjson.RawJSON([]byte(`{"from":"test"}`)),
+				Payload:    rawjson.Message([]byte(`{"from":"test"}`)),
 			},
 		},
 		[]*planner.ToolResult{
@@ -140,7 +165,7 @@ func TestBuildPlannerToolOutputsPreservesOmittedResultMetadata(t *testing.T) {
 				ResultOmitted:       true,
 				ResultOmittedReason: "workflow_budget",
 				ResultBytes:         12345,
-				ServerData:          rawjson.RawJSON([]byte(`[{"kind":"evidence"}]`)),
+				ServerData:          rawjson.Message([]byte(`[{"kind":"evidence"}]`)),
 			},
 		},
 	)
@@ -182,7 +207,7 @@ func TestPlanResumeActivityPreservesEmptyRawJSONPayloads(t *testing.T) {
 				ToolCalls: []planner.ToolRequest{
 					{
 						Name:    "svc.other.tool",
-						Payload: rawjson.RawJSON([]byte{}),
+						Payload: rawjson.Message([]byte{}),
 					},
 				},
 				Await: planner.NewAwait(
@@ -190,7 +215,7 @@ func TestPlanResumeActivityPreservesEmptyRawJSONPayloads(t *testing.T) {
 						ID:         "await-q",
 						ToolName:   "chat.ask_question.ask_question",
 						ToolCallID: "call-q",
-						Payload:    rawjson.RawJSON([]byte{}),
+						Payload:    rawjson.Message([]byte{}),
 					}),
 					planner.AwaitExternalToolsItem(&planner.AwaitExternalTools{
 						ID: "await-ext",
@@ -198,7 +223,7 @@ func TestPlanResumeActivityPreservesEmptyRawJSONPayloads(t *testing.T) {
 							{
 								Name:       "external.one",
 								ToolCallID: "call-ext",
-								Payload:    rawjson.RawJSON([]byte{}),
+								Payload:    rawjson.Message([]byte{}),
 							},
 						},
 					}),

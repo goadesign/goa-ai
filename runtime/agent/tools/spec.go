@@ -61,15 +61,12 @@ type (
 		// AgentID is the fully qualified agent identifier (e.g., "service.agent_name").
 		// Only set when IsAgentTool is true.
 		AgentID string
-		// BoundedResult indicates that this tool's result is declared as a bounded
-		// view over a potentially larger data set. It is set via the BoundedResult
-		// DSL helper and propagated into specs so runtimes and services can enforce
-		// and surface truncation metadata consistently.
-		BoundedResult bool
-		// Paging optionally describes cursor-based pagination fields for this tool.
-		// When set, runtimes can generate paging-aware reminders and UIs can
-		// render consistent paging affordances without inspecting schemas.
-		Paging *PagingSpec
+		// Bounds declares the runtime-owned bounded-result contract for this tool.
+		// When non-nil, runtimes require explicit planner.ToolResult.Bounds metadata
+		// on successful executions and project the canonical bounded fields back
+		// into encoded result JSON, result previews, and stream/hook payloads
+		// without inspecting tool-specific semantics.
+		Bounds *BoundsSpec
 		// ServerData enumerates server-only payloads emitted alongside the tool
 		// result. Server data is never sent to model providers.
 		//
@@ -111,14 +108,23 @@ type (
 		Type TypeSpec
 	}
 
-	// PagingSpec describes cursor-based pagination for a tool.
-	// Field names refer to the tool payload/result schemas.
+	// BoundsSpec describes the runtime-owned bounds contract for a tool.
+	BoundsSpec struct {
+		// Paging optionally describes cursor-based pagination for this bounded tool.
+		Paging *PagingSpec
+	}
+
+	// PagingSpec describes cursor-based pagination for a bounded tool.
+	// Field names refer to the payload/result contract projected by
+	// BoundedResult, not necessarily to fields authored on the semantic Go
+	// result type.
 	PagingSpec struct {
 		// CursorField is the name of the optional String field in the tool payload
 		// used to request subsequent pages.
 		CursorField string
-		// NextCursorField is the name of the optional String field in the tool result
-		// that carries the cursor for the next page.
+		// NextCursorField is the canonical field name for the next-page cursor in
+		// the projected result contract. Runtimes populate it from
+		// planner.ToolResult.Bounds.NextCursor when present.
 		NextCursorField string
 	}
 

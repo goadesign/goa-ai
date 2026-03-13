@@ -405,7 +405,7 @@ func (tb *thinkingBuffer) finalize(index int) *model.ThinkingPart {
 	return nil
 }
 
-func decodeToolPayload(raw string) rawjson.RawJSON {
+func decodeToolPayload(raw string) rawjson.Message {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		trimmed = "{}"
@@ -414,5 +414,5 @@ func decodeToolPayload(raw string) rawjson.RawJSON {
 	if len(data) == 0 {
 		return nil
 	}
-	return rawjson.RawJSON(data)
+	return rawjson.Message(data)
 }

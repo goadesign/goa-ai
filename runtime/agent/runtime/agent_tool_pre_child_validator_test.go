@@ -72,7 +72,7 @@ func TestExecuteToolCalls_AgentToolPreChildValidatorReturnsToolError(t *testing.
 		[]planner.ToolRequest{
 			{
 				Name:    "svc.tools.do",
-				Payload: rawjson.RawJSON([]byte(`{"sources":["x"]}`)),
+				Payload: rawjson.Message([]byte(`{"sources":["x"]}`)),
 			},
 		},
 		0,

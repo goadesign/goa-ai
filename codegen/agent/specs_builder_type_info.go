@@ -8,9 +8,12 @@ import (
 	"strconv"
 	"strings"
 
+	"goa.design/goa-ai/boundedresult"
 	"goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
 )
+
+const jsonSchemaTypeObject = "object"
 
 // scopeForTool returns the NameScope used to derive all type and helper names
 // for the specs package being generated.
@@ -118,10 +121,7 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	// deterministic aliasing and imports and matches the repository tests
 	// which assert service-qualified references in generated codecs.
 	//
-	// For bounded tool RESULTS, we intentionally materialize a concrete
-	// defined type (rather than an alias) so that codegen can attach the
-	// agent.BoundedResult interface via a method on the result type.
-	defineType := usage == usageResult && tool.BoundedResult
+	defineType := false
 	// Materialize the PUBLIC tool-facing type as a service-level shape:
 	// required fields are non-pointers; defaults behave normally.
 	const (
@@ -152,6 +152,12 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	schemaBytes, err := schemaForAttribute(schemaAttr)
 	if err != nil {
 		return nil, err
+	}
+	if usage == usageResult && tool.Bounds != nil {
+		schemaBytes, err = projectBoundedResultSchema(schemaBytes, tool.Bounds)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Example JSON for payload types (optional). We intentionally derive examples
@@ -279,38 +285,6 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	if fdesc := buildFieldDescriptions(schemaAttr); len(fdesc) > 0 {
 		info.FieldDescs = fdesc
 	}
-	// For bounded tool results, mark the type as implementing agent.BoundedResult
-	// so templates can emit a simple ResultBounds method that exposes the
-	// canonical Bounds contract. Bounded results are decoded as pointers so the
-	// runtime can reliably detect agent.BoundedResult via type assertions
-	// (deriveBounds) when enforcing bounded-view contracts.
-	if usage == usageResult && tool.BoundedResult {
-		info.ImplementsBounds = true
-		if tool.Paging != nil && tool.Paging.NextCursorField != "" {
-			if att.Find(tool.Paging.NextCursorField) != nil {
-				info.NextCursorGoField = codegen.Goify(tool.Paging.NextCursorField, true)
-			}
-		}
-		// Force pointer semantics for bounded results so codecs return
-		// *<ResultType>. This ensures decoded values implement the
-		// agent.BoundedResult interface (which has a pointer receiver) and
-		// allows the runtime to derive Bounds metadata from the typed result.
-		info.Pointer = true
-		const agentPath = "goa.design/goa-ai/runtime/agent"
-		hasAgentImport := false
-		for _, im := range info.TypeImports {
-			if im != nil && im.Path == agentPath {
-				hasAgentImport = true
-				break
-			}
-		}
-		if !hasAgentImport {
-			info.TypeImports = append(info.TypeImports, &codegen.ImportSpec{
-				Name: "agent",
-				Path: agentPath,
-			})
-		}
-	}
 	b.types[key] = info
 	// Also index by the public type name so auxiliary passes (e.g.,
 	// validator collection) can detect that a concrete alias already
@@ -399,6 +373,111 @@ func goLiteralForAny(v any) string {
 		// Best-effort: stringify unknown decoded values.
 		return strconv.Quote(fmt.Sprintf("%v", x))
 	}
+}
+
+func projectBoundedResultSchema(schemaBytes []byte, bounds *ToolBoundsData) ([]byte, error) {
+	if len(schemaBytes) == 0 || bounds == nil {
+		return schemaBytes, nil
+	}
+
+	var schema map[string]any
+	if err := json.Unmarshal(schemaBytes, &schema); err != nil {
+		return nil, fmt.Errorf("unmarshal bounded result schema: %w", err)
+	}
+	if schemaType, ok := schema["type"].(string); ok && schemaType != jsonSchemaTypeObject {
+		return nil, fmt.Errorf("bounded tool result schema must be an object, got %q", schemaType)
+	}
+	schema["type"] = jsonSchemaTypeObject
+
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok || properties == nil {
+		properties = make(map[string]any)
+		schema["properties"] = properties
+	}
+	for name, fieldSchema := range boundedResultSchemaFields(bounds) {
+		properties[name] = fieldSchema
+	}
+	schema["required"] = mergeBoundedResultRequired(schema["required"], bounds, boundedresult.RequiredFieldNames()...)
+
+	projected, err := json.Marshal(schema)
+	if err != nil {
+		return nil, fmt.Errorf("marshal bounded result schema: %w", err)
+	}
+	return projected, nil
+}
+
+func boundedResultSchemaFields(bounds *ToolBoundsData) map[string]any {
+	fields := map[string]any{
+		boundedresult.FieldReturned: map[string]any{
+			"type":        "integer",
+			"description": "Number of items returned in this response after applying tool limits.",
+		},
+		boundedresult.FieldTotal: map[string]any{
+			"type":        "integer",
+			"description": "Total number of matching items before truncation.",
+		},
+		boundedresult.FieldTruncated: map[string]any{
+			"type":        "boolean",
+			"description": "True when this result is partial because tool limits or caps were applied.",
+		},
+		boundedresult.FieldRefinementHint: map[string]any{
+			"type":        "string",
+			"description": "Short guidance on how to narrow the request when the result is truncated.",
+		},
+	}
+	if bounds.Paging != nil && bounds.Paging.NextCursorField != "" {
+		fields[bounds.Paging.NextCursorField] = map[string]any{
+			"type":        "string",
+			"description": "Opaque cursor for the next page. Call the same tool again with the same parameters and this cursor value.",
+		}
+	}
+	return fields
+}
+
+// mergeBoundedResultRequired preserves authored required fields while forcing
+// the canonical bounded contract: returned/truncated are required and the
+// remaining bounded fields stay optional.
+func mergeBoundedResultRequired(existing any, bounds *ToolBoundsData, names ...string) []any {
+	requiredSet := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		requiredSet[name] = struct{}{}
+	}
+	optionalBoundsFields := canonicalOptionalBoundedResultFields(bounds)
+	if existingRequired, ok := existing.([]any); ok {
+		for _, item := range existingRequired {
+			if name, ok := item.(string); ok && name != "" {
+				if _, isOptionalBound := optionalBoundsFields[name]; isOptionalBound {
+					continue
+				}
+				requiredSet[name] = struct{}{}
+			}
+		}
+	}
+	merged := make([]string, 0, len(requiredSet))
+	for name := range requiredSet {
+		merged = append(merged, name)
+	}
+	sort.Strings(merged)
+
+	out := make([]any, 0, len(merged))
+	for _, name := range merged {
+		out = append(out, name)
+	}
+	return out
+}
+
+// canonicalOptionalBoundedResultFields returns the bounded-result fields that
+// must remain optional in the generated JSON schema.
+func canonicalOptionalBoundedResultFields(bounds *ToolBoundsData) map[string]struct{} {
+	nextCursorField := ""
+	if bounds != nil && bounds.Paging != nil {
+		nextCursorField = bounds.Paging.NextCursorField
+	}
+	fields := make(map[string]struct{})
+	for _, name := range boundedresult.OptionalFieldNames(nextCursorField) {
+		fields[name] = struct{}{}
+	}
+	return fields
 }
 
 // isEmptyStruct reports whether the provided attribute ultimately resolves to

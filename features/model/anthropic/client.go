@@ -523,7 +523,7 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 				Parts: []model.Part{model.TextPart{Text: block.Text}},
 			})
 		case "tool_use":
-			payload := rawjson.RawJSON(block.Input)
+			payload := rawjson.Message(block.Input)
 			name := ""
 			if block.Name != "" {
 				raw := block.Name

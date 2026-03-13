@@ -108,7 +108,7 @@ func TestAgentTool_DefaultContentFromPayload(t *testing.T) {
 		RunID:     "r1",
 		SessionID: "s1",
 		Name:      tools.Ident("svc.tools.do"),
-		Payload:   rawjson.RawJSON([]byte(`"hello"`)),
+		Payload:   rawjson.Message([]byte(`"hello"`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -161,7 +161,7 @@ func TestAgentTool_TextContent(t *testing.T) {
 		RunID:     "r1",
 		SessionID: "s1",
 		Name:      tools.Ident("svc.tools.do"),
-		Payload:   rawjson.RawJSON([]byte(`"hello"`)),
+		Payload:   rawjson.Message([]byte(`"hello"`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -217,7 +217,7 @@ func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 		RunID:     "r1",
 		SessionID: "s1",
 		Name:      tools.Ident("svc.tools.do"),
-		Payload:   rawjson.RawJSON([]byte(`"hello"`)),
+		Payload:   rawjson.Message([]byte(`"hello"`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -278,7 +278,7 @@ func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 		RunID:     "r1",
 		SessionID: "s1",
 		Name:      tools.Ident("svc.tools.do"),
-		Payload:   rawjson.RawJSON([]byte(`"hello"`)),
+		Payload:   rawjson.Message([]byte(`"hello"`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -333,12 +333,12 @@ func TestAgentTool_UsesFinalToolResultBeforeAggregation(t *testing.T) {
 	out := &RunOutput{
 		FinalToolResult: &api.ToolEvent{
 			Name:   parent.Name,
-			Result: rawjson.RawJSON([]byte(`{"events":["ok"]}`)),
+			Result: rawjson.Message([]byte(`{"events":["ok"]}`)),
 		},
 		ToolEvents: []*api.ToolEvent{
 			{
 				Name:   tools.Ident("test.child"),
-				Result: rawjson.RawJSON([]byte(`"bad"`)),
+				Result: rawjson.Message([]byte(`"bad"`)),
 			},
 		},
 	}

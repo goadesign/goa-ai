@@ -68,7 +68,7 @@ type (
 		// ServerData carries server-only metadata for events that support it
 		// (currently `tool_end`). It is never forwarded to model providers, but
 		// downstream subscribers (e.g., persistence drains) may consume it.
-		ServerData rawjson.RawJSON `json:"server_data,omitempty"`
+		ServerData rawjson.Message `json:"server_data,omitempty"`
 	}
 
 	// PublishedEvent describes a runtime event that has been successfully

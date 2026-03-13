@@ -22,12 +22,11 @@ var Specs = []tools.ToolSpec{
 
 var (
 	SpecEcho = tools.ToolSpec{
-		Name:          Echo,
-		Service:       "alpha",
-		Toolset:       "alpha.ops",
-		Description:   "Echo",
-		Tags:          []string{},
-		BoundedResult: false,
+		Name:        Echo,
+		Service:     "alpha",
+		Toolset:     "alpha.ops",
+		Description: "Echo",
+		Tags:        []string{},
 		Payload: tools.TypeSpec{
 			Name:         "EchoPayload",
 			Schema:       []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),

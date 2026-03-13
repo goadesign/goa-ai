@@ -94,7 +94,7 @@ type (
 		// is an agent-as-tool execution. Nil for top-level runs. Nested agent planners
 		// can use this structured input to render method-specific prompts without
 		// reparsing free-form messages.
-		ToolArgs rawjson.RawJSON
+		ToolArgs rawjson.Message
 
 		// Attempt counts how many times the run has been attempted/resumed.
 		Attempt int

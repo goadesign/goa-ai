@@ -159,15 +159,14 @@ func (e *toolBatchExec) synthesizeToolError(ctx context.Context, call planner.To
 		Error:      toolErr,
 		RetryHint:  retryHintFromExecutionError(call.Name, err),
 	}
-	spec, ok := e.r.toolSpec(call.Name)
-	if !ok {
+	if _, ok := e.r.toolSpec(call.Name); !ok {
 		return e.synthesizeUnknownToolResult(ctx, call, duration)
 	}
-	if err := e.r.enforceToolResultContracts(spec, call, toolErr, toolRes); err != nil {
+	resultJSON, err := e.r.materializeToolResult(ctx, call, toolRes)
+	if err != nil {
 		return nil, err
 	}
-
-	if err := e.publishToolResultReceived(ctx, call, toolRes, nil, duration); err != nil {
+	if err := e.publishToolResultReceived(ctx, call, toolRes, resultJSON, duration); err != nil {
 		return nil, err
 	}
 	return toolRes, nil
@@ -202,20 +201,10 @@ func (r *Runtime) enforceToolResultContracts(spec tools.ToolSpec, call planner.T
 	if tr == nil {
 		return fmt.Errorf("CRITICAL: nil tool result for %q (%s)", call.Name, call.ToolCallID)
 	}
-	// Derive Bounds from the decoded result when the result type implements
-	// agent.BoundedResult and the executor did not populate Bounds explicitly.
-	if tr.Bounds == nil {
-		if b := deriveBounds(tr.Result); b != nil {
-			tr.Bounds = b
-		}
-	}
-	if spec.BoundedResult && toolErr == nil && tr.Bounds == nil {
-		return fmt.Errorf("bounded tool %q returned result without bounds (tool_call_id=%s, type=%T)", call.Name, call.ToolCallID, tr.Result)
-	}
-	return nil
+	return validateToolBoundsContract(spec, call, toolErr, tr.Bounds)
 }
 
-func (e *toolBatchExec) publishToolResultReceived(ctx context.Context, call planner.ToolRequest, tr *planner.ToolResult, resultJSON json.RawMessage, duration time.Duration) error {
+func (e *toolBatchExec) publishToolResultReceived(ctx context.Context, call planner.ToolRequest, tr *planner.ToolResult, resultJSON rawjson.Message, duration time.Duration) error {
 	parentID := parentToolCallID(call, e.runCtx)
 	ev := hooks.NewToolResultReceivedEvent(
 		e.runID,
@@ -225,9 +214,9 @@ func (e *toolBatchExec) publishToolResultReceived(ctx context.Context, call plan
 		call.ToolCallID,
 		parentID,
 		tr.Result,
-		rawjson.RawJSON(resultJSON),
+		resultJSON,
 		tr.ServerData,
-		formatResultPreview(call.Name, tr.Result),
+		formatResultPreview(call.Name, tr.Result, tr.Bounds),
 		tr.Bounds,
 		duration,
 		tr.Telemetry,
@@ -311,7 +300,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 					ParentToolCallID: call.ParentToolCallID,
 				}
 				if adapted, err := ts.PayloadAdapter(ctx, meta, call.Name, raw.RawMessage()); err == nil && len(adapted) > 0 {
-					raw = rawjson.RawJSON(adapted)
+					raw = rawjson.Message(adapted)
 				} else if err != nil {
 					return nil, fmt.Errorf("inline payload adapter failed for %s: %w", call.Name, err)
 				}
@@ -385,19 +374,9 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 				return nil, fmt.Errorf("inline tool %q returned nil result", call.Name)
 			}
 			duration := wfCtx.Now().Sub(start)
-			var toolErr *planner.ToolError
-			if result.Error != nil {
-				toolErr = result.Error
-			}
-			if err := e.r.enforceToolResultContracts(spec, call, toolErr, result); err != nil {
+			resultJSON, err := e.r.materializeToolResult(ctx, call, result)
+			if err != nil {
 				return nil, err
-			}
-			var resultJSON json.RawMessage
-			if toolErr == nil {
-				resultJSON, err = e.r.marshalToolValue(ctx, call.Name, result.Result)
-				if err != nil {
-					return nil, fmt.Errorf("encode %s tool result for streaming: %w", call.Name, err)
-				}
 			}
 			if err := e.publishToolResultReceived(ctx, call, result, resultJSON, duration); err != nil {
 				return nil, err
@@ -527,6 +506,7 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 			toolRes := &planner.ToolResult{
 				Name:       info.call.Name,
 				Result:     decoded,
+				Bounds:     out.Bounds,
 				ServerData: out.ServerData,
 				ToolCallID: info.call.ToolCallID,
 				Telemetry:  out.Telemetry,
@@ -552,14 +532,7 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 				}
 				toolRes.RetryHint = &h
 			}
-
-			var resultJSON json.RawMessage
-			if toolErr == nil {
-				resultJSON, err = e.r.marshalToolValue(ctx, info.call.Name, decoded)
-				if err != nil {
-					return nil, nil, false, fmt.Errorf("encode %s tool result for streaming: %w", info.call.Name, err)
-				}
-			}
+			resultJSON := out.Payload
 			if err := e.publishToolResultReceived(ctx, info.call, toolRes, resultJSON, duration); err != nil {
 				return nil, nil, false, err
 			}
@@ -622,11 +595,7 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 			}
 
 			duration := wfCtx.Now().Sub(info.startTime)
-			var toolErr *planner.ToolError
-			if tr.Error != nil {
-				toolErr = tr.Error
-			}
-			spec, ok := e.r.toolSpec(info.call.Name)
+			_, ok := e.r.toolSpec(info.call.Name)
 			if !ok {
 				tr, synthErr := e.synthesizeUnknownToolResult(ctx, info.call, duration)
 				if synthErr != nil {
@@ -635,16 +604,9 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 				out[info.call.ToolCallID] = tr
 				continue
 			}
-			if err := e.r.enforceToolResultContracts(spec, info.call, toolErr, tr); err != nil {
+			resultJSON, err := e.r.materializeToolResult(ctx, info.call, tr)
+			if err != nil {
 				return nil, nil, false, err
-			}
-
-			var resultJSON json.RawMessage
-			if toolErr == nil {
-				resultJSON, err = e.r.marshalToolValue(ctx, info.call.Name, tr.Result)
-				if err != nil {
-					return nil, nil, false, fmt.Errorf("encode %s tool result for streaming: %w", info.call.Name, err)
-				}
 			}
 			if err := e.publishToolResultReceived(ctx, info.call, tr, resultJSON, duration); err != nil {
 				return nil, nil, false, err
@@ -730,11 +692,14 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 				Error:      toolErr,
 			}
 			if ok {
-				if err := r.enforceToolResultContracts(spec, call, toolErr, tr); err != nil {
+				resultJSON, err := r.materializeToolResult(ctx, call, tr)
+				if err != nil {
 					return nil, false, err
 				}
-			}
-			if err := exec.publishToolResultReceived(ctx, call, tr, nil, 0); err != nil {
+				if err := exec.publishToolResultReceived(ctx, call, tr, resultJSON, 0); err != nil {
+					return nil, false, err
+				}
+			} else if err := exec.publishToolResultReceived(ctx, call, tr, nil, 0); err != nil {
 				return nil, false, err
 			}
 			results = append(results, tr)
@@ -820,15 +785,20 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 				ToolCallID: info.call.ToolCallID,
 				Error:      toolErr,
 			}
-			spec, ok := r.toolSpec(info.call.Name)
-			if ok {
-				if err := r.enforceToolResultContracts(spec, info.call, toolErr, tr); err != nil {
+			if _, ok := r.toolSpec(info.call.Name); ok {
+				resultJSON, err := r.materializeToolResult(ctx, info.call, tr)
+				if err != nil {
 					return nil, false, err
 				}
-			}
-			duration := wfCtx.Now().Sub(info.startTime)
-			if err := exec.publishToolResultReceived(ctx, info.call, tr, nil, duration); err != nil {
-				return nil, false, err
+				duration := wfCtx.Now().Sub(info.startTime)
+				if err := exec.publishToolResultReceived(ctx, info.call, tr, resultJSON, duration); err != nil {
+					return nil, false, err
+				}
+			} else {
+				duration := wfCtx.Now().Sub(info.startTime)
+				if err := exec.publishToolResultReceived(ctx, info.call, tr, nil, duration); err != nil {
+					return nil, false, err
+				}
 			}
 			activityByID[info.call.ToolCallID] = tr
 		}
@@ -846,15 +816,20 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 				ToolCallID: info.call.ToolCallID,
 				Error:      toolErr,
 			}
-			spec, ok := r.toolSpec(info.call.Name)
-			if ok {
-				if err := r.enforceToolResultContracts(spec, info.call, toolErr, tr); err != nil {
+			if _, ok := r.toolSpec(info.call.Name); ok {
+				resultJSON, err := r.materializeToolResult(ctx, info.call, tr)
+				if err != nil {
 					return nil, false, err
 				}
-			}
-			duration := wfCtx.Now().Sub(info.startTime)
-			if err := exec.publishToolResultReceived(ctx, info.call, tr, nil, duration); err != nil {
-				return nil, false, err
+				duration := wfCtx.Now().Sub(info.startTime)
+				if err := exec.publishToolResultReceived(ctx, info.call, tr, resultJSON, duration); err != nil {
+					return nil, false, err
+				}
+			} else {
+				duration := wfCtx.Now().Sub(info.startTime)
+				if err := exec.publishToolResultReceived(ctx, info.call, tr, nil, duration); err != nil {
+					return nil, false, err
+				}
 			}
 			batch.inlineByID[info.call.ToolCallID] = tr
 		}

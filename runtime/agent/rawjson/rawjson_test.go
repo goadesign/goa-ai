@@ -10,7 +10,7 @@ import (
 func TestRawJSONMarshalJSONEmptyAndWhitespaceAsNull(t *testing.T) {
 	testCases := []struct {
 		name  string
-		value RawJSON
+		value Message
 	}{
 		{
 			name:  "nil",
@@ -18,11 +18,11 @@ func TestRawJSONMarshalJSONEmptyAndWhitespaceAsNull(t *testing.T) {
 		},
 		{
 			name:  "empty bytes",
-			value: RawJSON([]byte{}),
+			value: Message([]byte{}),
 		},
 		{
 			name:  "whitespace bytes",
-			value: RawJSON([]byte("  \n\t  ")),
+			value: Message([]byte("  \n\t  ")),
 		},
 	}
 
@@ -38,15 +38,15 @@ func TestRawJSONMarshalJSONEmptyAndWhitespaceAsNull(t *testing.T) {
 func TestRawJSONMarshalJSONRejectsInvalidJSON(t *testing.T) {
 	testCases := []struct {
 		name  string
-		value RawJSON
+		value Message
 	}{
 		{
 			name:  "truncated object",
-			value: RawJSON([]byte(`{"a"`)),
+			value: Message([]byte(`{"a"`)),
 		},
 		{
 			name:  "invalid token",
-			value: RawJSON([]byte(`{x:1}`)),
+			value: Message([]byte(`{x:1}`)),
 		},
 	}
 
@@ -91,7 +91,7 @@ func TestRawJSONUnmarshalJSONNormalizesAndValidates(t *testing.T) {
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			var value RawJSON
+			var value Message
 			err := value.UnmarshalJSON(testCase.input)
 			if testCase.wantErr != "" {
 				require.Error(t, err)
@@ -110,11 +110,11 @@ func TestRawJSONUnmarshalJSONNormalizesAndValidates(t *testing.T) {
 
 func TestRawJSONRoundTripWithEncodingJSON(t *testing.T) {
 	type envelope struct {
-		Payload RawJSON `json:"payload"`
+		Payload Message `json:"payload"`
 	}
 
 	input := envelope{
-		Payload: RawJSON([]byte(`{"a":[1,2,3],"ok":true}`)),
+		Payload: Message([]byte(`{"a":[1,2,3],"ok":true}`)),
 	}
 	wire, err := json.Marshal(input)
 	require.NoError(t, err)
@@ -126,6 +126,6 @@ func TestRawJSONRoundTripWithEncodingJSON(t *testing.T) {
 }
 
 func TestRawJSONRawMessageReturnsUnderlyingBytes(t *testing.T) {
-	value := RawJSON([]byte(`{"x":1}`))
+	value := Message([]byte(`{"x":1}`))
 	require.JSONEq(t, `{"x":1}`, string(value.RawMessage()))
 }

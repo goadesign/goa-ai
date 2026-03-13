@@ -62,7 +62,7 @@ func TestExecuteToolActivity_DecodeInExecutor_PassesRaw(t *testing.T) {
 	rt.mu.Unlock()
 
 	// Call ExecuteToolActivity with a pre-encoded payload; it should flow through.
-	raw := rawjson.RawJSON([]byte(`{"x":1}`))
+	raw := rawjson.Message([]byte(`{"x":1}`))
 	input := ToolInput{ToolsetName: "svc.ts", ToolName: tools.Ident("svc.ts.tool"), Payload: raw}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)

@@ -18,7 +18,7 @@ import (
 func TestSendPublishesEnvelope(t *testing.T) {
 	cli := mockpulse.NewClient(t)
 	str := mockpulse.NewStream(t)
-	server := rawjson.RawJSON([]byte(`[{"kind":"aura.evidence","data":[{"uri":"atlas://points/123","kind":"time_series"}]}]`))
+	server := rawjson.Message([]byte(`[{"kind":"aura.evidence","data":[{"uri":"atlas://points/123","kind":"time_series"}]}]`))
 
 	cli.AddStream(func(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
 		require.Equal(t, "session/session-123", name)
@@ -45,7 +45,7 @@ func TestSendPublishesEnvelope(t *testing.T) {
 	require.NoError(t, err)
 
 	endPayload := stream.ToolEndPayload{
-		Result: rawjson.RawJSON([]byte(`{"status":"ok"}`)),
+		Result: rawjson.Message([]byte(`{"status":"ok"}`)),
 	}
 	err = sink.Send(context.Background(), stream.ToolEnd{
 		Base:       stream.NewBase(stream.EventToolEnd, "run-123", "session-123", endPayload),
@@ -89,10 +89,10 @@ func TestOnPublishedCalled(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	endPayload := stream.ToolEndPayload{Result: rawjson.RawJSON([]byte(`{"status":"ok"}`))}
+	endPayload := stream.ToolEndPayload{Result: rawjson.Message([]byte(`{"status":"ok"}`))}
 	err = sink.Send(context.Background(), stream.ToolEnd{
 		Base:       stream.NewBase(stream.EventToolEnd, "run-123", "session-123", endPayload),
-		ServerData: rawjson.RawJSON([]byte(`{"x":1}`)),
+		ServerData: rawjson.Message([]byte(`{"x":1}`)),
 		Data:       endPayload,
 	})
 	require.NoError(t, err)

@@ -263,7 +263,7 @@ type (
 		// runtimes treat it as opaque JSON and rely on codecs for any schema-aware
 		// decoding. The RawJSON type exists to make workflow-boundary encoding safe
 		// (it normalizes empty payloads to JSON null).
-		Payload rawjson.RawJSON
+		Payload rawjson.Message
 
 		// ID is an optional provider-issued identifier for the tool call.
 		ID string

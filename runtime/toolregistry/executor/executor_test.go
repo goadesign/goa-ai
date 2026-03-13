@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/features/stream/pulse/clients/pulse"
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 	aistream "goa.design/goa-ai/runtime/agent/stream"
@@ -28,11 +29,10 @@ func TestExecutorUsesOldestStartForResultStreamSink(t *testing.T) {
 
 	specs := fakeSpecs{
 		spec: &tools.ToolSpec{
-			Name:          "todos.update_todos",
-			Toolset:       "todos.todos",
-			Result:        tools.TypeSpec{},
-			Payload:       tools.TypeSpec{},
-			BoundedResult: false,
+			Name:    "todos.update_todos",
+			Toolset: "todos.todos",
+			Result:  tools.TypeSpec{},
+			Payload: tools.TypeSpec{},
 		},
 	}
 
@@ -97,11 +97,10 @@ func TestExecutorForwardsOutputDelta(t *testing.T) {
 
 	specs := fakeSpecs{
 		spec: &tools.ToolSpec{
-			Name:          "todos.update_todos",
-			Toolset:       "todos.todos",
-			Result:        tools.TypeSpec{},
-			Payload:       tools.TypeSpec{},
-			BoundedResult: false,
+			Name:    "todos.update_todos",
+			Toolset: "todos.todos",
+			Result:  tools.TypeSpec{},
+			Payload: tools.TypeSpec{},
 		},
 	}
 
@@ -162,6 +161,83 @@ func TestExecutorForwardsOutputDelta(t *testing.T) {
 	assert.Equal(t, "toolcall-1", ev.Data.ToolCallID)
 	assert.Equal(t, "stdout", ev.Data.Stream)
 	assert.Equal(t, "hi\n", ev.Data.Delta)
+}
+
+func TestExecutorRestoresBoundsFromRegistryMessage(t *testing.T) {
+	t.Parallel()
+
+	const (
+		toolUseID       = "tooluse-123"
+		resultStreamID  = "result:" + toolUseID
+		resultEventName = "result"
+	)
+	nextCursor := "cursor-2"
+
+	specs := fakeSpecs{
+		spec: &tools.ToolSpec{
+			Name:    "atlas.read.list_devices",
+			Toolset: "atlas.read",
+			Result:  tools.TypeSpec{},
+			Payload: tools.TypeSpec{},
+			Bounds: &tools.BoundsSpec{
+				Paging: &tools.PagingSpec{
+					CursorField:     "cursor",
+					NextCursorField: "next_cursor",
+				},
+			},
+		},
+	}
+
+	stream := &fakeStream{
+		t:             t,
+		requiredStart: "0",
+		events: []*streaming.Event{
+			{
+				ID:        "1-0",
+				EventName: resultEventName,
+				Payload: mustJSON(t, toolregistry.ToolResultMessage{
+					ToolUseID: toolUseID,
+					Result:    json.RawMessage(`{}`),
+					Bounds: &agent.Bounds{
+						Returned:       1,
+						Truncated:      true,
+						NextCursor:     &nextCursor,
+						RefinementHint: "narrow by device",
+					},
+				}),
+			},
+		},
+	}
+	pc := fakePulseClient{
+		streamID: resultStreamID,
+		stream:   stream,
+	}
+
+	exec := New(
+		fakeRegistryClient{
+			toolUseID:      toolUseID,
+			resultStreamID: resultStreamID,
+		},
+		pc,
+		specs,
+		WithResultEventKey(resultEventName),
+	)
+
+	res, err := exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
+		RunID:     "run",
+		SessionID: "sess",
+	}, &planner.ToolRequest{
+		Name:    "atlas.read.list_devices",
+		Payload: []byte(`{}`),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.NotNil(t, res.Bounds)
+	assert.Equal(t, 1, res.Bounds.Returned)
+	assert.True(t, res.Bounds.Truncated)
+	require.NotNil(t, res.Bounds.NextCursor)
+	assert.Equal(t, nextCursor, *res.Bounds.NextCursor)
+	assert.Equal(t, "narrow by device", res.Bounds.RefinementHint)
 }
 
 type fakeRegistryClient struct {
