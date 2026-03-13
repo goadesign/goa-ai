@@ -79,15 +79,12 @@ type (
 		Payload *typeData
 		// Type metadata for the tool's output result.
 		Result *typeData
-		// BoundedResult indicates that this tool's result is declared as a bounded
-		// view over a potentially larger data set (set via the BoundedResult DSL
-		// helper). It is propagated into ToolSpec for runtime consumers.
-		BoundedResult bool
+		// Bounds declares the out-of-band bounded-result contract for this tool.
+		// It is propagated into ToolSpec for runtime consumers.
+		Bounds *ToolBoundsData
 		// TerminalRun indicates this tool should terminate the run immediately after
 		// execution (no follow-up plan/resume/finalization turn).
 		TerminalRun bool
-		// Paging describes cursor-based pagination fields for this tool when configured.
-		Paging *ToolPagingData
 		// ResultReminder is an optional system reminder injected into the
 		// conversation after the tool result is returned.
 		ResultReminder string
@@ -211,15 +208,6 @@ type (
 		// treated as the zero value (only for payloads). This is true for
 		// payload types that are empty structs (no fields).
 		AcceptEmpty bool
-		// ImplementsBounds indicates that this type implements agent.BoundedResult.
-		// When true, templates emit a Bounds() method on the result alias type so
-		// runtimes can rely on the interface rather than reflection.
-		ImplementsBounds bool
-
-		// HasNextCursor reports whether the tool result type declares a top-level
-		// cursor field for paging. When non-empty, ResultBounds includes Bounds.NextCursor
-		// from the corresponding result field.
-		NextCursorGoField string
 	}
 
 	// toolSpecBuilder walks tool types and generates corresponding type metadata,

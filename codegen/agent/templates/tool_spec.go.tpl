@@ -41,7 +41,16 @@ var (
         {{- if .TerminalRun }}
         TerminalRun: true,
         {{- end }}
-        BoundedResult: {{ if .BoundedResult }}true{{ else }}false{{ end }},
+        {{- if .Bounds }}
+        Bounds: &tools.BoundsSpec{
+            {{- if .Bounds.Paging }}
+            Paging: &tools.PagingSpec{
+                CursorField: {{ printf "%q" .Bounds.Paging.CursorField }},
+                NextCursorField: {{ printf "%q" .Bounds.Paging.NextCursorField }},
+            },
+            {{- end }}
+        },
+        {{- end }}
         {{- if .ServerData }}
         ServerData: []*tools.ServerDataSpec{
         {{- range .ServerData }}
@@ -65,12 +74,6 @@ var (
                 },
             },
         {{- end }}
-        },
-        {{- end }}
-        {{- if .Paging }}
-        Paging: &tools.PagingSpec{
-            CursorField: {{ printf "%q" .Paging.CursorField }},
-            NextCursorField: {{ printf "%q" .Paging.NextCursorField }},
         },
         {{- end }}
         {{- if .ResultReminder }}

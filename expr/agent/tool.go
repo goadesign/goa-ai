@@ -63,21 +63,16 @@ type (
 		// InjectedFields are fields marked as infrastructure-only.
 		InjectedFields []string
 
-		// BoundedResult indicates that this tool's result is intended to be a
-		// bounded view over a potentially larger data set. It is set by the
-		// BoundedResult DSL helper and propagated into tool metadata so runtimes
-		// and services can enforce and surface bounds consistently.
-		BoundedResult bool
+		// Bounds declares the out-of-band bounded-result contract for this tool.
+		// When non-nil, runtimes require planner.ToolResult.Bounds and generated
+		// method-backed executors project canonical bound fields from service
+		// method results without polluting the semantic result schema.
+		Bounds *ToolBoundsExpr
 
 		// TerminalRun indicates that once this tool executes, the runtime should
 		// terminate the run immediately without requesting a follow-up planner
 		// PlanResume/finalization turn. It is set via the TerminalRun DSL helper.
 		TerminalRun bool
-
-		// Paging optionally describes cursor-based pagination for this tool.
-		// When set, codegen and runtimes can surface paging-aware guidance and
-		// fill Bounds.NextCursor from the configured result field.
-		Paging *ToolPagingExpr
 
 		// ResultReminder is an optional system reminder that is injected into
 		// the conversation after the tool result is returned. It provides
@@ -141,15 +136,25 @@ type (
 		MethodResultField string
 	}
 
+	// ToolBoundsExpr describes the out-of-band bounded-result contract for a tool.
+	ToolBoundsExpr struct {
+		// Tool is the owning tool declaration.
+		Tool *ToolExpr
+		// Paging optionally describes cursor-based pagination for this bounded tool.
+		Paging *ToolPagingExpr
+	}
+
 	// ToolPagingExpr identifies the cursor field names used by a cursor-paged tool.
-	// Field names refer to the tool payload and tool result schemas respectively.
-	// The values carried by these fields are opaque cursors.
+	// CursorField always names a payload field. NextCursorField names the
+	// canonical next-page cursor identifier for the paging contract, which is
+	// projected into runtime-owned bounds metadata rather than the semantic tool
+	// result.
 	ToolPagingExpr struct {
 		// CursorField is the name of the optional String field in the tool payload
 		// that carries the paging cursor for retrieving the next page.
 		CursorField string
-		// NextCursorField is the name of the optional String field in the tool result
-		// that carries the cursor for the next page.
+		// NextCursorField is the canonical field name for the next-page cursor in
+		// the paging contract.
 		NextCursorField string
 	}
 
@@ -195,6 +200,14 @@ func (t *ToolExpr) EvalName() string {
 		return fmt.Sprintf("tool %q in toolset %q and service %q", t.Name, ts, svc)
 	}
 	return fmt.Sprintf("tool %q in toolset %q", t.Name, ts)
+}
+
+// EvalName implements eval.Expression.
+func (b *ToolBoundsExpr) EvalName() string {
+	if b == nil || b.Tool == nil {
+		return "tool bounds"
+	}
+	return fmt.Sprintf("bounded result for %s", b.Tool.EvalName())
 }
 
 // EvalName implements eval.Expression.
@@ -376,7 +389,7 @@ func (t *ToolExpr) validateShapes() error {
 	check("Args", t.Args)
 	check("Return", t.Return)
 	validateServerDataShapes(t, verr, check)
-	validatePagingShape(t, verr)
+	validateBoundsShape(t, verr)
 	if len(verr.Errors) == 0 {
 		return nil
 	}
@@ -415,23 +428,28 @@ func validateServerDataShapes(t *ToolExpr, verr *eval.ValidationErrors, check fu
 	}
 }
 
-func validatePagingShape(tool *ToolExpr, verr *eval.ValidationErrors) {
-	if tool == nil || verr == nil || tool.Paging == nil {
+func validateBoundsShape(tool *ToolExpr, verr *eval.ValidationErrors) {
+	if tool == nil || verr == nil || tool.Bounds == nil {
 		return
 	}
-	if !tool.BoundedResult {
-		verr.Add(tool, "Paging configuration requires BoundedResult()")
+	validateMethodResultBoundsShape(tool, verr)
+	validateToolReturnBoundsShape(tool, verr)
+	if tool.Bounds.Paging == nil {
 		return
 	}
-	validatePagingField := func(where string, att *goaexpr.AttributeExpr, name string) {
+	validatePagingField := func(where string, att *goaexpr.AttributeExpr, name string, required bool) {
 		if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
-			verr.Add(tool, "%s must be non-empty when configuring paging", where)
+			if required {
+				verr.Add(tool, "%s must be non-empty when configuring paging", where)
+			}
 			return
 		}
 
 		field := att.Find(name)
 		if field == nil || field.Type == nil || field.Type == goaexpr.Empty {
-			verr.Add(tool, "%s must define an optional String field named %q when configuring paging", where, name)
+			if required {
+				verr.Add(tool, "%s must define an optional String field named %q when configuring paging", where, name)
+			}
 			return
 		}
 		if field.Type != goaexpr.String {
@@ -453,16 +471,83 @@ func validatePagingShape(tool *ToolExpr, verr *eval.ValidationErrors) {
 		}
 	}
 
-	if tool.Paging.CursorField == "" {
+	if tool.Bounds.Paging.CursorField == "" {
 		verr.Add(tool, "Cursor() is required when configuring paging")
 		return
 	}
-	if tool.Paging.NextCursorField == "" {
+	if tool.Bounds.Paging.NextCursorField == "" {
 		verr.Add(tool, "NextCursor() is required when configuring paging")
 		return
 	}
-	validatePagingField("Args", tool.Args, tool.Paging.CursorField)
-	validatePagingField("Return", tool.Return, tool.Paging.NextCursorField)
+	validatePagingField("Args", tool.Args, tool.Bounds.Paging.CursorField, true)
+}
+
+// validateToolReturnBoundsShape enforces that the explicit tool-facing Return
+// shape stays semantic while BoundedResult owns the canonical bounded fields.
+func validateToolReturnBoundsShape(tool *ToolExpr, verr *eval.ValidationErrors) {
+	if tool == nil || verr == nil || tool.Bounds == nil || tool.Return == nil {
+		return
+	}
+	for _, name := range canonicalBoundedResultFieldNames(tool.Bounds) {
+		field := tool.Return.Find(name)
+		if field == nil || field.Type == nil || field.Type == goaexpr.Empty {
+			continue
+		}
+		verr.Add(tool, "bounded tool return must not define canonical bounds field %q; use planner.ToolResult.Bounds instead", name)
+	}
+}
+
+func validateMethodResultBoundsShape(tool *ToolExpr, verr *eval.ValidationErrors) {
+	if tool == nil || verr == nil || tool.Bounds == nil || tool.Method == nil {
+		return
+	}
+	if tool.Method.Result == nil {
+		verr.Add(tool, "bounded method result requires a non-empty bound method result")
+		return
+	}
+	validateBoundsField := func(name string, expected goaexpr.DataType, label string, existsRequired bool, mustBeRequired bool, mustBeOptional bool) {
+		field := tool.Method.Result.Find(name)
+		if field == nil || field.Type == nil || field.Type == goaexpr.Empty {
+			if existsRequired {
+				verr.Add(tool, "bounded method result must define %q on the bound method result", name)
+			}
+			return
+		}
+		if field.Type != expected {
+			verr.Add(tool, "bounded method result field %q must be a %s", name, label)
+			return
+		}
+		isRequired := tool.Method.Result.IsRequired(name)
+		if mustBeRequired && !isRequired {
+			verr.Add(tool, "bounded method result field %q must be required", name)
+			return
+		}
+		if mustBeOptional && isRequired {
+			verr.Add(tool, "bounded method result field %q must be optional", name)
+		}
+	}
+	validateBoundsField("returned", goaexpr.Int, "Int", true, true, false)
+	validateBoundsField("truncated", goaexpr.Boolean, "Boolean", true, true, false)
+	validateBoundsField("total", goaexpr.Int, "Int", false, false, true)
+	validateBoundsField("refinement_hint", goaexpr.String, "String", false, false, true)
+	if tool.Bounds.Paging != nil && tool.Bounds.Paging.NextCursorField != "" {
+		validateBoundsField(tool.Bounds.Paging.NextCursorField, goaexpr.String, "String", true, false, true)
+	}
+}
+
+// canonicalBoundedResultFieldNames returns the reserved model-visible fields
+// owned by BoundedResult for schema and runtime projection.
+func canonicalBoundedResultFieldNames(bounds *ToolBoundsExpr) []string {
+	names := []string{
+		"returned",
+		"total",
+		"truncated",
+		"refinement_hint",
+	}
+	if bounds != nil && bounds.Paging != nil && bounds.Paging.NextCursorField != "" {
+		names = append(names, bounds.Paging.NextCursorField)
+	}
+	return names
 }
 
 // Finalize materializes tool shapes and resolves method bindings.

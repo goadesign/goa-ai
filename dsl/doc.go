@@ -173,10 +173,9 @@
 // transforms and keep tool schemas decoupled from method signatures.
 //
 // Mark bounded results: Tools returning potentially large data should use
-// BoundedResult() so the runtime can track truncation metadata. BoundedResult
-// enforces a canonical bounded-result shape by adding the standard bounds
-// fields (returned/total/truncated/refinement_hint) when they are not declared
-// explicitly.
+// BoundedResult() so the runtime can track truncation metadata. Bounded tools
+// keep their semantic result shape domain-specific and return canonical bounds
+// through planner.ToolResult.Bounds.
 //
 // For complete documentation and examples, see docs/dsl.md in the repository.
 package dsl

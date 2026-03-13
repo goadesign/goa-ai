@@ -711,6 +711,16 @@ func serviceExecutorFiles(agent *AgentData) []*codegen.File {
 				break
 			}
 		}
+		needsAgentBounds := false
+		for _, t := range ts.Tools {
+			if t == nil || !t.IsMethodBacked || t.Bounds == nil || t.Bounds.Projection == nil {
+				continue
+			}
+			if t.Bounds.Projection.Returned != nil && t.Bounds.Projection.Truncated != nil {
+				needsAgentBounds = true
+				break
+			}
+		}
 		imports := []*codegen.ImportSpec{
 			{Path: "context"},
 			{Path: "encoding/json"},
@@ -722,6 +732,9 @@ func serviceExecutorFiles(agent *AgentData) []*codegen.File {
 			{Path: "goa.design/goa-ai/runtime/agent/tools"},
 			{Path: "goa.design/goa-ai/runtime/toolregistry"},
 			{Path: ts.SpecsImportPath, Name: specsAlias},
+		}
+		if needsAgentBounds {
+			imports = append(imports, &codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent", Name: "agent"})
 		}
 		if needsRawJSON {
 			imports = append(imports, &codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/rawjson"})
