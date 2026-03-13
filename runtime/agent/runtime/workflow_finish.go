@@ -149,11 +149,11 @@ func finalToolResultEvent(toolName tools.Ident, result *planner.FinalToolResult)
 	}
 	return &api.ToolEvent{
 		Name:                toolName,
-		Result:              append(rawjson.RawJSON(nil), result.Result...),
+		Result:              append(rawjson.Message(nil), result.Result...),
 		ResultBytes:         result.ResultBytes,
 		ResultOmitted:       result.ResultOmitted,
 		ResultOmittedReason: result.ResultOmittedReason,
-		ServerData:          append(rawjson.RawJSON(nil), result.ServerData...),
+		ServerData:          append(rawjson.Message(nil), result.ServerData...),
 		Bounds:              result.Bounds,
 		Error:               result.Error,
 		RetryHint:           result.RetryHint,

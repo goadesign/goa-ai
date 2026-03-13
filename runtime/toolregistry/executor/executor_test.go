@@ -28,11 +28,10 @@ func TestExecutorUsesOldestStartForResultStreamSink(t *testing.T) {
 
 	specs := fakeSpecs{
 		spec: &tools.ToolSpec{
-			Name:          "todos.update_todos",
-			Toolset:       "todos.todos",
-			Result:        tools.TypeSpec{},
-			Payload:       tools.TypeSpec{},
-			BoundedResult: false,
+			Name:    "todos.update_todos",
+			Toolset: "todos.todos",
+			Result:  tools.TypeSpec{},
+			Payload: tools.TypeSpec{},
 		},
 	}
 
@@ -97,11 +96,10 @@ func TestExecutorForwardsOutputDelta(t *testing.T) {
 
 	specs := fakeSpecs{
 		spec: &tools.ToolSpec{
-			Name:          "todos.update_todos",
-			Toolset:       "todos.todos",
-			Result:        tools.TypeSpec{},
-			Payload:       tools.TypeSpec{},
-			BoundedResult: false,
+			Name:    "todos.update_todos",
+			Toolset: "todos.todos",
+			Result:  tools.TypeSpec{},
+			Payload: tools.TypeSpec{},
 		},
 	}
 

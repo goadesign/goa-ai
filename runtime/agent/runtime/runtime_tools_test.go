@@ -1,11 +1,15 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"testing"
+	"text/template"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -16,11 +20,44 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
+	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/session"
 	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
+
+type projectedRuntimeResult struct {
+	Results []string `json:"results"`
+}
+
+func newProjectedResultSpec() tools.ToolSpec {
+	codec := tools.JSONCodec[any]{
+		ToJSON: json.Marshal,
+		FromJSON: func(data []byte) (any, error) {
+			if len(bytes.TrimSpace(data)) == 0 || string(bytes.TrimSpace(data)) == "null" {
+				return nil, nil
+			}
+			var out projectedRuntimeResult
+			if err := json.Unmarshal(data, &out); err != nil {
+				return nil, err
+			}
+			return &out, nil
+		},
+	}
+	return tools.ToolSpec{
+		Name:    "tool",
+		Toolset: "svc.ts",
+		Payload: tools.TypeSpec{Name: "tool_payload", Codec: newAnyJSONSpec("tool", "svc.ts").Payload.Codec},
+		Result:  tools.TypeSpec{Name: "tool_result", Codec: codec},
+		Bounds: &tools.BoundsSpec{
+			Paging: &tools.PagingSpec{
+				CursorField:     "cursor",
+				NextCursorField: "next_cursor",
+			},
+		},
+	}
+}
 
 func TestExecuteToolActivityReturnsErrorAndHint(t *testing.T) {
 	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
@@ -49,13 +86,55 @@ func TestExecuteToolActivityReturnsErrorAndHint(t *testing.T) {
 	require.Equal(t, planner.RetryReasonInvalidArguments, out.RetryHint.Reason)
 }
 
+func TestEnforceToolResultContractsRequiresExplicitBoundsForBoundedTool(t *testing.T) {
+	rt := &Runtime{}
+	spec := newAnyJSONSpec("tool", "svc.ts")
+	spec.Bounds = &tools.BoundsSpec{
+		Paging: &tools.PagingSpec{
+			CursorField:     "cursor",
+			NextCursorField: "next_cursor",
+		},
+	}
+	call := planner.ToolRequest{Name: "tool", ToolCallID: "tool-1"}
+
+	err := rt.enforceToolResultContracts(spec, call, nil, &planner.ToolResult{
+		Name:   call.Name,
+		Result: map[string]any{"ok": true},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "bounded tool")
+	require.Contains(t, err.Error(), "without bounds")
+}
+
+func TestEnforceToolResultContractsAcceptsExplicitBoundsForBoundedTool(t *testing.T) {
+	rt := &Runtime{}
+	spec := newAnyJSONSpec("tool", "svc.ts")
+	spec.Bounds = &tools.BoundsSpec{
+		Paging: &tools.PagingSpec{
+			CursorField:     "cursor",
+			NextCursorField: "next_cursor",
+		},
+	}
+	call := planner.ToolRequest{Name: "tool", ToolCallID: "tool-1"}
+
+	err := rt.enforceToolResultContracts(spec, call, nil, &planner.ToolResult{
+		Name:   call.Name,
+		Result: map[string]any{"ok": true},
+		Bounds: &agent.Bounds{
+			Returned:  1,
+			Truncated: false,
+		},
+	})
+	require.NoError(t, err)
+}
+
 func TestExecuteToolActivityPropagatesServerData(t *testing.T) {
 	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 		return &planner.ToolResult{
 			Name:       call.Name,
 			ToolCallID: call.ToolCallID,
 			Result:     map[string]any{"ok": true},
-			ServerData: rawjson.RawJSON([]byte(`[{"kind":"example.evidence","data":[{"uri":"example://points/123","kind":"time_series"}]}]`)),
+			ServerData: rawjson.Message([]byte(`[{"kind":"example.evidence","data":[{"uri":"example://points/123","kind":"time_series"}]}]`)),
 		}, nil
 	}}}}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
@@ -66,6 +145,211 @@ func TestExecuteToolActivityPropagatesServerData(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.JSONEq(t, `[{"kind":"example.evidence","data":[{"uri":"example://points/123","kind":"time_series"}]}]`, string(out.ServerData))
+}
+
+func TestExecuteToolActivityRunsResultMaterializer(t *testing.T) {
+	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {
+		Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			return &planner.ToolResult{
+				Name:       call.Name,
+				ToolCallID: call.ToolCallID,
+				Result: map[string]any{
+					"ok": true,
+				},
+			}, nil
+		},
+		ResultMaterializer: func(ctx context.Context, meta ToolCallMeta, call *planner.ToolRequest, result *planner.ToolResult) error {
+			require.Equal(t, "tool-1", meta.ToolCallID)
+			require.JSONEq(t, `{"input":"ok"}`, string(call.Payload))
+			result.ServerData = rawjson.Message([]byte(`[{"kind":"example.materialized","data":{"source":"runtime"}}]`))
+			return nil
+		},
+	}}}
+	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
+		tools.Ident("tool"): newAnyJSONSpec("tool", "svc.ts"),
+	}
+	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte(`{"input":"ok"}`)}
+	out, err := rt.ExecuteToolActivity(context.Background(), &input)
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.JSONEq(t, `[{"kind":"example.materialized","data":{"source":"runtime"}}]`, string(out.ServerData))
+}
+
+func TestExecuteToolActivityPropagatesBounds(t *testing.T) {
+	total := 9
+	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		return &planner.ToolResult{
+			Name:       call.Name,
+			ToolCallID: call.ToolCallID,
+			Result:     map[string]any{"ok": true},
+			Bounds: &agent.Bounds{
+				Returned:  7,
+				Total:     &total,
+				Truncated: true,
+			},
+		}, nil
+	}}}}
+	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
+		tools.Ident("tool"): newAnyJSONSpec("tool", "svc.ts"),
+	}
+	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("null")}
+	out, err := rt.ExecuteToolActivity(context.Background(), &input)
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.NotNil(t, out.Bounds)
+	require.Equal(t, 7, out.Bounds.Returned)
+	require.NotNil(t, out.Bounds.Total)
+	require.Equal(t, 9, *out.Bounds.Total)
+	require.True(t, out.Bounds.Truncated)
+}
+
+func TestEncodeCanonicalToolResultProjectsBoundsIntoEncodedResult(t *testing.T) {
+	total := 9
+	cursor := "next-page"
+	result, err := EncodeCanonicalToolResult(newProjectedResultSpec(), &projectedRuntimeResult{
+		Results: []string{"alpha"},
+	}, &agent.Bounds{
+		Returned:       1,
+		Total:          &total,
+		Truncated:      true,
+		NextCursor:     &cursor,
+		RefinementHint: "narrow by source",
+	})
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"results": ["alpha"],
+		"returned": 1,
+		"total": 9,
+		"truncated": true,
+		"next_cursor": "next-page",
+		"refinement_hint": "narrow by source"
+	}`, string(result))
+}
+
+func TestEncodeCanonicalToolResultRejectsRawJSONResult(t *testing.T) {
+	_, err := EncodeCanonicalToolResult(newProjectedResultSpec(), json.RawMessage(`{"results":["alpha"]}`), &agent.Bounds{
+		Returned:  1,
+		Truncated: false,
+	})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "typed Go value")
+}
+
+func TestEncodeCanonicalToolResultRejectsRuntimeRawJSONResult(t *testing.T) {
+	_, err := EncodeCanonicalToolResult(newProjectedResultSpec(), rawjson.Message(`{"results":["alpha"]}`), &agent.Bounds{
+		Returned:  1,
+		Truncated: false,
+	})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "typed Go value")
+}
+
+func TestExecuteToolActivityProjectsBoundsIntoEncodedResult(t *testing.T) {
+	total := 9
+	cursor := "next-page"
+	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		return &planner.ToolResult{
+			Name:       call.Name,
+			ToolCallID: call.ToolCallID,
+			Result: &projectedRuntimeResult{
+				Results: []string{"alpha"},
+			},
+			Bounds: &agent.Bounds{
+				Returned:       1,
+				Total:          &total,
+				Truncated:      true,
+				NextCursor:     &cursor,
+				RefinementHint: "narrow by source",
+			},
+		}, nil
+	}}}}
+	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
+		tools.Ident("tool"): newProjectedResultSpec(),
+	}
+	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("null")}
+	out, err := rt.ExecuteToolActivity(context.Background(), &input)
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.JSONEq(t, `{
+		"results": ["alpha"],
+		"returned": 1,
+		"total": 9,
+		"truncated": true,
+		"next_cursor": "next-page",
+		"refinement_hint": "narrow by source"
+	}`, string(out.Payload))
+}
+
+func TestExecuteToolActivityDropsStaleOptionalBoundFieldsFromSemanticResult(t *testing.T) {
+	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		return &planner.ToolResult{
+			Name:       call.Name,
+			ToolCallID: call.ToolCallID,
+			Result: map[string]any{
+				"results":         []string{"alpha"},
+				"total":           99,
+				"next_cursor":     "stale",
+				"refinement_hint": "stale hint",
+			},
+			Bounds: &agent.Bounds{
+				Returned:  1,
+				Truncated: false,
+			},
+		}, nil
+	}}}}
+	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
+		tools.Ident("tool"): newProjectedResultSpec(),
+	}
+	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("null")}
+	out, err := rt.ExecuteToolActivity(context.Background(), &input)
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.JSONEq(t, `{
+		"results": ["alpha"],
+		"returned": 1,
+		"truncated": false
+	}`, string(out.Payload))
+}
+
+func TestPublishToolResultReceivedProjectsBoundsIntoResultPreview(t *testing.T) {
+	toolName := tools.Ident("svc.tools.projected_preview")
+	rthints.RegisterResultHint(toolName, template.Must(template.New("preview").Parse(
+		`{{ index .Result.Results 0 }} / {{ .Bounds.Returned }} / {{ .Bounds.Total }}`,
+	)))
+
+	recorder := &recordingHooks{}
+	exec := &toolBatchExec{
+		r: &Runtime{
+			Bus:           recorder,
+			RunEventStore: runloginmem.New(),
+		},
+		runID:     "run-1",
+		agentID:   "agent-1",
+		sessionID: "session-1",
+		turnID:    "turn-1",
+	}
+	total := 9
+	call := planner.ToolRequest{Name: toolName, ToolCallID: "tool-1"}
+	tr := &planner.ToolResult{
+		Name:       toolName,
+		ToolCallID: "tool-1",
+		Result: &projectedRuntimeResult{
+			Results: []string{"alpha"},
+		},
+		Bounds: &agent.Bounds{
+			Returned:  1,
+			Total:     &total,
+			Truncated: true,
+		},
+	}
+
+	err := exec.publishToolResultReceived(context.Background(), call, tr, nil, 0)
+	require.NoError(t, err)
+	require.Len(t, recorder.events, 1)
+
+	resultEvt, ok := recorder.events[0].(*hooks.ToolResultReceivedEvent)
+	require.True(t, ok)
+	require.Equal(t, "alpha / 1 / 9", resultEvt.ResultPreview)
 }
 
 func TestRegisterToolset_RejectsAgentToolsetWithoutSpecs(t *testing.T) {
@@ -281,7 +565,7 @@ func TestServiceToolEventsPropagateServerData(t *testing.T) {
 			tools.Ident("svc.tools.example"): newAnyJSONSpec("svc.tools.example", "svc.tools"),
 		},
 	}
-	server := rawjson.RawJSON([]byte(`[{"kind":"example.evidence","data":[{"uri":"example://points/123","kind":"time_series"}]}]`))
+	server := rawjson.Message([]byte(`[{"kind":"example.evidence","data":[{"uri":"example://points/123","kind":"time_series"}]}]`))
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		hookRuntime: rt,
@@ -310,6 +594,150 @@ func TestServiceToolEventsPropagateServerData(t *testing.T) {
 	}
 	require.NotNil(t, resultEvt, "expected ToolResultReceivedEvent")
 	require.JSONEq(t, string(server), string(resultEvt.ServerData))
+}
+
+func TestConsumeProvidedToolResultsRunsResultMaterializer(t *testing.T) {
+	recorder := &recordingHooks{}
+	rt := &Runtime{
+		Bus:           recorder,
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+		toolsets: map[string]ToolsetRegistration{
+			"svc.tools": {
+				ResultMaterializer: func(ctx context.Context, meta ToolCallMeta, call *planner.ToolRequest, result *planner.ToolResult) error {
+					require.Equal(t, "tool-call-1", meta.ToolCallID)
+					require.JSONEq(t, `{"input":"ok"}`, string(call.Payload))
+					result.Result = map[string]any{
+						"ok":           true,
+						"materialized": true,
+					}
+					result.ServerData = rawjson.Message([]byte(`[{"kind":"example.materialized","data":{"source":"await"}}]`))
+					return nil
+				},
+			},
+		},
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			tools.Ident("svc.tools.example"): newAnyJSONSpec("svc.tools.example", "svc.tools"),
+		},
+	}
+	base := &planner.PlanInput{
+		RunContext: run.Context{
+			RunID:     "run-1",
+			SessionID: "session-1",
+			TurnID:    "turn-1",
+		},
+	}
+	state := newRunLoopState(nil, nil, model.TokenUsage{}, policy.CapsState{}, 1)
+	allowed := []planner.ToolRequest{
+		{
+			Name:       tools.Ident("svc.tools.example"),
+			ToolCallID: "tool-call-1",
+			Payload:    rawjson.Message([]byte(`{"input":"ok"}`)),
+		},
+	}
+	results, err := rt.consumeProvidedToolResults(
+		context.Background(),
+		&RunInput{
+			AgentID:   "agent",
+			RunID:     "run-1",
+			SessionID: "session-1",
+			TurnID:    "turn-1",
+		},
+		base,
+		state,
+		"turn-1",
+		&api.ToolResultsSet{
+			RunID: "run-1",
+			ID:    "await-1",
+			Results: []*api.ProvidedToolResult{
+				{
+					Name:       tools.Ident("svc.tools.example"),
+					ToolCallID: "tool-call-1",
+					Result:     rawjson.Message([]byte(`{"ok":true}`)),
+				},
+			},
+		},
+		allowed,
+		map[string]struct{}{"tool-call-1": {}},
+	)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.JSONEq(t, `[{"kind":"example.materialized","data":{"source":"await"}}]`, string(results[0].ServerData))
+
+	var resultEvt *hooks.ToolResultReceivedEvent
+	for _, evt := range recorder.events {
+		if e, ok := evt.(*hooks.ToolResultReceivedEvent); ok {
+			resultEvt = e
+		}
+	}
+	require.NotNil(t, resultEvt, "expected ToolResultReceivedEvent")
+	require.JSONEq(t, `{"ok":true,"materialized":true}`, string(resultEvt.ResultJSON))
+	require.JSONEq(t, `[{"kind":"example.materialized","data":{"source":"await"}}]`, string(resultEvt.ServerData))
+}
+
+func TestServiceToolEventsPropagateBounds(t *testing.T) {
+	recorder := &recordingHooks{}
+	rt := &Runtime{
+		Bus:           recorder,
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+		toolsets: map[string]ToolsetRegistration{
+			"svc.tools": {},
+		},
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			tools.Ident("svc.tools.example"): {
+				Name:    tools.Ident("svc.tools.example"),
+				Toolset: "svc.tools",
+				Payload: tools.TypeSpec{},
+				Result:  tools.TypeSpec{},
+				Bounds:  &tools.BoundsSpec{},
+			},
+		},
+	}
+	wfCtx := &testWorkflowContext{
+		ctx:         context.Background(),
+		hookRuntime: rt,
+		asyncResult: ToolOutput{
+			Payload: []byte("null"),
+			Bounds: &agent.Bounds{
+				Returned:  1,
+				Truncated: false,
+			},
+		},
+	}
+	parentCtx := &run.Context{
+		RunID:            "child-run",
+		SessionID:        "session-1",
+		TurnID:           "turn-1",
+		ParentRunID:      "parent-run",
+		ParentAgentID:    "parent.agent",
+		ParentToolCallID: "tool-parent",
+	}
+	calls := []planner.ToolRequest{{
+		Name:       tools.Ident("svc.tools.example"),
+		ToolCallID: "child-call",
+	}}
+	results, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "child.agent", parentCtx, nil, calls, 0, nil, time.Time{})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.NotNil(t, results[0].Bounds)
+	require.Equal(t, 1, results[0].Bounds.Returned)
+	require.False(t, results[0].Bounds.Truncated)
+
+	var resultEvt *hooks.ToolResultReceivedEvent
+	for _, evt := range recorder.events {
+		if e, ok := evt.(*hooks.ToolResultReceivedEvent); ok {
+			resultEvt = e
+		}
+	}
+	require.NotNil(t, resultEvt, "expected ToolResultReceivedEvent")
+	require.NotNil(t, resultEvt.Bounds)
+	require.Equal(t, 1, resultEvt.Bounds.Returned)
+	require.False(t, resultEvt.Bounds.Truncated)
 }
 
 func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {

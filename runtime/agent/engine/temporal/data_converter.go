@@ -64,10 +64,9 @@ type (
 
 	toolResultsSetWire struct {
 		// See planActivityInputWire: these names match Temporal's default JSON encoding.
-		RunID      string
-		ID         string
-		Results    []*api.ToolEvent
-		RetryHints []*planner.RetryHint
+		RunID   string
+		ID      string
+		Results []*api.ProvidedToolResult
 	}
 )
 
@@ -228,7 +227,6 @@ func decodeToolResultsSet(p *commonpb.Payload, valuePtr any) error {
 	dst.RunID = w.RunID
 	dst.ID = w.ID
 	dst.Results = w.Results
-	dst.RetryHints = w.RetryHints
 	return nil
 }
 
@@ -266,9 +264,8 @@ func encodeToolResultsSetWire(in *api.ToolResultsSet) (*toolResultsSetWire, erro
 		return nil, fmt.Errorf("temporal: tool results set is nil")
 	}
 	return &toolResultsSetWire{
-		RunID:      in.RunID,
-		ID:         in.ID,
-		Results:    in.Results,
-		RetryHints: in.RetryHints,
+		RunID:   in.RunID,
+		ID:      in.ID,
+		Results: in.Results,
 	}, nil
 }

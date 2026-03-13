@@ -101,7 +101,7 @@ func (r *Runtime) waitAwaitConfirmation(
 		); err != nil {
 			return nil, nil, err
 		}
-		resultJSON, err := r.marshalToolValue(ctx, it.call.Name, deniedResult)
+		resultJSON, err := r.marshalToolValue(ctx, it.call.Name, deniedResult, nil)
 		if err != nil {
 			return nil, nil, fmt.Errorf("encode %s denied tool result for streaming: %w", it.call.Name, err)
 		}
@@ -115,9 +115,9 @@ func (r *Runtime) waitAwaitConfirmation(
 				it.call.ToolCallID,
 				it.call.ParentToolCallID,
 				deniedResult,
-				rawjson.RawJSON(resultJSON),
+				rawjson.Message(resultJSON),
 				nil,
-				formatResultPreview(it.call.Name, deniedResult),
+				formatResultPreview(it.call.Name, deniedResult, nil),
 				nil,
 				0,
 				nil,
@@ -562,28 +562,30 @@ func (r *Runtime) consumeProvidedToolResults(ctx context.Context, input *RunInpu
 	}
 
 	seen := make(map[string]struct{}, len(rs.Results))
-	for _, tr := range rs.Results {
-		if tr == nil {
+	providedByID := make(map[string]*api.ProvidedToolResult, len(rs.Results))
+	for _, item := range rs.Results {
+		if item == nil {
 			return nil, errors.New("await: nil tool result")
 		}
-		if tr.ToolCallID == "" {
-			return nil, fmt.Errorf("await: result for tool %q missing tool_call_id", tr.Name)
+		if item.ToolCallID == "" {
+			return nil, fmt.Errorf("await: result for tool %q missing tool_call_id", item.Name)
 		}
 		if expected != nil {
-			if _, ok := expected[tr.ToolCallID]; !ok {
-				return nil, fmt.Errorf("await: unexpected tool result for tool_call_id %q", tr.ToolCallID)
+			if _, ok := expected[item.ToolCallID]; !ok {
+				return nil, fmt.Errorf("await: unexpected tool result for tool_call_id %q", item.ToolCallID)
 			}
 		}
-		if _, dup := seen[tr.ToolCallID]; dup {
-			return nil, fmt.Errorf("await: duplicate result for tool_call_id %q", tr.ToolCallID)
+		if _, dup := seen[item.ToolCallID]; dup {
+			return nil, fmt.Errorf("await: duplicate result for tool_call_id %q", item.ToolCallID)
 		}
-		seen[tr.ToolCallID] = struct{}{}
+		seen[item.ToolCallID] = struct{}{}
+		providedByID[item.ToolCallID] = item
 	}
 	if expected != nil && len(seen) != len(expected) {
 		return nil, fmt.Errorf("await: tool result ids did not match awaited tool_use ids (awaited=%d, got=%d)", len(expected), len(seen))
 	}
 
-	decoded, err := r.decodeToolEvents(ctx, rs.Results)
+	decoded, resultJSONs, err := r.decodeProvidedToolResults(ctx, allowed, providedByID)
 	if err != nil {
 		return nil, err
 	}
@@ -602,9 +604,9 @@ func (r *Runtime) consumeProvidedToolResults(ctx context.Context, input *RunInpu
 		if tr == nil {
 			continue
 		}
-		var resultJSON rawjson.RawJSON
-		if i < len(rs.Results) {
-			resultJSON = rs.Results[i].Result
+		var resultJSON rawjson.Message
+		if i < len(resultJSONs) {
+			resultJSON = resultJSONs[i]
 		}
 		if err := r.publishHook(
 			ctx,
@@ -618,7 +620,7 @@ func (r *Runtime) consumeProvidedToolResults(ctx context.Context, input *RunInpu
 				tr.Result,
 				resultJSON,
 				tr.ServerData,
-				formatResultPreview(tr.Name, tr.Result),
+				formatResultPreview(tr.Name, tr.Result, tr.Bounds),
 				tr.Bounds,
 				0,
 				nil,

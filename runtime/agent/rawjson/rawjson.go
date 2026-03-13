@@ -11,7 +11,7 @@
 // sidecars). A single accidental `json.RawMessage{}` or `[]byte{}` assignment
 // can therefore crash workflow encoding.
 //
-// RawJSON eliminates that failure mode by normalizing empty/whitespace payloads
+// Message eliminates that failure mode by normalizing empty/whitespace payloads
 // to JSON null during marshaling while still validating non-empty payloads.
 package rawjson
 
@@ -21,17 +21,17 @@ import (
 	"fmt"
 )
 
-// RawJSON is an opaque JSON value encoded as bytes.
+// Message is an opaque JSON value encoded as bytes.
 //
 // Contract:
 //   - Nil represents absence (preferred).
 //   - Non-empty values must be valid JSON.
 //   - Empty/whitespace-only values are normalized to JSON null during marshaling
 //     to avoid runtime encoding failures at workflow boundaries.
-type RawJSON json.RawMessage
+type Message json.RawMessage
 
 // RawMessage returns the underlying value as json.RawMessage.
-func (r RawJSON) RawMessage() json.RawMessage {
+func (r Message) RawMessage() json.RawMessage {
 	return json.RawMessage(r)
 }
 
@@ -39,7 +39,7 @@ func (r RawJSON) RawMessage() json.RawMessage {
 //
 // This method never returns an "unexpected end of JSON input" error for empty
 // slices; empty/whitespace is encoded as JSON null.
-func (r RawJSON) MarshalJSON() ([]byte, error) {
+func (r Message) MarshalJSON() ([]byte, error) {
 	data := []byte(r)
 	if len(bytes.TrimSpace(data)) == 0 {
 		return []byte("null"), nil
@@ -53,7 +53,7 @@ func (r RawJSON) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON implements json.Unmarshaler.
 //
 // The decoder validates non-null JSON and normalizes null to nil.
-func (r *RawJSON) UnmarshalJSON(data []byte) error {
+func (r *Message) UnmarshalJSON(data []byte) error {
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		*r = nil
@@ -64,6 +64,6 @@ func (r *RawJSON) UnmarshalJSON(data []byte) error {
 	}
 	out := make([]byte, len(trimmed))
 	copy(out, trimmed)
-	*r = RawJSON(out)
+	*r = Message(out)
 	return nil
 }

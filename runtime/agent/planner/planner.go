@@ -167,7 +167,7 @@ type ToolRequest struct {
 	Name tools.Ident
 
 	// Payload is the canonical JSON payload for the tool call.
-	Payload rawjson.RawJSON
+	Payload rawjson.Message
 
 	// AgentID is the identifier of the agent that issued this tool request.
 	AgentID agent.Ident
@@ -210,7 +210,7 @@ type ToolResult struct {
 	//   - This is canonical JSON bytes (typically a JSON array of server-data items).
 	//   - The runtime treats the payload as opaque bytes; sinks and UIs decode it
 	//     using the tool specs/codecs for the corresponding kinds.
-	ServerData rawjson.RawJSON
+	ServerData rawjson.Message
 
 	// ResultBytes is the size, in bytes, of the canonical JSON result payload when
 	// known. It is populated by the runtime when a tool result crosses a workflow
@@ -278,10 +278,10 @@ type ToolOutput struct {
 	ToolCallID string
 
 	// Payload is the canonical JSON payload passed to the tool.
-	Payload rawjson.RawJSON
+	Payload rawjson.Message
 
 	// Result is the canonical JSON result payload encoded with the tool result codec.
-	Result rawjson.RawJSON
+	Result rawjson.Message
 
 	// ResultBytes is the size, in bytes, of the canonical JSON result payload when known.
 	ResultBytes int
@@ -294,7 +294,7 @@ type ToolOutput struct {
 	ResultOmittedReason string
 
 	// ServerData carries canonical server-only JSON emitted alongside the tool result.
-	ServerData rawjson.RawJSON
+	ServerData rawjson.Message
 
 	// Bounds describes how the result has been bounded relative to the full data set.
 	Bounds *agent.Bounds
@@ -357,10 +357,10 @@ type FinalResponse struct {
 type FinalToolResult struct {
 	// Result is the canonical JSON result payload encoded with the parent tool's
 	// result codec.
-	Result rawjson.RawJSON
+	Result rawjson.Message
 
 	// ServerData carries server-only data associated with the final tool result.
-	ServerData rawjson.RawJSON
+	ServerData rawjson.Message
 
 	// ResultBytes is the size, in bytes, of the canonical JSON result payload
 	// when known.
@@ -487,7 +487,7 @@ type AwaitQuestions struct {
 	ToolCallID string
 
 	// Payload is the canonical JSON payload for the awaited tool call.
-	Payload rawjson.RawJSON
+	Payload rawjson.Message
 
 	// Title is an optional display title for the questions form.
 	Title *string
@@ -538,7 +538,7 @@ type AwaitToolItem struct {
 	ToolCallID string
 
 	// Payload is the canonical JSON payload for the external tool call.
-	Payload rawjson.RawJSON
+	Payload rawjson.Message
 }
 
 // TerminationReason indicates why the runtime forced finalization.

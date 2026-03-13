@@ -464,19 +464,19 @@ func contentIndex(idx *int32) (int, error) {
 	return int(*idx), nil
 }
 
-func decodeToolPayload(raw string) rawjson.RawJSON {
+func decodeToolPayload(raw string) rawjson.Message {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return rawjson.RawJSON([]byte("{}"))
+		return rawjson.Message([]byte("{}"))
 	}
 	data := []byte(trimmed)
 	if !json.Valid(data) {
 		// Tool payload fragments come from a model stream boundary and can be
 		// truncated when the provider stops on max_tokens. Return an empty object
 		// so tool schema validation can produce a structured tool error.
-		return rawjson.RawJSON([]byte("{}"))
+		return rawjson.Message([]byte("{}"))
 	}
-	return rawjson.RawJSON(data)
+	return rawjson.Message(data)
 }
 
 func translateCitationDelta(delta brtypes.CitationsDelta) model.Citation {

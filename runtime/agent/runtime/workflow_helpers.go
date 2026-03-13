@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -178,8 +177,8 @@ func (r *Runtime) appendUserToolResults(
 		}
 		if spec, ok := r.toolSpec(tr.Name); ok {
 			cursorField := ""
-			if spec.Paging != nil {
-				cursorField = spec.Paging.CursorField
+			if spec.Bounds != nil && spec.Bounds.Paging != nil {
+				cursorField = spec.Bounds.Paging.CursorField
 			}
 			if rem := boundsReminder(tr, cursorField); rem != "" {
 				reminders = append(reminders, rem)
@@ -224,11 +223,7 @@ func (r *Runtime) toolResultContent(tr *planner.ToolResult) (any, error) {
 		if tr.Result == nil {
 			return nil, nil
 		}
-		spec, ok := r.toolSpec(tr.Name)
-		if !ok || spec.Result.Codec.ToJSON == nil {
-			return nil, fmt.Errorf("runtime: missing result codec for %s", tr.Name)
-		}
-		raw, err := spec.Result.Codec.ToJSON(tr.Result)
+		raw, err := r.marshalToolValue(context.Background(), tr.Name, tr.Result, tr.Bounds)
 		if err != nil {
 			return nil, fmt.Errorf("runtime: encode tool_result for %s: %w", tr.Name, err)
 		}
@@ -236,23 +231,19 @@ func (r *Runtime) toolResultContent(tr *planner.ToolResult) (any, error) {
 			return map[string]any{
 				"ok":        true,
 				"truncated": true,
-				"preview":   formatResultPreview(tr.Name, tr.Result),
+				"preview":   formatResultPreview(tr.Name, tr.Result, tr.Bounds),
 				"bounds":    tr.Bounds,
 				"note":      "Tool result omitted from transcript due to size. Use follow-up tools to narrow the request or rely on observer-side rendering.",
 			}, nil
 		}
-		return json.RawMessage(raw), nil
+		return raw, nil
 	}
 	if tr.Result == nil {
 		return map[string]any{
 			"error": tr.Error,
 		}, nil
 	}
-	spec, ok := r.toolSpec(tr.Name)
-	if !ok || spec.Result.Codec.ToJSON == nil {
-		return nil, fmt.Errorf("runtime: missing result codec for %s", tr.Name)
-	}
-	raw, err := spec.Result.Codec.ToJSON(tr.Result)
+	raw, err := r.marshalToolValue(context.Background(), tr.Name, tr.Result, tr.Bounds)
 	if err != nil {
 		return nil, fmt.Errorf("runtime: encode tool_result for %s: %w", tr.Name, err)
 	}
@@ -260,32 +251,16 @@ func (r *Runtime) toolResultContent(tr *planner.ToolResult) (any, error) {
 		return map[string]any{
 			"ok":        false,
 			"truncated": true,
-			"preview":   formatResultPreview(tr.Name, tr.Result),
+			"preview":   formatResultPreview(tr.Name, tr.Result, tr.Bounds),
 			"bounds":    tr.Bounds,
 			"error":     tr.Error,
 			"note":      "Tool result omitted from transcript due to size. Use follow-up tools to narrow the request or rely on observer-side rendering.",
 		}, nil
 	}
 	return map[string]any{
-		"result": json.RawMessage(raw),
+		"result": raw,
 		"error":  tr.Error,
 	}, nil
-}
-
-// deriveBounds extracts Bounds metadata from a decoded tool result when the
-// result type implements agent.BoundedResult. It returns nil only when the
-// value does not implement the interface or when ResultBounds() returns nil.
-// A zero-value Bounds (Returned=0, Total=nil, Truncated=false, RefinementHint="")
-// is valid metadata indicating no truncation occurred and is returned as-is.
-func deriveBounds(result any) *agent.Bounds {
-	if result == nil {
-		return nil
-	}
-	br, ok := result.(agent.BoundedResult)
-	if !ok || br == nil {
-		return nil
-	}
-	return br.ResultBounds()
 }
 
 // hardProtectionIfNeeded emits a protection event and signals finalization when

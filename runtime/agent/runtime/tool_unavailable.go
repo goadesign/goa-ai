@@ -22,7 +22,7 @@ const toolUnavailableToolsetName = "goa-ai.runtime"
 
 type toolUnavailablePayload struct {
 	RequestedTool    string          `json:"requested_tool"`
-	RequestedPayload rawjson.RawJSON `json:"requested_payload,omitempty"`
+	RequestedPayload rawjson.Message `json:"requested_payload,omitempty"`
 }
 
 func toolUnavailableToolDefinition() *model.ToolDefinition {
@@ -146,7 +146,7 @@ func (r *Runtime) rewriteUnknownToolCalls(calls []planner.ToolRequest) ([]planne
 			return nil, fmt.Errorf("runtime: encode tool_unavailable payload for %s: %w", call.Name, err)
 		}
 		call.Name = tools.ToolUnavailable
-		call.Payload = rawjson.RawJSON(payload)
+		call.Payload = rawjson.Message(payload)
 		out[i] = call
 	}
 	return out, nil

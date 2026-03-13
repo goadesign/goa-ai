@@ -212,7 +212,7 @@ func translateResponse(resp openai.ChatCompletionResponse) *model.Response {
 	}
 }
 
-func parseToolArguments(raw string) rawjson.RawJSON {
+func parseToolArguments(raw string) rawjson.Message {
 	if raw == "" {
 		return nil
 	}
@@ -220,5 +220,5 @@ func parseToolArguments(raw string) rawjson.RawJSON {
 	if len(data) == 0 {
 		return nil
 	}
-	return rawjson.RawJSON(data)
+	return rawjson.Message(data)
 }

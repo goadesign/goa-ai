@@ -320,7 +320,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		}
 		return s.sink.Send(ctx, ToolEnd{
 			Base:       Base{t: EventToolEnd, r: evt.RunID(), s: evt.SessionID(), p: payload},
-			ServerData: append(rawjson.RawJSON(nil), evt.ServerData...),
+			ServerData: append(rawjson.Message(nil), evt.ServerData...),
 			Data:       payload,
 		})
 	case *hooks.ToolCallUpdatedEvent:

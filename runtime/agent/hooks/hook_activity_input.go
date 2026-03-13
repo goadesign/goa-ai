@@ -24,5 +24,5 @@ type ActivityInput struct {
 	TurnID string
 
 	// Payload holds event-specific fields encoded as JSON.
-	Payload rawjson.RawJSON
+	Payload rawjson.Message
 }

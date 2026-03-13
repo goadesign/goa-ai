@@ -50,7 +50,7 @@ func TestExecuteToolActivity_UsesGeneratedCodecs(t *testing.T) {
 	}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{spec.Name: spec}
 
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: spec.Name, Payload: rawjson.RawJSON([]byte("{}"))}
+	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: spec.Name, Payload: rawjson.Message([]byte("{}"))}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
