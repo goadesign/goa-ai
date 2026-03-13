@@ -1,5 +1,5 @@
-// tool_result_contract.go centralizes tool-result bounds invariants so every
-// runtime ingress path enforces the same contract.
+// Package runtime executes agent runs and enforces runtime-owned tool-result
+// contracts, including bounded-result invariants across all ingress paths.
 package runtime
 
 import (
