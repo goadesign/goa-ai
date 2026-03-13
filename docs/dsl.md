@@ -169,9 +169,9 @@ on agent/tool contracts.
 | `Inject(fields...)` | Inside `Tool` | Marks fields as server-injected (hidden from LLM) |
 | `CallHintTemplate(tmpl)` | Inside `Tool` | Go template for call display hint |
 | `ResultHintTemplate(tmpl)` | Inside `Tool` | Go template for result display hint |
-| `BoundedResult(dsl?)` | Inside `Tool` | Marks result as bounded view over larger data; optional sub-DSL can declare paging cursor fields |
+| `BoundedResult(dsl?)` | Inside `Tool` | Declares a runtime-owned bounded-result contract; optional sub-DSL can declare paging cursor fields |
 | `Cursor(name)` | Inside `BoundedResult(func() { ... })` | Declares which payload field carries the paging cursor (optional) |
-| `NextCursor(name)` | Inside `BoundedResult(func() { ... })` | Declares which result field carries the next-page cursor (optional) |
+| `NextCursor(name)` | Inside `BoundedResult(func() { ... })` | Declares the projected result field name for the next-page cursor (optional) |
 | `ResultReminder(text)` | Inside `Tool` | Static system reminder injected after tool result |
 | `Confirmation(dsl)` | Inside `Tool` | Declares that tool execution must be explicitly approved out-of-band |
 
@@ -191,35 +191,52 @@ generator invariants.
 
 ### Bounded results (returned / total / truncated / refinement_hint)
 
-`BoundedResult` exists so tools can return a bounded view (caps, window clamping, downsampling)
-while the runtime can reliably detect truncation and guide the planner.
+`BoundedResult` exists so tools can return a bounded view (caps, window clamping,
+downsampling, pagination) while Goa-AI exposes a single canonical bounds contract.
+The semantic tool result remains domain-specific; the runtime contract lives in
+`planner.ToolResult.Bounds`.
 
-Canonical bounds fields:
+Canonical model-visible fields:
 
 - `returned` (**required**, Int)
 - `truncated` (**required**, Boolean)
 - `total` (optional, Int)
 - `refinement_hint` (optional, String)
+- `next_cursor` (optional, String) when declared via `NextCursor(...)`
 
-Authoring rule (no hybrids):
+Single source of truth:
 
-- Either declare **none** of these fields and let `BoundedResult()` add all of them, or
-- Declare **all** of them with the correct types/requiredness.
+- `BoundedResult(...)` records the contract in generated `tools.ToolSpec.Bounds`.
+- Codegen projects the canonical bounded fields into the generated JSON result schema.
+- Successful bounded tool executions must set `planner.ToolResult.Bounds`.
+- The runtime projects those bounds back into encoded tool-result JSON, result-hint
+  template data, hooks, and stream events.
+
+Tool-facing return types therefore must not duplicate canonical bounded fields just
+so the model can see them. Validation rejects authored `Return(...)` shapes that
+declare `returned`, `total`, `truncated`, `refinement_hint`, or the configured
+`next_cursor` field. Keep authored result types semantic and domain-focused.
+
+For method-backed `BindTo` tools, the bound service method result may still carry
+the canonical bounded fields so the generated executor can build
+`planner.ToolResult.Bounds`, but only `returned` and `truncated` may be required.
+`total`, `refinement_hint`, and `next_cursor` remain optional parts of the bounds
+contract.
 
 ### Pagination (cursor / next_cursor)
 
 Tools that return potentially large datasets should support cursor-based pagination when practical.
-Cursor-paged tools identify the two paging fields in their own payload/result schemas:
+Cursor-paged tools identify two canonical paging fields:
 
 - **payload cursor field** (declared via `Cursor("field_name")`)
-- **result next-cursor field** (declared via `NextCursor("field_name")`)
+- **projected result next-cursor field** (declared via `NextCursor("field_name")`)
 
 Contract:
 
 - Treat cursors as **opaque**: do not parse, modify, or synthesize them.
 - When paging, keep **all other arguments unchanged**; only set the payload cursor field.
-- Paged tools should also be `BoundedResult(...)` tools and surface truncation metadata
-  (returned/total/truncated/refinement hints) alongside results.
+- Paged tools should also be `BoundedResult(...)` tools and return the next cursor through
+  `planner.ToolResult.Bounds.NextCursor`.
 
 ### Tool Confirmation (Human-in-the-Loop)
 
@@ -746,8 +763,8 @@ Tool("get_data", "Get user data", func() {
 ### Display Hint Templates
 
 `CallHintTemplate` and `ResultHintTemplate` configure Go templates for UI display.
-These templates are rendered by the runtime against the tool's **typed** payload/result structs
-and surfaced via hook + stream events as `DisplayHint` (call) and result previews (result).
+These templates are rendered by the runtime against typed Go values and surfaced
+via hook + stream events as `DisplayHint` (call) and result previews (result).
 
 ```go
 Tool("search", "Search documents", func() {
@@ -760,12 +777,19 @@ Tool("search", "Search documents", func() {
         Attribute("results", ArrayOf(String))
     })
     CallHintTemplate("Searching for: {{ .Query }} (limit: {{ .Limit }})")
-    ResultHintTemplate("Found {{ .Count }} results")
+    ResultHintTemplate("Found {{ .Result.Count }} results")
 })
 ```
 
 Templates are compiled with `missingkey=error`. Keep hints concise (≤140 characters recommended).
-Template variables use Go field names (e.g., `.Query`, `.Limit`), not JSON keys.
+Template variables use Go field names, not JSON keys.
+
+- Call templates receive the typed payload as the template root (for example,
+  `.Query`, `.Limit`).
+- Result templates receive an explicit wrapper where semantic fields live under
+  `.Result` and bounded metadata lives under `.Bounds` (for example,
+  `.Result.Count`, `.Bounds.Returned`). `.Bounds` is nil when the tool result
+  is unbounded.
 
 **Runtime contract:**
 
@@ -786,20 +810,26 @@ override via `runtime.WithHintOverrides`. Overrides take precedence over DSL tem
 
 `BoundedResult` marks a tool's result as a bounded view over potentially larger data. When set:
 
-- Generated `tools.ToolSpec` has `BoundedResult: true`
-- Generated `ResultBounds()` method implements `agent.BoundedResult`
-- Runtime attaches bounds metadata to hook events and streams
+- Generated `tools.ToolSpec.Bounds` describes the bounded-result contract
+- Generated JSON result schemas include the canonical bounded fields
+- Runtime requires `planner.ToolResult.Bounds` and attaches those bounds to hook events and streams
 
 ```go
 Tool("list_devices", "List devices in scope", func() {
     Args(ListDevicesArgs)
     Return(ListDevicesReturn)
-    BoundedResult()  // Result may be truncated
+    BoundedResult(func() {
+        Cursor("cursor")
+        NextCursor("next_cursor")
+    })
 })
 ```
 
-Services are responsible for trimming and setting the canonical bounds fields on the tool result
-(`returned`, `total`, `truncated`, `refinement_hint`).
+Services and finalizers are responsible for trimming and populating
+`planner.ToolResult.Bounds`. Goa-AI then projects those bounds into the
+model-visible result JSON using the canonical field names declared by
+`BoundedResult(...)`. Result-hint templates access the same runtime metadata via
+`.Bounds`; Goa-AI does not merge those fields into the semantic result value.
 
 ### Tags
 
