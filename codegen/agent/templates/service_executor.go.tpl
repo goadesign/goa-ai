@@ -269,11 +269,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                     Error: planner.NewToolError(fmt.Sprintf("unexpected method result type for %q", call.Name)),
                 }, nil
             }
-            nextBounds, e := init{{ goify .Name true }}Bounds(mr)
-            if e != nil {
-                return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(e)}, nil
-            }
-            bounds = nextBounds
+            bounds = init{{ goify .Name true }}Bounds(mr)
         {{- end }}
         {{- end }}
         }
@@ -363,9 +359,8 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
 {{- $tool := . }}
 
 // init{{ goify .Name true }}Bounds projects canonical bounds metadata from the
-// bound method result. It fails when the service result violates the bounded
-// tool contract.
-func init{{ goify .Name true }}Bounds(mr {{ .MethodResultTypeRef }}) (*agent.Bounds, error) {
+// bound method result.
+func init{{ goify .Name true }}Bounds(mr {{ .MethodResultTypeRef }}) *agent.Bounds {
     bounds := &agent.Bounds{}
     {{- with .Bounds.Projection.Returned }}
     bounds.Returned = mr.{{ .Name }}
@@ -393,7 +388,7 @@ func init{{ goify .Name true }}Bounds(mr {{ .MethodResultTypeRef }}) (*agent.Bou
     }
         {{- end }}
     {{- end }}
-    return bounds, nil
+    return bounds
 }
 {{- end }}
 {{- end }}

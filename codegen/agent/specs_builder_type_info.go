@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"goa.design/goa-ai/boundedresult"
 	"goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -396,7 +397,7 @@ func projectBoundedResultSchema(schemaBytes []byte, bounds *ToolBoundsData) ([]b
 	for name, fieldSchema := range boundedResultSchemaFields(bounds) {
 		properties[name] = fieldSchema
 	}
-	schema["required"] = mergeBoundedResultRequired(schema["required"], bounds, "returned", "truncated")
+	schema["required"] = mergeBoundedResultRequired(schema["required"], bounds, boundedresult.RequiredFieldNames()...)
 
 	projected, err := json.Marshal(schema)
 	if err != nil {
@@ -407,19 +408,19 @@ func projectBoundedResultSchema(schemaBytes []byte, bounds *ToolBoundsData) ([]b
 
 func boundedResultSchemaFields(bounds *ToolBoundsData) map[string]any {
 	fields := map[string]any{
-		"returned": map[string]any{
+		boundedresult.FieldReturned: map[string]any{
 			"type":        "integer",
 			"description": "Number of items returned in this response after applying tool limits.",
 		},
-		"total": map[string]any{
+		boundedresult.FieldTotal: map[string]any{
 			"type":        "integer",
 			"description": "Total number of matching items before truncation.",
 		},
-		"truncated": map[string]any{
+		boundedresult.FieldTruncated: map[string]any{
 			"type":        "boolean",
 			"description": "True when this result is partial because tool limits or caps were applied.",
 		},
-		"refinement_hint": map[string]any{
+		boundedresult.FieldRefinementHint: map[string]any{
 			"type":        "string",
 			"description": "Short guidance on how to narrow the request when the result is truncated.",
 		},
@@ -468,12 +469,13 @@ func mergeBoundedResultRequired(existing any, bounds *ToolBoundsData, names ...s
 // canonicalOptionalBoundedResultFields returns the bounded-result fields that
 // must remain optional in the generated JSON schema.
 func canonicalOptionalBoundedResultFields(bounds *ToolBoundsData) map[string]struct{} {
-	fields := map[string]struct{}{
-		"total":           {},
-		"refinement_hint": {},
+	nextCursorField := ""
+	if bounds != nil && bounds.Paging != nil {
+		nextCursorField = bounds.Paging.NextCursorField
 	}
-	if bounds != nil && bounds.Paging != nil && bounds.Paging.NextCursorField != "" {
-		fields[bounds.Paging.NextCursorField] = struct{}{}
+	fields := make(map[string]struct{})
+	for _, name := range boundedresult.OptionalFieldNames(nextCursorField) {
+		fields[name] = struct{}{}
 	}
 	return fields
 }

@@ -660,6 +660,15 @@ the canonical bounds fields (`returned`, `total`, `truncated`,
 `refinement_hint`, and optional `next_cursor`) into the emitted result JSON and
 hook/stream payloads.
 
+The runtime enforces one strict contract across all result ingress paths
+(regular execution and externally provided await results):
+
+- unbounded tools must not return bounds metadata,
+- error tool results must not return bounds metadata,
+- successful bounded results must include bounds metadata,
+- when `truncated=true`, bounds must include either `next_cursor` or
+  `refinement_hint`.
+
 ```go
 type Bounds struct {
     Returned       int     // Items in this response
@@ -844,7 +853,7 @@ Callers provide results via:
 err := rt.ProvideToolResults(ctx, &api.ToolResultsSet{
     RunID: "run-123",
     ID:    "external-1",
-    Results: []*api.ToolEvent{
+    Results: []*api.ProvidedToolResult{
         {
             ToolCallID: "toolcall-1",
             Name:       tools.Ident("chat.ask_question.ask_question"),
@@ -854,6 +863,12 @@ err := rt.ProvideToolResults(ctx, &api.ToolResultsSet{
     },
 })
 ```
+
+Provided tool results are strict boundary inputs:
+
+- each item must be exactly one of: `Error` or non-null `Result`,
+- if the tool is bounded and successful, `Bounds` must be present and satisfy
+  bounded-result invariants.
 
 ### Tool Confirmation (Design-Time + Runtime Overrides)
 

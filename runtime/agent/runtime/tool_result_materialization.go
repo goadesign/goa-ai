@@ -106,12 +106,14 @@ func (r *Runtime) decodeProvidedToolResult(ctx context.Context, spec tools.ToolS
 	if item == nil {
 		return nil, nil, fmt.Errorf("await: nil tool result")
 	}
-	bounds, err := cloneProvidedToolBounds(spec, item)
-	if err != nil {
-		return nil, nil, err
+	resultProvided := hasNonNullJSON(item.Result.RawMessage())
+	if item.Error != nil && resultProvided {
+		return nil, nil, fmt.Errorf("await: tool result for %s is invalid: error and result are both set", call.Name)
 	}
+	bounds := cloneProvidedToolBounds(item.Bounds)
 	var decoded any
-	if hasNonNullJSON(item.Result.RawMessage()) && item.Error == nil {
+	var err error
+	if resultProvided && item.Error == nil {
 		decoded, err = spec.Result.Codec.FromJSON(item.Result.RawMessage())
 		if err != nil {
 			return nil, nil, fmt.Errorf("await: decode tool result for %s: %w", call.Name, err)
@@ -133,31 +135,22 @@ func (r *Runtime) decodeProvidedToolResult(ctx context.Context, spec tools.ToolS
 	return result, resultJSON, nil
 }
 
-// cloneProvidedToolBounds validates externally supplied bounds metadata against
-// the tool contract and returns an internal copy for the decoded planner result.
-func cloneProvidedToolBounds(spec tools.ToolSpec, item *api.ProvidedToolResult) (*agent.Bounds, error) {
-	if item.Bounds == nil {
-		if item.Error == nil && spec.Bounds != nil {
-			return nil, fmt.Errorf("await: missing bounds metadata for bounded tool %q", item.Name)
-		}
-		return nil, nil
+// cloneProvidedToolBounds copies provided bounds metadata into an internal
+// planner result. Contract validation is centralized in materializeToolResult.
+func cloneProvidedToolBounds(bounds *agent.Bounds) *agent.Bounds {
+	if bounds == nil {
+		return nil
 	}
-	if item.Error != nil || spec.Bounds == nil {
-		return nil, fmt.Errorf("await: unexpected bounds metadata for tool %q", item.Name)
+	c := *bounds
+	if bounds.Total != nil {
+		total := *bounds.Total
+		c.Total = &total
 	}
-	if item.Bounds.Truncated && item.Bounds.NextCursor == nil && item.Bounds.RefinementHint == "" {
-		return nil, fmt.Errorf("await: bounded tool %q returned truncated result without next_cursor or refinement_hint", item.Name)
+	if bounds.NextCursor != nil {
+		next := *bounds.NextCursor
+		c.NextCursor = &next
 	}
-	bounds := *item.Bounds
-	if item.Bounds.Total != nil {
-		total := *item.Bounds.Total
-		bounds.Total = &total
-	}
-	if item.Bounds.NextCursor != nil {
-		next := *item.Bounds.NextCursor
-		bounds.NextCursor = &next
-	}
-	return &bounds, nil
+	return &c
 }
 
 func toolCallMeta(call planner.ToolRequest) ToolCallMeta {
