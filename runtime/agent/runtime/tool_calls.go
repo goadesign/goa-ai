@@ -197,8 +197,7 @@ func (e *toolBatchExec) synthesizeUnknownToolResult(ctx context.Context, call pl
 	return tr, nil
 }
 
-func (r *Runtime) enforceToolResultContracts(spec tools.ToolSpec, call planner.ToolRequest, toolErr *planner.ToolError, tr *planner.ToolResult) error {
-	_ = toolErr
+func (r *Runtime) enforceToolResultContracts(spec tools.ToolSpec, call planner.ToolRequest, tr *planner.ToolResult) error {
 	return validateToolResultContract(spec, call, tr)
 }
 
@@ -509,12 +508,10 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 				ToolCallID: info.call.ToolCallID,
 				Telemetry:  out.Telemetry,
 			}
-			var toolErr *planner.ToolError
 			if out.Error != "" {
-				toolErr = planner.NewToolError(out.Error)
-				toolRes.Error = toolErr
+				toolRes.Error = planner.NewToolError(out.Error)
 			}
-			if err := e.r.enforceToolResultContracts(spec, info.call, toolErr, toolRes); err != nil {
+			if err := e.r.enforceToolResultContracts(spec, info.call, toolRes); err != nil {
 				return nil, nil, false, err
 			}
 			if out.RetryHint != nil {

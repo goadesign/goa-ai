@@ -35,7 +35,7 @@ func (r *Runtime) materializeToolResult(ctx context.Context, call planner.ToolRe
 	if err := r.applyResultMaterializer(ctx, spec, call, result); err != nil {
 		return nil, err
 	}
-	if err := r.enforceToolResultContracts(spec, call, result.Error, result); err != nil {
+	if err := r.enforceToolResultContracts(spec, call, result); err != nil {
 		return nil, err
 	}
 	var resultJSON rawjson.Message

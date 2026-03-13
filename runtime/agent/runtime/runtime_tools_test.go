@@ -97,7 +97,7 @@ func TestEnforceToolResultContractsRequiresExplicitBoundsForBoundedTool(t *testi
 	}
 	call := planner.ToolRequest{Name: "tool", ToolCallID: "tool-1"}
 
-	err := rt.enforceToolResultContracts(spec, call, nil, &planner.ToolResult{
+	err := rt.enforceToolResultContracts(spec, call, &planner.ToolResult{
 		Name:   call.Name,
 		Result: map[string]any{"ok": true},
 	})
@@ -117,7 +117,7 @@ func TestEnforceToolResultContractsAcceptsExplicitBoundsForBoundedTool(t *testin
 	}
 	call := planner.ToolRequest{Name: "tool", ToolCallID: "tool-1"}
 
-	err := rt.enforceToolResultContracts(spec, call, nil, &planner.ToolResult{
+	err := rt.enforceToolResultContracts(spec, call, &planner.ToolResult{
 		Name:   call.Name,
 		Result: map[string]any{"ok": true},
 		Bounds: &agent.Bounds{
@@ -139,7 +139,7 @@ func TestEnforceToolResultContractsRejectsTruncatedBoundsWithoutContinuation(t *
 	}
 	call := planner.ToolRequest{Name: "tool", ToolCallID: "tool-1"}
 
-	err := rt.enforceToolResultContracts(spec, call, nil, &planner.ToolResult{
+	err := rt.enforceToolResultContracts(spec, call, &planner.ToolResult{
 		Name:   call.Name,
 		Result: map[string]any{"ok": true},
 		Bounds: &agent.Bounds{
@@ -738,7 +738,7 @@ func TestEnforceToolResultContractsRejectsAmbiguousErrorAndResult(t *testing.T) 
 		Error:      planner.NewToolError("failed"),
 	}
 
-	err := rt.enforceToolResultContracts(newAnyJSONSpec(call.Name, "svc.tools"), call, tr.Error, tr)
+	err := rt.enforceToolResultContracts(newAnyJSONSpec(call.Name, "svc.tools"), call, tr)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "error and result are both set")
 }
