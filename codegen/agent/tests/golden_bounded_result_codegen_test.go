@@ -31,4 +31,12 @@ func TestGolden_BoundedResult_UsesBoundsSpecAndProjection(t *testing.T) {
 	require.Contains(t, executor, "bounds.NextCursor = mr.NextCursor")
 	require.NotContains(t, executor, `requires method result field "returned"`)
 	require.NotContains(t, executor, `requires method result field "truncated"`)
+
+	provider := generatedContentBySuffix(t, files, "toolsets/lookup/provider.go")
+	require.Contains(t, provider, "bounds := initSearchBounds(methodOut)")
+	require.Contains(t, provider, "Bounds:    bounds,")
+	require.Contains(t, provider, "func initSearchBounds(")
+	require.Contains(t, provider, "bounds.Returned = mr.Returned")
+	require.Contains(t, provider, "bounds.Truncated = mr.Truncated")
+	require.Contains(t, provider, "bounds.NextCursor = mr.NextCursor")
 }
