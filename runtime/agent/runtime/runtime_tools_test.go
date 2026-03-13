@@ -128,6 +128,29 @@ func TestEnforceToolResultContractsAcceptsExplicitBoundsForBoundedTool(t *testin
 	require.NoError(t, err)
 }
 
+func TestEnforceToolResultContractsRejectsTruncatedBoundsWithoutContinuation(t *testing.T) {
+	rt := &Runtime{}
+	spec := newAnyJSONSpec("tool", "svc.ts")
+	spec.Bounds = &tools.BoundsSpec{
+		Paging: &tools.PagingSpec{
+			CursorField:     "cursor",
+			NextCursorField: "next_cursor",
+		},
+	}
+	call := planner.ToolRequest{Name: "tool", ToolCallID: "tool-1"}
+
+	err := rt.enforceToolResultContracts(spec, call, nil, &planner.ToolResult{
+		Name:   call.Name,
+		Result: map[string]any{"ok": true},
+		Bounds: &agent.Bounds{
+			Returned:  1,
+			Truncated: true,
+		},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "truncated result without next_cursor or refinement_hint")
+}
+
 func TestExecuteToolActivityPropagatesServerData(t *testing.T) {
 	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 		return &planner.ToolResult{
@@ -185,12 +208,14 @@ func TestExecuteToolActivityPropagatesBounds(t *testing.T) {
 			Bounds: &agent.Bounds{
 				Returned:  7,
 				Total:     &total,
-				Truncated: true,
+				Truncated: false,
 			},
 		}, nil
 	}}}}
+	spec := newAnyJSONSpec("tool", "svc.ts")
+	spec.Bounds = &tools.BoundsSpec{}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
-		tools.Ident("tool"): newAnyJSONSpec("tool", "svc.ts"),
+		tools.Ident("tool"): spec,
 	}
 	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("null")}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
@@ -200,7 +225,7 @@ func TestExecuteToolActivityPropagatesBounds(t *testing.T) {
 	require.Equal(t, 7, out.Bounds.Returned)
 	require.NotNil(t, out.Bounds.Total)
 	require.Equal(t, 9, *out.Bounds.Total)
-	require.True(t, out.Bounds.Truncated)
+	require.False(t, out.Bounds.Truncated)
 }
 
 func TestEncodeCanonicalToolResultProjectsBoundsIntoEncodedResult(t *testing.T) {
@@ -675,6 +700,66 @@ func TestConsumeProvidedToolResultsRunsResultMaterializer(t *testing.T) {
 	require.NotNil(t, resultEvt, "expected ToolResultReceivedEvent")
 	require.JSONEq(t, `{"ok":true,"materialized":true}`, string(resultEvt.ResultJSON))
 	require.JSONEq(t, `[{"kind":"example.materialized","data":{"source":"await"}}]`, string(resultEvt.ServerData))
+}
+
+func TestConsumeProvidedToolResultsRejectsAmbiguousErrorAndResult(t *testing.T) {
+	rt := &Runtime{
+		toolsets: map[string]ToolsetRegistration{
+			"svc.tools": {},
+		},
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			tools.Ident("svc.tools.example"): newAnyJSONSpec("svc.tools.example", "svc.tools"),
+		},
+	}
+	call := planner.ToolRequest{
+		Name:       tools.Ident("svc.tools.example"),
+		ToolCallID: "tool-call-1",
+	}
+	_, _, err := rt.decodeProvidedToolResult(context.Background(), rt.toolSpecs[call.Name], call, &api.ProvidedToolResult{
+		Name:       call.Name,
+		ToolCallID: call.ToolCallID,
+		Result:     rawjson.Message([]byte(`{"ok":true}`)),
+		Error:      planner.NewToolError("failed"),
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "error and result are both set")
+}
+
+func TestConsumeProvidedToolResultsRejectsTruncatedBoundsWithoutContinuation(t *testing.T) {
+	rt := &Runtime{
+		toolsets: map[string]ToolsetRegistration{
+			"svc.tools": {},
+		},
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			tools.Ident("svc.tools.example"): {
+				Name:    tools.Ident("svc.tools.example"),
+				Toolset: "svc.tools",
+				Payload: newAnyJSONSpec("svc.tools.example", "svc.tools").Payload,
+				Result:  newAnyJSONSpec("svc.tools.example", "svc.tools").Result,
+				Bounds: &tools.BoundsSpec{
+					Paging: &tools.PagingSpec{
+						CursorField:     "cursor",
+						NextCursorField: "next_cursor",
+					},
+				},
+			},
+		},
+	}
+	call := planner.ToolRequest{
+		Name:       tools.Ident("svc.tools.example"),
+		ToolCallID: "tool-call-1",
+	}
+	_, _, err := rt.decodeProvidedToolResult(context.Background(), rt.toolSpecs[call.Name], call, &api.ProvidedToolResult{
+		Name:       call.Name,
+		ToolCallID: call.ToolCallID,
+		Result:     rawjson.Message([]byte(`{"ok":true}`)),
+		Bounds: &agent.Bounds{
+			Returned:  1,
+			Truncated: true,
+		},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "truncated result without next_cursor or refinement_hint")
 }
 
 func TestServiceToolEventsPropagateBounds(t *testing.T) {

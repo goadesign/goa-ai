@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 
+	"goa.design/goa-ai/boundedresult"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
@@ -538,16 +539,11 @@ func validateMethodResultBoundsShape(tool *ToolExpr, verr *eval.ValidationErrors
 // canonicalBoundedResultFieldNames returns the reserved model-visible fields
 // owned by BoundedResult for schema and runtime projection.
 func canonicalBoundedResultFieldNames(bounds *ToolBoundsExpr) []string {
-	names := []string{
-		"returned",
-		"total",
-		"truncated",
-		"refinement_hint",
+	nextCursorField := ""
+	if bounds != nil && bounds.Paging != nil {
+		nextCursorField = bounds.Paging.NextCursorField
 	}
-	if bounds != nil && bounds.Paging != nil && bounds.Paging.NextCursorField != "" {
-		names = append(names, bounds.Paging.NextCursorField)
-	}
-	return names
+	return boundedresult.CanonicalFieldNames(nextCursorField)
 }
 
 // Finalize materializes tool shapes and resolves method bindings.

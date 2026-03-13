@@ -211,6 +211,8 @@ Single source of truth:
 - Successful bounded tool executions must set `planner.ToolResult.Bounds`.
 - The runtime projects those bounds back into encoded tool-result JSON, result-hint
   template data, hooks, and stream events.
+- Runtime enforcement is strict across all ingress paths: if `truncated=true`,
+  bounds must include either `next_cursor` or `refinement_hint`.
 
 Tool-facing return types therefore must not duplicate canonical bounded fields just
 so the model can see them. Validation rejects authored `Return(...)` shapes that

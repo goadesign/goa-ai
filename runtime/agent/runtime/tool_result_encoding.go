@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"goa.design/goa-ai/boundedresult"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -82,13 +83,13 @@ func projectBoundedToolResultJSON(spec tools.ToolSpec, raw json.RawMessage, boun
 	for _, name := range canonicalBoundedResultJSONFields(spec) {
 		delete(projected, name)
 	}
-	projected["returned"] = bounds.Returned
-	projected["truncated"] = bounds.Truncated
+	projected[boundedresult.FieldReturned] = bounds.Returned
+	projected[boundedresult.FieldTruncated] = bounds.Truncated
 	if bounds.Total != nil {
-		projected["total"] = *bounds.Total
+		projected[boundedresult.FieldTotal] = *bounds.Total
 	}
 	if bounds.RefinementHint != "" {
-		projected["refinement_hint"] = bounds.RefinementHint
+		projected[boundedresult.FieldRefinementHint] = bounds.RefinementHint
 	}
 	if spec.Bounds.Paging != nil && spec.Bounds.Paging.NextCursorField != "" && bounds.NextCursor != nil {
 		projected[spec.Bounds.Paging.NextCursorField] = *bounds.NextCursor
@@ -104,14 +105,9 @@ func projectBoundedToolResultJSON(spec tools.ToolSpec, raw json.RawMessage, boun
 // canonicalBoundedResultJSONFields returns the reserved JSON property names that
 // BoundedResult owns for runtime projection.
 func canonicalBoundedResultJSONFields(spec tools.ToolSpec) []string {
-	names := []string{
-		"returned",
-		"total",
-		"truncated",
-		"refinement_hint",
+	nextCursorField := ""
+	if spec.Bounds != nil && spec.Bounds.Paging != nil {
+		nextCursorField = spec.Bounds.Paging.NextCursorField
 	}
-	if spec.Bounds != nil && spec.Bounds.Paging != nil && spec.Bounds.Paging.NextCursorField != "" {
-		names = append(names, spec.Bounds.Paging.NextCursorField)
-	}
-	return names
+	return boundedresult.CanonicalFieldNames(nextCursorField)
 }

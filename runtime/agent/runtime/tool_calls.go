@@ -201,10 +201,7 @@ func (r *Runtime) enforceToolResultContracts(spec tools.ToolSpec, call planner.T
 	if tr == nil {
 		return fmt.Errorf("CRITICAL: nil tool result for %q (%s)", call.Name, call.ToolCallID)
 	}
-	if spec.Bounds != nil && toolErr == nil && tr.Bounds == nil {
-		return fmt.Errorf("bounded tool %q returned result without bounds (tool_call_id=%s, type=%T)", call.Name, call.ToolCallID, tr.Result)
-	}
-	return nil
+	return validateToolBoundsContract(spec, call, toolErr, tr.Bounds)
 }
 
 func (e *toolBatchExec) publishToolResultReceived(ctx context.Context, call planner.ToolRequest, tr *planner.ToolResult, resultJSON rawjson.Message, duration time.Duration) error {
