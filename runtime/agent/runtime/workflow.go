@@ -195,7 +195,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	}
 	if firstOutput == nil || firstOutput.Result == nil {
 		r.logger.Error(wfCtx.Context(), "Plan activity returned nil result")
-		finalErr = fmt.Errorf("Plan activity returned nil PlanResult")
+		finalErr = fmt.Errorf("plan activity returned nil result")
 		finalStatus = runStatusFailed
 		return nil, finalErr
 	}
@@ -203,7 +203,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	r.logger.Info(wfCtx.Context(), "Plan activity completed", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil)
 	// Validate PlanResult structure - if planner returned ToolCalls, they should be present.
 	if len(result.ToolCalls) == 0 && result.FinalResponse == nil && result.Await == nil {
-		finalErr = fmt.Errorf("PlanResult has no ToolCalls, FinalResponse, or Await - this should never happen")
+		finalErr = fmt.Errorf("plan result has no tool calls, final response, or await")
 		finalStatus = runStatusFailed
 		return nil, finalErr
 	}

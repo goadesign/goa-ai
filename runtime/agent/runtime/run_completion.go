@@ -1,6 +1,6 @@
-// run_completion.go coordinates lazy workflow-handle waiting and
-// terminal hook repair so durable runs still emit one canonical RunCompleted
-// event without forcing every starter process to block on workflow completion.
+// Package runtime coordinates lazy workflow-handle waiting and terminal hook
+// repair so durable runs still emit one canonical RunCompleted event without
+// forcing every starter process to block on workflow completion.
 package runtime
 
 import (
@@ -197,9 +197,10 @@ func (r *Runtime) runHasTerminalSnapshot(ctx context.Context, runID string) (boo
 	switch snapshot.Status {
 	case run.StatusCompleted, run.StatusFailed, run.StatusCanceled:
 		return true, nil
-	default:
+	case run.StatusPending, run.StatusRunning, run.StatusPaused:
 		return false, nil
 	}
+	panic("runtime: unsupported run snapshot status for terminal detection: " + string(snapshot.Status))
 }
 
 // synthesizeTerminalRunCompletion publishes a canonical RunCompleted event using
@@ -320,6 +321,8 @@ func terminalRunStatusForEngineStatus(status engine.RunStatus) string {
 		return runStatusFailed
 	case engine.RunStatusCanceled:
 		return runStatusCanceled
+	case engine.RunStatusPending, engine.RunStatusRunning, engine.RunStatusPaused:
+		panic("runtime: non-terminal engine run status cannot map to terminal repair: " + string(status))
 	default:
 		panic("runtime: unexpected engine run status for terminal repair: " + string(status))
 	}
@@ -335,6 +338,8 @@ func terminalRunErrorForStatus(status engine.RunStatus) error {
 		return errors.New("workflow failed before runtime emitted RunCompleted")
 	case engine.RunStatusCanceled:
 		return context.Canceled
+	case engine.RunStatusPending, engine.RunStatusRunning, engine.RunStatusPaused:
+		panic("runtime: non-terminal engine run status cannot map to terminal error: " + string(status))
 	default:
 		panic("runtime: unexpected engine run status for terminal error mapping: " + string(status))
 	}

@@ -613,8 +613,12 @@ func queryRunStatusFromInfo(info *workflowpb.WorkflowExecutionInfo) engine.RunSt
 		enumspb.WORKFLOW_EXECUTION_STATUS_TERMINATED,
 		enumspb.WORKFLOW_EXECUTION_STATUS_CONTINUED_AS_NEW:
 		return engine.RunStatusFailed
+	case enumspb.WORKFLOW_EXECUTION_STATUS_UNSPECIFIED,
+		enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING,
+		enumspb.WORKFLOW_EXECUTION_STATUS_PAUSED:
+		panic(fmt.Sprintf("temporal engine: closed workflow has non-terminal status %s", info.GetStatus()))
 	default:
-		return engine.RunStatusFailed
+		panic(fmt.Sprintf("temporal engine: closed workflow has unsupported status %s", info.GetStatus()))
 	}
 }
 

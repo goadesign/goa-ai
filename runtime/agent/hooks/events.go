@@ -989,7 +989,8 @@ func providerErrorFromTemporalEnvelope(err error) (*model.ProviderError, bool) {
 		return nil, false
 	}
 	var envelope providerErrorEnvelope
-	if appErr.Details(&envelope) != nil {
+	decoded := appErr.Details(&envelope) == nil
+	if !decoded {
 		return nil, false
 	}
 	if envelope.Provider == "" || envelope.Kind == "" {

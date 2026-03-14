@@ -1,6 +1,6 @@
-// activity_heartbeat.go emits cooperative activity heartbeats for long-running
-// planner and tool activities so engine-driven cancellation reaches streaming
-// provider calls promptly instead of after the activity returns on its own.
+// Package runtime emits cooperative activity heartbeats for long-running planner
+// and tool activities so engine-driven cancellation reaches streaming provider
+// calls promptly instead of after the activity returns on its own.
 package runtime
 
 import (

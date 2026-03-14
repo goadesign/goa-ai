@@ -49,7 +49,6 @@ func TestQueryRunStatusFromInfoMapsTerminalStates(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -70,6 +69,43 @@ func TestQueryRunStatusFromInfoTreatsOpenExecutionAsRunning(t *testing.T) {
 	}
 
 	require.Equal(t, engine.RunStatusRunning, queryRunStatusFromInfo(info))
+}
+
+func TestQueryRunStatusFromInfoPanicsOnClosedNonTerminalStatus(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name   string
+		status enumspb.WorkflowExecutionStatus
+	}{
+		{
+			name:   "unspecified",
+			status: enumspb.WORKFLOW_EXECUTION_STATUS_UNSPECIFIED,
+		},
+		{
+			name:   "running",
+			status: enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING,
+		},
+		{
+			name:   "paused",
+			status: enumspb.WORKFLOW_EXECUTION_STATUS_PAUSED,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			info := &workflowpb.WorkflowExecutionInfo{
+				Status:    tc.status,
+				CloseTime: timestamppb.Now(),
+			}
+
+			require.Panics(t, func() {
+				queryRunStatusFromInfo(info)
+			})
+		})
+	}
 }
 
 func TestMapDescribeWorkflowExecutionErrorPreservesNonNotFoundFailures(t *testing.T) {

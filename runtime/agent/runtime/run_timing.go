@@ -1,4 +1,4 @@
-// run_timing.go centralizes the timeout contract shared by run submission and
+// Package runtime centralizes the timeout contract shared by run submission and
 // workflow execution so the engine-level run timeout can never undercut the
 // workflow's own hard deadline.
 package runtime

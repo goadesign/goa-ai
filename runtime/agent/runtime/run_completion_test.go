@@ -226,6 +226,8 @@ func (e *controlledWaitEngine) QueryRunCompletion(context.Context, string) (*api
 		return nil, errors.New("workflow failed before runtime emitted RunCompleted")
 	case engine.RunStatusCanceled:
 		return nil, context.Canceled
+	case engine.RunStatusPending, engine.RunStatusRunning, engine.RunStatusPaused:
+		return e.handle.out, e.handle.err
 	default:
 		return e.handle.out, e.handle.err
 	}

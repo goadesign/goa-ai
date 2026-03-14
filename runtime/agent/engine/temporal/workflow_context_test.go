@@ -64,7 +64,7 @@ func TestActivityOptionsForUsesExplicitTimeoutFields(t *testing.T) {
 	require.NotNil(t, opts.RetryPolicy)
 	require.EqualValues(t, 3, opts.RetryPolicy.MaximumAttempts)
 	require.Equal(t, time.Second, opts.RetryPolicy.InitialInterval)
-	require.Equal(t, 2.0, opts.RetryPolicy.BackoffCoefficient)
+	require.InDelta(t, 2.0, opts.RetryPolicy.BackoffCoefficient, 0.000001)
 }
 
 func TestActivityOptionsForLeavesQueueWaitUnsetWithoutTemporalDefault(t *testing.T) {
