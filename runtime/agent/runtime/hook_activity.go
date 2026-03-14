@@ -36,6 +36,9 @@ const hookActivityName = "runtime.publish_hook"
 //     (memory) and local observability, but it must not be allowed to corrupt or
 //     block the canonical transcript.
 func (r *Runtime) hookActivity(ctx context.Context, input *HookActivityInput) error {
+	stopHeartbeat := startActivityHeartbeat(ctx)
+	defer stopHeartbeat()
+
 	evt, err := hooks.DecodeFromHookInput(input)
 	if err != nil {
 		return err
@@ -96,6 +99,9 @@ func (r *Runtime) hookActivity(ctx context.Context, input *HookActivityInput) er
 		if err := r.Bus.Publish(ctx, evt); err != nil {
 			r.logWarn(ctx, "hook publish failed", err, "event", evt.Type())
 		}
+	}
+	if input.Type == hooks.RunCompleted {
+		r.storeWorkflowHandle(input.RunID, nil)
 	}
 	return nil
 }

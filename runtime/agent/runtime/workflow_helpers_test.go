@@ -11,6 +11,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/memory"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
@@ -155,34 +156,22 @@ func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
 				errorMessage = tc.tr.Error.Error()
 			}
 			replayed := transcript.BuildMessagesFromEvents([]memory.Event{
-				{
-					Type:      memory.EventAssistantMessage,
-					Timestamp: time.Now(),
-					Data: map[string]any{
-						"message": "calling tool",
-					},
-				},
-				{
-					Type:      memory.EventToolCall,
-					Timestamp: time.Now(),
-					Data: map[string]any{
-						"tool_call_id": call.ToolCallID,
-						"tool_name":    call.Name,
-						"payload":      map[string]any{"x": 1},
-					},
-				},
-				{
-					Type:      memory.EventToolResult,
-					Timestamp: time.Now(),
-					Data: map[string]any{
-						"tool_call_id":  call.ToolCallID,
-						"tool_name":     call.Name,
-						"result_json":   resultJSON,
-						"preview":       formatResultPreview(tc.tr.Name, tc.tr.Result, tc.tr.Bounds),
-						"bounds":        tc.tr.Bounds,
-						"error_message": errorMessage,
-					},
-				},
+				memory.NewEvent(time.Now(), memory.AssistantMessageData{
+					Message: "calling tool",
+				}, nil),
+				memory.NewEvent(time.Now(), memory.ToolCallData{
+					ToolCallID:  call.ToolCallID,
+					ToolName:    call.Name,
+					PayloadJSON: rawjson.Message(`{"x":1}`),
+				}, nil),
+				memory.NewEvent(time.Now(), memory.ToolResultData{
+					ToolCallID:   call.ToolCallID,
+					ToolName:     call.Name,
+					ResultJSON:   rawjson.Message(resultJSON),
+					Preview:      formatResultPreview(tc.tr.Name, tc.tr.Result, tc.tr.Bounds),
+					Bounds:       tc.tr.Bounds,
+					ErrorMessage: errorMessage,
+				}, nil),
 			})
 			require.Len(t, replayed, 2)
 

@@ -7,6 +7,7 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/memory"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 func TestLedger_BuildAndValidate(t *testing.T) {
@@ -79,42 +80,26 @@ func TestLedger_MultipleToolUseSingleUserMessage(t *testing.T) {
 
 func TestBuildMessagesFromEvents_ParentToolOnly(t *testing.T) {
 	events := []memory.Event{
-		{
-			Type:      memory.EventThinking,
-			Timestamp: time.Now(),
-			Data: map[string]any{
-				"text":          "thinking",
-				"signature":     "sig",
-				"content_index": 0,
-				"final":         true,
-			},
-		},
-		{
-			Type:      memory.EventAssistantMessage,
-			Timestamp: time.Now(),
-			Data: map[string]any{
-				"message": "calling tool",
-			},
-		},
-		{
-			Type:      memory.EventToolCall,
-			Timestamp: time.Now(),
-			Data: map[string]any{
-				"tool_call_id": "tc-1",
-				"tool_name":    "svc.tool",
-				"payload":      map[string]any{"q": 1},
-			},
-		},
-		{
-			Type:      memory.EventToolResult,
-			Timestamp: time.Now(),
-			Data: map[string]any{
-				"tool_call_id": "tc-1",
-				"tool_name":    "svc.tool",
-				"result_json":  `{"ok":true}`,
-				"duration":     time.Second,
-			},
-		},
+		memory.NewEvent(time.Now(), memory.ThinkingData{
+			Text:         "thinking",
+			Signature:    "sig",
+			ContentIndex: 0,
+			Final:        true,
+		}, nil),
+		memory.NewEvent(time.Now(), memory.AssistantMessageData{
+			Message: "calling tool",
+		}, nil),
+		memory.NewEvent(time.Now(), memory.ToolCallData{
+			ToolCallID:  "tc-1",
+			ToolName:    "svc.tool",
+			PayloadJSON: rawjson.Message(`{"q":1}`),
+		}, nil),
+		memory.NewEvent(time.Now(), memory.ToolResultData{
+			ToolCallID: "tc-1",
+			ToolName:   "svc.tool",
+			ResultJSON: rawjson.Message(`{"ok":true}`),
+			Duration:   time.Second,
+		}, nil),
 	}
 
 	msgs := BuildMessagesFromEvents(events)
@@ -250,32 +235,20 @@ func containsSubstring(s, sub string) bool {
 
 func TestBuildMessagesFromEvents_ToolErrorIncludesErrorContent(t *testing.T) {
 	events := []memory.Event{
-		{
-			Type:      memory.EventAssistantMessage,
-			Timestamp: time.Now(),
-			Data: map[string]any{
-				"message": "calling tool",
-			},
-		},
-		{
-			Type:      memory.EventToolCall,
-			Timestamp: time.Now(),
-			Data: map[string]any{
-				"tool_call_id": "tc-1",
-				"tool_name":    "svc.tool",
-				"payload":      map[string]any{"q": 1},
-			},
-		},
-		{
-			Type:      memory.EventToolResult,
-			Timestamp: time.Now(),
-			Data: map[string]any{
-				"tool_call_id":  "tc-1",
-				"tool_name":     "svc.tool",
-				"error_message": "access denied: missing controlleddevices.write privilege",
-				"duration":      time.Second,
-			},
-		},
+		memory.NewEvent(time.Now(), memory.AssistantMessageData{
+			Message: "calling tool",
+		}, nil),
+		memory.NewEvent(time.Now(), memory.ToolCallData{
+			ToolCallID:  "tc-1",
+			ToolName:    "svc.tool",
+			PayloadJSON: rawjson.Message(`{"q":1}`),
+		}, nil),
+		memory.NewEvent(time.Now(), memory.ToolResultData{
+			ToolCallID:   "tc-1",
+			ToolName:     "svc.tool",
+			ErrorMessage: "access denied: missing controlleddevices.write privilege",
+			Duration:     time.Second,
+		}, nil),
 	}
 
 	msgs := BuildMessagesFromEvents(events)
@@ -298,5 +271,79 @@ func TestBuildMessagesFromEvents_ToolErrorIncludesErrorContent(t *testing.T) {
 	want := "access denied: missing controlleddevices.write privilege"
 	if tr.Content != want {
 		t.Fatalf("content mismatch:\n got: %#v\nwant: %#v", tr.Content, want)
+	}
+}
+
+func TestBuildMessagesFromEvents_AcceptsLegacyToolCallPayloadShape(t *testing.T) {
+	events := []memory.Event{
+		memory.NewEvent(time.Now(), memory.AssistantMessageData{
+			Message: "calling tool",
+		}, nil),
+		{
+			Type:      memory.EventToolCall,
+			Timestamp: time.Now(),
+			Data: map[string]any{
+				"tool_call_id": "tc-1",
+				"tool_name":    "svc.tool",
+				"payload": map[string]any{
+					"q": 1,
+				},
+			},
+		},
+		memory.NewEvent(time.Now(), memory.ToolResultData{
+			ToolCallID: "tc-1",
+			ToolName:   "svc.tool",
+			ResultJSON: rawjson.Message(`{"ok":true}`),
+		}, nil),
+	}
+
+	msgs := BuildMessagesFromEvents(events)
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	}
+	if len(msgs[0].Parts) != 2 {
+		t.Fatalf("expected 2 assistant parts, got %d", len(msgs[0].Parts))
+	}
+	tu, ok := msgs[0].Parts[1].(model.ToolUsePart)
+	if !ok {
+		t.Fatalf("expected ToolUsePart, got %T", msgs[0].Parts[1])
+	}
+	want := map[string]any{"q": float64(1)}
+	if !reflect.DeepEqual(tu.Input, want) {
+		t.Fatalf("input mismatch:\n got: %#v\nwant: %#v", tu.Input, want)
+	}
+}
+
+func TestBuildMessagesFromEvents_AcceptsLegacyThinkingBytes(t *testing.T) {
+	events := []memory.Event{
+		{
+			Type:      memory.EventThinking,
+			Timestamp: time.Now(),
+			Data: map[string]any{
+				"text":          "reasoning",
+				"signature":     "sig",
+				"redacted":      []byte("opaque"),
+				"content_index": 0,
+				"final":         true,
+			},
+		},
+		memory.NewEvent(time.Now(), memory.AssistantMessageData{
+			Message: "done",
+		}, nil),
+	}
+
+	msgs := BuildMessagesFromEvents(events)
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	if len(msgs[0].Parts) != 2 {
+		t.Fatalf("expected 2 assistant parts, got %d", len(msgs[0].Parts))
+	}
+	part, ok := msgs[0].Parts[0].(model.ThinkingPart)
+	if !ok {
+		t.Fatalf("expected ThinkingPart, got %T", msgs[0].Parts[0])
+	}
+	if !reflect.DeepEqual(part.Redacted, []byte("opaque")) {
+		t.Fatalf("redacted mismatch:\n got: %#v\nwant: %#v", part.Redacted, []byte("opaque"))
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -21,6 +22,7 @@ import (
 type recordingRunlog struct {
 	events []*runlog.Event
 	err    error
+	delay  time.Duration
 }
 
 func (r *recordingRunlog) Append(_ context.Context, e *runlog.Event) error {
@@ -29,6 +31,9 @@ func (r *recordingRunlog) Append(_ context.Context, e *runlog.Event) error {
 	}
 	if e == nil {
 		return errors.New("event is nil")
+	}
+	if r.delay > 0 {
+		time.Sleep(r.delay)
 	}
 	r.events = append(r.events, e)
 	return nil
@@ -128,6 +133,41 @@ func TestHookActivityAppendFailureAbortsPublish(t *testing.T) {
 	err = rt.hookActivity(context.Background(), input)
 	require.ErrorIs(t, err, appendErr)
 	require.Nil(t, published)
+}
+
+func TestHookActivityRecordsHeartbeatsWhenConfigured(t *testing.T) {
+	t.Parallel()
+
+	recorder := &heartbeatRecorder{}
+	rl := &recordingRunlog{delay: 10 * time.Millisecond}
+	store := sessioninmem.New()
+	rt := &Runtime{
+		RunEventStore: rl,
+		Bus:           hooks.NewBus(),
+		SessionStore:  store,
+	}
+
+	now := time.Now().UTC()
+	_, err := store.CreateSession(context.Background(), "sess-1", now)
+	require.NoError(t, err)
+	require.NoError(t, store.UpsertRun(context.Background(), session.RunMeta{
+		AgentID:   "svc.agent",
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		Status:    session.RunStatusPending,
+		StartedAt: now,
+		UpdatedAt: now,
+	}))
+
+	input, err := hooks.EncodeToHookInput(hooks.NewPlannerNoteEvent("run-1", "svc.agent", "sess-1", "note", nil), "turn-1")
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	ctx = engine.WithActivityHeartbeatRecorder(ctx, recorder)
+	ctx = engine.WithActivityHeartbeatTimeout(ctx, 3*time.Millisecond)
+
+	require.NoError(t, rt.hookActivity(ctx, input))
+	require.GreaterOrEqual(t, recorder.Count(), 1)
 }
 
 func TestHookActivity_EnrichesToolCallScheduledDisplayHintInRunlog(t *testing.T) {

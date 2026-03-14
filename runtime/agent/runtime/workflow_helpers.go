@@ -107,7 +107,7 @@ func (r *Runtime) executeGroupedToolCalls(
 	for i := range grouped {
 		opt := toolOpts
 		if timeouts[i] > 0 {
-			opt.Timeout = timeouts[i]
+			opt.StartToCloseTimeout = timeouts[i]
 		}
 		sub, timedOut, err := r.executeToolCalls(wfCtx, reg.ExecuteToolActivity, opt, agentID, &base.RunContext, base.Messages, grouped[i], expectedChildren, parentTracker, finishBy)
 		if err != nil {

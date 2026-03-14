@@ -230,16 +230,21 @@ func (e *toolBatchExec) publishToolCallScheduled(ctx context.Context, call plann
 
 func computeToolActivityOptions(wfCtx engine.WorkflowContext, base engine.ActivityOptions, finishBy time.Time) engine.ActivityOptions {
 	callOpts := base
-	timeout := base.Timeout
+	startToClose := base.StartToCloseTimeout
+	scheduleToStart := base.ScheduleToStartTimeout
 	if !finishBy.IsZero() {
 		now := wfCtx.Now()
 		if rem := finishBy.Sub(now); rem > 0 {
-			if timeout == 0 || timeout > rem {
-				timeout = rem
+			if startToClose == 0 || startToClose > rem {
+				startToClose = rem
+			}
+			if scheduleToStart == 0 || scheduleToStart > rem {
+				scheduleToStart = rem
 			}
 		}
 	}
-	callOpts.Timeout = timeout
+	callOpts.StartToCloseTimeout = startToClose
+	callOpts.ScheduleToStartTimeout = scheduleToStart
 	return callOpts
 }
 

@@ -459,9 +459,9 @@ func (w *wfCtx) PublishHook(ctx context.Context, call engine.HookActivityCall) e
 	if !ok {
 		return fmt.Errorf("hook activity %q not registered", call.Name)
 	}
-	timeout := call.Options.Timeout
+	timeout := call.Options.StartToCloseTimeout
 	if timeout == 0 {
-		timeout = def.opts.Timeout
+		timeout = def.opts.StartToCloseTimeout
 	}
 	actCtx, cancel := withOptionalTimeout(ctx, timeout)
 	defer cancel()
@@ -481,9 +481,9 @@ func (w *wfCtx) ExecutePlannerActivity(ctx context.Context, call engine.PlannerA
 	if !ok {
 		return nil, fmt.Errorf("planner activity %q not registered", call.Name)
 	}
-	timeout := call.Options.Timeout
+	timeout := call.Options.StartToCloseTimeout
 	if timeout == 0 {
-		timeout = def.opts.Timeout
+		timeout = def.opts.StartToCloseTimeout
 	}
 	actCtx, cancel := withOptionalTimeout(ctx, timeout)
 	defer cancel()
@@ -515,9 +515,9 @@ func (w *wfCtx) ExecuteToolActivityAsync(ctx context.Context, call engine.ToolAc
 	fut := &future[*api.ToolOutput]{ready: make(chan struct{})}
 	go func() {
 		defer close(fut.ready)
-		timeout := call.Options.Timeout
+		timeout := call.Options.StartToCloseTimeout
 		if timeout == 0 {
-			timeout = def.opts.Timeout
+			timeout = def.opts.StartToCloseTimeout
 		}
 		actCtx, cancel := withOptionalTimeout(ctx, timeout)
 		defer cancel()

@@ -17,10 +17,8 @@ import (
 	"fmt"
 	"strings"
 
-	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/memory"
 	"goa.design/goa-ai/runtime/agent/model"
-	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 type (
@@ -235,89 +233,54 @@ func BuildMessagesFromEvents(events []memory.Event) []*model.Message {
 	for _, e := range events {
 		switch e.Type {
 		case memory.EventAssistantMessage:
-			if m, ok := e.Data.(map[string]any); ok {
-				if s, ok2 := m["message"].(string); ok2 && s != "" {
-					l.AppendText(s)
-				}
+			data, err := memory.DecodeAssistantMessageData(e)
+			if err != nil {
+				panic(fmt.Sprintf("transcript: decode %s event: %v", e.Type, err))
+			}
+			if data.Message != "" {
+				l.AppendText(data.Message)
 			}
 		case memory.EventToolCall:
-			if m, ok := e.Data.(map[string]any); ok {
-				var id string
-				if v, ok2 := m["tool_call_id"].(string); ok2 {
-					id = v
-				}
-				var name string
-				if v, ok2 := m["tool_name"].(string); ok2 {
-					name = v
-				}
-				var payload any
-				if v, ok2 := m["payload"]; ok2 {
-					payload = v
-				}
-				if id != "" && name != "" {
-					l.DeclareToolUse(id, name, payload)
-					toolOrder = append(toolOrder, id)
-				}
+			data, err := memory.DecodeToolCallData(e)
+			if err != nil {
+				panic(fmt.Sprintf("transcript: decode %s event: %v", e.Type, err))
 			}
+			payload, err := data.Input()
+			if err != nil {
+				panic(fmt.Sprintf("transcript: decode tool_call %q payload: %v", data.ToolCallID, err))
+			}
+			l.DeclareToolUse(data.ToolCallID, string(data.ToolName), payload)
+			toolOrder = append(toolOrder, data.ToolCallID)
 		case memory.EventToolResult:
-			if m, ok := e.Data.(map[string]any); ok {
-				var id string
-				if v, ok2 := m["tool_call_id"].(string); ok2 {
-					id = v
-				}
-				var resultJSON rawjson.Message
-				if v, ok2 := m["result_json"].(string); ok2 && v != "" {
-					resultJSON = rawjson.Message(v)
-				}
-				var preview string
-				if v, ok2 := m["preview"].(string); ok2 {
-					preview = v
-				}
-				var bounds *agent.Bounds
-				if v, ok2 := m["bounds"].(*agent.Bounds); ok2 {
-					bounds = v
-				}
-				var errorMessage string
-				if v, ok2 := m["error_message"].(string); ok2 {
-					errorMessage = v
-				}
-				content, err := ProjectToolResultContent(resultJSON, bounds, preview, errorMessage)
-				if err != nil {
-					panic(fmt.Sprintf("transcript: reconstruct tool_result %q: %v", id, err))
-				}
-				isErr := errorMessage != ""
-				if id != "" {
-					pendingResults = append(pendingResults, ToolResultSpec{
-						ToolUseID: id,
-						Content:   content,
-						IsError:   isErr,
-					})
-				}
+			data, err := memory.DecodeToolResultData(e)
+			if err != nil {
+				panic(fmt.Sprintf("transcript: decode %s event: %v", e.Type, err))
 			}
+			content, err := ProjectToolResultContent(data.ResultJSON, data.Bounds, data.Preview, data.ErrorMessage)
+			if err != nil {
+				panic(fmt.Sprintf("transcript: reconstruct tool_result %q: %v", data.ToolCallID, err))
+			}
+			pendingResults = append(pendingResults, ToolResultSpec{
+				ToolUseID: data.ToolCallID,
+				Content:   content,
+				IsError:   data.ErrorMessage != "",
+			})
 		case memory.EventPlannerNote:
 			// Planner notes are not part of provider messages; ignore here.
 		case memory.EventUserMessage:
 			// User messages are not stored today by the runtime; if present, ignore here.
 		case memory.EventThinking:
-			if m, ok := e.Data.(map[string]any); ok {
-				var tp ThinkingPart
-				if v, ok2 := m["text"].(string); ok2 && v != "" {
-					tp.Text = v
-				}
-				if v, ok2 := m["signature"].(string); ok2 && v != "" {
-					tp.Signature = v
-				}
-				if v, ok2 := m["redacted"].([]byte); ok2 && len(v) > 0 {
-					tp.Redacted = append([]byte(nil), v...)
-				}
-				if v, ok2 := m["content_index"].(int); ok2 {
-					tp.Index = v
-				}
-				if v, ok2 := m["final"].(bool); ok2 {
-					tp.Final = v
-				}
-				l.AppendThinking(tp)
+			data, err := memory.DecodeThinkingData(e)
+			if err != nil {
+				panic(fmt.Sprintf("transcript: decode %s event: %v", e.Type, err))
 			}
+			l.AppendThinking(ThinkingPart{
+				Text:      data.Text,
+				Signature: data.Signature,
+				Redacted:  data.Redacted,
+				Index:     data.ContentIndex,
+				Final:     data.Final,
+			})
 		}
 	}
 	if len(pendingResults) > 0 {

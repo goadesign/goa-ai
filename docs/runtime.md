@@ -155,7 +155,7 @@ rt := runtime.New(
     runtime.WithLogger(logger),          // Structured logging
     runtime.WithMetrics(metrics),        // Counter/histogram recording
     runtime.WithTracer(tracer),          // Distributed tracing
-    runtime.WithWorker(agentID, cfg),    // Per-agent worker config
+    runtime.WithWorker(agentID, cfg),    // Per-agent queue placement
 )
 ```
 
@@ -170,6 +170,12 @@ When options are omitted, the runtime uses sensible defaults:
 | Policy | None (all tools allowed, caps from agent registration) |
 | Hooks | In-process bus |
 | Logger/Metrics/Tracer | No-op implementations |
+
+`runtime.WithWorker(...)` is intentionally narrow: it controls agent placement
+(`Queue`) only. Semantic planner and tool attempt budgets come from the DSL
+(`RunPolicy.Timing`) or per-run overrides (`runtime.WithTiming(...)`). If you
+use the Temporal engine and need queue-wait or liveness tuning, configure those
+mechanics on `temporal.Options.ActivityDefaults` when constructing the engine.
 
 ### Prompt Registry and Overrides
 
@@ -1400,6 +1406,11 @@ client.Run(ctx, "session-1", msgs,
 )
 ```
 
+`Timing.Plan` and `Timing.Tools` are semantic attempt budgets. They bound how
+long a healthy planner or tool attempt may run once execution starts. Queue-wait
+timeouts and heartbeat-based liveness detection are engine-specific concerns and
+belong in the engine adapter, not the generic runtime API.
+
 ---
 
 ## Introspection
@@ -1479,8 +1490,27 @@ eng, _ := temporal.New(temporal.Options{
     WorkerOptions: temporal.WorkerOptions{
         TaskQueue: "orchestrator.chat",
     },
+    ActivityDefaults: temporal.ActivityDefaults{
+        Planner: temporal.ActivityTimeoutDefaults{
+            QueueWaitTimeout: 30 * time.Second,
+            LivenessTimeout:  20 * time.Second,
+        },
+        Tool: temporal.ActivityTimeoutDefaults{
+            QueueWaitTimeout: 2 * time.Minute,
+            LivenessTimeout:  20 * time.Second,
+        },
+    },
 })
 ```
+
+In this split:
+
+- `RunPolicy.Timing.Plan` / `runtime.WithTiming(...).Plan` set the planner
+  attempt budget.
+- `RunPolicy.Timing.Tools` / `runtime.WithTiming(...).Tools` set the tool
+  attempt budget.
+- `temporal.Options.ActivityDefaults` sets Temporal-only queue-wait and
+  heartbeat liveness behavior.
 
 **In-memory** — Fast iteration, no durability:
 

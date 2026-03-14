@@ -81,6 +81,8 @@ const (
 	RunStatusRunning RunStatus = "running"
 	// RunStatusCompleted indicates the workflow finished successfully.
 	RunStatusCompleted RunStatus = "completed"
+	// RunStatusTimedOut indicates the workflow exceeded its run deadline.
+	RunStatusTimedOut RunStatus = "timed_out"
 	// RunStatusFailed indicates the workflow failed permanently.
 	RunStatusFailed RunStatus = "failed"
 	// RunStatusCanceled indicates the workflow was canceled externally.
@@ -138,6 +140,17 @@ type (
 		// and optional runID. The payload is engine-specific and must be
 		// serializable by the engine client.
 		SignalByID(ctx context.Context, workflowID, runID, name string, payload any) error
+	}
+
+	// CompletionQuerier allows runtimes to recover the same terminal output/error
+	// that WorkflowHandle.Wait would have returned, but by run identifier after a
+	// restart or detached starter. Callers should query lifecycle first and invoke
+	// this only once the engine reports a terminal status, because implementations
+	// may otherwise block waiting for completion.
+	CompletionQuerier interface {
+		// QueryRunCompletion returns the workflow output for successful runs or the
+		// terminal error for failed/timed-out/canceled runs.
+		QueryRunCompletion(ctx context.Context, runID string) (*api.RunOutput, error)
 	}
 
 	// Canceler provides workflow cancellation by workflow ID without requiring
@@ -334,9 +347,17 @@ type (
 		// RetryPolicy controls retry behavior for this activity. If zero-valued, the
 		// engine uses its default retry policy.
 		RetryPolicy RetryPolicy
-		// Timeout bounds the total activity execution time, including retries. Zero
-		// means no timeout (not recommended for production).
-		Timeout time.Duration
+		// ScheduleToStartTimeout bounds how long the activity may wait in the task
+		// queue before a worker starts the attempt. Zero means leave queue-wait
+		// unspecified here and let the engine adapter apply its own defaults.
+		ScheduleToStartTimeout time.Duration
+		// StartToCloseTimeout bounds one activity attempt once a worker has started
+		// executing it. This is the primary "healthy attempt" budget for planner and
+		// tool work. Zero means use the engine default.
+		StartToCloseTimeout time.Duration
+		// HeartbeatTimeout bounds the maximum gap between heartbeats emitted by the
+		// running activity. Zero disables heartbeat-based liveness detection.
+		HeartbeatTimeout time.Duration
 	}
 
 	// HookActivityCall describes a single invocation of the runtime hook publishing

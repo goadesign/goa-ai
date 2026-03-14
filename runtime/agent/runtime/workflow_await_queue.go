@@ -151,7 +151,7 @@ func (r *Runtime) waitAwaitConfirmation(
 		call.ToolCallID = generateDeterministicToolCallID(base.RunContext.RunID, call.TurnID, base.RunContext.Attempt, call.Name, 0)
 	}
 
-	grouped, timeouts := r.groupToolCallsByTimeout([]planner.ToolRequest{call}, input, toolOpts.Timeout)
+	grouped, timeouts := r.groupToolCallsByTimeout([]planner.ToolRequest{call}, input, toolOpts.StartToCloseTimeout)
 	finishBy := time.Time{}
 	if !deadlines.Hard.IsZero() {
 		finishBy = deadlines.Hard.Add(-deadlines.finalizeReserve())

@@ -4,6 +4,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"testing"
 	"text/template"
 	"time"
@@ -242,7 +243,7 @@ func TestOneShotRunRejectsSessionSearchAttribute(t *testing.T) {
 	require.Contains(t, err.Error(), "SessionID is not allowed for one-shot runs")
 }
 
-func TestStartRunCapsTimeoutFromPolicyBudget(t *testing.T) {
+func TestStartRunUsesPolicyBudgetForRunTimeout(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
 		Engine:       eng,
@@ -262,7 +263,7 @@ func TestStartRunCapsTimeoutFromPolicyBudget(t *testing.T) {
 					FinalizerGrace: 10 * time.Second,
 				},
 				ResumeActivityOptions: engine.ActivityOptions{
-					Timeout: 20 * time.Second,
+					StartToCloseTimeout: 20 * time.Second,
 				},
 			},
 		},
@@ -272,7 +273,7 @@ func TestStartRunCapsTimeoutFromPolicyBudget(t *testing.T) {
 	require.NoError(t, err)
 	_, err = client.Start(context.Background(), "sess-1", nil)
 	require.NoError(t, err)
-	require.Equal(t, 15*time.Minute, eng.last.RunTimeout)
+	require.Equal(t, 20*time.Minute+50*time.Second, eng.last.RunTimeout)
 }
 
 func TestStartRunUsesDefaultTimeoutWithoutPolicyBudget(t *testing.T) {
@@ -299,6 +300,74 @@ func TestStartRunUsesDefaultTimeoutWithoutPolicyBudget(t *testing.T) {
 	_, err = client.Start(context.Background(), "sess-1", nil)
 	require.NoError(t, err)
 	require.Equal(t, 15*time.Minute, eng.last.RunTimeout)
+}
+
+func TestWorkerConfigOnlyExposesQueuePlacement(t *testing.T) {
+	t.Parallel()
+
+	typ := reflect.TypeOf(WorkerConfig{})
+	_, hasPlan := typ.FieldByName("PlanActivityOptions")
+	_, hasResume := typ.FieldByName("ResumeActivityOptions")
+	_, hasTool := typ.FieldByName("ExecuteToolActivityOptions")
+
+	require.False(t, hasPlan)
+	require.False(t, hasResume)
+	require.False(t, hasTool)
+}
+
+func TestRegisterAgentAppliesWorkerQueueOverride(t *testing.T) {
+	eng := &stubEngine{}
+	rt := New(
+		WithEngine(eng),
+		WithWorker("service.agent", WorkerConfig{
+			Queue: "custom.queue",
+		}),
+	)
+
+	err := rt.RegisterAgent(context.Background(), AgentRegistration{
+		ID:      "service.agent",
+		Planner: &stubPlanner{},
+		Workflow: engine.WorkflowDefinition{
+			Name:      "service.workflow",
+			TaskQueue: "service.queue",
+			Handler:   rt.ExecuteWorkflow,
+		},
+		PlanActivityName: "service.agent.plan",
+		PlanActivityOptions: engine.ActivityOptions{
+			StartToCloseTimeout: time.Minute,
+		},
+		ResumeActivityName: "service.agent.resume",
+		ResumeActivityOptions: engine.ActivityOptions{
+			StartToCloseTimeout: time.Minute,
+		},
+		ExecuteToolActivity: "service.agent.executetool",
+		ExecuteToolActivityOptions: engine.ActivityOptions{
+			StartToCloseTimeout: 2 * time.Minute,
+			RetryPolicy: engine.RetryPolicy{
+				MaxAttempts: 1,
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	planOpts := eng.registeredPlannerActivityOptions["service.agent.plan"]
+	require.Equal(t, "custom.queue", planOpts.Queue)
+	require.Equal(t, time.Minute, planOpts.StartToCloseTimeout)
+	require.Zero(t, planOpts.ScheduleToStartTimeout)
+	require.Zero(t, planOpts.HeartbeatTimeout)
+
+	resumeOpts := eng.registeredPlannerActivityOptions["service.agent.resume"]
+	require.Equal(t, "custom.queue", resumeOpts.Queue)
+	require.Equal(t, time.Minute, resumeOpts.StartToCloseTimeout)
+	require.Zero(t, resumeOpts.ScheduleToStartTimeout)
+	require.Zero(t, resumeOpts.HeartbeatTimeout)
+
+	executeOpts := eng.registeredExecuteActivityOptions["service.agent.executetool"]
+	require.Equal(t, "custom.queue", executeOpts.Queue)
+	require.Equal(t, 2*time.Minute, executeOpts.StartToCloseTimeout)
+	require.Zero(t, executeOpts.ScheduleToStartTimeout)
+	require.Zero(t, executeOpts.HeartbeatTimeout)
+	require.Equal(t, 1, executeOpts.RetryPolicy.MaxAttempts)
 }
 
 func TestRunOptionsPropagateToStartRequest(t *testing.T) {

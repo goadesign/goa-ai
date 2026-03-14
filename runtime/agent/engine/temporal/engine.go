@@ -10,8 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
+	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
+	workflowpb "go.temporal.io/api/workflow/v1"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	temporalotel "go.temporal.io/sdk/contrib/opentelemetry"
@@ -49,6 +52,13 @@ type Options struct {
 	// TaskQueue must be set and defines the default queue used when workflow/activity
 	// definitions omit a queue. A worker is created per unique task queue.
 	WorkerOptions WorkerOptions
+
+	// ActivityDefaults configures Temporal-owned execution mechanics for each
+	// activity class. These defaults apply only when the runtime registration did
+	// not already specify the corresponding engine.ActivityOptions field, so
+	// semantic attempt budgets remain owned by the runtime while queue-wait and
+	// liveness stay adapter-specific.
+	ActivityDefaults ActivityDefaults
 
 	// Instrumentation toggles OTEL tracing and metrics for the Temporal client and workers.
 	// Tracing and metrics are enabled by default. Set DisableTracing or DisableMetrics to
@@ -92,6 +102,30 @@ type WorkerOptions struct {
 	// worker behavior: concurrency limits, worker identity, custom interceptors, etc.
 	// Refer to Temporal SDK documentation for available options.
 	Options worker.Options
+}
+
+// ActivityDefaults groups Temporal-specific defaults for each registered
+// activity class. Planner defaults apply to both PlanStart and PlanResume
+// activities because both represent planner attempts from the runtime's point
+// of view.
+type ActivityDefaults struct {
+	// Hook configures workflow hook publishing activities.
+	Hook ActivityTimeoutDefaults
+	// Planner configures PlanStart and PlanResume activities.
+	Planner ActivityTimeoutDefaults
+	// Tool configures ExecuteTool activities.
+	Tool ActivityTimeoutDefaults
+}
+
+// ActivityTimeoutDefaults configures the Temporal-only mechanics that sit
+// around a runtime-owned activity attempt budget.
+type ActivityTimeoutDefaults struct {
+	// QueueWaitTimeout bounds how long a scheduled activity may wait for a worker
+	// before Temporal times out the task.
+	QueueWaitTimeout time.Duration
+	// LivenessTimeout bounds the maximum gap between runtime-emitted heartbeats
+	// before Temporal concludes the worker attempt is no longer healthy.
+	LivenessTimeout time.Duration
 }
 
 // InstrumentationOptions configures how the engine wires OpenTelemetry (OTEL)
@@ -143,6 +177,7 @@ type Engine struct {
 	defaultQueue      string
 	workerOpts        worker.Options
 	autoStartDisabled bool
+	activityDefaults  ActivityDefaults
 
 	logger  telemetry.Logger
 	metrics telemetry.Metrics
@@ -204,6 +239,7 @@ func New(opts Options) (*Engine, error) {
 		defaultQueue:      defaultQueue,
 		workerOpts:        workerOpts,
 		autoStartDisabled: opts.DisableWorkerAutoStart,
+		activityDefaults:  opts.ActivityDefaults,
 		logger:            logger,
 		metrics:           metrics,
 		tracer:            tracer,
@@ -257,6 +293,7 @@ func (e *Engine) RegisterWorkflow(_ context.Context, def engine.WorkflowDefiniti
 // Hook activities publish workflow-emitted hook events outside of deterministic
 // workflow code. The activity accepts *api.HookActivityInput and returns an error.
 func (e *Engine) RegisterHookActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.HookActivityInput) error) error {
+	opts = e.applyActivityClassDefaults(activityKindHook, opts)
 	wrapped := func(ctx context.Context, in *api.HookActivityInput) error {
 		return fn(e.injectWorkflowContextIntoActivity(ctx), in)
 	}
@@ -276,6 +313,7 @@ func (e *Engine) RegisterHookActivity(_ context.Context, name string, opts engin
 //
 // Thread-safe: Safe to call concurrently with other Register* methods.
 func (e *Engine) RegisterPlannerActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.PlanActivityInput) (*api.PlanActivityOutput, error)) error {
+	opts = e.applyActivityClassDefaults(activityKindPlanner, opts)
 	// Wrap to inject originating WorkflowContext into activity context so runtime code
 	// can start child workflows (agent-as-tool) with engine-owned context.
 	wrapped := func(ctx context.Context, in *api.PlanActivityInput) (*api.PlanActivityOutput, error) {
@@ -295,6 +333,7 @@ func (e *Engine) RegisterPlannerActivity(_ context.Context, name string, opts en
 //
 // Thread-safe: Safe to call concurrently with other Register* methods.
 func (e *Engine) RegisterExecuteToolActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.ToolInput) (*api.ToolOutput, error)) error {
+	opts = e.applyActivityClassDefaults(activityKindTool, opts)
 	// Wrap to inject originating WorkflowContext into activity context so runtime code
 	// can start child workflows (agent-as-tool) with engine-owned context.
 	wrapped := func(ctx context.Context, in *api.ToolInput) (*api.ToolOutput, error) {
@@ -400,12 +439,59 @@ func (e *Engine) Close() error {
 func (e *Engine) injectWorkflowContextIntoActivity(ctx context.Context) context.Context {
 	info := activity.GetInfo(ctx)
 	with := engine.WithActivityContext(ctx)
+	with = engine.WithActivityHeartbeatRecorder(with, temporalHeartbeatRecorder{ctx: ctx})
+	with = engine.WithActivityHeartbeatTimeout(with, info.HeartbeatTimeout)
 	if v, ok := e.workflowContexts.Load(info.WorkflowExecution.RunID); ok {
 		if wf, ok2 := v.(engine.WorkflowContext); ok2 {
 			with = engine.WithWorkflowContext(with, wf)
 		}
 	}
 	return with
+}
+
+type temporalHeartbeatRecorder struct {
+	ctx context.Context
+}
+
+func (r temporalHeartbeatRecorder) RecordHeartbeat(details ...any) {
+	activity.RecordHeartbeat(r.ctx, details...)
+}
+
+type activityKind string
+
+const (
+	activityKindHook    activityKind = "hook"
+	activityKindPlanner activityKind = "planner"
+	activityKindTool    activityKind = "tool"
+)
+
+// applyActivityClassDefaults overlays Temporal-owned queue-wait and liveness
+// defaults onto a runtime-owned registration when those mechanics were left
+// unspecified by the caller.
+func (e *Engine) applyActivityClassDefaults(kind activityKind, opts engine.ActivityOptions) engine.ActivityOptions {
+	defaults := e.activityClassDefaultsFor(kind)
+	if opts.ScheduleToStartTimeout == 0 {
+		opts.ScheduleToStartTimeout = defaults.QueueWaitTimeout
+	}
+	if opts.HeartbeatTimeout == 0 {
+		opts.HeartbeatTimeout = defaults.LivenessTimeout
+	}
+	return opts
+}
+
+// activityClassDefaultsFor returns the Temporal adapter defaults for the given
+// activity class.
+func (e *Engine) activityClassDefaultsFor(kind activityKind) ActivityTimeoutDefaults {
+	switch kind {
+	case activityKindHook:
+		return e.activityDefaults.Hook
+	case activityKindPlanner:
+		return e.activityDefaults.Planner
+	case activityKindTool:
+		return e.activityDefaults.Tool
+	default:
+		return ActivityTimeoutDefaults{}
+	}
 }
 
 // registerActivityWithCtx registers an activity function on the appropriate queue,
@@ -484,20 +570,60 @@ func (e *Engine) QueryRunStatus(ctx context.Context, runID string) (engine.RunSt
 	}
 	desc, err := e.client.DescribeWorkflowExecution(ctx, runID, "")
 	if err != nil {
-		// Treat failures to describe as a missing workflow for the purposes of
-		// coarse-grained status. Callers surface this as run.ErrNotFound.
-		return "", engine.ErrWorkflowNotFound
+		return "", mapDescribeWorkflowExecutionError(err)
 	}
-	info := desc.GetWorkflowExecutionInfo()
+	return queryRunStatusFromInfo(desc.GetWorkflowExecutionInfo()), nil
+}
+
+// QueryRunCompletion returns the terminal output/error for a workflow by
+// workflow identifier so restart-time repair can preserve the original failure.
+func (e *Engine) QueryRunCompletion(ctx context.Context, runID string) (*api.RunOutput, error) {
+	if runID == "" {
+		return nil, fmt.Errorf("run id is required")
+	}
+	var out *api.RunOutput
+	if err := e.client.GetWorkflow(ctx, runID, "").Get(ctx, &out); err != nil {
+		var notFound *serviceerror.NotFound
+		if errors.As(err, &notFound) {
+			return nil, engine.ErrWorkflowNotFound
+		}
+		return nil, err
+	}
+	return out, nil
+}
+
+// queryRunStatusFromInfo maps Temporal execution info into the engine's coarse
+// lifecycle contract. Closed executions retain Temporal's terminal outcome so
+// cross-process repair can synthesize the correct RunCompleted event.
+func queryRunStatusFromInfo(info *workflowpb.WorkflowExecutionInfo) engine.RunStatus {
 	if info == nil {
-		return engine.RunStatusPending, nil
+		return engine.RunStatusPending
 	}
-	// When CloseTime is unset, the execution is still running. Any non-nil
-	// CloseTime indicates a terminal state (completed/failed/canceled/etc.).
 	if info.GetCloseTime() == nil {
-		return engine.RunStatusRunning, nil
+		return engine.RunStatusRunning
 	}
-	return engine.RunStatusCompleted, nil
+	switch info.GetStatus() {
+	case enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED:
+		return engine.RunStatusCompleted
+	case enumspb.WORKFLOW_EXECUTION_STATUS_CANCELED:
+		return engine.RunStatusCanceled
+	case enumspb.WORKFLOW_EXECUTION_STATUS_TIMED_OUT:
+		return engine.RunStatusTimedOut
+	case enumspb.WORKFLOW_EXECUTION_STATUS_FAILED,
+		enumspb.WORKFLOW_EXECUTION_STATUS_TERMINATED,
+		enumspb.WORKFLOW_EXECUTION_STATUS_CONTINUED_AS_NEW:
+		return engine.RunStatusFailed
+	default:
+		return engine.RunStatusFailed
+	}
+}
+
+func mapDescribeWorkflowExecutionError(err error) error {
+	var notFound *serviceerror.NotFound
+	if errors.As(err, &notFound) {
+		return engine.ErrWorkflowNotFound
+	}
+	return err
 }
 
 func (e *Engine) ensureWorkersStarted() {

@@ -19,7 +19,20 @@ import (
 	"go.temporal.io/sdk/temporal"
 )
 
+const providerErrorApplicationType = "goa_ai.provider_error"
+
 type (
+	providerErrorEnvelope struct {
+		Provider   string
+		Operation  string
+		HTTPStatus int
+		Kind       string
+		Code       string
+		Message    string
+		RequestID  string
+		Retryable  bool
+	}
+
 	// Event is the interface all hook events must implement. The runtime publishes
 	// events through the Bus, and subscribers receive them via HandleEvent.
 	// Concrete event types carry typed payloads for each lifecycle phase.
@@ -561,8 +574,7 @@ func NewRunCompletedEvent(runID string, agentID agent.Ident, sessionID, status s
 	if err == nil {
 		return out
 	}
-	var pe *model.ProviderError
-	if errors.As(err, &pe) {
+	if pe, ok := providerErrorFromError(err); ok {
 		out.ErrorProvider = pe.Provider()
 		out.ErrorOperation = pe.Operation()
 		out.ErrorKind = string(pe.Kind())
@@ -583,6 +595,33 @@ func NewRunCompletedEvent(runID string, agentID agent.Ident, sessionID, status s
 	out.ErrorKind, out.PublicError = classifyNonProviderFailure(err)
 	out.Retryable = true // Non-provider failures are always retryable.
 	return out
+}
+
+// WrapRunCompletionError encodes provider failures into a Temporal application
+// error envelope so Wait()/Get()-based terminal paths can recover structured
+// provider metadata after the workflow engine serializes the error.
+func WrapRunCompletionError(err error) error {
+	if _, alreadyWrapped := providerErrorFromTemporalEnvelope(err); alreadyWrapped {
+		return err
+	}
+	pe, ok := model.AsProviderError(err)
+	if !ok {
+		return err
+	}
+	envelope := providerErrorEnvelope{
+		Provider:   pe.Provider(),
+		Operation:  pe.Operation(),
+		HTTPStatus: pe.HTTPStatus(),
+		Kind:       string(pe.Kind()),
+		Code:       pe.Code(),
+		Message:    pe.Message(),
+		RequestID:  pe.RequestID(),
+		Retryable:  pe.Retryable(),
+	}
+	if pe.Retryable() {
+		return temporal.NewApplicationErrorWithCause(pe.Error(), providerErrorApplicationType, err, envelope)
+	}
+	return temporal.NewNonRetryableApplicationError(pe.Error(), providerErrorApplicationType, err, envelope)
 }
 
 // NewChildRunLinkedEvent constructs a ChildRunLinkedEvent for the given parent
@@ -931,6 +970,42 @@ func classifyNonProviderFailure(err error) (kind, publicError string) {
 		return ErrorKindTimeout, PublicErrorTimeout
 	}
 	return ErrorKindInternal, PublicErrorInternal
+}
+
+func providerErrorFromError(err error) (*model.ProviderError, bool) {
+	pe, ok := model.AsProviderError(err)
+	if ok {
+		return pe, true
+	}
+	return providerErrorFromTemporalEnvelope(err)
+}
+
+func providerErrorFromTemporalEnvelope(err error) (*model.ProviderError, bool) {
+	var appErr *temporal.ApplicationError
+	if !errors.As(err, &appErr) {
+		return nil, false
+	}
+	if appErr.Type() != providerErrorApplicationType {
+		return nil, false
+	}
+	var envelope providerErrorEnvelope
+	if appErr.Details(&envelope) != nil {
+		return nil, false
+	}
+	if envelope.Provider == "" || envelope.Kind == "" {
+		return nil, false
+	}
+	return model.NewProviderError(
+		envelope.Provider,
+		envelope.Operation,
+		envelope.HTTPStatus,
+		model.ProviderErrorKind(envelope.Kind),
+		envelope.Code,
+		envelope.Message,
+		envelope.RequestID,
+		envelope.Retryable,
+		appErr,
+	), true
 }
 
 func providerPublicError(pe *model.ProviderError) string {
