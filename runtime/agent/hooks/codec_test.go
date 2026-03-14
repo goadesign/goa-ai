@@ -11,10 +11,13 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+const (
+	testRunID     = "run-1"
+	testSessionID = "session-1"
+)
+
 func TestDecodeFromHookInput_ToolResultReceivedPreservesServerDataBytes(t *testing.T) {
-	runID := "run-1"
 	agentID := agent.Ident("agent-1")
-	sessionID := "session-1"
 	toolName := tools.Ident("svc.tools.lookup")
 	toolCallID := "call-1"
 
@@ -22,9 +25,9 @@ func TestDecodeFromHookInput_ToolResultReceivedPreservesServerDataBytes(t *testi
 	serverData := rawjson.Message([]byte(`[{"kind":"example.topology","data":{"hello":"world","n":1}}]`))
 
 	ev := NewToolResultReceivedEvent(
-		runID,
+		testRunID,
 		agentID,
-		sessionID,
+		testSessionID,
 		toolName,
 		toolCallID,
 		"",
@@ -53,18 +56,16 @@ func TestDecodeFromHookInput_ToolResultReceivedPreservesServerDataBytes(t *testi
 }
 
 func TestDecodeFromHookInput_PromptRenderedRoundTrip(t *testing.T) {
-	runID := "run-1"
 	agentID := agent.Ident("agent-1")
-	sessionID := "session-1"
 
 	ev := NewPromptRenderedEvent(
-		runID,
+		testRunID,
 		agentID,
-		sessionID,
+		testSessionID,
 		"example.agent.system",
 		"v3",
 		prompt.Scope{
-			SessionID: sessionID,
+			SessionID: testSessionID,
 			Labels: map[string]string{
 				"account": "acme",
 				"region":  "west",
@@ -80,13 +81,36 @@ func TestDecodeFromHookInput_PromptRenderedRoundTrip(t *testing.T) {
 
 	got, ok := decoded.(*PromptRenderedEvent)
 	require.True(t, ok)
-	require.Equal(t, runID, got.RunID())
+	require.Equal(t, testRunID, got.RunID())
 	require.Equal(t, string(agentID), got.AgentID())
-	require.Equal(t, sessionID, got.SessionID())
+	require.Equal(t, testSessionID, got.SessionID())
 	require.Equal(t, "turn-1", got.TurnID())
 	require.Equal(t, prompt.Ident("example.agent.system"), got.PromptID)
 	require.Equal(t, "v3", got.Version)
-	require.Equal(t, sessionID, got.Scope.SessionID)
+	require.Equal(t, testSessionID, got.Scope.SessionID)
 	require.Equal(t, "acme", got.Scope.Labels["account"])
 	require.Equal(t, "west", got.Scope.Labels["region"])
+}
+
+func TestEncodeToHookInputPreservesEventIdentity(t *testing.T) {
+	agentID := agent.Ident("agent-1")
+
+	ev := NewPromptRenderedEvent(
+		testRunID,
+		agentID,
+		testSessionID,
+		"example.agent.system",
+		"v3",
+		prompt.Scope{SessionID: testSessionID},
+	)
+
+	in, err := EncodeToHookInput(ev, "turn-1")
+	require.NoError(t, err)
+	require.Equal(t, ev.Timestamp(), in.TimestampMS)
+	require.Equal(t, ev.EventKey(), in.EventKey)
+
+	decoded, err := DecodeFromHookInput(in)
+	require.NoError(t, err)
+	require.Equal(t, ev.Timestamp(), decoded.Timestamp())
+	require.Equal(t, ev.EventKey(), decoded.EventKey())
 }

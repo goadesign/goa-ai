@@ -86,6 +86,11 @@ type (
 		// join key across processes and transports.
 		SessionID() string
 
+		// EventKey returns the stable logical identity of the originating hook event
+		// when the stream event was derived from one. Empty means the producer did not
+		// attach a durable identity.
+		EventKey() string
+
 		// Payload returns the event-specific data in a JSON-serializable form. Sinks use
 		// this for generic marshaling when they don't need typed access. For example, the
 		// Pulse sink calls Payload() and marshals the result to JSON without knowing the
@@ -568,6 +573,8 @@ type (
 		// All events from a single run share the same S value, enabling subscribers
 		// to join streams to session-scoped stores without out-of-band registries.
 		s string
+		// k is the stable logical identity propagated from the originating hook event.
+		k string
 		// p is the JSON-serializable payload returned by the Payload() method. Sinks
 		// marshal this value when publishing events. Set P to the appropriate payload
 		// type for the event (e.g., ToolStartPayload for ToolStart events).
@@ -797,7 +804,13 @@ const (
 // NewBase constructs a Base event with the given type, run ID, optional
 // session ID, and payload.
 func NewBase(t EventType, runID, sessionID string, payload any) Base {
-	return Base{t: t, r: runID, s: sessionID, p: payload}
+	return NewBaseWithEventKey(t, runID, sessionID, payload, "")
+}
+
+// NewBaseWithEventKey constructs a Base event and attaches the stable logical
+// identity of the originating hook event when one is available.
+func NewBaseWithEventKey(t EventType, runID, sessionID string, payload any, eventKey string) Base {
+	return Base{t: t, r: runID, s: sessionID, k: eventKey, p: payload}
 }
 
 // Type implements Event.Type.
@@ -808,6 +821,9 @@ func (e Base) RunID() string { return e.r }
 
 // SessionID implements Event.SessionID.
 func (e Base) SessionID() string { return e.s }
+
+// EventKey implements Event.EventKey.
+func (e Base) EventKey() string { return e.k }
 
 // Payload implements Event.Payload.
 func (e Base) Payload() any { return e.p }

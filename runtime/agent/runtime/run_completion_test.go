@@ -82,11 +82,11 @@ func newRepairRaceRunlog() *repairRaceRunlog {
 	}
 }
 
-func (r *repairRaceRunlog) Append(_ context.Context, e *runlog.Event) error {
+func (r *repairRaceRunlog) Append(_ context.Context, e *runlog.Event) (runlog.AppendResult, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.events = append(r.events, e)
-	return nil
+	return runlog.AppendResult{ID: e.ID, Inserted: true}, nil
 }
 
 func (r *repairRaceRunlog) List(ctx context.Context, _ string, _ string, limit int) (runlog.Page, error) {
@@ -137,7 +137,7 @@ func newWaitLazyRepairRaceRunlog() *waitLazyRepairRaceRunlog {
 	}
 }
 
-func (r *waitLazyRepairRaceRunlog) Append(ctx context.Context, e *runlog.Event) error {
+func (r *waitLazyRepairRaceRunlog) Append(ctx context.Context, e *runlog.Event) (runlog.AppendResult, error) {
 	if e.Type == hooks.RunCompleted {
 		r.mu.Lock()
 		release := r.firstAppendRelease
@@ -146,7 +146,7 @@ func (r *waitLazyRepairRaceRunlog) Append(ctx context.Context, e *runlog.Event) 
 		if shouldBlock {
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return runlog.AppendResult{}, ctx.Err()
 			case <-release:
 			}
 		}
@@ -154,7 +154,7 @@ func (r *waitLazyRepairRaceRunlog) Append(ctx context.Context, e *runlog.Event) 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.events = append(r.events, e)
-	return nil
+	return runlog.AppendResult{ID: e.ID, Inserted: true}, nil
 }
 
 func (r *waitLazyRepairRaceRunlog) List(ctx context.Context, _ string, _ string, limit int) (runlog.Page, error) {

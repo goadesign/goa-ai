@@ -58,7 +58,8 @@ func (r *Runtime) hookActivity(ctx context.Context, input *HookActivityInput) er
 	// Consumers must treat ToolCallArgsDelta as optional; the canonical tool
 	// payload is still emitted via tool_start/tool_end and the finalized tool call.
 	if input.Type != hooks.ToolCallArgsDelta {
-		if err := r.RunEventStore.Append(ctx, &runlog.Event{
+		if _, err := r.RunEventStore.Append(ctx, &runlog.Event{
+			EventKey:  input.EventKey,
 			RunID:     input.RunID,
 			AgentID:   input.AgentID,
 			SessionID: input.SessionID,

@@ -58,7 +58,9 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 		ExecuteToolActivity: "alpha.scribe.executetool",
 		ExecuteToolActivityOptions: engine.ActivityOptions{
 			RetryPolicy: engine.RetryPolicy{
-				MaxAttempts: 1,
+				MaxAttempts:        3,
+				InitialInterval:    time.Duration(1000000000),
+				BackoffCoefficient: 2,
 			},
 		},
 		Specs:  nil,

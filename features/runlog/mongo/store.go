@@ -23,7 +23,7 @@ func NewStore(client clientsmongo.Client) (*Store, error) {
 }
 
 // Append implements runlog.Store.
-func (s *Store) Append(ctx context.Context, e *runlog.Event) error {
+func (s *Store) Append(ctx context.Context, e *runlog.Event) (runlog.AppendResult, error) {
 	return s.client.Append(ctx, e)
 }
 

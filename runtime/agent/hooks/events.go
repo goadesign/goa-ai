@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/google/uuid"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -68,6 +69,10 @@ type (
 		// Events are timestamped at creation, not at delivery, so subscribers can calculate
 		// durations and latencies between related events.
 		Timestamp() int64
+		// EventKey returns the stable logical identity for this event within the run.
+		// Durable stores use it to make canonical event publishing exact-once even when
+		// the hook activity is retried.
+		EventKey() string
 		// TurnID returns the conversational turn identifier if turn tracking is active,
 		// empty string otherwise. A turn groups events for a single user interaction cycle
 		// (e.g., from user message through final assistant response). UI systems use this
@@ -401,6 +406,7 @@ type (
 		runID     string
 		agentID   agent.Ident
 		timestamp int64
+		eventKey  string
 		// sessionID associates the event with the logical session that owns the
 		// run. All events emitted for a given run share the same session ID.
 		sessionID string
@@ -1038,6 +1044,9 @@ func (e baseEvent) AgentID() string { return string(e.agentID) }
 // Timestamp returns the Unix timestamp in milliseconds when the event occurred.
 func (e baseEvent) Timestamp() int64 { return e.timestamp }
 
+// EventKey returns the stable logical identity for this event.
+func (e baseEvent) EventKey() string { return e.eventKey }
+
 // TurnID returns the conversational turn identifier (empty if not set).
 func (e baseEvent) TurnID() string { return e.turnID }
 
@@ -1054,12 +1063,25 @@ func (e *baseEvent) SetSessionID(id string) {
 	e.sessionID = id
 }
 
+// SetTimestampMS restores the original event timestamp when reconstructing an
+// event from a hook activity input envelope.
+func (e *baseEvent) SetTimestampMS(timestampMS int64) {
+	e.timestamp = timestampMS
+}
+
+// SetEventKey restores the original event key when reconstructing an event from
+// a hook activity input envelope.
+func (e *baseEvent) SetEventKey(eventKey string) {
+	e.eventKey = eventKey
+}
+
 // newBaseEvent constructs a baseEvent with the current timestamp.
 func newBaseEvent(runID string, agentID agent.Ident) baseEvent {
 	return baseEvent{
 		runID:     runID,
 		agentID:   agentID,
 		timestamp: time.Now().UnixMilli(),
+		eventKey:  uuid.NewString(),
 	}
 }
 

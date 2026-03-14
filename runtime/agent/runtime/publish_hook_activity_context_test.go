@@ -165,8 +165,8 @@ type failingRunlogStore struct {
 	err error
 }
 
-func (s failingRunlogStore) Append(_ context.Context, _ *runlog.Event) error {
-	return s.err
+func (s failingRunlogStore) Append(_ context.Context, _ *runlog.Event) (runlog.AppendResult, error) {
+	return runlog.AppendResult{}, s.err
 }
 
 func (s failingRunlogStore) List(_ context.Context, _ string, _ string, _ int) (runlog.Page, error) {

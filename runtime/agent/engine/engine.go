@@ -125,10 +125,11 @@ type (
 		// conflicts with a running workflow, or if scheduling fails.
 		StartWorkflow(ctx context.Context, req WorkflowStartRequest) (WorkflowHandle, error)
 
-		// QueryRunStatus returns the current lifecycle status for a workflow execution
-		// identified by runID. The engine is the source of truth for workflow status.
-		// Returns an error if the run does not exist or if querying fails.
-		QueryRunStatus(ctx context.Context, runID string) (RunStatus, error)
+		// QueryRunStatus returns the current lifecycle status for the workflow
+		// identified by workflowID. The engine is the source of truth for durable
+		// workflow status. Returns an error if the workflow does not exist or if
+		// querying fails.
+		QueryRunStatus(ctx context.Context, workflowID string) (RunStatus, error)
 	}
 
 	// Signaler provides direct signaling by workflow ID/run ID without relying on
@@ -149,8 +150,9 @@ type (
 	// may otherwise block waiting for completion.
 	CompletionQuerier interface {
 		// QueryRunCompletion returns the workflow output for successful runs or the
-		// terminal error for failed/timed-out/canceled runs.
-		QueryRunCompletion(ctx context.Context, runID string) (*api.RunOutput, error)
+		// terminal error for failed/timed-out/canceled runs, addressed by
+		// workflowID.
+		QueryRunCompletion(ctx context.Context, workflowID string) (*api.RunOutput, error)
 	}
 
 	// Canceler provides workflow cancellation by workflow ID without requiring
@@ -158,10 +160,9 @@ type (
 	// (for example, Temporal) should implement this so callers can cancel runs
 	// across process restarts.
 	Canceler interface {
-		// CancelByID requests cancellation of the workflow identified by runID.
-		// Implementations may ignore runID vs workflowID distinctions when the
-		// runtime uses a single identifier for both.
-		CancelByID(ctx context.Context, runID string) error
+		// CancelByID requests cancellation of the workflow identified by
+		// workflowID.
+		CancelByID(ctx context.Context, workflowID string) error
 	}
 
 	// WorkflowDefinition binds a workflow handler to a logical name and default queue.

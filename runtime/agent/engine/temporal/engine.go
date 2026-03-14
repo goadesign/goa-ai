@@ -1,41 +1,34 @@
 // Package temporal implements the engine.Engine adapter backed by Temporal.
 // It registers workflows and activities, manages per-queue workers, starts
 // executions, and exposes workflow handles for waiting, signaling, and
-// cancellation. The adapter wires OpenTelemetry tracing/metrics and supports
-// lazy worker startup.
+// cancellation. The adapter wires OpenTelemetry tracing/metrics and owns worker
+// startup for every registered task queue.
 package temporal
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
 
-	enumspb "go.temporal.io/api/enums/v1"
-	"go.temporal.io/api/serviceerror"
-	workflowpb "go.temporal.io/api/workflow/v1"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	temporalotel "go.temporal.io/sdk/contrib/opentelemetry"
-	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/telemetry"
-	"goa.design/goa-ai/runtime/temporaltrace"
 )
 
 // Options configures the Temporal engine adapter for registering workflows,
 // activities, and managing worker lifecycle. Either a pre-configured Client
 // or ClientOptions must be provided. The adapter automatically wires OTEL
-// instrumentation, manages per-queue workers, and optionally auto-starts
-// workers on first workflow execution.
+// instrumentation and manages per-queue workers.
 //
-// Default behavior includes auto-starting workers and enabling tracing/metrics.
-// Set DisableWorkerAutoStart to manually control worker lifecycle via Worker().
+// Default behavior enables tracing/metrics and starts each queue's worker as
+// soon as the adapter registers a workflow or activity for that queue.
 type Options struct {
 	// Client is an optional pre-configured Temporal client. If nil, the adapter
 	// creates a lazy client using ClientOptions, allowing automatic OTEL interceptor
@@ -64,12 +57,6 @@ type Options struct {
 	// Tracing and metrics are enabled by default. Set DisableTracing or DisableMetrics to
 	// opt out. Customize interceptor behavior via TracerOptions and MetricsOptions.
 	Instrumentation InstrumentationOptions
-
-	// DisableWorkerAutoStart disables automatic worker startup on first workflow execution.
-	// When false (default), workers start automatically so callers don't need to call
-	// Worker().Start(). Set to true when you need manual control over worker lifecycle
-	// or want to register all workflows/activities before starting workers.
-	DisableWorkerAutoStart bool
 
 	// Logger emits workflow and worker logs. If nil, a noop logger is used (no output).
 	// Provide a logger to observe workflow execution, worker health, and activity progress.
@@ -164,30 +151,29 @@ type InstrumentationOptions struct {
 // automatically wires OTEL instrumentation for tracing and metrics.
 //
 // Thread-safety: All methods are safe for concurrent use. Internal state is protected
-// by mutexes. Workers are lazily created and started on-demand (unless auto-start is
-// disabled).
+// by mutexes. Workers are created per queue and started immediately when the
+// queue is first registered.
 //
-// Lifecycle: Construct via New(), register workflows/activities, then either let workers
-// auto-start or manually call Worker().Start(). Call Close() to gracefully shut down all
-// workers and the Temporal client.
+// Lifecycle: Construct via New(), register workflows/activities, and call Close()
+// to gracefully stop workers and release the Temporal client when owned here.
 type Engine struct {
 	client      client.Client
 	closeClient bool
 
-	defaultQueue      string
-	workerOpts        worker.Options
-	autoStartDisabled bool
-	activityDefaults  ActivityDefaults
+	defaultQueue     string
+	workerOpts       worker.Options
+	activityDefaults ActivityDefaults
 
 	logger  telemetry.Logger
 	metrics telemetry.Metrics
 	tracer  telemetry.Tracer
 
-	mu              sync.Mutex
-	workers         map[string]*workerBundle
-	workersStarted  bool
-	workflows       map[string]engine.WorkflowDefinition
-	activityOptions map[string]engine.ActivityOptions
+	mu                sync.Mutex
+	workers           map[string]*workerBundle
+	workflows         map[string]engine.WorkflowDefinition
+	pendingWorkflows  map[string]struct{}
+	activityOptions   map[string]engine.ActivityOptions
+	pendingActivities map[string]struct{}
 
 	workflowContexts sync.Map // runID -> engine.WorkflowContext
 }
@@ -238,14 +224,15 @@ func New(opts Options) (*Engine, error) {
 		closeClient:       closeClient,
 		defaultQueue:      defaultQueue,
 		workerOpts:        workerOpts,
-		autoStartDisabled: opts.DisableWorkerAutoStart,
 		activityDefaults:  opts.ActivityDefaults,
 		logger:            logger,
 		metrics:           metrics,
 		tracer:            tracer,
 		workers:           make(map[string]*workerBundle),
 		workflows:         make(map[string]engine.WorkflowDefinition),
+		pendingWorkflows:  make(map[string]struct{}),
 		activityOptions:   make(map[string]engine.ActivityOptions),
+		pendingActivities: make(map[string]struct{}),
 	}
 	return e, nil
 }
@@ -269,23 +256,24 @@ func (e *Engine) RegisterWorkflow(_ context.Context, def engine.WorkflowDefiniti
 	if queue == "" {
 		queue = e.defaultQueue
 	}
-	bundle, err := e.workerForQueue(queue)
-	if err != nil {
+	if err := e.beginWorkflowRegistration(def.Name); err != nil {
 		return err
 	}
+	registered := false
+	defer func() {
+		if !registered {
+			e.abortWorkflowRegistration(def.Name)
+		}
+	}()
+	bundle := e.workerForQueue(queue)
 
 	bundle.registerWorkflow(def.Name, func(tctx workflow.Context, input *api.RunInput) (*api.RunOutput, error) {
 		wfCtx := newTemporalWorkflowContext(e, tctx)
 		defer e.releaseWorkflowContext(wfCtx.runID)
 		return def.Handler(wfCtx, input)
 	})
-
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if _, exists := e.workflows[def.Name]; exists {
-		return fmt.Errorf("temporal engine: workflow %q already registered", def.Name)
-	}
-	e.workflows[def.Name] = def
+	e.finishWorkflowRegistration(def)
+	registered = true
 	return nil
 }
 
@@ -346,7 +334,6 @@ func (e *Engine) RegisterExecuteToolActivity(_ context.Context, name string, opt
 // workflow definition and input. It constructs Temporal-specific start options from
 // the request (ID, queue, retry policy) and executes the workflow asynchronously.
 //
-// If auto-start is enabled (default), workers are automatically started before execution.
 // The workflow's task queue is resolved in order: req.TaskQueue → def.TaskQueue →
 // engine.defaultQueue. A base context is stored for activity execution correlation.
 //
@@ -355,6 +342,8 @@ func (e *Engine) RegisterExecuteToolActivity(_ context.Context, name string, opt
 // an existing workflow, or if Temporal client execution fails.
 //
 // Thread-safe: Safe to call concurrently.
+//
+//nolint:unparam // engine.Engine requires returning a workflow handle.
 func (e *Engine) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest) (engine.WorkflowHandle, error) {
 	if req.Workflow == "" {
 		return nil, fmt.Errorf("temporal engine: workflow name is required")
@@ -362,10 +351,6 @@ func (e *Engine) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequ
 	def, err := e.workflowDefinition(req.Workflow)
 	if err != nil {
 		return nil, err
-	}
-
-	if !e.autoStartDisabled {
-		e.ensureWorkersStarted()
 	}
 
 	queue := req.TaskQueue
@@ -379,6 +364,16 @@ func (e *Engine) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequ
 	opts := client.StartWorkflowOptions{
 		ID:        req.ID,
 		TaskQueue: queue,
+	}
+	if len(req.Memo) > 0 {
+		opts.Memo = req.Memo
+	}
+	if len(req.SearchAttributes) > 0 {
+		typedSearchAttributes, err := convertSearchAttributes(req.SearchAttributes)
+		if err != nil {
+			return nil, err
+		}
+		opts.TypedSearchAttributes = typedSearchAttributes
 	}
 	if req.RunTimeout > 0 {
 		// Apply as WorkflowRunTimeout. Temporal also supports WorkflowExecutionTimeout;
@@ -400,26 +395,9 @@ func (e *Engine) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequ
 	}, nil
 }
 
-// Worker returns a controller for managing the lifecycle of all workers managed
-// by this engine. Use this to manually start or stop workers when DisableWorkerAutoStart
-// is enabled. When auto-start is active (default), workers start automatically on
-// first workflow execution, making this method optional.
-//
-// The controller provides Start() to launch all registered workers and Stop() to
-// gracefully shut them down. Multiple calls to Worker() return controllers for the
-// same underlying engine, so start/stop operations affect all workers globally.
-//
-// Thread-safe: Safe to call concurrently.
-func (e *Engine) Worker() *WorkerController {
-	return &WorkerController{engine: e}
-}
-
 // Close gracefully shuts down the Temporal client if the engine created it
 // (via ClientOptions). If a pre-configured Client was provided to New(), Close
 // does nothing, leaving client lifecycle management to the caller.
-//
-// Call Close during application shutdown after stopping workers via Worker().Stop().
-// Closing the client while workers are active may cause workflow/activity failures.
 //
 // Returns nil (error signature maintained for interface compatibility).
 //
@@ -427,6 +405,7 @@ func (e *Engine) Worker() *WorkerController {
 //
 //nolint:unparam // Error return maintained for interface compatibility.
 func (e *Engine) Close() error {
+	e.stopWorkers()
 	if e.closeClient && e.client != nil {
 		e.client.Close()
 	}
@@ -504,43 +483,20 @@ func (e *Engine) registerActivityWithCtx(name string, opts engine.ActivityOption
 	if queue == "" {
 		queue = e.defaultQueue
 	}
-	bundle, err := e.workerForQueue(queue)
-	if err != nil {
+	if err := e.beginActivityRegistration(name); err != nil {
 		return err
 	}
+	registered := false
+	defer func() {
+		if !registered {
+			e.abortActivityRegistration(name)
+		}
+	}()
+	bundle := e.workerForQueue(queue)
 	bundle.registerActivity(name, fn)
-	e.mu.Lock()
-	e.activityOptions[name] = opts
-	e.mu.Unlock()
+	e.finishActivityRegistration(name, opts)
+	registered = true
 	return nil
-}
-
-func (e *Engine) workerForQueue(queue string) (*workerBundle, error) {
-	if queue == "" {
-		queue = e.defaultQueue
-	}
-	if queue == "" {
-		return nil, fmt.Errorf("temporal engine: no task queue configured")
-	}
-
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	if bundle, ok := e.workers[queue]; ok {
-		return bundle, nil
-	}
-
-	w := worker.New(e.client, queue, e.workerOpts)
-	bundle := &workerBundle{
-		queue:  queue,
-		worker: w,
-		logger: e.logger,
-	}
-	e.workers[queue] = bundle
-	if e.workersStarted {
-		bundle.start()
-	}
-	return bundle, nil
 }
 
 func (e *Engine) workflowDefinition(name string) (engine.WorkflowDefinition, error) {
@@ -554,97 +510,74 @@ func (e *Engine) workflowDefinition(name string) (engine.WorkflowDefinition, err
 	return def, nil
 }
 
-// TemporalClient exposes the underlying Temporal SDK client for read-only
-// operations such as workflow queries. Callers must not close or mutate the
-// client; lifecycle is owned by the engine.
-func (e *Engine) TemporalClient() client.Client {
-	return e.client
-}
-
-// QueryRunStatus returns the current lifecycle status for a workflow execution
-// by querying Temporal. The runID parameter is the workflow execution ID
-// (Temporal WorkflowID). This queries the latest run for that workflow.
-func (e *Engine) QueryRunStatus(ctx context.Context, runID string) (engine.RunStatus, error) {
-	if runID == "" {
-		return "", fmt.Errorf("run id is required")
-	}
-	desc, err := e.client.DescribeWorkflowExecution(ctx, runID, "")
-	if err != nil {
-		return "", mapDescribeWorkflowExecutionError(err)
-	}
-	return queryRunStatusFromInfo(desc.GetWorkflowExecutionInfo()), nil
-}
-
-// QueryRunCompletion returns the terminal output/error for a workflow by
-// workflow identifier so restart-time repair can preserve the original failure.
-func (e *Engine) QueryRunCompletion(ctx context.Context, runID string) (*api.RunOutput, error) {
-	if runID == "" {
-		return nil, fmt.Errorf("run id is required")
-	}
-	var out *api.RunOutput
-	if err := e.client.GetWorkflow(ctx, runID, "").Get(ctx, &out); err != nil {
-		var notFound *serviceerror.NotFound
-		if errors.As(err, &notFound) {
-			return nil, engine.ErrWorkflowNotFound
-		}
-		return nil, err
-	}
-	return out, nil
-}
-
-// queryRunStatusFromInfo maps Temporal execution info into the engine's coarse
-// lifecycle contract. Closed executions retain Temporal's terminal outcome so
-// cross-process repair can synthesize the correct RunCompleted event.
-func queryRunStatusFromInfo(info *workflowpb.WorkflowExecutionInfo) engine.RunStatus {
-	if info == nil {
-		return engine.RunStatusPending
-	}
-	if info.GetCloseTime() == nil {
-		return engine.RunStatusRunning
-	}
-	switch info.GetStatus() {
-	case enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED:
-		return engine.RunStatusCompleted
-	case enumspb.WORKFLOW_EXECUTION_STATUS_CANCELED:
-		return engine.RunStatusCanceled
-	case enumspb.WORKFLOW_EXECUTION_STATUS_TIMED_OUT:
-		return engine.RunStatusTimedOut
-	case enumspb.WORKFLOW_EXECUTION_STATUS_FAILED,
-		enumspb.WORKFLOW_EXECUTION_STATUS_TERMINATED,
-		enumspb.WORKFLOW_EXECUTION_STATUS_CONTINUED_AS_NEW:
-		return engine.RunStatusFailed
-	case enumspb.WORKFLOW_EXECUTION_STATUS_UNSPECIFIED,
-		enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING,
-		enumspb.WORKFLOW_EXECUTION_STATUS_PAUSED:
-		panic(fmt.Sprintf("temporal engine: closed workflow has non-terminal status %s", info.GetStatus()))
-	default:
-		panic(fmt.Sprintf("temporal engine: closed workflow has unsupported status %s", info.GetStatus()))
-	}
-}
-
-func mapDescribeWorkflowExecutionError(err error) error {
-	var notFound *serviceerror.NotFound
-	if errors.As(err, &notFound) {
-		return engine.ErrWorkflowNotFound
-	}
-	return err
-}
-
-func (e *Engine) ensureWorkersStarted() {
+// beginWorkflowRegistration reserves a workflow name so duplicate concurrent
+// registrations fail before any worker or registry mutation occurs.
+func (e *Engine) beginWorkflowRegistration(name string) error {
 	e.mu.Lock()
-	if e.workersStarted {
-		e.mu.Unlock()
-		return
+	defer e.mu.Unlock()
+
+	if _, exists := e.workflows[name]; exists {
+		return fmt.Errorf("temporal engine: workflow %q already registered", name)
 	}
-	e.workersStarted = true
-	bundles := make([]*workerBundle, 0, len(e.workers))
-	for _, b := range e.workers {
-		bundles = append(bundles, b)
+	if _, exists := e.pendingWorkflows[name]; exists {
+		return fmt.Errorf("temporal engine: workflow %q already registered", name)
 	}
-	e.mu.Unlock()
-	for _, b := range bundles {
-		b.start()
+	e.pendingWorkflows[name] = struct{}{}
+	return nil
+}
+
+// finishWorkflowRegistration commits a workflow definition after worker
+// registration succeeds and clears the temporary reservation.
+func (e *Engine) finishWorkflowRegistration(def engine.WorkflowDefinition) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	delete(e.pendingWorkflows, def.Name)
+	e.workflows[def.Name] = def
+}
+
+// abortWorkflowRegistration releases a reserved workflow name after a failed
+// registration attempt so later retries can proceed.
+func (e *Engine) abortWorkflowRegistration(name string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	delete(e.pendingWorkflows, name)
+}
+
+// beginActivityRegistration reserves an activity name so duplicate concurrent
+// registrations fail before any worker or option mutation occurs.
+func (e *Engine) beginActivityRegistration(name string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if _, exists := e.activityOptions[name]; exists {
+		return fmt.Errorf("temporal engine: activity %q already registered", name)
 	}
+	if _, exists := e.pendingActivities[name]; exists {
+		return fmt.Errorf("temporal engine: activity %q already registered", name)
+	}
+	e.pendingActivities[name] = struct{}{}
+	return nil
+}
+
+// finishActivityRegistration commits activity defaults after worker registration
+// succeeds and clears the temporary reservation.
+func (e *Engine) finishActivityRegistration(name string, opts engine.ActivityOptions) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	delete(e.pendingActivities, name)
+	e.activityOptions[name] = opts
+}
+
+// abortActivityRegistration releases a reserved activity name after a failed
+// registration attempt so later retries can proceed.
+func (e *Engine) abortActivityRegistration(name string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	delete(e.pendingActivities, name)
 }
 
 func (e *Engine) trackWorkflowContext(runID string, wf engine.WorkflowContext) {
@@ -659,184 +592,4 @@ func (e *Engine) releaseWorkflowContext(runID string) {
 		return
 	}
 	e.workflowContexts.Delete(runID)
-}
-
-// WorkerController manages worker lifecycle (start/stop) for all task queues
-// managed by the Temporal engine. It provides manual control over when workers
-// begin polling Temporal for workflow and activity tasks.
-//
-// Obtain a controller via Engine.Worker(). When auto-start is disabled, call
-// Start() after registering all workflows/activities. When auto-start is enabled
-// (default), Start() is optional - workers start automatically on first workflow
-// execution.
-//
-// Call Stop() during graceful shutdown to drain in-flight tasks and disconnect
-// workers from Temporal. Multiple controllers for the same engine share state,
-// so stop operations affect all workers globally.
-//
-// Thread-safety: Start() and Stop() are safe to call concurrently.
-type WorkerController struct {
-	engine *Engine
-}
-
-// Start launches all registered workers. Subsequent worker registrations will
-// be auto-started as they are created.
-//
-//nolint:unparam // Error return maintained for future extensibility.
-func (c *WorkerController) Start() error {
-	c.engine.ensureWorkersStarted()
-	return nil
-}
-
-// Stop gracefully stops all workers managed by the engine.
-func (c *WorkerController) Stop() {
-	c.engine.mu.Lock()
-	bundles := make([]*workerBundle, 0, len(c.engine.workers))
-	for _, b := range c.engine.workers {
-		bundles = append(bundles, b)
-	}
-	c.engine.mu.Unlock()
-
-	for _, b := range bundles {
-		b.stop()
-	}
-}
-
-type workerBundle struct {
-	queue  string
-	worker worker.Worker
-	logger telemetry.Logger
-
-	startOnce sync.Once
-}
-
-func (b *workerBundle) start() {
-	b.startOnce.Do(func() {
-		go func() {
-			if err := b.worker.Run(worker.InterruptCh()); err != nil {
-				b.logger.Error(context.Background(), "temporal worker exited", "queue", b.queue, "err", err)
-			}
-		}()
-	})
-}
-
-func (b *workerBundle) stop() {
-	b.worker.Stop()
-}
-
-func (b *workerBundle) registerWorkflow(name string, fn any) {
-	b.worker.RegisterWorkflowWithOptions(fn, workflow.RegisterOptions{Name: name})
-}
-
-// typed registration reuses the same underlying RegisterWorkflowWithOptions since
-// Temporal infers payload type from the function signature.
-
-func (b *workerBundle) registerActivity(name string, fn any) {
-	b.worker.RegisterActivityWithOptions(fn, activity.RegisterOptions{Name: name})
-}
-
-type instrumentation struct {
-	contextPropagators []workflow.ContextPropagator
-	workerInterceptors []interceptor.WorkerInterceptor
-	metrics            client.MetricsHandler
-}
-
-func configureInstrumentation(opts InstrumentationOptions) *instrumentation {
-	inst := &instrumentation{}
-	if !opts.DisableTracing {
-		// Trace domain contract:
-		//   - Temporal activities emit new-root spans (new trace IDs).
-		//   - Upstream request traces are preserved via OTel links, not parenthood.
-		// We intentionally do not use Temporal's OTEL tracing interceptor: it
-		// propagates parent trace context through durable scheduling boundaries,
-		// which produces long-lived traces that fragment in downstream pipelines.
-		inst.contextPropagators = append(inst.contextPropagators, temporaltrace.NewLinkPropagator())
-		inst.workerInterceptors = append(inst.workerInterceptors, temporaltrace.NewActivityInterceptor())
-	}
-	if !opts.DisableMetrics {
-		inst.metrics = temporalotel.NewMetricsHandler(opts.MetricsOptions)
-	}
-	if len(inst.contextPropagators) == 0 && len(inst.workerInterceptors) == 0 && inst.metrics == nil {
-		return nil
-	}
-	return inst
-}
-
-func applyClientInstrumentation(opts *client.Options, inst *instrumentation) {
-	if inst == nil {
-		return
-	}
-	opts.ContextPropagators = append(opts.ContextPropagators, inst.contextPropagators...)
-	if inst.metrics != nil && opts.MetricsHandler == nil {
-		opts.MetricsHandler = inst.metrics
-	}
-}
-
-func applyWorkerInstrumentation(opts *worker.Options, inst *instrumentation) {
-	if inst == nil {
-		return
-	}
-	opts.Interceptors = append(opts.Interceptors, inst.workerInterceptors...)
-}
-
-type workflowHandle struct {
-	run    client.WorkflowRun
-	client client.Client
-}
-
-func (h *workflowHandle) Wait(ctx context.Context) (*api.RunOutput, error) {
-	var out *api.RunOutput
-	if err := h.run.Get(ctx, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (h *workflowHandle) Signal(ctx context.Context, name string, payload any) error {
-	return mapSignalError(h.client.SignalWorkflow(ctx, h.run.GetID(), h.run.GetRunID(), name, payload))
-}
-
-// SignalByID sends a signal to a workflow by its workflow ID/run ID directly.
-func (e *Engine) SignalByID(ctx context.Context, workflowID, runID, name string, payload any) error {
-	if workflowID == "" {
-		return fmt.Errorf("workflow id is required")
-	}
-	return mapSignalError(e.client.SignalWorkflow(ctx, workflowID, runID, name, payload))
-}
-
-func (e *Engine) CancelByID(ctx context.Context, runID string) error {
-	if runID == "" {
-		return fmt.Errorf("run id is required")
-	}
-	if err := e.client.CancelWorkflow(ctx, runID, ""); err != nil {
-		var notFound *serviceerror.NotFound
-		if errors.As(err, &notFound) {
-			return engine.ErrWorkflowNotFound
-		}
-		return err
-	}
-	return nil
-}
-
-func (h *workflowHandle) Cancel(ctx context.Context) error {
-	return h.client.CancelWorkflow(ctx, h.run.GetID(), h.run.GetRunID())
-}
-
-// mapSignalError normalizes Temporal signaling failures into engine-level
-// contract errors consumed by runtime callers.
-func mapSignalError(err error) error {
-	if err == nil {
-		return nil
-	}
-
-	var notFound *serviceerror.NotFound
-	if errors.As(err, &notFound) {
-		return engine.ErrWorkflowNotFound
-	}
-	var failedPrecondition *serviceerror.FailedPrecondition
-	if errors.As(err, &failedPrecondition) {
-		return engine.ErrWorkflowCompleted
-	}
-
-	return err
 }

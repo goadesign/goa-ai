@@ -41,7 +41,6 @@ import (
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
-	engtemporal "goa.design/goa-ai/runtime/agent/engine/temporal"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/memory"
@@ -422,6 +421,18 @@ const (
 	defaultExecuteToolActivityTimeout = 2 * time.Minute
 	defaultHookActivityTimeout        = 15 * time.Second
 )
+
+// defaultRetriedActivityPolicy returns the runtime's standard infrastructure
+// retry policy for activities whose logical work is now replay-safe by
+// contract. Planner/tool business errors still surface in typed results rather
+// than escaping as activity failures.
+func defaultRetriedActivityPolicy() engine.RetryPolicy {
+	return engine.RetryPolicy{
+		MaxAttempts:        3,
+		InitialInterval:    time.Second,
+		BackoffCoefficient: 2,
+	}
+}
 
 var (
 	// Typed error sentinels for common invalid states.
@@ -1080,9 +1091,7 @@ func (r *Runtime) ensureHookActivityRegistered(ctx context.Context) error {
 	}
 	opts := engine.ActivityOptions{
 		StartToCloseTimeout: timeout,
-		RetryPolicy: engine.RetryPolicy{
-			MaxAttempts: 1,
-		},
+		RetryPolicy:         defaultRetriedActivityPolicy(),
 	}
 	if opts.StartToCloseTimeout == 0 {
 		opts.StartToCloseTimeout = timeout
@@ -1197,8 +1206,8 @@ func (r *Runtime) NewBedrockModelClient(awsrt *bedrockruntime.Client, cfg Bedroc
 		Temperature:    cfg.Temperature,
 		Logger:         r.logger,
 	}
-	if eng, ok := r.Engine.(*engtemporal.Engine); ok {
-		return bedrock.New(awsrt, opts, bedrock.NewTemporalLedgerSource(eng.TemporalClient()))
+	if querier, ok := r.Engine.(bedrock.WorkflowQuerier); ok {
+		return bedrock.New(awsrt, opts, bedrock.NewTemporalLedgerSource(querier))
 	}
 	// Engines without durable queries: construct without ledger rehydration.
 	return bedrock.New(awsrt, opts, nil)

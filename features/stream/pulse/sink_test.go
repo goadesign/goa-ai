@@ -56,6 +56,37 @@ func TestSendPublishesEnvelope(t *testing.T) {
 	require.False(t, str.HasMore())
 }
 
+func TestSendPublishesEnvelopeEventKey(t *testing.T) {
+	cli := mockpulse.NewClient(t)
+	str := mockpulse.NewStream(t)
+	const lastID = "1-0"
+
+	cli.AddStream(func(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
+		require.Equal(t, "session/session-123", name)
+		return str, nil
+	})
+	str.AddAdd(func(ctx context.Context, event string, payload []byte) (string, error) {
+		var env Envelope
+		require.NoError(t, json.Unmarshal(payload, &env))
+		require.Equal(t, "evt-1", env.EventKey)
+		return lastID, nil
+	})
+
+	sink, err := NewSink(Options{Client: cli})
+	require.NoError(t, err)
+	err = sink.Send(context.Background(), stream.AssistantReply{
+		Base: stream.NewBaseWithEventKey(
+			stream.EventAssistantReply,
+			"run-123",
+			"session-123",
+			stream.AssistantReplyPayload{Text: "ok"},
+			"evt-1",
+		),
+		Data: stream.AssistantReplyPayload{Text: "ok"},
+	})
+	require.NoError(t, err)
+}
+
 func TestOnPublishedCalled(t *testing.T) {
 	cli := mockpulse.NewClient(t)
 	str := mockpulse.NewStream(t)

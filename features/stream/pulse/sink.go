@@ -57,6 +57,9 @@ type (
 	Envelope struct {
 		// Type identifies the event kind (e.g., "tool_end", "assistant_reply").
 		Type string `json:"type"`
+		// EventKey is the stable logical identity propagated from the originating
+		// hook event when one exists.
+		EventKey string `json:"event_key,omitempty"`
 		// RunID links the event to a specific workflow execution.
 		RunID string `json:"run_id"`
 		// SessionID links the event to the logical session that owns the run.
@@ -119,6 +122,7 @@ func (s *Sink) Send(ctx context.Context, event stream.Event) error {
 	}
 	env := Envelope{
 		Type:      string(event.Type()),
+		EventKey:  event.EventKey(),
 		RunID:     event.RunID(),
 		SessionID: event.SessionID(),
 		Timestamp: time.Now().UTC(),

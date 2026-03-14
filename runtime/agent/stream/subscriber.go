@@ -101,7 +101,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		}
 		payload := UsagePayload{TokenUsage: evt.TokenUsage}
 		return s.sink.Send(ctx, Usage{
-			Base: Base{t: EventUsage, r: evt.RunID(), s: evt.SessionID(), p: payload},
+			Base: newBaseFromHook(evt, EventUsage, payload),
 			Data: payload,
 		})
 	case *hooks.AwaitClarificationEvent:
@@ -116,7 +116,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			ExampleInput:   evt.ExampleInput,
 		}
 		return s.sink.Send(ctx, AwaitClarification{
-			Base: Base{t: EventAwaitClarification, r: evt.RunID(), s: evt.SessionID(), p: payload},
+			Base: newBaseFromHook(evt, EventAwaitClarification, payload),
 			Data: payload,
 		})
 	case *hooks.AwaitConfirmationEvent:
@@ -132,7 +132,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Payload:    evt.Payload,
 		}
 		return s.sink.Send(ctx, AwaitConfirmation{
-			Base: Base{t: EventAwaitConfirmation, r: evt.RunID(), s: evt.SessionID(), p: payload},
+			Base: newBaseFromHook(evt, EventAwaitConfirmation, payload),
 			Data: payload,
 		})
 	case *hooks.AwaitQuestionsEvent:
@@ -163,7 +163,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Questions:  qs,
 		}
 		return s.sink.Send(ctx, AwaitQuestions{
-			Base: Base{t: EventAwaitQuestions, r: evt.RunID(), s: evt.SessionID(), p: payload},
+			Base: newBaseFromHook(evt, EventAwaitQuestions, payload),
 			Data: payload,
 		})
 	case *hooks.AwaitExternalToolsEvent:
@@ -180,7 +180,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		}
 		payload := AwaitExternalToolsPayload{ID: evt.ID, Items: items}
 		return s.sink.Send(ctx, AwaitExternalTools{
-			Base: Base{t: EventAwaitExternalTools, r: evt.RunID(), s: evt.SessionID(), p: payload},
+			Base: newBaseFromHook(evt, EventAwaitExternalTools, payload),
 			Data: payload,
 		})
 	case *hooks.ToolAuthorizationEvent:
@@ -195,7 +195,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			ApprovedBy: evt.ApprovedBy,
 		}
 		return s.sink.Send(ctx, ToolAuthorization{
-			Base: Base{t: EventToolAuthorization, r: evt.RunID(), s: evt.SessionID(), p: payload},
+			Base: newBaseFromHook(evt, EventToolAuthorization, payload),
 			Data: payload,
 		})
 	case *hooks.ToolCallArgsDeltaEvent:
@@ -214,7 +214,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Delta:      evt.Delta,
 		}
 		return s.sink.Send(ctx, ToolCallArgsDelta{
-			Base: Base{t: EventToolCallArgsDelta, r: evt.RunID(), s: evt.SessionID(), p: payload},
+			Base: newBaseFromHook(evt, EventToolCallArgsDelta, payload),
 			Data: payload,
 		})
 	case *hooks.ToolCallScheduledEvent:
@@ -231,7 +231,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			DisplayHint:           evt.DisplayHint,
 		}
 		return s.sink.Send(ctx, ToolStart{
-			Base: Base{t: EventToolStart, r: evt.RunID(), s: evt.SessionID(), p: payload},
+			Base: newBaseFromHook(evt, EventToolStart, payload),
 			Data: payload,
 		})
 	case *hooks.AssistantMessageEvent:
@@ -243,7 +243,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Text: evt.Message,
 		}
 		return s.sink.Send(ctx, AssistantReply{
-			Base: Base{t: EventAssistantReply, r: evt.RunID(), s: evt.SessionID(), p: payload},
+			Base: newBaseFromHook(evt, EventAssistantReply, payload),
 			Data: payload,
 		})
 	case *hooks.PlannerNoteEvent:
@@ -255,7 +255,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Note: evt.Note,
 		}
 		return s.sink.Send(ctx, PlannerThought{
-			Base: Base{t: EventPlannerThought, r: evt.RunID(), s: evt.SessionID(), p: payload},
+			Base: newBaseFromHook(evt, EventPlannerThought, payload),
 			Data: payload,
 		})
 	case *hooks.PromptRenderedEvent:
@@ -268,7 +268,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Scope:    evt.Scope,
 		}
 		return s.sink.Send(ctx, PromptRendered{
-			Base: Base{t: EventPromptRendered, r: evt.RunID(), s: evt.SessionID(), p: payload},
+			Base: newBaseFromHook(evt, EventPromptRendered, payload),
 			Data: payload,
 		})
 	case *hooks.ThinkingBlockEvent:
@@ -291,7 +291,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			payload.Note = evt.Text
 		}
 		return s.sink.Send(ctx, PlannerThought{
-			Base: Base{t: EventPlannerThought, r: evt.RunID(), s: evt.SessionID(), p: payload},
+			Base: newBaseFromHook(evt, EventPlannerThought, payload),
 			Data: payload,
 		})
 	case *hooks.ToolResultReceivedEvent:
@@ -319,7 +319,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			payload.ResultPreview = preview
 		}
 		return s.sink.Send(ctx, ToolEnd{
-			Base:       Base{t: EventToolEnd, r: evt.RunID(), s: evt.SessionID(), p: payload},
+			Base:       newBaseFromHook(evt, EventToolEnd, payload),
 			ServerData: append(rawjson.Message(nil), evt.ServerData...),
 			Data:       payload,
 		})
@@ -332,7 +332,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			ExpectedChildrenTotal: evt.ExpectedChildrenTotal,
 		}
 		return s.sink.Send(ctx, ToolUpdate{
-			Base: Base{t: EventToolUpdate, r: evt.RunID(), s: evt.SessionID(), p: up},
+			Base: newBaseFromHook(evt, EventToolUpdate, up),
 			Data: up,
 		})
 	case *hooks.ChildRunLinkedEvent:
@@ -346,7 +346,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			ChildAgentID: evt.ChildAgentID,
 		}
 		return s.sink.Send(ctx, ChildRunLinked{
-			Base: Base{t: EventChildRunLinked, r: evt.RunID(), s: evt.SessionID(), p: payload},
+			Base: newBaseFromHook(evt, EventChildRunLinked, payload),
 			Data: payload,
 		})
 	case *hooks.RunCompletedEvent:
@@ -374,13 +374,13 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			payload.Error = evt.PublicError
 		}
 		if err := s.sink.Send(ctx, Workflow{
-			Base: Base{t: EventWorkflow, r: evt.RunID(), s: evt.SessionID(), p: payload},
+			Base: newBaseFromHook(evt, EventWorkflow, payload),
 			Data: payload,
 		}); err != nil {
 			return err
 		}
 		return s.sink.Send(ctx, RunStreamEnd{
-			Base: Base{t: EventRunStreamEnd, r: evt.RunID(), s: evt.SessionID(), p: RunStreamEndPayload{}},
+			Base: newBaseFromHook(evt, EventRunStreamEnd, RunStreamEndPayload{}),
 			Data: RunStreamEndPayload{},
 		})
 	case *hooks.RunPhaseChangedEvent:
@@ -396,12 +396,16 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Phase: string(evt.Phase),
 		}
 		return s.sink.Send(ctx, Workflow{
-			Base: Base{t: EventWorkflow, r: evt.RunID(), s: evt.SessionID(), p: payload},
+			Base: newBaseFromHook(evt, EventWorkflow, payload),
 			Data: payload,
 		})
 	default:
 		return nil
 	}
+}
+
+func newBaseFromHook(evt hooks.Event, eventType EventType, payload any) Base {
+	return NewBaseWithEventKey(eventType, evt.RunID(), evt.SessionID(), payload, evt.EventKey())
 }
 
 // clampPreview normalizes whitespace and clamps result previews to a reasonable

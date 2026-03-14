@@ -71,6 +71,16 @@ func TestQueryRunStatusFromInfoTreatsOpenExecutionAsRunning(t *testing.T) {
 	require.Equal(t, engine.RunStatusRunning, queryRunStatusFromInfo(info))
 }
 
+func TestQueryRunStatusFromInfoTreatsOpenPausedExecutionAsPaused(t *testing.T) {
+	t.Parallel()
+
+	info := &workflowpb.WorkflowExecutionInfo{
+		Status: enumspb.WORKFLOW_EXECUTION_STATUS_PAUSED,
+	}
+
+	require.Equal(t, engine.RunStatusPaused, queryRunStatusFromInfo(info))
+}
+
 func TestQueryRunStatusFromInfoPanicsOnClosedNonTerminalStatus(t *testing.T) {
 	t.Parallel()
 

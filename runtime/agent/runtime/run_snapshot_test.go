@@ -29,6 +29,7 @@ func TestNewRunSnapshotDerivesToolStateAndCompletion(t *testing.T) {
 		in, err := hooks.EncodeToHookInput(evt, turnID)
 		require.NoError(t, err)
 		return &runlog.Event{
+			EventKey:  in.EventKey,
 			RunID:     runID,
 			AgentID:   agentID,
 			SessionID: sessionID,
@@ -69,7 +70,8 @@ func TestGetRunSnapshotReadsThroughStore(t *testing.T) {
 	t.Parallel()
 
 	rl := runloginmem.New()
-	require.NoError(t, rl.Append(context.Background(), &runlog.Event{
+	_, err := rl.Append(context.Background(), &runlog.Event{
+		EventKey:  "evt-1",
 		RunID:     "run-1",
 		AgentID:   agent.Ident("svc.agent"),
 		SessionID: "sess-1",
@@ -77,12 +79,13 @@ func TestGetRunSnapshotReadsThroughStore(t *testing.T) {
 		Type:      hooks.RunPhaseChanged,
 		Payload:   []byte(`{"phase":"planning"}`),
 		Timestamp: time.Unix(1, 0).UTC(),
-	}))
+	})
+	require.NoError(t, err)
 
 	rt := &Runtime{
 		RunEventStore: rl,
 	}
 
-	_, err := rt.GetRunSnapshot(context.Background(), "run-1")
+	_, err = rt.GetRunSnapshot(context.Background(), "run-1")
 	require.NoError(t, err)
 }

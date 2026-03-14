@@ -1458,18 +1458,18 @@ func newActivity(agent *AgentData, kind ActivityKind, logicalSuffix string, queu
 	}
 	switch kind {
 	case ActivityKindPlan, ActivityKindResume:
-		artifact.RetryPolicy = plannerActivityRetryPolicy()
+		artifact.RetryPolicy = defaultActivityRetryPolicy()
 		artifact.StartToCloseTimeout = defaultPlannerActivityTimeout
 	case ActivityKindExecuteTool:
-		// ExecuteTool activities do not retry by default: tool failures should be
-		// addressed by the planner (fix inputs), and timeouts should not restart
-		// the same operation from scratch.
-		artifact.RetryPolicy = engine.RetryPolicy{MaxAttempts: 1}
+		// ExecuteTool retries are safe because logical tool calls now carry stable
+		// identities and runtimes/providers are responsible for replaying durable
+		// results instead of re-running side effects on retried attempts.
+		artifact.RetryPolicy = defaultActivityRetryPolicy()
 	}
 	return artifact
 }
 
-func plannerActivityRetryPolicy() engine.RetryPolicy {
+func defaultActivityRetryPolicy() engine.RetryPolicy {
 	return engine.RetryPolicy{
 		MaxAttempts:        3,
 		InitialInterval:    time.Second,

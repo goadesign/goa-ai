@@ -255,13 +255,13 @@ func (e *eng) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest
 }
 
 // QueryRunStatus returns the current lifecycle status for a workflow execution.
-func (e *eng) QueryRunStatus(_ context.Context, runID string) (engine.RunStatus, error) {
-	if runID == "" {
-		return "", fmt.Errorf("run id is required")
+func (e *eng) QueryRunStatus(_ context.Context, workflowID string) (engine.RunStatus, error) {
+	if workflowID == "" {
+		return "", fmt.Errorf("workflow id is required")
 	}
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	status, ok := e.statuses[runID]
+	status, ok := e.statuses[workflowID]
 	if !ok {
 		return "", engine.ErrWorkflowNotFound
 	}
