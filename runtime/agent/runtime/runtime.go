@@ -1392,13 +1392,9 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 		}
 	}
 	if requireSession {
-		if req.SearchAttributes == nil {
-			req.SearchAttributes = make(map[string]any, 1)
-		}
 		if v, ok := req.SearchAttributes["SessionID"]; ok && v != input.SessionID {
 			return nil, fmt.Errorf("workflow search attribute SessionID=%v does not match session id %q", v, input.SessionID)
 		}
-		req.SearchAttributes["SessionID"] = input.SessionID
 		now := time.Now().UTC()
 		if err := r.SessionStore.UpsertRun(ctx, session.RunMeta{
 			AgentID:   string(input.AgentID),

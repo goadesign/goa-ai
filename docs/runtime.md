@@ -1400,7 +1400,7 @@ client.Run(ctx, "session-1", msgs,
     runtime.WithMetadata(map[string]any{"request_id": "abc"}),
     runtime.WithTaskQueue("custom-queue"),
     runtime.WithMemo(map[string]any{"workflow_name": "Chat"}),
-    runtime.WithSearchAttributes(map[string]any{"SessionID": "s1"}),
+    runtime.WithSearchAttributes(map[string]any{"tenant": "acme"}),
     runtime.WithTiming(runtime.Timing{
         Budget: 2 * time.Minute,
         Plan:   30 * time.Second,
@@ -1408,6 +1408,10 @@ client.Run(ctx, "session-1", msgs,
     }),
 )
 ```
+
+Search attributes are passed through to the workflow engine as caller-owned
+index metadata. The runtime does not mirror `SessionID` into engine search
+attributes automatically.
 
 `Timing.Plan` and `Timing.Tools` are semantic attempt budgets. They bound how
 long a healthy planner or tool attempt may run once execution starts. Queue-wait
@@ -1860,8 +1864,8 @@ var ErrRateLimited = errors.New("model: rate limited")
 3. **Choose one streaming path.** Either use the decorated model client OR
    `planner.ConsumeStream`, never both.
 
-4. **Set SessionID.** Every run requires a session ID for proper grouping and
-   memory association.
+4. **Set SessionID for sessionful runs.** `Run` and `Start` require a session ID
+   for grouping and memory association. `OneShotRun` is explicitly sessionless.
 
 5. **Trust the contracts.** Don't add defensive checks for values guaranteed by
    Goa validation or construction. Let violations fail fast.

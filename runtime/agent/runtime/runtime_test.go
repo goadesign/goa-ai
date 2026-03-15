@@ -103,6 +103,26 @@ func TestStartRunRequiresSessionID(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestStartRunDoesNotInjectSessionSearchAttribute(t *testing.T) {
+	eng := &stubEngine{}
+	rt := &Runtime{
+		Engine:       eng,
+		logger:       telemetry.NoopLogger{},
+		metrics:      telemetry.NoopMetrics{},
+		tracer:       telemetry.NoopTracer{},
+		SessionStore: sessioninmem.New(),
+		agents: map[agent.Ident]AgentRegistration{
+			"service.agent": {ID: "service.agent", Workflow: engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "q"}},
+		},
+	}
+	client := rt.MustClient(agent.Ident("service.agent"))
+	_, err := rt.CreateSession(context.Background(), "sess-1")
+	require.NoError(t, err)
+	_, err = client.Start(context.Background(), "sess-1", nil)
+	require.NoError(t, err)
+	require.Nil(t, eng.last.SearchAttributes)
+}
+
 func TestFinishWithoutToolCalls_UsesPlannerFinalToolResult(t *testing.T) {
 	rt := &Runtime{
 		logger:        telemetry.NoopLogger{},
@@ -524,8 +544,7 @@ func TestStartRunForwardsWorkflowOptions(t *testing.T) {
 	require.Equal(t, in.RunID, eng.last.ID)
 	require.Equal(t, in.WorkflowOptions.Memo, eng.last.Memo)
 	require.Equal(t, map[string]any{
-		"SessionID": in.SessionID,
-		"sa":        "x",
+		"sa": "x",
 	}, eng.last.SearchAttributes)
 	require.Equal(t, 5, eng.last.RetryPolicy.MaxAttempts)
 	require.Equal(t, 5*time.Second, eng.last.RetryPolicy.InitialInterval)
