@@ -197,11 +197,8 @@ func (e *toolBatchExec) synthesizeUnknownToolResult(ctx context.Context, call pl
 	return tr, nil
 }
 
-func (r *Runtime) enforceToolResultContracts(spec tools.ToolSpec, call planner.ToolRequest, toolErr *planner.ToolError, tr *planner.ToolResult) error {
-	if tr == nil {
-		return fmt.Errorf("CRITICAL: nil tool result for %q (%s)", call.Name, call.ToolCallID)
-	}
-	return validateToolBoundsContract(spec, call, toolErr, tr.Bounds)
+func (r *Runtime) enforceToolResultContracts(spec tools.ToolSpec, call planner.ToolRequest, tr *planner.ToolResult) error {
+	return validateToolResultContract(spec, call, tr)
 }
 
 func (e *toolBatchExec) publishToolResultReceived(ctx context.Context, call planner.ToolRequest, tr *planner.ToolResult, resultJSON rawjson.Message, duration time.Duration) error {
@@ -233,16 +230,21 @@ func (e *toolBatchExec) publishToolCallScheduled(ctx context.Context, call plann
 
 func computeToolActivityOptions(wfCtx engine.WorkflowContext, base engine.ActivityOptions, finishBy time.Time) engine.ActivityOptions {
 	callOpts := base
-	timeout := base.Timeout
+	startToClose := base.StartToCloseTimeout
+	scheduleToStart := base.ScheduleToStartTimeout
 	if !finishBy.IsZero() {
 		now := wfCtx.Now()
 		if rem := finishBy.Sub(now); rem > 0 {
-			if timeout == 0 || timeout > rem {
-				timeout = rem
+			if startToClose == 0 || startToClose > rem {
+				startToClose = rem
+			}
+			if scheduleToStart == 0 || scheduleToStart > rem {
+				scheduleToStart = rem
 			}
 		}
 	}
-	callOpts.Timeout = timeout
+	callOpts.StartToCloseTimeout = startToClose
+	callOpts.ScheduleToStartTimeout = scheduleToStart
 	return callOpts
 }
 
@@ -511,12 +513,10 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 				ToolCallID: info.call.ToolCallID,
 				Telemetry:  out.Telemetry,
 			}
-			var toolErr *planner.ToolError
 			if out.Error != "" {
-				toolErr = planner.NewToolError(out.Error)
-				toolRes.Error = toolErr
+				toolRes.Error = planner.NewToolError(out.Error)
 			}
-			if err := e.r.enforceToolResultContracts(spec, info.call, toolErr, toolRes); err != nil {
+			if err := e.r.enforceToolResultContracts(spec, info.call, toolRes); err != nil {
 				return nil, nil, false, err
 			}
 			if out.RetryHint != nil {

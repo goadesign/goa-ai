@@ -71,6 +71,10 @@ type (
 const (
 	workflowIDKey contextKey = "temporal.workflow_id"
 	runIDKey      contextKey = "temporal.run_id"
+
+	// defaultActivityStartToCloseTimeout bounds activities that omit an explicit
+	// attempt timeout even after runtime-level defaulting.
+	defaultActivityStartToCloseTimeout = 2 * time.Minute
 )
 
 // NewWorkflowContext adapts a Temporal workflow.Context into the engine.WorkflowContext
@@ -327,23 +331,35 @@ func (w *temporalWorkflowContext) activityOptionsFor(name string, override engin
 		queue = w.engine.defaultQueue
 	}
 
-	timeout := override.Timeout
-	if timeout == 0 {
-		timeout = defaults.Timeout
+	startToClose := override.StartToCloseTimeout
+	if startToClose == 0 {
+		startToClose = defaults.StartToCloseTimeout
 	}
-	if timeout == 0 {
-		timeout = time.Minute
+	if startToClose == 0 {
+		startToClose = defaultActivityStartToCloseTimeout
+	}
+
+	scheduleToStart := override.ScheduleToStartTimeout
+	if scheduleToStart == 0 {
+		scheduleToStart = defaults.ScheduleToStartTimeout
+	}
+
+	heartbeat := override.HeartbeatTimeout
+	if heartbeat == 0 {
+		heartbeat = defaults.HeartbeatTimeout
+	}
+	if heartbeat > 0 && startToClose > 0 && heartbeat > startToClose {
+		heartbeat = startToClose
 	}
 
 	retry := mergeRetryPolicies(defaults.RetryPolicy, override.RetryPolicy)
 
 	return workflow.ActivityOptions{
-		// Bound both queue wait time and execution time to the effective timeout.
-		// Without ScheduleToStartTimeout, a workflow can block until its run timeout
-		// when workers are unavailable, preventing deterministic deadline handling
-		// in the runtime.
-		ScheduleToStartTimeout: timeout,
-		StartToCloseTimeout:    timeout,
+		// Bound queue wait separately from attempt execution so runtime policies can
+		// keep healthy attempts long enough while still failing worker outages fast.
+		ScheduleToStartTimeout: scheduleToStart,
+		StartToCloseTimeout:    startToClose,
+		HeartbeatTimeout:       heartbeat,
 		TaskQueue:              queue,
 		RetryPolicy:            convertRetryPolicy(retry),
 	}

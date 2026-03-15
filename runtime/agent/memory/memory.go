@@ -49,9 +49,9 @@ type (
 		Type EventType
 		// Timestamp marks when the event occurred, used for ordering and filtering.
 		Timestamp time.Time
-		// Data holds the event-specific payload (message content, tool args, results, etc.).
-		// The structure depends on Type: user/assistant messages contain strings or
-		// structured data, tool calls contain arguments, tool results contain return values.
+		// Data holds the event-specific payload encoded as a generic map for storage.
+		// Callers should construct and decode it via the typed helpers in
+		// `event_data.go` instead of reaching into string keys directly.
 		Data any
 		// Labels provides structured metadata for filtering, querying, or policy decisions.
 		// Examples: {"role": "user"}, {"tool": "search"}, {"error": "timeout"}.

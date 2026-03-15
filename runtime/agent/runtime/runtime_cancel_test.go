@@ -18,10 +18,10 @@ type recordingCancelByIDEngine struct {
 	err      error
 }
 
-func (e *recordingCancelByIDEngine) CancelByID(ctx context.Context, runID string) error {
+func (e *recordingCancelByIDEngine) CancelByID(ctx context.Context, workflowID string) error {
 	_ = ctx
 	e.mu.Lock()
-	e.canceled = append(e.canceled, runID)
+	e.canceled = append(e.canceled, workflowID)
 	e.mu.Unlock()
 	return e.err
 }

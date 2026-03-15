@@ -7,10 +7,12 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/runlog"
+	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/session"
 	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
@@ -21,17 +23,21 @@ import (
 type recordingRunlog struct {
 	events []*runlog.Event
 	err    error
+	delay  time.Duration
 }
 
-func (r *recordingRunlog) Append(_ context.Context, e *runlog.Event) error {
+func (r *recordingRunlog) Append(_ context.Context, e *runlog.Event) (runlog.AppendResult, error) {
 	if r.err != nil {
-		return r.err
+		return runlog.AppendResult{}, r.err
 	}
 	if e == nil {
-		return errors.New("event is nil")
+		return runlog.AppendResult{}, errors.New("event is nil")
+	}
+	if r.delay > 0 {
+		time.Sleep(r.delay)
 	}
 	r.events = append(r.events, e)
-	return nil
+	return runlog.AppendResult{ID: e.ID, Inserted: true}, nil
 }
 
 func (r *recordingRunlog) List(context.Context, string, string, int) (runlog.Page, error) {
@@ -128,6 +134,85 @@ func TestHookActivityAppendFailureAbortsPublish(t *testing.T) {
 	err = rt.hookActivity(context.Background(), input)
 	require.ErrorIs(t, err, appendErr)
 	require.Nil(t, published)
+}
+
+func TestHookActivity_ReplayedChildRunLinkDoesNotDuplicateSessionProjection(t *testing.T) {
+	t.Parallel()
+
+	store := sessioninmem.New()
+	now := time.Now().UTC()
+	_, err := store.CreateSession(context.Background(), "sess-1", now)
+	require.NoError(t, err)
+	require.NoError(t, store.UpsertRun(context.Background(), session.RunMeta{
+		AgentID:   "svc.agent",
+		RunID:     "parent-run",
+		SessionID: "sess-1",
+		Status:    session.RunStatusRunning,
+		StartedAt: now,
+		UpdatedAt: now,
+	}))
+
+	rt := &Runtime{
+		RunEventStore: runloginmem.New(),
+		Bus:           hooks.NewBus(),
+		SessionStore:  store,
+	}
+
+	input, err := hooks.EncodeToHookInput(
+		hooks.NewChildRunLinkedEvent(
+			"parent-run",
+			"svc.agent",
+			"sess-1",
+			tools.Ident("svc.agent.child"),
+			"tool-call-1",
+			"child-run",
+			"svc.child",
+		),
+		"turn-1",
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, rt.hookActivity(context.Background(), input))
+	require.NoError(t, rt.hookActivity(context.Background(), input))
+
+	parent, err := store.LoadRun(context.Background(), "parent-run")
+	require.NoError(t, err)
+	require.Equal(t, []string{"child-run"}, parent.ChildRunIDs)
+}
+
+func TestHookActivityRecordsHeartbeatsWhenConfigured(t *testing.T) {
+	t.Parallel()
+
+	recorder := &heartbeatRecorder{}
+	rl := &recordingRunlog{delay: 10 * time.Millisecond}
+	store := sessioninmem.New()
+	rt := &Runtime{
+		RunEventStore: rl,
+		Bus:           hooks.NewBus(),
+		SessionStore:  store,
+	}
+
+	now := time.Now().UTC()
+	_, err := store.CreateSession(context.Background(), "sess-1", now)
+	require.NoError(t, err)
+	require.NoError(t, store.UpsertRun(context.Background(), session.RunMeta{
+		AgentID:   "svc.agent",
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		Status:    session.RunStatusPending,
+		StartedAt: now,
+		UpdatedAt: now,
+	}))
+
+	input, err := hooks.EncodeToHookInput(hooks.NewPlannerNoteEvent("run-1", "svc.agent", "sess-1", "note", nil), "turn-1")
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	ctx = engine.WithActivityHeartbeatRecorder(ctx, recorder)
+	ctx = engine.WithActivityHeartbeatTimeout(ctx, 3*time.Millisecond)
+
+	require.NoError(t, rt.hookActivity(ctx, input))
+	require.GreaterOrEqual(t, recorder.Count(), 1)
 }
 
 func TestHookActivity_EnrichesToolCallScheduledDisplayHintInRunlog(t *testing.T) {

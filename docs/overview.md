@@ -537,6 +537,11 @@ rt := runtime.New(
 )
 ```
 
+`runtime.WithWorker(...)` handles placement only. Keep planner/tool attempt
+budgets in `RunPolicy.Timing` or `runtime.WithTiming(...)`; configure
+Temporal-specific queue-wait and liveness behavior on the Temporal engine
+itself.
+
 ### Agent Registration
 
 ```go
@@ -884,6 +889,9 @@ The `sessionID` argument is required and must be a non-empty, non-whitespace str
 | `WithAllowedTags([]string)`             | Filter by tags               |
 | `WithDeniedTags([]string)`              | Exclude by tags              |
 | `WithTiming(Timing)`                    | Set multiple timing overrides |
+
+`WithTiming(Timing)` sets semantic run/planner/tool budgets. It does not expose
+engine-level queue-wait or heartbeat tuning.
 
 ### 2. Engine Start
 

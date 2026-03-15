@@ -35,6 +35,14 @@ type (
 		SetTurnID(string)
 	}
 
+	timestampSetter interface {
+		SetTimestampMS(int64)
+	}
+
+	eventKeySetter interface {
+		SetEventKey(string)
+	}
+
 	toolResultReceivedPayload struct {
 		ToolCallID       string                   `json:"tool_call_id"`
 		ParentToolCallID string                   `json:"parent_tool_call_id,omitempty"`
@@ -105,12 +113,14 @@ func EncodeToHookInput(evt Event, turnID string) (*ActivityInput, error) {
 	}
 
 	return &ActivityInput{
-		Type:      evt.Type(),
-		RunID:     evt.RunID(),
-		AgentID:   agent.Ident(evt.AgentID()),
-		SessionID: evt.SessionID(),
-		TurnID:    turnID,
-		Payload:   payload,
+		Type:        evt.Type(),
+		EventKey:    evt.EventKey(),
+		RunID:       evt.RunID(),
+		AgentID:     agent.Ident(evt.AgentID()),
+		SessionID:   evt.SessionID(),
+		TurnID:      turnID,
+		TimestampMS: evt.Timestamp(),
+		Payload:     payload,
 	}, nil
 }
 
@@ -340,9 +350,19 @@ func DecodeFromHookInput(input *ActivityInput) (Event, error) {
 	if input.TurnID != "" {
 		stampTurnID(evt, input.TurnID)
 	}
+	stampTimestamp(evt, input.TimestampMS)
+	stampEventKey(evt, input.EventKey)
 	return evt, nil
 }
 
 func stampTurnID(evt Event, turnID string) {
 	evt.(turnIDSetter).SetTurnID(turnID)
+}
+
+func stampTimestamp(evt Event, timestampMS int64) {
+	evt.(timestampSetter).SetTimestampMS(timestampMS)
+}
+
+func stampEventKey(evt Event, eventKey string) {
+	evt.(eventKeySetter).SetEventKey(eventKey)
 }

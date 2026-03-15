@@ -294,7 +294,7 @@ func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) 
 		))
 	}
 
-	toolUseID := uuid.New().String()
+	toolUseID := toolUseIDForCall(p.Meta)
 	resultStreamID := toolregistry.ResultStreamID(toolUseID)
 	resultStream, err := s.pulseClient.Stream(resultStreamID, streamopts.WithStreamTTL(s.resultStreamTTL))
 	if err != nil {
@@ -353,6 +353,17 @@ func validatePayloadJSONAgainstSchema(payloadJSON []byte, schemaBytes []byte) er
 	}
 
 	return nil
+}
+
+// toolUseIDForCall returns the stable transport identity for a registry-routed
+// tool execution. When callers already supplied a logical ToolCallID, retries
+// must reuse it so the registry does not turn one logical tool call into
+// multiple transport attempts with different result streams.
+func toolUseIDForCall(meta *genregistry.ToolCallMeta) string {
+	if meta != nil && meta.ToolCallID != nil && *meta.ToolCallID != "" {
+		return *meta.ToolCallID
+	}
+	return uuid.New().String()
 }
 
 func derefString(s *string) string {

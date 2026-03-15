@@ -14,6 +14,18 @@ import (
 )
 
 type (
+	// AppendResult describes the outcome of storing a canonical run event.
+	//
+	// IDs remain store-assigned cursor values. Inserted reports whether this call
+	// inserted a new event or replayed an existing event with the same logical
+	// event key.
+	AppendResult struct {
+		// ID is the store-assigned opaque identifier for the canonical event.
+		ID string
+		// Inserted reports whether the event was newly inserted.
+		Inserted bool
+	}
+
 	// Event is a single immutable run event appended to the run log.
 	//
 	// Store implementations assign the ID when persisting the event. IDs are
@@ -22,6 +34,10 @@ type (
 	Event struct {
 		// ID is the store-assigned opaque identifier for this event.
 		ID string
+		// EventKey is the stable logical identity for this event within the run.
+		// Append deduplicates on (run_id, event_key) while leaving ID as the
+		// ordered cursor for pagination.
+		EventKey string
 		// RunID is the identifier of the run this event belongs to.
 		RunID string
 		// AgentID is the identifier of the agent that emitted the event.
@@ -55,9 +71,10 @@ type (
 		// Append stores the event in the run log.
 		//
 		// Store implementations assign the event ID and persist the payload
-		// verbatim. Append must be durable: failures are surfaced to callers so
-		// workflows can fail fast when canonical logging is unavailable.
-		Append(ctx context.Context, e *Event) error
+		// verbatim. Append must be durable and idempotent on (run_id, event_key):
+		// exact duplicates return the existing event ID with Inserted=false, while
+		// conflicting bodies for the same key must fail loudly.
+		Append(ctx context.Context, e *Event) (AppendResult, error)
 
 		// List returns the next forward page of events for the given run ID.
 		//

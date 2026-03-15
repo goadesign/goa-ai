@@ -41,7 +41,6 @@ import (
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
-	engtemporal "goa.design/goa-ai/runtime/agent/engine/temporal"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/memory"
@@ -133,6 +132,11 @@ type (
 		handleMu   sync.RWMutex
 		runHandles map[string]engine.WorkflowHandle
 
+		// completionRepairMu serializes no-handle terminal repair so concurrent
+		// readers cannot append duplicate RunCompleted events for the same missing
+		// canonical completion window.
+		completionRepairMu sync.Mutex
+
 		// workers holds optional per-agent worker configuration supplied at
 		// construction time.
 		workers map[agent.Ident]WorkerConfig
@@ -216,13 +220,16 @@ type (
 	// RuntimeOption configures the runtime via functional options passed to NewWith.
 	RuntimeOption func(*Options)
 
-	// WorkerConfig configures the worker for a specific agent. Engines that
-	// support background workers (e.g., Temporal) use this configuration to
-	// determine queue bindings and concurrency. For in-memory engines this is
-	// ignored.
+	// WorkerConfig configures per-agent queue placement. Engines that support
+	// background workers (for example Temporal) use this to select the workflow
+	// and activity queue for the agent. Engine-specific concurrency, liveness,
+	// and queue-wait tuning belongs in the engine adapter. In-memory engines
+	// ignore this configuration.
 	WorkerConfig struct {
 		// Queue overrides the default task queue for this agent's workflow and
-		// activities. When empty the generated default queue is used.
+		// activities. When set, the runtime rebases workflow, planner, and tool
+		// activities onto this queue. Engine-specific liveness and queue-wait tuning
+		// belongs in the engine adapter, not the generic runtime surface.
 		Queue string
 	}
 
@@ -350,7 +357,9 @@ type (
 		// MaxConsecutiveFailedToolCalls caps sequential failures before aborting (0 = unlimited).
 		MaxConsecutiveFailedToolCalls int
 
-		// TimeBudget is the wall-clock deadline for run completion (0 = unlimited).
+		// TimeBudget is the semantic wall-clock budget for planner and tool work
+		// within the run (0 = unlimited). The runtime derives the engine run timeout
+		// from this budget plus finalizer reserve and a small engine headroom.
 		TimeBudget time.Duration
 
 		// FinalizerGrace reserves time to produce a last assistant message after the
@@ -407,11 +416,23 @@ const (
 
 const (
 	// Opinionated defaults applied when activity timeouts are unspecified.
-	defaultPlanActivityTimeout        = 30 * time.Second
-	defaultResumeActivityTimeout      = 30 * time.Second
+	defaultPlanActivityTimeout        = 2 * time.Minute
+	defaultResumeActivityTimeout      = 2 * time.Minute
 	defaultExecuteToolActivityTimeout = 2 * time.Minute
 	defaultHookActivityTimeout        = 15 * time.Second
 )
+
+// defaultRetriedActivityPolicy returns the runtime's standard infrastructure
+// retry policy for activities whose logical work is now replay-safe by
+// contract. Planner/tool business errors still surface in typed results rather
+// than escaping as activity failures.
+func defaultRetriedActivityPolicy() engine.RetryPolicy {
+	return engine.RetryPolicy{
+		MaxAttempts:        3,
+		InitialInterval:    time.Second,
+		BackoffCoefficient: 2,
+	}
+}
 
 var (
 	// Typed error sentinels for common invalid states.
@@ -504,7 +525,8 @@ func WithWorkflowOptions(o *WorkflowOptions) RunOption {
 }
 
 // WithTiming sets run-level timing overrides in a single structured option.
-// Zero-valued fields are ignored.
+// Budget is the semantic run budget; Plan and Tools are attempt budgets. Zero-
+// valued fields are ignored.
 func WithTiming(t Timing) RunOption {
 	return func(in *RunInput) {
 		if in.Policy == nil {
@@ -564,7 +586,9 @@ func WithRunMaxConsecutiveFailedToolCalls(n int) RunOption {
 	}
 }
 
-// WithRunTimeBudget sets a wall-clock budget for the run. Zero means no override.
+// WithRunTimeBudget sets the semantic wall-clock budget for planner and tool
+// work in the run. The runtime expands this into an engine run timeout by
+// adding finalizer reserve and engine headroom. Zero means no override.
 func WithRunTimeBudget(d time.Duration) RunOption {
 	return func(in *RunInput) {
 		if in.Policy == nil {
@@ -575,7 +599,7 @@ func WithRunTimeBudget(d time.Duration) RunOption {
 }
 
 // WithRunFinalizerGrace reserves time to produce a final assistant message after
-// the run's TimeBudget is exhausted. Zero means no override.
+// the run's semantic TimeBudget is exhausted. Zero means no override.
 func WithRunFinalizerGrace(d time.Duration) RunOption {
 	return func(in *RunInput) {
 		if in.Policy == nil {
@@ -788,66 +812,50 @@ func newFromOptions(opts Options) *Runtime {
 			var memEvent memory.Event
 			switch evt := event.(type) {
 			case *hooks.ToolCallScheduledEvent:
-				memEvent = memory.Event{
-					Type:      memory.EventToolCall,
-					Timestamp: time.UnixMilli(evt.Timestamp()),
-					Data: map[string]any{
-						"tool_call_id":            evt.ToolCallID,
-						"parent_tool_call_id":     evt.ParentToolCallID,
-						"tool_name":               evt.ToolName,
-						"payload":                 evt.Payload,
-						"queue":                   evt.Queue,
-						"expected_children_total": evt.ExpectedChildrenTotal,
-					},
-				}
+				memEvent = memory.NewEvent(time.UnixMilli(evt.Timestamp()), memory.ToolCallData{
+					ToolCallID:            evt.ToolCallID,
+					ParentToolCallID:      evt.ParentToolCallID,
+					ToolName:              evt.ToolName,
+					PayloadJSON:           evt.Payload,
+					Queue:                 evt.Queue,
+					ExpectedChildrenTotal: evt.ExpectedChildrenTotal,
+				}, nil)
 				return rt.Memory.AppendEvents(ctx, evt.AgentID(), evt.RunID(), memEvent)
 			case *hooks.ToolResultReceivedEvent:
-				memEvent = memory.Event{
-					Type:      memory.EventToolResult,
-					Timestamp: time.UnixMilli(evt.Timestamp()),
-					Data: map[string]any{
-						"tool_call_id":        evt.ToolCallID,
-						"parent_tool_call_id": evt.ParentToolCallID,
-						"tool_name":           evt.ToolName,
-						"result":              evt.Result,
-						"bounds":              evt.Bounds,
-						"duration":            evt.Duration,
-						"error":               evt.Error,
-					},
+				errorMessage := ""
+				if evt.Error != nil {
+					errorMessage = evt.Error.Error()
 				}
+				memEvent = memory.NewEvent(time.UnixMilli(evt.Timestamp()), memory.ToolResultData{
+					ToolCallID:       evt.ToolCallID,
+					ParentToolCallID: evt.ParentToolCallID,
+					ToolName:         evt.ToolName,
+					ResultJSON:       evt.ResultJSON,
+					Preview:          evt.ResultPreview,
+					Bounds:           evt.Bounds,
+					Duration:         evt.Duration,
+					ErrorMessage:     errorMessage,
+				}, nil)
 				return rt.Memory.AppendEvents(ctx, evt.AgentID(), evt.RunID(), memEvent)
 			case *hooks.AssistantMessageEvent:
-				memEvent = memory.Event{
-					Type:      memory.EventAssistantMessage,
-					Timestamp: time.UnixMilli(evt.Timestamp()),
-					Data: map[string]any{
-						"message":    evt.Message,
-						"structured": evt.Structured,
-					},
-				}
+				memEvent = memory.NewEvent(time.UnixMilli(evt.Timestamp()), memory.AssistantMessageData{
+					Message:    evt.Message,
+					Structured: evt.Structured,
+				}, nil)
 				return rt.Memory.AppendEvents(ctx, evt.AgentID(), evt.RunID(), memEvent)
 			case *hooks.ThinkingBlockEvent:
-				memEvent = memory.Event{
-					Type:      memory.EventThinking,
-					Timestamp: time.UnixMilli(evt.Timestamp()),
-					Data: map[string]any{
-						"text":          evt.Text,
-						"signature":     evt.Signature,
-						"redacted":      evt.Redacted,
-						"content_index": evt.ContentIndex,
-						"final":         evt.Final,
-					},
-				}
+				memEvent = memory.NewEvent(time.UnixMilli(evt.Timestamp()), memory.ThinkingData{
+					Text:         evt.Text,
+					Signature:    evt.Signature,
+					Redacted:     evt.Redacted,
+					ContentIndex: evt.ContentIndex,
+					Final:        evt.Final,
+				}, nil)
 				return rt.Memory.AppendEvents(ctx, evt.AgentID(), evt.RunID(), memEvent)
 			case *hooks.PlannerNoteEvent:
-				memEvent = memory.Event{
-					Type:      memory.EventPlannerNote,
-					Timestamp: time.UnixMilli(evt.Timestamp()),
-					Data: map[string]any{
-						"note": evt.Note,
-					},
-					Labels: evt.Labels,
-				}
+				memEvent = memory.NewEvent(time.UnixMilli(evt.Timestamp()), memory.PlannerNoteData{
+					Note: evt.Note,
+				}, evt.Labels)
 				return rt.Memory.AppendEvents(ctx, evt.AgentID(), evt.RunID(), memEvent)
 			}
 			return nil
@@ -1000,19 +1008,20 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 			reg.Workflow.TaskQueue = q
 			reg.PlanActivityOptions.Queue = q
 			reg.ResumeActivityOptions.Queue = q
+			reg.ExecuteToolActivityOptions.Queue = q
 		}
 	}
 
-	// Apply opinionated default timeouts when unspecified. These keep activities bounded
-	// even when designs omit explicit values.
-	if reg.PlanActivityOptions.Timeout == 0 {
-		reg.PlanActivityOptions.Timeout = defaultPlanActivityTimeout
+	// Apply runtime-owned attempt defaults after queue rebasing. Engine-specific
+	// queue-wait and liveness mechanics are derived inside the engine adapter.
+	if reg.PlanActivityOptions.StartToCloseTimeout == 0 {
+		reg.PlanActivityOptions.StartToCloseTimeout = defaultPlanActivityTimeout
 	}
-	if reg.ResumeActivityOptions.Timeout == 0 {
-		reg.ResumeActivityOptions.Timeout = defaultResumeActivityTimeout
+	if reg.ResumeActivityOptions.StartToCloseTimeout == 0 {
+		reg.ResumeActivityOptions.StartToCloseTimeout = defaultResumeActivityTimeout
 	}
-	if reg.ExecuteToolActivityOptions.Timeout == 0 {
-		reg.ExecuteToolActivityOptions.Timeout = defaultExecuteToolActivityTimeout
+	if reg.ExecuteToolActivityOptions.StartToCloseTimeout == 0 {
+		reg.ExecuteToolActivityOptions.StartToCloseTimeout = defaultExecuteToolActivityTimeout
 	}
 
 	// Register untyped workflow; Temporal adapter wraps with workflow.Context and
@@ -1081,10 +1090,11 @@ func (r *Runtime) ensureHookActivityRegistered(ctx context.Context) error {
 		timeout = r.hookActivityTimeout
 	}
 	opts := engine.ActivityOptions{
-		Timeout: timeout,
-		RetryPolicy: engine.RetryPolicy{
-			MaxAttempts: 1,
-		},
+		StartToCloseTimeout: timeout,
+		RetryPolicy:         defaultRetriedActivityPolicy(),
+	}
+	if opts.StartToCloseTimeout == 0 {
+		opts.StartToCloseTimeout = timeout
 	}
 	if err := r.Engine.RegisterHookActivity(ctx, hookActivityName, opts, r.hookActivity); err != nil {
 		return err
@@ -1196,8 +1206,8 @@ func (r *Runtime) NewBedrockModelClient(awsrt *bedrockruntime.Client, cfg Bedroc
 		Temperature:    cfg.Temperature,
 		Logger:         r.logger,
 	}
-	if eng, ok := r.Engine.(*engtemporal.Engine); ok {
-		return bedrock.New(awsrt, opts, bedrock.NewTemporalLedgerSource(eng.TemporalClient()))
+	if querier, ok := r.Engine.(bedrock.WorkflowQuerier); ok {
+		return bedrock.New(awsrt, opts, bedrock.NewTemporalLedgerSource(querier))
 	}
 	// Engines without durable queries: construct without ledger rehydration.
 	return bedrock.New(awsrt, opts, nil)
@@ -1335,53 +1345,14 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	} else if strings.TrimSpace(input.SessionID) != "" {
 		return nil, ErrSessionNotAllowed
 	}
+	reg, _ := r.agentByID(input.AgentID)
 	req := engine.WorkflowStartRequest{
 		ID:        input.RunID,
 		Workflow:  workflowName,
 		TaskQueue: defaultQueue,
 		Input:     input,
 	}
-	// Compute an engine-level TTL for the workflow to prevent indefinite runs.
-	// Use agent/run policy when available and cap by a hard maximum.
-	{
-		const hardCap = 15 * time.Minute
-		// Headroom ensures the workflow can publish terminal events and complete
-		// deterministic cleanup even when finalization runs right up to the deadline.
-		const headroom = 30 * time.Second
-		var (
-			policyBudget time.Duration
-			grace        time.Duration
-			resumeTO     time.Duration
-		)
-		if input.Policy != nil && input.Policy.TimeBudget > 0 {
-			policyBudget = input.Policy.TimeBudget
-			grace = input.Policy.FinalizerGrace
-			resumeTO = input.Policy.PlanTimeout
-		} else if reg, ok := r.agentByID(input.AgentID); ok {
-			policyBudget = reg.Policy.TimeBudget
-			grace = reg.Policy.FinalizerGrace
-			resumeTO = reg.ResumeActivityOptions.Timeout
-			if input.Policy != nil && input.Policy.PlanTimeout > 0 {
-				resumeTO = input.Policy.PlanTimeout
-			}
-		}
-		if grace == 0 {
-			grace = defaultFinalizerGrace
-		}
-		if resumeTO == 0 {
-			// Keep this aligned with the Temporal engine default activity timeout.
-			resumeTO = time.Minute
-		}
-		if grace < resumeTO {
-			grace = resumeTO
-		}
-		req.RunTimeout = hardCap
-		if policyBudget > 0 {
-			if t := policyBudget + grace + headroom; t > 0 && t < req.RunTimeout {
-				req.RunTimeout = t
-			}
-		}
-	}
+	req.RunTimeout = resolveRunTiming(reg, input).RunTimeout
 	if opts := input.WorkflowOptions; opts != nil {
 		if opts.TaskQueue != "" {
 			req.TaskQueue = opts.TaskQueue
@@ -1427,6 +1398,10 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	handle, err := r.Engine.StartWorkflow(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrWorkflowStartFailed, err)
+	}
+	if r.RunEventStore != nil {
+		observed := newObservedWorkflowHandle(r, input, handle)
+		handle = observed
 	}
 	r.storeWorkflowHandle(input.RunID, handle)
 	return handle, nil
@@ -1590,7 +1565,7 @@ func (r *Runtime) mapAwaitSignalError(ctx context.Context, runID string, err err
 // isTerminalRunStatus reports whether the run lifecycle is permanently closed.
 func isTerminalRunStatus(status engine.RunStatus) bool {
 	switch status {
-	case engine.RunStatusCompleted, engine.RunStatusFailed, engine.RunStatusCanceled:
+	case engine.RunStatusCompleted, engine.RunStatusTimedOut, engine.RunStatusFailed, engine.RunStatusCanceled:
 		return true
 	case engine.RunStatusPending, engine.RunStatusRunning, engine.RunStatusPaused:
 		return false
@@ -1600,12 +1575,68 @@ func isTerminalRunStatus(status engine.RunStatus) bool {
 
 // ListRunEvents returns a forward page of canonical run events for the given run.
 func (r *Runtime) ListRunEvents(ctx context.Context, runID, cursor string, limit int) (runlog.Page, error) {
-	return r.RunEventStore.List(ctx, runID, cursor, limit)
+	page, err := r.RunEventStore.List(ctx, runID, cursor, limit)
+	if err != nil {
+		return runlog.Page{}, err
+	}
+	if !runEventPageNeedsTerminalRepair(page) {
+		return page, nil
+	}
+	if err := r.repairTerminalRunCompletion(ctx, runID); err != nil {
+		r.logWarn(ctx, "run completion repair skipped for event read", err, "run_id", runID)
+		return page, nil
+	}
+	repaired, err := r.RunEventStore.List(ctx, runID, cursor, limit)
+	if err != nil {
+		return runlog.Page{}, err
+	}
+	if !repairedTailNeedsCompletionDelta(page, repaired) {
+		return repaired, nil
+	}
+	delta, err := r.RunEventStore.List(ctx, runID, page.Events[len(page.Events)-1].ID, 1)
+	if err != nil {
+		return runlog.Page{}, err
+	}
+	if len(delta.Events) == 0 || delta.Events[0].Type != hooks.RunCompleted {
+		return repaired, nil
+	}
+	events := append([]*runlog.Event(nil), page.Events...)
+	events = append(events, delta.Events[0])
+	return runlog.Page{
+		Events:     events,
+		NextCursor: delta.NextCursor,
+	}, nil
 }
 
 // GetRunSnapshot derives a compact snapshot of the run state by replaying the
 // canonical run log.
 func (r *Runtime) GetRunSnapshot(ctx context.Context, runID string) (*run.Snapshot, error) {
+	snapshot, err := r.loadRunSnapshot(ctx, runID)
+	if err != nil {
+		if errors.Is(err, run.ErrNotFound) {
+			if repairErr := r.repairTerminalRunCompletion(ctx, runID); repairErr != nil {
+				r.logWarn(ctx, "run completion repair skipped for missing snapshot", repairErr, "run_id", runID)
+				return nil, err
+			}
+			return r.loadRunSnapshot(ctx, runID)
+		}
+		return nil, err
+	}
+	if snapshot.Status == run.StatusCompleted ||
+		snapshot.Status == run.StatusFailed ||
+		snapshot.Status == run.StatusCanceled {
+		return snapshot, nil
+	}
+	if err := r.repairTerminalRunCompletion(ctx, runID); err != nil {
+		r.logWarn(ctx, "run completion repair skipped for snapshot read", err, "run_id", runID)
+		return snapshot, nil
+	}
+	return r.loadRunSnapshot(ctx, runID)
+}
+
+// loadRunSnapshot replays the canonical run log without attempting terminal
+// repair. Callers that serve external reads should repair first.
+func (r *Runtime) loadRunSnapshot(ctx context.Context, runID string) (*run.Snapshot, error) {
 	const pageSize = 512
 
 	var (
@@ -1624,6 +1655,31 @@ func (r *Runtime) GetRunSnapshot(ctx context.Context, runID string) (*run.Snapsh
 		cursor = page.NextCursor
 	}
 	return newRunSnapshot(events)
+}
+
+// runEventPageNeedsTerminalRepair reports whether a caller is currently reading
+// the durable tail of the run log without a canonical RunCompleted event.
+func runEventPageNeedsTerminalRepair(page runlog.Page) bool {
+	if page.NextCursor != "" {
+		return false
+	}
+	if len(page.Events) == 0 {
+		return true
+	}
+	return page.Events[len(page.Events)-1].Type != hooks.RunCompleted
+}
+
+// repairedTailNeedsCompletionDelta reports whether repair appended a terminal
+// event behind an originally full tail page, so callers need that single new
+// event stitched into the same response to observe convergence immediately.
+func repairedTailNeedsCompletionDelta(original, repaired runlog.Page) bool {
+	if len(original.Events) == 0 || len(repaired.Events) == 0 {
+		return false
+	}
+	if repaired.NextCursor == "" {
+		return false
+	}
+	return repaired.Events[len(repaired.Events)-1].Type != hooks.RunCompleted
 }
 
 // addToolsetLocked registers a toolset and its specs without acquiring the lock.

@@ -24,6 +24,9 @@ type (
 		RunID            string `json:"run_id"`
 		SessionID        string `json:"session_id"`
 		TurnID           string `json:"turn_id,omitempty"`
+		// ToolCallID is the logical execution identity assigned by the runtime. When
+		// present, registry retries must reuse it as the transport ToolUseID instead
+		// of minting a fresh per-attempt identifier.
 		ToolCallID       string `json:"tool_call_id,omitempty"`
 		ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
 	}
@@ -31,6 +34,9 @@ type (
 	// ToolCallMessage is published to a toolset request stream for tool invocations
 	// and provider health checks.
 	ToolCallMessage struct {
+		// ToolUseID is the transport identity for this request stream message. For
+		// registry-routed tool calls it is stable across retries and equals the
+		// logical ToolCallID when the caller supplied one.
 		Type      ToolCallMessageType `json:"type"`
 		ToolUseID string              `json:"tool_use_id,omitempty"`
 		PingID    string              `json:"ping_id,omitempty"`

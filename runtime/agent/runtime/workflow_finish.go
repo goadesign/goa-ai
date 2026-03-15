@@ -33,7 +33,7 @@ func (r *Runtime) finishWithoutToolCalls(
 	if err := validateTerminalPlanResult(result); err != nil {
 		r.logger.Error(ctx, "ERROR - invalid planner terminal result", "err", err)
 		return nil, fmt.Errorf(
-			"CRITICAL: %w - ToolCalls=%d, FinalResponse=%v, FinalToolResult=%v, Await=%v",
+			"%w - ToolCalls=%d, FinalResponse=%v, FinalToolResult=%v, Await=%v",
 			err,
 			len(result.ToolCalls),
 			result.FinalResponse != nil,

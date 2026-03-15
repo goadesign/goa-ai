@@ -255,13 +255,13 @@ func (e *eng) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest
 }
 
 // QueryRunStatus returns the current lifecycle status for a workflow execution.
-func (e *eng) QueryRunStatus(_ context.Context, runID string) (engine.RunStatus, error) {
-	if runID == "" {
-		return "", fmt.Errorf("run id is required")
+func (e *eng) QueryRunStatus(_ context.Context, workflowID string) (engine.RunStatus, error) {
+	if workflowID == "" {
+		return "", fmt.Errorf("workflow id is required")
 	}
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	status, ok := e.statuses[runID]
+	status, ok := e.statuses[workflowID]
 	if !ok {
 		return "", engine.ErrWorkflowNotFound
 	}
@@ -459,9 +459,9 @@ func (w *wfCtx) PublishHook(ctx context.Context, call engine.HookActivityCall) e
 	if !ok {
 		return fmt.Errorf("hook activity %q not registered", call.Name)
 	}
-	timeout := call.Options.Timeout
+	timeout := call.Options.StartToCloseTimeout
 	if timeout == 0 {
-		timeout = def.opts.Timeout
+		timeout = def.opts.StartToCloseTimeout
 	}
 	actCtx, cancel := withOptionalTimeout(ctx, timeout)
 	defer cancel()
@@ -481,9 +481,9 @@ func (w *wfCtx) ExecutePlannerActivity(ctx context.Context, call engine.PlannerA
 	if !ok {
 		return nil, fmt.Errorf("planner activity %q not registered", call.Name)
 	}
-	timeout := call.Options.Timeout
+	timeout := call.Options.StartToCloseTimeout
 	if timeout == 0 {
-		timeout = def.opts.Timeout
+		timeout = def.opts.StartToCloseTimeout
 	}
 	actCtx, cancel := withOptionalTimeout(ctx, timeout)
 	defer cancel()
@@ -515,9 +515,9 @@ func (w *wfCtx) ExecuteToolActivityAsync(ctx context.Context, call engine.ToolAc
 	fut := &future[*api.ToolOutput]{ready: make(chan struct{})}
 	go func() {
 		defer close(fut.ready)
-		timeout := call.Options.Timeout
+		timeout := call.Options.StartToCloseTimeout
 		if timeout == 0 {
-			timeout = def.opts.Timeout
+			timeout = def.opts.StartToCloseTimeout
 		}
 		actCtx, cancel := withOptionalTimeout(ctx, timeout)
 		defer cancel()

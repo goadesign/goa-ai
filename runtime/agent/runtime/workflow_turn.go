@@ -124,7 +124,7 @@ func (r *Runtime) handleToolTurn(
 		execCalls[i] = call
 	}
 
-	grouped, timeouts := r.groupToolCallsByTimeout(execCalls, input, toolOpts.Timeout)
+	grouped, timeouts := r.groupToolCallsByTimeout(execCalls, input, toolOpts.StartToCloseTimeout)
 	finishBy := time.Time{}
 	if !deadlines.Hard.IsZero() {
 		finishBy = deadlines.Hard.Add(-deadlines.finalizeReserve())

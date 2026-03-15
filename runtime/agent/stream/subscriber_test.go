@@ -43,6 +43,17 @@ func TestStreamSubscriber(t *testing.T) {
 	require.Equal(t, "hello", v.Data.Text)
 }
 
+func TestStreamSubscriber_PreservesHookEventKey(t *testing.T) {
+	sink := &mockSink{}
+	sub, err := NewSubscriber(sink)
+	require.NoError(t, err)
+
+	evt := hooks.NewPlannerNoteEvent("r1", agent.Ident("agent1"), "session-1", "note", nil)
+	require.NoError(t, sub.HandleEvent(context.Background(), evt))
+	require.Len(t, sink.events, 1)
+	require.Equal(t, evt.EventKey(), sink.events[0].EventKey())
+}
+
 func TestStreamSubscriber_ToolStart(t *testing.T) {
 	sink := &mockSink{}
 	sub, err := NewSubscriber(sink)

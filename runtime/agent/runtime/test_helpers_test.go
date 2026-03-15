@@ -777,16 +777,33 @@ func (h *stubWorkflowHandle) Signal(ctx context.Context, name string, payload an
 }
 func (h *stubWorkflowHandle) Cancel(context.Context) error { return nil }
 
-type stubEngine struct{ last engine.WorkflowStartRequest }
+type stubEngine struct {
+	last                             engine.WorkflowStartRequest
+	registeredHookActivityOptions    map[string]engine.ActivityOptions
+	registeredPlannerActivityOptions map[string]engine.ActivityOptions
+	registeredExecuteActivityOptions map[string]engine.ActivityOptions
+}
 
 func (s *stubEngine) RegisterWorkflow(context.Context, engine.WorkflowDefinition) error { return nil }
-func (s *stubEngine) RegisterHookActivity(context.Context, string, engine.ActivityOptions, func(context.Context, *api.HookActivityInput) error) error {
+func (s *stubEngine) RegisterHookActivity(_ context.Context, name string, opts engine.ActivityOptions, _ func(context.Context, *api.HookActivityInput) error) error {
+	if s.registeredHookActivityOptions == nil {
+		s.registeredHookActivityOptions = make(map[string]engine.ActivityOptions)
+	}
+	s.registeredHookActivityOptions[name] = opts
 	return nil
 }
-func (s *stubEngine) RegisterPlannerActivity(context.Context, string, engine.ActivityOptions, func(context.Context, *api.PlanActivityInput) (*api.PlanActivityOutput, error)) error {
+func (s *stubEngine) RegisterPlannerActivity(_ context.Context, name string, opts engine.ActivityOptions, _ func(context.Context, *api.PlanActivityInput) (*api.PlanActivityOutput, error)) error {
+	if s.registeredPlannerActivityOptions == nil {
+		s.registeredPlannerActivityOptions = make(map[string]engine.ActivityOptions)
+	}
+	s.registeredPlannerActivityOptions[name] = opts
 	return nil
 }
-func (s *stubEngine) RegisterExecuteToolActivity(context.Context, string, engine.ActivityOptions, func(context.Context, *api.ToolInput) (*api.ToolOutput, error)) error {
+func (s *stubEngine) RegisterExecuteToolActivity(_ context.Context, name string, opts engine.ActivityOptions, _ func(context.Context, *api.ToolInput) (*api.ToolOutput, error)) error {
+	if s.registeredExecuteActivityOptions == nil {
+		s.registeredExecuteActivityOptions = make(map[string]engine.ActivityOptions)
+	}
+	s.registeredExecuteActivityOptions[name] = opts
 	return nil
 }
 func (s *stubEngine) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest) (engine.WorkflowHandle, error) {

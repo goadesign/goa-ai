@@ -200,8 +200,13 @@ type (
 		// ToolUseID correlates this result to a prior tool use declaration.
 		ToolUseID string
 
-		// Content is the result payload, typically a JSON-compatible value or
-		// string.
+		// Content is the provider-facing tool result payload.
+		//
+		// Contract:
+		//   - Successful results carry a decoded JSON-compatible value.
+		//   - Failed results carry plain error text with IsError=true.
+		//   - Runtime/tooling code must not store raw JSON bytes or Go error
+		//     structs here.
 		Content any
 
 		// IsError reports whether Content represents an error from the tool.

@@ -3,8 +3,14 @@ engine.ActivityOptions{
 {{- if ne .Queue "" }}
     Queue: {{ printf "%q" .Queue }},
 {{- end }}
-{{- if gt .Timeout 0 }}
-    Timeout: time.Duration({{ printf "%d" .Timeout }}),
+{{- if gt .ScheduleToStartTimeout 0 }}
+    ScheduleToStartTimeout: time.Duration({{ printf "%d" .ScheduleToStartTimeout }}),
+{{- end }}
+{{- if gt .StartToCloseTimeout 0 }}
+    StartToCloseTimeout: time.Duration({{ printf "%d" .StartToCloseTimeout }}),
+{{- end }}
+{{- if gt .HeartbeatTimeout 0 }}
+    HeartbeatTimeout: time.Duration({{ printf "%d" .HeartbeatTimeout }}),
 {{- end }}
 {{- if or (gt .RetryPolicy.MaxAttempts 0) (gt .RetryPolicy.InitialInterval 0) (ne .RetryPolicy.BackoffCoefficient 0.0) }}
     RetryPolicy: engine.RetryPolicy{

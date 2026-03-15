@@ -4,6 +4,7 @@ package mongo
 //go:generate cmg gen .
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -27,7 +28,7 @@ type (
 	Client interface {
 		health.Pinger
 
-		Append(ctx context.Context, e *runlog.Event) error
+		Append(ctx context.Context, e *runlog.Event) (runlog.AppendResult, error)
 		List(ctx context.Context, runID string, cursor string, limit int) (runlog.Page, error)
 	}
 
@@ -47,6 +48,7 @@ type (
 
 	eventDocument struct {
 		ID        primitive.ObjectID `bson:"_id,omitempty"`
+		EventKey  string             `bson:"event_key"`
 		RunID     string             `bson:"run_id"`
 		AgentID   string             `bson:"agent_id"`
 		SessionID string             `bson:"session_id"`
@@ -99,24 +101,28 @@ func (c *client) Ping(ctx context.Context) error {
 	return c.mongo.Ping(ctx, readpref.Primary())
 }
 
-func (c *client) Append(ctx context.Context, e *runlog.Event) error {
+func (c *client) Append(ctx context.Context, e *runlog.Event) (runlog.AppendResult, error) {
 	if e == nil {
-		return errors.New("event is required")
+		return runlog.AppendResult{}, errors.New("event is required")
 	}
 	if e.RunID == "" {
-		return errors.New("run id is required")
+		return runlog.AppendResult{}, errors.New("run id is required")
+	}
+	if e.EventKey == "" {
+		return runlog.AppendResult{}, errors.New("event key is required")
 	}
 	if e.Type == "" {
-		return errors.New("event type is required")
+		return runlog.AppendResult{}, errors.New("event type is required")
 	}
 	if e.Timestamp.IsZero() {
-		return errors.New("timestamp is required")
+		return runlog.AppendResult{}, errors.New("timestamp is required")
 	}
 
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()
 
 	doc := eventDocument{
+		EventKey:  e.EventKey,
 		RunID:     e.RunID,
 		AgentID:   string(e.AgentID),
 		SessionID: e.SessionID,
@@ -127,14 +133,25 @@ func (c *client) Append(ctx context.Context, e *runlog.Event) error {
 	}
 	res, err := c.coll.InsertOne(ctx, doc)
 	if err != nil {
-		return err
+		if mongodriver.IsDuplicateKeyError(err) {
+			existing, lookupErr := c.lookupEventByKey(ctx, e.RunID, e.EventKey)
+			if lookupErr != nil {
+				return runlog.AppendResult{}, lookupErr
+			}
+			if !sameEventDocument(existing, doc) {
+				return runlog.AppendResult{}, fmt.Errorf("event key %q conflicts with existing event body", e.EventKey)
+			}
+			e.ID = existing.ID.Hex()
+			return runlog.AppendResult{ID: e.ID, Inserted: false}, nil
+		}
+		return runlog.AppendResult{}, err
 	}
 	oid, ok := res.InsertedID.(primitive.ObjectID)
 	if !ok {
-		return fmt.Errorf("unexpected inserted id type %T", res.InsertedID)
+		return runlog.AppendResult{}, fmt.Errorf("unexpected inserted id type %T", res.InsertedID)
 	}
 	e.ID = oid.Hex()
-	return nil
+	return runlog.AppendResult{ID: e.ID, Inserted: true}, nil
 }
 
 func (c *client) List(ctx context.Context, runID string, cursor string, limit int) (page runlog.Page, err error) {
@@ -178,6 +195,7 @@ func (c *client) List(ctx context.Context, runID string, cursor string, limit in
 		}
 		events = append(events, &runlog.Event{
 			ID:        doc.ID.Hex(),
+			EventKey:  doc.EventKey,
 			RunID:     doc.RunID,
 			AgentID:   agent.Ident(doc.AgentID),
 			SessionID: doc.SessionID,
@@ -210,13 +228,23 @@ func (c *client) withTimeout(ctx context.Context) (context.Context, context.Canc
 }
 
 func ensureIndexes(ctx context.Context, coll collection) error {
-	index := mongodriver.IndexModel{
+	cursorIndex := mongodriver.IndexModel{
 		Keys: bson.D{
 			{Key: "run_id", Value: 1},
 			{Key: "_id", Value: 1},
 		},
 	}
-	_, err := coll.Indexes().CreateOne(ctx, index)
+	if _, err := coll.Indexes().CreateOne(ctx, cursorIndex); err != nil {
+		return err
+	}
+	identityIndex := mongodriver.IndexModel{
+		Keys: bson.D{
+			{Key: "run_id", Value: 1},
+			{Key: "event_key", Value: 1},
+		},
+		Options: options.Index().SetUnique(true),
+	}
+	_, err := coll.Indexes().CreateOne(ctx, identityIndex)
 	return err
 }
 
@@ -236,6 +264,7 @@ func newClientWithCollection(mongoClient *mongodriver.Client, coll collection, t
 
 type collection interface {
 	InsertOne(ctx context.Context, document any, opts ...*options.InsertOneOptions) (*mongodriver.InsertOneResult, error)
+	FindOne(ctx context.Context, filter any, opts ...*options.FindOneOptions) singleResult
 	Find(ctx context.Context, filter any, opts ...*options.FindOptions) (cursor, error)
 	Indexes() indexView
 }
@@ -249,6 +278,10 @@ type cursor interface {
 	Decode(val any) error
 	Err() error
 	Close(ctx context.Context) error
+}
+
+type singleResult interface {
+	Decode(val any) error
 }
 
 type mongoCollection struct {
@@ -265,6 +298,10 @@ func (c mongoCollection) Find(ctx context.Context, filter any, opts ...*options.
 		return nil, err
 	}
 	return mongoCursor{cur: cur}, nil
+}
+
+func (c mongoCollection) FindOne(ctx context.Context, filter any, opts ...*options.FindOneOptions) singleResult {
+	return c.coll.FindOne(ctx, filter, opts...)
 }
 
 func (c mongoCollection) Indexes() indexView {
@@ -297,4 +334,27 @@ type mongoIndexView struct {
 
 func (v mongoIndexView) CreateOne(ctx context.Context, model mongodriver.IndexModel, opts ...*options.CreateIndexesOptions) (string, error) {
 	return v.view.CreateOne(ctx, model, opts...)
+}
+
+func (c *client) lookupEventByKey(ctx context.Context, runID string, eventKey string) (eventDocument, error) {
+	var doc eventDocument
+	err := c.coll.FindOne(ctx, bson.M{
+		"run_id":    runID,
+		"event_key": eventKey,
+	}).Decode(&doc)
+	if err != nil {
+		return eventDocument{}, err
+	}
+	return doc, nil
+}
+
+func sameEventDocument(existing eventDocument, candidate eventDocument) bool {
+	return existing.EventKey == candidate.EventKey &&
+		existing.RunID == candidate.RunID &&
+		existing.AgentID == candidate.AgentID &&
+		existing.SessionID == candidate.SessionID &&
+		existing.TurnID == candidate.TurnID &&
+		existing.Type == candidate.Type &&
+		existing.Timestamp.Equal(candidate.Timestamp) &&
+		bytes.Equal(existing.Payload, candidate.Payload)
 }

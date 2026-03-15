@@ -44,6 +44,7 @@ type (
 		t   stream.EventType
 		run string
 		s   string
+		k   string
 		b   json.RawMessage
 	}
 )
@@ -51,6 +52,7 @@ type (
 func (e decodedEvent) Type() stream.EventType { return e.t }
 func (e decodedEvent) RunID() string          { return e.run }
 func (e decodedEvent) SessionID() string      { return e.s }
+func (e decodedEvent) EventKey() string       { return e.k }
 func (e decodedEvent) Payload() any           { return e.b }
 
 // NewSubscriber constructs a Pulse-backed subscriber. The Client field in opts
@@ -158,6 +160,7 @@ func (s *Subscriber) consume(ctx context.Context, sink clientspulse.Sink, out ch
 func decodeEnvelope(payload []byte) (stream.Event, error) {
 	var env struct {
 		Type      string          `json:"type"`
+		EventKey  string          `json:"event_key"`
 		RunID     string          `json:"run_id"`
 		SessionID string          `json:"session_id"`
 		Timestamp time.Time       `json:"timestamp"`
@@ -170,6 +173,7 @@ func decodeEnvelope(payload []byte) (stream.Event, error) {
 		t:   stream.EventType(env.Type),
 		run: env.RunID,
 		s:   env.SessionID,
+		k:   env.EventKey,
 		b:   env.Payload,
 	}, nil
 }

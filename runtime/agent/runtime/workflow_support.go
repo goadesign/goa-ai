@@ -172,7 +172,7 @@ func (r *Runtime) finalizeWithPlanner(
 	// Apply run-level Plan timeout override to Resume if present.
 	resumeOpts := reg.ResumeActivityOptions
 	if input.Policy != nil && input.Policy.PlanTimeout > 0 {
-		resumeOpts.Timeout = input.Policy.PlanTimeout
+		resumeOpts.StartToCloseTimeout = input.Policy.PlanTimeout
 	}
 	output, err := r.runPlanActivity(wfCtx, reg.ResumeActivityName, resumeOpts, req, hardDeadline)
 	if err != nil {
@@ -532,17 +532,23 @@ func (r *Runtime) runPlanActivity(
 		return nil, errors.New("plan activity not registered")
 	}
 	callOpts := options
-	// Apply timeout: start with configured, then cap to remaining time to hard deadline.
-	timeout := options.Timeout
+	// Cap queue wait and attempt time to the remaining hard deadline so finalizer
+	// handling stays deterministic even when workers are unavailable.
+	startToClose := options.StartToCloseTimeout
+	scheduleToStart := options.ScheduleToStartTimeout
 	if !hardDeadline.IsZero() {
 		now := wfCtx.Now()
 		if rem := hardDeadline.Sub(now); rem > 0 {
-			if timeout == 0 || timeout > rem {
-				timeout = rem
+			if startToClose == 0 || startToClose > rem {
+				startToClose = rem
+			}
+			if scheduleToStart == 0 || scheduleToStart > rem {
+				scheduleToStart = rem
 			}
 		}
 	}
-	callOpts.Timeout = timeout
+	callOpts.StartToCloseTimeout = startToClose
+	callOpts.ScheduleToStartTimeout = scheduleToStart
 
 	out, err := wfCtx.ExecutePlannerActivity(wfCtx.Context(), engine.PlannerActivityCall{
 		Name:    activityName,
@@ -553,16 +559,16 @@ func (r *Runtime) runPlanActivity(
 		return nil, err
 	}
 	if out == nil {
-		return nil, fmt.Errorf("CRITICAL: runPlanActivity received nil PlanActivityOutput")
+		return nil, fmt.Errorf("runPlanActivity received nil PlanActivityOutput")
 	}
 	if out.Result == nil {
-		return nil, fmt.Errorf("CRITICAL: runPlanActivity received nil PlanResult")
+		return nil, fmt.Errorf("runPlanActivity received nil PlanResult")
 	}
 	if len(out.Result.ToolCalls) == 0 &&
 		out.Result.FinalResponse == nil &&
 		out.Result.FinalToolResult == nil &&
 		out.Result.Await == nil {
-		return nil, fmt.Errorf("CRITICAL: runPlanActivity received PlanResult with no ToolCalls, FinalResponse, FinalToolResult, or Await")
+		return nil, fmt.Errorf("runPlanActivity received PlanResult with no ToolCalls, FinalResponse, FinalToolResult, or Await")
 	}
 	r.logger.Info(wfCtx.Context(),
 		"runPlanActivity received PlanResult",

@@ -81,6 +81,8 @@ const (
 	RunStatusRunning RunStatus = "running"
 	// RunStatusCompleted indicates the workflow finished successfully.
 	RunStatusCompleted RunStatus = "completed"
+	// RunStatusTimedOut indicates the workflow exceeded its run deadline.
+	RunStatusTimedOut RunStatus = "timed_out"
 	// RunStatusFailed indicates the workflow failed permanently.
 	RunStatusFailed RunStatus = "failed"
 	// RunStatusCanceled indicates the workflow was canceled externally.
@@ -123,10 +125,11 @@ type (
 		// conflicts with a running workflow, or if scheduling fails.
 		StartWorkflow(ctx context.Context, req WorkflowStartRequest) (WorkflowHandle, error)
 
-		// QueryRunStatus returns the current lifecycle status for a workflow execution
-		// identified by runID. The engine is the source of truth for workflow status.
-		// Returns an error if the run does not exist or if querying fails.
-		QueryRunStatus(ctx context.Context, runID string) (RunStatus, error)
+		// QueryRunStatus returns the current lifecycle status for the workflow
+		// identified by workflowID. The engine is the source of truth for durable
+		// workflow status. Returns an error if the workflow does not exist or if
+		// querying fails.
+		QueryRunStatus(ctx context.Context, workflowID string) (RunStatus, error)
 	}
 
 	// Signaler provides direct signaling by workflow ID/run ID without relying on
@@ -140,15 +143,26 @@ type (
 		SignalByID(ctx context.Context, workflowID, runID, name string, payload any) error
 	}
 
+	// CompletionQuerier allows runtimes to recover the same terminal output/error
+	// that WorkflowHandle.Wait would have returned, but by run identifier after a
+	// restart or detached starter. Callers should query lifecycle first and invoke
+	// this only once the engine reports a terminal status, because implementations
+	// may otherwise block waiting for completion.
+	CompletionQuerier interface {
+		// QueryRunCompletion returns the workflow output for successful runs or the
+		// terminal error for failed/timed-out/canceled runs, addressed by
+		// workflowID.
+		QueryRunCompletion(ctx context.Context, workflowID string) (*api.RunOutput, error)
+	}
+
 	// Canceler provides workflow cancellation by workflow ID without requiring
 	// in-process workflow handles. Engines that support out-of-process cancellation
 	// (for example, Temporal) should implement this so callers can cancel runs
 	// across process restarts.
 	Canceler interface {
-		// CancelByID requests cancellation of the workflow identified by runID.
-		// Implementations may ignore runID vs workflowID distinctions when the
-		// runtime uses a single identifier for both.
-		CancelByID(ctx context.Context, runID string) error
+		// CancelByID requests cancellation of the workflow identified by
+		// workflowID.
+		CancelByID(ctx context.Context, workflowID string) error
 	}
 
 	// WorkflowDefinition binds a workflow handler to a logical name and default queue.
@@ -334,9 +348,17 @@ type (
 		// RetryPolicy controls retry behavior for this activity. If zero-valued, the
 		// engine uses its default retry policy.
 		RetryPolicy RetryPolicy
-		// Timeout bounds the total activity execution time, including retries. Zero
-		// means no timeout (not recommended for production).
-		Timeout time.Duration
+		// ScheduleToStartTimeout bounds how long the activity may wait in the task
+		// queue before a worker starts the attempt. Zero means leave queue-wait
+		// unspecified here and let the engine adapter apply its own defaults.
+		ScheduleToStartTimeout time.Duration
+		// StartToCloseTimeout bounds one activity attempt once a worker has started
+		// executing it. This is the primary "healthy attempt" budget for planner and
+		// tool work. Zero means use the engine default.
+		StartToCloseTimeout time.Duration
+		// HeartbeatTimeout bounds the maximum gap between heartbeats emitted by the
+		// running activity. Zero disables heartbeat-based liveness detection.
+		HeartbeatTimeout time.Duration
 	}
 
 	// HookActivityCall describes a single invocation of the runtime hook publishing

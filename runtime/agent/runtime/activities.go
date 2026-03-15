@@ -31,6 +31,9 @@ import (
 // agent context with memory access and delegates to the planner's PlanStart
 // implementation.
 func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
+	stopHeartbeat := startActivityHeartbeat(ctx)
+	defer stopHeartbeat()
+
 	events := newPlannerEvents(r, input.AgentID, input.RunID, input.RunContext.SessionID, input.RunContext.TurnID)
 	reg, agentCtx, err := r.plannerContext(ctx, input, events)
 	if err != nil {
@@ -84,6 +87,9 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 // execution to produce the next plan. The activity creates an agent context
 // with memory access and delegates to the planner's PlanResume implementation.
 func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
+	stopHeartbeat := startActivityHeartbeat(ctx)
+	defer stopHeartbeat()
+
 	events := newPlannerEvents(r, input.AgentID, input.RunID, input.RunContext.SessionID, input.RunContext.TurnID)
 	reg, agentCtx, err := r.plannerContext(ctx, input, events)
 	if err != nil {
@@ -186,6 +192,9 @@ func normalizeAnyRawMessage(value any) any {
 // encodes the result using the tool‑specific codec. Returns an error if the
 // toolset is not registered or if encoding/decoding fails.
 func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*ToolOutput, error) {
+	stopHeartbeat := startActivityHeartbeat(ctx)
+	defer stopHeartbeat()
+
 	if req == nil {
 		return nil, errors.New("tool input is required")
 	}

@@ -12,9 +12,12 @@ import (
 	"github.com/leanovate/gopter"
 	"github.com/leanovate/gopter/gen"
 	"github.com/leanovate/gopter/prop"
+	"github.com/stretchr/testify/require"
 	goa "goa.design/goa/v3/pkg"
+	streamopts "goa.design/pulse/streaming/options"
 
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
+	mockpulse "goa.design/goa-ai/features/stream/pulse/clients/pulse/mocks"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/registry/store/memory"
 	"goa.design/goa-ai/runtime/toolregistry"
@@ -330,6 +333,69 @@ func TestCallToolPayloadValidation(t *testing.T) {
 	))
 
 	properties.TestingRun(t)
+}
+
+func TestCallToolReusesLogicalToolCallIdentity(t *testing.T) {
+	ctx := context.Background()
+	pulseClient := mockpulse.NewClient(t)
+	resultStream := mockpulse.NewStream(t)
+	for range 2 {
+		pulseClient.AddStream(func(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
+			return resultStream, nil
+		})
+		resultStream.AddAdd(func(ctx context.Context, event string, payload []byte) (string, error) {
+			return "1-0", nil
+		})
+	}
+
+	store := memory.New()
+	require.NoError(t, store.SaveToolset(ctx, &genregistry.Toolset{
+		Name: "toolset-1",
+		Tools: []*genregistry.ToolSchema{
+			{
+				Name:          "lookup",
+				PayloadSchema: []byte(`{"type":"object"}`),
+				ResultSchema:  []byte(`{"type":"object"}`),
+			},
+		},
+		StreamID: "toolset:toolset-1:requests",
+	}))
+
+	streams := newMockStreamManagerForService()
+	svc, err := NewService(ServiceOptions{
+		Store:         store,
+		StreamManager: streams,
+		HealthTracker: newMockHealthTracker(),
+		PulseClient:   pulseClient,
+	})
+	require.NoError(t, err)
+
+	toolCallID := "tool-call-1"
+	payload := &genregistry.CallToolPayload{
+		Toolset:     "toolset-1",
+		Tool:        "lookup",
+		PayloadJSON: []byte(`{"query":"ok"}`),
+		Meta: &genregistry.ToolCallMeta{
+			RunID:       "run-1",
+			SessionID:   "session-1",
+			ToolCallID:  &toolCallID,
+			TurnID:      nil,
+			ParentToolCallID: nil,
+		},
+	}
+
+	first, err := svc.CallTool(ctx, payload)
+	require.NoError(t, err)
+	second, err := svc.CallTool(ctx, payload)
+	require.NoError(t, err)
+
+	require.Equal(t, toolCallID, first.ToolUseID)
+	require.Equal(t, toolCallID, second.ToolUseID)
+	require.Equal(t, toolregistry.ResultStreamID(toolCallID), first.ResultStreamID)
+	require.Equal(t, first.ResultStreamID, second.ResultStreamID)
+	require.Len(t, streams.messages["toolset-1"], 2)
+	require.Equal(t, toolCallID, streams.messages["toolset-1"][0].ToolUseID)
+	require.Equal(t, toolCallID, streams.messages["toolset-1"][1].ToolUseID)
 }
 
 // payloadValidationTestCase represents a test case for payload validation.

@@ -35,7 +35,7 @@ func (r *Runtime) materializeToolResult(ctx context.Context, call planner.ToolRe
 	if err := r.applyResultMaterializer(ctx, spec, call, result); err != nil {
 		return nil, err
 	}
-	if err := r.enforceToolResultContracts(spec, call, result.Error, result); err != nil {
+	if err := r.enforceToolResultContracts(spec, call, result); err != nil {
 		return nil, err
 	}
 	var resultJSON rawjson.Message
@@ -53,7 +53,7 @@ func (r *Runtime) materializeToolResult(ctx context.Context, call planner.ToolRe
 // when the toolset registered one.
 func (r *Runtime) applyResultMaterializer(ctx context.Context, spec tools.ToolSpec, call planner.ToolRequest, result *planner.ToolResult) error {
 	if result == nil {
-		return fmt.Errorf("CRITICAL: nil tool result for %q (%s)", call.Name, call.ToolCallID)
+		return fmt.Errorf("nil tool result for %q (%s)", call.Name, call.ToolCallID)
 	}
 	if result.Name == "" {
 		result.Name = call.Name

@@ -97,7 +97,7 @@ func TestEnforceToolResultContractsRequiresExplicitBoundsForBoundedTool(t *testi
 	}
 	call := planner.ToolRequest{Name: "tool", ToolCallID: "tool-1"}
 
-	err := rt.enforceToolResultContracts(spec, call, nil, &planner.ToolResult{
+	err := rt.enforceToolResultContracts(spec, call, &planner.ToolResult{
 		Name:   call.Name,
 		Result: map[string]any{"ok": true},
 	})
@@ -117,7 +117,7 @@ func TestEnforceToolResultContractsAcceptsExplicitBoundsForBoundedTool(t *testin
 	}
 	call := planner.ToolRequest{Name: "tool", ToolCallID: "tool-1"}
 
-	err := rt.enforceToolResultContracts(spec, call, nil, &planner.ToolResult{
+	err := rt.enforceToolResultContracts(spec, call, &planner.ToolResult{
 		Name:   call.Name,
 		Result: map[string]any{"ok": true},
 		Bounds: &agent.Bounds{
@@ -139,7 +139,7 @@ func TestEnforceToolResultContractsRejectsTruncatedBoundsWithoutContinuation(t *
 	}
 	call := planner.ToolRequest{Name: "tool", ToolCallID: "tool-1"}
 
-	err := rt.enforceToolResultContracts(spec, call, nil, &planner.ToolResult{
+	err := rt.enforceToolResultContracts(spec, call, &planner.ToolResult{
 		Name:   call.Name,
 		Result: map[string]any{"ok": true},
 		Bounds: &agent.Bounds{
@@ -149,6 +149,17 @@ func TestEnforceToolResultContractsRejectsTruncatedBoundsWithoutContinuation(t *
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "truncated result without next_cursor or refinement_hint")
+}
+
+func TestEnforceToolResultContractsRejectsNilToolResultWithoutCriticalPrefix(t *testing.T) {
+	rt := &Runtime{}
+	spec := newAnyJSONSpec("tool", "svc.ts")
+	call := planner.ToolRequest{Name: "tool", ToolCallID: "tool-1"}
+
+	err := rt.enforceToolResultContracts(spec, call, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "nil tool result")
+	require.NotContains(t, err.Error(), "CRITICAL:")
 }
 
 func TestExecuteToolActivityPropagatesServerData(t *testing.T) {
@@ -721,6 +732,24 @@ func TestConsumeProvidedToolResultsRejectsAmbiguousErrorAndResult(t *testing.T) 
 		Result:     rawjson.Message([]byte(`{"ok":true}`)),
 		Error:      planner.NewToolError("failed"),
 	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "error and result are both set")
+}
+
+func TestEnforceToolResultContractsRejectsAmbiguousErrorAndResult(t *testing.T) {
+	rt := &Runtime{}
+	call := planner.ToolRequest{
+		Name:       tools.Ident("svc.tools.example"),
+		ToolCallID: "tool-call-1",
+	}
+	tr := &planner.ToolResult{
+		Name:       call.Name,
+		ToolCallID: call.ToolCallID,
+		Result:     map[string]any{"ok": true},
+		Error:      planner.NewToolError("failed"),
+	}
+
+	err := rt.enforceToolResultContracts(newAnyJSONSpec(call.Name, "svc.tools"), call, tr)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "error and result are both set")
 }

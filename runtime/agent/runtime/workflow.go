@@ -46,7 +46,10 @@ const (
 // and runtime hooks. Returns the final agent output or an error if the workflow
 // fails. Generated code calls this from the workflow handler registered with
 // the engine.
-func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput) (*RunOutput, error) {
+func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput) (_ *RunOutput, retErr error) {
+	defer func() {
+		retErr = hooks.WrapRunCompletionError(retErr)
+	}()
 	if r.logger != nil {
 		r.logger.Info(wfCtx.Context(), "ExecuteWorkflow called", "agent_id", input.AgentID, "run_id", input.RunID)
 	}
@@ -97,18 +100,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	finalStatus := runStatusSuccess
 	var finalErr error
 	defer func() {
-		// Compute the terminal phase for the completion event.
-		var phase run.Phase
-		switch finalStatus {
-		case runStatusSuccess:
-			phase = run.PhaseCompleted
-		case runStatusFailed:
-			phase = run.PhaseFailed
-		case runStatusCanceled:
-			phase = run.PhaseCanceled
-		default:
-			phase = run.PhaseCompleted
-		}
+		phase := terminalRunPhaseForStatus(finalStatus)
 		// Use a fresh context with timeout for terminal events. The workflow
 		// engine supplies a replay-aware context so subscribers can avoid
 		// re-applying side effects during history replay while still allowing
@@ -136,45 +128,16 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		RunContext: runCtx,
 	}
 	// Compute deadlines before the initial Plan so it cannot outlive the run window.
+	timing := resolveRunTiming(reg, input)
+	timeBudget := timing.TimeBudget
+	grace := timing.FinalizerGrace
 	var (
-		timeBudget     time.Duration
 		budgetDeadline time.Time
 		hardDeadline   time.Time
-		grace          time.Duration
 	)
-	{
-		timeBudget = time.Duration(0)
-		if input.Policy != nil && input.Policy.TimeBudget > 0 {
-			timeBudget = input.Policy.TimeBudget
-		} else if reg.Policy.TimeBudget > 0 {
-			timeBudget = reg.Policy.TimeBudget
-		}
-		switch {
-		case input.Policy != nil && input.Policy.FinalizerGrace > 0:
-			grace = input.Policy.FinalizerGrace
-		case reg.Policy.FinalizerGrace > 0:
-			grace = reg.Policy.FinalizerGrace
-		default:
-			grace = defaultFinalizerGrace
-		}
-		// Finalization requires at least one planner resume activity. Ensure the
-		// grace period can accommodate that activity's timeout; otherwise we can
-		// deterministically hit the engine run timeout while finalizing.
-		resumeTimeout := reg.ResumeActivityOptions.Timeout
-		if input.Policy != nil && input.Policy.PlanTimeout > 0 {
-			resumeTimeout = input.Policy.PlanTimeout
-		}
-		if resumeTimeout == 0 {
-			// Keep this aligned with the Temporal engine default activity timeout.
-			resumeTimeout = time.Minute
-		}
-		if grace < resumeTimeout {
-			grace = resumeTimeout
-		}
-		if timeBudget > 0 {
-			budgetDeadline = wfCtx.Now().Add(timeBudget)
-			hardDeadline = budgetDeadline.Add(grace)
-		}
+	if timeBudget > 0 {
+		budgetDeadline = wfCtx.Now().Add(timeBudget)
+		hardDeadline = budgetDeadline.Add(grace)
 	}
 	startReq := PlanActivityInput{
 		AgentID:    input.AgentID,
@@ -190,17 +153,17 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	// Apply run-level Plan timeout override when provided.
 	planOpts := reg.PlanActivityOptions
 	if input.Policy != nil && input.Policy.PlanTimeout > 0 {
-		planOpts.Timeout = input.Policy.PlanTimeout
+		planOpts.StartToCloseTimeout = input.Policy.PlanTimeout
 	}
 	// Emit timing resolution for observability.
 	if r.logger != nil {
 		var planTimeout time.Duration
-		if planOpts.Timeout > 0 {
-			planTimeout = planOpts.Timeout
+		if planOpts.StartToCloseTimeout > 0 {
+			planTimeout = planOpts.StartToCloseTimeout
 		}
-		toolTimeout := reg.ExecuteToolActivityOptions.Timeout
+		toolTimeout := reg.ExecuteToolActivityOptions.StartToCloseTimeout
 		if toolTimeout == 0 {
-			toolTimeout = 2 * time.Minute
+			toolTimeout = defaultExecuteToolActivityTimeout
 		}
 		if input.Policy != nil && input.Policy.ToolTimeout > 0 {
 			toolTimeout = input.Policy.ToolTimeout
@@ -220,39 +183,31 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		turnID,
 	); err != nil {
 		finalErr = err
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			finalStatus = runStatusCanceled
-		} else {
-			finalStatus = runStatusFailed
-		}
+		finalStatus = terminalRunStatusForError(err)
 		return nil, err
 	}
 	firstOutput, err := r.runPlanActivity(wfCtx, reg.PlanActivityName, planOpts, startReq, hardDeadline)
 	if err != nil {
 		r.logger.Error(wfCtx.Context(), "Plan activity failed", "error", err)
 		finalErr = err
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			finalStatus = runStatusCanceled
-		} else {
-			finalStatus = runStatusFailed
-		}
+		finalStatus = terminalRunStatusForError(err)
 		return nil, err
 	}
 	if firstOutput == nil || firstOutput.Result == nil {
 		r.logger.Error(wfCtx.Context(), "Plan activity returned nil result")
-		finalErr = fmt.Errorf("CRITICAL: Plan activity returned nil PlanResult")
+		finalErr = fmt.Errorf("plan activity returned nil result")
 		finalStatus = runStatusFailed
 		return nil, finalErr
 	}
 	result := firstOutput.Result
 	r.logger.Info(wfCtx.Context(), "Plan activity completed", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil)
-	// CRITICAL: Validate PlanResult structure - if planner returned ToolCalls, they should be present
+	// Validate PlanResult structure - if planner returned ToolCalls, they should be present.
 	if len(result.ToolCalls) == 0 && result.FinalResponse == nil && result.Await == nil {
-		finalErr = fmt.Errorf("CRITICAL: PlanResult has no ToolCalls, FinalResponse, or Await - this should never happen")
+		finalErr = fmt.Errorf("plan result has no tool calls, final response, or await")
 		finalStatus = runStatusFailed
 		return nil, finalErr
 	}
-	// CRITICAL: If ToolCalls is empty but planner returned them, serialization may have failed
+	// If ToolCalls is empty but planner returned them, serialization may have failed.
 	if len(result.ToolCalls) == 0 && result.FinalResponse != nil {
 		r.logger.Info(wfCtx.Context(), "PlanResult has FinalResponse but no ToolCalls - workflow will return early")
 	}
@@ -283,11 +238,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		turnID,
 	); err != nil {
 		finalErr = err
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			finalStatus = runStatusCanceled
-		} else {
-			finalStatus = runStatusFailed
-		}
+		finalStatus = terminalRunStatusForError(err)
 		return nil, err
 	}
 	out, err := r.runLoop(
@@ -309,11 +260,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	)
 	if err != nil {
 		finalErr = err
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			finalStatus = runStatusCanceled
-		} else {
-			finalStatus = runStatusFailed
-		}
+		finalStatus = terminalRunStatusForError(err)
 		return nil, err
 	}
 	// Successful completion.
@@ -349,10 +296,10 @@ func (r *Runtime) runLoop(
 		r.logger = telemetry.NoopLogger{}
 	}
 	if initialResult == nil {
-		return nil, fmt.Errorf("CRITICAL: runLoop initial PlanResult is nil")
+		return nil, fmt.Errorf("runLoop initial PlanResult is nil")
 	}
 	if len(initialResult.ToolCalls) == 0 && initialResult.FinalResponse == nil && initialResult.Await == nil {
-		return nil, fmt.Errorf("CRITICAL: runLoop initial PlanResult has no ToolCalls, FinalResponse, or Await")
+		return nil, fmt.Errorf("runLoop initial PlanResult has no ToolCalls, FinalResponse, or Await")
 	}
 	r.logger.Info(ctx, "runLoop starting iteration", "tool_calls", len(initialResult.ToolCalls), "final_response", initialResult.FinalResponse != nil, "await", initialResult.Await != nil)
 	st := newRunLoopState(initialResult, initialTranscript, initialUsage, caps, nextAttempt)
@@ -365,14 +312,14 @@ func (r *Runtime) runLoop(
 	// Derive per-run overrides for Resume and Tools.
 	resumeOpts := reg.ResumeActivityOptions
 	if input.Policy != nil && input.Policy.PlanTimeout > 0 {
-		resumeOpts.Timeout = input.Policy.PlanTimeout
+		resumeOpts.StartToCloseTimeout = input.Policy.PlanTimeout
 	}
 	toolOpts := reg.ExecuteToolActivityOptions
 	if input.Policy != nil && input.Policy.ToolTimeout > 0 {
-		toolOpts.Timeout = input.Policy.ToolTimeout
+		toolOpts.StartToCloseTimeout = input.Policy.ToolTimeout
 	}
-	if toolOpts.Timeout == 0 {
-		toolOpts.Timeout = 2 * time.Minute
+	if toolOpts.StartToCloseTimeout == 0 {
+		toolOpts.StartToCloseTimeout = defaultExecuteToolActivityTimeout
 	}
 
 	loop := newWorkflowLoop(

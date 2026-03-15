@@ -5,6 +5,7 @@
 package inmem
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strconv"
@@ -21,28 +22,47 @@ type (
 		nextSeq map[string]int64
 		// per-run ordered events.
 		events map[string][]*runlog.Event
+		// per-run stable event identities.
+		eventsByKey map[string]map[string]*runlog.Event
 	}
 )
 
 // New returns a new in-memory run log store.
 func New() *Store {
 	return &Store{
-		nextSeq: make(map[string]int64),
-		events:  make(map[string][]*runlog.Event),
+		nextSeq:    make(map[string]int64),
+		events:     make(map[string][]*runlog.Event),
+		eventsByKey: make(map[string]map[string]*runlog.Event),
 	}
 }
 
 // Append implements runlog.Store.
-func (s *Store) Append(_ context.Context, e *runlog.Event) error {
+func (s *Store) Append(_ context.Context, e *runlog.Event) (runlog.AppendResult, error) {
 	if e == nil {
-		return fmt.Errorf("event is required")
+		return runlog.AppendResult{}, fmt.Errorf("event is required")
 	}
 	if e.RunID == "" {
-		return fmt.Errorf("run_id is required")
+		return runlog.AppendResult{}, fmt.Errorf("run_id is required")
+	}
+	if e.EventKey == "" {
+		return runlog.AppendResult{}, fmt.Errorf("event_key is required")
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	byKey := s.eventsByKey[e.RunID]
+	if byKey == nil {
+		byKey = make(map[string]*runlog.Event)
+		s.eventsByKey[e.RunID] = byKey
+	}
+	if existing, ok := byKey[e.EventKey]; ok {
+		if !sameEventBody(existing, e) {
+			return runlog.AppendResult{}, fmt.Errorf("event_key %q conflicts with existing event body", e.EventKey)
+		}
+		e.ID = existing.ID
+		return runlog.AppendResult{ID: existing.ID, Inserted: false}, nil
+	}
 
 	seq := s.nextSeq[e.RunID] + 1
 	s.nextSeq[e.RunID] = seq
@@ -50,7 +70,8 @@ func (s *Store) Append(_ context.Context, e *runlog.Event) error {
 	e.ID = strconv.FormatInt(seq, 10)
 	ev := *e
 	s.events[e.RunID] = append(s.events[e.RunID], &ev)
-	return nil
+	byKey[e.EventKey] = &ev
+	return runlog.AppendResult{ID: ev.ID, Inserted: true}, nil
 }
 
 // List implements runlog.Store.
@@ -103,4 +124,21 @@ func (s *Store) List(_ context.Context, runID string, cursor string, limit int) 
 		Events:     events,
 		NextCursor: next,
 	}, nil
+}
+
+// sameEventBody reports whether candidate represents the same immutable logical
+// event as existing. It deliberately excludes the store-assigned ID because
+// deduplication happens before cursor assignment.
+func sameEventBody(existing *runlog.Event, candidate *runlog.Event) bool {
+	if existing == nil || candidate == nil {
+		return false
+	}
+	return existing.EventKey == candidate.EventKey &&
+		existing.RunID == candidate.RunID &&
+		existing.AgentID == candidate.AgentID &&
+		existing.SessionID == candidate.SessionID &&
+		existing.TurnID == candidate.TurnID &&
+		existing.Type == candidate.Type &&
+		existing.Timestamp.Equal(candidate.Timestamp) &&
+		bytes.Equal(existing.Payload, candidate.Payload)
 }

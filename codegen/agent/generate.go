@@ -425,7 +425,10 @@ func cloneToolsetsWithSpecsAliases(toolsets []*ToolsetData, aliases map[string]s
 }
 
 func activityNeedsTime(act ActivityArtifact) bool {
-	return act.Timeout > 0 || act.RetryPolicy.InitialInterval > 0
+	return act.ScheduleToStartTimeout > 0 ||
+		act.StartToCloseTimeout > 0 ||
+		act.HeartbeatTimeout > 0 ||
+		act.RetryPolicy.InitialInterval > 0
 }
 
 func agentActivitiesNeedTimeImport(agent *AgentData) bool {

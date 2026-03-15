@@ -11,6 +11,9 @@ type ActivityInput struct {
 	// Type identifies the hook event variant (for example, ToolCallScheduled).
 	Type EventType
 
+	// EventKey is the stable logical identity for this event within the run.
+	EventKey string
+
 	// RunID identifies the run that owns this event.
 	RunID string
 
@@ -22,6 +25,9 @@ type ActivityInput struct {
 
 	// TurnID groups events for a single conversational turn. Empty when turn tracking is disabled.
 	TurnID string
+
+	// TimestampMS records when the event originally occurred.
+	TimestampMS int64
 
 	// Payload holds event-specific fields encoded as JSON.
 	Payload rawjson.Message

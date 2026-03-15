@@ -37,14 +37,14 @@ func TestRunPlanActivityUsesOptions(t *testing.T) {
 	}
 
 	opts := engine.ActivityOptions{
-		Queue:       "custom_queue",
-		Timeout:     30 * time.Second,
-		RetryPolicy: engine.RetryPolicy{MaxAttempts: 3, InitialInterval: time.Second, BackoffCoefficient: 2},
+		Queue:               "custom_queue",
+		StartToCloseTimeout: 30 * time.Second,
+		RetryPolicy:         engine.RetryPolicy{MaxAttempts: 3, InitialInterval: time.Second, BackoffCoefficient: 2},
 	}
 	_, err := rt.runPlanActivity(wf, "calc.agent.plan", opts, PlanActivityInput{}, time.Time{})
 	require.NoError(t, err)
 	require.Equal(t, opts.Queue, wf.lastPlannerCall.Options.Queue)
-	require.Equal(t, opts.Timeout, wf.lastPlannerCall.Options.Timeout)
+	require.Equal(t, opts.StartToCloseTimeout, wf.lastPlannerCall.Options.StartToCloseTimeout)
 	require.Equal(t, opts.RetryPolicy, wf.lastPlannerCall.Options.RetryPolicy)
 }
 
@@ -71,6 +71,23 @@ func TestRunPlanActivityAcceptsTerminalFinalToolResult(t *testing.T) {
 	require.NotNil(t, out.Result)
 	require.NotNil(t, out.Result.FinalToolResult)
 	require.JSONEq(t, `{"status":"ok"}`, string(out.Result.FinalToolResult.Result))
+}
+
+func TestRunPlanActivityRejectsNilPlanResultWithoutCriticalPrefix(t *testing.T) {
+	rt := &Runtime{
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Bus:     noopHooks{},
+	}
+	wf := &testWorkflowContext{
+		ctx: context.Background(),
+	}
+
+	_, err := rt.runPlanActivity(wf, "calc.agent.plan", engine.ActivityOptions{}, PlanActivityInput{}, time.Time{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "nil PlanResult")
+	require.NotContains(t, err.Error(), "CRITICAL:")
 }
 
 func TestPlanStartActivityInvokesPlanner(t *testing.T) {

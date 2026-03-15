@@ -27,6 +27,7 @@ func TestClientAppendAssignsID(t *testing.T) {
 	c := &client{coll: coll}
 
 	e := &runlog.Event{
+		EventKey:  "evt-1",
 		RunID:     "run-1",
 		AgentID:   "agent-1",
 		SessionID: "session-1",
@@ -35,8 +36,9 @@ func TestClientAppendAssignsID(t *testing.T) {
 		Payload:   []byte(`{"ok":true}`),
 		Timestamp: time.Unix(1, 0).UTC(),
 	}
-	err := c.Append(context.Background(), e)
+	res, err := c.Append(context.Background(), e)
 	require.NoError(t, err)
+	require.True(t, res.Inserted)
 	assert.Equal(t, oid.Hex(), e.ID)
 }
 
@@ -97,6 +99,63 @@ func TestClientListNextCursor(t *testing.T) {
 	}
 }
 
+func TestClientAppendReturnsExistingIDForDuplicateEventKey(t *testing.T) {
+	t.Parallel()
+
+	oid := mustOID(t, "000000000000000000000001")
+	coll := &fakeCollection{
+		insertedID: oid,
+	}
+	c := &client{coll: coll}
+
+	e := &runlog.Event{
+		RunID:     "run-1",
+		AgentID:   "agent-1",
+		SessionID: "session-1",
+		TurnID:    "turn-1",
+		Type:      hooks.RunStarted,
+		Payload:   []byte(`{"ok":true}`),
+		Timestamp: time.Unix(1, 0).UTC(),
+		EventKey:  "evt-1",
+	}
+	first, err := c.Append(context.Background(), e)
+	require.NoError(t, err)
+	require.True(t, first.Inserted)
+
+	coll.insertErr = mongodriver.WriteException{
+		WriteErrors: []mongodriver.WriteError{
+			{Code: 11000, Message: "duplicate key"},
+		},
+	}
+	coll.findOneDoc = eventDocument{
+		ID:        oid,
+		RunID:     "run-1",
+		AgentID:   "agent-1",
+		SessionID: "session-1",
+		TurnID:    "turn-1",
+		Type:      string(hooks.RunStarted),
+		Payload:   []byte(`{"ok":true}`),
+		Timestamp: time.Unix(1, 0).UTC(),
+		EventKey:  "evt-1",
+	}
+
+	dup := &runlog.Event{
+		RunID:     "run-1",
+		AgentID:   "agent-1",
+		SessionID: "session-1",
+		TurnID:    "turn-1",
+		Type:      hooks.RunStarted,
+		Payload:   []byte(`{"ok":true}`),
+		Timestamp: time.Unix(1, 0).UTC(),
+		EventKey:  "evt-1",
+	}
+	second, err := c.Append(context.Background(), dup)
+	require.NoError(t, err)
+	require.False(t, second.Inserted)
+	require.Equal(t, oid.Hex(), second.ID)
+	require.Equal(t, oid.Hex(), dup.ID)
+}
+
 func fakeEventDocuments(runID string, n int) []eventDocument {
 	docs := make([]eventDocument, 0, n)
 	for i := 1; i <= n; i++ {
@@ -128,10 +187,19 @@ func mustOID(t *testing.T, hex string) primitive.ObjectID {
 type fakeCollection struct {
 	insertedID primitive.ObjectID
 	findDocs   []eventDocument
+	findOneDoc eventDocument
+	insertErr  error
 }
 
 func (c *fakeCollection) InsertOne(context.Context, any, ...*options.InsertOneOptions) (*mongodriver.InsertOneResult, error) {
+	if c.insertErr != nil {
+		return nil, c.insertErr
+	}
 	return &mongodriver.InsertOneResult{InsertedID: c.insertedID}, nil
+}
+
+func (c *fakeCollection) FindOne(_ context.Context, _ any, _ ...*options.FindOneOptions) singleResult {
+	return fakeSingleResult{doc: c.findOneDoc}
 }
 
 func (c *fakeCollection) Find(_ context.Context, filter any, opts ...*options.FindOptions) (cursor, error) {
@@ -217,5 +285,22 @@ func (c *fakeCursor) Err() error {
 }
 
 func (c *fakeCursor) Close(context.Context) error {
+	return nil
+}
+
+type fakeSingleResult struct {
+	doc eventDocument
+	err error
+}
+
+func (r fakeSingleResult) Decode(val any) error {
+	if r.err != nil {
+		return r.err
+	}
+	p, ok := val.(*eventDocument)
+	if !ok {
+		return nil
+	}
+	*p = r.doc
 	return nil
 }

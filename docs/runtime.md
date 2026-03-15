@@ -155,7 +155,7 @@ rt := runtime.New(
     runtime.WithLogger(logger),          // Structured logging
     runtime.WithMetrics(metrics),        // Counter/histogram recording
     runtime.WithTracer(tracer),          // Distributed tracing
-    runtime.WithWorker(agentID, cfg),    // Per-agent worker config
+    runtime.WithWorker(agentID, cfg),    // Per-agent queue placement
 )
 ```
 
@@ -170,6 +170,12 @@ When options are omitted, the runtime uses sensible defaults:
 | Policy | None (all tools allowed, caps from agent registration) |
 | Hooks | In-process bus |
 | Logger/Metrics/Tracer | No-op implementations |
+
+`runtime.WithWorker(...)` is intentionally narrow: it controls agent placement
+(`Queue`) only. Semantic planner and tool attempt budgets come from the DSL
+(`RunPolicy.Timing`) or per-run overrides (`runtime.WithTiming(...)`). If you
+use the Temporal engine and need queue-wait or liveness tuning, configure those
+mechanics on `temporal.Options.ActivityDefaults` when constructing the engine.
 
 ### Prompt Registry and Overrides
 
@@ -319,7 +325,7 @@ type PlanResumeInput struct {
     RunContext  run.Context
     Agent       PlannerContext
     Events      PlannerEvents
-    ToolResults []*ToolResult         // Results from previous tool calls
+    ToolOutputs []*ToolOutput         // Results from previous tool calls
     Finalize    *Termination          // Non-nil when runtime forces finalization
     Reminders   []reminder.Reminder
 }
@@ -683,6 +689,16 @@ result-hint templates under `.Bounds`, hook events, and stream events. Services
 own truncation logic; the runtime only propagates and projects what tools
 report.
 
+Transcript-facing tool results use a stricter provider contract than execution
+boundaries:
+
+- canonical raw bytes live in `ToolOutput.Result`, `ToolResultReceivedEvent.ResultJSON`,
+  and durable memory-event `result_json`,
+- `model.ToolResultPart.Content` carries semantic provider-facing content only:
+  decoded JSON-compatible values on success or plain error text with `IsError=true`,
+- oversized successful transcript content projects to an explicit omission object:
+  `{"omitted":true,"reason":"size_limit","preview":"...","bounds":{...}}`.
+
 For method-backed `BindTo` tools, the bound service method result still needs to
 carry the canonical bounded fields so the generated executor can build
 `planner.ToolResult.Bounds` before runtime projection. Explicit tool-facing
@@ -869,6 +885,10 @@ Provided tool results are strict boundary inputs:
 - each item must be exactly one of: `Error` or non-null `Result`,
 - if the tool is bounded and successful, `Bounds` must be present and satisfy
   bounded-result invariants.
+
+Those rules apply only at execution/history boundaries. Once the runtime projects
+tool output into transcript messages, models never see raw `Result` bytes or
+structured Go error values.
 
 ### Tool Confirmation (Design-Time + Runtime Overrides)
 
@@ -1386,6 +1406,11 @@ client.Run(ctx, "session-1", msgs,
 )
 ```
 
+`Timing.Plan` and `Timing.Tools` are semantic attempt budgets. They bound how
+long a healthy planner or tool attempt may run once execution starts. Queue-wait
+timeouts and heartbeat-based liveness detection are engine-specific concerns and
+belong in the engine adapter, not the generic runtime API.
+
 ---
 
 ## Introspection
@@ -1465,8 +1490,27 @@ eng, _ := temporal.New(temporal.Options{
     WorkerOptions: temporal.WorkerOptions{
         TaskQueue: "orchestrator.chat",
     },
+    ActivityDefaults: temporal.ActivityDefaults{
+        Planner: temporal.ActivityTimeoutDefaults{
+            QueueWaitTimeout: 30 * time.Second,
+            LivenessTimeout:  20 * time.Second,
+        },
+        Tool: temporal.ActivityTimeoutDefaults{
+            QueueWaitTimeout: 2 * time.Minute,
+            LivenessTimeout:  20 * time.Second,
+        },
+    },
 })
 ```
+
+In this split:
+
+- `RunPolicy.Timing.Plan` / `runtime.WithTiming(...).Plan` set the planner
+  attempt budget.
+- `RunPolicy.Timing.Tools` / `runtime.WithTiming(...).Tools` set the tool
+  attempt budget.
+- `temporal.Options.ActivityDefaults` sets Temporal-only queue-wait and
+  heartbeat liveness behavior.
 
 **In-memory** — Fast iteration, no durability:
 

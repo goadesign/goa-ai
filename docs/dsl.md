@@ -987,6 +987,15 @@ RunPolicy(func() {
 })
 ```
 
+`Timing` is intentionally semantic. `Plan(...)` and `Tools(...)` describe the
+attempt budget for planner and tool work once execution begins. They do not
+configure workflow-engine mechanics such as queue-wait timeouts or heartbeat
+liveness. Those deployment concerns belong in the selected engine adapter (for
+example `temporal.Options.ActivityDefaults` for the Temporal engine).
+`Budget(...)` sets the semantic wall-clock budget for the run; the runtime then
+derives an engine run timeout by adding finalizer reserve and small engine
+headroom so the final planner turn and terminal cleanup can still complete.
+
 ---
 
 ## MCP Server Definition

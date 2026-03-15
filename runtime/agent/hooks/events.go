@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/google/uuid"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -19,7 +20,20 @@ import (
 	"go.temporal.io/sdk/temporal"
 )
 
+const providerErrorApplicationType = "goa_ai.provider_error"
+
 type (
+	providerErrorEnvelope struct {
+		Provider   string
+		Operation  string
+		HTTPStatus int
+		Kind       string
+		Code       string
+		Message    string
+		RequestID  string
+		Retryable  bool
+	}
+
 	// Event is the interface all hook events must implement. The runtime publishes
 	// events through the Bus, and subscribers receive them via HandleEvent.
 	// Concrete event types carry typed payloads for each lifecycle phase.
@@ -55,6 +69,10 @@ type (
 		// Events are timestamped at creation, not at delivery, so subscribers can calculate
 		// durations and latencies between related events.
 		Timestamp() int64
+		// EventKey returns the stable logical identity for this event within the run.
+		// Durable stores use it to make canonical event publishing exact-once even when
+		// the hook activity is retried.
+		EventKey() string
 		// TurnID returns the conversational turn identifier if turn tracking is active,
 		// empty string otherwise. A turn groups events for a single user interaction cycle
 		// (e.g., from user message through final assistant response). UI systems use this
@@ -388,6 +406,7 @@ type (
 		runID     string
 		agentID   agent.Ident
 		timestamp int64
+		eventKey  string
 		// sessionID associates the event with the logical session that owns the
 		// run. All events emitted for a given run share the same session ID.
 		sessionID string
@@ -561,8 +580,7 @@ func NewRunCompletedEvent(runID string, agentID agent.Ident, sessionID, status s
 	if err == nil {
 		return out
 	}
-	var pe *model.ProviderError
-	if errors.As(err, &pe) {
+	if pe, ok := providerErrorFromError(err); ok {
 		out.ErrorProvider = pe.Provider()
 		out.ErrorOperation = pe.Operation()
 		out.ErrorKind = string(pe.Kind())
@@ -583,6 +601,33 @@ func NewRunCompletedEvent(runID string, agentID agent.Ident, sessionID, status s
 	out.ErrorKind, out.PublicError = classifyNonProviderFailure(err)
 	out.Retryable = true // Non-provider failures are always retryable.
 	return out
+}
+
+// WrapRunCompletionError encodes provider failures into a Temporal application
+// error envelope so Wait()/Get()-based terminal paths can recover structured
+// provider metadata after the workflow engine serializes the error.
+func WrapRunCompletionError(err error) error {
+	if _, alreadyWrapped := providerErrorFromTemporalEnvelope(err); alreadyWrapped {
+		return err
+	}
+	pe, ok := model.AsProviderError(err)
+	if !ok {
+		return err
+	}
+	envelope := providerErrorEnvelope{
+		Provider:   pe.Provider(),
+		Operation:  pe.Operation(),
+		HTTPStatus: pe.HTTPStatus(),
+		Kind:       string(pe.Kind()),
+		Code:       pe.Code(),
+		Message:    pe.Message(),
+		RequestID:  pe.RequestID(),
+		Retryable:  pe.Retryable(),
+	}
+	if pe.Retryable() {
+		return temporal.NewApplicationErrorWithCause(pe.Error(), providerErrorApplicationType, err, envelope)
+	}
+	return temporal.NewNonRetryableApplicationError(pe.Error(), providerErrorApplicationType, err, envelope)
 }
 
 // NewChildRunLinkedEvent constructs a ChildRunLinkedEvent for the given parent
@@ -933,6 +978,43 @@ func classifyNonProviderFailure(err error) (kind, publicError string) {
 	return ErrorKindInternal, PublicErrorInternal
 }
 
+func providerErrorFromError(err error) (*model.ProviderError, bool) {
+	pe, ok := model.AsProviderError(err)
+	if ok {
+		return pe, true
+	}
+	return providerErrorFromTemporalEnvelope(err)
+}
+
+func providerErrorFromTemporalEnvelope(err error) (*model.ProviderError, bool) {
+	var appErr *temporal.ApplicationError
+	if !errors.As(err, &appErr) {
+		return nil, false
+	}
+	if appErr.Type() != providerErrorApplicationType {
+		return nil, false
+	}
+	var envelope providerErrorEnvelope
+	decoded := appErr.Details(&envelope) == nil
+	if !decoded {
+		return nil, false
+	}
+	if envelope.Provider == "" || envelope.Kind == "" {
+		return nil, false
+	}
+	return model.NewProviderError(
+		envelope.Provider,
+		envelope.Operation,
+		envelope.HTTPStatus,
+		model.ProviderErrorKind(envelope.Kind),
+		envelope.Code,
+		envelope.Message,
+		envelope.RequestID,
+		envelope.Retryable,
+		appErr,
+	), true
+}
+
 func providerPublicError(pe *model.ProviderError) string {
 	switch pe.Kind() {
 	case model.ProviderErrorKindRateLimited:
@@ -962,6 +1044,9 @@ func (e baseEvent) AgentID() string { return string(e.agentID) }
 // Timestamp returns the Unix timestamp in milliseconds when the event occurred.
 func (e baseEvent) Timestamp() int64 { return e.timestamp }
 
+// EventKey returns the stable logical identity for this event.
+func (e baseEvent) EventKey() string { return e.eventKey }
+
 // TurnID returns the conversational turn identifier (empty if not set).
 func (e baseEvent) TurnID() string { return e.turnID }
 
@@ -978,12 +1063,25 @@ func (e *baseEvent) SetSessionID(id string) {
 	e.sessionID = id
 }
 
+// SetTimestampMS restores the original event timestamp when reconstructing an
+// event from a hook activity input envelope.
+func (e *baseEvent) SetTimestampMS(timestampMS int64) {
+	e.timestamp = timestampMS
+}
+
+// SetEventKey restores the original event key when reconstructing an event from
+// a hook activity input envelope.
+func (e *baseEvent) SetEventKey(eventKey string) {
+	e.eventKey = eventKey
+}
+
 // newBaseEvent constructs a baseEvent with the current timestamp.
 func newBaseEvent(runID string, agentID agent.Ident) baseEvent {
 	return baseEvent{
 		runID:     runID,
 		agentID:   agentID,
 		timestamp: time.Now().UnixMilli(),
+		eventKey:  uuid.NewString(),
 	}
 }
 

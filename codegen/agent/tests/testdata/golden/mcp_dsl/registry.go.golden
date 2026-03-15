@@ -37,8 +37,8 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 		},
 		PlanActivityName: "alpha.scribe.plan",
 		PlanActivityOptions: engine.ActivityOptions{
-			Queue:   "alpha_scribe_workflow",
-			Timeout: time.Duration(120000000000),
+			Queue:               "alpha_scribe_workflow",
+			StartToCloseTimeout: time.Duration(120000000000),
 			RetryPolicy: engine.RetryPolicy{
 				MaxAttempts:        3,
 				InitialInterval:    time.Duration(1000000000),
@@ -47,8 +47,8 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 		},
 		ResumeActivityName: "alpha.scribe.resume",
 		ResumeActivityOptions: engine.ActivityOptions{
-			Queue:   "alpha_scribe_workflow",
-			Timeout: time.Duration(120000000000),
+			Queue:               "alpha_scribe_workflow",
+			StartToCloseTimeout: time.Duration(120000000000),
 			RetryPolicy: engine.RetryPolicy{
 				MaxAttempts:        3,
 				InitialInterval:    time.Duration(1000000000),
@@ -58,7 +58,9 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 		ExecuteToolActivity: "alpha.scribe.executetool",
 		ExecuteToolActivityOptions: engine.ActivityOptions{
 			RetryPolicy: engine.RetryPolicy{
-				MaxAttempts: 1,
+				MaxAttempts:        3,
+				InitialInterval:    time.Duration(1000000000),
+				BackoffCoefficient: 2,
 			},
 		},
 		Specs:  nil,

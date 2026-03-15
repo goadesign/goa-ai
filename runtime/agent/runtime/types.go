@@ -20,8 +20,8 @@ type (
 	ToolOutput         = api.ToolOutput
 
 	// WorkflowOptions mirrors the subset of engine start options we expose through
-	// the runtime. Memo/SearchAttributes follow Temporal semantics but remain generic
-	// maps so other engines can interpret them as needed.
+	// the runtime. Memo and SearchAttributes remain generic visibility metadata so
+	// each engine can map them to its own durable workflow substrate.
 	WorkflowOptions = api.WorkflowOptions
 
 	// PolicyOverrides configures per-run policy constraints.
