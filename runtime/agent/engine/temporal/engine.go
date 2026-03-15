@@ -1,8 +1,8 @@
 // Package temporal implements the engine.Engine adapter backed by Temporal.
 // It registers workflows and activities, manages per-queue workers, starts
 // executions, and exposes workflow handles for waiting, signaling, and
-// cancellation. The adapter wires OpenTelemetry tracing/metrics and owns worker
-// startup for every registered task queue.
+// cancellation. The adapter wires OpenTelemetry tracing/metrics and keeps
+// Temporal-specific worker lifecycle inside this package.
 package temporal
 
 import (
@@ -22,13 +22,13 @@ import (
 	"goa.design/goa-ai/runtime/agent/telemetry"
 )
 
-// Options configures the Temporal engine adapter for registering workflows,
-// activities, and managing worker lifecycle. Either a pre-configured Client
+// Options configures the Temporal engine adapter. Either a pre-configured Client
 // or ClientOptions must be provided. The adapter automatically wires OTEL
-// instrumentation and manages per-queue workers.
+// instrumentation.
 //
-// Default behavior enables tracing/metrics and starts each queue's worker as
-// soon as the adapter registers a workflow or activity for that queue.
+// Use NewWorker when the process will register workflows/activities and poll task
+// queues locally. Use NewClient when the process only needs Temporal client
+// capabilities such as starting workflows, querying status, or signaling runs.
 type Options struct {
 	// Client is an optional pre-configured Temporal client. If nil, the adapter
 	// creates a lazy client using ClientOptions, allowing automatic OTEL interceptor
@@ -41,9 +41,9 @@ type Options struct {
 	// etc.) need to be set; OTEL interceptors are configured automatically.
 	ClientOptions *client.Options
 
-	// WorkerOptions configures worker defaults for task queue, concurrency, and identity.
-	// TaskQueue must be set and defines the default queue used when workflow/activity
-	// definitions omit a queue. A worker is created per unique task queue.
+	// WorkerOptions configures worker defaults for task queue, concurrency, and
+	// identity. NewWorker requires TaskQueue to be set and creates one worker per
+	// unique task queue. NewClient ignores this field.
 	WorkerOptions WorkerOptions
 
 	// ActivityDefaults configures Temporal-owned execution mechanics for each
@@ -146,19 +146,27 @@ type InstrumentationOptions struct {
 }
 
 // Engine implements engine.Engine using Temporal as the durable execution backend.
-// It manages workflow/activity registration, per-queue worker lifecycle, and provides
-// workflow execution handles. The engine creates one worker per unique task queue and
-// automatically wires OTEL instrumentation for tracing and metrics.
+// It manages workflow/activity registration, per-queue worker lifecycle, and
+// workflow execution handles. Worker-mode engines stage registrations until the
+// runtime seals registration, at which point polling begins with a fully
+// configured runtime registry.
 //
 // Thread-safety: All methods are safe for concurrent use. Internal state is protected
-// by mutexes. Workers are created per queue and started immediately when the
-// queue is first registered.
+// by mutexes.
 //
-// Lifecycle: Construct via New(), register workflows/activities, and call Close()
-// to gracefully stop workers and release the Temporal client when owned here.
+// Lifecycle:
+//   - Construct via NewWorker() for worker processes or NewClient() for client-only
+//     processes.
+//   - Register workflows/activities only on worker engines.
+//   - Call engine.SealRegistration via runtime.Seal() once all local registrations
+//     are complete so polling begins from a coherent registry.
+//   - Call Close() to gracefully stop workers and release the Temporal client when
+//     owned here.
 type Engine struct {
 	client      client.Client
 	closeClient bool
+
+	workerMode bool
 
 	defaultQueue     string
 	workerOpts       worker.Options
@@ -169,6 +177,7 @@ type Engine struct {
 	tracer  telemetry.Tracer
 
 	mu                sync.Mutex
+	registrationSealed bool
 	workers           map[string]*workerBundle
 	workflows         map[string]engine.WorkflowDefinition
 	pendingWorkflows  map[string]struct{}
@@ -178,11 +187,23 @@ type Engine struct {
 	workflowContexts sync.Map // runID -> engine.WorkflowContext
 }
 
-// New constructs a Temporal engine adapter. Either Client or ClientOptions must
-// be provided. The default task queue in WorkerOptions must also be configured.
-func New(opts Options) (*Engine, error) {
+// NewClient constructs a Temporal engine for client-only processes. Client-mode
+// engines can start workflows, query status, and signal runs, but they reject
+// workflow/activity registration because they do not own workers.
+func NewClient(opts Options) (*Engine, error) {
+	return newEngine(opts, false)
+}
+
+// NewWorker constructs a Temporal engine for worker processes. Worker-mode
+// engines accept workflow/activity registration and begin polling only after
+// registration has been sealed.
+func NewWorker(opts Options) (*Engine, error) {
+	return newEngine(opts, true)
+}
+
+func newEngine(opts Options, workerMode bool) (*Engine, error) {
 	defaultQueue := opts.WorkerOptions.TaskQueue
-	if defaultQueue == "" {
+	if workerMode && defaultQueue == "" {
 		return nil, fmt.Errorf("temporal engine: worker options must include a default task queue")
 	}
 	logger := opts.Logger
@@ -217,11 +238,14 @@ func New(opts Options) (*Engine, error) {
 	}
 
 	workerOpts := opts.WorkerOptions.Options
-	applyWorkerInstrumentation(&workerOpts, inst)
+	if workerMode {
+		applyWorkerInstrumentation(&workerOpts, inst)
+	}
 
 	e := &Engine{
 		client:            cli,
 		closeClient:       closeClient,
+		workerMode:        workerMode,
 		defaultQueue:      defaultQueue,
 		workerOpts:        workerOpts,
 		activityDefaults:  opts.ActivityDefaults,
@@ -249,6 +273,9 @@ func New(opts Options) (*Engine, error) {
 //
 // Thread-safe: Safe to call concurrently with other Register* methods.
 func (e *Engine) RegisterWorkflow(_ context.Context, def engine.WorkflowDefinition) error {
+	if err := e.requireWorkerMode("register workflows"); err != nil {
+		return err
+	}
 	if def.Name == "" {
 		return fmt.Errorf("temporal engine: workflow name cannot be empty")
 	}
@@ -281,6 +308,9 @@ func (e *Engine) RegisterWorkflow(_ context.Context, def engine.WorkflowDefiniti
 // Hook activities publish workflow-emitted hook events outside of deterministic
 // workflow code. The activity accepts *api.HookActivityInput and returns an error.
 func (e *Engine) RegisterHookActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.HookActivityInput) error) error {
+	if err := e.requireWorkerMode("register hook activities"); err != nil {
+		return err
+	}
 	opts = e.applyActivityClassDefaults(activityKindHook, opts)
 	wrapped := func(ctx context.Context, in *api.HookActivityInput) error {
 		return fn(e.injectWorkflowContextIntoActivity(ctx), in)
@@ -301,6 +331,9 @@ func (e *Engine) RegisterHookActivity(_ context.Context, name string, opts engin
 //
 // Thread-safe: Safe to call concurrently with other Register* methods.
 func (e *Engine) RegisterPlannerActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.PlanActivityInput) (*api.PlanActivityOutput, error)) error {
+	if err := e.requireWorkerMode("register planner activities"); err != nil {
+		return err
+	}
 	opts = e.applyActivityClassDefaults(activityKindPlanner, opts)
 	// Wrap to inject originating WorkflowContext into activity context so runtime code
 	// can start child workflows (agent-as-tool) with engine-owned context.
@@ -321,6 +354,9 @@ func (e *Engine) RegisterPlannerActivity(_ context.Context, name string, opts en
 //
 // Thread-safe: Safe to call concurrently with other Register* methods.
 func (e *Engine) RegisterExecuteToolActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.ToolInput) (*api.ToolOutput, error)) error {
+	if err := e.requireWorkerMode("register execute_tool activities"); err != nil {
+		return err
+	}
 	opts = e.applyActivityClassDefaults(activityKindTool, opts)
 	// Wrap to inject originating WorkflowContext into activity context so runtime code
 	// can start child workflows (agent-as-tool) with engine-owned context.
@@ -412,6 +448,32 @@ func (e *Engine) Close() error {
 	return nil
 }
 
+// SealRegistration closes the registration phase for worker-mode engines and
+// starts polling for every queue registered so far. Client-mode engines do not
+// stage registrations, so sealing is a no-op.
+//
+//nolint:unparam // engine.RegistrationSealer requires an error result.
+func (e *Engine) SealRegistration(context.Context) error {
+	if !e.workerMode {
+		return nil
+	}
+	e.mu.Lock()
+	if e.registrationSealed {
+		e.mu.Unlock()
+		return nil
+	}
+	e.registrationSealed = true
+	bundles := make([]*workerBundle, 0, len(e.workers))
+	for _, bundle := range e.workers {
+		bundles = append(bundles, bundle)
+	}
+	e.mu.Unlock()
+	for _, bundle := range bundles {
+		bundle.start()
+	}
+	return nil
+}
+
 // injectWorkflowContextIntoActivity attaches the originating WorkflowContext to the
 // activity context when available so runtime code can access engine-owned workflow
 // operations (e.g., starting child workflows for agent-as-tool).
@@ -497,6 +559,13 @@ func (e *Engine) registerActivityWithCtx(name string, opts engine.ActivityOption
 	e.finishActivityRegistration(name, opts)
 	registered = true
 	return nil
+}
+
+func (e *Engine) requireWorkerMode(action string) error {
+	if e.workerMode {
+		return nil
+	}
+	return fmt.Errorf("temporal engine: client mode cannot %s; use temporal.NewWorker", action)
 }
 
 func (e *Engine) workflowDefinition(name string) (engine.WorkflowDefinition, error) {

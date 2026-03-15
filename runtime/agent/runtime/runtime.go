@@ -141,9 +141,9 @@ type (
 		// construction time.
 		workers map[agent.Ident]WorkerConfig
 
-		// registrationClosed prevents late agent registration after the first
-		// run is submitted, avoiding dynamic handler registration on running
-		// workers (not supported by some engines).
+		// registrationClosed prevents late agent/toolset registration after the
+		// runtime has been explicitly sealed or the first run has been submitted,
+		// avoiding dynamic handler registration on active workers.
 		registrationClosed bool
 
 		// hookActivityRegistered tracks whether the runtime hook activity has
@@ -964,6 +964,26 @@ func WithQueue(name string) WorkerOption {
 	return func(c *WorkerConfig) { c.Queue = name }
 }
 
+// Seal closes the registration phase and activates engines that stage worker
+// handlers until the runtime is fully configured. Worker deployments should call
+// Seal after registering all toolsets and agents, before serving traffic.
+//
+// Seal is idempotent. It also marks the runtime registration as closed so later
+// RegisterAgent/RegisterToolset calls fail fast.
+func (r *Runtime) Seal(ctx context.Context) error {
+	r.mu.Lock()
+	alreadyClosed := r.registrationClosed
+	r.registrationClosed = true
+	r.mu.Unlock()
+	if alreadyClosed {
+		return nil
+	}
+	if sealer, ok := r.Engine.(engine.RegistrationSealer); ok {
+		return sealer.SealRegistration(ctx)
+	}
+	return nil
+}
+
 // RegisterAgent validates the registration, registers workflows and activities with
 // the engine, and stores the agent metadata for later lookup. Returns an error if
 // required fields are missing or if engine registration fails.
@@ -1324,10 +1344,12 @@ func (r *Runtime) startOneShotRunWithRoute(ctx context.Context, input *RunInput,
 // When requireSession is false, the run is one-shot: SessionID must stay empty,
 // no SessionStore writes are performed, and no SessionID search attribute is set.
 func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName, defaultQueue string, requireSession bool) (engine.WorkflowHandle, error) {
-	// Close registration on first run submission to avoid dynamic handler registration after workers may have started.
-	r.mu.Lock()
-	r.registrationClosed = true
-	r.mu.Unlock()
+	// Close registration on first run submission so local start paths cannot race
+	// later handler mutations. Worker deployments should call Seal during startup;
+	// local starters still converge on the same sealed contract here.
+	if err := r.Seal(ctx); err != nil {
+		return nil, err
+	}
 	if input.RunID == "" {
 		input.RunID = generateRunID(string(input.AgentID))
 	}

@@ -567,6 +567,7 @@ func TestRegisterAgentAfterFirstRunIsRejected(t *testing.T) {
 	require.NoError(t, err)
 	_, err = rt.MustClient(agent.Ident("service.agent")).Start(context.Background(), "sess-1", nil)
 	require.NoError(t, err)
+	require.Equal(t, 1, eng.sealCalls)
 
 	// Registering a new agent afterwards is rejected
 	err = rt.RegisterAgent(context.Background(), AgentRegistration{
@@ -582,6 +583,36 @@ func TestRegisterAgentAfterFirstRunIsRejected(t *testing.T) {
 		ExecuteToolActivity: "execute",
 	})
 	require.ErrorIs(t, err, ErrRegistrationClosed)
+}
+
+func TestSealClosesRegistrationAndDelegatesToEngine(t *testing.T) {
+	t.Parallel()
+
+	eng := &stubEngine{}
+	rt := &Runtime{
+		Engine:       eng,
+		logger:       telemetry.NoopLogger{},
+		metrics:      telemetry.NoopMetrics{},
+		tracer:       telemetry.NoopTracer{},
+		SessionStore: sessioninmem.New(),
+		runHandles:   make(map[string]engine.WorkflowHandle),
+		agents:       make(map[agent.Ident]AgentRegistration),
+		toolsets:     make(map[string]ToolsetRegistration),
+	}
+
+	require.NoError(t, rt.Seal(context.Background()))
+	require.Equal(t, 1, eng.sealCalls)
+
+	err := rt.RegisterToolset(ToolsetRegistration{
+		Name: "svc.toolset",
+		Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			return &planner.ToolResult{}, nil
+		},
+	})
+	require.ErrorIs(t, err, ErrRegistrationClosed)
+
+	require.NoError(t, rt.Seal(context.Background()))
+	require.Equal(t, 1, eng.sealCalls)
 }
 
 func TestTimeBudgetExceeded(t *testing.T) {

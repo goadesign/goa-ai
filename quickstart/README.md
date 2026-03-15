@@ -109,7 +109,7 @@ import (
     specs "<module>/gen/<service>/agents/<agent>/specs"
 )
 
-eng, _ := temporal.New(temporal.Options{
+eng, _ := temporal.NewWorker(temporal.Options{
     ClientOptions: &client.Options{
         HostPort:      "127.0.0.1:7233",
         Namespace:     "default",

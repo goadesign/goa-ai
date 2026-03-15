@@ -37,6 +37,7 @@ func TestRegisterWorkflowRejectsDuplicateBeforeCreatingWorkerForNewQueue(t *test
 		Handler:   handler,
 	})
 	require.NoError(t, err)
+	require.False(t, eng.workers["queue.alpha"].started.Load())
 
 	err = eng.RegisterWorkflow(context.Background(), engine.WorkflowDefinition{
 		Name:      "agent.workflow",
@@ -62,6 +63,7 @@ func TestRegisterPlannerActivityRejectsDuplicateNameAcrossQueues(t *testing.T) {
 		StartToCloseTimeout: time.Minute,
 	}, handler)
 	require.NoError(t, err)
+	require.False(t, eng.workers["queue.alpha"].started.Load())
 
 	err = eng.RegisterPlannerActivity(context.Background(), "planner.activity", engine.ActivityOptions{
 		Queue:               "queue.beta",
@@ -82,7 +84,7 @@ func TestStartWorkflowPropagatesMemoAndSearchAttributes(t *testing.T) {
 	t.Parallel()
 
 	service := &testWorkflowService{}
-	eng, err := New(Options{
+	eng, err := NewWorker(Options{
 		Client: newWorkflowServiceClient(t, service),
 		WorkerOptions: WorkerOptions{
 			TaskQueue: "default.queue",
@@ -157,12 +159,49 @@ func TestStartWorkflowRejectsUnsupportedSearchAttributeType(t *testing.T) {
 	require.ErrorContains(t, err, `search attribute "Unsupported" has unsupported type []int`)
 }
 
+func TestNewClientRejectsRegistration(t *testing.T) {
+	t.Parallel()
+
+	eng, err := NewClient(Options{
+		Client: newLazyTestClient(t),
+	})
+	require.NoError(t, err)
+
+	err = eng.RegisterWorkflow(context.Background(), engine.WorkflowDefinition{
+		Name: "agent.workflow",
+		Handler: func(ctx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
+			return &api.RunOutput{}, nil
+		},
+	})
+	require.ErrorContains(t, err, "client mode cannot register workflows")
+}
+
+func TestSealRegistrationStartsQueuedWorkers(t *testing.T) {
+	t.Parallel()
+
+	eng := newTestEngine(t)
+	err := eng.RegisterPlannerActivity(context.Background(), "planner.activity", engine.ActivityOptions{
+		Queue:               "queue.alpha",
+		StartToCloseTimeout: time.Minute,
+	}, func(ctx context.Context, input *api.PlanActivityInput) (*api.PlanActivityOutput, error) {
+		return &api.PlanActivityOutput{}, nil
+	})
+	require.NoError(t, err)
+
+	bundle := eng.workers["queue.alpha"]
+	require.NotNil(t, bundle)
+	require.False(t, bundle.started.Load())
+
+	require.NoError(t, eng.SealRegistration(context.Background()))
+	require.True(t, bundle.started.Load())
+}
+
 // newTestEngine returns a Temporal engine backed by a lazy Temporal client so tests can
 // exercise registration logic without contacting a Temporal server.
 func newTestEngine(t *testing.T) *Engine {
 	t.Helper()
 
-	eng, err := New(Options{
+	eng, err := NewWorker(Options{
 		Client: newLazyTestClient(t),
 		WorkerOptions: WorkerOptions{
 			TaskQueue: "default.queue",

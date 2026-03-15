@@ -13,9 +13,10 @@
 //
 // # Constructing an Engine
 //
-// Use New to create an engine with Temporal client and worker options:
+// Worker processes use NewWorker to create an engine with Temporal client and
+// worker options:
 //
-//	eng, err := temporal.New(temporal.Options{
+//	eng, err := temporal.NewWorker(temporal.Options{
 //	    ClientOptions: &client.Options{
 //	        HostPort:  "temporal:7233",
 //	        Namespace: "default",
@@ -34,20 +35,34 @@
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
+//	rt := runtime.New(runtime.WithEngine(eng))
+//	// Register toolsets first, then agents.
+//	if err := rt.Seal(context.Background()); err != nil {
+//	    log.Fatal(err)
+//	}
 //	defer eng.Close()
+//
+// Client-only processes use NewClient and do not register local workflows or
+// activities:
+//
+//	eng, err := temporal.NewClient(temporal.Options{
+//	    ClientOptions: &client.Options{
+//	        HostPort:  "temporal:7233",
+//	        Namespace: "default",
+//	    },
+//	})
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
 //
 // # Worker vs Client Mode
 //
-// The same engine can operate in two modes:
+// Worker mode polls task queues and executes workflows locally. Client mode
+// submits workflows without local execution.
 //
-//   - Worker mode: Polls task queues and executes workflows locally. Use this in
-//     processes that register agents and run planners/tools.
-//
-//   - Client mode: Submits workflows without local execution. Use this in API
-//     gateways or CLI tools that start runs but don't process them.
-//
-// Both modes use the same Options; the difference is whether agents are registered
-// on the runtime. Client-only processes skip agent registration.
+// Registration sealing is part of the worker-mode contract: the runtime must seal
+// registration only after all toolsets and agents have been registered so polling
+// begins from a coherent local registry.
 //
 // # Workflow Determinism
 //

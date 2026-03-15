@@ -49,7 +49,7 @@
 // # Usage Pattern
 //
 //	// Create engine (Temporal for production)
-//	eng, _ := temporal.New(temporal.Options{...})
+//	eng, _ := temporal.NewWorker(temporal.Options{...})
 //	defer eng.Close()
 //
 //	// Create runtime with engine
@@ -153,6 +153,15 @@ type (
 		// terminal error for failed/timed-out/canceled runs, addressed by
 		// workflowID.
 		QueryRunCompletion(ctx context.Context, workflowID string) (*api.RunOutput, error)
+	}
+
+	// RegistrationSealer allows an engine to stage workflow/activity registrations
+	// until the runtime has finished building its full local registry. Worker-capable
+	// engines use this to avoid polling with partially registered handlers.
+	RegistrationSealer interface {
+		// SealRegistration closes the registration phase and makes staged handlers
+		// visible to execution. Implementations must be idempotent.
+		SealRegistration(ctx context.Context) error
 	}
 
 	// Canceler provides workflow cancellation by workflow ID without requiring

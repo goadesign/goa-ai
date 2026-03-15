@@ -782,6 +782,7 @@ type stubEngine struct {
 	registeredHookActivityOptions    map[string]engine.ActivityOptions
 	registeredPlannerActivityOptions map[string]engine.ActivityOptions
 	registeredExecuteActivityOptions map[string]engine.ActivityOptions
+	sealCalls                        int
 }
 
 func (s *stubEngine) RegisterWorkflow(context.Context, engine.WorkflowDefinition) error { return nil }
@@ -813,6 +814,12 @@ func (s *stubEngine) StartWorkflow(ctx context.Context, req engine.WorkflowStart
 
 func (s *stubEngine) QueryRunStatus(context.Context, string) (engine.RunStatus, error) {
 	return engine.RunStatusCompleted, nil
+}
+
+//nolint:unparam // test stub mirrors engine.RegistrationSealer.
+func (s *stubEngine) SealRegistration(context.Context) error {
+	s.sealCalls++
+	return nil
 }
 
 type noopWorkflowHandle struct{}

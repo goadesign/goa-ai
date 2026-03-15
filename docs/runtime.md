@@ -100,7 +100,7 @@ func main() {
 ```go
 func main() {
     // Temporal engine for durable execution
-    temporalEng, _ := temporal.New(temporal.Options{
+    temporalEng, _ := temporal.NewWorker(temporal.Options{
         ClientOptions: &client.Options{HostPort: "temporal:7233"},
         WorkerOptions: temporal.WorkerOptions{TaskQueue: "orchestrator.chat"},
     })
@@ -124,11 +124,14 @@ func main() {
         runtime.WithTracer(telemetry.NewClueTracer()),
     )
 
-    // Register agents
+    // Register toolsets first, then agents, then seal registration.
     if err := chat.RegisterChatAgent(ctx, rt, chat.ChatAgentConfig{
         Planner:      newChatPlanner(),
         HistoryModel: smallModelClient, // for history compression
     }); err != nil {
+        panic(err)
+    }
+    if err := rt.Seal(ctx); err != nil {
         panic(err)
     }
 
@@ -1477,12 +1480,12 @@ type WorkflowContext interface {
 
 ### Available Engines
 
-**Temporal** — Production-grade durable execution:
+**Temporal worker** — Production-grade durable execution:
 
 ```go
 import temporal "goa.design/goa-ai/runtime/agent/engine/temporal"
 
-eng, _ := temporal.New(temporal.Options{
+eng, _ := temporal.NewWorker(temporal.Options{
     ClientOptions: &client.Options{
         HostPort:  "temporal:7233",
         Namespace: "default",
@@ -1499,6 +1502,17 @@ eng, _ := temporal.New(temporal.Options{
             QueueWaitTimeout: 2 * time.Minute,
             LivenessTimeout:  20 * time.Second,
         },
+    },
+})
+```
+
+**Temporal client** — Start/query/signal without local polling:
+
+```go
+eng, _ := temporal.NewClient(temporal.Options{
+    ClientOptions: &client.Options{
+        HostPort:  "temporal:7233",
+        Namespace: "default",
     },
 })
 ```

@@ -1,11 +1,12 @@
 // Package temporal keeps worker lifecycle isolated from the engine's public
-// API. The contract is simple: queue registration creates the worker if needed,
-// starts it exactly once, and Close stops every worker the engine owns.
+// API. Worker-mode engines stage queue handlers during registration and start
+// polling only after the runtime seals registration.
 package temporal
 
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/worker"
@@ -20,19 +21,20 @@ func (e *Engine) workerForQueue(queue string) *workerBundle {
 	}
 
 	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	if bundle, ok := e.workers[queue]; ok {
-		return bundle
+	bundle, ok := e.workers[queue]
+	if !ok {
+		bundle = &workerBundle{
+			queue:  queue,
+			worker: worker.New(e.client, queue, e.workerOpts),
+			logger: e.logger,
+		}
+		e.workers[queue] = bundle
 	}
-
-	bundle := &workerBundle{
-		queue:  queue,
-		worker: worker.New(e.client, queue, e.workerOpts),
-		logger: e.logger,
+	shouldStart := e.registrationSealed
+	e.mu.Unlock()
+	if shouldStart {
+		bundle.start()
 	}
-	e.workers[queue] = bundle
-	bundle.start()
 	return bundle
 }
 
@@ -57,10 +59,12 @@ type workerBundle struct {
 	logger telemetry.Logger
 
 	startOnce sync.Once
+	started   atomic.Bool
 }
 
 func (b *workerBundle) start() {
 	b.startOnce.Do(func() {
+		b.started.Store(true)
 		go func() {
 			if err := b.worker.Run(worker.InterruptCh()); err != nil {
 				b.logger.Error(context.Background(), "temporal worker exited", "queue", b.queue, "err", err)
@@ -70,6 +74,9 @@ func (b *workerBundle) start() {
 }
 
 func (b *workerBundle) stop() {
+	if !b.started.Load() {
+		return
+	}
 	b.worker.Stop()
 }
 
