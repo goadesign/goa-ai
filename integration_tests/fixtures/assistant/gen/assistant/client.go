@@ -26,10 +26,11 @@ type Client struct {
 	SearchEndpoint              goa.Endpoint
 	ExecuteCodeEndpoint         goa.Endpoint
 	ProcessBatchEndpoint        goa.Endpoint
+	MultiContentEndpoint        goa.Endpoint
 }
 
 // NewClient initializes a "assistant" service client given the endpoints.
-func NewClient(listDocuments, systemInfo, conversationHistory, generatePrompts, sendNotification, analyzeSentiment, extractKeywords, summarizeText, search, executeCode, processBatch goa.Endpoint) *Client {
+func NewClient(listDocuments, systemInfo, conversationHistory, generatePrompts, sendNotification, analyzeSentiment, extractKeywords, summarizeText, search, executeCode, processBatch, multiContent goa.Endpoint) *Client {
 	return &Client{
 		ListDocumentsEndpoint:       listDocuments,
 		SystemInfoEndpoint:          systemInfo,
@@ -42,6 +43,7 @@ func NewClient(listDocuments, systemInfo, conversationHistory, generatePrompts, 
 		SearchEndpoint:              search,
 		ExecuteCodeEndpoint:         executeCode,
 		ProcessBatchEndpoint:        processBatch,
+		MultiContentEndpoint:        multiContent,
 	}
 }
 
@@ -154,4 +156,14 @@ func (c *Client) ProcessBatch(ctx context.Context, p *ProcessBatchPayload) (res 
 		return
 	}
 	return ires.(*ProcessBatchResult), nil
+}
+
+// MultiContent calls the "multi_content" endpoint of the "assistant" service.
+func (c *Client) MultiContent(ctx context.Context, p *MultiContentPayload) (res *MultiContentResult, err error) {
+	var ires any
+	ires, err = c.MultiContentEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*MultiContentResult), nil
 }

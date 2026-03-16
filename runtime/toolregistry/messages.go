@@ -21,9 +21,9 @@ type (
 	// Providers may use this metadata to scope data access and persistence (for example,
 	// applying session-scoped policies without polluting tool payload schemas).
 	ToolCallMeta struct {
-		RunID            string `json:"run_id"`
-		SessionID        string `json:"session_id"`
-		TurnID           string `json:"turn_id,omitempty"`
+		RunID     string `json:"run_id"`
+		SessionID string `json:"session_id"`
+		TurnID    string `json:"turn_id,omitempty"`
 		// ToolCallID is the logical execution identity assigned by the runtime. When
 		// present, registry retries must reuse it as the transport ToolUseID instead
 		// of minting a fresh per-attempt identifier.

@@ -53,7 +53,7 @@ func (r *RootExpr) Packages() []string {
 
 // WalkSets exposes the nested expressions to the eval engine.
 func (r *RootExpr) WalkSets(walk eval.SetWalker) {
-	var mcps eval.ExpressionSet
+	mcps := make(eval.ExpressionSet, 0, len(r.MCPServers))
 	for _, mcp := range r.MCPServers {
 		mcps = append(mcps, mcp)
 	}

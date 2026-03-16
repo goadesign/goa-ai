@@ -118,6 +118,20 @@ The generated `MCPAdapterOptions` provides configuration hooks:
 - StructuredStreamJSON: when true, stream events are emitted as `resource` items with `application/json`.
 - ProtocolVersionOverride: override `DefaultProtocolVersion` at construction time.
 
+### Client-side caller architecture
+
+There are two distinct client-side MCP call paths, and they serve different purposes:
+
+- `runtime/mcp` provides transport callers (`NewStdioCaller`, `NewHTTPCaller`, `NewSSECaller`) for connecting to external MCP servers. These constructors create an SDK-backed `SessionCaller`, so initialize negotiation, capability exchange, and transport lifecycle are owned by the official Go SDK.
+- Generated MCP JSON-RPC clients are used only when Goa generates an MCP service and a matching typed JSON-RPC client for that same service. In that case the generated `NewCaller` wrapper adapts the generated JSON-RPC client to the shared `runtime/mcp.Caller` interface and reuses the runtime normalization contract.
+
+This split is intentional:
+
+- External MCP transports should use the SDK directly because transport/session semantics are protocol-level concerns.
+- Generated JSON-RPC clients should stay typed and Goa-native because they target Goa-generated MCP services, not arbitrary remote MCP transports.
+
+Both paths converge on the same runtime `Caller` contract and the same tool result normalization logic, so runtime-managed callers and generated callers expose identical multi-content behavior to the rest of goa-ai.
+
 ## Streaming
 
 No custom streaming templates. When your methods stream, Goa's JSON-RPC generator emits the SSE stack. We simply adjust paths/imports so it lives under the MCP tree.

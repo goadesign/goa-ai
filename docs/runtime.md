@@ -1595,7 +1595,8 @@ type Tracer interface {
 ## MCP Callers
 
 The `runtime/mcp` package provides three caller implementations for different MCP server
-transports.
+transports. Each constructor establishes an initialized MCP session and returns a
+caller that can be reused across multiple tool invocations.
 
 ### StdioCaller
 
@@ -1608,6 +1609,7 @@ caller, err := mcp.NewStdioCaller(mcp.StdioOptions{
     Command: "npx",
     Args:    []string{"-y", "@modelcontextprotocol/server-filesystem"},
     Env:     []string{"HOME=" + os.Getenv("HOME")},
+    InitTimeout: 5 * time.Second,
 })
 if err != nil {
     log.Fatal(err)
@@ -1617,24 +1619,52 @@ defer caller.Close()
 
 ### HTTPCaller
 
-HTTP POST to MCP endpoints:
+Connects to an MCP server that exposes the streamable HTTP transport:
 
 ```go
-caller := mcp.NewHTTPCaller("https://mcp-server.example.com/mcp")
+caller, err := mcp.NewHTTPCaller(ctx, mcp.HTTPOptions{
+    Endpoint:    "https://mcp-server.example.com/mcp",
+    InitTimeout: 5 * time.Second,
+})
+if err != nil {
+    log.Fatal(err)
+}
+defer caller.Close()
 ```
 
 ### SSECaller
 
-Server-Sent Events for streaming MCP responses:
+Connects to an MCP server that exposes the legacy SSE transport:
 
 ```go
-caller := mcp.NewSSECaller(mcp.SSEOptions{
-    URL: "https://mcp-server.example.com/sse",
+caller, err := mcp.NewSSECaller(ctx, mcp.HTTPOptions{
+    Endpoint:    "https://mcp-server.example.com/sse",
+    InitTimeout: 5 * time.Second,
 })
+if err != nil {
+    log.Fatal(err)
+}
+defer caller.Close()
 ```
 
-All callers implement the `mcp.Caller` interface and include automatic retry via
-`runtime/mcp/retry`.
+All three constructors return a caller that implements `mcp.Caller`. The
+initialization timeout only bounds session establishment; it does not cancel the
+live session after `Connect` succeeds.
+
+### Normalized tool results
+
+MCP callers normalize `tools/call` results into a consistent shape:
+
+- Text content items are concatenated in order.
+- If the combined text is valid JSON, it becomes `CallResponse.Result`.
+- Otherwise the combined text is returned as a JSON string.
+- `CallResponse.Structured` contains the full structured MCP content payload.
+- If a tool returns no text content, callers fall back to marshaling the first
+  structured content item into `CallResponse.Result`.
+
+Generated MCP JSON-RPC clients and MCP client adapters use the same
+normalization contract, so runtime callers and generated callers observe the
+same behavior for multi-part tool output.
 
 ### Server-initiated events (Broadcaster)
 

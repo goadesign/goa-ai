@@ -1,268 +1,255 @@
 package mcp
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
 
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
 
-const (
-	stdioHelperEnv      = "GOA_MCP_STDIO_HELPER"
-	rpcMethodInitialize = "initialize"
-	rpcMethodToolsCall  = "tools/call"
-)
+const sdkStdioHelperEnv = "GOA_MCP_SDK_STDIO_HELPER"
 
-func init() { otel.SetTextMapPropagator(propagation.TraceContext{}) }
-
-type roundTripperFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {
-	return f(r)
+func init() {
+	otel.SetTextMapPropagator(propagation.TraceContext{})
 }
 
-func httpResponse(status int, headers http.Header, body []byte) *http.Response {
-	if headers == nil {
-		headers = make(http.Header)
-	}
-	return &http.Response{
-		StatusCode: status,
-		Header:     headers,
-		Body:       io.NopCloser(bytes.NewReader(body)),
-	}
-}
-
-func TestHTTPCallerCallTool(t *testing.T) {
+func TestCallToolAcrossProtocols(t *testing.T) {
 	t.Parallel()
-	var traceHeader string
-	var metaTrace string
-	client := &http.Client{
-		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				return nil, err
-			}
-			if err := r.Body.Close(); err != nil {
-				return nil, err
-			}
-			var req rpcRequest
-			if err := json.Unmarshal(body, &req); err != nil {
-				return nil, err
-			}
-			switch req.Method {
-			case rpcMethodInitialize:
-				resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"capabilities":{}}`)}
-				data, err := json.Marshal(resp)
-				if err != nil {
-					return nil, err
-				}
-				headers := http.Header{
-					"Content-Type": []string{"application/json"},
-				}
-				return httpResponse(http.StatusOK, headers, data), nil
-			case rpcMethodToolsCall:
-				traceHeader = r.Header.Get("Traceparent")
-				if params, ok := req.Params.(map[string]any); ok {
-					if meta, ok := params["_meta"].(map[string]any); ok {
-						if tp, ok := meta["traceparent"].(string); ok {
-							metaTrace = tp
-						}
-					}
-				}
-				resultJSON := `{"content":[{"type":"text","text":"{\"ok\":true}","mimeType":"application/json"}],"isError":false}`
-				resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(resultJSON)}
-				data, err := json.Marshal(resp)
-				if err != nil {
-					return nil, err
-				}
-				headers := http.Header{
-					"Content-Type": []string{"application/json"},
-				}
-				return httpResponse(http.StatusOK, headers, data), nil
-			default:
-				return httpResponse(http.StatusBadRequest, nil, []byte("unknown method")), nil
-			}
-		}),
+
+	tests := []struct {
+		name      string
+		newCaller func(t *testing.T, ctx context.Context) *SessionCaller
+	}{
+		{
+			name: "stdio",
+			newCaller: func(t *testing.T, ctx context.Context) *SessionCaller {
+				t.Helper()
+
+				caller, err := NewStdioCaller(ctx, StdioOptions{
+					Command:     os.Args[0],
+					Args:        []string{"-test.run=TestSDKStdioServerProcess", "--"},
+					Env:         append(os.Environ(), sdkStdioHelperEnv+"=1"),
+					InitTimeout: 5 * time.Second,
+				})
+				require.NoError(t, err)
+				return caller
+			},
+		},
+		{
+			name: "streamable_http",
+			newCaller: func(t *testing.T, ctx context.Context) *SessionCaller {
+				t.Helper()
+
+				server := httptest.NewServer(sdkmcp.NewStreamableHTTPHandler(func(*http.Request) *sdkmcp.Server {
+					return newSDKTestServer()
+				}, &sdkmcp.StreamableHTTPOptions{
+					DisableLocalhostProtection: true,
+				}))
+				t.Cleanup(server.Close)
+
+				caller, err := NewHTTPCaller(ctx, HTTPOptions{
+					Endpoint:    server.URL,
+					InitTimeout: 5 * time.Second,
+				})
+				require.NoError(t, err)
+				return caller
+			},
+		},
+		{
+			name: "sse",
+			newCaller: func(t *testing.T, ctx context.Context) *SessionCaller {
+				t.Helper()
+
+				server := httptest.NewServer(sdkmcp.NewSSEHandler(func(*http.Request) *sdkmcp.Server {
+					return newSDKTestServer()
+				}, nil))
+				t.Cleanup(server.Close)
+
+				caller, err := NewSSECaller(ctx, HTTPOptions{
+					Endpoint:    server.URL,
+					InitTimeout: 5 * time.Second,
+				})
+				require.NoError(t, err)
+				return caller
+			},
+		},
 	}
 
-	ctx, expectedTrace := contextWithTrace()
-	caller, err := NewHTTPCaller(ctx, HTTPOptions{Endpoint: "http://mcp.test/rpc", Client: client})
-	require.NoError(t, err)
-	req := CallRequest{Suite: "svc.ts", Tool: "search", Payload: json.RawMessage(`{"query":"hi"}`)}
-	resp, err := caller.CallTool(ctx, req)
-	require.NoError(t, err)
-	require.Equal(t, "{\"ok\":true}", string(resp.Result))
-	require.Equal(t, expectedTrace, traceHeader)
-	require.Equal(t, expectedTrace, metaTrace)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-func TestSSECallerCallTool(t *testing.T) {
-	t.Parallel()
-	var traceHeader string
-	var metaTrace string
-	client := &http.Client{
-		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				return nil, err
-			}
-			if err := r.Body.Close(); err != nil {
-				return nil, err
-			}
-			var req rpcRequest
-			if err := json.Unmarshal(body, &req); err != nil {
-				return nil, err
-			}
-			switch req.Method {
-			case rpcMethodInitialize:
-				resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"capabilities":{}}`)}
-				data, err := json.Marshal(resp)
-				if err != nil {
-					return nil, err
-				}
-				headers := http.Header{
-					"Content-Type": []string{"application/json"},
-				}
-				return httpResponse(http.StatusOK, headers, data), nil
-			case rpcMethodToolsCall:
-				traceHeader = r.Header.Get("Traceparent")
-				if params, ok := req.Params.(map[string]any); ok {
-					if meta, ok := params["_meta"].(map[string]any); ok {
-						if tp, ok := meta["traceparent"].(string); ok {
-							metaTrace = tp
-						}
-					}
-				}
-				resultJSON := `{"content":[{"type":"text","text":"{\"ok\":true}","mimeType":"application/json"}],"isError":false}`
-				rpcResp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(resultJSON)}
-				data, err := json.Marshal(rpcResp)
-				if err != nil {
-					return nil, err
-				}
-				var sse bytes.Buffer
-				if _, err := fmt.Fprintln(&sse, "event: response"); err != nil {
-					return nil, err
-				}
-				if _, err := fmt.Fprintf(&sse, "data: %s\n\n", bytes.TrimSpace(data)); err != nil {
-					return nil, err
-				}
-				headers := http.Header{
-					"Content-Type": []string{"text/event-stream"},
-				}
-				return httpResponse(http.StatusOK, headers, sse.Bytes()), nil
-			default:
-				return httpResponse(http.StatusBadRequest, nil, []byte("unknown method")), nil
-			}
-		}),
+			ctx, expectedTrace := contextWithTrace()
+
+			multiCaller := tt.newCaller(t, ctx)
+			assertMultiContentResponse(t, multiCaller, ctx)
+			require.NoError(t, multiCaller.Close())
+
+			traceCaller := tt.newCaller(t, ctx)
+			assertTraceMetadataForwarding(t, traceCaller, ctx, expectedTrace)
+			require.NoError(t, traceCaller.Close())
+		})
 	}
-
-	ctx, expectedTrace := contextWithTrace()
-	caller, err := NewSSECaller(ctx, HTTPOptions{Endpoint: "http://mcp.test/rpc", Client: client})
-	require.NoError(t, err)
-	req := CallRequest{Suite: "svc.ts", Tool: "search", Payload: json.RawMessage(`{"query":"hi"}`)}
-	resp, err := caller.CallTool(ctx, req)
-	require.NoError(t, err)
-	require.Equal(t, "{\"ok\":true}", string(resp.Result))
-	require.Equal(t, expectedTrace, traceHeader)
-	require.Equal(t, expectedTrace, metaTrace)
 }
 
-func TestStdioCallerCallTool(t *testing.T) {
+func TestNormalizeSDKToolResultConcatenatesTextAcrossAllContentItems(t *testing.T) {
 	t.Parallel()
-	ctx, expectedTrace := contextWithTrace()
-	caller, err := NewStdioCaller(ctx, StdioOptions{
-		Command:     os.Args[0],
-		Args:        []string{"-test.run=TestStdioHelper", "--"},
-		Env:         []string{stdioHelperEnv + "=1"},
-		InitTimeout: time.Second,
+
+	first := &sdkmcp.TextContent{Text: "{\"result\":\"hello "}
+	second := &sdkmcp.TextContent{Text: "world\"}"}
+	resp, err := normalizeSDKToolResult(&sdkmcp.CallToolResult{
+		Content: []sdkmcp.Content{first, second},
 	})
 	require.NoError(t, err)
-	defer func() {
-		if err := caller.Close(); err != nil {
-			t.Logf("caller close error: %v", err)
-		}
-	}()
-	resp, err := caller.CallTool(ctx, CallRequest{Suite: "svc.ts", Tool: "meta", Payload: json.RawMessage(`"noop"`)})
+	require.JSONEq(t, `{"result":"hello world"}`, string(resp.Result))
+
+	var structured []map[string]any
+	require.NoError(t, json.Unmarshal(resp.Structured, &structured))
+	require.Len(t, structured, 2)
+	assert.Equal(t, "text", structured[0]["type"])
+	assert.Equal(t, "text", structured[1]["type"])
+}
+
+func TestNormalizeSDKToolResultFallsBackToStructuredItemWhenNoTextExists(t *testing.T) {
+	t.Parallel()
+
+	resp, err := normalizeSDKToolResult(&sdkmcp.CallToolResult{
+		Content: []sdkmcp.Content{
+			&sdkmcp.ImageContent{
+				Data:     []byte("fake-image"),
+				MIMEType: "image/png",
+			},
+		},
+	})
 	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(resp.Result, &result))
+	assert.Equal(t, "image", result["type"])
+	assert.Equal(t, "image/png", result["mimeType"])
+	assert.Equal(t, "ZmFrZS1pbWFnZQ==", result["data"])
+
+	var structured []map[string]any
+	require.NoError(t, json.Unmarshal(resp.Structured, &structured))
+	require.Len(t, structured, 1)
+	assert.Equal(t, "image", structured[0]["type"])
+}
+
+func TestSDKStdioServerProcess(t *testing.T) {
+	if os.Getenv(sdkStdioHelperEnv) != "1" {
+		t.Skip("helper subprocess")
+	}
+
+	runSDKStdioServerProcess()
+}
+
+func assertMultiContentResponse(t *testing.T, caller *SessionCaller, ctx context.Context) {
+	t.Helper()
+
+	resp, err := caller.CallTool(ctx, CallRequest{
+		Tool:    "multi_content_tool",
+		Payload: json.RawMessage(`{}`),
+	})
+	require.NoError(t, err)
+
 	var result string
-	err = json.Unmarshal(resp.Result, &result)
+	require.NoError(t, json.Unmarshal(resp.Result, &result))
+	assert.Equal(t, "hello world!", result)
+
+	var structured []map[string]any
+	require.NoError(t, json.Unmarshal(resp.Structured, &structured))
+	require.Len(t, structured, 3)
+
+	assert.Equal(t, "text", structured[0]["type"])
+	assert.Equal(t, "hello ", structured[0]["text"])
+	assert.Equal(t, "text", structured[1]["type"])
+	assert.Equal(t, "world", structured[1]["text"])
+	assert.Equal(t, "text", structured[2]["type"])
+	assert.Equal(t, "!", structured[2]["text"])
+}
+
+func assertTraceMetadataForwarding(t *testing.T, caller *SessionCaller, ctx context.Context, expectedTrace string) {
+	t.Helper()
+
+	resp, err := caller.CallTool(ctx, CallRequest{
+		Tool:    "trace_meta_tool",
+		Payload: json.RawMessage(`{}`),
+	})
 	require.NoError(t, err)
-	require.Equal(t, expectedTrace, result)
+
+	var traceparent string
+	require.NoError(t, json.Unmarshal(resp.Result, &traceparent))
+	assert.Equal(t, expectedTrace, traceparent)
 }
 
 func contextWithTrace() (context.Context, string) {
 	traceID := trace.TraceID{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0x00}
 	spanID := trace.SpanID{0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80}
-	spanCtx := trace.NewSpanContext(trace.SpanContextConfig{TraceID: traceID, SpanID: spanID, TraceFlags: trace.FlagsSampled})
+	spanCtx := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    traceID,
+		SpanID:     spanID,
+		TraceFlags: trace.FlagsSampled,
+	})
 	ctx := trace.ContextWithSpanContext(context.Background(), spanCtx)
 	expected := fmt.Sprintf("00-%s-%s-01", traceID.String(), spanID.String())
 	return ctx, expected
 }
 
-func TestStdioHelper(t *testing.T) {
-	if os.Getenv(stdioHelperEnv) != "1" {
-		t.Skip("helper process")
-	}
-	runStdioHelper()
+func newSDKTestServer() *sdkmcp.Server {
+	server := sdkmcp.NewServer(
+		&sdkmcp.Implementation{
+			Name:    "test-server",
+			Version: "1.0.0",
+		},
+		nil,
+	)
+
+	server.AddTool(&sdkmcp.Tool{
+		Name:        "multi_content_tool",
+		Description: "Returns multiple text items",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+	}, func(context.Context, *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
+		return &sdkmcp.CallToolResult{
+			Content: []sdkmcp.Content{
+				&sdkmcp.TextContent{Text: "hello "},
+				&sdkmcp.TextContent{Text: "world"},
+				&sdkmcp.TextContent{Text: "!"},
+			},
+		}, nil
+	})
+
+	server.AddTool(&sdkmcp.Tool{
+		Name:        "trace_meta_tool",
+		Description: "Returns the incoming trace metadata",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+	}, func(_ context.Context, req *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
+		traceparent, _ := req.Params.Meta["traceparent"].(string)
+		return &sdkmcp.CallToolResult{
+			Content: []sdkmcp.Content{
+				&sdkmcp.TextContent{Text: traceparent},
+			},
+		}, nil
+	})
+
+	return server
 }
 
-func runStdioHelper() {
-	reader := bufio.NewReader(os.Stdin)
-	writer := bufio.NewWriter(os.Stdout)
-	for {
-		frame, err := readFrame(reader)
-		if err != nil {
-			break
-		}
-		var req rpcRequest
-		if err := json.Unmarshal(frame, &req); err != nil {
-			continue
-		}
-		switch req.Method {
-		case rpcMethodInitialize:
-			resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"capabilities":{}}`)}
-			writeFrame(writer, resp)
-		case rpcMethodToolsCall:
-			traceVal := ""
-			if params, ok := req.Params.(map[string]any); ok {
-				if meta, ok := params["_meta"].(map[string]any); ok {
-					if tp, ok := meta["traceparent"].(string); ok {
-						traceVal = tp
-					}
-				}
-			}
-			if traceVal == "" {
-				errResp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32602, Message: "missing traceparent"}}
-				writeFrame(writer, errResp)
-				continue
-			}
-			result := toolsCallResult{Content: []contentItem{{Type: "text", Text: &traceVal}}}
-			data, _ := json.Marshal(result)
-			resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: data}
-			writeFrame(writer, resp)
-		default:
-			errResp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32601, Message: "unknown method"}}
-			writeFrame(writer, errResp)
-		}
+func runSDKStdioServerProcess() {
+	server := newSDKTestServer()
+	if err := server.Run(context.Background(), &sdkmcp.StdioTransport{}); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
-	_ = writer.Flush()
 	os.Exit(0)
-}
-
-func writeFrame(writer *bufio.Writer, resp rpcResponse) {
-	data, _ := json.Marshal(resp)
-	_, _ = fmt.Fprintf(writer, "Content-Length: %d\r\n\r\n", len(data))
-	_, _ = writer.Write(data)
-	_ = writer.Flush()
 }

@@ -12,6 +12,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 	mcpruntime "goa.design/goa-ai/runtime/mcp"
 	"goa.design/goa-ai/runtime/mcp/retry"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 )
 
 // {{ .Register.HelperName }}ToolSpecs contains the tool specifications for the {{ .Register.SuiteName }} toolset.
@@ -163,10 +164,10 @@ func {{ .Register.HelperName }}RetryHint(toolName tools.Ident, err error) *plann
 			RestrictToTool: true,
 		}
 	}
-	var rpcErr *mcpruntime.Error
+	var rpcErr *jsonrpc.Error
 	if errors.As(err, &rpcErr) {
 		switch rpcErr.Code {
-		case mcpruntime.JSONRPCInvalidParams:
+		case jsonrpc.CodeInvalidParams:
 			// Schema and example are known at generation time - use switch for direct lookup
 			var schemaJSON, example string
 			switch key {
@@ -183,7 +184,7 @@ func {{ .Register.HelperName }}RetryHint(toolName tools.Ident, err error) *plann
 				Message:        prompt,
 				RestrictToTool: true,
 			}
-		case mcpruntime.JSONRPCMethodNotFound:
+		case jsonrpc.CodeMethodNotFound:
 			return &planner.RetryHint{
 				Reason:  planner.RetryReasonToolUnavailable,
 				Tool:    toolName,

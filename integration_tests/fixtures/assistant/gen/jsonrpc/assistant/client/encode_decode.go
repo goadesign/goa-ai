@@ -929,6 +929,93 @@ func DecodeProcessBatchResponse(decoder func(*http.Response) goahttp.Decoder, re
 	}
 }
 
+// BuildMultiContentRequest instantiates a HTTP request object with method and
+// path set to call the "assistant" service "multi_content" endpoint
+func (c *Client) BuildMultiContentRequest(ctx context.Context, v any) (*http.Request, error) {
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: MultiContentAssistantPath()}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("assistant", "multi_content", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeMultiContentRequest returns an encoder for requests sent to the
+// assistant multi_content server.
+func EncodeMultiContentRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*assistant.MultiContentPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("assistant", "multi_content", "*assistant.MultiContentPayload", v)
+		}
+		b := NewMultiContentRequestBody(p)
+		body := &jsonrpc.Request{
+			JSONRPC: "2.0",
+			Method:  "multi_content",
+			Params:  b,
+		}
+		// No ID field in payload - always send as a request with generated ID
+		id := uuid.New().String()
+		body.ID = id
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("assistant", "multi_content", err)
+		}
+		return nil
+	}
+}
+
+// DecodeMultiContentResponse returns a decoder for responses returned by the
+// assistant service multi_content JSON-RPC method. restoreBody controls
+// whether the response body should be restored after having been read.
+func DecodeMultiContentResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("assistant", "multi_content", resp.StatusCode, string(body))
+		}
+
+		var jresp jsonrpc.RawResponse
+		if err := decoder(resp).Decode(&jresp); err != nil {
+			return nil, goahttp.ErrDecodingError("assistant", "multi_content", err)
+		}
+
+		if jresp.Error != nil {
+			switch jresp.Error.Code {
+			default:
+				body, _ := io.ReadAll(resp.Body)
+				return nil, goahttp.ErrInvalidResponse("assistant", "multi_content", resp.StatusCode, string(body))
+			}
+		}
+		resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Result))
+		var (
+			body MultiContentResponseBody
+			err  error
+		)
+		err = decoder(resp).Decode(&body)
+		if err != nil {
+			return nil, goahttp.ErrDecodingError("assistant", "multi_content", err)
+		}
+		res := NewMultiContentResultOK(&body)
+		return res, nil
+	}
+}
+
 // EncodeListDocumentsRequest returns an encoder for requests sent to the
 // assistant service list_documents JSON-RPC method.
 func EncodeListDocumentsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {

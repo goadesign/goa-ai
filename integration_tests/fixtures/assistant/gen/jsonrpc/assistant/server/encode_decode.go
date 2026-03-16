@@ -423,3 +423,46 @@ func DecodeProcessBatchRequest(mux goahttp.Muxer, decoder func(*http.Request) go
 		return payload, nil
 	}
 }
+
+// EncodeMultiContentResponse returns an encoder for responses returned by the
+// assistant multi_content endpoint.
+func EncodeMultiContentResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*assistant.MultiContentResult)
+		enc := encoder(ctx, w)
+		body := NewMultiContentResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeMultiContentRequest returns a decoder for requests sent to the
+// assistant multi_content endpoint.
+func DecodeMultiContentRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*assistant.MultiContentPayload, error) {
+	return func(r *http.Request, req *jsonrpc.RawRequest) (*assistant.MultiContentPayload, error) {
+		r.Body = io.NopCloser(bytes.NewReader(req.Params))
+		var payload *assistant.MultiContentPayload
+		var (
+			body MultiContentRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidateMultiContentRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+		payload = NewMultiContentPayload(&body)
+
+		return payload, nil
+	}
+}

@@ -376,10 +376,10 @@ func TestCallToolReusesLogicalToolCallIdentity(t *testing.T) {
 		Tool:        "lookup",
 		PayloadJSON: []byte(`{"query":"ok"}`),
 		Meta: &genregistry.ToolCallMeta{
-			RunID:       "run-1",
-			SessionID:   "session-1",
-			ToolCallID:  &toolCallID,
-			TurnID:      nil,
+			RunID:            "run-1",
+			SessionID:        "session-1",
+			ToolCallID:       &toolCallID,
+			TurnID:           nil,
 			ParentToolCallID: nil,
 		},
 	}

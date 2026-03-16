@@ -61,3 +61,8 @@ func ExecuteCodeAssistantPath() string {
 func ProcessBatchAssistantPath() string {
 	return "/rpc"
 }
+
+// MultiContentAssistantPath returns the URL path to the assistant service multi_content HTTP endpoint.
+func MultiContentAssistantPath() string {
+	return "/rpc"
+}

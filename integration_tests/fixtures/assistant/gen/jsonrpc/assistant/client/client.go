@@ -308,3 +308,26 @@ func (c *Client) ProcessBatch() goa.Endpoint {
 		return decodeResponse(resp)
 	}
 }
+
+// MultiContent returns an endpoint that makes JSON-RPC requests to the
+// assistant service multi_content method.
+func (c *Client) MultiContent() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeMultiContentRequest(c.encoder)
+		decodeResponse = DecodeMultiContentResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildMultiContentRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		if err := encodeRequest(req, v); err != nil {
+			return nil, err
+		}
+		resp, err := c.Doer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("assistant", "multi_content", err)
+		}
+		return decodeResponse(resp)
+	}
+}

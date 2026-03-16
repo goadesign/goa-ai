@@ -297,6 +297,11 @@ func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*Tools
 			Description: stringPtr("Process a batch of items"),
 			InputSchema: json.RawMessage(`{"type":"object","required":["items"],"properties":{"blob":{"type":"string","description":"Base64 blob"},"format":{"type":"string","description":"Output format","enum":["json","text","blob","uri"]},"items":{"type":"array","description":"Items to process","items":{"type":"string"}},"mimeType":{"type":"string","description":"MIME type"},"uri":{"type":"string","description":"Resource URI"}},"additionalProperties":false}`),
 		},
+		{
+			Name:        "multi_content",
+			Description: stringPtr("Return multiple content items"),
+			InputSchema: json.RawMessage(`{"type":"object","required":["count"],"properties":{"count":{"type":"integer","description":"Number of content items to return"}},"additionalProperties":false}`),
+		},
 	}
 	res := &ToolsListResult{Tools: tools}
 	a.log(ctx, "response", map[string]any{"method": "tools/list"})
@@ -487,6 +492,27 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload, stream 
 			}
 		}
 		result, err := a.service.ProcessBatch(ctx, payload)
+		if err != nil {
+			return a.mapError(err)
+		}
+		s, serr := mcpruntime.EncodeJSONToString(ctx, goahttp.ResponseEncoder, result)
+		if serr != nil {
+			return serr
+		}
+		final := &ToolsCallResult{
+			Content: []*ContentItem{
+				buildContentItem(a, s),
+			},
+		}
+		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
+		return stream.SendAndClose(ctx, final)
+	case "multi_content":
+		req := &http.Request{Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(bytes.NewReader(p.Arguments))}
+		var payload *assistant.MultiContentPayload
+		if err := goahttp.RequestDecoder(req).Decode(&payload); err != nil {
+			return goa.PermanentError("invalid_params", "%s", err.Error())
+		}
+		result, err := a.service.MultiContent(ctx, payload)
 		if err != nil {
 			return a.mapError(err)
 		}

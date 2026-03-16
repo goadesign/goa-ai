@@ -23,7 +23,7 @@ func BuildConversationHistoryPayload(assistantConversationHistoryBody string) (*
 	{
 		err = json.Unmarshal([]byte(assistantConversationHistoryBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"flag\": false,\n      \"limit\": 744680901799951283,\n      \"nums\": [\n         0.22249585049818327,\n         0.9981565642878103,\n         0.9532843882765837,\n         0.3797985896036785\n      ]\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"flag\": false,\n      \"limit\": 814060631314628939,\n      \"nums\": [\n         \"Cum et.\",\n         \"Nostrum rem rerum possimus est in consequatur.\",\n         \"Laboriosam reprehenderit.\"\n      ]\n   }'")
 		}
 	}
 	v := &assistant.ConversationHistoryPayload{
@@ -31,7 +31,7 @@ func BuildConversationHistoryPayload(assistantConversationHistoryBody string) (*
 		Flag:  body.Flag,
 	}
 	if body.Nums != nil {
-		v.Nums = make([]float64, len(body.Nums))
+		v.Nums = make([]any, len(body.Nums))
 		for i, val := range body.Nums {
 			v.Nums[i] = val
 		}
@@ -48,7 +48,7 @@ func BuildGeneratePromptsPayload(assistantGeneratePromptsBody string) (*assistan
 	{
 		err = json.Unmarshal([]byte(assistantGeneratePromptsBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"context\": \"Odit quibusdam aliquid.\",\n      \"task\": \"Sit fugiat ullam beatae.\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"context\": \"Qui cum.\",\n      \"task\": \"Sequi aut adipisci voluptatem modi numquam.\"\n   }'")
 		}
 	}
 	v := &assistant.GeneratePromptsPayload{
@@ -67,7 +67,7 @@ func BuildSendNotificationPayload(assistantSendNotificationBody string) (*assist
 	{
 		err = json.Unmarshal([]byte(assistantSendNotificationBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"data\": \"Eaque provident odio natus repudiandae assumenda.\",\n      \"message\": \"Ullam at.\",\n      \"type\": \"Soluta eum non.\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"data\": \"Magnam beatae nulla tempora quas.\",\n      \"message\": \"Corrupti laboriosam totam et.\",\n      \"type\": \"Voluptas illo ea aut enim ea.\"\n   }'")
 		}
 	}
 	v := &assistant.SendNotificationPayload{
@@ -87,7 +87,7 @@ func BuildAnalyzeSentimentPayload(assistantAnalyzeSentimentBody string) (*assist
 	{
 		err = json.Unmarshal([]byte(assistantAnalyzeSentimentBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"text\": \"Placeat ea aut reiciendis rerum.\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"text\": \"Inventore aut quis nam non.\"\n   }'")
 		}
 	}
 	v := &assistant.AnalyzeSentimentPayload{
@@ -105,7 +105,7 @@ func BuildExtractKeywordsPayload(assistantExtractKeywordsBody string) (*assistan
 	{
 		err = json.Unmarshal([]byte(assistantExtractKeywordsBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"text\": \"Sequi aut adipisci voluptatem modi numquam.\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"text\": \"Illum facilis voluptatibus voluptates id quo et.\"\n   }'")
 		}
 	}
 	v := &assistant.ExtractKeywordsPayload{
@@ -123,7 +123,7 @@ func BuildSummarizeTextPayload(assistantSummarizeTextBody string) (*assistant.Su
 	{
 		err = json.Unmarshal([]byte(assistantSummarizeTextBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"text\": \"Voluptas illo ea aut enim ea.\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"text\": \"Nostrum omnis dolor quibusdam reiciendis.\"\n   }'")
 		}
 	}
 	v := &assistant.SummarizeTextPayload{
@@ -141,7 +141,7 @@ func BuildSearchPayload(assistantSearchBody string) (*assistant.SearchPayload, e
 	{
 		err = json.Unmarshal([]byte(assistantSearchBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"limit\": 9200926646358933367,\n      \"query\": \"Magnam beatae nulla tempora quas.\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"limit\": 8901209863505156988,\n      \"query\": \"Et aut quasi iusto dolorem.\"\n   }'")
 		}
 	}
 	v := &assistant.SearchPayload{
@@ -160,7 +160,7 @@ func BuildExecuteCodePayload(assistantExecuteCodeBody string) (*assistant.Execut
 	{
 		err = json.Unmarshal([]byte(assistantExecuteCodeBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"code\": \"Libero corrupti velit et.\",\n      \"language\": \"python\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"code\": \"Quasi aliquid hic commodi.\",\n      \"language\": \"python\"\n   }'")
 		}
 		if !(body.Language == "python" || body.Language == "javascript") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.language", body.Language, []any{"python", "javascript"}))
@@ -185,7 +185,7 @@ func BuildProcessBatchPayload(assistantProcessBatchBody string) (*assistant.Proc
 	{
 		err = json.Unmarshal([]byte(assistantProcessBatchBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"blob\": \"Distinctio quasi aliquid.\",\n      \"format\": \"uri\",\n      \"items\": [\n         \"Molestiae ea cumque et aut quasi iusto.\",\n         \"Ducimus voluptas ut a architecto voluptatum in.\",\n         \"Tempore est id porro.\"\n      ],\n      \"mimeType\": \"Cum est harum velit.\",\n      \"uri\": \"Commodi nam placeat quas qui ipsa tempore.\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"blob\": \"Architecto nulla iusto sapiente.\",\n      \"format\": \"json\",\n      \"items\": [\n         \"Tempore aperiam cum est harum velit.\",\n         \"Vel velit doloribus.\",\n         \"Est rerum.\"\n      ],\n      \"mimeType\": \"Placeat explicabo voluptatum.\",\n      \"uri\": \"Vel nobis.\"\n   }'")
 		}
 		if body.Items == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("items", "body"))
@@ -212,6 +212,24 @@ func BuildProcessBatchPayload(assistantProcessBatchBody string) (*assistant.Proc
 		}
 	} else {
 		v.Items = []string{}
+	}
+
+	return v, nil
+}
+
+// BuildMultiContentPayload builds the payload for the assistant multi_content
+// endpoint from CLI flags.
+func BuildMultiContentPayload(assistantMultiContentBody string) (*assistant.MultiContentPayload, error) {
+	var err error
+	var body MultiContentRequestBody
+	{
+		err = json.Unmarshal([]byte(assistantMultiContentBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"count\": 2658798931540041482\n   }'")
+		}
+	}
+	v := &assistant.MultiContentPayload{
+		Count: body.Count,
 	}
 
 	return v, nil

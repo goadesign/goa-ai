@@ -97,6 +97,13 @@ type ProcessBatchRequestBody struct {
 	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
 }
 
+// MultiContentRequestBody is the type of the "assistant" service
+// "multi_content" endpoint HTTP request body.
+type MultiContentRequestBody struct {
+	// Number of content items to return
+	Count int `form:"count" json:"count" xml:"count"`
+}
+
 // ListDocumentsResponseBody is the type of the "assistant" service
 // "list_documents" endpoint HTTP response body.
 type ListDocumentsResponseBody struct {
@@ -167,6 +174,13 @@ type ExecuteCodeResponseBody struct {
 type ProcessBatchResponseBody struct {
 	// Operation status
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
+}
+
+// MultiContentResponseBody is the type of the "assistant" service
+// "multi_content" endpoint HTTP response body.
+type MultiContentResponseBody struct {
+	// Combined text result
+	Result *string `form:"result,omitempty" json:"result,omitempty" xml:"result,omitempty"`
 }
 
 // NewConversationHistoryRequestBody builds the HTTP request body from the
@@ -269,6 +283,15 @@ func NewProcessBatchRequestBody(p *assistant.ProcessBatchPayload) *ProcessBatchR
 		}
 	} else {
 		body.Items = []string{}
+	}
+	return body
+}
+
+// NewMultiContentRequestBody builds the HTTP request body from the payload of
+// the "multi_content" endpoint of the "assistant" service.
+func NewMultiContentRequestBody(p *assistant.MultiContentPayload) *MultiContentRequestBody {
+	body := &MultiContentRequestBody{
+		Count: p.Count,
 	}
 	return body
 }
@@ -385,6 +408,16 @@ func NewExecuteCodeResultOK(body *ExecuteCodeResponseBody) *assistant.ExecuteCod
 func NewProcessBatchResultOK(body *ProcessBatchResponseBody) *assistant.ProcessBatchResult {
 	v := &assistant.ProcessBatchResult{
 		OK: body.OK,
+	}
+
+	return v
+}
+
+// NewMultiContentResultOK builds a "assistant" service "multi_content"
+// endpoint result from a HTTP "OK" response.
+func NewMultiContentResultOK(body *MultiContentResponseBody) *assistant.MultiContentResult {
+	v := &assistant.MultiContentResult{
+		Result: body.Result,
 	}
 
 	return v

@@ -26,6 +26,7 @@ type Endpoints struct {
 	Search              goa.Endpoint
 	ExecuteCode         goa.Endpoint
 	ProcessBatch        goa.Endpoint
+	MultiContent        goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "assistant" service with endpoints.
@@ -42,6 +43,7 @@ func NewEndpoints(s Service) *Endpoints {
 		Search:              NewSearchEndpoint(s),
 		ExecuteCode:         NewExecuteCodeEndpoint(s),
 		ProcessBatch:        NewProcessBatchEndpoint(s),
+		MultiContent:        NewMultiContentEndpoint(s),
 	}
 }
 
@@ -58,6 +60,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.Search = m(e.Search)
 	e.ExecuteCode = m(e.ExecuteCode)
 	e.ProcessBatch = m(e.ProcessBatch)
+	e.MultiContent = m(e.MultiContent)
 }
 
 // NewListDocumentsEndpoint returns an endpoint function that calls the method
@@ -154,5 +157,14 @@ func NewProcessBatchEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		p := req.(*ProcessBatchPayload)
 		return s.ProcessBatch(ctx, p)
+	}
+}
+
+// NewMultiContentEndpoint returns an endpoint function that calls the method
+// "multi_content" of service "assistant".
+func NewMultiContentEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*MultiContentPayload)
+		return s.MultiContent(ctx, p)
 	}
 }

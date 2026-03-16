@@ -23,7 +23,7 @@ import (
 //	command (subcommand1|subcommand2|...)
 func UsageCommands() []string {
 	return []string{
-		"assistant (list-documents|system-info|conversation-history|generate-prompts|send-notification|analyze-sentiment|extract-keywords|summarize-text|search|execute-code|process-batch)",
+		"assistant (list-documents|system-info|conversation-history|generate-prompts|send-notification|analyze-sentiment|extract-keywords|summarize-text|search|execute-code|process-batch|multi-content)",
 	}
 }
 
@@ -75,6 +75,9 @@ func ParseEndpoint(
 
 		assistantProcessBatchFlags    = flag.NewFlagSet("process-batch", flag.ExitOnError)
 		assistantProcessBatchBodyFlag = assistantProcessBatchFlags.String("body", "REQUIRED", "")
+
+		assistantMultiContentFlags    = flag.NewFlagSet("multi-content", flag.ExitOnError)
+		assistantMultiContentBodyFlag = assistantMultiContentFlags.String("body", "REQUIRED", "")
 	)
 	assistantFlags.Usage = assistantUsage
 	assistantListDocumentsFlags.Usage = assistantListDocumentsUsage
@@ -88,6 +91,7 @@ func ParseEndpoint(
 	assistantSearchFlags.Usage = assistantSearchUsage
 	assistantExecuteCodeFlags.Usage = assistantExecuteCodeUsage
 	assistantProcessBatchFlags.Usage = assistantProcessBatchUsage
+	assistantMultiContentFlags.Usage = assistantMultiContentUsage
 
 	if err := flag.CommandLine.Parse(os.Args[1:]); err != nil {
 		return nil, nil, err
@@ -156,6 +160,9 @@ func ParseEndpoint(
 			case "process-batch":
 				epf = assistantProcessBatchFlags
 
+			case "multi-content":
+				epf = assistantMultiContentFlags
+
 			}
 
 		}
@@ -212,6 +219,9 @@ func ParseEndpoint(
 			case "process-batch":
 				endpoint = c.ProcessBatch()
 				data, err = assistantc.BuildProcessBatchPayload(*assistantProcessBatchBodyFlag)
+			case "multi-content":
+				endpoint = c.MultiContent()
+				data, err = assistantc.BuildMultiContentPayload(*assistantMultiContentBodyFlag)
 			}
 		}
 	}
@@ -239,6 +249,7 @@ func assistantUsage() {
 	fmt.Fprintln(os.Stderr, `    search: Search knowledge base`)
 	fmt.Fprintln(os.Stderr, `    execute-code: Execute code`)
 	fmt.Fprintln(os.Stderr, `    process-batch: Process batch of items`)
+	fmt.Fprintln(os.Stderr, `    multi-content: Return multiple content items`)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Additional help:")
 	fmt.Fprintf(os.Stderr, "    %s assistant COMMAND --help\n", os.Args[0])
@@ -290,7 +301,7 @@ func assistantConversationHistoryUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant conversation-history --body '{\n      \"flag\": false,\n      \"limit\": 744680901799951283,\n      \"nums\": [\n         0.22249585049818327,\n         0.9981565642878103,\n         0.9532843882765837,\n         0.3797985896036785\n      ]\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant conversation-history --body '{\n      \"flag\": false,\n      \"limit\": 814060631314628939,\n      \"nums\": [\n         \"Cum et.\",\n         \"Nostrum rem rerum possimus est in consequatur.\",\n         \"Laboriosam reprehenderit.\"\n      ]\n   }'")
 }
 
 func assistantGeneratePromptsUsage() {
@@ -308,7 +319,7 @@ func assistantGeneratePromptsUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant generate-prompts --body '{\n      \"context\": \"Odit quibusdam aliquid.\",\n      \"task\": \"Sit fugiat ullam beatae.\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant generate-prompts --body '{\n      \"context\": \"Qui cum.\",\n      \"task\": \"Sequi aut adipisci voluptatem modi numquam.\"\n   }'")
 }
 
 func assistantSendNotificationUsage() {
@@ -326,7 +337,7 @@ func assistantSendNotificationUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant send-notification --body '{\n      \"data\": \"Eaque provident odio natus repudiandae assumenda.\",\n      \"message\": \"Ullam at.\",\n      \"type\": \"Soluta eum non.\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant send-notification --body '{\n      \"data\": \"Magnam beatae nulla tempora quas.\",\n      \"message\": \"Corrupti laboriosam totam et.\",\n      \"type\": \"Voluptas illo ea aut enim ea.\"\n   }'")
 }
 
 func assistantAnalyzeSentimentUsage() {
@@ -344,7 +355,7 @@ func assistantAnalyzeSentimentUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant analyze-sentiment --body '{\n      \"text\": \"Placeat ea aut reiciendis rerum.\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant analyze-sentiment --body '{\n      \"text\": \"Inventore aut quis nam non.\"\n   }'")
 }
 
 func assistantExtractKeywordsUsage() {
@@ -362,7 +373,7 @@ func assistantExtractKeywordsUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant extract-keywords --body '{\n      \"text\": \"Sequi aut adipisci voluptatem modi numquam.\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant extract-keywords --body '{\n      \"text\": \"Illum facilis voluptatibus voluptates id quo et.\"\n   }'")
 }
 
 func assistantSummarizeTextUsage() {
@@ -380,7 +391,7 @@ func assistantSummarizeTextUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant summarize-text --body '{\n      \"text\": \"Voluptas illo ea aut enim ea.\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant summarize-text --body '{\n      \"text\": \"Nostrum omnis dolor quibusdam reiciendis.\"\n   }'")
 }
 
 func assistantSearchUsage() {
@@ -398,7 +409,7 @@ func assistantSearchUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant search --body '{\n      \"limit\": 9200926646358933367,\n      \"query\": \"Magnam beatae nulla tempora quas.\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant search --body '{\n      \"limit\": 8901209863505156988,\n      \"query\": \"Et aut quasi iusto dolorem.\"\n   }'")
 }
 
 func assistantExecuteCodeUsage() {
@@ -416,7 +427,7 @@ func assistantExecuteCodeUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant execute-code --body '{\n      \"code\": \"Libero corrupti velit et.\",\n      \"language\": \"python\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant execute-code --body '{\n      \"code\": \"Quasi aliquid hic commodi.\",\n      \"language\": \"python\"\n   }'")
 }
 
 func assistantProcessBatchUsage() {
@@ -434,5 +445,23 @@ func assistantProcessBatchUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant process-batch --body '{\n      \"blob\": \"Distinctio quasi aliquid.\",\n      \"format\": \"uri\",\n      \"items\": [\n         \"Molestiae ea cumque et aut quasi iusto.\",\n         \"Ducimus voluptas ut a architecto voluptatum in.\",\n         \"Tempore est id porro.\"\n      ],\n      \"mimeType\": \"Cum est harum velit.\",\n      \"uri\": \"Commodi nam placeat quas qui ipsa tempore.\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant process-batch --body '{\n      \"blob\": \"Architecto nulla iusto sapiente.\",\n      \"format\": \"json\",\n      \"items\": [\n         \"Tempore aperiam cum est harum velit.\",\n         \"Vel velit doloribus.\",\n         \"Est rerum.\"\n      ],\n      \"mimeType\": \"Placeat explicabo voluptatum.\",\n      \"uri\": \"Vel nobis.\"\n   }'")
+}
+
+func assistantMultiContentUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] assistant multi-content", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Return multiple content items`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant multi-content --body '{\n      \"count\": 2658798931540041482\n   }'")
 }

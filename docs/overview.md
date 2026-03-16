@@ -356,11 +356,17 @@ Per‑turn enforcement of:
 MCP callers in `runtime/mcp` support multiple transports:
 
 - **`StdioCaller`** — Spawns MCP server as subprocess, communicates via stdin/stdout
-- **`HTTPCaller`** — HTTP POST to MCP endpoints
-- **`SSECaller`** — Server‑Sent Events for streaming MCP responses
+- **`HTTPCaller`** — Connects to MCP streamable HTTP endpoints
+- **`SSECaller`** — Connects to MCP legacy SSE endpoints
 
 All callers implement the `Caller` interface and include automatic retry (`runtime/mcp/retry`) and
 distributed tracing.
+
+All MCP callers normalize tool results the same way: text content is concatenated in
+order, valid JSON text becomes the main result payload directly, plain text is returned
+as a JSON string, and non-text-only responses fall back to the first structured content
+item. Generated MCP JSON-RPC callers and client adapters use the same normalization
+contract.
 
 ### Memory, Streaming & Telemetry
 

@@ -24,19 +24,16 @@ func NewCaller(client *Client, suite string) mcpruntime.Caller {
 // CallTool invokes tools/call via the generated JSON-RPC client and normalizes the response.
 func (c Caller) CallTool(ctx context.Context, req mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
 	if c.client == nil {
-
 		return mcpruntime.CallResponse{}, errors.New("mcp client not configured")
 	}
 	payload := &mcppkg.ToolsCallPayload{Name: req.Tool, Arguments: json.RawMessage(req.Payload)}
 	streamEndpoint := c.client.ToolsCall()
 	stream, err := streamEndpoint(ctx, payload)
 	if err != nil {
-
 		return mcpruntime.CallResponse{}, err
 	}
 	clientStream, ok := stream.(*ToolsCallClientStream)
 	if !ok {
-
 		return mcpruntime.CallResponse{}, errors.New("invalid tools/call stream type")
 	}
 	var last *mcppkg.ToolsCallResult
@@ -46,35 +43,27 @@ func (c Caller) CallTool(ctx context.Context, req mcpruntime.CallRequest) (mcpru
 			break
 		}
 		if recvErr != nil {
-
 			return mcpruntime.CallResponse{}, recvErr
 		}
 		last = ev
 	}
 	if last == nil || len(last.Content) == 0 {
-
 		return mcpruntime.CallResponse{}, errors.New("empty MCP response")
 	}
-	item := last.Content[0]
-	var result json.RawMessage
-	if item.Text != nil {
-		txt := []byte(*item.Text)
-		if json.Valid(txt) {
-			result = append(json.RawMessage(nil), txt...)
-		} else {
-			marshaled, err := json.Marshal(*item.Text)
-			if err != nil {
 
-				return mcpruntime.CallResponse{}, err
-			}
-			result = marshaled
+	return normalizeToolResult(last)
+}
+
+func normalizeToolResult(last *mcppkg.ToolsCallResult) (mcpruntime.CallResponse, error) {
+	textParts := make([]string, 0, len(last.Content))
+	for _, item := range last.Content {
+		if item.Text != nil {
+			textParts = append(textParts, *item.Text)
 		}
-	} else {
-		result = json.RawMessage("null")
 	}
-	var structured json.RawMessage
-	if item.MimeType != nil && *item.MimeType == "application/json" {
-		structured = append(json.RawMessage(nil), result...)
+	var fallback any
+	if len(last.Content) > 0 {
+		fallback = last.Content[0]
 	}
-	return mcpruntime.CallResponse{Result: result, Structured: structured}, nil
+	return mcpruntime.NormalizeToolCallResponse(textParts, last.Content, fallback)
 }

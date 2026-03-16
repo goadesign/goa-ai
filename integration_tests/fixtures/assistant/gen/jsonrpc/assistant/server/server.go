@@ -49,6 +49,8 @@ type Server struct {
 	ExecuteCode func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
 	// ProcessBatch is the handler for the process_batch method.
 	ProcessBatch func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
+	// MultiContent is the handler for the multi_content method.
+	MultiContent func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
 
 	decoder    func(*http.Request) goahttp.Decoder
 	encoder    func(context.Context, http.ResponseWriter) goahttp.Encoder
@@ -77,6 +79,7 @@ func New(
 			"search",
 			"execute_code",
 			"process_batch",
+			"multi_content",
 		},
 		ListDocuments:       NewListDocumentsHandler(endpoints.ListDocuments, mux, decoder, encoder, errhandler),
 		SystemInfo:          NewSystemInfoHandler(endpoints.SystemInfo, mux, decoder, encoder, errhandler),
@@ -89,6 +92,7 @@ func New(
 		Search:              NewSearchHandler(endpoints.Search, mux, decoder, encoder, errhandler),
 		ExecuteCode:         NewExecuteCodeHandler(endpoints.ExecuteCode, mux, decoder, encoder, errhandler),
 		ProcessBatch:        NewProcessBatchHandler(endpoints.ProcessBatch, mux, decoder, encoder, errhandler),
+		MultiContent:        NewMultiContentHandler(endpoints.MultiContent, mux, decoder, encoder, errhandler),
 		decoder:             decoder,
 		encoder:             encoder,
 		errhandler:          errhandler,
@@ -243,6 +247,10 @@ func (s *Server) processRequest(ctx context.Context, r *http.Request, req *jsonr
 	case "process_batch":
 		if err := s.ProcessBatch(ctx, r, req, w); err != nil {
 			s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", "process_batch", err))
+		}
+	case "multi_content":
+		if err := s.MultiContent(ctx, r, req, w); err != nil {
+			s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", "multi_content", err))
 		}
 	default:
 		s.encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, "Method not found", nil)
@@ -1112,6 +1120,85 @@ func NewProcessBatchHandler(
 		// Send response with the result
 		// Convert result to response body with proper JSON tags
 		body := NewProcessBatchResponseBody(res.(*assistant.ProcessBatchResult))
+		response := jsonrpc.MakeSuccessResponse(id, body)
+		if err := encoder(ctx, w).Encode(response); err != nil {
+			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
+		}
+		return nil
+	}
+}
+
+// NewMultiContentHandler creates a JSON-RPC handler which calls the
+// "assistant" service "multi_content" endpoint.
+func NewMultiContentHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+) func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error {
+	decodeParams := DecodeMultiContentRequest(mux, decoder)
+	return func(ctx context.Context, r *http.Request, req *jsonrpc.RawRequest, w http.ResponseWriter) error {
+		ctx = context.WithValue(ctx, goa.MethodKey, "multi_content")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+		params, err := decodeParams(r, req)
+		if err != nil {
+			// Only send error response if request has ID (not nil or empty string)
+			if req.ID != nil && req.ID != "" {
+				code := jsonrpc.InternalError
+				if _, ok := err.(*goa.ServiceError); ok {
+					code = jsonrpc.InvalidParams
+				}
+				encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
+			} else {
+				// No ID means notification - just log error
+				errhandler(ctx, w, fmt.Errorf("failed to decode parameters: %w", err))
+			}
+			return nil
+		}
+		res, err := endpoint(ctx, params)
+		if err != nil {
+			// Only send error response if request has ID (not nil or empty string)
+			if req.ID != nil && req.ID != "" {
+				var en goa.GoaErrorNamer
+				if !errors.As(err, &en) {
+					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
+					return nil
+				}
+				switch en.GoaErrorName() {
+				case "invalid_params":
+					encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
+				case "method_not_found":
+					encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, err.Error(), nil, encoder, errhandler)
+				default:
+					code := jsonrpc.InternalError
+					if _, ok := err.(*goa.ServiceError); ok {
+						code = jsonrpc.InvalidParams
+					}
+					encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
+				}
+			} else {
+				// No ID means notification - just log error
+				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
+			}
+			return nil
+		}
+
+		// For methods with no result, check if this is a notification
+
+		// For methods with results, determine the ID to use for the response
+		var id any
+		// No ID field in result - use request ID
+		id = req.ID
+
+		if id == nil || id == "" {
+			// Notification - no response
+			return nil
+		}
+
+		// Send response with the result
+		// Convert result to response body with proper JSON tags
+		body := NewMultiContentResponseBody(res.(*assistant.MultiContentResult))
 		response := jsonrpc.MakeSuccessResponse(id, body)
 		if err := encoder(ctx, w).Encode(response); err != nil {
 			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))

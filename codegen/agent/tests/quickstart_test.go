@@ -55,6 +55,7 @@ func TestQuickstartGeneratesAndRuns(t *testing.T) {
 			t.Fatalf("read quickstart go.mod: %v", err)
 		}
 		updated := strings.ReplaceAll(string(raw), "replace goa.design/goa-ai => ..", "replace goa.design/goa-ai => "+repoRoot)
+		//nolint:gosec // Test helper rewrites a trusted copied fixture file inside t.TempDir().
 		if err := os.WriteFile(modPath, []byte(updated), 0o600); err != nil {
 			t.Fatalf("write quickstart go.mod: %v", err)
 		}
@@ -196,6 +197,7 @@ func copyDir(src, dst string) error {
 		if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
 			return err
 		}
+		//nolint:gosec // Test helper copies trusted fixture files into a temp workspace.
 		return os.WriteFile(target, data, info.Mode())
 	})
 }
