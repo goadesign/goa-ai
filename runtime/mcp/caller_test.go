@@ -1,268 +1,79 @@
 package mcp
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"os"
 	"testing"
-	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/trace"
 )
 
-const (
-	stdioHelperEnv      = "GOA_MCP_STDIO_HELPER"
-	rpcMethodInitialize = "initialize"
-	rpcMethodToolsCall  = "tools/call"
-)
+func TestSessionCaller_CallTool_MultiContent(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-func init() { otel.SetTextMapPropagator(propagation.TraceContext{}) }
+	// 1. Create in-memory transports
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 
-type roundTripperFunc func(*http.Request) (*http.Response, error)
+	// 2. Setup the MCP Server
+	srv := mcp.NewServer(
+		&mcp.Implementation{Name: "test-server", Version: "1.0.0"},
+		nil,
+	)
 
-func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {
-	return f(r)
-}
+	// Register a tool that returns multiple text contents
+	srv.AddTool(&mcp.Tool{
+		Name:        "multi_content_tool",
+		Description: "Returns multiple text items",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+	}, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: "hello "},
+				&mcp.TextContent{Text: "world"},
+				&mcp.TextContent{Text: "!"},
+			},
+		}, nil
+	})
 
-func httpResponse(status int, headers http.Header, body []byte) *http.Response {
-	if headers == nil {
-		headers = make(http.Header)
-	}
-	return &http.Response{
-		StatusCode: status,
-		Header:     headers,
-		Body:       io.NopCloser(bytes.NewReader(body)),
-	}
-}
-
-func TestHTTPCallerCallTool(t *testing.T) {
-	t.Parallel()
-	var traceHeader string
-	var metaTrace string
-	client := &http.Client{
-		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				return nil, err
-			}
-			if err := r.Body.Close(); err != nil {
-				return nil, err
-			}
-			var req rpcRequest
-			if err := json.Unmarshal(body, &req); err != nil {
-				return nil, err
-			}
-			switch req.Method {
-			case rpcMethodInitialize:
-				resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"capabilities":{}}`)}
-				data, err := json.Marshal(resp)
-				if err != nil {
-					return nil, err
-				}
-				headers := http.Header{
-					"Content-Type": []string{"application/json"},
-				}
-				return httpResponse(http.StatusOK, headers, data), nil
-			case rpcMethodToolsCall:
-				traceHeader = r.Header.Get("Traceparent")
-				if params, ok := req.Params.(map[string]any); ok {
-					if meta, ok := params["_meta"].(map[string]any); ok {
-						if tp, ok := meta["traceparent"].(string); ok {
-							metaTrace = tp
-						}
-					}
-				}
-				resultJSON := `{"content":[{"type":"text","text":"{\"ok\":true}","mimeType":"application/json"}],"isError":false}`
-				resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(resultJSON)}
-				data, err := json.Marshal(resp)
-				if err != nil {
-					return nil, err
-				}
-				headers := http.Header{
-					"Content-Type": []string{"application/json"},
-				}
-				return httpResponse(http.StatusOK, headers, data), nil
-			default:
-				return httpResponse(http.StatusBadRequest, nil, []byte("unknown method")), nil
-			}
-		}),
-	}
-
-	ctx, expectedTrace := contextWithTrace()
-	caller, err := NewHTTPCaller(ctx, HTTPOptions{Endpoint: "http://mcp.test/rpc", Client: client})
+	serverSession, err := srv.Connect(ctx, serverTransport, nil)
 	require.NoError(t, err)
-	req := CallRequest{Suite: "svc.ts", Tool: "search", Payload: json.RawMessage(`{"query":"hi"}`)}
-	resp, err := caller.CallTool(ctx, req)
-	require.NoError(t, err)
-	require.Equal(t, "{\"ok\":true}", string(resp.Result))
-	require.Equal(t, expectedTrace, traceHeader)
-	require.Equal(t, expectedTrace, metaTrace)
-}
+	defer serverSession.Close()
 
-func TestSSECallerCallTool(t *testing.T) {
-	t.Parallel()
-	var traceHeader string
-	var metaTrace string
-	client := &http.Client{
-		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				return nil, err
-			}
-			if err := r.Body.Close(); err != nil {
-				return nil, err
-			}
-			var req rpcRequest
-			if err := json.Unmarshal(body, &req); err != nil {
-				return nil, err
-			}
-			switch req.Method {
-			case rpcMethodInitialize:
-				resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"capabilities":{}}`)}
-				data, err := json.Marshal(resp)
-				if err != nil {
-					return nil, err
-				}
-				headers := http.Header{
-					"Content-Type": []string{"application/json"},
-				}
-				return httpResponse(http.StatusOK, headers, data), nil
-			case rpcMethodToolsCall:
-				traceHeader = r.Header.Get("Traceparent")
-				if params, ok := req.Params.(map[string]any); ok {
-					if meta, ok := params["_meta"].(map[string]any); ok {
-						if tp, ok := meta["traceparent"].(string); ok {
-							metaTrace = tp
-						}
-					}
-				}
-				resultJSON := `{"content":[{"type":"text","text":"{\"ok\":true}","mimeType":"application/json"}],"isError":false}`
-				rpcResp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(resultJSON)}
-				data, err := json.Marshal(rpcResp)
-				if err != nil {
-					return nil, err
-				}
-				var sse bytes.Buffer
-				if _, err := fmt.Fprintln(&sse, "event: response"); err != nil {
-					return nil, err
-				}
-				if _, err := fmt.Fprintf(&sse, "data: %s\n\n", bytes.TrimSpace(data)); err != nil {
-					return nil, err
-				}
-				headers := http.Header{
-					"Content-Type": []string{"text/event-stream"},
-				}
-				return httpResponse(http.StatusOK, headers, sse.Bytes()), nil
-			default:
-				return httpResponse(http.StatusBadRequest, nil, []byte("unknown method")), nil
-			}
-		}),
-	}
-
-	ctx, expectedTrace := contextWithTrace()
-	caller, err := NewSSECaller(ctx, HTTPOptions{Endpoint: "http://mcp.test/rpc", Client: client})
+	// 3. Setup the MCP Client
+	cli := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1.0.0"}, nil)
+	clientSession, err := cli.Connect(ctx, clientTransport, nil)
 	require.NoError(t, err)
-	req := CallRequest{Suite: "svc.ts", Tool: "search", Payload: json.RawMessage(`{"query":"hi"}`)}
-	resp, err := caller.CallTool(ctx, req)
-	require.NoError(t, err)
-	require.Equal(t, "{\"ok\":true}", string(resp.Result))
-	require.Equal(t, expectedTrace, traceHeader)
-	require.Equal(t, expectedTrace, metaTrace)
-}
+	defer clientSession.Close()
 
-func TestStdioCallerCallTool(t *testing.T) {
-	t.Parallel()
-	ctx, expectedTrace := contextWithTrace()
-	caller, err := NewStdioCaller(ctx, StdioOptions{
-		Command:     os.Args[0],
-		Args:        []string{"-test.run=TestStdioHelper", "--"},
-		Env:         []string{stdioHelperEnv + "=1"},
-		InitTimeout: time.Second,
+	// 4. Create SessionCaller
+	caller := NewSessionCaller(clientSession)
+
+	// 5. Test CallTool
+	resp, err := caller.CallTool(ctx, CallRequest{
+		Tool:    "multi_content_tool",
+		Payload: json.RawMessage(`{}`),
 	})
 	require.NoError(t, err)
-	defer func() {
-		if err := caller.Close(); err != nil {
-			t.Logf("caller close error: %v", err)
-		}
-	}()
-	resp, err := caller.CallTool(ctx, CallRequest{Suite: "svc.ts", Tool: "meta", Payload: json.RawMessage(`"noop"`)})
-	require.NoError(t, err)
-	var result string
-	err = json.Unmarshal(resp.Result, &result)
-	require.NoError(t, err)
-	require.Equal(t, expectedTrace, result)
-}
 
-func contextWithTrace() (context.Context, string) {
-	traceID := trace.TraceID{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0x00}
-	spanID := trace.SpanID{0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80}
-	spanCtx := trace.NewSpanContext(trace.SpanContextConfig{TraceID: traceID, SpanID: spanID, TraceFlags: trace.FlagsSampled})
-	ctx := trace.ContextWithSpanContext(context.Background(), spanCtx)
-	expected := fmt.Sprintf("00-%s-%s-01", traceID.String(), spanID.String())
-	return ctx, expected
-}
+	// Verify concatenated string payload
+	var resultStr string
+	err = json.Unmarshal(resp.Result, &resultStr)
+	require.NoError(t, err, "Result should be capable of unmarshaling to a string")
+	assert.Equal(t, "hello world!", resultStr, "Text parts should be concatenated")
 
-func TestStdioHelper(t *testing.T) {
-	if os.Getenv(stdioHelperEnv) != "1" {
-		t.Skip("helper process")
-	}
-	runStdioHelper()
-}
+	// Verify structured raw payload
+	var structured []map[string]any
+	err = json.Unmarshal(resp.Structured, &structured)
+	require.NoError(t, err, "Structured should be valid JSON array of features")
+	require.Len(t, structured, 3)
 
-func runStdioHelper() {
-	reader := bufio.NewReader(os.Stdin)
-	writer := bufio.NewWriter(os.Stdout)
-	for {
-		frame, err := readFrame(reader)
-		if err != nil {
-			break
-		}
-		var req rpcRequest
-		if err := json.Unmarshal(frame, &req); err != nil {
-			continue
-		}
-		switch req.Method {
-		case rpcMethodInitialize:
-			resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"capabilities":{}}`)}
-			writeFrame(writer, resp)
-		case rpcMethodToolsCall:
-			traceVal := ""
-			if params, ok := req.Params.(map[string]any); ok {
-				if meta, ok := params["_meta"].(map[string]any); ok {
-					if tp, ok := meta["traceparent"].(string); ok {
-						traceVal = tp
-					}
-				}
-			}
-			if traceVal == "" {
-				errResp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32602, Message: "missing traceparent"}}
-				writeFrame(writer, errResp)
-				continue
-			}
-			result := toolsCallResult{Content: []contentItem{{Type: "text", Text: &traceVal}}}
-			data, _ := json.Marshal(result)
-			resp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: data}
-			writeFrame(writer, resp)
-		default:
-			errResp := rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32601, Message: "unknown method"}}
-			writeFrame(writer, errResp)
-		}
-	}
-	_ = writer.Flush()
-	os.Exit(0)
-}
-
-func writeFrame(writer *bufio.Writer, resp rpcResponse) {
-	data, _ := json.Marshal(resp)
-	_, _ = fmt.Fprintf(writer, "Content-Length: %d\r\n\r\n", len(data))
-	_, _ = writer.Write(data)
-	_ = writer.Flush()
+	assert.Equal(t, "text", structured[0]["type"])
+	assert.Equal(t, "hello ", structured[0]["text"])
+	assert.Equal(t, "text", structured[1]["type"])
+	assert.Equal(t, "world", structured[1]["text"])
+	assert.Equal(t, "text", structured[2]["type"])
+	assert.Equal(t, "!", structured[2]["text"])
 }

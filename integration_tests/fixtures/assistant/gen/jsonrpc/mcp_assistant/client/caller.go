@@ -55,16 +55,21 @@ func (c Caller) CallTool(ctx context.Context, req mcpruntime.CallRequest) (mcpru
 
 		return mcpruntime.CallResponse{}, errors.New("empty MCP response")
 	}
-	item := last.Content[0]
-	var result json.RawMessage
-	if item.Text != nil {
-		txt := []byte(*item.Text)
-		if json.Valid(txt) {
-			result = append(json.RawMessage(nil), txt...)
-		} else {
-			marshaled, err := json.Marshal(*item.Text)
-			if err != nil {
+	var textBytes []byte
+	for _, item := range last.Content {
+		if item.Text != nil {
+			textBytes = append(textBytes, []byte(*item.Text)...)
+		}
+	}
 
+	var result json.RawMessage
+	if len(textBytes) > 0 {
+		if json.Valid(textBytes) {
+			result = append(json.RawMessage(nil), textBytes...)
+		} else {
+			// Store raw text wrapped in quotes (valid JSON string)
+			marshaled, err := json.Marshal(string(textBytes))
+			if err != nil {
 				return mcpruntime.CallResponse{}, err
 			}
 			result = marshaled
@@ -72,9 +77,14 @@ func (c Caller) CallTool(ctx context.Context, req mcpruntime.CallRequest) (mcpru
 	} else {
 		result = json.RawMessage("null")
 	}
+
 	var structured json.RawMessage
-	if item.MimeType != nil && *item.MimeType == "application/json" {
-		structured = append(json.RawMessage(nil), result...)
+	if last.Content != nil {
+		marshaledContent, err := json.Marshal(last.Content)
+		if err == nil {
+			structured = append(json.RawMessage(nil), marshaledContent...)
+		}
 	}
+
 	return mcpruntime.CallResponse{Result: result, Structured: structured}, nil
 }

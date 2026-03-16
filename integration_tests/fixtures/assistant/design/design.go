@@ -162,6 +162,17 @@ var _ = Service("assistant", func() {
 		Tool("process_batch", "Process a batch of items")
 		JSONRPC(func() {})
 	})
+
+	Method("multi_content", func() {
+		Description("Return multiple content items")
+		Payload(func() {
+			Attribute("count", Int, "Number of content items to return")
+			Required("count")
+		})
+		Result(func() { Attribute("result", String, "Combined text result") })
+		Tool("multi_content", "Return multiple content items")
+		JSONRPC(func() {})
+	})
 })
 
 // ---- Shared Types (subset sufficient for integration tests) ----

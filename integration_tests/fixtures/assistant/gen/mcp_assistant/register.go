@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"goa.design/goa-ai/runtime/agent/planner"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -280,6 +281,50 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 			},
 		},
 	},
+	{
+		Name:        "multi_content",
+		Service:     "assistant",
+		Toolset:     "assistant.assistant-mcp",
+		Description: "Return multiple content items",
+		Payload: tools.TypeSpec{
+			Name:   "*assistant.MultiContentPayload",
+			Schema: []byte("{\"type\":\"object\",\"required\":[\"count\"],\"properties\":{\"count\":{\"type\":\"integer\",\"description\":\"Number of content items to return\"}},\"additionalProperties\":false}"),
+			Codec: tools.JSONCodec[any]{
+				ToJSON: func(v any) ([]byte, error) {
+					return json.Marshal(v)
+				},
+				FromJSON: func(data []byte) (any, error) {
+					if len(data) == 0 {
+						return nil, nil
+					}
+					var out any
+					if err := json.Unmarshal(data, &out); err != nil {
+						return nil, err
+					}
+					return out, nil
+				},
+			},
+		},
+		Result: tools.TypeSpec{
+			Name:   "*assistant.MultiContentResult",
+			Schema: nil,
+			Codec: tools.JSONCodec[any]{
+				ToJSON: func(v any) ([]byte, error) {
+					return json.Marshal(v)
+				},
+				FromJSON: func(data []byte) (any, error) {
+					if len(data) == 0 {
+						return nil, nil
+					}
+					var out any
+					if err := json.Unmarshal(data, &out); err != nil {
+						return nil, err
+					}
+					return out, nil
+				},
+			},
+		},
+	},
 }
 
 // RegisterAssistantAssistantMcpToolset registers the assistant-mcp toolset with the runtime.
@@ -381,10 +426,10 @@ func AssistantAssistantMcpToolsetRetryHint(toolName tools.Ident, err error) *pla
 			RestrictToTool: true,
 		}
 	}
-	var rpcErr *mcpruntime.Error
+	var rpcErr *jsonrpc.Error
 	if errors.As(err, &rpcErr) {
 		switch rpcErr.Code {
-		case mcpruntime.JSONRPCInvalidParams:
+		case jsonrpc.CodeInvalidParams:
 			// Schema and example are known at generation time - use switch for direct lookup
 			var schemaJSON, example string
 			switch key {
@@ -406,6 +451,9 @@ func AssistantAssistantMcpToolsetRetryHint(toolName tools.Ident, err error) *pla
 			case "process_batch":
 				schemaJSON = "{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"blob\":{\"type\":\"string\",\"description\":\"Base64 blob\"},\"format\":{\"type\":\"string\",\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"]},\"items\":{\"type\":\"array\",\"description\":\"Items to process\",\"items\":{\"type\":\"string\"}},\"mimeType\":{\"type\":\"string\",\"description\":\"MIME type\"},\"uri\":{\"type\":\"string\",\"description\":\"Resource URI\"}},\"additionalProperties\":false}"
 				example = "{\"blob\":\"abc123\",\"format\":\"text\",\"items\":[\"abc123\"],\"mimeType\":\"abc123\",\"uri\":\"abc123\"}"
+			case "multi_content":
+				schemaJSON = "{\"type\":\"object\",\"required\":[\"count\"],\"properties\":{\"count\":{\"type\":\"integer\",\"description\":\"Number of content items to return\"}},\"additionalProperties\":false}"
+				example = "{\"count\":1}"
 			}
 			prompt := retry.BuildRepairPrompt("tools/call:"+key, rpcErr.Message, example, schemaJSON)
 			return &planner.RetryHint{
@@ -414,7 +462,7 @@ func AssistantAssistantMcpToolsetRetryHint(toolName tools.Ident, err error) *pla
 				Message:        prompt,
 				RestrictToTool: true,
 			}
-		case mcpruntime.JSONRPCMethodNotFound:
+		case jsonrpc.CodeMethodNotFound:
 			return &planner.RetryHint{
 				Reason:  planner.RetryReasonToolUnavailable,
 				Tool:    toolName,

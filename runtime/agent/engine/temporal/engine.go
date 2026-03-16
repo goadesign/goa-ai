@@ -176,13 +176,13 @@ type Engine struct {
 	metrics telemetry.Metrics
 	tracer  telemetry.Tracer
 
-	mu                sync.Mutex
+	mu                 sync.Mutex
 	registrationSealed bool
-	workers           map[string]*workerBundle
-	workflows         map[string]engine.WorkflowDefinition
-	pendingWorkflows  map[string]struct{}
-	activityOptions   map[string]engine.ActivityOptions
-	pendingActivities map[string]struct{}
+	workers            map[string]*workerBundle
+	workflows          map[string]engine.WorkflowDefinition
+	pendingWorkflows   map[string]struct{}
+	activityOptions    map[string]engine.ActivityOptions
+	pendingActivities  map[string]struct{}
 
 	workflowContexts sync.Map // runID -> engine.WorkflowContext
 }

@@ -2,21 +2,14 @@ package mcp
 
 import (
 	"context"
-	"net/http"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 )
 
-func injectTraceHeaders(ctx context.Context, header http.Header) {
-	if ctx == nil || header == nil {
-		return
-	}
-	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(header))
-}
-
-func addTraceMeta(ctx context.Context, params map[string]any) {
-	if ctx == nil || params == nil {
+func addTraceMeta(ctx context.Context, meta *mcp.Meta) {
+	if ctx == nil {
 		return
 	}
 	carrier := propagation.MapCarrier{}
@@ -24,9 +17,10 @@ func addTraceMeta(ctx context.Context, params map[string]any) {
 	if len(carrier) == 0 {
 		return
 	}
-	meta := make(map[string]string, len(carrier))
-	for k, v := range carrier {
-		meta[k] = v
+	if *meta == nil {
+		*meta = make(mcp.Meta, len(carrier))
 	}
-	params["_meta"] = meta
+	for k, v := range carrier {
+		(*meta)[k] = v
+	}
 }

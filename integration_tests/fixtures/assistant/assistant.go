@@ -91,3 +91,10 @@ func (s *assistantsrvc) ProcessBatch(ctx context.Context, p *assistant.ProcessBa
 	log.Printf(ctx, "assistant.process_batch")
 	return
 }
+
+// Return multiple content items
+func (s *assistantsrvc) MultiContent(ctx context.Context, p *assistant.MultiContentPayload) (res *assistant.MultiContentResult, err error) {
+	res = &assistant.MultiContentResult{}
+	log.Printf(ctx, "assistant.multi_content")
+	return
+}
