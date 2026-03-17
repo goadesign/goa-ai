@@ -53,7 +53,7 @@ func validatePureMCPService(svc *expr.ServiceExpr, mcp *mcpexpr.MCPExpr, source 
 		}
 	}
 
-	var unmapped []string
+	unmapped := make([]string, 0, len(svc.Methods))
 	for _, method := range svc.Methods {
 		if _, ok := mapped[method.Name]; ok {
 			continue
