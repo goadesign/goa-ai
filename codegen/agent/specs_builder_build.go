@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"goa.design/goa-ai/codegen/shared"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
 	goaexpr "goa.design/goa/v3/expr"
@@ -44,25 +45,25 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 		metaPairs := toolMetaPairs(tool.Meta)
 		entry := &toolEntry{
 			// Name is the qualified tool ID used at runtime (toolset.tool).
-			Name:               tool.QualifiedName,
-			GoName:             goName,
-			ConstName:          constName,
-			Title:              tool.Title,
-			Service:            serviceName(tool),
-			Toolset:            toolsetName(tool),
-			Description:        tool.Description,
-			ServerData:         serverDataEntries,
-			Tags:               tool.Tags,
-			Meta:               tool.Meta,
-			MetaPairs:          metaPairs,
-			IsExportedByAgent:  tool.IsExportedByAgent,
-			ExportingAgentID:   tool.ExportingAgentID,
-			Payload:            payload,
-			Result:             result,
-			Bounds:             tool.Bounds,
-			TerminalRun:        tool.TerminalRun,
-			ResultReminder:     tool.ResultReminder,
-			Confirmation:       tool.Confirmation,
+			Name:              tool.QualifiedName,
+			GoName:            goName,
+			ConstName:         constName,
+			Title:             tool.Title,
+			Service:           serviceName(tool),
+			Toolset:           toolsetName(tool),
+			Description:       tool.Description,
+			ServerData:        serverDataEntries,
+			Tags:              tool.Tags,
+			Meta:              tool.Meta,
+			MetaPairs:         metaPairs,
+			IsExportedByAgent: tool.IsExportedByAgent,
+			ExportingAgentID:  tool.ExportingAgentID,
+			Payload:           payload,
+			Result:            result,
+			Bounds:            tool.Bounds,
+			TerminalRun:       tool.TerminalRun,
+			ResultReminder:    tool.ResultReminder,
+			Confirmation:      tool.Confirmation,
 		}
 		data.addTool(entry)
 	}
@@ -334,7 +335,7 @@ func (d *toolSpecsData) codecsImports() []*codegen.ImportSpec {
 	needsGoa := d.needsGoaImport()
 	extra := make(map[string]*codegen.ImportSpec)
 	needsServiceImport := false
-	serviceImportPath := joinImportPath(d.genpkg, d.svc.PathName)
+	serviceImportPath := shared.JoinImportPath(d.genpkg, d.svc.PathName)
 	for _, info := range d.typesList() {
 		if info.Import != nil && info.Import.Path != "" {
 			extra[info.Import.Path] = info.Import

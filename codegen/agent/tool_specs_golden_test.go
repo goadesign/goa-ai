@@ -207,7 +207,7 @@ func TestServiceToolsetCrossServiceBindTo(t *testing.T) {
 	// Find the alpha.scribe agent and its toolset.
 	var alphaSvc *codegen.ServiceAgentsData
 	for _, s := range data.Services {
-		if s.Service.Name == "alpha" {
+		if s.Service.Name == alphaServiceName {
 			alphaSvc = s
 			break
 		}

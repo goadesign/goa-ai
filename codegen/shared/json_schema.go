@@ -3,6 +3,7 @@ package shared
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"goa.design/goa/v3/expr"
 )
@@ -20,19 +21,20 @@ const (
 // ToJSONSchema returns a compact JSON Schema for the given Goa attribute.
 // It generates inline schemas without $ref references, which is required
 // for MCP protocols that expect fully resolved schemas.
-//
-// This function is shared between MCP code generation.
-func ToJSONSchema(attr *expr.AttributeExpr) string {
+func ToJSONSchema(attr *expr.AttributeExpr) (string, error) {
 	if attr == nil || attr.Type == nil || attr.Type == expr.Empty {
-		return `{"type":"object","additionalProperties":false}`
+		return `{"type":"object","additionalProperties":false}`, nil
 	}
 
-	schema := buildInlineSchema(attr)
+	schema, err := buildInlineSchema(attr, make(map[any]struct{}))
+	if err != nil {
+		return "", err
+	}
 	b, err := json.Marshal(schema)
 	if err != nil {
-		return `{"type":"object","additionalProperties":false}`
+		return "", fmt.Errorf("marshal JSON schema: %w", err)
 	}
-	return string(b)
+	return string(b), nil
 }
 
 // inlineSchema represents a JSON Schema without $ref references.
@@ -59,44 +61,12 @@ type inlineSchema struct {
 }
 
 // buildInlineSchema creates a JSON Schema from a Goa attribute without $ref.
-func buildInlineSchema(attr *expr.AttributeExpr) *inlineSchema {
+func buildInlineSchema(attr *expr.AttributeExpr, visited map[any]struct{}) (*inlineSchema, error) {
 	if attr == nil || attr.Type == nil {
-		return &inlineSchema{Type: jsonTypeObject, AdditionalProperties: false}
+		return &inlineSchema{Type: jsonTypeObject, AdditionalProperties: false}, nil
 	}
 
-	schema := &inlineSchema{
-		Description: attr.Description,
-	}
-
-	// Handle default value
-	if attr.DefaultValue != nil {
-		schema.Default = attr.DefaultValue
-	}
-
-	// Handle validations
-	if v := attr.Validation; v != nil {
-		if len(v.Values) > 0 {
-			schema.Enum = v.Values
-		}
-		if v.Minimum != nil {
-			schema.Minimum = v.Minimum
-		}
-		if v.Maximum != nil {
-			schema.Maximum = v.Maximum
-		}
-		if v.MinLength != nil {
-			schema.MinLength = v.MinLength
-		}
-		if v.MaxLength != nil {
-			schema.MaxLength = v.MaxLength
-		}
-		if v.Pattern != "" {
-			schema.Pattern = v.Pattern
-		}
-		if v.Format != "" {
-			schema.Format = string(v.Format)
-		}
-	}
+	schema := &inlineSchema{}
 
 	switch t := attr.Type.(type) {
 	case expr.Primitive:
@@ -104,22 +74,20 @@ func buildInlineSchema(attr *expr.AttributeExpr) *inlineSchema {
 	case *expr.Array:
 		schema.Type = jsonTypeArray
 		if t.ElemType != nil {
-			schema.Items = buildInlineSchema(t.ElemType)
-		}
-		if v := attr.Validation; v != nil {
-			if v.MinLength != nil {
-				schema.MinItems = v.MinLength
-				schema.MinLength = nil
+			items, err := buildInlineSchema(t.ElemType, visited)
+			if err != nil {
+				return nil, err
 			}
-			if v.MaxLength != nil {
-				schema.MaxItems = v.MaxLength
-				schema.MaxLength = nil
-			}
+			schema.Items = items
 		}
 	case *expr.Map:
 		schema.Type = jsonTypeObject
 		if t.ElemType != nil {
-			schema.AdditionalProperties = buildInlineSchema(t.ElemType)
+			properties, err := buildInlineSchema(t.ElemType, visited)
+			if err != nil {
+				return nil, err
+			}
+			schema.AdditionalProperties = properties
 		} else {
 			schema.AdditionalProperties = true
 		}
@@ -127,26 +95,99 @@ func buildInlineSchema(attr *expr.AttributeExpr) *inlineSchema {
 		schema.Type = jsonTypeObject
 		schema.Properties = make(map[string]*inlineSchema)
 		for _, nat := range *t {
-			schema.Properties[nat.Name] = buildInlineSchema(nat.Attribute)
+			property, err := buildInlineSchema(nat.Attribute, visited)
+			if err != nil {
+				return nil, err
+			}
+			schema.Properties[nat.Name] = property
 		}
 		schema.AdditionalProperties = false
-		// Collect required fields
-		if attr.Validation != nil && len(attr.Validation.Required) > 0 {
-			schema.Required = attr.Validation.Required
-		}
 	case *expr.UserTypeExpr:
-		// Inline the user type's attribute
-		return buildInlineSchema(t.Attribute())
+		return inlineWrappedSchema(attr, t.Attribute(), visited, t, t.TypeName)
 	case *expr.ResultTypeExpr:
-		// Inline the result type's attribute
-		return buildInlineSchema(t.Attribute())
+		return inlineWrappedSchema(attr, t.Attribute(), visited, t, t.TypeName)
 	default:
-		// Fallback for unknown types
 		schema.Type = jsonTypeObject
 		schema.AdditionalProperties = false
 	}
 
-	return schema
+	applyAttributeMetadata(schema, attr)
+	return schema, nil
+}
+
+// inlineWrappedSchema expands a user or result type while preserving the
+// wrapper attribute metadata that referred to it.
+func inlineWrappedSchema(
+	wrapper *expr.AttributeExpr,
+	inner *expr.AttributeExpr,
+	visited map[any]struct{},
+	identity any,
+	typeName string,
+) (*inlineSchema, error) {
+	if _, ok := visited[identity]; ok {
+		return nil, fmt.Errorf("recursive user type %q cannot be converted to inline JSON Schema", typeName)
+	}
+	visited[identity] = struct{}{}
+	defer delete(visited, identity)
+
+	schema, err := buildInlineSchema(inner, visited)
+	if err != nil {
+		return nil, err
+	}
+	applyAttributeMetadata(schema, wrapper)
+	return schema, nil
+}
+
+// applyAttributeMetadata copies attribute-level schema metadata onto an inline
+// schema. Wrappers override the inlined type they refer to.
+func applyAttributeMetadata(schema *inlineSchema, attr *expr.AttributeExpr) {
+	if schema == nil || attr == nil {
+		return
+	}
+	if attr.Description != "" {
+		schema.Description = attr.Description
+	}
+	if attr.DefaultValue != nil {
+		schema.Default = attr.DefaultValue
+	}
+	if attr.Validation == nil {
+		return
+	}
+	v := attr.Validation
+	if len(v.Values) > 0 {
+		schema.Enum = v.Values
+	}
+	if v.Minimum != nil {
+		schema.Minimum = v.Minimum
+	}
+	if v.Maximum != nil {
+		schema.Maximum = v.Maximum
+	}
+	if v.MinLength != nil {
+		schema.MinLength = v.MinLength
+	}
+	if v.MaxLength != nil {
+		schema.MaxLength = v.MaxLength
+	}
+	if v.Pattern != "" {
+		schema.Pattern = v.Pattern
+	}
+	if v.Format != "" {
+		schema.Format = string(v.Format)
+	}
+	if len(v.Required) > 0 {
+		schema.Required = v.Required
+	}
+	if schema.Type == jsonTypeArray {
+		if v.MinLength != nil {
+			schema.MinItems = v.MinLength
+			schema.MinLength = nil
+		}
+		if v.MaxLength != nil {
+			schema.MaxItems = v.MaxLength
+			schema.MaxLength = nil
+		}
+	}
 }
 
 // primitiveToJSONType converts a Goa primitive type to JSON Schema type.

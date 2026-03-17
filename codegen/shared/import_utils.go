@@ -55,6 +55,13 @@ func GatherAttributeImports(genpkg string, att *expr.AttributeExpr) []*codegen.I
 			for _, nat := range *dt {
 				visit(nat.Attribute)
 			}
+		case *expr.Union:
+			for _, nat := range dt.Values {
+				if nat == nil {
+					continue
+				}
+				visit(nat.Attribute)
+			}
 		case expr.CompositeExpr:
 			visit(dt.Attribute())
 		}

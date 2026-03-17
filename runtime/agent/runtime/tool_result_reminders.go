@@ -36,7 +36,7 @@ Returned: {{ .Returned }}
 Total: {{ .Total }}
 Truncated: true{{ if .NextCursor }}
 Next cursor: {{ .NextCursor }}
-To continue, call the same tool again with {{ .CursorField }}=<next_cursor> and the same parameters.{{ else if .RefinementHint }}
+To continue, call the same tool again with the same parameters and set {{ .CursorField }} to the exact opaque cursor string shown above. Do not send the literal strings "next_cursor" or "<next_cursor>", and do not modify the cursor.{{ else if .RefinementHint }}
 Refinement hint: {{ .RefinementHint }}
 Do not claim completeness unless you page or explicitly state the answer is partial.{{ else }}
 Do not claim completeness unless you page or explicitly state the answer is partial.{{ end }}

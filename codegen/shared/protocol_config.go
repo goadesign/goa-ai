@@ -1,15 +1,9 @@
 package shared
 
-// ProtocolConfig defines protocol-specific settings for code generation.
-// Both MCP implement this interface to provide their specific
-// configuration values.
+// ProtocolConfig supplies the JSON-RPC route path needed to build transport
+// expressions. Shared transport helpers deliberately depend on this minimal
+// contract so protocol-specific metadata stays in the owning generator package.
 type ProtocolConfig interface {
 	// JSONRPCPath returns the path for JSON-RPC endpoints.
 	JSONRPCPath() string
-	// ProtocolVersion returns the protocol version string.
-	ProtocolVersion() string
-	// Capabilities returns protocol-specific capabilities for initialization.
-	Capabilities() map[string]any
-	// Name returns the protocol name (e.g., "MCP").
-	Name() string
 }

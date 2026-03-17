@@ -229,42 +229,49 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
                 return result, nil
             },
         }
+        {{- $hasCallHints := false -}}
+        {{- $hasResultHints := false -}}
+        {{- range .Tools }}
+        {{- if .CallHintTemplate }}{{- $hasCallHints = true -}}{{- end }}
+        {{- if .ResultHintTemplate }}{{- $hasResultHints = true -}}{{- end }}
+        {{- end }}
+        {{- if or $hasCallHints $hasResultHints }}
         // Install DSL-provided hint templates when present.
         {
-            // Build maps only when at least one template exists to avoid overhead.
-            var callRaw map[tools.Ident]string
-            var resultRaw map[tools.Ident]string
-            {{- range .Tools }}
-            {{- if .CallHintTemplate }}
-            if callRaw == nil {
-                callRaw = make(map[tools.Ident]string)
-            }
-            // Use the canonical tool identifier so hints align with Specs and runtime events.
-            callRaw[tools.Ident({{ printf "%q" .QualifiedName }})] = {{ printf "%q" .CallHintTemplate }}
-            {{- end }}
-            {{- if .ResultHintTemplate }}
-            if resultRaw == nil {
-                resultRaw = make(map[tools.Ident]string)
-            }
-            // Use the canonical tool identifier so hints align with Specs and runtime events.
-            resultRaw[tools.Ident({{ printf "%q" .QualifiedName }})] = {{ printf "%q" .ResultHintTemplate }}
-            {{- end }}
-            {{- end }}
-            if len(callRaw) > 0 {
-                compiled, err := hints.CompileHintTemplates(callRaw, nil)
+            {{- if $hasCallHints }}
+            {
+                compiled, err := hints.CompileHintTemplates(map[tools.Ident]string{
+                {{- range .Tools }}
+                {{- if .CallHintTemplate }}
+                    // Use the canonical tool identifier so hints align with Specs and runtime events.
+                    tools.Ident({{ printf "%q" .QualifiedName }}): {{ printf "%q" .CallHintTemplate }},
+                {{- end }}
+                {{- end }}
+                }, nil)
                 if err != nil {
                     return err
                 }
                 reg.CallHints = compiled
             }
-            if len(resultRaw) > 0 {
-                compiled, err := hints.CompileHintTemplates(resultRaw, nil)
+            {{- end }}
+            {{- if $hasResultHints }}
+            {
+                compiled, err := hints.CompileHintTemplates(map[tools.Ident]string{
+                {{- range .Tools }}
+                {{- if .ResultHintTemplate }}
+                    // Use the canonical tool identifier so hints align with Specs and runtime events.
+                    tools.Ident({{ printf "%q" .QualifiedName }}): {{ printf "%q" .ResultHintTemplate }},
+                {{- end }}
+                {{- end }}
+                }, nil)
                 if err != nil {
                     return err
                 }
                 reg.ResultHints = compiled
             }
+            {{- end }}
         }
+        {{- end }}
         if err := rt.RegisterToolset(reg); err != nil {
             return err
         }

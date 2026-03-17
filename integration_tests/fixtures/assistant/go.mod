@@ -41,7 +41,6 @@ require (
 	go.opentelemetry.io/otel/trace v1.40.0 // indirect
 	go.temporal.io/api v1.62.2 // indirect
 	go.temporal.io/sdk v1.40.0 // indirect
-	go.temporal.io/sdk/contrib/opentelemetry v0.7.0 // indirect
 	golang.org/x/mod v0.33.0 // indirect
 	golang.org/x/net v0.50.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect

@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	mcpexpr "goa.design/goa-ai/expr/mcp"
-	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"
 
 	"goa.design/goa-ai/codegen/shared"
@@ -16,18 +15,31 @@ type mcpExprBuilder struct {
 	*shared.ProtocolExprBuilderBase
 	originalService *expr.ServiceExpr
 	mcp             *mcpexpr.MCPExpr
+	source          *sourceSnapshot
 	mcpService      *expr.ServiceExpr
 	root            *expr.RootExpr
 }
 
+// mcpHTTPServiceConfig carries the resolved JSON-RPC path into the shared HTTP
+// service builder. MCP-specific metadata stays in this package; the shared
+// builder only owns the transport shape.
+type mcpHTTPServiceConfig struct {
+	jsonrpcPath string
+}
+
 // newMCPExprBuilder creates a new MCP expression builder for the given
 // original service and its associated MCP expression configuration.
-func newMCPExprBuilder(svc *expr.ServiceExpr, mcp *mcpexpr.MCPExpr) *mcpExprBuilder {
+func newMCPExprBuilder(svc *expr.ServiceExpr, mcp *mcpexpr.MCPExpr, source *sourceSnapshot) *mcpExprBuilder {
 	return &mcpExprBuilder{
 		ProtocolExprBuilderBase: shared.NewProtocolExprBuilderBase(),
 		originalService:         svc,
 		mcp:                     mcp,
+		source:                  source,
 	}
+}
+
+func (c mcpHTTPServiceConfig) JSONRPCPath() string {
+	return c.jsonrpcPath
 }
 
 // BuildServiceExpr creates the Goa service expression that models the MCP
@@ -109,62 +121,24 @@ func (b *mcpExprBuilder) BuildRootExpr(mcpService *expr.ServiceExpr) *expr.RootE
 	return b.root
 }
 
-// buildHTTPService creates the HTTP/JSON-RPC service expression for MCP,
-// configuring routes and SSE for streaming methods.
-// Note: MCP has specific path lookup logic that differs from the shared base,
-// so we keep this method here rather than using BuildHTTPServiceBase.
+// buildHTTPService creates the HTTP/JSON-RPC service expression for MCP. The
+// builder owns path resolution from the source service, then delegates the
+// transport shape to shared.BuildHTTPServiceBase so JSON-RPC route wiring stays
+// consistent across protocol generators.
 func (b *mcpExprBuilder) buildHTTPService(mcpService *expr.ServiceExpr) *expr.HTTPServiceExpr {
 	// Get the JSONRPC path from the stored original configuration
 	jsonrpcPath := ""
 
-	// Use the path that was captured before filtering - required for MCP
-	if path, ok := getOriginalJSONRPCPath(b.originalService.Name); ok && path != "" {
+	if path, ok := b.source.jsonrpcPath(b.originalService.Name); ok && path != "" {
 		jsonrpcPath = path
 	} else {
-		// If no path was captured, record a validation error and default to /rpc
-		const missingPathMsg = "service %q must declare JSONRPC(func(){ POST(...) }) with a service-level path"
-		eval.Context.Record(&eval.Error{GoError: fmt.Errorf(missingPathMsg, b.originalService.Name)})
+		// The shared pure-MCP contract validator should reject this before the
+		// builder runs. Keep the local error as a last-resort guard so direct
+		// builder use still fails deterministically.
+		b.RecordValidationError(fmt.Errorf(missingJSONRPCRouteMessage, b.originalService.Name))
 		jsonrpcPath = "/rpc"
 	}
-
-	httpService := &expr.HTTPServiceExpr{
-		ServiceExpr: mcpService,
-		JSONRPCRoute: &expr.RouteExpr{
-			Method: "POST",
-			Path:   jsonrpcPath,
-		},
-		Paths: []string{},
-		SSE:   &expr.HTTPSSEExpr{},
-	}
-	// Ensure the JSONRPCRoute can compute full paths
-	httpService.JSONRPCRoute.Endpoint = &expr.HTTPEndpointExpr{Service: httpService}
-
-	// Create endpoints for each method
-	for _, method := range mcpService.Methods {
-		endpoint := &expr.HTTPEndpointExpr{
-			MethodExpr: method,
-			Service:    httpService,
-			Meta: expr.MetaExpr{
-				"jsonrpc": []string{},
-			},
-			Routes: []*expr.RouteExpr{},
-		}
-		endpoint.Body = method.Payload
-		endpoint.Params = expr.NewEmptyMappedAttributeExpr()
-		endpoint.Headers = expr.NewEmptyMappedAttributeExpr()
-		endpoint.Cookies = expr.NewEmptyMappedAttributeExpr()
-		rt := &expr.RouteExpr{Method: "POST", Path: jsonrpcPath, Endpoint: endpoint}
-		endpoint.Routes = []*expr.RouteExpr{rt}
-
-		// For streaming methods, configure SSE
-		if method.Stream == expr.ServerStreamKind {
-			endpoint.SSE = &expr.HTTPSSEExpr{}
-		}
-
-		httpService.HTTPEndpoints = append(httpService.HTTPEndpoints, endpoint)
-	}
-
-	return httpService
+	return shared.BuildHTTPServiceBase(mcpService, mcpHTTPServiceConfig{jsonrpcPath: jsonrpcPath})
 }
 
 // BuildServiceMapping creates the mapping between MCP methods and original

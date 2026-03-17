@@ -1,8 +1,8 @@
-// Package codegen implements the Goa plugin responsible for turning the agents
-// DSL expressions into runtime-ready Go packages. The plugin mirrors Goa's own
-// codegen pipeline: expressions are collected during evaluation, converted into
-// intermediary data structures during the prepare phase, then rendered through
-// templates via goa.design/goa/v3/codegen.Files.
+// Package codegen implements the Goa plugin that turns the agents DSL into
+// runtime-ready Go packages. The generator mirrors Goa's own pipeline:
+// evaluated roots are converted into template data, toolset ownership is
+// resolved directly from those roots inside this package, and the final files
+// are rendered through goa.design/goa/v3/codegen.Files.
 //
 // Toolsets fall into two main categories and drive different generated helpers:
 //   - Service-backed toolsets (method-backed tools declared in Uses blocks) emit
@@ -12,6 +12,11 @@
 //     helpers in the provider agent package plus thin consumer helpers in
 //     agents that Use the exported toolset; applications wire these via
 //     runtime.NewAgentToolsetRegistration and runtime.AgentToolOption.
+//
+// MCP-backed toolsets are owned by the provider service for specs/codecs but
+// still emit consumer-local executors and registration helpers. That ownership
+// contract is resolved here from evaluated agent/Goa roots rather than via a
+// separate intermediate IR package.
 //
 // Generator contracts (keep these consistent)
 //

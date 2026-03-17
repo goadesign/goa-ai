@@ -73,9 +73,9 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 		return fmt.Errorf("mcp callers are required for agent %s", "alpha.scribe")
 	}
 	{
-		caller := cfg.MCPCallers[ScribeCalcCoreToolsetID]
+		caller := cfg.MCPCallers[ScribeCalcServiceCoreSuiteToolsetID]
 		if caller == nil {
-			return fmt.Errorf("mcp caller for %s is required", ScribeCalcCoreToolsetID)
+			return fmt.Errorf("mcp caller for %s is required", ScribeCalcServiceCoreSuiteToolsetID)
 		}
 		exec := core.NewScribeCoreMCPExecutor(caller)
 		// Build a runtime ToolsetRegistration inline to avoid exposing method/service adapters.

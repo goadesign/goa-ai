@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"goa.design/goa-ai/boundedresult"
+	"goa.design/goa-ai/codegen/shared"
 	"goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -174,7 +175,7 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 
 	doc := fmt.Sprintf("%s defines the JSON %s for the %s tool.", typeName, usage, tool.QualifiedName)
 	transportDef := transportTypeName + " " + scope.GoTypeDef(schemaAttr, true, false)
-	transportImports := gatherAttributeImports(b.genpkg, schemaAttr)
+	transportImports := shared.GatherAttributeImports(b.genpkg, schemaAttr)
 	httpctx := codegen.NewAttributeContext(!goaexpr.IsPrimitive(schemaAttr.Type), false, false, "", scope)
 	transportValidation := validationCodeWithContext(schemaAttr, nil, httpctx, true, false, false, "body", tool, usage, "transport")
 	var transportValidationSrc []string
@@ -428,7 +429,7 @@ func boundedResultSchemaFields(bounds *ToolBoundsData) map[string]any {
 	if bounds.Paging != nil && bounds.Paging.NextCursorField != "" {
 		fields[bounds.Paging.NextCursorField] = map[string]any{
 			"type":        "string",
-			"description": "Opaque cursor for the next page. Call the same tool again with the same parameters and this cursor value.",
+			"description": "Opaque cursor for the next page. Call the same tool again with the same parameters and pass this exact string back as the paging cursor. Do not send the literal text \"next_cursor\" or modify the cursor.",
 		}
 	}
 	return fields

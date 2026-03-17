@@ -20,20 +20,24 @@ const headerSection = "source-header"
 const exampleMCPStubSection = "example-mcp-stub"
 
 // Generate orchestrates MCP code generation for services that declare MCP
-// configuration in the DSL. It composes Goa service and JSON-RPC generators
-// and adds adapter/client helpers.
-func Generate(genpkg string, _ []eval.Root, files []*codegen.File) ([]*codegen.File, error) {
-	// Process MCP services from original services
-	for _, svc := range getOriginalServices() {
+// configuration in the DSL. It validates the pure-MCP contract from the current
+// roots so direct callers cannot bypass PrepareServices, then composes Goa
+// service and JSON-RPC generators and adds adapter/client helpers.
+func Generate(genpkg string, roots []eval.Root, files []*codegen.File) ([]*codegen.File, error) {
+	source := collectSourceSnapshot(roots)
+	for _, svc := range source.services {
 		if !mcpexpr.Root.HasMCP(svc) {
 			continue
 		}
 
 		// Generate MCP service with MCP endpoints
 		mcp := mcpexpr.Root.GetMCP(svc)
+		if err := validatePureMCPService(svc, mcp, source); err != nil {
+			return nil, err
+		}
 
 		// Build MCP service expression
-		exprBuilder := newMCPExprBuilder(svc, mcp)
+		exprBuilder := newMCPExprBuilder(svc, mcp, source)
 		mcpService := exprBuilder.BuildServiceExpr()
 
 		// Create temporary root for MCP generation
@@ -47,7 +51,10 @@ func Generate(genpkg string, _ []eval.Root, files []*codegen.File) ([]*codegen.F
 		// Build mapping and adapter data early so we can customize generated clients
 		mapping := exprBuilder.BuildServiceMapping()
 		adapterGen := newAdapterGenerator(genpkg, svc, mcp, mapping)
-		adapterData := adapterGen.buildAdapterData()
+		adapterData, err := adapterGen.buildAdapterData()
+		if err != nil {
+			return nil, err
+		}
 		if reg := registerFile(adapterData); reg != nil {
 			files = append(files, reg)
 		}
@@ -60,10 +67,12 @@ func Generate(genpkg string, _ []eval.Root, files []*codegen.File) ([]*codegen.F
 		files = append(files, mcpFiles...)
 
 		// Generate MCP transport that wraps the original service
-		files = append(files, generateMCPTransport(genpkg, svc, mcp, mapping)...)
+		transportFiles := generateMCPTransport(genpkg, svc, adapterData)
+		files = append(files, transportFiles...)
 
 		// Generate MCP client adapter that wraps the MCP JSON-RPC client
-		files = append(files, generateMCPClientAdapter(genpkg, svc, mcp, mapping)...)
+		clientFiles := generateMCPClientAdapter(genpkg, svc, adapterData)
+		files = append(files, clientFiles...)
 	}
 
 	return files, nil
@@ -134,14 +143,12 @@ func applyMCPPolicyHeadersToJSONRPCMount(files []*codegen.File) {
 
 // generateMCPTransport generates adapter and prompt provider files that adapt
 // MCP protocol methods to the original service implementation.
-func generateMCPTransport(genpkg string, svc *expr.ServiceExpr, mcp *mcpexpr.MCPExpr, mapping *ServiceMethodMapping) []*codegen.File {
+func generateMCPTransport(genpkg string, svc *expr.ServiceExpr, data *AdapterData) []*codegen.File {
 	var files []*codegen.File
 	svcName := codegen.SnakeCase(svc.Name)
 
 	// Generate server adapter in gen/mcp_<service>/adapter_server.go (same package as MCP service)
 	adapterPath := filepath.Join(codegen.Gendir, "mcp_"+svcName, "adapter_server.go")
-	adapterGen := newAdapterGenerator(genpkg, svc, mcp, mapping)
-	data := adapterGen.buildAdapterData()
 	pkgName := data.MCPPackage
 
 	adapterImports := []*codegen.ImportSpec{
@@ -324,7 +331,7 @@ func generateMCPTransport(genpkg string, svc *expr.ServiceExpr, mcp *mcpexpr.MCP
 
 // generateMCPClientAdapter generates a client adapter that exposes the original
 // service endpoints while calling MCP JSON-RPC methods under the hood.
-func generateMCPClientAdapter(genpkg string, svc *expr.ServiceExpr, mcp *mcpexpr.MCPExpr, mapping *ServiceMethodMapping) []*codegen.File {
+func generateMCPClientAdapter(genpkg string, svc *expr.ServiceExpr, data *AdapterData) []*codegen.File {
 	files := make([]*codegen.File, 0, 1)
 
 	svcName := codegen.SnakeCase(svc.Name)
@@ -333,15 +340,7 @@ func generateMCPClientAdapter(genpkg string, svc *expr.ServiceExpr, mcp *mcpexpr
 	svcJSONRPCCAlias := svcName + "jsonrpcc"
 	mcpJSONRPCCAlias := mcpPkgAlias + "jsonrpcc"
 
-	adapterGen := newAdapterGenerator(genpkg, svc, mcp, mapping)
-	data := adapterGen.buildAdapterData()
-
 	// Extend data passed to template with aliases needed by imports
-	type methodInfo struct {
-		Name     string
-		IsMapped bool // Whether this method is mapped to an MCP construct
-	}
-
 	type clientAdapterTemplateData struct {
 		*AdapterData
 		ServiceGoName    string
@@ -349,30 +348,12 @@ func generateMCPClientAdapter(genpkg string, svc *expr.ServiceExpr, mcp *mcpexpr
 		MCPPkgAlias      string
 		SvcJSONRPCCAlias string
 		MCPJSONRPCCAlias string
-		AllMethods       []methodInfo // All service methods with mapping info
+		AllMethods       []string
 	}
 
-	// Build set of mapped methods
-	mapped := make(map[string]struct{})
-	for _, t := range data.Tools {
-		mapped[t.OriginalMethodName] = struct{}{}
-	}
-	for _, r := range data.Resources {
-		mapped[r.OriginalMethodName] = struct{}{}
-	}
-	for _, dp := range data.DynamicPrompts {
-		mapped[dp.OriginalMethodName] = struct{}{}
-	}
-
-	// Collect all service method names and check if they're mapped to MCP constructs
-	allMethods := make([]methodInfo, len(svc.Methods))
+	allMethods := make([]string, len(svc.Methods))
 	for i, m := range svc.Methods {
-		methodName := codegen.Goify(m.Name, true)
-		_, ok := mapped[methodName]
-		allMethods[i] = methodInfo{
-			Name:     methodName,
-			IsMapped: ok,
-		}
+		allMethods[i] = codegen.Goify(m.Name, true)
 	}
 
 	tdata := &clientAdapterTemplateData{
@@ -385,24 +366,54 @@ func generateMCPClientAdapter(genpkg string, svc *expr.ServiceExpr, mcp *mcpexpr
 		AllMethods:       allMethods,
 	}
 
+	needsFmt := len(data.Tools) > 0 || len(data.Resources) > 0 || len(data.DynamicPrompts) > 0
+	needsQueryURL := false
+	for _, resource := range data.Resources {
+		if resource.HasPayload {
+			needsQueryURL = true
+			break
+		}
+	}
+
 	imports := []*codegen.ImportSpec{
-		{Path: "bytes"},
 		{Path: "context"},
-		{Path: "fmt"},
-		{Path: "net/http"},
 		{Path: "io"},
-		{Path: "encoding/json"},
-		{Path: "net/url"},
-		{Path: "sort"},
-		{Path: "strings"},
+		{Path: "net/http"},
 		{Path: "goa.design/goa/v3/http", Name: "goahttp"},
-		{Path: "goa.design/goa/v3/jsonrpc", Name: "jsonrpc"},
-		{Path: "goa.design/goa-ai/runtime/mcp/retry", Name: "retry"},
 		{Path: genpkg + "/" + svcName, Name: svcName},
-		{Path: genpkg + "/jsonrpc/" + svcName + "/client", Name: svcJSONRPCCAlias},
 		// Import the MCP service package for types since we're now in a subpackage
 		{Path: genpkg + "/mcp_" + svcName, Name: mcpPkgAlias},
 		{Path: genpkg + "/jsonrpc/mcp_" + svcName + "/client", Name: mcpJSONRPCCAlias},
+	}
+	if needsFmt {
+		imports = append(imports, &codegen.ImportSpec{Path: "fmt"})
+	}
+	if needsQueryURL {
+		imports = append(imports, &codegen.ImportSpec{Path: "net/url"})
+	}
+	if data.NeedsQueryFormatting {
+		imports = append(imports, &codegen.ImportSpec{Path: "strconv"})
+	}
+	if len(data.Tools) > 0 || len(data.DynamicPrompts) > 0 {
+		imports = append(imports, &codegen.ImportSpec{
+			Path: "goa.design/goa-ai/runtime/mcp/retry",
+			Name: "retry",
+		})
+	}
+	if data.NeedsOriginalClient {
+		imports = append(imports,
+			&codegen.ImportSpec{Path: "bytes"},
+			&codegen.ImportSpec{Path: "goa.design/goa/v3/jsonrpc", Name: "jsonrpc"},
+			&codegen.ImportSpec{Path: genpkg + "/jsonrpc/" + svcName + "/client", Name: svcJSONRPCCAlias},
+		)
+	} else if len(data.Notifications) > 0 {
+		imports = append(imports, &codegen.ImportSpec{Path: "goa.design/goa/v3/jsonrpc", Name: "jsonrpc"})
+	}
+	if len(data.Notifications) > 0 {
+		imports = append(imports,
+			&codegen.ImportSpec{Path: "encoding/json"},
+			&codegen.ImportSpec{Path: "github.com/google/uuid"},
+		)
 	}
 
 	// Put client adapter in a separate subpackage to avoid import cycle
@@ -416,11 +427,34 @@ func generateMCPClientAdapter(genpkg string, svc *expr.ServiceExpr, mcp *mcpexpr
 				Source: mcpTemplates.Read("mcp_client_wrapper"),
 				Data:   tdata,
 				FuncMap: map[string]any{
-					"comment": codegen.Comment,
+					"comment":        codegen.Comment,
+					"goify":          func(s string) string { return codegen.Goify(s, true) },
+					"queryValueExpr": resourceQueryValueExpr,
 				},
 			},
 		},
 	})
 
 	return files
+}
+
+// resourceQueryValueExpr renders the direct Go expression that converts one
+// primitive query value into the string form expected by url.Values.
+func resourceQueryValueExpr(formatKind string, valueExpr string) string {
+	switch formatKind {
+	case resourceQueryFormatString:
+		return valueExpr
+	case resourceQueryFormatBool:
+		return "strconv.FormatBool(" + valueExpr + ")"
+	case resourceQueryFormatInt:
+		return "strconv.FormatInt(int64(" + valueExpr + "), 10)"
+	case resourceQueryFormatUint:
+		return "strconv.FormatUint(uint64(" + valueExpr + "), 10)"
+	case resourceQueryFormatFloat32:
+		return "strconv.FormatFloat(float64(" + valueExpr + "), 'g', -1, 32)"
+	case resourceQueryFormatFloat64:
+		return "strconv.FormatFloat(" + valueExpr + ", 'g', -1, 64)"
+	default:
+		panic("unsupported resource query format kind: " + formatKind)
+	}
 }
