@@ -15,6 +15,8 @@ import (
 	goaexpr "goa.design/goa/v3/expr"
 )
 
+const alphaServiceName = "alpha"
+
 func TestBuildGeneratorData(t *testing.T) {
 	roots := runAgentDesign(t)
 	data, err := codegen.BuildDataForTest("goa.design/goa-ai", roots)
@@ -123,7 +125,7 @@ func TestBuildGeneratorData_AliasedMCPToolsetUsesDefinitionNameForArtifacts(t *t
 
 	var consumerAgent *codegen.AgentData
 	for _, svc := range data.Services {
-		if svc.Service.Name != "alpha" {
+		if svc.Service.Name != alphaServiceName {
 			continue
 		}
 		require.Len(t, svc.Agents, 1)
@@ -151,7 +153,7 @@ func TestBuildGeneratorData_AliasedMCPToolsetsUseDistinctConstNames(t *testing.T
 
 	var consumerAgent *codegen.AgentData
 	for _, svc := range data.Services {
-		if svc.Service.Name != "alpha" {
+		if svc.Service.Name != alphaServiceName {
 			continue
 		}
 		require.Len(t, svc.Agents, 1)
@@ -170,7 +172,7 @@ func TestBuildGeneratorData_MCPToolsetConstNameDoesNotRepeatSuiteName(t *testing
 
 	var consumerAgent *codegen.AgentData
 	for _, svc := range data.Services {
-		if svc.Service.Name != "alpha" {
+		if svc.Service.Name != alphaServiceName {
 			continue
 		}
 		require.Len(t, svc.Agents, 1)
@@ -189,7 +191,7 @@ func TestBuildGeneratorData_MCPToolsetConstNamesStayDistinctAcrossProviderPartit
 
 	var consumerAgent *codegen.AgentData
 	for _, svc := range data.Services {
-		if svc.Service.Name != "alpha" {
+		if svc.Service.Name != alphaServiceName {
 			continue
 		}
 		require.Len(t, svc.Agents, 1)
@@ -286,7 +288,7 @@ func runAliasedMCPDesign(t *testing.T) []eval.Root {
 		})
 
 		var CalcRemote = Toolset("calc-remote", FromMCP("calc", "core"))
-		Service("alpha", func() {
+		Service(alphaServiceName, func() {
 			Agent("scribe", "Doc helper", func() {
 				Use(CalcRemote)
 			})
@@ -333,7 +335,7 @@ func runDuplicateAliasedMCPDesign(t *testing.T) []eval.Root {
 
 		var CalcRemotePrimary = Toolset("calc-remote-primary", FromMCP("calc", "core"))
 		var CalcRemoteSecondary = Toolset("calc-remote-secondary", FromMCP("calc", "core"))
-		Service("alpha", func() {
+		Service(alphaServiceName, func() {
 			Agent("scribe", "Doc helper", func() {
 				Use(CalcRemotePrimary)
 				Use(CalcRemoteSecondary)
@@ -380,7 +382,7 @@ func runDirectMCPUseDesign(t *testing.T) []eval.Root {
 		})
 
 		var Core = Toolset("core", FromMCP("calc", "core"))
-		Service("alpha", func() {
+		Service(alphaServiceName, func() {
 			Agent("scribe", "Doc helper", func() {
 				Use(Core)
 			})
@@ -439,7 +441,7 @@ func runPartitionedMCPConstCollisionDesign(t *testing.T) []eval.Root {
 
 		var CalcCoreAPI = Toolset("api", FromMCP("calc-core", "remote"))
 		var CalcRemoteAPI = Toolset("remote-api", FromMCP("calc", "core"))
-		Service("alpha", func() {
+		Service(alphaServiceName, func() {
 			Agent("scribe", "Doc helper", func() {
 				Use(CalcCoreAPI)
 				Use(CalcRemoteAPI)

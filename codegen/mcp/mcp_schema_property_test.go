@@ -566,8 +566,8 @@ func TestToolSchemaUsesArrayBoundsKeywords(t *testing.T) {
 	require.NoError(t, err)
 	var schema map[string]any
 	require.NoError(t, json.Unmarshal([]byte(jsonStr), &schema))
-	require.Equal(t, float64(minItems), schema["minItems"])
-	require.Equal(t, float64(maxItems), schema["maxItems"])
+	require.InDelta(t, float64(minItems), schema["minItems"], 0)
+	require.InDelta(t, float64(maxItems), schema["maxItems"], 0)
 	require.NotContains(t, schema, "minLength")
 	require.NotContains(t, schema, "maxLength")
 }

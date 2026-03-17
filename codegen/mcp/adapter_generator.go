@@ -647,13 +647,25 @@ func resourceQueryFormatKind(fieldName string, dt expr.DataType) (string, error)
 		return resourceQueryFormatFloat32, nil
 	case expr.Float64Kind:
 		return resourceQueryFormatFloat64, nil
-	default:
+	case expr.BytesKind,
+		expr.ArrayKind,
+		expr.ObjectKind,
+		expr.MapKind,
+		expr.UnionKind,
+		expr.UserTypeKind,
+		expr.ResultTypeKind,
+		expr.AnyKind:
 		return "", fmt.Errorf(
 			`field %q uses unsupported resource query type %q; expected string, bool, int, uint, float, or arrays of those values`,
 			fieldName,
 			underlying.Name(),
 		)
 	}
+	return "", fmt.Errorf(
+		`field %q uses unsupported resource query type %q; expected string, bool, int, uint, float, or arrays of those values`,
+		fieldName,
+		underlying.Name(),
+	)
 }
 
 // resourceQueryZeroGuardExpr returns the direct zero-value guard for optional
