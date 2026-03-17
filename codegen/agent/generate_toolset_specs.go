@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"goa.design/goa-ai/codegen/shared"
 	"goa.design/goa/v3/codegen"
 )
 
@@ -276,7 +277,7 @@ func toolsetProviderFile(genpkg string, ts *ToolsetData) *codegen.File {
 	if !hasMethods {
 		return nil
 	}
-	serviceImportPath := joinImportPath(genpkg, ts.SourceService.PathName)
+	serviceImportPath := shared.JoinImportPath(genpkg, ts.SourceService.PathName)
 	if serviceImportPath == "" {
 		return nil
 	}

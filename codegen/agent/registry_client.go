@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"goa.design/goa-ai/codegen/shared"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	"goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
@@ -118,7 +119,7 @@ func newRegistryClientData(genpkg, svcPath string, reg *agentsExpr.RegistryExpr)
 	goName := codegen.Goify(reg.Name, true)
 	pkgName := codegen.SnakeCase(reg.Name)
 	dir := filepath.Join("gen", svcPath, "registry", pkgName)
-	importPath := joinImportPath(genpkg, filepath.Join(svcPath, "registry", pkgName))
+	importPath := shared.JoinImportPath(genpkg, filepath.Join(svcPath, "registry", pkgName))
 
 	data := &RegistryClientData{
 		Name:         reg.Name,

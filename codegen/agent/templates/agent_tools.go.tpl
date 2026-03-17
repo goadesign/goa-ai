@@ -58,40 +58,47 @@ func New{{ .Toolset.Agent.GoName }}ToolsetRegistration(rt *runtime.Runtime) runt
     }
     reg := runtime.NewAgentToolsetRegistration(rt, cfg)
     reg.Specs = {{ $.Toolset.SpecsPackageName }}specs.Specs
+    {{- $hasCallHints := false -}}
+    {{- $hasResultHints := false -}}
+    {{- range .Toolset.Tools }}
+    {{- if .CallHintTemplate }}{{- $hasCallHints = true -}}{{- end }}
+    {{- if .ResultHintTemplate }}{{- $hasResultHints = true -}}{{- end }}
+    {{- end }}
+    {{- if or $hasCallHints $hasResultHints }}
     // Install DSL-provided hint templates when present.
     {
-        // Build maps only when at least one template exists to avoid overhead.
-        var callRaw map[tools.Ident]string
-        var resultRaw map[tools.Ident]string
-        {{- range .Toolset.Tools }}
-        {{- if .CallHintTemplate }}
-        if callRaw == nil {
-            callRaw = make(map[tools.Ident]string)
-        }
-        callRaw[{{ .ConstName }}] = {{ printf "%q" .CallHintTemplate }}
-        {{- end }}
-        {{- if .ResultHintTemplate }}
-        if resultRaw == nil {
-            resultRaw = make(map[tools.Ident]string)
-        }
-        resultRaw[{{ .ConstName }}] = {{ printf "%q" .ResultHintTemplate }}
-        {{- end }}
-        {{- end }}
-        if len(callRaw) > 0 {
-            compiled, err := hints.CompileHintTemplates(callRaw, nil)
+        {{- if $hasCallHints }}
+        {
+            compiled, err := hints.CompileHintTemplates(map[tools.Ident]string{
+            {{- range .Toolset.Tools }}
+            {{- if .CallHintTemplate }}
+                {{ .ConstName }}: {{ printf "%q" .CallHintTemplate }},
+            {{- end }}
+            {{- end }}
+            }, nil)
             if err != nil {
                 panic(err)
             }
             reg.CallHints = compiled
         }
-        if len(resultRaw) > 0 {
-            compiled, err := hints.CompileHintTemplates(resultRaw, nil)
+        {{- end }}
+        {{- if $hasResultHints }}
+        {
+            compiled, err := hints.CompileHintTemplates(map[tools.Ident]string{
+            {{- range .Toolset.Tools }}
+            {{- if .ResultHintTemplate }}
+                {{ .ConstName }}: {{ printf "%q" .ResultHintTemplate }},
+            {{- end }}
+            {{- end }}
+            }, nil)
             if err != nil {
                 panic(err)
             }
             reg.ResultHints = compiled
         }
+        {{- end }}
     }
+    {{- end }}
     return reg
 }
 
@@ -140,40 +147,47 @@ func NewRegistration(
     }
     reg := runtime.NewAgentToolsetRegistration(rt, cfg)
     reg.Specs = {{ $.Toolset.SpecsPackageName }}specs.Specs
+    {{- $hasCallHints = false -}}
+    {{- $hasResultHints = false -}}
+    {{- range .Toolset.Tools }}
+    {{- if .CallHintTemplate }}{{- $hasCallHints = true -}}{{- end }}
+    {{- if .ResultHintTemplate }}{{- $hasResultHints = true -}}{{- end }}
+    {{- end }}
+    {{- if or $hasCallHints $hasResultHints }}
     // Install DSL-provided hint templates when present.
     {
-        // Build maps only when at least one template exists to avoid overhead.
-        var callRaw map[tools.Ident]string
-        var resultRaw map[tools.Ident]string
-        {{- range .Toolset.Tools }}
-        {{- if .CallHintTemplate }}
-        if callRaw == nil {
-            callRaw = make(map[tools.Ident]string)
-        }
-        callRaw[{{ .ConstName }}] = {{ printf "%q" .CallHintTemplate }}
-        {{- end }}
-        {{- if .ResultHintTemplate }}
-        if resultRaw == nil {
-            resultRaw = make(map[tools.Ident]string)
-        }
-        resultRaw[{{ .ConstName }}] = {{ printf "%q" .ResultHintTemplate }}
-        {{- end }}
-        {{- end }}
-        if len(callRaw) > 0 {
-            compiled, err := hints.CompileHintTemplates(callRaw, nil)
+        {{- if $hasCallHints }}
+        {
+            compiled, err := hints.CompileHintTemplates(map[tools.Ident]string{
+            {{- range .Toolset.Tools }}
+            {{- if .CallHintTemplate }}
+                {{ .ConstName }}: {{ printf "%q" .CallHintTemplate }},
+            {{- end }}
+            {{- end }}
+            }, nil)
             if err != nil {
                 panic(err)
             }
             reg.CallHints = compiled
         }
-        if len(resultRaw) > 0 {
-            compiled, err := hints.CompileHintTemplates(resultRaw, nil)
+        {{- end }}
+        {{- if $hasResultHints }}
+        {
+            compiled, err := hints.CompileHintTemplates(map[tools.Ident]string{
+            {{- range .Toolset.Tools }}
+            {{- if .ResultHintTemplate }}
+                {{ .ConstName }}: {{ printf "%q" .ResultHintTemplate }},
+            {{- end }}
+            {{- end }}
+            }, nil)
             if err != nil {
                 panic(err)
             }
             reg.ResultHints = compiled
         }
+        {{- end }}
     }
+    {{- end }}
     return reg, nil
 }
 

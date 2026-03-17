@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"goa.design/goa-ai/codegen/shared"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
 	goaexpr "goa.design/goa/v3/expr"
@@ -28,7 +29,7 @@ func (b *toolSpecBuilder) materialize(typeName string, att *goaexpr.AttributeExp
 	}
 
 	// Base imports from attribute metadata and locations
-	imports = gatherAttributeImports(b.genpkg, att)
+	imports = shared.GatherAttributeImports(b.genpkg, att)
 
 	// Use Goa's type definition helpers to compute RHS of the type definition.
 	switch dt := att.Type.(type) {
@@ -65,7 +66,7 @@ func (b *toolSpecBuilder) materialize(typeName string, att *goaexpr.AttributeExp
 					Def:           elemName + " = " + elemComp,
 					FullRef:       elemName,
 					NeedType:      true,
-					TypeImports:   gatherAttributeImports(b.genpkg, dt.ElemType),
+					TypeImports:   shared.GatherAttributeImports(b.genpkg, dt.ElemType),
 					ExportedCodec: "",
 					GenericCodec:  "",
 					GenerateCodec: false,
@@ -91,7 +92,7 @@ func (b *toolSpecBuilder) materialize(typeName string, att *goaexpr.AttributeExp
 					Def:           valName + " = " + valComp,
 					FullRef:       valName,
 					NeedType:      true,
-					TypeImports:   gatherAttributeImports(b.genpkg, dt.ElemType),
+					TypeImports:   shared.GatherAttributeImports(b.genpkg, dt.ElemType),
 					ExportedCodec: "",
 					GenericCodec:  "",
 					GenerateCodec: false,
@@ -301,7 +302,7 @@ func (b *toolSpecBuilder) ensureNestedLocalTypes(scope *codegen.NameScope, att *
 			Def:         name + " = " + scope.GoTypeDef(ut.AttributeExpr, ptr, useDefault),
 			FullRef:     name,
 			NeedType:    true,
-			TypeImports: gatherAttributeImports(b.genpkg, ut.AttributeExpr),
+			TypeImports: shared.GatherAttributeImports(b.genpkg, ut.AttributeExpr),
 		}
 	}
 	return cloned
@@ -412,10 +413,10 @@ func (b *toolSpecBuilder) ensureNestedLocalTransportTypes(scope *codegen.NameSco
 			NeedType:               false,
 			IsToolType:             false,
 			GenerateCodec:          false,
-			TypeImports:            gatherAttributeImports(b.genpkg, ut.AttributeExpr),
+			TypeImports:            shared.GatherAttributeImports(b.genpkg, ut.AttributeExpr),
 			TransportTypeName:      name,
 			TransportDef:           name + " " + scope.GoTypeDef(ut.AttributeExpr, true, false),
-			TransportImports:       gatherAttributeImports(b.genpkg, ut.AttributeExpr),
+			TransportImports:       shared.GatherAttributeImports(b.genpkg, ut.AttributeExpr),
 			TransportValidationSrc: vlines,
 			TransportTypeRef:       tref,
 			TransportPointer:       strings.HasPrefix(tref, "*"),

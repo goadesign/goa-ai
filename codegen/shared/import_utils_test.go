@@ -4,9 +4,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"github.com/leanovate/gopter"
 	"github.com/leanovate/gopter/gen"
 	"github.com/leanovate/gopter/prop"
+	"goa.design/goa/v3/expr"
 )
 
 // TestImportPathResolutionConsistency verifies Property 14: Import Path Resolution Consistency.
@@ -90,6 +92,44 @@ func TestImportPathEmptyRelReturnsEmpty(t *testing.T) {
 	))
 
 	properties.TestingRun(t)
+}
+
+func TestGatherAttributeImports_UnionVariants(t *testing.T) {
+	external := &expr.UserTypeExpr{
+		TypeName: "ExternalDoc",
+		AttributeExpr: &expr.AttributeExpr{
+			Type: &expr.Object{
+				&expr.NamedAttributeExpr{
+					Name:      "id",
+					Attribute: &expr.AttributeExpr{Type: expr.String},
+				},
+			},
+			Meta: expr.MetaExpr{
+				"struct:pkg:path": []string{"types"},
+			},
+		},
+	}
+	att := &expr.AttributeExpr{
+		Type: &expr.Union{
+			TypeName: "Choice",
+			Values: []*expr.NamedAttributeExpr{
+				{
+					Name:      "doc",
+					Attribute: &expr.AttributeExpr{Type: external},
+				},
+				{
+					Name:      "text",
+					Attribute: &expr.AttributeExpr{Type: expr.String},
+				},
+			},
+		},
+	}
+
+	imports := GatherAttributeImports("goa.design/goa-ai", att)
+
+	require.Len(t, imports, 1)
+	require.Equal(t, "types", imports[0].Name)
+	require.Equal(t, "goa.design/goa-ai/gen/types", imports[0].Path)
 }
 
 // genValidGenPkg generates valid generation package paths.

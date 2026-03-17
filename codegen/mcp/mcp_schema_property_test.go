@@ -8,6 +8,7 @@ import (
 	"github.com/leanovate/gopter"
 	"github.com/leanovate/gopter/gen"
 	"github.com/leanovate/gopter/prop"
+	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/codegen/shared"
 	"goa.design/goa/v3/expr"
 )
@@ -25,7 +26,10 @@ func TestToolSchemaRoundTripProperty(t *testing.T) {
 	properties.Property("tool schema round-trip preserves structure", prop.ForAll(
 		func(attr *expr.AttributeExpr) bool {
 			// Serialize to JSON
-			jsonStr := shared.ToJSONSchema(attr)
+			jsonStr, err := shared.ToJSONSchema(attr)
+			if err != nil {
+				return false
+			}
 
 			// Deserialize back
 			var parsed map[string]any
@@ -67,7 +71,10 @@ func TestToolSchemaRoundTripWithValidations(t *testing.T) {
 
 	properties.Property("schema with validations round-trips correctly", prop.ForAll(
 		func(attr *expr.AttributeExpr) bool {
-			jsonStr := shared.ToJSONSchema(attr)
+			jsonStr, err := shared.ToJSONSchema(attr)
+			if err != nil {
+				return false
+			}
 
 			var first, second map[string]any
 			if err := json.Unmarshal([]byte(jsonStr), &first); err != nil {
@@ -101,7 +108,10 @@ func TestToolSchemaRoundTripNestedObjects(t *testing.T) {
 
 	properties.Property("nested object schema round-trips correctly", prop.ForAll(
 		func(attr *expr.AttributeExpr) bool {
-			jsonStr := shared.ToJSONSchema(attr)
+			jsonStr, err := shared.ToJSONSchema(attr)
+			if err != nil {
+				return false
+			}
 
 			var first, second map[string]any
 			if err := json.Unmarshal([]byte(jsonStr), &first); err != nil {
@@ -362,7 +372,10 @@ func TestToolSchemaRoundTripWithEnums(t *testing.T) {
 
 	properties.Property("schema with enums round-trips correctly", prop.ForAll(
 		func(attr *expr.AttributeExpr) bool {
-			jsonStr := shared.ToJSONSchema(attr)
+			jsonStr, err := shared.ToJSONSchema(attr)
+			if err != nil {
+				return false
+			}
 
 			var first, second map[string]any
 			if err := json.Unmarshal([]byte(jsonStr), &first); err != nil {
@@ -396,7 +409,10 @@ func TestToolSchemaRoundTripWithUserTypes(t *testing.T) {
 
 	properties.Property("schema with user types round-trips correctly", prop.ForAll(
 		func(attr *expr.AttributeExpr) bool {
-			jsonStr := shared.ToJSONSchema(attr)
+			jsonStr, err := shared.ToJSONSchema(attr)
+			if err != nil {
+				return false
+			}
 
 			var first, second map[string]any
 			if err := json.Unmarshal([]byte(jsonStr), &first); err != nil {
@@ -480,4 +496,78 @@ func genUserTypeAttr() gopter.Gen {
 				Type: userType,
 			}
 		})
+}
+
+func TestToolSchemaPreservesWrapperMetadata(t *testing.T) {
+	userObject := expr.Object{
+		&expr.NamedAttributeExpr{
+			Name: "id",
+			Attribute: &expr.AttributeExpr{
+				Type: expr.String,
+			},
+		},
+	}
+	userType := &expr.UserTypeExpr{
+		TypeName:      "Wrapped",
+		AttributeExpr: &expr.AttributeExpr{Type: &userObject},
+	}
+	attr := &expr.AttributeExpr{
+		Type:        userType,
+		Description: "wrapper description",
+		Validation: &expr.ValidationExpr{
+			Required: []string{"id"},
+		},
+	}
+
+	jsonStr, err := shared.ToJSONSchema(attr)
+
+	require.NoError(t, err)
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal([]byte(jsonStr), &schema))
+	require.Equal(t, "wrapper description", schema["description"])
+	require.Contains(t, schema["required"], "id")
+}
+
+func TestToolSchemaRejectsRecursiveUserTypes(t *testing.T) {
+	recursive := &expr.UserTypeExpr{TypeName: "Node"}
+	object := expr.Object{
+		&expr.NamedAttributeExpr{
+			Name: "next",
+			Attribute: &expr.AttributeExpr{
+				Type: recursive,
+			},
+		},
+	}
+	recursive.AttributeExpr = &expr.AttributeExpr{Type: &object}
+
+	_, err := shared.ToJSONSchema(&expr.AttributeExpr{Type: recursive})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "recursive")
+}
+
+func TestToolSchemaUsesArrayBoundsKeywords(t *testing.T) {
+	minItems := 2
+	maxItems := 4
+	attr := &expr.AttributeExpr{
+		Type: &expr.Array{
+			ElemType: &expr.AttributeExpr{
+				Type: expr.String,
+			},
+		},
+		Validation: &expr.ValidationExpr{
+			MinLength: &minItems,
+			MaxLength: &maxItems,
+		},
+	}
+
+	jsonStr, err := shared.ToJSONSchema(attr)
+
+	require.NoError(t, err)
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal([]byte(jsonStr), &schema))
+	require.Equal(t, float64(minItems), schema["minItems"])
+	require.Equal(t, float64(maxItems), schema["maxItems"])
+	require.NotContains(t, schema, "minLength")
+	require.NotContains(t, schema, "maxLength")
 }

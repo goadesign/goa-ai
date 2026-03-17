@@ -1,7 +1,7 @@
 {{- if .MCPToolsets }}
 const (
 {{- range .MCPToolsets }}
-    // {{ .ConstName }} uniquely identifies the {{ .ServiceName }}.{{ .SuiteName }} MCP toolset.
+    // {{ .ConstName }} uniquely identifies the {{ .QualifiedName }} MCP toolset binding.
     {{ .ConstName }} = {{ printf "%q" .QualifiedName }}
 {{- end }}
 )
@@ -38,16 +38,14 @@ func (c {{ .ConfigType }}) Validate() error {
     {{- end }}
 {{- end }}
 {{- if .MCPToolsets }}
-    required := []string{
+    if c.MCPCallers == nil {
+        return fmt.Errorf("mcp caller for %s is required", {{ (index .MCPToolsets 0).ConstName }})
+    }
 {{- range .MCPToolsets }}
-        {{ .ConstName }},
+    if c.MCPCallers[{{ .ConstName }}] == nil {
+        return fmt.Errorf("mcp caller for %s is required", {{ .ConstName }})
+    }
 {{- end }}
-    }
-    for _, id := range required {
-        if c.MCPCallers == nil || c.MCPCallers[id] == nil {
-            return fmt.Errorf("mcp caller for %s is required", id)
-        }
-    }
 {{- end }}
     return nil
 }

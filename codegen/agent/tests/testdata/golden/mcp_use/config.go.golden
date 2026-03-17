@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	// ScribeCalcCoreToolsetID uniquely identifies the calc.core MCP toolset.
-	ScribeCalcCoreToolsetID = "core"
+	// ScribeCalcServiceCoreSuiteToolsetID uniquely identifies the core MCP toolset binding.
+	ScribeCalcServiceCoreSuiteToolsetID = "core"
 )
 
 // ScribeAgentConfig configures the ScribeAgent agent package.
@@ -32,13 +32,11 @@ func (c ScribeAgentConfig) Validate() error {
 	if c.Planner == nil {
 		return errors.New("planner is required")
 	}
-	required := []string{
-		ScribeCalcCoreToolsetID,
+	if c.MCPCallers == nil {
+		return fmt.Errorf("mcp caller for %s is required", ScribeCalcServiceCoreSuiteToolsetID)
 	}
-	for _, id := range required {
-		if c.MCPCallers == nil || c.MCPCallers[id] == nil {
-			return fmt.Errorf("mcp caller for %s is required", id)
-		}
+	if c.MCPCallers[ScribeCalcServiceCoreSuiteToolsetID] == nil {
+		return fmt.Errorf("mcp caller for %s is required", ScribeCalcServiceCoreSuiteToolsetID)
 	}
 	return nil
 }

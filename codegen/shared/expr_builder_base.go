@@ -11,8 +11,9 @@ type (
 	// ProtocolExprBuilderBase provides common expression building functionality
 	// shared between MCP protocol implementations.
 	ProtocolExprBuilderBase struct {
-		types      map[string]*expr.UserTypeExpr
-		insertKeys []string // tracks insertion order for deterministic iteration
+		types                   map[string]*expr.UserTypeExpr
+		insertKeys              []string // tracks insertion order for deterministic iteration
+		pendingValidationErrors []error
 	}
 )
 
@@ -29,8 +30,13 @@ func (b *ProtocolExprBuilderBase) PrepareAndValidate(root *expr.RootExpr) error 
 	// Temporarily set global expr.Root so Goa validations that reference it
 	// resolve services and servers correctly against this temporary root.
 	originalRoot := expr.Root
+	originalErrors := cloneEvalErrors(eval.Context.Errors)
+	pendingErrors := b.consumePendingValidationErrors()
 	expr.Root = root
-	defer func() { expr.Root = originalRoot }()
+	defer func() {
+		expr.Root = originalRoot
+		eval.Context.Errors = originalErrors
+	}()
 
 	// Step 1: Prepare
 	prepareSet := func(set eval.ExpressionSet) {
@@ -60,8 +66,15 @@ func (b *ProtocolExprBuilderBase) PrepareAndValidate(root *expr.RootExpr) error 
 	validateSet(eval.ExpressionSet{root})
 	root.WalkSets(validateSet)
 
-	if eval.Context.Errors != nil {
-		return eval.Context.Errors
+	var validationErrors eval.MultiError
+	if len(eval.Context.Errors) > len(originalErrors) {
+		validationErrors = cloneEvalErrors(eval.Context.Errors[len(originalErrors):])
+	}
+	if len(pendingErrors) > 0 {
+		return appendPendingValidationErrors(validationErrors, pendingErrors)
+	}
+	if len(validationErrors) > 0 {
+		return validationErrors
 	}
 
 	// Step 3: Finalize
@@ -76,6 +89,42 @@ func (b *ProtocolExprBuilderBase) PrepareAndValidate(root *expr.RootExpr) error 
 	root.WalkSets(finalizeSet)
 
 	return nil
+}
+
+// RecordValidationError registers a generation-time validation failure that must
+// be returned by PrepareAndValidate even when it is discovered before Goa's
+// eval.Context snapshot begins.
+func (b *ProtocolExprBuilderBase) RecordValidationError(err error) {
+	if err == nil {
+		return
+	}
+	b.pendingValidationErrors = append(b.pendingValidationErrors, err)
+}
+
+func cloneEvalErrors(errors eval.MultiError) eval.MultiError {
+	if errors == nil {
+		return nil
+	}
+	cloned := make(eval.MultiError, len(errors))
+	copy(cloned, errors)
+	return cloned
+}
+
+func appendPendingValidationErrors(existing eval.MultiError, pending []error) eval.MultiError {
+	merged := cloneEvalErrors(existing)
+	for _, err := range pending {
+		merged = append(merged, &eval.Error{GoError: err})
+	}
+	return merged
+}
+
+func (b *ProtocolExprBuilderBase) consumePendingValidationErrors() []error {
+	if len(b.pendingValidationErrors) == 0 {
+		return nil
+	}
+	pending := append([]error(nil), b.pendingValidationErrors...)
+	b.pendingValidationErrors = nil
+	return pending
 }
 
 // CollectUserTypes returns all user types referenced by the protocol service

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"sort"
 	"strings"
 
 	"goa.design/goa-ai/codegen/shared"
@@ -35,6 +36,9 @@ type (
 		ToolsCallStreaming bool
 		// Derived flags
 		HasWatchableResources bool
+		NeedsMCPClient        bool
+		NeedsOriginalClient   bool
+		NeedsQueryFormatting  bool
 
 		Register     *RegisterData
 		ClientCaller *ClientCallerData
@@ -98,7 +102,27 @@ type (
 		HasResult          bool
 		PayloadType        string
 		ResultType         string
+		QueryFields        []*ResourceQueryField
 		Watchable          bool
+	}
+
+	// ResourceQueryField describes one statically known query parameter binding
+	// for a resource payload field.
+	ResourceQueryField struct {
+		QueryKey       string
+		GuardExpr      string
+		ValueExpr      string
+		CollectionExpr string
+		FormatKind     string
+		Repeated       bool
+	}
+
+	// resourceQueryFieldDefinition captures one flattened top-level resource
+	// query field together with the presence rules implied by the Goa payload.
+	resourceQueryFieldDefinition struct {
+		Attribute        *expr.AttributeExpr
+		Required         bool
+		PrimitivePointer bool
 	}
 
 	// StaticPromptAdapter represents a static prompt
@@ -159,6 +183,15 @@ type (
 	}
 )
 
+const (
+	resourceQueryFormatString  = "string"
+	resourceQueryFormatBool    = "bool"
+	resourceQueryFormatInt     = "int"
+	resourceQueryFormatUint    = "uint"
+	resourceQueryFormatFloat32 = "float32"
+	resourceQueryFormatFloat64 = "float64"
+)
+
 // newAdapterGenerator creates a new adapter generator
 func newAdapterGenerator(
 	genpkg string,
@@ -177,8 +210,16 @@ func newAdapterGenerator(
 
 // Private methods
 
-// buildAdapterData creates the data for the adapter template
-func (g *adapterGenerator) buildAdapterData() *AdapterData {
+// buildAdapterData creates the data for the adapter template.
+func (g *adapterGenerator) buildAdapterData() (*AdapterData, error) {
+	tools, err := g.buildToolAdapters()
+	if err != nil {
+		return nil, err
+	}
+	resources, err := g.buildResourceAdapters()
+	if err != nil {
+		return nil, err
+	}
 	data := &AdapterData{
 		ServiceName:         g.originalService.Name,
 		ServiceGoName:       codegen.Goify(g.originalService.Name, true),
@@ -190,8 +231,8 @@ func (g *adapterGenerator) buildAdapterData() *AdapterData {
 		MCPPackage:          "mcp" + strings.ToLower(codegen.Goify(g.originalService.Name, false)),
 		ServiceJSONRPCAlias: codegen.SnakeCase(g.originalService.Name) + "jsonrpc",
 		ImportPath:          g.genpkg,
-		Tools:               g.buildToolAdapters(),
-		Resources:           g.buildResourceAdapters(),
+		Tools:               tools,
+		Resources:           resources,
 		DynamicPrompts:      g.buildDynamicPromptAdapters(),
 		Notifications:       g.buildNotificationAdapters(),
 		Subscriptions:       g.buildSubscriptionAdapters(),
@@ -211,11 +252,17 @@ func (g *adapterGenerator) buildAdapterData() *AdapterData {
 			break
 		}
 	}
+	data.NeedsMCPClient = len(data.Tools) > 0 ||
+		len(data.Resources) > 0 ||
+		len(data.DynamicPrompts) > 0 ||
+		len(data.Notifications) > 0
+	data.NeedsOriginalClient = len(data.DynamicPrompts) > 0 || adapterDataNeedsOriginalClient(data.Tools, data.Resources)
+	data.NeedsQueryFormatting = adapterDataNeedsQueryFormatting(data.Resources)
 
 	data.Register = g.buildRegisterData(data)
 	data.ClientCaller = g.buildClientCallerData(data, g.genpkg)
 
-	return data
+	return data, nil
 }
 
 func (g *adapterGenerator) buildRegisterData(data *AdapterData) *RegisterData {
@@ -274,8 +321,37 @@ func (g *adapterGenerator) buildClientCallerData(data *AdapterData, genpkg strin
 	}
 }
 
-// buildToolAdapters creates adapter data for tools
-func (g *adapterGenerator) buildToolAdapters() []*ToolAdapter {
+// adapterDataNeedsOriginalClient reports whether any generated endpoint must
+// decode an MCP response through the original JSON-RPC client.
+func adapterDataNeedsOriginalClient(tools []*ToolAdapter, resources []*ResourceAdapter) bool {
+	for _, tool := range tools {
+		if tool.HasResult {
+			return true
+		}
+	}
+	for _, resource := range resources {
+		if resource.HasResult {
+			return true
+		}
+	}
+	return false
+}
+
+// adapterDataNeedsQueryFormatting reports whether resource query emission needs
+// strconv-based formatting for non-string primitive query values.
+func adapterDataNeedsQueryFormatting(resources []*ResourceAdapter) bool {
+	for _, resource := range resources {
+		for _, field := range resource.QueryFields {
+			if field.FormatKind != resourceQueryFormatString {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// buildToolAdapters creates adapter data for tools.
+func (g *adapterGenerator) buildToolAdapters() ([]*ToolAdapter, error) {
 	adapters := make([]*ToolAdapter, 0, len(g.mcp.Tools))
 
 	for _, tool := range g.mcp.Tools {
@@ -301,7 +377,11 @@ func (g *adapterGenerator) buildToolAdapters() []*ToolAdapter {
 		if hasRealPayload {
 			adapter.PayloadType = g.getTypeReference(tool.Method.Payload)
 			// Generate a minimal JSON Schema for MCP tools/list
-			adapter.InputSchema = shared.ToJSONSchema(tool.Method.Payload)
+			schema, err := shared.ToJSONSchema(tool.Method.Payload)
+			if err != nil {
+				return nil, fmt.Errorf("build schema for tool %q: %w", tool.Name, err)
+			}
+			adapter.InputSchema = schema
 			// Collect simple validations for adapter-side checks
 			req, enums, enumPtr := g.collectTopLevelValidations(tool.Method.Payload)
 			adapter.RequiredFields = req
@@ -321,7 +401,7 @@ func (g *adapterGenerator) buildToolAdapters() []*ToolAdapter {
 		adapters = append(adapters, adapter)
 	}
 
-	return adapters
+	return adapters, nil
 }
 
 // collectTopLevelValidations extracts required fields and enum values for a top-level object payload
@@ -382,8 +462,8 @@ func (g *adapterGenerator) collectTopLevelValidations(
 	return req, enums, enumPtr
 }
 
-// buildResourceAdapters creates adapter data for resources
-func (g *adapterGenerator) buildResourceAdapters() []*ResourceAdapter {
+// buildResourceAdapters creates adapter data for resources.
+func (g *adapterGenerator) buildResourceAdapters() ([]*ResourceAdapter, error) {
 	adapters := make([]*ResourceAdapter, 0, len(g.mcp.Resources))
 
 	for _, resource := range g.mcp.Resources {
@@ -404,6 +484,11 @@ func (g *adapterGenerator) buildResourceAdapters() []*ResourceAdapter {
 		// Set payload type reference only for real payloads
 		if hasRealPayload {
 			adapter.PayloadType = g.getTypeReference(resource.Method.Payload)
+			queryFields, err := buildResourceQueryFields(resource.Method.Payload)
+			if err != nil {
+				return nil, fmt.Errorf("build resource query fields for %q: %w", resource.Method.Name, err)
+			}
+			adapter.QueryFields = queryFields
 		}
 
 		// Set result type reference
@@ -414,7 +499,187 @@ func (g *adapterGenerator) buildResourceAdapters() []*ResourceAdapter {
 		adapters = append(adapters, adapter)
 	}
 
-	return adapters
+	return adapters, nil
+}
+
+// buildResourceQueryFields computes the statically known resource query plan so
+// the template can emit direct query assembly without rediscovering payload
+// structure at runtime.
+func buildResourceQueryFields(payload *expr.AttributeExpr) ([]*ResourceQueryField, error) {
+	definitions := make(map[string]resourceQueryFieldDefinition)
+	collectResourceQueryFields(payload, payload, definitions, make(map[string]struct{}))
+	if len(definitions) == 0 {
+		return nil, fmt.Errorf(
+			"payload must define at least one top-level primitive or array-of-primitive query field",
+		)
+	}
+	names := make([]string, 0, len(definitions))
+	for name := range definitions {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	fields := make([]*ResourceQueryField, 0, len(names))
+	for _, name := range names {
+		field, err := newResourceQueryField(name, definitions[name])
+		if err != nil {
+			return nil, err
+		}
+		fields = append(fields, field)
+	}
+	return fields, nil
+}
+
+// collectResourceQueryFields flattens the top-level resource payload across
+// direct fields, bases, and references so generated query assembly preserves
+// the original payload surface without runtime rediscovery.
+func collectResourceQueryFields(
+	root *expr.AttributeExpr,
+	att *expr.AttributeExpr,
+	fields map[string]resourceQueryFieldDefinition,
+	seen map[string]struct{},
+) {
+	if att == nil || att.Type == nil {
+		return
+	}
+	hash := att.Type.Hash()
+	if _, ok := seen[hash]; ok {
+		return
+	}
+	seen[hash] = struct{}{}
+	for _, base := range att.Bases {
+		collectResourceQueryFields(root, attributeDataType(base), fields, seen)
+	}
+	for _, ref := range att.References {
+		collectResourceQueryFields(root, attributeDataType(ref), fields, seen)
+	}
+	object := expr.AsObject(att.Type)
+	if object == nil {
+		return
+	}
+	for _, named := range *object {
+		required := att.IsRequired(named.Name) || root.IsRequired(named.Name)
+		fields[named.Name] = resourceQueryFieldDefinition{
+			Attribute:        named.Attribute,
+			Required:         required,
+			PrimitivePointer: !required && att.IsPrimitivePointer(named.Name, true),
+		}
+	}
+}
+
+// newResourceQueryField converts one flattened payload field into a concrete
+// query-rendering plan for the client adapter template.
+func newResourceQueryField(name string, definition resourceQueryFieldDefinition) (*ResourceQueryField, error) {
+	fieldName := codegen.Goify(name, true)
+	if array := expr.AsArray(definition.Attribute.Type); array != nil {
+		formatKind, err := resourceQueryFormatKind(name, array.ElemType.Type)
+		if err != nil {
+			return nil, err
+		}
+		return &ResourceQueryField{
+			QueryKey:       name,
+			GuardExpr:      fmt.Sprintf("len(payload.%s) > 0", fieldName),
+			CollectionExpr: fmt.Sprintf("payload.%s", fieldName),
+			ValueExpr:      "value",
+			FormatKind:     formatKind,
+			Repeated:       true,
+		}, nil
+	}
+
+	formatKind, err := resourceQueryFormatKind(name, definition.Attribute.Type)
+	if err != nil {
+		return nil, err
+	}
+	field := &ResourceQueryField{
+		QueryKey:       name,
+		ValueExpr:      fmt.Sprintf("payload.%s", fieldName),
+		FormatKind:     formatKind,
+		CollectionExpr: "",
+	}
+	if definition.Required {
+		return field, nil
+	}
+	if definition.PrimitivePointer {
+		field.GuardExpr = fmt.Sprintf("payload.%s != nil", fieldName)
+		field.ValueExpr = fmt.Sprintf("*payload.%s", fieldName)
+		return field, nil
+	}
+	field.GuardExpr = resourceQueryZeroGuardExpr(formatKind, fieldName)
+	return field, nil
+}
+
+// attributeDataType recovers the full attribute metadata for base and reference
+// types when they are modeled as named user types.
+func attributeDataType(dt expr.DataType) *expr.AttributeExpr {
+	if userType, ok := dt.(expr.UserType); ok {
+		return userType.Attribute()
+	}
+	return &expr.AttributeExpr{Type: dt}
+}
+
+// resourceQueryFormatKind classifies one supported scalar query value so the
+// template can emit direct string formatting without runtime JSON marshalling.
+func resourceQueryFormatKind(fieldName string, dt expr.DataType) (string, error) {
+	underlying := resourceQueryUnderlyingType(dt)
+	if array := expr.AsArray(underlying); array != nil {
+		return "", fmt.Errorf(
+			`field %q uses nested array query values; expected primitive or array of primitive values`,
+			fieldName,
+		)
+	}
+	if !expr.IsPrimitive(underlying) {
+		return "", fmt.Errorf(
+			`field %q uses unsupported resource query type %q; expected primitive or array of primitive values`,
+			fieldName,
+			underlying.Name(),
+		)
+	}
+	switch underlying.Kind() {
+	case expr.StringKind:
+		return resourceQueryFormatString, nil
+	case expr.BooleanKind:
+		return resourceQueryFormatBool, nil
+	case expr.IntKind, expr.Int32Kind, expr.Int64Kind:
+		return resourceQueryFormatInt, nil
+	case expr.UIntKind, expr.UInt32Kind, expr.UInt64Kind:
+		return resourceQueryFormatUint, nil
+	case expr.Float32Kind:
+		return resourceQueryFormatFloat32, nil
+	case expr.Float64Kind:
+		return resourceQueryFormatFloat64, nil
+	default:
+		return "", fmt.Errorf(
+			`field %q uses unsupported resource query type %q; expected string, bool, int, uint, float, or arrays of those values`,
+			fieldName,
+			underlying.Name(),
+		)
+	}
+}
+
+// resourceQueryZeroGuardExpr returns the direct zero-value guard for optional
+// non-pointer scalar query fields.
+func resourceQueryZeroGuardExpr(formatKind string, fieldName string) string {
+	switch formatKind {
+	case resourceQueryFormatString:
+		return fmt.Sprintf(`payload.%s != ""`, fieldName)
+	case resourceQueryFormatBool:
+		return fmt.Sprintf("payload.%s", fieldName)
+	default:
+		return fmt.Sprintf("payload.%s != 0", fieldName)
+	}
+}
+
+// resourceQueryUnderlyingType resolves aliases so query-field guard selection
+// follows the concrete runtime kind that Goa will generate.
+func resourceQueryUnderlyingType(dt expr.DataType) expr.DataType {
+	switch actual := dt.(type) {
+	case *expr.UserTypeExpr:
+		return resourceQueryUnderlyingType(actual.Type)
+	case *expr.ResultTypeExpr:
+		return resourceQueryUnderlyingType(actual.Type)
+	default:
+		return actual
+	}
 }
 
 // buildDynamicPromptAdapters creates adapter data for dynamic prompts

@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"goa.design/goa-ai/codegen/naming"
+	"goa.design/goa-ai/codegen/shared"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/expr"
 )
@@ -42,7 +43,7 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 	}
 
 	svcAlias := servicePkgAlias(svc)
-	svcImport := joinImportPath(genpkg, svc.PathName)
+	svcImport := shared.JoinImportPath(genpkg, svc.PathName)
 
 	var fns []transformFuncData
 	extraImports := make(map[string]*codegen.ImportSpec)
@@ -70,12 +71,12 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 		// Init<GoName>MethodPayload: tool payload (specs, public type) -> service method payload
 		if toolPayload != nil && toolPayload.PublicType != nil && t.Args != nil && t.Args.Type != expr.Empty && t.MethodPayloadAttr != nil && t.MethodPayloadAttr.Type != expr.Empty {
 			if err := codegen.IsCompatible(t.Args.Type, t.MethodPayloadAttr.Type, "in", "out"); err == nil {
-				for _, im := range gatherAttributeImports(genpkg, t.MethodPayloadAttr) {
+				for _, im := range shared.GatherAttributeImports(genpkg, t.MethodPayloadAttr) {
 					if im != nil && im.Path != "" {
 						extraImports[im.Path] = im
 					}
 				}
-				for _, im := range gatherAttributeImports(genpkg, toolPayload.PublicType) {
+				for _, im := range shared.GatherAttributeImports(genpkg, toolPayload.PublicType) {
 					if im != nil && im.Path != "" {
 						extraImports[im.Path] = im
 					}
@@ -125,12 +126,12 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 				baseAttr = t.Return
 			}
 			if err := codegen.IsCompatible(t.MethodResultAttr.Type, baseAttr.Type, "in", "out"); err == nil {
-				for _, im := range gatherAttributeImports(genpkg, t.MethodResultAttr) {
+				for _, im := range shared.GatherAttributeImports(genpkg, t.MethodResultAttr) {
 					if im != nil && im.Path != "" {
 						extraImports[im.Path] = im
 					}
 				}
-				for _, im := range gatherAttributeImports(genpkg, t.Return) {
+				for _, im := range shared.GatherAttributeImports(genpkg, t.Return) {
 					if im != nil && im.Path != "" {
 						extraImports[im.Path] = im
 					}
@@ -198,12 +199,12 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 					err,
 				))
 			}
-			for _, im := range gatherAttributeImports(genpkg, sourceAttr) {
+			for _, im := range shared.GatherAttributeImports(genpkg, sourceAttr) {
 				if im != nil && im.Path != "" {
 					extraImports[im.Path] = im
 				}
 			}
-			for _, im := range gatherAttributeImports(genpkg, targetAttr) {
+			for _, im := range shared.GatherAttributeImports(genpkg, targetAttr) {
 				if im != nil && im.Path != "" {
 					extraImports[im.Path] = im
 				}

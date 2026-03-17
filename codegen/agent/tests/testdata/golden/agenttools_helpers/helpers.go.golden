@@ -11,7 +11,6 @@ import (
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
 	runtime "goa.design/goa-ai/runtime/agent/runtime"
-	hints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -71,26 +70,6 @@ func NewScribeToolsetRegistration(rt *runtime.Runtime) runtime.ToolsetRegistrati
 	}
 	reg := runtime.NewAgentToolsetRegistration(rt, cfg)
 	reg.Specs = searchspecs.Specs
-	// Install DSL-provided hint templates when present.
-	{
-		// Build maps only when at least one template exists to avoid overhead.
-		var callRaw map[tools.Ident]string
-		var resultRaw map[tools.Ident]string
-		if len(callRaw) > 0 {
-			compiled, err := hints.CompileHintTemplates(callRaw, nil)
-			if err != nil {
-				panic(err)
-			}
-			reg.CallHints = compiled
-		}
-		if len(resultRaw) > 0 {
-			compiled, err := hints.CompileHintTemplates(resultRaw, nil)
-			if err != nil {
-				panic(err)
-			}
-			reg.ResultHints = compiled
-		}
-	}
 	return reg
 }
 
@@ -137,26 +116,6 @@ func NewRegistration(
 	}
 	reg := runtime.NewAgentToolsetRegistration(rt, cfg)
 	reg.Specs = searchspecs.Specs
-	// Install DSL-provided hint templates when present.
-	{
-		// Build maps only when at least one template exists to avoid overhead.
-		var callRaw map[tools.Ident]string
-		var resultRaw map[tools.Ident]string
-		if len(callRaw) > 0 {
-			compiled, err := hints.CompileHintTemplates(callRaw, nil)
-			if err != nil {
-				panic(err)
-			}
-			reg.CallHints = compiled
-		}
-		if len(resultRaw) > 0 {
-			compiled, err := hints.CompileHintTemplates(resultRaw, nil)
-			if err != nil {
-				panic(err)
-			}
-			reg.ResultHints = compiled
-		}
-	}
 	return reg, nil
 }
 

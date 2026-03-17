@@ -12,9 +12,12 @@ import (
 	"goa.design/goa/v3/expr"
 )
 
-// PrepareExample augments the original roots so the Goa example generator includes the
-// MCP JSON-RPC server without manual cmd edits.
+// PrepareExample augments the original roots so the Goa example generator
+// includes the MCP JSON-RPC server without manual cmd edits. It runs the same
+// pure-MCP contract validation as Generate so example scaffolding cannot mask
+// invalid MCP mappings.
 func PrepareExample(_ string, roots []eval.Root) error {
+	source := collectSourceSnapshot(roots)
 	for _, root := range roots {
 		r, ok := root.(*expr.RootExpr)
 		if !ok {
@@ -25,21 +28,11 @@ func PrepareExample(_ string, roots []eval.Root) error {
 				continue
 			}
 			mcp := mcpexpr.Root.GetMCP(svc)
-			builder := newMCPExprBuilder(svc, mcp)
-			mcpService := builder.BuildServiceExpr()
-
-			// Capture original JSON-RPC path (used by builder)
-			if _, exists := getOriginalJSONRPCPath(svc.Name); !exists && r.API != nil && r.API.JSONRPC != nil {
-				for _, jsonrpcSvc := range r.API.JSONRPC.Services {
-					if jsonrpcSvc.ServiceExpr == nil || jsonrpcSvc.ServiceExpr.Name != svc.Name {
-						continue
-					}
-					if route := jsonrpcSvc.JSONRPCRoute; route != nil && route.Path != "" {
-						setOriginalJSONRPCPath(svc.Name, route.Path)
-					}
-					break
-				}
+			if err := validatePureMCPService(svc, mcp, source); err != nil {
+				return err
 			}
+			builder := newMCPExprBuilder(svc, mcp, source)
+			mcpService := builder.BuildServiceExpr()
 
 			// Build and validate a temporary MCP root to finalize types
 			mcpTempRoot := builder.BuildRootExpr(mcpService)
@@ -122,11 +115,13 @@ func PrepareExample(_ string, roots []eval.Root) error {
 			if !serviceInList(r.Services, mcpService.Name) {
 				r.Services = append(r.Services, mcpService)
 			}
-			// Ensure existing servers reference MCP service for example wiring
+			// Only mount the MCP service on servers that originally exposed the
+			// source service. Example generation should preserve server ownership.
 			for _, srv := range r.API.Servers {
-				if !stringInList(srv.Services, mcpService.Name) {
-					srv.Services = append(srv.Services, mcpService.Name)
+				if !stringInList(srv.Services, svc.Name) || stringInList(srv.Services, mcpService.Name) {
+					continue
 				}
+				srv.Services = append(srv.Services, mcpService.Name)
 			}
 		}
 	}

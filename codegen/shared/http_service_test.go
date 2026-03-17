@@ -11,16 +11,10 @@ import (
 
 // testConfig implements ProtocolConfig for testing.
 type testConfig struct {
-	path         string
-	version      string
-	capabilities map[string]any
-	name         string
+	path string
 }
 
-func (c *testConfig) JSONRPCPath() string          { return c.path }
-func (c *testConfig) ProtocolVersion() string      { return c.version }
-func (c *testConfig) Capabilities() map[string]any { return c.capabilities }
-func (c *testConfig) Name() string                 { return c.name }
+func (c *testConfig) JSONRPCPath() string { return c.path }
 
 // TestProtocolConfigPathUsage verifies Property 15: Protocol Config Path Usage.
 // *For any* protocol configuration with a specified JSON-RPC path, all generated
@@ -33,9 +27,7 @@ func TestProtocolConfigPathUsage(t *testing.T) {
 	properties.Property("all routes use the configured JSON-RPC path", prop.ForAll(
 		func(path string) bool {
 			config := &testConfig{
-				path:    path,
-				version: "1.0",
-				name:    "Test",
+				path: path,
 			}
 
 			// Create a simple service with methods
@@ -74,47 +66,30 @@ func TestProtocolConfigPathUsage(t *testing.T) {
 	properties.TestingRun(t)
 }
 
-// TestCapabilityInclusion verifies Property 16: Capability Inclusion.
-// *For any* protocol configuration with specified capabilities, the configuration
-// should return all specified capabilities.
-func TestCapabilityInclusion(t *testing.T) {
-	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
-	properties := gopter.NewProperties(parameters)
-
-	properties.Property("capabilities are preserved in config", prop.ForAll(
-		func(caps map[string]bool) bool {
-			// Convert to map[string]any
-			capabilities := make(map[string]any)
-			for k, v := range caps {
-				capabilities[k] = v
-			}
-
-			config := &testConfig{
-				path:         "/test",
-				version:      "1.0",
-				capabilities: capabilities,
-				name:         "Test",
-			}
-
-			// Verify all capabilities are returned
-			returned := config.Capabilities()
-			if len(returned) != len(capabilities) {
-				return false
-			}
-
-			for k, v := range capabilities {
-				if returned[k] != v {
-					return false
-				}
-			}
-
-			return true
+func TestBuildHTTPServiceBase_ConfiguresStreamingEndpoints(t *testing.T) {
+	service := &expr.ServiceExpr{
+		Name: "test_service",
+		Methods: []*expr.MethodExpr{
+			{
+				Name:    "watch",
+				Payload: &expr.AttributeExpr{Type: expr.String},
+				Stream:  expr.ServerStreamKind,
+			},
 		},
-		genCapabilities(),
-	))
+	}
+	service.Methods[0].Service = service
 
-	properties.TestingRun(t)
+	httpService := BuildHTTPServiceBase(service, &testConfig{path: "/rpc"})
+
+	if httpService.JSONRPCRoute.Path != "/rpc" {
+		t.Fatalf("JSONRPCRoute.Path = %q, want /rpc", httpService.JSONRPCRoute.Path)
+	}
+	if len(httpService.HTTPEndpoints) != 1 {
+		t.Fatalf("len(HTTPEndpoints) = %d, want 1", len(httpService.HTTPEndpoints))
+	}
+	if httpService.HTTPEndpoints[0].SSE == nil {
+		t.Fatal("expected streaming endpoint SSE configuration")
+	}
 }
 
 // genValidJSONRPCPath generates valid JSON-RPC paths.
@@ -124,13 +99,5 @@ func genValidJSONRPCPath() gopter.Gen {
 		"/mcp",
 		"/api/v1/jsonrpc",
 		"/services/protocol",
-	)
-}
-
-// genCapabilities generates capability maps for testing.
-func genCapabilities() gopter.Gen {
-	return gen.MapOf(
-		gen.OneConstOf("tools", "resources", "prompts", "streaming", "notifications"),
-		gen.Bool(),
 	)
 }

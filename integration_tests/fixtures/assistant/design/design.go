@@ -51,7 +51,7 @@ var _ = Service("assistant", func() {
 		Payload(func() {
 			Attribute("limit", Int, "Max items")
 			Attribute("flag", Boolean, "Sample boolean flag")
-			Attribute("nums", ArrayOf(Any), "Numbers array")
+			Attribute("nums", ArrayOf(Float64), "Numbers array")
 		})
 		Result(func() {
 			Attribute("items", ArrayOf(String), "History items")

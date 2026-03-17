@@ -3,9 +3,6 @@ package codegen
 import (
 	"encoding/json"
 	"fmt"
-	"path"
-	"sort"
-	"strings"
 
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
@@ -115,64 +112,6 @@ func serviceName(tool *ToolData) string {
 // toolsetName returns the name of the toolset that contains the tool.
 func toolsetName(tool *ToolData) string {
 	return tool.Toolset.QualifiedName
-}
-
-// gatherAttributeImports collects all import specifications needed for a given
-// attribute expression, including imports for user types and meta-type imports.
-// It returns a sorted, deduplicated list of import specs.
-func gatherAttributeImports(genpkg string, att *goaexpr.AttributeExpr) []*codegen.ImportSpec {
-	uniq := make(map[string]*codegen.ImportSpec)
-	var visit func(*goaexpr.AttributeExpr)
-	visit = func(a *goaexpr.AttributeExpr) {
-		if a == nil {
-			return
-		}
-		for _, im := range codegen.GetMetaTypeImports(a) {
-			if im.Path != "" {
-				uniq[im.Path] = im
-			}
-		}
-		switch dt := a.Type.(type) {
-		case goaexpr.UserType:
-			if loc := codegen.UserTypeLocation(dt); loc != nil && loc.RelImportPath != "" {
-				imp := &codegen.ImportSpec{Name: loc.PackageName(), Path: joinImportPath(genpkg, loc.RelImportPath)}
-				uniq[imp.Path] = imp
-			}
-			visit(dt.Attribute())
-		case *goaexpr.Array:
-			visit(dt.ElemType)
-		case *goaexpr.Map:
-			visit(dt.KeyType)
-			visit(dt.ElemType)
-		case *goaexpr.Object:
-			for _, nat := range *dt {
-				visit(nat.Attribute)
-			}
-		case *goaexpr.Union:
-			for _, nat := range dt.Values {
-				if nat == nil {
-					continue
-				}
-				visit(nat.Attribute)
-			}
-		case goaexpr.CompositeExpr:
-			visit(dt.Attribute())
-		}
-	}
-	visit(att)
-	if len(uniq) == 0 {
-		return nil
-	}
-	paths := make([]string, 0, len(uniq))
-	for p := range uniq {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-	imports := make([]*codegen.ImportSpec, 0, len(paths))
-	for _, p := range paths {
-		imports = append(imports, uniq[p])
-	}
-	return imports
 }
 
 // servicePkgAlias returns the import alias for the service package using the
@@ -424,19 +363,6 @@ func unwrapUserTypeAttr(att *goaexpr.AttributeExpr) *goaexpr.AttributeExpr {
 			return att
 		}
 	}
-}
-
-// joinImportPath constructs a full import path by joining the generation package
-// base path with a relative path. It handles trailing "/gen" suffixes correctly.
-func joinImportPath(genpkg, rel string) string {
-	if rel == "" {
-		return ""
-	}
-	base := strings.TrimSuffix(genpkg, "/")
-	for strings.HasSuffix(base, "/gen") {
-		base = strings.TrimSuffix(base, "/gen")
-	}
-	return path.Join(base, "gen", rel)
 }
 
 // lowerCamel converts a string to lower camelCase using Goa's Goify function.

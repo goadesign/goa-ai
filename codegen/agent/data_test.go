@@ -9,6 +9,7 @@ import (
 	codegen "goa.design/goa-ai/codegen/agent"
 	. "goa.design/goa-ai/dsl"
 	agentsExpr "goa.design/goa-ai/expr/agent"
+	mcpexpr "goa.design/goa-ai/expr/mcp"
 	. "goa.design/goa/v3/dsl"
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
@@ -115,15 +116,102 @@ func TestGenerateProducesFiles(t *testing.T) {
 	require.Contains(t, paths, "gen/calc/agents/scribe/agenttools/docs_export/helpers.go")
 }
 
+func TestBuildGeneratorData_AliasedMCPToolsetUsesDefinitionNameForArtifacts(t *testing.T) {
+	roots := runAliasedMCPDesign(t)
+	data, err := codegen.BuildDataForTest("goa.design/goa-ai", roots)
+	require.NoError(t, err)
+
+	var consumerAgent *codegen.AgentData
+	for _, svc := range data.Services {
+		if svc.Service.Name != "alpha" {
+			continue
+		}
+		require.Len(t, svc.Agents, 1)
+		consumerAgent = svc.Agents[0]
+		break
+	}
+	require.NotNil(t, consumerAgent)
+	require.Len(t, consumerAgent.UsedToolsets, 1)
+
+	used := consumerAgent.UsedToolsets[0]
+	require.Equal(t, "calc-remote", used.Name)
+	require.Equal(t, "calc-remote", used.QualifiedName)
+	require.Equal(t, "calc_remote", used.PathName)
+	require.Equal(t, filepath.Join("gen", "calc", "toolsets", "calc_remote"), used.SpecsDir)
+	require.Equal(t, "goa.design/goa-ai/calc/toolsets/calc_remote", used.SpecsImportPath)
+	require.Len(t, used.Tools, 1)
+	require.Equal(t, "add", used.Tools[0].Name)
+	require.Equal(t, "calc-remote.add", used.Tools[0].QualifiedName)
+}
+
+func TestBuildGeneratorData_AliasedMCPToolsetsUseDistinctConstNames(t *testing.T) {
+	roots := runDuplicateAliasedMCPDesign(t)
+	data, err := codegen.BuildDataForTest("goa.design/goa-ai", roots)
+	require.NoError(t, err)
+
+	var consumerAgent *codegen.AgentData
+	for _, svc := range data.Services {
+		if svc.Service.Name != "alpha" {
+			continue
+		}
+		require.Len(t, svc.Agents, 1)
+		consumerAgent = svc.Agents[0]
+		break
+	}
+	require.NotNil(t, consumerAgent)
+	require.Len(t, consumerAgent.MCPToolsets, 2)
+	require.NotEqual(t, consumerAgent.MCPToolsets[0].ConstName, consumerAgent.MCPToolsets[1].ConstName)
+}
+
+func TestBuildGeneratorData_MCPToolsetConstNameDoesNotRepeatSuiteName(t *testing.T) {
+	roots := runDirectMCPUseDesign(t)
+	data, err := codegen.BuildDataForTest("goa.design/goa-ai", roots)
+	require.NoError(t, err)
+
+	var consumerAgent *codegen.AgentData
+	for _, svc := range data.Services {
+		if svc.Service.Name != "alpha" {
+			continue
+		}
+		require.Len(t, svc.Agents, 1)
+		consumerAgent = svc.Agents[0]
+		break
+	}
+	require.NotNil(t, consumerAgent)
+	require.Len(t, consumerAgent.MCPToolsets, 1)
+	require.Equal(t, "ScribeCalcServiceCoreSuiteToolsetID", consumerAgent.MCPToolsets[0].ConstName)
+}
+
+func TestBuildGeneratorData_MCPToolsetConstNamesStayDistinctAcrossProviderPartitions(t *testing.T) {
+	roots := runPartitionedMCPConstCollisionDesign(t)
+	data, err := codegen.BuildDataForTest("goa.design/goa-ai", roots)
+	require.NoError(t, err)
+
+	var consumerAgent *codegen.AgentData
+	for _, svc := range data.Services {
+		if svc.Service.Name != "alpha" {
+			continue
+		}
+		require.Len(t, svc.Agents, 1)
+		consumerAgent = svc.Agents[0]
+		break
+	}
+	require.NotNil(t, consumerAgent)
+	require.Len(t, consumerAgent.MCPToolsets, 2)
+	require.NotEqual(t, consumerAgent.MCPToolsets[0].ConstName, consumerAgent.MCPToolsets[1].ConstName)
+}
+
 func runAgentDesign(t *testing.T) []eval.Root {
 	t.Helper()
 
 	eval.Reset()
 	goaexpr.Root = new(goaexpr.RootExpr)
 	goaexpr.GeneratedResultTypes = new(goaexpr.ResultTypesRoot)
+	mcpexpr.Root = mcpexpr.NewRoot()
 
 	require.NoError(t, eval.Register(goaexpr.Root))
 	require.NoError(t, eval.Register(goaexpr.GeneratedResultTypes))
+	require.NoError(t, eval.Register(mcpexpr.Root))
 
 	agentsExpr.Root = &agentsExpr.RootExpr{}
 	require.NoError(t, eval.Register(agentsExpr.Root))
@@ -155,6 +243,206 @@ func runAgentDesign(t *testing.T) []eval.Root {
 					TimeBudget("45s")
 					InterruptsAllowed(true)
 				})
+			})
+		})
+	}
+
+	require.True(t, eval.Execute(design, nil), eval.Context.Error())
+	require.NoError(t, eval.RunDSL())
+	return []eval.Root{goaexpr.Root, agentsExpr.Root}
+}
+
+func runAliasedMCPDesign(t *testing.T) []eval.Root {
+	t.Helper()
+
+	eval.Reset()
+	goaexpr.Root = new(goaexpr.RootExpr)
+	goaexpr.GeneratedResultTypes = new(goaexpr.ResultTypesRoot)
+	mcpexpr.Root = mcpexpr.NewRoot()
+
+	require.NoError(t, eval.Register(goaexpr.Root))
+	require.NoError(t, eval.Register(goaexpr.GeneratedResultTypes))
+	require.NoError(t, eval.Register(mcpexpr.Root))
+
+	agentsExpr.Root = &agentsExpr.RootExpr{}
+	require.NoError(t, eval.Register(agentsExpr.Root))
+
+	goaexpr.Root.API = goaexpr.NewAPIExpr("test", func() {})
+	goaexpr.Root.API.Servers = []*goaexpr.ServerExpr{goaexpr.Root.API.DefaultServer()}
+
+	design := func() {
+		API("calc", func() {})
+		Service("calc", func() {
+			MCP("core", "1.0.0")
+			Method("add", func() {
+				Payload(func() {
+					Attribute("a", Int, "First operand")
+					Attribute("b", Int, "Second operand")
+					Required("a", "b")
+				})
+				Result(Int)
+				Tool("add", "Add two numbers")
+			})
+		})
+
+		var CalcRemote = Toolset("calc-remote", FromMCP("calc", "core"))
+		Service("alpha", func() {
+			Agent("scribe", "Doc helper", func() {
+				Use(CalcRemote)
+			})
+		})
+	}
+
+	require.True(t, eval.Execute(design, nil), eval.Context.Error())
+	require.NoError(t, eval.RunDSL())
+	return []eval.Root{goaexpr.Root, agentsExpr.Root}
+}
+
+func runDuplicateAliasedMCPDesign(t *testing.T) []eval.Root {
+	t.Helper()
+
+	eval.Reset()
+	goaexpr.Root = new(goaexpr.RootExpr)
+	goaexpr.GeneratedResultTypes = new(goaexpr.ResultTypesRoot)
+	mcpexpr.Root = mcpexpr.NewRoot()
+
+	require.NoError(t, eval.Register(goaexpr.Root))
+	require.NoError(t, eval.Register(goaexpr.GeneratedResultTypes))
+	require.NoError(t, eval.Register(mcpexpr.Root))
+
+	agentsExpr.Root = &agentsExpr.RootExpr{}
+	require.NoError(t, eval.Register(agentsExpr.Root))
+
+	goaexpr.Root.API = goaexpr.NewAPIExpr("test", func() {})
+	goaexpr.Root.API.Servers = []*goaexpr.ServerExpr{goaexpr.Root.API.DefaultServer()}
+
+	design := func() {
+		API("calc", func() {})
+		Service("calc", func() {
+			MCP("core", "1.0.0")
+			Method("add", func() {
+				Payload(func() {
+					Attribute("a", Int, "First operand")
+					Attribute("b", Int, "Second operand")
+					Required("a", "b")
+				})
+				Result(Int)
+				Tool("add", "Add two numbers")
+			})
+		})
+
+		var CalcRemotePrimary = Toolset("calc-remote-primary", FromMCP("calc", "core"))
+		var CalcRemoteSecondary = Toolset("calc-remote-secondary", FromMCP("calc", "core"))
+		Service("alpha", func() {
+			Agent("scribe", "Doc helper", func() {
+				Use(CalcRemotePrimary)
+				Use(CalcRemoteSecondary)
+			})
+		})
+	}
+
+	require.True(t, eval.Execute(design, nil), eval.Context.Error())
+	require.NoError(t, eval.RunDSL())
+	return []eval.Root{goaexpr.Root, agentsExpr.Root}
+}
+
+func runDirectMCPUseDesign(t *testing.T) []eval.Root {
+	t.Helper()
+
+	eval.Reset()
+	goaexpr.Root = new(goaexpr.RootExpr)
+	goaexpr.GeneratedResultTypes = new(goaexpr.ResultTypesRoot)
+	mcpexpr.Root = mcpexpr.NewRoot()
+
+	require.NoError(t, eval.Register(goaexpr.Root))
+	require.NoError(t, eval.Register(goaexpr.GeneratedResultTypes))
+	require.NoError(t, eval.Register(mcpexpr.Root))
+
+	agentsExpr.Root = &agentsExpr.RootExpr{}
+	require.NoError(t, eval.Register(agentsExpr.Root))
+
+	goaexpr.Root.API = goaexpr.NewAPIExpr("test", func() {})
+	goaexpr.Root.API.Servers = []*goaexpr.ServerExpr{goaexpr.Root.API.DefaultServer()}
+
+	design := func() {
+		API("calc", func() {})
+		Service("calc", func() {
+			MCP("core", "1.0.0")
+			Method("add", func() {
+				Payload(func() {
+					Attribute("a", Int, "First operand")
+					Attribute("b", Int, "Second operand")
+					Required("a", "b")
+				})
+				Result(Int)
+				Tool("add", "Add two numbers")
+			})
+		})
+
+		var Core = Toolset("core", FromMCP("calc", "core"))
+		Service("alpha", func() {
+			Agent("scribe", "Doc helper", func() {
+				Use(Core)
+			})
+		})
+	}
+
+	require.True(t, eval.Execute(design, nil), eval.Context.Error())
+	require.NoError(t, eval.RunDSL())
+	return []eval.Root{goaexpr.Root, agentsExpr.Root}
+}
+
+func runPartitionedMCPConstCollisionDesign(t *testing.T) []eval.Root {
+	t.Helper()
+
+	eval.Reset()
+	goaexpr.Root = new(goaexpr.RootExpr)
+	goaexpr.GeneratedResultTypes = new(goaexpr.ResultTypesRoot)
+	mcpexpr.Root = mcpexpr.NewRoot()
+
+	require.NoError(t, eval.Register(goaexpr.Root))
+	require.NoError(t, eval.Register(goaexpr.GeneratedResultTypes))
+	require.NoError(t, eval.Register(mcpexpr.Root))
+
+	agentsExpr.Root = &agentsExpr.RootExpr{}
+	require.NoError(t, eval.Register(agentsExpr.Root))
+
+	goaexpr.Root.API = goaexpr.NewAPIExpr("test", func() {})
+	goaexpr.Root.API.Servers = []*goaexpr.ServerExpr{goaexpr.Root.API.DefaultServer()}
+
+	design := func() {
+		API("calc", func() {})
+		Service("calc-core", func() {
+			MCP("remote", "1.0.0")
+			Method("add", func() {
+				Payload(func() {
+					Attribute("a", Int, "First operand")
+					Attribute("b", Int, "Second operand")
+					Required("a", "b")
+				})
+				Result(Int)
+				Tool("add", "Add two numbers")
+			})
+		})
+		Service("calc", func() {
+			MCP("core", "1.0.0")
+			Method("multiply", func() {
+				Payload(func() {
+					Attribute("a", Int, "First operand")
+					Attribute("b", Int, "Second operand")
+					Required("a", "b")
+				})
+				Result(Int)
+				Tool("multiply", "Multiply two numbers")
+			})
+		})
+
+		var CalcCoreAPI = Toolset("api", FromMCP("calc-core", "remote"))
+		var CalcRemoteAPI = Toolset("remote-api", FromMCP("calc", "core"))
+		Service("alpha", func() {
+			Agent("scribe", "Doc helper", func() {
+				Use(CalcCoreAPI)
+				Use(CalcRemoteAPI)
 			})
 		})
 	}
