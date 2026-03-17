@@ -14,8 +14,9 @@ const missingJSONRPCRouteMessage = `service %q must declare JSONRPC(func(){ POST
 
 type (
 	notificationPayloadField struct {
-		Attribute *expr.AttributeExpr
-		Required  bool
+		Attribute        *expr.AttributeExpr
+		Required         bool
+		PrimitivePointer bool
 	}
 )
 
@@ -197,9 +198,11 @@ func collectNotificationAttributeFields(
 	}
 	if object := expr.AsObject(att.Type); object != nil {
 		for _, nat := range *object {
+			required := root.IsRequired(nat.Name) || att.IsRequired(nat.Name)
 			field := notificationPayloadField{
-				Attribute: nat.Attribute,
-				Required:  root.IsRequired(nat.Name) || att.IsRequired(nat.Name),
+				Attribute:        nat.Attribute,
+				Required:         required,
+				PrimitivePointer: !required && att.IsPrimitivePointer(nat.Name, true),
 			}
 			if existing, ok := fields[nat.Name]; ok && existing.Required {
 				field.Required = true

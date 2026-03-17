@@ -119,6 +119,10 @@ func TestGenerateMCPClientAdapter_RendersNotificationEndpoints(t *testing.T) {
 	rendered := renderGeneratedFile(t, files[0])
 	require.Contains(t, rendered, "e.SendNotification =")
 	require.Contains(t, rendered, "NotifyStatusUpdate")
+	require.NotContains(t, rendered, "NotifyNotifyStatusUpdate")
+	require.Contains(t, rendered, "notificationPayload := &")
+	require.Contains(t, rendered, "SendNotificationPayload{")
+	require.Contains(t, rendered, "notificationPayload.Message =")
 }
 
 func TestGenerateMCPClientAdapter_RendersOriginalClientForResourceResults(t *testing.T) {

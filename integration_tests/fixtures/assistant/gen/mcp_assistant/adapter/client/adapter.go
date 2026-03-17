@@ -10,13 +10,11 @@ package mcpAssistantadapter
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"sort"
-	"strings"
+	"strconv"
 
 	assistant "example.com/assistant/gen/assistant"
 	assistantjsonrpcc "example.com/assistant/gen/jsonrpc/assistant/client"
@@ -28,9 +26,51 @@ import (
 	jsonrpc "goa.design/goa/v3/jsonrpc"
 )
 
+// encodeOriginalPayload serializes an original-service payload without a
+// JSON-RPC envelope so MCP tool and prompt calls can forward raw arguments.
+func encodeOriginalPayload(
+	ctx context.Context,
+	enc func(*http.Request) goahttp.Encoder,
+	payload any,
+) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "", nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := enc(req).Encode(payload); err != nil {
+		return nil, err
+	}
+	return io.ReadAll(req.Body)
+}
+
+// decodeOriginalJSONRPCResult rehydrates one MCP result as the original
+// service's JSON-RPC response shape and decodes it with Goa's generated client.
+func decodeOriginalJSONRPCResult(
+	enc func(*http.Request) goahttp.Encoder,
+	req *http.Request,
+	result []byte,
+	decode func(*http.Response) (any, error),
+) (any, error) {
+	raw := &jsonrpc.RawResponse{
+		JSONRPC: "2.0",
+		Result:  result,
+	}
+	if err := enc(req).Encode(raw); err != nil {
+		return nil, err
+	}
+	bodyBytes, err := io.ReadAll(req.Body)
+	if err != nil {
+		return nil, err
+	}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(bytes.NewReader(bodyBytes)),
+	}
+	return decode(resp)
+}
+
 // NewEndpoints creates endpoints that expose the original service API while
-// invoking the MCP transport under the hood for mapped methods. Unmapped
-// methods transparently fall back to the original JSON-RPC transport.
+// invoking the MCP transport under the hood for mapped methods.
 // NewEndpoints creates an Endpoints set that routes mapped methods through
 // the MCP transport while leaving unmapped methods on the original transport.
 func NewEndpoints(
@@ -51,19 +91,11 @@ func NewEndpoints(
 	// Tool: analyze_sentiment -> AnalyzeSentiment
 	e.AnalyzeSentiment = func(ctx context.Context, v any) (any, error) {
 		// Encode original payload to raw JSON using Goa encoder (no JSON-RPC envelope)
-		var args []byte
-		{
-			var payload any
-			payload = v.(*assistant.AnalyzeSentimentPayload)
-			reqArgs, _ := http.NewRequestWithContext(ctx, http.MethodPost, "", nil)
-			if err := enc(reqArgs).Encode(payload); err != nil {
-				return nil, err
-			}
-			b, err := io.ReadAll(reqArgs.Body)
-			if err != nil {
-				return nil, err
-			}
-			args = b
+		var payload any
+		payload = v.(*assistant.AnalyzeSentimentPayload)
+		args, err := encodeOriginalPayload(ctx, enc, payload)
+		if err != nil {
+			return nil, err
 		}
 
 		toolResp, err := mcpCaller.CallTool(ctx, mcpruntime.CallRequest{
@@ -74,36 +106,26 @@ func NewEndpoints(
 			prompt := retry.BuildRepairPrompt("tools/call:analyze_sentiment", err.Error(), "{\"text\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to analyze\"}},\"additionalProperties\":false}")
 			return nil, &retry.RetryableError{Prompt: prompt, Cause: err}
 		}
-		// Build JSON-RPC response envelope and decode using Goa-generated decoder
-		rr := &jsonrpc.RawResponse{JSONRPC: "2.0", Result: []byte(toolResp.Result)}
-		req3, _ := origC.BuildAnalyzeSentimentRequest(ctx, v)
-		if err := enc(req3).Encode(rr); err != nil {
-			return nil, err
+		if len(toolResp.Result) == 0 {
+			prompt := retry.BuildRepairPrompt("tools/call:analyze_sentiment", "empty MCP tool response", "{\"text\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to analyze\"}},\"additionalProperties\":false}")
+			return nil, &retry.RetryableError{Prompt: prompt, Cause: fmt.Errorf("empty MCP tool response for analyze_sentiment")}
 		}
-		bodyBytes, err := io.ReadAll(req3.Body)
+		// Build JSON-RPC response envelope and decode using Goa-generated decoder
+		req3, err := origC.BuildAnalyzeSentimentRequest(ctx, v)
 		if err != nil {
 			return nil, err
 		}
-		httpResp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(bodyBytes))}
 		decode := assistantjsonrpcc.DecodeAnalyzeSentimentResponse(dec, false)
-		return decode(httpResp)
+		return decodeOriginalJSONRPCResult(enc, req3, toolResp.Result, decode)
 	}
 	// Tool: extract_keywords -> ExtractKeywords
 	e.ExtractKeywords = func(ctx context.Context, v any) (any, error) {
 		// Encode original payload to raw JSON using Goa encoder (no JSON-RPC envelope)
-		var args []byte
-		{
-			var payload any
-			payload = v.(*assistant.ExtractKeywordsPayload)
-			reqArgs, _ := http.NewRequestWithContext(ctx, http.MethodPost, "", nil)
-			if err := enc(reqArgs).Encode(payload); err != nil {
-				return nil, err
-			}
-			b, err := io.ReadAll(reqArgs.Body)
-			if err != nil {
-				return nil, err
-			}
-			args = b
+		var payload any
+		payload = v.(*assistant.ExtractKeywordsPayload)
+		args, err := encodeOriginalPayload(ctx, enc, payload)
+		if err != nil {
+			return nil, err
 		}
 
 		toolResp, err := mcpCaller.CallTool(ctx, mcpruntime.CallRequest{
@@ -114,36 +136,26 @@ func NewEndpoints(
 			prompt := retry.BuildRepairPrompt("tools/call:extract_keywords", err.Error(), "{\"text\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text\"}},\"additionalProperties\":false}")
 			return nil, &retry.RetryableError{Prompt: prompt, Cause: err}
 		}
-		// Build JSON-RPC response envelope and decode using Goa-generated decoder
-		rr := &jsonrpc.RawResponse{JSONRPC: "2.0", Result: []byte(toolResp.Result)}
-		req3, _ := origC.BuildExtractKeywordsRequest(ctx, v)
-		if err := enc(req3).Encode(rr); err != nil {
-			return nil, err
+		if len(toolResp.Result) == 0 {
+			prompt := retry.BuildRepairPrompt("tools/call:extract_keywords", "empty MCP tool response", "{\"text\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text\"}},\"additionalProperties\":false}")
+			return nil, &retry.RetryableError{Prompt: prompt, Cause: fmt.Errorf("empty MCP tool response for extract_keywords")}
 		}
-		bodyBytes, err := io.ReadAll(req3.Body)
+		// Build JSON-RPC response envelope and decode using Goa-generated decoder
+		req3, err := origC.BuildExtractKeywordsRequest(ctx, v)
 		if err != nil {
 			return nil, err
 		}
-		httpResp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(bodyBytes))}
 		decode := assistantjsonrpcc.DecodeExtractKeywordsResponse(dec, false)
-		return decode(httpResp)
+		return decodeOriginalJSONRPCResult(enc, req3, toolResp.Result, decode)
 	}
 	// Tool: summarize_text -> SummarizeText
 	e.SummarizeText = func(ctx context.Context, v any) (any, error) {
 		// Encode original payload to raw JSON using Goa encoder (no JSON-RPC envelope)
-		var args []byte
-		{
-			var payload any
-			payload = v.(*assistant.SummarizeTextPayload)
-			reqArgs, _ := http.NewRequestWithContext(ctx, http.MethodPost, "", nil)
-			if err := enc(reqArgs).Encode(payload); err != nil {
-				return nil, err
-			}
-			b, err := io.ReadAll(reqArgs.Body)
-			if err != nil {
-				return nil, err
-			}
-			args = b
+		var payload any
+		payload = v.(*assistant.SummarizeTextPayload)
+		args, err := encodeOriginalPayload(ctx, enc, payload)
+		if err != nil {
+			return nil, err
 		}
 
 		toolResp, err := mcpCaller.CallTool(ctx, mcpruntime.CallRequest{
@@ -154,36 +166,26 @@ func NewEndpoints(
 			prompt := retry.BuildRepairPrompt("tools/call:summarize_text", err.Error(), "{\"text\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to summarize\"}},\"additionalProperties\":false}")
 			return nil, &retry.RetryableError{Prompt: prompt, Cause: err}
 		}
-		// Build JSON-RPC response envelope and decode using Goa-generated decoder
-		rr := &jsonrpc.RawResponse{JSONRPC: "2.0", Result: []byte(toolResp.Result)}
-		req3, _ := origC.BuildSummarizeTextRequest(ctx, v)
-		if err := enc(req3).Encode(rr); err != nil {
-			return nil, err
+		if len(toolResp.Result) == 0 {
+			prompt := retry.BuildRepairPrompt("tools/call:summarize_text", "empty MCP tool response", "{\"text\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to summarize\"}},\"additionalProperties\":false}")
+			return nil, &retry.RetryableError{Prompt: prompt, Cause: fmt.Errorf("empty MCP tool response for summarize_text")}
 		}
-		bodyBytes, err := io.ReadAll(req3.Body)
+		// Build JSON-RPC response envelope and decode using Goa-generated decoder
+		req3, err := origC.BuildSummarizeTextRequest(ctx, v)
 		if err != nil {
 			return nil, err
 		}
-		httpResp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(bodyBytes))}
 		decode := assistantjsonrpcc.DecodeSummarizeTextResponse(dec, false)
-		return decode(httpResp)
+		return decodeOriginalJSONRPCResult(enc, req3, toolResp.Result, decode)
 	}
 	// Tool: search -> Search
 	e.Search = func(ctx context.Context, v any) (any, error) {
 		// Encode original payload to raw JSON using Goa encoder (no JSON-RPC envelope)
-		var args []byte
-		{
-			var payload any
-			payload = v.(*assistant.SearchPayload)
-			reqArgs, _ := http.NewRequestWithContext(ctx, http.MethodPost, "", nil)
-			if err := enc(reqArgs).Encode(payload); err != nil {
-				return nil, err
-			}
-			b, err := io.ReadAll(reqArgs.Body)
-			if err != nil {
-				return nil, err
-			}
-			args = b
+		var payload any
+		payload = v.(*assistant.SearchPayload)
+		args, err := encodeOriginalPayload(ctx, enc, payload)
+		if err != nil {
+			return nil, err
 		}
 
 		toolResp, err := mcpCaller.CallTool(ctx, mcpruntime.CallRequest{
@@ -194,36 +196,26 @@ func NewEndpoints(
 			prompt := retry.BuildRepairPrompt("tools/call:search", err.Error(), "{\"limit\":1,\"query\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"query\"],\"properties\":{\"limit\":{\"type\":\"integer\",\"description\":\"Maximum number of results\"},\"query\":{\"type\":\"string\",\"description\":\"Search query\"}},\"additionalProperties\":false}")
 			return nil, &retry.RetryableError{Prompt: prompt, Cause: err}
 		}
-		// Build JSON-RPC response envelope and decode using Goa-generated decoder
-		rr := &jsonrpc.RawResponse{JSONRPC: "2.0", Result: []byte(toolResp.Result)}
-		req3, _ := origC.BuildSearchRequest(ctx, v)
-		if err := enc(req3).Encode(rr); err != nil {
-			return nil, err
+		if len(toolResp.Result) == 0 {
+			prompt := retry.BuildRepairPrompt("tools/call:search", "empty MCP tool response", "{\"limit\":1,\"query\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"query\"],\"properties\":{\"limit\":{\"type\":\"integer\",\"description\":\"Maximum number of results\"},\"query\":{\"type\":\"string\",\"description\":\"Search query\"}},\"additionalProperties\":false}")
+			return nil, &retry.RetryableError{Prompt: prompt, Cause: fmt.Errorf("empty MCP tool response for search")}
 		}
-		bodyBytes, err := io.ReadAll(req3.Body)
+		// Build JSON-RPC response envelope and decode using Goa-generated decoder
+		req3, err := origC.BuildSearchRequest(ctx, v)
 		if err != nil {
 			return nil, err
 		}
-		httpResp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(bodyBytes))}
 		decode := assistantjsonrpcc.DecodeSearchResponse(dec, false)
-		return decode(httpResp)
+		return decodeOriginalJSONRPCResult(enc, req3, toolResp.Result, decode)
 	}
 	// Tool: execute_code -> ExecuteCode
 	e.ExecuteCode = func(ctx context.Context, v any) (any, error) {
 		// Encode original payload to raw JSON using Goa encoder (no JSON-RPC envelope)
-		var args []byte
-		{
-			var payload any
-			payload = v.(*assistant.ExecuteCodePayload)
-			reqArgs, _ := http.NewRequestWithContext(ctx, http.MethodPost, "", nil)
-			if err := enc(reqArgs).Encode(payload); err != nil {
-				return nil, err
-			}
-			b, err := io.ReadAll(reqArgs.Body)
-			if err != nil {
-				return nil, err
-			}
-			args = b
+		var payload any
+		payload = v.(*assistant.ExecuteCodePayload)
+		args, err := encodeOriginalPayload(ctx, enc, payload)
+		if err != nil {
+			return nil, err
 		}
 
 		toolResp, err := mcpCaller.CallTool(ctx, mcpruntime.CallRequest{
@@ -234,36 +226,26 @@ func NewEndpoints(
 			prompt := retry.BuildRepairPrompt("tools/call:execute_code", err.Error(), "{\"code\":\"abc123\",\"language\":\"javascript\"}", "{\"type\":\"object\",\"required\":[\"language\",\"code\"],\"properties\":{\"code\":{\"type\":\"string\",\"description\":\"Code to execute\"},\"language\":{\"type\":\"string\",\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"]}},\"additionalProperties\":false}")
 			return nil, &retry.RetryableError{Prompt: prompt, Cause: err}
 		}
-		// Build JSON-RPC response envelope and decode using Goa-generated decoder
-		rr := &jsonrpc.RawResponse{JSONRPC: "2.0", Result: []byte(toolResp.Result)}
-		req3, _ := origC.BuildExecuteCodeRequest(ctx, v)
-		if err := enc(req3).Encode(rr); err != nil {
-			return nil, err
+		if len(toolResp.Result) == 0 {
+			prompt := retry.BuildRepairPrompt("tools/call:execute_code", "empty MCP tool response", "{\"code\":\"abc123\",\"language\":\"javascript\"}", "{\"type\":\"object\",\"required\":[\"language\",\"code\"],\"properties\":{\"code\":{\"type\":\"string\",\"description\":\"Code to execute\"},\"language\":{\"type\":\"string\",\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"]}},\"additionalProperties\":false}")
+			return nil, &retry.RetryableError{Prompt: prompt, Cause: fmt.Errorf("empty MCP tool response for execute_code")}
 		}
-		bodyBytes, err := io.ReadAll(req3.Body)
+		// Build JSON-RPC response envelope and decode using Goa-generated decoder
+		req3, err := origC.BuildExecuteCodeRequest(ctx, v)
 		if err != nil {
 			return nil, err
 		}
-		httpResp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(bodyBytes))}
 		decode := assistantjsonrpcc.DecodeExecuteCodeResponse(dec, false)
-		return decode(httpResp)
+		return decodeOriginalJSONRPCResult(enc, req3, toolResp.Result, decode)
 	}
 	// Tool: process_batch -> ProcessBatch
 	e.ProcessBatch = func(ctx context.Context, v any) (any, error) {
 		// Encode original payload to raw JSON using Goa encoder (no JSON-RPC envelope)
-		var args []byte
-		{
-			var payload any
-			payload = v.(*assistant.ProcessBatchPayload)
-			reqArgs, _ := http.NewRequestWithContext(ctx, http.MethodPost, "", nil)
-			if err := enc(reqArgs).Encode(payload); err != nil {
-				return nil, err
-			}
-			b, err := io.ReadAll(reqArgs.Body)
-			if err != nil {
-				return nil, err
-			}
-			args = b
+		var payload any
+		payload = v.(*assistant.ProcessBatchPayload)
+		args, err := encodeOriginalPayload(ctx, enc, payload)
+		if err != nil {
+			return nil, err
 		}
 
 		toolResp, err := mcpCaller.CallTool(ctx, mcpruntime.CallRequest{
@@ -274,36 +256,26 @@ func NewEndpoints(
 			prompt := retry.BuildRepairPrompt("tools/call:process_batch", err.Error(), "{\"blob\":\"abc123\",\"format\":\"text\",\"items\":[\"abc123\"],\"mimeType\":\"abc123\",\"uri\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"blob\":{\"type\":\"string\",\"description\":\"Base64 blob\"},\"format\":{\"type\":\"string\",\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"]},\"items\":{\"type\":\"array\",\"description\":\"Items to process\",\"items\":{\"type\":\"string\"}},\"mimeType\":{\"type\":\"string\",\"description\":\"MIME type\"},\"uri\":{\"type\":\"string\",\"description\":\"Resource URI\"}},\"additionalProperties\":false}")
 			return nil, &retry.RetryableError{Prompt: prompt, Cause: err}
 		}
-		// Build JSON-RPC response envelope and decode using Goa-generated decoder
-		rr := &jsonrpc.RawResponse{JSONRPC: "2.0", Result: []byte(toolResp.Result)}
-		req3, _ := origC.BuildProcessBatchRequest(ctx, v)
-		if err := enc(req3).Encode(rr); err != nil {
-			return nil, err
+		if len(toolResp.Result) == 0 {
+			prompt := retry.BuildRepairPrompt("tools/call:process_batch", "empty MCP tool response", "{\"blob\":\"abc123\",\"format\":\"text\",\"items\":[\"abc123\"],\"mimeType\":\"abc123\",\"uri\":\"abc123\"}", "{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"blob\":{\"type\":\"string\",\"description\":\"Base64 blob\"},\"format\":{\"type\":\"string\",\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"]},\"items\":{\"type\":\"array\",\"description\":\"Items to process\",\"items\":{\"type\":\"string\"}},\"mimeType\":{\"type\":\"string\",\"description\":\"MIME type\"},\"uri\":{\"type\":\"string\",\"description\":\"Resource URI\"}},\"additionalProperties\":false}")
+			return nil, &retry.RetryableError{Prompt: prompt, Cause: fmt.Errorf("empty MCP tool response for process_batch")}
 		}
-		bodyBytes, err := io.ReadAll(req3.Body)
+		// Build JSON-RPC response envelope and decode using Goa-generated decoder
+		req3, err := origC.BuildProcessBatchRequest(ctx, v)
 		if err != nil {
 			return nil, err
 		}
-		httpResp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(bodyBytes))}
 		decode := assistantjsonrpcc.DecodeProcessBatchResponse(dec, false)
-		return decode(httpResp)
+		return decodeOriginalJSONRPCResult(enc, req3, toolResp.Result, decode)
 	}
 	// Tool: multi_content -> MultiContent
 	e.MultiContent = func(ctx context.Context, v any) (any, error) {
 		// Encode original payload to raw JSON using Goa encoder (no JSON-RPC envelope)
-		var args []byte
-		{
-			var payload any
-			payload = v.(*assistant.MultiContentPayload)
-			reqArgs, _ := http.NewRequestWithContext(ctx, http.MethodPost, "", nil)
-			if err := enc(reqArgs).Encode(payload); err != nil {
-				return nil, err
-			}
-			b, err := io.ReadAll(reqArgs.Body)
-			if err != nil {
-				return nil, err
-			}
-			args = b
+		var payload any
+		payload = v.(*assistant.MultiContentPayload)
+		args, err := encodeOriginalPayload(ctx, enc, payload)
+		if err != nil {
+			return nil, err
 		}
 
 		toolResp, err := mcpCaller.CallTool(ctx, mcpruntime.CallRequest{
@@ -314,56 +286,22 @@ func NewEndpoints(
 			prompt := retry.BuildRepairPrompt("tools/call:multi_content", err.Error(), "{\"count\":1}", "{\"type\":\"object\",\"required\":[\"count\"],\"properties\":{\"count\":{\"type\":\"integer\",\"description\":\"Number of content items to return\"}},\"additionalProperties\":false}")
 			return nil, &retry.RetryableError{Prompt: prompt, Cause: err}
 		}
-		// Build JSON-RPC response envelope and decode using Goa-generated decoder
-		rr := &jsonrpc.RawResponse{JSONRPC: "2.0", Result: []byte(toolResp.Result)}
-		req3, _ := origC.BuildMultiContentRequest(ctx, v)
-		if err := enc(req3).Encode(rr); err != nil {
-			return nil, err
+		if len(toolResp.Result) == 0 {
+			prompt := retry.BuildRepairPrompt("tools/call:multi_content", "empty MCP tool response", "{\"count\":1}", "{\"type\":\"object\",\"required\":[\"count\"],\"properties\":{\"count\":{\"type\":\"integer\",\"description\":\"Number of content items to return\"}},\"additionalProperties\":false}")
+			return nil, &retry.RetryableError{Prompt: prompt, Cause: fmt.Errorf("empty MCP tool response for multi_content")}
 		}
-		bodyBytes, err := io.ReadAll(req3.Body)
+		// Build JSON-RPC response envelope and decode using Goa-generated decoder
+		req3, err := origC.BuildMultiContentRequest(ctx, v)
 		if err != nil {
 			return nil, err
 		}
-		httpResp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(bodyBytes))}
 		decode := assistantjsonrpcc.DecodeMultiContentResponse(dec, false)
-		return decode(httpResp)
+		return decodeOriginalJSONRPCResult(enc, req3, toolResp.Result, decode)
 	}
 	// Resource: doc://list -> ListDocuments
 	e.ListDocuments = func(ctx context.Context, v any) (any, error) {
 		// Forward original payload parameters via URI query string when applicable
 		uri := "doc://list"
-		{
-			var payload any
-			payload = struct{}{}
-			reqArgs, _ := http.NewRequestWithContext(ctx, http.MethodPost, "", nil)
-			if err := enc(reqArgs).Encode(payload); err == nil {
-				b, rerr := io.ReadAll(reqArgs.Body)
-				if rerr == nil && len(b) > 0 {
-					var m map[string]any
-					if jerr := json.Unmarshal(b, &m); jerr == nil && len(m) > 0 {
-						var keys []string
-						for k := range m {
-							keys = append(keys, k)
-						}
-						sort.Strings(keys)
-						var q []string
-						for _, k := range keys {
-							switch vv := m[k].(type) {
-							case []any:
-								for _, e := range vv {
-									q = append(q, fmt.Sprintf("%s=%v", url.QueryEscape(k), url.QueryEscape(fmt.Sprint(e))))
-								}
-							default:
-								q = append(q, fmt.Sprintf("%s=%v", url.QueryEscape(k), url.QueryEscape(fmt.Sprint(vv))))
-							}
-						}
-						if len(q) > 0 {
-							uri = uri + "?" + strings.Join(q, "&")
-						}
-					}
-				}
-			}
-		}
 		ires, err := mcpC.ResourcesRead()(ctx, &mcpAssistant.ResourcesReadPayload{URI: uri})
 		if err != nil {
 			return nil, err
@@ -373,55 +311,17 @@ func NewEndpoints(
 			return nil, fmt.Errorf("empty MCP resource response for doc://list")
 		}
 		// Build JSON-RPC response envelope and decode using Goa-generated decoder
-		jrr := &jsonrpc.RawResponse{JSONRPC: "2.0", Result: []byte(*rr.Contents[0].Text)}
-		req3, _ := origC.BuildListDocumentsRequest(ctx, v)
-		if err := enc(req3).Encode(jrr); err != nil {
-			return nil, err
-		}
-		bodyBytes, err := io.ReadAll(req3.Body)
+		req3, err := origC.BuildListDocumentsRequest(ctx, v)
 		if err != nil {
 			return nil, err
 		}
-		resp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(bodyBytes))}
 		decode := assistantjsonrpcc.DecodeListDocumentsResponse(dec, false)
-		return decode(resp)
+		return decodeOriginalJSONRPCResult(enc, req3, []byte(*rr.Contents[0].Text), decode)
 	}
 	// Resource: system://info -> SystemInfo
 	e.SystemInfo = func(ctx context.Context, v any) (any, error) {
 		// Forward original payload parameters via URI query string when applicable
 		uri := "system://info"
-		{
-			var payload any
-			payload = struct{}{}
-			reqArgs, _ := http.NewRequestWithContext(ctx, http.MethodPost, "", nil)
-			if err := enc(reqArgs).Encode(payload); err == nil {
-				b, rerr := io.ReadAll(reqArgs.Body)
-				if rerr == nil && len(b) > 0 {
-					var m map[string]any
-					if jerr := json.Unmarshal(b, &m); jerr == nil && len(m) > 0 {
-						var keys []string
-						for k := range m {
-							keys = append(keys, k)
-						}
-						sort.Strings(keys)
-						var q []string
-						for _, k := range keys {
-							switch vv := m[k].(type) {
-							case []any:
-								for _, e := range vv {
-									q = append(q, fmt.Sprintf("%s=%v", url.QueryEscape(k), url.QueryEscape(fmt.Sprint(e))))
-								}
-							default:
-								q = append(q, fmt.Sprintf("%s=%v", url.QueryEscape(k), url.QueryEscape(fmt.Sprint(vv))))
-							}
-						}
-						if len(q) > 0 {
-							uri = uri + "?" + strings.Join(q, "&")
-						}
-					}
-				}
-			}
-		}
 		ires, err := mcpC.ResourcesRead()(ctx, &mcpAssistant.ResourcesReadPayload{URI: uri})
 		if err != nil {
 			return nil, err
@@ -431,54 +331,32 @@ func NewEndpoints(
 			return nil, fmt.Errorf("empty MCP resource response for system://info")
 		}
 		// Build JSON-RPC response envelope and decode using Goa-generated decoder
-		jrr := &jsonrpc.RawResponse{JSONRPC: "2.0", Result: []byte(*rr.Contents[0].Text)}
-		req3, _ := origC.BuildSystemInfoRequest(ctx, v)
-		if err := enc(req3).Encode(jrr); err != nil {
-			return nil, err
-		}
-		bodyBytes, err := io.ReadAll(req3.Body)
+		req3, err := origC.BuildSystemInfoRequest(ctx, v)
 		if err != nil {
 			return nil, err
 		}
-		resp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(bodyBytes))}
 		decode := assistantjsonrpcc.DecodeSystemInfoResponse(dec, false)
-		return decode(resp)
+		return decodeOriginalJSONRPCResult(enc, req3, []byte(*rr.Contents[0].Text), decode)
 	}
 	// Resource: conversation://history -> ConversationHistory
 	e.ConversationHistory = func(ctx context.Context, v any) (any, error) {
 		// Forward original payload parameters via URI query string when applicable
 		uri := "conversation://history"
-		{
-			var payload any
-			payload = v.(*assistant.ConversationHistoryPayload)
-			reqArgs, _ := http.NewRequestWithContext(ctx, http.MethodPost, "", nil)
-			if err := enc(reqArgs).Encode(payload); err == nil {
-				b, rerr := io.ReadAll(reqArgs.Body)
-				if rerr == nil && len(b) > 0 {
-					var m map[string]any
-					if jerr := json.Unmarshal(b, &m); jerr == nil && len(m) > 0 {
-						var keys []string
-						for k := range m {
-							keys = append(keys, k)
-						}
-						sort.Strings(keys)
-						var q []string
-						for _, k := range keys {
-							switch vv := m[k].(type) {
-							case []any:
-								for _, e := range vv {
-									q = append(q, fmt.Sprintf("%s=%v", url.QueryEscape(k), url.QueryEscape(fmt.Sprint(e))))
-								}
-							default:
-								q = append(q, fmt.Sprintf("%s=%v", url.QueryEscape(k), url.QueryEscape(fmt.Sprint(vv))))
-							}
-						}
-						if len(q) > 0 {
-							uri = uri + "?" + strings.Join(q, "&")
-						}
-					}
-				}
+		payload := v.(*assistant.ConversationHistoryPayload)
+		query := url.Values{}
+		if payload.Flag != nil {
+			query.Add("flag", strconv.FormatBool(*payload.Flag))
+		}
+		if payload.Limit != nil {
+			query.Add("limit", strconv.FormatInt(int64(*payload.Limit), 10))
+		}
+		if len(payload.Nums) > 0 {
+			for _, value := range payload.Nums {
+				query.Add("nums", strconv.FormatFloat(value, 'g', -1, 64))
 			}
+		}
+		if encoded := query.Encode(); encoded != "" {
+			uri = uri + "?" + encoded
 		}
 		ires, err := mcpC.ResourcesRead()(ctx, &mcpAssistant.ResourcesReadPayload{URI: uri})
 		if err != nil {
@@ -489,34 +367,20 @@ func NewEndpoints(
 			return nil, fmt.Errorf("empty MCP resource response for conversation://history")
 		}
 		// Build JSON-RPC response envelope and decode using Goa-generated decoder
-		jrr := &jsonrpc.RawResponse{JSONRPC: "2.0", Result: []byte(*rr.Contents[0].Text)}
-		req3, _ := origC.BuildConversationHistoryRequest(ctx, v)
-		if err := enc(req3).Encode(jrr); err != nil {
-			return nil, err
-		}
-		bodyBytes, err := io.ReadAll(req3.Body)
+		req3, err := origC.BuildConversationHistoryRequest(ctx, v)
 		if err != nil {
 			return nil, err
 		}
-		resp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(bodyBytes))}
 		decode := assistantjsonrpcc.DecodeConversationHistoryResponse(dec, false)
-		return decode(resp)
+		return decodeOriginalJSONRPCResult(enc, req3, []byte(*rr.Contents[0].Text), decode)
 	}
 	// Dynamic Prompt: contextual_prompts -> GeneratePrompts
 	e.GeneratePrompts = func(ctx context.Context, v any) (any, error) {
-		var args []byte
-		{
-			var payload any
-			payload = v.(*assistant.GeneratePromptsPayload)
-			reqArgs, _ := http.NewRequestWithContext(ctx, http.MethodPost, "", nil)
-			if err := enc(reqArgs).Encode(payload); err != nil {
-				return nil, err
-			}
-			b, err := io.ReadAll(reqArgs.Body)
-			if err != nil {
-				return nil, err
-			}
-			args = b
+		var payload any
+		payload = v.(*assistant.GeneratePromptsPayload)
+		args, err := encodeOriginalPayload(ctx, enc, payload)
+		if err != nil {
+			return nil, err
 		}
 		ires, err := mcpC.PromptsGet()(ctx, &mcpAssistant.PromptsGetPayload{Name: "contextual_prompts", Arguments: args})
 		if err != nil {
@@ -529,18 +393,24 @@ func NewEndpoints(
 			return nil, &retry.RetryableError{Prompt: prompt, Cause: fmt.Errorf("empty MCP prompt response for contextual_prompts")}
 		}
 		// Build JSON-RPC response envelope and decode using Goa-generated decoder
-		jrr := &jsonrpc.RawResponse{JSONRPC: "2.0", Result: []byte(*r.Messages[0].Content.Text)}
-		req3, _ := origC.BuildGeneratePromptsRequest(ctx, v)
-		if err := enc(req3).Encode(jrr); err != nil {
-			return nil, err
-		}
-		bodyBytes, err := io.ReadAll(req3.Body)
+		req3, err := origC.BuildGeneratePromptsRequest(ctx, v)
 		if err != nil {
 			return nil, err
 		}
-		resp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(bodyBytes))}
 		decode := assistantjsonrpcc.DecodeGeneratePromptsResponse(dec, false)
-		return decode(resp)
+		return decodeOriginalJSONRPCResult(enc, req3, []byte(*r.Messages[0].Content.Text), decode)
+	}
+	// Notification: status_update -> SendNotification
+	e.SendNotification = func(ctx context.Context, v any) (any, error) {
+		payload := v.(*assistant.SendNotificationPayload)
+		notificationPayload := &mcpAssistant.SendNotificationPayload{
+			Type: payload.Type,
+			Data: payload.Data,
+		}
+		message := payload.Message
+		notificationPayload.Message = &message
+		_, err := mcpC.NotifyStatusUpdate()(ctx, notificationPayload)
+		return nil, err
 	}
 
 	return e
@@ -556,13 +426,12 @@ func NewClient(
 	restore bool,
 ) *assistant.Client {
 	e := NewEndpoints(scheme, host, doer, enc, dec, restore)
-	origClient := assistantjsonrpcc.NewClient(scheme, host, doer, enc, dec, restore)
 	return assistant.NewClient(
 		e.ListDocuments,
 		e.SystemInfo,
 		e.ConversationHistory,
 		e.GeneratePrompts,
-		origClient.SendNotification(),
+		e.SendNotification,
 		e.AnalyzeSentiment,
 		e.ExtractKeywords,
 		e.SummarizeText,

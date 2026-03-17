@@ -164,6 +164,9 @@ type (
 		Name               string
 		Description        string
 		OriginalMethodName string
+		HasMessage         bool
+		MessagePointer     bool
+		HasData            bool
 	}
 
 	// SubscriptionAdapter represents a subscription mapping
@@ -790,10 +793,16 @@ func (g *adapterGenerator) buildNotificationAdapters() []*NotificationAdapter {
 	adapters := make([]*NotificationAdapter, 0)
 	if g.mcp != nil {
 		for _, n := range g.mcp.Notifications {
+			fields := collectNotificationPayloadFields(n.Method.Payload)
+			messageField, hasMessage := fields["message"]
+			_, hasData := fields["data"]
 			adapters = append(adapters, &NotificationAdapter{
 				Name:               n.Name,
 				Description:        n.Description,
 				OriginalMethodName: codegen.Goify(n.Method.Name, true),
+				HasMessage:         hasMessage,
+				MessagePointer:     hasMessage && messageField.PrimitivePointer,
+				HasData:            hasData,
 			})
 		}
 	}
