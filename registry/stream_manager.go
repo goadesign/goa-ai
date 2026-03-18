@@ -51,14 +51,9 @@ func NewStreamManager(client clientspulse.Client) StreamManager {
 	}
 }
 
-// streamIDForToolset returns the deterministic stream ID for a toolset.
-func streamIDForToolset(toolset string) string {
-	return fmt.Sprintf("toolset:%s:requests", toolset)
-}
-
 // GetOrCreateStream returns the stream for a toolset, creating it if needed.
 func (m *streamManager) GetOrCreateStream(ctx context.Context, toolset string) (clientspulse.Stream, string, error) {
-	streamID := streamIDForToolset(toolset)
+	streamID := toolregistry.ToolsetStreamID(toolset)
 
 	// Fast path: check if stream already exists.
 	m.mu.RLock()

@@ -76,11 +76,7 @@ func TestPingsSurviveReregisterAndFailover(t *testing.T) {
 	}
 
 	toolset := "reregister-toolset"
-	if err := tracker1.StartPingLoop(ctx, toolset); err != nil {
-		_ = tracker1.Close()
-		_ = node1.Close(ctx)
-		t.Fatalf("failed to start ping loop: %v", err)
-	}
+	registerCatalogToolset(t, ctx, registryMap, tracker1, toolset)
 
 	// Wait for pings.
 	for range 3 {

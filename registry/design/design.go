@@ -89,7 +89,7 @@ var _ = Service("registry", func() {
 	// ---- Invocation Operations ----
 
 	Method("CallTool", func() {
-		Description("Initiate a tool call by publishing a tool call message to the toolset request stream and returning the tool use identifier and result stream identifier.")
+		Description("Initiate a tool call by publishing a tool call message to the toolset request stream and returning the tool use identifier.")
 		Payload(CallToolPayload)
 		Result(CallToolResult)
 		Error("not_found")
@@ -153,15 +153,11 @@ var RegisterPayload = Type("RegisterPayload", func() {
 
 var RegisterResult = Type("RegisterResult", func() {
 	Description("Result of a successful toolset registration")
-	Field(1, "stream_id", String, "Pulse stream identifier for receiving tool requests", func() {
-		MinLength(1)
-		Example("toolset:data-tools:requests")
-	})
-	Field(2, "registered_at", String, "ISO 8601 timestamp of registration", func() {
+	Field(1, "registered_at", String, "ISO 8601 timestamp of registration", func() {
 		Format(FormatDateTime)
 		Example("2024-01-15T10:30:00Z")
 	})
-	Required("stream_id", "registered_at")
+	Required("registered_at")
 })
 
 var UnregisterPayload = Type("UnregisterPayload", func() {
@@ -171,18 +167,6 @@ var UnregisterPayload = Type("UnregisterPayload", func() {
 		Example("data-tools")
 	})
 	Required("name")
-})
-
-var EmitToolResultPayload = Type("EmitToolResultPayload", func() {
-	Description("Payload for emitting a tool execution result")
-	Field(1, "tool_use_id", String, "Unique identifier for the tool invocation", func() {
-		MinLength(1)
-		MaxLength(256)
-		Example("call-abc123")
-	})
-	Field(2, "result", Any, "Tool execution result (JSON-serializable)")
-	Field(3, "error", ToolError, "Error details if execution failed")
-	Required("tool_use_id")
 })
 
 var PongPayload = Type("PongPayload", func() {
@@ -210,7 +194,6 @@ var ListToolsetsPayload = Type("ListToolsetsPayload", func() {
 var ListToolsetsResult = Type("ListToolsetsResult", func() {
 	Description("Result containing list of toolsets")
 	Field(1, "toolsets", ArrayOf(ToolsetInfo), "List of registered toolsets")
-	Required("toolsets")
 })
 
 var GetToolsetPayload = Type("GetToolsetPayload", func() {
@@ -235,7 +218,6 @@ var SearchPayload = Type("SearchPayload", func() {
 var SearchResult = Type("SearchResult", func() {
 	Description("Result containing search matches")
 	Field(1, "toolsets", ArrayOf(ToolsetInfo), "Matching toolsets")
-	Required("toolsets")
 })
 
 var CallToolPayload = Type("CallToolPayload", func() {
@@ -265,12 +247,7 @@ var CallToolResult = Type("CallToolResult", func() {
 		MaxLength(256)
 		Example("call-abc123")
 	})
-	Field(2, "result_stream_id", String, "Pulse stream identifier that will receive the tool result message.", func() {
-		MinLength(1)
-		MaxLength(256)
-		Example("result:call-abc123")
-	})
-	Required("tool_use_id", "result_stream_id")
+	Required("tool_use_id")
 })
 
 // ---- Shared Types ----
@@ -290,15 +267,11 @@ var Toolset = Type("Toolset", func() {
 		Example([]string{"data", "etl"})
 	})
 	Field(5, "tools", ArrayOf(ToolSchema), "Tool schemas included in the toolset.")
-	Field(6, "stream_id", String, "Pulse stream identifier", func() {
-		MinLength(1)
-		Example("toolset:data-tools:requests")
-	})
-	Field(7, "registered_at", String, "ISO 8601 registration timestamp", func() {
+	Field(6, "registered_at", String, "ISO 8601 registration timestamp", func() {
 		Format(FormatDateTime)
 		Example("2024-01-15T10:30:00Z")
 	})
-	Required("name", "tools", "stream_id", "registered_at")
+	Required("name", "tools", "registered_at")
 })
 
 var ToolsetInfo = Type("ToolsetInfo", func() {
