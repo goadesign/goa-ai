@@ -32,7 +32,7 @@ import (
 type (
 	// Client initiates tool calls through a registry gateway.
 	Client interface {
-		CallTool(ctx context.Context, toolset string, tool tools.Ident, payload []byte, meta toolregistry.ToolCallMeta) (toolUseID string, resultStreamID string, err error)
+		CallTool(ctx context.Context, toolset string, tool tools.Ident, payload []byte, meta toolregistry.ToolCallMeta) (toolUseID string, err error)
 	}
 
 	// SpecLookup resolves tool specifications for decoding results and server data.
@@ -123,7 +123,7 @@ func New(client Client, pulse pulsec.Client, specs SpecLookup, opts ...Option) *
 		pulse:          pulse,
 		specs:          specs,
 		sinkName:       "agent",
-		resultEventKey: "result",
+		resultEventKey: toolregistry.ResultEventKey,
 		outputDeltaKey: toolregistry.OutputDeltaEventKey,
 		logger:         telemetry.NewNoopLogger(),
 		tracer:         telemetry.NewNoopTracer(),
@@ -192,12 +192,13 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 		ToolCallID:       meta.ToolCallID,
 		ParentToolCallID: meta.ParentToolCallID,
 	}
-	toolUseID, resultStreamID, err := e.client.CallTool(ctx, toolsetID, call.Name, call.Payload, tmeta)
+	toolUseID, err := e.client.CallTool(ctx, toolsetID, call.Name, call.Payload, tmeta)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "call tool via registry failed")
 		return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err), ToolCallID: meta.ToolCallID}, nil
 	}
+	resultStreamID := toolregistry.ResultStreamID(toolUseID)
 	span.AddEvent(
 		"toolregistry.call_tool_ok",
 		"toolregistry.tool_use_id", toolUseID,

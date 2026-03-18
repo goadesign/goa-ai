@@ -4,9 +4,9 @@
 // which runs as a standalone service. It includes:
 //
 //   - Service implementation (service.go) — gRPC service handlers
-//   - Store interface and implementations (store/)
+//   - Toolset catalog (catalog.go) — Pulse-backed metadata persistence
 //   - Health tracking (health_tracker.go) — provider liveness detection
-//   - Stream management (stream_manager.go, result_stream.go) — Pulse stream handling
+//   - Stream management (stream_manager.go) — Pulse stream handling
 //   - Generated code (gen/) — Goa-generated types and gRPC transport
 //   - Design (design/) — Goa DSL service definition
 //
@@ -42,8 +42,6 @@ import (
 	registrypb "goa.design/goa-ai/registry/gen/grpc/registry/pb"
 	grpcserver "goa.design/goa-ai/registry/gen/grpc/registry/server"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
-	"goa.design/goa-ai/registry/store"
-	"goa.design/goa-ai/registry/store/replicated"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/pulse/pool"
 	"goa.design/pulse/rmap"
@@ -69,9 +67,6 @@ type (
 	Config struct {
 		// Redis is the Redis client for Pulse operations. Required.
 		Redis *redis.Client
-		// Store is the persistence layer for toolset metadata.
-		// Defaults to a replicated-map backed store if not provided.
-		Store store.Store
 		// Name is the registry name used to derive Pulse resource names.
 		// Multiple nodes with the same Name and Redis connection form a cluster,
 		// sharing state and coordinating health checks automatically.
@@ -173,42 +168,12 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 		return nil, errors.Join(fmt.Errorf("create health tracker: %w", err), closeErr)
 	}
 
-	// Use replicated store if none provided.
-	st := cfg.Store
-	if st == nil {
-		st = replicated.New(registryMap)
-	}
-
-	// Ensure ping loops exist for all persisted toolsets on startup.
-	//
-	// The authoritative source of registered toolsets is the store. The health
-	// tracker also maintains a "registry:toolsets:" membership index for
-	// cross-node coordination, but that index can be missing (e.g., after process
-	// restarts) while the store remains intact. Re-registering ping loops here
-	// ensures health checks resume without requiring providers to re-register.
-	if toolsets, err := st.ListToolsets(ctx, nil); err != nil {
-		healthMap.Close()
-		registryMap.Close()
-		htCloseErr := healthTracker.Close()
-		poolCloseErr := poolNode.Close(ctx)
-		pulseCloseErr := pulseClient.Close(ctx)
-		return nil, errors.Join(fmt.Errorf("list toolsets for health tracking: %w", err), htCloseErr, poolCloseErr, pulseCloseErr)
-	} else {
-		for _, ts := range toolsets {
-			if err := healthTracker.StartPingLoop(ctx, ts.Name); err != nil {
-				healthMap.Close()
-				registryMap.Close()
-				htCloseErr := healthTracker.Close()
-				poolCloseErr := poolNode.Close(ctx)
-				pulseCloseErr := pulseClient.Close(ctx)
-				return nil, errors.Join(fmt.Errorf("start health ping loop for toolset %q: %w", ts.Name, err), htCloseErr, poolCloseErr, pulseCloseErr)
-			}
-		}
-	}
+	// Create the authoritative toolset catalog.
+	catalog := newToolsetCatalog(registryMap)
 
 	// Create the service.
-	service, err := NewService(ServiceOptions{
-		Store:           st,
+	service, err := newService(serviceOptions{
+		catalog:         catalog,
 		StreamManager:   streamManager,
 		HealthTracker:   healthTracker,
 		PulseClient:     pulseClient,

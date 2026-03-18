@@ -1,4 +1,9 @@
 // Package registry provides the internal tool registry service implementation.
+//
+// This file owns the transport-facing registry contract: it admits toolsets
+// into the shared catalog, validates routed tool calls against admitted
+// schemas, gates execution on provider health, and publishes tool-call traffic
+// onto the canonical registry streams.
 package registry
 
 import (
@@ -9,11 +14,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/santhosh-tekuri/jsonschema/v6"
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
-	"goa.design/goa-ai/registry/store"
-	"goa.design/goa-ai/registry/store/memory"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/toolregistry"
 	streamopts "goa.design/pulse/streaming/options"
@@ -23,7 +25,8 @@ type (
 	// Service implements the registry service interface.
 	// It provides toolset registration, discovery, and tool invocation capabilities.
 	Service struct {
-		store         store.Store
+		catalog       *toolsetCatalog
+		validator     *schemaValidator
 		streamManager StreamManager
 		healthTracker HealthTracker
 
@@ -31,11 +34,10 @@ type (
 		resultStreamTTL time.Duration
 	}
 
-	// ServiceOptions configures the registry service.
-	ServiceOptions struct {
-		// Store is the persistence layer for toolset metadata.
-		// Defaults to an in-memory store if not provided.
-		Store store.Store
+	// serviceOptions configures the registry service.
+	serviceOptions struct {
+		// catalog is the authoritative toolset catalog.
+		catalog *toolsetCatalog
 		// StreamManager manages Pulse streams for toolset communication.
 		StreamManager StreamManager
 		// HealthTracker tracks provider health status.
@@ -51,11 +53,11 @@ type (
 // Compile-time check that Service implements the generated interface.
 var _ genregistry.Service = (*Service)(nil)
 
-// NewService creates a new registry service with the given options.
-func NewService(opts ServiceOptions) (*Service, error) {
-	st := opts.Store
-	if st == nil {
-		st = memory.New()
+// newService wires the registry service over the already-constructed catalog,
+// stream manager, health tracker, and Pulse client.
+func newService(opts serviceOptions) (*Service, error) {
+	if opts.catalog == nil {
+		return nil, fmt.Errorf("toolset catalog is required")
 	}
 	if opts.StreamManager == nil {
 		return nil, fmt.Errorf("stream manager is required")
@@ -71,7 +73,8 @@ func NewService(opts ServiceOptions) (*Service, error) {
 		ttl = 15 * time.Minute
 	}
 	return &Service{
-		store:           st,
+		catalog:         opts.catalog,
+		validator:       newSchemaValidator(),
 		streamManager:   opts.StreamManager,
 		healthTracker:   opts.HealthTracker,
 		pulseClient:     opts.PulseClient,
@@ -80,21 +83,23 @@ func NewService(opts ServiceOptions) (*Service, error) {
 }
 
 // Register registers a toolset with the registry.
-// It validates the toolset schema, stores the metadata, creates or returns
-// the Pulse stream identifier, and starts the health ping loop.
+// It validates the toolset schema, ensures the toolset request stream exists,
+// stores the metadata, and starts the health ping loop.
 func (s *Service) Register(ctx context.Context, p *genregistry.RegisterPayload) (*genregistry.RegisterResult, error) {
 	// Validate tool schemas.
-	if err := validateToolSchemas(p.Tools); err != nil {
+	if err := s.validator.ValidateToolSchemas(p.Tools); err != nil {
 		return nil, genregistry.MakeValidationError(fmt.Errorf("invalid tool schema: %w", err))
 	}
 
-	// Get or create the Pulse stream for this toolset.
-	_, streamID, err := s.streamManager.GetOrCreateStream(ctx, p.Name)
+	// Ensure the Pulse request stream for this toolset exists.
+	_, _, err := s.streamManager.GetOrCreateStream(ctx, p.Name)
 	if err != nil {
 		return nil, fmt.Errorf("create stream for toolset: %w", err)
 	}
 
-	registeredAt := time.Now().UTC().Format(time.RFC3339)
+	// registered_at is transport metadata for discovery and debugging.
+	// Registration identity is the catalog-owned opaque token rotated on save.
+	registeredAt := time.Now().UTC().Format(time.RFC3339Nano)
 
 	// Build the toolset for storage.
 	toolset := &genregistry.Toolset{
@@ -103,12 +108,11 @@ func (s *Service) Register(ctx context.Context, p *genregistry.RegisterPayload) 
 		Version:      p.Version,
 		Tags:         p.Tags,
 		Tools:        p.Tools,
-		StreamID:     streamID,
 		RegisteredAt: registeredAt,
 	}
 
 	// Store the toolset (creates or updates).
-	if err := s.store.SaveToolset(ctx, toolset); err != nil {
+	if err := s.catalog.SaveToolset(ctx, toolset); err != nil {
 		return nil, fmt.Errorf("save toolset: %w", err)
 	}
 
@@ -118,47 +122,18 @@ func (s *Service) Register(ctx context.Context, p *genregistry.RegisterPayload) 
 	}
 
 	return &genregistry.RegisterResult{
-		StreamID:     streamID,
 		RegisteredAt: registeredAt,
 	}, nil
 }
 
-// validateToolSchemas validates that all tool schemas are valid JSON Schema.
-func validateToolSchemas(tools []*genregistry.ToolSchema) error {
-	for _, tool := range tools {
-		if tool == nil {
-			return fmt.Errorf("tool schema is nil")
-		}
-		if tool.Name == "" {
-			return fmt.Errorf("tool schema missing name")
-		}
-		if len(tool.PayloadSchema) == 0 {
-			return fmt.Errorf("tool %q: payload schema is required", tool.Name)
-		}
-		if len(tool.ResultSchema) == 0 {
-			return fmt.Errorf("tool %q: result schema is required", tool.Name)
-		}
-		if !json.Valid(tool.PayloadSchema) {
-			return fmt.Errorf("tool %q: payload schema is not valid JSON", tool.Name)
-		}
-		if !json.Valid(tool.ResultSchema) {
-			return fmt.Errorf("tool %q: result schema is not valid JSON", tool.Name)
-		}
-		if len(tool.SidecarSchema) > 0 && !json.Valid(tool.SidecarSchema) {
-			return fmt.Errorf("tool %q: sidecar schema is not valid JSON", tool.Name)
-		}
-	}
-	return nil
-}
-
 // Unregister removes a toolset from the registry.
-// It stops the health ping loop and removes the toolset from the store.
+// It stops the health ping loop and removes the toolset from the catalog.
 // Returns not-found error if the toolset doesn't exist.
 // **Validates: Requirements 5.1, 5.2, 5.3**
 func (s *Service) Unregister(ctx context.Context, p *genregistry.UnregisterPayload) error {
-	// Delete the toolset from the store.
-	if err := s.store.DeleteToolset(ctx, p.Name); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
+	// Delete the toolset from the catalog.
+	if err := s.catalog.DeleteToolset(ctx, p.Name); err != nil {
+		if errors.Is(err, errToolsetNotFound) {
 			return genregistry.MakeNotFound(fmt.Errorf("toolset %q not found", p.Name))
 		}
 		return fmt.Errorf("delete toolset: %w", err)
@@ -176,7 +151,7 @@ func (s *Service) Unregister(ctx context.Context, p *genregistry.UnregisterPaylo
 // Pong records a pong response for a health check ping.
 // This restores healthy status if the provider was previously marked unhealthy.
 func (s *Service) Pong(ctx context.Context, p *genregistry.PongPayload) error {
-	return s.healthTracker.RecordPong(ctx, p.Toolset)
+	return s.healthTracker.RecordPong(ctx, p.Toolset, p.PingID)
 }
 
 // ListToolsets returns all registered toolsets with optional tag filtering.
@@ -184,7 +159,7 @@ func (s *Service) Pong(ctx context.Context, p *genregistry.PongPayload) error {
 // an empty list when the catalog is empty.
 // **Validates: Requirements 6.1, 6.2, 6.3**
 func (s *Service) ListToolsets(ctx context.Context, p *genregistry.ListToolsetsPayload) (*genregistry.ListToolsetsResult, error) {
-	toolsets, err := s.store.ListToolsets(ctx, p.Tags)
+	toolsets, err := s.catalog.ListToolsets(ctx, p.Tags)
 	if err != nil {
 		return nil, fmt.Errorf("list toolsets: %w", err)
 	}
@@ -216,9 +191,9 @@ func toolsetToInfo(ts *genregistry.Toolset) *genregistry.ToolsetInfo {
 // the toolset doesn't exist.
 // **Validates: Requirements 7.1, 7.2**
 func (s *Service) GetToolset(ctx context.Context, p *genregistry.GetToolsetPayload) (*genregistry.Toolset, error) {
-	toolset, err := s.store.GetToolset(ctx, p.Name)
+	toolset, err := s.catalog.GetToolset(ctx, p.Name)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
+		if errors.Is(err, errToolsetNotFound) {
 			return nil, genregistry.MakeNotFound(fmt.Errorf("toolset %q not found", p.Name))
 		}
 		return nil, fmt.Errorf("get toolset: %w", err)
@@ -230,7 +205,7 @@ func (s *Service) GetToolset(ctx context.Context, p *genregistry.GetToolsetPaylo
 // Returns matching toolsets or an empty list when no matches are found.
 // **Validates: Requirements 8.1, 8.2**
 func (s *Service) Search(ctx context.Context, p *genregistry.SearchPayload) (*genregistry.SearchResult, error) {
-	toolsets, err := s.store.SearchToolsets(ctx, p.Query)
+	toolsets, err := s.catalog.SearchToolsets(ctx, p.Query)
 	if err != nil {
 		return nil, fmt.Errorf("search toolsets: %w", err)
 	}
@@ -250,9 +225,9 @@ func (s *Service) Search(ctx context.Context, p *genregistry.SearchPayload) (*ge
 // creates the per-call result stream, and publishes the request to the toolset stream.
 func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) (*genregistry.CallToolResult, error) {
 	// 1. Get the toolset to validate the tool exists and get its schema.
-	toolset, err := s.store.GetToolset(ctx, p.Toolset)
+	toolset, err := s.catalog.GetToolset(ctx, p.Toolset)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
+		if errors.Is(err, errToolsetNotFound) {
 			return nil, genregistry.MakeNotFound(fmt.Errorf("toolset %q not found", p.Toolset))
 		}
 		return nil, fmt.Errorf("get toolset: %w", err)
@@ -271,7 +246,7 @@ func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) 
 	}
 
 	// 3. Validate payload against tool's payload schema.
-	if err := validatePayloadJSONAgainstSchema(p.PayloadJSON, tool.PayloadSchema); err != nil {
+	if err := s.validator.ValidatePayload(tool.PayloadSchema, p.PayloadJSON); err != nil {
 		return nil, genregistry.MakeValidationError(fmt.Errorf("payload validation failed: %w", err))
 	}
 
@@ -316,43 +291,8 @@ func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) 
 		return nil, fmt.Errorf("publish tool call: %w", err)
 	}
 	return &genregistry.CallToolResult{
-		ToolUseID:      toolUseID,
-		ResultStreamID: resultStreamID,
+		ToolUseID: toolUseID,
 	}, nil
-}
-
-func validatePayloadJSONAgainstSchema(payloadJSON []byte, schemaBytes []byte) error {
-	if len(schemaBytes) == 0 {
-		return nil // No schema to validate against
-	}
-
-	// Unmarshal the schema JSON.
-	var schemaDoc any
-	if err := json.Unmarshal(schemaBytes, &schemaDoc); err != nil {
-		return fmt.Errorf("unmarshal schema: %w", err)
-	}
-
-	var payloadDoc any
-	if err := json.Unmarshal(payloadJSON, &payloadDoc); err != nil {
-		return fmt.Errorf("unmarshal payload: %w", err)
-	}
-
-	// Compile the schema.
-	c := jsonschema.NewCompiler()
-	if err := c.AddResource("schema.json", schemaDoc); err != nil {
-		return fmt.Errorf("add schema resource: %w", err)
-	}
-	schema, err := c.Compile("schema.json")
-	if err != nil {
-		return fmt.Errorf("compile schema: %w", err)
-	}
-
-	// Validate the payload.
-	if err := schema.Validate(payloadDoc); err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // toolUseIDForCall returns the stable transport identity for a registry-routed

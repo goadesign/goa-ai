@@ -1,10 +1,16 @@
 // Package registry provides the internal tool registry service implementation.
+//
+// This file owns distributed provider liveness. Catalog membership is the
+// authoritative source of which toolsets participate in health tracking, and
+// shared health records are scoped to the current registration epoch so a
+// same-name re-registration cannot inherit stale health from a prior provider.
 package registry
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,10 +28,10 @@ type (
 	// enabling fast failure instead of timeouts when all providers are unhealthy.
 	//
 	// The tracker uses two Pulse replicated maps:
-	// 1. A registry map that tracks which toolsets are registered (for cross-node coordination)
-	// 2. A health map that stores the last pong timestamp for each toolset
+	// 1. A catalog map that stores registered toolsets (for cross-node coordination)
+	// 2. A health map that stores registration-scoped pong records for each toolset
 	//
-	// All nodes subscribe to the registry map. When a toolset is registered/unregistered,
+	// All nodes subscribe to the catalog map. When a toolset is registered/unregistered,
 	// all nodes see the change and start/stop their distributed ticker participation.
 	// The distributed ticker ensures only one node sends pings at a time, with automatic
 	// failover if that node crashes.
@@ -39,20 +45,22 @@ type (
 		//     Healthy=false with LastPong unset.
 		Health(toolset string) (ToolsetHealth, error)
 
-		// RecordPong records a pong response for a toolset.
-		// This updates the last pong timestamp in the shared health map.
-		RecordPong(ctx context.Context, toolset string) error
+		// RecordPong records a pong response for a toolset when the pong matches
+		// the current catalog registration epoch.
+		RecordPong(ctx context.Context, toolset string, pingID string) error
 
 		// IsHealthy returns whether a toolset has healthy providers.
 		// A toolset is healthy if a pong was received within the staleness threshold.
 		IsHealthy(toolset string) bool
 
-		// StartPingLoop registers a toolset for health tracking across all nodes.
-		// All nodes will participate in the distributed ticker for this toolset.
+		// StartPingLoop ensures this node participates in health tracking for a
+		// catalog-registered toolset. Cross-node participation is derived from the
+		// shared catalog, not from a second membership index.
 		StartPingLoop(ctx context.Context, toolset string) error
 
-		// StopPingLoop unregisters a toolset from health tracking across all nodes.
-		// All nodes will stop their ticker participation for this toolset.
+		// StopPingLoop stops local health tracking participation for an
+		// unregistered toolset and clears its shared health state. Other nodes stop
+		// via catalog change propagation.
 		StopPingLoop(ctx context.Context, toolset string)
 
 		// Close stops all ping loops and releases resources.
@@ -82,8 +90,9 @@ type (
 
 	healthTracker struct {
 		streamManager       StreamManager
-		healthMap           *rmap.Map // stores last pong timestamps
-		registryMap         *rmap.Map // tracks registered toolsets for cross-node coordination
+		catalog             *toolsetCatalog
+		healthMap           *rmap.Map // stores registration-scoped health records
+		catalogMap          *rmap.Map // stores registered toolsets for cross-node coordination
 		poolNode            *pool.Node
 		pingInterval        time.Duration
 		missedPingThreshold int
@@ -101,6 +110,14 @@ type (
 		closeOnce sync.Once
 		closeCh   chan struct{}
 	}
+
+	// healthRecord is the shared liveness state for a toolset registration.
+	// RegistrationToken ties the pong to the current catalog entry so same-name
+	// re-registration does not inherit stale health from a previous provider.
+	healthRecord struct {
+		RegistrationToken string `json:"registration_token"`
+		LastPongUnixNano  int64  `json:"last_pong_unix_nano"`
+	}
 )
 
 const (
@@ -110,8 +127,7 @@ const (
 	// before marking a toolset as unhealthy.
 	DefaultMissedPingThreshold = 3
 
-	healthKeyPrefix   = "registry:health:"
-	registryKeyPrefix = "registry:toolsets:"
+	healthKeyPrefix = "registry:health:"
 )
 
 // WithPingInterval sets the interval between health check pings.
@@ -129,26 +145,27 @@ func WithMissedPingThreshold(n int) HealthTrackerOption {
 	}
 }
 
+// WithHealthLogger sets the logger used for health-transition and ping errors.
 func WithHealthLogger(l telemetry.Logger) HealthTrackerOption {
 	return func(o *healthTrackerOptions) {
 		o.logger = l
 	}
 }
 
-// NewHealthTracker creates a new HealthTracker.
-// streamManager is used to publish ping messages to toolset streams.
-// healthMap is the Pulse replicated map for storing health state (last pong timestamps).
-// registryMap is the Pulse replicated map for tracking registered toolsets across nodes.
-// node is the Pulse pool node for creating distributed tickers.
-func NewHealthTracker(streamManager StreamManager, healthMap, registryMap *rmap.Map, node *pool.Node, opts ...HealthTrackerOption) (HealthTracker, error) {
+// NewHealthTracker creates a new distributed health tracker.
+//
+// The tracker derives toolset participation from the shared catalog map, stores
+// registration-scoped health in the shared health map, and uses a Pulse pool
+// ticker so only one node in the cluster publishes pings at a time.
+func NewHealthTracker(streamManager StreamManager, healthMap, catalogMap *rmap.Map, node *pool.Node, opts ...HealthTrackerOption) (HealthTracker, error) {
 	if streamManager == nil {
 		return nil, fmt.Errorf("stream manager is required")
 	}
 	if healthMap == nil {
 		return nil, fmt.Errorf("health map is required for distributed health tracking")
 	}
-	if registryMap == nil {
-		return nil, fmt.Errorf("registry map is required for cross-node coordination")
+	if catalogMap == nil {
+		return nil, fmt.Errorf("catalog map is required for cross-node coordination")
 	}
 	if node == nil {
 		return nil, fmt.Errorf("pool node is required for distributed tickers")
@@ -171,14 +188,15 @@ func NewHealthTracker(streamManager StreamManager, healthMap, registryMap *rmap.
 	// This gives providers enough time to respond before being marked unhealthy.
 	stalenessThreshold := time.Duration(options.missedPingThreshold+1) * options.pingInterval
 
-	// Subscribe before spawning goroutine to avoid race: if a registry event
+	// Subscribe before spawning goroutine to avoid race: if a catalog event
 	// arrives before the goroutine calls Subscribe(), the event is missed.
-	registryEvents := registryMap.Subscribe()
+	catalogEvents := catalogMap.Subscribe()
 
 	h := &healthTracker{
 		streamManager:        streamManager,
+		catalog:              newToolsetCatalog(catalogMap),
 		healthMap:            healthMap,
-		registryMap:          registryMap,
+		catalogMap:           catalogMap,
 		poolNode:             node,
 		pingInterval:         options.pingInterval,
 		missedPingThreshold:  options.missedPingThreshold,
@@ -191,26 +209,57 @@ func NewHealthTracker(streamManager StreamManager, healthMap, registryMap *rmap.
 		closeCh:              make(chan struct{}),
 	}
 
-	// Start watching for registry changes from other nodes.
-	go h.watchRegistryChanges(registryEvents)
+	// Start watching for catalog changes from other nodes.
+	go h.watchCatalogChanges(catalogEvents)
 
-	// Sync with existing registered toolsets.
+	// Sync with existing catalog entries.
 	h.syncExistingToolsets()
 
 	return h, nil
 }
 
-func (h *healthTracker) RecordPong(ctx context.Context, toolset string) error {
+// RecordPong implements HealthTracker.
+func (h *healthTracker) RecordPong(ctx context.Context, toolset string, pingID string) error {
+	registrationToken, err := h.registrationToken(ctx, toolset)
+	if err != nil {
+		if errors.Is(err, errToolsetNotFound) {
+			return nil
+		}
+		return fmt.Errorf("resolve registration token: %w", err)
+	}
+	if !pingBelongsToRegistration(pingID, registrationToken) {
+		return nil
+	}
+
 	key := healthKey(toolset)
-	ts := time.Now().UnixNano()
-	_, err := h.healthMap.Set(ctx, key, strconv.FormatInt(ts, 10))
+	record := healthRecord{
+		RegistrationToken: registrationToken,
+		LastPongUnixNano:  time.Now().UnixNano(),
+	}
+	payload, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("marshal health record: %w", err)
+	}
+	_, err = h.healthMap.Set(ctx, key, string(payload))
 	if err != nil {
 		return fmt.Errorf("record pong: %w", err)
 	}
 	return nil
 }
 
+// Health implements HealthTracker.
 func (h *healthTracker) Health(toolset string) (ToolsetHealth, error) {
+	registrationToken, err := h.registrationToken(context.Background(), toolset)
+	if err != nil {
+		if errors.Is(err, errToolsetNotFound) {
+			return ToolsetHealth{
+				Healthy:            false,
+				StalenessThreshold: h.stalenessThreshold,
+			}, nil
+		}
+		return ToolsetHealth{}, fmt.Errorf("resolve registration token: %w", err)
+	}
+
 	key := healthKey(toolset)
 	val, ok := h.healthMap.Get(key)
 	if !ok {
@@ -219,11 +268,17 @@ func (h *healthTracker) Health(toolset string) (ToolsetHealth, error) {
 			StalenessThreshold: h.stalenessThreshold,
 		}, nil
 	}
-	ts, err := strconv.ParseInt(val, 10, 64)
+	record, err := parseHealthRecord(val)
 	if err != nil {
 		return ToolsetHealth{}, fmt.Errorf("parse last pong timestamp for %q: %w", toolset, err)
 	}
-	lastPong := time.Unix(0, ts)
+	if record.RegistrationToken != registrationToken {
+		return ToolsetHealth{
+			Healthy:            false,
+			StalenessThreshold: h.stalenessThreshold,
+		}, nil
+	}
+	lastPong := time.Unix(0, record.LastPongUnixNano)
 	age := time.Since(lastPong)
 	healthy := age <= h.stalenessThreshold
 	return ToolsetHealth{
@@ -234,6 +289,7 @@ func (h *healthTracker) Health(toolset string) (ToolsetHealth, error) {
 	}, nil
 }
 
+// IsHealthy implements HealthTracker.
 func (h *healthTracker) IsHealthy(toolset string) bool {
 	hh, err := h.Health(toolset)
 	if err != nil {
@@ -242,15 +298,8 @@ func (h *healthTracker) IsHealthy(toolset string) bool {
 	return hh.Healthy
 }
 
+// StartPingLoop implements HealthTracker.
 func (h *healthTracker) StartPingLoop(ctx context.Context, toolset string) error {
-	// Add to registry map - this notifies all nodes.
-	key := registryKey(toolset)
-	ts := time.Now().UnixNano()
-	_, err := h.registryMap.Set(ctx, key, strconv.FormatInt(ts, 10))
-	if err != nil {
-		return fmt.Errorf("register toolset: %w", err)
-	}
-
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	// (Re)start local ticker.
@@ -273,13 +322,8 @@ func (h *healthTracker) StartPingLoop(ctx context.Context, toolset string) error
 	return h.startLocalTickerLocked(toolset)
 }
 
+// StopPingLoop implements HealthTracker.
 func (h *healthTracker) StopPingLoop(ctx context.Context, toolset string) {
-	// Remove from registry map - this notifies all nodes.
-	key := registryKey(toolset)
-	if _, err := h.registryMap.Delete(ctx, key); err != nil {
-		h.logger.Error(ctx, "unregister toolset failed", "component", "tool-registry-health", "toolset", toolset, "key", key, "err", err)
-	}
-
 	// Clean up health state.
 	healthK := healthKey(toolset)
 	if _, err := h.healthMap.Delete(ctx, healthK); err != nil {
@@ -295,6 +339,7 @@ func (h *healthTracker) StopPingLoop(ctx context.Context, toolset string) {
 	h.stateMu.Unlock()
 }
 
+// Close implements HealthTracker.
 func (h *healthTracker) Close() error {
 	h.closeOnce.Do(func() {
 		close(h.closeCh)
@@ -321,34 +366,34 @@ func (h *healthTracker) Close() error {
 	return nil
 }
 
-// watchRegistryChanges reacts to registry map changes from other nodes.
-// The events channel must be obtained via registryMap.Subscribe() before
+// watchCatalogChanges reacts to catalog map changes from other nodes.
+// The events channel must be obtained via catalogMap.Subscribe() before
 // calling this method to avoid missing events that arrive between tracker
 // construction and goroutine startup.
-func (h *healthTracker) watchRegistryChanges(events <-chan rmap.EventKind) {
-	defer h.registryMap.Unsubscribe(events)
+func (h *healthTracker) watchCatalogChanges(events <-chan rmap.EventKind) {
+	defer h.catalogMap.Unsubscribe(events)
 
 	for {
 		select {
 		case <-h.closeCh:
 			return
 		case <-events:
-			h.syncWithRegistry()
+			h.syncWithCatalog()
 		}
 	}
 }
 
 // syncExistingToolsets syncs with toolsets that were registered before this node started.
 func (h *healthTracker) syncExistingToolsets() {
-	h.syncWithRegistry()
+	h.syncWithCatalog()
 }
 
-// syncWithRegistry ensures local tickers match the registry map state.
-func (h *healthTracker) syncWithRegistry() {
-	// Get all registered toolsets from the registry map.
+// syncWithCatalog ensures local tickers match the catalog state.
+func (h *healthTracker) syncWithCatalog() {
+	// Get all registered toolsets from the catalog map.
 	registered := make(map[string]bool)
-	for _, key := range h.registryMap.Keys() {
-		toolset := toolsetFromRegistryKey(key)
+	for _, key := range h.catalogMap.Keys() {
+		toolset := toolsetFromCatalogKey(key)
 		if toolset != "" {
 			registered[toolset] = true
 		}
@@ -375,6 +420,8 @@ func (h *healthTracker) syncWithRegistry() {
 	}
 }
 
+// startLocalTickerLocked creates this node's distributed ticker participant and
+// launches the long-lived ping loop for the toolset.
 func (h *healthTracker) startLocalTickerLocked(toolset string) error {
 	if _, ok := h.tickers[toolset]; ok {
 		return nil
@@ -418,21 +465,28 @@ func (h *healthTracker) stopLocalTickerLocked(toolset string) {
 	}
 }
 
+// healthKey returns the shared health-map key for a toolset.
 func healthKey(toolset string) string {
 	return healthKeyPrefix + toolset
 }
 
-func registryKey(toolset string) string {
-	return registryKeyPrefix + toolset
-}
-
-func toolsetFromRegistryKey(key string) string {
-	if !strings.HasPrefix(key, registryKeyPrefix) {
+// toolsetFromCatalogKey extracts the toolset name from a catalog key.
+func toolsetFromCatalogKey(key string) string {
+	if !strings.HasPrefix(key, toolsetCatalogKeyPrefix) {
 		return ""
 	}
-	return strings.TrimPrefix(key, registryKeyPrefix)
+	return strings.TrimPrefix(key, toolsetCatalogKeyPrefix)
 }
 
+// registrationToken resolves the current catalog-backed liveness epoch for a
+// toolset. The catalog owns this opaque token so re-registration rotates epoch
+// identity even when the human-readable registration timestamp collides.
+func (h *healthTracker) registrationToken(ctx context.Context, toolset string) (string, error) {
+	return h.catalog.RegistrationToken(ctx, toolset)
+}
+
+// runPingLoop emits periodic pings for the distributed ticker winner and logs
+// state transitions before each ping publish.
 func (h *healthTracker) runPingLoop(ctx context.Context, toolset string, ticker *pool.Ticker) {
 	for {
 		select {
@@ -445,8 +499,25 @@ func (h *healthTracker) runPingLoop(ctx context.Context, toolset string, ticker 
 	}
 }
 
+// sendPing publishes one health ping bound to the current registration epoch.
 func (h *healthTracker) sendPing(ctx context.Context, toolset string) {
-	pingID := uuid.New().String()
+	registrationToken, err := h.registrationToken(ctx, toolset)
+	if err != nil {
+		if errors.Is(err, errToolsetNotFound) {
+			return
+		}
+		h.logger.Error(
+			context.Background(),
+			"resolve ping registration token failed",
+			"event", "resolve_ping_registration_token_failed",
+			"component", "tool-registry-health",
+			"toolset", toolset,
+			"err", err,
+		)
+		return
+	}
+
+	pingID := newPingID(registrationToken)
 	msg := toolregistry.NewPingMessage(pingID)
 	if err := h.streamManager.PublishToolCall(ctx, toolset, msg); err != nil {
 		h.logger.Error(
@@ -461,24 +532,45 @@ func (h *healthTracker) sendPing(ctx context.Context, toolset string) {
 	}
 }
 
+// observeHealth samples the current derived health state and forwards it to the
+// transition logger.
 func (h *healthTracker) observeHealth(ctx context.Context, toolset string) {
-	key := healthKey(toolset)
-	val, ok := h.healthMap.Get(key)
-	if !ok {
+	health, err := h.Health(toolset)
+	if err != nil {
+		h.logger.Error(ctx, "read toolset health failed", "component", "tool-registry-health", "toolset", toolset, "err", err)
 		h.noteHealth(ctx, toolset, false, 0, "missing_health_entry")
 		return
 	}
-	ts, err := strconv.ParseInt(val, 10, 64)
-	if err != nil {
-		h.logger.Error(ctx, "parse pong timestamp failed", "component", "tool-registry-health", "toolset", toolset, "value", val, "err", err)
-		h.noteHealth(ctx, toolset, false, 0, "invalid_health_timestamp")
+	if health.LastPong.IsZero() {
+		h.noteHealth(ctx, toolset, false, 0, "missing_health_entry")
 		return
 	}
-	lastPong := time.Unix(0, ts)
-	age := time.Since(lastPong)
-	h.noteHealth(ctx, toolset, age <= h.stalenessThreshold, ts, "ok")
+	h.noteHealth(ctx, toolset, health.Healthy, health.LastPong.UnixNano(), "ok")
 }
 
+// parseHealthRecord decodes the shared health-map payload.
+func parseHealthRecord(raw string) (healthRecord, error) {
+	var record healthRecord
+	if err := json.Unmarshal([]byte(raw), &record); err != nil {
+		return healthRecord{}, err
+	}
+	return record, nil
+}
+
+// newPingID returns a ping identifier that carries the active registration
+// token so pong handling can reject stale registrations.
+func newPingID(registrationToken string) string {
+	return registrationToken + "/" + uuid.New().String()
+}
+
+// pingBelongsToRegistration reports whether the ponged ping ID belongs to the
+// current registration epoch.
+func pingBelongsToRegistration(pingID string, registrationToken string) bool {
+	return strings.HasPrefix(pingID, registrationToken+"/")
+}
+
+// noteHealth logs health transitions while suppressing duplicate observations
+// that would otherwise spam the registry logs on every ping tick.
 func (h *healthTracker) noteHealth(ctx context.Context, toolset string, healthy bool, lastPongNano int64, reason string) {
 	h.stateMu.Lock()
 	defer h.stateMu.Unlock()

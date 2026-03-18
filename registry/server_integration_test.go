@@ -11,7 +11,6 @@ import (
 	registrypb "goa.design/goa-ai/registry/gen/grpc/registry/pb"
 	grpcserver "goa.design/goa-ai/registry/gen/grpc/registry/server"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
-	"goa.design/goa-ai/registry/store/memory"
 	goa "goa.design/goa/v3/pkg"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -50,6 +49,26 @@ func TestServerIntegration(t *testing.T) {
 
 	client := startServerAndClient(t, reg)
 
+	t.Run("empty discovery succeeds", func(t *testing.T) {
+		listResult, err := client.ListToolsets(ctx, &genregistry.ListToolsetsPayload{})
+		if err != nil {
+			t.Fatalf("list empty registry: %v", err)
+		}
+		if len(listResult.Toolsets) != 0 {
+			t.Errorf("expected 0 toolsets, got %d", len(listResult.Toolsets))
+		}
+
+		searchResult, err := client.Search(ctx, &genregistry.SearchPayload{
+			Query: "missing",
+		})
+		if err != nil {
+			t.Fatalf("search empty registry: %v", err)
+		}
+		if len(searchResult.Toolsets) != 0 {
+			t.Errorf("expected 0 search results, got %d", len(searchResult.Toolsets))
+		}
+	})
+
 	t.Run("register and list", func(t *testing.T) {
 		desc := "Data processing tools"
 		rawVersion := "1.0.0"
@@ -73,8 +92,8 @@ func TestServerIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("register: %v", err)
 		}
-		if regResult.StreamID == "" {
-			t.Error("expected non-empty stream ID")
+		if regResult.RegisteredAt == "" {
+			t.Error("expected non-empty registration timestamp")
 		}
 
 		// List toolsets.
@@ -210,16 +229,11 @@ func TestServerMultiNodeSync(t *testing.T) {
 	rdb := getRedis(t)
 	ctx := context.Background()
 
-	// Create a shared store for both nodes.
-	// In production, this would be a MongoDB store or similar.
-	sharedStore := memory.New()
-
-	// Create two registry nodes with the same name (cluster) and shared store.
+	// Create two registry nodes with the same name (cluster) and shared Redis-backed catalog.
 	clusterName := "cluster-test-" + t.Name()
 
 	reg1, err := New(ctx, Config{
 		Redis:               rdb,
-		Store:               sharedStore,
 		Name:                clusterName,
 		PingInterval:        50 * time.Millisecond,
 		MissedPingThreshold: 2,
@@ -232,7 +246,6 @@ func TestServerMultiNodeSync(t *testing.T) {
 
 	reg2, err := New(ctx, Config{
 		Redis:               rdb,
-		Store:               sharedStore,
 		Name:                clusterName,
 		PingInterval:        50 * time.Millisecond,
 		MissedPingThreshold: 2,
@@ -265,7 +278,7 @@ func TestServerMultiNodeSync(t *testing.T) {
 		t.Fatalf("register on node 1: %v", err)
 	}
 
-	// Query from node 2 - should see the toolset (shared store).
+	// Query from node 2 - should see the toolset (shared catalog).
 	listResult, err := client2.ListToolsets(ctx, &genregistry.ListToolsetsPayload{})
 	if err != nil {
 		t.Fatalf("list from node 2: %v", err)
@@ -282,29 +295,14 @@ func TestServerMultiNodeSync(t *testing.T) {
 		t.Fatalf("unregister from node 2: %v", err)
 	}
 
-	// Query from node 1 - should be gone (shared store).
-	// Note: When the toolsets array is empty, gRPC/protobuf omits it from the wire
-	// format, but Goa's decoder expects it (Required field). This causes a decoding
-	// error that we treat as "empty list" for this test.
+	// Query from node 1 - should be gone (shared catalog).
 	listResult, err = client1.ListToolsets(ctx, &genregistry.ListToolsetsPayload{})
 	if err != nil {
-		// The "toolsets is missing from message" error occurs when the response
-		// has no toolsets (empty slice). This is expected after unregister.
-		if isEmptyListError(err) {
-			return // Success - no toolsets
-		}
 		t.Fatalf("list from node 1: %v", err)
 	}
 	if len(listResult.Toolsets) != 0 {
 		t.Errorf("expected 0 toolsets on node 1 after unregister, got %d", len(listResult.Toolsets))
 	}
-}
-
-// isEmptyListError checks if the error is due to an empty toolsets array
-// being omitted from the gRPC response (protobuf doesn't send empty arrays).
-func isEmptyListError(err error) bool {
-	return err != nil && (err.Error() == `"toolsets" is missing from message` ||
-		err.Error() == `"toolsets" is missing`)
 }
 
 // TestServerValidationErrors tests that the server properly returns validation
