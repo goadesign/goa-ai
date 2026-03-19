@@ -63,6 +63,8 @@ func (r *Runtime) splitConfirmationCalls(ctx context.Context, base *planner.Plan
 	return toExecute, toConfirm, nil
 }
 
+// confirmationPlan is the runtime-owned confirmation render plan for a single
+// tool call.
 type confirmationPlan struct {
 	Title        string
 	Prompt       string
