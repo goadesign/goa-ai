@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"goa.design/goa-ai/registry/store/memory"
 	"goa.design/pulse/pool"
 )
 
@@ -17,37 +16,6 @@ func TestNewRegistry(t *testing.T) {
 	// Create registry with default config.
 	reg, err := New(ctx, Config{
 		Redis:               rdb,
-		Name:                "test-" + t.Name(),
-		PingInterval:        50 * time.Millisecond,
-		MissedPingThreshold: 2,
-		PoolNodeOptions:     testNodeOpts(),
-	})
-	if err != nil {
-		t.Fatalf("failed to create registry: %v", err)
-	}
-	defer func() {
-		if err := reg.Close(ctx); err != nil {
-			t.Errorf("failed to close registry: %v", err)
-		}
-	}()
-
-	// Verify service is accessible.
-	if reg.Service() == nil {
-		t.Error("Service() should return non-nil service")
-	}
-}
-
-// TestNewRegistryWithCustomStore verifies that a custom store can be injected.
-func TestNewRegistryWithCustomStore(t *testing.T) {
-	rdb := getRedis(t)
-	ctx := context.Background()
-
-	// Create a custom store.
-	customStore := memory.New()
-
-	reg, err := New(ctx, Config{
-		Redis:               rdb,
-		Store:               customStore,
 		Name:                "test-" + t.Name(),
 		PingInterval:        50 * time.Millisecond,
 		MissedPingThreshold: 2,

@@ -19,14 +19,13 @@ import (
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	mockpulse "goa.design/goa-ai/features/stream/pulse/clients/pulse/mocks"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
-	"goa.design/goa-ai/registry/store/memory"
 	"goa.design/goa-ai/runtime/toolregistry"
 )
 
 // TestRegistrationIdempotence verifies Property 2: Registration idempotence.
 // **Feature: internal-tool-registry, Property 2: Registration idempotence**
 // *For any* toolset, registering it twice with updated metadata should result in
-// the second metadata being stored, and the stream ID should remain the same.
+// the second metadata being stored, with the refreshed registration timestamp persisted.
 // **Validates: Requirements 2.2, 2.5**
 func TestRegistrationIdempotence(t *testing.T) {
 	rdb := getRedis(t)
@@ -43,20 +42,12 @@ func TestRegistrationIdempotence(t *testing.T) {
 		func(tc registrationIdempotenceTestCase) bool {
 			ctx := context.Background()
 
-			// Create a memory store.
-			store := memory.New()
-
 			// Create mock dependencies.
 			mockSM := newMockStreamManagerForService()
 			mockHT := newMockHealthTracker()
 
 			// Create the service.
-			svc, err := NewService(ServiceOptions{
-				Store:         store,
-				StreamManager: mockSM,
-				HealthTracker: mockHT,
-				PulseClient:   pulseClient,
-			})
+			svc, err := newTestServiceForServiceTests(pulseClient, mockSM, mockHT)
 			if err != nil {
 				return false
 			}
@@ -66,17 +57,16 @@ func TestRegistrationIdempotence(t *testing.T) {
 			if err != nil {
 				return false
 			}
-			firstStreamID := result1.StreamID
+			if result1.RegisteredAt == "" {
+				return false
+			}
 
 			// Second registration with updated metadata.
 			result2, err := svc.Register(ctx, tc.secondPayload)
 			if err != nil {
 				return false
 			}
-			secondStreamID := result2.StreamID
-
-			// Stream ID should remain the same.
-			if firstStreamID != secondStreamID {
+			if result2.RegisteredAt == "" {
 				return false
 			}
 
@@ -101,6 +91,9 @@ func TestRegistrationIdempotence(t *testing.T) {
 			if len(retrieved.Tools) != len(tc.secondPayload.Tools) {
 				return false
 			}
+			if retrieved.RegisteredAt != result2.RegisteredAt {
+				return false
+			}
 
 			return true
 		},
@@ -108,6 +101,22 @@ func TestRegistrationIdempotence(t *testing.T) {
 	))
 
 	properties.TestingRun(t)
+}
+
+func newTestServiceForServiceTests(pulseClient clientspulse.Client, streamManager StreamManager, healthTracker HealthTracker, seed ...*genregistry.Toolset) (*Service, error) {
+	catalog := newToolsetCatalog(newTestCatalogMap())
+	ctx := context.Background()
+	for _, toolset := range seed {
+		if err := catalog.SaveToolset(ctx, toolset); err != nil {
+			return nil, err
+		}
+	}
+	return newService(serviceOptions{
+		catalog:       catalog,
+		StreamManager: streamManager,
+		HealthTracker: healthTracker,
+		PulseClient:   pulseClient,
+	})
 }
 
 // registrationIdempotenceTestCase represents a test case for registration idempotence.
@@ -285,23 +294,12 @@ func TestCallToolPayloadValidation(t *testing.T) {
 		func(tc payloadValidationTestCase) bool {
 			ctx := context.Background()
 
-			// Create a memory store and save the toolset.
-			store := memory.New()
-			if err := store.SaveToolset(ctx, tc.toolset); err != nil {
-				return false
-			}
-
 			// Create mock dependencies.
 			mockSM := newMockStreamManagerForService()
 			mockHT := newMockHealthTracker() // Always healthy
 
 			// Create the service.
-			svc, err := NewService(ServiceOptions{
-				Store:         store,
-				StreamManager: mockSM,
-				HealthTracker: mockHT,
-				PulseClient:   pulseClient,
-			})
+			svc, err := newTestServiceForServiceTests(pulseClient, mockSM, mockHT, tc.toolset)
 			if err != nil {
 				return false
 			}
@@ -335,6 +333,47 @@ func TestCallToolPayloadValidation(t *testing.T) {
 	properties.TestingRun(t)
 }
 
+func TestCallToolRejectsToolsetWithoutPayloadSchema(t *testing.T) {
+	ctx := context.Background()
+	pulseClient := mockpulse.NewClient(t)
+	resultStream := mockpulse.NewStream(t)
+	pulseClient.AddStream(func(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
+		return resultStream, nil
+	})
+	resultStream.AddAdd(func(ctx context.Context, event string, payload []byte) (string, error) {
+		return "1-0", nil
+	})
+
+	toolset := &genregistry.Toolset{
+		Name: "toolset-1",
+		Tools: []*genregistry.ToolSchema{
+			{
+				Name:         "lookup",
+				ResultSchema: []byte(`{"type":"object"}`),
+			},
+		},
+		RegisteredAt: "2024-01-15T10:30:00Z",
+	}
+
+	svc, err := newTestServiceForServiceTests(pulseClient, newMockStreamManagerForService(), newMockHealthTracker(), toolset)
+	require.NoError(t, err)
+
+	_, err = svc.CallTool(ctx, &genregistry.CallToolPayload{
+		Toolset:     "toolset-1",
+		Tool:        "lookup",
+		PayloadJSON: []byte(`{"query":"ok"}`),
+		Meta: &genregistry.ToolCallMeta{
+			RunID:     "run-1",
+			SessionID: "session-1",
+		},
+	})
+	require.Error(t, err)
+
+	var svcErr *goa.ServiceError
+	require.ErrorAs(t, err, &svcErr)
+	require.Equal(t, "validation_error", svcErr.Name)
+}
+
 func TestCallToolReusesLogicalToolCallIdentity(t *testing.T) {
 	ctx := context.Background()
 	pulseClient := mockpulse.NewClient(t)
@@ -348,8 +387,7 @@ func TestCallToolReusesLogicalToolCallIdentity(t *testing.T) {
 		})
 	}
 
-	store := memory.New()
-	require.NoError(t, store.SaveToolset(ctx, &genregistry.Toolset{
+	toolset := &genregistry.Toolset{
 		Name: "toolset-1",
 		Tools: []*genregistry.ToolSchema{
 			{
@@ -358,16 +396,11 @@ func TestCallToolReusesLogicalToolCallIdentity(t *testing.T) {
 				ResultSchema:  []byte(`{"type":"object"}`),
 			},
 		},
-		StreamID: "toolset:toolset-1:requests",
-	}))
+		RegisteredAt: "2024-01-15T10:30:00Z",
+	}
 
 	streams := newMockStreamManagerForService()
-	svc, err := NewService(ServiceOptions{
-		Store:         store,
-		StreamManager: streams,
-		HealthTracker: newMockHealthTracker(),
-		PulseClient:   pulseClient,
-	})
+	svc, err := newTestServiceForServiceTests(pulseClient, streams, newMockHealthTracker(), toolset)
 	require.NoError(t, err)
 
 	toolCallID := "tool-call-1"
@@ -391,8 +424,6 @@ func TestCallToolReusesLogicalToolCallIdentity(t *testing.T) {
 
 	require.Equal(t, toolCallID, first.ToolUseID)
 	require.Equal(t, toolCallID, second.ToolUseID)
-	require.Equal(t, toolregistry.ResultStreamID(toolCallID), first.ResultStreamID)
-	require.Equal(t, first.ResultStreamID, second.ResultStreamID)
 	require.Len(t, streams.messages["toolset-1"], 2)
 	require.Equal(t, toolCallID, streams.messages["toolset-1"][0].ToolUseID)
 	require.Equal(t, toolCallID, streams.messages["toolset-1"][1].ToolUseID)
@@ -431,7 +462,6 @@ func genPayloadValidationTestCase() gopter.Gen {
 			toolset := &genregistry.Toolset{
 				Name:         toolsetName,
 				Tools:        []*genregistry.ToolSchema{tool},
-				StreamID:     "toolset:" + toolsetName + ":requests",
 				RegisteredAt: "2024-01-15T10:30:00Z",
 			}
 
@@ -524,8 +554,9 @@ func genInvalidPayloadForSchema(schemaType string) gopter.Gen {
 
 // mockStreamManagerForService is a mock StreamManager for service tests.
 type mockStreamManagerForService struct {
-	mu       sync.RWMutex
-	messages map[string][]toolregistry.ToolCallMessage
+	mu              sync.RWMutex
+	createdToolsets []string
+	messages        map[string][]toolregistry.ToolCallMessage
 }
 
 func newMockStreamManagerForService() *mockStreamManagerForService {
@@ -535,6 +566,9 @@ func newMockStreamManagerForService() *mockStreamManagerForService {
 }
 
 func (m *mockStreamManagerForService) GetOrCreateStream(ctx context.Context, toolset string) (clientspulse.Stream, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.createdToolsets = append(m.createdToolsets, toolset)
 	return nil, "mock-stream:" + toolset, nil
 }
 
@@ -555,14 +589,15 @@ var _ StreamManager = (*mockStreamManagerForService)(nil)
 
 // mockHealthTracker is a mock HealthTracker for service tests.
 type mockHealthTracker struct {
-	healthy bool
+	healthy         bool
+	startedToolsets []string
 }
 
 func newMockHealthTracker() *mockHealthTracker {
 	return &mockHealthTracker{healthy: true}
 }
 
-func (m *mockHealthTracker) RecordPong(ctx context.Context, toolset string) error {
+func (m *mockHealthTracker) RecordPong(ctx context.Context, toolset string, pingID string) error {
 	return nil
 }
 
@@ -575,6 +610,7 @@ func (m *mockHealthTracker) IsHealthy(toolset string) bool {
 }
 
 func (m *mockHealthTracker) StartPingLoop(ctx context.Context, toolset string) error {
+	m.startedToolsets = append(m.startedToolsets, toolset)
 	return nil
 }
 
@@ -606,20 +642,12 @@ func TestUnregisterRemovesFromListing(t *testing.T) {
 		func(tc unregisterRemovesFromListingTestCase) bool {
 			ctx := context.Background()
 
-			// Create a memory store.
-			store := memory.New()
-
 			// Create mock dependencies.
 			mockSM := newMockStreamManagerForService()
 			mockHT := newMockHealthTracker()
 
 			// Create the service.
-			svc, err := NewService(ServiceOptions{
-				Store:         store,
-				StreamManager: mockSM,
-				HealthTracker: mockHT,
-				PulseClient:   pulseClient,
-			})
+			svc, err := newTestServiceForServiceTests(pulseClient, mockSM, mockHT)
 			if err != nil {
 				return false
 			}
@@ -752,20 +780,12 @@ func TestInvalidSchemaRejection(t *testing.T) {
 		func(tc invalidSchemaTestCase) bool {
 			ctx := context.Background()
 
-			// Create a memory store.
-			store := memory.New()
-
 			// Create mock dependencies.
 			mockSM := newMockStreamManagerForService()
 			mockHT := newMockHealthTracker()
 
 			// Create the service.
-			svc, err := NewService(ServiceOptions{
-				Store:         store,
-				StreamManager: mockSM,
-				HealthTracker: mockHT,
-				PulseClient:   pulseClient,
-			})
+			svc, err := newTestServiceForServiceTests(pulseClient, mockSM, mockHT)
 			if err != nil {
 				return false
 			}
@@ -791,9 +811,83 @@ func TestInvalidSchemaRejection(t *testing.T) {
 	properties.TestingRun(t)
 }
 
+func TestRegisterRejectsSemanticallyInvalidSchemaWithoutSideEffects(t *testing.T) {
+	ctx := context.Background()
+
+	testCases := []struct {
+		name   string
+		mutate func(*genregistry.ToolSchema)
+	}{
+		{
+			name: "payload schema",
+			mutate: func(tool *genregistry.ToolSchema) {
+				tool.PayloadSchema = []byte(`{"type":"definitely-not-a-json-schema-type"}`)
+			},
+		},
+		{
+			name: "result schema",
+			mutate: func(tool *genregistry.ToolSchema) {
+				tool.ResultSchema = []byte(`{"properties":{"value":{"type":"not-a-real-type"}}}`)
+			},
+		},
+		{
+			name: "sidecar schema",
+			mutate: func(tool *genregistry.ToolSchema) {
+				tool.SidecarSchema = []byte(`{"properties":{"meta":{"type":"not-a-real-type"}}}`)
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			pulseClient := mockpulse.NewClient(t)
+			streams := newMockStreamManagerForService()
+			health := newMockHealthTracker()
+
+			svc, err := newTestServiceForServiceTests(pulseClient, streams, health)
+			require.NoError(t, err)
+
+			payload := validRegisterPayloadForSchemaAdmission("toolset-" + tc.name)
+			tc.mutate(payload.Tools[0])
+
+			_, err = svc.Register(ctx, payload)
+			require.Error(t, err)
+
+			var svcErr *goa.ServiceError
+			require.ErrorAs(t, err, &svcErr)
+			require.Equal(t, "validation_error", svcErr.Name)
+			require.Empty(t, streams.createdToolsets)
+			require.Empty(t, health.startedToolsets)
+
+			list, err := svc.ListToolsets(ctx, &genregistry.ListToolsetsPayload{})
+			require.NoError(t, err)
+			require.Empty(t, list.Toolsets)
+		})
+	}
+}
+
 // invalidSchemaTestCase represents a test case for invalid schema rejection.
 type invalidSchemaTestCase struct {
 	payload *genregistry.RegisterPayload
+}
+
+func validRegisterPayloadForSchemaAdmission(name string) *genregistry.RegisterPayload {
+	description := "schema admission test toolset"
+	version := genregistry.SemVer("1.0.0")
+
+	return &genregistry.RegisterPayload{
+		Name:        name,
+		Description: &description,
+		Version:     &version,
+		Tags:        []string{"schema"},
+		Tools: []*genregistry.ToolSchema{
+			{
+				Name:          "lookup",
+				PayloadSchema: []byte(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`),
+				ResultSchema:  []byte(`{"type":"object","properties":{"value":{"type":"string"}},"required":["value"]}`),
+			},
+		},
+	}
 }
 
 // genInvalidSchemaTestCase generates test cases with invalid tool schemas.
@@ -907,20 +1001,12 @@ func TestUnregisterNonExistentReturnsNotFound(t *testing.T) {
 		func(tc unregisterNonExistentTestCase) bool {
 			ctx := context.Background()
 
-			// Create a memory store.
-			store := memory.New()
-
 			// Create mock dependencies.
 			mockSM := newMockStreamManagerForService()
 			mockHT := newMockHealthTracker()
 
 			// Create the service.
-			svc, err := NewService(ServiceOptions{
-				Store:         store,
-				StreamManager: mockSM,
-				HealthTracker: mockHT,
-				PulseClient:   pulseClient,
-			})
+			svc, err := newTestServiceForServiceTests(pulseClient, mockSM, mockHT)
 			if err != nil {
 				return false
 			}

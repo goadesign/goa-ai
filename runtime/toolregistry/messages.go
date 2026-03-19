@@ -116,6 +116,10 @@ const (
 	// MessageTypePing indicates a health ping message on a toolset stream.
 	MessageTypePing ToolCallMessageType = "ping"
 
+	// ResultEventKey is the Pulse event name used to publish canonical tool result
+	// envelopes to a per-call result stream.
+	ResultEventKey = "result"
+
 	// OutputDeltaEventKey is the Pulse event name used to publish best-effort tool
 	// output delta messages to a per-call result stream.
 	OutputDeltaEventKey = "output_delta"

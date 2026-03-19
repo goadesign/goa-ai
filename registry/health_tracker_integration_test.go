@@ -179,9 +179,7 @@ func TestMultiNodeRegistrationSync(t *testing.T) {
 	defer func() { _ = tracker2.Close() }()
 
 	// Register a toolset on node 1.
-	if err := tracker1.StartPingLoop(ctx, "test-toolset"); err != nil {
-		t.Fatalf("failed to start ping loop: %v", err)
-	}
+	registerCatalogToolset(t, ctx, registryMap, tracker1, "test-toolset")
 
 	// Wait for the registry event and for the peer node to start local ticker
 	// participation for this toolset.
@@ -202,9 +200,92 @@ func TestMultiNodeRegistrationSync(t *testing.T) {
 	}
 
 	// Verify the toolset is in the registry map.
-	_, ok := registryMap.Get("registry:toolsets:test-toolset")
+	_, ok := registryMap.Get(toolsetCatalogKey("test-toolset"))
 	if !ok {
 		t.Error("toolset should be in registry map")
+	}
+}
+
+func TestCatalogRegistrationSyncStartsTickers(t *testing.T) {
+	rdb := getRedis(t)
+	ctx := context.Background()
+
+	healthMap, err := rmap.Join(ctx, "health-catalog-"+t.Name(), rdb)
+	if err != nil {
+		t.Fatalf("failed to create health map: %v", err)
+	}
+	defer healthMap.Close()
+
+	registryMap, err := rmap.Join(ctx, "registry-catalog-"+t.Name(), rdb)
+	if err != nil {
+		t.Fatalf("failed to create registry map: %v", err)
+	}
+	defer registryMap.Close()
+
+	registryEvents := registryMap.Subscribe()
+	defer registryMap.Unsubscribe(registryEvents)
+
+	poolName := "pool-" + t.Name()
+	node1, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
+	if err != nil {
+		t.Fatalf("failed to create node1: %v", err)
+	}
+	defer func() { _ = node1.Close(ctx) }()
+
+	node2, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
+	if err != nil {
+		t.Fatalf("failed to create node2: %v", err)
+	}
+	defer func() { _ = node2.Close(ctx) }()
+
+	mockSM := newMockStreamManager()
+
+	tracker1, err := NewHealthTracker(
+		mockSM,
+		healthMap,
+		registryMap,
+		node1,
+		WithPingInterval(50*time.Millisecond),
+		WithMissedPingThreshold(2),
+	)
+	if err != nil {
+		t.Fatalf("failed to create tracker1: %v", err)
+	}
+	defer func() { _ = tracker1.Close() }()
+
+	tracker2, err := NewHealthTracker(
+		mockSM,
+		healthMap,
+		registryMap,
+		node2,
+		WithPingInterval(50*time.Millisecond),
+		WithMissedPingThreshold(2),
+	)
+	if err != nil {
+		t.Fatalf("failed to create tracker2: %v", err)
+	}
+	defer func() { _ = tracker2.Close() }()
+
+	catalog := newToolsetCatalog(registryMap)
+	requireToolsetName := "catalog-toolset"
+	if err := catalog.SaveToolset(ctx, testCatalogToolset(requireToolsetName, "Catalog registration", []string{"catalog"})); err != nil {
+		t.Fatalf("failed to save catalog toolset: %v", err)
+	}
+
+	select {
+	case <-registryEvents:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for catalog event")
+	}
+
+	waitForTicker(t, tracker1, requireToolsetName)
+	waitForTicker(t, tracker2, requireToolsetName)
+
+	if tracker1.IsHealthy(requireToolsetName) {
+		t.Error("tracker1 should see toolset as unhealthy before any pong")
+	}
+	if tracker2.IsHealthy(requireToolsetName) {
+		t.Error("tracker2 should see toolset as unhealthy before any pong")
 	}
 }
 
@@ -272,9 +353,7 @@ func TestMultiNodeUnregistrationSync(t *testing.T) {
 	defer func() { _ = tracker2.Close() }()
 
 	// Register on node 1.
-	if err := tracker1.StartPingLoop(ctx, "test-toolset"); err != nil {
-		t.Fatalf("failed to start ping loop: %v", err)
-	}
+	registerCatalogToolset(t, ctx, registryMap, tracker1, "test-toolset")
 
 	// Wait for registration event.
 	select {
@@ -288,7 +367,7 @@ func TestMultiNodeUnregistrationSync(t *testing.T) {
 	defer healthMap.Unsubscribe(healthEvents)
 
 	// Unregister on node 2 (different node than registration).
-	tracker2.StopPingLoop(ctx, "test-toolset")
+	unregisterCatalogToolset(t, ctx, registryMap, tracker2, "test-toolset")
 
 	// Wait for both unregistration event (registry map) and health cleanup event.
 	// They may arrive in any order, so we wait for both.
@@ -307,7 +386,7 @@ func TestMultiNodeUnregistrationSync(t *testing.T) {
 	}
 
 	// Toolset should be removed from registry map.
-	_, ok := registryMap.Get("registry:toolsets:test-toolset")
+	_, ok := registryMap.Get(toolsetCatalogKey("test-toolset"))
 	if ok {
 		t.Error("toolset should be removed from registry map")
 	}
@@ -363,9 +442,7 @@ func TestNewNodeSyncsExistingToolsets(t *testing.T) {
 	}
 	defer func() { _ = tracker1.Close() }()
 
-	if err := tracker1.StartPingLoop(ctx, "existing-toolset"); err != nil {
-		t.Fatalf("failed to start ping loop: %v", err)
-	}
+	registerCatalogToolset(t, ctx, registryMap, tracker1, "existing-toolset")
 
 	// Wait for registration event.
 	select {
@@ -401,6 +478,54 @@ func TestNewNodeSyncsExistingToolsets(t *testing.T) {
 	}
 }
 
+func TestNewNodeBootstrapsExistingCatalogToolsets(t *testing.T) {
+	rdb := getRedis(t)
+	ctx := context.Background()
+
+	healthMap, err := rmap.Join(ctx, "health-bootstrap-"+t.Name(), rdb)
+	if err != nil {
+		t.Fatalf("failed to create health map: %v", err)
+	}
+	defer healthMap.Close()
+
+	registryMap, err := rmap.Join(ctx, "registry-bootstrap-"+t.Name(), rdb)
+	if err != nil {
+		t.Fatalf("failed to create registry map: %v", err)
+	}
+	defer registryMap.Close()
+
+	catalog := newToolsetCatalog(registryMap)
+	toolset := "bootstrap-toolset"
+	if err := catalog.SaveToolset(ctx, testCatalogToolset(toolset, "Bootstrap catalog entry", []string{"bootstrap"})); err != nil {
+		t.Fatalf("failed to save catalog toolset: %v", err)
+	}
+
+	poolName := "pool-" + t.Name()
+	node, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
+	if err != nil {
+		t.Fatalf("failed to create node: %v", err)
+	}
+	defer func() { _ = node.Close(ctx) }()
+
+	tracker, err := NewHealthTracker(
+		newMockStreamManager(),
+		healthMap,
+		registryMap,
+		node,
+		WithPingInterval(50*time.Millisecond),
+		WithMissedPingThreshold(2),
+	)
+	if err != nil {
+		t.Fatalf("failed to create tracker: %v", err)
+	}
+	defer func() { _ = tracker.Close() }()
+
+	waitForTicker(t, tracker, toolset)
+	if tracker.IsHealthy(toolset) {
+		t.Error("tracker should see existing catalog toolset as unhealthy before any pong")
+	}
+}
+
 func waitForTicker(t *testing.T, tracker HealthTracker, toolset string) {
 	t.Helper()
 
@@ -426,6 +551,28 @@ func waitForTicker(t *testing.T, tracker HealthTracker, toolset string) {
 			t.Fatalf("tracker did not start local ticker for %q", toolset)
 		}
 	}
+}
+
+func registerCatalogToolset(t *testing.T, ctx context.Context, registryMap *rmap.Map, tracker HealthTracker, toolset string) {
+	t.Helper()
+
+	catalog := newToolsetCatalog(registryMap)
+	if err := catalog.SaveToolset(ctx, testCatalogToolset(toolset, "Health tracker test toolset", []string{"health"})); err != nil {
+		t.Fatalf("failed to save catalog toolset: %v", err)
+	}
+	if err := tracker.StartPingLoop(ctx, toolset); err != nil {
+		t.Fatalf("failed to start ping loop: %v", err)
+	}
+}
+
+func unregisterCatalogToolset(t *testing.T, ctx context.Context, registryMap *rmap.Map, tracker HealthTracker, toolset string) {
+	t.Helper()
+
+	catalog := newToolsetCatalog(registryMap)
+	if err := catalog.DeleteToolset(ctx, toolset); err != nil {
+		t.Fatalf("failed to delete catalog toolset: %v", err)
+	}
+	tracker.StopPingLoop(ctx, toolset)
 }
 
 // TestPingsContinueAfterNodeFailure verifies that pings continue when the
@@ -494,9 +641,7 @@ func TestPingsContinueAfterNodeFailure(t *testing.T) {
 	}
 
 	// Register toolset on node1.
-	if err := tracker1.StartPingLoop(ctx, "failover-toolset"); err != nil {
-		t.Fatalf("failed to start ping loop: %v", err)
-	}
+	registerCatalogToolset(t, ctx, registryMap, tracker1, "failover-toolset")
 
 	// Wait for registration event (tracker2 will sync and create its ticker).
 	select {
@@ -625,10 +770,7 @@ func TestPingsContinueAfterPeerTrackerClose(t *testing.T) {
 	}
 
 	toolset := "peer-close-toolset"
-	if err := tracker1.StartPingLoop(ctx, toolset); err != nil {
-		_ = tracker1.Close()
-		t.Fatalf("failed to start ping loop: %v", err)
-	}
+	registerCatalogToolset(t, ctx, registryMap, tracker1, toolset)
 
 	// Wait for registration event (tracker2 will sync and create its ticker).
 	select {

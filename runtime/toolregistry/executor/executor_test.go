@@ -24,7 +24,7 @@ func TestExecutorUsesOldestStartForResultStreamSink(t *testing.T) {
 	const (
 		toolUseID       = "tooluse-123"
 		resultStreamID  = "result:" + toolUseID
-		resultEventName = "result"
+		resultEventName = toolregistry.ResultEventKey
 	)
 
 	specs := fakeSpecs{
@@ -56,8 +56,61 @@ func TestExecutorUsesOldestStartForResultStreamSink(t *testing.T) {
 	}
 
 	exec := New(fakeRegistryClient{
-		toolUseID:      toolUseID,
-		resultStreamID: resultStreamID,
+		toolUseID: toolUseID,
+	}, pc, specs, WithResultEventKey(resultEventName))
+
+	res, err := exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
+		RunID:     "run",
+		SessionID: "sess",
+	}, &planner.ToolRequest{
+		Name:    "todos.update_todos",
+		Payload: []byte(`{}`),
+	})
+
+	require.NoError(t, err)
+	assert.NotNil(t, res)
+	assert.Equal(t, tools.Ident("todos.update_todos"), res.Name)
+}
+
+func TestExecutorDerivesResultStreamIDFromToolUseID(t *testing.T) {
+	t.Parallel()
+
+	const (
+		toolUseID       = "tooluse-derive-123"
+		resultEventName = toolregistry.ResultEventKey
+	)
+	expectedResultStreamID := toolregistry.ResultStreamID(toolUseID)
+
+	specs := fakeSpecs{
+		spec: &tools.ToolSpec{
+			Name:    "todos.update_todos",
+			Toolset: "todos.todos",
+			Result:  tools.TypeSpec{},
+			Payload: tools.TypeSpec{},
+		},
+	}
+
+	stream := &fakeStream{
+		t:             t,
+		requiredStart: "0",
+		events: []*streaming.Event{
+			{
+				ID:        "1-0",
+				EventName: resultEventName,
+				Payload: mustJSON(t, toolregistry.ToolResultMessage{
+					ToolUseID: toolUseID,
+					Result:    json.RawMessage(`{}`),
+				}),
+			},
+		},
+	}
+	pc := fakePulseClient{
+		streamID: expectedResultStreamID,
+		stream:   stream,
+	}
+
+	exec := New(fakeRegistryClient{
+		toolUseID: toolUseID,
 	}, pc, specs, WithResultEventKey(resultEventName))
 
 	res, err := exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
@@ -92,7 +145,7 @@ func TestExecutorForwardsOutputDelta(t *testing.T) {
 	const (
 		toolUseID       = "tooluse-123"
 		resultStreamID  = "result:" + toolUseID
-		resultEventName = "result"
+		resultEventName = toolregistry.ResultEventKey
 	)
 
 	specs := fakeSpecs{
@@ -132,8 +185,7 @@ func TestExecutorForwardsOutputDelta(t *testing.T) {
 	sink := &captureSink{}
 	exec := New(
 		fakeRegistryClient{
-			toolUseID:      toolUseID,
-			resultStreamID: resultStreamID,
+			toolUseID: toolUseID,
 		},
 		pc,
 		specs,
@@ -169,7 +221,7 @@ func TestExecutorRestoresBoundsFromRegistryMessage(t *testing.T) {
 	const (
 		toolUseID       = "tooluse-123"
 		resultStreamID  = "result:" + toolUseID
-		resultEventName = "result"
+		resultEventName = toolregistry.ResultEventKey
 	)
 	nextCursor := "cursor-2"
 
@@ -215,8 +267,7 @@ func TestExecutorRestoresBoundsFromRegistryMessage(t *testing.T) {
 
 	exec := New(
 		fakeRegistryClient{
-			toolUseID:      toolUseID,
-			resultStreamID: resultStreamID,
+			toolUseID: toolUseID,
 		},
 		pc,
 		specs,
@@ -241,12 +292,11 @@ func TestExecutorRestoresBoundsFromRegistryMessage(t *testing.T) {
 }
 
 type fakeRegistryClient struct {
-	toolUseID      string
-	resultStreamID string
+	toolUseID string
 }
 
-func (c fakeRegistryClient) CallTool(ctx context.Context, toolset string, tool tools.Ident, payload []byte, meta toolregistry.ToolCallMeta) (string, string, error) {
-	return c.toolUseID, c.resultStreamID, nil
+func (c fakeRegistryClient) CallTool(ctx context.Context, toolset string, tool tools.Ident, payload []byte, meta toolregistry.ToolCallMeta) (string, error) {
+	return c.toolUseID, nil
 }
 
 type fakeSpecs struct {

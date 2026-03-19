@@ -509,8 +509,8 @@ func TestServe_PublishesOutputDeltaToResultStream(t *testing.T) {
 	if seen[toolregistry.OutputDeltaEventKey] < 1 {
 		t.Fatalf("expected at least 1 %q event, saw=%v", toolregistry.OutputDeltaEventKey, seen)
 	}
-	if seen["result"] < 1 {
-		t.Fatalf("expected at least 1 %q event, saw=%v", "result", seen)
+	if seen[toolregistry.ResultEventKey] < 1 {
+		t.Fatalf("expected at least 1 %q event, saw=%v", toolregistry.ResultEventKey, seen)
 	}
 
 	cancel()

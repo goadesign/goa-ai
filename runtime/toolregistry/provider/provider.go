@@ -36,7 +36,7 @@ type (
 		SinkName string
 
 		// ResultEventType is the Pulse entry type used for publishing results.
-		// When empty, defaults to "result".
+		// When empty, defaults to toolregistry.ResultEventKey.
 		ResultEventType string
 
 		// SinkAckGracePeriod configures the Pulse sink acknowledgement grace
@@ -141,7 +141,7 @@ func Serve(ctx context.Context, pulse pulseclients.Client, toolset string, handl
 	}
 	resultEventType := opts.ResultEventType
 	if resultEventType == "" {
-		resultEventType = "result"
+		resultEventType = toolregistry.ResultEventKey
 	}
 	if opts.Pong == nil {
 		return fmt.Errorf("pong handler is required")

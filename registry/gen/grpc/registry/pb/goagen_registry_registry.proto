@@ -1,4 +1,4 @@
-// Code generated with goa v3.23.4, DO NOT EDIT.
+// Code generated with goa v3.25.3, DO NOT EDIT.
 //
 // registry protocol buffer definition
 //
@@ -26,8 +26,7 @@ service Registry {
 	// Search toolsets by keyword matching name, description, or tags
 	rpc Search (SearchRequest) returns (SearchResponse);
 	// Initiate a tool call by publishing a tool call message to the toolset
-// request stream and returning the tool use identifier and result stream
-// identifier.
+// request stream and returning the tool use identifier.
 	rpc CallTool (CallToolRequest) returns (CallToolResponse);
 }
 
@@ -60,10 +59,8 @@ message ToolSchema {
 }
 
 message RegisterResponse {
-	// Pulse stream identifier for receiving tool requests
-	string stream_id = 1;
 	// ISO 8601 timestamp of registration
-	string registered_at = 2;
+	string registered_at = 1;
 }
 
 message UnregisterRequest {
@@ -125,10 +122,8 @@ message GetToolsetResponse {
 	repeated string tags = 4;
 	// Tool schemas included in the toolset.
 	repeated ToolSchema tools = 5;
-	// Pulse stream identifier
-	string stream_id = 6;
 	// ISO 8601 registration timestamp
-	string registered_at = 7;
+	string registered_at = 6;
 }
 
 message SearchRequest {
@@ -172,6 +167,4 @@ message ToolCallMeta {
 message CallToolResponse {
 	// Unique identifier for this invocation
 	string tool_use_id = 1;
-	// Pulse stream identifier that will receive the tool result message.
-	string result_stream_id = 2;
 }
