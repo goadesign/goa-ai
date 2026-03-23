@@ -2,7 +2,6 @@ package hooks
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -17,18 +16,13 @@ import (
 
 type (
 	// runCompletedPayload is used to serialize RunCompletedEvent for transport.
-	// It converts the error to a string since errors cannot be directly serialized.
+	// It preserves the canonical terminal outcome so hook transport does not
+	// infer failures or cancellations from raw error strings.
 	runCompletedPayload struct {
-		Status         string    `json:"status"`
-		Phase          run.Phase `json:"phase"`
-		PublicError    string    `json:"public_error,omitempty"`
-		Error          string    `json:"error,omitempty"`
-		ErrorProvider  string    `json:"error_provider,omitempty"`
-		ErrorOperation string    `json:"error_operation,omitempty"`
-		ErrorKind      string    `json:"error_kind,omitempty"`
-		ErrorCode      string    `json:"error_code,omitempty"`
-		HTTPStatus     int       `json:"http_status,omitempty"`
-		Retryable      bool      `json:"retryable"`
+		Status       string            `json:"status"`
+		Phase        run.Phase         `json:"phase"`
+		Failure      *run.Failure      `json:"failure,omitempty"`
+		Cancellation *run.Cancellation `json:"cancellation,omitempty"`
 	}
 
 	turnIDSetter interface {
@@ -66,18 +60,10 @@ func EncodeToHookInput(evt Event, turnID string) (*ActivityInput, error) {
 	switch e := evt.(type) {
 	case *RunCompletedEvent:
 		p := runCompletedPayload{
-			Status:         e.Status,
-			Phase:          e.Phase,
-			PublicError:    e.PublicError,
-			ErrorProvider:  e.ErrorProvider,
-			ErrorOperation: e.ErrorOperation,
-			ErrorKind:      e.ErrorKind,
-			ErrorCode:      e.ErrorCode,
-			HTTPStatus:     e.HTTPStatus,
-			Retryable:      e.Retryable,
-		}
-		if e.Error != nil {
-			p.Error = e.Error.Error()
+			Status:       e.Status,
+			Phase:        e.Phase,
+			Failure:      e.Failure,
+			Cancellation: e.Cancellation,
 		}
 		b, err := json.Marshal(p)
 		if err != nil {
@@ -168,18 +154,18 @@ func DecodeFromHookInput(input *ActivityInput) (Event, error) {
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", RunCompleted, err)
 		}
-		var runErr error
-		if p.Error != "" {
-			runErr = errors.New(p.Error)
+		rc, err := newRunCompletedEventFromPayload(
+			input.RunID,
+			input.AgentID,
+			input.SessionID,
+			p.Status,
+			p.Phase,
+			p.Failure,
+			p.Cancellation,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("decode %s payload: %w", RunCompleted, err)
 		}
-		rc := NewRunCompletedEvent(input.RunID, input.AgentID, input.SessionID, p.Status, p.Phase, runErr)
-		rc.PublicError = p.PublicError
-		rc.ErrorProvider = p.ErrorProvider
-		rc.ErrorOperation = p.ErrorOperation
-		rc.ErrorKind = p.ErrorKind
-		rc.ErrorCode = p.ErrorCode
-		rc.HTTPStatus = p.HTTPStatus
-		rc.Retryable = p.Retryable
 		evt = rc
 
 	case ChildRunLinked:

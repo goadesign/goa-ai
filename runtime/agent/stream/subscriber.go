@@ -10,13 +10,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 )
 
-// RunCompletedEvent.Status values emitted by the workflow runtime.
-const (
-	completionStatusSuccess  = "success"
-	completionStatusFailed   = "failed"
-	completionStatusCanceled = "canceled"
-)
-
 type (
 	// Subscriber receives runtime events and forwards certain ones to a
 	// stream.Sink, such as a WebSocket, SSE, or message bus. It acts as a
@@ -358,20 +351,10 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			return fmt.Errorf("run_completed event missing phase for run %s", evt.RunID())
 		}
 		payload := WorkflowPayload{
-			Phase:          phase,
-			Status:         evt.Status,
-			ErrorProvider:  evt.ErrorProvider,
-			ErrorOperation: evt.ErrorOperation,
-			ErrorKind:      evt.ErrorKind,
-			ErrorCode:      evt.ErrorCode,
-			HTTPStatus:     evt.HTTPStatus,
-			Retryable:      evt.Retryable,
-		}
-		if evt.Error != nil {
-			payload.DebugError = evt.Error.Error()
-		}
-		if evt.Status == completionStatusFailed {
-			payload.Error = evt.PublicError
+			Phase:        phase,
+			Status:       evt.Status,
+			Failure:      evt.Failure,
+			Cancellation: evt.Cancellation,
 		}
 		if err := s.sink.Send(ctx, Workflow{
 			Base: newBaseFromHook(evt, EventWorkflow, payload),

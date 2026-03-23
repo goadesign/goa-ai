@@ -3,6 +3,7 @@ package hooks
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -97,26 +98,12 @@ type (
 		baseEvent
 		// Status indicates the final outcome: "success", "failed", or "canceled".
 		Status string
-		// PublicError is a user-safe, deterministic summary of the terminal failure.
-		// It is empty on success and cancellations. On failures, it is populated
-		// and is intended to be rendered directly in UIs without additional parsing.
-		PublicError string
-		// Error contains any terminal error that halted the run. Nil on success.
-		Error error
-		// ErrorProvider identifies the model provider when the terminal error was
-		// caused by a provider failure (for example, "bedrock").
-		ErrorProvider string
-		// ErrorOperation identifies the provider operation when available.
-		ErrorOperation string
-		// ErrorKind classifies provider failures into a small set of stable categories
-		// suitable for retry and UX decisions (for example, "auth" or "invalid_request").
-		ErrorKind string
-		// ErrorCode is the provider-specific error code when available.
-		ErrorCode string
-		// HTTPStatus is the provider HTTP status code when available.
-		HTTPStatus int
-		// Retryable reports whether retrying may succeed without changing the request.
-		Retryable bool
+		// Failure carries the terminal failure payload when Status is "failed".
+		// It is nil on successful and canceled runs.
+		Failure *run.Failure
+		// Cancellation carries the terminal cancellation payload when Status is
+		// "canceled". It is nil on successful and failed runs.
+		Cancellation *run.Cancellation
 		// Phase captures the terminal phase for the run. For successful runs this
 		// is typically PhaseCompleted; failures map to PhaseFailed; cancellations
 		// map to PhaseCanceled.
@@ -565,42 +552,129 @@ func NewRunStartedEvent(runID string, agentID agent.Ident, runContext run.Contex
 	}
 }
 
-// NewRunCompletedEvent constructs a RunCompletedEvent. Status should
-// be "success", "failed", or "canceled"; phase must be the terminal
-// lifecycle phase for the run. err may be nil on success.
-func NewRunCompletedEvent(runID string, agentID agent.Ident, sessionID, status string, phase run.Phase, err error) *RunCompletedEvent {
+// NewRunCompletedEvent constructs a RunCompletedEvent.
+//
+// Contract:
+//   - Status must be "success", "failed", or "canceled".
+//   - Failed runs must provide a non-nil err so Failure can be populated.
+//   - Canceled runs should provide cancellation provenance; when none is supplied,
+//     the runtime records the cancel as engine-originated.
+func NewRunCompletedEvent(
+	runID string,
+	agentID agent.Ident,
+	sessionID, status string,
+	phase run.Phase,
+	err error,
+	cancellation *run.Cancellation,
+) *RunCompletedEvent {
+	var failure *run.Failure
+	switch status {
+	case "failed":
+		if err != nil {
+			failure = newRunFailure(err)
+		}
+	case "canceled":
+		cancellation = newRunCancellation(cancellation)
+	}
+	evt, buildErr := newRunCompletedEventFromPayload(runID, agentID, sessionID, status, phase, failure, cancellation)
+	if buildErr != nil {
+		panic("hooks: " + buildErr.Error())
+	}
+	return evt
+}
+
+// newRunCompletedEventFromPayload validates the canonical terminal outcome
+// payload before materializing a RunCompletedEvent from decoded hook input.
+func newRunCompletedEventFromPayload(
+	runID string,
+	agentID agent.Ident,
+	sessionID, status string,
+	phase run.Phase,
+	failure *run.Failure,
+	cancellation *run.Cancellation,
+) (*RunCompletedEvent, error) {
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
 	out := &RunCompletedEvent{
 		baseEvent: be,
 		Status:    status,
 		Phase:     phase,
-		Error:     err,
 	}
-	if err == nil {
-		return out
-	}
-	if pe, ok := providerErrorFromError(err); ok {
-		out.ErrorProvider = pe.Provider()
-		out.ErrorOperation = pe.Operation()
-		out.ErrorKind = string(pe.Kind())
-		out.ErrorCode = pe.Code()
-		out.HTTPStatus = pe.HTTPStatus()
-		out.Retryable = pe.Retryable()
-		if status == "failed" {
-			out.PublicError = providerPublicError(pe)
+	switch status {
+	case "success":
+		if failure != nil || cancellation != nil {
+			return nil, errors.New("successful run completion must not carry terminal outcome payload")
 		}
-		return out
+		return out, nil
+	case "failed":
+		if cancellation != nil {
+			return nil, errors.New("failed run completion must not carry cancellation payload")
+		}
+		if failure == nil {
+			return nil, errors.New("failed run completion requires failure payload")
+		}
+		if failure.Message == "" {
+			return nil, errors.New("failed run completion requires failure message")
+		}
+		if failure.Kind == "" {
+			return nil, errors.New("failed run completion requires failure kind")
+		}
+		out.Failure = failure
+		return out, nil
+	case "canceled":
+		if failure != nil {
+			return nil, errors.New("canceled run completion must not carry failure payload")
+		}
+		if cancellation == nil {
+			return nil, errors.New("canceled run completion requires cancellation payload")
+		}
+		if cancellation.Reason == "" {
+			return nil, errors.New("canceled run completion requires cancellation reason")
+		}
+		out.Cancellation = cancellation
+		return out, nil
+	default:
+		return nil, fmt.Errorf("unexpected run completion status %q", status)
 	}
+}
 
-	// Cancellation is terminal but non-error for UX purposes.
-	if status != "failed" {
-		return out
+// newRunFailure classifies the terminal error into the canonical failure payload.
+func newRunFailure(err error) *run.Failure {
+	if pe, ok := providerErrorFromError(err); ok {
+		return &run.Failure{
+			Message:      providerPublicError(pe),
+			DebugMessage: err.Error(),
+			Provider:     pe.Provider(),
+			Operation:    pe.Operation(),
+			Kind:         string(pe.Kind()),
+			Code:         pe.Code(),
+			HTTPStatus:   pe.HTTPStatus(),
+			Retryable:    pe.Retryable(),
+		}
 	}
+	kind, message := classifyNonProviderFailure(err)
+	return &run.Failure{
+		Message:      message,
+		DebugMessage: err.Error(),
+		Kind:         kind,
+		Retryable:    true, // Non-provider failures are always retryable.
+	}
+}
 
-	out.ErrorKind, out.PublicError = classifyNonProviderFailure(err)
-	out.Retryable = true // Non-provider failures are always retryable.
-	return out
+// newRunCancellation returns the canonical cancellation payload for a terminal
+// canceled run.
+func newRunCancellation(cancellation *run.Cancellation) *run.Cancellation {
+	if cancellation == nil {
+		return &run.Cancellation{
+			Reason: run.CancellationReasonEngineCanceled,
+		}
+	}
+	if cancellation.Reason == "" {
+		panic("hooks: canceled run completion requires a cancellation reason")
+	}
+	return &run.Cancellation{
+		Reason: cancellation.Reason,
+	}
 }
 
 // WrapRunCompletionError encodes provider failures into a Temporal application

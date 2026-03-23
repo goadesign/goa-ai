@@ -849,6 +849,115 @@ func TestPingsContinueAfterPeerTrackerClose(t *testing.T) {
 	}
 }
 
+func TestStaleTickerRepairsAfterLocalTickerDies(t *testing.T) {
+	rdb := getRedis(t)
+	ctx := context.Background()
+
+	healthMap, err := rmap.Join(ctx, "health-"+t.Name(), rdb)
+	if err != nil {
+		t.Fatalf("failed to create health map: %v", err)
+	}
+	defer healthMap.Close()
+
+	registryMap, err := rmap.Join(ctx, "registry-"+t.Name(), rdb)
+	if err != nil {
+		t.Fatalf("failed to create registry map: %v", err)
+	}
+	defer registryMap.Close()
+
+	node, err := pool.AddNode(ctx, "pool-"+t.Name(), rdb, testNodeOpts()...)
+	if err != nil {
+		t.Fatalf("failed to create node: %v", err)
+	}
+	defer func() { _ = node.Close(ctx) }()
+
+	mockSM := &pingCountingStreamManager{
+		messages: make(map[string]int),
+		pingCh:   make(chan string, 100),
+	}
+
+	tracker, err := NewHealthTracker(
+		mockSM,
+		healthMap,
+		registryMap,
+		node,
+		WithPingInterval(50*time.Millisecond),
+		WithMissedPingThreshold(1),
+	)
+	if err != nil {
+		t.Fatalf("failed to create tracker: %v", err)
+	}
+	defer func() { _ = tracker.Close() }()
+
+	toolset := "repair-toolset"
+	registerCatalogToolset(t, ctx, registryMap, tracker, toolset)
+	waitForTicker(t, tracker, toolset)
+
+	select {
+	case <-mockSM.pingCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for initial ping")
+	}
+
+drainLoop:
+	for {
+		select {
+		case <-mockSM.pingCh:
+		default:
+			break drainLoop
+		}
+	}
+
+	catalog := newToolsetCatalog(registryMap)
+	registrationToken, err := catalog.RegistrationToken(ctx, toolset)
+	if err != nil {
+		t.Fatalf("failed to resolve registration token: %v", err)
+	}
+	if err := setHealthRecordForTest(ctx, healthMap, toolset, registrationToken, time.Now()); err != nil {
+		t.Fatalf("failed to seed health record: %v", err)
+	}
+
+	ht, ok := tracker.(*healthTracker)
+	if !ok {
+		t.Fatalf("unexpected tracker type %T", tracker)
+	}
+
+	ht.mu.Lock()
+	oldTicker := ht.tickers[toolset]
+	if oldTicker == nil {
+		ht.mu.Unlock()
+		t.Fatalf("tracker does not have a local ticker for %q", toolset)
+	}
+	oldTicker.Close()
+	ht.mu.Unlock()
+
+	repaired := false
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
+	for !repaired {
+		select {
+		case <-poll.C:
+			ht.mu.Lock()
+			current := ht.tickers[toolset]
+			ht.mu.Unlock()
+			repaired = current != nil && current != oldTicker
+		case <-deadline.C:
+			t.Fatal("tracker did not recreate the dead local ticker")
+		}
+	}
+
+	select {
+	case repairedToolset := <-mockSM.pingCh:
+		if repairedToolset != toolset {
+			t.Fatalf("expected repaired ping for %q, got %q", toolset, repairedToolset)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for ping from repaired ticker")
+	}
+}
+
 // pingCountingStreamManager counts pings per toolset and signals via channel.
 type pingCountingStreamManager struct {
 	mu       sync.RWMutex

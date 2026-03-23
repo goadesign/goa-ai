@@ -114,9 +114,22 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		detached := wfCtx.Detached()
 		termCtx, cancel := context.WithTimeout(detached.Context(), 10*time.Second)
 		defer cancel()
+		completed, buildErr := r.buildRunCompletedEvent(
+			termCtx,
+			input.RunID,
+			input.AgentID,
+			input.SessionID,
+			finalStatus,
+			phase,
+			finalErr,
+		)
+		if buildErr != nil {
+			r.logWarn(termCtx, "run completion build failed", buildErr, "run_id", input.RunID, "agent_id", input.AgentID)
+			return
+		}
 		if err := r.publishHookErr(
 			termCtx,
-			hooks.NewRunCompletedEvent(input.RunID, input.AgentID, input.SessionID, finalStatus, phase, finalErr),
+			completed,
 			turnID,
 		); err != nil {
 			r.logWarn(termCtx, "run completed hook failed", err, "run_id", input.RunID, "agent_id", input.AgentID)

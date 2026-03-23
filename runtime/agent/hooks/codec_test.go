@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -113,4 +115,41 @@ func TestEncodeToHookInputPreservesEventIdentity(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, ev.Timestamp(), decoded.Timestamp())
 	require.Equal(t, ev.EventKey(), decoded.EventKey())
+}
+
+func TestDecodeFromHookInput_RunCompletedRejectsFailedPayloadWithoutFailure(t *testing.T) {
+	payload, err := json.Marshal(runCompletedPayload{
+		Status: "failed",
+		Phase:  run.PhaseFailed,
+	})
+	require.NoError(t, err)
+
+	_, err = DecodeFromHookInput(&ActivityInput{
+		Type:        RunCompleted,
+		RunID:       testRunID,
+		AgentID:     agent.Ident("agent-1"),
+		SessionID:   testSessionID,
+		TimestampMS: time.Now().UnixMilli(),
+		Payload:     rawjson.Message(payload),
+	})
+	require.ErrorContains(t, err, "failed run completion requires failure payload")
+}
+
+func TestDecodeFromHookInput_RunCompletedRejectsCanceledPayloadWithoutReason(t *testing.T) {
+	payload, err := json.Marshal(runCompletedPayload{
+		Status: "canceled",
+		Phase:  run.PhaseCanceled,
+		Cancellation: &run.Cancellation{},
+	})
+	require.NoError(t, err)
+
+	_, err = DecodeFromHookInput(&ActivityInput{
+		Type:        RunCompleted,
+		RunID:       testRunID,
+		AgentID:     agent.Ident("agent-1"),
+		SessionID:   testSessionID,
+		TimestampMS: time.Now().UnixMilli(),
+		Payload:     rawjson.Message(payload),
+	})
+	require.ErrorContains(t, err, "canceled run completion requires cancellation reason")
 }

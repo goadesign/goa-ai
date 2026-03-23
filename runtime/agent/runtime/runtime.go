@@ -770,26 +770,10 @@ func newFromOptions(opts Options) *Runtime {
 				default:
 					return fmt.Errorf("unexpected run completed status %q", evt.Status)
 				}
-				if evt.PublicError != "" {
+				if evt.Cancellation != nil {
 					metadata = map[string]any{
-						"public_error": evt.PublicError,
+						runMetaCancellationReason: evt.Cancellation.Reason,
 					}
-					if evt.ErrorProvider != "" {
-						metadata["error_provider"] = evt.ErrorProvider
-					}
-					if evt.ErrorOperation != "" {
-						metadata["error_operation"] = evt.ErrorOperation
-					}
-					if evt.ErrorKind != "" {
-						metadata["error_kind"] = evt.ErrorKind
-					}
-					if evt.ErrorCode != "" {
-						metadata["error_code"] = evt.ErrorCode
-					}
-					if evt.HTTPStatus != 0 {
-						metadata["http_status"] = evt.HTTPStatus
-					}
-					metadata["retryable"] = evt.Retryable
 				}
 				return rt.SessionStore.UpsertRun(ctx, session.RunMeta{
 					AgentID:   evt.AgentID(),
@@ -1425,7 +1409,7 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	return handle, nil
 }
 
-// CancelRun requests cancellation of the workflow identified by runID.
+// CancelRun requests cancellation of the workflow identified by req.RunID.
 //
 // Cancellation must work across process restarts, so it is implemented via the
 // engine's cancel-by-ID capability rather than relying on in-process workflow
@@ -1433,15 +1417,27 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 //
 // CancelRun is idempotent: if the workflow does not exist (already completed,
 // canceled, or never started), CancelRun returns nil.
-func (r *Runtime) CancelRun(ctx context.Context, runID string) error {
-	if runID == "" {
+func (r *Runtime) CancelRun(ctx context.Context, req CancelRequest) error {
+	if req.RunID == "" {
 		return errors.New("run id is required")
+	}
+	if req.Reason == "" {
+		return errors.New("cancel reason is required")
 	}
 	canceler, ok := r.Engine.(engine.Canceler)
 	if !ok || canceler == nil {
 		return fmt.Errorf("engine does not support cancel-by-id")
 	}
-	if err := canceler.CancelByID(ctx, runID); err != nil {
+	previous, wrote, err := r.recordRunCancellation(ctx, req)
+	if err != nil {
+		return fmt.Errorf("record cancellation: %w", err)
+	}
+	if err := canceler.CancelByID(ctx, req.RunID); err != nil {
+		if wrote {
+			if rollbackErr := r.rollbackRunCancellation(ctx, previous, req); rollbackErr != nil {
+				return errors.Join(err, fmt.Errorf("rollback cancellation provenance: %w", rollbackErr))
+			}
+		}
 		if errors.Is(err, engine.ErrWorkflowNotFound) {
 			return nil
 		}

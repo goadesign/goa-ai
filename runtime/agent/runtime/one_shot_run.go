@@ -82,7 +82,14 @@ func (r *Runtime) RunOneShot(ctx context.Context, input OneShotRunInput, execute
 	})
 	execErr := execute(execCtx)
 	status, phase := oneShotTerminalState(execErr)
-	if err := r.publishHookErr(ctx, hooks.NewRunCompletedEvent(input.RunID, input.AgentID, "", status, phase, execErr), input.TurnID); err != nil {
+	completed, err := r.buildRunCompletedEvent(ctx, input.RunID, input.AgentID, "", status, phase, execErr)
+	if err != nil {
+		if execErr != nil {
+			return execErr
+		}
+		return err
+	}
+	if err := r.publishHookErr(ctx, completed, input.TurnID); err != nil {
 		if execErr != nil {
 			r.logWarn(ctx, "one-shot completion hook failed", err, "run_id", input.RunID, "agent_id", input.AgentID)
 			return execErr
