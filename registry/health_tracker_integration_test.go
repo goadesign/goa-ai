@@ -362,6 +362,17 @@ func TestMultiNodeUnregistrationSync(t *testing.T) {
 		t.Fatal("timeout waiting for registration event")
 	}
 
+	// Seed shared health state for the active registration so unregister cleanup
+	// has real distributed state to delete.
+	catalog := newToolsetCatalog(registryMap)
+	registrationToken, err := catalog.RegistrationToken(ctx, "test-toolset")
+	if err != nil {
+		t.Fatalf("failed to resolve registration token: %v", err)
+	}
+	if err := setHealthRecordForTest(ctx, healthMap, "test-toolset", registrationToken, time.Now()); err != nil {
+		t.Fatalf("failed to seed health record: %v", err)
+	}
+
 	// Subscribe to health map changes to detect cleanup.
 	healthEvents := healthMap.Subscribe()
 	defer healthMap.Unsubscribe(healthEvents)
