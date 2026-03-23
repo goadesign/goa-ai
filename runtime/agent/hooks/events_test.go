@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -28,13 +29,30 @@ func TestNewRunCompletedEventPreservesTemporalProviderErrorEnvelope(t *testing.T
 	require.ErrorAs(t, err, &appErr)
 	require.False(t, appErr.NonRetryable())
 
-	evt := NewRunCompletedEvent("run-1", "svc.agent", "sess-1", "failed", run.PhaseFailed, err)
+	evt := NewRunCompletedEvent("run-1", "svc.agent", "sess-1", "failed", run.PhaseFailed, err, nil)
 
-	require.Equal(t, PublicErrorProviderRateLimited, evt.PublicError)
-	require.Equal(t, "bedrock", evt.ErrorProvider)
-	require.Equal(t, "converse_stream", evt.ErrorOperation)
-	require.Equal(t, string(model.ProviderErrorKindRateLimited), evt.ErrorKind)
-	require.Equal(t, "ThrottlingException", evt.ErrorCode)
-	require.Equal(t, 429, evt.HTTPStatus)
-	require.True(t, evt.Retryable)
+	require.NotNil(t, evt.Failure)
+	require.Equal(t, PublicErrorProviderRateLimited, evt.Failure.Message)
+	require.Equal(t, "bedrock", evt.Failure.Provider)
+	require.Equal(t, "converse_stream", evt.Failure.Operation)
+	require.Equal(t, string(model.ProviderErrorKindRateLimited), evt.Failure.Kind)
+	require.Equal(t, "ThrottlingException", evt.Failure.Code)
+	require.Equal(t, 429, evt.Failure.HTTPStatus)
+	require.True(t, evt.Failure.Retryable)
+}
+
+func TestNewRunCompletedEventCanceledOmitsFailureMetadata(t *testing.T) {
+	evt := NewRunCompletedEvent(
+		"run-1",
+		"svc.agent",
+		"sess-1",
+		"canceled",
+		run.PhaseCanceled,
+		context.Canceled,
+		&run.Cancellation{Reason: run.CancellationReasonUserRequested},
+	)
+
+	require.Nil(t, evt.Failure)
+	require.NotNil(t, evt.Cancellation)
+	require.Equal(t, run.CancellationReasonUserRequested, evt.Cancellation.Reason)
 }

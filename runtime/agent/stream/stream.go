@@ -22,6 +22,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/toolerrors"
 )
@@ -592,26 +593,11 @@ type (
 		// on terminal updates derived from RunCompletedEvent and may be
 		// empty for non-terminal phase transitions.
 		Status string `json:"status,omitempty"`
-		// Error is a user-safe error message intended to be displayed directly
-		// to end users. It is populated only on failures and is empty on success
-		// and cancellations.
-		Error string `json:"error,omitempty"`
-		// DebugError is a raw error string intended for logs and diagnostics. It
-		// may contain infrastructure details and should not be rendered in UIs.
-		DebugError string `json:"debug_error,omitempty"`
-		// ErrorProvider identifies the model provider when the terminal error was
-		// caused by a provider failure (for example, "bedrock").
-		ErrorProvider string `json:"error_provider,omitempty"`
-		// ErrorOperation identifies the provider operation when available.
-		ErrorOperation string `json:"error_operation,omitempty"`
-		// ErrorKind classifies provider failures into a small set of stable categories.
-		ErrorKind string `json:"error_kind,omitempty"`
-		// ErrorCode is the provider-specific error code when available.
-		ErrorCode string `json:"error_code,omitempty"`
-		// HTTPStatus is the provider HTTP status code when available.
-		HTTPStatus int `json:"http_status,omitempty"`
-		// Retryable reports whether retrying may succeed without changing the request.
-		Retryable bool `json:"retryable"`
+		// Failure carries the canonical failure payload for failed terminal updates.
+		Failure *run.Failure `json:"failure,omitempty"`
+		// Cancellation carries the canonical cancellation payload for canceled
+		// terminal updates.
+		Cancellation *run.Cancellation `json:"cancellation,omitempty"`
 	}
 
 	// ChildRunLinkedPayload describes an agent-as-tool child run link.

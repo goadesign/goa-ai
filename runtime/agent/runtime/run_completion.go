@@ -6,6 +6,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -106,6 +107,27 @@ func (h *observedWorkflowHandle) awaitCompletion() {
 	h.runtime.storeWorkflowHandle(h.runID, nil)
 }
 
+// buildRunCompletedEvent constructs the canonical terminal hook payload for a
+// run, including persisted cancellation provenance when the run was canceled.
+func (r *Runtime) buildRunCompletedEvent(
+	ctx context.Context,
+	runID string,
+	agentID agent.Ident,
+	sessionID, status string,
+	phase run.Phase,
+	err error,
+) (*hooks.RunCompletedEvent, error) {
+	var cancellation *run.Cancellation
+	if status == runStatusCanceled {
+		loadCancellation, loadErr := r.loadRunCancellation(ctx, runID)
+		if loadErr != nil {
+			return nil, fmt.Errorf("load cancellation provenance: %w", loadErr)
+		}
+		cancellation = loadCancellation
+	}
+	return hooks.NewRunCompletedEvent(runID, agentID, sessionID, status, phase, err, cancellation), nil
+}
+
 // repairObservedTerminalRunCompletion publishes the canonical terminal hook for
 // a workflow handle that has already completed locally. It shares the same
 // serialized repair gate as lazy no-handle repair so only one RunCompleted
@@ -113,12 +135,12 @@ func (h *observedWorkflowHandle) awaitCompletion() {
 func (r *Runtime) repairObservedTerminalRunCompletion(ctx context.Context, runID string, agentID agent.Ident, sessionID, turnID string, waitErr error) error {
 	status := terminalRunStatusForError(waitErr)
 	phase := terminalRunPhaseForStatus(status)
+	evt, err := r.buildRunCompletedEvent(ctx, runID, agentID, sessionID, status, phase, waitErr)
+	if err != nil {
+		return err
+	}
 	return r.withSerializedTerminalRepair(ctx, runID, func(ctx context.Context) error {
-		return r.publishHookErr(
-			ctx,
-			hooks.NewRunCompletedEvent(runID, agentID, sessionID, status, phase, waitErr),
-			turnID,
-		)
+		return r.publishHookErr(ctx, evt, turnID)
 	})
 }
 
@@ -212,16 +234,21 @@ func (r *Runtime) synthesizeTerminalRunCompletion(ctx context.Context, runID str
 		return err
 	}
 	publicStatus := terminalRunStatusForEngineStatus(status)
+	evt, err := r.buildRunCompletedEvent(
+		ctx,
+		runID,
+		agentID,
+		sessionID,
+		publicStatus,
+		terminalRunPhaseForStatus(publicStatus),
+		terminalRunErrorForStatus(status),
+	)
+	if err != nil {
+		return err
+	}
 	return r.publishHookErr(
 		ctx,
-		hooks.NewRunCompletedEvent(
-			runID,
-			agentID,
-			sessionID,
-			publicStatus,
-			terminalRunPhaseForStatus(publicStatus),
-			terminalRunErrorForStatus(status),
-		),
+		evt,
 		turnID,
 	)
 }
@@ -239,16 +266,21 @@ func (r *Runtime) repairQueriedTerminalRunCompletion(ctx context.Context, runID 
 			return err
 		}
 		status := terminalRunStatusForError(waitErr)
+		evt, err := r.buildRunCompletedEvent(
+			ctx,
+			runID,
+			agentID,
+			sessionID,
+			status,
+			terminalRunPhaseForStatus(status),
+			waitErr,
+		)
+		if err != nil {
+			return err
+		}
 		return r.publishHookErr(
 			ctx,
-			hooks.NewRunCompletedEvent(
-				runID,
-				agentID,
-				sessionID,
-				status,
-				terminalRunPhaseForStatus(status),
-				waitErr,
-			),
+			evt,
 			turnID,
 		)
 	})

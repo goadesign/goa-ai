@@ -441,7 +441,7 @@ func TestStartRunSkipsSynthesizedCompletionWhenRunAlreadyTerminal(t *testing.T) 
 	require.NoError(t, err)
 	require.NoError(t, rt.publishHookErr(
 		ctx,
-		hooks.NewRunCompletedEvent("run-1", "service.agent", "sess-1", runStatusSuccess, run.PhaseCompleted, nil),
+		hooks.NewRunCompletedEvent("run-1", "service.agent", "sess-1", runStatusSuccess, run.PhaseCompleted, nil, nil),
 		"turn-1",
 	))
 
@@ -558,8 +558,9 @@ func TestGetRunSnapshotRepairsTimedOutRunWithTimeoutPublicError(t *testing.T) {
 
 	completed, ok := decoded.(*hooks.RunCompletedEvent)
 	require.True(t, ok)
-	require.Equal(t, hooks.PublicErrorTimeout, completed.PublicError)
-	require.Equal(t, hooks.ErrorKindTimeout, completed.ErrorKind)
+	require.NotNil(t, completed.Failure)
+	require.Equal(t, hooks.PublicErrorTimeout, completed.Failure.Message)
+	require.Equal(t, hooks.ErrorKindTimeout, completed.Failure.Kind)
 }
 
 func TestGetRunSnapshotRepairsFailedRunWithQueriedProviderError(t *testing.T) {
@@ -627,11 +628,12 @@ func TestGetRunSnapshotRepairsFailedRunWithQueriedProviderError(t *testing.T) {
 
 	completed, ok := decoded.(*hooks.RunCompletedEvent)
 	require.True(t, ok)
-	require.Equal(t, hooks.PublicErrorProviderRateLimited, completed.PublicError)
-	require.Equal(t, string(model.ProviderErrorKindRateLimited), completed.ErrorKind)
-	require.Equal(t, "bedrock", completed.ErrorProvider)
-	require.Equal(t, 429, completed.HTTPStatus)
-	require.True(t, completed.Retryable)
+	require.NotNil(t, completed.Failure)
+	require.Equal(t, hooks.PublicErrorProviderRateLimited, completed.Failure.Message)
+	require.Equal(t, string(model.ProviderErrorKindRateLimited), completed.Failure.Kind)
+	require.Equal(t, "bedrock", completed.Failure.Provider)
+	require.Equal(t, 429, completed.Failure.HTTPStatus)
+	require.True(t, completed.Failure.Retryable)
 }
 
 func TestGetRunSnapshotRepairsTerminalCompletionOnceAcrossConcurrentReaders(t *testing.T) {
@@ -772,8 +774,9 @@ func TestWaitAndLazyRepairPublishSingleTerminalCompletionForSignalerEngines(t *t
 	}
 	require.Equal(t, 1, completed)
 	require.NotNil(t, completedEvent)
-	require.Equal(t, hooks.PublicErrorTimeout, completedEvent.PublicError)
-	require.Equal(t, hooks.ErrorKindTimeout, completedEvent.ErrorKind)
+	require.NotNil(t, completedEvent.Failure)
+	require.Equal(t, hooks.PublicErrorTimeout, completedEvent.Failure.Message)
+	require.Equal(t, hooks.ErrorKindTimeout, completedEvent.Failure.Kind)
 }
 
 func TestListRunEventsRepairsTerminalCompletionForTailReads(t *testing.T) {
@@ -929,7 +932,7 @@ func TestRunCompletedHookClearsStoredHandleWhenEngineSignalsByID(t *testing.T) {
 
 	err = rt.publishHookErr(
 		ctx,
-		hooks.NewRunCompletedEvent("run-1", "service.agent", "sess-1", runStatusSuccess, run.PhaseCompleted, nil),
+		hooks.NewRunCompletedEvent("run-1", "service.agent", "sess-1", runStatusSuccess, run.PhaseCompleted, nil, nil),
 		"turn-1",
 	)
 	require.NoError(t, err)
@@ -992,8 +995,9 @@ func TestGetRunSnapshotUsesObservedHandleBeforeSynthesizingForSignalerEngines(t 
 
 	completed, ok := decoded.(*hooks.RunCompletedEvent)
 	require.True(t, ok)
-	require.Equal(t, hooks.PublicErrorTimeout, completed.PublicError)
-	require.Equal(t, hooks.ErrorKindTimeout, completed.ErrorKind)
+	require.NotNil(t, completed.Failure)
+	require.Equal(t, hooks.PublicErrorTimeout, completed.Failure.Message)
+	require.Equal(t, hooks.ErrorKindTimeout, completed.Failure.Kind)
 }
 
 func TestGetRunSnapshotReturnsStoredStateWhenRepairStatusQueryFails(t *testing.T) {

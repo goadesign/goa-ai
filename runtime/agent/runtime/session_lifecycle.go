@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/session"
 )
 
@@ -70,16 +70,12 @@ func (r *Runtime) cancelSessionRuns(ctx context.Context, sessionID string) error
 	if len(runs) == 0 {
 		return nil
 	}
-	canceler, ok := r.Engine.(engine.Canceler)
 	var errs []error
-	for _, run := range runs {
-		if ok {
-			if err := canceler.CancelByID(ctx, run.RunID); err != nil {
-				errs = append(errs, err)
-			}
-			continue
-		}
-		if err := r.CancelRun(ctx, run.RunID); err != nil {
+	for _, meta := range runs {
+		if err := r.CancelRun(ctx, CancelRequest{
+			RunID:  meta.RunID,
+			Reason: run.CancellationReasonSessionEnded,
+		}); err != nil {
 			errs = append(errs, err)
 		}
 	}

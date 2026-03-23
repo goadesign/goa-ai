@@ -2,6 +2,9 @@ package tests
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,17 +50,8 @@ func TestQuickstartGeneratesAndRuns(t *testing.T) {
 	// be generated and run from the repo tree. Once copied into a temp dir, that
 	// relative path no longer points at the repo root. Rewrite it to an absolute
 	// replace so `goa gen` and `go mod tidy` can resolve the local goa-ai module.
-	{
-		modPath := filepath.Join(quickstartDir, "go.mod")
-		//nolint:gosec // Test helper reads a trusted fixture file.
-		raw, err := os.ReadFile(modPath)
-		if err != nil {
-			t.Fatalf("read quickstart go.mod: %v", err)
-		}
-		updated := strings.ReplaceAll(string(raw), "replace goa.design/goa-ai => ..", "replace goa.design/goa-ai => "+repoRoot)
-		if err := os.WriteFile(modPath, []byte(updated), 0o600); err != nil {
-			t.Fatalf("write quickstart go.mod: %v", err)
-		}
+	if err := rewriteQuickstartModule(quickstartDir, repoRoot); err != nil {
+		t.Fatalf("rewrite quickstart go.mod: %v", err)
 	}
 
 	// Ensure we have a clean state (remove generated files that aren't committed)
@@ -165,37 +159,87 @@ func TestQuickstartDesignExists(t *testing.T) {
 	}
 }
 
-func copyDir(src, dst string) error {
+// rewriteQuickstartModule rewrites the copied quickstart module so its local
+// goa-ai replace points back at the repository root.
+func rewriteQuickstartModule(rootPath, repoRoot string) (err error) {
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return fmt.Errorf("open quickstart root: %w", err)
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close quickstart root: %w", closeErr))
+		}
+	}()
+
+	raw, err := root.ReadFile("go.mod")
+	if err != nil {
+		return fmt.Errorf("read quickstart go.mod: %w", err)
+	}
+	updated := strings.ReplaceAll(
+		string(raw),
+		"replace goa.design/goa-ai => ..",
+		"replace goa.design/goa-ai => "+repoRoot,
+	)
+	if err := root.WriteFile("go.mod", []byte(updated), 0o600); err != nil {
+		return fmt.Errorf("write quickstart go.mod: %w", err)
+	}
+	return nil
+}
+
+// copyDir copies the quickstart fixture into the temp workspace using
+// root-scoped file operations so the test cannot escape either tree.
+func copyDir(src, dst string) (err error) {
 	if err := os.MkdirAll(dst, 0o750); err != nil {
 		return err
 	}
-	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
+	srcRoot, err := os.OpenRoot(src)
+	if err != nil {
+		return fmt.Errorf("open quickstart source root: %w", err)
+	}
+	defer func() {
+		if closeErr := srcRoot.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close quickstart source root: %w", closeErr))
 		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
+	}()
+
+	dstRoot, err := os.OpenRoot(dst)
+	if err != nil {
+		return fmt.Errorf("open quickstart destination root: %w", err)
+	}
+	defer func() {
+		if closeErr := dstRoot.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close quickstart destination root: %w", closeErr))
 		}
-		if rel == "." {
+	}()
+
+	return fs.WalkDir(srcRoot.FS(), ".", func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == "." {
 			return nil
 		}
-		target := filepath.Join(dst, rel)
 		if d.IsDir() {
-			return os.MkdirAll(target, 0o750)
+			return dstRoot.MkdirAll(path, 0o750)
 		}
 		info, err := d.Info()
 		if err != nil {
 			return err
 		}
-		//nolint:gosec // Test helper copies trusted fixture files.
-		data, err := os.ReadFile(path)
+		data, err := srcRoot.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
+		parent := filepath.Dir(path)
+		if parent != "." {
+			if err := dstRoot.MkdirAll(parent, 0o750); err != nil {
+				return err
+			}
+		}
+		if err := dstRoot.WriteFile(path, data, info.Mode().Perm()); err != nil {
 			return err
 		}
-		return os.WriteFile(target, data, info.Mode())
+		return nil
 	})
 }

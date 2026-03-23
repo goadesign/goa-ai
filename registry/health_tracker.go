@@ -102,6 +102,10 @@ type (
 		mu      sync.RWMutex
 		tickers map[string]*pool.Ticker
 		cancels map[string]context.CancelFunc
+		// tickerStartedAt records when the current local ticker instance was
+		// created so stale-health repair can distinguish "this ticker stopped
+		// after we had healthy pongs" from "we have never seen a pong yet".
+		tickerStartedAt map[string]time.Time
 
 		stateMu              sync.Mutex
 		lastObservedHealthy  map[string]bool
@@ -204,6 +208,7 @@ func NewHealthTracker(streamManager StreamManager, healthMap, catalogMap *rmap.M
 		logger:               logger,
 		tickers:              make(map[string]*pool.Ticker),
 		cancels:              make(map[string]context.CancelFunc),
+		tickerStartedAt:      make(map[string]time.Time),
 		lastObservedHealthy:  make(map[string]bool),
 		lastObservedPongNano: make(map[string]int64),
 		closeCh:              make(chan struct{}),
@@ -302,6 +307,13 @@ func (h *healthTracker) IsHealthy(toolset string) bool {
 func (h *healthTracker) StartPingLoop(ctx context.Context, toolset string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	return h.restartLocalTickerLocked(toolset)
+}
+
+// restartLocalTickerLocked replaces the current local ticker participant for a
+// toolset without deleting the shared ticker-map entry. The caller must hold
+// h.mu.
+func (h *healthTracker) restartLocalTickerLocked(toolset string) error {
 	// (Re)start local ticker.
 	//
 	// In production we observed that a node can keep a stale *pool.Ticker in-memory
@@ -362,22 +374,27 @@ func (h *healthTracker) Close() error {
 		}
 		h.tickers = make(map[string]*pool.Ticker)
 		h.cancels = make(map[string]context.CancelFunc)
+		h.tickerStartedAt = make(map[string]time.Time)
 	})
 	return nil
 }
 
-// watchCatalogChanges reacts to catalog map changes from other nodes.
-// The events channel must be obtained via catalogMap.Subscribe() before
-// calling this method to avoid missing events that arrive between tracker
-// construction and goroutine startup.
+// watchCatalogChanges reacts to catalog map changes from other nodes and
+// periodically repairs stale local tickers. The events channel must be obtained
+// via catalogMap.Subscribe() before calling this method to avoid missing events
+// that arrive between tracker construction and goroutine startup.
 func (h *healthTracker) watchCatalogChanges(events <-chan rmap.EventKind) {
 	defer h.catalogMap.Unsubscribe(events)
+	repairTicker := time.NewTicker(h.pingInterval)
+	defer repairTicker.Stop()
 
 	for {
 		select {
 		case <-h.closeCh:
 			return
 		case <-events:
+			h.syncWithCatalog()
+		case <-repairTicker.C:
 			h.syncWithCatalog()
 		}
 	}
@@ -408,6 +425,28 @@ func (h *healthTracker) syncWithCatalog() {
 			// Use background context since this is triggered by map changes.
 			if err := h.startLocalTickerLocked(toolset); err != nil {
 				h.logger.Error(context.Background(), "start ticker failed", "event", "start_ticker_failed", "toolset", toolset, "err", err)
+			}
+			continue
+		}
+		health, shouldRestart, startedAt, err := h.shouldRestartStaleTickerLocked(toolset)
+		if err != nil {
+			h.logger.Error(context.Background(), "read ticker health failed", "event", "read_ticker_health_failed", "toolset", toolset, "err", err)
+			continue
+		}
+		if shouldRestart {
+			h.logger.Warn(
+				context.Background(),
+				"repairing stale local ticker",
+				"event", "repair_stale_ticker",
+				"component", "tool-registry-health",
+				"toolset", toolset,
+				"started_at", startedAt.UTC().Format(time.RFC3339Nano),
+				"last_pong", health.LastPong.UTC().Format(time.RFC3339Nano),
+				"age_since_last_pong", health.Age.String(),
+				"staleness_threshold", health.StalenessThreshold.String(),
+			)
+			if err := h.restartLocalTickerLocked(toolset); err != nil {
+				h.logger.Error(context.Background(), "restart ticker failed", "event", "restart_ticker_failed", "toolset", toolset, "err", err)
 			}
 		}
 	}
@@ -442,6 +481,7 @@ func (h *healthTracker) startLocalTickerLocked(toolset string) error {
 
 	h.tickers[toolset] = ticker
 	h.cancels[toolset] = cancel
+	h.tickerStartedAt[toolset] = time.Now()
 	go h.runPingLoop(loopCtx, toolset, ticker)
 
 	return nil
@@ -463,6 +503,7 @@ func (h *healthTracker) stopLocalTickerLocked(toolset string) {
 		ticker.Stop()
 		delete(h.tickers, toolset)
 	}
+	delete(h.tickerStartedAt, toolset)
 }
 
 // healthKey returns the shared health-map key for a toolset.
@@ -483,6 +524,26 @@ func toolsetFromCatalogKey(key string) string {
 // identity even when the human-readable registration timestamp collides.
 func (h *healthTracker) registrationToken(ctx context.Context, toolset string) (string, error) {
 	return h.catalog.RegistrationToken(ctx, toolset)
+}
+
+// shouldRestartStaleTickerLocked reports whether the current local ticker
+// instance predates the last healthy pong and the toolset has since gone stale.
+// That combination means the cluster previously had working heartbeats, but the
+// current ticker generation has stopped making forward progress and should be
+// recreated. The caller must hold h.mu.
+func (h *healthTracker) shouldRestartStaleTickerLocked(toolset string) (ToolsetHealth, bool, time.Time, error) {
+	startedAt, ok := h.tickerStartedAt[toolset]
+	if !ok {
+		return ToolsetHealth{}, false, time.Time{}, nil
+	}
+	health, err := h.Health(toolset)
+	if err != nil {
+		return ToolsetHealth{}, false, time.Time{}, err
+	}
+	if health.Healthy || health.LastPong.IsZero() {
+		return health, false, startedAt, nil
+	}
+	return health, health.LastPong.After(startedAt), startedAt, nil
 }
 
 // runPingLoop emits periodic pings for the distributed ticker winner and logs
