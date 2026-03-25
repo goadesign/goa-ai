@@ -1,10 +1,13 @@
 package temporal
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.temporal.io/sdk/testsuite"
+	"go.temporal.io/sdk/workflow"
 	"goa.design/goa-ai/runtime/agent/engine"
 )
 
@@ -108,4 +111,60 @@ func TestActivityOptionsForCapsHeartbeatToAttemptBudget(t *testing.T) {
 
 	require.Equal(t, 5*time.Second, opts.StartToCloseTimeout)
 	require.Equal(t, 5*time.Second, opts.HeartbeatTimeout)
+}
+
+func TestTemporalReceiverReceiveReturnsCanceledBeforeLaterSignal(t *testing.T) {
+	t.Parallel()
+
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	const signalName = "receiver.signal"
+
+	env.RegisterDelayedCallback(func() {
+		env.CancelWorkflow()
+	}, time.Second)
+	env.RegisterDelayedCallback(func() {
+		env.SignalWorkflow(signalName, "late-value")
+	}, 2*time.Second)
+
+	env.ExecuteWorkflow(func(ctx workflow.Context) error {
+		recv := &temporalReceiver[string]{
+			ctx: ctx,
+			ch:  workflow.GetSignalChannel(ctx, signalName),
+		}
+		_, err := recv.Receive(context.Background())
+		return err
+	})
+
+	err := env.GetWorkflowError()
+	require.Error(t, err)
+	require.ErrorContains(t, err, "canceled")
+}
+
+func TestTemporalReceiverReceiveWithTimeoutReturnsCanceledBeforeLaterSignal(t *testing.T) {
+	t.Parallel()
+
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	const signalName = "receiver.timeout.signal"
+
+	env.RegisterDelayedCallback(func() {
+		env.CancelWorkflow()
+	}, time.Second)
+	env.RegisterDelayedCallback(func() {
+		env.SignalWorkflow(signalName, "late-value")
+	}, 2*time.Second)
+
+	env.ExecuteWorkflow(func(ctx workflow.Context) error {
+		recv := &temporalReceiver[string]{
+			ctx: ctx,
+			ch:  workflow.GetSignalChannel(ctx, signalName),
+		}
+		_, err := recv.ReceiveWithTimeout(context.Background(), 10*time.Second)
+		return err
+	})
+
+	err := env.GetWorkflowError()
+	require.Error(t, err)
+	require.ErrorContains(t, err, "canceled")
 }
