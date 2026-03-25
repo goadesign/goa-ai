@@ -457,17 +457,41 @@ func (f immediateFuture[T]) IsReady() bool {
 
 // Receive blocks until a signal value is delivered and returns it.
 //
-// Temporal receives signals on the workflow context (not the provided ctx). We still
-// honor ctx cancellation before blocking so callers can enforce deadlines in a
-// deterministic way.
+// Temporal receives signals on the workflow context (not the provided ctx), so
+// cancellation must also observe the workflow context's Done channel. Without
+// that, a canceled workflow can remain stuck forever on a blocking signal wait.
 func (r *temporalReceiver[T]) Receive(ctx context.Context) (T, error) {
 	if err := ctx.Err(); err != nil {
 		var zero T
 		return zero, err
 	}
+	if err := normalizeTemporalError(r.ctx.Err()); err != nil {
+		var zero T
+		return zero, err
+	}
 
 	var out T
-	r.ch.Receive(r.ctx, &out)
+	if ok := r.ch.ReceiveAsync(&out); ok {
+		return out, nil
+	}
+
+	var canceled bool
+	sel := workflow.NewSelector(r.ctx)
+	sel.AddReceive(r.ch, func(c workflow.ReceiveChannel, _ bool) {
+		c.Receive(r.ctx, &out)
+	})
+	sel.AddReceive(r.ctx.Done(), func(workflow.ReceiveChannel, bool) {
+		canceled = true
+	})
+	sel.Select(r.ctx)
+
+	if canceled {
+		var zero T
+		if err := normalizeTemporalError(r.ctx.Err()); err != nil {
+			return zero, err
+		}
+		return zero, context.Canceled
+	}
 	return out, nil
 }
 
@@ -480,6 +504,10 @@ func (r *temporalReceiver[T]) ReceiveWithTimeout(ctx context.Context, timeout ti
 		var zero T
 		return zero, err
 	}
+	if err := normalizeTemporalError(r.ctx.Err()); err != nil {
+		var zero T
+		return zero, err
+	}
 	if timeout <= 0 {
 		var zero T
 		return zero, context.DeadlineExceeded
@@ -487,9 +515,13 @@ func (r *temporalReceiver[T]) ReceiveWithTimeout(ctx context.Context, timeout ti
 
 	var (
 		out      T
+		canceled bool
 		got      bool
 		timedOut bool
 	)
+	if ok := r.ch.ReceiveAsync(&out); ok {
+		return out, nil
+	}
 
 	timerCtx, cancel := workflow.WithCancel(r.ctx)
 	timer := workflow.NewTimer(timerCtx, timeout)
@@ -499,6 +531,10 @@ func (r *temporalReceiver[T]) ReceiveWithTimeout(ctx context.Context, timeout ti
 		c.Receive(r.ctx, &out)
 		got = true
 	})
+	sel.AddReceive(r.ctx.Done(), func(workflow.ReceiveChannel, bool) {
+		cancel()
+		canceled = true
+	})
 	sel.AddFuture(timer, func(workflow.Future) {
 		timedOut = true
 	})
@@ -507,6 +543,13 @@ func (r *temporalReceiver[T]) ReceiveWithTimeout(ctx context.Context, timeout ti
 
 	if got {
 		return out, nil
+	}
+	if canceled {
+		var zero T
+		if err := normalizeTemporalError(r.ctx.Err()); err != nil {
+			return zero, err
+		}
+		return zero, context.Canceled
 	}
 	if timedOut {
 		var zero T
