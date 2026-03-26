@@ -262,14 +262,15 @@ type ToolResult struct {
 	RunLink *run.Handle
 }
 
-// ToolOutput captures one executed tool call in a workflow-safe form suitable
-// for planner resume and finalization logic.
+// ToolOutput captures one executed tool call in canonical JSON form for planner
+// resume and finalization logic.
 //
 // Contract:
 //   - Payload is the canonical JSON input sent to the tool.
 //   - Result and ServerData are canonical JSON bytes produced by the tool.
-//   - This type must remain workflow-boundary safe; it intentionally does not
-//     carry decoded `any` values.
+//   - Resume activities hydrate all planner-visible state for this type from the
+//     canonical run log before invoking planner code.
+//   - This type intentionally does not carry decoded `any` values.
 type ToolOutput struct {
 	// Name is the fully-qualified tool identifier that was executed.
 	Name tools.Ident

@@ -229,14 +229,21 @@ type (
 		ParentToolCallID string
 		// ToolName is the globally unique tool identifier that was executed.
 		ToolName tools.Ident
-		// Result contains the tool's output payload. Nil if Error is set.
-		Result any
-		// ResultJSON contains the canonical JSON encoding of Result as produced
+		// ResultJSON contains the canonical JSON encoding of the tool result as produced
 		// by the tool's generated result codec.
 		//
-		// This is used by stream sinks and persistence layers that must serialize
-		// tool results without relying on `encoding/json` and Go field names.
+		// This is the canonical durable representation consumed by stream sinks,
+		// persistence layers, and planner resume hydration.
 		ResultJSON rawjson.Message
+		// ResultBytes is the size, in bytes, of the canonical JSON result payload
+		// before any workflow-boundary omission is applied.
+		ResultBytes int
+		// ResultOmitted indicates that the canonical result payload was omitted
+		// from the workflow-safe envelope that produced this event.
+		ResultOmitted bool
+		// ResultOmittedReason provides a stable, machine-readable reason for omitting
+		// the canonical result payload. Empty when ResultOmitted is false.
+		ResultOmittedReason string
 		// ServerData carries server-only data emitted by tool providers. This payload
 		// must not be serialized into model provider requests and is treated as opaque
 		// JSON bytes by the runtime.
@@ -906,26 +913,29 @@ func NewToolCallScheduledEvent(runID string, agentID agent.Ident, sessionID stri
 	}
 }
 
-// NewToolResultReceivedEvent constructs a ToolResultReceivedEvent. Result and err
-// capture the tool outcome; duration is the wall-clock execution time; telemetry
-// carries structured observability metadata (nil if not collected).
-func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID, parentToolCallID string, result any, resultJSON, serverData rawjson.Message, resultPreview string, bounds *agent.Bounds, duration time.Duration, telemetry *telemetry.ToolTelemetry, retryHint *planner.RetryHint, err *toolerrors.ToolError) *ToolResultReceivedEvent {
+// NewToolResultReceivedEvent constructs a ToolResultReceivedEvent. The canonical
+// result JSON and server-side sidecars are stored exactly once here; duration is
+// the wall-clock execution time; telemetry carries structured observability
+// metadata (nil if not collected).
+func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID, parentToolCallID string, resultJSON rawjson.Message, resultBytes int, resultOmitted bool, resultOmittedReason string, serverData rawjson.Message, resultPreview string, bounds *agent.Bounds, duration time.Duration, telemetry *telemetry.ToolTelemetry, retryHint *planner.RetryHint, err *toolerrors.ToolError) *ToolResultReceivedEvent {
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
 	return &ToolResultReceivedEvent{
-		baseEvent:        be,
-		ToolCallID:       toolCallID,
-		ParentToolCallID: parentToolCallID,
-		ToolName:         toolName,
-		Result:           result,
-		ResultJSON:       resultJSON,
-		ServerData:       serverData,
-		ResultPreview:    resultPreview,
-		Bounds:           bounds,
-		Duration:         duration,
-		Telemetry:        telemetry,
-		RetryHint:        retryHint,
-		Error:            err,
+		baseEvent:           be,
+		ToolCallID:          toolCallID,
+		ParentToolCallID:    parentToolCallID,
+		ToolName:            toolName,
+		ResultJSON:          resultJSON,
+		ResultBytes:         resultBytes,
+		ResultOmitted:       resultOmitted,
+		ResultOmittedReason: resultOmittedReason,
+		ServerData:          serverData,
+		ResultPreview:       resultPreview,
+		Bounds:              bounds,
+		Duration:            duration,
+		Telemetry:           telemetry,
+		RetryHint:           retryHint,
+		Error:               err,
 	}
 }
 

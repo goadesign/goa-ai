@@ -8,8 +8,9 @@ package runtime
 //   externally through an await signal, are materialized before canonical JSON
 //   encoding and hook publication.
 // - Toolset-owned server-only sidecars must be attached here so streamed
-//   `tool_result` events, durable run logs, and resume inputs all observe the
-//   same result shape.
+//   `tool_result` events and durable run logs observe the same canonical result
+//   shape and planner-visible metadata, and planner resume hydration can
+//   reconstruct them exactly.
 // - External callers provide raw result JSON only; they never construct the
 //   runtime's internal `api.ToolEvent` envelope.
 

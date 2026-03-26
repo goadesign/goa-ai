@@ -334,6 +334,13 @@ type PlanResumeInput struct {
 }
 ```
 
+Planners receive fully hydrated `ToolOutputs`, but the workflow/activity wire
+format no longer carries raw tool payloads or result bodies inline.
+`PlanActivityInput.ToolOutputs` ships tool-call references only, and the runtime
+rehydrates `Payload`, `Result`, `ServerData`, and planner-visible result
+metadata from the canonical run log inside `PlanResumeActivity` before invoking
+the planner.
+
 ### PlanResult
 
 ```go
@@ -1229,6 +1236,13 @@ The runtime exposes:
 
 Configure the store via `runtime.WithRunEventStore(...)`. If not set, the runtime
 defaults to an in-memory implementation (`runtime/agent/runlog/inmem`).
+
+The run log is also the canonical hydration source for planner resumes:
+`ToolCallScheduledEvent` stores the authoritative tool payload, and
+`ToolResultReceivedEvent` stores the authoritative result JSON plus
+planner-visible outcome metadata and server-only sidecars once. Planner
+activity inputs now carry tool-call references only and reload canonical state
+on demand instead of accumulating duplicated summaries in workflow history.
 
 ### Run Phases
 

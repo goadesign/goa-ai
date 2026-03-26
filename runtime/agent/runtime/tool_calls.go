@@ -203,6 +203,10 @@ func (r *Runtime) enforceToolResultContracts(spec tools.ToolSpec, call planner.T
 
 func (e *toolBatchExec) publishToolResultReceived(ctx context.Context, call planner.ToolRequest, tr *planner.ToolResult, resultJSON rawjson.Message, duration time.Duration) error {
 	parentID := parentToolCallID(call, e.runCtx)
+	resultBytes := tr.ResultBytes
+	if !tr.ResultOmitted {
+		resultBytes = len(resultJSON)
+	}
 	ev := hooks.NewToolResultReceivedEvent(
 		e.runID,
 		e.agentID,
@@ -210,8 +214,10 @@ func (e *toolBatchExec) publishToolResultReceived(ctx context.Context, call plan
 		call.Name,
 		call.ToolCallID,
 		parentID,
-		tr.Result,
 		resultJSON,
+		resultBytes,
+		tr.ResultOmitted,
+		tr.ResultOmittedReason,
 		tr.ServerData,
 		formatResultPreview(call.Name, tr.Result, tr.Bounds),
 		tr.Bounds,

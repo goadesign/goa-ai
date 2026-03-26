@@ -298,15 +298,18 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			return errors.New("stream: tool_end missing tool_name")
 		}
 		payload := ToolEndPayload{
-			ToolCallID:       evt.ToolCallID,
-			ParentToolCallID: evt.ParentToolCallID,
-			ToolName:         string(evt.ToolName),
-			Result:           evt.ResultJSON,
-			Bounds:           evt.Bounds,
-			Duration:         evt.Duration,
-			Telemetry:        evt.Telemetry,
-			RetryHint:        evt.RetryHint,
-			Error:            evt.Error,
+			ToolCallID:          evt.ToolCallID,
+			ParentToolCallID:    evt.ParentToolCallID,
+			ToolName:            string(evt.ToolName),
+			Result:              evt.ResultJSON,
+			ResultBytes:         evt.ResultBytes,
+			ResultOmitted:       evt.ResultOmitted,
+			ResultOmittedReason: evt.ResultOmittedReason,
+			Bounds:              evt.Bounds,
+			Duration:            evt.Duration,
+			Telemetry:           evt.Telemetry,
+			RetryHint:           evt.RetryHint,
+			Error:               evt.Error,
 		}
 		if preview := clampPreview(evt.ResultPreview); preview != "" {
 			payload.ResultPreview = preview

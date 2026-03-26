@@ -13,6 +13,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -114,7 +115,7 @@ func TestPublishHookErr_DoesNotUseWorkflowContextFromActivity(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestPublishHookErr_CompactsOversizedToolResultPayload(t *testing.T) {
+func TestPublishHookErr_PersistsCanonicalToolResultPayloadWithoutDuplicateResult(t *testing.T) {
 	store := runloginmem.New()
 	rt := &Runtime{
 		RunEventStore: store,
@@ -135,8 +136,10 @@ func TestPublishHookErr_CompactsOversizedToolResultPayload(t *testing.T) {
 		tools.Ident("ratings.get_rated_turn_context"),
 		"call-1",
 		"",
-		result,
 		resultJSON,
+		len(resultJSON),
+		false,
+		"",
 		nil,
 		"large result payload",
 		nil,
@@ -158,7 +161,40 @@ func TestPublishHookErr_CompactsOversizedToolResultPayload(t *testing.T) {
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(page.Events[0].Payload, &payload))
 	_, hasResult := payload["result"]
-	require.False(t, hasResult, "oversized payload should drop duplicate result field")
+	require.False(t, hasResult, "tool result hooks must not carry duplicate typed results")
+}
+
+func TestPublishHookErr_RejectsOversizedCanonicalPayload(t *testing.T) {
+	rt := &Runtime{
+		RunEventStore: runloginmem.New(),
+		Bus:           noopHooks{},
+		logger:        telemetry.NoopLogger{},
+		tracer:        telemetry.NewNoopTracer(),
+	}
+	oversizedResult := rawjson.Message([]byte(`{"text":"` + strings.Repeat("x", maxHookPayloadBytes) + `"}`))
+	evt := hooks.NewToolResultReceivedEvent(
+		testRunID,
+		agent.Ident("agent"),
+		testSessionID,
+		tools.Ident("ratings.get_rated_turn_context"),
+		"call-1",
+		"",
+		oversizedResult,
+		len(oversizedResult),
+		false,
+		"",
+		nil,
+		"",
+		nil,
+		0,
+		nil,
+		nil,
+		nil,
+	)
+
+	err := rt.publishHookErr(context.Background(), evt, "turn-1")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "hook payload exceeds budget")
 }
 
 type failingRunlogStore struct {

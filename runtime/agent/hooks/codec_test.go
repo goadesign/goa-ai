@@ -33,8 +33,10 @@ func TestDecodeFromHookInput_ToolResultReceivedPreservesServerDataBytes(t *testi
 		toolName,
 		toolCallID,
 		"",
-		nil,
 		resultJSON,
+		len(resultJSON),
+		false,
+		"",
 		serverData,
 		"preview",
 		nil,
@@ -46,6 +48,7 @@ func TestDecodeFromHookInput_ToolResultReceivedPreservesServerDataBytes(t *testi
 
 	in, err := EncodeToHookInput(ev, "")
 	require.NoError(t, err)
+	require.NotContains(t, string(in.Payload), `"result":`)
 
 	decoded, err := DecodeFromHookInput(in)
 	require.NoError(t, err)
@@ -54,6 +57,9 @@ func TestDecodeFromHookInput_ToolResultReceivedPreservesServerDataBytes(t *testi
 	require.True(t, ok)
 	require.Equal(t, toolName, tr.ToolName)
 	require.Equal(t, toolCallID, tr.ToolCallID)
+	require.Equal(t, len(resultJSON), tr.ResultBytes)
+	require.False(t, tr.ResultOmitted)
+	require.Empty(t, tr.ResultOmittedReason)
 	require.JSONEq(t, string(serverData), string(tr.ServerData))
 }
 
@@ -137,8 +143,8 @@ func TestDecodeFromHookInput_RunCompletedRejectsFailedPayloadWithoutFailure(t *t
 
 func TestDecodeFromHookInput_RunCompletedRejectsCanceledPayloadWithoutReason(t *testing.T) {
 	payload, err := json.Marshal(runCompletedPayload{
-		Status: "canceled",
-		Phase:  run.PhaseCanceled,
+		Status:       "canceled",
+		Phase:        run.PhaseCanceled,
 		Cancellation: &run.Cancellation{},
 	})
 	require.NoError(t, err)

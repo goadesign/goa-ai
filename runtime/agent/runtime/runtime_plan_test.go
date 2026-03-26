@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -123,25 +125,66 @@ func TestPlannerBoundaryOmitsToolResultsField(t *testing.T) {
 
 func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 	called := false
-	toolOutputs := []*api.ToolCallOutput{{
-		Name:       "svc.ts.tool",
-		ToolCallID: "call-1",
-		Payload:    rawjson.Message([]byte(`{"from":"test"}`)),
-		Result:     rawjson.Message([]byte(`{"status":"ok"}`)),
-		ServerData: rawjson.Message([]byte(`[{"kind":"evidence"}]`)),
-	}}
+	toolName := tools.Ident("svc.ts.tool")
+	resultJSON := rawjson.Message([]byte(`{"status":"ok"}`))
+	serverData := rawjson.Message([]byte(`[{"kind":"evidence"}]`))
+	total := 17
+	bounds := &agent.Bounds{Returned: 10, Total: &total, Truncated: true, RefinementHint: "narrow the window"}
+	toolOutputs := []*api.ToolOutputRef{{ToolCallID: "call-1"}}
 	pl := &stubPlanner{resume: func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
 		called = true
 		require.NotNil(t, input)
 		require.Len(t, input.ToolOutputs, 1)
-		require.Equal(t, tools.Ident("svc.ts.tool"), input.ToolOutputs[0].Name)
+		require.Equal(t, toolName, input.ToolOutputs[0].Name)
 		require.Equal(t, "call-1", input.ToolOutputs[0].ToolCallID)
 		require.JSONEq(t, `{"from":"test"}`, string(input.ToolOutputs[0].Payload))
 		require.JSONEq(t, `{"status":"ok"}`, string(input.ToolOutputs[0].Result))
 		require.JSONEq(t, `[{"kind":"evidence"}]`, string(input.ToolOutputs[0].ServerData))
+		require.Equal(t, len(resultJSON), input.ToolOutputs[0].ResultBytes)
+		require.NotNil(t, input.ToolOutputs[0].Bounds)
+		require.True(t, input.ToolOutputs[0].Bounds.Truncated)
+		require.Equal(t, "narrow the window", input.ToolOutputs[0].Bounds.RefinementHint)
 		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: "svc.other.tool"}}}, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
+	require.NoError(t, rt.publishHookErr(
+		context.Background(),
+		hooks.NewToolCallScheduledEvent(
+			"run-123",
+			"service.agent",
+			"",
+			toolName,
+			"call-1",
+			rawjson.Message([]byte(`{"from":"test"}`)),
+			"queue",
+			"",
+			0,
+		),
+		"",
+	))
+	require.NoError(t, rt.publishHookErr(
+		context.Background(),
+		hooks.NewToolResultReceivedEvent(
+			"run-123",
+			"service.agent",
+			"",
+			toolName,
+			"call-1",
+			"",
+			resultJSON,
+			len(resultJSON),
+			false,
+			"",
+			serverData,
+			"preview",
+			bounds,
+			50*time.Millisecond,
+			nil,
+			nil,
+			nil,
+		),
+		"",
+	))
 	input := PlanActivityInput{
 		AgentID:     "service.agent",
 		RunID:       "run-123",
@@ -152,6 +195,102 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, called)
 	require.Len(t, out.Result.ToolCalls, 1)
+}
+
+func TestPlanResumeActivityFailsWhenCanonicalToolResultIsMissing(t *testing.T) {
+	rt := newTestRuntimeWithPlanner("service.agent", &stubPlanner{})
+	require.NoError(t, rt.publishHookErr(
+		context.Background(),
+		hooks.NewToolCallScheduledEvent(
+			"run-123",
+			"service.agent",
+			"",
+			"svc.ts.tool",
+			"call-1",
+			rawjson.Message([]byte(`{"from":"test"}`)),
+			"queue",
+			"",
+			0,
+		),
+		"",
+	))
+	input := PlanActivityInput{
+		AgentID: "service.agent",
+		RunID:   "run-123",
+		RunContext: run.Context{
+			RunID:   "run-123",
+			Attempt: 1,
+		},
+		ToolOutputs: []*api.ToolOutputRef{{ToolCallID: "call-1"}},
+	}
+
+	_, err := rt.PlanResumeActivity(context.Background(), &input)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "missing canonical tool result in run log")
+}
+
+func TestPlanResumeActivityHydratesOmittedResultMetadataFromCanonicalRunlog(t *testing.T) {
+	called := false
+	pl := &stubPlanner{resume: func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+		called = true
+		require.Len(t, input.ToolOutputs, 1)
+		require.Equal(t, "call-1", input.ToolOutputs[0].ToolCallID)
+		require.True(t, input.ToolOutputs[0].ResultOmitted)
+		require.Equal(t, "workflow_budget", input.ToolOutputs[0].ResultOmittedReason)
+		require.Equal(t, 12345, input.ToolOutputs[0].ResultBytes)
+		require.Nil(t, input.ToolOutputs[0].Result)
+		require.JSONEq(t, `[{"kind":"evidence"}]`, string(input.ToolOutputs[0].ServerData))
+		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: "svc.other.tool"}}}, nil
+	}}
+	rt := newTestRuntimeWithPlanner("service.agent", pl)
+	require.NoError(t, rt.publishHookErr(
+		context.Background(),
+		hooks.NewToolCallScheduledEvent(
+			"run-123",
+			"service.agent",
+			"",
+			"svc.ts.tool",
+			"call-1",
+			rawjson.Message([]byte(`{"from":"test"}`)),
+			"queue",
+			"",
+			0,
+		),
+		"",
+	))
+	require.NoError(t, rt.publishHookErr(
+		context.Background(),
+		hooks.NewToolResultReceivedEvent(
+			"run-123",
+			"service.agent",
+			"",
+			"svc.ts.tool",
+			"call-1",
+			"",
+			nil,
+			12345,
+			true,
+			"workflow_budget",
+			rawjson.Message([]byte(`[{"kind":"evidence"}]`)),
+			"preview",
+			nil,
+			0,
+			nil,
+			nil,
+			nil,
+		),
+		"",
+	))
+	input := PlanActivityInput{
+		AgentID:     "service.agent",
+		RunID:       "run-123",
+		RunContext:  run.Context{RunID: "run-123", Attempt: 2},
+		ToolOutputs: []*api.ToolOutputRef{{ToolCallID: "call-1"}},
+	}
+
+	_, err := rt.PlanResumeActivity(context.Background(), &input)
+	require.NoError(t, err)
+	require.True(t, called)
 }
 
 func TestBuildPlannerToolOutputsPreservesOmittedResultMetadata(t *testing.T) {
