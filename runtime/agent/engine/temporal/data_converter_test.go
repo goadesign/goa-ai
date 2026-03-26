@@ -62,13 +62,9 @@ func TestNewAgentDataConverter_RoundTripsPlanActivityInputToolOutputs(t *testing
 			RunID:   "run-123",
 			Attempt: 2,
 		},
-		ToolOutputs: []*api.ToolCallOutput{
+		ToolOutputs: []*api.ToolOutputRef{
 			{
-				Name:       "test.tool",
 				ToolCallID: "call-1",
-				Payload:    rawjson.Message([]byte(`{"input":"ok"}`)),
-				Result:     rawjson.Message([]byte(`{"output":"ok"}`)),
-				ServerData: rawjson.Message([]byte(`[{"kind":"evidence"}]`)),
 			},
 		},
 	})
@@ -78,11 +74,7 @@ func TestNewAgentDataConverter_RoundTripsPlanActivityInputToolOutputs(t *testing
 	require.NoError(t, dc.FromPayload(p, &decoded))
 	require.NotNil(t, decoded)
 	require.Len(t, decoded.ToolOutputs, 1)
-	require.Equal(t, tools.Ident("test.tool"), decoded.ToolOutputs[0].Name)
 	require.Equal(t, "call-1", decoded.ToolOutputs[0].ToolCallID)
-	require.JSONEq(t, `{"input":"ok"}`, string(decoded.ToolOutputs[0].Payload))
-	require.JSONEq(t, `{"output":"ok"}`, string(decoded.ToolOutputs[0].Result))
-	require.JSONEq(t, `[{"kind":"evidence"}]`, string(decoded.ToolOutputs[0].ServerData))
 }
 
 func TestNewAgentDataConverter_RejectsJSONStringifiedToolResult(t *testing.T) {

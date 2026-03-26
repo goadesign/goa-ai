@@ -391,8 +391,18 @@ type (
 		ToolName string `json:"tool_name"`
 		// Result contains the tool's output payload. This is the structured data
 		// returned by the tool on success. It is the canonical JSON encoding
-		// produced by the tool result codec. Nil when the tool failed.
+		// produced by the tool result codec. Nil when the tool failed or when the
+		// canonical result payload was omitted from this workflow-safe envelope.
 		Result rawjson.Message `json:"result,omitempty"`
+		// ResultBytes is the size, in bytes, of the canonical JSON result payload
+		// before any workflow-boundary omission is applied.
+		ResultBytes int `json:"result_bytes,omitempty"`
+		// ResultOmitted indicates that the canonical result payload was omitted
+		// from the workflow-safe envelope that produced this event.
+		ResultOmitted bool `json:"result_omitted,omitempty"`
+		// ResultOmittedReason provides a stable, machine-readable reason for
+		// omitting the canonical result payload. Empty when ResultOmitted is false.
+		ResultOmittedReason string `json:"result_omitted_reason,omitempty"`
 		// ResultPreview is a concise, user-facing summary of the tool result rendered from
 		// DSL-authored templates when available. It is intended for UI ribbons and summaries
 		// (for example, "Device list ready" or "Found 3 critical alarms").

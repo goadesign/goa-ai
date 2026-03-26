@@ -211,9 +211,10 @@ type (
 		// ResultOmitted indicates that the runtime intentionally omitted Result bytes
 		// from this envelope to satisfy workflow-boundary payload budgets.
 		//
-		// This is used in planner activity inputs: workflow orchestration must not
-		// shuttle large tool payloads. Full tool results remain available via hooks
-		// (memory/streams) and in RunOutput.ToolEvents.
+		// This is used for workflow-safe child/final tool-result envelopes: workflow
+		// orchestration must not shuttle arbitrarily large result payloads. Full tool
+		// results remain available via the canonical run log when that path owns the
+		// execution history.
 		ResultOmitted bool
 
 		// ResultOmittedReason provides a stable, machine-readable reason for omitting
@@ -251,53 +252,16 @@ type (
 		RunLink *run.Handle
 	}
 
-	// ToolCallOutput is the workflow-boundary safe record of one executed tool call
-	// passed into planner resume/finalization activities.
+	// ToolOutputRef is the workflow-boundary safe reference to one canonical tool
+	// output stored in the run log.
 	//
 	// Contract:
-	// - Payload is the canonical JSON input sent to the tool.
-	// - Result and ServerData are canonical JSON bytes, not decoded Go values.
-	// - This preserves the exact executed tool boundary for planners that need
-	//   authoritative execution history.
-	ToolCallOutput struct {
-		// Name is the fully-qualified tool identifier that was executed.
-		Name tools.Ident
-
+	// - This is a pure identity envelope for planner resume/finalization.
+	// - The runtime hydrates all planner-visible tool state from canonical run-log
+	//   events before invoking planners.
+	ToolOutputRef struct {
 		// ToolCallID is the correlation identifier for this tool invocation.
 		ToolCallID string
-
-		// Payload is the canonical JSON payload passed to the tool.
-		Payload rawjson.Message
-
-		// Result is the canonical JSON result payload encoded using the tool result codec.
-		Result rawjson.Message
-
-		// ResultBytes is the size, in bytes, of the canonical JSON result payload
-		// produced by the runtime before any workflow-boundary trimming is applied.
-		ResultBytes int
-
-		// ResultOmitted indicates that the runtime intentionally omitted Result bytes
-		// from this envelope to satisfy workflow-boundary payload budgets.
-		ResultOmitted bool
-
-		// ResultOmittedReason provides a stable, machine-readable reason for omitting
-		// the result bytes. Empty when ResultOmitted is false.
-		ResultOmittedReason string
-
-		// ServerData carries canonical server-only data emitted alongside the tool result.
-		ServerData rawjson.Message
-
-		// Bounds describes how the result has been bounded relative to the full underlying data set.
-		Bounds *agent.Bounds
-
-		// Error is the structured tool error when tool execution failed.
-		Error *planner.ToolError
-
-		// RetryHint is optional structured guidance for recovering from tool failures.
-		RetryHint *planner.RetryHint
-
-		// Telemetry contains tool execution metrics (duration, token usage, model).
-		Telemetry *telemetry.ToolTelemetry
 	}
 
 	// PlanActivityInput carries the planner input for PlanStart and PlanResume activities.
@@ -319,8 +283,10 @@ type (
 		// Contract:
 		// - This is the sole planner-facing execution-history field across the
 		//   workflow/activity boundary.
-		// - Entries preserve the canonical tool input, output, and server data bytes.
-		ToolOutputs []*ToolCallOutput
+		// - Entries are references only; they do not inline planner-visible tool data.
+		// - The runtime rehydrates canonical tool input, result, server data, and
+		//   planner-visible metadata from the run event log before invoking planners.
+		ToolOutputs []*ToolOutputRef
 
 		// Finalize requests a final turn with no further tool calls.
 		Finalize *planner.Termination

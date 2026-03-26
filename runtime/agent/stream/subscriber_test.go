@@ -84,7 +84,9 @@ func TestStreamSubscriber_ToolEnd_EmitsServerData(t *testing.T) {
 		"call-1",
 		"",
 		nil,
-		nil,
+		0,
+		false,
+		"",
 		server,
 		"",
 		nil,
@@ -115,7 +117,9 @@ func TestStreamSubscriber_ToolEnd_AllowsMissingResult(t *testing.T) {
 		"call-1",
 		"",
 		nil,
-		nil,
+		4096,
+		true,
+		"workflow_budget",
 		nil,
 		"",
 		nil,
@@ -127,6 +131,11 @@ func TestStreamSubscriber_ToolEnd_AllowsMissingResult(t *testing.T) {
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 	require.Len(t, sink.events, 1)
 	require.Equal(t, EventToolEnd, sink.events[0].Type())
+	end, ok := sink.events[0].(ToolEnd)
+	require.True(t, ok)
+	require.True(t, end.Data.ResultOmitted)
+	require.Equal(t, "workflow_budget", end.Data.ResultOmittedReason)
+	require.Equal(t, 4096, end.Data.ResultBytes)
 }
 
 func TestStreamSubscriber_ToolUpdate(t *testing.T) {
@@ -387,8 +396,10 @@ func TestStreamSubscriber_ToolEndPrecedesRunStreamEnd(t *testing.T) {
 		tools.Ident("svc.tool"),
 		"call-1",
 		"",
-		nil,
 		rawjson.Message([]byte(`{"ok":true}`)),
+		len(`{"ok":true}`),
+		false,
+		"",
 		nil,
 		"",
 		nil,

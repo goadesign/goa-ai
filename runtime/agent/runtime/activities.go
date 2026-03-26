@@ -84,8 +84,9 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 //     instead of invoking activities directly.
 //
 // This activity is registered with the workflow engine and invoked after tool
-// execution to produce the next plan. The activity creates an agent context
-// with memory access and delegates to the planner's PlanResume implementation.
+// execution to produce the next plan. The activity creates an agent context,
+// loads canonical tool outputs from the run log, and delegates to the planner's
+// PlanResume implementation.
 func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
 	stopHeartbeat := startActivityHeartbeat(ctx)
 	defer stopHeartbeat()
@@ -95,7 +96,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err != nil {
 		return nil, err
 	}
-	toolOutputs, err := r.decodeToolOutputs(input.ToolOutputs)
+	toolOutputs, err := r.loadPlannerToolOutputs(ctx, input.RunID, input.ToolOutputs)
 	if err != nil {
 		return nil, err
 	}

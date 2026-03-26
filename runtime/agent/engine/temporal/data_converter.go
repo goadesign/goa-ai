@@ -47,7 +47,7 @@ type (
 		RunID       string
 		Messages    []*model.Message
 		RunContext  run.Context
-		ToolOutputs []*api.ToolCallOutput
+		ToolOutputs []*api.ToolOutputRef
 		Finalize    *planner.Termination
 	}
 

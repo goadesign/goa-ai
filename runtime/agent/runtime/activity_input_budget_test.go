@@ -1,40 +1,57 @@
 package runtime
 
 import (
-	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
-func TestEncodeToolEventsForPlanningOmitsServerDataAndLargeResults(t *testing.T) {
+func TestBuildNextResumeRequestKeepsLargePayloadAndResultsOffWire(t *testing.T) {
 	rt := newTestRuntimeWithPlanner("service.agent.budget", &stubPlanner{})
-	name := tools.Ident("svc.ts.big")
-	rt.toolSpecs[name] = newAnyJSONSpec(name, "svc.ts")
-
-	tr := &planner.ToolResult{
-		Name:       name,
-		ToolCallID: "tc-1",
-		Result: map[string]any{
-			"blob": strings.Repeat("x", maxPlanToolResultBytes+1024),
+	base := &planner.PlanInput{
+		Messages: []*model.Message{
+			{
+				Role:  model.ConversationRoleUser,
+				Parts: []model.Part{model.TextPart{Text: "hello"}},
+			},
 		},
-		ServerData: []byte(`[{"kind":"test.kind","data":{"ignored":true}}]`),
+		RunContext: run.Context{
+			RunID:   "run-1",
+			Attempt: 1,
+		},
 	}
+	payload := rawjson.Message([]byte(`{"blob":"` + strings.Repeat("x", maxPlanActivityInputBytes) + `"}`))
+	result := rawjson.Message([]byte(`{"blob":"` + strings.Repeat("x", maxPlanActivityInputBytes) + `"}`))
+	serverData := rawjson.Message([]byte(`[{"kind":"test.kind","data":"` + strings.Repeat("x", maxPlanActivityInputBytes) + `"}]`))
+	toolOutputs := []*planner.ToolOutput{
+		{
+			Name:        "svc.ts.big",
+			ToolCallID:  "tc-1",
+			Payload:     payload,
+			Result:      result,
+			ResultBytes: len(result),
+			ServerData:  serverData,
+		},
+	}
+	nextAttempt := 2
 
-	events, err := rt.encodeToolEventsForPlanning(context.Background(), []*planner.ToolResult{tr})
+	in, err := rt.buildNextResumeRequest(agent.Ident("service.agent.budget"), base, toolOutputs, &nextAttempt)
 	require.NoError(t, err)
-	require.Len(t, events, 1)
-	require.Equal(t, name, events[0].Name)
-	require.Empty(t, events[0].Result, "planning tool events must omit oversized results")
-	require.True(t, events[0].ResultOmitted)
-	require.Equal(t, resultOmittedReasonWorkflowBudget, events[0].ResultOmittedReason)
-	require.Greater(t, events[0].ResultBytes, maxPlanToolResultBytes)
-	require.Nil(t, events[0].ServerData, "planning tool events must omit server data")
+	require.Len(t, in.ToolOutputs, 1)
+	require.Equal(t, "tc-1", in.ToolOutputs[0].ToolCallID)
+
+	wire, err := json.Marshal(in)
+	require.NoError(t, err)
+	require.Less(t, len(wire), 10_000, "resume request wire shape must stay compact")
 }
 
 func TestToolResultContentTruncatesOversizedResults(t *testing.T) {

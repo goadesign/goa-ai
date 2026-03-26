@@ -38,18 +38,20 @@ type (
 	}
 
 	toolResultReceivedPayload struct {
-		ToolCallID       string                   `json:"tool_call_id"`
-		ParentToolCallID string                   `json:"parent_tool_call_id,omitempty"`
-		ToolName         tools.Ident              `json:"tool_name"`
-		Result           any                      `json:"result,omitempty"`
-		ResultJSON       rawjson.Message          `json:"result_json,omitempty"`
-		ServerData       rawjson.Message          `json:"server_data,omitempty"`
-		ResultPreview    string                   `json:"result_preview,omitempty"`
-		Bounds           *agent.Bounds            `json:"bounds,omitempty"`
-		Duration         time.Duration            `json:"duration"`
-		Telemetry        *telemetry.ToolTelemetry `json:"telemetry,omitempty"`
-		RetryHint        *planner.RetryHint       `json:"retry_hint,omitempty"`
-		Error            *toolerrors.ToolError    `json:"error,omitempty"`
+		ToolCallID          string                   `json:"tool_call_id"`
+		ParentToolCallID    string                   `json:"parent_tool_call_id,omitempty"`
+		ToolName            tools.Ident              `json:"tool_name"`
+		ResultJSON          rawjson.Message          `json:"result_json,omitempty"`
+		ResultBytes         int                      `json:"result_bytes,omitempty"`
+		ResultOmitted       bool                     `json:"result_omitted,omitempty"`
+		ResultOmittedReason string                   `json:"result_omitted_reason,omitempty"`
+		ServerData          rawjson.Message          `json:"server_data,omitempty"`
+		ResultPreview       string                   `json:"result_preview,omitempty"`
+		Bounds              *agent.Bounds            `json:"bounds,omitempty"`
+		Duration            time.Duration            `json:"duration"`
+		Telemetry           *telemetry.ToolTelemetry `json:"telemetry,omitempty"`
+		RetryHint           *planner.RetryHint       `json:"retry_hint,omitempty"`
+		Error               *toolerrors.ToolError    `json:"error,omitempty"`
 	}
 )
 
@@ -72,18 +74,20 @@ func EncodeToHookInput(evt Event, turnID string) (*ActivityInput, error) {
 		payload = rawjson.Message(b)
 	case *ToolResultReceivedEvent:
 		p := toolResultReceivedPayload{
-			ToolCallID:       e.ToolCallID,
-			ParentToolCallID: e.ParentToolCallID,
-			ToolName:         e.ToolName,
-			Result:           e.Result,
-			ResultJSON:       e.ResultJSON,
-			ServerData:       e.ServerData,
-			ResultPreview:    e.ResultPreview,
-			Bounds:           e.Bounds,
-			Duration:         e.Duration,
-			Telemetry:        e.Telemetry,
-			RetryHint:        e.RetryHint,
-			Error:            e.Error,
+			ToolCallID:          e.ToolCallID,
+			ParentToolCallID:    e.ParentToolCallID,
+			ToolName:            e.ToolName,
+			ResultJSON:          e.ResultJSON,
+			ResultBytes:         e.ResultBytes,
+			ResultOmitted:       e.ResultOmitted,
+			ResultOmittedReason: e.ResultOmittedReason,
+			ServerData:          e.ServerData,
+			ResultPreview:       e.ResultPreview,
+			Bounds:              e.Bounds,
+			Duration:            e.Duration,
+			Telemetry:           e.Telemetry,
+			RetryHint:           e.RetryHint,
+			Error:               e.Error,
 		}
 		b, err := json.Marshal(p)
 		if err != nil {
@@ -283,8 +287,10 @@ func DecodeFromHookInput(input *ActivityInput) (Event, error) {
 			p.ToolName,
 			p.ToolCallID,
 			p.ParentToolCallID,
-			p.Result,
 			p.ResultJSON,
+			p.ResultBytes,
+			p.ResultOmitted,
+			p.ResultOmittedReason,
 			p.ServerData,
 			p.ResultPreview,
 			p.Bounds,

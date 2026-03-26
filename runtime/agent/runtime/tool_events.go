@@ -19,9 +19,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
-const maxPlanToolResultBytes = 64 * 1024
-const resultOmittedReasonWorkflowBudget = "workflow_budget"
-
 // encodeToolEvents converts typed in-memory tool results into workflow-boundary safe
 // envelopes.
 //
@@ -53,56 +50,6 @@ func (r *Runtime) encodeToolEvents(ctx context.Context, events []*planner.ToolRe
 			ToolCallID:    ev.ToolCallID,
 			ChildrenCount: ev.ChildrenCount,
 			RunLink:       ev.RunLink,
-		})
-	}
-	return out, nil
-}
-
-// encodeToolEventsForPlanning converts tool results into workflow-boundary safe envelopes
-// suitable for PlanStart/PlanResume activity inputs.
-//
-// The planner resume inputs must remain small: the workflow loop is the control plane
-// and should not shuttle observer-side rendering payloads or large values across workflow/activity
-// boundaries. Full tool results are persisted via hooks and returned in
-// RunOutput.ToolEvents for callers that need them.
-//
-// Contract:
-//   - ServerData is always omitted.
-//   - Results larger than maxPlanToolResultBytes are omitted (Result=nil) and must be
-//     consumed via the provider transcript (tool_result parts) or via out-of-band
-//     persistence.
-func (r *Runtime) encodeToolEventsForPlanning(ctx context.Context, events []*planner.ToolResult) ([]*api.ToolEvent, error) {
-	if len(events) == 0 {
-		return nil, nil
-	}
-	out := make([]*api.ToolEvent, 0, len(events))
-	for _, ev := range events {
-		result, err := r.marshalToolValue(ctx, ev.Name, ev.Result, ev.Bounds)
-		if err != nil {
-			return nil, fmt.Errorf("encode tool result for %s: %w", ev.Name, err)
-		}
-		resultBytes := len(result)
-		omitted := false
-		omittedReason := ""
-		if len(result) > maxPlanToolResultBytes {
-			omitted = true
-			omittedReason = resultOmittedReasonWorkflowBudget
-			result = nil
-		}
-		out = append(out, &api.ToolEvent{
-			Name:                ev.Name,
-			Result:              rawjson.Message(result),
-			ResultBytes:         resultBytes,
-			ResultOmitted:       omitted,
-			ResultOmittedReason: omittedReason,
-			ServerData:          nil,
-			Bounds:              ev.Bounds,
-			Error:               ev.Error,
-			RetryHint:           ev.RetryHint,
-			Telemetry:           ev.Telemetry,
-			ToolCallID:          ev.ToolCallID,
-			ChildrenCount:       ev.ChildrenCount,
-			RunLink:             ev.RunLink,
 		})
 	}
 	return out, nil
@@ -175,60 +122,21 @@ func (r *Runtime) buildPlannerToolOutputs(ctx context.Context, calls []planner.T
 	return out, nil
 }
 
-// decodeToolOutputs converts workflow-boundary tool output envelopes back into
-// planner ToolOutput values.
-func (r *Runtime) decodeToolOutputs(events []*api.ToolCallOutput) ([]*planner.ToolOutput, error) {
-	if len(events) == 0 {
-		return nil, nil
-	}
-	out := make([]*planner.ToolOutput, 0, len(events))
-	for _, ev := range events {
-		if ev == nil {
-			return nil, fmt.Errorf("nil tool output entry")
-		}
-		out = append(out, &planner.ToolOutput{
-			Name:                ev.Name,
-			ToolCallID:          ev.ToolCallID,
-			Payload:             append(rawjson.Message(nil), ev.Payload...),
-			Result:              append(rawjson.Message(nil), ev.Result...),
-			ResultBytes:         ev.ResultBytes,
-			ResultOmitted:       ev.ResultOmitted,
-			ResultOmittedReason: ev.ResultOmittedReason,
-			ServerData:          append(rawjson.Message(nil), ev.ServerData...),
-			Bounds:              ev.Bounds,
-			Error:               ev.Error,
-			RetryHint:           ev.RetryHint,
-			Telemetry:           ev.Telemetry,
-		})
-	}
-	return out, nil
-}
-
-// encodePlannerToolOutputs clones planner ToolOutput values into the
-// workflow-boundary safe api.ToolCallOutput shape used by plan activities.
-func encodePlannerToolOutputs(outputs []*planner.ToolOutput) ([]*api.ToolCallOutput, error) {
+// encodePlannerToolOutputs converts planner ToolOutput values into canonical
+// run-log references for plan activities.
+func encodePlannerToolOutputs(outputs []*planner.ToolOutput) ([]*api.ToolOutputRef, error) {
 	if len(outputs) == 0 {
 		return nil, nil
 	}
-	out := make([]*api.ToolCallOutput, 0, len(outputs))
+	out := make([]*api.ToolOutputRef, 0, len(outputs))
 	for _, output := range outputs {
 		if output == nil {
 			return nil, fmt.Errorf("encode planner tool outputs: nil tool output")
 		}
-		out = append(out, &api.ToolCallOutput{
-			Name:                output.Name,
-			ToolCallID:          output.ToolCallID,
-			Payload:             append(rawjson.Message(nil), output.Payload...),
-			Result:              append(rawjson.Message(nil), output.Result...),
-			ResultBytes:         output.ResultBytes,
-			ResultOmitted:       output.ResultOmitted,
-			ResultOmittedReason: output.ResultOmittedReason,
-			ServerData:          append(rawjson.Message(nil), output.ServerData...),
-			Bounds:              output.Bounds,
-			Error:               output.Error,
-			RetryHint:           output.RetryHint,
-			Telemetry:           output.Telemetry,
-		})
+		if output.ToolCallID == "" {
+			return nil, fmt.Errorf("encode planner tool outputs: missing tool_call_id")
+		}
+		out = append(out, &api.ToolOutputRef{ToolCallID: output.ToolCallID})
 	}
 	return out, nil
 }
