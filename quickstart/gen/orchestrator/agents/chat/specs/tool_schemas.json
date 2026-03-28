@@ -15,7 +15,7 @@
             "question": {
               "type": "string",
               "description": "User question to answer",
-              "example": "Delectus eveniet ad accusantium magnam saepe nulla."
+              "example": "Ut possimus impedit facilis tempora ut."
             }
           },
           "required": [
@@ -32,7 +32,7 @@
             "text": {
               "type": "string",
               "description": "Answer text",
-              "example": "Ipsa et reprehenderit distinctio id nobis."
+              "example": "Ut provident."
             }
           },
           "required": [

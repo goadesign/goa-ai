@@ -20,7 +20,8 @@ go get goa.design/goa-ai@latest
 
 ## 2) Add a tiny design (design/design.go)
 
-This declares one service (`orchestrator`) with a single agent (`chat`) and a tiny helper toolset.
+This declares one service (`orchestrator`) with a single agent (`chat`), a tiny
+helper toolset, and a typed direct completion.
 
 ```go
 package design
@@ -41,10 +42,39 @@ var AskPayload = Type("AskPayload", func() {
 
 var Answer = Type("Answer", func() {
     Attribute("text", String, "Answer text")
+    Example(map[string]any{"text": "Tokyo is the capital of Japan."})
     Required("text")
 })
 
+var DraftTaskStep = Type("DraftTaskStep", func() {
+    Attribute("title", String, "Short step title")
+    Example(map[string]any{"title": "Review the current launch checklist"})
+    Required("title")
+})
+
+var TaskDraft = Type("TaskDraft", func() {
+    Attribute("assistant_text", String, "Short explanation of the generated draft")
+    Attribute("name", String, "Task name")
+    Attribute("goal", String, "Outcome-style goal")
+    Attribute("steps", ArrayOf(DraftTaskStep), "Ordered draft steps")
+    Example(map[string]any{
+        "assistant_text": "Created a launch-readiness task draft.",
+        "name": "Prepare launch checklist",
+        "goal": "Confirm the service is ready to launch.",
+        "steps": []map[string]any{
+            {"title": "Review release notes and rollout scope"},
+            {"title": "Confirm dashboards and alerts are healthy"},
+            {"title": "Share the launch checklist with stakeholders"},
+        },
+    })
+    Required("assistant_text", "name", "goal", "steps")
+})
+
 var _ = Service("orchestrator", func() {
+    Completion("draft_task", "Produce a task draft directly", func() {
+        Return(TaskDraft)
+    })
+
     Agent("chat", "Friendly Q&A assistant", func() {
         Use("helpers", func() {
             Tool("answer", "Answer a simple question", func() {
@@ -72,6 +102,43 @@ This creates:
 - **`cmd/orchestrator/main.go`** - Runnable example using the bootstrap
 - **`internal/agents/bootstrap/bootstrap.go`** - Wires runtime and registers agents
 - **`internal/agents/chat/planner/planner.go`** - Stub planner (edit to connect your LLM)
+- **`gen/<service>/completions/`** - Generated typed direct-completion helpers
+
+### Typed Direct Completion
+
+Tools are for callable capabilities. When you want the assistant to return a
+typed result directly, declare a service-owned completion:
+
+```go
+var TaskDraft = Type("TaskDraft", func() {
+    Attribute("name", String, "Task name")
+    Attribute("goal", String, "Outcome-style goal")
+    Required("name", "goal")
+})
+
+var _ = Service("orchestrator", func() {
+    Completion("draft_task", "Produce a task draft directly", func() {
+        Return(TaskDraft)
+    })
+})
+```
+
+Completion names are part of the structured-output contract. They must be
+1-64 ASCII characters, may contain letters, digits, `_`, and `-`, and must
+start with a letter or digit.
+
+Regeneration emits `gen/orchestrator/completions/` with the result schema,
+typed codecs, and generated helpers such as `CompleteDraftTask(...)`,
+`StreamCompleteDraftTask(...)`, and `DecodeDraftTaskChunk(...)`.
+
+The unary helper issues a unary model request with provider-enforced structured
+output and decodes the assistant response through the generated codec. The
+streaming helper stays on the raw `model.Streamer` surface: `completion_delta`
+chunks are preview-only, exactly one final `completion` chunk is canonical, and
+`DecodeDraftTaskChunk(...)` decodes only that final payload. Generated
+completion helpers reject tool-enabled requests and caller-supplied
+`StructuredOutput`. Providers that do not implement structured output return
+`model.ErrStructuredOutputUnsupported`.
 
 ## 4) Run the generated example
 
@@ -84,6 +151,9 @@ Expected output:
 ```
 RunID: orchestrator-chat-...
 Assistant: Hello from example planner.
+Completion draft_task: ...
+Completion delta draft_task: ...
+Completion stream draft_task: ...
 ```
 
 The generated example uses the in-memory engine, so no Temporal is needed for development.

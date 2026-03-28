@@ -15,9 +15,9 @@ import (
 // Generate is the code generation entry point for the agents plugin. It is called
 // by the Goa code generation framework during the `goa gen` command execution.
 //
-// The function scans the provided DSL roots for agent declarations, transforms them
-// into template-ready data structures, and generates all necessary Go files for each
-// agent. Generated artifacts include:
+// The function scans the provided DSL roots for agent and completion
+// declarations, transforms them into template-ready data structures, and
+// generates all necessary Go files. Generated artifacts include:
 //   - agent.go: agent struct and constructor
 //   - config.go: configuration types and validation
 //   - workflow.go: workflow definition and handler
@@ -25,6 +25,7 @@ import (
 //   - registry.go: engine registration helpers
 //   - specs/<toolset>/: per-toolset specifications, types, and codecs
 //   - specs/specs.go: agent-level aggregator of all toolset specs
+//   - completions/: service-owned typed completion specs, types, and codecs
 //   - agenttools/: helpers for exported toolsets (agent-as-tool pattern)
 //   - (optional) service_toolset.go: executor-first registration for method-backed toolsets
 //
@@ -66,6 +67,11 @@ func Generate(genpkg string, roots []eval.Root, files []*codegen.File) ([]*codeg
 
 	// Emit owner-scoped toolset specs/codecs once per defining toolset.
 	generated = append(generated, toolsetSpecsFiles(data)...)
+	completionFiles, err := completionSpecsFiles(data)
+	if err != nil {
+		return nil, err
+	}
+	generated = append(generated, completionFiles...)
 
 	for _, svc := range data.Services {
 		// Emit registry client packages for declared registries.

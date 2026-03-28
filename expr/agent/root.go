@@ -15,6 +15,9 @@ type RootExpr struct {
 	// Agents is the collection of all agent expressions defined in the
 	// design.
 	Agents []*AgentExpr
+	// Completions is the collection of all service-owned typed completion
+	// contracts declared in the design.
+	Completions []*CompletionExpr
 	// ServiceExports holds toolsets exported directly by services.
 	ServiceExports []*ServiceExportsExpr
 	// Toolsets is the collection of all standalone toolset expressions not
@@ -78,6 +81,9 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 	}
 
 	walk(eval.ToExpressionSet(r.Agents))
+	if len(r.Completions) > 0 {
+		walk(eval.ToExpressionSet(r.Completions))
+	}
 
 	var groups eval.ExpressionSet
 	for _, agent := range r.Agents {
@@ -140,6 +146,7 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 func (r *RootExpr) Validate() error {
 	verr := new(eval.ValidationErrors)
 	r.validateSanitizedAgentSlugs(verr)
+	r.validateCompletionNames(verr)
 
 	// Validate registry name uniqueness.
 	registries := make(map[string]*RegistryExpr)
@@ -240,6 +247,43 @@ func (r *RootExpr) validateSanitizedAgentSlugs(verr *eval.ValidationErrors) {
 			continue
 		}
 		agents[key] = agent
+	}
+}
+
+func (r *RootExpr) validateCompletionNames(verr *eval.ValidationErrors) {
+	names := make(map[string]*CompletionExpr)
+	slugs := make(map[string]*CompletionExpr)
+	for _, completion := range r.Completions {
+		if completion == nil || completion.Service == nil || completion.Name == "" {
+			continue
+		}
+		serviceKey := completion.Service.Name + ":"
+		nameKey := serviceKey + completion.Name
+		if other, dup := names[nameKey]; dup {
+			verr.Add(
+				completion,
+				"completion name %q duplicates a completion declared in %s within service %q",
+				completion.Name,
+				other.EvalName(),
+				completion.Service.Name,
+			)
+			continue
+		}
+		names[nameKey] = completion
+
+		slug := naming.SanitizeToken(completion.Name, "completion")
+		slugKey := serviceKey + slug
+		if other, dup := slugs[slugKey]; dup {
+			verr.Add(
+				completion,
+				"sanitized completion name %q duplicates a completion declared in %s within service %q",
+				slug,
+				other.EvalName(),
+				completion.Service.Name,
+			)
+			continue
+		}
+		slugs[slugKey] = completion
 	}
 }
 

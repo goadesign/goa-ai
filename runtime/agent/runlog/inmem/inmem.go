@@ -30,8 +30,8 @@ type (
 // New returns a new in-memory run log store.
 func New() *Store {
 	return &Store{
-		nextSeq:    make(map[string]int64),
-		events:     make(map[string][]*runlog.Event),
+		nextSeq:     make(map[string]int64),
+		events:      make(map[string][]*runlog.Event),
 		eventsByKey: make(map[string]map[string]*runlog.Event),
 	}
 }

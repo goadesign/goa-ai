@@ -5,6 +5,7 @@ Build intelligent agents, MCP servers, and registry-integrated toolsets from you
 ## What you get
 
 - **Agents**: Durable plan/execute loops with policy enforcement, memory, and streaming
+- **Typed Completions**: Service-owned structured assistant-output contracts with generated codecs and helpers
 - **MCP**: Endpoints mapped from your Goa service (tools, resources, prompts) with JSON-RPC/SSE transport
 - **Registries**: Centralized tool catalogs with federation, caching, and semantic search
 - **Unified Toolsets**: Single `Toolset` construct with providers (local, MCP, registry)
@@ -17,7 +18,7 @@ For each service annotated with agents or MCP, the plugin:
 2. Runs standard Goa generators:
    - Service layer via `codegen/service` (service, endpoints, client)
    - JSON-RPC transport via `jsonrpc/codegen` (server, client, types; SSE when streaming)
-   - Agent workflows, activities, and tool specs via `codegen/agent`
+   - Agent workflows, activities, tool specs, and completion specs via `codegen/agent`
 3. Applies small, deterministic transformations so files land under appropriate paths.
 
 We compose on top of Goa—no forks, minimal templates, and predictable output.
@@ -26,6 +27,7 @@ We compose on top of Goa—no forks, minimal templates, and predictable output.
 
 - Agent packages: `gen/<svc>/agents/<agent>/`
 - Tool specs: `gen/<svc>/agents/<agent>/specs/`
+- Service completions: `gen/<svc>/completions/`
 - MCP service: `gen/mcp_<service>/`
 - Registry clients: `gen/<svc>/registry/<name>/`
 
@@ -50,6 +52,49 @@ var RegistryTools = Toolset("enterprise", FromRegistry(CorpRegistry, "data-tools
 ```
 
 All toolsets are first-class citizens—agents use `Use(toolset)` uniformly regardless of provider.
+
+## Service-Owned Typed Completions
+
+Direct assistant output is a different contract than a tool call, so Goa-AI models
+it explicitly with `Completion(...)` on a service:
+
+```go
+var Draft = Type("Draft", func() {
+    Attribute("name", String, "Task name")
+    Attribute("goal", String, "Outcome-style goal")
+    Required("name", "goal")
+})
+
+var _ = Service("tasks", func() {
+    Completion("draft_from_transcript", "Produce a task draft directly", func() {
+        Return(Draft)
+    })
+})
+```
+
+Completion names are part of the structured-output contract. They must be
+1-64 ASCII characters, may contain letters, digits, `_`, and `-`, and must
+start with a letter or digit.
+
+This generates a service-owned completions package with:
+
+- the completion result schema
+- generated result codecs and validation helpers
+- typed `completion.Spec` values
+- unary helpers that request provider-enforced structured output and decode the
+  assistant response through the generated codec
+- streaming helpers that surface preview `completion_delta` fragments plus one
+  canonical final `completion` payload
+
+Streaming completions stay on the raw `model.Streamer` surface, and generated
+`Decode<Name>Chunk(...)` helpers decode only the final canonical payload.
+Providers that do not implement structured output fail explicitly with
+`model.ErrStructuredOutputUnsupported`.
+
+The design intentionally keeps completions separate from toolsets: toolsets model
+callable capabilities, while completions model final assistant answers. Both reuse
+the same Goa types, validations, and codegen pipeline so there is one contract
+surface for structured model I/O.
 
 ## Registry Integration
 

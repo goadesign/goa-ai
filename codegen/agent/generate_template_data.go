@@ -27,9 +27,18 @@ type (
 	toolCodecsFileData struct {
 		Types []*typeData
 		Tools []*toolEntry
+		// EmitToolLookups controls whether the tool-specific codec lookup helpers
+		// are rendered in this package.
+		EmitToolLookups bool
 		// Helpers contains a file-level, de-duplicated list of helper transform
 		// functions referenced by codec-local conversions (transport <-> public).
 		Helpers []*codegen.TransformFunctionData
+	}
+
+	completionSpecFileData struct {
+		PackageName string
+		Completions []*completionEntry
+		Types       []*typeData
 	}
 
 	toolSpecsAggregateData struct {

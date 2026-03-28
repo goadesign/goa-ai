@@ -41,6 +41,7 @@ Building AI agents shouldn't mean wrestling with JSON schemas, debugging brittle
 | **Agents that crash and lose state** | Temporal-backed durable execution with automatic retries |
 | **Messy multi-agent composition** | First-class agent-as-tool with run trees and run links |
 | **Schema drift between components** | Single source of truth: DSL → generated codecs → runtime validation |
+| **Hand-parsed structured final answers** | Service-owned `Completion(...)` contracts generate schemas, codecs, and typed completion helpers |
 | **Observability as afterthought** | Built-in streaming, transcripts, traces, and metrics from day one |
 | **Manual MCP integration** | Generated wrappers turn MCP servers into typed toolsets |
 | **Toolsets scattered across services** | Clustered registry for dynamic discovery and health-monitored invocation |
@@ -55,6 +56,7 @@ Building AI agents shouldn't mean wrestling with JSON schemas, debugging brittle
      │                 │        │                 │        │                 │
      │  Agent DSL      │        │  Tool specs     │        │  Plan/Execute   │
      │  Tool schemas   │        │  Codecs         │        │  Policy checks  │
+     │  Completions    │        │  Completions    │        │  Structured I/O │
      │  Policies       │        │  Workflows      │        │  Streaming      │
      │  MCP bindings   │        │  Registries     │        │  Memory         │
      └─────────────────┘        └─────────────────┘        └─────────────────┘
@@ -63,7 +65,7 @@ Building AI agents shouldn't mean wrestling with JSON schemas, debugging brittle
 
 1. **Design** — Express intent in Go: agents, tools, policies. Version-controlled, type-checked, reviewable.
 
-2. **Generate** — `goa gen` produces everything: tool specs with JSON schemas, type-safe codecs, workflow definitions, registry helpers. Never edit `gen/`—regenerate on change.
+2. **Generate** — `goa gen` produces everything: tool specs with JSON schemas, service-owned completion packages, type-safe codecs, workflow definitions, registry helpers. Never edit `gen/`—regenerate on change.
 
 3. **Execute** — The runtime runs your agents: plan/execute loops, policy enforcement, memory persistence, event streaming. Swap engines (in-memory → Temporal) without changing agent code.
 
@@ -202,6 +204,52 @@ Agent("assistant", "Document assistant", func() {
 - JSON Schema for LLM function calling (auto-generated)
 - Validation at boundaries—invalid calls get retry hints, not crashes
 - Type-safe Go structs for payloads and results
+
+### Typed Direct Completions
+
+Not every structured model interaction is a tool call. Sometimes you want the
+assistant to return a typed result directly.
+
+```go
+var TaskDraft = Type("TaskDraft", func() {
+    Attribute("name", String, "Task name")
+    Attribute("goal", String, "Outcome-style goal")
+    Required("name", "goal")
+})
+
+var _ = Service("tasks", func() {
+    Completion("draft_from_transcript", "Produce a task draft directly", func() {
+        Return(TaskDraft)
+    })
+})
+```
+
+Completion names are part of the structured-output contract. They must be
+1-64 ASCII characters, may contain letters, digits, `_`, and `-`, and must
+start with a letter or digit.
+
+`goa gen` emits a service-owned package at `gen/<service>/completions/` with:
+
+- JSON schema for the completion result
+- typed codecs and validation helpers
+- typed `completion.Spec` values
+- unary `Complete<Name>(...)` helpers
+- streaming `StreamComplete<Name>(...)` and `Decode<Name>Chunk(...)` helpers
+
+Completions are service-owned contracts and do not require any `Agent(...)`
+declaration. Agent quickstart/example scaffolding is emitted only for services
+that actually own agents.
+
+This keeps direct assistant output on the same contract surface as tools:
+Goa types, validations, `OneOf`, generated codecs, and fail-fast runtime
+enforcement. Generated helpers reject tool-enabled requests and caller-supplied
+`StructuredOutput`. Unary helpers decode the final unary response directly.
+Streaming helpers stay on the raw `model.Streamer` surface: `completion_delta`
+chunks are preview-only, exactly one final `completion` chunk is canonical, and
+`Decode<Name>Chunk(...)` decodes only that final payload. Completion streams
+stay off planner streaming helpers because planner streaming is for assistant
+transcript/tool events, not structured-output chunks. Providers that do not
+implement structured output surface `model.ErrStructuredOutputUnsupported`.
 
 ### BindTo: Zero-Glue Service Integration
 

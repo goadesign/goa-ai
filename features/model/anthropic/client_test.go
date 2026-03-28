@@ -198,3 +198,57 @@ func TestComplete_RateLimited(t *testing.T) {
 		t.Fatalf("expected ErrRateLimited, got %v", err)
 	}
 }
+
+func TestComplete_RejectsStructuredOutput(t *testing.T) {
+	stub := &stubMessagesClient{}
+	cl, err := New(stub, Options{
+		DefaultModel: "claude-3.5-sonnet",
+		MaxTokens:    64,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, err = cl.Complete(context.Background(), &model.Request{
+		Messages: []*model.Message{
+			{
+				Role:  model.ConversationRoleUser,
+				Parts: []model.Part{model.TextPart{Text: "hi"}},
+			},
+		},
+		StructuredOutput: &model.StructuredOutput{
+			Name:   "draft_from_transcript",
+			Schema: []byte(`{"type":"object"}`),
+		},
+	})
+	if !errors.Is(err, model.ErrStructuredOutputUnsupported) {
+		t.Fatalf("expected ErrStructuredOutputUnsupported, got %v", err)
+	}
+}
+
+func TestStream_RejectsStructuredOutput(t *testing.T) {
+	stub := &stubMessagesClient{}
+	cl, err := New(stub, Options{
+		DefaultModel: "claude-3.5-sonnet",
+		MaxTokens:    64,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, err = cl.Stream(context.Background(), &model.Request{
+		Messages: []*model.Message{
+			{
+				Role:  model.ConversationRoleUser,
+				Parts: []model.Part{model.TextPart{Text: "hi"}},
+			},
+		},
+		StructuredOutput: &model.StructuredOutput{
+			Name:   "draft_from_transcript",
+			Schema: []byte(`{"type":"object"}`),
+		},
+	})
+	if !errors.Is(err, model.ErrStructuredOutputUnsupported) {
+		t.Fatalf("expected ErrStructuredOutputUnsupported, got %v", err)
+	}
+}

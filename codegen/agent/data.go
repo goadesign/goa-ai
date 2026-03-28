@@ -20,17 +20,17 @@ import (
 type (
 	// GeneratorData holds the complete design metadata extracted from Goa DSL
 	// expressions and transformed into a template-friendly structure. It groups
-	// all declared agents by their owning Goa services and provides the root
-	// import path for generated code.
+	// all declared agents and service-owned completions by their owning Goa
+	// services and provides the root import path for generated code.
 	//
 	// Instances are created by buildGeneratorData during the Goa code generation
-	// phase by scanning AgentExpr expressions from the DSL root. The structure is
-	// immutable after construction and safe for concurrent template rendering.
-	// Services are sorted alphabetically by name, and agents within each service
-	// are also sorted for deterministic output.
+	// phase by scanning evaluated agent/completion expressions from the DSL root.
+	// The structure is immutable after construction and safe for concurrent
+	// template rendering. Services are sorted alphabetically by name, and nested
+	// agents/completions are also sorted for deterministic output.
 	//
-	// If no agents are declared in the design, Services will be empty and the
-	// Generate function will skip code generation entirely.
+	// If no agents or completions are declared in the design, Services will be
+	// empty and the Generate function will skip code generation entirely.
 	GeneratorData struct {
 		// Genpkg is the Go import path to the generated code root (typically `<module>/gen`).
 		Genpkg string
@@ -38,14 +38,15 @@ type (
 		Services []*ServiceAgentsData
 	}
 
-	// ServiceAgentsData groups all agents declared under a single Goa service.
-	// It bundles the service's core metadata (from Goa's service generators) with
-	// the agent-specific metadata needed for code generation.
+	// ServiceAgentsData groups all goa-ai declarations declared under a single Goa
+	// service. It bundles the service's core metadata (from Goa's service
+	// generators) with the agent- and completion-specific metadata needed for
+	// code generation.
 	//
 	// Each ServiceAgentsData corresponds to one Goa service that declares at least
-	// one agent. The structure is created during buildGeneratorData and is immutable
-	// after construction. Agents are sorted alphabetically by name for deterministic
-	// generation.
+	// one agent or completion. The structure is created during buildGeneratorData
+	// and is immutable after construction. Agents and completions are sorted
+	// alphabetically by name for deterministic generation.
 	//
 	// Templates use this to generate service-scoped agent packages and to access
 	// both service-level types (via Service.UserTypes) and agent-level artifacts.
@@ -54,6 +55,8 @@ type (
 		Service *service.Data
 		// Agents lists each agent declared within the service DSL.
 		Agents []*AgentData
+		// Completions lists each typed assistant-output contract declared by the service.
+		Completions []*CompletionData
 		// HasMCP indicates whether any agent under this service references external
 		// MCP toolsets. Example-phase generators use this to decide whether to emit
 		// MCP caller scaffolding/imports.
@@ -796,6 +799,18 @@ func buildGeneratorData(genpkg string, roots []eval.Root) (*GeneratorData, error
 			svcAgents.HasMCP = true
 		}
 	}
+	for _, completionExpr := range agentsRoot.Completions {
+		svcData := servicesData.Get(completionExpr.Service.Name)
+		if svcData == nil {
+			return nil, fmt.Errorf("service %q not found for completion %q", completionExpr.Service.Name, completionExpr.Name)
+		}
+		svcAgents := serviceMap[svcData.Name]
+		if svcAgents == nil {
+			svcAgents = &ServiceAgentsData{Service: svcData}
+			serviceMap[svcData.Name] = svcAgents
+		}
+		svcAgents.Completions = append(svcAgents.Completions, newCompletionData(completionExpr))
+	}
 
 	services := make([]*ServiceAgentsData, 0, len(serviceMap))
 	for _, svc := range serviceMap {
@@ -806,6 +821,9 @@ func buildGeneratorData(genpkg string, roots []eval.Root) (*GeneratorData, error
 	})
 	for _, svc := range services {
 		slices.SortFunc(svc.Agents, func(a, b *AgentData) int {
+			return strings.Compare(a.Name, b.Name)
+		})
+		slices.SortFunc(svc.Completions, func(a, b *CompletionData) int {
 			return strings.Compare(a.Name, b.Name)
 		})
 	}

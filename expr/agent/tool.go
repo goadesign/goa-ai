@@ -371,21 +371,7 @@ func (t *ToolExpr) validateShapes() error {
 	verr := new(eval.ValidationErrors)
 	validateToolConfirmation(t, verr)
 	check := func(where string, att *goaexpr.AttributeExpr) {
-		if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
-			return
-		}
-		if _, ok := att.Type.(goaexpr.UserType); ok {
-			return
-		}
-		if goaexpr.IsPrimitive(att.Type) {
-			return
-		}
-		// Allow composite inline shapes (arrays, maps, objects, and composites).
-		switch att.Type.(type) {
-		case *goaexpr.Array, *goaexpr.Map, *goaexpr.Object, goaexpr.CompositeExpr:
-			return
-		}
-		verr.Add(t, "%s must be a user type, primitive, or composite shape", where)
+		validateContractShape(t, where, att, verr)
 	}
 	check("Args", t.Args)
 	check("Return", t.Return)
@@ -395,6 +381,24 @@ func (t *ToolExpr) validateShapes() error {
 		return nil
 	}
 	return verr
+}
+
+func validateContractShape(owner eval.Expression, where string, att *goaexpr.AttributeExpr, verr *eval.ValidationErrors) {
+	if verr == nil || att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+		return
+	}
+	if _, ok := att.Type.(goaexpr.UserType); ok {
+		return
+	}
+	if goaexpr.IsPrimitive(att.Type) {
+		return
+	}
+	// Allow composite inline shapes (arrays, maps, objects, and composites).
+	switch att.Type.(type) {
+	case *goaexpr.Array, *goaexpr.Map, *goaexpr.Object, goaexpr.CompositeExpr:
+		return
+	}
+	verr.Add(owner, "%s must be a user type, primitive, or composite shape", where)
 }
 
 func validateServerDataShapes(t *ToolExpr, verr *eval.ValidationErrors, check func(where string, att *goaexpr.AttributeExpr)) {

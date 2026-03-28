@@ -232,12 +232,15 @@ func Return(val any, args ...any) {
 		eval.TooManyArgError()
 		return
 	}
-	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
-	if !ok {
+	switch current := eval.Current().(type) {
+	case *agentsexpr.ToolExpr:
+		current.Return = toolDSL(current, "Return", val, args...)
+	case *agentsexpr.CompletionExpr:
+		current.Return = completionDSL(current, "Return", val, args...)
+	default:
 		eval.IncompatibleDSL()
 		return
 	}
-	tool.Return = toolDSL(tool, "Return", val, args...)
 }
 
 // ServerData declares typed server-only data emitted alongside a tool result.
@@ -690,6 +693,17 @@ func TerminalRun() {
 
 // toolDSL mirrors Goa's method DSL helpers to define tool shapes.
 func toolDSL(m *agentsexpr.ToolExpr, suffix string, p any, args ...any) *goaexpr.AttributeExpr {
+	return shapeDSL(m.Name, suffix, p, args...)
+}
+
+// completionDSL mirrors toolDSL for service-owned completion contracts.
+func completionDSL(c *agentsexpr.CompletionExpr, suffix string, p any, args ...any) *goaexpr.AttributeExpr {
+	return shapeDSL(c.Name, suffix, p, args...)
+}
+
+// shapeDSL mirrors Goa's method DSL helpers to define model-facing contract
+// shapes for tools and completions.
+func shapeDSL(ownerName, suffix string, p any, args ...any) *goaexpr.AttributeExpr {
 	var (
 		att *goaexpr.AttributeExpr
 		fn  func()
@@ -715,7 +729,7 @@ func toolDSL(m *agentsexpr.ToolExpr, suffix string, p any, args ...any) *goaexpr
 				// If the DSL modifies the type attributes "requiredness"
 				// then rename the type to avoid collisions.
 				if renamer, ok := dupped.(interface{ Rename(string) }); ok {
-					renamer.Rename(actual.Name() + "_" + m.Name + "_" + suffix)
+					renamer.Rename(actual.Name() + "_" + ownerName + "_" + suffix)
 				}
 			}
 		}

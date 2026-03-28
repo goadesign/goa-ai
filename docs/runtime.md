@@ -49,6 +49,7 @@ The runtime operates on three layers:
 | **Engine** | Workflow backend (Temporal or in-memory). Provides durable execution, activities, and signals. |
 | **Planner** | Decision-maker. Analyzes messages and returns tool calls or a final response. |
 | **Toolset** | Collection of tools with shared execution logic. Generated from DSL or registered manually. |
+| **Completion** | Service-owned typed direct assistant output. Generated under `gen/<service>/completions` with unary and streaming helpers backed by generated codecs. |
 | **Hooks** | Internal event bus. Publishes lifecycle events for memory, streaming, and telemetry. |
 | **Stream** | External event delivery. Transforms hook events into client-facing updates (SSE, WebSocket, Pulse). |
 
@@ -138,6 +139,88 @@ func main() {
     // Workers poll and execute; clients submit runs from anywhere
 }
 ```
+
+---
+
+## Typed Direct Completions
+
+Not every structured model interaction should be modeled as a tool call. When a
+service needs a typed final assistant answer, declare `Completion(...)` in the
+DSL and regenerate.
+
+`goa gen` emits a service-owned package at `gen/<service>/completions` with:
+
+- result schemas and typed result/union types
+- generated JSON codecs and validation helpers
+- typed `completion.Spec` values
+- generated `Complete<Name>(ctx, client, req)` helpers
+- generated `StreamComplete<Name>(ctx, client, req)` and `Decode<Name>Chunk(chunk)` helpers
+
+Services may declare completions without declaring any `Agent(...)`. Agent
+quickstart/example scaffolding is emitted only for services that actually own
+agents.
+
+Those helpers clone the request, attach provider-neutral `StructuredOutput`,
+call the underlying `model.Client`, and decode the canonical typed payload
+through the generated codec:
+
+```go
+resp, err := taskcompletion.CompleteDraftFromTranscript(ctx, modelClient, &model.Request{
+    Messages: []*model.Message{{
+        Role:  model.ConversationRoleUser,
+        Parts: []model.Part{model.TextPart{Text: "Create a startup investigation task."}},
+    }},
+})
+if err != nil {
+    panic(err)
+}
+
+fmt.Println(resp.Value.Name)
+```
+
+Streaming completions stay on the raw `model.Streamer` surface and decode the
+final canonical `completion` chunk only:
+
+```go
+stream, err := taskcompletion.StreamCompleteDraftFromTranscript(ctx, modelClient, &model.Request{
+    Messages: []*model.Message{{
+        Role:  model.ConversationRoleUser,
+        Parts: []model.Part{model.TextPart{Text: "Create a startup investigation task."}},
+    }},
+})
+if err != nil {
+    panic(err)
+}
+defer stream.Close()
+
+for {
+    chunk, err := stream.Recv()
+    if errors.Is(err, io.EOF) {
+        break
+    }
+    if err != nil {
+        panic(err)
+    }
+    value, ok, err := taskcompletion.DecodeDraftFromTranscriptChunk(chunk)
+    if err != nil {
+        panic(err)
+    }
+    if ok {
+        fmt.Println(value.Name)
+    }
+}
+```
+
+Typed completion helpers are intentionally strict:
+
+- Unary helpers accept unary requests only.
+- Completion names are validated at the DSL boundary: 1-64 ASCII characters,
+  letters/digits/`_`/`-` only, and must start with a letter or digit.
+- Unary and streaming helpers reject tool-enabled requests and caller-supplied `StructuredOutput`.
+- Streaming providers emit `completion_delta*` preview fragments plus exactly one canonical `completion` chunk, or reject the request explicitly.
+- `Decode<Name>Chunk` ignores preview chunks and decodes only the final `completion`.
+- Completion streams stay on the direct `model.Streamer` path; do not route them through planner streaming helpers, which are for assistant transcript text/tool execution events.
+- Providers that do not implement structured output surface `model.ErrStructuredOutputUnsupported`.
 
 ---
 

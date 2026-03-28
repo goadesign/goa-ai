@@ -27,10 +27,10 @@ func (b *toolSpecBuilder) scopeForTool() *codegen.NameScope {
 	return b.svcScope
 }
 
-// typeFor returns type metadata for a tool payload/result/sidecar attribute,
-// applying tool-specific shape selection rules (e.g., method-backed result
+// typeFor returns type metadata for a contract payload/result/sidecar attribute,
+// applying owner-specific shape selection rules (e.g., method-backed result
 // selection) before materialization.
-func (b *toolSpecBuilder) typeFor(tool *ToolData, att *goaexpr.AttributeExpr, usage typeUsage) (*typeData, error) {
+func (b *toolSpecBuilder) typeFor(owner *contractTypeOwner, att *goaexpr.AttributeExpr, usage typeUsage) (*typeData, error) {
 	// For method-backed tools, prefer the tool Return type for RESULTs when it
 	// is explicitly declared in the DSL so that model-facing schemas reflect
 	// the tool contract (e.g., AtlasListDevicesToolReturn). When no Return is
@@ -41,10 +41,10 @@ func (b *toolSpecBuilder) typeFor(tool *ToolData, att *goaexpr.AttributeExpr, us
 	// server-only fields (e.g., session_id) from leaking into tool-visible
 	// schemas. Server fields are injected post-decode by adapters before
 	// making the actual service method call.
-	if tool != nil && tool.IsMethodBacked && usage == usageResult {
-		if (tool.Return == nil || tool.Return.Type == goaexpr.Empty) &&
-			tool.MethodResultAttr != nil && tool.MethodResultAttr.Type != goaexpr.Empty {
-			att = tool.MethodResultAttr
+	if owner != nil && owner.PreferMethodResult && usage == usageResult {
+		if (att == nil || att.Type == goaexpr.Empty) &&
+			owner.MethodResultAttr != nil && owner.MethodResultAttr.Type != goaexpr.Empty {
+			att = owner.MethodResultAttr
 		}
 	}
 
@@ -55,24 +55,24 @@ func (b *toolSpecBuilder) typeFor(tool *ToolData, att *goaexpr.AttributeExpr, us
 		att = &goaexpr.AttributeExpr{Type: &goaexpr.Object{}}
 	}
 
-	info, err := b.buildTypeInfo(tool, att, usage, "")
+	info, err := b.buildTypeInfo(owner, att, usage, "")
 	if err != nil {
 		return nil, err
 	}
 	return info, nil
 }
 
-// ensureType generates a standalone type definition and metadata for a tool's
-// payload or result using a simplified, mode-driven materialization policy.
-func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeExpr, usage typeUsage, qualifier string) (*typeData, error) {
-	if tool == nil || tool.Toolset == nil {
-		return nil, fmt.Errorf("invalid tool metadata: nil tool or toolset")
+// buildTypeInfo generates a standalone type definition and metadata for a
+// contract payload/result/sidecar shape using a simplified materialization policy.
+func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.AttributeExpr, usage typeUsage, qualifier string) (*typeData, error) {
+	if owner == nil || owner.ScopeName == "" {
+		return nil, fmt.Errorf("invalid contract metadata: missing owner scope")
 	}
 	// Enforce core invariants early: attributes must have a non-nil Type and
 	// user types must always carry a non-nil AttributeExpr. Violations are
 	// treated as generator bugs and must be fixed at the construction site.
-	assertNoNilTypes(att, tool, usage, "tool-attr")
-	typeName := codegen.Goify(tool.Name, true)
+	assertNoNilTypes(att, owner, usage, "contract-attr")
+	typeName := codegen.Goify(owner.Name, true)
 	switch usage {
 	case usagePayload:
 		typeName += "Payload"
@@ -112,7 +112,7 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	toolUT.TypeName = typeName
 
 	// Stable cache key: reference for service-alias, otherwise deterministic name
-	key := stableTypeKey(tool, usage, qualifier)
+	key := stableTypeKey(owner, usage, qualifier)
 	if existing := b.types[key]; existing != nil {
 		return existing, nil
 	}
@@ -137,6 +137,15 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	// Determine pointer semantics for top-level alias/value.
 	aliasIsPointer := strings.Contains(defLine, "= *")
 	ptr := aliasIsPointer || strings.HasPrefix(fullRef, "*")
+	// Payloads and object-shaped results/sidecars use pointer codecs so decode
+	// paths can validate the tagged transport shape before transforming into the
+	// public local type.
+	if usage == usagePayload {
+		ptr = true
+	}
+	if (usage == usageResult || usage == usageSidecar) && goaexpr.AsObject(baseAttr.Type) != nil {
+		ptr = true
+	}
 
 	// Internal transport type used only by codecs for JSON decode+validation.
 	// This is the actual JSON contract (schema property names + missing detection).
@@ -154,30 +163,34 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 	if err != nil {
 		return nil, err
 	}
-	if usage == usageResult && tool.Bounds != nil {
-		schemaBytes, err = projectBoundedResultSchema(schemaBytes, tool.Bounds)
+	if usage == usageResult && owner.Bounds != nil {
+		schemaBytes, err = projectBoundedResultSchema(schemaBytes, owner.Bounds)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	// Example JSON for payload types (optional). We intentionally derive examples
-	// only for payloads so runtimes can guide callers toward schema-compliant
-	// inputs when decode fails.
+	// Example JSON for externally visible request/response contracts. Payload
+	// examples guide callers toward schema-compliant inputs, while completion
+	// result examples drive generated example scaffolding without inventing
+	// ad-hoc sample payloads in templates.
 	var exampleBytes []byte
-	if usage == usagePayload {
+	if usage == usagePayload || (usage == usageResult && owner.Kind == contractTypeOwnerCompletion) {
 		// Examples must reflect the JSON wire contract, not the public tool type.
 		// In particular, unions are encoded as canonical {type,value} objects in
 		// the transport graph; deriving examples from the public type produces a
-		// flattened shape that misleads callers and LLMs.
+		// flattened shape that misleads callers and generated examples.
 		exampleBytes = exampleForAttribute(schemaAttr)
 	}
 
-	doc := fmt.Sprintf("%s defines the JSON %s for the %s tool.", typeName, usage, tool.QualifiedName)
+	doc := fmt.Sprintf("%s defines the JSON %s for the %s tool.", typeName, usage, owner.QualifiedName)
+	if owner.Kind == contractTypeOwnerCompletion {
+		doc = fmt.Sprintf("%s defines the JSON %s for the completion %s.", typeName, usage, owner.QualifiedName)
+	}
 	transportDef := transportTypeName + " " + scope.GoTypeDef(schemaAttr, true, false)
 	transportImports := shared.GatherAttributeImports(b.genpkg, schemaAttr)
 	httpctx := codegen.NewAttributeContext(!goaexpr.IsPrimitive(schemaAttr.Type), false, false, "", scope)
-	transportValidation := validationCodeWithContext(schemaAttr, nil, httpctx, true, false, false, "body", tool, usage, "transport")
+	transportValidation := validationCodeWithContext(schemaAttr, nil, httpctx, true, false, false, "body", owner, usage, "transport")
 	var transportValidationSrc []string
 	if strings.TrimSpace(transportValidation) != "" {
 		transportValidationSrc = strings.Split(transportValidation, "\n")
@@ -222,6 +235,21 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 		b.codecTransformHelperKeys[key] = struct{}{}
 		b.codecTransformHelpers = append(b.codecTransformHelpers, h)
 	}
+	emitTransport := ptr || owner.Kind == contractTypeOwnerTool
+	transportTypeNameOut := ""
+	transportDefOut := ""
+	var transportImportsOut []*codegen.ImportSpec
+	var transportValidationSrcOut []string
+	transportTypeRefOut := ""
+	transportPointerOut := false
+	if emitTransport {
+		transportTypeNameOut = transportTypeName
+		transportDefOut = transportDef
+		transportImportsOut = transportImports
+		transportValidationSrcOut = transportValidationSrc
+		transportTypeRefOut = scope.GoTypeRef(src)
+		transportPointerOut = strings.HasPrefix(scope.GoTypeRef(src), "*")
+	}
 	info := &typeData{
 		Key:                    key,
 		TypeName:               typeName,
@@ -248,34 +276,19 @@ func (b *toolSpecBuilder) buildTypeInfo(tool *ToolData, att *goaexpr.AttributeEx
 		Pointer:                ptr,
 		MarshalArg:             "v",
 		UnmarshalArg:           "v",
-		TransportTypeName:      transportTypeName,
-		TransportDef:           transportDef,
-		TransportImports:       transportImports,
-		TransportValidationSrc: transportValidationSrc,
-		TransportTypeRef:       scope.GoTypeRef(src),
-		TransportPointer:       strings.HasPrefix(scope.GoTypeRef(src), "*"),
+		TransportTypeName:      transportTypeNameOut,
+		TransportDef:           transportDefOut,
+		TransportImports:       transportImportsOut,
+		TransportValidationSrc: transportValidationSrcOut,
+		TransportTypeRef:       transportTypeRefOut,
+		TransportPointer:       transportPointerOut,
 		DecodeTransform:        decodeBody,
 		EncodeTransform:        encodeBody,
 	}
-	if usage == usagePayload && len(exampleBytes) > 0 {
+	if len(exampleBytes) > 0 && (usage == usagePayload || (usage == usageResult && owner.Kind == contractTypeOwnerCompletion)) {
 		if eg, ok := exampleInputGoExpr(exampleBytes); ok {
 			info.ExampleInputGo = eg
 		}
-	}
-	// For tool payloads, untyped codecs should return pointers.
-	// Record pointer intent via the flag; templates will render "*" where needed
-	// using Goa NameScope-derived base references (no string surgery here).
-	if usage == usagePayload {
-		info.Pointer = true
-	}
-	// For tool results and sidecars, prefer pointers for object-shaped types.
-	//
-	// Tool result and sidecar values are typically produced by generated transforms
-	// and service executors via address-taking composite literals (e.g. &T{...}).
-	// Using pointer codecs makes the tool contract explicit and prevents accidental
-	// fallback marshaling of unrelated service method types.
-	if (usage == usageResult || usage == usageSidecar) && goaexpr.AsObject(baseAttr.Type) != nil {
-		info.Pointer = true
 	}
 	// Validation is performed on the internal transport type during Unmarshal.
 	// Accept empty JSON for payloads that are empty structs (no fields).

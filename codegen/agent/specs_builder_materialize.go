@@ -138,13 +138,13 @@ func (b *toolSpecBuilder) materialize(typeName string, att *goaexpr.AttributeExp
 	return tt, defLine, fullRef, imports
 }
 
-// stableTypeKey returns a deterministic cache key for the tool-facing type name
-// within a toolset scope.
-func stableTypeKey(tool *ToolData, usage typeUsage, qualifier string) string {
-	if tool == nil {
+// stableTypeKey returns a deterministic cache key for a contract-owned public
+// type name within its generation scope.
+func stableTypeKey(owner *contractTypeOwner, usage typeUsage, qualifier string) string {
+	if owner == nil {
 		return ""
 	}
-	tn := codegen.Goify(tool.Name, true)
+	tn := codegen.Goify(owner.Name, true)
 	switch usage {
 	case usagePayload:
 		tn += "Payload"
@@ -156,11 +156,7 @@ func stableTypeKey(tool *ToolData, usage typeUsage, qualifier string) string {
 		}
 		tn += "ServerData"
 	}
-	scope := ""
-	if tool.Toolset != nil {
-		scope = tool.Toolset.QualifiedName
-	}
-	return "scope:" + scope + "/name:" + tn
+	return "scope:" + owner.ScopeName + "/name:" + tn
 }
 
 // newToolSpecsData constructs an empty toolSpecsData container.

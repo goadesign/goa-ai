@@ -36,9 +36,17 @@ type bedrockStreamer struct {
 	toolNameMap map[string]string
 	modelID     string
 	modelClass  model.ModelClass
+	output      *model.StructuredOutput
 }
 
-func newBedrockStreamer(ctx context.Context, stream *bedrockruntime.ConverseStreamEventStream, nameMap map[string]string, modelID string, modelClass model.ModelClass) model.Streamer {
+func newBedrockStreamer(
+	ctx context.Context,
+	stream *bedrockruntime.ConverseStreamEventStream,
+	nameMap map[string]string,
+	modelID string,
+	modelClass model.ModelClass,
+	output *model.StructuredOutput,
+) model.Streamer {
 	cctx, cancel := context.WithCancel(ctx)
 	bs := &bedrockStreamer{
 		ctx:         cctx,
@@ -48,6 +56,7 @@ func newBedrockStreamer(ctx context.Context, stream *bedrockruntime.ConverseStre
 		toolNameMap: nameMap,
 		modelID:     modelID,
 		modelClass:  modelClass,
+		output:      output,
 	}
 	go bs.run()
 	return bs
@@ -103,7 +112,15 @@ func (s *bedrockStreamer) run() {
 		}
 	}()
 
-	processor := newChunkProcessor(s.emitChunk, s.recordUsage, s.recordCitations, s.toolNameMap, s.modelID, s.modelClass)
+	processor := newChunkProcessor(
+		s.emitChunk,
+		s.recordUsage,
+		s.recordCitations,
+		s.toolNameMap,
+		s.modelID,
+		s.modelClass,
+		s.output,
+	)
 	events := s.stream.Events()
 
 	for {
@@ -188,12 +205,14 @@ type chunkProcessor struct {
 	recordCites func([]model.Citation)
 
 	toolBlocks map[int]*toolBuffer
+	completion *completionBuffer
 	// reasoningBlocks accumulates reasoning content per content index until stop.
 	reasoningBlocks map[int]*reasoningBuffer
 
 	toolNameMap map[string]string
 	modelID     string
 	modelClass  model.ModelClass
+	output      *model.StructuredOutput
 }
 
 func newChunkProcessor(
@@ -203,6 +222,7 @@ func newChunkProcessor(
 	nameMap map[string]string,
 	modelID string,
 	modelClass model.ModelClass,
+	output *model.StructuredOutput,
 ) *chunkProcessor {
 	return &chunkProcessor{
 		emit:            emit,
@@ -213,6 +233,7 @@ func newChunkProcessor(
 		toolNameMap:     nameMap,
 		modelID:         modelID,
 		modelClass:      modelClass,
+		output:          output,
 	}
 }
 
@@ -220,6 +241,7 @@ func (p *chunkProcessor) Handle(event any) error {
 	switch ev := event.(type) {
 	case *brtypes.ConverseStreamOutputMemberMessageStart:
 		p.toolBlocks = make(map[int]*toolBuffer)
+		p.completion = nil
 		return nil
 	case *brtypes.ConverseStreamOutputMemberContentBlockStart:
 		idx, err := contentIndex(ev.Value.ContentBlockIndex)
@@ -228,6 +250,12 @@ func (p *chunkProcessor) Handle(event any) error {
 		}
 		if start := ev.Value.Start; start != nil {
 			if toolUse, ok := start.(*brtypes.ContentBlockStartMemberToolUse); ok {
+				if p.output != nil {
+					return fmt.Errorf(
+						"bedrock stream: structured output %q emitted tool_use start",
+						p.output.Name,
+					)
+				}
 				tb := &toolBuffer{}
 				if toolUse.Value.ToolUseId == nil || *toolUse.Value.ToolUseId == "" {
 					return fmt.Errorf("bedrock stream: tool use block missing tool_use_id")
@@ -264,6 +292,9 @@ func (p *chunkProcessor) Handle(event any) error {
 		case *brtypes.ContentBlockDeltaMemberText:
 			if delta.Value == "" {
 				return nil
+			}
+			if p.output != nil {
+				return p.handleCompletionDelta(idx, delta.Value)
 			}
 			return p.emit(model.Chunk{
 				Type: model.ChunkTypeText,
@@ -324,6 +355,12 @@ func (p *chunkProcessor) Handle(event any) error {
 				return nil
 			}
 		case *brtypes.ContentBlockDeltaMemberToolUse:
+			if p.output != nil {
+				return fmt.Errorf(
+					"bedrock stream: structured output %q emitted tool_use delta",
+					p.output.Name,
+				)
+			}
 			if tb := p.toolBlocks[idx]; tb != nil && delta.Value.Input != nil {
 				fragment := *delta.Value.Input
 				tb.fragments = append(tb.fragments, fragment)
@@ -347,6 +384,9 @@ func (p *chunkProcessor) Handle(event any) error {
 	case *brtypes.ConverseStreamOutputMemberContentBlockStop:
 		idx, err := contentIndex(ev.Value.ContentBlockIndex)
 		if err != nil {
+			return err
+		}
+		if err := p.finalizeCompletion(idx); err != nil {
 			return err
 		}
 		// Finalize any reasoning block accumulated for this index.
@@ -401,6 +441,7 @@ func (p *chunkProcessor) Handle(event any) error {
 		}
 		p.toolBlocks = make(map[int]*toolBuffer)
 		p.reasoningBlocks = make(map[int]*reasoningBuffer)
+		p.completion = nil
 		return p.emit(chunk)
 	case *brtypes.ConverseStreamOutputMemberMetadata:
 		if ev.Value.Usage == nil {
@@ -446,6 +487,14 @@ type toolBuffer struct {
 	fragments []string
 }
 
+// completionBuffer accumulates one structured-output content block until the
+// provider closes it and the adapter can emit the canonical completion chunk.
+type completionBuffer struct {
+	name      string
+	index     int
+	fragments []string
+}
+
 func (tb *toolBuffer) finalInput() string {
 	if len(tb.fragments) == 0 {
 		return "{}"
@@ -455,6 +504,76 @@ func (tb *toolBuffer) finalInput() string {
 		return "{}"
 	}
 	return joined
+}
+
+// finalPayload returns the canonical JSON payload for the structured completion
+// block. Unlike tool payloads, typed completions do not use fallbacks: invalid
+// or empty JSON is a hard provider contract violation.
+func (cb *completionBuffer) finalPayload() (rawjson.Message, error) {
+	if len(cb.fragments) == 0 {
+		return nil, errors.New("structured completion payload is empty")
+	}
+	joined := strings.Join(cb.fragments, "")
+	trimmed := strings.TrimSpace(joined)
+	if trimmed == "" {
+		return nil, errors.New("structured completion payload is empty")
+	}
+	data := []byte(trimmed)
+	if !json.Valid(data) {
+		return nil, fmt.Errorf("structured completion payload is not valid JSON: %q", trimmed)
+	}
+	return rawjson.Message(data), nil
+}
+
+// handleCompletionDelta records and emits one structured-output preview
+// fragment for the currently open Bedrock content block.
+func (p *chunkProcessor) handleCompletionDelta(idx int, delta string) error {
+	if p.output == nil {
+		return errors.New("bedrock stream: completion delta requested without structured output")
+	}
+	if p.completion == nil {
+		p.completion = &completionBuffer{
+			name:  p.output.Name,
+			index: idx,
+		}
+	}
+	if p.completion.index != idx {
+		return fmt.Errorf(
+			"bedrock stream: structured output %q spanned multiple content blocks (%d, %d)",
+			p.output.Name,
+			p.completion.index,
+			idx,
+		)
+	}
+	p.completion.fragments = append(p.completion.fragments, delta)
+	return p.emit(model.Chunk{
+		Type: model.ChunkTypeCompletionDelta,
+		CompletionDelta: &model.CompletionDelta{
+			Name:  p.completion.name,
+			Delta: delta,
+		},
+	})
+}
+
+// finalizeCompletion emits the canonical structured completion payload for the
+// given content block index when one is buffered there.
+func (p *chunkProcessor) finalizeCompletion(idx int) error {
+	if p.completion == nil || p.completion.index != idx {
+		return nil
+	}
+	payload, err := p.completion.finalPayload()
+	if err != nil {
+		return fmt.Errorf("bedrock stream: structured output %q: %w", p.output.Name, err)
+	}
+	completion := p.completion
+	p.completion = nil
+	return p.emit(model.Chunk{
+		Type: model.ChunkTypeCompletion,
+		Completion: &model.Completion{
+			Name:    completion.name,
+			Payload: payload,
+		},
+	})
 }
 
 func contentIndex(idx *int32) (int, error) {
