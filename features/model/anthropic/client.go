@@ -150,6 +150,12 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*sdk.M
 	if len(req.Messages) == 0 {
 		return nil, nil, errors.New("anthropic: messages are required")
 	}
+	if req.StructuredOutput != nil {
+		return nil, nil, fmt.Errorf(
+			"anthropic messages do not support structured output: %w",
+			model.ErrStructuredOutputUnsupported,
+		)
+	}
 	modelID := c.resolveModelID(req)
 	if modelID == "" {
 		return nil, nil, errors.New("anthropic: model identifier is required")

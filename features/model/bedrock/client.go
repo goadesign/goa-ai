@@ -105,6 +105,7 @@ type requestParts struct {
 	modelClass              model.ModelClass
 	messages                []brtypes.Message
 	system                  []brtypes.SystemContentBlock
+	outputConfig            *brtypes.OutputConfig
 	toolConfig              *brtypes.ToolConfiguration
 	toolNameCanonicalToProv map[string]string
 	toolNameProvToCanonical map[string]string
@@ -172,7 +173,9 @@ func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Respo
 }
 
 // Stream invokes the Bedrock ConverseStream API and adapts incremental events
-// into model.Chunks so planners can surface partial responses.
+// into model.Chunks so planners can surface partial responses. Structured
+// output streams emit completion_delta previews plus one canonical completion
+// payload before stop.
 func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
 	parts, err := c.prepareRequest(ctx, req)
 	if err != nil {
@@ -191,7 +194,14 @@ func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer
 	if stream == nil {
 		return nil, errors.New("bedrock: stream output missing event stream")
 	}
-	return newBedrockStreamer(ctx, stream, parts.toolNameProvToCanonical, parts.modelID, parts.modelClass), nil
+	return newBedrockStreamer(
+		ctx,
+		stream,
+		parts.toolNameProvToCanonical,
+		parts.modelID,
+		parts.modelClass,
+		req.StructuredOutput,
+	), nil
 }
 
 func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*requestParts, error) {
@@ -248,6 +258,10 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*reque
 	if err != nil {
 		return nil, err
 	}
+	outputConfig, err := encodeOutputConfig(req.StructuredOutput)
+	if err != nil {
+		return nil, err
+	}
 	// Bedrock requires toolConfig when messages contain tool_use or tool_result
 	// blocks. Fail fast with a clear error rather than letting Bedrock reject
 	// the request with a generic validation error.
@@ -267,6 +281,7 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*reque
 		modelClass:              req.ModelClass,
 		messages:                messages,
 		system:                  system,
+		outputConfig:            outputConfig,
 		toolConfig:              toolConfig,
 		toolNameCanonicalToProv: canonToSan,
 		toolNameProvToCanonical: sanToCanon,
@@ -304,6 +319,9 @@ func (c *Client) buildConverseInput(parts *requestParts, req *model.Request) *be
 	if parts.toolConfig != nil {
 		input.ToolConfig = parts.toolConfig
 	}
+	if parts.outputConfig != nil {
+		input.OutputConfig = parts.outputConfig
+	}
 	if cfg := c.inferenceConfig(req.MaxTokens, req.Temperature); cfg != nil {
 		input.InferenceConfig = cfg
 	}
@@ -320,6 +338,9 @@ func (c *Client) buildConverseStreamInput(parts *requestParts, req *model.Reques
 	}
 	if parts.toolConfig != nil {
 		input.ToolConfig = parts.toolConfig
+	}
+	if parts.outputConfig != nil {
+		input.OutputConfig = parts.outputConfig
 	}
 	if thinking.enable {
 		fields := map[string]any{}
@@ -344,6 +365,29 @@ func (c *Client) buildConverseStreamInput(parts *requestParts, req *model.Reques
 		input.InferenceConfig = cfg
 	}
 	return input
+}
+
+// encodeOutputConfig translates a provider-neutral structured-output request
+// into Bedrock's response format configuration.
+func encodeOutputConfig(output *model.StructuredOutput) (*brtypes.OutputConfig, error) {
+	if output == nil {
+		return nil, nil
+	}
+	if len(output.Schema) == 0 {
+		return nil, errors.New("bedrock: structured output requires a schema")
+	}
+	def := brtypes.JsonSchemaDefinition{
+		Schema: aws.String(string(output.Schema)),
+	}
+	if output.Name != "" {
+		def.Name = aws.String(output.Name)
+	}
+	return &brtypes.OutputConfig{
+		TextFormat: &brtypes.OutputFormat{
+			Type:      brtypes.OutputFormatTypeJsonSchema,
+			Structure: &brtypes.OutputFormatStructureMemberJsonSchema{Value: def},
+		},
+	}, nil
 }
 
 func (c *Client) resolveThinking(req *model.Request, parts *requestParts) thinkingConfig {
@@ -974,25 +1018,20 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 	}
 	resp := &model.Response{}
 	if msg, ok := output.Output.(*brtypes.ConverseOutputMemberMessage); ok {
+		assistant := model.Message{Role: model.ConversationRole(msg.Value.Role)}
 		for _, block := range msg.Value.Content {
 			switch v := block.(type) {
 			case *brtypes.ContentBlockMemberText:
 				if v.Value == "" {
 					continue
 				}
-				resp.Content = append(resp.Content, model.Message{
-					Role:  "assistant",
-					Parts: []model.Part{model.TextPart{Text: v.Value}},
-				})
+				assistant.Parts = appendAssistantTextPart(assistant.Parts, v.Value)
 			case *brtypes.ContentBlockMemberCitationsContent:
 				part := translateCitationsContent(v.Value)
 				if part.Text == "" && len(part.Citations) == 0 {
 					continue
 				}
-				resp.Content = append(resp.Content, model.Message{
-					Role:  "assistant",
-					Parts: []model.Part{part},
-				})
+				assistant.Parts = append(assistant.Parts, part)
 			case *brtypes.ContentBlockMemberToolUse:
 				payload := decodeDocument(v.Value.Input)
 				name := ""
@@ -1021,6 +1060,9 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 				})
 			}
 		}
+		if len(assistant.Parts) > 0 {
+			resp.Content = append(resp.Content, assistant)
+		}
 	}
 	if usage := output.Usage; usage != nil {
 		resp.Usage = model.TokenUsage{
@@ -1035,6 +1077,24 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 	}
 	resp.StopReason = string(output.StopReason)
 	return resp, nil
+}
+
+// appendAssistantTextPart appends text to the assistant message while
+// preserving the single-message Bedrock response shape. Adjacent text blocks
+// are coalesced because Bedrock may segment one logical assistant message
+// across multiple text blocks.
+func appendAssistantTextPart(parts []model.Part, text string) []model.Part {
+	if text == "" {
+		return parts
+	}
+	if len(parts) == 0 {
+		return append(parts, model.TextPart{Text: text})
+	}
+	if last, ok := parts[len(parts)-1].(model.TextPart); ok {
+		parts[len(parts)-1] = model.TextPart{Text: last.Text + text}
+		return parts
+	}
+	return append(parts, model.TextPart{Text: text})
 }
 
 func decodeDocument(doc document.Interface) rawjson.Message {

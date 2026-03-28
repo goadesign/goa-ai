@@ -145,6 +145,15 @@ func TestQuickstartGeneratesAndRuns(t *testing.T) {
 		if !strings.Contains(output, "Assistant:") {
 			t.Errorf("expected output to contain 'Assistant:', got:\n%s", output)
 		}
+		if !strings.Contains(output, `Completion draft_task: {"assistant_text":"Created a launch-readiness task draft."`) {
+			t.Errorf("expected output to contain 'Completion draft_task:', got:\n%s", output)
+		}
+		if !strings.Contains(output, `Completion delta draft_task: {"assistant_text":"Creat`) {
+			t.Errorf("expected output to contain streamed completion delta preview, got:\n%s", output)
+		}
+		if !strings.Contains(output, `Completion stream draft_task: {"assistant_text":"Created a launch-readiness task draft."`) {
+			t.Errorf("expected output to contain 'Completion stream draft_task:', got:\n%s", output)
+		}
 		t.Logf("Example output:\n%s", output)
 	})
 }

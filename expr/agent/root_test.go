@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -79,4 +80,41 @@ func TestRootExprValidateRejectsOwnerScopedDefiningToolsetCollisions(t *testing.
 	require.Error(t, err)
 	require.ErrorContains(t, err, `sanitized toolset name "remote_tools"`)
 	require.ErrorContains(t, err, "owner-scoped")
+}
+
+func TestCompletionExprValidateStructuredOutputNameContract(t *testing.T) {
+	cases := []struct {
+		name           string
+		completionName string
+		wantErr        bool
+	}{
+		{name: "snake case", completionName: "draft_from_transcript"},
+		{name: "hyphenated", completionName: "draft-task"},
+		{name: "alphanumeric", completionName: "task1"},
+		{name: "max length", completionName: strings.Repeat("a", 64)},
+		{name: "empty", completionName: "", wantErr: true},
+		{name: "invalid leading hyphen", completionName: "-draft", wantErr: true},
+		{name: "invalid leading underscore", completionName: "_draft", wantErr: true},
+		{name: "space", completionName: "draft from transcript", wantErr: true},
+		{name: "too long", completionName: strings.Repeat("a", 65), wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			completion := &CompletionExpr{
+				Name:    tc.completionName,
+				Service: &goaexpr.ServiceExpr{Name: "tasks"},
+				Return:  &goaexpr.AttributeExpr{Type: goaexpr.String},
+			}
+
+			err := completion.Validate()
+
+			if tc.wantErr {
+				require.Error(t, err)
+				require.ErrorContains(t, err, "must be 1-64 ASCII characters")
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
 }

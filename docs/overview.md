@@ -16,6 +16,7 @@ survive a restart. Just elegant designs that compile into production‑grade sys
 | **Long‑running agents crash**        | Durable orchestration with automatic retries, time budgets, and deterministic replay |
 | **Composing agents is messy**        | First‑class agent‑as‑tool composition, even across processes, with run trees and linked streams |
 | **Schema drift haunts you**          | Generated codecs and registries keep everything in sync—change the DSL, regenerate, done |
+| **Structured final answers drift**   | Service-owned `Completion(...)` contracts reuse Goa types and generated codecs for direct assistant output |
 | **Observability is an afterthought** | Built‑in streaming, transcripts, logs, metrics, and traces from day one |
 | **MCP integration is manual**        | Generated wrappers turn MCP servers into typed toolsets automatically |
 
@@ -31,8 +32,8 @@ Think of it as a pipeline from intention to execution:
    version‑controlled.
 
 2. **Codegen** (`codegen/agent`, `codegen/mcp`) — Transform your design into typed Go packages:
-   tool specs, codecs, workflow definitions, registry helpers. Lives under `gen/`—never edit by
-   hand.
+   tool specs, completion specs, codecs, workflow definitions, registry helpers. Lives under
+   `gen/`—never edit by hand.
 
 3. **Runtime** (`runtime/agent`, `runtime/mcp`) — The workhorse that executes your agents:
    plan/execute loops, policy enforcement, memory, sessions, streaming, telemetry, and MCP
@@ -100,6 +101,26 @@ helpers for agents using the exported toolset.
 
 No matter how tools are wired—service methods, custom executors, or nested agents—`Use` merges
 everything into a single, coherent catalog. Your planner sees one clean universe of tools.
+
+### Service-Owned Typed Completions
+
+Tool calls are not the only structured contract Goa-AI can own. `Completion(...)`
+lets a service declare a typed direct assistant response using the same Goa type
+system as tools.
+
+Completion names are part of the structured-output contract. They must be
+1-64 ASCII characters, may contain letters, digits, `_`, and `-`, and must
+start with a letter or digit.
+
+Codegen emits a dedicated package at `gen/<service>/completions/` with the result
+types, unions, JSON codecs, schemas, and typed completion helpers. Unary
+helpers request provider-enforced structured output and decode the final
+assistant response through the generated codec instead of hand-parsing JSON.
+Streaming helpers stay on the raw `model.Streamer` surface: `completion_delta`
+chunks are preview-only, exactly one final `completion` chunk is canonical, and
+generated `Decode<Name>Chunk(...)` helpers decode only that final payload.
+Providers that do not implement structured output fail explicitly with
+`model.ErrStructuredOutputUnsupported`.
 
 ### Tool Schemas JSON
 

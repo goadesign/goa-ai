@@ -60,6 +60,12 @@ func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Respo
 	if len(req.Messages) == 0 {
 		return nil, errors.New("messages are required")
 	}
+	if req.StructuredOutput != nil {
+		return nil, fmt.Errorf(
+			"openai chat completions do not support structured output: %w",
+			model.ErrStructuredOutputUnsupported,
+		)
+	}
 	modelID := req.Model
 	if modelID == "" {
 		modelID = c.model
@@ -150,7 +156,15 @@ func hasToolDefinition(defs []*model.ToolDefinition, name string) bool {
 
 // Stream reports that OpenAI Chat Completions streaming is not yet supported by
 // this adapter. Callers should fall back to Complete.
-func (c *Client) Stream(context.Context, *model.Request) (model.Streamer, error) {
+//
+//nolint:unparam // model.Client requires a streamer result even when streaming is unsupported.
+func (c *Client) Stream(_ context.Context, req *model.Request) (model.Streamer, error) {
+	if req != nil && req.StructuredOutput != nil {
+		return nil, fmt.Errorf(
+			"openai chat completions do not support structured output: %w",
+			model.ErrStructuredOutputUnsupported,
+		)
+	}
 	return nil, model.ErrStreamingUnsupported
 }
 

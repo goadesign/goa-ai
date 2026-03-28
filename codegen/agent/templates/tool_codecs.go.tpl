@@ -144,6 +144,7 @@ func enrich{{ .TypeName }}ValidationError(err error) error {
 {{- end }}
 {{- end }}
 
+{{- if .EmitToolLookups }}
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
     switch name {
@@ -171,6 +172,7 @@ func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
         return nil, false
     }
 }
+{{- end }}
 
 {{- range .Types }}
     {{- if .GenerateCodec }}

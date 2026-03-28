@@ -148,6 +148,44 @@ func TestClientCompleteWithToolChoiceNone(t *testing.T) {
 	require.Equal(t, "none", req.ToolChoice)
 }
 
+func TestClientCompleteRejectsStructuredOutput(t *testing.T) {
+	mock := &mockChatClient{}
+	client, err := openaimodel.New(openaimodel.Options{Client: mock, DefaultModel: "gpt-4o"})
+	require.NoError(t, err)
+
+	_, err = client.Complete(context.Background(), &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "ping"}},
+		}},
+		StructuredOutput: &model.StructuredOutput{
+			Name:   "draft_from_transcript",
+			Schema: []byte(`{"type":"object"}`),
+		},
+	})
+	require.Error(t, err)
+	require.ErrorIs(t, err, model.ErrStructuredOutputUnsupported)
+}
+
+func TestClientStreamRejectsStructuredOutput(t *testing.T) {
+	mock := &mockChatClient{}
+	client, err := openaimodel.New(openaimodel.Options{Client: mock, DefaultModel: "gpt-4o"})
+	require.NoError(t, err)
+
+	_, err = client.Stream(context.Background(), &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "ping"}},
+		}},
+		StructuredOutput: &model.StructuredOutput{
+			Name:   "draft_from_transcript",
+			Schema: []byte(`{"type":"object"}`),
+		},
+	})
+	require.Error(t, err)
+	require.ErrorIs(t, err, model.ErrStructuredOutputUnsupported)
+}
+
 func TestClientRequiresDefaultModel(t *testing.T) {
 	_, err := openaimodel.New(openaimodel.Options{Client: &mockChatClient{}})
 	require.Error(t, err)

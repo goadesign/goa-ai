@@ -104,6 +104,23 @@ type (
 		Values []string
 	}
 
+	contractTypeOwnerKind string
+
+	// contractTypeOwner captures the contract-local metadata needed to derive
+	// shared payload/result type information for either a tool or a completion.
+	contractTypeOwner struct {
+		Kind          contractTypeOwnerKind
+		Name          string
+		QualifiedName string
+		ScopeName     string
+
+		// PreferMethodResult reports whether result generation should fall back to
+		// MethodResultAttr when the declared result is empty.
+		PreferMethodResult bool
+		MethodResultAttr   *goaexpr.AttributeExpr
+		Bounds             *ToolBoundsData
+	}
+
 	// typeData holds all metadata needed to generate a type definition, schema,
 	// and codec functions for a tool's payload or result type. It includes the
 	// Go type definition, JSON schema, validation code, and import specifications.
@@ -245,6 +262,9 @@ type (
 )
 
 const (
+	contractTypeOwnerTool       contractTypeOwnerKind = "tool"
+	contractTypeOwnerCompletion contractTypeOwnerKind = "completion"
+
 	usagePayload typeUsage = "payload"
 	usageResult  typeUsage = "result"
 	usageSidecar typeUsage = "sidecar"

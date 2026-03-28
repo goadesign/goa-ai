@@ -32,6 +32,11 @@ func fileContent(t *testing.T, files []*gcodegen.File, wantPath string) string {
 	return testhelpers.FileContent(t, files, wantPath)
 }
 
+// fileExists reports whether the generated file list contains wantPath.
+func fileExists(files []*gcodegen.File, wantPath string) bool {
+	return testhelpers.FileExists(files, wantPath)
+}
+
 // assertGoldenGo compares content as Go source with the golden file path
 // relative to tests/testdata/golden/<scenario>/...
 func assertGoldenGo(t *testing.T, scenario string, name string, content string) {

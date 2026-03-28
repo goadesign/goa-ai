@@ -23,6 +23,7 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 	data := newToolSpecsData(genpkg, svc)
 	builder := newToolSpecBuilder(genpkg, svc)
 	for _, tool := range tools {
+		owner := newToolContractTypeOwner(tool)
 		scope := builder.scopeForTool()
 		goName := codegen.Goify(tool.Name, true)
 		// Reserve the tool ID constant name *before* materializing any type
@@ -30,11 +31,11 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 		// with it (e.g., a nested user type named "Answer").
 		constName := scope.Unique(goName)
 
-		payload, err := builder.typeFor(tool, tool.Args, usagePayload)
+		payload, err := builder.typeFor(owner, tool.Args, usagePayload)
 		if err != nil {
 			return nil, err
 		}
-		result, err := builder.typeFor(tool, tool.Return, usageResult)
+		result, err := builder.typeFor(owner, tool.Return, usageResult)
 		if err != nil {
 			return nil, err
 		}
@@ -86,6 +87,27 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 		return data.tools[i].Name < data.tools[j].Name
 	})
 	return data, nil
+}
+
+// newToolContractTypeOwner projects a tool into the minimal owner metadata
+// needed by the shared contract type builder.
+func newToolContractTypeOwner(tool *ToolData) *contractTypeOwner {
+	if tool == nil {
+		return nil
+	}
+	scopeName := ""
+	if tool.Toolset != nil {
+		scopeName = tool.Toolset.QualifiedName
+	}
+	return &contractTypeOwner{
+		Kind:               contractTypeOwnerTool,
+		Name:               tool.Name,
+		QualifiedName:      tool.QualifiedName,
+		ScopeName:          scopeName,
+		PreferMethodResult: tool.IsMethodBacked,
+		MethodResultAttr:   tool.MethodResultAttr,
+		Bounds:             tool.Bounds,
+	}
 }
 
 func toolMetaPairs(meta map[string][]string) []toolMetaPair {
@@ -172,15 +194,16 @@ func validationCodeWithContext(
 	attCtx *codegen.AttributeContext,
 	req, alias, view bool,
 	target string,
-	tool *ToolData,
+	owner *contractTypeOwner,
 	usage typeUsage,
 	ctx string,
 ) string {
 	defer func() {
 		if r := recover(); r != nil {
 			panic(fmt.Sprintf(
-				"agent/specs_builder: ValidationCode panic for tool %q (usage=%s, ctx=%s, target=%s): %v",
-				tool.QualifiedName,
+				"agent/specs_builder: ValidationCode panic for %s %q (usage=%s, ctx=%s, target=%s): %v",
+				owner.Kind,
+				owner.QualifiedName,
 				usage,
 				ctx,
 				target,
@@ -200,11 +223,12 @@ func validationCodeWithContext(
 //
 // Violations are treated as generator bugs and must be fixed at the
 // construction site rather than papered over with defensive checks.
-func assertNoNilTypes(att *goaexpr.AttributeExpr, tool *ToolData, usage typeUsage, ctx string) {
+func assertNoNilTypes(att *goaexpr.AttributeExpr, owner *contractTypeOwner, usage typeUsage, ctx string) {
 	if att == nil {
 		panic(fmt.Sprintf(
-			"agent/specs_builder: nil AttributeExpr for tool %q (usage=%s, ctx=%s)",
-			tool.QualifiedName,
+			"agent/specs_builder: nil AttributeExpr for %s %q (usage=%s, ctx=%s)",
+			owner.Kind,
+			owner.QualifiedName,
 			usage,
 			ctx,
 		))
@@ -214,9 +238,10 @@ func assertNoNilTypes(att *goaexpr.AttributeExpr, tool *ToolData, usage typeUsag
 	walk = func(prefix string, a *goaexpr.AttributeExpr) {
 		if a == nil {
 			panic(fmt.Sprintf(
-				"agent/specs_builder: nil AttributeExpr at %q for tool %q (usage=%s, ctx=%s)",
+				"agent/specs_builder: nil AttributeExpr at %q for %s %q (usage=%s, ctx=%s)",
 				prefix,
-				tool.QualifiedName,
+				owner.Kind,
+				owner.QualifiedName,
 				usage,
 				ctx,
 			))
@@ -227,9 +252,10 @@ func assertNoNilTypes(att *goaexpr.AttributeExpr, tool *ToolData, usage typeUsag
 		seen[a] = struct{}{}
 		if a.Type == nil {
 			panic(fmt.Sprintf(
-				"agent/specs_builder: nil Type at %q for tool %q (usage=%s, ctx=%s)",
+				"agent/specs_builder: nil Type at %q for %s %q (usage=%s, ctx=%s)",
 				prefix,
-				tool.QualifiedName,
+				owner.Kind,
+				owner.QualifiedName,
 				usage,
 				ctx,
 			))
@@ -239,10 +265,11 @@ func assertNoNilTypes(att *goaexpr.AttributeExpr, tool *ToolData, usage typeUsag
 			uat := dt.Attribute()
 			if uat == nil || uat.Type == nil {
 				panic(fmt.Sprintf(
-					"agent/specs_builder: user type %T with nil attribute/type at %q for tool %q (usage=%s, ctx=%s)",
+					"agent/specs_builder: user type %T with nil attribute/type at %q for %s %q (usage=%s, ctx=%s)",
 					dt,
 					prefix,
-					tool.QualifiedName,
+					owner.Kind,
+					owner.QualifiedName,
 					usage,
 					ctx,
 				))
@@ -252,9 +279,10 @@ func assertNoNilTypes(att *goaexpr.AttributeExpr, tool *ToolData, usage typeUsag
 			for _, nat := range *dt {
 				if nat == nil {
 					panic(fmt.Sprintf(
-						"agent/specs_builder: nil NamedAttributeExpr in object at %q for tool %q (usage=%s, ctx=%s)",
+						"agent/specs_builder: nil NamedAttributeExpr in object at %q for %s %q (usage=%s, ctx=%s)",
 						prefix,
-						tool.QualifiedName,
+						owner.Kind,
+						owner.QualifiedName,
 						usage,
 						ctx,
 					))
@@ -408,6 +436,7 @@ func serverDataEntriesForTool(tool *ToolData, builder *toolSpecBuilder) ([]*serv
 	if tool == nil || len(tool.ServerData) == 0 {
 		return nil, nil
 	}
+	owner := newToolContractTypeOwner(tool)
 	out := make([]*serverDataEntry, 0, len(tool.ServerData))
 	for _, sd := range tool.ServerData {
 		if sd == nil || strings.TrimSpace(sd.Kind) == "" {
@@ -416,7 +445,7 @@ func serverDataEntriesForTool(tool *ToolData, builder *toolSpecBuilder) ([]*serv
 		if sd.Schema == nil || sd.Schema.Type == nil || sd.Schema.Type == goaexpr.Empty {
 			return nil, fmt.Errorf("tool %q: ServerData(%q) missing schema", tool.QualifiedName, sd.Kind)
 		}
-		td, err := builder.buildTypeInfo(tool, sd.Schema, usageSidecar, sd.Kind)
+		td, err := builder.buildTypeInfo(owner, sd.Schema, usageSidecar, sd.Kind)
 		if err != nil {
 			return nil, err
 		}

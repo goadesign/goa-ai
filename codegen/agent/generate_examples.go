@@ -235,24 +235,45 @@ func emitExecutorInternalStub(ag *AgentData, ts *ToolsetData) *codegen.File {
 // root. The file is named AGENTS_QUICKSTART.md and is generated unless disabled
 // via DSL.
 func quickstartReadmeFile(data *GeneratorData) *codegen.File {
-	if data == nil || len(data.Services) == 0 {
+	quickstartData := agentQuickstartData(data)
+	if quickstartData == nil {
 		return nil
 	}
 	sections := []*codegen.SectionTemplate{
 		{
 			Name:    "agents-quickstart",
 			Source:  agentsTemplates.Read(quickstartReadmeT),
-			Data:    data,
+			Data:    quickstartData,
 			FuncMap: templateFuncMap(),
 		},
 	}
 	return &codegen.File{Path: "AGENTS_QUICKSTART.md", SectionTemplates: sections}
 }
 
-// emitCmdMain patches cmd/<service>/main.go for agent-only designs. If Goa core
-// already generated the file in memory, the function rewrites its sections in
-// place. Otherwise it creates a new example main unless one already exists on
-// disk.
+// agentQuickstartData filters generator data down to the services that actually
+// declare agents so agent quickstart docs never assume agentless services.
+func agentQuickstartData(data *GeneratorData) *GeneratorData {
+	if data == nil {
+		return nil
+	}
+	quickstartData := &GeneratorData{Genpkg: data.Genpkg}
+	for _, svc := range data.Services {
+		if svc == nil || len(svc.Agents) == 0 {
+			continue
+		}
+		quickstartData.Services = append(quickstartData.Services, svc)
+	}
+	if len(quickstartData.Services) == 0 {
+		return nil
+	}
+	return quickstartData
+}
+
+// emitCmdMain patches cmd/<service>/main.go for services that expose runnable
+// examples. Agent-bearing services always get a main, and the generated example
+// also demonstrates service-owned completions when present. If Goa core already
+// generated the file in memory, the function rewrites its sections in place.
+// Otherwise it creates a new example main unless one already exists on disk.
 func emitCmdMain(svc *ServiceAgentsData, moduleBase string, files []*codegen.File) *codegen.File {
 	if svc == nil || len(svc.Agents) == 0 {
 		return nil
@@ -274,14 +295,27 @@ func emitCmdMain(svc *ServiceAgentsData, moduleBase string, files []*codegen.Fil
 		{Path: filepath.ToSlash(filepath.Join(moduleBase, "internal", "agents", "bootstrap"))},
 		{Path: "goa.design/goa-ai/runtime/agent/model", Name: "model"},
 	}
+	if len(svc.Completions) > 0 {
+		imports = append(imports,
+			&codegen.ImportSpec{Path: "io"},
+			&codegen.ImportSpec{Path: filepath.ToSlash(filepath.Join(moduleBase, "gen", svc.Service.PathName, "completions"))},
+			&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/rawjson"},
+		)
+	}
 	for _, ag := range svc.Agents {
 		imports = append(imports, &codegen.ImportSpec{Path: ag.ImportPath, Name: ag.PackageName})
 	}
 
 	agentSection := &codegen.SectionTemplate{
-		Name:    "cmd-main",
-		Source:  agentsTemplates.Read(cmdMainT),
-		Data:    struct{ Agents []*AgentData }{Agents: svc.Agents},
+		Name:   "cmd-main",
+		Source: agentsTemplates.Read(cmdMainT),
+		Data: struct {
+			Agents      []*AgentData
+			Completions []*CompletionData
+		}{
+			Agents:      svc.Agents,
+			Completions: svc.Completions,
+		},
 		FuncMap: templateFuncMap(),
 	}
 

@@ -127,3 +127,27 @@ func TestTranslateResponse_CitationsContentBlock(t *testing.T) {
 	require.Equal(t, 1, part.Citations[0].Location.DocumentPage.End)
 	require.Equal(t, "cited", part.Citations[0].SourceContent[0])
 }
+
+func TestTranslateResponse_PreservesSingleAssistantMessageAcrossBlocks(t *testing.T) {
+	out := &bedrockruntime.ConverseOutput{
+		Output: &brtypes.ConverseOutputMemberMessage{
+			Value: brtypes.Message{
+				Role: brtypes.ConversationRoleAssistant,
+				Content: []brtypes.ContentBlock{
+					&brtypes.ContentBlockMemberText{Value: `{"assistant_`},
+					&brtypes.ContentBlockMemberText{Value: `text":"created a draft"}`},
+				},
+			},
+		},
+	}
+
+	resp, err := translateResponse(out, nil, "", "")
+	require.NoError(t, err)
+	require.Len(t, resp.Content, 1)
+	require.Equal(t, model.ConversationRoleAssistant, resp.Content[0].Role)
+	require.Len(t, resp.Content[0].Parts, 1)
+
+	part, ok := resp.Content[0].Parts[0].(model.TextPart)
+	require.True(t, ok)
+	require.JSONEq(t, `{"assistant_text":"created a draft"}`, part.Text)
+}

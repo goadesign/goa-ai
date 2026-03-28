@@ -9,9 +9,10 @@ details.
 - **Import path:** `"goa.design/goa-ai/dsl"` (typically dot-imported alongside Goa's DSL).
 - **Entry point:** Declare agents inside a regular Goa `Service` definition. The DSL augments Goa's
   design tree and is processed during `goa gen`.
-- **Outcome:** `goa gen` produces agent packages (`gen/<service>/agents/<agent>`), tool
-  codecs/specs, activity handlers, and registration helpers. A contextual `AGENTS_QUICKSTART.md` is
-  written at the module root unless disabled via `DisableAgentDocs()`.
+- **Outcome:** `goa gen` produces agent packages (`gen/<service>/agents/<agent>`), service-owned
+  completion packages (`gen/<service>/completions`), tool codecs/specs, activity handlers, and
+  registration helpers. A contextual `AGENTS_QUICKSTART.md` is written at the module root unless
+  disabled via `DisableAgentDocs()`.
 
 The DSL is evaluated by Goa's `eval` engine, so the same rules apply as with the standard
 service/transport DSL: expressions must be invoked in the proper context, and attribute definitions
@@ -80,6 +81,8 @@ Running `goa gen example.com/assistant/design` produces:
 - `gen/orchestrator/agents/chat`: workflow + planner activities + agent registry.
 - `gen/orchestrator/agents/chat/specs`: payload/result structs, JSON codecs, tool schemas.
 - `gen/orchestrator/agents/chat/agenttools`: helpers that expose exported tools to other agents.
+- `gen/orchestrator/completions`: typed direct-assistant completion specs/codecs/helpers when the
+  service declares `Completion(...)`.
 - MCP registration helpers when an MCP toolset is referenced via `Use`.
 
 Each per-toolset specs package defines typed tool identifiers (`tools.Ident`) and uses those
@@ -96,6 +99,49 @@ var Specs = []tools.ToolSpec{
 ```
 
 Use these constants anywhere you need to reference tools.
+
+### Service-Owned Typed Completions
+
+Some structured interactions are direct assistant responses rather than tool calls.
+Use `Completion(...)` inside a Goa `Service` to declare a typed assistant-output
+contract owned by the service itself:
+
+```go
+var Draft = Type("Draft", func() {
+	Attribute("name", String, "Task name")
+	Attribute("goal", String, "Outcome-style goal")
+	Required("name", "goal")
+})
+
+var _ = Service("tasks", func() {
+	Completion("draft_from_transcript", "Produce a task draft directly", func() {
+		Return(Draft)
+	})
+})
+```
+
+`Completion(...)` reuses Goa’s normal type system, so `Attribute`, `Required`,
+`Example`, validations, and `OneOf` all apply exactly as they do for tool payloads
+and results.
+
+Completion names are part of the structured-output contract. They must be
+1-64 ASCII characters, may contain letters, digits, `_`, and `-`, and must
+start with a letter or digit.
+
+Running `goa gen` emits a service-owned package under `gen/<service>/completions`
+that contains:
+
+- completion result types and unions
+- generated JSON codecs and validation helpers
+- typed `completion.Spec` values
+- generated `Complete<Name>(ctx, client, req)` helpers that request provider-enforced
+  structured output and decode the assistant response through the generated codec
+- generated `StreamComplete<Name>(ctx, client, req)` and `Decode<Name>Chunk(...)`
+  helpers for typed completion streaming
+
+Streaming helpers stay on the raw `model.Streamer` surface: `completion_delta`
+chunks are preview-only, exactly one final `completion` chunk is canonical, and
+`Decode<Name>Chunk(...)` decodes only that final payload.
 
 ### Agent‑as‑Tool Composition (Child Workflows)
 
@@ -140,6 +186,7 @@ on agent/tool contracts.
 | Function | Context | Purpose |
 |----------|---------|---------|
 | `Agent(name, description, dsl)` | Inside `Service` | Declares an LLM agent with tool usage/exports and run policy |
+| `Completion(name, description?, dsl?)` | Inside `Service` | Declares a service-owned typed direct assistant-output contract |
 | `Use(value, dsl?)` | Inside `Agent` | Declares toolset consumption (referencing or inline definition) |
 | `Export(value, dsl?)` | Inside `Agent` or `Service` | Declares toolsets exposed to other agents |
 | `AgentToolset(svc, agent, ts)` | Top-level or inside `Use` | References a toolset exported by another agent |
@@ -162,7 +209,7 @@ on agent/tool contracts.
 |----------|---------|---------|
 | `Tool(name, description?, dsl?)` | Inside `Toolset` or `Method` | Declares a callable tool |
 | `Args(type)` | Inside `Tool` | Defines input parameter schema |
-| `Return(type)` | Inside `Tool` | Defines output result schema |
+| `Return(type)` | Inside `Tool` or `Completion` | Defines the model-visible result schema |
 | `ServerData(kind, type, dsl?)` | Inside `Tool` | Defines server-only data emitted alongside results (never sent to model providers) |
 | `ServerDataDefault("on" \| "off")` | Inside `Tool` | Default emission for optional server-data when `server_data` is omitted or `"auto"` |
 | `BindTo(method)` or `BindTo(service, method)` | Inside `Tool` | Binds tool to a Goa service method |

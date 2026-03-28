@@ -24,6 +24,8 @@ Here’s a map of what Goa-AI just built for you based on your `design/*.go` fil
             * Max Consecutive Failures: `1`
             * Time Budget: `15s`
             * Interrupts Allowed: `false`
+    * **Direct Completions:**
+        * `draft_task`
 
 ---
 
@@ -46,6 +48,7 @@ This generates:
 - `internal/agents/bootstrap/bootstrap.go` — Wires runtime and registers agents
 - `internal/agents/<agent>/planner/planner.go` — Stub planner (edit to connect your LLM)
 - `cmd/<service>/main.go` — Example main that uses the bootstrap
+- `gen/<service>/completions/` — Typed completion helpers when your service declares `Completion(...)`
 
 ### Understanding the Generated Code
 
@@ -137,6 +140,11 @@ func main() {
     }
 }
 ```
+
+When a service also declares `Completion(...)` contracts, Goa generates
+`gen/<service>/completions/` and the example main demonstrates both
+`Complete<Name>(...)` and `StreamComplete<Name>(...)` using the generated typed
+codecs and schema examples.
 
 ---
 
@@ -382,7 +390,7 @@ import (
     specs "<module>/gen/<service>/agents/<agent>/specs"
 )
 
-eng, err := temporal.NewWorker(temporal.Options{
+eng, err := temporal.New(temporal.Options{
     ClientOptions: &client.Options{
         HostPort:      "127.0.0.1:7233",
         Namespace:     "default",

@@ -230,7 +230,7 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 				{
 					Name:    "tool-spec-codecs",
 					Source:  agentsTemplates.Read(toolCodecsFileT),
-					Data:    toolCodecsFileData{Types: types, Tools: specsData.tools, Helpers: specsData.CodecTransformHelpers},
+					Data:    toolCodecsFileData{Types: types, Tools: specsData.tools, EmitToolLookups: true, Helpers: specsData.CodecTransformHelpers},
 					FuncMap: templateFuncMap(),
 				},
 			}

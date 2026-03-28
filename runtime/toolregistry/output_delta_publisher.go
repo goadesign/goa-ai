@@ -31,4 +31,3 @@ func OutputDeltaPublisherFromContext(ctx context.Context) (OutputDeltaPublisher,
 	pub, ok := ctx.Value(outputDeltaPublisherKey{}).(OutputDeltaPublisher)
 	return pub, ok
 }
-

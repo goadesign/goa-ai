@@ -298,6 +298,39 @@ type (
 		Delta string
 	}
 
+	// Completion is the canonical structured payload emitted for a streaming
+	// typed completion.
+	//
+	// Contract:
+	//   - Provider adapters MUST populate Payload as valid JSON.
+	//   - Completion is the only canonical structured payload for a typed
+	//     completion stream; callers must not reconstruct the final value from
+	//     completion deltas.
+	Completion struct {
+		// Name is the stable completion identifier associated with this payload.
+		Name string
+
+		// Payload is the canonical JSON value for the streamed completion.
+		Payload rawjson.Message
+	}
+
+	// CompletionDelta is an incremental structured-output fragment streamed while
+	// the provider is still constructing the final completion JSON.
+	//
+	// Contract:
+	//   - This is a best-effort UX signal. Consumers may ignore it entirely.
+	//   - The canonical completion payload remains Completion.Payload in the final
+	//     ChunkTypeCompletion emitted before stream termination.
+	//   - Delta is not guaranteed to be valid JSON on its own; callers must treat
+	//     it as an opaque fragment suitable only for progressive previews.
+	CompletionDelta struct {
+		// Name is the stable completion identifier associated with this delta.
+		Name string
+
+		// Delta is the raw JSON fragment emitted by the provider.
+		Delta string
+	}
+
 	// ToolChoiceMode controls how the model uses tools for a request.
 	//
 	// Not all providers support all modes. Provider adapters fail fast when a
@@ -315,6 +348,19 @@ type (
 
 		// Name identifies the tool to request when Mode is ToolChoiceModeTool.
 		// It must match the Name of one of the tool definitions in Request.Tools.
+		Name string
+	}
+
+	// StructuredOutput configures provider-enforced structured assistant output
+	// for a request.
+	//
+	// Provider adapters fail fast when structured output is requested but not
+	// supported instead of silently degrading to free-form text.
+	StructuredOutput struct {
+		// Schema constrains the assistant response as JSON Schema.
+		Schema []byte
+
+		// Name is an optional provider-facing schema identifier.
 		Name string
 	}
 
@@ -387,6 +433,9 @@ type (
 		// Thinking configures provider-specific reasoning behavior.
 		Thinking *ThinkingOptions
 
+		// StructuredOutput constrains assistant output when supported.
+		StructuredOutput *StructuredOutput
+
 		// Cache configures prompt caching behavior. Nil means no caching.
 		Cache *CacheOptions
 	}
@@ -431,6 +480,15 @@ type (
 		// ToolCallDelta carries an incremental tool-call payload fragment when Type
 		// is ChunkTypeToolCallDelta. It is strictly optional and may be ignored.
 		ToolCallDelta *ToolCallDelta
+
+		// Completion carries the canonical structured payload when Type is
+		// ChunkTypeCompletion.
+		Completion *Completion
+
+		// CompletionDelta carries an incremental structured-output fragment when
+		// Type is ChunkTypeCompletionDelta. It is strictly optional and may be
+		// ignored.
+		CompletionDelta *CompletionDelta
 
 		// UsageDelta reports incremental token usage when available.
 		UsageDelta *TokenUsage
@@ -548,6 +606,19 @@ const (
 	// ChunkTypeThinking identifies a chunk carrying thinking content.
 	ChunkTypeThinking = "thinking"
 
+	// ChunkTypeCompletionDelta identifies a chunk carrying an incremental typed
+	// completion JSON fragment.
+	//
+	// Naming note: this is a *delta* because fragments are not guaranteed to be
+	// valid JSON boundaries. It exists solely for progressive previews and is
+	// safe to ignore; the canonical completion payload is emitted as
+	// ChunkTypeCompletion.
+	ChunkTypeCompletionDelta = "completion_delta"
+
+	// ChunkTypeCompletion identifies a chunk carrying the canonical typed
+	// completion payload for a structured-output stream.
+	ChunkTypeCompletion = "completion"
+
 	// ChunkTypeUsage identifies a chunk carrying a usage delta.
 	ChunkTypeUsage = "usage"
 
@@ -611,6 +682,10 @@ const (
 
 // ErrStreamingUnsupported indicates the provider does not support streaming.
 var ErrStreamingUnsupported = errors.New("model: streaming not supported")
+
+// ErrStructuredOutputUnsupported indicates the provider does not support
+// provider-enforced structured output for the requested model API.
+var ErrStructuredOutputUnsupported = errors.New("model: structured output not supported")
 
 // ErrRateLimited indicates the provider rejected the request due to rate
 // limiting after exhausting any configured retries. Callers must not retry
