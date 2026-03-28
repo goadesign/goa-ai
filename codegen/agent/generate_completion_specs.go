@@ -39,7 +39,7 @@ func completionSpecsFiles(data *GeneratorData) ([]*codegen.File, error) {
 		transportPkgAlias = "toolhttp"
 	)
 
-	var out []*codegen.File
+	out := make([]*codegen.File, 0, len(data.Services)*6)
 	for _, svc := range data.Services {
 		if svc == nil || svc.Service == nil || len(svc.Completions) == 0 {
 			continue
