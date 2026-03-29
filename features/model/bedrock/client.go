@@ -368,7 +368,9 @@ func (c *Client) buildConverseStreamInput(parts *requestParts, req *model.Reques
 }
 
 // encodeOutputConfig translates a provider-neutral structured-output request
-// into Bedrock's response format configuration.
+// into Bedrock's response format configuration. It adapts the canonical
+// generated schema to Bedrock's accepted subset without changing the
+// completion contract owned by the service.
 func encodeOutputConfig(output *model.StructuredOutput) (*brtypes.OutputConfig, error) {
 	if output == nil {
 		return nil, nil
@@ -376,8 +378,12 @@ func encodeOutputConfig(output *model.StructuredOutput) (*brtypes.OutputConfig, 
 	if len(output.Schema) == 0 {
 		return nil, errors.New("bedrock: structured output requires a schema")
 	}
+	schema, err := normalizeStructuredOutputSchemaForBedrock(output.Schema)
+	if err != nil {
+		return nil, err
+	}
 	def := brtypes.JsonSchemaDefinition{
-		Schema: aws.String(string(output.Schema)),
+		Schema: aws.String(string(schema)),
 	}
 	if output.Name != "" {
 		def.Name = aws.String(output.Name)

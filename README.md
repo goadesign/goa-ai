@@ -250,6 +250,9 @@ chunks are preview-only, exactly one final `completion` chunk is canonical, and
 stay off planner streaming helpers because planner streaming is for assistant
 transcript/tool events, not structured-output chunks. Providers that do not
 implement structured output surface `model.ErrStructuredOutputUnsupported`.
+Provider adapters translate the canonical generated schema into any
+provider-specific subset they require and fail explicitly when the provider
+cannot represent the service contract.
 
 ### BindTo: Zero-Glue Service Integration
 

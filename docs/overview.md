@@ -121,6 +121,9 @@ chunks are preview-only, exactly one final `completion` chunk is canonical, and
 generated `Decode<Name>Chunk(...)` helpers decode only that final payload.
 Providers that do not implement structured output fail explicitly with
 `model.ErrStructuredOutputUnsupported`.
+The generated schema remains the canonical service contract; model adapters may
+normalize it for provider-specific constrained decoding, but they must reject
+providers that cannot represent the declared contract.
 
 ### Tool Schemas JSON
 

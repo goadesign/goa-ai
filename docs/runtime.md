@@ -221,6 +221,7 @@ Typed completion helpers are intentionally strict:
 - `Decode<Name>Chunk` ignores preview chunks and decodes only the final `completion`.
 - Completion streams stay on the direct `model.Streamer` path; do not route them through planner streaming helpers, which are for assistant transcript text/tool execution events.
 - Providers that do not implement structured output surface `model.ErrStructuredOutputUnsupported`.
+- Generated schemas are canonical and provider-neutral; provider adapters may normalize them to a supported subset, but must fail explicitly when they cannot preserve the declared contract.
 
 ---
 
