@@ -90,6 +90,9 @@ Streaming completions stay on the raw `model.Streamer` surface, and generated
 `Decode<Name>Chunk(...)` helpers decode only the final canonical payload.
 Providers that do not implement structured output fail explicitly with
 `model.ErrStructuredOutputUnsupported`.
+Generated schemas stay provider-neutral. Provider adapters may normalize that
+canonical schema to a provider-specific subset for constrained decoding, but
+they must fail explicitly instead of redefining the service contract.
 
 The design intentionally keeps completions separate from toolsets: toolsets model
 callable capabilities, while completions model final assistant answers. Both reuse
