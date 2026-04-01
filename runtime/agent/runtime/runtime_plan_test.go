@@ -111,6 +111,55 @@ func TestPlanStartActivityInvokesPlanner(t *testing.T) {
 	require.NotNil(t, out.Result.FinalResponse)
 }
 
+func TestPlanStartActivityAdvertisesPolicyFilteredTools(t *testing.T) {
+	called := false
+	pl := &stubPlanner{
+		start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+			called = true
+			definitions := input.Agent.AdvertisedToolDefinitions()
+			require.Len(t, definitions, 1)
+			require.Equal(t, "svc.tools.visible", definitions[0].Name)
+			require.Equal(t, "Visible tool", definitions[0].Description)
+			schema, ok := definitions[0].InputSchema.(map[string]any)
+			require.True(t, ok)
+			require.Equal(t, "object", schema["type"])
+			return &planner.PlanResult{
+				FinalResponse: &planner.FinalResponse{
+					Message: &model.Message{
+						Role:  "assistant",
+						Parts: []model.Part{model.TextPart{Text: "ok"}},
+					},
+				},
+			}, nil
+		},
+	}
+	rt := newTestRuntimeWithPlanner("service.agent", pl)
+	visible := newAnyJSONSpec("svc.tools.visible", "svc.tools")
+	visible.Description = "Visible tool"
+	visible.Payload.Schema = []byte(`{"type":"object","properties":{"q":{"type":"string"}}}`)
+	visible.Tags = []string{"system", "profile"}
+	blocked := newAnyJSONSpec("svc.tools.blocked", "svc.tools")
+	blocked.Tags = []string{"system"}
+	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{
+		"service.agent": {visible, blocked},
+	}
+	input := PlanActivityInput{
+		AgentID:  "service.agent",
+		RunID:    "run-123",
+		Messages: []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hello"}}}},
+		RunContext: run.Context{
+			RunID: "run-123",
+		},
+		Policy: &PolicyOverrides{
+			TagClauses: []TagPolicyClause{{AllowedAny: []string{"profile"}}},
+		},
+	}
+	out, err := rt.PlanStartActivity(context.Background(), &input)
+	require.NoError(t, err)
+	require.True(t, called)
+	require.NotNil(t, out.Result.FinalResponse)
+}
+
 func TestPlannerBoundaryOmitsToolResultsField(t *testing.T) {
 	t.Parallel()
 
@@ -349,6 +398,7 @@ func TestBuildNextResumeRequestRejectsNilToolOutputEntry(t *testing.T) {
 	_, err := rt.buildNextResumeRequest(
 		"svc.agent",
 		base,
+		nil,
 		[]*planner.ToolOutput{nil},
 		&nextAttempt,
 	)

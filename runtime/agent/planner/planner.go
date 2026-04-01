@@ -94,6 +94,10 @@ type PlannerContext interface {
 	// State returns ephemeral per-run storage for planner-local state.
 	State() AgentState
 
+	// AdvertisedToolDefinitions returns the model-facing tool definitions after
+	// applying runtime policy filtering for the current run.
+	AdvertisedToolDefinitions() []*model.ToolDefinition
+
 	// ModelClient returns the model client configured for the given model ID.
 	// The boolean result is false when the requested model is not configured.
 	ModelClient(id string) (model.Client, bool)

@@ -61,9 +61,12 @@ func (r *Runtime) handleToolTurn(
 
 	candidates := result.ToolCalls
 	r.logger.Info(ctx, "Workflow received tool calls from planner", "count", len(candidates))
-	candidates = r.applyPerRunOverrides(ctx, input, candidates)
 	var err error
 	candidates, err = r.rewriteUnknownToolCalls(candidates)
+	if err != nil {
+		return nil, err
+	}
+	candidates, err = r.applyPerRunOverrides(ctx, input, candidates)
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +213,7 @@ func (r *Runtime) handleToolTurn(
 		return out, err
 	}
 
-	resumeReq, err := r.buildNextResumeRequest(input.AgentID, base, st.ToolOutputs, &st.NextAttempt)
+	resumeReq, err := r.buildNextResumeRequest(input.AgentID, base, input.Policy, st.ToolOutputs, &st.NextAttempt)
 	if err != nil {
 		return nil, err
 	}

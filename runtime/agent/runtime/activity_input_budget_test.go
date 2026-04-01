@@ -44,7 +44,7 @@ func TestBuildNextResumeRequestKeepsLargePayloadAndResultsOffWire(t *testing.T) 
 	}
 	nextAttempt := 2
 
-	in, err := rt.buildNextResumeRequest(agent.Ident("service.agent.budget"), base, toolOutputs, &nextAttempt)
+	in, err := rt.buildNextResumeRequest(agent.Ident("service.agent.budget"), base, nil, toolOutputs, &nextAttempt)
 	require.NoError(t, err)
 	require.Len(t, in.ToolOutputs, 1)
 	require.Equal(t, "tc-1", in.ToolOutputs[0].ToolCallID)

@@ -451,12 +451,17 @@ type PlannerContext interface {
     Metrics() telemetry.Metrics           // Counters and histograms
     Tracer() telemetry.Tracer             // Distributed tracing
     State() AgentState                    // Ephemeral per-run key-value store
+    AdvertisedToolDefinitions() []*model.ToolDefinition // Runtime-filtered model-facing tools
     ModelClient(id string) (model.Client, bool)  // LLM client lookup
     RenderPrompt(ctx context.Context, id string, data any) (*prompt.PromptContent, error)
     AddReminder(r reminder.Reminder)      // Register backstage guidance
     RemoveReminder(id string)             // Clear a reminder
 }
 ```
+
+Use `AdvertisedToolDefinitions()` when constructing provider requests inside planners. The
+runtime filters registered tool specs before the planner/model sees them and strips tag metadata
+from the model-facing `ToolDefinition` values.
 
 ### PlannerEvents
 
@@ -1262,10 +1267,17 @@ client.Run(ctx, "session-1", msgs,
     runtime.WithRunMaxToolCalls(5),
     runtime.WithRunTimeBudget(2*time.Minute),
     runtime.WithRestrictToTool(tools.Ident("helpers.search")),
-    runtime.WithAllowedTags([]string{"safe", "read-only"}),
-    runtime.WithDeniedTags([]string{"destructive"}),
+    runtime.WithTagPolicyClauses([]runtime.TagPolicyClause{
+        {AllowedAny: []string{"safe", "read-only"}},
+        {DeniedAny: []string{"destructive"}},
+    }),
 )
 ```
+
+Tag filtering is applied twice with the same predicate:
+
+- before planner prompting via `PlannerContext.AdvertisedToolDefinitions()`
+- before tool execution as an invariant check
 
 ### Runtime Policy Override
 

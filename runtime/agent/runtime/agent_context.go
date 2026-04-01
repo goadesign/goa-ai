@@ -20,6 +20,7 @@ type agentContextOptions struct {
 	memory    memory.Reader
 	sessionID string
 	labels    map[string]string
+	policy    compiledToolPolicy
 	turnID    string
 	events    planner.PlannerEvents
 	cache     CachePolicy
@@ -34,6 +35,7 @@ type simplePlannerContext struct {
 	mem       memory.Reader
 	sessionID string
 	labels    map[string]string
+	policy    compiledToolPolicy
 	ev        planner.PlannerEvents
 	cache     CachePolicy
 }
@@ -47,6 +49,7 @@ func newAgentContext(opts agentContextOptions) planner.PlannerContext {
 		mem:       opts.memory,
 		sessionID: opts.sessionID,
 		labels:    cloneLabels(opts.labels),
+		policy:    opts.policy,
 		ev:        opts.events,
 		cache:     opts.cache,
 	}
@@ -59,6 +62,9 @@ func (c *simplePlannerContext) Logger() telemetry.Logger   { return c.rt.logger 
 func (c *simplePlannerContext) Metrics() telemetry.Metrics { return c.rt.metrics }
 func (c *simplePlannerContext) Tracer() telemetry.Tracer   { return c.rt.tracer }
 func (c *simplePlannerContext) State() planner.AgentState  { return noopAgentState{} }
+func (c *simplePlannerContext) AdvertisedToolDefinitions() []*model.ToolDefinition {
+	return advertisedToolDefinitions(c.rt.ToolSpecsForAgent(c.agent), c.policy)
+}
 func (c *simplePlannerContext) ModelClient(id string) (model.Client, bool) {
 	c.rt.mu.RLock()
 	m, ok := c.rt.models[id]

@@ -117,6 +117,7 @@ func (r *Runtime) finalizeWithPlanner(
 		RunID:       base.RunContext.RunID,
 		Messages:    messages,
 		RunContext:  resumeCtx,
+		Policy:      clonePolicyOverrides(input.Policy),
 		ToolOutputs: encodedToolOutputs,
 		Finalize:    &planner.Termination{Reason: reason, Message: hint},
 	}

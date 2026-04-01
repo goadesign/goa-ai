@@ -2,10 +2,10 @@ package runtime
 
 // tool_unavailable.go defines the runtime-owned "tool unavailable" tool.
 //
-// This tool is the canonical representation of "the model requested a tool name
-// that is not registered for this run". We keep the transcript/tool handshake
-// structurally valid by rewriting unknown tool calls to this tool and embedding
-// the originally requested name + payload inside its input.
+// This tool is the canonical representation of "the model requested a tool that
+// is not available for this run". We keep the transcript/tool handshake
+// structurally valid by rewriting unknown or policy-denied tool calls to this
+// tool and embedding the originally requested name + payload inside its input.
 
 import (
 	"context"
@@ -28,7 +28,7 @@ type toolUnavailablePayload struct {
 func toolUnavailableToolDefinition() *model.ToolDefinition {
 	return &model.ToolDefinition{
 		Name:        tools.ToolUnavailable.String(),
-		Description: "Internal. Used when the model requests an unknown tool name. Always returns an error with a retry hint to pick a tool from the advertised list.",
+		Description: "Internal. Used when the model requests a tool that is not available for this run. Always returns an error with a retry hint to pick a tool from the advertised list.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -51,7 +51,7 @@ func toolUnavailableToolsetRegistration() ToolsetRegistration {
 		Name:        tools.ToolUnavailable,
 		Service:     "goa-ai",
 		Toolset:     toolUnavailableToolsetName,
-		Description: "Runtime-owned tool that represents unknown tool calls.",
+		Description: "Runtime-owned tool that represents unavailable tool calls.",
 		Payload: tools.TypeSpec{
 			Name:        "ToolUnavailablePayload",
 			Schema:      mustMarshalToolUnavailableSchema(),
@@ -108,7 +108,7 @@ func executeToolUnavailable(ctx context.Context, call *planner.ToolRequest) (*pl
 		requested = "<missing requested_tool>"
 	}
 
-	toolErr := planner.NewToolError(fmt.Sprintf("unknown tool %q", requested))
+	toolErr := planner.NewToolError(fmt.Sprintf("tool %q is not available for this run", requested))
 	return &planner.ToolResult{
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,
@@ -117,9 +117,25 @@ func executeToolUnavailable(ctx context.Context, call *planner.ToolRequest) (*pl
 			Reason:         planner.RetryReasonToolUnavailable,
 			Tool:           call.Name,
 			RestrictToTool: false,
-			Message:        "Tool name is not registered for this run. Choose a tool from the advertised tool list and call it with the exact JSON schema.",
+			Message:        "Tool is not available for this run. Choose a tool from the advertised tool list and call it with the exact JSON schema.",
 		},
 	}, nil
+}
+
+// rewriteToolCallUnavailable rewrites one tool call to the runtime-owned
+// tool_unavailable tool while preserving the originally requested tool name and
+// payload in the rewritten input.
+func (r *Runtime) rewriteToolCallUnavailable(call planner.ToolRequest) (planner.ToolRequest, error) {
+	payload, err := json.Marshal(toolUnavailablePayload{
+		RequestedTool:    call.Name.String(),
+		RequestedPayload: call.Payload,
+	})
+	if err != nil {
+		return planner.ToolRequest{}, fmt.Errorf("runtime: encode tool_unavailable payload for %s: %w", call.Name, err)
+	}
+	call.Name = tools.ToolUnavailable
+	call.Payload = rawjson.Message(payload)
+	return call, nil
 }
 
 func (r *Runtime) rewriteUnknownToolCalls(calls []planner.ToolRequest) ([]planner.ToolRequest, error) {
@@ -138,16 +154,11 @@ func (r *Runtime) rewriteUnknownToolCalls(calls []planner.ToolRequest) ([]planne
 			continue
 		}
 
-		payload, err := json.Marshal(toolUnavailablePayload{
-			RequestedTool:    call.Name.String(),
-			RequestedPayload: call.Payload,
-		})
+		rewritten, err := r.rewriteToolCallUnavailable(call)
 		if err != nil {
-			return nil, fmt.Errorf("runtime: encode tool_unavailable payload for %s: %w", call.Name, err)
+			return nil, err
 		}
-		call.Name = tools.ToolUnavailable
-		call.Payload = rawjson.Message(payload)
-		out[i] = call
+		out[i] = rewritten
 	}
 	return out, nil
 }
