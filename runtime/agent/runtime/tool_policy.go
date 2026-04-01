@@ -1,4 +1,4 @@
-// tool_policy.go compiles per-run tool policy into one reusable predicate used
+// Package runtime compiles per-run tool policy into one reusable predicate used
 // both before planner prompting and during execution-time enforcement.
 package runtime
 
