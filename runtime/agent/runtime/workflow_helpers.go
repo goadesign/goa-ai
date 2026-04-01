@@ -303,6 +303,7 @@ func (r *Runtime) appendToolOutputs(ctx context.Context, st *runLoopState, calls
 func (r *Runtime) buildNextResumeRequest(
 	agentID agent.Ident,
 	base *planner.PlanInput,
+	runPolicy *PolicyOverrides,
 	toolOutputs []*planner.ToolOutput,
 	nextAttempt *int,
 ) (PlanActivityInput, error) {
@@ -322,6 +323,7 @@ func (r *Runtime) buildNextResumeRequest(
 		RunID:       base.RunContext.RunID,
 		Messages:    plannerMsgs,
 		RunContext:  resumeCtx,
+		Policy:      clonePolicyOverrides(runPolicy),
 		ToolOutputs: encodedToolOutputs,
 	}
 	if err := enforcePlanActivityInputBudget(out); err != nil {

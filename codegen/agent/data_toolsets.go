@@ -254,7 +254,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		Description:        expr.Description,
 		QualifiedName:      qualified,
 		Title:              naming.HumanizeTitle(defaultString(expr.Title, expr.Name)),
-		Tags:               slices.Clone(expr.Tags),
+		Tags:               mergedToolTags(ts, expr),
 		Meta:               map[string][]string(expr.Meta),
 		Args:               expr.Args,
 		Return:             expr.Return,
@@ -352,6 +352,36 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		}
 	}
 	return tool
+}
+
+// mergedToolTags returns the stable union of toolset-level and tool-level tags.
+//
+// Contract:
+//   - Toolset tags apply to every tool declared in that toolset.
+//   - Tool-level tags may add extra metadata without needing to repeat shared
+//     capability tags on every tool.
+//   - Output order is deterministic: toolset tags first, then tool-only tags.
+func mergedToolTags(ts *ToolsetData, expr *agentsExpr.ToolExpr) []string {
+	if len(ts.Tags) == 0 && len(expr.Tags) == 0 {
+		return nil
+	}
+	tags := make([]string, 0, len(ts.Tags)+len(expr.Tags))
+	seen := make(map[string]struct{}, len(ts.Tags)+len(expr.Tags))
+	for _, tag := range ts.Tags {
+		if _, ok := seen[tag]; ok {
+			continue
+		}
+		seen[tag] = struct{}{}
+		tags = append(tags, tag)
+	}
+	for _, tag := range expr.Tags {
+		if _, ok := seen[tag]; ok {
+			continue
+		}
+		seen[tag] = struct{}{}
+		tags = append(tags, tag)
+	}
+	return tags
 }
 
 // pagingData converts the optional DSL paging contract into generator data.

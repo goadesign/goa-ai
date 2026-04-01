@@ -157,6 +157,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		RunID:      input.RunID,
 		Messages:   input.Messages,
 		RunContext: runCtx,
+		Policy:     clonePolicyOverrides(input.Policy),
 	}
 	if err := enforcePlanActivityInputBudget(startReq); err != nil {
 		finalErr = err

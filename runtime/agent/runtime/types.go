@@ -28,6 +28,10 @@ type (
 	// All fields are optional; zero values mean no override.
 	PolicyOverrides = api.PolicyOverrides
 
+	// TagPolicyClause describes one tag-policy clause applied to advertised and
+	// executable tools for a run.
+	TagPolicyClause = api.TagPolicyClause
+
 	// RunOutput represents the final outcome returned by a run workflow, including the
 	// concluding assistant message plus tool traces and planner notes for callers.
 	RunOutput = api.RunOutput

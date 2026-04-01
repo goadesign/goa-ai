@@ -630,6 +630,10 @@ func filterToolCalls(calls []planner.ToolRequest, allowed []tools.Ident) []plann
 	}
 	filtered := make([]planner.ToolRequest, 0, len(calls))
 	for _, call := range calls {
+		if call.Name == tools.ToolUnavailable {
+			filtered = append(filtered, call)
+			continue
+		}
 		if _, ok := allow[call.Name]; ok {
 			filtered = append(filtered, call)
 		}

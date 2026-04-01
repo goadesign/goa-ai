@@ -745,6 +745,7 @@ type PlannerContext interface {
     Metrics() telemetry.Metrics
     Tracer() telemetry.Tracer
     State() AgentState                    // Ephemeral per-run state
+    AdvertisedToolDefinitions() []*model.ToolDefinition
     ModelClient(id string) (model.Client, bool)
     RenderPrompt(ctx context.Context, id string, data any) (*prompt.PromptContent, error)
     AddReminder(r reminder.Reminder)      // Register guidance for future turns
@@ -875,8 +876,10 @@ history, unified debugging.
 
 ### Advertising Tools to Planners
 
-Use `specs.AdvertisedSpecs()` from `gen/<svc>/agents/<agent>/specs` to pass tool specs to the model.
-This keeps IDs and schemas aligned with your design and eliminates manual lists.
+Register generated tool specs with the runtime using `specs.AdvertisedSpecs()` from
+`gen/<svc>/agents/<agent>/specs`. Inside planners, use
+`input.Agent.AdvertisedToolDefinitions()` to get the runtime-filtered model-facing tool
+definitions. Tags stay in runtime policy metadata and are not exposed to model providers.
 
 ---
 
@@ -912,7 +915,12 @@ The `sessionID` argument is required and must be a non-empty, non-whitespace str
 | `WithRestrictToTool(tools.Ident)`       | Limit available tools        |
 | `WithAllowedTags([]string)`             | Filter by tags               |
 | `WithDeniedTags([]string)`              | Exclude by tags              |
+| `WithTagPolicyClauses([]TagPolicyClause)` | Compose explicit tag clauses |
 | `WithTiming(Timing)`                    | Set multiple timing overrides |
+
+Prefer `WithTagPolicyClauses` for new code when you need multiple allow/deny
+rules; `WithAllowedTags` and `WithDeniedTags` are convenience shorthands for a
+single clause.
 
 `WithTiming(Timing)` sets semantic run/planner/tool budgets. It does not expose
 engine-level queue-wait or heartbeat tuning.

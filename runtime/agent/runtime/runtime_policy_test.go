@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -67,4 +68,92 @@ func TestPolicyAllowlistTrimsToolExecution(t *testing.T) {
 		}
 	}
 	require.Equal(t, []tools.Ident{tools.Ident("allowed")}, scheduled)
+}
+
+func TestApplyPerRunOverridesUsesAllTagClauses(t *testing.T) {
+	rt := &Runtime{
+		logger: telemetry.NoopLogger{},
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			"visible": func() tools.ToolSpec {
+				spec := newAnyJSONSpec("visible", "svc.tools")
+				spec.Tags = []string{"system", "profile"}
+				return spec
+			}(),
+			"missing": func() tools.ToolSpec {
+				spec := newAnyJSONSpec("missing", "svc.tools")
+				spec.Tags = []string{"system"}
+				return spec
+			}(),
+			"denied": func() tools.ToolSpec {
+				spec := newAnyJSONSpec("denied", "svc.tools")
+				spec.Tags = []string{"system", "profile", "blocked"}
+				return spec
+			}(),
+		},
+	}
+	rewritten, err := rt.applyPerRunOverrides(
+		context.Background(),
+		&RunInput{
+			Policy: &PolicyOverrides{
+				AllowedTags: []string{"system"},
+				TagClauses: []TagPolicyClause{
+					{AllowedAny: []string{"profile"}},
+					{DeniedAny: []string{"blocked"}},
+				},
+			},
+		},
+		[]planner.ToolRequest{
+			{Name: "visible"},
+			{Name: "missing"},
+			{Name: "denied"},
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, rewritten, 3)
+	require.Equal(t, tools.Ident("visible"), rewritten[0].Name)
+	require.Equal(t, tools.ToolUnavailable, rewritten[1].Name)
+	require.Equal(t, tools.ToolUnavailable, rewritten[2].Name)
+	require.JSONEq(t, `{"requested_tool":"missing"}`, string(rewritten[1].Payload))
+	require.JSONEq(t, `{"requested_tool":"denied"}`, string(rewritten[2].Payload))
+}
+
+func TestFilterToolCallsKeepsToolUnavailable(t *testing.T) {
+	filtered := filterToolCalls(
+		[]planner.ToolRequest{
+			{Name: "allowed"},
+			{Name: tools.ToolUnavailable},
+			{Name: "blocked"},
+		},
+		[]tools.Ident{"allowed"},
+	)
+	require.Len(t, filtered, 2)
+	require.Equal(t, tools.Ident("allowed"), filtered[0].Name)
+	require.Equal(t, tools.ToolUnavailable, filtered[1].Name)
+}
+
+func TestAdvertisedToolDefinitionsHonorCompiledPolicy(t *testing.T) {
+	rt := newTestRuntimeWithPlanner("service.agent", &stubPlanner{})
+	visible := newAnyJSONSpec("svc.tools.visible", "svc.tools")
+	visible.Description = "Visible tool"
+	visible.Payload.Schema = []byte(`{"type":"object","properties":{"q":{"type":"string"}}}`)
+	visible.Tags = []string{"system", "profile"}
+	blocked := newAnyJSONSpec("svc.tools.blocked", "svc.tools")
+	blocked.Tags = []string{"system"}
+	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{
+		"service.agent": {visible, blocked},
+	}
+	ctx := newAgentContext(agentContextOptions{
+		runtime: rt,
+		agentID: "service.agent",
+		policy: compileToolPolicy(&PolicyOverrides{
+			TagClauses: []TagPolicyClause{{AllowedAny: []string{"profile"}}},
+		}),
+	})
+	definitions := ctx.AdvertisedToolDefinitions()
+	require.Len(t, definitions, 1)
+	require.Equal(t, visible.Name.String(), definitions[0].Name)
+	require.Equal(t, visible.Description, definitions[0].Description)
+	schema, ok := definitions[0].InputSchema.(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "object", schema["type"])
 }

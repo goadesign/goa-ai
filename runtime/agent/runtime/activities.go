@@ -529,6 +529,7 @@ func (r *Runtime) plannerContext(ctx context.Context, input *PlanActivityInput, 
 	if err != nil {
 		return nil, nil, err
 	}
+	runPolicy := compileToolPolicy(input.Policy)
 	agentCtx := newAgentContext(agentContextOptions{
 		runtime:   r,
 		agentID:   input.AgentID,
@@ -536,6 +537,7 @@ func (r *Runtime) plannerContext(ctx context.Context, input *PlanActivityInput, 
 		memory:    reader,
 		sessionID: input.RunContext.SessionID,
 		labels:    input.RunContext.Labels,
+		policy:    runPolicy,
 		turnID:    input.RunContext.TurnID,
 		events:    events,
 		cache:     reg.Policy.Cache,

@@ -109,6 +109,22 @@ type (
 		BackoffCoefficient float64
 	}
 
+	// TagPolicyClause describes one tag-filtering clause for a run.
+	//
+	// Contract:
+	//   - A tool passes the clause when AllowedAny is empty or intersects the tool tags.
+	//   - A tool fails the clause when any DeniedAny tag intersects the tool tags.
+	//   - Runtimes apply all configured clauses with logical AND.
+	TagPolicyClause struct {
+		// AllowedAny allows a tool when at least one listed tag is present. Empty
+		// means this clause does not constrain allowed tags.
+		AllowedAny []string
+
+		// DeniedAny rejects a tool when any listed tag is present. Empty means
+		// this clause does not constrain denied tags.
+		DeniedAny []string
+	}
+
 	// PolicyOverrides configures per-run policy constraints. All fields are optional;
 	// zero values mean no override.
 	PolicyOverrides struct {
@@ -123,6 +139,10 @@ type (
 
 		// DeniedTags excludes tools tagged with any of the listed tags from execution.
 		DeniedTags []string
+
+		// TagClauses applies explicit tag-policy clauses. Runtimes combine legacy
+		// AllowedTags/DeniedTags with these clauses using logical AND.
+		TagClauses []TagPolicyClause
 
 		// MaxToolCalls caps the total number of tool calls a run may execute.
 		MaxToolCalls int
@@ -277,6 +297,10 @@ type (
 
 		// RunContext carries nested-run metadata (parent IDs, tool identifiers, etc.).
 		RunContext run.Context
+
+		// Policy snapshots the per-run policy visible to the planner activity.
+		// Runtimes use this to shape the planner-visible advertised tool list.
+		Policy *PolicyOverrides
 
 		// ToolOutputs is the accumulated executed tool-call history for the run so far.
 		//

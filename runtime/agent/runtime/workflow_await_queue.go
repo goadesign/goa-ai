@@ -324,7 +324,7 @@ func (r *Runtime) handleAwaitQueue(
 		return nil, err
 	}
 
-	resumeReq, err := r.buildNextResumeRequest(input.AgentID, base, st.ToolOutputs, &st.NextAttempt)
+	resumeReq, err := r.buildNextResumeRequest(input.AgentID, base, input.Policy, st.ToolOutputs, &st.NextAttempt)
 	if err != nil {
 		return nil, err
 	}

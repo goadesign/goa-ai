@@ -4,7 +4,8 @@ package runtime
 // filter and cap tool calls deterministically.
 //
 // Contract:
-// - Per-run overrides are applied first (restrict-to-tool and tag allow/deny).
+// - Per-run overrides are applied first using the same compiled predicate used to
+//   advertise tools to planners.
 // - Runtime policy decisions can further filter calls and update caps.
 
 import (
@@ -17,42 +18,45 @@ import (
 	"goa.design/goa-ai/runtime/agent/policy"
 )
 
-// applyPerRunOverrides filters candidate tool calls using per-run overrides:
-// RestrictToTool and tag allow/deny lists. Returns the filtered slice.
-func (r *Runtime) applyPerRunOverrides(ctx context.Context, input *RunInput, candidates []planner.ToolRequest) []planner.ToolRequest {
+// applyPerRunOverrides rewrites policy-denied tool calls to the runtime-owned
+// tool_unavailable tool using the same compiled predicate that already shaped
+// the planner-visible advertised tool set.
+func (r *Runtime) applyPerRunOverrides(ctx context.Context, input *RunInput, candidates []planner.ToolRequest) ([]planner.ToolRequest, error) {
 	if input == nil || input.Policy == nil || len(candidates) == 0 {
-		return candidates
+		return candidates, nil
 	}
-	ov := input.Policy
-	if ov.RestrictToTool == "" && len(ov.AllowedTags) == 0 && len(ov.DeniedTags) == 0 {
-		return candidates
+	runPolicy := compileToolPolicy(input.Policy)
+	if runPolicy.isZero() {
+		return candidates, nil
 	}
-	r.logger.Info(ctx, "Applying per-run policy overrides", "restrict_to_tool", ov.RestrictToTool, "allowed_tags", ov.AllowedTags, "denied_tags", ov.DeniedTags)
+	r.logger.Info(
+		ctx,
+		"Applying per-run policy overrides",
+		"restrict_to_tool",
+		input.Policy.RestrictToTool,
+		"allowed_tags",
+		input.Policy.AllowedTags,
+		"denied_tags",
+		input.Policy.DeniedTags,
+		"tag_clauses",
+		len(input.Policy.TagClauses),
+	)
 	metas := r.toolMetadata(candidates)
-	filtered := make([]planner.ToolRequest, 0, len(candidates))
+	rewritten := make([]planner.ToolRequest, 0, len(candidates))
 	for i, call := range candidates {
-		if ov.RestrictToTool != "" && call.Name != ov.RestrictToTool {
-			r.logger.Info(ctx, "Tool filtered by RestrictToTool", "tool", call.Name)
+		if runPolicy.allowsTool(call.Name, metas[i].Tags) {
+			rewritten = append(rewritten, call)
 			continue
 		}
-		ok := true
-		if len(ov.AllowedTags) > 0 || len(ov.DeniedTags) > 0 {
-			tags := metas[i].Tags
-			if len(ov.AllowedTags) > 0 && !hasIntersection(tags, ov.AllowedTags) {
-				r.logger.Info(ctx, "Tool filtered by AllowedTags", "tool", call.Name, "tags", tags, "required", ov.AllowedTags)
-				ok = false
-			}
-			if ok && len(ov.DeniedTags) > 0 && hasIntersection(tags, ov.DeniedTags) {
-				r.logger.Info(ctx, "Tool filtered by DeniedTags", "tool", call.Name, "tags", tags, "denied", ov.DeniedTags)
-				ok = false
-			}
+		r.logger.Info(ctx, "Tool rewritten by run policy", "tool", call.Name, "tags", metas[i].Tags)
+		unavailable, err := r.rewriteToolCallUnavailable(call)
+		if err != nil {
+			return nil, err
 		}
-		if ok {
-			filtered = append(filtered, call)
-		}
+		rewritten = append(rewritten, unavailable)
 	}
-	r.logger.Info(ctx, "After per-run policy filtering", "candidates", len(filtered))
-	return filtered
+	r.logger.Info(ctx, "After per-run policy rewriting", "candidates", len(rewritten))
+	return rewritten, nil
 }
 
 // applyRuntimePolicy applies the runtime policy (if configured) to the provided

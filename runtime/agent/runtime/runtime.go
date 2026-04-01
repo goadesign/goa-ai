@@ -640,6 +640,16 @@ func WithAllowedTags(tags []string) RunOption {
 	}
 }
 
+// WithTagPolicyClauses sets explicit tag-policy clauses on the run policy.
+func WithTagPolicyClauses(clauses []TagPolicyClause) RunOption {
+	return func(in *RunInput) {
+		if in.Policy == nil {
+			in.Policy = &PolicyOverrides{}
+		}
+		in.Policy.TagClauses = cloneTagPolicyClauses(clauses)
+	}
+}
+
 // WithDeniedTags filters out candidate tools that have any of these tags.
 func WithDeniedTags(tags []string) RunOption {
 	return func(in *RunInput) {
