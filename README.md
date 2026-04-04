@@ -542,6 +542,22 @@ func main() {
 }
 ```
 
+## Tracing Error Contract
+
+Runtime tracing uses one generic rule for span failures across model clients and
+Temporal activity execution:
+
+- Non-nil errors mark spans failed by default.
+- They do not mark spans failed when the active context is already done and the
+  returned error is a structured context-termination shape.
+- Supported termination shapes are `context.Canceled`,
+  `context.DeadlineExceeded`, and gRPC `Canceled` / `DeadlineExceeded`
+  statuses.
+
+This contract is runtime-generic. Application-specific error taxonomies,
+dashboard semantics, and product observability attributes belong in the
+integrating application, not in `goa-ai`.
+
 ---
 
 ## Feature Modules
