@@ -565,6 +565,36 @@ func main() {
 
 ---
 
+## OpenAI Adapter Support
+
+The `features/model/openai` adapter now targets the official `openai-go`
+Responses API while preserving the same `model.Client` contract used by the
+Bedrock and Anthropic adapters for the core Aura planner loop:
+
+| Capability | OpenAI Responses API |
+|------------|----------------------|
+| Unary assistant text | Yes |
+| Unary tool calls with provider IDs | Yes |
+| Runtime-owned factory | Yes, via `Runtime.NewOpenAIModelClient(...)` |
+| `RunID` transcript rehydration | Yes, via the runtime-owned ledger source |
+| Transcript replay of assistant `tool_use` + user `tool_result` | Yes, for OpenAI-representable assistant turns; tool errors stay explicit |
+| Streaming text | Yes |
+| Streaming `tool_call_delta` + final `tool_call` | Yes |
+| Streaming usage + stop chunks | Yes |
+| Model-class routing (`default`, `high-reasoning`, `small`) | Yes |
+| Structured output (`response_format: json_schema`) | Yes, but it cannot be combined with tools |
+| Prompt cache options / cache checkpoints | Rejected explicitly |
+| Thinking | Representable subset only: enable + configured `reasoning_effort`; budgeted or interleaved requests are rejected explicitly |
+
+This is the acceptance target for Aura inference backends: planners continue to
+talk to `model.Client`, while provider-specific details stay inside
+`features/model/openai`.
+
+When `RunID` is set, transcript rehydration is strict: the runtime must provide
+ledger access and the adapter fails fast if prior messages cannot be loaded.
+
+---
+
 ## Human-in-the-Loop
 
 Pause runs for human review, resume when ready:

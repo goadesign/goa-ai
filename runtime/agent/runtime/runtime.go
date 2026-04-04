@@ -37,7 +37,10 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
+	openaisdk "github.com/openai/openai-go"
+	"github.com/openai/openai-go/option"
 	bedrock "goa.design/goa-ai/features/model/bedrock"
+	openai "goa.design/goa-ai/features/model/openai"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
@@ -57,6 +60,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/agent/transcript"
 
 	"text/template"
 
@@ -1197,12 +1201,47 @@ func (r *Runtime) ModelClient(id string) (model.Client, bool) {
 
 // BedrockConfig configures the bedrock-backed model client created by the runtime.
 type BedrockConfig struct {
-	DefaultModel   string
-	HighModel      string
-	SmallModel     string
-	MaxTokens      int
+	// DefaultModel is the primary model identifier used for default-class requests.
+	DefaultModel string
+	// HighModel is the model identifier used for high-reasoning requests.
+	HighModel string
+	// SmallModel is the model identifier used for small/cheap requests.
+	SmallModel string
+	// MaxTokens is the default completion token cap.
+	MaxTokens int
+	// ThinkingBudget is the default Bedrock thinking-token budget.
 	ThinkingBudget int
-	Temperature    float32
+	// Temperature is the default sampling temperature.
+	Temperature float32
+}
+
+// OpenAIConfig configures the OpenAI-backed model client created by the runtime.
+type OpenAIConfig struct {
+	// APIKey authenticates requests to the OpenAI-compatible endpoint.
+	APIKey string
+	// BaseURL optionally overrides the default OpenAI API base URL.
+	BaseURL string
+	// DefaultModel is the primary model identifier used for default-class requests.
+	DefaultModel string
+	// HighModel is the model identifier used for high-reasoning requests.
+	HighModel string
+	// SmallModel is the model identifier used for small/cheap requests.
+	SmallModel string
+	// MaxTokens is the default completion token cap.
+	MaxTokens int
+	// Temperature is the default sampling temperature.
+	Temperature float32
+	// ThinkingEffort selects the OpenAI reasoning effort for thinking-enabled requests.
+	ThinkingEffort string
+}
+
+// transcriptLedgerSource returns the runtime-owned transcript rehydration source
+// when the configured engine supports workflow queries.
+func (r *Runtime) transcriptLedgerSource() transcript.LedgerSource {
+	if querier, ok := r.Engine.(transcript.WorkflowQuerier); ok {
+		return transcript.NewTemporalLedgerSource(querier)
+	}
+	return nil
 }
 
 // NewBedrockModelClient constructs a model.Client backed by AWS Bedrock using the
@@ -1220,11 +1259,34 @@ func (r *Runtime) NewBedrockModelClient(awsrt *bedrockruntime.Client, cfg Bedroc
 		Temperature:    cfg.Temperature,
 		Logger:         r.logger,
 	}
-	if querier, ok := r.Engine.(bedrock.WorkflowQuerier); ok {
-		return bedrock.New(awsrt, opts, bedrock.NewTemporalLedgerSource(querier))
+	return bedrock.New(awsrt, opts, r.transcriptLedgerSource())
+}
+
+// NewOpenAIModelClient constructs a model.Client backed by the OpenAI Responses
+// API using runtime-owned client construction and transcript rehydration.
+func (r *Runtime) NewOpenAIModelClient(cfg OpenAIConfig) (model.Client, error) {
+	apiKey := strings.TrimSpace(cfg.APIKey)
+	if apiKey == "" {
+		return nil, errors.New("openai: api key is required")
 	}
-	// Engines without durable queries: construct without ledger rehydration.
-	return bedrock.New(awsrt, opts, nil)
+	requestOptions := []option.RequestOption{
+		option.WithAPIKey(apiKey),
+	}
+	if baseURL := strings.TrimSpace(cfg.BaseURL); baseURL != "" {
+		requestOptions = append(requestOptions, option.WithBaseURL(baseURL))
+	}
+	client := openaisdk.NewClient(requestOptions...)
+	service := client.Responses
+	return openai.New(openai.Options{
+		Client:              &service,
+		DefaultModel:        cfg.DefaultModel,
+		HighModel:           cfg.HighModel,
+		SmallModel:          cfg.SmallModel,
+		MaxCompletionTokens: cfg.MaxTokens,
+		Temperature:         cfg.Temperature,
+		ThinkingEffort:      cfg.ThinkingEffort,
+		Ledger:              r.transcriptLedgerSource(),
+	})
 }
 
 // agentByID returns the registered agent by ID if present. The boolean indicates

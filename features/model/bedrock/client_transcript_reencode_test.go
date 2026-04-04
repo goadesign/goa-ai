@@ -173,6 +173,43 @@ func TestEncodeMessages_RewritesUnknownToolUseToToolUnavailable(t *testing.T) {
 	}
 }
 
+func TestClientCompleteRejectsInvalidToolLoopWithoutThinking(t *testing.T) {
+	client := &Client{
+		runtime:      &errorRuntimeClient{converseErr: model.ErrRateLimited},
+		defaultModel: "test-model",
+		maxTok:       10,
+		temp:         0.5,
+		think:        defaultThinkingBudget,
+	}
+
+	_, err := client.prepareRequest(context.Background(), &model.Request{
+		Messages: []*model.Message{{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{
+				model.ToolUsePart{
+					ID:    "tu1",
+					Name:  "search_assets",
+					Input: map[string]any{"q": "pump"},
+				},
+			},
+		}},
+		Tools: []*model.ToolDefinition{{
+			Name:        "search_assets",
+			Description: "Search for assets.",
+			InputSchema: map[string]any{"type": "object"},
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected transcript validation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid transcript") {
+		t.Fatalf("expected invalid transcript error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "tool_result") {
+		t.Fatalf("expected missing tool_result detail, got: %v", err)
+	}
+}
+
 func TestEncodeMessages_AppendsSystemCacheCheckpoint(t *testing.T) {
 	ctx := context.Background()
 	msgs := []*model.Message{

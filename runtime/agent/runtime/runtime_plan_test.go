@@ -406,6 +406,36 @@ func TestBuildNextResumeRequestRejectsNilToolOutputEntry(t *testing.T) {
 	require.Contains(t, err.Error(), "nil tool output")
 }
 
+func TestBuildNextResumeRequestUsesProviderNeutralTranscriptValidation(t *testing.T) {
+	t.Parallel()
+
+	rt := &Runtime{}
+	base := &planner.PlanInput{
+		Messages: []*model.Message{{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{
+				model.ToolUsePart{ID: "call-1", Name: "svc.tool"},
+			},
+		}},
+		RunContext: run.Context{
+			RunID:     "run-123",
+			SessionID: "sess-1",
+		},
+	}
+	nextAttempt := 1
+
+	_, err := rt.buildNextResumeRequest(
+		"svc.agent",
+		base,
+		nil,
+		nil,
+		&nextAttempt,
+	)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid resume transcript")
+	require.NotContains(t, err.Error(), "Bedrock")
+}
+
 func TestPlanResumeActivityPreservesEmptyRawJSONPayloads(t *testing.T) {
 	pl := &stubPlanner{
 		resume: func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
