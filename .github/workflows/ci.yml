@@ -41,7 +41,7 @@ jobs:
 
       - name: Lint (golangci-lint v2)
         run: |
-          golangci-lint run --timeout=5m
+          make lint
         if: success()
 
       - name: Run unit tests
