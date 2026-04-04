@@ -33,7 +33,11 @@
 //	})
 package hooks
 
-import "context"
+import (
+	"context"
+
+	"goa.design/goa-ai/runtime/agent/runlog"
+)
 
 type (
 	// SubscriberFunc is an adapter that allows ordinary functions to act as
@@ -50,9 +54,10 @@ type (
 	SubscriberFunc func(ctx context.Context, event Event) error
 )
 
-// EventType enumerates well-known runtime events broadcast on the hook bus.
-// Each type corresponds to a specific phase in the agent workflow lifecycle.
-type EventType string
+// EventType enumerates well-known runtime hook events broadcast on the hook bus.
+// It is an alias of the durable run-log record type because hook events are one
+// subset of canonical runtime records.
+type EventType = runlog.Type
 
 const (
 	// RunStarted fires when a run begins execution. The Payload

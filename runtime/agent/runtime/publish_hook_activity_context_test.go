@@ -48,8 +48,8 @@ func (panicWorkflowContext) Detached() engine.WorkflowContext {
 	return panicWorkflowContext{}
 }
 
-func (panicWorkflowContext) PublishHook(ctx context.Context, call engine.HookActivityCall) error {
-	panic("unexpected PublishHook from activity context")
+func (panicWorkflowContext) PublishRecord(ctx context.Context, call engine.RecordActivityCall) error {
+	panic("unexpected PublishRecord from activity context")
 }
 
 func (panicWorkflowContext) ExecutePlannerActivity(ctx context.Context, call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
@@ -88,6 +88,10 @@ func (panicWorkflowContext) Now() time.Time {
 	return time.Unix(0, 0).UTC()
 }
 
+func (panicWorkflowContext) NextSequence() uint64 {
+	return 1
+}
+
 func (panicWorkflowContext) NewTimer(ctx context.Context, d time.Duration) (engine.Future[time.Time], error) {
 	return nil, nil
 }
@@ -113,6 +117,26 @@ func TestPublishHookErr_DoesNotUseWorkflowContextFromActivity(t *testing.T) {
 	ctx := engine.WithActivityContext(engine.WithWorkflowContext(context.Background(), panicWorkflowContext{}))
 	err := rt.publishHookErr(ctx, hooks.NewPlannerNoteEvent(testRunID, agent.Ident("agent"), testSessionID, "note", nil), "turn-1")
 	require.NoError(t, err)
+}
+
+func TestPublishHookErr_UsesDeterministicWorkflowRecordMetadata(t *testing.T) {
+	wfCtx := &testWorkflowContext{ctx: context.Background()}
+	rt := &Runtime{
+		RunEventStore: runloginmem.New(),
+		Bus:           noopHooks{},
+		logger:        telemetry.NoopLogger{},
+		tracer:        telemetry.NewNoopTracer(),
+	}
+
+	err := rt.publishHookErr(
+		engine.WithWorkflowContext(context.Background(), wfCtx),
+		hooks.NewPlannerNoteEvent(testRunID, agent.Ident("agent"), testSessionID, "note", nil),
+		"turn-1",
+	)
+	require.NoError(t, err)
+	require.Equal(t, recordActivityName, wfCtx.lastHookCall.Name)
+	require.Equal(t, int64(0), wfCtx.lastHookCall.Input.TimestampMS)
+	require.Equal(t, testRunID+"/turn-1/"+string(hooks.PlannerNote)+"/1", wfCtx.lastHookCall.Input.EventKey)
 }
 
 func TestPublishHookErr_PersistsCanonicalToolResultPayloadWithoutDuplicateResult(t *testing.T) {
@@ -260,7 +284,7 @@ func (w *cancelOnPlannerWorkflowContext) RunID() string {
 	return testRunID
 }
 
-func (w *cancelOnPlannerWorkflowContext) PublishHook(ctx context.Context, call engine.HookActivityCall) error {
+func (w *cancelOnPlannerWorkflowContext) PublishRecord(ctx context.Context, call engine.RecordActivityCall) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -306,6 +330,10 @@ func (w *cancelOnPlannerWorkflowContext) ConfirmationDecisions() engine.Receiver
 
 func (w *cancelOnPlannerWorkflowContext) Now() time.Time {
 	return time.Unix(0, 0).UTC()
+}
+
+func (w *cancelOnPlannerWorkflowContext) NextSequence() uint64 {
+	return 1
 }
 
 func (w *cancelOnPlannerWorkflowContext) NewTimer(ctx context.Context, d time.Duration) (engine.Future[time.Time], error) {

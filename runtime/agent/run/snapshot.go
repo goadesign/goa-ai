@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -34,6 +35,10 @@ type (
 
 		// LastAssistantMessage is the most recent assistant message emitted by the run.
 		LastAssistantMessage string
+
+		// Transcript is the canonical provider-ready transcript derived from durable
+		// transcript delta records when they are present in the run log.
+		Transcript []*model.Message
 
 		// Await describes the current await state when the run is paused awaiting input.
 		Await *AwaitSnapshot

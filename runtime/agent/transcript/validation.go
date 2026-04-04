@@ -91,12 +91,10 @@ func ValidatePlannerTranscript(messages []*model.Message) error {
 	return nil
 }
 
-// ValidateBedrock verifies Bedrock-specific representability constraints on top
-// of the shared planner transcript invariants.
+// ValidateBedrock verifies Bedrock-specific representability constraints.
+// Callers own canonical transcript validation before they invoke provider
+// adapters.
 func ValidateBedrock(messages []*model.Message, thinkingEnabled bool) error {
-	if err := ValidatePlannerTranscript(messages); err != nil {
-		return fmt.Errorf("bedrock: %w", err)
-	}
 	if !thinkingEnabled {
 		return nil
 	}

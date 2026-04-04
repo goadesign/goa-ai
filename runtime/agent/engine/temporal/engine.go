@@ -96,8 +96,8 @@ type WorkerOptions struct {
 // activities because both represent planner attempts from the runtime's point
 // of view.
 type ActivityDefaults struct {
-	// Hook configures workflow hook publishing activities.
-	Hook ActivityTimeoutDefaults
+	// Record configures workflow record activities.
+	Record ActivityTimeoutDefaults
 	// Planner configures PlanStart and PlanResume activities.
 	Planner ActivityTimeoutDefaults
 	// Tool configures ExecuteTool activities.
@@ -304,15 +304,16 @@ func (e *Engine) RegisterWorkflow(_ context.Context, def engine.WorkflowDefiniti
 	return nil
 }
 
-// RegisterHookActivity registers a typed hook activity with the Temporal engine.
-// Hook activities publish workflow-emitted hook events outside of deterministic
-// workflow code. The activity accepts *api.HookActivityInput and returns an error.
-func (e *Engine) RegisterHookActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.HookActivityInput) error) error {
-	if err := e.requireWorkerMode("register hook activities"); err != nil {
+// RegisterRecordActivity registers a typed runtime-record activity with the
+// Temporal engine. Record activities persist workflow-emitted records outside
+// of deterministic workflow code. The activity accepts
+// *api.RecordActivityInput and returns an error.
+func (e *Engine) RegisterRecordActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.RecordActivityInput) error) error {
+	if err := e.requireWorkerMode("register record activities"); err != nil {
 		return err
 	}
-	opts = e.applyActivityClassDefaults(activityKindHook, opts)
-	wrapped := func(ctx context.Context, in *api.HookActivityInput) error {
+	opts = e.applyActivityClassDefaults(activityKindRecord, opts)
+	wrapped := func(ctx context.Context, in *api.RecordActivityInput) error {
 		return fn(e.injectWorkflowContextIntoActivity(ctx), in)
 	}
 	return e.registerActivityWithCtx(name, opts, wrapped)
@@ -501,7 +502,7 @@ func (r temporalHeartbeatRecorder) RecordHeartbeat(details ...any) {
 type activityKind string
 
 const (
-	activityKindHook    activityKind = "hook"
+	activityKindRecord  activityKind = "record"
 	activityKindPlanner activityKind = "planner"
 	activityKindTool    activityKind = "tool"
 )
@@ -524,8 +525,8 @@ func (e *Engine) applyActivityClassDefaults(kind activityKind, opts engine.Activ
 // activity class.
 func (e *Engine) activityClassDefaultsFor(kind activityKind) ActivityTimeoutDefaults {
 	switch kind {
-	case activityKindHook:
-		return e.activityDefaults.Hook
+	case activityKindRecord:
+		return e.activityDefaults.Record
 	case activityKindPlanner:
 		return e.activityDefaults.Planner
 	case activityKindTool:

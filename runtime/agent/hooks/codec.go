@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,12 +10,21 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/toolerrors"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
+	// EncodeOptions supplies the durable metadata required to transport one hook
+	// event through the runtime record activity.
+	EncodeOptions struct {
+		TurnID      string
+		EventKey    string
+		TimestampMS int64
+	}
+
 	// runCompletedPayload is used to serialize RunCompletedEvent for transport.
 	// It preserves the canonical terminal outcome so hook transport does not
 	// infer failures or cancellations from raw error strings.
@@ -55,9 +65,31 @@ type (
 	}
 )
 
-// EncodeToHookInput creates a hook activity input envelope from a hook event for
-// serialization and transport to the hook activity.
-func EncodeToHookInput(evt Event, turnID string) (*ActivityInput, error) {
+// EncodeToRecordInput creates a durable runtime-record envelope from one hook
+// event for serialization and transport to the record activity.
+func EncodeToRecordInput(evt Event, opts EncodeOptions) (*runlog.ActivityInput, error) {
+	if evt == nil {
+		return nil, errors.New("encode hook record: event is nil")
+	}
+	explicitMetadata := opts.EventKey != ""
+	eventKey := evt.EventKey()
+	timestampMS := evt.Timestamp()
+	if explicitMetadata {
+		eventKey = opts.EventKey
+		timestampMS = opts.TimestampMS
+	} else if opts.TimestampMS != 0 {
+		timestampMS = opts.TimestampMS
+	}
+	if eventKey == "" {
+		return nil, errors.New("encode hook record: event key is required")
+	}
+	if !explicitMetadata && timestampMS == 0 {
+		return nil, errors.New("encode hook record: timestamp is required")
+	}
+	turnID := opts.TurnID
+	if turnID == "" {
+		turnID = evt.TurnID()
+	}
 	var payload rawjson.Message
 	switch e := evt.(type) {
 	case *RunCompletedEvent:
@@ -102,20 +134,24 @@ func EncodeToHookInput(evt Event, turnID string) (*ActivityInput, error) {
 		payload = rawjson.Message(b)
 	}
 
-	return &ActivityInput{
+	return &runlog.ActivityInput{
 		Type:        evt.Type(),
-		EventKey:    evt.EventKey(),
+		EventKey:    eventKey,
 		RunID:       evt.RunID(),
 		AgentID:     agent.Ident(evt.AgentID()),
 		SessionID:   evt.SessionID(),
 		TurnID:      turnID,
-		TimestampMS: evt.Timestamp(),
+		TimestampMS: timestampMS,
 		Payload:     payload,
 	}, nil
 }
 
-// DecodeFromHookInput reconstructs a hooks.Event from the serialized hook input.
-func DecodeFromHookInput(input *ActivityInput) (Event, error) {
+// DecodeFromRecordInput reconstructs a hooks.Event from the serialized runtime
+// record envelope.
+func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
+	if input == nil {
+		return nil, errors.New("decode hook record: input is nil")
+	}
 	var evt Event
 	switch input.Type {
 	case RunStarted:

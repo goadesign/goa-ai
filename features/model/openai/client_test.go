@@ -6,13 +6,18 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/openai/openai-go/responses"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/runlog"
+	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 func TestNewRequiresDefaultModel(t *testing.T) {
@@ -31,39 +36,37 @@ func TestNewRejectsUnknownThinkingEffort(t *testing.T) {
 	assert.Contains(t, err.Error(), "unsupported thinking effort")
 }
 
-func TestClientCompleteRunIDPrependsLedgerMessages(t *testing.T) {
+func TestClientCompleteUsesExplicitToolLoopTranscript(t *testing.T) {
 	transport := &mockTransport{
 		completeResponse: mustResponse(t, `{"status":"completed","output":[]}`),
 	}
-	ledger := &stubLedgerSource{
-		messages: []*model.Message{{
-			Role: model.ConversationRoleAssistant,
-			Parts: []model.Part{
-				model.TextPart{Text: "Need a tool."},
-				model.ToolUsePart{
-					ID:    "call_1",
-					Name:  "analytics.analyze",
-					Input: map[string]any{"query": "sales"},
-				},
-			},
-		}},
-	}
 	client, err := New(Options{
 		DefaultModel: "gpt-4o",
-		Ledger:       ledger,
 		transport:    transport,
 	})
 	require.NoError(t, err)
 
 	_, err = client.Complete(context.Background(), &model.Request{
-		RunID: "run-123",
-		Messages: []*model.Message{{
-			Role: model.ConversationRoleUser,
-			Parts: []model.Part{model.ToolResultPart{
-				ToolUseID: "call_1",
-				Content:   map[string]any{"status": "ok"},
-			}},
-		}},
+		Messages: []*model.Message{
+			{
+				Role: model.ConversationRoleAssistant,
+				Parts: []model.Part{
+					model.TextPart{Text: "Need a tool."},
+					model.ToolUsePart{
+						ID:    "call_1",
+						Name:  "analytics.analyze",
+						Input: map[string]any{"query": "sales"},
+					},
+				},
+			},
+			{
+				Role: model.ConversationRoleUser,
+				Parts: []model.Part{model.ToolResultPart{
+					ToolUseID: "call_1",
+					Content:   map[string]any{"status": "ok"},
+				}},
+			},
+		},
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
@@ -72,7 +75,6 @@ func TestClientCompleteRunIDPrependsLedgerMessages(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.Equal(t, "run-123", ledger.runID)
 	require.Len(t, transport.completeRequests, 1)
 	items := transport.completeRequests[0].Input.OfInputItemList
 	require.Len(t, items, 3)
@@ -88,12 +90,18 @@ func TestClientCompleteRunIDPrependsLedgerMessages(t *testing.T) {
 	assert.JSONEq(t, `{"status":"ok"}`, items[2].OfFunctionCallOutput.Output)
 }
 
-func TestClientCompleteRunIDRejectsUnrepresentableLedgerTranscript(t *testing.T) {
+func TestClientCompleteRejectsUnrepresentableExplicitTranscript(t *testing.T) {
 	transport := &mockTransport{
 		completeResponse: mustResponse(t, `{"status":"completed","output":[]}`),
 	}
-	ledger := &stubLedgerSource{
-		messages: []*model.Message{{
+	client, err := New(Options{
+		DefaultModel: "gpt-4o",
+		transport:    transport,
+	})
+	require.NoError(t, err)
+
+	_, err = client.Complete(context.Background(), &model.Request{
+		Messages: []*model.Message{{
 			Role: model.ConversationRoleAssistant,
 			Parts: []model.Part{
 				model.ToolUsePart{
@@ -104,16 +112,6 @@ func TestClientCompleteRunIDRejectsUnrepresentableLedgerTranscript(t *testing.T)
 				model.TextPart{Text: "post tool text"},
 			},
 		}},
-	}
-	client, err := New(Options{
-		DefaultModel: "gpt-4o",
-		Ledger:       ledger,
-		transport:    transport,
-	})
-	require.NoError(t, err)
-
-	_, err = client.Complete(context.Background(), &model.Request{
-		RunID: "run-123",
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
@@ -125,7 +123,7 @@ func TestClientCompleteRunIDRejectsUnrepresentableLedgerTranscript(t *testing.T)
 	assert.Empty(t, transport.completeRequests)
 }
 
-func TestClientCompleteRunIDRequiresLedgerSource(t *testing.T) {
+func TestClientCompleteLowersRunlogReplayedTranscript(t *testing.T) {
 	transport := &mockTransport{
 		completeResponse: mustResponse(t, `{"status":"completed","output":[]}`),
 	}
@@ -135,41 +133,28 @@ func TestClientCompleteRunIDRequiresLedgerSource(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = client.Complete(context.Background(), &model.Request{
-		RunID: "run-123",
-		Messages: []*model.Message{{
-			Role:  model.ConversationRoleUser,
-			Parts: []model.Part{model.TextPart{Text: "Ping"}},
-		}},
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "RunID requires a configured ledger source")
-	assert.Empty(t, transport.completeRequests)
-}
+	messages := replayedToolLoopMessages(t)
 
-func TestClientCompleteRunIDPropagatesLedgerErrors(t *testing.T) {
-	transport := &mockTransport{
-		completeResponse: mustResponse(t, `{"status":"completed","output":[]}`),
-	}
-	ledger := &stubLedgerSource{err: errors.New("query failed")}
-	client, err := New(Options{
-		DefaultModel: "gpt-4o",
-		Ledger:       ledger,
-		transport:    transport,
+	_, err = client.Complete(context.Background(), &model.Request{
+		Messages: messages,
+		Tools: []*model.ToolDefinition{{
+			Name:        "analytics.analyze",
+			Description: "Run an analysis.",
+			InputSchema: map[string]any{"type": "object"},
+		}},
 	})
 	require.NoError(t, err)
 
-	_, err = client.Complete(context.Background(), &model.Request{
-		RunID: "run-123",
-		Messages: []*model.Message{{
-			Role:  model.ConversationRoleUser,
-			Parts: []model.Part{model.TextPart{Text: "Ping"}},
-		}},
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), `load messages for run "run-123"`)
-	assert.Contains(t, err.Error(), "query failed")
-	assert.Empty(t, transport.completeRequests)
+	require.Len(t, transport.completeRequests, 1)
+	items := transport.completeRequests[0].Input.OfInputItemList
+	require.Len(t, items, 5)
+	require.NotNil(t, items[0].OfMessage)
+	require.NotNil(t, items[1].OfReasoning)
+	require.NotNil(t, items[2].OfOutputMessage)
+	require.NotNil(t, items[3].OfFunctionCall)
+	require.NotNil(t, items[4].OfFunctionCallOutput)
+	assert.Equal(t, "call_1", items[3].OfFunctionCall.CallID)
+	assert.Equal(t, "call_1", items[4].OfFunctionCallOutput.CallID)
 }
 
 func TestClientCompleteEncodesToolLoopTranscript(t *testing.T) {
@@ -937,17 +922,6 @@ func (m *mockTransport) Stream(_ context.Context, request responses.ResponseNewP
 	return m.stream
 }
 
-type stubLedgerSource struct {
-	runID    string
-	messages []*model.Message
-	err      error
-}
-
-func (s *stubLedgerSource) Messages(_ context.Context, runID string) ([]*model.Message, error) {
-	s.runID = runID
-	return s.messages, s.err
-}
-
 type mockStream struct {
 	events   []responses.ResponseStreamEventUnion
 	index    int
@@ -987,4 +961,57 @@ func mustStreamEvent(t *testing.T, raw string) responses.ResponseStreamEventUnio
 	var event responses.ResponseStreamEventUnion
 	require.NoError(t, json.Unmarshal([]byte(raw), &event))
 	return event
+}
+
+func replayedToolLoopMessages(t *testing.T) []*model.Message {
+	t.Helper()
+
+	ctx := context.Background()
+	store := runloginmem.New()
+	appendReplayTranscriptDelta(t, ctx, store, []*model.Message{{
+		Role:  model.ConversationRoleUser,
+		Parts: []model.Part{model.TextPart{Text: "Summarize sales"}},
+	}})
+	appendReplayTranscriptDelta(t, ctx, store, []*model.Message{{
+		Role: model.ConversationRoleAssistant,
+		Parts: []model.Part{
+			model.ThinkingPart{Text: "Need the sales data first.", Index: 0, Final: true},
+			model.TextPart{Text: "Need the sales data first."},
+			model.ToolUsePart{
+				ID:    "call_1",
+				Name:  "analytics.analyze",
+				Input: map[string]any{"query": "sales"},
+			},
+		},
+	}})
+	appendReplayTranscriptDelta(t, ctx, store, []*model.Message{{
+		Role: model.ConversationRoleUser,
+		Parts: []model.Part{model.ToolResultPart{
+			ToolUseID: "call_1",
+			Content:   map[string]any{"status": "ok", "rows": 3},
+		}},
+	}})
+
+	messages, err := transcript.BuildMessagesFromRunLog(ctx, store, "run-1")
+	require.NoError(t, err)
+	return messages
+}
+
+func appendReplayTranscriptDelta(t *testing.T, ctx context.Context, store runlog.Store, messages []*model.Message) {
+	t.Helper()
+
+	payload, err := transcript.EncodeRunLogDelta(messages)
+	require.NoError(t, err)
+
+	_, err = store.Append(ctx, &runlog.Event{
+		EventKey:  time.Now().UTC().Format(time.RFC3339Nano),
+		RunID:     "run-1",
+		AgentID:   agent.Ident("agent-1"),
+		SessionID: "session-1",
+		TurnID:    "turn-1",
+		Type:      transcript.RunLogMessagesAppended,
+		Payload:   payload,
+		Timestamp: time.Now().UTC(),
+	})
+	require.NoError(t, err)
 }

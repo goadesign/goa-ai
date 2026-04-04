@@ -2,7 +2,7 @@
 //
 // This file defines the Temporal-backed implementation of engine.WorkflowContext.
 // The runtime uses it to:
-// - execute typed planner/tool/hook activities with engine-owned defaults,
+// - execute typed planner/tool/record activities with engine-owned defaults,
 // - access deterministic time/timers and workflow cancellation,
 // - receive external signals in a replay-safe way,
 // - start child workflows by explicit name and queue.
@@ -32,6 +32,7 @@ type (
 		ctx        workflow.Context
 		workflowID string
 		runID      string
+		sequence   *uint64
 		logger     telemetry.Logger
 		metrics    telemetry.Metrics
 		tracer     telemetry.Tracer
@@ -85,7 +86,7 @@ const (
 // (for example ExecuteAgentChildWithRoute).
 //
 // The returned context uses engine defaults (queue, timeouts, retry) when invoking
-// typed planner/tool/hook activities.
+// typed planner/tool/record activities.
 func NewWorkflowContext(e *Engine, ctx workflow.Context) engine.WorkflowContext {
 	return newTemporalWorkflowContext(e, ctx)
 }
@@ -97,6 +98,7 @@ func newTemporalWorkflowContext(e *Engine, ctx workflow.Context) *temporalWorkfl
 		ctx:        ctx,
 		workflowID: info.WorkflowExecution.ID,
 		runID:      info.WorkflowExecution.RunID,
+		sequence:   new(uint64),
 		logger:     e.logger,
 		metrics:    e.metrics,
 		tracer:     e.tracer,
@@ -175,12 +177,12 @@ func (w *temporalWorkflowContext) RunID() string {
 	return w.runID
 }
 
-func (w *temporalWorkflowContext) PublishHook(ctx context.Context, call engine.HookActivityCall) error {
+func (w *temporalWorkflowContext) PublishRecord(ctx context.Context, call engine.RecordActivityCall) error {
 	if call.Name == "" {
-		return errors.New("hook activity name is required")
+		return errors.New("record activity name is required")
 	}
 	if call.Input == nil {
-		return errors.New("hook activity input is required")
+		return errors.New("record activity input is required")
 	}
 
 	actx := workflow.WithActivityOptions(w.ctx, w.activityOptionsFor(call.Name, call.Options))
@@ -283,6 +285,11 @@ func (w *temporalWorkflowContext) Now() time.Time {
 	return workflow.Now(w.ctx)
 }
 
+func (w *temporalWorkflowContext) NextSequence() uint64 {
+	(*w.sequence)++
+	return *w.sequence
+}
+
 func (w *temporalWorkflowContext) NewTimer(ctx context.Context, d time.Duration) (engine.Future[time.Time], error) {
 	now := workflow.Now(w.ctx)
 	if d <= 0 {
@@ -311,6 +318,7 @@ func (w *temporalWorkflowContext) WithCancel() (engine.WorkflowContext, func()) 
 			ctx:        cctx,
 			workflowID: w.workflowID,
 			runID:      w.runID,
+			sequence:   w.sequence,
 			logger:     w.logger,
 			metrics:    w.metrics,
 			tracer:     w.tracer,
@@ -390,6 +398,7 @@ func (w *temporalWorkflowContext) Detached() engine.WorkflowContext {
 		ctx:        dctx,
 		workflowID: w.workflowID,
 		runID:      w.runID,
+		sequence:   w.sequence,
 		logger:     w.logger,
 		metrics:    w.metrics,
 		tracer:     w.tracer,

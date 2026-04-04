@@ -131,6 +131,15 @@ var AnthropicRegistry = Registry("anthropic", func() {
 - **Federation Sync**: Periodic catalog synchronization from external registries
 - **Search**: Semantic and keyword-based tool discovery
 
+### Transcript Boundary
+
+- **Stateless model adapters**: Provider clients accept the full provider-ready
+  transcript in `model.Request.Messages`; they never reload history from a
+  runtime-owned `RunID`.
+- **Durable replay**: The runtime persists canonical transcript deltas as
+  runlog records so providers, replay tooling, and future backends can
+  reconstruct the exact message order generically.
+
 ## MCP Server Definition
 
 Enable MCP protocol for a service with `MCP`:

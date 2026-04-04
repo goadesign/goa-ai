@@ -18,9 +18,8 @@ import (
 )
 
 // QueryWorkflow exposes Temporal query execution through the engine's durable
-// workflow identity. It exists only for read-only integrations, such as
-// transcript rehydration, that need a narrow query capability instead of the
-// full Temporal client surface.
+// workflow identity. It exists only for read-only integrations that need a
+// narrow query capability instead of the full Temporal client surface.
 func (e *Engine) QueryWorkflow(ctx context.Context, workflowID, queryType string, args ...any) (converter.EncodedValue, error) {
 	if workflowID == "" {
 		return nil, fmt.Errorf("workflow id is required")

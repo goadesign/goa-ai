@@ -8,8 +8,10 @@ import (
 	"hash/fnv"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
+	"github.com/google/uuid"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -17,8 +19,10 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/prompt"
+	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 const (
@@ -368,8 +372,8 @@ func (r *Runtime) logWarn(ctx context.Context, msg string, err error, kv ...any)
 // publishHookErr emits a runtime hook event and returns an error on failure.
 //
 // When called from workflow code (ctx carries engine.WorkflowContext), publishHookErr
-// schedules the runtime hook activity. Outside workflows, it calls the hook
-// activity directly. In both cases, the hook activity is responsible for
+// schedules the runtime record activity. Outside workflows, it calls the record
+// activity directly. In both cases, the record activity is responsible for
 // appending the event to the canonical run log before publishing to the bus.
 //
 // This function exists because runtime hook emission is semantically split:
@@ -380,7 +384,12 @@ func (r *Runtime) logWarn(ctx context.Context, msg string, err error, kv ...any)
 // the error. Workflow loop code may choose to treat failures as fatal via
 // publishHook (panic) to avoid silent divergence.
 func (r *Runtime) publishHookErr(ctx context.Context, evt hooks.Event, turnID string) error {
-	in, err := hooks.EncodeToHookInput(evt, turnID)
+	meta := recordDispatchMetadataForContext(ctx, evt.RunID(), turnID, evt.Type())
+	in, err := hooks.EncodeToRecordInput(evt, hooks.EncodeOptions{
+		TurnID:      turnID,
+		EventKey:    meta.EventKey,
+		TimestampMS: meta.TimestampMS,
+	})
 	if err != nil {
 		return err
 	}
@@ -394,21 +403,101 @@ func (r *Runtime) publishHookErr(ctx context.Context, evt hooks.Event, turnID st
 		)
 	}
 	if wfCtx := engine.WorkflowContextFromContext(ctx); wfCtx != nil && !engine.IsActivityContext(ctx) {
-		return wfCtx.PublishHook(ctx, engine.HookActivityCall{
-			Name:  hookActivityName,
+		return wfCtx.PublishRecord(ctx, engine.RecordActivityCall{
+			Name:  recordActivityName,
 			Input: in,
 		})
 	}
-	return r.hookActivity(ctx, in)
+	return r.recordActivity(ctx, in)
 }
 
 // publishHook emits a runtime hook event and returns an error on failure.
 //
 // Note that bus publish failures do not cause publishHookErr to return an error;
-// only failures to encode, dispatch the hook activity, or append to the canonical
+// only failures to encode, dispatch the record activity, or append to the canonical
 // run log are considered fatal.
 func (r *Runtime) publishHook(ctx context.Context, evt hooks.Event, turnID string) error {
 	return r.publishHookErr(ctx, evt, turnID)
+}
+
+// publishTranscriptDeltaErr persists a canonical transcript delta as a durable
+// run-log record. Transcript deltas bypass hook subscribers and stream sinks.
+func (r *Runtime) publishTranscriptDeltaErr(
+	ctx context.Context,
+	runID string,
+	agentID agent.Ident,
+	sessionID string,
+	turnID string,
+	messages []*model.Message,
+) error {
+	payload, err := transcript.EncodeRunLogDelta(messages)
+	if err != nil {
+		return err
+	}
+	if len(payload) > maxHookPayloadBytes {
+		return fmt.Errorf(
+			"runtime: transcript delta payload exceeds budget (%d > %d bytes, run_id=%s)",
+			len(payload),
+			maxHookPayloadBytes,
+			runID,
+		)
+	}
+	meta := recordDispatchMetadataForContext(ctx, runID, turnID, transcript.RunLogMessagesAppended)
+	input := &runlog.ActivityInput{
+		Type:        transcript.RunLogMessagesAppended,
+		EventKey:    meta.EventKey,
+		RunID:       runID,
+		AgentID:     agentID,
+		SessionID:   sessionID,
+		TurnID:      turnID,
+		TimestampMS: meta.TimestampMS,
+		Payload:     payload,
+	}
+	if wfCtx := engine.WorkflowContextFromContext(ctx); wfCtx != nil && !engine.IsActivityContext(ctx) {
+		return wfCtx.PublishRecord(ctx, engine.RecordActivityCall{
+			Name:  recordActivityName,
+			Input: input,
+		})
+	}
+	return r.recordActivity(ctx, input)
+}
+
+// publishTranscriptDelta is the panic-free wrapper used by workflow/runtime code
+// when transcript persistence failures must stop the run.
+func (r *Runtime) publishTranscriptDelta(
+	ctx context.Context,
+	runID string,
+	agentID agent.Ident,
+	sessionID string,
+	turnID string,
+	messages []*model.Message,
+) error {
+	return r.publishTranscriptDeltaErr(ctx, runID, agentID, sessionID, turnID, messages)
+}
+
+type recordDispatchMetadata struct {
+	EventKey    string
+	TimestampMS int64
+}
+
+func recordDispatchMetadataForContext(ctx context.Context, runID, turnID string, recordType runlog.Type) recordDispatchMetadata {
+	if wfCtx := engine.WorkflowContextFromContext(ctx); wfCtx != nil && !engine.IsActivityContext(ctx) {
+		return recordDispatchMetadata{
+			EventKey:    formatWorkflowRecordEventKey(runID, turnID, recordType, wfCtx.NextSequence()),
+			TimestampMS: wfCtx.Now().UnixMilli(),
+		}
+	}
+	return recordDispatchMetadata{
+		EventKey:    uuid.NewString(),
+		TimestampMS: time.Now().UnixMilli(),
+	}
+}
+
+func formatWorkflowRecordEventKey(runID, turnID string, recordType runlog.Type, seq uint64) string {
+	if turnID == "" {
+		turnID = "no_turn"
+	}
+	return fmt.Sprintf("%s/%s/%s/%d", runID, turnID, recordType, seq)
 }
 
 // onPromptRendered is the runtime-owned observer callback used by PromptRegistry.

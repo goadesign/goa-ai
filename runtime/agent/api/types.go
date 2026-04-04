@@ -8,11 +8,11 @@ import (
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
-	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -328,8 +328,9 @@ type (
 		Usage model.TokenUsage
 	}
 
-	// HookActivityInput is the canonical workflow-to-activity envelope for hook events.
-	HookActivityInput = hooks.ActivityInput
+	// RecordActivityInput is the canonical workflow-to-activity envelope for
+	// durable runtime records.
+	RecordActivityInput = runlog.ActivityInput
 
 	// ToolInput is the payload passed to tool executors. Payload is JSON-encoded.
 	ToolInput struct {

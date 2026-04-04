@@ -238,7 +238,7 @@ func decodeRunlogHookEvent(event *runlog.Event) (hooks.Event, error) {
 	if event == nil {
 		return nil, fmt.Errorf("runtime: nil run log event")
 	}
-	decoded, err := hooks.DecodeFromHookInput(&hooks.ActivityInput{
+	decoded, err := hooks.DecodeFromRecordInput(&runlog.ActivityInput{
 		Type:        event.Type,
 		EventKey:    event.EventKey,
 		RunID:       event.RunID,

@@ -19,7 +19,6 @@ import (
 	"github.com/openai/openai-go/shared"
 
 	"goa.design/goa-ai/runtime/agent/model"
-	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 type (
@@ -61,10 +60,6 @@ type (
 		// and "high".
 		ThinkingEffort string
 
-		// Ledger provides runtime-owned transcript rehydration for RunID-based
-		// requests. When nil, RunID-based requests are not supported.
-		Ledger transcript.LedgerSource
-
 		transport transport
 	}
 
@@ -79,7 +74,6 @@ type (
 		maxCompletionTokens int
 		temperature         float32
 		thinkingEffort      string
-		ledger              transcript.LedgerSource
 	}
 
 	// preparedRequest carries the provider-ready request plus the reversible
@@ -144,7 +138,6 @@ func New(opts Options) (*Client, error) {
 		maxCompletionTokens: opts.MaxCompletionTokens,
 		temperature:         opts.Temperature,
 		thinkingEffort:      opts.ThinkingEffort,
-		ledger:              opts.Ledger,
 	}, nil
 }
 
@@ -163,7 +156,7 @@ func NewFromAPIKey(apiKey, defaultModel string) (*Client, error) {
 
 // Complete renders a unary response using the configured OpenAI client.
 func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
-	prepared, err := c.prepareRequest(ctx, req)
+	prepared, err := c.prepareRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +175,7 @@ func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Respo
 
 // Stream renders a streaming response using the configured OpenAI client.
 func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
-	prepared, err := c.prepareRequest(ctx, req)
+	prepared, err := c.prepareRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -200,18 +193,14 @@ func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer
 	), nil
 }
 
-func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*preparedRequest, error) {
+func (c *Client) prepareRequest(req *model.Request) (*preparedRequest, error) {
 	if req == nil {
 		return nil, errors.New("openai: request is required")
 	}
 	if err := validateRequestBoundary(req); err != nil {
 		return nil, err
 	}
-	merged, err := transcript.RehydrateMessages(ctx, c.ledger, req.RunID, req.Messages)
-	if err != nil {
-		return nil, fmt.Errorf("openai: %w", err)
-	}
-	if len(merged) == 0 {
+	if len(req.Messages) == 0 {
 		return nil, errors.New("openai: messages are required")
 	}
 	modelID, modelClass, err := c.resolveModel(req)
@@ -225,7 +214,7 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*prepa
 	if err != nil {
 		return nil, err
 	}
-	input, err := encodeMessages(merged, canonicalToProvider)
+	input, err := encodeMessages(req.Messages, canonicalToProvider)
 	if err != nil {
 		return nil, err
 	}

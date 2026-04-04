@@ -4,9 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
-
-	"github.com/google/uuid"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -17,6 +14,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/toolerrors"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"time"
 
 	"go.temporal.io/sdk/temporal"
 )
@@ -1148,24 +1146,23 @@ func (e *baseEvent) SetSessionID(id string) {
 }
 
 // SetTimestampMS restores the original event timestamp when reconstructing an
-// event from a hook activity input envelope.
+// event from a durable runtime record envelope.
 func (e *baseEvent) SetTimestampMS(timestampMS int64) {
 	e.timestamp = timestampMS
 }
 
 // SetEventKey restores the original event key when reconstructing an event from
-// a hook activity input envelope.
+// a durable runtime record envelope.
 func (e *baseEvent) SetEventKey(eventKey string) {
 	e.eventKey = eventKey
 }
 
-// newBaseEvent constructs a baseEvent with the current timestamp.
+// newBaseEvent constructs a baseEvent without durable dispatch metadata. The
+// runtime stamps event keys and timestamps when it emits the enclosing record.
 func newBaseEvent(runID string, agentID agent.Ident) baseEvent {
 	return baseEvent{
-		runID:     runID,
-		agentID:   agentID,
-		timestamp: time.Now().UnixMilli(),
-		eventKey:  uuid.NewString(),
+		runID:   runID,
+		agentID: agentID,
 	}
 }
 

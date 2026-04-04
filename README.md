@@ -592,7 +592,7 @@ Bedrock and Anthropic adapters for the core Aura planner loop:
 | Unary assistant text | Yes |
 | Unary tool calls with provider IDs | Yes |
 | Runtime-owned factory | Yes, via `Runtime.NewOpenAIModelClient(...)` |
-| `RunID` transcript rehydration | Yes, via the runtime-owned ledger source |
+| Explicit full transcript input | Yes, callers must pass the complete provider-ready transcript in `model.Request.Messages` |
 | Transcript replay of assistant `tool_use` + user `tool_result` | Yes, for OpenAI-representable assistant turns; tool errors stay explicit |
 | Streaming text | Yes |
 | Streaming `tool_call_delta` + final `tool_call` | Yes |
@@ -606,8 +606,10 @@ This is the acceptance target for Aura inference backends: planners continue to
 talk to `model.Client`, while provider-specific details stay inside
 `features/model/openai`.
 
-When `RunID` is set, transcript rehydration is strict: the runtime must provide
-ledger access and the adapter fails fast if prior messages cannot be loaded.
+Model adapters are now stateless at the transcript boundary: they do not look
+up history from a `RunID`. Runtime-owned callers build the full transcript
+explicitly and durable replay reconstructs that transcript from runlog
+`transcript_messages_appended` records.
 
 ---
 

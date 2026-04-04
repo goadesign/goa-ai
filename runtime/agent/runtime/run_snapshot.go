@@ -8,6 +8,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
+	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 // newRunSnapshot derives a compact run state snapshot by replaying canonical
@@ -49,7 +50,6 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 			s.UpdatedAt = e.Timestamp
 		}
 
-		//nolint:exhaustive // Snapshot intentionally derives state from a small subset of events.
 		switch e.Type {
 		case hooks.ChildRunLinked:
 			var p hooks.ChildRunLinkedEvent
@@ -162,7 +162,7 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 			tc.ExpectedChildrenTotal = p.ExpectedChildrenTotal
 
 		case hooks.ToolResultReceived:
-			decoded, err := hooks.DecodeFromHookInput(&hooks.ActivityInput{
+			decoded, err := hooks.DecodeFromRecordInput(&runlog.ActivityInput{
 				Type:      hooks.ToolResultReceived,
 				RunID:     e.RunID,
 				AgentID:   e.AgentID,
@@ -230,6 +230,14 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 			}
 			return a.ToolCallID < b.ToolCallID
 		})
+	}
+
+	transcriptMessages, foundTranscript, err := transcript.ReplayRunLogEvents(events)
+	if err != nil {
+		return nil, err
+	}
+	if foundTranscript {
+		s.Transcript = transcriptMessages
 	}
 
 	return s, nil

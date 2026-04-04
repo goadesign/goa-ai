@@ -5,10 +5,16 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
+	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/runlog"
+	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 // Ensures encodeMessages preserves transcript order and places reasoning before tool_use
@@ -72,6 +78,90 @@ func TestEncodeMessages_ReencodeTranscriptOrder(t *testing.T) {
 	}
 }
 
+func TestClientPrepareRequestLowersRunlogReplayedTranscript(t *testing.T) {
+	messages := replayedBedrockToolLoopMessages(t)
+	client := &Client{
+		defaultModel: "test-model",
+		maxTok:       32,
+		temp:         0.0,
+		think:        defaultThinkingBudget,
+	}
+
+	parts, err := client.prepareRequest(context.Background(), &model.Request{
+		Messages: messages,
+		Tools: []*model.ToolDefinition{{
+			Name:        "analytics.analyze",
+			Description: "Run an analysis.",
+			InputSchema: map[string]any{"type": "object"},
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, parts.messages, 3)
+
+	require.Equal(t, brtypes.ConversationRoleUser, parts.messages[0].Role)
+	require.Equal(t, brtypes.ConversationRoleAssistant, parts.messages[1].Role)
+	require.Equal(t, brtypes.ConversationRoleUser, parts.messages[2].Role)
+
+	var toolUse *brtypes.ContentBlockMemberToolUse
+	for _, block := range parts.messages[1].Content {
+		if v, ok := block.(*brtypes.ContentBlockMemberToolUse); ok {
+			toolUse = v
+			break
+		}
+	}
+	require.NotNil(t, toolUse)
+	require.NotNil(t, toolUse.Value.ToolUseId)
+	require.Equal(t, "call_1", *toolUse.Value.ToolUseId)
+
+	toolResult, ok := parts.messages[2].Content[0].(*brtypes.ContentBlockMemberToolResult)
+	require.True(t, ok)
+	require.NotNil(t, toolResult.Value.ToolUseId)
+	require.Equal(t, "call_1", *toolResult.Value.ToolUseId)
+}
+
+func TestClientPrepareRequestFailsOnMissingThinkingInToolLoop(t *testing.T) {
+	client := &Client{
+		defaultModel: "anthropic.claude-3-7-sonnet",
+		maxTok:       32,
+		temp:         0.0,
+		think:        defaultThinkingBudget,
+	}
+
+	_, err := client.prepareRequest(context.Background(), &model.Request{
+		Messages: []*model.Message{
+			{
+				Role: model.ConversationRoleAssistant,
+				Parts: []model.Part{
+					model.TextPart{Text: "Need the sales data first."},
+					model.ToolUsePart{
+						ID:    "call_1",
+						Name:  "analytics.analyze",
+						Input: map[string]any{"query": "sales"},
+					},
+				},
+			},
+			{
+				Role: model.ConversationRoleUser,
+				Parts: []model.Part{
+					model.ToolResultPart{
+						ToolUseID: "call_1",
+						Content:   map[string]any{"status": "ok"},
+					},
+				},
+			},
+		},
+		Tools: []*model.ToolDefinition{{
+			Name:        "analytics.analyze",
+			Description: "Run an analysis.",
+			InputSchema: map[string]any{"type": "object"},
+		}},
+		Thinking: &model.ThinkingOptions{
+			Enable: true,
+		},
+	})
+	require.ErrorContains(t, err, "must start with thinking")
+}
+
 // Ensures encodeMessages fails fast when a tool_use references a tool that is not in the
 // current tool configuration. This catches transcript contamination (e.g., ledger key
 // collision between agent runs) or missing tool definitions.
@@ -103,6 +193,59 @@ func TestEncodeMessages_FailsOnUnknownToolUse(t *testing.T) {
 	if !strings.Contains(err.Error(), "not in the current tool configuration") {
 		t.Errorf("error should mention tool configuration mismatch, got: %v", err)
 	}
+}
+
+func replayedBedrockToolLoopMessages(t *testing.T) []*model.Message {
+	t.Helper()
+
+	ctx := context.Background()
+	store := runloginmem.New()
+	appendBedrockReplayDelta(t, ctx, store, []*model.Message{{
+		Role:  model.ConversationRoleUser,
+		Parts: []model.Part{model.TextPart{Text: "Summarize sales"}},
+	}})
+	appendBedrockReplayDelta(t, ctx, store, []*model.Message{{
+		Role: model.ConversationRoleAssistant,
+		Parts: []model.Part{
+			model.ThinkingPart{Text: "Need the sales data first.", Signature: "sig-1", Index: 0, Final: true},
+			model.TextPart{Text: "Need the sales data first."},
+			model.ToolUsePart{
+				ID:    "call_1",
+				Name:  "analytics.analyze",
+				Input: map[string]any{"query": "sales"},
+			},
+		},
+	}})
+	appendBedrockReplayDelta(t, ctx, store, []*model.Message{{
+		Role: model.ConversationRoleUser,
+		Parts: []model.Part{model.ToolResultPart{
+			ToolUseID: "call_1",
+			Content:   map[string]any{"status": "ok", "rows": 3},
+		}},
+	}})
+
+	messages, err := transcript.BuildMessagesFromRunLog(ctx, store, "run-1")
+	require.NoError(t, err)
+	return messages
+}
+
+func appendBedrockReplayDelta(t *testing.T, ctx context.Context, store runlog.Store, messages []*model.Message) {
+	t.Helper()
+
+	payload, err := transcript.EncodeRunLogDelta(messages)
+	require.NoError(t, err)
+
+	_, err = store.Append(ctx, &runlog.Event{
+		EventKey:  time.Now().UTC().Format(time.RFC3339Nano),
+		RunID:     "run-1",
+		AgentID:   agent.Ident("agent-1"),
+		SessionID: "session-1",
+		TurnID:    "turn-1",
+		Type:      transcript.RunLogMessagesAppended,
+		Payload:   payload,
+		Timestamp: time.Now().UTC(),
+	})
+	require.NoError(t, err)
 }
 
 func TestEncodeMessages_RewritesUnknownToolUseToToolUnavailable(t *testing.T) {
@@ -173,43 +316,6 @@ func TestEncodeMessages_RewritesUnknownToolUseToToolUnavailable(t *testing.T) {
 	}
 }
 
-func TestClientCompleteRejectsInvalidToolLoopWithoutThinking(t *testing.T) {
-	client := &Client{
-		runtime:      &errorRuntimeClient{converseErr: model.ErrRateLimited},
-		defaultModel: "test-model",
-		maxTok:       10,
-		temp:         0.5,
-		think:        defaultThinkingBudget,
-	}
-
-	_, err := client.prepareRequest(context.Background(), &model.Request{
-		Messages: []*model.Message{{
-			Role: model.ConversationRoleAssistant,
-			Parts: []model.Part{
-				model.ToolUsePart{
-					ID:    "tu1",
-					Name:  "search_assets",
-					Input: map[string]any{"q": "pump"},
-				},
-			},
-		}},
-		Tools: []*model.ToolDefinition{{
-			Name:        "search_assets",
-			Description: "Search for assets.",
-			InputSchema: map[string]any{"type": "object"},
-		}},
-	})
-	if err == nil {
-		t.Fatal("expected transcript validation error, got nil")
-	}
-	if !strings.Contains(err.Error(), "invalid transcript") {
-		t.Fatalf("expected invalid transcript error, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "tool_result") {
-		t.Fatalf("expected missing tool_result detail, got: %v", err)
-	}
-}
-
 func TestEncodeMessages_AppendsSystemCacheCheckpoint(t *testing.T) {
 	ctx := context.Background()
 	msgs := []*model.Message{
@@ -241,80 +347,5 @@ func TestEncodeMessages_AppendsSystemCacheCheckpoint(t *testing.T) {
 	}
 	if _, ok := system[1].(*brtypes.SystemContentBlockMemberCachePoint); !ok {
 		t.Fatalf("second system block is not cache checkpoint")
-	}
-}
-
-func TestHealThinkingGaps(t *testing.T) {
-	tests := []struct {
-		name       string
-		msgs       []*model.Message
-		wantHealed bool // whether a redacted thinking part should be prepended
-	}{
-		{
-			name: "assistant with tool_use and no thinking gets healed",
-			msgs: []*model.Message{{
-				Role: model.ConversationRoleAssistant,
-				Parts: []model.Part{
-					model.TextPart{Text: "calling tool"},
-					model.ToolUsePart{ID: "tu1", Name: "search"},
-				},
-			}},
-			wantHealed: true,
-		},
-		{
-			name: "assistant with tool_use and existing thinking unchanged",
-			msgs: []*model.Message{{
-				Role: model.ConversationRoleAssistant,
-				Parts: []model.Part{
-					model.ThinkingPart{Text: "thought", Signature: "sig"},
-					model.TextPart{Text: "calling tool"},
-					model.ToolUsePart{ID: "tu1", Name: "search"},
-				},
-			}},
-			wantHealed: false,
-		},
-		{
-			name: "assistant without tool_use unchanged",
-			msgs: []*model.Message{{
-				Role: model.ConversationRoleAssistant,
-				Parts: []model.Part{
-					model.TextPart{Text: "just text"},
-				},
-			}},
-			wantHealed: false,
-		},
-		{
-			name: "user message with tool_result unchanged",
-			msgs: []*model.Message{{
-				Role: model.ConversationRoleUser,
-				Parts: []model.Part{
-					model.ToolResultPart{ToolUseID: "tu1", Content: "ok"},
-				},
-			}},
-			wantHealed: false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			origLen := len(tt.msgs[0].Parts)
-			healThinkingGaps(tt.msgs)
-			if tt.wantHealed {
-				if len(tt.msgs[0].Parts) != origLen+1 {
-					t.Fatalf("expected parts count %d, got %d", origLen+1, len(tt.msgs[0].Parts))
-				}
-				tp, ok := tt.msgs[0].Parts[0].(model.ThinkingPart)
-				if !ok {
-					t.Fatalf("expected ThinkingPart first, got %T", tt.msgs[0].Parts[0])
-				}
-				if len(tp.Redacted) == 0 {
-					t.Fatal("expected Redacted content in placeholder")
-				}
-				if !tp.Final {
-					t.Fatal("expected Final=true")
-				}
-			} else if len(tt.msgs[0].Parts) != origLen {
-				t.Fatalf("expected parts count unchanged at %d, got %d", origLen, len(tt.msgs[0].Parts))
-			}
-		})
 	}
 }

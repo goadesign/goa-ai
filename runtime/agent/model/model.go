@@ -397,9 +397,6 @@ type (
 
 	// Request captures inputs for a model invocation.
 	Request struct {
-		// RunID identifies the logical run for this request when available.
-		RunID string
-
 		// Model is the provider-specific model identifier when specified.
 		Model string
 

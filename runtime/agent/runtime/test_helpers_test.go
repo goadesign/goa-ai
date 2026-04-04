@@ -26,11 +26,12 @@ import (
 type testWorkflowContext struct {
 	ctx context.Context
 
-	lastHookCall    engine.HookActivityCall
+	lastHookCall    engine.RecordActivityCall
 	lastPlannerCall engine.PlannerActivityCall
 	lastToolCall    engine.ToolActivityCall
 
-	asyncResult ToolOutput
+	asyncResult  ToolOutput
+	nextSequence uint64
 
 	sigMu         sync.Mutex
 	pauseCh       chan *api.PauseRequest
@@ -42,7 +43,7 @@ type testWorkflowContext struct {
 	planResult    *planner.PlanResult
 	hasPlanResult bool
 	barrier       chan struct{}
-	hookRuntime   *Runtime // optional runtime for hook activity execution
+	hookRuntime   *Runtime // optional runtime for record activity execution
 	runtime       *Runtime // optional runtime for activity execution (plan/resume/execute)
 	childRuntime  *Runtime // optional runtime for child workflow execution
 
@@ -153,6 +154,14 @@ func (t *testWorkflowContext) Now() time.Time {
 	return time.Unix(0, 0)
 }
 
+func (t *testWorkflowContext) NextSequence() uint64 {
+	root := t.root()
+	root.sigMu.Lock()
+	defer root.sigMu.Unlock()
+	root.nextSequence++
+	return root.nextSequence
+}
+
 func (t *testWorkflowContext) NewTimer(ctx context.Context, d time.Duration) (engine.Future[time.Time], error) {
 	now := time.Now()
 	if d <= 0 {
@@ -220,7 +229,7 @@ func (t *testWorkflowContext) StartChildWorkflow(ctx context.Context, req engine
 	}, nil
 }
 
-func (t *testWorkflowContext) PublishHook(ctx context.Context, call engine.HookActivityCall) error {
+func (t *testWorkflowContext) PublishRecord(ctx context.Context, call engine.RecordActivityCall) error {
 	t.lastHookCall = call
 	hookRT := t.hookRuntime
 	if hookRT == nil {
@@ -229,10 +238,10 @@ func (t *testWorkflowContext) PublishHook(ctx context.Context, call engine.HookA
 	if hookRT == nil {
 		return nil
 	}
-	if call.Name != hookActivityName {
-		return fmt.Errorf("unexpected hook activity name %q", call.Name)
+	if call.Name != recordActivityName {
+		return fmt.Errorf("unexpected record activity name %q", call.Name)
 	}
-	return hookRT.hookActivity(ctx, call.Input)
+	return hookRT.recordActivity(ctx, call.Input)
 }
 
 func (t *testWorkflowContext) ExecutePlannerActivity(ctx context.Context, call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
@@ -510,9 +519,10 @@ type routeWorkflowContext struct {
 	plannerRoutes map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error)
 	toolRoutes    map[string]func(context.Context, *ToolInput) (*ToolOutput, error)
 
-	lastHookCall    engine.HookActivityCall
+	lastHookCall    engine.RecordActivityCall
 	lastPlannerCall engine.PlannerActivityCall
 	lastToolCall    engine.ToolActivityCall
+	nextSequence    uint64
 
 	sigMu         sync.Mutex
 	pauseCh       chan *api.PauseRequest
@@ -521,7 +531,7 @@ type routeWorkflowContext struct {
 	toolResultsCh chan *api.ToolResultsSet
 	confirmCh     chan *api.ConfirmationDecision
 
-	hookRuntime  *Runtime // optional runtime for hook activity execution
+	hookRuntime  *Runtime // optional runtime for record activity execution
 	childRuntime *Runtime // optional runtime for child workflow execution
 
 	parent *routeWorkflowContext
@@ -603,6 +613,14 @@ func (r *routeWorkflowContext) Now() time.Time {
 	return time.Unix(0, 0)
 }
 
+func (r *routeWorkflowContext) NextSequence() uint64 {
+	root := r.root()
+	root.sigMu.Lock()
+	defer root.sigMu.Unlock()
+	root.nextSequence++
+	return root.nextSequence
+}
+
 func (r *routeWorkflowContext) NewTimer(ctx context.Context, d time.Duration) (engine.Future[time.Time], error) {
 	now := time.Now()
 	if d <= 0 {
@@ -653,15 +671,15 @@ func (r *routeWorkflowContext) StartChildWorkflow(ctx context.Context, req engin
 	}, nil
 }
 
-func (r *routeWorkflowContext) PublishHook(ctx context.Context, call engine.HookActivityCall) error {
+func (r *routeWorkflowContext) PublishRecord(ctx context.Context, call engine.RecordActivityCall) error {
 	r.lastHookCall = call
-	if call.Name != hookActivityName {
-		return fmt.Errorf("unexpected hook activity name %q", call.Name)
+	if call.Name != recordActivityName {
+		return fmt.Errorf("unexpected record activity name %q", call.Name)
 	}
 	if r.hookRuntime == nil {
 		return nil
 	}
-	return r.hookRuntime.hookActivity(ctx, call.Input)
+	return r.hookRuntime.recordActivity(ctx, call.Input)
 }
 
 func (r *routeWorkflowContext) ExecutePlannerActivity(ctx context.Context, call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
@@ -779,18 +797,18 @@ func (h *stubWorkflowHandle) Cancel(context.Context) error { return nil }
 
 type stubEngine struct {
 	last                             engine.WorkflowStartRequest
-	registeredHookActivityOptions    map[string]engine.ActivityOptions
+	registeredRecordActivityOptions  map[string]engine.ActivityOptions
 	registeredPlannerActivityOptions map[string]engine.ActivityOptions
 	registeredExecuteActivityOptions map[string]engine.ActivityOptions
 	sealCalls                        int
 }
 
 func (s *stubEngine) RegisterWorkflow(context.Context, engine.WorkflowDefinition) error { return nil }
-func (s *stubEngine) RegisterHookActivity(_ context.Context, name string, opts engine.ActivityOptions, _ func(context.Context, *api.HookActivityInput) error) error {
-	if s.registeredHookActivityOptions == nil {
-		s.registeredHookActivityOptions = make(map[string]engine.ActivityOptions)
+func (s *stubEngine) RegisterRecordActivity(_ context.Context, name string, opts engine.ActivityOptions, _ func(context.Context, *api.RecordActivityInput) error) error {
+	if s.registeredRecordActivityOptions == nil {
+		s.registeredRecordActivityOptions = make(map[string]engine.ActivityOptions)
 	}
-	s.registeredHookActivityOptions[name] = opts
+	s.registeredRecordActivityOptions[name] = opts
 	return nil
 }
 func (s *stubEngine) RegisterPlannerActivity(_ context.Context, name string, opts engine.ActivityOptions, _ func(context.Context, *api.PlanActivityInput) (*api.PlanActivityOutput, error)) error {

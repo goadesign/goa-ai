@@ -25,6 +25,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	agentruntime "goa.design/goa-ai/runtime/agent/runtime"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 func TestExecuteWorkflowCancelsAwaitQuestionsBeforeLateResults(t *testing.T) {
@@ -77,7 +78,7 @@ func TestExecuteWorkflowCancelsAwaitQuestionsBeforeLateResults(t *testing.T) {
 	}
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
-	env.RegisterActivityWithOptions(recorder.Record, activity.RegisterOptions{Name: "runtime.publish_hook"})
+	env.RegisterActivityWithOptions(recorder.Record, activity.RegisterOptions{Name: "runtime.record_event"})
 	env.RegisterActivityWithOptions(rt.PlanStartActivity, activity.RegisterOptions{Name: planActivityName})
 	env.RegisterActivityWithOptions(rt.PlanResumeActivity, activity.RegisterOptions{Name: resumeActivityName})
 
@@ -212,9 +213,12 @@ type hookRecorder struct {
 	events []hooks.Event
 }
 
-// Record decodes the hook activity payload so the test can assert on emitted events.
-func (r *hookRecorder) Record(_ context.Context, input *api.HookActivityInput) error {
-	evt, err := hooks.DecodeFromHookInput(input)
+// Record decodes the runtime record payload so the test can assert on emitted hook events.
+func (r *hookRecorder) Record(_ context.Context, input *api.RecordActivityInput) error {
+	if input.Type == transcript.RunLogMessagesAppended {
+		return nil
+	}
+	evt, err := hooks.DecodeFromRecordInput(input)
 	if err != nil {
 		return err
 	}
