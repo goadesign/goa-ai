@@ -141,6 +141,19 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		Messages:   input.Messages,
 		RunContext: runCtx,
 	}
+	// Register the ledger query before the first planner activity so the planner's
+	// initial model request can rehydrate the current run from an initially empty
+	// prior transcript.
+	st := &runLoopState{
+		Ledger: transcript.FromModelMessages(nil),
+	}
+	if err := wfCtx.SetQueryHandler(transcript.QueryLedgerMessages, func() ([]*model.Message, error) {
+		return st.Ledger.BuildMessages(), nil
+	}); err != nil {
+		finalErr = err
+		finalStatus = terminalRunStatusForError(err)
+		return nil, err
+	}
 	// Compute deadlines before the initial Plan so it cannot outlive the run window.
 	timing := resolveRunTiming(reg, input)
 	timeBudget := timing.TimeBudget
@@ -240,6 +253,12 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	}
 	// Deadlines (budgetDeadline, hardDeadline, grace) already computed above.
 	nextAttempt := planInput.RunContext.Attempt + 1
+	st.Caps = caps
+	st.NextAttempt = nextAttempt
+	st.AggUsage = firstOutput.Usage
+	st.Result = firstOutput.Result
+	st.Transcript = firstOutput.Transcript
+	st.Ledger = transcript.FromModelMessages(firstOutput.Transcript)
 	r.logger.Info(wfCtx.Context(), "Starting runLoop", "tool_calls", len(result.ToolCalls))
 	// Create parentTracker if this is a nested agent run (has ParentToolCallID)
 	var parentTracker *childTracker
@@ -256,18 +275,14 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		finalStatus = terminalRunStatusForError(err)
 		return nil, err
 	}
-	out, err := r.runLoop(
+	out, err := r.runLoopWithState(
 		wfCtx,
 		reg,
 		input,
 		planInput,
-		firstOutput.Result,
-		firstOutput.Transcript,
-		firstOutput.Usage,
-		caps,
+		st,
 		budgetDeadline,
 		hardDeadline,
-		nextAttempt,
 		turnID,
 		parentTracker,
 		ctrl,
@@ -286,6 +301,8 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 
 // runLoop executes the plan/tool/resume cycle until the planner returns a final response
 // or a cap/deadline is exceeded. The turnID parameter enables turn-based event stamping.
+//
+//nolint:unparam // compatibility wrapper retained for direct unit tests that seed run-loop state explicitly.
 func (r *Runtime) runLoop(
 	wfCtx engine.WorkflowContext,
 	reg AgentRegistration,
@@ -303,6 +320,35 @@ func (r *Runtime) runLoop(
 	ctrl *interrupt.Controller,
 	finalizerGrace time.Duration,
 ) (*RunOutput, error) {
+	st := newRunLoopState(initialResult, initialTranscript, initialUsage, caps, nextAttempt)
+	return r.runLoopWithState(
+		wfCtx,
+		reg,
+		input,
+		base,
+		st,
+		budgetDeadline,
+		hardDeadline,
+		turnID,
+		parentTracker,
+		ctrl,
+		finalizerGrace,
+	)
+}
+
+func (r *Runtime) runLoopWithState(
+	wfCtx engine.WorkflowContext,
+	reg AgentRegistration,
+	input *RunInput,
+	base *planner.PlanInput,
+	st *runLoopState,
+	budgetDeadline time.Time,
+	hardDeadline time.Time,
+	turnID string,
+	parentTracker *childTracker,
+	ctrl *interrupt.Controller,
+	finalizerGrace time.Duration,
+) (*RunOutput, error) {
 	if base == nil {
 		return nil, errors.New("base plan input is required")
 	}
@@ -310,20 +356,16 @@ func (r *Runtime) runLoop(
 	if r.logger == nil {
 		r.logger = telemetry.NoopLogger{}
 	}
-	if initialResult == nil {
+	if st == nil {
+		return nil, errors.New("runLoop state is required")
+	}
+	if st.Result == nil {
 		return nil, fmt.Errorf("runLoop initial PlanResult is nil")
 	}
-	if len(initialResult.ToolCalls) == 0 && initialResult.FinalResponse == nil && initialResult.Await == nil {
+	if len(st.Result.ToolCalls) == 0 && st.Result.FinalResponse == nil && st.Result.Await == nil {
 		return nil, fmt.Errorf("runLoop initial PlanResult has no ToolCalls, FinalResponse, or Await")
 	}
-	r.logger.Info(ctx, "runLoop starting iteration", "tool_calls", len(initialResult.ToolCalls), "final_response", initialResult.FinalResponse != nil, "await", initialResult.Await != nil)
-	st := newRunLoopState(initialResult, initialTranscript, initialUsage, caps, nextAttempt)
-	// Expose provider-ready messages via a workflow query for external rehydration.
-	if err := wfCtx.SetQueryHandler(transcript.QueryLedgerMessages, func() ([]*model.Message, error) {
-		return st.Ledger.BuildMessages(), nil
-	}); err != nil {
-		return nil, err
-	}
+	r.logger.Info(ctx, "runLoop starting iteration", "tool_calls", len(st.Result.ToolCalls), "final_response", st.Result.FinalResponse != nil, "await", st.Result.Await != nil)
 	// Derive per-run overrides for Resume and Tools.
 	resumeOpts := reg.ResumeActivityOptions
 	if input.Policy != nil && input.Policy.PlanTimeout > 0 {
