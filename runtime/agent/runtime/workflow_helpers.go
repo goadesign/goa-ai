@@ -311,8 +311,8 @@ func (r *Runtime) buildNextResumeRequest(
 	resumeCtx.Attempt = *nextAttempt
 	*nextAttempt++
 	plannerMsgs := cloneMessages(base.Messages)
-	if err := transcript.ValidateBedrock(plannerMsgs, false); err != nil {
-		return PlanActivityInput{}, fmt.Errorf("invalid Bedrock transcript for run %s: %w", base.RunContext.RunID, err)
+	if err := transcript.ValidatePlannerTranscript(plannerMsgs); err != nil {
+		return PlanActivityInput{}, fmt.Errorf("invalid resume transcript for run %s: %w", base.RunContext.RunID, err)
 	}
 	encodedToolOutputs, err := encodePlannerToolOutputs(toolOutputs)
 	if err != nil {

@@ -225,6 +225,36 @@ Typed completion helpers are intentionally strict:
 
 ---
 
+## OpenAI Adapter Matrix
+
+The `features/model/openai` adapter now targets the official `openai-go`
+Responses API while satisfying the core `model.Client` contract expected by
+planner and runtime streaming:
+
+| Capability | Status |
+|------------|--------|
+| Unary assistant text | Supported |
+| Unary tool calls with provider-issued IDs | Supported |
+| Runtime-owned factory | Supported via `Runtime.NewOpenAIModelClient(...)` |
+| `RunID` transcript rehydration | Supported via the runtime-owned ledger source |
+| Assistant `tool_use` + user `tool_result` transcript replay | Supported for OpenAI-representable assistant turns; tool-result errors stay explicit |
+| Streaming text | Supported |
+| Streaming `tool_call_delta` and final `tool_call` | Supported |
+| Streaming usage and stop chunks | Supported |
+| Model-class routing (`default`, `high-reasoning`, `small`) | Supported |
+| Structured output (`completion_delta` + final `completion`) | Supported via OpenAI `json_schema` response format, but not in combination with tools |
+| Cache options / cache checkpoints | Rejected explicitly |
+| Thinking | Only the representable subset is supported: `Thinking.Enable` may map to configured OpenAI `reasoning_effort`; budgeted or interleaved thinking requests fail fast |
+
+This is the intended migration seam for Aura-style inference backends: swap the
+provider adapter, keep planners and runtime flow unchanged.
+
+Resume requests are strict: when `RunID` is set, the runtime must be able to
+load prior ledger messages or the adapter returns an error rather than silently
+falling back to request-local messages.
+
+---
+
 ## Runtime Configuration
 
 ### Construction Options
@@ -1411,7 +1441,10 @@ RunPolicy(func() {
 ```
 
 The runtime populates `model.Request.Cache` when planners don't set it explicitly.
-Providers that don't support caching ignore these options.
+Provider behavior is adapter-specific: Bedrock maps these checkpoints onto native
+cache primitives, while the OpenAI Responses adapter currently rejects
+cache-bearing requests explicitly because it cannot preserve the checkpoint
+contract.
 
 ---
 
@@ -1458,7 +1491,21 @@ client, err := rt.NewBedrockModelClient(awsClient, runtime.BedrockConfig{
     MaxTokens:      4096,
     ThinkingBudget: 10000,
 })
+
+// Create OpenAI client via runtime helper
+openAIClient, err := rt.NewOpenAIModelClient(runtime.OpenAIConfig{
+    APIKey:         os.Getenv("OPENAI_API_KEY"),
+    DefaultModel:   "gpt-5-mini",
+    HighModel:      "gpt-5",
+    SmallModel:     "gpt-5-nano",
+    MaxTokens:      4096,
+    ThinkingEffort: "high",
+})
 ```
+
+When the configured engine supports workflow queries, both runtime-owned model
+factories wire transcript rehydration automatically, so `model.Request.RunID`
+rehydrates prior provider-ready messages before request-local messages.
 
 When planners render prompts through `RenderPrompt`, copy prompt provenance into model requests:
 

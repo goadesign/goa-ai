@@ -22,6 +22,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
+	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 const (
@@ -318,7 +319,7 @@ func (r *Runtime) runLoop(
 	r.logger.Info(ctx, "runLoop starting iteration", "tool_calls", len(initialResult.ToolCalls), "final_response", initialResult.FinalResponse != nil, "await", initialResult.Await != nil)
 	st := newRunLoopState(initialResult, initialTranscript, initialUsage, caps, nextAttempt)
 	// Expose provider-ready messages via a workflow query for external rehydration.
-	if err := wfCtx.SetQueryHandler("ledger_messages", func() ([]*model.Message, error) {
+	if err := wfCtx.SetQueryHandler(transcript.QueryLedgerMessages, func() ([]*model.Message, error) {
 		return st.Ledger.BuildMessages(), nil
 	}); err != nil {
 		return nil, err

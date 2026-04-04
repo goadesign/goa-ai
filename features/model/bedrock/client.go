@@ -89,15 +89,8 @@ type Client struct {
 	maxTok       int
 	temp         float32
 	think        int
-	ledger       ledgerSource
+	ledger       transcript.LedgerSource
 	logger       telemetry.Logger
-}
-
-// ledgerSource provides provider-ready messages for a given run when available.
-// This interface is internal to the goa-ai bedrock client and implemented by the
-// runtime using engine-specific mechanisms (e.g., Temporal workflow queries).
-type ledgerSource interface {
-	Messages(ctx context.Context, runID string) ([]*model.Message, error)
 }
 
 type requestParts struct {
@@ -122,7 +115,7 @@ type thinkingConfig struct {
 // and streaming requests. The provided ledgerSource allows the client to prepend
 // provider-verified messages for a specific run ID during request encoding,
 // ensuring transcript continuity across completions.
-func New(aws *bedrockruntime.Client, opts Options, ledger ledgerSource) (*Client, error) {
+func New(aws *bedrockruntime.Client, opts Options, ledger transcript.LedgerSource) (*Client, error) {
 	opts.Runtime = aws
 	if opts.Runtime == nil {
 		return nil, errors.New("bedrock runtime client is required")
@@ -205,18 +198,18 @@ func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer
 }
 
 func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*requestParts, error) {
-	// Rehydrate provider-ready messages from the ledger when a RunID is provided.
-	var merged []*model.Message
-	if c.ledger != nil && req.RunID != "" {
-		if msgs, err := c.ledger.Messages(ctx, req.RunID); err == nil && len(msgs) > 0 {
-			merged = append(merged, msgs...)
-		}
-	}
-	if len(req.Messages) > 0 {
-		merged = append(merged, req.Messages...)
+	// Rehydrate provider-ready messages from the runtime ledger when a RunID is
+	// provided. Replay is strict: missing or unreadable ledger state is a
+	// request-shape error, not a best-effort fallback.
+	merged, err := transcript.RehydrateMessages(ctx, c.ledger, req.RunID, req.Messages)
+	if err != nil {
+		return nil, fmt.Errorf("bedrock: %w", err)
 	}
 	if len(merged) == 0 {
 		return nil, errors.New("bedrock: messages are required")
+	}
+	if err := transcript.ValidatePlannerTranscript(merged); err != nil {
+		return nil, fmt.Errorf("bedrock: invalid transcript (run=%s): %w", req.RunID, err)
 	}
 	modelID := c.resolveModelID(req)
 	if modelID == "" {
@@ -426,9 +419,12 @@ func (c *Client) resolveThinking(req *model.Request, parts *requestParts) thinki
 
 // Note on thinking preconditions:
 //
+// prepareRequest always enforces the shared planner tool-loop invariants.
+//
 // For legacy models (pre-Opus 4.6) with type:"enabled", Bedrock interleaved
-// thinking requires reasoning to precede tool_use within the same assistant
-// message. prepareRequest enforces this via transcript.ValidateBedrock.
+// thinking additionally requires reasoning to precede tool_use within the same
+// assistant message. prepareRequest enforces that representability constraint
+// via transcript.ValidateBedrock after healing missing thinking placeholders.
 //
 // For adaptive thinking models (Opus 4.6+), thinking is optional — the model
 // may skip reasoning entirely on simple turns. The thinking-first ordering
