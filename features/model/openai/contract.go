@@ -6,10 +6,9 @@
 //     stop reasons.
 //   - Streaming emits provider-neutral text, tool-call delta/final, usage, and
 //     stop chunks.
-//   - RunID-based requests rehydrate prior provider-ready transcript items
-//     through the runtime-owned ledger source before appending request-local
-//     messages; missing or unreadable ledger state fails fast instead of
-//     silently dropping history.
+//   - Requests are stateless at the adapter boundary: callers must provide the
+//     full provider-ready transcript in-order, and missing history fails fast at
+//     the owned runtime boundary instead of being heuristically rehydrated.
 //   - Transcript encoding round-trips assistant tool_use and user tool_result
 //     messages when the assistant turn is representable by OpenAI's
 //     single-message shape; unrepresentable assistant interleaving fails fast,

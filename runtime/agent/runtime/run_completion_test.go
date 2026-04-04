@@ -546,7 +546,7 @@ func TestGetRunSnapshotRepairsTimedOutRunWithTimeoutPublicError(t *testing.T) {
 	require.NotEmpty(t, page.Events)
 
 	last := page.Events[len(page.Events)-1]
-	decoded, err := hooks.DecodeFromHookInput(&hooks.ActivityInput{
+	decoded, err := hooks.DecodeFromRecordInput(&runlog.ActivityInput{
 		Type:      last.Type,
 		RunID:     last.RunID,
 		AgentID:   last.AgentID,
@@ -616,7 +616,7 @@ func TestGetRunSnapshotRepairsFailedRunWithQueriedProviderError(t *testing.T) {
 	require.NotEmpty(t, page.Events)
 
 	last := page.Events[len(page.Events)-1]
-	decoded, err := hooks.DecodeFromHookInput(&hooks.ActivityInput{
+	decoded, err := hooks.DecodeFromRecordInput(&runlog.ActivityInput{
 		Type:      last.Type,
 		RunID:     last.RunID,
 		AgentID:   last.AgentID,
@@ -758,7 +758,7 @@ func TestWaitAndLazyRepairPublishSingleTerminalCompletionForSignalerEngines(t *t
 	for _, evt := range page.Events {
 		if evt.Type == hooks.RunCompleted {
 			completed++
-			decoded, decodeErr := hooks.DecodeFromHookInput(&hooks.ActivityInput{
+			decoded, decodeErr := hooks.DecodeFromRecordInput(&runlog.ActivityInput{
 				Type:      evt.Type,
 				RunID:     evt.RunID,
 				AgentID:   evt.AgentID,
@@ -983,7 +983,7 @@ func TestGetRunSnapshotUsesObservedHandleBeforeSynthesizingForSignalerEngines(t 
 	require.NotEmpty(t, page.Events)
 
 	last := page.Events[len(page.Events)-1]
-	decoded, err := hooks.DecodeFromHookInput(&hooks.ActivityInput{
+	decoded, err := hooks.DecodeFromRecordInput(&runlog.ActivityInput{
 		Type:      last.Type,
 		RunID:     last.RunID,
 		AgentID:   last.AgentID,

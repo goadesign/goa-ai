@@ -153,7 +153,6 @@ func TestDocumentPartDecodeRejectsInvalidSources(t *testing.T) {
 
 func TestRequestJSONRoundTripPreservesPromptRefs(t *testing.T) {
 	original := &Request{
-		RunID: "run-123",
 		PromptRefs: []prompt.PromptRef{
 			{
 				ID:      "planner.system",

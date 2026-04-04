@@ -210,7 +210,6 @@ func modelSpanAttrs(modelID string, req *model.Request) []attribute.KeyValue {
 	}
 	return []attribute.KeyValue{
 		attribute.String("goa_ai.model_id", modelID),
-		attribute.String("goa_ai.run_id", req.RunID),
 		attribute.String("goa_ai.model", req.Model),
 		attribute.String("goa_ai.model_class", string(req.ModelClass)),
 		attribute.Bool("goa_ai.stream", req.Stream),

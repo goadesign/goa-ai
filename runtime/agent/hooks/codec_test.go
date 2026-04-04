@@ -10,6 +10,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -18,7 +19,7 @@ const (
 	testSessionID = "session-1"
 )
 
-func TestDecodeFromHookInput_ToolResultReceivedPreservesServerDataBytes(t *testing.T) {
+func TestDecodeFromRecordInput_ToolResultReceivedPreservesServerDataBytes(t *testing.T) {
 	agentID := agent.Ident("agent-1")
 	toolName := tools.Ident("svc.tools.lookup")
 	toolCallID := "call-1"
@@ -46,11 +47,14 @@ func TestDecodeFromHookInput_ToolResultReceivedPreservesServerDataBytes(t *testi
 		nil,
 	)
 
-	in, err := EncodeToHookInput(ev, "")
+	in, err := EncodeToRecordInput(ev, EncodeOptions{
+		EventKey:    "evt-tool-result",
+		TimestampMS: 101,
+	})
 	require.NoError(t, err)
 	require.NotContains(t, string(in.Payload), `"result":`)
 
-	decoded, err := DecodeFromHookInput(in)
+	decoded, err := DecodeFromRecordInput(in)
 	require.NoError(t, err)
 
 	tr, ok := decoded.(*ToolResultReceivedEvent)
@@ -63,7 +67,7 @@ func TestDecodeFromHookInput_ToolResultReceivedPreservesServerDataBytes(t *testi
 	require.JSONEq(t, string(serverData), string(tr.ServerData))
 }
 
-func TestDecodeFromHookInput_PromptRenderedRoundTrip(t *testing.T) {
+func TestDecodeFromRecordInput_PromptRenderedRoundTrip(t *testing.T) {
 	agentID := agent.Ident("agent-1")
 
 	ev := NewPromptRenderedEvent(
@@ -81,10 +85,14 @@ func TestDecodeFromHookInput_PromptRenderedRoundTrip(t *testing.T) {
 		},
 	)
 
-	in, err := EncodeToHookInput(ev, "turn-1")
+	in, err := EncodeToRecordInput(ev, EncodeOptions{
+		TurnID:      "turn-1",
+		EventKey:    "evt-prompt-rendered",
+		TimestampMS: 102,
+	})
 	require.NoError(t, err)
 
-	decoded, err := DecodeFromHookInput(in)
+	decoded, err := DecodeFromRecordInput(in)
 	require.NoError(t, err)
 
 	got, ok := decoded.(*PromptRenderedEvent)
@@ -100,7 +108,7 @@ func TestDecodeFromHookInput_PromptRenderedRoundTrip(t *testing.T) {
 	require.Equal(t, "west", got.Scope.Labels["region"])
 }
 
-func TestEncodeToHookInputPreservesEventIdentity(t *testing.T) {
+func TestEncodeToRecordInputPreservesDispatchMetadata(t *testing.T) {
 	agentID := agent.Ident("agent-1")
 
 	ev := NewPromptRenderedEvent(
@@ -112,36 +120,41 @@ func TestEncodeToHookInputPreservesEventIdentity(t *testing.T) {
 		prompt.Scope{SessionID: testSessionID},
 	)
 
-	in, err := EncodeToHookInput(ev, "turn-1")
+	in, err := EncodeToRecordInput(ev, EncodeOptions{
+		TurnID:      "turn-1",
+		EventKey:    "evt-prompt-rendered",
+		TimestampMS: 103,
+	})
 	require.NoError(t, err)
-	require.Equal(t, ev.Timestamp(), in.TimestampMS)
-	require.Equal(t, ev.EventKey(), in.EventKey)
+	require.Equal(t, int64(103), in.TimestampMS)
+	require.Equal(t, "evt-prompt-rendered", in.EventKey)
 
-	decoded, err := DecodeFromHookInput(in)
+	decoded, err := DecodeFromRecordInput(in)
 	require.NoError(t, err)
-	require.Equal(t, ev.Timestamp(), decoded.Timestamp())
-	require.Equal(t, ev.EventKey(), decoded.EventKey())
+	require.Equal(t, int64(103), decoded.Timestamp())
+	require.Equal(t, "evt-prompt-rendered", decoded.EventKey())
 }
 
-func TestDecodeFromHookInput_RunCompletedRejectsFailedPayloadWithoutFailure(t *testing.T) {
+func TestDecodeFromRecordInput_RunCompletedRejectsFailedPayloadWithoutFailure(t *testing.T) {
 	payload, err := json.Marshal(runCompletedPayload{
 		Status: "failed",
 		Phase:  run.PhaseFailed,
 	})
 	require.NoError(t, err)
 
-	_, err = DecodeFromHookInput(&ActivityInput{
+	_, err = DecodeFromRecordInput(&runlog.ActivityInput{
 		Type:        RunCompleted,
 		RunID:       testRunID,
 		AgentID:     agent.Ident("agent-1"),
 		SessionID:   testSessionID,
+		EventKey:    "evt-run-completed-failed",
 		TimestampMS: time.Now().UnixMilli(),
 		Payload:     rawjson.Message(payload),
 	})
 	require.ErrorContains(t, err, "failed run completion requires failure payload")
 }
 
-func TestDecodeFromHookInput_RunCompletedRejectsCanceledPayloadWithoutReason(t *testing.T) {
+func TestDecodeFromRecordInput_RunCompletedRejectsCanceledPayloadWithoutReason(t *testing.T) {
 	payload, err := json.Marshal(runCompletedPayload{
 		Status:       "canceled",
 		Phase:        run.PhaseCanceled,
@@ -149,11 +162,12 @@ func TestDecodeFromHookInput_RunCompletedRejectsCanceledPayloadWithoutReason(t *
 	})
 	require.NoError(t, err)
 
-	_, err = DecodeFromHookInput(&ActivityInput{
+	_, err = DecodeFromRecordInput(&runlog.ActivityInput{
 		Type:        RunCompleted,
 		RunID:       testRunID,
 		AgentID:     agent.Ident("agent-1"),
 		SessionID:   testSessionID,
+		EventKey:    "evt-run-completed-canceled",
 		TimestampMS: time.Now().UnixMilli(),
 		Payload:     rawjson.Message(payload),
 	})

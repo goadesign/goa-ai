@@ -12,14 +12,15 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 func TestAppendUserToolResults_IncludesErrorInToolResultContent(t *testing.T) {
-	rt := &Runtime{}
-	base := &planner.PlanInput{}
-	led := transcript.NewLedger()
+	rt := New()
+	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	agentID := agent.Ident("agent-1")
 
 	call := planner.ToolRequest{
 		Name:       tools.Ident("svc.commands.adjust_setpoint"),
@@ -31,7 +32,7 @@ func TestAppendUserToolResults_IncludesErrorInToolResultContent(t *testing.T) {
 		Error:      planner.NewToolError("access denied: missing controlleddevices.write privilege"),
 	}
 
-	require.NoError(t, rt.appendUserToolResults(base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, led))
+	require.NoError(t, rt.appendUserToolResults(t.Context(), agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, ""))
 
 	require.Len(t, base.Messages, 1)
 	require.Equal(t, model.ConversationRoleUser, base.Messages[0].Role)
@@ -44,20 +45,19 @@ func TestAppendUserToolResults_IncludesErrorInToolResultContent(t *testing.T) {
 }
 
 func TestAppendUserToolResults_DecodesSuccessfulResultContent(t *testing.T) {
-	rt := &Runtime{
-		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			tools.Ident("svc.commands.adjust_setpoint"): {
-				Name: tools.Ident("svc.commands.adjust_setpoint"),
-				Result: tools.TypeSpec{
-					Codec: tools.JSONCodec[any]{
-						ToJSON: json.Marshal,
-					},
+	rt := New()
+	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
+		tools.Ident("svc.commands.adjust_setpoint"): {
+			Name: tools.Ident("svc.commands.adjust_setpoint"),
+			Result: tools.TypeSpec{
+				Codec: tools.JSONCodec[any]{
+					ToJSON: json.Marshal,
 				},
 			},
 		},
 	}
-	base := &planner.PlanInput{}
-	led := transcript.NewLedger()
+	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	agentID := agent.Ident("agent-1")
 
 	call := planner.ToolRequest{
 		Name:       tools.Ident("svc.commands.adjust_setpoint"),
@@ -71,7 +71,7 @@ func TestAppendUserToolResults_DecodesSuccessfulResultContent(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, rt.appendUserToolResults(base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, led))
+	require.NoError(t, rt.appendUserToolResults(t.Context(), agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, ""))
 
 	require.Len(t, base.Messages, 1)
 	part, ok := base.Messages[0].Parts[0].(model.ToolResultPart)
@@ -83,18 +83,18 @@ func TestAppendUserToolResults_DecodesSuccessfulResultContent(t *testing.T) {
 }
 
 func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
-	rt := &Runtime{
-		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			tools.Ident("svc.commands.adjust_setpoint"): {
-				Name: tools.Ident("svc.commands.adjust_setpoint"),
-				Result: tools.TypeSpec{
-					Codec: tools.JSONCodec[any]{
-						ToJSON: json.Marshal,
-					},
+	rt := New()
+	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
+		tools.Ident("svc.commands.adjust_setpoint"): {
+			Name: tools.Ident("svc.commands.adjust_setpoint"),
+			Result: tools.TypeSpec{
+				Codec: tools.JSONCodec[any]{
+					ToJSON: json.Marshal,
 				},
 			},
 		},
 	}
+	agentID := agent.Ident("agent-1")
 	call := planner.ToolRequest{
 		Name:       tools.Ident("svc.commands.adjust_setpoint"),
 		ToolCallID: "tc-1",
@@ -136,10 +136,9 @@ func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			base := &planner.PlanInput{}
-			led := transcript.NewLedger()
+			base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 
-			require.NoError(t, rt.appendUserToolResults(base, []planner.ToolRequest{call}, []*planner.ToolResult{tc.tr}, led))
+			require.NoError(t, rt.appendUserToolResults(t.Context(), agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tc.tr}, ""))
 			require.Len(t, base.Messages, 1)
 
 			livePart, ok := base.Messages[0].Parts[0].(model.ToolResultPart)
@@ -184,20 +183,19 @@ func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
 }
 
 func TestAppendUserToolResults_AppendsBoundsReminderAfterToolResults(t *testing.T) {
-	rt := &Runtime{
-		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			tools.Ident("svc.read.list_devices"): {
-				Name: tools.Ident("svc.read.list_devices"),
-				Result: tools.TypeSpec{
-					Codec: tools.JSONCodec[any]{
-						ToJSON: json.Marshal,
-					},
+	rt := New()
+	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
+		tools.Ident("svc.read.list_devices"): {
+			Name: tools.Ident("svc.read.list_devices"),
+			Result: tools.TypeSpec{
+				Codec: tools.JSONCodec[any]{
+					ToJSON: json.Marshal,
 				},
 			},
 		},
 	}
-	base := &planner.PlanInput{}
-	led := transcript.NewLedger()
+	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	agentID := agent.Ident("agent-1")
 
 	call := planner.ToolRequest{
 		Name:       tools.Ident("svc.read.list_devices"),
@@ -216,7 +214,7 @@ func TestAppendUserToolResults_AppendsBoundsReminderAfterToolResults(t *testing.
 		},
 	}
 
-	require.NoError(t, rt.appendUserToolResults(base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, led))
+	require.NoError(t, rt.appendUserToolResults(t.Context(), agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, ""))
 
 	require.Len(t, base.Messages, 2)
 	require.Equal(t, model.ConversationRoleUser, base.Messages[0].Role)
@@ -229,9 +227,9 @@ func TestAppendUserToolResults_AppendsBoundsReminderAfterToolResults(t *testing.
 }
 
 func TestAppendUserToolResults_AppendsRetryHintReminderAfterToolResults(t *testing.T) {
-	rt := &Runtime{}
-	base := &planner.PlanInput{}
-	led := transcript.NewLedger()
+	rt := New()
+	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	agentID := agent.Ident("agent-1")
 
 	call := planner.ToolRequest{
 		Name:       tools.Ident("svc.read.aggregate"),
@@ -252,7 +250,7 @@ func TestAppendUserToolResults_AppendsRetryHintReminderAfterToolResults(t *testi
 		},
 	}
 
-	require.NoError(t, rt.appendUserToolResults(base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, led))
+	require.NoError(t, rt.appendUserToolResults(t.Context(), agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, ""))
 
 	require.Len(t, base.Messages, 2)
 	require.Equal(t, model.ConversationRoleUser, base.Messages[0].Role)

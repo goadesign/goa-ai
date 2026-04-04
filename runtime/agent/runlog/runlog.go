@@ -9,11 +9,46 @@ import (
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
-	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 type (
+	// Type identifies one canonical durable run-log record kind.
+	//
+	// Hook event types are one subset of durable record types. Other runtime-owned
+	// records, such as transcript deltas, also use this namespace without being
+	// hook events.
+	Type string
+
+	// ActivityInput is the canonical workflow-to-activity envelope for one durable
+	// runtime record emitted from workflow code.
+	ActivityInput struct {
+		// Type identifies the record variant.
+		Type Type
+
+		// EventKey is the stable logical identity for this record within the run.
+		EventKey string
+
+		// RunID identifies the run that owns this record.
+		RunID string
+
+		// AgentID identifies the agent that owns this record.
+		AgentID agent.Ident
+
+		// SessionID identifies the logical session that owns this record.
+		SessionID string
+
+		// TurnID groups records for a single conversational turn. Empty when turn
+		// tracking is disabled.
+		TurnID string
+
+		// TimestampMS records when the runtime emitted this record.
+		TimestampMS int64
+
+		// Payload holds record-specific fields encoded as JSON.
+		Payload rawjson.Message
+	}
+
 	// AppendResult describes the outcome of storing a canonical run event.
 	//
 	// IDs remain store-assigned cursor values. Inserted reports whether this call
@@ -46,8 +81,8 @@ type (
 		SessionID string
 		// TurnID identifies the conversational turn within the session.
 		TurnID string
-		// Type is the hook event type.
-		Type hooks.EventType
+		// Type identifies the durable record kind.
+		Type Type
 		// Payload is the canonical JSON-encoded payload for the event.
 		Payload rawjson.Message
 		// Timestamp is the event time.

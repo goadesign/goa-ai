@@ -389,11 +389,11 @@ func TestRegisterAgentAppliesWorkerQueueOverride(t *testing.T) {
 	require.Zero(t, executeOpts.HeartbeatTimeout)
 	require.Equal(t, 1, executeOpts.RetryPolicy.MaxAttempts)
 
-	hookOpts := eng.registeredHookActivityOptions[hookActivityName]
-	require.Equal(t, 15*time.Second, hookOpts.StartToCloseTimeout)
-	require.Equal(t, 3, hookOpts.RetryPolicy.MaxAttempts)
-	require.Equal(t, time.Second, hookOpts.RetryPolicy.InitialInterval)
-	require.InDelta(t, 2.0, hookOpts.RetryPolicy.BackoffCoefficient, 0.000001)
+	recordOpts := eng.registeredRecordActivityOptions[recordActivityName]
+	require.Equal(t, 15*time.Second, recordOpts.StartToCloseTimeout)
+	require.Equal(t, 3, recordOpts.RetryPolicy.MaxAttempts)
+	require.Equal(t, time.Second, recordOpts.RetryPolicy.InitialInterval)
+	require.InDelta(t, 2.0, recordOpts.RetryPolicy.BackoffCoefficient, 0.000001)
 }
 
 func TestRunOptionsPropagateToStartRequest(t *testing.T) {

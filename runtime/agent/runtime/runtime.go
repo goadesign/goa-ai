@@ -150,14 +150,14 @@ type (
 		// avoiding dynamic handler registration on active workers.
 		registrationClosed bool
 
-		// hookActivityRegistered tracks whether the runtime hook activity has
+		// recordActivityRegistered tracks whether the runtime record activity has
 		// been registered with the engine.
-		hookActivityRegistered bool
+		recordActivityRegistered bool
 
-		// hookActivityTimeout overrides the StartToClose timeout used for the
-		// hook publishing activity (`runtime.publish_hook`). Zero means use the
+		// recordActivityTimeout overrides the StartToClose timeout used for the
+		// durable record activity (`runtime.record_event`). Zero means use the
 		// runtime default.
-		hookActivityTimeout time.Duration
+		recordActivityTimeout time.Duration
 
 		// reminders manages run-scoped system reminders used for backstage
 		// guidance (safety, correctness, workflow) injected into prompts by
@@ -201,10 +201,10 @@ type (
 		// Tracer emits spans for planner/tool execution.
 		Tracer telemetry.Tracer
 
-		// HookActivityTimeout overrides the StartToClose timeout for the
-		// hook publishing activity (`runtime.publish_hook`). Zero means use the
+		// RecordActivityTimeout overrides the StartToClose timeout for the
+		// durable record activity (`runtime.record_event`). Zero means use the
 		// runtime default.
-		HookActivityTimeout time.Duration
+		RecordActivityTimeout time.Duration
 
 		// Workers provides per-agent worker configuration. If an agent lacks
 		// an entry, the runtime uses a default worker configuration. Engines
@@ -423,7 +423,7 @@ const (
 	defaultPlanActivityTimeout        = 2 * time.Minute
 	defaultResumeActivityTimeout      = 2 * time.Minute
 	defaultExecuteToolActivityTimeout = 2 * time.Minute
-	defaultHookActivityTimeout        = 15 * time.Second
+	defaultRecordActivityTimeout      = 15 * time.Second
 )
 
 // defaultRetriedActivityPolicy returns the runtime's standard infrastructure
@@ -699,29 +699,29 @@ func newFromOptions(opts Options) *Runtime {
 		opts.SessionStore = sessioninmem.New()
 	}
 	rt := &Runtime{
-		Engine:              eng,
-		Memory:              opts.MemoryStore,
-		PromptRegistry:      prompt.NewRegistry(opts.PromptStore),
-		SessionStore:        opts.SessionStore,
-		Policy:              opts.Policy,
-		RunEventStore:       opts.RunEventStore,
-		Bus:                 bus,
-		Stream:              opts.Stream,
-		hookActivityTimeout: opts.HookActivityTimeout,
-		logger:              logger,
-		metrics:             metrics,
-		tracer:              tracer,
-		agents:              make(map[agent.Ident]AgentRegistration),
-		toolsets:            make(map[string]ToolsetRegistration),
-		toolSpecs:           make(map[tools.Ident]tools.ToolSpec),
-		toolSchemas:         make(map[string]map[string]any),
-		models:              make(map[string]model.Client),
-		runHandles:          make(map[string]engine.WorkflowHandle),
-		agentToolSpecs:      make(map[agent.Ident][]tools.ToolSpec),
-		workers:             opts.Workers,
-		reminders:           reminder.NewEngine(),
-		toolConfirmation:    opts.ToolConfirmation,
-		hintOverrides:       opts.HintOverrides,
+		Engine:                eng,
+		Memory:                opts.MemoryStore,
+		PromptRegistry:        prompt.NewRegistry(opts.PromptStore),
+		SessionStore:          opts.SessionStore,
+		Policy:                opts.Policy,
+		RunEventStore:         opts.RunEventStore,
+		Bus:                   bus,
+		Stream:                opts.Stream,
+		recordActivityTimeout: opts.RecordActivityTimeout,
+		logger:                logger,
+		metrics:               metrics,
+		tracer:                tracer,
+		agents:                make(map[agent.Ident]AgentRegistration),
+		toolsets:              make(map[string]ToolsetRegistration),
+		toolSpecs:             make(map[tools.Ident]tools.ToolSpec),
+		toolSchemas:           make(map[string]map[string]any),
+		models:                make(map[string]model.Client),
+		runHandles:            make(map[string]engine.WorkflowHandle),
+		agentToolSpecs:        make(map[agent.Ident][]tools.ToolSpec),
+		workers:               opts.Workers,
+		reminders:             reminder.NewEngine(),
+		toolConfirmation:      opts.ToolConfirmation,
+		hintOverrides:         opts.HintOverrides,
 	}
 	rt.PromptRegistry.SetObserver(rt.onPromptRendered)
 	// Install runtime-owned toolsets before any agent registration so planners
@@ -889,17 +889,16 @@ func New(opts ...RuntimeOption) *Runtime {
 // WithEngine sets the workflow engine.
 func WithEngine(e engine.Engine) RuntimeOption { return func(o *Options) { o.Engine = e } }
 
-// WithHookActivityTimeout sets the StartToClose timeout for the hook publishing
-// activity (`runtime.publish_hook`). This activity persists and streams hook
-// events emitted by workflow code, so its timeout bounds end-to-end hook
-// durability and stream continuity while a session is active.
+// WithRecordActivityTimeout sets the StartToClose timeout for the durable
+// record activity (`runtime.record_event`). This activity persists canonical
+// run-log records and fans out hook-backed records while a session is active.
 //
 // d must be greater than zero.
-func WithHookActivityTimeout(d time.Duration) RuntimeOption {
+func WithRecordActivityTimeout(d time.Duration) RuntimeOption {
 	if d <= 0 {
-		panic("runtime: hook activity timeout must be greater than zero")
+		panic("runtime: record activity timeout must be greater than zero")
 	}
-	return func(o *Options) { o.HookActivityTimeout = d }
+	return func(o *Options) { o.RecordActivityTimeout = d }
 }
 
 // WithMemoryStore sets the memory store.
@@ -1016,7 +1015,7 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	if r.Engine == nil {
 		return ErrEngineNotConfigured
 	}
-	if err := r.ensureHookActivityRegistered(ctx); err != nil {
+	if err := r.ensureRecordActivityRegistered(ctx); err != nil {
 		return err
 	}
 
@@ -1097,15 +1096,15 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	return nil
 }
 
-func (r *Runtime) ensureHookActivityRegistered(ctx context.Context) error {
+func (r *Runtime) ensureRecordActivityRegistered(ctx context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.hookActivityRegistered {
+	if r.recordActivityRegistered {
 		return nil
 	}
-	timeout := defaultHookActivityTimeout
-	if r.hookActivityTimeout > 0 {
-		timeout = r.hookActivityTimeout
+	timeout := defaultRecordActivityTimeout
+	if r.recordActivityTimeout > 0 {
+		timeout = r.recordActivityTimeout
 	}
 	opts := engine.ActivityOptions{
 		StartToCloseTimeout: timeout,
@@ -1114,10 +1113,10 @@ func (r *Runtime) ensureHookActivityRegistered(ctx context.Context) error {
 	if opts.StartToCloseTimeout == 0 {
 		opts.StartToCloseTimeout = timeout
 	}
-	if err := r.Engine.RegisterHookActivity(ctx, hookActivityName, opts, r.hookActivity); err != nil {
+	if err := r.Engine.RegisterRecordActivity(ctx, recordActivityName, opts, r.recordActivity); err != nil {
 		return err
 	}
-	r.hookActivityRegistered = true
+	r.recordActivityRegistered = true
 	return nil
 }
 
@@ -1235,19 +1234,8 @@ type OpenAIConfig struct {
 	ThinkingEffort string
 }
 
-// transcriptLedgerSource returns the runtime-owned transcript rehydration source
-// when the configured engine supports workflow queries.
-func (r *Runtime) transcriptLedgerSource() transcript.LedgerSource {
-	if querier, ok := r.Engine.(transcript.WorkflowQuerier); ok {
-		return transcript.NewTemporalLedgerSource(querier)
-	}
-	return nil
-}
-
-// NewBedrockModelClient constructs a model.Client backed by AWS Bedrock using the
-// runtime's own ledger access. The caller supplies the AWS Bedrock runtime client
-// and model configuration; the runtime wires the appropriate ledger source (Temporal
-// workflow query or in-memory no-op) so the client can rehydrate messages by RunID.
+// NewBedrockModelClient constructs a model.Client backed by AWS Bedrock.
+// Callers must supply the complete canonical transcript in Request.Messages.
 func (r *Runtime) NewBedrockModelClient(awsrt *bedrockruntime.Client, cfg BedrockConfig) (model.Client, error) {
 	opts := bedrock.Options{
 		Runtime:        awsrt,
@@ -1259,11 +1247,12 @@ func (r *Runtime) NewBedrockModelClient(awsrt *bedrockruntime.Client, cfg Bedroc
 		Temperature:    cfg.Temperature,
 		Logger:         r.logger,
 	}
-	return bedrock.New(awsrt, opts, r.transcriptLedgerSource())
+	return bedrock.New(awsrt, opts)
 }
 
 // NewOpenAIModelClient constructs a model.Client backed by the OpenAI Responses
-// API using runtime-owned client construction and transcript rehydration.
+// API using runtime-owned client construction. Callers must supply the complete
+// canonical transcript in Request.Messages.
 func (r *Runtime) NewOpenAIModelClient(cfg OpenAIConfig) (model.Client, error) {
 	apiKey := strings.TrimSpace(cfg.APIKey)
 	if apiKey == "" {
@@ -1285,7 +1274,6 @@ func (r *Runtime) NewOpenAIModelClient(cfg OpenAIConfig) (model.Client, error) {
 		MaxCompletionTokens: cfg.MaxTokens,
 		Temperature:         cfg.Temperature,
 		ThinkingEffort:      cfg.ThinkingEffort,
-		Ledger:              r.transcriptLedgerSource(),
 	})
 }
 
@@ -1422,6 +1410,9 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 		}
 	} else if strings.TrimSpace(input.SessionID) != "" {
 		return nil, ErrSessionNotAllowed
+	}
+	if err := transcript.ValidatePlannerTranscript(input.Messages); err != nil {
+		return nil, fmt.Errorf("runtime: invalid transcript: %w", err)
 	}
 	reg, _ := r.agentByID(input.AgentID)
 	req := engine.WorkflowStartRequest{

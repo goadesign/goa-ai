@@ -346,7 +346,9 @@ func (r *Runtime) handleInterrupts(
 			return errors.New("resume: received nil resume request")
 		}
 		if len(resumeReq.Messages) > 0 {
-			base.Messages = append(base.Messages, resumeReq.Messages...)
+			if err := r.appendTranscriptMessages(ctx, input.AgentID, base, turnID, resumeReq.Messages); err != nil {
+				return err
+			}
 		}
 		base.RunContext.Attempt = *nextAttempt
 		*nextAttempt++
@@ -497,10 +499,12 @@ func (r *Runtime) handleMissingFieldsPolicy(
 			return nil, fmt.Errorf("unexpected await ID for clarification")
 		}
 		if ans.Answer != "" {
-			base.Messages = append(base.Messages, &model.Message{
+			if err := r.appendTranscriptMessages(ctx, input.AgentID, base, turnID, []*model.Message{{
 				Role:  model.ConversationRoleUser,
 				Parts: []model.Part{model.TextPart{Text: ans.Answer}},
-			})
+			}}); err != nil {
+				return nil, err
+			}
 		}
 		if err := r.publishHook(ctx, hooks.NewRunResumedEvent(
 			base.RunContext.RunID,

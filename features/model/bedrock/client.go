@@ -89,7 +89,6 @@ type Client struct {
 	maxTok       int
 	temp         float32
 	think        int
-	ledger       transcript.LedgerSource
 	logger       telemetry.Logger
 }
 
@@ -111,11 +110,9 @@ type thinkingConfig struct {
 	budget      int
 }
 
-// New initializes a Bedrock-powered model client configured for chat completion
-// and streaming requests. The provided ledgerSource allows the client to prepend
-// provider-verified messages for a specific run ID during request encoding,
-// ensuring transcript continuity across completions.
-func New(aws *bedrockruntime.Client, opts Options, ledger transcript.LedgerSource) (*Client, error) {
+// New initializes a Bedrock-powered model client configured for chat
+// completion and streaming requests.
+func New(aws *bedrockruntime.Client, opts Options) (*Client, error) {
 	opts.Runtime = aws
 	if opts.Runtime == nil {
 		return nil, errors.New("bedrock runtime client is required")
@@ -135,7 +132,6 @@ func New(aws *bedrockruntime.Client, opts Options, ledger transcript.LedgerSourc
 	}
 	c := &Client{
 		runtime:      opts.Runtime,
-		ledger:       ledger,
 		defaultModel: opts.DefaultModel,
 		highModel:    opts.HighModel,
 		smallModel:   opts.SmallModel,
@@ -198,18 +194,8 @@ func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer
 }
 
 func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*requestParts, error) {
-	// Rehydrate provider-ready messages from the runtime ledger when a RunID is
-	// provided. Replay is strict: missing or unreadable ledger state is a
-	// request-shape error, not a best-effort fallback.
-	merged, err := transcript.RehydrateMessages(ctx, c.ledger, req.RunID, req.Messages)
-	if err != nil {
-		return nil, fmt.Errorf("bedrock: %w", err)
-	}
-	if len(merged) == 0 {
+	if len(req.Messages) == 0 {
 		return nil, errors.New("bedrock: messages are required")
-	}
-	if err := transcript.ValidatePlannerTranscript(merged); err != nil {
-		return nil, fmt.Errorf("bedrock: invalid transcript (run=%s): %w", req.RunID, err)
 	}
 	modelID := c.resolveModelID(req)
 	if modelID == "" {
@@ -220,13 +206,8 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*reque
 	// entirely, so the thinking-first ordering rule does not apply.
 	thinkingEnabled := req.Thinking != nil && req.Thinking.Enable
 	if thinkingEnabled && !isAdaptiveThinkingModel(modelID) {
-		// Heal legacy or degraded messages before validation: if an
-		// assistant message has tool_use blocks but no leading thinking
-		// (e.g. the stream lost the signature delta), insert a redacted
-		// placeholder so the message satisfies Bedrock's ordering contract.
-		healThinkingGaps(merged)
-		if err := transcript.ValidateBedrock(merged, true); err != nil {
-			return nil, fmt.Errorf("bedrock: invalid message ordering with thinking enabled (run=%s, model=%s): %w", req.RunID, modelID, err)
+		if err := transcript.ValidateBedrock(req.Messages, true); err != nil {
+			return nil, fmt.Errorf("bedrock: invalid message ordering with thinking enabled (model=%s): %w", modelID, err)
 		}
 	}
 	// Extract cache options from request.
@@ -240,8 +221,8 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*reque
 	// for a Nova model rather than sending an invalid configuration.
 	if cacheAfterTools && isNovaModel(modelID) {
 		return nil, fmt.Errorf(
-			"bedrock: Cache.AfterTools is not supported for Nova models (run=%s, model=%s)",
-			req.RunID, modelID,
+			"bedrock: Cache.AfterTools is not supported for Nova models (model=%s)",
+			modelID,
 		)
 	}
 	// Build tool configuration and name maps before encoding messages so tool_use
@@ -258,14 +239,13 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*reque
 	// Bedrock requires toolConfig when messages contain tool_use or tool_result
 	// blocks. Fail fast with a clear error rather than letting Bedrock reject
 	// the request with a generic validation error.
-	if toolConfig == nil && messagesHaveToolBlocks(merged) {
+	if toolConfig == nil && messagesHaveToolBlocks(req.Messages) {
 		return nil, fmt.Errorf(
-			"bedrock: messages contain tool_use/tool_result but no tools provided in request (run=%s); "+
+			"bedrock: messages contain tool_use/tool_result but no tools provided in request; " +
 				"ensure the planner always passes tools when history has tool blocks",
-			req.RunID,
 		)
 	}
-	messages, system, err := encodeMessages(ctx, merged, canonToSan, cacheAfterSystem, c.logger)
+	messages, system, err := encodeMessages(ctx, req.Messages, canonToSan, cacheAfterSystem, c.logger)
 	if err != nil {
 		return nil, err
 	}
@@ -1255,37 +1235,4 @@ func messagesHaveToolBlocks(msgs []*model.Message) bool {
 		}
 	}
 	return false
-}
-
-// healThinkingGaps ensures every assistant message that contains tool_use
-// blocks begins with a ThinkingPart. When the Bedrock stream loses the
-// signature delta (transient API issue) or when legacy transcript data was
-// persisted before the BuildMessages fix, assistant messages can end up with
-// tool_use but no leading thinking — which violates Bedrock's strict ordering
-// contract. This function inserts a minimal redacted placeholder to satisfy
-// the constraint without altering the semantic content of the message.
-func healThinkingGaps(msgs []*model.Message) {
-	for _, m := range msgs {
-		if m.Role != model.ConversationRoleAssistant {
-			continue
-		}
-		var hasToolUse, hasThinking bool
-		for _, p := range m.Parts {
-			switch p.(type) {
-			case model.ToolUsePart:
-				hasToolUse = true
-			case model.ThinkingPart:
-				hasThinking = true
-			}
-		}
-		if hasToolUse && !hasThinking {
-			m.Parts = append(
-				[]model.Part{model.ThinkingPart{
-					Redacted: []byte("redacted"),
-					Final:    true,
-				}},
-				m.Parts...,
-			)
-		}
-	}
 }

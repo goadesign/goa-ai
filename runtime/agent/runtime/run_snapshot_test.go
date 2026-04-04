@@ -3,17 +3,20 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/toolerrors"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 func TestNewRunSnapshotDerivesToolStateAndCompletion(t *testing.T) {
@@ -27,7 +30,11 @@ func TestNewRunSnapshotDerivesToolStateAndCompletion(t *testing.T) {
 	)
 
 	mk := func(at time.Time, evt hooks.Event) *runlog.Event {
-		in, err := hooks.EncodeToHookInput(evt, turnID)
+		in, err := hooks.EncodeToRecordInput(evt, hooks.EncodeOptions{
+			TurnID:      turnID,
+			EventKey:    fmt.Sprintf("evt-%d", at.Unix()),
+			TimestampMS: at.UnixMilli(),
+		})
 		require.NoError(t, err)
 		return &runlog.Event{
 			EventKey:  in.EventKey,
@@ -89,4 +96,29 @@ func TestGetRunSnapshotReadsThroughStore(t *testing.T) {
 
 	_, err = rt.GetRunSnapshot(context.Background(), "run-1")
 	require.NoError(t, err)
+}
+
+func TestNewRunSnapshotIncludesCanonicalTranscript(t *testing.T) {
+	t.Parallel()
+
+	payload, err := transcript.EncodeRunLogDelta([]*model.Message{{
+		Role:  model.ConversationRoleUser,
+		Parts: []model.Part{model.TextPart{Text: "hello"}},
+	}})
+	require.NoError(t, err)
+
+	snap, err := newRunSnapshot([]*runlog.Event{{
+		EventKey:  "evt-transcript",
+		RunID:     "run-1",
+		AgentID:   agent.Ident("svc.agent"),
+		SessionID: "sess-1",
+		TurnID:    "turn-1",
+		Type:      transcript.RunLogMessagesAppended,
+		Payload:   payload,
+		Timestamp: time.Unix(10, 0).UTC(),
+	}})
+	require.NoError(t, err)
+	require.Len(t, snap.Transcript, 1)
+	require.Equal(t, model.ConversationRoleUser, snap.Transcript[0].Role)
+	require.Equal(t, []model.Part{model.TextPart{Text: "hello"}}, snap.Transcript[0].Parts)
 }

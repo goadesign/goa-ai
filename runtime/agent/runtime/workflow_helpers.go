@@ -122,18 +122,20 @@ func (r *Runtime) executeGroupedToolCalls(
 }
 
 // appendUserToolResults appends a user message with tool_result blocks for the
-// executed tools and updates the ledger. Tool results are ordered to match the
-// assistant tool_use IDs from the allowed calls slice so that provider
-// handshakes remain deterministic regardless of execution timing.
+// executed tools and persists the canonical transcript delta. Tool results are
+// ordered to match the assistant tool_use IDs from the allowed calls slice so
+// that provider handshakes remain deterministic regardless of execution timing.
 //
 // If any tool has a ResultReminder configured in its spec, a system message
 // with the reminder text is appended after the tool results to provide
 // backstage guidance to the model.
 func (r *Runtime) appendUserToolResults(
+	ctx context.Context,
+	agentID agent.Ident,
 	base *planner.PlanInput,
 	allowed []planner.ToolRequest,
 	vals []*planner.ToolResult,
-	led *transcript.Ledger,
+	turnID string,
 ) error {
 	if len(vals) == 0 {
 		return nil
@@ -147,7 +149,6 @@ func (r *Runtime) appendUserToolResults(
 	}
 
 	parts := make([]model.Part, 0, len(resultsByID))
-	specs := make([]transcript.ToolResultSpec, 0, len(resultsByID))
 	var reminders []string
 	for _, call := range allowed {
 		tr, ok := resultsByID[call.ToolCallID]
@@ -159,11 +160,6 @@ func (r *Runtime) appendUserToolResults(
 			return err
 		}
 		parts = append(parts, model.ToolResultPart{
-			ToolUseID: tr.ToolCallID,
-			Content:   content,
-			IsError:   tr.Error != nil,
-		})
-		specs = append(specs, transcript.ToolResultSpec{
 			ToolUseID: tr.ToolCallID,
 			Content:   content,
 			IsError:   tr.Error != nil,
@@ -190,11 +186,10 @@ func (r *Runtime) appendUserToolResults(
 		return nil
 	}
 
-	base.Messages = append(base.Messages, &model.Message{
+	messages := []*model.Message{{
 		Role:  model.ConversationRoleUser,
 		Parts: parts,
-	})
-	led.AppendUserToolResults(specs)
+	}}
 
 	if len(reminders) > 0 {
 		var reminderText strings.Builder
@@ -206,12 +201,12 @@ func (r *Runtime) appendUserToolResults(
 			reminderText.WriteString(rem)
 			reminderText.WriteString("</system-reminder>")
 		}
-		base.Messages = append(base.Messages, &model.Message{
+		messages = append(messages, &model.Message{
 			Role:  model.ConversationRoleSystem,
 			Parts: []model.Part{model.TextPart{Text: reminderText.String()}},
 		})
 	}
-	return nil
+	return r.appendTranscriptMessages(ctx, agentID, base, turnID, messages)
 }
 
 func (r *Runtime) toolResultContent(tr *planner.ToolResult) (any, error) {

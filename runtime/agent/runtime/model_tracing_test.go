@@ -51,7 +51,7 @@ func TestTracedClientStreamIgnoresCanceledStart(t *testing.T) {
 		},
 	}, tracer, telemetry.NewNoopLogger(), "bedrock")
 
-	stream, err := client.Stream(ctx, &model.Request{RunID: "run_123", Stream: true})
+	stream, err := client.Stream(ctx, &model.Request{Stream: true})
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Nil(t, stream)
 	require.Len(t, tracer.spans, 1)
@@ -73,7 +73,7 @@ func TestTracedClientCompleteIgnoresContextTermination(t *testing.T) {
 		},
 	}, tracer, telemetry.NewNoopLogger(), "bedrock")
 
-	resp, err := client.Complete(ctx, &model.Request{RunID: "run_123"})
+	resp, err := client.Complete(ctx, &model.Request{})
 	require.Equal(t, grpcCodes.Canceled, grpcStatus.Code(err))
 	assert.Nil(t, resp)
 	require.Len(t, tracer.spans, 1)

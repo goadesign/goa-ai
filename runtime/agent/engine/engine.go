@@ -106,10 +106,10 @@ type (
 		// RegisterWorkflow registers a workflow definition with the engine.
 		RegisterWorkflow(ctx context.Context, def WorkflowDefinition) error
 
-		// RegisterHookActivity registers a typed activity that publishes workflow-emitted
-		// hook events outside of the deterministic workflow thread. The activity accepts
-		// *api.HookActivityInput and returns an error.
-		RegisterHookActivity(ctx context.Context, name string, opts ActivityOptions, fn func(context.Context, *api.HookActivityInput) error) error
+		// RegisterRecordActivity registers a typed activity that persists
+		// workflow-emitted runtime records outside of the deterministic workflow
+		// thread. The activity accepts *api.RecordActivityInput and returns an error.
+		RegisterRecordActivity(ctx context.Context, name string, opts ActivityOptions, fn func(context.Context, *api.RecordActivityInput) error) error
 
 		// RegisterPlannerActivity registers a typed planner activity (PlanStart or
 		// PlanResume) that accepts *api.PlanActivityInput and returns *api.PlanActivityOutput.
@@ -226,10 +226,11 @@ type (
 		// and run-level correlation.
 		RunID() string
 
-		// PublishHook schedules the runtime hook activity and waits for completion.
-		// Implementations must run hook publishing outside of the deterministic workflow
-		// thread (e.g., via activities in Temporal) so subscribers can perform I/O.
-		PublishHook(ctx context.Context, call HookActivityCall) error
+		// PublishRecord schedules the runtime record activity and waits for completion.
+		// Implementations must run record persistence outside of the deterministic
+		// workflow thread (e.g., via activities in Temporal) so downstream record
+		// consumers can perform I/O.
+		PublishRecord(ctx context.Context, call RecordActivityCall) error
 
 		// ExecutePlannerActivity schedules a planner activity (PlanStart/PlanResume)
 		// and blocks until it completes. Planner activities are executed outside the
@@ -262,6 +263,11 @@ type (
 		// Now returns the current workflow time in a deterministic manner. Implementations
 		// must return a time source that is replay-safe (e.g., Temporal's workflow.Now).
 		Now() time.Time
+
+		// NextSequence returns the next replay-stable monotonic sequence number for
+		// this workflow context. Runtime record dispatch uses it to stamp unique
+		// durable event keys without relying on nondeterministic sources.
+		NextSequence() uint64
 
 		// NewTimer returns a Future that becomes ready after the given duration elapses
 		// in workflow time. This is the engine-agnostic primitive for waking up on time
@@ -370,14 +376,14 @@ type (
 		HeartbeatTimeout time.Duration
 	}
 
-	// HookActivityCall describes a single invocation of the runtime hook publishing
+	// RecordActivityCall describes a single invocation of the runtime record
 	// activity from inside workflow code.
-	HookActivityCall struct {
-		// Name identifies the registered hook activity.
+	RecordActivityCall struct {
+		// Name identifies the registered record activity.
 		Name string
 
 		// Input is the typed payload passed to the activity handler.
-		Input *api.HookActivityInput
+		Input *api.RecordActivityInput
 
 		// Options overrides the registered activity defaults for this invocation.
 		Options ActivityOptions

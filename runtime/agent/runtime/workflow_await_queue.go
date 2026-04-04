@@ -24,7 +24,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
-	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 const awaitReasonQueue = "await_queue"
@@ -80,7 +79,9 @@ func (r *Runtime) waitAwaitConfirmation(
 	// Confirmation gates tool execution. We represent both approval and denial as
 	// a provider-visible tool_use + tool_result pair so planners see a deterministic
 	// outcome for the tool call they requested.
-	r.recordAssistantTurn(base, st.Transcript, []planner.ToolRequest{it.call}, st.Ledger)
+	if err := r.recordAssistantTurn(ctx, input.AgentID, base, st.Transcript, []planner.ToolRequest{it.call}, turnID); err != nil {
+		return nil, nil, err
+	}
 
 	if !approved {
 		deniedResult := it.plan.DeniedResult
@@ -141,7 +142,7 @@ func (r *Runtime) waitAwaitConfirmation(
 		if err := r.appendToolOutputs(ctx, st, []planner.ToolRequest{it.call}, []*planner.ToolResult{tr}); err != nil {
 			return nil, nil, err
 		}
-		if err := r.appendUserToolResults(base, []planner.ToolRequest{it.call}, []*planner.ToolResult{tr}, st.Ledger); err != nil {
+		if err := r.appendUserToolResults(ctx, input.AgentID, base, []planner.ToolRequest{it.call}, []*planner.ToolResult{tr}, turnID); err != nil {
 			return nil, nil, err
 		}
 		return []*planner.ToolResult{tr}, nil, nil
@@ -177,7 +178,7 @@ func (r *Runtime) waitAwaitConfirmation(
 	if err := r.appendToolOutputs(ctx, st, []planner.ToolRequest{call}, vals); err != nil {
 		return nil, nil, err
 	}
-	if err := r.appendUserToolResults(base, []planner.ToolRequest{call}, vals, st.Ledger); err != nil {
+	if err := r.appendUserToolResults(ctx, input.AgentID, base, []planner.ToolRequest{call}, vals, turnID); err != nil {
 		return nil, nil, err
 	}
 	if timedOut {
@@ -338,7 +339,6 @@ func (r *Runtime) handleAwaitQueue(
 	st.AggUsage = addTokenUsage(st.AggUsage, resOutput.Usage)
 	st.Result = resOutput.Result
 	st.Transcript = resOutput.Transcript
-	st.Ledger = transcript.FromModelMessages(st.Transcript)
 	return nil, nil
 }
 
@@ -396,11 +396,13 @@ func (r *Runtime) publishAwaitQueueItem(ctx context.Context, input *RunInput, ba
 		}
 		// Questions are modeled as a provider-native tool use. Record the
 		// assistant tool_use turn before waiting for out-of-band results.
-		r.recordAssistantTurn(base, st.Transcript, []planner.ToolRequest{{
+		if err := r.recordAssistantTurn(ctx, input.AgentID, base, st.Transcript, []planner.ToolRequest{{
 			Name:       q.ToolName,
 			ToolCallID: q.ToolCallID,
 			Payload:    q.Payload,
-		}}, st.Ledger)
+		}}, turnID); err != nil {
+			return err
+		}
 		if q.ToolCallID == "" {
 			return errors.New("await_questions: missing tool_call_id")
 		}
@@ -448,7 +450,9 @@ func (r *Runtime) publishAwaitQueueItem(ctx context.Context, input *RunInput, ba
 		}
 		// External tools are modeled as a provider-native tool use. Record the
 		// assistant tool_use turn before waiting for out-of-band results.
-		r.recordAssistantTurn(base, st.Transcript, awaitCalls, st.Ledger)
+		if err := r.recordAssistantTurn(ctx, input.AgentID, base, st.Transcript, awaitCalls, turnID); err != nil {
+			return err
+		}
 		for _, call := range awaitCalls {
 			if call.ToolCallID == "" {
 				continue
@@ -491,10 +495,12 @@ func (r *Runtime) waitAwaitQueueItem(ctx context.Context, ctrl *interrupt.Contro
 			return nil, errors.New("unexpected await ID for clarification")
 		}
 		if ans.Answer != "" {
-			base.Messages = append(base.Messages, &model.Message{
+			if err := r.appendTranscriptMessages(ctx, input.AgentID, base, turnID, []*model.Message{{
 				Role:  model.ConversationRoleUser,
 				Parts: []model.Part{model.TextPart{Text: ans.Answer}},
-			})
+			}}); err != nil {
+				return nil, err
+			}
 		}
 		return nil, nil
 	case planner.AwaitItemKindQuestions:
@@ -592,13 +598,13 @@ func (r *Runtime) consumeProvidedToolResults(ctx context.Context, input *RunInpu
 		return nil, err
 	}
 
-	// Record tool results in the run ledger and publish tool_result events for streaming.
+	// Record tool results for streaming and append their canonical transcript delta.
 	st.ToolEvents = append(st.ToolEvents, cloneToolResults(decoded)...)
 	if err := r.appendToolOutputs(ctx, st, allowed, decoded); err != nil {
 		return nil, err
 	}
 
-	if err := r.appendUserToolResults(base, allowed, decoded, st.Ledger); err != nil {
+	if err := r.appendUserToolResults(ctx, input.AgentID, base, allowed, decoded, turnID); err != nil {
 		return nil, err
 	}
 

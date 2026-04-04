@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -12,19 +13,22 @@ import (
 	"goa.design/goa-ai/runtime/agent/runlog"
 	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/session"
+	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
-// hookActivityName is the engine-registered activity that publishes hook events
-// on behalf of workflow code.
-const hookActivityName = "runtime.publish_hook"
+// recordActivityName is the engine-registered activity that persists durable
+// runtime records and fans out hook-backed records on behalf of workflow code.
+const recordActivityName = "runtime.record_event"
 
-// hookActivity publishes workflow-emitted hook events outside of deterministic
-// workflow execution.
+// recordActivity persists workflow-emitted runtime records outside of
+// deterministic workflow execution.
 //
 // Contract:
 //   - The canonical record of runtime events is the run event log. Appending to
 //     RunEventStore is a correctness invariant: failures must fail the activity
 //     so the workflow run can stop and/or be retried by the engine.
+//   - Canonical transcript deltas are runtime-owned run-log records. They bypass
+//     hook decoding, streaming, and bus publication.
 //   - Streaming is a session contract:
 //   - While the session is active, stream emission failures must fail the
 //     activity so workflows can retry or stop rather than silently diverge
@@ -35,18 +39,29 @@ const hookActivityName = "runtime.publish_hook"
 //   - Publishing to the hook bus is best-effort. The bus drives derived storage
 //     (memory) and local observability, but it must not be allowed to corrupt or
 //     block the canonical transcript.
-func (r *Runtime) hookActivity(ctx context.Context, input *HookActivityInput) error {
+func (r *Runtime) recordActivity(ctx context.Context, input *RecordActivityInput) error {
 	stopHeartbeat := startActivityHeartbeat(ctx)
 	defer stopHeartbeat()
+	if input == nil {
+		return errors.New("runtime: record input is nil")
+	}
 
-	evt, err := hooks.DecodeFromHookInput(input)
+	if input.Type == transcript.RunLogMessagesAppended {
+		return r.appendTranscriptRunLogDelta(ctx, input)
+	}
+
+	evt, err := hooks.DecodeFromRecordInput(input)
 	if err != nil {
 		return err
 	}
 	payload := append([]byte(nil), input.Payload...)
 	if e, ok := evt.(*hooks.ToolCallScheduledEvent); ok {
 		if enriched := r.enrichToolCallScheduledHint(ctx, e); enriched {
-			reencoded, err := hooks.EncodeToHookInput(e, input.TurnID)
+			reencoded, err := hooks.EncodeToRecordInput(e, hooks.EncodeOptions{
+				TurnID:      input.TurnID,
+				EventKey:    input.EventKey,
+				TimestampMS: input.TimestampMS,
+			})
 			if err == nil {
 				payload = append([]byte(nil), reencoded.Payload.RawMessage()...)
 			}
@@ -105,6 +120,29 @@ func (r *Runtime) hookActivity(ctx context.Context, input *HookActivityInput) er
 		r.storeWorkflowHandle(input.RunID, nil)
 	}
 	return nil
+}
+
+// appendTranscriptRunLogDelta appends a canonical transcript delta record to the
+// durable run log. Transcript deltas never publish to the hook bus or session
+// streams because they are runtime-owned persistence, not live UX signals.
+func (r *Runtime) appendTranscriptRunLogDelta(ctx context.Context, input *RecordActivityInput) error {
+	if input == nil {
+		return errors.New("runtime: transcript delta input is nil")
+	}
+	if _, err := transcript.DecodeRunLogDelta(input.Payload); err != nil {
+		return fmt.Errorf("runtime: decode transcript delta: %w", err)
+	}
+	_, err := r.RunEventStore.Append(ctx, &runlog.Event{
+		EventKey:  input.EventKey,
+		RunID:     input.RunID,
+		AgentID:   input.AgentID,
+		SessionID: input.SessionID,
+		TurnID:    input.TurnID,
+		Type:      input.Type,
+		Payload:   append([]byte(nil), input.Payload...),
+		Timestamp: time.UnixMilli(input.TimestampMS).UTC(),
+	})
+	return err
 }
 
 func (r *Runtime) enrichToolCallScheduledHint(ctx context.Context, evt *hooks.ToolCallScheduledEvent) bool {

@@ -236,7 +236,7 @@ planner and runtime streaming:
 | Unary assistant text | Supported |
 | Unary tool calls with provider-issued IDs | Supported |
 | Runtime-owned factory | Supported via `Runtime.NewOpenAIModelClient(...)` |
-| `RunID` transcript rehydration | Supported via the runtime-owned ledger source |
+| Explicit full transcript input | Supported; callers pass the complete provider-ready transcript in `model.Request.Messages` |
 | Assistant `tool_use` + user `tool_result` transcript replay | Supported for OpenAI-representable assistant turns; tool-result errors stay explicit |
 | Streaming text | Supported |
 | Streaming `tool_call_delta` and final `tool_call` | Supported |
@@ -249,9 +249,10 @@ planner and runtime streaming:
 This is the intended migration seam for Aura-style inference backends: swap the
 provider adapter, keep planners and runtime flow unchanged.
 
-Resume requests are strict: when `RunID` is set, the runtime must be able to
-load prior ledger messages or the adapter returns an error rather than silently
-falling back to request-local messages.
+Model adapters are stateless at the transcript boundary. They never rehydrate
+history from a `RunID`; runtime-owned callers must supply the full transcript,
+and durable recovery rebuilds that transcript from runlog
+`transcript_messages_appended` records.
 
 ---
 
@@ -1126,9 +1127,10 @@ handle memory persistence and stream forwarding.
 
 **Determinism note:** When using a durable workflow engine (e.g., Temporal),
 workflow code must be deterministic and must not trigger external I/O. The
-runtime therefore routes workflow-emitted hook events through a dedicated hook
-activity (`runtime.publish_hook`), which publishes to the bus outside the
-workflow thread. Activities and other non-workflow code publish directly.
+runtime therefore routes workflow-emitted records through a dedicated record
+activity (`runtime.record_event`), which persists canonical run-log records and
+fans out hook-backed records outside the workflow thread. Activities and other
+non-workflow code publish directly.
 
 **Event types:**
 
@@ -1503,9 +1505,10 @@ openAIClient, err := rt.NewOpenAIModelClient(runtime.OpenAIConfig{
 })
 ```
 
-When the configured engine supports workflow queries, both runtime-owned model
-factories wire transcript rehydration automatically, so `model.Request.RunID`
-rehydrates prior provider-ready messages before request-local messages.
+Runtime-owned model factories are transcript-stateless. Callers must pass the
+complete provider-ready transcript in `model.Request.Messages`, and the runtime
+persists canonical transcript deltas so they can be replayed from the durable
+runlog when needed.
 
 When planners render prompts through `RenderPrompt`, copy prompt provenance into model requests:
 
@@ -1518,7 +1521,6 @@ if err != nil {
 }
 
 resp, err := modelClient.Complete(ctx, &model.Request{
-    RunID:      input.RunContext.RunID,
     Messages:   input.Messages,
     PromptRefs: []prompt.PromptRef{content.Ref},
 })
@@ -1607,7 +1609,7 @@ specs := rt.ToolSpecsForAgent(agent.Ident("service.chat"))
 ```go
 type Engine interface {
     RegisterWorkflow(ctx, def WorkflowDefinition) error
-    RegisterHookActivity(ctx, name, opts, fn) error
+    RegisterRecordActivity(ctx, name, opts, fn) error
     RegisterPlannerActivity(ctx, name, opts, fn) error
     RegisterExecuteToolActivity(ctx, name, opts, fn) error
     StartWorkflow(ctx, req WorkflowStartRequest) (WorkflowHandle, error)
@@ -1625,7 +1627,8 @@ type WorkflowContext interface {
     WorkflowID() string
     RunID() string
     Now() time.Time  // Deterministic time
-    PublishHook(ctx, call) error
+    NextSequence() uint64
+    PublishRecord(ctx, call) error
     ExecutePlannerActivity(ctx, call) (*api.PlanActivityOutput, error)
     ExecuteToolActivity(ctx, call) (*api.ToolOutput, error)
     ExecuteToolActivityAsync(ctx, call) (Future[*api.ToolOutput], error)

@@ -8,27 +8,49 @@ package runtime
 // - Appends messages to the PlanInput in the same order used for tool_result correlation.
 
 import (
+	"context"
+
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/transcript"
 )
+
+// appendTranscriptMessages appends canonical transcript messages to the planner
+// input and persists the exact delta to the durable run log.
+func (r *Runtime) appendTranscriptMessages(
+	ctx context.Context,
+	agentID agent.Ident,
+	base *planner.PlanInput,
+	turnID string,
+	messages []*model.Message,
+) error {
+	if len(messages) == 0 {
+		return nil
+	}
+	base.Messages = append(base.Messages, messages...)
+	return r.publishTranscriptDelta(
+		ctx,
+		base.RunContext.RunID,
+		agentID,
+		base.RunContext.SessionID,
+		turnID,
+		messages,
+	)
+}
 
 // recordAssistantTurn merges streamed transcript parts with the declared tool calls
 // and appends the resulting assistant messages to the conversation state.
-func (r *Runtime) recordAssistantTurn(base *planner.PlanInput, transcriptMsgs []*model.Message, allowed []planner.ToolRequest, led *transcript.Ledger) {
-	if led == nil {
-		led = transcript.NewLedger()
-	}
+func (r *Runtime) recordAssistantTurn(
+	ctx context.Context,
+	agentID agent.Ident,
+	base *planner.PlanInput,
+	transcriptMsgs []*model.Message,
+	allowed []planner.ToolRequest,
+	turnID string,
+) error {
 	if len(transcriptMsgs) == 0 && len(allowed) == 0 {
-		return
+		return nil
 	}
-	for _, call := range allowed {
-		led.DeclareToolUse(call.ToolCallID, string(call.Name), call.Payload)
-	}
-	// Flush a single assistant message capturing the full turn (thinking/text
-	// plus all tool_use blocks) so the next user message can correlate to the
-	// complete set of tool_use IDs.
-	led.FlushAssistant()
 	messages := cloneMessages(transcriptMsgs)
 	target := findAssistantMessage(messages)
 	if target == nil {
@@ -42,7 +64,7 @@ func (r *Runtime) recordAssistantTurn(base *planner.PlanInput, transcriptMsgs []
 			Input: call.Payload,
 		})
 	}
-	base.Messages = append(base.Messages, messages...)
+	return r.appendTranscriptMessages(ctx, agentID, base, turnID, messages)
 }
 
 // findAssistantMessage returns the last assistant message in msgs, if any.

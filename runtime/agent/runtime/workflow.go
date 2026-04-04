@@ -22,7 +22,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
-	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 const (
@@ -141,19 +140,21 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		Messages:   input.Messages,
 		RunContext: runCtx,
 	}
-	// Register the ledger query before the first planner activity so the planner's
-	// initial model request can rehydrate the current run from an initially empty
-	// prior transcript.
-	st := &runLoopState{
-		Ledger: transcript.FromModelMessages(nil),
+	if len(input.Messages) > 0 {
+		if err := r.publishTranscriptDelta(
+			wfCtx.Context(),
+			input.RunID,
+			input.AgentID,
+			input.SessionID,
+			turnID,
+			input.Messages,
+		); err != nil {
+			finalErr = err
+			finalStatus = terminalRunStatusForError(err)
+			return nil, err
+		}
 	}
-	if err := wfCtx.SetQueryHandler(transcript.QueryLedgerMessages, func() ([]*model.Message, error) {
-		return st.Ledger.BuildMessages(), nil
-	}); err != nil {
-		finalErr = err
-		finalStatus = terminalRunStatusForError(err)
-		return nil, err
-	}
+	st := &runLoopState{}
 	// Compute deadlines before the initial Plan so it cannot outlive the run window.
 	timing := resolveRunTiming(reg, input)
 	timeBudget := timing.TimeBudget
@@ -258,7 +259,6 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	st.AggUsage = firstOutput.Usage
 	st.Result = firstOutput.Result
 	st.Transcript = firstOutput.Transcript
-	st.Ledger = transcript.FromModelMessages(firstOutput.Transcript)
 	r.logger.Info(wfCtx.Context(), "Starting runLoop", "tool_calls", len(result.ToolCalls))
 	// Create parentTracker if this is a nested agent run (has ParentToolCallID)
 	var parentTracker *childTracker

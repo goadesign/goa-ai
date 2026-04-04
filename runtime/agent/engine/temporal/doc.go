@@ -71,7 +71,7 @@
 // WorkflowContext that exposes only deterministic operations:
 //
 //   - Now() returns workflow time (not wall clock)
-//   - PublishHook schedules hook publishing outside the workflow thread
+//   - PublishRecord schedules record persistence outside the workflow thread
 //   - ExecutePlannerActivity runs planner activities
 //   - ExecuteToolActivity/ExecuteToolActivityAsync run tool activities
 //   - PauseRequests/ResumeRequests/... return typed signal receivers

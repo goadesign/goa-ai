@@ -347,15 +347,16 @@ In `newFromOptions`:
 - Always initialize `PromptRegistry = prompt.NewRegistry(opts.PromptStore)`.
 - Do not fail runtime creation when `PromptStore` is nil.
 
-### 8.2 Hook integration from registry
+### 8.2 Record integration from registry
 
-Use existing hook publishing seam:
+Use existing runtime record publishing seam:
 
 - `runtime/agent/runtime/helpers.go`
   - `publishHookErr(...)`
 
-Registry event emission should call runtime hook publisher callback, not publish
-directly to bus, so canonical runlog append behavior remains consistent.
+Registry event emission should call the runtime hook publisher callback, not
+publish directly to the bus, so canonical runlog append behavior remains
+consistent.
 
 ---
 

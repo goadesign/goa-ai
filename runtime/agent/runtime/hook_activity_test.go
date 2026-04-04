@@ -44,6 +44,17 @@ func (r *recordingRunlog) List(context.Context, string, string, int) (runlog.Pag
 	return runlog.Page{}, errors.New("not implemented")
 }
 
+func mustEncodeHookRecord(t *testing.T, evt hooks.Event, eventKey string, timestampMS int64) *runlog.ActivityInput {
+	t.Helper()
+	input, err := hooks.EncodeToRecordInput(evt, hooks.EncodeOptions{
+		TurnID:      "turn-1",
+		EventKey:    eventKey,
+		TimestampMS: timestampMS,
+	})
+	require.NoError(t, err)
+	return input
+}
+
 func TestHookActivityAppendsBeforePublish(t *testing.T) {
 	t.Parallel()
 
@@ -79,10 +90,14 @@ func TestHookActivityAppendsBeforePublish(t *testing.T) {
 		Metadata:  nil,
 	}))
 
-	input, err := hooks.EncodeToHookInput(hooks.NewPlannerNoteEvent("run-1", "svc.agent", "sess-1", "note", nil), "turn-1")
-	require.NoError(t, err)
+	input := mustEncodeHookRecord(
+		t,
+		hooks.NewPlannerNoteEvent("run-1", "svc.agent", "sess-1", "note", nil),
+		"evt-1",
+		1,
+	)
 
-	err = rt.hookActivity(context.Background(), input)
+	err = rt.recordActivity(context.Background(), input)
 	require.NoError(t, err)
 
 	require.NotNil(t, published)
@@ -128,10 +143,14 @@ func TestHookActivityAppendFailureAbortsPublish(t *testing.T) {
 		Metadata:  nil,
 	}))
 
-	input, err := hooks.EncodeToHookInput(hooks.NewPlannerNoteEvent("run-1", "svc.agent", "sess-1", "note", nil), "turn-1")
-	require.NoError(t, err)
+	input := mustEncodeHookRecord(
+		t,
+		hooks.NewPlannerNoteEvent("run-1", "svc.agent", "sess-1", "note", nil),
+		"evt-2",
+		2,
+	)
 
-	err = rt.hookActivity(context.Background(), input)
+	err = rt.recordActivity(context.Background(), input)
 	require.ErrorIs(t, err, appendErr)
 	require.Nil(t, published)
 }
@@ -158,7 +177,8 @@ func TestHookActivity_ReplayedChildRunLinkDoesNotDuplicateSessionProjection(t *t
 		SessionStore:  store,
 	}
 
-	input, err := hooks.EncodeToHookInput(
+	input := mustEncodeHookRecord(
+		t,
 		hooks.NewChildRunLinkedEvent(
 			"parent-run",
 			"svc.agent",
@@ -168,12 +188,12 @@ func TestHookActivity_ReplayedChildRunLinkDoesNotDuplicateSessionProjection(t *t
 			"child-run",
 			"svc.child",
 		),
-		"turn-1",
+		"evt-3",
+		3,
 	)
-	require.NoError(t, err)
 
-	require.NoError(t, rt.hookActivity(context.Background(), input))
-	require.NoError(t, rt.hookActivity(context.Background(), input))
+	require.NoError(t, rt.recordActivity(context.Background(), input))
+	require.NoError(t, rt.recordActivity(context.Background(), input))
 
 	parent, err := store.LoadRun(context.Background(), "parent-run")
 	require.NoError(t, err)
@@ -204,14 +224,18 @@ func TestHookActivityRecordsHeartbeatsWhenConfigured(t *testing.T) {
 		UpdatedAt: now,
 	}))
 
-	input, err := hooks.EncodeToHookInput(hooks.NewPlannerNoteEvent("run-1", "svc.agent", "sess-1", "note", nil), "turn-1")
-	require.NoError(t, err)
+	input := mustEncodeHookRecord(
+		t,
+		hooks.NewPlannerNoteEvent("run-1", "svc.agent", "sess-1", "note", nil),
+		"evt-4",
+		4,
+	)
 
 	ctx := context.Background()
 	ctx = engine.WithActivityHeartbeatRecorder(ctx, recorder)
 	ctx = engine.WithActivityHeartbeatTimeout(ctx, 3*time.Millisecond)
 
-	require.NoError(t, rt.hookActivity(ctx, input))
+	require.NoError(t, rt.recordActivity(ctx, input))
 	require.GreaterOrEqual(t, recorder.Count(), 1)
 }
 
@@ -262,10 +286,9 @@ func TestHookActivity_EnrichesToolCallScheduledDisplayHintInRunlog(t *testing.T)
 	// hint (when possible) using typed payloads at publish time.
 	require.Empty(t, ev.DisplayHint)
 
-	input, err := hooks.EncodeToHookInput(ev, "turn-1")
-	require.NoError(t, err)
+	input := mustEncodeHookRecord(t, ev, "evt-5", 5)
 
-	require.NoError(t, rt.hookActivity(context.Background(), input))
+	require.NoError(t, rt.recordActivity(context.Background(), input))
 	require.Len(t, rl.events, 1)
 	require.Equal(t, hooks.ToolCallScheduled, rl.events[0].Type)
 	require.Contains(t, string(rl.events[0].Payload), "Checking hourly energy rates")
@@ -306,13 +329,11 @@ func TestHookActivityAccumulatesPromptRefsOnRunMeta(t *testing.T) {
 			Labels:    nil,
 		},
 	)
-	input, err := hooks.EncodeToHookInput(ev, "turn-1")
-	require.NoError(t, err)
-	require.NoError(t, rt.hookActivity(context.Background(), input))
+	input := mustEncodeHookRecord(t, ev, "evt-6", 6)
+	require.NoError(t, rt.recordActivity(context.Background(), input))
 
-	input2, err := hooks.EncodeToHookInput(ev, "turn-1")
-	require.NoError(t, err)
-	require.NoError(t, rt.hookActivity(context.Background(), input2))
+	input2 := mustEncodeHookRecord(t, ev, "evt-7", 7)
+	require.NoError(t, rt.recordActivity(context.Background(), input2))
 
 	run, err := store.LoadRun(context.Background(), "run-1")
 	require.NoError(t, err)
@@ -357,10 +378,9 @@ func TestHookActivityLinksChildRunsOnParentRunMeta(t *testing.T) {
 		"run-child",
 		"svc.child",
 	)
-	input, err := hooks.EncodeToHookInput(linked, "turn-1")
-	require.NoError(t, err)
-	require.NoError(t, rt.hookActivity(context.Background(), input))
-	require.NoError(t, rt.hookActivity(context.Background(), input))
+	input := mustEncodeHookRecord(t, linked, "evt-8", 8)
+	require.NoError(t, rt.recordActivity(context.Background(), input))
+	require.NoError(t, rt.recordActivity(context.Background(), input))
 
 	parentRun, err := store.LoadRun(context.Background(), "run-parent")
 	require.NoError(t, err)

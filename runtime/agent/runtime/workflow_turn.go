@@ -21,7 +21,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 // handleToolTurn executes the planner-returned tool calls for the current turn
@@ -115,7 +114,9 @@ func (r *Runtime) handleToolTurn(
 		return nil, fmt.Errorf("confirmation required but interrupts are not available")
 	}
 	if len(toExecute) > 0 {
-		r.recordAssistantTurn(base, st.Transcript, toExecute, st.Ledger)
+		if err := r.recordAssistantTurn(ctx, input.AgentID, base, st.Transcript, toExecute, turnID); err != nil {
+			return nil, err
+		}
 	}
 
 	execCalls := make([]planner.ToolRequest, len(toExecute))
@@ -141,7 +142,7 @@ func (r *Runtime) handleToolTurn(
 	if err := r.appendToolOutputs(ctx, st, toExecute, vals); err != nil {
 		return nil, err
 	}
-	if err := r.appendUserToolResults(base, toExecute, vals, st.Ledger); err != nil {
+	if err := r.appendUserToolResults(ctx, input.AgentID, base, toExecute, vals, turnID); err != nil {
 		return nil, err
 	}
 	if timedOut {
@@ -227,7 +228,6 @@ func (r *Runtime) handleToolTurn(
 	st.AggUsage = addTokenUsage(st.AggUsage, resOutput.Usage)
 	st.Result = resOutput.Result
 	st.Transcript = resOutput.Transcript
-	st.Ledger = transcript.FromModelMessages(st.Transcript)
 	return nil, nil
 }
 

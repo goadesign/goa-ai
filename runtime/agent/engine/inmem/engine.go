@@ -28,7 +28,7 @@ type (
 
 		workflows map[string]engine.WorkflowDefinition
 
-		hookActivities    map[string]hookActivityDef
+		recordActivities  map[string]recordActivityDef
 		plannerActivities map[string]plannerActivityDef
 		toolActivities    map[string]toolActivityDef
 
@@ -42,6 +42,7 @@ type (
 		id    string
 		runID string
 		eng   *eng
+		seq   *sequenceCounter
 
 		pauseCh       chan *api.PauseRequest
 		resumeCh      chan *api.ResumeRequest
@@ -64,9 +65,14 @@ type (
 		h engine.WorkflowHandle
 	}
 
-	hookActivityDef struct {
-		handler func(context.Context, *api.HookActivityInput) error
+	recordActivityDef struct {
+		handler func(context.Context, *api.RecordActivityInput) error
 		opts    engine.ActivityOptions
+	}
+
+	sequenceCounter struct {
+		mu   sync.Mutex
+		next uint64
 	}
 
 	plannerActivityDef struct {
@@ -99,6 +105,13 @@ var (
 	_ engine.ChildWorkflowHandle = (*childHandle)(nil)
 )
 
+func (s *sequenceCounter) Next() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.next++
+	return s.next
+}
+
 // New returns a new in-memory workflow engine.
 //
 // This engine is intended for tests and local development only. It does not
@@ -125,24 +138,24 @@ func (e *eng) RegisterWorkflow(_ context.Context, def engine.WorkflowDefinition)
 	return nil
 }
 
-// RegisterHookActivity registers a typed hook activity that publishes workflow-emitted
-// hook events outside of deterministic workflow code.
-func (e *eng) RegisterHookActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.HookActivityInput) error) error {
+// RegisterRecordActivity registers a typed runtime-record activity that persists
+// workflow-emitted records outside of deterministic workflow code.
+func (e *eng) RegisterRecordActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.RecordActivityInput) error) error {
 	if name == "" {
-		return errors.New("hook activity name is required")
+		return errors.New("record activity name is required")
 	}
 	if fn == nil {
-		return errors.New("hook activity handler is required")
+		return errors.New("record activity handler is required")
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.hookActivities == nil {
-		e.hookActivities = make(map[string]hookActivityDef)
+	if e.recordActivities == nil {
+		e.recordActivities = make(map[string]recordActivityDef)
 	}
-	if _, dup := e.hookActivities[name]; dup {
-		return fmt.Errorf("hook activity %q already registered", name)
+	if _, dup := e.recordActivities[name]; dup {
+		return fmt.Errorf("record activity %q already registered", name)
 	}
-	e.hookActivities[name] = hookActivityDef{
+	e.recordActivities[name] = recordActivityDef{
 		handler: fn,
 		opts:    opts,
 	}
@@ -212,6 +225,7 @@ func (e *eng) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest
 		// In-memory assigns workflow ID as run ID.
 		runID: req.ID,
 		eng:   e,
+		seq:   &sequenceCounter{},
 
 		pauseCh:       make(chan *api.PauseRequest, 1),
 		resumeCh:      make(chan *api.ResumeRequest, 1),
@@ -407,6 +421,10 @@ func (w *wfCtx) Now() time.Time {
 	return time.Now()
 }
 
+func (w *wfCtx) NextSequence() uint64 {
+	return w.seq.Next()
+}
+
 func (w *wfCtx) NewTimer(ctx context.Context, d time.Duration) (engine.Future[time.Time], error) {
 	now := time.Now()
 	if d <= 0 {
@@ -446,18 +464,18 @@ func (w *wfCtx) Await(ctx context.Context, condition func() bool) error {
 	}
 }
 
-func (w *wfCtx) PublishHook(ctx context.Context, call engine.HookActivityCall) error {
+func (w *wfCtx) PublishRecord(ctx context.Context, call engine.RecordActivityCall) error {
 	if call.Name == "" {
-		return errors.New("hook activity name is required")
+		return errors.New("record activity name is required")
 	}
 	if call.Input == nil {
-		return errors.New("hook activity input is required")
+		return errors.New("record activity input is required")
 	}
 	w.eng.mu.RLock()
-	def, ok := w.eng.hookActivities[call.Name]
+	def, ok := w.eng.recordActivities[call.Name]
 	w.eng.mu.RUnlock()
 	if !ok {
-		return fmt.Errorf("hook activity %q not registered", call.Name)
+		return fmt.Errorf("record activity %q not registered", call.Name)
 	}
 	timeout := call.Options.StartToCloseTimeout
 	if timeout == 0 {

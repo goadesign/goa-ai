@@ -8,6 +8,7 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/prompt"
+	"goa.design/goa-ai/runtime/agent/runlog"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/session"
 	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
@@ -109,7 +110,7 @@ func TestRunOneShotClassifiesCanceledExecutionAsCanceled(t *testing.T) {
 	require.Len(t, page.Events, 2)
 	require.Equal(t, hooks.RunCompleted, page.Events[1].Type)
 
-	input := &hooks.ActivityInput{
+	input := &runlog.ActivityInput{
 		Type:      page.Events[1].Type,
 		RunID:     page.Events[1].RunID,
 		AgentID:   "example.agent",
@@ -117,7 +118,7 @@ func TestRunOneShotClassifiesCanceledExecutionAsCanceled(t *testing.T) {
 		TurnID:    page.Events[1].TurnID,
 		Payload:   page.Events[1].Payload,
 	}
-	event, decodeErr := hooks.DecodeFromHookInput(input)
+	event, decodeErr := hooks.DecodeFromRecordInput(input)
 	require.NoError(t, decodeErr)
 	completed, ok := event.(*hooks.RunCompletedEvent)
 	require.True(t, ok)
