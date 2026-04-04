@@ -397,16 +397,10 @@ func TestMultiNodeUnregistrationSync(t *testing.T) {
 	}
 
 	// Toolset should be removed from registry map.
-	_, ok := registryMap.Get(toolsetCatalogKey("test-toolset"))
-	if ok {
-		t.Error("toolset should be removed from registry map")
-	}
+	waitForMapKeyRemoval(t, registryMap, toolsetCatalogKey("test-toolset"))
 
 	// Health state should be cleaned up.
-	_, ok = healthMap.Get("registry:health:test-toolset")
-	if ok {
-		t.Error("health state should be cleaned up")
-	}
+	waitForMapKeyRemoval(t, healthMap, "registry:health:test-toolset")
 }
 
 // TestNewNodeSyncsExistingToolsets verifies that a new node joining the cluster
@@ -560,6 +554,25 @@ func waitForTicker(t *testing.T, tracker HealthTracker, toolset string) {
 		case <-poll.C:
 		case <-deadline.C:
 			t.Fatalf("tracker did not start local ticker for %q", toolset)
+		}
+	}
+}
+
+func waitForMapKeyRemoval(t *testing.T, rm *rmap.Map, key string) {
+	t.Helper()
+
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
+	for {
+		if _, ok := rm.Get(key); !ok {
+			return
+		}
+		select {
+		case <-poll.C:
+		case <-deadline.C:
+			t.Fatalf("map key %q was not removed", key)
 		}
 	}
 }
