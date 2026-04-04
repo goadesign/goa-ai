@@ -194,6 +194,22 @@ that UIs and stream bridges can consume without heuristics.
 
 This keeps consumers simple: render `error`, gate “Retry” on `retryable`, and treat `canceled` as non-error.
 
+## Runtime Tracing Error Contract
+
+The runtime uses one generic rule for span failures across model clients and
+Temporal activities:
+
+- Non-nil errors mark spans failed by default.
+- They do not mark spans failed when the active context is already done and the
+  returned error is a structured context-termination shape.
+- Supported termination shapes are `context.Canceled`,
+  `context.DeadlineExceeded`, and gRPC `Canceled` / `DeadlineExceeded`
+  statuses.
+
+This tracing rule is intentionally generic. Application-specific error
+taxonomies, dashboard semantics, and product observability attributes belong in
+the integrating application rather than in the runtime.
+
 ## Tool Input Schema
 
 For each tool with a non-empty payload, the plugin derives a compact JSON Schema from the Goa attribute and exposes it in `tools/list` under `inputSchema`. This uses Goa's `openapi.Schema` type for complete JSON Schema draft 2020-12 support.

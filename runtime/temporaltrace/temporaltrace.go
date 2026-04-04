@@ -24,6 +24,7 @@ import (
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/workflow"
+	"goa.design/goa-ai/runtime/agent/telemetry"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -205,12 +206,14 @@ func (a *activityInbound) ExecuteActivity(ctx context.Context, in *interceptor.E
 	defer span.End()
 
 	out, err := a.Next.ExecuteActivity(ctx, in)
-	if err != nil {
+	if err == nil {
+		return out, nil
+	}
+	if telemetry.ShouldRecordSpanError(ctx, err) {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return nil, err
 	}
-	return out, nil
+	return nil, err
 }
 
 // TraceParent returns the W3C traceparent string for the active span in ctx.

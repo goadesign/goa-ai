@@ -1,3 +1,10 @@
+// Package runtime records model client spans and stream lifecycle telemetry.
+//
+// Contract:
+//   - Each complete or stream request owns exactly one client span.
+//   - Stream spans aggregate token usage across chunks and end at most once.
+//   - A non-nil error marks the span failed only when telemetry classifies it as
+//     a real operation failure instead of a context-driven termination.
 package runtime
 
 import (
@@ -25,6 +32,7 @@ type (
 	tracedStream struct {
 		inner model.Streamer
 		span  telemetry.Span
+		ctx   context.Context
 
 		mu    sync.Mutex
 		usage model.TokenUsage
@@ -62,6 +70,10 @@ func (c *tracedClient) Complete(ctx context.Context, req *model.Request) (*model
 
 	resp, err := c.inner.Complete(ctx, req)
 	if err != nil {
+		if !telemetry.ShouldRecordSpanError(ctx, err) {
+			span.SetStatus(codes.Unset, "")
+			return resp, err
+		}
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "model complete failed")
 		c.logger.Error(
@@ -99,6 +111,11 @@ func (c *tracedClient) Stream(ctx context.Context, req *model.Request) (model.St
 
 	st, err := c.inner.Stream(ctx, req)
 	if err != nil {
+		if !telemetry.ShouldRecordSpanError(ctx, err) {
+			span.SetStatus(codes.Unset, "")
+			span.End()
+			return nil, err
+		}
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "model stream failed")
 		span.End()
@@ -113,6 +130,7 @@ func (c *tracedClient) Stream(ctx context.Context, req *model.Request) (model.St
 	return &tracedStream{
 		inner: st,
 		span:  span,
+		ctx:   ctx,
 	}, nil
 }
 
@@ -121,6 +139,10 @@ func (s *tracedStream) Recv() (model.Chunk, error) {
 	if err != nil {
 		if errors.Is(err, io.EOF) {
 			s.end(codes.Ok, "eof")
+			return ch, err
+		}
+		if !telemetry.ShouldRecordSpanError(s.ctx, err) {
+			s.end(codes.Unset, "")
 			return ch, err
 		}
 		s.span.RecordError(err)
@@ -145,6 +167,10 @@ func (s *tracedStream) Recv() (model.Chunk, error) {
 func (s *tracedStream) Close() error {
 	err := s.inner.Close()
 	if err != nil {
+		if !telemetry.ShouldRecordSpanError(s.ctx, err) {
+			s.end(codes.Unset, "")
+			return err
+		}
 		s.span.RecordError(err)
 		s.end(codes.Error, "stream close failed")
 		return err

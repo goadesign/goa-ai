@@ -175,7 +175,7 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*sdk.M
 	params := sdk.MessageNewParams{
 		MaxTokens: int64(maxTokens),
 		Messages:  msgs,
-		Model:     sdk.Model(modelID),
+		Model:     modelID,
 	}
 	if len(system) > 0 {
 		params.System = system

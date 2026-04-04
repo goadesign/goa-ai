@@ -3,8 +3,6 @@
 GO ?= go
 HTTP_PORT ?= 8888
 
-GOPATH ?= $(shell go env GOPATH)
-GOLANGCI_LINT := $(shell command -v golangci-lint 2>/dev/null)
 PROTOC := $(shell command -v protoc 2>/dev/null)
 PROTOC_GEN_GO := protoc-gen-go
 PROTOC_GEN_GO_GRPC := protoc-gen-go-grpc
@@ -17,7 +15,7 @@ build: tools
 	$(GO) build ./...
 
 lint: tools
-	golangci-lint run --timeout=5m
+	$(GO) tool golangci-lint run --timeout=5m
 
 test: tools
 	$(GO) test -race -covermode=atomic -coverprofile=cover.out `$(GO) list ./... | grep -v '/integration_tests'`
@@ -31,12 +29,7 @@ ci: build lint test
 tools: ensure-golangci ensure-protoc-plugins protoc-check
 
 ensure-golangci:
-	@if [ -z "$(GOLANGCI_LINT)" ]; then \
-		echo "Installing golangci-lint v2.6.2..."; \
-		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(GOPATH)/bin v2.6.2; \
-	else \
-		echo "golangci-lint found: $(GOLANGCI_LINT)"; \
-	fi
+	@$(GO) tool golangci-lint version >/dev/null
 
 ensure-protoc-plugins:
 	@if ! command -v $(PROTOC_GEN_GO) >/dev/null 2>&1; then \
