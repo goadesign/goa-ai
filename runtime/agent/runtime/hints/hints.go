@@ -5,6 +5,7 @@ package hints
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"text/template"
@@ -115,7 +116,8 @@ func CompileHintTemplates(raw map[tools.Ident]string, extra template.FuncMap) (m
 			return 0
 		},
 		// humanTime renders a timestamp for user-facing hints at minute precision.
-		// It accepts RFC3339 timestamp strings and time.Time values.
+		// It accepts time.Time values, RFC3339 strings, named string aliases, and
+		// pointers to any of those shapes.
 		//
 		// When parsing fails, it returns fmt.Sprint(v) so hint rendering can
 		// continue while still surfacing the original value.
@@ -129,9 +131,9 @@ func CompileHintTemplates(raw map[tools.Ident]string, extra template.FuncMap) (m
 		// since returns the integer number of seconds between two timestamps:
 		// to - from.
 		//
-		// It accepts RFC3339 timestamp strings (including timezone offsets) and
-		// time.Time values. When parsing fails, it returns 0 so hint rendering
-		// can continue.
+		// It accepts time.Time values, RFC3339 strings, named string aliases, and
+		// pointers to any of those shapes. When parsing fails, it returns 0 so
+		// hint rendering can continue.
 		"since": func(from, to any) int64 {
 			a, ok := parseTimestamp(from)
 			if !ok {
@@ -170,33 +172,42 @@ func CompileHintTemplates(raw map[tools.Ident]string, extra template.FuncMap) (m
 	return out, nil
 }
 
+// parseTimestamp normalizes template values into a time.Time.
+// It accepts time.Time values, RFC3339 strings, named string aliases, and
+// arbitrary pointer layers around those values. It returns false when the
+// value is nil or cannot be parsed.
 func parseTimestamp(v any) (time.Time, bool) {
-	switch t := v.(type) {
-	case time.Time:
-		return t, true
-	case *time.Time:
-		if t == nil {
+	if v == nil {
+		return time.Time{}, false
+	}
+	rv := reflect.ValueOf(v)
+	for rv.IsValid() && rv.Kind() == reflect.Pointer {
+		if rv.IsNil() {
 			return time.Time{}, false
 		}
-		return *t, true
-	case string:
-		if t == "" {
-			return time.Time{}, false
-		}
-		ts, err := time.Parse(time.RFC3339, t)
-		if err != nil {
-			return time.Time{}, false
-		}
-		return ts, true
-	default:
-		s := fmt.Sprint(v)
-		if s == "" {
-			return time.Time{}, false
-		}
-		ts, err := time.Parse(time.RFC3339, s)
-		if err != nil {
-			return time.Time{}, false
-		}
+		rv = rv.Elem()
+	}
+	if !rv.IsValid() {
+		return time.Time{}, false
+	}
+	if ts, ok := rv.Interface().(time.Time); ok {
 		return ts, true
 	}
+	if rv.Kind() == reflect.String {
+		return parseTimestampString(rv.String())
+	}
+	return parseTimestampString(fmt.Sprint(rv.Interface()))
+}
+
+// parseTimestampString parses an RFC3339 timestamp string and reports whether
+// the input contained a usable value.
+func parseTimestampString(s string) (time.Time, bool) {
+	if s == "" {
+		return time.Time{}, false
+	}
+	ts, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return ts, true
 }

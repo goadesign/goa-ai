@@ -17,7 +17,7 @@ func TestFormatResultPreviewUsesExplicitResultAndBoundsShape(t *testing.T) {
 	)))
 
 	total := 9
-	preview := formatResultPreview(toolName, &projectedRuntimeResult{
+	preview := formatResultPreview(toolName, nil, &projectedRuntimeResult{
 		Results: []string{"alpha"},
 	}, &agent.Bounds{
 		Returned:  1,
@@ -34,9 +34,24 @@ func TestFormatResultPreviewLeavesBoundsNilWhenAbsent(t *testing.T) {
 		`{{ if .Bounds }}has-bounds{{ else }}{{ len .Result.Results }} result{{ end }}`,
 	)))
 
-	preview := formatResultPreview(toolName, &projectedRuntimeResult{
+	preview := formatResultPreview(toolName, nil, &projectedRuntimeResult{
 		Results: []string{"alpha"},
 	}, nil)
 
 	require.Equal(t, "1 result", preview)
+}
+
+func TestFormatResultPreviewIncludesTypedArgsWhenAvailable(t *testing.T) {
+	toolName := tools.Ident("svc.tools.preview_args")
+	rthints.RegisterResultHint(toolName, template.Must(template.New("preview_args").Parse(
+		`{{ .Args.Query }} -> {{ index .Result.Results 0 }}`,
+	)))
+
+	preview := formatResultPreview(toolName, &projectedRuntimePayload{
+		Query: "status",
+	}, &projectedRuntimeResult{
+		Results: []string{"alpha"},
+	}, nil)
+
+	require.Equal(t, "status -> alpha", preview)
 }

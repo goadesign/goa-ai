@@ -67,7 +67,7 @@ func TestToolResultContentTruncatesOversizedResults(t *testing.T) {
 		},
 	}
 
-	content, err := rt.toolResultContent(tr)
+	content, err := rt.toolResultContent(nil, tr)
 	require.NoError(t, err)
 	m, ok := content.(map[string]any)
 	require.True(t, ok, "oversized tool_result content must be projected, not raw JSON")

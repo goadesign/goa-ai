@@ -31,11 +31,28 @@ type projectedRuntimeResult struct {
 	Results []string `json:"results"`
 }
 
+type projectedRuntimePayload struct {
+	Query string `json:"query"`
+}
+
 func newProjectedResultSpec() tools.ToolSpec {
+	payloadCodec := tools.JSONCodec[any]{
+		ToJSON: json.Marshal,
+		FromJSON: func(data []byte) (any, error) {
+			if len(bytes.TrimSpace(data)) == 0 || string(bytes.TrimSpace(data)) == jsonNullLiteral {
+				return nil, nil
+			}
+			var out projectedRuntimePayload
+			if err := json.Unmarshal(data, &out); err != nil {
+				return nil, err
+			}
+			return &out, nil
+		},
+	}
 	codec := tools.JSONCodec[any]{
 		ToJSON: json.Marshal,
 		FromJSON: func(data []byte) (any, error) {
-			if len(bytes.TrimSpace(data)) == 0 || string(bytes.TrimSpace(data)) == "null" {
+			if len(bytes.TrimSpace(data)) == 0 || string(bytes.TrimSpace(data)) == jsonNullLiteral {
 				return nil, nil
 			}
 			var out projectedRuntimeResult
@@ -48,7 +65,7 @@ func newProjectedResultSpec() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:    "tool",
 		Toolset: "svc.ts",
-		Payload: tools.TypeSpec{Name: "tool_payload", Codec: newAnyJSONSpec("tool", "svc.ts").Payload.Codec},
+		Payload: tools.TypeSpec{Name: "tool_payload", Codec: payloadCodec},
 		Result:  tools.TypeSpec{Name: "tool_result", Codec: codec},
 		Bounds: &tools.BoundsSpec{
 			Paging: &tools.PagingSpec{
@@ -381,7 +398,7 @@ func TestExecuteToolActivityDropsStaleOptionalBoundFieldsFromSemanticResult(t *t
 func TestPublishToolResultReceivedProjectsBoundsIntoResultPreview(t *testing.T) {
 	toolName := tools.Ident("svc.tools.projected_preview")
 	rthints.RegisterResultHint(toolName, template.Must(template.New("preview").Parse(
-		`{{ index .Result.Results 0 }} / {{ .Bounds.Returned }} / {{ .Bounds.Total }}`,
+		`{{ .Args.Query }} / {{ index .Result.Results 0 }} / {{ .Bounds.Returned }} / {{ .Bounds.Total }}`,
 	)))
 
 	recorder := &recordingHooks{}
@@ -389,6 +406,9 @@ func TestPublishToolResultReceivedProjectsBoundsIntoResultPreview(t *testing.T) 
 		r: &Runtime{
 			Bus:           recorder,
 			RunEventStore: runloginmem.New(),
+			toolSpecs: map[tools.Ident]tools.ToolSpec{
+				toolName: newProjectedResultSpec(),
+			},
 		},
 		runID:     "run-1",
 		agentID:   "agent-1",
@@ -396,7 +416,11 @@ func TestPublishToolResultReceivedProjectsBoundsIntoResultPreview(t *testing.T) 
 		turnID:    "turn-1",
 	}
 	total := 9
-	call := planner.ToolRequest{Name: toolName, ToolCallID: "tool-1"}
+	call := planner.ToolRequest{
+		Name:       toolName,
+		ToolCallID: "tool-1",
+		Payload:    rawjson.Message(`{"query":"status"}`),
+	}
 	tr := &planner.ToolResult{
 		Name:       toolName,
 		ToolCallID: "tool-1",
@@ -416,7 +440,7 @@ func TestPublishToolResultReceivedProjectsBoundsIntoResultPreview(t *testing.T) 
 
 	resultEvt, ok := recorder.events[0].(*hooks.ToolResultReceivedEvent)
 	require.True(t, ok)
-	require.Equal(t, "alpha / 1 / 9", resultEvt.ResultPreview)
+	require.Equal(t, "status / alpha / 1 / 9", resultEvt.ResultPreview)
 }
 
 func TestRegisterToolset_RejectsAgentToolsetWithoutSpecs(t *testing.T) {

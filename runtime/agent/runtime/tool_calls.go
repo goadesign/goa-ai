@@ -219,7 +219,7 @@ func (e *toolBatchExec) publishToolResultReceived(ctx context.Context, call plan
 		tr.ResultOmitted,
 		tr.ResultOmittedReason,
 		tr.ServerData,
-		formatResultPreview(call.Name, tr.Result, tr.Bounds),
+		formatResultPreviewForCall(ctx, e.r, &call, tr.Result, tr.Bounds),
 		tr.Bounds,
 		duration,
 		tr.Telemetry,
