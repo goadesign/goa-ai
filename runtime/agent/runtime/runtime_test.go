@@ -196,7 +196,7 @@ func TestFinishWithoutToolCallsRejectsDualTerminalOutputs(t *testing.T) {
 	require.Contains(t, err.Error(), "both")
 }
 
-func TestOneShotRunDoesNotRequireSession(t *testing.T) {
+func TestStartOneShotDoesNotRequireSession(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
 		Engine:     eng,
@@ -215,13 +215,14 @@ func TestOneShotRunDoesNotRequireSession(t *testing.T) {
 		},
 	}
 	client := rt.MustClient(agent.Ident("service.agent"))
-	_, err := client.OneShotRun(
+	handle, err := client.StartOneShot(
 		context.Background(),
 		nil,
 		WithRunID("run-oneshot-1"),
 		WithTurnID("turn-oneshot-1"),
 	)
 	require.NoError(t, err)
+	require.NotNil(t, handle)
 	require.Equal(t, "service.workflow", eng.last.Workflow)
 	require.Equal(t, "run-oneshot-1", eng.last.ID)
 	in := eng.last.Input

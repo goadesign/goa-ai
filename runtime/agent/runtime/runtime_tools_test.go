@@ -86,6 +86,37 @@ func TestExecuteToolActivityReturnsErrorAndHint(t *testing.T) {
 	require.Equal(t, planner.RetryReasonInvalidArguments, out.RetryHint.Reason)
 }
 
+func TestExecuteToolActivityPropagatesLabels(t *testing.T) {
+	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		require.Equal(t, map[string]string{
+			"aura.session.id": "sess-1",
+			"kind":            "brief",
+		}, call.Labels)
+		return &planner.ToolResult{
+			Name:   call.Name,
+			Result: map[string]any{"ok": true},
+		}, nil
+	}}}}
+	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
+		tools.Ident("tool"): newAnyJSONSpec("tool", "svc.ts"),
+	}
+	input := ToolInput{
+		AgentID:    "agent",
+		RunID:      "run",
+		ToolName:   "tool",
+		ToolCallID: "tool-1",
+		Payload:    []byte("null"),
+		Labels: map[string]string{
+			"aura.session.id": "sess-1",
+			"kind":            "brief",
+		},
+	}
+	out, err := rt.ExecuteToolActivity(context.Background(), &input)
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.JSONEq(t, `{"ok":true}`, string(out.Payload))
+}
+
 func TestEnforceToolResultContractsRequiresExplicitBoundsForBoundedTool(t *testing.T) {
 	rt := &Runtime{}
 	spec := newAnyJSONSpec("tool", "svc.ts")
