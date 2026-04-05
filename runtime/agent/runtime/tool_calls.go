@@ -405,6 +405,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 			ToolCallID:       call.ToolCallID,
 			Payload:          call.Payload,
 			SessionID:        call.SessionID,
+			Labels:           cloneLabels(call.Labels),
 			TurnID:           call.TurnID,
 			ParentToolCallID: call.ParentToolCallID,
 		}

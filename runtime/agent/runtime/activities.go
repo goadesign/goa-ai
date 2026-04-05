@@ -297,6 +297,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		RunID:            req.RunID,
 		AgentID:          req.AgentID,
 		SessionID:        req.SessionID,
+		Labels:           cloneLabels(req.Labels),
 		TurnID:           req.TurnID,
 		ParentToolCallID: req.ParentToolCallID,
 		ToolCallID:       req.ToolCallID,

@@ -15,8 +15,9 @@ type (
 	// Contract:
 	// - Run and Start are sessionful APIs: callers must provide a concrete
 	//   session ID that already exists in the runtime SessionStore.
-	// - OneShotRun is sessionless: callers provide no session ID and the runtime
-	//   persists only canonical run-log events for introspection by RunID.
+	// - StartOneShot and OneShotRun are sessionless: callers provide no session
+	//   ID and the runtime persists only canonical run-log events for
+	//   introspection by RunID.
 	// - Generated code typically returns AgentClient implementations via NewClient
 	//   helpers bound to one agent route.
 	AgentClient interface {
@@ -33,11 +34,22 @@ type (
 		// on workflow completion.
 		Start(ctx context.Context, sessionID string, messages []*model.Message, opts ...RunOption) (engine.WorkflowHandle, error)
 
-		// OneShotRun starts one sessionless workflow and blocks until completion.
+		// StartOneShot starts one sessionless workflow and returns immediately with
+		// a workflow handle for asynchronous coordination.
 		//
 		// One-shot runs do not participate in session lifecycle and do not emit
 		// session-scoped stream events. They still append canonical lifecycle and
 		// prompt/tool events to the run log.
+		//
+		// Callers use this when they need durable background work that can be
+		// observed by RunID before the request returns. StartOneShot does not block
+		// on workflow completion.
+		StartOneShot(ctx context.Context, messages []*model.Message, opts ...RunOption) (engine.WorkflowHandle, error)
+
+		// OneShotRun starts one sessionless workflow and blocks until completion.
+		//
+		// OneShotRun is request/response oriented: it is equivalent to
+		// StartOneShot followed by handle.Wait on the returned workflow handle.
 		OneShotRun(ctx context.Context, messages []*model.Message, opts ...RunOption) (*RunOutput, error)
 	}
 
@@ -137,9 +149,13 @@ func (c *agentClient) Start(ctx context.Context, sessionID string, messages []*m
 	return c.r.startRun(ctx, &input)
 }
 
-func (c *agentClient) OneShotRun(ctx context.Context, messages []*model.Message, opts ...RunOption) (*RunOutput, error) {
+func (c *agentClient) StartOneShot(ctx context.Context, messages []*model.Message, opts ...RunOption) (engine.WorkflowHandle, error) {
 	input := buildOneShotRunInput(c.id, messages, opts)
-	handle, err := c.r.startOneShotRun(ctx, &input)
+	return c.r.startOneShotRun(ctx, &input)
+}
+
+func (c *agentClient) OneShotRun(ctx context.Context, messages []*model.Message, opts ...RunOption) (*RunOutput, error) {
+	handle, err := c.StartOneShot(ctx, messages, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -159,9 +175,13 @@ func (c *agentClientRoute) Start(ctx context.Context, sessionID string, messages
 	return c.r.startRunWithRoute(ctx, &input, c.route)
 }
 
-func (c *agentClientRoute) OneShotRun(ctx context.Context, messages []*model.Message, opts ...RunOption) (*RunOutput, error) {
+func (c *agentClientRoute) StartOneShot(ctx context.Context, messages []*model.Message, opts ...RunOption) (engine.WorkflowHandle, error) {
 	input := buildOneShotRunInput(c.route.ID, messages, opts)
-	handle, err := c.r.startOneShotRunWithRoute(ctx, &input, c.route)
+	return c.r.startOneShotRunWithRoute(ctx, &input, c.route)
+}
+
+func (c *agentClientRoute) OneShotRun(ctx context.Context, messages []*model.Message, opts ...RunOption) (*RunOutput, error) {
+	handle, err := c.StartOneShot(ctx, messages, opts...)
 	if err != nil {
 		return nil, err
 	}

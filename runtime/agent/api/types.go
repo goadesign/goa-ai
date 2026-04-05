@@ -355,6 +355,10 @@ type (
 		// SessionID is the logical session identifier (for example, a chat conversation).
 		SessionID string
 
+		// Labels carries caller-defined run metadata dimensions used by runtime
+		// policies and prompt scoping.
+		Labels map[string]string
+
 		// TurnID identifies the conversational turn that produced this tool call.
 		TurnID string
 
