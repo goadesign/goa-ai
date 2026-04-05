@@ -120,7 +120,7 @@ func (r *Runtime) waitAwaitConfirmation(
 				false,
 				"",
 				nil,
-				formatResultPreview(it.call.Name, deniedResult, nil),
+				formatResultPreviewForCall(ctx, r, &it.call, deniedResult, nil),
 				nil,
 				0,
 				nil,
@@ -616,6 +616,10 @@ func (r *Runtime) consumeProvidedToolResults(ctx context.Context, input *RunInpu
 		if i < len(resultJSONs) {
 			resultJSON = resultJSONs[i]
 		}
+		var call *planner.ToolRequest
+		if i < len(allowed) {
+			call = &allowed[i]
+		}
 		if err := r.publishHook(
 			ctx,
 			hooks.NewToolResultReceivedEvent(
@@ -630,7 +634,7 @@ func (r *Runtime) consumeProvidedToolResults(ctx context.Context, input *RunInpu
 				false,
 				"",
 				tr.ServerData,
-				formatResultPreview(tr.Name, tr.Result, tr.Bounds),
+				formatResultPreviewForCall(ctx, r, call, tr.Result, tr.Bounds),
 				tr.Bounds,
 				0,
 				nil,

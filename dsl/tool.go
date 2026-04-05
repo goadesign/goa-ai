@@ -570,6 +570,8 @@ func CallHintTemplate(s string) {
 // template is rendered after execution to produce a concise preview.
 //
 // Result templates receive an explicit runtime-owned wrapper:
+//   - `.Args` is the tool's typed payload value when the runtime can decode the
+//     original tool call payload, otherwise nil.
 //   - `.Result` is the tool's typed semantic result value.
 //   - `.Bounds` is the runtime-owned bounded-result metadata when the tool
 //     returned `planner.ToolResult.Bounds`, otherwise nil.
@@ -587,7 +589,7 @@ func CallHintTemplate(s string) {
 //	        Attribute("count", Int)
 //	        Attribute("results", ArrayOf(String))
 //	    })
-//	    ResultHintTemplate("Found {{ .Result.Count }} results")
+//	    ResultHintTemplate("Found {{ .Result.Count }} results for {{ .Args.Query }}")
 //	})
 func ResultHintTemplate(s string) {
 	tool, ok := eval.Current().(*agentsexpr.ToolExpr)

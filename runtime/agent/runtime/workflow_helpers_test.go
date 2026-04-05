@@ -167,7 +167,7 @@ func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
 					ToolCallID:   call.ToolCallID,
 					ToolName:     call.Name,
 					ResultJSON:   rawjson.Message(resultJSON),
-					Preview:      formatResultPreview(tc.tr.Name, tc.tr.Result, tc.tr.Bounds),
+					Preview:      formatResultPreviewForCall(t.Context(), rt, &call, tc.tr.Result, tc.tr.Bounds),
 					Bounds:       tc.tr.Bounds,
 					ErrorMessage: errorMessage,
 				}, nil),

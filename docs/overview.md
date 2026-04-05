@@ -466,7 +466,7 @@ policies, and MCP servers within Goa service designs.
 | `BindTo(method)` or `BindTo(service, method)` | Bind tool to service method implementation |
 | `Inject(fields...)` | Mark fields as infrastructure-only (hidden from LLM) |
 | `CallHintTemplate(tmpl)` | Go template for tool call `DisplayHint` (typed payload; rendered by runtime) |
-| `ResultHintTemplate(tmpl)` | Go template for tool result display (`.Result` + optional `.Bounds`; rendered by runtime) |
+| `ResultHintTemplate(tmpl)` | Go template for tool result display (`.Args`, `.Result`, optional `.Bounds`; rendered by runtime) |
 | `BoundedResult()` | Mark result as bounded view over larger data |
 | `ResultReminder(text)` | Static system reminder injected after tool result |
 

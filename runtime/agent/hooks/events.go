@@ -248,10 +248,11 @@ type (
 		ServerData rawjson.Message
 		// ResultPreview is a concise, user-facing summary of the tool result rendered
 		// from the registered ResultHintTemplate for this tool. Result templates
-		// receive the runtime preview wrapper (`.Result` for semantic data,
-		// `.Bounds` for bounded-result metadata). The preview is computed while the
-		// result is still strongly typed so downstream subscribers do not need to
-		// re-render templates from JSON-decoded maps.
+		// receive the runtime preview wrapper (`.Args` for typed payload data,
+		// `.Result` for semantic data, `.Bounds` for bounded-result metadata). The
+		// preview is computed while the result is still strongly typed so
+		// downstream subscribers do not need to re-render templates from
+		// JSON-decoded maps.
 		ResultPreview string
 		// Bounds, when non-nil, describes how the tool result has been bounded
 		// relative to the full underlying data set. It is supplied by tool

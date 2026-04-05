@@ -826,7 +826,7 @@ Tool("search", "Search documents", func() {
         Attribute("results", ArrayOf(String))
     })
     CallHintTemplate("Searching for: {{ .Query }} (limit: {{ .Limit }})")
-    ResultHintTemplate("Found {{ .Result.Count }} results")
+    ResultHintTemplate("Found {{ .Result.Count }} results for {{ .Args.Query }}")
 })
 ```
 
@@ -835,10 +835,12 @@ Template variables use Go field names, not JSON keys.
 
 - Call templates receive the typed payload as the template root (for example,
   `.Query`, `.Limit`).
-- Result templates receive an explicit wrapper where semantic fields live under
-  `.Result` and bounded metadata lives under `.Bounds` (for example,
-  `.Result.Count`, `.Bounds.Returned`). `.Bounds` is nil when the tool result
-  is unbounded.
+- Result templates receive an explicit wrapper where payload fields live under
+  `.Args`, semantic fields live under `.Result`, and bounded metadata lives
+  under `.Bounds` (for example, `.Args.Query`, `.Result.Count`,
+  `.Bounds.Returned`). `.Args` is nil when the runtime cannot decode the
+  original tool call payload, and `.Bounds` is nil when the tool result is
+  unbounded.
 
 **Runtime contract:**
 

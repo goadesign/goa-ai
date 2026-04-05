@@ -155,7 +155,7 @@ func (r *Runtime) appendUserToolResults(
 		if !ok || tr == nil || tr.ToolCallID == "" {
 			continue
 		}
-		content, err := r.toolResultContent(tr)
+		content, err := r.toolResultContent(&call, tr)
 		if err != nil {
 			return err
 		}
@@ -209,7 +209,7 @@ func (r *Runtime) appendUserToolResults(
 	return r.appendTranscriptMessages(ctx, agentID, base, turnID, messages)
 }
 
-func (r *Runtime) toolResultContent(tr *planner.ToolResult) (any, error) {
+func (r *Runtime) toolResultContent(call *planner.ToolRequest, tr *planner.ToolResult) (any, error) {
 	if tr == nil {
 		return nil, nil
 	}
@@ -228,7 +228,7 @@ func (r *Runtime) toolResultContent(tr *planner.ToolResult) (any, error) {
 	return transcript.ProjectToolResultContent(
 		resultJSON,
 		tr.Bounds,
-		formatResultPreview(tr.Name, tr.Result, tr.Bounds),
+		formatResultPreviewForCall(context.Background(), r, call, tr.Result, tr.Bounds),
 		errorMessage,
 	)
 }
