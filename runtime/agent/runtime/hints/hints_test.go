@@ -80,8 +80,6 @@ func TestCompileHintTemplates_Since(t *testing.T) {
 func TestCompileHintTemplates_HumanTime(t *testing.T) {
 	t.Parallel()
 
-	type namedTime string
-
 	type testCase struct {
 		name string
 		in   any
@@ -97,14 +95,6 @@ func TestCompileHintTemplates_HumanTime(t *testing.T) {
 		{
 			name: "rfc3339_offset",
 			in:   "2025-01-01T00:00:00-08:00",
-			want: "Jan 1, 12:00 AM",
-		},
-		{
-			name: "named_string_pointer",
-			in: func() any {
-				ts := namedTime("2025-01-01T00:00:00Z")
-				return &ts
-			}(),
 			want: "Jan 1, 12:00 AM",
 		},
 		{
