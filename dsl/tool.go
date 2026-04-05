@@ -50,7 +50,7 @@ import (
 //
 // Example (external MCP tool with inline schemas):
 //
-//	var RemoteSearch = Toolset("remote", FromMCP("search-service", "search"), func() {
+//	var RemoteSearch = Toolset("remote", FromExternalMCP("search-service", "search"), func() {
 //	    Tool("web_search", "Search the web", func() {
 //	        Args(func() { Attribute("query", String) })
 //	        Return(func() { Attribute("results", ArrayOf(String)) })

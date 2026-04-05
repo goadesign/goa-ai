@@ -41,6 +41,7 @@ func TestProviderExpr_EvalName(t *testing.T) {
 				Kind:       ProviderMCP,
 				MCPService: "assistant-service",
 				MCPToolset: "assistant-mcp",
+				MCPSource:  MCPSourceGoa,
 			},
 			want: `MCP provider (service="assistant-service", toolset="assistant-mcp")`,
 		},
@@ -86,8 +87,10 @@ func TestProviderExpr_KindDetection(t *testing.T) {
 			Kind:       ProviderMCP,
 			MCPService: "svc",
 			MCPToolset: "toolset",
+			MCPSource:  MCPSourceGoa,
 		}
 		require.Equal(t, ProviderMCP, p.Kind)
+		require.Equal(t, MCPSourceGoa, p.MCPSource)
 	})
 
 	t.Run("registry provider has ProviderRegistry kind", func(t *testing.T) {

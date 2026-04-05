@@ -27,7 +27,18 @@ func TestExternalMCPToolset_SelfContainedTypes(t *testing.T) {
 		API("svc", func() {})
 		// Provider service referenced by FromMCP
 		Service("assistant", func() {})
-		assistantSuite := Toolset(FromMCP("assistant", "assistant-mcp"))
+		assistantSuite := Toolset(FromExternalMCP("assistant", "assistant-mcp"), func() {
+			Tool("search", "Search", func() {
+				Args(func() {
+					Attribute("query", String, "Query")
+					Required("query")
+				})
+				Return(func() {
+					Attribute("results", ArrayOf(String), "Results")
+					Required("results")
+				})
+			})
+		})
 		Service("svc", func() {
 			Agent("a", "", func() {
 				Use(assistantSuite)
@@ -52,4 +63,31 @@ func TestExternalMCPToolset_SelfContainedTypes(t *testing.T) {
 			require.NotContainsf(t, def, "= ", "unexpected alias in %s: %s", name, def)
 		}
 	}
+}
+
+func TestGoaBackedMCPToolset_RequiresDesignMCPDefinition(t *testing.T) {
+	eval.Reset()
+	goaexpr.Root = new(goaexpr.RootExpr)
+	goaexpr.GeneratedResultTypes = new(goaexpr.ResultTypesRoot)
+	require.NoError(t, eval.Register(goaexpr.Root))
+	require.NoError(t, eval.Register(goaexpr.GeneratedResultTypes))
+	agentsExpr.Root = &agentsExpr.RootExpr{}
+	require.NoError(t, eval.Register(agentsExpr.Root))
+
+	design := func() {
+		API("svc", func() {})
+		Service("assistant", func() {})
+		assistantSuite := Toolset(FromMCP("assistant", "assistant-mcp"))
+		Service("svc", func() {
+			Agent("a", "", func() {
+				Use(assistantSuite)
+			})
+		})
+	}
+	require.True(t, eval.Execute(design, nil), eval.Context.Error())
+	require.NoError(t, eval.RunDSL())
+
+	_, err := codegen.BuildDataForTest("goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root})
+	require.Error(t, err)
+	require.ErrorContains(t, err, `could not resolve Goa-defined MCP toolset`)
 }

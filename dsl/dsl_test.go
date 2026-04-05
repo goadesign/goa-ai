@@ -208,7 +208,9 @@ func TestAgentToolsetCrossServiceReference(t *testing.T) {
 func TestProviderInference_LocalAndMCP(t *testing.T) {
 	runDSL(t, func() {
 		API("test", func() {})
-		var SearchSuite = Toolset(FromMCP("svc", "search"))
+		var SearchSuite = Toolset(FromExternalMCP("svc", "search"), func() {
+			Tool("search", "", func() {})
+		})
 		Service("svc", func() {
 			Agent("a", "desc", func() {
 				Use("local", func() { Tool("x", "", func() {}) })

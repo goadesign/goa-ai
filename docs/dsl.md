@@ -199,7 +199,8 @@ on agent/tool contracts.
 | Function | Context | Purpose |
 |----------|---------|---------|
 | `Toolset(args...)` | Top-level | Defines a provider-owned toolset |
-| `FromMCP(service, toolset)` | Argument to `Toolset` | Configures MCP server as toolset provider |
+| `FromMCP(service, toolset)` | Argument to `Toolset` | Configures a Goa-defined MCP server in the same design as toolset provider |
+| `FromExternalMCP(service, toolset)` | Argument to `Toolset` | Configures an external MCP server with inline tool schemas |
 | `FromRegistry(registry, toolset)` | Argument to `Toolset` | Configures registry as toolset provider |
 | `Tags(values...)` | Inside `Toolset` or `Tool` | Attaches metadata labels for categorization |
 
@@ -423,7 +424,7 @@ Service("orchestrator", func() {
 
 `Use` declares that the current agent consumes a toolset. The value can be:
 
-- A `*ToolsetExpr` returned by `Toolset` or `FromMCP` (provider-owned)
+- A `*ToolsetExpr` returned by `Toolset`, `FromMCP`, or `FromExternalMCP` (provider-owned)
 - A string name for an inline, agent-local toolset definition
 
 An optional DSL function can:
@@ -514,11 +515,13 @@ var CommonTools = Toolset("common", func() {
 
 ### MCP-Backed Toolsets
 
-`FromMCP` configures a toolset to be backed by an MCP server. Two patterns are supported:
+MCP-backed toolsets now use explicit modes so the generator never has to infer
+where schemas come from.
 
 **Pattern 1: Goa-backed MCP server (same design)**
 
-When your MCP server is defined in the same design using the `MCP` DSL:
+Use `FromMCP` when your MCP server is defined in the same design using the
+`MCP(...)` DSL:
 
 ```go
 Service("assistant", func() {
@@ -538,12 +541,16 @@ Agent("chat", "Chat agent", func() {
 })
 ```
 
+`FromMCP` in this mode must point at a Goa service that declares `MCP(...)`, and
+the toolset must not declare inline `Tool(...)` schemas.
+
 **Pattern 2: External MCP server (inline schemas)**
 
-For external MCP servers, define the schemas inline:
+Use `FromExternalMCP` for external MCP servers, and define the tool schemas
+inline:
 
 ```go
-var RemoteSearch = Toolset("remote-search", FromMCP("remote", "search"), func() {
+var RemoteSearch = Toolset("remote-search", FromExternalMCP("remote", "search"), func() {
     Tool("web_search", "Search the web", func() {
         Args(func() { Attribute("query", String) })
         Return(func() { Attribute("results", ArrayOf(String)) })
@@ -555,7 +562,20 @@ Agent("helper", "Helper agent", func() {
 })
 ```
 
+`FromExternalMCP` requires at least one inline `Tool(...)` declaration because
+those schemas are the contract surface for the external server.
+
 At runtime, supply an `mcpruntime.Caller` for the toolset ID.
+
+### Migration Notes
+
+- If you previously used `FromMCP(...)` for an external MCP server with inline
+  tool schemas, switch that declaration to `FromExternalMCP(...)`.
+- `FromMCP(...)` now means "Goa-defined MCP server in this design" only. It
+  rejects inline tool schemas and fails evaluation if the referenced service
+  does not declare `MCP(...)`.
+- Agent and toolset names that sanitize to an empty identifier now fail during
+  evaluation instead of being silently repaired during code generation.
 
 ### Registry-Backed Toolsets
 
@@ -574,6 +594,11 @@ var PinnedTools = Toolset(FromRegistry(CorpRegistry, "data-tools"), func() {
     Version("1.2.3")
 })
 ```
+
+`FromRegistry` produces a dynamic toolset reference. Generated agent-side
+registry clients live under `gen/<svc>/registry/<name>/`, while the clustered
+registry service implementation lives under `registry/` and the shared wire
+protocol lives under `runtime/toolregistry/`.
 
 ---
 
@@ -1110,8 +1135,9 @@ Service("calculator", func() {
 
 ## Registry
 
-`Registry` declares a remote registry source for tool discovery. Registries are centralized
-catalogs of MCP servers and toolsets that agents can discover and consume.
+`Registry` declares a remote registry source for tool discovery. Registries are
+centralized catalogs of MCP servers and toolsets that agents can discover and
+consume through generated registry clients.
 
 ```go
 var CorpRegistry = Registry("corp-registry", func() {

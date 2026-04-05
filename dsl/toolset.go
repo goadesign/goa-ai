@@ -42,9 +42,18 @@ import (
 //	    })
 //	})
 //
-// For MCP-backed toolsets, use FromMCP provider option:
+// For Goa-backed MCP toolsets, use FromMCP provider option:
 //
 //	var MCPTools = Toolset(FromMCP("assistant-service", "assistant-mcp"))
+//
+// For external MCP toolsets with inline schemas, use FromExternalMCP:
+//
+//	var RemoteTools = Toolset(FromExternalMCP("assistant-service", "assistant-mcp"), func() {
+//	    Tool("search", "Search remote system", func() {
+//	        Args(func() { Attribute("query", String, "Query") })
+//	        Return(func() { Attribute("results", ArrayOf(String), "Results") })
+//	    })
+//	})
 //
 // For registry-backed toolsets, use FromRegistry provider option:
 //
@@ -52,9 +61,11 @@ import (
 //
 // Toolset accepts these forms:
 //   - Toolset("name", func()) - local toolset with inline schemas
-//   - Toolset(FromMCP(service, toolset)) - MCP-backed toolset (name derived from toolset)
+//   - Toolset(FromMCP(service, toolset)) - Goa-backed MCP toolset (name derived from toolset)
+//   - Toolset(FromExternalMCP(service, toolset), func()) - external MCP toolset with inline schemas
 //   - Toolset(FromRegistry(registry, toolset)) - registry-backed toolset (name derived from toolset)
 //   - Toolset("name", FromMCP(...)) - MCP-backed with explicit name
+//   - Toolset("name", FromExternalMCP(...), func()) - external MCP toolset with explicit name
 //   - Toolset("name", FromRegistry(...)) - registry-backed with explicit name
 //   - Toolset(FromMCP(...), func()) - MCP-backed with additional config
 func Toolset(args ...any) *agentsexpr.ToolsetExpr {
@@ -105,8 +116,9 @@ func Toolset(args ...any) *agentsexpr.ToolsetExpr {
 	return ts
 }
 
-// FromMCP configures a toolset to be backed by an MCP server. Use FromMCP
-// as a provider option when declaring a Toolset.
+// FromMCP configures a toolset to be backed by a Goa-defined MCP server. Use
+// FromMCP when the referenced service declares MCP capabilities in the same
+// evaluated design.
 //
 // FromMCP takes:
 //   - service: Goa service name that owns the MCP server
@@ -132,6 +144,27 @@ func FromMCP(service, toolset string) *agentsexpr.ProviderExpr {
 		Kind:       agentsexpr.ProviderMCP,
 		MCPService: service,
 		MCPToolset: toolset,
+		MCPSource:  agentsexpr.MCPSourceGoa,
+	}
+}
+
+// FromExternalMCP configures a toolset to target an external MCP provider while
+// declaring tool schemas inline in the DSL. Use this when the provider is not
+// modeled as an MCP-enabled Goa service in the current design.
+func FromExternalMCP(service, toolset string) *agentsexpr.ProviderExpr {
+	if service == "" {
+		eval.ReportError("FromExternalMCP requires non-empty service name")
+		return nil
+	}
+	if toolset == "" {
+		eval.ReportError("FromExternalMCP requires non-empty toolset name")
+		return nil
+	}
+	return &agentsexpr.ProviderExpr{
+		Kind:       agentsexpr.ProviderMCP,
+		MCPService: service,
+		MCPToolset: toolset,
+		MCPSource:  agentsexpr.MCPSourceInline,
 	}
 }
 

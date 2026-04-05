@@ -5,6 +5,9 @@ import "fmt"
 // ProviderKind identifies the source/executor type for a toolset.
 type ProviderKind int
 
+// MCPSourceKind identifies how an MCP-backed toolset obtains its schemas.
+type MCPSourceKind int
+
 const (
 	// ProviderLocal indicates a toolset with inline schemas defined
 	// directly in the DSL.
@@ -13,6 +16,15 @@ const (
 	ProviderMCP
 	// ProviderRegistry indicates a toolset sourced from a registry.
 	ProviderRegistry
+)
+
+const (
+	// MCPSourceGoa indicates schemas come from an MCP-enabled Goa service in the
+	// same evaluated design.
+	MCPSourceGoa MCPSourceKind = iota
+	// MCPSourceInline indicates schemas are declared inline in the toolset DSL
+	// for an external MCP provider.
+	MCPSourceInline
 )
 
 // String returns a human-readable representation of the provider kind.
@@ -40,6 +52,9 @@ type ProviderExpr struct {
 	// MCPToolset is the MCP server name for this toolset. Used when
 	// Kind is ProviderMCP.
 	MCPToolset string
+	// MCPSource identifies whether schemas come from a Goa-defined MCP service or
+	// from inline tool declarations. Used when Kind is ProviderMCP.
+	MCPSource MCPSourceKind
 	// Registry references the registry source for this toolset.
 	// Used when Kind is ProviderRegistry.
 	Registry *RegistryExpr

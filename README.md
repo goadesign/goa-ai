@@ -44,7 +44,7 @@ Building AI agents shouldn't mean wrestling with JSON schemas, debugging brittle
 | **Hand-parsed structured final answers** | Service-owned `Completion(...)` contracts generate schemas, codecs, and typed completion helpers |
 | **Observability as afterthought** | Built-in streaming, transcripts, traces, and metrics from day one |
 | **Manual MCP integration** | Generated wrappers turn MCP servers into typed toolsets |
-| **Toolsets scattered across services** | Clustered registry for dynamic discovery and health-monitored invocation |
+| **Toolsets scattered across services** | Generated registry clients plus a clustered registry service for dynamic discovery and health-monitored invocation |
 
 ---
 
@@ -65,9 +65,22 @@ Building AI agents shouldn't mean wrestling with JSON schemas, debugging brittle
 
 1. **Design** — Express intent in Go: agents, tools, policies. Version-controlled, type-checked, reviewable.
 
-2. **Generate** — `goa gen` produces everything: tool specs with JSON schemas, service-owned completion packages, type-safe codecs, workflow definitions, registry helpers. Never edit `gen/`—regenerate on change.
+2. **Generate** — `goa gen` produces everything: tool specs with JSON schemas, service-owned completion packages, type-safe codecs, workflow definitions, and generated registry clients/helpers. Never edit `gen/`—regenerate on change.
 
 3. **Execute** — The runtime runs your agents: plan/execute loops, policy enforcement, memory persistence, event streaming. Swap engines (in-memory → Temporal) without changing agent code.
+
+---
+
+## Registry Vocabulary
+
+`goa-ai` uses "registry" for a few adjacent concepts:
+
+- `Registry(...)` / `FromRegistry(...)` in the DSL declare an external tool catalog and a dynamic toolset reference that is resolved at runtime.
+- `gen/<service>/registry/<name>/` contains generated agent-side registry clients and helpers for one declared DSL registry source.
+- `runtime/toolregistry` defines the low-level wire protocol and Pulse stream naming shared by registry executors, providers, and the clustered gateway.
+- `registry/` contains the standalone clustered registry service implementation that admits toolsets, tracks provider health, and routes cross-process tool calls.
+
+Keeping these layers distinct helps when reading generated `registry.go` files: those helpers register components with a local `agentsruntime.Runtime`; they do not implement the clustered `registry/` service.
 
 ---
 
@@ -576,7 +589,8 @@ integrating application, not in `goa-ai`.
 | **Streaming & Integration** | |
 | `features/stream/pulse` | Pulse (Redis Streams) for real-time events |
 | `features/policy/basic` | Policy engine for tool filtering |
-| `registry` | Clustered gateway for cross-process toolset discovery |
+| `registry` | Clustered registry service for cross-process toolset discovery and routing |
+| `runtime/toolregistry` | Wire protocol and stream naming shared by registry providers, executors, and the clustered service |
 | `runtime/mcp` | MCP callers (stdio, HTTP, SSE) for tool server integration |
 
 ---

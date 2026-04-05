@@ -101,7 +101,7 @@ surface for structured model I/O.
 
 ## Registry Integration
 
-Declare centralized registries for tool discovery and agent publication:
+Declare centralized registry sources for dynamic tool discovery and agent publication:
 
 ```go
 var CorpRegistry = Registry("corp-registry", func() {
@@ -124,12 +124,14 @@ var AnthropicRegistry = Registry("anthropic", func() {
 })
 ```
 
-### Runtime Components
+### Registry Vocabulary
 
-- **Registry Manager** (`runtime/registry/manager.go`): Multi-source catalog merging
-- **Schema Cache** (`runtime/registry/cache.go`): TTL-based caching with fallback
-- **Federation Sync**: Periodic catalog synchronization from external registries
-- **Search**: Semantic and keyword-based tool discovery
+- **DSL registry source**: `Registry(...)` declares a remote catalog and `FromRegistry(...)` binds a toolset to it.
+- **Generated registry client**: `gen/<svc>/registry/<name>/` contains the agent-side client/helpers for one declared DSL registry source.
+- **Registry wire protocol**: `runtime/toolregistry/` defines the Pulse stream names, message envelopes, and output-delta context used by providers, executors, and the clustered gateway.
+- **Clustered registry service**: `registry/` implements the standalone multi-node service that admits toolsets, tracks provider health, and routes tool calls over the wire protocol.
+
+Generated `registry.go` files in agent packages are local runtime registration helpers; they do not implement the clustered registry service.
 
 ### Transcript Boundary
 

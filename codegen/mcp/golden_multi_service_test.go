@@ -60,7 +60,8 @@ func TestMultiService_GeneratesCLIAndStubs(t *testing.T) {
 	files = patchCLIForServer("orchestrator", svr, []*expr.ServiceExpr{alpha, beta}, files)
 
 	// Generate adapter stubs for both services and replace bodies
-	generateExampleAdapterStubs([]*expr.ServiceExpr{alpha, beta}, files)
+	_, err := generateExampleAdapterStubs([]*expr.ServiceExpr{alpha, beta}, files)
+	require.NoError(t, err)
 
 	// Validate CLI header contains both adapter client imports
 	var importPaths []string

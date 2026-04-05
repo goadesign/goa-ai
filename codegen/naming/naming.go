@@ -16,7 +16,9 @@ import (
 //   - contains only [a-z0-9_]
 //   - never starts/ends with '_' and never contains repeated "__"
 //
-// When the sanitized result is empty, SanitizeToken returns fallback.
+// Author-facing call sites should pass an empty fallback and reject empty
+// results during DSL/eval validation. Non-empty fallbacks are reserved for
+// internal synthetic identifiers such as queue segments or import aliases.
 func SanitizeToken(name, fallback string) string {
 	s := strings.ToLower(codegen.SnakeCase(name))
 	s = strings.Map(func(r rune) rune {

@@ -10,9 +10,8 @@ import (
 	goaexpr "goa.design/goa/v3/expr"
 )
 
-// populateMCPToolset discovers and populates tools for external MCP toolsets by
-// querying the MCP design root. It is called during toolset data construction when
-// a toolset references an external MCP server (expr.External == true).
+// populateMCPToolset discovers and populates tools for Goa-backed MCP toolsets
+// by querying the evaluated MCP design root.
 //
 // The function looks up the MCP server/toolset definition by service and toolset
 // name, then creates ToolData entries for each tool defined in that toolset. Tool
@@ -21,12 +20,8 @@ import (
 // alphabetically by name for deterministic generation.
 //
 // If the toolset has no description, it inherits the description from the MCP
-// server/toolset. If the MCP root or toolset cannot be found, the function
-// returns early with no error, leaving the toolset's Tools slice empty.
-// populateMCPToolset returns true when an MCP server/toolset defined in the Goa
-// design was found and used to populate tools. When false is returned, callers
-// may choose to populate tools from inline tool declarations (custom external
-// MCP).
+// server/toolset. When the MCP root or toolset cannot be found, the function
+// returns false so the caller can fail with a precise contract error.
 func populateMCPToolset(ts *ToolsetData) bool {
 	if ts.Expr == nil || ts.Expr.Provider == nil || ts.Expr.Provider.Kind != agentsExpr.ProviderMCP {
 		return false

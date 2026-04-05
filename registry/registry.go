@@ -23,8 +23,9 @@
 // This enables horizontal scaling and high availability. Clients can connect
 // to any node and see the same registry state.
 //
-// For client-side code that agents use to connect to and consume the registry,
-// see the runtime/registry package.
+// For generated agent-side clients emitted from DSL `Registry(...)` declarations,
+// see `gen/<svc>/registry/<name>/`. For the shared wire protocol used by this
+// service, providers, and executors, see `runtime/toolregistry`.
 package registry
 
 import (

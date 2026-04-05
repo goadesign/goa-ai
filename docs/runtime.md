@@ -483,7 +483,8 @@ type PlannerContext interface {
     Tracer() telemetry.Tracer             // Distributed tracing
     State() AgentState                    // Ephemeral per-run key-value store
     AdvertisedToolDefinitions() []*model.ToolDefinition // Runtime-filtered model-facing tools
-    ModelClient(id string) (model.Client, bool)  // LLM client lookup
+    ModelClient(id string) (model.Client, bool)  // Raw LLM client lookup
+    PlannerModelClient(id string) (planner.PlannerModelClient, bool) // Planner-scoped client with runtime-owned event emission
     RenderPrompt(ctx context.Context, id string, data any) (*prompt.PromptContent, error)
     AddReminder(r reminder.Reminder)      // Register backstage guidance
     RemoveReminder(id string)             // Clear a reminder
@@ -511,71 +512,41 @@ type PlannerEvents interface {
 
 ## Streaming Planners
 
-When using model streaming, planners have two options for emitting events. Choose
-**exactly one** per stream to avoid double-emitting.
+When using model streaming, planners now have two explicit integration styles.
+Choose one per planner call.
 
-### Option 1: Runtime-Decorated Client (Recommended)
+### Option 1: PlannerModelClient (Recommended)
 
-`PlannerContext.ModelClient(id)` returns a client wrapped with an event decorator.
-The decorator emits `AssistantChunk`, `PlannerThinkingBlock`, and `UsageDelta`
-automatically on each `Recv()` call:
+`PlannerContext.PlannerModelClient(id)` returns a planner-scoped client that owns
+`AssistantChunk`, `PlannerThinkingBlock`, and `UsageDelta` emission. Its
+`Stream(...)` method drains the underlying provider stream and returns a
+`planner.StreamSummary`:
 
 ```go
 func (p *MyPlanner) PlanResume(ctx context.Context, input *PlanResumeInput) (*PlanResult, error) {
-    mc, ok := input.Agent.ModelClient("bedrock")
+    mc, ok := input.Agent.PlannerModelClient("bedrock")
     if !ok {
         return nil, errors.New("model not configured")
     }
 
     req := &model.Request{
-        RunID:      input.RunContext.RunID,
         ModelClass: model.ModelClassHighReasoning,
         Messages:   input.Messages,
         Stream:     true,
     }
-    
-    st, err := mc.Stream(ctx, req)
+
+    sum, err := mc.Stream(ctx, req)
     if err != nil {
         return nil, err
     }
-    defer st.Close()
-
-    // Drain stream manually; events are emitted automatically by the wrapper
-    var calls []ToolRequest
-    var out strings.Builder
-    for {
-        chunk, rerr := st.Recv()
-        if errors.Is(rerr, io.EOF) {
-            break
-        }
-        if rerr != nil {
-            return nil, rerr
-        }
-        switch chunk.Type {
-        case model.ChunkTypeToolCall:
-            calls = append(calls, ToolRequest{
-                Name:       chunk.ToolCall.Name,
-                Payload:    chunk.ToolCall.Payload,
-                ToolCallID: chunk.ToolCall.ID,
-            })
-        case model.ChunkTypeText:
-            // Accumulate text locally (already emitted via decorator)
-            for _, p := range chunk.Message.Parts {
-                if tp, ok := p.(model.TextPart); ok {
-                    out.WriteString(tp.Text)
-                }
-            }
-        }
-    }
-
-    if len(calls) > 0 {
-        return &PlanResult{ToolCalls: calls}, nil
+    if len(sum.ToolCalls) > 0 {
+        return &PlanResult{ToolCalls: sum.ToolCalls}, nil
     }
     return &PlanResult{
         FinalResponse: &FinalResponse{
             Message: &model.Message{
                 Role:  model.ConversationRoleAssistant,
-                Parts: []model.Part{model.TextPart{Text: out.String()}},
+                Parts: []model.Part{model.TextPart{Text: sum.Text}},
             },
         },
         Streamed: true, // Text was already streamed
@@ -583,14 +554,25 @@ func (p *MyPlanner) PlanResume(ctx context.Context, input *PlanResumeInput) (*Pl
 }
 ```
 
-**Important:** Do NOT call `planner.ConsumeStream` when using the decorated client.
+This is the safest integration style because the planner-scoped client does not
+expose a raw `model.Streamer`, so it cannot be combined accidentally with
+`planner.ConsumeStream`.
 
 ### Option 2: ConsumeStream with Raw Client
 
-When you have a raw `model.Client` (not decorated), use `planner.ConsumeStream`:
+When you want the raw `model.Client`, fetch it from `PlannerContext.ModelClient`
+and pair it with `planner.ConsumeStream`:
 
 ```go
-sum, err := planner.ConsumeStream(ctx, streamer, input.Events)
+mc, ok := input.Agent.ModelClient("bedrock")
+if !ok {
+    return nil, errors.New("model not configured")
+}
+st, err := mc.Stream(ctx, req)
+if err != nil {
+    return nil, err
+}
+sum, err := planner.ConsumeStream(ctx, st, req, input.Events)
 if err != nil {
     return nil, err
 }
@@ -599,7 +581,9 @@ if err != nil {
 This helper drains the stream, emits events via `PlannerEvents`, and returns a
 `StreamSummary` with accumulated text and tool calls.
 
-**Important:** Never combine a decorated client with `ConsumeStream`.
+Use the raw client path when you need full control over stream consumption or
+want to bypass runtime-owned event emission entirely and manage `input.Events`
+yourself.
 
 ---
 
@@ -725,16 +709,15 @@ The registry wire protocol and deterministic stream IDs are defined in `runtime/
 - Toolset request stream: `toolset:<toolsetID>:requests`
 - Per-call result stream: `result:<toolUseID>`
 
-### Registry discovery & catalog sync (runtime/registry)
+### Registry discovery & catalog sync
 
-If you need runtime discovery of toolsets and schemas (e.g., tool catalogs that change without a `goa gen`),
-use the client-side components in `runtime/registry`:
+If you need runtime discovery of toolsets and schemas (for example, tool
+catalogs that change without a `goa gen`), use the generated agent-side
+registry client packages under `gen/<service>/registry/<name>/`.
 
-- `GRPCClientAdapter`: wraps a generated gRPC registry client into a `RegistryClient` interface
-- `Manager`: multi-registry discovery with caching and periodic sync (`StartSync`/`StopSync`)
-- `SearchClient`: cross-registry search with semantic-first + keyword fallback when supported
-
-These are client-side helpers. The standalone registry service implementation lives under `goa-ai/registry`.
+Those generated clients own the consumer-side discovery flow. The standalone
+clustered registry service implementation lives under `goa-ai/registry`, and
+the shared Pulse wire protocol lives under `goa-ai/runtime/toolregistry`.
 
 **Inline tools** — Custom executor implementation:
 
@@ -2021,8 +2004,9 @@ var ErrRateLimited = errors.New("model: rate limited")
 2. **Use generated clients.** The typed `<agent>.NewClient(rt)` embeds route
    information and provides compile-time safety.
 
-3. **Choose one streaming path.** Either use the decorated model client OR
-   `planner.ConsumeStream`, never both.
+3. **Choose one streaming path.** Use `PlannerModelClient` for runtime-owned
+   event emission, or use raw `ModelClient` with `planner.ConsumeStream` (or
+   manual draining) when you want explicit control.
 
 4. **Set SessionID for sessionful runs.** `Run` and `Start` require a session ID
    for grouping and memory association. `OneShotRun` is explicitly sessionless.

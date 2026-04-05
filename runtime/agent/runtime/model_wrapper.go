@@ -8,12 +8,10 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-// This file implements a per-turn model.Client decorator that emits runtime
-// planner events as model output is consumed. The wrapper:
-//   - Streams: forwards assistant text, thinking blocks, and usage deltas
-//     to PlannerEvents so the runtime ledger captures them automatically.
-//   - Unary: emits assistant text/thinking from the final response and
-//     reports usage when available.
+// This file implements planner-scoped model client wrappers owned by the
+// runtime. The planner client wrapper emits runtime planner events as model
+// output is consumed, while the remaining wrappers apply cache/tool/tracing
+// policy to raw model clients returned from PlannerContext.ModelClient.
 //
 // Critical invariants:
 //   - Final tool calls are NOT emitted here; those are already surfaced to
@@ -24,21 +22,23 @@ import (
 //   - Emission occurs in the planner activity context to keep ledger writes
 //     deterministic and scoped to the current turn.
 
-// eventDecoratedClient wraps a model.Client and forwards stream/unary content to
-// PlannerEvents so the runtime ledger captures thinking/text/usage automatically.
-type eventDecoratedClient struct {
+// plannerModelClient wraps a raw model.Client and owns PlannerEvents emission
+// for one planner turn.
+type plannerModelClient struct {
 	inner  model.Client
 	events planner.PlannerEvents
 }
 
-// newEventDecoratedClient returns a client wrapper that emits PlannerEvents for
-// assistant text, thinking blocks, and usage. When inner or events is nil, the
-// inner client is returned unchanged.
-func newEventDecoratedClient(inner model.Client, events planner.PlannerEvents) model.Client {
-	if inner == nil || events == nil {
-		return inner
+// newPlannerModelClient returns a planner-scoped client that emits
+// PlannerEvents for assistant text, thinking blocks, and usage.
+func newPlannerModelClient(inner model.Client, events planner.PlannerEvents) planner.PlannerModelClient {
+	if inner == nil {
+		return nil
 	}
-	return &eventDecoratedClient{
+	if events == nil {
+		events = planner.NoopEvents()
+	}
+	return &plannerModelClient{
 		inner:  inner,
 		events: events,
 	}
@@ -47,7 +47,7 @@ func newEventDecoratedClient(inner model.Client, events planner.PlannerEvents) m
 // Complete delegates to the inner client, then emits usage and assistant
 // content (text + thinking) for the final response. If the adapter did not
 // stamp model identity, the wrapper fills it from the request.
-func (c *eventDecoratedClient) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
+func (c *plannerModelClient) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
 	resp, err := c.inner.Complete(ctx, req)
 	if err != nil {
 		return resp, err
@@ -66,75 +66,14 @@ func (c *eventDecoratedClient) Complete(ctx context.Context, req *model.Request)
 	return resp, nil
 }
 
-// Stream delegates to the inner client and returns a Streamer whose Recv()
-// emits PlannerEvents for assistant text, thinking blocks, and usage. Model
-// identity from the request is captured so usage chunks can be attributed.
-func (c *eventDecoratedClient) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
+// Stream delegates to the inner client, drains the resulting stream through the
+// planner helper, and returns the aggregated summary.
+func (c *plannerModelClient) Stream(ctx context.Context, req *model.Request) (planner.StreamSummary, error) {
 	st, err := c.inner.Stream(ctx, req)
 	if err != nil {
-		return nil, err
+		return planner.StreamSummary{}, err
 	}
-	return &eventStream{
-		inner:  st,
-		events: c.events,
-		ctx:    ctx,
-		req:    req,
-	}, nil
-}
-
-// eventStream decorates a model.Streamer to emit PlannerEvents for chunks.
-// It carries the original request so usage chunks can be attributed to the
-// requested model when the adapter did not stamp identity.
-type eventStream struct {
-	inner  model.Streamer
-	events planner.PlannerEvents
-	ctx    context.Context
-	req    *model.Request
-}
-
-// Recv forwards events for text/thinking/usage chunks.
-//
-// Contract:
-//   - Final tool calls are passed through untouched for the planner/workflow to
-//     handle.
-//   - Tool call argument deltas are forwarded as best-effort PlannerEvents for
-//     streaming UX; consumers may ignore them.
-func (s *eventStream) Recv() (model.Chunk, error) {
-	ch, err := s.inner.Recv()
-	if err != nil {
-		return ch, err
-	}
-	switch ch.Type {
-	case model.ChunkTypeToolCallDelta:
-		if ch.ToolCallDelta != nil {
-			s.events.ToolCallArgsDelta(s.ctx, ch.ToolCallDelta.ID, ch.ToolCallDelta.Name, ch.ToolCallDelta.Delta)
-		}
-	case model.ChunkTypeText:
-		if ch.Message != nil {
-			emitMessageContent(s.ctx, s.events, ch.Message)
-		}
-	case model.ChunkTypeThinking:
-		// Prefer structured thinking parts when present; otherwise use delta text.
-		if ch.Message != nil {
-			emitThinkingParts(s.ctx, s.events, ch.Message)
-		} else if ch.Thinking != "" {
-			s.events.PlannerThinkingBlock(s.ctx, model.ThinkingPart{Text: ch.Thinking})
-		}
-	case model.ChunkTypeUsage:
-		if ch.UsageDelta != nil {
-			stampModelIdentity(ch.UsageDelta, s.req)
-			s.events.UsageDelta(s.ctx, *ch.UsageDelta)
-		}
-	}
-	return ch, nil
-}
-
-func (s *eventStream) Close() error {
-	return s.inner.Close()
-}
-
-func (s *eventStream) Metadata() map[string]any {
-	return s.inner.Metadata()
+	return planner.ConsumeStream(ctx, st, req, c.events)
 }
 
 // cacheConfiguredClient wraps a model.Client and applies the agent CachePolicy
