@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -384,7 +385,7 @@ func (r *Runtime) logWarn(ctx context.Context, msg string, err error, kv ...any)
 // the error. Workflow loop code may choose to treat failures as fatal via
 // publishHook (panic) to avoid silent divergence.
 func (r *Runtime) publishHookErr(ctx context.Context, evt hooks.Event, turnID string) error {
-	meta := recordDispatchMetadataForContext(ctx, evt.RunID(), turnID, evt.Type())
+	meta := recordDispatchMetadataForContext(ctx)
 	in, err := hooks.EncodeToRecordInput(evt, hooks.EncodeOptions{
 		TurnID:      turnID,
 		EventKey:    meta.EventKey,
@@ -442,7 +443,7 @@ func (r *Runtime) publishTranscriptDeltaErr(
 			runID,
 		)
 	}
-	meta := recordDispatchMetadataForContext(ctx, runID, turnID, transcript.RunLogMessagesAppended)
+	meta := recordDispatchMetadataForContext(ctx)
 	input := &runlog.ActivityInput{
 		Type:        transcript.RunLogMessagesAppended,
 		EventKey:    meta.EventKey,
@@ -480,10 +481,20 @@ type recordDispatchMetadata struct {
 	TimestampMS int64
 }
 
-func recordDispatchMetadataForContext(ctx context.Context, runID, turnID string, recordType runlog.Type) recordDispatchMetadata {
+// recordDispatchMetadataForContext returns canonical append metadata for one
+// durable record emission.
+//
+// Workflow code must use a replay-stable identity owned by the emitting workflow
+// itself. Non-workflow callers do not have deterministic sequencing, so they use
+// a UUID instead.
+func recordDispatchMetadataForContext(ctx context.Context) recordDispatchMetadata {
 	if wfCtx := engine.WorkflowContextFromContext(ctx); wfCtx != nil && !engine.IsActivityContext(ctx) {
+		workflowID := wfCtx.WorkflowID()
+		if workflowID == "" {
+			panic("runtime: workflow context missing workflow id")
+		}
 		return recordDispatchMetadata{
-			EventKey:    formatWorkflowRecordEventKey(runID, turnID, recordType, wfCtx.NextSequence()),
+			EventKey:    formatWorkflowRecordEventKey(workflowID, wfCtx.NextSequence()),
 			TimestampMS: wfCtx.Now().UnixMilli(),
 		}
 	}
@@ -493,11 +504,14 @@ func recordDispatchMetadataForContext(ctx context.Context, runID, turnID string,
 	}
 }
 
-func formatWorkflowRecordEventKey(runID, turnID string, recordType runlog.Type, seq uint64) string {
-	if turnID == "" {
-		turnID = "no_turn"
-	}
-	return fmt.Sprintf("%s/%s/%s/%d", runID, turnID, recordType, seq)
+// formatWorkflowRecordEventKey builds the canonical durable identity for one
+// workflow-emitted record.
+//
+// The identity is scoped to the emitting workflow, not the target run log. That
+// keeps the contract simple and lets multiple child workflows append distinct
+// records into the same parent run without key collisions.
+func formatWorkflowRecordEventKey(emitterWorkflowID string, seq uint64) string {
+	return fmt.Sprintf("%s/%d", url.PathEscape(emitterWorkflowID), seq)
 }
 
 // onPromptRendered is the runtime-owned observer callback used by PromptRegistry.

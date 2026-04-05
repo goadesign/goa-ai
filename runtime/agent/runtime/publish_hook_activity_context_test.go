@@ -119,8 +119,10 @@ func TestPublishHookErr_DoesNotUseWorkflowContextFromActivity(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestPublishHookErr_UsesDeterministicWorkflowRecordMetadata(t *testing.T) {
-	wfCtx := &testWorkflowContext{ctx: context.Background()}
+func TestPublishHookErr_UsesWorkflowScopedRecordMetadata(t *testing.T) {
+	wfCtx := &testWorkflowContext{
+		ctx: context.Background(),
+	}
 	rt := &Runtime{
 		RunEventStore: runloginmem.New(),
 		Bus:           noopHooks{},
@@ -136,7 +138,58 @@ func TestPublishHookErr_UsesDeterministicWorkflowRecordMetadata(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, recordActivityName, wfCtx.lastHookCall.Name)
 	require.Equal(t, int64(0), wfCtx.lastHookCall.Input.TimestampMS)
-	require.Equal(t, testRunID+"/turn-1/"+string(hooks.PlannerNote)+"/1", wfCtx.lastHookCall.Input.EventKey)
+	require.Equal(t, testWorkflowID+"/1", wfCtx.lastHookCall.Input.EventKey)
+}
+
+func TestPublishHookErr_CrossRunWorkflowEventsDoNotCollide(t *testing.T) {
+	store := runloginmem.New()
+	rt := &Runtime{
+		RunEventStore: store,
+		Bus:           noopHooks{},
+		logger:        telemetry.NoopLogger{},
+		tracer:        telemetry.NewNoopTracer(),
+	}
+	parentRunID := "run-parent"
+	childWorkflowOne := "run-parent/agent/tooluse_one"
+	childWorkflowTwo := "run-parent/agent/tooluse_two"
+	wfCtxOne := &testWorkflowContext{
+		ctx:          context.Background(),
+		workflowID:   childWorkflowOne,
+		nextSequence: 7,
+		hookRuntime:  rt,
+	}
+	wfCtxTwo := &testWorkflowContext{
+		ctx:          context.Background(),
+		workflowID:   childWorkflowTwo,
+		nextSequence: 7,
+		hookRuntime:  rt,
+	}
+
+	err := rt.publishHookErr(
+		engine.WithWorkflowContext(context.Background(), wfCtxOne),
+		hooks.NewToolCallUpdatedEvent(parentRunID, agent.Ident("agent"), testSessionID, "tooluse_one", 1),
+		"",
+	)
+	require.NoError(t, err)
+	err = rt.publishHookErr(
+		engine.WithWorkflowContext(context.Background(), wfCtxTwo),
+		hooks.NewToolCallUpdatedEvent(parentRunID, agent.Ident("agent"), testSessionID, "tooluse_two", 2),
+		"",
+	)
+	require.NoError(t, err)
+	require.Equal(t, "run-parent%2Fagent%2Ftooluse_one/8", wfCtxOne.lastHookCall.Input.EventKey)
+	require.Equal(t, "run-parent%2Fagent%2Ftooluse_two/8", wfCtxTwo.lastHookCall.Input.EventKey)
+
+	page, err := store.List(context.Background(), parentRunID, "", 10)
+	require.NoError(t, err)
+	require.Len(t, page.Events, 2)
+	require.Equal(t, "run-parent%2Fagent%2Ftooluse_one/8", page.Events[0].EventKey)
+	require.Equal(t, "run-parent%2Fagent%2Ftooluse_two/8", page.Events[1].EventKey)
+	require.NotEqual(t, page.Events[0].EventKey, page.Events[1].EventKey)
+	require.Equal(t, hooks.ToolCallUpdated, page.Events[0].Type)
+	require.Equal(t, hooks.ToolCallUpdated, page.Events[1].Type)
+	require.Equal(t, parentRunID, page.Events[0].RunID)
+	require.Equal(t, parentRunID, page.Events[1].RunID)
 }
 
 func TestPublishHookErr_PersistsCanonicalToolResultPayloadWithoutDuplicateResult(t *testing.T) {

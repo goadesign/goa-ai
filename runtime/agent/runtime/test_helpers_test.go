@@ -32,6 +32,7 @@ type testWorkflowContext struct {
 
 	asyncResult  ToolOutput
 	nextSequence uint64
+	workflowID   string
 
 	sigMu         sync.Mutex
 	pauseCh       chan *api.PauseRequest
@@ -76,6 +77,9 @@ func (t *testWorkflowContext) Context() context.Context {
 }
 
 func (t *testWorkflowContext) WorkflowID() string {
+	if t.workflowID != "" {
+		return t.workflowID
+	}
 	return "wf"
 }
 
@@ -97,6 +101,7 @@ func (t *testWorkflowContext) Detached() engine.WorkflowContext {
 		lastToolCall:    t.lastToolCall,
 
 		asyncResult: t.asyncResult,
+		workflowID:  t.workflowID,
 
 		planResult:    t.planResult,
 		hasPlanResult: t.hasPlanResult,
@@ -131,6 +136,7 @@ func (t *testWorkflowContext) WithCancel() (engine.WorkflowContext, func()) {
 		lastToolCall:    t.lastToolCall,
 
 		asyncResult: t.asyncResult,
+		workflowID:  t.workflowID,
 
 		planResult:    t.planResult,
 		hasPlanResult: t.hasPlanResult,
