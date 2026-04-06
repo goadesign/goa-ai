@@ -132,7 +132,13 @@ func (r *Runtime) buildRunCompletedEvent(
 // a workflow handle that has already completed locally. It shares the same
 // serialized repair gate as lazy no-handle repair so only one RunCompleted
 // event can be appended per run.
-func (r *Runtime) repairObservedTerminalRunCompletion(ctx context.Context, runID string, agentID agent.Ident, sessionID, turnID string, waitErr error) error {
+func (r *Runtime) repairObservedTerminalRunCompletion(
+	ctx context.Context,
+	runID string,
+	agentID agent.Ident,
+	sessionID, turnID string,
+	waitErr error,
+) error {
 	status := terminalRunStatusForError(waitErr)
 	phase := terminalRunPhaseForStatus(status)
 	evt, err := r.buildRunCompletedEvent(ctx, runID, agentID, sessionID, status, phase, waitErr)
@@ -234,15 +240,7 @@ func (r *Runtime) synthesizeTerminalRunCompletion(ctx context.Context, runID str
 		return err
 	}
 	publicStatus := terminalRunStatusForEngineStatus(status)
-	evt, err := r.buildRunCompletedEvent(
-		ctx,
-		runID,
-		agentID,
-		sessionID,
-		publicStatus,
-		terminalRunPhaseForStatus(publicStatus),
-		terminalRunErrorForStatus(status),
-	)
+	evt, err := r.buildRunCompletedEvent(ctx, runID, agentID, sessionID, publicStatus, terminalRunPhaseForStatus(publicStatus), terminalRunErrorForStatus(status))
 	if err != nil {
 		return err
 	}

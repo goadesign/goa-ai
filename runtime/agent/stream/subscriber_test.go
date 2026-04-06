@@ -43,6 +43,25 @@ func TestStreamSubscriber(t *testing.T) {
 	require.Equal(t, "hello", v.Data.Text)
 }
 
+func TestStreamSubscriber_AssistantTurnCommitted(t *testing.T) {
+	sink := &mockSink{}
+	sub, err := NewSubscriber(sink)
+	require.NoError(t, err)
+	ctx := context.Background()
+	evt := hooks.NewAssistantTurnCommittedEvent("r1", agent.Ident("agent1"), "session-1", &model.Message{
+		Role:  model.ConversationRoleAssistant,
+		Parts: []model.Part{model.TextPart{Text: "hello"}},
+	})
+	require.NoError(t, sub.HandleEvent(ctx, evt))
+	require.Len(t, sink.events, 1)
+	require.Equal(t, EventAssistantTurn, sink.events[0].Type())
+	v, ok := sink.events[0].(AssistantTurn)
+	require.True(t, ok)
+	require.NotNil(t, v.Data.Message)
+	require.Equal(t, model.ConversationRoleAssistant, v.Data.Message.Role)
+	require.Equal(t, []model.Part{model.TextPart{Text: "hello"}}, v.Data.Message.Parts)
+}
+
 func TestStreamSubscriber_PreservesHookEventKey(t *testing.T) {
 	sink := &mockSink{}
 	sub, err := NewSubscriber(sink)

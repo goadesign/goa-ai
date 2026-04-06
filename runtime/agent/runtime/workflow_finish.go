@@ -67,6 +67,9 @@ func (r *Runtime) finishWithoutToolCalls(
 			return nil, err
 		}
 	}
+	if err := r.appendTerminalAssistantMessage(ctx, input.AgentID, base, turnID, finalMsg); err != nil {
+		return nil, err
+	}
 
 	for _, note := range result.Notes {
 		if err := r.publishHook(

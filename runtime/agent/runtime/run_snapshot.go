@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/transcript"
@@ -238,6 +239,16 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 	}
 	if foundTranscript {
 		s.Transcript = transcriptMessages
+		for i := len(transcriptMessages) - 1; i >= 0; i-- {
+			msg := transcriptMessages[i]
+			if msg == nil || msg.Role != model.ConversationRoleAssistant {
+				continue
+			}
+			if text := agentMessageText(msg); text != "" {
+				s.LastAssistantMessage = text
+				break
+			}
+		}
 	}
 
 	return s, nil

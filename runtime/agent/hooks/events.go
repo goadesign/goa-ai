@@ -343,6 +343,19 @@ type (
 		Structured any
 	}
 
+	// AssistantTurnCommittedEvent fires after the runtime appends a canonical
+	// assistant transcript message to the durable run log.
+	//
+	// Contract:
+	//   - Message is the exact assistant transcript artifact written to the run log.
+	//   - Downstream consumers must treat it as the canonical assistant turn, not
+	//     as a best-effort streaming chunk.
+	AssistantTurnCommittedEvent struct {
+		baseEvent
+		// Message is the canonical assistant transcript message that was just committed.
+		Message *model.Message
+	}
+
 	// RetryHintIssuedEvent fires when the planner or runtime suggests a retry
 	// policy change, such as disabling a failing tool or adjusting caps.
 	RetryHintIssuedEvent struct {
@@ -1029,6 +1042,19 @@ func NewAssistantMessageEvent(runID string, agentID agent.Ident, sessionID strin
 	}
 }
 
+// NewAssistantTurnCommittedEvent constructs an AssistantTurnCommittedEvent.
+func NewAssistantTurnCommittedEvent(runID string, agentID agent.Ident, sessionID string, message *model.Message) *AssistantTurnCommittedEvent {
+	if message == nil {
+		panic("hooks: assistant turn committed requires message")
+	}
+	be := newBaseEvent(runID, agentID)
+	be.sessionID = sessionID
+	return &AssistantTurnCommittedEvent{
+		baseEvent: be,
+		Message:   message,
+	}
+}
+
 // NewRetryHintIssuedEvent constructs a RetryHintIssuedEvent indicating a
 // suggested retry policy adjustment.
 func NewRetryHintIssuedEvent(runID string, agentID agent.Ident, sessionID string, reason string, toolName tools.Ident, message string) *RetryHintIssuedEvent {
@@ -1179,12 +1205,15 @@ func (e *ToolCallUpdatedEvent) Type() EventType    { return ToolCallUpdated }
 func (e *ToolCallArgsDeltaEvent) Type() EventType  { return ToolCallArgsDelta }
 func (e *PlannerNoteEvent) Type() EventType        { return PlannerNote }
 func (e *AssistantMessageEvent) Type() EventType   { return AssistantMessage }
-func (e *ThinkingBlockEvent) Type() EventType      { return ThinkingBlock }
-func (e *RetryHintIssuedEvent) Type() EventType    { return RetryHintIssued }
-func (e *MemoryAppendedEvent) Type() EventType     { return MemoryAppended }
-func (e *PolicyDecisionEvent) Type() EventType     { return PolicyDecision }
-func (e *UsageEvent) Type() EventType              { return Usage }
-func (e *HardProtectionEvent) Type() EventType     { return HardProtectionTriggered }
-func (e *RunPhaseChangedEvent) Type() EventType    { return RunPhaseChanged }
-func (e *ChildRunLinkedEvent) Type() EventType     { return ChildRunLinked }
-func (e *PromptRenderedEvent) Type() EventType     { return PromptRendered }
+func (e *AssistantTurnCommittedEvent) Type() EventType {
+	return AssistantTurnCommitted
+}
+func (e *ThinkingBlockEvent) Type() EventType   { return ThinkingBlock }
+func (e *RetryHintIssuedEvent) Type() EventType { return RetryHintIssued }
+func (e *MemoryAppendedEvent) Type() EventType  { return MemoryAppended }
+func (e *PolicyDecisionEvent) Type() EventType  { return PolicyDecision }
+func (e *UsageEvent) Type() EventType           { return Usage }
+func (e *HardProtectionEvent) Type() EventType  { return HardProtectionTriggered }
+func (e *RunPhaseChangedEvent) Type() EventType { return RunPhaseChanged }
+func (e *ChildRunLinkedEvent) Type() EventType  { return ChildRunLinked }
+func (e *PromptRenderedEvent) Type() EventType  { return PromptRendered }

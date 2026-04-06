@@ -21,6 +21,7 @@ type (
 	//
 	// The following hook events are streamed to clients:
 	//   - AssistantMessage      → EventAssistantReply
+	//   - AssistantTurnCommitted → EventAssistantTurn
 	//   - PlannerNote           → EventPlannerThought
 	//   - PromptRendered        → EventPromptRendered
 	//   - ToolCallArgsDelta     → EventToolCallArgsDelta (optional)
@@ -28,8 +29,7 @@ type (
 	//   - ToolCallUpdated       → EventToolUpdate
 	//   - ToolResultReceived    → EventToolEnd
 	//
-	// All other (internal) events, such as workflow lifecycle changes, are
-	// ignored and not sent to clients.
+	// All other internal events are ignored and not sent to clients.
 	Subscriber struct {
 		sink    Sink
 		profile StreamProfile
@@ -75,6 +75,7 @@ func NewSubscriberWithProfile(sink Sink, profile StreamProfile) (*Subscriber, er
 //
 // Event translation:
 //   - AssistantMessage → EventAssistantReply
+//   - AssistantTurnCommitted → EventAssistantTurn
 //   - PlannerNote → EventPlannerThought
 //   - PromptRendered → EventPromptRendered
 //   - ToolCallArgsDelta → EventToolCallArgsDelta (optional)
@@ -237,6 +238,18 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		}
 		return s.sink.Send(ctx, AssistantReply{
 			Base: newBaseFromHook(evt, EventAssistantReply, payload),
+			Data: payload,
+		})
+	case *hooks.AssistantTurnCommittedEvent:
+		if !s.profile.AssistantTurns {
+			return nil
+		}
+		if evt.Message == nil {
+			return fmt.Errorf("assistant_turn_committed missing message for run %s", evt.RunID())
+		}
+		payload := AssistantTurnPayload{Message: evt.Message}
+		return s.sink.Send(ctx, AssistantTurn{
+			Base: newBaseFromHook(evt, EventAssistantTurn, payload),
 			Data: payload,
 		})
 	case *hooks.PlannerNoteEvent:

@@ -38,6 +38,21 @@ func (r *Runtime) appendTranscriptMessages(
 	)
 }
 
+// appendTerminalAssistantMessage persists the final assistant message as the
+// canonical transcript tail for a terminal turn.
+func (r *Runtime) appendTerminalAssistantMessage(
+	ctx context.Context,
+	agentID agent.Ident,
+	base *planner.PlanInput,
+	turnID string,
+	msg *model.Message,
+) error {
+	if agentMessageText(msg) == "" {
+		return nil
+	}
+	return r.appendTranscriptMessages(ctx, agentID, base, turnID, cloneMessages([]*model.Message{msg}))
+}
+
 // recordAssistantTurn merges streamed transcript parts with the declared tool calls
 // and appends the resulting assistant messages to the conversation state.
 func (r *Runtime) recordAssistantTurn(
