@@ -123,3 +123,17 @@ func TestGenerateExampleAdapterStubs_RequiresExplicitMCPImportAlias(t *testing.T
 	require.Error(t, err)
 	require.ErrorContains(t, err, `must import "example.com/assistant/gen/mcp_orchestrator" with an explicit alias`)
 }
+
+func TestReplaceHTTPServiceByNameReplacesOriginalExactlyOnce(t *testing.T) {
+	original := &expr.HTTPServiceExpr{ServiceExpr: &expr.ServiceExpr{Name: "orchestrator"}}
+	replacement := &expr.HTTPServiceExpr{ServiceExpr: &expr.ServiceExpr{Name: "mcp_orchestrator"}}
+
+	services := replaceHTTPServiceByName(
+		[]*expr.HTTPServiceExpr{original, replacement, original},
+		"orchestrator",
+		replacement,
+	)
+
+	require.Len(t, services, 1)
+	require.Same(t, replacement, services[0])
+}

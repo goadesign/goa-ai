@@ -36,7 +36,7 @@ func newPlannerModelClient(inner model.Client, events planner.PlannerEvents) pla
 		return nil
 	}
 	if events == nil {
-		events = planner.NoopEvents()
+		panic("runtime: planner model client requires PlannerEvents")
 	}
 	return &plannerModelClient{
 		inner:  inner,

@@ -20,8 +20,9 @@ func New() planner.Planner { return &examplePlanner{} }
 // the example bootstrap. The planner acts as the agent's "brain": it reasons over
 // conversation messages, decides whether to request tool executions, and produces
 // final assistant responses. Production planners typically invoke LLMs via
-// registered model clients (in.Agent.ModelClient(...)), emit intermediate
-// messages/notes for streaming, and integrate tool results in PlanResume.
+// registered planner-scoped model clients (in.Agent.PlannerModelClient(...)) or
+// pair the raw ModelClient stream with planner.ConsumeStream / explicit
+// PlannerEvents emission, then integrate tool results in PlanResume.
 type examplePlanner struct{}
 
 func (p *examplePlanner) Decide(ctx context.Context, tool string) string {

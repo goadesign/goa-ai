@@ -149,11 +149,20 @@ func TestSimplePlannerContextPlannerModelClientOwnsEventEmission(t *testing.T) {
 	require.Equal(t, "tool_use", summary.StopReason)
 	require.Equal(t, "gpt-5", summary.Usage.Model)
 	require.Equal(t, model.ModelClassDefault, summary.Usage.ModelClass)
-	require.Equal(t, 3, summary.Usage.InputTokens)
-	require.Equal(t, 5, summary.Usage.OutputTokens)
-	require.Equal(t, 8, summary.Usage.TotalTokens)
+	require.Equal(t, 2, summary.Usage.InputTokens)
+	require.Equal(t, 4, summary.Usage.OutputTokens)
+	require.Equal(t, 6, summary.Usage.TotalTokens)
 	require.True(t, streamer.closed)
-	require.Len(t, events.usage, 2)
+	require.Len(t, events.usage, 1)
 	require.Equal(t, "gpt-5", events.usage[0].Model)
 	require.Equal(t, model.ModelClassDefault, events.usage[0].ModelClass)
+}
+
+func TestNewPlannerModelClientRequiresEvents(t *testing.T) {
+	require.PanicsWithValue(t,
+		"runtime: planner model client requires PlannerEvents",
+		func() {
+			_ = newPlannerModelClient(stubModelClient{}, nil)
+		},
+	)
 }
