@@ -129,6 +129,12 @@ const (
 	// Payload contains the message content and any structured output.
 	AssistantMessage EventType = "assistant_message"
 
+	// AssistantTurnCommitted fires when the runtime appends a canonical
+	// assistant message to the durable transcript run log. Unlike
+	// AssistantMessage, this event represents the committed assistant turn
+	// artifact used for replay and downstream projection.
+	AssistantTurnCommitted EventType = "assistant_turn_committed"
+
 	// RetryHintIssued fires when the planner or runtime suggests a retry
 	// policy change, such as disabling a failing tool or adjusting caps.
 	// The Payload contains the hint reason and affected tool metadata.

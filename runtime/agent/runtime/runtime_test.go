@@ -25,6 +25,7 @@ import (
 	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 // nestedPlannerStub discovers children across iterations: first 2 children,
@@ -194,6 +195,104 @@ func TestFinishWithoutToolCallsRejectsDualTerminalOutputs(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, out)
 	require.Contains(t, err.Error(), "both")
+}
+
+func TestFinishWithoutToolCallsAppendsTerminalTranscript(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := runloginmem.New()
+	rt := &Runtime{
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: store,
+	}
+	input := &RunInput{
+		AgentID:   "svc.agent",
+		SessionID: "sess-1",
+	}
+	base := &planner.PlanInput{
+		RunContext: run.Context{
+			RunID:     "run-1",
+			SessionID: "sess-1",
+		},
+	}
+	st := &runLoopState{
+		Result: &planner.PlanResult{
+			FinalResponse: &planner.FinalResponse{
+				Message: &model.Message{
+					Role:  model.ConversationRoleAssistant,
+					Parts: []model.Part{model.TextPart{Text: "done"}},
+				},
+			},
+			Streamed: true,
+		},
+	}
+
+	out, err := rt.finishWithoutToolCalls(ctx, input, base, st, "turn-1")
+	require.NoError(t, err)
+	require.Equal(t, "done", agentMessageText(out.Final))
+
+	page, err := store.List(ctx, "run-1", "", 10)
+	require.NoError(t, err)
+	require.Len(t, page.Events, 1)
+	require.Equal(t, transcript.RunLogMessagesAppended, page.Events[0].Type)
+
+	msgs, err := transcript.DecodeRunLogDelta(page.Events[0].Payload)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	require.Equal(t, "done", agentMessageText(msgs[0]))
+}
+
+func TestFinishWithoutToolCallsAppendsTerminalTranscriptFromCitationsPart(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := runloginmem.New()
+	rt := &Runtime{
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: store,
+	}
+	input := &RunInput{
+		AgentID:   "svc.agent",
+		SessionID: "sess-1",
+	}
+	base := &planner.PlanInput{
+		RunContext: run.Context{
+			RunID:     "run-1",
+			SessionID: "sess-1",
+		},
+	}
+	st := &runLoopState{
+		Result: &planner.PlanResult{
+			FinalResponse: &planner.FinalResponse{
+				Message: &model.Message{
+					Role: model.ConversationRoleAssistant,
+					Parts: []model.Part{model.CitationsPart{
+						Text: "cited answer",
+					}},
+				},
+			},
+			Streamed: true,
+		},
+	}
+
+	out, err := rt.finishWithoutToolCalls(ctx, input, base, st, "turn-1")
+	require.NoError(t, err)
+	require.Equal(t, "cited answer", agentMessageText(out.Final))
+
+	page, err := store.List(ctx, "run-1", "", 10)
+	require.NoError(t, err)
+	require.Len(t, page.Events, 1)
+	require.Equal(t, transcript.RunLogMessagesAppended, page.Events[0].Type)
+
+	msgs, err := transcript.DecodeRunLogDelta(page.Events[0].Payload)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	require.Equal(t, "cited answer", agentMessageText(msgs[0]))
 }
 
 func TestStartOneShotDoesNotRequireSession(t *testing.T) {

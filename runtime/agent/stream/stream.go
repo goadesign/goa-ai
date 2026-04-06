@@ -116,6 +116,17 @@ type (
 		Data AssistantReplyPayload
 	}
 
+	// AssistantTurn streams a canonical assistant transcript message after the
+	// runtime has durably appended it to the run log.
+	//
+	// Contract:
+	//   - Each event represents one committed assistant transcript artifact.
+	//   - Unlike AssistantReply, this event is canonical and replay-safe.
+	AssistantTurn struct {
+		Base
+		Data AssistantTurnPayload
+	}
+
 	// PlannerThought streams planner reasoning and intermediate annotations during
 	// execution. These events allow clients to display "thinking..." indicators and
 	// show the planner's internal reasoning process before tool calls complete.
@@ -263,6 +274,11 @@ type (
 	// It mirrors AssistantReply.Text for consumers decoding Base.Payload().
 	AssistantReplyPayload struct {
 		Text string `json:"text"`
+	}
+
+	// AssistantTurnPayload carries the committed assistant transcript message.
+	AssistantTurnPayload struct {
+		Message *model.Message `json:"message"`
 	}
 
 	// PlannerThoughtPayload is the typed wire payload for planner thought events.
@@ -632,6 +648,8 @@ type (
 	StreamProfile struct {
 		// Assistant controls assistant reply emission.
 		Assistant bool
+		// AssistantTurns controls canonical assistant transcript emission.
+		AssistantTurns bool
 		// Thoughts controls planner thought / thinking emission.
 		Thoughts bool
 		// PromptRendered controls emission of prompt_rendered events.
@@ -669,6 +687,7 @@ type (
 func DefaultProfile() StreamProfile {
 	return StreamProfile{
 		Assistant:          true,
+		AssistantTurns:     true,
 		Thoughts:           true,
 		PromptRendered:     true,
 		ToolStart:          true,
@@ -761,6 +780,10 @@ const (
 	// progressively (streaming typewriter effect). Emitted by StreamSubscriber when
 	// AssistantMessageEvent hooks fire. Payload is AssistantReplyPayload.
 	EventAssistantReply EventType = "assistant_reply"
+
+	// EventAssistantTurn streams one canonical assistant transcript message after
+	// the runtime has durably appended it to the run log.
+	EventAssistantTurn EventType = "assistant_turn"
 
 	// EventAwaitClarification streams when a planner requests human clarification.
 	EventAwaitClarification EventType = "await_clarification"

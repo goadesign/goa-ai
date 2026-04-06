@@ -183,19 +183,25 @@ func generateDeterministicAwaitID(runID, turnID string, tool tools.Ident, toolCa
 	return strings.Join([]string{runID, tid, safeTool, "await", toolCallID}, "/")
 }
 
-// agentMessageText concatenates text parts from a model.Message.
+// agentMessageText concatenates assistant-visible text parts from a model.Message.
 func agentMessageText(msg *model.Message) string {
 	if msg == nil || len(msg.Parts) == 0 {
 		return ""
 	}
 	var b strings.Builder
 	for _, p := range msg.Parts {
-		// Skip ThinkingPart to avoid leaking non-user-facing reasoning.
-		if _, isThinking := p.(model.ThinkingPart); isThinking {
+		switch v := p.(type) {
+		case model.ThinkingPart:
+			// Skip ThinkingPart to avoid leaking non-user-facing reasoning.
 			continue
-		}
-		if tp, ok := p.(model.TextPart); ok && tp.Text != "" {
-			b.WriteString(tp.Text)
+		case model.TextPart:
+			if v.Text != "" {
+				b.WriteString(v.Text)
+			}
+		case model.CitationsPart:
+			if v.Text != "" {
+				b.WriteString(v.Text)
+			}
 		}
 	}
 	return b.String()

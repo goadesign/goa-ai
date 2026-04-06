@@ -211,6 +211,9 @@ func (r *Runtime) finalizeWithPlanner(
 			return nil, err
 		}
 	}
+	if err := r.appendTerminalAssistantMessage(ctx, input.AgentID, base, turnID, finalMsg); err != nil {
+		return nil, err
+	}
 	for _, note := range output.Result.Notes {
 		if err := r.publishHook(
 			ctx,

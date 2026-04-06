@@ -122,3 +122,26 @@ func TestNewRunSnapshotIncludesCanonicalTranscript(t *testing.T) {
 	require.Equal(t, model.ConversationRoleUser, snap.Transcript[0].Role)
 	require.Equal(t, []model.Part{model.TextPart{Text: "hello"}}, snap.Transcript[0].Parts)
 }
+
+func TestNewRunSnapshotUsesTranscriptAssistantMessage(t *testing.T) {
+	t.Parallel()
+
+	payload, err := transcript.EncodeRunLogDelta([]*model.Message{{
+		Role:  model.ConversationRoleAssistant,
+		Parts: []model.Part{model.TextPart{Text: "final hello"}},
+	}})
+	require.NoError(t, err)
+
+	snap, err := newRunSnapshot([]*runlog.Event{{
+		EventKey:  "evt-transcript-assistant",
+		RunID:     "run-1",
+		AgentID:   agent.Ident("svc.agent"),
+		SessionID: "sess-1",
+		TurnID:    "turn-1",
+		Type:      transcript.RunLogMessagesAppended,
+		Payload:   payload,
+		Timestamp: time.Unix(20, 0).UTC(),
+	}})
+	require.NoError(t, err)
+	require.Equal(t, "final hello", snap.LastAssistantMessage)
+}

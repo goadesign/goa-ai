@@ -119,11 +119,12 @@ func TestHookActivity_StreamFailureNoopAfterSessionEnded(t *testing.T) {
 	require.Equal(t, hooks.PlannerNote, rl.events[0].Type)
 }
 
-func TestRecordActivity_TranscriptDeltaBypassesHookFanout(t *testing.T) {
+func TestRecordActivity_TranscriptDeltaSkipsBusAndNonAssistantStreamEvents(t *testing.T) {
 	t.Parallel()
 
 	rl := &recordingRunlog{}
 	bus := hooks.NewBus()
+	store := sessioninmem.New()
 	sink := &countingStreamSink{}
 	sub, err := stream.NewSubscriber(sink)
 	require.NoError(t, err)
@@ -145,8 +146,11 @@ func TestRecordActivity_TranscriptDeltaBypassesHookFanout(t *testing.T) {
 	rt := &Runtime{
 		RunEventStore:    rl,
 		Bus:              bus,
+		SessionStore:     store,
 		streamSubscriber: sub,
 	}
+	_, err = store.CreateSession(context.Background(), "sess-1", time.Now().UTC())
+	require.NoError(t, err)
 
 	err = rt.recordActivity(context.Background(), &runlog.ActivityInput{
 		Type:        transcript.RunLogMessagesAppended,
@@ -162,6 +166,86 @@ func TestRecordActivity_TranscriptDeltaBypassesHookFanout(t *testing.T) {
 	require.Len(t, rl.events, 1)
 	require.False(t, published)
 	require.Equal(t, 0, sink.count)
+}
+
+func TestRecordActivity_TranscriptDeltaStreamsCommittedAssistantTurns(t *testing.T) {
+	t.Parallel()
+
+	rl := &recordingRunlog{}
+	store := sessioninmem.New()
+	sink := &countingStreamSink{}
+	sub, err := stream.NewSubscriber(sink)
+	require.NoError(t, err)
+
+	rt := &Runtime{
+		RunEventStore:    rl,
+		Bus:              hooks.NewBus(),
+		SessionStore:     store,
+		streamSubscriber: sub,
+	}
+	_, err = store.CreateSession(context.Background(), "sess-1", time.Now().UTC())
+	require.NoError(t, err)
+
+	payload, err := transcript.EncodeRunLogDelta([]*model.Message{{
+		Role:  model.ConversationRoleAssistant,
+		Parts: []model.Part{model.TextPart{Text: "hello"}},
+	}})
+	require.NoError(t, err)
+
+	err = rt.recordActivity(context.Background(), &runlog.ActivityInput{
+		Type:        transcript.RunLogMessagesAppended,
+		EventKey:    "evt-transcript-assistant",
+		RunID:       "run-1",
+		AgentID:     "svc.agent",
+		SessionID:   "sess-1",
+		TurnID:      "turn-1",
+		TimestampMS: 1,
+		Payload:     payload,
+	})
+	require.NoError(t, err)
+	require.Len(t, rl.events, 1)
+	require.Equal(t, 1, sink.count)
+}
+
+func TestRecordActivity_TranscriptDeltaStreamsCommittedAssistantCitationsTurns(t *testing.T) {
+	t.Parallel()
+
+	rl := &recordingRunlog{}
+	store := sessioninmem.New()
+	sink := &countingStreamSink{}
+	sub, err := stream.NewSubscriber(sink)
+	require.NoError(t, err)
+
+	rt := &Runtime{
+		RunEventStore:    rl,
+		Bus:              hooks.NewBus(),
+		SessionStore:     store,
+		streamSubscriber: sub,
+	}
+	_, err = store.CreateSession(context.Background(), "sess-1", time.Now().UTC())
+	require.NoError(t, err)
+
+	payload, err := transcript.EncodeRunLogDelta([]*model.Message{{
+		Role: model.ConversationRoleAssistant,
+		Parts: []model.Part{model.CitationsPart{
+			Text: "supported by cited content",
+		}},
+	}})
+	require.NoError(t, err)
+
+	err = rt.recordActivity(context.Background(), &runlog.ActivityInput{
+		Type:        transcript.RunLogMessagesAppended,
+		EventKey:    "evt-transcript-assistant-citations",
+		RunID:       "run-1",
+		AgentID:     "svc.agent",
+		SessionID:   "sess-1",
+		TurnID:      "turn-1",
+		TimestampMS: 1,
+		Payload:     payload,
+	})
+	require.NoError(t, err)
+	require.Len(t, rl.events, 1)
+	require.Equal(t, 1, sink.count)
 }
 
 var _ runlog.Store = (*recordingRunlog)(nil)

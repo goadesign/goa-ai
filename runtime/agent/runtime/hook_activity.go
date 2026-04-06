@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
@@ -28,7 +29,8 @@ const recordActivityName = "runtime.record_event"
 //     RunEventStore is a correctness invariant: failures must fail the activity
 //     so the workflow run can stop and/or be retried by the engine.
 //   - Canonical transcript deltas are runtime-owned run-log records. They bypass
-//     hook decoding, streaming, and bus publication.
+//     hook decoding and bus publication. Sessionful runs additionally fan out
+//     canonical assistant-turn stream events derived from those committed deltas.
 //   - Streaming is a session contract:
 //   - While the session is active, stream emission failures must fail the
 //     activity so workflows can retry or stop rather than silently diverge
@@ -123,16 +125,17 @@ func (r *Runtime) recordActivity(ctx context.Context, input *RecordActivityInput
 }
 
 // appendTranscriptRunLogDelta appends a canonical transcript delta record to the
-// durable run log. Transcript deltas never publish to the hook bus or session
-// streams because they are runtime-owned persistence, not live UX signals.
+// durable run log and fans out canonical assistant-turn stream events for any
+// committed assistant transcript messages.
 func (r *Runtime) appendTranscriptRunLogDelta(ctx context.Context, input *RecordActivityInput) error {
 	if input == nil {
 		return errors.New("runtime: transcript delta input is nil")
 	}
-	if _, err := transcript.DecodeRunLogDelta(input.Payload); err != nil {
+	messages, err := transcript.DecodeRunLogDelta(input.Payload)
+	if err != nil {
 		return fmt.Errorf("runtime: decode transcript delta: %w", err)
 	}
-	_, err := r.RunEventStore.Append(ctx, &runlog.Event{
+	_, err = r.RunEventStore.Append(ctx, &runlog.Event{
 		EventKey:  input.EventKey,
 		RunID:     input.RunID,
 		AgentID:   input.AgentID,
@@ -142,7 +145,38 @@ func (r *Runtime) appendTranscriptRunLogDelta(ctx context.Context, input *Record
 		Payload:   append([]byte(nil), input.Payload...),
 		Timestamp: time.UnixMilli(input.TimestampMS).UTC(),
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	if input.SessionID == "" || r.streamSubscriber == nil {
+		return nil
+	}
+	sess, err := r.SessionStore.LoadSession(ctx, input.SessionID)
+	if err != nil {
+		return err
+	}
+	if sess.Status == session.StatusEnded {
+		return nil
+	}
+	for i, msg := range messages {
+		if msg == nil || msg.Role != model.ConversationRoleAssistant || agentMessageText(msg) == "" {
+			continue
+		}
+		evt := hooks.NewAssistantTurnCommittedEvent(input.RunID, input.AgentID, input.SessionID, msg)
+		evt.SetTurnID(input.TurnID)
+		evt.SetTimestampMS(input.TimestampMS)
+		evt.SetEventKey(committedAssistantTurnEventKey(input.EventKey, i))
+		if err := r.streamSubscriber.HandleEvent(ctx, evt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// committedAssistantTurnEventKey derives a stable event key for one assistant
+// message extracted from a transcript delta record.
+func committedAssistantTurnEventKey(base string, index int) string {
+	return fmt.Sprintf("%s/assistant/%d", base, index)
 }
 
 func (r *Runtime) enrichToolCallScheduledHint(ctx context.Context, evt *hooks.ToolCallScheduledEvent) bool {
