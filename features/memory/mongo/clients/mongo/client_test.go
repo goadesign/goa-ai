@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"go.mongodb.org/mongo-driver/bson"
-	mongodriver "go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	mongodriver "go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
 	"goa.design/goa-ai/runtime/agent/memory"
 )
@@ -99,7 +99,7 @@ func newFakeCollection() *fakeCollection {
 	return &fakeCollection{docs: make(map[string]*runDocument)}
 }
 
-func (c *fakeCollection) FindOne(ctx context.Context, filter any, opts ...*options.FindOneOptions) singleResult {
+func (c *fakeCollection) FindOne(ctx context.Context, filter any, opts ...options.Lister[options.FindOneOptions]) singleResult {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	key := docKey(filter)
@@ -113,7 +113,7 @@ func (c *fakeCollection) FindOne(ctx context.Context, filter any, opts ...*optio
 }
 
 func (c *fakeCollection) UpdateOne(ctx context.Context, filter any, update any,
-	opts ...*options.UpdateOptions) (*mongodriver.UpdateResult, error) {
+	opts ...options.Lister[options.UpdateOneOptions]) (*mongodriver.UpdateResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	key := docKey(filter)
@@ -155,7 +155,7 @@ type fakeIndexView struct {
 }
 
 func (v fakeIndexView) CreateOne(ctx context.Context, model mongodriver.IndexModel,
-	opts ...*options.CreateIndexesOptions) (string, error) {
+	opts ...options.Lister[options.CreateIndexesOptions]) (string, error) {
 	if len(model.Keys.(bson.D)) == 0 {
 		return "", errors.New("missing keys")
 	}

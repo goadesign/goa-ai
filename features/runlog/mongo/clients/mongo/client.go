@@ -10,11 +10,11 @@ import (
 	"fmt"
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	mongodriver "go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.mongodb.org/mongo-driver/mongo/readpref"
+	"go.mongodb.org/mongo-driver/v2/bson"
+
+	mongodriver "go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
 
 	"goa.design/clue/health"
 
@@ -47,15 +47,15 @@ type (
 	}
 
 	eventDocument struct {
-		ID        primitive.ObjectID `bson:"_id,omitempty"`
-		EventKey  string             `bson:"event_key"`
-		RunID     string             `bson:"run_id"`
-		AgentID   string             `bson:"agent_id"`
-		SessionID string             `bson:"session_id"`
-		TurnID    string             `bson:"turn_id"`
-		Type      string             `bson:"type"`
-		Payload   []byte             `bson:"payload"`
-		Timestamp time.Time          `bson:"timestamp"`
+		ID        bson.ObjectID `bson:"_id,omitempty"`
+		EventKey  string        `bson:"event_key"`
+		RunID     string        `bson:"run_id"`
+		AgentID   string        `bson:"agent_id"`
+		SessionID string        `bson:"session_id"`
+		TurnID    string        `bson:"turn_id"`
+		Type      string        `bson:"type"`
+		Payload   []byte        `bson:"payload"`
+		Timestamp time.Time     `bson:"timestamp"`
 	}
 )
 
@@ -146,7 +146,7 @@ func (c *client) Append(ctx context.Context, e *runlog.Event) (runlog.AppendResu
 		}
 		return runlog.AppendResult{}, err
 	}
-	oid, ok := res.InsertedID.(primitive.ObjectID)
+	oid, ok := res.InsertedID.(bson.ObjectID)
 	if !ok {
 		return runlog.AppendResult{}, fmt.Errorf("unexpected inserted id type %T", res.InsertedID)
 	}
@@ -164,7 +164,7 @@ func (c *client) List(ctx context.Context, runID string, cursor string, limit in
 
 	filter := bson.M{"run_id": runID}
 	if cursor != "" {
-		oid, err := primitive.ObjectIDFromHex(cursor)
+		oid, err := bson.ObjectIDFromHex(cursor)
 		if err != nil {
 			return runlog.Page{}, fmt.Errorf("invalid cursor %q: %w", cursor, err)
 		}
@@ -263,14 +263,14 @@ func newClientWithCollection(mongoClient *mongodriver.Client, coll collection, t
 }
 
 type collection interface {
-	InsertOne(ctx context.Context, document any, opts ...*options.InsertOneOptions) (*mongodriver.InsertOneResult, error)
-	FindOne(ctx context.Context, filter any, opts ...*options.FindOneOptions) singleResult
-	Find(ctx context.Context, filter any, opts ...*options.FindOptions) (cursor, error)
+	InsertOne(ctx context.Context, document any, opts ...options.Lister[options.InsertOneOptions]) (*mongodriver.InsertOneResult, error)
+	FindOne(ctx context.Context, filter any, opts ...options.Lister[options.FindOneOptions]) singleResult
+	Find(ctx context.Context, filter any, opts ...options.Lister[options.FindOptions]) (cursor, error)
 	Indexes() indexView
 }
 
 type indexView interface {
-	CreateOne(ctx context.Context, model mongodriver.IndexModel, opts ...*options.CreateIndexesOptions) (string, error)
+	CreateOne(ctx context.Context, model mongodriver.IndexModel, opts ...options.Lister[options.CreateIndexesOptions]) (string, error)
 }
 
 type cursor interface {
@@ -288,11 +288,11 @@ type mongoCollection struct {
 	coll *mongodriver.Collection
 }
 
-func (c mongoCollection) InsertOne(ctx context.Context, document any, opts ...*options.InsertOneOptions) (*mongodriver.InsertOneResult, error) {
+func (c mongoCollection) InsertOne(ctx context.Context, document any, opts ...options.Lister[options.InsertOneOptions]) (*mongodriver.InsertOneResult, error) {
 	return c.coll.InsertOne(ctx, document, opts...)
 }
 
-func (c mongoCollection) Find(ctx context.Context, filter any, opts ...*options.FindOptions) (cursor, error) {
+func (c mongoCollection) Find(ctx context.Context, filter any, opts ...options.Lister[options.FindOptions]) (cursor, error) {
 	cur, err := c.coll.Find(ctx, filter, opts...)
 	if err != nil {
 		return nil, err
@@ -300,7 +300,7 @@ func (c mongoCollection) Find(ctx context.Context, filter any, opts ...*options.
 	return mongoCursor{cur: cur}, nil
 }
 
-func (c mongoCollection) FindOne(ctx context.Context, filter any, opts ...*options.FindOneOptions) singleResult {
+func (c mongoCollection) FindOne(ctx context.Context, filter any, opts ...options.Lister[options.FindOneOptions]) singleResult {
 	return c.coll.FindOne(ctx, filter, opts...)
 }
 
@@ -332,7 +332,7 @@ type mongoIndexView struct {
 	view mongodriver.IndexView
 }
 
-func (v mongoIndexView) CreateOne(ctx context.Context, model mongodriver.IndexModel, opts ...*options.CreateIndexesOptions) (string, error) {
+func (v mongoIndexView) CreateOne(ctx context.Context, model mongodriver.IndexModel, opts ...options.Lister[options.CreateIndexesOptions]) (string, error) {
 	return v.view.CreateOne(ctx, model, opts...)
 }
 
