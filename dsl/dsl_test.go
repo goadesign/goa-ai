@@ -1,6 +1,7 @@
 package dsl_test
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -251,6 +252,76 @@ func runDSL(t *testing.T, dsl func()) {
 
 	require.True(t, eval.Execute(dsl, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
+}
+
+func runDSLWithError(t *testing.T, dsl func()) error {
+	t.Helper()
+
+	eval.Reset()
+	goaexpr.Root = new(goaexpr.RootExpr)
+	goaexpr.GeneratedResultTypes = new(goaexpr.ResultTypesRoot)
+
+	require.NoError(t, eval.Register(goaexpr.Root))
+	require.NoError(t, eval.Register(goaexpr.GeneratedResultTypes))
+
+	agentsexpr.Root = &agentsexpr.RootExpr{}
+	require.NoError(t, eval.Register(agentsexpr.Root))
+
+	goaexpr.Root.API = goaexpr.NewAPIExpr("test", func() {})
+	goaexpr.Root.API.Servers = []*goaexpr.ServerExpr{goaexpr.Root.API.DefaultServer()}
+
+	if !eval.Execute(dsl, nil) {
+		return errors.New(eval.Context.Error())
+	}
+	return eval.RunDSL()
+}
+
+func TestToolRejectsDuplicateDSLFunctions(t *testing.T) {
+	err := runDSLWithError(t, func() {
+		Toolset("local", func() {
+			Tool("search", func() {}, func() {})
+		})
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "Tool accepts at most one DSL function")
+}
+
+func TestToolRejectsInvalidArgumentType(t *testing.T) {
+	err := runDSLWithError(t, func() {
+		Toolset("local", func() {
+			Tool("search", 42)
+		})
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "optional description string or DSL function")
+}
+
+func TestUseRejectsMultipleDSLFunctions(t *testing.T) {
+	err := runDSLWithError(t, func() {
+		Service("assistant", func() {
+			Agent("planner", "planner", func() {
+				Use("adhoc", func() {}, func() {})
+			})
+		})
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "Use accepts at most one DSL function")
+}
+
+func TestExportRejectsMultipleDSLFunctions(t *testing.T) {
+	err := runDSLWithError(t, func() {
+		Service("assistant", func() {
+			Agent("planner", "planner", func() {
+				Export("adhoc", func() {}, func() {})
+			})
+		})
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "Export accepts at most one DSL function")
 }
 
 // TestPassthroughWithServiceAndMethodNames verifies Passthrough works with

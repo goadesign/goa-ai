@@ -26,8 +26,8 @@ import (
 //
 //	var DataIngestToolset = Toolset("data-ingest", func() {
 //		Tool("csv-uploader", func() {
-//			Input(func() { /* CSV file fields */ })
-//			Output(func() { /* Validation result */ })
+//			Args(func() { /* CSV file fields */ })
+//			Return(func() { /* Validation result */ })
 //		})
 //	})
 //
@@ -72,7 +72,7 @@ func Agent(name, description string, dsl func()) *expragents.AgentExpr {
 
 // Use declares that the current agent consumes the specified toolset.
 // The value may be either:
-//   - A *expragents.ToolsetExpr returned by Toolset or MCPToolset (provider-owned)
+//   - A *expragents.ToolsetExpr returned by Toolset (provider-owned)
 //   - A string name for an inline, agent-local toolset definition
 //
 // An optional DSL function can:
@@ -105,6 +105,10 @@ func Use(value any, fn ...func()) *expragents.ToolsetExpr {
 		eval.IncompatibleDSL()
 		return nil
 	}
+	if len(fn) > 1 {
+		eval.ReportError("Use accepts at most one DSL function")
+		return nil
+	}
 	var dsl func()
 	if len(fn) > 0 {
 		dsl = fn[0]
@@ -122,9 +126,13 @@ func Use(value any, fn ...func()) *expragents.ToolsetExpr {
 
 // Export declares that the current agent or service exports the specified
 // toolset for other agents to consume. Providers typically declare reusable
-// toolsets at the top level via Toolset or MCPToolset, then reference them from
+// toolsets at the top level via Toolset, then reference them from
 // agents or services with Export.
 func Export(value any, fn ...func()) *expragents.ToolsetExpr {
+	if len(fn) > 1 {
+		eval.ReportError("Export accepts at most one DSL function")
+		return nil
+	}
 	var dsl func()
 	if len(fn) > 0 {
 		dsl = fn[0]

@@ -72,6 +72,8 @@ import (
 func Tool(name string, args ...any) {
 	var description string
 	var dslf func()
+	var seenDescription bool
+	var seenDSL bool
 
 	if name == "" {
 		eval.ReportError("tool name cannot be empty")
@@ -82,9 +84,22 @@ func Tool(name string, args ...any) {
 	for _, arg := range args {
 		switch a := arg.(type) {
 		case string:
+			if seenDescription {
+				eval.ReportError("Tool accepts at most one description string")
+				return
+			}
 			description = a
+			seenDescription = true
 		case func():
+			if seenDSL {
+				eval.ReportError("Tool accepts at most one DSL function")
+				return
+			}
 			dslf = a
+			seenDSL = true
+		default:
+			eval.InvalidArgError("optional description string or DSL function", arg)
+			return
 		}
 	}
 

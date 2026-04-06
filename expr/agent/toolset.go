@@ -87,10 +87,8 @@ func (t *ToolsetExpr) SetDescription(d string) {
 // registry-backed toolsets.
 func (t *ToolsetExpr) SetVersion(v string) {
 	if t.Provider == nil || t.Provider.Kind != ProviderRegistry {
-		// Validation will catch this; just store it for now
-		if t.Provider == nil {
-			t.Provider = &ProviderExpr{}
-		}
+		eval.ReportError("Version is only valid for FromRegistry toolsets")
+		return
 	}
 	t.Provider.Version = v
 }

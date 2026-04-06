@@ -43,6 +43,12 @@ type PlannerModelClient interface {
 // thinking chunks via the provided PlannerEvents. It returns the aggregated
 // StreamSummary so planners can produce a final response or schedule tool calls.
 // Callers are responsible for handling ToolCalls in the resulting summary.
+//
+// Usage contract:
+//   - Usage deltas emitted as chunks are the canonical streaming signal.
+//   - Stream metadata usage is a fallback for adapters that only expose final
+//     usage via Metadata().
+//   - When both are present, metadata is not added again.
 func ConsumeStream(ctx context.Context, streamer model.Streamer, req *model.Request, ev PlannerEvents) (StreamSummary, error) {
 	var summary StreamSummary
 	if streamer == nil {
@@ -54,6 +60,7 @@ func ConsumeStream(ctx context.Context, streamer model.Streamer, req *model.Requ
 	defer func() {
 		_ = streamer.Close()
 	}()
+	var sawUsageDelta bool
 
 	for {
 		chunk, err := streamer.Recv()
@@ -105,6 +112,7 @@ func ConsumeStream(ctx context.Context, streamer model.Streamer, req *model.Requ
 			ev.ToolCallArgsDelta(ctx, chunk.ToolCallDelta.ID, chunk.ToolCallDelta.Name, chunk.ToolCallDelta.Delta)
 		case model.ChunkTypeUsage:
 			if chunk.UsageDelta != nil {
+				sawUsageDelta = true
 				stampUsageModelIdentity(chunk.UsageDelta, req)
 				summary.Usage = addUsage(summary.Usage, *chunk.UsageDelta)
 				ev.UsageDelta(ctx, *chunk.UsageDelta)
@@ -114,11 +122,13 @@ func ConsumeStream(ctx context.Context, streamer model.Streamer, req *model.Requ
 		}
 	}
 
-	if meta := streamer.Metadata(); meta != nil {
-		if usage, ok := meta["usage"].(model.TokenUsage); ok {
-			stampUsageModelIdentity(&usage, req)
-			summary.Usage = addUsage(summary.Usage, usage)
-			ev.UsageDelta(ctx, usage)
+	if !sawUsageDelta {
+		if meta := streamer.Metadata(); meta != nil {
+			if usage, ok := meta["usage"].(model.TokenUsage); ok {
+				stampUsageModelIdentity(&usage, req)
+				summary.Usage = addUsage(summary.Usage, usage)
+				ev.UsageDelta(ctx, usage)
+			}
 		}
 	}
 

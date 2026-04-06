@@ -53,65 +53,8 @@ func PrepareExample(_ string, roots []eval.Root) error {
 			if r.API.JSONRPC == nil {
 				r.API.JSONRPC = &expr.JSONRPCExpr{}
 			}
-
-			// Remove original HTTP/JSON-RPC services for MCP-enabled service from the example
-			{
-				// HTTP
-				if len(r.API.HTTP.Services) > 0 {
-					filtered := make([]*expr.HTTPServiceExpr, 0, len(r.API.HTTP.Services))
-					for _, hs := range r.API.HTTP.Services {
-						if hs.ServiceExpr != nil && hs.ServiceExpr.Name == svc.Name {
-							continue
-						}
-						filtered = append(filtered, hs)
-					}
-					r.API.HTTP.Services = filtered
-				}
-				// JSON-RPC
-				if len(r.API.JSONRPC.Services) > 0 {
-					filtered := make([]*expr.HTTPServiceExpr, 0, len(r.API.JSONRPC.Services))
-					for _, js := range r.API.JSONRPC.Services {
-						if js.ServiceExpr != nil && js.ServiceExpr.Name == svc.Name {
-							continue
-						}
-						filtered = append(filtered, js)
-					}
-					r.API.JSONRPC.Services = filtered
-				}
-			}
-			// Add to JSONRPC.HTTP services if not already present
-			already := false
-			for _, hs := range r.API.JSONRPC.Services {
-				if hs.ServiceExpr != nil && hs.ServiceExpr.Name == httpSvc.ServiceExpr.Name {
-					already = true
-					break
-				}
-			}
-			if !already {
-				r.API.JSONRPC.Services = append(r.API.JSONRPC.Services, httpSvc)
-			}
-			// Remove original JSON-RPC service for this server so /rpc is handled by MCP only
-			if len(r.API.JSONRPC.Services) > 0 {
-				filtered := make([]*expr.HTTPServiceExpr, 0, len(r.API.JSONRPC.Services))
-				for _, js := range r.API.JSONRPC.Services {
-					if js.ServiceExpr != nil && js.ServiceExpr.Name == svc.Name {
-						continue
-					}
-					filtered = append(filtered, js)
-				}
-				r.API.JSONRPC.Services = filtered
-			}
-			// Add MCP service once to JSONRPC services
-			present := false
-			for _, js := range r.API.JSONRPC.Services {
-				if js.ServiceExpr != nil && js.ServiceExpr.Name == httpSvc.ServiceExpr.Name {
-					present = true
-					break
-				}
-			}
-			if !present {
-				r.API.JSONRPC.Services = append(r.API.JSONRPC.Services, httpSvc)
-			}
+			r.API.HTTP.Services = removeHTTPServiceByName(r.API.HTTP.Services, svc.Name)
+			r.API.JSONRPC.Services = replaceHTTPServiceByName(r.API.JSONRPC.Services, svc.Name, httpSvc)
 			// Add mcp service once to top-level services
 			if !serviceInList(r.Services, mcpService.Name) {
 				r.Services = append(r.Services, mcpService)
@@ -369,6 +312,41 @@ func deriveBaseModuleFromHeader(header *codegen.SectionTemplate) string {
 		}
 	}
 	return ""
+}
+
+func removeHTTPServiceByName(services []*expr.HTTPServiceExpr, name string) []*expr.HTTPServiceExpr {
+	if len(services) == 0 {
+		return nil
+	}
+	filtered := make([]*expr.HTTPServiceExpr, 0, len(services))
+	for _, svc := range services {
+		if svc != nil && svc.ServiceExpr != nil && svc.ServiceExpr.Name == name {
+			continue
+		}
+		filtered = append(filtered, svc)
+	}
+	return filtered
+}
+
+func replaceHTTPServiceByName(services []*expr.HTTPServiceExpr, removeName string, replacement *expr.HTTPServiceExpr) []*expr.HTTPServiceExpr {
+	replacementName := ""
+	if replacement != nil && replacement.ServiceExpr != nil {
+		replacementName = replacement.ServiceExpr.Name
+	}
+	filtered := make([]*expr.HTTPServiceExpr, 0, len(services)+1)
+	for _, svc := range services {
+		if svc != nil && svc.ServiceExpr != nil {
+			name := svc.ServiceExpr.Name
+			if name == removeName || (replacementName != "" && name == replacementName) {
+				continue
+			}
+		}
+		filtered = append(filtered, svc)
+	}
+	if replacement != nil {
+		filtered = append(filtered, replacement)
+	}
+	return filtered
 }
 
 func serviceInList(list []*expr.ServiceExpr, name string) bool {

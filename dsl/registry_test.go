@@ -242,6 +242,17 @@ func TestFromRegistryWithVersion(t *testing.T) {
 	require.Equal(t, "1.2.3", ts.Provider.Version)
 }
 
+func TestVersionRejectsNonRegistryToolset(t *testing.T) {
+	err := runDSLWithError(t, func() {
+		Toolset("local", func() {
+			Version("1.2.3")
+		})
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "Version is only valid for FromRegistry toolsets")
+}
+
 // TestPublishToInExport verifies PublishTo works inside Export.
 func TestPublishToInExport(t *testing.T) {
 	runDSL(t, func() {
