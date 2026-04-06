@@ -8,10 +8,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	mongodriver "go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+
+	mongodriver "go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/runlog"
@@ -159,7 +159,7 @@ func TestClientAppendReturnsExistingIDForDuplicateEventKey(t *testing.T) {
 func fakeEventDocuments(runID string, n int) []eventDocument {
 	docs := make([]eventDocument, 0, n)
 	for i := 1; i <= n; i++ {
-		oid := primitive.ObjectID{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, byte(i)}
+		oid := bson.ObjectID{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, byte(i)}
 		docs = append(docs, eventDocument{
 			ID:        oid,
 			RunID:     runID,
@@ -174,10 +174,10 @@ func fakeEventDocuments(runID string, n int) []eventDocument {
 	return docs
 }
 
-func mustOID(t *testing.T, hex string) primitive.ObjectID {
+func mustOID(t *testing.T, hex string) bson.ObjectID {
 	t.Helper()
 
-	oid, err := primitive.ObjectIDFromHex(hex)
+	oid, err := bson.ObjectIDFromHex(hex)
 	if !assert.NoError(t, err) {
 		t.FailNow()
 	}
@@ -185,33 +185,33 @@ func mustOID(t *testing.T, hex string) primitive.ObjectID {
 }
 
 type fakeCollection struct {
-	insertedID primitive.ObjectID
+	insertedID bson.ObjectID
 	findDocs   []eventDocument
 	findOneDoc eventDocument
 	insertErr  error
 }
 
-func (c *fakeCollection) InsertOne(context.Context, any, ...*options.InsertOneOptions) (*mongodriver.InsertOneResult, error) {
+func (c *fakeCollection) InsertOne(context.Context, any, ...options.Lister[options.InsertOneOptions]) (*mongodriver.InsertOneResult, error) {
 	if c.insertErr != nil {
 		return nil, c.insertErr
 	}
 	return &mongodriver.InsertOneResult{InsertedID: c.insertedID}, nil
 }
 
-func (c *fakeCollection) FindOne(_ context.Context, _ any, _ ...*options.FindOneOptions) singleResult {
+func (c *fakeCollection) FindOne(_ context.Context, _ any, _ ...options.Lister[options.FindOneOptions]) singleResult {
 	return fakeSingleResult{doc: c.findOneDoc}
 }
 
-func (c *fakeCollection) Find(_ context.Context, filter any, opts ...*options.FindOptions) (cursor, error) {
+func (c *fakeCollection) Find(_ context.Context, filter any, opts ...options.Lister[options.FindOptions]) (cursor, error) {
 	f, ok := filter.(bson.M)
 	if !ok {
 		return &fakeCursor{}, nil
 	}
 
 	runID, _ := f["run_id"].(string)
-	var after primitive.ObjectID
+	var after bson.ObjectID
 	if id, ok := f["_id"].(bson.M); ok {
-		if gt, ok := id["$gt"].(primitive.ObjectID); ok {
+		if gt, ok := id["$gt"].(bson.ObjectID); ok {
 			after = gt
 		}
 	}
@@ -228,8 +228,16 @@ func (c *fakeCollection) Find(_ context.Context, filter any, opts ...*options.Fi
 	}
 
 	var limit int64
-	if len(opts) > 0 && opts[0] != nil && opts[0].Limit != nil {
-		limit = *opts[0].Limit
+	if len(opts) > 0 && opts[0] != nil {
+		findOpts := new(options.FindOptions)
+		for _, apply := range opts[0].List() {
+			if err := apply(findOpts); err != nil {
+				panic(err)
+			}
+		}
+		if findOpts.Limit != nil {
+			limit = *findOpts.Limit
+		}
 	}
 	if limit > 0 && int64(len(filtered)) > limit {
 		filtered = filtered[:limit]
@@ -244,7 +252,7 @@ func (c *fakeCollection) Indexes() indexView {
 
 type fakeIndexView struct{}
 
-func (fakeIndexView) CreateOne(context.Context, mongodriver.IndexModel, ...*options.CreateIndexesOptions) (string, error) {
+func (fakeIndexView) CreateOne(context.Context, mongodriver.IndexModel, ...options.Lister[options.CreateIndexesOptions]) (string, error) {
 	return "", nil
 }
 

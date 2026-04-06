@@ -8,10 +8,10 @@ import (
 	"errors"
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson"
-	mongodriver "go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.mongodb.org/mongo-driver/mongo/readpref"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	mongodriver "go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
 
 	"goa.design/clue/health"
 
@@ -137,7 +137,7 @@ func (c *client) CreateSession(ctx context.Context, sessionID string, createdAt 
 			"updated_at": now,
 		},
 	}
-	if _, err := c.sessions.UpdateOne(ctxWithTimeout, filter, update, options.Update().SetUpsert(true)); err != nil {
+	if _, err := c.sessions.UpdateOne(ctxWithTimeout, filter, update, options.UpdateOne().SetUpsert(true)); err != nil {
 		return session.Session{}, err
 	}
 
@@ -238,7 +238,7 @@ func (c *client) UpsertRun(ctx context.Context, run session.RunMeta) error {
 			"started_at": doc.StartedAt,
 		},
 	}
-	_, err := c.runs.UpdateOne(ctx, filter, update, options.Update().SetUpsert(true))
+	_, err := c.runs.UpdateOne(ctx, filter, update, options.UpdateOne().SetUpsert(true))
 	return err
 }
 
@@ -255,7 +255,7 @@ func (c *client) LinkChildRun(ctx context.Context, parentRunID string, child ses
 		return err
 	}
 	defer sessionCtx.EndSession(ctx)
-	_, err = sessionCtx.WithTransaction(ctx, func(txCtx mongodriver.SessionContext) (any, error) {
+	_, err = sessionCtx.WithTransaction(ctx, func(txCtx context.Context) (any, error) {
 		return nil, c.linkChildRun(txCtx, parentRunID, child)
 	})
 	return err
@@ -520,16 +520,16 @@ func newClientWithCollections(mongoClient *mongodriver.Client, sessionsColl, run
 }
 
 type collection interface {
-	FindOne(ctx context.Context, filter any, opts ...*options.FindOneOptions) singleResult
-	Find(ctx context.Context, filter any, opts ...*options.FindOptions) (cursor, error)
+	FindOne(ctx context.Context, filter any, opts ...options.Lister[options.FindOneOptions]) singleResult
+	Find(ctx context.Context, filter any, opts ...options.Lister[options.FindOptions]) (cursor, error)
 	UpdateOne(ctx context.Context, filter any, update any,
-		opts ...*options.UpdateOptions) (*mongodriver.UpdateResult, error)
+		opts ...options.Lister[options.UpdateOneOptions]) (*mongodriver.UpdateResult, error)
 	Indexes() indexView
 }
 
 type indexView interface {
 	CreateOne(ctx context.Context, model mongodriver.IndexModel,
-		opts ...*options.CreateIndexesOptions) (string, error)
+		opts ...options.Lister[options.CreateIndexesOptions]) (string, error)
 }
 
 type singleResult interface {
@@ -547,11 +547,11 @@ type mongoCollection struct {
 	coll *mongodriver.Collection
 }
 
-func (c mongoCollection) FindOne(ctx context.Context, filter any, opts ...*options.FindOneOptions) singleResult {
+func (c mongoCollection) FindOne(ctx context.Context, filter any, opts ...options.Lister[options.FindOneOptions]) singleResult {
 	return mongoSingleResult{res: c.coll.FindOne(ctx, filter, opts...)}
 }
 
-func (c mongoCollection) Find(ctx context.Context, filter any, opts ...*options.FindOptions) (cursor, error) {
+func (c mongoCollection) Find(ctx context.Context, filter any, opts ...options.Lister[options.FindOptions]) (cursor, error) {
 	cur, err := c.coll.Find(ctx, filter, opts...)
 	if err != nil {
 		return nil, err
@@ -560,7 +560,7 @@ func (c mongoCollection) Find(ctx context.Context, filter any, opts ...*options.
 }
 
 func (c mongoCollection) UpdateOne(ctx context.Context, filter any, update any,
-	opts ...*options.UpdateOptions) (*mongodriver.UpdateResult, error) {
+	opts ...options.Lister[options.UpdateOneOptions]) (*mongodriver.UpdateResult, error) {
 	return c.coll.UpdateOne(ctx, filter, update, opts...)
 }
 
@@ -601,6 +601,6 @@ type mongoIndexView struct {
 }
 
 func (v mongoIndexView) CreateOne(ctx context.Context, model mongodriver.IndexModel,
-	opts ...*options.CreateIndexesOptions) (string, error) {
+	opts ...options.Lister[options.CreateIndexesOptions]) (string, error) {
 	return v.view.CreateOne(ctx, model, opts...)
 }

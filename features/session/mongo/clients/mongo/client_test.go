@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"go.mongodb.org/mongo-driver/bson"
-	mongodriver "go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	mongodriver "go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/session"
@@ -240,7 +240,7 @@ func newFakeRunsCollection() *fakeRunsCollection {
 	return &fakeRunsCollection{docs: make(map[string]runDocument)}
 }
 
-func (c *fakeRunsCollection) FindOne(ctx context.Context, filter any, opts ...*options.FindOneOptions) singleResult {
+func (c *fakeRunsCollection) FindOne(ctx context.Context, filter any, opts ...options.Lister[options.FindOneOptions]) singleResult {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	runID := filter.(bson.M)["run_id"].(string)
@@ -252,7 +252,7 @@ func (c *fakeRunsCollection) FindOne(ctx context.Context, filter any, opts ...*o
 	return fakeSingleResult{doc: &copyDoc}
 }
 
-func (c *fakeRunsCollection) Find(ctx context.Context, filter any, opts ...*options.FindOptions) (cursor, error) {
+func (c *fakeRunsCollection) Find(ctx context.Context, filter any, opts ...options.Lister[options.FindOptions]) (cursor, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -284,7 +284,7 @@ func (c *fakeRunsCollection) Find(ctx context.Context, filter any, opts ...*opti
 }
 
 func (c *fakeRunsCollection) UpdateOne(ctx context.Context, filter any, update any,
-	opts ...*options.UpdateOptions) (*mongodriver.UpdateResult, error) {
+	opts ...options.Lister[options.UpdateOneOptions]) (*mongodriver.UpdateResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	runID := filter.(bson.M)["run_id"].(string)
@@ -345,7 +345,7 @@ type fakeIndexView struct {
 }
 
 func (v fakeIndexView) CreateOne(ctx context.Context, model mongodriver.IndexModel,
-	opts ...*options.CreateIndexesOptions) (string, error) {
+	opts ...options.Lister[options.CreateIndexesOptions]) (string, error) {
 	if len(model.Keys.(bson.D)) == 0 {
 		return "", errors.New("missing keys")
 	}
@@ -383,7 +383,7 @@ func newFakeSessionsCollection() *fakeSessionsCollection {
 	return &fakeSessionsCollection{docs: make(map[string]sessionDocument)}
 }
 
-func (c *fakeSessionsCollection) FindOne(ctx context.Context, filter any, opts ...*options.FindOneOptions) singleResult {
+func (c *fakeSessionsCollection) FindOne(ctx context.Context, filter any, opts ...options.Lister[options.FindOneOptions]) singleResult {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	sessionID := filter.(bson.M)["session_id"].(string)
@@ -395,12 +395,12 @@ func (c *fakeSessionsCollection) FindOne(ctx context.Context, filter any, opts .
 	return fakeSingleResult{doc: &copyDoc}
 }
 
-func (c *fakeSessionsCollection) Find(ctx context.Context, filter any, opts ...*options.FindOptions) (cursor, error) {
+func (c *fakeSessionsCollection) Find(ctx context.Context, filter any, opts ...options.Lister[options.FindOptions]) (cursor, error) {
 	return newFakeCursor(nil), nil
 }
 
 func (c *fakeSessionsCollection) UpdateOne(ctx context.Context, filter any, update any,
-	opts ...*options.UpdateOptions) (*mongodriver.UpdateResult, error) {
+	opts ...options.Lister[options.UpdateOneOptions]) (*mongodriver.UpdateResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -412,8 +412,16 @@ func (c *fakeSessionsCollection) UpdateOne(ctx context.Context, filter any, upda
 
 	up := update.(bson.M)
 	upsert := false
-	if len(opts) > 0 && opts[0] != nil && opts[0].Upsert != nil {
-		upsert = *opts[0].Upsert
+	if len(opts) > 0 && opts[0] != nil {
+		updateOpts := new(options.UpdateOneOptions)
+		for _, apply := range opts[0].List() {
+			if err := apply(updateOpts); err != nil {
+				panic(err)
+			}
+		}
+		if updateOpts.Upsert != nil {
+			upsert = *updateOpts.Upsert
+		}
 	}
 
 	if !ok && upsert {
