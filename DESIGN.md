@@ -44,8 +44,16 @@ var LocalTools = Toolset("utils", func() {
     })
 })
 
-// MCP-backed toolset
+// Goa-backed MCP toolset
 var MCPTools = Toolset("assistant", FromMCP("assistant-service", "assistant-mcp"))
+
+// External MCP toolset with inline schemas
+var RemoteMCPTools = Toolset("remote-search", FromExternalMCP("remote", "search"), func() {
+    Tool("web_search", "Search the web", func() {
+        Args(func() { Attribute("query", String) })
+        Return(func() { Attribute("results", ArrayOf(String)) })
+    })
+})
 
 // Registry-backed toolset (discovered at runtime)
 var RegistryTools = Toolset("enterprise", FromRegistry(CorpRegistry, "data-tools"))

@@ -208,7 +208,7 @@ func (p *MySmartPlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (
 
 // PlanResume is called after tools have run, giving the agent new information.
 func (p *MySmartPlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
-    // 1. Inspect the tool results from in.ToolResults.
+    // 1. Inspect the executed tool-call history from in.ToolOutputs.
     // 2. Build a new prompt including the tool results.
     // 3. Call the LLM to decide what to do next.
     return &planner.PlanResult{
@@ -297,7 +297,7 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
 
 #### Connecting to Remote Services (MCP)
 
-If your agent uses tools from another service via MCP (`Use(MCPToolset(...))`):
+If your agent uses tools from another service via MCP (`Use(Toolset(FromMCP(...)))` or a top-level `AssistantSuite := Toolset(FromMCP(...))`):
 
 1.  Get the generated Goa client for the remote service.
 2.  Wrap it in an `mcpruntime.Caller`.
