@@ -714,7 +714,7 @@ type PlanResumeInput struct {
     RunContext  run.Context
     Agent       PlannerContext
     Events      PlannerEvents
-    ToolResults []*ToolResult      // Results from previous tool calls
+    ToolOutputs []*ToolOutput      // Canonical executed tool-call history
     Finalize    *Termination       // Non-nil when runtime forces finalization
     Reminders   []reminder.Reminder
 }
@@ -726,9 +726,11 @@ type PlanResumeInput struct {
 type PlanResult struct {
     ToolCalls     []ToolRequest    // Tools to execute
     FinalResponse *FinalResponse   // Terminal assistant message
+    FinalToolResult *FinalToolResult // Terminal tool result for nested agent runs
     Streamed      bool             // True if text already streamed via Events
     Await         *Await           // Pause for human input
     RetryHint     *RetryHint       // Guidance after failures
+    ExpectedChildren int           // Optional hint for nested child results
     Notes         []PlannerAnnotation // Intermediate reasoning
 }
 ```
@@ -747,9 +749,9 @@ type PlannerContext interface {
     Tracer() telemetry.Tracer
     State() AgentState                    // Ephemeral per-run state
     AdvertisedToolDefinitions() []*model.ToolDefinition
-    ModelClient(id string) (model.Client, bool)
-    PlannerModelClient(id string) (planner.PlannerModelClient, bool)
-    RenderPrompt(ctx context.Context, id string, data any) (*prompt.PromptContent, error)
+    ModelClient(id string) (model.Client, bool) // Raw client; no PlannerEvents emission
+    PlannerModelClient(id string) (planner.PlannerModelClient, bool) // Planner-scoped streaming client
+    RenderPrompt(ctx context.Context, id prompt.Ident, data any) (*prompt.PromptContent, error)
     AddReminder(r reminder.Reminder)      // Register guidance for future turns
     RemoveReminder(id string)             // Clear outdated guidance
 }
@@ -762,6 +764,7 @@ Stream updates during planning:
 ```go
 type PlannerEvents interface {
     AssistantChunk(ctx context.Context, text string)
+    ToolCallArgsDelta(ctx context.Context, toolCallID string, toolName tools.Ident, delta string)
     PlannerThinkingBlock(ctx context.Context, block model.ThinkingPart)
     PlannerThought(ctx context.Context, note string, labels map[string]string)
     UsageDelta(ctx context.Context, usage model.TokenUsage)

@@ -107,9 +107,14 @@ func main() {
     })
     defer temporalEng.Close()
 
-    // MongoDB stores for persistence
+    // MongoDB stores for persistence.
+    // The low-level client is a *mongo.Client from go.mongodb.org/mongo-driver/v2/mongo.
     mongoClient := newMongoClient()
-    memStore := memorymongo.New(mongoClient)
+    memClient, _ := memorymongoclient.New(memorymongoclient.Options{
+        Client:   mongoClient,
+        Database: "agents",
+    })
+    memStore, _ := memorymongo.NewStore(memClient)
 
     // Pulse sink for real-time streaming
     pulseSink, _ := pulse.NewSink(pulse.Options{Client: newPulseClient()})
@@ -462,9 +467,11 @@ the planner.
 type PlanResult struct {
     ToolCalls     []ToolRequest    // Tools to execute (empty for final response)
     FinalResponse *FinalResponse   // Terminal assistant message
+    FinalToolResult *FinalToolResult // Terminal tool result for nested agent runs
     Streamed      bool             // True if text was already streamed via Events
     Await         *Await           // Pause for clarification or external tools
     RetryHint     *RetryHint       // Guidance after tool failures
+    ExpectedChildren int           // Optional hint for nested child results
     Notes         []PlannerAnnotation
 }
 ```
@@ -485,7 +492,7 @@ type PlannerContext interface {
     AdvertisedToolDefinitions() []*model.ToolDefinition // Runtime-filtered model-facing tools
     ModelClient(id string) (model.Client, bool)  // Raw LLM client lookup
     PlannerModelClient(id string) (planner.PlannerModelClient, bool) // Planner-scoped client with runtime-owned event emission
-    RenderPrompt(ctx context.Context, id string, data any) (*prompt.PromptContent, error)
+    RenderPrompt(ctx context.Context, id prompt.Ident, data any) (*prompt.PromptContent, error)
     AddReminder(r reminder.Reminder)      // Register backstage guidance
     RemoveReminder(id string)             // Clear a reminder
 }
@@ -502,6 +509,7 @@ from the model-facing `ToolDefinition` values.
 ```go
 type PlannerEvents interface {
     AssistantChunk(ctx context.Context, text string)
+    ToolCallArgsDelta(ctx context.Context, toolCallID string, toolName tools.Ident, delta string)
     PlannerThinkingBlock(ctx context.Context, block model.ThinkingPart)
     PlannerThought(ctx context.Context, note string, labels map[string]string)
     UsageDelta(ctx context.Context, usage model.TokenUsage)
@@ -591,13 +599,12 @@ yourself.
 
 ### Tool Payload and Result Flow
 
-1. **Model emits tool call** — Provider adapter produces `model.ToolCall` with
-   `json.RawMessage` payload
-2. **Planner returns ToolRequest** — Payload stays as `json.RawMessage`
-3. **Runtime decodes payload** — Uses generated codecs to validate and decode
+1. **Model emits tool call** — Provider adapters produce a streamed or final tool call with canonical JSON bytes
+2. **Planner returns `ToolRequest`** — `ToolRequest.Payload` stays as `rawjson.Message`
+3. **Runtime decodes payload** — Uses generated codecs to validate and decode canonical JSON
 4. **Executor runs tool** — Receives typed or raw payload depending on configuration
-5. **Runtime encodes result** — Uses generated codecs for consistency
-6. **Planner receives ToolResult** — Gets typed result via `ToolResult.Result`
+5. **Runtime encodes result** — Uses generated codecs and persists canonical `ToolOutput` history
+6. **Planner resumes from `ToolOutputs`** — `PlanResumeInput.ToolOutputs` is the canonical execution-history boundary
 
 ### ToolsetRegistration
 

@@ -708,7 +708,7 @@ Tool("get_time_series", "Get time series data", func() {
 ```
 
 Server-data is never included in prompts to the LLM. Optional server-data may be projected into
-observer-facing UI artifacts (e.g., `planner.ToolResult.Artifacts` and stream events) while
+observer-facing projections via `planner.ToolResult.ServerData`, hooks, and stream events while
 always-on server-data is intended for in-process subscribers such as persistence and telemetry.
 
 #### Declaring a server-data audience (`Audience*`)
@@ -819,8 +819,8 @@ Codegen produces transform helpers when shapes are compatible:
 `Inject` marks payload fields as server-injected. Injected fields are:
 
 1. Hidden from the LLM (excluded from JSON schema)
-2. Exposed in generated structs with setter methods
-3. Populated by runtime hooks (ToolInterceptor)
+2. Still required on the bound method payload
+3. Populated from `runtime.ToolCallMeta` by generated executors, with optional typed `ToolInterceptor.Inject` hooks
 
 ```go
 Tool("get_data", "Get user data", func() {
@@ -833,6 +833,10 @@ Tool("get_data", "Get user data", func() {
     Inject("session_id")  // Hidden from LLM, set by runtime
 })
 ```
+
+Injected fields must be required `String` fields on the bound method payload, and the
+supported names are fixed: `run_id`, `session_id`, `turn_id`, `tool_call_id`, and
+`parent_tool_call_id`.
 
 ### Display Hint Templates
 

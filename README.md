@@ -522,7 +522,12 @@ func main() {
     defer eng.Close()
 
     // Persistence
-    mongoClient := newMongoClient()
+    mongoClient := newMongoClient() // *mongo.Client from go.mongodb.org/mongo-driver/v2/mongo
+    memClient, _ := memorymongoclient.New(memorymongoclient.Options{
+        Client:   mongoClient,
+        Database: "agents",
+    })
+    memStore, _ := memorymongo.NewStore(memClient)
     redisClient := newRedisClient()
 
     // Model provider
@@ -537,7 +542,7 @@ func main() {
     // Wire it all together
     rt := runtime.New(
         runtime.WithEngine(eng),
-        runtime.WithMemoryStore(memorymongo.New(mongoClient)),
+        runtime.WithMemoryStore(memStore),
         runtime.WithStream(pulseSink),
         runtime.WithModelClient("claude", modelClient),
         runtime.WithPolicy(basicpolicy.New()),
