@@ -115,15 +115,16 @@ func newToolsetData(
 		// structures that are populated via runtime discovery.
 
 	case isMCPBacked:
-		if ref.Provider.MCP != nil {
-			mcpMeta := ref.Provider.MCP
-			ts.MCP = &MCPToolsetMeta{
-				ServiceName:   mcpMeta.ServiceName,
-				SuiteName:     mcpMeta.SuiteName,
-				Source:        mcpMeta.Source,
-				QualifiedName: mcpMeta.QualifiedName,
-				ConstName:     mcpMeta.ConstName,
-			}
+		if ref.Provider == nil || ref.Provider.MCP == nil {
+			return nil, fmt.Errorf("toolset %q is MCP-backed but missing MCP metadata", expr.Name)
+		}
+		mcpMeta := ref.Provider.MCP
+		ts.MCP = &MCPToolsetMeta{
+			ServiceName:   mcpMeta.ServiceName,
+			SuiteName:     mcpMeta.SuiteName,
+			Source:        mcpMeta.Source,
+			QualifiedName: mcpMeta.QualifiedName,
+			ConstName:     mcpMeta.ConstName,
 		}
 		switch ts.MCP.Source {
 		case agentsExpr.MCPSourceGoa:
@@ -137,7 +138,10 @@ func newToolsetData(
 			}
 		case agentsExpr.MCPSourceInline:
 			for _, toolExpr := range expr.Tools {
-				tool := newToolData(ts, toolExpr, servicesData)
+				tool, err := newToolData(ts, toolExpr, servicesData)
+				if err != nil {
+					return nil, err
+				}
 				ts.Tools = append(ts.Tools, tool)
 			}
 			slices.SortFunc(ts.Tools, func(a, b *ToolData) int {
@@ -149,7 +153,10 @@ func newToolsetData(
 
 	default:
 		for _, toolExpr := range expr.Tools {
-			tool := newToolData(ts, toolExpr, servicesData)
+			tool, err := newToolData(ts, toolExpr, servicesData)
+			if err != nil {
+				return nil, err
+			}
 			ts.Tools = append(ts.Tools, tool)
 		}
 		slices.SortFunc(ts.Tools, func(a, b *ToolData) int {
@@ -200,7 +207,7 @@ func buildServiceImportMap(svc *service.Data) map[string]*codegen.ImportSpec {
 
 // newToolData resolves one tool expression into the template data consumed by
 // executor/spec generation, including method binding metadata when applicable.
-func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *service.ServicesData) *ToolData {
+func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *service.ServicesData) (*ToolData, error) {
 	// ts is guaranteed non-nil by construction (collectToolsets/newToolsetData)
 	// and ts.QualifiedName is always set there.
 	qualified := fmt.Sprintf("%s.%s", ts.Name, expr.Name)
@@ -249,16 +256,20 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		tool.PassthroughMethod = expr.ExportPassthrough.TargetMethod
 	}
 	if expr.Method == nil {
-		return tool
+		return tool, nil
 	}
 	tool.IsMethodBacked = true
 	// Populate exact payload/result type names using Goa service metadata.
 	if servicesData == nil || ts.SourceService == nil {
-		return tool
+		return nil, fmt.Errorf("method-backed tool %q requires source service metadata", tool.QualifiedName)
 	}
 	sd := servicesData.Get(ts.SourceService.Name)
 	if sd == nil {
-		return tool
+		return nil, fmt.Errorf(
+			"method-backed tool %q could not resolve source service %q",
+			tool.QualifiedName,
+			ts.SourceService.Name,
+		)
 	}
 	for _, md := range sd.Methods {
 		if md.Name != expr.Method.Name {
@@ -303,12 +314,12 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		break
 	}
 	if tool.MethodGoName == "" {
-		panic(fmt.Sprintf(
-			"method %q not found in service %q for tool %q",
+		return nil, fmt.Errorf(
+			"method-backed tool %q could not resolve bound method %q on service %q",
+			tool.QualifiedName,
 			expr.Method.Name,
 			ts.SourceService.Name,
-			tool.QualifiedName,
-		))
+		)
 	}
 	// Derive HasResult from tool.Return or bound method result.
 	tool.HasResult = (tool.Return != nil && tool.Return.Type != goaexpr.Empty) || (tool.MethodResultAttr != nil && tool.MethodResultAttr.Type != goaexpr.Empty)
@@ -319,7 +330,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 			tool.ResultAliasesMethod = ToolAttrAliasesMethod(tool.Return, tool.MethodResultAttr)
 		}
 	}
-	return tool
+	return tool, nil
 }
 
 // mergedToolTags returns the stable union of toolset-level and tool-level tags.

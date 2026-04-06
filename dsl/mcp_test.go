@@ -1,6 +1,7 @@
 package dsl_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -113,6 +114,21 @@ func TestMCPStaticPrompt(t *testing.T) {
 	require.Equal(t, "You are a helpful assistant", prompt.Messages[0].Content)
 	require.Equal(t, "user", prompt.Messages[1].Role)
 	require.Equal(t, "Hello!", prompt.Messages[1].Content)
+}
+
+func TestMCPStaticPromptRejectsOddMessageList(t *testing.T) {
+	err := runMCPDSLWithError(t, func() {
+		API("test", func() {})
+		Service("assistant", func() {
+			MCP("assistant", "1.0")
+			StaticPrompt("greeting", "Friendly greeting",
+				"system", "You are a helpful assistant",
+				"user")
+		})
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "StaticPrompt requires role/content pairs")
 }
 
 func TestMCPDynamicPrompt(t *testing.T) {
@@ -264,4 +280,26 @@ func runMCPDSL(t *testing.T, dsl func()) {
 
 	require.True(t, eval.Execute(dsl, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
+}
+
+func runMCPDSLWithError(t *testing.T, dsl func()) error {
+	t.Helper()
+
+	eval.Reset()
+	goaexpr.Root = new(goaexpr.RootExpr)
+	goaexpr.GeneratedResultTypes = new(goaexpr.ResultTypesRoot)
+
+	require.NoError(t, eval.Register(goaexpr.Root))
+	require.NoError(t, eval.Register(goaexpr.GeneratedResultTypes))
+
+	mcpexpr.Root = mcpexpr.NewRoot()
+	require.NoError(t, eval.Register(mcpexpr.Root))
+
+	goaexpr.Root.API = goaexpr.NewAPIExpr("test", func() {})
+	goaexpr.Root.API.Servers = []*goaexpr.ServerExpr{goaexpr.Root.API.DefaultServer()}
+
+	if !eval.Execute(dsl, nil) {
+		return errors.New(eval.Context.Error())
+	}
+	return eval.RunDSL()
 }

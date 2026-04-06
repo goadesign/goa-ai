@@ -78,10 +78,37 @@ func TestConsumeStreamStampsUsageIdentityFromRequest(t *testing.T) {
 	require.True(t, streamer.closed)
 	require.Equal(t, "gpt-5", summary.Usage.Model)
 	require.Equal(t, model.ModelClassHighReasoning, summary.Usage.ModelClass)
-	require.Equal(t, 3, summary.Usage.InputTokens)
-	require.Equal(t, 4, summary.Usage.OutputTokens)
-	require.Equal(t, 7, summary.Usage.TotalTokens)
-	require.Len(t, events.usage, 2)
+	require.Equal(t, 2, summary.Usage.InputTokens)
+	require.Equal(t, 3, summary.Usage.OutputTokens)
+	require.Equal(t, 5, summary.Usage.TotalTokens)
+	require.Len(t, events.usage, 1)
 	require.Equal(t, "gpt-5", events.usage[0].Model)
 	require.Equal(t, model.ModelClassHighReasoning, events.usage[0].ModelClass)
+}
+
+func TestConsumeStreamFallsBackToMetadataUsage(t *testing.T) {
+	streamer := &testStreamer{
+		meta: map[string]any{
+			"usage": model.TokenUsage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3},
+		},
+	}
+	events := &recordingEvents{}
+
+	summary, err := ConsumeStream(
+		context.Background(),
+		streamer,
+		&model.Request{Model: "gpt-5", ModelClass: model.ModelClassDefault},
+		events,
+	)
+
+	require.NoError(t, err)
+	require.True(t, streamer.closed)
+	require.Equal(t, "gpt-5", summary.Usage.Model)
+	require.Equal(t, model.ModelClassDefault, summary.Usage.ModelClass)
+	require.Equal(t, 1, summary.Usage.InputTokens)
+	require.Equal(t, 2, summary.Usage.OutputTokens)
+	require.Equal(t, 3, summary.Usage.TotalTokens)
+	require.Len(t, events.usage, 1)
+	require.Equal(t, "gpt-5", events.usage[0].Model)
+	require.Equal(t, model.ModelClassDefault, events.usage[0].ModelClass)
 }

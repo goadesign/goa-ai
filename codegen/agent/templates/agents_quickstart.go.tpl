@@ -237,7 +237,7 @@ type MySmartPlanner struct{}
 // PlanStart is called at the beginning of a run.
 func (p *MySmartPlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
     // 1. Get an LLM client from the runtime.
-    // mc, _ := in.Agent.ModelClient("bedrock")
+    // mc, _ := in.Agent.PlannerModelClient("bedrock")
     
     // 2. Build a prompt from in.Messages.
     

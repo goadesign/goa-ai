@@ -171,11 +171,13 @@ func StaticPrompt(name, description string, messages ...string) {
 		eval.IncompatibleDSL()
 		return
 	}
+	if len(messages)%2 != 0 {
+		eval.ReportError("StaticPrompt requires role/content pairs")
+		return
+	}
 	prompt := &exprmcp.PromptExpr{Name: name, Description: description, Messages: make([]*exprmcp.MessageExpr, 0)}
 	for i := 0; i < len(messages); i += 2 {
-		if i+1 < len(messages) {
-			prompt.Messages = append(prompt.Messages, &exprmcp.MessageExpr{Role: messages[i], Content: messages[i+1]})
-		}
+		prompt.Messages = append(prompt.Messages, &exprmcp.MessageExpr{Role: messages[i], Content: messages[i+1]})
 	}
 	mcp.Prompts = append(mcp.Prompts, prompt)
 }
