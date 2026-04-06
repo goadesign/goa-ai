@@ -1,7 +1,6 @@
 package dsl
 
 import (
-	_ "goa.design/goa-ai/codegen/mcp" // Registers the MCP codegen plugin with Goa
 	exprmcp "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"

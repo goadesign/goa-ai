@@ -98,9 +98,19 @@ type PlannerContext interface {
 	// applying runtime policy filtering for the current run.
 	AdvertisedToolDefinitions() []*model.ToolDefinition
 
-	// ModelClient returns the model client configured for the given model ID.
+	// ModelClient returns the raw model client configured for the given model ID.
 	// The boolean result is false when the requested model is not configured.
+	//
+	// Runtime policy wrappers such as tracing, cache defaults, and tool
+	// availability are applied, but PlannerEvents emission is not. Planners that
+	// want runtime-owned text/thinking/usage streaming should use
+	// PlannerModelClient instead.
 	ModelClient(id string) (model.Client, bool)
+
+	// PlannerModelClient returns a planner-scoped model client that owns
+	// PlannerEvents emission for the current turn. The boolean result is false
+	// when the requested model is not configured.
+	PlannerModelClient(id string) (PlannerModelClient, bool)
 
 	// RenderPrompt resolves and renders a registered prompt by ID.
 	//

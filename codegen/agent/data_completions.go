@@ -1,8 +1,7 @@
 package codegen
 
 import (
-	agentsExpr "goa.design/goa-ai/expr/agent"
-	"goa.design/goa/v3/codegen"
+	ir "goa.design/goa-ai/codegen/ir"
 	goaexpr "goa.design/goa/v3/expr"
 )
 
@@ -21,14 +20,16 @@ type (
 	}
 )
 
-// newCompletionData transforms an evaluated CompletionExpr into template-ready
-// metadata for service-owned completion generation.
-func newCompletionData(expr *agentsExpr.CompletionExpr) *CompletionData {
-	goName := codegen.Goify(expr.Name, true)
+// newCompletionDataFromIR transforms a canonical IR completion into the
+// template-ready metadata used by service-owned completion generation.
+func newCompletionDataFromIR(completion *ir.Completion) *CompletionData {
+	if completion == nil || completion.Expr == nil {
+		return nil
+	}
 	return &CompletionData{
-		Name:        expr.Name,
-		Description: expr.Description,
-		GoName:      goName,
-		Result:      expr.Return,
+		Name:        completion.Name,
+		Description: completion.Description,
+		GoName:      completion.GoName,
+		Result:      completion.Expr.Return,
 	}
 }

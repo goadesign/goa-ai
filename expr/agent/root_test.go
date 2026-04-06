@@ -23,6 +23,20 @@ func TestRootExprValidateRejectsSanitizedAgentCollisionsWithinService(t *testing
 	require.ErrorContains(t, err, `sanitized agent name "remote_tools"`)
 }
 
+func TestRootExprValidateRejectsAgentNamesWithoutSanitizedIdentifier(t *testing.T) {
+	service := &goaexpr.ServiceExpr{Name: "assistant"}
+	root := &RootExpr{
+		Agents: []*AgentExpr{
+			{Name: "!!!", Service: service},
+		},
+	}
+
+	err := root.Validate()
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, `agent name "!!!" must contain at least one letter or digit after sanitization`)
+}
+
 func TestRootExprValidateRejectsSanitizedToolsetCollisionsWithinOwner(t *testing.T) {
 	service := &goaexpr.ServiceExpr{Name: "assistant"}
 	agent := &AgentExpr{Name: "planner", Service: service}
@@ -80,6 +94,22 @@ func TestRootExprValidateRejectsOwnerScopedDefiningToolsetCollisions(t *testing.
 	require.Error(t, err)
 	require.ErrorContains(t, err, `sanitized toolset name "remote_tools"`)
 	require.ErrorContains(t, err, "owner-scoped")
+}
+
+func TestRootExprValidateRejectsToolsetNamesWithoutSanitizedIdentifier(t *testing.T) {
+	service := &goaexpr.ServiceExpr{Name: "assistant"}
+	agent := &AgentExpr{Name: "planner", Service: service}
+	toolset := &ToolsetExpr{Name: "!!!", Agent: agent}
+	agent.Used = &ToolsetGroupExpr{
+		Agent:    agent,
+		Toolsets: []*ToolsetExpr{toolset},
+	}
+	root := &RootExpr{Agents: []*AgentExpr{agent}}
+
+	err := root.Validate()
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, `toolset name "!!!" must contain at least one letter or digit after sanitization`)
 }
 
 func TestCompletionExprValidateStructuredOutputNameContract(t *testing.T) {

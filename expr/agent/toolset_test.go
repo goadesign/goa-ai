@@ -28,6 +28,7 @@ func TestToolsetExpr_Validate_ProviderMCP(t *testing.T) {
 				Kind:       ProviderMCP,
 				MCPService: "existing-service",
 				MCPToolset: "mcp-server",
+				MCPSource:  MCPSourceGoa,
 			},
 		}
 		err := ts.Validate()
@@ -41,6 +42,7 @@ func TestToolsetExpr_Validate_ProviderMCP(t *testing.T) {
 				Kind:       ProviderMCP,
 				MCPService: "existing-service",
 				MCPToolset: "",
+				MCPSource:  MCPSourceGoa,
 			},
 		}
 		err := ts.Validate()
@@ -55,11 +57,58 @@ func TestToolsetExpr_Validate_ProviderMCP(t *testing.T) {
 				Kind:       ProviderMCP,
 				MCPService: "non-existent-service",
 				MCPToolset: "mcp-server",
+				MCPSource:  MCPSourceGoa,
 			},
 		}
 		err := ts.Validate()
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "FromMCP could not resolve service")
+	})
+
+	t.Run("Goa-backed MCP provider rejects inline tool schemas", func(t *testing.T) {
+		ts := &ToolsetExpr{
+			Name: "mcp-tools",
+			Provider: &ProviderExpr{
+				Kind:       ProviderMCP,
+				MCPService: "existing-service",
+				MCPToolset: "mcp-server",
+				MCPSource:  MCPSourceGoa,
+			},
+			Tools: []*ToolExpr{{Name: "search"}},
+		}
+		err := ts.Validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "cannot declare inline Tool schemas")
+	})
+
+	t.Run("external MCP provider requires inline tool schemas", func(t *testing.T) {
+		ts := &ToolsetExpr{
+			Name: "remote-tools",
+			Provider: &ProviderExpr{
+				Kind:       ProviderMCP,
+				MCPService: "existing-service",
+				MCPToolset: "remote-mcp",
+				MCPSource:  MCPSourceInline,
+			},
+		}
+		err := ts.Validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "require inline Tool declarations")
+	})
+
+	t.Run("valid external MCP provider with inline tool schemas", func(t *testing.T) {
+		ts := &ToolsetExpr{
+			Name: "remote-tools",
+			Provider: &ProviderExpr{
+				Kind:       ProviderMCP,
+				MCPService: "existing-service",
+				MCPToolset: "remote-mcp",
+				MCPSource:  MCPSourceInline,
+			},
+			Tools: []*ToolExpr{{Name: "search"}},
+		}
+		err := ts.Validate()
+		require.NoError(t, err)
 	})
 }
 
@@ -142,12 +191,14 @@ func TestToolsetExpr_ProviderResolution(t *testing.T) {
 				Kind:       ProviderMCP,
 				MCPService: "svc",
 				MCPToolset: "mcp-server",
+				MCPSource:  MCPSourceGoa,
 			},
 		}
 		require.NotNil(t, ts.Provider)
 		require.Equal(t, ProviderMCP, ts.Provider.Kind)
 		require.Equal(t, "svc", ts.Provider.MCPService)
 		require.Equal(t, "mcp-server", ts.Provider.MCPToolset)
+		require.Equal(t, MCPSourceGoa, ts.Provider.MCPSource)
 	})
 
 	t.Run("toolset with registry provider", func(t *testing.T) {

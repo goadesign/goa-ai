@@ -28,7 +28,10 @@ engine.ActivityOptions{
 }
 {{- end }}
 
-// Register{{ .StructName }} registers the generated agent components with the runtime.
+// Register{{ .StructName }} registers the generated agent components with the local runtime.
+// This helper wires generated code into `agentsruntime.Runtime`; it does not
+// implement the clustered `registry` service or the `runtime/toolregistry`
+// wire protocol.
 func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, cfg {{ .ConfigType }}) error {
     if rt == nil {
         return errors.New("runtime is required")
@@ -168,8 +171,8 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
 {{- end }}
 {{- end }}
 {{- if $had }}
-// RegisterUsedToolsets registers all non-MCP Used toolsets for this agent.
-// Provide executors via typed options for each required toolset.
+// RegisterUsedToolsets registers all non-MCP Used toolsets for this agent with
+// the local runtime. Provide executors via typed options for each required toolset.
 //
 // Example:
 //   err := RegisterUsedToolsets(ctx, rt,

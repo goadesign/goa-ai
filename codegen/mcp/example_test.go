@@ -69,7 +69,8 @@ func TestGenerateExampleAdapterStubs_ReplacesStub(t *testing.T) {
 	}
 	stub := &codegen.File{Path: "mcp_orchestrator.go", SectionTemplates: []*codegen.SectionTemplate{header, body}}
 
-	files := generateExampleAdapterStubs([]*expr.ServiceExpr{svc}, []*codegen.File{stub})
+	files, err := generateExampleAdapterStubs([]*expr.ServiceExpr{svc}, []*codegen.File{stub})
+	require.NoError(t, err)
 	require.Len(t, files, 1)
 	// Body should now contain a call to NewMCPAdapter(NewOrchestrator())
 	found := false
@@ -79,4 +80,46 @@ func TestGenerateExampleAdapterStubs_ReplacesStub(t *testing.T) {
 		}
 	}
 	require.True(t, found, "expected example adapter stub to be generated")
+}
+
+func TestGenerateExampleAdapterStubs_RequiresExpectedStubPath(t *testing.T) {
+	svc := &expr.ServiceExpr{Name: "Orchestrator"}
+	header := &codegen.SectionTemplate{
+		Name: headerSection,
+		Data: map[string]any{
+			"Imports": []*codegen.ImportSpec{
+				{Path: "example.com/assistant/gen/mcp_orchestrator", Name: "mcporchestrator"},
+			},
+		},
+	}
+	stub := &codegen.File{
+		Path:             "unexpected.go",
+		SectionTemplates: []*codegen.SectionTemplate{header},
+	}
+
+	_, err := generateExampleAdapterStubs([]*expr.ServiceExpr{svc}, []*codegen.File{stub})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, `expected MCP example stub "mcp_orchestrator.go"`)
+}
+
+func TestGenerateExampleAdapterStubs_RequiresExplicitMCPImportAlias(t *testing.T) {
+	svc := &expr.ServiceExpr{Name: "Orchestrator"}
+	header := &codegen.SectionTemplate{
+		Name: headerSection,
+		Data: map[string]any{
+			"Imports": []*codegen.ImportSpec{
+				{Path: "example.com/assistant/gen/mcp_orchestrator"},
+			},
+		},
+	}
+	stub := &codegen.File{
+		Path:             "mcp_orchestrator.go",
+		SectionTemplates: []*codegen.SectionTemplate{header},
+	}
+
+	_, err := generateExampleAdapterStubs([]*expr.ServiceExpr{svc}, []*codegen.File{stub})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, `must import "example.com/assistant/gen/mcp_orchestrator" with an explicit alias`)
 }

@@ -234,7 +234,11 @@ func (r *RootExpr) Validate() error {
 func (r *RootExpr) validateSanitizedAgentSlugs(verr *eval.ValidationErrors) {
 	agents := make(map[string]*AgentExpr)
 	for _, agent := range r.Agents {
-		slug := naming.SanitizeToken(agent.Name, "agent")
+		slug := naming.SanitizeToken(agent.Name, "")
+		if slug == "" {
+			verr.Add(agent, "agent name %q must contain at least one letter or digit after sanitization", agent.Name)
+			continue
+		}
 		key := agent.Service.Name + ":" + slug
 		if other, dup := agents[key]; dup {
 			verr.Add(
@@ -271,7 +275,15 @@ func (r *RootExpr) validateCompletionNames(verr *eval.ValidationErrors) {
 		}
 		names[nameKey] = completion
 
-		slug := naming.SanitizeToken(completion.Name, "completion")
+		slug := naming.SanitizeToken(completion.Name, "")
+		if slug == "" {
+			verr.Add(
+				completion,
+				"completion name %q must contain at least one letter or digit after sanitization",
+				completion.Name,
+			)
+			continue
+		}
 		slugKey := serviceKey + slug
 		if other, dup := slugs[slugKey]; dup {
 			verr.Add(
@@ -297,7 +309,11 @@ func (r *RootExpr) recordSanitizedToolsetSlug(
 	if ts.Name == "" {
 		return
 	}
-	slug := naming.SanitizeToken(ts.Name, "toolset")
+	slug := naming.SanitizeToken(ts.Name, "")
+	if slug == "" {
+		verr.Add(ts, "toolset name %q must contain at least one letter or digit after sanitization", ts.Name)
+		return
+	}
 	key := scopeKey + ":" + slug
 	if other, dup := toolsets[key]; dup {
 		if sameToolsetOrigin(other, ts) {
@@ -333,7 +349,7 @@ func canonicalToolset(ts *ToolsetExpr) *ToolsetExpr {
 }
 
 func (r *RootExpr) agentToolsetScopeKey(agent *AgentExpr) string {
-	return agent.Service.Name + ":" + naming.SanitizeToken(agent.Name, "agent")
+	return agent.Service.Name + ":" + naming.SanitizeToken(agent.Name, "")
 }
 
 func (r *RootExpr) agentToolsetScopeLabel(agent *AgentExpr) string {
@@ -359,7 +375,11 @@ func (r *RootExpr) validateOwnerScopedToolsetSlugs(verr *eval.ValidationErrors) 
 		if !ok {
 			continue
 		}
-		slug := naming.SanitizeToken(ts.Name, "toolset")
+		slug := naming.SanitizeToken(ts.Name, "")
+		if slug == "" {
+			verr.Add(ts, "toolset name %q must contain at least one letter or digit after sanitization", ts.Name)
+			continue
+		}
 		key := namespace + ":" + slug
 		if other, dup := owners[key]; dup {
 			if other == ts {
@@ -391,7 +411,7 @@ func (r *RootExpr) collectToolsetOwnerRefs() map[*ToolsetExpr][]toolsetOwnerRef 
 			kind:        kind,
 			serviceName: serviceName,
 			agentName:   agentName,
-			agentSlug:   naming.SanitizeToken(agentName, "agent"),
+			agentSlug:   naming.SanitizeToken(agentName, ""),
 		}
 		refs[def] = append(refs[def], ref)
 	}

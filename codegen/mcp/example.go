@@ -2,6 +2,7 @@
 package codegen
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -143,7 +144,10 @@ func ModifyExampleFiles(_ string, roots []eval.Root, files []*codegen.File) ([]*
 	}
 
 	// Ensure example stub returns the adapter-backed service instead of zero-value stub
-	files = generateExampleAdapterStubs(mcpServices, files)
+	files, err := generateExampleAdapterStubs(mcpServices, files)
+	if err != nil {
+		return nil, err
+	}
 
 	for _, svr := range r.API.Servers {
 		dir := example.Servers.Get(svr, r).Dir
@@ -244,9 +248,9 @@ func patchCLIForServer(dir string, svr *expr.ServerExpr, mcpServices []*expr.Ser
 // patchExampleStubForMCP rewrites the generated example stub (mcp_<svc>.go)
 // to return the adapter that wraps the original service implementation, so the
 // server exposes proper MCP behavior.
-func generateExampleAdapterStubs(mcpServices []*expr.ServiceExpr, files []*codegen.File) []*codegen.File {
+func generateExampleAdapterStubs(mcpServices []*expr.ServiceExpr, files []*codegen.File) ([]*codegen.File, error) {
 	if len(mcpServices) == 0 {
-		return files
+		return files, nil
 	}
 	// Build lookup of files by path for quick replacement
 	byPath := make(map[string]*codegen.File, len(files))
@@ -255,57 +259,18 @@ func generateExampleAdapterStubs(mcpServices []*expr.ServiceExpr, files []*codeg
 	}
 	for _, svc := range mcpServices {
 		svcGo := codegen.Goify(svc.Name, true)
-		svcSnake := codegen.SnakeCase(svc.Name)
-		// Locate existing stub file and header to copy package/import context
-		stubPath := filepath.ToSlash("mcp_" + svcSnake + ".go")
+		stubPath := expectedExampleStubPath(svc)
 		f := byPath[stubPath]
 		if f == nil {
-			// As a fallback, scan for any file declaring NewMcp<Service>()
-			for _, cf := range files {
-				for _, s := range cf.SectionTemplates {
-					if s.Name != headerSection && strings.Contains(s.Source, "func NewMcp"+svcGo+"()") {
-						f = cf
-						break
-					}
-				}
-				if f != nil {
-					break
-				}
-			}
-		}
-		if f == nil {
-			// No stub found; skip
-			continue
+			return nil, fmt.Errorf("expected MCP example stub %q for service %q", stubPath, svc.Name)
 		}
 		header := findSection(f, headerSection)
 		if header == nil {
-			continue
+			return nil, fmt.Errorf("example stub %q for service %q is missing %q", f.Path, svc.Name, headerSection)
 		}
-		// Ensure import for MCP service package exists and capture its alias
-		mcpAlias := ""
-		if data, ok := header.Data.(map[string]any); ok {
-			if imv, ok2 := data["Imports"]; ok2 {
-				if specs, ok3 := imv.([]*codegen.ImportSpec); ok3 {
-					for _, spec := range specs {
-						if strings.HasSuffix(spec.Path, "/gen/mcp_"+svcSnake) {
-							mcpAlias = spec.Name
-							break
-						}
-					}
-				}
-			}
-		}
-		if mcpAlias == "" {
-			// Derive base module from any CLI header if available
-			base := deriveBaseModuleFromFiles(files)
-			if base != "" {
-				codegen.AddImport(header, &codegen.ImportSpec{Path: base + "/gen/mcp_" + svcSnake, Name: codegen.Goify("mcp_"+svcSnake, false)})
-				mcpAlias = codegen.Goify("mcp_"+svcSnake, false)
-			}
-		}
-		if mcpAlias == "" {
-			// As a last resort keep using a conventional alias
-			mcpAlias = codegen.Goify("mcp_"+svcSnake, false)
+		mcpAlias, err := exampleStubImportAlias(header, svc)
+		if err != nil {
+			return nil, err
 		}
 		// Determine whether prompts are enabled to decide constructor arity
 		hasPrompts := false
@@ -320,26 +285,53 @@ func generateExampleAdapterStubs(mcpServices []*expr.ServiceExpr, files []*codeg
 		// Replace file content except header with our body
 		f.SectionTemplates = []*codegen.SectionTemplate{header, {Name: exampleMCPStubSection, Source: body}}
 	}
-	return files
+	return files, nil
 }
 
-// deriveBaseModuleFromFiles attempts to locate the module import prefix by inspecting
-// CLI files that import gen/jsonrpc/cli/. Returns empty string if not found.
-func deriveBaseModuleFromFiles(files []*codegen.File) string {
-	for _, f := range files {
-		p := filepath.ToSlash(f.Path)
-		if !strings.Contains(p, "/cmd/") || !strings.HasSuffix(p, "/jsonrpc.go") {
-			continue
-		}
-		header := findSection(f, headerSection)
-		if header == nil {
-			continue
-		}
-		if base := deriveBaseModuleFromHeader(header); base != "" {
-			return base
-		}
+// expectedExampleStubPath returns the canonical example stub file path emitted by
+// Goa for one MCP-enabled service.
+func expectedExampleStubPath(svc *expr.ServiceExpr) string {
+	return filepath.ToSlash("mcp_" + codegen.SnakeCase(svc.Name) + ".go")
+}
+
+// exampleStubImportAlias returns the explicit import alias for the generated MCP
+// package expected by the example stub header. The stub must already carry this
+// import; example rewriting no longer invents one.
+func exampleStubImportAlias(header *codegen.SectionTemplate, svc *expr.ServiceExpr) (string, error) {
+	if header == nil || header.Data == nil {
+		return "", fmt.Errorf("example stub %q is missing import metadata", expectedExampleStubPath(svc))
 	}
-	return ""
+	data, ok := header.Data.(map[string]any)
+	if !ok {
+		return "", fmt.Errorf("example stub %q has unexpected header metadata", expectedExampleStubPath(svc))
+	}
+	imv, ok := data["Imports"]
+	if !ok {
+		return "", fmt.Errorf("example stub %q is missing imports", expectedExampleStubPath(svc))
+	}
+	specs, ok := imv.([]*codegen.ImportSpec)
+	if !ok {
+		return "", fmt.Errorf("example stub %q has unexpected imports metadata", expectedExampleStubPath(svc))
+	}
+	wantSuffix := "/gen/mcp_" + codegen.SnakeCase(svc.Name)
+	for _, spec := range specs {
+		if !strings.HasSuffix(spec.Path, wantSuffix) {
+			continue
+		}
+		if spec.Name == "" {
+			return "", fmt.Errorf(
+				"example stub %q must import %q with an explicit alias",
+				expectedExampleStubPath(svc),
+				spec.Path,
+			)
+		}
+		return spec.Name, nil
+	}
+	return "", fmt.Errorf(
+		"example stub %q must import generated MCP package with suffix %q",
+		expectedExampleStubPath(svc),
+		wantSuffix,
+	)
 }
 
 // findSection returns the first section with the given name in file f.

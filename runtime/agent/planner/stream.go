@@ -24,11 +24,26 @@ type StreamSummary struct {
 	StopReason string
 }
 
+// PlannerModelClient is a planner-scoped model client that owns PlannerEvents
+// emission for the current turn.
+//
+// Contract:
+//   - Complete emits assistant text, thinking blocks, and usage from the final
+//     response before returning it.
+//   - Stream drains the underlying model stream, emits PlannerEvents, and
+//     returns the aggregated StreamSummary.
+//   - This interface intentionally does not expose model.Streamer so callers
+//     cannot accidentally combine automatic event emission with ConsumeStream.
+type PlannerModelClient interface {
+	Complete(ctx context.Context, req *model.Request) (*model.Response, error)
+	Stream(ctx context.Context, req *model.Request) (StreamSummary, error)
+}
+
 // ConsumeStream drains the provided streamer, emitting planner events for text and
 // thinking chunks via the provided PlannerEvents. It returns the aggregated
 // StreamSummary so planners can produce a final response or schedule tool calls.
 // Callers are responsible for handling ToolCalls in the resulting summary.
-func ConsumeStream(ctx context.Context, streamer model.Streamer, ev PlannerEvents) (StreamSummary, error) {
+func ConsumeStream(ctx context.Context, streamer model.Streamer, req *model.Request, ev PlannerEvents) (StreamSummary, error) {
 	var summary StreamSummary
 	if streamer == nil {
 		return summary, errors.New("nil streamer")
@@ -90,6 +105,7 @@ func ConsumeStream(ctx context.Context, streamer model.Streamer, ev PlannerEvent
 			ev.ToolCallArgsDelta(ctx, chunk.ToolCallDelta.ID, chunk.ToolCallDelta.Name, chunk.ToolCallDelta.Delta)
 		case model.ChunkTypeUsage:
 			if chunk.UsageDelta != nil {
+				stampUsageModelIdentity(chunk.UsageDelta, req)
 				summary.Usage = addUsage(summary.Usage, *chunk.UsageDelta)
 				ev.UsageDelta(ctx, *chunk.UsageDelta)
 			}
@@ -100,6 +116,7 @@ func ConsumeStream(ctx context.Context, streamer model.Streamer, ev PlannerEvent
 
 	if meta := streamer.Metadata(); meta != nil {
 		if usage, ok := meta["usage"].(model.TokenUsage); ok {
+			stampUsageModelIdentity(&usage, req)
 			summary.Usage = addUsage(summary.Usage, usage)
 			ev.UsageDelta(ctx, usage)
 		}
@@ -109,9 +126,31 @@ func ConsumeStream(ctx context.Context, streamer model.Streamer, ev PlannerEvent
 }
 
 func addUsage(current, delta model.TokenUsage) model.TokenUsage {
+	if current.Model == "" {
+		current.Model = delta.Model
+	}
+	if current.ModelClass == "" {
+		current.ModelClass = delta.ModelClass
+	}
 	return model.TokenUsage{
-		InputTokens:  current.InputTokens + delta.InputTokens,
-		OutputTokens: current.OutputTokens + delta.OutputTokens,
-		TotalTokens:  current.TotalTokens + delta.TotalTokens,
+		Model:            current.Model,
+		ModelClass:       current.ModelClass,
+		InputTokens:      current.InputTokens + delta.InputTokens,
+		OutputTokens:     current.OutputTokens + delta.OutputTokens,
+		TotalTokens:      current.TotalTokens + delta.TotalTokens,
+		CacheReadTokens:  current.CacheReadTokens + delta.CacheReadTokens,
+		CacheWriteTokens: current.CacheWriteTokens + delta.CacheWriteTokens,
+	}
+}
+
+func stampUsageModelIdentity(usage *model.TokenUsage, req *model.Request) {
+	if usage == nil || req == nil {
+		return
+	}
+	if usage.Model == "" && req.Model != "" {
+		usage.Model = req.Model
+	}
+	if usage.ModelClass == "" && req.ModelClass != "" {
+		usage.ModelClass = req.ModelClass
 	}
 }

@@ -66,6 +66,21 @@ func (c *simplePlannerContext) AdvertisedToolDefinitions() []*model.ToolDefiniti
 	return advertisedToolDefinitions(c.rt.ToolSpecsForAgent(c.agent), c.policy)
 }
 func (c *simplePlannerContext) ModelClient(id string) (model.Client, bool) {
+	return c.configuredModelClient(id)
+}
+
+func (c *simplePlannerContext) PlannerModelClient(id string) (planner.PlannerModelClient, bool) {
+	cli, ok := c.configuredModelClient(id)
+	if !ok {
+		return nil, false
+	}
+	return newPlannerModelClient(cli, c.ev), true
+}
+
+// configuredModelClient returns the runtime-managed raw model client for the
+// current planner turn, with transport/policy wrappers applied but without
+// PlannerEvents decoration.
+func (c *simplePlannerContext) configuredModelClient(id string) (model.Client, bool) {
 	c.rt.mu.RLock()
 	m, ok := c.rt.models[id]
 	c.rt.mu.RUnlock()
@@ -73,10 +88,6 @@ func (c *simplePlannerContext) ModelClient(id string) (model.Client, bool) {
 		return nil, false
 	}
 	cli := m
-	// Wrap with per-turn event decorator so thinking/text/usage are captured automatically.
-	if c.ev != nil {
-		cli = newEventDecoratedClient(cli, c.ev)
-	}
 	// Apply agent cache policy so planners do not need to thread CacheOptions
 	// through every model.Request construction. Explicit Request.Cache values
 	// continue to take precedence over the agent policy.

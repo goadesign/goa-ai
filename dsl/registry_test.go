@@ -321,6 +321,16 @@ func TestFromMCPProviderExpr(t *testing.T) {
 	require.Equal(t, agentsexpr.ProviderMCP, provider.Kind)
 	require.Equal(t, "assistant-service", provider.MCPService)
 	require.Equal(t, "assistant-mcp", provider.MCPToolset)
+	require.Equal(t, agentsexpr.MCPSourceGoa, provider.MCPSource)
+}
+
+func TestFromExternalMCPProviderExpr(t *testing.T) {
+	provider := FromExternalMCP("assistant-service", "assistant-mcp")
+	require.NotNil(t, provider)
+	require.Equal(t, agentsexpr.ProviderMCP, provider.Kind)
+	require.Equal(t, "assistant-service", provider.MCPService)
+	require.Equal(t, "assistant-mcp", provider.MCPToolset)
+	require.Equal(t, agentsexpr.MCPSourceInline, provider.MCPSource)
 }
 
 // TestFromRegistryProviderExpr verifies FromRegistry creates a provider expression.

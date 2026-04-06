@@ -9,10 +9,10 @@ import (
 	"errors"
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson"
-	mongodriver "go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.mongodb.org/mongo-driver/mongo/readpref"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	mongodriver "go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
 
 	"goa.design/clue/health"
 
@@ -282,14 +282,14 @@ func newClientWithCollection(mongoClient *mongodriver.Client, coll collection, t
 }
 
 type collection interface {
-	FindOne(ctx context.Context, filter any, opts ...*options.FindOneOptions) singleResult
-	Find(ctx context.Context, filter any, opts ...*options.FindOptions) (cursor, error)
-	InsertOne(ctx context.Context, document any, opts ...*options.InsertOneOptions) (*mongodriver.InsertOneResult, error)
+	FindOne(ctx context.Context, filter any, opts ...options.Lister[options.FindOneOptions]) singleResult
+	Find(ctx context.Context, filter any, opts ...options.Lister[options.FindOptions]) (cursor, error)
+	InsertOne(ctx context.Context, document any, opts ...options.Lister[options.InsertOneOptions]) (*mongodriver.InsertOneResult, error)
 	Indexes() indexView
 }
 
 type indexView interface {
-	CreateOne(ctx context.Context, model mongodriver.IndexModel, opts ...*options.CreateIndexesOptions) (string, error)
+	CreateOne(ctx context.Context, model mongodriver.IndexModel, opts ...options.Lister[options.CreateIndexesOptions]) (string, error)
 }
 
 type singleResult interface {
@@ -307,11 +307,11 @@ type mongoCollection struct {
 	coll *mongodriver.Collection
 }
 
-func (c mongoCollection) FindOne(ctx context.Context, filter any, opts ...*options.FindOneOptions) singleResult {
+func (c mongoCollection) FindOne(ctx context.Context, filter any, opts ...options.Lister[options.FindOneOptions]) singleResult {
 	return mongoSingleResult{res: c.coll.FindOne(ctx, filter, opts...)}
 }
 
-func (c mongoCollection) Find(ctx context.Context, filter any, opts ...*options.FindOptions) (cursor, error) {
+func (c mongoCollection) Find(ctx context.Context, filter any, opts ...options.Lister[options.FindOptions]) (cursor, error) {
 	cur, err := c.coll.Find(ctx, filter, opts...)
 	if err != nil {
 		return nil, err
@@ -319,7 +319,7 @@ func (c mongoCollection) Find(ctx context.Context, filter any, opts ...*options.
 	return mongoCursor{cur: cur}, nil
 }
 
-func (c mongoCollection) InsertOne(ctx context.Context, document any, opts ...*options.InsertOneOptions) (*mongodriver.InsertOneResult, error) {
+func (c mongoCollection) InsertOne(ctx context.Context, document any, opts ...options.Lister[options.InsertOneOptions]) (*mongodriver.InsertOneResult, error) {
 	return c.coll.InsertOne(ctx, document, opts...)
 }
 
@@ -359,6 +359,6 @@ type mongoIndexView struct {
 	view mongodriver.IndexView
 }
 
-func (v mongoIndexView) CreateOne(ctx context.Context, model mongodriver.IndexModel, opts ...*options.CreateIndexesOptions) (string, error) {
+func (v mongoIndexView) CreateOne(ctx context.Context, model mongodriver.IndexModel, opts ...options.Lister[options.CreateIndexesOptions]) (string, error) {
 	return v.view.CreateOne(ctx, model, opts...)
 }

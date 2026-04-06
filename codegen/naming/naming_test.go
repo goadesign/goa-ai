@@ -14,7 +14,8 @@ func TestSanitizeToken(t *testing.T) {
 		want     string
 	}{
 		{name: "snake case punctuation", input: "Remote-Tools.v1", fallback: "toolset", want: "remote_tools_v1"},
-		{name: "collapses empty to fallback", input: "!!!", fallback: "toolset", want: "toolset"},
+		{name: "empty without fallback stays empty", input: "!!!", fallback: "", want: ""},
+		{name: "internal fallback remains available", input: "!!!", fallback: "toolset", want: "toolset"},
 		{name: "trims repeated separators", input: "__remote__tools__", fallback: "toolset", want: "remote_tools"},
 	}
 

@@ -11,10 +11,10 @@ package codegen
 import (
 	"fmt"
 	"path"
-	"path/filepath"
 	"slices"
 	"strings"
 
+	ir "goa.design/goa-ai/codegen/ir"
 	"goa.design/goa-ai/codegen/naming"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	"goa.design/goa/v3/codegen"
@@ -26,21 +26,24 @@ import (
 // ToolsetData entries for a single agent.
 func collectToolsets(
 	agent *AgentData,
-	group *agentsExpr.ToolsetGroupExpr,
-	kind ToolsetKind,
+	refs []*ir.ToolsetRef,
 	servicesData *service.ServicesData,
-) []*ToolsetData {
-	if group == nil || len(group.Toolsets) == 0 {
-		return nil
+) ([]*ToolsetData, error) {
+	if len(refs) == 0 {
+		return nil, nil
 	}
-	toolsets := make([]*ToolsetData, 0, len(group.Toolsets))
-	for _, tsExpr := range group.Toolsets {
-		toolsets = append(toolsets, newToolsetData(agent, tsExpr, kind, servicesData))
+	toolsets := make([]*ToolsetData, 0, len(refs))
+	for _, ref := range refs {
+		ts, err := newToolsetData(agent, ref, servicesData)
+		if err != nil {
+			return nil, err
+		}
+		toolsets = append(toolsets, ts)
 	}
 	slices.SortFunc(toolsets, func(a, b *ToolsetData) int {
 		return strings.Compare(a.Name, b.Name)
 	})
-	return toolsets
+	return toolsets, nil
 }
 
 // newToolsetData resolves one DSL toolset into the generator's canonical
@@ -48,143 +51,91 @@ func collectToolsets(
 // concrete tool metadata needed by downstream templates.
 func newToolsetData(
 	agent *AgentData,
-	expr *agentsExpr.ToolsetExpr,
-	kind ToolsetKind,
+	ref *ir.ToolsetRef,
 	servicesData *service.ServicesData,
-) *ToolsetData {
-	toolsetSlug := naming.SanitizeToken(expr.Name, "toolset")
-	serviceName := agent.Service.Name
-	queue := naming.QueueName(agent.Service.PathName, agent.Slug, toolsetSlug, "tasks")
-	qualifiedName := expr.Name
-	sourceService := agent.Service
-
-	// If this is an MCP toolset, use the service name from the MCP service.
-	if expr.Provider != nil && expr.Provider.Kind == agentsExpr.ProviderMCP && servicesData != nil && expr.Provider.MCPService != "" {
-		if svc := servicesData.Get(expr.Provider.MCPService); svc != nil {
-			sourceService = svc
-		}
-	}
-	// Track provider service name (when referencing an exported toolset).
-	var originServiceName string
-	if expr.Origin != nil && expr.Origin.Agent != nil && expr.Origin.Agent.Service != nil {
-		originServiceName = expr.Origin.Agent.Service.Name
-	}
-	// If this toolset references an origin from another agent, inherit the source service.
-	if originServiceName != "" && servicesData != nil {
-		if svc := servicesData.Get(originServiceName); svc != nil {
-			sourceService = svc
-		}
-	}
-	// If this is a method-backed toolset, prefer the service referenced by the
-	// first bound method (BindTo) when present.
-	isMCPBacked := expr.Provider != nil && expr.Provider.Kind == agentsExpr.ProviderMCP
-	if !isMCPBacked && servicesData != nil && len(expr.Tools) > 0 {
-		if svcName := expr.Tools[0].BoundServiceName(); svcName != "" {
-			if svc := servicesData.Get(svcName); svc != nil {
-				sourceService = svc
-			}
-		}
-	}
-	sourceServiceName := serviceName
-	if sourceService != nil && sourceService.Name != "" {
-		sourceServiceName = sourceService.Name
-	} else if expr.Provider != nil && expr.Provider.MCPService != "" {
-		sourceServiceName = expr.Provider.MCPService
+) (*ToolsetData, error) {
+	expr := ref.Expr
+	toolsetSlug := ref.Slug
+	serviceName := ref.ServiceName
+	sourceServiceName := ref.SourceServiceName
+	var sourceService *service.Data
+	if ref.SourceService != nil {
+		sourceService = ref.SourceService.Goa
+	} else if servicesData != nil && sourceServiceName != "" {
+		sourceService = servicesData.Get(sourceServiceName)
 	}
 	var imports map[string]*codegen.ImportSpec
 	if sourceService != nil {
 		imports = buildServiceImportMap(sourceService)
 	}
-
-	// When consuming a local toolset (defined within this agent/service), qualify
-	// it under the consumer namespace to prevent collisions. When the toolset is
-	// exported by another agent (Origin set and different service), reuse the
-	// provider's canonical name so callers see consistent identifiers end-to-end.
-	if kind == ToolsetKindUsed && !isMCPBacked {
-		if originServiceName == "" || originServiceName == agent.Service.Name {
-			qualifiedName = fmt.Sprintf("%s.%s", sourceServiceName, expr.Name)
-		}
-	}
-
 	ts := &ToolsetData{
-		Expr:              expr,
-		Name:              expr.Name,
-		Title:             naming.HumanizeTitle(expr.Name),
-		Description:       expr.Description,
-		Tags:              slices.Clone(expr.Tags),
-		ServiceName:       serviceName,
-		SourceServiceName: sourceServiceName,
-		SourceService:     sourceService,
-		// QualifiedName is the toolset-scoped identifier (`toolset`).
-		QualifiedName:        qualifiedName,
-		TaskQueue:            queue,
-		Kind:                 kind,
+		Expr:                 expr,
+		Name:                 ref.Name,
+		Title:                naming.HumanizeTitle(ref.Name),
+		Description:          ref.Description,
+		Tags:                 slices.Clone(ref.Tags),
+		ServiceName:          serviceName,
+		SourceServiceName:    sourceServiceName,
+		SourceService:        sourceService,
+		QualifiedName:        ref.QualifiedName,
+		TaskQueue:            ref.TaskQueue,
+		Kind:                 toolsetKindFromIR(ref.Kind),
 		Agent:                agent,
 		PathName:             toolsetSlug,
-		PackageName:          toolsetSlug,
+		PackageName:          ref.PackageName,
 		SourceServiceImports: imports,
-		PackageImportPath:    path.Join(agent.ImportPath, toolsetSlug),
-		Dir:                  filepath.Join(agent.Dir, toolsetSlug),
-		SpecsPackageName:     toolsetSlug,
-		// SpecsImportPath/SpecsDir are assigned after building the complete design
-		// so ownership can be resolved deterministically (service-owned vs agent-exported).
-		SpecsImportPath: "",
-		SpecsDir:        "",
+		PackageImportPath:    ref.PackageImportPath,
+		Dir:                  ref.Dir,
+		SpecsPackageName:     ref.SpecsPackageName,
+		SpecsImportPath:      ref.SpecsImportPath,
+		SpecsDir:             ref.SpecsDir,
+		AgentToolsPackage:    ref.AgentToolsPackage,
+		AgentToolsDir:        ref.AgentToolsDir,
+		AgentToolsImportPath: ref.AgentToolsImportPath,
 	}
-
-	if kind == ToolsetKindExported {
-		ts.AgentToolsPackage = toolsetSlug
-		ts.AgentToolsDir = filepath.Join(agent.Dir, "agenttools", toolsetSlug)
-		ts.AgentToolsImportPath = path.Join(agent.ImportPath, "agenttools", toolsetSlug)
-	}
+	isMCPBacked := ref.Provider != nil && ref.Provider.Kind == agentsExpr.ProviderMCP
 
 	// Handle toolset based on provider type.
 	switch {
-	case expr.Provider != nil && expr.Provider.Kind == agentsExpr.ProviderRegistry:
+	case ref.Provider != nil && ref.Provider.Kind == agentsExpr.ProviderRegistry:
 		ts.IsRegistryBacked = true
-		regName := ""
-		if expr.Provider.Registry != nil {
-			regName = expr.Provider.Registry.Name
-		}
-		regPkgName := codegen.SnakeCase(regName)
-		regClientImport := path.Join(agent.Genpkg, agent.Service.PathName, "registry", regPkgName)
-		regClientAlias := "reg" + codegen.Goify(regName, false)
-		ts.Registry = &RegistryToolsetMeta{
-			RegistryName:             regName,
-			ToolsetName:              expr.Provider.ToolsetName,
-			Version:                  expr.Provider.Version,
-			QualifiedName:            ts.QualifiedName,
-			RegistryClientImportPath: regClientImport,
-			RegistryClientAlias:      regClientAlias,
+		if ref.Provider.Registry != nil {
+			registry := ref.Provider.Registry
+			ts.Registry = &RegistryToolsetMeta{
+				RegistryName:             registry.RegistryName,
+				ToolsetName:              registry.ToolsetName,
+				Version:                  registry.Version,
+				QualifiedName:            registry.QualifiedName,
+				RegistryClientImportPath: registry.RegistryClientImportPath,
+				RegistryClientAlias:      registry.RegistryClientAlias,
+			}
 		}
 		// Registry toolsets have no compile-time tools; they are discovered at runtime.
 		// The Tools slice remains empty; specs generation will create placeholder
 		// structures that are populated via runtime discovery.
 
 	case isMCPBacked:
-		mcpService := expr.Provider.MCPService
-		mcpToolset := expr.Provider.MCPToolset
-		if mcpService != "" {
-			ts.SourceServiceName = mcpService
+		if ref.Provider.MCP != nil {
+			mcpMeta := ref.Provider.MCP
+			ts.MCP = &MCPToolsetMeta{
+				ServiceName:   mcpMeta.ServiceName,
+				SuiteName:     mcpMeta.SuiteName,
+				Source:        mcpMeta.Source,
+				QualifiedName: mcpMeta.QualifiedName,
+				ConstName:     mcpMeta.ConstName,
+			}
 		}
-		helperPkg := "mcp_" + codegen.SnakeCase(mcpService)
-		helperImport := path.Join(agent.Genpkg, helperPkg)
-		helperAlias := "mcp" + codegen.Goify(mcpService, false)
-		helperFunc := fmt.Sprintf("Register%s%sToolset",
-			codegen.Goify(mcpService, true), codegen.Goify(mcpToolset, true))
-		ts.MCP = &MCPToolsetMeta{
-			ServiceName:      mcpService,
-			SuiteName:        mcpToolset,
-			QualifiedName:    ts.QualifiedName,
-			HelperImportPath: helperImport,
-			HelperAlias:      helperAlias,
-			HelperFunc:       helperFunc,
-			ConstName:        mcpToolsetConstName(agent.GoName, mcpService, mcpToolset, toolsetSlug),
-		}
-		// Populate from Goa-backed MCP if available; otherwise keep/derive tools
-		// from inline declarations (custom external MCP).
-		found := populateMCPToolset(ts)
-		if !found && len(expr.Tools) > 0 {
+		switch ts.MCP.Source {
+		case agentsExpr.MCPSourceGoa:
+			if !populateMCPToolset(ts) {
+				return nil, fmt.Errorf(
+					"toolset %q could not resolve Goa-defined MCP toolset %q on service %q",
+					expr.Name,
+					expr.Provider.MCPToolset,
+					expr.Provider.MCPService,
+				)
+			}
+		case agentsExpr.MCPSourceInline:
 			for _, toolExpr := range expr.Tools {
 				tool := newToolData(ts, toolExpr, servicesData)
 				ts.Tools = append(ts.Tools, tool)
@@ -192,6 +143,8 @@ func newToolsetData(
 			slices.SortFunc(ts.Tools, func(a, b *ToolData) int {
 				return strings.Compare(a.Name, b.Name)
 			})
+		default:
+			return nil, fmt.Errorf("toolset %q has unknown MCP schema source %d", expr.Name, ts.MCP.Source)
 		}
 
 	default:
@@ -211,7 +164,18 @@ func newToolsetData(
 		}
 	}
 
-	return ts
+	return ts, nil
+}
+
+func toolsetKindFromIR(kind ir.ToolsetRefKind) ToolsetKind {
+	switch kind {
+	case ir.ToolsetRefKindUsed:
+		return ToolsetKindUsed
+	case ir.ToolsetRefKindExported:
+		return ToolsetKindExported
+	default:
+		panic(fmt.Sprintf("unknown toolset ref kind %q", kind))
+	}
 }
 
 // buildServiceImportMap indexes the user-type imports already computed by Goa
@@ -247,13 +211,17 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 	if isExported {
 		exportingAgentID = ts.Agent.ID
 	}
+	title := expr.Name
+	if expr.Title != "" {
+		title = expr.Title
+	}
 
 	tool := &ToolData{
 		Name:               expr.Name,
 		ConstName:          codegen.Goify(expr.Name, true),
 		Description:        expr.Description,
 		QualifiedName:      qualified,
-		Title:              naming.HumanizeTitle(defaultString(expr.Title, expr.Name)),
+		Title:              naming.HumanizeTitle(title),
 		Tags:               mergedToolTags(ts, expr),
 		Meta:               map[string][]string(expr.Meta),
 		Args:               expr.Args,
@@ -268,7 +236,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		TerminalRun:        expr.TerminalRun,
 		ResultReminder:     expr.ResultReminder,
 	}
-	tool.ServerData = serverDataData(expr.ServerData, qualified)
+	tool.ServerData = serverDataData(expr.ServerData)
 	if expr.Confirmation != nil {
 		tool.Confirmation = &ToolConfirmationData{
 			Title:                expr.Confirmation.Title,
@@ -436,14 +404,14 @@ func boundsFieldData(result *goaexpr.AttributeExpr, name string) *ToolBoundsFiel
 
 // serverDataData materializes optional server-data sidecars attached to one
 // tool, including inferred descriptions when the DSL leaves them blank.
-func serverDataData(exprs []*agentsExpr.ServerDataExpr, qualified string) []*ServerDataData {
+func serverDataData(exprs []*agentsExpr.ServerDataExpr) []*ServerDataData {
 	if len(exprs) == 0 {
 		return nil
 	}
 	out := make([]*ServerDataData, 0, len(exprs))
 	for _, sd := range exprs {
 		item := &ServerDataData{
-			Kind:     defaultString(sd.Kind, qualified),
+			Kind:     sd.Kind,
 			Audience: sd.Audience,
 			Schema:   sd.Schema,
 		}
@@ -492,20 +460,4 @@ func mustFindMethodExpr(root *goaexpr.RootExpr, serviceName, methodName string) 
 		return nil
 	}
 	return svc.Method(methodName)
-}
-
-// mcpToolsetConstName derives a stable agent-local identifier for an external
-// MCP toolset. Explicit Service/Suite/Alias separators preserve the provider
-// namespace so different partitions cannot collapse into the same Go name.
-func mcpToolsetConstName(agentGoName, serviceName, suiteName, toolsetSlug string) string {
-	constName := fmt.Sprintf(
-		"%s%sService%sSuite",
-		agentGoName,
-		codegen.Goify(serviceName, true),
-		codegen.Goify(suiteName, true),
-	)
-	if toolsetSlug != naming.SanitizeToken(suiteName, "toolset") {
-		constName += codegen.Goify(toolsetSlug, true) + "Alias"
-	}
-	return constName + "ToolsetID"
 }

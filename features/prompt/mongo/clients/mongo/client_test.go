@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"go.mongodb.org/mongo-driver/bson"
-	mongodriver "go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	mongodriver "go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
 	"goa.design/goa-ai/runtime/agent/prompt"
 )
@@ -200,7 +200,7 @@ func newFakeCollection() *fakeCollection {
 	}
 }
 
-func (c *fakeCollection) FindOne(ctx context.Context, filter any, opts ...*options.FindOneOptions) singleResult {
+func (c *fakeCollection) FindOne(ctx context.Context, filter any, opts ...options.Lister[options.FindOneOptions]) singleResult {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -214,7 +214,7 @@ func (c *fakeCollection) FindOne(ctx context.Context, filter any, opts ...*optio
 	return fakeSingleResult{doc: &matches[0]}
 }
 
-func (c *fakeCollection) Find(ctx context.Context, filter any, opts ...*options.FindOptions) (cursor, error) {
+func (c *fakeCollection) Find(ctx context.Context, filter any, opts ...options.Lister[options.FindOptions]) (cursor, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -225,7 +225,7 @@ func (c *fakeCollection) Find(ctx context.Context, filter any, opts ...*options.
 	return &fakeCursor{docs: matches, idx: -1}, nil
 }
 
-func (c *fakeCollection) InsertOne(ctx context.Context, document any, opts ...*options.InsertOneOptions) (*mongodriver.InsertOneResult, error) {
+func (c *fakeCollection) InsertOne(ctx context.Context, document any, opts ...options.Lister[options.InsertOneOptions]) (*mongodriver.InsertOneResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -327,7 +327,7 @@ type fakeIndexView struct {
 }
 
 func (v fakeIndexView) CreateOne(ctx context.Context, model mongodriver.IndexModel,
-	opts ...*options.CreateIndexesOptions) (string, error) {
+	opts ...options.Lister[options.CreateIndexesOptions]) (string, error) {
 	v.parent.mu.Lock()
 	defer v.parent.mu.Unlock()
 	v.parent.indexes = append(v.parent.indexes, model)

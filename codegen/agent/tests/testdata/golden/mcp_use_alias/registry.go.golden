@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	calc_remote "goa.design/goa-ai/alpha/agents/scribe/calc_remote"
+	specs "goa.design/goa-ai/alpha/agents/scribe/specs"
 	calc_remote2 "goa.design/goa-ai/calc/toolsets/calc_remote"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -18,7 +19,10 @@ import (
 	"time"
 )
 
-// RegisterScribeAgent registers the generated agent components with the runtime.
+// RegisterScribeAgent registers the generated agent components with the local runtime.
+// This helper wires generated code into `agentsruntime.Runtime`; it does not
+// implement the clustered `registry` service or the `runtime/toolregistry`
+// wire protocol.
 func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ScribeAgentConfig) error {
 	if rt == nil {
 		return errors.New("runtime is required")
@@ -63,7 +67,7 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 				BackoffCoefficient: 2,
 			},
 		},
-		Specs:  nil,
+		Specs:  specs.Specs,
 		Policy: agentsruntime.RunPolicy{},
 	}); err != nil {
 		return err

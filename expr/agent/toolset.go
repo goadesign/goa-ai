@@ -116,6 +116,26 @@ func (t *ToolsetExpr) Validate() error {
 					verr.Add(t, "FromMCP could not resolve service %q", t.Provider.MCPService)
 				}
 			}
+			if t.Origin == nil {
+				switch t.Provider.MCPSource {
+				case MCPSourceGoa:
+					if len(t.Tools) > 0 {
+						verr.Add(
+							t,
+							"Goa-backed MCP toolsets cannot declare inline Tool schemas; use FromExternalMCP(service, toolset) for inline schemas",
+						)
+					}
+				case MCPSourceInline:
+					if len(t.Tools) == 0 {
+						verr.Add(
+							t,
+							"external MCP toolsets require inline Tool declarations; declare tools in the Toolset DSL",
+						)
+					}
+				default:
+					verr.Add(t, "unknown MCP schema source %d", t.Provider.MCPSource)
+				}
+			}
 		case ProviderRegistry:
 			if t.Provider.Registry == nil {
 				verr.Add(t, "registry is required for FromRegistry provider")

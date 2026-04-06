@@ -1,14 +1,11 @@
 package codegen
 
 import (
-	"fmt"
-	"path"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
-	"goa.design/goa-ai/codegen/naming"
+	ir "goa.design/goa-ai/codegen/ir"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa/v3/codegen"
@@ -146,9 +143,11 @@ type (
 		// Each entry captures the helper import/path information required to register
 		// the toolset with the runtime at agent registration time.
 		MCPToolsets []*MCPToolsetMeta
-		// RegistryToolsets lists the distinct registry-backed toolsets referenced via
-		// FromRegistry provider. Each entry captures the registry client import/path
-		// information required to discover and register the toolset at runtime.
+		// RegistryToolsets lists the distinct DSL FromRegistry toolset references
+		// used by the agent. Each entry captures the generated agent-side registry
+		// client import/path information required to discover and register the
+		// dynamic toolset at runtime; it does not describe the clustered registry
+		// service or the runtime/toolregistry wire protocol directly.
 		RegistryToolsets []*RegistryToolsetMeta
 		// Runtime captures derived workflow/activity data used by templates.
 		Runtime RuntimeData
@@ -365,14 +364,10 @@ type (
 		ServiceName string
 		// SuiteName is the MCP server/toolset identifier provided in the service DSL.
 		SuiteName string
+		// Source identifies whether schemas come from Goa MCP or inline DSL.
+		Source agentsExpr.MCPSourceKind
 		// QualifiedName is the canonical toolset identifier (server/toolset name).
 		QualifiedName string
-		// HelperImportPath is the Go import path for the generated register helper.
-		HelperImportPath string
-		// HelperAlias is the import alias used inside generated agent code.
-		HelperAlias string
-		// HelperFunc is the helper function name (Register<Service><Suite>Toolset).
-		HelperFunc string
 		// ConstName is the generated Go identifier for the agent-local MCP toolset
 		// ID constant. Explicit Service/Suite/Alias separators keep provider
 		// partitions distinct so different remote bindings cannot collapse into the
@@ -380,10 +375,11 @@ type (
 		ConstName string
 	}
 
-	// RegistryToolsetMeta captures the information required to register a
-	// registry-backed toolset with the runtime. Registry toolsets defer schema
-	// resolution to runtime discovery, generating placeholder specs that are
-	// populated when the agent starts.
+	// RegistryToolsetMeta captures the information required to wire one DSL
+	// FromRegistry toolset reference into the local runtime. Registry-backed
+	// toolsets defer schema resolution to runtime discovery through the generated
+	// registry client, generating placeholder specs that are populated when the
+	// agent starts.
 	RegistryToolsetMeta struct {
 		// RegistryName is the name of the registry source.
 		RegistryName string
@@ -444,7 +440,8 @@ type (
 	//
 	// Args and Return are Goa attribute expressions that define the tool's input/output
 	// schema. Code generation uses these to create type-safe marshalers, validators,
-	// and specification builders for the runtime tool registry.
+	// and specification builders consumed by local runtimes, generated registry
+	// clients, and the runtime/toolregistry wire protocol.
 	//
 	// Created by newToolData during toolset data construction; immutable afterward.
 	ToolData struct {
@@ -768,127 +765,80 @@ const (
 	defaultPlannerActivityTimeout = 2 * time.Minute
 )
 
-// buildGeneratorData inspects the Goa and agents roots to build template-friendly data.
+// buildGeneratorData builds render data from the canonical IR.
 func buildGeneratorData(genpkg string, roots []eval.Root) (*GeneratorData, error) {
-	var (
-		goaRoot    *goaexpr.RootExpr
-		agentsRoot = agentsExpr.Root
-	)
-	for _, root := range roots {
-		if goaRoot, _ = root.(*goaexpr.RootExpr); goaRoot != nil {
-			break
-		}
-	}
-
-	servicesData := service.NewServicesData(goaRoot)
-	serviceMap := make(map[string]*ServiceAgentsData)
-
-	for _, agentExpr := range agentsRoot.Agents {
-		svcData := servicesData.Get(agentExpr.Service.Name)
-		if svcData == nil {
-			return nil, fmt.Errorf("service %q not found for agent %q", agentExpr.Service.Name, agentExpr.Name)
-		}
-		svcAgents := serviceMap[svcData.Name]
-		if svcAgents == nil {
-			svcAgents = &ServiceAgentsData{Service: svcData}
-			serviceMap[svcData.Name] = svcAgents
-		}
-		agentData := newAgentData(genpkg, svcData, agentExpr, servicesData)
-		svcAgents.Agents = append(svcAgents.Agents, agentData)
-		if len(agentData.MCPToolsets) > 0 {
-			svcAgents.HasMCP = true
-		}
-	}
-	for _, completionExpr := range agentsRoot.Completions {
-		svcData := servicesData.Get(completionExpr.Service.Name)
-		if svcData == nil {
-			return nil, fmt.Errorf("service %q not found for completion %q", completionExpr.Service.Name, completionExpr.Name)
-		}
-		svcAgents := serviceMap[svcData.Name]
-		if svcAgents == nil {
-			svcAgents = &ServiceAgentsData{Service: svcData}
-			serviceMap[svcData.Name] = svcAgents
-		}
-		svcAgents.Completions = append(svcAgents.Completions, newCompletionData(completionExpr))
-	}
-
-	services := make([]*ServiceAgentsData, 0, len(serviceMap))
-	for _, svc := range serviceMap {
-		services = append(services, svc)
-	}
-	slices.SortFunc(services, func(a, b *ServiceAgentsData) int {
-		return strings.Compare(a.Service.Name, b.Service.Name)
-	})
-	for _, svc := range services {
-		slices.SortFunc(svc.Agents, func(a, b *AgentData) int {
-			return strings.Compare(a.Name, b.Name)
-		})
-		slices.SortFunc(svc.Completions, func(a, b *CompletionData) int {
-			return strings.Compare(a.Name, b.Name)
-		})
-	}
-	if err := assignToolsetOwnership(genpkg, roots, services); err != nil {
+	design, err := ir.Build(genpkg, roots)
+	if err != nil {
 		return nil, err
 	}
-
-	return &GeneratorData{Genpkg: genpkg, Services: services}, nil
+	return buildGeneratorDataFromIR(design)
 }
 
-func newAgentData(
-	genpkg string,
-	svc *service.Data,
-	agentExpr *agentsExpr.AgentExpr,
-	servicesData *service.ServicesData,
-) *AgentData {
-	goName := codegen.Goify(agentExpr.Name, true)
-	configType := goName + "AgentConfig"
-	structName := goName + "Agent"
+func buildGeneratorDataFromIR(design *ir.Design) (*GeneratorData, error) {
+	if design == nil {
+		return &GeneratorData{}, nil
+	}
+	servicesData := service.NewServicesData(design.GoaRoot)
+	services := make([]*ServiceAgentsData, 0, len(design.Services))
+	for _, svcIR := range design.Services {
+		if svcIR == nil || (len(svcIR.Agents) == 0 && len(svcIR.Completions) == 0) {
+			continue
+		}
+		svc := &ServiceAgentsData{Service: svcIR.Goa}
+		for _, agentIR := range svcIR.Agents {
+			agentData, err := newAgentData(design.Genpkg, agentIR, servicesData)
+			if err != nil {
+				return nil, err
+			}
+			svc.Agents = append(svc.Agents, agentData)
+			if len(agentData.MCPToolsets) > 0 {
+				svc.HasMCP = true
+			}
+		}
+		for _, completionIR := range svcIR.Completions {
+			svc.Completions = append(svc.Completions, newCompletionDataFromIR(completionIR))
+		}
+		services = append(services, svc)
+	}
+	return &GeneratorData{Genpkg: design.Genpkg, Services: services}, nil
+}
 
-	agentSlug := naming.SanitizeToken(agentExpr.Name, "agent")
-	agentDir := filepath.Join(codegen.Gendir, svc.PathName, "agents", agentSlug)
-	agentImport := path.Join(genpkg, svc.PathName, "agents", agentSlug)
-
-	workflowFunc := goName + "Workflow"
-	workflowVar := goName + "WorkflowDefinition"
-	workflowName := naming.Identifier(svc.Name, agentExpr.Name, "workflow")
-	workflowQueue := naming.QueueName(svc.PathName, agentSlug, "workflow")
-
+func newAgentData(genpkg string, agentIR *ir.Agent, servicesData *service.ServicesData) (*AgentData, error) {
 	agent := &AgentData{
 		Genpkg:                genpkg,
-		Name:                  agentExpr.Name,
-		Description:           agentExpr.Description,
-		ID:                    naming.Identifier(svc.Name, agentExpr.Name),
-		GoName:                goName,
-		Slug:                  agentSlug,
-		Service:               svc,
-		PackageName:           agentSlug,
-		PathName:              agentSlug,
-		Dir:                   agentDir,
-		ImportPath:            agentImport,
-		ConfigType:            configType,
-		StructName:            structName,
-		WorkflowFunc:          workflowFunc,
-		WorkflowDefinitionVar: workflowVar,
-		WorkflowName:          workflowName,
-		WorkflowQueue:         workflowQueue,
-		// Aggregated specs package for agent-level imports
-		ToolSpecsPackage:    "specs",
-		ToolSpecsImportPath: path.Join(agentImport, "specs"),
-		ToolSpecsDir:        filepath.Join(agentDir, "specs"),
+		Name:                  agentIR.Name,
+		Description:           agentIR.Description,
+		ID:                    agentIR.ID,
+		GoName:                codegen.Goify(agentIR.Name, true),
+		Slug:                  agentIR.Slug,
+		Service:               agentIR.Service.Goa,
+		PackageName:           agentIR.PackageName,
+		PathName:              agentIR.PathName,
+		Dir:                   agentIR.Dir,
+		ImportPath:            agentIR.ImportPath,
+		ConfigType:            agentIR.ConfigType,
+		StructName:            agentIR.StructName,
+		WorkflowFunc:          agentIR.WorkflowFunc,
+		WorkflowDefinitionVar: agentIR.WorkflowDefinitionVar,
+		WorkflowName:          agentIR.WorkflowName,
+		WorkflowQueue:         agentIR.WorkflowQueue,
+		ToolSpecsPackage:      agentIR.ToolSpecsPackage,
+		ToolSpecsImportPath:   agentIR.ToolSpecsImportPath,
+		ToolSpecsDir:          agentIR.ToolSpecsDir,
 	}
 
 	agent.Runtime = RuntimeData{
 		Workflow: WorkflowArtifact{
-			FuncName:      workflowFunc,
-			DefinitionVar: workflowVar,
-			Name:          workflowName,
-			Queue:         workflowQueue,
+			FuncName:      agentIR.WorkflowFunc,
+			DefinitionVar: agentIR.WorkflowDefinitionVar,
+			Name:          agentIR.WorkflowName,
+			Queue:         agentIR.WorkflowQueue,
 		},
 	}
 	// Register default activities (plan/resume) scoped to the workflow queue.
 	agent.Runtime.Activities = append(agent.Runtime.Activities,
-		newActivity(agent, ActivityKindPlan, "Plan", workflowQueue),
-		newActivity(agent, ActivityKindResume, "Resume", workflowQueue),
+		newActivity(agent, ActivityKindPlan, "Plan", agentIR.WorkflowQueue),
+		newActivity(agent, ActivityKindResume, "Resume", agentIR.WorkflowQueue),
 		newActivity(agent, ActivityKindExecuteTool, "ExecuteTool", ""),
 	)
 	for i := range agent.Runtime.Activities {
@@ -909,7 +859,7 @@ func newAgentData(
 		}
 	}
 
-	agent.RunPolicy = newRunPolicyData(agentExpr.RunPolicy)
+	agent.RunPolicy = newRunPolicyData(agentIR.Expr.RunPolicy)
 	// Apply DSL timing overrides to activity artifacts when provided.
 	if agent.RunPolicy.PlanTimeout > 0 {
 		if agent.Runtime.PlanActivity != nil {
@@ -924,8 +874,16 @@ func newAgentData(
 			agent.Runtime.ExecuteTool.StartToCloseTimeout = agent.RunPolicy.ToolTimeout
 		}
 	}
-	agent.UsedToolsets = collectToolsets(agent, agentExpr.Used, ToolsetKindUsed, servicesData)
-	agent.ExportedToolsets = collectToolsets(agent, agentExpr.Exported, ToolsetKindExported, servicesData)
+	usedToolsets, err := collectToolsets(agent, agentIR.UsedToolsets, servicesData)
+	if err != nil {
+		return nil, err
+	}
+	exportedToolsets, err := collectToolsets(agent, agentIR.ExportedToolsets, servicesData)
+	if err != nil {
+		return nil, err
+	}
+	agent.UsedToolsets = usedToolsets
+	agent.ExportedToolsets = exportedToolsets
 	agent.AllToolsets = append([]*ToolsetData{}, agent.UsedToolsets...)
 	agent.AllToolsets = append(agent.AllToolsets, agent.ExportedToolsets...)
 
@@ -997,14 +955,7 @@ func newAgentData(
 		}
 	}
 
-	return agent
+	return agent, nil
 }
 
 // Naming helpers moved to codegen/naming.
-
-func defaultString(val, fallback string) string {
-	if val != "" {
-		return val
-	}
-	return fallback
-}

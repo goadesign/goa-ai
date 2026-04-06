@@ -8,10 +8,10 @@ import (
 	"errors"
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson"
-	mongodriver "go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.mongodb.org/mongo-driver/mongo/readpref"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	mongodriver "go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
 
 	"goa.design/clue/health"
 
@@ -144,7 +144,7 @@ func (c *client) AppendEvents(ctx context.Context, agentID, runID string, events
 			},
 		},
 	}
-	_, err := c.coll.UpdateOne(ctx, filter, update, options.Update().SetUpsert(true))
+	_, err := c.coll.UpdateOne(ctx, filter, update, options.UpdateOne().SetUpsert(true))
 	return err
 }
 
@@ -252,15 +252,15 @@ func newClientWithCollection(mongoClient *mongodriver.Client, coll collection, t
 }
 
 type collection interface {
-	FindOne(ctx context.Context, filter any, opts ...*options.FindOneOptions) singleResult
+	FindOne(ctx context.Context, filter any, opts ...options.Lister[options.FindOneOptions]) singleResult
 	UpdateOne(ctx context.Context, filter any, update any,
-		opts ...*options.UpdateOptions) (*mongodriver.UpdateResult, error)
+		opts ...options.Lister[options.UpdateOneOptions]) (*mongodriver.UpdateResult, error)
 	Indexes() indexView
 }
 
 type indexView interface {
 	CreateOne(ctx context.Context, model mongodriver.IndexModel,
-		opts ...*options.CreateIndexesOptions) (string, error)
+		opts ...options.Lister[options.CreateIndexesOptions]) (string, error)
 }
 
 type singleResult interface {
@@ -271,12 +271,12 @@ type mongoCollection struct {
 	coll *mongodriver.Collection
 }
 
-func (c mongoCollection) FindOne(ctx context.Context, filter any, opts ...*options.FindOneOptions) singleResult {
+func (c mongoCollection) FindOne(ctx context.Context, filter any, opts ...options.Lister[options.FindOneOptions]) singleResult {
 	return mongoSingleResult{res: c.coll.FindOne(ctx, filter, opts...)}
 }
 
 func (c mongoCollection) UpdateOne(ctx context.Context, filter any, update any,
-	opts ...*options.UpdateOptions) (*mongodriver.UpdateResult, error) {
+	opts ...options.Lister[options.UpdateOneOptions]) (*mongodriver.UpdateResult, error) {
 	return c.coll.UpdateOne(ctx, filter, update, opts...)
 }
 
@@ -297,6 +297,6 @@ type mongoIndexView struct {
 }
 
 func (v mongoIndexView) CreateOne(ctx context.Context, model mongodriver.IndexModel,
-	opts ...*options.CreateIndexesOptions) (string, error) {
+	opts ...options.Lister[options.CreateIndexesOptions]) (string, error) {
 	return v.view.CreateOne(ctx, model, opts...)
 }

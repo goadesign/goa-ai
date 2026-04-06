@@ -475,7 +475,8 @@ policies, and MCP servers within Goa service designs.
 | Function | Purpose |
 |----------|---------|
 | `Toolset(name, func())` | Define a named toolset with tools |
-| `FromMCP(service, toolset)` | Configure toolset backed by MCP server |
+| `FromMCP(service, toolset)` | Configure toolset backed by a Goa-defined MCP server in the same design |
+| `FromExternalMCP(service, toolset)` | Configure toolset backed by an external MCP server with inline schemas |
 | `FromRegistry(registry, toolset)` | Configure toolset sourced from registry |
 | `AgentToolset(service, agent, toolset)` | Reference toolset exported by another agent |
 | `Description(text)` | Set toolset description |
@@ -747,6 +748,7 @@ type PlannerContext interface {
     State() AgentState                    // Ephemeral per-run state
     AdvertisedToolDefinitions() []*model.ToolDefinition
     ModelClient(id string) (model.Client, bool)
+    PlannerModelClient(id string) (planner.PlannerModelClient, bool)
     RenderPrompt(ctx context.Context, id string, data any) (*prompt.PromptContent, error)
     AddReminder(r reminder.Reminder)      // Register guidance for future turns
     RemoveReminder(id string)             // Clear outdated guidance
