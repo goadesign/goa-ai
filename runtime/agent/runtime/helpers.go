@@ -427,10 +427,11 @@ func (r *Runtime) publishHook(ctx context.Context, evt hooks.Event, turnID strin
 	return r.publishHookErr(ctx, evt, turnID)
 }
 
-// publishTranscriptDeltaErr persists a canonical transcript delta as a durable
-// run-log record. Transcript deltas bypass hook subscribers and stream sinks.
-func (r *Runtime) publishTranscriptDeltaErr(
+// publishTranscriptMessagesErr persists canonical transcript messages as a
+// durable run-log record with the specified transcript record type.
+func (r *Runtime) publishTranscriptMessagesErr(
 	ctx context.Context,
+	recordType runlog.Type,
 	runID string,
 	agentID agent.Ident,
 	sessionID string,
@@ -451,7 +452,7 @@ func (r *Runtime) publishTranscriptDeltaErr(
 	}
 	meta := recordDispatchMetadataForContext(ctx)
 	input := &runlog.ActivityInput{
-		Type:        transcript.RunLogMessagesAppended,
+		Type:        recordType,
 		EventKey:    meta.EventKey,
 		RunID:       runID,
 		AgentID:     agentID,
@@ -469,6 +470,50 @@ func (r *Runtime) publishTranscriptDeltaErr(
 	return r.recordActivity(ctx, input)
 }
 
+// publishTranscriptSeedErr persists canonical transcript seed messages for a
+// run. Seeded transcript messages rebuild run snapshots but must not fan out as
+// newly committed assistant turns.
+func (r *Runtime) publishTranscriptSeedErr(
+	ctx context.Context,
+	runID string,
+	agentID agent.Ident,
+	sessionID string,
+	turnID string,
+	messages []*model.Message,
+) error {
+	return r.publishTranscriptMessagesErr(
+		ctx,
+		transcript.RunLogMessagesSeeded,
+		runID,
+		agentID,
+		sessionID,
+		turnID,
+		messages,
+	)
+}
+
+// publishTranscriptDeltaErr persists canonical transcript messages appended
+// during the run. Appended assistant messages are eligible for committed
+// assistant-turn fanout.
+func (r *Runtime) publishTranscriptDeltaErr(
+	ctx context.Context,
+	runID string,
+	agentID agent.Ident,
+	sessionID string,
+	turnID string,
+	messages []*model.Message,
+) error {
+	return r.publishTranscriptMessagesErr(
+		ctx,
+		transcript.RunLogMessagesAppended,
+		runID,
+		agentID,
+		sessionID,
+		turnID,
+		messages,
+	)
+}
+
 // publishTranscriptDelta is the panic-free wrapper used by workflow/runtime code
 // when transcript persistence failures must stop the run.
 func (r *Runtime) publishTranscriptDelta(
@@ -480,6 +525,19 @@ func (r *Runtime) publishTranscriptDelta(
 	messages []*model.Message,
 ) error {
 	return r.publishTranscriptDeltaErr(ctx, runID, agentID, sessionID, turnID, messages)
+}
+
+// publishTranscriptSeed is the panic-free wrapper used by workflow/runtime code
+// for run-start transcript seed persistence.
+func (r *Runtime) publishTranscriptSeed(
+	ctx context.Context,
+	runID string,
+	agentID agent.Ident,
+	sessionID string,
+	turnID string,
+	messages []*model.Message,
+) error {
+	return r.publishTranscriptSeedErr(ctx, runID, agentID, sessionID, turnID, messages)
 }
 
 type recordDispatchMetadata struct {

@@ -141,7 +141,10 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		RunContext: runCtx,
 	}
 	if len(input.Messages) > 0 {
-		if err := r.publishTranscriptDelta(
+		// Seed the run transcript with the exact planner input. These messages are
+		// durable for replay/snapshots but are not newly committed conversation
+		// output for this run, so they must not be published as appended deltas.
+		if err := r.publishTranscriptSeed(
 			wfCtx.Context(),
 			input.RunID,
 			input.AgentID,
