@@ -20,6 +20,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/runlog"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/session"
 	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
@@ -293,6 +294,82 @@ func TestFinishWithoutToolCallsAppendsTerminalTranscriptFromCitationsPart(t *tes
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	require.Equal(t, "cited answer", agentMessageText(msgs[0]))
+}
+
+func TestExecuteWorkflowSeedsInitialTranscriptInsteadOfAppendingHistory(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := runloginmem.New()
+	rt := &Runtime{
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: store,
+		SessionStore:  sessioninmem.New(),
+		Bus:           noopHooks{},
+		agents: map[agent.Ident]AgentRegistration{
+			"svc.agent": {
+				ID: "svc.agent",
+				Planner: &stubPlanner{start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
+					return &planner.PlanResult{
+						FinalResponse: &planner.FinalResponse{
+							Message: &model.Message{
+								Role:  model.ConversationRoleAssistant,
+								Parts: []model.Part{model.TextPart{Text: "done"}},
+							},
+						},
+					}, nil
+				}},
+				PlanActivityName: "plan",
+			},
+		},
+	}
+	wfCtx := &testWorkflowContext{
+		ctx:         ctx,
+		runtime:     rt,
+		hookRuntime: rt,
+	}
+
+	_, err := rt.ExecuteWorkflow(wfCtx, &RunInput{
+		AgentID:   "svc.agent",
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		TurnID:    "turn-1",
+		Messages: []*model.Message{
+			{
+				Role:  model.ConversationRoleUser,
+				Parts: []model.Part{model.TextPart{Text: "prior user"}},
+			},
+			{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "prior assistant"}},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	page, err := store.List(ctx, "run-1", "", 20)
+	require.NoError(t, err)
+	var transcriptEvents []*runlog.Event
+	for _, event := range page.Events {
+		if event.Type == transcript.RunLogMessagesSeeded || event.Type == transcript.RunLogMessagesAppended {
+			transcriptEvents = append(transcriptEvents, event)
+		}
+	}
+	require.Len(t, transcriptEvents, 2)
+	require.Equal(t, transcript.RunLogMessagesSeeded, transcriptEvents[0].Type)
+	require.Equal(t, transcript.RunLogMessagesAppended, transcriptEvents[1].Type)
+
+	seeded, err := transcript.DecodeRunLogDelta(transcriptEvents[0].Payload)
+	require.NoError(t, err)
+	require.Len(t, seeded, 2)
+	require.Equal(t, "prior assistant", agentMessageText(seeded[1]))
+
+	appended, err := transcript.DecodeRunLogDelta(transcriptEvents[1].Payload)
+	require.NoError(t, err)
+	require.Len(t, appended, 1)
+	require.Equal(t, "done", agentMessageText(appended[0]))
 }
 
 func TestStartOneShotDoesNotRequireSession(t *testing.T) {

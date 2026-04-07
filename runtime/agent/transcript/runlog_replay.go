@@ -13,15 +13,15 @@ import (
 
 const runlogReplayPageSize = 512
 
-// ReplayRunLogEvents replays canonical transcript delta records from an ordered
-// run-log event slice.
+// ReplayRunLogEvents replays canonical transcript seed and append records from
+// an ordered run-log event slice.
 func ReplayRunLogEvents(events []*runlog.Event) ([]*model.Message, bool, error) {
 	var (
 		messages []*model.Message
 		found    bool
 	)
 	for _, event := range events {
-		if event == nil || event.Type != RunLogMessagesAppended {
+		if event == nil || !isTranscriptRunLogType(event.Type) {
 			continue
 		}
 		delta, err := decodeTranscriptMessagesDelta(event)
@@ -34,7 +34,7 @@ func ReplayRunLogEvents(events []*runlog.Event) ([]*model.Message, bool, error) 
 	return messages, found, nil
 }
 
-// BuildMessagesFromRunLog replays canonical transcript delta events from the
+// BuildMessagesFromRunLog replays canonical transcript message events from the
 // durable run log and returns the ordered provider-ready transcript.
 func BuildMessagesFromRunLog(ctx context.Context, store runlog.Store, runID string) ([]*model.Message, error) {
 	if store == nil {
@@ -65,7 +65,7 @@ func BuildMessagesFromRunLog(ctx context.Context, store runlog.Store, runID stri
 		cursor = page.NextCursor
 	}
 	if !found {
-		return nil, fmt.Errorf("transcript: runlog for run %q has no transcript delta events", runID)
+		return nil, fmt.Errorf("transcript: runlog for run %q has no transcript message events", runID)
 	}
 	return messages, nil
 }
@@ -81,4 +81,10 @@ func decodeTranscriptMessagesDelta(event *runlog.Event) ([]*model.Message, error
 		return nil, fmt.Errorf("transcript: decode runlog event %q for run %q: %w", event.EventKey, event.RunID, err)
 	}
 	return delta, nil
+}
+
+// isTranscriptRunLogType reports whether typ stores canonical transcript
+// messages for replay.
+func isTranscriptRunLogType(typ runlog.Type) bool {
+	return typ == RunLogMessagesSeeded || typ == RunLogMessagesAppended
 }

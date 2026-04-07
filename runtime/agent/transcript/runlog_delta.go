@@ -11,10 +11,18 @@ import (
 	"goa.design/goa-ai/runtime/agent/runlog"
 )
 
-// RunLogMessagesAppended is the durable run-log record type for canonical
-// transcript deltas. It is not a hook event and is never published to the hook
-// bus or stream subscribers.
-const RunLogMessagesAppended runlog.Type = "transcript_messages_appended"
+const (
+	// RunLogMessagesSeeded is the durable run-log record type for canonical
+	// transcript messages that seeded a run at start. Seeded transcript messages
+	// describe planner input that already existed before the run began, so they
+	// must never be fanned out as newly committed assistant turns.
+	RunLogMessagesSeeded runlog.Type = "transcript_messages_seeded"
+
+	// RunLogMessagesAppended is the durable run-log record type for canonical
+	// transcript messages appended during a run. Appended transcript messages are
+	// eligible for committed assistant-turn fanout to session-aware consumers.
+	RunLogMessagesAppended runlog.Type = "transcript_messages_appended"
+)
 
 // EncodeRunLogDelta encodes canonical transcript messages for durable run-log
 // storage using model.Message JSON as the single payload format.

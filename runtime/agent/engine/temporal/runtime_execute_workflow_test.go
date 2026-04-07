@@ -215,7 +215,7 @@ type hookRecorder struct {
 
 // Record decodes the runtime record payload so the test can assert on emitted hook events.
 func (r *hookRecorder) Record(_ context.Context, input *api.RecordActivityInput) error {
-	if input.Type == transcript.RunLogMessagesAppended {
+	if input.Type == transcript.RunLogMessagesSeeded || input.Type == transcript.RunLogMessagesAppended {
 		return nil
 	}
 	evt, err := hooks.DecodeFromRecordInput(input)

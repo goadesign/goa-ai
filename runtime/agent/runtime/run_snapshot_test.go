@@ -123,6 +123,49 @@ func TestNewRunSnapshotIncludesCanonicalTranscript(t *testing.T) {
 	require.Equal(t, []model.Part{model.TextPart{Text: "hello"}}, snap.Transcript[0].Parts)
 }
 
+func TestNewRunSnapshotReplaysSeededAndAppendedTranscriptMessages(t *testing.T) {
+	t.Parallel()
+
+	seedPayload, err := transcript.EncodeRunLogDelta([]*model.Message{{
+		Role:  model.ConversationRoleUser,
+		Parts: []model.Part{model.TextPart{Text: "hello"}},
+	}})
+	require.NoError(t, err)
+	appendPayload, err := transcript.EncodeRunLogDelta([]*model.Message{{
+		Role:  model.ConversationRoleAssistant,
+		Parts: []model.Part{model.TextPart{Text: "world"}},
+	}})
+	require.NoError(t, err)
+
+	snap, err := newRunSnapshot([]*runlog.Event{
+		{
+			EventKey:  "evt-seed",
+			RunID:     "run-1",
+			AgentID:   agent.Ident("svc.agent"),
+			SessionID: "sess-1",
+			TurnID:    "turn-1",
+			Type:      transcript.RunLogMessagesSeeded,
+			Payload:   seedPayload,
+			Timestamp: time.Unix(10, 0).UTC(),
+		},
+		{
+			EventKey:  "evt-append",
+			RunID:     "run-1",
+			AgentID:   agent.Ident("svc.agent"),
+			SessionID: "sess-1",
+			TurnID:    "turn-1",
+			Type:      transcript.RunLogMessagesAppended,
+			Payload:   appendPayload,
+			Timestamp: time.Unix(20, 0).UTC(),
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, snap.Transcript, 2)
+	require.Equal(t, model.ConversationRoleUser, snap.Transcript[0].Role)
+	require.Equal(t, model.ConversationRoleAssistant, snap.Transcript[1].Role)
+	require.Equal(t, "world", snap.LastAssistantMessage)
+}
+
 func TestNewRunSnapshotUsesTranscriptAssistantMessage(t *testing.T) {
 	t.Parallel()
 

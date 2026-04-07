@@ -28,9 +28,10 @@ const recordActivityName = "runtime.record_event"
 //   - The canonical record of runtime events is the run event log. Appending to
 //     RunEventStore is a correctness invariant: failures must fail the activity
 //     so the workflow run can stop and/or be retried by the engine.
-//   - Canonical transcript deltas are runtime-owned run-log records. They bypass
-//     hook decoding and bus publication. Sessionful runs additionally fan out
-//     canonical assistant-turn stream events derived from those committed deltas.
+//   - Canonical transcript message records are runtime-owned run-log records.
+//     They bypass hook decoding and bus publication. Seed records rebuild run
+//     snapshots only; appended records additionally fan out canonical
+//     assistant-turn stream events for session-aware consumers.
 //   - Streaming is a session contract:
 //   - While the session is active, stream emission failures must fail the
 //     activity so workflows can retry or stop rather than silently diverge
@@ -48,8 +49,8 @@ func (r *Runtime) recordActivity(ctx context.Context, input *RecordActivityInput
 		return errors.New("runtime: record input is nil")
 	}
 
-	if input.Type == transcript.RunLogMessagesAppended {
-		return r.appendTranscriptRunLogDelta(ctx, input)
+	if input.Type == transcript.RunLogMessagesSeeded || input.Type == transcript.RunLogMessagesAppended {
+		return r.appendTranscriptRunLogMessages(ctx, input)
 	}
 
 	evt, err := hooks.DecodeFromRecordInput(input)
@@ -124,10 +125,11 @@ func (r *Runtime) recordActivity(ctx context.Context, input *RecordActivityInput
 	return nil
 }
 
-// appendTranscriptRunLogDelta appends a canonical transcript delta record to the
-// durable run log and fans out canonical assistant-turn stream events for any
-// committed assistant transcript messages.
-func (r *Runtime) appendTranscriptRunLogDelta(ctx context.Context, input *RecordActivityInput) error {
+// appendTranscriptRunLogMessages appends canonical transcript message records to
+// the durable run log. Only appended transcript messages fan out canonical
+// assistant-turn stream events; seeded transcript messages rebuild snapshots but
+// do not represent newly committed conversation output.
+func (r *Runtime) appendTranscriptRunLogMessages(ctx context.Context, input *RecordActivityInput) error {
 	if input == nil {
 		return errors.New("runtime: transcript delta input is nil")
 	}
@@ -156,6 +158,10 @@ func (r *Runtime) appendTranscriptRunLogDelta(ctx context.Context, input *Record
 		return err
 	}
 	if sess.Status == session.StatusEnded {
+		return nil
+	}
+	streamCommittedAssistantTurns := input.Type == transcript.RunLogMessagesAppended
+	if !streamCommittedAssistantTurns {
 		return nil
 	}
 	for i, msg := range messages {

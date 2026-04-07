@@ -65,6 +65,28 @@ func TestBuildMessagesFromRunLogReplaysCanonicalTranscriptOrder(t *testing.T) {
 	}, messages[2].Parts[0])
 }
 
+func TestBuildMessagesFromRunLogReplaysSeededAndAppendedTranscriptMessages(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := runloginmem.New()
+
+	appendTranscriptMessages(t, ctx, store, "run-1", "turn-1", RunLogMessagesSeeded, []*model.Message{{
+		Role:  model.ConversationRoleUser,
+		Parts: []model.Part{model.TextPart{Text: "hello"}},
+	}})
+	appendTranscriptMessages(t, ctx, store, "run-1", "turn-1", RunLogMessagesAppended, []*model.Message{{
+		Role:  model.ConversationRoleAssistant,
+		Parts: []model.Part{model.TextPart{Text: "world"}},
+	}})
+
+	messages, err := BuildMessagesFromRunLog(ctx, store, "run-1")
+	require.NoError(t, err)
+	require.Len(t, messages, 2)
+	require.Equal(t, model.ConversationRoleUser, messages[0].Role)
+	require.Equal(t, model.ConversationRoleAssistant, messages[1].Role)
+}
+
 func TestBuildMessagesFromRunLogRequiresTranscriptDeltaEvents(t *testing.T) {
 	t.Parallel()
 
@@ -83,10 +105,15 @@ func TestBuildMessagesFromRunLogRequiresTranscriptDeltaEvents(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = BuildMessagesFromRunLog(ctx, store, "run-1")
-	require.ErrorContains(t, err, "has no transcript delta events")
+	require.ErrorContains(t, err, "has no transcript message events")
 }
 
 func appendTranscriptDelta(t *testing.T, ctx context.Context, store runlog.Store, runID, turnID string, messages []*model.Message) {
+	t.Helper()
+	appendTranscriptMessages(t, ctx, store, runID, turnID, RunLogMessagesAppended, messages)
+}
+
+func appendTranscriptMessages(t *testing.T, ctx context.Context, store runlog.Store, runID, turnID string, typ runlog.Type, messages []*model.Message) {
 	t.Helper()
 
 	payload, err := EncodeRunLogDelta(messages)
@@ -98,7 +125,7 @@ func appendTranscriptDelta(t *testing.T, ctx context.Context, store runlog.Store
 		AgentID:   agent.Ident("agent-1"),
 		SessionID: "session-1",
 		TurnID:    turnID,
-		Type:      RunLogMessagesAppended,
+		Type:      typ,
 		Payload:   payload,
 		Timestamp: time.Now().UTC(),
 	})
