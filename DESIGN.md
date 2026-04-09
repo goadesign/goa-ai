@@ -229,6 +229,23 @@ This tracing rule is intentionally generic. Application-specific error
 taxonomies, dashboard semantics, and product observability attributes belong in
 the integrating application rather than in the runtime.
 
+## Temporal Worker Activation Contract
+
+Temporal worker startup is a real runtime contract, not a background best-effort
+side effect:
+
+- Worker-capable engines stage workflow and activity registrations until
+  `runtime.Seal(ctx)` closes registration.
+- In the Temporal engine, sealing is the activation boundary. It starts every
+  registered worker with `worker.Start()`, retries startup failures until `ctx`
+  ends, and returns an error if activation never succeeds before the caller's
+  deadline.
+- Once sealing returns `nil`, the runtime may safely start serving traffic
+  because its workers are actively polling.
+- Post-start fatal worker failures surface through the configured
+  `worker.Options.OnFatalError` callback instead of being silently ignored.
+  Integrating services should treat that callback as process-fatal and exit.
+
 ## Tool Input Schema
 
 For each tool with a non-empty payload, the plugin derives a compact JSON Schema from the Goa attribute and exposes it in `tools/list` under `inputSchema`. This uses Goa's `openapi.Schema` type for complete JSON Schema draft 2020-12 support.

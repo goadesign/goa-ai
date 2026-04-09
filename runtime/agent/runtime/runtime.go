@@ -150,6 +150,15 @@ type (
 		// avoiding dynamic handler registration on active workers.
 		registrationClosed bool
 
+		// activationComplete reports whether the runtime activation boundary has
+		// completed successfully. Failed Seal attempts leave registration closed
+		// but keep this false so callers may retry activation.
+		activationComplete bool
+
+		// sealMu serializes activation attempts so repeated Seal calls cannot race
+		// and a failed attempt may be retried deterministically.
+		sealMu sync.Mutex
+
 		// recordActivityRegistered tracks whether the runtime record activity has
 		// been registered with the engine.
 		recordActivityRegistered bool
@@ -963,21 +972,42 @@ func WithQueue(name string) WorkerOption {
 
 // Seal closes the registration phase and activates engines that stage worker
 // handlers until the runtime is fully configured. Worker deployments should call
-// Seal after registering all toolsets and agents, before serving traffic.
+// Seal after registering all toolsets and agents, before serving traffic. When
+// the engine supports staged workers, Seal returns only after activation
+// succeeds or ctx ends.
 //
-// Seal is idempotent. It also marks the runtime registration as closed so later
-// RegisterAgent/RegisterToolset calls fail fast.
+// Successful Seal calls are idempotent. The first call closes registration so
+// later RegisterAgent/RegisterToolset calls fail fast even if activation later
+// fails. Callers may retry Seal after a context-limited activation failure.
 func (r *Runtime) Seal(ctx context.Context) error {
 	r.mu.Lock()
-	alreadyClosed := r.registrationClosed
+	alreadyActivated := r.activationComplete
 	r.registrationClosed = true
 	r.mu.Unlock()
-	if alreadyClosed {
+	if alreadyActivated {
 		return nil
 	}
-	if sealer, ok := r.Engine.(engine.RegistrationSealer); ok {
-		return sealer.SealRegistration(ctx)
+
+	r.sealMu.Lock()
+	defer r.sealMu.Unlock()
+
+	r.mu.Lock()
+	if r.activationComplete {
+		r.mu.Unlock()
+		return nil
 	}
+	r.registrationClosed = true
+	r.mu.Unlock()
+
+	if sealer, ok := r.Engine.(engine.RegistrationSealer); ok {
+		if err := sealer.SealRegistration(ctx); err != nil {
+			return err
+		}
+	}
+
+	r.mu.Lock()
+	r.activationComplete = true
+	r.mu.Unlock()
 	return nil
 }
 

@@ -159,7 +159,7 @@ type InstrumentationOptions struct {
 //     processes.
 //   - Register workflows/activities only on worker engines.
 //   - Call engine.SealRegistration via runtime.Seal() once all local registrations
-//     are complete so polling begins from a coherent registry.
+//     are complete. The call blocks until every local worker activates or ctx ends.
 //   - Call Close() to gracefully stop workers and release the Temporal client when
 //     owned here.
 type Engine struct {
@@ -176,8 +176,14 @@ type Engine struct {
 	metrics telemetry.Metrics
 	tracer  telemetry.Tracer
 
-	mu                 sync.Mutex
-	registrationSealed bool
+	workerFactory           func(client.Client, string, worker.Options) worker.Worker
+	activationRetryInterval time.Duration
+
+	activationMu sync.Mutex
+	mu           sync.Mutex
+
+	registrationClosed bool
+	activationComplete bool
 	workers            map[string]*workerBundle
 	workflows          map[string]engine.WorkflowDefinition
 	pendingWorkflows   map[string]struct{}
@@ -243,20 +249,22 @@ func newEngine(opts Options, workerMode bool) (*Engine, error) {
 	}
 
 	e := &Engine{
-		client:            cli,
-		closeClient:       closeClient,
-		workerMode:        workerMode,
-		defaultQueue:      defaultQueue,
-		workerOpts:        workerOpts,
-		activityDefaults:  opts.ActivityDefaults,
-		logger:            logger,
-		metrics:           metrics,
-		tracer:            tracer,
-		workers:           make(map[string]*workerBundle),
-		workflows:         make(map[string]engine.WorkflowDefinition),
-		pendingWorkflows:  make(map[string]struct{}),
-		activityOptions:   make(map[string]engine.ActivityOptions),
-		pendingActivities: make(map[string]struct{}),
+		client:                  cli,
+		closeClient:             closeClient,
+		workerMode:              workerMode,
+		defaultQueue:            defaultQueue,
+		workerOpts:              workerOpts,
+		activityDefaults:        opts.ActivityDefaults,
+		logger:                  logger,
+		metrics:                 metrics,
+		tracer:                  tracer,
+		workerFactory:           worker.New,
+		activationRetryInterval: defaultActivationRetryInterval,
+		workers:                 make(map[string]*workerBundle),
+		workflows:               make(map[string]engine.WorkflowDefinition),
+		pendingWorkflows:        make(map[string]struct{}),
+		activityOptions:         make(map[string]engine.ActivityOptions),
+		pendingActivities:       make(map[string]struct{}),
 	}
 	return e, nil
 }
@@ -450,28 +458,38 @@ func (e *Engine) Close() error {
 }
 
 // SealRegistration closes the registration phase for worker-mode engines and
-// starts polling for every queue registered so far. Client-mode engines do not
-// stage registrations, so sealing is a no-op.
-//
-//nolint:unparam // engine.RegistrationSealer requires an error result.
-func (e *Engine) SealRegistration(context.Context) error {
+// activates every queue registered so far. Successful calls are idempotent.
+// Failed activation attempts leave registration closed but allow later callers
+// to retry activation. Client-mode engines do not stage registrations, so
+// sealing is a no-op.
+func (e *Engine) SealRegistration(ctx context.Context) error {
 	if !e.workerMode {
 		return nil
 	}
+
+	e.activationMu.Lock()
+	defer e.activationMu.Unlock()
+
 	e.mu.Lock()
-	if e.registrationSealed {
+	if e.activationComplete {
 		e.mu.Unlock()
 		return nil
 	}
-	e.registrationSealed = true
+	e.registrationClosed = true
 	bundles := make([]*workerBundle, 0, len(e.workers))
 	for _, bundle := range e.workers {
 		bundles = append(bundles, bundle)
 	}
 	e.mu.Unlock()
 	for _, bundle := range bundles {
-		bundle.start()
+		if err := bundle.start(ctx); err != nil {
+			return err
+		}
 	}
+
+	e.mu.Lock()
+	e.activationComplete = true
+	e.mu.Unlock()
 	return nil
 }
 
@@ -586,6 +604,9 @@ func (e *Engine) beginWorkflowRegistration(name string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	if e.registrationClosed {
+		return fmt.Errorf("temporal engine: registration is sealed")
+	}
 	if _, exists := e.workflows[name]; exists {
 		return fmt.Errorf("temporal engine: workflow %q already registered", name)
 	}
@@ -621,6 +642,9 @@ func (e *Engine) beginActivityRegistration(name string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	if e.registrationClosed {
+		return fmt.Errorf("temporal engine: registration is sealed")
+	}
 	if _, exists := e.activityOptions[name]; exists {
 		return fmt.Errorf("temporal engine: activity %q already registered", name)
 	}

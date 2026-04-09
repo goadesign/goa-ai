@@ -37,7 +37,9 @@
 //	}
 //	rt := runtime.New(runtime.WithEngine(eng))
 //	// Register toolsets first, then agents.
-//	if err := rt.Seal(context.Background()); err != nil {
+//	sealCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+//	defer cancel()
+//	if err := rt.Seal(sealCtx); err != nil {
 //	    log.Fatal(err)
 //	}
 //	defer eng.Close()
@@ -61,8 +63,9 @@
 // submits workflows without local execution.
 //
 // Registration sealing is part of the worker-mode contract: the runtime must seal
-// registration only after all toolsets and agents have been registered so polling
-// begins from a coherent local registry.
+// registration only after all toolsets and agents have been registered. Seal is
+// the worker activation boundary: it returns only after every local worker has
+// started successfully or the caller's context deadline ends.
 //
 // # Workflow Determinism
 //
