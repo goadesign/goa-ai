@@ -3,6 +3,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"testing"
@@ -809,6 +810,40 @@ func TestSealClosesRegistrationAndDelegatesToEngine(t *testing.T) {
 
 	require.NoError(t, rt.Seal(context.Background()))
 	require.Equal(t, 1, eng.sealCalls)
+}
+
+func TestSealRetriesAfterActivationFailure(t *testing.T) {
+	t.Parallel()
+
+	eng := &stubEngine{sealErrors: []error{errors.New("temporal unavailable"), nil}}
+	rt := &Runtime{
+		Engine:       eng,
+		logger:       telemetry.NoopLogger{},
+		metrics:      telemetry.NoopMetrics{},
+		tracer:       telemetry.NoopTracer{},
+		SessionStore: sessioninmem.New(),
+		runHandles:   make(map[string]engine.WorkflowHandle),
+		agents:       make(map[agent.Ident]AgentRegistration),
+		toolsets:     make(map[string]ToolsetRegistration),
+	}
+
+	err := rt.Seal(context.Background())
+	require.ErrorContains(t, err, "temporal unavailable")
+	require.Equal(t, 1, eng.sealCalls)
+
+	err = rt.RegisterToolset(ToolsetRegistration{
+		Name: "svc.toolset",
+		Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			return &planner.ToolResult{}, nil
+		},
+	})
+	require.ErrorIs(t, err, ErrRegistrationClosed)
+
+	require.NoError(t, rt.Seal(context.Background()))
+	require.Equal(t, 2, eng.sealCalls)
+
+	require.NoError(t, rt.Seal(context.Background()))
+	require.Equal(t, 2, eng.sealCalls)
 }
 
 func TestTimeBudgetExceeded(t *testing.T) {

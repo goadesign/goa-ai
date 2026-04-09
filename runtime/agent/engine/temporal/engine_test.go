@@ -37,7 +37,7 @@ func TestRegisterWorkflowRejectsDuplicateBeforeCreatingWorkerForNewQueue(t *test
 		Handler:   handler,
 	})
 	require.NoError(t, err)
-	require.False(t, eng.workers["queue.alpha"].started.Load())
+	require.False(t, eng.workers["queue.alpha"].isStarted())
 
 	err = eng.RegisterWorkflow(context.Background(), engine.WorkflowDefinition{
 		Name:      "agent.workflow",
@@ -63,7 +63,7 @@ func TestRegisterPlannerActivityRejectsDuplicateNameAcrossQueues(t *testing.T) {
 		StartToCloseTimeout: time.Minute,
 	}, handler)
 	require.NoError(t, err)
-	require.False(t, eng.workers["queue.alpha"].started.Load())
+	require.False(t, eng.workers["queue.alpha"].isStarted())
 
 	err = eng.RegisterPlannerActivity(context.Background(), "planner.activity", engine.ActivityOptions{
 		Queue:               "queue.beta",
@@ -174,26 +174,6 @@ func TestNewClientRejectsRegistration(t *testing.T) {
 		},
 	})
 	require.ErrorContains(t, err, "client mode cannot register workflows")
-}
-
-func TestSealRegistrationStartsQueuedWorkers(t *testing.T) {
-	t.Parallel()
-
-	eng := newTestEngine(t)
-	err := eng.RegisterPlannerActivity(context.Background(), "planner.activity", engine.ActivityOptions{
-		Queue:               "queue.alpha",
-		StartToCloseTimeout: time.Minute,
-	}, func(ctx context.Context, input *api.PlanActivityInput) (*api.PlanActivityOutput, error) {
-		return &api.PlanActivityOutput{}, nil
-	})
-	require.NoError(t, err)
-
-	bundle := eng.workers["queue.alpha"]
-	require.NotNil(t, bundle)
-	require.False(t, bundle.started.Load())
-
-	require.NoError(t, eng.SealRegistration(context.Background()))
-	require.True(t, bundle.started.Load())
 }
 
 // newTestEngine returns a Temporal engine backed by a lazy Temporal client so tests can

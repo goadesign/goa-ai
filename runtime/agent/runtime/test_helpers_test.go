@@ -807,6 +807,7 @@ type stubEngine struct {
 	registeredPlannerActivityOptions map[string]engine.ActivityOptions
 	registeredExecuteActivityOptions map[string]engine.ActivityOptions
 	sealCalls                        int
+	sealErrors                       []error
 }
 
 func (s *stubEngine) RegisterWorkflow(context.Context, engine.WorkflowDefinition) error { return nil }
@@ -840,10 +841,19 @@ func (s *stubEngine) QueryRunStatus(context.Context, string) (engine.RunStatus, 
 	return engine.RunStatusCompleted, nil
 }
 
-//nolint:unparam // test stub mirrors engine.RegistrationSealer.
 func (s *stubEngine) SealRegistration(context.Context) error {
 	s.sealCalls++
-	return nil
+	if len(s.sealErrors) == 0 {
+		return nil
+	}
+	idx := s.sealCalls - 1
+	if idx >= len(s.sealErrors) {
+		idx = len(s.sealErrors) - 1
+	}
+	if s.sealErrors[idx] == nil {
+		return nil
+	}
+	return s.sealErrors[idx]
 }
 
 type noopWorkflowHandle struct{}

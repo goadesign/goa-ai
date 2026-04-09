@@ -389,13 +389,17 @@ The in-memory engine is great for development. For production, swap in Temporal:
 
 ```go
 import (
+    "context"
+    "log"
+    "time"
+
     "go.temporal.io/sdk/client"
     runtimeTemporal "goa.design/goa-ai/runtime/agent/engine/temporal"
 )
 
 func main() {
     // Production engine: Temporal for durability
-    eng, _ := runtimeTemporal.New(runtimeTemporal.Options{
+    eng, err := runtimeTemporal.NewWorker(runtimeTemporal.Options{
         ClientOptions: &client.Options{
             HostPort:  "localhost:7233",
             Namespace: "default",
@@ -404,10 +408,19 @@ func main() {
             TaskQueue: "my-agents",
         },
     })
+    if err != nil {
+        log.Fatal(err)
+    }
     defer eng.Close()
 
     rt := runtime.New(runtime.WithEngine(eng))
     // ... register agents, same as before
+    sealCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+    defer cancel()
+    if err := rt.Seal(sealCtx); err != nil {
+        log.Fatal(err)
+    }
+    // Start serving traffic only after Seal succeeds.
 }
 ```
 
@@ -418,6 +431,10 @@ func main() {
 - **Deployment safety** — Rolling deploys don't lose in-flight work
 
 Your agent code doesn't change. Just swap the engine.
+
+For worker processes, `rt.Seal(ctx)` is the activation boundary: it retries
+worker startup until the provided deadline and returns an error instead of
+letting the process serve traffic with no active pollers.
 
 ---
 
@@ -515,10 +532,13 @@ A fully-wired production setup:
 ```go
 func main() {
     // Durable execution
-    eng, _ := runtimeTemporal.New(runtimeTemporal.Options{
+    eng, err := runtimeTemporal.NewWorker(runtimeTemporal.Options{
         ClientOptions: &client.Options{HostPort: "temporal:7233"},
         WorkerOptions: runtimeTemporal.WorkerOptions{TaskQueue: "agents"},
     })
+    if err != nil {
+        log.Fatal(err)
+    }
     defer eng.Close()
 
     // Persistence
@@ -556,7 +576,13 @@ func main() {
         Planner: newChatPlanner(),
     })
 
-    // Workers poll and execute; clients submit runs from anywhere
+    sealCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+    defer cancel()
+    if err := rt.Seal(sealCtx); err != nil {
+        log.Fatal(err)
+    }
+
+    // Workers now poll and execute; clients submit runs from anywhere.
 }
 ```
 

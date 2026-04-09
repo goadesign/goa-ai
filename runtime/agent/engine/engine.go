@@ -159,8 +159,10 @@ type (
 	// until the runtime has finished building its full local registry. Worker-capable
 	// engines use this to avoid polling with partially registered handlers.
 	RegistrationSealer interface {
-		// SealRegistration closes the registration phase and makes staged handlers
-		// visible to execution. Implementations must be idempotent.
+		// SealRegistration closes the registration phase and activates any staged
+		// workers before the runtime starts serving traffic. Successful calls must
+		// be idempotent and implementations must honor ctx as the activation
+		// deadline. If activation fails because ctx ended, callers may retry.
 		SealRegistration(ctx context.Context) error
 	}
 
