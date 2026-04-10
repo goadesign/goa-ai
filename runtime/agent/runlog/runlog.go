@@ -117,4 +117,18 @@ type (
 		// to start from the beginning). Limit must be greater than zero.
 		List(ctx context.Context, runID string, cursor string, limit int) (Page, error)
 	}
+
+	// SessionReader lists canonical run-log records across all runs in a session.
+	//
+	// Session-scoped consumers such as transcript projections and evidence views
+	// use this interface to derive session state from canonical facts rather than
+	// from downstream materializations.
+	SessionReader interface {
+		// ListSession returns the next forward page of events for the given
+		// session ID.
+		//
+		// Cursor is an opaque value returned by a previous call to ListSession (or
+		// empty to start from the beginning). Limit must be greater than zero.
+		ListSession(ctx context.Context, sessionID string, cursor string, limit int) (Page, error)
+	}
 )

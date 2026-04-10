@@ -31,3 +31,8 @@ func (s *Store) Append(ctx context.Context, e *runlog.Event) (runlog.AppendResul
 func (s *Store) List(ctx context.Context, runID string, cursor string, limit int) (runlog.Page, error) {
 	return s.client.List(ctx, runID, cursor, limit)
 }
+
+// ListSession implements runlog.SessionReader.
+func (s *Store) ListSession(ctx context.Context, sessionID string, cursor string, limit int) (runlog.Page, error) {
+	return s.client.ListSession(ctx, sessionID, cursor, limit)
+}

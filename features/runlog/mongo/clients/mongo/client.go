@@ -30,6 +30,7 @@ type (
 
 		Append(ctx context.Context, e *runlog.Event) (runlog.AppendResult, error)
 		List(ctx context.Context, runID string, cursor string, limit int) (runlog.Page, error)
+		ListSession(ctx context.Context, sessionID string, cursor string, limit int) (runlog.Page, error)
 	}
 
 	// Options configures the Mongo client implementation.
@@ -161,8 +162,28 @@ func (c *client) List(ctx context.Context, runID string, cursor string, limit in
 	if limit <= 0 {
 		return runlog.Page{}, errors.New("limit must be > 0")
 	}
+	return c.listWithFilter(ctx, bson.M{"run_id": runID}, cursor, limit)
+}
 
-	filter := bson.M{"run_id": runID}
+func (c *client) ListSession(ctx context.Context, sessionID string, cursor string, limit int) (page runlog.Page, err error) {
+	if sessionID == "" {
+		return runlog.Page{}, errors.New("session id is required")
+	}
+	if limit <= 0 {
+		return runlog.Page{}, errors.New("limit must be > 0")
+	}
+	return c.listWithFilter(ctx, bson.M{"session_id": sessionID}, cursor, limit)
+}
+
+func (c *client) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if c.timeout <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, c.timeout)
+}
+
+// listWithFilter applies one cursor-scoped forward scan over the event collection.
+func (c *client) listWithFilter(ctx context.Context, filter bson.M, cursor string, limit int) (page runlog.Page, err error) {
 	if cursor != "" {
 		oid, err := bson.ObjectIDFromHex(cursor)
 		if err != nil {
@@ -220,13 +241,6 @@ func (c *client) List(ctx context.Context, runID string, cursor string, limit in
 	}, nil
 }
 
-func (c *client) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
-	if c.timeout <= 0 {
-		return ctx, func() {}
-	}
-	return context.WithTimeout(ctx, c.timeout)
-}
-
 func ensureIndexes(ctx context.Context, coll collection) error {
 	cursorIndex := mongodriver.IndexModel{
 		Keys: bson.D{
@@ -235,6 +249,15 @@ func ensureIndexes(ctx context.Context, coll collection) error {
 		},
 	}
 	if _, err := coll.Indexes().CreateOne(ctx, cursorIndex); err != nil {
+		return err
+	}
+	sessionCursorIndex := mongodriver.IndexModel{
+		Keys: bson.D{
+			{Key: "session_id", Value: 1},
+			{Key: "_id", Value: 1},
+		},
+	}
+	if _, err := coll.Indexes().CreateOne(ctx, sessionCursorIndex); err != nil {
 		return err
 	}
 	identityIndex := mongodriver.IndexModel{

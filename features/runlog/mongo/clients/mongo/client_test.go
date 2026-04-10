@@ -3,6 +3,7 @@ package mongo
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -99,6 +100,63 @@ func TestClientListNextCursor(t *testing.T) {
 	}
 }
 
+func TestClientListSessionNextCursor(t *testing.T) {
+	t.Parallel()
+
+	type testCase struct {
+		name       string
+		eventCount int
+		limit      int
+		wantNext   string
+	}
+	cases := []testCase{
+		{
+			name:       "fewer_than_limit",
+			eventCount: 2,
+			limit:      3,
+			wantNext:   "",
+		},
+		{
+			name:       "exactly_limit_no_more",
+			eventCount: 3,
+			limit:      3,
+			wantNext:   "",
+		},
+		{
+			name:       "more_than_limit_has_next",
+			eventCount: 4,
+			limit:      3,
+			wantNext:   "000000000000000000000003",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			sessionID := "session-1"
+			coll := &fakeCollection{
+				findDocs: fakeSessionEventDocuments(sessionID, tc.eventCount),
+			}
+			c := &client{coll: coll}
+
+			page, err := c.ListSession(context.Background(), sessionID, "", tc.limit)
+			require.NoError(t, err)
+			assert.Len(t, page.Events, min(tc.eventCount, tc.limit))
+			assert.Equal(t, tc.wantNext, page.NextCursor)
+
+			if tc.wantNext == "" {
+				return
+			}
+
+			next, err := c.ListSession(context.Background(), sessionID, page.NextCursor, tc.limit)
+			require.NoError(t, err)
+			assert.Len(t, next.Events, tc.eventCount-tc.limit)
+			assert.Empty(t, next.NextCursor)
+		})
+	}
+}
+
 func TestClientAppendReturnsExistingIDForDuplicateEventKey(t *testing.T) {
 	t.Parallel()
 
@@ -174,6 +232,25 @@ func fakeEventDocuments(runID string, n int) []eventDocument {
 	return docs
 }
 
+func fakeSessionEventDocuments(sessionID string, n int) []eventDocument {
+	docs := make([]eventDocument, 0, n)
+	for i := 1; i <= n; i++ {
+		oid := bson.ObjectID{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, byte(i)}
+		docs = append(docs, eventDocument{
+			ID:        oid,
+			EventKey:  fmt.Sprintf("evt-%d", i),
+			RunID:     fmt.Sprintf("run-%d", i),
+			AgentID:   "agent-1",
+			SessionID: sessionID,
+			TurnID:    "turn-1",
+			Type:      string(hooks.RunStarted),
+			Payload:   []byte(`{}`),
+			Timestamp: time.Unix(int64(i), 0).UTC(),
+		})
+	}
+	return docs
+}
+
 func mustOID(t *testing.T, hex string) bson.ObjectID {
 	t.Helper()
 
@@ -209,6 +286,7 @@ func (c *fakeCollection) Find(_ context.Context, filter any, opts ...options.Lis
 	}
 
 	runID, _ := f["run_id"].(string)
+	sessionID, _ := f["session_id"].(string)
 	var after bson.ObjectID
 	if id, ok := f["_id"].(bson.M); ok {
 		if gt, ok := id["$gt"].(bson.ObjectID); ok {
@@ -218,7 +296,10 @@ func (c *fakeCollection) Find(_ context.Context, filter any, opts ...options.Lis
 
 	filtered := make([]eventDocument, 0, len(c.findDocs))
 	for _, doc := range c.findDocs {
-		if doc.RunID != runID {
+		if runID != "" && doc.RunID != runID {
+			continue
+		}
+		if sessionID != "" && doc.SessionID != sessionID {
 			continue
 		}
 		if !after.IsZero() && bytes.Compare(doc.ID[:], after[:]) <= 0 {
