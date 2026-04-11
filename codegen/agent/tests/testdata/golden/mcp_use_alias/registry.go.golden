@@ -87,7 +87,7 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 			Name: "calc-remote",
 			// Use the used-toolset specs package for strong-contract payload/result codecs.
 			Specs: calc_remote2.Specs,
-			Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			Execute: func(ctx context.Context, call *planner.ToolRequest) (*agentsruntime.ToolExecutionResult, error) {
 				if call == nil {
 					return nil, fmt.Errorf("tool request is nil")
 				}
@@ -103,7 +103,7 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 					return nil, err
 				}
 				if result == nil {
-					return nil, fmt.Errorf("executor returned nil result")
+					return nil, fmt.Errorf("executor returned nil execution result")
 				}
 				return result, nil
 			},

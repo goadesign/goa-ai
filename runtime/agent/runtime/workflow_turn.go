@@ -10,7 +10,8 @@ package runtime
 //   recording the assistant tool_use turn, executing tools, and producing the next
 //   PlanResume request (or finalizing).
 // - It may also handle “mixed” turns where the planner returns ToolCalls plus an
-//   Await.ExternalTools handshake (execute internal tools first, then pause).
+//   await handshake, or where executed tools emit runtime-owned pauses from the
+//   current batch (execute tools first, then pause once).
 
 import (
 	"errors"
@@ -133,10 +134,12 @@ func (r *Runtime) handleToolTurn(
 	if !deadlines.Hard.IsZero() {
 		finishBy = deadlines.Hard.Add(-deadlines.finalizeReserve())
 	}
-	vals, timedOut, err := r.executeGroupedToolCalls(wfCtx, reg, input.AgentID, base, result.ExpectedChildren, parentTracker, finishBy, grouped, timeouts, toolOpts)
+	outcomes, timedOut, err := r.executeGroupedToolCalls(wfCtx, reg, input.AgentID, base, result.ExpectedChildren, parentTracker, finishBy, grouped, timeouts, toolOpts)
 	if err != nil {
 		return nil, err
 	}
+	vals := toolResultsFromExecutions(outcomes)
+	toolPauses := toolPausesFromExecutions(outcomes)
 	lastToolResults := vals
 	st.ToolEvents = append(st.ToolEvents, cloneToolResults(vals)...)
 	if err := r.appendToolOutputs(ctx, st, toExecute, vals); err != nil {
@@ -159,10 +162,20 @@ func (r *Runtime) handleToolTurn(
 	}
 
 	st.Caps.RemainingToolCalls = decrementCap(st.Caps.RemainingToolCalls, len(allowed))
-	if len(confirmations) > 0 || (result.Await != nil && len(result.Await.Items) > 0) {
-		items := []planner.AwaitItem(nil)
+	if result.Await != nil && len(result.Await.Items) > 0 && len(toolPauses) > 0 {
+		return nil, fmt.Errorf("planner await and tool pause cannot both be present in the same turn")
+	}
+	if len(confirmations) > 0 || (result.Await != nil && len(result.Await.Items) > 0) || len(toolPauses) > 0 {
+		items := make([]planner.AwaitItem, 0, len(toolPauses))
 		if result.Await != nil {
-			items = result.Await.Items
+			items = append(items, result.Await.Items...)
+		}
+		if len(toolPauses) > 0 {
+			pauseItems, err := toolPauseAwaitItems(toolPauses)
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, pauseItems...)
 		}
 		out, err := r.handleAwaitQueue(
 			wfCtx,
@@ -245,4 +258,55 @@ func (r *Runtime) executedTerminalRunTool(results []*planner.ToolResult) (bool, 
 		}
 	}
 	return false, nil
+}
+
+// toolResultsFromExecutions extracts durable planner-visible tool results from a
+// batch of runtime-owned execution outcomes.
+func toolResultsFromExecutions(outcomes []*ToolExecutionResult) []*planner.ToolResult {
+	if len(outcomes) == 0 {
+		return nil
+	}
+	results := make([]*planner.ToolResult, 0, len(outcomes))
+	for _, outcome := range outcomes {
+		if outcome == nil || outcome.ToolResult == nil {
+			continue
+		}
+		results = append(results, outcome.ToolResult)
+	}
+	return results
+}
+
+// toolPausesFromExecutions extracts current-batch runtime pause signals from a
+// batch of execution outcomes in canonical tool-call order.
+func toolPausesFromExecutions(outcomes []*ToolExecutionResult) []*ToolPause {
+	if len(outcomes) == 0 {
+		return nil
+	}
+	pauses := make([]*ToolPause, 0, len(outcomes))
+	for _, outcome := range outcomes {
+		if outcome == nil || outcome.Pause == nil {
+			continue
+		}
+		pauses = append(pauses, outcome.Pause)
+	}
+	return pauses
+}
+
+// toolPauseAwaitItems projects runtime-owned tool pauses into the existing await
+// queue item model.
+func toolPauseAwaitItems(pauses []*ToolPause) ([]planner.AwaitItem, error) {
+	if len(pauses) == 0 {
+		return nil, nil
+	}
+	items := make([]planner.AwaitItem, 0, len(pauses))
+	for i, pause := range pauses {
+		if pause == nil || pause.Clarification == nil {
+			return nil, fmt.Errorf("tool pause %d is invalid", i)
+		}
+		items = append(items, planner.AwaitClarificationItem(&planner.AwaitClarification{
+			ID:       pause.Clarification.ID,
+			Question: pause.Clarification.Question,
+		}))
+	}
+	return items, nil
 }

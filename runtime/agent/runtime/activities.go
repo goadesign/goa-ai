@@ -303,20 +303,20 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		ToolCallID:       req.ToolCallID,
 	}
 	start := time.Now()
-	result, err := reg.Execute(ctx, &call)
+	execResult, err := reg.Execute(ctx, &call)
 	if err != nil {
 		return nil, err
 	}
-	if result == nil {
-		return nil, errors.New("tool execution returned nil result")
+	if execResult == nil {
+		return nil, errors.New("tool execution returned nil execution result")
 	}
 	// Enrich or build telemetry via registration builder when available.
 	if reg.TelemetryBuilder != nil {
-		if tel := reg.TelemetryBuilder(ctx, meta, req.ToolName, start, time.Now(), nil); tel != nil && result.Telemetry == nil {
-			result.Telemetry = tel
+		if tel := reg.TelemetryBuilder(ctx, meta, req.ToolName, start, time.Now(), nil); tel != nil && execResult.ToolResult != nil && execResult.ToolResult.Telemetry == nil {
+			execResult.ToolResult.Telemetry = tel
 		}
 	}
-	resultJSON, err := r.materializeToolResult(ctx, call, result)
+	result, resultJSON, pause, err := r.materializeToolExecutionResult(ctx, call, execResult)
 	if err != nil {
 		return nil, err
 	}
@@ -331,6 +331,9 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	}
 	if result.RetryHint != nil {
 		out.RetryHint = result.RetryHint
+	}
+	if pause != nil {
+		out.Pause = pause
 	}
 	return out, nil
 }

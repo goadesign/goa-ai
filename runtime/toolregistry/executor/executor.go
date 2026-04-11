@@ -136,30 +136,30 @@ func New(client Client, pulse pulsec.Client, specs SpecLookup, opts ...Option) *
 	return e
 }
 
-func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*planner.ToolResult, error) {
+func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*runtime.ToolExecutionResult, error) {
 	if call == nil {
-		return &planner.ToolResult{Error: planner.NewToolError("tool request is nil")}, nil
+		return runtime.Executed(&planner.ToolResult{Error: planner.NewToolError("tool request is nil")}), nil
 	}
 	if meta == nil {
-		return &planner.ToolResult{Name: call.Name, Error: planner.NewToolError("tool call meta is nil")}, nil
+		return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.NewToolError("tool call meta is nil")}), nil
 	}
 	if e.client == nil {
-		return &planner.ToolResult{Name: call.Name, Error: planner.NewToolError("registry client is nil")}, nil
+		return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.NewToolError("registry client is nil")}), nil
 	}
 	if e.pulse == nil {
-		return &planner.ToolResult{Name: call.Name, Error: planner.NewToolError("pulse client is nil")}, nil
+		return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.NewToolError("pulse client is nil")}), nil
 	}
 	if e.specs == nil {
-		return &planner.ToolResult{Name: call.Name, Error: planner.NewToolError("tool specs lookup is nil")}, nil
+		return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.NewToolError("tool specs lookup is nil")}), nil
 	}
 
 	spec, ok := e.specs.Spec(call.Name)
 	if !ok {
-		return &planner.ToolResult{Name: call.Name, Error: planner.NewToolError(fmt.Sprintf("unknown tool %q", call.Name))}, nil
+		return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.NewToolError(fmt.Sprintf("unknown tool %q", call.Name))}), nil
 	}
 	toolsetID := spec.Toolset
 	if toolsetID == "" {
-		return &planner.ToolResult{Name: call.Name, Error: planner.NewToolError(fmt.Sprintf("tool %q missing toolset routing id", call.Name))}, nil
+		return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.NewToolError(fmt.Sprintf("tool %q missing toolset routing id", call.Name))}), nil
 	}
 
 	tracer := e.tracer
@@ -196,7 +196,7 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "call tool via registry failed")
-		return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err), ToolCallID: meta.ToolCallID}, nil
+		return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err), ToolCallID: meta.ToolCallID}), nil
 	}
 	resultStreamID := toolregistry.ResultStreamID(toolUseID)
 	span.AddEvent(
@@ -366,7 +366,7 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 				"toolregistry.result_stream_id", resultStreamID,
 			)
 			span.SetStatus(codes.Ok, "ok")
-			return e.decodeToolResult(spec, call, meta.ToolCallID, msg), nil
+			return runtime.Executed(e.decodeToolResult(spec, call, meta.ToolCallID, msg)), nil
 		}
 	}
 }

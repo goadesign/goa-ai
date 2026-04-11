@@ -25,13 +25,13 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 			"svc.tools": {},
 			"inline.ts": {
 				Inline: true,
-				Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+				Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 					return &planner.ToolResult{
 						Name:       call.Name,
 						ToolCallID: call.ToolCallID,
 						Result:     "inline",
 					}, nil
-				},
+				}),
 			},
 		},
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
@@ -91,7 +91,7 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 	}
 
 	type out struct {
-		results  []*planner.ToolResult
+		results  []*ToolExecutionResult
 		timedOut bool
 		err      error
 	}

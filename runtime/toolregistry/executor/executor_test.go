@@ -69,7 +69,8 @@ func TestExecutorUsesOldestStartForResultStreamSink(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotNil(t, res)
-	assert.Equal(t, tools.Ident("todos.update_todos"), res.Name)
+	require.NotNil(t, res.ToolResult)
+	assert.Equal(t, tools.Ident("todos.update_todos"), res.ToolResult.Name)
 }
 
 func TestExecutorDerivesResultStreamIDFromToolUseID(t *testing.T) {
@@ -123,7 +124,8 @@ func TestExecutorDerivesResultStreamIDFromToolUseID(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotNil(t, res)
-	assert.Equal(t, tools.Ident("todos.update_todos"), res.Name)
+	require.NotNil(t, res.ToolResult)
+	assert.Equal(t, tools.Ident("todos.update_todos"), res.ToolResult.Name)
 }
 
 type captureSink struct {
@@ -283,12 +285,13 @@ func TestExecutorRestoresBoundsFromRegistryMessage(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, res)
-	require.NotNil(t, res.Bounds)
-	assert.Equal(t, 1, res.Bounds.Returned)
-	assert.True(t, res.Bounds.Truncated)
-	require.NotNil(t, res.Bounds.NextCursor)
-	assert.Equal(t, nextCursor, *res.Bounds.NextCursor)
-	assert.Equal(t, "narrow by device", res.Bounds.RefinementHint)
+	require.NotNil(t, res.ToolResult)
+	require.NotNil(t, res.ToolResult.Bounds)
+	assert.Equal(t, 1, res.ToolResult.Bounds.Returned)
+	assert.True(t, res.ToolResult.Bounds.Truncated)
+	require.NotNil(t, res.ToolResult.Bounds.NextCursor)
+	assert.Equal(t, nextCursor, *res.ToolResult.Bounds.NextCursor)
+	assert.Equal(t, "narrow by device", res.ToolResult.Bounds.RefinementHint)
 }
 
 type fakeRegistryClient struct {

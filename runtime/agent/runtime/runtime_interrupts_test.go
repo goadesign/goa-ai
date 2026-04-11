@@ -24,11 +24,11 @@ func TestRunLoopPauseResumeEmitsEvents_Barriered(t *testing.T) {
 		metrics: telemetry.NoopMetrics{},
 		tracer:  telemetry.NoopTracer{},
 		toolsets: map[string]ToolsetRegistration{"svc.ts": {
-			Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 				return &planner.ToolResult{
 					Name: call.Name,
 				}, nil
-			}}},
+			})}},
 	}
 	// Strong contract: codecs must be present. Provide a minimal spec for the tool.
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{

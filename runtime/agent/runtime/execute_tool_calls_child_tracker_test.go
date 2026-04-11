@@ -23,13 +23,13 @@ func TestExecuteToolCalls_ChildTrackerUpdateEmittedOnIncrease(t *testing.T) {
 		toolsets: map[string]ToolsetRegistration{
 			"inline.ts": {
 				Inline: true,
-				Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+				Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 					return &planner.ToolResult{
 						Name:       call.Name,
 						ToolCallID: call.ToolCallID,
 						Result:     "ok",
 					}, nil
-				},
+				}),
 			},
 		},
 		toolSpecs: map[tools.Ident]tools.ToolSpec{

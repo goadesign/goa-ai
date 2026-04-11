@@ -1,11 +1,11 @@
 package runtime
 
 // workflow_await_queue.go contains workflow-side support for queued await
-// prompts returned by planners.
+// prompts returned by planners or the just-executed tool batch.
 //
 // Contract:
-// - Planners may return an Await barrier containing multiple ordered await
-//   items (clarifications, questions, external tool handshakes).
+// - Await items may come from the planner result or tool-owned awaits emitted by
+//   the current execution batch.
 // - The runtime publishes all await events, pauses once, then waits for each
 //   item to be satisfied in order.
 // - The runtime resumes planning exactly once after the entire await queue is
@@ -42,24 +42,24 @@ func (r *Runtime) waitAwaitConfirmation(
 	ctrl *interrupt.Controller,
 	deadlines *runDeadlines,
 	it confirmationAwait,
-) ([]*planner.ToolResult, *RunOutput, error) {
+) ([]*planner.ToolResult, []planner.AwaitItem, *RunOutput, error) {
 	if deadlines == nil {
-		return nil, nil, errors.New("missing run deadlines")
+		return nil, nil, nil, errors.New("missing run deadlines")
 	}
 	waitStartedAt := wfCtx.Now()
 	dec, err := ctrl.WaitProvideConfirmation(ctx, 0)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	deadlines.pause(wfCtx.Now().Sub(waitStartedAt))
 	if dec == nil {
-		return nil, nil, errors.New("await_confirmation: received nil confirmation decision")
+		return nil, nil, nil, errors.New("await_confirmation: received nil confirmation decision")
 	}
 	if dec.ID != "" && dec.ID != it.awaitID {
-		return nil, nil, fmt.Errorf("unexpected confirmation id %q (expected %q)", dec.ID, it.awaitID)
+		return nil, nil, nil, fmt.Errorf("unexpected confirmation id %q (expected %q)", dec.ID, it.awaitID)
 	}
 	if dec.RequestedBy == "" {
-		return nil, nil, fmt.Errorf("confirmation decision missing requested_by for %q (%s)", it.call.Name, it.call.ToolCallID)
+		return nil, nil, nil, fmt.Errorf("confirmation decision missing requested_by for %q (%s)", it.call.Name, it.call.ToolCallID)
 	}
 
 	approved := dec.Approved
@@ -73,14 +73,14 @@ func (r *Runtime) waitAwaitConfirmation(
 		it.plan.Prompt,
 		dec.RequestedBy,
 	), turnID); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	// Confirmation gates tool execution. We represent both approval and denial as
 	// a provider-visible tool_use + tool_result pair so planners see a deterministic
 	// outcome for the tool call they requested.
 	if err := r.recordAssistantTurn(ctx, input.AgentID, base, st.Transcript, []planner.ToolRequest{it.call}, turnID); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	if !approved {
@@ -100,11 +100,11 @@ func (r *Runtime) waitAwaitConfirmation(
 			),
 			turnID,
 		); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		resultJSON, err := r.marshalToolValue(ctx, it.call.Name, deniedResult, nil)
 		if err != nil {
-			return nil, nil, fmt.Errorf("encode %s denied tool result for streaming: %w", it.call.Name, err)
+			return nil, nil, nil, fmt.Errorf("encode %s denied tool result for streaming: %w", it.call.Name, err)
 		}
 		if err := r.publishHook(
 			ctx,
@@ -129,7 +129,7 @@ func (r *Runtime) waitAwaitConfirmation(
 			),
 			turnID,
 		); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 
 		tr := &planner.ToolResult{
@@ -140,12 +140,12 @@ func (r *Runtime) waitAwaitConfirmation(
 		}
 		st.ToolEvents = append(st.ToolEvents, cloneToolResults([]*planner.ToolResult{tr})...)
 		if err := r.appendToolOutputs(ctx, st, []planner.ToolRequest{it.call}, []*planner.ToolResult{tr}); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if err := r.appendUserToolResults(ctx, input.AgentID, base, []planner.ToolRequest{it.call}, []*planner.ToolResult{tr}, turnID); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
-		return []*planner.ToolResult{tr}, nil, nil
+		return []*planner.ToolResult{tr}, nil, nil, nil
 	}
 
 	// Approved: execute the tool call.
@@ -159,7 +159,7 @@ func (r *Runtime) waitAwaitConfirmation(
 	if !deadlines.Hard.IsZero() {
 		finishBy = deadlines.Hard.Add(-deadlines.finalizeReserve())
 	}
-	vals, timedOut, err := r.executeGroupedToolCalls(
+	outcomes, timedOut, err := r.executeGroupedToolCalls(
 		wfCtx,
 		reg,
 		input.AgentID,
@@ -172,20 +172,29 @@ func (r *Runtime) waitAwaitConfirmation(
 		toolOpts,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
+	vals := toolResultsFromExecutions(outcomes)
+	toolPauses := toolPausesFromExecutions(outcomes)
 	st.ToolEvents = append(st.ToolEvents, cloneToolResults(vals)...)
 	if err := r.appendToolOutputs(ctx, st, []planner.ToolRequest{call}, vals); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if err := r.appendUserToolResults(ctx, input.AgentID, base, []planner.ToolRequest{call}, vals, turnID); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if timedOut {
 		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.ToolOutputs, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonTimeBudget, deadlines.Hard)
-		return nil, out, err
+		return nil, nil, out, err
 	}
-	return vals, nil, nil
+	if len(toolPauses) == 0 {
+		return vals, nil, nil, nil
+	}
+	pauseItems, err := toolPauseAwaitItems(toolPauses)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return vals, pauseItems, nil, nil
 }
 
 func (r *Runtime) handleAwaitQueue(
@@ -261,7 +270,7 @@ func (r *Runtime) handleAwaitQueue(
 	allToolResults = append(allToolResults, priorToolResults...)
 
 	for _, it := range confirmations {
-		res, out, err := r.waitAwaitConfirmation(ctx, wfCtx, reg, input, base, st, toolOpts, expectedChildren, parentTracker, turnID, ctrl, deadlines, it)
+		res, pauseItems, out, err := r.waitAwaitConfirmation(ctx, wfCtx, reg, input, base, st, toolOpts, expectedChildren, parentTracker, turnID, ctrl, deadlines, it)
 		if err != nil {
 			return nil, err
 		}
@@ -270,6 +279,9 @@ func (r *Runtime) handleAwaitQueue(
 		}
 		if len(res) > 0 {
 			allToolResults = append(allToolResults, res...)
+		}
+		if len(pauseItems) > 0 {
+			items = append(items, pauseItems...)
 		}
 	}
 

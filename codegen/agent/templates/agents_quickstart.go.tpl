@@ -310,17 +310,17 @@ import (
     specs "<module>/gen/<svc>/agents/<agent>/specs/<toolset>"
 )
 
-func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*planner.ToolResult, error) {
+func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*runtime.ToolExecutionResult, error) {
     switch call.Name {
     case "<svc>.<toolset>.<tool>":
         // Decode payload using generated codec
         pc, ok := specs.PayloadCodec(string(call.Name))
         if !ok {
-            return &planner.ToolResult{Error: planner.NewToolError("payload codec not found")}, nil
+            return runtime.Executed(&planner.ToolResult{Error: planner.NewToolError("payload codec not found")}), nil
         }
         args, err := pc.FromJSON(call.Payload)
         if err != nil {
-            return &planner.ToolResult{Error: planner.NewToolError("invalid payload: " + err.Error())}, nil
+            return runtime.Executed(&planner.ToolResult{Error: planner.NewToolError("invalid payload: " + err.Error())}), nil
         }
         // Type-assert to the generated payload type:
         // typedArgs := args.(*specs.<ToolPayload>)
@@ -328,16 +328,16 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
         // Call your service client, map result via specs.ToToolReturn_<Tool>
         // Or build a typed tool return directly:
         // res := &specs.<ToolReturn>{Status: "ok"}
-        return &planner.ToolResult{
+        return runtime.Executed(&planner.ToolResult{
 			Name:   call.Name,
 			Result: &specs.<ToolReturn>{
 				Status: "ok",
 			},
-		}, nil
+		}), nil
     }
-    return &planner.ToolResult{
+    return runtime.Executed(&planner.ToolResult{
 		Error: planner.NewToolError("unknown tool"),
-	}, nil
+	}), nil
 }
 ```
 
