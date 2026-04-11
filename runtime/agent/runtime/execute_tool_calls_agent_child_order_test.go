@@ -93,7 +93,7 @@ func TestExecuteToolCalls_AgentToolsPublishResultsAsComplete(t *testing.T) {
 	}
 
 	type out struct {
-		results []*planner.ToolResult
+		results []*ToolExecutionResult
 		err     error
 	}
 	done := make(chan out, 1)
@@ -112,8 +112,10 @@ func TestExecuteToolCalls_AgentToolsPublishResultsAsComplete(t *testing.T) {
 	got := <-done
 	require.NoError(t, got.err)
 	require.Len(t, got.results, 2)
-	require.Equal(t, calls[0].ToolCallID, got.results[0].ToolCallID)
-	require.Equal(t, calls[1].ToolCallID, got.results[1].ToolCallID)
+	require.NotNil(t, got.results[0].ToolResult)
+	require.NotNil(t, got.results[1].ToolResult)
+	require.Equal(t, calls[0].ToolCallID, got.results[0].ToolResult.ToolCallID)
+	require.Equal(t, calls[1].ToolCallID, got.results[1].ToolResult.ToolCallID)
 
 	var ends []*hooks.ToolResultReceivedEvent
 	for _, evt := range recorder.events {

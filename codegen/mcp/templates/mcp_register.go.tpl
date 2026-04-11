@@ -124,7 +124,7 @@ func Register{{ .Register.HelperName }}(ctx context.Context, rt *agentsruntime.R
 	return rt.RegisterToolset(agentsruntime.ToolsetRegistration{
 		Name:        {{ printf "%q" .Register.SuiteQualifiedName }},
 		Description: {{ printf "%q" .Register.Description }},
-		Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: func(ctx context.Context, call *planner.ToolRequest) (*agentsruntime.ToolExecutionResult, error) {
 			if call == nil {
 				return nil, errors.New("tool request is nil")
 			}
@@ -132,7 +132,7 @@ func Register{{ .Register.HelperName }}(ctx context.Context, rt *agentsruntime.R
 			if err != nil {
 				return nil, err
 			}
-			return &out, nil
+			return agentsruntime.Executed(&out), nil
 		},
 		Specs:            {{ .Register.HelperName }}ToolSpecs,
 		DecodeInExecutor: true,

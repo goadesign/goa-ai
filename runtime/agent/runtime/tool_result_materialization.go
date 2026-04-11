@@ -50,6 +50,30 @@ func (r *Runtime) materializeToolResult(ctx context.Context, call planner.ToolRe
 	return resultJSON, nil
 }
 
+// materializeToolExecutionResult validates the runtime-owned execution wrapper,
+// materializes the durable tool result, and returns the current-batch pause
+// signal separately from planner-visible history.
+func (r *Runtime) materializeToolExecutionResult(
+	ctx context.Context,
+	call planner.ToolRequest,
+	exec *ToolExecutionResult,
+) (*planner.ToolResult, rawjson.Message, *ToolPause, error) {
+	if exec == nil {
+		return nil, nil, nil, fmt.Errorf("tool %q returned nil execution result", call.Name)
+	}
+	if exec.ToolResult == nil {
+		return nil, nil, nil, fmt.Errorf("tool %q returned nil tool result", call.Name)
+	}
+	resultJSON, err := r.materializeToolResult(ctx, call, exec.ToolResult)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if err := validateToolPauseContract(call, exec.ToolResult, exec.Pause); err != nil {
+		return nil, nil, nil, err
+	}
+	return exec.ToolResult, resultJSON, exec.Pause, nil
+}
+
 // applyResultMaterializer invokes the toolset-owned typed result materializer
 // when the toolset registered one.
 func (r *Runtime) applyResultMaterializer(ctx context.Context, spec tools.ToolSpec, call planner.ToolRequest, result *planner.ToolResult) error {

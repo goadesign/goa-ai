@@ -59,7 +59,7 @@ type (
 
 		futures      []futureInfo
 		childFutures []agentChildFutureInfo
-		inlineByID   map[string]*planner.ToolResult
+		inlineByID   map[string]*ToolExecutionResult
 
 		discoveredIDs []string
 	}
@@ -261,7 +261,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 		calls:         calls,
 		futures:       make([]futureInfo, 0, len(calls)),
 		childFutures:  make([]agentChildFutureInfo, 0, len(calls)),
-		inlineByID:    make(map[string]*planner.ToolResult, len(calls)),
+		inlineByID:    make(map[string]*ToolExecutionResult, len(calls)),
 		discoveredIDs: make([]string, 0, len(calls)),
 	}
 
@@ -278,7 +278,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 			if err != nil {
 				return nil, err
 			}
-			b.inlineByID[call.ToolCallID] = tr
+			b.inlineByID[call.ToolCallID] = Executed(tr)
 			if e.parentTracker != nil {
 				b.discoveredIDs = append(b.discoveredIDs, call.ToolCallID)
 			}
@@ -329,7 +329,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 					if err := e.publishToolResultReceived(ctx, call, tr, nil, 0); err != nil {
 						return nil, err
 					}
-					b.inlineByID[call.ToolCallID] = tr
+					b.inlineByID[call.ToolCallID] = Executed(tr)
 					if e.parentTracker != nil {
 						b.discoveredIDs = append(b.discoveredIDs, call.ToolCallID)
 					}
@@ -374,22 +374,25 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 
 			start := wfCtx.Now()
 			ctxInline := engine.WithWorkflowContext(ctx, wfCtx)
-			result, err := ts.Execute(ctxInline, &call)
+			execResult, err := ts.Execute(ctxInline, &call)
 			if err != nil {
 				return nil, fmt.Errorf("inline tool %q failed: %w", call.Name, err)
 			}
-			if result == nil {
-				return nil, fmt.Errorf("inline tool %q returned nil result", call.Name)
+			if execResult == nil {
+				return nil, fmt.Errorf("inline tool %q returned nil execution result", call.Name)
 			}
 			duration := wfCtx.Now().Sub(start)
-			resultJSON, err := e.r.materializeToolResult(ctx, call, result)
+			result, resultJSON, pause, err := e.r.materializeToolExecutionResult(ctx, call, execResult)
 			if err != nil {
 				return nil, err
 			}
 			if err := e.publishToolResultReceived(ctx, call, result, resultJSON, duration); err != nil {
 				return nil, err
 			}
-			b.inlineByID[call.ToolCallID] = result
+			b.inlineByID[call.ToolCallID] = &ToolExecutionResult{
+				ToolResult: result,
+				Pause:      pause,
+			}
 			if e.parentTracker != nil {
 				b.discoveredIDs = append(b.discoveredIDs, call.ToolCallID)
 			}
@@ -449,9 +452,9 @@ func (e *toolBatchExec) maybePublishChildTrackerUpdate(ctx context.Context, disc
 	return nil
 }
 
-func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowContext, futures []futureInfo, finalizeTimer engine.Future[time.Time]) (map[string]*planner.ToolResult, []futureInfo, bool, error) {
+func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowContext, futures []futureInfo, finalizeTimer engine.Future[time.Time]) (map[string]*ToolExecutionResult, []futureInfo, bool, error) {
 	ctx := wfCtx.Context()
-	activityByID := make(map[string]*planner.ToolResult, len(futures))
+	activityByID := make(map[string]*ToolExecutionResult, len(futures))
 	pending := append([]futureInfo(nil), futures...)
 	for len(pending) > 0 {
 		if err := wfCtx.Await(ctx, func() bool {
@@ -485,7 +488,7 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 				if synthErr != nil {
 					return nil, nil, false, synthErr
 				}
-				activityByID[info.call.ToolCallID] = toolRes
+				activityByID[info.call.ToolCallID] = Executed(toolRes)
 				continue
 			}
 			if out == nil {
@@ -499,7 +502,7 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 				if synthErr != nil {
 					return nil, nil, false, synthErr
 				}
-				activityByID[info.call.ToolCallID] = tr
+				activityByID[info.call.ToolCallID] = Executed(tr)
 				continue
 			}
 
@@ -526,6 +529,9 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 			if err := e.r.enforceToolResultContracts(spec, info.call, toolRes); err != nil {
 				return nil, nil, false, err
 			}
+			if err := validateToolPauseContract(info.call, toolRes, out.Pause); err != nil {
+				return nil, nil, false, err
+			}
 			if out.RetryHint != nil {
 				h := *out.RetryHint
 				if len(h.ExampleInput) == 0 && len(spec.Payload.ExampleInput) > 0 {
@@ -544,7 +550,10 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 				return nil, nil, false, err
 			}
 
-			activityByID[info.call.ToolCallID] = toolRes
+			activityByID[info.call.ToolCallID] = &ToolExecutionResult{
+				ToolResult: toolRes,
+				Pause:      out.Pause,
+			}
 		}
 		if finalizeTimer != nil && finalizeTimer.IsReady() && len(pending) > 0 {
 			return activityByID, pending, true, nil
@@ -553,13 +562,13 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 	return activityByID, nil, false, nil
 }
 
-func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, children []agentChildFutureInfo, finalizeTimer engine.Future[time.Time]) (map[string]*planner.ToolResult, []agentChildFutureInfo, bool, error) {
+func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, children []agentChildFutureInfo, finalizeTimer engine.Future[time.Time]) (map[string]*ToolExecutionResult, []agentChildFutureInfo, bool, error) {
 	ctx := wfCtx.Context()
 	if len(children) == 0 {
-		return map[string]*planner.ToolResult{}, nil, false, nil
+		return map[string]*ToolExecutionResult{}, nil, false, nil
 	}
 
-	out := make(map[string]*planner.ToolResult, len(children))
+	out := make(map[string]*ToolExecutionResult, len(children))
 	pending := append([]agentChildFutureInfo(nil), children...)
 	for len(pending) > 0 {
 		if err := wfCtx.Await(ctx, func() bool {
@@ -593,7 +602,7 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 				if synthErr != nil {
 					return nil, nil, false, synthErr
 				}
-				out[info.call.ToolCallID] = toolRes
+				out[info.call.ToolCallID] = Executed(toolRes)
 				continue
 			}
 			tr, err := e.r.adaptAgentChildOutput(ctx, info.cfg, &info.call, info.nestedRun, outPtr)
@@ -608,7 +617,7 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 				if synthErr != nil {
 					return nil, nil, false, synthErr
 				}
-				out[info.call.ToolCallID] = tr
+				out[info.call.ToolCallID] = Executed(tr)
 				continue
 			}
 			resultJSON, err := e.r.materializeToolResult(ctx, info.call, tr)
@@ -618,7 +627,7 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 			if err := e.publishToolResultReceived(ctx, info.call, tr, resultJSON, duration); err != nil {
 				return nil, nil, false, err
 			}
-			out[info.call.ToolCallID] = tr
+			out[info.call.ToolCallID] = Executed(tr)
 		}
 		if finalizeTimer != nil && finalizeTimer.IsReady() && len(pending) > 0 {
 			return out, pending, true, nil
@@ -627,8 +636,8 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 	return out, nil, false, nil
 }
 
-func mergeToolResultsInCallOrder(calls []planner.ToolRequest, activityByID, inlineByID map[string]*planner.ToolResult) ([]*planner.ToolResult, error) {
-	results := make([]*planner.ToolResult, 0, len(calls))
+func mergeToolExecutionsInCallOrder(calls []planner.ToolRequest, activityByID, inlineByID map[string]*ToolExecutionResult) ([]*ToolExecutionResult, error) {
+	results := make([]*ToolExecutionResult, 0, len(calls))
 	for _, call := range calls {
 		if ar, ok := activityByID[call.ToolCallID]; ok {
 			results = append(results, ar)
@@ -653,7 +662,7 @@ func mergeToolResultsInCallOrder(calls []planner.ToolRequest, activityByID, inli
 //
 // expectedChildren indicates how many child tools are expected to be discovered dynamically
 // by the tools in this batch (0 if not tracked).
-func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName string, toolActOptions engine.ActivityOptions, agentID agent.Ident, runCtx *run.Context, messages []*model.Message, calls []planner.ToolRequest, expectedChildren int, parentTracker *childTracker, finishBy time.Time) ([]*planner.ToolResult, bool, error) {
+func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName string, toolActOptions engine.ActivityOptions, agentID agent.Ident, runCtx *run.Context, messages []*model.Message, calls []planner.ToolRequest, expectedChildren int, parentTracker *childTracker, finishBy time.Time) ([]*ToolExecutionResult, bool, error) {
 	if runCtx == nil {
 		return nil, false, fmt.Errorf("missing run context")
 	}
@@ -675,7 +684,7 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 	ctx := wfCtx.Context()
 	if !finishBy.IsZero() && !wfCtx.Now().Before(finishBy) {
 		const cancelMsg = "canceled: time budget reached"
-		results := make([]*planner.ToolResult, 0, len(calls))
+		results := make([]*ToolExecutionResult, 0, len(calls))
 		for i, call := range calls {
 			call = exec.normalizeToolCall(call, i)
 			queue := ""
@@ -709,7 +718,7 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 			} else if err := exec.publishToolResultReceived(ctx, call, tr, nil, 0); err != nil {
 				return nil, false, err
 			}
-			results = append(results, tr)
+			results = append(results, Executed(tr))
 		}
 		return results, true, nil
 	}
@@ -807,7 +816,7 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 					return nil, false, err
 				}
 			}
-			activityByID[info.call.ToolCallID] = tr
+			activityByID[info.call.ToolCallID] = Executed(tr)
 		}
 
 		for _, info := range pendingChildren {
@@ -838,11 +847,11 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 					return nil, false, err
 				}
 			}
-			batch.inlineByID[info.call.ToolCallID] = tr
+			batch.inlineByID[info.call.ToolCallID] = Executed(tr)
 		}
 	}
 
-	merged, err := mergeToolResultsInCallOrder(batch.calls, activityByID, batch.inlineByID)
+	merged, err := mergeToolExecutionsInCallOrder(batch.calls, activityByID, batch.inlineByID)
 	if err != nil {
 		return nil, false, err
 	}

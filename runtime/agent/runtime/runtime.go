@@ -300,14 +300,15 @@ type (
 		Metadata policy.ToolMetadata
 
 		// Execute invokes the concrete tool implementation for a given tool call.
-		// Returns a ToolResult containing the payload, telemetry, errors, and retry hints.
+		// Returns the durable tool result plus an optional current-batch pause
+		// signal owned by the runtime.
 		//
 		// For service-based tools, codegen generates this function to call service clients.
 		// For agent-tools (Exports), generated registrations set Inline=true and
 		// populate AgentTool so the workflow runtime can start nested agents as child
 		// workflows and adapt their RunOutput into a ToolResult.
 		// For custom/server-side tools, users provide their own implementation.
-		Execute func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error)
+		Execute func(ctx context.Context, call *planner.ToolRequest) (*ToolExecutionResult, error)
 
 		// Specs enumerates the codecs associated with each tool in the set.
 		// Used by the runtime for JSON marshaling/unmarshaling and schema validation.

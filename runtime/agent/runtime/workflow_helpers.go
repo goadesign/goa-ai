@@ -101,8 +101,8 @@ func (r *Runtime) executeGroupedToolCalls(
 	grouped [][]planner.ToolRequest,
 	timeouts []time.Duration,
 	toolOpts engine.ActivityOptions,
-) ([]*planner.ToolResult, bool, error) {
-	var out []*planner.ToolResult
+) ([]*ToolExecutionResult, bool, error) {
+	var out []*ToolExecutionResult
 	timedOutAny := false
 	for i := range grouped {
 		opt := toolOpts

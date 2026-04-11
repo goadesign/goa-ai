@@ -12,12 +12,14 @@ import (
 )
 
 type (
-	RunInput            = api.RunInput
-	PlanActivityInput   = api.PlanActivityInput
-	PlanActivityOutput  = api.PlanActivityOutput
-	RecordActivityInput = api.RecordActivityInput
-	ToolInput           = api.ToolInput
-	ToolOutput          = api.ToolOutput
+	RunInput               = api.RunInput
+	PlanActivityInput      = api.PlanActivityInput
+	PlanActivityOutput     = api.PlanActivityOutput
+	RecordActivityInput    = api.RecordActivityInput
+	ToolInput              = api.ToolInput
+	ToolOutput             = api.ToolOutput
+	ToolPause              = api.ToolPause
+	ToolPauseClarification = api.ToolPauseClarification
 
 	// WorkflowOptions mirrors the subset of engine start options we expose through
 	// the runtime. Memo and SearchAttributes remain generic visibility metadata so
@@ -86,16 +88,29 @@ type (
 	//   inside workflow code.
 	ResultMaterializer func(ctx context.Context, meta ToolCallMeta, call *planner.ToolRequest, result *planner.ToolResult) error
 
-	// ToolCallExecutor executes a tool call and returns a planner.ToolResult. This
-	// generic interface enables a uniform execution model across method-backed
-	// tools, MCP tools, and agent-tools. Registrations accept a ToolCallExecutor and
-	// the runtime delegates execution via this interface.
+	// ToolExecutionResult captures the runtime-owned outcome of one tool
+	// invocation.
+	//
+	// Contract:
+	// - ToolResult is required and carries the durable planner-visible tool
+	//   outcome for transcript, hooks, and cumulative ToolOutputs history.
+	// - Pause is optional and is consumed only by the current execution batch.
+	// - Pause is never copied into cumulative planner ToolOutputs history.
+	ToolExecutionResult struct {
+		ToolResult *planner.ToolResult
+		Pause      *ToolPause
+	}
+
+	// ToolCallExecutor executes a tool call and returns a runtime-owned execution
+	// result. This generic interface enables a uniform execution model across
+	// method-backed tools, MCP tools, and agent-tools. Registrations accept a
+	// ToolCallExecutor and the runtime delegates execution via this interface.
 	ToolCallExecutor interface {
-		Execute(ctx context.Context, meta *ToolCallMeta, call *planner.ToolRequest) (*planner.ToolResult, error)
+		Execute(ctx context.Context, meta *ToolCallMeta, call *planner.ToolRequest) (*ToolExecutionResult, error)
 	}
 
 	// ToolCallExecutorFunc adapts a function to the ToolCallExecutor interface.
-	ToolCallExecutorFunc func(ctx context.Context, meta *ToolCallMeta, call *planner.ToolRequest) (*planner.ToolResult, error)
+	ToolCallExecutorFunc func(ctx context.Context, meta *ToolCallMeta, call *planner.ToolRequest) (*ToolExecutionResult, error)
 
 	// ToolActivityExecutor handles execution of a single tool via workflow
 	// activities. Implementations decide how to schedule and await activity
@@ -125,8 +140,13 @@ type (
 var _ ToolActivityExecutor = (*ActivityToolExecutor)(nil)
 
 // Execute calls f(ctx, meta, call).
-func (f ToolCallExecutorFunc) Execute(ctx context.Context, meta *ToolCallMeta, call *planner.ToolRequest) (*planner.ToolResult, error) {
+func (f ToolCallExecutorFunc) Execute(ctx context.Context, meta *ToolCallMeta, call *planner.ToolRequest) (*ToolExecutionResult, error) {
 	return f(ctx, meta, call)
+}
+
+// Executed wraps a durable tool result with no current-batch pause.
+func Executed(result *planner.ToolResult) *ToolExecutionResult {
+	return &ToolExecutionResult{ToolResult: result}
 }
 
 // Execute schedules the tool as a workflow activity and waits for its result.

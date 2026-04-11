@@ -393,6 +393,33 @@ type (
 
 		// RetryHint provides structured retry guidance when execution failed due to invalid payloads.
 		RetryHint *planner.RetryHint
+
+		// Pause carries an optional runtime-owned pause signal emitted by the tool
+		// from the current execution batch.
+		//
+		// Contract:
+		//   - This survives the tool activity boundary so the workflow thread can
+		//     pause before the next planner resume.
+		//   - The runtime consumes it from the current batch only and does not
+		//     persist it into cumulative planner ToolOutputs history.
+		Pause *ToolPause
+	}
+
+	// ToolPause describes one runtime-owned pause request emitted by a tool.
+	//
+	// Exactly one payload field must be set.
+	ToolPause struct {
+		Clarification *ToolPauseClarification
+	}
+
+	// ToolPauseClarification requests free-form operator input before the runtime
+	// resumes planning.
+	ToolPauseClarification struct {
+		// ID uniquely identifies this pause request.
+		ID string
+
+		// Question is the operator-facing prompt to present.
+		Question string
 	}
 
 	// PauseRequest carries metadata attached to a pause signal.

@@ -33,6 +33,30 @@ func validateToolResultContract(spec tools.ToolSpec, call planner.ToolRequest, t
 	return validateToolBoundsContract(spec, call, tr.Error, tr.Bounds)
 }
 
+// validateToolPauseContract enforces the runtime-owned pause contract for one
+// executed tool result after the durable tool-result contract has been validated.
+func validateToolPauseContract(call planner.ToolRequest, tr *planner.ToolResult, pause *ToolPause) error {
+	if pause == nil {
+		return nil
+	}
+	if tr == nil {
+		return fmt.Errorf("tool %q pause is invalid: missing tool result (tool_call_id=%s)", call.Name, call.ToolCallID)
+	}
+	if tr.Error != nil {
+		return fmt.Errorf("tool %q pause is invalid: pause and error are both set (tool_call_id=%s)", call.Name, call.ToolCallID)
+	}
+	if pause.Clarification == nil {
+		return fmt.Errorf("tool %q pause is invalid: missing clarification payload (tool_call_id=%s)", call.Name, call.ToolCallID)
+	}
+	if pause.Clarification.ID == "" {
+		return fmt.Errorf("tool %q pause is invalid: clarification id is required (tool_call_id=%s)", call.Name, call.ToolCallID)
+	}
+	if pause.Clarification.Question == "" {
+		return fmt.Errorf("tool %q pause is invalid: clarification question is required (tool_call_id=%s)", call.Name, call.ToolCallID)
+	}
+	return nil
+}
+
 // validateToolBoundsContract enforces the bounds-specific subset of the runtime
 // tool-result contract after the result/error shape has been validated.
 func validateToolBoundsContract(spec tools.ToolSpec, call planner.ToolRequest, toolErr *planner.ToolError, bounds *agent.Bounds) error {

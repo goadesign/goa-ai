@@ -22,6 +22,19 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+func wrapExecute(fn func(context.Context, *planner.ToolRequest) (*planner.ToolResult, error)) func(context.Context, *planner.ToolRequest) (*ToolExecutionResult, error) {
+	return func(ctx context.Context, call *planner.ToolRequest) (*ToolExecutionResult, error) {
+		result, err := fn(ctx, call)
+		if err != nil {
+			return nil, err
+		}
+		if result == nil {
+			return nil, nil
+		}
+		return Executed(result), nil
+	}
+}
+
 // testWorkflowContext is a lightweight engine.WorkflowContext implementation used by tests.
 type testWorkflowContext struct {
 	ctx context.Context

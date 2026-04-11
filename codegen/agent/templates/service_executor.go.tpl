@@ -124,17 +124,17 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             panic(fmt.Errorf("service executor missing callers for tools: %s", strings.Join(missing, ", ")))
         }
     }
-    return runtime.ToolCallExecutorFunc(func(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*planner.ToolResult, error) {
+    return runtime.ToolCallExecutorFunc(func(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*runtime.ToolExecutionResult, error) {
         if call == nil {
-            return &planner.ToolResult{Error: planner.NewToolError("tool request is nil")}, nil
+            return runtime.Executed(&planner.ToolResult{Error: planner.NewToolError("tool request is nil")}), nil
         }
         if meta == nil {
-            return &planner.ToolResult{Error: planner.NewToolError("tool call meta is nil")}, nil
+            return runtime.Executed(&planner.ToolResult{Error: planner.NewToolError("tool call meta is nil")}), nil
         }
         // Lookup caller registered for this tool.
         caller := cfg.callers[call.Name]
         if caller == nil {
-            return &planner.ToolResult{
+            return runtime.Executed(&planner.ToolResult{
                 Name: call.Name,
                 Error: planner.NewToolError(
                     fmt.Sprintf(
@@ -144,7 +144,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                         "{{ .Toolset.QualifiedName }}",
                     ),
                 ),
-            }, nil
+            }), nil
         }
         // Decode tool payload from canonical JSON into a typed struct using the
         // generated payload codec. Method‑backed tools always have a payload
@@ -157,7 +157,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             }
             val, err := pc.FromJSON(call.Payload)
             if err != nil {
-                return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
+                return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}), nil
             }
             toolArgs = val
         }
@@ -167,7 +167,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             var err error
             methodIn, err = cfg.mapPayload(call.Name, toolArgs, meta)
             if err != nil {
-                return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
+                return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}), nil
             }
         } else {
              // Default mapping using generated transforms
@@ -204,7 +204,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
         // Apply interceptors (injection)
         for _, inj := range cfg.injectors {
             if err := inj.Inject(ctx, methodIn, meta); err != nil {
-                 return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
+                 return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}), nil
             }
         }
 
@@ -222,7 +222,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                     tr.RetryHint = hint
                 }
             }
-            return tr, nil
+            return runtime.Executed(tr), nil
         }
         // Map back to tool result
         var result any
@@ -230,7 +230,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             var e error
             result, e = cfg.mapResult(call.Name, methodOut, meta)
             if e != nil {
-                return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(e)}, nil
+                return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(e)}), nil
             }
         } else {
             // Default mapping using generated transforms
@@ -264,10 +264,10 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
         case tools.Ident({{ printf "%q" .QualifiedName }}):
             mr, ok := methodOut.({{ .MethodResultTypeRef }})
             if !ok {
-                return &planner.ToolResult{
+                return runtime.Executed(&planner.ToolResult{
                     Name:  call.Name,
                     Error: planner.NewToolError(fmt.Sprintf("unexpected method result type for %q", call.Name)),
-                }, nil
+                }), nil
             }
             bounds = init{{ goify .Name true }}Bounds(mr)
         {{- end }}
@@ -302,10 +302,10 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
         case tools.Ident({{ printf "%q" .QualifiedName }}):
             mr, ok := methodOut.({{ .MethodResultTypeRef }})
             if !ok {
-                return &planner.ToolResult{
+                return runtime.Executed(&planner.ToolResult{
                     Name:  call.Name,
                     Error: planner.NewToolError(fmt.Sprintf("unexpected method result type for %q", call.Name)),
-                }, nil
+                }), nil
             }
             {{- $tool := . }}
             {{- range .ServerData }}
@@ -314,7 +314,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                 data := {{ $.Toolset.SpecsPackageName }}.Init{{ $tool.ConstName }}{{ goify .Kind true }}ServerData(mr.{{ goify .MethodResultField true }})
                 dataJSON, err := {{ $.Toolset.SpecsPackageName }}.{{ $tool.ConstName }}{{ goify .Kind true }}ServerDataCodec.ToJSON(data)
                 if err != nil {
-                    return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
+                    return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}), nil
                 }
                 if string(dataJSON) != "null" {
                     serverItems = append(serverItems, &toolregistry.ServerDataItem{
@@ -334,22 +334,22 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
         if len(serverItems) > 0 {
             b, err := json.Marshal(serverItems)
             if err != nil {
-                return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
+                return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}), nil
             }
             serverData = rawjson.Message(b)
         }
-        return &planner.ToolResult{
+        return runtime.Executed(&planner.ToolResult{
             Name:       call.Name,
             Result:     result,
             Bounds:     {{ if $hasBoundsProjection }}bounds{{ else }}nil{{ end }},
             ServerData: serverData,
-        }, nil
+        }), nil
         {{- else }}
-        return &planner.ToolResult{
+        return runtime.Executed(&planner.ToolResult{
             Name:   call.Name,
             Result: result,
             Bounds: {{ if $hasBoundsProjection }}bounds{{ else }}nil{{ end }},
-        }, nil
+        }), nil
         {{- end }}
     })
 }

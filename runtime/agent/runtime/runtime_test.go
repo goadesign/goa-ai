@@ -660,12 +660,12 @@ func TestRuntimeResumeRunSignalsWorkflow(t *testing.T) {
 func TestConsecutiveFailureBreaker(t *testing.T) {
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
-			"svc.tools": {Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			"svc.tools": {Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 				return &planner.ToolResult{
 					Name:  call.Name,
 					Error: planner.NewToolError("boom"),
 				}, nil
-			}},
+			})},
 		},
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
 			"fail": newAnyJSONSpec("fail", "svc.tools"),
@@ -802,9 +802,9 @@ func TestSealClosesRegistrationAndDelegatesToEngine(t *testing.T) {
 
 	err := rt.RegisterToolset(ToolsetRegistration{
 		Name: "svc.toolset",
-		Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 			return &planner.ToolResult{}, nil
-		},
+		}),
 	})
 	require.ErrorIs(t, err, ErrRegistrationClosed)
 
@@ -833,9 +833,9 @@ func TestSealRetriesAfterActivationFailure(t *testing.T) {
 
 	err = rt.RegisterToolset(ToolsetRegistration{
 		Name: "svc.toolset",
-		Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 			return &planner.ToolResult{}, nil
-		},
+		}),
 	})
 	require.ErrorIs(t, err, ErrRegistrationClosed)
 
@@ -848,11 +848,11 @@ func TestSealRetriesAfterActivationFailure(t *testing.T) {
 
 func TestTimeBudgetExceeded(t *testing.T) {
 	rt := &Runtime{
-		toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name: call.Name,
 			}, nil
-		}}},
+		})}},
 		toolSpecs: map[tools.Ident]tools.ToolSpec{"tool": newAnyJSONSpec("tool", "svc.ts")},
 		Bus:       noopHooks{},
 		logger:    telemetry.NoopLogger{},
@@ -943,12 +943,12 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 	// Register nested tools toolset used by nested agent
 	rt.toolsets = map[string]ToolsetRegistration{
 		"nested.tools": {
-			Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 				return &planner.ToolResult{
 					Name:   call.Name,
 					Result: map[string]string{"ok": "true"},
 				}, nil
-			},
+			}),
 		},
 	}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
@@ -1012,7 +1012,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 	// Parent agent-tools toolset that invokes nested agent inline
 	agentTools := ToolsetRegistration{
 		Name: "svc.agenttools",
-		Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 			if call == nil {
 				return nil, fmt.Errorf("tool request is nil")
 			}
@@ -1046,7 +1046,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 			}
 			result := ConvertRunOutputToToolResult(call.Name, outPtr)
 			return &result, nil
-		},
+		}),
 	}
 	// Register parent toolset
 	rt.mu.Lock()
@@ -1123,11 +1123,11 @@ func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
 			"svc.export": {
-				Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+				Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 					return &planner.ToolResult{
 						Name: call.Name,
 					}, nil
-				},
+				}),
 			},
 		},
 		toolSpecs: map[tools.Ident]tools.ToolSpec{

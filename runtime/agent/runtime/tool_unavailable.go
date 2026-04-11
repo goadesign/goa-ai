@@ -82,7 +82,7 @@ func mustMarshalToolUnavailableSchema() []byte {
 	return data
 }
 
-func executeToolUnavailable(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+func executeToolUnavailable(ctx context.Context, call *planner.ToolRequest) (*ToolExecutionResult, error) {
 	requested := ""
 	if len(call.Payload) > 0 {
 		var p toolUnavailablePayload
@@ -90,7 +90,7 @@ func executeToolUnavailable(ctx context.Context, call *planner.ToolRequest) (*pl
 			// This tool is runtime-owned but models can still call it directly.
 			// Treat malformed payloads as tool errors so the run can continue.
 			toolErr := planner.NewToolError(fmt.Sprintf("tool_unavailable payload is invalid JSON: %v", err))
-			return &planner.ToolResult{
+			return Executed(&planner.ToolResult{
 				Name:       call.Name,
 				ToolCallID: call.ToolCallID,
 				Error:      toolErr,
@@ -100,7 +100,7 @@ func executeToolUnavailable(ctx context.Context, call *planner.ToolRequest) (*pl
 					Message:        "Call tool_unavailable with JSON: {\"requested_tool\": <string>, \"requested_payload\": <json>} (requested_payload is optional).",
 					RestrictToTool: true,
 				},
-			}, nil
+			}), nil
 		}
 		requested = p.RequestedTool
 	}
@@ -109,7 +109,7 @@ func executeToolUnavailable(ctx context.Context, call *planner.ToolRequest) (*pl
 	}
 
 	toolErr := planner.NewToolError(fmt.Sprintf("tool %q is not available for this run", requested))
-	return &planner.ToolResult{
+	return Executed(&planner.ToolResult{
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,
 		Error:      toolErr,
@@ -119,7 +119,7 @@ func executeToolUnavailable(ctx context.Context, call *planner.ToolRequest) (*pl
 			RestrictToTool: false,
 			Message:        "Tool is not available for this run. Choose a tool from the advertised tool list and call it with the exact JSON schema.",
 		},
-	}, nil
+	}), nil
 }
 
 // rewriteToolCallUnavailable rewrites one tool call to the runtime-owned
