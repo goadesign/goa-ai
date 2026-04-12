@@ -187,6 +187,19 @@ func schemaForAttribute(att *goaexpr.AttributeExpr) ([]byte, error) {
 	return b, nil
 }
 
+// authoredExampleForAttribute returns the last explicit Example(...) declared on
+// the source attribute, normalized to the canonical JSON contract of target.
+func authoredExampleForAttribute(source, target *goaexpr.AttributeExpr) []byte {
+	if source == nil {
+		return nil
+	}
+	examples := source.ExtractUserExamples()
+	if len(examples) == 0 {
+		return nil
+	}
+	return normalizeExampleValue(target, examples[len(examples)-1].Value)
+}
+
 // exampleForAttribute produces a minimal JSON example for the given attribute
 // using Goa's example generator. When no meaningful example can be derived it
 // returns nil so callers can distinguish between "no example" and an empty
@@ -200,7 +213,12 @@ func exampleForAttribute(att *goaexpr.AttributeExpr) []byte {
 	if v == nil {
 		return nil
 	}
+	return normalizeExampleValue(att, v)
+}
 
+// normalizeExampleValue canonicalizes one example value into JSON-native shapes
+// and rewrites union nodes to the canonical {type,value} encoding.
+func normalizeExampleValue(att *goaexpr.AttributeExpr, v any) []byte {
 	// Normalize to JSON-native shapes (map[string]any, []any, float64, string, bool)
 	// so downstream rewriting logic doesn't have to handle typed maps/slices that
 	// Goa's example generator may produce for single-field objects.
