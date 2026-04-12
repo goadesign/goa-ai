@@ -180,7 +180,14 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		// In particular, unions are encoded as canonical {type,value} objects in
 		// the transport graph; deriving examples from the public type produces a
 		// flattened shape that misleads callers and generated examples.
-		exampleBytes = exampleForAttribute(schemaAttr)
+		//
+		// Prefer an explicit top-level Example(...) from the original DSL
+		// attribute. If none exists, synthesize the minimal example from the
+		// transport schema attribute.
+		exampleBytes = authoredExampleForAttribute(att, schemaAttr)
+		if len(exampleBytes) == 0 {
+			exampleBytes = exampleForAttribute(schemaAttr)
+		}
 	}
 
 	doc := fmt.Sprintf("%s defines the JSON %s for the %s tool.", typeName, usage, owner.QualifiedName)
