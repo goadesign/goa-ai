@@ -469,6 +469,8 @@ policies, and MCP servers within Goa service designs.
 | `ResultHintTemplate(tmpl)` | Go template for tool result display (`.Args`, `.Result`, optional `.Bounds`; rendered by runtime) |
 | `BoundedResult()` | Mark result as bounded view over larger data |
 | `ResultReminder(text)` | Static system reminder injected after tool result |
+| `TerminalRun()` | Tool completes the run immediately after execution (no follow-up planner turn) |
+| `Bookkeeping()` | Tool calls do not consume the run-level `MaxToolCalls` budget |
 
 ### Toolset Definition
 
@@ -488,7 +490,7 @@ policies, and MCP servers within Goa service designs.
 |----------|---------|
 | `RunPolicy(func())` | Define execution constraints for an agent |
 | `DefaultCaps(opts...)` | Configure resource limits |
-| `MaxToolCalls(n)` | Cap total tool invocations per run |
+| `MaxToolCalls(n)` | Cap budgeted (non-bookkeeping) tool invocations per run |
 | `MaxConsecutiveFailedToolCalls(n)` | Cap sequential failures before aborting |
 | `TimeBudget(duration)` | Set maximum execution duration |
 | `InterruptsAllowed(bool)` | Enable/disable user interruptions |
@@ -612,7 +614,6 @@ out, err := client.Run(ctx, "session-1", messages,
     runtime.WithLabels(map[string]string{"env": "prod"}),
     runtime.WithTaskQueue("priority"),
     runtime.WithRunTimeBudget(5*time.Minute),
-    runtime.WithPerTurnMaxToolCalls(10),
     runtime.WithAllowedTags([]string{"safe"}),
 )
 
@@ -912,7 +913,6 @@ The `sessionID` argument is required and must be a non-empty, non-whitespace str
 | `WithTaskQueue(string)`                 | Route to specific workers    |
 | `WithMemo(map[string]any)`              | Attach workflow memo         |
 | `WithSearchAttributes(map[string]any)`  | Enable queries               |
-| `WithPerTurnMaxToolCalls(int)`          | Override DSL defaults        |
 | `WithRunMaxToolCalls(int)`              | Cap total tool calls         |
 | `WithRunTimeBudget(duration)`           | Set time limits              |
 | `WithRunFinalizerGrace(duration)`       | Reserve time for final message |

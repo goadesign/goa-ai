@@ -41,6 +41,9 @@ var (
         {{- if .TerminalRun }}
         TerminalRun: true,
         {{- end }}
+        {{- if .Bookkeeping }}
+        Bookkeeping: true,
+        {{- end }}
         {{- if .Bounds }}
         Bounds: &tools.BoundsSpec{
             {{- if .Bounds.Paging }}
@@ -125,6 +128,7 @@ var (
                 {{ printf "%q" . }},
             {{- end }}
             },
+            BudgetClass: policy.ToolBudgetClass{{ if .Bookkeeping }}Bookkeeping{{ else }}Budgeted{{ end }},
         },
     {{- end }}
     }
@@ -179,6 +183,18 @@ func ResultSchema(name tools.Ident) ([]byte, bool) {
 // Metadata exposes policy metadata for the generated tools.
 func Metadata() []policy.ToolMetadata {
     return metadata
+}
+
+// MetadataByName returns policy metadata for the named tool if present.
+func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
+    switch name {
+    {{- range $i, $tool := .Tools }}
+    case {{ $tool.ConstName }}:
+        return metadata[{{ $i }}], true
+    {{- end }}
+    default:
+        return policy.ToolMetadata{}, false
+    }
 }
 
 

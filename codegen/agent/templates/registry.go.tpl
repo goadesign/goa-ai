@@ -62,6 +62,7 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
 {{- end }}
         {{- if .Tools }}
         Specs: {{ .ToolSpecsPackage }}.Specs,
+        ToolMetadataLookup: {{ .ToolSpecsPackage }}.MetadataByName,
         {{- else }}
         Specs: nil,
         {{- end }}
@@ -129,6 +130,7 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
             Name: {{ printf "%q" .QualifiedName }},
             // Use the used-toolset specs package for strong-contract payload/result codecs.
             Specs: {{ .SpecsPackageName }}.Specs,
+            ToolMetadataLookup: {{ .SpecsPackageName }}.MetadataByName,
             Execute: func(ctx context.Context, call *planner.ToolRequest) (*agentsruntime.ToolExecutionResult, error) {
                 if call == nil {
                     return nil, fmt.Errorf("tool request is nil")
@@ -201,6 +203,7 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
         reg := agentsruntime.ToolsetRegistration{
             Name:  toolsetID,
             Specs: {{ .SpecsPackageName }}.Specs,
+            ToolMetadataLookup: {{ .SpecsPackageName }}.MetadataByName,
             Execute: func(ctx context.Context, call *planner.ToolRequest) (*agentsruntime.ToolExecutionResult, error) {
                 if call == nil {
                     return nil, fmt.Errorf("tool request is nil")

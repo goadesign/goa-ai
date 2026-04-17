@@ -574,6 +574,37 @@ func TestRegisterAgentAppliesWorkerQueueOverride(t *testing.T) {
 	require.InDelta(t, 2.0, recordOpts.RetryPolicy.BackoffCoefficient, 0.000001)
 }
 
+func TestRegisterAgentRejectsTerminalSpecWithoutBookkeeping(t *testing.T) {
+	eng := &stubEngine{}
+	rt := New(WithEngine(eng))
+
+	err := rt.RegisterAgent(context.Background(), AgentRegistration{
+		ID:      "service.agent",
+		Planner: &stubPlanner{},
+		Workflow: engine.WorkflowDefinition{
+			Name:      "service.workflow",
+			TaskQueue: "service.queue",
+			Handler:   rt.ExecuteWorkflow,
+		},
+		PlanActivityName: "service.agent.plan",
+		PlanActivityOptions: engine.ActivityOptions{
+			StartToCloseTimeout: time.Minute,
+		},
+		ResumeActivityName: "service.agent.resume",
+		ResumeActivityOptions: engine.ActivityOptions{
+			StartToCloseTimeout: time.Minute,
+		},
+		ExecuteToolActivity: "service.agent.executetool",
+		ExecuteToolActivityOptions: engine.ActivityOptions{
+			StartToCloseTimeout: time.Minute,
+		},
+		Specs: []tools.ToolSpec{newInvalidTerminalSpec("tasks.complete")},
+	})
+
+	require.ErrorIs(t, err, ErrInvalidConfig)
+	require.ErrorContains(t, err, "terminal tool \"tasks.complete\" must also declare bookkeeping")
+}
+
 func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
@@ -658,6 +689,7 @@ func TestRuntimeResumeRunSignalsWorkflow(t *testing.T) {
 }
 
 func TestConsecutiveFailureBreaker(t *testing.T) {
+	failSpec := newAnyJSONSpec("fail", "svc.tools")
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
@@ -667,14 +699,12 @@ func TestConsecutiveFailureBreaker(t *testing.T) {
 				}, nil
 			})},
 		},
-		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			"fail": newAnyJSONSpec("fail", "svc.tools"),
-		},
 		Bus:     noopHooks{},
 		logger:  telemetry.NoopLogger{},
 		metrics: telemetry.NoopMetrics{},
 		tracer:  telemetry.NoopTracer{},
 	}
+	seedTestToolSpecs(rt, failSpec)
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Error: "boom"}}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
@@ -847,18 +877,19 @@ func TestSealRetriesAfterActivationFailure(t *testing.T) {
 }
 
 func TestTimeBudgetExceeded(t *testing.T) {
+	toolSpec := newAnyJSONSpec("tool", "svc.ts")
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name: call.Name,
 			}, nil
 		})}},
-		toolSpecs: map[tools.Ident]tools.ToolSpec{"tool": newAnyJSONSpec("tool", "svc.ts")},
-		Bus:       noopHooks{},
-		logger:    telemetry.NoopLogger{},
-		metrics:   telemetry.NoopMetrics{},
-		tracer:    telemetry.NoopTracer{},
+		Bus:     noopHooks{},
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
 	}
+	seedTestToolSpecs(rt, toolSpec)
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
@@ -951,11 +982,12 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 			}),
 		},
 	}
-	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
-		"child1": newAnyJSONSpec("child1", "nested.tools"),
-		"child2": newAnyJSONSpec("child2", "nested.tools"),
-		"child3": newAnyJSONSpec("child3", "nested.tools"),
-	}
+	seedTestToolSpecs(
+		rt,
+		newAnyJSONSpec("child1", "nested.tools"),
+		newAnyJSONSpec("child2", "nested.tools"),
+		newAnyJSONSpec("child3", "nested.tools"),
+	)
 
 	// Register nested agent (planner + activity names)
 	nestedReg := AgentRegistration{
@@ -1051,7 +1083,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 	// Register parent toolset
 	rt.mu.Lock()
 	rt.toolsets[agentTools.Name] = agentTools
-	rt.toolSpecs["invoke"] = newAnyJSONSpec("invoke", "svc.agenttools")
+	seedTestToolSpecs(rt, newAnyJSONSpec("invoke", "svc.agenttools"))
 	rt.mu.Unlock()
 
 	// Parent run requests a single agent-tool invocation
@@ -1191,12 +1223,11 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 	rt := &Runtime{
 		Policy: &stubPolicyEngine{decision: decision},
 		Bus:    bus,
-		toolsets: map[string]ToolsetRegistration{
-			"svc.tools": {
-				Metadata: policy.ToolMetadata{
-					ID:    "search",
-					Title: "Search",
-				},
+		policyToolMetadata: map[tools.Ident]policy.ToolMetadata{
+			"search": {
+				ID:          "search",
+				Title:       "Search",
+				BudgetClass: policy.ToolBudgetClassBudgeted,
 			},
 		},
 		toolSpecs: map[tools.Ident]tools.ToolSpec{

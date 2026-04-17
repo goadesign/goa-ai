@@ -191,7 +191,7 @@ type MySmartPlanner struct{}
 // PlanStart is called at the beginning of a run.
 func (p *MySmartPlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
     // 1. Get an LLM client from the runtime.
-    // mc, _ := in.Agent.ModelClient("bedrock")
+    // mc, _ := in.Agent.PlannerModelClient("bedrock")
     
     // 2. Build a prompt from in.Messages.
     
@@ -208,7 +208,7 @@ func (p *MySmartPlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (
 
 // PlanResume is called after tools have run, giving the agent new information.
 func (p *MySmartPlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
-    // 1. Inspect the executed tool-call history from in.ToolOutputs.
+    // 1. Inspect the tool results from in.ToolResults.
     // 2. Build a new prompt including the tool results.
     // 3. Call the LLM to decide what to do next.
     return &planner.PlanResult{
@@ -264,17 +264,17 @@ import (
     specs "<module>/gen/<svc>/agents/<agent>/specs/<toolset>"
 )
 
-func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*planner.ToolResult, error) {
+func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*runtime.ToolExecutionResult, error) {
     switch call.Name {
     case "<svc>.<toolset>.<tool>":
         // Decode payload using generated codec
         pc, ok := specs.PayloadCodec(string(call.Name))
         if !ok {
-            return &planner.ToolResult{Error: planner.NewToolError("payload codec not found")}, nil
+            return runtime.Executed(&planner.ToolResult{Error: planner.NewToolError("payload codec not found")}), nil
         }
         args, err := pc.FromJSON(call.Payload)
         if err != nil {
-            return &planner.ToolResult{Error: planner.NewToolError("invalid payload: " + err.Error())}, nil
+            return runtime.Executed(&planner.ToolResult{Error: planner.NewToolError("invalid payload: " + err.Error())}), nil
         }
         // Type-assert to the generated payload type:
         // typedArgs := args.(*specs.<ToolPayload>)
@@ -282,22 +282,22 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
         // Call your service client, map result via specs.ToToolReturn_<Tool>
         // Or build a typed tool return directly:
         // res := &specs.<ToolReturn>{Status: "ok"}
-        return &planner.ToolResult{
+        return runtime.Executed(&planner.ToolResult{
 			Name:   call.Name,
 			Result: &specs.<ToolReturn>{
 				Status: "ok",
 			},
-		}, nil
+		}), nil
     }
-    return &planner.ToolResult{
+    return runtime.Executed(&planner.ToolResult{
 		Error: planner.NewToolError("unknown tool"),
-	}, nil
+	}), nil
 }
 ```
 
 #### Connecting to Remote Services (MCP)
 
-If your agent uses tools from another service via MCP (`Use(Toolset(FromMCP(...)))` or a top-level `AssistantSuite := Toolset(FromMCP(...))`):
+If your agent uses tools from another service via MCP (`Use(MCPToolset(...))`):
 
 1.  Get the generated Goa client for the remote service.
 2.  Wrap it in an `mcpruntime.Caller`.

@@ -54,6 +54,7 @@ var (
 			Title:       "Dangerous Write",
 			Description: "Write a stateful change",
 			Tags:        []string{},
+			BudgetClass: policy.ToolBudgetClassBudgeted,
 		},
 	}
 	names = []tools.Ident{
@@ -99,4 +100,14 @@ func ResultSchema(name tools.Ident) ([]byte, bool) {
 // Metadata exposes policy metadata for the generated tools.
 func Metadata() []policy.ToolMetadata {
 	return metadata
+}
+
+// MetadataByName returns policy metadata for the named tool if present.
+func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
+	switch name {
+	case DangerousWrite:
+		return metadata[0], true
+	default:
+		return policy.ToolMetadata{}, false
+	}
 }

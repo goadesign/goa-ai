@@ -27,12 +27,14 @@ var (
 			Title:       "Add",
 			Description: "Add",
 			Tags:        []string{},
+			BudgetClass: policy.ToolBudgetClassBudgeted,
 		},
 		{
 			ID:          tools.Ident("ops.echo"),
 			Title:       "Echo",
 			Description: "Echo",
 			Tags:        []string{},
+			BudgetClass: policy.ToolBudgetClassBudgeted,
 		},
 	}
 
@@ -84,4 +86,16 @@ func AdvertisedSpecs() []tools.ToolSpec {
 // Metadata exposes policy metadata for the aggregated tools.
 func Metadata() []policy.ToolMetadata {
 	return metadata
+}
+
+// MetadataByName returns policy metadata for the named tool if present.
+func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
+	switch name {
+	case tools.Ident("math.add"):
+		return math.MetadataByName(name)
+	case tools.Ident("ops.echo"):
+		return ops.MetadataByName(name)
+	default:
+		return policy.ToolMetadata{}, false
+	}
 }

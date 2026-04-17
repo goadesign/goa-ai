@@ -8,11 +8,11 @@ details.
 
 - **Import path:** `"goa.design/goa-ai/dsl"` (typically dot-imported alongside Goa's DSL).
 - **Entry point:** Declare agents inside a regular Goa `Service` definition. The DSL augments Goa's
-  design tree and is processed during `goa gen`.
+design tree and is processed during `goa gen`.
 - **Outcome:** `goa gen` produces agent packages (`gen/<service>/agents/<agent>`), service-owned
-  completion packages (`gen/<service>/completions`), tool codecs/specs, activity handlers, and
-  registration helpers. A contextual `AGENTS_QUICKSTART.md` is written at the module root unless
-  disabled via `DisableAgentDocs()`.
+completion packages (`gen/<service>/completions`), tool codecs/specs, activity handlers, and
+registration helpers. A contextual `AGENTS_QUICKSTART.md` is written at the module root unless
+disabled via `DisableAgentDocs()`.
 
 The DSL is evaluated by Goa's `eval` engine, so the same rules apply as with the standard
 service/transport DSL: expressions must be invoked in the proper context, and attribute definitions
@@ -82,7 +82,7 @@ Running `goa gen example.com/assistant/design` produces:
 - `gen/orchestrator/agents/chat/specs`: payload/result structs, JSON codecs, tool schemas.
 - `gen/orchestrator/agents/chat/agenttools`: helpers that expose exported tools to other agents.
 - `gen/orchestrator/completions`: typed direct-assistant completion specs/codecs/helpers when the
-  service declares `Completion(...)`.
+service declares `Completion(...)`.
 - MCP registration helpers when an MCP toolset is referenced via `Use`.
 
 Each per-toolset specs package defines typed tool identifiers (`tools.Ident`) and uses those
@@ -135,9 +135,9 @@ that contains:
 - generated JSON codecs and validation helpers
 - typed `completion.Spec` values
 - generated `Complete<Name>(ctx, client, req)` helpers that request provider-enforced
-  structured output and decode the assistant response through the generated codec
+structured output and decode the assistant response through the generated codec
 - generated `StreamComplete<Name>(ctx, client, req)` and `Decode<Name>Chunk(...)`
-  helpers for typed completion streaming
+helpers for typed completion streaming
 
 Streaming helpers stay on the raw `model.Streamer` surface: `completion_delta`
 chunks are preview-only, exactly one final `completion` chunk is canonical, and
@@ -148,12 +148,12 @@ chunks are preview-only, exactly one final `completion` chunk is canonical, and
 When agent A "uses" a toolset exported by agent B, Goa‑AI wires composition automatically:
 
 - The exporter (agent B) package includes a generated `agenttools` package with typed tool IDs and
-  `NewRegistration(rt, systemPrompt, ...runtime.AgentToolOption)` helpers.
+`NewRegistration(rt, systemPrompt, ...runtime.AgentToolOption)` helpers.
 - The consumer registers the returned `runtime.ToolsetRegistration` with its runtime. The consumer
-  does not need the exporter’s planner locally; it only needs routing metadata.
+does not need the exporter’s planner locally; it only needs routing metadata.
 - At runtime, invoking an exported tool starts the exporter agent as a **child workflow** using the
-  generated route metadata. The parent emits `ChildRunLinked` and the returned `ToolResult`
-  includes a `RunLink` handle to the child run.
+generated route metadata. The parent emits `ChildRunLinked` and the returned `ToolResult`
+includes a `RunLink` handle to the child run.
 
 Each run has its own event stream. Stream profiles select which event kinds are emitted to
 different audiences and link child runs via run handles rather than flattening run identity.
@@ -169,10 +169,10 @@ Prompt management is intentionally runtime-driven:
 - Configure scoped overrides with `runtime.WithPromptStore(...)` (for example, Mongo prompt store).
 - Render prompts in planners using `PlannerContext.RenderPrompt(...)`.
 - For agent-as-tool registrations, consumer-side prompt rendering is optional. If you need the
-  consumer to render a payload-only user message, you may map tool IDs to prompt IDs with
-  `runtime.WithPromptSpec(...)` (or provide templates/text). When no consumer-side content is
-  configured, the runtime uses the canonical JSON tool payload bytes as the nested user message,
-  and provider planners can render their own prompts with injected server-side context.
+consumer to render a payload-only user message, you may map tool IDs to prompt IDs with
+`runtime.WithPromptSpec(...)` (or provide templates/text). When no consumer-side content is
+configured, the runtime uses the canonical JSON tool payload bytes as the nested user message,
+and provider planners can render their own prompts with injected server-side context.
 
 This keeps prompt rollout and overrides operational (runtime/store level) while the DSL remains focused
 on agent/tool contracts.
@@ -183,58 +183,66 @@ on agent/tool contracts.
 
 ### Agent Functions
 
-| Function | Context | Purpose |
-|----------|---------|---------|
-| `Agent(name, description, dsl)` | Inside `Service` | Declares an LLM agent with tool usage/exports and run policy |
-| `Completion(name, description?, dsl?)` | Inside `Service` | Declares a service-owned typed direct assistant-output contract |
-| `Use(value, dsl?)` | Inside `Agent` | Declares toolset consumption (referencing or inline definition) |
-| `Export(value, dsl?)` | Inside `Agent` or `Service` | Declares toolsets exposed to other agents |
-| `AgentToolset(svc, agent, ts)` | Top-level or inside `Use` | References a toolset exported by another agent |
-| `UseAgentToolset(svc, agent, ts)` | Inside `Agent` | Combines `AgentToolset` with `Use` |
-| `DisableAgentDocs()` | Inside `API` | Disables `AGENTS_QUICKSTART.md` generation |
-| `Passthrough(tool, target...)` | Inside exported `Tool` | Forwards tool execution to a Goa service method |
+
+| Function                               | Context                     | Purpose                                                         |
+| -------------------------------------- | --------------------------- | --------------------------------------------------------------- |
+| `Agent(name, description, dsl)`        | Inside `Service`            | Declares an LLM agent with tool usage/exports and run policy    |
+| `Completion(name, description?, dsl?)` | Inside `Service`            | Declares a service-owned typed direct assistant-output contract |
+| `Use(value, dsl?)`                     | Inside `Agent`              | Declares toolset consumption (referencing or inline definition) |
+| `Export(value, dsl?)`                  | Inside `Agent` or `Service` | Declares toolsets exposed to other agents                       |
+| `AgentToolset(svc, agent, ts)`         | Top-level or inside `Use`   | References a toolset exported by another agent                  |
+| `UseAgentToolset(svc, agent, ts)`      | Inside `Agent`              | Combines `AgentToolset` with `Use`                              |
+| `DisableAgentDocs()`                   | Inside `API`                | Disables `AGENTS_QUICKSTART.md` generation                      |
+| `Passthrough(tool, target...)`         | Inside exported `Tool`      | Forwards tool execution to a Goa service method                 |
+
 
 ### Toolset Functions
 
-| Function | Context | Purpose |
-|----------|---------|---------|
-| `Toolset(args...)` | Top-level | Defines a provider-owned toolset |
-| `FromMCP(service, toolset)` | Argument to `Toolset` | Configures a Goa-defined MCP server in the same design as toolset provider |
-| `FromExternalMCP(service, toolset)` | Argument to `Toolset` | Configures an external MCP server with inline tool schemas |
-| `FromRegistry(registry, toolset)` | Argument to `Toolset` | Configures registry as toolset provider |
-| `Tags(values...)` | Inside `Toolset` or `Tool` | Attaches metadata labels for categorization |
+
+| Function                            | Context                    | Purpose                                                                    |
+| ----------------------------------- | -------------------------- | -------------------------------------------------------------------------- |
+| `Toolset(args...)`                  | Top-level                  | Defines a provider-owned toolset                                           |
+| `FromMCP(service, toolset)`         | Argument to `Toolset`      | Configures a Goa-defined MCP server in the same design as toolset provider |
+| `FromExternalMCP(service, toolset)` | Argument to `Toolset`      | Configures an external MCP server with inline tool schemas                 |
+| `FromRegistry(registry, toolset)`   | Argument to `Toolset`      | Configures registry as toolset provider                                    |
+| `Tags(values...)`                   | Inside `Toolset` or `Tool` | Attaches metadata labels for categorization                                |
+
 
 ### Tool Functions
 
-| Function | Context | Purpose |
-|----------|---------|---------|
-| `Tool(name, description?, dsl?)` | Inside `Toolset` or `Method` | Declares a callable tool |
-| `Args(type)` | Inside `Tool` | Defines input parameter schema |
-| `Return(type)` | Inside `Tool` or `Completion` | Defines the model-visible result schema |
-| `ServerData(kind, type, dsl?)` | Inside `Tool` | Defines server-only data emitted alongside results (never sent to model providers) |
-| `ServerDataDefault("on" \| "off")` | Inside `Tool` | Default emission for optional server-data when `server_data` is omitted or `"auto"` |
-| `BindTo(method)` or `BindTo(service, method)` | Inside `Tool` | Binds tool to a Goa service method |
-| `Inject(fields...)` | Inside `Tool` | Marks fields as server-injected (hidden from LLM) |
-| `CallHintTemplate(tmpl)` | Inside `Tool` | Go template for call display hint |
-| `ResultHintTemplate(tmpl)` | Inside `Tool` | Go template for result display hint |
-| `BoundedResult(dsl?)` | Inside `Tool` | Declares a runtime-owned bounded-result contract; optional sub-DSL can declare paging cursor fields |
-| `Cursor(name)` | Inside `BoundedResult(func() { ... })` | Declares which payload field carries the paging cursor (optional) |
-| `NextCursor(name)` | Inside `BoundedResult(func() { ... })` | Declares the projected result field name for the next-page cursor (optional) |
-| `ResultReminder(text)` | Inside `Tool` | Static system reminder injected after tool result |
-| `Confirmation(dsl)` | Inside `Tool` | Declares that tool execution must be explicitly approved out-of-band |
+
+| Function                                      | Context                                | Purpose                                                                                             |
+| --------------------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `Tool(name, description?, dsl?)`              | Inside `Toolset` or `Method`           | Declares a callable tool                                                                            |
+| `Args(type)`                                  | Inside `Tool`                          | Defines input parameter schema                                                                      |
+| `Return(type)`                                | Inside `Tool` or `Completion`          | Defines the model-visible result schema                                                             |
+| `ServerData(kind, type, dsl?)`                | Inside `Tool`                          | Defines server-only data emitted alongside results (never sent to model providers)                  |
+| `ServerDataDefault("on"                       | "off")`                                | Inside `Tool`                                                                                       |
+| `BindTo(method)` or `BindTo(service, method)` | Inside `Tool`                          | Binds tool to a Goa service method                                                                  |
+| `Inject(fields...)`                           | Inside `Tool`                          | Marks fields as server-injected (hidden from LLM)                                                   |
+| `CallHintTemplate(tmpl)`                      | Inside `Tool`                          | Go template for call display hint                                                                   |
+| `ResultHintTemplate(tmpl)`                    | Inside `Tool`                          | Go template for result display hint                                                                 |
+| `BoundedResult(dsl?)`                         | Inside `Tool`                          | Declares a runtime-owned bounded-result contract; optional sub-DSL can declare paging cursor fields |
+| `Cursor(name)`                                | Inside `BoundedResult(func() { ... })` | Declares which payload field carries the paging cursor (optional)                                   |
+| `NextCursor(name)`                            | Inside `BoundedResult(func() { ... })` | Declares the projected result field name for the next-page cursor (optional)                        |
+| `ResultReminder(text)`                        | Inside `Tool`                          | Static system reminder injected after tool result                                                   |
+| `Confirmation(dsl)`                           | Inside `Tool`                          | Declares that tool execution must be explicitly approved out-of-band                                |
+| `TerminalRun()`                               | Inside `Tool`                          | Marks tool as terminal: run completes immediately after execution                                   |
+| `Bookkeeping()`                               | Inside `Tool`                          | Marks tool as bookkeeping: calls do not consume the run-level `MaxToolCalls` budget                 |
+
 
 ### Tool payload defaults (Feature)
 
 Tool payload defaults follow Goa’s request‑style semantics:
 
 - Codecs decode JSON into helper “decode‑body” structs with pointer fields to distinguish **missing**
-  from **zero**.
+from **zero**.
 - Codecs then transform helper → final payload using Goa’s transform generator, which injects
-  default values deterministically.
+default values deterministically.
 - As a result, optional primitive fields with defaults are emitted as **value fields** (non‑pointers)
-  in the final tool payload type.
+in the final tool payload type.
 
-See [`docs/tool_payload_defaults.md`](tool_payload_defaults.md) for the complete contract and the
+See `[docs/tool_payload_defaults.md](tool_payload_defaults.md)` for the complete contract and the
 generator invariants.
 
 ### Bounded results (returned / total / truncated / refinement_hint)
@@ -258,9 +266,9 @@ Single source of truth:
 - Codegen projects the canonical bounded fields into the generated JSON result schema.
 - Successful bounded tool executions must set `planner.ToolResult.Bounds`.
 - The runtime projects those bounds back into encoded tool-result JSON, result-hint
-  template data, hooks, and stream events.
+template data, hooks, and stream events.
 - Runtime enforcement is strict across all ingress paths: if `truncated=true`,
-  bounds must include either `next_cursor` or `refinement_hint`.
+bounds must include either `next_cursor` or `refinement_hint`.
 
 Tool-facing return types therefore must not duplicate canonical bounded fields just
 so the model can see them. Validation rejects authored `Return(...)` shapes that
@@ -286,7 +294,7 @@ Contract:
 - Treat cursors as **opaque**: do not parse, modify, or synthesize them.
 - When paging, keep **all other arguments unchanged**; only set the payload cursor field.
 - Paged tools should also be `BoundedResult(...)` tools and return the next cursor through
-  `planner.ToolResult.Bounds.NextCursor`.
+`planner.ToolResult.Bounds.NextCursor`.
 
 ### Tool Confirmation (Human-in-the-Loop)
 
@@ -314,86 +322,98 @@ Tool("dangerous_write", "Write a stateful change", func() {
 Notes:
 
 - The runtime owns how confirmation is requested. The built-in confirmation protocol uses a dedicated
-  `AwaitConfirmation` await and a `ProvideConfirmation` decision call. See `docs/runtime.md` for the
-  expected payloads and flow.
+`AwaitConfirmation` await and a `ProvideConfirmation` decision call. See `docs/runtime.md` for the
+expected payloads and flow.
 - Confirmation templates (`PromptTemplate` and `DeniedResultTemplate`) are Go `text/template` strings
-  executed with `missingkey=error`. In addition to the standard template functions (e.g. `printf`),
-  Goa-AI provides:
+executed with `missingkey=error`. In addition to the standard template functions (e.g. `printf`),
+Goa-AI provides:
   - `json v` → JSON encodes `v` (useful for optional pointer fields or embedding structured values).
   - `quote s` → returns a Go-escaped quoted string (like `fmt.Sprintf("%q", s)`).
 - Design-time confirmation is the **common case** (“this tool always needs approval”), but runtimes
-  can also require confirmation dynamically for additional tools via `runtime.WithToolConfirmation(...)`
-  (see runtime docs).
+can also require confirmation dynamically for additional tools via `runtime.WithToolConfirmation(...)`
+(see runtime docs).
 
 ### Policy Functions
 
-| Function | Context | Purpose |
-|----------|---------|---------|
-| `RunPolicy(dsl)` | Inside `Agent` | Configures runtime execution constraints |
-| `DefaultCaps(opts...)` | Inside `RunPolicy` | Sets resource limits using option functions |
-| `MaxToolCalls(n)` | Argument to `DefaultCaps` | Maximum total tool invocations |
-| `MaxConsecutiveFailedToolCalls(n)` | Argument to `DefaultCaps` | Maximum consecutive failures before stopping |
-| `TimeBudget(duration)` | Inside `RunPolicy` | Maximum wall-clock execution time (e.g., "5m") |
-| `InterruptsAllowed(bool)` | Inside `RunPolicy` | Enables user interruption handling |
-| `OnMissingFields(action)` | Inside `RunPolicy` | Validation behavior: `""`, `"finalize"`, `"await_clarification"`, `"resume"` |
+
+| Function                           | Context                   | Purpose                                                                      |
+| ---------------------------------- | ------------------------- | ---------------------------------------------------------------------------- |
+| `RunPolicy(dsl)`                   | Inside `Agent`            | Configures runtime execution constraints                                     |
+| `DefaultCaps(opts...)`             | Inside `RunPolicy`        | Sets resource limits using option functions                                  |
+| `MaxToolCalls(n)`                  | Argument to `DefaultCaps` | Maximum budgeted (non-bookkeeping) tool invocations                          |
+| `MaxConsecutiveFailedToolCalls(n)` | Argument to `DefaultCaps` | Maximum consecutive failures before stopping                                 |
+| `TimeBudget(duration)`             | Inside `RunPolicy`        | Maximum wall-clock execution time (e.g., "5m")                               |
+| `InterruptsAllowed(bool)`          | Inside `RunPolicy`        | Enables user interruption handling                                           |
+| `OnMissingFields(action)`          | Inside `RunPolicy`        | Validation behavior: `""`, `"finalize"`, `"await_clarification"`, `"resume"` |
+
 
 ### Timing Functions
 
-| Function | Context | Purpose |
-|----------|---------|---------|
-| `Timing(dsl)` | Inside `RunPolicy` | Groups timing configuration |
-| `Budget(duration)` | Inside `RunPolicy` or `Timing` | Total wall-clock budget for the run |
-| `Plan(duration)` | Inside `RunPolicy` or `Timing` | Timeout for Plan and Resume activities |
-| `Tools(duration)` | Inside `RunPolicy` or `Timing` | Default timeout for tool activities |
+
+| Function           | Context                        | Purpose                                |
+| ------------------ | ------------------------------ | -------------------------------------- |
+| `Timing(dsl)`      | Inside `RunPolicy`             | Groups timing configuration            |
+| `Budget(duration)` | Inside `RunPolicy` or `Timing` | Total wall-clock budget for the run    |
+| `Plan(duration)`   | Inside `RunPolicy` or `Timing` | Timeout for Plan and Resume activities |
+| `Tools(duration)`  | Inside `RunPolicy` or `Timing` | Default timeout for tool activities    |
+
 
 ### History Functions
 
-| Function | Context | Purpose |
-|----------|---------|---------|
-| `History(dsl)` | Inside `RunPolicy` | Configures conversation history management |
-| `KeepRecentTurns(n)` | Inside `History` | Retain only the most recent N turns |
-| `Compress(triggerAt, keepRecent)` | Inside `History` | Summarize older turns when threshold reached |
+
+| Function                          | Context            | Purpose                                      |
+| --------------------------------- | ------------------ | -------------------------------------------- |
+| `History(dsl)`                    | Inside `RunPolicy` | Configures conversation history management   |
+| `KeepRecentTurns(n)`              | Inside `History`   | Retain only the most recent N turns          |
+| `Compress(triggerAt, keepRecent)` | Inside `History`   | Summarize older turns when threshold reached |
+
 
 ### Cache Functions
 
-| Function | Context | Purpose |
-|----------|---------|---------|
-| `Cache(dsl)` | Inside `RunPolicy` | Configures prompt caching hints |
-| `AfterSystem()` | Inside `Cache` | Place cache checkpoint after system messages |
-| `AfterTools()` | Inside `Cache` | Place cache checkpoint after tool definitions |
+
+| Function        | Context            | Purpose                                       |
+| --------------- | ------------------ | --------------------------------------------- |
+| `Cache(dsl)`    | Inside `RunPolicy` | Configures prompt caching hints               |
+| `AfterSystem()` | Inside `Cache`     | Place cache checkpoint after system messages  |
+| `AfterTools()`  | Inside `Cache`     | Place cache checkpoint after tool definitions |
+
 
 ### MCP Functions
 
-| Function | Context | Purpose |
-|----------|---------|---------|
-| `MCP(name, version, opts...)` | Inside `Service` | Enables MCP protocol for the service |
-| `ProtocolVersion(version)` | Option for `MCP` | Sets MCP protocol version (e.g., "2025-06-18") |
-| `Tool(name, description)` | Inside `Method` (with MCP enabled) | Marks method as MCP tool |
-| `Resource(name, uri, mime)` | Inside `Method` | Marks method as MCP resource provider |
-| `WatchableResource(name, uri, mime)` | Inside `Method` | MCP resource with subscription support |
-| `StaticPrompt(name, desc, msgs...)` | Inside `Service` (with MCP) | Defines static MCP prompt template |
-| `DynamicPrompt(name, description)` | Inside `Method` | Marks method as dynamic prompt generator |
-| `Notification(name, description)` | Inside `Method` | Marks method as MCP notification sender |
-| `Subscription(resourceName)` | Inside `Method` | Defines subscription handler for a resource |
-| `SubscriptionMonitor(name)` | Inside `Method` | Defines SSE monitor for subscriptions |
+
+| Function                             | Context                            | Purpose                                        |
+| ------------------------------------ | ---------------------------------- | ---------------------------------------------- |
+| `MCP(name, version, opts...)`        | Inside `Service`                   | Enables MCP protocol for the service           |
+| `ProtocolVersion(version)`           | Option for `MCP`                   | Sets MCP protocol version (e.g., "2025-06-18") |
+| `Tool(name, description)`            | Inside `Method` (with MCP enabled) | Marks method as MCP tool                       |
+| `Resource(name, uri, mime)`          | Inside `Method`                    | Marks method as MCP resource provider          |
+| `WatchableResource(name, uri, mime)` | Inside `Method`                    | MCP resource with subscription support         |
+| `StaticPrompt(name, desc, msgs...)`  | Inside `Service` (with MCP)        | Defines static MCP prompt template             |
+| `DynamicPrompt(name, description)`   | Inside `Method`                    | Marks method as dynamic prompt generator       |
+| `Notification(name, description)`    | Inside `Method`                    | Marks method as MCP notification sender        |
+| `Subscription(resourceName)`         | Inside `Method`                    | Defines subscription handler for a resource    |
+| `SubscriptionMonitor(name)`          | Inside `Method`                    | Defines SSE monitor for subscriptions          |
+
 
 ### Registry Functions
 
-| Function | Context | Purpose |
-|----------|---------|---------|
-| `Registry(name, dsl?)` | Top-level | Declares a remote registry source |
-| `URL(url)` | Inside `Registry` | Sets the registry endpoint URL (required) |
-| `APIVersion(version)` | Inside `Registry` | Sets registry API version (default: "v1") |
-| `Security(scheme)` | Inside `Registry` | References Goa security scheme for auth |
-| `Timeout(duration)` | Inside `Registry` | Sets HTTP request timeout |
-| `Retry(maxRetries, backoff)` | Inside `Registry` | Configures retry policy |
-| `SyncInterval(duration)` | Inside `Registry` | Sets catalog refresh interval |
-| `CacheTTL(duration)` | Inside `Registry` | Sets local cache duration |
-| `Federation(dsl)` | Inside `Registry` | Configures external registry imports |
-| `Include(patterns...)` | Inside `Federation` | Glob patterns for namespaces to import |
-| `Exclude(patterns...)` | Inside `Federation` | Glob patterns for namespaces to skip |
-| `PublishTo(registry)` | Inside `Toolset` (in `Export`) | Configures registry publication |
-| `Version(version)` | Inside `Toolset` (with `FromRegistry`) | Pins toolset version |
+
+| Function                     | Context                                | Purpose                                   |
+| ---------------------------- | -------------------------------------- | ----------------------------------------- |
+| `Registry(name, dsl?)`       | Top-level                              | Declares a remote registry source         |
+| `URL(url)`                   | Inside `Registry`                      | Sets the registry endpoint URL (required) |
+| `APIVersion(version)`        | Inside `Registry`                      | Sets registry API version (default: "v1") |
+| `Security(scheme)`           | Inside `Registry`                      | References Goa security scheme for auth   |
+| `Timeout(duration)`          | Inside `Registry`                      | Sets HTTP request timeout                 |
+| `Retry(maxRetries, backoff)` | Inside `Registry`                      | Configures retry policy                   |
+| `SyncInterval(duration)`     | Inside `Registry`                      | Sets catalog refresh interval             |
+| `CacheTTL(duration)`         | Inside `Registry`                      | Sets local cache duration                 |
+| `Federation(dsl)`            | Inside `Registry`                      | Configures external registry imports      |
+| `Include(patterns...)`       | Inside `Federation`                    | Glob patterns for namespaces to import    |
+| `Exclude(patterns...)`       | Inside `Federation`                    | Glob patterns for namespaces to skip      |
+| `PublishTo(registry)`        | Inside `Toolset` (in `Export`)         | Configures registry publication           |
+| `Version(version)`           | Inside `Toolset` (with `FromRegistry`) | Pins toolset version                      |
+
 
 ---
 
@@ -428,6 +448,7 @@ Service("orchestrator", func() {
 - A string name for an inline, agent-local toolset definition
 
 An optional DSL function can:
+
 - Subset tools from a referenced provider toolset by name
 - Define ad-hoc tools local to this agent
 
@@ -570,12 +591,12 @@ At runtime, supply an `mcpruntime.Caller` for the toolset ID.
 ### Migration Notes
 
 - If you previously used `FromMCP(...)` for an external MCP server with inline
-  tool schemas, switch that declaration to `FromExternalMCP(...)`.
+tool schemas, switch that declaration to `FromExternalMCP(...)`.
 - `FromMCP(...)` now means "Goa-defined MCP server in this design" only. It
-  rejects inline tool schemas and fails evaluation if the referenced service
-  does not declare `MCP(...)`.
+rejects inline tool schemas and fails evaluation if the referenced service
+does not declare `MCP(...)`.
 - Agent and toolset names that sanitize to an empty identifier now fail during
-  evaluation instead of being silently repaired during code generation.
+evaluation instead of being silently repaired during code generation.
 
 ### Registry-Backed Toolsets
 
@@ -863,22 +884,22 @@ Templates are compiled with `missingkey=error`. Keep hints concise (≤140 chara
 Template variables use Go field names, not JSON keys.
 
 - Call templates receive the typed payload as the template root (for example,
-  `.Query`, `.Limit`).
+`.Query`, `.Limit`).
 - Result templates receive an explicit wrapper where payload fields live under
-  `.Args`, semantic fields live under `.Result`, and bounded metadata lives
-  under `.Bounds` (for example, `.Args.Query`, `.Result.Count`,
-  `.Bounds.Returned`). `.Args` is nil when the runtime cannot decode the
-  original tool call payload, and `.Bounds` is nil when the tool result is
-  unbounded.
+`.Args`, semantic fields live under `.Result`, and bounded metadata lives
+under `.Bounds` (for example, `.Args.Query`, `.Result.Count`,
+`.Bounds.Returned`). `.Args` is nil when the runtime cannot decode the
+original tool call payload, and `.Bounds` is nil when the tool result is
+unbounded.
 
 **Runtime contract:**
 
 - Tool call scheduled events default to `DisplayHint==""` at construction time. The runtime may enrich
-  and persist a **durable default** hint when it can decode the typed payload and execute the template.
+and persist a **durable default** hint when it can decode the typed payload and execute the template.
 - If you set `DisplayHint` explicitly (non-empty) before publishing the hook event, the runtime treats it
-  as authoritative and will not overwrite it.
+as authoritative and will not overwrite it.
 - If typed decoding fails, the runtime leaves `DisplayHint` empty (strict contract: no rendering against
-  raw JSON bytes).
+raw JSON bytes).
 
 **Per-consumer overrides (optional):**
 
@@ -928,6 +949,7 @@ Toolset("admin-tools", func() {
 ```
 
 Common tag patterns include:
+
 - Domain: `"nlp"`, `"database"`, `"api"`, `"filesystem"`
 - Capability: `"read"`, `"write"`, `"search"`, `"transform"`
 - Risk: `"safe"`, `"destructive"`, `"external"`
@@ -953,6 +975,42 @@ Tool("get_time_series", "Get Time Series", func() {
     ResultReminder("The user sees a rendered graph of this data in the UI.")
 })
 ```
+
+### TerminalRun
+
+`TerminalRun` marks a tool as terminal for the run: once it executes, the runtime
+terminates the run immediately after publishing the tool result(s) without
+requesting a follow-up PlanResume/finalization turn. Use it for tools whose
+result is the user-facing terminal output of the run (for example, a final
+report renderer or a commit-this-run tool).
+
+```go
+Tool("tasks_complete", "Commit the terminal task artifact", func() {
+    Args(TaskCompletionArgs)
+    Return(TaskCompletionResult)
+    TerminalRun()
+})
+```
+
+### Bookkeeping
+
+`Bookkeeping` marks a tool as a bookkeeping tool that does not consume the
+run-level `MaxToolCalls` retrieval budget. Bookkeeping calls never decrement
+`RemainingToolCalls` and are never dropped when a batch is trimmed to fit the
+remaining budget. Use it for structured progress, status, and commit tools
+whose cost is record-keeping rather than retrieval or side-effecting work.
+
+```go
+Tool("set_step_status", "Update step status", func() {
+    Args(SetStepStatusArgs)
+    Return(SetStepStatusResult)
+    Bookkeeping()
+})
+```
+
+`Bookkeeping` composes with `TerminalRun`: a terminal commit tool is typically
+both (bookkeeping so it always executes and terminal so the run completes when
+it does).
 
 ---
 
@@ -995,19 +1053,23 @@ RunPolicy(func() {
 
 ### DefaultCaps Options
 
-| Option | Purpose |
-|--------|---------|
-| `MaxToolCalls(n)` | Maximum total tool invocations per run |
-| `MaxConsecutiveFailedToolCalls(n)` | Stop after N consecutive failures |
+
+| Option                             | Purpose                                |
+| ---------------------------------- | -------------------------------------- |
+| `MaxToolCalls(n)`                  | Maximum budgeted (non-bookkeeping) tool invocations per run |
+| `MaxConsecutiveFailedToolCalls(n)` | Stop after N consecutive failures      |
+
 
 ### OnMissingFields Values
 
-| Value | Behavior |
-|-------|----------|
-| `""` (empty) | Let the planner decide based on context |
-| `"finalize"` | Stop execution when required fields are missing |
-| `"await_clarification"` | Pause and wait for user input |
-| `"resume"` | Continue execution despite missing fields |
+
+| Value                   | Behavior                                        |
+| ----------------------- | ----------------------------------------------- |
+| `""` (empty)            | Let the planner decide based on context         |
+| `"finalize"`            | Stop execution when required fields are missing |
+| `"await_clarification"` | Pause and wait for user input                   |
+| `"resume"`              | Continue execution despite missing fields       |
+
 
 ### History Policies
 
@@ -1124,16 +1186,18 @@ Service("calculator", func() {
 
 ### MCP Capabilities
 
-| DSL Function | MCP Capability |
-|--------------|----------------|
-| `Tool(name, desc)` in Method | `tools/list`, `tools/call` |
-| `Resource(name, uri, mime)` | `resources/list`, `resources/read` |
-| `WatchableResource(...)` | Resources with `resources/subscribe` |
-| `StaticPrompt(...)` | `prompts/list`, `prompts/get` (static) |
-| `DynamicPrompt(...)` | `prompts/list`, `prompts/get` (dynamic, method-backed) |
-| `Notification(...)` | Notification senders |
-| `Subscription(...)` | Subscription handlers |
-| `SubscriptionMonitor(...)` | SSE subscription monitors |
+
+| DSL Function                 | MCP Capability                                         |
+| ---------------------------- | ------------------------------------------------------ |
+| `Tool(name, desc)` in Method | `tools/list`, `tools/call`                             |
+| `Resource(name, uri, mime)`  | `resources/list`, `resources/read`                     |
+| `WatchableResource(...)`     | Resources with `resources/subscribe`                   |
+| `StaticPrompt(...)`          | `prompts/list`, `prompts/get` (static)                 |
+| `DynamicPrompt(...)`         | `prompts/list`, `prompts/get` (dynamic, method-backed) |
+| `Notification(...)`          | Notification senders                                   |
+| `Subscription(...)`          | Subscription handlers                                  |
+| `SubscriptionMonitor(...)`   | SSE subscription monitors                              |
+
 
 ---
 
@@ -1401,6 +1465,8 @@ return planner.ToolResult{Result: tr}, nil
 ```
 
 Notes:
+
 - Compatibility uses Goa's type system (names and structure, including `Extend`)
 - For nested shapes, keep pointers in user types for validators/codecs
 - Mapping lives in executors; transforms are conveniences when types align
+

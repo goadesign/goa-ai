@@ -124,7 +124,8 @@ func validateTerminalPlanResult(result *planner.PlanResult) error {
 // finishAfterTerminalToolCalls completes the run after a tool turn whose executed
 // tools are declared terminal (ToolSpec.TerminalRun). It returns a RunOutput with
 // tool events but does not publish an assistant message event or request any
-// follow-up PlanResume/finalization turn.
+// follow-up PlanResume/finalization turn. Final remains nil because the run
+// ended by terminal tool contract, not by planner-authored assistant text.
 func (r *Runtime) finishAfterTerminalToolCalls(
 	ctx context.Context,
 	input *RunInput,
@@ -138,7 +139,6 @@ func (r *Runtime) finishAfterTerminalToolCalls(
 	return &RunOutput{
 		AgentID:    input.AgentID,
 		RunID:      base.RunContext.RunID,
-		Final:      &model.Message{Role: model.ConversationRoleAssistant},
 		ToolEvents: toolEvents,
 		Usage:      &st.AggUsage,
 	}, nil

@@ -20,6 +20,7 @@ func TestRunLoopStopsAfterTerminalTool(t *testing.T) {
 
 	terminalTool := newAnyJSONSpec(tools.Ident("tasks.progress.final_report"), "tasks.progress")
 	terminalTool.TerminalRun = true
+	terminalTool.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "tasks.progress",
 		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
@@ -79,7 +80,73 @@ func TestRunLoopStopsAfterTerminalTool(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	require.NotNil(t, out.Final)
+	require.Nil(t, out.Final)
+	require.Len(t, out.ToolEvents, 1)
+	require.Equal(t, terminalTool.Name, out.ToolEvents[0].Name)
+	require.Empty(t, wfCtx.lastPlannerCall.Name, "expected no planner resume/finalization after terminal tool")
+}
+
+func TestRunLoopTerminalToolExecutesWithExhaustedBudget(t *testing.T) {
+	rt := New(WithLogger(telemetry.NoopLogger{}))
+
+	terminalTool := newAnyJSONSpec(tools.Ident("tasks.progress.complete"), "tasks.progress")
+	terminalTool.TerminalRun = true
+	terminalTool.Bookkeeping = true
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
+		Name: "tasks.progress",
+		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			return &planner.ToolResult{
+				Name:       call.Name,
+				Result:     map[string]any{"ok": true},
+				ToolCallID: call.ToolCallID,
+			}, nil
+		}),
+		Specs: []tools.ToolSpec{terminalTool},
+	}))
+
+	wfCtx := &testWorkflowContext{
+		ctx:     context.Background(),
+		runtime: rt,
+	}
+	base := &planner.PlanInput{
+		RunContext: run.Context{
+			RunID:     "run-1",
+			SessionID: "sess-1",
+			TurnID:    "turn-1",
+			Attempt:   1,
+		},
+	}
+	input := &RunInput{
+		AgentID:   agent.Ident("agent-1"),
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		TurnID:    "turn-1",
+	}
+	initial := &planner.PlanResult{
+		ToolCalls: []planner.ToolRequest{{Name: terminalTool.Name}},
+	}
+	caps := policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 0}
+
+	out, err := rt.runLoop(
+		wfCtx,
+		AgentRegistration{ExecuteToolActivity: "execute"},
+		input,
+		base,
+		initial,
+		nil,
+		model.TokenUsage{},
+		caps,
+		time.Time{},
+		time.Time{},
+		2,
+		"turn-1",
+		nil,
+		nil,
+		0,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.Nil(t, out.Final)
 	require.Len(t, out.ToolEvents, 1)
 	require.Equal(t, terminalTool.Name, out.ToolEvents[0].Name)
 	require.Empty(t, wfCtx.lastPlannerCall.Name, "expected no planner resume/finalization after terminal tool")

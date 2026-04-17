@@ -612,23 +612,20 @@ func (r *Runtime) onPromptRendered(ctx context.Context, event prompt.RenderEvent
 }
 
 // initialCaps constructs the initial caps state from the agent's run policy.
-// If caps are configured (> 0), the remaining counts are set to match the maximums.
+// Remaining counts mirror the configured maximums. Zero means the cap is not
+// configured for this run.
 func initialCaps(cfg RunPolicy) policy.CapsState {
-	caps := policy.CapsState{
-		MaxToolCalls:                  cfg.MaxToolCalls,
-		MaxConsecutiveFailedToolCalls: cfg.MaxConsecutiveFailedToolCalls,
+	return policy.CapsState{
+		MaxToolCalls:                        cfg.MaxToolCalls,
+		RemainingToolCalls:                  cfg.MaxToolCalls,
+		MaxConsecutiveFailedToolCalls:       cfg.MaxConsecutiveFailedToolCalls,
+		RemainingConsecutiveFailedToolCalls: cfg.MaxConsecutiveFailedToolCalls,
 	}
-	if cfg.MaxToolCalls > 0 {
-		caps.RemainingToolCalls = cfg.MaxToolCalls
-	}
-	if cfg.MaxConsecutiveFailedToolCalls > 0 {
-		caps.RemainingConsecutiveFailedToolCalls = cfg.MaxConsecutiveFailedToolCalls
-	}
-	return caps
 }
 
-// decrementCap decrements a cap value by delta. If current is 0 (unlimited), returns 0.
-// If the result would be negative, returns 0.
+// decrementCap decrements a cap value by delta. If current is 0 (cap not
+// configured), it remains 0. If the result would be negative, the cap is
+// exhausted and therefore clamped to 0.
 func decrementCap(current int, delta int) int {
 	if current == 0 || delta == 0 {
 		return current
@@ -670,23 +667,41 @@ func capFailures(results []*planner.ToolResult) int {
 	return count
 }
 
-// mergeCaps merges policy decision caps into the current caps state. Decision caps
-// override current caps if they are > 0 or if ExpiresAt is set.
+// mergeCaps merges policy decision caps into the current caps state. Policy
+// decisions may only tighten configured caps; they never create new caps or
+// raise the remaining budget.
 func mergeCaps(current policy.CapsState, decision policy.CapsState) policy.CapsState {
-	if decision.MaxToolCalls > 0 {
-		current.MaxToolCalls = decision.MaxToolCalls
+	current.MaxToolCalls = mergeCapDown(current.MaxToolCalls, decision.MaxToolCalls)
+	current.RemainingToolCalls = mergeCapDown(current.RemainingToolCalls, decision.RemainingToolCalls)
+	current.MaxConsecutiveFailedToolCalls = mergeCapDown(
+		current.MaxConsecutiveFailedToolCalls,
+		decision.MaxConsecutiveFailedToolCalls,
+	)
+	current.RemainingConsecutiveFailedToolCalls = mergeCapDown(
+		current.RemainingConsecutiveFailedToolCalls,
+		decision.RemainingConsecutiveFailedToolCalls,
+	)
+	current.ExpiresAt = mergeDeadlineDown(current.ExpiresAt, decision.ExpiresAt)
+	return current
+}
+
+// mergeCapDown returns the tighter of two configured caps. Zero means the cap is
+// not configured and therefore cannot be introduced or raised by policy.
+func mergeCapDown(current int, decision int) int {
+	if current == 0 || decision == 0 {
+		return current
 	}
-	if decision.RemainingToolCalls > 0 {
-		current.RemainingToolCalls = decision.RemainingToolCalls
+	return min(current, decision)
+}
+
+// mergeDeadlineDown returns the earlier of two configured deadlines. A zero
+// deadline is not configured and therefore cannot be introduced or relaxed by policy.
+func mergeDeadlineDown(current time.Time, decision time.Time) time.Time {
+	if current.IsZero() || decision.IsZero() {
+		return current
 	}
-	if decision.MaxConsecutiveFailedToolCalls > 0 {
-		current.MaxConsecutiveFailedToolCalls = decision.MaxConsecutiveFailedToolCalls
-	}
-	if decision.RemainingConsecutiveFailedToolCalls > 0 {
-		current.RemainingConsecutiveFailedToolCalls = decision.RemainingConsecutiveFailedToolCalls
-	}
-	if !decision.ExpiresAt.IsZero() {
-		current.ExpiresAt = decision.ExpiresAt
+	if decision.Before(current) {
+		return decision
 	}
 	return current
 }
@@ -717,27 +732,63 @@ func hasIntersection(a []string, b []string) bool {
 	return false
 }
 
+// isBookkeeping reports whether the tool is exempt from the run-level
+// MaxToolCalls retrieval budget, consulting the canonical policy metadata
+// BudgetClass assigned once at registration time.
+func (r *Runtime) isBookkeeping(name tools.Ident) bool {
+	meta, ok := r.policyMetadata(name)
+	if !ok {
+		return false
+	}
+	return meta.BudgetClass == policy.ToolBudgetClassBookkeeping
+}
+
 // toolMetadata retrieves policy metadata for each tool call by looking up the
-// toolset registration. If the toolset is not found, constructs minimal metadata
-// with the tool name.
+// registered canonical metadata. If the tool is not found, it constructs minimal
+// metadata with the tool name and the default budget class.
 func (r *Runtime) toolMetadata(calls []planner.ToolRequest) []policy.ToolMetadata {
 	metas := make([]policy.ToolMetadata, 0, len(calls))
 	for _, call := range calls {
-		if spec, ok := r.toolSpec(call.Name); ok {
-			metas = append(metas, policy.ToolMetadata{
-				ID:          spec.Name,
-				Title:       defaultToolTitle(spec.Name),
-				Description: spec.Description,
-				Tags:        append([]string(nil), spec.Tags...),
-			})
+		if meta, ok := r.policyMetadata(call.Name); ok {
+			metas = append(metas, cloneToolMetadata(meta))
 			continue
 		}
 		metas = append(metas, policy.ToolMetadata{
-			ID:    call.Name,
-			Title: defaultToolTitle(call.Name),
+			ID:          call.Name,
+			Title:       defaultToolTitle(call.Name),
+			BudgetClass: policy.ToolBudgetClassBudgeted,
 		})
 	}
 	return metas
+}
+
+func canonicalToolMetadata(spec tools.ToolSpec, lookup ToolMetadataLookup) policy.ToolMetadata {
+	if lookup != nil {
+		meta, ok := lookup(spec.Name)
+		if !ok {
+			panic(fmt.Sprintf("runtime: missing policy metadata for tool %q", spec.Name))
+		}
+		return cloneToolMetadata(meta)
+	}
+	return policy.ToolMetadata{
+		ID:          spec.Name,
+		Title:       defaultToolTitle(spec.Name),
+		Description: spec.Description,
+		Tags:        append([]string(nil), spec.Tags...),
+		BudgetClass: toolBudgetClass(spec.Bookkeeping),
+	}
+}
+
+func cloneToolMetadata(meta policy.ToolMetadata) policy.ToolMetadata {
+	meta.Tags = append([]string(nil), meta.Tags...)
+	return meta
+}
+
+func toolBudgetClass(bookkeeping bool) policy.ToolBudgetClass {
+	if bookkeeping {
+		return policy.ToolBudgetClassBookkeeping
+	}
+	return policy.ToolBudgetClassBudgeted
 }
 
 // defaultToolTitle derives a human-friendly title from a fully-qualified tool id.

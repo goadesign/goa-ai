@@ -34,8 +34,9 @@ type (
 	// executable tools for a run.
 	TagPolicyClause = api.TagPolicyClause
 
-	// RunOutput represents the final outcome returned by a run workflow, including the
-	// concluding assistant message plus tool traces and planner notes for callers.
+	// RunOutput represents the final outcome returned by a run workflow,
+	// including the concluding assistant message (when present) plus tool traces
+	// and planner notes for callers.
 	RunOutput = api.RunOutput
 
 	// ActivityToolExecutor implements ToolActivityExecutor for regular tools that execute via

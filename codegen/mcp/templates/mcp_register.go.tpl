@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/policy"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -62,6 +63,30 @@ var {{ .Register.HelperName }}ToolSpecs = []tools.ToolSpec{
 		},
 	},
 {{- end }}
+}
+
+// {{ .Register.HelperName }}ToolMetadata contains canonical policy metadata for the {{ .Register.SuiteName }} toolset.
+var {{ .Register.HelperName }}ToolMetadata = []policy.ToolMetadata{
+{{- range .Register.Tools }}
+	{
+		ID:          {{ printf "%q" .ID }},
+		Title:       {{ printf "%q" .Title }},
+		Description: {{ printf "%q" .Description }},
+		BudgetClass: policy.ToolBudgetClassBudgeted,
+	},
+{{- end }}
+}
+
+// {{ .Register.HelperName }}ToolMetadataByName returns canonical policy metadata for the named MCP tool.
+func {{ .Register.HelperName }}ToolMetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
+	switch name {
+{{- range $i, $tool := .Register.Tools }}
+	case {{ printf "%q" $tool.ID }}:
+		return {{ $.Register.HelperName }}ToolMetadata[{{ $i }}], true
+{{- end }}
+	default:
+		return policy.ToolMetadata{}, false
+	}
 }
 
 // Register{{ .Register.HelperName }} registers the {{ .Register.SuiteName }} toolset with the runtime.
@@ -135,6 +160,7 @@ func Register{{ .Register.HelperName }}(ctx context.Context, rt *agentsruntime.R
 			return agentsruntime.Executed(&out), nil
 		},
 		Specs:            {{ .Register.HelperName }}ToolSpecs,
+		ToolMetadataLookup: {{ .Register.HelperName }}ToolMetadataByName,
 		DecodeInExecutor: true,
 	})
 }

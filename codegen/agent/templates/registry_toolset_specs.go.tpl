@@ -55,6 +55,7 @@ var Specs []tools.ToolSpec
 
 var (
 	specIndex = make(map[tools.Ident]*tools.ToolSpec)
+	metadataIndex = make(map[tools.Ident]policy.ToolMetadata)
 	metadata  []policy.ToolMetadata
 	mu        sync.RWMutex
 )
@@ -79,6 +80,7 @@ func DiscoverAndPopulate(ctx context.Context, client RegistryClient) error {
 
 	Specs = make([]tools.ToolSpec, 0, len(toolset.Tools))
 	specIndex = make(map[tools.Ident]*tools.ToolSpec, len(toolset.Tools))
+	metadataIndex = make(map[tools.Ident]policy.ToolMetadata, len(toolset.Tools))
 	metadata = make([]policy.ToolMetadata, 0, len(toolset.Tools))
 
 	for _, tool := range toolset.Tools {
@@ -101,12 +103,15 @@ func DiscoverAndPopulate(ctx context.Context, client RegistryClient) error {
 		}
 		Specs = append(Specs, spec)
 		specIndex[spec.Name] = &Specs[len(Specs)-1]
-		metadata = append(metadata, policy.ToolMetadata{
+		meta := policy.ToolMetadata{
 			ID:          spec.Name,
 			Title:       tool.Title,
 			Description: tool.Description,
 			Tags:        tool.Tags,
-		})
+			BudgetClass: policy.ToolBudgetClassBudgeted,
+		}
+		metadata = append(metadata, meta)
+		metadataIndex[spec.Name] = meta
 	}
 
 	return nil
@@ -168,6 +173,15 @@ func Metadata() []policy.ToolMetadata {
 	out := make([]policy.ToolMetadata, len(metadata))
 	copy(out, metadata)
 	return out
+}
+
+// MetadataByName returns policy metadata for the named tool if present.
+func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
+	mu.RLock()
+	defer mu.RUnlock()
+
+	meta, ok := metadataIndex[name]
+	return meta, ok
 }
 
 // ValidatePayload validates a tool payload against its registry-provided schema.

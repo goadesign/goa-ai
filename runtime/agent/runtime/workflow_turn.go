@@ -50,10 +50,6 @@ func (r *Runtime) handleToolTurn(
 		return nil, errors.New("missing run deadlines")
 	}
 
-	if st.Caps.RemainingToolCalls == 0 && st.Caps.MaxToolCalls > 0 {
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.ToolOutputs, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonToolCap, deadlines.Hard)
-		return out, err
-	}
 	if !deadlines.Budget.IsZero() && wfCtx.Now().After(deadlines.Budget) {
 		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.ToolOutputs, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonTimeBudget, deadlines.Hard)
 		return out, err
@@ -104,7 +100,11 @@ func (r *Runtime) handleToolTurn(
 		}
 	}
 
-	allowed = r.capAllowedCalls(allowed, input, st.Caps)
+	allowed, budgetCost := r.capAllowedCalls(allowed, st.Caps)
+	if len(allowed) == 0 {
+		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.ToolOutputs, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonToolCap, deadlines.Hard)
+		return out, err
+	}
 	allowed = r.prepareAllowedCallsMetadata(input.AgentID, base, allowed, parentTracker)
 
 	toExecute, confirmations, err := r.splitConfirmationCalls(ctx, base, allowed)
@@ -152,6 +152,7 @@ func (r *Runtime) handleToolTurn(
 		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.ToolOutputs, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonTimeBudget, deadlines.Hard)
 		return out, err
 	}
+	st.Caps.RemainingToolCalls = decrementCap(st.Caps.RemainingToolCalls, budgetCost)
 
 	terminal, err := r.executedTerminalRunTool(vals)
 	if err != nil {
@@ -160,8 +161,6 @@ func (r *Runtime) handleToolTurn(
 	if terminal {
 		return r.finishAfterTerminalToolCalls(ctx, input, base, st)
 	}
-
-	st.Caps.RemainingToolCalls = decrementCap(st.Caps.RemainingToolCalls, len(allowed))
 	if result.Await != nil && len(result.Await.Items) > 0 && len(toolPauses) > 0 {
 		return nil, fmt.Errorf("planner await and tool pause cannot both be present in the same turn")
 	}

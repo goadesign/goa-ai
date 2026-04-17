@@ -35,6 +35,19 @@ func wrapExecute(fn func(context.Context, *planner.ToolRequest) (*planner.ToolRe
 	}
 }
 
+func seedTestToolSpecs(rt *Runtime, specs ...tools.ToolSpec) {
+	if rt.toolSpecs == nil {
+		rt.toolSpecs = make(map[tools.Ident]tools.ToolSpec)
+	}
+	if rt.policyToolMetadata == nil {
+		rt.policyToolMetadata = make(map[tools.Ident]policy.ToolMetadata)
+	}
+	for _, spec := range specs {
+		rt.toolSpecs[spec.Name] = spec
+		rt.policyToolMetadata[spec.Name] = canonicalToolMetadata(spec, nil)
+	}
+}
+
 // testWorkflowContext is a lightweight engine.WorkflowContext implementation used by tests.
 type testWorkflowContext struct {
 	ctx context.Context
