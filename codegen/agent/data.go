@@ -251,9 +251,9 @@ type (
 	// The runtime increments counters for each tool call and failure,
 	// terminating the agent run with an error if caps are exceeded.
 	CapsData struct {
-		// MaxToolCalls caps the number of tool invocations per run (0 = unlimited).
+		// MaxToolCalls caps the number of tool invocations per run (0 = not configured).
 		MaxToolCalls int
-		// MaxConsecutiveFailedToolCalls stops execution after N consecutive failures (0 = unlimited).
+		// MaxConsecutiveFailedToolCalls stops execution after N consecutive failures (0 = not configured).
 		MaxConsecutiveFailedToolCalls int
 	}
 
@@ -554,6 +554,10 @@ type (
 		// TerminalRun indicates that once this tool executes, the runtime should
 		// complete the run immediately (no follow-up PlanResume/finalize turn).
 		TerminalRun bool
+
+		// Bookkeeping indicates this tool is a bookkeeping tool (status / findings /
+		// terminal commits) that does not consume the run-level retrieval budget.
+		Bookkeeping bool
 
 		// ResultReminder is an optional system reminder injected into the
 		// conversation after the tool result is returned. It provides backstage

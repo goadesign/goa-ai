@@ -698,6 +698,11 @@ func ResultReminder(s string) {
 // executes, the runtime should complete the run immediately without requesting
 // a follow-up planner PlanResume/finalization turn.
 //
+// Terminal tools are normalized as bookkeeping during DSL preparation. This
+// keeps the terminal contract safe by construction at a single canonical phase:
+// the run-level retrieval budget must never trim away the tool that commits the
+// terminal outcome.
+//
 // TerminalRun must appear in a Tool expression.
 func TerminalRun() {
 	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
@@ -706,6 +711,29 @@ func TerminalRun() {
 		return
 	}
 	tool.TerminalRun = true
+}
+
+// Bookkeeping marks the current tool as a bookkeeping tool that does not
+// consume the run-level MaxToolCalls retrieval budget. Runtimes never decrement
+// RemainingToolCalls for bookkeeping calls and never drop them when trimming a
+// batch to fit the remaining budget. Use it for structured progress, status,
+// and terminal-commit tools whose cost is record-keeping, not retrieval.
+//
+// Bookkeeping must appear in a Tool expression.
+//
+// Example:
+//
+//	Tool("set_step_status", "Update step status", func() {
+//	    Args(func() { ... })
+//	    Bookkeeping()
+//	})
+func Bookkeeping() {
+	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	tool.Bookkeeping = true
 }
 
 // toolDSL mirrors Goa's method DSL helpers to define tool shapes.

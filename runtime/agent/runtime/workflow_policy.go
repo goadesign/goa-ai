@@ -11,6 +11,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -22,7 +23,7 @@ import (
 // tool_unavailable tool using the same compiled predicate that already shaped
 // the planner-visible advertised tool set.
 func (r *Runtime) applyPerRunOverrides(ctx context.Context, input *RunInput, candidates []planner.ToolRequest) ([]planner.ToolRequest, error) {
-	if input == nil || input.Policy == nil || len(candidates) == 0 {
+	if input == nil || len(candidates) == 0 {
 		return candidates, nil
 	}
 	runPolicy := compileToolPolicy(input.Policy)
@@ -116,15 +117,33 @@ func (r *Runtime) applyRuntimePolicy(
 	return allowed, caps, nil
 }
 
-// capAllowedCalls applies per-turn and remaining caps to the allowed set.
-func (r *Runtime) capAllowedCalls(allowed []planner.ToolRequest, input *RunInput, caps policy.CapsState) []planner.ToolRequest {
-	if input.Policy != nil && input.Policy.PerTurnMaxToolCalls > 0 && len(allowed) > input.Policy.PerTurnMaxToolCalls {
-		allowed = allowed[:input.Policy.PerTurnMaxToolCalls]
+// capAllowedCalls applies the run-level MaxToolCalls budget to the allowed set.
+//
+// The run-level MaxToolCalls budget applies to budgeted (non-bookkeeping) tools
+// only: bookkeeping calls never consume the budget and are never dropped by
+// this cap. When the budgeted subsequence exceeds the remaining budget, only
+// the overflow is discarded; bookkeeping calls retain their original position.
+// The returned budget cost counts only the kept budgeted calls.
+func (r *Runtime) capAllowedCalls(allowed []planner.ToolRequest, caps policy.CapsState) ([]planner.ToolRequest, int) {
+	remaining := caps.RemainingToolCalls
+	if remaining < 0 {
+		panic(fmt.Sprintf("runtime: negative remaining tool calls: %d", remaining))
 	}
-	if caps.MaxToolCalls > 0 && caps.RemainingToolCalls < len(allowed) {
-		allowed = allowed[:caps.RemainingToolCalls]
+	enforceCap := caps.MaxToolCalls > 0
+	out := make([]planner.ToolRequest, 0, len(allowed))
+	budgetCost := 0
+	for _, call := range allowed {
+		if r.isBookkeeping(call.Name) {
+			out = append(out, call)
+			continue
+		}
+		if enforceCap && budgetCost >= remaining {
+			continue
+		}
+		out = append(out, call)
+		budgetCost++
 	}
-	return allowed
+	return out, budgetCost
 }
 
 // prepareAllowedCallsMetadata stamps run/session/turn IDs and deterministic tool

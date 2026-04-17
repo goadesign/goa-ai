@@ -108,6 +108,9 @@ func (r *RunPolicyExpr) EvalName() string {
 // Validate enforces semantic constraints on the run policy.
 func (r *RunPolicyExpr) Validate() error {
 	verr := new(eval.ValidationErrors)
+	if r.DefaultCaps != nil && r.DefaultCaps.MaxToolCalls <= 0 {
+		verr.Add(r.DefaultCaps, "DefaultCaps requires MaxToolCalls > 0")
+	}
 	if r.OnMissingFields != "" {
 		switch r.OnMissingFields {
 		case "finalize", "await_clarification", "resume":

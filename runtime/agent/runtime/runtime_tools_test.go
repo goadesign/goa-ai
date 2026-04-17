@@ -462,12 +462,13 @@ func TestRegisterToolset_RejectsAgentToolsetWithoutSpecs(t *testing.T) {
 }
 
 func TestToolsetTaskQueueOverrideUsed(t *testing.T) {
+	childSpec := newAnyJSONSpec("child", "svc.export")
 	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.export": {TaskQueue: "q1", Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 		return &planner.ToolResult{
 			Name: call.Name,
 		}, nil
 	})}}, Bus: noopHooks{}}
-	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{"child": newAnyJSONSpec("child", "svc.export")}
+	seedTestToolSpecs(rt, childSpec)
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, hasPlanResult: true}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
@@ -485,12 +486,13 @@ func TestToolsetTaskQueueOverrideUsed(t *testing.T) {
 }
 
 func TestPreserveModelProvidedToolCallID(t *testing.T) {
+	toolSpec := newAnyJSONSpec("tool", "svc.ts")
 	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 		// Ensure the ID provided by the planner/model flows into the executor unchanged
 		require.Equal(t, "model-123", call.ToolCallID)
 		return &planner.ToolResult{Name: call.Name}, nil
 	})}}, Bus: noopHooks{}}
-	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{"tool": newAnyJSONSpec("tool", "svc.ts")}
+	seedTestToolSpecs(rt, toolSpec)
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, hasPlanResult: true}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
@@ -520,6 +522,7 @@ func TestActivityToolExecutorExecute(t *testing.T) {
 
 func TestRunLoopPauseResumeEmitsEvents(t *testing.T) {
 	recorder := &recordingHooks{}
+	toolSpec := newAnyJSONSpec("tool", "svc.ts")
 	rt := &Runtime{
 		Bus:           recorder,
 		logger:        telemetry.NoopLogger{},
@@ -533,7 +536,7 @@ func TestRunLoopPauseResumeEmitsEvents(t *testing.T) {
 			}, nil
 		})}},
 	}
-	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{"tool": newAnyJSONSpec("tool", "svc.ts")}
+	seedTestToolSpecs(rt, toolSpec)
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		hookRuntime: rt,
@@ -912,6 +915,7 @@ func TestServiceToolEventsPropagateBounds(t *testing.T) {
 
 func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 	recorder := &recordingHooks{}
+	inlineSpec := newAnyJSONSpec("child.get_time_series", "child.tools")
 	rt := &Runtime{
 		Bus:           recorder,
 		logger:        telemetry.NoopLogger{},
@@ -934,9 +938,7 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 			}),
 		},
 	}
-	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
-		tools.Ident("child.get_time_series"): newAnyJSONSpec("child.get_time_series", "child.tools"),
-	}
+	seedTestToolSpecs(rt, inlineSpec)
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		hookRuntime: rt,

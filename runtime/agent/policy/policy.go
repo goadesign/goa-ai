@@ -79,8 +79,8 @@ type (
 		AllowedTools []tools.Ident
 
 		// Caps carries the updated caps that should be enforced for this turn and
-		// subsequent turns. Policies can decrement counts (consume budget) or adjust
-		// limits based on observed behavior.
+		// subsequent turns. Policies may only tighten configured budgets and
+		// deadlines; they never create new caps or relax existing ones.
 		Caps CapsState
 
 		// DisableTools signals that no further tool calls should be executed for this
@@ -98,6 +98,10 @@ type (
 		// stores this alongside run records and emits it in policy decision events.
 		Metadata map[string]any
 	}
+
+	// ToolBudgetClass classifies whether a tool consumes the run-level
+	// MaxToolCalls budget.
+	ToolBudgetClass string
 
 	// ToolMetadata describes a candidate tool available to the agent. The runtime
 	// provides this metadata to the policy engine for filtering and allowlist decisions.
@@ -119,23 +123,31 @@ type (
 		// Tags lists metadata labels for filtering (e.g., ["privileged", "external"]).
 		// Policies can allowlist/blocklist based on tags without hardcoding tool IDs.
 		Tags []string
+
+		// BudgetClass reports whether invoking the tool consumes the run-level
+		// MaxToolCalls budget. Budgeted tools count against the cap; bookkeeping
+		// tools are exempt.
+		BudgetClass ToolBudgetClass
 	}
 
 	// CapsState tracks remaining execution budgets for a run. The runtime decrements
 	// these counters as tool calls execute and failures occur. When caps are exhausted,
 	// the runtime terminates the workflow or forces a final response.
 	CapsState struct {
-		// MaxToolCalls is the total allowed tool invocations for the run. Zero means
-		// unlimited. Configured per-agent in the design via RunPolicy.
+		// MaxToolCalls is the total allowed budgeted tool invocations for the run.
+		// Bookkeeping tools are exempt. Zero means the cap is not configured.
+		// Configured per-agent in the design via RunPolicy.
 		MaxToolCalls int
 
-		// RemainingToolCalls tracks how many tool invocations are still allowed. The
-		// runtime decrements this after each tool execution (success or failure).
-		// When this reaches zero, no more tool calls are permitted.
+		// RemainingToolCalls tracks how many budgeted tool invocations are still
+		// allowed. The runtime decrements this after each budgeted tool execution
+		// (success or failure). When this reaches zero, no more budgeted tool calls
+		// are permitted.
 		RemainingToolCalls int
 
 		// MaxConsecutiveFailedToolCalls caps consecutive failures per run. Zero means
-		// unlimited. Used for circuit breaking: if N tools fail in a row, terminate.
+		// the cap is not configured. Used for circuit breaking: if N tools fail in
+		// a row, terminate.
 		MaxConsecutiveFailedToolCalls int
 
 		// RemainingConsecutiveFailedToolCalls tracks how many consecutive failures are allowed
@@ -149,6 +161,13 @@ type (
 		// exceeds this timestamp. Configured per-agent via RunPolicy.TimeBudget.
 		ExpiresAt time.Time
 	}
+)
+
+const (
+	// ToolBudgetClassBudgeted identifies tools that consume MaxToolCalls budget.
+	ToolBudgetClassBudgeted ToolBudgetClass = "budgeted"
+	// ToolBudgetClassBookkeeping identifies tools that are exempt from MaxToolCalls.
+	ToolBudgetClassBookkeeping ToolBudgetClass = "bookkeeping"
 )
 
 // RetryReason categorizes planner failures communicated via RetryHint. These values

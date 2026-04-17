@@ -58,6 +58,7 @@ func New{{ .Toolset.Agent.GoName }}ToolsetRegistration(rt *runtime.Runtime) runt
     }
     reg := runtime.NewAgentToolsetRegistration(rt, cfg)
     reg.Specs = {{ $.Toolset.SpecsPackageName }}specs.Specs
+    reg.ToolMetadataLookup = {{ $.Toolset.SpecsPackageName }}specs.MetadataByName
     {{- $hasCallHints := false -}}
     {{- $hasResultHints := false -}}
     {{- range .Toolset.Tools }}
@@ -147,6 +148,7 @@ func NewRegistration(
     }
     reg := runtime.NewAgentToolsetRegistration(rt, cfg)
     reg.Specs = {{ $.Toolset.SpecsPackageName }}specs.Specs
+    reg.ToolMetadataLookup = {{ $.Toolset.SpecsPackageName }}specs.MetadataByName
     {{- $hasCallHints = false -}}
     {{- $hasResultHints = false -}}
     {{- range .Toolset.Tools }}

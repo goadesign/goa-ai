@@ -210,11 +210,8 @@ func toSet[T ~string](values []string) map[T]struct{} {
 }
 
 func limitCap(current int, limit int) int {
-	if limit <= 0 {
+	if current == 0 || limit <= 0 {
 		return current
-	}
-	if current == 0 {
-		return limit
 	}
 	if current < limit {
 		return current

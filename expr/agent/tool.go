@@ -72,8 +72,17 @@ type (
 
 		// TerminalRun indicates that once this tool executes, the runtime should
 		// terminate the run immediately without requesting a follow-up planner
-		// PlanResume/finalization turn. It is set via the TerminalRun DSL helper.
+		// PlanResume/finalization turn. Terminal tools are always treated as
+		// bookkeeping so the run-level retrieval budget cannot trim them away.
+		// It is set via the TerminalRun DSL helper.
 		TerminalRun bool
+
+		// Bookkeeping indicates the tool is a structured bookkeeping tool (status
+		// updates, findings, terminal commits) and must not be accounted against
+		// the run-level MaxToolCalls retrieval budget. Runtimes do not decrement
+		// the budget for bookkeeping calls and never drop them during budget
+		// trimming. It is set via the Bookkeeping DSL helper.
+		Bookkeeping bool
 
 		// ResultReminder is an optional system reminder that is injected into
 		// the conversation after the tool result is returned. It provides
@@ -246,13 +255,17 @@ func (t *ToolExpr) RecordBinding(serviceName, methodName string) {
 	t.bindMethodName = methodName
 }
 
-// Prepare ensures Args and Return are always non-nil attributes.
+// Prepare ensures Args and Return are always non-nil attributes and applies
+// canonical tool normalization before validation/codegen.
 func (t *ToolExpr) Prepare() {
 	if t.Args == nil {
 		t.Args = &goaexpr.AttributeExpr{Type: goaexpr.Empty}
 	}
 	if t.Return == nil {
 		t.Return = &goaexpr.AttributeExpr{Type: goaexpr.Empty}
+	}
+	if t.TerminalRun {
+		t.Bookkeeping = true
 	}
 }
 

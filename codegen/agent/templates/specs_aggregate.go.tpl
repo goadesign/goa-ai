@@ -22,6 +22,7 @@ var (
                 {{ printf "%q" . }},
             {{- end }}
             },
+            BudgetClass: policy.ToolBudgetClass{{ if .Bookkeeping }}Bookkeeping{{ else }}Budgeted{{ end }},
         },
         {{- end }}
     {{- end }}
@@ -82,4 +83,19 @@ func AdvertisedSpecs() []tools.ToolSpec {
 // Metadata exposes policy metadata for the aggregated tools.
 func Metadata() []policy.ToolMetadata {
     return metadata
+}
+
+// MetadataByName returns policy metadata for the named tool if present.
+func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
+    switch name {
+    {{- range .Toolsets }}
+        {{- $pkg := .SpecsPackageName }}
+        {{- range .Tools }}
+    case tools.Ident({{ printf "%q" .QualifiedName }}):
+        return {{ $pkg }}.MetadataByName(name)
+        {{- end }}
+    {{- end }}
+    default:
+        return policy.ToolMetadata{}, false
+    }
 }

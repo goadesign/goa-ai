@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/policy"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -282,6 +283,66 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 	},
 }
 
+// AssistantAssistantMcpToolsetToolMetadata contains canonical policy metadata for the assistant-mcp toolset.
+var AssistantAssistantMcpToolsetToolMetadata = []policy.ToolMetadata{
+	{
+		ID:          "analyze_sentiment",
+		Title:       "Analyze Sentiment",
+		Description: "Analyze sentiment of text",
+		BudgetClass: policy.ToolBudgetClassBudgeted,
+	},
+	{
+		ID:          "extract_keywords",
+		Title:       "Extract Keywords",
+		Description: "Extract keywords from text",
+		BudgetClass: policy.ToolBudgetClassBudgeted,
+	},
+	{
+		ID:          "summarize_text",
+		Title:       "Summarize Text",
+		Description: "Summarize text",
+		BudgetClass: policy.ToolBudgetClassBudgeted,
+	},
+	{
+		ID:          "search",
+		Title:       "Search",
+		Description: "Search knowledge base",
+		BudgetClass: policy.ToolBudgetClassBudgeted,
+	},
+	{
+		ID:          "execute_code",
+		Title:       "Execute Code",
+		Description: "Execute code",
+		BudgetClass: policy.ToolBudgetClassBudgeted,
+	},
+	{
+		ID:          "process_batch",
+		Title:       "Process Batch",
+		Description: "Process a batch of items",
+		BudgetClass: policy.ToolBudgetClassBudgeted,
+	},
+}
+
+// AssistantAssistantMcpToolsetToolMetadataByName returns canonical policy metadata for the named MCP tool.
+func AssistantAssistantMcpToolsetToolMetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
+	switch name {
+	case "analyze_sentiment":
+		return AssistantAssistantMcpToolsetToolMetadata[0], true
+	case "extract_keywords":
+		return AssistantAssistantMcpToolsetToolMetadata[1], true
+	case "summarize_text":
+		return AssistantAssistantMcpToolsetToolMetadata[2], true
+	case "search":
+		return AssistantAssistantMcpToolsetToolMetadata[3], true
+	case "execute_code":
+		return AssistantAssistantMcpToolsetToolMetadata[4], true
+	case "process_batch":
+		return AssistantAssistantMcpToolsetToolMetadata[5], true
+	default:
+		return policy.ToolMetadata{}, false
+	}
+}
+
 // RegisterAssistantAssistantMcpToolset registers the assistant-mcp toolset with the runtime.
 // The caller parameter provides the MCP client for making remote calls.
 func RegisterAssistantAssistantMcpToolset(ctx context.Context, rt *agentsruntime.Runtime, caller mcpruntime.Caller) error {
@@ -342,7 +403,7 @@ func RegisterAssistantAssistantMcpToolset(ctx context.Context, rt *agentsruntime
 	return rt.RegisterToolset(agentsruntime.ToolsetRegistration{
 		Name:        "assistant.assistant-mcp",
 		Description: "AI Assistant service with full MCP protocol support",
-		Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: func(ctx context.Context, call *planner.ToolRequest) (*agentsruntime.ToolExecutionResult, error) {
 			if call == nil {
 				return nil, errors.New("tool request is nil")
 			}
@@ -350,10 +411,11 @@ func RegisterAssistantAssistantMcpToolset(ctx context.Context, rt *agentsruntime
 			if err != nil {
 				return nil, err
 			}
-			return &out, nil
+			return agentsruntime.Executed(&out), nil
 		},
-		Specs:            AssistantAssistantMcpToolsetToolSpecs,
-		DecodeInExecutor: true,
+		Specs:              AssistantAssistantMcpToolsetToolSpecs,
+		ToolMetadataLookup: AssistantAssistantMcpToolsetToolMetadataByName,
+		DecodeInExecutor:   true,
 	})
 }
 

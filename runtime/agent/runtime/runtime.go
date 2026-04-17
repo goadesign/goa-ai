@@ -79,6 +79,11 @@ type (
 	//     when possible; it may be nil when decoding fails.
 	HintOverrideFunc func(ctx context.Context, tool tools.Ident, payload any) (hint string, ok bool)
 
+	// ToolMetadataLookup resolves canonical policy metadata for a tool identifier.
+	// Generated registrations should provide this so the runtime can reuse
+	// generation-time metadata instead of reconstructing it from specs.
+	ToolMetadataLookup func(name tools.Ident) (policy.ToolMetadata, bool)
+
 	// Runtime orchestrates agent workflows, policy enforcement, memory persistence,
 	// and event streaming. It serves as the central registry for agents, toolsets,
 	// and models. All public methods are thread-safe and can be called concurrently.
@@ -126,6 +131,10 @@ type (
 		agents    map[agent.Ident]AgentRegistration
 		toolsets  map[string]ToolsetRegistration
 		toolSpecs map[tools.Ident]tools.ToolSpec
+		// policyToolMetadata stores canonical per-tool policy metadata resolved at
+		// registration time from generated lookups or, for manual registrations,
+		// derived once from the supplied specs.
+		policyToolMetadata map[tools.Ident]policy.ToolMetadata
 		// parsed tool payload schemas cached by tool name for hint building
 		toolSchemas map[string]map[string]any
 		models      map[string]model.Client
@@ -277,6 +286,9 @@ type (
 		ExecuteToolActivityOptions engine.ActivityOptions
 		// Specs provides JSON codecs for every tool declared in the agent design.
 		Specs []tools.ToolSpec
+		// ToolMetadataLookup resolves canonical policy metadata for the tools
+		// declared in Specs.
+		ToolMetadataLookup ToolMetadataLookup
 		// Policy configures caps/time budget/interrupt settings for the agent.
 		Policy RunPolicy
 	}
@@ -296,8 +308,10 @@ type (
 		// Description provides human-readable context for tooling.
 		Description string
 
-		// Metadata captures structured policy metadata about the toolset.
-		Metadata policy.ToolMetadata
+		// ToolMetadataLookup resolves canonical policy metadata for tools in this
+		// registration. Generated toolsets should provide this so runtime policy
+		// evaluation can consume generation-time metadata directly.
+		ToolMetadataLookup ToolMetadataLookup
 
 		// Execute invokes the concrete tool implementation for a given tool call.
 		// Returns the durable tool result plus an optional current-batch pause
@@ -365,10 +379,12 @@ type (
 	// These values are evaluated during workflow execution to enforce limits and prevent
 	// runaway tool loops or budget overruns.
 	RunPolicy struct {
-		// MaxToolCalls caps the total number of tool invocations per run (0 = unlimited).
+		// MaxToolCalls caps the total number of budgeted (non-bookkeeping) tool
+		// invocations per run. Zero means the cap is not configured.
 		MaxToolCalls int
 
-		// MaxConsecutiveFailedToolCalls caps sequential failures before aborting (0 = unlimited).
+		// MaxConsecutiveFailedToolCalls caps sequential failures before aborting.
+		// Zero means the cap is not configured.
 		MaxConsecutiveFailedToolCalls int
 
 		// TimeBudget is the semantic wall-clock budget for planner and tool work
@@ -566,20 +582,13 @@ func WithTiming(t Timing) RunOption {
 	}
 }
 
-// WithPerTurnMaxToolCalls sets a per-turn cap on tool executions. Zero means unlimited.
-func WithPerTurnMaxToolCalls(n int) RunOption {
-	return func(in *RunInput) {
-		if in.Policy == nil {
-			in.Policy = &PolicyOverrides{}
-		}
-		in.Policy.PerTurnMaxToolCalls = n
-	}
-}
-
 // WithRunMaxToolCalls sets a per-run cap on total tool executions.
-// Non-zero overrides the agent's DSL RunPolicy default for this run.
-// Zero means no override (use the design default, which may be unlimited).
+// The caller must supply a positive override value; omit the option to use the
+// agent's design default.
 func WithRunMaxToolCalls(n int) RunOption {
+	if n <= 0 {
+		panic("runtime: WithRunMaxToolCalls requires n > 0")
+	}
 	return func(in *RunInput) {
 		if in.Policy == nil {
 			in.Policy = &PolicyOverrides{}
@@ -588,10 +597,13 @@ func WithRunMaxToolCalls(n int) RunOption {
 	}
 }
 
-// WithRunMaxConsecutiveFailedToolCalls caps consecutive failures before aborting the run.
-// Non-zero overrides the agent's DSL RunPolicy default for this run.
-// Zero means no override (use the design default, which may be unlimited).
+// WithRunMaxConsecutiveFailedToolCalls caps consecutive failures before aborting
+// the run. The caller must supply a positive override value; omit the option to
+// use the agent's design default.
 func WithRunMaxConsecutiveFailedToolCalls(n int) RunOption {
+	if n <= 0 {
+		panic("runtime: WithRunMaxConsecutiveFailedToolCalls requires n > 0")
+	}
 	return func(in *RunInput) {
 		if in.Policy == nil {
 			in.Policy = &PolicyOverrides{}
@@ -724,6 +736,7 @@ func newFromOptions(opts Options) *Runtime {
 		agents:                make(map[agent.Ident]AgentRegistration),
 		toolsets:              make(map[string]ToolsetRegistration),
 		toolSpecs:             make(map[tools.Ident]tools.ToolSpec),
+		policyToolMetadata:    make(map[tools.Ident]policy.ToolMetadata),
 		toolSchemas:           make(map[string]map[string]any),
 		models:                make(map[string]model.Client),
 		runHandles:            make(map[string]engine.WorkflowHandle),
@@ -1043,6 +1056,9 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	if reg.ResumeActivityName == "" {
 		return fmt.Errorf("%w: missing resume activity name", ErrInvalidConfig)
 	}
+	if err := validateSpecs(reg.Specs, reg.ToolMetadataLookup); err != nil {
+		return err
+	}
 	if r.Engine == nil {
 		return ErrEngineNotConfigured
 	}
@@ -1108,7 +1124,7 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 
 	r.mu.Lock()
 	r.agents[reg.ID] = reg
-	r.addToolSpecsLocked(reg.Specs)
+	r.addToolSpecsLocked(reg.Specs, reg.ToolMetadataLookup)
 	if len(reg.Specs) > 0 {
 		// store a shallow copy to avoid external mutation
 		cp := make([]tools.ToolSpec, len(reg.Specs))
@@ -1116,7 +1132,7 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 		r.agentToolSpecs[reg.ID] = cp
 	}
 	for _, ts := range reg.Toolsets {
-		if err := validateAgentToolsetSpecs(ts); err != nil {
+		if err := validateToolsetSpecs(ts); err != nil {
 			r.mu.Unlock()
 			return err
 		}
@@ -1167,7 +1183,7 @@ func (r *Runtime) RegisterToolset(ts ToolsetRegistration) error {
 	if ts.Execute == nil {
 		return errors.New("toolset execute function is required")
 	}
-	if err := validateAgentToolsetSpecs(ts); err != nil {
+	if err := validateToolsetSpecs(ts); err != nil {
 		return err
 	}
 	r.mu.Lock()
@@ -1184,7 +1200,10 @@ func (r *Runtime) RegisterToolset(ts ToolsetRegistration) error {
 	return nil
 }
 
-func validateAgentToolsetSpecs(ts ToolsetRegistration) error {
+func validateToolsetSpecs(ts ToolsetRegistration) error {
+	if err := validateSpecs(ts.Specs, ts.ToolMetadataLookup); err != nil {
+		return err
+	}
 	if ts.AgentTool == nil {
 		return nil
 	}
@@ -1197,6 +1216,34 @@ func validateAgentToolsetSpecs(ts ToolsetRegistration) error {
 			return fmt.Errorf("%w: agent toolset %q (agent=%s) requires tool specs/codecs", ErrInvalidConfig, ts.Name, agentID)
 		}
 		return fmt.Errorf("%w: agent toolset %q requires tool specs/codecs", ErrInvalidConfig, ts.Name)
+	}
+	return nil
+}
+
+func validateSpecs(specs []tools.ToolSpec, lookup ToolMetadataLookup) error {
+	for _, spec := range specs {
+		if spec.TerminalRun && !spec.Bookkeeping {
+			return fmt.Errorf("%w: terminal tool %q must also declare bookkeeping", ErrInvalidConfig, spec.Name)
+		}
+		if lookup == nil {
+			continue
+		}
+		meta, ok := lookup(spec.Name)
+		if !ok {
+			return fmt.Errorf("%w: missing policy metadata for tool %q", ErrInvalidConfig, spec.Name)
+		}
+		if meta.ID != spec.Name {
+			return fmt.Errorf("%w: policy metadata id %q does not match tool %q", ErrInvalidConfig, meta.ID, spec.Name)
+		}
+		if meta.BudgetClass != toolBudgetClass(spec.Bookkeeping) {
+			return fmt.Errorf(
+				"%w: policy metadata budget class %q does not match tool %q bookkeeping=%t",
+				ErrInvalidConfig,
+				meta.BudgetClass,
+				spec.Name,
+				spec.Bookkeeping,
+			)
+		}
 	}
 	return nil
 }
@@ -1794,14 +1841,21 @@ func repairedTailNeedsCompletionDelta(original, repaired runlog.Page) bool {
 // Caller must hold r.mu.
 func (r *Runtime) addToolsetLocked(ts ToolsetRegistration) {
 	r.toolsets[ts.Name] = ts
-	r.addToolSpecsLocked(ts.Specs)
+	r.addToolSpecsLocked(ts.Specs, ts.ToolMetadataLookup)
 }
 
 // addToolSpecsLocked registers tool specs without acquiring the lock.
 // Caller must hold r.mu.
-func (r *Runtime) addToolSpecsLocked(specs []tools.ToolSpec) {
+func (r *Runtime) addToolSpecsLocked(specs []tools.ToolSpec, lookup ToolMetadataLookup) {
+	if r.toolSpecs == nil {
+		r.toolSpecs = make(map[tools.Ident]tools.ToolSpec)
+	}
+	if r.policyToolMetadata == nil {
+		r.policyToolMetadata = make(map[tools.Ident]policy.ToolMetadata)
+	}
 	for _, spec := range specs {
 		r.toolSpecs[spec.Name] = spec
+		r.policyToolMetadata[spec.Name] = canonicalToolMetadata(spec, lookup)
 	}
 }
 
@@ -1811,6 +1865,19 @@ func (r *Runtime) toolSpec(name tools.Ident) (tools.ToolSpec, bool) {
 	spec, ok := r.toolSpecs[name]
 	r.mu.RUnlock()
 	return spec, ok
+}
+
+func (r *Runtime) policyMetadata(name tools.Ident) (policy.ToolMetadata, bool) {
+	r.mu.RLock()
+	meta, ok := r.policyToolMetadata[name]
+	r.mu.RUnlock()
+	if ok {
+		return meta, true
+	}
+	if _, ok := r.toolSpec(name); !ok {
+		return policy.ToolMetadata{}, false
+	}
+	panic(fmt.Sprintf("runtime: missing canonical policy metadata for tool %q", name))
 }
 
 // ListAgents returns the IDs of registered agents.

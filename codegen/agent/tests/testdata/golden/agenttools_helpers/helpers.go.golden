@@ -70,6 +70,7 @@ func NewScribeToolsetRegistration(rt *runtime.Runtime) runtime.ToolsetRegistrati
 	}
 	reg := runtime.NewAgentToolsetRegistration(rt, cfg)
 	reg.Specs = searchspecs.Specs
+	reg.ToolMetadataLookup = searchspecs.MetadataByName
 	return reg
 }
 
@@ -116,6 +117,7 @@ func NewRegistration(
 	}
 	reg := runtime.NewAgentToolsetRegistration(rt, cfg)
 	reg.Specs = searchspecs.Specs
+	reg.ToolMetadataLookup = searchspecs.MetadataByName
 	return reg, nil
 }
 

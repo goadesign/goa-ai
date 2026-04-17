@@ -13,11 +13,11 @@ import (
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
-	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 func TestRunLoopPauseResumeEmitsEvents_Barriered(t *testing.T) {
 	recorder := &recordingHooks{}
+	toolSpec := newAnyJSONSpec("tool", "svc.ts")
 	rt := &Runtime{
 		Bus:     recorder,
 		logger:  telemetry.NoopLogger{},
@@ -31,9 +31,7 @@ func TestRunLoopPauseResumeEmitsEvents_Barriered(t *testing.T) {
 			})}},
 	}
 	// Strong contract: codecs must be present. Provide a minimal spec for the tool.
-	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
-		tools.Ident("tool"): newAnyJSONSpec("tool", "svc.ts"),
-	}
+	seedTestToolSpecs(rt, toolSpec)
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, barrier: make(chan struct{}, 1)}
 	wfCtx.ensureSignals()
 	go func() {

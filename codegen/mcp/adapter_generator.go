@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"goa.design/goa-ai/codegen/naming"
 	"goa.design/goa-ai/codegen/shared"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa/v3/codegen"
@@ -62,6 +63,7 @@ type (
 	// RegisterTool represents a single tool entry in the helper file.
 	RegisterTool struct {
 		ID            string
+		Title         string
 		QualifiedName string
 		Description   string
 		PayloadType   string
@@ -299,6 +301,7 @@ func (g *adapterGenerator) buildRegisterData(data *AdapterData) *RegisterData {
 		}
 		reg.Tools = append(reg.Tools, RegisterTool{
 			ID:            tool.Name,
+			Title:         naming.HumanizeTitle(tool.Name),
 			QualifiedName: fmt.Sprintf("%s.%s.%s", reg.ServiceName, reg.SuiteName, tool.Name),
 			Description:   tool.Description,
 			PayloadType:   payloadType,

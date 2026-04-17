@@ -128,9 +128,6 @@ type (
 	// PolicyOverrides configures per-run policy constraints. All fields are optional;
 	// zero values mean no override.
 	PolicyOverrides struct {
-		// PerTurnMaxToolCalls limits the number of tool calls the planner may issue per turn.
-		PerTurnMaxToolCalls int
-
 		// RestrictToTool restricts tool execution to the given tool identifier.
 		RestrictToTool tools.Ident
 
@@ -144,7 +141,8 @@ type (
 		// AllowedTags/DeniedTags with these clauses using logical AND.
 		TagClauses []TagPolicyClause
 
-		// MaxToolCalls caps the total number of tool calls a run may execute.
+		// MaxToolCalls caps the total number of budgeted (non-bookkeeping) tool
+		// calls a run may execute.
 		MaxToolCalls int
 
 		// MaxConsecutiveFailedToolCalls caps the number of consecutive failing tool calls before finalizing.
@@ -169,8 +167,9 @@ type (
 		InterruptsAllowed bool
 	}
 
-	// RunOutput represents the final outcome returned by a run workflow, including the
-	// concluding assistant message plus tool traces and planner notes for callers.
+	// RunOutput represents the final outcome returned by a run workflow, including
+	// the concluding assistant message (when the planner authored one) plus tool
+	// traces and planner notes for callers.
 	RunOutput struct {
 		// AgentID echoes the agent that produced the result.
 		AgentID agent.Ident
@@ -178,7 +177,8 @@ type (
 		// RunID echoes the workflow execution identifier.
 		RunID string
 
-		// Final is the assistant reply returned to the caller.
+		// Final is the assistant reply returned to the caller. It is nil when the
+		// run ended by terminal-tool contract rather than planner-authored text.
 		Final *model.Message
 
 		// FinalToolResult is the canonical parent tool_result for nested agent runs

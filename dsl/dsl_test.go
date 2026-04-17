@@ -80,6 +80,41 @@ func TestRunPolicyDefaults(t *testing.T) {
 	require.Equal(t, 45*time.Second, policy.TimeBudget)
 }
 
+func TestDefaultCapsRequiresPositiveMaxToolCalls(t *testing.T) {
+	err := runDSLWithError(t, func() {
+		API("test", func() {})
+		Service("tasks", func() {
+			Agent("planner", "Planner agent", func() {
+				RunPolicy(func() {
+					DefaultCaps(MaxToolCalls(0))
+				})
+			})
+		})
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "MaxToolCalls requires n > 0")
+}
+
+func TestTerminalRunImpliesBookkeeping(t *testing.T) {
+	runDSL(t, func() {
+		API("test", func() {})
+		Service("tasks", func() {
+			Agent("planner", "Planner agent", func() {
+				Use("tasks.progress", func() {
+					Tool("complete", "Complete task", func() {
+						TerminalRun()
+					})
+				})
+			})
+		})
+	})
+
+	tool := agentsexpr.Root.Agents[0].Used.Toolsets[0].Tools[0]
+	require.True(t, tool.TerminalRun)
+	require.True(t, tool.Bookkeeping)
+}
+
 func TestToolsetReferenceReuse(t *testing.T) {
 	runDSL(t, func() {
 		API("test", func() {})

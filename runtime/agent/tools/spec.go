@@ -51,8 +51,20 @@ type (
 		//
 		// This is intended for tools whose result is the user-facing terminal output
 		// (for example, a final report renderer) and should not be followed by extra
-		// model narration.
+		// model narration. Terminal tools must also declare Bookkeeping so the
+		// retrieval budget cannot trim them away. DSL-defined tools are normalized
+		// during expression preparation; runtime registration rejects inconsistent
+		// specs from other sources.
 		TerminalRun bool
+		// Bookkeeping indicates the tool is a structured bookkeeping tool and must
+		// not be charged against the run-level MaxToolCalls retrieval budget.
+		// Runtimes do not decrement RemainingToolCalls for bookkeeping calls and
+		// never drop them when trimming a batch to fit the remaining budget.
+		//
+		// This is intended for structured progress, status, finding, and terminal-
+		// commit tools whose cost is record-keeping rather than retrieval or
+		// side-effecting work.
+		Bookkeeping bool
 		// IsAgentTool indicates this tool is implemented by an agent (agent-as-tool).
 		// When true, the runtime executes the tool by starting the provider agent as a
 		// child workflow from within the parent workflow loop. Set by codegen when
@@ -132,10 +144,10 @@ type (
 	// It is emitted by goa-ai codegen when a tool uses Confirmation in the DSL.
 	//
 	// Confirmation uses a runtime-owned confirmation transport (typically an
-	// ask_question-style external interaction) to obtain an approve/deny decision
-	// from a human operator. Tool authors only configure templates and optional
-	// display title; the runtime owns how confirmation is requested and how the
-	// decision is delivered back to the run.
+	// await_confirmation interaction in the host application) to obtain an
+	// approve/deny decision from a human operator. Tool authors only configure
+	// templates and optional display title; the runtime owns how confirmation is
+	// requested and how the decision is delivered back to the run.
 	ConfirmationSpec struct {
 		// Title is an optional title shown in the confirmation UI (when supported).
 		Title string

@@ -17,15 +17,26 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+func canonicalMetadataMap(specs ...tools.ToolSpec) map[tools.Ident]policy.ToolMetadata {
+	metas := make(map[tools.Ident]policy.ToolMetadata, len(specs))
+	for _, spec := range specs {
+		metas[spec.Name] = canonicalToolMetadata(spec, nil)
+	}
+	return metas
+}
+
 func TestPolicyAllowlistTrimsToolExecution(t *testing.T) {
 	recorder := &recordingHooks{}
+	allowedSpec := newAnyJSONSpec("allowed", "svc.tools")
+	blockedSpec := newAnyJSONSpec("blocked", "svc.tools")
 	rt := &Runtime{
-		Bus:           recorder,
-		Policy:        &stubPolicyEngine{decision: policy.Decision{AllowedTools: []tools.Ident{tools.Ident("allowed")}}},
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
+		Bus:                recorder,
+		Policy:             &stubPolicyEngine{decision: policy.Decision{AllowedTools: []tools.Ident{tools.Ident("allowed")}}},
+		logger:             telemetry.NoopLogger{},
+		metrics:            telemetry.NoopMetrics{},
+		tracer:             telemetry.NoopTracer{},
+		RunEventStore:      runloginmem.New(),
+		policyToolMetadata: canonicalMetadataMap(allowedSpec, blockedSpec),
 	}
 	rt.toolsets = map[string]ToolsetRegistration{"svc.tools": {
 		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
@@ -34,7 +45,10 @@ func TestPolicyAllowlistTrimsToolExecution(t *testing.T) {
 				Result: map[string]any{"ok": true},
 			}, nil
 		})}}
-	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{"allowed": newAnyJSONSpec("allowed", "svc.tools"), "blocked": newAnyJSONSpec("blocked", "svc.tools")}
+	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
+		"allowed": allowedSpec,
+		"blocked": blockedSpec,
+	}
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		hookRuntime: rt,
@@ -71,24 +85,28 @@ func TestPolicyAllowlistTrimsToolExecution(t *testing.T) {
 }
 
 func TestApplyPerRunOverridesUsesAllTagClauses(t *testing.T) {
+	visibleSpec := func() tools.ToolSpec {
+		spec := newAnyJSONSpec("visible", "svc.tools")
+		spec.Tags = []string{"system", "profile"}
+		return spec
+	}()
+	missingSpec := func() tools.ToolSpec {
+		spec := newAnyJSONSpec("missing", "svc.tools")
+		spec.Tags = []string{"system"}
+		return spec
+	}()
+	deniedSpec := func() tools.ToolSpec {
+		spec := newAnyJSONSpec("denied", "svc.tools")
+		spec.Tags = []string{"system", "profile", "blocked"}
+		return spec
+	}()
 	rt := &Runtime{
-		logger: telemetry.NoopLogger{},
+		logger:             telemetry.NoopLogger{},
+		policyToolMetadata: canonicalMetadataMap(visibleSpec, missingSpec, deniedSpec),
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			"visible": func() tools.ToolSpec {
-				spec := newAnyJSONSpec("visible", "svc.tools")
-				spec.Tags = []string{"system", "profile"}
-				return spec
-			}(),
-			"missing": func() tools.ToolSpec {
-				spec := newAnyJSONSpec("missing", "svc.tools")
-				spec.Tags = []string{"system"}
-				return spec
-			}(),
-			"denied": func() tools.ToolSpec {
-				spec := newAnyJSONSpec("denied", "svc.tools")
-				spec.Tags = []string{"system", "profile", "blocked"}
-				return spec
-			}(),
+			"visible": visibleSpec,
+			"missing": missingSpec,
+			"denied":  deniedSpec,
 		},
 	}
 	rewritten, err := rt.applyPerRunOverrides(
@@ -156,4 +174,54 @@ func TestAdvertisedToolDefinitionsHonorCompiledPolicy(t *testing.T) {
 	schema, ok := definitions[0].InputSchema.(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "object", schema["type"])
+}
+
+func TestToolMetadataUsesRegisteredCanonicalMetadata(t *testing.T) {
+	rt := New(WithLogger(telemetry.NoopLogger{}))
+	spec := newAnyJSONSpec("svc.tools.search", "svc.tools")
+	spec.Description = "Spec description should not be re-derived"
+	spec.Tags = []string{"spec"}
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
+		Name: "svc.tools",
+		Specs: []tools.ToolSpec{
+			spec,
+		},
+		ToolMetadataLookup: func(name tools.Ident) (policy.ToolMetadata, bool) {
+			if name != spec.Name {
+				return policy.ToolMetadata{}, false
+			}
+			return policy.ToolMetadata{
+				ID:          name,
+				Title:       "Generated Search",
+				Description: "Generated metadata wins",
+				Tags:        []string{"generated"},
+				BudgetClass: policy.ToolBudgetClassBudgeted,
+			}, true
+		},
+		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			return &planner.ToolResult{Name: call.Name}, nil
+		}),
+	}))
+
+	require.Equal(t, []policy.ToolMetadata{
+		{
+			ID:          spec.Name,
+			Title:       "Generated Search",
+			Description: "Generated metadata wins",
+			Tags:        []string{"generated"},
+			BudgetClass: policy.ToolBudgetClassBudgeted,
+		},
+	}, rt.toolMetadata([]planner.ToolRequest{{Name: spec.Name}}))
+}
+
+func TestPolicyMetadataPanicsWithoutCanonicalMetadata(t *testing.T) {
+	rt := &Runtime{
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			"svc.tools.search": newAnyJSONSpec("svc.tools.search", "svc.tools"),
+		},
+	}
+
+	require.PanicsWithValue(t, `runtime: missing canonical policy metadata for tool "svc.tools.search"`, func() {
+		rt.policyMetadata("svc.tools.search")
+	})
 }

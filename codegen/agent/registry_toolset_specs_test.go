@@ -72,6 +72,7 @@ func TestRegistryToolsetSpecsStructure(t *testing.T) {
 	require.Contains(t, specsContent, "func PayloadSchema(name tools.Ident) ([]byte, bool)")
 	require.Contains(t, specsContent, "func ResultSchema(name tools.Ident) ([]byte, bool)")
 	require.Contains(t, specsContent, "func Metadata() []policy.ToolMetadata")
+	require.Contains(t, specsContent, "func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool)")
 	require.Contains(t, specsContent, "RegistryToolsetID")
 	require.Contains(t, specsContent, "RegistryName")
 	require.Contains(t, specsContent, "ToolsetName")
@@ -133,6 +134,7 @@ func TestRegistryToolsetSpecsMetadata(t *testing.T) {
 	require.Contains(t, specsContent, "\"test-registry\"")
 	require.Contains(t, specsContent, "\"enterprise-tools\"")
 	require.Contains(t, specsContent, "\"1.2.3\"")
+	require.Contains(t, specsContent, "BudgetClass: policy.ToolBudgetClassBudgeted")
 }
 
 // TestRegistryToolsetSpecsGeneratorData verifies generator data identifies registry toolsets.

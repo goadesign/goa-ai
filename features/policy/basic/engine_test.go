@@ -51,6 +51,19 @@ func TestEngineRestrictsViaRetryHint(t *testing.T) {
 	require.Equal(t, 1, decision.Caps.RemainingToolCalls)
 }
 
+func TestEngineRestrictToToolDoesNotSynthesizeBudget(t *testing.T) {
+	engine, err := basic.New(basic.Options{})
+	require.NoError(t, err)
+	decision, err := engine.Decide(context.Background(), policy.Input{
+		Tools:         []policy.ToolMetadata{{ID: "svc.alpha.tool"}, {ID: "svc.beta.tool"}},
+		RetryHint:     &policy.RetryHint{Tool: "svc.beta.tool", RestrictToTool: true},
+		RemainingCaps: policy.CapsState{},
+	})
+	require.NoError(t, err)
+	require.Equal(t, []tools.Ident{tools.Ident("svc.beta.tool")}, decision.AllowedTools)
+	require.Zero(t, decision.Caps.RemainingToolCalls)
+}
+
 func TestEngineRemovesUnavailableTool(t *testing.T) {
 	engine, err := basic.New(basic.Options{AllowTools: []string{"svc.alpha.tool", "svc.beta.tool"}})
 	require.NoError(t, err)

@@ -174,16 +174,21 @@ func OnMissingFields(action string) {
 // on agent execution.
 type CapsOption func(*expragents.CapsExpr)
 
-// MaxToolCalls configures the maximum number of tool invocations allowed during
-// agent execution. Use this with DefaultCaps to limit total tool usage.
+// MaxToolCalls configures the maximum number of budgeted (non-bookkeeping) tool
+// invocations allowed during agent execution. Use this with DefaultCaps to
+// limit retrieval-style tool usage while exempting bookkeeping calls.
 //
-// MaxToolCalls takes a single integer argument specifying the maximum count.
+// MaxToolCalls takes a single positive integer argument specifying the maximum count.
 //
 // Example:
 //
 //	DefaultCaps(MaxToolCalls(15))
 func MaxToolCalls(n int) CapsOption {
 	return func(c *expragents.CapsExpr) {
+		if n <= 0 {
+			eval.ReportError("MaxToolCalls requires n > 0")
+			return
+		}
 		c.MaxToolCalls = n
 	}
 }
@@ -192,14 +197,18 @@ func MaxToolCalls(n int) CapsOption {
 // tool failures before the agent stops execution. Use this with DefaultCaps to
 // prevent runaway failure loops.
 //
-// MaxConsecutiveFailedToolCalls takes a single integer argument specifying the
-// maximum consecutive failure count.
+// MaxConsecutiveFailedToolCalls takes a single positive integer argument specifying
+// the maximum consecutive failure count.
 //
 // Example:
 //
 //	DefaultCaps(MaxConsecutiveFailedToolCalls(3))
 func MaxConsecutiveFailedToolCalls(n int) CapsOption {
 	return func(c *expragents.CapsExpr) {
+		if n <= 0 {
+			eval.ReportError("MaxConsecutiveFailedToolCalls requires n > 0")
+			return
+		}
 		c.MaxConsecutiveFailedToolCall = n
 	}
 }

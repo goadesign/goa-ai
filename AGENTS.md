@@ -51,7 +51,10 @@ You are an agentic systems engineer. Optimize for elegance, strong contracts, co
 - Required arrays must be non-empty. If empty is valid, make the field optional. OneOf/union values must set exactly one variant.
 - Do not rely on nil vs empty slices to encode presence.
 - Every `Field` must include an inline description string. Prefer `SharedType` for shared types, use DSL `Description(...)`/field descriptions instead of comment-only docs, and add `Example(...)` plus validations where appropriate.
-- Apply partial evaluation: if a branch, collection, or structure is known at generation time, emit only the applicable code. Do not generate runtime loops or runtime conditionals over static inputs.
+- Prefer codegen-time specialization over runtime interpretation. If the DSL or generator already knows the branch, loop domain, identifier set, metadata, or wiring shape, emit the final code/data directly instead of generating generic runtime logic to rediscover it.
+- Apply partial evaluation aggressively: if a branch, collection, or structure is known at generation time, emit only the applicable code. Use template `if`, `range`, and helper composition to specialize the output; do not emit runtime loops or runtime conditionals over static inputs.
+- Generated code should expose canonical precomputed artifacts for static facts, such as typed lookups, metadata, routing tables, and configuration. Runtime code should consume those artifacts, not reconstruct them from broader specs on every call.
+- Keep runtime branching for truly dynamic inputs only, such as user/model input, network results, database state, and registry-discovered catalogs.
 - When runtime dispatch is truly required, prefer a shared runtime library plus generated configuration over duplicating near-identical generated algorithms.
 - Generator edits must be section-driven and guard-first: match the target section early and `continue`; avoid redundant `s.Source == ""`-style guards.
 - Generator code must stay generic. Derive aliases from imports instead of example-specific names.
