@@ -1196,16 +1196,36 @@ func hasToolDefinition(defs []*model.ToolDefinition, name string) bool {
 	return false
 }
 
+// adaptiveThinkingModelMarkers lists the Claude Opus minor-version markers that
+// require (Opus 4.6) or exclusively support (Opus 4.7+) adaptive thinking. New
+// Opus releases should be added here after verifying their thinking contract.
+//
+// Contract:
+//   - Opus 4.6: adaptive preferred; legacy type:"enabled" + budget_tokens still
+//     works but produces unreliable thinking signatures and is deprecated.
+//   - Opus 4.7+: legacy type:"enabled" + budget_tokens returns a 400 error from
+//     Bedrock. Adaptive thinking is the only supported mode.
+var adaptiveThinkingModelMarkers = []string{
+	"opus-4-6",
+	"opus-4-7",
+}
+
 // isAdaptiveThinkingModel reports whether modelID requires adaptive thinking
 // configuration. Starting with Opus 4.6, Anthropic deprecates the manual
 // type:"enabled" + budget_tokens config in favor of type:"adaptive", where the
 // model dynamically decides when and how deeply to reason. Interleaved thinking
-// is automatic in adaptive mode — no beta header is needed. Using the legacy
-// config with these models produces unreliable thinking signatures.
+// is automatic in adaptive mode — no beta header is needed. On Opus 4.7+ the
+// legacy config is removed entirely and returns a 400 error.
 func isAdaptiveThinkingModel(modelID string) bool {
-	// Bedrock model IDs use the form "global.anthropic.claude-opus-4-6-v1" or
-	// "anthropic.claude-opus-4-6-…". Match the "opus-4-6" segment.
-	return strings.Contains(modelID, "opus-4-6")
+	// Bedrock model IDs use the form "global.anthropic.claude-opus-4-6-v1",
+	// "us.anthropic.claude-opus-4-7", or "anthropic.claude-opus-4-7". Match the
+	// "opus-<major>-<minor>" segment against the known markers.
+	for _, marker := range adaptiveThinkingModelMarkers {
+		if strings.Contains(modelID, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // isNovaModel reports whether the given model identifier refers to an Amazon
