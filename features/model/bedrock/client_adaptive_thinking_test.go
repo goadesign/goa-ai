@@ -99,3 +99,64 @@ func TestBuildConverseStreamInputOpus47UsesAdaptiveThinking(t *testing.T) {
 	_, hasBeta := fields["anthropic_beta"]
 	assert.False(t, hasBeta, "adaptive thinking must not include the interleaved beta header")
 }
+
+// Claude Opus 4.7 rejects sampling parameters like temperature. The Bedrock
+// adapter must omit temperature for Opus 4.7 requests while preserving it for
+// models that still support sampling controls.
+func TestOpus47OmitsTemperatureFromInferenceConfig(t *testing.T) {
+	client := &Client{
+		defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		highModel:    "us.anthropic.claude-opus-4-7",
+		smallModel:   "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+	}
+
+	cases := []struct {
+		name       string
+		modelClass model.ModelClass
+		wantTemp   bool
+	}{
+		{
+			name:       "default keeps temperature",
+			modelClass: model.ModelClassDefault,
+			wantTemp:   true,
+		},
+		{
+			name:       "high reasoning omits temperature",
+			modelClass: model.ModelClassHighReasoning,
+			wantTemp:   false,
+		},
+		{
+			name:       "small keeps temperature",
+			modelClass: model.ModelClassSmall,
+			wantTemp:   true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &model.Request{
+				ModelClass:  tc.modelClass,
+				Temperature: 0.2,
+				Messages: []*model.Message{{
+					Role:  model.ConversationRoleUser,
+					Parts: []model.Part{model.TextPart{Text: "hello"}},
+				}},
+			}
+
+			parts, err := client.prepareRequest(context.Background(), req)
+			require.NoError(t, err)
+
+			input := client.buildConverseInput(parts, req)
+			if tc.wantTemp {
+				require.NotNil(t, input.InferenceConfig)
+				require.NotNil(t, input.InferenceConfig.Temperature)
+				assert.InDelta(t, 0.2, *input.InferenceConfig.Temperature, 0.001)
+				return
+			}
+
+			if input.InferenceConfig != nil {
+				assert.Nil(t, input.InferenceConfig.Temperature)
+			}
+		})
+	}
+}

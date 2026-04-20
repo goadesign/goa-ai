@@ -295,7 +295,7 @@ func (c *Client) buildConverseInput(parts *requestParts, req *model.Request) *be
 	if parts.outputConfig != nil {
 		input.OutputConfig = parts.outputConfig
 	}
-	if cfg := c.inferenceConfig(req.MaxTokens, req.Temperature); cfg != nil {
+	if cfg := c.inferenceConfig(parts.modelID, req.MaxTokens, req.Temperature); cfg != nil {
 		input.InferenceConfig = cfg
 	}
 	return input
@@ -334,7 +334,7 @@ func (c *Client) buildConverseStreamInput(parts *requestParts, req *model.Reques
 		}
 		input.AdditionalModelRequestFields = document.NewLazyDocument(&fields)
 	}
-	if cfg := c.inferenceConfig(req.MaxTokens, req.Temperature); cfg != nil {
+	if cfg := c.inferenceConfig(parts.modelID, req.MaxTokens, req.Temperature); cfg != nil {
 		input.InferenceConfig = cfg
 	}
 	return input
@@ -423,19 +423,28 @@ func (c *Client) streamOptions(thinking thinkingConfig) []func(*bedrockruntime.O
 	}
 }
 
-func (c *Client) inferenceConfig(maxTokens int, temp float32) *brtypes.InferenceConfiguration {
+func (c *Client) inferenceConfig(modelID string, maxTokens int, temp float32) *brtypes.InferenceConfiguration {
 	var cfg brtypes.InferenceConfiguration
 	tokens := c.effectiveMaxTokens(maxTokens)
 	if tokens > 0 {
 		cfg.MaxTokens = aws.Int32(int32(tokens)) //nolint:gosec // AWS SDK requires int32
 	}
-	if t := c.effectiveTemperature(temp); t > 0 {
-		cfg.Temperature = aws.Float32(t)
+	if supportsTemperature(modelID) {
+		if t := c.effectiveTemperature(temp); t > 0 {
+			cfg.Temperature = aws.Float32(t)
+		}
 	}
 	if cfg.MaxTokens == nil && cfg.Temperature == nil {
 		return nil
 	}
 	return &cfg
+}
+
+// supportsTemperature reports whether modelID accepts Bedrock's temperature
+// inference parameter. Claude Opus 4.7 removed temperature/top_p/top_k, so the
+// adapter must omit temperature entirely for every Opus 4.7 Bedrock scope.
+func supportsTemperature(modelID string) bool {
+	return !strings.Contains(modelID, "opus-4-7")
 }
 
 // isRateLimited reports whether err represents a provider rate limiting
