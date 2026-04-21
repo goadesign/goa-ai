@@ -1500,6 +1500,11 @@ complete provider-ready transcript in `model.Request.Messages`, and the runtime
 persists canonical transcript deltas so they can be replayed from the durable
 runlog when needed.
 
+For Bedrock adaptive Claude models, the Bedrock adapter explicitly requests
+summarized reasoning display so streamed `thinking` chunks stay visible instead
+of falling back to signature-only omitted reasoning blocks on models such as
+Claude Opus 4.7.
+
 When planners render prompts through `RenderPrompt`, copy prompt provenance into model requests:
 
 ```go

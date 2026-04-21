@@ -149,6 +149,10 @@ Generated `registry.go` files in agent packages are local runtime registration h
 - **Durable replay**: The runtime persists canonical transcript deltas as
   runlog records so providers, replay tooling, and future backends can
   reconstruct the exact message order generically.
+- **Visible reasoning contract**: Bedrock adaptive-thinking requests ask for
+  summarized reasoning display explicitly so streamed `thinking` events remain
+  visible across Claude adaptive model revisions whose provider defaults may
+  otherwise omit the reasoning text payload.
 
 ## MCP Server Definition
 

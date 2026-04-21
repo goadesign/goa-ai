@@ -626,6 +626,16 @@ integrating application, not in `goa-ai`.
 
 ---
 
+## Bedrock Adapter Notes
+
+The `features/model/bedrock` adapter keeps adaptive Claude thinking visible at
+the `model.Client` boundary by explicitly requesting summarized reasoning
+display. This preserves streamed `thinking` chunks across adaptive Claude model
+revisions such as Opus 4.7, where the provider default changed to omit visible
+reasoning text unless callers opt in.
+
+---
+
 ## OpenAI Adapter Support
 
 The `features/model/openai` adapter now targets the official `openai-go`

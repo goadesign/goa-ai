@@ -46,8 +46,9 @@ func TestIsAdaptiveThinkingModel(t *testing.T) {
 }
 
 // When the configured high-reasoning model is Opus 4.7, the streaming input
-// must carry thinking: {type: "adaptive"} — never the legacy
-// type:"enabled" + budget_tokens payload that returns a 400 on 4.7.
+// must carry thinking: {type: "adaptive", display: "summarized"} — never the
+// legacy type:"enabled" + budget_tokens payload that returns a 400 on 4.7 and
+// never the implicit display default that omits visible reasoning text.
 func TestBuildConverseStreamInputOpus47UsesAdaptiveThinking(t *testing.T) {
 	client := &Client{
 		defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
@@ -94,10 +95,46 @@ func TestBuildConverseStreamInputOpus47UsesAdaptiveThinking(t *testing.T) {
 	thinkingField, ok := fields["thinking"].(map[string]any)
 	require.True(t, ok, "expected thinking field to be a map, got %T", fields["thinking"])
 	assert.Equal(t, "adaptive", thinkingField["type"])
+	assert.Equal(t, "summarized", thinkingField["display"])
 	_, hasBudget := thinkingField["budget_tokens"]
 	assert.False(t, hasBudget, "adaptive thinking must not include budget_tokens")
 	_, hasBeta := fields["anthropic_beta"]
 	assert.False(t, hasBeta, "adaptive thinking must not include the interleaved beta header")
+}
+
+// Bedrock adaptive thinking is valid even without tools. The adapter must not
+// silently drop thinking config just because the request is a plain message
+// turn, otherwise Opus 4.7 falls back to omitted reasoning text again.
+func TestResolveThinkingOpus47WithoutTools(t *testing.T) {
+	client := &Client{
+		defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		highModel:    "us.anthropic.claude-opus-4-7",
+		maxTok:       32,
+		think:        defaultThinkingBudget,
+	}
+
+	req := &model.Request{
+		ModelClass: model.ModelClassHighReasoning,
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "explain the trade-offs"}},
+		}},
+		Thinking: &model.ThinkingOptions{
+			Enable:       true,
+			Interleaved:  true,
+			BudgetTokens: 8192,
+		},
+	}
+
+	parts, err := client.prepareRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.Nil(t, parts.toolConfig, "test requires a no-tools request")
+
+	thinking := client.resolveThinking(req, parts)
+	require.True(t, thinking.enable, "explicit adaptive thinking must survive no-tools requests")
+	require.True(t, thinking.adaptive, "Opus 4.7 must stay on adaptive thinking without tools")
+	require.Zero(t, thinking.budget, "adaptive mode must not carry a token budget")
+	require.False(t, thinking.interleaved, "adaptive mode must not request the legacy interleaved beta header")
 }
 
 // Claude Opus 4.7 rejects sampling parameters like temperature. The Bedrock

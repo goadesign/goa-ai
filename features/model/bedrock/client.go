@@ -319,9 +319,14 @@ func (c *Client) buildConverseStreamInput(parts *requestParts, req *model.Reques
 		fields := map[string]any{}
 		if thinking.adaptive {
 			// Opus 4.6+: adaptive thinking lets the model decide when and how
-			// deeply to reason. Interleaved thinking is automatic — no beta
-			// header required.
-			fields["thinking"] = map[string]any{"type": "adaptive"}
+			// deeply to reason. Request summarized display explicitly so Bedrock
+			// keeps returning visible reasoning text even on models like Opus 4.7
+			// where omitted display is now the default. Interleaved thinking is
+			// automatic — no beta header required.
+			fields["thinking"] = map[string]any{
+				"type":    "adaptive",
+				"display": "summarized",
+			}
 		} else {
 			thinkingCfg := map[string]any{"type": "enabled"}
 			if thinking.budget > 0 {
@@ -371,9 +376,6 @@ func encodeOutputConfig(output *model.StructuredOutput) (*brtypes.OutputConfig, 
 
 func (c *Client) resolveThinking(req *model.Request, parts *requestParts) thinkingConfig {
 	if req.Thinking == nil || !req.Thinking.Enable {
-		return thinkingConfig{}
-	}
-	if parts.toolConfig == nil {
 		return thinkingConfig{}
 	}
 	// Opus 4.6 requires adaptive thinking: the model dynamically decides when
