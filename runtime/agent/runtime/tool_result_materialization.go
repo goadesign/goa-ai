@@ -95,34 +95,36 @@ func (r *Runtime) applyResultMaterializer(ctx context.Context, spec tools.ToolSp
 	return nil
 }
 
-// decodeProvidedToolResults decodes externally supplied raw tool results in the
+// decodeProvidedToolRecords decodes externally supplied raw tool results in the
 // canonical awaited call order and materializes their runtime-owned sidecars.
-func (r *Runtime) decodeProvidedToolResults(ctx context.Context, allowed []planner.ToolRequest, provided map[string]*api.ProvidedToolResult) ([]*planner.ToolResult, []rawjson.Message, error) {
+func (r *Runtime) decodeProvidedToolRecords(ctx context.Context, allowed []planner.ToolRequest, provided map[string]*api.ProvidedToolResult) ([]stepToolRecord, error) {
 	if len(allowed) == 0 {
-		return nil, nil, nil
+		return nil, nil
 	}
-	results := make([]*planner.ToolResult, 0, len(allowed))
-	resultJSONs := make([]rawjson.Message, 0, len(allowed))
+	records := make([]stepToolRecord, 0, len(allowed))
 	for _, call := range allowed {
 		item := provided[call.ToolCallID]
 		if item == nil {
-			return nil, nil, fmt.Errorf("await: missing tool result for tool_call_id %q", call.ToolCallID)
+			return nil, fmt.Errorf("await: missing tool result for tool_call_id %q", call.ToolCallID)
 		}
 		if item.Name != call.Name {
-			return nil, nil, fmt.Errorf("await: result tool %q does not match awaited tool %q", item.Name, call.Name)
+			return nil, fmt.Errorf("await: result tool %q does not match awaited tool %q", item.Name, call.Name)
 		}
 		spec, ok := r.toolSpec(call.Name)
 		if !ok {
-			return nil, nil, fmt.Errorf("await: tool %q is not registered", call.Name)
+			return nil, fmt.Errorf("await: tool %q is not registered", call.Name)
 		}
 		result, resultJSON, err := r.decodeProvidedToolResult(ctx, spec, call, item)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		results = append(results, result)
-		resultJSONs = append(resultJSONs, resultJSON)
+		records = append(records, stepToolRecord{
+			call:       call,
+			result:     result,
+			resultJSON: resultJSON,
+		})
 	}
-	return results, resultJSONs, nil
+	return records, nil
 }
 
 // decodeProvidedToolResult converts one externally supplied raw result into the

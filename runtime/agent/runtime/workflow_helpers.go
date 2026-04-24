@@ -121,41 +121,32 @@ func (r *Runtime) executeGroupedToolCalls(
 	return out, timedOutAny, nil
 }
 
-// appendUserToolResults appends a user message with tool_result blocks for the
-// executed tools and persists the canonical transcript delta. Tool results are
-// ordered to match the assistant tool_use IDs from the allowed calls slice so
-// that provider handshakes remain deterministic regardless of execution timing.
+// appendUserToolRecordResults appends a user message with planner-visible
+// tool_result blocks in canonical step-record order.
 //
-// If any tool has a ResultReminder configured in its spec, a system message
-// with the reminder text is appended after the tool results to provide
-// backstage guidance to the model.
-func (r *Runtime) appendUserToolResults(
+// If any visible tool result has a ResultReminder configured in its spec, a
+// system message with the reminder text is appended after the tool results to
+// provide backstage guidance to the model.
+func (r *Runtime) appendUserToolRecordResults(
 	ctx context.Context,
 	agentID agent.Ident,
 	base *planner.PlanInput,
-	allowed []planner.ToolRequest,
-	vals []*planner.ToolResult,
+	records []stepToolRecord,
 	turnID string,
 ) error {
-	allowed, vals, err := r.filterPlannerVisibleToolResults(allowed, vals)
+	records, err := r.filterPlannerVisibleToolRecords(records)
 	if err != nil {
 		return err
 	}
-	if len(vals) == 0 {
+	if len(records) == 0 {
 		return nil
 	}
-	resultsByID := make(map[string]*planner.ToolResult, len(vals))
-	for _, tr := range vals {
-		resultsByID[tr.ToolCallID] = tr
-	}
 
-	parts := make([]model.Part, 0, len(resultsByID))
+	parts := make([]model.Part, 0, len(records))
 	var reminders []string
-	for _, call := range allowed {
-		tr, ok := resultsByID[call.ToolCallID]
-		if !ok {
-			continue
-		}
+	for _, record := range records {
+		call := record.call
+		tr := record.result
 		content, err := r.toolResultContent(&call, tr)
 		if err != nil {
 			return err
@@ -231,93 +222,65 @@ func (r *Runtime) filterPlannerVisibleToolCalls(calls []planner.ToolRequest) []p
 	return filtered
 }
 
-// filterLatePlannerVisibleToolCalls returns bookkeeping calls that become
+// filterLatePlannerVisibleToolRecords returns bookkeeping records that become
 // planner-visible only after execution produced a retryable failure.
-func (r *Runtime) filterLatePlannerVisibleToolCalls(calls []planner.ToolRequest, results []*planner.ToolResult) ([]planner.ToolRequest, error) {
-	if len(calls) == 0 && len(results) == 0 {
+func (r *Runtime) filterLatePlannerVisibleToolRecords(records []stepToolRecord) ([]stepToolRecord, error) {
+	if len(records) == 0 {
 		return nil, nil
 	}
-	if len(calls) != len(results) {
-		return nil, fmt.Errorf("filter late planner-visible tool calls: calls/results length mismatch (%d != %d)", len(calls), len(results))
-	}
-
-	resultsByToolCallID := make(map[string]*planner.ToolResult, len(results))
-	for _, result := range results {
-		if result == nil {
-			return nil, fmt.Errorf("filter late planner-visible tool calls: nil tool result")
+	filtered := make([]stepToolRecord, 0, len(records))
+	for _, record := range records {
+		if err := validateStepToolRecord("filter late planner-visible tool records", record); err != nil {
+			return nil, err
 		}
-		if result.ToolCallID == "" {
-			return nil, fmt.Errorf("filter late planner-visible tool calls: missing result tool_call_id for %s", result.Name)
-		}
-		if _, exists := resultsByToolCallID[result.ToolCallID]; exists {
-			return nil, fmt.Errorf("filter late planner-visible tool calls: duplicate result tool_call_id %s", result.ToolCallID)
-		}
-		resultsByToolCallID[result.ToolCallID] = result
-	}
-
-	filtered := make([]planner.ToolRequest, 0, len(calls))
-	for _, call := range calls {
-		if call.ToolCallID == "" {
-			return nil, fmt.Errorf("filter late planner-visible tool calls: missing call tool_call_id for %s", call.Name)
-		}
-		if !r.isBookkeeping(call.Name) || r.plannerVisibleToolCall(call) {
+		if !r.isBookkeeping(record.call.Name) || r.plannerVisibleToolCall(record.call) {
 			continue
 		}
-		result, ok := resultsByToolCallID[call.ToolCallID]
-		if !ok {
-			return nil, fmt.Errorf("filter late planner-visible tool calls: missing result for tool_call_id %s", call.ToolCallID)
-		}
-		if !r.plannerVisibleToolResult(call, result) {
+		if !r.plannerVisibleToolResult(record.call, record.result) {
 			continue
 		}
-		filtered = append(filtered, call)
+		filtered = append(filtered, record)
 	}
 	return filtered, nil
 }
 
-// filterPlannerVisibleToolResults returns the subset of executed tool
-// calls/results that remain visible to future planner turns. Bookkeeping tools
-// still execute and publish durable run events, but only planner-visible
-// bookkeeping results and retryable bookkeeping failures remain visible.
-func (r *Runtime) filterPlannerVisibleToolResults(calls []planner.ToolRequest, results []*planner.ToolResult) ([]planner.ToolRequest, []*planner.ToolResult, error) {
-	if len(calls) == 0 && len(results) == 0 {
-		return nil, nil, nil
+// filterPlannerVisibleToolRecords returns the subset of paired step records that
+// remain visible to future planner turns.
+func (r *Runtime) filterPlannerVisibleToolRecords(records []stepToolRecord) ([]stepToolRecord, error) {
+	if len(records) == 0 {
+		return nil, nil
 	}
-	if len(calls) != len(results) {
-		return nil, nil, fmt.Errorf("filter planner-visible tool results: calls/results length mismatch (%d != %d)", len(calls), len(results))
-	}
-
-	resultsByToolCallID := make(map[string]*planner.ToolResult, len(results))
-	for _, result := range results {
-		if result == nil {
-			return nil, nil, fmt.Errorf("filter planner-visible tool results: nil tool result")
+	filtered := make([]stepToolRecord, 0, len(records))
+	for _, record := range records {
+		if err := validateStepToolRecord("filter planner-visible tool records", record); err != nil {
+			return nil, err
 		}
-		if result.ToolCallID == "" {
-			return nil, nil, fmt.Errorf("filter planner-visible tool results: missing result tool_call_id for %s", result.Name)
-		}
-		if _, exists := resultsByToolCallID[result.ToolCallID]; exists {
-			return nil, nil, fmt.Errorf("filter planner-visible tool results: duplicate result tool_call_id %s", result.ToolCallID)
-		}
-		resultsByToolCallID[result.ToolCallID] = result
-	}
-
-	filteredCalls := make([]planner.ToolRequest, 0, len(calls))
-	filteredResults := make([]*planner.ToolResult, 0, len(results))
-	for _, call := range calls {
-		if call.ToolCallID == "" {
-			return nil, nil, fmt.Errorf("filter planner-visible tool results: missing call tool_call_id for %s", call.Name)
-		}
-		result, ok := resultsByToolCallID[call.ToolCallID]
-		if !ok {
-			return nil, nil, fmt.Errorf("filter planner-visible tool results: missing result for tool_call_id %s", call.ToolCallID)
-		}
-		if !r.plannerVisibleToolResult(call, result) {
+		if !r.plannerVisibleToolResult(record.call, record.result) {
 			continue
 		}
-		filteredCalls = append(filteredCalls, call)
-		filteredResults = append(filteredResults, result)
+		filtered = append(filtered, record)
 	}
-	return filteredCalls, filteredResults, nil
+	return filtered, nil
+}
+
+// validateStepToolRecord enforces the internal paired call/result contract.
+func validateStepToolRecord(context string, record stepToolRecord) error {
+	if record.call.ToolCallID == "" {
+		return fmt.Errorf("%s: missing call tool_call_id for %s", context, record.call.Name)
+	}
+	if record.result == nil {
+		return fmt.Errorf("%s: nil tool result for %s", context, record.call.Name)
+	}
+	if record.result.ToolCallID == "" {
+		return fmt.Errorf("%s: missing result tool_call_id for %s", context, record.result.Name)
+	}
+	if record.result.ToolCallID != record.call.ToolCallID {
+		return fmt.Errorf("%s: result tool_call_id %s does not match call tool_call_id %s", context, record.result.ToolCallID, record.call.ToolCallID)
+	}
+	if record.result.Name != "" && record.result.Name != record.call.Name {
+		return fmt.Errorf("%s: result name %s does not match call %s", context, record.result.Name, record.call.Name)
+	}
+	return nil
 }
 
 // plannerVisibleToolCall reports whether the declared tool call should remain in
@@ -401,19 +364,15 @@ func (r *Runtime) hardProtectionIfNeeded(
 	return false, nil
 }
 
-// appendToolOutputs records canonical planner tool outputs in run-loop state.
-//
-// Contract:
-//   - Calls must already have deterministic ToolCallIDs.
-//   - Results are matched back to calls by ToolCallID so await-provided results
-//     preserve the requested call order.
-func (r *Runtime) appendToolOutputs(ctx context.Context, st *runLoopState, calls []planner.ToolRequest, results []*planner.ToolResult) error {
-	if len(calls) == 0 {
-		return nil
-	}
-	outputs, err := r.buildPlannerToolOutputs(ctx, calls, results)
+// appendToolOutputRecords records canonical planner tool outputs from paired
+// step records in run-loop state.
+func (r *Runtime) appendToolOutputRecords(ctx context.Context, st *runLoopState, records []stepToolRecord) error {
+	outputs, err := r.buildPlannerToolOutputRecords(ctx, records)
 	if err != nil {
 		return err
+	}
+	if len(outputs) == 0 {
+		return nil
 	}
 	st.ToolOutputs = append(st.ToolOutputs, outputs...)
 	return nil

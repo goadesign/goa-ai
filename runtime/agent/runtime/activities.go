@@ -19,6 +19,16 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+// plannerActivityInvocation is the shared prepared state for one planner
+// activity execution.
+type plannerActivityInvocation struct {
+	reg       *AgentRegistration
+	agentCtx  planner.PlannerContext
+	events    *runtimePlannerEvents
+	messages  []*model.Message
+	reminders []reminder.Reminder
+}
+
 // PlanStartActivity executes the planner's PlanStart method.
 //
 // Advanced & generated integration
@@ -34,46 +44,24 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 	stopHeartbeat := startActivityHeartbeat(ctx)
 	defer stopHeartbeat()
 
-	events := newPlannerEvents(r, input.AgentID, input.RunID, input.RunContext.SessionID, input.RunContext.TurnID)
-	reg, agentCtx, err := r.plannerContext(ctx, input, events)
+	act, err := r.preparePlannerActivity(ctx, input)
 	if err != nil {
 		return nil, err
 	}
-	var rems []reminder.Reminder
-	if r.reminders != nil {
-		rems = r.reminders.Snapshot(input.RunID)
-	}
-	msgs := r.applyHistoryPolicy(ctx, reg, input.Messages)
 	planInput := &planner.PlanInput{
-		Messages:   msgs,
+		Messages:   act.messages,
 		RunContext: input.RunContext,
-		Agent:      agentCtx,
-		Events:     events,
-		Reminders:  rems,
+		Agent:      act.agentCtx,
+		Events:     act.events,
+		Reminders:  act.reminders,
 	}
-	result, err := r.planStart(ctx, reg, planInput)
+	result, err := r.planStart(ctx, act.reg, planInput)
 	if err != nil {
-		if errors.Is(err, model.ErrRateLimited) {
-			events.PlannerThought(
-				ctx,
-				"Model provider is rate-limiting this request. It is safe to retry after a short delay.",
-				map[string]string{"code": "rate_limited"},
-			)
-		}
+		act.notePlannerRateLimit(ctx, err)
 		return nil, err
 	}
 	r.logger.Info(ctx, "PlanStartActivity returning PlanResult", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil, "await", result.Await != nil)
-	if err := events.hookError(); err != nil {
-		return nil, err
-	}
-	transcript := events.exportTranscript()
-	normalizeTranscriptRawJSON(transcript)
-	out := &PlanActivityOutput{
-		Result:     result,
-		Transcript: transcript,
-		Usage:      events.exportUsage(),
-	}
-	return out, nil
+	return act.output(result)
 }
 
 // PlanResumeActivity executes the planner's PlanResume method.
@@ -91,8 +79,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	stopHeartbeat := startActivityHeartbeat(ctx)
 	defer stopHeartbeat()
 
-	events := newPlannerEvents(r, input.AgentID, input.RunID, input.RunContext.SessionID, input.RunContext.TurnID)
-	reg, agentCtx, err := r.plannerContext(ctx, input, events)
+	act, err := r.preparePlannerActivity(ctx, input)
 	if err != nil {
 		return nil, err
 	}
@@ -100,42 +87,70 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err != nil {
 		return nil, err
 	}
+	planInput := &planner.PlanResumeInput{
+		Messages:    act.messages,
+		RunContext:  input.RunContext,
+		Agent:       act.agentCtx,
+		Events:      act.events,
+		ToolOutputs: toolOutputs,
+		Finalize:    input.Finalize,
+		Reminders:   act.reminders,
+	}
+	result, err := r.planResume(ctx, act.reg, planInput)
+	if err != nil {
+		act.notePlannerRateLimit(ctx, err)
+		return nil, err
+	}
+	return act.output(result)
+}
+
+// preparePlannerActivity constructs all shared planner activity state before
+// the specific PlanStart or PlanResume payload is built.
+func (r *Runtime) preparePlannerActivity(ctx context.Context, input *PlanActivityInput) (*plannerActivityInvocation, error) {
+	events := newPlannerEvents(r, input.AgentID, input.RunID, input.RunContext.SessionID, input.RunContext.TurnID)
+	reg, agentCtx, err := r.plannerContext(ctx, input, events)
+	if err != nil {
+		return nil, err
+	}
 	var rems []reminder.Reminder
 	if r.reminders != nil {
 		rems = r.reminders.Snapshot(input.RunID)
 	}
-	msgs := r.applyHistoryPolicy(ctx, reg, input.Messages)
-	planInput := &planner.PlanResumeInput{
-		Messages:    msgs,
-		RunContext:  input.RunContext,
-		Agent:       agentCtx,
-		Events:      events,
-		ToolOutputs: toolOutputs,
-		Finalize:    input.Finalize,
-		Reminders:   rems,
-	}
-	result, err := r.planResume(ctx, reg, planInput)
-	if err != nil {
-		if errors.Is(err, model.ErrRateLimited) {
-			events.PlannerThought(
-				ctx,
-				"Model provider is rate-limiting this request. It is safe to retry after a short delay.",
-				map[string]string{"code": "rate_limited"},
-			)
-		}
+	return &plannerActivityInvocation{
+		reg:       reg,
+		agentCtx:  agentCtx,
+		events:    events,
+		messages:  r.applyHistoryPolicy(ctx, reg, input.Messages),
+		reminders: rems,
+	}, nil
+}
+
+// output validates hook publication and exports the workflow-safe planner
+// activity result.
+func (a *plannerActivityInvocation) output(result *planner.PlanResult) (*PlanActivityOutput, error) {
+	if err := a.events.hookError(); err != nil {
 		return nil, err
 	}
-	if err := events.hookError(); err != nil {
-		return nil, err
-	}
-	transcript := events.exportTranscript()
+	transcript := a.events.exportTranscript()
 	normalizeTranscriptRawJSON(transcript)
-	out := &PlanActivityOutput{
+	return &PlanActivityOutput{
 		Result:     result,
 		Transcript: transcript,
-		Usage:      events.exportUsage(),
+		Usage:      a.events.exportUsage(),
+	}, nil
+}
+
+// notePlannerRateLimit emits a structured planner note for provider
+// rate-limiting errors before the activity returns the failure.
+func (a *plannerActivityInvocation) notePlannerRateLimit(ctx context.Context, err error) {
+	if !errors.Is(err, model.ErrRateLimited) {
+		return
 	}
-	return out, nil
+	a.events.PlannerThought(
+		ctx,
+		"Model provider is rate-limiting this request. It is safe to retry after a short delay.",
+		map[string]string{"code": "rate_limited"},
+	)
 }
 
 func normalizeTranscriptRawJSON(messages []*model.Message) {

@@ -1025,7 +1025,9 @@ bookkeeping failures remain planner-visible through `RetryHint` even without
 Operationally, a planner result is processed as one workflow step: the runtime
 executes admitted tool and await work, records durable and planner-visible
 outputs through one canonical path, then applies a single transition policy for
-resume, finish, terminal-tool completion, or forced finalization.
+resume, finish, terminal-tool completion, or forced finalization. A
+`FinalResponse` or `FinalToolResult` may only accompany hidden, non-terminal
+bookkeeping calls that complete successfully in the same step.
 
 ```go
 Tool("set_step_status", "Update step status", func() {

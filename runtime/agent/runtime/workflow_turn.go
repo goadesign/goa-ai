@@ -1,17 +1,15 @@
 package runtime
 
-// workflow_turn.go contains the implementation of a single “tool turn” inside the
-// durable workflow plan loop.
+// workflow_turn.go contains the tool-execution portion of one workflow step.
 //
 // Contract:
 // - The function in this file is replay-safe: it uses workflow time and publishes
 //   hook events deterministically based on inputs.
-// - It owns the mechanics of taking planner ToolCalls through policy/confirmation,
-//   recording the assistant tool_use turn, executing tools, and producing the next
-//   PlanResume request (or finalizing).
-// - It may also handle “mixed” turns where the planner returns ToolCalls plus an
-//   await handshake, or where executed tools emit runtime-owned pauses from the
-//   current batch (execute tools first, then pause once).
+// - It owns the mechanics of taking planner ToolCalls through policy,
+//   confirmation splitting, canonical assistant tool_use recording, and tool
+//   execution.
+// - It may also return await work when the planner result or executed tools
+//   require an external input handshake before the step can transition.
 
 import (
 	"context"
@@ -19,392 +17,194 @@ import (
 	"fmt"
 	"time"
 
-	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
-	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/planner"
 )
 
-type toolTurnResolution uint8
+type stepTransition uint8
 
 const (
-	toolTurnResolutionResume toolTurnResolution = iota
-	toolTurnResolutionFinishCurrent
-	toolTurnResolutionFinishTerminal
+	stepTransitionResume stepTransition = iota
+	stepTransitionFinishCurrent
+	stepTransitionFinishTerminal
 )
 
-// handleToolTurn executes the planner-returned tool calls for the current turn
-// and advances the workflow to the next planner result.
-//
-// Return contract:
-//   - **out != nil**: the run is complete (success/finalized) and the caller must return.
-//   - **out == nil && err == nil**: the turn was executed and st was advanced to the next
-//     planner result; the caller should continue the loop.
-func (r *Runtime) handleToolTurn(
-	wfCtx engine.WorkflowContext,
-	reg AgentRegistration,
-	input *RunInput,
-	base *planner.PlanInput,
-	st *runLoopState,
-	resumeOpts engine.ActivityOptions,
-	toolOpts engine.ActivityOptions,
-	deadlines *runDeadlines,
-	turnID string,
-	parentTracker *childTracker,
-	ctrl *interrupt.Controller,
-) (*RunOutput, error) {
-	ctx := wfCtx.Context()
-	result := st.Result
-	if deadlines == nil {
-		return nil, errors.New("missing run deadlines")
-	}
-
-	if !deadlines.Budget.IsZero() && wfCtx.Now().After(deadlines.Budget) {
-		out, finalized, err := r.finalizeWithPlannerIfAllowed(
-			wfCtx,
-			reg,
-			input,
-			base,
-			st.ToolEvents,
-			st.ToolOutputs,
-			st.AggUsage,
-			st.NextAttempt,
-			turnID,
-			planner.TerminationReasonTimeBudget,
-			deadlines.Hard,
-		)
-		if err != nil {
-			return nil, err
-		}
-		if finalized {
-			return out, nil
-		}
-	}
-
-	candidates := result.ToolCalls
-	r.logger.Info(ctx, "Workflow received tool calls from planner", "count", len(candidates))
+// executeToolStep executes the immediate tool portion of one workflow step. It
+// records produced tool results through the canonical result recorder and
+// returns any await work that must be drained before the step can advance.
+func (l *workflowLoop) executeToolStep(program stepProgram, batch *stepBatch) ([]confirmationAwait, []planner.AwaitItem, error) {
+	ctx := l.wfCtx.Context()
+	result := program.result
+	candidates := program.calls
+	l.r.logger.Info(ctx, "Workflow received tool calls from planner", "count", len(candidates))
 	var err error
-	candidates, err = r.rewriteUnknownToolCalls(candidates)
+	candidates, err = l.r.rewriteUnknownToolCalls(candidates)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	candidates, err = r.applyPerRunOverrides(ctx, input, candidates)
+	candidates, err = l.r.applyPerRunOverrides(ctx, l.input, candidates)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	allowed, nextCaps, err := r.applyRuntimePolicy(ctx, base, input, candidates, st.Caps, turnID, result.RetryHint)
+	allowed, nextCaps, err := l.r.applyRuntimePolicy(ctx, l.base, l.input, candidates, l.st.Caps, l.turnID, result.RetryHint)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	st.Caps = nextCaps
+	l.st.Caps = nextCaps
 	if len(allowed) == 0 {
-		r.logger.Error(ctx, "ERROR - No tools allowed for execution after filtering", "candidates", len(result.ToolCalls))
-		return nil, errors.New("no tools allowed for execution")
+		l.r.logger.Error(ctx, "ERROR - No tools allowed for execution after filtering", "candidates", len(result.ToolCalls))
+		return nil, nil, errors.New("no tools allowed for execution")
 	}
 
-	r.logger.Info(ctx, "Executing allowed tool calls", "count", len(allowed))
-	if parentTracker != nil {
+	l.r.logger.Info(ctx, "Executing allowed tool calls", "count", len(allowed))
+	if l.parentTracker != nil {
 		ids := collectToolCallIDs(allowed)
-		if len(ids) > 0 && parentTracker.registerDiscovered(ids) {
-			if base.RunContext.ParentRunID == "" || base.RunContext.ParentAgentID == "" {
-				return nil, fmt.Errorf("nested run is missing parent run context")
+		if len(ids) > 0 && l.parentTracker.registerDiscovered(ids) {
+			if l.base.RunContext.ParentRunID == "" || l.base.RunContext.ParentAgentID == "" {
+				return nil, nil, errors.New("nested run is missing parent run context")
 			}
-			if err := r.publishHook(
+			if err := l.r.publishHook(
 				ctx,
 				hooks.NewToolCallUpdatedEvent(
-					base.RunContext.ParentRunID,
-					base.RunContext.ParentAgentID,
-					base.RunContext.SessionID,
-					parentTracker.parentToolCallID,
-					parentTracker.currentTotal(),
+					l.base.RunContext.ParentRunID,
+					l.base.RunContext.ParentAgentID,
+					l.base.RunContext.SessionID,
+					l.parentTracker.parentToolCallID,
+					l.parentTracker.currentTotal(),
 				),
-				turnID,
+				l.turnID,
 			); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
-			parentTracker.markUpdated()
+			l.parentTracker.markUpdated()
 		}
 	}
 
-	allowed, budgetCost := r.capAllowedCalls(allowed, st.Caps)
+	allowed, budgetCost := l.r.capAllowedCalls(allowed, l.st.Caps)
 	if len(allowed) == 0 {
-		out, finalized, err := r.finalizeWithPlannerIfAllowed(
-			wfCtx,
-			reg,
-			input,
-			base,
-			st.ToolEvents,
-			st.ToolOutputs,
-			st.AggUsage,
-			st.NextAttempt,
-			turnID,
-			planner.TerminationReasonToolCap,
-			deadlines.Hard,
-		)
-		if err != nil {
-			return nil, err
+		batch.finalize = &stepFinalization{
+			reason:     planner.TerminationReasonToolCap,
+			skippedErr: "tool cap finalization skipped without hard deadline",
 		}
-		if finalized {
-			return out, nil
-		}
-		return nil, fmt.Errorf("tool cap finalization skipped without hard deadline")
+		return nil, nil, nil
 	}
-	allowed = r.prepareAllowedCallsMetadata(input.AgentID, base, allowed, parentTracker)
+	batch.budgetCost += budgetCost
+	allowed = l.r.prepareAllowedCallsMetadata(l.input.AgentID, l.base, allowed, l.parentTracker)
+	if program.kind == stepKindToolTerminal {
+		if err := l.r.validateToolTerminalProgram(allowed); err != nil {
+			return nil, nil, err
+		}
+	}
 
-	toExecute, confirmations, err := r.splitConfirmationCalls(ctx, base, allowed)
+	toExecute, confirmations, err := l.r.splitConfirmationCalls(ctx, l.base, allowed)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if len(confirmations) > 0 && ctrl == nil {
-		return nil, fmt.Errorf("confirmation required but interrupts are not available")
+	if len(confirmations) > 0 && l.ctrl == nil {
+		return nil, nil, errors.New("confirmation required but interrupts are not available")
 	}
-	if len(toExecute) > 0 {
-		if err := r.recordAssistantTurn(ctx, input.AgentID, base, st.Transcript, toExecute, turnID); err != nil {
-			return nil, err
-		}
+	if program.kind == stepKindToolTerminal && len(confirmations) > 0 {
+		return nil, nil, errors.New("workflow step terminal payload cannot accompany confirmation-gated tools")
 	}
-
-	execCalls := make([]planner.ToolRequest, len(toExecute))
-	for i := range toExecute {
-		call := toExecute[i]
-		if call.ToolCallID == "" {
-			call.ToolCallID = generateDeterministicToolCallID(base.RunContext.RunID, call.TurnID, base.RunContext.Attempt, call.Name, i)
-		}
-		execCalls[i] = call
+	if err := l.r.recordAssistantTurn(ctx, l.input.AgentID, l.base, l.st.Transcript, allowed, l.turnID); err != nil {
+		return nil, nil, err
 	}
 
-	grouped, timeouts := r.groupToolCallsByTimeout(execCalls, input, toolOpts.StartToCloseTimeout)
+	grouped, timeouts := l.r.groupToolCallsByTimeout(toExecute, l.input, l.toolOpts.StartToCloseTimeout)
 	finishBy := time.Time{}
-	if !deadlines.Hard.IsZero() {
-		finishBy = deadlines.Hard.Add(-deadlines.finalizeReserve())
+	if !l.deadlines.Hard.IsZero() {
+		finishBy = l.deadlines.Hard.Add(-l.deadlines.finalizeReserve())
 	}
-	outcomes, timedOut, err := r.executeGroupedToolCalls(wfCtx, reg, input.AgentID, base, result.ExpectedChildren, parentTracker, finishBy, grouped, timeouts, toolOpts)
+	outcomes, timedOut, err := l.r.executeGroupedToolCalls(l.wfCtx, l.reg, l.input.AgentID, l.base, result.ExpectedChildren, l.parentTracker, finishBy, grouped, timeouts, l.toolOpts)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	vals := toolResultsFromExecutions(outcomes)
-	toolPauses := toolPausesFromExecutions(outcomes)
-	lastToolResults := vals
-	applyToolResultPolicyHints(input, vals)
-	st.ToolEvents = append(st.ToolEvents, cloneToolResults(vals)...)
-	if result.Await != nil && len(result.Await.Items) > 0 && len(toolPauses) > 0 {
-		return nil, fmt.Errorf("planner await and tool pause cannot both be present in the same turn")
-	}
-	hasAwaitWork := len(confirmations) > 0 || (result.Await != nil && len(result.Await.Items) > 0) || len(toolPauses) > 0
-	turnResolution := toolTurnResolutionResume
-	if hasAwaitWork {
-		if err := r.appendPlannerVisibleTurnResults(ctx, input, base, st, turnID, toExecute, vals); err != nil {
-			return nil, err
-		}
-	} else {
-		turnResolution, err = r.classifyToolTurn(toExecute, vals, result)
-		if err != nil {
-			return nil, err
-		}
-		if turnResolution == toolTurnResolutionResume {
-			if err := r.appendPlannerVisibleTurnResults(ctx, input, base, st, turnID, toExecute, vals); err != nil {
-				return nil, err
-			}
-		}
-	}
-	if timedOut {
-		out, finalized, err := r.finalizeWithPlannerIfAllowed(
-			wfCtx,
-			reg,
-			input,
-			base,
-			st.ToolEvents,
-			st.ToolOutputs,
-			st.AggUsage,
-			st.NextAttempt,
-			turnID,
-			planner.TerminationReasonTimeBudget,
-			deadlines.Hard,
-		)
-		if err != nil {
-			return nil, err
-		}
-		if finalized {
-			return out, nil
-		}
-	}
-	st.Caps.RemainingToolCalls = decrementCap(st.Caps.RemainingToolCalls, budgetCost)
-
-	if hasAwaitWork {
-		items := make([]planner.AwaitItem, 0, len(toolPauses))
-		if result.Await != nil {
-			items = append(items, result.Await.Items...)
-		}
-		if len(toolPauses) > 0 {
-			pauseItems, err := toolPauseAwaitItems(toolPauses)
-			if err != nil {
-				return nil, err
-			}
-			items = append(items, pauseItems...)
-		}
-		out, err := r.handleAwaitQueue(
-			wfCtx,
-			reg,
-			input,
-			base,
-			st,
-			resumeOpts,
-			toolOpts,
-			result.ExpectedChildren,
-			parentTracker,
-			ctrl,
-			deadlines,
-			turnID,
-			confirmations,
-			items,
-			lastToolResults,
-		)
-		if err != nil {
-			return nil, err
-		}
-		return out, nil
-	}
-
-	switch turnResolution {
-	case toolTurnResolutionFinishTerminal:
-		return r.finishAfterTerminalToolCalls(ctx, input, base, st)
-	case toolTurnResolutionFinishCurrent:
-		return r.finishCurrentPlanResult(ctx, input, base, st, turnID)
-	case toolTurnResolutionResume:
-	}
-	if capFailures(vals) > 0 {
-		st.Caps.RemainingConsecutiveFailedToolCalls = decrementCap(
-			st.Caps.RemainingConsecutiveFailedToolCalls,
-			capFailures(vals),
-		)
-		if st.Caps.MaxConsecutiveFailedToolCalls > 0 && st.Caps.RemainingConsecutiveFailedToolCalls <= 0 {
-			out, finalized, err := r.finalizeWithPlannerIfAllowed(
-				wfCtx,
-				reg,
-				input,
-				base,
-				st.ToolEvents,
-				st.ToolOutputs,
-				st.AggUsage,
-				st.NextAttempt,
-				turnID,
-				planner.TerminationReasonFailureCap,
-				deadlines.Hard,
-			)
-			if err != nil {
-				return nil, err
-			}
-			if finalized {
-				return out, nil
-			}
-			return nil, fmt.Errorf("failure-cap finalization skipped without hard deadline")
-		}
-	} else if st.Caps.MaxConsecutiveFailedToolCalls > 0 {
-		st.Caps.RemainingConsecutiveFailedToolCalls = st.Caps.MaxConsecutiveFailedToolCalls
-	}
-
-	if out, err := r.handleMissingFieldsPolicy(wfCtx, reg, input, base, vals, st.ToolEvents, st.ToolOutputs, st.AggUsage, &st.NextAttempt, turnID, ctrl, deadlines); err != nil {
-		return nil, err
-	} else if out != nil {
-		return out, nil
-	}
-
-	protected, err := r.hardProtectionIfNeeded(ctx, input.AgentID, base, vals, turnID)
+	records, err := stepToolRecordsFromExecutions(toExecute, outcomes)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if protected {
-		out, finalized, err := r.finalizeWithPlannerIfAllowed(
-			wfCtx,
-			reg,
-			input,
-			base,
-			st.ToolEvents,
-			st.ToolOutputs,
-			st.AggUsage,
-			st.NextAttempt,
-			turnID,
-			planner.TerminationReasonFailureCap,
-			deadlines.Hard,
-		)
-		if err != nil {
-			return nil, err
-		}
-		if finalized {
-			return out, nil
-		}
-		return nil, fmt.Errorf("protected finalization skipped without hard deadline")
-	}
+	batch.records = append(batch.records, records...)
+	batch.timedOut = batch.timedOut || timedOut
 
-	resumeReq, err := r.buildNextResumeRequest(input.AgentID, base, input.Policy, st.ToolOutputs, &st.NextAttempt)
-	if err != nil {
-		return nil, err
+	toolPauses := toolPausesFromRecords(records)
+	if len(program.awaitItems) > 0 && len(toolPauses) > 0 {
+		return nil, nil, errors.New("planner await and tool pause cannot both be present in the same turn")
 	}
-	resOutput, err := r.runPlanActivity(wfCtx, reg.ResumeActivityName, resumeOpts, resumeReq, deadlines.Budget)
-	if err != nil {
-		return nil, err
+	items := append([]planner.AwaitItem(nil), program.awaitItems...)
+	if len(toolPauses) > 0 {
+		pauseItems, err := toolPauseAwaitItems(toolPauses)
+		if err != nil {
+			return nil, nil, err
+		}
+		items = append(items, pauseItems...)
 	}
-	if resOutput == nil || resOutput.Result == nil {
-		return nil, fmt.Errorf("plan activity returned nil result on resume")
+	if program.kind == stepKindToolTerminal && len(items) > 0 {
+		return nil, nil, errors.New("workflow step terminal payload cannot accompany await work")
 	}
-	st.AggUsage = addTokenUsage(st.AggUsage, resOutput.Usage)
-	st.Result = resOutput.Result
-	st.Transcript = resOutput.Transcript
-	return nil, nil
+	return confirmations, items, nil
 }
 
-// appendPlannerVisibleTurnResults appends only the subset of tool results that
-// remain visible to future planner turns. Successful bookkeeping batches
-// therefore become a no-op here, while retryable bookkeeping failures and mixed
-// batches still preserve the planner-visible repair context.
-func (r *Runtime) appendPlannerVisibleTurnResults(
+// recordStepToolResults appends all state derived from concrete tool results.
+// Durable tool events keep every result; planner-visible transcript/tool-output
+// state is filtered by the existing bookkeeping visibility contract.
+func (r *Runtime) recordStepToolResults(
 	ctx context.Context,
 	input *RunInput,
 	base *planner.PlanInput,
 	st *runLoopState,
 	turnID string,
-	calls []planner.ToolRequest,
-	results []*planner.ToolResult,
+	records []stepToolRecord,
 ) error {
-	if err := r.appendToolOutputs(ctx, st, calls, results); err != nil {
+	results := stepToolResults(records)
+	applyToolResultPolicyHints(input, results)
+	st.ToolEvents = append(st.ToolEvents, cloneToolResults(results)...)
+	if err := r.appendToolOutputRecords(ctx, st, records); err != nil {
 		return err
 	}
-	if err := r.appendLatePlannerVisibleToolUses(ctx, input.AgentID, base, calls, results, turnID); err != nil {
+	if err := r.appendLatePlannerVisibleToolRecordUses(ctx, input.AgentID, base, records, turnID); err != nil {
 		return err
 	}
-	if err := r.appendUserToolResults(ctx, input.AgentID, base, calls, results, turnID); err != nil {
+	if err := r.appendUserToolRecordResults(ctx, input.AgentID, base, records, turnID); err != nil {
 		return err
 	}
 	return nil
 }
 
-// classifyToolTurn decides whether an executed batch with no pending await work
-// must resume reasoning or can complete immediately without replaying tool
-// results back into the planner.
-func (r *Runtime) classifyToolTurn(calls []planner.ToolRequest, results []*planner.ToolResult, result *planner.PlanResult) (toolTurnResolution, error) {
-	if len(calls) == 0 {
-		return toolTurnResolutionResume, nil
+// classifyStep decides whether a completed step must resume reasoning or can
+// finish immediately without replaying tool results back into the planner.
+func (r *Runtime) classifyStep(batch stepBatch) (stepTransition, error) {
+	if batch.awaited {
+		return stepTransitionResume, nil
 	}
-	for _, call := range calls {
-		if !r.isBookkeeping(call.Name) {
-			return toolTurnResolutionResume, nil
+	return r.classifyToolRecords(batch.records, batch.program.result)
+}
+
+// classifyToolRecords decides whether an executed batch with no pending await
+// work must resume reasoning or can complete immediately.
+func (r *Runtime) classifyToolRecords(records []stepToolRecord, result *planner.PlanResult) (stepTransition, error) {
+	if len(records) == 0 {
+		return stepTransitionResume, nil
+	}
+	for _, record := range records {
+		if !r.isBookkeeping(record.call.Name) {
+			return stepTransitionResume, nil
 		}
 	}
 
-	plannerVisibleCalls, _, err := r.filterPlannerVisibleToolResults(calls, results)
+	plannerVisibleRecords, err := r.filterPlannerVisibleToolRecords(records)
 	if err != nil {
 		return 0, err
 	}
-	if len(plannerVisibleCalls) > 0 {
-		return toolTurnResolutionResume, nil
+	if len(plannerVisibleRecords) > 0 {
+		return stepTransitionResume, nil
 	}
 
-	terminal, err := r.executedSuccessfulTerminalRunTool(results)
+	terminal, err := r.executedSuccessfulTerminalRunTool(records)
 	if err != nil {
 		return 0, err
 	}
 	if terminal {
-		return toolTurnResolutionFinishTerminal, nil
+		return stepTransitionFinishTerminal, nil
 	}
 	if err := validateTerminalPlanResult(result); err != nil {
 		return 0, fmt.Errorf(
@@ -412,57 +212,25 @@ func (r *Runtime) classifyToolTurn(calls []planner.ToolRequest, results []*plann
 			err,
 		)
 	}
-	return toolTurnResolutionFinishCurrent, nil
+	return stepTransitionFinishCurrent, nil
 }
 
 // executedSuccessfulTerminalRunTool reports whether the executed batch contains
 // a terminal tool result that completed without a tool error.
-func (r *Runtime) executedSuccessfulTerminalRunTool(results []*planner.ToolResult) (bool, error) {
-	for _, tr := range results {
-		if tr == nil {
-			continue
+func (r *Runtime) executedSuccessfulTerminalRunTool(records []stepToolRecord) (bool, error) {
+	for _, record := range records {
+		if record.result == nil {
+			return false, fmt.Errorf("missing tool result for %q", record.call.Name)
 		}
-		spec, ok := r.toolSpec(tr.Name)
+		spec, ok := r.toolSpec(record.result.Name)
 		if !ok {
-			return false, fmt.Errorf("unknown tool %q", tr.Name)
+			return false, fmt.Errorf("unknown tool %q", record.result.Name)
 		}
-		if spec.TerminalRun && tr.Error == nil {
+		if spec.TerminalRun && record.result.Error == nil {
 			return true, nil
 		}
 	}
 	return false, nil
-}
-
-// toolResultsFromExecutions extracts durable planner-visible tool results from a
-// batch of runtime-owned execution outcomes.
-func toolResultsFromExecutions(outcomes []*ToolExecutionResult) []*planner.ToolResult {
-	if len(outcomes) == 0 {
-		return nil
-	}
-	results := make([]*planner.ToolResult, 0, len(outcomes))
-	for _, outcome := range outcomes {
-		if outcome == nil || outcome.ToolResult == nil {
-			continue
-		}
-		results = append(results, outcome.ToolResult)
-	}
-	return results
-}
-
-// toolPausesFromExecutions extracts current-batch runtime pause signals from a
-// batch of execution outcomes in canonical tool-call order.
-func toolPausesFromExecutions(outcomes []*ToolExecutionResult) []*ToolPause {
-	if len(outcomes) == 0 {
-		return nil
-	}
-	pauses := make([]*ToolPause, 0, len(outcomes))
-	for _, outcome := range outcomes {
-		if outcome == nil || outcome.Pause == nil {
-			continue
-		}
-		pauses = append(pauses, outcome.Pause)
-	}
-	return pauses
 }
 
 // toolPauseAwaitItems projects runtime-owned tool pauses into the existing await

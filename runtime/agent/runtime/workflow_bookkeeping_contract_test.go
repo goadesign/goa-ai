@@ -24,6 +24,73 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+func TestNormalizeStepRejectsContradictoryTerminalShapes(t *testing.T) {
+	rt := New(WithLogger(telemetry.NoopLogger{}))
+	budgeted := newAnyJSONSpec(tools.Ident("svc.lookup"), "svc")
+	visibleBookkeeping := newAnyJSONSpec(tools.Ident("svc.progress"), "svc")
+	visibleBookkeeping.Bookkeeping = true
+	visibleBookkeeping.PlannerVisible = true
+	terminalTool := newAnyJSONSpec(tools.Ident("svc.complete"), "svc")
+	terminalTool.Bookkeeping = true
+	terminalTool.TerminalRun = true
+	seedTestToolSpecs(rt, budgeted, visibleBookkeeping, terminalTool)
+
+	final := &planner.FinalResponse{
+		Message: &model.Message{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "done"}},
+		},
+	}
+	cases := []struct {
+		name   string
+		result *planner.PlanResult
+		want   string
+	}{
+		{
+			name: "terminal plus await",
+			result: &planner.PlanResult{
+				FinalResponse: final,
+				Await: planner.NewAwait(planner.AwaitClarificationItem(&planner.AwaitClarification{
+					ID:       "clarify-1",
+					Question: "Which item?",
+				})),
+			},
+			want: "cannot combine terminal payload and await",
+		},
+		{
+			name: "terminal plus budgeted tool",
+			result: &planner.PlanResult{
+				ToolCalls:     []planner.ToolRequest{{Name: budgeted.Name}},
+				FinalResponse: final,
+			},
+			want: "cannot accompany budgeted tool",
+		},
+		{
+			name: "terminal plus planner-visible bookkeeping",
+			result: &planner.PlanResult{
+				ToolCalls:     []planner.ToolRequest{{Name: visibleBookkeeping.Name}},
+				FinalResponse: final,
+			},
+			want: "cannot accompany planner-visible bookkeeping tool",
+		},
+		{
+			name: "terminal plus terminal tool",
+			result: &planner.PlanResult{
+				ToolCalls:     []planner.ToolRequest{{Name: terminalTool.Name}},
+				FinalResponse: final,
+			},
+			want: "cannot accompany terminal tool",
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := rt.normalizeStep(tt.result)
+			require.ErrorContains(t, err, tt.want)
+		})
+	}
+}
+
 func TestRunLoopBookkeepingOnlyFinalResponseFinishesWithoutResume(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
@@ -484,7 +551,7 @@ func TestRunLoopBookkeepingOnlyToolPauseAwaitsWithoutPlannerVisibleReplay(t *tes
 	require.Equal(t, "Check alarm 7", part.Text)
 }
 
-func TestRunLoopBookkeepingOnlyToolPauseBeatsSameTurnFinalResponse(t *testing.T) {
+func TestRunLoopBookkeepingToolTerminalRejectsPause(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
 	bookkeeping := newAnyJSONSpec(tools.Ident("tasks.progress.set_step_status"), "tasks.progress")
@@ -522,14 +589,6 @@ func TestRunLoopBookkeepingOnlyToolPauseBeatsSameTurnFinalResponse(t *testing.T)
 				},
 			},
 		},
-		planResult:    &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "after wait"}}}}},
-		hasPlanResult: true,
-	}
-	wfCtx.ensureSignals()
-	ctrl := interrupt.NewController(wfCtx)
-	wfCtx.clarifyCh <- &api.ClarificationAnswer{
-		ID:     "task-input-1",
-		Answer: "Check alarm 7",
 	}
 
 	base := &planner.PlanInput{
@@ -572,12 +631,11 @@ func TestRunLoopBookkeepingOnlyToolPauseBeatsSameTurnFinalResponse(t *testing.T)
 		2,
 		"turn-1",
 		nil,
-		ctrl,
+		nil,
 		0,
 	)
-	require.NoError(t, err)
-	require.NotNil(t, out)
-	require.Equal(t, "after wait", agentMessageText(out.Final))
-	require.Equal(t, "resume", wfCtx.lastPlannerCall.Name)
-	require.Empty(t, wfCtx.lastPlannerCall.Input.ToolOutputs, "bookkeeping pauses must not replay tool outputs into the planner")
+	require.Error(t, err)
+	require.Nil(t, out)
+	require.ErrorContains(t, err, "workflow step terminal payload cannot accompany await work")
+	require.Empty(t, wfCtx.lastPlannerCall.Name, "invalid tool-terminal steps must not resume")
 }

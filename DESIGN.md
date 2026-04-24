@@ -155,6 +155,13 @@ Generated `registry.go` files in agent packages are local runtime registration h
   selected bookkeeping results visible as structured state for the next planner
   turn. A bookkeeping-only turn without planner-visible results must therefore
   resolve in the same turn via a terminal outcome or an await/pause handshake.
+- **Step transition boundary**: The workflow loop processes one admitted
+  `PlanResult` as one step, records all tool-result state through the canonical
+  recorder, then runs one transition policy to resume, finish, or finalize.
+  Terminal planner payloads are exclusive except for hidden, non-terminal
+  bookkeeping side effects that complete successfully in the same step. Deadline
+  checks control admission of new work; tool execution still observes the
+  finalizer window and emits canceled tool results for work it stops waiting on.
 - **Visible reasoning contract**: Bedrock adaptive-thinking requests ask for
   summarized reasoning display explicitly so streamed `thinking` events remain
   visible across Claude adaptive model revisions whose provider defaults may

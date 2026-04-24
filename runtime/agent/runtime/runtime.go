@@ -1602,14 +1602,7 @@ func (r *Runtime) PauseRun(ctx context.Context, req interrupt.PauseRequest) erro
 	if req.RunID == "" {
 		return errors.New("run id is required")
 	}
-	if s, ok := r.Engine.(engine.Signaler); ok {
-		return s.SignalByID(ctx, req.RunID, "", interrupt.SignalPause, req)
-	}
-	handle, ok := r.workflowHandle(req.RunID)
-	if !ok {
-		return fmt.Errorf("run %q not found", req.RunID)
-	}
-	return handle.Signal(ctx, interrupt.SignalPause, req)
+	return r.signalRun(ctx, req.RunID, interrupt.SignalPause, req, false)
 }
 
 // ResumeRun notifies the workflow that execution can continue. The resume payload
@@ -1621,14 +1614,7 @@ func (r *Runtime) ResumeRun(ctx context.Context, req interrupt.ResumeRequest) er
 	if req.RunID == "" {
 		return errors.New("run id is required")
 	}
-	if s, ok := r.Engine.(engine.Signaler); ok {
-		return s.SignalByID(ctx, req.RunID, "", interrupt.SignalResume, req)
-	}
-	handle, ok := r.workflowHandle(req.RunID)
-	if !ok {
-		return fmt.Errorf("run %q not found", req.RunID)
-	}
-	return handle.Signal(ctx, interrupt.SignalResume, req)
+	return r.signalRun(ctx, req.RunID, interrupt.SignalResume, req, false)
 }
 
 // ProvideClarification sends a typed clarification answer to a waiting run.
@@ -1639,14 +1625,7 @@ func (r *Runtime) ProvideClarification(ctx context.Context, ans interrupt.Clarif
 	if ans.RunID == "" {
 		return errors.New("run id is required")
 	}
-	if s, ok := r.Engine.(engine.Signaler); ok {
-		return r.mapAwaitSignalError(ctx, ans.RunID, s.SignalByID(ctx, ans.RunID, "", interrupt.SignalProvideClarification, ans))
-	}
-	handle, ok := r.workflowHandle(ans.RunID)
-	if !ok {
-		return r.mapAwaitSignalError(ctx, ans.RunID, engine.ErrWorkflowNotFound)
-	}
-	return r.mapAwaitSignalError(ctx, ans.RunID, handle.Signal(ctx, interrupt.SignalProvideClarification, ans))
+	return r.signalRun(ctx, ans.RunID, interrupt.SignalProvideClarification, ans, true)
 }
 
 // ProvideToolResults sends a set of external tool results to a waiting run.
@@ -1657,14 +1636,7 @@ func (r *Runtime) ProvideToolResults(ctx context.Context, rs interrupt.ToolResul
 	if rs.RunID == "" {
 		return errors.New("run id is required")
 	}
-	if s, ok := r.Engine.(engine.Signaler); ok {
-		return r.mapAwaitSignalError(ctx, rs.RunID, s.SignalByID(ctx, rs.RunID, "", interrupt.SignalProvideToolResults, rs))
-	}
-	handle, ok := r.workflowHandle(rs.RunID)
-	if !ok {
-		return r.mapAwaitSignalError(ctx, rs.RunID, engine.ErrWorkflowNotFound)
-	}
-	return r.mapAwaitSignalError(ctx, rs.RunID, handle.Signal(ctx, interrupt.SignalProvideToolResults, rs))
+	return r.signalRun(ctx, rs.RunID, interrupt.SignalProvideToolResults, rs, true)
 }
 
 // ProvideConfirmation sends a typed confirmation decision to a waiting run.
@@ -1672,17 +1644,34 @@ func (r *Runtime) ProvideConfirmation(ctx context.Context, dec interrupt.Confirm
 	if dec == nil {
 		return errors.New("confirmation decision is required")
 	}
-	if strings.TrimSpace(dec.RunID) == "" {
+	if dec.RunID == "" {
 		return errors.New("run id is required")
 	}
+	return r.signalRun(ctx, dec.RunID, interrupt.SignalProvideConfirmation, dec, true)
+}
+
+// signalRun dispatches a workflow signal through the engine Signaler when
+// available, otherwise through the locally tracked workflow handle.
+func (r *Runtime) signalRun(ctx context.Context, runID string, signal string, payload any, mapAwait bool) error {
 	if s, ok := r.Engine.(engine.Signaler); ok {
-		return r.mapAwaitSignalError(ctx, dec.RunID, s.SignalByID(ctx, dec.RunID, "", interrupt.SignalProvideConfirmation, dec))
+		err := s.SignalByID(ctx, runID, "", signal, payload)
+		if mapAwait {
+			return r.mapAwaitSignalError(ctx, runID, err)
+		}
+		return err
 	}
-	handle, ok := r.workflowHandle(dec.RunID)
+	handle, ok := r.workflowHandle(runID)
 	if !ok {
-		return r.mapAwaitSignalError(ctx, dec.RunID, engine.ErrWorkflowNotFound)
+		if mapAwait {
+			return r.mapAwaitSignalError(ctx, runID, engine.ErrWorkflowNotFound)
+		}
+		return fmt.Errorf("run %q not found", runID)
 	}
-	return r.mapAwaitSignalError(ctx, dec.RunID, handle.Signal(ctx, interrupt.SignalProvideConfirmation, dec))
+	err := handle.Signal(ctx, signal, payload)
+	if mapAwait {
+		return r.mapAwaitSignalError(ctx, runID, err)
+	}
+	return err
 }
 
 // mapAwaitSignalError converts engine signal-delivery errors into typed runtime
