@@ -250,6 +250,55 @@ func (r *Runtime) finalizeWithPlanner(
 	}, nil
 }
 
+// finalizeWithPlannerIfAllowed centralizes the restricted-tool contract for
+// tool-free planner finalization.
+//
+// Contract:
+//   - Unrestricted runs may always finalize through the planner.
+//   - Restricted-tool runs may only use planner finalization once the hard
+//     deadline has actually been reached.
+//   - Before the hard deadline, time-budget finalization is deferred so the
+//     workflow can stay on the restricted-tool path, while every other
+//     tool-free-finalization reason fails loudly.
+func (r *Runtime) finalizeWithPlannerIfAllowed(
+	wfCtx engine.WorkflowContext,
+	reg AgentRegistration,
+	input *RunInput,
+	base *planner.PlanInput,
+	allToolResults []*planner.ToolResult,
+	allToolOutputs []*planner.ToolOutput,
+	aggUsage model.TokenUsage,
+	nextAttempt int,
+	turnID string,
+	reason planner.TerminationReason,
+	hardDeadline time.Time,
+) (*RunOutput, bool, error) {
+	if !shouldBypassPlannerFinalization(input) {
+		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, allToolResults, allToolOutputs, aggUsage, nextAttempt, turnID, reason, hardDeadline)
+		return out, true, err
+	}
+	now := wfCtx.Now()
+	if !hardDeadline.IsZero() && !now.Before(hardDeadline) {
+		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, allToolResults, allToolOutputs, aggUsage, nextAttempt, turnID, reason, hardDeadline)
+		return out, true, err
+	}
+	if reason == planner.TerminationReasonTimeBudget {
+		return nil, false, nil
+	}
+	restrictedTool := ""
+	if input != nil && input.Policy != nil {
+		restrictedTool = string(input.Policy.RestrictToTool)
+	}
+	if restrictedTool == "" {
+		restrictedTool = "<unknown>"
+	}
+	return nil, false, fmt.Errorf(
+		"run restricted to tool %q cannot use tool-free planner finalization for %s before hard deadline",
+		restrictedTool,
+		reason,
+	)
+}
+
 // handleInterrupts drains pause signals and blocks until a resume signal arrives.
 // When budgetDeadline is reached, it returns nil so the caller can finalize cleanly.
 func (r *Runtime) handleInterrupts(
@@ -428,8 +477,26 @@ func (r *Runtime) handleMissingFieldsPolicy(
 	}
 	switch reg.Policy.OnMissingFields {
 	case MissingFieldsFinalize:
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, allResults, allToolOutputs, aggUsage, *nextAttempt, turnID, planner.TerminationReasonFailureCap, time.Time{})
-		return out, err
+		out, finalized, err := r.finalizeWithPlannerIfAllowed(
+			wfCtx,
+			reg,
+			input,
+			base,
+			allResults,
+			allToolOutputs,
+			aggUsage,
+			*nextAttempt,
+			turnID,
+			planner.TerminationReasonFailureCap,
+			time.Time{},
+		)
+		if err != nil {
+			return nil, err
+		}
+		if finalized {
+			return out, nil
+		}
+		return nil, fmt.Errorf("missing-fields finalize skipped without hard deadline")
 	case MissingFieldsAwaitClarification:
 		// Generate deterministic await ID for correlation safety.
 		awaitID := generateDeterministicAwaitID(base.RunContext.RunID, base.RunContext.TurnID, triggerTool, triggerCall)
