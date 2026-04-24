@@ -76,7 +76,20 @@ func WithClient(client *{{ .ServicePkgAlias }}.Client) ExecOpt {
         {{- range .Toolset.Tools }}
         {{- if .IsMethodBacked }}
         c.callers[tools.Ident({{ printf "%q" .QualifiedName }})] = func(ctx context.Context, args any) (any, error) {
+            {{- if .HasResult }}
+                {{- if .MethodPayloadTypeRef }}
             return client.{{ .MethodGoName }}(ctx, args.({{ .MethodPayloadTypeRef }}))
+                {{- else }}
+            return client.{{ .MethodGoName }}(ctx)
+                {{- end }}
+            {{- else }}
+                {{- if .MethodPayloadTypeRef }}
+            err := client.{{ .MethodGoName }}(ctx, args.({{ .MethodPayloadTypeRef }}))
+                {{- else }}
+            err := client.{{ .MethodGoName }}(ctx)
+                {{- end }}
+            return nil, err
+            {{- end }}
         }
         {{- end }}
         {{- end }}
@@ -131,164 +144,6 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
         if meta == nil {
             return runtime.Executed(&planner.ToolResult{Error: planner.NewToolError("tool call meta is nil")}), nil
         }
-        // Lookup caller registered for this tool.
-        caller := cfg.callers[call.Name]
-        if caller == nil {
-            return runtime.Executed(&planner.ToolResult{
-                Name: call.Name,
-                Error: planner.NewToolError(
-                    fmt.Sprintf(
-                        "no service caller registered for tool %q in toolset %q; "+
-                            "ensure the appropriate With... option is wired when constructing the executor",
-                        call.Name,
-                        "{{ .Toolset.QualifiedName }}",
-                    ),
-                ),
-            }), nil
-        }
-        // Decode tool payload from canonical JSON into a typed struct using the
-        // generated payload codec. Method‑backed tools always have a payload
-        // codec; missing codecs are treated as programmer errors.
-        var toolArgs any
-        if len(call.Payload) > 0 {
-            pc, ok := {{ $.Toolset.SpecsPackageName }}.PayloadCodec(string(call.Name))
-            if !ok || pc == nil || pc.FromJSON == nil {
-                panic(fmt.Errorf("missing payload codec for tool %q in toolset %q", call.Name, "{{ .Toolset.QualifiedName }}"))
-            }
-            val, err := pc.FromJSON(call.Payload)
-            if err != nil {
-                return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}), nil
-            }
-            toolArgs = val
-        }
-        // Map to method payload
-        var methodIn any
-        if cfg.mapPayload != nil {
-            var err error
-            methodIn, err = cfg.mapPayload(call.Name, toolArgs, meta)
-            if err != nil {
-                return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}), nil
-            }
-        } else {
-             // Default mapping using generated transforms
-             switch call.Name {
-             {{- range .Toolset.Tools }}
-             {{- if .IsMethodBacked }}
-             case tools.Ident({{ printf "%q" .QualifiedName }}):
-                 {{- if .PayloadAliasesMethod }}
-                 methodIn = toolArgs
-                 {{- if .InjectedFields }}
-                 p := methodIn.({{ .MethodPayloadTypeRef }})
-                 {{- range .InjectedFields }}
-                 p.{{ goify . true }} = meta.{{ goify . true }}
-                 {{- end }}
-                 methodIn = p
-                 {{- end }}
-                 {{- else }}
-                 // Call generated transform
-                 p := {{ $.Toolset.SpecsPackageName }}.Init{{ goify .Name true }}MethodPayload(toolArgs.(*{{ $.Toolset.SpecsPackageName }}.{{ .ConstName }}Payload))
-                 {{- if .InjectedFields }}
-                 {{- range .InjectedFields }}
-                 p.{{ goify . true }} = meta.{{ goify . true }}
-                 {{- end }}
-                 {{- end }}
-                 methodIn = p
-                 {{- end }}
-             {{- end }}
-             {{- end }}
-             default:
-                 methodIn = toolArgs
-             }
-        }
-        
-        // Apply interceptors (injection)
-        for _, inj := range cfg.injectors {
-            if err := inj.Inject(ctx, methodIn, meta); err != nil {
-                 return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}), nil
-            }
-        }
-
-        // Invoke caller
-        methodOut, err := caller(ctx, methodIn)
-        if err != nil {
-            tr := &planner.ToolResult{
-                Name:  call.Name,
-                Error: planner.ToolErrorFromError(err),
-            }
-            // Attach structured retry hints when the error provides them.
-            var provider planner.RetryHintProvider
-            if errors.As(err, &provider) {
-                if hint := provider.RetryHint(call.Name); hint != nil {
-                    tr.RetryHint = hint
-                }
-            }
-            return runtime.Executed(tr), nil
-        }
-        // Map back to tool result
-        var result any
-        if cfg.mapResult != nil {
-            var e error
-            result, e = cfg.mapResult(call.Name, methodOut, meta)
-            if e != nil {
-                return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(e)}), nil
-            }
-        } else {
-            // Default mapping using generated transforms
-            switch call.Name {
-            {{- range .Toolset.Tools }}
-            {{- if .IsMethodBacked }}
-            case tools.Ident({{ printf "%q" .QualifiedName }}):
-                {{- if .ResultAliasesMethod }}
-                result = methodOut
-                {{- else }}
-                result = {{ $.Toolset.SpecsPackageName }}.Init{{ goify .Name true }}ToolResult(methodOut.({{ .MethodResultTypeRef }}))
-                {{- end }}
-            {{- end }}
-            {{- end }}
-            default:
-                result = methodOut
-            }
-        }
-
-        {{- $hasBoundsProjection := false }}
-        {{- range .Toolset.Tools }}
-            {{- if and .IsMethodBacked .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
-                {{- $hasBoundsProjection = true }}
-            {{- end }}
-        {{- end }}
-        {{- if $hasBoundsProjection }}
-        var bounds *agent.Bounds
-        switch call.Name {
-        {{- range .Toolset.Tools }}
-        {{- if and .IsMethodBacked .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
-        case tools.Ident({{ printf "%q" .QualifiedName }}):
-            mr, ok := methodOut.({{ .MethodResultTypeRef }})
-            if !ok {
-                return runtime.Executed(&planner.ToolResult{
-                    Name:  call.Name,
-                    Error: planner.NewToolError(fmt.Sprintf("unexpected method result type for %q", call.Name)),
-                }), nil
-            }
-            bounds = init{{ goify .Name true }}Bounds(mr)
-        {{- end }}
-        {{- end }}
-        }
-        {{- end }}
-
-        // Build final tool result. ServerData is recorded as canonical JSON bytes
-        // (an array of toolregistry.ServerDataItem) and never sent to model providers.
-        {{- $hasServerData := false }}
-        {{- range .Toolset.Tools }}
-            {{- if .IsMethodBacked }}
-                {{- range .ServerData }}
-                    {{- if .MethodResultField }}
-                        {{- $hasServerData = true }}
-                    {{- end }}
-                {{- end }}
-            {{- end }}
-        {{- end }}
-        {{- if $hasServerData }}
-        var serverItems []*toolregistry.ServerDataItem
         switch call.Name {
         {{- range .Toolset.Tools }}
         {{- if .IsMethodBacked }}
@@ -298,15 +153,98 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                     {{- $toolHasSource = true }}
                 {{- end }}
             {{- end }}
-            {{- if $toolHasSource }}
+            {{- $hasBoundsProjection := and .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
         case tools.Ident({{ printf "%q" .QualifiedName }}):
+            caller := cfg.callers[call.Name]
+            if caller == nil {
+                panic(fmt.Errorf("service executor missing caller for tool %q", call.Name))
+            }
+            var toolArgs any
+            {{- if .MethodPayloadTypeRef }}
+            {
+                val, err := {{ $.Toolset.SpecsPackageName }}.{{ .ConstName }}PayloadCodec.FromJSON(call.Payload)
+                if err != nil {
+                    return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}), nil
+                }
+                toolArgs = val
+            }
+            {{- end }}
+            var methodIn any
+            if cfg.mapPayload != nil {
+                var err error
+                methodIn, err = cfg.mapPayload(call.Name, toolArgs, meta)
+                if err != nil {
+                    return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}), nil
+                }
+            } else {
+                {{- if .MethodPayloadTypeRef }}
+                    {{- if .PayloadAliasesMethod }}
+                methodIn = toolArgs
+                        {{- if .InjectedFields }}
+                p := methodIn.({{ .MethodPayloadTypeRef }})
+                            {{- range .InjectedFields }}
+                p.{{ goify . true }} = meta.{{ goify . true }}
+                            {{- end }}
+                methodIn = p
+                        {{- end }}
+                    {{- else }}
+                p := {{ $.Toolset.SpecsPackageName }}.Init{{ goify .Name true }}MethodPayload(toolArgs.(*{{ $.Toolset.SpecsPackageName }}.{{ .ConstName }}Payload))
+                        {{- range .InjectedFields }}
+                p.{{ goify . true }} = meta.{{ goify . true }}
+                        {{- end }}
+                methodIn = p
+                    {{- end }}
+                {{- end }}
+            }
+            for _, inj := range cfg.injectors {
+                if err := inj.Inject(ctx, methodIn, meta); err != nil {
+                    return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}), nil
+                }
+            }
+            methodOut, err := caller(ctx, methodIn)
+            if err != nil {
+                tr := &planner.ToolResult{
+                    Name:  call.Name,
+                    Error: planner.ToolErrorFromError(err),
+                }
+                var provider planner.RetryHintProvider
+                if errors.As(err, &provider) {
+                    if hint := provider.RetryHint(call.Name); hint != nil {
+                        tr.RetryHint = hint
+                    }
+                }
+                return runtime.Executed(tr), nil
+            }
+            var result any
+            if cfg.mapResult != nil {
+                var e error
+                result, e = cfg.mapResult(call.Name, methodOut, meta)
+                if e != nil {
+                    return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(e)}), nil
+                }
+            } else {
+                {{- if .HasResult }}
+                    {{- if .ResultAliasesMethod }}
+                result = methodOut
+                    {{- else }}
+                result = {{ $.Toolset.SpecsPackageName }}.Init{{ goify .Name true }}ToolResult(methodOut.({{ .MethodResultTypeRef }}))
+                    {{- end }}
+                {{- end }}
+            }
+            {{- if or $hasBoundsProjection $toolHasSource }}
             mr, ok := methodOut.({{ .MethodResultTypeRef }})
             if !ok {
                 return runtime.Executed(&planner.ToolResult{
                     Name:  call.Name,
-                    Error: planner.NewToolError(fmt.Sprintf("unexpected method result type for %q", call.Name)),
+                    Error: planner.NewToolError(fmt.Sprintf("unexpected method result type for %q: %T", call.Name, methodOut)),
                 }), nil
             }
+            {{- end }}
+            {{- if $hasBoundsProjection }}
+            bounds := init{{ goify .Name true }}Bounds(mr)
+            {{- end }}
+            {{- if $toolHasSource }}
+            var serverItems []*toolregistry.ServerDataItem
             {{- $tool := . }}
             {{- range .ServerData }}
             {{- if .MethodResultField }}
@@ -326,31 +264,33 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             }
             {{- end }}
             {{- end }}
-            {{- end }}
-        {{- end }}
-        {{- end }}
-        }
-        var serverData rawjson.Message
-        if len(serverItems) > 0 {
-            b, err := json.Marshal(serverItems)
-            if err != nil {
-                return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}), nil
+            var serverData rawjson.Message
+            if len(serverItems) > 0 {
+                b, err := json.Marshal(serverItems)
+                if err != nil {
+                    return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}), nil
+                }
+                serverData = rawjson.Message(b)
             }
-            serverData = rawjson.Message(b)
-        }
-        return runtime.Executed(&planner.ToolResult{
-            Name:       call.Name,
-            Result:     result,
-            Bounds:     {{ if $hasBoundsProjection }}bounds{{ else }}nil{{ end }},
-            ServerData: serverData,
-        }), nil
-        {{- else }}
-        return runtime.Executed(&planner.ToolResult{
-            Name:   call.Name,
-            Result: result,
-            Bounds: {{ if $hasBoundsProjection }}bounds{{ else }}nil{{ end }},
-        }), nil
+            {{- end }}
+            return runtime.Executed(&planner.ToolResult{
+                Name:   call.Name,
+                Result: result,
+                {{- if $hasBoundsProjection }}
+                Bounds: bounds,
+                {{- end }}
+                {{- if $toolHasSource }}
+                ServerData: serverData,
+                {{- end }}
+            }), nil
         {{- end }}
+        {{- end }}
+        default:
+            return runtime.Executed(&planner.ToolResult{
+                Name:  call.Name,
+                Error: planner.NewToolError(fmt.Sprintf("unknown tool %q for toolset %q", call.Name, "{{ .Toolset.QualifiedName }}")),
+            }), nil
+        }
     })
 }
 

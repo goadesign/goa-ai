@@ -622,6 +622,11 @@ registry clients live under `gen/<svc>/registry/<name>/`, while the clustered
 registry service implementation lives under `registry/` and the shared wire
 protocol lives under `runtime/toolregistry/`.
 
+Generated registry-backed specs expose `DiscoverAndPopulate`, `Specs`,
+`ValidatePayload`, and `ValidateResult`. Discovery remains dynamic because the
+catalog comes from the registry at runtime, but schema validation uses the shared
+runtime validator rather than duplicated generated validation code.
+
 ---
 
 ## Tool
@@ -1016,6 +1021,11 @@ handshake), or when at least one successful bookkeeping result is declared
 `PlannerVisible()` and supplies canonical state for the next turn. Retryable
 bookkeeping failures remain planner-visible through `RetryHint` even without
 `PlannerVisible()`.
+
+Operationally, a planner result is processed as one workflow step: the runtime
+executes admitted tool and await work, records durable and planner-visible
+outputs through one canonical path, then applies a single transition policy for
+resume, finish, terminal-tool completion, or forced finalization.
 
 ```go
 Tool("set_step_status", "Update step status", func() {
@@ -1511,4 +1521,3 @@ Notes:
 - Compatibility uses Goa's type system (names and structure, including `Extend`)
 - For nested shapes, keep pointers in user types for validators/codecs
 - Mapping lives in executors; transforms are conveniences when types align
-

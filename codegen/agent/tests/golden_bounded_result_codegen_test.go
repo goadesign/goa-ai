@@ -23,7 +23,8 @@ func TestGolden_BoundedResult_UsesBoundsSpecAndProjection(t *testing.T) {
 	require.Contains(t, schemas, `"next_cursor"`)
 
 	executor := generatedContentBySuffix(t, files, "agents/scribe/lookup/service_executor.go")
-	require.Contains(t, executor, "bounds = initSearchBounds(mr)")
+	require.Contains(t, executor, "SearchPayloadCodec.FromJSON(call.Payload)")
+	require.Contains(t, executor, "bounds := initSearchBounds(mr)")
 	require.Contains(t, executor, "Bounds: bounds,")
 	require.Contains(t, executor, "func initSearchBounds(")
 	require.Contains(t, executor, "bounds.Returned = mr.Returned")

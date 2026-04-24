@@ -485,6 +485,10 @@ policies, and MCP servers within Goa service designs.
 | `Description(text)` | Set toolset description |
 | `Version(version)` | Pin registry-backed toolset version |
 
+Generated used-toolset registration is fail-fast: `RegisterUsedToolsets` returns
+an error if any required local executor is missing or nil, before registering
+the toolsets with the runtime.
+
 ### Run Policy
 
 | Function | Purpose |
