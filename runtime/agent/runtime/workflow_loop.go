@@ -199,7 +199,7 @@ func (l *workflowLoop) run() (*RunOutput, error) {
 		l.r.logger.Info(ctx, "Checking result.ToolCalls", "len", len(l.st.Result.ToolCalls))
 		if len(l.st.Result.ToolCalls) == 0 {
 			l.r.logger.Info(ctx, "No tool calls, checking FinalResponse")
-			return l.r.finishWithoutToolCalls(ctx, l.input, l.base, l.st, l.turnID)
+			return l.r.finishCurrentPlanResult(ctx, l.input, l.base, l.st, l.turnID)
 		}
 
 		out, err := l.r.handleToolTurn(

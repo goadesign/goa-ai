@@ -228,7 +228,7 @@ on agent/tool contracts.
 | `ResultReminder(text)`                        | Inside `Tool`                          | Static system reminder injected after tool result                                                   |
 | `Confirmation(dsl)`                           | Inside `Tool`                          | Declares that tool execution must be explicitly approved out-of-band                                |
 | `TerminalRun()`                               | Inside `Tool`                          | Marks tool as terminal: run completes immediately after execution                                   |
-| `Bookkeeping()`                               | Inside `Tool`                          | Marks tool as bookkeeping: calls do not consume the run-level `MaxToolCalls` budget                 |
+| `Bookkeeping()`                               | Inside `Tool`                          | Marks tool as control-plane bookkeeping: no `MaxToolCalls` budget, no transcript/tool-output replay |
 
 
 ### Tool payload defaults (Feature)
@@ -994,11 +994,25 @@ Tool("tasks_complete", "Commit the terminal task artifact", func() {
 
 ### Bookkeeping
 
-`Bookkeeping` marks a tool as a bookkeeping tool that does not consume the
-run-level `MaxToolCalls` retrieval budget. Bookkeeping calls never decrement
-`RemainingToolCalls` and are never dropped when a batch is trimmed to fit the
-remaining budget. Use it for structured progress, status, and commit tools
-whose cost is record-keeping rather than retrieval or side-effecting work.
+`Bookkeeping` marks a tool as a control-plane bookkeeping tool rather than a
+future reasoning input.
+
+Runtime contract:
+
+- bookkeeping calls do not consume the run-level `MaxToolCalls` retrieval budget,
+- bookkeeping calls are never dropped when a batch is trimmed to fit the
+  remaining budget,
+- bookkeeping results still publish durable run events for hooks, streams, and
+  run-log consumers,
+- bookkeeping results are **not** appended back into the model-visible
+  transcript and are **not** replayed to future planner turns as `ToolOutputs`.
+
+This means a bookkeeping-only planner turn is only valid when the same turn
+already resolves without another reasoning resume: either a `TerminalRun` tool,
+a `FinalResponse` / `FinalToolResult`, or an await/pause control-plane
+handshake. If a planner emits bookkeeping-only tool calls without a same-turn
+terminal or await continuation, the runtime fails fast instead of scheduling an
+implicit extra resume.
 
 ```go
 Tool("set_step_status", "Update step status", func() {

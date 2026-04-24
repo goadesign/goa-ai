@@ -712,10 +712,8 @@ func TestConsumeProvidedToolResultsRunsResultMaterializer(t *testing.T) {
 				},
 			},
 		},
-		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			tools.Ident("svc.tools.example"): newAnyJSONSpec("svc.tools.example", "svc.tools"),
-		},
 	}
+	seedTestToolSpecs(rt, newAnyJSONSpec("svc.tools.example", "svc.tools"))
 	base := &planner.PlanInput{
 		RunContext: run.Context{
 			RunID:     "run-1",

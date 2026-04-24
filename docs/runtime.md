@@ -461,6 +461,19 @@ rehydrates `Payload`, `Result`, `ServerData`, and planner-visible result
 metadata from the canonical run log inside `PlanResumeActivity` before invoking
 the planner.
 
+Bookkeeping exception:
+
+- tools declared with `Bookkeeping()` still execute and still publish durable
+  run events,
+- but their results are not replayed as `PlanResumeInput.ToolOutputs` and are
+  not appended back into the model-visible transcript,
+- except when a bookkeeping tool fails with a `RetryHint`: that retryable
+  failure becomes planner-visible so the next resume turn can repair and resend
+  the tool call without replaying successful bookkeeping noise,
+- bookkeeping tools may still drive an await handshake in the same turn (for
+  example a runtime-owned `ToolPause`); that control-plane await remains legal
+  even though the bookkeeping result itself is not planner-visible.
+
 ### PlanResult
 
 ```go
@@ -475,6 +488,20 @@ type PlanResult struct {
     Notes         []PlannerAnnotation
 }
 ```
+
+Bookkeeping turn invariant:
+
+- if a planner turn emits any budgeted tool call, the runtime resumes as usual
+  from the surviving planner-visible tool outputs,
+- if a planner turn emits only bookkeeping tool calls, the same `PlanResult`
+  must also resolve that turn without another reasoning resume: either a
+  terminal outcome (`TerminalRun` tool or `FinalResponse` / `FinalToolResult`)
+  or an await/pause control-plane handshake,
+- retryable bookkeeping failures are the one planner-visible exception: when a
+  bookkeeping tool returns a `RetryHint`, the runtime resumes so the planner can
+  repair and resend that tool call,
+- otherwise the runtime fails fast instead of scheduling an implicit extra
+  `PlanResume`.
 
 ### PlannerContext
 
@@ -604,7 +631,11 @@ yourself.
 3. **Runtime decodes payload** — Uses generated codecs to validate and decode canonical JSON
 4. **Executor runs tool** — Receives typed or raw payload depending on configuration
 5. **Runtime encodes result** — Uses generated codecs and persists canonical `ToolOutput` history
-6. **Planner resumes from `ToolOutputs`** — `PlanResumeInput.ToolOutputs` is the canonical execution-history boundary
+6. **Planner resumes from `ToolOutputs`** — `PlanResumeInput.ToolOutputs` is the canonical execution-history boundary for budgeted tools only
+
+Bookkeeping tools follow the same execution and durability path, but not the
+same reasoning path: the runtime records their hook/stream/run-log events
+without replaying their results into future planner turns.
 
 ### ToolsetRegistration
 

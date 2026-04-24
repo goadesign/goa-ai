@@ -4,8 +4,10 @@ package runtime
 // conversation message list that is fed back into the planner.
 //
 // Contract:
-// - Produces a canonical assistant message that includes all tool_use parts for the turn.
-// - Appends messages to the PlanInput in the same order used for tool_result correlation.
+// - Produces a canonical assistant message that includes only planner-visible
+//   tool_use parts for the turn.
+// - Appends messages to the PlanInput in the same order used for tool_result
+//   correlation.
 
 import (
 	"context"
@@ -63,12 +65,13 @@ func (r *Runtime) recordAssistantTurn(
 	allowed []planner.ToolRequest,
 	turnID string,
 ) error {
+	allowed = r.filterPlannerVisibleToolCalls(allowed)
 	if len(transcriptMsgs) == 0 && len(allowed) == 0 {
 		return nil
 	}
 	messages := cloneMessages(transcriptMsgs)
 	target := findAssistantMessage(messages)
-	if target == nil {
+	if target == nil && len(allowed) > 0 {
 		target = &model.Message{Role: model.ConversationRoleAssistant}
 		messages = append(messages, target)
 	}
@@ -80,6 +83,34 @@ func (r *Runtime) recordAssistantTurn(
 		})
 	}
 	return r.appendTranscriptMessages(ctx, agentID, base, turnID, messages)
+}
+
+// appendLatePlannerVisibleToolUses appends bookkeeping tool_use parts that
+// became planner-visible only after execution produced retryable failures.
+func (r *Runtime) appendLatePlannerVisibleToolUses(
+	ctx context.Context,
+	agentID agent.Ident,
+	base *planner.PlanInput,
+	calls []planner.ToolRequest,
+	results []*planner.ToolResult,
+	turnID string,
+) error {
+	lateCalls, err := r.filterLatePlannerVisibleToolCalls(calls, results)
+	if err != nil {
+		return err
+	}
+	if len(lateCalls) == 0 {
+		return nil
+	}
+	msg := &model.Message{Role: model.ConversationRoleAssistant}
+	for _, call := range lateCalls {
+		msg.Parts = append(msg.Parts, model.ToolUsePart{
+			ID:    call.ToolCallID,
+			Name:  string(call.Name),
+			Input: call.Payload,
+		})
+	}
+	return r.appendTranscriptMessages(ctx, agentID, base, turnID, []*model.Message{msg})
 }
 
 // findAssistantMessage returns the last assistant message in msgs, if any.

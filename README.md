@@ -346,6 +346,23 @@ Agent("assistant", "Production assistant", func() {
 
 Policies are enforced by the runtime—not just suggestions.
 
+### Bookkeeping Tools: Control-Plane Side Effects
+
+Use `Bookkeeping()` for progress, status, finding, or terminal-commit tools
+whose job is to update control-plane state rather than feed another reasoning
+turn.
+
+- bookkeeping tools do **not** consume `MaxToolCalls`
+- their results still publish durable events for streams and run logs
+- their results are **not** replayed into future planner-visible transcript or
+  `ToolOutputs` state
+- a bookkeeping-only turn must resolve in the same turn, either by finishing
+  (`TerminalRun`, `FinalResponse`, `FinalToolResult`) or by entering an
+  await/pause handshake
+
+This keeps progress/control-plane loops cheap without hiding them from
+observability.
+
 ---
 
 ## Streaming: Real-Time Visibility

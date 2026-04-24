@@ -20,9 +20,10 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-// finishWithoutToolCalls finalizes a plan result when the planner returned no
-// tool calls, producing the final assistant message and planner notes.
-func (r *Runtime) finishWithoutToolCalls(
+// finishCurrentPlanResult materializes the current planner result into the
+// user-visible RunOutput, preserving streamed transcript recovery and planner
+// note publication.
+func (r *Runtime) finishCurrentPlanResult(
 	ctx context.Context,
 	input *RunInput,
 	base *planner.PlanInput,
@@ -117,6 +118,9 @@ func validateTerminalPlanResult(result *planner.PlanResult) error {
 	}
 	if result.FinalResponse != nil && result.FinalToolResult != nil {
 		return fmt.Errorf("planner returned both FinalResponse and FinalToolResult")
+	}
+	if result.Await != nil && len(result.Await.Items) > 0 {
+		return fmt.Errorf("planner returned await alongside terminal payload")
 	}
 	return nil
 }
