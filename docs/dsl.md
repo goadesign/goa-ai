@@ -228,7 +228,7 @@ on agent/tool contracts.
 | `ResultReminder(text)`                        | Inside `Tool`                          | Static system reminder injected after tool result                                                   |
 | `Confirmation(dsl)`                           | Inside `Tool`                          | Declares that tool execution must be explicitly approved out-of-band                                |
 | `TerminalRun()`                               | Inside `Tool`                          | Marks tool as terminal: run completes immediately after execution                                   |
-| `Bookkeeping()`                               | Inside `Tool`                          | Marks tool as control-plane bookkeeping: no `MaxToolCalls` budget, no transcript/tool-output replay |
+| `Bookkeeping()`                               | Inside `Tool`                          | Marks tool as control-plane bookkeeping: no `MaxToolCalls` budget, hidden from future planner turns by default |
 | `PlannerVisible()`                            | Inside `Tool`                          | Keeps a bookkeeping result visible to the next planner turn                                         |
 
 
@@ -1005,15 +1005,17 @@ Runtime contract:
   remaining budget,
 - bookkeeping results still publish durable run events for hooks, streams, and
   run-log consumers,
-- bookkeeping results are **not** appended back into the model-visible
-  transcript and are **not** replayed to future planner turns as `ToolOutputs`.
+- successful bookkeeping results stay hidden from the model-visible transcript
+  and future `ToolOutputs` by default unless the tool also declares
+  `PlannerVisible()`.
 
 This means a bookkeeping-only planner turn is only valid when the same turn
-already resolves without another reasoning resume: either a `TerminalRun` tool,
-a `FinalResponse` / `FinalToolResult`, or an await/pause control-plane
-handshake. If a planner emits bookkeeping-only tool calls without a same-turn
-terminal or await continuation, the runtime fails fast instead of scheduling an
-implicit extra resume.
+already resolves without another reasoning resume (a `TerminalRun` tool, a
+`FinalResponse` / `FinalToolResult`, or an await/pause control-plane
+handshake), or when at least one successful bookkeeping result is declared
+`PlannerVisible()` and supplies canonical state for the next turn. Retryable
+bookkeeping failures remain planner-visible through `RetryHint` even without
+`PlannerVisible()`.
 
 ```go
 Tool("set_step_status", "Update step status", func() {
