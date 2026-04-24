@@ -352,19 +352,21 @@ Policies are enforced by the runtime—not just suggestions.
 ### Bookkeeping Tools: Control-Plane Side Effects
 
 Use `Bookkeeping()` for progress, status, finding, or terminal-commit tools
-whose job is to update control-plane state rather than feed another reasoning
-turn.
+whose job is to update control-plane state rather than perform retrieval.
 
 - bookkeeping tools do **not** consume `MaxToolCalls`
 - their results still publish durable events for streams and run logs
-- their results are **not** replayed into future planner-visible transcript or
-  `ToolOutputs` state
-- a bookkeeping-only turn must resolve in the same turn, either by finishing
-  (`TerminalRun`, `FinalResponse`, `FinalToolResult`) or by entering an
-  await/pause handshake
+- successful bookkeeping results stay hidden from future planner-visible
+  transcript and `ToolOutputs` state by default
+- `PlannerVisible()` is the opt-in exception for non-terminal bookkeeping tools
+  that emit canonical state needed by the next planner turn
+- a bookkeeping-only turn must either resolve in the same turn
+  (`TerminalRun`, `FinalResponse`, `FinalToolResult`, await/pause) or produce a
+  planner-visible bookkeeping result that justifies the next resume
 
-This keeps progress/control-plane loops cheap without hiding them from
-observability.
+This keeps control-plane loops cheap without hiding them from observability,
+while still letting selected bookkeeping results drive structured follow-up
+reasoning when needed.
 
 ---
 

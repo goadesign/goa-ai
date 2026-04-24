@@ -469,12 +469,15 @@ Bookkeeping exception:
   and are not appended back into the model-visible transcript,
 - `PlannerVisible()` is the opt-in exception: selected bookkeeping results stay
   planner-visible and are replayed like budgeted tool results,
+- `PlannerVisible()` is only valid on non-terminal bookkeeping tools; budgeted
+  tools are already planner-visible and terminal bookkeeping tools end the run
+  instead of resuming it,
 - except when a bookkeeping tool fails with a `RetryHint`: that retryable
   failure becomes planner-visible so the next resume turn can repair and resend
   the tool call without replaying successful bookkeeping noise,
 - bookkeeping tools may still drive an await handshake in the same turn (for
   example a runtime-owned `ToolPause`); that control-plane await remains legal
-  even though the bookkeeping result itself is not planner-visible.
+  even when no successful bookkeeping result is replayed.
 
 ### PlanResult
 
