@@ -65,6 +65,10 @@ type (
 		// commit tools whose cost is record-keeping rather than retrieval or
 		// side-effecting work.
 		Bookkeeping bool
+		// PlannerVisible keeps a bookkeeping tool visible to future planner turns.
+		// This is intended for control-plane tools that still produce canonical
+		// reasoning state. Budgeted tools are already planner-visible by default.
+		PlannerVisible bool
 		// IsAgentTool indicates this tool is implemented by an agent (agent-as-tool).
 		// When true, the runtime executes the tool by starting the provider agent as a
 		// child workflow from within the parent workflow loop. Set by codegen when

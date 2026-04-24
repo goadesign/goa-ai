@@ -88,6 +88,8 @@ type (
 		// Bookkeeping indicates this tool is a bookkeeping tool (status / findings /
 		// terminal commits) that does not consume the run-level retrieval budget.
 		Bookkeeping bool
+		// PlannerVisible keeps a bookkeeping tool visible to future planner turns.
+		PlannerVisible bool
 		// ResultReminder is an optional system reminder injected into the
 		// conversation after the tool result is returned.
 		ResultReminder string

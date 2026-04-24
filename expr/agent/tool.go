@@ -84,6 +84,12 @@ type (
 		// trimming. It is set via the Bookkeeping DSL helper.
 		Bookkeeping bool
 
+		// PlannerVisible keeps a bookkeeping tool visible to future planner turns.
+		// This is intended for control-plane tools that still produce canonical
+		// reasoning state (for example, structured progress snapshots). Budgeted
+		// tools are already planner-visible by default.
+		PlannerVisible bool
+
 		// ResultReminder is an optional system reminder that is injected into
 		// the conversation after the tool result is returned. It provides
 		// backstage guidance to the model about how to interpret or present
@@ -390,6 +396,12 @@ func (t *ToolExpr) validateShapes() error {
 	check("Return", t.Return)
 	validateServerDataShapes(t, verr, check)
 	validateBoundsShape(t, verr)
+	if t.PlannerVisible && !t.Bookkeeping {
+		verr.Add(t, "PlannerVisible requires Bookkeeping")
+	}
+	if t.PlannerVisible && t.TerminalRun {
+		verr.Add(t, "PlannerVisible cannot be combined with TerminalRun")
+	}
 	if len(verr.Errors) == 0 {
 		return nil
 	}

@@ -748,6 +748,26 @@ func Bookkeeping() {
 	tool.Bookkeeping = true
 }
 
+// PlannerVisible keeps a bookkeeping tool result visible to future planner
+// turns.
+//
+// Runtime contract:
+//   - bookkeeping tools remain budget-exempt and durable,
+//   - successful executions are replayed into future planner transcript/tool-output
+//     state instead of being hidden,
+//   - the helper is only valid on non-terminal bookkeeping tools; budgeted tools
+//     are already planner-visible by default.
+//
+// PlannerVisible must appear in a Tool expression.
+func PlannerVisible() {
+	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	tool.PlannerVisible = true
+}
+
 // toolDSL mirrors Goa's method DSL helpers to define tool shapes.
 func toolDSL(m *agentsexpr.ToolExpr, suffix string, p any, args ...any) *goaexpr.AttributeExpr {
 	return shapeDSL(m.Name, suffix, p, args...)

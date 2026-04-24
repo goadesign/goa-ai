@@ -242,6 +242,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		Bounds:             boundsData(expr.Bounds, expr.Method),
 		TerminalRun:        expr.TerminalRun,
 		Bookkeeping:        expr.Bookkeeping,
+		PlannerVisible:     expr.PlannerVisible,
 		ResultReminder:     expr.ResultReminder,
 	}
 	tool.ServerData = serverDataData(expr.ServerData)
