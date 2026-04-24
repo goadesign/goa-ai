@@ -138,6 +138,7 @@ func (r *Runtime) waitAwaitConfirmation(
 			Result:     deniedResult,
 			Error:      nil,
 		}
+		applyToolResultPolicyHints(input, []*planner.ToolResult{tr})
 		st.ToolEvents = append(st.ToolEvents, cloneToolResults([]*planner.ToolResult{tr})...)
 		if err := r.appendToolOutputs(ctx, st, []planner.ToolRequest{it.call}, []*planner.ToolResult{tr}); err != nil {
 			return nil, nil, nil, err
@@ -176,6 +177,7 @@ func (r *Runtime) waitAwaitConfirmation(
 	}
 	vals := toolResultsFromExecutions(outcomes)
 	toolPauses := toolPausesFromExecutions(outcomes)
+	applyToolResultPolicyHints(input, vals)
 	st.ToolEvents = append(st.ToolEvents, cloneToolResults(vals)...)
 	if err := r.appendToolOutputs(ctx, st, []planner.ToolRequest{call}, vals); err != nil {
 		return nil, nil, nil, err
@@ -184,8 +186,25 @@ func (r *Runtime) waitAwaitConfirmation(
 		return nil, nil, nil, err
 	}
 	if timedOut {
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.ToolOutputs, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonTimeBudget, deadlines.Hard)
-		return nil, nil, out, err
+		out, finalized, err := r.finalizeWithPlannerIfAllowed(
+			wfCtx,
+			reg,
+			input,
+			base,
+			st.ToolEvents,
+			st.ToolOutputs,
+			st.AggUsage,
+			st.NextAttempt,
+			turnID,
+			planner.TerminationReasonTimeBudget,
+			deadlines.Hard,
+		)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if finalized {
+			return nil, nil, out, nil
+		}
 	}
 	if len(toolPauses) == 0 {
 		return vals, nil, nil, nil
@@ -303,8 +322,26 @@ func (r *Runtime) handleAwaitQueue(
 			capFailures(allToolResults),
 		)
 		if st.Caps.MaxConsecutiveFailedToolCalls > 0 && st.Caps.RemainingConsecutiveFailedToolCalls <= 0 {
-			out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.ToolOutputs, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonFailureCap, deadlines.Hard)
-			return out, err
+			out, finalized, err := r.finalizeWithPlannerIfAllowed(
+				wfCtx,
+				reg,
+				input,
+				base,
+				st.ToolEvents,
+				st.ToolOutputs,
+				st.AggUsage,
+				st.NextAttempt,
+				turnID,
+				planner.TerminationReasonFailureCap,
+				deadlines.Hard,
+			)
+			if err != nil {
+				return nil, err
+			}
+			if finalized {
+				return out, nil
+			}
+			return nil, fmt.Errorf("failure-cap finalization skipped without hard deadline")
 		}
 	} else if st.Caps.MaxConsecutiveFailedToolCalls > 0 {
 		st.Caps.RemainingConsecutiveFailedToolCalls = st.Caps.MaxConsecutiveFailedToolCalls
@@ -321,8 +358,26 @@ func (r *Runtime) handleAwaitQueue(
 		return nil, err
 	}
 	if protected {
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.ToolOutputs, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonFailureCap, deadlines.Hard)
-		return out, err
+		out, finalized, err := r.finalizeWithPlannerIfAllowed(
+			wfCtx,
+			reg,
+			input,
+			base,
+			st.ToolEvents,
+			st.ToolOutputs,
+			st.AggUsage,
+			st.NextAttempt,
+			turnID,
+			planner.TerminationReasonFailureCap,
+			deadlines.Hard,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if finalized {
+			return out, nil
+		}
+		return nil, fmt.Errorf("protected finalization skipped without hard deadline")
 	}
 
 	if err := r.publishHook(
@@ -609,6 +664,7 @@ func (r *Runtime) consumeProvidedToolResults(ctx context.Context, input *RunInpu
 	if err != nil {
 		return nil, err
 	}
+	applyToolResultPolicyHints(input, decoded)
 
 	// Record tool results for streaming and append their canonical transcript delta.
 	st.ToolEvents = append(st.ToolEvents, cloneToolResults(decoded)...)

@@ -60,8 +60,25 @@ func (r *Runtime) handleToolTurn(
 	}
 
 	if !deadlines.Budget.IsZero() && wfCtx.Now().After(deadlines.Budget) {
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.ToolOutputs, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonTimeBudget, deadlines.Hard)
-		return out, err
+		out, finalized, err := r.finalizeWithPlannerIfAllowed(
+			wfCtx,
+			reg,
+			input,
+			base,
+			st.ToolEvents,
+			st.ToolOutputs,
+			st.AggUsage,
+			st.NextAttempt,
+			turnID,
+			planner.TerminationReasonTimeBudget,
+			deadlines.Hard,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if finalized {
+			return out, nil
+		}
 	}
 
 	candidates := result.ToolCalls
@@ -111,8 +128,26 @@ func (r *Runtime) handleToolTurn(
 
 	allowed, budgetCost := r.capAllowedCalls(allowed, st.Caps)
 	if len(allowed) == 0 {
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.ToolOutputs, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonToolCap, deadlines.Hard)
-		return out, err
+		out, finalized, err := r.finalizeWithPlannerIfAllowed(
+			wfCtx,
+			reg,
+			input,
+			base,
+			st.ToolEvents,
+			st.ToolOutputs,
+			st.AggUsage,
+			st.NextAttempt,
+			turnID,
+			planner.TerminationReasonToolCap,
+			deadlines.Hard,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if finalized {
+			return out, nil
+		}
+		return nil, fmt.Errorf("tool cap finalization skipped without hard deadline")
 	}
 	allowed = r.prepareAllowedCallsMetadata(input.AgentID, base, allowed, parentTracker)
 
@@ -150,6 +185,7 @@ func (r *Runtime) handleToolTurn(
 	vals := toolResultsFromExecutions(outcomes)
 	toolPauses := toolPausesFromExecutions(outcomes)
 	lastToolResults := vals
+	applyToolResultPolicyHints(input, vals)
 	st.ToolEvents = append(st.ToolEvents, cloneToolResults(vals)...)
 	if result.Await != nil && len(result.Await.Items) > 0 && len(toolPauses) > 0 {
 		return nil, fmt.Errorf("planner await and tool pause cannot both be present in the same turn")
@@ -172,8 +208,25 @@ func (r *Runtime) handleToolTurn(
 		}
 	}
 	if timedOut {
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.ToolOutputs, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonTimeBudget, deadlines.Hard)
-		return out, err
+		out, finalized, err := r.finalizeWithPlannerIfAllowed(
+			wfCtx,
+			reg,
+			input,
+			base,
+			st.ToolEvents,
+			st.ToolOutputs,
+			st.AggUsage,
+			st.NextAttempt,
+			turnID,
+			planner.TerminationReasonTimeBudget,
+			deadlines.Hard,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if finalized {
+			return out, nil
+		}
 	}
 	st.Caps.RemainingToolCalls = decrementCap(st.Caps.RemainingToolCalls, budgetCost)
 
@@ -225,8 +278,26 @@ func (r *Runtime) handleToolTurn(
 			capFailures(vals),
 		)
 		if st.Caps.MaxConsecutiveFailedToolCalls > 0 && st.Caps.RemainingConsecutiveFailedToolCalls <= 0 {
-			out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.ToolOutputs, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonFailureCap, deadlines.Hard)
-			return out, err
+			out, finalized, err := r.finalizeWithPlannerIfAllowed(
+				wfCtx,
+				reg,
+				input,
+				base,
+				st.ToolEvents,
+				st.ToolOutputs,
+				st.AggUsage,
+				st.NextAttempt,
+				turnID,
+				planner.TerminationReasonFailureCap,
+				deadlines.Hard,
+			)
+			if err != nil {
+				return nil, err
+			}
+			if finalized {
+				return out, nil
+			}
+			return nil, fmt.Errorf("failure-cap finalization skipped without hard deadline")
 		}
 	} else if st.Caps.MaxConsecutiveFailedToolCalls > 0 {
 		st.Caps.RemainingConsecutiveFailedToolCalls = st.Caps.MaxConsecutiveFailedToolCalls
@@ -243,8 +314,26 @@ func (r *Runtime) handleToolTurn(
 		return nil, err
 	}
 	if protected {
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.ToolOutputs, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonFailureCap, deadlines.Hard)
-		return out, err
+		out, finalized, err := r.finalizeWithPlannerIfAllowed(
+			wfCtx,
+			reg,
+			input,
+			base,
+			st.ToolEvents,
+			st.ToolOutputs,
+			st.AggUsage,
+			st.NextAttempt,
+			turnID,
+			planner.TerminationReasonFailureCap,
+			deadlines.Hard,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if finalized {
+			return out, nil
+		}
+		return nil, fmt.Errorf("protected finalization skipped without hard deadline")
 	}
 
 	resumeReq, err := r.buildNextResumeRequest(input.AgentID, base, input.Policy, st.ToolOutputs, &st.NextAttempt)

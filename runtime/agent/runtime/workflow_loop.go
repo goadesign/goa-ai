@@ -17,6 +17,7 @@ package runtime
 //   place by loop methods.
 
 import (
+	"fmt"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -141,7 +142,7 @@ func (l *workflowLoop) run() (*RunOutput, error) {
 
 		now := l.wfCtx.Now()
 		if l.deadlines.shouldFinalize(now) {
-			return l.r.finalizeWithPlanner(
+			out, finalized, err := l.r.finalizeWithPlannerIfAllowed(
 				l.wfCtx,
 				l.reg,
 				l.input,
@@ -154,9 +155,15 @@ func (l *workflowLoop) run() (*RunOutput, error) {
 				planner.TerminationReasonTimeBudget,
 				l.deadlines.Hard,
 			)
+			if err != nil {
+				return nil, err
+			}
+			if finalized {
+				return out, nil
+			}
 		}
 		if !l.deadlines.Hard.IsZero() && now.After(l.deadlines.Hard) {
-			return l.r.finalizeWithPlanner(
+			out, finalized, err := l.r.finalizeWithPlannerIfAllowed(
 				l.wfCtx,
 				l.reg,
 				l.input,
@@ -169,6 +176,13 @@ func (l *workflowLoop) run() (*RunOutput, error) {
 				planner.TerminationReasonTimeBudget,
 				l.deadlines.Hard,
 			)
+			if err != nil {
+				return nil, err
+			}
+			if finalized {
+				return out, nil
+			}
+			return nil, fmt.Errorf("hard-deadline finalization skipped")
 		}
 
 		// Await-only: publish await event, pause, and wait for external input.
