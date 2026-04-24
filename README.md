@@ -217,6 +217,9 @@ Agent("assistant", "Document assistant", func() {
 - JSON Schema for LLM function calling (auto-generated)
 - Validation at boundaries—invalid calls get retry hints, not crashes
 - Type-safe Go structs for payloads and results
+- Explicit control-plane contracts: `Bookkeeping()` keeps tools durable and
+  budget-exempt, while `PlannerVisible()` lets selected bookkeeping results feed
+  the next planner turn as structured state
 
 ### Typed Direct Completions
 

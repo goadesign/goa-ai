@@ -605,6 +605,80 @@ func TestRegisterAgentRejectsTerminalSpecWithoutBookkeeping(t *testing.T) {
 	require.ErrorContains(t, err, "terminal tool \"tasks.complete\" must also declare bookkeeping")
 }
 
+func TestRegisterAgentRejectsPlannerVisibleSpecWithoutBookkeeping(t *testing.T) {
+	eng := &stubEngine{}
+	rt := New(WithEngine(eng))
+
+	err := rt.RegisterAgent(context.Background(), AgentRegistration{
+		ID:      "service.agent",
+		Planner: &stubPlanner{},
+		Workflow: engine.WorkflowDefinition{
+			Name:      "service.workflow",
+			TaskQueue: "service.queue",
+			Handler:   rt.ExecuteWorkflow,
+		},
+		PlanActivityName: "service.agent.plan",
+		PlanActivityOptions: engine.ActivityOptions{
+			StartToCloseTimeout: time.Minute,
+		},
+		ResumeActivityName: "service.agent.resume",
+		ResumeActivityOptions: engine.ActivityOptions{
+			StartToCloseTimeout: time.Minute,
+		},
+		ExecuteToolActivity: "service.agent.executetool",
+		ExecuteToolActivityOptions: engine.ActivityOptions{
+			StartToCloseTimeout: time.Minute,
+		},
+		Specs: []tools.ToolSpec{{
+			Name:           "tasks.progress.set_step_status",
+			PlannerVisible: true,
+			Payload:        tools.TypeSpec{Codec: tools.AnyJSONCodec},
+			Result:         tools.TypeSpec{Codec: tools.AnyJSONCodec},
+		}},
+	})
+
+	require.ErrorIs(t, err, ErrInvalidConfig)
+	require.ErrorContains(t, err, "planner-visible tool \"tasks.progress.set_step_status\" must also declare bookkeeping")
+}
+
+func TestRegisterAgentRejectsPlannerVisibleTerminalSpec(t *testing.T) {
+	eng := &stubEngine{}
+	rt := New(WithEngine(eng))
+
+	err := rt.RegisterAgent(context.Background(), AgentRegistration{
+		ID:      "service.agent",
+		Planner: &stubPlanner{},
+		Workflow: engine.WorkflowDefinition{
+			Name:      "service.workflow",
+			TaskQueue: "service.queue",
+			Handler:   rt.ExecuteWorkflow,
+		},
+		PlanActivityName: "service.agent.plan",
+		PlanActivityOptions: engine.ActivityOptions{
+			StartToCloseTimeout: time.Minute,
+		},
+		ResumeActivityName: "service.agent.resume",
+		ResumeActivityOptions: engine.ActivityOptions{
+			StartToCloseTimeout: time.Minute,
+		},
+		ExecuteToolActivity: "service.agent.executetool",
+		ExecuteToolActivityOptions: engine.ActivityOptions{
+			StartToCloseTimeout: time.Minute,
+		},
+		Specs: []tools.ToolSpec{{
+			Name:           "tasks.progress.complete",
+			Bookkeeping:    true,
+			PlannerVisible: true,
+			TerminalRun:    true,
+			Payload:        tools.TypeSpec{Codec: tools.AnyJSONCodec},
+			Result:         tools.TypeSpec{Codec: tools.AnyJSONCodec},
+		}},
+	})
+
+	require.ErrorIs(t, err, ErrInvalidConfig)
+	require.ErrorContains(t, err, "planner-visible tool \"tasks.progress.complete\" cannot also be terminal")
+}
+
 func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{

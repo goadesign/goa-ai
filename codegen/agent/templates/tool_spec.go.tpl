@@ -44,6 +44,9 @@ var (
         {{- if .Bookkeeping }}
         Bookkeeping: true,
         {{- end }}
+        {{- if .PlannerVisible }}
+        PlannerVisible: true,
+        {{- end }}
         {{- if .Bounds }}
         Bounds: &tools.BoundsSpec{
             {{- if .Bounds.Paging }}

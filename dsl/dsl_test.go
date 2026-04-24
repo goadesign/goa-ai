@@ -115,6 +115,44 @@ func TestTerminalRunImpliesBookkeeping(t *testing.T) {
 	require.True(t, tool.Bookkeeping)
 }
 
+func TestPlannerVisibleRequiresBookkeeping(t *testing.T) {
+	err := runDSLWithError(t, func() {
+		API("test", func() {})
+		Service("tasks", func() {
+			Agent("planner", "Planner agent", func() {
+				Use("tasks.progress", func() {
+					Tool("set_step_status", "Update task step status", func() {
+						PlannerVisible()
+					})
+				})
+			})
+		})
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "PlannerVisible requires Bookkeeping")
+}
+
+func TestPlannerVisibleCannotBeTerminal(t *testing.T) {
+	err := runDSLWithError(t, func() {
+		API("test", func() {})
+		Service("tasks", func() {
+			Agent("planner", "Planner agent", func() {
+				Use("tasks.progress", func() {
+					Tool("set_step_status", "Update task step status", func() {
+						Bookkeeping()
+						PlannerVisible()
+						TerminalRun()
+					})
+				})
+			})
+		})
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "PlannerVisible cannot be combined with TerminalRun")
+}
+
 func TestToolsetReferenceReuse(t *testing.T) {
 	runDSL(t, func() {
 		API("test", func() {})
