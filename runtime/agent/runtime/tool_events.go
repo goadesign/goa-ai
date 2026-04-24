@@ -65,11 +65,12 @@ func (r *Runtime) encodeToolEvents(ctx context.Context, events []*planner.ToolRe
 //   - If a result was already omitted at an upstream truthful boundary, the
 //     original omission metadata is preserved without re-encoding synthetic bytes.
 func (r *Runtime) buildPlannerToolOutputs(ctx context.Context, calls []planner.ToolRequest, results []*planner.ToolResult) ([]*planner.ToolOutput, error) {
+	calls, results, err := r.filterPlannerVisibleToolResults(calls, results)
+	if err != nil {
+		return nil, err
+	}
 	if len(calls) == 0 {
 		return nil, nil
-	}
-	if len(calls) != len(results) {
-		return nil, fmt.Errorf("encode tool outputs: calls/results length mismatch (%d != %d)", len(calls), len(results))
 	}
 	resultsByToolCallID := make(map[string]*planner.ToolResult, len(results))
 	for _, result := range results {

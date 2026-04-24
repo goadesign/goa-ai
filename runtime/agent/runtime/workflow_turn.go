@@ -14,6 +14,7 @@ package runtime
 //   current batch (execute tools first, then pause once).
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -22,6 +23,14 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/planner"
+)
+
+type toolTurnResolution uint8
+
+const (
+	toolTurnResolutionResume toolTurnResolution = iota
+	toolTurnResolutionFinishCurrent
+	toolTurnResolutionFinishTerminal
 )
 
 // handleToolTurn executes the planner-returned tool calls for the current turn
@@ -142,11 +151,25 @@ func (r *Runtime) handleToolTurn(
 	toolPauses := toolPausesFromExecutions(outcomes)
 	lastToolResults := vals
 	st.ToolEvents = append(st.ToolEvents, cloneToolResults(vals)...)
-	if err := r.appendToolOutputs(ctx, st, toExecute, vals); err != nil {
-		return nil, err
+	if result.Await != nil && len(result.Await.Items) > 0 && len(toolPauses) > 0 {
+		return nil, fmt.Errorf("planner await and tool pause cannot both be present in the same turn")
 	}
-	if err := r.appendUserToolResults(ctx, input.AgentID, base, toExecute, vals, turnID); err != nil {
-		return nil, err
+	hasAwaitWork := len(confirmations) > 0 || (result.Await != nil && len(result.Await.Items) > 0) || len(toolPauses) > 0
+	turnResolution := toolTurnResolutionResume
+	if hasAwaitWork {
+		if err := r.appendPlannerVisibleTurnResults(ctx, input, base, st, turnID, toExecute, vals); err != nil {
+			return nil, err
+		}
+	} else {
+		turnResolution, err = r.classifyToolTurn(toExecute, vals, result)
+		if err != nil {
+			return nil, err
+		}
+		if turnResolution == toolTurnResolutionResume {
+			if err := r.appendPlannerVisibleTurnResults(ctx, input, base, st, turnID, toExecute, vals); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if timedOut {
 		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, st.ToolEvents, st.ToolOutputs, st.AggUsage, st.NextAttempt, turnID, planner.TerminationReasonTimeBudget, deadlines.Hard)
@@ -154,17 +177,7 @@ func (r *Runtime) handleToolTurn(
 	}
 	st.Caps.RemainingToolCalls = decrementCap(st.Caps.RemainingToolCalls, budgetCost)
 
-	terminal, err := r.executedTerminalRunTool(vals)
-	if err != nil {
-		return nil, err
-	}
-	if terminal {
-		return r.finishAfterTerminalToolCalls(ctx, input, base, st)
-	}
-	if result.Await != nil && len(result.Await.Items) > 0 && len(toolPauses) > 0 {
-		return nil, fmt.Errorf("planner await and tool pause cannot both be present in the same turn")
-	}
-	if len(confirmations) > 0 || (result.Await != nil && len(result.Await.Items) > 0) || len(toolPauses) > 0 {
+	if hasAwaitWork {
 		items := make([]planner.AwaitItem, 0, len(toolPauses))
 		if result.Await != nil {
 			items = append(items, result.Await.Items...)
@@ -197,6 +210,14 @@ func (r *Runtime) handleToolTurn(
 			return nil, err
 		}
 		return out, nil
+	}
+
+	switch turnResolution {
+	case toolTurnResolutionFinishTerminal:
+		return r.finishAfterTerminalToolCalls(ctx, input, base, st)
+	case toolTurnResolutionFinishCurrent:
+		return r.finishCurrentPlanResult(ctx, input, base, st, turnID)
+	case toolTurnResolutionResume:
 	}
 	if capFailures(vals) > 0 {
 		st.Caps.RemainingConsecutiveFailedToolCalls = decrementCap(
@@ -243,7 +264,71 @@ func (r *Runtime) handleToolTurn(
 	return nil, nil
 }
 
-func (r *Runtime) executedTerminalRunTool(results []*planner.ToolResult) (bool, error) {
+// appendPlannerVisibleTurnResults appends only the subset of tool results that
+// remain visible to future planner turns. Successful bookkeeping batches
+// therefore become a no-op here, while retryable bookkeeping failures and mixed
+// batches still preserve the planner-visible repair context.
+func (r *Runtime) appendPlannerVisibleTurnResults(
+	ctx context.Context,
+	input *RunInput,
+	base *planner.PlanInput,
+	st *runLoopState,
+	turnID string,
+	calls []planner.ToolRequest,
+	results []*planner.ToolResult,
+) error {
+	if err := r.appendToolOutputs(ctx, st, calls, results); err != nil {
+		return err
+	}
+	if err := r.appendLatePlannerVisibleToolUses(ctx, input.AgentID, base, calls, results, turnID); err != nil {
+		return err
+	}
+	if err := r.appendUserToolResults(ctx, input.AgentID, base, calls, results, turnID); err != nil {
+		return err
+	}
+	return nil
+}
+
+// classifyToolTurn decides whether an executed batch with no pending await work
+// must resume reasoning or can complete immediately without replaying tool
+// results back into the planner.
+func (r *Runtime) classifyToolTurn(calls []planner.ToolRequest, results []*planner.ToolResult, result *planner.PlanResult) (toolTurnResolution, error) {
+	if len(calls) == 0 {
+		return toolTurnResolutionResume, nil
+	}
+	for _, call := range calls {
+		if !r.isBookkeeping(call.Name) {
+			return toolTurnResolutionResume, nil
+		}
+	}
+
+	plannerVisibleCalls, _, err := r.filterPlannerVisibleToolResults(calls, results)
+	if err != nil {
+		return 0, err
+	}
+	if len(plannerVisibleCalls) > 0 {
+		return toolTurnResolutionResume, nil
+	}
+
+	terminal, err := r.executedSuccessfulTerminalRunTool(results)
+	if err != nil {
+		return 0, err
+	}
+	if terminal {
+		return toolTurnResolutionFinishTerminal, nil
+	}
+	if err := validateTerminalPlanResult(result); err != nil {
+		return 0, fmt.Errorf(
+			"bookkeeping-only tool batch requires a terminal tool or terminal planner payload in the same turn: %w",
+			err,
+		)
+	}
+	return toolTurnResolutionFinishCurrent, nil
+}
+
+// executedSuccessfulTerminalRunTool reports whether the executed batch contains
+// a terminal tool result that completed without a tool error.
+func (r *Runtime) executedSuccessfulTerminalRunTool(results []*planner.ToolResult) (bool, error) {
 	for _, tr := range results {
 		if tr == nil {
 			continue
@@ -252,7 +337,7 @@ func (r *Runtime) executedTerminalRunTool(results []*planner.ToolResult) (bool, 
 		if !ok {
 			return false, fmt.Errorf("unknown tool %q", tr.Name)
 		}
-		if spec.TerminalRun {
+		if spec.TerminalRun && tr.Error == nil {
 			return true, nil
 		}
 	}

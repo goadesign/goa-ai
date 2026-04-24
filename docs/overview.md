@@ -470,7 +470,7 @@ policies, and MCP servers within Goa service designs.
 | `BoundedResult()` | Mark result as bounded view over larger data |
 | `ResultReminder(text)` | Static system reminder injected after tool result |
 | `TerminalRun()` | Tool completes the run immediately after execution (no follow-up planner turn) |
-| `Bookkeeping()` | Tool calls do not consume the run-level `MaxToolCalls` budget |
+| `Bookkeeping()` | Control-plane tool: no `MaxToolCalls` budget, no transcript/tool-output replay, and bookkeeping-only turns must finish or await in the same turn |
 
 ### Toolset Definition
 

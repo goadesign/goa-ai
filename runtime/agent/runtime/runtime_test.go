@@ -126,7 +126,7 @@ func TestStartRunDoesNotInjectSessionSearchAttribute(t *testing.T) {
 	require.Nil(t, eng.last.SearchAttributes)
 }
 
-func TestFinishWithoutToolCalls_UsesPlannerFinalToolResult(t *testing.T) {
+func TestFinishCurrentPlanResult_UsesPlannerFinalToolResult(t *testing.T) {
 	rt := &Runtime{
 		logger:        telemetry.NoopLogger{},
 		metrics:       telemetry.NoopMetrics{},
@@ -153,14 +153,14 @@ func TestFinishWithoutToolCalls_UsesPlannerFinalToolResult(t *testing.T) {
 		},
 	}
 
-	out, err := rt.finishWithoutToolCalls(context.Background(), input, base, st, "turn-1")
+	out, err := rt.finishCurrentPlanResult(context.Background(), input, base, st, "turn-1")
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.NotNil(t, out.FinalToolResult)
 	require.JSONEq(t, `{"status":"ok"}`, string(out.FinalToolResult.Result))
 }
 
-func TestFinishWithoutToolCallsRejectsDualTerminalOutputs(t *testing.T) {
+func TestFinishCurrentPlanResultRejectsDualTerminalOutputs(t *testing.T) {
 	rt := &Runtime{
 		logger:        telemetry.NoopLogger{},
 		metrics:       telemetry.NoopMetrics{},
@@ -193,13 +193,13 @@ func TestFinishWithoutToolCallsRejectsDualTerminalOutputs(t *testing.T) {
 		},
 	}
 
-	out, err := rt.finishWithoutToolCalls(context.Background(), input, base, st, "turn-1")
+	out, err := rt.finishCurrentPlanResult(context.Background(), input, base, st, "turn-1")
 	require.Error(t, err)
 	require.Nil(t, out)
 	require.Contains(t, err.Error(), "both")
 }
 
-func TestFinishWithoutToolCallsAppendsTerminalTranscript(t *testing.T) {
+func TestFinishCurrentPlanResultAppendsTerminalTranscript(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -232,7 +232,7 @@ func TestFinishWithoutToolCallsAppendsTerminalTranscript(t *testing.T) {
 		},
 	}
 
-	out, err := rt.finishWithoutToolCalls(ctx, input, base, st, "turn-1")
+	out, err := rt.finishCurrentPlanResult(ctx, input, base, st, "turn-1")
 	require.NoError(t, err)
 	require.Equal(t, "done", agentMessageText(out.Final))
 
@@ -247,7 +247,7 @@ func TestFinishWithoutToolCallsAppendsTerminalTranscript(t *testing.T) {
 	require.Equal(t, "done", agentMessageText(msgs[0]))
 }
 
-func TestFinishWithoutToolCallsAppendsTerminalTranscriptFromCitationsPart(t *testing.T) {
+func TestFinishCurrentPlanResultAppendsTerminalTranscriptFromCitationsPart(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -282,7 +282,7 @@ func TestFinishWithoutToolCallsAppendsTerminalTranscriptFromCitationsPart(t *tes
 		},
 	}
 
-	out, err := rt.finishWithoutToolCalls(ctx, input, base, st, "turn-1")
+	out, err := rt.finishCurrentPlanResult(ctx, input, base, st, "turn-1")
 	require.NoError(t, err)
 	require.Equal(t, "cited answer", agentMessageText(out.Final))
 
