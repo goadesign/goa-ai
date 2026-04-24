@@ -743,6 +743,16 @@ func (r *Runtime) isBookkeeping(name tools.Ident) bool {
 	return meta.BudgetClass == policy.ToolBudgetClassBookkeeping
 }
 
+// isPlannerVisibleBookkeeping reports whether the named tool is a bookkeeping
+// tool whose successful results remain visible to future planner turns.
+func (r *Runtime) isPlannerVisibleBookkeeping(name tools.Ident) bool {
+	spec, ok := r.toolSpec(name)
+	if !ok {
+		return false
+	}
+	return spec.Bookkeeping && spec.PlannerVisible
+}
+
 // toolMetadata retrieves policy metadata for each tool call by looking up the
 // registered canonical metadata. If the tool is not found, it constructs minimal
 // metadata with the tool name and the default budget class.

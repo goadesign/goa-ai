@@ -213,17 +213,17 @@ func (r *Runtime) appendUserToolResults(
 // filterPlannerVisibleToolCalls returns the subset of tool calls that are
 // definitely visible before execution.
 //
-// Successful bookkeeping calls remain hidden from future planner turns because
-// they are control-plane side effects rather than reasoning inputs. Retryable
-// bookkeeping failures are appended later, after execution reveals the
-// RetryHint-bearing result that must be replayed for repair.
+// Successful bookkeeping calls remain hidden from future planner turns unless
+// their tool spec explicitly keeps them planner-visible. Retryable bookkeeping
+// failures are appended later, after execution reveals the RetryHint-bearing
+// result that must be replayed for repair.
 func (r *Runtime) filterPlannerVisibleToolCalls(calls []planner.ToolRequest) []planner.ToolRequest {
 	if len(calls) == 0 {
 		return nil
 	}
 	filtered := make([]planner.ToolRequest, 0, len(calls))
 	for _, call := range calls {
-		if r.isBookkeeping(call.Name) {
+		if !r.plannerVisibleToolCall(call) {
 			continue
 		}
 		filtered = append(filtered, call)
@@ -260,7 +260,7 @@ func (r *Runtime) filterLatePlannerVisibleToolCalls(calls []planner.ToolRequest,
 		if call.ToolCallID == "" {
 			return nil, fmt.Errorf("filter late planner-visible tool calls: missing call tool_call_id for %s", call.Name)
 		}
-		if !r.isBookkeeping(call.Name) {
+		if !r.isBookkeeping(call.Name) || r.plannerVisibleToolCall(call) {
 			continue
 		}
 		result, ok := resultsByToolCallID[call.ToolCallID]
@@ -277,9 +277,8 @@ func (r *Runtime) filterLatePlannerVisibleToolCalls(calls []planner.ToolRequest,
 
 // filterPlannerVisibleToolResults returns the subset of executed tool
 // calls/results that remain visible to future planner turns. Bookkeeping tools
-// still execute and publish durable run events, but only retryable bookkeeping
-// failures remain visible because the planner must see their RetryHint to
-// repair and resend the payload.
+// still execute and publish durable run events, but only planner-visible
+// bookkeeping results and retryable bookkeeping failures remain visible.
 func (r *Runtime) filterPlannerVisibleToolResults(calls []planner.ToolRequest, results []*planner.ToolResult) ([]planner.ToolRequest, []*planner.ToolResult, error) {
 	if len(calls) == 0 && len(results) == 0 {
 		return nil, nil, nil
@@ -321,10 +320,16 @@ func (r *Runtime) filterPlannerVisibleToolResults(calls []planner.ToolRequest, r
 	return filteredCalls, filteredResults, nil
 }
 
+// plannerVisibleToolCall reports whether the declared tool call should remain in
+// the planner-visible transcript for a future turn.
+func (r *Runtime) plannerVisibleToolCall(call planner.ToolRequest) bool {
+	return !r.isBookkeeping(call.Name) || r.isPlannerVisibleBookkeeping(call.Name)
+}
+
 // plannerVisibleToolResult reports whether the executed result must be replayed
 // into a future planner turn.
 func (r *Runtime) plannerVisibleToolResult(call planner.ToolRequest, result *planner.ToolResult) bool {
-	if !r.isBookkeeping(call.Name) {
+	if r.plannerVisibleToolCall(call) {
 		return true
 	}
 	return result != nil && result.Error != nil && result.RetryHint != nil

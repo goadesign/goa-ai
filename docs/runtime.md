@@ -465,8 +465,10 @@ Bookkeeping exception:
 
 - tools declared with `Bookkeeping()` still execute and still publish durable
   run events,
-- but their results are not replayed as `PlanResumeInput.ToolOutputs` and are
-  not appended back into the model-visible transcript,
+- by default their results are not replayed as `PlanResumeInput.ToolOutputs`
+  and are not appended back into the model-visible transcript,
+- `PlannerVisible()` is the opt-in exception: selected bookkeeping results stay
+  planner-visible and are replayed like budgeted tool results,
 - except when a bookkeeping tool fails with a `RetryHint`: that retryable
   failure becomes planner-visible so the next resume turn can repair and resend
   the tool call without replaying successful bookkeeping noise,
@@ -493,10 +495,13 @@ Bookkeeping turn invariant:
 
 - if a planner turn emits any budgeted tool call, the runtime resumes as usual
   from the surviving planner-visible tool outputs,
+- if a planner turn emits planner-visible bookkeeping results, the runtime also
+  resumes from those results,
 - if a planner turn emits only bookkeeping tool calls, the same `PlanResult`
   must also resolve that turn without another reasoning resume: either a
-  terminal outcome (`TerminalRun` tool or `FinalResponse` / `FinalToolResult`)
-  or an await/pause control-plane handshake,
+  terminal outcome (`TerminalRun` tool or `FinalResponse` / `FinalToolResult`),
+  an await/pause control-plane handshake, or a planner-visible bookkeeping
+  result,
 - retryable bookkeeping failures are the one planner-visible exception: when a
   bookkeeping tool returns a `RetryHint`, the runtime resumes so the planner can
   repair and resend that tool call,

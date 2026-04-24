@@ -243,6 +243,71 @@ func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 	require.Equal(t, model.ConversationRoleSystem, wfCtx.lastPlannerCall.Input.Messages[2].Role)
 }
 
+func TestRunLoopPlannerVisibleBookkeepingOnlyResumes(t *testing.T) {
+	rt := New(WithLogger(telemetry.NoopLogger{}))
+
+	bookkeeping := newAnyJSONSpec(tools.Ident("tasks.progress.set_step_status"), "tasks.progress")
+	bookkeeping.Bookkeeping = true
+	bookkeeping.PlannerVisible = true
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
+		Name: "tasks.progress",
+		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			return &planner.ToolResult{
+				Name:       call.Name,
+				Result:     map[string]any{"steps": []any{map[string]any{"step_id": "select_alarm", "status": "in_progress"}}},
+				ToolCallID: call.ToolCallID,
+			}, nil
+		}),
+		Specs: []tools.ToolSpec{bookkeeping},
+	}))
+
+	wfCtx := &testWorkflowContext{
+		ctx:           context.Background(),
+		planResult:    &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}}}},
+		hasPlanResult: true,
+	}
+	base := &planner.PlanInput{
+		RunContext: run.Context{
+			RunID:     "run-1",
+			SessionID: "sess-1",
+			TurnID:    "turn-1",
+			Attempt:   1,
+		},
+	}
+	input := &RunInput{
+		AgentID:   agent.Ident("agent-1"),
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		TurnID:    "turn-1",
+	}
+	initial := &planner.PlanResult{
+		ToolCalls: []planner.ToolRequest{{Name: bookkeeping.Name}},
+	}
+
+	out, err := rt.runLoop(
+		wfCtx,
+		AgentRegistration{ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
+		input,
+		base,
+		initial,
+		nil,
+		model.TokenUsage{},
+		policy.CapsState{},
+		time.Time{},
+		time.Time{},
+		2,
+		"turn-1",
+		nil,
+		nil,
+		0,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.Equal(t, "resume", wfCtx.lastPlannerCall.Name)
+	require.Len(t, wfCtx.lastPlannerCall.Input.ToolOutputs, 1)
+	require.Equal(t, "run-1/turn-1/attempt-1/tasks-progress-set_step_status/0", wfCtx.lastPlannerCall.Input.ToolOutputs[0].ToolCallID)
+}
+
 func TestRunLoopMixedBudgetedAndBookkeepingStillResumes(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 

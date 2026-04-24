@@ -432,6 +432,58 @@ func TestBuildPlannerToolOutputsSkipsBookkeepingResults(t *testing.T) {
 	require.Equal(t, tools.Ident("svc.ts.tool"), outputs[0].Name)
 }
 
+func TestBuildPlannerToolOutputsKeepsPlannerVisibleBookkeepingResults(t *testing.T) {
+	t.Parallel()
+
+	rt := &Runtime{
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+	}
+	seedTestToolSpecs(
+		rt,
+		newAnyJSONSpec("svc.ts.tool", "svc.tools"),
+		func() tools.ToolSpec {
+			spec := newAnyJSONSpec("tasks.progress.set_step_status", "tasks.progress")
+			spec.Bookkeeping = true
+			spec.PlannerVisible = true
+			return spec
+		}(),
+	)
+
+	outputs, err := rt.buildPlannerToolOutputs(
+		context.Background(),
+		[]planner.ToolRequest{
+			{
+				Name:       "svc.ts.tool",
+				ToolCallID: "call-1",
+				Payload:    rawjson.Message([]byte(`{"from":"test"}`)),
+			},
+			{
+				Name:       "tasks.progress.set_step_status",
+				ToolCallID: "call-2",
+				Payload:    rawjson.Message([]byte(`{"step":"verify"}`)),
+			},
+		},
+		[]*planner.ToolResult{
+			{
+				Name:       "svc.ts.tool",
+				ToolCallID: "call-1",
+				Result:     map[string]any{"status": "ok"},
+			},
+			{
+				Name:       "tasks.progress.set_step_status",
+				ToolCallID: "call-2",
+				Result:     map[string]any{"ok": true},
+			},
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, outputs, 2)
+	require.Equal(t, "call-2", outputs[1].ToolCallID)
+	require.Equal(t, tools.Ident("tasks.progress.set_step_status"), outputs[1].Name)
+}
+
 func TestBuildNextResumeRequestRejectsNilToolOutputEntry(t *testing.T) {
 	t.Parallel()
 

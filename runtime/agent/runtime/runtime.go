@@ -1225,6 +1225,12 @@ func validateSpecs(specs []tools.ToolSpec, lookup ToolMetadataLookup) error {
 		if spec.TerminalRun && !spec.Bookkeeping {
 			return fmt.Errorf("%w: terminal tool %q must also declare bookkeeping", ErrInvalidConfig, spec.Name)
 		}
+		if spec.PlannerVisible && !spec.Bookkeeping {
+			return fmt.Errorf("%w: planner-visible tool %q must also declare bookkeeping", ErrInvalidConfig, spec.Name)
+		}
+		if spec.PlannerVisible && spec.TerminalRun {
+			return fmt.Errorf("%w: planner-visible tool %q cannot also be terminal", ErrInvalidConfig, spec.Name)
+		}
 		if lookup == nil {
 			continue
 		}

@@ -297,6 +297,52 @@ func TestAppendUserToolResults_SkipsBookkeepingResults(t *testing.T) {
 	require.Equal(t, "call-1", part.ToolUseID)
 }
 
+func TestAppendUserToolResults_KeepsPlannerVisibleBookkeepingResults(t *testing.T) {
+	rt := New()
+	seedTestToolSpecs(
+		rt,
+		newAnyJSONSpec("svc.tools.read", "svc.tools"),
+		func() tools.ToolSpec {
+			spec := newAnyJSONSpec("tasks.progress.set_step_status", "tasks.progress")
+			spec.Bookkeeping = true
+			spec.PlannerVisible = true
+			return spec
+		}(),
+	)
+	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	agentID := agent.Ident("agent-1")
+
+	calls := []planner.ToolRequest{
+		{Name: "svc.tools.read", ToolCallID: "call-1"},
+		{Name: "tasks.progress.set_step_status", ToolCallID: "call-2"},
+	}
+	results := []*planner.ToolResult{
+		{
+			Name:       "svc.tools.read",
+			ToolCallID: "call-1",
+			Result:     map[string]any{"value": 1},
+		},
+		{
+			Name:       "tasks.progress.set_step_status",
+			ToolCallID: "call-2",
+			Result:     map[string]any{"ok": true},
+		},
+	}
+
+	require.NoError(t, rt.appendUserToolResults(t.Context(), agentID, base, calls, results, ""))
+	require.Len(t, base.Messages, 1)
+	require.Equal(t, model.ConversationRoleUser, base.Messages[0].Role)
+	require.Len(t, base.Messages[0].Parts, 2)
+
+	first, ok := base.Messages[0].Parts[0].(model.ToolResultPart)
+	require.True(t, ok)
+	require.Equal(t, "call-1", first.ToolUseID)
+
+	second, ok := base.Messages[0].Parts[1].(model.ToolResultPart)
+	require.True(t, ok)
+	require.Equal(t, "call-2", second.ToolUseID)
+}
+
 func TestAppendUserToolResults_ReplaysRetryableBookkeepingFailures(t *testing.T) {
 	rt := New()
 	seedTestToolSpecs(
