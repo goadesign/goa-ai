@@ -65,38 +65,27 @@ func (r *Runtime) encodeToolEvents(ctx context.Context, events []*planner.ToolRe
 //   - If a result was already omitted at an upstream truthful boundary, the
 //     original omission metadata is preserved without re-encoding synthetic bytes.
 func (r *Runtime) buildPlannerToolOutputs(ctx context.Context, calls []planner.ToolRequest, results []*planner.ToolResult) ([]*planner.ToolOutput, error) {
-	calls, results, err := r.filterPlannerVisibleToolResults(calls, results)
+	records, err := stepToolRecordsFromCallsAndResults("build planner tool outputs", calls, results)
 	if err != nil {
 		return nil, err
 	}
-	if len(calls) == 0 {
+	return r.buildPlannerToolOutputRecords(ctx, records)
+}
+
+// buildPlannerToolOutputRecords converts paired step records into planner
+// ToolOutput values suitable for run-loop state.
+func (r *Runtime) buildPlannerToolOutputRecords(ctx context.Context, records []stepToolRecord) ([]*planner.ToolOutput, error) {
+	records, err := r.filterPlannerVisibleToolRecords(records)
+	if err != nil {
+		return nil, err
+	}
+	if len(records) == 0 {
 		return nil, nil
 	}
-	resultsByToolCallID := make(map[string]*planner.ToolResult, len(results))
-	for _, result := range results {
-		if result == nil {
-			return nil, fmt.Errorf("encode tool outputs: nil tool result")
-		}
-		if result.ToolCallID == "" {
-			return nil, fmt.Errorf("encode tool outputs: missing result tool_call_id for %s", result.Name)
-		}
-		if _, exists := resultsByToolCallID[result.ToolCallID]; exists {
-			return nil, fmt.Errorf("encode tool outputs: duplicate result tool_call_id %s", result.ToolCallID)
-		}
-		resultsByToolCallID[result.ToolCallID] = result
-	}
-	out := make([]*planner.ToolOutput, 0, len(calls))
-	for _, call := range calls {
-		if call.ToolCallID == "" {
-			return nil, fmt.Errorf("build planner tool outputs: missing call tool_call_id for %s", call.Name)
-		}
-		result, ok := resultsByToolCallID[call.ToolCallID]
-		if !ok {
-			return nil, fmt.Errorf("build planner tool outputs: missing result for tool_call_id %s", call.ToolCallID)
-		}
-		if result.Name != "" && result.Name != call.Name {
-			return nil, fmt.Errorf("build planner tool outputs: result name %s does not match call %s", result.Name, call.Name)
-		}
+	out := make([]*planner.ToolOutput, 0, len(records))
+	for _, record := range records {
+		call := record.call
+		result := record.result
 		output := &planner.ToolOutput{
 			Name:                call.Name,
 			ToolCallID:          call.ToolCallID,

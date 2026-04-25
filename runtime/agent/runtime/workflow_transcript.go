@@ -85,29 +85,28 @@ func (r *Runtime) recordAssistantTurn(
 	return r.appendTranscriptMessages(ctx, agentID, base, turnID, messages)
 }
 
-// appendLatePlannerVisibleToolUses appends bookkeeping tool_use parts that
-// became planner-visible only after execution produced retryable failures.
-func (r *Runtime) appendLatePlannerVisibleToolUses(
+// appendLatePlannerVisibleToolRecordUses appends bookkeeping tool_use parts that
+// become planner-visible only after execution produced retryable failures.
+func (r *Runtime) appendLatePlannerVisibleToolRecordUses(
 	ctx context.Context,
 	agentID agent.Ident,
 	base *planner.PlanInput,
-	calls []planner.ToolRequest,
-	results []*planner.ToolResult,
+	records []stepToolRecord,
 	turnID string,
 ) error {
-	lateCalls, err := r.filterLatePlannerVisibleToolCalls(calls, results)
+	lateRecords, err := r.filterLatePlannerVisibleToolRecords(records)
 	if err != nil {
 		return err
 	}
-	if len(lateCalls) == 0 {
+	if len(lateRecords) == 0 {
 		return nil
 	}
 	msg := &model.Message{Role: model.ConversationRoleAssistant}
-	for _, call := range lateCalls {
+	for _, record := range lateRecords {
 		msg.Parts = append(msg.Parts, model.ToolUsePart{
-			ID:    call.ToolCallID,
-			Name:  string(call.Name),
-			Input: call.Payload,
+			ID:    record.call.ToolCallID,
+			Name:  string(record.call.Name),
+			Input: record.call.Payload,
 		})
 	}
 	return r.appendTranscriptMessages(ctx, agentID, base, turnID, []*model.Message{msg})

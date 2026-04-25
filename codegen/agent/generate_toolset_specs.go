@@ -319,14 +319,12 @@ func toolsetRegistrySpecsFiles(ts *ToolsetData) []*codegen.File {
 
 	specImports := []*codegen.ImportSpec{
 		{Path: "context"},
-		{Path: "encoding/json"},
 		{Path: "fmt"},
-		{Path: "regexp"},
 		{Path: "sort"},
-		{Path: "strings"},
 		{Path: "sync"},
 		{Path: "goa.design/goa-ai/runtime/agent/policy"},
 		{Path: "goa.design/goa-ai/runtime/agent/tools"},
+		{Path: "goa.design/goa-ai/runtime/toolregistry/schema", Name: "registryschema"},
 	}
 	sections := []*codegen.SectionTemplate{
 		codegen.Header(ts.Name+" registry toolset specs", ts.SpecsPackageName, specImports),

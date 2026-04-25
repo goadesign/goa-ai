@@ -61,18 +61,32 @@ func Spec(name tools.Ident) (*tools.ToolSpec, bool) {
 
 // PayloadSchema returns the JSON schema for the named tool payload.
 func PayloadSchema(name tools.Ident) ([]byte, bool) {
-    if s, ok := Spec(name); ok {
-        return s.Payload.Schema, true
+    switch name {
+    {{- range .Toolsets }}
+        {{- $pkg := .SpecsPackageName }}
+        {{- range .Tools }}
+    case tools.Ident({{ printf "%q" .QualifiedName }}):
+        return {{ $pkg }}.Spec{{ .ConstName }}.Payload.Schema, true
+        {{- end }}
+    {{- end }}
+    default:
+        return nil, false
     }
-    return nil, false
 }
 
 // ResultSchema returns the JSON schema for the named tool result.
 func ResultSchema(name tools.Ident) ([]byte, bool) {
-    if s, ok := Spec(name); ok {
-        return s.Result.Schema, true
+    switch name {
+    {{- range .Toolsets }}
+        {{- $pkg := .SpecsPackageName }}
+        {{- range .Tools }}
+    case tools.Ident({{ printf "%q" .QualifiedName }}):
+        return {{ $pkg }}.Spec{{ .ConstName }}.Result.Schema, true
+        {{- end }}
+    {{- end }}
+    default:
+        return nil, false
     }
-    return nil, false
 }
 
 // AdvertisedSpecs returns the full list of tool specs to advertise to the model.
@@ -89,10 +103,19 @@ func Metadata() []policy.ToolMetadata {
 func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
     switch name {
     {{- range .Toolsets }}
-        {{- $pkg := .SpecsPackageName }}
         {{- range .Tools }}
     case tools.Ident({{ printf "%q" .QualifiedName }}):
-        return {{ $pkg }}.MetadataByName(name)
+        return policy.ToolMetadata{
+            ID:          tools.Ident({{ printf "%q" .QualifiedName }}),
+            Title:       {{ printf "%q" .Title }},
+            Description: {{ printf "%q" .Description }},
+            Tags: []string{
+            {{- range .Tags }}
+                {{ printf "%q" . }},
+            {{- end }}
+            },
+            BudgetClass: policy.ToolBudgetClass{{ if .Bookkeeping }}Bookkeeping{{ else }}Budgeted{{ end }},
+        }, true
         {{- end }}
     {{- end }}
     default:

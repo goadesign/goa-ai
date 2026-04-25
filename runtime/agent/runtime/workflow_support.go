@@ -181,73 +181,19 @@ func (r *Runtime) finalizeWithPlanner(
 		return nil, fmt.Errorf("%s: %w", reasonText, err)
 	}
 	if output == nil || output.Result == nil {
-		return nil, fmt.Errorf("%s", reasonText)
-	}
-	if err := validateTerminalPlanResult(output.Result); err != nil {
-		return nil, fmt.Errorf("%s: %w", reasonText, err)
+		return nil, errors.New(reasonText)
 	}
 	aggUsage = addTokenUsage(aggUsage, output.Usage)
-	var finalMsg *model.Message
-	if output.Result.FinalResponse != nil {
-		finalMsg = output.Result.FinalResponse.Message
-		if output.Result.Streamed && agentMessageText(finalMsg) == "" {
-			if text := transcriptText(output.Transcript); text != "" {
-				finalMsg = newTextAgentMessage(model.ConversationRoleAssistant, text)
-			}
-		}
-	}
-	if output.Result.FinalResponse != nil && !output.Result.Streamed {
-		if err := r.publishHook(
-			ctx,
-			hooks.NewAssistantMessageEvent(
-				base.RunContext.RunID,
-				input.AgentID,
-				base.RunContext.SessionID,
-				agentMessageText(finalMsg),
-				nil,
-			),
-			turnID,
-		); err != nil {
-			return nil, err
-		}
-	}
-	if err := r.appendTerminalAssistantMessage(ctx, input.AgentID, base, turnID, finalMsg); err != nil {
-		return nil, err
-	}
-	for _, note := range output.Result.Notes {
-		if err := r.publishHook(
-			ctx,
-			hooks.NewPlannerNoteEvent(
-				base.RunContext.RunID,
-				input.AgentID,
-				base.RunContext.SessionID,
-				note.Text,
-				note.Labels,
-			),
-			turnID,
-		); err != nil {
-			return nil, err
-		}
-	}
-	notes := make([]*planner.PlannerAnnotation, len(output.Result.Notes))
-	for i := range output.Result.Notes {
-		notes[i] = &output.Result.Notes[i]
-	}
-	toolEvents, err := r.encodeToolEvents(ctx, allToolResults)
+	out, err := r.materializeTerminalPlannerResult(ctx, input, base, turnID, terminalPlannerState{
+		result:     output.Result,
+		transcript: output.Transcript,
+		toolEvents: allToolResults,
+		usage:      aggUsage,
+	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", reasonText, err)
 	}
-	finalToolResult := finalToolResultEvent(base.RunContext.Tool, output.Result.FinalToolResult)
-
-	return &RunOutput{
-		AgentID:         input.AgentID,
-		RunID:           base.RunContext.RunID,
-		Final:           finalMsg,
-		FinalToolResult: finalToolResult,
-		ToolEvents:      toolEvents,
-		Notes:           notes,
-		Usage:           &aggUsage,
-	}, nil
+	return out, nil
 }
 
 // finalizeWithPlannerIfAllowed centralizes the restricted-tool contract for

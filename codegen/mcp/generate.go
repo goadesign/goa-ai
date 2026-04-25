@@ -90,9 +90,10 @@ func generateMCPServiceCode(genpkg string, root *expr.RootExpr, mcpService *expr
 	userTypePkgs := make(map[string][]string)
 	serviceFiles := service.Files(genpkg, mcpService, servicesData, userTypePkgs)
 	for _, f := range serviceFiles {
-		if strings.HasSuffix(filepath.ToSlash(f.Path), "/service.go") && len(f.SectionTemplates) > 0 {
-			service.AddServiceDataMetaTypeImports(f.SectionTemplates[0], mcpService, servicesData.Get(mcpService.Name))
+		if !strings.HasSuffix(filepath.ToSlash(f.Path), "/service.go") {
+			continue
 		}
+		addMCPServiceDataMetaTypeImports(f, mcpService, servicesData.Get(mcpService.Name))
 	}
 	files = append(files, serviceFiles...)
 	files = append(files, service.EndpointFile(genpkg, mcpService, servicesData))
@@ -113,6 +114,22 @@ func generateMCPServiceCode(genpkg string, root *expr.RootExpr, mcpService *expr
 
 	applyMCPPolicyHeadersToJSONRPCMount(files)
 	return files
+}
+
+func addMCPServiceDataMetaTypeImports(f *codegen.File, mcpService *expr.ServiceExpr, data *service.Data) {
+	if f == nil {
+		return
+	}
+	for _, s := range f.SectionTemplates {
+		if s == nil {
+			continue
+		}
+		if s.Name != headerSection {
+			continue
+		}
+		service.AddServiceDataMetaTypeImports(s, mcpService, data)
+		return
+	}
 }
 
 // applyMCPPolicyHeadersToJSONRPCMount replaces the JSON-RPC server mount section
@@ -136,6 +153,7 @@ func applyMCPPolicyHeadersToJSONRPCMount(files []*codegen.File) {
 			}
 			if s.Name == "jsonrpc-server-mount" {
 				s.Source = mcpTemplates.Read("jsonrpc_server_mount")
+				continue
 			}
 		}
 	}

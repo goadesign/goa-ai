@@ -10,6 +10,7 @@ import (
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/eval"
+	goaexpr "goa.design/goa/v3/expr"
 )
 
 // Generate is the code generation entry point for the agents plugin. It is called
@@ -515,11 +516,42 @@ func mcpExecutorFiles(agent *AgentData) []*codegen.File {
 			continue
 		}
 		seen[path] = struct{}{}
-		data := serviceToolsetFileData{PackageName: ts.PackageName, Agent: agent, Toolset: ts}
+		tools := make([]mcpExecutorToolData, 0, len(ts.Tools))
+		if len(ts.Tools) > 0 {
+			specs, err := buildToolSpecsDataFor(agent.Genpkg, ts.SourceService, ts.Tools)
+			if err != nil {
+				panic(fmt.Sprintf("agent codegen: MCP executor specs for toolset %q: %v", ts.QualifiedName, err))
+			}
+			entries := make(map[string]*toolEntry, len(specs.tools))
+			for _, entry := range specs.tools {
+				entries[entry.Name] = entry
+			}
+			for _, tool := range ts.Tools {
+				entry := entries[tool.QualifiedName]
+				if entry == nil {
+					panic(fmt.Sprintf("agent codegen: missing MCP tool spec for %q", tool.QualifiedName))
+				}
+				resultCodec := ""
+				if entry.Result != nil {
+					resultCodec = entry.Result.GenericCodec
+				}
+				tools = append(tools, mcpExecutorToolData{
+					LocalName:          tool.Name,
+					ConstName:          entry.ConstName,
+					HasResult:          tool.Return != nil && tool.Return.Type != goaexpr.Empty,
+					ResultGenericCodec: resultCodec,
+				})
+			}
+		}
+		data := mcpExecutorFileData{
+			PackageName: ts.PackageName,
+			Agent:       agent,
+			Toolset:     ts,
+			Tools:       tools,
+		}
 		imports := []*codegen.ImportSpec{
 			{Path: "context"},
 			{Path: "encoding/json"},
-			{Path: "strings"},
 			{Path: "goa.design/goa-ai/runtime/agent/planner"},
 			{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "runtime"},
 			{Path: "goa.design/goa-ai/runtime/agent/telemetry"},
@@ -644,6 +676,24 @@ func serviceExecutorFiles(agent *AgentData) []*codegen.File {
 		// alias for this file without affecting other generated artifacts.
 		tsCopy := *ts
 		tsCopy.SpecsPackageName = specsAlias
+		specs, err := buildToolSpecsDataFor(agent.Genpkg, svc, ts.Tools)
+		if err != nil {
+			panic(fmt.Sprintf("agent codegen: service executor specs for toolset %q: %v", ts.QualifiedName, err))
+		}
+		entries := make(map[string]*toolEntry, len(specs.tools))
+		for _, entry := range specs.tools {
+			entries[entry.Name] = entry
+		}
+		tsCopy.Tools = make([]*ToolData, 0, len(ts.Tools))
+		for _, tool := range ts.Tools {
+			toolCopy := *tool
+			if entry := entries[tool.QualifiedName]; entry != nil {
+				toolCopy.ConstName = entry.ConstName
+			} else {
+				panic(fmt.Sprintf("agent codegen: missing service executor tool spec for %q", tool.QualifiedName))
+			}
+			tsCopy.Tools = append(tsCopy.Tools, &toolCopy)
+		}
 
 		data := serviceToolsetFileData{
 			PackageName:     ts.PackageName,
@@ -688,21 +738,23 @@ func serviceExecutorFiles(agent *AgentData) []*codegen.File {
 		}
 		imports := []*codegen.ImportSpec{
 			{Path: "context"},
-			{Path: "encoding/json"},
 			{Path: "errors"},
 			{Path: "fmt"},
 			{Path: "strings"},
 			{Path: "goa.design/goa-ai/runtime/agent/planner"},
 			{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "runtime"},
 			{Path: "goa.design/goa-ai/runtime/agent/tools"},
-			{Path: "goa.design/goa-ai/runtime/toolregistry"},
 			{Path: ts.SpecsImportPath, Name: specsAlias},
 		}
 		if needsAgentBounds {
 			imports = append(imports, &codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent", Name: "agent"})
 		}
 		if needsRawJSON {
-			imports = append(imports, &codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/rawjson"})
+			imports = append(imports,
+				&codegen.ImportSpec{Path: "encoding/json"},
+				&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/rawjson"},
+				&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/toolregistry"},
+			)
 		}
 		if needsSharedTypes {
 			typesPath := filepath.ToSlash(filepath.Join(agent.Genpkg, "types"))

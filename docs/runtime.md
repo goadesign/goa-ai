@@ -479,6 +479,20 @@ Bookkeeping exception:
   example a runtime-owned `ToolPause`); that control-plane await remains legal
   even when no successful bookkeeping result is replayed.
 
+Workflow step boundary:
+
+- the runtime treats each admitted `PlanResult` as one workflow step,
+- immediate tool execution, confirmations, and await-provided results append to
+  one step batch and use the same recorder for durable events and
+  planner-visible transcript/tool-output state,
+- after the batch is complete, one transition policy decides resume, finish,
+  terminal-tool finish, or forced finalization,
+- terminal planner payloads are exclusive except for hidden, non-terminal
+  bookkeeping side effects that complete successfully in the same step,
+- deadline checks happen before admitting new work; in-flight tool batches
+  still respect the finalizer window and synthesize canceled tool results for
+  unfinished calls.
+
 ### PlanResult
 
 ```go

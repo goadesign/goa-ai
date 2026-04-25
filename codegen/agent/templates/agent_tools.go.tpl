@@ -28,6 +28,44 @@ var {{ .GoName }}PayloadCodec = {{ $.Toolset.SpecsPackageName }}specs.{{ .Payloa
 var {{ .GoName }}ResultCodec  = {{ $.Toolset.SpecsPackageName }}specs.{{ .Result.ExportedCodec }}
 {{- end }}
 
+{{- $hasCallHints := false -}}
+{{- $hasResultHints := false -}}
+{{- range .Toolset.Tools }}
+{{- if .CallHintTemplate }}{{- $hasCallHints = true -}}{{- end }}
+{{- if .ResultHintTemplate }}{{- $hasResultHints = true -}}{{- end }}
+{{- end }}
+{{- if or $hasCallHints $hasResultHints }}
+func installGeneratedHints(reg *runtime.ToolsetRegistration) error {
+    {{- if $hasCallHints }}
+    callHints, err := hints.CompileHintTemplates(map[tools.Ident]string{
+    {{- range .Toolset.Tools }}
+    {{- if .CallHintTemplate }}
+        {{ .ConstName }}: {{ printf "%q" .CallHintTemplate }},
+    {{- end }}
+    {{- end }}
+    }, nil)
+    if err != nil {
+        return err
+    }
+    reg.CallHints = callHints
+    {{- end }}
+    {{- if $hasResultHints }}
+    resultHints, err := hints.CompileHintTemplates(map[tools.Ident]string{
+    {{- range .Toolset.Tools }}
+    {{- if .ResultHintTemplate }}
+        {{ .ConstName }}: {{ printf "%q" .ResultHintTemplate }},
+    {{- end }}
+    {{- end }}
+    }, nil)
+    if err != nil {
+        return err
+    }
+    reg.ResultHints = resultHints
+    {{- end }}
+    return nil
+}
+{{- end }}
+
 // New{{ .Toolset.Agent.GoName }}ToolsetRegistration creates a toolset registration for the {{ .Toolset.Agent.Name }} agent.
 // The returned registration can be used with runtime.RegisterToolset to make the agent
 // available as a tool to other agents. When invoked, the agent runs its full planning loop
@@ -59,45 +97,9 @@ func New{{ .Toolset.Agent.GoName }}ToolsetRegistration(rt *runtime.Runtime) runt
     reg := runtime.NewAgentToolsetRegistration(rt, cfg)
     reg.Specs = {{ $.Toolset.SpecsPackageName }}specs.Specs
     reg.ToolMetadataLookup = {{ $.Toolset.SpecsPackageName }}specs.MetadataByName
-    {{- $hasCallHints := false -}}
-    {{- $hasResultHints := false -}}
-    {{- range .Toolset.Tools }}
-    {{- if .CallHintTemplate }}{{- $hasCallHints = true -}}{{- end }}
-    {{- if .ResultHintTemplate }}{{- $hasResultHints = true -}}{{- end }}
-    {{- end }}
     {{- if or $hasCallHints $hasResultHints }}
-    // Install DSL-provided hint templates when present.
-    {
-        {{- if $hasCallHints }}
-        {
-            compiled, err := hints.CompileHintTemplates(map[tools.Ident]string{
-            {{- range .Toolset.Tools }}
-            {{- if .CallHintTemplate }}
-                {{ .ConstName }}: {{ printf "%q" .CallHintTemplate }},
-            {{- end }}
-            {{- end }}
-            }, nil)
-            if err != nil {
-                panic(err)
-            }
-            reg.CallHints = compiled
-        }
-        {{- end }}
-        {{- if $hasResultHints }}
-        {
-            compiled, err := hints.CompileHintTemplates(map[tools.Ident]string{
-            {{- range .Toolset.Tools }}
-            {{- if .ResultHintTemplate }}
-                {{ .ConstName }}: {{ printf "%q" .ResultHintTemplate }},
-            {{- end }}
-            {{- end }}
-            }, nil)
-            if err != nil {
-                panic(err)
-            }
-            reg.ResultHints = compiled
-        }
-        {{- end }}
+    if err := installGeneratedHints(&reg); err != nil {
+        panic(err)
     }
     {{- end }}
     return reg
@@ -149,45 +151,9 @@ func NewRegistration(
     reg := runtime.NewAgentToolsetRegistration(rt, cfg)
     reg.Specs = {{ $.Toolset.SpecsPackageName }}specs.Specs
     reg.ToolMetadataLookup = {{ $.Toolset.SpecsPackageName }}specs.MetadataByName
-    {{- $hasCallHints = false -}}
-    {{- $hasResultHints = false -}}
-    {{- range .Toolset.Tools }}
-    {{- if .CallHintTemplate }}{{- $hasCallHints = true -}}{{- end }}
-    {{- if .ResultHintTemplate }}{{- $hasResultHints = true -}}{{- end }}
-    {{- end }}
     {{- if or $hasCallHints $hasResultHints }}
-    // Install DSL-provided hint templates when present.
-    {
-        {{- if $hasCallHints }}
-        {
-            compiled, err := hints.CompileHintTemplates(map[tools.Ident]string{
-            {{- range .Toolset.Tools }}
-            {{- if .CallHintTemplate }}
-                {{ .ConstName }}: {{ printf "%q" .CallHintTemplate }},
-            {{- end }}
-            {{- end }}
-            }, nil)
-            if err != nil {
-                panic(err)
-            }
-            reg.CallHints = compiled
-        }
-        {{- end }}
-        {{- if $hasResultHints }}
-        {
-            compiled, err := hints.CompileHintTemplates(map[tools.Ident]string{
-            {{- range .Toolset.Tools }}
-            {{- if .ResultHintTemplate }}
-                {{ .ConstName }}: {{ printf "%q" .ResultHintTemplate }},
-            {{- end }}
-            {{- end }}
-            }, nil)
-            if err != nil {
-                panic(err)
-            }
-            reg.ResultHints = compiled
-        }
-        {{- end }}
+    if err := installGeneratedHints(&reg); err != nil {
+        return runtime.ToolsetRegistration{}, err
     }
     {{- end }}
     return reg, nil

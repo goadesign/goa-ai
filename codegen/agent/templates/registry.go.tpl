@@ -194,6 +194,17 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
             o(execs)
         }
     }
+    var missing []string
+    {{- range .UsedToolsets }}
+    {{- if and (not (isMCPBacked .)) (eq .AgentToolsImportPath "") }}
+    if execs[{{ printf "%q" .QualifiedName }}] == nil {
+        missing = append(missing, {{ printf "%q" .QualifiedName }})
+    }
+    {{- end }}
+    {{- end }}
+    if len(missing) > 0 {
+        return fmt.Errorf("missing executors for toolsets: %v", missing)
+    }
     // Register non-MCP used toolsets that are not provided by agent-as-tool exports.
     {{- range .UsedToolsets }}
     {{- if and (not (isMCPBacked .)) (eq .AgentToolsImportPath "") }}
@@ -207,16 +218,6 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
             Execute: func(ctx context.Context, call *planner.ToolRequest) (*agentsruntime.ToolExecutionResult, error) {
                 if call == nil {
                     return nil, fmt.Errorf("tool request is nil")
-                }
-                if exec == nil {
-                    return agentsruntime.Executed(&planner.ToolResult{
-                        Error: planner.NewToolError(
-                            fmt.Sprintf(
-                                "no executor registered for toolset %q; ensure the appropriate With...Executor is wired in RegisterUsedToolsets",
-                                toolsetID,
-                            ),
-                        ),
-                    }), nil
                 }
                 meta := &agentsruntime.ToolCallMeta{
                     RunID:            call.RunID,
@@ -242,40 +243,8 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
         {{- if .ResultHintTemplate }}{{- $hasResultHints = true -}}{{- end }}
         {{- end }}
         {{- if or $hasCallHints $hasResultHints }}
-        // Install DSL-provided hint templates when present.
-        {
-            {{- if $hasCallHints }}
-            {
-                compiled, err := hints.CompileHintTemplates(map[tools.Ident]string{
-                {{- range .Tools }}
-                {{- if .CallHintTemplate }}
-                    // Use the canonical tool identifier so hints align with Specs and runtime events.
-                    tools.Ident({{ printf "%q" .QualifiedName }}): {{ printf "%q" .CallHintTemplate }},
-                {{- end }}
-                {{- end }}
-                }, nil)
-                if err != nil {
-                    return err
-                }
-                reg.CallHints = compiled
-            }
-            {{- end }}
-            {{- if $hasResultHints }}
-            {
-                compiled, err := hints.CompileHintTemplates(map[tools.Ident]string{
-                {{- range .Tools }}
-                {{- if .ResultHintTemplate }}
-                    // Use the canonical tool identifier so hints align with Specs and runtime events.
-                    tools.Ident({{ printf "%q" .QualifiedName }}): {{ printf "%q" .ResultHintTemplate }},
-                {{- end }}
-                {{- end }}
-                }, nil)
-                if err != nil {
-                    return err
-                }
-                reg.ResultHints = compiled
-            }
-            {{- end }}
+        if err := install{{ goify .PathName true }}GeneratedHints(&reg); err != nil {
+            return err
         }
         {{- end }}
         if err := rt.RegisterToolset(reg); err != nil {
@@ -292,12 +261,47 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
 // With{{ goify .PathName true }}Executor associates an executor for {{ .QualifiedName }}.
 func With{{ goify .PathName true }}Executor(exec agentsruntime.ToolCallExecutor) func(map[string]agentsruntime.ToolCallExecutor) {
     return func(m map[string]agentsruntime.ToolCallExecutor) {
-        if exec == nil {
-            return
-        }
         m[{{ printf "%q" .QualifiedName }}] = exec
     }
 }
+
+{{- $hasCallHints := false -}}
+{{- $hasResultHints := false -}}
+{{- range .Tools }}
+{{- if .CallHintTemplate }}{{- $hasCallHints = true -}}{{- end }}
+{{- if .ResultHintTemplate }}{{- $hasResultHints = true -}}{{- end }}
+{{- end }}
+{{- if or $hasCallHints $hasResultHints }}
+func install{{ goify .PathName true }}GeneratedHints(reg *agentsruntime.ToolsetRegistration) error {
+    {{- if $hasCallHints }}
+    callHints, err := hints.CompileHintTemplates(map[tools.Ident]string{
+    {{- range .Tools }}
+    {{- if .CallHintTemplate }}
+        tools.Ident({{ printf "%q" .QualifiedName }}): {{ printf "%q" .CallHintTemplate }},
+    {{- end }}
+    {{- end }}
+    }, nil)
+    if err != nil {
+        return err
+    }
+    reg.CallHints = callHints
+    {{- end }}
+    {{- if $hasResultHints }}
+    resultHints, err := hints.CompileHintTemplates(map[tools.Ident]string{
+    {{- range .Tools }}
+    {{- if .ResultHintTemplate }}
+        tools.Ident({{ printf "%q" .QualifiedName }}): {{ printf "%q" .ResultHintTemplate }},
+    {{- end }}
+    {{- end }}
+    }, nil)
+    if err != nil {
+        return err
+    }
+    reg.ResultHints = resultHints
+    {{- end }}
+    return nil
+}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

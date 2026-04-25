@@ -64,6 +64,20 @@ type (
 		ServicePkgAlias string
 	}
 
+	mcpExecutorFileData struct {
+		PackageName string
+		Agent       *AgentData
+		Toolset     *ToolsetData
+		Tools       []mcpExecutorToolData
+	}
+
+	mcpExecutorToolData struct {
+		LocalName          string
+		ConstName          string
+		HasResult          bool
+		ResultGenericCodec string
+	}
+
 	// transforms metadata used by tool_transforms.go.tpl
 	transformFuncData struct {
 		Name          string
