@@ -25,6 +25,17 @@ func canonicalMetadataMap(specs ...tools.ToolSpec) map[tools.Ident]policy.ToolMe
 	return metas
 }
 
+func restrictedFinalPlanResult(text string) *planner.PlanResult {
+	return &planner.PlanResult{
+		FinalResponse: &planner.FinalResponse{
+			Message: &model.Message{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: text}},
+			},
+		},
+	}
+}
+
 func TestPolicyAllowlistTrimsToolExecution(t *testing.T) {
 	recorder := &recordingHooks{}
 	allowedSpec := newAnyJSONSpec("allowed", "svc.tools")
@@ -82,6 +93,150 @@ func TestPolicyAllowlistTrimsToolExecution(t *testing.T) {
 		}
 	}
 	require.Equal(t, []tools.Ident{tools.Ident("allowed")}, scheduled)
+}
+
+func TestRestrictedRunToolCapFinalizes(t *testing.T) {
+	t.Parallel()
+
+	toolSpec := newAnyJSONSpec("svc.tools.read", "svc.tools")
+	rt := &Runtime{
+		Bus:           noopHooks{},
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+	}
+	seedTestToolSpecs(rt, toolSpec)
+	wfCtx := &testWorkflowContext{
+		ctx:           context.Background(),
+		hookRuntime:   rt,
+		planResult:    restrictedFinalPlanResult("finalized after tool cap"),
+		hasPlanResult: true,
+	}
+	input := &RunInput{
+		AgentID: "svc.agent",
+		RunID:   "run-1",
+		Policy:  &PolicyOverrides{RestrictToTool: toolSpec.Name},
+	}
+	base := &planner.PlanInput{
+		RunContext: run.Context{RunID: input.RunID},
+		Agent:      newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID}),
+	}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: toolSpec.Name}}}
+
+	out, err := rt.runLoop(wfCtx, AgentRegistration{
+		ID:                  input.AgentID,
+		Planner:             &stubPlanner{},
+		ExecuteToolActivity: "execute",
+		ResumeActivityName:  "resume",
+	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{
+		MaxToolCalls:       1,
+		RemainingToolCalls: 0,
+	}, time.Time{}, time.Time{}, 2, "turn-1", nil, nil, 0)
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.NotNil(t, out.Final)
+	require.Equal(t, model.ConversationRoleAssistant, out.Final.Role)
+	require.NotNil(t, wfCtx.lastPlannerCall.Input.Finalize)
+	require.Equal(t, planner.TerminationReasonToolCap, wfCtx.lastPlannerCall.Input.Finalize.Reason)
+}
+
+func TestRestrictedRunFailureCapFinalizes(t *testing.T) {
+	t.Parallel()
+
+	toolSpec := newAnyJSONSpec("svc.tools.read", "svc.tools")
+	rt := &Runtime{
+		Bus:           noopHooks{},
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+	}
+	seedTestToolSpecs(rt, toolSpec)
+	wfCtx := &testWorkflowContext{
+		ctx:         context.Background(),
+		hookRuntime: rt,
+		asyncResult: ToolOutput{
+			Error: "invalid arguments",
+			RetryHint: &planner.RetryHint{
+				Reason: planner.RetryReasonInvalidArguments,
+				Tool:   toolSpec.Name,
+			},
+		},
+		planResult:    restrictedFinalPlanResult("finalized after failure cap"),
+		hasPlanResult: true,
+	}
+	input := &RunInput{
+		AgentID: "svc.agent",
+		RunID:   "run-1",
+		Policy:  &PolicyOverrides{RestrictToTool: toolSpec.Name},
+	}
+	base := &planner.PlanInput{
+		RunContext: run.Context{RunID: input.RunID},
+		Agent:      newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID}),
+	}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: toolSpec.Name}}}
+
+	out, err := rt.runLoop(wfCtx, AgentRegistration{
+		ID:                  input.AgentID,
+		Planner:             &stubPlanner{},
+		ExecuteToolActivity: "execute",
+		ResumeActivityName:  "resume",
+	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{
+		MaxToolCalls:                        5,
+		RemainingToolCalls:                  5,
+		MaxConsecutiveFailedToolCalls:       1,
+		RemainingConsecutiveFailedToolCalls: 1,
+	}, time.Time{}, time.Time{}, 2, "turn-1", nil, nil, 0)
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.NotNil(t, out.Final)
+	require.Len(t, out.ToolEvents, 1)
+	require.NotNil(t, wfCtx.lastPlannerCall.Input.Finalize)
+	require.Equal(t, planner.TerminationReasonFailureCap, wfCtx.lastPlannerCall.Input.Finalize.Reason)
+}
+
+func TestRestrictedUnknownToolReachesFailureCap(t *testing.T) {
+	t.Parallel()
+
+	rt := New(WithRunEventStore(runloginmem.New()))
+	wfCtx := &testWorkflowContext{
+		ctx:           context.Background(),
+		hookRuntime:   rt,
+		asyncResult:   ToolOutput{Payload: []byte("null")},
+		planResult:    restrictedFinalPlanResult("finalized after unknown tool"),
+		hasPlanResult: true,
+	}
+	input := &RunInput{
+		AgentID: "svc.agent",
+		RunID:   "run-1",
+		Policy:  &PolicyOverrides{RestrictToTool: "svc.tools.read"},
+	}
+	base := &planner.PlanInput{
+		RunContext: run.Context{RunID: input.RunID},
+		Agent:      newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID}),
+	}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: "svc.tools.missing"}}}
+
+	out, err := rt.runLoop(wfCtx, AgentRegistration{
+		ID:                  input.AgentID,
+		Planner:             &stubPlanner{},
+		ExecuteToolActivity: "execute",
+		ResumeActivityName:  "resume",
+	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{
+		MaxToolCalls:                        5,
+		RemainingToolCalls:                  5,
+		MaxConsecutiveFailedToolCalls:       1,
+		RemainingConsecutiveFailedToolCalls: 1,
+	}, time.Time{}, time.Time{}, 2, "turn-1", nil, nil, 0)
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.NotNil(t, out.Final)
+	require.Len(t, out.ToolEvents, 1)
+	require.Equal(t, tools.ToolUnavailable, out.ToolEvents[0].Name)
+	require.NotNil(t, out.ToolEvents[0].Error)
+	require.NotNil(t, wfCtx.lastPlannerCall.Input.Finalize)
+	require.Equal(t, planner.TerminationReasonFailureCap, wfCtx.lastPlannerCall.Input.Finalize.Reason)
 }
 
 func TestApplyPerRunOverridesUsesAllTagClauses(t *testing.T) {

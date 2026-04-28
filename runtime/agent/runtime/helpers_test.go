@@ -20,7 +20,7 @@ func TestGenerateDeterministicToolCallID_DeterministicForSameInputs(t *testing.T
 	require.Equal(t, id1, id2)
 }
 
-func TestCapFailures_SkipsToolUnavailable(t *testing.T) {
+func TestCapFailures_CountsEveryToolError(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -29,7 +29,7 @@ func TestCapFailures_SkipsToolUnavailable(t *testing.T) {
 		want    int
 	}{
 		{
-			name: "tool_unavailable_with_hint_does_not_decrement",
+			name: "tool_unavailable_with_hint_counts",
 			results: []*planner.ToolResult{{
 				Name:       tools.Ident("svc.data.discover"),
 				ToolCallID: "tc1",
@@ -39,7 +39,20 @@ func TestCapFailures_SkipsToolUnavailable(t *testing.T) {
 					Tool:   tools.Ident("svc.data.discover"),
 				},
 			}},
-			want: 0,
+			want: 1,
+		},
+		{
+			name: "invalid_arguments_with_hint_counts",
+			results: []*planner.ToolResult{{
+				Name:       tools.Ident("svc.data.discover"),
+				ToolCallID: "tc-invalid",
+				Error:      planner.NewToolError("invalid arguments"),
+				RetryHint: &planner.RetryHint{
+					Reason: planner.RetryReasonInvalidArguments,
+					Tool:   tools.Ident("svc.data.discover"),
+				},
+			}},
+			want: 1,
 		},
 		{
 			name: "rate_limited_counts",
