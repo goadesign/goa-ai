@@ -254,12 +254,9 @@ func (r *Runtime) finalizeWithPlanner(
 // tool-free planner finalization.
 //
 // Contract:
-//   - Unrestricted runs may always finalize through the planner.
-//   - Restricted-tool runs may only use planner finalization once the hard
-//     deadline has actually been reached.
-//   - Before the hard deadline, time-budget finalization is deferred so the
-//     workflow can stay on the restricted-tool path, while every other
-//     tool-free-finalization reason fails loudly.
+//   - Retry restrictions constrain only future tool selection.
+//   - Terminal runtime policy reasons always finalize through the planner with
+//     tools disabled; caps and deadlines mean there is no legal next tool step.
 func (r *Runtime) finalizeWithPlannerIfAllowed(
 	wfCtx engine.WorkflowContext,
 	reg AgentRegistration,
@@ -273,30 +270,8 @@ func (r *Runtime) finalizeWithPlannerIfAllowed(
 	reason planner.TerminationReason,
 	hardDeadline time.Time,
 ) (*RunOutput, bool, error) {
-	if !shouldBypassPlannerFinalization(input) {
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, allToolResults, allToolOutputs, aggUsage, nextAttempt, turnID, reason, hardDeadline)
-		return out, true, err
-	}
-	now := wfCtx.Now()
-	if !hardDeadline.IsZero() && !now.Before(hardDeadline) {
-		out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, allToolResults, allToolOutputs, aggUsage, nextAttempt, turnID, reason, hardDeadline)
-		return out, true, err
-	}
-	if reason == planner.TerminationReasonTimeBudget {
-		return nil, false, nil
-	}
-	restrictedTool := ""
-	if input != nil && input.Policy != nil {
-		restrictedTool = string(input.Policy.RestrictToTool)
-	}
-	if restrictedTool == "" {
-		restrictedTool = "<unknown>"
-	}
-	return nil, false, fmt.Errorf(
-		"run restricted to tool %q cannot use tool-free planner finalization for %s before hard deadline",
-		restrictedTool,
-		reason,
-	)
+	out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, allToolResults, allToolOutputs, aggUsage, nextAttempt, turnID, reason, hardDeadline)
+	return out, true, err
 }
 
 // handleInterrupts drains pause signals and blocks until a resume signal arrives.
