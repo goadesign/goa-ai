@@ -640,27 +640,14 @@ func decrementCap(current int, delta int) int {
 // capFailures counts tool failures that should decrement the consecutive-failure cap.
 //
 // Contract:
-//   - "missing_fields" and "invalid_arguments" failures are considered recoverable
-//     contract errors when surfaced with a RetryHint; they should not immediately
-//     trip the run-level failure cap before the planner gets a chance to retry with
-//     corrected inputs (typically guided by the retry-hint system reminder).
+//   - Every tool result error counts as one failed attempt.
+//   - Retry hints may shape the next planner attempt, but they do not make the
+//     failed attempt free for cap accounting.
 func capFailures(results []*planner.ToolResult) int {
 	count := 0
 	for _, res := range results {
 		if res == nil || res.Error == nil {
 			continue
-		}
-		if h := res.RetryHint; h != nil {
-			switch h.Reason {
-			case planner.RetryReasonMissingFields, planner.RetryReasonInvalidArguments, planner.RetryReasonToolUnavailable:
-				continue
-			case planner.RetryReasonMalformedResponse,
-				planner.RetryReasonTimeout,
-				planner.RetryReasonRateLimited:
-				// Count towards the consecutive-failure cap.
-			default:
-				panic(fmt.Sprintf("runtime: unknown retry reason %q", h.Reason))
-			}
 		}
 		count++
 	}

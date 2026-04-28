@@ -160,6 +160,53 @@ func TestFinishCurrentPlanResult_UsesPlannerFinalToolResult(t *testing.T) {
 	require.JSONEq(t, `{"status":"ok"}`, string(out.FinalToolResult.Result))
 }
 
+func TestRunLoopWithStateAcceptsInitialFinalToolResult(t *testing.T) {
+	rt := &Runtime{
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+		Bus:           noopHooks{},
+	}
+	wf := &testWorkflowContext{ctx: context.Background()}
+	input := &RunInput{
+		AgentID:   "svc.agent",
+		SessionID: "sess-1",
+	}
+	base := &planner.PlanInput{
+		RunContext: run.Context{
+			RunID:     "run-1",
+			SessionID: "sess-1",
+			Tool:      "svc.tools.do",
+		},
+	}
+	st := &runLoopState{
+		Result: &planner.PlanResult{
+			FinalToolResult: &planner.FinalToolResult{
+				Result: rawjson.Message([]byte(`{"status":"ok"}`)),
+			},
+		},
+	}
+
+	out, err := rt.runLoopWithState(
+		wf,
+		AgentRegistration{},
+		input,
+		base,
+		st,
+		time.Time{},
+		time.Time{},
+		"turn-1",
+		nil,
+		nil,
+		0,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.NotNil(t, out.FinalToolResult)
+	require.JSONEq(t, `{"status":"ok"}`, string(out.FinalToolResult.Result))
+}
+
 func TestFinishCurrentPlanResultRejectsDualTerminalOutputs(t *testing.T) {
 	rt := &Runtime{
 		logger:        telemetry.NoopLogger{},

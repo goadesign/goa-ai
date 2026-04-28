@@ -365,10 +365,23 @@ func (r *Runtime) runLoopWithState(
 	if st.Result == nil {
 		return nil, fmt.Errorf("runLoop initial PlanResult is nil")
 	}
-	if len(st.Result.ToolCalls) == 0 && st.Result.FinalResponse == nil && st.Result.Await == nil {
-		return nil, fmt.Errorf("runLoop initial PlanResult has no ToolCalls, FinalResponse, or Await")
+	if len(st.Result.ToolCalls) == 0 &&
+		st.Result.FinalResponse == nil &&
+		st.Result.FinalToolResult == nil &&
+		st.Result.Await == nil {
+		return nil, fmt.Errorf("runLoop initial PlanResult has no ToolCalls, FinalResponse, FinalToolResult, or Await")
 	}
-	r.logger.Info(ctx, "runLoop starting iteration", "tool_calls", len(st.Result.ToolCalls), "final_response", st.Result.FinalResponse != nil, "await", st.Result.Await != nil)
+	r.logger.Info(ctx,
+		"runLoop starting iteration",
+		"tool_calls",
+		len(st.Result.ToolCalls),
+		"final_response",
+		st.Result.FinalResponse != nil,
+		"final_tool_result",
+		st.Result.FinalToolResult != nil,
+		"await",
+		st.Result.Await != nil,
+	)
 	// Derive per-run overrides for Resume and Tools.
 	resumeOpts := reg.ResumeActivityOptions
 	if input.Policy != nil && input.Policy.PlanTimeout > 0 {

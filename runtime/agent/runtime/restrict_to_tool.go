@@ -8,8 +8,8 @@ package runtime
 //   RetryHint with RestrictToTool=true and Tool set.
 // - Once restricted-tool mode is active, the runtime keeps that constraint for
 //   the rest of the run unless the caller overwrote PolicyOverrides directly.
-// - Restricted-tool runs must not fall back to tool-free planner finalization
-//   before the hard deadline because their next legal move is still a tool call.
+// - Restricted-tool mode constrains tool selection only; terminal caps and
+//   deadlines still finalize through the planner with tools disabled.
 
 import "goa.design/goa-ai/runtime/agent/planner"
 
@@ -30,11 +30,4 @@ func applyToolResultPolicyHints(input *RunInput, results []*planner.ToolResult) 
 		input.Policy.RestrictToTool = result.RetryHint.Tool
 		return
 	}
-}
-
-// shouldBypassPlannerFinalization reports whether the runtime must preserve the
-// current tool-only path instead of switching into tool-free planner
-// finalization.
-func shouldBypassPlannerFinalization(input *RunInput) bool {
-	return input != nil && input.Policy != nil && input.Policy.RestrictToTool != ""
 }
