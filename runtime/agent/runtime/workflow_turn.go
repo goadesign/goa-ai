@@ -145,8 +145,8 @@ func (l *workflowLoop) executeToolStep(program stepProgram, batch *stepBatch) ([
 }
 
 // recordStepToolResults appends all state derived from concrete tool results.
-// Durable tool events keep every result; planner-visible transcript/tool-output
-// state is filtered by the existing bookkeeping visibility contract.
+// Durable tool events keep every result; planner-facing transcript/tool-output
+// state is filtered by the bookkeeping visibility contract.
 func (r *Runtime) recordStepToolResults(
 	ctx context.Context,
 	input *RunInput,
@@ -161,7 +161,7 @@ func (r *Runtime) recordStepToolResults(
 	if err := r.appendToolOutputRecords(ctx, st, records); err != nil {
 		return err
 	}
-	if err := r.appendLatePlannerVisibleToolRecordUses(ctx, input.AgentID, base, records, turnID); err != nil {
+	if err := r.appendRetryableBookkeepingToolUses(ctx, input.AgentID, base, records, turnID); err != nil {
 		return err
 	}
 	if err := r.appendUserToolRecordResults(ctx, input.AgentID, base, records, turnID); err != nil {
@@ -191,11 +191,11 @@ func (r *Runtime) classifyToolRecords(records []stepToolRecord, result *planner.
 		}
 	}
 
-	plannerVisibleRecords, err := r.filterPlannerVisibleToolRecords(records)
+	plannerFacingRecords, err := r.filterPlannerFacingToolRecords(records)
 	if err != nil {
 		return 0, err
 	}
-	if len(plannerVisibleRecords) > 0 {
+	if len(plannerFacingRecords) > 0 {
 		return stepTransitionResume, nil
 	}
 

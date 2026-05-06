@@ -121,7 +121,7 @@ func (r *Runtime) executeGroupedToolCalls(
 	return out, timedOutAny, nil
 }
 
-// appendUserToolRecordResults appends a user message with planner-visible
+// appendUserToolRecordResults appends a user message with planner-facing
 // tool_result blocks in canonical step-record order.
 //
 // If any visible tool result has a ResultReminder configured in its spec, a
@@ -134,7 +134,7 @@ func (r *Runtime) appendUserToolRecordResults(
 	records []stepToolRecord,
 	turnID string,
 ) error {
-	records, err := r.filterPlannerVisibleToolRecords(records)
+	records, err := r.filterPlannerFacingToolRecords(records)
 	if err != nil {
 		return err
 	}
@@ -201,20 +201,19 @@ func (r *Runtime) appendUserToolRecordResults(
 	return r.appendTranscriptMessages(ctx, agentID, base, turnID, messages)
 }
 
-// filterPlannerVisibleToolCalls returns the subset of tool calls that are
+// filterPlannerFacingToolCalls returns the subset of tool calls that are
 // definitely visible before execution.
 //
-// Successful bookkeeping calls remain hidden from future planner turns unless
-// their tool spec explicitly keeps them planner-visible. Retryable bookkeeping
-// failures are appended later, after execution reveals the RetryHint-bearing
-// result that must be replayed for repair.
-func (r *Runtime) filterPlannerVisibleToolCalls(calls []planner.ToolRequest) []planner.ToolRequest {
+// Successful bookkeeping calls remain hidden from future planner turns.
+// Retryable bookkeeping failures are appended later, after execution reveals the
+// RetryHint-bearing result that must be replayed for repair.
+func (r *Runtime) filterPlannerFacingToolCalls(calls []planner.ToolRequest) []planner.ToolRequest {
 	if len(calls) == 0 {
 		return nil
 	}
 	filtered := make([]planner.ToolRequest, 0, len(calls))
 	for _, call := range calls {
-		if !r.plannerVisibleToolCall(call) {
+		if r.isBookkeeping(call.Name) {
 			continue
 		}
 		filtered = append(filtered, call)
@@ -222,40 +221,34 @@ func (r *Runtime) filterPlannerVisibleToolCalls(calls []planner.ToolRequest) []p
 	return filtered
 }
 
-// filterLatePlannerVisibleToolRecords returns bookkeeping records that become
-// planner-visible only after execution produced a retryable failure.
-func (r *Runtime) filterLatePlannerVisibleToolRecords(records []stepToolRecord) ([]stepToolRecord, error) {
-	if len(records) == 0 {
-		return nil, nil
+// filterRetryableBookkeepingToolRecords returns bookkeeping records that become
+// planner-facing only after execution produced a retryable failure.
+func (r *Runtime) filterRetryableBookkeepingToolRecords(records []stepToolRecord) ([]stepToolRecord, error) {
+	plannerFacingRecords, err := r.filterPlannerFacingToolRecords(records)
+	if err != nil {
+		return nil, err
 	}
-	filtered := make([]stepToolRecord, 0, len(records))
-	for _, record := range records {
-		if err := validateStepToolRecord("filter late planner-visible tool records", record); err != nil {
-			return nil, err
+	filtered := make([]stepToolRecord, 0, len(plannerFacingRecords))
+	for _, record := range plannerFacingRecords {
+		if r.isBookkeeping(record.call.Name) {
+			filtered = append(filtered, record)
 		}
-		if !r.isBookkeeping(record.call.Name) || r.plannerVisibleToolCall(record.call) {
-			continue
-		}
-		if !r.plannerVisibleToolResult(record.call, record.result) {
-			continue
-		}
-		filtered = append(filtered, record)
 	}
 	return filtered, nil
 }
 
-// filterPlannerVisibleToolRecords returns the subset of paired step records that
+// filterPlannerFacingToolRecords returns the subset of paired step records that
 // remain visible to future planner turns.
-func (r *Runtime) filterPlannerVisibleToolRecords(records []stepToolRecord) ([]stepToolRecord, error) {
+func (r *Runtime) filterPlannerFacingToolRecords(records []stepToolRecord) ([]stepToolRecord, error) {
 	if len(records) == 0 {
 		return nil, nil
 	}
 	filtered := make([]stepToolRecord, 0, len(records))
 	for _, record := range records {
-		if err := validateStepToolRecord("filter planner-visible tool records", record); err != nil {
+		if err := validateStepToolRecord("filter planner-facing tool records", record); err != nil {
 			return nil, err
 		}
-		if !r.plannerVisibleToolResult(record.call, record.result) {
+		if !r.plannerFacingToolResult(record.call, record.result) {
 			continue
 		}
 		filtered = append(filtered, record)
@@ -283,16 +276,10 @@ func validateStepToolRecord(context string, record stepToolRecord) error {
 	return nil
 }
 
-// plannerVisibleToolCall reports whether the declared tool call should remain in
-// the planner-visible transcript for a future turn.
-func (r *Runtime) plannerVisibleToolCall(call planner.ToolRequest) bool {
-	return !r.isBookkeeping(call.Name) || r.isPlannerVisibleBookkeeping(call.Name)
-}
-
-// plannerVisibleToolResult reports whether the executed result must be replayed
+// plannerFacingToolResult reports whether the executed result must be replayed
 // into a future planner turn.
-func (r *Runtime) plannerVisibleToolResult(call planner.ToolRequest, result *planner.ToolResult) bool {
-	if r.plannerVisibleToolCall(call) {
+func (r *Runtime) plannerFacingToolResult(call planner.ToolRequest, result *planner.ToolResult) bool {
+	if !r.isBookkeeping(call.Name) {
 		return true
 	}
 	return result != nil && result.Error != nil && result.RetryHint != nil
