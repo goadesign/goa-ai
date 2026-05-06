@@ -267,7 +267,12 @@ var Docs = Toolset("docs", func() {
 })
 ```
 
-Generated specs include model-facing schemas and runtime-facing codecs. Invalid payloads fail at the boundary and can produce structured retry hints rather than string parsing.
+**What you get:**
+- JSON Schema for LLM function calling (auto-generated)
+- Validation at boundaries—invalid calls get retry hints, not crashes
+- Type-safe Go structs for payloads and results
+- Explicit control-plane contracts: `Bookkeeping()` keeps tools durable,
+  budget-exempt, and hidden from future planner turns
 
 ### Bind Tools to Goa Services
 
@@ -432,7 +437,6 @@ Tool("set_step_status", "Update task step status", func() {
 	Args(SetStepStatusRequest)
 	Return(TaskProgressSnapshot)
 	Bookkeeping()
-	PlannerVisible()
 })
 
 Tool("commit_report", "Commit final report", func() {
@@ -443,9 +447,9 @@ Tool("commit_report", "Commit final report", func() {
 })
 ```
 
-Bookkeeping tools do not consume the normal `MaxToolCalls` budget. Their events are still durable and streamed. Results stay hidden from future planner turns unless `PlannerVisible()` opts them back in.
+Bookkeeping tools do not consume the normal `MaxToolCalls` budget. Their events are still durable and streamed. Successful results stay hidden from future planner turns; retryable failures stay visible with their retry hints so the planner can repair the failed call.
 
-The workflow runtime evaluates one admitted planner result as one step: it executes tool and await work, records durable and planner-visible outputs through one canonical path, then applies one transition policy to resume, finish, or finalize. A terminal payload may only accompany hidden, non-terminal bookkeeping side effects; budgeted tools, planner-visible bookkeeping, terminal tools, and awaits must be separate planner decisions.
+The workflow runtime evaluates one admitted planner result as one step: it executes tool and await work, records durable and planner-facing outputs through one canonical path, then applies one transition policy to resume, finish, or finalize. A terminal payload may only accompany hidden, non-terminal bookkeeping side effects; budgeted tools, retryable bookkeeping failures, terminal tools, and awaits must be separate planner decisions.
 
 ---
 

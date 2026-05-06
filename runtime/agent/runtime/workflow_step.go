@@ -168,9 +168,6 @@ func (r *Runtime) validateToolTerminalProgram(calls []planner.ToolRequest) error
 		if !spec.Bookkeeping {
 			return fmt.Errorf("workflow step terminal payload cannot accompany budgeted tool %q", call.Name)
 		}
-		if spec.PlannerVisible {
-			return fmt.Errorf("workflow step terminal payload cannot accompany planner-visible bookkeeping tool %q", call.Name)
-		}
 		if spec.TerminalRun {
 			return fmt.Errorf("workflow step terminal payload cannot accompany terminal tool %q", call.Name)
 		}

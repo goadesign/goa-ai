@@ -75,7 +75,7 @@ func (r *Runtime) buildPlannerToolOutputs(ctx context.Context, calls []planner.T
 // buildPlannerToolOutputRecords converts paired step records into planner
 // ToolOutput values suitable for run-loop state.
 func (r *Runtime) buildPlannerToolOutputRecords(ctx context.Context, records []stepToolRecord) ([]*planner.ToolOutput, error) {
-	records, err := r.filterPlannerVisibleToolRecords(records)
+	records, err := r.filterPlannerFacingToolRecords(records)
 	if err != nil {
 		return nil, err
 	}
