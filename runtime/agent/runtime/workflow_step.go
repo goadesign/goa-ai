@@ -40,6 +40,7 @@ type (
 	stepBatch struct {
 		program       stepProgram
 		records       []stepToolRecord
+		recorded      int
 		budgetCost    int
 		timedOut      bool
 		awaited       bool
@@ -187,6 +188,11 @@ func (l *workflowLoop) executeStepProgram(program stepProgram) (stepBatch, error
 		if batch.finalize != nil {
 			return batch, nil
 		}
+		if len(confirmations) == 0 && len(items) > 0 {
+			if err := l.recordUnrecordedStepToolResults(&batch); err != nil {
+				return stepBatch{}, err
+			}
+		}
 		if len(confirmations) > 0 || len(items) > 0 {
 			if err := l.handleAwaitQueue(
 				program.result.ExpectedChildren,
@@ -220,7 +226,7 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	if batch.finalize != nil {
 		return l.finalizeStep(batch.finalize.reason, batch.finalize.skippedErr)
 	}
-	if err := l.r.recordStepToolResults(l.wfCtx.Context(), l.input, l.base, l.st, l.turnID, batch.records); err != nil {
+	if err := l.recordUnrecordedStepToolResults(&batch); err != nil {
 		return nil, err
 	}
 	if batch.timedOut {
@@ -323,6 +329,23 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	l.st.Result = resOutput.Result
 	l.st.Transcript = resOutput.Transcript
 	return nil, nil
+}
+
+// recordUnrecordedStepToolResults persists each concrete tool result exactly
+// once, preserving transcript order when a tool result creates await work.
+func (l *workflowLoop) recordUnrecordedStepToolResults(batch *stepBatch) error {
+	if batch == nil {
+		return errors.New("workflow step missing batch")
+	}
+	if batch.recorded > len(batch.records) {
+		panic("runtime: recorded step tool result count exceeds batch records")
+	}
+	records := batch.records[batch.recorded:]
+	if err := l.r.recordStepToolResults(l.wfCtx.Context(), l.input, l.base, l.st, l.turnID, records); err != nil {
+		return err
+	}
+	batch.recorded = len(batch.records)
+	return nil
 }
 
 // finalizeStep runs a required finalization transition and fails if restricted
