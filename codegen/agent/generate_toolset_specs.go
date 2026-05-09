@@ -162,7 +162,7 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 				unionImports = append(unionImports,
 					codegen.SimpleImport("encoding/json"),
 					codegen.SimpleImport("fmt"),
-					codegen.GoaImport(""),
+					codegen.SimpleImport("goa.design/goa-ai/runtime/agent/tools"),
 				)
 				unionImports = append(unionImports, timports...)
 				unionSections := []*codegen.SectionTemplate{
@@ -197,7 +197,7 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 			unionImports = append(unionImports,
 				codegen.SimpleImport("encoding/json"),
 				codegen.SimpleImport("fmt"),
-				codegen.GoaImport(""),
+				codegen.SimpleImport("goa.design/goa-ai/runtime/agent/tools"),
 			)
 			unionImports = append(unionImports, typeImports...)
 			unionSections := []*codegen.SectionTemplate{

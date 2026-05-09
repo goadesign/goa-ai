@@ -137,7 +137,7 @@ func (r *Runtime) appendUserToolResults(
 	vals []*planner.ToolResult,
 	turnID string,
 ) error {
-	allowed, vals, err := r.filterPlannerVisibleToolResults(allowed, vals)
+	allowed, vals, err := r.filterPlannerFacingToolResults(allowed, vals)
 	if err != nil {
 		return err
 	}
@@ -210,20 +210,19 @@ func (r *Runtime) appendUserToolResults(
 	return r.appendTranscriptMessages(ctx, agentID, base, turnID, messages)
 }
 
-// filterPlannerVisibleToolCalls returns the subset of tool calls that are
-// definitely visible before execution.
+// filterPlannerFacingToolCalls returns the subset of tool calls that are
+// part of the next planner transcript before execution.
 //
-// Successful bookkeeping calls remain hidden from future planner turns unless
-// their tool spec explicitly keeps them planner-visible. Retryable bookkeeping
-// failures are appended later, after execution reveals the RetryHint-bearing
-// result that must be replayed for repair.
-func (r *Runtime) filterPlannerVisibleToolCalls(calls []planner.ToolRequest) []planner.ToolRequest {
+// Successful bookkeeping calls remain hidden from future planner turns.
+// Retryable bookkeeping failures are appended later, after execution reveals the
+// RetryHint-bearing result that must be replayed for repair.
+func (r *Runtime) filterPlannerFacingToolCalls(calls []planner.ToolRequest) []planner.ToolRequest {
 	if len(calls) == 0 {
 		return nil
 	}
 	filtered := make([]planner.ToolRequest, 0, len(calls))
 	for _, call := range calls {
-		if !r.plannerVisibleToolCall(call) {
+		if r.isBookkeeping(call.Name) {
 			continue
 		}
 		filtered = append(filtered, call)
@@ -231,72 +230,44 @@ func (r *Runtime) filterPlannerVisibleToolCalls(calls []planner.ToolRequest) []p
 	return filtered
 }
 
-// filterLatePlannerVisibleToolCalls returns bookkeeping calls that become
-// planner-visible only after execution produced a retryable failure.
-func (r *Runtime) filterLatePlannerVisibleToolCalls(calls []planner.ToolRequest, results []*planner.ToolResult) ([]planner.ToolRequest, error) {
-	if len(calls) == 0 && len(results) == 0 {
-		return nil, nil
+// filterRetryableBookkeepingToolCalls returns bookkeeping calls that become
+// planner-facing only after execution produced a retryable failure.
+func (r *Runtime) filterRetryableBookkeepingToolCalls(calls []planner.ToolRequest, results []*planner.ToolResult) ([]planner.ToolRequest, error) {
+	plannerFacingCalls, _, err := r.filterPlannerFacingToolResults(calls, results)
+	if err != nil {
+		return nil, err
 	}
-	if len(calls) != len(results) {
-		return nil, fmt.Errorf("filter late planner-visible tool calls: calls/results length mismatch (%d != %d)", len(calls), len(results))
-	}
-
-	resultsByToolCallID := make(map[string]*planner.ToolResult, len(results))
-	for _, result := range results {
-		if result == nil {
-			return nil, fmt.Errorf("filter late planner-visible tool calls: nil tool result")
+	filtered := make([]planner.ToolRequest, 0, len(plannerFacingCalls))
+	for _, call := range plannerFacingCalls {
+		if r.isBookkeeping(call.Name) {
+			filtered = append(filtered, call)
 		}
-		if result.ToolCallID == "" {
-			return nil, fmt.Errorf("filter late planner-visible tool calls: missing result tool_call_id for %s", result.Name)
-		}
-		if _, exists := resultsByToolCallID[result.ToolCallID]; exists {
-			return nil, fmt.Errorf("filter late planner-visible tool calls: duplicate result tool_call_id %s", result.ToolCallID)
-		}
-		resultsByToolCallID[result.ToolCallID] = result
-	}
-
-	filtered := make([]planner.ToolRequest, 0, len(calls))
-	for _, call := range calls {
-		if call.ToolCallID == "" {
-			return nil, fmt.Errorf("filter late planner-visible tool calls: missing call tool_call_id for %s", call.Name)
-		}
-		if !r.isBookkeeping(call.Name) || r.plannerVisibleToolCall(call) {
-			continue
-		}
-		result, ok := resultsByToolCallID[call.ToolCallID]
-		if !ok {
-			return nil, fmt.Errorf("filter late planner-visible tool calls: missing result for tool_call_id %s", call.ToolCallID)
-		}
-		if !r.plannerVisibleToolResult(call, result) {
-			continue
-		}
-		filtered = append(filtered, call)
 	}
 	return filtered, nil
 }
 
-// filterPlannerVisibleToolResults returns the subset of executed tool
+// filterPlannerFacingToolResults returns the subset of executed tool
 // calls/results that remain visible to future planner turns. Bookkeeping tools
-// still execute and publish durable run events, but only planner-visible
-// bookkeeping results and retryable bookkeeping failures remain visible.
-func (r *Runtime) filterPlannerVisibleToolResults(calls []planner.ToolRequest, results []*planner.ToolResult) ([]planner.ToolRequest, []*planner.ToolResult, error) {
+// still execute and publish durable run events, but only retryable bookkeeping
+// failures remain visible.
+func (r *Runtime) filterPlannerFacingToolResults(calls []planner.ToolRequest, results []*planner.ToolResult) ([]planner.ToolRequest, []*planner.ToolResult, error) {
 	if len(calls) == 0 && len(results) == 0 {
 		return nil, nil, nil
 	}
 	if len(calls) != len(results) {
-		return nil, nil, fmt.Errorf("filter planner-visible tool results: calls/results length mismatch (%d != %d)", len(calls), len(results))
+		return nil, nil, fmt.Errorf("filter planner-facing tool results: calls/results length mismatch (%d != %d)", len(calls), len(results))
 	}
 
 	resultsByToolCallID := make(map[string]*planner.ToolResult, len(results))
 	for _, result := range results {
 		if result == nil {
-			return nil, nil, fmt.Errorf("filter planner-visible tool results: nil tool result")
+			return nil, nil, fmt.Errorf("filter planner-facing tool results: nil tool result")
 		}
 		if result.ToolCallID == "" {
-			return nil, nil, fmt.Errorf("filter planner-visible tool results: missing result tool_call_id for %s", result.Name)
+			return nil, nil, fmt.Errorf("filter planner-facing tool results: missing result tool_call_id for %s", result.Name)
 		}
 		if _, exists := resultsByToolCallID[result.ToolCallID]; exists {
-			return nil, nil, fmt.Errorf("filter planner-visible tool results: duplicate result tool_call_id %s", result.ToolCallID)
+			return nil, nil, fmt.Errorf("filter planner-facing tool results: duplicate result tool_call_id %s", result.ToolCallID)
 		}
 		resultsByToolCallID[result.ToolCallID] = result
 	}
@@ -305,13 +276,13 @@ func (r *Runtime) filterPlannerVisibleToolResults(calls []planner.ToolRequest, r
 	filteredResults := make([]*planner.ToolResult, 0, len(results))
 	for _, call := range calls {
 		if call.ToolCallID == "" {
-			return nil, nil, fmt.Errorf("filter planner-visible tool results: missing call tool_call_id for %s", call.Name)
+			return nil, nil, fmt.Errorf("filter planner-facing tool results: missing call tool_call_id for %s", call.Name)
 		}
 		result, ok := resultsByToolCallID[call.ToolCallID]
 		if !ok {
-			return nil, nil, fmt.Errorf("filter planner-visible tool results: missing result for tool_call_id %s", call.ToolCallID)
+			return nil, nil, fmt.Errorf("filter planner-facing tool results: missing result for tool_call_id %s", call.ToolCallID)
 		}
-		if !r.plannerVisibleToolResult(call, result) {
+		if !r.plannerFacingToolResult(call, result) {
 			continue
 		}
 		filteredCalls = append(filteredCalls, call)
@@ -320,16 +291,10 @@ func (r *Runtime) filterPlannerVisibleToolResults(calls []planner.ToolRequest, r
 	return filteredCalls, filteredResults, nil
 }
 
-// plannerVisibleToolCall reports whether the declared tool call should remain in
-// the planner-visible transcript for a future turn.
-func (r *Runtime) plannerVisibleToolCall(call planner.ToolRequest) bool {
-	return !r.isBookkeeping(call.Name) || r.isPlannerVisibleBookkeeping(call.Name)
-}
-
-// plannerVisibleToolResult reports whether the executed result must be replayed
+// plannerFacingToolResult reports whether the executed result must be replayed
 // into a future planner turn.
-func (r *Runtime) plannerVisibleToolResult(call planner.ToolRequest, result *planner.ToolResult) bool {
-	if r.plannerVisibleToolCall(call) {
+func (r *Runtime) plannerFacingToolResult(call planner.ToolRequest, result *planner.ToolResult) bool {
+	if !r.isBookkeeping(call.Name) {
 		return true
 	}
 	return result != nil && result.Error != nil && result.RetryHint != nil

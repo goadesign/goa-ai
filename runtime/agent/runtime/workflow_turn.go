@@ -193,7 +193,7 @@ func (r *Runtime) handleToolTurn(
 	hasAwaitWork := len(confirmations) > 0 || (result.Await != nil && len(result.Await.Items) > 0) || len(toolPauses) > 0
 	turnResolution := toolTurnResolutionResume
 	if hasAwaitWork {
-		if err := r.appendPlannerVisibleTurnResults(ctx, input, base, st, turnID, toExecute, vals); err != nil {
+		if err := r.appendPlannerFacingTurnResults(ctx, input, base, st, turnID, toExecute, vals); err != nil {
 			return nil, err
 		}
 	} else {
@@ -202,7 +202,7 @@ func (r *Runtime) handleToolTurn(
 			return nil, err
 		}
 		if turnResolution == toolTurnResolutionResume {
-			if err := r.appendPlannerVisibleTurnResults(ctx, input, base, st, turnID, toExecute, vals); err != nil {
+			if err := r.appendPlannerFacingTurnResults(ctx, input, base, st, turnID, toExecute, vals); err != nil {
 				return nil, err
 			}
 		}
@@ -353,11 +353,11 @@ func (r *Runtime) handleToolTurn(
 	return nil, nil
 }
 
-// appendPlannerVisibleTurnResults appends only the subset of tool results that
+// appendPlannerFacingTurnResults appends only the subset of tool results that
 // remain visible to future planner turns. Successful bookkeeping batches
 // therefore become a no-op here, while retryable bookkeeping failures and mixed
-// batches still preserve the planner-visible repair context.
-func (r *Runtime) appendPlannerVisibleTurnResults(
+// batches still preserve the planner-facing repair context.
+func (r *Runtime) appendPlannerFacingTurnResults(
 	ctx context.Context,
 	input *RunInput,
 	base *planner.PlanInput,
@@ -369,7 +369,7 @@ func (r *Runtime) appendPlannerVisibleTurnResults(
 	if err := r.appendToolOutputs(ctx, st, calls, results); err != nil {
 		return err
 	}
-	if err := r.appendLatePlannerVisibleToolUses(ctx, input.AgentID, base, calls, results, turnID); err != nil {
+	if err := r.appendRetryableBookkeepingToolUses(ctx, input.AgentID, base, calls, results, turnID); err != nil {
 		return err
 	}
 	if err := r.appendUserToolResults(ctx, input.AgentID, base, calls, results, turnID); err != nil {
@@ -391,11 +391,11 @@ func (r *Runtime) classifyToolTurn(calls []planner.ToolRequest, results []*plann
 		}
 	}
 
-	plannerVisibleCalls, _, err := r.filterPlannerVisibleToolResults(calls, results)
+	plannerFacingCalls, _, err := r.filterPlannerFacingToolResults(calls, results)
 	if err != nil {
 		return 0, err
 	}
-	if len(plannerVisibleCalls) > 0 {
+	if len(plannerFacingCalls) > 0 {
 		return toolTurnResolutionResume, nil
 	}
 
@@ -433,7 +433,7 @@ func (r *Runtime) executedSuccessfulTerminalRunTool(results []*planner.ToolResul
 	return false, nil
 }
 
-// toolResultsFromExecutions extracts durable planner-visible tool results from a
+// toolResultsFromExecutions extracts durable tool results from a
 // batch of runtime-owned execution outcomes.
 func toolResultsFromExecutions(outcomes []*ToolExecutionResult) []*planner.ToolResult {
 	if len(outcomes) == 0 {

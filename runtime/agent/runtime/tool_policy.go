@@ -33,7 +33,7 @@ func compileToolPolicy(overrides *PolicyOverrides) compiledToolPolicy {
 	}
 	clauses = append(clauses, cloneTagPolicyClauses(overrides.TagClauses)...)
 	return compiledToolPolicy{
-		restrictToTool: overrides.RestrictToTool,
+		restrictToTool: effectiveRestrictToTool(overrides),
 		tagClauses:     clauses,
 	}
 }
@@ -78,6 +78,18 @@ func legacyTagPolicyClause(overrides *PolicyOverrides) (api.TagPolicyClause, boo
 		AllowedAny: append([]string(nil), overrides.AllowedTags...),
 		DeniedAny:  append([]string(nil), overrides.DeniedTags...),
 	}, true
+}
+
+// effectiveRestrictToTool resolves the active single-tool constraint. Caller
+// policy is run-scoped and therefore dominates retry-scoped correction state.
+func effectiveRestrictToTool(overrides *PolicyOverrides) tools.Ident {
+	if overrides == nil {
+		return ""
+	}
+	if overrides.RestrictToTool != "" {
+		return overrides.RestrictToTool
+	}
+	return overrides.RetryRestrictToTool
 }
 
 // isZero reports whether the compiled policy has no effect.

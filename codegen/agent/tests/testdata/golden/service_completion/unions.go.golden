@@ -9,8 +9,37 @@ package completions
 import (
 	"encoding/json"
 	"fmt"
-	goa "goa.design/goa/v3/pkg"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
+
+type unionDiscriminatorError struct {
+	union   string
+	got     string
+	allowed []string
+}
+
+// Error reports the invalid union discriminator in the canonical {type,value}
+// JSON shape emitted for tool payloads and results.
+func (e *unionDiscriminatorError) Error() string {
+	return fmt.Sprintf("unexpected %s type %q (allowed: %q)", e.union, e.got, e.allowed)
+}
+
+// Issues exposes the discriminator failure in the same shape as generated
+// validation errors so runtimes can build retry hints without parsing strings.
+func (e *unionDiscriminatorError) Issues() []*tools.FieldIssue {
+	allowed := append([]string(nil), e.allowed...)
+	constraint := "invalid_enum_value"
+	if e.got == "" {
+		constraint = "missing_field"
+	}
+	return []*tools.FieldIssue{
+		{
+			Field:      "type",
+			Constraint: constraint,
+			Allowed:    allowed,
+		},
+	}
+}
 
 // Draft is a sum-type union.
 type Draft struct {
@@ -82,19 +111,13 @@ func (u *Draft) SetExistingTaskID(v DraftExistingTaskID) {
 func (u Draft) Validate() error {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("type", "", []any{
-			string(DraftKindNewTask),
-			string(DraftKindExistingTaskID),
-		})
+		return newDraftDiscriminatorError("")
 	case DraftKindNewTask:
 		return nil
 	case DraftKindExistingTaskID:
 		return nil
 	default:
-		return goa.InvalidEnumValueError("type", u.kind, []any{
-			string(DraftKindNewTask),
-			string(DraftKindExistingTaskID),
-		})
+		return newDraftDiscriminatorError(string(u.kind))
 	}
 }
 
@@ -112,7 +135,7 @@ func (u Draft) MarshalJSON() ([]byte, error) {
 	case DraftKindExistingTaskID:
 		value = u.ExistingTaskID
 	default:
-		return nil, fmt.Errorf("unexpected Draft discriminant %q", u.kind)
+		return nil, newDraftDiscriminatorError(string(u.kind))
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`
@@ -148,7 +171,18 @@ func (u *Draft) UnmarshalJSON(data []byte) error {
 		u.kind = DraftKindExistingTaskID
 		u.ExistingTaskID = v
 	default:
-		return fmt.Errorf("unexpected Draft type %q", raw.Type)
+		return newDraftDiscriminatorError(raw.Type)
 	}
 	return nil
+}
+
+func newDraftDiscriminatorError(got string) error {
+	return &unionDiscriminatorError{
+		union: "Draft",
+		got:   got,
+		allowed: []string{
+			string(DraftKindNewTask),
+			string(DraftKindExistingTaskID),
+		},
+	}
 }

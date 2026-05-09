@@ -217,9 +217,8 @@ Agent("assistant", "Document assistant", func() {
 - JSON Schema for LLM function calling (auto-generated)
 - Validation at boundaries—invalid calls get retry hints, not crashes
 - Type-safe Go structs for payloads and results
-- Explicit control-plane contracts: `Bookkeeping()` keeps tools durable and
-  budget-exempt, while `PlannerVisible()` lets selected bookkeeping results feed
-  the next planner turn as structured state
+- Explicit control-plane contracts: `Bookkeeping()` keeps tools durable,
+  budget-exempt, and hidden from future planner turns
 
 ### Typed Direct Completions
 
@@ -356,17 +355,15 @@ whose job is to update control-plane state rather than perform retrieval.
 
 - bookkeeping tools do **not** consume `MaxToolCalls`
 - their results still publish durable events for streams and run logs
-- successful bookkeeping results stay hidden from future planner-visible
-  transcript and `ToolOutputs` state by default
-- `PlannerVisible()` is the opt-in exception for non-terminal bookkeeping tools
-  that emit canonical state needed by the next planner turn
+- successful bookkeeping results stay hidden from future planner transcript and
+  `ToolOutputs` state
 - a bookkeeping-only turn must either resolve in the same turn
-  (`TerminalRun`, `FinalResponse`, `FinalToolResult`, await/pause) or produce a
-  planner-visible bookkeeping result that justifies the next resume
+  (`TerminalRun`, `FinalResponse`, `FinalToolResult`, await/pause) or fail fast
+  before scheduling an implicit resume
 
 This keeps control-plane loops cheap without hiding them from observability,
-while still letting selected bookkeeping results drive structured follow-up
-reasoning when needed.
+while keeping planner reasoning state on explicit planner inputs rather than
+control-plane tool results.
 
 ---
 

@@ -9,8 +9,37 @@ package union
 import (
 	"encoding/json"
 	"fmt"
-	goa "goa.design/goa/v3/pkg"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
+
+type unionDiscriminatorError struct {
+	union   string
+	got     string
+	allowed []string
+}
+
+// Error reports the invalid union discriminator in the canonical {type,value}
+// JSON shape emitted for tool payloads and results.
+func (e *unionDiscriminatorError) Error() string {
+	return fmt.Sprintf("unexpected %s type %q (allowed: %q)", e.union, e.got, e.allowed)
+}
+
+// Issues exposes the discriminator failure in the same shape as generated
+// validation errors so runtimes can build retry hints without parsing strings.
+func (e *unionDiscriminatorError) Issues() []*tools.FieldIssue {
+	allowed := append([]string(nil), e.allowed...)
+	constraint := "invalid_enum_value"
+	if e.got == "" {
+		constraint = "missing_field"
+	}
+	return []*tools.FieldIssue{
+		{
+			Field:      "type",
+			Constraint: constraint,
+			Allowed:    allowed,
+		},
+	}
+}
 
 // Value is a sum-type union.
 type Value struct {
@@ -82,19 +111,13 @@ func (u *Value) SetText(v ValueText) {
 func (u Value) Validate() error {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("type", "", []any{
-			string(ValueKindNumber),
-			string(ValueKindText),
-		})
+		return newValueDiscriminatorError("")
 	case ValueKindNumber:
 		return nil
 	case ValueKindText:
 		return nil
 	default:
-		return goa.InvalidEnumValueError("type", u.kind, []any{
-			string(ValueKindNumber),
-			string(ValueKindText),
-		})
+		return newValueDiscriminatorError(string(u.kind))
 	}
 }
 
@@ -112,7 +135,7 @@ func (u Value) MarshalJSON() ([]byte, error) {
 	case ValueKindText:
 		value = u.Text
 	default:
-		return nil, fmt.Errorf("unexpected Value discriminant %q", u.kind)
+		return nil, newValueDiscriminatorError(string(u.kind))
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`
@@ -148,7 +171,18 @@ func (u *Value) UnmarshalJSON(data []byte) error {
 		u.kind = ValueKindText
 		u.Text = v
 	default:
-		return fmt.Errorf("unexpected Value type %q", raw.Type)
+		return newValueDiscriminatorError(raw.Type)
 	}
 	return nil
+}
+
+func newValueDiscriminatorError(got string) error {
+	return &unionDiscriminatorError{
+		union: "Value",
+		got:   got,
+		allowed: []string{
+			string(ValueKindNumber),
+			string(ValueKindText),
+		},
+	}
 }

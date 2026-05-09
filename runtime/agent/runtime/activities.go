@@ -283,7 +283,8 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 					RetryHint: hint,
 				}, nil
 			}
-			// No structured hint available: return error only.
+			// Generated codecs must emit structured validation errors for schema
+			// contract violations that are not native JSON syntax/type errors.
 			return &ToolOutput{Error: decErr.Error()}, nil
 		}
 	}
@@ -421,13 +422,14 @@ func buildRetryHintFromValidation(err error, toolName tools.Ident) ([]string, st
 // planners and UIs can guide callers toward a schema-compliant payload.
 //
 // When a payload example is available in the tool specs, the hint attaches it as
-// ExampleInput so consumers can display a concrete, valid payload.
+// ExampleInput so consumers can display a concrete, valid payload. Returns nil
+// when the error is not a recognized JSON decode error so callers can decide
+// whether to fall back to a generic hint or propagate the error verbatim.
 func buildRetryHintFromDecodeError(err error, toolName tools.Ident, spec *tools.ToolSpec) *planner.RetryHint {
 	var (
 		typeErr   *json.UnmarshalTypeError
 		syntaxErr *json.SyntaxError
 		fields    []string
-		reason    planner.RetryReason
 		question  string
 	)
 
@@ -438,7 +440,6 @@ func buildRetryHintFromDecodeError(err error, toolName tools.Ident, spec *tools.
 			field = "$payload"
 		}
 		fields = []string{field}
-		reason = planner.RetryReasonMissingFields
 		question = fmt.Sprintf(
 			"I could not decode the %s tool input. The %s field has the wrong JSON shape. Please resend this tool call with a JSON object that matches the expected schema.",
 			toolName,
@@ -446,14 +447,12 @@ func buildRetryHintFromDecodeError(err error, toolName tools.Ident, spec *tools.
 		)
 	case errors.As(err, &syntaxErr):
 		fields = []string{"$payload"}
-		reason = planner.RetryReasonMissingFields
 		question = fmt.Sprintf(
 			"I could not parse the %s tool input as JSON (syntax error near byte offset %d). Please resend this tool call with a valid JSON object payload.",
 			toolName,
 			syntaxErr.Offset,
 		)
 	default:
-		// Not a JSON decode error we can interpret.
 		return nil
 	}
 
@@ -463,7 +462,7 @@ func buildRetryHintFromDecodeError(err error, toolName tools.Ident, spec *tools.
 	}
 
 	return &planner.RetryHint{
-		Reason:             reason,
+		Reason:             planner.RetryReasonMissingFields,
 		Tool:               toolName,
 		MissingFields:      fields,
 		ExampleInput:       example,

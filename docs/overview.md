@@ -471,7 +471,6 @@ policies, and MCP servers within Goa service designs.
 | `ResultReminder(text)` | Static system reminder injected after tool result |
 | `TerminalRun()` | Tool completes the run immediately after execution (no follow-up planner turn) |
 | `Bookkeeping()` | Control-plane tool: no `MaxToolCalls` budget and hidden from future planner turns by default |
-| `PlannerVisible()` | Keeps a non-terminal bookkeeping result visible to the next planner turn |
 
 ### Toolset Definition
 

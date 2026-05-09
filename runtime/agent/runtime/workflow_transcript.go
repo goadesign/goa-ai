@@ -4,7 +4,7 @@ package runtime
 // conversation message list that is fed back into the planner.
 //
 // Contract:
-// - Produces a canonical assistant message that includes only planner-visible
+// - Produces a canonical assistant message that includes only planner-facing
 //   tool_use parts for the turn.
 // - Appends messages to the PlanInput in the same order used for tool_result
 //   correlation.
@@ -55,8 +55,9 @@ func (r *Runtime) appendTerminalAssistantMessage(
 	return r.appendTranscriptMessages(ctx, agentID, base, turnID, cloneMessages([]*model.Message{msg}))
 }
 
-// recordAssistantTurn merges streamed transcript parts with the declared tool calls
-// and appends the resulting assistant messages to the conversation state.
+// recordAssistantTurn appends the canonical assistant turn. Streamed provider
+// tool uses are discarded and rebuilt from runtime-admitted planner-facing calls
+// so bookkeeping calls can never leak into the provider transcript.
 func (r *Runtime) recordAssistantTurn(
 	ctx context.Context,
 	agentID agent.Ident,
@@ -65,11 +66,11 @@ func (r *Runtime) recordAssistantTurn(
 	allowed []planner.ToolRequest,
 	turnID string,
 ) error {
-	allowed = r.filterPlannerVisibleToolCalls(allowed)
-	if len(transcriptMsgs) == 0 && len(allowed) == 0 {
+	allowed = r.filterPlannerFacingToolCalls(allowed)
+	messages := cloneMessagesWithoutToolUse(transcriptMsgs)
+	if len(messages) == 0 && len(allowed) == 0 {
 		return nil
 	}
-	messages := cloneMessages(transcriptMsgs)
 	target := findAssistantMessage(messages)
 	if target == nil && len(allowed) > 0 {
 		target = &model.Message{Role: model.ConversationRoleAssistant}
@@ -85,9 +86,9 @@ func (r *Runtime) recordAssistantTurn(
 	return r.appendTranscriptMessages(ctx, agentID, base, turnID, messages)
 }
 
-// appendLatePlannerVisibleToolUses appends bookkeeping tool_use parts that
-// became planner-visible only after execution produced retryable failures.
-func (r *Runtime) appendLatePlannerVisibleToolUses(
+// appendRetryableBookkeepingToolUses appends bookkeeping tool_use parts that
+// became planner-facing only after execution produced retryable failures.
+func (r *Runtime) appendRetryableBookkeepingToolUses(
 	ctx context.Context,
 	agentID agent.Ident,
 	base *planner.PlanInput,
@@ -95,7 +96,7 @@ func (r *Runtime) appendLatePlannerVisibleToolUses(
 	results []*planner.ToolResult,
 	turnID string,
 ) error {
-	lateCalls, err := r.filterLatePlannerVisibleToolCalls(calls, results)
+	lateCalls, err := r.filterRetryableBookkeepingToolCalls(calls, results)
 	if err != nil {
 		return err
 	}
@@ -136,6 +137,37 @@ func cloneMessages(msgs []*model.Message) []*model.Message {
 		}
 		parts := make([]model.Part, len(msg.Parts))
 		copy(parts, msg.Parts)
+		out = append(out, &model.Message{
+			Role:  msg.Role,
+			Parts: parts,
+			Meta:  cloneMetadata(msg.Meta),
+		})
+	}
+	return out
+}
+
+// cloneMessagesWithoutToolUse copies streamed transcript messages while removing
+// provider-emitted tool_use parts. Runtime-owned planner.ToolRequest values are
+// the only source of canonical tool_use transcript entries.
+func cloneMessagesWithoutToolUse(msgs []*model.Message) []*model.Message {
+	if len(msgs) == 0 {
+		return nil
+	}
+	out := make([]*model.Message, 0, len(msgs))
+	for _, msg := range msgs {
+		if msg == nil {
+			continue
+		}
+		parts := make([]model.Part, 0, len(msg.Parts))
+		for _, part := range msg.Parts {
+			if _, ok := part.(model.ToolUsePart); ok {
+				continue
+			}
+			parts = append(parts, part)
+		}
+		if len(parts) == 0 {
+			continue
+		}
 		out = append(out, &model.Message{
 			Role:  msg.Role,
 			Parts: parts,

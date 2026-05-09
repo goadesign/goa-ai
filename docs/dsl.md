@@ -229,7 +229,6 @@ on agent/tool contracts.
 | `Confirmation(dsl)`                           | Inside `Tool`                          | Declares that tool execution must be explicitly approved out-of-band                                |
 | `TerminalRun()`                               | Inside `Tool`                          | Marks tool as terminal: run completes immediately after execution                                   |
 | `Bookkeeping()`                               | Inside `Tool`                          | Marks tool as control-plane bookkeeping: no `MaxToolCalls` budget, hidden from future planner turns by default |
-| `PlannerVisible()`                            | Inside `Tool`                          | Keeps a bookkeeping result visible to the next planner turn                                         |
 
 
 ### Tool payload defaults (Feature)
@@ -1011,16 +1010,13 @@ Runtime contract:
 - bookkeeping results still publish durable run events for hooks, streams, and
   run-log consumers,
 - successful bookkeeping results stay hidden from the model-visible transcript
-  and future `ToolOutputs` by default unless the tool also declares
-  `PlannerVisible()`.
+  and future `ToolOutputs`.
 
 This means a bookkeeping-only planner turn is only valid when the same turn
 already resolves without another reasoning resume (a `TerminalRun` tool, a
 `FinalResponse` / `FinalToolResult`, or an await/pause control-plane
-handshake), or when at least one successful bookkeeping result is declared
-`PlannerVisible()` and supplies canonical state for the next turn. Retryable
-bookkeeping failures remain planner-visible through `RetryHint` even without
-`PlannerVisible()`.
+handshake). Retryable bookkeeping failures remain planner-visible through
+`RetryHint` so the planner can repair the failed control-plane call.
 
 Operationally, a planner result is processed as one workflow step: the runtime
 executes admitted tool and await work, records durable and planner-visible
@@ -1038,31 +1034,6 @@ Tool("set_step_status", "Update step status", func() {
 `Bookkeeping` composes with `TerminalRun`: a terminal commit tool is typically
 both (bookkeeping so it always executes and terminal so the run completes when
 it does).
-
-### PlannerVisible
-
-`PlannerVisible` keeps a bookkeeping tool visible to future planner turns.
-Use it for control-plane tools that still emit canonical reasoning state, such
-as structured progress snapshots.
-
-Runtime contract:
-
-- `PlannerVisible()` is only valid on non-terminal bookkeeping tools,
-- successful executions are appended back into planner-visible
-  transcript/tool-output state,
-- retryable bookkeeping failures remain planner-visible regardless, as they did
-  before,
-- budgeted tools do not need `PlannerVisible()` because they are already
-  planner-visible by default.
-
-```go
-Tool("set_step_status", "Update task step status", func() {
-    Args(SetStepStatusArgs)
-    Return(TaskProgressSnapshot)
-    Bookkeeping()
-    PlannerVisible()
-})
-```
 
 ---
 

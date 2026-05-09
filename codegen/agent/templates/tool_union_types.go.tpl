@@ -1,3 +1,32 @@
+type unionDiscriminatorError struct {
+	union   string
+	got     string
+	allowed []string
+}
+
+// Error reports the invalid union discriminator in the canonical {type,value}
+// JSON shape emitted for tool payloads and results.
+func (e *unionDiscriminatorError) Error() string {
+	return fmt.Sprintf("unexpected %s type %q (allowed: %q)", e.union, e.got, e.allowed)
+}
+
+// Issues exposes the discriminator failure in the same shape as generated
+// validation errors so runtimes can build retry hints without parsing strings.
+func (e *unionDiscriminatorError) Issues() []*tools.FieldIssue {
+	allowed := append([]string(nil), e.allowed...)
+	constraint := "invalid_enum_value"
+	if e.got == "" {
+		constraint = "missing_field"
+	}
+	return []*tools.FieldIssue{
+		{
+			Field:      "type",
+			Constraint: constraint,
+			Allowed:    allowed,
+		},
+	}
+}
+
 {{- range $i, $u := .Unions }}
 {{- if gt $i 0 }}
 
@@ -53,21 +82,13 @@ func (u *{{ $u.Name }}) Set{{ .FieldName }}(v {{ .FieldType }}) {
 func (u {{ $u.Name }}) Validate() error {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("type", "", []any{
-			{{- range $u.Fields }}
-			string({{ .KindConst }}),
-			{{- end }}
-		})
+		return new{{ $u.Name }}DiscriminatorError("")
 	{{- range $u.Fields }}
 	case {{ .KindConst }}:
 		return nil
 	{{- end }}
 	default:
-		return goa.InvalidEnumValueError("type", u.kind, []any{
-			{{- range $u.Fields }}
-			string({{ .KindConst }}),
-			{{- end }}
-		})
+		return new{{ $u.Name }}DiscriminatorError(string(u.kind))
 	}
 }
 
@@ -85,7 +106,7 @@ func (u {{ $u.Name }}) MarshalJSON() ([]byte, error) {
 		value = u.{{ .FieldName }}
 	{{- end }}
 	default:
-		return nil, fmt.Errorf("unexpected {{ $u.Name }} discriminant %q", u.kind)
+		return nil, new{{ $u.Name }}DiscriminatorError(string(u.kind))
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`
@@ -116,8 +137,20 @@ func (u *{{ $u.Name }}) UnmarshalJSON(data []byte) error {
 		u.{{ .FieldName }} = v
 	{{- end }}
 	default:
-		return fmt.Errorf("unexpected {{ $u.Name }} type %q", raw.Type)
+		return new{{ $u.Name }}DiscriminatorError(raw.Type)
 	}
 	return nil
+}
+
+func new{{ $u.Name }}DiscriminatorError(got string) error {
+	return &unionDiscriminatorError{
+		union: "{{ $u.Name }}",
+		got:   got,
+		allowed: []string{
+			{{- range $u.Fields }}
+			string({{ .KindConst }}),
+			{{- end }}
+		},
+	}
 }
 {{- end }}

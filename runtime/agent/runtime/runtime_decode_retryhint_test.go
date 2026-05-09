@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -71,11 +72,18 @@ func TestBuildRetryHintFromDecodeError_SyntaxError(t *testing.T) {
 	require.NotEmpty(t, hint.ClarifyingQuestion)
 }
 
-// TestBuildRetryHintFromDecodeError_NonJSONError verifies that non-JSON errors
-// do not produce a RetryHint.
-func TestBuildRetryHintFromDecodeError_NonJSONError(t *testing.T) {
-	hint := buildRetryHintFromDecodeError(errors.New("some other error"), tools.Ident("svc.ts.tool"), nil)
-	require.Nil(t, hint)
+// TestBuildRetryHintFromDecodeError_GenericErrorReturnsNil verifies that
+// buildRetryHintFromDecodeError preserves its strict contract: errors raised
+// outside json.SyntaxError/UnmarshalTypeError yield nil so non-decode callers
+// (for example agent-tool prompt rendering) can propagate the error verbatim.
+func TestBuildRetryHintFromDecodeError_GenericErrorReturnsNil(t *testing.T) {
+	decErr := errors.New(`unexpected Rule2 type "signal_change"`)
+	spec := &tools.ToolSpec{
+		Payload: tools.TypeSpec{
+			ExampleInput: map[string]any{"AssistantText": "ok"},
+		},
+	}
+	require.Nil(t, buildRetryHintFromDecodeError(decErr, tools.Ident("svc.ts.tool"), spec))
 }
 
 // TestExecuteToolActivity_DecodeErrorRetryHint ensures ExecuteToolActivity
@@ -137,4 +145,59 @@ func TestExecuteToolActivity_DecodeErrorRetryHint(t *testing.T) {
 	require.Equal(t, planner.RetryReasonMissingFields, out.RetryHint.Reason)
 	require.Equal(t, []string{"summary"}, out.RetryHint.MissingFields)
 	require.NotNil(t, out.RetryHint.ExampleInput)
+}
+
+// TestExecuteToolActivity_UnionValidationRetryHint verifies that generated
+// union discriminator errors stay structured when wrapped by the payload codec.
+func TestExecuteToolActivity_UnionValidationRetryHint(t *testing.T) {
+	rt := &Runtime{
+		logger:   telemetry.NoopLogger{},
+		toolsets: make(map[string]ToolsetRegistration),
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			"svc.ts.tool": {
+				Name:    "svc.ts.tool",
+				Service: "svc",
+				Toolset: "svc.ts",
+				Payload: tools.TypeSpec{
+					Name: "P",
+					Codec: tools.JSONCodec[any]{
+						FromJSON: func(data []byte) (any, error) {
+							err := &fakeValidationError{
+								issues: []*tools.FieldIssue{{
+									Field:      "type",
+									Constraint: "invalid_enum_value",
+									Allowed:    []string{"schedule", "signal"},
+								}},
+							}
+							return nil, fmt.Errorf("decode payload: %w", err)
+						},
+					},
+				},
+				Result: tools.TypeSpec{Name: "R"},
+			},
+		},
+	}
+	rt.toolsets["svc.ts"] = ToolsetRegistration{
+		Name: "svc.ts",
+		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			t.Fatalf("executor should not be called when generated validation fails")
+			return nil, nil
+		}),
+		Specs: []tools.ToolSpec{
+			rt.toolSpecs["svc.ts.tool"],
+		},
+	}
+
+	out, err := rt.ExecuteToolActivity(context.Background(), &ToolInput{
+		ToolsetName: "svc.ts",
+		ToolName:    tools.Ident("svc.ts.tool"),
+		Payload:     rawjson.Message([]byte(`{"type":"signal_change"}`)),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.NotEmpty(t, out.Error)
+	require.NotNil(t, out.RetryHint)
+	require.Equal(t, planner.RetryReasonInvalidArguments, out.RetryHint.Reason)
+	require.Equal(t, []string{"type"}, out.RetryHint.MissingFields)
+	require.Contains(t, out.RetryHint.ClarifyingQuestion, "one of: schedule, signal")
 }

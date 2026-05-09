@@ -131,6 +131,11 @@ type (
 		// RestrictToTool restricts tool execution to the given tool identifier.
 		RestrictToTool tools.Ident
 
+		// RetryRestrictToTool is runtime-owned retry state installed from a
+		// RetryHint. Caller-supplied RestrictToTool remains run-scoped and takes
+		// precedence when both are set.
+		RetryRestrictToTool tools.Ident
+
 		// AllowedTags restricts tool execution to tools tagged with at least one of the listed tags.
 		AllowedTags []string
 
