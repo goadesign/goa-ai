@@ -352,16 +352,20 @@ func (d *toolSpecsData) typeImports() []*codegen.ImportSpec {
 
 // codecsImports returns the imports required by the generated tool codecs file.
 func (d *toolSpecsData) codecsImports() []*codegen.ImportSpec {
+	needsGoa := d.needsGoaImport()
 	base := []*codegen.ImportSpec{
 		codegen.SimpleImport("encoding/json"),
-		codegen.SimpleImport("errors"),
+	}
+	if needsGoa {
+		base = append(base, codegen.SimpleImport("errors"))
+	}
+	base = append(base,
 		codegen.SimpleImport("fmt"),
 		codegen.SimpleImport("goa.design/goa-ai/runtime/agent/tools"),
-	}
+	)
 	if d.needsUnicodeImport() {
 		base = append(base, codegen.SimpleImport("unicode/utf8"))
 	}
-	needsGoa := d.needsGoaImport()
 	extra := make(map[string]*codegen.ImportSpec)
 	needsServiceImport := false
 	serviceImportPath := shared.JoinImportPath(d.genpkg, d.svc.PathName)
@@ -402,9 +406,9 @@ func (d *toolSpecsData) codecsImports() []*codegen.ImportSpec {
 	}
 	if needsGoa {
 		base = append(base, codegen.GoaImport(""))
+		// Keep strings import last to match golden expectations.
+		base = append(base, codegen.SimpleImport("strings"))
 	}
-	// Keep strings import last to match golden expectations.
-	base = append(base, codegen.SimpleImport("strings"))
 	return base
 }
 

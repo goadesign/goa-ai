@@ -8,38 +8,8 @@ package union
 
 import (
 	"encoding/json"
-	"fmt"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
-
-type unionDiscriminatorError struct {
-	union   string
-	got     string
-	allowed []string
-}
-
-// Error reports the invalid union discriminator in the canonical {type,value}
-// JSON shape emitted for tool payloads and results.
-func (e *unionDiscriminatorError) Error() string {
-	return fmt.Sprintf("unexpected %s type %q (allowed: %q)", e.union, e.got, e.allowed)
-}
-
-// Issues exposes the discriminator failure in the same shape as generated
-// validation errors so runtimes can build retry hints without parsing strings.
-func (e *unionDiscriminatorError) Issues() []*tools.FieldIssue {
-	allowed := append([]string(nil), e.allowed...)
-	constraint := "invalid_enum_value"
-	if e.got == "" {
-		constraint = "missing_field"
-	}
-	return []*tools.FieldIssue{
-		{
-			Field:      "type",
-			Constraint: constraint,
-			Allowed:    allowed,
-		},
-	}
-}
 
 // Value is a sum-type union.
 type Value struct {
@@ -111,13 +81,14 @@ func (u *Value) SetText(v ValueText) {
 func (u Value) Validate() error {
 	switch u.kind {
 	case "":
-		return newValueDiscriminatorError("")
+		return newValueDiscriminatorError("", false)
 	case ValueKindNumber:
 		return nil
 	case ValueKindText:
 		return nil
 	default:
-		return newValueDiscriminatorError(string(u.kind))
+		got := string(u.kind)
+		return newValueDiscriminatorError(got, true)
 	}
 }
 
@@ -135,7 +106,8 @@ func (u Value) MarshalJSON() ([]byte, error) {
 	case ValueKindText:
 		value = u.Text
 	default:
-		return nil, newValueDiscriminatorError(string(u.kind))
+		got := string(u.kind)
+		return nil, newValueDiscriminatorError(got, true)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`
@@ -149,13 +121,16 @@ func (u Value) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON unmarshals the union from the canonical {type,value} JSON shape.
 func (u *Value) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		Type  string          `json:"type"`
+		Type  *string         `json:"type"`
 		Value json.RawMessage `json:"value"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	switch raw.Type {
+	if raw.Type == nil {
+		return newValueDiscriminatorError("", false)
+	}
+	switch *raw.Type {
 	case string(ValueKindNumber):
 		var v ValueNumber
 		if err := json.Unmarshal(raw.Value, &v); err != nil {
@@ -171,18 +146,14 @@ func (u *Value) UnmarshalJSON(data []byte) error {
 		u.kind = ValueKindText
 		u.Text = v
 	default:
-		return newValueDiscriminatorError(raw.Type)
+		return newValueDiscriminatorError(*raw.Type, true)
 	}
 	return nil
 }
 
-func newValueDiscriminatorError(got string) error {
-	return &unionDiscriminatorError{
-		union: "Value",
-		got:   got,
-		allowed: []string{
-			string(ValueKindNumber),
-			string(ValueKindText),
-		},
-	}
+func newValueDiscriminatorError(got string, typePresent bool) error {
+	return tools.NewUnionDiscriminatorError("Value", got, typePresent, []string{
+		string(ValueKindNumber),
+		string(ValueKindText),
+	})
 }

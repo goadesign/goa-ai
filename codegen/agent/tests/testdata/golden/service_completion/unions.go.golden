@@ -8,38 +8,8 @@ package completions
 
 import (
 	"encoding/json"
-	"fmt"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
-
-type unionDiscriminatorError struct {
-	union   string
-	got     string
-	allowed []string
-}
-
-// Error reports the invalid union discriminator in the canonical {type,value}
-// JSON shape emitted for tool payloads and results.
-func (e *unionDiscriminatorError) Error() string {
-	return fmt.Sprintf("unexpected %s type %q (allowed: %q)", e.union, e.got, e.allowed)
-}
-
-// Issues exposes the discriminator failure in the same shape as generated
-// validation errors so runtimes can build retry hints without parsing strings.
-func (e *unionDiscriminatorError) Issues() []*tools.FieldIssue {
-	allowed := append([]string(nil), e.allowed...)
-	constraint := "invalid_enum_value"
-	if e.got == "" {
-		constraint = "missing_field"
-	}
-	return []*tools.FieldIssue{
-		{
-			Field:      "type",
-			Constraint: constraint,
-			Allowed:    allowed,
-		},
-	}
-}
 
 // Draft is a sum-type union.
 type Draft struct {
@@ -111,13 +81,14 @@ func (u *Draft) SetExistingTaskID(v DraftExistingTaskID) {
 func (u Draft) Validate() error {
 	switch u.kind {
 	case "":
-		return newDraftDiscriminatorError("")
+		return newDraftDiscriminatorError("", false)
 	case DraftKindNewTask:
 		return nil
 	case DraftKindExistingTaskID:
 		return nil
 	default:
-		return newDraftDiscriminatorError(string(u.kind))
+		got := string(u.kind)
+		return newDraftDiscriminatorError(got, true)
 	}
 }
 
@@ -135,7 +106,8 @@ func (u Draft) MarshalJSON() ([]byte, error) {
 	case DraftKindExistingTaskID:
 		value = u.ExistingTaskID
 	default:
-		return nil, newDraftDiscriminatorError(string(u.kind))
+		got := string(u.kind)
+		return nil, newDraftDiscriminatorError(got, true)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`
@@ -149,13 +121,16 @@ func (u Draft) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON unmarshals the union from the canonical {type,value} JSON shape.
 func (u *Draft) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		Type  string          `json:"type"`
+		Type  *string         `json:"type"`
 		Value json.RawMessage `json:"value"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	switch raw.Type {
+	if raw.Type == nil {
+		return newDraftDiscriminatorError("", false)
+	}
+	switch *raw.Type {
 	case string(DraftKindNewTask):
 		var v *CompletionDraft
 		if err := json.Unmarshal(raw.Value, &v); err != nil {
@@ -171,18 +146,14 @@ func (u *Draft) UnmarshalJSON(data []byte) error {
 		u.kind = DraftKindExistingTaskID
 		u.ExistingTaskID = v
 	default:
-		return newDraftDiscriminatorError(raw.Type)
+		return newDraftDiscriminatorError(*raw.Type, true)
 	}
 	return nil
 }
 
-func newDraftDiscriminatorError(got string) error {
-	return &unionDiscriminatorError{
-		union: "Draft",
-		got:   got,
-		allowed: []string{
-			string(DraftKindNewTask),
-			string(DraftKindExistingTaskID),
-		},
-	}
+func newDraftDiscriminatorError(got string, typePresent bool) error {
+	return tools.NewUnionDiscriminatorError("Draft", got, typePresent, []string{
+		string(DraftKindNewTask),
+		string(DraftKindExistingTaskID),
+	})
 }

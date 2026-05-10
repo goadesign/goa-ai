@@ -103,6 +103,13 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
 			o(execs)
 		}
 	}
+	var missing []string
+	if execs["orchestrator.helpers"] == nil {
+		missing = append(missing, "orchestrator.helpers")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("missing executors for toolsets: %v", missing)
+	}
 	// Register non-MCP used toolsets that are not provided by agent-as-tool exports.
 	{
 		const toolsetID = "orchestrator.helpers"
@@ -114,16 +121,6 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
 			Execute: func(ctx context.Context, call *planner.ToolRequest) (*agentsruntime.ToolExecutionResult, error) {
 				if call == nil {
 					return nil, fmt.Errorf("tool request is nil")
-				}
-				if exec == nil {
-					return agentsruntime.Executed(&planner.ToolResult{
-						Error: planner.NewToolError(
-							fmt.Sprintf(
-								"no executor registered for toolset %q; ensure the appropriate With...Executor is wired in RegisterUsedToolsets",
-								toolsetID,
-							),
-						),
-					}), nil
 				}
 				meta := &agentsruntime.ToolCallMeta{
 					RunID:            call.RunID,
@@ -152,9 +149,6 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
 // WithHelpersExecutor associates an executor for orchestrator.helpers.
 func WithHelpersExecutor(exec agentsruntime.ToolCallExecutor) func(map[string]agentsruntime.ToolCallExecutor) {
 	return func(m map[string]agentsruntime.ToolCallExecutor) {
-		if exec == nil {
-			return
-		}
 		m["orchestrator.helpers"] = exec
 	}
 }

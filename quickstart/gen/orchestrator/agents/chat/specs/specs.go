@@ -53,18 +53,22 @@ func Spec(name tools.Ident) (*tools.ToolSpec, bool) {
 
 // PayloadSchema returns the JSON schema for the named tool payload.
 func PayloadSchema(name tools.Ident) ([]byte, bool) {
-	if s, ok := Spec(name); ok {
-		return s.Payload.Schema, true
+	switch name {
+	case tools.Ident("helpers.answer"):
+		return helpers.SpecAnswer.Payload.Schema, true
+	default:
+		return nil, false
 	}
-	return nil, false
 }
 
 // ResultSchema returns the JSON schema for the named tool result.
 func ResultSchema(name tools.Ident) ([]byte, bool) {
-	if s, ok := Spec(name); ok {
-		return s.Result.Schema, true
+	switch name {
+	case tools.Ident("helpers.answer"):
+		return helpers.SpecAnswer.Result.Schema, true
+	default:
+		return nil, false
 	}
-	return nil, false
 }
 
 // AdvertisedSpecs returns the full list of tool specs to advertise to the model.
@@ -81,7 +85,13 @@ func Metadata() []policy.ToolMetadata {
 func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
 	switch name {
 	case tools.Ident("helpers.answer"):
-		return helpers.MetadataByName(name)
+		return policy.ToolMetadata{
+			ID:          tools.Ident("helpers.answer"),
+			Title:       "Answer",
+			Description: "Answer a simple question",
+			Tags:        []string{},
+			BudgetClass: policy.ToolBudgetClassBudgeted,
+		}, true
 	default:
 		return policy.ToolMetadata{}, false
 	}
