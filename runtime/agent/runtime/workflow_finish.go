@@ -10,6 +10,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"goa.design/goa-ai/runtime/agent/api"
@@ -19,6 +20,15 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
+
+// terminalPlannerState carries the runtime-owned state needed to materialize a
+// terminal planner result.
+type terminalPlannerState struct {
+	result     *planner.PlanResult
+	transcript []*model.Message
+	toolEvents []*planner.ToolResult
+	usage      model.TokenUsage
+}
 
 // finishCurrentPlanResult materializes the current planner result into the
 // user-visible RunOutput, preserving streamed transcript recovery and planner
@@ -30,9 +40,29 @@ func (r *Runtime) finishCurrentPlanResult(
 	st *runLoopState,
 	turnID string,
 ) (*RunOutput, error) {
-	result := st.Result
+	return r.materializeTerminalPlannerResult(ctx, input, base, turnID, terminalPlannerState{
+		result:     st.Result,
+		transcript: st.Transcript,
+		toolEvents: st.ToolEvents,
+		usage:      st.AggUsage,
+	})
+}
+
+// materializeTerminalPlannerResult translates a terminal planner payload into
+// the user-visible run output and canonical terminal transcript/events.
+func (r *Runtime) materializeTerminalPlannerResult(
+	ctx context.Context,
+	input *RunInput,
+	base *planner.PlanInput,
+	turnID string,
+	state terminalPlannerState,
+) (*RunOutput, error) {
+	result := state.result
 	if err := validateTerminalPlanResult(result); err != nil {
 		r.logger.Error(ctx, "ERROR - invalid planner terminal result", "err", err)
+		if result == nil {
+			return nil, err
+		}
 		return nil, fmt.Errorf(
 			"%w - ToolCalls=%d, FinalResponse=%v, FinalToolResult=%v, Await=%v",
 			err,
@@ -47,7 +77,7 @@ func (r *Runtime) finishCurrentPlanResult(
 	if result.FinalResponse != nil {
 		finalMsg = result.FinalResponse.Message
 		if result.Streamed && agentMessageText(finalMsg) == "" {
-			if text := transcriptText(st.Transcript); text != "" {
+			if text := transcriptText(state.transcript); text != "" {
 				finalMsg = newTextAgentMessage(model.ConversationRoleAssistant, text)
 			}
 		}
@@ -92,7 +122,7 @@ func (r *Runtime) finishCurrentPlanResult(
 		notes[i] = &result.Notes[i]
 	}
 
-	toolEvents, err := r.encodeToolEvents(ctx, st.ToolEvents)
+	toolEvents, err := r.encodeToolEvents(ctx, state.toolEvents)
 	if err != nil {
 		return nil, err
 	}
@@ -105,22 +135,22 @@ func (r *Runtime) finishCurrentPlanResult(
 		FinalToolResult: finalToolResult,
 		ToolEvents:      toolEvents,
 		Notes:           notes,
-		Usage:           &st.AggUsage,
+		Usage:           &state.usage,
 	}, nil
 }
 
 func validateTerminalPlanResult(result *planner.PlanResult) error {
 	if result == nil {
-		return fmt.Errorf("planner returned nil terminal result")
+		return errors.New("planner returned nil terminal result")
 	}
 	if result.FinalResponse == nil && result.FinalToolResult == nil {
-		return fmt.Errorf("planner returned neither FinalResponse nor FinalToolResult")
+		return errors.New("planner returned neither FinalResponse nor FinalToolResult")
 	}
 	if result.FinalResponse != nil && result.FinalToolResult != nil {
-		return fmt.Errorf("planner returned both FinalResponse and FinalToolResult")
+		return errors.New("planner returned both FinalResponse and FinalToolResult")
 	}
-	if result.Await != nil && len(result.Await.Items) > 0 {
-		return fmt.Errorf("planner returned await alongside terminal payload")
+	if result.Await != nil {
+		return errors.New("planner returned await alongside terminal payload")
 	}
 	return nil
 }

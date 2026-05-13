@@ -185,50 +185,12 @@ func (l *workflowLoop) run() (*RunOutput, error) {
 			return nil, fmt.Errorf("hard-deadline finalization skipped")
 		}
 
-		// Await-only: publish await event, pause, and wait for external input.
-		//
-		// If the planner also returned tool calls, we must execute those first and only then
-		// pause for the await (handled in the tool-turn path).
-		if l.st.Result.Await != nil && len(l.st.Result.ToolCalls) == 0 {
-			out, err := l.r.handleAwaitOnlyResult(
-				l.wfCtx,
-				l.reg,
-				l.input,
-				l.base,
-				l.st,
-				l.resumeOpts,
-				l.ctrl,
-				&l.deadlines,
-				l.turnID,
-			)
-			if err != nil {
-				return nil, err
-			}
-			if out != nil {
-				return out, nil
-			}
-			continue
+		program, err := l.r.normalizeStep(l.st.Result)
+		if err != nil {
+			return nil, err
 		}
-
-		l.r.logger.Info(ctx, "Checking result.ToolCalls", "len", len(l.st.Result.ToolCalls))
-		if len(l.st.Result.ToolCalls) == 0 {
-			l.r.logger.Info(ctx, "No tool calls, checking FinalResponse")
-			return l.r.finishCurrentPlanResult(ctx, l.input, l.base, l.st, l.turnID)
-		}
-
-		out, err := l.r.handleToolTurn(
-			l.wfCtx,
-			l.reg,
-			l.input,
-			l.base,
-			l.st,
-			l.resumeOpts,
-			l.toolOpts,
-			&l.deadlines,
-			l.turnID,
-			l.parentTracker,
-			l.ctrl,
-		)
+		l.r.logger.Info(ctx, "Running workflow step", "kind", program.kind.String(), "tool_calls", len(program.calls), "await_items", len(program.awaitItems))
+		out, err := l.runStep(program)
 		if err != nil {
 			return nil, err
 		}

@@ -151,7 +151,7 @@ Generated `registry.go` files in agent packages are local runtime registration h
   reconstruct the exact message order generically.
 - **Bookkeeping control plane**: `Bookkeeping()` tool results stay durable for
   hooks, streams, and run logs, but they are not replayed into future
-  planner-visible transcript/tool-output state. A bookkeeping-only turn must
+  planner-facing transcript/tool-output state. A bookkeeping-only turn must
   therefore resolve in the same turn via a terminal outcome or an await/pause
   handshake.
 - **Visible reasoning contract**: Bedrock adaptive-thinking requests ask for

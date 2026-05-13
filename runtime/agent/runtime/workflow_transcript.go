@@ -87,28 +87,27 @@ func (r *Runtime) recordAssistantTurn(
 }
 
 // appendRetryableBookkeepingToolUses appends bookkeeping tool_use parts that
-// became planner-facing only after execution produced retryable failures.
+// become planner-facing only after execution produced retryable failures.
 func (r *Runtime) appendRetryableBookkeepingToolUses(
 	ctx context.Context,
 	agentID agent.Ident,
 	base *planner.PlanInput,
-	calls []planner.ToolRequest,
-	results []*planner.ToolResult,
+	records []stepToolRecord,
 	turnID string,
 ) error {
-	lateCalls, err := r.filterRetryableBookkeepingToolCalls(calls, results)
+	lateRecords, err := r.filterRetryableBookkeepingToolRecords(records)
 	if err != nil {
 		return err
 	}
-	if len(lateCalls) == 0 {
+	if len(lateRecords) == 0 {
 		return nil
 	}
 	msg := &model.Message{Role: model.ConversationRoleAssistant}
-	for _, call := range lateCalls {
+	for _, record := range lateRecords {
 		msg.Parts = append(msg.Parts, model.ToolUsePart{
-			ID:    call.ToolCallID,
-			Name:  string(call.Name),
-			Input: call.Payload,
+			ID:    record.call.ToolCallID,
+			Name:  string(record.call.Name),
+			Input: record.call.Payload,
 		})
 	}
 	return r.appendTranscriptMessages(ctx, agentID, base, turnID, []*model.Message{msg})

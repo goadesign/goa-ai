@@ -89,6 +89,8 @@ type (
 	}
 )
 
+const canceledByTimeBudgetMessage = "canceled: time budget reached"
+
 // collectToolCallIDs returns the tool call IDs in the same order as calls.
 func collectToolCallIDs(calls []planner.ToolRequest) []string {
 	ids := make([]string, 0, len(calls))
@@ -195,6 +197,28 @@ func (e *toolBatchExec) synthesizeUnknownToolResult(ctx context.Context, call pl
 		return nil, err
 	}
 	return tr, nil
+}
+
+// synthesizeCanceledExecution records a completed tool handshake for work the
+// runtime stopped waiting on because the finalization window was reached.
+func (e *toolBatchExec) synthesizeCanceledExecution(ctx context.Context, call planner.ToolRequest, duration time.Duration) (*ToolExecutionResult, error) {
+	tr := &planner.ToolResult{
+		Name:       call.Name,
+		ToolCallID: call.ToolCallID,
+		Error:      planner.NewToolError(canceledByTimeBudgetMessage),
+	}
+	var resultJSON rawjson.Message
+	if _, ok := e.r.toolSpec(call.Name); ok {
+		encoded, err := e.r.materializeToolResult(ctx, call, tr)
+		if err != nil {
+			return nil, err
+		}
+		resultJSON = encoded
+	}
+	if err := e.publishToolResultReceived(ctx, call, tr, resultJSON, duration); err != nil {
+		return nil, err
+	}
+	return Executed(tr), nil
 }
 
 func (r *Runtime) enforceToolResultContracts(spec tools.ToolSpec, call planner.ToolRequest, tr *planner.ToolResult) error {
@@ -495,71 +519,77 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 				return nil, nil, false, fmt.Errorf("tool %q returned nil output", info.call.Name)
 			}
 
-			duration := wfCtx.Now().Sub(info.startTime)
-			spec, ok := e.r.toolSpec(info.call.Name)
-			if !ok {
-				tr, synthErr := e.synthesizeUnknownToolResult(ctx, info.call, duration)
-				if synthErr != nil {
-					return nil, nil, false, synthErr
-				}
-				activityByID[info.call.ToolCallID] = Executed(tr)
-				continue
-			}
-
-			var decoded any
-			if out.Error == "" && hasNonNullJSON(out.Payload.RawMessage()) {
-				v, decErr := e.r.unmarshalToolValue(ctx, info.call.Name, out.Payload.RawMessage(), false)
-				if decErr != nil {
-					return nil, nil, false, fmt.Errorf("tool %q result decode failed (tool_call_id=%s): %w", info.call.Name, info.call.ToolCallID, decErr)
-				}
-				decoded = v
-			}
-
-			toolRes := &planner.ToolResult{
-				Name:       info.call.Name,
-				Result:     decoded,
-				Bounds:     out.Bounds,
-				ServerData: out.ServerData,
-				ToolCallID: info.call.ToolCallID,
-				Telemetry:  out.Telemetry,
-			}
-			if out.Error != "" {
-				toolRes.Error = planner.NewToolError(out.Error)
-			}
-			if err := e.r.enforceToolResultContracts(spec, info.call, toolRes); err != nil {
+			execResult, err := e.executionFromActivityOutput(ctx, info, out, wfCtx.Now().Sub(info.startTime))
+			if err != nil {
 				return nil, nil, false, err
 			}
-			if err := validateToolPauseContract(info.call, toolRes, out.Pause); err != nil {
-				return nil, nil, false, err
-			}
-			if out.RetryHint != nil {
-				h := *out.RetryHint
-				if len(h.ExampleInput) == 0 && len(spec.Payload.ExampleInput) > 0 {
-					h.ExampleInput = maps.Clone(spec.Payload.ExampleInput)
-				}
-				if len(h.PriorInput) == 0 && len(info.call.Payload) > 0 {
-					var prior map[string]any
-					if err := json.Unmarshal(info.call.Payload, &prior); err == nil && len(prior) > 0 {
-						h.PriorInput = prior
-					}
-				}
-				toolRes.RetryHint = &h
-			}
-			resultJSON := out.Payload
-			if err := e.publishToolResultReceived(ctx, info.call, toolRes, resultJSON, duration); err != nil {
-				return nil, nil, false, err
-			}
-
-			activityByID[info.call.ToolCallID] = &ToolExecutionResult{
-				ToolResult: toolRes,
-				Pause:      out.Pause,
-			}
+			activityByID[info.call.ToolCallID] = execResult
 		}
 		if finalizeTimer != nil && finalizeTimer.IsReady() && len(pending) > 0 {
 			return activityByID, pending, true, nil
 		}
 	}
 	return activityByID, nil, false, nil
+}
+
+// executionFromActivityOutput decodes and validates one activity result, then
+// publishes the canonical result event for the tool call.
+func (e *toolBatchExec) executionFromActivityOutput(ctx context.Context, info futureInfo, out *ToolOutput, duration time.Duration) (*ToolExecutionResult, error) {
+	spec, ok := e.r.toolSpec(info.call.Name)
+	if !ok {
+		tr, err := e.synthesizeUnknownToolResult(ctx, info.call, duration)
+		if err != nil {
+			return nil, err
+		}
+		return Executed(tr), nil
+	}
+
+	var decoded any
+	if out.Error == "" && hasNonNullJSON(out.Payload.RawMessage()) {
+		v, err := e.r.unmarshalToolValue(ctx, info.call.Name, out.Payload.RawMessage(), false)
+		if err != nil {
+			return nil, fmt.Errorf("tool %q result decode failed (tool_call_id=%s): %w", info.call.Name, info.call.ToolCallID, err)
+		}
+		decoded = v
+	}
+
+	toolRes := &planner.ToolResult{
+		Name:       info.call.Name,
+		Result:     decoded,
+		Bounds:     out.Bounds,
+		ServerData: out.ServerData,
+		ToolCallID: info.call.ToolCallID,
+		Telemetry:  out.Telemetry,
+	}
+	if out.Error != "" {
+		toolRes.Error = planner.NewToolError(out.Error)
+	}
+	if err := e.r.enforceToolResultContracts(spec, info.call, toolRes); err != nil {
+		return nil, err
+	}
+	if err := validateToolPauseContract(info.call, toolRes, out.Pause); err != nil {
+		return nil, err
+	}
+	if out.RetryHint != nil {
+		h := *out.RetryHint
+		if len(h.ExampleInput) == 0 && len(spec.Payload.ExampleInput) > 0 {
+			h.ExampleInput = maps.Clone(spec.Payload.ExampleInput)
+		}
+		if len(h.PriorInput) == 0 && len(info.call.Payload) > 0 {
+			var prior map[string]any
+			if err := json.Unmarshal(info.call.Payload, &prior); err == nil && len(prior) > 0 {
+				h.PriorInput = prior
+			}
+		}
+		toolRes.RetryHint = &h
+	}
+	if err := e.publishToolResultReceived(ctx, info.call, toolRes, out.Payload, duration); err != nil {
+		return nil, err
+	}
+	return &ToolExecutionResult{
+		ToolResult: toolRes,
+		Pause:      out.Pause,
+	}, nil
 }
 
 func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, children []agentChildFutureInfo, finalizeTimer engine.Future[time.Time]) (map[string]*ToolExecutionResult, []agentChildFutureInfo, bool, error) {
@@ -683,7 +713,6 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 
 	ctx := wfCtx.Context()
 	if !finishBy.IsZero() && !wfCtx.Now().Before(finishBy) {
-		const cancelMsg = "canceled: time budget reached"
 		results := make([]*ToolExecutionResult, 0, len(calls))
 		for i, call := range calls {
 			call = exec.normalizeToolCall(call, i)
@@ -701,24 +730,11 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 				return nil, false, err
 			}
 
-			toolErr := planner.NewToolError(cancelMsg)
-			tr := &planner.ToolResult{
-				Name:       call.Name,
-				ToolCallID: call.ToolCallID,
-				Error:      toolErr,
-			}
-			if ok {
-				resultJSON, err := r.materializeToolResult(ctx, call, tr)
-				if err != nil {
-					return nil, false, err
-				}
-				if err := exec.publishToolResultReceived(ctx, call, tr, resultJSON, 0); err != nil {
-					return nil, false, err
-				}
-			} else if err := exec.publishToolResultReceived(ctx, call, tr, nil, 0); err != nil {
+			result, err := exec.synthesizeCanceledExecution(ctx, call, 0)
+			if err != nil {
 				return nil, false, err
 			}
-			results = append(results, Executed(tr))
+			results = append(results, result)
 		}
 		return results, true, nil
 	}
@@ -777,7 +793,6 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 	}
 
 	if timedOut {
-		const cancelMsg = "canceled: time budget reached"
 		for _, info := range pendingChildren {
 			if info.handle != nil {
 				if err := info.handle.Cancel(ctx); err != nil {
@@ -795,28 +810,11 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 			if _, ok := activityByID[info.call.ToolCallID]; ok {
 				continue
 			}
-			toolErr := planner.NewToolError(cancelMsg)
-			tr := &planner.ToolResult{
-				Name:       info.call.Name,
-				ToolCallID: info.call.ToolCallID,
-				Error:      toolErr,
+			result, err := exec.synthesizeCanceledExecution(ctx, info.call, wfCtx.Now().Sub(info.startTime))
+			if err != nil {
+				return nil, false, err
 			}
-			if _, ok := r.toolSpec(info.call.Name); ok {
-				resultJSON, err := r.materializeToolResult(ctx, info.call, tr)
-				if err != nil {
-					return nil, false, err
-				}
-				duration := wfCtx.Now().Sub(info.startTime)
-				if err := exec.publishToolResultReceived(ctx, info.call, tr, resultJSON, duration); err != nil {
-					return nil, false, err
-				}
-			} else {
-				duration := wfCtx.Now().Sub(info.startTime)
-				if err := exec.publishToolResultReceived(ctx, info.call, tr, nil, duration); err != nil {
-					return nil, false, err
-				}
-			}
-			activityByID[info.call.ToolCallID] = Executed(tr)
+			activityByID[info.call.ToolCallID] = result
 		}
 
 		for _, info := range pendingChildren {
@@ -826,28 +824,11 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 			if _, ok := batch.inlineByID[info.call.ToolCallID]; ok {
 				continue
 			}
-			toolErr := planner.NewToolError(cancelMsg)
-			tr := &planner.ToolResult{
-				Name:       info.call.Name,
-				ToolCallID: info.call.ToolCallID,
-				Error:      toolErr,
+			result, err := exec.synthesizeCanceledExecution(ctx, info.call, wfCtx.Now().Sub(info.startTime))
+			if err != nil {
+				return nil, false, err
 			}
-			if _, ok := r.toolSpec(info.call.Name); ok {
-				resultJSON, err := r.materializeToolResult(ctx, info.call, tr)
-				if err != nil {
-					return nil, false, err
-				}
-				duration := wfCtx.Now().Sub(info.startTime)
-				if err := exec.publishToolResultReceived(ctx, info.call, tr, resultJSON, duration); err != nil {
-					return nil, false, err
-				}
-			} else {
-				duration := wfCtx.Now().Sub(info.startTime)
-				if err := exec.publishToolResultReceived(ctx, info.call, tr, nil, duration); err != nil {
-					return nil, false, err
-				}
-			}
-			batch.inlineByID[info.call.ToolCallID] = Executed(tr)
+			batch.inlineByID[info.call.ToolCallID] = result
 		}
 	}
 

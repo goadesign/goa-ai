@@ -233,9 +233,9 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	}
 	result := firstOutput.Result
 	r.logger.Info(wfCtx.Context(), "Plan activity completed", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil)
-	// Validate PlanResult structure - if planner returned ToolCalls, they should be present.
-	if len(result.ToolCalls) == 0 && result.FinalResponse == nil && result.Await == nil {
-		finalErr = fmt.Errorf("plan result has no tool calls, final response, or await")
+	// Validate the non-empty planner-result boundary before constructing run state.
+	if len(result.ToolCalls) == 0 && result.FinalResponse == nil && result.FinalToolResult == nil && result.Await == nil {
+		finalErr = fmt.Errorf("plan result has no tool calls, final response, final tool result, or await")
 		finalStatus = runStatusFailed
 		return nil, finalErr
 	}

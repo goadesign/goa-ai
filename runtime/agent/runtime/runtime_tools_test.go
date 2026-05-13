@@ -721,7 +721,6 @@ func TestConsumeProvidedToolResultsRunsResultMaterializer(t *testing.T) {
 			TurnID:    "turn-1",
 		},
 	}
-	state := newRunLoopState(nil, nil, model.TokenUsage{}, policy.CapsState{}, 1)
 	allowed := []planner.ToolRequest{
 		{
 			Name:       tools.Ident("svc.tools.example"),
@@ -729,7 +728,7 @@ func TestConsumeProvidedToolResultsRunsResultMaterializer(t *testing.T) {
 			Payload:    rawjson.Message([]byte(`{"input":"ok"}`)),
 		},
 	}
-	results, err := rt.consumeProvidedToolResults(
+	records, err := rt.consumeProvidedToolResultRecords(
 		context.Background(),
 		&RunInput{
 			AgentID:   "agent",
@@ -738,7 +737,6 @@ func TestConsumeProvidedToolResultsRunsResultMaterializer(t *testing.T) {
 			TurnID:    "turn-1",
 		},
 		base,
-		state,
 		"turn-1",
 		&api.ToolResultsSet{
 			RunID: "run-1",
@@ -755,8 +753,8 @@ func TestConsumeProvidedToolResultsRunsResultMaterializer(t *testing.T) {
 		map[string]struct{}{"tool-call-1": {}},
 	)
 	require.NoError(t, err)
-	require.Len(t, results, 1)
-	require.JSONEq(t, `[{"kind":"example.materialized","data":{"source":"await"}}]`, string(results[0].ServerData))
+	require.Len(t, records, 1)
+	require.JSONEq(t, `[{"kind":"example.materialized","data":{"source":"await"}}]`, string(records[0].result.ServerData))
 
 	var resultEvt *hooks.ToolResultReceivedEvent
 	for _, evt := range recorder.events {

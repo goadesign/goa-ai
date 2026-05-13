@@ -17,6 +17,25 @@ import (
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
+func appendUserToolResultsForTest(t *testing.T, rt *Runtime, agentID agent.Ident, base *planner.PlanInput, calls []planner.ToolRequest, results []*planner.ToolResult) {
+	t.Helper()
+	records := stepToolRecordsForTest(t, calls, results)
+	require.NoError(t, rt.appendUserToolRecordResults(t.Context(), agentID, base, records, ""))
+}
+
+func appendRetryableBookkeepingToolUsesForTest(t *testing.T, rt *Runtime, agentID agent.Ident, base *planner.PlanInput, calls []planner.ToolRequest, results []*planner.ToolResult) {
+	t.Helper()
+	records := stepToolRecordsForTest(t, calls, results)
+	require.NoError(t, rt.appendRetryableBookkeepingToolUses(t.Context(), agentID, base, records, ""))
+}
+
+func stepToolRecordsForTest(t *testing.T, calls []planner.ToolRequest, results []*planner.ToolResult) []stepToolRecord {
+	t.Helper()
+	records, err := stepToolRecordsFromCallsAndResults("test step tool records", calls, results)
+	require.NoError(t, err)
+	return records
+}
+
 func TestRecordAssistantTurnRebuildsToolUsesFromPlannerFacingCalls(t *testing.T) {
 	rt := New()
 	seedTestToolSpecs(
@@ -97,7 +116,7 @@ func TestAppendUserToolResults_IncludesErrorInToolResultContent(t *testing.T) {
 		Error:      planner.NewToolError("access denied: missing controlleddevices.write privilege"),
 	}
 
-	require.NoError(t, rt.appendUserToolResults(t.Context(), agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, ""))
+	appendUserToolResultsForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr})
 
 	require.Len(t, base.Messages, 1)
 	require.Equal(t, model.ConversationRoleUser, base.Messages[0].Role)
@@ -134,7 +153,7 @@ func TestAppendUserToolResults_DecodesSuccessfulResultContent(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, rt.appendUserToolResults(t.Context(), agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, ""))
+	appendUserToolResultsForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr})
 
 	require.Len(t, base.Messages, 1)
 	part, ok := base.Messages[0].Parts[0].(model.ToolResultPart)
@@ -199,7 +218,7 @@ func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 
-			require.NoError(t, rt.appendUserToolResults(t.Context(), agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tc.tr}, ""))
+			appendUserToolResultsForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tc.tr})
 			require.Len(t, base.Messages, 1)
 
 			livePart, ok := base.Messages[0].Parts[0].(model.ToolResultPart)
@@ -273,7 +292,7 @@ func TestAppendUserToolResults_AppendsBoundsReminderAfterToolResults(t *testing.
 		},
 	}
 
-	require.NoError(t, rt.appendUserToolResults(t.Context(), agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, ""))
+	appendUserToolResultsForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr})
 
 	require.Len(t, base.Messages, 2)
 	require.Equal(t, model.ConversationRoleUser, base.Messages[0].Role)
@@ -309,7 +328,7 @@ func TestAppendUserToolResults_AppendsRetryHintReminderAfterToolResults(t *testi
 		},
 	}
 
-	require.NoError(t, rt.appendUserToolResults(t.Context(), agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, ""))
+	appendUserToolResultsForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr})
 
 	require.Len(t, base.Messages, 2)
 	require.Equal(t, model.ConversationRoleUser, base.Messages[0].Role)
@@ -352,7 +371,7 @@ func TestAppendUserToolResults_SkipsBookkeepingResults(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, rt.appendUserToolResults(t.Context(), agentID, base, calls, results, ""))
+	appendUserToolResultsForTest(t, rt, agentID, base, calls, results)
 	require.Len(t, base.Messages, 1)
 	require.Equal(t, model.ConversationRoleUser, base.Messages[0].Role)
 	require.Len(t, base.Messages[0].Parts, 1)
@@ -392,8 +411,8 @@ func TestAppendUserToolResults_ReplaysRetryableBookkeepingFailures(t *testing.T)
 		},
 	}
 
-	require.NoError(t, rt.appendRetryableBookkeepingToolUses(t.Context(), agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, ""))
-	require.NoError(t, rt.appendUserToolResults(t.Context(), agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, ""))
+	appendRetryableBookkeepingToolUsesForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr})
+	appendUserToolResultsForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr})
 
 	require.Len(t, base.Messages, 3)
 	require.Equal(t, model.ConversationRoleAssistant, base.Messages[0].Role)

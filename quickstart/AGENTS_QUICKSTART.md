@@ -245,6 +245,11 @@ err := <agentpkg>.RegisterUsedToolsets(ctx, rt,
 if err != nil { panic(err) }
 ```
 
+`RegisterUsedToolsets` validates this wiring before it registers anything. Every
+required used toolset must have a non-nil executor; missing executors are
+configuration errors and fail fast instead of surfacing later as tool-call
+results.
+
 Implement the executor's `Execute` function to:
 - Switch on `call.Name` for each tool
 - Decode `call.Payload` to typed args using the generated codec
