@@ -1,314 +1,112 @@
-// Package schema validates dynamic tool-registry payloads against registry-provided JSON schemas.
+// Package schema validates dynamic tool-registry payloads against
+// registry-provided JSON Schemas.
 //
 // The registry catalog is discovered at runtime, so generated code cannot
-// specialize these checks per tool. Keep the interpreter here and let generated
-// registry specs provide only the discovered schema bytes and call site.
+// specialize these checks per tool. This package owns JSON Schema compilation
+// and caching so generated registry specs expose only the stable Validate
+// boundary and do not leak the concrete validation library to callers.
 package schema
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"regexp"
-	"strings"
+	"sync"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-// ValidationError describes one JSON schema validation failure.
-type ValidationError struct {
-	// Path is the JSON path to the invalid field.
-	Path string
-	// Message explains the validation failure.
-	Message string
-	// Value is the invalid value.
-	Value any
+type validator struct {
+	mu       sync.RWMutex
+	compiled map[string]*jsonschema.Schema
 }
 
-// ValidationErrors collects JSON schema validation failures.
-type ValidationErrors struct {
-	// Errors is the ordered list of validation failures.
-	Errors []*ValidationError
-}
+var defaultValidator = newValidator()
 
 // Validate validates data against schema. Context names the validated value in
 // parse/marshal errors, for example "payload" or "result".
-func Validate(schema []byte, data any, context string) error {
+func Validate(schemaBytes []byte, data any, context string) error {
+	return defaultValidator.Validate(schemaBytes, data, context)
+}
+
+func newValidator() *validator {
+	return &validator{
+		compiled: make(map[string]*jsonschema.Schema),
+	}
+}
+
+// Validate validates data against schemaBytes with the package-owned compiler
+// cache. The input data is normalized through JSON so Go numeric/map shapes match
+// the JSON document model used by the registry wire contract.
+func (v *validator) Validate(schemaBytes []byte, data any, context string) error {
+	schema, err := v.compiledSchema(schemaBytes)
+	if err != nil {
+		return fmt.Errorf("compile %s schema: %w", context, err)
+	}
+
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("marshal %s for validation: %w", context, err)
 	}
 
-	var schemaObj map[string]any
-	if err := json.Unmarshal(schema, &schemaObj); err != nil {
-		return fmt.Errorf("parse %s schema: %w", context, err)
-	}
-
-	var dataObj any
-	if err := json.Unmarshal(jsonData, &dataObj); err != nil {
+	var doc any
+	if err := json.Unmarshal(jsonData, &doc); err != nil {
 		return fmt.Errorf("parse %s data: %w", context, err)
 	}
 
-	errs := &ValidationErrors{}
-	validateType(schemaObj, dataObj, "", errs)
-	if errs.HasErrors() {
-		return errs
+	if err := schema.Validate(doc); err != nil {
+		return fmt.Errorf("validate %s: %w", context, err)
 	}
 	return nil
 }
 
-// Error implements error.
-func (e *ValidationError) Error() string {
-	if e.Path == "" {
-		return e.Message
+// compiledSchema returns the compiled form of schemaBytes, creating and caching
+// it on first use. Cache keys are content digests so repeated generated calls
+// share one compiled contract regardless of which registry package supplied it.
+func (v *validator) compiledSchema(schemaBytes []byte) (*jsonschema.Schema, error) {
+	if len(schemaBytes) == 0 {
+		return nil, fmt.Errorf("schema is required")
 	}
-	return fmt.Sprintf("%s: %s", e.Path, e.Message)
+
+	digest := schemaDigest(schemaBytes)
+
+	v.mu.RLock()
+	schema := v.compiled[digest]
+	v.mu.RUnlock()
+	if schema != nil {
+		return schema, nil
+	}
+
+	var schemaDoc any
+	if err := json.Unmarshal(schemaBytes, &schemaDoc); err != nil {
+		return nil, fmt.Errorf("unmarshal schema: %w", err)
+	}
+
+	compiler := jsonschema.NewCompiler()
+	resource := schemaResource(digest)
+	if err := compiler.AddResource(resource, schemaDoc); err != nil {
+		return nil, fmt.Errorf("add schema resource: %w", err)
+	}
+	compiled, err := compiler.Compile(resource)
+	if err != nil {
+		return nil, fmt.Errorf("compile schema: %w", err)
+	}
+
+	v.mu.Lock()
+	if cached := v.compiled[digest]; cached != nil {
+		v.mu.Unlock()
+		return cached, nil
+	}
+	v.compiled[digest] = compiled
+	v.mu.Unlock()
+	return compiled, nil
 }
 
-// Error implements error.
-func (e *ValidationErrors) Error() string {
-	if len(e.Errors) == 0 {
-		return "validation failed"
-	}
-	if len(e.Errors) == 1 {
-		return e.Errors[0].Error()
-	}
-	msgs := make([]string, 0, len(e.Errors))
-	for _, err := range e.Errors {
-		msgs = append(msgs, err.Error())
-	}
-	return fmt.Sprintf("validation failed: %s", strings.Join(msgs, "; "))
+func schemaDigest(schemaBytes []byte) string {
+	sum := sha256.Sum256(schemaBytes)
+	return fmt.Sprintf("%x", sum)
 }
 
-// Add appends one validation failure.
-func (e *ValidationErrors) Add(path, message string, value any) {
-	e.Errors = append(e.Errors, &ValidationError{
-		Path:    path,
-		Message: message,
-		Value:   value,
-	})
-}
-
-// HasErrors reports whether any validation failures were recorded.
-func (e *ValidationErrors) HasErrors() bool {
-	return len(e.Errors) > 0
-}
-
-func validateType(schema map[string]any, data any, path string, errs *ValidationErrors) {
-	if data == nil {
-		if nullable, ok := schema["nullable"].(bool); ok && nullable {
-			return
-		}
-		schemaType, _ := schema["type"].(string)
-		if schemaType != "" && schemaType != "null" {
-			errs.Add(path, fmt.Sprintf("expected %s, got null", schemaType), nil)
-		}
-		return
-	}
-
-	schemaType, _ := schema["type"].(string)
-	switch schemaType {
-	case "object":
-		validateObject(schema, data, path, errs)
-	case "array":
-		validateArray(schema, data, path, errs)
-	case "string":
-		validateString(schema, data, path, errs)
-	case "number", "integer":
-		validateNumber(schema, data, path, schemaType, errs)
-	case "boolean":
-		if _, ok := data.(bool); !ok {
-			errs.Add(path, fmt.Sprintf("expected boolean, got %T", data), data)
-		}
-	case "null":
-		errs.Add(path, fmt.Sprintf("expected null, got %T", data), data)
-	case "":
-		if oneOf, ok := schema["oneOf"].([]any); ok {
-			validateOneOf(oneOf, data, path, errs)
-		}
-		if anyOf, ok := schema["anyOf"].([]any); ok {
-			validateAnyOf(anyOf, data, path, errs)
-		}
-	}
-}
-
-func validateObject(schema map[string]any, data any, path string, errs *ValidationErrors) {
-	obj, ok := data.(map[string]any)
-	if !ok {
-		errs.Add(path, fmt.Sprintf("expected object, got %T", data), data)
-		return
-	}
-
-	if required, ok := schema["required"].([]any); ok {
-		for _, r := range required {
-			fieldName, _ := r.(string)
-			if _, exists := obj[fieldName]; !exists {
-				errs.Add(joinPath(path, fieldName), "missing required field", nil)
-			}
-		}
-	}
-
-	props, _ := schema["properties"].(map[string]any)
-	additionalProps := true
-	if ap, ok := schema["additionalProperties"].(bool); ok {
-		additionalProps = ap
-	}
-
-	for key, val := range obj {
-		fieldPath := joinPath(path, key)
-		if props != nil {
-			if propSchema, ok := props[key].(map[string]any); ok {
-				validateType(propSchema, val, fieldPath, errs)
-				continue
-			}
-		}
-		if !additionalProps {
-			errs.Add(fieldPath, "additional property not allowed", val)
-		}
-	}
-}
-
-func validateArray(schema map[string]any, data any, path string, errs *ValidationErrors) {
-	arr, ok := data.([]any)
-	if !ok {
-		errs.Add(path, fmt.Sprintf("expected array, got %T", data), data)
-		return
-	}
-
-	if minItems, ok := schema["minItems"].(float64); ok {
-		if float64(len(arr)) < minItems {
-			errs.Add(path, fmt.Sprintf("array length %d is less than minimum %d", len(arr), int(minItems)), nil)
-		}
-	}
-	if maxItems, ok := schema["maxItems"].(float64); ok {
-		if float64(len(arr)) > maxItems {
-			errs.Add(path, fmt.Sprintf("array length %d exceeds maximum %d", len(arr), int(maxItems)), nil)
-		}
-	}
-	if items, ok := schema["items"].(map[string]any); ok {
-		for i, item := range arr {
-			itemPath := fmt.Sprintf("%s[%d]", path, i)
-			if path == "" {
-				itemPath = fmt.Sprintf("[%d]", i)
-			}
-			validateType(items, item, itemPath, errs)
-		}
-	}
-}
-
-func validateString(schema map[string]any, data any, path string, errs *ValidationErrors) {
-	str, ok := data.(string)
-	if !ok {
-		errs.Add(path, fmt.Sprintf("expected string, got %T", data), data)
-		return
-	}
-
-	if minLen, ok := schema["minLength"].(float64); ok {
-		if float64(len(str)) < minLen {
-			errs.Add(path, fmt.Sprintf("string length %d is less than minimum %d", len(str), int(minLen)), str)
-		}
-	}
-	if maxLen, ok := schema["maxLength"].(float64); ok {
-		if float64(len(str)) > maxLen {
-			errs.Add(path, fmt.Sprintf("string length %d exceeds maximum %d", len(str), int(maxLen)), str)
-		}
-	}
-	if enum, ok := schema["enum"].([]any); ok {
-		found := false
-		for _, e := range enum {
-			if eStr, ok := e.(string); ok && eStr == str {
-				found = true
-				break
-			}
-		}
-		if !found {
-			errs.Add(path, fmt.Sprintf("value %q is not in enum", str), str)
-		}
-	}
-	if pattern, ok := schema["pattern"].(string); ok {
-		matched, err := regexp.MatchString(pattern, str)
-		if err != nil {
-			errs.Add(path, fmt.Sprintf("invalid pattern %q: %v", pattern, err), str)
-		} else if !matched {
-			errs.Add(path, fmt.Sprintf("value %q does not match pattern %q", str, pattern), str)
-		}
-	}
-}
-
-func validateNumber(schema map[string]any, data any, path, schemaType string, errs *ValidationErrors) {
-	var num float64
-	switch v := data.(type) {
-	case float64:
-		num = v
-	case int:
-		num = float64(v)
-	case int64:
-		num = float64(v)
-	case float32:
-		num = float64(v)
-	default:
-		errs.Add(path, fmt.Sprintf("expected %s, got %T", schemaType, data), data)
-		return
-	}
-
-	if schemaType == "integer" && num != float64(int64(num)) {
-		errs.Add(path, fmt.Sprintf("expected integer, got %v", num), data)
-	}
-	if min, ok := schema["minimum"].(float64); ok {
-		if num < min {
-			errs.Add(path, fmt.Sprintf("value %v is less than minimum %v", num, min), data)
-		}
-	}
-	if max, ok := schema["maximum"].(float64); ok {
-		if num > max {
-			errs.Add(path, fmt.Sprintf("value %v exceeds maximum %v", num, max), data)
-		}
-	}
-	if exMin, ok := schema["exclusiveMinimum"].(float64); ok {
-		if num <= exMin {
-			errs.Add(path, fmt.Sprintf("value %v must be greater than %v", num, exMin), data)
-		}
-	}
-	if exMax, ok := schema["exclusiveMaximum"].(float64); ok {
-		if num >= exMax {
-			errs.Add(path, fmt.Sprintf("value %v must be less than %v", num, exMax), data)
-		}
-	}
-}
-
-func validateOneOf(oneOf []any, data any, path string, errs *ValidationErrors) {
-	validCount := 0
-	for _, schema := range oneOf {
-		schemaMap, ok := schema.(map[string]any)
-		if !ok {
-			continue
-		}
-		testErrs := &ValidationErrors{}
-		validateType(schemaMap, data, path, testErrs)
-		if !testErrs.HasErrors() {
-			validCount++
-		}
-	}
-	if validCount != 1 {
-		errs.Add(path, fmt.Sprintf("value must match exactly one schema in oneOf, matched %d", validCount), data)
-	}
-}
-
-func validateAnyOf(anyOf []any, data any, path string, errs *ValidationErrors) {
-	for _, schema := range anyOf {
-		schemaMap, ok := schema.(map[string]any)
-		if !ok {
-			continue
-		}
-		testErrs := &ValidationErrors{}
-		validateType(schemaMap, data, path, testErrs)
-		if !testErrs.HasErrors() {
-			return
-		}
-	}
-	errs.Add(path, "value does not match any schema in anyOf", data)
-}
-
-func joinPath(base, field string) string {
-	if base == "" {
-		return field
-	}
-	return base + "." + field
+func schemaResource(digest string) string {
+	return "schema://toolregistry/" + digest + ".json"
 }

@@ -8,8 +8,7 @@ package completions
 
 import (
 	"encoding/json"
-	"fmt"
-	goa "goa.design/goa/v3/pkg"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 // Draft is a sum-type union.
@@ -82,19 +81,14 @@ func (u *Draft) SetExistingTaskID(v DraftExistingTaskID) {
 func (u Draft) Validate() error {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("type", "", []any{
-			string(DraftKindNewTask),
-			string(DraftKindExistingTaskID),
-		})
+		return newDraftDiscriminatorError("", false)
 	case DraftKindNewTask:
 		return nil
 	case DraftKindExistingTaskID:
 		return nil
 	default:
-		return goa.InvalidEnumValueError("type", u.kind, []any{
-			string(DraftKindNewTask),
-			string(DraftKindExistingTaskID),
-		})
+		got := string(u.kind)
+		return newDraftDiscriminatorError(got, true)
 	}
 }
 
@@ -112,7 +106,8 @@ func (u Draft) MarshalJSON() ([]byte, error) {
 	case DraftKindExistingTaskID:
 		value = u.ExistingTaskID
 	default:
-		return nil, fmt.Errorf("unexpected Draft discriminant %q", u.kind)
+		got := string(u.kind)
+		return nil, newDraftDiscriminatorError(got, true)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`
@@ -126,13 +121,16 @@ func (u Draft) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON unmarshals the union from the canonical {type,value} JSON shape.
 func (u *Draft) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		Type  string          `json:"type"`
+		Type  *string         `json:"type"`
 		Value json.RawMessage `json:"value"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	switch raw.Type {
+	if raw.Type == nil {
+		return newDraftDiscriminatorError("", false)
+	}
+	switch *raw.Type {
 	case string(DraftKindNewTask):
 		var v *CompletionDraft
 		if err := json.Unmarshal(raw.Value, &v); err != nil {
@@ -148,7 +146,14 @@ func (u *Draft) UnmarshalJSON(data []byte) error {
 		u.kind = DraftKindExistingTaskID
 		u.ExistingTaskID = v
 	default:
-		return fmt.Errorf("unexpected Draft type %q", raw.Type)
+		return newDraftDiscriminatorError(*raw.Type, true)
 	}
 	return nil
+}
+
+func newDraftDiscriminatorError(got string, typePresent bool) error {
+	return tools.NewUnionDiscriminatorError("Draft", got, typePresent, []string{
+		string(DraftKindNewTask),
+		string(DraftKindExistingTaskID),
+	})
 }

@@ -23,8 +23,7 @@ func TestValidateObjectSchema(t *testing.T) {
 
 	err = Validate(schema, map[string]any{"name": "x", "extra": true}, "payload")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "name: string length 1 is less than minimum 2")
-	assert.Contains(t, err.Error(), "extra: additional property not allowed")
+	assert.Contains(t, err.Error(), "validate payload")
 }
 
 func TestValidateOneOf(t *testing.T) {
@@ -40,5 +39,51 @@ func TestValidateOneOf(t *testing.T) {
 
 	err := Validate(schema, true, "result")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "value must match exactly one schema in oneOf")
+	assert.Contains(t, err.Error(), "validate result")
+}
+
+func TestValidateUsesFullJSONSchemaComposition(t *testing.T) {
+	schema := []byte(`{
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"$defs": {
+			"tag": {"type": "string", "const": "fixed"}
+		},
+		"allOf": [{
+			"type": "object",
+			"required": ["tag", "meta"],
+			"additionalProperties": false,
+			"properties": {
+				"tag": {"$ref": "#/$defs/tag"},
+				"meta": {
+					"type": "object",
+					"additionalProperties": {"type": "integer"}
+				}
+			}
+		}]
+	}`)
+
+	require.NoError(t, Validate(schema, map[string]any{
+		"tag":  "fixed",
+		"meta": map[string]any{"count": 3},
+	}, "payload"))
+
+	err := Validate(schema, map[string]any{
+		"tag":  "other",
+		"meta": map[string]any{"count": "three"},
+	}, "payload")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "validate payload")
+}
+
+func TestValidateSupportsNonStringEnum(t *testing.T) {
+	schema := []byte(`{
+		"type": "integer",
+		"enum": [1, 2]
+	}`)
+
+	require.NoError(t, Validate(schema, 1, "result"))
+
+	err := Validate(schema, 3, "result")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "validate result")
 }

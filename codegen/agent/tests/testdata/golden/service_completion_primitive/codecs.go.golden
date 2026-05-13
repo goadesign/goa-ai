@@ -8,10 +8,8 @@ package completions
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"goa.design/goa-ai/runtime/agent/tools"
-	"strings"
 )
 
 var (
@@ -34,36 +32,6 @@ var (
 		},
 	}
 )
-
-// ValidationError wraps a validation failure and exposes issues that callers
-// can use to build retry hints. It implements error and an Issues() accessor.
-type ValidationError struct {
-	msg          string
-	issues       []*tools.FieldIssue
-	descriptions map[string]string
-}
-
-func (e ValidationError) Error() string {
-	return e.msg
-}
-func (e ValidationError) Issues() []*tools.FieldIssue {
-	if len(e.issues) == 0 {
-		return nil
-	}
-	out := make([]*tools.FieldIssue, len(e.issues))
-	copy(out, e.issues)
-	return out
-}
-func (e ValidationError) Descriptions() map[string]string {
-	if len(e.descriptions) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(e.descriptions))
-	for k, v := range e.descriptions {
-		out[k] = v
-	}
-	return out
-}
 
 // MarshalHeadlineResult serializes HeadlineResult into JSON.
 func MarshalHeadlineResult(v HeadlineResult) ([]byte, error) {

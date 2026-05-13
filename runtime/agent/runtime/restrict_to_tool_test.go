@@ -1,7 +1,7 @@
 package runtime
 
 // restrict_to_tool_test.go verifies retry-driven tool restrictions do not leak
-// beyond the correction they were created for.
+// beyond the correction they were created for or clear caller run policy.
 
 import (
 	"testing"
@@ -11,7 +11,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-func TestApplyToolResultPolicyHintsClearsSatisfiedRestriction(t *testing.T) {
+func TestApplyToolResultPolicyHintsKeepsCallerRestrictionAfterSuccessfulToolResult(t *testing.T) {
 	t.Parallel()
 
 	input := &RunInput{
@@ -24,7 +24,24 @@ func TestApplyToolResultPolicyHintsClearsSatisfiedRestriction(t *testing.T) {
 		Name: tools.Ident("ada.resolve_time_series_sources"),
 	}})
 
-	assert.Empty(t, input.Policy.RestrictToTool)
+	assert.Equal(t, tools.Ident("ada.resolve_time_series_sources"), input.Policy.RestrictToTool)
+	assert.Empty(t, input.Policy.RetryRestrictToTool)
+}
+
+func TestApplyToolResultPolicyHintsClearsSatisfiedRetryRestriction(t *testing.T) {
+	t.Parallel()
+
+	input := &RunInput{
+		Policy: &PolicyOverrides{
+			RetryRestrictToTool: tools.Ident("ada.resolve_time_series_sources"),
+		},
+	}
+
+	applyToolResultPolicyHints(input, []*planner.ToolResult{{
+		Name: tools.Ident("ada.resolve_time_series_sources"),
+	}})
+
+	assert.Empty(t, input.Policy.RetryRestrictToTool)
 }
 
 func TestApplyToolResultPolicyHintsKeepsRestrictionAfterFailedCorrection(t *testing.T) {
@@ -32,7 +49,7 @@ func TestApplyToolResultPolicyHintsKeepsRestrictionAfterFailedCorrection(t *test
 
 	input := &RunInput{
 		Policy: &PolicyOverrides{
-			RestrictToTool: tools.Ident("ada.resolve_time_series_sources"),
+			RetryRestrictToTool: tools.Ident("ada.resolve_time_series_sources"),
 		},
 	}
 
@@ -41,7 +58,7 @@ func TestApplyToolResultPolicyHintsKeepsRestrictionAfterFailedCorrection(t *test
 		Error: planner.NewToolError("invalid arguments"),
 	}})
 
-	assert.Equal(t, tools.Ident("ada.resolve_time_series_sources"), input.Policy.RestrictToTool)
+	assert.Equal(t, tools.Ident("ada.resolve_time_series_sources"), input.Policy.RetryRestrictToTool)
 }
 
 func TestApplyToolResultPolicyHintsPromotesNewRestriction(t *testing.T) {
@@ -58,5 +75,31 @@ func TestApplyToolResultPolicyHintsPromotesNewRestriction(t *testing.T) {
 		},
 	}})
 
-	assert.Equal(t, tools.Ident("ada.resolve_time_series_sources"), input.Policy.RestrictToTool)
+	assert.Equal(t, tools.Ident("ada.resolve_time_series_sources"), input.Policy.RetryRestrictToTool)
+}
+
+func TestApplyToolResultPolicyHintsPromotesNewRestrictionAfterSatisfiedCorrection(t *testing.T) {
+	t.Parallel()
+
+	input := &RunInput{
+		Policy: &PolicyOverrides{
+			RetryRestrictToTool: tools.Ident("ada.resolve_time_series_sources"),
+		},
+	}
+
+	applyToolResultPolicyHints(input, []*planner.ToolResult{
+		{
+			Name: tools.Ident("ada.resolve_time_series_sources"),
+		},
+		{
+			Name:  tools.Ident("ada.compile_query"),
+			Error: planner.NewToolError("missing fields"),
+			RetryHint: &planner.RetryHint{
+				Tool:           tools.Ident("ada.compile_query"),
+				RestrictToTool: true,
+			},
+		},
+	})
+
+	assert.Equal(t, tools.Ident("ada.compile_query"), input.Policy.RetryRestrictToTool)
 }

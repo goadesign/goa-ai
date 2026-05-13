@@ -56,38 +56,9 @@ var {{ .TypeName }}FieldDescs = map[string]string{
     {{- end }}
 {{- end }}
 
-// ValidationError wraps a validation failure and exposes issues that callers
-// can use to build retry hints. It implements error and an Issues() accessor.
-type ValidationError struct {
-    msg          string
-    issues       []*tools.FieldIssue
-    descriptions map[string]string
-}
-
-func (e ValidationError) Error() string {
-    return e.msg
-}
-func (e ValidationError) Issues() []*tools.FieldIssue {
-    if len(e.issues) == 0 {
-        return nil
-    }
-    out := make([]*tools.FieldIssue, len(e.issues))
-    copy(out, e.issues)
-    return out
-}
-func (e ValidationError) Descriptions() map[string]string {
-    if len(e.descriptions) == 0 {
-        return nil
-    }
-    out := make(map[string]string, len(e.descriptions))
-    for k, v := range e.descriptions {
-        out[k] = v
-    }
-    return out
-}
 {{- if $hasValidation }}
 // newValidationError converts a goa.ServiceError (possibly merged) into a
-// ValidationError with structured FieldIssue entries. It trims any leading
+// tools.ValidationError with structured FieldIssue entries. It trims any leading
 // "body." from field names for conciseness.
 func newValidationError(err error) error {
     if err == nil {
@@ -107,15 +78,15 @@ func newValidationError(err error) error {
         if strings.HasPrefix(field, "body.") {
             field = strings.TrimPrefix(field, "body.")
         }
+        if field == "" {
+            field = "$payload"
+        }
         issues = append(issues, &tools.FieldIssue{Field: field, Constraint: h.Name})
     }
     if len(issues) == 0 {
         return err
     }
-    return &ValidationError{
-        msg:    err.Error(),
-        issues: issues,
-    }
+    return tools.NewValidationError(err.Error(), issues, nil)
 }
 {{- end }}
 
@@ -123,23 +94,23 @@ func newValidationError(err error) error {
 {{- range .Types }}
 {{- if and .FieldDescs .TransportValidationSrc (ne (index .TransportValidationSrc 0) "") }}
 func enrich{{ .TypeName }}ValidationError(err error) error {
-    ve, ok := err.(*ValidationError)
-    if !ok || ve == nil {
+    var ve *tools.ValidationError
+    if !errors.As(err, &ve) {
         return err
     }
-    if len(ve.issues) == 0 {
+    issues := ve.Issues()
+    if len(issues) == 0 {
         return err
     }
     m := make(map[string]string)
     {{- if .FieldDescs }}
-    for _, is := range ve.issues {
+    for _, is := range issues {
         if d, ok := {{ .TypeName }}FieldDescs[is.Field]; ok && d != "" {
             m[is.Field] = d
         }
     }
     {{- end }}
-    ve.descriptions = m
-    return ve
+    return tools.NewValidationError(ve.Error(), issues, m)
 }
 {{- end }}
 {{- end }}

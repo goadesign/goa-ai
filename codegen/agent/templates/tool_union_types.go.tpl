@@ -53,21 +53,14 @@ func (u *{{ $u.Name }}) Set{{ .FieldName }}(v {{ .FieldType }}) {
 func (u {{ $u.Name }}) Validate() error {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("type", "", []any{
-			{{- range $u.Fields }}
-			string({{ .KindConst }}),
-			{{- end }}
-		})
+		return new{{ $u.Name }}DiscriminatorError("", false)
 	{{- range $u.Fields }}
 	case {{ .KindConst }}:
 		return nil
 	{{- end }}
 	default:
-		return goa.InvalidEnumValueError("type", u.kind, []any{
-			{{- range $u.Fields }}
-			string({{ .KindConst }}),
-			{{- end }}
-		})
+		got := string(u.kind)
+		return new{{ $u.Name }}DiscriminatorError(got, true)
 	}
 }
 
@@ -85,7 +78,8 @@ func (u {{ $u.Name }}) MarshalJSON() ([]byte, error) {
 		value = u.{{ .FieldName }}
 	{{- end }}
 	default:
-		return nil, fmt.Errorf("unexpected {{ $u.Name }} discriminant %q", u.kind)
+		got := string(u.kind)
+		return nil, new{{ $u.Name }}DiscriminatorError(got, true)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`
@@ -99,13 +93,16 @@ func (u {{ $u.Name }}) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON unmarshals the union from the canonical {type,value} JSON shape.
 func (u *{{ $u.Name }}) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		Type  string          `json:"type"`
+		Type  *string         `json:"type"`
 		Value json.RawMessage `json:"value"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	switch raw.Type {
+	if raw.Type == nil {
+		return new{{ $u.Name }}DiscriminatorError("", false)
+	}
+	switch *raw.Type {
 	{{- range $u.Fields }}
 	case string({{ .KindConst }}):
 		var v {{ .FieldType }}
@@ -116,8 +113,16 @@ func (u *{{ $u.Name }}) UnmarshalJSON(data []byte) error {
 		u.{{ .FieldName }} = v
 	{{- end }}
 	default:
-		return fmt.Errorf("unexpected {{ $u.Name }} type %q", raw.Type)
+		return new{{ $u.Name }}DiscriminatorError(*raw.Type, true)
 	}
 	return nil
+}
+
+func new{{ $u.Name }}DiscriminatorError(got string, typePresent bool) error {
+	return tools.NewUnionDiscriminatorError("{{ $u.Name }}", got, typePresent, []string{
+		{{- range $u.Fields }}
+		string({{ .KindConst }}),
+		{{- end }}
+	})
 }
 {{- end }}

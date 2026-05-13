@@ -9,14 +9,16 @@ package runtime
 // - Once restricted-tool mode is active, the runtime keeps that constraint until
 //   the requested tool succeeds. The correction is scoped to the failed tool
 //   payload, not to the rest of the run.
+// - Caller-supplied WithRestrictToTool policy is run-scoped. Retry restrictions
+//   live in separate runtime-owned state and never clear caller policy.
 // - Restricted-tool mode constrains tool selection only; terminal caps and
 //   deadlines still finalize through the planner with tools disabled.
 
 import "goa.design/goa-ai/runtime/agent/planner"
 
 // applyToolResultPolicyHints applies retry restrictions from tool outputs. A
-// successful result for the currently restricted tool clears the restriction so
-// later planner turns can use the full advertised tool set again.
+// successful result for the retry-restricted tool clears only retry-owned state
+// so later planner turns can use the full caller-allowed tool set again.
 func applyToolResultPolicyHints(input *RunInput, results []*planner.ToolResult) {
 	if len(results) == 0 {
 		return
@@ -29,7 +31,7 @@ func applyToolResultPolicyHints(input *RunInput, results []*planner.ToolResult) 
 		if input.Policy == nil {
 			input.Policy = &PolicyOverrides{}
 		}
-		input.Policy.RestrictToTool = result.RetryHint.Tool
+		input.Policy.RetryRestrictToTool = result.RetryHint.Tool
 		return
 	}
 }
@@ -37,14 +39,14 @@ func applyToolResultPolicyHints(input *RunInput, results []*planner.ToolResult) 
 // clearSatisfiedToolRestriction removes a retry-driven restriction after the
 // requested tool has produced a successful result in the current batch.
 func clearSatisfiedToolRestriction(input *RunInput, results []*planner.ToolResult) {
-	if input == nil || input.Policy == nil || input.Policy.RestrictToTool == "" {
+	if input == nil || input.Policy == nil || input.Policy.RetryRestrictToTool == "" {
 		return
 	}
 	for _, result := range results {
-		if result == nil || result.Name != input.Policy.RestrictToTool || result.Error != nil {
+		if result == nil || result.Name != input.Policy.RetryRestrictToTool || result.Error != nil {
 			continue
 		}
-		input.Policy.RestrictToTool = ""
+		input.Policy.RetryRestrictToTool = ""
 		return
 	}
 }
