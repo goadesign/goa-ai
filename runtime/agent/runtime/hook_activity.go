@@ -14,7 +14,11 @@ import (
 	"goa.design/goa-ai/runtime/agent/runlog"
 	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/session"
+	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/transcript"
+
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // recordActivityName is the engine-registered activity that persists durable
@@ -123,6 +127,75 @@ func (r *Runtime) recordActivity(ctx context.Context, input *RecordActivityInput
 		r.storeWorkflowHandle(input.RunID, nil)
 	}
 	return nil
+}
+
+// recordGenAITelemetryEvent projects durable hook records into standard GenAI
+// spans as a hook subscriber. Tool spans are reconstructed from result events so
+// inline, activity, and registry-backed tools share one observability shape.
+func (r *Runtime) recordGenAITelemetryEvent(ctx context.Context, evt hooks.Event) error {
+	switch e := evt.(type) {
+	case *hooks.ToolResultReceivedEvent:
+		ctx = telemetry.WithGenAIContext(ctx, telemetry.GenAIContext{
+			ConversationID: conversationID(e.SessionID(), e.RunID()),
+			AgentID:        string(e.AgentID()),
+			AgentName:      string(e.AgentID()),
+		})
+		r.recordGenAIToolSpan(ctx, e)
+	case *hooks.ChildRunLinkedEvent:
+		ctx = telemetry.WithGenAIContext(ctx, telemetry.GenAIContext{
+			ConversationID: conversationID(e.SessionID(), e.RunID()),
+			AgentID:        string(e.AgentID()),
+			AgentName:      string(e.AgentID()),
+		})
+		r.recordGenAIInvokeAgentSpan(ctx, e)
+	}
+	return nil
+}
+
+// recordGenAIToolSpan emits the standard execute_tool span from the completed
+// tool result event. The event timestamp marks completion; Duration reconstructs
+// the start timestamp when available.
+func (r *Runtime) recordGenAIToolSpan(ctx context.Context, evt *hooks.ToolResultReceivedEvent) {
+	endedAt := time.UnixMilli(evt.Timestamp()).UTC()
+	startedAt := endedAt
+	if evt.Duration > 0 {
+		startedAt = endedAt.Add(-evt.Duration)
+	}
+	_, span := r.tracer.Start(
+		ctx,
+		"execute_tool "+string(evt.ToolName),
+		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithTimestamp(startedAt),
+		trace.WithAttributes(telemetry.GenAIToolAttrs(ctx, string(evt.ToolName), evt.ToolCallID)...),
+	)
+	if evt.Error != nil {
+		span.RecordError(evt.Error)
+		span.SetStatus(codes.Error, evt.Error.Error())
+	} else {
+		span.SetStatus(codes.Ok, "ok")
+	}
+	span.End(trace.WithTimestamp(endedAt))
+}
+
+// recordGenAIInvokeAgentSpan emits the caller-side invoke_agent span for an
+// agent-as-tool child run link. The child run emits its own model/tool spans
+// under its own agent identity.
+func (r *Runtime) recordGenAIInvokeAgentSpan(ctx context.Context, evt *hooks.ChildRunLinkedEvent) {
+	ts := time.UnixMilli(evt.Timestamp()).UTC()
+	attrs := telemetry.GenAIOperationAttrs(ctx, telemetry.GenAIOperationInvokeAgent)
+	attrs = append(attrs,
+		telemetry.AttrGenAIToolName.String(string(evt.ToolName)),
+		telemetry.AttrGenAIToolCallID.String(evt.ToolCallID),
+	)
+	_, span := r.tracer.Start(
+		ctx,
+		"invoke_agent "+string(evt.ChildAgentID),
+		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithTimestamp(ts),
+		trace.WithAttributes(attrs...),
+	)
+	span.SetStatus(codes.Ok, "ok")
+	span.End(trace.WithTimestamp(ts))
 }
 
 // appendTranscriptRunLogMessages appends canonical transcript message records to

@@ -57,7 +57,7 @@ func (s *chunkStreamer) Metadata() map[string]any {
 	return s.meta
 }
 
-func TestSimplePlannerContextModelClientReturnsRawClient(t *testing.T) {
+func TestSimplePlannerContextModelClientDoesNotEmitPlannerEvents(t *testing.T) {
 	events := &recordingPlannerEvents{}
 	rt := &Runtime{
 		models: map[string]model.Client{
@@ -78,7 +78,13 @@ func TestSimplePlannerContextModelClientReturnsRawClient(t *testing.T) {
 		logger: telemetry.NewNoopLogger(),
 		tracer: telemetry.NoopTracer{},
 	}
-	ctx := &simplePlannerContext{rt: rt, ev: events}
+	ctx := &simplePlannerContext{
+		rt:        rt,
+		agent:     "svc.agent",
+		runID:     "run-1",
+		sessionID: "sess-1",
+		ev:        events,
+	}
 
 	client, ok := ctx.ModelClient("primary")
 	require.True(t, ok)
@@ -129,7 +135,13 @@ func TestSimplePlannerContextPlannerModelClientOwnsEventEmission(t *testing.T) {
 		logger: telemetry.NewNoopLogger(),
 		tracer: telemetry.NoopTracer{},
 	}
-	ctx := &simplePlannerContext{rt: rt, ev: events}
+	ctx := &simplePlannerContext{
+		rt:        rt,
+		agent:     "svc.agent",
+		runID:     "run-1",
+		sessionID: "sess-1",
+		ev:        events,
+	}
 
 	client, ok := ctx.PlannerModelClient("primary")
 	require.True(t, ok)

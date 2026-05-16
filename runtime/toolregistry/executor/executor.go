@@ -162,11 +162,7 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 		return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.NewToolError(fmt.Sprintf("tool %q missing toolset routing id", call.Name))}), nil
 	}
 
-	tracer := e.tracer
-	if tracer == nil {
-		tracer = telemetry.NewNoopTracer()
-	}
-	ctx, span := tracer.Start(
+	ctx, span := e.tracer.Start(
 		ctx,
 		"toolregistry.execute",
 		trace.WithSpanKind(trace.SpanKindClient),

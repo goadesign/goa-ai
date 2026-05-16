@@ -5,6 +5,7 @@ import (
 	"context"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -43,6 +44,7 @@ type Tracer interface {
 type Span interface {
 	End(opts ...trace.SpanEndOption)
 	AddEvent(name string, attrs ...any)
+	SetAttributes(attrs ...attribute.KeyValue)
 	SetStatus(code codes.Code, description string)
 	RecordError(err error, opts ...trace.EventOption)
 }

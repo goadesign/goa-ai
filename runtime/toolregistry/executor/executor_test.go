@@ -7,11 +7,15 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 	aistream "goa.design/goa-ai/runtime/agent/stream"
+	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/toolregistry"
 	"goa.design/pulse/streaming"
@@ -128,8 +132,73 @@ func TestExecutorDerivesResultStreamIDFromToolUseID(t *testing.T) {
 	assert.Equal(t, tools.Ident("todos.update_todos"), res.ToolResult.Name)
 }
 
+func TestExecutorEmitsRegistrySpan(t *testing.T) {
+	tracer := &recordingTracer{}
+	const (
+		toolUseID       = "tooluse-genai-123"
+		resultEventName = toolregistry.ResultEventKey
+	)
+	specs := fakeSpecs{
+		spec: &tools.ToolSpec{
+			Name:    "todos.update_todos",
+			Toolset: "todos.todos",
+			Result:  tools.TypeSpec{},
+			Payload: tools.TypeSpec{},
+		},
+	}
+	stream := &fakeStream{
+		t:             t,
+		requiredStart: "0",
+		events: []*streaming.Event{
+			{
+				ID:        "1-0",
+				EventName: resultEventName,
+				Payload: mustJSON(t, toolregistry.ToolResultMessage{
+					ToolUseID: toolUseID,
+					Result:    json.RawMessage(`{}`),
+				}),
+			},
+		},
+	}
+	exec := New(
+		fakeRegistryClient{toolUseID: toolUseID},
+		fakePulseClient{streamID: toolregistry.ResultStreamID(toolUseID), stream: stream},
+		specs,
+		WithTracer(tracer),
+	)
+
+	res, err := exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
+		RunID:      "run",
+		SessionID:  "sess",
+		TurnID:     "turn",
+		ToolCallID: "toolcall-1",
+	}, &planner.ToolRequest{
+		Name:    "todos.update_todos",
+		Payload: []byte(`{}`),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	require.Len(t, tracer.spans, 1)
+	assert.Equal(t, "toolregistry.execute", tracer.spans[0].name)
+	attrs := attrsByKey(tracer.spans[0].attrs)
+	assert.Equal(t, "todos.update_todos", attrs[attribute.Key("toolregistry.tool")].AsString())
+	assert.Equal(t, "todos.todos", attrs[attribute.Key("toolregistry.toolset")].AsString())
+	assert.Equal(t, "toolcall-1", attrs[attribute.Key("toolregistry.tool_call_id")].AsString())
+	assert.Equal(t, "agent", attrs[attribute.Key("toolregistry.sink")].AsString())
+}
+
 type captureSink struct {
 	events []aistream.Event
+}
+
+type recordingTracer struct {
+	spans []*recordingSpan
+}
+
+type recordingSpan struct {
+	name  string
+	attrs []attribute.KeyValue
 }
 
 func (s *captureSink) Send(ctx context.Context, event aistream.Event) error {
@@ -378,4 +447,41 @@ func mustJSON(t *testing.T, v any) []byte {
 		t.Fatalf("marshal: %v", err)
 	}
 	return b
+}
+
+func (t *recordingTracer) Start(ctx context.Context, name string, opts ...trace.SpanStartOption) (context.Context, telemetry.Span) {
+	cfg := trace.NewSpanStartConfig(opts...)
+	span := &recordingSpan{
+		name:  name,
+		attrs: cfg.Attributes(),
+	}
+	t.spans = append(t.spans, span)
+	return ctx, span
+}
+
+func (t *recordingTracer) Span(context.Context) telemetry.Span {
+	if len(t.spans) == 0 {
+		return &recordingSpan{}
+	}
+	return t.spans[len(t.spans)-1]
+}
+
+func (s *recordingSpan) End(...trace.SpanEndOption) {}
+
+func (s *recordingSpan) AddEvent(string, ...any) {}
+
+func (s *recordingSpan) SetAttributes(attrs ...attribute.KeyValue) {
+	s.attrs = append(s.attrs, attrs...)
+}
+
+func (s *recordingSpan) SetStatus(codes.Code, string) {}
+
+func (s *recordingSpan) RecordError(error, ...trace.EventOption) {}
+
+func attrsByKey(attrs []attribute.KeyValue) map[attribute.Key]attribute.Value {
+	out := make(map[attribute.Key]attribute.Value, len(attrs))
+	for _, attr := range attrs {
+		out[attr.Key] = attr.Value
+	}
+	return out
 }

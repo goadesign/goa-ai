@@ -580,6 +580,13 @@ Generated `registry.go` files in agent packages are local runtime registration h
 ## Production
 
 Start simple with `runtime.New()`. Move to production by adding durable execution, persistent stores, model providers, stream delivery, policy, and telemetry.
+When a tracer is configured, goa-ai emits OpenTelemetry GenAI semantic-convention
+spans for planner-scoped model calls (`chat {model}`), tool calls
+(`execute_tool {tool}`), and agent-as-tool delegation (`invoke_agent {agent}`).
+These spans carry conversation ID, agent identity, model request/response
+fields, token usage, finish reasons, and streaming time-to-first-chunk where
+available. Prompt text, chat history, tool arguments, and tool results are not
+recorded by default.
 
 ```go
 eng, err := temporal.NewWorker(temporal.Options{

@@ -257,5 +257,6 @@ type noopSpan struct{}
 
 func (noopSpan) End(_ ...trace.SpanEndOption)                {}
 func (noopSpan) AddEvent(_ string, _ ...any)                 {}
+func (noopSpan) SetAttributes(_ ...attribute.KeyValue)       {}
 func (noopSpan) SetStatus(_ codes.Code, _ string)            {}
 func (noopSpan) RecordError(_ error, _ ...trace.EventOption) {}

@@ -752,6 +752,9 @@ func newFromOptions(opts Options) *Runtime {
 	rt.mu.Lock()
 	rt.addToolsetLocked(toolUnavailableToolsetRegistration())
 	rt.mu.Unlock()
+	if _, err := bus.Register(hooks.SubscriberFunc(rt.recordGenAITelemetryEvent)); err != nil {
+		panic(fmt.Errorf("register GenAI telemetry subscriber: %w", err))
+	}
 	if rt.SessionStore != nil {
 		sessionSub := hooks.SubscriberFunc(func(ctx context.Context, event hooks.Event) error {
 			if event.SessionID() == "" {

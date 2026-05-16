@@ -107,6 +107,81 @@ func TestHookActivityAppendsBeforePublish(t *testing.T) {
 	require.Equal(t, input.Payload, rl.events[0].Payload)
 }
 
+func TestGenAITimelineSubscriberEmitsSpans(t *testing.T) {
+	tracer := &recordingTelemetryTracer{}
+	rl := &recordingRunlog{}
+	bus := hooks.NewBus()
+	store := sessioninmem.New()
+	rt := &Runtime{
+		RunEventStore: rl,
+		Bus:           bus,
+		SessionStore:  store,
+		tracer:        tracer,
+	}
+	sub, err := bus.Register(hooks.SubscriberFunc(rt.recordGenAITelemetryEvent))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sub.Close() })
+	now := time.Now().UTC()
+	_, err = store.CreateSession(context.Background(), "sess-1", now)
+	require.NoError(t, err)
+	require.NoError(t, store.UpsertRun(context.Background(), session.RunMeta{
+		AgentID:   "svc.agent",
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		Status:    session.RunStatusRunning,
+		StartedAt: now,
+		UpdatedAt: now,
+	}))
+
+	toolEvent := hooks.NewToolResultReceivedEvent(
+		"run-1",
+		"svc.agent",
+		"sess-1",
+		"svc.tools.search",
+		"call-1",
+		"",
+		nil,
+		0,
+		false,
+		"",
+		nil,
+		"",
+		nil,
+		150*time.Millisecond,
+		nil,
+		nil,
+		nil,
+	)
+	childEvent := hooks.NewChildRunLinkedEvent(
+		"run-1",
+		"svc.agent",
+		"sess-1",
+		"svc.tools.delegate",
+		"call-2",
+		"child-run",
+		"svc.child",
+	)
+
+	require.NoError(t, rt.recordActivity(context.Background(), mustEncodeHookRecord(t, toolEvent, "evt-tool", 1_000)))
+	require.NoError(t, rt.recordActivity(context.Background(), mustEncodeHookRecord(t, childEvent, "evt-child", 2_000)))
+
+	require.Len(t, tracer.spans, 2)
+
+	toolAttrs := attrsByKey(tracer.spans[0].attrs)
+	require.Equal(t, "execute_tool svc.tools.search", tracer.spans[0].name)
+	require.Equal(t, telemetry.GenAIOperationExecuteTool, toolAttrs[telemetry.AttrGenAIOperationName].AsString())
+	require.Equal(t, "sess-1", toolAttrs[telemetry.AttrGenAIConversationID].AsString())
+	require.Equal(t, "svc.agent", toolAttrs[telemetry.AttrGenAIAgentName].AsString())
+	require.Equal(t, "svc.tools.search", toolAttrs[telemetry.AttrGenAIToolName].AsString())
+	require.Equal(t, "call-1", toolAttrs[telemetry.AttrGenAIToolCallID].AsString())
+
+	invokeAttrs := attrsByKey(tracer.spans[1].attrs)
+	require.Equal(t, "invoke_agent svc.child", tracer.spans[1].name)
+	require.Equal(t, telemetry.GenAIOperationInvokeAgent, invokeAttrs[telemetry.AttrGenAIOperationName].AsString())
+	require.Equal(t, "svc.agent", invokeAttrs[telemetry.AttrGenAIAgentName].AsString())
+	require.Equal(t, "call-2", invokeAttrs[telemetry.AttrGenAIToolCallID].AsString())
+}
+
 func TestHookActivityAppendFailureAbortsPublish(t *testing.T) {
 	t.Parallel()
 

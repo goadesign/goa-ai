@@ -238,6 +238,28 @@ This tracing rule is intentionally generic. Application-specific error
 taxonomies, dashboard semantics, and product observability attributes belong in
 the integrating application rather than in the runtime.
 
+## GenAI Observability Contract
+
+The runtime emits OpenTelemetry GenAI semantic-convention spans for agent
+operations:
+
+- Planner-scoped model calls use `gen_ai.operation.name="chat"` and span names
+  of the form `chat {model}`. Model requests must carry a model name or model
+  class, and the runtime attaches conversation, agent, request model, max token,
+  response model, finish reason, token usage, and streaming
+  time-to-first-chunk attributes.
+- Tool executions use `gen_ai.operation.name="execute_tool"` and span names of
+  the form `execute_tool {tool_name}`. The runlog hook subscriber owns these
+  spans so inline, activity, and registry-backed tools produce exactly one
+  GenAI tool operation. Tool arguments and results are not recorded as span
+  attributes because they may contain user data.
+- Agent-as-tool links emit caller-side `invoke_agent {agent_name}` spans. The
+  child agent emits its own model and tool spans under its own agent identity.
+
+Prompt content, chat history, tool arguments, and tool results remain opt-in
+application policy. The runtime records identifiers, names, counts, timings,
+errors, and token usage by default.
+
 ## Temporal Worker Activation Contract
 
 Temporal worker startup is a real runtime contract, not a background best-effort

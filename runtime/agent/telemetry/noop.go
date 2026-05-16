@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -76,6 +77,9 @@ func (noopSpan) End(...trace.SpanEndOption) {}
 
 // AddEvent is a no-op.
 func (noopSpan) AddEvent(string, ...any) {}
+
+// SetAttributes is a no-op.
+func (noopSpan) SetAttributes(...attribute.KeyValue) {}
 
 // SetStatus is a no-op.
 func (noopSpan) SetStatus(codes.Code, string) {}

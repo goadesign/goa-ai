@@ -55,6 +55,16 @@ func newAgentContext(opts agentContextOptions) planner.PlannerContext {
 	}
 }
 
+// conversationID returns the GenAI conversation identifier for a run. Sessioned
+// runs use the stable session ID; one-shot runs use their run ID because the run
+// is the complete user/model exchange.
+func conversationID(sessionID, runID string) string {
+	if sessionID != "" {
+		return sessionID
+	}
+	return runID
+}
+
 func (c *simplePlannerContext) ID() agent.Ident            { return c.agent }
 func (c *simplePlannerContext) RunID() string              { return c.runID }
 func (c *simplePlannerContext) Memory() memory.Reader      { return c.mem }
@@ -99,7 +109,11 @@ func (c *simplePlannerContext) configuredModelClient(id string) (model.Client, b
 	cli = newToolUnavailableConfiguredClient(cli)
 	// Wrap with tracing so model invocations are always visible in traces, including
 	// full stream lifetimes when streaming is used.
-	cli = newTracedClient(cli, c.rt.tracer, c.rt.logger, id)
+	cli = newTracedClient(cli, c.rt.tracer, c.rt.logger, id, telemetry.GenAIContext{
+		ConversationID: conversationID(c.sessionID, c.runID),
+		AgentID:        string(c.agent),
+		AgentName:      string(c.agent),
+	})
 	return cli, true
 }
 
