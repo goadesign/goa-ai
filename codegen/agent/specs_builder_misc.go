@@ -10,6 +10,8 @@ import (
 	"goa.design/goa/v3/http/codegen/openapi"
 )
 
+const jsonSchemaTypeInteger = "integer"
+
 // buildFieldDescriptions collects dotted field-path descriptions from the provided
 // attribute. It follows objects, arrays, maps and user types, trimming any leading
 // root qualifiers at error construction time (newValidationError does this for "body.").
@@ -32,6 +34,7 @@ func buildFieldDescriptions(att *goaexpr.AttributeExpr) map[string]string {
 				return
 			}
 			seen[id] = struct{}{}
+			defer delete(seen, id)
 			walk(prefix, dt.Attribute())
 		case *goaexpr.Object:
 			for _, nat := range *dt {
@@ -71,6 +74,111 @@ func buildFieldDescriptions(att *goaexpr.AttributeExpr) map[string]string {
 		return nil
 	}
 	return out
+}
+
+// buildFieldJSONTypes collects the generated JSON type expected at each dotted field path.
+func buildFieldJSONTypes(att *goaexpr.AttributeExpr) map[string]string {
+	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+		return nil
+	}
+	out := make(map[string]string)
+	seen := make(map[string]struct{})
+	var walk func(prefix string, a *goaexpr.AttributeExpr)
+	walk = func(prefix string, a *goaexpr.AttributeExpr) {
+		if a == nil || a.Type == nil || a.Type == goaexpr.Empty {
+			return
+		}
+		if prefix != "" {
+			jsonType := generatedJSONType(a.Type)
+			if jsonType != "" {
+				if _, exists := out[prefix]; exists {
+					jsonType = ""
+				}
+			}
+			if jsonType != "" {
+				out[prefix] = jsonType
+			}
+		}
+		switch dt := a.Type.(type) {
+		case goaexpr.UserType:
+			id := dt.ID()
+			if _, ok := seen[id]; ok {
+				return
+			}
+			seen[id] = struct{}{}
+			defer delete(seen, id)
+			walk(prefix, dt.Attribute())
+		case *goaexpr.Object:
+			for _, nat := range *dt {
+				name := nat.Name
+				path := name
+				if prefix != "" {
+					path = prefix + "." + name
+				}
+				walk(path, nat.Attribute)
+			}
+		case *goaexpr.Array:
+			walk(prefix, dt.ElemType)
+		case *goaexpr.Map:
+			walk(prefix, dt.ElemType)
+		case *goaexpr.Union:
+			valuePrefix := prefix
+			if valueKey := dt.GetValueKey(); valueKey != "" {
+				if valuePrefix != "" {
+					valuePrefix = valuePrefix + "." + valueKey
+				} else {
+					valuePrefix = valueKey
+				}
+			}
+			for _, v := range dt.Values {
+				walk(valuePrefix, v.Attribute)
+			}
+		}
+	}
+	walk("", att)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// generatedJSONType maps Goa types to the JSON type emitted by the generated schema.
+func generatedJSONType(dt goaexpr.DataType) string {
+	switch actual := dt.(type) {
+	case goaexpr.UserType:
+		return generatedJSONType(actual.Attribute().Type)
+	case *goaexpr.Object, *goaexpr.Map, *goaexpr.Union:
+		return "object"
+	case *goaexpr.Array:
+		return "array"
+	case goaexpr.Primitive:
+		switch actual.Kind() {
+		case goaexpr.BooleanKind:
+			return "boolean"
+		case goaexpr.StringKind, goaexpr.BytesKind:
+			return "string"
+		case goaexpr.IntKind,
+			goaexpr.Int32Kind,
+			goaexpr.Int64Kind,
+			goaexpr.UIntKind,
+			goaexpr.UInt32Kind,
+			goaexpr.UInt64Kind:
+			return jsonSchemaTypeInteger
+		case goaexpr.Float32Kind,
+			goaexpr.Float64Kind:
+			return "number"
+		case goaexpr.AnyKind:
+			return "JSON value"
+		case goaexpr.ArrayKind,
+			goaexpr.ObjectKind,
+			goaexpr.MapKind,
+			goaexpr.UnionKind,
+			goaexpr.UserTypeKind,
+			goaexpr.ResultTypeKind:
+			return ""
+		}
+	}
+	return ""
 }
 
 // isEmptyStruct reports whether the attribute resolves to an empty object.

@@ -224,6 +224,8 @@ type (
 		GenerateCodec bool
 		// FieldDescs maps dotted field paths to descriptions (for payload types).
 		FieldDescs map[string]string
+		// FieldJSONTypes maps dotted field paths to their generated JSON type.
+		FieldJSONTypes map[string]string
 		// AcceptEmpty indicates that empty JSON input should be accepted and
 		// treated as the zero value (only for payloads). This is true for
 		// payload types that are empty structs (no fields).

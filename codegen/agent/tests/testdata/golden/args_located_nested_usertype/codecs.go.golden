@@ -60,6 +60,11 @@ var SetStepStatusPayloadFieldDescs = map[string]string{
 	"status":  "New step status.",
 	"step_id": "Step identifier.",
 }
+var SetStepStatusPayloadFieldJSONTypes = map[string]string{
+	"note":    "string",
+	"status":  "string",
+	"step_id": "string",
+}
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
 // tools.ValidationError with structured FieldIssue entries. It trims any leading
@@ -109,6 +114,37 @@ func enrichSetStepStatusPayloadValidationError(err error) error {
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
 }
+func invalidSetStepStatusPayloadFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	field = strings.TrimPrefix(field, "SetStepStatusPayloadTransport.")
+	if field == "" {
+		field = "$payload"
+	}
+	expected := SetStepStatusPayloadFieldJSONTypes[field]
+	if expected == "" {
+		expected = typeErr.Type.String()
+	}
+	actual := typeErr.Value
+	if actual == "" {
+		actual = "JSON value"
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
 
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
@@ -154,7 +190,7 @@ func UnmarshalSetStepStatusPayload(data []byte) (*SetStepStatusPayload, error) {
 	}
 	var tv toolhttp.SetStepStatusPayloadTransport
 	if err := json.Unmarshal(data, &tv); err != nil {
-		return nil, fmt.Errorf("decode setStepStatusPayload: %w", err)
+		return nil, invalidSetStepStatusPayloadFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateSetStepStatusPayloadTransport(&tv); err != nil {
 		err = newValidationError(err)

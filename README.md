@@ -269,7 +269,8 @@ var Docs = Toolset("docs", func() {
 
 **What you get:**
 - JSON Schema for LLM function calling (auto-generated)
-- Validation at boundaries—invalid calls get retry hints, not crashes
+- Validation at boundaries: invalid calls get structured retry hints, including
+  generated JSON type mismatch guidance, not crashes or schema-string parsing
 - Type-safe Go structs for payloads and results
 - Explicit control-plane contracts: `Bookkeeping()` keeps tools durable,
   budget-exempt, and hidden from future planner turns

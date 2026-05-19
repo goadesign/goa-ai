@@ -60,6 +60,12 @@ var SummarizeDocPayloadFieldDescs = map[string]string{
 var SummarizeDocResultFieldDescs = map[string]string{
 	"title": "Title",
 }
+var SummarizeDocPayloadFieldJSONTypes = map[string]string{
+	"doc_id": "string",
+}
+var SummarizeDocResultFieldJSONTypes = map[string]string{
+	"title": "string",
+}
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
 // tools.ValidationError with structured FieldIssue entries. It trims any leading
@@ -126,6 +132,68 @@ func enrichSummarizeDocResultValidationError(err error) error {
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
 }
+func invalidSummarizeDocPayloadFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	field = strings.TrimPrefix(field, "SummarizeDocPayloadTransport.")
+	if field == "" {
+		field = "$payload"
+	}
+	expected := SummarizeDocPayloadFieldJSONTypes[field]
+	if expected == "" {
+		expected = typeErr.Type.String()
+	}
+	actual := typeErr.Value
+	if actual == "" {
+		actual = "JSON value"
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
+func invalidSummarizeDocResultFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	field = strings.TrimPrefix(field, "SummarizeDocResultTransport.")
+	if field == "" {
+		field = "$payload"
+	}
+	expected := SummarizeDocResultFieldJSONTypes[field]
+	if expected == "" {
+		expected = typeErr.Type.String()
+	}
+	actual := typeErr.Value
+	if actual == "" {
+		actual = "JSON value"
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
 
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
@@ -168,7 +236,7 @@ func UnmarshalSummarizeDocPayload(data []byte) (*SummarizeDocPayload, error) {
 	}
 	var tv toolhttp.SummarizeDocPayloadTransport
 	if err := json.Unmarshal(data, &tv); err != nil {
-		return nil, fmt.Errorf("decode summarizeDocPayload: %w", err)
+		return nil, invalidSummarizeDocPayloadFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateSummarizeDocPayloadTransport(&tv); err != nil {
 		err = newValidationError(err)
@@ -205,7 +273,7 @@ func UnmarshalSummarizeDocResult(data []byte) (*SummarizeDocResult, error) {
 	}
 	var tv toolhttp.SummarizeDocResultTransport
 	if err := json.Unmarshal(data, &tv); err != nil {
-		return nil, fmt.Errorf("decode summarizeDocResult: %w", err)
+		return nil, invalidSummarizeDocResultFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateSummarizeDocResultTransport(&tv); err != nil {
 		err = newValidationError(err)

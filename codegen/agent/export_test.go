@@ -45,6 +45,25 @@ func CollectTypeSchemasForTest(specs *toolSpecsData) map[string][]byte {
 	return out
 }
 
+// CollectTypeJSONTypesForTest returns generated field JSON type metadata by type.
+func CollectTypeJSONTypesForTest(specs *toolSpecsData) map[string]map[string]string {
+	out := make(map[string]map[string]string)
+	if specs == nil {
+		return out
+	}
+	for _, td := range specs.typesList() {
+		if len(td.FieldJSONTypes) == 0 {
+			continue
+		}
+		copied := make(map[string]string, len(td.FieldJSONTypes))
+		for field, jsonType := range td.FieldJSONTypes {
+			copied[field] = jsonType
+		}
+		out[td.TypeName] = copied
+	}
+	return out
+}
+
 // CollectTypeImportAliasesForTest returns the distinct import aliases used by
 // the given type (matched by substring on type name). It includes both the
 // direct Import (if any) and TypeImports collected during analysis.

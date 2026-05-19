@@ -69,6 +69,21 @@ var UpsertResultFieldDescs = map[string]string{
 	"id":             "Identifier",
 	"name":           "Name",
 }
+var UpsertPayloadFieldJSONTypes = map[string]string{
+	"profile":                "object",
+	"profile.address":        "object",
+	"profile.address.city":   "string",
+	"profile.address.street": "string",
+	"profile.id":             "string",
+	"profile.name":           "string",
+}
+var UpsertResultFieldJSONTypes = map[string]string{
+	"address":        "object",
+	"address.city":   "string",
+	"address.street": "string",
+	"id":             "string",
+	"name":           "string",
+}
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
 // tools.ValidationError with structured FieldIssue entries. It trims any leading
@@ -135,6 +150,68 @@ func enrichUpsertResultValidationError(err error) error {
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
 }
+func invalidUpsertPayloadFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	field = strings.TrimPrefix(field, "UpsertPayloadTransport.")
+	if field == "" {
+		field = "$payload"
+	}
+	expected := UpsertPayloadFieldJSONTypes[field]
+	if expected == "" {
+		expected = typeErr.Type.String()
+	}
+	actual := typeErr.Value
+	if actual == "" {
+		actual = "JSON value"
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
+func invalidUpsertResultFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	field = strings.TrimPrefix(field, "UpsertResultTransport.")
+	if field == "" {
+		field = "$payload"
+	}
+	expected := UpsertResultFieldJSONTypes[field]
+	if expected == "" {
+		expected = typeErr.Type.String()
+	}
+	actual := typeErr.Value
+	if actual == "" {
+		actual = "JSON value"
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
 
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
@@ -176,7 +253,7 @@ func UnmarshalUpsertPayload(data []byte) (*UpsertPayload, error) {
 	}
 	var tv toolhttp.UpsertPayloadTransport
 	if err := json.Unmarshal(data, &tv); err != nil {
-		return nil, fmt.Errorf("decode upsertPayload: %w", err)
+		return nil, invalidUpsertPayloadFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateUpsertPayloadTransport(&tv); err != nil {
 		err = newValidationError(err)
@@ -214,7 +291,7 @@ func UnmarshalUpsertResult(data []byte) (*UpsertResult, error) {
 	}
 	var tv toolhttp.UpsertResultTransport
 	if err := json.Unmarshal(data, &tv); err != nil {
-		return nil, fmt.Errorf("decode upsertResult: %w", err)
+		return nil, invalidUpsertResultFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateUpsertResultTransport(&tv); err != nil {
 		err = newValidationError(err)

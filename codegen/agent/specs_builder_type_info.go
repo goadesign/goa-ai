@@ -306,6 +306,9 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	if fdesc := buildFieldDescriptions(schemaAttr); len(fdesc) > 0 {
 		info.FieldDescs = fdesc
 	}
+	if ftypes := buildFieldJSONTypes(schemaAttr); len(ftypes) > 0 {
+		info.FieldJSONTypes = ftypes
+	}
 	b.types[key] = info
 	// Also index by the public type name so auxiliary passes (e.g.,
 	// validator collection) can detect that a concrete alias already
@@ -430,11 +433,11 @@ func projectBoundedResultSchema(schemaBytes []byte, bounds *ToolBoundsData) ([]b
 func boundedResultSchemaFields(bounds *ToolBoundsData) map[string]any {
 	fields := map[string]any{
 		boundedresult.FieldReturned: map[string]any{
-			"type":        "integer",
+			"type":        jsonSchemaTypeInteger,
 			"description": "Number of items returned in this response after applying tool limits.",
 		},
 		boundedresult.FieldTotal: map[string]any{
-			"type":        "integer",
+			"type":        jsonSchemaTypeInteger,
 			"description": "Total number of matching items before truncation.",
 		},
 		boundedresult.FieldTruncated: map[string]any{

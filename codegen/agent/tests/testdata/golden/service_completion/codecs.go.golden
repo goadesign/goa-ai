@@ -41,6 +41,13 @@ var DraftFromTranscriptResultFieldDescs = map[string]string{
 	"draft.value.steps":       "Draft steps",
 	"draft.value.steps.label": "User-visible step label",
 }
+var DraftFromTranscriptResultFieldJSONTypes = map[string]string{
+	"assistant_text":          "string",
+	"draft":                   "object",
+	"draft.value":             "object",
+	"draft.value.steps":       "array",
+	"draft.value.steps.label": "string",
+}
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
 // tools.ValidationError with structured FieldIssue entries. It trims any leading
@@ -90,6 +97,37 @@ func enrichDraftFromTranscriptResultValidationError(err error) error {
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
 }
+func invalidDraftFromTranscriptResultFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	field = strings.TrimPrefix(field, "DraftFromTranscriptResultTransport.")
+	if field == "" {
+		field = "$payload"
+	}
+	expected := DraftFromTranscriptResultFieldJSONTypes[field]
+	if expected == "" {
+		expected = typeErr.Type.String()
+	}
+	actual := typeErr.Value
+	if actual == "" {
+		actual = "JSON value"
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
 
 // MarshalDraftFromTranscriptResult serializes *DraftFromTranscriptResult into JSON.
 func MarshalDraftFromTranscriptResult(v *DraftFromTranscriptResult) ([]byte, error) {
@@ -127,7 +165,7 @@ func UnmarshalDraftFromTranscriptResult(data []byte) (*DraftFromTranscriptResult
 	}
 	var tv toolhttp.DraftFromTranscriptResultTransport
 	if err := json.Unmarshal(data, &tv); err != nil {
-		return nil, fmt.Errorf("decode draftFromTranscriptResult: %w", err)
+		return nil, invalidDraftFromTranscriptResultFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateDraftFromTranscriptResultTransport(&tv); err != nil {
 		err = newValidationError(err)

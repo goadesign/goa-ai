@@ -83,6 +83,59 @@ func TestBuildToolSpecsData_DeterministicRefs(t *testing.T) {
 	require.True(t, ok, "expected alias to service type or self-contained struct definition (or no local types in new design)")
 }
 
+func TestBuildToolSpecsData_FieldJSONTypes(t *testing.T) {
+	eval.Reset()
+	goaexpr.Root = new(goaexpr.RootExpr)
+	goaexpr.GeneratedResultTypes = new(goaexpr.ResultTypesRoot)
+	require.NoError(t, eval.Register(goaexpr.Root))
+	require.NoError(t, eval.Register(goaexpr.GeneratedResultTypes))
+
+	agentsExpr.Root = &agentsExpr.RootExpr{}
+	require.NoError(t, eval.Register(agentsExpr.Root))
+
+	design := func() {
+		goadsl.API("alpha", func() {})
+		var Section = goadsl.Type("Section", func() {
+			goadsl.Attribute("heading", goadsl.String, "Heading")
+			goadsl.Required("heading")
+		})
+		goadsl.Service("alpha", func() {
+			Agent("scribe", "Doc helper", func() {
+				Use("briefs", func() {
+					Tool("complete", "Complete a brief", func() {
+						Args(func() {
+							goadsl.Attribute("sections", goadsl.ArrayOf(Section), "Brief sections")
+							goadsl.Attribute("lead", Section, "Lead section")
+							goadsl.Attribute("backup", Section, "Backup section")
+							goadsl.Attribute("publish", goadsl.Boolean, "Whether to publish")
+							goadsl.Attribute("retry_count", goadsl.Int, "Retry count")
+							goadsl.Required("sections", "lead", "backup", "publish", "retry_count")
+						})
+					})
+				})
+			})
+		})
+	}
+	require.True(t, eval.Execute(design, nil), eval.Context.Error())
+	require.NoError(t, eval.RunDSL())
+
+	data, err := codegen.BuildDataForTest("goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root})
+	require.NoError(t, err)
+	specs, err := codegen.BuildToolSpecsDataForTest(data.Services[0].Agents[0])
+	require.NoError(t, err)
+
+	jsonTypes := codegen.CollectTypeJSONTypesForTest(specs)
+
+	require.Equal(t, "array", jsonTypes["CompletePayload"]["sections"])
+	require.Equal(t, "string", jsonTypes["CompletePayload"]["sections.heading"])
+	require.Equal(t, "object", jsonTypes["CompletePayload"]["lead"])
+	require.Equal(t, "string", jsonTypes["CompletePayload"]["lead.heading"])
+	require.Equal(t, "object", jsonTypes["CompletePayload"]["backup"])
+	require.Equal(t, "string", jsonTypes["CompletePayload"]["backup.heading"])
+	require.Equal(t, "boolean", jsonTypes["CompletePayload"]["publish"])
+	require.Equal(t, "integer", jsonTypes["CompletePayload"]["retry_count"])
+}
+
 // Extend fields in tool shapes must be materialized before type/spec generation.
 func TestBuildToolSpecsData_ExtendFieldsMaterialized(t *testing.T) {
 	eval.Reset()

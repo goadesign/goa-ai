@@ -1,7 +1,10 @@
 // Package tools exposes shared tool metadata and codec types used by generated code.
 package tools
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // FieldIssue represents a single validation issue for a payload.
 // Constraint values follow goa error kinds: missing_field, invalid_enum_value,
@@ -16,6 +19,17 @@ type FieldIssue struct {
 	MaxLen  *int
 	Pattern string
 	Format  string
+	// ExpectedJSONType and ActualJSONType are populated for invalid_field_type
+	// issues emitted by generated codecs after JSON decoding rejects a field.
+	ExpectedJSONType string
+	ActualJSONType   string
+}
+
+// InvalidFieldTypeMessage renders generated JSON type metadata as planner guidance.
+func InvalidFieldTypeMessage(issue *FieldIssue) string {
+	expected := jsonTypeArticle(issue.ExpectedJSONType)
+	actual := jsonTypeArticle(issue.ActualJSONType)
+	return fmt.Sprintf("`%s` must be %s, not %s", issue.Field, expected, actual)
 }
 
 // ValidationError is the canonical structured validation error emitted by
@@ -43,6 +57,16 @@ func NewValidationError(message string, issues []*FieldIssue, descriptions map[s
 		issues:       clonedIssues,
 		descriptions: cloneStringMap(descriptions),
 	}
+}
+
+func jsonTypeArticle(value string) string {
+	if value == "" {
+		return "a JSON value"
+	}
+	if strings.HasPrefix(value, "JSON ") {
+		return "a " + value
+	}
+	return "a JSON " + value
 }
 
 // NewUnionDiscriminatorError creates the canonical validation error for a

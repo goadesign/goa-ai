@@ -61,6 +61,13 @@ var AddPayloadFieldDescs = map[string]string{
 var AddResultFieldDescs = map[string]string{
 	"sum": "Sum",
 }
+var AddPayloadFieldJSONTypes = map[string]string{
+	"left":  "integer",
+	"right": "integer",
+}
+var AddResultFieldJSONTypes = map[string]string{
+	"sum": "integer",
+}
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
 // tools.ValidationError with structured FieldIssue entries. It trims any leading
@@ -127,6 +134,68 @@ func enrichAddResultValidationError(err error) error {
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
 }
+func invalidAddPayloadFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	field = strings.TrimPrefix(field, "AddPayloadTransport.")
+	if field == "" {
+		field = "$payload"
+	}
+	expected := AddPayloadFieldJSONTypes[field]
+	if expected == "" {
+		expected = typeErr.Type.String()
+	}
+	actual := typeErr.Value
+	if actual == "" {
+		actual = "JSON value"
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
+func invalidAddResultFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	field = strings.TrimPrefix(field, "AddResultTransport.")
+	if field == "" {
+		field = "$payload"
+	}
+	expected := AddResultFieldJSONTypes[field]
+	if expected == "" {
+		expected = typeErr.Type.String()
+	}
+	actual := typeErr.Value
+	if actual == "" {
+		actual = "JSON value"
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
 
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
@@ -170,7 +239,7 @@ func UnmarshalAddPayload(data []byte) (*AddPayload, error) {
 	}
 	var tv toolhttp.AddPayloadTransport
 	if err := json.Unmarshal(data, &tv); err != nil {
-		return nil, fmt.Errorf("decode addPayload: %w", err)
+		return nil, invalidAddPayloadFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateAddPayloadTransport(&tv); err != nil {
 		err = newValidationError(err)
@@ -208,7 +277,7 @@ func UnmarshalAddResult(data []byte) (*AddResult, error) {
 	}
 	var tv toolhttp.AddResultTransport
 	if err := json.Unmarshal(data, &tv); err != nil {
-		return nil, fmt.Errorf("decode addResult: %w", err)
+		return nil, invalidAddResultFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateAddResultTransport(&tv); err != nil {
 		err = newValidationError(err)

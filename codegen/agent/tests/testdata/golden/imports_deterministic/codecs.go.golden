@@ -61,6 +61,12 @@ var StorePayloadFieldDescs = map[string]string{
 var StoreResultFieldDescs = map[string]string{
 	"id": "Identifier",
 }
+var StorePayloadFieldJSONTypes = map[string]string{
+	"id": "string",
+}
+var StoreResultFieldJSONTypes = map[string]string{
+	"id": "string",
+}
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
 // tools.ValidationError with structured FieldIssue entries. It trims any leading
@@ -127,6 +133,68 @@ func enrichStoreResultValidationError(err error) error {
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
 }
+func invalidStorePayloadFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	field = strings.TrimPrefix(field, "StorePayloadTransport.")
+	if field == "" {
+		field = "$payload"
+	}
+	expected := StorePayloadFieldJSONTypes[field]
+	if expected == "" {
+		expected = typeErr.Type.String()
+	}
+	actual := typeErr.Value
+	if actual == "" {
+		actual = "JSON value"
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
+func invalidStoreResultFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	field = strings.TrimPrefix(field, "StoreResultTransport.")
+	if field == "" {
+		field = "$payload"
+	}
+	expected := StoreResultFieldJSONTypes[field]
+	if expected == "" {
+		expected = typeErr.Type.String()
+	}
+	actual := typeErr.Value
+	if actual == "" {
+		actual = "JSON value"
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
 
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
@@ -169,7 +237,7 @@ func UnmarshalStorePayload(data []byte) (*StorePayload, error) {
 	}
 	var tv toolhttp.StorePayloadTransport
 	if err := json.Unmarshal(data, &tv); err != nil {
-		return nil, fmt.Errorf("decode storePayload: %w", err)
+		return nil, invalidStorePayloadFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateStorePayloadTransport(&tv); err != nil {
 		err = newValidationError(err)
@@ -206,7 +274,7 @@ func UnmarshalStoreResult(data []byte) (*StoreResult, error) {
 	}
 	var tv toolhttp.StoreResultTransport
 	if err := json.Unmarshal(data, &tv); err != nil {
-		return nil, fmt.Errorf("decode storeResult: %w", err)
+		return nil, invalidStoreResultFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateStoreResultTransport(&tv); err != nil {
 		err = newValidationError(err)

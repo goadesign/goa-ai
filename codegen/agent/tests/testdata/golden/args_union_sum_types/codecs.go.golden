@@ -60,6 +60,16 @@ var EchoPayloadFieldDescs = map[string]string{
 var EchoResultFieldDescs = map[string]string{
 	"id": "Request identifier",
 }
+var EchoPayloadFieldJSONTypes = map[string]string{
+	"id":          "string",
+	"value":       "object",
+	"value.value": "integer",
+}
+var EchoResultFieldJSONTypes = map[string]string{
+	"id":          "string",
+	"value":       "object",
+	"value.value": "integer",
+}
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
 // tools.ValidationError with structured FieldIssue entries. It trims any leading
@@ -126,6 +136,68 @@ func enrichEchoResultValidationError(err error) error {
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
 }
+func invalidEchoPayloadFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	field = strings.TrimPrefix(field, "EchoPayloadTransport.")
+	if field == "" {
+		field = "$payload"
+	}
+	expected := EchoPayloadFieldJSONTypes[field]
+	if expected == "" {
+		expected = typeErr.Type.String()
+	}
+	actual := typeErr.Value
+	if actual == "" {
+		actual = "JSON value"
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
+func invalidEchoResultFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	field = strings.TrimPrefix(field, "EchoResultTransport.")
+	if field == "" {
+		field = "$payload"
+	}
+	expected := EchoResultFieldJSONTypes[field]
+	if expected == "" {
+		expected = typeErr.Type.String()
+	}
+	actual := typeErr.Value
+	if actual == "" {
+		actual = "JSON value"
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
 
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
@@ -184,7 +256,7 @@ func UnmarshalEchoPayload(data []byte) (*EchoPayload, error) {
 	}
 	var tv toolhttp.EchoPayloadTransport
 	if err := json.Unmarshal(data, &tv); err != nil {
-		return nil, fmt.Errorf("decode echoPayload: %w", err)
+		return nil, invalidEchoPayloadFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateEchoPayloadTransport(&tv); err != nil {
 		err = newValidationError(err)
@@ -253,7 +325,7 @@ func UnmarshalEchoResult(data []byte) (*EchoResult, error) {
 	}
 	var tv toolhttp.EchoResultTransport
 	if err := json.Unmarshal(data, &tv); err != nil {
-		return nil, fmt.Errorf("decode echoResult: %w", err)
+		return nil, invalidEchoResultFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateEchoResultTransport(&tv); err != nil {
 		err = newValidationError(err)
