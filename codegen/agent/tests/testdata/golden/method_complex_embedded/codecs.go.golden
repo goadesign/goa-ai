@@ -70,6 +70,7 @@ var UpsertResultFieldDescs = map[string]string{
 	"name":           "Name",
 }
 var UpsertPayloadFieldJSONTypes = map[string]string{
+	"$payload":               "object",
 	"profile":                "object",
 	"profile.address":        "object",
 	"profile.address.city":   "string",
@@ -78,6 +79,7 @@ var UpsertPayloadFieldJSONTypes = map[string]string{
 	"profile.name":           "string",
 }
 var UpsertResultFieldJSONTypes = map[string]string{
+	"$payload":       "object",
 	"address":        "object",
 	"address.city":   "string",
 	"address.street": "string",
@@ -160,13 +162,13 @@ func invalidUpsertPayloadFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected := UpsertPayloadFieldJSONTypes[field]
-	if expected == "" {
-		expected = typeErr.Type.String()
+	expected, ok := UpsertPayloadFieldJSONTypes[field]
+	if !ok {
+		return err
 	}
 	actual := typeErr.Value
 	if actual == "" {
-		actual = "JSON value"
+		return err
 	}
 	return tools.NewValidationError(
 		err.Error(),
@@ -191,13 +193,13 @@ func invalidUpsertResultFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected := UpsertResultFieldJSONTypes[field]
-	if expected == "" {
-		expected = typeErr.Type.String()
+	expected, ok := UpsertResultFieldJSONTypes[field]
+	if !ok {
+		return err
 	}
 	actual := typeErr.Value
 	if actual == "" {
-		actual = "JSON value"
+		return err
 	}
 	return tools.NewValidationError(
 		err.Error(),

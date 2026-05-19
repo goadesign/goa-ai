@@ -62,11 +62,13 @@ var AddResultFieldDescs = map[string]string{
 	"sum": "Sum",
 }
 var AddPayloadFieldJSONTypes = map[string]string{
-	"left":  "integer",
-	"right": "integer",
+	"$payload": "object",
+	"left":     "integer",
+	"right":    "integer",
 }
 var AddResultFieldJSONTypes = map[string]string{
-	"sum": "integer",
+	"$payload": "object",
+	"sum":      "integer",
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -144,13 +146,13 @@ func invalidAddPayloadFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected := AddPayloadFieldJSONTypes[field]
-	if expected == "" {
-		expected = typeErr.Type.String()
+	expected, ok := AddPayloadFieldJSONTypes[field]
+	if !ok {
+		return err
 	}
 	actual := typeErr.Value
 	if actual == "" {
-		actual = "JSON value"
+		return err
 	}
 	return tools.NewValidationError(
 		err.Error(),
@@ -175,13 +177,13 @@ func invalidAddResultFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected := AddResultFieldJSONTypes[field]
-	if expected == "" {
-		expected = typeErr.Type.String()
+	expected, ok := AddResultFieldJSONTypes[field]
+	if !ok {
+		return err
 	}
 	actual := typeErr.Value
 	if actual == "" {
-		actual = "JSON value"
+		return err
 	}
 	return tools.NewValidationError(
 		err.Error(),

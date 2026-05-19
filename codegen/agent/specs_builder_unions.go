@@ -4,7 +4,6 @@ import (
 	"sort"
 
 	"goa.design/goa/v3/codegen"
-	"goa.design/goa/v3/codegen/service"
 	goaexpr "goa.design/goa/v3/expr"
 )
 
@@ -16,7 +15,7 @@ func (b *toolSpecBuilder) collectUnionSumTypes(scope *codegen.NameScope, att *go
 		return
 	}
 	if b.unions == nil {
-		b.unions = make(map[string]*service.UnionTypeData)
+		b.unions = make(map[string]*unionTypeData)
 	}
 	seen := make(map[string]struct{})
 	collectUnionSumTypes(att, scope, b.unions, seen)
@@ -30,18 +29,18 @@ func (b *toolSpecBuilder) collectTransportUnionSumTypes(scope *codegen.NameScope
 		return
 	}
 	if b.transportUnions == nil {
-		b.transportUnions = make(map[string]*service.UnionTypeData)
+		b.transportUnions = make(map[string]*unionTypeData)
 	}
 	seen := make(map[string]struct{})
 	collectUnionSumTypes(att, scope, b.transportUnions, seen)
 }
 
 // unionTypes returns the collected union sum types in deterministic order.
-func (b *toolSpecBuilder) unionTypes() []*service.UnionTypeData {
+func (b *toolSpecBuilder) unionTypes() []*unionTypeData {
 	if b == nil || len(b.unions) == 0 {
 		return nil
 	}
-	out := make([]*service.UnionTypeData, 0, len(b.unions))
+	out := make([]*unionTypeData, 0, len(b.unions))
 	for _, u := range b.unions {
 		out = append(out, u)
 	}
@@ -53,11 +52,11 @@ func (b *toolSpecBuilder) unionTypes() []*service.UnionTypeData {
 
 // transportUnionTypes returns the collected transport union sum types in
 // deterministic order.
-func (b *toolSpecBuilder) transportUnionTypes() []*service.UnionTypeData {
+func (b *toolSpecBuilder) transportUnionTypes() []*unionTypeData {
 	if b == nil || len(b.transportUnions) == 0 {
 		return nil
 	}
-	out := make([]*service.UnionTypeData, 0, len(b.transportUnions))
+	out := make([]*unionTypeData, 0, len(b.transportUnions))
 	for _, u := range b.transportUnions {
 		out = append(out, u)
 	}
@@ -70,7 +69,7 @@ func (b *toolSpecBuilder) transportUnionTypes() []*service.UnionTypeData {
 func collectUnionSumTypes(
 	att *goaexpr.AttributeExpr,
 	scope *codegen.NameScope,
-	unions map[string]*service.UnionTypeData,
+	unions map[string]*unionTypeData,
 	seen map[string]struct{},
 ) {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
@@ -112,12 +111,12 @@ func collectUnionSumTypes(
 	}
 }
 
-func buildUnionTypeData(u *goaexpr.Union, scope *codegen.NameScope) *service.UnionTypeData {
+func buildUnionTypeData(u *goaexpr.Union, scope *codegen.NameScope) *unionTypeData {
 	att := &goaexpr.AttributeExpr{Type: u}
 	name := scope.GoTypeName(att)
 	kindName := scope.Unique(name + "Kind")
 
-	fields := make([]*service.UnionFieldData, 0, len(u.Values))
+	fields := make([]*unionFieldData, 0, len(u.Values))
 	for _, nat := range u.Values {
 		if nat == nil || nat.Attribute == nil {
 			continue
@@ -129,16 +128,17 @@ func buildUnionTypeData(u *goaexpr.Union, scope *codegen.NameScope) *service.Uni
 		}
 		fieldType := scope.GoFullTypeRef(nat.Attribute, pkg)
 		kindConst := kindName + codegen.Goify(nat.Name, true)
-		fields = append(fields, &service.UnionFieldData{
+		fields = append(fields, &unionFieldData{
 			Name:      nat.Name,
 			KindConst: kindConst,
 			FieldName: fieldName,
 			FieldType: fieldType,
+			JSONType:  generatedJSONType(nat.Attribute.Type),
 			TypeTag:   nat.Name,
 		})
 	}
 
-	return &service.UnionTypeData{
+	return &unionTypeData{
 		Name:     name,
 		KindName: kindName,
 		Fields:   fields,

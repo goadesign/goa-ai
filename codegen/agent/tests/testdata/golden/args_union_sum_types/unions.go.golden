@@ -8,6 +8,7 @@ package union
 
 import (
 	"encoding/json"
+	"errors"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -134,6 +135,21 @@ func (u *Value) UnmarshalJSON(data []byte) error {
 	case string(ValueKindNumber):
 		var v ValueNumber
 		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			var typeErr *json.UnmarshalTypeError
+			if errors.As(err, &typeErr) && typeErr.Value != "" {
+				return tools.NewValidationError(
+					err.Error(),
+					[]*tools.FieldIssue{
+						{
+							Field:            "value",
+							Constraint:       "invalid_field_type",
+							ExpectedJSONType: "integer",
+							ActualJSONType:   typeErr.Value,
+						},
+					},
+					nil,
+				)
+			}
 			return err
 		}
 		u.kind = ValueKindNumber
@@ -141,6 +157,21 @@ func (u *Value) UnmarshalJSON(data []byte) error {
 	case string(ValueKindText):
 		var v ValueText
 		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			var typeErr *json.UnmarshalTypeError
+			if errors.As(err, &typeErr) && typeErr.Value != "" {
+				return tools.NewValidationError(
+					err.Error(),
+					[]*tools.FieldIssue{
+						{
+							Field:            "value",
+							Constraint:       "invalid_field_type",
+							ExpectedJSONType: "string",
+							ActualJSONType:   typeErr.Value,
+						},
+					},
+					nil,
+				)
+			}
 			return err
 		}
 		u.kind = ValueKindText

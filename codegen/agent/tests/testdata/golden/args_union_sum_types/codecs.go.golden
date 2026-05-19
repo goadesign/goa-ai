@@ -61,14 +61,14 @@ var EchoResultFieldDescs = map[string]string{
 	"id": "Request identifier",
 }
 var EchoPayloadFieldJSONTypes = map[string]string{
-	"id":          "string",
-	"value":       "object",
-	"value.value": "integer",
+	"$payload": "object",
+	"id":       "string",
+	"value":    "object",
 }
 var EchoResultFieldJSONTypes = map[string]string{
-	"id":          "string",
-	"value":       "object",
-	"value.value": "integer",
+	"$payload": "object",
+	"id":       "string",
+	"value":    "object",
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -146,13 +146,13 @@ func invalidEchoPayloadFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected := EchoPayloadFieldJSONTypes[field]
-	if expected == "" {
-		expected = typeErr.Type.String()
+	expected, ok := EchoPayloadFieldJSONTypes[field]
+	if !ok {
+		return err
 	}
 	actual := typeErr.Value
 	if actual == "" {
-		actual = "JSON value"
+		return err
 	}
 	return tools.NewValidationError(
 		err.Error(),
@@ -177,13 +177,13 @@ func invalidEchoResultFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected := EchoResultFieldJSONTypes[field]
-	if expected == "" {
-		expected = typeErr.Type.String()
+	expected, ok := EchoResultFieldJSONTypes[field]
+	if !ok {
+		return err
 	}
 	actual := typeErr.Value
 	if actual == "" {
-		actual = "JSON value"
+		return err
 	}
 	return tools.NewValidationError(
 		err.Error(),

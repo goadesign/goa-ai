@@ -196,6 +196,20 @@ func (d *toolSpecsData) needsJSONTypeIssueImport() bool {
 	return false
 }
 
+// needsStringImport reports whether codecs emit string manipulation for Goa
+// validation paths or generated transport field names.
+func (d *toolSpecsData) needsStringImport() bool {
+	if d.needsGoaImport() {
+		return true
+	}
+	for _, info := range d.order {
+		if len(info.FieldJSONTypes) > 0 && info.TransportTypeName != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // validationCodeWithContext wraps goa ValidationCode so that any panic carries
 // enough context (tool name, usage, and local context) to pinpoint generator
 // bugs. It does not attempt to recover; violations are treated as hard errors.
@@ -418,7 +432,7 @@ func (d *toolSpecsData) codecsImports() []*codegen.ImportSpec {
 	if needsGoa {
 		base = append(base, codegen.GoaImport(""))
 	}
-	if needsGoa || needsJSONTypeIssues {
+	if d.needsStringImport() {
 		// Keep strings import last to match golden expectations.
 		base = append(base, codegen.SimpleImport("strings"))
 	}

@@ -53,20 +53,8 @@ func buildFieldDescriptions(att *goaexpr.AttributeExpr) map[string]string {
 		case *goaexpr.Map:
 			walk(prefix, dt.ElemType)
 		case *goaexpr.Union:
-			// Unions marshal as a canonical {type,value} object. Field paths should
-			// reflect the actual wire contract to avoid misleading dotted paths like
-			// "block.text" that omit the "value" envelope.
-			valuePrefix := prefix
-			if valueKey := dt.GetValueKey(); valueKey != "" {
-				if valuePrefix != "" {
-					valuePrefix = valuePrefix + "." + valueKey
-				} else {
-					valuePrefix = valueKey
-				}
-			}
-			for _, v := range dt.Values {
-				walk(valuePrefix, v.Attribute)
-			}
+			// Union branch descriptions depend on the discriminator, so this generic
+			// field map records only the union field itself.
 		}
 	}
 	walk("", att)
@@ -88,15 +76,19 @@ func buildFieldJSONTypes(att *goaexpr.AttributeExpr) map[string]string {
 		if a == nil || a.Type == nil || a.Type == goaexpr.Empty {
 			return
 		}
-		if prefix != "" {
+		field := prefix
+		if field == "" {
+			field = "$payload"
+		}
+		if field != "" {
 			jsonType := generatedJSONType(a.Type)
 			if jsonType != "" {
-				if _, exists := out[prefix]; exists {
+				if _, exists := out[field]; exists {
 					jsonType = ""
 				}
 			}
 			if jsonType != "" {
-				out[prefix] = jsonType
+				out[field] = jsonType
 			}
 		}
 		switch dt := a.Type.(type) {
@@ -122,17 +114,9 @@ func buildFieldJSONTypes(att *goaexpr.AttributeExpr) map[string]string {
 		case *goaexpr.Map:
 			walk(prefix, dt.ElemType)
 		case *goaexpr.Union:
-			valuePrefix := prefix
-			if valueKey := dt.GetValueKey(); valueKey != "" {
-				if valuePrefix != "" {
-					valuePrefix = valuePrefix + "." + valueKey
-				} else {
-					valuePrefix = valueKey
-				}
-			}
-			for _, v := range dt.Values {
-				walk(valuePrefix, v.Attribute)
-			}
+			// Union branch payload types are discriminator-specific. The unqualified
+			// {type,value} envelope path is intentionally not used as contract
+			// metadata for branch values.
 		}
 	}
 	walk("", att)

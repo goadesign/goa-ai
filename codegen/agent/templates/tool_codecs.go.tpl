@@ -134,17 +134,19 @@ func invalid{{ .TypeName }}FieldTypeError(err error) error {
         return err
     }
     field := typeErr.Field
+    {{- if .TransportTypeName }}
     field = strings.TrimPrefix(field, "{{ .TransportTypeName }}.")
+    {{- end }}
     if field == "" {
         field = "$payload"
     }
-    expected := {{ .TypeName }}FieldJSONTypes[field]
-    if expected == "" {
-        expected = typeErr.Type.String()
+    expected, ok := {{ .TypeName }}FieldJSONTypes[field]
+    if !ok {
+        return err
     }
     actual := typeErr.Value
     if actual == "" {
-        actual = "JSON value"
+        return err
     }
     return tools.NewValidationError(
         err.Error(),

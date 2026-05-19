@@ -61,10 +61,12 @@ var SummarizeDocResultFieldDescs = map[string]string{
 	"title": "Title",
 }
 var SummarizeDocPayloadFieldJSONTypes = map[string]string{
-	"doc_id": "string",
+	"$payload": "object",
+	"doc_id":   "string",
 }
 var SummarizeDocResultFieldJSONTypes = map[string]string{
-	"title": "string",
+	"$payload": "object",
+	"title":    "string",
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -142,13 +144,13 @@ func invalidSummarizeDocPayloadFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected := SummarizeDocPayloadFieldJSONTypes[field]
-	if expected == "" {
-		expected = typeErr.Type.String()
+	expected, ok := SummarizeDocPayloadFieldJSONTypes[field]
+	if !ok {
+		return err
 	}
 	actual := typeErr.Value
 	if actual == "" {
-		actual = "JSON value"
+		return err
 	}
 	return tools.NewValidationError(
 		err.Error(),
@@ -173,13 +175,13 @@ func invalidSummarizeDocResultFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected := SummarizeDocResultFieldJSONTypes[field]
-	if expected == "" {
-		expected = typeErr.Type.String()
+	expected, ok := SummarizeDocResultFieldJSONTypes[field]
+	if !ok {
+		return err
 	}
 	actual := typeErr.Value
 	if actual == "" {
-		actual = "JSON value"
+		return err
 	}
 	return tools.NewValidationError(
 		err.Error(),

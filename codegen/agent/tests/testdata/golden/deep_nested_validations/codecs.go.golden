@@ -69,6 +69,7 @@ var ValidateResultFieldDescs = map[string]string{
 	"root":             "Root value",
 }
 var ValidatePayloadFieldJSONTypes = map[string]string{
+	"$payload":         "object",
 	"child":            "object",
 	"child.child":      "object",
 	"child.child.leaf": "string",
@@ -76,6 +77,7 @@ var ValidatePayloadFieldJSONTypes = map[string]string{
 	"root":             "string",
 }
 var ValidateResultFieldJSONTypes = map[string]string{
+	"$payload":         "object",
 	"child":            "object",
 	"child.child":      "object",
 	"child.child.leaf": "string",
@@ -158,13 +160,13 @@ func invalidValidatePayloadFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected := ValidatePayloadFieldJSONTypes[field]
-	if expected == "" {
-		expected = typeErr.Type.String()
+	expected, ok := ValidatePayloadFieldJSONTypes[field]
+	if !ok {
+		return err
 	}
 	actual := typeErr.Value
 	if actual == "" {
-		actual = "JSON value"
+		return err
 	}
 	return tools.NewValidationError(
 		err.Error(),
@@ -189,13 +191,13 @@ func invalidValidateResultFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected := ValidateResultFieldJSONTypes[field]
-	if expected == "" {
-		expected = typeErr.Type.String()
+	expected, ok := ValidateResultFieldJSONTypes[field]
+	if !ok {
+		return err
 	}
 	actual := typeErr.Value
 	if actual == "" {
-		actual = "JSON value"
+		return err
 	}
 	return tools.NewValidationError(
 		err.Error(),

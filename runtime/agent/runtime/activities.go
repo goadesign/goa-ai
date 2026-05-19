@@ -391,7 +391,7 @@ func buildRetryHintFromValidation(err error, toolName tools.Ident) ([]string, st
 				missing = append(missing, is.Field)
 			}
 		}
-		if is.Constraint == "invalid_field_type" {
+		if tools.HasInvalidFieldTypeMetadata(is) {
 			typeIssues = append(typeIssues, is)
 		}
 	}
@@ -399,15 +399,7 @@ func buildRetryHintFromValidation(err error, toolName tools.Ident) ([]string, st
 		return nil, "", planner.RetryReasonInvalidArguments, false
 	}
 	if len(typeIssues) > 0 {
-		parts := make([]string, 0, min(len(typeIssues), 3))
-		for i, issue := range typeIssues {
-			if i == 3 {
-				break
-			}
-			parts = append(parts, tools.InvalidFieldTypeMessage(issue))
-		}
-		question := "Please resend the tool call with " + strings.Join(parts, ", ") + "."
-		return fields, question, planner.RetryReasonInvalidArguments, true
+		return fields, tools.InvalidFieldTypeQuestion(typeIssues), planner.RetryReasonInvalidArguments, true
 	}
 	// Build a concise, description-enriched question for up to three fields.
 	var question string

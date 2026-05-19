@@ -8,9 +8,11 @@ package ops
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	toolhttp "goa.design/goa-ai/alpha/toolsets/ops/http"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"strings"
 )
 
 var (
@@ -51,6 +53,75 @@ var (
 		},
 	}
 )
+var EchoPayloadFieldJSONTypes = map[string]string{
+	"$payload": "string",
+}
+var EchoResultFieldJSONTypes = map[string]string{
+	"$payload": "string",
+}
+
+func invalidEchoPayloadFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	field = strings.TrimPrefix(field, "EchoPayloadTransport.")
+	if field == "" {
+		field = "$payload"
+	}
+	expected, ok := EchoPayloadFieldJSONTypes[field]
+	if !ok {
+		return err
+	}
+	actual := typeErr.Value
+	if actual == "" {
+		return err
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
+func invalidEchoResultFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	field = strings.TrimPrefix(field, "EchoResultTransport.")
+	if field == "" {
+		field = "$payload"
+	}
+	expected, ok := EchoResultFieldJSONTypes[field]
+	if !ok {
+		return err
+	}
+	actual := typeErr.Value
+	if actual == "" {
+		return err
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
 
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
@@ -91,7 +162,7 @@ func UnmarshalEchoPayload(data []byte) (*EchoPayload, error) {
 	}
 	var tv toolhttp.EchoPayloadTransport
 	if err := json.Unmarshal(data, &tv); err != nil {
-		return nil, fmt.Errorf("decode echoPayload: %w", err)
+		return nil, invalidEchoPayloadFieldTypeError(err)
 	}
 	in := &tv
 	_ = in
@@ -113,6 +184,7 @@ func UnmarshalEchoResult(data []byte) (EchoResult, error) {
 	}
 	var v EchoResult
 	if err := json.Unmarshal(data, &v); err != nil {
+		err = invalidEchoResultFieldTypeError(err)
 		return zero, fmt.Errorf("decode echoResult: %w", err)
 	}
 	return v, nil

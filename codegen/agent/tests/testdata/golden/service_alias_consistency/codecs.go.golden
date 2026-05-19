@@ -61,10 +61,12 @@ var ReadResultFieldDescs = map[string]string{
 	"id": "ID",
 }
 var ReadPayloadFieldJSONTypes = map[string]string{
-	"id": "string",
+	"$payload": "object",
+	"id":       "string",
 }
 var ReadResultFieldJSONTypes = map[string]string{
-	"id": "string",
+	"$payload": "object",
+	"id":       "string",
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -142,13 +144,13 @@ func invalidReadPayloadFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected := ReadPayloadFieldJSONTypes[field]
-	if expected == "" {
-		expected = typeErr.Type.String()
+	expected, ok := ReadPayloadFieldJSONTypes[field]
+	if !ok {
+		return err
 	}
 	actual := typeErr.Value
 	if actual == "" {
-		actual = "JSON value"
+		return err
 	}
 	return tools.NewValidationError(
 		err.Error(),
@@ -173,13 +175,13 @@ func invalidReadResultFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected := ReadResultFieldJSONTypes[field]
-	if expected == "" {
-		expected = typeErr.Type.String()
+	expected, ok := ReadResultFieldJSONTypes[field]
+	if !ok {
+		return err
 	}
 	actual := typeErr.Value
 	if actual == "" {
-		actual = "JSON value"
+		return err
 	}
 	return tools.NewValidationError(
 		err.Error(),

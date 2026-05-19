@@ -107,6 +107,23 @@ func (u *{{ $u.Name }}) UnmarshalJSON(data []byte) error {
 	case string({{ .KindConst }}):
 		var v {{ .FieldType }}
 		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			{{- if .JSONType }}
+			var typeErr *json.UnmarshalTypeError
+			if errors.As(err, &typeErr) && typeErr.Value != "" {
+				return tools.NewValidationError(
+					err.Error(),
+					[]*tools.FieldIssue{
+						{
+							Field:            "value",
+							Constraint:       "invalid_field_type",
+							ExpectedJSONType: {{ printf "%q" .JSONType }},
+							ActualJSONType:   typeErr.Value,
+						},
+					},
+					nil,
+				)
+			}
+			{{- end }}
 			return err
 		}
 		u.kind = {{ .KindConst }}

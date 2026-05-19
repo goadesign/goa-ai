@@ -490,7 +490,7 @@ func buildRetryHintFromIssues(toolName tools.Ident, spec *tools.ToolSpec, issues
 		if is.Constraint == "missing_field" {
 			missing = append(missing, is.Field)
 		}
-		if is.Constraint == "invalid_field_type" {
+		if tools.HasInvalidFieldTypeMetadata(is) {
 			typeIssues = append(typeIssues, is)
 		}
 	}
@@ -526,14 +526,7 @@ func buildRetryHintFromIssues(toolName tools.Ident, spec *tools.ToolSpec, issues
 
 func buildClarifyingQuestion(toolName tools.Ident, missing, fields []string, typeIssues []*tools.FieldIssue) string {
 	if len(typeIssues) > 0 {
-		parts := make([]string, 0, min(len(typeIssues), 3))
-		for i, issue := range typeIssues {
-			if i == 3 {
-				break
-			}
-			parts = append(parts, tools.InvalidFieldTypeMessage(issue))
-		}
-		return "Please resend the tool call with " + strings.Join(parts, ", ") + "."
+		return tools.InvalidFieldTypeQuestion(typeIssues)
 	}
 	if len(missing) == 2 && missing[0] == "query" && missing[1] == "requested_signals" {
 		return "I need additional information to run " + toolName.String() + ". Please provide either `query` (a short description) or `requested_signals` (a non-empty list of signal names) and resend the tool call."
