@@ -48,6 +48,17 @@ var {{ .TypeName }}FieldDescs = map[string]string{
 {{- end }}
 {{- end }}
 
+{{- /* Emit generated JSON type metadata per type if available */ -}}
+{{- range .Types }}
+{{- if .FieldJSONTypes }}
+var {{ .TypeName }}FieldJSONTypes = map[string]string{
+    {{- range $k, $v := .FieldJSONTypes }}
+    {{ printf "%q" $k }}: {{ printf "%q" $v }},
+    {{- end }}
+}
+{{- end }}
+{{- end }}
+
 {{- /* Compute whether any type has transport validation to gate helper emission */ -}}
 {{- $hasValidation := false }}
 {{- range .Types }}
@@ -111,6 +122,44 @@ func enrich{{ .TypeName }}ValidationError(err error) error {
     }
     {{- end }}
     return tools.NewValidationError(ve.Error(), issues, m)
+}
+{{- end }}
+{{- end }}
+
+{{- range .Types }}
+{{- if .FieldJSONTypes }}
+func invalid{{ .TypeName }}FieldTypeError(err error) error {
+    var typeErr *json.UnmarshalTypeError
+    if !errors.As(err, &typeErr) {
+        return err
+    }
+    field := typeErr.Field
+    {{- if .TransportTypeName }}
+    field = strings.TrimPrefix(field, "{{ .TransportTypeName }}.")
+    {{- end }}
+    if field == "" {
+        field = "$payload"
+    }
+    expected, ok := {{ .TypeName }}FieldJSONTypes[field]
+    if !ok {
+        return err
+    }
+    actual := typeErr.Value
+    if actual == "" {
+        return err
+    }
+    return tools.NewValidationError(
+        err.Error(),
+        []*tools.FieldIssue{
+            {
+                Field:            field,
+                Constraint:       "invalid_field_type",
+                ExpectedJSONType: expected,
+                ActualJSONType:   actual,
+            },
+        },
+        nil,
+    )
 }
 {{- end }}
 {{- end }}
@@ -189,7 +238,11 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
     {{- if and .TransportTypeName .Pointer }}
     var tv toolhttp.{{ .TransportTypeName }}
     if err := json.Unmarshal(data, &tv); err != nil {
+        {{- if .FieldJSONTypes }}
+        return nil, invalid{{ .TypeName }}FieldTypeError(err)
+        {{- else }}
         return nil, fmt.Errorf("{{ .DecodeError }}: %w", err)
+        {{- end }}
     }
     {{- if .TransportValidationSrc }}
     if err := toolhttp.Validate{{ .TransportTypeName }}(&tv); err != nil {
@@ -208,6 +261,9 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
     {{- else }}
     var v {{ .FullRef }}
     if err := json.Unmarshal(data, &v); err != nil {
+        {{- if .FieldJSONTypes }}
+        err = invalid{{ .TypeName }}FieldTypeError(err)
+        {{- end }}
         {{- if .Pointer }}
         return nil, fmt.Errorf("{{ .DecodeError }}: %w", err)
         {{- else }}

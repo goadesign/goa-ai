@@ -8,6 +8,7 @@ package completions
 
 import (
 	"encoding/json"
+	"errors"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -134,6 +135,21 @@ func (u *Draft) UnmarshalJSON(data []byte) error {
 	case string(DraftKindNewTask):
 		var v *CompletionDraft
 		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			var typeErr *json.UnmarshalTypeError
+			if errors.As(err, &typeErr) && typeErr.Value != "" {
+				return tools.NewValidationError(
+					err.Error(),
+					[]*tools.FieldIssue{
+						{
+							Field:            "value",
+							Constraint:       "invalid_field_type",
+							ExpectedJSONType: "object",
+							ActualJSONType:   typeErr.Value,
+						},
+					},
+					nil,
+				)
+			}
 			return err
 		}
 		u.kind = DraftKindNewTask
@@ -141,6 +157,21 @@ func (u *Draft) UnmarshalJSON(data []byte) error {
 	case string(DraftKindExistingTaskID):
 		var v DraftExistingTaskID
 		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			var typeErr *json.UnmarshalTypeError
+			if errors.As(err, &typeErr) && typeErr.Value != "" {
+				return tools.NewValidationError(
+					err.Error(),
+					[]*tools.FieldIssue{
+						{
+							Field:            "value",
+							Constraint:       "invalid_field_type",
+							ExpectedJSONType: "string",
+							ActualJSONType:   typeErr.Value,
+						},
+					},
+					nil,
+				)
+			}
 			return err
 		}
 		u.kind = DraftKindExistingTaskID

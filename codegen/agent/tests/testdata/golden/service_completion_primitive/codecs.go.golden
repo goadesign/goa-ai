@@ -8,6 +8,7 @@ package completions
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -32,6 +33,40 @@ var (
 		},
 	}
 )
+var HeadlineResultFieldJSONTypes = map[string]string{
+	"$payload": "string",
+}
+
+func invalidHeadlineResultFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	if field == "" {
+		field = "$payload"
+	}
+	expected, ok := HeadlineResultFieldJSONTypes[field]
+	if !ok {
+		return err
+	}
+	actual := typeErr.Value
+	if actual == "" {
+		return err
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
 
 // MarshalHeadlineResult serializes HeadlineResult into JSON.
 func MarshalHeadlineResult(v HeadlineResult) ([]byte, error) {
@@ -46,6 +81,7 @@ func UnmarshalHeadlineResult(data []byte) (HeadlineResult, error) {
 	}
 	var v HeadlineResult
 	if err := json.Unmarshal(data, &v); err != nil {
+		err = invalidHeadlineResultFieldTypeError(err)
 		return zero, fmt.Errorf("decode headlineResult: %w", err)
 	}
 	return v, nil

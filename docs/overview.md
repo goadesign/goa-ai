@@ -987,8 +987,10 @@ Goa‑AI produces retry hints from validation failures in two places:
 
 - **Codec validation (decode‑time)**: generated tool codecs validate JSON payloads before
   execution. When validation fails, the runtime extracts structured `FieldIssue` entries
-  (missing fields, invalid enum values, length/range constraints) and converts them into
-  `planner.RetryHint` so planners/UIs can ask for the missing/corrected fields.
+  (missing fields, invalid enum values, length/range constraints, and JSON type
+  mismatches) and converts them into `planner.RetryHint` so planners/UIs can ask
+  for the missing/corrected fields. JSON type mismatches carry generated
+  expected/actual JSON type metadata instead of requiring runtime schema parsing.
 
 - **Provider/service validation (execution‑time)**: tool providers may call a bound service
   method that returns a Goa validation error. Providers should include structured field

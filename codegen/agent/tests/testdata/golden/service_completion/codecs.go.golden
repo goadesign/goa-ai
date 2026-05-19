@@ -37,9 +37,12 @@ var (
 	}
 )
 var DraftFromTranscriptResultFieldDescs = map[string]string{
-	"assistant_text":          "Assistant summary",
-	"draft.value.steps":       "Draft steps",
-	"draft.value.steps.label": "User-visible step label",
+	"assistant_text": "Assistant summary",
+}
+var DraftFromTranscriptResultFieldJSONTypes = map[string]string{
+	"$payload":       "object",
+	"assistant_text": "string",
+	"draft":          "object",
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -90,6 +93,37 @@ func enrichDraftFromTranscriptResultValidationError(err error) error {
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
 }
+func invalidDraftFromTranscriptResultFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	field = strings.TrimPrefix(field, "DraftFromTranscriptResultTransport.")
+	if field == "" {
+		field = "$payload"
+	}
+	expected, ok := DraftFromTranscriptResultFieldJSONTypes[field]
+	if !ok {
+		return err
+	}
+	actual := typeErr.Value
+	if actual == "" {
+		return err
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
 
 // MarshalDraftFromTranscriptResult serializes *DraftFromTranscriptResult into JSON.
 func MarshalDraftFromTranscriptResult(v *DraftFromTranscriptResult) ([]byte, error) {
@@ -127,7 +161,7 @@ func UnmarshalDraftFromTranscriptResult(data []byte) (*DraftFromTranscriptResult
 	}
 	var tv toolhttp.DraftFromTranscriptResultTransport
 	if err := json.Unmarshal(data, &tv); err != nil {
-		return nil, fmt.Errorf("decode draftFromTranscriptResult: %w", err)
+		return nil, invalidDraftFromTranscriptResultFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateDraftFromTranscriptResultTransport(&tv); err != nil {
 		err = newValidationError(err)

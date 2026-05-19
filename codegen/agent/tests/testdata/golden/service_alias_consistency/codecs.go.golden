@@ -60,6 +60,14 @@ var ReadPayloadFieldDescs = map[string]string{
 var ReadResultFieldDescs = map[string]string{
 	"id": "ID",
 }
+var ReadPayloadFieldJSONTypes = map[string]string{
+	"$payload": "object",
+	"id":       "string",
+}
+var ReadResultFieldJSONTypes = map[string]string{
+	"$payload": "object",
+	"id":       "string",
+}
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
 // tools.ValidationError with structured FieldIssue entries. It trims any leading
@@ -126,6 +134,68 @@ func enrichReadResultValidationError(err error) error {
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
 }
+func invalidReadPayloadFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	field = strings.TrimPrefix(field, "ReadPayloadTransport.")
+	if field == "" {
+		field = "$payload"
+	}
+	expected, ok := ReadPayloadFieldJSONTypes[field]
+	if !ok {
+		return err
+	}
+	actual := typeErr.Value
+	if actual == "" {
+		return err
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
+func invalidReadResultFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	field = strings.TrimPrefix(field, "ReadResultTransport.")
+	if field == "" {
+		field = "$payload"
+	}
+	expected, ok := ReadResultFieldJSONTypes[field]
+	if !ok {
+		return err
+	}
+	actual := typeErr.Value
+	if actual == "" {
+		return err
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
 
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
@@ -168,7 +238,7 @@ func UnmarshalReadPayload(data []byte) (*ReadPayload, error) {
 	}
 	var tv toolhttp.ReadPayloadTransport
 	if err := json.Unmarshal(data, &tv); err != nil {
-		return nil, fmt.Errorf("decode readPayload: %w", err)
+		return nil, invalidReadPayloadFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateReadPayloadTransport(&tv); err != nil {
 		err = newValidationError(err)
@@ -205,7 +275,7 @@ func UnmarshalReadResult(data []byte) (*ReadResult, error) {
 	}
 	var tv toolhttp.ReadResultTransport
 	if err := json.Unmarshal(data, &tv); err != nil {
-		return nil, fmt.Errorf("decode readResult: %w", err)
+		return nil, invalidReadResultFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateReadResultTransport(&tv); err != nil {
 		err = newValidationError(err)

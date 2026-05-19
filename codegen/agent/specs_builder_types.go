@@ -24,12 +24,12 @@ type (
 		tools []*toolEntry
 		// Unions contains the sum-type unions required by any generated tool types
 		// in this specs package.
-		Unions []*service.UnionTypeData
+		Unions []*unionTypeData
 		// TransportUnions contains the sum-type unions required by any generated
 		// transport types in the toolset-local http package. These must be derived
 		// from the transport attribute graph (after localization) so they do not
 		// leak service `gen/types` references into tool JSON.
-		TransportUnions []*service.UnionTypeData
+		TransportUnions []*unionTypeData
 		// CodecTransformHelpers contains helper functions produced by Goa's
 		// GoTransform when generating codec-local conversions (transport <-> public).
 		// These are emitted once per package to support recursive types without
@@ -100,6 +100,21 @@ type (
 		Audience    string
 		Description string
 		Type        *typeData
+	}
+
+	unionTypeData struct {
+		Name     string
+		KindName string
+		Fields   []*unionFieldData
+	}
+
+	unionFieldData struct {
+		Name      string
+		KindConst string
+		FieldName string
+		FieldType string
+		JSONType  string
+		TypeTag   string
 	}
 
 	toolMetaPair struct {
@@ -224,6 +239,8 @@ type (
 		GenerateCodec bool
 		// FieldDescs maps dotted field paths to descriptions (for payload types).
 		FieldDescs map[string]string
+		// FieldJSONTypes maps dotted field paths to their generated JSON type.
+		FieldJSONTypes map[string]string
 		// AcceptEmpty indicates that empty JSON input should be accepted and
 		// treated as the zero value (only for payloads). This is true for
 		// payload types that are empty structs (no fields).
@@ -251,10 +268,10 @@ type (
 		helperScope *codegen.NameScope
 		// unions accumulates all union sum types referenced by generated tool
 		// payload/result/sidecar types in this specs package, indexed by union hash.
-		unions map[string]*service.UnionTypeData
+		unions map[string]*unionTypeData
 		// transportUnions accumulates all union sum types referenced by transport
 		// helper graphs emitted into the toolset-local http package.
-		transportUnions map[string]*service.UnionTypeData
+		transportUnions map[string]*unionTypeData
 		// codecTransformHelpers accumulates unique GoTransform helper functions
 		// required by codec-local conversions (transport <-> public).
 		codecTransformHelpers    []*codegen.TransformFunctionData

@@ -2,7 +2,6 @@ package codegen
 
 import (
 	"goa.design/goa/v3/codegen"
-	"goa.design/goa/v3/codegen/service"
 )
 
 type (
@@ -17,7 +16,7 @@ type (
 	}
 
 	toolUnionTypesFileData struct {
-		Unions []*service.UnionTypeData
+		Unions []*unionTypeData
 	}
 
 	toolTransportTypesFileData struct {

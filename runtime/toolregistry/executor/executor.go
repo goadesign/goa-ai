@@ -481,6 +481,7 @@ func buildRetryHintFromIssues(toolName tools.Ident, spec *tools.ToolSpec, issues
 	}
 	fields := make([]string, 0, len(issues))
 	missing := make([]string, 0, len(issues))
+	typeIssues := make([]*tools.FieldIssue, 0, len(issues))
 	for _, is := range issues {
 		if is == nil || is.Field == "" {
 			continue
@@ -488,6 +489,9 @@ func buildRetryHintFromIssues(toolName tools.Ident, spec *tools.ToolSpec, issues
 		fields = append(fields, is.Field)
 		if is.Constraint == "missing_field" {
 			missing = append(missing, is.Field)
+		}
+		if tools.HasInvalidFieldTypeMetadata(is) {
+			typeIssues = append(typeIssues, is)
 		}
 	}
 	if len(fields) == 0 {
@@ -498,7 +502,7 @@ func buildRetryHintFromIssues(toolName tools.Ident, spec *tools.ToolSpec, issues
 	sort.Strings(fields)
 	sort.Strings(missing)
 
-	question := buildClarifyingQuestion(toolName, missing, fields)
+	question := buildClarifyingQuestion(toolName, missing, fields, typeIssues)
 	var example map[string]any
 	if spec != nil && len(spec.Payload.ExampleInput) > 0 {
 		example = spec.Payload.ExampleInput
@@ -507,16 +511,23 @@ func buildRetryHintFromIssues(toolName tools.Ident, spec *tools.ToolSpec, issues
 	if len(missing) > 0 {
 		reason = planner.RetryReasonMissingFields
 	}
+	hintFields := missing
+	if len(hintFields) == 0 {
+		hintFields = fields
+	}
 	return &planner.RetryHint{
 		Reason:             reason,
 		Tool:               toolName,
-		MissingFields:      missing,
+		MissingFields:      hintFields,
 		ExampleInput:       example,
 		ClarifyingQuestion: question,
 	}
 }
 
-func buildClarifyingQuestion(toolName tools.Ident, missing, fields []string) string {
+func buildClarifyingQuestion(toolName tools.Ident, missing, fields []string, typeIssues []*tools.FieldIssue) string {
+	if len(typeIssues) > 0 {
+		return tools.InvalidFieldTypeQuestion(typeIssues)
+	}
 	if len(missing) == 2 && missing[0] == "query" && missing[1] == "requested_signals" {
 		return "I need additional information to run " + toolName.String() + ". Please provide either `query` (a short description) or `requested_signals` (a non-empty list of signal names) and resend the tool call."
 	}

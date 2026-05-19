@@ -137,15 +137,15 @@ func (r *Runtime) recordGenAITelemetryEvent(ctx context.Context, evt hooks.Event
 	case *hooks.ToolResultReceivedEvent:
 		ctx = telemetry.WithGenAIContext(ctx, telemetry.GenAIContext{
 			ConversationID: conversationID(e.SessionID(), e.RunID()),
-			AgentID:        string(e.AgentID()),
-			AgentName:      string(e.AgentID()),
+			AgentID:        e.AgentID(),
+			AgentName:      e.AgentID(),
 		})
 		r.recordGenAIToolSpan(ctx, e)
 	case *hooks.ChildRunLinkedEvent:
 		ctx = telemetry.WithGenAIContext(ctx, telemetry.GenAIContext{
 			ConversationID: conversationID(e.SessionID(), e.RunID()),
-			AgentID:        string(e.AgentID()),
-			AgentName:      string(e.AgentID()),
+			AgentID:        e.AgentID(),
+			AgentName:      e.AgentID(),
 		})
 		r.recordGenAIInvokeAgentSpan(ctx, e)
 	}

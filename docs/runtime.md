@@ -1915,8 +1915,11 @@ Goa‑AI supports two complementary paths that produce `planner.RetryHint`:
    The generated tool codec validates the tool JSON payload before execution.
    If validation fails, the codec returns a generated validation error that exposes
    structured issues (`Issues() []*tools.FieldIssue`) and descriptions. The runtime
-   converts these into `planner.RetryHint` automatically (missing fields, enum values,
-   etc.).
+   converts these into `planner.RetryHint` automatically. Generated codecs also
+   turn JSON type mismatches into `invalid_field_type` issues with expected and
+   actual JSON type metadata, so callers can produce guidance such as
+   ``sections` must be a JSON array, not a JSON string`` without parsing schemas
+   or error strings.
 
 2. **Execution‑time validation (service / tool provider errors)**  
    When a tool provider calls a bound service method, the method may return a Goa

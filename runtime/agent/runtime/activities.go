@@ -378,6 +378,7 @@ func buildRetryHintFromValidation(err error, toolName tools.Ident) ([]string, st
 	}
 	fields := make([]string, 0, len(issues))
 	missing := make([]string, 0, len(issues))
+	typeIssues := make([]*tools.FieldIssue, 0, len(issues))
 	for _, is := range issues {
 		if is.Field == "" {
 			continue
@@ -390,9 +391,15 @@ func buildRetryHintFromValidation(err error, toolName tools.Ident) ([]string, st
 				missing = append(missing, is.Field)
 			}
 		}
+		if tools.HasInvalidFieldTypeMetadata(is) {
+			typeIssues = append(typeIssues, is)
+		}
 	}
 	if len(fields) == 0 {
 		return nil, "", planner.RetryReasonInvalidArguments, false
+	}
+	if len(typeIssues) > 0 {
+		return fields, tools.InvalidFieldTypeQuestion(typeIssues), planner.RetryReasonInvalidArguments, true
 	}
 	// Build a concise, description-enriched question for up to three fields.
 	var question string

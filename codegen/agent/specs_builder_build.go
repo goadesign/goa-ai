@@ -186,6 +186,30 @@ func (d *toolSpecsData) needsGoaImport() bool {
 	return false
 }
 
+// needsJSONTypeIssueImport reports whether codecs emit structured JSON type issues.
+func (d *toolSpecsData) needsJSONTypeIssueImport() bool {
+	for _, info := range d.order {
+		if len(info.FieldJSONTypes) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// needsStringImport reports whether codecs emit string manipulation for Goa
+// validation paths or generated transport field names.
+func (d *toolSpecsData) needsStringImport() bool {
+	if d.needsGoaImport() {
+		return true
+	}
+	for _, info := range d.order {
+		if len(info.FieldJSONTypes) > 0 && info.TransportTypeName != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // validationCodeWithContext wraps goa ValidationCode so that any panic carries
 // enough context (tool name, usage, and local context) to pinpoint generator
 // bugs. It does not attempt to recover; violations are treated as hard errors.
@@ -353,10 +377,11 @@ func (d *toolSpecsData) typeImports() []*codegen.ImportSpec {
 // codecsImports returns the imports required by the generated tool codecs file.
 func (d *toolSpecsData) codecsImports() []*codegen.ImportSpec {
 	needsGoa := d.needsGoaImport()
+	needsJSONTypeIssues := d.needsJSONTypeIssueImport()
 	base := []*codegen.ImportSpec{
 		codegen.SimpleImport("encoding/json"),
 	}
-	if needsGoa {
+	if needsGoa || needsJSONTypeIssues {
 		base = append(base, codegen.SimpleImport("errors"))
 	}
 	base = append(base,
@@ -406,6 +431,8 @@ func (d *toolSpecsData) codecsImports() []*codegen.ImportSpec {
 	}
 	if needsGoa {
 		base = append(base, codegen.GoaImport(""))
+	}
+	if d.needsStringImport() {
 		// Keep strings import last to match golden expectations.
 		base = append(base, codegen.SimpleImport("strings"))
 	}

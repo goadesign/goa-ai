@@ -62,6 +62,24 @@ func TestBuildRetryHint_LengthPatternFormat(t *testing.T) {
 	require.True(t, containsAll(q, []string{"name", "email", "code"}))
 }
 
+func TestBuildRetryHint_InvalidFieldType(t *testing.T) {
+	ferr := &fakeValidationError{
+		issues: []*tools.FieldIssue{{
+			Field:            "sections",
+			Constraint:       "invalid_field_type",
+			ExpectedJSONType: "array",
+			ActualJSONType:   "string",
+		}},
+	}
+
+	fields, q, reason, ok := buildRetryHintFromValidation(ferr, "tasks.progress.complete")
+
+	require.True(t, ok)
+	require.Equal(t, planner.RetryReasonInvalidArguments, reason)
+	require.Equal(t, []string{"sections"}, fields)
+	require.Contains(t, q, "`sections` must be a JSON array, not a JSON string")
+}
+
 // containsAll helper
 func containsAll(s string, parts []string) bool {
 	for _, p := range parts {

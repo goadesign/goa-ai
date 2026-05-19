@@ -6,6 +6,50 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestInvalidFieldTypeQuestion(t *testing.T) {
+	issues := []*FieldIssue{
+		{
+			Field:            "sections",
+			Constraint:       "invalid_field_type",
+			ExpectedJSONType: "array",
+			ActualJSONType:   "string",
+		},
+		{
+			Field:            "retry_count",
+			Constraint:       "invalid_field_type",
+			ExpectedJSONType: "integer",
+			ActualJSONType:   "number 1.5",
+		},
+	}
+
+	got := InvalidFieldTypeQuestion(issues)
+
+	assert.Equal(t, "Please resend the tool call with `sections` must be a JSON array, not a JSON string, `retry_count` must be a JSON integer, not a JSON number 1.5.", got)
+}
+
+func TestInvalidFieldTypeQuestionRequiresInvalidFieldTypeMetadata(t *testing.T) {
+	issue := &FieldIssue{
+		Field:      "sections",
+		Constraint: "invalid_field_type",
+	}
+
+	assert.PanicsWithValue(t, "tools invalid_field_type issue requires expected JSON type", func() {
+		InvalidFieldTypeQuestion([]*FieldIssue{issue})
+	})
+}
+
+func TestValidationErrorAcceptsGenericInvalidFieldTypeIssues(t *testing.T) {
+	issue := &FieldIssue{
+		Field:      "query.count",
+		Constraint: "invalid_field_type",
+	}
+
+	err := NewValidationError("bad type", []*FieldIssue{issue}, nil)
+
+	assert.Equal(t, []*FieldIssue{issue}, err.Issues())
+	assert.False(t, HasInvalidFieldTypeMetadata(issue))
+}
+
 func TestValidationErrorClonesIssues(t *testing.T) {
 	const mutated = "mutated"
 

@@ -102,6 +102,7 @@ func completionSpecsFiles(data *GeneratorData) ([]*codegen.File, error) {
 				unionImports := make([]*codegen.ImportSpec, 0, 3+len(timports))
 				unionImports = append(unionImports,
 					codegen.SimpleImport("encoding/json"),
+					codegen.SimpleImport("errors"),
 					codegen.SimpleImport("goa.design/goa-ai/runtime/agent/tools"),
 				)
 				unionImports = append(unionImports, timports...)
@@ -141,6 +142,7 @@ func completionSpecsFiles(data *GeneratorData) ([]*codegen.File, error) {
 			unionImports := make([]*codegen.ImportSpec, 0, 3+len(typeImports))
 			unionImports = append(unionImports,
 				codegen.SimpleImport("encoding/json"),
+				codegen.SimpleImport("errors"),
 				codegen.SimpleImport("goa.design/goa-ai/runtime/agent/tools"),
 			)
 			unionImports = append(unionImports, typeImports...)
