@@ -155,6 +155,12 @@ Each entry contains the canonical tool ID with full JSON Schemas:
 Schemas derive from the same DSL as your generated specs and codecs. If schema generation fails,
 `goa gen` fails fast—no silent drift between runtime contracts and the JSON catalogue.
 
+`OneOf` values are emitted in the same canonical discriminated envelope used by
+the generated codecs: each variant is a `oneOf` object with a fixed `type`
+value and a typed `value` payload. For example, a markdown block variant is
+described as `{ "type": "markdown", "value": { "text": "..." } }`, never as a
+raw string or as an untyped `value.anyOf` branch.
+
 ### Bounded Tool Results and Bounds Metadata
 
 Some tools naturally return large lists, graphs, or time‑series windows. Goa‑AI lets you mark these

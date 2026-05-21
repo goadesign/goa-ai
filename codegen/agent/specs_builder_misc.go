@@ -3,6 +3,7 @@ package codegen
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
@@ -268,7 +269,7 @@ func schemaForAttribute(att *goaexpr.AttributeExpr) ([]byte, error) {
 				if err != nil {
 					return b, nil
 				}
-				return b, nil
+				return specializeUnionSchemas(b, att)
 			}
 		}
 	}
@@ -276,7 +277,166 @@ func schemaForAttribute(att *goaexpr.AttributeExpr) ([]byte, error) {
 	if err != nil {
 		return b, err
 	}
-	return b, nil
+	return specializeUnionSchemas(b, att)
+}
+
+// specializeUnionSchemas rewrites Goa's generic OneOf schema projection into
+// the canonical discriminated JSON envelope generated codecs require. The
+// owning contract is the generated union codec: callers must send
+// {type:<variant>, value:<variant-payload>}, and the schema should expose that
+// exact closed shape instead of an unbound anyOf under value.
+func specializeUnionSchemas(schemaBytes []byte, att *goaexpr.AttributeExpr) ([]byte, error) {
+	if len(schemaBytes) == 0 || att == nil || !containsUnion(att) {
+		return schemaBytes, nil
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(schemaBytes, &doc); err != nil {
+		return nil, fmt.Errorf("unmarshal schema for union specialization: %w", err)
+	}
+	defs, _ := doc["$defs"].(map[string]any)
+	if err := specializeUnionSchemaNode(att, doc, defs, map[string]struct{}{}); err != nil {
+		return nil, err
+	}
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return nil, fmt.Errorf("marshal schema for union specialization: %w", err)
+	}
+	return out, nil
+}
+
+func containsUnion(att *goaexpr.AttributeExpr) bool {
+	if att == nil || att.Type == nil {
+		return false
+	}
+	switch dt := att.Type.(type) {
+	case goaexpr.UserType:
+		return containsUnion(dt.Attribute())
+	case *goaexpr.Object:
+		for _, nat := range *dt {
+			if containsUnion(nat.Attribute) {
+				return true
+			}
+		}
+	case *goaexpr.Array:
+		return containsUnion(dt.ElemType)
+	case *goaexpr.Map:
+		return containsUnion(dt.ElemType)
+	case *goaexpr.Union:
+		return true
+	}
+	return false
+}
+
+func specializeUnionSchemaNode(att *goaexpr.AttributeExpr, schema map[string]any, defs map[string]any, seen map[string]struct{}) error {
+	if att == nil || att.Type == nil || len(schema) == 0 {
+		return nil
+	}
+	if refName := schemaRefName(schema); refName != "" {
+		if _, ok := seen[refName]; ok {
+			return nil
+		}
+		defSchema, ok := defs[refName].(map[string]any)
+		if !ok {
+			return fmt.Errorf("schema ref %q for union specialization is missing from $defs", refName)
+		}
+		seen[refName] = struct{}{}
+		defer delete(seen, refName)
+		return specializeUnionSchemaNode(att, defSchema, defs, seen)
+	}
+	switch dt := att.Type.(type) {
+	case goaexpr.UserType:
+		return specializeUnionSchemaNode(dt.Attribute(), schema, defs, seen)
+	case *goaexpr.Object:
+		properties, _ := schema["properties"].(map[string]any)
+		for _, nat := range *dt {
+			if !containsUnion(nat.Attribute) {
+				continue
+			}
+			childSchema, _ := properties[nat.Name].(map[string]any)
+			if len(childSchema) == 0 {
+				return fmt.Errorf("schema for union-bearing field %q is missing", nat.Name)
+			}
+			if err := specializeUnionSchemaNode(nat.Attribute, childSchema, defs, seen); err != nil {
+				return err
+			}
+		}
+	case *goaexpr.Array:
+		if !containsUnion(dt.ElemType) {
+			return nil
+		}
+		items, _ := schema["items"].(map[string]any)
+		if len(items) == 0 {
+			return fmt.Errorf("array schema for union-bearing elements is missing items")
+		}
+		return specializeUnionSchemaNode(dt.ElemType, items, defs, seen)
+	case *goaexpr.Map:
+		if !containsUnion(dt.ElemType) {
+			return nil
+		}
+		values, _ := schema["additionalProperties"].(map[string]any)
+		if len(values) == 0 {
+			return fmt.Errorf("map schema for union-bearing values is missing additionalProperties")
+		}
+		return specializeUnionSchemaNode(dt.ElemType, values, defs, seen)
+	case *goaexpr.Union:
+		return rewriteUnionSchema(dt, schema)
+	}
+	return nil
+}
+
+func rewriteUnionSchema(union *goaexpr.Union, schema map[string]any) error {
+	typeKey := union.GetTypeKey()
+	if typeKey == "" {
+		typeKey = "type"
+	}
+	valueKey := union.GetValueKey()
+	if valueKey == "" {
+		valueKey = "value"
+	}
+	properties, _ := schema["properties"].(map[string]any)
+	typeSchema, _ := properties[typeKey].(map[string]any)
+	valueSchema, _ := properties[valueKey].(map[string]any)
+	variants, _ := typeSchema["enum"].([]any)
+	values, _ := valueSchema["anyOf"].([]any)
+	if len(variants) != len(union.Values) || len(values) != len(union.Values) {
+		return fmt.Errorf("union schema for %q does not match %d variants", union.TypeName, len(union.Values))
+	}
+
+	oneOf := make([]any, 0, len(union.Values))
+	for i, nat := range union.Values {
+		if nat == nil {
+			return fmt.Errorf("union %q has nil variant %d", union.TypeName, i)
+		}
+		name, _ := variants[i].(string)
+		if name != nat.Name {
+			return fmt.Errorf("union schema variant %d for %q is %q, want %q", i, union.TypeName, name, nat.Name)
+		}
+		oneOf = append(oneOf, map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				typeKey: map[string]any{
+					"type": "string",
+					"enum": []any{nat.Name},
+				},
+				valueKey: values[i],
+			},
+			"required": []any{typeKey, valueKey},
+		})
+	}
+	delete(schema, "type")
+	delete(schema, "properties")
+	delete(schema, "required")
+	delete(schema, "example")
+	schema["oneOf"] = oneOf
+	return nil
+}
+
+func schemaRefName(schema map[string]any) string {
+	ref, _ := schema["$ref"].(string)
+	if ref == "" || !strings.HasPrefix(ref, "#/$defs/") {
+		return ""
+	}
+	return strings.TrimPrefix(ref, "#/$defs/")
 }
 
 // authoredExampleForAttribute returns the last explicit Example(...) declared on
