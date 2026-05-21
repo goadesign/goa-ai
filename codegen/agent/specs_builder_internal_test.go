@@ -183,6 +183,130 @@ func TestBuildToolSpecsData_FieldJSONTypes_DoNotFlattenUnionVariants(t *testing.
 	require.NotContains(t, jsonTypes["EchoPayload"], "value.value")
 }
 
+func TestBuildToolSpecsData_UnionSchemasUseCanonicalEnvelope(t *testing.T) {
+	eval.Reset()
+	goaexpr.Root = new(goaexpr.RootExpr)
+	goaexpr.GeneratedResultTypes = new(goaexpr.ResultTypesRoot)
+	require.NoError(t, eval.Register(goaexpr.Root))
+	require.NoError(t, eval.Register(goaexpr.GeneratedResultTypes))
+
+	agentsExpr.Root = &agentsExpr.RootExpr{}
+	require.NoError(t, eval.Register(agentsExpr.Root))
+
+	design := func() {
+		goadsl.API("alpha", func() {})
+		var UnionPayload = goadsl.Type("UnionPayload", func() {
+			goadsl.Attribute("id", goadsl.String, "Request identifier")
+			goadsl.OneOf("value", func() {
+				goadsl.Attribute("number", goadsl.Int32, "Numeric value")
+				goadsl.Attribute("text", goadsl.String, "Text value")
+			})
+			goadsl.Required("id", "value")
+		})
+		goadsl.Service("alpha", func() {
+			Agent("scribe", "Doc helper", func() {
+				Use("union", func() {
+					Tool("echo", "Echo union", func() {
+						Args(UnionPayload)
+					})
+				})
+			})
+		})
+	}
+	require.True(t, eval.Execute(design, nil), eval.Context.Error())
+	require.NoError(t, eval.RunDSL())
+
+	data, err := codegen.BuildDataForTest("goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root})
+	require.NoError(t, err)
+	specs, err := codegen.BuildToolSpecsDataForTest(data.Services[0].Agents[0])
+	require.NoError(t, err)
+
+	schemas := codegen.CollectTypeSchemasForTest(specs)
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(schemas["EchoPayload"], &schema))
+	properties := schema["properties"].(map[string]any)
+	value := properties["value"].(map[string]any)
+	require.NotContains(t, value, "properties")
+	oneOf := value["oneOf"].([]any)
+	require.Len(t, oneOf, 2)
+	first := oneOf[0].(map[string]any)
+	firstProperties := first["properties"].(map[string]any)
+	firstType := firstProperties["type"].(map[string]any)
+	require.Equal(t, []any{"number"}, firstType["enum"])
+	require.Equal(t, []any{"type", "value"}, first["required"])
+	require.NotNil(t, firstProperties["value"])
+}
+
+func TestBuildToolSpecsData_UnionSchemasSpecializeDefinitions(t *testing.T) {
+	eval.Reset()
+	goaexpr.Root = new(goaexpr.RootExpr)
+	goaexpr.GeneratedResultTypes = new(goaexpr.ResultTypesRoot)
+	require.NoError(t, eval.Register(goaexpr.Root))
+	require.NoError(t, eval.Register(goaexpr.GeneratedResultTypes))
+
+	agentsExpr.Root = &agentsExpr.RootExpr{}
+	require.NoError(t, eval.Register(agentsExpr.Root))
+
+	design := func() {
+		goadsl.API("alpha", func() {})
+		var Markdown = goadsl.Type("Markdown", func() {
+			goadsl.Attribute("text", goadsl.String, "Markdown text")
+			goadsl.Required("text")
+		})
+		var Figure = goadsl.Type("Figure", func() {
+			goadsl.Attribute("evidence_id", goadsl.String, "Evidence id")
+			goadsl.Required("evidence_id")
+		})
+		var Block = goadsl.Type("Block", func() {
+			goadsl.OneOf("block", func() {
+				goadsl.Attribute("markdown", Markdown, "Markdown block")
+				goadsl.Attribute("figure", Figure, "Figure block")
+			})
+			goadsl.Required("block")
+		})
+		var Section = goadsl.Type("Section", func() {
+			goadsl.Attribute("blocks", goadsl.ArrayOf(Block), "Blocks")
+			goadsl.Required("blocks")
+		})
+		var Payload = goadsl.Type("Payload", func() {
+			goadsl.Attribute("sections", goadsl.ArrayOf(Section), "Sections")
+			goadsl.Required("sections")
+		})
+		goadsl.Service("alpha", func() {
+			Agent("scribe", "Doc helper", func() {
+				Use("brief", func() {
+					Tool("save", "Save brief", func() {
+						Args(Payload)
+					})
+				})
+			})
+		})
+	}
+	require.True(t, eval.Execute(design, nil), eval.Context.Error())
+	require.NoError(t, eval.RunDSL())
+
+	data, err := codegen.BuildDataForTest("goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root})
+	require.NoError(t, err)
+	specs, err := codegen.BuildToolSpecsDataForTest(data.Services[0].Agents[0])
+	require.NoError(t, err)
+
+	schemas := codegen.CollectTypeSchemasForTest(specs)
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(schemas["SavePayload"], &schema))
+	defs := schema["$defs"].(map[string]any)
+	block := defs["Block"].(map[string]any)
+	properties := block["properties"].(map[string]any)
+	union := properties["block"].(map[string]any)
+	require.NotContains(t, union, "properties")
+	oneOf := union["oneOf"].([]any)
+	require.Len(t, oneOf, 2)
+	first := oneOf[0].(map[string]any)
+	firstProperties := first["properties"].(map[string]any)
+	firstType := firstProperties["type"].(map[string]any)
+	require.Equal(t, []any{"markdown"}, firstType["enum"])
+	require.NotNil(t, firstProperties["value"])
+}
+
 // Extend fields in tool shapes must be materialized before type/spec generation.
 func TestBuildToolSpecsData_ExtendFieldsMaterialized(t *testing.T) {
 	eval.Reset()

@@ -124,6 +124,12 @@ var _ = Service("tasks", func() {
 `Example`, validations, and `OneOf` all apply exactly as they do for tool payloads
 and results.
 
+Generated JSON Schemas expose `OneOf` values through the same discriminated
+envelope the codecs accept: `{ "type": "<variant>", "value": <typed-payload> }`.
+Each schema variant fixes `type` to exactly one enum value and gives `value` the
+variant payload schema, so model-facing contracts do not advertise untyped
+`anyOf` payloads or raw string shortcuts.
+
 Completion names are part of the structured-output contract. They must be
 1-64 ASCII characters, may contain letters, digits, `_`, and `-`, and must
 start with a letter or digit.
