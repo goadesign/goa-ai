@@ -369,6 +369,51 @@ func TestHookActivity_EnrichesToolCallScheduledDisplayHintInRunlog(t *testing.T)
 	require.Contains(t, string(rl.events[0].Payload), "Checking hourly energy rates")
 }
 
+func TestHookActivity_EnrichesToolUnavailableDisplayHintInRunlog(t *testing.T) {
+	t.Parallel()
+
+	rl := &recordingRunlog{}
+	bus := hooks.NewBus()
+	store := sessioninmem.New()
+	rt := New(
+		WithRunEventStore(rl),
+		WithHooks(bus),
+		WithSessionStore(store),
+	)
+
+	now := time.Now().UTC()
+	_, err := store.CreateSession(context.Background(), "sess-1", now)
+	require.NoError(t, err)
+	require.NoError(t, store.UpsertRun(context.Background(), session.RunMeta{
+		AgentID:   "svc.agent",
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		Status:    session.RunStatusPending,
+		StartedAt: now,
+		UpdatedAt: now,
+	}))
+
+	ev := hooks.NewToolCallScheduledEvent(
+		"run-1",
+		"svc.agent",
+		"sess-1",
+		tools.ToolUnavailable,
+		"call-1",
+		rawjson.Message([]byte(`{"requested_tool":"ada.resolve_time_series_sources"}`)),
+		"queue",
+		"",
+		0,
+	)
+	require.Empty(t, ev.DisplayHint)
+
+	input := mustEncodeHookRecord(t, ev, "evt-6", 6)
+
+	require.NoError(t, rt.recordActivity(context.Background(), input))
+	require.Len(t, rl.events, 1)
+	require.Equal(t, hooks.ToolCallScheduled, rl.events[0].Type)
+	require.Contains(t, string(rl.events[0].Payload), "Tool not available: ada.resolve_time_series_sources")
+}
+
 func TestHookActivityAccumulatesPromptRefsOnRunMeta(t *testing.T) {
 	t.Parallel()
 

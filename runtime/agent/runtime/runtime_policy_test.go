@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
+	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -255,14 +257,12 @@ func TestApplyPerRunOverridesUsesAllTagClauses(t *testing.T) {
 		spec.Tags = []string{"system", "profile", "blocked"}
 		return spec
 	}()
-	rt := &Runtime{
-		logger:             telemetry.NoopLogger{},
-		policyToolMetadata: canonicalMetadataMap(visibleSpec, missingSpec, deniedSpec),
-		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			"visible": visibleSpec,
-			"missing": missingSpec,
-			"denied":  deniedSpec,
-		},
+	rt := New()
+	rt.policyToolMetadata = canonicalMetadataMap(visibleSpec, missingSpec, deniedSpec)
+	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
+		"visible": visibleSpec,
+		"missing": missingSpec,
+		"denied":  deniedSpec,
 	}
 	rewritten, err := rt.applyPerRunOverrides(
 		context.Background(),
@@ -288,6 +288,10 @@ func TestApplyPerRunOverridesUsesAllTagClauses(t *testing.T) {
 	require.Equal(t, tools.ToolUnavailable, rewritten[2].Name)
 	require.JSONEq(t, `{"requested_tool":"missing"}`, string(rewritten[1].Payload))
 	require.JSONEq(t, `{"requested_tool":"denied"}`, string(rewritten[2].Payload))
+
+	var hintPayload map[string]any
+	require.NoError(t, json.Unmarshal(rewritten[2].Payload.RawMessage(), &hintPayload))
+	require.Equal(t, "Tool not available: denied", rthints.FormatCallHint(tools.ToolUnavailable, hintPayload))
 }
 
 func TestFilterToolCallsKeepsToolUnavailable(t *testing.T) {
