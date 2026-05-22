@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"text/template"
 
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -18,7 +19,16 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-const toolUnavailableToolsetName = "goa-ai.runtime"
+const (
+	toolUnavailableToolsetName     = "goa-ai.runtime"
+	toolUnavailableCallHintPattern = `Tool not available: {{index . "requested_tool"}}`
+)
+
+var toolUnavailableCallHint = template.Must(
+	template.New(tools.ToolUnavailable.String()).
+		Option("missingkey=error").
+		Parse(toolUnavailableCallHintPattern),
+)
 
 type toolUnavailablePayload struct {
 	RequestedTool    string          `json:"requested_tool"`
@@ -70,6 +80,9 @@ func toolUnavailableToolsetRegistration() ToolsetRegistration {
 		Inline:      true,
 		Execute:     executeToolUnavailable,
 		Specs:       []tools.ToolSpec{spec},
+		CallHints: map[tools.Ident]*template.Template{
+			tools.ToolUnavailable: toolUnavailableCallHint,
+		},
 	}
 }
 

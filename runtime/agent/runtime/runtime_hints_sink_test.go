@@ -78,6 +78,25 @@ func TestHintingSinkRendersHintForNilAndEmptyPayload(t *testing.T) {
 	}
 }
 
+func TestAddToolsetLockedRegistersHints(t *testing.T) {
+	toolID := tools.Ident("runtime.hints.test.canonical_registration")
+	rt := New()
+
+	rt.mu.Lock()
+	rt.addToolsetLocked(ToolsetRegistration{
+		Name:  "runtime.hints.test",
+		Specs: []tools.ToolSpec{newAnyJSONSpec(toolID, "runtime.hints.test")},
+		CallHints: map[tools.Ident]*template.Template{
+			toolID: mustTemplate(t, toolID, "Checking {{.target}}"),
+		},
+	})
+	rt.mu.Unlock()
+
+	assert.Equal(t, "Checking registration", rthints.FormatCallHint(toolID, map[string]any{
+		"target": "registration",
+	}))
+}
+
 func TestHintingSinkRendersHintForRawJSONPayload(t *testing.T) {
 	toolID := tools.Ident("runtime.hints.test.rawjson")
 	rthints.RegisterCallHint(toolID, mustTemplate(t, toolID, "Checking {{.Resolution}} energy rates"))
@@ -107,6 +126,28 @@ func TestHintingSinkRendersHintForRawJSONPayload(t *testing.T) {
 	out, ok := sink.events[0].(stream.ToolStart)
 	require.True(t, ok)
 	assert.Equal(t, "Checking hourly energy rates", out.Data.DisplayHint)
+}
+
+func TestHintingSinkRendersHintForToolUnavailable(t *testing.T) {
+	rt := New()
+	sink := &hintRecordingStreamSink{}
+	decorated := newHintingSink(rt, sink)
+	payload := stream.ToolStartPayload{
+		ToolCallID: "call-tool-unavailable-1",
+		ToolName:   tools.ToolUnavailable.String(),
+		Payload:    rawjson.Message([]byte(`{"requested_tool":"ada.resolve_time_series_sources"}`)),
+	}
+	ev := stream.ToolStart{
+		Base: stream.NewBase(stream.EventToolStart, "run-1", "session-1", payload),
+		Data: payload,
+	}
+
+	require.NoError(t, decorated.Send(context.Background(), ev))
+	require.Len(t, sink.events, 1)
+
+	out, ok := sink.events[0].(stream.ToolStart)
+	require.True(t, ok)
+	assert.Equal(t, "Tool not available: ada.resolve_time_series_sources", out.Data.DisplayHint)
 }
 
 func TestHintingSinkOverrideWins(t *testing.T) {

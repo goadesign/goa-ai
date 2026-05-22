@@ -338,15 +338,15 @@ type (
 		Inline bool
 
 		// CallHints optionally provides precompiled templates for call display hints
-		// keyed by tool ident. When present, RegisterToolset installs these in the
-		// global hints registry so sinks can render concise, domain-authored labels.
+		// keyed by tool ident. The runtime installs these with the toolset so sinks
+		// can render concise, domain-authored labels.
 		CallHints map[tools.Ident]*template.Template
 
 		// ResultHints optionally provides precompiled templates for result previews
 		// keyed by tool ident. Templates receive the runtime-owned preview wrapper
 		// where semantic data is available under `.Result` and bounded metadata
-		// under `.Bounds`. When present, RegisterToolset installs these in the
-		// global hints registry so sinks can render concise result previews.
+		// under `.Bounds`. The runtime installs these with the toolset so sinks can
+		// render concise result previews.
 		ResultHints map[tools.Ident]*template.Template
 
 		// PayloadAdapter normalizes or enriches raw JSON payloads prior to decoding.
@@ -1192,14 +1192,6 @@ func (r *Runtime) RegisterToolset(ts ToolsetRegistration) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.addToolsetLocked(ts)
-
-	// Install optional hint templates into the global registry for sinks.
-	if len(ts.CallHints) > 0 {
-		rthints.RegisterCallHints(ts.CallHints)
-	}
-	if len(ts.ResultHints) > 0 {
-		rthints.RegisterResultHints(ts.ResultHints)
-	}
 	return nil
 }
 
@@ -1829,11 +1821,18 @@ func repairedTailNeedsCompletionDelta(original, repaired runlog.Page) bool {
 	return repaired.Events[len(repaired.Events)-1].Type != hooks.RunCompleted
 }
 
-// addToolsetLocked registers a toolset and its specs without acquiring the lock.
+// addToolsetLocked registers a toolset, specs, metadata, and hints without
+// acquiring the lock.
 // Caller must hold r.mu.
 func (r *Runtime) addToolsetLocked(ts ToolsetRegistration) {
 	r.toolsets[ts.Name] = ts
 	r.addToolSpecsLocked(ts.Specs, ts.ToolMetadataLookup)
+	if len(ts.CallHints) > 0 {
+		rthints.RegisterCallHints(ts.CallHints)
+	}
+	if len(ts.ResultHints) > 0 {
+		rthints.RegisterResultHints(ts.ResultHints)
+	}
 }
 
 // addToolSpecsLocked registers tool specs without acquiring the lock.
