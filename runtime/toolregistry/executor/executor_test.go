@@ -77,6 +77,35 @@ func TestExecutorUsesOldestStartForResultStreamSink(t *testing.T) {
 	assert.Equal(t, tools.Ident("todos.update_todos"), res.ToolResult.Name)
 }
 
+func TestBuildRetryHintFromIssuesRestrictsToFailedTool(t *testing.T) {
+	t.Parallel()
+
+	hint := buildRetryHintFromIssues("atlas.read.recommend_signals", nil, []*tools.FieldIssue{{
+		Field:            "selector",
+		Constraint:       "invalid_field_type",
+		ExpectedJSONType: "object",
+		ActualJSONType:   "string",
+	}})
+
+	require.NotNil(t, hint)
+	assert.Equal(t, planner.RetryReasonInvalidArguments, hint.Reason)
+	assert.Equal(t, tools.Ident("atlas.read.recommend_signals"), hint.Tool)
+	assert.True(t, hint.RestrictToTool)
+	assert.Equal(t, []string{"selector"}, hint.MissingFields)
+	assert.Contains(t, hint.ClarifyingQuestion, "`selector` must be a JSON object, not a JSON string")
+}
+
+func TestRetryHintFromInvalidArgumentsRestrictsToFailedTool(t *testing.T) {
+	t.Parallel()
+
+	hint := retryHintFromToolErrorCode("atlas.read.recommend_signals", "invalid_arguments")
+
+	require.NotNil(t, hint)
+	assert.Equal(t, planner.RetryReasonInvalidArguments, hint.Reason)
+	assert.Equal(t, tools.Ident("atlas.read.recommend_signals"), hint.Tool)
+	assert.True(t, hint.RestrictToTool)
+}
+
 func TestExecutorDerivesResultStreamIDFromToolUseID(t *testing.T) {
 	t.Parallel()
 
