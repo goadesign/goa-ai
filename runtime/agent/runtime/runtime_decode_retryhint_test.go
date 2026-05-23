@@ -51,6 +51,7 @@ func TestBuildRetryHintFromDecodeError_UnmarshalTypeError(t *testing.T) {
 	require.NotNil(t, hint)
 	require.Equal(t, planner.RetryReasonMissingFields, hint.Reason)
 	require.Equal(t, tools.Ident("diagnostics.emit.emit_diagnosis_result"), hint.Tool)
+	require.True(t, hint.RestrictToTool)
 	require.Equal(t, []string{"summary"}, hint.MissingFields)
 	require.NotEmpty(t, hint.ClarifyingQuestion)
 	require.Contains(t, hint.ClarifyingQuestion, "summary")
@@ -68,6 +69,7 @@ func TestBuildRetryHintFromDecodeError_SyntaxError(t *testing.T) {
 	hint := buildRetryHintFromDecodeError(se, tools.Ident("svc.ts.tool"), nil)
 	require.NotNil(t, hint)
 	require.Equal(t, planner.RetryReasonMissingFields, hint.Reason)
+	require.True(t, hint.RestrictToTool)
 	require.Equal(t, []string{"$payload"}, hint.MissingFields)
 	require.NotEmpty(t, hint.ClarifyingQuestion)
 }
@@ -143,6 +145,7 @@ func TestExecuteToolActivity_DecodeErrorRetryHint(t *testing.T) {
 	require.NotEmpty(t, out.Error)
 	require.NotNil(t, out.RetryHint)
 	require.Equal(t, planner.RetryReasonMissingFields, out.RetryHint.Reason)
+	require.True(t, out.RetryHint.RestrictToTool)
 	require.Equal(t, []string{"summary"}, out.RetryHint.MissingFields)
 	require.NotNil(t, out.RetryHint.ExampleInput)
 }
@@ -198,6 +201,7 @@ func TestExecuteToolActivity_UnionValidationRetryHint(t *testing.T) {
 	require.NotEmpty(t, out.Error)
 	require.NotNil(t, out.RetryHint)
 	require.Equal(t, planner.RetryReasonInvalidArguments, out.RetryHint.Reason)
+	require.True(t, out.RetryHint.RestrictToTool)
 	require.Equal(t, []string{"type"}, out.RetryHint.MissingFields)
 	require.Contains(t, out.RetryHint.ClarifyingQuestion, "one of: schedule, signal")
 }

@@ -455,16 +455,18 @@ func retryHintFromToolErrorCode(tool tools.Ident, code string) *planner.RetryHin
 		// We reuse the invalid_arguments retry reason so downstream UIs classify the
 		// failure correctly (invalid_input vs internal) without adding new wire fields.
 		return &planner.RetryHint{
-			Reason: planner.RetryReasonInvalidArguments,
-			Tool:   tool,
+			Reason:         planner.RetryReasonInvalidArguments,
+			Tool:           tool,
+			RestrictToTool: true,
 		}
 	case "invalid_arguments":
 		// Tool-codec validation errors are surfaced by providers as invalid_arguments.
 		// These are always user-actionable: they indicate the payload did not satisfy
 		// the tool schema (missing fields, enum violations, range constraints, etc.).
 		return &planner.RetryHint{
-			Reason: planner.RetryReasonInvalidArguments,
-			Tool:   tool,
+			Reason:         planner.RetryReasonInvalidArguments,
+			Tool:           tool,
+			RestrictToTool: true,
 		}
 	case "timeout":
 		return &planner.RetryHint{
@@ -518,6 +520,7 @@ func buildRetryHintFromIssues(toolName tools.Ident, spec *tools.ToolSpec, issues
 	return &planner.RetryHint{
 		Reason:             reason,
 		Tool:               toolName,
+		RestrictToTool:     true,
 		MissingFields:      hintFields,
 		ExampleInput:       example,
 		ClarifyingQuestion: question,

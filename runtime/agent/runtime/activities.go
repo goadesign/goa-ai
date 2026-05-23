@@ -279,6 +279,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 					RetryHint: &planner.RetryHint{
 						Reason:             reason,
 						Tool:               req.ToolName,
+						RestrictToTool:     true,
 						MissingFields:      fields,
 						ClarifyingQuestion: question,
 					},
@@ -486,6 +487,7 @@ func buildRetryHintFromDecodeError(err error, toolName tools.Ident, spec *tools.
 	return &planner.RetryHint{
 		Reason:             planner.RetryReasonMissingFields,
 		Tool:               toolName,
+		RestrictToTool:     true,
 		MissingFields:      fields,
 		ExampleInput:       example,
 		ClarifyingQuestion: question,
@@ -497,6 +499,7 @@ func buildRetryHintFromAgentToolRequestError(err error, toolName tools.Ident, sp
 		return &planner.RetryHint{
 			Reason:             reason,
 			Tool:               toolName,
+			RestrictToTool:     true,
 			MissingFields:      fields,
 			ClarifyingQuestion: question,
 		}
