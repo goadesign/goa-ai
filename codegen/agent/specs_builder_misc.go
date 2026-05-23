@@ -379,12 +379,12 @@ func specializeUnionSchemaNode(att *goaexpr.AttributeExpr, schema map[string]any
 		}
 		return specializeUnionSchemaNode(dt.ElemType, values, defs, seen)
 	case *goaexpr.Union:
-		return rewriteUnionSchema(dt, schema)
+		return rewriteUnionSchema(dt, schema, defs, seen)
 	}
 	return nil
 }
 
-func rewriteUnionSchema(union *goaexpr.Union, schema map[string]any) error {
+func rewriteUnionSchema(union *goaexpr.Union, schema map[string]any, defs map[string]any, seen map[string]struct{}) error {
 	typeKey := union.GetTypeKey()
 	if typeKey == "" {
 		typeKey = "type"
@@ -395,7 +395,7 @@ func rewriteUnionSchema(union *goaexpr.Union, schema map[string]any) error {
 	}
 	properties, _ := schema["properties"].(map[string]any)
 	if len(properties) == 0 {
-		return validateCanonicalUnionSchema(union, schema, typeKey, valueKey)
+		return validateCanonicalUnionSchema(union, schema, defs, seen, typeKey, valueKey)
 	}
 	typeSchema, _ := properties[typeKey].(map[string]any)
 	valueSchema, _ := properties[valueKey].(map[string]any)
@@ -414,6 +414,13 @@ func rewriteUnionSchema(union *goaexpr.Union, schema map[string]any) error {
 		if name != nat.Name {
 			return fmt.Errorf("union schema variant %d for %q is %q, want %q", i, union.TypeName, name, nat.Name)
 		}
+		value, _ := values[i].(map[string]any)
+		if len(value) == 0 {
+			return fmt.Errorf("union schema variant %d for %q is missing value schema", i, union.TypeName)
+		}
+		if err := specializeUnionSchemaNode(nat.Attribute, value, defs, seen); err != nil {
+			return err
+		}
 		oneOf = append(oneOf, map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -421,7 +428,7 @@ func rewriteUnionSchema(union *goaexpr.Union, schema map[string]any) error {
 					"type": "string",
 					"enum": []any{nat.Name},
 				},
-				valueKey: values[i],
+				valueKey: value,
 			},
 			"required": []any{typeKey, valueKey},
 		})
@@ -436,7 +443,7 @@ func rewriteUnionSchema(union *goaexpr.Union, schema map[string]any) error {
 
 // validateCanonicalUnionSchema accepts a shared definition that was already
 // specialized while walking another reference to the same Goa union.
-func validateCanonicalUnionSchema(union *goaexpr.Union, schema map[string]any, typeKey, valueKey string) error {
+func validateCanonicalUnionSchema(union *goaexpr.Union, schema map[string]any, defs map[string]any, seen map[string]struct{}, typeKey, valueKey string) error {
 	oneOf, _ := schema["oneOf"].([]any)
 	if len(oneOf) != len(union.Values) {
 		return fmt.Errorf("union schema for %q is missing canonical properties and has %d canonical variants, want %d", union.TypeName, len(oneOf), len(union.Values))
@@ -445,10 +452,13 @@ func validateCanonicalUnionSchema(union *goaexpr.Union, schema map[string]any, t
 		branch, _ := oneOf[i].(map[string]any)
 		properties, _ := branch["properties"].(map[string]any)
 		typeSchema, _ := properties[typeKey].(map[string]any)
-		_, ok := properties[valueKey].(map[string]any)
+		valueSchema, ok := properties[valueKey].(map[string]any)
 		variants, _ := typeSchema["enum"].([]any)
 		if len(variants) != 1 || variants[0] != nat.Name || !ok {
 			return fmt.Errorf("union schema canonical variant %d for %q does not match %q", i, union.TypeName, nat.Name)
+		}
+		if err := specializeUnionSchemaNode(nat.Attribute, valueSchema, defs, seen); err != nil {
+			return err
 		}
 	}
 	return nil

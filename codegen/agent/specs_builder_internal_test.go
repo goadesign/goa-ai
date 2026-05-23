@@ -322,9 +322,24 @@ func TestBuildToolSpecsData_UnionSchemasIncludeEmptyObjectVariants(t *testing.T)
 		var NoConfig = goadsl.Type("NoConfig", func() {
 			goadsl.Description("Explicit empty config.")
 		})
+		var StaticSource = goadsl.Type("StaticSource", func() {
+			goadsl.Attribute("label", goadsl.String, "Static label")
+			goadsl.Required("label")
+		})
+		var DynamicSource = goadsl.Type("DynamicSource", func() {
+			goadsl.Attribute("path", goadsl.String, "Dynamic path")
+			goadsl.Required("path")
+		})
+		var Source = goadsl.Type("Source", func() {
+			goadsl.OneOf("source", func() {
+				goadsl.Attribute("static", StaticSource, "Static source")
+				goadsl.Attribute("dynamic", DynamicSource, "Dynamic source")
+			})
+		})
 		var DelayConfig = goadsl.Type("DelayConfig", func() {
 			goadsl.Attribute("seconds", goadsl.Int, "Delay seconds")
-			goadsl.Required("seconds")
+			goadsl.Attribute("source", Source, "Delay source")
+			goadsl.Required("seconds", "source")
 		})
 		var Config = goadsl.Type("Config", func() {
 			goadsl.OneOf("value", func() {
@@ -370,6 +385,17 @@ func TestBuildToolSpecsData_UnionSchemasIncludeEmptyObjectVariants(t *testing.T)
 	firstType := firstProperties["type"].(map[string]any)
 	require.Equal(t, []any{"none"}, firstType["enum"])
 	require.NotNil(t, firstProperties["value"])
+
+	delay := defs["DelayConfig"].(map[string]any)
+	delayProperties := delay["properties"].(map[string]any)
+	source := delayProperties["source"].(map[string]any)
+	if ref, _ := source["$ref"].(string); strings.HasPrefix(ref, "#/$defs/") {
+		source = defs[strings.TrimPrefix(ref, "#/$defs/")].(map[string]any)
+	}
+	sourceProperties := source["properties"].(map[string]any)
+	sourceValue := sourceProperties["source"].(map[string]any)
+	sourceOneOf := sourceValue["oneOf"].([]any)
+	require.Len(t, sourceOneOf, 2)
 }
 
 // Extend fields in tool shapes must be materialized before type/spec generation.
