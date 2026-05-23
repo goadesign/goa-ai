@@ -307,6 +307,71 @@ func TestBuildToolSpecsData_UnionSchemasSpecializeDefinitions(t *testing.T) {
 	require.NotNil(t, firstProperties["value"])
 }
 
+func TestBuildToolSpecsData_UnionSchemasIncludeEmptyObjectVariants(t *testing.T) {
+	eval.Reset()
+	goaexpr.Root = new(goaexpr.RootExpr)
+	goaexpr.GeneratedResultTypes = new(goaexpr.ResultTypesRoot)
+	require.NoError(t, eval.Register(goaexpr.Root))
+	require.NoError(t, eval.Register(goaexpr.GeneratedResultTypes))
+
+	agentsExpr.Root = &agentsExpr.RootExpr{}
+	require.NoError(t, eval.Register(agentsExpr.Root))
+
+	design := func() {
+		goadsl.API("alpha", func() {})
+		var NoConfig = goadsl.Type("NoConfig", func() {
+			goadsl.Description("Explicit empty config.")
+		})
+		var DelayConfig = goadsl.Type("DelayConfig", func() {
+			goadsl.Attribute("seconds", goadsl.Int, "Delay seconds")
+			goadsl.Required("seconds")
+		})
+		var Config = goadsl.Type("Config", func() {
+			goadsl.OneOf("value", func() {
+				goadsl.Attribute("none", NoConfig, "No config")
+				goadsl.Attribute("delay", DelayConfig, "Delay config")
+			})
+		})
+		var Payload = goadsl.Type("Payload", func() {
+			goadsl.Attribute("primary_config", Config, "Primary config")
+			goadsl.Attribute("fallback_config", Config, "Fallback config")
+			goadsl.Required("primary_config", "fallback_config")
+		})
+		goadsl.Service("alpha", func() {
+			Agent("scribe", "Doc helper", func() {
+				Use("config", func() {
+					Tool("save", "Save config", func() {
+						Args(Payload)
+					})
+				})
+			})
+		})
+	}
+	require.True(t, eval.Execute(design, nil), eval.Context.Error())
+	require.NoError(t, eval.RunDSL())
+
+	data, err := codegen.BuildDataForTest("goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root})
+	require.NoError(t, err)
+	specs, err := codegen.BuildToolSpecsDataForTest(data.Services[0].Agents[0])
+	require.NoError(t, err)
+
+	schemas := codegen.CollectTypeSchemasForTest(specs)
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(schemas["SavePayload"], &schema))
+	defs := schema["$defs"].(map[string]any)
+	config := defs["Config"].(map[string]any)
+	properties := config["properties"].(map[string]any)
+	union := properties["value"].(map[string]any)
+	oneOf := union["oneOf"].([]any)
+	require.Len(t, oneOf, 2)
+
+	first := oneOf[0].(map[string]any)
+	firstProperties := first["properties"].(map[string]any)
+	firstType := firstProperties["type"].(map[string]any)
+	require.Equal(t, []any{"none"}, firstType["enum"])
+	require.NotNil(t, firstProperties["value"])
+}
+
 // Extend fields in tool shapes must be materialized before type/spec generation.
 func TestBuildToolSpecsData_ExtendFieldsMaterialized(t *testing.T) {
 	eval.Reset()

@@ -394,12 +394,15 @@ func rewriteUnionSchema(union *goaexpr.Union, schema map[string]any) error {
 		valueKey = "value"
 	}
 	properties, _ := schema["properties"].(map[string]any)
+	if len(properties) == 0 {
+		return validateCanonicalUnionSchema(union, schema, typeKey, valueKey)
+	}
 	typeSchema, _ := properties[typeKey].(map[string]any)
 	valueSchema, _ := properties[valueKey].(map[string]any)
 	variants, _ := typeSchema["enum"].([]any)
 	values, _ := valueSchema["anyOf"].([]any)
 	if len(variants) != len(union.Values) || len(values) != len(union.Values) {
-		return fmt.Errorf("union schema for %q does not match %d variants", union.TypeName, len(union.Values))
+		return fmt.Errorf("union schema for %q has %d type variants and %d value variants, want %d", union.TypeName, len(variants), len(values), len(union.Values))
 	}
 
 	oneOf := make([]any, 0, len(union.Values))
@@ -428,6 +431,26 @@ func rewriteUnionSchema(union *goaexpr.Union, schema map[string]any) error {
 	delete(schema, "required")
 	delete(schema, "example")
 	schema["oneOf"] = oneOf
+	return nil
+}
+
+// validateCanonicalUnionSchema accepts a shared definition that was already
+// specialized while walking another reference to the same Goa union.
+func validateCanonicalUnionSchema(union *goaexpr.Union, schema map[string]any, typeKey, valueKey string) error {
+	oneOf, _ := schema["oneOf"].([]any)
+	if len(oneOf) != len(union.Values) {
+		return fmt.Errorf("union schema for %q is missing canonical properties and has %d canonical variants, want %d", union.TypeName, len(oneOf), len(union.Values))
+	}
+	for i, nat := range union.Values {
+		branch, _ := oneOf[i].(map[string]any)
+		properties, _ := branch["properties"].(map[string]any)
+		typeSchema, _ := properties[typeKey].(map[string]any)
+		_, ok := properties[valueKey].(map[string]any)
+		variants, _ := typeSchema["enum"].([]any)
+		if len(variants) != 1 || variants[0] != nat.Name || !ok {
+			return fmt.Errorf("union schema canonical variant %d for %q does not match %q", i, union.TypeName, nat.Name)
+		}
+	}
 	return nil
 }
 
