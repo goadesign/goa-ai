@@ -70,7 +70,7 @@ func TestClientCompleteUsesExplicitToolLoopTranscript(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			InputSchema: map[string]any{"type": "object"},
+			Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
 		}},
 	})
 	require.NoError(t, err)
@@ -115,7 +115,7 @@ func TestClientCompleteRejectsUnrepresentableExplicitTranscript(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			InputSchema: map[string]any{"type": "object"},
+			Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
 		}},
 	})
 	require.Error(t, err)
@@ -140,7 +140,7 @@ func TestClientCompleteLowersRunlogReplayedTranscript(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			InputSchema: map[string]any{"type": "object"},
+			Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
 		}},
 	})
 	require.NoError(t, err)
@@ -222,7 +222,7 @@ func TestClientCompleteEncodesToolLoopTranscript(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			InputSchema: map[string]any{"type": "object"},
+			Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
 		}},
 	})
 	require.NoError(t, err)
@@ -285,7 +285,7 @@ func TestClientCompleteRewritesUnknownToolUseToToolUnavailable(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        tools.ToolUnavailable.String(),
 			Description: "Report that a previously used tool is unavailable.",
-			InputSchema: map[string]any{"type": "object"},
+			Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
 		}},
 	})
 	require.NoError(t, err)
@@ -330,7 +330,7 @@ func TestClientCompleteEncodesToolResultErrorsExplicitly(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			InputSchema: map[string]any{"type": "object"},
+			Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
 		}},
 	})
 	require.NoError(t, err)
@@ -365,7 +365,7 @@ func TestClientCompleteRejectsAssistantTextAfterToolUse(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			InputSchema: map[string]any{"type": "object"},
+			Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
 		}},
 	})
 	require.Error(t, err)
@@ -392,7 +392,7 @@ func TestClientCompleteRoutesModelsAndToolChoice(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			InputSchema: map[string]any{"type": "object"},
+			Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
 		}},
 		ToolChoice: &model.ToolChoice{Mode: model.ToolChoiceModeAny},
 	})
@@ -569,7 +569,7 @@ func TestClientCompleteRejectsStructuredOutputWithTools(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			InputSchema: map[string]any{"type": "object"},
+			Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
 		}},
 		StructuredOutput: &model.StructuredOutput{
 			Name:   "draft_from_transcript",
@@ -596,7 +596,7 @@ func TestClientCompleteRejectsInvalidToolDefinitions(t *testing.T) {
 			name: "missing tool name",
 			tools: []*model.ToolDefinition{{
 				Description: "Run an analysis.",
-				InputSchema: map[string]any{"type": "object"},
+				Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
 			}},
 			wantErr: "tool[0] is missing name",
 		},
@@ -721,7 +721,7 @@ func TestOpenAIStreamerEmitsTextToolCallsUsageAndStop(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			InputSchema: map[string]any{"type": "object"},
+			Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
 		}},
 	})
 	require.NoError(t, err)

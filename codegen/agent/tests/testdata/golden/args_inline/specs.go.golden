@@ -30,14 +30,16 @@ var (
 		Payload: tools.TypeSpec{
 			Name:         "AddPayload",
 			Schema:       []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"left\":{\"type\":\"integer\",\"description\":\"Left operand\",\"example\":1056967519,\"format\":\"int32\"},\"right\":{\"type\":\"integer\",\"description\":\"Right operand\",\"example\":1084554470,\"format\":\"int32\"}},\"example\":{\"left\":1,\"right\":1},\"required\":[\"left\",\"right\"]}"),
+			PlainSchema:  []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"left\":{\"type\":\"integer\",\"description\":\"Left operand\",\"example\":1056967519,\"format\":\"int32\"},\"right\":{\"type\":\"integer\",\"description\":\"Right operand\",\"example\":1084554470,\"format\":\"int32\"}},\"required\":[\"left\",\"right\"]}"),
 			ExampleJSON:  []byte("{\"left\":1,\"right\":1}"),
 			ExampleInput: map[string]any{"left": 1, "right": 1},
 			Codec:        addPayloadCodec,
 		},
 		Result: tools.TypeSpec{
-			Name:   "AddResult",
-			Schema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"sum\":{\"type\":\"integer\",\"description\":\"Sum\",\"example\":1051318795,\"format\":\"int32\"}},\"required\":[\"sum\"]}"),
-			Codec:  addResultCodec,
+			Name:        "AddResult",
+			Schema:      []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"sum\":{\"type\":\"integer\",\"description\":\"Sum\",\"example\":1051318795,\"format\":\"int32\"}},\"required\":[\"sum\"]}"),
+			PlainSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"sum\":{\"type\":\"integer\",\"description\":\"Sum\",\"example\":1051318795,\"format\":\"int32\"}},\"required\":[\"sum\"]}"),
+			Codec:       addResultCodec,
 		},
 	}
 )

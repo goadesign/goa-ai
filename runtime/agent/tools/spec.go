@@ -165,6 +165,10 @@ type (
 		Name string
 		// Schema contains the JSON schema definition rendered at code generation time.
 		Schema []byte
+		// PlainSchema contains the JSON schema definition without root-level
+		// example annotations. Providers that require examples outside the schema
+		// use this precomputed variant instead of rewriting Schema at runtime.
+		PlainSchema []byte
 		// ExampleJSON optionally contains a canonical example JSON document for this
 		// type. When present on payload types, runtimes and planners can surface it
 		// in retry hints or await-clarification prompts to guide callers toward a

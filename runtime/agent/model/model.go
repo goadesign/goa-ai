@@ -240,8 +240,8 @@ type (
 
 	// ToolDefinition describes a tool exposed to the model.
 	//
-	// Definitions are derived from Goa tool specifications and include the
-	// name, description, and JSON Schema input.
+	// Definitions are derived from Goa tool specifications and include the name,
+	// description, and generated input contract.
 	ToolDefinition struct {
 		// Name is the tool identifier as seen by the model.
 		Name string
@@ -250,8 +250,22 @@ type (
 		// when to call the tool.
 		Description string
 
-		// InputSchema is a JSON Schema describing the tool input payload.
-		InputSchema any
+		// Input describes the model-facing tool payload contract.
+		Input ToolInputDefinition
+	}
+
+	// ToolInputDefinition contains the generated model-facing input contract for
+	// one tool.
+	ToolInputDefinition struct {
+		// Schema is the annotated JSON Schema describing the tool input payload.
+		Schema any
+
+		// PlainSchema is the JSON Schema without root-level example annotations.
+		// Providers that carry examples outside the schema use this variant.
+		PlainSchema any
+
+		// ExampleInput is the canonical JSON-object example input for the tool.
+		ExampleInput map[string]any
 	}
 
 	// ToolCall is a requested tool invocation from the model.

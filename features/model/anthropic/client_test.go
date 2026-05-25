@@ -118,7 +118,7 @@ func TestComplete_ToolUse(t *testing.T) {
 			{
 				Name:        "test.tool",
 				Description: "test tool",
-				InputSchema: json.RawMessage(`{"type":"object"}`),
+				Input:       model.ToolInputDefinition{Schema: json.RawMessage(`{"type":"object"}`)},
 			},
 		},
 	}
@@ -167,6 +167,40 @@ func TestComplete_ToolUse(t *testing.T) {
 	}
 	if string(call.Payload) != `{"x":1}` {
 		t.Fatalf("unexpected payload %s", string(call.Payload))
+	}
+}
+
+func TestEncodeTools_UsesPlainSchemaAndInputExamples(t *testing.T) {
+	defs := []*model.ToolDefinition{{
+		Name:        "reports.complete",
+		Description: "Complete a report",
+		Input: model.ToolInputDefinition{
+			Schema: map[string]any{
+				"type":    "object",
+				"example": map[string]any{"summary": "Done"},
+			},
+			PlainSchema: map[string]any{
+				"type": "object",
+			},
+			ExampleInput: map[string]any{"summary": "Done"},
+		},
+	}}
+
+	tools, _, _, err := encodeTools(context.Background(), defs)
+	if err != nil {
+		t.Fatalf("encodeTools: %v", err)
+	}
+	if len(tools) != 1 || tools[0].OfTool == nil {
+		t.Fatalf("expected one encoded tool, got %#v", tools)
+	}
+	if len(tools[0].OfTool.InputExamples) != 1 {
+		t.Fatalf("expected one input example, got %#v", tools[0].OfTool.InputExamples)
+	}
+	if got := tools[0].OfTool.InputExamples[0]["summary"]; got != "Done" {
+		t.Fatalf("unexpected input example summary %v", got)
+	}
+	if _, ok := tools[0].OfTool.InputSchema.ExtraFields["example"]; ok {
+		t.Fatalf("plain schema should not include root example: %#v", tools[0].OfTool.InputSchema.ExtraFields)
 	}
 }
 

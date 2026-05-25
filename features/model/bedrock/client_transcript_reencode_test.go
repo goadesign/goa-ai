@@ -92,7 +92,7 @@ func TestClientPrepareRequestLowersRunlogReplayedTranscript(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			InputSchema: map[string]any{"type": "object"},
+			Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
 		}},
 	})
 	require.NoError(t, err)
@@ -153,7 +153,7 @@ func TestClientPrepareRequestFailsOnMissingThinkingInToolLoop(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			InputSchema: map[string]any{"type": "object"},
+			Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
 		}},
 		Thinking: &model.ThinkingOptions{
 			Enable: true,

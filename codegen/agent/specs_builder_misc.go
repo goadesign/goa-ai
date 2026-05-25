@@ -233,17 +233,26 @@ func servicePkgAlias(svc *service.Data) string {
 // It returns the schema as JSON bytes, or nil if the attribute is empty or
 // cannot be represented as a schema.
 func schemaForAttribute(att *goaexpr.AttributeExpr, example any) ([]byte, error) {
+	schema, _, err := schemaVariantsForAttribute(att, example)
+	return schema, err
+}
+
+// schemaVariantsForAttribute generates the annotated and plain OpenAPI JSON
+// schema views for att from one Goa schema graph. The annotated view receives
+// the root example supplied by the caller; the plain view clears only that root
+// example so provider adapters can carry examples outside the schema without
+// reprocessing JSON at runtime.
+func schemaVariantsForAttribute(att *goaexpr.AttributeExpr, example any) ([]byte, []byte, error) {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
-		return nil, nil
+		return nil, nil, nil
 	}
 	prev := openapi.Definitions
 	openapi.Definitions = make(map[string]*openapi.Schema)
 	defer func() { openapi.Definitions = prev }()
 	schema := openapi.AttributeTypeSchema(goaexpr.Root.API, att)
 	if schema == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
-	schema.Example = example
 	if len(openapi.Definitions) > 0 {
 		schema.Defs = openapi.Definitions
 	}
@@ -261,7 +270,6 @@ func schemaForAttribute(att *goaexpr.AttributeExpr, example any) ([]byte, error)
 		}
 		if tname != "" {
 			if def, ok := openapi.Definitions[tname]; ok && def != nil {
-				def.Example = example
 				// Build a new definitions map excluding the root to avoid
 				// self-referential cycles during JSON marshaling.
 				if len(openapi.Definitions) > 0 {
@@ -276,20 +284,34 @@ func schemaForAttribute(att *goaexpr.AttributeExpr, example any) ([]byte, error)
 						def.Defs = defs
 					}
 				}
-				// Marshal schema JSON directly (Goa emits 2020-12 + $defs).
-				b, err := def.JSON()
-				if err != nil {
-					return b, nil
-				}
-				return specializeUnionSchemas(b, att)
+				return schemaVariantBytes(def, att, example)
 			}
 		}
 	}
-	b, err := schema.JSON()
+	return schemaVariantBytes(schema, att, example)
+}
+
+func schemaVariantBytes(schema *openapi.Schema, att *goaexpr.AttributeExpr, example any) ([]byte, []byte, error) {
+	prevExample := schema.Example
+	schema.Example = example
+	annotated, err := schema.JSON()
 	if err != nil {
-		return b, err
+		schema.Example = prevExample
+		return annotated, nil, err
 	}
-	return specializeUnionSchemas(b, att)
+	annotated, err = specializeUnionSchemas(annotated, att)
+	if err != nil {
+		schema.Example = prevExample
+		return annotated, nil, err
+	}
+	schema.Example = nil
+	plain, err := schema.JSON()
+	schema.Example = prevExample
+	if err != nil {
+		return annotated, plain, err
+	}
+	plain, err = specializeUnionSchemas(plain, att)
+	return annotated, plain, err
 }
 
 // specializeUnionSchemas rewrites Goa's generic OneOf schema projection into

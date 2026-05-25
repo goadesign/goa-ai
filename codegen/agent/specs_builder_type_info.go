@@ -179,12 +179,16 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 
 	// JSON schema from transport attribute
 	var err error
-	schemaBytes, err := schemaForAttribute(schemaAttr, exampleValue(example))
+	schemaBytes, plainSchemaBytes, err := schemaVariantsForAttribute(schemaAttr, exampleValue(example))
 	if err != nil {
 		return nil, err
 	}
 	if usage == usageResult && owner.Bounds != nil {
 		schemaBytes, err = projectBoundedResultSchema(schemaBytes, owner.Bounds)
+		if err != nil {
+			return nil, err
+		}
+		plainSchemaBytes, err = projectBoundedResultSchema(plainSchemaBytes, owner.Bounds)
 		if err != nil {
 			return nil, err
 		}
@@ -263,6 +267,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		Doc:                    doc,
 		Def:                    defLine,
 		SchemaJSON:             schemaBytes,
+		PlainSchemaJSON:        plainSchemaBytes,
 		ExampleJSON:            exampleJSON(example),
 		ExportedCodec:          typeName + "Codec",
 		GenericCodec:           lowerCamel(typeName) + "Codec",

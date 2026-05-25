@@ -39,19 +39,21 @@ func toolUnavailableToolDefinition() *model.ToolDefinition {
 	return &model.ToolDefinition{
 		Name:        tools.ToolUnavailable.String(),
 		Description: "Internal. Used when the model requests a tool that is not available for this run. Always returns an error with a retry hint to pick a tool from the advertised list.",
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"requested_tool": map[string]any{
-					"type":        "string",
-					"description": "The provider-visible tool name originally requested by the model.",
+		Input: model.ToolInputDefinition{
+			Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"requested_tool": map[string]any{
+						"type":        "string",
+						"description": "The provider-visible tool name originally requested by the model.",
+					},
+					"requested_payload": map[string]any{
+						"description": "The original JSON payload that the model provided for the unknown tool.",
+					},
 				},
-				"requested_payload": map[string]any{
-					"description": "The original JSON payload that the model provided for the unknown tool.",
-				},
+				"required":             []string{"requested_tool"},
+				"additionalProperties": false,
 			},
-			"required":             []string{"requested_tool"},
-			"additionalProperties": false,
 		},
 	}
 }
@@ -87,7 +89,7 @@ func toolUnavailableToolsetRegistration() ToolsetRegistration {
 }
 
 func mustMarshalToolUnavailableSchema() []byte {
-	schema := toolUnavailableToolDefinition().InputSchema
+	schema := toolUnavailableToolDefinition().Input.Schema
 	data, err := json.Marshal(schema)
 	if err != nil {
 		panic(fmt.Errorf("runtime: marshal tool_unavailable schema: %w", err))

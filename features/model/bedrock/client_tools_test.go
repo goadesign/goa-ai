@@ -14,15 +14,16 @@ import (
 func TestEncodeTools_NoChoice(t *testing.T) {
 	ctx := context.Background()
 
-	cfg, canonToSan, sanToCanon, err := encodeTools(ctx, []*model.ToolDefinition{
+	cfg, fields, canonToSan, sanToCanon, err := encodeTools(ctx, "amazon.nova-pro-v1:0", []*model.ToolDefinition{
 		{
 			Name:        "lookup",
 			Description: "Search",
-			InputSchema: map[string]any{"type": "object"},
+			Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
 		},
 	}, nil, false, nil)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
+	require.Nil(t, fields)
 	require.Len(t, cfg.Tools, 1)
 	require.Nil(t, cfg.ToolChoice)
 	require.Len(t, canonToSan, 1)
@@ -32,11 +33,11 @@ func TestEncodeTools_NoChoice(t *testing.T) {
 func TestEncodeTools_ModeAny(t *testing.T) {
 	ctx := context.Background()
 
-	cfg, canonToSan, sanToCanon, err := encodeTools(ctx, []*model.ToolDefinition{
+	cfg, _, canonToSan, sanToCanon, err := encodeTools(ctx, "amazon.nova-pro-v1:0", []*model.ToolDefinition{
 		{
 			Name:        "lookup",
 			Description: "Search",
-			InputSchema: map[string]any{"type": "object"},
+			Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
 		},
 	}, &model.ToolChoice{Mode: model.ToolChoiceModeAny}, false, nil)
 	require.NoError(t, err)
@@ -52,11 +53,11 @@ func TestEncodeTools_ModeAny(t *testing.T) {
 func TestEncodeTools_ModeTool(t *testing.T) {
 	ctx := context.Background()
 
-	cfg, canonToSan, sanToCanon, err := encodeTools(ctx, []*model.ToolDefinition{
+	cfg, _, canonToSan, sanToCanon, err := encodeTools(ctx, "amazon.nova-pro-v1:0", []*model.ToolDefinition{
 		{
 			Name:        "lookup",
 			Description: "Search",
-			InputSchema: map[string]any{"type": "object"},
+			Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
 		},
 	}, &model.ToolChoice{
 		Mode: model.ToolChoiceModeTool,
@@ -77,11 +78,11 @@ func TestEncodeTools_ModeTool(t *testing.T) {
 func TestEncodeTools_ModeNonePreservesConfig(t *testing.T) {
 	ctx := context.Background()
 
-	cfg, canonToSan, sanToCanon, err := encodeTools(ctx, []*model.ToolDefinition{
+	cfg, _, canonToSan, sanToCanon, err := encodeTools(ctx, "amazon.nova-pro-v1:0", []*model.ToolDefinition{
 		{
 			Name:        "lookup",
 			Description: "Search",
-			InputSchema: map[string]any{"type": "object"},
+			Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
 		},
 	}, &model.ToolChoice{Mode: model.ToolChoiceModeNone}, false, nil)
 	require.NoError(t, err)
@@ -95,18 +96,18 @@ func TestEncodeTools_ModeNonePreservesConfig(t *testing.T) {
 func TestEncodeTools_ChoiceWithoutToolsErrors(t *testing.T) {
 	ctx := context.Background()
 
-	_, _, _, err := encodeTools(ctx, nil, &model.ToolChoice{Mode: model.ToolChoiceModeAny}, false, nil)
+	_, _, _, _, err := encodeTools(ctx, "amazon.nova-pro-v1:0", nil, &model.ToolChoice{Mode: model.ToolChoiceModeAny}, false, nil)
 	require.Error(t, err)
 }
 
 func TestEncodeTools_AppendsCacheCheckpoint(t *testing.T) {
 	ctx := context.Background()
 
-	cfg, _, _, err := encodeTools(ctx, []*model.ToolDefinition{
+	cfg, _, _, _, err := encodeTools(ctx, "amazon.nova-pro-v1:0", []*model.ToolDefinition{
 		{
 			Name:        "lookup",
 			Description: "Search",
-			InputSchema: map[string]any{"type": "object"},
+			Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
 		},
 	}, nil, true, nil)
 	require.NoError(t, err)
@@ -114,6 +115,34 @@ func TestEncodeTools_AppendsCacheCheckpoint(t *testing.T) {
 	require.Len(t, cfg.Tools, 2, "expected tool spec + cache checkpoint")
 	_, ok := cfg.Tools[1].(*brtypes.ToolMemberCachePoint)
 	require.True(t, ok, "expected second tool entry to be cache checkpoint")
+}
+
+func TestEncodeTools_AnthropicModelAddsToolExamples(t *testing.T) {
+	ctx := context.Background()
+
+	cfg, fields, _, _, err := encodeTools(ctx, "us.anthropic.claude-opus-4-7", []*model.ToolDefinition{
+		{
+			Name:        "reports.complete",
+			Description: "Complete a report",
+			Input: model.ToolInputDefinition{
+				Schema: map[string]any{
+					"type":    "object",
+					"example": map[string]any{"summary": "Done"},
+				},
+				PlainSchema:  map[string]any{"type": "object"},
+				ExampleInput: map[string]any{"summary": "Done"},
+			},
+		},
+	}, nil, false, nil)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	require.Equal(t, []string{"tool-examples-2025-10-29"}, fields["anthropic_beta"])
+	tools, ok := fields["tools"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, tools, 1)
+	require.Equal(t, "reports_complete", tools[0]["name"])
+	require.Equal(t, []map[string]any{{"summary": "Done"}}, tools[0]["input_examples"])
+	require.Equal(t, map[string]any{"type": "object"}, tools[0]["input_schema"])
 }
 
 func TestIsNovaModel(t *testing.T) {

@@ -363,13 +363,14 @@ func encodeTools(ctx context.Context, defs []*model.ToolDefinition) ([]sdk.ToolU
 		if def.Description == "" {
 			return nil, nil, nil, fmt.Errorf("anthropic: tool %q is missing description", canonical)
 		}
-		schema, err := toolInputSchema(ctx, def.InputSchema)
+		input, examples, err := anthropicToolInput(ctx, def)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("anthropic: tool %q schema: %w", canonical, err)
 		}
-		u := sdk.ToolUnionParamOfTool(schema, sanitized)
+		u := sdk.ToolUnionParamOfTool(input, sanitized)
 		if u.OfTool != nil {
 			u.OfTool.Description = sdk.String(def.Description)
+			u.OfTool.InputExamples = examples
 		}
 		toolList = append(toolList, u)
 	}
@@ -377,6 +378,21 @@ func encodeTools(ctx context.Context, defs []*model.ToolDefinition) ([]sdk.ToolU
 		return nil, nil, nil, nil
 	}
 	return toolList, canonToSan, sanToCanon, nil
+}
+
+func anthropicToolInput(ctx context.Context, def *model.ToolDefinition) (sdk.ToolInputSchemaParam, []map[string]any, error) {
+	if def.Input.ExampleInput == nil {
+		schema, err := toolInputSchema(ctx, def.Input.Schema)
+		return schema, nil, err
+	}
+	if def.Input.PlainSchema == nil {
+		return sdk.ToolInputSchemaParam{}, nil, errors.New("example input requires plain schema")
+	}
+	schema, err := toolInputSchema(ctx, def.Input.PlainSchema)
+	if err != nil {
+		return sdk.ToolInputSchemaParam{}, nil, err
+	}
+	return schema, []map[string]any{def.Input.ExampleInput}, nil
 }
 
 func toolInputSchema(_ context.Context, schema any) (sdk.ToolInputSchemaParam, error) {

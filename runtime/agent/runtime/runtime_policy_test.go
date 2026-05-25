@@ -313,6 +313,8 @@ func TestAdvertisedToolDefinitionsHonorCompiledPolicy(t *testing.T) {
 	visible := newAnyJSONSpec("svc.tools.visible", "svc.tools")
 	visible.Description = "Visible tool"
 	visible.Payload.Schema = []byte(`{"type":"object","properties":{"q":{"type":"string"}}}`)
+	visible.Payload.PlainSchema = []byte(`{"type":"object"}`)
+	visible.Payload.ExampleInput = map[string]any{"q": "status"}
 	visible.Tags = []string{"system", "profile"}
 	blocked := newAnyJSONSpec("svc.tools.blocked", "svc.tools")
 	blocked.Tags = []string{"system"}
@@ -330,9 +332,13 @@ func TestAdvertisedToolDefinitionsHonorCompiledPolicy(t *testing.T) {
 	require.Len(t, definitions, 1)
 	require.Equal(t, visible.Name.String(), definitions[0].Name)
 	require.Equal(t, visible.Description, definitions[0].Description)
-	schema, ok := definitions[0].InputSchema.(map[string]any)
+	schema, ok := definitions[0].Input.Schema.(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "object", schema["type"])
+	plainSchema, ok := definitions[0].Input.PlainSchema.(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "object", plainSchema["type"])
+	require.Equal(t, map[string]any{"q": "status"}, definitions[0].Input.ExampleInput)
 }
 
 func TestToolMetadataUsesRegisteredCanonicalMetadata(t *testing.T) {

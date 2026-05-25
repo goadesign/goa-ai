@@ -65,11 +65,13 @@ var (
                     Name: {{ if .Type }}{{ printf "%q" .Type.TypeName }}{{ else }}""{{ end }},
                     {{- if .Type }}
                     Schema: {{- if gt (len .Type.SchemaJSON) 0 }}[]byte({{ printf "%q" .Type.SchemaJSON }}){{ else }}nil{{ end }},
+                    PlainSchema: {{- if gt (len .Type.PlainSchemaJSON) 0 }}[]byte({{ printf "%q" .Type.PlainSchemaJSON }}){{ else }}nil{{ end }},
                     ExampleJSON: {{- if gt (len .Type.ExampleJSON) 0 }}[]byte({{ printf "%q" .Type.ExampleJSON }}){{ else }}nil{{ end }},
                     ExampleInput: {{- if .Type.ExampleInputGo }}{{ .Type.ExampleInputGo }}{{ else }}nil{{ end }},
                     Codec: {{ .Type.GenericCodec }},
                     {{- else }}
                     Schema: nil,
+                    PlainSchema: nil,
                     ExampleJSON: nil,
                     ExampleInput: nil,
                     Codec: tools.JSONCodec[any]{},
@@ -93,11 +95,13 @@ var (
             Name: {{ if .Payload }}{{ printf "%q" .Payload.TypeName }}{{ else }}""{{ end }},
             {{- if .Payload }}
             Schema: {{- if gt (len .Payload.SchemaJSON) 0 }}[]byte({{ printf "%q" .Payload.SchemaJSON }}){{ else }}nil{{ end }},
+            PlainSchema: {{- if gt (len .Payload.PlainSchemaJSON) 0 }}[]byte({{ printf "%q" .Payload.PlainSchemaJSON }}){{ else }}nil{{ end }},
             ExampleJSON: {{- if gt (len .Payload.ExampleJSON) 0 }}[]byte({{ printf "%q" .Payload.ExampleJSON }}){{ else }}nil{{ end }},
             ExampleInput: {{- if .Payload.ExampleInputGo }}{{ .Payload.ExampleInputGo }}{{ else }}nil{{ end }},
             Codec:  {{ .Payload.GenericCodec }},
             {{- else }}
             Schema: nil,
+            PlainSchema: nil,
             ExampleJSON: nil,
             ExampleInput: nil,
             Codec:  tools.JSONCodec[any]{},
@@ -107,8 +111,10 @@ var (
             Name: {{ if .Result }}{{ printf "%q" .Result.TypeName }}{{ else }}""{{ end }},
             Schema: {{- if and .Result (gt (len .Result.SchemaJSON) 0) }}[]byte({{ printf "%q" .Result.SchemaJSON }}){{ else }}nil{{ end }},
             {{- if .Result }}
+            PlainSchema: {{- if gt (len .Result.PlainSchemaJSON) 0 }}[]byte({{ printf "%q" .Result.PlainSchemaJSON }}){{ else }}nil{{ end }},
             Codec:  {{ .Result.GenericCodec }},
             {{- else }}
+            PlainSchema: nil,
             Codec:  tools.JSONCodec[any]{},
             {{- end }}
         },

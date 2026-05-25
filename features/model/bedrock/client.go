@@ -99,6 +99,7 @@ type requestParts struct {
 	system                  []brtypes.SystemContentBlock
 	outputConfig            *brtypes.OutputConfig
 	toolConfig              *brtypes.ToolConfiguration
+	additionalModelFields   map[string]any
 	toolNameCanonicalToProv map[string]string
 	toolNameProvToCanonical map[string]string
 }
@@ -228,7 +229,7 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*reque
 	// Build tool configuration and name maps before encoding messages so tool_use
 	// names can reuse the exact sanitized identifiers. encodeTools is the single
 	// source of truth for name sanitization.
-	toolConfig, canonToSan, sanToCanon, err := encodeTools(ctx, req.Tools, req.ToolChoice, cacheAfterTools, c.logger)
+	toolConfig, additionalModelFields, canonToSan, sanToCanon, err := encodeTools(ctx, modelID, req.Tools, req.ToolChoice, cacheAfterTools, c.logger)
 	if err != nil {
 		return nil, err
 	}
@@ -256,6 +257,7 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*reque
 		system:                  system,
 		outputConfig:            outputConfig,
 		toolConfig:              toolConfig,
+		additionalModelFields:   additionalModelFields,
 		toolNameCanonicalToProv: canonToSan,
 		toolNameProvToCanonical: sanToCanon,
 	}, nil
@@ -298,6 +300,9 @@ func (c *Client) buildConverseInput(parts *requestParts, req *model.Request) *be
 	if cfg := c.inferenceConfig(parts.modelID, req.MaxTokens, req.Temperature); cfg != nil {
 		input.InferenceConfig = cfg
 	}
+	if len(parts.additionalModelFields) > 0 {
+		input.AdditionalModelRequestFields = document.NewLazyDocument(&parts.additionalModelFields)
+	}
 	return input
 }
 
@@ -315,8 +320,11 @@ func (c *Client) buildConverseStreamInput(parts *requestParts, req *model.Reques
 	if parts.outputConfig != nil {
 		input.OutputConfig = parts.outputConfig
 	}
+	fields := cloneAdditionalModelFields(parts.additionalModelFields)
 	if thinking.enable {
-		fields := map[string]any{}
+		if fields == nil {
+			fields = map[string]any{}
+		}
 		if thinking.adaptive {
 			// Opus 4.6+: adaptive thinking lets the model decide when and how
 			// deeply to reason. Request summarized display explicitly so Bedrock
@@ -334,9 +342,11 @@ func (c *Client) buildConverseStreamInput(parts *requestParts, req *model.Reques
 			}
 			fields["thinking"] = thinkingCfg
 			if thinking.interleaved {
-				fields["anthropic_beta"] = []string{"interleaved-thinking-2025-05-14"}
+				addAnthropicBeta(fields, "interleaved-thinking-2025-05-14")
 			}
 		}
+	}
+	if len(fields) > 0 {
 		input.AdditionalModelRequestFields = document.NewLazyDocument(&fields)
 	}
 	if cfg := c.inferenceConfig(parts.modelID, req.MaxTokens, req.Temperature); cfg != nil {
@@ -447,6 +457,30 @@ func (c *Client) inferenceConfig(modelID string, maxTokens int, temp float32) *b
 // adapter must omit temperature entirely for every Opus 4.7 Bedrock scope.
 func supportsTemperature(modelID string) bool {
 	return !strings.Contains(modelID, "opus-4-7")
+}
+
+func cloneAdditionalModelFields(fields map[string]any) map[string]any {
+	if len(fields) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(fields))
+	for k, v := range fields {
+		out[k] = v
+	}
+	return out
+}
+
+func addAnthropicBeta(fields map[string]any, beta string) {
+	if beta == "" {
+		return
+	}
+	values, _ := fields["anthropic_beta"].([]string)
+	for _, value := range values {
+		if value == beta {
+			return
+		}
+	}
+	fields["anthropic_beta"] = append(values, beta)
 }
 
 // isRateLimited reports whether err represents a provider rate limiting
@@ -767,22 +801,25 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 
 func encodeTools(
 	ctx context.Context,
+	modelID string,
 	defs []*model.ToolDefinition,
 	choice *model.ToolChoice,
 	cacheAfterTools bool,
 	logger telemetry.Logger,
-) (*brtypes.ToolConfiguration, map[string]string, map[string]string, error) {
+) (*brtypes.ToolConfiguration, map[string]any, map[string]string, map[string]string, error) {
 	if len(defs) == 0 {
 		if choice == nil {
-			return nil, nil, nil, nil
+			return nil, nil, nil, nil, nil
 		}
-		return nil, nil, nil, fmt.Errorf("bedrock: tool choice is set but no tools are defined")
+		return nil, nil, nil, nil, fmt.Errorf("bedrock: tool choice is set but no tools are defined")
 	}
 	toolList := make([]brtypes.Tool, 0, len(defs))
 	// canonToSan maps canonical IDs (toolset.tool) to provider-visible sanitized names.
 	canonToSan := make(map[string]string, len(defs))
 	// sanToCanon is the reverse map used to translate provider names back to canonical IDs.
 	sanToCanon := make(map[string]string, len(defs))
+	anthropicModel := isAnthropicBedrockModel(modelID)
+	anthropicTools := make([]map[string]any, 0, len(defs))
 	for _, def := range defs {
 		if def == nil {
 			continue
@@ -793,7 +830,7 @@ func encodeTools(
 		}
 		sanitized := SanitizeToolName(canonical)
 		if prev, ok := sanToCanon[sanitized]; ok && prev != canonical {
-			return nil, nil, nil, fmt.Errorf(
+			return nil, nil, nil, nil, fmt.Errorf(
 				"bedrock: tool name %q sanitizes to %q which collides with %q",
 				canonical, sanitized, prev,
 			)
@@ -801,9 +838,17 @@ func encodeTools(
 		sanToCanon[sanitized] = canonical
 		canonToSan[canonical] = sanitized
 		if def.Description == "" {
-			return nil, nil, nil, fmt.Errorf("bedrock: tool %q is missing description", canonical)
+			return nil, nil, nil, nil, fmt.Errorf("bedrock: tool %q is missing description", canonical)
 		}
-		schemaDoc := toDocument(ctx, def.InputSchema, logger)
+		inputSchema := def.Input.Schema
+		if anthropicModel && def.Input.ExampleInput != nil {
+			if def.Input.PlainSchema == nil {
+				return nil, nil, nil, nil, fmt.Errorf("bedrock: tool %q example input requires plain schema", canonical)
+			}
+			inputSchema = def.Input.PlainSchema
+			anthropicTools = append(anthropicTools, anthropicToolDefinition(sanitized, def))
+		}
+		schemaDoc := toDocument(ctx, inputSchema, logger)
 		spec := brtypes.ToolSpecification{
 			Name:        aws.String(sanitized),
 			Description: aws.String(def.Description),
@@ -813,9 +858,9 @@ func encodeTools(
 	}
 	if len(toolList) == 0 {
 		if choice == nil || choice.Mode == model.ToolChoiceModeNone {
-			return nil, nil, nil, nil
+			return nil, nil, nil, nil, nil
 		}
-		return nil, nil, nil, fmt.Errorf("bedrock: tool choice is set but no tools are defined")
+		return nil, nil, nil, nil, fmt.Errorf("bedrock: tool choice is set but no tools are defined")
 	}
 	// Policy-driven: append a cache checkpoint after tools when requested.
 	// Note: Only Claude models support tool-level cache checkpoints; Nova does not.
@@ -826,7 +871,7 @@ func encodeTools(
 	}
 
 	if choice == nil {
-		return &brtypes.ToolConfiguration{Tools: toolList}, canonToSan, sanToCanon, nil
+		return &brtypes.ToolConfiguration{Tools: toolList}, anthropicToolExampleFields(anthropicTools), canonToSan, sanToCanon, nil
 	}
 
 	cfg := brtypes.ToolConfiguration{
@@ -848,23 +893,43 @@ func encodeTools(
 		}
 	case model.ToolChoiceModeTool:
 		if choice.Name == "" {
-			return nil, nil, nil, fmt.Errorf("bedrock: tool choice mode %q requires a tool name", choice.Mode)
+			return nil, nil, nil, nil, fmt.Errorf("bedrock: tool choice mode %q requires a tool name", choice.Mode)
 		}
 		if !hasToolDefinition(defs, choice.Name) {
-			return nil, nil, nil, fmt.Errorf("bedrock: tool choice name %q does not match any tool", choice.Name)
+			return nil, nil, nil, nil, fmt.Errorf("bedrock: tool choice name %q does not match any tool", choice.Name)
 		}
 		sanitized := SanitizeToolName(choice.Name)
 		if canonical, ok := sanToCanon[sanitized]; !ok || canonical != choice.Name {
-			return nil, nil, nil, fmt.Errorf("bedrock: tool choice name %q does not match any tool", choice.Name)
+			return nil, nil, nil, nil, fmt.Errorf("bedrock: tool choice name %q does not match any tool", choice.Name)
 		}
 		cfg.ToolChoice = &brtypes.ToolChoiceMemberTool{
 			Value: brtypes.SpecificToolChoice{Name: aws.String(sanitized)},
 		}
 	default:
-		return nil, nil, nil, fmt.Errorf("bedrock: unsupported tool choice mode %q", choice.Mode)
+		return nil, nil, nil, nil, fmt.Errorf("bedrock: unsupported tool choice mode %q", choice.Mode)
 	}
 
-	return &cfg, canonToSan, sanToCanon, nil
+	return &cfg, anthropicToolExampleFields(anthropicTools), canonToSan, sanToCanon, nil
+}
+
+func anthropicToolDefinition(name string, def *model.ToolDefinition) map[string]any {
+	return map[string]any{
+		"name":           name,
+		"description":    def.Description,
+		"input_schema":   def.Input.PlainSchema,
+		"input_examples": []map[string]any{def.Input.ExampleInput},
+	}
+}
+
+func anthropicToolExampleFields(tools []map[string]any) map[string]any {
+	if len(tools) == 0 {
+		return nil
+	}
+	fields := map[string]any{
+		"tools": tools,
+	}
+	addAnthropicBeta(fields, "tool-examples-2025-10-29")
+	return fields
 }
 
 // sanitizeDocumentName maps an arbitrary user-provided document name (typically a
@@ -1248,6 +1313,11 @@ func isNovaModel(modelID string) bool {
 	}
 	// Bedrock Nova models are prefixed with "amazon.nova-".
 	return strings.HasPrefix(modelID, "amazon.nova-")
+}
+
+func isAnthropicBedrockModel(modelID string) bool {
+	return strings.HasPrefix(modelID, "anthropic.") ||
+		strings.Contains(modelID, ".anthropic.")
 }
 
 // messagesHaveToolBlocks returns true if any message in the slice contains

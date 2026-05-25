@@ -14,10 +14,12 @@ var (
             Name: {{ if .Result }}{{ printf "%q" .Result.TypeName }}{{ else }}""{{ end }},
             Schema: {{- if and .Result (gt (len .Result.SchemaJSON) 0) }}[]byte({{ printf "%q" .Result.SchemaJSON }}){{ else }}nil{{ end }},
             {{- if .Result }}
+            PlainSchema: {{- if gt (len .Result.PlainSchemaJSON) 0 }}[]byte({{ printf "%q" .Result.PlainSchemaJSON }}){{ else }}nil{{ end }},
             ExampleJSON: {{- if gt (len .Result.ExampleJSON) 0 }}[]byte({{ printf "%q" .Result.ExampleJSON }}){{ else }}nil{{ end }},
             ExampleInput: {{- if .Result.ExampleInputGo }}{{ .Result.ExampleInputGo }}{{ else }}nil{{ end }},
             Codec: {{ .Result.GenericCodec }},
             {{- else }}
+            PlainSchema: nil,
             ExampleJSON: nil,
             ExampleInput: nil,
             Codec: tools.JSONCodec[any]{},

@@ -148,9 +148,19 @@ func toolDefinitionFromSpec(spec tools.ToolSpec) *model.ToolDefinition {
 			panic(fmt.Errorf("runtime: decode payload schema for %s: %w", spec.Name, err))
 		}
 	}
+	var plainInputSchema any
+	if len(spec.Payload.PlainSchema) > 0 {
+		if err := json.Unmarshal(spec.Payload.PlainSchema, &plainInputSchema); err != nil {
+			panic(fmt.Errorf("runtime: decode plain payload schema for %s: %w", spec.Name, err))
+		}
+	}
 	return &model.ToolDefinition{
 		Name:        spec.Name.String(),
 		Description: spec.Description,
-		InputSchema: inputSchema,
+		Input: model.ToolInputDefinition{
+			Schema:       inputSchema,
+			PlainSchema:  plainInputSchema,
+			ExampleInput: spec.Payload.ExampleInput,
+		},
 	}
 }
