@@ -24,7 +24,7 @@ var (
 		Description: "Write a short task headline",
 		Result: tools.TypeSpec{
 			Name:         "HeadlineResult",
-			Schema:       []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
+			Schema:       []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\",\"example\":\"abc123\"}"),
 			ExampleJSON:  []byte("\"abc123\""),
 			ExampleInput: nil,
 			Codec:        headlineResultCodec,

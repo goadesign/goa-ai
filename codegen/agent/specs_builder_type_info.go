@@ -156,25 +156,12 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	// localization). These are emitted into the toolset-local http package.
 	b.collectTransportUnionSumTypes(scope, transportAttr)
 
-	// JSON schema from transport attribute
-	schemaAttr := transportAttr
-	var err error
-	schemaBytes, err := schemaForAttribute(schemaAttr)
-	if err != nil {
-		return nil, err
-	}
-	if usage == usageResult && owner.Bounds != nil {
-		schemaBytes, err = projectBoundedResultSchema(schemaBytes, owner.Bounds)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	// Example JSON for externally visible request/response contracts. Payload
 	// examples guide callers toward schema-compliant inputs, while completion
 	// result examples drive generated example scaffolding without inventing
 	// ad-hoc sample payloads in templates.
-	var exampleBytes []byte
+	schemaAttr := transportAttr
+	var example *exampleData
 	if usage == usagePayload || (usage == usageResult && owner.Kind == contractTypeOwnerCompletion) {
 		// Examples must reflect the JSON wire contract, not the public tool type.
 		// In particular, unions are encoded as canonical {type,value} objects in
@@ -184,9 +171,22 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		// Prefer an explicit top-level Example(...) from the original DSL
 		// attribute. If none exists, synthesize the minimal example from the
 		// transport schema attribute.
-		exampleBytes = authoredExampleForAttribute(att, schemaAttr)
-		if len(exampleBytes) == 0 {
-			exampleBytes = exampleForAttribute(schemaAttr)
+		example = authoredExampleForAttribute(att, schemaAttr)
+		if example == nil {
+			example = exampleForAttribute(schemaAttr)
+		}
+	}
+
+	// JSON schema from transport attribute
+	var err error
+	schemaBytes, err := schemaForAttribute(schemaAttr, exampleValue(example))
+	if err != nil {
+		return nil, err
+	}
+	if usage == usageResult && owner.Bounds != nil {
+		schemaBytes, err = projectBoundedResultSchema(schemaBytes, owner.Bounds)
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -263,7 +263,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		Doc:                    doc,
 		Def:                    defLine,
 		SchemaJSON:             schemaBytes,
-		ExampleJSON:            exampleBytes,
+		ExampleJSON:            exampleJSON(example),
 		ExportedCodec:          typeName + "Codec",
 		GenericCodec:           lowerCamel(typeName) + "Codec",
 		MarshalFunc:            "Marshal" + typeName,
@@ -292,8 +292,8 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		DecodeTransform:        decodeBody,
 		EncodeTransform:        encodeBody,
 	}
-	if len(exampleBytes) > 0 && (usage == usagePayload || (usage == usageResult && owner.Kind == contractTypeOwnerCompletion)) {
-		if eg, ok := exampleInputGoExpr(exampleBytes); ok {
+	if example != nil && (usage == usagePayload || (usage == usageResult && owner.Kind == contractTypeOwnerCompletion)) {
+		if eg, ok := exampleInputGoExpr(example.JSON); ok {
 			info.ExampleInputGo = eg
 		}
 	}

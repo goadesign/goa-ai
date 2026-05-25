@@ -13,6 +13,16 @@ import (
 
 const jsonSchemaTypeInteger = "integer"
 
+type (
+	// exampleData keeps one canonical JSON-native example in both generated
+	// byte form and schema annotation form so tool specs do not derive the same
+	// contract twice.
+	exampleData struct {
+		JSON  []byte
+		Value any
+	}
+)
+
 // buildFieldDescriptions collects dotted field-path descriptions from the provided
 // attribute. It follows objects, arrays, maps and user types, trimming any leading
 // root qualifiers at error construction time (newValidationError does this for "body.").
@@ -222,7 +232,7 @@ func servicePkgAlias(svc *service.Data) string {
 // schemaForAttribute generates an OpenAPI JSON schema for the given attribute.
 // It returns the schema as JSON bytes, or nil if the attribute is empty or
 // cannot be represented as a schema.
-func schemaForAttribute(att *goaexpr.AttributeExpr) ([]byte, error) {
+func schemaForAttribute(att *goaexpr.AttributeExpr, example any) ([]byte, error) {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return nil, nil
 	}
@@ -233,6 +243,7 @@ func schemaForAttribute(att *goaexpr.AttributeExpr) ([]byte, error) {
 	if schema == nil {
 		return nil, nil
 	}
+	schema.Example = example
 	if len(openapi.Definitions) > 0 {
 		schema.Defs = openapi.Definitions
 	}
@@ -250,6 +261,7 @@ func schemaForAttribute(att *goaexpr.AttributeExpr) ([]byte, error) {
 		}
 		if tname != "" {
 			if def, ok := openapi.Definitions[tname]; ok && def != nil {
+				def.Example = example
 				// Build a new definitions map excluding the root to avoid
 				// self-referential cycles during JSON marshaling.
 				if len(openapi.Definitions) > 0 {
@@ -472,9 +484,9 @@ func schemaRefName(schema map[string]any) string {
 	return strings.TrimPrefix(ref, "#/$defs/")
 }
 
-// authoredExampleForAttribute returns the last explicit Example(...) declared on
-// the source attribute, normalized to the canonical JSON contract of target.
-func authoredExampleForAttribute(source, target *goaexpr.AttributeExpr) []byte {
+// authoredExampleForAttribute returns the last explicit Example(...) declared
+// on the source attribute, normalized to the canonical JSON contract of target.
+func authoredExampleForAttribute(source, target *goaexpr.AttributeExpr) *exampleData {
 	if source == nil {
 		return nil
 	}
@@ -489,7 +501,7 @@ func authoredExampleForAttribute(source, target *goaexpr.AttributeExpr) []byte {
 // using Goa's example generator. When no meaningful example can be derived it
 // returns nil so callers can distinguish between "no example" and an empty
 // object.
-func exampleForAttribute(att *goaexpr.AttributeExpr) []byte {
+func exampleForAttribute(att *goaexpr.AttributeExpr) *exampleData {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return nil
 	}
@@ -503,7 +515,7 @@ func exampleForAttribute(att *goaexpr.AttributeExpr) []byte {
 
 // normalizeExampleValue canonicalizes one example value into JSON-native shapes
 // and rewrites union nodes to the canonical {type,value} encoding.
-func normalizeExampleValue(att *goaexpr.AttributeExpr, v any) []byte {
+func normalizeExampleValue(att *goaexpr.AttributeExpr, v any) *exampleData {
 	// Normalize to JSON-native shapes (map[string]any, []any, float64, string, bool)
 	// so downstream rewriting logic doesn't have to handle typed maps/slices that
 	// Goa's example generator may produce for single-field objects.
@@ -524,7 +536,21 @@ func normalizeExampleValue(att *goaexpr.AttributeExpr, v any) []byte {
 	if string(data) == "{}" {
 		return nil
 	}
-	return data
+	return &exampleData{JSON: data, Value: normalized}
+}
+
+func exampleJSON(example *exampleData) []byte {
+	if example == nil {
+		return nil
+	}
+	return example.JSON
+}
+
+func exampleValue(example *exampleData) any {
+	if example == nil {
+		return nil
+	}
+	return example.Value
 }
 
 // canonicalizeUnionExamples rewrites Goa's "flattened" union examples into the

@@ -11,5 +11,6 @@ func TestAuthoredPayloadExamplePreservedInToolSpecs(t *testing.T) {
 	files := buildAndGenerate(t, testscenarios.AuthoredPayloadExample())
 	specsSrc := fileContent(t, files, "gen/calc/toolsets/helpers/specs.go")
 
+	require.Contains(t, specsSrc, `\"example\":{\"limit\":7,\"query\":\"battery alarms\"}`)
 	require.Contains(t, specsSrc, `ExampleJSON:[]byte("{\"limit\":7,\"query\":\"battery alarms\"}")`)
 }

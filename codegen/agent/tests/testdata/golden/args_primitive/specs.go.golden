@@ -29,7 +29,7 @@ var (
 		Tags:        []string{},
 		Payload: tools.TypeSpec{
 			Name:         "EchoPayload",
-			Schema:       []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
+			Schema:       []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\",\"example\":\"abc123\"}"),
 			ExampleJSON:  []byte("\"abc123\""),
 			ExampleInput: nil,
 			Codec:        echoPayloadCodec,
