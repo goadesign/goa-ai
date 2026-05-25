@@ -12,10 +12,6 @@
         "name": "DangerousWritePayload",
         "schema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "example": {
-            "key": "abc123",
-            "value": "abc123"
-          },
           "properties": {
             "key": {
               "description": "Key to update.",

@@ -229,14 +229,6 @@ func servicePkgAlias(svc *service.Data) string {
 	return svc.PkgName
 }
 
-// schemaForAttribute generates an OpenAPI JSON schema for the given attribute.
-// It returns the schema as JSON bytes, or nil if the attribute is empty or
-// cannot be represented as a schema.
-func schemaForAttribute(att *goaexpr.AttributeExpr, example any) ([]byte, error) {
-	schema, _, err := schemaVariantsForAttribute(att, example)
-	return schema, err
-}
-
 // schemaVariantsForAttribute generates the annotated and plain OpenAPI JSON
 // schema views for att from one Goa schema graph. The annotated view receives
 // the root example supplied by the caller; the plain view clears only that root
@@ -517,22 +509,6 @@ func authoredExampleForAttribute(source, target *goaexpr.AttributeExpr) *example
 		return nil
 	}
 	return normalizeExampleValue(target, examples[len(examples)-1].Value)
-}
-
-// exampleForAttribute produces a minimal JSON example for the given attribute
-// using Goa's example generator. When no meaningful example can be derived it
-// returns nil so callers can distinguish between "no example" and an empty
-// object.
-func exampleForAttribute(att *goaexpr.AttributeExpr) *exampleData {
-	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
-		return nil
-	}
-	gen := &goaexpr.ExampleGenerator{Randomizer: goaexpr.NewDeterministicRandomizer()}
-	v := att.Example(gen)
-	if v == nil {
-		return nil
-	}
-	return normalizeExampleValue(att, v)
 }
 
 // normalizeExampleValue canonicalizes one example value into JSON-native shapes

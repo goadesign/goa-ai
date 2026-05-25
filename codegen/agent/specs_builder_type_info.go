@@ -156,10 +156,10 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	// localization). These are emitted into the toolset-local http package.
 	b.collectTransportUnionSumTypes(scope, transportAttr)
 
-	// Example JSON for externally visible request/response contracts. Payload
-	// examples guide callers toward schema-compliant inputs, while completion
-	// result examples drive generated example scaffolding without inventing
-	// ad-hoc sample payloads in templates.
+	// Example JSON for externally visible request/response contracts. Only
+	// authored Goa Example(...) values become top-level schema examples and model
+	// input examples; synthesized attribute examples stay out of provider tool
+	// definitions so prompts only include examples the DSL author chose.
 	schemaAttr := transportAttr
 	var example *exampleData
 	if usage == usagePayload || (usage == usageResult && owner.Kind == contractTypeOwnerCompletion) {
@@ -168,13 +168,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		// the transport graph; deriving examples from the public type produces a
 		// flattened shape that misleads callers and generated examples.
 		//
-		// Prefer an explicit top-level Example(...) from the original DSL
-		// attribute. If none exists, synthesize the minimal example from the
-		// transport schema attribute.
 		example = authoredExampleForAttribute(att, schemaAttr)
-		if example == nil {
-			example = exampleForAttribute(schemaAttr)
-		}
 	}
 
 	// JSON schema from transport attribute

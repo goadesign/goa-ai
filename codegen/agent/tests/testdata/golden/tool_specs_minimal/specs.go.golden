@@ -29,10 +29,10 @@ var (
 		Tags:        []string{},
 		Payload: tools.TypeSpec{
 			Name:                     "SummarizeDocPayload",
-			Schema:                   []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"doc_id\":{\"type\":\"string\",\"description\":\"Document identifier\",\"example\":\"Magnam asperiores dolorum.\"}},\"example\":{\"doc_id\":\"abc123\"},\"required\":[\"doc_id\"]}"),
+			Schema:                   []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"doc_id\":{\"type\":\"string\",\"description\":\"Document identifier\",\"example\":\"Magnam asperiores dolorum.\"}},\"required\":[\"doc_id\"]}"),
 			SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"doc_id\":{\"type\":\"string\",\"description\":\"Document identifier\",\"example\":\"Magnam asperiores dolorum.\"}},\"required\":[\"doc_id\"]}"),
-			ExampleJSON:              []byte("{\"doc_id\":\"abc123\"}"),
-			ExampleInput:             map[string]any{"doc_id": "abc123"},
+			ExampleJSON:              nil,
+			ExampleInput:             nil,
 			Codec:                    summarizeDocPayloadCodec,
 		},
 		Result: tools.TypeSpec{

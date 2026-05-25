@@ -34,10 +34,10 @@ var (
 		},
 		Payload: tools.TypeSpec{
 			Name:                     "DangerousWritePayload",
-			Schema:                   []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"Key to update.\",\"example\":\"Dignissimos quo illum.\"},\"value\":{\"type\":\"string\",\"description\":\"New value.\",\"example\":\"Nemo quia.\"}},\"example\":{\"key\":\"abc123\",\"value\":\"abc123\"},\"required\":[\"key\",\"value\"]}"),
+			Schema:                   []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"Key to update.\",\"example\":\"Dignissimos quo illum.\"},\"value\":{\"type\":\"string\",\"description\":\"New value.\",\"example\":\"Nemo quia.\"}},\"required\":[\"key\",\"value\"]}"),
 			SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"Key to update.\",\"example\":\"Dignissimos quo illum.\"},\"value\":{\"type\":\"string\",\"description\":\"New value.\",\"example\":\"Nemo quia.\"}},\"required\":[\"key\",\"value\"]}"),
-			ExampleJSON:              []byte("{\"key\":\"abc123\",\"value\":\"abc123\"}"),
-			ExampleInput:             map[string]any{"key": "abc123", "value": "abc123"},
+			ExampleJSON:              nil,
+			ExampleInput:             nil,
 			Codec:                    dangerousWritePayloadCodec,
 		},
 		Result: tools.TypeSpec{

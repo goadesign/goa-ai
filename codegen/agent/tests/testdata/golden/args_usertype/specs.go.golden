@@ -29,10 +29,10 @@ var (
 		Tags:        []string{},
 		Payload: tools.TypeSpec{
 			Name:                     "StorePayload",
-			Schema:                   []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Identifier\",\"example\":\"Dignissimos quo illum.\"},\"title\":{\"type\":\"string\",\"description\":\"Title\",\"example\":\"Nemo quia.\"}},\"example\":{\"id\":\"abc123\",\"title\":\"abc123\"},\"required\":[\"id\",\"title\"]}"),
+			Schema:                   []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Identifier\",\"example\":\"Dignissimos quo illum.\"},\"title\":{\"type\":\"string\",\"description\":\"Title\",\"example\":\"Nemo quia.\"}},\"required\":[\"id\",\"title\"]}"),
 			SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Identifier\",\"example\":\"Dignissimos quo illum.\"},\"title\":{\"type\":\"string\",\"description\":\"Title\",\"example\":\"Nemo quia.\"}},\"required\":[\"id\",\"title\"]}"),
-			ExampleJSON:              []byte("{\"id\":\"abc123\",\"title\":\"abc123\"}"),
-			ExampleInput:             map[string]any{"id": "abc123", "title": "abc123"},
+			ExampleJSON:              nil,
+			ExampleInput:             nil,
 			Codec:                    storePayloadCodec,
 		},
 		Result: tools.TypeSpec{
