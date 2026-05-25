@@ -543,6 +543,13 @@ Use `AdvertisedToolDefinitions()` when constructing provider requests inside pla
 runtime filters registered tool specs before the planner/model sees them and strips tag metadata
 from the model-facing `ToolDefinition` values.
 
+Generated tool definitions also carry precomputed provider projections. The
+DSL-authored top-level Goa `Example(...)` on a payload becomes the only
+top-level provider example: providers that consume schema annotations use the
+generated schema `example`, while Anthropic and Bedrock Claude adapters use the
+generated schema without the root example plus top-level `input_examples`.
+Runtime code does not parse or rewrite schemas to discover examples.
+
 ### PlannerEvents
 
 `PlannerEvents` emits streaming updates that the runtime captures and publishes:

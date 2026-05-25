@@ -279,7 +279,19 @@ side effect:
 
 ## Tool Input Schema
 
-For each tool with a non-empty payload, the plugin derives a compact JSON Schema from the Goa attribute and exposes it in `tools/list` under `inputSchema`. This uses Goa's `openapi.Schema` type for complete JSON Schema draft 2020-12 support.
+For each tool with a non-empty payload, the plugin derives JSON Schema from the
+Goa attribute using Goa's `openapi.Schema` type for complete JSON Schema draft
+2020-12 support. The generated tool spec is the canonical model-facing contract:
+it contains the annotated schema, a second schema with only the root `example`
+removed, and a parsed `ExampleInput` when the payload has an authored top-level
+Goa `Example(...)`.
+
+Provider adapters choose between those precomputed projections. Providers that
+consume JSON Schema annotations use the annotated schema. Anthropic and Bedrock
+Claude use top-level `input_examples` and the schema without the root example.
+Synthesized Goa examples may remain nested schema annotations, but they are not
+promoted to top-level provider examples. Runtime and product code do not inspect
+or rewrite schemas to infer provider-specific shapes.
 
 ## Tool Identification
 

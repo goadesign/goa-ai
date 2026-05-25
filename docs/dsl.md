@@ -124,6 +124,15 @@ var _ = Service("tasks", func() {
 `Example`, validations, and `OneOf` all apply exactly as they do for tool payloads
 and results.
 
+For tools, a top-level Goa `Example(...)` on the `Args` attribute is the only
+source promoted to provider-facing tool examples. Codegen emits the annotated
+JSON Schema, a second schema with only the root `example` removed, and a parsed
+JSON-object `ExampleInput` at generation time. Provider adapters then select the
+precomputed projection: OpenAI-style providers use the annotated schema,
+Anthropic and Bedrock Claude use top-level `input_examples` with the plain root
+schema, and no provider receives synthesized examples as top-level tool
+examples.
+
 Generated JSON Schemas expose `OneOf` values through the same discriminated
 envelope the codecs accept: `{ "type": "<variant>", "value": <typed-payload> }`.
 Each schema variant fixes `type` to exactly one enum value and gives `value` the

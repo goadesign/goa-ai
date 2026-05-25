@@ -139,6 +139,33 @@ func TestEncodeTools_AnthropicModelAddsToolExamples(t *testing.T) {
 	require.Equal(t, map[string]any{"type": "object"}, tools[0]["input_schema"])
 }
 
+func TestEncodeTools_AnthropicModelKeepsAllToolsWhenOneHasExample(t *testing.T) {
+	ctx := context.Background()
+
+	cfg, fields, _, _, err := encodeTools(ctx, "us.anthropic.claude-opus-4-7", []*model.ToolDefinition{
+		{
+			Name:        "reports.complete",
+			Description: "Complete a report",
+			Input:       model.ToolInputFromSpec(toolInputExampleSpec()),
+		},
+		{
+			Name:        "reports.lookup",
+			Description: "Look up a report",
+			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+		},
+	}, nil, false, nil)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	tools, ok := fields["tools"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, tools, 2)
+	require.Equal(t, "reports_complete", tools[0]["name"])
+	require.Equal(t, []map[string]any{{"summary": "Done"}}, tools[0]["input_examples"])
+	require.Equal(t, "reports_lookup", tools[1]["name"])
+	require.NotContains(t, tools[1], "input_examples")
+	require.Equal(t, map[string]any{"type": "object"}, tools[1]["input_schema"])
+}
+
 func TestIsNovaModel(t *testing.T) {
 	cases := []struct {
 		name string

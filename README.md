@@ -272,6 +272,11 @@ var Docs = Toolset("docs", func() {
 - Validation at boundaries: invalid calls get structured retry hints, including
   generated JSON type mismatch guidance, not crashes or schema-string parsing
 - Type-safe Go structs for payloads and results
+- Provider-facing examples only when you author a top-level Goa `Example(...)`
+  on the tool payload. Codegen precomputes both schema variants and parsed
+  example input so OpenAI-style providers consume the schema `example`
+  annotation while Anthropic and Bedrock Claude receive top-level
+  `input_examples` with the root schema example removed.
 - Explicit control-plane contracts: `Bookkeeping()` keeps tools durable,
   budget-exempt, and hidden from future planner turns
 

@@ -820,6 +820,7 @@ func encodeTools(
 	sanToCanon := make(map[string]string, len(defs))
 	anthropicModel := isAnthropicBedrockModel(modelID)
 	anthropicTools := make([]map[string]any, 0, len(defs))
+	anthropicHasExamples := false
 	for _, def := range defs {
 		if def == nil {
 			continue
@@ -842,12 +843,16 @@ func encodeTools(
 		}
 		input := def.Input
 		inputSchema := input.JSONSchema()
-		if anthropicModel && input.ExampleInput() != nil {
+		hasExample := input.ExampleInput() != nil
+		if anthropicModel && hasExample {
 			if input.SchemaWithoutRootExample() == nil {
 				return nil, nil, nil, nil, fmt.Errorf("bedrock: tool %q example input requires schema without root example", canonical)
 			}
 			inputSchema = input.SchemaWithoutRootExample()
-			anthropicTools = append(anthropicTools, anthropicToolDefinition(sanitized, def))
+			anthropicHasExamples = true
+		}
+		if anthropicModel {
+			anthropicTools = append(anthropicTools, anthropicToolDefinition(sanitized, def, hasExample))
 		}
 		schemaDoc := toDocument(ctx, inputSchema, logger)
 		spec := brtypes.ToolSpecification{
@@ -872,7 +877,7 @@ func encodeTools(
 	}
 
 	if choice == nil {
-		return &brtypes.ToolConfiguration{Tools: toolList}, anthropicToolExampleFields(anthropicTools), canonToSan, sanToCanon, nil
+		return &brtypes.ToolConfiguration{Tools: toolList}, anthropicToolExampleFields(anthropicTools, anthropicHasExamples), canonToSan, sanToCanon, nil
 	}
 
 	cfg := brtypes.ToolConfiguration{
@@ -910,21 +915,28 @@ func encodeTools(
 		return nil, nil, nil, nil, fmt.Errorf("bedrock: unsupported tool choice mode %q", choice.Mode)
 	}
 
-	return &cfg, anthropicToolExampleFields(anthropicTools), canonToSan, sanToCanon, nil
+	return &cfg, anthropicToolExampleFields(anthropicTools, anthropicHasExamples), canonToSan, sanToCanon, nil
 }
 
-func anthropicToolDefinition(name string, def *model.ToolDefinition) map[string]any {
+func anthropicToolDefinition(name string, def *model.ToolDefinition, includeExample bool) map[string]any {
 	input := def.Input
-	return map[string]any{
-		"name":           name,
-		"description":    def.Description,
-		"input_schema":   input.SchemaWithoutRootExample(),
-		"input_examples": []map[string]any{input.ExampleInput()},
+	inputSchema := input.JSONSchema()
+	if includeExample {
+		inputSchema = input.SchemaWithoutRootExample()
 	}
+	tool := map[string]any{
+		"name":         name,
+		"description":  def.Description,
+		"input_schema": inputSchema,
+	}
+	if includeExample {
+		tool["input_examples"] = []map[string]any{input.ExampleInput()}
+	}
+	return tool
 }
 
-func anthropicToolExampleFields(tools []map[string]any) map[string]any {
-	if len(tools) == 0 {
+func anthropicToolExampleFields(tools []map[string]any, hasExamples bool) map[string]any {
+	if !hasExamples {
 		return nil
 	}
 	fields := map[string]any{
