@@ -5,7 +5,9 @@ package model
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -704,6 +706,28 @@ var ErrStructuredOutputUnsupported = errors.New("model: structured output not su
 // failure that is safe to surface to higher layers.
 var ErrRateLimited = errors.New("model: rate limited")
 
+// ToolDefinitionFromSpec converts a generated Goa tool specification into the
+// model-facing tool contract advertised to providers. Generated schema bytes are
+// compile-time artifacts; invalid JSON is an invariant violation and panics.
+func ToolDefinitionFromSpec(spec tools.ToolSpec) *ToolDefinition {
+	return &ToolDefinition{
+		Name:        spec.Name.String(),
+		Description: spec.Description,
+		Input:       ToolInputDefinitionFromTypeSpec(spec.Payload),
+	}
+}
+
+// ToolInputDefinitionFromTypeSpec projects one generated payload type into the
+// model input contract, preserving all generated schema variants and the
+// canonical object example without exposing that wiring at call sites.
+func ToolInputDefinitionFromTypeSpec(spec tools.TypeSpec) ToolInputDefinition {
+	return ToolInputDefinition{
+		Schema:       decodeGeneratedSchema(spec.Name, "payload schema", spec.Schema),
+		PlainSchema:  decodeGeneratedSchema(spec.Name, "plain payload schema", spec.PlainSchema),
+		ExampleInput: spec.ExampleInput,
+	}
+}
+
 func (TextPart) isPart() {}
 
 func (ImagePart) isPart() {}
@@ -719,3 +743,14 @@ func (ToolUsePart) isPart() {}
 func (ToolResultPart) isPart() {}
 
 func (CacheCheckpointPart) isPart() {}
+
+func decodeGeneratedSchema(name, label string, data []byte) any {
+	if len(data) == 0 {
+		return nil
+	}
+	var schema any
+	if err := json.Unmarshal(data, &schema); err != nil {
+		panic(fmt.Errorf("model: decode generated %s for %s: %w", label, name, err))
+	}
+	return schema
+}

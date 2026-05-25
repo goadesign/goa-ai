@@ -3,8 +3,6 @@
 package runtime
 
 import (
-	"encoding/json"
-	"fmt"
 	"maps"
 
 	"goa.design/goa-ai/runtime/agent/api"
@@ -142,25 +140,5 @@ func tagClauseAllows(clause api.TagPolicyClause, tags []string) bool {
 // shape advertised to providers. Invalid generated schemas are invariant
 // violations and therefore panic.
 func toolDefinitionFromSpec(spec tools.ToolSpec) *model.ToolDefinition {
-	var inputSchema any
-	if len(spec.Payload.Schema) > 0 {
-		if err := json.Unmarshal(spec.Payload.Schema, &inputSchema); err != nil {
-			panic(fmt.Errorf("runtime: decode payload schema for %s: %w", spec.Name, err))
-		}
-	}
-	var plainInputSchema any
-	if len(spec.Payload.PlainSchema) > 0 {
-		if err := json.Unmarshal(spec.Payload.PlainSchema, &plainInputSchema); err != nil {
-			panic(fmt.Errorf("runtime: decode plain payload schema for %s: %w", spec.Name, err))
-		}
-	}
-	return &model.ToolDefinition{
-		Name:        spec.Name.String(),
-		Description: spec.Description,
-		Input: model.ToolInputDefinition{
-			Schema:       inputSchema,
-			PlainSchema:  plainInputSchema,
-			ExampleInput: spec.Payload.ExampleInput,
-		},
-	}
+	return model.ToolDefinitionFromSpec(spec)
 }
