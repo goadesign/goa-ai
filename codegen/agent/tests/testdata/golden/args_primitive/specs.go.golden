@@ -28,18 +28,18 @@ var (
 		Description: "Echo",
 		Tags:        []string{},
 		Payload: tools.TypeSpec{
-			Name:         "EchoPayload",
-			Schema:       []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\",\"example\":\"abc123\"}"),
-			PlainSchema:  []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
-			ExampleJSON:  []byte("\"abc123\""),
-			ExampleInput: nil,
-			Codec:        echoPayloadCodec,
+			Name:                     "EchoPayload",
+			Schema:                   []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\",\"example\":\"abc123\"}"),
+			SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
+			ExampleJSON:              []byte("\"abc123\""),
+			ExampleInput:             nil,
+			Codec:                    echoPayloadCodec,
 		},
 		Result: tools.TypeSpec{
-			Name:        "EchoResult",
-			Schema:      []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
-			PlainSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
-			Codec:       echoResultCodec,
+			Name:                     "EchoResult",
+			Schema:                   []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
+			SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
+			Codec:                    echoResultCodec,
 		},
 	}
 )

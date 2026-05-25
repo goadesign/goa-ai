@@ -840,12 +840,13 @@ func encodeTools(
 		if def.Description == "" {
 			return nil, nil, nil, nil, fmt.Errorf("bedrock: tool %q is missing description", canonical)
 		}
-		inputSchema := def.Input.Schema
-		if anthropicModel && def.Input.ExampleInput != nil {
-			if def.Input.PlainSchema == nil {
-				return nil, nil, nil, nil, fmt.Errorf("bedrock: tool %q example input requires plain schema", canonical)
+		input := def.Input
+		inputSchema := input.JSONSchema()
+		if anthropicModel && input.ExampleInput() != nil {
+			if input.SchemaWithoutRootExample() == nil {
+				return nil, nil, nil, nil, fmt.Errorf("bedrock: tool %q example input requires schema without root example", canonical)
 			}
-			inputSchema = def.Input.PlainSchema
+			inputSchema = input.SchemaWithoutRootExample()
 			anthropicTools = append(anthropicTools, anthropicToolDefinition(sanitized, def))
 		}
 		schemaDoc := toDocument(ctx, inputSchema, logger)
@@ -913,11 +914,12 @@ func encodeTools(
 }
 
 func anthropicToolDefinition(name string, def *model.ToolDefinition) map[string]any {
+	input := def.Input
 	return map[string]any{
 		"name":           name,
 		"description":    def.Description,
-		"input_schema":   def.Input.PlainSchema,
-		"input_examples": []map[string]any{def.Input.ExampleInput},
+		"input_schema":   input.SchemaWithoutRootExample(),
+		"input_examples": []map[string]any{input.ExampleInput()},
 	}
 }
 

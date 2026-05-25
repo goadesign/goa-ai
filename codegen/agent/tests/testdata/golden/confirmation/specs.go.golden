@@ -33,18 +33,18 @@ var (
 			DeniedResultTemplate: "{\"summary\":\"Cancelled\",\"key\":\"{{ .Key }}\"}",
 		},
 		Payload: tools.TypeSpec{
-			Name:         "DangerousWritePayload",
-			Schema:       []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"Key to update.\",\"example\":\"Dignissimos quo illum.\"},\"value\":{\"type\":\"string\",\"description\":\"New value.\",\"example\":\"Nemo quia.\"}},\"example\":{\"key\":\"abc123\",\"value\":\"abc123\"},\"required\":[\"key\",\"value\"]}"),
-			PlainSchema:  []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"Key to update.\",\"example\":\"Dignissimos quo illum.\"},\"value\":{\"type\":\"string\",\"description\":\"New value.\",\"example\":\"Nemo quia.\"}},\"required\":[\"key\",\"value\"]}"),
-			ExampleJSON:  []byte("{\"key\":\"abc123\",\"value\":\"abc123\"}"),
-			ExampleInput: map[string]any{"key": "abc123", "value": "abc123"},
-			Codec:        dangerousWritePayloadCodec,
+			Name:                     "DangerousWritePayload",
+			Schema:                   []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"Key to update.\",\"example\":\"Dignissimos quo illum.\"},\"value\":{\"type\":\"string\",\"description\":\"New value.\",\"example\":\"Nemo quia.\"}},\"example\":{\"key\":\"abc123\",\"value\":\"abc123\"},\"required\":[\"key\",\"value\"]}"),
+			SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"Key to update.\",\"example\":\"Dignissimos quo illum.\"},\"value\":{\"type\":\"string\",\"description\":\"New value.\",\"example\":\"Nemo quia.\"}},\"required\":[\"key\",\"value\"]}"),
+			ExampleJSON:              []byte("{\"key\":\"abc123\",\"value\":\"abc123\"}"),
+			ExampleInput:             map[string]any{"key": "abc123", "value": "abc123"},
+			Codec:                    dangerousWritePayloadCodec,
 		},
 		Result: tools.TypeSpec{
-			Name:        "DangerousWriteResult",
-			Schema:      []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"Key that was updated.\",\"example\":\"Molestiae velit quam amet cupiditate non.\"},\"summary\":{\"type\":\"string\",\"description\":\"Summary of the update.\",\"example\":\"Consequatur reprehenderit.\"}},\"required\":[\"summary\",\"key\"]}"),
-			PlainSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"Key that was updated.\",\"example\":\"Molestiae velit quam amet cupiditate non.\"},\"summary\":{\"type\":\"string\",\"description\":\"Summary of the update.\",\"example\":\"Consequatur reprehenderit.\"}},\"required\":[\"summary\",\"key\"]}"),
-			Codec:       dangerousWriteResultCodec,
+			Name:                     "DangerousWriteResult",
+			Schema:                   []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"Key that was updated.\",\"example\":\"Molestiae velit quam amet cupiditate non.\"},\"summary\":{\"type\":\"string\",\"description\":\"Summary of the update.\",\"example\":\"Consequatur reprehenderit.\"}},\"required\":[\"summary\",\"key\"]}"),
+			SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"Key that was updated.\",\"example\":\"Molestiae velit quam amet cupiditate non.\"},\"summary\":{\"type\":\"string\",\"description\":\"Summary of the update.\",\"example\":\"Consequatur reprehenderit.\"}},\"required\":[\"summary\",\"key\"]}"),
+			Codec:                    dangerousWriteResultCodec,
 		},
 	}
 )

@@ -23,12 +23,12 @@ var (
 		Name:        Headline,
 		Description: "Write a short task headline",
 		Result: tools.TypeSpec{
-			Name:         "HeadlineResult",
-			Schema:       []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\",\"example\":\"abc123\"}"),
-			PlainSchema:  []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
-			ExampleJSON:  []byte("\"abc123\""),
-			ExampleInput: nil,
-			Codec:        headlineResultCodec,
+			Name:                     "HeadlineResult",
+			Schema:                   []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\",\"example\":\"abc123\"}"),
+			SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
+			ExampleJSON:              []byte("\"abc123\""),
+			ExampleInput:             nil,
+			Codec:                    headlineResultCodec,
 		},
 		Codec: HeadlineResultCodec,
 	}

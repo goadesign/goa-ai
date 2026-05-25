@@ -381,18 +381,20 @@ func encodeTools(ctx context.Context, defs []*model.ToolDefinition) ([]sdk.ToolU
 }
 
 func anthropicToolInput(ctx context.Context, def *model.ToolDefinition) (sdk.ToolInputSchemaParam, []map[string]any, error) {
-	if def.Input.ExampleInput == nil {
-		schema, err := toolInputSchema(ctx, def.Input.Schema)
+	input := def.Input
+	example := input.ExampleInput()
+	if example == nil {
+		schema, err := toolInputSchema(ctx, input.JSONSchema())
 		return schema, nil, err
 	}
-	if def.Input.PlainSchema == nil {
-		return sdk.ToolInputSchemaParam{}, nil, errors.New("example input requires plain schema")
+	if input.SchemaWithoutRootExample() == nil {
+		return sdk.ToolInputSchemaParam{}, nil, errors.New("example input requires schema without root example")
 	}
-	schema, err := toolInputSchema(ctx, def.Input.PlainSchema)
+	schema, err := toolInputSchema(ctx, input.SchemaWithoutRootExample())
 	if err != nil {
 		return sdk.ToolInputSchemaParam{}, nil, err
 	}
-	return schema, []map[string]any{def.Input.ExampleInput}, nil
+	return schema, []map[string]any{example}, nil
 }
 
 func toolInputSchema(_ context.Context, schema any) (sdk.ToolInputSchemaParam, error) {

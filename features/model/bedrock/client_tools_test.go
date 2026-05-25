@@ -9,6 +9,7 @@ import (
 
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 func TestEncodeTools_NoChoice(t *testing.T) {
@@ -18,7 +19,7 @@ func TestEncodeTools_NoChoice(t *testing.T) {
 		{
 			Name:        "lookup",
 			Description: "Search",
-			Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
+			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
 		},
 	}, nil, false, nil)
 	require.NoError(t, err)
@@ -37,7 +38,7 @@ func TestEncodeTools_ModeAny(t *testing.T) {
 		{
 			Name:        "lookup",
 			Description: "Search",
-			Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
+			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
 		},
 	}, &model.ToolChoice{Mode: model.ToolChoiceModeAny}, false, nil)
 	require.NoError(t, err)
@@ -57,7 +58,7 @@ func TestEncodeTools_ModeTool(t *testing.T) {
 		{
 			Name:        "lookup",
 			Description: "Search",
-			Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
+			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
 		},
 	}, &model.ToolChoice{
 		Mode: model.ToolChoiceModeTool,
@@ -82,7 +83,7 @@ func TestEncodeTools_ModeNonePreservesConfig(t *testing.T) {
 		{
 			Name:        "lookup",
 			Description: "Search",
-			Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
+			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
 		},
 	}, &model.ToolChoice{Mode: model.ToolChoiceModeNone}, false, nil)
 	require.NoError(t, err)
@@ -107,7 +108,7 @@ func TestEncodeTools_AppendsCacheCheckpoint(t *testing.T) {
 		{
 			Name:        "lookup",
 			Description: "Search",
-			Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
+			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
 		},
 	}, nil, true, nil)
 	require.NoError(t, err)
@@ -124,14 +125,7 @@ func TestEncodeTools_AnthropicModelAddsToolExamples(t *testing.T) {
 		{
 			Name:        "reports.complete",
 			Description: "Complete a report",
-			Input: model.ToolInputDefinition{
-				Schema: map[string]any{
-					"type":    "object",
-					"example": map[string]any{"summary": "Done"},
-				},
-				PlainSchema:  map[string]any{"type": "object"},
-				ExampleInput: map[string]any{"summary": "Done"},
-			},
+			Input:       model.ToolInputFromSpec(toolInputExampleSpec()),
 		},
 	}, nil, false, nil)
 	require.NoError(t, err)
@@ -160,6 +154,17 @@ func TestIsNovaModel(t *testing.T) {
 			got := isNovaModel(tt.in)
 			require.Equal(t, tt.want, got)
 		})
+	}
+}
+
+func toolInputExampleSpec() tools.TypeSpec {
+	return tools.TypeSpec{
+		Name:                     "ReportsCompletePayload",
+		Schema:                   []byte(`{"type":"object","example":{"summary":"Done"}}`),
+		SchemaWithoutRootExample: []byte(`{"type":"object"}`),
+		ExampleInput: map[string]any{
+			"summary": "Done",
+		},
 	}
 }
 

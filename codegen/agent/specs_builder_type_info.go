@@ -179,7 +179,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 
 	// JSON schema from transport attribute
 	var err error
-	schemaBytes, plainSchemaBytes, err := schemaVariantsForAttribute(schemaAttr, exampleValue(example))
+	schemaBytes, schemaWithoutRootExampleBytes, err := schemaVariantsForAttribute(schemaAttr, exampleValue(example))
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +188,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		if err != nil {
 			return nil, err
 		}
-		plainSchemaBytes, err = projectBoundedResultSchema(plainSchemaBytes, owner.Bounds)
+		schemaWithoutRootExampleBytes, err = projectBoundedResultSchema(schemaWithoutRootExampleBytes, owner.Bounds)
 		if err != nil {
 			return nil, err
 		}
@@ -262,40 +262,40 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		transportPointerOut = strings.HasPrefix(scope.GoTypeRef(src), "*")
 	}
 	info := &typeData{
-		Key:                    key,
-		TypeName:               typeName,
-		Doc:                    doc,
-		Def:                    defLine,
-		SchemaJSON:             schemaBytes,
-		PlainSchemaJSON:        plainSchemaBytes,
-		ExampleJSON:            exampleJSON(example),
-		ExportedCodec:          typeName + "Codec",
-		GenericCodec:           lowerCamel(typeName) + "Codec",
-		MarshalFunc:            "Marshal" + typeName,
-		UnmarshalFunc:          "Unmarshal" + typeName,
-		ValidateFunc:           "",
-		FullRef:                fullRef,
-		NeedType:               defLine != "",
-		IsToolType:             usage == usagePayload || usage == usageResult || usage == usageSidecar,
-		PublicType:             dst,
-		NilError:               fmt.Sprintf("%s is nil", lowerCamel(typeName)),
-		DecodeError:            fmt.Sprintf("decode %s", lowerCamel(typeName)),
-		ValidateError:          fmt.Sprintf("validate %s", lowerCamel(typeName)),
-		EmptyError:             fmt.Sprintf("%s JSON is empty", lowerCamel(typeName)),
-		Usage:                  usage,
-		TypeImports:            imports,
-		GenerateCodec:          true,
-		Pointer:                ptr,
-		MarshalArg:             "v",
-		UnmarshalArg:           "v",
-		TransportTypeName:      transportTypeNameOut,
-		TransportDef:           transportDefOut,
-		TransportImports:       transportImportsOut,
-		TransportValidationSrc: transportValidationSrcOut,
-		TransportTypeRef:       transportTypeRefOut,
-		TransportPointer:       transportPointerOut,
-		DecodeTransform:        decodeBody,
-		EncodeTransform:        encodeBody,
+		Key:                          key,
+		TypeName:                     typeName,
+		Doc:                          doc,
+		Def:                          defLine,
+		SchemaJSON:                   schemaBytes,
+		SchemaWithoutRootExampleJSON: schemaWithoutRootExampleBytes,
+		ExampleJSON:                  exampleJSON(example),
+		ExportedCodec:                typeName + "Codec",
+		GenericCodec:                 lowerCamel(typeName) + "Codec",
+		MarshalFunc:                  "Marshal" + typeName,
+		UnmarshalFunc:                "Unmarshal" + typeName,
+		ValidateFunc:                 "",
+		FullRef:                      fullRef,
+		NeedType:                     defLine != "",
+		IsToolType:                   usage == usagePayload || usage == usageResult || usage == usageSidecar,
+		PublicType:                   dst,
+		NilError:                     fmt.Sprintf("%s is nil", lowerCamel(typeName)),
+		DecodeError:                  fmt.Sprintf("decode %s", lowerCamel(typeName)),
+		ValidateError:                fmt.Sprintf("validate %s", lowerCamel(typeName)),
+		EmptyError:                   fmt.Sprintf("%s JSON is empty", lowerCamel(typeName)),
+		Usage:                        usage,
+		TypeImports:                  imports,
+		GenerateCodec:                true,
+		Pointer:                      ptr,
+		MarshalArg:                   "v",
+		UnmarshalArg:                 "v",
+		TransportTypeName:            transportTypeNameOut,
+		TransportDef:                 transportDefOut,
+		TransportImports:             transportImportsOut,
+		TransportValidationSrc:       transportValidationSrcOut,
+		TransportTypeRef:             transportTypeRefOut,
+		TransportPointer:             transportPointerOut,
+		DecodeTransform:              decodeBody,
+		EncodeTransform:              encodeBody,
 	}
 	if example != nil && (usage == usagePayload || (usage == usageResult && owner.Kind == contractTypeOwnerCompletion)) {
 		if eg, ok := exampleInputGoExpr(example.JSON); ok {

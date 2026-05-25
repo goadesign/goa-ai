@@ -120,7 +120,7 @@ func TestPlanStartActivityAdvertisesPolicyFilteredTools(t *testing.T) {
 			require.Len(t, definitions, 1)
 			require.Equal(t, "svc.tools.visible", definitions[0].Name)
 			require.Equal(t, "Visible tool", definitions[0].Description)
-			schema, ok := definitions[0].Input.Schema.(map[string]any)
+			schema, ok := definitions[0].Input.JSONSchema().(map[string]any)
 			require.True(t, ok)
 			require.Equal(t, "object", schema["type"])
 			return &planner.PlanResult{

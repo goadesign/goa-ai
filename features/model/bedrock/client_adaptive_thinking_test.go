@@ -66,7 +66,7 @@ func TestBuildConverseStreamInputOpus47UsesAdaptiveThinking(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "search",
 			Description: "search the workspace",
-			Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
+			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
 		}},
 		Thinking: &model.ThinkingOptions{
 			Enable:       true,

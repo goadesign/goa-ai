@@ -151,7 +151,7 @@ func TestCompleteRejectsToolDefinitions(t *testing.T) {
 			Tools: []*model.ToolDefinition{{
 				Name:        "lookup",
 				Description: "Search",
-				Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
+				Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
 			}},
 		},
 		testCompletionSpec(),
@@ -217,7 +217,7 @@ func TestStreamRejectsInvariantViolations(t *testing.T) {
 				Tools: []*model.ToolDefinition{{
 					Name:        "lookup",
 					Description: "Search",
-					Input:       model.ToolInputDefinition{Schema: map[string]any{"type": "object"}},
+					Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
 				}},
 			},
 			want: "does not allow tool definitions",

@@ -253,21 +253,14 @@ type (
 		Description string
 
 		// Input describes the model-facing tool payload contract.
-		Input ToolInputDefinition
+		Input ToolInput
 	}
 
-	// ToolInputDefinition contains the generated model-facing input contract for
-	// one tool.
-	ToolInputDefinition struct {
-		// Schema is the annotated JSON Schema describing the tool input payload.
-		Schema any
-
-		// PlainSchema is the JSON Schema without root-level example annotations.
-		// Providers that carry examples outside the schema use this variant.
-		PlainSchema any
-
-		// ExampleInput is the canonical JSON-object example input for the tool.
-		ExampleInput map[string]any
+	// ToolInput contains the model-facing input contract for one tool.
+	ToolInput struct {
+		jsonSchema               any
+		schemaWithoutRootExample any
+		exampleInput             map[string]any
 	}
 
 	// ToolCall is a requested tool invocation from the model.
@@ -713,19 +706,43 @@ func ToolDefinitionFromSpec(spec tools.ToolSpec) *ToolDefinition {
 	return &ToolDefinition{
 		Name:        spec.Name.String(),
 		Description: spec.Description,
-		Input:       ToolInputDefinitionFromTypeSpec(spec.Payload),
+		Input:       ToolInputFromSpec(spec.Payload),
 	}
 }
 
-// ToolInputDefinitionFromTypeSpec projects one generated payload type into the
-// model input contract, preserving all generated schema variants and the
-// canonical object example without exposing that wiring at call sites.
-func ToolInputDefinitionFromTypeSpec(spec tools.TypeSpec) ToolInputDefinition {
-	return ToolInputDefinition{
-		Schema:       decodeGeneratedSchema(spec.Name, "payload schema", spec.Schema),
-		PlainSchema:  decodeGeneratedSchema(spec.Name, "plain payload schema", spec.PlainSchema),
-		ExampleInput: spec.ExampleInput,
+// ToolInputFromSchema builds an input contract from a caller-authored schema.
+// Use this for local tools whose schema does not come from generated Goa specs.
+func ToolInputFromSchema(schema any) ToolInput {
+	return ToolInput{jsonSchema: schema}
+}
+
+// ToolInputFromSpec projects one generated payload type into the model input
+// contract, preserving all generated schema variants and the canonical object
+// example without exposing that wiring at call sites.
+func ToolInputFromSpec(spec tools.TypeSpec) ToolInput {
+	return ToolInput{
+		jsonSchema:               decodeGeneratedSchema(spec.Name, "payload schema", spec.Schema),
+		schemaWithoutRootExample: decodeGeneratedSchema(spec.Name, "schema without root example", spec.SchemaWithoutRootExample),
+		exampleInput:             spec.ExampleInput,
 	}
+}
+
+// JSONSchema returns the annotated JSON Schema for providers that consume JSON
+// Schema annotations directly.
+func (in ToolInput) JSONSchema() any {
+	return in.jsonSchema
+}
+
+// SchemaWithoutRootExample returns the JSON Schema without its root example
+// annotation. Providers with top-level example fields use this projection.
+func (in ToolInput) SchemaWithoutRootExample() any {
+	return in.schemaWithoutRootExample
+}
+
+// ExampleInput returns the canonical JSON-object input example for providers
+// with top-level input example support.
+func (in ToolInput) ExampleInput() map[string]any {
+	return in.exampleInput
 }
 
 func (TextPart) isPart() {}

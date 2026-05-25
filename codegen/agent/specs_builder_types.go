@@ -155,10 +155,10 @@ type (
 		// empty, no schema is available or the type cannot be represented as
 		// a JSON schema.
 		SchemaJSON []byte
-		// PlainSchemaJSON holds the OpenAPI JSON schema bytes without root-level
-		// example annotations. Model providers that accept examples outside the
-		// schema consume this generated variant directly.
-		PlainSchemaJSON []byte
+		// SchemaWithoutRootExampleJSON holds the OpenAPI JSON schema bytes without
+		// the root example annotation. Model providers that accept examples outside
+		// the schema consume this generated variant directly.
+		SchemaWithoutRootExampleJSON []byte
 		// ExampleJSON holds a canonical example JSON document for this type when
 		// available. For payloads, it is derived from Goa examples and can be used
 		// by runtimes to surface concrete examples in retry hints or UI prompts.

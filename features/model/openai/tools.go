@@ -43,7 +43,7 @@ func encodeTools(defs []*model.ToolDefinition) ([]responses.ToolUnionParam, map[
 				previous,
 			)
 		}
-		parameters, err := toolInputSchema(def.Input.Schema)
+		parameters, err := toolInputSchema(def.Input.JSONSchema())
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("openai: tool %q schema: %w", def.Name, err)
 		}

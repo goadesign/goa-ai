@@ -11,6 +11,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type stubMessagesClient struct {
@@ -118,7 +119,7 @@ func TestComplete_ToolUse(t *testing.T) {
 			{
 				Name:        "test.tool",
 				Description: "test tool",
-				Input:       model.ToolInputDefinition{Schema: json.RawMessage(`{"type":"object"}`)},
+				Input:       model.ToolInputFromSchema(json.RawMessage(`{"type":"object"}`)),
 			},
 		},
 	}
@@ -170,20 +171,11 @@ func TestComplete_ToolUse(t *testing.T) {
 	}
 }
 
-func TestEncodeTools_UsesPlainSchemaAndInputExamples(t *testing.T) {
+func TestEncodeTools_UsesSchemaWithoutRootExampleAndInputExamples(t *testing.T) {
 	defs := []*model.ToolDefinition{{
 		Name:        "reports.complete",
 		Description: "Complete a report",
-		Input: model.ToolInputDefinition{
-			Schema: map[string]any{
-				"type":    "object",
-				"example": map[string]any{"summary": "Done"},
-			},
-			PlainSchema: map[string]any{
-				"type": "object",
-			},
-			ExampleInput: map[string]any{"summary": "Done"},
-		},
+		Input:       model.ToolInputFromSpec(toolInputExampleSpec()),
 	}}
 
 	tools, _, _, err := encodeTools(context.Background(), defs)
@@ -201,6 +193,17 @@ func TestEncodeTools_UsesPlainSchemaAndInputExamples(t *testing.T) {
 	}
 	if _, ok := tools[0].OfTool.InputSchema.ExtraFields["example"]; ok {
 		t.Fatalf("plain schema should not include root example: %#v", tools[0].OfTool.InputSchema.ExtraFields)
+	}
+}
+
+func toolInputExampleSpec() tools.TypeSpec {
+	return tools.TypeSpec{
+		Name:                     "ReportsCompletePayload",
+		Schema:                   []byte(`{"type":"object","example":{"summary":"Done"}}`),
+		SchemaWithoutRootExample: []byte(`{"type":"object"}`),
+		ExampleInput: map[string]any{
+			"summary": "Done",
+		},
 	}
 }
 
