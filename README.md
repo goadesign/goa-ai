@@ -273,10 +273,10 @@ var Docs = Toolset("docs", func() {
   generated JSON type mismatch guidance, not crashes or schema-string parsing
 - Type-safe Go structs for payloads and results
 - Provider-facing examples only when you author a top-level Goa `Example(...)`
-  on the tool payload. Codegen precomputes both schema variants and parsed
-  example input so OpenAI-style providers consume the schema `example`
-  annotation while Anthropic and Bedrock Claude receive top-level
-  `input_examples` with the root schema example removed.
+  on the tool payload. Codegen precomputes the annotated schema, the schema with
+  the root `example` removed, and the parsed example input so OpenAI-style
+  providers consume schema annotations while Anthropic and Bedrock Claude receive
+  provider-native `input_examples`.
 - Explicit control-plane contracts: `Bookkeeping()` keeps tools durable,
   budget-exempt, and hidden from future planner turns
 
@@ -653,6 +653,10 @@ if err := rt.Seal(sealCtx); err != nil {
 Production checklist:
 
 - Keep all model-facing schemas in the DSL. Regenerate instead of hand-editing `gen/`.
+- Preserve generated tool input projections across model gateways and proxies:
+  schema, schema without the root example, and parsed example input must reach
+  the provider adapter intact so Anthropic/Bedrock can send native
+  `input_examples`.
 - Register models, toolsets, agents, stores, streams, policy, and telemetry before the first run.
 - Call `rt.Seal(ctx)` for worker processes before serving traffic; Temporal workers start at the seal boundary.
 - Use `CreateSession` before sessionful `Run`/`Start`, or use `OneShotRun`/`StartOneShot` for sessionless work.

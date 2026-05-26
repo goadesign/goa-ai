@@ -282,16 +282,29 @@ side effect:
 For each tool with a non-empty payload, the plugin derives JSON Schema from the
 Goa attribute using Goa's `openapi.Schema` type for complete JSON Schema draft
 2020-12 support. The generated tool spec is the canonical model-facing contract:
-it contains the annotated schema, a second schema with only the root `example`
-removed, and a parsed `ExampleInput` when the payload has an authored top-level
-Goa `Example(...)`.
+it contains the annotated schema, a schema with only the root `example` removed,
+the raw authored example JSON, and a parsed `ExampleInput` object when the
+payload has an authored top-level Goa `Example(...)`.
 
-Provider adapters choose between those precomputed projections. Providers that
-consume JSON Schema annotations use the annotated schema. Anthropic and Bedrock
-Claude use top-level `input_examples` and the schema without the root example.
-Synthesized Goa examples may remain nested schema annotations, but they are not
-promoted to top-level provider examples. Runtime and product code do not inspect
-or rewrite schemas to infer provider-specific shapes.
+An authored top-level Goa `Example(...)` is the only source for provider-facing
+top-level tool examples. Synthesized Goa examples may remain nested JSON Schema
+annotations for fields and definitions, but they are not promoted to
+provider-native examples. This keeps provider examples intentional rather than
+letting generated placeholder data become model guidance.
+
+Provider adapters choose between the precomputed projections. Providers that
+consume JSON Schema annotations use the annotated schema. Direct Anthropic and
+Bedrock Claude use top-level `input_examples` with the schema that omits the root
+example; Bedrock carries those examples through Anthropic's provider-native
+request fields in `additionalModelRequestFields` when the required beta contract
+applies. Runtime and product code do not inspect or rewrite schemas to infer
+provider-specific shapes.
+
+Any proxy or product-owned model boundary that reconstructs goa-ai model tools
+must preserve the same projections: annotated schema, schema without root
+example, and parsed example input. Dropping the example fields before a provider
+adapter runs prevents Anthropic/Bedrock from sending `input_examples`, even
+though the generated tool spec still contained the authored examples.
 
 ## Tool Identification
 

@@ -245,4 +245,7 @@ Note: tool execution requires wiring executors. For a first run, the in‑proces
 
 - Always change design in `design/*.go` then run `goa gen` (and `goa example` as needed). Never edit `gen/` by hand.
 - Generated tool specs live under `gen/<svc>/agents/<agent>/specs/…` with typed codecs.
+- Tool payload examples come from authored top-level Goa `Example(...)` blocks.
+  Generated specs keep both schema variants plus parsed example input so
+  provider adapters can choose schema annotations or native `input_examples`.
 - Policies and caps are enforced by the runtime during execution; keep planners small and declarative.
