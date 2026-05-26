@@ -586,12 +586,6 @@ func canonicalizeUnionExamples(att *goaexpr.AttributeExpr, example any) any {
 			return example
 		}
 
-		var chosen *goaexpr.NamedAttributeExpr
-		chosen = pickUnionVariantForExample(dt, example)
-		if chosen == nil {
-			panic(fmt.Sprintf("agent/specs_builder: union example does not match any variant (type=%q)", dt.TypeName))
-		}
-
 		typeKey := dt.GetTypeKey()
 		if typeKey == "" {
 			typeKey = "type"
@@ -601,6 +595,15 @@ func canonicalizeUnionExamples(att *goaexpr.AttributeExpr, example any) any {
 			valueKey = "value"
 		}
 
+		var chosen *goaexpr.NamedAttributeExpr
+		if canonical, ok := canonicalUnionExample(dt, example, typeKey, valueKey); ok {
+			return canonical
+		}
+		chosen = pickUnionVariantForExample(dt, example)
+		if chosen == nil {
+			panic(fmt.Sprintf("agent/specs_builder: union example does not match any variant (type=%q)", dt.TypeName))
+		}
+
 		return map[string]any{
 			typeKey:  chosen.Name,
 			valueKey: canonicalizeUnionExamples(chosen.Attribute, example),
@@ -608,6 +611,37 @@ func canonicalizeUnionExamples(att *goaexpr.AttributeExpr, example any) any {
 	default:
 		return example
 	}
+}
+
+// canonicalUnionExample returns an already-tagged union example unchanged except
+// for normalizing nested unions inside the selected variant value.
+func canonicalUnionExample(u *goaexpr.Union, example any, typeKey, valueKey string) (any, bool) {
+	m, ok := example.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	typeName, ok := m[typeKey].(string)
+	if !ok || typeName == "" {
+		return nil, false
+	}
+	var chosen *goaexpr.NamedAttributeExpr
+	for _, nat := range u.Values {
+		if nat != nil && nat.Name == typeName {
+			chosen = nat
+			break
+		}
+	}
+	if chosen == nil {
+		return nil, false
+	}
+	value, ok := m[valueKey]
+	if !ok {
+		panic(fmt.Sprintf("agent/specs_builder: canonical union example for %q missing %q", u.TypeName, valueKey))
+	}
+	return map[string]any{
+		typeKey:  typeName,
+		valueKey: canonicalizeUnionExamples(chosen.Attribute, value),
+	}, true
 }
 
 func pickUnionVariantForExample(u *goaexpr.Union, example any) *goaexpr.NamedAttributeExpr {

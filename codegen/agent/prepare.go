@@ -93,6 +93,9 @@ func flattenAndHide(att *goaexpr.AttributeExpr, injected []string) *goaexpr.Attr
 		// Extract the underlying attribute from the UserType and dup it.
 		// We lose the named type wrapping, effectively flattening it to an inline definition.
 		inner := goaexpr.DupAtt(ut.Attribute())
+		if len(newAtt.UserExamples) == 0 {
+			newAtt.UserExamples = inner.ExtractUserExamples()
+		}
 		newAtt.Type = inner.Type
 		// Merge validation if needed (inner validation is the effective one for the fields)
 		if newAtt.Validation == nil {
