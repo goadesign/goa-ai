@@ -2,6 +2,7 @@ package bedrock
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -164,6 +165,114 @@ func TestEncodeTools_AnthropicModelKeepsAllToolsWhenOneHasExample(t *testing.T) 
 	require.Equal(t, "reports_lookup", tools[1]["name"])
 	require.NotContains(t, tools[1], "input_examples")
 	require.Equal(t, map[string]any{"type": "object"}, tools[1]["input_schema"])
+}
+
+func TestBuildConverseStreamInputAnthropicToolExamplesUseNativeToolsOnly(t *testing.T) {
+	ctx := context.Background()
+	client := &Client{
+		defaultModel: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+		maxTok:       32,
+		think:        defaultThinkingBudget,
+	}
+	req := &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "finish the report"}},
+		}},
+		Tools: []*model.ToolDefinition{{
+			Name:        "reports.complete",
+			Description: "Complete a report",
+			Input:       model.ToolInputFromSpec(toolInputExampleSpec()),
+		}},
+	}
+
+	parts, err := client.prepareRequest(ctx, req)
+	require.NoError(t, err)
+	require.NotNil(t, parts.toolConfig)
+
+	input := client.buildConverseStreamInput(parts, req, thinkingConfig{})
+	require.Nil(t, input.ToolConfig)
+	require.NotNil(t, input.AdditionalModelRequestFields)
+
+	raw, err := input.AdditionalModelRequestFields.MarshalSmithyDocument()
+	require.NoError(t, err)
+	var fields map[string]any
+	require.NoError(t, json.Unmarshal(raw, &fields))
+	require.Equal(t, []any{"tool-examples-2025-10-29"}, fields["anthropic_beta"])
+	tools, ok := fields["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, tools, 1)
+}
+
+func TestBuildConverseStreamInputWithToolResultsUsesBedrockToolConfig(t *testing.T) {
+	ctx := context.Background()
+	client := &Client{
+		defaultModel: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+		maxTok:       32,
+		think:        defaultThinkingBudget,
+	}
+	req := &model.Request{
+		Messages: []*model.Message{
+			{
+				Role: model.ConversationRoleUser,
+				Parts: []model.Part{
+					model.TextPart{Text: "finish the report"},
+				},
+			},
+			{
+				Role: model.ConversationRoleAssistant,
+				Parts: []model.Part{
+					model.ToolUsePart{
+						ID:    "toolu_1",
+						Name:  "reports.lookup",
+						Input: map[string]any{"query": "status"},
+					},
+				},
+			},
+			{
+				Role: model.ConversationRoleUser,
+				Parts: []model.Part{
+					model.ToolResultPart{
+						ToolUseID: "toolu_1",
+						Content:   map[string]any{"status": "ready"},
+					},
+				},
+			},
+		},
+		Tools: []*model.ToolDefinition{
+			{
+				Name:        "reports.complete",
+				Description: "Complete a report",
+				Input:       model.ToolInputFromSpec(toolInputExampleSpec()),
+			},
+			{
+				Name:        "reports.lookup",
+				Description: "Look up a report",
+				Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+			},
+		},
+	}
+
+	parts, err := client.prepareRequest(ctx, req)
+	require.NoError(t, err)
+
+	input := client.buildConverseStreamInput(parts, req, thinkingConfig{})
+	require.NotNil(t, input.ToolConfig)
+	require.Nil(t, input.AdditionalModelRequestFields)
+}
+
+func TestEncodeTools_AnthropicToolChoiceUsesNativeFieldWithExamples(t *testing.T) {
+	ctx := context.Background()
+
+	_, fields, _, _, err := encodeTools(ctx, "us.anthropic.claude-opus-4-7", []*model.ToolDefinition{
+		{
+			Name:        "reports.complete",
+			Description: "Complete a report",
+			Input:       model.ToolInputFromSpec(toolInputExampleSpec()),
+		},
+	}, &model.ToolChoice{Mode: model.ToolChoiceModeTool, Name: "reports.complete"}, false, nil)
+	require.NoError(t, err)
+	require.Equal(t, map[string]any{"type": "tool", "name": "reports_complete"}, fields["tool_choice"])
 }
 
 func TestIsNovaModel(t *testing.T) {

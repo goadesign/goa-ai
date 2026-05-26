@@ -548,7 +548,10 @@ DSL-authored top-level Goa `Example(...)` on a payload becomes the only
 top-level provider example: providers that consume schema annotations use the
 generated schema `example`, while Anthropic and Bedrock Claude adapters use the
 generated schema without the root example plus top-level `input_examples`.
-Runtime code does not parse or rewrite schemas to discover examples.
+Runtime code does not parse or rewrite schemas to discover examples. Boundaries
+that transport model tools between processes should use `model.ToolInputContract`
+so the complete provider-neutral input contract stays intact until the provider
+adapter chooses a projection.
 
 ### PlannerEvents
 

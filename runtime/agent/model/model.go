@@ -263,6 +263,25 @@ type (
 		exampleInput             map[string]any
 	}
 
+	// ToolInputContract is the provider-neutral, JSON-compatible projection of a
+	// tool input contract. It is used at process and service boundaries where the
+	// unexported ToolInput invariants must be transported without exposing
+	// generator internals or provider-specific request fields.
+	ToolInputContract struct {
+		// Schema is the canonical JSON Schema presented to providers that consume
+		// examples embedded in schema annotations.
+		Schema any
+
+		// SchemaWithoutRootExample is the same schema without the root example
+		// annotation. Provider adapters that expose examples separately may choose
+		// this projection.
+		SchemaWithoutRootExample any
+
+		// ExampleInput is the canonical authored JSON-object input example when the
+		// generated tool spec provides one.
+		ExampleInput map[string]any
+	}
+
 	// ToolCall is a requested tool invocation from the model.
 	//
 	// Tool calls capture the tool identity, raw arguments, and an optional
@@ -724,6 +743,34 @@ func ToolInputFromSpec(spec tools.TypeSpec) ToolInput {
 		jsonSchema:               decodeGeneratedSchema(spec.Name, "payload schema", spec.Schema),
 		schemaWithoutRootExample: decodeGeneratedSchema(spec.Name, "schema without root example", spec.SchemaWithoutRootExample),
 		exampleInput:             spec.ExampleInput,
+	}
+}
+
+// ToolInputFromContract reconstructs a ToolInput from a provider-neutral
+// transport contract. Boundary code uses this after decoding JSON from another
+// process; generated-code callers should prefer ToolInputFromSpec.
+func ToolInputFromContract(toolName string, contract ToolInputContract) (ToolInput, error) {
+	if contract.Schema == nil {
+		return ToolInput{}, fmt.Errorf("model: tool %q input schema is required", toolName)
+	}
+	if contract.ExampleInput != nil && contract.SchemaWithoutRootExample == nil {
+		return ToolInput{}, fmt.Errorf("model: tool %q example input requires schema without root example", toolName)
+	}
+	return ToolInput{
+		jsonSchema:               contract.Schema,
+		schemaWithoutRootExample: contract.SchemaWithoutRootExample,
+		exampleInput:             contract.ExampleInput,
+	}, nil
+}
+
+// Contract returns the provider-neutral transport projection of the tool input.
+// The returned values are JSON-compatible objects owned by the caller; callers
+// crossing process boundaries should clone them before mutation or serialization.
+func (in ToolInput) Contract() ToolInputContract {
+	return ToolInputContract{
+		Schema:                   in.jsonSchema,
+		SchemaWithoutRootExample: in.schemaWithoutRootExample,
+		ExampleInput:             in.exampleInput,
 	}
 }
 

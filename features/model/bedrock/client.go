@@ -288,10 +288,11 @@ func (c *Client) buildConverseInput(parts *requestParts, req *model.Request) *be
 		ModelId:  aws.String(parts.modelID),
 		Messages: parts.messages,
 	}
+	fields := additionalModelFieldsForRequest(parts.additionalModelFields, req)
 	if len(parts.system) > 0 {
 		input.System = parts.system
 	}
-	if parts.toolConfig != nil {
+	if parts.toolConfig != nil && !usesProviderNativeTools(fields) {
 		input.ToolConfig = parts.toolConfig
 	}
 	if parts.outputConfig != nil {
@@ -300,8 +301,8 @@ func (c *Client) buildConverseInput(parts *requestParts, req *model.Request) *be
 	if cfg := c.inferenceConfig(parts.modelID, req.MaxTokens, req.Temperature); cfg != nil {
 		input.InferenceConfig = cfg
 	}
-	if len(parts.additionalModelFields) > 0 {
-		input.AdditionalModelRequestFields = document.NewLazyDocument(&parts.additionalModelFields)
+	if len(fields) > 0 {
+		input.AdditionalModelRequestFields = document.NewLazyDocument(&fields)
 	}
 	return input
 }
@@ -311,16 +312,16 @@ func (c *Client) buildConverseStreamInput(parts *requestParts, req *model.Reques
 		ModelId:  aws.String(parts.modelID),
 		Messages: parts.messages,
 	}
+	fields := additionalModelFieldsForRequest(parts.additionalModelFields, req)
 	if len(parts.system) > 0 {
 		input.System = parts.system
 	}
-	if parts.toolConfig != nil {
+	if parts.toolConfig != nil && !usesProviderNativeTools(fields) {
 		input.ToolConfig = parts.toolConfig
 	}
 	if parts.outputConfig != nil {
 		input.OutputConfig = parts.outputConfig
 	}
-	fields := cloneAdditionalModelFields(parts.additionalModelFields)
 	if thinking.enable {
 		if fields == nil {
 			fields = map[string]any{}
@@ -470,6 +471,21 @@ func cloneAdditionalModelFields(fields map[string]any) map[string]any {
 	return out
 }
 
+// additionalModelFieldsForRequest selects provider-specific request fields for
+// this turn. Bedrock Converse requires ToolConfig whenever the transcript
+// already contains toolUse/toolResult blocks. In those resume turns we omit
+// Anthropic's native tool-example field so Bedrock sees one tool declaration.
+func additionalModelFieldsForRequest(fields map[string]any, req *model.Request) map[string]any {
+	out := cloneAdditionalModelFields(fields)
+	if len(out) == 0 || !messagesHaveToolBlocks(req.Messages) || !usesProviderNativeTools(out) {
+		return out
+	}
+	delete(out, "tools")
+	delete(out, "tool_choice")
+	removeAnthropicBeta(out, "tool-examples-2025-10-29")
+	return out
+}
+
 func addAnthropicBeta(fields map[string]any, beta string) {
 	if beta == "" {
 		return
@@ -481,6 +497,24 @@ func addAnthropicBeta(fields map[string]any, beta string) {
 		}
 	}
 	fields["anthropic_beta"] = append(values, beta)
+}
+
+func removeAnthropicBeta(fields map[string]any, beta string) {
+	values, _ := fields["anthropic_beta"].([]string)
+	if len(values) == 0 {
+		return
+	}
+	out := values[:0]
+	for _, value := range values {
+		if value != beta {
+			out = append(out, value)
+		}
+	}
+	if len(out) == 0 {
+		delete(fields, "anthropic_beta")
+		return
+	}
+	fields["anthropic_beta"] = out
 }
 
 // isRateLimited reports whether err represents a provider rate limiting
@@ -877,7 +911,7 @@ func encodeTools(
 	}
 
 	if choice == nil {
-		return &brtypes.ToolConfiguration{Tools: toolList}, anthropicToolExampleFields(anthropicTools, anthropicHasExamples), canonToSan, sanToCanon, nil
+		return &brtypes.ToolConfiguration{Tools: toolList}, anthropicToolExampleFields(anthropicTools, anthropicHasExamples, nil), canonToSan, sanToCanon, nil
 	}
 
 	cfg := brtypes.ToolConfiguration{
@@ -915,7 +949,7 @@ func encodeTools(
 		return nil, nil, nil, nil, fmt.Errorf("bedrock: unsupported tool choice mode %q", choice.Mode)
 	}
 
-	return &cfg, anthropicToolExampleFields(anthropicTools, anthropicHasExamples), canonToSan, sanToCanon, nil
+	return &cfg, anthropicToolExampleFields(anthropicTools, anthropicHasExamples, choice), canonToSan, sanToCanon, nil
 }
 
 func anthropicToolDefinition(name string, def *model.ToolDefinition, includeExample bool) map[string]any {
@@ -935,15 +969,39 @@ func anthropicToolDefinition(name string, def *model.ToolDefinition, includeExam
 	return tool
 }
 
-func anthropicToolExampleFields(tools []map[string]any, hasExamples bool) map[string]any {
+func anthropicToolExampleFields(tools []map[string]any, hasExamples bool, choice *model.ToolChoice) map[string]any {
 	if !hasExamples {
 		return nil
 	}
 	fields := map[string]any{
 		"tools": tools,
 	}
+	if choice != nil {
+		switch choice.Mode {
+		case "", model.ToolChoiceModeAuto, model.ToolChoiceModeNone:
+		case model.ToolChoiceModeAny:
+			fields["tool_choice"] = map[string]any{"type": "any"}
+		case model.ToolChoiceModeTool:
+			fields["tool_choice"] = map[string]any{
+				"type": "tool",
+				"name": SanitizeToolName(choice.Name),
+			}
+		}
+	}
 	addAnthropicBeta(fields, "tool-examples-2025-10-29")
 	return fields
+}
+
+// usesProviderNativeTools reports whether additionalModelFields carries the
+// provider's tool declaration. Anthropic tool examples require the native
+// `tools` field, which must be the only provider-visible tool list in the
+// request or Claude rejects the duplicate names before planning starts.
+func usesProviderNativeTools(fields map[string]any) bool {
+	if len(fields) == 0 {
+		return false
+	}
+	_, ok := fields["tools"]
+	return ok
 }
 
 // sanitizeDocumentName maps an arbitrary user-provided document name (typically a

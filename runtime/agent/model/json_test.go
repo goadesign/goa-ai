@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent/prompt"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 func TestPartMarshalJSONIncludesKind(t *testing.T) {
@@ -67,6 +68,26 @@ func TestDecodeMessagePartHonorsKind(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "legacy", tu.Name)
 	require.Equal(t, map[string]any{"q": "old"}, tu.Input)
+}
+
+func TestToolInputContractRoundTrip(t *testing.T) {
+	orig := ToolInputFromSpec(toolInputSpecFixture())
+
+	contract := orig.Contract()
+	got, err := ToolInputFromContract("reports.complete", contract)
+	require.NoError(t, err)
+
+	require.Equal(t, orig.JSONSchema(), got.JSONSchema())
+	require.Equal(t, orig.SchemaWithoutRootExample(), got.SchemaWithoutRootExample())
+	require.Equal(t, orig.ExampleInput(), got.ExampleInput())
+}
+
+func TestToolInputContractRequiresSchemaWithoutRootExample(t *testing.T) {
+	_, err := ToolInputFromContract("reports.complete", ToolInputContract{
+		Schema:       map[string]any{"type": "object"},
+		ExampleInput: map[string]any{"summary": "Done"},
+	})
+	require.ErrorContains(t, err, "example input requires schema without root example")
 }
 
 func TestThinkingPartRoundTripPreservesSignature(t *testing.T) {
@@ -171,4 +192,13 @@ func TestRequestJSONRoundTripPreservesPromptRefs(t *testing.T) {
 	var decoded Request
 	require.NoError(t, json.Unmarshal(raw, &decoded))
 	require.Equal(t, original.PromptRefs, decoded.PromptRefs)
+}
+
+func toolInputSpecFixture() tools.TypeSpec {
+	return tools.TypeSpec{
+		Name:                     "ReportsCompletePayload",
+		Schema:                   []byte(`{"type":"object","example":{"summary":"Done"}}`),
+		SchemaWithoutRootExample: []byte(`{"type":"object"}`),
+		ExampleInput:             map[string]any{"summary": "Done"},
+	}
 }

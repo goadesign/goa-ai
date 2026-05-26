@@ -654,9 +654,9 @@ Production checklist:
 
 - Keep all model-facing schemas in the DSL. Regenerate instead of hand-editing `gen/`.
 - Preserve generated tool input projections across model gateways and proxies:
-  schema, schema without the root example, and parsed example input must reach
-  the provider adapter intact so Anthropic/Bedrock can send native
-  `input_examples`.
+  schema, schema without the root example, and parsed example input should move
+  as one provider-neutral `model.ToolInputContract` until the provider adapter
+  chooses the final projection.
 - Register models, toolsets, agents, stores, streams, policy, and telemetry before the first run.
 - Call `rt.Seal(ctx)` for worker processes before serving traffic; Temporal workers start at the seal boundary.
 - Use `CreateSession` before sessionful `Run`/`Start`, or use `OneShotRun`/`StartOneShot` for sessionless work.
