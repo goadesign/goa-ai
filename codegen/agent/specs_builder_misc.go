@@ -143,7 +143,7 @@ func generatedJSONType(dt goaexpr.DataType) string {
 	case goaexpr.UserType:
 		return generatedJSONType(actual.Attribute().Type)
 	case *goaexpr.Object, *goaexpr.Map, *goaexpr.Union:
-		return "object"
+		return jsonSchemaTypeObject
 	case *goaexpr.Array:
 		return "array"
 	case goaexpr.Primitive:
@@ -307,10 +307,11 @@ func schemaVariantBytes(schema *openapi.Schema, att *goaexpr.AttributeExpr, exam
 }
 
 // specializeUnionSchemas rewrites Goa's generic OneOf schema projection into
-// the canonical discriminated JSON envelope generated codecs require. The
-// owning contract is the generated union codec: callers must send
-// {type:<variant>, value:<variant-payload>}, and the schema should expose that
-// exact closed shape instead of an unbound anyOf under value.
+// the discriminated JSON envelope generated codecs require. The owning contract
+// is the generated union codec: callers must send {type:<variant>,
+// value:<variant-payload>}. The schema keeps that envelope as an object so model
+// providers see the payload field as JSON, while nested union values are still
+// recursively specialized.
 func specializeUnionSchemas(schemaBytes []byte, att *goaexpr.AttributeExpr) ([]byte, error) {
 	if len(schemaBytes) == 0 || att == nil || !containsUnion(att) {
 		return schemaBytes, nil
@@ -431,7 +432,6 @@ func rewriteUnionSchema(union *goaexpr.Union, schema map[string]any, defs map[st
 		return fmt.Errorf("union schema for %q has %d type variants and %d value variants, want %d", union.TypeName, len(variants), len(values), len(union.Values))
 	}
 
-	oneOf := make([]any, 0, len(union.Values))
 	for i, nat := range union.Values {
 		if nat == nil {
 			return fmt.Errorf("union %q has nil variant %d", union.TypeName, i)
@@ -447,23 +447,11 @@ func rewriteUnionSchema(union *goaexpr.Union, schema map[string]any, defs map[st
 		if err := specializeUnionSchemaNode(nat.Attribute, value, defs, seen); err != nil {
 			return err
 		}
-		oneOf = append(oneOf, map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				typeKey: map[string]any{
-					"type": "string",
-					"enum": []any{nat.Name},
-				},
-				valueKey: value,
-			},
-			"required": []any{typeKey, valueKey},
-		})
 	}
-	delete(schema, "type")
-	delete(schema, "properties")
-	delete(schema, "required")
 	delete(schema, "example")
-	schema["oneOf"] = oneOf
+	schema["type"] = jsonSchemaTypeObject
+	schema["properties"] = properties
+	schema["required"] = []any{typeKey, valueKey}
 	return nil
 }
 
