@@ -1,3 +1,17 @@
+// decodeUnionStrictJSON decodes one union JSON document and rejects fields that
+// are not present in the generated union envelope or selected branch contract.
+func decodeUnionStrictJSON(data []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("multiple JSON documents")
+	}
+	return nil
+}
+
 {{- range $i, $u := .Unions }}
 {{- if gt $i 0 }}
 
@@ -96,7 +110,7 @@ func (u *{{ $u.Name }}) UnmarshalJSON(data []byte) error {
 		Type  *string         `json:"type"`
 		Value json.RawMessage `json:"value"`
 	}
-	if err := json.Unmarshal(data, &raw); err != nil {
+	if err := decodeUnionStrictJSON(data, &raw); err != nil {
 		return err
 	}
 	if raw.Type == nil {
@@ -106,7 +120,7 @@ func (u *{{ $u.Name }}) UnmarshalJSON(data []byte) error {
 	{{- range $u.Fields }}
 	case string({{ .KindConst }}):
 		var v {{ .FieldType }}
-		if err := json.Unmarshal(raw.Value, &v); err != nil {
+		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
 			{{- if .JSONType }}
 			var typeErr *json.UnmarshalTypeError
 			if errors.As(err, &typeErr) && typeErr.Value != "" {

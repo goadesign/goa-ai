@@ -76,6 +76,7 @@ func ValidateEchoResultTransport(v *EchoResultTransport) error {
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -116,6 +117,16 @@ func TestUnmarshalEchoPayloadUsesSelectedUnionBranchType(t *testing.T) {
 	issue := issues[0]
 	if issue.Field != "value" || issue.Constraint != "invalid_field_type" || issue.ExpectedJSONType != "integer" || issue.ActualJSONType != "string" {
 		t.Fatalf("unexpected issue: %#v", issue)
+	}
+}
+
+func TestUnmarshalEchoPayloadRejectsUnknownUnionBranchFields(t *testing.T) {
+	_, err := UnmarshalEchoPayload([]byte(`+"`"+`{"id":"req_1","value":{"type":"structured","value":{"label":"ready","extra":true}}}`+"`"+`))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "unknown field") || !strings.Contains(err.Error(), "extra") {
+		t.Fatalf("expected unknown field error for extra, got %v", err)
 	}
 }
 `)

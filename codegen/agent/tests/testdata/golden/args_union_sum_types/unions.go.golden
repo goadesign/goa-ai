@@ -7,16 +7,34 @@
 package union
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"io"
 )
+
+// decodeUnionStrictJSON decodes one union JSON document and rejects fields that
+// are not present in the generated union envelope or selected branch contract.
+func decodeUnionStrictJSON(data []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("multiple JSON documents")
+	}
+	return nil
+}
 
 // Value is a sum-type union.
 type Value struct {
-	kind   ValueKind
-	Number ValueNumber
-	Text   ValueText
+	kind       ValueKind
+	Number     ValueNumber
+	Text       ValueText
+	Structured *StructuredValue
 }
 
 // ValueKind enumerates the union variants for Value.
@@ -27,6 +45,8 @@ const (
 	ValueKindNumber ValueKind = "number"
 	// ValueKindText identifies the text branch of the union.
 	ValueKindText ValueKind = "text"
+	// ValueKindStructured identifies the structured branch of the union.
+	ValueKindStructured ValueKind = "structured"
 )
 
 // Kind returns the discriminator value of the union.
@@ -78,6 +98,28 @@ func (u *Value) SetText(v ValueText) {
 	u.Text = v
 }
 
+// NewValueStructured constructs a Value with the structured branch set.
+func NewValueStructured(v *StructuredValue) Value {
+	return Value{
+		kind:       ValueKindStructured,
+		Structured: v,
+	}
+}
+
+// AsStructured returns the value of the structured branch if set.
+func (u Value) AsStructured() (_ *StructuredValue, ok bool) {
+	if u.kind != ValueKindStructured {
+		return
+	}
+	return u.Structured, true
+}
+
+// SetStructured sets the structured branch of the union.
+func (u *Value) SetStructured(v *StructuredValue) {
+	u.kind = ValueKindStructured
+	u.Structured = v
+}
+
 // Validate ensures the union discriminant is valid.
 func (u Value) Validate() error {
 	switch u.kind {
@@ -86,6 +128,8 @@ func (u Value) Validate() error {
 	case ValueKindNumber:
 		return nil
 	case ValueKindText:
+		return nil
+	case ValueKindStructured:
 		return nil
 	default:
 		got := string(u.kind)
@@ -106,6 +150,8 @@ func (u Value) MarshalJSON() ([]byte, error) {
 		value = u.Number
 	case ValueKindText:
 		value = u.Text
+	case ValueKindStructured:
+		value = u.Structured
 	default:
 		got := string(u.kind)
 		return nil, newValueDiscriminatorError(got, true)
@@ -125,7 +171,7 @@ func (u *Value) UnmarshalJSON(data []byte) error {
 		Type  *string         `json:"type"`
 		Value json.RawMessage `json:"value"`
 	}
-	if err := json.Unmarshal(data, &raw); err != nil {
+	if err := decodeUnionStrictJSON(data, &raw); err != nil {
 		return err
 	}
 	if raw.Type == nil {
@@ -134,7 +180,7 @@ func (u *Value) UnmarshalJSON(data []byte) error {
 	switch *raw.Type {
 	case string(ValueKindNumber):
 		var v ValueNumber
-		if err := json.Unmarshal(raw.Value, &v); err != nil {
+		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
 			var typeErr *json.UnmarshalTypeError
 			if errors.As(err, &typeErr) && typeErr.Value != "" {
 				return tools.NewValidationError(
@@ -156,7 +202,7 @@ func (u *Value) UnmarshalJSON(data []byte) error {
 		u.Number = v
 	case string(ValueKindText):
 		var v ValueText
-		if err := json.Unmarshal(raw.Value, &v); err != nil {
+		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
 			var typeErr *json.UnmarshalTypeError
 			if errors.As(err, &typeErr) && typeErr.Value != "" {
 				return tools.NewValidationError(
@@ -176,6 +222,28 @@ func (u *Value) UnmarshalJSON(data []byte) error {
 		}
 		u.kind = ValueKindText
 		u.Text = v
+	case string(ValueKindStructured):
+		var v *StructuredValue
+		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
+			var typeErr *json.UnmarshalTypeError
+			if errors.As(err, &typeErr) && typeErr.Value != "" {
+				return tools.NewValidationError(
+					err.Error(),
+					[]*tools.FieldIssue{
+						{
+							Field:            "value",
+							Constraint:       "invalid_field_type",
+							ExpectedJSONType: "object",
+							ActualJSONType:   typeErr.Value,
+						},
+					},
+					nil,
+				)
+			}
+			return err
+		}
+		u.kind = ValueKindStructured
+		u.Structured = v
 	default:
 		return newValueDiscriminatorError(*raw.Type, true)
 	}
@@ -186,5 +254,6 @@ func newValueDiscriminatorError(got string, typePresent bool) error {
 	return tools.NewUnionDiscriminatorError("Value", got, typePresent, []string{
 		string(ValueKindNumber),
 		string(ValueKindText),
+		string(ValueKindStructured),
 	})
 }

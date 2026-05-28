@@ -247,6 +247,12 @@ func MarshalEchoPayload(v *EchoPayload) ([]byte, error) {
 		u := out.Value
 		u.SetText((toolhttp.ValueTextTransport)(obj))
 		out.Value = u
+	case "structured":
+		actual, _ := in.Value.AsStructured()
+		obj := encodeStructuredValueToToolhttpStructuredValueTransport(actual)
+		u := out.Value
+		u.SetStructured((*toolhttp.StructuredValueTransport)(obj))
+		out.Value = u
 	}
 	return json.Marshal(out)
 }
@@ -286,6 +292,12 @@ func UnmarshalEchoPayload(data []byte) (*EchoPayload, error) {
 		u := out.Value
 		u.SetText((ValueText)(obj))
 		out.Value = u
+	case "structured":
+		actual, _ := in.Value.AsStructured()
+		obj := decodeToolhttpStructuredValueTransportToStructuredValue(actual)
+		u := out.Value
+		u.SetStructured((*StructuredValue)(obj))
+		out.Value = u
 	}
 	return out, nil
 }
@@ -315,6 +327,12 @@ func MarshalEchoResult(v *EchoResult) ([]byte, error) {
 
 		u := out.Value
 		u.SetText((toolhttp.ValueTextTransport)(obj))
+		out.Value = u
+	case "structured":
+		actual, _ := in.Value.AsStructured()
+		obj := encodeStructuredValueToToolhttpStructuredValueTransport(actual)
+		u := out.Value
+		u.SetStructured((*toolhttp.StructuredValueTransport)(obj))
 		out.Value = u
 	}
 	return json.Marshal(out)
@@ -355,6 +373,12 @@ func UnmarshalEchoResult(data []byte) (*EchoResult, error) {
 		u := out.Value
 		u.SetText((ValueText)(obj))
 		out.Value = u
+	case "structured":
+		actual, _ := in.Value.AsStructured()
+		obj := decodeToolhttpStructuredValueTransportToStructuredValue(actual)
+		u := out.Value
+		u.SetStructured((*StructuredValue)(obj))
+		out.Value = u
 	}
 	return out, nil
 }
@@ -371,4 +395,20 @@ func decodeStrictJSON(data []byte, v any) error {
 		return fmt.Errorf("multiple JSON documents")
 	}
 	return nil
+}
+
+// Helper transform functions
+func decodeToolhttpStructuredValueTransportToStructuredValue(v *toolhttp.StructuredValueTransport) *StructuredValue {
+	res := &StructuredValue{
+		Label: *v.Label,
+	}
+
+	return res
+}
+func encodeStructuredValueToToolhttpStructuredValueTransport(v *StructuredValue) *toolhttp.StructuredValueTransport {
+	res := &toolhttp.StructuredValueTransport{
+		Label: &v.Label,
+	}
+
+	return res
 }

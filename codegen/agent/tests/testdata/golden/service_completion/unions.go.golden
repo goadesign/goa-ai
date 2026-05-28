@@ -7,10 +7,27 @@
 package completions
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"io"
 )
+
+// decodeUnionStrictJSON decodes one union JSON document and rejects fields that
+// are not present in the generated union envelope or selected branch contract.
+func decodeUnionStrictJSON(data []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("multiple JSON documents")
+	}
+	return nil
+}
 
 // Draft is a sum-type union.
 type Draft struct {
@@ -125,7 +142,7 @@ func (u *Draft) UnmarshalJSON(data []byte) error {
 		Type  *string         `json:"type"`
 		Value json.RawMessage `json:"value"`
 	}
-	if err := json.Unmarshal(data, &raw); err != nil {
+	if err := decodeUnionStrictJSON(data, &raw); err != nil {
 		return err
 	}
 	if raw.Type == nil {
@@ -134,7 +151,7 @@ func (u *Draft) UnmarshalJSON(data []byte) error {
 	switch *raw.Type {
 	case string(DraftKindNewTask):
 		var v *CompletionDraft
-		if err := json.Unmarshal(raw.Value, &v); err != nil {
+		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
 			var typeErr *json.UnmarshalTypeError
 			if errors.As(err, &typeErr) && typeErr.Value != "" {
 				return tools.NewValidationError(
@@ -156,7 +173,7 @@ func (u *Draft) UnmarshalJSON(data []byte) error {
 		u.NewTask = v
 	case string(DraftKindExistingTaskID):
 		var v DraftExistingTaskID
-		if err := json.Unmarshal(raw.Value, &v); err != nil {
+		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
 			var typeErr *json.UnmarshalTypeError
 			if errors.As(err, &typeErr) && typeErr.Value != "" {
 				return tools.NewValidationError(

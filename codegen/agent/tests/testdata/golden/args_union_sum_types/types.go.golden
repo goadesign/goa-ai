@@ -19,6 +19,11 @@ type (
 		ID    string
 		Value Value
 	}
+	// StructuredValue is a helper type materialized for nested references.
+	StructuredValue = struct {
+		// Structured value label
+		Label string
+	}
 	// ValueNumber is a helper type materialized for nested references.
 	ValueNumber = int32
 	// ValueText is a helper type materialized for nested references.
