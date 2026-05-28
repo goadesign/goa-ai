@@ -172,6 +172,83 @@ func TestComplete_ToolUse(t *testing.T) {
 	}
 }
 
+func TestPrepareRequestForcedToolDisablesThinking(t *testing.T) {
+	cl := &Client{
+		defaultModel: "claude-opus-4-7",
+		maxTok:       4096,
+		think:        2048,
+	}
+
+	params, _, err := cl.prepareRequest(context.Background(), &model.Request{
+		Messages: []*model.Message{{
+			Role: model.ConversationRoleUser,
+			Parts: []model.Part{
+				model.TextPart{Text: "finish the task"},
+			},
+		}},
+		Tools: []*model.ToolDefinition{{
+			Name:        "tasks.progress.complete",
+			Description: "complete the task",
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+		}},
+		ToolChoice: &model.ToolChoice{
+			Mode: model.ToolChoiceModeTool,
+			Name: "tasks.progress.complete",
+		},
+		Thinking: &model.ThinkingOptions{
+			Enable:       true,
+			BudgetTokens: 2048,
+		},
+	})
+	if err != nil {
+		t.Fatalf("prepareRequest: %v", err)
+	}
+	if params.Thinking.OfEnabled != nil {
+		t.Fatalf("forced tool choice must not send thinking config")
+	}
+	if params.ToolChoice.OfTool == nil {
+		t.Fatalf("expected forced tool choice to survive")
+	}
+}
+
+func TestPrepareRequestAnyToolDisablesThinking(t *testing.T) {
+	cl := &Client{
+		defaultModel: "claude-opus-4-7",
+		maxTok:       4096,
+		think:        2048,
+	}
+
+	params, _, err := cl.prepareRequest(context.Background(), &model.Request{
+		Messages: []*model.Message{{
+			Role: model.ConversationRoleUser,
+			Parts: []model.Part{
+				model.TextPart{Text: "continue through tools"},
+			},
+		}},
+		Tools: []*model.ToolDefinition{{
+			Name:        "tasks.progress.update",
+			Description: "update task progress",
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+		}},
+		ToolChoice: &model.ToolChoice{
+			Mode: model.ToolChoiceModeAny,
+		},
+		Thinking: &model.ThinkingOptions{
+			Enable:       true,
+			BudgetTokens: 2048,
+		},
+	})
+	if err != nil {
+		t.Fatalf("prepareRequest: %v", err)
+	}
+	if params.Thinking.OfEnabled != nil {
+		t.Fatalf("any tool choice must not send thinking config")
+	}
+	if params.ToolChoice.OfAny == nil {
+		t.Fatalf("expected any tool choice to survive")
+	}
+}
+
 func TestEncodeTools_UsesSchemaWithoutRootExampleAndInputExamples(t *testing.T) {
 	defs := []*model.ToolDefinition{{
 		Name:        "reports.complete",

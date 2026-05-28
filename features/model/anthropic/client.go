@@ -187,7 +187,7 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*sdk.M
 	if t := c.effectiveTemperature(req.Temperature); t > 0 {
 		params.Temperature = sdk.Float(t)
 	}
-	if req.Thinking != nil && req.Thinking.Enable {
+	if req.Thinking != nil && req.Thinking.Enable && !forcesToolUse(req.ToolChoice) {
 		budget := req.Thinking.BudgetTokens
 		if budget <= 0 {
 			budget = int(c.think)
@@ -426,6 +426,13 @@ func toolExampleInput(raw rawjson.Message) (map[string]any, error) {
 		return nil, err
 	}
 	return m, nil
+}
+
+// forcesToolUse reports whether Anthropic will treat tool_choice as requiring a
+// tool-use response. The Messages API rejects thinking for these requests, so
+// forced tool-use takes precedence during request encoding.
+func forcesToolUse(choice *model.ToolChoice) bool {
+	return choice != nil && (choice.Mode == model.ToolChoiceModeAny || choice.Mode == model.ToolChoiceModeTool)
 }
 
 func encodeToolChoice(choice *model.ToolChoice, canonToProv map[string]string, defs []*model.ToolDefinition) (sdk.ToolChoiceUnionParam, error) {

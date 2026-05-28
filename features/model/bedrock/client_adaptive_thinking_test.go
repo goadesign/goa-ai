@@ -138,6 +138,91 @@ func TestResolveThinkingOpus47WithoutTools(t *testing.T) {
 	require.False(t, thinking.interleaved, "adaptive mode must not request the legacy interleaved beta header")
 }
 
+// Bedrock Anthropic rejects thinking when tool_choice forces one exact tool.
+// The adapter owns that provider representability rule so planners can express
+// the stronger semantic constraint without knowing the transport quirk.
+func TestResolveThinkingOpus47ForcedToolDisablesThinking(t *testing.T) {
+	client := &Client{
+		defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		highModel:    "us.anthropic.claude-opus-4-7",
+		maxTok:       32,
+		think:        defaultThinkingBudget,
+	}
+
+	req := &model.Request{
+		ModelClass: model.ModelClassHighReasoning,
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "finish the task"}},
+		}},
+		Tools: []*model.ToolDefinition{{
+			Name:        "tasks.progress.complete",
+			Description: "complete the task",
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+		}},
+		ToolChoice: &model.ToolChoice{
+			Mode: model.ToolChoiceModeTool,
+			Name: "tasks.progress.complete",
+		},
+		Thinking: &model.ThinkingOptions{
+			Enable:       true,
+			Interleaved:  true,
+			BudgetTokens: 8192,
+		},
+	}
+
+	parts, err := client.prepareRequest(context.Background(), req)
+	require.NoError(t, err)
+
+	thinking := client.resolveThinking(req, parts)
+	require.False(t, thinking.enable)
+
+	input := client.buildConverseStreamInput(parts, req, thinking)
+	if input.AdditionalModelRequestFields != nil {
+		raw, err := input.AdditionalModelRequestFields.MarshalSmithyDocument()
+		require.NoError(t, err)
+		var fields map[string]any
+		require.NoError(t, json.Unmarshal(raw, &fields))
+		assert.NotContains(t, fields, "thinking")
+	}
+}
+
+func TestResolveThinkingOpus47AnyToolDisablesThinking(t *testing.T) {
+	client := &Client{
+		defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		highModel:    "us.anthropic.claude-opus-4-7",
+		maxTok:       32,
+		think:        defaultThinkingBudget,
+	}
+
+	req := &model.Request{
+		ModelClass: model.ModelClassHighReasoning,
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "continue through tools"}},
+		}},
+		Tools: []*model.ToolDefinition{{
+			Name:        "tasks.progress.update",
+			Description: "update task progress",
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+		}},
+		ToolChoice: &model.ToolChoice{
+			Mode: model.ToolChoiceModeAny,
+		},
+		Thinking: &model.ThinkingOptions{
+			Enable:       true,
+			Interleaved:  true,
+			BudgetTokens: 8192,
+		},
+	}
+
+	parts, err := client.prepareRequest(context.Background(), req)
+	require.NoError(t, err)
+
+	thinking := client.resolveThinking(req, parts)
+	require.False(t, thinking.enable)
+}
+
 // Claude Opus 4.7 rejects sampling parameters like temperature. The Bedrock
 // adapter must omit temperature for Opus 4.7 requests while preserving it for
 // models that still support sampling controls.

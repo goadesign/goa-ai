@@ -102,6 +102,10 @@ type (
 		// Labels carries caller-provided metadata (account, priority, etc.).
 		Labels map[string]string
 
+		// Metadata carries structured caller-owned state that planners may inspect
+		// without stringifying domain data into labels.
+		Metadata map[string]any
+
 		// MaxDuration encodes the wall-clock budget remaining (string form for prompts/telemetry).
 		MaxDuration string
 	}

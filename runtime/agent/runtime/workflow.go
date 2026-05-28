@@ -79,6 +79,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		ToolArgs:         input.ToolArgs,
 		Attempt:          1,
 		Labels:           input.Labels,
+		Metadata:         input.Metadata,
 	}
 	// Get turn ID for event stamping
 	turnID := input.TurnID

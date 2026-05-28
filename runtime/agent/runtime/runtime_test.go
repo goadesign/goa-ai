@@ -359,7 +359,8 @@ func TestExecuteWorkflowSeedsInitialTranscriptInsteadOfAppendingHistory(t *testi
 		agents: map[agent.Ident]AgentRegistration{
 			"svc.agent": {
 				ID: "svc.agent",
-				Planner: &stubPlanner{start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
+				Planner: &stubPlanner{start: func(_ context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+					require.Equal(t, "state-json", input.RunContext.Metadata["task_state"])
 					return &planner.PlanResult{
 						FinalResponse: &planner.FinalResponse{
 							Message: &model.Message{
@@ -384,6 +385,7 @@ func TestExecuteWorkflowSeedsInitialTranscriptInsteadOfAppendingHistory(t *testi
 		RunID:     "run-1",
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
+		Metadata:  map[string]any{"task_state": "state-json"},
 		Messages: []*model.Message{
 			{
 				Role:  model.ConversationRoleUser,

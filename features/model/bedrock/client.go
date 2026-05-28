@@ -390,7 +390,10 @@ func (c *Client) resolveThinking(req *model.Request, parts *requestParts) thinki
 	if req.Thinking == nil || !req.Thinking.Enable {
 		return thinkingConfig{}
 	}
-	// Opus 4.6 requires adaptive thinking: the model dynamically decides when
+	if forcesToolUse(req.ToolChoice) {
+		return thinkingConfig{}
+	}
+	// Opus 4.6+ requires adaptive thinking: the model dynamically decides when
 	// and how deeply to reason. Interleaved thinking is automatic in adaptive
 	// mode — no beta header is needed. The legacy type:"enabled" + budget_tokens
 	// config is deprecated for Opus 4.6 and produces unreliable signatures.
@@ -409,6 +412,14 @@ func (c *Client) resolveThinking(req *model.Request, parts *requestParts) thinki
 		interleaved: req.Thinking.Interleaved,
 		budget:      budget,
 	}
+}
+
+// forcesToolUse reports whether a provider-neutral tool choice requires the
+// next assistant turn to contain a tool call. Anthropic-on-Bedrock rejects
+// thinking for those requests, regardless of whether the caller names one tool
+// or allows any tool.
+func forcesToolUse(choice *model.ToolChoice) bool {
+	return choice != nil && (choice.Mode == model.ToolChoiceModeAny || choice.Mode == model.ToolChoiceModeTool)
 }
 
 // Note on thinking preconditions:
