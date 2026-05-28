@@ -14,8 +14,8 @@ func TestAuthoredPayloadExamplePreservedInToolSpecs(t *testing.T) {
 	specsSrc := fileContent(t, files, "gen/calc/toolsets/helpers/specs.go")
 
 	require.Contains(t, specsSrc, `\"example\":{\"limit\":7,\"query\":\"battery alarms\"}`)
-	require.Contains(t, specsSrc, `SchemaWithoutRootExample:[]byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\"`)
-	require.NotContains(t, specsSrc, `SchemaWithoutRootExample:[]byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"example\"`)
+	require.Contains(t, specsSrc, `SchemaWithoutRootExample:tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\"`)
+	require.NotContains(t, specsSrc, `SchemaWithoutRootExample:tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"example\"`)
 	require.Contains(t, specsSrc, `ExampleJSON:tools.RawJSON("{\"limit\":7,\"query\":\"battery alarms\"}")`)
 	require.NotContains(t, specsSrc, `ExampleInput:`)
 }

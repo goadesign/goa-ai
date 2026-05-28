@@ -7,12 +7,14 @@
 package profiles
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	toolhttp "goa.design/goa-ai/alpha/toolsets/profiles/http"
 	"goa.design/goa-ai/runtime/agent/tools"
 	goa "goa.design/goa/v3/pkg"
+	"io"
 	"strings"
 )
 
@@ -254,7 +256,7 @@ func UnmarshalUpsertPayload(data []byte) (*UpsertPayload, error) {
 		return nil, fmt.Errorf("upsertPayload JSON is empty")
 	}
 	var tv toolhttp.UpsertPayloadTransport
-	if err := json.Unmarshal(data, &tv); err != nil {
+	if err := decodeStrictJSON(data, &tv); err != nil {
 		return nil, invalidUpsertPayloadFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateUpsertPayloadTransport(&tv); err != nil {
@@ -309,6 +311,20 @@ func UnmarshalUpsertResult(data []byte) (*UpsertResult, error) {
 	}
 	out.Address = decodeToolhttpAddressTransportToAddress(in.Address)
 	return out, nil
+}
+
+// decodeStrictJSON decodes one JSON document and rejects object fields that are
+// not present in the generated transport contract.
+func decodeStrictJSON(data []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("multiple JSON documents")
+	}
+	return nil
 }
 
 // Helper transform functions

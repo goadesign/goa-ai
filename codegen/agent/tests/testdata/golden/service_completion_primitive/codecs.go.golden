@@ -7,10 +7,12 @@
 package completions
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"io"
 )
 
 var (
@@ -85,4 +87,18 @@ func UnmarshalHeadlineResult(data []byte) (HeadlineResult, error) {
 		return zero, fmt.Errorf("decode headlineResult: %w", err)
 	}
 	return v, nil
+}
+
+// decodeStrictJSON decodes one JSON document and rejects object fields that are
+// not present in the generated transport contract.
+func decodeStrictJSON(data []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("multiple JSON documents")
+	}
+	return nil
 }

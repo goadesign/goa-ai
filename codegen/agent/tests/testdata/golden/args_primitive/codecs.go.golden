@@ -7,11 +7,13 @@
 package ops
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	toolhttp "goa.design/goa-ai/alpha/toolsets/ops/http"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"io"
 	"strings"
 )
 
@@ -161,7 +163,7 @@ func UnmarshalEchoPayload(data []byte) (*EchoPayload, error) {
 		return nil, fmt.Errorf("echoPayload JSON is empty")
 	}
 	var tv toolhttp.EchoPayloadTransport
-	if err := json.Unmarshal(data, &tv); err != nil {
+	if err := decodeStrictJSON(data, &tv); err != nil {
 		return nil, invalidEchoPayloadFieldTypeError(err)
 	}
 	in := &tv
@@ -188,4 +190,18 @@ func UnmarshalEchoResult(data []byte) (EchoResult, error) {
 		return zero, fmt.Errorf("decode echoResult: %w", err)
 	}
 	return v, nil
+}
+
+// decodeStrictJSON decodes one JSON document and rejects object fields that are
+// not present in the generated transport contract.
+func decodeStrictJSON(data []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("multiple JSON documents")
+	}
+	return nil
 }

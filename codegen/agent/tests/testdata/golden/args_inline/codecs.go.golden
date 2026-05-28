@@ -7,12 +7,14 @@
 package math
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	toolhttp "goa.design/goa-ai/alpha/toolsets/math/http"
 	"goa.design/goa-ai/runtime/agent/tools"
 	goa "goa.design/goa/v3/pkg"
+	"io"
 	"strings"
 )
 
@@ -240,7 +242,7 @@ func UnmarshalAddPayload(data []byte) (*AddPayload, error) {
 		return nil, fmt.Errorf("addPayload JSON is empty")
 	}
 	var tv toolhttp.AddPayloadTransport
-	if err := json.Unmarshal(data, &tv); err != nil {
+	if err := decodeStrictJSON(data, &tv); err != nil {
 		return nil, invalidAddPayloadFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateAddPayloadTransport(&tv); err != nil {
@@ -293,4 +295,18 @@ func UnmarshalAddResult(data []byte) (*AddResult, error) {
 		Sum: *in.Sum,
 	}
 	return out, nil
+}
+
+// decodeStrictJSON decodes one JSON document and rejects object fields that are
+// not present in the generated transport contract.
+func decodeStrictJSON(data []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("multiple JSON documents")
+	}
+	return nil
 }
