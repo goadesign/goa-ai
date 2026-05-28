@@ -470,11 +470,11 @@ type (
 
 	// AwaitClarificationPayload describes a human clarification request.
 	AwaitClarificationPayload struct {
-		ID             string         `json:"id"`
-		Question       string         `json:"question"`
-		MissingFields  []string       `json:"missing_fields,omitempty"`
-		RestrictToTool string         `json:"restrict_to_tool,omitempty"`
-		ExampleInput   map[string]any `json:"example_input,omitempty"`
+		ID             string          `json:"id"`
+		Question       string          `json:"question"`
+		MissingFields  []string        `json:"missing_fields,omitempty"`
+		RestrictToTool string          `json:"restrict_to_tool,omitempty"`
+		ExampleJSON    rawjson.Message `json:"example_json,omitempty"`
 	}
 
 	// AwaitConfirmationPayload describes an operator confirmation request.

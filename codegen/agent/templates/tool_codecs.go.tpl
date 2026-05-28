@@ -237,7 +237,11 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
     }
     {{- if and .TransportTypeName .Pointer }}
     var tv toolhttp.{{ .TransportTypeName }}
+    {{- if eq .Usage "payload" }}
+    if err := decodeStrictJSON(data, &tv); err != nil {
+    {{- else }}
     if err := json.Unmarshal(data, &tv); err != nil {
+    {{- end }}
         {{- if .FieldJSONTypes }}
         return nil, invalid{{ .TypeName }}FieldTypeError(err)
         {{- else }}
@@ -260,7 +264,11 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
     return out, nil
     {{- else }}
     var v {{ .FullRef }}
+    {{- if eq .Usage "payload" }}
+    if err := decodeStrictJSON(data, &v); err != nil {
+    {{- else }}
     if err := json.Unmarshal(data, &v); err != nil {
+    {{- end }}
         {{- if .FieldJSONTypes }}
         err = invalid{{ .TypeName }}FieldTypeError(err)
         {{- end }}
@@ -279,6 +287,20 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
 }
     {{- end }}
 {{- end }}
+
+// decodeStrictJSON decodes one JSON document and rejects object fields that are
+// not present in the generated transport contract.
+func decodeStrictJSON(data []byte, v any) error {
+    dec := json.NewDecoder(bytes.NewReader(data))
+    dec.DisallowUnknownFields()
+    if err := dec.Decode(v); err != nil {
+        return err
+    }
+    if err := dec.Decode(&struct{}{}); err != io.EOF {
+        return fmt.Errorf("multiple JSON documents")
+    }
+    return nil
+}
 
 {{- if .Helpers }}
 // Helper transform functions

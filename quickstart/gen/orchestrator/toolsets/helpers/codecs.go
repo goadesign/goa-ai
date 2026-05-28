@@ -8,9 +8,11 @@
 package helpers
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	toolhttp "example.com/quickstart/gen/orchestrator/toolsets/helpers/http"
@@ -61,6 +63,14 @@ var AnswerPayloadFieldDescs = map[string]string{
 }
 var AnswerResultFieldDescs = map[string]string{
 	"text": "Answer text",
+}
+var AnswerPayloadFieldJSONTypes = map[string]string{
+	"$payload": "object",
+	"question": "string",
+}
+var AnswerResultFieldJSONTypes = map[string]string{
+	"$payload": "object",
+	"text":     "string",
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -128,6 +138,68 @@ func enrichAnswerResultValidationError(err error) error {
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
 }
+func invalidAnswerPayloadFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	field = strings.TrimPrefix(field, "AnswerPayloadTransport.")
+	if field == "" {
+		field = "$payload"
+	}
+	expected, ok := AnswerPayloadFieldJSONTypes[field]
+	if !ok {
+		return err
+	}
+	actual := typeErr.Value
+	if actual == "" {
+		return err
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
+func invalidAnswerResultFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	field = strings.TrimPrefix(field, "AnswerResultTransport.")
+	if field == "" {
+		field = "$payload"
+	}
+	expected, ok := AnswerResultFieldJSONTypes[field]
+	if !ok {
+		return err
+	}
+	actual := typeErr.Value
+	if actual == "" {
+		return err
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
 
 // PayloadCodec returns the generic codec for the named tool payload.
 func PayloadCodec(name string) (*tools.JSONCodec[any], bool) {
@@ -169,8 +241,8 @@ func UnmarshalAnswerPayload(data []byte) (*AnswerPayload, error) {
 		return nil, fmt.Errorf("answerPayload JSON is empty")
 	}
 	var tv toolhttp.AnswerPayloadTransport
-	if err := json.Unmarshal(data, &tv); err != nil {
-		return nil, fmt.Errorf("decode answerPayload: %w", err)
+	if err := decodeStrictJSON(data, &tv); err != nil {
+		return nil, invalidAnswerPayloadFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateAnswerPayloadTransport(&tv); err != nil {
 		err = newValidationError(err)
@@ -207,7 +279,7 @@ func UnmarshalAnswerResult(data []byte) (*AnswerResult, error) {
 	}
 	var tv toolhttp.AnswerResultTransport
 	if err := json.Unmarshal(data, &tv); err != nil {
-		return nil, fmt.Errorf("decode answerResult: %w", err)
+		return nil, invalidAnswerResultFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateAnswerResultTransport(&tv); err != nil {
 		err = newValidationError(err)
@@ -221,4 +293,18 @@ func UnmarshalAnswerResult(data []byte) (*AnswerResult, error) {
 		Text: *in.Text,
 	}
 	return out, nil
+}
+
+// decodeStrictJSON decodes one JSON document and rejects object fields that are
+// not present in the generated transport contract.
+func decodeStrictJSON(data []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("multiple JSON documents")
+	}
+	return nil
 }

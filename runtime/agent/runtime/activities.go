@@ -445,7 +445,7 @@ func buildRetryHintFromValidation(err error, toolName tools.Ident) ([]string, st
 // planners and UIs can guide callers toward a schema-compliant payload.
 //
 // When a payload example is available in the tool specs, the hint attaches it as
-// ExampleInput so consumers can display a concrete, valid payload. Returns nil
+// ExampleJSON so consumers can display a concrete, valid payload. Returns nil
 // when the error is not a recognized JSON decode error so callers can decide
 // whether to fall back to a generic hint or propagate the error verbatim.
 func buildRetryHintFromDecodeError(err error, toolName tools.Ident, spec *tools.ToolSpec) *planner.RetryHint {
@@ -479,9 +479,9 @@ func buildRetryHintFromDecodeError(err error, toolName tools.Ident, spec *tools.
 		return nil
 	}
 
-	var example map[string]any
-	if spec != nil && len(spec.Payload.ExampleInput) > 0 {
-		example = spec.Payload.ExampleInput
+	var example rawjson.Message
+	if spec != nil && len(spec.Payload.ExampleJSON) > 0 {
+		example = append(rawjson.Message(nil), spec.Payload.ExampleJSON...)
 	}
 
 	return &planner.RetryHint{
@@ -489,7 +489,7 @@ func buildRetryHintFromDecodeError(err error, toolName tools.Ident, spec *tools.
 		Tool:               toolName,
 		RestrictToTool:     true,
 		MissingFields:      fields,
-		ExampleInput:       example,
+		ExampleJSON:        example,
 		ClarifyingQuestion: question,
 	}
 }

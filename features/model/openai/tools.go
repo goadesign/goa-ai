@@ -13,6 +13,7 @@ import (
 	"github.com/openai/openai-go/responses"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 const structuredOutputDefaultName = "structured_output"
@@ -128,7 +129,7 @@ func encodeStructuredOutput(output *model.StructuredOutput) (responses.ResponseT
 			"openai: structured output schema is not valid JSON",
 		)
 	}
-	parameters, err := toolInputSchema(schema)
+	parameters, err := toolInputSchema(rawjson.Message(schema))
 	if err != nil {
 		return responses.ResponseTextConfigParam{}, false, fmt.Errorf(
 			"openai: structured output schema: %w",
@@ -151,23 +152,8 @@ func encodeStructuredOutput(output *model.StructuredOutput) (responses.ResponseT
 	}, true, nil
 }
 
-func toolInputSchema(schema any) (map[string]any, error) {
-	if schema == nil {
-		return nil, nil
-	}
-	var data []byte
-	switch actual := schema.(type) {
-	case json.RawMessage:
-		data = actual
-	case []byte:
-		data = actual
-	default:
-		encoded, err := json.Marshal(actual)
-		if err != nil {
-			return nil, err
-		}
-		data = encoded
-	}
+func toolInputSchema(schema rawjson.Message) (map[string]any, error) {
+	data := bytes.TrimSpace(schema)
 	if len(data) == 0 {
 		return nil, nil
 	}

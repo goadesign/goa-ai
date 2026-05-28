@@ -379,7 +379,9 @@ func (d *toolSpecsData) codecsImports() []*codegen.ImportSpec {
 	needsGoa := d.needsGoaImport()
 	needsJSONTypeIssues := d.needsJSONTypeIssueImport()
 	base := []*codegen.ImportSpec{
+		codegen.SimpleImport("bytes"),
 		codegen.SimpleImport("encoding/json"),
+		codegen.SimpleImport("io"),
 	}
 	if needsGoa || needsJSONTypeIssues {
 		base = append(base, codegen.SimpleImport("errors"))

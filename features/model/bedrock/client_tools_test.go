@@ -10,19 +10,18 @@ import (
 
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 func TestEncodeTools_NoChoice(t *testing.T) {
-	ctx := context.Background()
-
-	cfg, fields, canonToSan, sanToCanon, err := encodeTools(ctx, "amazon.nova-pro-v1:0", []*model.ToolDefinition{
+	cfg, fields, canonToSan, sanToCanon, err := encodeTools("amazon.nova-pro-v1:0", []*model.ToolDefinition{
 		{
 			Name:        "lookup",
 			Description: "Search",
-			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		},
-	}, nil, false, nil)
+	}, nil, false)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	require.Nil(t, fields)
@@ -33,15 +32,13 @@ func TestEncodeTools_NoChoice(t *testing.T) {
 }
 
 func TestEncodeTools_ModeAny(t *testing.T) {
-	ctx := context.Background()
-
-	cfg, _, canonToSan, sanToCanon, err := encodeTools(ctx, "amazon.nova-pro-v1:0", []*model.ToolDefinition{
+	cfg, _, canonToSan, sanToCanon, err := encodeTools("amazon.nova-pro-v1:0", []*model.ToolDefinition{
 		{
 			Name:        "lookup",
 			Description: "Search",
-			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		},
-	}, &model.ToolChoice{Mode: model.ToolChoiceModeAny}, false, nil)
+	}, &model.ToolChoice{Mode: model.ToolChoiceModeAny}, false)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	require.Len(t, cfg.Tools, 1)
@@ -53,18 +50,16 @@ func TestEncodeTools_ModeAny(t *testing.T) {
 }
 
 func TestEncodeTools_ModeTool(t *testing.T) {
-	ctx := context.Background()
-
-	cfg, _, canonToSan, sanToCanon, err := encodeTools(ctx, "amazon.nova-pro-v1:0", []*model.ToolDefinition{
+	cfg, _, canonToSan, sanToCanon, err := encodeTools("amazon.nova-pro-v1:0", []*model.ToolDefinition{
 		{
 			Name:        "lookup",
 			Description: "Search",
-			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		},
 	}, &model.ToolChoice{
 		Mode: model.ToolChoiceModeTool,
 		Name: "lookup",
-	}, false, nil)
+	}, false)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	require.Len(t, cfg.Tools, 1)
@@ -78,15 +73,13 @@ func TestEncodeTools_ModeTool(t *testing.T) {
 }
 
 func TestEncodeTools_ModeNonePreservesConfig(t *testing.T) {
-	ctx := context.Background()
-
-	cfg, _, canonToSan, sanToCanon, err := encodeTools(ctx, "amazon.nova-pro-v1:0", []*model.ToolDefinition{
+	cfg, _, canonToSan, sanToCanon, err := encodeTools("amazon.nova-pro-v1:0", []*model.ToolDefinition{
 		{
 			Name:        "lookup",
 			Description: "Search",
-			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		},
-	}, &model.ToolChoice{Mode: model.ToolChoiceModeNone}, false, nil)
+	}, &model.ToolChoice{Mode: model.ToolChoiceModeNone}, false)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	require.Len(t, cfg.Tools, 1)
@@ -96,22 +89,18 @@ func TestEncodeTools_ModeNonePreservesConfig(t *testing.T) {
 }
 
 func TestEncodeTools_ChoiceWithoutToolsErrors(t *testing.T) {
-	ctx := context.Background()
-
-	_, _, _, _, err := encodeTools(ctx, "amazon.nova-pro-v1:0", nil, &model.ToolChoice{Mode: model.ToolChoiceModeAny}, false, nil)
+	_, _, _, _, err := encodeTools("amazon.nova-pro-v1:0", nil, &model.ToolChoice{Mode: model.ToolChoiceModeAny}, false)
 	require.Error(t, err)
 }
 
 func TestEncodeTools_AppendsCacheCheckpoint(t *testing.T) {
-	ctx := context.Background()
-
-	cfg, _, _, _, err := encodeTools(ctx, "amazon.nova-pro-v1:0", []*model.ToolDefinition{
+	cfg, _, _, _, err := encodeTools("amazon.nova-pro-v1:0", []*model.ToolDefinition{
 		{
 			Name:        "lookup",
 			Description: "Search",
-			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		},
-	}, nil, true, nil)
+	}, nil, true)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	require.Len(t, cfg.Tools, 2, "expected tool spec + cache checkpoint")
@@ -120,15 +109,13 @@ func TestEncodeTools_AppendsCacheCheckpoint(t *testing.T) {
 }
 
 func TestEncodeTools_AnthropicModelAddsToolExamples(t *testing.T) {
-	ctx := context.Background()
-
-	cfg, fields, _, _, err := encodeTools(ctx, "us.anthropic.claude-opus-4-7", []*model.ToolDefinition{
+	cfg, fields, _, _, err := encodeTools("us.anthropic.claude-opus-4-7", []*model.ToolDefinition{
 		{
 			Name:        "reports.complete",
 			Description: "Complete a report",
 			Input:       model.ToolInputFromSpec(toolInputExampleSpec()),
 		},
-	}, nil, false, nil)
+	}, nil, false)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	require.Equal(t, []string{"tool-examples-2025-10-29"}, fields["anthropic_beta"])
@@ -141,9 +128,7 @@ func TestEncodeTools_AnthropicModelAddsToolExamples(t *testing.T) {
 }
 
 func TestEncodeTools_AnthropicModelKeepsAllToolsWhenOneHasExample(t *testing.T) {
-	ctx := context.Background()
-
-	cfg, fields, _, _, err := encodeTools(ctx, "us.anthropic.claude-opus-4-7", []*model.ToolDefinition{
+	cfg, fields, _, _, err := encodeTools("us.anthropic.claude-opus-4-7", []*model.ToolDefinition{
 		{
 			Name:        "reports.complete",
 			Description: "Complete a report",
@@ -152,9 +137,9 @@ func TestEncodeTools_AnthropicModelKeepsAllToolsWhenOneHasExample(t *testing.T) 
 		{
 			Name:        "reports.lookup",
 			Description: "Look up a report",
-			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		},
-	}, nil, false, nil)
+	}, nil, false)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	tools, ok := fields["tools"].([]map[string]any)
@@ -248,7 +233,7 @@ func TestBuildConverseStreamInputWithToolResultsUsesBedrockToolConfig(t *testing
 			{
 				Name:        "reports.lookup",
 				Description: "Look up a report",
-				Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+				Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 			},
 		},
 	}
@@ -262,15 +247,13 @@ func TestBuildConverseStreamInputWithToolResultsUsesBedrockToolConfig(t *testing
 }
 
 func TestEncodeTools_AnthropicToolChoiceUsesNativeFieldWithExamples(t *testing.T) {
-	ctx := context.Background()
-
-	_, fields, _, _, err := encodeTools(ctx, "us.anthropic.claude-opus-4-7", []*model.ToolDefinition{
+	_, fields, _, _, err := encodeTools("us.anthropic.claude-opus-4-7", []*model.ToolDefinition{
 		{
 			Name:        "reports.complete",
 			Description: "Complete a report",
 			Input:       model.ToolInputFromSpec(toolInputExampleSpec()),
 		},
-	}, &model.ToolChoice{Mode: model.ToolChoiceModeTool, Name: "reports.complete"}, false, nil)
+	}, &model.ToolChoice{Mode: model.ToolChoiceModeTool, Name: "reports.complete"}, false)
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"type": "tool", "name": "reports_complete"}, fields["tool_choice"])
 }
@@ -296,11 +279,9 @@ func TestIsNovaModel(t *testing.T) {
 func toolInputExampleSpec() tools.TypeSpec {
 	return tools.TypeSpec{
 		Name:                     "ReportsCompletePayload",
-		Schema:                   []byte(`{"type":"object","example":{"summary":"Done"}}`),
-		SchemaWithoutRootExample: []byte(`{"type":"object"}`),
-		ExampleInput: map[string]any{
-			"summary": "Done",
-		},
+		Schema:                   tools.RawJSON(`{"type":"object","example":{"summary":"Done"}}`),
+		SchemaWithoutRootExample: tools.RawJSON(`{"type":"object"}`),
+		ExampleJSON:              tools.RawJSON(`{"summary":"Done"}`),
 	}
 }
 

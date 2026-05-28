@@ -14,6 +14,7 @@ import (
 
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -70,7 +71,7 @@ func TestClientCompleteUsesExplicitToolLoopTranscript(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
 	require.NoError(t, err)
@@ -115,7 +116,7 @@ func TestClientCompleteRejectsUnrepresentableExplicitTranscript(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
 	require.Error(t, err)
@@ -140,7 +141,7 @@ func TestClientCompleteLowersRunlogReplayedTranscript(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
 	require.NoError(t, err)
@@ -222,7 +223,7 @@ func TestClientCompleteEncodesToolLoopTranscript(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
 	require.NoError(t, err)
@@ -285,7 +286,7 @@ func TestClientCompleteRewritesUnknownToolUseToToolUnavailable(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        tools.ToolUnavailable.String(),
 			Description: "Report that a previously used tool is unavailable.",
-			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
 	require.NoError(t, err)
@@ -330,7 +331,7 @@ func TestClientCompleteEncodesToolResultErrorsExplicitly(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
 	require.NoError(t, err)
@@ -365,7 +366,7 @@ func TestClientCompleteRejectsAssistantTextAfterToolUse(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
 	require.Error(t, err)
@@ -392,7 +393,7 @@ func TestClientCompleteRoutesModelsAndToolChoice(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 		ToolChoice: &model.ToolChoice{Mode: model.ToolChoiceModeAny},
 	})
@@ -473,7 +474,7 @@ func TestClientCompleteSupportsStructuredOutput(t *testing.T) {
 		}},
 		StructuredOutput: &model.StructuredOutput{
 			Name:   "draft_from_transcript",
-			Schema: []byte(`{"type":"object","additionalProperties":false}`),
+			Schema: tools.RawJSON(`{"type":"object","additionalProperties":false}`),
 		},
 	})
 	require.NoError(t, err)
@@ -569,11 +570,11 @@ func TestClientCompleteRejectsStructuredOutputWithTools(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 		StructuredOutput: &model.StructuredOutput{
 			Name:   "draft_from_transcript",
-			Schema: []byte(`{"type":"object"}`),
+			Schema: tools.RawJSON(`{"type":"object"}`),
 		},
 	})
 	require.Error(t, err)
@@ -596,7 +597,7 @@ func TestClientCompleteRejectsInvalidToolDefinitions(t *testing.T) {
 			name: "missing tool name",
 			tools: []*model.ToolDefinition{{
 				Description: "Run an analysis.",
-				Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+				Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 			}},
 			wantErr: "tool[0] is missing name",
 		},
@@ -721,7 +722,7 @@ func TestOpenAIStreamerEmitsTextToolCallsUsageAndStop(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
 	require.NoError(t, err)
@@ -874,7 +875,7 @@ func TestOpenAIStreamerStructuredOutput(t *testing.T) {
 		}},
 		StructuredOutput: &model.StructuredOutput{
 			Name:   "draft_from_transcript",
-			Schema: []byte(`{"type":"object"}`),
+			Schema: tools.RawJSON(`{"type":"object"}`),
 		},
 	})
 	require.NoError(t, err)

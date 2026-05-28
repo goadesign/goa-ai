@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -92,7 +93,7 @@ func TestClientPrepareRequestLowersRunlogReplayedTranscript(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
 	require.NoError(t, err)
@@ -153,7 +154,7 @@ func TestClientPrepareRequestFailsOnMissingThinkingInToolLoop(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 		Thinking: &model.ThinkingOptions{
 			Enable: true,

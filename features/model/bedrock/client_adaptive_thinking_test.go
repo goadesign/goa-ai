@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 // isAdaptiveThinkingModel must match every Bedrock inference profile scope
@@ -66,7 +67,7 @@ func TestBuildConverseStreamInputOpus47UsesAdaptiveThinking(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "search",
 			Description: "search the workspace",
-			Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 		Thinking: &model.ThinkingOptions{
 			Enable:       true,

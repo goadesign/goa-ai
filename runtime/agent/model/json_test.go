@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent/prompt"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -79,15 +80,15 @@ func TestToolInputContractRoundTrip(t *testing.T) {
 
 	require.Equal(t, orig.JSONSchema(), got.JSONSchema())
 	require.Equal(t, orig.SchemaWithoutRootExample(), got.SchemaWithoutRootExample())
-	require.Equal(t, orig.ExampleInput(), got.ExampleInput())
+	require.Equal(t, orig.ExampleJSON(), got.ExampleJSON())
 }
 
 func TestToolInputContractRequiresSchemaWithoutRootExample(t *testing.T) {
 	_, err := ToolInputFromContract("reports.complete", ToolInputContract{
-		Schema:       map[string]any{"type": "object"},
-		ExampleInput: map[string]any{"summary": "Done"},
+		Schema:      rawjson.Message(`{"type":"object"}`),
+		ExampleJSON: rawjson.Message(`{"summary":"Done"}`),
 	})
-	require.ErrorContains(t, err, "example input requires schema without root example")
+	require.ErrorContains(t, err, "example JSON requires schema without root example")
 }
 
 func TestThinkingPartRoundTripPreservesSignature(t *testing.T) {
@@ -197,8 +198,8 @@ func TestRequestJSONRoundTripPreservesPromptRefs(t *testing.T) {
 func toolInputSpecFixture() tools.TypeSpec {
 	return tools.TypeSpec{
 		Name:                     "ReportsCompletePayload",
-		Schema:                   []byte(`{"type":"object","example":{"summary":"Done"}}`),
-		SchemaWithoutRootExample: []byte(`{"type":"object"}`),
-		ExampleInput:             map[string]any{"summary": "Done"},
+		Schema:                   tools.RawJSON(`{"type":"object","example":{"summary":"Done"}}`),
+		SchemaWithoutRootExample: tools.RawJSON(`{"type":"object"}`),
+		ExampleJSON:              tools.RawJSON(`{"summary":"Done"}`),
 	}
 }

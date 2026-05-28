@@ -107,7 +107,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Question:       evt.Question,
 			MissingFields:  append([]string(nil), evt.MissingFields...),
 			RestrictToTool: string(evt.RestrictToTool),
-			ExampleInput:   evt.ExampleInput,
+			ExampleJSON:    evt.ExampleJSON,
 		}
 		return s.sink.Send(ctx, AwaitClarification{
 			Base: newBaseFromHook(evt, EventAwaitClarification, payload),

@@ -322,9 +322,7 @@ func TestAppendUserToolResults_AppendsRetryHintReminderAfterToolResults(t *testi
 			Tool:           call.Name,
 			RestrictToTool: true,
 			Message:        "Unsupported filter field.",
-			ExampleInput: map[string]any{
-				"dataset": "alarms",
-			},
+			ExampleJSON:    rawjson.Message(`{"dataset":"alarms"}`),
 		},
 	}
 

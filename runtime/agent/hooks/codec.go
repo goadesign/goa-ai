@@ -227,7 +227,7 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", AwaitClarification, err)
 		}
-		evt = NewAwaitClarificationEvent(input.RunID, input.AgentID, input.SessionID, p.ID, p.Question, p.MissingFields, p.RestrictToTool, p.ExampleInput)
+		evt = NewAwaitClarificationEvent(input.RunID, input.AgentID, input.SessionID, p.ID, p.Question, p.MissingFields, p.RestrictToTool, p.ExampleJSON)
 
 	case AwaitQuestions:
 		var p AwaitQuestionsEvent

@@ -120,9 +120,7 @@ func TestPlanStartActivityAdvertisesPolicyFilteredTools(t *testing.T) {
 			require.Len(t, definitions, 1)
 			require.Equal(t, "svc.tools.visible", definitions[0].Name)
 			require.Equal(t, "Visible tool", definitions[0].Description)
-			schema, ok := definitions[0].Input.JSONSchema().(map[string]any)
-			require.True(t, ok)
-			require.Equal(t, "object", schema["type"])
+			require.JSONEq(t, `{"type":"object","properties":{"q":{"type":"string"}}}`, string(definitions[0].Input.JSONSchema()))
 			return &planner.PlanResult{
 				FinalResponse: &planner.FinalResponse{
 					Message: &model.Message{
@@ -136,7 +134,7 @@ func TestPlanStartActivityAdvertisesPolicyFilteredTools(t *testing.T) {
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
 	visible := newAnyJSONSpec("svc.tools.visible", "svc.tools")
 	visible.Description = "Visible tool"
-	visible.Payload.Schema = []byte(`{"type":"object","properties":{"q":{"type":"string"}}}`)
+	visible.Payload.Schema = tools.RawJSON(`{"type":"object","properties":{"q":{"type":"string"}}}`)
 	visible.Tags = []string{"system", "profile"}
 	blocked := newAnyJSONSpec("svc.tools.blocked", "svc.tools")
 	blocked.Tags = []string{"system"}

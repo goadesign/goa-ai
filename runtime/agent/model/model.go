@@ -4,6 +4,7 @@
 package model
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -258,28 +259,28 @@ type (
 
 	// ToolInput contains the model-facing input contract for one tool.
 	ToolInput struct {
-		jsonSchema               any
-		schemaWithoutRootExample any
-		exampleInput             map[string]any
+		jsonSchema               rawjson.Message
+		schemaWithoutRootExample rawjson.Message
+		exampleJSON              rawjson.Message
 	}
 
-	// ToolInputContract is the provider-neutral, JSON-compatible projection of a
-	// tool input contract. It is used at process and service boundaries where the
+	// ToolInputContract is the provider-neutral raw JSON projection of a tool
+	// input contract. It is used at process and service boundaries where the
 	// unexported ToolInput invariants must be transported without exposing
 	// generator internals or provider-specific request fields.
 	ToolInputContract struct {
 		// Schema is the canonical JSON Schema presented to providers that consume
 		// examples embedded in schema annotations.
-		Schema any
+		Schema rawjson.Message
 
 		// SchemaWithoutRootExample is the same schema without the root example
 		// annotation. Provider adapters that expose examples separately may choose
 		// this projection.
-		SchemaWithoutRootExample any
+		SchemaWithoutRootExample rawjson.Message
 
-		// ExampleInput is the canonical authored JSON-object input example when the
+		// ExampleJSON is the canonical authored JSON input example when the
 		// generated tool spec provides one.
-		ExampleInput map[string]any
+		ExampleJSON rawjson.Message
 	}
 
 	// ToolCall is a requested tool invocation from the model.
@@ -731,8 +732,8 @@ func ToolDefinitionFromSpec(spec tools.ToolSpec) *ToolDefinition {
 
 // ToolInputFromSchema builds an input contract from a caller-authored schema.
 // Use this for local tools whose schema does not come from generated Goa specs.
-func ToolInputFromSchema(schema any) ToolInput {
-	return ToolInput{jsonSchema: schema}
+func ToolInputFromSchema(schema rawjson.Message) ToolInput {
+	return ToolInput{jsonSchema: validatedJSON("caller-authored tool schema", schema)}
 }
 
 // ToolInputFromSpec projects one generated payload type into the model input
@@ -740,9 +741,9 @@ func ToolInputFromSchema(schema any) ToolInput {
 // example without exposing that wiring at call sites.
 func ToolInputFromSpec(spec tools.TypeSpec) ToolInput {
 	return ToolInput{
-		jsonSchema:               decodeGeneratedSchema(spec.Name, "payload schema", spec.Schema),
-		schemaWithoutRootExample: decodeGeneratedSchema(spec.Name, "schema without root example", spec.SchemaWithoutRootExample),
-		exampleInput:             spec.ExampleInput,
+		jsonSchema:               validateGeneratedJSON(spec.Name, "payload schema", spec.Schema),
+		schemaWithoutRootExample: validateGeneratedJSON(spec.Name, "schema without root example", spec.SchemaWithoutRootExample),
+		exampleJSON:              validateGeneratedJSON(spec.Name, "example JSON", spec.ExampleJSON),
 	}
 }
 
@@ -753,43 +754,54 @@ func ToolInputFromContract(toolName string, contract ToolInputContract) (ToolInp
 	if contract.Schema == nil {
 		return ToolInput{}, fmt.Errorf("model: tool %q input schema is required", toolName)
 	}
-	if contract.ExampleInput != nil && contract.SchemaWithoutRootExample == nil {
-		return ToolInput{}, fmt.Errorf("model: tool %q example input requires schema without root example", toolName)
+	if len(bytes.TrimSpace(contract.ExampleJSON)) > 0 && contract.SchemaWithoutRootExample == nil {
+		return ToolInput{}, fmt.Errorf("model: tool %q example JSON requires schema without root example", toolName)
+	}
+	schema, err := validateContractJSON(toolName, "input schema", contract.Schema)
+	if err != nil {
+		return ToolInput{}, err
+	}
+	schemaWithoutRootExample, err := validateContractJSON(toolName, "schema without root example", contract.SchemaWithoutRootExample)
+	if err != nil {
+		return ToolInput{}, err
+	}
+	exampleJSON, err := validateContractJSON(toolName, "example JSON", contract.ExampleJSON)
+	if err != nil {
+		return ToolInput{}, err
 	}
 	return ToolInput{
-		jsonSchema:               contract.Schema,
-		schemaWithoutRootExample: contract.SchemaWithoutRootExample,
-		exampleInput:             contract.ExampleInput,
+		jsonSchema:               schema,
+		schemaWithoutRootExample: schemaWithoutRootExample,
+		exampleJSON:              exampleJSON,
 	}, nil
 }
 
 // Contract returns the provider-neutral transport projection of the tool input.
-// The returned values are JSON-compatible objects owned by the caller; callers
-// crossing process boundaries should clone them before mutation or serialization.
+// The returned values are raw generated JSON documents owned by the caller.
 func (in ToolInput) Contract() ToolInputContract {
 	return ToolInputContract{
 		Schema:                   in.jsonSchema,
 		SchemaWithoutRootExample: in.schemaWithoutRootExample,
-		ExampleInput:             in.exampleInput,
+		ExampleJSON:              in.exampleJSON,
 	}
 }
 
 // JSONSchema returns the annotated JSON Schema for providers that consume JSON
 // Schema annotations directly.
-func (in ToolInput) JSONSchema() any {
+func (in ToolInput) JSONSchema() rawjson.Message {
 	return in.jsonSchema
 }
 
 // SchemaWithoutRootExample returns the JSON Schema without its root example
 // annotation. Providers with top-level example fields use this projection.
-func (in ToolInput) SchemaWithoutRootExample() any {
+func (in ToolInput) SchemaWithoutRootExample() rawjson.Message {
 	return in.schemaWithoutRootExample
 }
 
-// ExampleInput returns the canonical JSON-object input example for providers
-// with top-level input example support.
-func (in ToolInput) ExampleInput() map[string]any {
-	return in.exampleInput
+// ExampleJSON returns the canonical JSON input example for providers with
+// top-level input example support.
+func (in ToolInput) ExampleJSON() rawjson.Message {
+	return in.exampleJSON
 }
 
 func (TextPart) isPart() {}
@@ -808,13 +820,41 @@ func (ToolResultPart) isPart() {}
 
 func (CacheCheckpointPart) isPart() {}
 
-func decodeGeneratedSchema(name, label string, data []byte) any {
-	if len(data) == 0 {
+func validateGeneratedJSON(name, label string, data rawjson.Message) rawjson.Message {
+	if len(bytes.TrimSpace(data)) == 0 {
 		return nil
 	}
-	var schema any
-	if err := json.Unmarshal(data, &schema); err != nil {
-		panic(fmt.Errorf("model: decode generated %s for %s: %w", label, name, err))
+	if !json.Valid(data) {
+		panic(fmt.Errorf("model: invalid generated %s for %s", label, name))
 	}
-	return schema
+	return cloneRawJSON(data)
+}
+
+func validateContractJSON(toolName, label string, data rawjson.Message) (rawjson.Message, error) {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil, nil
+	}
+	if !json.Valid(data) {
+		return nil, fmt.Errorf("model: invalid %s for tool %q", label, toolName)
+	}
+	return cloneRawJSON(data), nil
+}
+
+func validatedJSON(label string, data rawjson.Message) rawjson.Message {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil
+	}
+	if !json.Valid(data) {
+		panic(fmt.Errorf("model: invalid %s", label))
+	}
+	return cloneRawJSON(data)
+}
+
+func cloneRawJSON(data rawjson.Message) rawjson.Message {
+	if data == nil {
+		return nil
+	}
+	out := make(rawjson.Message, len(data))
+	copy(out, data)
+	return out
 }

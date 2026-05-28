@@ -18,6 +18,9 @@
               "example": "Ut possimus impedit facilis tempora ut."
             }
           },
+          "example": {
+            "question": "What is the capital of Japan?"
+          },
           "required": [
             "question"
           ]

@@ -339,8 +339,8 @@ type RetryHint struct {
 	// MissingFields lists required fields that were missing or invalid.
 	MissingFields []string
 
-	// ExampleInput is an example payload (as a JSON object) to guide callers.
-	ExampleInput map[string]any
+	// ExampleJSON is a canonical JSON example payload to guide callers.
+	ExampleJSON rawjson.Message
 
 	// PriorInput is the payload (as a JSON object) that caused the failure when
 	// available, to assist interactive repair flows.
@@ -479,8 +479,8 @@ type AwaitClarification struct {
 	// RestrictToTool optionally binds the clarification to a single tool.
 	RestrictToTool tools.Ident
 
-	// ExampleInput is an example payload (as a JSON object) to guide the user.
-	ExampleInput map[string]any
+	// ExampleJSON is a canonical JSON example payload to guide the user.
+	ExampleJSON rawjson.Message
 
 	// ClarifyingPrompt is an optional prompt to use when building follow-up messages.
 	ClarifyingPrompt string

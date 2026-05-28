@@ -312,9 +312,9 @@ func TestAdvertisedToolDefinitionsHonorCompiledPolicy(t *testing.T) {
 	rt := newTestRuntimeWithPlanner("service.agent", &stubPlanner{})
 	visible := newAnyJSONSpec("svc.tools.visible", "svc.tools")
 	visible.Description = "Visible tool"
-	visible.Payload.Schema = []byte(`{"type":"object","properties":{"q":{"type":"string"}}}`)
-	visible.Payload.SchemaWithoutRootExample = []byte(`{"type":"object"}`)
-	visible.Payload.ExampleInput = map[string]any{"q": "status"}
+	visible.Payload.Schema = tools.RawJSON(`{"type":"object","properties":{"q":{"type":"string"}}}`)
+	visible.Payload.SchemaWithoutRootExample = tools.RawJSON(`{"type":"object"}`)
+	visible.Payload.ExampleJSON = tools.RawJSON(`{"q":"status"}`)
 	visible.Tags = []string{"system", "profile"}
 	blocked := newAnyJSONSpec("svc.tools.blocked", "svc.tools")
 	blocked.Tags = []string{"system"}
@@ -332,13 +332,9 @@ func TestAdvertisedToolDefinitionsHonorCompiledPolicy(t *testing.T) {
 	require.Len(t, definitions, 1)
 	require.Equal(t, visible.Name.String(), definitions[0].Name)
 	require.Equal(t, visible.Description, definitions[0].Description)
-	schema, ok := definitions[0].Input.JSONSchema().(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, "object", schema["type"])
-	schemaWithoutRootExample, ok := definitions[0].Input.SchemaWithoutRootExample().(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, "object", schemaWithoutRootExample["type"])
-	require.Equal(t, map[string]any{"q": "status"}, definitions[0].Input.ExampleInput())
+	require.JSONEq(t, `{"type":"object","properties":{"q":{"type":"string"}}}`, string(definitions[0].Input.JSONSchema()))
+	require.JSONEq(t, `{"type":"object"}`, string(definitions[0].Input.SchemaWithoutRootExample()))
+	require.JSONEq(t, `{"q":"status"}`, string(definitions[0].Input.ExampleJSON()))
 }
 
 func TestToolMetadataUsesRegisteredCanonicalMetadata(t *testing.T) {

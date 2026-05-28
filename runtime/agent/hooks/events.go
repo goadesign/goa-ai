@@ -433,8 +433,8 @@ type (
 		MissingFields []string
 		// RestrictToTool optionally narrows the next turn to a specific tool.
 		RestrictToTool tools.Ident
-		// ExampleInput optionally provides a schema-compliant example.
-		ExampleInput map[string]any
+		// ExampleJSON optionally provides a schema-compliant JSON example.
+		ExampleJSON rawjson.Message
 	}
 
 	// AwaitConfirmationEvent indicates the runtime requested an explicit operator
@@ -787,14 +787,7 @@ func NewRunResumedEvent(runID string, agentID agent.Ident, sessionID, notes, req
 }
 
 // NewAwaitClarificationEvent constructs an AwaitClarificationEvent with the provided details.
-func NewAwaitClarificationEvent(runID string, agentID agent.Ident, sessionID, id, question string, missing []string, restrict tools.Ident, example map[string]any) *AwaitClarificationEvent {
-	var ex map[string]any
-	if len(example) > 0 {
-		ex = make(map[string]any, len(example))
-		for k, v := range example {
-			ex[k] = v
-		}
-	}
+func NewAwaitClarificationEvent(runID string, agentID agent.Ident, sessionID, id, question string, missing []string, restrict tools.Ident, example rawjson.Message) *AwaitClarificationEvent {
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
 	return &AwaitClarificationEvent{
@@ -803,7 +796,7 @@ func NewAwaitClarificationEvent(runID string, agentID agent.Ident, sessionID, id
 		Question:       question,
 		MissingFields:  append([]string(nil), missing...),
 		RestrictToTool: restrict,
-		ExampleInput:   ex,
+		ExampleJSON:    append(rawjson.Message(nil), example...),
 	}
 }
 

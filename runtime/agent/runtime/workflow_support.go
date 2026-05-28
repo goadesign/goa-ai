@@ -433,7 +433,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 			mf.ClarifyingQuestion,
 			mf.MissingFields,
 			restrict,
-			mf.ExampleInput,
+			mf.ExampleJSON,
 		), turnID); err != nil {
 			return nil, err
 		}

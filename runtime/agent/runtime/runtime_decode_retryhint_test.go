@@ -37,13 +37,7 @@ func TestBuildRetryHintFromDecodeError_UnmarshalTypeError(t *testing.T) {
 	ute := &json.UnmarshalTypeError{Field: "summary"}
 	spec := &tools.ToolSpec{
 		Payload: tools.TypeSpec{
-			ExampleInput: map[string]any{
-				"summary": map[string]any{
-					"summary": "Headline",
-				},
-				"recommendations":      []any{"Do X"},
-				"requires_remediation": true,
-			},
+			ExampleJSON: tools.RawJSON(`{"summary":{"summary":"Headline"},"recommendations":["Do X"],"requires_remediation":true}`),
 		},
 	}
 
@@ -55,11 +49,7 @@ func TestBuildRetryHintFromDecodeError_UnmarshalTypeError(t *testing.T) {
 	require.Equal(t, []string{"summary"}, hint.MissingFields)
 	require.NotEmpty(t, hint.ClarifyingQuestion)
 	require.Contains(t, hint.ClarifyingQuestion, "summary")
-	require.NotNil(t, hint.ExampleInput)
-	// ExampleInput should contain the top-level summary object.
-	s, ok := hint.ExampleInput["summary"]
-	require.True(t, ok)
-	require.NotNil(t, s)
+	require.JSONEq(t, `{"summary":{"summary":"Headline"},"recommendations":["Do X"],"requires_remediation":true}`, string(hint.ExampleJSON))
 }
 
 // TestBuildRetryHintFromDecodeError_SyntaxError verifies that malformed JSON
@@ -82,7 +72,7 @@ func TestBuildRetryHintFromDecodeError_GenericErrorReturnsNil(t *testing.T) {
 	decErr := errors.New(`unexpected Rule2 type "signal_change"`)
 	spec := &tools.ToolSpec{
 		Payload: tools.TypeSpec{
-			ExampleInput: map[string]any{"AssistantText": "ok"},
+			ExampleJSON: tools.RawJSON(`{"AssistantText":"ok"}`),
 		},
 	}
 	require.Nil(t, buildRetryHintFromDecodeError(decErr, tools.Ident("svc.ts.tool"), spec))
@@ -100,14 +90,8 @@ func TestExecuteToolActivity_DecodeErrorRetryHint(t *testing.T) {
 				Service: "svc",
 				Toolset: "svc.ts",
 				Payload: tools.TypeSpec{
-					Name: "P",
-					ExampleInput: map[string]any{
-						"summary": map[string]any{
-							"summary": "Headline",
-						},
-						"recommendations":      []any{"Do X"},
-						"requires_remediation": true,
-					},
+					Name:        "P",
+					ExampleJSON: tools.RawJSON(`{"summary":{"summary":"Headline"},"recommendations":["Do X"],"requires_remediation":true}`),
 					Codec: tools.JSONCodec[any]{
 						FromJSON: func(data []byte) (any, error) {
 							// Force a decode failure that buildRetryHintFromDecodeError
@@ -147,7 +131,7 @@ func TestExecuteToolActivity_DecodeErrorRetryHint(t *testing.T) {
 	require.Equal(t, planner.RetryReasonMissingFields, out.RetryHint.Reason)
 	require.True(t, out.RetryHint.RestrictToTool)
 	require.Equal(t, []string{"summary"}, out.RetryHint.MissingFields)
-	require.NotNil(t, out.RetryHint.ExampleInput)
+	require.NotNil(t, out.RetryHint.ExampleJSON)
 }
 
 // TestExecuteToolActivity_UnionValidationRetryHint verifies that generated

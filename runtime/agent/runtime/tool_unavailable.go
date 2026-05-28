@@ -39,22 +39,7 @@ func toolUnavailableToolDefinition() *model.ToolDefinition {
 	return &model.ToolDefinition{
 		Name:        tools.ToolUnavailable.String(),
 		Description: "Internal. Used when the model requests a tool that is not available for this run. Always returns an error with a retry hint to pick a tool from the advertised list.",
-		Input: model.ToolInputFromSchema(
-			map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"requested_tool": map[string]any{
-						"type":        "string",
-						"description": "The provider-visible tool name originally requested by the model.",
-					},
-					"requested_payload": map[string]any{
-						"description": "The original JSON payload that the model provided for the unknown tool.",
-					},
-				},
-				"required":             []string{"requested_tool"},
-				"additionalProperties": false,
-			},
-		),
+		Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object","properties":{"requested_tool":{"type":"string","description":"The provider-visible tool name originally requested by the model."},"requested_payload":{"description":"The original JSON payload that the model provided for the unknown tool."}},"required":["requested_tool"],"additionalProperties":false}`)),
 	}
 }
 
@@ -67,12 +52,12 @@ func toolUnavailableToolsetRegistration() ToolsetRegistration {
 		Payload: tools.TypeSpec{
 			Name:        "ToolUnavailablePayload",
 			Schema:      mustMarshalToolUnavailableSchema(),
-			ExampleJSON: []byte(`{"requested_tool":"svc_read_count_events","requested_payload":{"from":"2026-02-06T00:00:00Z"}}`),
+			ExampleJSON: tools.RawJSON(`{"requested_tool":"svc_read_count_events","requested_payload":{"from":"2026-02-06T00:00:00Z"}}`),
 			Codec:       tools.AnyJSONCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:   "ToolUnavailableResult",
-			Schema: []byte(`{"type":"object","additionalProperties":true}`),
+			Schema: tools.RawJSON(`{"type":"object","additionalProperties":true}`),
 			Codec:  tools.AnyJSONCodec,
 		},
 	}
@@ -88,13 +73,8 @@ func toolUnavailableToolsetRegistration() ToolsetRegistration {
 	}
 }
 
-func mustMarshalToolUnavailableSchema() []byte {
-	schema := toolUnavailableToolDefinition().Input.JSONSchema()
-	data, err := json.Marshal(schema)
-	if err != nil {
-		panic(fmt.Errorf("runtime: marshal tool_unavailable schema: %w", err))
-	}
-	return data
+func mustMarshalToolUnavailableSchema() tools.RawJSON {
+	return toolUnavailableToolDefinition().Input.JSONSchema()
 }
 
 func executeToolUnavailable(ctx context.Context, call *planner.ToolRequest) (*ToolExecutionResult, error) {

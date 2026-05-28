@@ -31,11 +31,11 @@ func TestProviderAgnosticSpecsGenerationProperty(t *testing.T) {
 				Tags:        []string{"test"},
 				Payload: tools.TypeSpec{
 					Name:   toolName + "Payload",
-					Schema: []byte(`{"type":"object"}`),
+					Schema: tools.RawJSON(`{"type":"object"}`),
 				},
 				Result: tools.TypeSpec{
 					Name:   toolName + "Result",
-					Schema: []byte(`{"type":"object"}`),
+					Schema: tools.RawJSON(`{"type":"object"}`),
 				},
 			}
 
@@ -156,11 +156,11 @@ func TestToolSpecFieldPresence(t *testing.T) {
 				Tags:        tags,
 				Payload: tools.TypeSpec{
 					Name:   toolName + "Payload",
-					Schema: []byte(`{"type":"object"}`),
+					Schema: tools.RawJSON(`{"type":"object"}`),
 				},
 				Result: tools.TypeSpec{
 					Name:   toolName + "Result",
-					Schema: []byte(`{"type":"object"}`),
+					Schema: tools.RawJSON(`{"type":"object"}`),
 				},
 			}
 
@@ -261,11 +261,11 @@ func createToolSpec(toolName, toolsetName, serviceName string, _ agentsexpr.Prov
 		Tags:        []string{},
 		Payload: tools.TypeSpec{
 			Name:   toolName + "Payload",
-			Schema: []byte(`{"type":"object"}`),
+			Schema: tools.RawJSON(`{"type":"object"}`),
 		},
 		Result: tools.TypeSpec{
 			Name:   toolName + "Result",
-			Schema: []byte(`{"type":"object"}`),
+			Schema: tools.RawJSON(`{"type":"object"}`),
 		},
 	}
 }

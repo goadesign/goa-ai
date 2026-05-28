@@ -1,6 +1,10 @@
 package tools
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"goa.design/goa-ai/runtime/agent/rawjson"
+)
 
 // AnyJSONCodec is a pre-built codec for the `any` type. It uses standard JSON
 // marshaling/unmarshaling and is suitable for integrations where the concrete
@@ -20,6 +24,14 @@ var AnyJSONCodec = JSONCodec[any]{
 }
 
 type (
+	// RawJSON is an opaque JSON document emitted by code generation.
+	//
+	// Tool schemas and examples use RawJSON so runtime contracts transport the
+	// generated document bytes without parsing them into map-shaped values. Model
+	// provider adapters are the only layer that may decode these documents into
+	// provider SDK structures.
+	RawJSON = rawjson.Message
+
 	// ServerDataAudience declares who a server-data payload is intended for.
 	//
 	// Audience is a routing contract for downstream consumers (timeline projection,
@@ -164,20 +176,24 @@ type (
 		// Name is the Go identifier associated with the type.
 		Name string
 		// Schema contains the JSON schema definition rendered at code generation time.
-		Schema []byte
+		Schema RawJSON
 		// SchemaWithoutRootExample contains the JSON schema definition without the
 		// root example annotation. Providers that require examples outside the
 		// schema use this precomputed variant instead of rewriting Schema at runtime.
-		SchemaWithoutRootExample []byte
+		SchemaWithoutRootExample RawJSON
 		// ExampleJSON optionally contains a canonical example JSON document for this
 		// type. When present on payload types, runtimes and planners can surface it
 		// in retry hints or await-clarification prompts to guide callers toward a
 		// schema-compliant shape.
-		ExampleJSON []byte
-		// ExampleInput is an optional parsed example payload. When present, it is a
-		// JSON-object example represented as a map and can be attached to retry hints
-		// without runtime JSON unmarshaling.
-		ExampleInput map[string]any
+		ExampleJSON RawJSON
+		// FieldDescriptions maps dotted JSON field paths to their generated
+		// descriptions. It is the codegen-owned metadata projection for UI and
+		// retry guidance; consumers must not parse Schema to rediscover it.
+		FieldDescriptions map[string]string
+		// FieldJSONTypes maps dotted JSON field paths to the JSON type expected by
+		// generated codecs. It powers structured retry guidance without schema
+		// introspection.
+		FieldJSONTypes map[string]string
 		// Codec serializes and deserializes values matching the type.
 		Codec JSONCodec[any]
 	}

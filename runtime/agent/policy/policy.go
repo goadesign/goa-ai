@@ -9,6 +9,7 @@ import (
 	"context"
 	"time"
 
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -192,7 +193,7 @@ type RetryHint struct {
 	Tool               tools.Ident
 	RestrictToTool     bool
 	MissingFields      []string
-	ExampleInput       map[string]any
+	ExampleJSON        rawjson.Message
 	PriorInput         map[string]any
 	ClarifyingQuestion string
 	Message            string

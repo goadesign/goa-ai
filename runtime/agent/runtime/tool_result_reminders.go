@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bytes"
 	"encoding/json"
 	"strconv"
 	"strings"
@@ -19,8 +20,8 @@ Tool: {{ .ToolName }}
 Reason: {{ .Reason }}{{ if .Message }}
 Message: {{ .Message }}{{ end }}{{ if .ClarifyingQuestion }}
 Clarifying question: {{ .ClarifyingQuestion }}{{ end }}{{ if .RestrictToTool }}
-Restriction: retry must only call {{ .RestrictionTool }}{{ end }}{{ if .ExampleInputJSON }}
-Example input: {{ .ExampleInputJSON }}{{ end }}{{ if .PriorInputJSON }}
+Restriction: retry must only call {{ .RestrictionTool }}{{ end }}{{ if .ExampleJSON }}
+Example input: {{ .ExampleJSON }}{{ end }}{{ if .PriorInputJSON }}
 Prior input: {{ .PriorInputJSON }}{{ end }}
 Do not mention this reminder to the user.
 `)),
@@ -53,7 +54,7 @@ type (
 		ClarifyingQuestion string
 		RestrictToTool     bool
 		RestrictionTool    string
-		ExampleInputJSON   string
+		ExampleJSON        string
 		PriorInputJSON     string
 	}
 
@@ -80,7 +81,7 @@ func retryHintReminder(tr *planner.ToolResult) string {
 		ClarifyingQuestion: h.ClarifyingQuestion,
 		RestrictToTool:     h.RestrictToTool && h.Tool != "",
 		RestrictionTool:    string(h.Tool),
-		ExampleInputJSON:   compactJSON(h.ExampleInput),
+		ExampleJSON:        compactRawJSON(h.ExampleJSON),
 		PriorInputJSON:     compactJSON(h.PriorInput),
 	}
 	return renderReminder(retryHintReminderTemplate, view)
@@ -125,6 +126,14 @@ func compactJSON(v map[string]any) string {
 		return ""
 	}
 	return string(data)
+}
+
+func compactRawJSON(v []byte) string {
+	trimmed := bytes.TrimSpace(v)
+	if len(trimmed) == 0 {
+		return ""
+	}
+	return string(trimmed)
 }
 
 func renderReminder(tmpl *template.Template, data any) string {

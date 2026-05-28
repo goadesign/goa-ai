@@ -163,10 +163,6 @@ type (
 		// available. For payloads, it is derived from Goa examples and can be used
 		// by runtimes to surface concrete examples in retry hints or UI prompts.
 		ExampleJSON []byte
-		// ExampleInputGo is a Go expression that evaluates to a map[string]any
-		// representing an example payload. It is only populated for payload
-		// examples that are JSON objects.
-		ExampleInputGo string
 		// Typed codec variable name (e.g., "MyToolPayloadCodec").
 		ExportedCodec string
 		// Untyped codec variable name (e.g., "myToolPayloadCodec").

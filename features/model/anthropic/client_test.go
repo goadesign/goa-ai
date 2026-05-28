@@ -11,6 +11,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -119,7 +120,7 @@ func TestComplete_ToolUse(t *testing.T) {
 			{
 				Name:        "test.tool",
 				Description: "test tool",
-				Input:       model.ToolInputFromSchema(json.RawMessage(`{"type":"object"}`)),
+				Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 			},
 		},
 	}
@@ -199,11 +200,9 @@ func TestEncodeTools_UsesSchemaWithoutRootExampleAndInputExamples(t *testing.T) 
 func toolInputExampleSpec() tools.TypeSpec {
 	return tools.TypeSpec{
 		Name:                     "ReportsCompletePayload",
-		Schema:                   []byte(`{"type":"object","example":{"summary":"Done"}}`),
-		SchemaWithoutRootExample: []byte(`{"type":"object"}`),
-		ExampleInput: map[string]any{
-			"summary": "Done",
-		},
+		Schema:                   tools.RawJSON(`{"type":"object","example":{"summary":"Done"}}`),
+		SchemaWithoutRootExample: tools.RawJSON(`{"type":"object"}`),
+		ExampleJSON:              tools.RawJSON(`{"summary":"Done"}`),
 	}
 }
 
@@ -255,7 +254,7 @@ func TestComplete_RejectsStructuredOutput(t *testing.T) {
 		},
 		StructuredOutput: &model.StructuredOutput{
 			Name:   "draft_from_transcript",
-			Schema: []byte(`{"type":"object"}`),
+			Schema: tools.RawJSON(`{"type":"object"}`),
 		},
 	})
 	if !errors.Is(err, model.ErrStructuredOutputUnsupported) {
@@ -282,7 +281,7 @@ func TestStream_RejectsStructuredOutput(t *testing.T) {
 		},
 		StructuredOutput: &model.StructuredOutput{
 			Name:   "draft_from_transcript",
-			Schema: []byte(`{"type":"object"}`),
+			Schema: tools.RawJSON(`{"type":"object"}`),
 		},
 	})
 	if !errors.Is(err, model.ErrStructuredOutputUnsupported) {

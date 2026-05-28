@@ -20,6 +20,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/prompt"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -334,7 +335,7 @@ func toPolicyRetryHint(hint *planner.RetryHint) *policy.RetryHint {
 		Tool:               hint.Tool,
 		RestrictToTool:     hint.RestrictToTool,
 		MissingFields:      cloneStrings(hint.MissingFields),
-		ExampleInput:       cloneMetadata(hint.ExampleInput),
+		ExampleJSON:        append(rawjson.Message(nil), hint.ExampleJSON...),
 		PriorInput:         cloneMetadata(hint.PriorInput),
 		ClarifyingQuestion: hint.ClarifyingQuestion,
 		Message:            hint.Message,

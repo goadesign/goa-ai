@@ -6,6 +6,7 @@
 package anthropic
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -382,36 +383,27 @@ func encodeTools(ctx context.Context, defs []*model.ToolDefinition) ([]sdk.ToolU
 
 func anthropicToolInput(ctx context.Context, def *model.ToolDefinition) (sdk.ToolInputSchemaParam, []map[string]any, error) {
 	input := def.Input
-	example := input.ExampleInput()
+	example := input.ExampleJSON()
 	if example == nil {
 		schema, err := toolInputSchema(ctx, input.JSONSchema())
 		return schema, nil, err
 	}
 	if input.SchemaWithoutRootExample() == nil {
-		return sdk.ToolInputSchemaParam{}, nil, errors.New("example input requires schema without root example")
+		return sdk.ToolInputSchemaParam{}, nil, errors.New("example JSON requires schema without root example")
 	}
 	schema, err := toolInputSchema(ctx, input.SchemaWithoutRootExample())
 	if err != nil {
 		return sdk.ToolInputSchemaParam{}, nil, err
 	}
-	return schema, []map[string]any{example}, nil
+	exampleInput, err := toolExampleInput(example)
+	if err != nil {
+		return sdk.ToolInputSchemaParam{}, nil, err
+	}
+	return schema, []map[string]any{exampleInput}, nil
 }
 
-func toolInputSchema(_ context.Context, schema any) (sdk.ToolInputSchemaParam, error) {
-	if schema == nil {
-		return sdk.ToolInputSchemaParam{}, nil
-	}
-	var raw json.RawMessage
-	switch v := schema.(type) {
-	case json.RawMessage:
-		raw = v
-	default:
-		data, err := json.Marshal(v)
-		if err != nil {
-			return sdk.ToolInputSchemaParam{}, err
-		}
-		raw = data
-	}
+func toolInputSchema(_ context.Context, schema rawjson.Message) (sdk.ToolInputSchemaParam, error) {
+	raw := bytes.TrimSpace(schema)
 	if len(raw) == 0 {
 		return sdk.ToolInputSchemaParam{}, nil
 	}
@@ -422,6 +414,18 @@ func toolInputSchema(_ context.Context, schema any) (sdk.ToolInputSchemaParam, e
 	return sdk.ToolInputSchemaParam{
 		ExtraFields: m,
 	}, nil
+}
+
+func toolExampleInput(raw rawjson.Message) (map[string]any, error) {
+	data := bytes.TrimSpace(raw)
+	if len(data) == 0 {
+		return nil, nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 func encodeToolChoice(choice *model.ToolChoice, canonToProv map[string]string, defs []*model.ToolDefinition) (sdk.ToolChoiceUnionParam, error) {

@@ -6,6 +6,7 @@
 package bedrock
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -229,7 +230,7 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*reque
 	// Build tool configuration and name maps before encoding messages so tool_use
 	// names can reuse the exact sanitized identifiers. encodeTools is the single
 	// source of truth for name sanitization.
-	toolConfig, additionalModelFields, canonToSan, sanToCanon, err := encodeTools(ctx, modelID, req.Tools, req.ToolChoice, cacheAfterTools, c.logger)
+	toolConfig, additionalModelFields, canonToSan, sanToCanon, err := encodeTools(modelID, req.Tools, req.ToolChoice, cacheAfterTools)
 	if err != nil {
 		return nil, err
 	}
@@ -834,12 +835,10 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 }
 
 func encodeTools(
-	ctx context.Context,
 	modelID string,
 	defs []*model.ToolDefinition,
 	choice *model.ToolChoice,
 	cacheAfterTools bool,
-	logger telemetry.Logger,
 ) (*brtypes.ToolConfiguration, map[string]any, map[string]string, map[string]string, error) {
 	if len(defs) == 0 {
 		if choice == nil {
@@ -877,18 +876,25 @@ func encodeTools(
 		}
 		input := def.Input
 		inputSchema := input.JSONSchema()
-		hasExample := input.ExampleInput() != nil
+		hasExample := input.ExampleJSON() != nil
 		if anthropicModel && hasExample {
 			if input.SchemaWithoutRootExample() == nil {
-				return nil, nil, nil, nil, fmt.Errorf("bedrock: tool %q example input requires schema without root example", canonical)
+				return nil, nil, nil, nil, fmt.Errorf("bedrock: tool %q example JSON requires schema without root example", canonical)
 			}
 			inputSchema = input.SchemaWithoutRootExample()
 			anthropicHasExamples = true
 		}
 		if anthropicModel {
-			anthropicTools = append(anthropicTools, anthropicToolDefinition(sanitized, def, hasExample))
+			anthropicTool, err := anthropicToolDefinition(sanitized, def, hasExample)
+			if err != nil {
+				return nil, nil, nil, nil, err
+			}
+			anthropicTools = append(anthropicTools, anthropicTool)
 		}
-		schemaDoc := toDocument(ctx, inputSchema, logger)
+		schemaDoc, err := schemaDocument(inputSchema)
+		if err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("bedrock: tool %q schema: %w", canonical, err)
+		}
 		spec := brtypes.ToolSpecification{
 			Name:        aws.String(sanitized),
 			Description: aws.String(def.Description),
@@ -952,21 +958,29 @@ func encodeTools(
 	return &cfg, anthropicToolExampleFields(anthropicTools, anthropicHasExamples, choice), canonToSan, sanToCanon, nil
 }
 
-func anthropicToolDefinition(name string, def *model.ToolDefinition, includeExample bool) map[string]any {
+func anthropicToolDefinition(name string, def *model.ToolDefinition, includeExample bool) (map[string]any, error) {
 	input := def.Input
 	inputSchema := input.JSONSchema()
 	if includeExample {
 		inputSchema = input.SchemaWithoutRootExample()
 	}
+	schema, err := schemaMap(inputSchema)
+	if err != nil {
+		return nil, fmt.Errorf("bedrock: tool %q Anthropic schema: %w", def.Name, err)
+	}
 	tool := map[string]any{
 		"name":         name,
 		"description":  def.Description,
-		"input_schema": inputSchema,
+		"input_schema": schema,
 	}
 	if includeExample {
-		tool["input_examples"] = []map[string]any{input.ExampleInput()}
+		example, err := schemaMap(input.ExampleJSON())
+		if err != nil {
+			return nil, fmt.Errorf("bedrock: tool %q Anthropic example: %w", def.Name, err)
+		}
+		tool["input_examples"] = []map[string]any{example}
 	}
-	return tool
+	return tool, nil
 }
 
 func anthropicToolExampleFields(tools []map[string]any, hasExamples bool, choice *model.ToolChoice) map[string]any {
@@ -1113,6 +1127,26 @@ func toDocument(ctx context.Context, schema any, logger telemetry.Logger) docume
 	default:
 		return lazyDocument(v)
 	}
+}
+
+func schemaDocument(schema rawjson.Message) (document.Interface, error) {
+	m, err := schemaMap(schema)
+	if err != nil {
+		return nil, err
+	}
+	return lazyDocument(m), nil
+}
+
+func schemaMap(schema rawjson.Message) (map[string]any, error) {
+	data := bytes.TrimSpace(schema)
+	if len(data) == 0 {
+		return nil, errors.New("schema JSON is required")
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return nil, err
+	}
+	return decoded, nil
 }
 
 // isProviderSafeToolUseID reports whether id conforms to Bedrock's documented

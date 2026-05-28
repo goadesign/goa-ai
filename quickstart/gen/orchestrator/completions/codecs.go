@@ -8,9 +8,11 @@
 package completions
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	toolhttp "example.com/quickstart/gen/orchestrator/completions/http"
@@ -44,6 +46,14 @@ var DraftTaskResultFieldDescs = map[string]string{
 	"name":           "Task name",
 	"steps":          "Ordered draft steps",
 	"steps.title":    "Short step title",
+}
+var DraftTaskResultFieldJSONTypes = map[string]string{
+	"$payload":       "object",
+	"assistant_text": "string",
+	"goal":           "string",
+	"name":           "string",
+	"steps":          "array",
+	"steps.title":    "string",
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -94,6 +104,37 @@ func enrichDraftTaskResultValidationError(err error) error {
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
 }
+func invalidDraftTaskResultFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	field = strings.TrimPrefix(field, "DraftTaskResultTransport.")
+	if field == "" {
+		field = "$payload"
+	}
+	expected, ok := DraftTaskResultFieldJSONTypes[field]
+	if !ok {
+		return err
+	}
+	actual := typeErr.Value
+	if actual == "" {
+		return err
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
 
 // MarshalDraftTaskResult serializes *DraftTaskResult into JSON.
 func MarshalDraftTaskResult(v *DraftTaskResult) ([]byte, error) {
@@ -126,7 +167,7 @@ func UnmarshalDraftTaskResult(data []byte) (*DraftTaskResult, error) {
 	}
 	var tv toolhttp.DraftTaskResultTransport
 	if err := json.Unmarshal(data, &tv); err != nil {
-		return nil, fmt.Errorf("decode draftTaskResult: %w", err)
+		return nil, invalidDraftTaskResultFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateDraftTaskResultTransport(&tv); err != nil {
 		err = newValidationError(err)
@@ -150,6 +191,20 @@ func UnmarshalDraftTaskResult(data []byte) (*DraftTaskResult, error) {
 		out.Steps[i] = decodeToolhttpDraftTaskStepTransportToDraftTaskStep(val)
 	}
 	return out, nil
+}
+
+// decodeStrictJSON decodes one JSON document and rejects object fields that are
+// not present in the generated transport contract.
+func decodeStrictJSON(data []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("multiple JSON documents")
+	}
+	return nil
 }
 
 // Helper transform functions

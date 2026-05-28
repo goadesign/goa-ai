@@ -385,8 +385,8 @@ func (e *Executor) decodeToolResult(spec *tools.ToolSpec, call *planner.ToolRequ
 		} else if hint := retryHintFromToolErrorCode(tool, msg.Error.Code); hint != nil {
 			out.RetryHint = hint
 		}
-		if out.RetryHint != nil && out.RetryHint.ExampleInput == nil {
-			out.RetryHint.ExampleInput = cloneExampleInput(spec)
+		if out.RetryHint != nil && len(out.RetryHint.ExampleJSON) == 0 {
+			out.RetryHint.ExampleJSON = cloneExampleJSON(spec)
 		}
 		return out
 	}
@@ -505,9 +505,9 @@ func buildRetryHintFromIssues(toolName tools.Ident, spec *tools.ToolSpec, issues
 	sort.Strings(missing)
 
 	question := buildClarifyingQuestion(toolName, missing, fields, typeIssues)
-	var example map[string]any
-	if spec != nil && len(spec.Payload.ExampleInput) > 0 {
-		example = spec.Payload.ExampleInput
+	var example rawjson.Message
+	if spec != nil && len(spec.Payload.ExampleJSON) > 0 {
+		example = append(rawjson.Message(nil), spec.Payload.ExampleJSON...)
 	}
 	reason := planner.RetryReasonInvalidArguments
 	if len(missing) > 0 {
@@ -522,7 +522,7 @@ func buildRetryHintFromIssues(toolName tools.Ident, spec *tools.ToolSpec, issues
 		Tool:               toolName,
 		RestrictToTool:     true,
 		MissingFields:      hintFields,
-		ExampleInput:       example,
+		ExampleJSON:        example,
 		ClarifyingQuestion: question,
 	}
 }
@@ -540,37 +540,11 @@ func buildClarifyingQuestion(toolName tools.Ident, missing, fields []string, typ
 	return "I could not run " + toolName.String() + " due to invalid arguments. Please correct: " + strings.Join(fields, ", ") + " and resend the tool call."
 }
 
-func cloneExampleInput(spec *tools.ToolSpec) map[string]any {
-	if spec == nil || len(spec.Payload.ExampleInput) == 0 {
+func cloneExampleJSON(spec *tools.ToolSpec) rawjson.Message {
+	if spec == nil || len(spec.Payload.ExampleJSON) == 0 {
 		return nil
 	}
-	return cloneAnyMap(spec.Payload.ExampleInput)
-}
-
-func cloneAnyMap(in map[string]any) map[string]any {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[string]any, len(in))
-	for k, v := range in {
-		out[k] = cloneAny(v)
-	}
-	return out
-}
-
-func cloneAny(in any) any {
-	switch v := in.(type) {
-	case map[string]any:
-		return cloneAnyMap(v)
-	case []any:
-		out := make([]any, len(v))
-		for i := range v {
-			out[i] = cloneAny(v[i])
-		}
-		return out
-	default:
-		return in
-	}
+	return append(rawjson.Message(nil), spec.Payload.ExampleJSON...)
 }
 
 func uniqueStrings(in []string) []string {

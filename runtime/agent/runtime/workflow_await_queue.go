@@ -295,7 +295,7 @@ func (r *Runtime) admitAwaitItem(ctx context.Context, input *RunInput, base *pla
 			c.Question,
 			c.MissingFields,
 			c.RestrictToTool,
-			c.ExampleInput,
+			c.ExampleJSON,
 		), turnID)
 	case planner.AwaitItemKindQuestions:
 		q := it.Questions

@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -22,7 +23,7 @@ func testCompletionSpec() Spec[testCompletionResult] {
 		Description: "Synthesize task draft",
 		Result: tools.TypeSpec{
 			Name:   "DraftFromTranscriptResult",
-			Schema: []byte(`{"type":"object","required":["assistant_text"]}`),
+			Schema: tools.RawJSON(`{"type":"object","required":["assistant_text"]}`),
 		},
 		Codec: tools.JSONCodec[testCompletionResult]{
 			ToJSON:   marshalTestCompletionResult,
@@ -151,7 +152,7 @@ func TestCompleteRejectsToolDefinitions(t *testing.T) {
 			Tools: []*model.ToolDefinition{{
 				Name:        "lookup",
 				Description: "Search",
-				Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+				Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 			}},
 		},
 		testCompletionSpec(),
@@ -206,7 +207,7 @@ func TestStreamRejectsInvariantViolations(t *testing.T) {
 			req: &model.Request{
 				StructuredOutput: &model.StructuredOutput{
 					Name:   "other",
-					Schema: []byte(`{"type":"object"}`),
+					Schema: tools.RawJSON(`{"type":"object"}`),
 				},
 			},
 			want: "cannot override an existing structured output request",
@@ -217,7 +218,7 @@ func TestStreamRejectsInvariantViolations(t *testing.T) {
 				Tools: []*model.ToolDefinition{{
 					Name:        "lookup",
 					Description: "Search",
-					Input:       model.ToolInputFromSchema(map[string]any{"type": "object"}),
+					Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 				}},
 			},
 			want: "does not allow tool definitions",

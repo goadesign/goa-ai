@@ -1,11 +1,9 @@
 package codegen
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 
 	"goa.design/goa-ai/boundedresult"
@@ -291,11 +289,6 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		DecodeTransform:              decodeBody,
 		EncodeTransform:              encodeBody,
 	}
-	if example != nil && (usage == usagePayload || (usage == usageResult && owner.Kind == contractTypeOwnerCompletion)) {
-		if eg, ok := exampleInputGoExpr(example.JSON); ok {
-			info.ExampleInputGo = eg
-		}
-	}
 	// Validation is performed on the internal transport type during Unmarshal.
 	// Accept empty JSON for payloads that are empty structs (no fields).
 	if usage == usagePayload && isEmptyStruct(att) {
@@ -322,81 +315,6 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 // NOTE: The reserved `server_data` payload field is added by the runtime, not by
 // the generated tool schema. Tool payload schemas remain stable and do not
 // include runtime-reserved controls.
-
-func exampleInputGoExpr(exampleJSON []byte) (string, bool) {
-	trimmed := bytes.TrimSpace(exampleJSON)
-	if len(trimmed) == 0 || !json.Valid(trimmed) {
-		return "", false
-	}
-	dec := json.NewDecoder(bytes.NewReader(trimmed))
-	dec.UseNumber()
-	var v any
-	if err := dec.Decode(&v); err != nil {
-		return "", false
-	}
-	m, ok := v.(map[string]any)
-	if !ok || len(m) == 0 {
-		return "", false
-	}
-	return goLiteralForAny(m), true
-}
-
-func goLiteralForAny(v any) string {
-	switch x := v.(type) {
-	case nil:
-		return "nil"
-	case bool:
-		// Keep primitive formatting aligned with Goa's codegen helpers which
-		// use fmt's Go-syntax formatting (%#v) when emitting literals (see
-		// goa.design/goa/v3/codegen/validation.go:toSlice).
-		return fmt.Sprintf("%#v", x)
-	case string:
-		return fmt.Sprintf("%#v", x)
-	case json.Number:
-		if i, err := x.Int64(); err == nil {
-			return fmt.Sprintf("%#v", i)
-		}
-		if f, err := x.Float64(); err == nil {
-			return fmt.Sprintf("%#v", f)
-		}
-		return fmt.Sprintf("%#v", x.String())
-	case float64:
-		return fmt.Sprintf("%#v", x)
-	case []any:
-		if len(x) == 0 {
-			return "[]any{}"
-		}
-		elems := make([]string, len(x))
-		for i, v := range x {
-			elems[i] = goLiteralForAny(v)
-		}
-		return fmt.Sprintf("[]any{%s}", strings.Join(elems, ", "))
-	case map[string]any:
-		if len(x) == 0 {
-			return "map[string]any{}"
-		}
-		keys := make([]string, 0, len(x))
-		for k := range x {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		var b strings.Builder
-		b.WriteString("map[string]any{")
-		for i, k := range keys {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			fmt.Fprintf(&b, "%#v", k)
-			b.WriteString(": ")
-			b.WriteString(goLiteralForAny(x[k]))
-		}
-		b.WriteString("}")
-		return b.String()
-	default:
-		// Best-effort: stringify unknown decoded values.
-		return strconv.Quote(fmt.Sprintf("%v", x))
-	}
-}
 
 func projectBoundedResultSchema(schemaBytes []byte, bounds *ToolBoundsData) ([]byte, error) {
 	if len(schemaBytes) == 0 || bounds == nil {

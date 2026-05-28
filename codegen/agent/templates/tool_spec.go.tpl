@@ -64,16 +64,18 @@ var (
                 Type: tools.TypeSpec{
                     Name: {{ if .Type }}{{ printf "%q" .Type.TypeName }}{{ else }}""{{ end }},
                     {{- if .Type }}
-                    Schema: {{- if gt (len .Type.SchemaJSON) 0 }}[]byte({{ printf "%q" .Type.SchemaJSON }}){{ else }}nil{{ end }},
-                    SchemaWithoutRootExample: {{- if gt (len .Type.SchemaWithoutRootExampleJSON) 0 }}[]byte({{ printf "%q" .Type.SchemaWithoutRootExampleJSON }}){{ else }}nil{{ end }},
-                    ExampleJSON: {{- if gt (len .Type.ExampleJSON) 0 }}[]byte({{ printf "%q" .Type.ExampleJSON }}){{ else }}nil{{ end }},
-                    ExampleInput: {{- if .Type.ExampleInputGo }}{{ .Type.ExampleInputGo }}{{ else }}nil{{ end }},
+                    Schema: {{- if gt (len .Type.SchemaJSON) 0 }}tools.RawJSON({{ printf "%q" .Type.SchemaJSON }}){{ else }}nil{{ end }},
+                    SchemaWithoutRootExample: {{- if gt (len .Type.SchemaWithoutRootExampleJSON) 0 }}tools.RawJSON({{ printf "%q" .Type.SchemaWithoutRootExampleJSON }}){{ else }}nil{{ end }},
+                    ExampleJSON: {{- if gt (len .Type.ExampleJSON) 0 }}tools.RawJSON({{ printf "%q" .Type.ExampleJSON }}){{ else }}nil{{ end }},
+                    FieldDescriptions: {{- if .Type.FieldDescs }}{{ .Type.TypeName }}FieldDescs{{ else }}nil{{ end }},
+                    FieldJSONTypes: {{- if .Type.FieldJSONTypes }}{{ .Type.TypeName }}FieldJSONTypes{{ else }}nil{{ end }},
                     Codec: {{ .Type.GenericCodec }},
                     {{- else }}
                     Schema: nil,
                     SchemaWithoutRootExample: nil,
                     ExampleJSON: nil,
-                    ExampleInput: nil,
+                    FieldDescriptions: nil,
+                    FieldJSONTypes: nil,
                     Codec: tools.JSONCodec[any]{},
                     {{- end }}
                 },
@@ -94,27 +96,33 @@ var (
         Payload: tools.TypeSpec{
             Name: {{ if .Payload }}{{ printf "%q" .Payload.TypeName }}{{ else }}""{{ end }},
             {{- if .Payload }}
-            Schema: {{- if gt (len .Payload.SchemaJSON) 0 }}[]byte({{ printf "%q" .Payload.SchemaJSON }}){{ else }}nil{{ end }},
-            SchemaWithoutRootExample: {{- if gt (len .Payload.SchemaWithoutRootExampleJSON) 0 }}[]byte({{ printf "%q" .Payload.SchemaWithoutRootExampleJSON }}){{ else }}nil{{ end }},
-            ExampleJSON: {{- if gt (len .Payload.ExampleJSON) 0 }}[]byte({{ printf "%q" .Payload.ExampleJSON }}){{ else }}nil{{ end }},
-            ExampleInput: {{- if .Payload.ExampleInputGo }}{{ .Payload.ExampleInputGo }}{{ else }}nil{{ end }},
+            Schema: {{- if gt (len .Payload.SchemaJSON) 0 }}tools.RawJSON({{ printf "%q" .Payload.SchemaJSON }}){{ else }}nil{{ end }},
+            SchemaWithoutRootExample: {{- if gt (len .Payload.SchemaWithoutRootExampleJSON) 0 }}tools.RawJSON({{ printf "%q" .Payload.SchemaWithoutRootExampleJSON }}){{ else }}nil{{ end }},
+            ExampleJSON: {{- if gt (len .Payload.ExampleJSON) 0 }}tools.RawJSON({{ printf "%q" .Payload.ExampleJSON }}){{ else }}nil{{ end }},
+            FieldDescriptions: {{- if .Payload.FieldDescs }}{{ .Payload.TypeName }}FieldDescs{{ else }}nil{{ end }},
+            FieldJSONTypes: {{- if .Payload.FieldJSONTypes }}{{ .Payload.TypeName }}FieldJSONTypes{{ else }}nil{{ end }},
             Codec:  {{ .Payload.GenericCodec }},
             {{- else }}
             Schema: nil,
             SchemaWithoutRootExample: nil,
             ExampleJSON: nil,
-            ExampleInput: nil,
+            FieldDescriptions: nil,
+            FieldJSONTypes: nil,
             Codec:  tools.JSONCodec[any]{},
             {{- end }}
         },
         Result: tools.TypeSpec{
             Name: {{ if .Result }}{{ printf "%q" .Result.TypeName }}{{ else }}""{{ end }},
-            Schema: {{- if and .Result (gt (len .Result.SchemaJSON) 0) }}[]byte({{ printf "%q" .Result.SchemaJSON }}){{ else }}nil{{ end }},
+            Schema: {{- if and .Result (gt (len .Result.SchemaJSON) 0) }}tools.RawJSON({{ printf "%q" .Result.SchemaJSON }}){{ else }}nil{{ end }},
             {{- if .Result }}
-            SchemaWithoutRootExample: {{- if gt (len .Result.SchemaWithoutRootExampleJSON) 0 }}[]byte({{ printf "%q" .Result.SchemaWithoutRootExampleJSON }}){{ else }}nil{{ end }},
+            SchemaWithoutRootExample: {{- if gt (len .Result.SchemaWithoutRootExampleJSON) 0 }}tools.RawJSON({{ printf "%q" .Result.SchemaWithoutRootExampleJSON }}){{ else }}nil{{ end }},
+            FieldDescriptions: {{- if .Result.FieldDescs }}{{ .Result.TypeName }}FieldDescs{{ else }}nil{{ end }},
+            FieldJSONTypes: {{- if .Result.FieldJSONTypes }}{{ .Result.TypeName }}FieldJSONTypes{{ else }}nil{{ end }},
             Codec:  {{ .Result.GenericCodec }},
             {{- else }}
             SchemaWithoutRootExample: nil,
+            FieldDescriptions: nil,
+            FieldJSONTypes: nil,
             Codec:  tools.JSONCodec[any]{},
             {{- end }}
         },

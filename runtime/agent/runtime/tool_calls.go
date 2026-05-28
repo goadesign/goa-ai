@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"time"
 
 	agent "goa.design/goa-ai/runtime/agent"
@@ -572,8 +571,8 @@ func (e *toolBatchExec) executionFromActivityOutput(ctx context.Context, info fu
 	}
 	if out.RetryHint != nil {
 		h := *out.RetryHint
-		if len(h.ExampleInput) == 0 && len(spec.Payload.ExampleInput) > 0 {
-			h.ExampleInput = maps.Clone(spec.Payload.ExampleInput)
+		if len(h.ExampleJSON) == 0 && len(spec.Payload.ExampleJSON) > 0 {
+			h.ExampleJSON = append(rawjson.Message(nil), spec.Payload.ExampleJSON...)
 		}
 		if len(h.PriorInput) == 0 && len(info.call.Payload) > 0 {
 			var prior map[string]any

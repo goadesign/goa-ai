@@ -60,6 +60,19 @@ You are an agentic systems engineer. Optimize for elegance, strong contracts, co
 - Generator code must stay generic. Derive aliases from imports instead of example-specific names.
 - DSL packages may use dot imports; `.golangci.yml` allows `ST1001`.
 - Do not introspect Goa `docs.json` at runtime. Use generated `tool_specs.Specs`, including payload/result schemas and codecs.
+- Tool schemas, schema projections, examples, and retry examples are canonical
+ raw JSON contracts. Keep them as `rawjson.Message`/`tools.RawJSON`
+ through runtime and generated specs. Do not rehydrate them into
+ `map[string]any` except inside provider adapters that must build provider SDK
+ documents.
+- Generated `tools.TypeSpec` owns tool schema metadata such as field
+ descriptions and JSON field types. UI, retry, and clarification code should
+ consume `TypeSpec.FieldDescriptions` and `TypeSpec.FieldJSONTypes`; do not
+ parse JSON Schema to rediscover labels or expected types.
+- Generated codecs own JSON boundary validation, including unknown-field
+ rejection, required fields, scalar validation, union decoding, and typed
+ transforms. Service code should call the generated codec instead of compiling
+ or walking generated schemas.
 - Keep template directive indentation independent from emitted Go code. Prefer `{{- ... }}` to control whitespace.
 - Write fast deterministic table-driven tests in `*_test.go`. Prefer `testify/assert`; use `testify/require` only when the test cannot continue.
 - Do not test impossible internal invariant breaks; test boundaries such as malformed JSON, third-party failures, DB nulls, context extraction, and failed type assertions.
