@@ -18,6 +18,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -184,6 +185,25 @@ func (r *Runtime) finalizeWithPlanner(
 		return nil, errors.New(reasonText)
 	}
 	aggUsage = addTokenUsage(aggUsage, output.Usage)
+	if isFinalizationTerminalToolPlan(output.Result) {
+		out, err := r.finishFinalizationTerminalToolCalls(
+			wfCtx,
+			reg,
+			input,
+			base,
+			output,
+			allToolResults,
+			allToolOutputs,
+			aggUsage,
+			nextAttempt+1,
+			turnID,
+			hardDeadline,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", reasonText, err)
+		}
+		return out, nil
+	}
 	out, err := r.materializeTerminalPlannerResult(ctx, input, base, turnID, terminalPlannerState{
 		result:     output.Result,
 		transcript: output.Transcript,
@@ -194,6 +214,112 @@ func (r *Runtime) finalizeWithPlanner(
 		return nil, fmt.Errorf("%s: %w", reasonText, err)
 	}
 	return out, nil
+}
+
+// isFinalizationTerminalToolPlan reports whether a finalization planner turn
+// requested a terminal tool as the terminal action instead of returning text.
+func isFinalizationTerminalToolPlan(result *planner.PlanResult) bool {
+	return result != nil &&
+		len(result.ToolCalls) > 0 &&
+		result.FinalResponse == nil &&
+		result.FinalToolResult == nil &&
+		result.Await == nil
+}
+
+// finishFinalizationTerminalToolCalls executes terminal bookkeeping tools
+// returned from a finalization turn and materializes the run directly from their
+// durable side effects.
+func (r *Runtime) finishFinalizationTerminalToolCalls(
+	wfCtx engine.WorkflowContext,
+	reg AgentRegistration,
+	input *RunInput,
+	base *planner.PlanInput,
+	output *PlanActivityOutput,
+	allToolResults []*planner.ToolResult,
+	allToolOutputs []*planner.ToolOutput,
+	aggUsage model.TokenUsage,
+	nextAttempt int,
+	turnID string,
+	hardDeadline time.Time,
+) (*RunOutput, error) {
+	if output == nil || output.Result == nil {
+		return nil, errors.New("finalization terminal tool plan is missing planner output")
+	}
+	if err := r.validateFinalizationTerminalToolCalls(output.Result.ToolCalls); err != nil {
+		return nil, err
+	}
+	toolOpts := reg.ExecuteToolActivityOptions
+	if toolOpts.StartToCloseTimeout == 0 {
+		toolOpts.StartToCloseTimeout = defaultExecuteToolActivityTimeout
+	}
+	st := newRunLoopState(output.Result, output.Transcript, aggUsage, policy.CapsState{}, nextAttempt)
+	st.ToolEvents = cloneToolResults(allToolResults)
+	st.ToolOutputs = append([]*planner.ToolOutput(nil), allToolOutputs...)
+	loop := newWorkflowLoop(
+		r,
+		wfCtx,
+		reg,
+		input,
+		base,
+		st,
+		turnID,
+		nil,
+		nil,
+		runDeadlines{Budget: hardDeadline, Hard: hardDeadline},
+		reg.ResumeActivityOptions,
+		toolOpts,
+	)
+	program := stepProgram{
+		result: output.Result,
+		calls:  output.Result.ToolCalls,
+		kind:   stepKindTools,
+	}
+	batch := stepBatch{program: program}
+	confirmations, items, err := loop.executeToolStep(program, &batch)
+	if err != nil {
+		return nil, err
+	}
+	if batch.finalize != nil {
+		return nil, fmt.Errorf("finalization terminal tool step requested nested finalization: %s", batch.finalize.reason)
+	}
+	if batch.timedOut {
+		return nil, errors.New("finalization terminal tool step timed out")
+	}
+	if len(confirmations) > 0 || len(items) > 0 {
+		return nil, errors.New("finalization terminal tool step cannot pause")
+	}
+	if err := loop.recordUnrecordedStepToolResults(&batch); err != nil {
+		return nil, err
+	}
+	terminal, err := r.executedSuccessfulTerminalRunTool(batch.records)
+	if err != nil {
+		return nil, err
+	}
+	if !terminal {
+		return nil, errors.New("finalization terminal tool step did not complete a terminal tool")
+	}
+	return r.finishAfterTerminalToolCalls(wfCtx.Context(), input, base, st)
+}
+
+// validateFinalizationTerminalToolCalls permits only terminal bookkeeping tools
+// during finalization because caps/deadlines have already forbidden new work.
+func (r *Runtime) validateFinalizationTerminalToolCalls(calls []planner.ToolRequest) error {
+	if len(calls) == 0 {
+		return errors.New("finalization terminal tool plan has no tool calls")
+	}
+	for _, call := range calls {
+		spec, ok := r.toolSpec(call.Name)
+		if !ok {
+			return fmt.Errorf("finalization terminal tool plan cannot call unknown tool %q", call.Name)
+		}
+		if !spec.Bookkeeping {
+			return fmt.Errorf("finalization terminal tool plan cannot call budgeted tool %q", call.Name)
+		}
+		if !spec.TerminalRun {
+			return fmt.Errorf("finalization terminal tool plan cannot call non-terminal tool %q", call.Name)
+		}
+	}
+	return nil
 }
 
 // finalizeWithPlannerIfAllowed centralizes the restricted-tool contract for

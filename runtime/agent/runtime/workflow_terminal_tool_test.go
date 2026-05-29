@@ -151,3 +151,83 @@ func TestRunLoopTerminalToolExecutesWithExhaustedBudget(t *testing.T) {
 	require.Equal(t, terminalTool.Name, out.ToolEvents[0].Name)
 	require.Empty(t, wfCtx.lastPlannerCall.Name, "expected no planner resume/finalization after terminal tool")
 }
+
+func TestFinalizeWithPlannerExecutesTerminalToolCall(t *testing.T) {
+	rt := New(WithLogger(telemetry.NoopLogger{}))
+
+	terminalTool := newAnyJSONSpec(tools.Ident("tasks.progress.complete"), "tasks.progress")
+	terminalTool.TerminalRun = true
+	terminalTool.Bookkeeping = true
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
+		Name: "tasks.progress",
+		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			return &planner.ToolResult{
+				Name:       call.Name,
+				Result:     map[string]any{"ok": true},
+				ToolCallID: call.ToolCallID,
+			}, nil
+		}),
+		Specs: []tools.ToolSpec{terminalTool},
+	}))
+
+	wfCtx := &routeWorkflowContext{
+		ctx:   context.Background(),
+		runID: "run-1",
+		plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
+			"resume": func(_ context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
+				if input.RunID == "" {
+					return nil, context.Canceled
+				}
+				return &PlanActivityOutput{
+					Result: &planner.PlanResult{
+						ToolCalls: []planner.ToolRequest{{Name: terminalTool.Name}},
+					},
+				}, nil
+			},
+		},
+		toolRoutes: map[string]func(context.Context, *ToolInput) (*ToolOutput, error){
+			"execute": func(ctx context.Context, input *ToolInput) (*ToolOutput, error) {
+				return rt.ExecuteToolActivity(ctx, input)
+			},
+		},
+	}
+	base := &planner.PlanInput{
+		RunContext: run.Context{
+			RunID:     "run-1",
+			SessionID: "sess-1",
+			TurnID:    "turn-1",
+			Attempt:   1,
+		},
+	}
+	input := &RunInput{
+		AgentID:   agent.Ident("agent-1"),
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		TurnID:    "turn-1",
+	}
+
+	out, err := rt.finalizeWithPlanner(
+		wfCtx,
+		AgentRegistration{
+			ExecuteToolActivity: "execute",
+			ResumeActivityName:  "resume",
+		},
+		input,
+		base,
+		nil,
+		nil,
+		model.TokenUsage{},
+		2,
+		"turn-1",
+		planner.TerminationReasonFailureCap,
+		time.Time{},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.Nil(t, out.Final)
+	require.Len(t, out.ToolEvents, 1)
+	require.Equal(t, terminalTool.Name, out.ToolEvents[0].Name)
+	require.Equal(t, "resume", wfCtx.lastPlannerCall.Name)
+	require.NotNil(t, wfCtx.lastPlannerCall.Input.Finalize)
+}
