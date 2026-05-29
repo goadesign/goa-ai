@@ -154,6 +154,11 @@ Generated `registry.go` files in agent packages are local runtime registration h
   planner-facing transcript/tool-output state. A bookkeeping-only turn must
   therefore resolve in the same turn via a terminal outcome or an await/pause
   handshake.
+- **Forced finalization control plane**: when runtime caps or deadlines force
+  finalization, planners may return terminal bookkeeping tools instead of a
+  prose final answer. The runtime executes only `Bookkeeping()` + `TerminalRun()`
+  tools in that path, keeps them inside the remaining hard-deadline window, and
+  closes the run only if every terminal side effect succeeds.
 - **Visible reasoning contract**: Bedrock adaptive-thinking requests ask for
   summarized reasoning display explicitly so streamed `thinking` events remain
   visible across Claude adaptive model revisions whose provider defaults may

@@ -169,7 +169,12 @@ out, err = client.OneShotRun(ctx, []*model.Message{{
 
 ### 5. Replace the Stub Planner
 
-Planners decide what happens next: final response, tool calls, await human input, or terminal tool result. Tool executors decide how work is performed.
+Planners decide what happens next: final response, tool calls, await human input,
+or terminal tool result. During runtime-forced finalization, planners may also
+close through terminal bookkeeping tools; the runtime executes only
+`Bookkeeping()` + `TerminalRun()` tools in that path and requires the terminal
+side effects to succeed inside the remaining hard-deadline window. Tool
+executors decide how work is performed.
 
 ```go
 func (p *Planner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {

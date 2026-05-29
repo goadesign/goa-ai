@@ -384,7 +384,8 @@ Start ──► PlanStart ──► Tool Calls? ──► Execute Tools ──�
 2. **PlanStart** — Planner receives messages and decides: answer or call tools?
 3. **Execute** — Tools run as activities (parallel by default)
 4. **PlanResume** — Planner receives tool results and decides next step
-5. **Repeat** — Loop continues until planner returns a `FinalResponse`
+5. **Repeat** — Loop continues until planner returns a `FinalResponse`,
+   `FinalToolResult`, or a successful `TerminalRun` tool completes the run
 
 ### Workflow Contracts
 
@@ -484,6 +485,12 @@ Workflow step boundary:
   terminal-tool finish, or forced finalization,
 - terminal planner payloads are exclusive except for hidden, non-terminal
   bookkeeping side effects that complete successfully in the same step,
+- when forced finalization is active (`PlanResumeInput.Finalize != nil`), a
+  planner may close through terminal bookkeeping tools instead of prose; the
+  runtime admits only `Bookkeeping()` + `TerminalRun()` calls, executes them
+  inside the remaining hard-deadline window, stamps generated tool-call IDs with
+  the finalization attempt, and requires every terminal side effect in the batch
+  to complete successfully,
 - deadline checks happen before admitting new work; in-flight tool batches
   still respect the finalizer window and synthesize canceled tool results for
   unfinished calls.
@@ -514,6 +521,8 @@ Bookkeeping turn invariant:
 - retryable bookkeeping failures are the one planner-visible exception: when a
   bookkeeping tool returns a `RetryHint`, the runtime resumes so the planner can
   repair and resend that tool call,
+- during forced finalization, terminal bookkeeping calls are not replayed into a
+  later planner turn; they either durably close the run or fail finalization,
 - otherwise the runtime fails fast instead of scheduling an implicit extra
   `PlanResume`.
 
