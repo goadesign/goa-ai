@@ -195,7 +195,7 @@ func (r *Runtime) finalizeWithPlanner(
 			allToolResults,
 			allToolOutputs,
 			aggUsage,
-			nextAttempt+1,
+			nextAttempt,
 			turnID,
 			hardDeadline,
 		)
@@ -248,6 +248,9 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 	if err := r.validateFinalizationTerminalToolCalls(output.Result.ToolCalls); err != nil {
 		return nil, err
 	}
+	execBase := *base
+	execBase.RunContext = base.RunContext
+	execBase.RunContext.Attempt = nextAttempt
 	toolOpts := reg.ExecuteToolActivityOptions
 	if toolOpts.StartToCloseTimeout == 0 {
 		toolOpts.StartToCloseTimeout = defaultExecuteToolActivityTimeout
@@ -260,12 +263,12 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 		wfCtx,
 		reg,
 		input,
-		base,
+		&execBase,
 		st,
 		turnID,
 		nil,
 		nil,
-		runDeadlines{Budget: hardDeadline, Hard: hardDeadline},
+		runDeadlines{Budget: hardDeadline},
 		reg.ResumeActivityOptions,
 		toolOpts,
 	)
@@ -298,7 +301,7 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 	if !terminal {
 		return nil, errors.New("finalization terminal tool step did not complete a terminal tool")
 	}
-	return r.finishAfterTerminalToolCalls(wfCtx.Context(), input, base, st)
+	return r.finishAfterTerminalToolCalls(wfCtx.Context(), input, &execBase, st)
 }
 
 // validateFinalizationTerminalToolCalls permits only terminal bookkeeping tools

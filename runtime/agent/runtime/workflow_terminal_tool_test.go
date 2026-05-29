@@ -228,6 +228,7 @@ func TestFinalizeWithPlannerExecutesTerminalToolCall(t *testing.T) {
 	require.Nil(t, out.Final)
 	require.Len(t, out.ToolEvents, 1)
 	require.Equal(t, terminalTool.Name, out.ToolEvents[0].Name)
+	require.Equal(t, "run-1/turn-1/attempt-2/tasks-progress-complete/0", out.ToolEvents[0].ToolCallID)
 	require.Equal(t, "resume", wfCtx.lastPlannerCall.Name)
 	require.NotNil(t, wfCtx.lastPlannerCall.Input.Finalize)
 }
