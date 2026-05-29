@@ -18,6 +18,7 @@ import (
 
 func TestExecuteToolCalls_CancelsInFlightToolsWhenTimeBudgetReached(t *testing.T) {
 	recorder := &recordingHooks{}
+	toolSpec := newAnyJSONSpec("svc.tools.slow", "svc.tools")
 	rt := &Runtime{
 		Bus:           recorder,
 		logger:        telemetry.NoopLogger{},
@@ -27,10 +28,8 @@ func TestExecuteToolCalls_CancelsInFlightToolsWhenTimeBudgetReached(t *testing.T
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {},
 		},
-		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			tools.Ident("svc.tools.slow"): newAnyJSONSpec("svc.tools.slow", "svc.tools"),
-		},
 	}
+	seedTestToolSpecs(rt, toolSpec)
 
 	fut := &controlledToolFuture{ready: make(chan struct{})}
 	wfCtx := &testWorkflowContext{

@@ -66,8 +66,7 @@ func TestExecuteToolCalls_AgentToolsFanOut(t *testing.T) {
 	spec2.IsAgentTool = true
 	spec2.AgentID = string(cfg.AgentID)
 
-	rt.toolSpecs[tool1] = spec1
-	rt.toolSpecs[tool2] = spec2
+	seedTestToolSpecs(rt, spec1, spec2)
 
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),

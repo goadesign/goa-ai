@@ -59,8 +59,7 @@ func TestExecuteToolCalls_AgentToolsPublishResultsAsComplete(t *testing.T) {
 	spec2 := newAnyJSONSpec(tool2, reg.Name)
 	spec2.IsAgentTool = true
 	spec2.AgentID = string(cfg.AgentID)
-	rt.toolSpecs[tool1] = spec1
-	rt.toolSpecs[tool2] = spec2
+	seedTestToolSpecs(rt, spec1, spec2)
 
 	childHandles := make(chan *controlledChildHandle, 2)
 	wfCtx := &testWorkflowContext{

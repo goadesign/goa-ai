@@ -19,6 +19,8 @@ import (
 
 func TestExecuteToolCalls_ServiceToolsPublishResultsAsComplete(t *testing.T) {
 	recorder := &recordingHooks{}
+	slowSpec := newAnyJSONSpec("svc.tools.slow", "svc.tools")
+	fastSpec := newAnyJSONSpec("svc.tools.fast", "svc.tools")
 	rt := &Runtime{
 		Bus:           recorder,
 		RunEventStore: runloginmem.New(),
@@ -28,11 +30,8 @@ func TestExecuteToolCalls_ServiceToolsPublishResultsAsComplete(t *testing.T) {
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {},
 		},
-		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			tools.Ident("svc.tools.slow"): newAnyJSONSpec("svc.tools.slow", "svc.tools"),
-			tools.Ident("svc.tools.fast"): newAnyJSONSpec("svc.tools.fast", "svc.tools"),
-		},
 	}
+	seedTestToolSpecs(rt, slowSpec, fastSpec)
 
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
@@ -95,6 +94,7 @@ func TestExecuteToolCalls_ServiceToolsPublishResultsAsComplete(t *testing.T) {
 
 func TestExecuteToolCalls_ServiceToolErrorDoesNotAbortRun(t *testing.T) {
 	recorder := &recordingHooks{}
+	failSpec := newAnyJSONSpec("svc.tools.fail", "svc.tools")
 	rt := &Runtime{
 		Bus:           recorder,
 		RunEventStore: runloginmem.New(),
@@ -104,10 +104,8 @@ func TestExecuteToolCalls_ServiceToolErrorDoesNotAbortRun(t *testing.T) {
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {},
 		},
-		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			tools.Ident("svc.tools.fail"): newAnyJSONSpec("svc.tools.fail", "svc.tools"),
-		},
 	}
+	seedTestToolSpecs(rt, failSpec)
 
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),

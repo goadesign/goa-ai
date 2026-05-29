@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/runlog"
@@ -367,6 +368,65 @@ func TestHookActivity_EnrichesToolCallScheduledDisplayHintInRunlog(t *testing.T)
 	require.Len(t, rl.events, 1)
 	require.Equal(t, hooks.ToolCallScheduled, rl.events[0].Type)
 	require.Contains(t, string(rl.events[0].Payload), "Checking hourly energy rates")
+}
+
+func TestHookActivity_EnrichesMalformedToolCallScheduledDisplayHintInRunlog(t *testing.T) {
+	t.Parallel()
+
+	toolID := tools.Ident("runtime.hints.test.scheduled_malformed")
+	rthints.RegisterCallHint(toolID, mustTemplate(t, toolID, "Checking {{.Resolution}} energy rates"))
+
+	rl := &recordingRunlog{}
+	bus := hooks.NewBus()
+	store := sessioninmem.New()
+
+	rt := &Runtime{
+		RunEventStore: rl,
+		Bus:           bus,
+		SessionStore:  store,
+		logger:        telemetry.NoopLogger{},
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			toolID: newTypedHintSpec(toolID),
+		},
+		policyToolMetadata: map[tools.Ident]policy.ToolMetadata{
+			toolID: {
+				ID:    toolID,
+				Title: "Check Energy Rates",
+			},
+		},
+	}
+
+	now := time.Now().UTC()
+	_, err := store.CreateSession(context.Background(), "sess-1", now)
+	require.NoError(t, err)
+	require.NoError(t, store.UpsertRun(context.Background(), session.RunMeta{
+		AgentID:   "svc.agent",
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		Status:    session.RunStatusPending,
+		StartedAt: now,
+		UpdatedAt: now,
+	}))
+
+	ev := hooks.NewToolCallScheduledEvent(
+		"run-1",
+		"svc.agent",
+		"sess-1",
+		toolID,
+		"call-1",
+		rawjson.Message([]byte(`{"resolution":42}`)),
+		"queue",
+		"",
+		0,
+	)
+	require.Empty(t, ev.DisplayHint)
+
+	input := mustEncodeHookRecord(t, ev, "evt-malformed", 5)
+
+	require.NoError(t, rt.recordActivity(context.Background(), input))
+	require.Len(t, rl.events, 1)
+	require.Equal(t, hooks.ToolCallScheduled, rl.events[0].Type)
+	require.Contains(t, string(rl.events[0].Payload), "Check Energy Rates")
 }
 
 func TestHookActivity_EnrichesToolUnavailableDisplayHintInRunlog(t *testing.T) {

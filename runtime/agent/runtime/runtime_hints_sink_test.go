@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/stream"
@@ -92,9 +93,12 @@ func TestAddToolsetLockedRegistersHints(t *testing.T) {
 	})
 	rt.mu.Unlock()
 
-	assert.Equal(t, "Checking registration", rthints.FormatCallHint(toolID, map[string]any{
+	hint, ok, err := rthints.RenderCallHint(toolID, map[string]any{
 		"target": "registration",
-	}))
+	})
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, "Checking registration", hint)
 }
 
 func TestHintingSinkRendersHintForRawJSONPayload(t *testing.T) {
@@ -126,6 +130,43 @@ func TestHintingSinkRendersHintForRawJSONPayload(t *testing.T) {
 	out, ok := sink.events[0].(stream.ToolStart)
 	require.True(t, ok)
 	assert.Equal(t, "Checking hourly energy rates", out.Data.DisplayHint)
+}
+
+func TestHintingSinkUsesToolTitleForMalformedPayload(t *testing.T) {
+	toolID := tools.Ident("runtime.hints.test.malformed_payload")
+	rthints.RegisterCallHint(toolID, mustTemplate(t, toolID, "Checking {{.Resolution}} energy rates"))
+
+	rt := &Runtime{
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			toolID: newTypedHintSpec(toolID),
+		},
+		policyToolMetadata: map[tools.Ident]policy.ToolMetadata{
+			toolID: {
+				ID:    toolID,
+				Title: "Check Energy Rates",
+			},
+		},
+		logger: telemetry.NoopLogger{},
+	}
+
+	sink := &hintRecordingStreamSink{}
+	decorated := newHintingSink(rt, sink)
+	payload := stream.ToolStartPayload{
+		ToolCallID: "call-malformed-1",
+		ToolName:   string(toolID),
+		Payload:    rawjson.Message([]byte(`{"resolution":42}`)),
+	}
+	ev := stream.ToolStart{
+		Base: stream.NewBase(stream.EventToolStart, "run-1", "session-1", payload),
+		Data: payload,
+	}
+
+	require.NoError(t, decorated.Send(context.Background(), ev))
+	require.Len(t, sink.events, 1)
+
+	out, ok := sink.events[0].(stream.ToolStart)
+	require.True(t, ok)
+	assert.Equal(t, "Check Energy Rates", out.Data.DisplayHint)
 }
 
 func TestHintingSinkRendersHintForToolUnavailable(t *testing.T) {
@@ -184,6 +225,43 @@ func TestHintingSinkOverrideWins(t *testing.T) {
 	out, ok := sink.events[0].(stream.ToolStart)
 	require.True(t, ok)
 	assert.Equal(t, "Overridden hint", out.Data.DisplayHint)
+}
+
+func TestHintingSinkRejectsEmptyOverride(t *testing.T) {
+	toolID := tools.Ident("runtime.hints.test.empty_override")
+
+	rt := &Runtime{
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			toolID: newTypedHintSpec(toolID),
+		},
+		policyToolMetadata: map[tools.Ident]policy.ToolMetadata{
+			toolID: {
+				ID:    toolID,
+				Title: "Check Energy Rates",
+			},
+		},
+		logger: telemetry.NoopLogger{},
+		hintOverrides: map[tools.Ident]HintOverrideFunc{
+			toolID: func(ctx context.Context, tool tools.Ident, payload any) (string, bool) {
+				return "", true
+			},
+		},
+	}
+
+	sink := &hintRecordingStreamSink{}
+	decorated := newHintingSink(rt, sink)
+	payload := stream.ToolStartPayload{
+		ToolCallID: "call-empty-override-1",
+		ToolName:   string(toolID),
+		Payload:    rawjson.Message([]byte(`{"resolution":"hourly"}`)),
+	}
+	ev := stream.ToolStart{
+		Base: stream.NewBase(stream.EventToolStart, "run-1", "session-1", payload),
+		Data: payload,
+	}
+
+	require.ErrorContains(t, decorated.Send(context.Background(), ev), "returned empty display hint")
+	require.Empty(t, sink.events)
 }
 
 func newTypedHintSpec(name tools.Ident) tools.ToolSpec {

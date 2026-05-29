@@ -1,9 +1,7 @@
 package runtime
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -12,7 +10,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/runlog"
-	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/transcript"
@@ -63,7 +60,11 @@ func (r *Runtime) recordActivity(ctx context.Context, input *RecordActivityInput
 	}
 	payload := append([]byte(nil), input.Payload...)
 	if e, ok := evt.(*hooks.ToolCallScheduledEvent); ok {
-		if enriched := r.enrichToolCallScheduledHint(ctx, e); enriched {
+		enriched, err := r.enrichToolCallScheduledHint(ctx, e)
+		if err != nil {
+			return err
+		}
+		if enriched {
 			reencoded, err := hooks.EncodeToRecordInput(e, hooks.EncodeOptions{
 				TurnID:      input.TurnID,
 				EventKey:    input.EventKey,
@@ -258,31 +259,19 @@ func committedAssistantTurnEventKey(base string, index int) string {
 	return fmt.Sprintf("%s/assistant/%d", base, index)
 }
 
-func (r *Runtime) enrichToolCallScheduledHint(ctx context.Context, evt *hooks.ToolCallScheduledEvent) bool {
+func (r *Runtime) enrichToolCallScheduledHint(ctx context.Context, evt *hooks.ToolCallScheduledEvent) (bool, error) {
 	if evt == nil {
-		return false
+		return false, nil
 	}
 	if evt.DisplayHint != "" {
-		return false
+		return false, nil
 	}
-	raw := normalizeHintPayloadJSON(evt.Payload.RawMessage())
-	typed, err := r.unmarshalToolValue(ctx, evt.ToolName, raw, true)
-	if err != nil || typed == nil {
-		return false
+	hint, err := r.renderToolCallDisplayHint(ctx, evt.ToolName, evt.Payload.RawMessage(), "")
+	if err != nil {
+		return false, err
 	}
-	if hint := rthints.FormatCallHint(evt.ToolName, typed); hint != "" {
-		evt.DisplayHint = hint
-		return true
-	}
-	return false
-}
-
-func normalizeHintPayloadJSON(raw json.RawMessage) json.RawMessage {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return json.RawMessage("{}")
-	}
-	return raw
+	evt.DisplayHint = hint
+	return true, nil
 }
 
 func (r *Runtime) updateRunMetaFromHookEvent(ctx context.Context, evt hooks.Event) error {

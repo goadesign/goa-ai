@@ -291,7 +291,10 @@ func TestApplyPerRunOverridesUsesAllTagClauses(t *testing.T) {
 
 	var hintPayload map[string]any
 	require.NoError(t, json.Unmarshal(rewritten[2].Payload.RawMessage(), &hintPayload))
-	require.Equal(t, "Tool not available: denied", rthints.FormatCallHint(tools.ToolUnavailable, hintPayload))
+	hint, ok, err := rthints.RenderCallHint(tools.ToolUnavailable, hintPayload)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "Tool not available: denied", hint)
 }
 
 func TestFilterToolCallsKeepsToolUnavailable(t *testing.T) {

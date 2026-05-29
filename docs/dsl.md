@@ -914,12 +914,13 @@ unbounded.
 
 **Runtime contract:**
 
-- Tool call scheduled events default to `DisplayHint==""` at construction time. The runtime may enrich
-and persist a **durable default** hint when it can decode the typed payload and execute the template.
+- Tool call scheduled events default to `DisplayHint==""` at construction time. The runtime enriches and
+persists a **durable default** hint from the typed template when payload decoding succeeds.
 - If you set `DisplayHint` explicitly (non-empty) before publishing the hook event, the runtime treats it
 as authoritative and will not overwrite it.
-- If typed decoding fails, the runtime leaves `DisplayHint` empty (strict contract: no rendering against
-raw JSON bytes).
+- Tool registration requires a non-empty metadata title. If typed decoding fails, the runtime uses that title
+as the hint. The malformed payload still fails at the tool boundary; the metadata title only preserves the
+display contract.
 
 **Per-consumer overrides (optional):**
 

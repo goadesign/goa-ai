@@ -1221,6 +1221,9 @@ func validateSpecs(specs []tools.ToolSpec, lookup ToolMetadataLookup) error {
 			return fmt.Errorf("%w: terminal tool %q must also declare bookkeeping", ErrInvalidConfig, spec.Name)
 		}
 		if lookup == nil {
+			if strings.TrimSpace(defaultToolTitle(spec.Name)) == "" {
+				return fmt.Errorf("%w: tool %q must have a non-empty display title", ErrInvalidConfig, spec.Name)
+			}
 			continue
 		}
 		meta, ok := lookup(spec.Name)
@@ -1229,6 +1232,9 @@ func validateSpecs(specs []tools.ToolSpec, lookup ToolMetadataLookup) error {
 		}
 		if meta.ID != spec.Name {
 			return fmt.Errorf("%w: policy metadata id %q does not match tool %q", ErrInvalidConfig, meta.ID, spec.Name)
+		}
+		if strings.TrimSpace(meta.Title) == "" {
+			return fmt.Errorf("%w: policy metadata title for tool %q is required", ErrInvalidConfig, spec.Name)
 		}
 		if meta.BudgetClass != toolBudgetClass(spec.Bookkeeping) {
 			return fmt.Errorf(

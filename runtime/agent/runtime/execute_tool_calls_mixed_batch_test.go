@@ -20,6 +20,9 @@ import (
 
 func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *testing.T) {
 	recorder := &recordingHooks{ch: make(chan hooks.Event, 128)}
+	agentToolSpec := newAnyJSONSpec("svc.agent.child", "svc.agenttools")
+	agentToolSpec.IsAgentTool = true
+	agentToolSpec.AgentID = "nested.agent"
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {},
@@ -34,17 +37,6 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 				}),
 			},
 		},
-		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			tools.Ident("svc.tools.a1"):     newAnyJSONSpec("svc.tools.a1", "svc.tools"),
-			tools.Ident("svc.tools.a2"):     newAnyJSONSpec("svc.tools.a2", "svc.tools"),
-			tools.Ident("inline.ts.inline"): newAnyJSONSpec("inline.ts.inline", "inline.ts"),
-			tools.Ident("svc.agent.child"): func() tools.ToolSpec {
-				spec := newAnyJSONSpec("svc.agent.child", "svc.agenttools")
-				spec.IsAgentTool = true
-				spec.AgentID = "nested.agent"
-				return spec
-			}(),
-		},
 		logger:        telemetry.NoopLogger{},
 		metrics:       telemetry.NoopMetrics{},
 		tracer:        telemetry.NoopTracer{},
@@ -52,6 +44,13 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 		Bus:           recorder,
 		SessionStore:  sessioninmem.New(),
 	}
+	seedTestToolSpecs(
+		rt,
+		newAnyJSONSpec("svc.tools.a1", "svc.tools"),
+		newAnyJSONSpec("svc.tools.a2", "svc.tools"),
+		newAnyJSONSpec("inline.ts.inline", "inline.ts"),
+		agentToolSpec,
+	)
 
 	// Register the agent toolset that maps svc.agenttools.* to child workflows.
 	cfg := AgentToolConfig{

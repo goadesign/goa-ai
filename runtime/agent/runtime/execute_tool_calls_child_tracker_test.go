@@ -19,6 +19,7 @@ import (
 
 func TestExecuteToolCalls_ChildTrackerUpdateEmittedOnIncrease(t *testing.T) {
 	recorder := &recordingHooks{}
+	toolSpec := newAnyJSONSpec("inline.ts.t", "inline.ts")
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
 			"inline.ts": {
@@ -32,15 +33,13 @@ func TestExecuteToolCalls_ChildTrackerUpdateEmittedOnIncrease(t *testing.T) {
 				}),
 			},
 		},
-		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			tools.Ident("inline.ts.t"): newAnyJSONSpec("inline.ts.t", "inline.ts"),
-		},
 		logger:        telemetry.NoopLogger{},
 		metrics:       telemetry.NoopMetrics{},
 		tracer:        telemetry.NoopTracer{},
 		RunEventStore: runloginmem.New(),
 		Bus:           recorder,
 	}
+	seedTestToolSpecs(rt, toolSpec)
 
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),

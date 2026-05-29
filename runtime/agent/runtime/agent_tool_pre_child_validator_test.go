@@ -19,7 +19,6 @@ import (
 func TestExecuteToolCalls_AgentToolPreChildValidatorReturnsToolError(t *testing.T) {
 	rt := &Runtime{
 		toolsets:      map[string]ToolsetRegistration{},
-		toolSpecs:     map[tools.Ident]tools.ToolSpec{},
 		Bus:           noopHooks{},
 		logger:        telemetry.NoopLogger{},
 		metrics:       telemetry.NoopMetrics{},
@@ -52,7 +51,7 @@ func TestExecuteToolCalls_AgentToolPreChildValidatorReturnsToolError(t *testing.
 	rt.toolsets["svc.tools"] = reg
 	spec := newAnyJSONSpec("svc.tools.do", "svc.tools")
 	spec.IsAgentTool = true
-	rt.toolSpecs["svc.tools.do"] = spec
+	seedTestToolSpecs(rt, spec)
 
 	wfCtx := &testWorkflowContext{
 		ctx:     context.Background(),

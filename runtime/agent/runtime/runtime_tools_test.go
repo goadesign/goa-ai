@@ -590,6 +590,7 @@ func TestRunLoopPauseResumeEmitsEvents(t *testing.T) {
 
 func TestServiceToolEventsUseChildRunContext(t *testing.T) {
 	recorder := &recordingHooks{}
+	toolSpec := newAnyJSONSpec("svc.tools.fetch_time_series", "svc.tools")
 	rt := &Runtime{
 		Bus:           recorder,
 		logger:        telemetry.NoopLogger{},
@@ -599,10 +600,8 @@ func TestServiceToolEventsUseChildRunContext(t *testing.T) {
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {},
 		},
-		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			tools.Ident("svc.tools.fetch_time_series"): newAnyJSONSpec("svc.tools.fetch_time_series", "svc.tools"),
-		},
 	}
+	seedTestToolSpecs(rt, toolSpec)
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		hookRuntime: rt,
@@ -646,6 +645,7 @@ func TestServiceToolEventsUseChildRunContext(t *testing.T) {
 
 func TestServiceToolEventsPropagateServerData(t *testing.T) {
 	recorder := &recordingHooks{}
+	toolSpec := newAnyJSONSpec("svc.tools.example", "svc.tools")
 	rt := &Runtime{
 		Bus:           recorder,
 		logger:        telemetry.NoopLogger{},
@@ -655,10 +655,8 @@ func TestServiceToolEventsPropagateServerData(t *testing.T) {
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {},
 		},
-		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			tools.Ident("svc.tools.example"): newAnyJSONSpec("svc.tools.example", "svc.tools"),
-		},
 	}
+	seedTestToolSpecs(rt, toolSpec)
 	server := rawjson.Message([]byte(`[{"kind":"example.evidence","data":[{"uri":"example://points/123","kind":"time_series"}]}]`))
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
@@ -847,6 +845,13 @@ func TestConsumeProvidedToolResultsRejectsTruncatedBoundsWithoutContinuation(t *
 
 func TestServiceToolEventsPropagateBounds(t *testing.T) {
 	recorder := &recordingHooks{}
+	toolSpec := tools.ToolSpec{
+		Name:    tools.Ident("svc.tools.example"),
+		Toolset: "svc.tools",
+		Payload: tools.TypeSpec{},
+		Result:  tools.TypeSpec{},
+		Bounds:  &tools.BoundsSpec{},
+	}
 	rt := &Runtime{
 		Bus:           recorder,
 		logger:        telemetry.NoopLogger{},
@@ -856,16 +861,8 @@ func TestServiceToolEventsPropagateBounds(t *testing.T) {
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {},
 		},
-		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			tools.Ident("svc.tools.example"): {
-				Name:    tools.Ident("svc.tools.example"),
-				Toolset: "svc.tools",
-				Payload: tools.TypeSpec{},
-				Result:  tools.TypeSpec{},
-				Bounds:  &tools.BoundsSpec{},
-			},
-		},
 	}
+	seedTestToolSpecs(rt, toolSpec)
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		hookRuntime: rt,

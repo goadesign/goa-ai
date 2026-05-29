@@ -67,20 +67,27 @@ func RegisterResultHints(m map[tools.Ident]*template.Template) {
 	}
 }
 
-// FormatCallHint renders the call hint for the given tool and payload. Returns
-// an empty string when no template is registered or rendering fails.
-func FormatCallHint(id tools.Ident, payload any) string {
+// RenderCallHint renders the registered call hint template for id.
+//
+// The boolean return reports whether a template was registered. A registered
+// template must render a non-empty string; render errors and empty output are
+// returned as contract violations.
+func RenderCallHint(id tools.Ident, payload any) (string, bool, error) {
 	mu.RLock()
 	tmpl := callHints[id]
 	mu.RUnlock()
 	if tmpl == nil {
-		return ""
+		return "", false, nil
 	}
 	var b strings.Builder
 	if err := tmpl.Execute(&b, payload); err != nil {
-		return ""
+		return "", true, fmt.Errorf("render call hint for %s: %w", id, err)
 	}
-	return b.String()
+	out := b.String()
+	if strings.TrimSpace(out) == "" {
+		return "", true, fmt.Errorf("render call hint for %s: empty output", id)
+	}
+	return out, true, nil
 }
 
 // FormatResultHint renders the result hint for the given tool and result. Returns

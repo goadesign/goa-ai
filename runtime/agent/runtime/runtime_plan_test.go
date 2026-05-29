@@ -212,6 +212,7 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: "svc.other.tool"}}}, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
+	seedTestToolSpecs(rt, newAnyJSONSpec(toolName, "svc.tools"))
 	require.NoError(t, rt.publishHookErr(
 		context.Background(),
 		hooks.NewToolCallScheduledEvent(
@@ -264,6 +265,7 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 
 func TestPlanResumeActivityFailsWhenCanonicalToolResultIsMissing(t *testing.T) {
 	rt := newTestRuntimeWithPlanner("service.agent", &stubPlanner{})
+	seedTestToolSpecs(rt, newAnyJSONSpec("svc.ts.tool", "svc.tools"))
 	require.NoError(t, rt.publishHookErr(
 		context.Background(),
 		hooks.NewToolCallScheduledEvent(
@@ -308,6 +310,7 @@ func TestPlanResumeActivityHydratesOmittedResultMetadataFromCanonicalRunlog(t *t
 		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: "svc.other.tool"}}}, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
+	seedTestToolSpecs(rt, newAnyJSONSpec("svc.ts.tool", "svc.tools"))
 	require.NoError(t, rt.publishHookErr(
 		context.Background(),
 		hooks.NewToolCallScheduledEvent(

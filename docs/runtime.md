@@ -699,10 +699,12 @@ hook + stream events.
 Contract:
 
 - Hook constructors do not render hints. Tool call scheduled events default to `DisplayHint==""`.
-- The runtime may enrich and persist a **durable default** hint at publish time by decoding the typed tool
-  payload using generated codecs and executing the `CallHintTemplate` (if registered).
-- When typed decoding fails or no template is registered, the runtime leaves `DisplayHint` empty. Hints are
-  never rendered against raw JSON bytes.
+- The runtime may enrich and persist a **durable default** hint at publish time. It first decodes the typed
+  tool payload using generated codecs and executes the `CallHintTemplate` when registered.
+- Tool registration requires a non-empty metadata title. When typed decoding fails or no template is
+  registered, the runtime uses that title as the display hint. Malformed payloads still fail at the tool
+  boundary; the metadata title only keeps the attempted work renderable. Hints are never rendered against raw
+  JSON bytes.
 - If a producer explicitly sets `DisplayHint` (non-empty) before publishing the hook event, the runtime treats
   it as authoritative and does not overwrite it.
 

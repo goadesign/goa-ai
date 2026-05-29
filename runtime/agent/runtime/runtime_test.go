@@ -654,6 +654,27 @@ func TestRegisterAgentRejectsTerminalSpecWithoutBookkeeping(t *testing.T) {
 	require.ErrorContains(t, err, "terminal tool \"tasks.complete\" must also declare bookkeeping")
 }
 
+func TestRegisterToolsetRejectsEmptyToolMetadataTitle(t *testing.T) {
+	rt := New()
+	toolID := tools.Ident("svc.tools.fetch")
+	err := rt.RegisterToolset(ToolsetRegistration{
+		Name: "svc.tools",
+		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			return &planner.ToolResult{}, nil
+		}),
+		Specs: []tools.ToolSpec{newAnyJSONSpec(toolID, "svc.tools")},
+		ToolMetadataLookup: func(name tools.Ident) (policy.ToolMetadata, bool) {
+			return policy.ToolMetadata{
+				ID:          name,
+				BudgetClass: policy.ToolBudgetClassBudgeted,
+			}, true
+		},
+	})
+
+	require.ErrorIs(t, err, ErrInvalidConfig)
+	require.ErrorContains(t, err, "policy metadata title for tool \"svc.tools.fetch\" is required")
+}
+
 func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
@@ -1201,6 +1222,8 @@ func TestChildTrackerLifecycle(t *testing.T) {
 
 func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 	recorder := &recordingHooks{}
+	child1Spec := newAnyJSONSpec("child1", "svc.export")
+	child2Spec := newAnyJSONSpec("child2", "svc.export")
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
 			"svc.export": {
@@ -1211,16 +1234,13 @@ func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 				}),
 			},
 		},
-		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			tools.Ident("child1"): newAnyJSONSpec("child1", "svc.export"),
-			tools.Ident("child2"): newAnyJSONSpec("child2", "svc.export"),
-		},
 		Bus:           recorder,
 		logger:        telemetry.NoopLogger{},
 		metrics:       telemetry.NoopMetrics{},
 		tracer:        telemetry.NoopTracer{},
 		RunEventStore: runloginmem.New(),
 	}
+	seedTestToolSpecs(rt, child1Spec, child2Spec)
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		hookRuntime: rt,
