@@ -232,3 +232,92 @@ func TestFinalizeWithPlannerExecutesTerminalToolCall(t *testing.T) {
 	require.Equal(t, "resume", wfCtx.lastPlannerCall.Name)
 	require.NotNil(t, wfCtx.lastPlannerCall.Input.Finalize)
 }
+
+func TestFinalizeWithPlannerRejectsPartialTerminalToolFailure(t *testing.T) {
+	rt := New(WithLogger(telemetry.NoopLogger{}))
+
+	failTool := newAnyJSONSpec(tools.Ident("tasks.progress.fail"), "tasks.progress")
+	failTool.TerminalRun = true
+	failTool.Bookkeeping = true
+	completeTool := newAnyJSONSpec(tools.Ident("tasks.progress.complete"), "tasks.progress")
+	completeTool.TerminalRun = true
+	completeTool.Bookkeeping = true
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
+		Name: "tasks.progress",
+		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			if call.Name == failTool.Name {
+				return &planner.ToolResult{
+					Name:       call.Name,
+					Error:      planner.NewToolError("failed terminal side effect"),
+					ToolCallID: call.ToolCallID,
+				}, nil
+			}
+			return &planner.ToolResult{
+				Name:       call.Name,
+				Result:     map[string]any{"ok": true},
+				ToolCallID: call.ToolCallID,
+			}, nil
+		}),
+		Specs: []tools.ToolSpec{failTool, completeTool},
+	}))
+
+	wfCtx := &routeWorkflowContext{
+		ctx:   context.Background(),
+		runID: "run-1",
+		plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
+			"resume": func(_ context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
+				if input.RunID == "" {
+					return nil, context.Canceled
+				}
+				return &PlanActivityOutput{
+					Result: &planner.PlanResult{
+						ToolCalls: []planner.ToolRequest{
+							{Name: failTool.Name},
+							{Name: completeTool.Name},
+						},
+					},
+				}, nil
+			},
+		},
+		toolRoutes: map[string]func(context.Context, *ToolInput) (*ToolOutput, error){
+			"execute": func(ctx context.Context, input *ToolInput) (*ToolOutput, error) {
+				return rt.ExecuteToolActivity(ctx, input)
+			},
+		},
+	}
+	base := &planner.PlanInput{
+		RunContext: run.Context{
+			RunID:     "run-1",
+			SessionID: "sess-1",
+			TurnID:    "turn-1",
+			Attempt:   1,
+		},
+	}
+	input := &RunInput{
+		AgentID:   agent.Ident("agent-1"),
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		TurnID:    "turn-1",
+	}
+
+	out, err := rt.finalizeWithPlanner(
+		wfCtx,
+		AgentRegistration{
+			ExecuteToolActivity: "execute",
+			ResumeActivityName:  "resume",
+		},
+		input,
+		base,
+		nil,
+		nil,
+		model.TokenUsage{},
+		2,
+		"turn-1",
+		planner.TerminationReasonFailureCap,
+		time.Time{},
+	)
+
+	require.Nil(t, out)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "finalization terminal tool step failed")
+}

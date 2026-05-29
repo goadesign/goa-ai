@@ -268,7 +268,10 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 		turnID,
 		nil,
 		nil,
-		runDeadlines{Budget: hardDeadline},
+		runDeadlines{
+			Budget: hardDeadline,
+			Hard:   terminalToolExecutionDeadline(hardDeadline),
+		},
 		reg.ResumeActivityOptions,
 		toolOpts,
 	)
@@ -294,14 +297,19 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 	if err := loop.recordUnrecordedStepToolResults(&batch); err != nil {
 		return nil, err
 	}
-	terminal, err := r.executedSuccessfulTerminalRunTool(batch.records)
-	if err != nil {
+	if err := r.validateFinalizationTerminalToolRecords(batch.records); err != nil {
 		return nil, err
 	}
-	if !terminal {
-		return nil, errors.New("finalization terminal tool step did not complete a terminal tool")
-	}
 	return r.finishAfterTerminalToolCalls(wfCtx.Context(), input, &execBase, st)
+}
+
+// terminalToolExecutionDeadline makes executeToolStep use hardDeadline as the
+// terminal tool finishBy without reserving another finalization window.
+func terminalToolExecutionDeadline(hardDeadline time.Time) time.Time {
+	if hardDeadline.IsZero() {
+		return time.Time{}
+	}
+	return hardDeadline.Add(minActivityTimeout)
 }
 
 // validateFinalizationTerminalToolCalls permits only terminal bookkeeping tools
@@ -320,6 +328,33 @@ func (r *Runtime) validateFinalizationTerminalToolCalls(calls []planner.ToolRequ
 		}
 		if !spec.TerminalRun {
 			return fmt.Errorf("finalization terminal tool plan cannot call non-terminal tool %q", call.Name)
+		}
+	}
+	return nil
+}
+
+// validateFinalizationTerminalToolRecords requires every finalization terminal
+// side effect to complete successfully after policy and unavailable-tool rewrites.
+func (r *Runtime) validateFinalizationTerminalToolRecords(records []stepToolRecord) error {
+	if len(records) == 0 {
+		return errors.New("finalization terminal tool step produced no records")
+	}
+	for _, record := range records {
+		if err := validateStepToolRecord("finalization terminal tool step", record); err != nil {
+			return err
+		}
+		if record.pause != nil {
+			return fmt.Errorf("finalization terminal tool step cannot pause on tool %q", record.call.Name)
+		}
+		if record.result.Error != nil {
+			return fmt.Errorf("finalization terminal tool step failed on tool %q: %w", record.call.Name, record.result.Error)
+		}
+		spec, ok := r.toolSpec(record.result.Name)
+		if !ok {
+			return fmt.Errorf("finalization terminal tool step returned unknown tool %q", record.result.Name)
+		}
+		if !spec.TerminalRun {
+			return fmt.Errorf("finalization terminal tool step returned non-terminal tool %q", record.result.Name)
 		}
 	}
 	return nil
@@ -663,13 +698,15 @@ func (r *Runtime) runPlanActivity(
 	scheduleToStart := options.ScheduleToStartTimeout
 	if !hardDeadline.IsZero() {
 		now := wfCtx.Now()
-		if rem := hardDeadline.Sub(now); rem > 0 {
-			if startToClose == 0 || startToClose > rem {
-				startToClose = rem
-			}
-			if scheduleToStart == 0 || scheduleToStart > rem {
-				scheduleToStart = rem
-			}
+		rem := hardDeadline.Sub(now)
+		if rem <= 0 {
+			return nil, fmt.Errorf("plan activity %q missed hard deadline", activityName)
+		}
+		if startToClose == 0 || startToClose > rem {
+			startToClose = rem
+		}
+		if scheduleToStart == 0 || scheduleToStart > rem {
+			scheduleToStart = rem
 		}
 	}
 	callOpts.StartToCloseTimeout = startToClose

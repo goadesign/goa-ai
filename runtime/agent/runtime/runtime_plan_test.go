@@ -50,6 +50,24 @@ func TestRunPlanActivityUsesOptions(t *testing.T) {
 	require.Equal(t, opts.RetryPolicy, wf.lastPlannerCall.Options.RetryPolicy)
 }
 
+func TestRunPlanActivityRejectsExpiredHardDeadline(t *testing.T) {
+	rt := &Runtime{
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Bus:     noopHooks{},
+	}
+	wf := &testWorkflowContext{
+		ctx: context.Background(),
+	}
+
+	_, err := rt.runPlanActivity(wf, "calc.agent.plan", engine.ActivityOptions{}, PlanActivityInput{}, time.Unix(-1, 0))
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "missed hard deadline")
+	require.Empty(t, wf.lastPlannerCall.Name)
+}
+
 func TestRunPlanActivityAcceptsTerminalFinalToolResult(t *testing.T) {
 	rt := &Runtime{
 		logger:  telemetry.NoopLogger{},
