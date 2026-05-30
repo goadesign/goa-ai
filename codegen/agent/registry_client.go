@@ -77,6 +77,11 @@ type (
 	}
 )
 
+const (
+	authHeaderIn        = "header"
+	authorizationHeader = "Authorization"
+)
+
 // registryClientFiles generates the registry client files for all declared
 // registries. Each registry produces a client package under
 // gen/<service>/registry/<name>/.
@@ -162,11 +167,16 @@ func newRegistryClientData(genpkg, svcPath string, reg *agentsExpr.RegistryExpr)
 			case goaexpr.OAuth2Kind:
 				schemeData.Scopes = sec.Scopes
 			case goaexpr.JWTKind:
-				schemeData.In = "header"
-				schemeData.ParamName = "Authorization"
+				schemeData.In = authHeaderIn
+				schemeData.ParamName = authorizationHeader
+				schemeData.Scopes = sec.Scopes
+			case goaexpr.BearerKind:
+				schemeData.In = authHeaderIn
+				schemeData.ParamName = authorizationHeader
+				schemeData.Scopes = sec.Scopes
 			case goaexpr.BasicAuthKind:
-				schemeData.In = "header"
-				schemeData.ParamName = "Authorization"
+				schemeData.In = authHeaderIn
+				schemeData.ParamName = authorizationHeader
 			case goaexpr.NoKind:
 				// Already handled above
 			}

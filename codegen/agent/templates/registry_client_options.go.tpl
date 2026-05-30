@@ -27,6 +27,14 @@ type {{ goify .Name true }}Auth struct {
 	Token string
 }
 {{- end }}
+{{- if isBearer .Kind }}
+
+// {{ goify .Name true }}Auth provides bearer token authentication.
+type {{ goify .Name true }}Auth struct {
+	// Token is the bearer token.
+	Token string
+}
+{{- end }}
 {{- if isBasicAuth .Kind }}
 
 // {{ goify .Name true }}Auth provides Basic authentication.
@@ -109,6 +117,13 @@ func With{{ goify .Name true }}(token string) Option {
 	return WithAuth(&{{ goify .Name true }}Auth{Token: token})
 }
 {{- end }}
+{{- if isBearer .Kind }}
+
+// With{{ goify .Name true }} creates an auth provider with the given bearer token.
+func With{{ goify .Name true }}(token string) Option {
+	return WithAuth(&{{ goify .Name true }}Auth{Token: token})
+}
+{{- end }}
 {{- if isBasicAuth .Kind }}
 
 // With{{ goify .Name true }} creates an auth provider with the given credentials.
@@ -152,6 +167,17 @@ func (a *{{ goify .Name true }}Auth) ApplyAuth(req *http.Request) error {
 }
 {{- end }}
 {{- if isJWT .Kind }}
+
+// ApplyAuth implements AuthProvider.
+func (a *{{ goify .Name true }}Auth) ApplyAuth(req *http.Request) error {
+	if a.Token == "" {
+		return nil
+	}
+	req.Header.Set("Authorization", "Bearer "+a.Token)
+	return nil
+}
+{{- end }}
+{{- if isBearer .Kind }}
 
 // ApplyAuth implements AuthProvider.
 func (a *{{ goify .Name true }}Auth) ApplyAuth(req *http.Request) error {

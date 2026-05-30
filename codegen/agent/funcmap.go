@@ -29,6 +29,10 @@ func templateFuncMap() map[string]any {
 		"isJWT": func(kind goaexpr.SchemeKind) bool {
 			return kind == goaexpr.JWTKind
 		},
+		// isBearer reports whether the scheme kind is BearerKind.
+		"isBearer": func(kind goaexpr.SchemeKind) bool {
+			return kind == goaexpr.BearerKind
+		},
 		// isBasicAuth reports whether the scheme kind is BasicAuthKind.
 		"isBasicAuth": func(kind goaexpr.SchemeKind) bool {
 			return kind == goaexpr.BasicAuthKind
