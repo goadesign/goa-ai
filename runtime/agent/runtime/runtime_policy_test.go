@@ -297,6 +297,36 @@ func TestApplyPerRunOverridesUsesAllTagClauses(t *testing.T) {
 	require.Equal(t, "Tool not available: denied", hint)
 }
 
+func TestApplyPerRunOverridesUsesRetryRestriction(t *testing.T) {
+	correctionSpec := newAnyJSONSpec("ada.get_time_series", "ada")
+	otherSpec := newAnyJSONSpec("tasks.progress.update", "tasks.progress")
+	rt := New()
+	rt.policyToolMetadata = canonicalMetadataMap(correctionSpec, otherSpec)
+	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
+		correctionSpec.Name: correctionSpec,
+		otherSpec.Name:      otherSpec,
+	}
+
+	rewritten, err := rt.applyPerRunOverrides(
+		context.Background(),
+		&RunInput{
+			Policy: &PolicyOverrides{
+				RetryRestrictToTool: correctionSpec.Name,
+			},
+		},
+		[]planner.ToolRequest{
+			{Name: correctionSpec.Name},
+			{Name: otherSpec.Name},
+		},
+	)
+
+	require.NoError(t, err)
+	require.Len(t, rewritten, 2)
+	require.Equal(t, correctionSpec.Name, rewritten[0].Name)
+	require.Equal(t, tools.ToolUnavailable, rewritten[1].Name)
+	require.JSONEq(t, `{"requested_tool":"tasks.progress.update"}`, string(rewritten[1].Payload))
+}
+
 func TestFilterToolCallsKeepsToolUnavailable(t *testing.T) {
 	filtered := filterToolCalls(
 		[]planner.ToolRequest{

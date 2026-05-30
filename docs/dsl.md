@@ -1041,6 +1041,11 @@ resume, finish, terminal-tool completion, or forced finalization. A
 `FinalResponse` or `FinalToolResult` may only accompany hidden, non-terminal
 bookkeeping calls that complete successfully in the same step.
 
+During forced finalization, retry-owned restrict-to-tool state from a previous
+failed repair constrains normal correction turns but does not block validated
+terminal bookkeeping tools. Caller-supplied `WithRestrictToTool` policy remains
+run-scoped and still applies.
+
 ```go
 Tool("set_step_status", "Update step status", func() {
     Args(SetStepStatusArgs)

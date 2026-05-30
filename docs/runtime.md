@@ -491,6 +491,9 @@ Workflow step boundary:
   inside the remaining hard-deadline window, stamps generated tool-call IDs with
   the finalization attempt, and requires every terminal side effect in the batch
   to complete successfully,
+- retry-owned restrict-to-tool state constrains normal repair turns but not this
+  validated terminal bookkeeping path; caller-supplied `WithRestrictToTool`
+  remains run-scoped and still applies,
 - deadline checks happen before admitting new work; in-flight tool batches
   still respect the finalizer window and synthesize canceled tool results for
   unfinished calls.

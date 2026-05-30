@@ -158,7 +158,9 @@ Generated `registry.go` files in agent packages are local runtime registration h
   finalization, planners may return terminal bookkeeping tools instead of a
   prose final answer. The runtime executes only `Bookkeeping()` + `TerminalRun()`
   tools in that path, keeps them inside the remaining hard-deadline window, and
-  closes the run only if every terminal side effect succeeds.
+  closes the run only if every terminal side effect succeeds. Retry-owned
+  restrict-to-tool state does not block this validated terminal path; caller
+  `WithRestrictToTool` policy remains run-scoped and still applies.
 - **Visible reasoning contract**: Bedrock adaptive-thinking requests ask for
   summarized reasoning display explicitly so streamed `thinking` events remain
   visible across Claude adaptive model revisions whose provider defaults may

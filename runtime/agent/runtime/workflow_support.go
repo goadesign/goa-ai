@@ -248,6 +248,7 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 	if err := r.validateFinalizationTerminalToolCalls(output.Result.ToolCalls); err != nil {
 		return nil, err
 	}
+	execInput := inputForFinalizationTerminalTools(input)
 	execBase := *base
 	execBase.RunContext = base.RunContext
 	execBase.RunContext.Attempt = nextAttempt
@@ -262,7 +263,7 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 		r,
 		wfCtx,
 		reg,
-		input,
+		execInput,
 		&execBase,
 		st,
 		turnID,
@@ -300,7 +301,7 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 	if err := r.validateFinalizationTerminalToolRecords(batch.records); err != nil {
 		return nil, err
 	}
-	return r.finishAfterTerminalToolCalls(wfCtx.Context(), input, &execBase, st)
+	return r.finishAfterTerminalToolCalls(wfCtx.Context(), execInput, &execBase, st)
 }
 
 // terminalToolExecutionDeadline makes executeToolStep use hardDeadline as the

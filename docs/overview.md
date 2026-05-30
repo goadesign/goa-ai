@@ -933,6 +933,11 @@ The `sessionID` argument is required and must be a non-empty, non-whitespace str
 | `WithTagPolicyClauses([]TagPolicyClause)` | Compose explicit tag clauses |
 | `WithTiming(Timing)`                    | Set multiple timing overrides |
 
+Runtime-owned retry restrictions installed from `RetryHint` constrain normal
+repair turns only. They do not block validated terminal bookkeeping tools during
+forced finalization; caller `WithRestrictToTool` policy remains run-scoped and
+still applies.
+
 Prefer `WithTagPolicyClauses` for new code when you need multiple allow/deny
 rules; `WithAllowedTags` and `WithDeniedTags` are convenience shorthands for a
 single clause.
