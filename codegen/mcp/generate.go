@@ -93,7 +93,7 @@ func generateMCPServiceCode(genpkg string, root *expr.RootExpr, mcpService *expr
 		if !strings.HasSuffix(filepath.ToSlash(f.Path), "/service.go") {
 			continue
 		}
-		addMCPServiceDataMetaTypeImports(f, mcpService, servicesData.Get(mcpService.Name))
+		addMCPServiceDataMetaTypeImports(f, servicesData.Get(mcpService.Name))
 	}
 	files = append(files, serviceFiles...)
 	files = append(files, service.EndpointFile(genpkg, mcpService, servicesData))
@@ -116,7 +116,7 @@ func generateMCPServiceCode(genpkg string, root *expr.RootExpr, mcpService *expr
 	return files
 }
 
-func addMCPServiceDataMetaTypeImports(f *codegen.File, mcpService *expr.ServiceExpr, data *service.Data) {
+func addMCPServiceDataMetaTypeImports(f *codegen.File, data *service.Data) {
 	if f == nil {
 		return
 	}
@@ -127,7 +127,7 @@ func addMCPServiceDataMetaTypeImports(f *codegen.File, mcpService *expr.ServiceE
 		if s.Name != headerSection {
 			continue
 		}
-		service.AddServiceDataMetaTypeImports(s, mcpService, data)
+		service.AddServiceDataMetaTypeImports(s, data)
 		return
 	}
 }
