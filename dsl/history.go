@@ -8,9 +8,16 @@ import (
 // History defines how the agent runtime manages conversation history before
 // each planner invocation. It can either:
 //
-//   - KeepRecentTurns(N) to retain only the last N turns, or
-//   - Compress(triggerAt, keepRecent) to summarize older turns once the
-//     trigger threshold is reached.
+//   - KeepRecentTurns(N) to retain only the last N turns without summarizing, or
+//   - CompressAt... plus KeepMax... to summarize older turns while preserving
+//     a bounded exact tail of whole recent turns.
+//
+// Compression separates the trigger budget from the exact-retention budget:
+// CompressAtMaxInputTokens and CompressAtTurns decide when summarization runs,
+// while KeepMaxInputTokens and KeepMaxTurns decide which newest complete turns
+// remain unsummarized afterward. Token budgets are evaluated at runtime using
+// the configured history model, so design values are defaults that applications
+// may override for a specific deployment/model.
 //
 // At most one history policy may be configured per agent.
 //
@@ -20,7 +27,9 @@ import (
 //
 //	RunPolicy(func() {
 //	    History(func() {
-//	        KeepRecentTurns(20)
+//	        CompressAtMaxInputTokens(120000)
+//	        KeepMaxInputTokens(40000)
+//	        KeepMaxTurns(12)
 //	    })
 //	})
 func History(fn func()) {
@@ -134,45 +143,112 @@ func KeepRecentTurns(n int) {
 	h.KeepRecent = n
 }
 
-// Compress configures a history policy that summarizes older turns once a
-// trigger threshold is reached, retaining the most recent keepRecent turns in
-// full fidelity. The runtime uses the configured thresholds to construct a
-// compression policy; applications supply the model client via generated
-// configuration when Compress is enabled.
+// CompressAtTurns configures compression to run once at least n logical turns
+// have accumulated. It is optional when CompressAtMaxInputTokens is set.
 //
-// Compress must appear inside a History expression. At most one of
-// KeepRecentTurns or Compress may be configured.
+// A logical turn starts with a user request and includes subsequent assistant
+// messages and tool_use/tool_result exchanges up to the next user request.
+//
+// CompressAtTurns must appear inside a History expression.
 //
 // Example:
 //
 //	RunPolicy(func() {
 //	    History(func() {
-//	        Compress(30, 10) // trigger at 30 turns, keep 10 recent
+//	        CompressAtTurns(30)
+//	        KeepMaxTurns(10)
 //	    })
 //	})
-func Compress(triggerAt, keepRecent int) {
+func CompressAtTurns(n int) {
 	h, ok := eval.Current().(*expragents.HistoryExpr)
 	if !ok {
 		eval.IncompatibleDSL()
 		return
 	}
-	if h.Mode != "" {
+	if !selectCompression(h) {
+		return
+	}
+	if n <= 0 {
+		eval.ReportError("CompressAtTurns requires n > 0, got %d", n)
+		return
+	}
+	h.CompressAtTurns = n
+}
+
+// CompressAtMaxInputTokens configures compression to run when the
+// provider-visible input transcript exceeds n tokens. Token counting happens at
+// runtime through the configured history model because tokenization is
+// model-specific.
+//
+// CompressAtMaxInputTokens must appear inside a History expression.
+func CompressAtMaxInputTokens(n int) {
+	h, ok := eval.Current().(*expragents.HistoryExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	if !selectCompression(h) {
+		return
+	}
+	if n <= 0 {
+		eval.ReportError("CompressAtMaxInputTokens requires n > 0, got %d", n)
+		return
+	}
+	h.CompressAtMaxInputTokens = n
+}
+
+// KeepMaxTurns caps the exact retention tail to at most n newest logical turns
+// after compression summarizes older history.
+//
+// KeepMaxTurns must appear inside a History expression with a compression
+// trigger.
+func KeepMaxTurns(n int) {
+	h, ok := eval.Current().(*expragents.HistoryExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	if !selectCompression(h) {
+		return
+	}
+	if n <= 0 {
+		eval.ReportError("KeepMaxTurns requires n > 0, got %d", n)
+		return
+	}
+	h.KeepMaxTurns = n
+}
+
+// KeepMaxInputTokens keeps the newest whole logical turns whose exact transcript
+// fits under n input tokens after compression summarizes older history. The
+// runtime never truncates or edits a turn to fit this budget; if adding the next
+// older turn would exceed the budget, that whole turn is summarized instead.
+//
+// KeepMaxInputTokens must appear inside a History expression with a compression
+// trigger.
+func KeepMaxInputTokens(n int) {
+	h, ok := eval.Current().(*expragents.HistoryExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	if !selectCompression(h) {
+		return
+	}
+	if n <= 0 {
+		eval.ReportError("KeepMaxInputTokens requires n > 0, got %d", n)
+		return
+	}
+	h.KeepMaxInputTokens = n
+}
+
+func selectCompression(h *expragents.HistoryExpr) bool {
+	if h.Mode == "" {
+		h.Mode = expragents.HistoryModeCompress
+		return true
+	}
+	if h.Mode != expragents.HistoryModeCompress {
 		eval.ReportError("only one history policy may be configured per agent")
-		return
+		return false
 	}
-	if triggerAt <= 0 {
-		eval.ReportError("Compress requires triggerAt > 0, got %d", triggerAt)
-		return
-	}
-	if keepRecent < 0 {
-		eval.ReportError("Compress requires keepRecent >= 0, got %d", keepRecent)
-		return
-	}
-	if keepRecent >= triggerAt {
-		eval.ReportError("Compress requires keepRecent < triggerAt (got %d >= %d)", keepRecent, triggerAt)
-		return
-	}
-	h.Mode = expragents.HistoryModeCompress
-	h.TriggerAt = triggerAt
-	h.CompressKeepRecent = keepRecent
+	return true
 }

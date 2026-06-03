@@ -116,11 +116,15 @@ func (r *Runtime) preparePlannerActivity(ctx context.Context, input *PlanActivit
 	if r.reminders != nil {
 		rems = r.reminders.Snapshot(input.RunID)
 	}
+	messages, err := r.applyHistoryPolicy(ctx, reg, input.Messages)
+	if err != nil {
+		return nil, err
+	}
 	return &plannerActivityInvocation{
 		reg:       reg,
 		agentCtx:  agentCtx,
 		events:    events,
-		messages:  r.applyHistoryPolicy(ctx, reg, input.Messages),
+		messages:  messages,
 		reminders: rems,
 	}, nil
 }

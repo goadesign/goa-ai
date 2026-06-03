@@ -5,6 +5,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -21,12 +22,45 @@ type (
 	//     its call).
 	//
 	// Policies are applied by the runtime before each planner invocation
-	// (PlanStart and PlanResume). Callers may log policy errors and fall back to
-	// the original messages when appropriate.
+	// (PlanStart and PlanResume). Policy errors mean the runtime cannot construct a
+	// contract-valid planner transcript and should fail the run.
 	HistoryPolicy func(ctx context.Context, msgs []*model.Message) ([]*model.Message, error)
 
 	// CompressOption configures the Compress history policy.
 	CompressOption func(*compressConfig)
+
+	// HistoryCompressionConfig describes the runtime defaults or overrides for a
+	// compression history policy.
+	//
+	// Compression has two independent decisions:
+	//   - CompressAtTurns and CompressAtMaxInputTokens decide when older history
+	//     should be summarized. The triggers are ORed.
+	//   - KeepMaxTurns and KeepMaxInputTokens decide which newest complete turns
+	//     remain exact after summarization. The budgets are ANDed when both are
+	//     set.
+	//
+	// Token counts are computed at runtime with the configured history model.
+	// KeepMaxInputTokens never truncates a turn; it keeps newest whole turns until
+	// adding the next older turn would exceed the budget.
+	HistoryCompressionConfig struct {
+		// CompressAtTurns triggers summarization once at least this many logical
+		// turns are present. Zero disables the turn-count trigger.
+		CompressAtTurns int
+
+		// CompressAtMaxInputTokens triggers summarization once the full
+		// provider-visible transcript exceeds this input-token count. Zero
+		// disables the token trigger.
+		CompressAtMaxInputTokens int
+
+		// KeepMaxTurns caps exact retention to this many newest logical turns.
+		// Zero disables the turn-count retention cap.
+		KeepMaxTurns int
+
+		// KeepMaxInputTokens caps exact retention to newest whole turns whose
+		// combined input-token count fits this budget. Zero disables the token
+		// retention cap.
+		KeepMaxInputTokens int
+	}
 
 	// compressConfig carries optional configuration for the Compress policy.
 	compressConfig struct {
@@ -36,6 +70,8 @@ type (
 		summaryRole model.ConversationRole
 		// modelClass selects the model family for summarization.
 		modelClass model.ModelClass
+		// tokenCounter overrides the client counter used for preflight counts.
+		tokenCounter model.TokenCounter
 	}
 
 	// turn represents a logical conversation turn: a user message and its
@@ -133,6 +169,16 @@ func WithModelClass(class model.ModelClass) CompressOption {
 	}
 }
 
+// WithTokenCounter sets the exact counter used for token-trigger and
+// token-retention budgets. This is intended for tests and custom provider
+// adapters; production model clients should normally satisfy model.TokenCounter
+// themselves.
+func WithTokenCounter(counter model.TokenCounter) CompressOption {
+	return func(c *compressConfig) {
+		c.tokenCounter = counter
+	}
+}
+
 // KeepRecentTurns returns a policy that keeps only the most recent N turns of
 // conversation history. A "turn" is defined as a User message followed by its
 // corresponding Assistant response (including any tool use/result exchanges).
@@ -187,31 +233,35 @@ func KeepRecentTurns(n int) HistoryPolicy {
 	}
 }
 
-// Compress returns a policy that summarizes older conversation history when
-// the turn count exceeds triggerAt. The policy uses the provided model client
-// to generate a summary of older turns, keeping the most recent keepRecent turns
-// intact.
-//
-// Hysteresis: Compression only triggers when len(turns) >= triggerAt. After
-// compression, history drops to keepRecent + 1 (summary), so it won't trigger
-// again until history regrows to triggerAt.
+// Compress returns a policy that summarizes older conversation history when cfg
+// says either the turn count or the provider-counted input-token budget has been
+// exceeded. After summarization it keeps a newest exact tail selected by whole
+// logical turns, bounded by KeepMaxTurns, KeepMaxInputTokens, or both.
 //
 // The policy always preserves:
-//   - All System messages at the start of the conversation
-//   - The most recent keepRecent turns in full fidelity
-//   - Tool use/result integrity in the kept turns
+//   - All System messages at the start of the conversation.
+//   - Complete turn boundaries; it never splits user, assistant, tool_use, and
+//     tool_result messages that belong to the same logical turn.
+//   - Tool use/result integrity in every kept exact turn.
 //
-// Example: Compress(30, 10, client) triggers at 30 turns, compresses to a
-// summary + 10 recent turns, then won't trigger again until 30 turns accumulate.
-func Compress(triggerAt, keepRecent int, client model.Client, opts ...CompressOption) HistoryPolicy {
-	cfg := defaultCompressConfig()
+// KeepMaxInputTokens is an exact-tail budget, not a truncation budget. If the
+// newest complete turn cannot fit, Compress returns an error because continuing
+// with a silently dropped latest turn would break the conversation contract.
+func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...CompressOption) HistoryPolicy {
+	runtimeCfg := defaultCompressConfig()
 	for _, opt := range opts {
-		opt(cfg)
+		opt(runtimeCfg)
 	}
 
 	return func(ctx context.Context, msgs []*model.Message) ([]*model.Message, error) {
-		if triggerAt <= 0 || keepRecent < 0 || client == nil || len(msgs) == 0 {
+		if client == nil {
+			return msgs, errors.New("runtime: history compression model is required")
+		}
+		if len(msgs) == 0 {
 			return msgs, nil
+		}
+		if err := validateHistoryCompressionConfig(policyCfg); err != nil {
+			return msgs, err
 		}
 
 		// Identify system messages at the start (context, not history)
@@ -232,19 +282,24 @@ func Compress(triggerAt, keepRecent int, client model.Client, opts ...CompressOp
 		history := msgs[systemEnd:]
 		turns := parseTurns(history)
 
-		// Check if compression should trigger
-		if len(turns) < triggerAt {
+		triggered, err := shouldCompress(ctx, policyCfg, runtimeCfg, client, msgs, len(turns))
+		if err != nil {
+			return msgs, err
+		}
+		if !triggered {
 			return msgs, nil
 		}
 
-		// Split into [toCompress] and [keepRecent]
-		splitIdx := len(turns) - keepRecent
-		if splitIdx <= 0 {
+		keepStart, err := exactTailStart(ctx, policyCfg, runtimeCfg, client, turns)
+		if err != nil {
+			return msgs, err
+		}
+		if keepStart <= 0 {
 			return msgs, nil
 		}
 
-		toCompress := turns[:splitIdx]
-		toKeep := turns[splitIdx:]
+		toCompress := turns[:keepStart]
+		toKeep := turns[keepStart:]
 
 		// Build conversation text for summarization
 		var sb strings.Builder
@@ -256,9 +311,9 @@ func Compress(triggerAt, keepRecent int, client model.Client, opts ...CompressOp
 		}
 
 		// Call the model to summarize
-		summaryPrompt := fmt.Sprintf(cfg.summaryPrompt, sb.String())
+		summaryPrompt := fmt.Sprintf(runtimeCfg.summaryPrompt, sb.String())
 		req := &model.Request{
-			ModelClass: cfg.modelClass,
+			ModelClass: runtimeCfg.modelClass,
 			Messages: []*model.Message{
 				{
 					Role:  model.ConversationRoleUser,
@@ -277,12 +332,12 @@ func Compress(triggerAt, keepRecent int, client model.Client, opts ...CompressOp
 		// Extract summary text
 		summaryText := extractResponseText(resp)
 		if summaryText == "" {
-			return msgs, nil
+			return msgs, errors.New("runtime: history compression model returned empty summary")
 		}
 
 		// Build summary message
 		summaryMsg := &model.Message{
-			Role: cfg.summaryRole,
+			Role: runtimeCfg.summaryRole,
 			Parts: []model.Part{
 				model.TextPart{Text: "[Conversation Summary]\n" + summaryText},
 			},
@@ -304,6 +359,130 @@ func Compress(triggerAt, keepRecent int, client model.Client, opts ...CompressOp
 
 		return result, nil
 	}
+}
+
+func validateHistoryCompressionConfig(cfg HistoryCompressionConfig) error {
+	return cfg.Validate()
+}
+
+// Validate verifies that the compression config has at least one trigger and one
+// exact-retention budget. Zero means "unset" for each individual field.
+func (cfg HistoryCompressionConfig) Validate() error {
+	if cfg.CompressAtTurns <= 0 && cfg.CompressAtMaxInputTokens <= 0 {
+		return errors.New("runtime: history compression requires CompressAtTurns or CompressAtMaxInputTokens")
+	}
+	if cfg.KeepMaxTurns <= 0 && cfg.KeepMaxInputTokens <= 0 {
+		return errors.New("runtime: history compression requires KeepMaxTurns or KeepMaxInputTokens")
+	}
+	if cfg.CompressAtTurns < 0 {
+		return errors.New("runtime: CompressAtTurns must be positive when set")
+	}
+	if cfg.CompressAtMaxInputTokens < 0 {
+		return errors.New("runtime: CompressAtMaxInputTokens must be positive when set")
+	}
+	if cfg.KeepMaxTurns < 0 {
+		return errors.New("runtime: KeepMaxTurns must be positive when set")
+	}
+	if cfg.KeepMaxInputTokens < 0 {
+		return errors.New("runtime: KeepMaxInputTokens must be positive when set")
+	}
+	if cfg.CompressAtTurns > 0 && cfg.KeepMaxTurns >= cfg.CompressAtTurns {
+		return errors.New("runtime: KeepMaxTurns must be less than CompressAtTurns")
+	}
+	return nil
+}
+
+func shouldCompress(
+	ctx context.Context,
+	cfg HistoryCompressionConfig,
+	runtimeCfg *compressConfig,
+	client model.Client,
+	msgs []*model.Message,
+	turnCount int,
+) (bool, error) {
+	if cfg.CompressAtTurns > 0 && turnCount >= cfg.CompressAtTurns {
+		return true, nil
+	}
+	if cfg.CompressAtMaxInputTokens <= 0 {
+		return false, nil
+	}
+	count, err := countMessages(ctx, runtimeCfg, client, msgs)
+	if err != nil {
+		return false, err
+	}
+	return count.InputTokens > cfg.CompressAtMaxInputTokens, nil
+}
+
+func exactTailStart(
+	ctx context.Context,
+	cfg HistoryCompressionConfig,
+	runtimeCfg *compressConfig,
+	client model.Client,
+	turns []turn,
+) (int, error) {
+	if len(turns) == 0 {
+		return 0, nil
+	}
+	keepStart := len(turns)
+	for i := len(turns) - 1; i >= 0; i -= 1 {
+		if cfg.KeepMaxTurns > 0 && len(turns)-i > cfg.KeepMaxTurns {
+			break
+		}
+		candidate := flattenTurns(turns[i:])
+		if cfg.KeepMaxInputTokens > 0 {
+			count, err := countMessages(ctx, runtimeCfg, client, candidate)
+			if err != nil {
+				return 0, err
+			}
+			if count.InputTokens > cfg.KeepMaxInputTokens {
+				if keepStart == len(turns) {
+					return 0, fmt.Errorf("runtime: newest history turn exceeds KeepMaxInputTokens (%d > %d)", count.InputTokens, cfg.KeepMaxInputTokens)
+				}
+				break
+			}
+		}
+		keepStart = i
+	}
+	return keepStart, nil
+}
+
+func countMessages(
+	ctx context.Context,
+	cfg *compressConfig,
+	client model.Client,
+	msgs []*model.Message,
+) (model.TokenCount, error) {
+	counter := cfg.tokenCounter
+	if counter == nil {
+		var ok bool
+		counter, ok = client.(model.TokenCounter)
+		if !ok {
+			return model.TokenCount{}, errors.New("runtime: history compression token counter is required for token budgets")
+		}
+	}
+	count, err := counter.CountTokens(ctx, &model.Request{
+		ModelClass: cfg.modelClass,
+		Messages:   msgs,
+	})
+	if err != nil {
+		return model.TokenCount{}, err
+	}
+	if !count.Exact {
+		return model.TokenCount{}, errors.New("runtime: history compression requires exact token counts")
+	}
+	return count, nil
+}
+
+func flattenTurns(turns []turn) []*model.Message {
+	total := 0
+	for _, t := range turns {
+		total += len(t.messages)
+	}
+	msgs := make([]*model.Message, 0, total)
+	for _, t := range turns {
+		msgs = append(msgs, t.messages...)
+	}
+	return msgs
 }
 
 // parseTurns groups messages into logical turns. A turn starts with a User

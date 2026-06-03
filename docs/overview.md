@@ -250,8 +250,11 @@ var _ = Service("orchestrator", func() {
 			DefaultCaps(MaxToolCalls(2), MaxConsecutiveFailedToolCalls(1))
 			TimeBudget("15s")
 			History(func() {
-				// For long sessions, summarize older turns and keep the last 10.
-				Compress(30, 10)
+				// For long sessions, summarize older turns and keep a bounded
+				// exact tail of newest complete turns.
+				CompressAtMaxInputTokens(120_000)
+				KeepMaxInputTokens(40_000)
+				KeepMaxTurns(10)
 			})
 		})
 	})
@@ -315,7 +318,7 @@ func main() {
 
 	if err := chat.RegisterChatAgent(context.Background(), rt, chat.ChatAgentConfig{
 		Planner:      &StubPlanner{},
-		HistoryModel: myHistoryModelClient, // required when using Compress history
+		HistoryModel: myHistoryModelClient, // counts tokens and writes summaries
 	}); err != nil {
 		panic(err)
 	}
@@ -512,7 +515,10 @@ the toolsets with the runtime.
 |----------|---------|
 | `History(func())` | Configure conversation history management |
 | `KeepRecentTurns(n)` | Retain only the most recent N turns |
-| `Compress(triggerAt, keepRecent)` | Summarize older turns when threshold reached |
+| `CompressAtTurns(n)` | Summarize older turns when the turn threshold is reached |
+| `CompressAtMaxInputTokens(n)` | Summarize older turns when runtime input-token count exceeds the threshold |
+| `KeepMaxTurns(n)` | Keep at most N newest complete turns exact after summarization |
+| `KeepMaxInputTokens(n)` | Keep newest complete turns whose runtime token count fits the budget |
 
 ### Prompt Caching
 

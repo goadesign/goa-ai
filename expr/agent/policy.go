@@ -68,12 +68,18 @@ type (
 		// KeepRecent is the number of recent turns to retain when
 		// ModeKeepRecent is selected.
 		KeepRecent int
-		// TriggerAt is the number of turns that must accumulate before
-		// compression triggers when ModeCompress is selected.
-		TriggerAt int
-		// CompressKeepRecent is the number of recent turns to retain in full
-		// fidelity when ModeCompress is selected.
-		CompressKeepRecent int
+		// CompressAtTurns is the optional logical-turn threshold that triggers
+		// summarization when ModeCompress is selected.
+		CompressAtTurns int
+		// CompressAtMaxInputTokens is the optional runtime-counted input-token
+		// threshold that triggers summarization when ModeCompress is selected.
+		CompressAtMaxInputTokens int
+		// KeepMaxTurns is the optional maximum number of newest logical turns to
+		// keep exact after summarizing older history.
+		KeepMaxTurns int
+		// KeepMaxInputTokens is the optional runtime-counted input-token budget
+		// for selecting newest whole turns to keep exact after summarization.
+		KeepMaxInputTokens int
 	}
 
 	// CacheExpr captures the design-time configuration for prompt caching
@@ -131,14 +137,26 @@ func (r *RunPolicyExpr) Validate() error {
 				verr.Add(r.History, "KeepRecentTurns requires a positive turn count")
 			}
 		case HistoryModeCompress:
-			if r.History.TriggerAt <= 0 {
-				verr.Add(r.History, "Compress requires TriggerAt > 0")
+			if r.History.CompressAtTurns <= 0 && r.History.CompressAtMaxInputTokens <= 0 {
+				verr.Add(r.History, "compression requires CompressAtTurns or CompressAtMaxInputTokens")
 			}
-			if r.History.CompressKeepRecent < 0 {
-				verr.Add(r.History, "Compress requires keepRecent >= 0")
+			if r.History.KeepMaxTurns <= 0 && r.History.KeepMaxInputTokens <= 0 {
+				verr.Add(r.History, "compression requires KeepMaxTurns or KeepMaxInputTokens")
 			}
-			if r.History.CompressKeepRecent >= r.History.TriggerAt {
-				verr.Add(r.History, "Compress keepRecent must be less than TriggerAt")
+			if r.History.CompressAtTurns < 0 {
+				verr.Add(r.History, "CompressAtTurns must be positive when set")
+			}
+			if r.History.CompressAtMaxInputTokens < 0 {
+				verr.Add(r.History, "CompressAtMaxInputTokens must be positive when set")
+			}
+			if r.History.KeepMaxTurns < 0 {
+				verr.Add(r.History, "KeepMaxTurns must be positive when set")
+			}
+			if r.History.KeepMaxInputTokens < 0 {
+				verr.Add(r.History, "KeepMaxInputTokens must be positive when set")
+			}
+			if r.History.CompressAtTurns > 0 && r.History.KeepMaxTurns >= r.History.CompressAtTurns {
+				verr.Add(r.History, "KeepMaxTurns must be less than CompressAtTurns")
 			}
 		default:
 			verr.Add(r.History, "unknown history mode %q", r.History.Mode)

@@ -41,6 +41,7 @@ const (
 type RuntimeClient interface {
 	Converse(ctx context.Context, params *bedrockruntime.ConverseInput, optFns ...func(*bedrockruntime.Options)) (*bedrockruntime.ConverseOutput, error)
 	ConverseStream(ctx context.Context, params *bedrockruntime.ConverseStreamInput, optFns ...func(*bedrockruntime.Options)) (*bedrockruntime.ConverseStreamOutput, error)
+	CountTokens(ctx context.Context, params *bedrockruntime.CountTokensInput, optFns ...func(*bedrockruntime.Options)) (*bedrockruntime.CountTokensOutput, error)
 }
 
 // StreamOutput is the subset of the AWS ConverseStream output type required by
@@ -162,6 +163,29 @@ func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Respo
 		return nil, wrapBedrockError("converse", err)
 	}
 	return translateResponse(output, parts.toolNameProvToCanonical, parts.modelID, parts.modelClass)
+}
+
+// CountTokens asks Bedrock to count the exact input tokens for req using the
+// same Converse request preparation path as Complete. The returned count matches
+// Bedrock billing for the same model/request shape.
+func (c *Client) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
+	parts, err := c.prepareRequest(ctx, req)
+	if err != nil {
+		return model.TokenCount{}, err
+	}
+	output, err := c.runtime.CountTokens(ctx, c.buildCountTokensInput(parts, req))
+	if err != nil {
+		return model.TokenCount{}, wrapBedrockError("count_tokens", err)
+	}
+	if output.InputTokens == nil {
+		return model.TokenCount{}, errors.New("bedrock: count_tokens response missing input tokens")
+	}
+	return model.TokenCount{
+		Model:       parts.modelID,
+		ModelClass:  parts.modelClass,
+		InputTokens: int(*output.InputTokens),
+		Exact:       true,
+	}, nil
 }
 
 // Stream invokes the Bedrock ConverseStream API and adapts incremental events
@@ -307,6 +331,24 @@ func (c *Client) buildConverseInput(parts *requestParts, req *model.Request) *be
 		input.AdditionalModelRequestFields = document.NewLazyDocument(&fields)
 	}
 	return input
+}
+
+func (c *Client) buildCountTokensInput(parts *requestParts, req *model.Request) *bedrockruntime.CountTokensInput {
+	fields := additionalModelFieldsForRequest(parts.additionalModelFields, req)
+	converse := brtypes.ConverseTokensRequest{
+		Messages: parts.messages,
+		System:   parts.system,
+	}
+	if parts.toolConfig != nil && !usesProviderNativeTools(fields) {
+		converse.ToolConfig = parts.toolConfig
+	}
+	if len(fields) > 0 {
+		converse.AdditionalModelRequestFields = document.NewLazyDocument(&fields)
+	}
+	return &bedrockruntime.CountTokensInput{
+		ModelId: aws.String(parts.modelID),
+		Input:   &brtypes.CountTokensInputMemberConverse{Value: converse},
+	}
 }
 
 func (c *Client) buildConverseStreamInput(parts *requestParts, req *model.Request, thinking thinkingConfig) *bedrockruntime.ConverseStreamInput {

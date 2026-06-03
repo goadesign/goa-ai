@@ -387,6 +387,12 @@ Agent("operator", "Production operations agent", func() {
 })
 ```
 
+History can also use model-assisted compression: declare
+`CompressAtMaxInputTokens` or `CompressAtTurns` triggers plus `KeepMaxInputTokens`
+or `KeepMaxTurns` exact-retention budgets inside `History`. Token budgets are
+counted at runtime by a history model that implements `model.TokenCounter` with
+exact counts and keep only whole recent turns, never truncated tool exchanges.
+
 Per-run options can further restrict execution:
 
 ```go
