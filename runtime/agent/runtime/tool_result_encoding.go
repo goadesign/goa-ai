@@ -21,12 +21,12 @@ import (
 )
 
 // EncodeCanonicalToolResult encodes a typed tool result into the canonical JSON
-// contract before model-facing continuation references are projected.
+// contract exposed by Goa-AI.
 //
 // It uses the generated result codec from spec as the sole semantic encoder,
-// then overlays runtime-owned bounded-result metadata from bounds. Provider
-// cursors in bounds remain provider-owned here; runtime execution paths project
-// model-facing continuation references when a tool_call_id is available.
+// then overlays any runtime-owned bounded-result metadata from bounds. Callers
+// that create workflow-safe envelopes outside ExecuteToolActivity should use
+// this helper instead of duplicating codec and bounded-result projection logic.
 func EncodeCanonicalToolResult(spec tools.ToolSpec, value any, bounds *agent.Bounds) (rawjson.Message, error) {
 	if value == nil {
 		return nil, nil

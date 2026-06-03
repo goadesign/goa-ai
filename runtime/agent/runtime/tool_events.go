@@ -33,32 +33,23 @@ func (r *Runtime) encodeToolEvents(ctx context.Context, events []*planner.ToolRe
 	}
 	out := make([]*api.ToolEvent, 0, len(events))
 	for _, ev := range events {
-		_, ok := r.toolSpec(ev.Name)
-		if !ok {
-			return nil, fmt.Errorf("encode tool result for %s: no tool spec found", ev.Name)
-		}
-		visibleBounds, err := r.modelVisibleBoundsForTool(ev.Name, ev.ToolCallID, ev.Bounds)
-		if err != nil {
-			return nil, err
-		}
-		result, err := r.marshalToolValue(ctx, ev.Name, ev.Result, visibleBounds)
+		result, err := r.marshalToolValue(ctx, ev.Name, ev.Result, ev.Bounds)
 		if err != nil {
 			return nil, fmt.Errorf("encode tool result for %s: %w", ev.Name, err)
 		}
 		out = append(out, &api.ToolEvent{
-			Name:           ev.Name,
-			Result:         rawjson.Message(result),
-			ResultBytes:    len(result),
-			ResultOmitted:  false,
-			ServerData:     append(rawjson.Message(nil), ev.ServerData...),
-			Bounds:         visibleBounds,
-			ProviderBounds: cloneBounds(ev.Bounds),
-			Error:          ev.Error,
-			RetryHint:      ev.RetryHint,
-			Telemetry:      ev.Telemetry,
-			ToolCallID:     ev.ToolCallID,
-			ChildrenCount:  ev.ChildrenCount,
-			RunLink:        ev.RunLink,
+			Name:          ev.Name,
+			Result:        rawjson.Message(result),
+			ResultBytes:   len(result),
+			ResultOmitted: false,
+			ServerData:    append(rawjson.Message(nil), ev.ServerData...),
+			Bounds:        ev.Bounds,
+			Error:         ev.Error,
+			RetryHint:     ev.RetryHint,
+			Telemetry:     ev.Telemetry,
+			ToolCallID:    ev.ToolCallID,
+			ChildrenCount: ev.ChildrenCount,
+			RunLink:       ev.RunLink,
 		})
 	}
 	return out, nil
@@ -95,14 +86,6 @@ func (r *Runtime) buildPlannerToolOutputRecords(ctx context.Context, records []s
 	for _, record := range records {
 		call := record.call
 		result := record.result
-		_, ok := r.toolSpec(call.Name)
-		if !ok {
-			return nil, fmt.Errorf("build planner tool output result for %s: no tool spec found", call.Name)
-		}
-		visibleBounds, err := r.modelVisibleBoundsForTool(call.Name, call.ToolCallID, result.Bounds)
-		if err != nil {
-			return nil, err
-		}
 		output := &planner.ToolOutput{
 			Name:                call.Name,
 			ToolCallID:          call.ToolCallID,
@@ -111,14 +94,13 @@ func (r *Runtime) buildPlannerToolOutputRecords(ctx context.Context, records []s
 			ResultOmitted:       result.ResultOmitted,
 			ResultOmittedReason: result.ResultOmittedReason,
 			ServerData:          append(rawjson.Message(nil), result.ServerData...),
-			Bounds:              visibleBounds,
-			ProviderBounds:      cloneBounds(result.Bounds),
+			Bounds:              result.Bounds,
 			Error:               result.Error,
 			RetryHint:           result.RetryHint,
 			Telemetry:           result.Telemetry,
 		}
 		if !result.ResultOmitted {
-			resultJSON, err := r.marshalToolValue(ctx, call.Name, result.Result, visibleBounds)
+			resultJSON, err := r.marshalToolValue(ctx, call.Name, result.Result, result.Bounds)
 			if err != nil {
 				return nil, fmt.Errorf("build planner tool output result for %s: %w", call.Name, err)
 			}

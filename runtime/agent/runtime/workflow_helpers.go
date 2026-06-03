@@ -290,12 +290,8 @@ func (r *Runtime) toolResultContent(call *planner.ToolRequest, tr *planner.ToolR
 		return nil, nil
 	}
 	var resultJSON rawjson.Message
-	bounds, err := r.modelVisibleBoundsForTool(tr.Name, tr.ToolCallID, tr.Bounds)
-	if err != nil {
-		return nil, err
-	}
 	if tr.Result != nil {
-		raw, err := r.marshalToolValue(context.Background(), tr.Name, tr.Result, bounds)
+		raw, err := r.marshalToolValue(context.Background(), tr.Name, tr.Result, tr.Bounds)
 		if err != nil {
 			return nil, fmt.Errorf("runtime: encode tool_result for %s: %w", tr.Name, err)
 		}
@@ -307,8 +303,8 @@ func (r *Runtime) toolResultContent(call *planner.ToolRequest, tr *planner.ToolR
 	}
 	return transcript.ProjectToolResultContent(
 		resultJSON,
-		bounds,
-		formatResultPreviewForCall(context.Background(), r, call, tr.Result, bounds),
+		tr.Bounds,
+		formatResultPreviewForCall(context.Background(), r, call, tr.Result, tr.Bounds),
 		errorMessage,
 	)
 }

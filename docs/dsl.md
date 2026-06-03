@@ -273,18 +273,15 @@ Canonical model-visible fields:
 - `truncated` (**required**, Boolean)
 - `total` (optional, Int)
 - `refinement_hint` (optional, String)
-- `next_cursor` (optional, String) when declared via `NextCursor(...)`; this is
-  a runtime continuation reference, not the provider cursor itself.
+- `next_cursor` (optional, String) when declared via `NextCursor(...)`
 
 Single source of truth:
 
 - `BoundedResult(...)` records the contract in generated `tools.ToolSpec.Bounds`.
 - Codegen projects the canonical bounded fields into the generated JSON result schema.
 - Successful bounded tool executions must set `planner.ToolResult.Bounds`.
-- The runtime projects those bounds back into encoded tool-result JSON,
-  result-hint template data, hooks, and stream events. For cursor-paged results,
-  model-visible JSON carries a continuation reference while the provider cursor
-  remains private runtime metadata.
+- The runtime projects those bounds back into encoded tool-result JSON, result-hint
+template data, hooks, and stream events.
 - Runtime enforcement is strict across all ingress paths: if `truncated=true`,
 bounds must include either `next_cursor` or `refinement_hint`.
 
@@ -309,13 +306,10 @@ Cursor-paged tools identify two canonical paging fields:
 
 Contract:
 
-- Providers return the next page cursor through
-  `planner.ToolResult.Bounds.NextCursor`; this raw cursor is provider-owned.
-- Model-visible results expose the producing tool result as the `next_cursor`
-  continuation reference.
-- To page, call the same tool with the payload cursor field set to that
-  continuation reference. The runtime reuses the prior tool input and injects
-  the provider cursor privately.
+- Treat cursors as **opaque**: do not parse, modify, or synthesize them.
+- When paging, keep **all other arguments unchanged**; only set the payload cursor field.
+- Paged tools should also be `BoundedResult(...)` tools and return the next cursor through
+`planner.ToolResult.Bounds.NextCursor`.
 
 ### Tool Confirmation (Human-in-the-Loop)
 

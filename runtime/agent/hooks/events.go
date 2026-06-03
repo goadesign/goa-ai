@@ -254,14 +254,11 @@ type (
 		// downstream subscribers do not need to re-render templates from
 		// JSON-decoded maps.
 		ResultPreview string
-		// Bounds, when non-nil, describes model-visible bounded result metadata.
-		// For cursor-paged tools, NextCursor is a runtime continuation reference,
-		// not the provider cursor.
+		// Bounds, when non-nil, describes how the tool result has been bounded
+		// relative to the full underlying data set. It is supplied by tool
+		// implementations and surfaced for observability; the runtime does not
+		// modify it.
 		Bounds *agent.Bounds
-		// ProviderBounds carries private provider-owned bounded metadata used by the
-		// runtime to hydrate continuation calls. Subscribers must not send it to
-		// model providers.
-		ProviderBounds *agent.Bounds
 		// Duration is the wall-clock execution time for the tool activity.
 		Duration time.Duration
 		// Telemetry holds structured observability metadata (tokens, model, retries).
@@ -925,7 +922,7 @@ func NewToolCallScheduledEvent(runID string, agentID agent.Ident, sessionID stri
 // result JSON and server-side sidecars are stored exactly once here; duration is
 // the wall-clock execution time; telemetry carries structured observability
 // metadata (nil if not collected).
-func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID, parentToolCallID string, resultJSON rawjson.Message, resultBytes int, resultOmitted bool, resultOmittedReason string, serverData rawjson.Message, resultPreview string, bounds, providerBounds *agent.Bounds, duration time.Duration, telemetry *telemetry.ToolTelemetry, retryHint *planner.RetryHint, err *toolerrors.ToolError) *ToolResultReceivedEvent {
+func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID, parentToolCallID string, resultJSON rawjson.Message, resultBytes int, resultOmitted bool, resultOmittedReason string, serverData rawjson.Message, resultPreview string, bounds *agent.Bounds, duration time.Duration, telemetry *telemetry.ToolTelemetry, retryHint *planner.RetryHint, err *toolerrors.ToolError) *ToolResultReceivedEvent {
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
 	return &ToolResultReceivedEvent{
@@ -940,7 +937,6 @@ func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID str
 		ServerData:          serverData,
 		ResultPreview:       resultPreview,
 		Bounds:              bounds,
-		ProviderBounds:      providerBounds,
 		Duration:            duration,
 		Telemetry:           telemetry,
 		RetryHint:           retryHint,
