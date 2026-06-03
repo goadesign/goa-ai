@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 type historyCountingClient struct {
@@ -64,7 +65,7 @@ func TestCompressPropagatesTokenCountError(t *testing.T) {
 	out, err := policy(context.Background(), []*model.Message{
 		userMsg("question"),
 		assistantTextMsg("answer"),
-	})
+	}, nil)
 	require.ErrorContains(t, err, "count failed")
 	require.Len(t, out, 2)
 }
@@ -81,7 +82,7 @@ func TestCompressRequiresTokenCounterForTokenBudgets(t *testing.T) {
 	out, err := policy(context.Background(), []*model.Message{
 		userMsg("question"),
 		assistantTextMsg("answer"),
-	})
+	}, nil)
 	require.ErrorContains(t, err, "history compression token counter is required")
 	require.Len(t, out, 2)
 }
@@ -96,7 +97,7 @@ func TestCompressRequiresExactTokenCounts(t *testing.T) {
 	out, err := policy(context.Background(), []*model.Message{
 		userMsg("question"),
 		assistantTextMsg("answer"),
-	})
+	}, nil)
 	require.ErrorContains(t, err, "history compression requires exact token counts")
 	require.Len(t, out, 2)
 }
@@ -109,7 +110,7 @@ func TestCompressRequiresHistoryModel(t *testing.T) {
 	out, err := policy(context.Background(), []*model.Message{
 		userMsg("question"),
 		assistantTextMsg("answer"),
-	})
+	}, nil)
 	require.ErrorContains(t, err, "history compression model is required")
 	assert.Equal(t, []*model.Message{
 		userMsg("question"),
@@ -130,7 +131,7 @@ func TestCompressRejectsEmptySummary(t *testing.T) {
 		assistantTextMsg("answer 2"),
 	}
 
-	out, err := policy(context.Background(), msgs)
+	out, err := policy(context.Background(), msgs, nil)
 	require.ErrorContains(t, err, "history compression model returned empty summary")
 	assert.Same(t, msgs[0], out[0])
 }
@@ -153,12 +154,21 @@ func TestCompress_TokenBudgetTriggersAndKeepsWholeRecentTurns(t *testing.T) {
 		assistantTextMsg("answer 3"),
 	}
 
-	out, err := policy(context.Background(), msgs)
+	toolDefs := []*model.ToolDefinition{
+		{
+			Name:        "lookup",
+			Description: "Looks up cursor-backed data.",
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object","properties":{"id":{"type":"string"}}}`)),
+		},
+	}
+
+	out, err := policy(context.Background(), msgs, toolDefs)
 	require.NoError(t, err)
 
 	require.True(t, client.tokenCounted)
 	require.NotNil(t, client.counted)
 	assert.Equal(t, model.ModelClassSmall, client.counted.ModelClass)
+	assert.Equal(t, toolDefs, client.counted.Tools)
 	require.NotNil(t, client.summarized)
 	require.Len(t, client.summarized.Messages, 1)
 	assert.Contains(t, textPart(t, client.summarized.Messages[0]), "question 1")

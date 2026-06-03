@@ -345,11 +345,11 @@ func toPolicyRetryHint(hint *planner.RetryHint) *policy.RetryHint {
 // applyHistoryPolicy applies the agent's history policy to the given messages.
 // Policy failures are planning failures because the runtime cannot construct the
 // transcript promised by the agent registration.
-func (r *Runtime) applyHistoryPolicy(ctx context.Context, reg *AgentRegistration, msgs []*model.Message) ([]*model.Message, error) {
+func (r *Runtime) applyHistoryPolicy(ctx context.Context, reg *AgentRegistration, msgs []*model.Message, tools []*model.ToolDefinition) ([]*model.Message, error) {
 	if reg.Policy.History == nil || len(msgs) == 0 {
 		return msgs, nil
 	}
-	out, err := reg.Policy.History(ctx, msgs)
+	out, err := reg.Policy.History(ctx, msgs, tools)
 	if err != nil {
 		return nil, fmt.Errorf("history policy for agent %s: %w", reg.ID, err)
 	}

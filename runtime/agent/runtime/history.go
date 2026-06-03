@@ -24,7 +24,7 @@ type (
 	// Policies are applied by the runtime before each planner invocation
 	// (PlanStart and PlanResume). Policy errors mean the runtime cannot construct a
 	// contract-valid planner transcript and should fail the run.
-	HistoryPolicy func(ctx context.Context, msgs []*model.Message) ([]*model.Message, error)
+	HistoryPolicy func(ctx context.Context, msgs []*model.Message, tools []*model.ToolDefinition) ([]*model.Message, error)
 
 	// CompressOption configures the Compress history policy.
 	CompressOption func(*compressConfig)
@@ -142,7 +142,7 @@ Here's an example of how your output should be structured:
 7. Optional Next Step:
 [Next step to take, if applicable]
 
-Please provide your summary based on the conversation so far, following this structure and ensuring precision and thoroughness in your response.
+Provide your summary based on the conversation so far, following this structure and ensuring precision and thoroughness in your response.
 
 CONVERSATION:
 %s`
@@ -190,7 +190,7 @@ func WithTokenCounter(counter model.TokenCounter) CompressOption {
 //
 // Example: KeepRecentTurns(5) keeps the last 5 user-assistant exchanges.
 func KeepRecentTurns(n int) HistoryPolicy {
-	return func(_ context.Context, msgs []*model.Message) ([]*model.Message, error) {
+	return func(_ context.Context, msgs []*model.Message, _ []*model.ToolDefinition) ([]*model.Message, error) {
 		if n <= 0 || len(msgs) == 0 {
 			return msgs, nil
 		}
@@ -253,7 +253,7 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 		opt(runtimeCfg)
 	}
 
-	return func(ctx context.Context, msgs []*model.Message) ([]*model.Message, error) {
+	return func(ctx context.Context, msgs []*model.Message, tools []*model.ToolDefinition) ([]*model.Message, error) {
 		if client == nil {
 			return msgs, errors.New("runtime: history compression model is required")
 		}
@@ -282,7 +282,7 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 		history := msgs[systemEnd:]
 		turns := parseTurns(history)
 
-		triggered, err := shouldCompress(ctx, policyCfg, runtimeCfg, client, msgs, len(turns))
+		triggered, err := shouldCompress(ctx, policyCfg, runtimeCfg, client, msgs, tools, len(turns))
 		if err != nil {
 			return msgs, err
 		}
@@ -290,7 +290,7 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 			return msgs, nil
 		}
 
-		keepStart, err := exactTailStart(ctx, policyCfg, runtimeCfg, client, turns)
+		keepStart, err := exactTailStart(ctx, policyCfg, runtimeCfg, client, tools, turns)
 		if err != nil {
 			return msgs, err
 		}
@@ -398,6 +398,7 @@ func shouldCompress(
 	runtimeCfg *compressConfig,
 	client model.Client,
 	msgs []*model.Message,
+	tools []*model.ToolDefinition,
 	turnCount int,
 ) (bool, error) {
 	if cfg.CompressAtTurns > 0 && turnCount >= cfg.CompressAtTurns {
@@ -406,7 +407,7 @@ func shouldCompress(
 	if cfg.CompressAtMaxInputTokens <= 0 {
 		return false, nil
 	}
-	count, err := countMessages(ctx, runtimeCfg, client, msgs)
+	count, err := countMessages(ctx, runtimeCfg, client, msgs, tools)
 	if err != nil {
 		return false, err
 	}
@@ -418,6 +419,7 @@ func exactTailStart(
 	cfg HistoryCompressionConfig,
 	runtimeCfg *compressConfig,
 	client model.Client,
+	tools []*model.ToolDefinition,
 	turns []turn,
 ) (int, error) {
 	if len(turns) == 0 {
@@ -430,7 +432,7 @@ func exactTailStart(
 		}
 		candidate := flattenTurns(turns[i:])
 		if cfg.KeepMaxInputTokens > 0 {
-			count, err := countMessages(ctx, runtimeCfg, client, candidate)
+			count, err := countMessages(ctx, runtimeCfg, client, candidate, tools)
 			if err != nil {
 				return 0, err
 			}
@@ -451,6 +453,7 @@ func countMessages(
 	cfg *compressConfig,
 	client model.Client,
 	msgs []*model.Message,
+	tools []*model.ToolDefinition,
 ) (model.TokenCount, error) {
 	counter := cfg.tokenCounter
 	if counter == nil {
@@ -463,6 +466,7 @@ func countMessages(
 	count, err := counter.CountTokens(ctx, &model.Request{
 		ModelClass: cfg.modelClass,
 		Messages:   msgs,
+		Tools:      tools,
 	})
 	if err != nil {
 		return model.TokenCount{}, err
