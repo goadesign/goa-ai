@@ -71,6 +71,9 @@ func (r *Runtime) hydrateContinuationCalls(calls []planner.ToolRequest, history 
 // hydrateContinuationCall resolves one cursor reference against prior tool
 // outputs and reconstructs the exact provider payload for the next page.
 func (r *Runtime) hydrateContinuationCall(call planner.ToolRequest, history []*planner.ToolOutput) (planner.ToolRequest, error) {
+	if call.ProviderCursorPayload {
+		return call, nil
+	}
 	spec, ok := r.toolSpec(call.Name)
 	if !ok || spec.Bounds == nil || spec.Bounds.Paging == nil || spec.Bounds.Paging.CursorField == "" {
 		return call, nil

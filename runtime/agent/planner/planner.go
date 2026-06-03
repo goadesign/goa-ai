@@ -183,6 +183,14 @@ type ToolRequest struct {
 	// Payload is the canonical JSON payload for the tool call.
 	Payload rawjson.Message
 
+	// ProviderCursorPayload reports that any cursor field in Payload already
+	// contains a provider-owned cursor constructed by trusted planner code.
+	//
+	// Runtime continuation hydration must only rewrite model-authored
+	// continuation references. Provider planners set this for deterministic child
+	// replay calls whose payloads are not model-authored.
+	ProviderCursorPayload bool
+
 	// AgentID is the identifier of the agent that issued this tool request.
 	AgentID agent.Ident
 
