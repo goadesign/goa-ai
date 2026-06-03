@@ -95,7 +95,7 @@
 //   - [ResultHintTemplate] configures result display hint template
 //   - [BoundedResult] marks result as a bounded view over larger data
 //   - [Cursor] declares which payload field carries a paging cursor (optional)
-//   - [NextCursor] declares which result field carries the next-page continuation reference (optional)
+//   - [NextCursor] declares which result field carries the next-page cursor (optional)
 //   - [Confirmation] declares that a tool must be confirmed out-of-band before execution
 //
 // Policy Functions:

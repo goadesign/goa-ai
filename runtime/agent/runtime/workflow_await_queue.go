@@ -37,7 +37,6 @@ func (r *Runtime) waitAwaitConfirmation(
 	toolOpts engine.ActivityOptions,
 	expectedChildren int,
 	parentTracker *childTracker,
-	history []*planner.ToolOutput,
 	turnID string,
 	ctrl *interrupt.Controller,
 	deadlines *runDeadlines,
@@ -115,7 +114,6 @@ func (r *Runtime) waitAwaitConfirmation(
 				nil,
 				formatResultPreviewForCall(ctx, r, &it.call, deniedResult, nil),
 				nil,
-				nil,
 				0,
 				nil,
 				nil,
@@ -142,11 +140,7 @@ func (r *Runtime) waitAwaitConfirmation(
 		call.ToolCallID = generateDeterministicToolCallID(base.RunContext.RunID, call.TurnID, base.RunContext.Attempt, call.Name, 0)
 	}
 
-	hydrated, err := r.hydrateContinuationCalls([]planner.ToolRequest{call}, history)
-	if err != nil {
-		return nil, nil, false, err
-	}
-	grouped, timeouts := r.groupToolCallsByTimeout(hydrated, input, toolOpts.StartToCloseTimeout)
+	grouped, timeouts := r.groupToolCallsByTimeout([]planner.ToolRequest{call}, input, toolOpts.StartToCloseTimeout)
 	finishBy := time.Time{}
 	if !deadlines.Hard.IsZero() {
 		finishBy = deadlines.Hard.Add(-deadlines.finalizeReserve())
@@ -166,7 +160,7 @@ func (r *Runtime) waitAwaitConfirmation(
 	if err != nil {
 		return nil, nil, false, err
 	}
-	records, err := stepToolRecordsFromExecutions(hydrated, outcomes)
+	records, err := stepToolRecordsFromExecutions([]planner.ToolRequest{call}, outcomes)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -244,7 +238,7 @@ func (l *workflowLoop) handleAwaitQueue(
 	waitTimeout := time.Duration(0)
 
 	for _, it := range confirmations {
-		records, pauseItems, timedOut, err := r.waitAwaitConfirmation(ctx, wfCtx, l.reg, input, base, l.toolOpts, expectedChildren, l.parentTracker, st.ToolOutputs, turnID, ctrl, &l.deadlines, it)
+		records, pauseItems, timedOut, err := r.waitAwaitConfirmation(ctx, wfCtx, l.reg, input, base, l.toolOpts, expectedChildren, l.parentTracker, turnID, ctrl, &l.deadlines, it)
 		if err != nil {
 			return err
 		}
@@ -544,10 +538,6 @@ func (r *Runtime) consumeProvidedToolResultRecords(ctx context.Context, input *R
 			continue
 		}
 		call := record.call
-		bounds, err := r.modelVisibleBoundsForTool(tr.Name, tr.ToolCallID, tr.Bounds)
-		if err != nil {
-			return nil, err
-		}
 		if err := r.publishHook(
 			ctx,
 			hooks.NewToolResultReceivedEvent(
@@ -562,8 +552,7 @@ func (r *Runtime) consumeProvidedToolResultRecords(ctx context.Context, input *R
 				false,
 				"",
 				tr.ServerData,
-				formatResultPreviewForCall(ctx, r, &call, tr.Result, bounds),
-				bounds,
+				formatResultPreviewForCall(ctx, r, &call, tr.Result, tr.Bounds),
 				tr.Bounds,
 				0,
 				nil,

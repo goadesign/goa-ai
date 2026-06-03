@@ -7,8 +7,7 @@ import (
 )
 
 // Cursor declares which optional String field on the tool payload carries the
-// runtime continuation reference for cursor-based pagination. Cursor must be
-// used inside BoundedResult.
+// cursor for cursor-based pagination. Cursor must be used inside BoundedResult.
 func Cursor(field string) {
 	bounds, ok := eval.Current().(*agentsexpr.ToolBoundsExpr)
 	if !ok {
@@ -25,10 +24,10 @@ func Cursor(field string) {
 	bounds.Paging.CursorField = field
 }
 
-// NextCursor declares the canonical field name for the next-page continuation
-// reference in the bounded paging contract. Providers return the actual cursor
-// through planner.ToolResult.Bounds.NextCursor; runtimes project a continuation
-// reference into the model-visible result JSON using this field name. NextCursor
+// NextCursor declares the canonical field name for the next-page cursor in the
+// bounded paging contract. Providers return the actual cursor through
+// planner.ToolResult.Bounds.NextCursor; codegen and runtimes then project that
+// value into the model-visible result JSON using this field name. NextCursor
 // must be used inside BoundedResult.
 func NextCursor(field string) {
 	bounds, ok := eval.Current().(*agentsexpr.ToolBoundsExpr)

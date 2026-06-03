@@ -252,15 +252,9 @@ type (
 		// It is never sent to model providers.
 		ServerData rawjson.Message
 
-		// Bounds, when non-nil, describes the model-visible bounded result metadata.
-		// For cursor-paged tools, NextCursor is the runtime continuation reference,
-		// not the provider cursor.
+		// Bounds, when non-nil, describes how the result has been bounded relative
+		// to the full underlying data set (for example, list/window/graph caps).
 		Bounds *agent.Bounds
-
-		// ProviderBounds carries private provider-owned bounded metadata across
-		// workflow boundaries. It is used by the runtime to hydrate continuation
-		// calls and must not be sent to model providers.
-		ProviderBounds *agent.Bounds
 
 		// Error is the structured tool error when tool execution failed.
 		Error *planner.ToolError

@@ -36,8 +36,8 @@ Tool: {{ .ToolName }}
 Returned: {{ .Returned }}
 Total: {{ .Total }}
 Truncated: true{{ if .NextCursor }}
-Continuation reference: {{ .NextCursor }}
-To continue, call the same tool again and set {{ .CursorField }} to the continuation reference shown above. You may omit the other parameters; the runtime will reuse the prior tool input. Do not send the literal strings "next_cursor" or "<next_cursor>".{{ else if .RefinementHint }}
+Next cursor: {{ .NextCursor }}
+To continue, call the same tool again with the same parameters and set {{ .CursorField }} to the exact opaque cursor string shown above. Do not send the literal strings "next_cursor" or "<next_cursor>", and do not modify the cursor.{{ else if .RefinementHint }}
 Refinement hint: {{ .RefinementHint }}
 Do not claim completeness unless you page or explicitly state the answer is partial.{{ else }}
 Do not claim completeness unless you page or explicitly state the answer is partial.{{ end }}
@@ -100,7 +100,7 @@ func boundsReminder(tr *planner.ToolResult, cursorField string) string {
 
 	next := ""
 	if b.NextCursor != nil {
-		next = tr.ToolCallID
+		next = strings.TrimSpace(*b.NextCursor)
 	}
 	field := strings.TrimSpace(cursorField)
 	if field == "" {
