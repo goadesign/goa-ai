@@ -31,6 +31,13 @@ func TestIsAdaptiveThinkingModel(t *testing.T) {
 		{"opus-4-7 eu geo", "eu.anthropic.claude-opus-4-7", true},
 		{"opus-4-7 jp geo", "jp.anthropic.claude-opus-4-7", true},
 		{"opus-4-7 global", "global.anthropic.claude-opus-4-7", true},
+		{"opus-4-8 in-region", "anthropic.claude-opus-4-8", true},
+		{"opus-4-8 us geo", "us.anthropic.claude-opus-4-8", true},
+		{"opus-4-8 eu geo", "eu.anthropic.claude-opus-4-8", true},
+		{"opus-4-8 jp geo", "jp.anthropic.claude-opus-4-8", true},
+		{"opus-4-8 au geo", "au.anthropic.claude-opus-4-8", true},
+		{"opus-4-8 global", "global.anthropic.claude-opus-4-8", true},
+		{"future opus-4-9", "us.anthropic.claude-opus-4-9", true},
 		{"opus-4-1", "anthropic.claude-opus-4-1", false},
 		{"opus-4-5", "anthropic.claude-opus-4-5", false},
 		{"sonnet-4-5", "global.anthropic.claude-sonnet-4-5-20250929-v1:0", false},
@@ -46,61 +53,69 @@ func TestIsAdaptiveThinkingModel(t *testing.T) {
 	}
 }
 
-// When the configured high-reasoning model is Opus 4.7, the streaming input
+// When the configured high-reasoning model is Opus 4.7 or later, the streaming input
 // must carry thinking: {type: "adaptive", display: "summarized"} — never the
-// legacy type:"enabled" + budget_tokens payload that returns a 400 on 4.7 and
+// legacy type:"enabled" + budget_tokens payload that returns a 400 on 4.7+ and
 // never the implicit display default that omits visible reasoning text.
-func TestBuildConverseStreamInputOpus47UsesAdaptiveThinking(t *testing.T) {
-	client := &Client{
-		defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-		highModel:    "us.anthropic.claude-opus-4-7",
-		maxTok:       32,
-		think:        defaultThinkingBudget,
+func TestBuildConverseStreamInputOpus47AndLaterUsesAdaptiveThinking(t *testing.T) {
+	for _, highModel := range []string{
+		"us.anthropic.claude-opus-4-7",
+		"us.anthropic.claude-opus-4-8",
+		"us.anthropic.claude-opus-4-9",
+	} {
+		t.Run(highModel, func(t *testing.T) {
+			client := &Client{
+				defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+				highModel:    highModel,
+				maxTok:       32,
+				think:        defaultThinkingBudget,
+			}
+
+			req := &model.Request{
+				ModelClass: model.ModelClassHighReasoning,
+				Messages: []*model.Message{{
+					Role:  model.ConversationRoleUser,
+					Parts: []model.Part{model.TextPart{Text: "plan the refactor"}},
+				}},
+				Tools: []*model.ToolDefinition{{
+					Name:        "search",
+					Description: "search the workspace",
+					Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+				}},
+				Thinking: &model.ThinkingOptions{
+					Enable:       true,
+					Interleaved:  true,
+					BudgetTokens: 8192,
+				},
+			}
+
+			parts, err := client.prepareRequest(context.Background(), req)
+			require.NoError(t, err)
+
+			thinking := client.resolveThinking(req, parts)
+			require.True(t, thinking.enable, "thinking must be enabled")
+			require.True(t, thinking.adaptive, "Opus 4.7+ must use adaptive thinking")
+			require.Zero(t, thinking.budget, "adaptive mode must not carry a token budget")
+			require.False(t, thinking.interleaved, "adaptive mode must not set the interleaved beta header")
+
+			input := client.buildConverseStreamInput(parts, req, thinking)
+			require.NotNil(t, input.AdditionalModelRequestFields)
+
+			raw, err := input.AdditionalModelRequestFields.MarshalSmithyDocument()
+			require.NoError(t, err)
+			var fields map[string]any
+			require.NoError(t, json.Unmarshal(raw, &fields))
+
+			thinkingField, ok := fields["thinking"].(map[string]any)
+			require.True(t, ok, "expected thinking field to be a map, got %T", fields["thinking"])
+			assert.Equal(t, "adaptive", thinkingField["type"])
+			assert.Equal(t, "summarized", thinkingField["display"])
+			_, hasBudget := thinkingField["budget_tokens"]
+			assert.False(t, hasBudget, "adaptive thinking must not include budget_tokens")
+			_, hasBeta := fields["anthropic_beta"]
+			assert.False(t, hasBeta, "adaptive thinking must not include the interleaved beta header")
+		})
 	}
-
-	req := &model.Request{
-		ModelClass: model.ModelClassHighReasoning,
-		Messages: []*model.Message{{
-			Role:  model.ConversationRoleUser,
-			Parts: []model.Part{model.TextPart{Text: "plan the refactor"}},
-		}},
-		Tools: []*model.ToolDefinition{{
-			Name:        "search",
-			Description: "search the workspace",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
-		}},
-		Thinking: &model.ThinkingOptions{
-			Enable:       true,
-			Interleaved:  true,
-			BudgetTokens: 8192,
-		},
-	}
-
-	parts, err := client.prepareRequest(context.Background(), req)
-	require.NoError(t, err)
-
-	thinking := client.resolveThinking(req, parts)
-	require.True(t, thinking.enable, "thinking must be enabled")
-	require.True(t, thinking.adaptive, "Opus 4.7 must use adaptive thinking")
-	require.Zero(t, thinking.budget, "adaptive mode must not carry a token budget")
-	require.False(t, thinking.interleaved, "adaptive mode must not set the interleaved beta header")
-
-	input := client.buildConverseStreamInput(parts, req, thinking)
-	require.NotNil(t, input.AdditionalModelRequestFields)
-
-	raw, err := input.AdditionalModelRequestFields.MarshalSmithyDocument()
-	require.NoError(t, err)
-	var fields map[string]any
-	require.NoError(t, json.Unmarshal(raw, &fields))
-
-	thinkingField, ok := fields["thinking"].(map[string]any)
-	require.True(t, ok, "expected thinking field to be a map, got %T", fields["thinking"])
-	assert.Equal(t, "adaptive", thinkingField["type"])
-	assert.Equal(t, "summarized", thinkingField["display"])
-	_, hasBudget := thinkingField["budget_tokens"]
-	assert.False(t, hasBudget, "adaptive thinking must not include budget_tokens")
-	_, hasBeta := fields["anthropic_beta"]
-	assert.False(t, hasBeta, "adaptive thinking must not include the interleaved beta header")
 }
 
 // Bedrock adaptive thinking is valid even without tools. The adapter must not
@@ -223,13 +238,13 @@ func TestResolveThinkingOpus47AnyToolDisablesThinking(t *testing.T) {
 	require.False(t, thinking.enable)
 }
 
-// Claude Opus 4.7 rejects sampling parameters like temperature. The Bedrock
-// adapter must omit temperature for Opus 4.7 requests while preserving it for
+// Claude Opus 4.7 and later reject sampling parameters like temperature. The Bedrock
+// adapter must omit temperature for Opus 4.7+ requests while preserving it for
 // models that still support sampling controls.
-func TestOpus47OmitsTemperatureFromInferenceConfig(t *testing.T) {
+func TestOpus47AndLaterOmitsTemperatureFromInferenceConfig(t *testing.T) {
 	client := &Client{
 		defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-		highModel:    "us.anthropic.claude-opus-4-7",
+		highModel:    "us.anthropic.claude-opus-4-8",
 		smallModel:   "global.anthropic.claude-haiku-4-5-20251001-v1:0",
 	}
 
@@ -280,6 +295,26 @@ func TestOpus47OmitsTemperatureFromInferenceConfig(t *testing.T) {
 			if input.InferenceConfig != nil {
 				assert.Nil(t, input.InferenceConfig.Temperature)
 			}
+		})
+	}
+}
+
+func TestSupportsTemperature(t *testing.T) {
+	cases := []struct {
+		name    string
+		modelID string
+		want    bool
+	}{
+		{"opus-4-6 supports sampling", "global.anthropic.claude-opus-4-6-v1", true},
+		{"opus-4-7 omits sampling", "us.anthropic.claude-opus-4-7", false},
+		{"opus-4-8 omits sampling", "us.anthropic.claude-opus-4-8", false},
+		{"future opus-4-9 omits sampling", "global.anthropic.claude-opus-4-9", false},
+		{"sonnet keeps sampling", "global.anthropic.claude-sonnet-4-5-20250929-v1:0", true},
+		{"haiku keeps sampling", "global.anthropic.claude-haiku-4-5-20251001-v1:0", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, supportsTemperature(tc.modelID))
 		})
 	}
 }
