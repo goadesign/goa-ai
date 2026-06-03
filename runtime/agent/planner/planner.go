@@ -183,6 +183,14 @@ type ToolRequest struct {
 	// Payload is the canonical JSON payload for the tool call.
 	Payload rawjson.Message
 
+	// ProviderCursorPayload reports that any cursor field in Payload already
+	// contains a provider-owned cursor constructed by trusted planner code.
+	//
+	// Runtime continuation hydration must only rewrite model-authored
+	// continuation references. Provider planners set this for deterministic child
+	// replay calls whose payloads are not model-authored.
+	ProviderCursorPayload bool
+
 	// AgentID is the identifier of the agent that issued this tool request.
 	AgentID agent.Ident
 
@@ -311,8 +319,13 @@ type ToolOutput struct {
 	// ServerData carries canonical server-only JSON emitted alongside the tool result.
 	ServerData rawjson.Message
 
-	// Bounds describes how the result has been bounded relative to the full data set.
+	// Bounds describes model-visible bounded metadata. For cursor-paged tools,
+	// NextCursor is the runtime continuation reference.
 	Bounds *agent.Bounds
+
+	// ProviderBounds carries private provider-owned bounded metadata used by
+	// runtime continuation hydration. It must not be sent to model providers.
+	ProviderBounds *agent.Bounds
 
 	// Error is the structured tool error, when the tool execution failed.
 	Error *ToolError
@@ -388,9 +401,13 @@ type FinalToolResult struct {
 	// ResultOmittedReason provides a stable, machine-readable reason for omission.
 	ResultOmittedReason string
 
-	// Bounds describes how the result has been bounded relative to the full data
-	// set when applicable.
+	// Bounds describes model-visible bounded metadata when applicable. For
+	// cursor-paged tools, NextCursor is a runtime continuation reference.
 	Bounds *agent.Bounds
+
+	// ProviderBounds carries private provider-owned bounded metadata used by
+	// runtime continuation hydration. It must not be sent to model providers.
+	ProviderBounds *agent.Bounds
 
 	// Error is the structured tool error, when the nested planner finalized with
 	// a tool-scoped failure.

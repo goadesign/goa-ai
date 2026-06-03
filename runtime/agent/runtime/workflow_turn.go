@@ -110,7 +110,11 @@ func (l *workflowLoop) executeToolStep(program stepProgram, batch *stepBatch) ([
 		return nil, nil, err
 	}
 
-	grouped, timeouts := l.r.groupToolCallsByTimeout(toExecute, l.input, l.toolOpts.StartToCloseTimeout)
+	hydratedToExecute, err := l.r.hydrateContinuationCalls(toExecute, l.st.ToolOutputs)
+	if err != nil {
+		return nil, nil, err
+	}
+	grouped, timeouts := l.r.groupToolCallsByTimeout(hydratedToExecute, l.input, l.toolOpts.StartToCloseTimeout)
 	finishBy := time.Time{}
 	if !l.deadlines.Hard.IsZero() {
 		finishBy = l.deadlines.Hard.Add(-l.deadlines.finalizeReserve())
@@ -119,7 +123,7 @@ func (l *workflowLoop) executeToolStep(program stepProgram, batch *stepBatch) ([
 	if err != nil {
 		return nil, nil, err
 	}
-	records, err := stepToolRecordsFromExecutions(toExecute, outcomes)
+	records, err := stepToolRecordsFromExecutions(hydratedToExecute, outcomes)
 	if err != nil {
 		return nil, nil, err
 	}

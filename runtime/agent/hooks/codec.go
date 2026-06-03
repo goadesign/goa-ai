@@ -58,6 +58,7 @@ type (
 		ServerData          rawjson.Message          `json:"server_data,omitempty"`
 		ResultPreview       string                   `json:"result_preview,omitempty"`
 		Bounds              *agent.Bounds            `json:"bounds,omitempty"`
+		ProviderBounds      *agent.Bounds            `json:"provider_bounds,omitempty"`
 		Duration            time.Duration            `json:"duration"`
 		Telemetry           *telemetry.ToolTelemetry `json:"telemetry,omitempty"`
 		RetryHint           *planner.RetryHint       `json:"retry_hint,omitempty"`
@@ -116,6 +117,7 @@ func EncodeToRecordInput(evt Event, opts EncodeOptions) (*runlog.ActivityInput, 
 			ServerData:          e.ServerData,
 			ResultPreview:       e.ResultPreview,
 			Bounds:              e.Bounds,
+			ProviderBounds:      e.ProviderBounds,
 			Duration:            e.Duration,
 			Telemetry:           e.Telemetry,
 			RetryHint:           e.RetryHint,
@@ -330,6 +332,7 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 			p.ServerData,
 			p.ResultPreview,
 			p.Bounds,
+			p.ProviderBounds,
 			p.Duration,
 			p.Telemetry,
 			p.RetryHint,

@@ -148,6 +148,7 @@ func TestGenAITimelineSubscriberEmitsSpans(t *testing.T) {
 		nil,
 		"",
 		nil,
+		nil,
 		150*time.Millisecond,
 		nil,
 		nil,

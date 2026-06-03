@@ -41,7 +41,11 @@ func (r *Runtime) materializeToolResult(ctx context.Context, call planner.ToolRe
 	}
 	var resultJSON rawjson.Message
 	if result.Error == nil {
-		encoded, err := r.marshalToolValue(ctx, call.Name, result.Result, result.Bounds)
+		visibleBounds, err := r.modelVisibleBoundsForTool(call.Name, call.ToolCallID, result.Bounds)
+		if err != nil {
+			return nil, err
+		}
+		encoded, err := r.marshalToolValue(ctx, call.Name, result.Result, visibleBounds)
 		if err != nil {
 			return nil, fmt.Errorf("encode %s tool result: %w", call.Name, err)
 		}
@@ -165,19 +169,7 @@ func (r *Runtime) decodeProvidedToolResult(ctx context.Context, spec tools.ToolS
 // cloneProvidedToolBounds copies provided bounds metadata into an internal
 // planner result. Contract validation is centralized in materializeToolResult.
 func cloneProvidedToolBounds(bounds *agent.Bounds) *agent.Bounds {
-	if bounds == nil {
-		return nil
-	}
-	c := *bounds
-	if bounds.Total != nil {
-		total := *bounds.Total
-		c.Total = &total
-	}
-	if bounds.NextCursor != nil {
-		next := *bounds.NextCursor
-		c.NextCursor = &next
-	}
-	return &c
+	return cloneBounds(bounds)
 }
 
 func toolCallMeta(call planner.ToolRequest) ToolCallMeta {
