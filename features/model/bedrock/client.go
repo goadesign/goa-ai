@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -466,10 +467,11 @@ func (c *Client) inferenceConfig(modelID string, maxTokens int, temp float32) *b
 }
 
 // supportsTemperature reports whether modelID accepts Bedrock's temperature
-// inference parameter. Claude Opus 4.7 removed temperature/top_p/top_k, so the
-// adapter must omit temperature entirely for every Opus 4.7 Bedrock scope.
+// inference parameter. Claude Opus 4.7 and later removed temperature/top_p/top_k,
+// so the adapter must omit sampling controls for every Opus 4.7+ Bedrock scope.
 func supportsTemperature(modelID string) bool {
-	return !strings.Contains(modelID, "opus-4-7")
+	minor, ok := opus4Minor(modelID)
+	return !ok || minor < 7
 }
 
 func cloneAdditionalModelFields(fields map[string]any) map[string]any {
@@ -1389,20 +1391,6 @@ func hasToolDefinition(defs []*model.ToolDefinition, name string) bool {
 	return false
 }
 
-// adaptiveThinkingModelMarkers lists the Claude Opus minor-version markers that
-// require (Opus 4.6) or exclusively support (Opus 4.7+) adaptive thinking. New
-// Opus releases should be added here after verifying their thinking contract.
-//
-// Contract:
-//   - Opus 4.6: adaptive preferred; legacy type:"enabled" + budget_tokens still
-//     works but produces unreliable thinking signatures and is deprecated.
-//   - Opus 4.7+: legacy type:"enabled" + budget_tokens returns a 400 error from
-//     Bedrock. Adaptive thinking is the only supported mode.
-var adaptiveThinkingModelMarkers = []string{
-	"opus-4-6",
-	"opus-4-7",
-}
-
 // isAdaptiveThinkingModel reports whether modelID requires adaptive thinking
 // configuration. Starting with Opus 4.6, Anthropic deprecates the manual
 // type:"enabled" + budget_tokens config in favor of type:"adaptive", where the
@@ -1410,15 +1398,32 @@ var adaptiveThinkingModelMarkers = []string{
 // is automatic in adaptive mode — no beta header is needed. On Opus 4.7+ the
 // legacy config is removed entirely and returns a 400 error.
 func isAdaptiveThinkingModel(modelID string) bool {
-	// Bedrock model IDs use the form "global.anthropic.claude-opus-4-6-v1",
-	// "us.anthropic.claude-opus-4-7", or "anthropic.claude-opus-4-7". Match the
-	// "opus-<major>-<minor>" segment against the known markers.
-	for _, marker := range adaptiveThinkingModelMarkers {
-		if strings.Contains(modelID, marker) {
-			return true
-		}
+	minor, ok := opus4Minor(modelID)
+	return ok && minor >= 6
+}
+
+// opus4Minor extracts the minor number from Anthropic Bedrock Opus 4 model IDs.
+// Bedrock publishes in-region, geo, and global IDs that all contain the stable
+// "claude-opus-4-<minor>" segment, optionally followed by a provider suffix.
+func opus4Minor(modelID string) (int, bool) {
+	const marker = "claude-opus-4-"
+	start := strings.Index(modelID, marker)
+	if start < 0 {
+		return 0, false
 	}
-	return false
+	rest := modelID[start+len(marker):]
+	end := 0
+	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
+		end++
+	}
+	if end == 0 {
+		return 0, false
+	}
+	minor, err := strconv.Atoi(rest[:end])
+	if err != nil {
+		return 0, false
+	}
+	return minor, true
 }
 
 // isNovaModel reports whether the given model identifier refers to an Amazon
