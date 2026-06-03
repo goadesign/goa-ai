@@ -18,6 +18,13 @@ type fakeClient struct {
 	streamCalls   int
 }
 
+type fakeCountingClient struct {
+	fakeClient
+
+	count model.TokenCount
+	err   error
+}
+
 func (f *fakeClient) Complete(_ context.Context, _ *model.Request) (*model.Response, error) {
 	f.completeCalls++
 	return nil, f.completeErr
@@ -26,6 +33,13 @@ func (f *fakeClient) Complete(_ context.Context, _ *model.Request) (*model.Respo
 func (f *fakeClient) Stream(_ context.Context, _ *model.Request) (model.Streamer, error) {
 	f.streamCalls++
 	return nil, f.streamErr
+}
+
+func (f *fakeCountingClient) CountTokens(context.Context, *model.Request) (model.TokenCount, error) {
+	if f.err != nil {
+		return model.TokenCount{}, f.err
+	}
+	return f.count, nil
 }
 
 func TestAdaptiveRateLimiter_BackoffOnRateLimited(t *testing.T) {
@@ -147,7 +161,7 @@ func TestAdaptiveRateLimiter_RespectsContextWhenQueued(t *testing.T) {
 	}
 }
 
-func TestEstimateTokensMonotonic(t *testing.T) {
+func TestTokenEstimatorMonotonic(t *testing.T) {
 	t.Helper()
 
 	smallReq := &model.Request{
@@ -171,8 +185,21 @@ func TestEstimateTokensMonotonic(t *testing.T) {
 		},
 	}
 
-	small := estimateTokens(smallReq)
-	big := estimateTokens(bigReq)
+	estimator := model.TokenEstimator{
+		CharactersPerToken: 1,
+		MinimumTokens:      1,
+		OverheadTokens:     1,
+	}
+	smallCount, err := estimator.CountTokens(context.Background(), smallReq)
+	if err != nil {
+		t.Fatalf("small estimate: %v", err)
+	}
+	bigCount, err := estimator.CountTokens(context.Background(), bigReq)
+	if err != nil {
+		t.Fatalf("big estimate: %v", err)
+	}
+	small := smallCount.InputTokens
+	big := bigCount.InputTokens
 
 	if small <= 0 {
 		t.Fatalf("expected positive token estimate for small request, got %d",
@@ -181,5 +208,36 @@ func TestEstimateTokensMonotonic(t *testing.T) {
 	if big <= small {
 		t.Fatalf("expected larger estimate for larger request, small=%d big=%d",
 			small, big)
+	}
+}
+
+func TestAdaptiveRateLimiterDelegatesTokenCounting(t *testing.T) {
+	limiter := newAdaptiveRateLimiter(60000, 60000)
+	client := &fakeCountingClient{
+		count: model.TokenCount{
+			Model:       "provider-model",
+			ModelClass:  model.ModelClassSmall,
+			InputTokens: 42,
+			Exact:       true,
+		},
+	}
+	wrapped := limiter.Middleware()(client)
+
+	count, err := wrapped.(model.TokenCounter).CountTokens(context.Background(), &model.Request{})
+	if err != nil {
+		t.Fatalf("count tokens: %v", err)
+	}
+	if count.InputTokens != 42 || !count.Exact {
+		t.Fatalf("expected delegated exact count, got %#v", count)
+	}
+}
+
+func TestAdaptiveRateLimiterCountTokensRequiresWrappedCounter(t *testing.T) {
+	limiter := newAdaptiveRateLimiter(60000, 60000)
+	wrapped := limiter.Middleware()(&fakeClient{})
+
+	_, err := wrapped.(model.TokenCounter).CountTokens(context.Background(), &model.Request{})
+	if err == nil {
+		t.Fatal("expected missing token counter error")
 	}
 }

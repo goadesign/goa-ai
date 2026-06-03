@@ -343,22 +343,20 @@ func toPolicyRetryHint(hint *planner.RetryHint) *policy.RetryHint {
 }
 
 // applyHistoryPolicy applies the agent's history policy to the given messages.
-// When no policy is configured or the policy returns an error, messages are
-// returned unchanged. An empty slice from the policy is treated as a no-op to
-// avoid accidentally wiping history.
-func (r *Runtime) applyHistoryPolicy(ctx context.Context, reg *AgentRegistration, msgs []*model.Message) []*model.Message {
+// Policy failures are planning failures because the runtime cannot construct the
+// transcript promised by the agent registration.
+func (r *Runtime) applyHistoryPolicy(ctx context.Context, reg *AgentRegistration, msgs []*model.Message) ([]*model.Message, error) {
 	if reg.Policy.History == nil || len(msgs) == 0 {
-		return msgs
+		return msgs, nil
 	}
 	out, err := reg.Policy.History(ctx, msgs)
 	if err != nil {
-		r.logWarn(ctx, "history policy failed", err, "agent_id", reg.ID)
-		return msgs
+		return nil, fmt.Errorf("history policy for agent %s: %w", reg.ID, err)
 	}
 	if len(out) == 0 {
-		return msgs
+		return nil, fmt.Errorf("history policy for agent %s returned no messages", reg.ID)
 	}
-	return out
+	return out, nil
 }
 
 // logWarn emits a warning log and records the error in the current span if tracing

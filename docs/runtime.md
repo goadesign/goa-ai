@@ -1466,22 +1466,51 @@ RunPolicy(func() {
 })
 ```
 
-### Compress
+### Compression
 
-Model-assisted summarization for long conversations:
+Model-assisted summarization for long conversations. Compression separates the
+trigger budget from the exact-retention budget:
+
+- `CompressAtTurns` and `CompressAtMaxInputTokens` decide when summarization
+  runs. The triggers are ORed.
+- `KeepMaxTurns` and `KeepMaxInputTokens` decide which newest complete turns
+  remain exact after summarization. When both are set, both limits apply.
+- `KeepMaxInputTokens` never truncates a turn. The runtime walks backward from
+  the newest turn and keeps only whole logical turns that fit the budget.
+- Token counts are computed at runtime through `HistoryModel`, because provider
+  tokenization depends on the deployed model. Token-budget compression requires
+  a history model that implements `model.TokenCounter` with exact counts; the
+  Bedrock adapter does this with Bedrock's native `CountTokens` API.
 
 ```go
 // DSL
 RunPolicy(func() {
     History(func() {
-        Compress(30, 10) // Trigger at 30 turns, keep 10 recent
+        CompressAtMaxInputTokens(120_000)
+        KeepMaxInputTokens(40_000)
+        KeepMaxTurns(12)
     })
 })
 
 // Registration
 cfg := chat.ChatAgentConfig{
     Planner:      myPlanner,
-    HistoryModel: smallModelClient, // For compression
+    HistoryModel: smallModelClient, // Counts tokens and writes summaries.
+}
+```
+
+The DSL values are generated defaults. Deployments can replace them when the
+configured model has a different context window or operating budget:
+
+```go
+cfg := chat.ChatAgentConfig{
+    Planner:      myPlanner,
+    HistoryModel: smallModelClient,
+    HistoryCompression: &runtime.HistoryCompressionConfig{
+        CompressAtMaxInputTokens: 180_000,
+        KeepMaxInputTokens:       60_000,
+        KeepMaxTurns:             16,
+    },
 }
 ```
 

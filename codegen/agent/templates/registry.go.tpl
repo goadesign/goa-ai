@@ -93,7 +93,24 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
             {{- if eq .RunPolicy.History.Mode "keep_recent" }}
                 return agentsruntime.KeepRecentTurns({{ .RunPolicy.History.KeepRecent }})
             {{- else if eq .RunPolicy.History.Mode "compress" }}
-                return agentsruntime.Compress({{ .RunPolicy.History.TriggerAt }}, {{ .RunPolicy.History.CompressKeepRecent }}, cfg.HistoryModel)
+                historyCompression := agentsruntime.HistoryCompressionConfig{
+                {{- if gt .RunPolicy.History.CompressAtTurns 0 }}
+                    CompressAtTurns: {{ .RunPolicy.History.CompressAtTurns }},
+                {{- end }}
+                {{- if gt .RunPolicy.History.CompressAtMaxInputTokens 0 }}
+                    CompressAtMaxInputTokens: {{ .RunPolicy.History.CompressAtMaxInputTokens }},
+                {{- end }}
+                {{- if gt .RunPolicy.History.KeepMaxTurns 0 }}
+                    KeepMaxTurns: {{ .RunPolicy.History.KeepMaxTurns }},
+                {{- end }}
+                {{- if gt .RunPolicy.History.KeepMaxInputTokens 0 }}
+                    KeepMaxInputTokens: {{ .RunPolicy.History.KeepMaxInputTokens }},
+                {{- end }}
+                }
+                if cfg.HistoryCompression != nil {
+                    historyCompression = *cfg.HistoryCompression
+                }
+                return agentsruntime.Compress(cfg.HistoryModel, historyCompression)
             {{- end }}
             }(),
 {{- end }}

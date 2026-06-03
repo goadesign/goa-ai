@@ -138,9 +138,22 @@ func (c *limitedClient) Stream(ctx context.Context, req *model.Request) (model.S
 	return stream, err
 }
 
+// CountTokens preserves the optional token-counting capability through the
+// middleware chain. Native counters are delegated so policy code sees the same
+// contract as the wrapped provider client.
+func (c *limitedClient) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
+	if counter, ok := c.next.(model.TokenCounter); ok {
+		return counter.CountTokens(ctx, req)
+	}
+	return model.TokenCount{}, errors.New("model middleware: wrapped client does not support token counting")
+}
+
 func (l *AdaptiveRateLimiter) wait(ctx context.Context, req *model.Request) error {
-	tokens := estimateTokens(req)
-	return l.limiter.WaitN(ctx, tokens)
+	count, err := model.TokenEstimator{}.CountTokens(ctx, req)
+	if err != nil {
+		return err
+	}
+	return l.limiter.WaitN(ctx, count.InputTokens)
 }
 
 func (l *AdaptiveRateLimiter) observe(err error) {
@@ -199,40 +212,6 @@ func (l *AdaptiveRateLimiter) probe() {
 	if cb != nil {
 		cb(newTPM)
 	}
-}
-
-// estimateTokens computes a cheap heuristic for the number of tokens in the
-// request transcript. It counts characters in text and string tool results,
-// converts them to tokens using a fixed ratio, and adds a small buffer for
-// system prompts and provider overhead.
-func estimateTokens(req *model.Request) int {
-	charCount := 0
-	for _, m := range req.Messages {
-		for _, p := range m.Parts {
-			switch v := p.(type) {
-			case model.TextPart:
-				if v.Text != "" {
-					charCount += len(v.Text)
-				}
-			case model.ToolResultPart:
-				if s, ok := v.Content.(string); ok && s != "" {
-					charCount += len(s)
-				}
-			}
-		}
-	}
-	if charCount <= 0 {
-		// Minimal non-zero estimate so callers still incur limiter costs even
-		// when messages are extremely small.
-		return 500
-	}
-	// Approximate 1 token per ~3 characters, then add a fixed buffer for
-	// system prompts and provider framing.
-	tokens := charCount / 3
-	if tokens < 1 {
-		tokens = 1
-	}
-	return tokens + 500
 }
 
 // replaceTPM updates the limiter effective budget to the given value,

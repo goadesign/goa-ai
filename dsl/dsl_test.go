@@ -485,7 +485,9 @@ func TestHistoryCompress(t *testing.T) {
 			Agent("agent", "desc", func() {
 				RunPolicy(func() {
 					History(func() {
-						Compress(30, 10)
+						CompressAtMaxInputTokens(120000)
+						KeepMaxInputTokens(40000)
+						KeepMaxTurns(10)
 					})
 				})
 			})
@@ -497,8 +499,9 @@ func TestHistoryCompress(t *testing.T) {
 	require.NotNil(t, policy)
 	require.NotNil(t, policy.History)
 	require.Equal(t, agentsexpr.HistoryModeCompress, policy.History.Mode)
-	require.Equal(t, 30, policy.History.TriggerAt)
-	require.Equal(t, 10, policy.History.CompressKeepRecent)
+	require.Equal(t, 120000, policy.History.CompressAtMaxInputTokens)
+	require.Equal(t, 40000, policy.History.KeepMaxInputTokens)
+	require.Equal(t, 10, policy.History.KeepMaxTurns)
 }
 
 // TestCacheConfiguration verifies Cache with AfterSystem and AfterTools.

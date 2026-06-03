@@ -14,8 +14,15 @@ type {{ .ConfigType }} struct {
 {{- if .RunPolicy.History }}
     {{- if eq .RunPolicy.History.Mode "compress" }}
     // HistoryModel provides the model client used for history compression when a
-    // Compress history policy is configured.
+    // compression history policy is configured. Token-budget compression counts
+    // tokens through this client at runtime because tokenization is model-specific.
     HistoryModel model.Client
+
+    // HistoryCompression overrides the DSL compression defaults for this
+    // deployment. Leave nil to use the generated defaults. Set this when the
+    // configured HistoryModel has a different context window or operational
+    // budget than the design-time default.
+    HistoryCompression *agentsruntime.HistoryCompressionConfig
     {{- end }}
 {{- end }}
 {{- if .MCPToolsets }}
@@ -34,6 +41,11 @@ func (c {{ .ConfigType }}) Validate() error {
     {{- if eq .RunPolicy.History.Mode "compress" }}
     if c.HistoryModel == nil {
         return errors.New("history model is required when Compress history policy is configured")
+    }
+    if c.HistoryCompression != nil {
+        if err := c.HistoryCompression.Validate(); err != nil {
+            return err
+        }
     }
     {{- end }}
 {{- end }}

@@ -167,6 +167,7 @@ func agentConfigFile(agent *AgentData) *codegen.File {
 	if agent.RunPolicy.History != nil && agent.RunPolicy.History.Mode == "compress" {
 		imports = append(imports,
 			&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/model", Name: "model"},
+			&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "agentsruntime"},
 		)
 	}
 	// Determine whether fmt is needed. The config Validate() uses fmt.Errorf for

@@ -23,3 +23,22 @@ func RunPolicyBasic() func() {
 		})
 	}
 }
+
+// RunPolicyHistoryCompressTokens returns a DSL design that exercises generated
+// token-budget history compression wiring.
+func RunPolicyHistoryCompressTokens() func() {
+	return func() {
+		API("alpha", func() {})
+		Service("alpha", func() {
+			Agent("scribe", "Doc helper", func() {
+				RunPolicy(func() {
+					History(func() {
+						CompressAtMaxInputTokens(120000)
+						KeepMaxInputTokens(40000)
+						KeepMaxTurns(12)
+					})
+				})
+			})
+		})
+	}
+}
