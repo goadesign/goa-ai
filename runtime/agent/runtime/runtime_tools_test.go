@@ -396,6 +396,22 @@ func TestHydrateContinuationCallUsesPriorPayloadAndProviderCursor(t *testing.T) 
 	require.JSONEq(t, `{"query":"status","limit":10,"cursor":"provider-cursor"}`, string(hydrated.Payload))
 }
 
+func TestHydrateContinuationCallSkipsProviderCursorPayload(t *testing.T) {
+	rt := &Runtime{}
+	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
+		tools.Ident("tool"): newProjectedResultSpec(),
+	}
+	call := planner.ToolRequest{
+		Name:                  "tool",
+		Payload:               rawjson.Message(`{"cursor":"provider-cursor"}`),
+		ProviderCursorPayload: true,
+	}
+
+	hydrated, err := rt.hydrateContinuationCall(call, nil)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"cursor":"provider-cursor"}`, string(hydrated.Payload))
+}
+
 func TestHydrateContinuationCallRejectsChangedParameter(t *testing.T) {
 	rt := &Runtime{}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
