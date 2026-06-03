@@ -230,6 +230,10 @@ func (e *toolBatchExec) publishToolResultReceived(ctx context.Context, call plan
 	if !tr.ResultOmitted {
 		resultBytes = len(resultJSON)
 	}
+	previewBounds, err := e.r.modelVisibleBoundsForTool(call.Name, call.ToolCallID, tr.Bounds)
+	if err != nil {
+		return err
+	}
 	ev := hooks.NewToolResultReceivedEvent(
 		e.runID,
 		e.agentID,
@@ -242,7 +246,8 @@ func (e *toolBatchExec) publishToolResultReceived(ctx context.Context, call plan
 		tr.ResultOmitted,
 		tr.ResultOmittedReason,
 		tr.ServerData,
-		formatResultPreviewForCall(ctx, e.r, &call, tr.Result, tr.Bounds),
+		formatResultPreviewForCall(ctx, e.r, &call, tr.Result, previewBounds),
+		previewBounds,
 		tr.Bounds,
 		duration,
 		tr.Telemetry,

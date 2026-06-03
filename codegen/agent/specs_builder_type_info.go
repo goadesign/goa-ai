@@ -369,7 +369,7 @@ func boundedResultSchemaFields(bounds *ToolBoundsData) map[string]any {
 	if bounds.Paging != nil && bounds.Paging.NextCursorField != "" {
 		fields[bounds.Paging.NextCursorField] = map[string]any{
 			"type":        "string",
-			"description": "Opaque cursor for the next page. Call the same tool again with the same parameters and pass this exact string back as the paging cursor. Do not send the literal text \"next_cursor\" or modify the cursor.",
+			"description": "Runtime continuation reference for the next page. To continue, call the same tool again and pass this exact reference as the paging cursor. The runtime reuses the prior tool input and applies the provider cursor privately.",
 		}
 	}
 	return fields

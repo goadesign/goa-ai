@@ -26,6 +26,8 @@ func TestDecodeFromRecordInput_ToolResultReceivedPreservesServerDataBytes(t *tes
 
 	resultJSON := rawjson.Message([]byte(`{"summary":"ok"}`))
 	serverData := rawjson.Message([]byte(`[{"kind":"example.topology","data":{"hello":"world","n":1}}]`))
+	publicCursor := "call-1"
+	providerCursor := "provider-cursor"
 
 	ev := NewToolResultReceivedEvent(
 		testRunID,
@@ -40,7 +42,16 @@ func TestDecodeFromRecordInput_ToolResultReceivedPreservesServerDataBytes(t *tes
 		"",
 		serverData,
 		"preview",
-		nil,
+		&agent.Bounds{
+			Returned:   1,
+			Truncated:  true,
+			NextCursor: &publicCursor,
+		},
+		&agent.Bounds{
+			Returned:   1,
+			Truncated:  true,
+			NextCursor: &providerCursor,
+		},
 		250*time.Millisecond,
 		nil,
 		nil,
@@ -65,6 +76,8 @@ func TestDecodeFromRecordInput_ToolResultReceivedPreservesServerDataBytes(t *tes
 	require.False(t, tr.ResultOmitted)
 	require.Empty(t, tr.ResultOmittedReason)
 	require.JSONEq(t, string(serverData), string(tr.ServerData))
+	require.Equal(t, publicCursor, *tr.Bounds.NextCursor)
+	require.Equal(t, providerCursor, *tr.ProviderBounds.NextCursor)
 }
 
 func TestDecodeFromRecordInput_PromptRenderedRoundTrip(t *testing.T) {

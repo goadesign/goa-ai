@@ -689,7 +689,7 @@ func (r *Runtime) decodeAgentChildFinalToolResult(ctx context.Context, call *pla
 		ResultOmitted:       event.ResultOmitted,
 		ResultOmittedReason: event.ResultOmittedReason,
 		ServerData:          append(rawjson.Message(nil), event.ServerData...),
-		Bounds:              event.Bounds,
+		Bounds:              event.ProviderBounds,
 		Error:               event.Error,
 		RetryHint:           event.RetryHint,
 		Telemetry:           event.Telemetry,

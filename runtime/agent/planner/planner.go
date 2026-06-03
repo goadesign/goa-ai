@@ -311,8 +311,13 @@ type ToolOutput struct {
 	// ServerData carries canonical server-only JSON emitted alongside the tool result.
 	ServerData rawjson.Message
 
-	// Bounds describes how the result has been bounded relative to the full data set.
+	// Bounds describes model-visible bounded metadata. For cursor-paged tools,
+	// NextCursor is the runtime continuation reference.
 	Bounds *agent.Bounds
+
+	// ProviderBounds carries private provider-owned bounded metadata used by
+	// runtime continuation hydration. It must not be sent to model providers.
+	ProviderBounds *agent.Bounds
 
 	// Error is the structured tool error, when the tool execution failed.
 	Error *ToolError
@@ -388,9 +393,13 @@ type FinalToolResult struct {
 	// ResultOmittedReason provides a stable, machine-readable reason for omission.
 	ResultOmittedReason string
 
-	// Bounds describes how the result has been bounded relative to the full data
-	// set when applicable.
+	// Bounds describes model-visible bounded metadata when applicable. For
+	// cursor-paged tools, NextCursor is a runtime continuation reference.
 	Bounds *agent.Bounds
+
+	// ProviderBounds carries private provider-owned bounded metadata used by
+	// runtime continuation hydration. It must not be sent to model providers.
+	ProviderBounds *agent.Bounds
 
 	// Error is the structured tool error, when the nested planner finalized with
 	// a tool-scoped failure.

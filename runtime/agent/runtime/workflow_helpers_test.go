@@ -301,7 +301,8 @@ func TestAppendUserToolResults_AppendsBoundsReminderAfterToolResults(t *testing.
 	txt, ok := base.Messages[1].Parts[0].(model.TextPart)
 	require.True(t, ok)
 	require.Contains(t, txt.Text, "A tool call returned a bounded/truncated result.")
-	require.Contains(t, txt.Text, "Next cursor: opaque-cursor")
+	require.Contains(t, txt.Text, "Continuation reference: tc-1")
+	require.NotContains(t, txt.Text, "opaque-cursor")
 }
 
 func TestAppendUserToolResults_AppendsRetryHintReminderAfterToolResults(t *testing.T) {

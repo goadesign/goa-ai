@@ -156,15 +156,14 @@ type (
 
 	// ToolPagingExpr identifies the cursor field names used by a cursor-paged tool.
 	// CursorField always names a payload field. NextCursorField names the
-	// canonical next-page cursor identifier for the paging contract, which is
-	// projected into runtime-owned bounds metadata rather than the semantic tool
-	// result.
+	// canonical next-page continuation reference for the model-facing paging
+	// contract.
 	ToolPagingExpr struct {
 		// CursorField is the name of the optional String field in the tool payload
-		// that carries the paging cursor for retrieving the next page.
+		// that carries the runtime continuation reference for retrieving the next page.
 		CursorField string
-		// NextCursorField is the canonical field name for the next-page cursor in
-		// the paging contract.
+		// NextCursorField is the canonical field name for the next-page continuation
+		// reference in the paging contract.
 		NextCursorField string
 	}
 
