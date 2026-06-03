@@ -35,6 +35,8 @@ type projectedRuntimePayload struct {
 	Query string `json:"query"`
 }
 
+const testProviderCursor = "provider-cursor"
+
 func newProjectedResultSpec() tools.ToolSpec {
 	payloadCodec := tools.JSONCodec[any]{
 		ToJSON: json.Marshal,
@@ -359,9 +361,156 @@ func TestExecuteToolActivityProjectsBoundsIntoEncodedResult(t *testing.T) {
 		"returned": 1,
 		"total": 9,
 		"truncated": true,
-		"next_cursor": "next-page",
+		"next_cursor": "tool-1",
 		"refinement_hint": "narrow by source"
 	}`, string(out.Payload))
+}
+
+func TestHydrateContinuationCallUsesPriorPayloadAndProviderCursor(t *testing.T) {
+	rt := &Runtime{}
+	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
+		tools.Ident("tool"): newProjectedResultSpec(),
+	}
+	history := []*planner.ToolOutput{{
+		Name:       "tool",
+		ToolCallID: "prev-call",
+		Payload:    rawjson.Message(`{"query":"status","limit":10}`),
+		Bounds: &agent.Bounds{
+			Returned:   10,
+			Truncated:  true,
+			NextCursor: stringPtr("prev-call"),
+		},
+		ProviderBounds: &agent.Bounds{
+			Returned:   10,
+			Truncated:  true,
+			NextCursor: stringPtr(testProviderCursor),
+		},
+	}}
+	call := planner.ToolRequest{
+		Name:    "tool",
+		Payload: rawjson.Message(`{"cursor":"prev-call"}`),
+	}
+
+	hydrated, err := rt.hydrateContinuationCall(call, history)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"query":"status","limit":10,"cursor":"provider-cursor"}`, string(hydrated.Payload))
+}
+
+func TestHydrateContinuationCallRejectsChangedParameter(t *testing.T) {
+	rt := &Runtime{}
+	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
+		tools.Ident("tool"): newProjectedResultSpec(),
+	}
+	history := []*planner.ToolOutput{{
+		Name:       "tool",
+		ToolCallID: "prev-call",
+		Payload:    rawjson.Message(`{"query":"status"}`),
+		Bounds: &agent.Bounds{
+			Returned:   10,
+			Truncated:  true,
+			NextCursor: stringPtr("prev-call"),
+		},
+		ProviderBounds: &agent.Bounds{
+			Returned:   10,
+			Truncated:  true,
+			NextCursor: stringPtr(testProviderCursor),
+		},
+	}}
+	call := planner.ToolRequest{
+		Name:    "tool",
+		Payload: rawjson.Message(`{"cursor":"prev-call","query":"other"}`),
+	}
+
+	_, err := rt.hydrateContinuationCall(call, history)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `changed parameter "query"`)
+}
+
+func TestHydrateContinuationCallRejectsWrongToolReference(t *testing.T) {
+	rt := &Runtime{}
+	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
+		tools.Ident("tool"):  newProjectedResultSpec(),
+		tools.Ident("other"): newProjectedResultSpec(),
+	}
+	history := []*planner.ToolOutput{{
+		Name:       "other",
+		ToolCallID: "prev-call",
+		Payload:    rawjson.Message(`{"query":"status"}`),
+		Bounds: &agent.Bounds{
+			Returned:   10,
+			Truncated:  true,
+			NextCursor: stringPtr("prev-call"),
+		},
+		ProviderBounds: &agent.Bounds{
+			Returned:   10,
+			Truncated:  true,
+			NextCursor: stringPtr(testProviderCursor),
+		},
+	}}
+	call := planner.ToolRequest{
+		Name:    "tool",
+		Payload: rawjson.Message(`{"cursor":"prev-call"}`),
+	}
+
+	_, err := rt.hydrateContinuationCall(call, history)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "belongs to tool other")
+}
+
+func TestHydrateContinuationCallRejectsUnknownReference(t *testing.T) {
+	rt := &Runtime{}
+	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
+		tools.Ident("tool"): newProjectedResultSpec(),
+	}
+	call := planner.ToolRequest{
+		Name:    "tool",
+		Payload: rawjson.Message(`{"cursor":"missing-call"}`),
+	}
+
+	_, err := rt.hydrateContinuationCall(call, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown continuation reference "missing-call"`)
+}
+
+func TestHydrateContinuationCallRejectsStaleReference(t *testing.T) {
+	rt := &Runtime{}
+	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
+		tools.Ident("tool"): newProjectedResultSpec(),
+	}
+	history := []*planner.ToolOutput{
+		{
+			Name:       "tool",
+			ToolCallID: "page-1",
+			Payload:    rawjson.Message(`{"query":"status"}`),
+			Bounds: &agent.Bounds{
+				Returned:   10,
+				Truncated:  true,
+				NextCursor: stringPtr("page-1"),
+			},
+			ProviderBounds: &agent.Bounds{
+				Returned:   10,
+				Truncated:  true,
+				NextCursor: stringPtr(testProviderCursor),
+			},
+		},
+		{
+			Name:       "tool",
+			ToolCallID: "page-2",
+			Payload:    rawjson.Message(`{"query":"status","cursor":"provider-cursor"}`),
+			Bounds: &agent.Bounds{
+				Returned:  10,
+				Truncated: false,
+			},
+		},
+	}
+	call := planner.ToolRequest{
+		Name:    "tool",
+		Payload: rawjson.Message(`{"cursor":"page-1"}`),
+	}
+
+	_, err := rt.hydrateContinuationCall(call, history)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `continuation reference "page-1" is stale`)
 }
 
 func TestExecuteToolActivityDropsStaleOptionalBoundFieldsFromSemanticResult(t *testing.T) {
@@ -428,9 +577,10 @@ func TestPublishToolResultReceivedProjectsBoundsIntoResultPreview(t *testing.T) 
 			Results: []string{"alpha"},
 		},
 		Bounds: &agent.Bounds{
-			Returned:  1,
-			Total:     &total,
-			Truncated: true,
+			Returned:   1,
+			Total:      &total,
+			Truncated:  true,
+			NextCursor: stringPtr(testProviderCursor),
 		},
 	}
 
@@ -441,6 +591,8 @@ func TestPublishToolResultReceivedProjectsBoundsIntoResultPreview(t *testing.T) 
 	resultEvt, ok := recorder.events[0].(*hooks.ToolResultReceivedEvent)
 	require.True(t, ok)
 	require.Equal(t, "status / alpha / 1 / 9", resultEvt.ResultPreview)
+	require.Equal(t, "tool-1", *resultEvt.Bounds.NextCursor)
+	require.Equal(t, testProviderCursor, *resultEvt.ProviderBounds.NextCursor)
 }
 
 func TestRegisterToolset_RejectsAgentToolsetWithoutSpecs(t *testing.T) {
@@ -1002,4 +1154,8 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 	require.Equal(t, tools.Ident("child.get_time_series"), resultEvt.ToolName)
 	require.JSONEq(t, `{"ok":true}`, string(resultEvt.ResultJSON))
 	require.Empty(t, resultEvt.ParentToolCallID)
+}
+
+func stringPtr(value string) *string {
+	return &value
 }

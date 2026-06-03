@@ -439,7 +439,7 @@ Tool("get_time_series", "Get a bounded time-series view", func() {
 })
 ```
 
-`BoundedResult` makes truncation explicit through runtime-owned bounds metadata (`returned`, `truncated`, optional `total`, `next_cursor`, and `refinement_hint`). `ServerData` attaches rich data that is never sent to model providers.
+`BoundedResult` makes truncation explicit through runtime-owned bounds metadata (`returned`, `truncated`, optional `total`, `next_cursor`, and `refinement_hint`). For paged tools, model-visible `next_cursor` is a runtime continuation reference; provider cursors remain private. `ServerData` attaches rich data that is never sent to model providers.
 
 ### Bookkeeping and Terminal Tools
 

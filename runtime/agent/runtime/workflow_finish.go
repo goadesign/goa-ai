@@ -192,6 +192,7 @@ func finalToolResultEvent(toolName tools.Ident, result *planner.FinalToolResult)
 		ResultOmittedReason: result.ResultOmittedReason,
 		ServerData:          append(rawjson.Message(nil), result.ServerData...),
 		Bounds:              result.Bounds,
+		ProviderBounds:      result.ProviderBounds,
 		Error:               result.Error,
 		RetryHint:           result.RetryHint,
 		Telemetry:           result.Telemetry,

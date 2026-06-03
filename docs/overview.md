@@ -173,8 +173,12 @@ surfaces the contract:
   bounded fields into the generated JSON result schema without forcing authored result types to
   duplicate those fields.
 - Successful bounded tool executions must populate `planner.ToolResult.Bounds`; the runtime then
-  projects those bounds into model-visible result JSON and attaches the same provider‑agnostic
-  `agent.Bounds` struct to planner results, hook events, streams, and memory events.
+  projects provider-owned bounds into model-visible result JSON, planner history, hook events,
+  streams, and memory events.
+- For cursor-paged tools, model-visible `next_cursor` is the producing `tool_call_id`
+  continuation reference. The provider cursor stays private in runtime history; when a follow-up
+  call passes the continuation reference in the payload cursor field, the runtime reuses the prior
+  payload and injects the provider cursor before execution.
 - For tools marked `BoundedResult`, the runtime enforces that bounds metadata is present and that
   any untruncated result stays under a configurable JSON size limit; trimming logic stays entirely
   in service code.
@@ -183,6 +187,8 @@ For bounded tools, bounds metadata is a hard contract:
 
 - `Returned` and `Truncated` must always be present.
 - `Total`, `NextCursor`, and `RefinementHint` are optional and should only be set when known.
+  Provider code sets `NextCursor` to its private cursor; runtime-facing model outputs replace it
+  with the continuation reference.
 
 ### Server Data (Sidecar Data)
 

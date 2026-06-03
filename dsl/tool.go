@@ -638,9 +638,11 @@ func ResultHintTemplate(s string) {
 //
 // Cursor-based pagination contract:
 //
-//   - Cursor values are opaque.
-//   - When paging, callers must keep all other parameters unchanged and only set
-//     the payload cursor field to the value returned in bounds as the next-page cursor.
+//   - Providers return private cursors through runtime bounds metadata.
+//   - Model-visible results carry a runtime continuation reference.
+//   - When paging, callers set the payload cursor field to that continuation
+//     reference; the runtime reuses the prior tool input and injects the private
+//     provider cursor.
 //
 // BoundedResult must appear in a Tool expression.
 func BoundedResult(fns ...func()) {

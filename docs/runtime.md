@@ -855,6 +855,13 @@ the canonical bounds fields (`returned`, `total`, `truncated`,
 `refinement_hint`, and optional `next_cursor`) into the emitted result JSON and
 hook/stream payloads.
 
+For cursor-paged tools, `planner.ToolResult.Bounds.NextCursor` is the
+provider-owned cursor returned by the tool implementation. Model-visible
+`next_cursor` is a runtime continuation reference tied to the producing tool
+result. When a later tool call sets the payload cursor field to that reference,
+the runtime reuses the prior tool input and injects the provider cursor
+privately before execution.
+
 The runtime enforces one strict contract across all result ingress paths
 (regular execution and externally provided await results):
 

@@ -101,6 +101,7 @@ func plannerToolOutputFromCanonicalEvents(runID, toolCallID string, events *cano
 		ResultOmittedReason: events.result.ResultOmittedReason,
 		ServerData:          append(rawjson.Message(nil), events.result.ServerData...),
 		Bounds:              events.result.Bounds,
+		ProviderBounds:      events.result.ProviderBounds,
 		Error:               events.result.Error,
 		RetryHint:           events.result.RetryHint,
 		Telemetry:           events.result.Telemetry,
