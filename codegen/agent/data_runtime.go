@@ -32,10 +32,12 @@ func newRunPolicyData(expr *agentsExpr.RunPolicyExpr) RunPolicyData {
 	}
 	if expr.History != nil {
 		h := &HistoryData{
-			Mode:               string(expr.History.Mode),
-			KeepRecent:         expr.History.KeepRecent,
-			TriggerAt:          expr.History.TriggerAt,
-			CompressKeepRecent: expr.History.CompressKeepRecent,
+			Mode:                     string(expr.History.Mode),
+			KeepRecent:               expr.History.KeepRecent,
+			CompressAtTurns:          expr.History.CompressAtTurns,
+			CompressAtMaxInputTokens: expr.History.CompressAtMaxInputTokens,
+			KeepMaxTurns:             expr.History.KeepMaxTurns,
+			KeepMaxInputTokens:       expr.History.KeepMaxInputTokens,
 		}
 		rp.History = h
 	}

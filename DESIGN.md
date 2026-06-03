@@ -149,6 +149,13 @@ Generated `registry.go` files in agent packages are local runtime registration h
 - **Durable replay**: The runtime persists canonical transcript deltas as
   runlog records so providers, replay tooling, and future backends can
   reconstruct the exact message order generically.
+- **History compression**: Agent designs may declare compression defaults with
+  `CompressAtTurns`, `CompressAtMaxInputTokens`, `KeepMaxTurns`, and
+  `KeepMaxInputTokens`. The runtime evaluates token budgets with the configured
+  model client's exact `model.TokenCounter`, so tokenization stays
+  deployment/model-specific while the design records the agent's default policy.
+  Exact retention always keeps whole recent turns; it never truncates
+  tool_use/tool_result pairs to satisfy a token budget.
 - **Bookkeeping control plane**: `Bookkeeping()` tool results stay durable for
   hooks, streams, and run logs, but they are not replayed into future
   planner-facing transcript/tool-output state. A bookkeeping-only turn must

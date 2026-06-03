@@ -32,6 +32,14 @@ func (e *errorRuntimeClient) ConverseStream(
 	return nil, e.converseStreamErr
 }
 
+func (e *errorRuntimeClient) CountTokens(
+	_ context.Context,
+	_ *bedrockruntime.CountTokensInput,
+	_ ...func(*bedrockruntime.Options),
+) (*bedrockruntime.CountTokensOutput, error) {
+	return nil, e.converseErr
+}
+
 func TestIsRateLimited_IdempotentOnSentinel(t *testing.T) {
 	err := model.ErrRateLimited
 	require.True(t, isRateLimited(err))

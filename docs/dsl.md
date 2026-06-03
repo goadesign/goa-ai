@@ -376,11 +376,21 @@ can also require confirmation dynamically for additional tools via `runtime.With
 ### History Functions
 
 
-| Function                          | Context            | Purpose                                      |
-| --------------------------------- | ------------------ | -------------------------------------------- |
-| `History(dsl)`                    | Inside `RunPolicy` | Configures conversation history management   |
-| `KeepRecentTurns(n)`              | Inside `History`   | Retain only the most recent N turns          |
-| `Compress(triggerAt, keepRecent)` | Inside `History`   | Summarize older turns when threshold reached |
+| Function                         | Context            | Purpose                                                           |
+| -------------------------------- | ------------------ | ----------------------------------------------------------------- |
+| `History(dsl)`                   | Inside `RunPolicy` | Configures conversation history management                        |
+| `KeepRecentTurns(n)`             | Inside `History`   | Retain only the most recent N turns without summarization         |
+| `CompressAtTurns(n)`             | Inside `History`   | Summarize older turns once at least N logical turns are present   |
+| `CompressAtMaxInputTokens(n)`    | Inside `History`   | Summarize older turns when runtime input-token count exceeds N    |
+| `KeepMaxTurns(n)`                | Inside `History`   | Keep at most N newest complete turns exact after summarization    |
+| `KeepMaxInputTokens(n)`          | Inside `History`   | Keep newest complete turns whose runtime token count fits budget  |
+
+Compression requires at least one `CompressAt...` trigger and at least one
+`KeepMax...` retention budget. Token budgets are defaults; generated agent
+config can replace them at runtime for the deployed model. When either trigger
+or retention uses tokens, the configured `HistoryModel` must implement
+`model.TokenCounter` with exact counts so the runtime counts the same request
+shape it will send to the provider.
 
 
 ### Cache Functions
@@ -1137,14 +1147,17 @@ RunPolicy(func() {
 ```go
 RunPolicy(func() {
     History(func() {
-        Compress(30, 10)  // Trigger at 30 turns, keep 10 recent
+        CompressAtMaxInputTokens(120_000)
+        KeepMaxInputTokens(40_000)
+        KeepMaxTurns(12)
     })
 })
 ```
 
-When `Compress` is used, the generated agent config includes a `HistoryModel` field that
-callers must supply with a `model.Client`. The runtime uses `ModelClassSmall` for
-summarization.
+When compression is configured, the generated agent config includes a
+`HistoryModel` field that callers must supply with a `model.Client`. The runtime
+uses `ModelClassSmall` for summarization and, when token budgets are set, counts
+tokens through the history model's exact `model.TokenCounter` implementation.
 
 ### Cache Policies
 

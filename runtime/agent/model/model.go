@@ -424,6 +424,53 @@ type (
 		CacheWriteTokens int
 	}
 
+	// TokenCount reports preflight input-token usage for a model request.
+	//
+	// Exact is true when the provider counted the request with the same
+	// tokenization path used for inference. Exact is false for explicit local
+	// estimators that approximate provider cost without a native provider call.
+	TokenCount struct {
+		// Model is the provider-resolved model identifier that would receive this
+		// request. It is empty when an estimator cannot resolve the concrete model.
+		Model string
+
+		// ModelClass is the logical model family requested by the caller.
+		ModelClass ModelClass
+
+		// InputTokens is the number of input tokens counted or estimated.
+		InputTokens int
+
+		// Exact reports whether InputTokens came from provider-native counting.
+		Exact bool
+	}
+
+	// TokenCounter is an optional model-client capability for preflight token
+	// counting. Provider adapters that can count tokens natively should implement
+	// it and set TokenCount.Exact to true. Local estimators should implement the
+	// same contract with Exact=false so callers can distinguish approximation
+	// from provider-authoritative counts.
+	TokenCounter interface {
+		CountTokens(ctx context.Context, req *Request) (TokenCount, error)
+	}
+
+	// TokenEstimator provides an explicit local fallback for clients that cannot
+	// count tokens natively. It measures the provider-visible request surface by
+	// byte size and converts it with a conservative character-per-token ratio.
+	TokenEstimator struct {
+		// CharactersPerToken is the approximate byte-to-token conversion ratio.
+		// When zero, the estimator uses three characters per token.
+		CharactersPerToken int
+
+		// OverheadTokens adds a fixed allowance for provider framing and request
+		// fields that are not represented directly in message text.
+		// When zero, the estimator uses 500 tokens.
+		OverheadTokens int
+
+		// MinimumTokens is the minimum non-zero estimate returned for tiny
+		// requests. When zero, the estimator uses 500 tokens.
+		MinimumTokens int
+	}
+
 	// Request captures inputs for a model invocation.
 	Request struct {
 		// Model is the provider-specific model identifier when specified.
@@ -583,6 +630,54 @@ type (
 		Metadata() map[string]any
 	}
 )
+
+// CountTokens estimates req's input-token usage with Exact=false. It is intended
+// for explicit fallback paths such as rate limiting or non-native providers, not
+// for provider-specific billing or hard context-window guarantees.
+func (e TokenEstimator) CountTokens(ctx context.Context, req *Request) (TokenCount, error) {
+	if err := ctx.Err(); err != nil {
+		return TokenCount{}, err
+	}
+	return TokenCount{
+		Model:       reqModel(req),
+		ModelClass:  reqModelClass(req),
+		InputTokens: e.estimate(req),
+		Exact:       false,
+	}, nil
+}
+
+func (e TokenEstimator) estimate(req *Request) int {
+	charCount := requestCharacterCount(req)
+	if charCount <= 0 {
+		return e.minimumTokens()
+	}
+	tokens := charCount / e.charactersPerToken()
+	if tokens < 1 {
+		tokens = 1
+	}
+	return tokens + e.overheadTokens()
+}
+
+func (e TokenEstimator) charactersPerToken() int {
+	if e.CharactersPerToken <= 0 {
+		return 3
+	}
+	return e.CharactersPerToken
+}
+
+func (e TokenEstimator) overheadTokens() int {
+	if e.OverheadTokens <= 0 {
+		return 500
+	}
+	return e.OverheadTokens
+}
+
+func (e TokenEstimator) minimumTokens() int {
+	if e.MinimumTokens <= 0 {
+		return 500
+	}
+	return e.MinimumTokens
+}
 
 const (
 	// ConversationRoleSystem is the role for system messages.
@@ -802,6 +897,115 @@ func (in ToolInput) SchemaWithoutRootExample() rawjson.Message {
 // top-level input example support.
 func (in ToolInput) ExampleJSON() rawjson.Message {
 	return in.exampleJSON
+}
+
+func reqModel(req *Request) string {
+	if req == nil {
+		return ""
+	}
+	return req.Model
+}
+
+func reqModelClass(req *Request) ModelClass {
+	if req == nil {
+		return ""
+	}
+	return req.ModelClass
+}
+
+func requestCharacterCount(req *Request) int {
+	if req == nil {
+		return 0
+	}
+	count := 0
+	for _, msg := range req.Messages {
+		count += messageCharacterCount(msg)
+	}
+	for _, tool := range req.Tools {
+		if tool == nil {
+			continue
+		}
+		count += len(tool.Name)
+		count += len(tool.Description)
+		count += len(tool.Input.JSONSchema())
+		count += len(tool.Input.SchemaWithoutRootExample())
+		count += len(tool.Input.ExampleJSON())
+	}
+	if req.ToolChoice != nil {
+		count += len(req.ToolChoice.Mode)
+		count += len(req.ToolChoice.Name)
+	}
+	if req.StructuredOutput != nil {
+		count += len(req.StructuredOutput.Name)
+		count += len(req.StructuredOutput.Schema)
+	}
+	return count
+}
+
+func messageCharacterCount(msg *Message) int {
+	if msg == nil {
+		return 0
+	}
+	count := len(msg.Role)
+	for _, part := range msg.Parts {
+		count += partCharacterCount(part)
+	}
+	return count
+}
+
+func partCharacterCount(part Part) int {
+	switch v := part.(type) {
+	case TextPart:
+		return len(v.Text)
+	case ImagePart:
+		return len(v.Bytes) + len(v.Format)
+	case DocumentPart:
+		count := len(v.Name) + len(v.Format) + len(v.Bytes) + len(v.Text) + len(v.URI) + len(v.Context)
+		for _, chunk := range v.Chunks {
+			count += len(chunk)
+		}
+		return count
+	case CitationsPart:
+		count := len(v.Text)
+		for _, citation := range v.Citations {
+			count += len(citation.Title) + len(citation.Source)
+			for _, text := range citation.SourceContent {
+				count += len(text)
+			}
+		}
+		return count
+	case ThinkingPart:
+		return len(v.Text) + len(v.Signature) + len(v.Redacted)
+	case ToolUsePart:
+		return len(v.ID) + len(v.Name) + encodedCharacterCount(v.Input)
+	case ToolResultPart:
+		return len(v.ToolUseID) + encodedCharacterCount(v.Content)
+	case CacheCheckpointPart:
+		return 0
+	default:
+		return 0
+	}
+}
+
+func encodedCharacterCount(value any) int {
+	switch v := value.(type) {
+	case nil:
+		return 0
+	case string:
+		return len(v)
+	case []byte:
+		return len(v)
+	case rawjson.Message:
+		return len(v)
+	case json.RawMessage:
+		return len(v)
+	default:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return len(fmt.Sprint(v))
+		}
+		return len(data)
+	}
 }
 
 func (TextPart) isPart() {}
