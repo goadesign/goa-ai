@@ -100,6 +100,7 @@ func collectToolCallIDs(calls []planner.ToolRequest) []string {
 }
 
 func (e *toolBatchExec) normalizeToolCall(call planner.ToolRequest, i int) planner.ToolRequest {
+	call.Payload = rawjson.Message(stripReservedToolPayloadFields(call.Payload.RawMessage()))
 	if call.SessionID == "" {
 		call.SessionID = e.sessionID
 	}

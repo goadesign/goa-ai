@@ -255,7 +255,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	// Apply optional payload adapter before decoding. Payloads are canonical
 	// JSON (json.RawMessage) along the planner/runtime boundary; adapters may
 	// normalize them before validation or execution.
-	raw := req.Payload
+	raw := rawjson.Message(stripReservedToolPayloadFields(req.Payload.RawMessage()))
 	meta := toolCallMeta(planner.ToolRequest{
 		RunID:            req.RunID,
 		SessionID:        req.SessionID,
@@ -265,7 +265,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	})
 	if reg.PayloadAdapter != nil && len(raw) > 0 {
 		if adapted, err := reg.PayloadAdapter(ctx, meta, req.ToolName, raw.RawMessage()); err == nil && len(adapted) > 0 {
-			raw = rawjson.Message(adapted)
+			raw = rawjson.Message(stripReservedToolPayloadFields(adapted))
 		} else if err != nil {
 			return &ToolOutput{Error: fmt.Sprintf("payload adapter failed: %v", err)}, nil
 		}
@@ -602,6 +602,9 @@ func (r *Runtime) unmarshalToolValue(ctx context.Context, toolName tools.Ident, 
 	if len(raw) == 0 {
 		return nil, nil
 	}
+	if payload {
+		raw = stripReservedToolPayloadFields(raw)
+	}
 	codec, ok := r.toolCodec(toolName, payload)
 	if ok && codec.FromJSON != nil {
 		v, err := codec.FromJSON(raw)
@@ -617,6 +620,33 @@ func (r *Runtime) unmarshalToolValue(ctx context.Context, toolName tools.Ident, 
 	}
 	r.logger.Error(ctx, "no codec found for tool", "tool", toolName, "payload", payload)
 	return nil, fmt.Errorf("no codec found for tool %s", toolName)
+}
+
+// stripReservedToolPayloadFields removes runtime-owned controls before
+// generated tool payload codecs enforce the authored schema. `server_data` is
+// not part of any tool's domain payload; sidecar emission is owned by tool
+// implementation contracts such as explicit render flags or result fields.
+func stripReservedToolPayloadFields(raw json.RawMessage) json.RawMessage {
+	if !bytes.Contains(raw, []byte(`"server_data"`)) {
+		return raw
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return raw
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &obj); err != nil {
+		return raw
+	}
+	if _, ok := obj["server_data"]; !ok {
+		return raw
+	}
+	delete(obj, "server_data")
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return raw
+	}
+	return out
 }
 
 // toolCodec retrieves the JSON codec for a tool's payload or result.

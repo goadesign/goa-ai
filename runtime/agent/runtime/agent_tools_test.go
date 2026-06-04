@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -118,6 +119,90 @@ func TestAgentTool_DefaultContentFromPayload(t *testing.T) {
 	require.Len(t, pl.msgs, 1)
 	require.Equal(t, model.ConversationRoleUser, pl.msgs[0].Role)
 	require.Equal(t, `"hello"`, firstText(pl.msgs[0]))
+}
+
+func TestAgentTool_StripsReservedServerDataBeforePayloadDecode(t *testing.T) {
+	rt := &Runtime{
+		agents:        make(map[agent.Ident]AgentRegistration),
+		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
+		Engine:        engineinmem.New(),
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+		Bus:           noopHooks{},
+		SessionStore:  sessioninmem.New(),
+	}
+	const agentID = "svc.agent"
+	pl := &capturePlanner{}
+	require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{
+		ID:                  agentID,
+		Planner:             pl,
+		Workflow:            engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }},
+		PlanActivityName:    "plan",
+		ResumeActivityName:  "resume",
+		ExecuteToolActivity: "execute",
+	}))
+
+	type strictPayload struct {
+		SourcesRef string `json:"sources_ref"`
+	}
+	callName := tools.Ident("svc.tools.get_time_series")
+	rt.toolSpecs[callName] = tools.ToolSpec{
+		Name:    callName,
+		Toolset: "svc.tools",
+		Payload: tools.TypeSpec{
+			Codec: tools.JSONCodec[any]{
+				FromJSON: func(data []byte) (any, error) {
+					var raw map[string]json.RawMessage
+					if err := json.Unmarshal(data, &raw); err != nil {
+						return nil, err
+					}
+					if _, ok := raw["server_data"]; ok {
+						return nil, errors.New("reserved server_data reached payload codec")
+					}
+					var out strictPayload
+					if err := json.Unmarshal(data, &out); err != nil {
+						return nil, err
+					}
+					return &out, nil
+				},
+			},
+		},
+		Result: tools.TypeSpec{Codec: tools.AnyJSONCodec},
+	}
+	reg := NewAgentToolsetRegistration(rt, AgentToolConfig{
+		AgentID: agentID,
+		Route: AgentRoute{
+			ID:               agent.Ident(agentID),
+			WorkflowName:     "wf",
+			DefaultTaskQueue: "default",
+		},
+		AgentToolContent: AgentToolContent{
+			Prompt: func(_ tools.Ident, payload any) string {
+				typed, ok := payload.(*strictPayload)
+				require.True(t, ok)
+				return typed.SourcesRef
+			},
+		},
+	})
+
+	call := planner.ToolRequest{
+		RunID:     "r1",
+		SessionID: "s1",
+		Name:      callName,
+		Payload:   rawjson.Message([]byte(`{"sources_ref":"src_1","server_data":"on"}`)),
+	}
+	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
+	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
+	ctx := engine.WithWorkflowContext(context.Background(), wf)
+	tr, err := reg.Execute(ctx, &call)
+	require.NoError(t, err)
+	require.NotNil(t, tr)
+	require.Len(t, pl.msgs, 1)
+	require.Equal(t, "src_1", firstText(pl.msgs[0]))
+	require.Len(t, wf.childRequests, 1)
+	require.JSONEq(t, `{"sources_ref":"src_1"}`, string(wf.childRequests[0].Input.ToolArgs))
 }
 
 func TestAgentTool_TextContent(t *testing.T) {

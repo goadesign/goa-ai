@@ -468,6 +468,9 @@ func attachRunLink(result *planner.ToolResult, handle *run.Handle) {
 // payload for prompt/template rendering and records canonical JSON args for the child.
 func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConfig, call *planner.ToolRequest, messages []*model.Message, parentRun *run.Context) ([]*model.Message, run.Context, error) {
 	var zeroCtx run.Context
+	sanitizedCall := *call
+	sanitizedCall.Payload = rawjson.Message(stripReservedToolPayloadFields(call.Payload.RawMessage()))
+	call = &sanitizedCall
 
 	// Decode payload for prompt/template rendering. Prefer tool codecs when
 	// specs are registered. Agent-as-tool payloads must be validated at the
