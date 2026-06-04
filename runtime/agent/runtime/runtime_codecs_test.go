@@ -18,8 +18,9 @@ func TestExecuteToolActivity_UsesGeneratedCodecs(t *testing.T) {
 	var decodedCalled bool
 	payloadCodec := tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) { return json.Marshal("encoded_payload") },
-		FromJSON: func(_ []byte) (any, error) {
+		FromJSON: func(data []byte) (any, error) {
 			decodedCalled = true
+			require.JSONEq(t, "{}", string(data))
 			return "decoded_payload", nil
 		},
 	}
@@ -50,7 +51,7 @@ func TestExecuteToolActivity_UsesGeneratedCodecs(t *testing.T) {
 	}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{spec.Name: spec}
 
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: spec.Name, Payload: rawjson.Message([]byte("{}"))}
+	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: spec.Name, Payload: rawjson.Message([]byte(`{"server_data":"on"}`))}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
