@@ -119,6 +119,7 @@ func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
 		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 	})
 
+	rt.toolSpecs["tool"] = newAnyJSONSpec("tool", "svc.tools")
 	cfg := AgentToolConfig{
 		AgentID: "svc.agent",
 		Route: AgentRoute{
@@ -529,4 +530,45 @@ func TestBuildAgentChildRequest_PreservesCanonicalToolArgs(t *testing.T) {
 	_, nestedRunCtx, err := rt.buildAgentChildRequest(context.Background(), cfg, call, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, payload, nestedRunCtx.ToolArgs)
+}
+
+func TestBuildAgentChildRequestRejectsMissingPayloadThroughCodec(t *testing.T) {
+	rt := &Runtime{
+		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
+		logger:    telemetry.NoopLogger{},
+	}
+
+	toolName := tools.Ident("tool")
+	spec := newAnyJSONSpec(toolName, "svc.tools")
+	spec.Payload.Codec = tools.JSONCodec[any]{
+		FromJSON: func(data []byte) (any, error) {
+			var decoded map[string]any
+			if err := json.Unmarshal(data, &decoded); err != nil {
+				return nil, err
+			}
+			if _, ok := decoded["scope_context"]; !ok {
+				return nil, fmt.Errorf("scope_context is required")
+			}
+			return decoded, nil
+		},
+	}
+	rt.toolSpecs[toolName] = spec
+
+	call := &planner.ToolRequest{
+		Name:       toolName,
+		RunID:      "run-1",
+		ToolCallID: "tooluse_123",
+		SessionID:  "sess-1",
+	}
+	cfg := &AgentToolConfig{
+		AgentToolContent: AgentToolContent{
+			Texts: map[tools.Ident]string{
+				toolName: "use payload",
+			},
+		},
+	}
+
+	_, _, err := rt.buildAgentChildRequest(context.Background(), cfg, call, nil, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "scope_context is required")
 }
