@@ -137,9 +137,9 @@ func flattenAndHide(att *goaexpr.AttributeExpr, injected []string) *goaexpr.Attr
 }
 
 // collectAndForceTypes walks the attribute recursively and ensures any
-// encountered user types are marked with the "type:generate:force" meta and
-// present in goaexpr.Root.Types. The walk recurses into user type attributes
-// as well (including alias bases and extended bases) using a visited set.
+// encountered user types are marked for Go generation and present in
+// goaexpr.Root.Types. The walk recurses into user type attributes as well
+// (including alias bases and extended bases) using a visited set.
 func collectAndForceTypes(att *goaexpr.AttributeExpr, existingByID, existingByName map[string]struct{}) error {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return nil
@@ -155,8 +155,7 @@ func collectAndForceTypes(att *goaexpr.AttributeExpr, existingByID, existingByNa
 		}
 		visited[ut.ID()] = struct{}{}
 
-		// Mark for generation across services. Preserve any existing meta.
-		ut.Attribute().AddMeta("type:generate:force")
+		markToolTypeForGeneration(ut)
 		if _, ok := existingByID[ut.ID()]; !ok {
 			goaexpr.Root.Types = append(goaexpr.Root.Types, ut)
 			existingByID[ut.ID()] = struct{}{}
@@ -187,6 +186,17 @@ func collectAndForceTypes(att *goaexpr.AttributeExpr, existingByID, existingByNa
 	}
 
 	return nil
+}
+
+// markToolTypeForGeneration preserves Goa type generation for tool-only shapes
+// without forcing private agent schemas into service OpenAPI documents. Goa
+// still includes the type in OpenAPI when it is reached from an HTTP endpoint.
+func markToolTypeForGeneration(ut goaexpr.UserType) {
+	attr := ut.Attribute()
+	attr.AddMeta("type:generate:force")
+	if _, ok := attr.Meta["openapi:generate"]; !ok {
+		attr.AddMeta("openapi:generate", "false")
+	}
 }
 
 func walkAttributeDependencyTypes(att *goaexpr.AttributeExpr, walkUT func(goaexpr.UserType) error) error {
