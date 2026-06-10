@@ -11,7 +11,11 @@ import (
 	"goa.design/goa/v3/http/codegen/openapi"
 )
 
-const jsonSchemaTypeInteger = "integer"
+const (
+	jsonSchemaTypeInteger = "integer"
+	unionTypeKeyDefault   = "type"
+	unionValueKeyDefault  = "value"
+)
 
 type (
 	// exampleData keeps one canonical JSON-native example in both generated
@@ -445,7 +449,7 @@ func projectUnionSchemaJSONNames(union *goaexpr.Union, schema map[string]any, de
 	properties, _ := schema["properties"].(map[string]any)
 	valueKey := union.GetValueKey()
 	if valueKey == "" {
-		valueKey = "value"
+		valueKey = unionValueKeyDefault
 	}
 	valueSchema, _ := properties[valueKey].(map[string]any)
 	values, _ := valueSchema["anyOf"].([]any)
@@ -570,11 +574,11 @@ func specializeUnionSchemaNode(att *goaexpr.AttributeExpr, schema map[string]any
 func rewriteUnionSchema(union *goaexpr.Union, schema map[string]any, defs map[string]any, seen map[string]struct{}) error {
 	typeKey := union.GetTypeKey()
 	if typeKey == "" {
-		typeKey = "type"
+		typeKey = unionTypeKeyDefault
 	}
 	valueKey := union.GetValueKey()
 	if valueKey == "" {
-		valueKey = "value"
+		valueKey = unionValueKeyDefault
 	}
 	properties, _ := schema["properties"].(map[string]any)
 	if len(properties) == 0 {
