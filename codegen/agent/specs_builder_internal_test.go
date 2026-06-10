@@ -234,6 +234,14 @@ func TestBuildToolSpecsData_UnionSchemasUseCanonicalEnvelope(t *testing.T) {
 	valuePayload := valueProperties["value"].(map[string]any)
 	anyOf := valuePayload["anyOf"].([]any)
 	require.Len(t, anyOf, 2)
+
+	if example, ok := schema["example"].(map[string]any); ok {
+		valueExample := example["value"].(map[string]any)
+		valueExampleType, ok := valueExample["type"].(string)
+		require.True(t, ok)
+		require.Contains(t, []string{"number", "text"}, valueExampleType)
+		require.Contains(t, valueExample, "value")
+	}
 }
 
 func TestBuildToolSpecsData_UnionSchemasSpecializeDefinitions(t *testing.T) {

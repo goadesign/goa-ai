@@ -3,12 +3,13 @@ package codegen
 import (
 	"strings"
 
+	goacodegen "goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
 )
 
-// cloneWithJSONTags returns a deep copy of the provided attribute where:
+// cloneWithModelJSONTags returns a deep copy of the provided attribute where:
 //   - all object fields (including nested objects) carry json struct tags whose
-//     names match the DSL field names, and
+//     names match the model-facing JSON field names, and
 //   - any `struct:pkg:*` locator metadata is removed so synthesized transport
 //     types are treated as local to the specs package.
 //
@@ -16,9 +17,10 @@ import (
 // schema property names and must preserve missing-vs-zero semantics via pointer
 // primitives (controlled by NameScope.GoTypeDef's ptr flag, not by this helper).
 //
-// Existing struct:tag:json metadata is preserved so DSL authors can override
-// tags explicitly using Meta or design-specific helpers.
-func cloneWithJSONTags(att *goaexpr.AttributeExpr) *goaexpr.AttributeExpr {
+// Existing HTTP/public transport JSON tag metadata is ignored because Goa
+// generators can attach it to shared design expressions. The only preserved JSON
+// tag is "-", which goa-ai uses to hide injected fields from the model contract.
+func cloneWithModelJSONTags(att *goaexpr.AttributeExpr) *goaexpr.AttributeExpr {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return att
 	}
@@ -35,7 +37,8 @@ func cloneWithJSONTags(att *goaexpr.AttributeExpr) *goaexpr.AttributeExpr {
 // normalizeTransportAttrRecursive:
 //   - removes struct:pkg:* locators so nested user types can be materialized
 //     locally, and
-//   - ensures object fields carry json:name tags matching the DSL field names.
+//   - ensures object fields carry json:name tags matching the model-facing
+//     field names.
 func normalizeTransportAttrRecursive(att *goaexpr.AttributeExpr) {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return
@@ -80,17 +83,61 @@ func normalizeTransportAttrRecursive(att *goaexpr.AttributeExpr) {
 		if nat.Attribute.Meta == nil {
 			nat.Attribute.Meta = make(goaexpr.MetaExpr)
 		}
-		// Only set the json name when no explicit json tag metadata was provided
-		// in the DSL.
-		//
 		// Use "struct:tag:json:name" (not "struct:tag:json") so Goa can append
 		// ",omitempty" automatically for fields that are not required by their
-		// parent object.
-		if _, ok := nat.Attribute.Meta["struct:tag:json"]; !ok {
-			if _, ok := nat.Attribute.Meta["struct:tag:json:name"]; !ok {
-				nat.Attribute.Meta["struct:tag:json:name"] = []string{nat.Name}
-			}
+		// parent object. Preserve only json:"-" because it hides injected fields.
+		hidden := hiddenJSONTag(nat.Attribute)
+		delete(nat.Attribute.Meta, "struct:tag:json")
+		delete(nat.Attribute.Meta, "struct:tag:json:name")
+		if hidden {
+			nat.Attribute.Meta["struct:tag:json"] = []string{"-"}
+		} else {
+			nat.Attribute.Meta["struct:tag:json:name"] = []string{modelJSONName(nat.Name)}
 		}
 		normalizeTransportAttrRecursive(nat.Attribute)
 	}
+}
+
+// modelJSONName returns the default model-facing JSON property name for a Goa
+// attribute. Tool contracts default to snake_case even when the Go/public API
+// attribute name is lowerCamel.
+func modelJSONName(name string) string {
+	return goacodegen.SnakeCase(name)
+}
+
+// transportFieldName returns the JSON property name generated for nat in a
+// model-facing transport attribute. HTTP/public transport tag metadata is
+// ignored; json:"-" remains authoritative for hidden injected fields.
+func transportFieldName(nat *goaexpr.NamedAttributeExpr) (string, bool) {
+	if nat == nil || nat.Attribute == nil {
+		return "", false
+	}
+	if hiddenJSONTag(nat.Attribute) {
+		return "", false
+	}
+	return modelJSONName(nat.Name), true
+}
+
+// hiddenJSONTag reports whether att is explicitly hidden from model-facing
+// JSON. goa-ai uses this for injected fields that service code supplies after
+// model decoding.
+func hiddenJSONTag(att *goaexpr.AttributeExpr) bool {
+	name, ok := explicitJSONTagName(att)
+	return ok && name == "-"
+}
+
+// explicitJSONTagName extracts a field name from Goa's JSON tag metadata.
+// A "-" tag is returned to let callers intentionally skip hidden fields.
+func explicitJSONTagName(att *goaexpr.AttributeExpr) (string, bool) {
+	if att == nil || len(att.Meta) == 0 {
+		return "", false
+	}
+	if tags := att.Meta["struct:tag:json"]; len(tags) > 0 {
+		name := strings.Split(tags[0], ",")[0]
+		return name, name != ""
+	}
+	if names := att.Meta["struct:tag:json:name"]; len(names) > 0 {
+		return names[0], names[0] != ""
+	}
+	return "", false
 }

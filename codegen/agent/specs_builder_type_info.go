@@ -148,7 +148,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	// Internal transport type used only by codecs for JSON decode+validation.
 	// This is the actual JSON contract (schema property names + missing detection).
 	transportTypeName := typeName + "Transport"
-	transportAttr := cloneWithJSONTags(tt)
+	transportAttr := cloneWithModelJSONTags(tt)
 	transportAttr = b.ensureNestedLocalTransportTypes(scope, transportAttr)
 	// Collect union sum types as they appear in the transport graph (after
 	// localization). These are emitted into the toolset-local http package.
@@ -367,7 +367,7 @@ func boundedResultSchemaFields(bounds *ToolBoundsData) map[string]any {
 		},
 	}
 	if bounds.Paging != nil && bounds.Paging.NextCursorField != "" {
-		fields[bounds.Paging.NextCursorField] = map[string]any{
+		fields[modelJSONName(bounds.Paging.NextCursorField)] = map[string]any{
 			"type":        "string",
 			"description": "Opaque cursor for the next page. Call the same tool again with the same parameters and pass this exact string back as the paging cursor. Do not send the literal text \"next_cursor\" or modify the cursor.",
 		}
@@ -416,7 +416,7 @@ func canonicalOptionalBoundedResultFields(bounds *ToolBoundsData) map[string]str
 	}
 	fields := make(map[string]struct{})
 	for _, name := range boundedresult.OptionalFieldNames(nextCursorField) {
-		fields[name] = struct{}{}
+		fields[modelJSONName(name)] = struct{}{}
 	}
 	return fields
 }
