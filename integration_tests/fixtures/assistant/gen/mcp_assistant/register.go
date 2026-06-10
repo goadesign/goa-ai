@@ -24,7 +24,7 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Description: "Analyze sentiment of text",
 		Payload: tools.TypeSpec{
 			Name:   "*assistant.AnalyzeSentimentPayload",
-			Schema: tools.RawJSON("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to analyze\"}},\"additionalProperties\":false}"),
+			Schema: []byte("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to analyze\"}},\"additionalProperties\":false}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					return json.Marshal(v)
@@ -68,7 +68,7 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Description: "Extract keywords from text",
 		Payload: tools.TypeSpec{
 			Name:   "*assistant.ExtractKeywordsPayload",
-			Schema: tools.RawJSON("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text\"}},\"additionalProperties\":false}"),
+			Schema: []byte("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text\"}},\"additionalProperties\":false}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					return json.Marshal(v)
@@ -112,7 +112,7 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Description: "Summarize text",
 		Payload: tools.TypeSpec{
 			Name:   "*assistant.SummarizeTextPayload",
-			Schema: tools.RawJSON("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to summarize\"}},\"additionalProperties\":false}"),
+			Schema: []byte("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to summarize\"}},\"additionalProperties\":false}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					return json.Marshal(v)
@@ -156,7 +156,7 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Description: "Search knowledge base",
 		Payload: tools.TypeSpec{
 			Name:   "*assistant.SearchPayload",
-			Schema: tools.RawJSON("{\"type\":\"object\",\"required\":[\"query\"],\"properties\":{\"limit\":{\"type\":\"integer\",\"description\":\"Maximum number of results\"},\"query\":{\"type\":\"string\",\"description\":\"Search query\"}},\"additionalProperties\":false}"),
+			Schema: []byte("{\"type\":\"object\",\"required\":[\"query\"],\"properties\":{\"limit\":{\"type\":\"integer\",\"description\":\"Maximum number of results\"},\"query\":{\"type\":\"string\",\"description\":\"Search query\"}},\"additionalProperties\":false}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					return json.Marshal(v)
@@ -200,7 +200,7 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Description: "Execute code",
 		Payload: tools.TypeSpec{
 			Name:   "*assistant.ExecuteCodePayload",
-			Schema: tools.RawJSON("{\"type\":\"object\",\"required\":[\"language\",\"code\"],\"properties\":{\"code\":{\"type\":\"string\",\"description\":\"Code to execute\"},\"language\":{\"type\":\"string\",\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"]}},\"additionalProperties\":false}"),
+			Schema: []byte("{\"type\":\"object\",\"required\":[\"language\",\"code\"],\"properties\":{\"code\":{\"type\":\"string\",\"description\":\"Code to execute\"},\"language\":{\"type\":\"string\",\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"]}},\"additionalProperties\":false}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					return json.Marshal(v)
@@ -244,7 +244,7 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Description: "Process a batch of items",
 		Payload: tools.TypeSpec{
 			Name:   "*assistant.ProcessBatchPayload",
-			Schema: tools.RawJSON("{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"blob\":{\"type\":\"string\",\"description\":\"Base64 blob\"},\"format\":{\"type\":\"string\",\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"]},\"items\":{\"type\":\"array\",\"description\":\"Items to process\",\"items\":{\"type\":\"string\"}},\"mimeType\":{\"type\":\"string\",\"description\":\"MIME type\"},\"uri\":{\"type\":\"string\",\"description\":\"Resource URI\"}},\"additionalProperties\":false}"),
+			Schema: []byte("{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"blob\":{\"type\":\"string\",\"description\":\"Base64 blob\"},\"format\":{\"type\":\"string\",\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"]},\"items\":{\"type\":\"array\",\"description\":\"Items to process\",\"items\":{\"type\":\"string\"}},\"mimeType\":{\"type\":\"string\",\"description\":\"MIME type\"},\"uri\":{\"type\":\"string\",\"description\":\"Resource URI\"}},\"additionalProperties\":false}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					return json.Marshal(v)
