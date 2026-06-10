@@ -101,7 +101,7 @@ func TestUnhealthyToolsetFastFailure(t *testing.T) {
 			// stalenessThreshold = (missedPingThreshold + 1) * pingInterval
 			stalenessThreshold := time.Duration(missedPingThreshold+1) * pingInterval
 			staleTime := time.Now().Add(-stalenessThreshold - time.Second)
-			if err := setHealthRecordForTest(ctx, healthMap, toolsetName, registrationToken, staleTime); err != nil {
+			if err := setHealthRecordForTest(ctx, healthMap, toolsetName, "provider-a", registrationToken, staleTime); err != nil {
 				return false
 			}
 			awaitMapEvent(healthEvents)
@@ -185,7 +185,8 @@ func TestPongRestoresHealthyStatus(t *testing.T) {
 			// Directly set a stale timestamp to make toolset unhealthy.
 			// stalenessThreshold = (2 + 1) * 100ms = 300ms
 			staleTime := time.Now().Add(-500 * time.Millisecond)
-			if err := setHealthRecordForTest(ctx, healthMap, toolsetName, registrationToken, staleTime); err != nil {
+			const providerID = "provider-a"
+			if err := setHealthRecordForTest(ctx, healthMap, toolsetName, providerID, registrationToken, staleTime); err != nil {
 				return false
 			}
 			awaitMapEvent(healthEvents)
@@ -196,7 +197,7 @@ func TestPongRestoresHealthyStatus(t *testing.T) {
 			}
 
 			// Record a pong (updates timestamp to now).
-			if err := tracker.RecordPong(ctx, toolsetName, newPingID(registrationToken)); err != nil {
+			if err := tracker.RecordPong(ctx, toolsetName, providerID, newPingID(registrationToken)); err != nil {
 				return false
 			}
 			awaitMapEvent(healthEvents)
@@ -214,21 +215,22 @@ func TestPongForUnregisteredToolsetDoesNotCreateHealth(t *testing.T) {
 	ctx := context.Background()
 	svc, tracker, _, healthMap, _ := newPongTestService(t)
 	require.NoError(t, svc.Pong(ctx, &genregistry.PongPayload{
-		PingID:  "registration-1/ping-1",
-		Toolset: "unknown-toolset",
+		PingID:     "registration-1/ping-1",
+		Toolset:    "unknown-toolset",
+		ProviderID: "provider-a",
 	}))
 
 	health, err := tracker.Health("unknown-toolset")
 	require.NoError(t, err)
 	require.False(t, health.Healthy)
 
-	_, ok := healthMap.Get(healthKey("unknown-toolset"))
+	_, ok := healthMap.Get(healthKey("unknown-toolset", "provider-a"))
 	require.False(t, ok)
 }
 
-func TestReregisterInvalidatesPreviousRegistrationHealth(t *testing.T) {
+func TestToolsetHealthyWhenAnyProviderInstanceFresh(t *testing.T) {
 	ctx := context.Background()
-	svc, tracker, catalog, healthMap, registryMap := newPongTestService(t)
+	_, tracker, catalog, healthMap, registryMap := newPongTestService(t)
 	registryEvents := registryMap.Subscribe()
 	defer registryMap.Unsubscribe(registryEvents)
 	healthEvents := healthMap.Subscribe()
@@ -239,45 +241,22 @@ func TestReregisterInvalidatesPreviousRegistrationHealth(t *testing.T) {
 		RegisteredAt: "registration-1",
 	}))
 	awaitMapEvent(registryEvents)
-	firstToken := requireRegistrationToken(t, ctx, catalog)
-	require.NoError(t, svc.Pong(ctx, &genregistry.PongPayload{
-		PingID:  newPingID(firstToken),
-		Toolset: "toolset-1",
-	}))
+	token := requireRegistrationToken(t, ctx, catalog)
+	require.NoError(t, setHealthRecordForTest(ctx, healthMap, "toolset-1", "provider-a", token, time.Now().Add(-400*time.Millisecond)))
 	awaitMapEvent(healthEvents)
+
+	require.NoError(t, setHealthRecordForTest(ctx, healthMap, "toolset-1", "provider-b", token, time.Now()))
+	awaitMapEvent(healthEvents)
+
 	health, err := tracker.Health("toolset-1")
 	require.NoError(t, err)
 	require.True(t, health.Healthy)
-
-	require.NoError(t, catalog.SaveToolset(ctx, &genregistry.Toolset{
-		Name:         "toolset-1",
-		RegisteredAt: "registration-2",
-	}))
-	awaitMapEvent(registryEvents)
-	secondToken := requireRegistrationToken(t, ctx, catalog)
-	require.NotEqual(t, firstToken, secondToken)
-
-	health, err = tracker.Health("toolset-1")
-	require.NoError(t, err)
-	require.False(t, health.Healthy)
-
-	healthBefore, ok := healthMap.Get(healthKey("toolset-1"))
-	require.True(t, ok)
-
-	require.NoError(t, svc.Pong(ctx, &genregistry.PongPayload{
-		PingID:  newPingID(firstToken),
-		Toolset: "toolset-1",
-	}))
-	healthAfter, ok := healthMap.Get(healthKey("toolset-1"))
-	require.True(t, ok)
-	require.Equal(t, healthBefore, healthAfter)
-
-	health, err = tracker.Health("toolset-1")
-	require.NoError(t, err)
-	require.False(t, health.Healthy)
+	require.Equal(t, "provider-b", health.ProviderID)
+	require.Equal(t, 2, health.ProviderCount)
+	require.Equal(t, 1, health.HealthyProviderCount)
 }
 
-func TestReregisterWithCollidingRegistrationTimestampsRejectsStalePong(t *testing.T) {
+func TestReregisterSameSchemaPreservesHealth(t *testing.T) {
 	ctx := context.Background()
 	svc, tracker, catalog, healthMap, registryMap := newPongTestService(t)
 	registryEvents := registryMap.Subscribe()
@@ -297,8 +276,9 @@ func TestReregisterWithCollidingRegistrationTimestampsRejectsStalePong(t *testin
 	awaitMapEvent(registryEvents)
 	firstToken := requireRegistrationToken(t, ctx, catalog)
 	require.NoError(t, svc.Pong(ctx, &genregistry.PongPayload{
-		PingID:  newPingID(firstToken),
-		Toolset: toolset,
+		PingID:     newPingID(firstToken),
+		Toolset:    toolset,
+		ProviderID: "provider-a",
 	}))
 	awaitMapEvent(healthEvents)
 	health, err := tracker.Health(toolset)
@@ -311,26 +291,120 @@ func TestReregisterWithCollidingRegistrationTimestampsRejectsStalePong(t *testin
 	}))
 	awaitMapEvent(registryEvents)
 	secondToken := requireRegistrationToken(t, ctx, catalog)
+	require.Equal(t, firstToken, secondToken)
+
+	health, err = tracker.Health(toolset)
+	require.NoError(t, err)
+	require.True(t, health.Healthy)
+	require.Equal(t, "provider-a", health.ProviderID)
+
+	require.NoError(t, tracker.RegisterProvider(ctx, toolset, "provider-a"))
+	awaitMapEvent(healthEvents)
+	health, err = tracker.Health(toolset)
+	require.NoError(t, err)
+	require.True(t, health.Healthy)
+	require.Equal(t, "provider-a", health.ProviderID)
+}
+
+func TestReregisterChangedSchemaRequiresNewProviderPong(t *testing.T) {
+	ctx := context.Background()
+	svc, tracker, catalog, healthMap, registryMap := newPongTestService(t)
+	registryEvents := registryMap.Subscribe()
+	defer registryMap.Unsubscribe(registryEvents)
+	healthEvents := healthMap.Subscribe()
+	defer healthMap.Unsubscribe(healthEvents)
+
+	const toolset = "toolset-1"
+	require.NoError(t, catalog.SaveToolset(ctx, &genregistry.Toolset{
+		Name:         toolset,
+		RegisteredAt: "registration-1",
+	}))
+	awaitMapEvent(registryEvents)
+	firstToken := requireRegistrationToken(t, ctx, catalog)
+	require.NoError(t, svc.Pong(ctx, &genregistry.PongPayload{
+		PingID:     newPingID(firstToken),
+		Toolset:    toolset,
+		ProviderID: "provider-a",
+	}))
+	awaitMapEvent(healthEvents)
+	health, err := tracker.Health(toolset)
+	require.NoError(t, err)
+	require.True(t, health.Healthy)
+
+	require.NoError(t, catalog.SaveToolset(ctx, &genregistry.Toolset{
+		Name:         toolset,
+		Tags:         []string{"changed"},
+		RegisteredAt: "registration-2",
+	}))
+	awaitMapEvent(registryEvents)
+	secondToken := requireRegistrationToken(t, ctx, catalog)
 	require.NotEqual(t, firstToken, secondToken)
 
 	health, err = tracker.Health(toolset)
 	require.NoError(t, err)
 	require.False(t, health.Healthy)
 
-	healthBefore, ok := healthMap.Get(healthKey(toolset))
-	require.True(t, ok)
-
 	require.NoError(t, svc.Pong(ctx, &genregistry.PongPayload{
-		PingID:  newPingID(firstToken),
-		Toolset: toolset,
+		PingID:     newPingID(secondToken),
+		Toolset:    toolset,
+		ProviderID: "provider-b",
 	}))
-	healthAfter, ok := healthMap.Get(healthKey(toolset))
-	require.True(t, ok)
-	require.Equal(t, healthBefore, healthAfter)
-
+	awaitMapEvent(healthEvents)
 	health, err = tracker.Health(toolset)
 	require.NoError(t, err)
-	require.False(t, health.Healthy)
+	require.True(t, health.Healthy)
+	require.Equal(t, "provider-b", health.ProviderID)
+}
+
+func TestStaleProviderHealthRecordsArePruned(t *testing.T) {
+	ctx := context.Background()
+	_, tracker, catalog, healthMap, registryMap := newPongTestService(t)
+	registryEvents := registryMap.Subscribe()
+	defer registryMap.Unsubscribe(registryEvents)
+
+	require.NoError(t, catalog.SaveToolset(ctx, &genregistry.Toolset{
+		Name:         "toolset-1",
+		RegisteredAt: "registration-1",
+	}))
+	awaitMapEvent(registryEvents)
+	token := requireRegistrationToken(t, ctx, catalog)
+	healthTracker := tracker.(*healthTracker)
+	healthTracker.stalenessThreshold = 10 * time.Second
+
+	require.NoError(t, setHealthRecordForTest(ctx, healthMap, "toolset-1", "provider-old", token, time.Now().Add(-time.Minute)))
+	require.NoError(t, setHealthRecordForTest(ctx, healthMap, "toolset-1", "provider-fresh", token, time.Now()))
+
+	healthTracker.observeHealth(ctx, "toolset-1")
+
+	health, err := tracker.Health("toolset-1")
+	require.NoError(t, err)
+	require.True(t, health.Healthy)
+	require.Equal(t, "provider-fresh", health.ProviderID)
+	waitForMapKeyRemoval(t, healthMap, healthKey("toolset-1", "provider-old"))
+	_, ok := healthMap.Get(healthKey("toolset-1", "provider-fresh"))
+	require.True(t, ok)
+}
+
+func TestDeleteHealthRecordsRemovesProviderAndLegacyKeys(t *testing.T) {
+	ctx := context.Background()
+	_, tracker, catalog, healthMap, registryMap := newPongTestService(t)
+	registryEvents := registryMap.Subscribe()
+	defer registryMap.Unsubscribe(registryEvents)
+
+	require.NoError(t, catalog.SaveToolset(ctx, &genregistry.Toolset{
+		Name:         "toolset-1",
+		RegisteredAt: "registration-1",
+	}))
+	awaitMapEvent(registryEvents)
+	token := requireRegistrationToken(t, ctx, catalog)
+	require.NoError(t, setHealthRecordForTest(ctx, healthMap, "toolset-1", "provider-a", token, time.Now()))
+	_, err := healthMap.Set(ctx, legacyHealthKey("toolset-1"), "legacy-health-record")
+	require.NoError(t, err)
+
+	require.NoError(t, tracker.(*healthTracker).deleteHealthRecords(ctx, "toolset-1"))
+
+	waitForMapKeyRemoval(t, healthMap, healthKey("toolset-1", "provider-a"))
+	waitForMapKeyRemoval(t, healthMap, legacyHealthKey("toolset-1"))
 }
 
 // newPongTestService builds a registry service backed by a real health tracker
@@ -406,15 +480,17 @@ func awaitMapEvent(events <-chan rmap.EventKind) {
 	<-events
 }
 
-func setHealthRecordForTest(ctx context.Context, healthMap *rmap.Map, toolset string, registrationToken string, lastPong time.Time) error {
+func setHealthRecordForTest(ctx context.Context, healthMap *rmap.Map, toolset, providerID, registrationToken string, lastPong time.Time) error {
 	payload, err := json.Marshal(healthRecord{
-		RegistrationToken: registrationToken,
-		LastPongUnixNano:  lastPong.UnixNano(),
+		ProviderID:         providerID,
+		RegistrationToken:  registrationToken,
+		RegisteredUnixNano: lastPong.UnixNano(),
+		LastPongUnixNano:   lastPong.UnixNano(),
 	})
 	if err != nil {
 		return err
 	}
-	_, err = healthMap.Set(ctx, healthKey(toolset), string(payload))
+	_, err = healthMap.Set(ctx, healthKey(toolset, providerID), string(payload))
 	return err
 }
 

@@ -148,7 +148,12 @@ var RegisterPayload = Type("RegisterPayload", func() {
 		Example([]string{"data", "etl", "analytics"})
 	})
 	Field(5, "tools", ArrayOf(ToolSchema), "Tool definitions with their schemas")
-	Required("name", "tools")
+	Field(6, "provider_id", String, "Stable identity of the provider process registering this toolset.", func() {
+		MinLength(1)
+		MaxLength(512)
+		Example("atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover")
+	})
+	Required("name", "tools", "provider_id")
 })
 
 var RegisterResult = Type("RegisterResult", func() {
@@ -181,7 +186,12 @@ var PongPayload = Type("PongPayload", func() {
 		MaxLength(256)
 		Example("data-tools")
 	})
-	Required("ping_id", "toolset")
+	Field(3, "provider_id", String, "Stable identity of the provider instance responding to the ping.", func() {
+		MinLength(1)
+		MaxLength(512)
+		Example("atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover")
+	})
+	Required("ping_id", "toolset", "provider_id")
 })
 
 var ListToolsetsPayload = Type("ListToolsetsPayload", func() {

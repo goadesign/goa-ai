@@ -80,6 +80,7 @@ func TestServerIntegration(t *testing.T) {
 			Description: &desc,
 			Version:     &version,
 			Tags:        []string{"data", "etl"},
+			ProviderID:  "data-tools/provider-a",
 			Tools: []*genregistry.ToolSchema{
 				{
 					Name:          "transform",
@@ -162,6 +163,7 @@ func TestServerIntegration(t *testing.T) {
 			Name:        "analytics-tools",
 			Description: &desc,
 			Tags:        []string{"analytics", "reporting"},
+			ProviderID:  "analytics-tools/provider-a",
 			Tools: []*genregistry.ToolSchema{
 				{
 					Name:          "report",
@@ -266,6 +268,7 @@ func TestServerMultiNodeSync(t *testing.T) {
 		Name:        "shared-tools",
 		Description: &desc,
 		Tags:        []string{"shared"},
+		ProviderID:  "shared-tools/provider-a",
 		Tools: []*genregistry.ToolSchema{
 			{
 				Name:          "shared-tool",
@@ -327,7 +330,8 @@ func TestServerValidationErrors(t *testing.T) {
 
 	t.Run("invalid schema rejected", func(t *testing.T) {
 		_, err := client.Register(ctx, &genregistry.RegisterPayload{
-			Name: "bad-schema-tools",
+			Name:       "bad-schema-tools",
+			ProviderID: "bad-schema-tools/provider-a",
 			Tools: []*genregistry.ToolSchema{
 				{
 					Name:          "bad-tool",
@@ -350,7 +354,8 @@ func TestServerValidationErrors(t *testing.T) {
 
 	t.Run("empty input schema rejected", func(t *testing.T) {
 		_, err := client.Register(ctx, &genregistry.RegisterPayload{
-			Name: "empty-schema-tools",
+			Name:       "empty-schema-tools",
+			ProviderID: "empty-schema-tools/provider-a",
 			Tools: []*genregistry.ToolSchema{
 				{
 					Name:          "empty-tool",

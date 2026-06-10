@@ -2,8 +2,8 @@
 //
 // This file owns distributed provider liveness. Catalog membership is the
 // authoritative source of which toolsets participate in health tracking, and
-// shared health records are scoped to the current registration epoch so a
-// same-name re-registration cannot inherit stale health from a prior provider.
+// shared health records are scoped to provider instances plus the current
+// registration epoch so rollout overlap can keep serving an unchanged schema.
 package registry
 
 import (
@@ -45,9 +45,13 @@ type (
 		//     Healthy=false with LastPong unset.
 		Health(toolset string) (ToolsetHealth, error)
 
-		// RecordPong records a pong response for a toolset when the pong matches
-		// the current catalog registration epoch.
-		RecordPong(ctx context.Context, toolset string, pingID string) error
+		// RecordPong records a pong response for a provider instance when the pong
+		// matches the current catalog registration epoch.
+		RecordPong(ctx context.Context, toolset, providerID, pingID string) error
+
+		// RegisterProvider records provider-instance membership for the active
+		// catalog registration without marking the provider healthy.
+		RegisterProvider(ctx context.Context, toolset, providerID string) error
 
 		// IsHealthy returns whether a toolset has healthy providers.
 		// A toolset is healthy if a pong was received within the staleness threshold.
@@ -71,10 +75,18 @@ type (
 	ToolsetHealth struct {
 		// Healthy reports whether a provider pong was received within the configured threshold.
 		Healthy bool
+		// ProviderID is the freshest provider instance for the active registration token.
+		ProviderID string
 		// LastPong is the timestamp of the last recorded pong when available.
 		LastPong time.Time
+		// RegisteredAt is the timestamp of the freshest active provider record.
+		RegisteredAt time.Time
 		// Age is the duration since LastPong when available.
 		Age time.Duration
+		// ProviderCount is the number of provider records for the active registration token.
+		ProviderCount int
+		// HealthyProviderCount is the number of active-token provider records that are fresh.
+		HealthyProviderCount int
 		// StalenessThreshold is the configured maximum acceptable pong age.
 		StalenessThreshold time.Duration
 	}
@@ -91,7 +103,7 @@ type (
 	healthTracker struct {
 		streamManager       StreamManager
 		catalog             *toolsetCatalog
-		healthMap           *rmap.Map // stores registration-scoped health records
+		healthMap           *rmap.Map // stores provider-instance health records
 		catalogMap          *rmap.Map // stores registered toolsets for cross-node coordination
 		poolNode            *pool.Node
 		pingInterval        time.Duration
@@ -115,12 +127,14 @@ type (
 		closeCh   chan struct{}
 	}
 
-	// healthRecord is the shared liveness state for a toolset registration.
-	// RegistrationToken ties the pong to the current catalog entry so same-name
-	// re-registration does not inherit stale health from a previous provider.
+	// healthRecord is the shared liveness state for one provider instance.
+	// RegistrationToken ties the pong to the current catalog entry so changed
+	// schemas do not inherit stale health from previous providers.
 	healthRecord struct {
-		RegistrationToken string `json:"registration_token"`
-		LastPongUnixNano  int64  `json:"last_pong_unix_nano"`
+		ProviderID         string `json:"provider_id"`
+		RegistrationToken  string `json:"registration_token"`
+		RegisteredUnixNano int64  `json:"registered_unix_nano"`
+		LastPongUnixNano   int64  `json:"last_pong_unix_nano"`
 	}
 )
 
@@ -224,7 +238,7 @@ func NewHealthTracker(streamManager StreamManager, healthMap, catalogMap *rmap.M
 }
 
 // RecordPong implements HealthTracker.
-func (h *healthTracker) RecordPong(ctx context.Context, toolset string, pingID string) error {
+func (h *healthTracker) RecordPong(ctx context.Context, toolset, providerID, pingID string) error {
 	registrationToken, err := h.registrationToken(ctx, toolset)
 	if err != nil {
 		if errors.Is(err, errToolsetNotFound) {
@@ -236,10 +250,22 @@ func (h *healthTracker) RecordPong(ctx context.Context, toolset string, pingID s
 		return nil
 	}
 
-	key := healthKey(toolset)
+	key := healthKey(toolset, providerID)
+	registeredUnixNano := time.Now().UnixNano()
+	if raw, ok := h.healthMap.Get(key); ok {
+		record, err := parseHealthRecord(raw)
+		if err != nil {
+			return fmt.Errorf("parse provider health record for %q: %w", toolset, err)
+		}
+		if record.RegistrationToken == registrationToken {
+			registeredUnixNano = record.RegisteredUnixNano
+		}
+	}
 	record := healthRecord{
-		RegistrationToken: registrationToken,
-		LastPongUnixNano:  time.Now().UnixNano(),
+		ProviderID:         providerID,
+		RegistrationToken:  registrationToken,
+		RegisteredUnixNano: registeredUnixNano,
+		LastPongUnixNano:   time.Now().UnixNano(),
 	}
 	payload, err := json.Marshal(record)
 	if err != nil {
@@ -248,6 +274,44 @@ func (h *healthTracker) RecordPong(ctx context.Context, toolset string, pingID s
 	_, err = h.healthMap.Set(ctx, key, string(payload))
 	if err != nil {
 		return fmt.Errorf("record pong: %w", err)
+	}
+	return nil
+}
+
+// RegisterProvider implements HealthTracker.
+func (h *healthTracker) RegisterProvider(ctx context.Context, toolset, providerID string) error {
+	registrationToken, err := h.registrationToken(ctx, toolset)
+	if err != nil {
+		if errors.Is(err, errToolsetNotFound) {
+			return nil
+		}
+		return fmt.Errorf("resolve registration token: %w", err)
+	}
+	key := healthKey(toolset, providerID)
+	registeredUnixNano := time.Now().UnixNano()
+	lastPongUnixNano := int64(0)
+	if raw, ok := h.healthMap.Get(key); ok {
+		record, err := parseHealthRecord(raw)
+		if err != nil {
+			return fmt.Errorf("parse provider health record for %q: %w", toolset, err)
+		}
+		if record.RegistrationToken == registrationToken {
+			registeredUnixNano = record.RegisteredUnixNano
+			lastPongUnixNano = record.LastPongUnixNano
+		}
+	}
+	record := healthRecord{
+		ProviderID:         providerID,
+		RegistrationToken:  registrationToken,
+		RegisteredUnixNano: registeredUnixNano,
+		LastPongUnixNano:   lastPongUnixNano,
+	}
+	payload, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("marshal provider health record: %w", err)
+	}
+	if _, err := h.healthMap.Set(ctx, key, string(payload)); err != nil {
+		return fmt.Errorf("register provider: %w", err)
 	}
 	return nil
 }
@@ -265,32 +329,56 @@ func (h *healthTracker) Health(toolset string) (ToolsetHealth, error) {
 		return ToolsetHealth{}, fmt.Errorf("resolve registration token: %w", err)
 	}
 
-	key := healthKey(toolset)
-	val, ok := h.healthMap.Get(key)
-	if !ok {
-		return ToolsetHealth{
-			Healthy:            false,
-			StalenessThreshold: h.stalenessThreshold,
-		}, nil
-	}
-	record, err := parseHealthRecord(val)
-	if err != nil {
-		return ToolsetHealth{}, fmt.Errorf("parse last pong timestamp for %q: %w", toolset, err)
-	}
-	if record.RegistrationToken != registrationToken {
-		return ToolsetHealth{
-			Healthy:            false,
-			StalenessThreshold: h.stalenessThreshold,
-		}, nil
-	}
-	lastPong := time.Unix(0, record.LastPongUnixNano)
-	age := time.Since(lastPong)
-	healthy := age <= h.stalenessThreshold
-	return ToolsetHealth{
-		Healthy:            healthy,
-		LastPong:           lastPong,
-		Age:                age,
+	now := time.Now()
+	prefix := healthKeyPrefixForToolset(toolset)
+	health := ToolsetHealth{
 		StalenessThreshold: h.stalenessThreshold,
+	}
+	for _, key := range h.healthMap.Keys() {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		raw, ok := h.healthMap.Get(key)
+		if !ok {
+			continue
+		}
+		record, err := parseHealthRecord(raw)
+		if err != nil {
+			return ToolsetHealth{}, fmt.Errorf("parse provider health record for %q: %w", toolset, err)
+		}
+		if record.RegistrationToken != registrationToken {
+			continue
+		}
+		registeredAt := time.Unix(0, record.RegisteredUnixNano)
+		health.ProviderCount++
+		if health.RegisteredAt.IsZero() || registeredAt.After(health.RegisteredAt) {
+			health.ProviderID = record.ProviderID
+			health.RegisteredAt = registeredAt
+		}
+		if record.LastPongUnixNano == 0 {
+			continue
+		}
+		lastPong := time.Unix(0, record.LastPongUnixNano)
+		age := now.Sub(lastPong)
+		if health.LastPong.IsZero() || lastPong.After(health.LastPong) {
+			health.ProviderID = record.ProviderID
+			health.LastPong = lastPong
+			health.Age = age
+		}
+		if age <= h.stalenessThreshold {
+			health.HealthyProviderCount++
+		}
+	}
+	health.Healthy = health.HealthyProviderCount > 0
+	return ToolsetHealth{
+		Healthy:              health.Healthy,
+		ProviderID:           health.ProviderID,
+		LastPong:             health.LastPong,
+		RegisteredAt:         health.RegisteredAt,
+		Age:                  health.Age,
+		ProviderCount:        health.ProviderCount,
+		HealthyProviderCount: health.HealthyProviderCount,
+		StalenessThreshold:   health.StalenessThreshold,
 	}, nil
 }
 
@@ -337,9 +425,8 @@ func (h *healthTracker) restartLocalTickerLocked(toolset string) error {
 // StopPingLoop implements HealthTracker.
 func (h *healthTracker) StopPingLoop(ctx context.Context, toolset string) {
 	// Clean up health state.
-	healthK := healthKey(toolset)
-	if _, err := h.healthMap.Delete(ctx, healthK); err != nil {
-		h.logger.Error(ctx, "delete toolset health failed", "component", "tool-registry-health", "toolset", toolset, "key", healthK, "err", err)
+	if err := h.deleteHealthRecords(ctx, toolset); err != nil {
+		h.logger.Error(ctx, "delete toolset health failed", "component", "tool-registry-health", "toolset", toolset, "err", err)
 	}
 
 	// Stop local ticker (other nodes will do the same via watchRegistryChanges).
@@ -506,9 +593,74 @@ func (h *healthTracker) stopLocalTickerLocked(toolset string) {
 	delete(h.tickerStartedAt, toolset)
 }
 
-// healthKey returns the shared health-map key for a toolset.
-func healthKey(toolset string) string {
+// pruneStaleProviderRecords removes provider records whose newest timestamp is
+// beyond the retention window. Health reads stay pure; ticker observation owns
+// bounded cleanup as operational maintenance.
+func (h *healthTracker) pruneStaleProviderRecords(ctx context.Context, toolset string) error {
+	retention := 2 * h.stalenessThreshold
+	now := time.Now()
+	prefix := healthKeyPrefixForToolset(toolset)
+	for _, key := range h.healthMap.Keys() {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		raw, ok := h.healthMap.Get(key)
+		if !ok {
+			continue
+		}
+		record, err := parseHealthRecord(raw)
+		if err != nil {
+			return fmt.Errorf("parse provider health record %q: %w", key, err)
+		}
+		newest := time.Unix(0, record.RegisteredUnixNano)
+		if record.LastPongUnixNano != 0 {
+			newest = time.Unix(0, record.LastPongUnixNano)
+		}
+		if now.Sub(newest) <= retention {
+			continue
+		}
+		if _, err := h.healthMap.Delete(ctx, key); err != nil {
+			return fmt.Errorf("delete stale provider health record %q: %w", key, err)
+		}
+	}
+	return nil
+}
+
+// deleteHealthRecords removes every provider-instance health record for a
+// toolset after the catalog entry is unregistered.
+func (h *healthTracker) deleteHealthRecords(ctx context.Context, toolset string) error {
+	legacyKey := legacyHealthKey(toolset)
+	if _, err := h.healthMap.Delete(ctx, legacyKey); err != nil {
+		return fmt.Errorf("delete legacy health record %q: %w", legacyKey, err)
+	}
+	prefix := healthKeyPrefixForToolset(toolset)
+	for _, key := range h.healthMap.Keys() {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		if _, err := h.healthMap.Delete(ctx, key); err != nil {
+			return fmt.Errorf("delete provider health record %q: %w", key, err)
+		}
+	}
+	return nil
+}
+
+// legacyHealthKey returns the pre-provider-instance health key shape.
+// TODO(registry-migration): remove this cleanup after deployed registries have
+// aged out all records written before provider-instance health.
+func legacyHealthKey(toolset string) string {
 	return healthKeyPrefix + toolset
+}
+
+// healthKey returns the shared health-map key for one provider instance.
+func healthKey(toolset, providerID string) string {
+	return healthKeyPrefixForToolset(toolset) + providerID
+}
+
+// healthKeyPrefixForToolset returns the key prefix for all provider instances
+// serving one toolset.
+func healthKeyPrefixForToolset(toolset string) string {
+	return healthKeyPrefix + toolset + ":"
 }
 
 // toolsetFromCatalogKey extracts the toolset name from a catalog key.
@@ -596,17 +748,20 @@ func (h *healthTracker) sendPing(ctx context.Context, toolset string) {
 // observeHealth samples the current derived health state and forwards it to the
 // transition logger.
 func (h *healthTracker) observeHealth(ctx context.Context, toolset string) {
+	if err := h.pruneStaleProviderRecords(ctx, toolset); err != nil {
+		h.logger.Error(ctx, "prune provider health records failed", "component", "tool-registry-health", "toolset", toolset, "err", err)
+	}
 	health, err := h.Health(toolset)
 	if err != nil {
 		h.logger.Error(ctx, "read toolset health failed", "component", "tool-registry-health", "toolset", toolset, "err", err)
-		h.noteHealth(ctx, toolset, false, 0, "missing_health_entry")
+		h.noteHealth(ctx, toolset, ToolsetHealth{}, "missing_health_entry")
 		return
 	}
 	if health.LastPong.IsZero() {
-		h.noteHealth(ctx, toolset, false, 0, "missing_health_entry")
+		h.noteHealth(ctx, toolset, health, "missing_health_entry")
 		return
 	}
-	h.noteHealth(ctx, toolset, health.Healthy, health.LastPong.UnixNano(), "ok")
+	h.noteHealth(ctx, toolset, health, "ok")
 }
 
 // parseHealthRecord decodes the shared health-map payload.
@@ -614,6 +769,15 @@ func parseHealthRecord(raw string) (healthRecord, error) {
 	var record healthRecord
 	if err := json.Unmarshal([]byte(raw), &record); err != nil {
 		return healthRecord{}, err
+	}
+	if record.ProviderID == "" {
+		return healthRecord{}, fmt.Errorf("missing provider id")
+	}
+	if record.RegistrationToken == "" {
+		return healthRecord{}, fmt.Errorf("missing registration token")
+	}
+	if record.RegisteredUnixNano == 0 {
+		return healthRecord{}, fmt.Errorf("missing provider registration timestamp")
 	}
 	return record, nil
 }
@@ -632,14 +796,18 @@ func pingBelongsToRegistration(pingID string, registrationToken string) bool {
 
 // noteHealth logs health transitions while suppressing duplicate observations
 // that would otherwise spam the registry logs on every ping tick.
-func (h *healthTracker) noteHealth(ctx context.Context, toolset string, healthy bool, lastPongNano int64, reason string) {
+func (h *healthTracker) noteHealth(ctx context.Context, toolset string, health ToolsetHealth, reason string) {
 	h.stateMu.Lock()
 	defer h.stateMu.Unlock()
 
 	prevHealthy, hasPrev := h.lastObservedHealthy[toolset]
 	prevPong := h.lastObservedPongNano[toolset]
+	lastPongNano := int64(0)
+	if !health.LastPong.IsZero() {
+		lastPongNano = health.LastPong.UnixNano()
+	}
 
-	h.lastObservedHealthy[toolset] = healthy
+	h.lastObservedHealthy[toolset] = health.Healthy
 	if lastPongNano != 0 {
 		h.lastObservedPongNano[toolset] = lastPongNano
 	}
@@ -647,7 +815,7 @@ func (h *healthTracker) noteHealth(ctx context.Context, toolset string, healthy 
 	if !hasPrev {
 		return
 	}
-	if prevHealthy == healthy && prevPong == lastPongNano {
+	if prevHealthy == health.Healthy && prevPong == lastPongNano {
 		return
 	}
 
@@ -659,12 +827,15 @@ func (h *healthTracker) noteHealth(ctx context.Context, toolset string, healthy 
 		lastPong = time.Unix(0, prevPong)
 	}
 
-	if prevHealthy && !healthy {
+	if prevHealthy && !health.Healthy {
 		h.logger.Warn(
 			ctx,
 			"toolset became unhealthy",
 			"component", "tool-registry-health",
 			"toolset", toolset,
+			"provider_id", health.ProviderID,
+			"provider_count", health.ProviderCount,
+			"healthy_provider_count", health.HealthyProviderCount,
 			"reason", reason,
 			"staleness_threshold", h.stalenessThreshold.String(),
 			"ping_interval", h.pingInterval.String(),

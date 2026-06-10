@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 
@@ -47,7 +48,7 @@ func TestToolsetCatalogSaveGetDelete(t *testing.T) {
 	require.ErrorIs(t, err, errToolsetNotFound)
 }
 
-func TestToolsetCatalogSaveRotatesRegistrationToken(t *testing.T) {
+func TestToolsetCatalogSavePreservesRegistrationTokenForIdenticalSchema(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -69,9 +70,94 @@ func TestToolsetCatalogSaveRotatesRegistrationToken(t *testing.T) {
 
 	assert.NotEmpty(t, firstEntry.RegistrationToken)
 	assert.NotEmpty(t, secondEntry.RegistrationToken)
-	assert.NotEqual(t, firstEntry.RegistrationToken, secondEntry.RegistrationToken)
+	assert.Equal(t, firstEntry.RegistrationToken, secondEntry.RegistrationToken)
+	assert.Equal(t, firstEntry.SchemaFingerprint, secondEntry.SchemaFingerprint)
 	assert.Equal(t, toolset.Name, secondEntry.Toolset.Name)
 	assert.Equal(t, toolset.RegisteredAt, secondEntry.Toolset.RegisteredAt)
+}
+
+func TestToolsetCatalogSaveRotatesRegistrationTokenForChangedSchema(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	backingMap := newTestCatalogMap()
+	cat := newToolsetCatalog(backingMap)
+	toolset := testCatalogToolset("atlas.read", "Atlas reads", []string{"atlas", "read"})
+
+	require.NoError(t, cat.SaveToolset(ctx, toolset))
+	firstRaw, ok := backingMap.Get(toolsetCatalogKey(toolset.Name))
+	require.True(t, ok)
+	firstEntry, err := parseCatalogEntry(toolset.Name, firstRaw)
+	require.NoError(t, err)
+
+	changed := testCatalogToolset("atlas.read", "Atlas reads changed", []string{"atlas", "read"})
+	require.NoError(t, cat.SaveToolset(ctx, changed))
+	secondRaw, ok := backingMap.Get(toolsetCatalogKey(changed.Name))
+	require.True(t, ok)
+	secondEntry, err := parseCatalogEntry(changed.Name, secondRaw)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, firstEntry.RegistrationToken, secondEntry.RegistrationToken)
+	assert.NotEqual(t, firstEntry.SchemaFingerprint, secondEntry.SchemaFingerprint)
+}
+
+func TestToolsetCatalogSavePreservesLegacyRegistrationTokenForIdenticalSchema(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	backingMap := newTestCatalogMap()
+	cat := newToolsetCatalog(backingMap)
+	toolset := testCatalogToolset("atlas.read", "Atlas reads", []string{"atlas", "read"})
+	legacyEntry := catalogEntry{
+		Toolset:           toolset,
+		RegistrationToken: "legacy-registration-token",
+	}
+	body, err := json.Marshal(legacyEntry)
+	require.NoError(t, err)
+	_, err = backingMap.Set(ctx, toolsetCatalogKey(toolset.Name), string(body))
+	require.NoError(t, err)
+
+	require.NoError(t, cat.SaveToolset(ctx, toolset))
+	raw, ok := backingMap.Get(toolsetCatalogKey(toolset.Name))
+	require.True(t, ok)
+	entry, err := parseCatalogEntry(toolset.Name, raw)
+	require.NoError(t, err)
+
+	assert.Equal(t, legacyEntry.RegistrationToken, entry.RegistrationToken)
+	assert.NotEmpty(t, entry.SchemaFingerprint)
+}
+
+func TestToolsetSchemaFingerprintNormalizesUnorderedFields(t *testing.T) {
+	t.Parallel()
+
+	description := "Atlas reads"
+	first := &genregistry.Toolset{
+		Name:        "atlas.read",
+		Description: &description,
+		Tags:        []string{"read", "atlas"},
+		Tools: []*genregistry.ToolSchema{
+			{Name: "atlas.read.z", Tags: []string{"z", "a"}, PayloadSchema: []byte(`{"type":"object"}`), ResultSchema: []byte(`{"type":"object"}`)},
+			{Name: "atlas.read.a", Tags: []string{"b", "a"}, PayloadSchema: []byte(`{"type":"object"}`), ResultSchema: []byte(`{"type":"object"}`)},
+		},
+	}
+	second := &genregistry.Toolset{
+		Name:        "atlas.read",
+		Description: &description,
+		Tags:        []string{"atlas", "read"},
+		Tools: []*genregistry.ToolSchema{
+			{Name: "atlas.read.a", Tags: []string{"a", "b"}, PayloadSchema: []byte(`{"type":"object"}`), ResultSchema: []byte(`{"type":"object"}`)},
+			{Name: "atlas.read.z", Tags: []string{"a", "z"}, PayloadSchema: []byte(`{"type":"object"}`), ResultSchema: []byte(`{"type":"object"}`)},
+		},
+	}
+
+	firstFingerprint, err := toolsetSchemaFingerprint(first)
+	require.NoError(t, err)
+	secondFingerprint, err := toolsetSchemaFingerprint(second)
+	require.NoError(t, err)
+
+	assert.Equal(t, firstFingerprint, secondFingerprint)
+	assert.Equal(t, []string{"read", "atlas"}, first.Tags)
+	assert.Equal(t, []string{"z", "a"}, first.Tools[0].Tags)
 }
 
 func TestToolsetCatalogListToolsetsFiltersTags(t *testing.T) {

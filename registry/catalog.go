@@ -5,9 +5,12 @@ package registry
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -30,6 +33,7 @@ type (
 	catalogEntry struct {
 		Toolset           *genregistry.Toolset `json:"toolset"`
 		RegistrationToken string               `json:"registration_token"`
+		SchemaFingerprint string               `json:"schema_fingerprint"`
 	}
 
 	// toolsetCatalog persists toolsets in the registry replicated-map keyspace.
@@ -55,9 +59,22 @@ func (c *toolsetCatalog) SaveToolset(ctx context.Context, toolset *genregistry.T
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	fingerprint, err := toolsetSchemaFingerprint(toolset)
+	if err != nil {
+		return fmt.Errorf("fingerprint toolset %q schema: %w", toolset.Name, err)
+	}
+	registrationToken := uuid.NewString()
+	existing, err := c.entry(ctx, toolset.Name)
+	if err != nil && !errors.Is(err, errToolsetNotFound) {
+		return err
+	}
+	if err == nil && existing.SchemaFingerprint == fingerprint {
+		registrationToken = existing.RegistrationToken
+	}
 	entry := catalogEntry{
 		Toolset:           toolset,
-		RegistrationToken: uuid.NewString(),
+		RegistrationToken: registrationToken,
+		SchemaFingerprint: fingerprint,
 	}
 	body, err := json.Marshal(entry)
 	if err != nil {
@@ -80,8 +97,8 @@ func (c *toolsetCatalog) GetToolset(ctx context.Context, name string) (*genregis
 }
 
 // RegistrationToken loads the current registration epoch token for a toolset.
-// The token changes on every save so same-name re-registration invalidates old
-// health records and stale pongs.
+// The token is preserved across identical schema registrations and rotates when
+// the registered schema changes.
 func (c *toolsetCatalog) RegistrationToken(ctx context.Context, name string) (string, error) {
 	entry, err := c.entry(ctx, name)
 	if err != nil {
@@ -178,7 +195,66 @@ func parseCatalogEntry(name string, body string) (catalogEntry, error) {
 	if entry.RegistrationToken == "" {
 		return catalogEntry{}, fmt.Errorf("toolset %q missing registration token", name)
 	}
+	if entry.SchemaFingerprint == "" {
+		// TODO(registry-migration): remove this legacy read path after all
+		// deployed registries have rewritten catalog entries with schema_fingerprint.
+		fingerprint, err := toolsetSchemaFingerprint(entry.Toolset)
+		if err != nil {
+			return catalogEntry{}, fmt.Errorf("fingerprint legacy toolset %q schema: %w", name, err)
+		}
+		entry.SchemaFingerprint = fingerprint
+	}
 	return entry, nil
+}
+
+// toolsetSchemaFingerprint returns a deterministic digest for the registered
+// toolset schema, excluding RegisteredAt because that field is registration
+// metadata rather than provider capability. Tags and tool order are normalized
+// because they are catalog/query organization, not execution identity.
+func toolsetSchemaFingerprint(toolset *genregistry.Toolset) (string, error) {
+	tools := make([]*genregistry.ToolSchema, len(toolset.Tools))
+	for i, tool := range toolset.Tools {
+		tools[i] = &genregistry.ToolSchema{
+			Name:          tool.Name,
+			Description:   tool.Description,
+			Tags:          sortedStrings(tool.Tags),
+			PayloadSchema: tool.PayloadSchema,
+			ResultSchema:  tool.ResultSchema,
+			SidecarSchema: tool.SidecarSchema,
+		}
+	}
+	sort.SliceStable(tools, func(i, j int) bool {
+		return tools[i].Name < tools[j].Name
+	})
+	body, err := json.Marshal(struct {
+		Name        string                    `json:"name"`
+		Description *string                   `json:"description,omitempty"`
+		Version     *genregistry.SemVer       `json:"version,omitempty"`
+		Tags        []string                  `json:"tags,omitempty"`
+		Tools       []*genregistry.ToolSchema `json:"tools"`
+	}{
+		Name:        toolset.Name,
+		Description: toolset.Description,
+		Version:     toolset.Version,
+		Tags:        sortedStrings(toolset.Tags),
+		Tools:       tools,
+	})
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// sortedStrings returns a sorted copy so fingerprinting can treat tag lists as
+// sets without mutating caller-owned generated payloads.
+func sortedStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	sorted := append([]string(nil), values...)
+	sort.Strings(sorted)
+	return sorted
 }
 
 // toolsetCatalogKey returns the deterministic replicated-map key for a toolset.

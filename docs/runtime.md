@@ -741,12 +741,15 @@ To run it, wire the generated provider into the runtime provider loop:
 
 ```go
 handler := toolsetpkg.NewProvider(serviceImpl)
+providerID := podName + "/" + toolsetID
 go func() {
     err := toolprovider.Serve(ctx, pulseClient, toolsetID, handler, toolprovider.Options{
-        Pong: func(ctx context.Context, pingID string) error {
+        ProviderID: providerID,
+        Pong: func(ctx context.Context, providerID, pingID string) error {
             return registryClient.Pong(ctx, &registry.PongPayload{
-                PingID:  pingID,
-                Toolset: toolsetID,
+                PingID:     pingID,
+                Toolset:    toolsetID,
+                ProviderID: providerID,
             })
         },
     })
@@ -758,8 +761,16 @@ go func() {
 
 This integration is intentionally split:
 
-- **Registry gateway**: validates payloads, tracks provider health, creates per-call result streams, and returns `tool_use_id`
+- **Registry gateway**: validates payloads, tracks provider-instance health, creates per-call result streams, and returns `tool_use_id`
 - **Service provider loop**: executes tools using the generated provider adapters and publishes results
+
+Provider health is instance-scoped. Each provider process must supply a stable
+`ProviderID` for the process/toolset pair and send the same value on registration
+and pong. The registry stores health records per provider id and treats a
+toolset as healthy when any provider instance for the active schema registration
+token has a fresh pong. Re-registering an identical schema preserves the token;
+registering a changed schema rotates it and requires a fresh pong from a
+provider serving the new schema.
 
 ### Registry-Routed Execution (Agent/Consumer Side)
 

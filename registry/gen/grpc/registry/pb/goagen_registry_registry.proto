@@ -1,4 +1,4 @@
-// Code generated with goa v3.25.3, DO NOT EDIT.
+// Code generated with goa, DO NOT EDIT.
 //
 // registry protocol buffer definition
 //
@@ -41,6 +41,8 @@ message RegisterRequest {
 	repeated string tags = 4;
 	// Tool definitions with their schemas
 	repeated ToolSchema tools = 5;
+	// Stable identity of the provider process registering this toolset.
+	string provider_id = 6;
 }
 // Tool schema declaration for registration with the tool registry gateway.
 message ToolSchema {
@@ -76,6 +78,8 @@ message PongRequest {
 	string ping_id = 1;
 	// Name of the toolset responding
 	string toolset = 2;
+	// Stable identity of the provider instance responding to the ping.
+	string provider_id = 3;
 }
 
 message PongResponse {

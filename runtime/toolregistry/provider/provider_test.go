@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,8 +15,6 @@ import (
 	"goa.design/goa-ai/runtime/toolregistry"
 	"goa.design/pulse/streaming"
 	streamopts "goa.design/pulse/streaming/options"
-
-	"sync/atomic"
 )
 
 type blockingHandler struct {
@@ -25,6 +24,12 @@ type blockingHandler struct {
 }
 
 const pulseAddEventID = "0-0"
+const testProviderID = "pod-a/test.toolset"
+
+type pongCall struct {
+	providerID string
+	pingID     string
+}
 
 func (h *blockingHandler) HandleToolCall(ctx context.Context, msg toolregistry.ToolCallMessage) (toolregistry.ToolResultMessage, error) {
 	if !h.callSeen.Swap(true) {
@@ -32,6 +37,17 @@ func (h *blockingHandler) HandleToolCall(ctx context.Context, msg toolregistry.T
 	}
 	<-h.unblock
 	return toolregistry.NewToolResultMessage(msg.ToolUseID, json.RawMessage(`{"ok":true}`)), nil
+}
+
+func TestServe_RejectsEmptyProviderID(t *testing.T) {
+	t.Parallel()
+
+	err := Serve(context.Background(), mockpulse.NewClient(t), "test.toolset", &blockingHandler{}, Options{
+		Pong: func(context.Context, string, string) error {
+			return nil
+		},
+	})
+	require.ErrorContains(t, err, "provider id is required")
 }
 
 func TestServe_RespondsToPingWhileToolCallInFlight(t *testing.T) {
@@ -80,13 +96,14 @@ func TestServe_RespondsToPingWhileToolCallInFlight(t *testing.T) {
 		unblock: make(chan struct{}),
 	}
 
-	pongs := make(chan string, 10)
+	pongs := make(chan pongCall, 10)
 
 	errc := make(chan error, 1)
 	go func() {
 		errc <- Serve(ctx, client, toolset, h, Options{
-			Pong: func(_ context.Context, pingID string) error {
-				pongs <- pingID
+			ProviderID: testProviderID,
+			Pong: func(_ context.Context, providerID, pingID string) error {
+				pongs <- pongCall{providerID: providerID, pingID: pingID}
 				return nil
 			},
 		})
@@ -121,9 +138,8 @@ func TestServe_RespondsToPingWhileToolCallInFlight(t *testing.T) {
 
 	select {
 	case got := <-pongs:
-		if got != "ping_1" {
-			t.Fatalf("unexpected ping id: %q", got)
-		}
+		require.Equal(t, testProviderID, got.providerID)
+		require.Equal(t, "ping_1", got.pingID)
 	case <-time.After(250 * time.Millisecond):
 		t.Fatal("expected pong while tool call is in flight")
 	}
@@ -199,15 +215,16 @@ func TestServe_RespondsToPingWhenQueueIsFull(t *testing.T) {
 		unblock: make(chan struct{}),
 	}
 
-	pongs := make(chan string, 10)
+	pongs := make(chan pongCall, 10)
 
 	errc := make(chan error, 1)
 	go func() {
 		errc <- Serve(ctx, client, toolset, h, Options{
+			ProviderID:             testProviderID,
 			MaxConcurrentToolCalls: 1,
 			MaxQueuedToolCalls:     0,
-			Pong: func(_ context.Context, pingID string) error {
-				pongs <- pingID
+			Pong: func(_ context.Context, providerID, pingID string) error {
+				pongs <- pongCall{providerID: providerID, pingID: pingID}
 				return nil
 			},
 		})
@@ -255,9 +272,8 @@ func TestServe_RespondsToPingWhenQueueIsFull(t *testing.T) {
 
 	select {
 	case got := <-pongs:
-		if got != "ping_1" {
-			t.Fatalf("unexpected ping id: %q", got)
-		}
+		require.Equal(t, testProviderID, got.providerID)
+		require.Equal(t, "ping_1", got.pingID)
 	case <-time.After(250 * time.Millisecond):
 		t.Fatal("expected pong while queue is full")
 	}
@@ -326,14 +342,15 @@ func TestServe_DoesNotExitOnPongFailure(t *testing.T) {
 	}
 
 	var attempts atomic.Int64
-	pongs := make(chan string, 10)
+	pongs := make(chan pongCall, 10)
 
 	errc := make(chan error, 1)
 	go func() {
 		errc <- Serve(ctx, client, toolset, h, Options{
+			ProviderID:  testProviderID,
 			PongTimeout: 50 * time.Millisecond,
-			Pong: func(_ context.Context, pingID string) error {
-				pongs <- pingID
+			Pong: func(_ context.Context, providerID, pingID string) error {
+				pongs <- pongCall{providerID: providerID, pingID: pingID}
 				if attempts.Add(1) == 1 {
 					return errors.New("pong failed")
 				}
@@ -350,7 +367,8 @@ func TestServe_DoesNotExitOnPongFailure(t *testing.T) {
 
 	select {
 	case got := <-pongs:
-		require.Equal(t, "ping_1", got)
+		require.Equal(t, testProviderID, got.providerID)
+		require.Equal(t, "ping_1", got.pingID)
 	case <-time.After(250 * time.Millisecond):
 		t.Fatal("expected pong attempt for ping_1")
 	}
@@ -368,7 +386,8 @@ func TestServe_DoesNotExitOnPongFailure(t *testing.T) {
 
 	select {
 	case got := <-pongs:
-		require.Equal(t, "ping_2", got)
+		require.Equal(t, testProviderID, got.providerID)
+		require.Equal(t, "ping_2", got.pingID)
 	case <-time.After(250 * time.Millisecond):
 		t.Fatal("expected pong attempt for ping_2")
 	}
@@ -474,7 +493,8 @@ func TestServe_PublishesOutputDeltaToResultStream(t *testing.T) {
 	errc := make(chan error, 1)
 	go func() {
 		errc <- Serve(ctx, client, toolset, h, Options{
-			Pong: func(_ context.Context, _ string) error { return nil },
+			ProviderID: testProviderID,
+			Pong:       func(_ context.Context, _, _ string) error { return nil },
 		})
 	}()
 

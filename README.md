@@ -44,7 +44,7 @@ You describe the agent system in the same design-first style as Goa services. `g
 | Multi-agent systems | First-class agent-as-tool composition with child runs and linked streams |
 | Human approval | Await/clarification flows plus design-time and runtime tool confirmation |
 | Real-time UI | Typed stream events for tool progress, assistant text, usage, awaits, workflow status, and child links |
-| External tools | MCP callers, generated MCP servers, external MCP schemas, and registry-backed discovery |
+| External tools | MCP callers, generated MCP servers, external MCP schemas, and registry-backed discovery with provider-instance health |
 | Production operations | Mongo-backed stores, Pulse streaming, OpenAI/Bedrock/Anthropic/gateway clients, telemetry hooks |
 
 Goa-AI is not a prompt wrapper. It is a contract and runtime layer for agentic Go services.

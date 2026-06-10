@@ -369,7 +369,7 @@ func TestMultiNodeUnregistrationSync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to resolve registration token: %v", err)
 	}
-	if err := setHealthRecordForTest(ctx, healthMap, "test-toolset", registrationToken, time.Now()); err != nil {
+	if err := setHealthRecordForTest(ctx, healthMap, "test-toolset", "provider-a", registrationToken, time.Now()); err != nil {
 		t.Fatalf("failed to seed health record: %v", err)
 	}
 
@@ -400,7 +400,7 @@ func TestMultiNodeUnregistrationSync(t *testing.T) {
 	waitForMapKeyRemoval(t, registryMap, toolsetCatalogKey("test-toolset"))
 
 	// Health state should be cleaned up.
-	waitForMapKeyRemoval(t, healthMap, "registry:health:test-toolset")
+	waitForMapKeyRemoval(t, healthMap, healthKey("test-toolset", "provider-a"))
 }
 
 // TestNewNodeSyncsExistingToolsets verifies that a new node joining the cluster
@@ -937,7 +937,7 @@ drainLoop:
 	if err != nil {
 		t.Fatalf("failed to resolve registration token: %v", err)
 	}
-	if err := setHealthRecordForTest(ctx, healthMap, toolset, registrationToken, time.Now()); err != nil {
+	if err := setHealthRecordForTest(ctx, healthMap, toolset, "provider-a", registrationToken, time.Now()); err != nil {
 		t.Fatalf("failed to seed health record: %v", err)
 	}
 
