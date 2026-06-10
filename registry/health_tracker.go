@@ -630,10 +630,8 @@ func (h *healthTracker) pruneStaleProviderRecords(ctx context.Context, toolset s
 // toolset after the catalog entry is unregistered.
 func (h *healthTracker) deleteHealthRecords(ctx context.Context, toolset string) error {
 	legacyKey := legacyHealthKey(toolset)
-	if _, ok := h.healthMap.Get(legacyKey); ok {
-		if _, err := h.healthMap.Delete(ctx, legacyKey); err != nil {
-			return fmt.Errorf("delete legacy health record %q: %w", legacyKey, err)
-		}
+	if _, err := h.healthMap.Delete(ctx, legacyKey); err != nil {
+		return fmt.Errorf("delete legacy health record %q: %w", legacyKey, err)
 	}
 	prefix := healthKeyPrefixForToolset(toolset)
 	for _, key := range h.healthMap.Keys() {
