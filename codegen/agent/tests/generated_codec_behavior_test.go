@@ -134,6 +134,79 @@ func TestUnmarshalEchoPayloadRejectsUnknownUnionBranchFields(t *testing.T) {
 	runGeneratedUnionGoTest(t, root)
 }
 
+func TestGeneratedCodecModelJSONNamesBehavior(t *testing.T) {
+	root := writeGeneratedModule(t, testhelpers.BuildAndGenerateWithPkg(t, "generated.local", testscenarios.ModelJSONNames()))
+	writeGeneratedPackageTest(t, root, "alpha/toolsets/inspect/http/validate_stub.go", `package http
+
+func ValidateInspectDevicePayloadTransport(v *InspectDevicePayloadTransport) error {
+	return nil
+}
+
+func ValidateInspectDeviceResultTransport(v *InspectDeviceResultTransport) error {
+	return nil
+}
+`)
+	writeGeneratedPackageTest(t, root, "alpha/toolsets/inspect/codecs_behavior_test.go", `package inspect
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestUnmarshalInspectDevicePayloadAcceptsSnakeCase(t *testing.T) {
+	payload, err := UnmarshalInspectDevicePayload([]byte(`+"`"+`{"device_alias":"ahu_1","render_ui":true,"source_ids":["temp"],"time_context":{"start_time":"2026-01-01T00:00:00Z","end_time":"2026-01-01T01:00:00Z"}}`+"`"+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload.DeviceAlias != "ahu_1" || !payload.RenderUI || len(payload.SourceIds) != 1 || payload.SourceIds[0] != "temp" {
+		t.Fatalf("unexpected payload: %#v", payload)
+	}
+	if payload.TimeContext.StartTime != "2026-01-01T00:00:00Z" || payload.TimeContext.EndTime != "2026-01-01T01:00:00Z" {
+		t.Fatalf("unexpected time context: %#v", payload.TimeContext)
+	}
+}
+
+func TestUnmarshalInspectDevicePayloadRejectsLowerCamel(t *testing.T) {
+	_, err := UnmarshalInspectDevicePayload([]byte(`+"`"+`{"deviceAlias":"ahu_1","renderUi":true,"timeContext":{"startTime":"2026-01-01T00:00:00Z","endTime":"2026-01-01T01:00:00Z"}}`+"`"+`))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "unknown field") || !strings.Contains(err.Error(), "deviceAlias") {
+		t.Fatalf("expected unknown field error for deviceAlias, got %v", err)
+	}
+}
+
+func TestMarshalInspectDevicePayloadEmitsSnakeCase(t *testing.T) {
+	payload := &InspectDevicePayload{
+		DeviceAlias: "ahu_1",
+		RenderUI:    true,
+		SourceIds:   []string{"temp"},
+		TimeContext: &TimeContext{
+			StartTime: "2026-01-01T00:00:00Z",
+			EndTime:   "2026-01-01T01:00:00Z",
+		},
+	}
+	data, err := MarshalInspectDevicePayload(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	for _, want := range []string{"device_alias", "render_ui", "source_ids", "time_context", "start_time", "end_time"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in %s", want, got)
+		}
+	}
+	for _, forbidden := range []string{"deviceAlias", "renderUi", "sourceIds", "timeContext", "startTime", "endTime"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("did not expect %q in %s", forbidden, got)
+		}
+	}
+}
+`)
+
+	runGeneratedInspectGoTest(t, root)
+}
+
 func writeGeneratedModule(t *testing.T, files []*gcodegen.File) string {
 	t.Helper()
 	root := t.TempDir()
@@ -172,6 +245,13 @@ func runGeneratedUnionGoTest(t *testing.T, root string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "test", "-mod=mod", "./alpha/toolsets/union"))
+}
+
+func runGeneratedInspectGoTest(t *testing.T, root string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "test", "-mod=mod", "./alpha/toolsets/inspect"))
 }
 
 func runGeneratedGoTestCommand(t *testing.T, root string, cmd *exec.Cmd) {

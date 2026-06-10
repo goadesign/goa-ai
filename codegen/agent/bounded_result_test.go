@@ -44,7 +44,7 @@ func TestBoundedResultProjectsBoundsIntoResultSchemaWithoutMutatingResultType(t 
 						})
 						BoundedResult(func() {
 							Cursor("cursor")
-							NextCursor("next_cursor")
+							NextCursor("nextCursor")
 						})
 					})
 				})
