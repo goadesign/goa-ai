@@ -116,6 +116,12 @@ func (s *Service) Register(ctx context.Context, p *genregistry.RegisterPayload) 
 		return nil, fmt.Errorf("save toolset: %w", err)
 	}
 
+	// Admit the registering provider as an active instance without marking it
+	// healthy; the provider must still answer a registration-token-bound ping.
+	if err := s.healthTracker.RegisterProvider(ctx, p.Name, p.ProviderID); err != nil {
+		return nil, fmt.Errorf("register provider: %w", err)
+	}
+
 	// Start health ping loop for the toolset.
 	if err := s.healthTracker.StartPingLoop(ctx, p.Name); err != nil {
 		return nil, fmt.Errorf("start health ping loop: %w", err)
@@ -151,7 +157,7 @@ func (s *Service) Unregister(ctx context.Context, p *genregistry.UnregisterPaylo
 // Pong records a pong response for a health check ping.
 // This restores healthy status if the provider was previously marked unhealthy.
 func (s *Service) Pong(ctx context.Context, p *genregistry.PongPayload) error {
-	return s.healthTracker.RecordPong(ctx, p.Toolset, p.PingID)
+	return s.healthTracker.RecordPong(ctx, p.Toolset, p.ProviderID, p.PingID)
 }
 
 // ListToolsets returns all registered toolsets with optional tag filtering.

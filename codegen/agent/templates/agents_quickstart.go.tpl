@@ -362,12 +362,15 @@ To serve tool calls from the registry gateway, run the provider loop inside the 
 ```go
 // cmd/<service>/main.go (or your service bootstrap)
 handler := <toolsetpkg>.NewProvider(svcImpl)
+providerID := "<pod-name>/" + toolsetID
 go func() {
     err := toolprovider.Serve(ctx, pulseClient, toolsetID, handler, toolprovider.Options{
-        Pong: func(ctx context.Context, pingID string) error {
+        ProviderID: providerID,
+        Pong: func(ctx context.Context, providerID, pingID string) error {
             return registryClient.Pong(ctx, &registry.PongPayload{
-                PingID:  pingID,
-                Toolset: toolsetID,
+                PingID:     pingID,
+                Toolset:    toolsetID,
+                ProviderID: providerID,
             })
         },
     })

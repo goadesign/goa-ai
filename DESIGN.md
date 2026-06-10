@@ -141,6 +141,14 @@ var AnthropicRegistry = Registry("anthropic", func() {
 
 Generated `registry.go` files in agent packages are local runtime registration helpers; they do not implement the clustered registry service.
 
+Provider health is owned by the clustered registry and is scoped to provider
+instances, not just toolset names. Provider processes supply one stable
+`ProviderID` per process/toolset pair on registration, `toolprovider.Serve`, and
+`Pong`. The registry stores health per provider id and schema registration token:
+identical schema re-registration preserves the token for rollout overlap, while
+schema changes rotate it and require a fresh pong from a provider serving the new
+schema.
+
 ### Transcript Boundary
 
 - **Stateless model adapters**: Provider clients accept the full provider-ready

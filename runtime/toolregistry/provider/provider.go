@@ -31,6 +31,10 @@ type (
 
 	// Options configure the provider loop.
 	Options struct {
+		// ProviderID is the stable identity of this provider process for this
+		// toolset. Deployments should derive it from pod identity plus toolset.
+		ProviderID string
+
 		// SinkName identifies the Pulse sink used for subscribing.
 		// When empty, defaults to "provider".
 		SinkName string
@@ -54,7 +58,7 @@ type (
 
 		// Pong acknowledges health pings emitted by the registry gateway.
 		// Providers must supply this to participate in health tracking.
-		Pong func(ctx context.Context, pingID string) error
+		Pong func(ctx context.Context, providerID, pingID string) error
 
 		// PongTimeout bounds how long Serve will wait for the Pong callback to
 		// return when handling a ping message.
@@ -135,6 +139,9 @@ func Serve(ctx context.Context, pulse pulseclients.Client, toolset string, handl
 	if handler == nil {
 		return fmt.Errorf("handler is required")
 	}
+	if opts.ProviderID == "" {
+		return fmt.Errorf("provider id is required")
+	}
 	sinkName := opts.SinkName
 	if sinkName == "" {
 		sinkName = "provider"
@@ -188,6 +195,7 @@ func Serve(ctx context.Context, pulse pulseclients.Client, toolset string, handl
 		"tool-registry provider subscribed",
 		"component", "tool-registry-provider",
 		"toolset", toolset,
+		"provider_id", opts.ProviderID,
 		"stream_id", streamID,
 		"sink", sinkName,
 	)
@@ -256,6 +264,7 @@ func Serve(ctx context.Context, pulse pulseclients.Client, toolset string, handl
 							attribute.String("messaging.operation", "process"),
 							attribute.String("messaging.message.id", item.ev.ID),
 							attribute.String("toolregistry.toolset", toolset),
+							attribute.String("toolregistry.provider_id", opts.ProviderID),
 							attribute.String("toolregistry.tool_use_id", item.msg.ToolUseID),
 							attribute.String("toolregistry.tool", item.msg.Tool.String()),
 							attribute.String("toolregistry.stream_id", streamID),
@@ -287,6 +296,7 @@ func Serve(ctx context.Context, pulse pulseclients.Client, toolset string, handl
 							"tool call handler failed",
 							"component", "tool-registry-provider",
 							"toolset", toolset,
+							"provider_id", opts.ProviderID,
 							"tool_use_id", item.msg.ToolUseID,
 							"tool", item.msg.Tool,
 							"err", err,
@@ -310,6 +320,7 @@ func Serve(ctx context.Context, pulse pulseclients.Client, toolset string, handl
 							"publish tool result failed",
 							"component", "tool-registry-provider",
 							"toolset", toolset,
+							"provider_id", opts.ProviderID,
 							"tool_use_id", item.msg.ToolUseID,
 							"tool", item.msg.Tool,
 							"result_stream_id", resultStreamID,
@@ -385,7 +396,7 @@ func Serve(ctx context.Context, pulse pulseclients.Client, toolset string, handl
 			case toolregistry.MessageTypePing:
 				if msg.PingID != "" {
 					pongCtx, pongCancel := context.WithTimeout(cancelCtx, pongTimeout)
-					err := opts.Pong(pongCtx, msg.PingID)
+					err := opts.Pong(pongCtx, opts.ProviderID, msg.PingID)
 					pongCancel()
 					if err != nil {
 						logger.Error(
@@ -393,6 +404,7 @@ func Serve(ctx context.Context, pulse pulseclients.Client, toolset string, handl
 							"pong failed",
 							"component", "tool-registry-provider",
 							"toolset", toolset,
+							"provider_id", opts.ProviderID,
 							"stream_id", streamID,
 							"event_id", ev.ID,
 							"ping_id", msg.PingID,
@@ -431,6 +443,7 @@ func Serve(ctx context.Context, pulse pulseclients.Client, toolset string, handl
 						"tool call queue full; leaving message unacked for later delivery",
 						"component", "tool-registry-provider",
 						"toolset", toolset,
+						"provider_id", opts.ProviderID,
 						"tool_use_id", msg.ToolUseID,
 						"tool", msg.Tool,
 						"stream_id", streamID,

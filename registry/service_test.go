@@ -174,6 +174,7 @@ func genRegisterPayload(name string) gopter.Gen {
 			Version:     version,
 			Tags:        vals[2].([]string),
 			Tools:       vals[3].([]*genregistry.ToolSchema),
+			ProviderID:  name + "/provider-a",
 		}
 	})
 }
@@ -597,7 +598,11 @@ func newMockHealthTracker() *mockHealthTracker {
 	return &mockHealthTracker{healthy: true}
 }
 
-func (m *mockHealthTracker) RecordPong(ctx context.Context, toolset string, pingID string) error {
+func (m *mockHealthTracker) RecordPong(ctx context.Context, toolset, providerID, pingID string) error {
+	return nil
+}
+
+func (m *mockHealthTracker) RegisterProvider(ctx context.Context, toolset, providerID string) error {
 	return nil
 }
 
@@ -880,6 +885,7 @@ func validRegisterPayloadForSchemaAdmission(name string) *genregistry.RegisterPa
 		Description: &description,
 		Version:     &version,
 		Tags:        []string{"schema"},
+		ProviderID:  name + "/provider-a",
 		Tools: []*genregistry.ToolSchema{
 			{
 				Name:          "lookup",
@@ -911,6 +917,7 @@ func genInvalidSchemaTestCase() gopter.Gen {
 					Version:     &version,
 					Tags:        []string{"test"},
 					Tools:       tools,
+					ProviderID:  toolsetName + "/provider-a",
 				},
 			}
 		})

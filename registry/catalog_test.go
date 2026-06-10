@@ -47,7 +47,7 @@ func TestToolsetCatalogSaveGetDelete(t *testing.T) {
 	require.ErrorIs(t, err, errToolsetNotFound)
 }
 
-func TestToolsetCatalogSaveRotatesRegistrationToken(t *testing.T) {
+func TestToolsetCatalogSavePreservesRegistrationTokenForIdenticalSchema(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -69,9 +69,35 @@ func TestToolsetCatalogSaveRotatesRegistrationToken(t *testing.T) {
 
 	assert.NotEmpty(t, firstEntry.RegistrationToken)
 	assert.NotEmpty(t, secondEntry.RegistrationToken)
-	assert.NotEqual(t, firstEntry.RegistrationToken, secondEntry.RegistrationToken)
+	assert.Equal(t, firstEntry.RegistrationToken, secondEntry.RegistrationToken)
+	assert.Equal(t, firstEntry.SchemaFingerprint, secondEntry.SchemaFingerprint)
 	assert.Equal(t, toolset.Name, secondEntry.Toolset.Name)
 	assert.Equal(t, toolset.RegisteredAt, secondEntry.Toolset.RegisteredAt)
+}
+
+func TestToolsetCatalogSaveRotatesRegistrationTokenForChangedSchema(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	backingMap := newTestCatalogMap()
+	cat := newToolsetCatalog(backingMap)
+	toolset := testCatalogToolset("atlas.read", "Atlas reads", []string{"atlas", "read"})
+
+	require.NoError(t, cat.SaveToolset(ctx, toolset))
+	firstRaw, ok := backingMap.Get(toolsetCatalogKey(toolset.Name))
+	require.True(t, ok)
+	firstEntry, err := parseCatalogEntry(toolset.Name, firstRaw)
+	require.NoError(t, err)
+
+	changed := testCatalogToolset("atlas.read", "Atlas reads changed", []string{"atlas", "read"})
+	require.NoError(t, cat.SaveToolset(ctx, changed))
+	secondRaw, ok := backingMap.Get(toolsetCatalogKey(changed.Name))
+	require.True(t, ok)
+	secondEntry, err := parseCatalogEntry(changed.Name, secondRaw)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, firstEntry.RegistrationToken, secondEntry.RegistrationToken)
+	assert.NotEqual(t, firstEntry.SchemaFingerprint, secondEntry.SchemaFingerprint)
 }
 
 func TestToolsetCatalogListToolsetsFiltersTags(t *testing.T) {
