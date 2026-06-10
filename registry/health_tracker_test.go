@@ -380,10 +380,31 @@ func TestStaleProviderHealthRecordsArePruned(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, health.Healthy)
 	require.Equal(t, "provider-fresh", health.ProviderID)
-	_, ok := healthMap.Get(healthKey("toolset-1", "provider-old"))
-	require.False(t, ok)
-	_, ok = healthMap.Get(healthKey("toolset-1", "provider-fresh"))
+	waitForMapKeyRemoval(t, healthMap, healthKey("toolset-1", "provider-old"))
+	_, ok := healthMap.Get(healthKey("toolset-1", "provider-fresh"))
 	require.True(t, ok)
+}
+
+func TestDeleteHealthRecordsRemovesProviderAndLegacyKeys(t *testing.T) {
+	ctx := context.Background()
+	_, tracker, catalog, healthMap, registryMap := newPongTestService(t)
+	registryEvents := registryMap.Subscribe()
+	defer registryMap.Unsubscribe(registryEvents)
+
+	require.NoError(t, catalog.SaveToolset(ctx, &genregistry.Toolset{
+		Name:         "toolset-1",
+		RegisteredAt: "registration-1",
+	}))
+	awaitMapEvent(registryEvents)
+	token := requireRegistrationToken(t, ctx, catalog)
+	require.NoError(t, setHealthRecordForTest(ctx, healthMap, "toolset-1", "provider-a", token, time.Now()))
+	_, err := healthMap.Set(ctx, legacyHealthKey("toolset-1"), "legacy-health-record")
+	require.NoError(t, err)
+
+	require.NoError(t, tracker.(*healthTracker).deleteHealthRecords(ctx, "toolset-1"))
+
+	waitForMapKeyRemoval(t, healthMap, healthKey("toolset-1", "provider-a"))
+	waitForMapKeyRemoval(t, healthMap, legacyHealthKey("toolset-1"))
 }
 
 // newPongTestService builds a registry service backed by a real health tracker

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -195,15 +196,36 @@ func parseCatalogEntry(name string, body string) (catalogEntry, error) {
 		return catalogEntry{}, fmt.Errorf("toolset %q missing registration token", name)
 	}
 	if entry.SchemaFingerprint == "" {
-		return catalogEntry{}, fmt.Errorf("toolset %q missing schema fingerprint", name)
+		// TODO(registry-migration): remove this legacy read path after all
+		// deployed registries have rewritten catalog entries with schema_fingerprint.
+		fingerprint, err := toolsetSchemaFingerprint(entry.Toolset)
+		if err != nil {
+			return catalogEntry{}, fmt.Errorf("fingerprint legacy toolset %q schema: %w", name, err)
+		}
+		entry.SchemaFingerprint = fingerprint
 	}
 	return entry, nil
 }
 
 // toolsetSchemaFingerprint returns a deterministic digest for the registered
 // toolset schema, excluding RegisteredAt because that field is registration
-// metadata rather than provider capability.
+// metadata rather than provider capability. Tags and tool order are normalized
+// because they are catalog/query organization, not execution identity.
 func toolsetSchemaFingerprint(toolset *genregistry.Toolset) (string, error) {
+	tools := make([]*genregistry.ToolSchema, len(toolset.Tools))
+	for i, tool := range toolset.Tools {
+		tools[i] = &genregistry.ToolSchema{
+			Name:          tool.Name,
+			Description:   tool.Description,
+			Tags:          sortedStrings(tool.Tags),
+			PayloadSchema: tool.PayloadSchema,
+			ResultSchema:  tool.ResultSchema,
+			SidecarSchema: tool.SidecarSchema,
+		}
+	}
+	sort.SliceStable(tools, func(i, j int) bool {
+		return tools[i].Name < tools[j].Name
+	})
 	body, err := json.Marshal(struct {
 		Name        string                    `json:"name"`
 		Description *string                   `json:"description,omitempty"`
@@ -214,14 +236,25 @@ func toolsetSchemaFingerprint(toolset *genregistry.Toolset) (string, error) {
 		Name:        toolset.Name,
 		Description: toolset.Description,
 		Version:     toolset.Version,
-		Tags:        toolset.Tags,
-		Tools:       toolset.Tools,
+		Tags:        sortedStrings(toolset.Tags),
+		Tools:       tools,
 	})
 	if err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256(body)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// sortedStrings returns a sorted copy so fingerprinting can treat tag lists as
+// sets without mutating caller-owned generated payloads.
+func sortedStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	sorted := append([]string(nil), values...)
+	sort.Strings(sorted)
+	return sorted
 }
 
 // toolsetCatalogKey returns the deterministic replicated-map key for a toolset.

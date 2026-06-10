@@ -629,6 +629,12 @@ func (h *healthTracker) pruneStaleProviderRecords(ctx context.Context, toolset s
 // deleteHealthRecords removes every provider-instance health record for a
 // toolset after the catalog entry is unregistered.
 func (h *healthTracker) deleteHealthRecords(ctx context.Context, toolset string) error {
+	legacyKey := legacyHealthKey(toolset)
+	if _, ok := h.healthMap.Get(legacyKey); ok {
+		if _, err := h.healthMap.Delete(ctx, legacyKey); err != nil {
+			return fmt.Errorf("delete legacy health record %q: %w", legacyKey, err)
+		}
+	}
 	prefix := healthKeyPrefixForToolset(toolset)
 	for _, key := range h.healthMap.Keys() {
 		if !strings.HasPrefix(key, prefix) {
@@ -639,6 +645,13 @@ func (h *healthTracker) deleteHealthRecords(ctx context.Context, toolset string)
 		}
 	}
 	return nil
+}
+
+// legacyHealthKey returns the pre-provider-instance health key shape.
+// TODO(registry-migration): remove this cleanup after deployed registries have
+// aged out all records written before provider-instance health.
+func legacyHealthKey(toolset string) string {
+	return healthKeyPrefix + toolset
 }
 
 // healthKey returns the shared health-map key for one provider instance.
