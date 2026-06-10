@@ -153,12 +153,12 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	// Collect union sum types as they appear in the transport graph (after
 	// localization). These are emitted into the toolset-local http package.
 	b.collectTransportUnionSumTypes(scope, transportAttr)
+	schemaAttr := cloneModelSchemaAttribute(transportAttr)
 
 	// Example JSON for externally visible request/response contracts. Only
 	// authored Goa Example(...) values become top-level schema examples and model
 	// input examples; synthesized attribute examples stay out of provider tool
 	// definitions so prompts only include examples the DSL author chose.
-	schemaAttr := transportAttr
 	var example *exampleData
 	if usage == usagePayload || (usage == usageResult && owner.Kind == contractTypeOwnerCompletion) {
 		// Examples must reflect the JSON wire contract, not the public tool type.
@@ -166,10 +166,10 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		// the transport graph; deriving examples from the public type produces a
 		// flattened shape that misleads callers and generated examples.
 		//
-		example = authoredExampleForAttribute(att, schemaAttr)
+		example = authoredExampleForAttribute(att)
 	}
 
-	// JSON schema from transport attribute
+	// JSON schema from model schema attribute.
 	var err error
 	schemaBytes, schemaWithoutRootExampleBytes, err := schemaVariantsForAttribute(schemaAttr, exampleValue(example))
 	if err != nil {
@@ -190,8 +190,8 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	if owner.Kind == contractTypeOwnerCompletion {
 		doc = fmt.Sprintf("%s defines the JSON %s for the completion %s.", typeName, usage, owner.QualifiedName)
 	}
-	transportDef := transportTypeName + " " + scope.GoTypeDef(schemaAttr, true, false)
-	transportImports := shared.GatherAttributeImports(b.genpkg, schemaAttr)
+	transportDef := transportTypeName + " " + scope.GoTypeDef(transportAttr, true, false)
+	transportImports := shared.GatherAttributeImports(b.genpkg, transportAttr)
 	httpctx := codegen.NewAttributeContext(!goaexpr.IsPrimitive(schemaAttr.Type), false, false, "", scope)
 	transportValidation := validationCodeWithContext(schemaAttr, nil, httpctx, true, false, false, "body", owner, usage, "transport")
 	var transportValidationSrc []string
@@ -201,7 +201,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 
 	src := &goaexpr.AttributeExpr{
 		Type: &goaexpr.UserTypeExpr{
-			AttributeExpr: schemaAttr,
+			AttributeExpr: transportAttr,
 			TypeName:      transportTypeName,
 		},
 	}

@@ -53,10 +53,7 @@ func buildFieldDescriptions(att *goaexpr.AttributeExpr) map[string]string {
 			walk(prefix, dt.Attribute())
 		case *goaexpr.Object:
 			for _, nat := range *dt {
-				name, ok := transportFieldName(nat)
-				if !ok {
-					continue
-				}
+				name := nat.Name
 				path := name
 				if prefix != "" {
 					path = prefix + "." + name
@@ -120,10 +117,7 @@ func buildFieldJSONTypes(att *goaexpr.AttributeExpr) map[string]string {
 			walk(prefix, dt.Attribute())
 		case *goaexpr.Object:
 			for _, nat := range *dt {
-				name, ok := transportFieldName(nat)
-				if !ok {
-					continue
-				}
+				name := nat.Name
 				path := name
 				if prefix != "" {
 					path = prefix + "." + name
@@ -301,11 +295,6 @@ func schemaVariantBytes(schema *openapi.Schema, att *goaexpr.AttributeExpr, exam
 		schema.Example = prevExample
 		return annotated, nil, err
 	}
-	annotated, err = projectSchemaJSONNames(annotated, att)
-	if err != nil {
-		schema.Example = prevExample
-		return annotated, nil, err
-	}
 	annotated, err = specializeUnionSchemas(annotated, att)
 	if err != nil {
 		schema.Example = prevExample
@@ -317,149 +306,8 @@ func schemaVariantBytes(schema *openapi.Schema, att *goaexpr.AttributeExpr, exam
 	if err != nil {
 		return annotated, plain, err
 	}
-	plain, err = projectSchemaJSONNames(plain, att)
-	if err != nil {
-		return annotated, plain, err
-	}
 	plain, err = specializeUnionSchemas(plain, att)
 	return annotated, plain, err
-}
-
-// projectSchemaJSONNames rewrites Goa's attribute-name OpenAPI projection into
-// the model-facing JSON field names used by generated tool transport structs.
-func projectSchemaJSONNames(schemaBytes []byte, att *goaexpr.AttributeExpr) ([]byte, error) {
-	if len(schemaBytes) == 0 || att == nil {
-		return schemaBytes, nil
-	}
-	var doc map[string]any
-	if err := json.Unmarshal(schemaBytes, &doc); err != nil {
-		return nil, fmt.Errorf("unmarshal schema for JSON-name projection: %w", err)
-	}
-	defs, _ := doc["$defs"].(map[string]any)
-	projectSchemaJSONNameNode(att, doc, defs, map[string]struct{}{})
-	out, err := json.Marshal(doc)
-	if err != nil {
-		return nil, fmt.Errorf("marshal schema for JSON-name projection: %w", err)
-	}
-	return out, nil
-}
-
-// projectSchemaJSONNameNode walks the schema shape alongside the original Goa
-// attribute so property names and examples match generated model JSON codecs.
-func projectSchemaJSONNameNode(att *goaexpr.AttributeExpr, schema map[string]any, defs map[string]any, seen map[string]struct{}) {
-	if att == nil || att.Type == nil || len(schema) == 0 {
-		return
-	}
-	if example, ok := schema["example"]; ok {
-		normalized, ok := canonicalizeSchemaExample(att, example)
-		if !ok {
-			delete(schema, "example")
-		} else {
-			schema["example"] = projectExampleFieldNames(att, normalized)
-		}
-	}
-	if refName := schemaRefName(schema); refName != "" {
-		if _, ok := seen[refName]; ok {
-			return
-		}
-		defSchema, _ := defs[refName].(map[string]any)
-		if len(defSchema) == 0 {
-			return
-		}
-		seen[refName] = struct{}{}
-		defer delete(seen, refName)
-		projectSchemaJSONNameNode(att, defSchema, defs, seen)
-		return
-	}
-	switch dt := att.Type.(type) {
-	case goaexpr.UserType:
-		projectSchemaJSONNameNode(dt.Attribute(), schema, defs, seen)
-	case *goaexpr.Object:
-		projectObjectSchemaJSONNames(dt, schema, defs, seen)
-	case *goaexpr.Array:
-		items, _ := schema["items"].(map[string]any)
-		projectSchemaJSONNameNode(dt.ElemType, items, defs, seen)
-	case *goaexpr.Map:
-		values, _ := schema["additionalProperties"].(map[string]any)
-		projectSchemaJSONNameNode(dt.ElemType, values, defs, seen)
-	case *goaexpr.Union:
-		projectUnionSchemaJSONNames(dt, schema, defs, seen)
-	}
-}
-
-// projectObjectSchemaJSONNames aligns object properties, required entries, and
-// nested schemas with the JSON names generated for model-facing transport
-// structs. Fields hidden with json:"-" are removed from the model schema.
-func projectObjectSchemaJSONNames(obj *goaexpr.Object, schema map[string]any, defs map[string]any, seen map[string]struct{}) {
-	properties, _ := schema["properties"].(map[string]any)
-	requiredNames := make(map[string]string, len(*obj))
-	hiddenNames := make(map[string]struct{})
-	for _, nat := range *obj {
-		name, ok := transportFieldName(nat)
-		if !ok {
-			hiddenNames[nat.Name] = struct{}{}
-			if properties != nil {
-				delete(properties, nat.Name)
-			}
-			continue
-		}
-		requiredNames[nat.Name] = name
-		var childSchema map[string]any
-		if properties != nil {
-			if child, ok := properties[nat.Name].(map[string]any); ok {
-				childSchema = child
-				if name != nat.Name {
-					delete(properties, nat.Name)
-					properties[name] = child
-				}
-			} else if child, ok := properties[name].(map[string]any); ok {
-				childSchema = child
-			}
-		}
-		projectSchemaJSONNameNode(nat.Attribute, childSchema, defs, seen)
-	}
-	if required, ok := schema["required"].([]any); ok {
-		projected := make([]any, 0, len(required))
-		for _, raw := range required {
-			name, ok := raw.(string)
-			if !ok {
-				projected = append(projected, raw)
-				continue
-			}
-			if _, hidden := hiddenNames[name]; hidden {
-				continue
-			}
-			if projected, ok := requiredNames[name]; ok {
-				raw = projected
-			}
-			projected = append(projected, raw)
-		}
-		if len(projected) == 0 {
-			delete(schema, "required")
-		} else {
-			schema["required"] = projected
-		}
-	}
-}
-
-// projectUnionSchemaJSONNames descends into union branch schemas without
-// changing the generated {type,value} envelope, because union discriminator
-// names are already model-facing JSON field names.
-func projectUnionSchemaJSONNames(union *goaexpr.Union, schema map[string]any, defs map[string]any, seen map[string]struct{}) {
-	properties, _ := schema["properties"].(map[string]any)
-	valueKey := union.GetValueKey()
-	if valueKey == "" {
-		valueKey = unionValueKeyDefault
-	}
-	valueSchema, _ := properties[valueKey].(map[string]any)
-	values, _ := valueSchema["anyOf"].([]any)
-	for i, nat := range union.Values {
-		if nat == nil || i >= len(values) {
-			continue
-		}
-		childSchema, _ := values[i].(map[string]any)
-		projectSchemaJSONNameNode(nat.Attribute, childSchema, defs, seen)
-	}
 }
 
 // specializeUnionSchemas rewrites Goa's generic OneOf schema projection into
@@ -514,6 +362,14 @@ func specializeUnionSchemaNode(att *goaexpr.AttributeExpr, schema map[string]any
 	if att == nil || att.Type == nil || len(schema) == 0 {
 		return nil
 	}
+	if example, ok := schema["example"]; ok {
+		normalized, ok := canonicalizeSchemaExample(att, example)
+		if !ok {
+			delete(schema, "example")
+		} else {
+			schema["example"] = normalized
+		}
+	}
 	if refName := schemaRefName(schema); refName != "" {
 		if _, ok := seen[refName]; ok {
 			return nil
@@ -535,10 +391,7 @@ func specializeUnionSchemaNode(att *goaexpr.AttributeExpr, schema map[string]any
 			if !containsUnion(nat.Attribute) {
 				continue
 			}
-			name, ok := transportFieldName(nat)
-			if !ok {
-				continue
-			}
+			name := nat.Name
 			childSchema, _ := properties[name].(map[string]any)
 			if len(childSchema) == 0 {
 				return fmt.Errorf("schema for union-bearing field %q is missing", name)
@@ -647,9 +500,8 @@ func schemaRefName(schema map[string]any) string {
 }
 
 // authoredExampleForAttribute returns the last explicit Example(...) declared
-// on the source attribute, normalized to the canonical model-facing JSON
-// contract.
-func authoredExampleForAttribute(source, _ *goaexpr.AttributeExpr) *exampleData {
+// on source, normalized to the canonical model-facing JSON contract.
+func authoredExampleForAttribute(source *goaexpr.AttributeExpr) *exampleData {
 	if source == nil {
 		return nil
 	}
