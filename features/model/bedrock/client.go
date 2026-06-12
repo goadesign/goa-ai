@@ -167,15 +167,10 @@ func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Respo
 
 // CountTokens asks Bedrock to count the exact input tokens for req using the
 // same Converse request preparation path as Complete, except that replayed
-// thinking blocks are omitted. Bedrock validates thinking signatures against
-// the counting model, but signatures only verify on the model that issued
-// them, and callers such as history-retention policies legitimately count
-// with a different (cheaper) model class than the one that produced the
-// transcript. The Claude 5 generation does not support CountTokens at all, so
-// counting against the signing model is not an option. Omitting thinking also
-// matches Anthropic billing, which strips prior-turn thinking from input. The
-// returned count therefore reflects the durable transcript cost for the
-// model/request shape.
+// thinking blocks are omitted per the model.TokenCounter contract. Bedrock
+// rejects thinking signatures issued by any other model ("Invalid signature
+// in thinking block"), and the Claude 5 generation does not support
+// CountTokens at all, so the count input must never carry thinking content.
 func (c *Client) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
 	countReq := *req
 	countReq.Messages = messagesWithoutThinking(req.Messages)

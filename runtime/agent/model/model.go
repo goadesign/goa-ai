@@ -449,6 +449,12 @@ type (
 	// it and set TokenCount.Exact to true. Local estimators should implement the
 	// same contract with Exact=false so callers can distinguish approximation
 	// from provider-authoritative counts.
+	//
+	// Counts measure the durable transcript: implementations exclude replayed
+	// thinking blocks from the counted surface. Thinking signatures only verify
+	// on the model that issued them, while callers such as history-retention
+	// policies legitimately count with a different model class; Anthropic
+	// billing likewise strips prior-turn thinking from input.
 	TokenCounter interface {
 		CountTokens(ctx context.Context, req *Request) (TokenCount, error)
 	}

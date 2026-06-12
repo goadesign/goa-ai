@@ -1492,6 +1492,10 @@ trigger budget from the exact-retention budget:
   tokenization depends on the deployed model. Token-budget compression requires
   a history model that implements `model.TokenCounter` with exact counts; the
   Bedrock adapter does this with Bedrock's native `CountTokens` API.
+- Counts exclude replayed thinking blocks: thinking signatures only verify on
+  the model that issued them, and the history model class can differ from the
+  model that produced the transcript. This matches Anthropic billing, which
+  strips prior-turn thinking from input.
 
 ```go
 // DSL
