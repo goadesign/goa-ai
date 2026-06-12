@@ -141,6 +141,14 @@ var (
 	buildErr      error
 	serverBinPath string
 	serverBinMu   sync.Mutex
+
+	// reservedPorts records every port handed to a server in this test
+	// process. Free ports are discovered by binding ":0" and closing the
+	// listener before the server binds, so without this reservation two
+	// parallel runners can be handed the same ephemeral port and race to
+	// bind it.
+	reservedPortsMu sync.Mutex
+	reservedPorts   = map[string]struct{}{}
 )
 
 // LoadScenarios loads scenarios from a YAML file path.
@@ -277,18 +285,35 @@ func toMap(v any) (map[string]any, bool) {
 	return nil, false
 }
 
-// getFreePort finds an available port on localhost.
+// getFreePort finds an available localhost port that no other runner in this
+// test process has been handed. The kernel can re-allocate an ephemeral port
+// as soon as the probing listener closes, so uniqueness across parallel
+// runners must be enforced here rather than assumed.
 func getFreePort() (string, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0") //nolint:noctx // test helper just picks a free port
-	if err != nil {
-		return "", fmt.Errorf("listen for free port: %w", err)
+	for range 16 {
+		l, err := net.Listen("tcp", "127.0.0.1:0") //nolint:noctx // test helper just picks a free port
+		if err != nil {
+			return "", fmt.Errorf("listen for free port: %w", err)
+		}
+		_, portStr, err := net.SplitHostPort(l.Addr().String())
+		closeErr := l.Close()
+		if err != nil {
+			return "", err
+		}
+		if closeErr != nil {
+			return "", fmt.Errorf("close free-port listener: %w", closeErr)
+		}
+		reservedPortsMu.Lock()
+		_, taken := reservedPorts[portStr]
+		if !taken {
+			reservedPorts[portStr] = struct{}{}
+		}
+		reservedPortsMu.Unlock()
+		if !taken {
+			return portStr, nil
+		}
 	}
-	defer func() { _ = l.Close() }()
-	_, portStr, err := net.SplitHostPort(l.Addr().String())
-	if err != nil {
-		return "", err
-	}
-	return portStr, nil
+	return "", errors.New("could not reserve a unique free port")
 }
 
 // methodFromOp maps operation names to JSON-RPC method names.
@@ -560,14 +585,6 @@ func (r *Runner) startServer(t *testing.T) error {
 		r.externalServer = true
 		return nil
 	}
-	port, err := getFreePort()
-	if err != nil {
-		return err
-	}
-	r.baseURL, err = url.Parse("http://localhost:" + port)
-	if err != nil {
-		return fmt.Errorf("parse local server URL: %w", err)
-	}
 	exampleRoot := findExampleRoot()
 	if exampleRoot == "" {
 		return fmt.Errorf("could not locate example root")
@@ -583,6 +600,36 @@ func (r *Runner) startServer(t *testing.T) error {
 	binPath, err := buildServerBinary(exampleRoot)
 	if err != nil {
 		return err
+	}
+	// Port reservation cannot exclude processes outside this test binary, so a
+	// server can still lose its port between the probing listener close and
+	// its own bind. That race has exactly one signature: the generated main
+	// shuts down cleanly logging "address already in use". Retry it with a
+	// fresh port and fail fast on every other startup failure.
+	const maxBindRaceRetries = 3
+	for attempt := 0; ; attempt++ {
+		err := r.launchServer(binPath)
+		if err == nil {
+			return nil
+		}
+		if attempt >= maxBindRaceRetries || !strings.Contains(err.Error(), "address already in use") {
+			return err
+		}
+		t.Logf("retrying server start after port bind race (attempt %d): %v", attempt+1, err)
+	}
+}
+
+// launchServer starts one server instance on a freshly reserved port and waits
+// for readiness by polling /rpc. Failures embed the captured stdout/stderr
+// tails so callers can distinguish the port bind race from real crashes.
+func (r *Runner) launchServer(binPath string) error {
+	port, err := getFreePort()
+	if err != nil {
+		return err
+	}
+	r.baseURL, err = url.Parse("http://localhost:" + port)
+	if err != nil {
+		return fmt.Errorf("parse local server URL: %w", err)
 	}
 	// Start HTTP server from pre-compiled binary (much faster than go run)
 	//nolint:gosec // launching pre-compiled test server binary
@@ -613,10 +660,10 @@ func (r *Runner) startServer(t *testing.T) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		select {
-		case err := <-r.exitCh:
+		case waitErr := <-r.exitCh:
 			return fmt.Errorf(
-				"server exited early: %w\n-- stdout (tail) --\n%s\n-- stderr (tail) --\n%s",
-				err,
+				"server exited early (%s)\n-- stdout (tail) --\n%s\n-- stderr (tail) --\n%s",
+				exitStatus(waitErr),
 				string(r.stdoutTail.Bytes()),
 				string(r.stderrTail.Bytes()),
 			)
@@ -634,6 +681,16 @@ func (r *Runner) startServer(t *testing.T) error {
 		string(r.stdoutTail.Bytes()),
 		string(r.stderrTail.Bytes()),
 	)
+}
+
+// exitStatus renders a cmd.Wait result for diagnostics. The generated example
+// main exits 0 even when its listener fails, so a nil error still means the
+// server quit before becoming ready.
+func exitStatus(err error) string {
+	if err == nil {
+		return "exit status 0"
+	}
+	return err.Error()
 }
 
 // stopServer stops the test server.
