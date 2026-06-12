@@ -244,6 +244,109 @@ func TestResolveThinkingOpus47AnyToolDisablesThinking(t *testing.T) {
 	require.False(t, thinking.enable)
 }
 
+// Claude 5 generation models run with always-on thinking, and Anthropic
+// rejects forced tool use whenever thinking is active. Unlike Opus, Fable has
+// no non-thinking mode to fall back to, so the adapter must fail fast with a
+// precise error instead of sending a request Bedrock will 400.
+func TestFableRejectsForcedToolChoice(t *testing.T) {
+	cases := []struct {
+		name       string
+		toolChoice *model.ToolChoice
+		wantErr    bool
+	}{
+		{
+			name:       "any is rejected",
+			toolChoice: &model.ToolChoice{Mode: model.ToolChoiceModeAny},
+			wantErr:    true,
+		},
+		{
+			name: "specific tool is rejected",
+			toolChoice: &model.ToolChoice{
+				Mode: model.ToolChoiceModeTool,
+				Name: "tasks.progress.complete",
+			},
+			wantErr: true,
+		},
+		{
+			name:       "auto is accepted",
+			toolChoice: &model.ToolChoice{Mode: model.ToolChoiceModeAuto},
+		},
+		{
+			name:       "none is accepted",
+			toolChoice: &model.ToolChoice{Mode: model.ToolChoiceModeNone},
+		},
+		{
+			name: "nil is accepted",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &Client{
+				defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+				highModel:    "us.anthropic.claude-fable-5",
+				maxTok:       32,
+				think:        defaultThinkingBudget,
+			}
+
+			req := &model.Request{
+				ModelClass: model.ModelClassHighReasoning,
+				Messages: []*model.Message{{
+					Role:  model.ConversationRoleUser,
+					Parts: []model.Part{model.TextPart{Text: "finish the task"}},
+				}},
+				Tools: []*model.ToolDefinition{{
+					Name:        "tasks.progress.complete",
+					Description: "complete the task",
+					Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+				}},
+				ToolChoice: tc.toolChoice,
+			}
+
+			_, err := client.prepareRequest(context.Background(), req)
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "does not support forced tool choice")
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+// Opus models keep the legacy escape hatch: forced tool choice is allowed and
+// the adapter drops thinking for that turn instead of erroring.
+func TestOpusStillAllowsForcedToolChoice(t *testing.T) {
+	client := &Client{
+		defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		highModel:    "us.anthropic.claude-opus-4-8",
+		maxTok:       32,
+		think:        defaultThinkingBudget,
+	}
+
+	req := &model.Request{
+		ModelClass: model.ModelClassHighReasoning,
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "finish the task"}},
+		}},
+		Tools: []*model.ToolDefinition{{
+			Name:        "tasks.progress.complete",
+			Description: "complete the task",
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+		}},
+		ToolChoice: &model.ToolChoice{
+			Mode: model.ToolChoiceModeTool,
+			Name: "tasks.progress.complete",
+		},
+	}
+
+	parts, err := client.prepareRequest(context.Background(), req)
+	require.NoError(t, err)
+	thinking := client.resolveThinking(req, parts)
+	require.False(t, thinking.enable, "forced tool choice must disable thinking on Opus")
+}
+
 // Claude Opus 4.7 and later, as well as the Claude 5 generation (Fable), reject
 // sampling parameters like temperature. The Bedrock adapter must omit
 // temperature for those requests while preserving it for models that still

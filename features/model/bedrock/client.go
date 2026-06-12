@@ -460,7 +460,10 @@ func (c *Client) resolveThinking(req *model.Request, parts *requestParts) thinki
 // forcesToolUse reports whether a provider-neutral tool choice requires the
 // next assistant turn to contain a tool call. Anthropic-on-Bedrock rejects
 // thinking for those requests, regardless of whether the caller names one tool
-// or allows any tool.
+// or allows any tool. On models with optional thinking the adapter drops the
+// thinking config for forced-tool turns; on the always-thinking Claude 5
+// generation (Fable/Mythos) forced tool use is unrepresentable and encodeTools
+// rejects it.
 func forcesToolUse(choice *model.ToolChoice) bool {
 	return choice != nil && (choice.Mode == model.ToolChoiceModeAny || choice.Mode == model.ToolChoiceModeTool)
 }
@@ -977,6 +980,21 @@ func encodeTools(
 
 	if choice == nil {
 		return &brtypes.ToolConfiguration{Tools: toolList}, anthropicToolExampleFields(anthropicTools, anthropicHasExamples, nil), canonToSan, sanToCanon, nil
+	}
+
+	// Claude 5 generation models (Fable/Mythos) run with always-on adaptive
+	// thinking, and Anthropic rejects forced tool use (tool_choice any/tool)
+	// whenever thinking is active. Earlier models let the adapter drop the
+	// thinking config for forced-tool turns; Fable has no non-thinking mode, so
+	// the request is unrepresentable. Fail fast with a precise error instead of
+	// letting Bedrock return an opaque ValidationException: callers must use
+	// auto and steer tool selection through prompting, enforcing the
+	// must-call-tool contract on the response.
+	if forcesToolUse(choice) && isFableModel(modelID) {
+		return nil, nil, nil, nil, fmt.Errorf(
+			"bedrock: model %q does not support forced tool choice (tool_choice mode %q): thinking is always on and incompatible with forced tool use; use mode \"auto\" and steer tool selection through prompting",
+			modelID, choice.Mode,
+		)
 	}
 
 	cfg := brtypes.ToolConfiguration{
