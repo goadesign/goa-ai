@@ -38,6 +38,11 @@ func TestIsAdaptiveThinkingModel(t *testing.T) {
 		{"opus-4-8 au geo", "au.anthropic.claude-opus-4-8", true},
 		{"opus-4-8 global", "global.anthropic.claude-opus-4-8", true},
 		{"future opus-4-9", "us.anthropic.claude-opus-4-9", true},
+		{"fable-5 in-region", "anthropic.claude-fable-5", true},
+		{"fable-5 us geo", "us.anthropic.claude-fable-5", true},
+		{"fable-5 global", "global.anthropic.claude-fable-5", true},
+		{"fable-5 suffixed", "us.anthropic.claude-fable-5-v1:0", true},
+		{"mythos-5 us geo", "us.anthropic.claude-mythos-5", true},
 		{"opus-4-1", "anthropic.claude-opus-4-1", false},
 		{"opus-4-5", "anthropic.claude-opus-4-5", false},
 		{"sonnet-4-5", "global.anthropic.claude-sonnet-4-5-20250929-v1:0", false},
@@ -62,6 +67,7 @@ func TestBuildConverseStreamInputOpus47AndLaterUsesAdaptiveThinking(t *testing.T
 		"us.anthropic.claude-opus-4-7",
 		"us.anthropic.claude-opus-4-8",
 		"us.anthropic.claude-opus-4-9",
+		"us.anthropic.claude-fable-5",
 	} {
 		t.Run(highModel, func(t *testing.T) {
 			client := &Client{
@@ -238,33 +244,38 @@ func TestResolveThinkingOpus47AnyToolDisablesThinking(t *testing.T) {
 	require.False(t, thinking.enable)
 }
 
-// Claude Opus 4.7 and later reject sampling parameters like temperature. The Bedrock
-// adapter must omit temperature for Opus 4.7+ requests while preserving it for
-// models that still support sampling controls.
+// Claude Opus 4.7 and later, as well as the Claude 5 generation (Fable), reject
+// sampling parameters like temperature. The Bedrock adapter must omit
+// temperature for those requests while preserving it for models that still
+// support sampling controls.
 func TestOpus47AndLaterOmitsTemperatureFromInferenceConfig(t *testing.T) {
-	client := &Client{
-		defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-		highModel:    "us.anthropic.claude-opus-4-8",
-		smallModel:   "global.anthropic.claude-haiku-4-5-20251001-v1:0",
-	}
-
 	cases := []struct {
 		name       string
+		highModel  string
 		modelClass model.ModelClass
 		wantTemp   bool
 	}{
 		{
 			name:       "default keeps temperature",
+			highModel:  "us.anthropic.claude-opus-4-8",
 			modelClass: model.ModelClassDefault,
 			wantTemp:   true,
 		},
 		{
-			name:       "high reasoning omits temperature",
+			name:       "high reasoning opus-4-8 omits temperature",
+			highModel:  "us.anthropic.claude-opus-4-8",
+			modelClass: model.ModelClassHighReasoning,
+			wantTemp:   false,
+		},
+		{
+			name:       "high reasoning fable-5 omits temperature",
+			highModel:  "us.anthropic.claude-fable-5",
 			modelClass: model.ModelClassHighReasoning,
 			wantTemp:   false,
 		},
 		{
 			name:       "small keeps temperature",
+			highModel:  "us.anthropic.claude-opus-4-8",
 			modelClass: model.ModelClassSmall,
 			wantTemp:   true,
 		},
@@ -272,6 +283,12 @@ func TestOpus47AndLaterOmitsTemperatureFromInferenceConfig(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			client := &Client{
+				defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+				highModel:    tc.highModel,
+				smallModel:   "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+			}
+
 			req := &model.Request{
 				ModelClass:  tc.modelClass,
 				Temperature: 0.2,
@@ -309,6 +326,9 @@ func TestSupportsTemperature(t *testing.T) {
 		{"opus-4-7 omits sampling", "us.anthropic.claude-opus-4-7", false},
 		{"opus-4-8 omits sampling", "us.anthropic.claude-opus-4-8", false},
 		{"future opus-4-9 omits sampling", "global.anthropic.claude-opus-4-9", false},
+		{"fable-5 omits sampling", "us.anthropic.claude-fable-5", false},
+		{"fable-5 suffixed omits sampling", "global.anthropic.claude-fable-5-v1:0", false},
+		{"mythos-5 omits sampling", "us.anthropic.claude-mythos-5", false},
 		{"sonnet keeps sampling", "global.anthropic.claude-sonnet-4-5-20250929-v1:0", true},
 		{"haiku keeps sampling", "global.anthropic.claude-haiku-4-5-20251001-v1:0", true},
 	}

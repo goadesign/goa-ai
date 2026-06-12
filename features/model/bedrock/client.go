@@ -511,7 +511,11 @@ func (c *Client) inferenceConfig(modelID string, maxTokens int, temp float32) *b
 // supportsTemperature reports whether modelID accepts Bedrock's temperature
 // inference parameter. Claude Opus 4.7 and later removed temperature/top_p/top_k,
 // so the adapter must omit sampling controls for every Opus 4.7+ Bedrock scope.
+// The Claude 5 generation (Fable/Mythos) also rejects sampling controls.
 func supportsTemperature(modelID string) bool {
+	if isFableModel(modelID) {
+		return false
+	}
 	minor, ok := opus4Minor(modelID)
 	return !ok || minor < 7
 }
@@ -1438,10 +1442,24 @@ func hasToolDefinition(defs []*model.ToolDefinition, name string) bool {
 // type:"enabled" + budget_tokens config in favor of type:"adaptive", where the
 // model dynamically decides when and how deeply to reason. Interleaved thinking
 // is automatic in adaptive mode — no beta header is needed. On Opus 4.7+ the
-// legacy config is removed entirely and returns a 400 error.
+// legacy config is removed entirely and returns a 400 error. On the Claude 5
+// generation (Fable/Mythos) thinking is always on; only type:"adaptive" is
+// accepted and the legacy config likewise returns a 400 error.
 func isAdaptiveThinkingModel(modelID string) bool {
+	if isFableModel(modelID) {
+		return true
+	}
 	minor, ok := opus4Minor(modelID)
 	return ok && minor >= 6
+}
+
+// isFableModel reports whether modelID belongs to the Claude 5 generation
+// (Fable and its Mythos sibling). Bedrock publishes in-region, geo, and global
+// IDs that all contain the stable "claude-fable-5"/"claude-mythos-5" segment,
+// optionally followed by a provider suffix.
+func isFableModel(modelID string) bool {
+	return strings.Contains(modelID, "claude-fable-5") ||
+		strings.Contains(modelID, "claude-mythos-5")
 }
 
 // opus4Minor extracts the minor number from Anthropic Bedrock Opus 4 model IDs.
