@@ -166,14 +166,25 @@ func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Respo
 }
 
 // CountTokens asks Bedrock to count the exact input tokens for req using the
-// same Converse request preparation path as Complete. The returned count matches
-// Bedrock billing for the same model/request shape.
+// same Converse request preparation path as Complete, except that replayed
+// thinking blocks are omitted. Bedrock validates thinking signatures against
+// the counting model, but signatures only verify on the model that issued
+// them, and callers such as history-retention policies legitimately count
+// with a different (cheaper) model class than the one that produced the
+// transcript. The Claude 5 generation does not support CountTokens at all, so
+// counting against the signing model is not an option. Omitting thinking also
+// matches Anthropic billing, which strips prior-turn thinking from input. The
+// returned count therefore reflects the durable transcript cost for the
+// model/request shape.
 func (c *Client) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
-	parts, err := c.prepareRequest(ctx, req)
+	countReq := *req
+	countReq.Messages = messagesWithoutThinking(req.Messages)
+	countReq.Thinking = nil
+	parts, err := c.prepareRequest(ctx, &countReq)
 	if err != nil {
 		return model.TokenCount{}, err
 	}
-	output, err := c.runtime.CountTokens(ctx, c.buildCountTokensInput(parts, req))
+	output, err := c.runtime.CountTokens(ctx, c.buildCountTokensInput(parts, &countReq))
 	if err != nil {
 		return model.TokenCount{}, wrapBedrockError("count_tokens", err)
 	}
@@ -1441,6 +1452,35 @@ func ptrValue[T ~int32 | ~int64](ptr *T) T {
 
 func lazyDocument(v any) document.Interface {
 	return document.NewLazyDocument(&v)
+}
+
+// messagesWithoutThinking returns msgs with all ThinkingParts removed for
+// CountTokens inputs. Messages left with no parts (thinking-only assistant
+// messages) are dropped entirely so the count request never carries empty
+// content blocks. Retained messages are shallow-cloned; the caller's messages
+// are never mutated.
+func messagesWithoutThinking(msgs []*model.Message) []*model.Message {
+	out := make([]*model.Message, 0, len(msgs))
+	for _, m := range msgs {
+		kept := make([]model.Part, 0, len(m.Parts))
+		for _, p := range m.Parts {
+			if _, ok := p.(model.ThinkingPart); ok {
+				continue
+			}
+			kept = append(kept, p)
+		}
+		if len(kept) == 0 {
+			continue
+		}
+		if len(kept) == len(m.Parts) {
+			out = append(out, m)
+			continue
+		}
+		clone := *m
+		clone.Parts = kept
+		out = append(out, &clone)
+	}
+	return out
 }
 
 func hasToolDefinition(defs []*model.ToolDefinition, name string) bool {
