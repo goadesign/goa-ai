@@ -338,6 +338,59 @@ func TestBoundedResultRequiresOptionalMethodNextCursor(t *testing.T) {
 // TestBoundedResultRequiresOptionalMethodTotalAndRefinementHint verifies that
 // bounded tools reject bound method results that make optional canonical bounds
 // fields required.
+// TestBoundedResultRequiresMethodRefinementHintWithoutPaging verifies that
+// non-paging bounded tools fail DSL validation when the bound method result
+// omits "refinement_hint": without paging the hint is the only continuation
+// channel, so a truncated result would be a guaranteed runtime contract
+// violation.
+func TestBoundedResultRequiresMethodRefinementHintWithoutPaging(t *testing.T) {
+	eval.Reset()
+	goaexpr.Root = new(goaexpr.RootExpr)
+	goaexpr.GeneratedResultTypes = new(goaexpr.ResultTypesRoot)
+	require.NoError(t, eval.Register(goaexpr.Root))
+	require.NoError(t, eval.Register(goaexpr.GeneratedResultTypes))
+
+	agentsExpr.Root = &agentsExpr.RootExpr{}
+	require.NoError(t, eval.Register(agentsExpr.Root))
+
+	design := func() {
+		goadsl.API("bounded_result_refinement_hint_required_test", func() {})
+		goadsl.Service("svc", func() {
+			goadsl.Method("Search", func() {
+				goadsl.Payload(func() {
+					goadsl.Attribute("query", goadsl.String)
+					goadsl.Required("query")
+				})
+				goadsl.Result(func() {
+					goadsl.Attribute("results", goadsl.ArrayOf(goadsl.String))
+					goadsl.Attribute("returned", goadsl.Int)
+					goadsl.Attribute("truncated", goadsl.Boolean)
+					goadsl.Required("results", "returned", "truncated")
+				})
+			})
+			Agent("agent", "desc", func() {
+				Use("tools", func() {
+					Tool("search", "Search", func() {
+						Args(func() {
+							goadsl.Attribute("query", goadsl.String)
+							goadsl.Required("query")
+						})
+						Return(func() {
+							goadsl.Attribute("results", goadsl.ArrayOf(goadsl.String))
+						})
+						BindTo("svc", "Search")
+						BoundedResult()
+					})
+				})
+			})
+		})
+	}
+	require.True(t, eval.Execute(design, nil), eval.Context.Error())
+	err := eval.RunDSL()
+	require.Error(t, err)
+	require.ErrorContains(t, err, `bounded method result must define "refinement_hint" on the bound method result`)
+}
+
 func TestBoundedResultRequiresOptionalMethodTotalAndRefinementHint(t *testing.T) {
 	eval.Reset()
 	goaexpr.Root = new(goaexpr.RootExpr)

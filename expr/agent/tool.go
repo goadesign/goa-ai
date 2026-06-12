@@ -547,7 +547,11 @@ func validateMethodResultBoundsShape(tool *ToolExpr, verr *eval.ValidationErrors
 	validateBoundsField("returned", goaexpr.Int, "Int", true, true, false)
 	validateBoundsField("truncated", goaexpr.Boolean, "Boolean", true, true, false)
 	validateBoundsField("total", goaexpr.Int, "Int", false, false, true)
-	validateBoundsField("refinement_hint", goaexpr.String, "String", false, false, true)
+	// Without paging, refinement_hint is the only continuation channel for
+	// truncated results, so the bound method result must define it; the
+	// runtime rejects truncated bounded results that carry neither a next
+	// cursor nor a refinement hint.
+	validateBoundsField("refinement_hint", goaexpr.String, "String", tool.Bounds.Paging == nil, false, true)
 	if tool.Bounds.Paging != nil && tool.Bounds.Paging.NextCursorField != "" {
 		validateBoundsField(tool.Bounds.Paging.NextCursorField, goaexpr.String, "String", true, false, true)
 	}
