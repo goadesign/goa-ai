@@ -133,3 +133,97 @@ func TestCompileHintTemplates_HumanTime(t *testing.T) {
 		})
 	}
 }
+
+func TestCompileHintTemplates_NumberFormatsNumericPointers(t *testing.T) {
+	t.Parallel()
+
+	temperature := 82.75
+	count := 38
+	raw := map[tools.Ident]string{
+		tools.Ident("t"): `{{printf "%.0f" (number .Temperature)}}F and {{printf "%.0f" (number .Count)}} periods`,
+	}
+	compiled, err := CompileHintTemplates(raw, template.FuncMap{})
+	if err != nil {
+		t.Fatalf("CompileHintTemplates error: %v", err)
+	}
+
+	tmpl := compiled[tools.Ident("t")]
+	if tmpl == nil {
+		t.Fatalf("expected compiled template")
+	}
+
+	var b strings.Builder
+	if err := tmpl.Execute(&b, map[string]any{
+		"Temperature": &temperature,
+		"Count":       &count,
+	}); err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if got := strings.TrimSpace(b.String()); got != "83F and 38 periods" {
+		t.Fatalf("unexpected output: got %q want %q", got, "83F and 38 periods")
+	}
+}
+
+func TestCompileHintTemplates_NumberRejectsNonNumericValues(t *testing.T) {
+	t.Parallel()
+
+	raw := map[tools.Ident]string{
+		tools.Ident("t"): `{{number .Value}}`,
+	}
+	compiled, err := CompileHintTemplates(raw, template.FuncMap{})
+	if err != nil {
+		t.Fatalf("CompileHintTemplates error: %v", err)
+	}
+
+	tmpl := compiled[tools.Ident("t")]
+	if tmpl == nil {
+		t.Fatalf("expected compiled template")
+	}
+
+	var b strings.Builder
+	if err := tmpl.Execute(&b, map[string]any{"Value": "warm"}); err == nil {
+		t.Fatalf("expected Execute error")
+	}
+}
+
+func TestRenderResultHintReturnsTemplateErrors(t *testing.T) {
+	t.Parallel()
+
+	toolID := tools.Ident("test.render_result_error")
+	compiled, err := CompileHintTemplates(map[tools.Ident]string{
+		toolID: `{{.Missing}}`,
+	}, template.FuncMap{})
+	if err != nil {
+		t.Fatalf("CompileHintTemplates error: %v", err)
+	}
+	RegisterResultHints(compiled)
+
+	_, ok, err := RenderResultHint(toolID, map[string]any{})
+	if !ok {
+		t.Fatalf("expected registered result hint")
+	}
+	if err == nil {
+		t.Fatalf("expected render error")
+	}
+}
+
+func TestRenderResultHintRejectsEmptyOutput(t *testing.T) {
+	t.Parallel()
+
+	toolID := tools.Ident("test.render_result_empty")
+	compiled, err := CompileHintTemplates(map[tools.Ident]string{
+		toolID: `{{""}}`,
+	}, template.FuncMap{})
+	if err != nil {
+		t.Fatalf("CompileHintTemplates error: %v", err)
+	}
+	RegisterResultHints(compiled)
+
+	_, ok, err := RenderResultHint(toolID, map[string]any{})
+	if !ok {
+		t.Fatalf("expected registered result hint")
+	}
+	if err == nil {
+		t.Fatalf("expected empty output error")
+	}
+}
