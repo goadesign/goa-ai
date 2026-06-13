@@ -98,6 +98,10 @@ func (r *Runtime) waitAwaitConfirmation(
 		if err != nil {
 			return nil, nil, false, fmt.Errorf("encode %s denied tool result for streaming: %w", it.call.Name, err)
 		}
+		preview, err := formatResultPreviewForCall(ctx, r, &it.call, deniedResult, nil)
+		if err != nil {
+			return nil, nil, false, err
+		}
 		if err := r.publishHook(
 			ctx,
 			hooks.NewToolResultReceivedEvent(
@@ -112,7 +116,7 @@ func (r *Runtime) waitAwaitConfirmation(
 				false,
 				"",
 				nil,
-				formatResultPreviewForCall(ctx, r, &it.call, deniedResult, nil),
+				preview,
 				nil,
 				0,
 				nil,
@@ -538,6 +542,10 @@ func (r *Runtime) consumeProvidedToolResultRecords(ctx context.Context, input *R
 			continue
 		}
 		call := record.call
+		preview, err := formatResultPreviewForCall(ctx, r, &call, tr.Result, tr.Bounds)
+		if err != nil {
+			return nil, err
+		}
 		if err := r.publishHook(
 			ctx,
 			hooks.NewToolResultReceivedEvent(
@@ -552,7 +560,7 @@ func (r *Runtime) consumeProvidedToolResultRecords(ctx context.Context, input *R
 				false,
 				"",
 				tr.ServerData,
-				formatResultPreviewForCall(ctx, r, &call, tr.Result, tr.Bounds),
+				preview,
 				tr.Bounds,
 				0,
 				nil,

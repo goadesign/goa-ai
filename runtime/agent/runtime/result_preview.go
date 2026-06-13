@@ -12,6 +12,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	agent "goa.design/goa-ai/runtime/agent"
@@ -43,22 +44,33 @@ type (
 // explicit template root so ResultHintTemplate authors reference payload data
 // via `.Args`, semantic data via `.Result`, and runtime-owned bounds via
 // `.Bounds`.
-func formatResultPreview(toolName tools.Ident, args, result any, bounds *agent.Bounds) string {
-	return clampPreview(rthints.FormatResultHint(toolName, resultPreviewTemplateData{
+func formatResultPreview(toolName tools.Ident, args, result any, bounds *agent.Bounds) (string, error) {
+	preview, ok, err := rthints.RenderResultHint(toolName, resultPreviewTemplateData{
 		Args:   args,
 		Result: result,
 		Bounds: bounds,
-	}))
+	})
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", nil
+	}
+	return clampPreview(preview), nil
 }
 
 // formatResultPreviewForCall decodes the original typed payload when available
 // and renders the user-facing tool result preview for call.Name.
-func formatResultPreviewForCall(ctx context.Context, rt *Runtime, call *planner.ToolRequest, result any, bounds *agent.Bounds) string {
+func formatResultPreviewForCall(ctx context.Context, rt *Runtime, call *planner.ToolRequest, result any, bounds *agent.Bounds) (string, error) {
 	if call == nil {
-		return ""
+		return "", nil
 	}
 	args := decodeResultPreviewArgs(ctx, rt, call)
-	return formatResultPreview(call.Name, args, result, bounds)
+	preview, err := formatResultPreview(call.Name, args, result, bounds)
+	if err != nil {
+		return "", fmt.Errorf("runtime: render result preview for %s: %w", call.Name, err)
+	}
+	return preview, nil
 }
 
 // decodeResultPreviewArgs decodes the original tool payload into its typed Go

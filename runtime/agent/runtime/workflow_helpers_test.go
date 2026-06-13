@@ -234,6 +234,8 @@ func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
 			if tc.tr.Error != nil {
 				errorMessage = tc.tr.Error.Error()
 			}
+			preview, err := formatResultPreviewForCall(t.Context(), rt, &call, tc.tr.Result, tc.tr.Bounds)
+			require.NoError(t, err)
 			replayed := transcript.BuildMessagesFromEvents([]memory.Event{
 				memory.NewEvent(time.Now(), memory.AssistantMessageData{
 					Message: "calling tool",
@@ -247,7 +249,7 @@ func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
 					ToolCallID:   call.ToolCallID,
 					ToolName:     call.Name,
 					ResultJSON:   rawjson.Message(resultJSON),
-					Preview:      formatResultPreviewForCall(t.Context(), rt, &call, tc.tr.Result, tc.tr.Bounds),
+					Preview:      preview,
 					Bounds:       tc.tr.Bounds,
 					ErrorMessage: errorMessage,
 				}, nil),

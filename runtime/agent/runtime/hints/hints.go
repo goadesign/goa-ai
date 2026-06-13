@@ -5,6 +5,7 @@ package hints
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"text/template"
@@ -76,39 +77,23 @@ func RenderCallHint(id tools.Ident, payload any) (string, bool, error) {
 	mu.RLock()
 	tmpl := callHints[id]
 	mu.RUnlock()
-	if tmpl == nil {
-		return "", false, nil
-	}
-	var b strings.Builder
-	if err := tmpl.Execute(&b, payload); err != nil {
-		return "", true, fmt.Errorf("render call hint for %s: %w", id, err)
-	}
-	out := b.String()
-	if strings.TrimSpace(out) == "" {
-		return "", true, fmt.Errorf("render call hint for %s: empty output", id)
-	}
-	return out, true, nil
+	return renderHint("call", id, tmpl, payload)
 }
 
-// FormatResultHint renders the result hint for the given tool and result. Returns
-// an empty string when no template is registered or rendering fails.
-func FormatResultHint(id tools.Ident, result any) string {
+// RenderResultHint renders the registered result hint template for id.
+//
+// The boolean return reports whether a template was registered. A registered
+// template must render a non-empty string; render errors and empty output are
+// returned as contract violations.
+func RenderResultHint(id tools.Ident, result any) (string, bool, error) {
 	mu.RLock()
 	tmpl := resultHints[id]
 	mu.RUnlock()
-	if tmpl == nil {
-		return ""
-	}
-	var b strings.Builder
-	if err := tmpl.Execute(&b, result); err != nil {
-		return ""
-	}
-	return b.String()
+	return renderHint("result", id, tmpl, result)
 }
 
 // CompileHintTemplates compiles text templates with a conservative default setup.
-// Missing keys are ignored so authors can write templates that adapt to
-// optional fields using if/with blocks without runtime errors.
+// Missing keys are errors; authors must use if/with blocks for optional fields.
 func CompileHintTemplates(raw map[tools.Ident]string, extra template.FuncMap) (map[tools.Ident]*template.Template, error) {
 	if len(raw) == 0 {
 		return nil, nil
@@ -159,6 +144,9 @@ func CompileHintTemplates(raw map[tools.Ident]string, extra template.FuncMap) (m
 			}
 			return s[:n]
 		},
+		// number converts scalar numeric values, including generated optional
+		// numeric pointers, into float64 for printf formatting in hints.
+		"number": number,
 	}
 	for k, v := range extra {
 		funcs[k] = v
@@ -175,6 +163,49 @@ func CompileHintTemplates(raw map[tools.Ident]string, extra template.FuncMap) (m
 		out[id] = tmpl
 	}
 	return out, nil
+}
+
+// renderHint executes a registered hint template and enforces the non-empty
+// preview invariant shared by call and result hints.
+func renderHint(kind string, id tools.Ident, tmpl *template.Template, data any) (string, bool, error) {
+	if tmpl == nil {
+		return "", false, nil
+	}
+	var b strings.Builder
+	if err := tmpl.Execute(&b, data); err != nil {
+		return "", true, fmt.Errorf("render %s hint for %s: %w", kind, id, err)
+	}
+	out := b.String()
+	if strings.TrimSpace(out) == "" {
+		return "", true, fmt.Errorf("render %s hint for %s: empty output", kind, id)
+	}
+	return out, true, nil
+}
+
+// number dereferences typed numeric values for hint templates. Template authors
+// use it with printf so optional generated fields never render as Go pointers.
+func number(v any) (float64, error) {
+	if v == nil {
+		return 0, fmt.Errorf("number: nil value")
+	}
+	rv := reflect.ValueOf(v)
+	for rv.Kind() == reflect.Pointer {
+		if rv.IsNil() {
+			return 0, fmt.Errorf("number: nil pointer")
+		}
+		rv = rv.Elem()
+	}
+	kind := rv.Kind()
+	switch {
+	case kind >= reflect.Int && kind <= reflect.Int64:
+		return float64(rv.Int()), nil
+	case kind >= reflect.Uint && kind <= reflect.Uintptr:
+		return float64(rv.Uint()), nil
+	case kind == reflect.Float32 || kind == reflect.Float64:
+		return rv.Float(), nil
+	default:
+		return 0, fmt.Errorf("number: unsupported %T", v)
+	}
 }
 
 func parseTimestamp(v any) (time.Time, bool) {
