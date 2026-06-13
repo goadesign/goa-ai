@@ -362,12 +362,13 @@ func TestAdvertisedToolDefinitionsHonorCompiledPolicy(t *testing.T) {
 		}),
 	})
 	definitions := ctx.AdvertisedToolDefinitions()
-	require.Len(t, definitions, 1)
+	require.Len(t, definitions, 2)
 	require.Equal(t, visible.Name.String(), definitions[0].Name)
 	require.Equal(t, visible.Description, definitions[0].Description)
 	require.JSONEq(t, `{"type":"object","properties":{"q":{"type":"string"}}}`, string(definitions[0].Input.JSONSchema()))
 	require.JSONEq(t, `{"type":"object"}`, string(definitions[0].Input.SchemaWithoutRootExample()))
 	require.JSONEq(t, `{"q":"status"}`, string(definitions[0].Input.ExampleJSON()))
+	require.Equal(t, tools.ToolUnavailable.String(), definitions[1].Name)
 }
 
 func TestToolMetadataUsesRegisteredCanonicalMetadata(t *testing.T) {

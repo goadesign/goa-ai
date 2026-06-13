@@ -153,13 +153,17 @@ func ensureToolUnavailableDefinition(req *model.Request) {
 	if !requestMayReferenceTools(req) {
 		return
 	}
+	req.Tools = appendToolUnavailableDefinition(req.Tools)
+}
+
+func appendToolUnavailableDefinition(defs []*model.ToolDefinition) []*model.ToolDefinition {
 	name := tools.ToolUnavailable.String()
-	for _, def := range req.Tools {
+	for _, def := range defs {
 		if def != nil && def.Name == name {
-			return
+			return defs
 		}
 	}
-	req.Tools = append(req.Tools, toolUnavailableToolDefinition())
+	return append(defs, toolUnavailableToolDefinition())
 }
 
 func requestMayReferenceTools(req *model.Request) bool {
