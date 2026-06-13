@@ -290,7 +290,7 @@ func assistantConversationHistoryUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant conversation-history --body '{\n      \"flag\": false,\n      \"limit\": 744680901799951283,\n      \"nums\": [\n         0.22249585049818327,\n         0.9981565642878103,\n         0.9532843882765837,\n         0.3797985896036785\n      ]\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant conversation-history --body '{\n      \"flag\": true,\n      \"limit\": 2637775629554690885,\n      \"nums\": [\n         0.5643204135869995,\n         0.38404870089046034\n      ]\n   }'")
 }
 
 func assistantGeneratePromptsUsage() {
@@ -308,7 +308,7 @@ func assistantGeneratePromptsUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant generate-prompts --body '{\n      \"context\": \"Odit quibusdam aliquid.\",\n      \"task\": \"Sit fugiat ullam beatae.\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant generate-prompts --body '{\n      \"context\": \"Ut aspernatur quas culpa.\",\n      \"task\": \"Voluptatum maiores incidunt eum accusamus.\"\n   }'")
 }
 
 func assistantSendNotificationUsage() {
@@ -326,7 +326,7 @@ func assistantSendNotificationUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant send-notification --body '{\n      \"data\": \"Eaque provident odio natus repudiandae assumenda.\",\n      \"message\": \"Ullam at.\",\n      \"type\": \"Soluta eum non.\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant send-notification --body '{\n      \"data\": \"Corrupti repellendus.\",\n      \"message\": \"Aspernatur in ut eos perspiciatis delectus.\",\n      \"type\": \"Ratione amet perspiciatis.\"\n   }'")
 }
 
 func assistantAnalyzeSentimentUsage() {
@@ -344,7 +344,7 @@ func assistantAnalyzeSentimentUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant analyze-sentiment --body '{\n      \"text\": \"Placeat ea aut reiciendis rerum.\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant analyze-sentiment --body '{\n      \"text\": \"Ipsam eos excepturi necessitatibus.\"\n   }'")
 }
 
 func assistantExtractKeywordsUsage() {
@@ -362,7 +362,7 @@ func assistantExtractKeywordsUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant extract-keywords --body '{\n      \"text\": \"Sequi aut adipisci voluptatem modi numquam.\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant extract-keywords --body '{\n      \"text\": \"Eum reprehenderit.\"\n   }'")
 }
 
 func assistantSummarizeTextUsage() {
@@ -380,7 +380,7 @@ func assistantSummarizeTextUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant summarize-text --body '{\n      \"text\": \"Voluptas illo ea aut enim ea.\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant summarize-text --body '{\n      \"text\": \"Ut consequatur illo dicta.\"\n   }'")
 }
 
 func assistantSearchUsage() {
@@ -398,7 +398,7 @@ func assistantSearchUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant search --body '{\n      \"limit\": 9200926646358933367,\n      \"query\": \"Magnam beatae nulla tempora quas.\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant search --body '{\n      \"limit\": 823993099793574612,\n      \"query\": \"Sit impedit eos.\"\n   }'")
 }
 
 func assistantExecuteCodeUsage() {
@@ -416,7 +416,7 @@ func assistantExecuteCodeUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant execute-code --body '{\n      \"code\": \"Libero corrupti velit et.\",\n      \"language\": \"python\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant execute-code --body '{\n      \"code\": \"Maxime consequatur fugiat.\",\n      \"language\": \"javascript\"\n   }'")
 }
 
 func assistantProcessBatchUsage() {
@@ -434,5 +434,5 @@ func assistantProcessBatchUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant process-batch --body '{\n      \"blob\": \"Distinctio quasi aliquid.\",\n      \"format\": \"uri\",\n      \"items\": [\n         \"Molestiae ea cumque et aut quasi iusto.\",\n         \"Ducimus voluptas ut a architecto voluptatum in.\",\n         \"Tempore est id porro.\"\n      ],\n      \"mimeType\": \"Cum est harum velit.\",\n      \"uri\": \"Commodi nam placeat quas qui ipsa tempore.\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant process-batch --body '{\n      \"blob\": \"Est non quia a iure.\",\n      \"format\": \"json\",\n      \"items\": [\n         \"Temporibus laborum occaecati.\",\n         \"Occaecati omnis.\"\n      ],\n      \"mimeType\": \"Perferendis autem et asperiores expedita.\",\n      \"uri\": \"Commodi consequatur aut voluptatibus corporis et.\"\n   }'")
 }

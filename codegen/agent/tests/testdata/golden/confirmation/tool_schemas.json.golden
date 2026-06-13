@@ -15,12 +15,12 @@
           "properties": {
             "key": {
               "description": "Key to update.",
-              "example": "Et iusto ex.",
+              "example": "Sed possimus enim.",
               "type": "string"
             },
             "value": {
               "description": "New value.",
-              "example": "Ipsam quia repudiandae quibusdam.",
+              "example": "A iusto nulla error temporibus.",
               "type": "string"
             }
           },
@@ -38,12 +38,12 @@
           "properties": {
             "key": {
               "description": "Key that was updated.",
-              "example": "Et expedita dignissimos.",
+              "example": "Sed possimus enim.",
               "type": "string"
             },
             "summary": {
               "description": "Summary of the update.",
-              "example": "Animi magnam repellat et.",
+              "example": "Est pariatur rerum non vero maiores ex.",
               "type": "string"
             }
           },

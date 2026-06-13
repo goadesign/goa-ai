@@ -9,7 +9,6 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -19,42 +18,6 @@ import (
 	"goa.design/goa/v3/jsonrpc"
 	goa "goa.design/goa/v3/pkg"
 )
-
-// EncodeListDocumentsResponse returns an encoder for responses returned by the
-// assistant list_documents endpoint.
-func EncodeListDocumentsResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		res, _ := v.(*assistant.Documents)
-		enc := encoder(ctx, w)
-		body := NewListDocumentsResponseBody(res)
-		w.WriteHeader(http.StatusOK)
-		return enc.Encode(body)
-	}
-}
-
-// EncodeSystemInfoResponse returns an encoder for responses returned by the
-// assistant system_info endpoint.
-func EncodeSystemInfoResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		res, _ := v.(*assistant.SystemInfoResult)
-		enc := encoder(ctx, w)
-		body := NewSystemInfoResponseBody(res)
-		w.WriteHeader(http.StatusOK)
-		return enc.Encode(body)
-	}
-}
-
-// EncodeConversationHistoryResponse returns an encoder for responses returned
-// by the assistant conversation_history endpoint.
-func EncodeConversationHistoryResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		res, _ := v.(*assistant.ConversationHistoryResult)
-		enc := encoder(ctx, w)
-		body := NewConversationHistoryResponseBody(res)
-		w.WriteHeader(http.StatusOK)
-		return enc.Encode(body)
-	}
-}
 
 // DecodeConversationHistoryRequest returns a decoder for requests sent to the
 // assistant conversation_history endpoint.
@@ -80,18 +43,6 @@ func DecodeConversationHistoryRequest(mux goahttp.Muxer, decoder func(*http.Requ
 		payload = NewConversationHistoryPayload(&body)
 
 		return payload, nil
-	}
-}
-
-// EncodeGeneratePromptsResponse returns an encoder for responses returned by
-// the assistant generate_prompts endpoint.
-func EncodeGeneratePromptsResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		res, _ := v.(*assistant.PromptTemplates)
-		enc := encoder(ctx, w)
-		body := NewGeneratePromptsResponseBody(res)
-		w.WriteHeader(http.StatusOK)
-		return enc.Encode(body)
 	}
 }
 
@@ -126,15 +77,6 @@ func DecodeGeneratePromptsRequest(mux goahttp.Muxer, decoder func(*http.Request)
 	}
 }
 
-// EncodeSendNotificationResponse returns an encoder for responses returned by
-// the assistant send_notification endpoint.
-func EncodeSendNotificationResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		w.WriteHeader(http.StatusNoContent)
-		return nil
-	}
-}
-
 // DecodeSendNotificationRequest returns a decoder for requests sent to the
 // assistant send_notification endpoint.
 func DecodeSendNotificationRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*assistant.SendNotificationPayload, error) {
@@ -163,18 +105,6 @@ func DecodeSendNotificationRequest(mux goahttp.Muxer, decoder func(*http.Request
 		payload = NewSendNotificationPayload(&body)
 
 		return payload, nil
-	}
-}
-
-// EncodeAnalyzeSentimentResponse returns an encoder for responses returned by
-// the assistant analyze_sentiment endpoint.
-func EncodeAnalyzeSentimentResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		res, _ := v.(*assistant.AnalyzeSentimentResult)
-		enc := encoder(ctx, w)
-		body := NewAnalyzeSentimentResponseBody(res)
-		w.WriteHeader(http.StatusOK)
-		return enc.Encode(body)
 	}
 }
 
@@ -209,18 +139,6 @@ func DecodeAnalyzeSentimentRequest(mux goahttp.Muxer, decoder func(*http.Request
 	}
 }
 
-// EncodeExtractKeywordsResponse returns an encoder for responses returned by
-// the assistant extract_keywords endpoint.
-func EncodeExtractKeywordsResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		res, _ := v.(*assistant.ExtractKeywordsResult)
-		enc := encoder(ctx, w)
-		body := NewExtractKeywordsResponseBody(res)
-		w.WriteHeader(http.StatusOK)
-		return enc.Encode(body)
-	}
-}
-
 // DecodeExtractKeywordsRequest returns a decoder for requests sent to the
 // assistant extract_keywords endpoint.
 func DecodeExtractKeywordsRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*assistant.ExtractKeywordsPayload, error) {
@@ -249,18 +167,6 @@ func DecodeExtractKeywordsRequest(mux goahttp.Muxer, decoder func(*http.Request)
 		payload = NewExtractKeywordsPayload(&body)
 
 		return payload, nil
-	}
-}
-
-// EncodeSummarizeTextResponse returns an encoder for responses returned by the
-// assistant summarize_text endpoint.
-func EncodeSummarizeTextResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		res, _ := v.(*assistant.SummarizeTextResult)
-		enc := encoder(ctx, w)
-		body := NewSummarizeTextResponseBody(res)
-		w.WriteHeader(http.StatusOK)
-		return enc.Encode(body)
 	}
 }
 
@@ -295,18 +201,6 @@ func DecodeSummarizeTextRequest(mux goahttp.Muxer, decoder func(*http.Request) g
 	}
 }
 
-// EncodeSearchResponse returns an encoder for responses returned by the
-// assistant search endpoint.
-func EncodeSearchResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		res, _ := v.(*assistant.SearchResult)
-		enc := encoder(ctx, w)
-		body := NewSearchResponseBody(res)
-		w.WriteHeader(http.StatusOK)
-		return enc.Encode(body)
-	}
-}
-
 // DecodeSearchRequest returns a decoder for requests sent to the assistant
 // search endpoint.
 func DecodeSearchRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*assistant.SearchPayload, error) {
@@ -338,18 +232,6 @@ func DecodeSearchRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.
 	}
 }
 
-// EncodeExecuteCodeResponse returns an encoder for responses returned by the
-// assistant execute_code endpoint.
-func EncodeExecuteCodeResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		res, _ := v.(*assistant.ExecuteCodeResult)
-		enc := encoder(ctx, w)
-		body := NewExecuteCodeResponseBody(res)
-		w.WriteHeader(http.StatusOK)
-		return enc.Encode(body)
-	}
-}
-
 // DecodeExecuteCodeRequest returns a decoder for requests sent to the
 // assistant execute_code endpoint.
 func DecodeExecuteCodeRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*assistant.ExecuteCodePayload, error) {
@@ -378,18 +260,6 @@ func DecodeExecuteCodeRequest(mux goahttp.Muxer, decoder func(*http.Request) goa
 		payload = NewExecuteCodePayload(&body)
 
 		return payload, nil
-	}
-}
-
-// EncodeProcessBatchResponse returns an encoder for responses returned by the
-// assistant process_batch endpoint.
-func EncodeProcessBatchResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		res, _ := v.(*assistant.ProcessBatchResult)
-		enc := encoder(ctx, w)
-		body := NewProcessBatchResponseBody(res)
-		w.WriteHeader(http.StatusOK)
-		return enc.Encode(body)
 	}
 }
 

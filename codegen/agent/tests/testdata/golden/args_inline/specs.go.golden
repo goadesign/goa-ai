@@ -29,8 +29,8 @@ var (
 		Tags:        []string{},
 		Payload: tools.TypeSpec{
 			Name:                     "AddPayload",
-			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"left\":{\"type\":\"integer\",\"description\":\"Left operand\",\"example\":1056967519,\"format\":\"int32\"},\"right\":{\"type\":\"integer\",\"description\":\"Right operand\",\"example\":1084554470,\"format\":\"int32\"}},\"required\":[\"left\",\"right\"]}"),
-			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"left\":{\"type\":\"integer\",\"description\":\"Left operand\",\"example\":1056967519,\"format\":\"int32\"},\"right\":{\"type\":\"integer\",\"description\":\"Right operand\",\"example\":1084554470,\"format\":\"int32\"}},\"required\":[\"left\",\"right\"]}"),
+			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"left\":{\"type\":\"integer\",\"description\":\"Left operand\",\"example\":407521916,\"format\":\"int32\"},\"right\":{\"type\":\"integer\",\"description\":\"Right operand\",\"example\":883836129,\"format\":\"int32\"}},\"required\":[\"left\",\"right\"]}"),
+			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"left\":{\"type\":\"integer\",\"description\":\"Left operand\",\"example\":407521916,\"format\":\"int32\"},\"right\":{\"type\":\"integer\",\"description\":\"Right operand\",\"example\":883836129,\"format\":\"int32\"}},\"required\":[\"left\",\"right\"]}"),
 			ExampleJSON:              nil,
 			FieldDescriptions:        AddPayloadFieldDescs,
 			FieldJSONTypes:           AddPayloadFieldJSONTypes,
@@ -38,8 +38,8 @@ var (
 		},
 		Result: tools.TypeSpec{
 			Name:                     "AddResult",
-			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"sum\":{\"type\":\"integer\",\"description\":\"Sum\",\"example\":1051318795,\"format\":\"int32\"}},\"required\":[\"sum\"]}"),
-			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"sum\":{\"type\":\"integer\",\"description\":\"Sum\",\"example\":1051318795,\"format\":\"int32\"}},\"required\":[\"sum\"]}"),
+			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"sum\":{\"type\":\"integer\",\"description\":\"Sum\",\"example\":1742919548,\"format\":\"int32\"}},\"required\":[\"sum\"]}"),
+			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"sum\":{\"type\":\"integer\",\"description\":\"Sum\",\"example\":1742919548,\"format\":\"int32\"}},\"required\":[\"sum\"]}"),
 			FieldDescriptions:        AddResultFieldDescs,
 			FieldJSONTypes:           AddResultFieldJSONTypes,
 			Codec:                    addResultCodec,

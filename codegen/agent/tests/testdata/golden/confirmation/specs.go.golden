@@ -34,8 +34,8 @@ var (
 		},
 		Payload: tools.TypeSpec{
 			Name:                     "DangerousWritePayload",
-			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"Key to update.\",\"example\":\"Dignissimos quo illum.\"},\"value\":{\"type\":\"string\",\"description\":\"New value.\",\"example\":\"Nemo quia.\"}},\"required\":[\"key\",\"value\"]}"),
-			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"Key to update.\",\"example\":\"Dignissimos quo illum.\"},\"value\":{\"type\":\"string\",\"description\":\"New value.\",\"example\":\"Nemo quia.\"}},\"required\":[\"key\",\"value\"]}"),
+			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"Key to update.\",\"example\":\"Sed possimus enim.\"},\"value\":{\"type\":\"string\",\"description\":\"New value.\",\"example\":\"A iusto nulla error temporibus.\"}},\"required\":[\"key\",\"value\"]}"),
+			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"Key to update.\",\"example\":\"Sed possimus enim.\"},\"value\":{\"type\":\"string\",\"description\":\"New value.\",\"example\":\"A iusto nulla error temporibus.\"}},\"required\":[\"key\",\"value\"]}"),
 			ExampleJSON:              nil,
 			FieldDescriptions:        DangerousWritePayloadFieldDescs,
 			FieldJSONTypes:           DangerousWritePayloadFieldJSONTypes,
@@ -43,8 +43,8 @@ var (
 		},
 		Result: tools.TypeSpec{
 			Name:                     "DangerousWriteResult",
-			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"Key that was updated.\",\"example\":\"Molestiae velit quam amet cupiditate non.\"},\"summary\":{\"type\":\"string\",\"description\":\"Summary of the update.\",\"example\":\"Consequatur reprehenderit.\"}},\"required\":[\"summary\",\"key\"]}"),
-			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"Key that was updated.\",\"example\":\"Molestiae velit quam amet cupiditate non.\"},\"summary\":{\"type\":\"string\",\"description\":\"Summary of the update.\",\"example\":\"Consequatur reprehenderit.\"}},\"required\":[\"summary\",\"key\"]}"),
+			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"Key that was updated.\",\"example\":\"Sed possimus enim.\"},\"summary\":{\"type\":\"string\",\"description\":\"Summary of the update.\",\"example\":\"Est pariatur rerum non vero maiores ex.\"}},\"required\":[\"summary\",\"key\"]}"),
+			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"Key that was updated.\",\"example\":\"Sed possimus enim.\"},\"summary\":{\"type\":\"string\",\"description\":\"Summary of the update.\",\"example\":\"Est pariatur rerum non vero maiores ex.\"}},\"required\":[\"summary\",\"key\"]}"),
 			FieldDescriptions:        DangerousWriteResultFieldDescs,
 			FieldJSONTypes:           DangerousWriteResultFieldJSONTypes,
 			Codec:                    dangerousWriteResultCodec,

@@ -35,6 +35,25 @@ func (c *Client) BuildListDocumentsRequest(ctx context.Context, v any) (*http.Re
 	return req, nil
 }
 
+// EncodeListDocumentsRequest returns an encoder for requests sent to the
+// assistant service list_documents JSON-RPC method.
+func EncodeListDocumentsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		// For JSON-RPC methods without payloads, we still need to send the method envelope
+		// Generate a unique ID for the request
+		id := uuid.New().String()
+		body := &jsonrpc.Request{
+			JSONRPC: "2.0",
+			Method:  "list_documents",
+			ID:      id,
+		}
+		if err := encoder(req).Encode(body); err != nil {
+			return goahttp.ErrEncodingError("assistant", "list_documents", err)
+		}
+		return nil
+	}
+}
+
 // DecodeListDocumentsResponse returns a decoder for responses returned by the
 // assistant service list_documents JSON-RPC method. restoreBody controls
 // whether the response body should be restored after having been read.
@@ -100,6 +119,25 @@ func (c *Client) BuildSystemInfoRequest(ctx context.Context, v any) (*http.Reque
 	}
 
 	return req, nil
+}
+
+// EncodeSystemInfoRequest returns an encoder for requests sent to the
+// assistant service system_info JSON-RPC method.
+func EncodeSystemInfoRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		// For JSON-RPC methods without payloads, we still need to send the method envelope
+		// Generate a unique ID for the request
+		id := uuid.New().String()
+		body := &jsonrpc.Request{
+			JSONRPC: "2.0",
+			Method:  "system_info",
+			ID:      id,
+		}
+		if err := encoder(req).Encode(body); err != nil {
+			return goahttp.ErrEncodingError("assistant", "system_info", err)
+		}
+		return nil
+	}
 }
 
 // DecodeSystemInfoResponse returns a decoder for responses returned by the
@@ -926,41 +964,5 @@ func DecodeProcessBatchResponse(decoder func(*http.Response) goahttp.Decoder, re
 		}
 		res := NewProcessBatchResultOK(&body)
 		return res, nil
-	}
-}
-
-// EncodeListDocumentsRequest returns an encoder for requests sent to the
-// assistant service list_documents JSON-RPC method.
-func EncodeListDocumentsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
-	return func(req *http.Request, v any) error {
-		// For JSON-RPC methods without payloads, we still need to send the method envelope
-		// Generate a unique ID for the request
-		id := uuid.New().String()
-		body := &jsonrpc.Request{
-			JSONRPC: "2.0",
-			Method:  "list_documents",
-			ID:      id,
-		}
-		if err := encoder(req).Encode(body); err != nil {
-			return goahttp.ErrEncodingError("assistant", "list_documents", err)
-		}
-		return nil
-	}
-} // EncodeSystemInfoRequest returns an encoder for requests sent to the
-// assistant service system_info JSON-RPC method.
-func EncodeSystemInfoRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
-	return func(req *http.Request, v any) error {
-		// For JSON-RPC methods without payloads, we still need to send the method envelope
-		// Generate a unique ID for the request
-		id := uuid.New().String()
-		body := &jsonrpc.Request{
-			JSONRPC: "2.0",
-			Method:  "system_info",
-			ID:      id,
-		}
-		if err := encoder(req).Encode(body); err != nil {
-			return goahttp.ErrEncodingError("assistant", "system_info", err)
-		}
-		return nil
 	}
 }

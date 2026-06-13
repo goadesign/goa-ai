@@ -83,6 +83,11 @@ func Generate(genpkg string, roots []eval.Root, files []*codegen.File) ([]*codeg
 func generateMCPServiceCode(genpkg string, root *expr.RootExpr, mcpService *expr.ServiceExpr) []*codegen.File {
 	files := make([]*codegen.File, 0, 16)
 
+	// The temporary MCP root never goes through generator.Generate so apply
+	// the sanctioned design normalization (anonymous object payload/result
+	// wrapping) the service generators rely on.
+	codegen.NormalizeRoot(root)
+
 	// Create services data from temporary MCP root
 	servicesData := service.NewServicesData(root)
 
@@ -99,18 +104,19 @@ func generateMCPServiceCode(genpkg string, root *expr.RootExpr, mcpService *expr
 	files = append(files, service.EndpointFile(genpkg, mcpService, servicesData))
 	files = append(files, service.ClientFile(genpkg, mcpService, servicesData))
 
-	// Generate JSON-RPC transport for MCP service only
-	httpServices := httpcodegen.NewServicesData(servicesData, &root.API.JSONRPC.HTTPExpr)
-	httpServices.Root = root
+	// Generate JSON-RPC transport for MCP service only. The JSON-RPC
+	// constructor drives gen/jsonrpc paths and headers; SSE server files are
+	// part of ServerFiles and the type/path constructors live in the HTTP
+	// package.
+	jsonrpcServices := httpcodegen.NewJSONRPCServicesData(servicesData, &root.API.JSONRPC.HTTPExpr)
+	jsonrpcServices.Root = root
 
-	// Generate both base and SSE server files.
-	files = append(files, jsonrpccodegen.ServerFiles(genpkg, httpServices)...)
-	files = append(files, jsonrpccodegen.SSEServerFiles(genpkg, httpServices)...)
-	files = append(files, jsonrpccodegen.ServerTypeFiles(genpkg, httpServices)...)
-	files = append(files, jsonrpccodegen.PathFiles(httpServices)...)
+	files = append(files, jsonrpccodegen.ServerFiles(genpkg, jsonrpcServices)...)
+	files = append(files, httpcodegen.ServerTypeFiles(genpkg, jsonrpcServices)...)
+	files = append(files, httpcodegen.PathFiles(jsonrpcServices)...)
 	// Add client-side JSON-RPC for MCP service so adapters can depend on it
-	files = append(files, jsonrpccodegen.ClientTypeFiles(genpkg, httpServices)...)
-	files = append(files, jsonrpccodegen.ClientFiles(genpkg, httpServices)...)
+	files = append(files, httpcodegen.ClientTypeFiles(genpkg, jsonrpcServices)...)
+	files = append(files, jsonrpccodegen.ClientFiles(genpkg, jsonrpcServices)...)
 
 	applyMCPPolicyHeadersToJSONRPCMount(files)
 	return files

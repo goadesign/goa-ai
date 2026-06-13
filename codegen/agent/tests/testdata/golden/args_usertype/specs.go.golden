@@ -29,8 +29,8 @@ var (
 		Tags:        []string{},
 		Payload: tools.TypeSpec{
 			Name:                     "StorePayload",
-			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Identifier\",\"example\":\"Dignissimos quo illum.\"},\"title\":{\"type\":\"string\",\"description\":\"Title\",\"example\":\"Nemo quia.\"}},\"required\":[\"id\",\"title\"]}"),
-			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Identifier\",\"example\":\"Dignissimos quo illum.\"},\"title\":{\"type\":\"string\",\"description\":\"Title\",\"example\":\"Nemo quia.\"}},\"required\":[\"id\",\"title\"]}"),
+			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Identifier\",\"example\":\"Et blanditiis nostrum voluptatum non quia.\"},\"title\":{\"type\":\"string\",\"description\":\"Title\",\"example\":\"Dolores ipsa fuga eos.\"}},\"required\":[\"id\",\"title\"]}"),
+			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Identifier\",\"example\":\"Et blanditiis nostrum voluptatum non quia.\"},\"title\":{\"type\":\"string\",\"description\":\"Title\",\"example\":\"Dolores ipsa fuga eos.\"}},\"required\":[\"id\",\"title\"]}"),
 			ExampleJSON:              nil,
 			FieldDescriptions:        StorePayloadFieldDescs,
 			FieldJSONTypes:           StorePayloadFieldJSONTypes,
@@ -38,8 +38,8 @@ var (
 		},
 		Result: tools.TypeSpec{
 			Name:                     "StoreResult",
-			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Identifier\",\"example\":\"Consequatur reprehenderit.\"},\"title\":{\"type\":\"string\",\"description\":\"Title\",\"example\":\"Molestiae velit quam amet cupiditate non.\"}},\"required\":[\"id\"]}"),
-			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Identifier\",\"example\":\"Consequatur reprehenderit.\"},\"title\":{\"type\":\"string\",\"description\":\"Title\",\"example\":\"Molestiae velit quam amet cupiditate non.\"}},\"required\":[\"id\"]}"),
+			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Identifier\",\"example\":\"Et blanditiis nostrum voluptatum non quia.\"},\"title\":{\"type\":\"string\",\"description\":\"Title\",\"example\":\"Dolores ipsa fuga eos.\"}},\"required\":[\"id\"]}"),
+			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Identifier\",\"example\":\"Et blanditiis nostrum voluptatum non quia.\"},\"title\":{\"type\":\"string\",\"description\":\"Title\",\"example\":\"Dolores ipsa fuga eos.\"}},\"required\":[\"id\"]}"),
 			FieldDescriptions:        StoreResultFieldDescs,
 			FieldJSONTypes:           StoreResultFieldJSONTypes,
 			Codec:                    storeResultCodec,
