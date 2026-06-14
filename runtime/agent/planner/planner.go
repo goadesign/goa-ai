@@ -183,6 +183,15 @@ type ToolRequest struct {
 	// Payload is the canonical JSON payload for the tool call.
 	Payload rawjson.Message
 
+	// ModelName is the tool identifier the model actually emitted when a planner
+	// compiles a model-facing synthetic tool into a different executable tool.
+	// Empty means the model-facing transcript identity is Name.
+	ModelName tools.Ident
+
+	// ModelPayload is the payload the model actually emitted when ModelName is
+	// set. Empty means the model-facing transcript payload is Payload.
+	ModelPayload rawjson.Message
+
 	// AgentID is the identifier of the agent that issued this tool request.
 	AgentID agent.Ident
 
@@ -205,6 +214,26 @@ type ToolRequest struct {
 	// ParentToolCallID is the identifier of the parent tool call when this invocation
 	// is nested (for example, a tool launched by an agent-as-tool).
 	ParentToolCallID string
+}
+
+// TranscriptName returns the model-facing tool name recorded in provider
+// transcript history. Execution, policy, and result contracts continue to use
+// Name.
+func (r ToolRequest) TranscriptName() tools.Ident {
+	if r.ModelName != "" {
+		return r.ModelName
+	}
+	return r.Name
+}
+
+// TranscriptPayload returns the model-facing tool payload recorded in provider
+// transcript history. Execution, policy, and result contracts continue to use
+// Payload.
+func (r ToolRequest) TranscriptPayload() rawjson.Message {
+	if len(r.ModelPayload) > 0 {
+		return r.ModelPayload
+	}
+	return r.Payload
 }
 
 // ToolResult captures the outcome of a tool invocation.

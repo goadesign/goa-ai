@@ -663,7 +663,7 @@ yourself.
 ### Tool Payload and Result Flow
 
 1. **Model emits tool call** — Provider adapters produce a streamed or final tool call with canonical JSON bytes
-2. **Planner returns `ToolRequest`** — `ToolRequest.Payload` stays as `rawjson.Message`
+2. **Planner returns `ToolRequest`** — `ToolRequest.Payload` stays as `rawjson.Message`; when a planner compiles a model-facing synthetic tool into a different executable tool, `ModelName`/`ModelPayload` preserve the provider transcript identity
 3. **Runtime decodes payload** — Uses generated codecs to validate and decode canonical JSON
 4. **Executor runs tool** — Receives typed or raw payload depending on configuration
 5. **Runtime encodes result** — Uses generated codecs and persists canonical `ToolOutput` history

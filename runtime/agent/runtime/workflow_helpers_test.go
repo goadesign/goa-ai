@@ -77,6 +77,31 @@ func TestRecordAssistantTurnRebuildsToolUsesFromPlannerFacingCalls(t *testing.T)
 	require.Equal(t, rawjson.Message(`{"q":"new"}`), use.Input)
 }
 
+func TestRecordAssistantTurnUsesModelFacingToolIdentityForCompiledCalls(t *testing.T) {
+	rt := New()
+	seedTestToolSpecs(rt, newAnyJSONSpec("atlas.read.get_time_series", "atlas.read"))
+	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	agentID := agent.Ident("agent-1")
+	calls := []planner.ToolRequest{{
+		Name:         "atlas.read.get_time_series",
+		Payload:      rawjson.Message(`{"mode":"chart","sources":[{"id":"source-1"}]}`),
+		ModelName:    "fetch_chart_signal_series",
+		ModelPayload: rawjson.Message(`{"from":"2026-06-12T00:00:00Z","to":"2026-06-13T00:00:00Z"}`),
+		ToolCallID:   "tooluse_1",
+	}}
+
+	require.NoError(t, rt.recordAssistantTurn(t.Context(), agentID, base, nil, calls, "turn-1"))
+
+	require.Len(t, base.Messages, 1)
+	require.Equal(t, model.ConversationRoleAssistant, base.Messages[0].Role)
+	require.Len(t, base.Messages[0].Parts, 1)
+	use, ok := base.Messages[0].Parts[0].(model.ToolUsePart)
+	require.True(t, ok)
+	require.Equal(t, "tooluse_1", use.ID)
+	require.Equal(t, "fetch_chart_signal_series", use.Name)
+	require.Equal(t, rawjson.Message(`{"from":"2026-06-12T00:00:00Z","to":"2026-06-13T00:00:00Z"}`), use.Input)
+}
+
 func TestRecordAssistantTurnDropsBookkeepingOnlyProviderToolUse(t *testing.T) {
 	rt := New()
 	bookkeeping := newAnyJSONSpec("tasks.progress.update", "tasks.progress")

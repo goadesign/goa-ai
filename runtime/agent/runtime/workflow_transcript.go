@@ -79,8 +79,8 @@ func (r *Runtime) recordAssistantTurn(
 	for _, call := range allowed {
 		target.Parts = append(target.Parts, model.ToolUsePart{
 			ID:    call.ToolCallID,
-			Name:  string(call.Name),
-			Input: call.Payload,
+			Name:  string(call.TranscriptName()),
+			Input: call.TranscriptPayload(),
 		})
 	}
 	return r.appendTranscriptMessages(ctx, agentID, base, turnID, messages)
@@ -106,8 +106,8 @@ func (r *Runtime) appendRetryableBookkeepingToolUses(
 	for _, record := range lateRecords {
 		msg.Parts = append(msg.Parts, model.ToolUsePart{
 			ID:    record.call.ToolCallID,
-			Name:  string(record.call.Name),
-			Input: record.call.Payload,
+			Name:  string(record.call.TranscriptName()),
+			Input: record.call.TranscriptPayload(),
 		})
 	}
 	return r.appendTranscriptMessages(ctx, agentID, base, turnID, []*model.Message{msg})
