@@ -73,6 +73,23 @@ func formatResultPreviewForCall(ctx context.Context, rt *Runtime, call *planner.
 	return preview, nil
 }
 
+// formatToolResultPreviewForCall renders a success preview for completed tool
+// results. Error results carry their user-visible failure in ToolError, so result
+// hint templates must not run against nil semantic result data.
+func formatToolResultPreviewForCall(ctx context.Context, rt *Runtime, call *planner.ToolRequest, tr *planner.ToolResult) (string, error) {
+	if tr == nil {
+		return "", nil
+	}
+	if toolResultHasError(tr) {
+		return "", nil
+	}
+	return formatResultPreviewForCall(ctx, rt, call, tr.Result, tr.Bounds)
+}
+
+func toolResultHasError(tr *planner.ToolResult) bool {
+	return tr != nil && tr.Error != nil
+}
+
 // decodeResultPreviewArgs decodes the original tool payload into its typed Go
 // value for result-hint rendering. Preview rendering is best-effort, so decode
 // failures are logged and yield nil args rather than failing execution.

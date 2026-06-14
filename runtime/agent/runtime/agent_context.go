@@ -73,7 +73,7 @@ func (c *simplePlannerContext) Metrics() telemetry.Metrics { return c.rt.metrics
 func (c *simplePlannerContext) Tracer() telemetry.Tracer   { return c.rt.tracer }
 func (c *simplePlannerContext) State() planner.AgentState  { return noopAgentState{} }
 func (c *simplePlannerContext) AdvertisedToolDefinitions() []*model.ToolDefinition {
-	return appendToolUnavailableDefinition(advertisedToolDefinitions(c.rt.ToolSpecsForAgent(c.agent), c.policy))
+	return advertisedToolDefinitions(c.rt.ToolSpecsForAgent(c.agent), c.policy)
 }
 func (c *simplePlannerContext) ModelClient(id string) (model.Client, bool) {
 	return c.configuredModelClient(id)

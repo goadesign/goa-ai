@@ -893,7 +893,9 @@ supported names are fixed: `run_id`, `session_id`, `turn_id`, `tool_call_id`, an
 
 `CallHintTemplate` and `ResultHintTemplate` configure Go templates for UI display.
 These templates are rendered by the runtime against typed Go values and surfaced
-via hook + stream events as `DisplayHint` (call) and result previews (result).
+via hook + stream events as `DisplayHint` (call) and result previews (successful
+results only). Tool errors surface through their error payloads, not result
+templates.
 
 ```go
 Tool("search", "Search documents", func() {

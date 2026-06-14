@@ -687,7 +687,7 @@ type ToolsetRegistration struct {
     TaskQueue   string                     // Optional queue override
     Inline      bool                       // Execute in workflow context
     CallHints   map[tools.Ident]*template.Template   // Tool call DisplayHint templates (typed payload only)
-    ResultHints map[tools.Ident]*template.Template   // Tool result preview templates (typed result only)
+    ResultHints map[tools.Ident]*template.Template   // Success result preview templates (typed result only)
     PayloadAdapter func(...)               // Pre-decode transformation
     ResultAdapter  func(...)               // Post-encode transformation
     AgentTool   *AgentToolConfig           // Agent-as-tool configuration

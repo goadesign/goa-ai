@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/planner"
 	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -57,4 +58,21 @@ func TestFormatResultPreviewIncludesTypedArgsWhenAvailable(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "status -> alpha", preview)
+}
+
+func TestFormatToolResultPreviewSkipsErrorResults(t *testing.T) {
+	toolName := tools.Ident("svc.tools.preview_error")
+	rthints.RegisterResultHint(toolName, template.Must(template.New("preview_error").Parse(
+		`{{ .Result.Summary }}`,
+	)))
+
+	preview, err := formatToolResultPreviewForCall(t.Context(), nil, &planner.ToolRequest{
+		Name: toolName,
+	}, &planner.ToolResult{
+		Name:  toolName,
+		Error: planner.NewToolError("tool failed"),
+	})
+
+	require.NoError(t, err)
+	require.Empty(t, preview)
 }

@@ -542,7 +542,7 @@ func (r *Runtime) consumeProvidedToolResultRecords(ctx context.Context, input *R
 			continue
 		}
 		call := record.call
-		preview, err := formatResultPreviewForCall(ctx, r, &call, tr.Result, tr.Bounds)
+		preview, err := formatToolResultPreviewForCall(ctx, r, &call, tr)
 		if err != nil {
 			return nil, err
 		}

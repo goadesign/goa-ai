@@ -234,7 +234,7 @@ func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
 			if tc.tr.Error != nil {
 				errorMessage = tc.tr.Error.Error()
 			}
-			preview, err := formatResultPreviewForCall(t.Context(), rt, &call, tc.tr.Result, tc.tr.Bounds)
+			preview, err := formatToolResultPreviewForCall(t.Context(), rt, &call, tc.tr)
 			require.NoError(t, err)
 			replayed := transcript.BuildMessagesFromEvents([]memory.Event{
 				memory.NewEvent(time.Now(), memory.AssistantMessageData{

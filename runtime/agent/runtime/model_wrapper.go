@@ -107,9 +107,11 @@ func (c *cacheConfiguredClient) Stream(ctx context.Context, req *model.Request) 
 	return c.inner.Stream(ctx, req)
 }
 
-// toolUnavailableConfiguredClient ensures the runtime-owned tool_unavailable tool
-// is always present in tool-aware requests. Some providers require that any tool
-// referenced in tool_use history appears in the current request tool list.
+// toolUnavailableConfiguredClient adds the runtime-owned tool_unavailable tool
+// only when message history references a tool that is absent from the current
+// request. Some providers require every historical tool_use name to appear in
+// the current request tool list, but advertising this internal tool on normal
+// requests gives planners a fake action they can choose.
 type toolUnavailableConfiguredClient struct {
 	inner model.Client
 }
@@ -150,7 +152,7 @@ func ensureToolUnavailableDefinition(req *model.Request) {
 	if req == nil {
 		return
 	}
-	if !requestMayReferenceTools(req) {
+	if !toolHistoryNeedsUnavailableDefinition(req) {
 		return
 	}
 	req.Tools = appendToolUnavailableDefinition(req.Tools)
@@ -166,20 +168,27 @@ func appendToolUnavailableDefinition(defs []*model.ToolDefinition) []*model.Tool
 	return append(defs, toolUnavailableToolDefinition())
 }
 
-func requestMayReferenceTools(req *model.Request) bool {
+func toolHistoryNeedsUnavailableDefinition(req *model.Request) bool {
 	if req == nil {
 		return false
 	}
-	if len(req.Tools) > 0 || req.ToolChoice != nil {
-		return true
+	current := make(map[string]struct{}, len(req.Tools))
+	for _, tool := range req.Tools {
+		if tool == nil || tool.Name == "" {
+			continue
+		}
+		current[tool.Name] = struct{}{}
 	}
 	for _, msg := range req.Messages {
 		if msg == nil {
 			continue
 		}
 		for _, part := range msg.Parts {
-			switch part.(type) {
-			case model.ToolUsePart, model.ToolResultPart:
+			use, ok := part.(model.ToolUsePart)
+			if !ok || use.Name == "" {
+				continue
+			}
+			if _, ok := current[use.Name]; !ok {
 				return true
 			}
 		}

@@ -135,11 +135,10 @@ func TestPlanStartActivityAdvertisesPolicyFilteredTools(t *testing.T) {
 		start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 			called = true
 			definitions := input.Agent.AdvertisedToolDefinitions()
-			require.Len(t, definitions, 2)
+			require.Len(t, definitions, 1)
 			require.Equal(t, "svc.tools.visible", definitions[0].Name)
 			require.Equal(t, "Visible tool", definitions[0].Description)
 			require.JSONEq(t, `{"type":"object","properties":{"q":{"type":"string"}}}`, string(definitions[0].Input.JSONSchema()))
-			require.Equal(t, tools.ToolUnavailable.String(), definitions[1].Name)
 			return &planner.PlanResult{
 				FinalResponse: &planner.FinalResponse{
 					Message: &model.Message{

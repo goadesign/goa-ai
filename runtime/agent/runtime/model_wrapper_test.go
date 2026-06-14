@@ -178,3 +178,54 @@ func TestNewPlannerModelClientRequiresEvents(t *testing.T) {
 		},
 	)
 }
+
+func TestToolUnavailableConfiguredClientDoesNotAdvertiseInternalToolByDefault(t *testing.T) {
+	client := newToolUnavailableConfiguredClient(stubModelClient{
+		complete: func(_ context.Context, req *model.Request) (*model.Response, error) {
+			require.Len(t, req.Tools, 1)
+			require.Equal(t, "svc.lookup", req.Tools[0].Name)
+			return &model.Response{}, nil
+		},
+	})
+
+	_, err := client.Complete(context.Background(), &model.Request{
+		Tools: []*model.ToolDefinition{{
+			Name: "svc.lookup",
+		}},
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "lookup"}},
+		}},
+	})
+
+	require.NoError(t, err)
+}
+
+func TestToolUnavailableConfiguredClientAdvertisesInternalToolForMissingHistoryToolUse(t *testing.T) {
+	client := newToolUnavailableConfiguredClient(stubModelClient{
+		complete: func(_ context.Context, req *model.Request) (*model.Response, error) {
+			names := make([]string, 0, len(req.Tools))
+			for _, tool := range req.Tools {
+				names = append(names, tool.Name)
+			}
+			require.ElementsMatch(t, []string{"svc.lookup", tools.ToolUnavailable.String()}, names)
+			return &model.Response{}, nil
+		},
+	})
+
+	_, err := client.Complete(context.Background(), &model.Request{
+		Tools: []*model.ToolDefinition{{
+			Name: "svc.lookup",
+		}},
+		Messages: []*model.Message{{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{model.ToolUsePart{
+				ID:    "tool-1",
+				Name:  "svc.old_lookup",
+				Input: map[string]any{"q": "status"},
+			}},
+		}},
+	})
+
+	require.NoError(t, err)
+}

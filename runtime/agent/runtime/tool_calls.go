@@ -231,7 +231,7 @@ func (e *toolBatchExec) publishToolResultReceived(ctx context.Context, call plan
 	if !tr.ResultOmitted {
 		resultBytes = len(resultJSON)
 	}
-	preview, err := formatResultPreviewForCall(ctx, e.r, &call, tr.Result, tr.Bounds)
+	preview, err := formatToolResultPreviewForCall(ctx, e.r, &call, tr)
 	if err != nil {
 		return err
 	}
