@@ -241,6 +241,11 @@ type (
 		FieldDescs map[string]string
 		// FieldJSONTypes maps dotted field paths to their generated JSON type.
 		FieldJSONTypes map[string]string
+		// FieldAllowedObjectKeys maps dotted closed-object paths to the JSON
+		// property names accepted at that object level. It is used only by
+		// generated payload and result codecs to reject unknown fields before
+		// transport decoding.
+		FieldAllowedObjectKeys map[string][]string
 		// AcceptEmpty indicates that empty JSON input should be accepted and
 		// treated as the zero value (only for payloads). This is true for
 		// payload types that are empty structs (no fields).

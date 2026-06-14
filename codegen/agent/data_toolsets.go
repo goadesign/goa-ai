@@ -370,8 +370,8 @@ func pagingData(p *agentsExpr.ToolPagingExpr) *ToolPagingData {
 		return nil
 	}
 	return &ToolPagingData{
-		CursorField:     p.CursorField,
-		NextCursorField: p.NextCursorField,
+		CursorField:     modelJSONName(p.CursorField),
+		NextCursorField: modelJSONName(p.NextCursorField),
 	}
 }
 

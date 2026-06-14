@@ -388,6 +388,8 @@ func (d *toolSpecsData) codecsImports() []*codegen.ImportSpec {
 	}
 	base = append(base,
 		codegen.SimpleImport("fmt"),
+		codegen.SimpleImport("slices"),
+		codegen.SimpleImport("sort"),
 		codegen.SimpleImport("goa.design/goa-ai/runtime/agent/tools"),
 	)
 	if d.needsUnicodeImport() {

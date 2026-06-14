@@ -36,14 +36,14 @@ func TestBoundedResultProjectsBoundsIntoResultSchemaWithoutMutatingResultType(t 
 					Tool("search", "Search", func() {
 						Args(func() {
 							goadsl.Attribute("query", goadsl.String)
-							goadsl.Attribute("cursor", goadsl.String)
+							goadsl.Attribute("pageCursor", goadsl.String)
 							goadsl.Required("query")
 						})
 						Return(func() {
 							goadsl.Attribute("results", goadsl.ArrayOf(goadsl.String))
 						})
 						BoundedResult(func() {
-							Cursor("cursor")
+							Cursor("pageCursor")
 							NextCursor("nextCursor")
 						})
 					})
@@ -110,6 +110,22 @@ func TestBoundedResultProjectsBoundsIntoResultSchemaWithoutMutatingResultType(t 
 	require.Contains(t, props, "next_cursor")
 	require.Contains(t, doc.Tools[0].Result.Schema.Required, "returned")
 	require.Contains(t, doc.Tools[0].Result.Schema.Required, "truncated")
+
+	var specs string
+	specsPath := filepath.ToSlash("gen/svc/toolsets/tools/specs.go")
+	for _, f := range files {
+		if filepath.ToSlash(f.Path) == specsPath {
+			var buf bytes.Buffer
+			for _, s := range f.SectionTemplates {
+				require.NoError(t, s.Write(&buf))
+			}
+			specs = buf.String()
+			break
+		}
+	}
+	require.NotEmpty(t, specs, "expected generated specs.go at %s", specsPath)
+	require.Contains(t, specs, `CursorField: "page_cursor"`)
+	require.Contains(t, specs, `NextCursorField: "next_cursor"`)
 }
 
 // TestBoundedResultGeneratesBoundsSpec verifies that the generated tool specs

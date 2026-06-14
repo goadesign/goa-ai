@@ -384,6 +384,7 @@ func buildRetryHintFromValidation(err error, toolName tools.Ident) ([]string, st
 	fields := make([]string, 0, len(issues))
 	missing := make([]string, 0, len(issues))
 	typeIssues := make([]*tools.FieldIssue, 0, len(issues))
+	unknownIssues := make([]*tools.FieldIssue, 0, len(issues))
 	for _, is := range issues {
 		if is.Field == "" {
 			continue
@@ -399,12 +400,18 @@ func buildRetryHintFromValidation(err error, toolName tools.Ident) ([]string, st
 		if tools.HasInvalidFieldTypeMetadata(is) {
 			typeIssues = append(typeIssues, is)
 		}
+		if is.Constraint == "unknown_field" {
+			unknownIssues = append(unknownIssues, is)
+		}
 	}
 	if len(fields) == 0 {
 		return nil, "", planner.RetryReasonInvalidArguments, false
 	}
 	if len(typeIssues) > 0 {
 		return fields, tools.InvalidFieldTypeQuestion(typeIssues), planner.RetryReasonInvalidArguments, true
+	}
+	if len(unknownIssues) > 0 {
+		return fields, unknownFieldQuestion(unknownIssues, toolName), planner.RetryReasonInvalidArguments, true
 	}
 	// Build a concise, description-enriched question for up to three fields.
 	var question string
@@ -441,6 +448,36 @@ func buildRetryHintFromValidation(err error, toolName tools.Ident) ([]string, st
 		reason = planner.RetryReasonMissingFields
 	}
 	return fields, question, reason, true
+}
+
+func unknownFieldQuestion(issues []*tools.FieldIssue, toolName tools.Ident) string {
+	max := len(issues)
+	if max > 3 {
+		max = 3
+	}
+	parts := make([]string, 0, max)
+	for i := 0; i < max; i++ {
+		issue := issues[i]
+		part := fmt.Sprintf("remove `%s`", issue.Field)
+		if len(issue.Allowed) > 0 {
+			part += "; allowed fields at that object are: " + quotedFieldList(issue.Allowed)
+		}
+		parts = append(parts, part)
+	}
+	if toolName != "" {
+		return "The " + string(toolName) + " tool input includes fields outside its schema. Please " + strings.Join(parts, "; ") + "."
+	}
+	return "The tool input includes fields outside its schema. Please " + strings.Join(parts, "; ") + "."
+}
+
+func quotedFieldList(fields []string) string {
+	ordered := append([]string(nil), fields...)
+	slices.Sort(ordered)
+	quoted := make([]string, 0, len(ordered))
+	for _, field := range ordered {
+		quoted = append(quoted, "`"+field+"`")
+	}
+	return strings.Join(quoted, ", ")
 }
 
 // buildRetryHintFromDecodeError examines JSON decode errors that occur before tool

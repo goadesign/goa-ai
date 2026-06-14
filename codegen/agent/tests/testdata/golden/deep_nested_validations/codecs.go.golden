@@ -15,6 +15,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 	goa "goa.design/goa/v3/pkg"
 	"io"
+	"slices"
+	"sort"
 	"strings"
 )
 
@@ -61,6 +63,7 @@ var ValidatePayloadFieldDescs = map[string]string{
 	"child.child":      "Child L3",
 	"child.child.leaf": "Leaf value",
 	"child.mid":        "Middle value",
+	"labels":           "Open labels keyed by source",
 	"root":             "Root value",
 }
 var ValidateResultFieldDescs = map[string]string{
@@ -68,6 +71,7 @@ var ValidateResultFieldDescs = map[string]string{
 	"child.child":      "Child L3",
 	"child.child.leaf": "Leaf value",
 	"child.mid":        "Middle value",
+	"labels":           "Open labels keyed by source",
 	"root":             "Root value",
 }
 var ValidatePayloadFieldJSONTypes = map[string]string{
@@ -76,6 +80,7 @@ var ValidatePayloadFieldJSONTypes = map[string]string{
 	"child.child":      "object",
 	"child.child.leaf": "string",
 	"child.mid":        "string",
+	"labels":           "object",
 	"root":             "string",
 }
 var ValidateResultFieldJSONTypes = map[string]string{
@@ -84,7 +89,36 @@ var ValidateResultFieldJSONTypes = map[string]string{
 	"child.child":      "object",
 	"child.child.leaf": "string",
 	"child.mid":        "string",
+	"labels":           "object",
 	"root":             "string",
+}
+var ValidatePayloadFieldAllowedObjectKeys = map[string][]string{
+	"": {
+		"child",
+		"labels",
+		"root",
+	},
+	"child": {
+		"child",
+		"mid",
+	},
+	"child.child": {
+		"leaf",
+	},
+}
+var ValidateResultFieldAllowedObjectKeys = map[string][]string{
+	"": {
+		"child",
+		"labels",
+		"root",
+	},
+	"child": {
+		"child",
+		"mid",
+	},
+	"child.child": {
+		"leaf",
+	},
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -247,6 +281,14 @@ func MarshalValidatePayload(v *ValidatePayload) ([]byte, error) {
 		Root: &in.Root,
 	}
 	out.Child = encodeLevel2ToToolhttpLevel2Transport(in.Child)
+	if in.Labels != nil {
+		out.Labels = make(map[string]string, len(in.Labels))
+		for key, val := range in.Labels {
+			tk := key
+			tv := val
+			out.Labels[tk] = tv
+		}
+	}
 	return json.Marshal(out)
 }
 
@@ -256,7 +298,7 @@ func UnmarshalValidatePayload(data []byte) (*ValidatePayload, error) {
 		return nil, fmt.Errorf("validatePayload JSON is empty")
 	}
 	var tv toolhttp.ValidatePayloadTransport
-	if err := decodeStrictJSON(data, &tv); err != nil {
+	if err := decodeKnownJSON(data, &tv, ValidatePayloadFieldAllowedObjectKeys); err != nil {
 		return nil, invalidValidatePayloadFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateValidatePayloadTransport(&tv); err != nil {
@@ -271,6 +313,14 @@ func UnmarshalValidatePayload(data []byte) (*ValidatePayload, error) {
 		Root: *in.Root,
 	}
 	out.Child = decodeToolhttpLevel2TransportToLevel2(in.Child)
+	if in.Labels != nil {
+		out.Labels = make(map[string]string, len(in.Labels))
+		for key, val := range in.Labels {
+			tk := key
+			tv := val
+			out.Labels[tk] = tv
+		}
+	}
 	return out, nil
 }
 
@@ -286,6 +336,14 @@ func MarshalValidateResult(v *ValidateResult) ([]byte, error) {
 		Root: &in.Root,
 	}
 	out.Child = encodeLevel2ToToolhttpLevel2Transport(in.Child)
+	if in.Labels != nil {
+		out.Labels = make(map[string]string, len(in.Labels))
+		for key, val := range in.Labels {
+			tk := key
+			tv := val
+			out.Labels[tk] = tv
+		}
+	}
 	return json.Marshal(out)
 }
 
@@ -295,7 +353,7 @@ func UnmarshalValidateResult(data []byte) (*ValidateResult, error) {
 		return nil, fmt.Errorf("validateResult JSON is empty")
 	}
 	var tv toolhttp.ValidateResultTransport
-	if err := json.Unmarshal(data, &tv); err != nil {
+	if err := decodeKnownJSON(data, &tv, ValidateResultFieldAllowedObjectKeys); err != nil {
 		return nil, invalidValidateResultFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateValidateResultTransport(&tv); err != nil {
@@ -310,6 +368,14 @@ func UnmarshalValidateResult(data []byte) (*ValidateResult, error) {
 		Root: *in.Root,
 	}
 	out.Child = decodeToolhttpLevel2TransportToLevel2(in.Child)
+	if in.Labels != nil {
+		out.Labels = make(map[string]string, len(in.Labels))
+		for key, val := range in.Labels {
+			tk := key
+			tv := val
+			out.Labels[tk] = tv
+		}
+	}
 	return out, nil
 }
 
@@ -325,6 +391,81 @@ func decodeStrictJSON(data []byte, v any) error {
 		return fmt.Errorf("multiple JSON documents")
 	}
 	return nil
+}
+
+// decodeKnownJSON decodes one JSON document after rejecting fields outside the
+// generated closed-object payload/result contracts. It preserves open map/object
+// fields by only validating paths present in allowed.
+func decodeKnownJSON(data []byte, v any, allowed map[string][]string) error {
+	if err := validateKnownJSONFields(data, allowed); err != nil {
+		return err
+	}
+	return json.Unmarshal(data, v)
+}
+
+func validateKnownJSONFields(data []byte, allowed map[string][]string) error {
+	var root any
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if err := dec.Decode(&root); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("multiple JSON documents")
+	}
+	return validateKnownJSONValue("", root, allowed)
+}
+
+func validateKnownJSONValue(path string, value any, allowed map[string][]string) error {
+	switch v := value.(type) {
+	case []any:
+		for _, item := range v {
+			if err := validateKnownJSONValue(path, item, allowed); err != nil {
+				return err
+			}
+		}
+		return nil
+	case map[string]any:
+		allowedKeys, ok := allowed[path]
+		if !ok {
+			return nil
+		}
+		keys := make([]string, 0, len(v))
+		for key := range v {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if !slices.Contains(allowedKeys, key) {
+				return unknownJSONFieldError(path, key, allowedKeys)
+			}
+			childPath := key
+			if path != "" {
+				childPath = path + "." + key
+			}
+			if err := validateKnownJSONValue(childPath, v[key], allowed); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func unknownJSONFieldError(path, field string, allowed []string) error {
+	issueField := field
+	if path != "" {
+		issueField = path + "." + field
+	}
+	return tools.NewValidationError(
+		fmt.Sprintf("unknown field %q", issueField),
+		[]*tools.FieldIssue{
+			{
+				Field:      issueField,
+				Constraint: "unknown_field",
+				Allowed:    append([]string(nil), allowed...),
+			},
+		},
+		nil,
+	)
 }
 
 // Helper transform functions

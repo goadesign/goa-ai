@@ -8,12 +8,15 @@ import (
 
 // FieldIssue represents a single validation issue for a payload.
 // Constraint values follow goa error kinds: missing_field, invalid_enum_value,
-// invalid_format, invalid_pattern, invalid_range, invalid_length, invalid_field_type.
+// invalid_format, invalid_pattern, invalid_range, invalid_length, invalid_field_type,
+// and unknown_field. Generated codecs use unknown_field when JSON includes object
+// keys outside a closed generated payload or result contract.
 // Generated tool codecs return []FieldIssue from ValidationError.Issues().
 type FieldIssue struct {
 	Field      string
 	Constraint string
 	// Optional extras for richer UIs and retry hints; not all are populated by the codecs.
+	// For unknown_field, Allowed lists the valid field names at that object level.
 	Allowed []string
 	MinLen  *int
 	MaxLen  *int
