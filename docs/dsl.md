@@ -275,6 +275,11 @@ Canonical model-visible fields:
 - `refinement_hint` (optional, String)
 - `next_cursor` (optional, String) when declared via `NextCursor(...)`
 
+`Cursor(...)` and `NextCursor(...)` name Goa attributes in the tool payload or
+bound method result. Generated schemas, `tools.ToolSpec.Bounds`, and runtime
+result JSON expose the model-facing JSON names, so a lower-camel attribute such
+as `nextCursor` is projected as `next_cursor`.
+
 Single source of truth:
 
 - `BoundedResult(...)` records the contract in generated `tools.ToolSpec.Bounds`.
@@ -307,7 +312,8 @@ Cursor-paged tools identify two canonical paging fields:
 Contract:
 
 - Treat cursors as **opaque**: do not parse, modify, or synthesize them.
-- When paging, keep **all other arguments unchanged**; only set the payload cursor field.
+- When paging, keep **all other arguments unchanged**; only set the model-facing
+payload cursor field named in generated `tools.ToolSpec.Bounds`.
 - Paged tools should also be `BoundedResult(...)` tools and return the next cursor through
 `planner.ToolResult.Bounds.NextCursor`.
 
@@ -961,7 +967,7 @@ Tool("list_devices", "List devices in scope", func() {
 
 Services and finalizers are responsible for trimming and populating
 `planner.ToolResult.Bounds`. Goa-AI then projects those bounds into the
-model-visible result JSON using the canonical field names declared by
+model-visible result JSON using model-facing field names derived from
 `BoundedResult(...)`. Result-hint templates access the same runtime metadata via
 `.Bounds`; Goa-AI does not merge those fields into the semantic result value.
 

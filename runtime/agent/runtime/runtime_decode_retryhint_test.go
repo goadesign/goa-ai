@@ -189,3 +189,58 @@ func TestExecuteToolActivity_UnionValidationRetryHint(t *testing.T) {
 	require.Equal(t, []string{"type"}, out.RetryHint.MissingFields)
 	require.Contains(t, out.RetryHint.ClarifyingQuestion, "one of: schedule, signal")
 }
+
+func TestExecuteToolActivity_UnknownFieldRetryHint(t *testing.T) {
+	rt := &Runtime{
+		logger:   telemetry.NoopLogger{},
+		toolsets: make(map[string]ToolsetRegistration),
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			"atlas.discover.get_device_status": {
+				Name:    "atlas.discover.get_device_status",
+				Service: "atlas",
+				Toolset: "atlas.discover",
+				Payload: tools.TypeSpec{
+					Name: "P",
+					Codec: tools.JSONCodec[any]{
+						FromJSON: func(data []byte) (any, error) {
+							err := &fakeValidationError{
+								issues: []*tools.FieldIssue{{
+									Field:      "scope_context",
+									Constraint: "unknown_field",
+									Allowed:    []string{"device_alias"},
+								}},
+							}
+							return nil, fmt.Errorf("decode payload: %w", err)
+						},
+					},
+				},
+				Result: tools.TypeSpec{Name: "R"},
+			},
+		},
+	}
+	rt.toolsets["atlas.discover"] = ToolsetRegistration{
+		Name: "atlas.discover",
+		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			t.Fatalf("executor should not be called when generated validation fails")
+			return nil, nil
+		}),
+		Specs: []tools.ToolSpec{
+			rt.toolSpecs["atlas.discover.get_device_status"],
+		},
+	}
+
+	out, err := rt.ExecuteToolActivity(context.Background(), &ToolInput{
+		ToolsetName: "atlas.discover",
+		ToolName:    tools.Ident("atlas.discover.get_device_status"),
+		Payload:     rawjson.Message([]byte(`{"scope_context":"compressor_2"}`)),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.NotEmpty(t, out.Error)
+	require.NotNil(t, out.RetryHint)
+	require.Equal(t, planner.RetryReasonInvalidArguments, out.RetryHint.Reason)
+	require.True(t, out.RetryHint.RestrictToTool)
+	require.Equal(t, []string{"scope_context"}, out.RetryHint.MissingFields)
+	require.Contains(t, out.RetryHint.ClarifyingQuestion, "remove `scope_context`")
+	require.Contains(t, out.RetryHint.ClarifyingQuestion, "`device_alias`")
+}

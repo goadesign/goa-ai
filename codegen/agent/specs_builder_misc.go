@@ -3,6 +3,7 @@ package codegen
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"goa.design/goa/v3/codegen"
@@ -132,6 +133,59 @@ func buildFieldJSONTypes(att *goaexpr.AttributeExpr) map[string]string {
 			// Union branch payload types are discriminator-specific. The unqualified
 			// {type,value} envelope path is intentionally not used as contract
 			// metadata for branch values.
+		}
+	}
+	walk("", att)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// buildFieldAllowedObjectKeys collects accepted JSON object keys at each closed
+// object path. It follows arrays into their element type so object arrays use the
+// same path as the array field, and stops at maps because map keys are open by
+// contract.
+func buildFieldAllowedObjectKeys(att *goaexpr.AttributeExpr) map[string][]string {
+	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+		return nil
+	}
+	out := make(map[string][]string)
+	seen := make(map[string]struct{})
+	var walk func(prefix string, a *goaexpr.AttributeExpr)
+	walk = func(prefix string, a *goaexpr.AttributeExpr) {
+		if a == nil || a.Type == nil || a.Type == goaexpr.Empty {
+			return
+		}
+		switch dt := a.Type.(type) {
+		case goaexpr.UserType:
+			id := dt.ID()
+			if _, ok := seen[id]; ok {
+				return
+			}
+			seen[id] = struct{}{}
+			defer delete(seen, id)
+			walk(prefix, dt.Attribute())
+		case *goaexpr.Object:
+			keys := make([]string, 0, len(*dt))
+			for _, nat := range *dt {
+				keys = append(keys, nat.Name)
+			}
+			sort.Strings(keys)
+			out[prefix] = keys
+			for _, nat := range *dt {
+				path := nat.Name
+				if prefix != "" {
+					path = prefix + "." + nat.Name
+				}
+				walk(path, nat.Attribute)
+			}
+		case *goaexpr.Array:
+			walk(prefix, dt.ElemType)
+		case *goaexpr.Map:
+			return
+		case *goaexpr.Union:
+			return
 		}
 	}
 	walk("", att)

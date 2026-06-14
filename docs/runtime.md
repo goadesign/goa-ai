@@ -866,6 +866,11 @@ the canonical bounds fields (`returned`, `total`, `truncated`,
 `refinement_hint`, and optional `next_cursor`) into the emitted result JSON and
 hook/stream payloads.
 
+`tools.ToolSpec.Bounds` stores model-facing JSON field names. DSL declarations
+may refer to lower-camel Goa attributes such as `nextCursor`, but generated
+schemas, runtime projection, and retry guidance use the JSON name
+`next_cursor`.
+
 The runtime enforces one strict contract across all result ingress paths
 (regular execution and externally provided await results):
 

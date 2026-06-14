@@ -609,7 +609,9 @@ type (
 	}
 
 	ToolPagingData struct {
-		CursorField     string
+		// CursorField is the model-facing JSON payload field name.
+		CursorField string
+		// NextCursorField is the model-facing JSON result field name.
 		NextCursorField string
 	}
 

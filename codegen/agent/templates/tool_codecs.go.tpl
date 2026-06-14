@@ -59,6 +59,21 @@ var {{ .TypeName }}FieldJSONTypes = map[string]string{
 {{- end }}
 {{- end }}
 
+{{- /* Emit generated closed-object key metadata per type if available */ -}}
+{{- range .Types }}
+{{- if .FieldAllowedObjectKeys }}
+var {{ .TypeName }}FieldAllowedObjectKeys = map[string][]string{
+    {{- range $path, $keys := .FieldAllowedObjectKeys }}
+    {{ printf "%q" $path }}: {
+        {{- range $keys }}
+        {{ printf "%q" . }},
+        {{- end }}
+    },
+    {{- end }}
+}
+{{- end }}
+{{- end }}
+
 {{- /* Compute whether any type has transport validation to gate helper emission */ -}}
 {{- $hasValidation := false }}
 {{- range .Types }}
@@ -237,7 +252,9 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
     }
     {{- if and .TransportTypeName .Pointer }}
     var tv toolhttp.{{ .TransportTypeName }}
-    {{- if eq .Usage "payload" }}
+    {{- if .FieldAllowedObjectKeys }}
+    if err := decodeKnownJSON(data, &tv, {{ .TypeName }}FieldAllowedObjectKeys); err != nil {
+    {{- else if eq .Usage "payload" }}
     if err := decodeStrictJSON(data, &tv); err != nil {
     {{- else }}
     if err := json.Unmarshal(data, &tv); err != nil {
@@ -264,7 +281,9 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
     return out, nil
     {{- else }}
     var v {{ .FullRef }}
-    {{- if eq .Usage "payload" }}
+    {{- if .FieldAllowedObjectKeys }}
+    if err := decodeKnownJSON(data, &v, {{ .TypeName }}FieldAllowedObjectKeys); err != nil {
+    {{- else if eq .Usage "payload" }}
     if err := decodeStrictJSON(data, &v); err != nil {
     {{- else }}
     if err := json.Unmarshal(data, &v); err != nil {
@@ -300,6 +319,81 @@ func decodeStrictJSON(data []byte, v any) error {
         return fmt.Errorf("multiple JSON documents")
     }
     return nil
+}
+
+// decodeKnownJSON decodes one JSON document after rejecting fields outside the
+// generated closed-object payload/result contracts. It preserves open map/object
+// fields by only validating paths present in allowed.
+func decodeKnownJSON(data []byte, v any, allowed map[string][]string) error {
+    if err := validateKnownJSONFields(data, allowed); err != nil {
+        return err
+    }
+    return json.Unmarshal(data, v)
+}
+
+func validateKnownJSONFields(data []byte, allowed map[string][]string) error {
+    var root any
+    dec := json.NewDecoder(bytes.NewReader(data))
+    if err := dec.Decode(&root); err != nil {
+        return err
+    }
+    if err := dec.Decode(&struct{}{}); err != io.EOF {
+        return fmt.Errorf("multiple JSON documents")
+    }
+    return validateKnownJSONValue("", root, allowed)
+}
+
+func validateKnownJSONValue(path string, value any, allowed map[string][]string) error {
+    switch v := value.(type) {
+    case []any:
+        for _, item := range v {
+            if err := validateKnownJSONValue(path, item, allowed); err != nil {
+                return err
+            }
+        }
+        return nil
+    case map[string]any:
+        allowedKeys, ok := allowed[path]
+        if !ok {
+            return nil
+        }
+        keys := make([]string, 0, len(v))
+        for key := range v {
+            keys = append(keys, key)
+        }
+        sort.Strings(keys)
+        for _, key := range keys {
+            if !slices.Contains(allowedKeys, key) {
+                return unknownJSONFieldError(path, key, allowedKeys)
+            }
+            childPath := key
+            if path != "" {
+                childPath = path + "." + key
+            }
+            if err := validateKnownJSONValue(childPath, v[key], allowed); err != nil {
+                return err
+            }
+        }
+    }
+    return nil
+}
+
+func unknownJSONFieldError(path, field string, allowed []string) error {
+    issueField := field
+    if path != "" {
+        issueField = path + "." + field
+    }
+    return tools.NewValidationError(
+        fmt.Sprintf("unknown field %q", issueField),
+        []*tools.FieldIssue{
+            {
+                Field:      issueField,
+                Constraint: "unknown_field",
+                Allowed:    append([]string(nil), allowed...),
+            },
+        },
+        nil,
+    )
 }
 
 {{- if .Helpers }}

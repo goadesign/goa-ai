@@ -3,6 +3,7 @@ package codegen
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -301,6 +302,12 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	if ftypes := buildFieldJSONTypes(schemaAttr); len(ftypes) > 0 {
 		info.FieldJSONTypes = ftypes
 	}
+	if allowed := buildFieldAllowedObjectKeys(schemaAttr); len(allowed) > 0 {
+		if usage == usageResult && owner.Bounds != nil {
+			allowed = withBoundedResultAllowedObjectKeys(allowed, owner.Bounds)
+		}
+		info.FieldAllowedObjectKeys = allowed
+	}
 	b.types[key] = info
 	// Also index by the public type name so auxiliary passes (e.g.,
 	// validator collection) can detect that a concrete alias already
@@ -419,6 +426,18 @@ func canonicalOptionalBoundedResultFields(bounds *ToolBoundsData) map[string]str
 		fields[modelJSONName(name)] = struct{}{}
 	}
 	return fields
+}
+
+func withBoundedResultAllowedObjectKeys(allowed map[string][]string, bounds *ToolBoundsData) map[string][]string {
+	nextCursorField := ""
+	if bounds != nil && bounds.Paging != nil {
+		nextCursorField = bounds.Paging.NextCursorField
+	}
+	root := append([]string(nil), allowed[""]...)
+	root = append(root, boundedresult.CanonicalFieldNames(modelJSONName(nextCursorField))...)
+	sort.Strings(root)
+	allowed[""] = slices.Compact(root)
+	return allowed
 }
 
 // isEmptyStruct reports whether the provided attribute ultimately resolves to
