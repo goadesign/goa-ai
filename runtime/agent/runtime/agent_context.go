@@ -113,7 +113,7 @@ func (c *simplePlannerContext) configuredModelClient(id string) (model.Client, b
 		ConversationID: conversationID(c.sessionID, c.runID),
 		AgentID:        string(c.agent),
 		AgentName:      string(c.agent),
-	})
+	}, c.rt.captureGenAIMessages)
 	return cli, true
 }
 

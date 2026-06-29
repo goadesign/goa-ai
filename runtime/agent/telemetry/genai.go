@@ -24,6 +24,8 @@ const (
 	AttrGenAIAgentName               = attribute.Key("gen_ai.agent.name")
 	AttrGenAIOperationName           = attribute.Key("gen_ai.operation.name")
 	AttrGenAIProviderName            = attribute.Key("gen_ai.provider.name")
+	AttrGenAIInputMessages           = attribute.Key("gen_ai.input.messages")
+	AttrGenAIOutputMessages          = attribute.Key("gen_ai.output.messages")
 	AttrGenAIRequestModel            = attribute.Key("gen_ai.request.model")
 	AttrGenAIRequestMaxTokens        = attribute.Key("gen_ai.request.max_tokens")
 	AttrGenAIResponseModel           = attribute.Key("gen_ai.response.model")
