@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -64,18 +65,56 @@ func TestBuildRetryHintFromDecodeError_SyntaxError(t *testing.T) {
 	require.NotEmpty(t, hint.ClarifyingQuestion)
 }
 
-// TestBuildRetryHintFromDecodeError_GenericErrorReturnsNil verifies that
-// buildRetryHintFromDecodeError preserves its strict contract: errors raised
-// outside json.SyntaxError/UnmarshalTypeError yield nil so non-decode callers
-// (for example agent-tool prompt rendering) can propagate the error verbatim.
-func TestBuildRetryHintFromDecodeError_GenericErrorReturnsNil(t *testing.T) {
-	decErr := errors.New(`unexpected Rule2 type "signal_change"`)
+// TestBuildRetryHintFromDecodeError_GenericDecodeErrorRestrictsRetry verifies
+// that decode failures without a JSON type or syntax shape — truncated
+// payloads (io.EOF / io.ErrUnexpectedEOF) and codec-specific errors — still
+// produce a restricted retry hint. Every error at this boundary is a defect in
+// the model-authored payload, so the model must always get a chance to resend
+// it; returning nil here previously escalated agent-tool decode failures into
+// terminal workflow errors.
+func TestBuildRetryHintFromDecodeError_GenericDecodeErrorRestrictsRetry(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{name: "truncated payload", err: io.ErrUnexpectedEOF},
+		{name: "empty payload", err: io.EOF},
+		{name: "codec union error", err: errors.New(`unexpected Rule2 type "signal_change"`)},
+	}
 	spec := &tools.ToolSpec{
 		Payload: tools.TypeSpec{
 			ExampleJSON: tools.RawJSON(`{"AssistantText":"ok"}`),
 		},
 	}
-	require.Nil(t, buildRetryHintFromDecodeError(decErr, tools.Ident("svc.ts.tool"), spec))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hint := buildRetryHintFromDecodeError(tc.err, tools.Ident("svc.ts.tool"), spec)
+			require.NotNil(t, hint)
+			require.Equal(t, tools.Ident("svc.ts.tool"), hint.Tool)
+			require.True(t, hint.RestrictToTool)
+			require.Equal(t, []string{"$payload"}, hint.MissingFields)
+			require.Contains(t, hint.ClarifyingQuestion, "svc.ts.tool")
+			require.Contains(t, hint.ClarifyingQuestion, tc.err.Error())
+			require.JSONEq(t, `{"AssistantText":"ok"}`, string(hint.ExampleJSON))
+		})
+	}
+}
+
+// TestBuildRetryHintFromAgentToolRequestError_ClassifiesPayloadDefectsOnly
+// verifies the agent-tool request error router: payload decode failures (the
+// model authored an undecodable payload) return a restricted retry hint so the
+// parent run feeds the failure back to the model, while runtime configuration
+// errors return nil and stay terminal workflow errors.
+func TestBuildRetryHintFromAgentToolRequestError_ClassifiesPayloadDefectsOnly(t *testing.T) {
+	decodeErr := fmt.Errorf("decode agent tool payload for ada.count_events: %w",
+		&agentToolPayloadError{cause: io.EOF})
+	hint := buildRetryHintFromAgentToolRequestError(decodeErr, tools.Ident("ada.count_events"), nil)
+	require.NotNil(t, hint)
+	require.True(t, hint.RestrictToTool)
+	require.Equal(t, tools.Ident("ada.count_events"), hint.Tool)
+
+	configErr := errors.New("agent tool ada.count_events requires a registered ToolSpec for payload decoding (missing specs/codecs)")
+	require.Nil(t, buildRetryHintFromAgentToolRequestError(configErr, tools.Ident("ada.count_events"), nil))
 }
 
 // TestExecuteToolActivity_DecodeErrorRetryHint ensures ExecuteToolActivity
