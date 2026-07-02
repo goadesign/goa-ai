@@ -40,6 +40,17 @@ type (
 	// Options are applied to AgentToolConfig before constructing the registration.
 	AgentToolOption func(*AgentToolConfig)
 
+	// agentToolPayloadError marks a model-authored agent-tool payload that
+	// failed typed decoding at the parent boundary. buildAgentChildRequest wraps
+	// only its unmarshalToolValue failure in this type so that
+	// buildRetryHintFromAgentToolRequestError can distinguish model payload
+	// defects (fed back to the model as a restricted retry) from runtime
+	// configuration errors such as missing ToolSpec registrations or prompt
+	// rendering failures (which stay terminal workflow errors).
+	agentToolPayloadError struct {
+		cause error
+	}
+
 	// PromptBuilder builds a user message for a tool call from its payload when
 	// no explicit text or template is configured.
 	PromptBuilder func(id tools.Ident, payload any) string
@@ -488,7 +499,7 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 	}
 	val, err := r.unmarshalToolValue(ctx, call.Name, rawPayload.RawMessage(), true)
 	if err != nil {
-		return nil, zeroCtx, fmt.Errorf("decode agent tool payload for %s: %w", call.Name, err)
+		return nil, zeroCtx, fmt.Errorf("decode agent tool payload for %s: %w", call.Name, &agentToolPayloadError{cause: err})
 	}
 	promptPayload := val
 	if cfg.PreChildValidator != nil {
@@ -707,4 +718,16 @@ func (r *Runtime) decodeAgentChildFinalToolResult(ctx context.Context, call *pla
 		result.Result = decoded
 	}
 	return result, nil
+}
+
+// Error reports the underlying decode failure verbatim so wrapped messages
+// keep the codec's diagnostic text.
+func (e *agentToolPayloadError) Error() string {
+	return e.cause.Error()
+}
+
+// Unwrap exposes the decode failure for errors.As-based classification such as
+// the JSON type/syntax specializations in buildRetryHintFromDecodeError.
+func (e *agentToolPayloadError) Unwrap() error {
+	return e.cause
 }
