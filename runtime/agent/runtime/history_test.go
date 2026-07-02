@@ -14,12 +14,16 @@ import (
 
 type historyCountingClient struct {
 	counted      *model.Request
+	countedAll   []*model.Request
 	summarized   *model.Request
 	summaryText  string
 	emptySummary bool
 	countErr     error
 	tokenCounted bool
 	inexactCount bool
+	// toolTokens charges this many tokens per tool definition present on the
+	// counted request, so tests can prove which counts include the catalog.
+	toolTokens int
 }
 
 func (c *historyCountingClient) Complete(_ context.Context, req *model.Request) (*model.Response, error) {
@@ -45,12 +49,13 @@ func (c *historyCountingClient) Stream(context.Context, *model.Request) (model.S
 func (c *historyCountingClient) CountTokens(_ context.Context, req *model.Request) (model.TokenCount, error) {
 	c.tokenCounted = true
 	c.counted = req
+	c.countedAll = append(c.countedAll, req)
 	if c.countErr != nil {
 		return model.TokenCount{}, c.countErr
 	}
 	return model.TokenCount{
 		ModelClass:  req.ModelClass,
-		InputTokens: len(req.Messages) * 10,
+		InputTokens: len(req.Messages)*10 + len(req.Tools)*c.toolTokens,
 		Exact:       !c.inexactCount,
 	}, nil
 }
@@ -166,9 +171,12 @@ func TestCompress_TokenBudgetTriggersAndKeepsWholeRecentTurns(t *testing.T) {
 	require.NoError(t, err)
 
 	require.True(t, client.tokenCounted)
-	require.NotNil(t, client.counted)
-	assert.Equal(t, model.ModelClassSmall, client.counted.ModelClass)
-	assert.Equal(t, toolDefs, client.counted.Tools)
+	require.NotEmpty(t, client.countedAll)
+	assert.Equal(t, model.ModelClassSmall, client.countedAll[0].ModelClass)
+	// The compression trigger counts the full provider-visible request
+	// including the tool catalog; exact-tail retention counts turn content
+	// only (see TestCompress_KeepBudgetExcludesToolCatalog).
+	assert.Equal(t, toolDefs, client.countedAll[0].Tools)
 	require.NotNil(t, client.summarized)
 	require.Len(t, client.summarized.Messages, 1)
 	assert.Contains(t, textPart(t, client.summarized.Messages[0]), "question 1")
@@ -179,6 +187,57 @@ func TestCompress_TokenBudgetTriggersAndKeepsWholeRecentTurns(t *testing.T) {
 	assert.Equal(t, "question 3", textPart(t, out[2]))
 	assertToolUse(t, out[3], "call-1", "lookup")
 	assertToolResult(t, out[4], "call-1", map[string]any{"next_cursor": "cursor-token"})
+	assert.Equal(t, "answer 3", textPart(t, out[5]))
+}
+
+// TestCompress_KeepBudgetExcludesToolCatalog verifies KeepMaxInputTokens
+// budgets the retained turn content only. The advertised tool catalog is fixed
+// request overhead that compression can never reclaim; charging it against the
+// exact-tail budget would make retention (and the newest-turn fit check)
+// depend on catalog size instead of turn size.
+func TestCompress_KeepBudgetExcludesToolCatalog(t *testing.T) {
+	client := &historyCountingClient{toolTokens: 1000}
+	policy := Compress(client, HistoryCompressionConfig{
+		CompressAtMaxInputTokens: 100,
+		KeepMaxInputTokens:       45,
+	})
+	msgs := []*model.Message{
+		systemMsg("system"),
+		userMsg("question 1"),
+		assistantTextMsg("answer 1"),
+		userMsg("question 2"),
+		assistantTextMsg("answer 2"),
+		userMsg("question 3"),
+		assistantTextMsg("answer 3"),
+	}
+	toolDefs := []*model.ToolDefinition{
+		{
+			Name:        "lookup",
+			Description: "Looks up data.",
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+		},
+	}
+
+	out, err := policy(context.Background(), msgs, toolDefs)
+	require.NoError(t, err)
+
+	// The compression trigger counts the full provider-visible request,
+	// catalog included; the exact-tail retention counts turn content only.
+	require.NotEmpty(t, client.countedAll)
+	assert.Equal(t, toolDefs, client.countedAll[0].Tools)
+	for _, req := range client.countedAll[1:] {
+		assert.Empty(t, req.Tools)
+	}
+
+	// Turn content alone fits two turns in the 45-token keep budget
+	// (2 messages = 20, 4 messages = 40, 6 messages = 60).
+	require.Len(t, out, 6)
+	assert.Equal(t, model.ConversationRoleSystem, out[0].Role)
+	assert.Equal(t, model.ConversationRoleSystem, out[1].Role)
+	assert.Contains(t, textPart(t, out[1]), "[Conversation Summary]")
+	assert.Equal(t, "question 2", textPart(t, out[2]))
+	assert.Equal(t, "answer 2", textPart(t, out[3]))
+	assert.Equal(t, "question 3", textPart(t, out[4]))
 	assert.Equal(t, "answer 3", textPart(t, out[5]))
 }
 

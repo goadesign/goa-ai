@@ -57,8 +57,11 @@ type (
 		KeepMaxTurns int
 
 		// KeepMaxInputTokens caps exact retention to newest whole turns whose
-		// combined input-token count fits this budget. Zero disables the token
-		// retention cap.
+		// combined input-token count fits this budget. The count covers turn
+		// content only; the advertised tool catalog is fixed request overhead
+		// that compression cannot reclaim and is therefore excluded (unlike
+		// CompressAtMaxInputTokens, which counts the full provider-visible
+		// request). Zero disables the token retention cap.
 		KeepMaxInputTokens int
 	}
 
@@ -432,7 +435,12 @@ func exactTailStart(
 		}
 		candidate := flattenTurns(turns[i:])
 		if cfg.KeepMaxInputTokens > 0 {
-			count, err := countMessages(ctx, runtimeCfg, client, candidate, tools)
+			// Count the candidate tail without the tool catalog: the catalog is
+			// fixed request overhead that retention can never reclaim, so the
+			// keep budget measures turn content only. Charging the catalog here
+			// would shrink retention (and fail the newest-turn fit check) based
+			// on catalog size rather than turn size.
+			count, err := countMessages(ctx, runtimeCfg, client, candidate, nil)
 			if err != nil {
 				return 0, err
 			}
