@@ -145,7 +145,10 @@ func TestCompress_TokenBudgetTriggersAndKeepsWholeRecentTurns(t *testing.T) {
 	client := &historyCountingClient{}
 	policy := Compress(client, HistoryCompressionConfig{
 		CompressAtMaxInputTokens: 80,
-		KeepMaxInputTokens:       50,
+		// The keep budget is anchored on the newest tail: adding turn 2 to the
+		// newest turn costs 20 tokens, which exceeds this budget, so only the
+		// newest turn stays exact.
+		KeepMaxInputTokens: 10,
 	})
 	msgs := []*model.Message{
 		systemMsg("system"),
@@ -191,15 +194,18 @@ func TestCompress_TokenBudgetTriggersAndKeepsWholeRecentTurns(t *testing.T) {
 }
 
 // TestCompress_KeepBudgetExcludesToolCatalog verifies KeepMaxInputTokens
-// budgets the retained turn content only. The advertised tool catalog is fixed
-// request overhead that compression can never reclaim; charging it against the
-// exact-tail budget would make retention (and the newest-turn fit check)
-// depend on catalog size instead of turn size.
+// budgets retained history relative to the newest tail, so the advertised tool
+// catalog (and the system prompt) cancel out of the comparison. The catalog is
+// fixed request overhead that compression can never reclaim; charging it
+// against the exact-tail budget would make retention depend on catalog size
+// instead of turn size. Every count must be a full planner-request shape
+// (system + turns + tools): providers such as Bedrock reject token counting
+// for tool-bearing transcripts without the tool config.
 func TestCompress_KeepBudgetExcludesToolCatalog(t *testing.T) {
 	client := &historyCountingClient{toolTokens: 1000}
 	policy := Compress(client, HistoryCompressionConfig{
-		CompressAtMaxInputTokens: 100,
-		KeepMaxInputTokens:       45,
+		CompressAtMaxInputTokens: 1050,
+		KeepMaxInputTokens:       25,
 	})
 	msgs := []*model.Message{
 		systemMsg("system"),
@@ -221,23 +227,19 @@ func TestCompress_KeepBudgetExcludesToolCatalog(t *testing.T) {
 	out, err := policy(context.Background(), msgs, toolDefs)
 	require.NoError(t, err)
 
-	// Providers such as Bedrock reject token counting for tool-bearing
-	// transcripts without the tool config, so every count of history messages
-	// must include the catalog. Only the single-message overhead probe may
-	// count without tools; its stub message carries no tool parts.
+	// Every counting request is a full planner-request shape: catalog
+	// attached and system prompt included.
 	require.NotEmpty(t, client.countedAll)
-	assert.Equal(t, toolDefs, client.countedAll[0].Tools)
 	for _, req := range client.countedAll {
-		if len(req.Tools) == 0 {
-			require.Len(t, req.Messages, 1)
-			require.Len(t, req.Messages[0].Parts, 1)
-			_, isText := req.Messages[0].Parts[0].(model.TextPart)
-			assert.True(t, isText)
-		}
+		assert.Equal(t, toolDefs, req.Tools)
+		require.NotEmpty(t, req.Messages)
+		assert.Equal(t, model.ConversationRoleSystem, req.Messages[0].Role)
 	}
 
-	// Turn content alone fits two turns in the 45-token keep budget
-	// (2 messages = 20, 4 messages = 40, 6 messages = 60).
+	// The 1000-token catalog cancels out of the anchored comparison: the
+	// newest tail counts 1030 (system + 2 messages + catalog), adding turn 2
+	// costs 20 more (fits the 25 budget), adding turn 1 costs 40 more
+	// (exceeds it). Turns 2 and 3 stay exact; turn 1 is summarized.
 	require.Len(t, out, 6)
 	assert.Equal(t, model.ConversationRoleSystem, out[0].Role)
 	assert.Equal(t, model.ConversationRoleSystem, out[1].Role)
@@ -246,6 +248,39 @@ func TestCompress_KeepBudgetExcludesToolCatalog(t *testing.T) {
 	assert.Equal(t, "answer 2", textPart(t, out[3]))
 	assert.Equal(t, "question 3", textPart(t, out[4]))
 	assert.Equal(t, "answer 3", textPart(t, out[5]))
+}
+
+// TestCompress_ErrsWhenNewestTurnCannotFitCompressTrigger verifies the run
+// fails loudly when even maximal compression — keeping only the newest turn —
+// cannot produce a planner request under CompressAtMaxInputTokens. This is the
+// truly doomed request; anything larger than the compress trigger would just
+// re-trigger compression forever.
+func TestCompress_ErrsWhenNewestTurnCannotFitCompressTrigger(t *testing.T) {
+	client := &historyCountingClient{toolTokens: 1000}
+	policy := Compress(client, HistoryCompressionConfig{
+		CompressAtMaxInputTokens: 1025,
+		KeepMaxInputTokens:       25,
+	})
+	msgs := []*model.Message{
+		systemMsg("system"),
+		userMsg("question 1"),
+		assistantTextMsg("answer 1"),
+		userMsg("question 2"),
+		assistantTextMsg("answer 2"),
+	}
+	toolDefs := []*model.ToolDefinition{
+		{
+			Name:        "lookup",
+			Description: "Looks up data.",
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+		},
+	}
+
+	// Total counts 1050 (5 messages + catalog) which trips the 1025 trigger,
+	// and the newest tail alone counts 1030 which still exceeds it.
+	out, err := policy(context.Background(), msgs, toolDefs)
+	require.ErrorContains(t, err, "newest history turn cannot fit within CompressAtMaxInputTokens (1030 > 1025)")
+	require.Len(t, out, 5)
 }
 
 func systemMsg(text string) *model.Message {

@@ -56,10 +56,10 @@ type (
 		// Zero disables the turn-count retention cap.
 		KeepMaxTurns int
 
-		// KeepMaxInputTokens caps exact retention to newest whole turns whose
-		// combined input-token count fits this budget. The count covers turn
-		// content only; the advertised tool catalog is fixed request overhead
-		// that compression cannot reclaim and is therefore excluded (unlike
+		// KeepMaxInputTokens caps exact retention by input tokens. The newest
+		// turn is always retained; this budget bounds the measured cost of the
+		// older whole turns that join it, anchored on the newest tail so the
+		// fixed system-prompt and tool-catalog overhead cancels out (unlike
 		// CompressAtMaxInputTokens, which counts the full provider-visible
 		// request). Zero disables the token retention cap.
 		KeepMaxInputTokens int
@@ -247,9 +247,12 @@ func KeepRecentTurns(n int) HistoryPolicy {
 //     tool_result messages that belong to the same logical turn.
 //   - Tool use/result integrity in every kept exact turn.
 //
-// KeepMaxInputTokens is an exact-tail budget, not a truncation budget. If the
-// newest complete turn cannot fit, Compress returns an error because continuing
-// with a silently dropped latest turn would break the conversation contract.
+// KeepMaxInputTokens is an exact-tail budget, not a truncation budget. The
+// newest complete turn is always retained — dropping it would break the
+// conversation contract — and the budget bounds the older turns that join it.
+// If even the newest turn alone cannot fit under CompressAtMaxInputTokens,
+// Compress returns an error: no amount of summarization can produce a planner
+// request that would not immediately re-trigger compression.
 func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...CompressOption) HistoryPolicy {
 	runtimeCfg := defaultCompressConfig()
 	for _, opt := range opts {
@@ -293,7 +296,7 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 			return msgs, nil
 		}
 
-		keepStart, err := exactTailStart(ctx, policyCfg, runtimeCfg, client, tools, turns)
+		keepStart, err := exactTailStart(ctx, policyCfg, runtimeCfg, client, msgs[:systemEnd], tools, turns)
 		if err != nil {
 			return msgs, err
 		}
@@ -417,49 +420,52 @@ func shouldCompress(
 	return count.InputTokens > cfg.CompressAtMaxInputTokens, nil
 }
 
+// exactTailStart selects the oldest turn index retained exactly. The newest
+// turn is always retained: compression cannot drop it without breaking the
+// conversation contract, so KeepMaxInputTokens budgets the older turns that
+// join it. Every candidate is counted as a full planner-request shape
+// (system + turns + tools) — providers such as Bedrock reject token counting
+// for tool-bearing transcripts without the tool config — and older turns are
+// charged by their measured cost relative to the newest tail, so the fixed
+// system-prompt and tool-catalog overhead cancels out of the comparison.
 func exactTailStart(
 	ctx context.Context,
 	cfg HistoryCompressionConfig,
 	runtimeCfg *compressConfig,
 	client model.Client,
+	system []*model.Message,
 	tools []*model.ToolDefinition,
 	turns []turn,
 ) (int, error) {
 	if len(turns) == 0 {
 		return 0, nil
 	}
-	overhead := 0
+	newestTokens := 0
 	if cfg.KeepMaxInputTokens > 0 {
-		var err error
-		overhead, err = catalogOverheadTokens(ctx, runtimeCfg, client, tools)
+		count, err := countMessages(ctx, runtimeCfg, client, requestShape(system, turns[len(turns)-1:]), tools)
 		if err != nil {
 			return 0, err
 		}
+		newestTokens = count.InputTokens
+		// If even maximal compression — keeping only the newest turn — cannot
+		// fit under the compress trigger, the run cannot construct a planner
+		// request that compression would not immediately re-trigger on. Fail
+		// loudly with the true invariant instead of silently proceeding.
+		if cfg.CompressAtMaxInputTokens > 0 && newestTokens > cfg.CompressAtMaxInputTokens {
+			return 0, fmt.Errorf("runtime: newest history turn cannot fit within CompressAtMaxInputTokens (%d > %d): compression keeps the newest turn whole and cannot produce a smaller planner request", newestTokens, cfg.CompressAtMaxInputTokens)
+		}
 	}
-	keepStart := len(turns)
-	for i := len(turns) - 1; i >= 0; i -= 1 {
+	keepStart := len(turns) - 1
+	for i := len(turns) - 2; i >= 0; i -= 1 {
 		if cfg.KeepMaxTurns > 0 && len(turns)-i > cfg.KeepMaxTurns {
 			break
 		}
-		candidate := flattenTurns(turns[i:])
 		if cfg.KeepMaxInputTokens > 0 {
-			// Candidates are counted with the tool catalog because providers
-			// such as Bedrock reject tool-bearing transcripts without the tool
-			// config, but the catalog's measured overhead is subtracted before
-			// comparing against the budget: the catalog is fixed request
-			// overhead that retention can never reclaim, so KeepMaxInputTokens
-			// budgets turn content only. Charging the catalog would shrink
-			// retention (and fail the newest-turn fit check) based on catalog
-			// size rather than turn size.
-			count, err := countMessages(ctx, runtimeCfg, client, candidate, tools)
+			count, err := countMessages(ctx, runtimeCfg, client, requestShape(system, turns[i:]), tools)
 			if err != nil {
 				return 0, err
 			}
-			turnTokens := count.InputTokens - overhead
-			if turnTokens > cfg.KeepMaxInputTokens {
-				if keepStart == len(turns) {
-					return 0, fmt.Errorf("runtime: newest history turn exceeds KeepMaxInputTokens (%d > %d)", turnTokens, cfg.KeepMaxInputTokens)
-				}
+			if count.InputTokens-newestTokens > cfg.KeepMaxInputTokens {
 				break
 			}
 		}
@@ -468,39 +474,12 @@ func exactTailStart(
 	return keepStart, nil
 }
 
-// catalogOverheadTokens measures the input-token cost of advertising the tool
-// catalog by counting one stub message with and without the tool definitions.
-// The stub carries no tool parts, so both probe requests are valid for
-// providers that reject tool-bearing transcripts without a tool config, and
-// the stub's own cost cancels out of the difference.
-func catalogOverheadTokens(
-	ctx context.Context,
-	cfg *compressConfig,
-	client model.Client,
-	tools []*model.ToolDefinition,
-) (int, error) {
-	if len(tools) == 0 {
-		return 0, nil
-	}
-	stub := []*model.Message{
-		{
-			Role:  model.ConversationRoleUser,
-			Parts: []model.Part{model.TextPart{Text: "."}},
-		},
-	}
-	withTools, err := countMessages(ctx, cfg, client, stub, tools)
-	if err != nil {
-		return 0, err
-	}
-	withoutTools, err := countMessages(ctx, cfg, client, stub, nil)
-	if err != nil {
-		return 0, err
-	}
-	overhead := withTools.InputTokens - withoutTools.InputTokens
-	if overhead < 0 {
-		overhead = 0
-	}
-	return overhead, nil
+// requestShape assembles the planner-request message shape used for token
+// counting: the preserved system prefix followed by the candidate tail turns.
+func requestShape(system []*model.Message, turns []turn) []*model.Message {
+	msgs := make([]*model.Message, 0, len(system)+len(turns))
+	msgs = append(msgs, system...)
+	return append(msgs, flattenTurns(turns)...)
 }
 
 func countMessages(
