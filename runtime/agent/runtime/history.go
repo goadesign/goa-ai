@@ -293,7 +293,7 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 			return msgs, nil
 		}
 
-		keepStart, err := exactTailStart(ctx, policyCfg, runtimeCfg, client, tools, turns)
+		keepStart, err := exactTailStart(ctx, policyCfg, runtimeCfg, client, turns)
 		if err != nil {
 			return msgs, err
 		}
@@ -422,7 +422,6 @@ func exactTailStart(
 	cfg HistoryCompressionConfig,
 	runtimeCfg *compressConfig,
 	client model.Client,
-	tools []*model.ToolDefinition,
 	turns []turn,
 ) (int, error) {
 	if len(turns) == 0 {
