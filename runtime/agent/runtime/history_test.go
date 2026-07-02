@@ -221,12 +221,19 @@ func TestCompress_KeepBudgetExcludesToolCatalog(t *testing.T) {
 	out, err := policy(context.Background(), msgs, toolDefs)
 	require.NoError(t, err)
 
-	// The compression trigger counts the full provider-visible request,
-	// catalog included; the exact-tail retention counts turn content only.
+	// Providers such as Bedrock reject token counting for tool-bearing
+	// transcripts without the tool config, so every count of history messages
+	// must include the catalog. Only the single-message overhead probe may
+	// count without tools; its stub message carries no tool parts.
 	require.NotEmpty(t, client.countedAll)
 	assert.Equal(t, toolDefs, client.countedAll[0].Tools)
-	for _, req := range client.countedAll[1:] {
-		assert.Empty(t, req.Tools)
+	for _, req := range client.countedAll {
+		if len(req.Tools) == 0 {
+			require.Len(t, req.Messages, 1)
+			require.Len(t, req.Messages[0].Parts, 1)
+			_, isText := req.Messages[0].Parts[0].(model.TextPart)
+			assert.True(t, isText)
+		}
 	}
 
 	// Turn content alone fits two turns in the 45-token keep budget

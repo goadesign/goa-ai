@@ -293,7 +293,7 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 			return msgs, nil
 		}
 
-		keepStart, err := exactTailStart(ctx, policyCfg, runtimeCfg, client, turns)
+		keepStart, err := exactTailStart(ctx, policyCfg, runtimeCfg, client, tools, turns)
 		if err != nil {
 			return msgs, err
 		}
@@ -422,10 +422,19 @@ func exactTailStart(
 	cfg HistoryCompressionConfig,
 	runtimeCfg *compressConfig,
 	client model.Client,
+	tools []*model.ToolDefinition,
 	turns []turn,
 ) (int, error) {
 	if len(turns) == 0 {
 		return 0, nil
+	}
+	overhead := 0
+	if cfg.KeepMaxInputTokens > 0 {
+		var err error
+		overhead, err = catalogOverheadTokens(ctx, runtimeCfg, client, tools)
+		if err != nil {
+			return 0, err
+		}
 	}
 	keepStart := len(turns)
 	for i := len(turns) - 1; i >= 0; i -= 1 {
@@ -434,18 +443,22 @@ func exactTailStart(
 		}
 		candidate := flattenTurns(turns[i:])
 		if cfg.KeepMaxInputTokens > 0 {
-			// Count the candidate tail without the tool catalog: the catalog is
-			// fixed request overhead that retention can never reclaim, so the
-			// keep budget measures turn content only. Charging the catalog here
-			// would shrink retention (and fail the newest-turn fit check) based
-			// on catalog size rather than turn size.
-			count, err := countMessages(ctx, runtimeCfg, client, candidate, nil)
+			// Candidates are counted with the tool catalog because providers
+			// such as Bedrock reject tool-bearing transcripts without the tool
+			// config, but the catalog's measured overhead is subtracted before
+			// comparing against the budget: the catalog is fixed request
+			// overhead that retention can never reclaim, so KeepMaxInputTokens
+			// budgets turn content only. Charging the catalog would shrink
+			// retention (and fail the newest-turn fit check) based on catalog
+			// size rather than turn size.
+			count, err := countMessages(ctx, runtimeCfg, client, candidate, tools)
 			if err != nil {
 				return 0, err
 			}
-			if count.InputTokens > cfg.KeepMaxInputTokens {
+			turnTokens := count.InputTokens - overhead
+			if turnTokens > cfg.KeepMaxInputTokens {
 				if keepStart == len(turns) {
-					return 0, fmt.Errorf("runtime: newest history turn exceeds KeepMaxInputTokens (%d > %d)", count.InputTokens, cfg.KeepMaxInputTokens)
+					return 0, fmt.Errorf("runtime: newest history turn exceeds KeepMaxInputTokens (%d > %d)", turnTokens, cfg.KeepMaxInputTokens)
 				}
 				break
 			}
@@ -453,6 +466,41 @@ func exactTailStart(
 		keepStart = i
 	}
 	return keepStart, nil
+}
+
+// catalogOverheadTokens measures the input-token cost of advertising the tool
+// catalog by counting one stub message with and without the tool definitions.
+// The stub carries no tool parts, so both probe requests are valid for
+// providers that reject tool-bearing transcripts without a tool config, and
+// the stub's own cost cancels out of the difference.
+func catalogOverheadTokens(
+	ctx context.Context,
+	cfg *compressConfig,
+	client model.Client,
+	tools []*model.ToolDefinition,
+) (int, error) {
+	if len(tools) == 0 {
+		return 0, nil
+	}
+	stub := []*model.Message{
+		{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "."}},
+		},
+	}
+	withTools, err := countMessages(ctx, cfg, client, stub, tools)
+	if err != nil {
+		return 0, err
+	}
+	withoutTools, err := countMessages(ctx, cfg, client, stub, nil)
+	if err != nil {
+		return 0, err
+	}
+	overhead := withTools.InputTokens - withoutTools.InputTokens
+	if overhead < 0 {
+		overhead = 0
+	}
+	return overhead, nil
 }
 
 func countMessages(
