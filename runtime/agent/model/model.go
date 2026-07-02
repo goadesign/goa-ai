@@ -933,9 +933,14 @@ func requestCharacterCount(req *Request) int {
 		}
 		count += len(tool.Name)
 		count += len(tool.Description)
-		count += len(tool.Input.JSONSchema())
-		count += len(tool.Input.SchemaWithoutRootExample())
-		count += len(tool.Input.ExampleJSON())
+		// Providers send one projection of the input contract per request:
+		// either the annotated schema, or the schema without its root example
+		// plus the separate example. Charge the larger of the two so the
+		// estimate stays conservative without summing renderings no provider
+		// combines.
+		annotated := len(tool.Input.JSONSchema())
+		split := len(tool.Input.SchemaWithoutRootExample()) + len(tool.Input.ExampleJSON())
+		count += max(annotated, split)
 	}
 	if req.ToolChoice != nil {
 		count += len(req.ToolChoice.Mode)
