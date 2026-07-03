@@ -29,12 +29,23 @@ func wrapGeminiError(operation string, err error) error {
 		status = gerr.Code
 		message = gerr.Message
 	}
+	return classifyProviderError(geminiProviderName, operation, status, message, err)
+}
+
+// classifyProviderError maps an HTTP status code to the goa-ai provider
+// error contract. It is shared by wrapGeminiError and
+// wrapAnthropicVertexError (see anthropic.go) so the status-to-kind
+// classification table is defined exactly once for every Vertex-hosted
+// model adapter. Throttling (429) joins model.ErrRateLimited so the
+// adaptive rate-limit middleware backs off; adapters never retry
+// themselves.
+func classifyProviderError(provider, operation string, status int, message string, cause error) error {
 	kind := model.ProviderErrorKindUnknown
 	retryable := false
 	switch {
 	case status == http.StatusTooManyRequests:
-		pe := model.NewProviderError(geminiProviderName, operation, status,
-			model.ProviderErrorKindRateLimited, "rate_limited", message, "", true, err)
+		pe := model.NewProviderError(provider, operation, status,
+			model.ProviderErrorKindRateLimited, "rate_limited", message, "", true, cause)
 		return errors.Join(model.ErrRateLimited, pe)
 	case status == http.StatusBadRequest:
 		kind = model.ProviderErrorKindInvalidRequest
@@ -44,5 +55,5 @@ func wrapGeminiError(operation string, err error) error {
 		kind = model.ProviderErrorKindUnavailable
 		retryable = true
 	}
-	return model.NewProviderError(geminiProviderName, operation, status, kind, "", message, "", retryable, err)
+	return model.NewProviderError(provider, operation, status, kind, "", message, "", retryable, cause)
 }
