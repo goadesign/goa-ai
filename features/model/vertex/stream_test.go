@@ -14,6 +14,7 @@ import (
 	"google.golang.org/genai"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 func drain(t *testing.T, s model.Streamer) []model.Chunk {
@@ -62,6 +63,33 @@ func TestStreamTextToolCallUsageStop(t *testing.T) {
 	assert.Equal(t, 7, chunks[2].UsageDelta.InputTokens)
 	assert.Equal(t, string(genai.FinishReasonStop), chunks[3].StopReason)
 	assert.NotNil(t, s.Metadata()["usage"])
+}
+
+func TestStreamToolCallThoughtSignature(t *testing.T) {
+	sig := []byte("gemini-3-tool-call-signature")
+	stub := &stubGenerativeClient{streamChunks: []*genai.GenerateContentResponse{
+		{Candidates: []*genai.Candidate{{Content: &genai.Content{Parts: []*genai.Part{
+			{
+				FunctionCall:     &genai.FunctionCall{Name: "feed_find_duplicates", Args: map[string]any{"title": "x"}},
+				ThoughtSignature: sig,
+			},
+		}}}}},
+		{Candidates: []*genai.Candidate{{FinishReason: genai.FinishReasonStop}}},
+	}}
+	cl, err := New(stub, Options{DefaultModel: "gemini-2.5-flash"})
+	require.NoError(t, err)
+	def := toolDef(t, "feed/find_duplicates", `{"type":"object"}`)
+	s, err := cl.Stream(context.Background(), &model.Request{
+		Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "go"}}}},
+		Tools:    []*model.ToolDefinition{def},
+	})
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, s.Close()) }()
+
+	chunks := drain(t, s)
+	require.Len(t, chunks, 2)
+	require.Equal(t, model.ChunkTypeToolCall, chunks[0].Type)
+	assert.Equal(t, base64.StdEncoding.EncodeToString(sig), chunks[0].ToolCall.ThoughtSignature)
 }
 
 func TestStreamThinkingWithSignature(t *testing.T) {
@@ -122,71 +150,101 @@ func TestStreamThinkingWithSignature(t *testing.T) {
 }
 
 // TestStreamThinkingSignatureLedgerSeamRoundTrip verifies the seam between
-// the streamer and two downstream consumers of the final ThinkingPart:
-// (1) the transcript ledger only replays thinking parts with BOTH Text and
-// Signature set (see runtime/agent/transcript/ledger.go BuildMessages), and
-// (2) encodeContents (features/model/vertex/messages.go) must be able to
-// round-trip that exact part back into a genai Part with the original
-// signature bytes when the assistant message is replayed on a later turn.
+// the streamer and the real downstream consumers of the final ThinkingPart
+// and tool-call ThoughtSignature: (1) the transcript ledger
+// (runtime/agent/transcript) only replays thinking parts with BOTH Text and
+// Signature set, and carries ToolUsePart.ThoughtSignature through
+// FromModelMessages/BuildMessages unconditionally, and (2) encodeContents
+// (features/model/vertex/messages.go) must round-trip both signatures back
+// into genai Parts with the original bytes when the assistant message is
+// replayed on a later turn.
 func TestStreamThinkingSignatureLedgerSeamRoundTrip(t *testing.T) {
-	sig := []byte("sig-bytes-for-round-trip")
+	thinkSig := []byte("sig-bytes-for-round-trip")
+	toolSig := []byte("tool-call-sig-bytes-for-round-trip")
 	stub := &stubGenerativeClient{streamChunks: []*genai.GenerateContentResponse{
 		{Candidates: []*genai.Candidate{{Content: &genai.Content{Parts: []*genai.Part{
 			{Thought: true, Text: "part one "},
-			{Thought: true, Text: "part two", ThoughtSignature: sig},
+			{Thought: true, Text: "part two", ThoughtSignature: thinkSig},
+		}}}}},
+		{Candidates: []*genai.Candidate{{Content: &genai.Content{Parts: []*genai.Part{
+			{
+				FunctionCall:     &genai.FunctionCall{Name: "feed_find_duplicates", Args: map[string]any{"title": "x"}},
+				ThoughtSignature: toolSig,
+			},
 		}}}}},
 		{Candidates: []*genai.Candidate{{FinishReason: genai.FinishReasonStop}}},
 	}}
 	cl, err := New(stub, Options{DefaultModel: "gemini-2.5-flash"})
 	require.NoError(t, err)
+	def := toolDef(t, "feed/find_duplicates", `{"type":"object"}`)
 	s, err := cl.Stream(context.Background(), &model.Request{
 		Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "go"}}}},
+		Tools:    []*model.ToolDefinition{def},
 	})
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, s.Close()) }()
 
 	chunks := drain(t, s)
-	var final *model.ThinkingPart
+	var finalThinking *model.ThinkingPart
+	var toolCall *model.ToolCall
 	for _, ch := range chunks {
-		if ch.Type != model.ChunkTypeThinking || ch.Message == nil {
-			continue
-		}
-		for _, p := range ch.Message.Parts {
-			if tp, ok := p.(model.ThinkingPart); ok && tp.Final {
-				tp := tp
-				final = &tp
+		switch ch.Type {
+		case model.ChunkTypeThinking:
+			if ch.Message == nil {
+				continue
 			}
+			for _, p := range ch.Message.Parts {
+				if tp, ok := p.(model.ThinkingPart); ok && tp.Final {
+					tp := tp
+					finalThinking = &tp
+				}
+			}
+		case model.ChunkTypeToolCall:
+			toolCall = ch.ToolCall
 		}
 	}
-	require.NotNil(t, final, "expected a final ThinkingPart in the stream")
-	require.NotEmpty(t, final.Text)
-	require.NotEmpty(t, final.Signature)
+	require.NotNil(t, finalThinking, "expected a final ThinkingPart in the stream")
+	require.NotEmpty(t, finalThinking.Text)
+	require.NotEmpty(t, finalThinking.Signature)
+	require.NotNil(t, toolCall, "expected a tool call in the stream")
+	require.Equal(t, "feed/find_duplicates", string(toolCall.Name))
+	require.NotEmpty(t, toolCall.ThoughtSignature)
 
-	// The ledger only replays this part if both Text and Signature survive
-	// (the bug this fix closes was a final part with Signature but no
-	// Text, which the ledger's `v.Text != "" && v.Signature != ""` filter
-	// silently drops).
-	require.True(t, final.Text != "" && final.Signature != "")
-
-	// Place the final ThinkingPart in an assistant message and run it
-	// through the same translation the runtime uses to build the next
-	// request's contents.
+	// Build the assistant turn the runtime would record (thinking followed
+	// by tool_use) and push it through the REAL transcript ledger, not a
+	// hand-rolled model.Message, so the seam under test is the one the
+	// runtime actually exercises.
 	msg := &model.Message{
 		Role: model.ConversationRoleAssistant,
 		Parts: []model.Part{
-			*final,
-			model.TextPart{Text: "answer"},
+			*finalThinking,
+			model.ToolUsePart{
+				ID:               toolCall.ID,
+				Name:             string(toolCall.Name),
+				Input:            toolCall.Payload,
+				ThoughtSignature: toolCall.ThoughtSignature,
+			},
 		},
 	}
-	_, contents, err := encodeContents([]*model.Message{msg}, nil)
+	rebuilt := transcript.FromModelMessages([]*model.Message{msg}).BuildMessages()
+	require.Len(t, rebuilt, 1)
+	require.Len(t, rebuilt[0].Parts, 2)
+
+	canonToProv, _ := buildToolNameMaps([]*model.ToolDefinition{def})
+	_, contents, err := encodeContents(rebuilt, canonToProv)
 	require.NoError(t, err)
 	require.Len(t, contents, 1)
 	require.Len(t, contents[0].Parts, 2)
 
-	gp := contents[0].Parts[0]
-	assert.True(t, gp.Thought)
-	assert.Equal(t, final.Text, gp.Text)
-	assert.Equal(t, sig, gp.ThoughtSignature, "signature must round-trip byte-for-byte")
+	thoughtPart := contents[0].Parts[0]
+	assert.True(t, thoughtPart.Thought)
+	assert.Equal(t, finalThinking.Text, thoughtPart.Text)
+	assert.Equal(t, thinkSig, thoughtPart.ThoughtSignature, "thinking signature must round-trip byte-for-byte")
+
+	toolPart := contents[0].Parts[1]
+	require.NotNil(t, toolPart.FunctionCall)
+	assert.Equal(t, "feed_find_duplicates", toolPart.FunctionCall.Name)
+	assert.Equal(t, toolSig, toolPart.ThoughtSignature, "tool-call thought signature must round-trip byte-for-byte")
 }
 
 func TestStreamUsageEmittedOnceWithLatestValues(t *testing.T) {

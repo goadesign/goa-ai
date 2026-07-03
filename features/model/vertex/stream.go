@@ -71,9 +71,10 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 						return
 					}
 					s.emit(model.Chunk{Type: model.ChunkTypeToolCall, ToolCall: &model.ToolCall{
-						Name:    toolIdent(part.FunctionCall.Name, prep.provToCanon),
-						Payload: payload,
-						ID:      toolCallID(part.FunctionCall, callIndex),
+						Name:             toolIdent(part.FunctionCall.Name, prep.provToCanon),
+						Payload:          payload,
+						ID:               toolCallID(part.FunctionCall, callIndex),
+						ThoughtSignature: encodeThoughtSignature(part.ThoughtSignature),
 					}})
 				case part.Thought:
 					// Accumulate thought text across Thought parts (mirrors

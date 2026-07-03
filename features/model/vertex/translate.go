@@ -36,9 +36,10 @@ func translateResponse(resp *genai.GenerateContentResponse, modelID string, clas
 				}
 				callIndex++
 				out.ToolCalls = append(out.ToolCalls, model.ToolCall{
-					Name:    toolIdent(part.FunctionCall.Name, provToCanon),
-					Payload: payload,
-					ID:      toolCallID(part.FunctionCall, callIndex),
+					Name:             toolIdent(part.FunctionCall.Name, provToCanon),
+					Payload:          payload,
+					ID:               toolCallID(part.FunctionCall, callIndex),
+					ThoughtSignature: encodeThoughtSignature(part.ThoughtSignature),
 				})
 			case part.Thought:
 				msg.Parts = append(msg.Parts, model.ThinkingPart{
@@ -92,6 +93,19 @@ func toolCallID(fc *genai.FunctionCall, index int) string {
 		return fc.ID
 	}
 	return fmt.Sprintf("call-%d-%s", index, fc.Name)
+}
+
+// encodeThoughtSignature converts a genai Part's raw ThoughtSignature bytes
+// into the opaque base64 string carried on model.ToolCall/model.ToolUsePart.
+// Gemini 3-class models attach a signature to the same Part that carries a
+// FunctionCall; gemini-2.5-class targets never populate it, so an empty
+// input (the common case) yields an empty string, matching the "empty means
+// absent" contract.
+func encodeThoughtSignature(sig []byte) string {
+	if len(sig) == 0 {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(sig)
 }
 
 // translateUsage maps Gemini usage metadata onto model.TokenUsage, counting

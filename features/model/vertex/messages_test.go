@@ -121,6 +121,41 @@ func TestEncodeContentsThinkingSignatureInvalidBase64(t *testing.T) {
 	assert.Contains(t, err.Error(), "vertex: encode thinking part: signature is not valid base64")
 }
 
+func TestEncodeContentsToolUseThoughtSignatureRoundTrips(t *testing.T) {
+	msgs := []*model.Message{
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+			model.ToolUsePart{
+				ID:               "c1",
+				Name:             "feed/find_duplicates",
+				Input:            map[string]any{"title": "picnic"},
+				ThoughtSignature: "c2ln", // base64("sig")
+			},
+		}},
+	}
+	_, contents, err := encodeContents(msgs, nil)
+	require.NoError(t, err)
+	require.Len(t, contents, 1)
+	fc := contents[0].Parts[0]
+	require.NotNil(t, fc.FunctionCall)
+	assert.Equal(t, []byte("sig"), fc.ThoughtSignature)
+}
+
+func TestEncodeContentsToolUseThoughtSignatureInvalidBase64(t *testing.T) {
+	msgs := []*model.Message{
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+			model.ToolUsePart{
+				ID:               "c1",
+				Name:             "feed/find_duplicates",
+				Input:            map[string]any{},
+				ThoughtSignature: "not*base64!",
+			},
+		}},
+	}
+	_, _, err := encodeContents(msgs, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `vertex: encode tool use "feed/find_duplicates": thought signature is not valid base64`)
+}
+
 func TestEncodeContentsToolUseNonObjectInputErrors(t *testing.T) {
 	msgs := []*model.Message{
 		{Role: model.ConversationRoleAssistant, Parts: []model.Part{

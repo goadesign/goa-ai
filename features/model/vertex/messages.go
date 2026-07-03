@@ -86,11 +86,25 @@ func encodePart(part model.Part, canonToProv map[string]string, toolUseNames map
 		if err != nil {
 			return nil, fmt.Errorf("vertex: encode tool use %q: %w", p.Name, err)
 		}
-		return &genai.Part{FunctionCall: &genai.FunctionCall{
+		gp := &genai.Part{FunctionCall: &genai.FunctionCall{
 			ID:   p.ID,
 			Name: providerToolName(p.Name, canonToProv),
 			Args: args,
-		}}, nil
+		}}
+		// Signature contract: mirrors the ThinkingPart case below. This
+		// adapter's response translator is the only producer of
+		// ToolUsePart.ThoughtSignature and always encodes it with
+		// base64.StdEncoding, so invalid base64 here is a broken invariant in
+		// this adapter's own translation, not a shape that can legitimately
+		// arrive from elsewhere; fail fast instead of dropping the signature.
+		if p.ThoughtSignature != "" {
+			sig, err := base64.StdEncoding.DecodeString(p.ThoughtSignature)
+			if err != nil {
+				return nil, fmt.Errorf("vertex: encode tool use %q: thought signature is not valid base64: %w", p.Name, err)
+			}
+			gp.ThoughtSignature = sig
+		}
+		return gp, nil
 	case model.ToolResultPart:
 		resp, err := toResponseMap(p.Content, p.IsError)
 		if err != nil {

@@ -1,6 +1,7 @@
 package vertex
 
 import (
+	"encoding/base64"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -43,6 +44,39 @@ func TestTranslateResponseTextAndToolCall(t *testing.T) {
 	assert.Equal(t, 125, out.Usage.TotalTokens)
 	assert.Equal(t, "gemini-2.5-pro", out.Usage.Model)
 	assert.Equal(t, model.ModelClassDefault, out.Usage.ModelClass)
+}
+
+func TestTranslateResponseFunctionCallThoughtSignature(t *testing.T) {
+	sig := []byte("gemini-3-tool-call-signature")
+	resp := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{{
+			Content: &genai.Content{Parts: []*genai.Part{
+				{
+					FunctionCall:     &genai.FunctionCall{Name: "feed_find_duplicates", Args: map[string]any{"title": "picnic"}},
+					ThoughtSignature: sig,
+				},
+			}},
+		}},
+	}
+	provToCanon := map[string]string{"feed_find_duplicates": "feed/find_duplicates"}
+	out, err := translateResponse(resp, "gemini-3-pro", model.ModelClassDefault, provToCanon)
+	require.NoError(t, err)
+	require.Len(t, out.ToolCalls, 1)
+	assert.Equal(t, base64.StdEncoding.EncodeToString(sig), out.ToolCalls[0].ThoughtSignature)
+}
+
+func TestTranslateResponseFunctionCallWithoutThoughtSignature(t *testing.T) {
+	resp := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{{
+			Content: &genai.Content{Parts: []*genai.Part{
+				{FunctionCall: &genai.FunctionCall{Name: "feed_find_duplicates", Args: map[string]any{}}},
+			}},
+		}},
+	}
+	out, err := translateResponse(resp, "gemini-2.5-pro", model.ModelClassDefault, map[string]string{})
+	require.NoError(t, err)
+	require.Len(t, out.ToolCalls, 1)
+	assert.Empty(t, out.ToolCalls[0].ThoughtSignature)
 }
 
 func TestTranslateResponseUnknownToolPassesThrough(t *testing.T) {
