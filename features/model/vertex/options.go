@@ -3,7 +3,7 @@ package vertex
 import "goa.design/goa-ai/runtime/agent/model"
 
 // geminiProviderName identifies the Gemini-on-Vertex adapter in provider errors.
-const geminiProviderName = "vertex-gemini" //nolint:unused
+const geminiProviderName = "vertex-gemini"
 
 // anthropicProviderName identifies the Claude-on-Vertex adapter in provider errors.
 const anthropicProviderName = "vertex-anthropic" //nolint:unused
