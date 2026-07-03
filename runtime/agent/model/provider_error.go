@@ -153,7 +153,7 @@ func ClassifyHTTPStatus(provider, operation string, status int, message string, 
 	retryable := false
 	switch {
 	case status == http.StatusTooManyRequests:
-		pe := NewProviderError(provider, operation, status, ProviderErrorKindRateLimited, "rate_limited", message, "", true, cause)
+		pe := NewProviderError(provider, operation, status, ProviderErrorKindRateLimited, "", message, "", true, cause)
 		return errors.Join(ErrRateLimited, pe)
 	case status == http.StatusBadRequest:
 		kind = ProviderErrorKindInvalidRequest

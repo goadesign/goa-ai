@@ -176,7 +176,7 @@ func providerToolName(name string, canonToProv map[string]string) string {
 // always describe an object payload), so a non-object value here is a
 // broken invariant, not a shape to coerce around.
 func toArgsMap(v any) (map[string]any, error) {
-	if m, ok := v.(map[string]any); ok {
+	if m, ok := v.(map[string]any); ok && m != nil {
 		return m, nil
 	}
 	raw, err := json.Marshal(v)
@@ -186,6 +186,12 @@ func toArgsMap(v any) (map[string]any, error) {
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return nil, fmt.Errorf("tool input must be a JSON object: %w", err)
+	}
+	if m == nil {
+		// JSON null unmarshals into a nil map without error. No-arg tool
+		// calls are legal, and Gemini requires Args to be an object, so
+		// normalize null to an empty object instead of sending nil.
+		m = map[string]any{}
 	}
 	return m, nil
 }
@@ -212,6 +218,16 @@ func toResponseMap(v any, isError bool) (map[string]any, error) {
 		}
 		if err := json.Unmarshal(raw, &m); err != nil {
 			m = map[string]any{"output": v}
+		}
+	}
+	if m == nil {
+		// JSON null unmarshals into a nil map without error (nil Content or
+		// content that marshals as null). Gemini requires Response to be an
+		// object, and m["error"] below would panic on a nil map, so start
+		// from an empty object and keep the non-nil value under "output".
+		m = map[string]any{}
+		if v != nil {
+			m["output"] = v
 		}
 	}
 	if isError {

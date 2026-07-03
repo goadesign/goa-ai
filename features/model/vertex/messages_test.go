@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 func TestEncodeContentsSystemAndRoles(t *testing.T) {
@@ -165,4 +166,59 @@ func TestEncodeContentsToolUseNonObjectInputErrors(t *testing.T) {
 	_, _, err := encodeContents(msgs, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `vertex: encode tool use "feed/find_duplicates": tool input must be a JSON object`)
+}
+
+func TestEncodeContentsToolUseNilInputEncodesEmptyArgs(t *testing.T) {
+	// JSON null unmarshals into a nil map without error, so a nil Input must
+	// not slip past the object check as nil Args: no-arg tool calls are
+	// legal and Gemini requires Args to be an object.
+	msgs := []*model.Message{
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+			model.ToolUsePart{ID: "c1", Name: "feed/find_duplicates", Input: nil},
+		}},
+	}
+	_, contents, err := encodeContents(msgs, nil)
+	require.NoError(t, err)
+	fc := contents[0].Parts[0].FunctionCall
+	require.NotNil(t, fc)
+	require.NotNil(t, fc.Args)
+	assert.Empty(t, fc.Args)
+}
+
+func TestEncodeContentsToolResultNilContentError(t *testing.T) {
+	// Nil Content used to leave the response map nil (JSON null unmarshals
+	// into a nil map without error), so m["error"] = true panicked. It must
+	// encode as {"error": true}.
+	msgs := []*model.Message{
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+			model.ToolUsePart{ID: "c1", Name: "feed/find_duplicates", Input: map[string]any{}},
+		}},
+		{Role: model.ConversationRoleUser, Parts: []model.Part{
+			model.ToolResultPart{ToolUseID: "c1", Content: nil, IsError: true},
+		}},
+	}
+	_, contents, err := encodeContents(msgs, nil)
+	require.NoError(t, err)
+	fr := contents[1].Parts[0].FunctionResponse
+	require.NotNil(t, fr)
+	assert.Equal(t, map[string]any{"error": true}, fr.Response)
+}
+
+func TestEncodeContentsToolResultNullRawContentEncodesObject(t *testing.T) {
+	// rawjson.Message{} marshals as JSON null; the response must still be a
+	// non-nil object on the wire because Gemini requires
+	// FunctionResponse.Response to be an object.
+	msgs := []*model.Message{
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+			model.ToolUsePart{ID: "c1", Name: "feed/find_duplicates", Input: map[string]any{}},
+		}},
+		{Role: model.ConversationRoleUser, Parts: []model.Part{
+			model.ToolResultPart{ToolUseID: "c1", Content: rawjson.Message{}},
+		}},
+	}
+	_, contents, err := encodeContents(msgs, nil)
+	require.NoError(t, err)
+	fr := contents[1].Parts[0].FunctionResponse
+	require.NotNil(t, fr)
+	require.NotNil(t, fr.Response)
 }
