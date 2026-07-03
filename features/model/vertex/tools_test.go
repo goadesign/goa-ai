@@ -39,6 +39,27 @@ func TestEncodeTools(t *testing.T) {
 	require.True(t, ok)
 	assert.NotContains(t, schema, "$schema")
 	assert.Equal(t, "object", schema["type"])
+	props, ok := schema["properties"].(map[string]any)
+	require.True(t, ok, "properties must survive normalization")
+	assert.Contains(t, props, "title")
+}
+
+func TestEncodeToolsMissingDescription(t *testing.T) {
+	defs := []*model.ToolDefinition{
+		{Name: "feed/find_duplicates", Input: model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`))},
+	}
+	canonToProv, _ := buildToolNameMaps(defs)
+	tools, err := encodeTools(defs, canonToProv)
+	require.Error(t, err)
+	assert.Nil(t, tools)
+	assert.Contains(t, err.Error(), `"feed/find_duplicates"`)
+	assert.Contains(t, err.Error(), "description")
+}
+
+func TestNormalizeSchemaMalformedJSON(t *testing.T) {
+	schema, err := normalizeSchema([]byte(`{"type":`))
+	require.Error(t, err)
+	assert.Nil(t, schema)
 }
 
 func TestEncodeToolConfig(t *testing.T) {

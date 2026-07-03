@@ -11,7 +11,9 @@ import (
 
 // encodeTools declares the request's tools as one genai.Tool with a
 // FunctionDeclaration per definition. Schemas are passed through as raw
-// JSON schema (ParametersJsonSchema) after normalization.
+// JSON schema (ParametersJsonSchema) after normalization. Definitions
+// without a description are rejected, matching the Bedrock provider's
+// convention rather than silently sending empty descriptions to Gemini.
 func encodeTools(defs []*model.ToolDefinition, canonToProv map[string]string) ([]*genai.Tool, error) {
 	if len(defs) == 0 {
 		return nil, nil
@@ -21,6 +23,9 @@ func encodeTools(defs []*model.ToolDefinition, canonToProv map[string]string) ([
 		prov, ok := canonToProv[def.Name]
 		if !ok {
 			continue // shadowed by sanitization collision
+		}
+		if def.Description == "" {
+			return nil, fmt.Errorf("vertex: tool %q requires a description", def.Name)
 		}
 		schema, err := normalizeSchema(def.Input.JSONSchema())
 		if err != nil {
