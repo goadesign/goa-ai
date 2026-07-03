@@ -9,6 +9,7 @@ import (
 	"google.golang.org/genai"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -29,9 +30,9 @@ func translateResponse(resp *genai.GenerateContentResponse, modelID string, clas
 			// results) are intentionally dropped: no model.Part equivalent.
 			switch {
 			case part.FunctionCall != nil:
-				payload, err := json.Marshal(part.FunctionCall.Args)
+				payload, err := marshalArgs(part.FunctionCall.Args)
 				if err != nil {
-					return nil, fmt.Errorf("vertex: marshal tool args: %w", err)
+					return nil, err
 				}
 				callIndex++
 				out.ToolCalls = append(out.ToolCalls, model.ToolCall{
@@ -64,6 +65,23 @@ func canonicalToolName(prov string, provToCanon map[string]string) string {
 		return canon
 	}
 	return prov
+}
+
+// toolIdent maps a provider tool name back to its canonical ident.
+func toolIdent(prov string, provToCanon map[string]string) tools.Ident {
+	return tools.Ident(canonicalToolName(prov, provToCanon))
+}
+
+// marshalArgs encodes Gemini function-call args as a JSON payload.
+func marshalArgs(args map[string]any) (rawjson.Message, error) {
+	if len(args) == 0 {
+		return rawjson.Message(`{}`), nil
+	}
+	b, err := json.Marshal(args)
+	if err != nil {
+		return nil, fmt.Errorf("vertex: marshal tool args: %w", err)
+	}
+	return b, nil
 }
 
 // toolCallID returns a stable per-response identifier for a function call,
