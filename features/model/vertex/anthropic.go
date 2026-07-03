@@ -1,23 +1,16 @@
-// This file: Claude-on-Vertex constructor. The Messages translator is
-// reused verbatim from features/model/anthropic — zero new translation
-// code — by handing it an Anthropic SDK client built with the SDK's vertex
-// transport, which rewrites /v1/messages to the Vertex rawPredict endpoints
-// and handles ADC auth. This file adds only what the anthropic package
-// lacks for Vertex: error classification. anthropic.isRateLimited only
-// detects errors that already wrap model.ErrRateLimited, so it never
-// recognizes a real SDK 429 (*anthropic.Error with StatusCode 429).
-// anthropicErrorMapper decorates the reused client — and wraps the streamer
-// it returns so mid-stream Recv errors are classified too, not just
-// call-establishment failures — so the adaptive rate-limit middleware
-// observes genuine Vertex throttling on both paths.
+// This file: Claude-on-Vertex constructor. The Messages translator AND
+// error classification live in features/model/anthropic — zero new
+// translation or error-mapping code here — by handing that package's client
+// an Anthropic SDK client built with the SDK's vertex transport, which
+// rewrites /v1/messages to the Vertex rawPredict endpoints and handles ADC
+// auth. This file is pure construction: it validates Vertex-specific
+// options and wires the vertex transport into anthropicprovider.New.
 
 package vertex
 
 import (
 	"context"
 	"errors"
-	"fmt"
-	"io"
 	"strings"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
@@ -78,96 +71,5 @@ func NewAnthropicClient(ctx context.Context, opts AnthropicOptions) (model.Clien
 	if err != nil {
 		return nil, err
 	}
-	return &anthropicErrorMapper{next: inner}, nil
-}
-
-// anthropicErrorMapper decorates a model.Client with the goa-ai provider
-// error contract for Anthropic SDK failures. It exists solely to fix the
-// upstream gap in features/model/anthropic: isRateLimited there only
-// detects errors that already wrap model.ErrRateLimited, so real SDK 429s
-// (surfaced as *anthropic.Error) are never classified as rate limits.
-type anthropicErrorMapper struct {
-	next model.Client
-}
-
-// Complete implements model.Client.
-func (m *anthropicErrorMapper) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
-	resp, err := m.next.Complete(ctx, req)
-	if err != nil {
-		return nil, wrapAnthropicVertexError("complete", err)
-	}
-	return resp, nil
-}
-
-// Stream implements model.Client. The returned streamer is itself wrapped
-// so mid-stream failures surfacing through Recv are classified too, not
-// just stream-establishment errors.
-func (m *anthropicErrorMapper) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
-	s, err := m.next.Stream(ctx, req)
-	if err != nil {
-		return nil, wrapAnthropicVertexError("stream", err)
-	}
-	return &anthropicStreamerMapper{next: s}, nil
-}
-
-// anthropicStreamerMapper decorates a model.Streamer so errors returned by
-// Recv mid-stream go through the same classification as call-establishment
-// errors. io.EOF (normal stream termination) and context cancellation or
-// deadline errors pass through unmapped: they are consumer-side flow
-// control, not provider failures.
-type anthropicStreamerMapper struct {
-	next model.Streamer
-}
-
-// Recv implements model.Streamer.
-func (s *anthropicStreamerMapper) Recv() (model.Chunk, error) {
-	chunk, err := s.next.Recv()
-	if err == nil ||
-		errors.Is(err, io.EOF) ||
-		errors.Is(err, context.Canceled) ||
-		errors.Is(err, context.DeadlineExceeded) {
-		return chunk, err
-	}
-	return chunk, wrapAnthropicVertexError("stream_recv", err)
-}
-
-// Close implements model.Streamer.
-func (s *anthropicStreamerMapper) Close() error { return s.next.Close() }
-
-// Metadata implements model.Streamer.
-func (s *anthropicStreamerMapper) Metadata() map[string]any { return s.next.Metadata() }
-
-// wrapAnthropicVertexError classifies Anthropic SDK errors (which carry the
-// Vertex HTTP status on *anthropic.Error) into the provider error contract,
-// using the same status-to-kind table as wrapGeminiError (see errors.go).
-func wrapAnthropicVertexError(operation string, err error) error {
-	if err == nil {
-		return nil
-	}
-	status := 0
-	message := ""
-	var apiErr *sdk.Error
-	if errors.As(err, &apiErr) {
-		status = apiErr.StatusCode
-		message = anthropicErrorMessage(apiErr)
-	} else {
-		message = err.Error()
-	}
-	return classifyProviderError(anthropicProviderName, operation, status, message, err)
-}
-
-// anthropicErrorMessage safely renders an *anthropic.Error's message.
-//
-// (*anthropic.Error).Error() unconditionally dereferences both Request and
-// Response (see internal/apierror/apierror.go), which the SDK always
-// populates when it constructs the error from a live HTTP round trip but
-// which are nil on any error built without one — including hand-constructed
-// test doubles. Calling apiErr.Error() in that case panics with a nil
-// pointer dereference instead of returning a string, so this falls back to
-// a status-only message whenever either field is missing.
-func anthropicErrorMessage(apiErr *sdk.Error) string {
-	if apiErr.Request == nil || apiErr.Response == nil {
-		return fmt.Sprintf("anthropic api error: status %d", apiErr.StatusCode)
-	}
-	return apiErr.Error()
+	return inner, nil
 }

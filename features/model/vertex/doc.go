@@ -1,7 +1,11 @@
 // Package vertex provides Google Cloud Vertex AI model clients for goa-ai:
 // a Gemini adapter implementing model.Client and model.TokenCounter, and a
-// Claude-on-Vertex constructor that reuses features/model/anthropic through
-// the Anthropic SDK's vertex transport.
+// Claude-on-Vertex constructor that is pure construction — it builds an
+// Anthropic SDK client against the SDK's Vertex transport and hands it to
+// features/model/anthropic, which owns both the Messages translation and
+// the HTTP-status provider-error classification for every Anthropic-hosted
+// adapter (direct API and Vertex-hosted alike). This file adds no
+// translation or error-mapping code of its own.
 //
 // Adapter contract (mirrors features/model/openai/contract.go):
 //

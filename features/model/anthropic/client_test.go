@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"testing"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -310,6 +313,62 @@ func TestComplete_RateLimited(t *testing.T) {
 	if !errors.Is(err, model.ErrRateLimited) {
 		t.Fatalf("expected ErrRateLimited, got %v", err)
 	}
+}
+
+// TestComplete_RealSDK429Classified verifies that a genuine Anthropic SDK
+// error (*sdk.Error, always returned as a pointer) with StatusCode 429 is
+// classified as rate-limited. Before this decorator-free classification
+// existed, isRateLimited only matched errors that already wrapped
+// model.ErrRateLimited, so a real SDK 429 was never detected.
+func TestComplete_RealSDK429Classified(t *testing.T) {
+	stub := &stubMessagesClient{
+		err: &sdk.Error{StatusCode: http.StatusTooManyRequests},
+	}
+	cl, err := New(stub, Options{DefaultModel: "claude-3.5-sonnet", MaxTokens: 64})
+	require.NoError(t, err)
+
+	req := &model.Request{
+		Messages: []*model.Message{
+			{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "hi"}}},
+		},
+	}
+
+	_, err = cl.Complete(context.Background(), req)
+	require.ErrorIs(t, err, model.ErrRateLimited)
+	pe, ok := model.AsProviderError(err)
+	require.True(t, ok)
+	assert.Equal(t, model.ProviderErrorKindRateLimited, pe.Kind())
+	assert.Equal(t, "anthropic", pe.Provider())
+	assert.True(t, pe.Retryable())
+}
+
+// TestStream_EstablishmentErrorClassified verifies that a stream
+// establishment failure (surfaced by ssestream.Stream.Err() immediately
+// after NewStreaming) is classified via the same status-to-kind table as
+// Complete, not just left as an opaque wrapped error.
+func TestStream_EstablishmentErrorClassified(t *testing.T) {
+	stub := &stubMessagesClient{
+		stream: ssestream.NewStream[sdk.MessageStreamEventUnion](
+			&noopDecoder{},
+			&sdk.Error{StatusCode: http.StatusInternalServerError},
+		),
+	}
+	cl, err := New(stub, Options{DefaultModel: "claude-3.5-sonnet", MaxTokens: 64})
+	require.NoError(t, err)
+
+	req := &model.Request{
+		Messages: []*model.Message{
+			{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "hi"}}},
+		},
+	}
+
+	streamer, err := cl.Stream(context.Background(), req)
+	require.Error(t, err)
+	assert.Nil(t, streamer)
+	pe, ok := model.AsProviderError(err)
+	require.True(t, ok)
+	assert.Equal(t, model.ProviderErrorKindUnavailable, pe.Kind())
+	assert.True(t, pe.Retryable())
 }
 
 func TestComplete_RejectsStructuredOutput(t *testing.T) {

@@ -5,9 +5,6 @@ import "goa.design/goa-ai/runtime/agent/model"
 // geminiProviderName identifies the Gemini-on-Vertex adapter in provider errors.
 const geminiProviderName = "vertex-gemini"
 
-// anthropicProviderName identifies the Claude-on-Vertex adapter in provider errors.
-const anthropicProviderName = "vertex-anthropic"
-
 // Options configures the Gemini-on-Vertex model client.
 //
 // Model IDs are Vertex publisher model names (e.g. "gemini-2.5-pro",

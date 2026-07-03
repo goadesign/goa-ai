@@ -112,7 +112,7 @@ func (s *anthropicStreamer) run() {
 		}
 		if !s.stream.Next() {
 			if err := s.stream.Err(); err != nil {
-				s.setErr(err)
+				s.setErr(wrapAnthropicError("stream_recv", err))
 			} else if err := s.ctx.Err(); err != nil {
 				s.setErr(err)
 			} else {
