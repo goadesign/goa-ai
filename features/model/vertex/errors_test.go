@@ -25,6 +25,11 @@ func TestWrapGeminiError(t *testing.T) {
 		{"401", http.StatusUnauthorized, model.ProviderErrorKindAuth, false, false},
 		{"403", http.StatusForbidden, model.ProviderErrorKindAuth, false, false},
 		{"503", http.StatusServiceUnavailable, model.ProviderErrorKindUnavailable, true, false},
+		// 520 is outside the old narrow bound (500-511, i.e.
+		// StatusNetworkAuthenticationRequired) but is still a server-side
+		// 5xx failure (a Cloudflare-style "unknown error" code some
+		// upstreams surface) and must classify as unavailable/retryable.
+		{"520", 520, model.ProviderErrorKindUnavailable, true, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

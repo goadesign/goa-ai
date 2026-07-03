@@ -1385,7 +1385,7 @@ git commit -m "feat(vertex): Gemini Complete with provider error mapping"
 - Consumes: `prepareRequest`, `GenerativeClient.GenerateContentStream` (an `iter.Seq2[*genai.GenerateContentResponse, error]`), Task 5 translation helpers.
 - Produces: `(*Client) Stream(ctx, req) (model.Streamer, error)`. Copies the canonical streamer skeleton from `features/model/anthropic/stream.go`: background goroutine, buffered `chan model.Chunk` (size 32), `Recv() (model.Chunk, error)` returning `io.EOF` on clean end, `Close()`, `Metadata() map[string]any` (stores final `"usage"`). Chunk mapping per streamed `GenerateContentResponse`:
   - text part → `ChunkTypeText` with assistant `Message{Parts: [TextPart]}`.
-  - thought part → `ChunkTypeThinking` with `Chunk.Thinking` set and a `ThinkingPart{Final: false}`; when the part carries a `ThoughtSignature`, also emit the final `ThinkingPart{Final: true, Signature}`.
+  - Thinking: incremental `ChunkTypeThinking` drafts (`Final:false`, text-bearing parts only); on signature arrival emit ONE final `ThinkingPart` carrying the full accumulated text AND base64 signature (the transcript ledger only replays parts with both).
   - function call part → single canonical `ChunkTypeToolCall` (Gemini delivers whole calls; no deltas needed).
   - `UsageMetadata` on the final chunk → `ChunkTypeUsage` with `UsageDelta` (stamped Model/ModelClass).
   - `FinishReason` non-empty → `ChunkTypeStop` with `StopReason` (emitted after usage).

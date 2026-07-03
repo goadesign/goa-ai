@@ -74,7 +74,10 @@ func (c *Client) CountTokens(ctx context.Context, req *model.Request) (model.Tok
 	if err != nil {
 		return model.TokenCount{}, err
 	}
-	resp, err := c.models.CountTokens(ctx, prep.modelID, prep.contents, nil)
+	resp, err := c.models.CountTokens(ctx, prep.modelID, prep.contents, &genai.CountTokensConfig{
+		SystemInstruction: prep.config.SystemInstruction,
+		Tools:             prep.config.Tools,
+	})
 	if err != nil {
 		return model.TokenCount{}, wrapGeminiError("count_tokens", err)
 	}

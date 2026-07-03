@@ -94,6 +94,37 @@ func TestEncodeContentsThinkingEcho(t *testing.T) {
 	assert.Equal(t, []byte("sig"), parts[0].ThoughtSignature) // "c2ln" is base64("sig")
 }
 
+func TestEncodeContentsToolResultOrphanNameSanitized(t *testing.T) {
+	msgs := []*model.Message{
+		{Role: model.ConversationRoleUser, Parts: []model.Part{
+			model.ToolResultPart{ToolUseID: "feed/find dup!", Content: map[string]any{"ok": true}},
+		}},
+	}
+	_, contents, err := encodeContents(msgs, nil)
+	require.NoError(t, err)
+	fr := contents[0].Parts[0].FunctionResponse
+	require.NotNil(t, fr)
+	assert.Equal(t, sanitizeToolName("feed/find dup!"), fr.Name)
+	assert.NotContains(t, fr.Name, "/")
+	assert.NotContains(t, fr.Name, " ")
+}
+
+func TestEncodeContentsRedactedOnlyThinkingSkipped(t *testing.T) {
+	msgs := []*model.Message{
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+			model.ThinkingPart{Redacted: []byte("opaque"), Final: true},
+			model.TextPart{Text: "answer"},
+		}},
+	}
+	_, contents, err := encodeContents(msgs, nil)
+	require.NoError(t, err)
+	require.Len(t, contents, 1)
+	// The redacted-only thinking part is dropped entirely, leaving only the
+	// text part.
+	require.Len(t, contents[0].Parts, 1)
+	assert.Equal(t, "answer", contents[0].Parts[0].Text)
+}
+
 func TestEncodeContentsThinkingSignatureInvalidBase64(t *testing.T) {
 	msgs := []*model.Message{
 		{Role: model.ConversationRoleAssistant, Parts: []model.Part{

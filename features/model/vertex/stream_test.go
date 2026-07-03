@@ -67,8 +67,13 @@ func TestStreamTextToolCallUsageStop(t *testing.T) {
 func TestStreamThinkingWithSignature(t *testing.T) {
 	sig := []byte("sig-bytes")
 	stub := &stubGenerativeClient{streamChunks: []*genai.GenerateContentResponse{
+		// Thought text split across two parts; the signature only arrives
+		// on the last one. The final ThinkingPart must carry the FULL
+		// accumulated text ("thinking hard about it"), not just the text
+		// from the part that happened to carry the signature.
 		{Candidates: []*genai.Candidate{{Content: &genai.Content{Parts: []*genai.Part{
-			{Thought: true, Text: "thinking hard", ThoughtSignature: sig},
+			{Thought: true, Text: "thinking hard "},
+			{Thought: true, Text: "about it", ThoughtSignature: sig},
 		}}}}},
 		{Candidates: []*genai.Candidate{{FinishReason: genai.FinishReasonStop}}},
 	}}
@@ -81,29 +86,143 @@ func TestStreamThinkingWithSignature(t *testing.T) {
 	defer func() { assert.NoError(t, s.Close()) }()
 
 	chunks := drain(t, s)
-	require.Len(t, chunks, 3)
+	require.Len(t, chunks, 4)
 
-	// Draft thinking chunk carries the reasoning text and is not final.
+	// First draft thinking chunk carries the first part's text and is not final.
 	assert.Equal(t, model.ChunkTypeThinking, chunks[0].Type)
-	assert.Equal(t, "thinking hard", chunks[0].Thinking)
+	assert.Equal(t, "thinking hard ", chunks[0].Thinking)
 	require.NotNil(t, chunks[0].Message)
 	require.Len(t, chunks[0].Message.Parts, 1)
-	draft, ok := chunks[0].Message.Parts[0].(model.ThinkingPart)
+	draft1, ok := chunks[0].Message.Parts[0].(model.ThinkingPart)
 	require.True(t, ok)
-	assert.False(t, draft.Final)
-	assert.Equal(t, "thinking hard", draft.Text)
+	assert.False(t, draft1.Final)
+	assert.Equal(t, "thinking hard ", draft1.Text)
 
-	// The thought signature yields a second, final thinking chunk carrying
-	// the base64-encoded signature.
+	// Second draft thinking chunk carries the second part's incremental
+	// text (not the accumulated text).
 	assert.Equal(t, model.ChunkTypeThinking, chunks[1].Type)
-	require.NotNil(t, chunks[1].Message)
-	require.Len(t, chunks[1].Message.Parts, 1)
-	final, ok := chunks[1].Message.Parts[0].(model.ThinkingPart)
+	assert.Equal(t, "about it", chunks[1].Thinking)
+	draft2, ok := chunks[1].Message.Parts[0].(model.ThinkingPart)
+	require.True(t, ok)
+	assert.False(t, draft2.Final)
+	assert.Equal(t, "about it", draft2.Text)
+
+	// The thought signature yields a third, final thinking chunk carrying
+	// the FULL accumulated text and the base64-encoded signature.
+	assert.Equal(t, model.ChunkTypeThinking, chunks[2].Type)
+	require.NotNil(t, chunks[2].Message)
+	require.Len(t, chunks[2].Message.Parts, 1)
+	final, ok := chunks[2].Message.Parts[0].(model.ThinkingPart)
 	require.True(t, ok)
 	assert.True(t, final.Final)
+	assert.Equal(t, "thinking hard about it", final.Text)
 	assert.Equal(t, base64.StdEncoding.EncodeToString(sig), final.Signature)
 
-	assert.Equal(t, model.ChunkTypeStop, chunks[2].Type)
+	assert.Equal(t, model.ChunkTypeStop, chunks[3].Type)
+}
+
+// TestStreamThinkingSignatureLedgerSeamRoundTrip verifies the seam between
+// the streamer and two downstream consumers of the final ThinkingPart:
+// (1) the transcript ledger only replays thinking parts with BOTH Text and
+// Signature set (see runtime/agent/transcript/ledger.go BuildMessages), and
+// (2) encodeContents (features/model/vertex/messages.go) must be able to
+// round-trip that exact part back into a genai Part with the original
+// signature bytes when the assistant message is replayed on a later turn.
+func TestStreamThinkingSignatureLedgerSeamRoundTrip(t *testing.T) {
+	sig := []byte("sig-bytes-for-round-trip")
+	stub := &stubGenerativeClient{streamChunks: []*genai.GenerateContentResponse{
+		{Candidates: []*genai.Candidate{{Content: &genai.Content{Parts: []*genai.Part{
+			{Thought: true, Text: "part one "},
+			{Thought: true, Text: "part two", ThoughtSignature: sig},
+		}}}}},
+		{Candidates: []*genai.Candidate{{FinishReason: genai.FinishReasonStop}}},
+	}}
+	cl, err := New(stub, Options{DefaultModel: "gemini-2.5-flash"})
+	require.NoError(t, err)
+	s, err := cl.Stream(context.Background(), &model.Request{
+		Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "go"}}}},
+	})
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, s.Close()) }()
+
+	chunks := drain(t, s)
+	var final *model.ThinkingPart
+	for _, ch := range chunks {
+		if ch.Type != model.ChunkTypeThinking || ch.Message == nil {
+			continue
+		}
+		for _, p := range ch.Message.Parts {
+			if tp, ok := p.(model.ThinkingPart); ok && tp.Final {
+				tp := tp
+				final = &tp
+			}
+		}
+	}
+	require.NotNil(t, final, "expected a final ThinkingPart in the stream")
+	require.NotEmpty(t, final.Text)
+	require.NotEmpty(t, final.Signature)
+
+	// The ledger only replays this part if both Text and Signature survive
+	// (the bug this fix closes was a final part with Signature but no
+	// Text, which the ledger's `v.Text != "" && v.Signature != ""` filter
+	// silently drops).
+	require.True(t, final.Text != "" && final.Signature != "")
+
+	// Place the final ThinkingPart in an assistant message and run it
+	// through the same translation the runtime uses to build the next
+	// request's contents.
+	msg := &model.Message{
+		Role: model.ConversationRoleAssistant,
+		Parts: []model.Part{
+			*final,
+			model.TextPart{Text: "answer"},
+		},
+	}
+	_, contents, err := encodeContents([]*model.Message{msg}, nil)
+	require.NoError(t, err)
+	require.Len(t, contents, 1)
+	require.Len(t, contents[0].Parts, 2)
+
+	gp := contents[0].Parts[0]
+	assert.True(t, gp.Thought)
+	assert.Equal(t, final.Text, gp.Text)
+	assert.Equal(t, sig, gp.ThoughtSignature, "signature must round-trip byte-for-byte")
+}
+
+func TestStreamUsageEmittedOnceWithLatestValues(t *testing.T) {
+	stub := &stubGenerativeClient{streamChunks: []*genai.GenerateContentResponse{
+		{
+			Candidates:    []*genai.Candidate{{Content: &genai.Content{Parts: []*genai.Part{{Text: "part one "}}}}},
+			UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 3, CandidatesTokenCount: 1, TotalTokenCount: 4},
+		},
+		{
+			Candidates:    []*genai.Candidate{{FinishReason: genai.FinishReasonStop}},
+			UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 7, CandidatesTokenCount: 5, TotalTokenCount: 12},
+		},
+	}}
+	cl, err := New(stub, Options{DefaultModel: "gemini-2.5-flash"})
+	require.NoError(t, err)
+	s, err := cl.Stream(context.Background(), &model.Request{
+		Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "go"}}}},
+	})
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, s.Close()) }()
+
+	chunks := drain(t, s)
+	var usageChunks []model.Chunk
+	for _, ch := range chunks {
+		if ch.Type == model.ChunkTypeUsage {
+			usageChunks = append(usageChunks, ch)
+		}
+	}
+	require.Len(t, usageChunks, 1, "exactly one usage chunk must be emitted even though two responses carried UsageMetadata")
+	assert.Equal(t, 7, usageChunks[0].UsageDelta.InputTokens)
+	assert.Equal(t, 12, usageChunks[0].UsageDelta.TotalTokens)
+
+	usage, ok := s.Metadata()["usage"].(model.TokenUsage)
+	require.True(t, ok)
+	assert.Equal(t, 7, usage.InputTokens)
+	assert.Equal(t, 12, usage.TotalTokens)
 }
 
 // signalingStreamClient wraps stubGenerativeClient to close pumpDone once

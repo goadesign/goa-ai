@@ -51,7 +51,10 @@ func classifyProviderError(provider, operation string, status int, message strin
 		kind = model.ProviderErrorKindInvalidRequest
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
 		kind = model.ProviderErrorKindAuth
-	case status >= http.StatusInternalServerError && status <= http.StatusNetworkAuthenticationRequired:
+	case status >= 500 && status < 600:
+		// Widened from the narrower [500, 511] (StatusNetworkAuthenticationRequired)
+		// range: any 5xx is a server-side failure and should be treated as
+		// unavailable/retryable, not left unclassified.
 		kind = model.ProviderErrorKindUnavailable
 		retryable = true
 	}

@@ -13,14 +13,15 @@ import (
 )
 
 type stubGenerativeClient struct {
-	lastModel    string
-	lastContents []*genai.Content
-	lastConfig   *genai.GenerateContentConfig
-	resp         *genai.GenerateContentResponse
-	err          error
-	streamChunks []*genai.GenerateContentResponse
-	streamErr    error
-	countResp    *genai.CountTokensResponse
+	lastModel       string
+	lastContents    []*genai.Content
+	lastConfig      *genai.GenerateContentConfig
+	resp            *genai.GenerateContentResponse
+	err             error
+	streamChunks    []*genai.GenerateContentResponse
+	streamErr       error
+	countResp       *genai.CountTokensResponse
+	lastCountConfig *genai.CountTokensConfig
 }
 
 func (s *stubGenerativeClient) GenerateContent(_ context.Context, m string, c []*genai.Content, cfg *genai.GenerateContentConfig) (*genai.GenerateContentResponse, error) {
@@ -42,8 +43,8 @@ func (s *stubGenerativeClient) GenerateContentStream(_ context.Context, m string
 	}
 }
 
-func (s *stubGenerativeClient) CountTokens(_ context.Context, m string, c []*genai.Content, _ *genai.CountTokensConfig) (*genai.CountTokensResponse, error) {
-	s.lastModel, s.lastContents = m, c
+func (s *stubGenerativeClient) CountTokens(_ context.Context, m string, c []*genai.Content, cfg *genai.CountTokensConfig) (*genai.CountTokensResponse, error) {
+	s.lastModel, s.lastContents, s.lastCountConfig = m, c, cfg
 	return s.countResp, s.err
 }
 

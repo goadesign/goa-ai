@@ -17,4 +17,16 @@
 //     failures as *model.ProviderError with kind/status/retryable set.
 //   - Unsupported feature combinations fail fast (e.g. Gemini structured
 //     output cannot be combined with tool definitions).
+//
+// Known limitations:
+//
+//   - Gemini 3-class models attach thought signatures to functionCall parts
+//     (not just to thought parts), but model.ToolCall and model.ToolUsePart
+//     have no field to carry a signature today. This adapter drops any
+//     signature attached to a function call, which is a no-op for
+//     gemini-2.5-class targets (they do not attach signatures there) but
+//     will lose replay-required signatures on Gemini 3-class models.
+//     Supporting it requires extending the model package (a Signature field
+//     on ToolCall/ToolUsePart plus corresponding transcript-ledger and
+//     translator changes) before this adapter can round-trip it.
 package vertex

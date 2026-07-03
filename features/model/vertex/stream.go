@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/base64"
 	"io"
+	"strings"
 	"sync"
 
 	"google.golang.org/genai"
@@ -47,6 +48,9 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 	defer close(s.chunks)
 	callIndex := 0
 	var stopReason string
+	var thoughtText strings.Builder
+	var usageSeen bool
+	var latestUsage model.TokenUsage
 	for resp, err := range seq {
 		if err != nil {
 			s.setErr(wrapGeminiError("generate_content_stream", err))
@@ -72,16 +76,30 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 						ID:      toolCallID(part.FunctionCall, callIndex),
 					}})
 				case part.Thought:
-					tp := model.ThinkingPart{Text: part.Text}
-					s.emit(model.Chunk{Type: model.ChunkTypeThinking, Thinking: part.Text,
-						Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{tp}}})
+					// Accumulate thought text across Thought parts (mirrors
+					// the anthropic streamer's thinkingBuffer). Draft chunks
+					// are display-only and only emitted for text-bearing
+					// parts, so a signature-only part produces no empty-draft
+					// noise. When a signature arrives, the final ThinkingPart
+					// carries the FULL accumulated text plus the signature —
+					// the transcript ledger (BuildMessages) only replays
+					// thinking parts that have both Text and Signature set,
+					// so a signature emitted alone would be silently dropped.
+					if part.Text != "" {
+						thoughtText.WriteString(part.Text)
+						draft := model.ThinkingPart{Text: part.Text}
+						s.emit(model.Chunk{Type: model.ChunkTypeThinking, Thinking: part.Text,
+							Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{draft}}})
+					}
 					if len(part.ThoughtSignature) > 0 {
 						final := model.ThinkingPart{
-							Final:     true,
+							Text:      thoughtText.String(),
 							Signature: base64.StdEncoding.EncodeToString(part.ThoughtSignature),
+							Final:     true,
 						}
 						s.emit(model.Chunk{Type: model.ChunkTypeThinking,
 							Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{final}}})
+						thoughtText.Reset()
 					}
 				case part.Text != "":
 					s.emit(model.Chunk{Type: model.ChunkTypeText,
@@ -93,12 +111,18 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 			stopReason = string(cand.FinishReason)
 		}
 		if resp.UsageMetadata != nil {
-			usage := translateUsage(resp.UsageMetadata, prep.modelID, prep.modelClass)
+			// Gemini streaming UsageMetadata is cumulative (not a delta), and
+			// consumers sum usage chunks across the stream, so only the
+			// latest value is emitted, and only once, below.
+			latestUsage = translateUsage(resp.UsageMetadata, prep.modelID, prep.modelClass)
+			usageSeen = true
 			s.mu.Lock()
-			s.meta["usage"] = usage
+			s.meta["usage"] = latestUsage
 			s.mu.Unlock()
-			s.emit(model.Chunk{Type: model.ChunkTypeUsage, UsageDelta: &usage})
 		}
+	}
+	if usageSeen {
+		s.emit(model.Chunk{Type: model.ChunkTypeUsage, UsageDelta: &latestUsage})
 	}
 	if stopReason != "" {
 		s.emit(model.Chunk{Type: model.ChunkTypeStop, StopReason: stopReason})

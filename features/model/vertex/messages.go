@@ -96,7 +96,11 @@ func encodePart(part model.Part, canonToProv map[string]string, toolUseNames map
 		if err != nil {
 			return nil, fmt.Errorf("vertex: encode tool result %q: %w", p.ToolUseID, err)
 		}
-		name := p.ToolUseID
+		// Orphan result (no matching ToolUsePart earlier in the transcript):
+		// fall back to the tool-use ID itself, sanitized the same way tool
+		// names are, since Gemini requires FunctionResponse.Name to be a
+		// legal function-name-shaped string.
+		name := sanitizeToolName(p.ToolUseID)
 		if canonName, ok := toolUseNames[p.ToolUseID]; ok {
 			name = providerToolName(canonName, canonToProv)
 		}
@@ -106,6 +110,14 @@ func encodePart(part model.Part, canonToProv map[string]string, toolUseNames map
 			Response: resp,
 		}}, nil
 	case model.ThinkingPart:
+		if p.Text == "" && p.Signature == "" {
+			// Redacted-only (or otherwise empty) thinking part: Gemini has
+			// no redacted-thinking round-trip (no Part field accepts opaque
+			// redacted bytes), so there is nothing valid to replay. Emitting
+			// an empty Part{Thought: true} would just be wire noise, so
+			// drop the part entirely instead.
+			return nil, nil
+		}
 		// Signature contract: model.ThinkingPart.Signature is an opaque
 		// string, while genai.Part.ThoughtSignature is []byte. This adapter
 		// defines the string form as standard base64 of the raw signature
