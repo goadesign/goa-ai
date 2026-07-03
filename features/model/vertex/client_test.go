@@ -84,8 +84,36 @@ func TestCompleteTextOnly(t *testing.T) {
 	require.NotNil(t, stub.lastConfig)
 	assert.NotNil(t, stub.lastConfig.SystemInstruction)
 	assert.EqualValues(t, 256, stub.lastConfig.MaxOutputTokens)
+	require.NotNil(t, stub.lastConfig.Temperature)
+	assert.InDelta(t, 0.2, *stub.lastConfig.Temperature, 1e-6)
 	assert.Equal(t, string(genai.FinishReasonStop), resp.StopReason)
 	assert.Equal(t, 10, resp.Usage.InputTokens)
+}
+
+func TestCompleteSystemOnlyTranscriptRejected(t *testing.T) {
+	stub := &stubGenerativeClient{resp: textResp("x")}
+	cl, err := New(stub, Options{DefaultModel: "gemini-2.5-pro"})
+	require.NoError(t, err)
+	_, err = cl.Complete(context.Background(), &model.Request{
+		Messages: []*model.Message{
+			{Role: model.ConversationRoleSystem, Parts: []model.Part{model.TextPart{Text: "be terse"}}},
+		},
+	})
+	require.ErrorContains(t, err, "no user or assistant messages")
+}
+
+func TestCompleteStructuredOutputWithoutTools(t *testing.T) {
+	stub := &stubGenerativeClient{resp: textResp(`{}`)}
+	cl, err := New(stub, Options{DefaultModel: "gemini-2.5-pro"})
+	require.NoError(t, err)
+	_, err = cl.Complete(context.Background(), &model.Request{
+		Messages:         []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "hi"}}}},
+		StructuredOutput: &model.StructuredOutput{Name: "out", Schema: []byte(`{"type":"object"}`)},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, stub.lastConfig)
+	assert.Equal(t, "application/json", stub.lastConfig.ResponseMIMEType)
+	assert.NotNil(t, stub.lastConfig.ResponseJsonSchema)
 }
 
 func TestCompleteStructuredOutputWithToolsRejected(t *testing.T) {
