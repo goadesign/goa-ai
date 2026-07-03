@@ -127,9 +127,11 @@ func AsProviderError(err error) (*ProviderError, bool) {
 
 // ClassifyHTTPStatus maps an HTTP status code returned by a model provider to
 // the goa-ai provider error contract. It is the single status-to-kind table
-// shared by every HTTP-backed provider adapter (Vertex Gemini, Vertex/direct
-// Anthropic; Bedrock keeps its own table because it must also preserve a
-// smithy-specific error code that this classifier does not carry).
+// for adapters that need only status-based classification (Vertex Gemini,
+// Vertex/direct Anthropic). Adapters that must also preserve a
+// provider-specific error code through ProviderError.Code (Bedrock's smithy
+// exception names, OpenAI's error codes) keep their own tables, since this
+// classifier does not carry a code.
 //
 // status is the provider's HTTP status code, or 0 when the adapter could not
 // recover one from a non-HTTP error (for example, a network failure or a

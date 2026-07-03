@@ -132,7 +132,7 @@ func encodePart(part model.Part, canonToProv map[string]string, toolUseNames map
 		if p.Signature != "" {
 			sig, err := base64.StdEncoding.DecodeString(p.Signature)
 			if err != nil {
-				return nil, fmt.Errorf("vertex: thinking signature is not valid base64: %w", err)
+				return nil, fmt.Errorf("vertex: encode thinking part: signature is not valid base64: %w", err)
 			}
 			gp.ThoughtSignature = sig
 		}
@@ -171,7 +171,7 @@ func toArgsMap(v any) (map[string]any, error) {
 	}
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil, fmt.Errorf("vertex: tool input must be a JSON object: %w", err)
+		return nil, fmt.Errorf("tool input must be a JSON object: %w", err)
 	}
 	return m, nil
 }

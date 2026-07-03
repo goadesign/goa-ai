@@ -4,8 +4,8 @@
 // Anthropic SDK client against the SDK's Vertex transport and hands it to
 // features/model/anthropic, which owns both the Messages translation and
 // the HTTP-status provider-error classification for every Anthropic-hosted
-// adapter (direct API and Vertex-hosted alike). This file adds no
-// translation or error-mapping code of its own.
+// adapter (direct API and Vertex-hosted alike). The constructor (see
+// anthropic.go) adds no translation or error-mapping code of its own.
 //
 // Adapter contract (mirrors features/model/openai/contract.go):
 //

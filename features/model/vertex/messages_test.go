@@ -118,7 +118,7 @@ func TestEncodeContentsThinkingSignatureInvalidBase64(t *testing.T) {
 	}
 	_, _, err := encodeContents(msgs, nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "thinking signature is not valid base64")
+	assert.Contains(t, err.Error(), "vertex: encode thinking part: signature is not valid base64")
 }
 
 func TestEncodeContentsToolUseNonObjectInputErrors(t *testing.T) {
@@ -129,5 +129,5 @@ func TestEncodeContentsToolUseNonObjectInputErrors(t *testing.T) {
 	}
 	_, _, err := encodeContents(msgs, nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "tool input must be a JSON object")
+	assert.Contains(t, err.Error(), `vertex: encode tool use "feed/find_duplicates": tool input must be a JSON object`)
 }

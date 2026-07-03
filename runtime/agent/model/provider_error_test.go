@@ -27,6 +27,10 @@ func TestClassifyHTTPStatus(t *testing.T) {
 		// server-side 5xx failure (a Cloudflare-style "unknown error" code
 		// some upstreams surface) and must classify as unavailable/retryable.
 		{"520", 520, ProviderErrorKindUnavailable, true, false},
+		// 599/600 pin the upper bound of the 5xx band: 599 is the last
+		// status classified as unavailable/retryable; 600 falls outside it.
+		{"599", 599, ProviderErrorKindUnavailable, true, false},
+		{"600", 600, ProviderErrorKindUnknown, false, false},
 		{"unknown", 418, ProviderErrorKindUnknown, false, false},
 		{"zero", 0, ProviderErrorKindUnknown, false, false},
 	}

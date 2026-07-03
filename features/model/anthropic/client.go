@@ -542,6 +542,11 @@ func isProviderSafeToolName(name string) bool {
 // the SDK's Vertex transport and relies on this function for its error
 // classification.
 //
+// Context cancellation and deadline errors pass through unwrapped: they are
+// consumer-side flow control, not provider failures, and must not be
+// classified. (io.EOF never reaches this function; the streamer surfaces
+// normal termination as a nil stream error and emits io.EOF itself.)
+//
 // Non-SDK errors (including bare model.ErrRateLimited sentinels used by
 // tests and any caller that pre-classifies) are classified with status 0
 // (kind unknown); the cause is still preserved as the Unwrap target, so
@@ -549,6 +554,9 @@ func isProviderSafeToolName(name string) bool {
 func wrapAnthropicError(operation string, err error) error {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
 	}
 	status := 0
 	message := ""

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -369,6 +370,28 @@ func TestStream_EstablishmentErrorClassified(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, model.ProviderErrorKindUnavailable, pe.Kind())
 	assert.True(t, pe.Retryable())
+}
+
+// TestComplete_ContextCancelPassthrough verifies that a context-cancellation
+// error surfaced by the SDK call passes through unclassified: cancellation
+// is consumer-side flow control, not a provider failure.
+func TestComplete_ContextCancelPassthrough(t *testing.T) {
+	cause := fmt.Errorf("rpc: %w", context.Canceled)
+	stub := &stubMessagesClient{err: cause}
+	cl, err := New(stub, Options{DefaultModel: "claude-3.5-sonnet", MaxTokens: 64})
+	require.NoError(t, err)
+
+	req := &model.Request{
+		Messages: []*model.Message{
+			{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "hi"}}},
+		},
+	}
+
+	_, err = cl.Complete(context.Background(), req)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, cause, err) // returned unwrapped, exactly as surfaced
+	_, ok := model.AsProviderError(err)
+	assert.False(t, ok)
 }
 
 func TestComplete_RejectsStructuredOutput(t *testing.T) {
