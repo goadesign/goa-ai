@@ -21,6 +21,11 @@
 //     failures as *model.ProviderError with kind/status/retryable set.
 //   - Unsupported feature combinations fail fast (e.g. Gemini structured
 //     output cannot be combined with tool definitions).
+//   - No silent fallbacks for states this adapter's own contract cannot
+//     legally produce: an invalid-base64 ThinkingPart.Signature, a
+//     non-object tool input, and a ToolResultPart with no matching
+//     ToolUsePart in the transcript are all invariant violations and
+//     return precise errors instead of a best-effort coercion.
 //
 // Known limitations:
 //

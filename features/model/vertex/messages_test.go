@@ -55,25 +55,25 @@ func TestEncodeContentsToolResultWithoutToolUse(t *testing.T) {
 			model.ToolResultPart{ToolUseID: "orphan", Content: map[string]any{"ok": true}},
 		}},
 	}
-	_, contents, err := encodeContents(msgs, nil)
-	require.NoError(t, err)
-	require.Len(t, contents, 1)
-	fr := contents[0].Parts[0].FunctionResponse
-	require.NotNil(t, fr)
-	assert.Equal(t, "orphan", fr.ID)
-	assert.Equal(t, "orphan", fr.Name) // no matching tool use: Name falls back to the ID
+	_, _, err := encodeContents(msgs, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `tool result "orphan" has no matching tool use`)
 }
 
 func TestEncodeContentsToolResultErrorDoesNotMutateContent(t *testing.T) {
 	content := map[string]any{"detail": "boom"}
 	msgs := []*model.Message{
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+			model.ToolUsePart{ID: "c1", Name: "feed/find_duplicates", Input: map[string]any{}},
+		}},
 		{Role: model.ConversationRoleUser, Parts: []model.Part{
 			model.ToolResultPart{ToolUseID: "c1", Content: content, IsError: true},
 		}},
 	}
 	_, contents, err := encodeContents(msgs, nil)
 	require.NoError(t, err)
-	fr := contents[0].Parts[0].FunctionResponse
+	require.Len(t, contents, 2)
+	fr := contents[1].Parts[0].FunctionResponse
 	require.NotNil(t, fr)
 	assert.Equal(t, true, fr.Response["error"])
 	assert.NotContains(t, content, "error") // caller-owned map must stay untouched
@@ -92,21 +92,6 @@ func TestEncodeContentsThinkingEcho(t *testing.T) {
 	require.Len(t, parts, 2)
 	assert.True(t, parts[0].Thought)
 	assert.Equal(t, []byte("sig"), parts[0].ThoughtSignature) // "c2ln" is base64("sig")
-}
-
-func TestEncodeContentsToolResultOrphanNameSanitized(t *testing.T) {
-	msgs := []*model.Message{
-		{Role: model.ConversationRoleUser, Parts: []model.Part{
-			model.ToolResultPart{ToolUseID: "feed/find dup!", Content: map[string]any{"ok": true}},
-		}},
-	}
-	_, contents, err := encodeContents(msgs, nil)
-	require.NoError(t, err)
-	fr := contents[0].Parts[0].FunctionResponse
-	require.NotNil(t, fr)
-	assert.Equal(t, sanitizeToolName("feed/find dup!"), fr.Name)
-	assert.NotContains(t, fr.Name, "/")
-	assert.NotContains(t, fr.Name, " ")
 }
 
 func TestEncodeContentsRedactedOnlyThinkingSkipped(t *testing.T) {
@@ -131,9 +116,18 @@ func TestEncodeContentsThinkingSignatureInvalidBase64(t *testing.T) {
 			model.ThinkingPart{Text: "reasoning", Signature: "not*base64!", Final: true},
 		}},
 	}
-	_, contents, err := encodeContents(msgs, nil)
-	require.NoError(t, err)
-	part := contents[0].Parts[0]
-	require.True(t, part.Thought)
-	assert.Equal(t, []byte("not*base64!"), part.ThoughtSignature) // raw-bytes fallback
+	_, _, err := encodeContents(msgs, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "thinking signature is not valid base64")
+}
+
+func TestEncodeContentsToolUseNonObjectInputErrors(t *testing.T) {
+	msgs := []*model.Message{
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+			model.ToolUsePart{ID: "c1", Name: "feed/find_duplicates", Input: "not-an-object"},
+		}},
+	}
+	_, _, err := encodeContents(msgs, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tool input must be a JSON object")
 }
