@@ -64,6 +64,49 @@ func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Respo
 	return translateResponse(resp, prep.modelID, prep.modelClass, prep.provToCanon)
 }
 
+// CountTokens implements model.TokenCounter using Vertex's native counter.
+// Replayed thinking parts are excluded per the TokenCounter contract.
+func (c *Client) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
+	stripped := messagesWithoutThinking(req.Messages)
+	reqCopy := *req
+	reqCopy.Messages = stripped
+	prep, err := c.prepareRequest(&reqCopy)
+	if err != nil {
+		return model.TokenCount{}, err
+	}
+	resp, err := c.models.CountTokens(ctx, prep.modelID, prep.contents, nil)
+	if err != nil {
+		return model.TokenCount{}, wrapGeminiError("count_tokens", err)
+	}
+	return model.TokenCount{
+		Model:       prep.modelID,
+		ModelClass:  prep.modelClass,
+		InputTokens: int(resp.TotalTokens),
+		Exact:       true,
+	}, nil
+}
+
+// messagesWithoutThinking returns a copy of msgs with ThinkingParts removed.
+func messagesWithoutThinking(msgs []*model.Message) []*model.Message {
+	out := make([]*model.Message, 0, len(msgs))
+	for _, msg := range msgs {
+		if msg == nil {
+			continue
+		}
+		parts := make([]model.Part, 0, len(msg.Parts))
+		for _, part := range msg.Parts {
+			if _, isThinking := part.(model.ThinkingPart); isThinking {
+				continue
+			}
+			parts = append(parts, part)
+		}
+		copied := *msg
+		copied.Parts = parts
+		out = append(out, &copied)
+	}
+	return out
+}
+
 // prepareRequest translates a model.Request into Gemini call inputs,
 // applying capability gates shared by Complete, Stream, and CountTokens.
 func (c *Client) prepareRequest(req *model.Request) (*preparedRequest, error) {
