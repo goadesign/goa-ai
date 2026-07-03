@@ -208,7 +208,9 @@ func (p *Planner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planne
 }
 ```
 
-Register model clients during bootstrap with `rt.RegisterModel(...)` or runtime factories such as `rt.NewOpenAIModelClient(...)` and `rt.NewBedrockModelClient(...)`.
+Register model clients during bootstrap with `rt.RegisterModel(...)` or runtime
+factories such as `rt.NewOpenAIModelClient(...)`, `rt.NewBedrockModelClient(...)`,
+`rt.NewVertexGeminiModelClient(...)`, and `rt.NewVertexAnthropicModelClient(...)`.
 
 ---
 
@@ -653,6 +655,20 @@ if err := rt.RegisterModel("default", modelClient); err != nil {
 	log.Fatal(err)
 }
 
+// Vertex AI (ADC auth): Gemini for the small tier, Claude for default/high.
+gemini, err := rt.NewVertexGeminiModelClient(ctx, runtime.VertexConfig{
+	ProjectID:    project,
+	Location:     "global",
+	DefaultModel: "gemini-2.5-flash",
+})
+// ...
+claude, err := rt.NewVertexAnthropicModelClient(ctx, runtime.VertexConfig{
+	ProjectID:    project,
+	Location:     "global",
+	DefaultModel: "claude-sonnet-5",
+	HighModel:    "claude-opus-4-8",
+})
+
 if err := chat.RegisterUsedToolsets(ctx, rt, chat.WithHelpersExecutor(helperExec)); err != nil {
 	log.Fatal(err)
 }
@@ -713,6 +729,7 @@ Production checklist:
 | `features/model/openai` | OpenAI Responses API adapter |
 | `features/model/bedrock` | AWS Bedrock adapter, including visible Claude thinking support |
 | `features/model/anthropic` | Direct Anthropic adapter |
+| `features/model/vertex` | Google Vertex AI adapters: Gemini (`vertex.New`) and Claude-on-Vertex (`vertex.NewAnthropicClient`), both with native token counting and provider-error classification. |
 | `features/model/gateway` | Remote model gateway client |
 | `features/model/middleware` | Rate limiting, logging, metrics middleware |
 | `features/memory/mongo` | Mongo-backed transcript memory store |
