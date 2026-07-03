@@ -101,9 +101,10 @@ func ConsumeStream(ctx context.Context, streamer model.Streamer, req *model.Requ
 				continue
 			}
 			summary.ToolCalls = append(summary.ToolCalls, ToolRequest{
-				Name:       chunk.ToolCall.Name,
-				Payload:    chunk.ToolCall.Payload,
-				ToolCallID: chunk.ToolCall.ID,
+				Name:             chunk.ToolCall.Name,
+				Payload:          chunk.ToolCall.Payload,
+				ToolCallID:       chunk.ToolCall.ID,
+				ThoughtSignature: chunk.ToolCall.ThoughtSignature,
 			})
 		case model.ChunkTypeToolCallDelta:
 			if chunk.ToolCallDelta == nil || chunk.ToolCallDelta.ID == "" || chunk.ToolCallDelta.Delta == "" {

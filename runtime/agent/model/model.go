@@ -193,6 +193,18 @@ type (
 
 		// Input is the JSON-compatible arguments object provided by the model.
 		Input any
+
+		// ThoughtSignature is an opaque, provider-defined signature that some
+		// providers (for example, Gemini 3) attach to a tool-call part to
+		// authenticate the reasoning that produced it. The encoding is
+		// provider-specific (the vertex adapter uses standard base64 of the raw
+		// signature bytes, matching ThinkingPart.Signature). Empty means absent;
+		// providers that do not use it ignore it.
+		//
+		// Replay obligation: when a provider round-trips a tool call it emitted,
+		// runtimes and planners MUST carry this value back unchanged so the
+		// provider can validate the continued reasoning chain.
+		ThoughtSignature string
 	}
 
 	// ToolResultPart carries a tool result provided by the user side.
@@ -301,6 +313,18 @@ type (
 
 		// ID is an optional provider-issued identifier for the tool call.
 		ID string
+
+		// ThoughtSignature is an opaque, provider-defined signature that some
+		// providers (for example, Gemini 3) attach to a tool-call part to
+		// authenticate the reasoning that produced it. The encoding is
+		// provider-specific (the vertex adapter uses standard base64 of the raw
+		// signature bytes, matching ThinkingPart.Signature). Empty means absent;
+		// providers that do not use it ignore it.
+		//
+		// Replay obligation: when a provider round-trips a tool call it emitted,
+		// runtimes and planners MUST carry this value back unchanged so the
+		// provider can validate the continued reasoning chain.
+		ThoughtSignature string
 	}
 
 	// ToolCallDelta is an incremental tool-call payload fragment streamed by

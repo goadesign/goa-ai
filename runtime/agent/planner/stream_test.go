@@ -86,6 +86,29 @@ func TestConsumeStreamStampsUsageIdentityFromRequest(t *testing.T) {
 	require.Equal(t, model.ModelClassHighReasoning, events.usage[0].ModelClass)
 }
 
+func TestConsumeStreamPreservesToolCallThoughtSignature(t *testing.T) {
+	streamer := &testStreamer{
+		chunks: []model.Chunk{
+			{
+				Type: model.ChunkTypeToolCall,
+				ToolCall: &model.ToolCall{
+					Name:             tools.Ident("svc.read.get_time_series"),
+					ID:               "call-1",
+					ThoughtSignature: "opaque-provider-signature",
+				},
+			},
+		},
+	}
+	events := &recordingEvents{}
+
+	summary, err := ConsumeStream(context.Background(), streamer, &model.Request{}, events)
+
+	require.NoError(t, err)
+	require.Len(t, summary.ToolCalls, 1)
+	require.Equal(t, tools.Ident("svc.read.get_time_series"), summary.ToolCalls[0].Name)
+	require.Equal(t, "opaque-provider-signature", summary.ToolCalls[0].ThoughtSignature)
+}
+
 func TestConsumeStreamFallsBackToMetadataUsage(t *testing.T) {
 	streamer := &testStreamer{
 		meta: map[string]any{

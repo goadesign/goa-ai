@@ -77,6 +77,29 @@ func TestRecordAssistantTurnRebuildsToolUsesFromPlannerFacingCalls(t *testing.T)
 	require.Equal(t, rawjson.Message(`{"q":"new"}`), use.Input)
 }
 
+func TestRecordAssistantTurnPreservesToolCallThoughtSignature(t *testing.T) {
+	rt := New()
+	seedTestToolSpecs(rt, newAnyJSONSpec("svc.tools.read", "svc.tools"))
+	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	agentID := agent.Ident("agent-1")
+	calls := []planner.ToolRequest{
+		{
+			Name:             "svc.tools.read",
+			ToolCallID:       "runtime-1",
+			Payload:          rawjson.Message(`{"q":"new"}`),
+			ThoughtSignature: "opaque-provider-signature",
+		},
+	}
+
+	require.NoError(t, rt.recordAssistantTurn(t.Context(), agentID, base, nil, calls, "turn-1"))
+
+	require.Len(t, base.Messages, 1)
+	require.Len(t, base.Messages[0].Parts, 1)
+	use, ok := base.Messages[0].Parts[0].(model.ToolUsePart)
+	require.True(t, ok)
+	require.Equal(t, "opaque-provider-signature", use.ThoughtSignature)
+}
+
 func TestRecordAssistantTurnUsesModelFacingToolIdentityForCompiledCalls(t *testing.T) {
 	rt := New()
 	seedTestToolSpecs(rt, newAnyJSONSpec("atlas.read.get_time_series", "atlas.read"))
@@ -404,6 +427,46 @@ func TestAppendUserToolResults_SkipsBookkeepingResults(t *testing.T) {
 	part, ok := base.Messages[0].Parts[0].(model.ToolResultPart)
 	require.True(t, ok)
 	require.Equal(t, "call-1", part.ToolUseID)
+}
+
+func TestAppendRetryableBookkeepingToolUsesPreservesToolCallThoughtSignature(t *testing.T) {
+	rt := New()
+	seedTestToolSpecs(
+		rt,
+		func() tools.ToolSpec {
+			spec := newAnyJSONSpec("tasks.progress.complete", "tasks.progress")
+			spec.Bookkeeping = true
+			spec.TerminalRun = true
+			return spec
+		}(),
+	)
+	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	agentID := agent.Ident("agent-1")
+
+	call := planner.ToolRequest{
+		Name:             "tasks.progress.complete",
+		ToolCallID:       "call-1",
+		Payload:          rawjson.Message(`{"title":"Final brief"}`),
+		ThoughtSignature: "opaque-provider-signature",
+	}
+	tr := &planner.ToolResult{
+		Name:       call.Name,
+		ToolCallID: call.ToolCallID,
+		Error:      planner.NewToolError("brief.summary length must be <= 600"),
+		RetryHint: &planner.RetryHint{
+			Reason:             planner.RetryReasonInvalidArguments,
+			Tool:               call.Name,
+			ClarifyingQuestion: "Please resend tasks.progress.complete with a payload that satisfies: brief.summary length must be <= 600.",
+		},
+	}
+
+	appendRetryableBookkeepingToolUsesForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr})
+
+	require.Len(t, base.Messages, 1)
+	require.Equal(t, model.ConversationRoleAssistant, base.Messages[0].Role)
+	use, ok := base.Messages[0].Parts[0].(model.ToolUsePart)
+	require.True(t, ok)
+	require.Equal(t, "opaque-provider-signature", use.ThoughtSignature)
 }
 
 func TestAppendUserToolResults_ReplaysRetryableBookkeepingFailures(t *testing.T) {

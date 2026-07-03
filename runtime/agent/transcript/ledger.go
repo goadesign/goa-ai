@@ -59,6 +59,11 @@ type (
 		Name string
 		// Args are the JSON‑encodable tool arguments.
 		Args any
+		// ThoughtSignature is the opaque, provider-defined tool-call signature
+		// (for example, Gemini 3). Empty means absent. The key intentionally
+		// differs from ThinkingPart.Signature so decodeLedgerPart's kind-less
+		// discriminator does not misclassify a tool_use as a thinking part.
+		ThoughtSignature string
 	}
 
 	// ToolResultPart communicates a tool result by the user back to the model,
@@ -135,7 +140,7 @@ func FromModelMessages(msgs []*model.Message) *Ledger {
 			case model.TextPart:
 				led.AppendText(v.Text)
 			case model.ToolUsePart:
-				led.DeclareToolUse(v.ID, v.Name, v.Input)
+				led.DeclareToolUse(v.ID, v.Name, v.Input, v.ThoughtSignature)
 				// Tool results are not part of assistant messages; they are
 				// reconstructed from events or planner results.
 			}
@@ -170,7 +175,10 @@ func BuildMessagesFromEvents(events []memory.Event) []*model.Message {
 			if err != nil {
 				panic(fmt.Sprintf("transcript: decode tool_call %q payload: %v", data.ToolCallID, err))
 			}
-			l.DeclareToolUse(data.ToolCallID, string(data.ToolName), payload)
+			// Durable tool_call events do not persist a tool-call thought
+			// signature; the signature rides the in-turn assistant tool_use path
+			// (FromModelMessages), not the memory-event replay path.
+			l.DeclareToolUse(data.ToolCallID, string(data.ToolName), payload, "")
 			toolOrder = append(toolOrder, data.ToolCallID)
 		case memory.EventToolResult:
 			data, err := memory.DecodeToolResultData(e)
@@ -322,15 +330,17 @@ func (l *Ledger) AppendText(text string) {
 // DeclareToolUse appends a tool_use to the current assistant message. The
 // caller is responsible for flushing the assistant message at the end of the
 // turn so that subsequent user tool_result messages can correlate to the full
-// set of tool_use blocks.
-func (l *Ledger) DeclareToolUse(id, name string, args any) {
+// set of tool_use blocks. thoughtSignature carries the opaque, provider-defined
+// tool-call signature (empty when absent).
+func (l *Ledger) DeclareToolUse(id, name string, args any, thoughtSignature string) {
 	if l.current == nil {
 		l.current = &Message{Role: "assistant", Parts: make([]Part, 0, 1)}
 	}
 	l.current.Parts = append(l.current.Parts, ToolUsePart{
-		ID:   id,
-		Name: name,
-		Args: args,
+		ID:               id,
+		Name:             name,
+		Args:             args,
+		ThoughtSignature: thoughtSignature,
 	})
 }
 
@@ -421,9 +431,10 @@ func (l *Ledger) BuildMessages() []*model.Message {
 				msg.Parts = append(
 					msg.Parts,
 					model.ToolUsePart{
-						ID:    v.ID,
-						Name:  v.Name,
-						Input: v.Args,
+						ID:               v.ID,
+						Name:             v.Name,
+						Input:            v.Args,
+						ThoughtSignature: v.ThoughtSignature,
 					},
 				)
 			case ToolResultPart:

@@ -17,7 +17,7 @@ func TestLedger_BuildAndValidate(t *testing.T) {
 	// Assistant text
 	l.AppendText("calling tool")
 	// Declare tool use
-	l.DeclareToolUse("tu1", "search_assets", map[string]any{"q": "pump"})
+	l.DeclareToolUse("tu1", "search_assets", map[string]any{"q": "pump"}, "")
 	// Flush assistant turn
 	l.FlushAssistant()
 	// Append user tool result as a single user message
@@ -55,8 +55,8 @@ func TestLedger_MultipleToolUseSingleUserMessage(t *testing.T) {
 	l := NewLedger()
 	l.AppendThinking(ThinkingPart{Text: "thinking", Signature: "sig", Index: 0, Final: true})
 	l.AppendText("calling tools")
-	l.DeclareToolUse("tu1", "tool_one", map[string]any{"x": 1})
-	l.DeclareToolUse("tu2", "tool_two", map[string]any{"y": 2})
+	l.DeclareToolUse("tu1", "tool_one", map[string]any{"x": 1}, "")
+	l.DeclareToolUse("tu2", "tool_two", map[string]any{"y": 2}, "")
 	l.FlushAssistant()
 	l.AppendUserToolResults([]ToolResultSpec{
 		{ToolUseID: "tu1", Content: map[string]any{"ok": true}, IsError: false},
@@ -75,6 +75,37 @@ func TestLedger_MultipleToolUseSingleUserMessage(t *testing.T) {
 	}
 	if msgs[1].Role != model.ConversationRoleUser {
 		t.Fatalf("second role = %s, want user", msgs[1].Role)
+	}
+}
+
+func TestLedger_FromModelMessagesPreservesThoughtSignature(t *testing.T) {
+	in := []*model.Message{
+		{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{
+				model.ToolUsePart{
+					ID:               "tu1",
+					Name:             "search_assets",
+					Input:            map[string]any{"q": "pump"},
+					ThoughtSignature: "opaque-provider-signature",
+				},
+			},
+		},
+	}
+
+	msgs := FromModelMessages(in).BuildMessages()
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	if len(msgs[0].Parts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(msgs[0].Parts))
+	}
+	tu, ok := msgs[0].Parts[0].(model.ToolUsePart)
+	if !ok {
+		t.Fatalf("part 0 is %T, want model.ToolUsePart", msgs[0].Parts[0])
+	}
+	if tu.ThoughtSignature != "opaque-provider-signature" {
+		t.Fatalf("ThoughtSignature = %q, want %q", tu.ThoughtSignature, "opaque-provider-signature")
 	}
 }
 
@@ -137,7 +168,7 @@ func TestBuildMessages_ThinkingSignatureLost(t *testing.T) {
 	// Append intermediate thinking: text but no signature (simulates lost delta).
 	l.AppendThinking(ThinkingPart{Text: "let me think about this", Index: 0, Final: false})
 	l.AppendText("calling tool")
-	l.DeclareToolUse("tu1", "search", map[string]any{"q": "test"})
+	l.DeclareToolUse("tu1", "search", map[string]any{"q": "test"}, "")
 	l.FlushAssistant()
 	l.AppendUserToolResults([]ToolResultSpec{{
 		ToolUseID: "tu1",
@@ -174,7 +205,7 @@ func TestBuildMessages_NoThinkingNoop(t *testing.T) {
 	// inject a placeholder — thinking absence is normal for non-thinking models.
 	l := NewLedger()
 	l.AppendText("hello")
-	l.DeclareToolUse("tu1", "search", map[string]any{"q": "test"})
+	l.DeclareToolUse("tu1", "search", map[string]any{"q": "test"}, "")
 	l.FlushAssistant()
 	l.AppendUserToolResults([]ToolResultSpec{{
 		ToolUseID: "tu1",
