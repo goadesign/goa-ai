@@ -306,6 +306,8 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 
 // runLoop executes the plan/tool/resume cycle until the planner returns a final response
 // or a cap/deadline is exceeded. The turnID parameter enables turn-based event stamping.
+// It does not thread ToolCallSignatures into the loop state; production enters via
+// runLoopWithState with state seeded from PlanActivityOutput.
 //
 //nolint:unparam // compatibility wrapper retained for direct unit tests that seed run-loop state explicitly.
 func (r *Runtime) runLoop(

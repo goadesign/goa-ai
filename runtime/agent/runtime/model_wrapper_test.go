@@ -6,7 +6,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -321,6 +323,58 @@ func TestConfiguredModelClientCapturesToolCallSignatureViaRawModelClient(t *test
 	}
 
 	require.Equal(t, map[string]string{"call-1": "sig-1"}, events.exportToolCallSignatures())
+}
+
+// TestPreparePlannerActivityWiresSignatureCaptureIntoModelClients pins the
+// production wiring: preparePlannerActivity constructs runtimePlannerEvents
+// and threads it into the planner context as the tool-call signature sink, so
+// a model client obtained from that context captures provider thought
+// signatures without any test-side replica of the wiring.
+func TestPreparePlannerActivityWiresSignatureCaptureIntoModelClients(t *testing.T) {
+	streamer := &chunkStreamer{
+		chunks: []model.Chunk{
+			{
+				Type:     model.ChunkTypeToolCall,
+				ToolCall: &model.ToolCall{ID: "call-1", Name: "svc.lookup", ThoughtSignature: "sig-1"},
+			},
+		},
+	}
+	rt := &Runtime{
+		agents: map[agent.Ident]AgentRegistration{
+			"svc.agent": {ID: "svc.agent"},
+		},
+		models: map[string]model.Client{
+			"primary": stubModelClient{
+				stream: func(context.Context, *model.Request) (model.Streamer, error) {
+					return streamer, nil
+				},
+			},
+		},
+		logger:  telemetry.NewNoopLogger(),
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Bus:     noopHooks{},
+	}
+
+	act, err := rt.preparePlannerActivity(context.Background(), &PlanActivityInput{
+		AgentID:    "svc.agent",
+		RunID:      "run-1",
+		RunContext: run.Context{SessionID: "sess-1", TurnID: "turn-1"},
+	})
+	require.NoError(t, err)
+
+	cli, ok := act.agentCtx.ModelClient("primary")
+	require.True(t, ok)
+	st, err := cli.Stream(context.Background(), &model.Request{Model: "gemini"})
+	require.NoError(t, err)
+	for {
+		if _, err := st.Recv(); err != nil {
+			require.ErrorIs(t, err, io.EOF)
+			break
+		}
+	}
+
+	require.Equal(t, map[string]string{"call-1": "sig-1"}, act.events.exportToolCallSignatures())
 }
 
 func TestToolUnavailableConfiguredClientAdvertisesInternalToolForMissingHistoryToolUse(t *testing.T) {

@@ -663,7 +663,10 @@ model-client boundary — before either streaming style above ever produces a
 `planner.ToolRequest` — and reattaches them by tool-call ID when rebuilding
 the provider transcript. `planner.ToolRequest` never carries a signature
 field; planners and custom `Planner` implementations do not need to know
-signatures exist.
+signatures exist. Because reattachment is keyed by the provider tool-call ID,
+planners that hand-build `ToolRequest` values from a `Complete` response must
+carry `Response.ToolCalls[i].ID` through unchanged — ID preservation is the
+load-bearing obligation.
 
 ---
 
