@@ -30,6 +30,8 @@ func encodeContents(msgs []*model.Message, canonToProv map[string]string) (*gena
 			continue
 		}
 		if msg.Role == model.ConversationRoleSystem {
+			// Only text parts contribute to the system instruction;
+			// non-text parts in system messages are dropped.
 			for _, part := range msg.Parts {
 				if tp, ok := part.(model.TextPart); ok {
 					systemTexts = append(systemTexts, tp.Text)
@@ -104,6 +106,13 @@ func encodePart(part model.Part, canonToProv map[string]string, toolUseNames map
 			Response: resp,
 		}}, nil
 	case model.ThinkingPart:
+		// Signature contract: model.ThinkingPart.Signature is an opaque
+		// string, while genai.Part.ThoughtSignature is []byte. This adapter
+		// defines the string form as standard base64 of the raw signature
+		// bytes (the response translator encodes with base64.StdEncoding
+		// correspondingly). If the string is not valid base64 (e.g. history
+		// produced by another adapter), fall back to the raw string bytes
+		// rather than dropping the signature.
 		gp := &genai.Part{Thought: true, Text: p.Text}
 		if p.Signature != "" {
 			sig, err := base64.StdEncoding.DecodeString(p.Signature)
@@ -141,6 +150,8 @@ func toArgsMap(v any) (map[string]any, error) {
 	}
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
+		// Adapter extension: Gemini args must be a JSON object, so
+		// non-object inputs are wrapped under "input".
 		return map[string]any{"input": v}, nil //nolint:nilerr // non-object inputs are wrapped
 	}
 	return m, nil
@@ -148,10 +159,15 @@ func toArgsMap(v any) (map[string]any, error) {
 
 // toResponseMap coerces a tool result into a JSON object, wrapping
 // non-object values under "output" and flagging errors under "error".
+// The returned map is always freshly allocated so the caller's Content
+// value is never mutated.
 func toResponseMap(v any, isError bool) (map[string]any, error) {
 	var m map[string]any
 	if mm, ok := v.(map[string]any); ok {
-		m = mm
+		m = make(map[string]any, len(mm)+1)
+		for k, val := range mm {
+			m[k] = val
+		}
 	} else {
 		raw, err := json.Marshal(v)
 		if err != nil {
