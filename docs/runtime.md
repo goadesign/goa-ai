@@ -656,6 +656,15 @@ Use the raw client path when you need full control over stream consumption or
 want to bypass runtime-owned event emission entirely and manage `input.Events`
 yourself.
 
+**Tool-call thought signatures**: some providers (for example, Gemini 3)
+attach an opaque, provider-defined signature to a tool call that must be
+replayed back verbatim on the next turn. The runtime captures these at the
+model-client boundary — before either streaming style above ever produces a
+`planner.ToolRequest` — and reattaches them by tool-call ID when rebuilding
+the provider transcript. `planner.ToolRequest` never carries a signature
+field; planners and custom `Planner` implementations do not need to know
+signatures exist.
+
 ---
 
 ## Tool Execution
