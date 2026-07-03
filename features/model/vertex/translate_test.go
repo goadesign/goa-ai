@@ -35,7 +35,8 @@ func TestTranslateResponseTextAndToolCall(t *testing.T) {
 	require.Len(t, out.ToolCalls, 1)
 	assert.Equal(t, "feed/find_duplicates", string(out.ToolCalls[0].Name))
 	assert.JSONEq(t, `{"title":"picnic"}`, string(out.ToolCalls[0].Payload))
-	assert.NotEmpty(t, out.ToolCalls[0].ID)
+	// No provider-issued ID on the FunctionCall, so the adapter synthesizes one.
+	assert.Equal(t, "call-1-feed_find_duplicates", out.ToolCalls[0].ID)
 	assert.Equal(t, string(genai.FinishReasonStop), out.StopReason)
 	assert.Equal(t, 100, out.Usage.InputTokens)
 	assert.Equal(t, 25, out.Usage.OutputTokens)
@@ -58,6 +59,24 @@ func TestTranslateResponseUnknownToolPassesThrough(t *testing.T) {
 	// Unadvertised names surface as-is so the runtime produces an
 	// unknown-tool result instead of the adapter erroring.
 	assert.Equal(t, "never_advertised", string(out.ToolCalls[0].Name))
+}
+
+func TestTranslateResponseProviderToolCallIDWins(t *testing.T) {
+	resp := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{{
+			Content: &genai.Content{Parts: []*genai.Part{
+				{FunctionCall: &genai.FunctionCall{ID: "call-abc", Name: "feed_find_duplicates", Args: map[string]any{}}},
+			}},
+		}},
+	}
+	out, err := translateResponse(resp, "m", model.ModelClassSmall, map[string]string{})
+	require.NoError(t, err)
+	require.Len(t, out.ToolCalls, 1)
+	// A provider-issued FunctionCall.ID is preferred over the synthesized
+	// call-N-name fallback.
+	assert.Equal(t, "call-abc", out.ToolCalls[0].ID)
+	// Model attribution is stamped even without usage metadata.
+	assert.Equal(t, model.ModelClassSmall, out.Usage.ModelClass)
 }
 
 func TestTranslateResponseNoCandidates(t *testing.T) {

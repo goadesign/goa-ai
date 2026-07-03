@@ -25,6 +25,8 @@ func translateResponse(resp *genai.GenerateContentResponse, modelID string, clas
 		msg := model.Message{Role: model.ConversationRoleAssistant}
 		callIndex := 0
 		for _, part := range cand.Content.Parts {
+			// Other genai.Part variants (inline/file data, code execution
+			// results) are intentionally dropped: no model.Part equivalent.
 			switch {
 			case part.FunctionCall != nil:
 				payload, err := json.Marshal(part.FunctionCall.Args)
