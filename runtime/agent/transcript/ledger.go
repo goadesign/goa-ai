@@ -152,6 +152,11 @@ func FromModelMessages(msgs []*model.Message) *Ledger {
 // BuildMessagesFromEvents reconstructs provider-ready messages from durable
 // memory events by replaying them through a Ledger. It returns messages in the
 // canonical provider order (assistant thinking → text → tool_use; user tool_result).
+//
+// Caveat: event-rebuilt transcripts never carry tool-call thought signatures
+// (memory.ToolCallData has no such field); this path serves observability
+// (run-log replay), not provider round-tripping, which uses the in-turn
+// assistant path (FromModelMessages) instead.
 func BuildMessagesFromEvents(events []memory.Event) []*model.Message {
 	l := NewLedger()
 	var pendingResults []ToolResultSpec

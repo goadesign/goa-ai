@@ -214,16 +214,6 @@ type ToolRequest struct {
 	// ParentToolCallID is the identifier of the parent tool call when this invocation
 	// is nested (for example, a tool launched by an agent-as-tool).
 	ParentToolCallID string
-
-	// ThoughtSignature is the opaque, provider-defined tool-call signature carried
-	// through from model.ToolCall.ThoughtSignature (for example, Gemini 3). Empty
-	// means absent. Unlike ModelName/ModelPayload there is no override accessor:
-	// the signature is a single value with no transcript-vs-execution distinction.
-	//
-	// Planner implementations that convert model.Response.ToolCalls into
-	// ToolRequests themselves MUST copy this field so providers can round-trip the
-	// signature; ConsumeStream already does this for stream-driven planners.
-	ThoughtSignature string
 }
 
 // TranscriptName returns the model-facing tool name recorded in provider

@@ -25,8 +25,13 @@ func appendUserToolResultsForTest(t *testing.T, rt *Runtime, agentID agent.Ident
 
 func appendRetryableBookkeepingToolUsesForTest(t *testing.T, rt *Runtime, agentID agent.Ident, base *planner.PlanInput, calls []planner.ToolRequest, results []*planner.ToolResult) {
 	t.Helper()
+	appendRetryableBookkeepingToolUsesWithSignaturesForTest(t, rt, agentID, base, calls, results, nil)
+}
+
+func appendRetryableBookkeepingToolUsesWithSignaturesForTest(t *testing.T, rt *Runtime, agentID agent.Ident, base *planner.PlanInput, calls []planner.ToolRequest, results []*planner.ToolResult, signatures map[string]string) {
+	t.Helper()
 	records := stepToolRecordsForTest(t, calls, results)
-	require.NoError(t, rt.appendRetryableBookkeepingToolUses(t.Context(), agentID, base, records, ""))
+	require.NoError(t, rt.appendRetryableBookkeepingToolUses(t.Context(), agentID, base, records, signatures, ""))
 }
 
 func stepToolRecordsForTest(t *testing.T, calls []planner.ToolRequest, results []*planner.ToolResult) []stepToolRecord {
@@ -62,7 +67,7 @@ func TestRecordAssistantTurnRebuildsToolUsesFromPlannerFacingCalls(t *testing.T)
 		{Name: "tasks.progress.update", ToolCallID: "runtime-bookkeeping", Payload: rawjson.Message(`{"ok":true}`)},
 	}
 
-	require.NoError(t, rt.recordAssistantTurn(t.Context(), agentID, base, transcriptMsgs, calls, "turn-1"))
+	require.NoError(t, rt.recordAssistantTurn(t.Context(), agentID, base, transcriptMsgs, calls, nil, "turn-1"))
 
 	require.Len(t, base.Messages, 1)
 	require.Equal(t, model.ConversationRoleAssistant, base.Messages[0].Role)
@@ -77,27 +82,57 @@ func TestRecordAssistantTurnRebuildsToolUsesFromPlannerFacingCalls(t *testing.T)
 	require.Equal(t, rawjson.Message(`{"q":"new"}`), use.Input)
 }
 
-func TestRecordAssistantTurnPreservesToolCallThoughtSignature(t *testing.T) {
+// TestRecordAssistantTurnAttachesToolCallSignatureByID is the lookup-side
+// counterpart to signature capture: recordAssistantTurn must attach a
+// captured thought signature to the rebuilt ToolUsePart by ToolCallID lookup,
+// never by reading a signature field off planner.ToolRequest (which has none).
+func TestRecordAssistantTurnAttachesToolCallSignatureByID(t *testing.T) {
 	rt := New()
 	seedTestToolSpecs(rt, newAnyJSONSpec("svc.tools.read", "svc.tools"))
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
 	calls := []planner.ToolRequest{
 		{
-			Name:             "svc.tools.read",
-			ToolCallID:       "runtime-1",
-			Payload:          rawjson.Message(`{"q":"new"}`),
-			ThoughtSignature: "opaque-provider-signature",
+			Name:       "svc.tools.read",
+			ToolCallID: "runtime-1",
+			Payload:    rawjson.Message(`{"q":"new"}`),
 		},
 	}
+	signatures := map[string]string{"runtime-1": "opaque-provider-signature"}
 
-	require.NoError(t, rt.recordAssistantTurn(t.Context(), agentID, base, nil, calls, "turn-1"))
+	require.NoError(t, rt.recordAssistantTurn(t.Context(), agentID, base, nil, calls, signatures, "turn-1"))
 
 	require.Len(t, base.Messages, 1)
 	require.Len(t, base.Messages[0].Parts, 1)
 	use, ok := base.Messages[0].Parts[0].(model.ToolUsePart)
 	require.True(t, ok)
 	require.Equal(t, "opaque-provider-signature", use.ThoughtSignature)
+}
+
+// TestRecordAssistantTurnLeavesSignatureEmptyWhenUncaptured verifies the
+// "missing key means absent" contract: a tool call with no entry in the
+// signatures map (or a nil map) must record an empty ThoughtSignature rather
+// than panicking or fabricating a value.
+func TestRecordAssistantTurnLeavesSignatureEmptyWhenUncaptured(t *testing.T) {
+	rt := New()
+	seedTestToolSpecs(rt, newAnyJSONSpec("svc.tools.read", "svc.tools"))
+	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	agentID := agent.Ident("agent-1")
+	calls := []planner.ToolRequest{
+		{
+			Name:       "svc.tools.read",
+			ToolCallID: "runtime-1",
+			Payload:    rawjson.Message(`{"q":"new"}`),
+		},
+	}
+
+	require.NoError(t, rt.recordAssistantTurn(t.Context(), agentID, base, nil, calls, nil, "turn-1"))
+
+	require.Len(t, base.Messages, 1)
+	require.Len(t, base.Messages[0].Parts, 1)
+	use, ok := base.Messages[0].Parts[0].(model.ToolUsePart)
+	require.True(t, ok)
+	require.Empty(t, use.ThoughtSignature)
 }
 
 func TestRecordAssistantTurnUsesModelFacingToolIdentityForCompiledCalls(t *testing.T) {
@@ -113,7 +148,7 @@ func TestRecordAssistantTurnUsesModelFacingToolIdentityForCompiledCalls(t *testi
 		ToolCallID:   "tooluse_1",
 	}}
 
-	require.NoError(t, rt.recordAssistantTurn(t.Context(), agentID, base, nil, calls, "turn-1"))
+	require.NoError(t, rt.recordAssistantTurn(t.Context(), agentID, base, nil, calls, nil, "turn-1"))
 
 	require.Len(t, base.Messages, 1)
 	require.Equal(t, model.ConversationRoleAssistant, base.Messages[0].Role)
@@ -144,7 +179,7 @@ func TestRecordAssistantTurnDropsBookkeepingOnlyProviderToolUse(t *testing.T) {
 		Payload:    rawjson.Message(`{"ok":true}`),
 	}}
 
-	require.NoError(t, rt.recordAssistantTurn(t.Context(), agentID, base, transcriptMsgs, calls, "turn-1"))
+	require.NoError(t, rt.recordAssistantTurn(t.Context(), agentID, base, transcriptMsgs, calls, nil, "turn-1"))
 
 	require.Empty(t, base.Messages)
 }
@@ -429,7 +464,11 @@ func TestAppendUserToolResults_SkipsBookkeepingResults(t *testing.T) {
 	require.Equal(t, "call-1", part.ToolUseID)
 }
 
-func TestAppendRetryableBookkeepingToolUsesPreservesToolCallThoughtSignature(t *testing.T) {
+// TestAppendRetryableBookkeepingToolUsesAttachesToolCallSignatureByID is the
+// lookup-side counterpart to signature capture for the retryable-bookkeeping
+// path: the rebuilt ToolUsePart must get its signature from an ID lookup
+// against the captured signatures map, not from planner.ToolRequest.
+func TestAppendRetryableBookkeepingToolUsesAttachesToolCallSignatureByID(t *testing.T) {
 	rt := New()
 	seedTestToolSpecs(
 		rt,
@@ -444,10 +483,9 @@ func TestAppendRetryableBookkeepingToolUsesPreservesToolCallThoughtSignature(t *
 	agentID := agent.Ident("agent-1")
 
 	call := planner.ToolRequest{
-		Name:             "tasks.progress.complete",
-		ToolCallID:       "call-1",
-		Payload:          rawjson.Message(`{"title":"Final brief"}`),
-		ThoughtSignature: "opaque-provider-signature",
+		Name:       "tasks.progress.complete",
+		ToolCallID: "call-1",
+		Payload:    rawjson.Message(`{"title":"Final brief"}`),
 	}
 	tr := &planner.ToolResult{
 		Name:       call.Name,
@@ -459,8 +497,9 @@ func TestAppendRetryableBookkeepingToolUsesPreservesToolCallThoughtSignature(t *
 			ClarifyingQuestion: "Please resend tasks.progress.complete with a payload that satisfies: brief.summary length must be <= 600.",
 		},
 	}
+	signatures := map[string]string{"call-1": "opaque-provider-signature"}
 
-	appendRetryableBookkeepingToolUsesForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr})
+	appendRetryableBookkeepingToolUsesWithSignaturesForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, signatures)
 
 	require.Len(t, base.Messages, 1)
 	require.Equal(t, model.ConversationRoleAssistant, base.Messages[0].Role)

@@ -98,6 +98,13 @@ func (c *simplePlannerContext) configuredModelClient(id string) (model.Client, b
 		return nil, false
 	}
 	cli := m
+	// Capture opaque provider tool-call thought signatures at the boundary,
+	// before any planner-facing type exists. This wraps the raw client so
+	// capture applies uniformly whether the planner drains it via
+	// PlannerModelClient or via ModelClient + planner.ConsumeStream.
+	if sink, ok := c.ev.(toolCallSignatureSink); ok {
+		cli = newSignatureCapturingClient(cli, sink)
+	}
 	// Apply agent cache policy so planners do not need to thread CacheOptions
 	// through every model.Request construction. Explicit Request.Cache values
 	// continue to take precedence over the agent policy.

@@ -100,11 +100,14 @@ func ConsumeStream(ctx context.Context, streamer model.Streamer, req *model.Requ
 			if chunk.ToolCall.Name == "" {
 				continue
 			}
+			// chunk.ToolCall.ThoughtSignature (when present) is captured by the
+			// runtime's model-client wrapper before this helper ever sees the
+			// chunk; ToolRequest intentionally carries no signature field so
+			// opaque provider state never transits this user-facing type.
 			summary.ToolCalls = append(summary.ToolCalls, ToolRequest{
-				Name:             chunk.ToolCall.Name,
-				Payload:          chunk.ToolCall.Payload,
-				ToolCallID:       chunk.ToolCall.ID,
-				ThoughtSignature: chunk.ToolCall.ThoughtSignature,
+				Name:       chunk.ToolCall.Name,
+				Payload:    chunk.ToolCall.Payload,
+				ToolCallID: chunk.ToolCall.ID,
 			})
 		case model.ChunkTypeToolCallDelta:
 			if chunk.ToolCallDelta == nil || chunk.ToolCallDelta.ID == "" || chunk.ToolCallDelta.Delta == "" {

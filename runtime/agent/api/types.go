@@ -331,6 +331,16 @@ type (
 
 		// Usage is the token usage reported by the model provider when available.
 		Usage model.TokenUsage
+
+		// ToolCallSignatures carries opaque, provider-defined tool-call thought
+		// signatures (for example, Gemini 3) captured by the runtime at the
+		// model-client boundary, keyed by tool-call ID. It is runtime-owned
+		// state, not planner-authored: no planner-facing type (ToolRequest,
+		// PlanResult, ...) ever carries a signature. A missing key means the
+		// provider did not emit one for that tool call. The workflow uses this
+		// map to reattach signatures by ID when rebuilding ToolUsePart entries
+		// for the provider transcript.
+		ToolCallSignatures map[string]string
 	}
 
 	// RecordActivityInput is the canonical workflow-to-activity envelope for
@@ -574,9 +584,10 @@ const (
 // implementations). This keeps workflows resilient to legacy payloads.
 func (o *PlanActivityOutput) UnmarshalJSON(data []byte) error {
 	type alias struct {
-		Result     *planner.PlanResult `json:"Result"`     //nolint:tagliatelle
-		Transcript []json.RawMessage   `json:"Transcript"` //nolint:tagliatelle
-		Usage      model.TokenUsage    `json:"Usage"`      //nolint:tagliatelle
+		Result             *planner.PlanResult `json:"Result"`             //nolint:tagliatelle
+		Transcript         []json.RawMessage   `json:"Transcript"`         //nolint:tagliatelle
+		Usage              model.TokenUsage    `json:"Usage"`              //nolint:tagliatelle
+		ToolCallSignatures map[string]string   `json:"ToolCallSignatures"` //nolint:tagliatelle
 	}
 	var tmp alias
 	if err := json.Unmarshal(data, &tmp); err != nil {
@@ -585,6 +596,7 @@ func (o *PlanActivityOutput) UnmarshalJSON(data []byte) error {
 
 	o.Result = tmp.Result
 	o.Usage = tmp.Usage
+	o.ToolCallSignatures = tmp.ToolCallSignatures
 	if len(tmp.Transcript) == 0 {
 		o.Transcript = nil
 		return nil

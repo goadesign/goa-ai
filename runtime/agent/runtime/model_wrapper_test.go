@@ -201,6 +201,128 @@ func TestToolUnavailableConfiguredClientDoesNotAdvertiseInternalToolByDefault(t 
 	require.NoError(t, err)
 }
 
+// fakeSignatureSink is a minimal toolCallSignatureSink recorder for tests.
+type fakeSignatureSink struct {
+	captured map[string]string
+}
+
+func (s *fakeSignatureSink) recordToolCallSignature(toolCallID, signature string) {
+	if s.captured == nil {
+		s.captured = make(map[string]string)
+	}
+	s.captured[toolCallID] = signature
+}
+
+func TestNewSignatureCapturingClientReturnsInnerWhenSinkNil(t *testing.T) {
+	inner := stubModelClient{}
+	client := newSignatureCapturingClient(inner, nil)
+	require.Equal(t, inner, client)
+}
+
+// TestSignatureCapturingClientCapturesFromCompleteResponse is the
+// capture-side test for the non-streaming path: a finalized tool call on a
+// Complete response must be recorded into the sink before any planner-facing
+// type is constructed.
+func TestSignatureCapturingClientCapturesFromCompleteResponse(t *testing.T) {
+	sink := &fakeSignatureSink{}
+	client := newSignatureCapturingClient(stubModelClient{
+		complete: func(context.Context, *model.Request) (*model.Response, error) {
+			return &model.Response{
+				ToolCalls: []model.ToolCall{
+					{ID: "call-1", Name: "svc.lookup", ThoughtSignature: "sig-1"},
+					{ID: "call-2", Name: "svc.other"}, // no signature: must not be recorded
+				},
+			}, nil
+		},
+	}, sink)
+
+	_, err := client.Complete(context.Background(), &model.Request{})
+
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"call-1": "sig-1"}, sink.captured)
+}
+
+// TestSignatureCapturingClientCapturesFromStreamedToolCallChunk is the
+// capture-side test for the streaming path: a ChunkTypeToolCall chunk
+// observed via Recv must be recorded into the sink as it is received.
+func TestSignatureCapturingClientCapturesFromStreamedToolCallChunk(t *testing.T) {
+	sink := &fakeSignatureSink{}
+	streamer := &chunkStreamer{
+		chunks: []model.Chunk{
+			{Type: model.ChunkTypeText, Message: &model.Message{Role: model.ConversationRoleAssistant}},
+			{
+				Type:     model.ChunkTypeToolCall,
+				ToolCall: &model.ToolCall{ID: "call-1", Name: "svc.lookup", ThoughtSignature: "sig-1"},
+			},
+			{
+				Type:     model.ChunkTypeToolCall,
+				ToolCall: &model.ToolCall{ID: "call-2", Name: "svc.other"}, // no signature
+			},
+		},
+	}
+	client := newSignatureCapturingClient(stubModelClient{
+		stream: func(context.Context, *model.Request) (model.Streamer, error) {
+			return streamer, nil
+		},
+	}, sink)
+
+	st, err := client.Stream(context.Background(), &model.Request{})
+	require.NoError(t, err)
+	for {
+		if _, err := st.Recv(); err != nil {
+			require.ErrorIs(t, err, io.EOF)
+			break
+		}
+	}
+
+	require.Equal(t, map[string]string{"call-1": "sig-1"}, sink.captured)
+}
+
+// TestConfiguredModelClientCapturesToolCallSignatureViaRawModelClient exercises
+// the full runtime wiring for the "Option 2" streaming style (AGENTS.md):
+// PlannerContext.ModelClient returns the raw client, and a planner drains it
+// directly with planner.ConsumeStream. Capture must still happen even though
+// ConsumeStream itself never sees or forwards a signature.
+func TestConfiguredModelClientCapturesToolCallSignatureViaRawModelClient(t *testing.T) {
+	rt := New()
+	events := newPlannerEvents(rt, "svc.agent", "run-1", "sess-1", "turn-1")
+	streamer := &chunkStreamer{
+		chunks: []model.Chunk{
+			{
+				Type:     model.ChunkTypeToolCall,
+				ToolCall: &model.ToolCall{ID: "call-1", Name: "svc.lookup", ThoughtSignature: "sig-1"},
+			},
+		},
+	}
+	rt.mu.Lock()
+	rt.models = map[string]model.Client{
+		"primary": stubModelClient{
+			stream: func(context.Context, *model.Request) (model.Streamer, error) {
+				return streamer, nil
+			},
+		},
+	}
+	rt.mu.Unlock()
+	agentCtx := newAgentContext(agentContextOptions{
+		runtime: rt,
+		agentID: "svc.agent",
+		runID:   "run-1",
+		events:  events,
+	})
+
+	cli, ok := agentCtx.ModelClient("primary")
+	require.True(t, ok)
+	st, err := cli.Stream(context.Background(), &model.Request{Model: "gemini"})
+	require.NoError(t, err)
+	for {
+		if _, err := st.Recv(); err != nil {
+			break
+		}
+	}
+
+	require.Equal(t, map[string]string{"call-1": "sig-1"}, events.exportToolCallSignatures())
+}
+
 func TestToolUnavailableConfiguredClientAdvertisesInternalToolForMissingHistoryToolUse(t *testing.T) {
 	client := newToolUnavailableConfiguredClient(stubModelClient{
 		complete: func(_ context.Context, req *model.Request) (*model.Response, error) {

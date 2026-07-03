@@ -58,12 +58,20 @@ func (r *Runtime) appendTerminalAssistantMessage(
 // recordAssistantTurn appends the canonical assistant turn. Streamed provider
 // tool uses are discarded and rebuilt from runtime-admitted planner-facing calls
 // so bookkeeping calls can never leak into the provider transcript.
+//
+// signatures carries opaque, provider-defined tool-call thought signatures
+// captured by the runtime at the model-client boundary (see
+// runLoopState.ToolCallSignatures), keyed by tool-call ID. It is looked up by
+// ID rather than read from planner.ToolRequest, which carries no signature
+// field. A nil or missing-key lookup yields "", correctly recording an absent
+// signature.
 func (r *Runtime) recordAssistantTurn(
 	ctx context.Context,
 	agentID agent.Ident,
 	base *planner.PlanInput,
 	transcriptMsgs []*model.Message,
 	allowed []planner.ToolRequest,
+	signatures map[string]string,
 	turnID string,
 ) error {
 	allowed = r.filterPlannerFacingToolCalls(allowed)
@@ -81,7 +89,7 @@ func (r *Runtime) recordAssistantTurn(
 			ID:               call.ToolCallID,
 			Name:             string(call.TranscriptName()),
 			Input:            call.TranscriptPayload(),
-			ThoughtSignature: call.ThoughtSignature,
+			ThoughtSignature: signatures[call.ToolCallID],
 		})
 	}
 	return r.appendTranscriptMessages(ctx, agentID, base, turnID, messages)
@@ -89,11 +97,15 @@ func (r *Runtime) recordAssistantTurn(
 
 // appendRetryableBookkeepingToolUses appends bookkeeping tool_use parts that
 // become planner-facing only after execution produced retryable failures.
+//
+// signatures is looked up by tool-call ID for the same reason documented on
+// recordAssistantTurn.
 func (r *Runtime) appendRetryableBookkeepingToolUses(
 	ctx context.Context,
 	agentID agent.Ident,
 	base *planner.PlanInput,
 	records []stepToolRecord,
+	signatures map[string]string,
 	turnID string,
 ) error {
 	lateRecords, err := r.filterRetryableBookkeepingToolRecords(records)
@@ -109,7 +121,7 @@ func (r *Runtime) appendRetryableBookkeepingToolUses(
 			ID:               record.call.ToolCallID,
 			Name:             string(record.call.TranscriptName()),
 			Input:            record.call.TranscriptPayload(),
-			ThoughtSignature: record.call.ThoughtSignature,
+			ThoughtSignature: signatures[record.call.ToolCallID],
 		})
 	}
 	return r.appendTranscriptMessages(ctx, agentID, base, turnID, []*model.Message{msg})
