@@ -62,7 +62,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
-
 	"google.golang.org/genai"
 
 	"text/template"
@@ -1321,14 +1320,22 @@ type OpenAIConfig struct {
 // are provider-specific (Gemini model names for the Gemini factory, Vertex
 // Claude publisher IDs for the Anthropic factory).
 type VertexConfig struct {
-	ProjectID      string
-	Location       string
-	DefaultModel   string
-	HighModel      string
-	SmallModel     string
-	MaxTokens      int
+	// ProjectID is the GCP project hosting the Vertex AI endpoint.
+	ProjectID string
+	// Location is the Vertex AI region (or "global") serving the endpoint.
+	Location string
+	// DefaultModel is the primary model identifier used for default-class requests.
+	DefaultModel string
+	// HighModel is the model identifier used for high-reasoning requests.
+	HighModel string
+	// SmallModel is the model identifier used for small/cheap requests.
+	SmallModel string
+	// MaxTokens is the default completion token cap.
+	MaxTokens int
+	// ThinkingBudget is the default thinking-token budget.
 	ThinkingBudget int
-	Temperature    float32
+	// Temperature is the default sampling temperature.
+	Temperature float32
 }
 
 // NewBedrockModelClient constructs a model.Client backed by AWS Bedrock.
