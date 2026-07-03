@@ -41,6 +41,7 @@ import (
 	"github.com/openai/openai-go/option"
 	bedrock "goa.design/goa-ai/features/model/bedrock"
 	openai "goa.design/goa-ai/features/model/openai"
+	vertexprovider "goa.design/goa-ai/features/model/vertex"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
@@ -61,6 +62,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
+
+	"google.golang.org/genai"
 
 	"text/template"
 
@@ -1313,6 +1316,21 @@ type OpenAIConfig struct {
 	ThinkingEffort string
 }
 
+// VertexConfig configures the Vertex-backed model clients created by the
+// runtime. ProjectID and Location identify the Vertex endpoint; model IDs
+// are provider-specific (Gemini model names for the Gemini factory, Vertex
+// Claude publisher IDs for the Anthropic factory).
+type VertexConfig struct {
+	ProjectID      string
+	Location       string
+	DefaultModel   string
+	HighModel      string
+	SmallModel     string
+	MaxTokens      int
+	ThinkingBudget int
+	Temperature    float32
+}
+
 // NewBedrockModelClient constructs a model.Client backed by AWS Bedrock.
 // Callers must supply the complete canonical transcript in Request.Messages.
 func (r *Runtime) NewBedrockModelClient(awsrt *bedrockruntime.Client, cfg BedrockConfig) (model.Client, error) {
@@ -1353,6 +1371,50 @@ func (r *Runtime) NewOpenAIModelClient(cfg OpenAIConfig) (model.Client, error) {
 		MaxCompletionTokens: cfg.MaxTokens,
 		Temperature:         cfg.Temperature,
 		ThinkingEffort:      cfg.ThinkingEffort,
+	})
+}
+
+// NewVertexGeminiModelClient creates a Gemini-on-Vertex model client using
+// Application Default Credentials. The client is not registered; call
+// RegisterModel with the returned client.
+func (r *Runtime) NewVertexGeminiModelClient(ctx context.Context, cfg VertexConfig) (model.Client, error) {
+	if strings.TrimSpace(cfg.ProjectID) == "" {
+		return nil, errors.New("vertex: project id is required")
+	}
+	if strings.TrimSpace(cfg.Location) == "" {
+		return nil, errors.New("vertex: location is required")
+	}
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		Backend:  genai.BackendVertexAI,
+		Project:  cfg.ProjectID,
+		Location: cfg.Location,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return vertexprovider.New(client.Models, vertexprovider.Options{
+		DefaultModel:   cfg.DefaultModel,
+		HighModel:      cfg.HighModel,
+		SmallModel:     cfg.SmallModel,
+		MaxTokens:      cfg.MaxTokens,
+		Temperature:    cfg.Temperature,
+		ThinkingBudget: cfg.ThinkingBudget,
+	})
+}
+
+// NewVertexAnthropicModelClient creates a Claude-on-Vertex model client
+// using Application Default Credentials. The client is not registered; call
+// RegisterModel with the returned client.
+func (r *Runtime) NewVertexAnthropicModelClient(ctx context.Context, cfg VertexConfig) (model.Client, error) {
+	return vertexprovider.NewAnthropicClient(ctx, vertexprovider.AnthropicOptions{
+		ProjectID:      cfg.ProjectID,
+		Region:         cfg.Location,
+		DefaultModel:   cfg.DefaultModel,
+		HighModel:      cfg.HighModel,
+		SmallModel:     cfg.SmallModel,
+		MaxTokens:      cfg.MaxTokens,
+		Temperature:    float64(cfg.Temperature),
+		ThinkingBudget: int64(cfg.ThinkingBudget),
 	})
 }
 
