@@ -360,3 +360,114 @@ func TestStreamSurfacesIteratorError(t *testing.T) {
 	_, ok := model.AsProviderError(recvErr)
 	assert.True(t, ok)
 }
+
+func TestStreamStructuredOutputEmitsCompletionDeltaAndFinalCompletion(t *testing.T) {
+	stub := &stubGenerativeClient{streamChunks: []*genai.GenerateContentResponse{
+		{Candidates: []*genai.Candidate{{Content: &genai.Content{Parts: []*genai.Part{
+			{Text: `{"assistant_text":`},
+		}}}}},
+		{
+			Candidates: []*genai.Candidate{{
+				Content:      &genai.Content{Parts: []*genai.Part{{Text: `"created a draft"}`}}},
+				FinishReason: genai.FinishReasonStop,
+			}},
+			UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 3, CandidatesTokenCount: 5, TotalTokenCount: 8},
+		},
+	}}
+	cl, err := New(stub, Options{DefaultModel: "gemini-2.5-flash"})
+	require.NoError(t, err)
+	s, err := cl.Stream(context.Background(), &model.Request{
+		Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "go"}}}},
+		StructuredOutput: &model.StructuredOutput{
+			Name:   "draft_from_transcript",
+			Schema: []byte(`{"type":"object"}`),
+		},
+	})
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, s.Close()) }()
+
+	chunks := drain(t, s)
+	types := make([]string, 0, len(chunks))
+	for _, ch := range chunks {
+		types = append(types, ch.Type)
+	}
+	assert.Equal(t, []string{
+		model.ChunkTypeCompletionDelta,
+		model.ChunkTypeCompletionDelta,
+		model.ChunkTypeCompletion,
+		model.ChunkTypeUsage,
+		model.ChunkTypeStop,
+	}, types)
+
+	require.NotNil(t, chunks[0].CompletionDelta)
+	assert.Equal(t, "draft_from_transcript", chunks[0].CompletionDelta.Name)
+	assert.Equal(t, `{"assistant_text":`, chunks[0].CompletionDelta.Delta)
+
+	require.NotNil(t, chunks[1].CompletionDelta)
+	assert.Equal(t, `"created a draft"}`, chunks[1].CompletionDelta.Delta)
+
+	require.NotNil(t, chunks[2].Completion)
+	assert.Equal(t, "draft_from_transcript", chunks[2].Completion.Name)
+	assert.JSONEq(t, `{"assistant_text":"created a draft"}`, string(chunks[2].Completion.Payload))
+}
+
+func TestStreamStructuredOutputRejectsInvalidFinalJSON(t *testing.T) {
+	stub := &stubGenerativeClient{streamChunks: []*genai.GenerateContentResponse{
+		{Candidates: []*genai.Candidate{{Content: &genai.Content{Parts: []*genai.Part{
+			{Text: `{"assistant_text":`},
+		}}}}},
+		{Candidates: []*genai.Candidate{{FinishReason: genai.FinishReasonStop}}},
+	}}
+	cl, err := New(stub, Options{DefaultModel: "gemini-2.5-flash"})
+	require.NoError(t, err)
+	s, err := cl.Stream(context.Background(), &model.Request{
+		Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "go"}}}},
+		StructuredOutput: &model.StructuredOutput{
+			Name:   "draft_from_transcript",
+			Schema: []byte(`{"type":"object"}`),
+		},
+	})
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, s.Close()) }()
+
+	err = drainToError(t, s)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not valid JSON")
+}
+
+func TestStreamStructuredOutputRejectsEmptyAccumulation(t *testing.T) {
+	stub := &stubGenerativeClient{streamChunks: []*genai.GenerateContentResponse{
+		{Candidates: []*genai.Candidate{{FinishReason: genai.FinishReasonStop}}},
+	}}
+	cl, err := New(stub, Options{DefaultModel: "gemini-2.5-flash"})
+	require.NoError(t, err)
+	s, err := cl.Stream(context.Background(), &model.Request{
+		Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "go"}}}},
+		StructuredOutput: &model.StructuredOutput{
+			Name:   "draft_from_transcript",
+			Schema: []byte(`{"type":"object"}`),
+		},
+	})
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, s.Close()) }()
+
+	err = drainToError(t, s)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "structured completion payload is empty")
+}
+
+// drainToError drains a streamer until it returns a non-EOF error, failing
+// the test if the stream instead reaches a clean end.
+func drainToError(t *testing.T, s model.Streamer) error {
+	t.Helper()
+	for {
+		_, err := s.Recv()
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, io.EOF) {
+			t.Fatal("expected stream error, got clean EOF")
+		}
+		return err
+	}
+}

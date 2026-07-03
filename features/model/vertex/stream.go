@@ -7,6 +7,9 @@ package vertex
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -14,6 +17,7 @@ import (
 	"google.golang.org/genai"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 // Stream implements model.Client.
@@ -49,6 +53,7 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 	callIndex := 0
 	var stopReason string
 	var thoughtText strings.Builder
+	var completionText strings.Builder
 	var usageSeen bool
 	var latestUsage model.TokenUsage
 	for resp, err := range seq {
@@ -103,6 +108,20 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 						thoughtText.Reset()
 					}
 				case part.Text != "":
+					// Structured-output requests replace free-form assistant
+					// text with the typed completion contract (see
+					// runtime/agent/completion): text deltas become
+					// CompletionDelta previews and the accumulated text is
+					// validated and emitted as one canonical Completion chunk
+					// once the stream ends, mirroring the bedrock adapter.
+					if prep.structuredOutput != nil {
+						completionText.WriteString(part.Text)
+						s.emit(model.Chunk{Type: model.ChunkTypeCompletionDelta, CompletionDelta: &model.CompletionDelta{
+							Name:  prep.structuredOutput.Name,
+							Delta: part.Text,
+						}})
+						continue
+					}
 					s.emit(model.Chunk{Type: model.ChunkTypeText,
 						Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: part.Text}}}})
 				}
@@ -122,12 +141,40 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 			s.mu.Unlock()
 		}
 	}
+	if prep.structuredOutput != nil {
+		payload, perr := finalStructuredCompletionPayload(completionText.String())
+		if perr != nil {
+			s.setErr(fmt.Errorf("vertex: structured output %q: %w", prep.structuredOutput.Name, perr))
+			return
+		}
+		s.emit(model.Chunk{Type: model.ChunkTypeCompletion, Completion: &model.Completion{
+			Name:    prep.structuredOutput.Name,
+			Payload: payload,
+		}})
+	}
 	if usageSeen {
 		s.emit(model.Chunk{Type: model.ChunkTypeUsage, UsageDelta: &latestUsage})
 	}
 	if stopReason != "" {
 		s.emit(model.Chunk{Type: model.ChunkTypeStop, StopReason: stopReason})
 	}
+}
+
+// finalStructuredCompletionPayload validates the fully-accumulated
+// structured-output text as canonical JSON. Unlike tool-call payload
+// fragments, typed completions use no fallbacks: empty or invalid JSON is a
+// hard provider contract violation surfaced to the caller instead of a
+// best-effort coercion.
+func finalStructuredCompletionPayload(accumulated string) (rawjson.Message, error) {
+	trimmed := strings.TrimSpace(accumulated)
+	if trimmed == "" {
+		return nil, errors.New("structured completion payload is empty")
+	}
+	data := []byte(trimmed)
+	if !json.Valid(data) {
+		return nil, fmt.Errorf("structured completion payload is not valid JSON: %q", trimmed)
+	}
+	return rawjson.Message(data), nil
 }
 
 func (s *geminiStreamer) emit(ch model.Chunk) {

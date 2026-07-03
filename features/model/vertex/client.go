@@ -32,11 +32,12 @@ type (
 
 	// preparedRequest carries one request's translated inputs.
 	preparedRequest struct {
-		modelID     string
-		modelClass  model.ModelClass
-		contents    []*genai.Content
-		config      *genai.GenerateContentConfig
-		provToCanon map[string]string
+		modelID          string
+		modelClass       model.ModelClass
+		contents         []*genai.Content
+		config           *genai.GenerateContentConfig
+		provToCanon      map[string]string
+		structuredOutput *model.StructuredOutput
 	}
 )
 
@@ -168,10 +169,11 @@ func (c *Client) prepareRequest(req *model.Request) (*preparedRequest, error) {
 		config.ThinkingConfig = tc
 	}
 	return &preparedRequest{
-		modelID:     c.opts.resolveModelID(req),
-		modelClass:  req.ModelClass,
-		contents:    contents,
-		config:      config,
-		provToCanon: provToCanon,
+		modelID:          c.opts.resolveModelID(req),
+		modelClass:       req.ModelClass,
+		contents:         contents,
+		config:           config,
+		provToCanon:      provToCanon,
+		structuredOutput: req.StructuredOutput,
 	}, nil
 }
