@@ -656,6 +656,18 @@ Use the raw client path when you need full control over stream consumption or
 want to bypass runtime-owned event emission entirely and manage `input.Events`
 yourself.
 
+**Tool-call thought signatures**: some providers (for example, Gemini 3)
+attach an opaque, provider-defined signature to a tool call that must be
+replayed back verbatim on the next turn. The runtime captures these at the
+model-client boundary — before either streaming style above ever produces a
+`planner.ToolRequest` — and reattaches them by tool-call ID when rebuilding
+the provider transcript. `planner.ToolRequest` never carries a signature
+field; planners and custom `Planner` implementations do not need to know
+signatures exist. Because reattachment is keyed by the provider tool-call ID,
+planners that hand-build `ToolRequest` values from a `Complete` response must
+carry `Response.ToolCalls[i].ID` through unchanged — ID preservation is the
+load-bearing obligation.
+
 ---
 
 ## Tool Execution
@@ -1611,6 +1623,27 @@ openAIClient, err := rt.NewOpenAIModelClient(runtime.OpenAIConfig{
     MaxTokens:      4096,
     ThinkingEffort: "high",
 })
+
+// Create a Gemini-on-Vertex client via runtime helper (Application Default Credentials)
+geminiClient, err := rt.NewVertexGeminiModelClient(ctx, runtime.VertexConfig{
+    ProjectID:      "my-gcp-project",
+    Location:       "us-central1",
+    DefaultModel:   "gemini-2.5-flash",
+    HighModel:      "gemini-3-pro-preview",
+    SmallModel:     "gemini-2.5-flash-lite",
+    MaxTokens:      4096,
+    ThinkingBudget: 10000,
+})
+
+// Create a Claude-on-Vertex client via runtime helper. This is pure
+// construction: it builds an Anthropic SDK client against the SDK's Vertex
+// transport and hands it to features/model/anthropic, which owns Messages
+// translation and error classification for every Anthropic-hosted adapter.
+claudeOnVertexClient, err := rt.NewVertexAnthropicModelClient(ctx, runtime.VertexConfig{
+    ProjectID:    "my-gcp-project",
+    Location:     "us-east5",
+    DefaultModel: "claude-sonnet-4-5@20250929",
+})
 ```
 
 Runtime-owned model factories are transcript-stateless. Callers must pass the
@@ -1622,6 +1655,13 @@ For Bedrock adaptive Claude models, the Bedrock adapter explicitly requests
 summarized reasoning display so streamed `thinking` chunks stay visible instead
 of falling back to signature-only omitted reasoning blocks on models such as
 Claude Opus 4.7.
+
+Gemini 3-class models attach an opaque thought signature to `functionCall`
+parts (not just to thought parts). The `features/model/vertex` adapter
+round-trips these through `model.ToolCall.ThoughtSignature` /
+`model.ToolUsePart.ThoughtSignature` using the same base64 convention as
+`ThinkingPart.Signature`; see "Tool-call thought signatures" above for how the
+runtime captures and reattaches them without exposing the field to planners.
 
 When planners render prompts through `RenderPrompt`, copy prompt provenance into model requests:
 

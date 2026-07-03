@@ -86,6 +86,34 @@ func TestConsumeStreamStampsUsageIdentityFromRequest(t *testing.T) {
 	require.Equal(t, model.ModelClassHighReasoning, events.usage[0].ModelClass)
 }
 
+// TestConsumeStreamToolCallOmitsThoughtSignature documents that ConsumeStream
+// deliberately does not surface model.ToolCall.ThoughtSignature on the
+// resulting planner.ToolRequest: opaque provider state is captured earlier, at
+// the runtime's model-client boundary (see runtime.signatureCapturingClient),
+// and never transits this user-facing type.
+func TestConsumeStreamToolCallOmitsThoughtSignature(t *testing.T) {
+	streamer := &testStreamer{
+		chunks: []model.Chunk{
+			{
+				Type: model.ChunkTypeToolCall,
+				ToolCall: &model.ToolCall{
+					Name:             tools.Ident("svc.read.get_time_series"),
+					ID:               "call-1",
+					ThoughtSignature: "opaque-provider-signature",
+				},
+			},
+		},
+	}
+	events := &recordingEvents{}
+
+	summary, err := ConsumeStream(context.Background(), streamer, &model.Request{}, events)
+
+	require.NoError(t, err)
+	require.Len(t, summary.ToolCalls, 1)
+	require.Equal(t, tools.Ident("svc.read.get_time_series"), summary.ToolCalls[0].Name)
+	require.Equal(t, "call-1", summary.ToolCalls[0].ToolCallID)
+}
+
 func TestConsumeStreamFallsBackToMetadataUsage(t *testing.T) {
 	streamer := &testStreamer{
 		meta: map[string]any{

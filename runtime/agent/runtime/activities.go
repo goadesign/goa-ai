@@ -138,9 +138,10 @@ func (a *plannerActivityInvocation) output(result *planner.PlanResult) (*PlanAct
 	transcript := a.events.exportTranscript()
 	normalizeTranscriptRawJSON(transcript)
 	return &PlanActivityOutput{
-		Result:     result,
-		Transcript: transcript,
-		Usage:      a.events.exportUsage(),
+		Result:             result,
+		Transcript:         transcript,
+		Usage:              a.events.exportUsage(),
+		ToolCallSignatures: a.events.exportToolCallSignatures(),
 	}, nil
 }
 

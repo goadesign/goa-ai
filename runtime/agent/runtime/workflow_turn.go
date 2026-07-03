@@ -106,7 +106,7 @@ func (l *workflowLoop) executeToolStep(program stepProgram, batch *stepBatch) ([
 	if program.kind == stepKindToolTerminal && len(confirmations) > 0 {
 		return nil, nil, errors.New("workflow step terminal payload cannot accompany confirmation-gated tools")
 	}
-	if err := l.r.recordAssistantTurn(ctx, l.input.AgentID, l.base, l.st.Transcript, allowed, l.turnID); err != nil {
+	if err := l.r.recordAssistantTurn(ctx, l.input.AgentID, l.base, l.st.Transcript, allowed, l.st.ToolCallSignatures, l.turnID); err != nil {
 		return nil, nil, err
 	}
 
@@ -161,7 +161,7 @@ func (r *Runtime) recordStepToolResults(
 	if err := r.appendToolOutputRecords(ctx, st, records); err != nil {
 		return err
 	}
-	if err := r.appendRetryableBookkeepingToolUses(ctx, input.AgentID, base, records, turnID); err != nil {
+	if err := r.appendRetryableBookkeepingToolUses(ctx, input.AgentID, base, records, st.ToolCallSignatures, turnID); err != nil {
 		return err
 	}
 	if err := r.appendUserToolRecordResults(ctx, input.AgentID, base, records, turnID); err != nil {
