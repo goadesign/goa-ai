@@ -6,8 +6,10 @@
 // lacks for Vertex: error classification. anthropic.isRateLimited only
 // detects errors that already wrap model.ErrRateLimited, so it never
 // recognizes a real SDK 429 (*anthropic.Error with StatusCode 429).
-// anthropicErrorMapper decorates the reused client so the adaptive
-// rate-limit middleware observes genuine Vertex throttling.
+// anthropicErrorMapper decorates the reused client — and wraps the streamer
+// it returns so mid-stream Recv errors are classified too, not just
+// call-establishment failures — so the adaptive rate-limit middleware
+// observes genuine Vertex throttling on both paths.
 
 package vertex
 
@@ -15,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
@@ -96,14 +99,43 @@ func (m *anthropicErrorMapper) Complete(ctx context.Context, req *model.Request)
 	return resp, nil
 }
 
-// Stream implements model.Client.
+// Stream implements model.Client. The returned streamer is itself wrapped
+// so mid-stream failures surfacing through Recv are classified too, not
+// just stream-establishment errors.
 func (m *anthropicErrorMapper) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
 	s, err := m.next.Stream(ctx, req)
 	if err != nil {
 		return nil, wrapAnthropicVertexError("stream", err)
 	}
-	return s, nil
+	return &anthropicStreamerMapper{next: s}, nil
 }
+
+// anthropicStreamerMapper decorates a model.Streamer so errors returned by
+// Recv mid-stream go through the same classification as call-establishment
+// errors. io.EOF (normal stream termination) and context cancellation or
+// deadline errors pass through unmapped: they are consumer-side flow
+// control, not provider failures.
+type anthropicStreamerMapper struct {
+	next model.Streamer
+}
+
+// Recv implements model.Streamer.
+func (s *anthropicStreamerMapper) Recv() (model.Chunk, error) {
+	chunk, err := s.next.Recv()
+	if err == nil ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) {
+		return chunk, err
+	}
+	return chunk, wrapAnthropicVertexError("stream_recv", err)
+}
+
+// Close implements model.Streamer.
+func (s *anthropicStreamerMapper) Close() error { return s.next.Close() }
+
+// Metadata implements model.Streamer.
+func (s *anthropicStreamerMapper) Metadata() map[string]any { return s.next.Metadata() }
 
 // wrapAnthropicVertexError classifies Anthropic SDK errors (which carry the
 // Vertex HTTP status on *anthropic.Error) into the provider error contract,
