@@ -2,9 +2,6 @@ package vertex
 
 import "goa.design/goa-ai/runtime/agent/model"
 
-// geminiProviderName identifies the Gemini-on-Vertex adapter in provider errors.
-const geminiProviderName = "vertex-gemini"
-
 // Options configures the Gemini-on-Vertex model client.
 //
 // Model IDs are Vertex publisher model names (e.g. "gemini-2.5-pro",
@@ -27,6 +24,9 @@ type Options struct {
 	// request enables thinking without a budget.
 	ThinkingBudget int
 }
+
+// geminiProviderName identifies the Gemini-on-Vertex adapter in provider errors.
+const geminiProviderName = "vertex-gemini"
 
 // resolveModelID picks the concrete Vertex model for a request: an explicit
 // Request.Model wins, then the configured class override, then DefaultModel.

@@ -1,8 +1,8 @@
-// Package vertex implements the Gemini-on-Vertex model.Client. Header
-// invariants:
+// Gemini-on-Vertex model.Client core. Invariants:
 //   - prepareRequest is the single translation entry point shared by
 //     Complete, Stream, and CountTokens so gates apply uniformly.
 //   - The adapter is stateless and never retries (see doc.go).
+
 package vertex
 
 import (
