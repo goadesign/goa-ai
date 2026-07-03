@@ -36,7 +36,7 @@ func translateResponse(resp *genai.GenerateContentResponse, modelID string, clas
 				}
 				callIndex++
 				out.ToolCalls = append(out.ToolCalls, model.ToolCall{
-					Name:    tools.Ident(canonicalToolName(part.FunctionCall.Name, provToCanon)),
+					Name:    toolIdent(part.FunctionCall.Name, provToCanon),
 					Payload: payload,
 					ID:      toolCallID(part.FunctionCall, callIndex),
 				})

@@ -79,6 +79,23 @@ func TestTranslateResponseProviderToolCallIDWins(t *testing.T) {
 	assert.Equal(t, model.ModelClassSmall, out.Usage.ModelClass)
 }
 
+func TestTranslateResponseNilArgsPayloadIsEmptyObject(t *testing.T) {
+	resp := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{{
+			Content: &genai.Content{Parts: []*genai.Part{
+				{FunctionCall: &genai.FunctionCall{Name: "feed_find_duplicates", Args: nil}},
+			}},
+		}},
+	}
+	out, err := translateResponse(resp, "m", model.ModelClassDefault, map[string]string{})
+	require.NoError(t, err)
+	require.Len(t, out.ToolCalls, 1)
+	// marshalArgs normalizes nil args to an empty JSON object; a plain
+	// json.Marshal of a nil map would produce JSON null, which violates the
+	// ToolCall.Payload contract (valid JSON object arguments).
+	assert.Equal(t, `{}`, string(out.ToolCalls[0].Payload))
+}
+
 func TestTranslateResponseNoCandidates(t *testing.T) {
 	_, err := translateResponse(&genai.GenerateContentResponse{}, "m", model.ModelClassDefault, nil)
 	assert.Error(t, err)

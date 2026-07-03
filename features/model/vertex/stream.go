@@ -21,9 +21,11 @@ func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer
 	if err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithCancel(ctx)
 	seq := c.models.GenerateContentStream(ctx, prep.modelID, prep.contents, prep.config)
 	s := &geminiStreamer{
 		ctx:    ctx,
+		cancel: cancel,
 		chunks: make(chan model.Chunk, 32),
 		meta:   make(map[string]any),
 	}
@@ -33,6 +35,7 @@ func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer
 
 type geminiStreamer struct {
 	ctx    context.Context
+	cancel context.CancelFunc
 	chunks chan model.Chunk
 	meta   map[string]any
 
@@ -134,8 +137,13 @@ func (s *geminiStreamer) Recv() (model.Chunk, error) {
 	}
 }
 
-// Close implements model.Streamer.
-func (s *geminiStreamer) Close() error { return nil }
+// Close implements model.Streamer. It cancels the pump goroutine's context
+// so run stops emitting even when the caller abandons the stream without
+// draining it. Context cancellation is idempotent, so is Close.
+func (s *geminiStreamer) Close() error {
+	s.cancel()
+	return nil
+}
 
 // Metadata implements model.Streamer.
 func (s *geminiStreamer) Metadata() map[string]any {
