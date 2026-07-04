@@ -42,5 +42,27 @@ func Inject{{ .ConstName }}(p *{{ .ConstName }}Payload, meta runtime.ToolCallMet
 {{- end }}
 	return nil
 }
+
+// Decode{{ .ConstName }} decodes payload into a {{ .ConstName }}Payload and
+// populates its Inject()-ed fields in one call, composing
+// {{ .ConstName }}PayloadCodec.FromJSON with Inject{{ .ConstName }}.
+//
+// Custom ToolCallExecutors for the {{ .QualifiedName }} tool must call THIS
+// function, not {{ .ConstName }}PayloadCodec.FromJSON followed by a manual
+// Inject{{ .ConstName }} call: decoding with the codec alone leaves every
+// injected field at its Go zero value with no error, because injected fields
+// carry a `json:"-"` wire tag (hidden from the model) and are therefore never
+// "missing" from the codec's point of view. Decode{{ .ConstName }} is the one
+// path that cannot silently skip injection.
+func Decode{{ .ConstName }}(payload []byte, meta runtime.ToolCallMeta, labels map[string]string) (*{{ .ConstName }}Payload, error) {
+	p, err := {{ .ConstName }}PayloadCodec.FromJSON(payload)
+	if err != nil {
+		return nil, err
+	}
+	if err := Inject{{ .ConstName }}(p, meta, labels); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
 {{- end }}
 {{- end }}

@@ -39,6 +39,10 @@ func TestInjectMetaBackedBoundToolBackwardCompatible(t *testing.T) {
 	require.Contains(t, inject, "v := meta.SessionID")
 	require.Contains(t, inject, "p.SessionID = &v",
 		"injected fields are pointers on the tool payload (hidden fields are optional in the model-facing contract)")
+	require.Contains(t, inject, "func DecodeGetData(payload []byte, meta runtime.ToolCallMeta, labels map[string]string) (*GetDataPayload, error) {",
+		"the composed decode helper must exist beside Inject<Tool> for custom executors")
+	require.Contains(t, inject, "p, err := GetDataPayloadCodec.FromJSON(payload)")
+	require.Contains(t, inject, "if err := InjectGetData(p, meta, labels); err != nil {")
 
 	provider := fileContent(t, files, "gen/atlas/toolsets/helpers/provider.go")
 	require.NotContains(t, provider, "methodIn.SessionID = msg.Meta.SessionID",
@@ -99,6 +103,8 @@ func TestInjectLabelBackedWithValidation(t *testing.T) {
 		"injected fields are pointers on the tool payload (hidden fields are optional in the model-facing contract)")
 	require.Contains(t, inject, "v := meta.SessionID", "mixed tool: session_id stays meta-backed alongside the label-backed field")
 	require.Contains(t, inject, "p.SessionID = &v")
+	require.Contains(t, inject, "func DecodeLookupHousehold(payload []byte, meta runtime.ToolCallMeta, labels map[string]string) (*LookupHouseholdPayload, error) {",
+		"the composed decode helper must exist for unbound (custom-executor-eligible) injecting tools too")
 
 	specs := fileContent(t, files, "gen/calc/toolsets/helpers/specs.go")
 	require.Contains(t, specs, `var RequiredLabels = []string{

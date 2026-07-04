@@ -318,7 +318,7 @@ Agent("chat", "Document assistant", func() {
 })
 ```
 
-The generator emits typed transforms where shapes are compatible. Runtime metadata supplies supported injected fields such as `run_id`, `session_id`, `turn_id`, and `tool_call_id`.
+The generator emits typed transforms where shapes are compatible. `Inject` names that match a `runtime.ToolCallMeta` field (`run_id`, `session_id`, `turn_id`, `tool_call_id`, `parent_tool_call_id`) are meta-backed; any other name is label-backed, read from labels supplied via `runtime.WithLabels(...)` at run start. See [`docs/dsl.md`](docs/dsl.md) and [`docs/runtime.md`](docs/runtime.md) for the full contract.
 
 ### Structured Direct Completions
 

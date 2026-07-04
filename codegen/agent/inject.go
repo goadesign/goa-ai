@@ -13,6 +13,15 @@
 //     to validate individual HTTP path/query parameters) applied to the
 //     label value.
 //
+// Each toolset's generated inject.go (see templates/tool_inject.go.tpl) also
+// exports a composed Decode<Tool> function per injecting tool, chaining
+// <Tool>PayloadCodec.FromJSON with Inject<Tool> in one call. Generated
+// dispatch (service_executor.go.tpl, tool_provider.go.tpl) calls the codec
+// and Inject<Tool> separately because it already holds meta/labels at the
+// right point in its own control flow; hand-written ToolCallExecutors have
+// no such generated call site, so Decode<Tool> is the one function they
+// should reach for to decode a tool payload without forgetting injection.
+//
 // expr/agent/tool.go's Validate already guarantees, before this file ever
 // runs, that every injected name exists on the effective payload, is
 // required, and is a String; this file trusts those invariants.
@@ -234,4 +243,3 @@ func fieldValidationCode(field *goaexpr.AttributeExpr, attName string) string {
 	code := codegen.AttributeValidationCode(field, nil, attCtx, true, false, "v", attName)
 	return strings.TrimSpace(code)
 }
-
