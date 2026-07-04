@@ -72,26 +72,14 @@ var metaFieldByGoName = map[string]struct{}{
 	"ParentToolCallID": {},
 }
 
-// injectedFieldSource classifies name's compiled source: it is meta-backed
-// when Goifying it matches a runtime.ToolCallMeta field, regardless of
-// whether the design used snake_case ("session_id") or lowerCamel
-// ("sessionId") -- both Goify to "SessionID". Every other name is
-// label-backed.
-func injectedFieldSource(name string) (metaField string, isMeta bool) {
-	gn := codegen.Goify(name, true)
-	if _, ok := metaFieldByGoName[gn]; ok {
-		return gn, true
-	}
-	return "", false
-}
-
 // buildInjectedFields resolves tool.InjectedFields against the effective
-// payload attribute (the bound method payload for method-backed tools,
-// otherwise the tool's own Args) into compiled InjectedFieldData entries.
+// tool Args (post codegen Prepare: explicit Args when declared, otherwise the
+// bound method payload copied in for method-backed tools) into compiled
+// InjectedFieldData entries.
 //
-// payload must be the same attribute expr.agent already validated the
-// injected names against (see expr/agent/tool.go Validate): every name is
-// guaranteed to exist, be required, and be a String.
+// payload must be part of the attribute sets expr/agent/tool.go's Validate
+// already checked the injected names against (see injectTargets there):
+// every name is guaranteed to exist, be required, and be a String.
 func buildInjectedFields(payload *goaexpr.AttributeExpr, names []string) []*InjectedFieldData {
 	if len(names) == 0 {
 		return nil
@@ -114,35 +102,6 @@ func buildInjectedFields(payload *goaexpr.AttributeExpr, names []string) []*Inje
 		out = append(out, data)
 	}
 	return out
-}
-
-// effectiveObject unwraps a payload attribute (dereferencing a user type
-// wrapper, if any) down to the underlying Object so individual fields can be
-// looked up by name. Callers only reach here after expr/agent/tool.go's
-// Validate has already confirmed the payload is an object.
-func effectiveObject(payload *goaexpr.AttributeExpr) *goaexpr.Object {
-	att := payload
-	if ut, ok := att.Type.(goaexpr.UserType); ok && ut != nil {
-		att = ut.Attribute()
-	}
-	obj, _ := att.Type.(*goaexpr.Object)
-	return obj
-}
-
-// fieldValidationCode generates the Go source that runs field's declared
-// validations (pattern, length, enum, format) against a local string
-// variable named "v", reusing goa's own per-attribute validation codegen
-// (the same helper that generates HTTP path/query parameter validation) so
-// Inject never duplicates validation rules by hand. Returns "" when the
-// field declares no validation beyond being required (already enforced by
-// the compiled missing-label check).
-func fieldValidationCode(field *goaexpr.AttributeExpr, attName string) string {
-	if field == nil {
-		return ""
-	}
-	attCtx := codegen.NewAttributeContext(false, false, false, "", codegen.NewNameScope())
-	code := codegen.AttributeValidationCode(field, nil, attCtx, true, false, "v", attName)
-	return strings.TrimSpace(code)
 }
 
 // requiredLabels returns the sorted, deduplicated set of label keys that
@@ -215,5 +174,47 @@ func toolInjectImports(tools []*ToolData) []*codegen.ImportSpec {
 		imports = append(imports, codegen.SimpleImport("unicode/utf8"))
 	}
 	return imports
+}
+
+// injectedFieldSource classifies name's compiled source: it is meta-backed
+// when Goifying it matches a runtime.ToolCallMeta field, regardless of
+// whether the design used snake_case ("session_id") or lowerCamel
+// ("sessionId") -- both Goify to "SessionID". Every other name is
+// label-backed.
+func injectedFieldSource(name string) (metaField string, isMeta bool) {
+	gn := codegen.Goify(name, true)
+	if _, ok := metaFieldByGoName[gn]; ok {
+		return gn, true
+	}
+	return "", false
+}
+
+// effectiveObject unwraps a payload attribute (dereferencing a user type
+// wrapper, if any) down to the underlying Object so individual fields can be
+// looked up by name. Callers only reach here after expr/agent/tool.go's
+// Validate has already confirmed the payload is an object.
+func effectiveObject(payload *goaexpr.AttributeExpr) *goaexpr.Object {
+	att := payload
+	if ut, ok := att.Type.(goaexpr.UserType); ok && ut != nil {
+		att = ut.Attribute()
+	}
+	obj, _ := att.Type.(*goaexpr.Object)
+	return obj
+}
+
+// fieldValidationCode generates the Go source that runs field's declared
+// validations (pattern, length, enum, format) against a local string
+// variable named "v", reusing goa's own per-attribute validation codegen
+// (the same helper that generates HTTP path/query parameter validation) so
+// Inject never duplicates validation rules by hand. Returns "" when the
+// field declares no validation beyond being required (already enforced by
+// the compiled missing-label check).
+func fieldValidationCode(field *goaexpr.AttributeExpr, attName string) string {
+	if field == nil {
+		return ""
+	}
+	attCtx := codegen.NewAttributeContext(false, false, false, "", codegen.NewNameScope())
+	code := codegen.AttributeValidationCode(field, nil, attCtx, true, false, "v", attName)
+	return strings.TrimSpace(code)
 }
 
