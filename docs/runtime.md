@@ -259,6 +259,23 @@ history from a `RunID`; runtime-owned callers must supply the full transcript,
 and durable recovery rebuilds that transcript from runlog
 `transcript_messages_appended` records.
 
+### Sampling parameters on current-generation Claude models
+
+Anthropic removed the `temperature`/`top_p`/`top_k` sampling parameters from
+current-generation Claude models (Opus 4.7 and later, Sonnet 5 and later, and
+the Fable/Mythos generation): a request carrying a non-default value is
+rejected with a 400 `invalid_request_error` ("temperature is deprecated for
+this model"). The Anthropic adapter (`features/model/anthropic`, which also
+backs Claude-on-Vertex) and the Bedrock adapter (`features/model/bedrock`)
+share one capability rule and omit `temperature` from the wire request for
+those models instead of forwarding a guaranteed failure — the model runs at
+its own default sampling behavior, and a configured `Options.Temperature` or
+`Request.Temperature` has no effect. The Anthropic adapter records the
+omission on the ambient trace span (`gen_ai.request.temperature_omitted`).
+Steer output behavior through prompting on these models; older generations
+(Opus ≤ 4.6, Sonnet 4.x, Haiku 4.5) keep honoring the configured value
+unchanged.
+
 ---
 
 ## Runtime Configuration

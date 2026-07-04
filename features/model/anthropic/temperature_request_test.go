@@ -11,7 +11,8 @@ import (
 )
 
 // TestPrepareRequestOmitsTemperatureForUnsupportedModels is the adapter-level
-// proof for the capability rule in temperature.go: a caller-configured,
+// proof for the shared capability rule
+// (features/model/internal/claudecaps.TemperatureSupported): a caller-configured,
 // non-default temperature must never reach the wire for a model that rejects
 // it, even though the field is set on both Options and the request. Before
 // this fix, prepareRequest forwarded Request.Temperature unconditionally and
@@ -21,6 +22,7 @@ func TestPrepareRequestOmitsTemperatureForUnsupportedModels(t *testing.T) {
 	unsupported := []string{
 		"claude-sonnet-5",
 		"claude-sonnet-5@20260201",
+		"claude-sonnet-6",
 		"claude-opus-4-7",
 		"claude-opus-4-8",
 		"claude-fable-5",

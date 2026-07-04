@@ -43,8 +43,9 @@ type AnthropicOptions struct {
 	// models that no longer accept the parameter (Claude Opus 4.7+, Claude
 	// Sonnet 5+, and the Fable/Mythos generation) — anthropicprovider omits
 	// it from the wire request for those models rather than forwarding a
-	// value guaranteed to 400. See temperatureSupported in
-	// features/model/anthropic/temperature.go for the exact rule.
+	// value guaranteed to 400. See
+	// features/model/internal/claudecaps.TemperatureSupported for the exact
+	// rule.
 	Temperature float64
 	// ThinkingBudget is the default thinking token budget.
 	ThinkingBudget int64

@@ -11,53 +11,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
-// isAdaptiveThinkingModel must match every Bedrock inference profile scope
-// (in-region, geo cross-region, global cross-region) for the Opus versions
-// that require adaptive thinking. Misclassifying these models causes the
-// adapter to send the legacy type:"enabled" + budget_tokens config, which
-// produces unreliable signatures on Opus 4.6 and a 400 error on Opus 4.7+.
-func TestIsAdaptiveThinkingModel(t *testing.T) {
-	cases := []struct {
-		name    string
-		modelID string
-		want    bool
-	}{
-		{"opus-4-6 in-region", "anthropic.claude-opus-4-6-v1", true},
-		{"opus-4-6 us geo", "us.anthropic.claude-opus-4-6-v1", true},
-		{"opus-4-6 eu geo", "eu.anthropic.claude-opus-4-6-v1", true},
-		{"opus-4-6 global", "global.anthropic.claude-opus-4-6-v1", true},
-		{"opus-4-7 in-region", "anthropic.claude-opus-4-7", true},
-		{"opus-4-7 us geo", "us.anthropic.claude-opus-4-7", true},
-		{"opus-4-7 eu geo", "eu.anthropic.claude-opus-4-7", true},
-		{"opus-4-7 jp geo", "jp.anthropic.claude-opus-4-7", true},
-		{"opus-4-7 global", "global.anthropic.claude-opus-4-7", true},
-		{"opus-4-8 in-region", "anthropic.claude-opus-4-8", true},
-		{"opus-4-8 us geo", "us.anthropic.claude-opus-4-8", true},
-		{"opus-4-8 eu geo", "eu.anthropic.claude-opus-4-8", true},
-		{"opus-4-8 jp geo", "jp.anthropic.claude-opus-4-8", true},
-		{"opus-4-8 au geo", "au.anthropic.claude-opus-4-8", true},
-		{"opus-4-8 global", "global.anthropic.claude-opus-4-8", true},
-		{"future opus-4-9", "us.anthropic.claude-opus-4-9", true},
-		{"fable-5 in-region", "anthropic.claude-fable-5", true},
-		{"fable-5 us geo", "us.anthropic.claude-fable-5", true},
-		{"fable-5 global", "global.anthropic.claude-fable-5", true},
-		{"fable-5 suffixed", "us.anthropic.claude-fable-5-v1:0", true},
-		{"mythos-5 us geo", "us.anthropic.claude-mythos-5", true},
-		{"opus-4-1", "anthropic.claude-opus-4-1", false},
-		{"opus-4-5", "anthropic.claude-opus-4-5", false},
-		{"sonnet-4-5", "global.anthropic.claude-sonnet-4-5-20250929-v1:0", false},
-		{"haiku-4-5", "global.anthropic.claude-haiku-4-5-20251001-v1:0", false},
-		{"sonnet-3-7", "anthropic.claude-3-7-sonnet", false},
-		{"nova", "amazon.nova-pro-v1:0", false},
-		{"empty", "", false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, isAdaptiveThinkingModel(tc.modelID), "isAdaptiveThinkingModel(%q)", tc.modelID)
-		})
-	}
-}
-
 // When the configured high-reasoning model is Opus 4.7 or later, the streaming input
 // must carry thinking: {type: "adaptive", display: "summarized"} — never the
 // legacy type:"enabled" + budget_tokens payload that returns a 400 on 4.7+ and
@@ -419,25 +372,48 @@ func TestOpus47AndLaterOmitsTemperatureFromInferenceConfig(t *testing.T) {
 	}
 }
 
-func TestSupportsTemperature(t *testing.T) {
+// TestSonnet5OmitsTemperatureOnBedrock is the regression test for the
+// live-verified 400 that motivated the shared capability rule: Claude
+// Sonnet 5 rejects any request carrying a non-default temperature
+// ("temperature is deprecated for this model"), so the Bedrock adapter must
+// never emit InferenceConfig.Temperature for it — while Sonnet 4.x keeps
+// receiving the caller's value.
+func TestSonnet5OmitsTemperatureOnBedrock(t *testing.T) {
 	cases := []struct {
-		name    string
-		modelID string
-		want    bool
+		name         string
+		defaultModel string
+		wantTemp     bool
 	}{
-		{"opus-4-6 supports sampling", "global.anthropic.claude-opus-4-6-v1", true},
-		{"opus-4-7 omits sampling", "us.anthropic.claude-opus-4-7", false},
-		{"opus-4-8 omits sampling", "us.anthropic.claude-opus-4-8", false},
-		{"future opus-4-9 omits sampling", "global.anthropic.claude-opus-4-9", false},
-		{"fable-5 omits sampling", "us.anthropic.claude-fable-5", false},
-		{"fable-5 suffixed omits sampling", "global.anthropic.claude-fable-5-v1:0", false},
-		{"mythos-5 omits sampling", "us.anthropic.claude-mythos-5", false},
-		{"sonnet keeps sampling", "global.anthropic.claude-sonnet-4-5-20250929-v1:0", true},
-		{"haiku keeps sampling", "global.anthropic.claude-haiku-4-5-20251001-v1:0", true},
+		{"sonnet-5 in-region omits temperature", "anthropic.claude-sonnet-5", false},
+		{"sonnet-5 us geo omits temperature", "us.anthropic.claude-sonnet-5", false},
+		{"sonnet-5 global suffixed omits temperature", "global.anthropic.claude-sonnet-5-v1:0", false},
+		{"sonnet-4-5 keeps temperature", "us.anthropic.claude-sonnet-4-5-20250929-v1:0", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, supportsTemperature(tc.modelID))
+			client := &Client{defaultModel: tc.defaultModel}
+
+			req := &model.Request{
+				Temperature: 0.2,
+				Messages: []*model.Message{{
+					Role:  model.ConversationRoleUser,
+					Parts: []model.Part{model.TextPart{Text: "hello"}},
+				}},
+			}
+
+			parts, err := client.prepareRequest(context.Background(), req)
+			require.NoError(t, err)
+
+			input := client.buildConverseInput(parts, req)
+			if tc.wantTemp {
+				require.NotNil(t, input.InferenceConfig)
+				require.NotNil(t, input.InferenceConfig.Temperature)
+				assert.InDelta(t, 0.2, *input.InferenceConfig.Temperature, 0.001)
+				return
+			}
+			if input.InferenceConfig != nil {
+				assert.Nil(t, input.InferenceConfig.Temperature)
+			}
 		})
 	}
 }
