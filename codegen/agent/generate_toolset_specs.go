@@ -21,6 +21,10 @@ type toolProviderFileData struct {
 	PackageName    string
 	ServiceTypeRef string
 	Tools          []*ToolData
+	// NeedsInject indicates at least one tool declares Inject() fields, so the
+	// generated HandleToolCall must build a runtime.ToolCallMeta from the wire
+	// toolregistry.ToolCallMeta once, ahead of the tool dispatch switch.
+	NeedsInject bool
 }
 
 // toolsetSpecsFiles emits toolset-owned packages (types, unions, codecs, specs,
@@ -313,6 +317,10 @@ func toolsetProviderFile(genpkg string, ts *ToolsetData) *codegen.File {
 	if hasBoundsProjection {
 		imports = append(imports, &codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent"})
 	}
+	needsInject := toolsNeedInject(ts.Tools)
+	if needsInject {
+		imports = append(imports, &codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/runtime"})
+	}
 	sections := []*codegen.SectionTemplate{
 		codegen.Header(ts.Name+" tool provider", ts.SpecsPackageName, imports),
 		{
@@ -322,6 +330,7 @@ func toolsetProviderFile(genpkg string, ts *ToolsetData) *codegen.File {
 				PackageName:    ts.SpecsPackageName,
 				ServiceTypeRef: fmt.Sprintf("%s.Service", ts.SourceService.PkgName),
 				Tools:          ts.Tools,
+				NeedsInject:    needsInject,
 			},
 			FuncMap: templateFuncMap(),
 		},
