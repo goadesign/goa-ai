@@ -497,11 +497,19 @@ func countMessages(
 			return model.TokenCount{}, errors.New("runtime: history compression token counter is required for token budgets")
 		}
 	}
-	count, err := counter.CountTokens(ctx, &model.Request{
+	// Counting requests are synthesized from history, so they need the same
+	// guarantee the configured model client gives Complete and Stream: when
+	// the transcript references a tool absent from the advertised list
+	// (unknown-tool recovery records runtime.tool_unavailable), the request
+	// tool configuration must still cover it or providers such as Bedrock
+	// reject the count.
+	req := &model.Request{
 		ModelClass: cfg.modelClass,
 		Messages:   msgs,
 		Tools:      tools,
-	})
+	}
+	ensureToolUnavailableDefinition(req)
+	count, err := counter.CountTokens(ctx, req)
 	if err != nil {
 		return model.TokenCount{}, err
 	}

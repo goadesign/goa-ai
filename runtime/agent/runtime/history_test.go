@@ -354,3 +354,48 @@ func assertToolResult(t *testing.T, msg *model.Message, id string, content any) 
 	assert.Equal(t, id, part.ToolUseID)
 	assert.Equal(t, content, part.Content)
 }
+
+// TestCompressCountsToolBearingHistoryWithUnavailableDefinition pins the
+// counting contract for transcripts that carry unknown-tool recovery: every
+// token-count request synthesized from history must include the runtime-owned
+// tool_unavailable definition when historical tool_use names are absent from
+// the advertised tool list, mirroring the guarantee the configured model
+// client provides for Complete and Stream. Providers such as Bedrock reject
+// tool-bearing transcripts whose tool_use names are missing from the request
+// tool configuration.
+func TestCompressCountsToolBearingHistoryWithUnavailableDefinition(t *testing.T) {
+	client := &historyCountingClient{}
+	policy := Compress(client, HistoryCompressionConfig{
+		CompressAtMaxInputTokens: 30,
+		KeepMaxInputTokens:       40,
+	})
+
+	_, err := policy(context.Background(), []*model.Message{
+		userMsg("question"),
+		assistantToolUseMsg("t1", "runtime.tool_unavailable"),
+		toolResultMsg("t1", "unavailable"),
+		assistantTextMsg("answer"),
+		userMsg("follow-up"),
+		assistantTextMsg("done"),
+	}, []*model.ToolDefinition{{Name: "known.tool"}})
+	require.NoError(t, err)
+	require.NotEmpty(t, client.countedAll)
+	for _, req := range client.countedAll {
+		names := make(map[string]bool, len(req.Tools))
+		for _, def := range req.Tools {
+			names[def.Name] = true
+		}
+		referencesUnavailable := false
+		for _, msg := range req.Messages {
+			for _, part := range msg.Parts {
+				if use, ok := part.(model.ToolUsePart); ok && use.Name == "runtime.tool_unavailable" {
+					referencesUnavailable = true
+				}
+			}
+		}
+		if referencesUnavailable {
+			require.True(t, names["runtime.tool_unavailable"],
+				"count request with recovered tool_use history must carry the tool_unavailable definition, got tools %v", names)
+		}
+	}
+}
