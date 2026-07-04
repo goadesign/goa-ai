@@ -39,7 +39,13 @@ type AnthropicOptions struct {
 	SmallModel string
 	// MaxTokens caps output tokens when the request does not set MaxTokens.
 	MaxTokens int
-	// Temperature is the default sampling temperature.
+	// Temperature is the default sampling temperature. It has no effect for
+	// models that no longer accept the parameter (Claude Opus 4.7+, Claude
+	// Sonnet 5+, and the Fable/Mythos generation) — anthropicprovider omits
+	// it from the wire request for those models rather than forwarding a
+	// value guaranteed to 400. See
+	// features/model/internal/claudecaps.TemperatureSupported for the exact
+	// rule.
 	Temperature float64
 	// ThinkingBudget is the default thinking token budget.
 	ThinkingBudget int64
