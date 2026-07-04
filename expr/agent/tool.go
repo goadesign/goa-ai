@@ -183,6 +183,20 @@ type (
 	}
 )
 
+// runtimeMetaFieldNames is the fixed set of runtime.ToolCallMeta Go field
+// names (post-Goify) that Inject() compiles to a direct meta read instead of
+// a run-label lookup. Kept in lockstep with
+// codegen/agent/inject.go:metaFieldByGoName -- expr/agent cannot import
+// codegen/agent (which imports expr/agent), so the fixed, rarely-changing set
+// is duplicated here rather than shared via import.
+var runtimeMetaFieldNames = map[string]struct{}{
+	"RunID":            {},
+	"SessionID":        {},
+	"TurnID":           {},
+	"ToolCallID":       {},
+	"ParentToolCallID": {},
+}
+
 // AddMeta adds metadata to the tool expression.
 //
 // This method exists so Goa's standard Meta DSL helper can attach metadata to
@@ -459,20 +473,6 @@ func targetDefiningField(targets []injectTarget, name string) (injectTarget, boo
 		}
 	}
 	return injectTarget{}, false
-}
-
-// runtimeMetaFieldNames is the fixed set of runtime.ToolCallMeta Go field
-// names (post-Goify) that Inject() compiles to a direct meta read instead of
-// a run-label lookup. Kept in lockstep with
-// codegen/agent/inject.go:metaFieldByGoName -- expr/agent cannot import
-// codegen/agent (which imports expr/agent), so the fixed, rarely-changing set
-// is duplicated here rather than shared via import.
-var runtimeMetaFieldNames = map[string]struct{}{
-	"RunID":            {},
-	"SessionID":        {},
-	"TurnID":           {},
-	"ToolCallID":       {},
-	"ParentToolCallID": {},
 }
 
 // validateNoLabelBackedInjectOnBoundTool rejects label-backed Inject() fields

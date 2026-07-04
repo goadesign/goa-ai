@@ -487,34 +487,6 @@ var (
 	ErrMissingLabels       = errors.New("run start: missing required labels")
 )
 
-// validateRequiredLabels fails fast, before any workflow or activity runs,
-// when the caller-supplied run labels omit a key that a label-backed
-// Inject() field requires. reg.RequiredLabels is generated data (the union
-// of every used toolset's RequiredLabels, computed once at codegen time); this
-// is a boundary check against genuinely dynamic caller input, not a
-// rediscovery of static structure.
-//
-// reg may be the zero value when the agent is not registered locally (for
-// example, a pure remote-route client start): RequiredLabels is empty in
-// that case, so validation trivially passes and the check is a no-op rather
-// than a false failure.
-func validateRequiredLabels(reg AgentRegistration, labels map[string]string) error {
-	if len(reg.RequiredLabels) == 0 {
-		return nil
-	}
-	var missing []string
-	for _, key := range reg.RequiredLabels {
-		if _, ok := labels[key]; !ok {
-			missing = append(missing, key)
-		}
-	}
-	if len(missing) == 0 {
-		return nil
-	}
-	return fmt.Errorf("%w: agent %q requires label(s) %v; call WithLabels(...) with these keys when starting the run",
-		ErrMissingLabels, reg.ID, missing)
-}
-
 // RunOption configures optional fields on RunInput for Run and Start. Required
 // values such as SessionID are positional arguments on AgentClient methods and
 // must not be set via RunOption.
@@ -1659,6 +1631,34 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	}
 	r.storeWorkflowHandle(input.RunID, handle)
 	return handle, nil
+}
+
+// validateRequiredLabels fails fast, before any workflow or activity runs,
+// when the caller-supplied run labels omit a key that a label-backed
+// Inject() field requires. reg.RequiredLabels is generated data (the union
+// of every used toolset's RequiredLabels, computed once at codegen time); this
+// is a boundary check against genuinely dynamic caller input, not a
+// rediscovery of static structure.
+//
+// reg may be the zero value when the agent is not registered locally (for
+// example, a pure remote-route client start): RequiredLabels is empty in
+// that case, so validation trivially passes and the check is a no-op rather
+// than a false failure.
+func validateRequiredLabels(reg AgentRegistration, labels map[string]string) error {
+	if len(reg.RequiredLabels) == 0 {
+		return nil
+	}
+	var missing []string
+	for _, key := range reg.RequiredLabels {
+		if _, ok := labels[key]; !ok {
+			missing = append(missing, key)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: agent %q requires label(s) %v; call WithLabels(...) with these keys when starting the run",
+		ErrMissingLabels, reg.ID, missing)
 }
 
 // CancelRun requests cancellation of the workflow identified by req.RunID.

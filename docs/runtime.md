@@ -941,6 +941,15 @@ the labels map itself.
    later, per tool call, when `Inject<Tool>` actually runs. Carry
    `RequiredLabels` on `AgentRoute` yourself if this gap matters for your
    deployment; the runtime does not do so today.
+   **Agent-as-tool child runs** bypass run-start validation the same way:
+   `ExecuteAgentChildWithRoute` starts the child workflow directly (no
+   `Start`/`StartOneShot` funnel), so the child's `RequiredLabels` are never
+   checked up front. The parent run's labels propagate to the child
+   unchanged (the child's `RunInput.Labels` is a copy of the parent tool
+   call's labels), so a parent started with the right `WithLabels(...)`
+   satisfies the child too; a label the child needs that the parent never
+   carried fails loud at the child's `Inject<Tool>` call, per tool call,
+   not at child start.
 
 **`WithLabels` contract:**
 

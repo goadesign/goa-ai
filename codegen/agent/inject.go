@@ -28,7 +28,7 @@
 package codegen
 
 import (
-	"sort"
+	"slices"
 	"strings"
 
 	"goa.design/goa/v3/codegen"
@@ -137,7 +137,7 @@ func requiredLabels(tools []*ToolData) []string {
 	for k := range seen {
 		out = append(out, k)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

@@ -35,6 +35,13 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 		if err != nil {
 			return nil, err
 		}
+		if payload != nil && len(tool.Injected) > 0 {
+			// The tool declares Inject() fields, so its generated payload codec's
+			// GoDoc must steer custom executors to the composed Decode<Tool>
+			// helper (tool_inject.go.tpl), whose name is derived from the same
+			// ConstName inject.go uses.
+			payload.InjectDecodeFunc = "Decode" + tool.ConstName
+		}
 		result, err := builder.typeFor(owner, tool.Return, usageResult)
 		if err != nil {
 			return nil, err

@@ -106,6 +106,10 @@ func TestInjectLabelBackedWithValidation(t *testing.T) {
 	require.Contains(t, inject, "func DecodeLookupHousehold(payload []byte, meta runtime.ToolCallMeta, labels map[string]string) (*LookupHouseholdPayload, error) {",
 		"the composed decode helper must exist for unbound (custom-executor-eligible) injecting tools too")
 
+	codecs := fileContent(t, files, "gen/calc/toolsets/helpers/codecs.go")
+	require.Contains(t, codecs, "// Prefer DecodeLookupHousehold when decoding tool calls: FromJSON alone",
+		"the injecting tool's payload codec GoDoc must steer custom executors to the composed Decode<Tool> helper")
+
 	specs := fileContent(t, files, "gen/calc/toolsets/helpers/specs.go")
 	require.Contains(t, specs, `var RequiredLabels = []string{
     "household_id",
