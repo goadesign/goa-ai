@@ -24,6 +24,7 @@ const (
 	mcpExecutorFileT           = "mcp_executor"
 	serviceExecutorFileT       = "service_executor"
 	toolCodecsFileT            = "tool_codecs"
+	toolInjectFileT            = "tool_inject"
 	toolSpecFileT              = "tool_spec"
 	toolProviderFileT          = "tool_provider"
 	toolSpecsAggregateT        = "specs_aggregate"

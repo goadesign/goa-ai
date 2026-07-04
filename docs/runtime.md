@@ -872,6 +872,124 @@ type ToolCallMeta struct {
 }
 ```
 
+### Injected Fields (`Inject()`)
+
+`Inject(names...)` in a `Tool` block marks payload fields as server-populated:
+hidden from the model (excluded from the JSON schema and the model-facing
+required list) and filled in by generated code before the tool executes.
+Injection is **compiled at generation time**, not interpreted at runtime --
+there is no reflection, no spec-walking, and no generic map plumbing beyond
+the labels map itself.
+
+**Design → codegen → runtime flow:**
+
+1. Design time: `Inject("session_id")` / `Inject("household_id")` records the
+   field name(s) on the tool. DSL `Validate` resolves each name against the
+   tool's effective payload (the explicit `Args()` when given, otherwise the
+   bound method's payload) and rejects the design if the field is missing,
+   optional, non-`String`, or (for a `BindTo` tool) label-backed.
+2. Codegen time: each name is classified against the fixed
+   `runtime.ToolCallMeta` field set (`sessionId`/`session_id` -> `SessionID`,
+   `runId`/`run_id` -> `RunID`, `turnId`/`turn_id` -> `TurnID`,
+   `toolCallId`/`tool_call_id` -> `ToolCallID`,
+   `parentToolCallId`/`parent_tool_call_id` -> `ParentToolCallID`). A match is
+   **meta-backed**; anything else is **label-backed**, using the design name
+   verbatim as the label key. `codegen/agent/prepare.go`'s `flattenAndHide`
+   removes the field from the model-facing schema and required list, which
+   makes every injected field a **pointer** on the generated tool payload
+   struct. Each toolset's `inject.go` (beside its `codecs.go`/`specs.go`) gets
+   one generated `Inject<Tool>(p *<Tool>Payload, meta runtime.ToolCallMeta,
+   labels map[string]string) error` function per injecting tool: meta-backed
+   fields copy directly from `meta`; label-backed fields look the key up in
+   `labels`, run the field's own declared validation (reusing Goa's
+   attribute-validation codegen, not hand-duplicated), and return a precise
+   error naming the tool and key on a missing or invalid label. The toolset's
+   `RequiredLabels` (sorted, deduplicated label keys) is generated onto its
+   specs package and aggregated, per agent, onto `AgentRegistration`.
+3. Runtime time: both execution topologies call the **same** generated
+   `Inject<Tool>` function between decode and execute, so population never
+   diverges by where a tool runs:
+   - Local (in-process) execution: the generated service executor calls
+     `Inject<Tool>` immediately after decoding the tool payload, before any
+     `WithPayloadMapper` customization or method-payload conversion, using
+     the run's `ToolCallMeta` and `ToolRequest.Labels`.
+   - Registry-served (bound) tools: the generated provider (`provider.go`)
+     calls the same `Inject<Tool>` function with a `nil` labels map --
+     sound only because a `BindTo` tool can never declare a label-backed
+     field (rejected at design time), since the registry wire protocol
+     carries no run labels.
+   - Custom (hand-written) `ToolCallExecutor`s -- for tools with no `BindTo`,
+     registered directly with the runtime -- have no generated call site.
+     **Use the toolset's generated `Decode<Tool>(payload []byte, meta
+     runtime.ToolCallMeta, labels map[string]string) (*<Tool>Payload, error)`
+     function to decode these tools' payloads**, not the raw
+     `<Tool>PayloadCodec.FromJSON` followed by a manual `Inject<Tool>` call.
+     `Decode<Tool>` composes both in one call; decoding with the codec alone
+     silently leaves injected fields at their Go zero value, because their
+     wire tag is `json:"-"` and there is no "missing key" signal. `payload`
+     accepts a `planner.ToolRequest.Payload` (`rawjson.Message`) directly.
+4. Run start: `Runtime.Start`/`StartOneShot` (and their route variants)
+   validate the caller-supplied `WithLabels(...)` map against the starting
+   agent's aggregated `RequiredLabels` **before** scheduling any workflow or
+   activity, failing fast with every missing key named in one error.
+   **Gateway/orchestration no-op:** this check reads `RequiredLabels` off the
+   *locally registered* `AgentRegistration`. A process that only holds a
+   `Runtime.ClientFor(route AgentRoute)` (or `MustClientFor`) -- the pattern
+   this runtime documents for gateway and orchestration processes that do
+   not run the agent's workflow themselves -- has no local registration, so
+   the check is a silent no-op there; a missing label is instead caught
+   later, per tool call, when `Inject<Tool>` actually runs. Carry
+   `RequiredLabels` on `AgentRoute` yourself if this gap matters for your
+   deployment; the runtime does not do so today.
+   **Agent-as-tool child runs** bypass run-start validation the same way:
+   `ExecuteAgentChildWithRoute` starts the child workflow directly (no
+   `Start`/`StartOneShot` funnel), so the child's `RequiredLabels` are never
+   checked up front. The parent run's labels propagate to the child
+   unchanged (the child's `RunInput.Labels` is a copy of the parent tool
+   call's labels), so a parent started with the right `WithLabels(...)`
+   satisfies the child too; a label the child needs that the parent never
+   carried fails loud at the child's `Inject<Tool>` call, per tool call,
+   not at child start.
+
+**`WithLabels` contract:**
+
+```go
+out, err := client.Run(ctx, sessionID, messages,
+    runtime.WithLabels(map[string]string{"household_id": "house-42"}),
+)
+```
+
+`WithLabels` merges into `RunInput.Labels`, which rides `ToolRequest.Labels`
+unchanged across both engines (inmem and Temporal) down to every tool
+execution in the run. Labels are plain strings; **only `String` fields may be
+injected** -- there is no generated conversion to numeric, boolean, or
+structured types. A design that needs a non-string injected value must model
+it as a `String` (with `Pattern`/`Format` validation as needed) and convert
+in service code.
+
+**Example (label-backed):**
+
+```go
+Tool("lookup_household", "Lookup scoped to a household", func() {
+    Args(func() {
+        Attribute("household_id", String, "Household to scope the search to.", func() {
+            Pattern("^[a-z0-9-]+$")
+        })
+        Attribute("query", String, "Search query.")
+        Required("household_id", "query")
+    })
+    // household_id is not a ToolCallMeta field, so it is label-backed:
+    // the run must supply it via WithLabels("household_id", "...").
+    Inject("household_id")
+})
+```
+
+See `codegen/agent/tests/testscenarios/inject_examples.go` (`InjectLabelExample`,
+`InjectBoundMetaExample`, `InjectMultiToolsetLabelsExample`,
+`InjectMixedBoundUnboundExample`) for complete, generation-tested design
+shapes exercising both meta-backed and label-backed injection, RequiredLabels
+aggregation across toolsets, and the mixed bound/unbound-tool case.
+
 ### Optional server-data (reserved `"server_data"` payload field)
 
 Tools can optionally produce **observer-facing server-data** (often projected into UI artifacts) that is never sent to model providers.

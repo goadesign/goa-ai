@@ -6,6 +6,10 @@ var (
 
     {{- end }}
     // {{ .ExportedCodec }} serializes values of type {{ if .Pointer }}*{{ end }}{{ .FullRef }} to canonical JSON.
+    {{- if .InjectDecodeFunc }}
+    // Prefer {{ .InjectDecodeFunc }} when decoding tool calls: FromJSON alone
+    // leaves Inject()-ed fields unset.
+    {{- end }}
     {{ .ExportedCodec }} = tools.JSONCodec[{{ if .Pointer }}*{{ end }}{{ .FullRef }}]{
         ToJSON:   {{ .MarshalFunc }},
         FromJSON: {{ .UnmarshalFunc }},

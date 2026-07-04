@@ -21,6 +21,13 @@ type toolProviderFileData struct {
 	PackageName    string
 	ServiceTypeRef string
 	Tools          []*ToolData
+	// NeedsInject indicates at least one METHOD-BACKED tool declares Inject()
+	// fields, so the generated HandleToolCall must build a
+	// runtime.ToolCallMeta from the wire toolregistry.ToolCallMeta once,
+	// ahead of the tool dispatch switch. Unbound tools never appear in
+	// HandleToolCall, so their Inject() fields must not trigger the meta
+	// declaration (it would be declared and unused -- a compile error).
+	NeedsInject bool
 }
 
 // toolsetSpecsFiles emits toolset-owned packages (types, unions, codecs, specs,
@@ -248,9 +255,23 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 			}
 			specSections := []*codegen.SectionTemplate{
 				codegen.Header(ts.Name+" tool specs", ts.SpecsPackageName, specImports),
-				{Name: "tool-specs", Source: agentsTemplates.Read(toolSpecFileT), Data: toolSpecFileData{PackageName: ts.SpecsPackageName, Tools: specsData.tools, Types: specsData.typesList()}, FuncMap: templateFuncMap()},
+				{Name: "tool-specs", Source: agentsTemplates.Read(toolSpecFileT), Data: toolSpecFileData{PackageName: ts.SpecsPackageName, Tools: specsData.tools, Types: specsData.typesList(), RequiredLabels: ts.RequiredLabels}, FuncMap: templateFuncMap()},
 			}
 			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, "specs.go"), SectionTemplates: specSections})
+			// inject.go: compiled Inject() population, shared by every topology
+			// that executes this toolset's tools.
+			if toolsNeedInject(ts.Tools) {
+				injectSections := []*codegen.SectionTemplate{
+					codegen.Header(ts.Name+" tool injection", ts.SpecsPackageName, toolInjectImports(ts.Tools)),
+					{
+						Name:    "tool-inject",
+						Source:  agentsTemplates.Read(toolInjectFileT),
+						Data:    toolInjectFileData{Tools: ts.Tools},
+						FuncMap: templateFuncMap(),
+					},
+				}
+				out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, "inject.go"), SectionTemplates: injectSections})
+			}
 		}
 
 		if f := toolsetAdapterTransformsFile(data.Genpkg, ts); f != nil {
@@ -299,6 +320,10 @@ func toolsetProviderFile(genpkg string, ts *ToolsetData) *codegen.File {
 	if hasBoundsProjection {
 		imports = append(imports, &codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent"})
 	}
+	needsInject := methodToolsNeedInject(ts.Tools)
+	if needsInject {
+		imports = append(imports, &codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/runtime"})
+	}
 	sections := []*codegen.SectionTemplate{
 		codegen.Header(ts.Name+" tool provider", ts.SpecsPackageName, imports),
 		{
@@ -308,6 +333,7 @@ func toolsetProviderFile(genpkg string, ts *ToolsetData) *codegen.File {
 				PackageName:    ts.SpecsPackageName,
 				ServiceTypeRef: fmt.Sprintf("%s.Service", ts.SourceService.PkgName),
 				Tools:          ts.Tools,
+				NeedsInject:    needsInject,
 			},
 			FuncMap: templateFuncMap(),
 		},
