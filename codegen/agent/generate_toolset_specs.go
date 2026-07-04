@@ -248,9 +248,23 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 			}
 			specSections := []*codegen.SectionTemplate{
 				codegen.Header(ts.Name+" tool specs", ts.SpecsPackageName, specImports),
-				{Name: "tool-specs", Source: agentsTemplates.Read(toolSpecFileT), Data: toolSpecFileData{PackageName: ts.SpecsPackageName, Tools: specsData.tools, Types: specsData.typesList()}, FuncMap: templateFuncMap()},
+				{Name: "tool-specs", Source: agentsTemplates.Read(toolSpecFileT), Data: toolSpecFileData{PackageName: ts.SpecsPackageName, Tools: specsData.tools, Types: specsData.typesList(), RequiredLabels: ts.RequiredLabels}, FuncMap: templateFuncMap()},
 			}
 			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, "specs.go"), SectionTemplates: specSections})
+			// inject.go: compiled Inject() population, shared by every topology
+			// that executes this toolset's tools.
+			if toolsNeedInject(ts.Tools) {
+				injectSections := []*codegen.SectionTemplate{
+					codegen.Header(ts.Name+" tool injection", ts.SpecsPackageName, toolInjectImports(ts.Tools)),
+					{
+						Name:    "tool-inject",
+						Source:  agentsTemplates.Read(toolInjectFileT),
+						Data:    toolInjectFileData{Tools: ts.Tools},
+						FuncMap: templateFuncMap(),
+					},
+				}
+				out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, "inject.go"), SectionTemplates: injectSections})
+			}
 		}
 
 		if f := toolsetAdapterTransformsFile(data.Genpkg, ts); f != nil {

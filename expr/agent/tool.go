@@ -270,10 +270,20 @@ func (t *ToolExpr) Prepare() {
 }
 
 // Validate checks that any recorded binding can be resolved to an existing
-// service and method.
+// service and method, and that any Inject()-ed fields resolve to a concrete,
+// required, String field on the effective tool payload (the bound method
+// payload when BindTo is used, otherwise the tool's own Args).
 func (t *ToolExpr) Validate() error {
 	if t.bindMethodName == "" {
-		return t.validateShapes()
+		verr := new(eval.ValidationErrors)
+		validateInjectedFields(t, t.Args, "tool payload", verr)
+		if err := t.validateShapes(); err != nil {
+			verr.AddError(t, err)
+		}
+		if len(verr.Errors) > 0 {
+			return verr
+		}
+		return nil
 	}
 	verr := new(eval.ValidationErrors)
 	var svc *goaexpr.ServiceExpr
@@ -290,9 +300,12 @@ func (t *ToolExpr) Validate() error {
 	for _, m := range svc.Methods {
 		if codegen.Goify(m.Name, true) == desired {
 			t.Method = m
-			validateInjectedFields(t, m, verr)
+			validateInjectedFields(t, m.Payload, "bound method payload", verr)
 			if err := t.validateShapes(); err != nil {
 				verr.AddError(t, err)
+				return verr
+			}
+			if len(verr.Errors) > 0 {
 				return verr
 			}
 			return nil
@@ -302,22 +315,27 @@ func (t *ToolExpr) Validate() error {
 	return verr
 }
 
-func validateInjectedFields(t *ToolExpr, m *goaexpr.MethodExpr, verr *eval.ValidationErrors) {
+// validateInjectedFields enforces the generation-time contract for Inject():
+// every injected name must be declared exactly once, must exist on the
+// effective payload, must be required there, and must be a String. These
+// invariants let codegen compile injection (direct ToolCallMeta reads or
+// label lookups) without any runtime schema introspection.
+func validateInjectedFields(t *ToolExpr, payload *goaexpr.AttributeExpr, payloadDesc string, verr *eval.ValidationErrors) {
 	if t == nil || len(t.InjectedFields) == 0 {
 		return
 	}
-	if m == nil || m.Payload == nil || m.Payload.Type == nil || m.Payload.Type == goaexpr.Empty {
-		verr.Add(t, "Inject requires a non-empty bound method payload")
+	if payload == nil || payload.Type == nil || payload.Type == goaexpr.Empty {
+		verr.Add(t, "Inject requires a non-empty %s", payloadDesc)
 		return
 	}
 
-	att := m.Payload
+	att := payload
 	if ut, ok := att.Type.(goaexpr.UserType); ok && ut != nil {
 		att = ut.Attribute()
 	}
 	obj, ok := att.Type.(*goaexpr.Object)
 	if !ok || obj == nil {
-		verr.Add(t, "Inject requires the bound method payload to be an object")
+		verr.Add(t, "Inject requires the %s to be an object", payloadDesc)
 		return
 	}
 
@@ -340,11 +358,6 @@ func validateInjectedFields(t *ToolExpr, m *goaexpr.MethodExpr, verr *eval.Valid
 		}
 		seen[name] = struct{}{}
 
-		if !isSupportedInjectedField(name) {
-			verr.Add(t, "Inject field %q is not supported (supported: %s)", name, supportedInjectedFieldsList())
-			continue
-		}
-
 		var field *goaexpr.NamedAttributeExpr
 		for _, na := range *obj {
 			if na.Name == name {
@@ -353,31 +366,18 @@ func validateInjectedFields(t *ToolExpr, m *goaexpr.MethodExpr, verr *eval.Valid
 			}
 		}
 		if field == nil || field.Attribute == nil || field.Attribute.Type == nil || field.Attribute.Type == goaexpr.Empty {
-			verr.Add(t, "Inject field %q does not exist on bound method payload", name)
+			verr.Add(t, "Inject field %q does not exist on the %s", name, payloadDesc)
 			continue
 		}
 		if _, ok := required[name]; !ok {
-			verr.Add(t, "Inject field %q must be required on the bound method payload", name)
+			verr.Add(t, "Inject field %q must be required on the %s; injected fields are always server-populated and hidden from the model, so an optional injected field is a contradiction", name, payloadDesc)
 			continue
 		}
 		if field.Attribute.Type != goaexpr.String {
-			verr.Add(t, "Inject field %q must be a String on the bound method payload", name)
+			verr.Add(t, "Inject field %q must be a String on the %s", name, payloadDesc)
 			continue
 		}
 	}
-}
-
-func isSupportedInjectedField(name string) bool {
-	switch name {
-	case "run_id", "session_id", "turn_id", "tool_call_id", "parent_tool_call_id":
-		return true
-	default:
-		return false
-	}
-}
-
-func supportedInjectedFieldsList() string {
-	return `"run_id", "session_id", "turn_id", "tool_call_id", "parent_tool_call_id"`
 }
 
 func (t *ToolExpr) validateShapes() error {

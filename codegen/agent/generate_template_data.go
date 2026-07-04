@@ -9,6 +9,9 @@ type (
 		PackageName string
 		Tools       []*toolEntry
 		Types       []*typeData
+		// RequiredLabels lists, sorted and deduplicated, the run label keys
+		// this toolset's label-backed Inject() fields require.
+		RequiredLabels []string
 	}
 
 	toolTypesFileData struct {
