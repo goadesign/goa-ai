@@ -58,6 +58,11 @@ type (
 		MaxTokens int
 
 		// Temperature is used when a request does not specify Temperature.
+		// It is silently omitted from the wire request for models that no
+		// longer accept the parameter (Claude Opus 4.7+, Claude Sonnet 5+,
+		// and the Fable/Mythos generation) — see temperatureSupported in
+		// temperature.go for the exact rule. Those models run at their own
+		// default sampling behavior regardless of this setting.
 		Temperature float64
 
 		// ThinkingBudget defines the default thinking token budget when thinking is
@@ -179,7 +184,11 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*sdk.M
 		params.Tools = tools
 	}
 	if t := c.effectiveTemperature(req.Temperature); t > 0 {
-		params.Temperature = sdk.Float(t)
+		if temperatureSupported(modelID) {
+			params.Temperature = sdk.Float(t)
+		} else {
+			traceTemperatureOmitted(ctx, modelID, t)
+		}
 	}
 	if req.Thinking != nil && req.Thinking.Enable && !forcesToolUse(req.ToolChoice) {
 		budget := req.Thinking.BudgetTokens
