@@ -36,7 +36,9 @@ func TestInjectMetaBackedBoundToolBackwardCompatible(t *testing.T) {
 
 	inject := fileContent(t, files, "gen/atlas/toolsets/helpers/inject.go")
 	require.Contains(t, inject, "func InjectGetData(p *GetDataPayload, meta runtime.ToolCallMeta, labels map[string]string) error {")
-	require.Contains(t, inject, "p.SessionID = meta.SessionID")
+	require.Contains(t, inject, "v := meta.SessionID")
+	require.Contains(t, inject, "p.SessionID = &v",
+		"injected fields are pointers on the tool payload (hidden fields are optional in the model-facing contract)")
 
 	provider := fileContent(t, files, "gen/atlas/toolsets/helpers/provider.go")
 	require.NotContains(t, provider, "methodIn.SessionID = msg.Meta.SessionID",
@@ -93,8 +95,10 @@ func TestInjectLabelBackedWithValidation(t *testing.T) {
 	require.Contains(t, inject, `v, ok := labels["household_id"]`)
 	require.Contains(t, inject, `return fmt.Errorf("tool %q: required label %q is missing; call WithLabels(%q, ...) at run start", "helpers.lookup_household", "household_id", "household_id")`)
 	require.Contains(t, inject, `goa.ValidatePattern("household_id", v, "^[a-z0-9-]+$")`)
-	require.Contains(t, inject, "p.HouseholdID = v")
-	require.Contains(t, inject, "p.SessionID = meta.SessionID", "mixed tool: session_id stays meta-backed alongside the label-backed field")
+	require.Contains(t, inject, "p.HouseholdID = &v",
+		"injected fields are pointers on the tool payload (hidden fields are optional in the model-facing contract)")
+	require.Contains(t, inject, "v := meta.SessionID", "mixed tool: session_id stays meta-backed alongside the label-backed field")
+	require.Contains(t, inject, "p.SessionID = &v")
 
 	specs := fileContent(t, files, "gen/calc/toolsets/helpers/specs.go")
 	require.Contains(t, specs, `var RequiredLabels = []string{
@@ -113,4 +117,54 @@ func TestInjectNoLabelsToolsetHasEmptyRequiredLabels(t *testing.T) {
 	specs := fileContent(t, files, "gen/calc/toolsets/helpers/specs.go")
 	require.Contains(t, specs, "var RequiredLabels = []string{\n}")
 	require.False(t, fileExists(files, "gen/calc/toolsets/helpers/inject.go"), "no Inject() fields means no generated inject.go")
+}
+
+// TestInjectAgentRequiredLabelsAggregation locks the agent-level
+// RequiredLabels contract at the generation layer: the agent's aggregated
+// specs package exposes the sorted, deduplicated union of every used
+// toolset's RequiredLabels, and registry.go wires that var onto
+// AgentRegistration so Runtime.Start/StartOneShot can enforce it before any
+// workflow is scheduled.
+func TestInjectAgentRequiredLabelsAggregation(t *testing.T) {
+	files := buildWithPrepare(t, testscenarios.InjectMultiToolsetLabelsExample())
+
+	// Per-toolset generated data: helpers requires household_id only; audit
+	// requires both keys.
+	helpers := fileContent(t, files, "gen/calc/toolsets/helpers/specs.go")
+	require.Contains(t, helpers, "var RequiredLabels = []string{\n    \"household_id\",\n}")
+	audit := fileContent(t, files, "gen/calc/toolsets/audit/specs.go")
+	require.Contains(t, audit, "var RequiredLabels = []string{\n    \"household_id\",\n    \"tenant_id\",\n}")
+
+	// Agent-level aggregate: union across both toolsets, sorted, and
+	// deduplicated (household_id appears in both toolsets but only once here).
+	agg := fileContent(t, files, "gen/calc/agents/scribe/specs/specs.go")
+	require.Contains(t, agg, "RequiredLabels = []string{\n        \"household_id\",\n        \"tenant_id\",\n    }")
+	require.Equal(t, 1, strings.Count(agg, `"household_id",`),
+		"duplicate label keys across toolsets must be deduplicated in the aggregate")
+
+	// Registry wiring: the aggregate var reaches AgentRegistration.
+	registry := fileContent(t, files, "gen/calc/agents/scribe/registry.go")
+	require.Contains(t, registry, "RequiredLabels: specs.RequiredLabels,")
+}
+
+// TestInjectMixedBoundUnboundProviderScopesMeta locks the provider-side
+// compile regression at the section level: a toolset mixing a non-injecting
+// BindTo tool with an injecting UNBOUND tool must NOT emit the
+// runtime.ToolCallMeta declaration (or the runtime import) in provider.go --
+// HandleToolCall only dispatches method-backed tools, so nothing would use
+// the variable and the generated package would fail to compile.
+// TestGeneratedMixedInjectPackagesCompile proves the same end to end with an
+// actual go build of the generated tree.
+func TestInjectMixedBoundUnboundProviderScopesMeta(t *testing.T) {
+	files := buildWithPrepare(t, testscenarios.InjectMixedBoundUnboundExample())
+
+	provider := fileContent(t, files, "gen/atlas/toolsets/helpers/provider.go")
+	require.NotContains(t, provider, "meta := runtime.ToolCallMeta{",
+		"no method-backed tool injects, so provider.go must not declare meta")
+	require.NotContains(t, provider, `"goa.design/goa-ai/runtime/agent/runtime"`,
+		"the runtime import must be gated together with the meta declaration")
+
+	// The unbound tool's compiled injection still exists for local executors.
+	inject := fileContent(t, files, "gen/atlas/toolsets/helpers/inject.go")
+	require.Contains(t, inject, "func InjectLookupHousehold(p *LookupHouseholdPayload, meta runtime.ToolCallMeta, labels map[string]string) error {")
 }

@@ -15,13 +15,13 @@ import (
 )
 
 // lookupHouseholdPayload mirrors the shape codegen generates for a tool
-// payload with a label-backed Inject() field: HouseholdID is tagged
-// `json:"-"` (hidden from the wire codec, matching prepare.go's
-// flattenAndHide) so it can only ever be populated by injection, never by
-// the model.
+// payload with a label-backed Inject() field: HouseholdID is a pointer
+// tagged `json:"-"` (hidden from the wire codec and optional in the
+// model-facing contract, matching prepare.go's flattenAndHide) so it can
+// only ever be populated by injection, never by the model.
 type lookupHouseholdPayload struct {
-	HouseholdID string `json:"-"`
-	Query       string `json:"query"`
+	HouseholdID *string `json:"-"`
+	Query       string  `json:"query"`
 }
 
 // injectLookupHousehold is a hand-written stand-in for a generated
@@ -41,8 +41,8 @@ func injectLookupHousehold(p *lookupHouseholdPayload, meta ToolCallMeta, labels 
 	if err := goa.ValidatePattern("household_id", v, "^[a-z0-9-]+$"); err != nil {
 		return fmt.Errorf("tool %q: label %q failed validation: %w", "helpers.lookup_household", "household_id", err)
 	}
-	p.HouseholdID = v
-	_ = meta // unused in this fixture; a real bound field would read meta.SessionID etc.
+	p.HouseholdID = &v
+	_ = meta // unused in this fixture; a real meta-backed field would read meta.SessionID etc.
 	return nil
 }
 
@@ -71,7 +71,7 @@ func newCustomLookupHouseholdToolset(t *testing.T, resultHouseholdID *string) To
 			if err := injectLookupHousehold(&p, meta, call.Labels); err != nil {
 				return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
 			}
-			*resultHouseholdID = p.HouseholdID
+			*resultHouseholdID = *p.HouseholdID
 			return &planner.ToolResult{Name: call.Name, Result: map[string]any{"ok": true}}, nil
 		}),
 		Specs: []tools.ToolSpec{newAnyJSONSpec(tools.Ident("helpers.lookup_household"), "helpers")},

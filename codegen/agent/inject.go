@@ -143,6 +143,23 @@ func toolsNeedInject(tools []*ToolData) bool {
 	return false
 }
 
+// methodToolsNeedInject reports whether any METHOD-BACKED tool declares at
+// least one Inject() field. The generated registry provider.go only emits
+// dispatch cases for method-backed tools, so its runtime.ToolCallMeta
+// construction (and the runtime package import) must be gated on this
+// narrower predicate: gating on toolsNeedInject would emit a
+// declared-and-unused meta variable -- a generated-code compile failure --
+// for toolsets mixing a non-injecting bound tool with an injecting unbound
+// tool.
+func methodToolsNeedInject(tools []*ToolData) bool {
+	for _, t := range tools {
+		if t != nil && t.IsMethodBacked && len(t.Injected) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // toolInjectImports returns the imports required by the generated inject.go.
 // "goa" and "unicode/utf8" are only pulled in when at least one field's
 // compiled validation code references them, mirroring
