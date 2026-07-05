@@ -208,7 +208,9 @@ func (p *Planner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planne
 }
 ```
 
-Register model clients during bootstrap with `rt.RegisterModel(...)` or runtime factories such as `rt.NewOpenAIModelClient(...)` and `rt.NewBedrockModelClient(...)`.
+Register model clients during bootstrap with `rt.RegisterModel(...)` or runtime
+factories such as `rt.NewOpenAIModelClient(...)`, `rt.NewBedrockModelClient(...)`,
+`rt.NewVertexGeminiModelClient(...)`, and `rt.NewVertexAnthropicModelClient(...)`.
 
 ---
 
@@ -316,7 +318,7 @@ Agent("chat", "Document assistant", func() {
 })
 ```
 
-The generator emits typed transforms where shapes are compatible. Runtime metadata supplies supported injected fields such as `run_id`, `session_id`, `turn_id`, and `tool_call_id`.
+The generator emits typed transforms where shapes are compatible. `Inject` names that match a `runtime.ToolCallMeta` field (`run_id`, `session_id`, `turn_id`, `tool_call_id`, `parent_tool_call_id`) are meta-backed; any other name is label-backed, read from labels supplied via `runtime.WithLabels(...)` at run start. See [`docs/dsl.md`](docs/dsl.md) and [`docs/runtime.md`](docs/runtime.md) for the full contract.
 
 ### Structured Direct Completions
 
@@ -445,7 +447,7 @@ Tool("get_time_series", "Get a bounded time-series view", func() {
 })
 ```
 
-`BoundedResult` makes truncation explicit through runtime-owned bounds metadata (`returned`, `truncated`, optional `total`, `next_cursor`, and `refinement_hint`). `ServerData` attaches rich data that is never sent to model providers.
+`BoundedResult` makes truncation explicit through runtime-owned bounds metadata (`returned`, `truncated`, optional `total`, `next_cursor`, and `refinement_hint`). Generated tool specs and result JSON use model-facing JSON names, so lower-camel Goa fields such as `nextCursor` are exposed as `next_cursor`. Truncated results must carry a continuation: bound method results must define `refinement_hint` (snake_case, optional String) unless paging is configured, and the runtime rejects truncated results that provide neither a next cursor nor a refinement hint. `ServerData` attaches rich data that is never sent to model providers.
 
 ### Bookkeeping and Terminal Tools
 
@@ -653,6 +655,20 @@ if err := rt.RegisterModel("default", modelClient); err != nil {
 	log.Fatal(err)
 }
 
+// Vertex AI (ADC auth): Gemini for the small tier, Claude for default/high.
+gemini, err := rt.NewVertexGeminiModelClient(ctx, runtime.VertexConfig{
+	ProjectID:    project,
+	Location:     "global",
+	DefaultModel: "gemini-2.5-flash",
+})
+// ...
+claude, err := rt.NewVertexAnthropicModelClient(ctx, runtime.VertexConfig{
+	ProjectID:    project,
+	Location:     "global",
+	DefaultModel: "claude-sonnet-5",
+	HighModel:    "claude-opus-4-8",
+})
+
 if err := chat.RegisterUsedToolsets(ctx, rt, chat.WithHelpersExecutor(helperExec)); err != nil {
 	log.Fatal(err)
 }
@@ -713,6 +729,7 @@ Production checklist:
 | `features/model/openai` | OpenAI Responses API adapter |
 | `features/model/bedrock` | AWS Bedrock adapter, including visible Claude thinking support |
 | `features/model/anthropic` | Direct Anthropic adapter |
+| `features/model/vertex` | Google Vertex AI adapters: Gemini (`vertex.New`) and Claude-on-Vertex (`vertex.NewAnthropicClient`), both with native token counting and provider-error classification. |
 | `features/model/gateway` | Remote model gateway client |
 | `features/model/middleware` | Rate limiting, logging, metrics middleware |
 | `features/memory/mongo` | Mongo-backed transcript memory store |

@@ -169,6 +169,7 @@ func newToolsetData(
 				break
 			}
 		}
+		ts.RequiredLabels = requiredLabels(ts.Tools)
 	}
 
 	return ts, nil
@@ -244,6 +245,10 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		Bookkeeping:        expr.Bookkeeping,
 		ResultReminder:     expr.ResultReminder,
 	}
+	// Resolve Inject() sources now: tool.Args already reflects codegen Prepare's
+	// defaulting (method payload copy for bound tools) and hiding, so this is
+	// the single point where both bound and unbound tools compile identically.
+	tool.Injected = buildInjectedFields(tool.Args, tool.InjectedFields)
 	tool.ServerData = serverDataData(expr.ServerData)
 	if expr.Confirmation != nil {
 		tool.Confirmation = &ToolConfirmationData{
@@ -370,8 +375,8 @@ func pagingData(p *agentsExpr.ToolPagingExpr) *ToolPagingData {
 		return nil
 	}
 	return &ToolPagingData{
-		CursorField:     p.CursorField,
-		NextCursorField: p.NextCursorField,
+		CursorField:     modelJSONName(p.CursorField),
+		NextCursorField: modelJSONName(p.NextCursorField),
 	}
 }
 

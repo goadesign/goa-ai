@@ -29,8 +29,8 @@ var (
 		Tags:        []string{},
 		Payload: tools.TypeSpec{
 			Name:                     "AddPayload",
-			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"left\":{\"type\":\"integer\",\"description\":\"Left operand\",\"example\":1056967519,\"format\":\"int32\"},\"right\":{\"type\":\"integer\",\"description\":\"Right operand\",\"example\":1084554470,\"format\":\"int32\"}},\"required\":[\"left\",\"right\"]}"),
-			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"left\":{\"type\":\"integer\",\"description\":\"Left operand\",\"example\":1056967519,\"format\":\"int32\"},\"right\":{\"type\":\"integer\",\"description\":\"Right operand\",\"example\":1084554470,\"format\":\"int32\"}},\"required\":[\"left\",\"right\"]}"),
+			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"left\":{\"type\":\"integer\",\"description\":\"Left operand\",\"example\":407521916,\"format\":\"int32\"},\"right\":{\"type\":\"integer\",\"description\":\"Right operand\",\"example\":883836129,\"format\":\"int32\"}},\"required\":[\"left\",\"right\"]}"),
+			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"left\":{\"type\":\"integer\",\"description\":\"Left operand\",\"example\":407521916,\"format\":\"int32\"},\"right\":{\"type\":\"integer\",\"description\":\"Right operand\",\"example\":883836129,\"format\":\"int32\"}},\"required\":[\"left\",\"right\"]}"),
 			ExampleJSON:              nil,
 			FieldDescriptions:        AddPayloadFieldDescs,
 			FieldJSONTypes:           AddPayloadFieldJSONTypes,
@@ -38,8 +38,8 @@ var (
 		},
 		Result: tools.TypeSpec{
 			Name:                     "AddResult",
-			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"sum\":{\"type\":\"integer\",\"description\":\"Sum\",\"example\":1051318795,\"format\":\"int32\"}},\"required\":[\"sum\"]}"),
-			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"sum\":{\"type\":\"integer\",\"description\":\"Sum\",\"example\":1051318795,\"format\":\"int32\"}},\"required\":[\"sum\"]}"),
+			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"sum\":{\"type\":\"integer\",\"description\":\"Sum\",\"example\":1742919548,\"format\":\"int32\"}},\"required\":[\"sum\"]}"),
+			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"sum\":{\"type\":\"integer\",\"description\":\"Sum\",\"example\":1742919548,\"format\":\"int32\"}},\"required\":[\"sum\"]}"),
 			FieldDescriptions:        AddResultFieldDescs,
 			FieldJSONTypes:           AddResultFieldJSONTypes,
 			Codec:                    addResultCodec,
@@ -61,6 +61,13 @@ var (
 		Add,
 	}
 )
+
+// RequiredLabels lists the run label keys this toolset's Inject-populated
+// tools require to be present via WithLabels(...) at run start. The runtime
+// validates coverage across every toolset an agent uses before starting a
+// run, so a missing label fails fast instead of surfacing mid-run as a tool
+// call error.
+var RequiredLabels = []string{}
 
 // Names returns the identifiers of all generated tools.
 func Names() []tools.Ident {

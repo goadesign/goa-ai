@@ -366,7 +366,7 @@ func (b *toolSpecBuilder) ensureNestedLocalTransportTypes(scope *codegen.NameSco
 			}
 		}
 		base := stripStructPkgMeta(goaexpr.DupAtt(ut.Attribute()))
-		normalizeTransportAttrRecursive(base)
+		normalizeModelJSONTransportAttrRecursive(base)
 		local := &goaexpr.UserTypeExpr{
 			AttributeExpr: base,
 			TypeName:      uniqueName,

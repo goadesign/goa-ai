@@ -41,6 +41,7 @@ import (
 	"github.com/openai/openai-go/option"
 	bedrock "goa.design/goa-ai/features/model/bedrock"
 	openai "goa.design/goa-ai/features/model/openai"
+	vertexprovider "goa.design/goa-ai/features/model/vertex"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
@@ -61,6 +62,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
+	"google.golang.org/genai"
 
 	"text/template"
 
@@ -291,6 +293,15 @@ type (
 		ToolMetadataLookup ToolMetadataLookup
 		// Policy configures caps/time budget/interrupt settings for the agent.
 		Policy RunPolicy
+
+		// RequiredLabels lists, sorted and deduplicated, the run label keys
+		// that label-backed Inject() fields require across every toolset this
+		// agent uses (generated as the agent's aggregated specs package
+		// RequiredLabels var). Runtime.Start/OneShotRun rejects a run whose
+		// supplied labels omit any of these keys, before scheduling any
+		// workflow or activity. Empty when no used toolset injects a
+		// label-backed field.
+		RequiredLabels []string
 	}
 
 	// ToolsetRegistration holds the metadata and execution logic for a toolset.
@@ -473,6 +484,7 @@ var (
 	ErrSessionNotAllowed   = errors.New("session id is not allowed")
 	ErrWorkflowStartFailed = errors.New("workflow start failed")
 	ErrRegistrationClosed  = errors.New("registration closed after first run")
+	ErrMissingLabels       = errors.New("run start: missing required labels")
 )
 
 // RunOption configures optional fields on RunInput for Run and Start. Required
@@ -1313,6 +1325,29 @@ type OpenAIConfig struct {
 	ThinkingEffort string
 }
 
+// VertexConfig configures the Vertex-backed model clients created by the
+// runtime. ProjectID and Location identify the Vertex endpoint; model IDs
+// are provider-specific (Gemini model names for the Gemini factory, Vertex
+// Claude publisher IDs for the Anthropic factory).
+type VertexConfig struct {
+	// ProjectID is the GCP project hosting the Vertex AI endpoint.
+	ProjectID string
+	// Location is the Vertex AI region (or "global") serving the endpoint.
+	Location string
+	// DefaultModel is the primary model identifier used for default-class requests.
+	DefaultModel string
+	// HighModel is the model identifier used for high-reasoning requests.
+	HighModel string
+	// SmallModel is the model identifier used for small/cheap requests.
+	SmallModel string
+	// MaxTokens is the default completion token cap.
+	MaxTokens int
+	// ThinkingBudget is the default thinking-token budget.
+	ThinkingBudget int
+	// Temperature is the default sampling temperature.
+	Temperature float32
+}
+
 // NewBedrockModelClient constructs a model.Client backed by AWS Bedrock.
 // Callers must supply the complete canonical transcript in Request.Messages.
 func (r *Runtime) NewBedrockModelClient(awsrt *bedrockruntime.Client, cfg BedrockConfig) (model.Client, error) {
@@ -1353,6 +1388,50 @@ func (r *Runtime) NewOpenAIModelClient(cfg OpenAIConfig) (model.Client, error) {
 		MaxCompletionTokens: cfg.MaxTokens,
 		Temperature:         cfg.Temperature,
 		ThinkingEffort:      cfg.ThinkingEffort,
+	})
+}
+
+// NewVertexGeminiModelClient creates a Gemini-on-Vertex model client using
+// Application Default Credentials. The client is not registered; call
+// RegisterModel with the returned client.
+func (r *Runtime) NewVertexGeminiModelClient(ctx context.Context, cfg VertexConfig) (model.Client, error) {
+	if strings.TrimSpace(cfg.ProjectID) == "" {
+		return nil, errors.New("vertex: project id is required")
+	}
+	if strings.TrimSpace(cfg.Location) == "" {
+		return nil, errors.New("vertex: location is required")
+	}
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		Backend:  genai.BackendVertexAI,
+		Project:  cfg.ProjectID,
+		Location: cfg.Location,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return vertexprovider.New(client.Models, vertexprovider.Options{
+		DefaultModel:   cfg.DefaultModel,
+		HighModel:      cfg.HighModel,
+		SmallModel:     cfg.SmallModel,
+		MaxTokens:      cfg.MaxTokens,
+		Temperature:    cfg.Temperature,
+		ThinkingBudget: cfg.ThinkingBudget,
+	})
+}
+
+// NewVertexAnthropicModelClient creates a Claude-on-Vertex model client
+// using Application Default Credentials. The client is not registered; call
+// RegisterModel with the returned client.
+func (r *Runtime) NewVertexAnthropicModelClient(ctx context.Context, cfg VertexConfig) (model.Client, error) {
+	return vertexprovider.NewAnthropicClient(ctx, vertexprovider.AnthropicOptions{
+		ProjectID:      cfg.ProjectID,
+		Region:         cfg.Location,
+		DefaultModel:   cfg.DefaultModel,
+		HighModel:      cfg.HighModel,
+		SmallModel:     cfg.SmallModel,
+		MaxTokens:      cfg.MaxTokens,
+		Temperature:    float64(cfg.Temperature),
+		ThinkingBudget: int64(cfg.ThinkingBudget),
 	})
 }
 
@@ -1494,6 +1573,9 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 		return nil, fmt.Errorf("runtime: invalid transcript: %w", err)
 	}
 	reg, _ := r.agentByID(input.AgentID)
+	if err := validateRequiredLabels(reg, input.Labels); err != nil {
+		return nil, err
+	}
 	req := engine.WorkflowStartRequest{
 		ID:        input.RunID,
 		Workflow:  workflowName,
@@ -1549,6 +1631,34 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	}
 	r.storeWorkflowHandle(input.RunID, handle)
 	return handle, nil
+}
+
+// validateRequiredLabels fails fast, before any workflow or activity runs,
+// when the caller-supplied run labels omit a key that a label-backed
+// Inject() field requires. reg.RequiredLabels is generated data (the union
+// of every used toolset's RequiredLabels, computed once at codegen time); this
+// is a boundary check against genuinely dynamic caller input, not a
+// rediscovery of static structure.
+//
+// reg may be the zero value when the agent is not registered locally (for
+// example, a pure remote-route client start): RequiredLabels is empty in
+// that case, so validation trivially passes and the check is a no-op rather
+// than a false failure.
+func validateRequiredLabels(reg AgentRegistration, labels map[string]string) error {
+	if len(reg.RequiredLabels) == 0 {
+		return nil
+	}
+	var missing []string
+	for _, key := range reg.RequiredLabels {
+		if _, ok := labels[key]; !ok {
+			missing = append(missing, key)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: agent %q requires label(s) %v; call WithLabels(...) with these keys when starting the run",
+		ErrMissingLabels, reg.ID, missing)
 }
 
 // CancelRun requests cancellation of the workflow identified by req.RunID.

@@ -45,6 +45,25 @@ func TestBuildRetryHint_InvalidEnum(t *testing.T) {
 	require.True(t, containsAll(q, []string{"format", "one of: a, b"}))
 }
 
+func TestBuildRetryHint_UnknownField(t *testing.T) {
+	ferr := &fakeValidationError{
+		issues: []*tools.FieldIssue{{
+			Field:      "scope_context",
+			Constraint: "unknown_field",
+			Allowed:    []string{"device_alias"},
+		}},
+	}
+	fields, q, reason, ok := buildRetryHintFromValidation(ferr, "atlas.discover.get_device_status")
+	require.True(t, ok)
+	require.Equal(t, planner.RetryReasonInvalidArguments, reason)
+	require.Equal(t, []string{"scope_context"}, fields)
+	require.True(t, containsAll(q, []string{
+		"atlas.discover.get_device_status",
+		"remove `scope_context`",
+		"`device_alias`",
+	}))
+}
+
 func TestBuildRetryHint_LengthPatternFormat(t *testing.T) {
 	min := 2
 	ferr := &fakeValidationError{

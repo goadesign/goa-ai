@@ -138,9 +138,10 @@ func (a *plannerActivityInvocation) output(result *planner.PlanResult) (*PlanAct
 	transcript := a.events.exportTranscript()
 	normalizeTranscriptRawJSON(transcript)
 	return &PlanActivityOutput{
-		Result:     result,
-		Transcript: transcript,
-		Usage:      a.events.exportUsage(),
+		Result:             result,
+		Transcript:         transcript,
+		Usage:              a.events.exportUsage(),
+		ToolCallSignatures: a.events.exportToolCallSignatures(),
 	}, nil
 }
 
@@ -289,23 +290,18 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 					},
 				}, nil
 			}
-			// Not a validation error: attempt to build a decode-oriented retry hint
-			// (for example, malformed or wrong-shape JSON) so planners can guide the
-			// caller toward a schema-compliant payload.
+			// Not a validation error: build the decode-oriented retry hint (for
+			// example malformed, truncated, or wrong-shape JSON) so planners can
+			// guide the caller toward a schema-compliant payload.
 			var specPtr *tools.ToolSpec
 			if spec, ok := r.toolSpec(req.ToolName); ok {
 				cp := spec
 				specPtr = &cp
 			}
-			if hint := buildRetryHintFromDecodeError(decErr, req.ToolName, specPtr); hint != nil {
-				return &ToolOutput{
-					Error:     decErr.Error(),
-					RetryHint: hint,
-				}, nil
-			}
-			// Generated codecs must emit structured validation errors for schema
-			// contract violations that are not native JSON syntax/type errors.
-			return &ToolOutput{Error: decErr.Error()}, nil
+			return &ToolOutput{
+				Error:     decErr.Error(),
+				RetryHint: buildRetryHintFromDecodeError(decErr, req.ToolName, specPtr),
+			}, nil
 		}
 	}
 
@@ -384,6 +380,7 @@ func buildRetryHintFromValidation(err error, toolName tools.Ident) ([]string, st
 	fields := make([]string, 0, len(issues))
 	missing := make([]string, 0, len(issues))
 	typeIssues := make([]*tools.FieldIssue, 0, len(issues))
+	unknownIssues := make([]*tools.FieldIssue, 0, len(issues))
 	for _, is := range issues {
 		if is.Field == "" {
 			continue
@@ -399,12 +396,18 @@ func buildRetryHintFromValidation(err error, toolName tools.Ident) ([]string, st
 		if tools.HasInvalidFieldTypeMetadata(is) {
 			typeIssues = append(typeIssues, is)
 		}
+		if is.Constraint == "unknown_field" {
+			unknownIssues = append(unknownIssues, is)
+		}
 	}
 	if len(fields) == 0 {
 		return nil, "", planner.RetryReasonInvalidArguments, false
 	}
 	if len(typeIssues) > 0 {
 		return fields, tools.InvalidFieldTypeQuestion(typeIssues), planner.RetryReasonInvalidArguments, true
+	}
+	if len(unknownIssues) > 0 {
+		return fields, unknownFieldQuestion(unknownIssues, toolName), planner.RetryReasonInvalidArguments, true
 	}
 	// Build a concise, description-enriched question for up to three fields.
 	var question string
@@ -443,15 +446,46 @@ func buildRetryHintFromValidation(err error, toolName tools.Ident) ([]string, st
 	return fields, question, reason, true
 }
 
-// buildRetryHintFromDecodeError examines JSON decode errors that occur before tool
-// execution and attempts to build a structured RetryHint. It treats malformed or
-// wrong-shape JSON as conceptually equivalent to missing required fields so that
-// planners and UIs can guide callers toward a schema-compliant payload.
+func unknownFieldQuestion(issues []*tools.FieldIssue, toolName tools.Ident) string {
+	max := len(issues)
+	if max > 3 {
+		max = 3
+	}
+	parts := make([]string, 0, max)
+	for i := 0; i < max; i++ {
+		issue := issues[i]
+		part := fmt.Sprintf("remove `%s`", issue.Field)
+		if len(issue.Allowed) > 0 {
+			part += "; allowed fields at that object are: " + quotedFieldList(issue.Allowed)
+		}
+		parts = append(parts, part)
+	}
+	if toolName != "" {
+		return "The " + string(toolName) + " tool input includes fields outside its schema. Please " + strings.Join(parts, "; ") + "."
+	}
+	return "The tool input includes fields outside its schema. Please " + strings.Join(parts, "; ") + "."
+}
+
+func quotedFieldList(fields []string) string {
+	ordered := append([]string(nil), fields...)
+	slices.Sort(ordered)
+	quoted := make([]string, 0, len(ordered))
+	for _, field := range ordered {
+		quoted = append(quoted, "`"+field+"`")
+	}
+	return strings.Join(quoted, ", ")
+}
+
+// buildRetryHintFromDecodeError converts a tool payload decode failure into a
+// structured RetryHint. Payloads at this boundary are model-authored, so every
+// decode failure — JSON type mismatches, syntax errors, truncated payloads
+// (io.EOF / io.ErrUnexpectedEOF), or codec-specific errors — is a defect the
+// model can correct by resending the call; the hint restricts recovery to the
+// failing tool. Callers must pass only decode errors: routing configuration or
+// rendering errors here would misreport runtime bugs as model defects.
 //
 // When a payload example is available in the tool specs, the hint attaches it as
-// ExampleJSON so consumers can display a concrete, valid payload. Returns nil
-// when the error is not a recognized JSON decode error so callers can decide
-// whether to fall back to a generic hint or propagate the error verbatim.
+// ExampleJSON so consumers can display a concrete, valid payload.
 func buildRetryHintFromDecodeError(err error, toolName tools.Ident, spec *tools.ToolSpec) *planner.RetryHint {
 	var (
 		typeErr   *json.UnmarshalTypeError
@@ -480,7 +514,12 @@ func buildRetryHintFromDecodeError(err error, toolName tools.Ident, spec *tools.
 			syntaxErr.Offset,
 		)
 	default:
-		return nil
+		fields = []string{"$payload"}
+		question = fmt.Sprintf(
+			"I could not decode the %s tool input (%s). Please resend this tool call with a complete JSON object payload that matches the expected schema.",
+			toolName,
+			err,
+		)
 	}
 
 	var example rawjson.Message
@@ -498,6 +537,13 @@ func buildRetryHintFromDecodeError(err error, toolName tools.Ident, spec *tools.
 	}
 }
 
+// buildRetryHintFromAgentToolRequestError classifies agent-tool request
+// failures raised before the child run starts. Model payload defects —
+// structured validation failures and payload decode failures marked by
+// agentToolPayloadError — produce a restricted retry hint so the parent run
+// feeds the failure back to the model. Runtime configuration errors (missing
+// ToolSpec registrations, prompt rendering failures) return nil and stay
+// terminal workflow errors.
 func buildRetryHintFromAgentToolRequestError(err error, toolName tools.Ident, spec *tools.ToolSpec) *planner.RetryHint {
 	if fields, question, reason, ok := buildRetryHintFromValidation(err, toolName); ok {
 		return &planner.RetryHint{
@@ -508,8 +554,9 @@ func buildRetryHintFromAgentToolRequestError(err error, toolName tools.Ident, sp
 			ClarifyingQuestion: question,
 		}
 	}
-	if hint := buildRetryHintFromDecodeError(err, toolName, spec); hint != nil {
-		return hint
+	var payloadErr *agentToolPayloadError
+	if errors.As(err, &payloadErr) {
+		return buildRetryHintFromDecodeError(payloadErr.cause, toolName, spec)
 	}
 	return nil
 }

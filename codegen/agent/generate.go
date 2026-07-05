@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"goa.design/goa-ai/codegen/shared"
@@ -131,9 +132,37 @@ func agentSpecsAggregatorFile(agent *AgentData) *codegen.File {
 	}
 	sections := []*codegen.SectionTemplate{
 		codegen.Header(agent.StructName+" aggregated tool specs", "specs", imports),
-		{Name: "tool-specs-aggregate", Source: agentsTemplates.Read(toolSpecsAggregateT), Data: toolSpecsAggregateData{Toolsets: toolsets}},
+		{
+			Name:   "tool-specs-aggregate",
+			Source: agentsTemplates.Read(toolSpecsAggregateT),
+			Data: toolSpecsAggregateData{
+				Toolsets:       toolsets,
+				RequiredLabels: unionRequiredLabels(toolsets),
+			},
+		},
 	}
 	return &codegen.File{Path: filepath.Join(agent.Dir, "specs", "specs.go"), SectionTemplates: sections}
+}
+
+// unionRequiredLabels returns the sorted, deduplicated union of every
+// toolset's RequiredLabels, giving the agent-level aggregate a single
+// generated source of truth for run-start label validation.
+func unionRequiredLabels(toolsets []*ToolsetData) []string {
+	seen := make(map[string]struct{})
+	for _, ts := range toolsets {
+		for _, l := range ts.RequiredLabels {
+			seen[l] = struct{}{}
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(seen))
+	for l := range seen {
+		out = append(out, l)
+	}
+	slices.Sort(out)
+	return out
 }
 
 func agentImplFile(agent *AgentData) *codegen.File {

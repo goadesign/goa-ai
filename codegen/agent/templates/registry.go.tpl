@@ -63,6 +63,7 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
         {{- if .Tools }}
         Specs: {{ .ToolSpecsPackage }}.Specs,
         ToolMetadataLookup: {{ .ToolSpecsPackage }}.MetadataByName,
+        RequiredLabels: {{ .ToolSpecsPackage }}.RequiredLabels,
         {{- else }}
         Specs: nil,
         {{- end }}

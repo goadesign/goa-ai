@@ -4,10 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
 	"testing"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent/model"
 )
@@ -135,6 +140,59 @@ func TestAnthropicStreamer_TextAndToolCall(t *testing.T) {
 	if !sawTool {
 		t.Fatalf("expected tool_call chunk")
 	}
+}
+
+// TestAnthropicStreamer_MidStream429Classified verifies that an error
+// surfaced by the underlying decoder mid-stream (not just at stream
+// establishment) is classified through the same status-to-kind table, so
+// errors.Is(err, model.ErrRateLimited) succeeds for a real SDK 429 that
+// arrives after the stream is already established.
+func TestAnthropicStreamer_MidStream429Classified(t *testing.T) {
+	dec := &testDecoder{err: &sdk.Error{StatusCode: http.StatusTooManyRequests}}
+	stream := ssestream.NewStream[sdk.MessageStreamEventUnion](dec, nil)
+
+	s := newAnthropicStreamer(context.Background(), stream, nil)
+	defer func() { _ = s.Close() }()
+
+	_, err := s.Recv()
+	require.ErrorIs(t, err, model.ErrRateLimited)
+	pe, ok := model.AsProviderError(err)
+	require.True(t, ok)
+	assert.Equal(t, model.ProviderErrorKindRateLimited, pe.Kind())
+}
+
+// TestAnthropicStreamer_ContextCancelPassthrough verifies that a
+// context-cancellation error surfaced by the underlying decoder mid-stream
+// passes through unclassified (no ProviderError): cancellation is
+// consumer-side flow control, not a provider failure.
+func TestAnthropicStreamer_ContextCancelPassthrough(t *testing.T) {
+	cause := fmt.Errorf("read: %w", context.Canceled)
+	dec := &testDecoder{err: cause}
+	stream := ssestream.NewStream[sdk.MessageStreamEventUnion](dec, nil)
+
+	s := newAnthropicStreamer(context.Background(), stream, nil)
+	defer func() { _ = s.Close() }()
+
+	_, err := s.Recv()
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, cause, err) // returned unwrapped, exactly as surfaced
+	_, ok := model.AsProviderError(err)
+	assert.False(t, ok)
+}
+
+// TestAnthropicStreamer_EOFPassthrough verifies that normal stream
+// termination surfaces as plain io.EOF, not a classified provider error.
+func TestAnthropicStreamer_EOFPassthrough(t *testing.T) {
+	dec := &testDecoder{events: nil}
+	stream := ssestream.NewStream[sdk.MessageStreamEventUnion](dec, nil)
+
+	s := newAnthropicStreamer(context.Background(), stream, nil)
+	defer func() { _ = s.Close() }()
+
+	_, err := s.Recv()
+	require.ErrorIs(t, err, io.EOF)
+	_, ok := model.AsProviderError(err)
+	assert.False(t, ok)
 }
 
 func mustJSON(v any) []byte {

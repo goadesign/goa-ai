@@ -49,6 +49,7 @@ func Build(genpkg string, roots []eval.Root) (*Design, error) {
 	if err != nil {
 		return nil, err
 	}
+	goacodegen.NormalizeRoot(goaRoot)
 
 	servicesData := service.NewServicesData(goaRoot)
 	services := buildServices(goaRoot, servicesData)

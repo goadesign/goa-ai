@@ -165,6 +165,12 @@ type (
 		ExampleJSON []byte
 		// Typed codec variable name (e.g., "MyToolPayloadCodec").
 		ExportedCodec string
+		// InjectDecodeFunc is the generated composed decode helper name
+		// (e.g., "DecodeGetData") when this type is the payload of a tool
+		// declaring Inject() fields. The codec GoDoc points custom executors
+		// at it: FromJSON alone leaves Inject()-ed fields unset. Empty for
+		// every other type.
+		InjectDecodeFunc string
 		// Untyped codec variable name (e.g., "myToolPayloadCodec").
 		GenericCodec string
 		// Marshal function name (e.g., "MarshalMyToolPayload").
@@ -241,6 +247,11 @@ type (
 		FieldDescs map[string]string
 		// FieldJSONTypes maps dotted field paths to their generated JSON type.
 		FieldJSONTypes map[string]string
+		// FieldAllowedObjectKeys maps dotted closed-object paths to the JSON
+		// property names accepted at that object level. It is used only by
+		// generated payload and result codecs to reject unknown fields before
+		// transport decoding.
+		FieldAllowedObjectKeys map[string][]string
 		// AcceptEmpty indicates that empty JSON input should be accepted and
 		// treated as the zero value (only for payloads). This is true for
 		// payload types that are empty structs (no fields).

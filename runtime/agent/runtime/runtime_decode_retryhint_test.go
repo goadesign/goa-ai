@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -64,18 +65,56 @@ func TestBuildRetryHintFromDecodeError_SyntaxError(t *testing.T) {
 	require.NotEmpty(t, hint.ClarifyingQuestion)
 }
 
-// TestBuildRetryHintFromDecodeError_GenericErrorReturnsNil verifies that
-// buildRetryHintFromDecodeError preserves its strict contract: errors raised
-// outside json.SyntaxError/UnmarshalTypeError yield nil so non-decode callers
-// (for example agent-tool prompt rendering) can propagate the error verbatim.
-func TestBuildRetryHintFromDecodeError_GenericErrorReturnsNil(t *testing.T) {
-	decErr := errors.New(`unexpected Rule2 type "signal_change"`)
+// TestBuildRetryHintFromDecodeError_GenericDecodeErrorRestrictsRetry verifies
+// that decode failures without a JSON type or syntax shape — truncated
+// payloads (io.EOF / io.ErrUnexpectedEOF) and codec-specific errors — still
+// produce a restricted retry hint. Every error at this boundary is a defect in
+// the model-authored payload, so the model must always get a chance to resend
+// it; returning nil here previously escalated agent-tool decode failures into
+// terminal workflow errors.
+func TestBuildRetryHintFromDecodeError_GenericDecodeErrorRestrictsRetry(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{name: "truncated payload", err: io.ErrUnexpectedEOF},
+		{name: "empty payload", err: io.EOF},
+		{name: "codec union error", err: errors.New(`unexpected Rule2 type "signal_change"`)},
+	}
 	spec := &tools.ToolSpec{
 		Payload: tools.TypeSpec{
 			ExampleJSON: tools.RawJSON(`{"AssistantText":"ok"}`),
 		},
 	}
-	require.Nil(t, buildRetryHintFromDecodeError(decErr, tools.Ident("svc.ts.tool"), spec))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hint := buildRetryHintFromDecodeError(tc.err, tools.Ident("svc.ts.tool"), spec)
+			require.NotNil(t, hint)
+			require.Equal(t, tools.Ident("svc.ts.tool"), hint.Tool)
+			require.True(t, hint.RestrictToTool)
+			require.Equal(t, []string{"$payload"}, hint.MissingFields)
+			require.Contains(t, hint.ClarifyingQuestion, "svc.ts.tool")
+			require.Contains(t, hint.ClarifyingQuestion, tc.err.Error())
+			require.JSONEq(t, `{"AssistantText":"ok"}`, string(hint.ExampleJSON))
+		})
+	}
+}
+
+// TestBuildRetryHintFromAgentToolRequestError_ClassifiesPayloadDefectsOnly
+// verifies the agent-tool request error router: payload decode failures (the
+// model authored an undecodable payload) return a restricted retry hint so the
+// parent run feeds the failure back to the model, while runtime configuration
+// errors return nil and stay terminal workflow errors.
+func TestBuildRetryHintFromAgentToolRequestError_ClassifiesPayloadDefectsOnly(t *testing.T) {
+	decodeErr := fmt.Errorf("decode agent tool payload for ada.count_events: %w",
+		&agentToolPayloadError{cause: io.EOF})
+	hint := buildRetryHintFromAgentToolRequestError(decodeErr, tools.Ident("ada.count_events"), nil)
+	require.NotNil(t, hint)
+	require.True(t, hint.RestrictToTool)
+	require.Equal(t, tools.Ident("ada.count_events"), hint.Tool)
+
+	configErr := errors.New("agent tool ada.count_events requires a registered ToolSpec for payload decoding (missing specs/codecs)")
+	require.Nil(t, buildRetryHintFromAgentToolRequestError(configErr, tools.Ident("ada.count_events"), nil))
 }
 
 // TestExecuteToolActivity_DecodeErrorRetryHint ensures ExecuteToolActivity
@@ -188,4 +227,59 @@ func TestExecuteToolActivity_UnionValidationRetryHint(t *testing.T) {
 	require.True(t, out.RetryHint.RestrictToTool)
 	require.Equal(t, []string{"type"}, out.RetryHint.MissingFields)
 	require.Contains(t, out.RetryHint.ClarifyingQuestion, "one of: schedule, signal")
+}
+
+func TestExecuteToolActivity_UnknownFieldRetryHint(t *testing.T) {
+	rt := &Runtime{
+		logger:   telemetry.NoopLogger{},
+		toolsets: make(map[string]ToolsetRegistration),
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			"atlas.discover.get_device_status": {
+				Name:    "atlas.discover.get_device_status",
+				Service: "atlas",
+				Toolset: "atlas.discover",
+				Payload: tools.TypeSpec{
+					Name: "P",
+					Codec: tools.JSONCodec[any]{
+						FromJSON: func(data []byte) (any, error) {
+							err := &fakeValidationError{
+								issues: []*tools.FieldIssue{{
+									Field:      "scope_context",
+									Constraint: "unknown_field",
+									Allowed:    []string{"device_alias"},
+								}},
+							}
+							return nil, fmt.Errorf("decode payload: %w", err)
+						},
+					},
+				},
+				Result: tools.TypeSpec{Name: "R"},
+			},
+		},
+	}
+	rt.toolsets["atlas.discover"] = ToolsetRegistration{
+		Name: "atlas.discover",
+		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			t.Fatalf("executor should not be called when generated validation fails")
+			return nil, nil
+		}),
+		Specs: []tools.ToolSpec{
+			rt.toolSpecs["atlas.discover.get_device_status"],
+		},
+	}
+
+	out, err := rt.ExecuteToolActivity(context.Background(), &ToolInput{
+		ToolsetName: "atlas.discover",
+		ToolName:    tools.Ident("atlas.discover.get_device_status"),
+		Payload:     rawjson.Message([]byte(`{"scope_context":"compressor_2"}`)),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.NotEmpty(t, out.Error)
+	require.NotNil(t, out.RetryHint)
+	require.Equal(t, planner.RetryReasonInvalidArguments, out.RetryHint.Reason)
+	require.True(t, out.RetryHint.RestrictToTool)
+	require.Equal(t, []string{"scope_context"}, out.RetryHint.MissingFields)
+	require.Contains(t, out.RetryHint.ClarifyingQuestion, "remove `scope_context`")
+	require.Contains(t, out.RetryHint.ClarifyingQuestion, "`device_alias`")
 }

@@ -9,7 +9,6 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -19,18 +18,6 @@ import (
 	"goa.design/goa/v3/jsonrpc"
 	goa "goa.design/goa/v3/pkg"
 )
-
-// EncodeInitializeResponse returns an encoder for responses returned by the
-// mcp_assistant initialize endpoint.
-func EncodeInitializeResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		res, _ := v.(*mcpassistant.InitializeResult)
-		enc := encoder(ctx, w)
-		body := NewInitializeResponseBody(res)
-		w.WriteHeader(http.StatusOK)
-		return enc.Encode(body)
-	}
-}
 
 // DecodeInitializeRequest returns a decoder for requests sent to the
 // mcp_assistant initialize endpoint.
@@ -63,30 +50,6 @@ func DecodeInitializeRequest(mux goahttp.Muxer, decoder func(*http.Request) goah
 	}
 }
 
-// EncodePingResponse returns an encoder for responses returned by the
-// mcp_assistant ping endpoint.
-func EncodePingResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		res, _ := v.(*mcpassistant.PingResult)
-		enc := encoder(ctx, w)
-		body := NewPingResponseBody(res)
-		w.WriteHeader(http.StatusOK)
-		return enc.Encode(body)
-	}
-}
-
-// EncodeToolsListResponse returns an encoder for responses returned by the
-// mcp_assistant tools/list endpoint.
-func EncodeToolsListResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		res, _ := v.(*mcpassistant.ToolsListResult)
-		enc := encoder(ctx, w)
-		body := NewToolsListResponseBody(res)
-		w.WriteHeader(http.StatusOK)
-		return enc.Encode(body)
-	}
-}
-
 // DecodeToolsListRequest returns a decoder for requests sent to the
 // mcp_assistant tools/list endpoint.
 func DecodeToolsListRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*mcpassistant.ToolsListPayload, error) {
@@ -111,18 +74,6 @@ func DecodeToolsListRequest(mux goahttp.Muxer, decoder func(*http.Request) goaht
 		payload = NewToolsListPayload(&body)
 
 		return payload, nil
-	}
-}
-
-// EncodeToolsCallResponse returns an encoder for responses returned by the
-// mcp_assistant tools/call endpoint.
-func EncodeToolsCallResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		res, _ := v.(*mcpassistant.ToolsCallResult)
-		enc := encoder(ctx, w)
-		body := NewToolsCallResponseBody(res)
-		w.WriteHeader(http.StatusOK)
-		return enc.Encode(body)
 	}
 }
 
@@ -157,18 +108,6 @@ func DecodeToolsCallRequest(mux goahttp.Muxer, decoder func(*http.Request) goaht
 	}
 }
 
-// EncodeResourcesListResponse returns an encoder for responses returned by the
-// mcp_assistant resources/list endpoint.
-func EncodeResourcesListResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		res, _ := v.(*mcpassistant.ResourcesListResult)
-		enc := encoder(ctx, w)
-		body := NewResourcesListResponseBody(res)
-		w.WriteHeader(http.StatusOK)
-		return enc.Encode(body)
-	}
-}
-
 // DecodeResourcesListRequest returns a decoder for requests sent to the
 // mcp_assistant resources/list endpoint.
 func DecodeResourcesListRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*mcpassistant.ResourcesListPayload, error) {
@@ -193,18 +132,6 @@ func DecodeResourcesListRequest(mux goahttp.Muxer, decoder func(*http.Request) g
 		payload = NewResourcesListPayload(&body)
 
 		return payload, nil
-	}
-}
-
-// EncodeResourcesReadResponse returns an encoder for responses returned by the
-// mcp_assistant resources/read endpoint.
-func EncodeResourcesReadResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		res, _ := v.(*mcpassistant.ResourcesReadResult)
-		enc := encoder(ctx, w)
-		body := NewResourcesReadResponseBody(res)
-		w.WriteHeader(http.StatusOK)
-		return enc.Encode(body)
 	}
 }
 
@@ -239,15 +166,6 @@ func DecodeResourcesReadRequest(mux goahttp.Muxer, decoder func(*http.Request) g
 	}
 }
 
-// EncodeResourcesSubscribeResponse returns an encoder for responses returned
-// by the mcp_assistant resources/subscribe endpoint.
-func EncodeResourcesSubscribeResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		w.WriteHeader(http.StatusNoContent)
-		return nil
-	}
-}
-
 // DecodeResourcesSubscribeRequest returns a decoder for requests sent to the
 // mcp_assistant resources/subscribe endpoint.
 func DecodeResourcesSubscribeRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*mcpassistant.ResourcesSubscribePayload, error) {
@@ -276,15 +194,6 @@ func DecodeResourcesSubscribeRequest(mux goahttp.Muxer, decoder func(*http.Reque
 		payload = NewResourcesSubscribePayload(&body)
 
 		return payload, nil
-	}
-}
-
-// EncodeResourcesUnsubscribeResponse returns an encoder for responses returned
-// by the mcp_assistant resources/unsubscribe endpoint.
-func EncodeResourcesUnsubscribeResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		w.WriteHeader(http.StatusNoContent)
-		return nil
 	}
 }
 
@@ -319,18 +228,6 @@ func DecodeResourcesUnsubscribeRequest(mux goahttp.Muxer, decoder func(*http.Req
 	}
 }
 
-// EncodePromptsListResponse returns an encoder for responses returned by the
-// mcp_assistant prompts/list endpoint.
-func EncodePromptsListResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		res, _ := v.(*mcpassistant.PromptsListResult)
-		enc := encoder(ctx, w)
-		body := NewPromptsListResponseBody(res)
-		w.WriteHeader(http.StatusOK)
-		return enc.Encode(body)
-	}
-}
-
 // DecodePromptsListRequest returns a decoder for requests sent to the
 // mcp_assistant prompts/list endpoint.
 func DecodePromptsListRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*mcpassistant.PromptsListPayload, error) {
@@ -355,18 +252,6 @@ func DecodePromptsListRequest(mux goahttp.Muxer, decoder func(*http.Request) goa
 		payload = NewPromptsListPayload(&body)
 
 		return payload, nil
-	}
-}
-
-// EncodePromptsGetResponse returns an encoder for responses returned by the
-// mcp_assistant prompts/get endpoint.
-func EncodePromptsGetResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		res, _ := v.(*mcpassistant.PromptsGetResult)
-		enc := encoder(ctx, w)
-		body := NewPromptsGetResponseBody(res)
-		w.WriteHeader(http.StatusOK)
-		return enc.Encode(body)
 	}
 }
 
@@ -401,15 +286,6 @@ func DecodePromptsGetRequest(mux goahttp.Muxer, decoder func(*http.Request) goah
 	}
 }
 
-// EncodeNotifyStatusUpdateResponse returns an encoder for responses returned
-// by the mcp_assistant notify_status_update endpoint.
-func EncodeNotifyStatusUpdateResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		w.WriteHeader(http.StatusNoContent)
-		return nil
-	}
-}
-
 // DecodeNotifyStatusUpdateRequest returns a decoder for requests sent to the
 // mcp_assistant notify_status_update endpoint.
 func DecodeNotifyStatusUpdateRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*mcpassistant.SendNotificationPayload, error) {
@@ -438,18 +314,6 @@ func DecodeNotifyStatusUpdateRequest(mux goahttp.Muxer, decoder func(*http.Reque
 		payload = NewNotifyStatusUpdateSendNotificationPayload(&body)
 
 		return payload, nil
-	}
-}
-
-// EncodeEventsStreamResponse returns an encoder for responses returned by the
-// mcp_assistant events/stream endpoint.
-func EncodeEventsStreamResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
-	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		res, _ := v.(*mcpassistant.EventsStreamResult)
-		enc := encoder(ctx, w)
-		body := NewEventsStreamResponseBody(res)
-		w.WriteHeader(http.StatusOK)
-		return enc.Encode(body)
 	}
 }
 

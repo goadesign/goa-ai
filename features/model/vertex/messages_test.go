@@ -1,0 +1,224 @@
+package vertex
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
+)
+
+func TestEncodeContentsSystemAndRoles(t *testing.T) {
+	msgs := []*model.Message{
+		{Role: model.ConversationRoleSystem, Parts: []model.Part{model.TextPart{Text: "be terse"}}},
+		{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "hi"}}},
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "hello"}}},
+	}
+	system, contents, err := encodeContents(msgs, nil)
+	require.NoError(t, err)
+	require.NotNil(t, system)
+	assert.Equal(t, "be terse", system.Parts[0].Text)
+	require.Len(t, contents, 2)
+	assert.Equal(t, "user", contents[0].Role)
+	assert.Equal(t, "model", contents[1].Role)
+}
+
+func TestEncodeContentsToolLoop(t *testing.T) {
+	canonToProv := map[string]string{"feed/find_duplicates": "feed_find_duplicates"}
+	msgs := []*model.Message{
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+			model.ToolUsePart{ID: "c1", Name: "feed/find_duplicates", Input: map[string]any{"title": "picnic"}},
+		}},
+		{Role: model.ConversationRoleUser, Parts: []model.Part{
+			model.ToolResultPart{ToolUseID: "c1", Content: []any{"m1"}},
+		}},
+	}
+	_, contents, err := encodeContents(msgs, canonToProv)
+	require.NoError(t, err)
+	require.Len(t, contents, 2)
+	fc := contents[0].Parts[0].FunctionCall
+	require.NotNil(t, fc)
+	assert.Equal(t, "c1", fc.ID)
+	assert.Equal(t, "feed_find_duplicates", fc.Name)
+	assert.Equal(t, "picnic", fc.Args["title"])
+	fr := contents[1].Parts[0].FunctionResponse
+	require.NotNil(t, fr)
+	assert.Equal(t, "c1", fr.ID)
+	assert.Equal(t, "feed_find_duplicates", fr.Name) // recovered from the tool use
+	assert.Contains(t, fr.Response, "output")        // non-object content wrapped
+}
+
+func TestEncodeContentsToolResultWithoutToolUse(t *testing.T) {
+	msgs := []*model.Message{
+		{Role: model.ConversationRoleUser, Parts: []model.Part{
+			model.ToolResultPart{ToolUseID: "orphan", Content: map[string]any{"ok": true}},
+		}},
+	}
+	_, _, err := encodeContents(msgs, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `tool result "orphan" has no matching tool use`)
+}
+
+func TestEncodeContentsToolResultErrorDoesNotMutateContent(t *testing.T) {
+	content := map[string]any{"detail": "boom"}
+	msgs := []*model.Message{
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+			model.ToolUsePart{ID: "c1", Name: "feed/find_duplicates", Input: map[string]any{}},
+		}},
+		{Role: model.ConversationRoleUser, Parts: []model.Part{
+			model.ToolResultPart{ToolUseID: "c1", Content: content, IsError: true},
+		}},
+	}
+	_, contents, err := encodeContents(msgs, nil)
+	require.NoError(t, err)
+	require.Len(t, contents, 2)
+	fr := contents[1].Parts[0].FunctionResponse
+	require.NotNil(t, fr)
+	assert.Equal(t, true, fr.Response["error"])
+	assert.NotContains(t, content, "error") // caller-owned map must stay untouched
+}
+
+func TestEncodeContentsThinkingEcho(t *testing.T) {
+	msgs := []*model.Message{
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+			model.ThinkingPart{Text: "reasoning", Signature: "c2ln", Final: true},
+			model.TextPart{Text: "answer"},
+		}},
+	}
+	_, contents, err := encodeContents(msgs, nil)
+	require.NoError(t, err)
+	parts := contents[0].Parts
+	require.Len(t, parts, 2)
+	assert.True(t, parts[0].Thought)
+	assert.Equal(t, []byte("sig"), parts[0].ThoughtSignature) // "c2ln" is base64("sig")
+}
+
+func TestEncodeContentsRedactedOnlyThinkingSkipped(t *testing.T) {
+	msgs := []*model.Message{
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+			model.ThinkingPart{Redacted: []byte("opaque"), Final: true},
+			model.TextPart{Text: "answer"},
+		}},
+	}
+	_, contents, err := encodeContents(msgs, nil)
+	require.NoError(t, err)
+	require.Len(t, contents, 1)
+	// The redacted-only thinking part is dropped entirely, leaving only the
+	// text part.
+	require.Len(t, contents[0].Parts, 1)
+	assert.Equal(t, "answer", contents[0].Parts[0].Text)
+}
+
+func TestEncodeContentsThinkingSignatureInvalidBase64(t *testing.T) {
+	msgs := []*model.Message{
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+			model.ThinkingPart{Text: "reasoning", Signature: "not*base64!", Final: true},
+		}},
+	}
+	_, _, err := encodeContents(msgs, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "vertex: encode thinking part: signature is not valid base64")
+}
+
+func TestEncodeContentsToolUseThoughtSignatureRoundTrips(t *testing.T) {
+	msgs := []*model.Message{
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+			model.ToolUsePart{
+				ID:               "c1",
+				Name:             "feed/find_duplicates",
+				Input:            map[string]any{"title": "picnic"},
+				ThoughtSignature: "c2ln", // base64("sig")
+			},
+		}},
+	}
+	_, contents, err := encodeContents(msgs, nil)
+	require.NoError(t, err)
+	require.Len(t, contents, 1)
+	fc := contents[0].Parts[0]
+	require.NotNil(t, fc.FunctionCall)
+	assert.Equal(t, []byte("sig"), fc.ThoughtSignature)
+}
+
+func TestEncodeContentsToolUseThoughtSignatureInvalidBase64(t *testing.T) {
+	msgs := []*model.Message{
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+			model.ToolUsePart{
+				ID:               "c1",
+				Name:             "feed/find_duplicates",
+				Input:            map[string]any{},
+				ThoughtSignature: "not*base64!",
+			},
+		}},
+	}
+	_, _, err := encodeContents(msgs, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `vertex: encode tool use "feed/find_duplicates": thought signature is not valid base64`)
+}
+
+func TestEncodeContentsToolUseNonObjectInputErrors(t *testing.T) {
+	msgs := []*model.Message{
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+			model.ToolUsePart{ID: "c1", Name: "feed/find_duplicates", Input: "not-an-object"},
+		}},
+	}
+	_, _, err := encodeContents(msgs, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `vertex: encode tool use "feed/find_duplicates": tool input must be a JSON object`)
+}
+
+func TestEncodeContentsToolUseNilInputEncodesEmptyArgs(t *testing.T) {
+	// JSON null unmarshals into a nil map without error, so a nil Input must
+	// not slip past the object check as nil Args: no-arg tool calls are
+	// legal and Gemini requires Args to be an object.
+	msgs := []*model.Message{
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+			model.ToolUsePart{ID: "c1", Name: "feed/find_duplicates", Input: nil},
+		}},
+	}
+	_, contents, err := encodeContents(msgs, nil)
+	require.NoError(t, err)
+	fc := contents[0].Parts[0].FunctionCall
+	require.NotNil(t, fc)
+	require.NotNil(t, fc.Args)
+	assert.Empty(t, fc.Args)
+}
+
+func TestEncodeContentsToolResultNilContentError(t *testing.T) {
+	// Nil Content used to leave the response map nil (JSON null unmarshals
+	// into a nil map without error), so m["error"] = true panicked. It must
+	// encode as {"error": true}.
+	msgs := []*model.Message{
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+			model.ToolUsePart{ID: "c1", Name: "feed/find_duplicates", Input: map[string]any{}},
+		}},
+		{Role: model.ConversationRoleUser, Parts: []model.Part{
+			model.ToolResultPart{ToolUseID: "c1", Content: nil, IsError: true},
+		}},
+	}
+	_, contents, err := encodeContents(msgs, nil)
+	require.NoError(t, err)
+	fr := contents[1].Parts[0].FunctionResponse
+	require.NotNil(t, fr)
+	assert.Equal(t, map[string]any{"error": true}, fr.Response)
+}
+
+func TestEncodeContentsToolResultNullRawContentEncodesObject(t *testing.T) {
+	// rawjson.Message{} marshals as JSON null; the response must still be a
+	// non-nil object on the wire because Gemini requires
+	// FunctionResponse.Response to be an object.
+	msgs := []*model.Message{
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+			model.ToolUsePart{ID: "c1", Name: "feed/find_duplicates", Input: map[string]any{}},
+		}},
+		{Role: model.ConversationRoleUser, Parts: []model.Part{
+			model.ToolResultPart{ToolUseID: "c1", Content: rawjson.Message{}},
+		}},
+	}
+	_, contents, err := encodeContents(msgs, nil)
+	require.NoError(t, err)
+	fr := contents[1].Parts[0].FunctionResponse
+	require.NotNil(t, fr)
+	require.NotNil(t, fr.Response)
+}

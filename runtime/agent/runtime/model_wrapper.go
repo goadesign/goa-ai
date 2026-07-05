@@ -10,8 +10,9 @@ import (
 
 // This file implements planner-scoped model client wrappers owned by the
 // runtime. The planner client wrapper emits runtime planner events as model
-// output is consumed, while the remaining wrappers apply cache/tool/tracing
-// policy to raw model clients returned from PlannerContext.ModelClient.
+// output is consumed, while the remaining wrappers apply cache/tool/tracing/
+// signature-capture policy to raw model clients returned from
+// PlannerContext.ModelClient.
 //
 // Critical invariants:
 //   - Final tool calls are NOT emitted here; those are already surfaced to
@@ -21,6 +22,12 @@ import (
 //     tool payload remains the finalized tool call and the runtime tool_start.
 //   - Emission occurs in the planner activity context to keep ledger writes
 //     deterministic and scoped to the current turn.
+//   - signatureCapturingClient observes opaque provider tool-call thought
+//     signatures at the model-client boundary, before planner.ToolRequest (or
+//     any other user-facing type) exists. It wraps the client returned by
+//     configuredModelClient regardless of whether the caller drains it via
+//     PlannerModelClient or the raw ModelClient + planner.ConsumeStream path,
+//     so capture is independent of which streaming style a planner chooses.
 
 // plannerModelClient wraps a raw model.Client and owns PlannerEvents emission
 // for one planner turn.
@@ -107,9 +114,11 @@ func (c *cacheConfiguredClient) Stream(ctx context.Context, req *model.Request) 
 	return c.inner.Stream(ctx, req)
 }
 
-// toolUnavailableConfiguredClient ensures the runtime-owned tool_unavailable tool
-// is always present in tool-aware requests. Some providers require that any tool
-// referenced in tool_use history appears in the current request tool list.
+// toolUnavailableConfiguredClient adds the runtime-owned tool_unavailable tool
+// only when message history references a tool that is absent from the current
+// request. Some providers require every historical tool_use name to appear in
+// the current request tool list, but advertising this internal tool on normal
+// requests gives planners a fake action they can choose.
 type toolUnavailableConfiguredClient struct {
 	inner model.Client
 }
@@ -131,6 +140,97 @@ func (c *toolUnavailableConfiguredClient) Stream(ctx context.Context, req *model
 	return c.inner.Stream(ctx, req)
 }
 
+// toolCallSignatureSink receives opaque, provider-defined tool-call thought
+// signatures captured at the model-client boundary, keyed by tool-call ID.
+// runtimePlannerEvents implements this so captured signatures flow back to
+// the workflow through the same activity-output channel already used for the
+// transcript and usage (see PlanActivityOutput.ToolCallSignatures). This
+// interface is intentionally unexported and separate from planner.PlannerEvents:
+// custom planners never implement it, and capture must not depend on which
+// PlannerEvents value (if any) a planner later passes to planner.ConsumeStream.
+type toolCallSignatureSink interface {
+	recordToolCallSignature(toolCallID, signature string)
+}
+
+// signatureCapturingClient wraps a model.Client to observe opaque
+// provider-defined tool-call thought signatures (for example, Gemini 3) the
+// moment they are produced by the provider, before any planner-facing type
+// (ToolRequest, PlanResult, ...) is constructed. Captured signatures are
+// recorded into sink for later ID-keyed reattachment; empty signatures are
+// never recorded.
+type signatureCapturingClient struct {
+	inner model.Client
+	sink  toolCallSignatureSink
+}
+
+// newSignatureCapturingClient wraps inner with signature capture. It returns
+// inner unchanged when sink is nil so construction never needs a defensive
+// nil check at call sites that lack a capture target (for example, tests).
+func newSignatureCapturingClient(inner model.Client, sink toolCallSignatureSink) model.Client {
+	if inner == nil {
+		return nil
+	}
+	if sink == nil {
+		return inner
+	}
+	return &signatureCapturingClient{inner: inner, sink: sink}
+}
+
+// Complete delegates to the inner client and captures signatures from the
+// non-streaming response's finalized tool calls.
+func (c *signatureCapturingClient) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
+	resp, err := c.inner.Complete(ctx, req)
+	if err != nil {
+		return resp, err
+	}
+	for _, tc := range resp.ToolCalls {
+		c.capture(tc.ID, tc.ThoughtSignature)
+	}
+	return resp, nil
+}
+
+// Stream delegates to the inner client and wraps the returned Streamer so
+// finalized tool-call chunks are observed as they are received.
+func (c *signatureCapturingClient) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
+	st, err := c.inner.Stream(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return &signatureCapturingStreamer{inner: st, sink: c.sink}, nil
+}
+
+// capture records a non-empty signature for a non-empty tool-call ID.
+func (c *signatureCapturingClient) capture(toolCallID, signature string) {
+	if toolCallID == "" || signature == "" {
+		return
+	}
+	c.sink.recordToolCallSignature(toolCallID, signature)
+}
+
+// signatureCapturingStreamer wraps a model.Streamer to capture tool-call
+// thought signatures from ChunkTypeToolCall chunks as they are received.
+type signatureCapturingStreamer struct {
+	inner model.Streamer
+	sink  toolCallSignatureSink
+}
+
+func (s *signatureCapturingStreamer) Recv() (model.Chunk, error) {
+	ch, err := s.inner.Recv()
+	if err != nil {
+		return ch, err
+	}
+	if ch.Type == model.ChunkTypeToolCall && ch.ToolCall != nil {
+		if ch.ToolCall.ID != "" && ch.ToolCall.ThoughtSignature != "" {
+			s.sink.recordToolCallSignature(ch.ToolCall.ID, ch.ToolCall.ThoughtSignature)
+		}
+	}
+	return ch, nil
+}
+
+func (s *signatureCapturingStreamer) Close() error { return s.inner.Close() }
+
+func (s *signatureCapturingStreamer) Metadata() map[string]any { return s.inner.Metadata() }
+
 // applyCachePolicy populates Request.Cache from the agent CachePolicy when no
 // explicit CacheOptions are present on the request.
 func applyCachePolicy(req *model.Request, cache CachePolicy) {
@@ -150,32 +250,43 @@ func ensureToolUnavailableDefinition(req *model.Request) {
 	if req == nil {
 		return
 	}
-	if !requestMayReferenceTools(req) {
+	if !toolHistoryNeedsUnavailableDefinition(req) {
 		return
 	}
-	name := tools.ToolUnavailable.String()
-	for _, def := range req.Tools {
-		if def != nil && def.Name == name {
-			return
-		}
-	}
-	req.Tools = append(req.Tools, toolUnavailableToolDefinition())
+	req.Tools = appendToolUnavailableDefinition(req.Tools)
 }
 
-func requestMayReferenceTools(req *model.Request) bool {
+func appendToolUnavailableDefinition(defs []*model.ToolDefinition) []*model.ToolDefinition {
+	name := tools.ToolUnavailable.String()
+	for _, def := range defs {
+		if def != nil && def.Name == name {
+			return defs
+		}
+	}
+	return append(defs, toolUnavailableToolDefinition())
+}
+
+func toolHistoryNeedsUnavailableDefinition(req *model.Request) bool {
 	if req == nil {
 		return false
 	}
-	if len(req.Tools) > 0 || req.ToolChoice != nil {
-		return true
+	current := make(map[string]struct{}, len(req.Tools))
+	for _, tool := range req.Tools {
+		if tool == nil || tool.Name == "" {
+			continue
+		}
+		current[tool.Name] = struct{}{}
 	}
 	for _, msg := range req.Messages {
 		if msg == nil {
 			continue
 		}
 		for _, part := range msg.Parts {
-			switch part.(type) {
-			case model.ToolUsePart, model.ToolResultPart:
+			use, ok := part.(model.ToolUsePart)
+			if !ok || use.Name == "" {
+				continue
+			}
+			if _, ok := current[use.Name]; !ok {
 				return true
 			}
 		}

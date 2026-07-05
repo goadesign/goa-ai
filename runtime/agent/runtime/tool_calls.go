@@ -231,6 +231,10 @@ func (e *toolBatchExec) publishToolResultReceived(ctx context.Context, call plan
 	if !tr.ResultOmitted {
 		resultBytes = len(resultJSON)
 	}
+	preview, err := formatToolResultPreviewForCall(ctx, e.r, &call, tr)
+	if err != nil {
+		return err
+	}
 	ev := hooks.NewToolResultReceivedEvent(
 		e.runID,
 		e.agentID,
@@ -243,7 +247,7 @@ func (e *toolBatchExec) publishToolResultReceived(ctx context.Context, call plan
 		tr.ResultOmitted,
 		tr.ResultOmittedReason,
 		tr.ServerData,
-		formatResultPreviewForCall(ctx, e.r, &call, tr.Result, tr.Bounds),
+		preview,
 		tr.Bounds,
 		duration,
 		tr.Telemetry,

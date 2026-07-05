@@ -27,6 +27,7 @@ func DeepNestedValidations() func() {
 			Description("Level 1 root")
 			Attribute("root", String, "Root value")
 			Attribute("child", Level2, "Child L2")
+			Attribute("labels", MapOf(String, String), "Open labels keyed by source")
 			Required("root", "child")
 		})
 

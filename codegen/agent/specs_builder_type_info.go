@@ -3,6 +3,7 @@ package codegen
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -148,17 +149,17 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	// Internal transport type used only by codecs for JSON decode+validation.
 	// This is the actual JSON contract (schema property names + missing detection).
 	transportTypeName := typeName + "Transport"
-	transportAttr := cloneWithJSONTags(tt)
+	transportAttr := cloneWithModelJSONTags(tt)
 	transportAttr = b.ensureNestedLocalTransportTypes(scope, transportAttr)
 	// Collect union sum types as they appear in the transport graph (after
 	// localization). These are emitted into the toolset-local http package.
 	b.collectTransportUnionSumTypes(scope, transportAttr)
+	schemaAttr := cloneModelSchemaAttribute(transportAttr)
 
 	// Example JSON for externally visible request/response contracts. Only
 	// authored Goa Example(...) values become top-level schema examples and model
 	// input examples; synthesized attribute examples stay out of provider tool
 	// definitions so prompts only include examples the DSL author chose.
-	schemaAttr := transportAttr
 	var example *exampleData
 	if usage == usagePayload || (usage == usageResult && owner.Kind == contractTypeOwnerCompletion) {
 		// Examples must reflect the JSON wire contract, not the public tool type.
@@ -166,10 +167,10 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		// the transport graph; deriving examples from the public type produces a
 		// flattened shape that misleads callers and generated examples.
 		//
-		example = authoredExampleForAttribute(att, schemaAttr)
+		example = authoredExampleForAttribute(att)
 	}
 
-	// JSON schema from transport attribute
+	// JSON schema from model schema attribute.
 	var err error
 	schemaBytes, schemaWithoutRootExampleBytes, err := schemaVariantsForAttribute(schemaAttr, exampleValue(example))
 	if err != nil {
@@ -190,8 +191,8 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	if owner.Kind == contractTypeOwnerCompletion {
 		doc = fmt.Sprintf("%s defines the JSON %s for the completion %s.", typeName, usage, owner.QualifiedName)
 	}
-	transportDef := transportTypeName + " " + scope.GoTypeDef(schemaAttr, true, false)
-	transportImports := shared.GatherAttributeImports(b.genpkg, schemaAttr)
+	transportDef := transportTypeName + " " + scope.GoTypeDef(transportAttr, true, false)
+	transportImports := shared.GatherAttributeImports(b.genpkg, transportAttr)
 	httpctx := codegen.NewAttributeContext(!goaexpr.IsPrimitive(schemaAttr.Type), false, false, "", scope)
 	transportValidation := validationCodeWithContext(schemaAttr, nil, httpctx, true, false, false, "body", owner, usage, "transport")
 	var transportValidationSrc []string
@@ -201,7 +202,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 
 	src := &goaexpr.AttributeExpr{
 		Type: &goaexpr.UserTypeExpr{
-			AttributeExpr: schemaAttr,
+			AttributeExpr: transportAttr,
 			TypeName:      transportTypeName,
 		},
 	}
@@ -301,6 +302,12 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	if ftypes := buildFieldJSONTypes(schemaAttr); len(ftypes) > 0 {
 		info.FieldJSONTypes = ftypes
 	}
+	if allowed := buildFieldAllowedObjectKeys(schemaAttr); len(allowed) > 0 {
+		if usage == usageResult && owner.Bounds != nil {
+			allowed = withBoundedResultAllowedObjectKeys(allowed, owner.Bounds)
+		}
+		info.FieldAllowedObjectKeys = allowed
+	}
 	b.types[key] = info
 	// Also index by the public type name so auxiliary passes (e.g.,
 	// validator collection) can detect that a concrete alias already
@@ -367,7 +374,7 @@ func boundedResultSchemaFields(bounds *ToolBoundsData) map[string]any {
 		},
 	}
 	if bounds.Paging != nil && bounds.Paging.NextCursorField != "" {
-		fields[bounds.Paging.NextCursorField] = map[string]any{
+		fields[modelJSONName(bounds.Paging.NextCursorField)] = map[string]any{
 			"type":        "string",
 			"description": "Opaque cursor for the next page. Call the same tool again with the same parameters and pass this exact string back as the paging cursor. Do not send the literal text \"next_cursor\" or modify the cursor.",
 		}
@@ -416,9 +423,21 @@ func canonicalOptionalBoundedResultFields(bounds *ToolBoundsData) map[string]str
 	}
 	fields := make(map[string]struct{})
 	for _, name := range boundedresult.OptionalFieldNames(nextCursorField) {
-		fields[name] = struct{}{}
+		fields[modelJSONName(name)] = struct{}{}
 	}
 	return fields
+}
+
+func withBoundedResultAllowedObjectKeys(allowed map[string][]string, bounds *ToolBoundsData) map[string][]string {
+	nextCursorField := ""
+	if bounds != nil && bounds.Paging != nil {
+		nextCursorField = bounds.Paging.NextCursorField
+	}
+	root := append([]string(nil), allowed[""]...)
+	root = append(root, boundedresult.CanonicalFieldNames(modelJSONName(nextCursorField))...)
+	sort.Strings(root)
+	allowed[""] = slices.Compact(root)
+	return allowed
 }
 
 // isEmptyStruct reports whether the provided attribute ultimately resolves to

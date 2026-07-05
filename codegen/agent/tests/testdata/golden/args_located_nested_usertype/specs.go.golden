@@ -29,8 +29,8 @@ var (
 		Tags:        []string{},
 		Payload: tools.TypeSpec{
 			Name:                     "SetStepStatusPayload",
-			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"note\":{\"type\":\"string\",\"description\":\"Optional note about progress.\",\"example\":\"Nemo quia.\"},\"status\":{\"$ref\":\"#/$defs/Status\"},\"step_id\":{\"type\":\"string\",\"description\":\"Step identifier.\",\"example\":\"Dignissimos quo illum.\"}},\"$defs\":{\"Status\":{\"title\":\"Status\",\"type\":\"string\",\"description\":\"Lifecycle status for a step.\",\"example\":\"in_progress\",\"enum\":[\"pending\",\"in_progress\",\"completed\",\"blocked\"]}},\"required\":[\"step_id\",\"status\"]}"),
-			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"note\":{\"type\":\"string\",\"description\":\"Optional note about progress.\",\"example\":\"Nemo quia.\"},\"status\":{\"$ref\":\"#/$defs/Status\"},\"step_id\":{\"type\":\"string\",\"description\":\"Step identifier.\",\"example\":\"Dignissimos quo illum.\"}},\"$defs\":{\"Status\":{\"title\":\"Status\",\"type\":\"string\",\"description\":\"Lifecycle status for a step.\",\"example\":\"in_progress\",\"enum\":[\"pending\",\"in_progress\",\"completed\",\"blocked\"]}},\"required\":[\"step_id\",\"status\"]}"),
+			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"note\":{\"type\":\"string\",\"description\":\"Optional note about progress.\",\"example\":\"Perspiciatis deleniti et qui eius quo debitis.\"},\"status\":{\"type\":\"string\",\"description\":\"New step status.\",\"example\":\"in_progress\",\"enum\":[\"pending\",\"in_progress\",\"completed\",\"blocked\"]},\"step_id\":{\"type\":\"string\",\"description\":\"Step identifier.\",\"example\":\"Minima ipsa fugit minima aliquam quaerat qui.\"}},\"required\":[\"step_id\",\"status\"]}"),
+			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"note\":{\"type\":\"string\",\"description\":\"Optional note about progress.\",\"example\":\"Perspiciatis deleniti et qui eius quo debitis.\"},\"status\":{\"type\":\"string\",\"description\":\"New step status.\",\"example\":\"in_progress\",\"enum\":[\"pending\",\"in_progress\",\"completed\",\"blocked\"]},\"step_id\":{\"type\":\"string\",\"description\":\"Step identifier.\",\"example\":\"Minima ipsa fugit minima aliquam quaerat qui.\"}},\"required\":[\"step_id\",\"status\"]}"),
 			ExampleJSON:              nil,
 			FieldDescriptions:        SetStepStatusPayloadFieldDescs,
 			FieldJSONTypes:           SetStepStatusPayloadFieldJSONTypes,
@@ -61,6 +61,13 @@ var (
 		SetStepStatus,
 	}
 )
+
+// RequiredLabels lists the run label keys this toolset's Inject-populated
+// tools require to be present via WithLabels(...) at run start. The runtime
+// validates coverage across every toolset an agent uses before starting a
+// run, so a missing label fails fast instead of surfacing mid-run as a tool
+// call error.
+var RequiredLabels = []string{}
 
 // Names returns the identifiers of all generated tools.
 func Names() []tools.Ident {

@@ -248,6 +248,7 @@ planner and runtime streaming:
 | Streaming usage and stop chunks | Supported |
 | Model-class routing (`default`, `high-reasoning`, `small`) | Supported |
 | Structured output (`completion_delta` + final `completion`) | Supported via OpenAI `json_schema` response format, but not in combination with tools |
+| Strict schemas | Tool and structured-output schemas are always sent with `strict:true`; the adapter projects canonical schemas onto the strict subset (closed objects, all members required, optionals nullable) and canonicalizes returned payloads by dropping the null members the projection introduced. Contracts strict mode cannot represent (open objects, map-style `additionalProperties`) are rejected explicitly |
 | Cache options / cache checkpoints | Rejected explicitly |
 | Thinking | Only the representable subset is supported: `Thinking.Enable` may map to configured OpenAI `reasoning_effort`; budgeted or interleaved thinking requests fail fast |
 
@@ -258,6 +259,23 @@ Model adapters are stateless at the transcript boundary. They never rehydrate
 history from a `RunID`; runtime-owned callers must supply the full transcript,
 and durable recovery rebuilds that transcript from runlog
 `transcript_messages_appended` records.
+
+### Sampling parameters on current-generation Claude models
+
+Anthropic removed the `temperature`/`top_p`/`top_k` sampling parameters from
+current-generation Claude models (Opus 4.7 and later, Sonnet 5 and later, and
+the Fable/Mythos generation): a request carrying a non-default value is
+rejected with a 400 `invalid_request_error` ("temperature is deprecated for
+this model"). The Anthropic adapter (`features/model/anthropic`, which also
+backs Claude-on-Vertex) and the Bedrock adapter (`features/model/bedrock`)
+share one capability rule and omit `temperature` from the wire request for
+those models instead of forwarding a guaranteed failure — the model runs at
+its own default sampling behavior, and a configured `Options.Temperature` or
+`Request.Temperature` has no effect. The Anthropic adapter records the
+omission on the ambient trace span (`gen_ai.request.temperature_omitted`).
+Steer output behavior through prompting on these models; older generations
+(Opus ≤ 4.6, Sonnet 4.x, Haiku 4.5) keep honoring the configured value
+unchanged.
 
 ---
 
@@ -656,6 +674,18 @@ Use the raw client path when you need full control over stream consumption or
 want to bypass runtime-owned event emission entirely and manage `input.Events`
 yourself.
 
+**Tool-call thought signatures**: some providers (for example, Gemini 3)
+attach an opaque, provider-defined signature to a tool call that must be
+replayed back verbatim on the next turn. The runtime captures these at the
+model-client boundary — before either streaming style above ever produces a
+`planner.ToolRequest` — and reattaches them by tool-call ID when rebuilding
+the provider transcript. `planner.ToolRequest` never carries a signature
+field; planners and custom `Planner` implementations do not need to know
+signatures exist. Because reattachment is keyed by the provider tool-call ID,
+planners that hand-build `ToolRequest` values from a `Complete` response must
+carry `Response.ToolCalls[i].ID` through unchanged — ID preservation is the
+load-bearing obligation.
+
 ---
 
 ## Tool Execution
@@ -663,7 +693,7 @@ yourself.
 ### Tool Payload and Result Flow
 
 1. **Model emits tool call** — Provider adapters produce a streamed or final tool call with canonical JSON bytes
-2. **Planner returns `ToolRequest`** — `ToolRequest.Payload` stays as `rawjson.Message`
+2. **Planner returns `ToolRequest`** — `ToolRequest.Payload` stays as `rawjson.Message`; when a planner compiles a model-facing synthetic tool into a different executable tool, `ModelName`/`ModelPayload` preserve the provider transcript identity
 3. **Runtime decodes payload** — Uses generated codecs to validate and decode canonical JSON
 4. **Executor runs tool** — Receives typed or raw payload depending on configuration
 5. **Runtime encodes result** — Uses generated codecs and persists canonical `ToolOutput` history
@@ -687,7 +717,7 @@ type ToolsetRegistration struct {
     TaskQueue   string                     // Optional queue override
     Inline      bool                       // Execute in workflow context
     CallHints   map[tools.Ident]*template.Template   // Tool call DisplayHint templates (typed payload only)
-    ResultHints map[tools.Ident]*template.Template   // Tool result preview templates (typed result only)
+    ResultHints map[tools.Ident]*template.Template   // Success result preview templates (typed result only)
     PayloadAdapter func(...)               // Pre-decode transformation
     ResultAdapter  func(...)               // Post-encode transformation
     AgentTool   *AgentToolConfig           // Agent-as-tool configuration
@@ -843,6 +873,124 @@ type ToolCallMeta struct {
 }
 ```
 
+### Injected Fields (`Inject()`)
+
+`Inject(names...)` in a `Tool` block marks payload fields as server-populated:
+hidden from the model (excluded from the JSON schema and the model-facing
+required list) and filled in by generated code before the tool executes.
+Injection is **compiled at generation time**, not interpreted at runtime --
+there is no reflection, no spec-walking, and no generic map plumbing beyond
+the labels map itself.
+
+**Design → codegen → runtime flow:**
+
+1. Design time: `Inject("session_id")` / `Inject("household_id")` records the
+   field name(s) on the tool. DSL `Validate` resolves each name against the
+   tool's effective payload (the explicit `Args()` when given, otherwise the
+   bound method's payload) and rejects the design if the field is missing,
+   optional, non-`String`, or (for a `BindTo` tool) label-backed.
+2. Codegen time: each name is classified against the fixed
+   `runtime.ToolCallMeta` field set (`sessionId`/`session_id` -> `SessionID`,
+   `runId`/`run_id` -> `RunID`, `turnId`/`turn_id` -> `TurnID`,
+   `toolCallId`/`tool_call_id` -> `ToolCallID`,
+   `parentToolCallId`/`parent_tool_call_id` -> `ParentToolCallID`). A match is
+   **meta-backed**; anything else is **label-backed**, using the design name
+   verbatim as the label key. `codegen/agent/prepare.go`'s `flattenAndHide`
+   removes the field from the model-facing schema and required list, which
+   makes every injected field a **pointer** on the generated tool payload
+   struct. Each toolset's `inject.go` (beside its `codecs.go`/`specs.go`) gets
+   one generated `Inject<Tool>(p *<Tool>Payload, meta runtime.ToolCallMeta,
+   labels map[string]string) error` function per injecting tool: meta-backed
+   fields copy directly from `meta`; label-backed fields look the key up in
+   `labels`, run the field's own declared validation (reusing Goa's
+   attribute-validation codegen, not hand-duplicated), and return a precise
+   error naming the tool and key on a missing or invalid label. The toolset's
+   `RequiredLabels` (sorted, deduplicated label keys) is generated onto its
+   specs package and aggregated, per agent, onto `AgentRegistration`.
+3. Runtime time: both execution topologies call the **same** generated
+   `Inject<Tool>` function between decode and execute, so population never
+   diverges by where a tool runs:
+   - Local (in-process) execution: the generated service executor calls
+     `Inject<Tool>` immediately after decoding the tool payload, before any
+     `WithPayloadMapper` customization or method-payload conversion, using
+     the run's `ToolCallMeta` and `ToolRequest.Labels`.
+   - Registry-served (bound) tools: the generated provider (`provider.go`)
+     calls the same `Inject<Tool>` function with a `nil` labels map --
+     sound only because a `BindTo` tool can never declare a label-backed
+     field (rejected at design time), since the registry wire protocol
+     carries no run labels.
+   - Custom (hand-written) `ToolCallExecutor`s -- for tools with no `BindTo`,
+     registered directly with the runtime -- have no generated call site.
+     **Use the toolset's generated `Decode<Tool>(payload []byte, meta
+     runtime.ToolCallMeta, labels map[string]string) (*<Tool>Payload, error)`
+     function to decode these tools' payloads**, not the raw
+     `<Tool>PayloadCodec.FromJSON` followed by a manual `Inject<Tool>` call.
+     `Decode<Tool>` composes both in one call; decoding with the codec alone
+     silently leaves injected fields at their Go zero value, because their
+     wire tag is `json:"-"` and there is no "missing key" signal. `payload`
+     accepts a `planner.ToolRequest.Payload` (`rawjson.Message`) directly.
+4. Run start: `Runtime.Start`/`StartOneShot` (and their route variants)
+   validate the caller-supplied `WithLabels(...)` map against the starting
+   agent's aggregated `RequiredLabels` **before** scheduling any workflow or
+   activity, failing fast with every missing key named in one error.
+   **Gateway/orchestration no-op:** this check reads `RequiredLabels` off the
+   *locally registered* `AgentRegistration`. A process that only holds a
+   `Runtime.ClientFor(route AgentRoute)` (or `MustClientFor`) -- the pattern
+   this runtime documents for gateway and orchestration processes that do
+   not run the agent's workflow themselves -- has no local registration, so
+   the check is a silent no-op there; a missing label is instead caught
+   later, per tool call, when `Inject<Tool>` actually runs. Carry
+   `RequiredLabels` on `AgentRoute` yourself if this gap matters for your
+   deployment; the runtime does not do so today.
+   **Agent-as-tool child runs** bypass run-start validation the same way:
+   `ExecuteAgentChildWithRoute` starts the child workflow directly (no
+   `Start`/`StartOneShot` funnel), so the child's `RequiredLabels` are never
+   checked up front. The parent run's labels propagate to the child
+   unchanged (the child's `RunInput.Labels` is a copy of the parent tool
+   call's labels), so a parent started with the right `WithLabels(...)`
+   satisfies the child too; a label the child needs that the parent never
+   carried fails loud at the child's `Inject<Tool>` call, per tool call,
+   not at child start.
+
+**`WithLabels` contract:**
+
+```go
+out, err := client.Run(ctx, sessionID, messages,
+    runtime.WithLabels(map[string]string{"household_id": "house-42"}),
+)
+```
+
+`WithLabels` merges into `RunInput.Labels`, which rides `ToolRequest.Labels`
+unchanged across both engines (inmem and Temporal) down to every tool
+execution in the run. Labels are plain strings; **only `String` fields may be
+injected** -- there is no generated conversion to numeric, boolean, or
+structured types. A design that needs a non-string injected value must model
+it as a `String` (with `Pattern`/`Format` validation as needed) and convert
+in service code.
+
+**Example (label-backed):**
+
+```go
+Tool("lookup_household", "Lookup scoped to a household", func() {
+    Args(func() {
+        Attribute("household_id", String, "Household to scope the search to.", func() {
+            Pattern("^[a-z0-9-]+$")
+        })
+        Attribute("query", String, "Search query.")
+        Required("household_id", "query")
+    })
+    // household_id is not a ToolCallMeta field, so it is label-backed:
+    // the run must supply it via WithLabels("household_id", "...").
+    Inject("household_id")
+})
+```
+
+See `codegen/agent/tests/testscenarios/inject_examples.go` (`InjectLabelExample`,
+`InjectBoundMetaExample`, `InjectMultiToolsetLabelsExample`,
+`InjectMixedBoundUnboundExample`) for complete, generation-tested design
+shapes exercising both meta-backed and label-backed injection, RequiredLabels
+aggregation across toolsets, and the mixed bound/unbound-tool case.
+
 ### Optional server-data (reserved `"server_data"` payload field)
 
 Tools can optionally produce **observer-facing server-data** (often projected into UI artifacts) that is never sent to model providers.
@@ -865,6 +1013,11 @@ executions must populate `planner.ToolResult.Bounds`, and the runtime projects
 the canonical bounds fields (`returned`, `total`, `truncated`,
 `refinement_hint`, and optional `next_cursor`) into the emitted result JSON and
 hook/stream payloads.
+
+`tools.ToolSpec.Bounds` stores model-facing JSON field names. DSL declarations
+may refer to lower-camel Goa attributes such as `nextCursor`, but generated
+schemas, runtime projection, and retry guidance use the JSON name
+`next_cursor`.
 
 The runtime enforces one strict contract across all result ingress paths
 (regular execution and externally provided await results):
@@ -1492,6 +1645,10 @@ trigger budget from the exact-retention budget:
   tokenization depends on the deployed model. Token-budget compression requires
   a history model that implements `model.TokenCounter` with exact counts; the
   Bedrock adapter does this with Bedrock's native `CountTokens` API.
+- Counts exclude replayed thinking blocks: thinking signatures only verify on
+  the model that issued them, and the history model class can differ from the
+  model that produced the transcript. This matches Anthropic billing, which
+  strips prior-turn thinking from input.
 
 ```go
 // DSL
@@ -1602,6 +1759,27 @@ openAIClient, err := rt.NewOpenAIModelClient(runtime.OpenAIConfig{
     MaxTokens:      4096,
     ThinkingEffort: "high",
 })
+
+// Create a Gemini-on-Vertex client via runtime helper (Application Default Credentials)
+geminiClient, err := rt.NewVertexGeminiModelClient(ctx, runtime.VertexConfig{
+    ProjectID:      "my-gcp-project",
+    Location:       "us-central1",
+    DefaultModel:   "gemini-2.5-flash",
+    HighModel:      "gemini-3-pro-preview",
+    SmallModel:     "gemini-2.5-flash-lite",
+    MaxTokens:      4096,
+    ThinkingBudget: 10000,
+})
+
+// Create a Claude-on-Vertex client via runtime helper. This is pure
+// construction: it builds an Anthropic SDK client against the SDK's Vertex
+// transport and hands it to features/model/anthropic, which owns Messages
+// translation and error classification for every Anthropic-hosted adapter.
+claudeOnVertexClient, err := rt.NewVertexAnthropicModelClient(ctx, runtime.VertexConfig{
+    ProjectID:    "my-gcp-project",
+    Location:     "us-east5",
+    DefaultModel: "claude-sonnet-4-5@20250929",
+})
 ```
 
 Runtime-owned model factories are transcript-stateless. Callers must pass the
@@ -1613,6 +1791,13 @@ For Bedrock adaptive Claude models, the Bedrock adapter explicitly requests
 summarized reasoning display so streamed `thinking` chunks stay visible instead
 of falling back to signature-only omitted reasoning blocks on models such as
 Claude Opus 4.7.
+
+Gemini 3-class models attach an opaque thought signature to `functionCall`
+parts (not just to thought parts). The `features/model/vertex` adapter
+round-trips these through `model.ToolCall.ThoughtSignature` /
+`model.ToolUsePart.ThoughtSignature` using the same base64 convention as
+`ThinkingPart.Signature`; see "Tool-call thought signatures" above for how the
+runtime captures and reattaches them without exposing the field to planners.
 
 When planners render prompts through `RenderPrompt`, copy prompt provenance into model requests:
 

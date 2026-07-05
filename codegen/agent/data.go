@@ -359,6 +359,13 @@ type (
 		// registry. When true, tool schemas are resolved at runtime via the
 		// registry client rather than being generated at compile time.
 		IsRegistryBacked bool
+		// RequiredLabels lists, sorted and deduplicated, the run label keys that
+		// label-backed Inject() fields require across every tool in this
+		// toolset. The runtime must reject a run at start time (via
+		// WithLabels(...)) when any of these keys are missing, before any
+		// planner or tool activity runs. Empty when no tool injects a
+		// label-backed field.
+		RequiredLabels []string
 	}
 
 	// MCPToolsetMeta captures the information required to register an external MCP
@@ -552,6 +559,13 @@ type (
 		// InjectedFields contains the names of fields marked for injection via DSL.
 		InjectedFields []string
 
+		// Injected carries the compiled, per-field resolution for InjectedFields:
+		// for each name, whether it is populated directly from ToolCallMeta or
+		// from a run label (with typed conversion and validation). Empty when
+		// InjectedFields is empty. Populated by newToolData from the effective
+		// payload attribute (bound method payload or tool Args).
+		Injected []*InjectedFieldData
+
 		// Bounds declares the out-of-band bounded-result contract for this tool.
 		// When non-nil, codegen emits runtime specs and method-result projection
 		// helpers without mutating the semantic result schema.
@@ -609,7 +623,9 @@ type (
 	}
 
 	ToolPagingData struct {
-		CursorField     string
+		// CursorField is the model-facing JSON payload field name.
+		CursorField string
+		// NextCursorField is the model-facing JSON result field name.
 		NextCursorField string
 	}
 

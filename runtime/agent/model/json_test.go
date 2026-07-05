@@ -115,6 +115,43 @@ func TestThinkingPartRoundTripPreservesSignature(t *testing.T) {
 	require.Equal(t, orig.Redacted, got.Redacted)
 }
 
+func TestToolUsePartRoundTripPreservesThoughtSignature(t *testing.T) {
+	orig := Message{
+		Role: ConversationRoleAssistant,
+		Parts: []Part{
+			ToolUsePart{
+				ID:               "tu1",
+				Name:             "search",
+				Input:            map[string]any{"q": "golang"},
+				ThoughtSignature: "opaque-provider-signature",
+			},
+		},
+	}
+
+	raw, err := json.Marshal(orig)
+	require.NoError(t, err)
+
+	var got Message
+	require.NoError(t, json.Unmarshal(raw, &got))
+	require.Len(t, got.Parts, 1)
+
+	tu, ok := got.Parts[0].(ToolUsePart)
+	require.True(t, ok)
+	require.Equal(t, "search", tu.Name)
+	require.Equal(t, "opaque-provider-signature", tu.ThoughtSignature)
+}
+
+func TestToolUsePartLegacyPayloadDecodesWithoutThoughtSignature(t *testing.T) {
+	const payload = `{"Kind":"tool_use","Name":"legacy","Args":{"q":"old"}}`
+	part, err := decodeMessagePart([]byte(payload))
+	require.NoError(t, err)
+
+	tu, ok := part.(ToolUsePart)
+	require.True(t, ok)
+	require.Equal(t, "legacy", tu.Name)
+	require.Empty(t, tu.ThoughtSignature)
+}
+
 func TestCacheCheckpointPartRoundTrip(t *testing.T) {
 	orig := CacheCheckpointPart{}
 

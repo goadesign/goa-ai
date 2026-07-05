@@ -18,7 +18,7 @@ import (
 
 func translateResponse(
 	resp *responses.Response,
-	providerToCanonical map[string]string,
+	codec *toolCodec,
 	resolvedModelID string,
 	resolvedModelClass model.ModelClass,
 	output *model.StructuredOutput,
@@ -82,7 +82,7 @@ func translateResponse(
 			if output != nil {
 				return nil, fmt.Errorf("openai: structured output %q emitted tool calls", output.Name)
 			}
-			toolCall, err := translateToolCall(actual, providerToCanonical)
+			toolCall, err := translateToolCall(actual, codec)
 			if err != nil {
 				return nil, err
 			}
@@ -197,7 +197,7 @@ func translateCitations(annotations []responses.ResponseOutputTextAnnotationUnio
 
 func translateToolCall(
 	call responses.ResponseFunctionToolCall,
-	providerToCanonical map[string]string,
+	codec *toolCodec,
 ) (model.ToolCall, error) {
 	if call.CallID == "" {
 		return model.ToolCall{}, errors.New("openai: tool call missing call_id")
@@ -209,9 +209,12 @@ func translateToolCall(
 	if err != nil {
 		return model.ToolCall{}, fmt.Errorf("openai: tool call %q payload: %w", call.CallID, err)
 	}
-	name := call.Name
-	if canonical, ok := providerToCanonical[name]; ok {
-		name = canonical
+	name := codec.canonicalName(call.Name)
+	if schema := codec.canonicalSchema(name); len(schema) > 0 {
+		payload, err = canonicalizeStrictPayload(schema, payload)
+		if err != nil {
+			return model.ToolCall{}, fmt.Errorf("openai: tool call %q payload: %w", call.CallID, err)
+		}
 	}
 	return model.ToolCall{
 		Name:    tools.Ident(name),
@@ -259,7 +262,11 @@ func structuredOutputPayload(content []model.Message, output *model.StructuredOu
 	if !json.Valid([]byte(text)) {
 		return nil, fmt.Errorf("openai: structured output %q payload is not valid JSON", structuredOutputName(output))
 	}
-	return rawjson.Message([]byte(text)), nil
+	payload, err := canonicalizeStrictPayload(rawjson.Message(output.Schema), rawjson.Message(text))
+	if err != nil {
+		return nil, fmt.Errorf("openai: structured output %q payload: %w", structuredOutputName(output), err)
+	}
+	return payload, nil
 }
 
 func extractAssistantText(content []model.Message) string {

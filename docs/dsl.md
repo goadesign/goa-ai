@@ -275,6 +275,11 @@ Canonical model-visible fields:
 - `refinement_hint` (optional, String)
 - `next_cursor` (optional, String) when declared via `NextCursor(...)`
 
+`Cursor(...)` and `NextCursor(...)` name Goa attributes in the tool payload or
+bound method result. Generated schemas, `tools.ToolSpec.Bounds`, and runtime
+result JSON expose the model-facing JSON names, so a lower-camel attribute such
+as `nextCursor` is projected as `next_cursor`.
+
 Single source of truth:
 
 - `BoundedResult(...)` records the contract in generated `tools.ToolSpec.Bounds`.
@@ -307,7 +312,8 @@ Cursor-paged tools identify two canonical paging fields:
 Contract:
 
 - Treat cursors as **opaque**: do not parse, modify, or synthesize them.
-- When paging, keep **all other arguments unchanged**; only set the payload cursor field.
+- When paging, keep **all other arguments unchanged**; only set the model-facing
+payload cursor field named in generated `tools.ToolSpec.Bounds`.
 - Paged tools should also be `BoundedResult(...)` tools and return the next cursor through
 `planner.ToolResult.Bounds.NextCursor`.
 
@@ -867,11 +873,22 @@ Codegen produces transform helpers when shapes are compatible:
 
 ### Inject (Server-Side Fields)
 
-`Inject` marks payload fields as server-injected. Injected fields are:
+`Inject` marks payload fields as server-populated. Injected fields are:
 
-1. Hidden from the LLM (excluded from JSON schema)
-2. Still required on the bound method payload
-3. Populated from `runtime.ToolCallMeta` by generated executors, with optional typed `ToolInterceptor.Inject` hooks
+1. Hidden from the LLM (excluded from the JSON schema and the model-facing required list)
+2. Required `String` fields on the tool's effective payload (the explicit `Args()` when given, otherwise the bound method's payload)
+3. Populated by generated code, from one of two generation-time-resolved sources
+
+**Meta-backed** names Goify to one of the five fixed `runtime.ToolCallMeta`
+fields -- `run_id`/`runId`, `session_id`/`sessionId`, `turn_id`/`turnId`,
+`tool_call_id`/`toolCallId`, `parent_tool_call_id`/`parentToolCallId` -- and
+compile to a direct meta read. **Every other name is label-backed**: it
+compiles to a run-label lookup (label key = the design name verbatim), with
+the field's own declared validation (`Pattern`, `Length`, enum, ...) applied
+to the label value, and callers must supply it via
+`runtime.WithLabels(...)` when starting the run. A label-backed field cannot
+be declared on a `BindTo` tool, because the registry wire protocol used by
+registry-served bound tools carries no run labels.
 
 ```go
 Tool("get_data", "Get user data", func() {
@@ -881,19 +898,37 @@ Tool("get_data", "Get user data", func() {
         Required("user_id", "session_id")
     })
     BindTo("data_service", "get_user")
-    Inject("session_id")  // Hidden from LLM, set by runtime
+    Inject("session_id")  // meta-backed: hidden from LLM, set by runtime
+})
+
+Tool("lookup_household", "Lookup scoped to a household", func() {
+    Args(func() {
+        Attribute("household_id", String, "Household to scope the search to.", func() {
+            Pattern("^[a-z0-9-]+$")
+        })
+        Attribute("query", String, "Search query.")
+        Required("household_id", "query")
+    })
+    Inject("household_id")  // label-backed: set via WithLabels("household_id", ...)
 })
 ```
 
-Injected fields must be required `String` fields on the bound method payload, and the
-supported names are fixed: `run_id`, `session_id`, `turn_id`, `tool_call_id`, and
-`parent_tool_call_id`.
+Codegen emits one `Inject<Tool>` function per injecting tool (in the
+toolset's generated `inject.go`), which both execution topologies call
+identically. Custom (hand-written) `ToolCallExecutor`s should decode these
+tools' payloads with the generated `Decode<Tool>` function instead of the
+raw payload codec, so injection can never be silently skipped. See
+[`docs/runtime.md`](runtime.md)'s "Injected Fields" section for the full
+design→codegen→runtime flow, run-start `RequiredLabels` enforcement, and the
+`Decode<Tool>` contract.
 
 ### Display Hint Templates
 
 `CallHintTemplate` and `ResultHintTemplate` configure Go templates for UI display.
 These templates are rendered by the runtime against typed Go values and surfaced
-via hook + stream events as `DisplayHint` (call) and result previews (result).
+via hook + stream events as `DisplayHint` (call) and result previews (successful
+results only). Tool errors surface through their error payloads, not result
+templates.
 
 ```go
 Tool("search", "Search documents", func() {
@@ -959,7 +994,7 @@ Tool("list_devices", "List devices in scope", func() {
 
 Services and finalizers are responsible for trimming and populating
 `planner.ToolResult.Bounds`. Goa-AI then projects those bounds into the
-model-visible result JSON using the canonical field names declared by
+model-visible result JSON using model-facing field names derived from
 `BoundedResult(...)`. Result-hint templates access the same runtime metadata via
 `.Bounds`; Goa-AI does not merge those fields into the semantic result value.
 

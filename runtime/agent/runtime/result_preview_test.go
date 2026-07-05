@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/planner"
 	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -17,7 +18,7 @@ func TestFormatResultPreviewUsesExplicitResultAndBoundsShape(t *testing.T) {
 	)))
 
 	total := 9
-	preview := formatResultPreview(toolName, nil, &projectedRuntimeResult{
+	preview, err := formatResultPreview(toolName, nil, &projectedRuntimeResult{
 		Results: []string{"alpha"},
 	}, &agent.Bounds{
 		Returned:  1,
@@ -25,6 +26,7 @@ func TestFormatResultPreviewUsesExplicitResultAndBoundsShape(t *testing.T) {
 		Truncated: true,
 	})
 
+	require.NoError(t, err)
 	require.Equal(t, "alpha / 1 / 9", preview)
 }
 
@@ -34,10 +36,11 @@ func TestFormatResultPreviewLeavesBoundsNilWhenAbsent(t *testing.T) {
 		`{{ if .Bounds }}has-bounds{{ else }}{{ len .Result.Results }} result{{ end }}`,
 	)))
 
-	preview := formatResultPreview(toolName, nil, &projectedRuntimeResult{
+	preview, err := formatResultPreview(toolName, nil, &projectedRuntimeResult{
 		Results: []string{"alpha"},
 	}, nil)
 
+	require.NoError(t, err)
 	require.Equal(t, "1 result", preview)
 }
 
@@ -47,11 +50,29 @@ func TestFormatResultPreviewIncludesTypedArgsWhenAvailable(t *testing.T) {
 		`{{ .Args.Query }} -> {{ index .Result.Results 0 }}`,
 	)))
 
-	preview := formatResultPreview(toolName, &projectedRuntimePayload{
+	preview, err := formatResultPreview(toolName, &projectedRuntimePayload{
 		Query: "status",
 	}, &projectedRuntimeResult{
 		Results: []string{"alpha"},
 	}, nil)
 
+	require.NoError(t, err)
 	require.Equal(t, "status -> alpha", preview)
+}
+
+func TestFormatToolResultPreviewSkipsErrorResults(t *testing.T) {
+	toolName := tools.Ident("svc.tools.preview_error")
+	rthints.RegisterResultHint(toolName, template.Must(template.New("preview_error").Parse(
+		`{{ .Result.Summary }}`,
+	)))
+
+	preview, err := formatToolResultPreviewForCall(t.Context(), nil, &planner.ToolRequest{
+		Name: toolName,
+	}, &planner.ToolResult{
+		Name:  toolName,
+		Error: planner.NewToolError("tool failed"),
+	})
+
+	require.NoError(t, err)
+	require.Empty(t, preview)
 }

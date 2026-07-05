@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"unicode"
 
@@ -23,6 +22,7 @@ import (
 	smithy "github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 
+	"goa.design/goa-ai/features/model/internal/claudecaps"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -166,14 +166,20 @@ func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Respo
 }
 
 // CountTokens asks Bedrock to count the exact input tokens for req using the
-// same Converse request preparation path as Complete. The returned count matches
-// Bedrock billing for the same model/request shape.
+// same Converse request preparation path as Complete, except that replayed
+// thinking blocks are omitted per the model.TokenCounter contract. Bedrock
+// rejects thinking signatures issued by any other model ("Invalid signature
+// in thinking block"), and the Claude 5 generation does not support
+// CountTokens at all, so the count input must never carry thinking content.
 func (c *Client) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
-	parts, err := c.prepareRequest(ctx, req)
+	countReq := *req
+	countReq.Messages = messagesWithoutThinking(req.Messages)
+	countReq.Thinking = nil
+	parts, err := c.prepareRequest(ctx, &countReq)
 	if err != nil {
 		return model.TokenCount{}, err
 	}
-	output, err := c.runtime.CountTokens(ctx, c.buildCountTokensInput(parts, req))
+	output, err := c.runtime.CountTokens(ctx, c.buildCountTokensInput(parts, &countReq))
 	if err != nil {
 		return model.TokenCount{}, wrapBedrockError("count_tokens", err)
 	}
@@ -232,7 +238,7 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*reque
 	// Adaptive thinking (Opus 4.6+) lets the model skip thinking blocks
 	// entirely, so the thinking-first ordering rule does not apply.
 	thinkingEnabled := req.Thinking != nil && req.Thinking.Enable
-	if thinkingEnabled && !isAdaptiveThinkingModel(modelID) {
+	if thinkingEnabled && !claudecaps.AdaptiveThinkingRequired(modelID) {
 		if err := transcript.ValidateBedrock(req.Messages, true); err != nil {
 			return nil, fmt.Errorf("bedrock: invalid message ordering with thinking enabled (model=%s): %w", modelID, err)
 		}
@@ -440,7 +446,7 @@ func (c *Client) resolveThinking(req *model.Request, parts *requestParts) thinki
 	// and how deeply to reason. Interleaved thinking is automatic in adaptive
 	// mode — no beta header is needed. The legacy type:"enabled" + budget_tokens
 	// config is deprecated for Opus 4.6 and produces unreliable signatures.
-	if isAdaptiveThinkingModel(parts.modelID) {
+	if claudecaps.AdaptiveThinkingRequired(parts.modelID) {
 		return thinkingConfig{
 			enable:   true,
 			adaptive: true,
@@ -460,7 +466,10 @@ func (c *Client) resolveThinking(req *model.Request, parts *requestParts) thinki
 // forcesToolUse reports whether a provider-neutral tool choice requires the
 // next assistant turn to contain a tool call. Anthropic-on-Bedrock rejects
 // thinking for those requests, regardless of whether the caller names one tool
-// or allows any tool.
+// or allows any tool. On models with optional thinking the adapter drops the
+// thinking config for forced-tool turns; on the always-thinking Claude 5
+// generation (Fable/Mythos) forced tool use is unrepresentable and encodeTools
+// rejects it.
 func forcesToolUse(choice *model.ToolChoice) bool {
 	return choice != nil && (choice.Mode == model.ToolChoiceModeAny || choice.Mode == model.ToolChoiceModeTool)
 }
@@ -497,7 +506,7 @@ func (c *Client) inferenceConfig(modelID string, maxTokens int, temp float32) *b
 	if tokens > 0 {
 		cfg.MaxTokens = aws.Int32(int32(tokens)) //nolint:gosec // AWS SDK requires int32
 	}
-	if supportsTemperature(modelID) {
+	if claudecaps.TemperatureSupported(modelID) {
 		if t := c.effectiveTemperature(temp); t > 0 {
 			cfg.Temperature = aws.Float32(t)
 		}
@@ -506,14 +515,6 @@ func (c *Client) inferenceConfig(modelID string, maxTokens int, temp float32) *b
 		return nil
 	}
 	return &cfg
-}
-
-// supportsTemperature reports whether modelID accepts Bedrock's temperature
-// inference parameter. Claude Opus 4.7 and later removed temperature/top_p/top_k,
-// so the adapter must omit sampling controls for every Opus 4.7+ Bedrock scope.
-func supportsTemperature(modelID string) bool {
-	minor, ok := opus4Minor(modelID)
-	return !ok || minor < 7
 }
 
 func cloneAdditionalModelFields(fields map[string]any) map[string]any {
@@ -975,6 +976,21 @@ func encodeTools(
 		return &brtypes.ToolConfiguration{Tools: toolList}, anthropicToolExampleFields(anthropicTools, anthropicHasExamples, nil), canonToSan, sanToCanon, nil
 	}
 
+	// Claude 5 generation models (Fable/Mythos) run with always-on adaptive
+	// thinking, and Anthropic rejects forced tool use (tool_choice any/tool)
+	// whenever thinking is active. Earlier models let the adapter drop the
+	// thinking config for forced-tool turns; Fable has no non-thinking mode, so
+	// the request is unrepresentable. Fail fast with a precise error instead of
+	// letting Bedrock return an opaque ValidationException: callers must use
+	// auto and steer tool selection through prompting, enforcing the
+	// must-call-tool contract on the response.
+	if forcesToolUse(choice) && claudecaps.IsFableGeneration(modelID) {
+		return nil, nil, nil, nil, fmt.Errorf(
+			"bedrock: model %q does not support forced tool choice (tool_choice mode %q): thinking is always on and incompatible with forced tool use; use mode \"auto\" and steer tool selection through prompting",
+			modelID, choice.Mode,
+		)
+	}
+
 	cfg := brtypes.ToolConfiguration{
 		Tools: toolList,
 	}
@@ -1421,6 +1437,35 @@ func lazyDocument(v any) document.Interface {
 	return document.NewLazyDocument(&v)
 }
 
+// messagesWithoutThinking returns msgs with all ThinkingParts removed for
+// CountTokens inputs. Messages left with no parts (thinking-only assistant
+// messages) are dropped entirely so the count request never carries empty
+// content blocks. Retained messages are shallow-cloned; the caller's messages
+// are never mutated.
+func messagesWithoutThinking(msgs []*model.Message) []*model.Message {
+	out := make([]*model.Message, 0, len(msgs))
+	for _, m := range msgs {
+		kept := make([]model.Part, 0, len(m.Parts))
+		for _, p := range m.Parts {
+			if _, ok := p.(model.ThinkingPart); ok {
+				continue
+			}
+			kept = append(kept, p)
+		}
+		if len(kept) == 0 {
+			continue
+		}
+		if len(kept) == len(m.Parts) {
+			out = append(out, m)
+			continue
+		}
+		clone := *m
+		clone.Parts = kept
+		out = append(out, &clone)
+	}
+	return out
+}
+
 func hasToolDefinition(defs []*model.ToolDefinition, name string) bool {
 	for _, def := range defs {
 		if def == nil {
@@ -1431,41 +1476,6 @@ func hasToolDefinition(defs []*model.ToolDefinition, name string) bool {
 		}
 	}
 	return false
-}
-
-// isAdaptiveThinkingModel reports whether modelID requires adaptive thinking
-// configuration. Starting with Opus 4.6, Anthropic deprecates the manual
-// type:"enabled" + budget_tokens config in favor of type:"adaptive", where the
-// model dynamically decides when and how deeply to reason. Interleaved thinking
-// is automatic in adaptive mode — no beta header is needed. On Opus 4.7+ the
-// legacy config is removed entirely and returns a 400 error.
-func isAdaptiveThinkingModel(modelID string) bool {
-	minor, ok := opus4Minor(modelID)
-	return ok && minor >= 6
-}
-
-// opus4Minor extracts the minor number from Anthropic Bedrock Opus 4 model IDs.
-// Bedrock publishes in-region, geo, and global IDs that all contain the stable
-// "claude-opus-4-<minor>" segment, optionally followed by a provider suffix.
-func opus4Minor(modelID string) (int, bool) {
-	const marker = "claude-opus-4-"
-	start := strings.Index(modelID, marker)
-	if start < 0 {
-		return 0, false
-	}
-	rest := modelID[start+len(marker):]
-	end := 0
-	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
-		end++
-	}
-	if end == 0 {
-		return 0, false
-	}
-	minor, err := strconv.Atoi(rest[:end])
-	if err != nil {
-		return 0, false
-	}
-	return minor, true
 }
 
 // isNovaModel reports whether the given model identifier refers to an Amazon

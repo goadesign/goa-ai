@@ -301,10 +301,14 @@ func (r *Runtime) toolResultContent(call *planner.ToolRequest, tr *planner.ToolR
 	if tr.Error != nil {
 		errorMessage = tr.Error.Error()
 	}
+	preview, err := formatToolResultPreviewForCall(context.Background(), r, call, tr)
+	if err != nil {
+		return nil, err
+	}
 	return transcript.ProjectToolResultContent(
 		resultJSON,
 		tr.Bounds,
-		formatResultPreviewForCall(context.Background(), r, call, tr.Result, tr.Bounds),
+		preview,
 		errorMessage,
 	)
 }

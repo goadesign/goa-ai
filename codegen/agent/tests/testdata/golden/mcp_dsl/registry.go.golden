@@ -69,6 +69,7 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 		},
 		Specs:              specs.Specs,
 		ToolMetadataLookup: specs.MetadataByName,
+		RequiredLabels:     specs.RequiredLabels,
 		Policy:             agentsruntime.RunPolicy{},
 	}); err != nil {
 		return err

@@ -90,7 +90,7 @@
 //   - [Return] defines output result schema
 //   - [Artifact] defines typed artifact data (not sent to model)
 //   - [BindTo] binds a tool to a service method
-//   - [Inject] marks fields as server-injected (hidden from LLM)
+//   - [Inject] marks fields as server-populated from ToolCallMeta or run labels (hidden from LLM)
 //   - [CallHintTemplate] configures call display hint template
 //   - [ResultHintTemplate] configures result display hint template
 //   - [BoundedResult] marks result as a bounded view over larger data

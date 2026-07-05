@@ -26,6 +26,8 @@ const (
 	AttrGenAIProviderName            = attribute.Key("gen_ai.provider.name")
 	AttrGenAIRequestModel            = attribute.Key("gen_ai.request.model")
 	AttrGenAIRequestMaxTokens        = attribute.Key("gen_ai.request.max_tokens")
+	AttrGenAIRequestTemperature      = attribute.Key("gen_ai.request.temperature")
+	AttrGenAIRequestTempOmitted      = attribute.Key("gen_ai.request.temperature_omitted")
 	AttrGenAIResponseModel           = attribute.Key("gen_ai.response.model")
 	AttrGenAIResponseFinishReasons   = attribute.Key("gen_ai.response.finish_reasons")
 	AttrGenAIResponseTTFT            = attribute.Key("gen_ai.response.time_to_first_chunk")
@@ -100,6 +102,21 @@ func GenAIUsageAttrs(input, output, cacheRead, cacheCreation int) []attribute.Ke
 		AttrGenAIUsageOutputTokens.Int(output),
 		AttrGenAIUsageCacheReadTokens.Int(cacheRead),
 		AttrGenAIUsageCacheCreationToken.Int(cacheCreation),
+	}
+}
+
+// GenAITemperatureOmittedAttrs returns the attributes a model adapter records
+// when it drops a caller-configured, non-default sampling temperature because
+// the resolved model no longer accepts the parameter (e.g. Claude Opus 4.7+,
+// Sonnet 5+, Fable/Mythos). The requested value is recorded under the
+// standard gen_ai.request.temperature key alongside an explicit omitted flag
+// and the concrete model ID the omission was decided against, so callers can
+// see that their temperature configuration had no effect on the wire request.
+func GenAITemperatureOmittedAttrs(modelID string, temperature float64) []attribute.KeyValue {
+	return []attribute.KeyValue{
+		AttrGenAIRequestTemperature.Float64(temperature),
+		AttrGenAIRequestTempOmitted.Bool(true),
+		AttrGenAIRequestModel.String(modelID),
 	}
 }
 

@@ -361,6 +361,8 @@ func TestStaleProviderHealthRecordsArePruned(t *testing.T) {
 	_, tracker, catalog, healthMap, registryMap := newPongTestService(t)
 	registryEvents := registryMap.Subscribe()
 	defer registryMap.Unsubscribe(registryEvents)
+	healthEvents := healthMap.Subscribe()
+	defer healthMap.Unsubscribe(healthEvents)
 
 	require.NoError(t, catalog.SaveToolset(ctx, &genregistry.Toolset{
 		Name:         "toolset-1",
@@ -372,7 +374,9 @@ func TestStaleProviderHealthRecordsArePruned(t *testing.T) {
 	healthTracker.stalenessThreshold = 10 * time.Second
 
 	require.NoError(t, setHealthRecordForTest(ctx, healthMap, "toolset-1", "provider-old", token, time.Now().Add(-time.Minute)))
+	awaitMapEvent(healthEvents)
 	require.NoError(t, setHealthRecordForTest(ctx, healthMap, "toolset-1", "provider-fresh", token, time.Now()))
+	awaitMapEvent(healthEvents)
 
 	healthTracker.observeHealth(ctx, "toolset-1")
 

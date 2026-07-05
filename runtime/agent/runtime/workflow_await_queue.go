@@ -98,6 +98,10 @@ func (r *Runtime) waitAwaitConfirmation(
 		if err != nil {
 			return nil, nil, false, fmt.Errorf("encode %s denied tool result for streaming: %w", it.call.Name, err)
 		}
+		preview, err := formatResultPreviewForCall(ctx, r, &it.call, deniedResult, nil)
+		if err != nil {
+			return nil, nil, false, err
+		}
 		if err := r.publishHook(
 			ctx,
 			hooks.NewToolResultReceivedEvent(
@@ -112,7 +116,7 @@ func (r *Runtime) waitAwaitConfirmation(
 				false,
 				"",
 				nil,
-				formatResultPreviewForCall(ctx, r, &it.call, deniedResult, nil),
+				preview,
 				nil,
 				0,
 				nil,
@@ -337,7 +341,7 @@ func (r *Runtime) admitAwaitItem(ctx context.Context, input *RunInput, base *pla
 			Name:       q.ToolName,
 			ToolCallID: q.ToolCallID,
 			Payload:    q.Payload,
-		}}, turnID); err != nil {
+		}}, st.ToolCallSignatures, turnID); err != nil {
 			return err
 		}
 		return r.publishHook(ctx, hooks.NewToolCallScheduledEvent(
@@ -387,7 +391,7 @@ func (r *Runtime) admitAwaitItem(ctx context.Context, input *RunInput, base *pla
 		}
 		// External tools are modeled as a provider-native tool use. Record the
 		// assistant tool_use turn before waiting for out-of-band results.
-		if err := r.recordAssistantTurn(ctx, input.AgentID, base, st.Transcript, awaitCalls, turnID); err != nil {
+		if err := r.recordAssistantTurn(ctx, input.AgentID, base, st.Transcript, awaitCalls, st.ToolCallSignatures, turnID); err != nil {
 			return err
 		}
 		for _, call := range awaitCalls {
@@ -538,6 +542,10 @@ func (r *Runtime) consumeProvidedToolResultRecords(ctx context.Context, input *R
 			continue
 		}
 		call := record.call
+		preview, err := formatToolResultPreviewForCall(ctx, r, &call, tr)
+		if err != nil {
+			return nil, err
+		}
 		if err := r.publishHook(
 			ctx,
 			hooks.NewToolResultReceivedEvent(
@@ -552,7 +560,7 @@ func (r *Runtime) consumeProvidedToolResultRecords(ctx context.Context, input *R
 				false,
 				"",
 				tr.ServerData,
-				formatResultPreviewForCall(ctx, r, &call, tr.Result, tr.Bounds),
+				preview,
 				tr.Bounds,
 				0,
 				nil,

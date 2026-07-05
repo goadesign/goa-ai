@@ -126,6 +126,25 @@ func (c *Client) BuildPingRequest(ctx context.Context, v any) (*http.Request, er
 	return req, nil
 }
 
+// EncodePingRequest returns an encoder for requests sent to the mcp_assistant
+// service ping JSON-RPC method.
+func EncodePingRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		// For JSON-RPC methods without payloads, we still need to send the method envelope
+		// Generate a unique ID for the request
+		id := uuid.New().String()
+		body := &jsonrpc.Request{
+			JSONRPC: "2.0",
+			Method:  "ping",
+			ID:      id,
+		}
+		if err := encoder(req).Encode(body); err != nil {
+			return goahttp.ErrEncodingError("mcp_assistant", "ping", err)
+		}
+		return nil
+	}
+}
+
 // DecodePingResponse returns a decoder for responses returned by the
 // mcp_assistant service ping JSON-RPC method. restoreBody controls whether the
 // response body should be restored after having been read.
@@ -977,6 +996,25 @@ func (c *Client) BuildEventsStreamRequest(ctx context.Context, v any) (*http.Req
 	return req, nil
 }
 
+// EncodeEventsStreamRequest returns an encoder for requests sent to the
+// mcp_assistant service events/stream JSON-RPC method.
+func EncodeEventsStreamRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		// For JSON-RPC methods without payloads, we still need to send the method envelope
+		// Generate a unique ID for the request
+		id := uuid.New().String()
+		body := &jsonrpc.Request{
+			JSONRPC: "2.0",
+			Method:  "events/stream",
+			ID:      id,
+		}
+		if err := encoder(req).Encode(body); err != nil {
+			return goahttp.ErrEncodingError("mcp_assistant", "events/stream", err)
+		}
+		return nil
+	}
+}
+
 // DecodeEventsStreamResponse returns a decoder for responses returned by the
 // mcp_assistant service events/stream JSON-RPC method. restoreBody controls
 // whether the response body should be restored after having been read.
@@ -1239,40 +1277,4 @@ func unmarshalMessageContentResponseBodyResponseBodyToMcpassistantMessageContent
 	}
 
 	return res
-}
-
-// EncodePingRequest returns an encoder for requests sent to the mcp_assistant
-// service ping JSON-RPC method.
-func EncodePingRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
-	return func(req *http.Request, v any) error {
-		// For JSON-RPC methods without payloads, we still need to send the method envelope
-		// Generate a unique ID for the request
-		id := uuid.New().String()
-		body := &jsonrpc.Request{
-			JSONRPC: "2.0",
-			Method:  "ping",
-			ID:      id,
-		}
-		if err := encoder(req).Encode(body); err != nil {
-			return goahttp.ErrEncodingError("mcp_assistant", "ping", err)
-		}
-		return nil
-	}
-} // EncodeEventsStreamRequest returns an encoder for requests sent to the
-// mcp_assistant service events/stream JSON-RPC method.
-func EncodeEventsStreamRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
-	return func(req *http.Request, v any) error {
-		// For JSON-RPC methods without payloads, we still need to send the method envelope
-		// Generate a unique ID for the request
-		id := uuid.New().String()
-		body := &jsonrpc.Request{
-			JSONRPC: "2.0",
-			Method:  "events/stream",
-			ID:      id,
-		}
-		if err := encoder(req).Encode(body); err != nil {
-			return goahttp.ErrEncodingError("mcp_assistant", "events/stream", err)
-		}
-		return nil
-	}
 }

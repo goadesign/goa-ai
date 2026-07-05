@@ -39,7 +39,7 @@ scenarios:
           events:
             - event: error
               data:
-                error: { code: -32601 }
+                error: { code: -32602 }
   - name: initialize_basic
     defaults:
       client: jsonrpc.mcp_assistant
