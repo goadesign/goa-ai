@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	grpcCodes "google.golang.org/grpc/codes"
 	grpcStatus "google.golang.org/grpc/status"
@@ -259,15 +260,13 @@ func TestTracedClientCompleteRecordsGenAIMessagesWhenEnabled(t *testing.T) {
 		complete: func(_ context.Context, _ *model.Request) (*model.Response, error) {
 			return &model.Response{
 				Content: []model.Message{{
-					Role: model.ConversationRoleAssistant,
-					Parts: []model.Part{
-						model.TextPart{Text: "I will check."},
-						model.ToolUsePart{
-							ID:    "call-1",
-							Name:  "atlas.read",
-							Input: map[string]any{"asset": "pump"},
-						},
-					},
+					Role:  model.ConversationRoleAssistant,
+					Parts: []model.Part{model.TextPart{Text: "I will check."}},
+				}},
+				ToolCalls: []model.ToolCall{{
+					ID:      "call-1",
+					Name:    "atlas.read",
+					Payload: rawjson.Message(`{"asset":"pump"}`),
 				}},
 				StopReason: "tool_use",
 			}, nil
@@ -303,7 +302,13 @@ func TestTracedClientCompleteRecordsGenAIMessagesWhenEnabled(t *testing.T) {
 				{
 					"type": "text",
 					"content": "I will check."
-				},
+				}
+			],
+			"finish_reason": "tool_use"
+		},
+		{
+			"role": "assistant",
+			"parts": [
 				{
 					"type": "tool_call",
 					"id": "call-1",
@@ -406,15 +411,12 @@ func TestTracedStreamRecordsBufferedOutputMessagesWhenEnabled(t *testing.T) {
 				{
 					"type": "text",
 					"content": "hello"
-				},
-				{
-					"type": "reasoning",
-					"content": "draft"
 				}
 			],
 			"finish_reason": "end_turn"
 		}
 	]`, attrs[telemetry.AttrGenAIOutputMessages].AsString())
+	require.NotContains(t, attrs[telemetry.AttrGenAIOutputMessages].AsString(), "draft")
 }
 
 func (t *recordingTelemetryTracer) Start(ctx context.Context, name string, opts ...trace.SpanStartOption) (context.Context, telemetry.Span) {

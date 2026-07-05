@@ -123,13 +123,13 @@ type (
 		// hookActivity so stream emission can be made fatal while a session is active.
 		streamSubscriber *stream.Subscriber
 
-	logger  telemetry.Logger
-	metrics telemetry.Metrics
-	tracer  telemetry.Tracer
+		logger  telemetry.Logger
+		metrics telemetry.Metrics
+		tracer  telemetry.Tracer
 
-	// captureGenAIMessages records full chat message payloads on chat-turn
-	// model spans when enabled via WithCaptureGenAIMessages.
-	captureGenAIMessages bool
+		// captureGenAIMessages records full chat message payloads on chat-turn
+		// model spans when enabled via WithCaptureGenAIMessages.
+		captureGenAIMessages bool
 
 		mu        sync.RWMutex
 		agents    map[agent.Ident]AgentRegistration
@@ -218,20 +218,21 @@ type (
 		Stream stream.Sink
 		// Logger emits structured logs (usually backed by Clue).
 		Logger telemetry.Logger
-	// Metrics records counters/histograms for runtime operations.
-	Metrics telemetry.Metrics
-	// Tracer emits spans for planner/tool execution.
-	Tracer telemetry.Tracer
+		// Metrics records counters/histograms for runtime operations.
+		Metrics telemetry.Metrics
+		// Tracer emits spans for planner/tool execution.
+		Tracer telemetry.Tracer
 
-	// CaptureGenAIMessages records full input and output chat message payloads
-	// on chat-turn model spans. The attributes can contain user content, tool
-	// arguments, and PII; keep disabled unless explicitly troubleshooting.
-	CaptureGenAIMessages bool
+		// CaptureGenAIMessages records full input and output chat message payloads
+		// on chat-turn model spans. Reasoning content is never captured. The
+		// attributes can contain user content, tool arguments, and PII; keep
+		// disabled unless explicitly troubleshooting.
+		CaptureGenAIMessages bool
 
-	// RecordActivityTimeout overrides the StartToClose timeout for the
-	// durable record activity (`runtime.record_event`). Zero means use the
-	// runtime default.
-	RecordActivityTimeout time.Duration
+		// RecordActivityTimeout overrides the StartToClose timeout for the
+		// durable record activity (`runtime.record_event`). Zero means use the
+		// runtime default.
+		RecordActivityTimeout time.Duration
 
 		// Workers provides per-agent worker configuration. If an agent lacks
 		// an entry, the runtime uses a default worker configuration. Engines
@@ -968,9 +969,10 @@ func WithMetrics(m telemetry.Metrics) RuntimeOption { return func(o *Options) { 
 func WithTracer(t telemetry.Tracer) RuntimeOption { return func(o *Options) { o.Tracer = t } }
 
 // WithCaptureGenAIMessages enables recording of full input and output chat
-// message payloads on chat-turn model spans. The captured attributes can
-// contain user content, tool arguments, and PII, so callers must opt in
-// explicitly and should never enable this by default in production.
+// message payloads on chat-turn model spans. Reasoning content is never
+// captured. The captured attributes can contain user content, tool arguments,
+// and PII, so callers must opt in explicitly and should never enable this by
+// default in production.
 func WithCaptureGenAIMessages(enabled bool) RuntimeOption {
 	return func(o *Options) { o.CaptureGenAIMessages = enabled }
 }

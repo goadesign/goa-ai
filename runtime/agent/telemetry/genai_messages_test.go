@@ -123,7 +123,7 @@ func TestGenAIOutputMessagesAttrIncludesFinishReason(t *testing.T) {
 	]`, attr.Value.AsString())
 }
 
-func TestGenAIMessageAttrsSerializeReasoning(t *testing.T) {
+func TestGenAIMessageAttrsExcludeReasoning(t *testing.T) {
 	t.Parallel()
 
 	attr, ok, err := telemetry.GenAIOutputMessagesAttr([]model.Message{
@@ -132,6 +132,7 @@ func TestGenAIMessageAttrsSerializeReasoning(t *testing.T) {
 			Parts: []model.Part{
 				model.ThinkingPart{Text: "thinking in plaintext"},
 				model.ThinkingPart{Redacted: []byte{0x01, 0x02}, Signature: "signed", Final: true},
+				model.TextPart{Text: "done"},
 			},
 		},
 	}, "stop")
@@ -143,12 +144,26 @@ func TestGenAIMessageAttrsSerializeReasoning(t *testing.T) {
 			"role": "assistant",
 			"finish_reason": "stop",
 			"parts": [
-				{"type": "reasoning", "content": "thinking in plaintext"},
-				{"type": "reasoning", "redacted": true, "signature": "signed", "final": true}
+				{"type": "text", "content": "done"}
 			]
 		}
 	]`, attr.Value.AsString())
+	require.NotContains(t, attr.Value.AsString(), "thinking in plaintext")
 	require.NotContains(t, attr.Value.AsString(), "AQI=")
+}
+
+func TestGenAIMessageAttrsSkipReasoningOnlyMessages(t *testing.T) {
+	t.Parallel()
+
+	_, ok, err := telemetry.GenAIOutputMessagesAttr([]model.Message{
+		{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.ThinkingPart{Text: "only thinking"}},
+		},
+	}, "stop")
+
+	require.NoError(t, err)
+	require.False(t, ok)
 }
 
 func TestGenAIInputMessagesAttrEmbedsRawJSONValues(t *testing.T) {

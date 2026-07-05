@@ -63,9 +63,9 @@ func newTracedClient(inner model.Client, tracer telemetry.Tracer, logger telemet
 		logger = telemetry.NewNoopLogger()
 	}
 	return &tracedClient{
-		inner:           inner,
-		tracer:          tracer,
-		logger:          logger,
+		inner:  inner,
+		tracer: tracer,
+		logger: logger,
 
 		modelID:         modelID,
 		genAI:           genAI,
@@ -106,7 +106,7 @@ func (c *tracedClient) Complete(ctx context.Context, req *model.Request) (*model
 	if resp.StopReason != "" {
 		span.SetAttributes(telemetry.AttrGenAIResponseFinishReasons.StringSlice([]string{resp.StopReason}))
 	}
-	c.recordOutputMessages(span, resp.Content, resp.StopReason)
+	c.recordOutputMessages(span, responseOutputMessages(resp), resp.StopReason)
 	span.SetStatus(codes.Ok, "ok")
 	return resp, nil
 }
@@ -217,7 +217,14 @@ func (s *tracedStream) end(code codes.Code, desc string) {
 		s.mu.Lock()
 		usage := s.usage
 		sawUsageDelta := s.sawUsageDelta
-		output := s.output
+		var (
+			outputMessages []model.Message
+			stopReason     string
+			haveOutput     bool
+		)
+		if s.output != nil {
+			outputMessages, stopReason, haveOutput = s.output.finish()
+		}
 		s.mu.Unlock()
 		if !sawUsageDelta {
 			usage = mergeStreamMetadataUsage(usage, s.inner.Metadata())
@@ -226,10 +233,8 @@ func (s *tracedStream) end(code codes.Code, desc string) {
 		if (usage != model.TokenUsage{}) {
 			s.span.SetAttributes(modelUsageAttrs(usage)...)
 		}
-		if output != nil {
-			if messages, stopReason, ok := output.finish(); ok {
-				s.applyOutputMessages(messages, stopReason)
-			}
+		if haveOutput {
+			s.applyOutputMessages(outputMessages, stopReason)
 		}
 		s.span.SetStatus(code, desc)
 		s.span.End()
@@ -380,9 +385,35 @@ func (s *tracedStream) recordOutputChunk(chunk model.Chunk) {
 	s.output.recordChunk(chunk)
 }
 
+// responseOutputMessages projects a unary model response onto the transcript
+// shape captured on chat-turn spans. The Response contract carries tool
+// invocations in ToolCalls, separate from the assistant content, so they are
+// appended as one assistant message to mirror the streaming capture.
+func responseOutputMessages(resp *model.Response) []model.Message {
+	if len(resp.ToolCalls) == 0 {
+		return resp.Content
+	}
+	parts := make([]model.Part, 0, len(resp.ToolCalls))
+	for _, call := range resp.ToolCalls {
+		parts = append(parts, model.ToolUsePart{
+			ID:    call.ID,
+			Name:  string(call.Name),
+			Input: call.Payload,
+		})
+	}
+	messages := make([]model.Message, 0, len(resp.Content)+1)
+	messages = append(messages, resp.Content...)
+	messages = append(messages, model.Message{
+		Role:  model.ConversationRoleAssistant,
+		Parts: parts,
+	})
+	return messages
+}
+
 // genAIStreamAccumulator coalesces streamed assistant chunks into one canonical
-// output message: adjacent text deltas merge into a single text part, only
-// final reasoning blocks are kept, and the terminal stop reason is captured.
+// output message: adjacent text deltas merge into a single text part, tool
+// calls and completions are captured, reasoning chunks are dropped entirely,
+// and the terminal stop reason is recorded.
 type genAIStreamAccumulator struct {
 	parts      []model.Part
 	stopReason string
@@ -397,10 +428,6 @@ func (a *genAIStreamAccumulator) recordChunk(chunk model.Chunk) {
 	case model.ChunkTypeText:
 		if chunk.Message != nil {
 			a.appendOutputParts(chunk.Message.Parts)
-		}
-	case model.ChunkTypeThinking:
-		if chunk.Message != nil {
-			a.appendFinalThinkingParts(chunk.Message.Parts)
 		}
 	case model.ChunkTypeToolCall:
 		if chunk.ToolCall != nil {
@@ -450,18 +477,5 @@ func (a *genAIStreamAccumulator) appendOutputParts(parts []model.Part) {
 			}
 		}
 		a.parts = append(a.parts, text)
-	}
-}
-
-func (a *genAIStreamAccumulator) appendFinalThinkingParts(parts []model.Part) {
-	for _, part := range parts {
-		thinking, ok := part.(model.ThinkingPart)
-		if !ok {
-			a.parts = append(a.parts, part)
-			continue
-		}
-		if thinking.Final || len(thinking.Redacted) > 0 {
-			a.parts = append(a.parts, thinking)
-		}
 	}
 }

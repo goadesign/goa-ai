@@ -39,11 +39,6 @@ type genAIToolCallResponsePart struct {
 	Response any    `json:"response"`
 }
 
-type genAIReasoningPart struct {
-	Type    string `json:"type"`
-	Content string `json:"content"`
-}
-
 type genAIBlobPart struct {
 	Type     string `json:"type"`
 	Modality string `json:"modality,omitempty"`
@@ -61,6 +56,8 @@ type genAIURIPart struct {
 // GenAIInputMessagesAttr serializes input messages to the OpenTelemetry GenAI
 // message schema as a JSON string attribute. Message content can be sensitive;
 // callers must opt in explicitly and should avoid enabling this by default.
+// Reasoning content is never captured; messages left without serializable
+// parts are skipped.
 func GenAIInputMessagesAttr(messages []*model.Message) (attribute.KeyValue, bool, error) {
 	if len(messages) == 0 {
 		return attribute.KeyValue{}, false, nil
@@ -70,9 +67,13 @@ func GenAIInputMessagesAttr(messages []*model.Message) (attribute.KeyValue, bool
 		if msg == nil {
 			continue
 		}
+		parts := genAIParts(msg.Parts)
+		if len(parts) == 0 {
+			continue
+		}
 		out = append(out, genAIInputMessage{
 			Role:  msg.Role,
-			Parts: genAIParts(msg.Parts),
+			Parts: parts,
 		})
 	}
 	if len(out) == 0 {
@@ -88,17 +89,26 @@ func GenAIInputMessagesAttr(messages []*model.Message) (attribute.KeyValue, bool
 // GenAIOutputMessagesAttr serializes output messages to the OpenTelemetry GenAI
 // message schema as a JSON string attribute. Message content can be sensitive;
 // callers must opt in explicitly and should avoid enabling this by default.
+// Reasoning content is never captured; messages left without serializable
+// parts are skipped.
 func GenAIOutputMessagesAttr(messages []model.Message, finishReason string) (attribute.KeyValue, bool, error) {
 	if len(messages) == 0 {
 		return attribute.KeyValue{}, false, nil
 	}
 	out := make([]genAIOutputMessage, 0, len(messages))
 	for _, msg := range messages {
+		parts := genAIParts(msg.Parts)
+		if len(parts) == 0 {
+			continue
+		}
 		out = append(out, genAIOutputMessage{
 			Role:         msg.Role,
-			Parts:        genAIParts(msg.Parts),
+			Parts:        parts,
 			FinishReason: finishReason,
 		})
+	}
+	if len(out) == 0 {
+		return attribute.KeyValue{}, false, nil
 	}
 	attr, err := genAIMessagesAttr(AttrGenAIOutputMessages, out)
 	if err != nil {
@@ -118,74 +128,60 @@ func genAIMessagesAttr(key attribute.Key, messages any) (attribute.KeyValue, err
 func genAIParts(parts []model.Part) []any {
 	out := make([]any, 0, len(parts))
 	for _, part := range parts {
-		out = append(out, genAIPart(part))
+		if mapped, ok := genAIPart(part); ok {
+			out = append(out, mapped)
+		}
 	}
 	return out
 }
 
-func genAIPart(part model.Part) any {
+// genAIPart maps one transcript part onto its GenAI message schema shape. It
+// reports ok=false for parts that are deliberately excluded from capture:
+// reasoning blocks are high-volume, provider-internal, and redacted variants
+// must never leak, so thinking content is dropped entirely.
+func genAIPart(part model.Part) (any, bool) {
 	switch v := part.(type) {
 	case model.TextPart:
-		return genAITextPart{Type: "text", Content: v.Text}
+		return genAITextPart{Type: "text", Content: v.Text}, true
 	case model.ToolUsePart:
 		return genAIToolCallPart{
 			Type:      "tool_call",
 			ID:        v.ID,
 			Name:      v.Name,
 			Arguments: v.Input,
-		}
+		}, true
 	case model.ToolResultPart:
 		return genAIToolCallResponsePart{
 			Type:     "tool_call_response",
 			ID:       v.ToolUseID,
 			Response: v.Content,
-		}
+		}, true
 	case model.ThinkingPart:
-		return genAIThinkingPart(v)
+		return nil, false
 	case model.ImagePart:
 		return genAIBlobPart{
 			Type:     "blob",
 			Modality: "image",
 			MIMEType: imageMIMEType(v.Format),
 			Content:  base64.StdEncoding.EncodeToString(v.Bytes),
-		}
+		}, true
 	case model.DocumentPart:
-		return genAIDocumentPart(v)
+		return genAIDocumentPart(v), true
 	case model.CitationsPart:
 		return map[string]any{
 			"type":      "citations",
 			"content":   v.Text,
 			"citations": v.Citations,
-		}
+		}, true
 	case model.CacheCheckpointPart:
 		return map[string]any{
 			"type": "cache_checkpoint",
-		}
+		}, true
 	default:
 		return map[string]any{
 			"type": "unknown",
-		}
+		}, true
 	}
-}
-
-func genAIThinkingPart(part model.ThinkingPart) any {
-	if part.Text != "" {
-		return genAIReasoningPart{Type: "reasoning", Content: part.Text}
-	}
-	out := map[string]any{
-		"type":     "reasoning",
-		"redacted": len(part.Redacted) > 0,
-	}
-	if part.Signature != "" {
-		out["signature"] = part.Signature
-	}
-	if part.Index != 0 {
-		out["index"] = part.Index
-	}
-	if part.Final {
-		out["final"] = part.Final
-	}
-	return out
 }
 
 func genAIDocumentPart(part model.DocumentPart) any {
