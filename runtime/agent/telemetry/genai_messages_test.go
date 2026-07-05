@@ -152,6 +152,21 @@ func TestGenAIMessageAttrsExcludeReasoning(t *testing.T) {
 	require.NotContains(t, attr.Value.AsString(), "AQI=")
 }
 
+func TestGenAIOutputMessagesAttrOmitsEmptyFinishReason(t *testing.T) {
+	t.Parallel()
+
+	attr, ok, err := telemetry.GenAIOutputMessagesAttr([]model.Message{
+		{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "done"}},
+		},
+	}, "")
+
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotContains(t, attr.Value.AsString(), "finish_reason")
+}
+
 func TestGenAIMessageAttrsSkipReasoningOnlyMessages(t *testing.T) {
 	t.Parallel()
 

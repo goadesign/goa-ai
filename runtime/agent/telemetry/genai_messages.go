@@ -18,7 +18,7 @@ type genAIInputMessage struct {
 type genAIOutputMessage struct {
 	Role         model.ConversationRole `json:"role"`
 	Parts        []any                  `json:"parts"`
-	FinishReason string                 `json:"finish_reason"`
+	FinishReason string                 `json:"finish_reason,omitempty"`
 }
 
 type genAITextPart struct {
@@ -208,8 +208,11 @@ func genAIDocumentPart(part model.DocumentPart) any {
 		out["chunks"] = part.Chunks
 		return out
 	default:
+		// The DocumentPart contract sets exactly one of URI/Bytes/Text/Chunks;
+		// reaching here means the invariant was violated upstream, so make the
+		// unexpected state visible in the trace instead of a document look-alike.
 		return map[string]any{
-			"type":     "document",
+			"type":     "unknown",
 			"modality": "document",
 		}
 	}
