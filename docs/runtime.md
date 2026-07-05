@@ -248,6 +248,7 @@ planner and runtime streaming:
 | Streaming usage and stop chunks | Supported |
 | Model-class routing (`default`, `high-reasoning`, `small`) | Supported |
 | Structured output (`completion_delta` + final `completion`) | Supported via OpenAI `json_schema` response format, but not in combination with tools |
+| Strict schemas | Tool and structured-output schemas are always sent with `strict:true`; the adapter projects canonical schemas onto the strict subset (closed objects, all members required, optionals nullable) and canonicalizes returned payloads by dropping the null members the projection introduced. Contracts strict mode cannot represent (open objects, map-style `additionalProperties`) are rejected explicitly |
 | Cache options / cache checkpoints | Rejected explicitly |
 | Thinking | Only the representable subset is supported: `Thinking.Enable` may map to configured OpenAI `reasoning_effort`; budgeted or interleaved thinking requests fail fast |
 

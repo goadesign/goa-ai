@@ -1,11 +1,11 @@
 // Package openai handles provider-visible OpenAI Responses API tool and
 // structured-output configuration. Canonical tool IDs stay inside goa-ai; only
-// sanitized names cross the provider boundary.
+// sanitized names cross the provider boundary, and tool input schemas cross it
+// in strict-mode projected form (see strict_schema.go).
 package openai
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -16,37 +16,52 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
+// toolCodec carries the reversible per-request tool projection state: the
+// sanitized names exchanged with OpenAI in both directions and the canonical
+// input schemas needed to canonicalize strict-mode tool arguments on the way
+// back. Methods tolerate a nil receiver so translation paths need no tool
+// bookkeeping when a request declares no tools.
+type toolCodec struct {
+	canonicalToProvider map[string]string
+	providerToCanonical map[string]string
+	canonicalSchemas    map[string]rawjson.Message
+}
+
 const structuredOutputDefaultName = "structured_output"
 
-func encodeTools(defs []*model.ToolDefinition) ([]responses.ToolUnionParam, map[string]string, map[string]string, error) {
+func encodeTools(defs []*model.ToolDefinition) ([]responses.ToolUnionParam, *toolCodec, error) {
 	if len(defs) == 0 {
-		return nil, nil, nil, nil
+		return nil, nil, nil
 	}
 	tools := make([]responses.ToolUnionParam, 0, len(defs))
-	canonicalToProvider := make(map[string]string, len(defs))
-	providerToCanonical := make(map[string]string, len(defs))
+	codec := &toolCodec{
+		canonicalToProvider: make(map[string]string, len(defs)),
+		providerToCanonical: make(map[string]string, len(defs)),
+		canonicalSchemas:    make(map[string]rawjson.Message, len(defs)),
+	}
 	for i, def := range defs {
 		if def == nil {
-			return nil, nil, nil, fmt.Errorf("openai: tool[%d] is nil", i)
+			return nil, nil, fmt.Errorf("openai: tool[%d] is nil", i)
 		}
 		if def.Name == "" {
-			return nil, nil, nil, fmt.Errorf("openai: tool[%d] is missing name", i)
+			return nil, nil, fmt.Errorf("openai: tool[%d] is missing name", i)
 		}
 		if def.Description == "" {
-			return nil, nil, nil, fmt.Errorf("openai: tool %q is missing description", def.Name)
+			return nil, nil, fmt.Errorf("openai: tool %q is missing description", def.Name)
 		}
 		providerName := SanitizeToolName(def.Name)
-		if previous, ok := providerToCanonical[providerName]; ok && previous != def.Name {
-			return nil, nil, nil, fmt.Errorf(
+		if previous, ok := codec.providerToCanonical[providerName]; ok && previous != def.Name {
+			return nil, nil, fmt.Errorf(
 				"openai: tool %q sanitizes to %q which collides with %q",
 				def.Name,
 				providerName,
 				previous,
 			)
 		}
-		parameters, err := toolInputSchema(def.Input.JSONSchema())
+		schema := def.Input.JSONSchema()
+		parameters, err := projectStrictSchema(schema)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("openai: tool %q schema: %w", def.Name, err)
+			return nil, nil, fmt.Errorf("openai: tool %q schema: %w", def.Name, err)
 		}
 		tools = append(tools, responses.ToolUnionParam{
 			OfFunction: &responses.FunctionToolParam{
@@ -56,13 +71,11 @@ func encodeTools(defs []*model.ToolDefinition) ([]responses.ToolUnionParam, map[
 				Strict:      param.NewOpt(true),
 			},
 		})
-		canonicalToProvider[def.Name] = providerName
-		providerToCanonical[providerName] = def.Name
+		codec.canonicalToProvider[def.Name] = providerName
+		codec.providerToCanonical[providerName] = def.Name
+		codec.canonicalSchemas[def.Name] = schema
 	}
-	if len(tools) == 0 {
-		return nil, nil, nil, nil
-	}
-	return tools, canonicalToProvider, providerToCanonical, nil
+	return tools, codec, nil
 }
 
 func encodeToolChoice(
@@ -124,23 +137,19 @@ func encodeStructuredOutput(output *model.StructuredOutput) (responses.ResponseT
 			"openai: structured output schema is required",
 		)
 	}
-	if !json.Valid(schema) {
-		return responses.ResponseTextConfigParam{}, false, errors.New(
-			"openai: structured output schema is not valid JSON",
-		)
-	}
-	parameters, err := toolInputSchema(rawjson.Message(schema))
-	if err != nil {
-		return responses.ResponseTextConfigParam{}, false, fmt.Errorf(
-			"openai: structured output schema: %w",
-			err,
-		)
-	}
 	name := structuredOutputDefaultName
 	if output.Name != "" {
 		name = output.Name
 	}
 	name = SanitizeToolName(name)
+	parameters, err := projectStrictSchema(rawjson.Message(schema))
+	if err != nil {
+		return responses.ResponseTextConfigParam{}, false, fmt.Errorf(
+			"openai: structured output %q schema: %w",
+			name,
+			err,
+		)
+	}
 	return responses.ResponseTextConfigParam{
 		Format: responses.ResponseFormatTextConfigUnionParam{
 			OfJSONSchema: &responses.ResponseFormatTextJSONSchemaConfigParam{
@@ -152,17 +161,32 @@ func encodeStructuredOutput(output *model.StructuredOutput) (responses.ResponseT
 	}, true, nil
 }
 
-func toolInputSchema(schema rawjson.Message) (map[string]any, error) {
-	data := bytes.TrimSpace(schema)
-	if len(data) == 0 {
-		return nil, nil
+// canonicalName maps a provider-visible tool name back to its canonical
+// goa-ai identifier. Unknown names pass through unchanged.
+func (c *toolCodec) canonicalName(providerName string) string {
+	if c == nil {
+		return providerName
 	}
-	if !json.Valid(data) {
-		return nil, errors.New("invalid JSON schema")
+	if canonical, ok := c.providerToCanonical[providerName]; ok {
+		return canonical
 	}
-	var decoded map[string]any
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return nil, err
+	return providerName
+}
+
+// canonicalSchema returns the canonical input schema recorded for a canonical
+// tool name, or nil when the request declared no such tool.
+func (c *toolCodec) canonicalSchema(canonicalName string) rawjson.Message {
+	if c == nil {
+		return nil
 	}
-	return decoded, nil
+	return c.canonicalSchemas[canonicalName]
+}
+
+// providerNames returns the canonical-to-provider name mapping used when
+// encoding request messages and tool choices. Nil when no tools are declared.
+func (c *toolCodec) providerNames() map[string]string {
+	if c == nil {
+		return nil
+	}
+	return c.canonicalToProvider
 }
