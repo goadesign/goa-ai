@@ -16,10 +16,13 @@ import (
 // with strict:true, and OpenAI only accepts a constrained JSON Schema subset
 // in that mode: every object must set additionalProperties:false and list all
 // of its properties as required, with optionality expressed as a null type
-// union. The canonical generated schema stays provider-neutral and remains
-// the source of truth for local decoding; this file either produces an
-// equivalent strict schema or rejects the contract explicitly when OpenAI
-// cannot represent it (open objects and map-style additionalProperties).
+// union, and unions expressed only as anyOf. The canonical generated schema
+// stays provider-neutral and remains the source of truth for local decoding;
+// this file either produces a generation-equivalent strict schema — one that
+// accepts every instance the canonical schema accepts, folding oneOf into
+// anyOf and dropping constraints strict mode rejects — or rejects the
+// contract explicitly when OpenAI cannot represent it (open objects and
+// map-style additionalProperties).
 //
 // The projection introduces exactly one model-visible artifact: canonically
 // optional members become nullable, so strict decoding emits explicit null
@@ -131,6 +134,7 @@ func projectStrictNode(node map[string]any, path string) error {
 		delete(node, keyword)
 	}
 	projectStrictFormat(node)
+	projectStrictUnion(node)
 	if includesSchemaType(node, strictSchemaTypeObject) {
 		if err := projectStrictObject(node, path); err != nil {
 			return err
@@ -223,6 +227,23 @@ func projectStrictObject(node map[string]any, path string) error {
 	return nil
 }
 
+// projectStrictUnion folds oneOf branches into anyOf: strict mode only
+// accepts anyOf, and for generation guidance anyOf accepts a superset of the
+// instances oneOf accepts. The canonical schema keeps exclusive oneOf
+// semantics for local validation.
+func projectStrictUnion(node map[string]any) {
+	branches, ok := node["oneOf"].([]any)
+	if !ok {
+		return
+	}
+	delete(node, "oneOf")
+	if existing, ok := node["anyOf"].([]any); ok {
+		node["anyOf"] = append(existing, branches...)
+		return
+	}
+	node["anyOf"] = branches
+}
+
 // projectStrictFormat keeps only the string formats OpenAI strict mode
 // accepts and drops format from every non-string schema.
 func projectStrictFormat(node map[string]any) {
@@ -242,8 +263,11 @@ func projectStrictFormat(node map[string]any) {
 
 // makeStrictNullable rewrites one property schema so null becomes an accepted
 // value: strict mode requires every member to be present, so null is how the
-// model omits a canonically optional member.
+// model omits a canonically optional member. Unions fold into anyOf first so
+// the null branch lands in the strict-representable form; the later visit of
+// this property during recursion finds nothing left to fold.
 func makeStrictNullable(property map[string]any) {
+	projectStrictUnion(property)
 	if enum, ok := property["enum"].([]any); ok && !containsJSONNull(enum) {
 		property["enum"] = append(enum, nil)
 	}

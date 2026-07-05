@@ -168,6 +168,26 @@ func TestProjectStrictSchema(t *testing.T) {
 			}`,
 		},
 		{
+			name: "oneOf unions fold into anyOf and optionals gain a null branch",
+			schema: `{
+				"type": "object",
+				"properties": {
+					"choice": {"oneOf": [{"type": "string"}, {"type": "integer"}]},
+					"pick": {"oneOf": [{"type": "string"}, {"type": "boolean"}]}
+				},
+				"required": ["choice"]
+			}`,
+			want: `{
+				"type": "object",
+				"additionalProperties": false,
+				"properties": {
+					"choice": {"anyOf": [{"type": "string"}, {"type": "integer"}]},
+					"pick": {"anyOf": [{"type": "string"}, {"type": "boolean"}, {"type": "null"}]}
+				},
+				"required": ["choice", "pick"]
+			}`,
+		},
+		{
 			name: "property names that look like keywords stay untouched",
 			schema: `{
 				"type": "object",
@@ -334,6 +354,17 @@ func TestCanonicalizeStrictPayload(t *testing.T) {
 				}
 			}`,
 			payload: `{"value": null}`,
+			want:    `{}`,
+		},
+		{
+			name: "removes null when no oneOf branch accepts it",
+			schema: `{
+				"type": "object",
+				"properties": {
+					"choice": {"oneOf": [{"type": "string"}, {"type": "integer"}]}
+				}
+			}`,
+			payload: `{"choice": null}`,
 			want:    `{}`,
 		},
 		{
