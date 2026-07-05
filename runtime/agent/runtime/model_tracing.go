@@ -28,8 +28,9 @@ type (
 		tracer telemetry.Tracer
 		logger telemetry.Logger
 
-		modelID string
-		genAI   telemetry.GenAIContext
+		modelID         string
+		genAI           telemetry.GenAIContext
+		captureMessages bool
 	}
 
 	tracedStream struct {
@@ -40,6 +41,10 @@ type (
 		mu    sync.Mutex
 		usage model.TokenUsage
 
+		// output accumulates streamed assistant parts so a single
+		// gen_ai.output.messages attribute can be emitted at stream end.
+		output *genAIStreamAccumulator
+
 		startedAt          time.Time
 		firstChunkRecorded bool
 		sawUsageDelta      bool
@@ -47,7 +52,7 @@ type (
 	}
 )
 
-func newTracedClient(inner model.Client, tracer telemetry.Tracer, logger telemetry.Logger, modelID string, genAI telemetry.GenAIContext) model.Client {
+func newTracedClient(inner model.Client, tracer telemetry.Tracer, logger telemetry.Logger, modelID string, genAI telemetry.GenAIContext, captureMessages bool) model.Client {
 	if inner == nil {
 		return nil
 	}
@@ -62,8 +67,9 @@ func newTracedClient(inner model.Client, tracer telemetry.Tracer, logger telemet
 		tracer: tracer,
 		logger: logger,
 
-		modelID: modelID,
-		genAI:   genAI,
+		modelID:         modelID,
+		genAI:           genAI,
+		captureMessages: captureMessages,
 	}
 }
 
@@ -76,6 +82,7 @@ func (c *tracedClient) Complete(ctx context.Context, req *model.Request) (*model
 		trace.WithAttributes(modelSpanAttrs(ctx, req)...),
 	)
 	defer span.End()
+	c.recordInputMessages(span, req.Messages)
 
 	resp, err := c.inner.Complete(ctx, req)
 	if err != nil {
@@ -99,6 +106,7 @@ func (c *tracedClient) Complete(ctx context.Context, req *model.Request) (*model
 	if resp.StopReason != "" {
 		span.SetAttributes(telemetry.AttrGenAIResponseFinishReasons.StringSlice([]string{resp.StopReason}))
 	}
+	c.recordOutputMessages(span, responseOutputMessages(resp), resp.StopReason)
 	span.SetStatus(codes.Ok, "ok")
 	return resp, nil
 }
@@ -112,6 +120,7 @@ func (c *tracedClient) Stream(ctx context.Context, req *model.Request) (model.St
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(modelSpanAttrs(ctx, req)...),
 	)
+	c.recordInputMessages(span, req.Messages)
 
 	st, err := c.inner.Stream(ctx, req)
 	if err != nil {
@@ -131,12 +140,16 @@ func (c *tracedClient) Stream(ctx context.Context, req *model.Request) (model.St
 		)
 		return nil, err
 	}
-	return &tracedStream{
+	ts := &tracedStream{
 		inner:     st,
 		span:      span,
 		ctx:       ctx,
 		startedAt: startedAt,
-	}, nil
+	}
+	if c.captureMessages {
+		ts.output = newGenAIStreamAccumulator()
+	}
+	return ts, nil
 }
 
 func (s *tracedStream) Recv() (model.Chunk, error) {
@@ -173,6 +186,7 @@ func (s *tracedStream) Recv() (model.Chunk, error) {
 	if isFirstGenAIOutputChunk(ch.Type) {
 		s.recordFirstChunk()
 	}
+	s.recordOutputChunk(ch)
 	if ch.Type == model.ChunkTypeStop && ch.StopReason != "" {
 		s.span.SetAttributes(telemetry.AttrGenAIResponseFinishReasons.StringSlice([]string{ch.StopReason}))
 	}
@@ -203,6 +217,14 @@ func (s *tracedStream) end(code codes.Code, desc string) {
 		s.mu.Lock()
 		usage := s.usage
 		sawUsageDelta := s.sawUsageDelta
+		var (
+			outputMessages []model.Message
+			stopReason     string
+			haveOutput     bool
+		)
+		if s.output != nil {
+			outputMessages, stopReason, haveOutput = s.output.finish()
+		}
 		s.mu.Unlock()
 		if !sawUsageDelta {
 			usage = mergeStreamMetadataUsage(usage, s.inner.Metadata())
@@ -210,6 +232,9 @@ func (s *tracedStream) end(code codes.Code, desc string) {
 
 		if (usage != model.TokenUsage{}) {
 			s.span.SetAttributes(modelUsageAttrs(usage)...)
+		}
+		if haveOutput {
+			s.applyOutputMessages(outputMessages, stopReason)
 		}
 		s.span.SetStatus(code, desc)
 		s.span.End()
@@ -306,5 +331,151 @@ func isFirstGenAIOutputChunk(chunkType string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// recordInputMessages stamps the chat-turn span with the provider-ready input
+// transcript when sensitive GenAI message capture is enabled.
+func (c *tracedClient) recordInputMessages(span telemetry.Span, messages []*model.Message) {
+	if !c.captureMessages {
+		return
+	}
+	attr, ok, err := telemetry.GenAIInputMessagesAttr(messages)
+	setGenAIMessagesAttr(span, attr, ok, err, "input")
+}
+
+// recordOutputMessages stamps the chat-turn span with the complete non-streaming
+// assistant response when sensitive GenAI message capture is enabled.
+func (c *tracedClient) recordOutputMessages(span telemetry.Span, messages []model.Message, stopReason string) {
+	if !c.captureMessages {
+		return
+	}
+	attr, ok, err := telemetry.GenAIOutputMessagesAttr(messages, stopReason)
+	setGenAIMessagesAttr(span, attr, ok, err, "output")
+}
+
+// applyOutputMessages stamps the chat-turn span with the buffered streaming
+// assistant output. It is called once at stream end; s.output is nil unless
+// capture is enabled, so the default hot path is unchanged.
+func (s *tracedStream) applyOutputMessages(messages []model.Message, stopReason string) {
+	attr, ok, err := telemetry.GenAIOutputMessagesAttr(messages, stopReason)
+	setGenAIMessagesAttr(s.span, attr, ok, err, "output")
+}
+
+func setGenAIMessagesAttr(span telemetry.Span, attr attribute.KeyValue, ok bool, err error, direction string) {
+	if err != nil {
+		span.AddEvent("gen_ai.messages_serialize_failed",
+			"gen_ai.message.direction", direction,
+			"exception.message", err.Error())
+		return
+	}
+	if ok {
+		span.SetAttributes(attr)
+	}
+}
+
+// recordOutputChunk feeds a streamed chunk to the accumulator so a single
+// output message can be emitted at stream end. No-op when capture is disabled.
+func (s *tracedStream) recordOutputChunk(chunk model.Chunk) {
+	if s.output == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.output.recordChunk(chunk)
+}
+
+// responseOutputMessages projects a unary model response onto the transcript
+// shape captured on chat-turn spans. The Response contract carries tool
+// invocations in ToolCalls, separate from the assistant content, so they are
+// appended as one assistant message to mirror the streaming capture.
+func responseOutputMessages(resp *model.Response) []model.Message {
+	if len(resp.ToolCalls) == 0 {
+		return resp.Content
+	}
+	parts := make([]model.Part, 0, len(resp.ToolCalls))
+	for _, call := range resp.ToolCalls {
+		parts = append(parts, model.ToolUsePart{
+			ID:    call.ID,
+			Name:  string(call.Name),
+			Input: call.Payload,
+		})
+	}
+	messages := make([]model.Message, 0, len(resp.Content)+1)
+	messages = append(messages, resp.Content...)
+	messages = append(messages, model.Message{
+		Role:  model.ConversationRoleAssistant,
+		Parts: parts,
+	})
+	return messages
+}
+
+// genAIStreamAccumulator coalesces streamed assistant chunks into one canonical
+// output message: adjacent text deltas merge into a single text part, tool
+// calls and completions are captured, reasoning chunks are dropped entirely,
+// and the terminal stop reason is recorded.
+type genAIStreamAccumulator struct {
+	parts      []model.Part
+	stopReason string
+}
+
+func newGenAIStreamAccumulator() *genAIStreamAccumulator {
+	return &genAIStreamAccumulator{}
+}
+
+func (a *genAIStreamAccumulator) recordChunk(chunk model.Chunk) {
+	switch chunk.Type {
+	case model.ChunkTypeText:
+		if chunk.Message != nil {
+			a.appendOutputParts(chunk.Message.Parts)
+		}
+	case model.ChunkTypeToolCall:
+		if chunk.ToolCall != nil {
+			a.parts = append(a.parts, model.ToolUsePart{
+				ID:    chunk.ToolCall.ID,
+				Name:  string(chunk.ToolCall.Name),
+				Input: chunk.ToolCall.Payload,
+			})
+		}
+	case model.ChunkTypeCompletion:
+		if chunk.Completion != nil {
+			a.parts = append(a.parts, model.TextPart{Text: string(chunk.Completion.Payload)})
+		}
+	case model.ChunkTypeStop:
+		a.stopReason = chunk.StopReason
+	}
+}
+
+// finish returns the coalesced assistant message and stop reason. It reports
+// ok=false when no output parts were observed so callers can skip emitting an
+// empty gen_ai.output.messages attribute.
+func (a *genAIStreamAccumulator) finish() ([]model.Message, string, bool) {
+	if len(a.parts) == 0 {
+		return nil, a.stopReason, false
+	}
+	return []model.Message{{
+		Role:  model.ConversationRoleAssistant,
+		Parts: a.parts,
+	}}, a.stopReason, true
+}
+
+func (a *genAIStreamAccumulator) appendOutputParts(parts []model.Part) {
+	for _, part := range parts {
+		text, ok := part.(model.TextPart)
+		if !ok {
+			a.parts = append(a.parts, part)
+			continue
+		}
+		if text.Text == "" {
+			continue
+		}
+		if len(a.parts) > 0 {
+			if last, ok := a.parts[len(a.parts)-1].(model.TextPart); ok {
+				last.Text += text.Text
+				a.parts[len(a.parts)-1] = last
+				continue
+			}
+		}
+		a.parts = append(a.parts, text)
 	}
 }

@@ -129,6 +129,10 @@ type (
 		metrics telemetry.Metrics
 		tracer  telemetry.Tracer
 
+		// captureGenAIMessages records full chat message payloads on chat-turn
+		// model spans when enabled via WithCaptureGenAIMessages.
+		captureGenAIMessages bool
+
 		mu        sync.RWMutex
 		agents    map[agent.Ident]AgentRegistration
 		toolsets  map[string]ToolsetRegistration
@@ -220,6 +224,12 @@ type (
 		Metrics telemetry.Metrics
 		// Tracer emits spans for planner/tool execution.
 		Tracer telemetry.Tracer
+
+		// CaptureGenAIMessages records full input and output chat message payloads
+		// on chat-turn model spans. Reasoning content is never captured. The
+		// attributes can contain user content, tool arguments, and PII; keep
+		// disabled unless explicitly troubleshooting.
+		CaptureGenAIMessages bool
 
 		// RecordActivityTimeout overrides the StartToClose timeout for the
 		// durable record activity (`runtime.record_event`). Zero means use the
@@ -745,6 +755,7 @@ func newFromOptions(opts Options) *Runtime {
 		logger:                logger,
 		metrics:               metrics,
 		tracer:                tracer,
+		captureGenAIMessages:  opts.CaptureGenAIMessages,
 		agents:                make(map[agent.Ident]AgentRegistration),
 		toolsets:              make(map[string]ToolsetRegistration),
 		toolSpecs:             make(map[tools.Ident]tools.ToolSpec),
@@ -968,6 +979,15 @@ func WithMetrics(m telemetry.Metrics) RuntimeOption { return func(o *Options) { 
 
 // WithTracer sets the tracer.
 func WithTracer(t telemetry.Tracer) RuntimeOption { return func(o *Options) { o.Tracer = t } }
+
+// WithCaptureGenAIMessages enables recording of full input and output chat
+// message payloads on chat-turn model spans. Reasoning content is never
+// captured. The captured attributes can contain user content, tool arguments,
+// and PII, so callers must opt in explicitly and should never enable this by
+// default in production.
+func WithCaptureGenAIMessages(enabled bool) RuntimeOption {
+	return func(o *Options) { o.CaptureGenAIMessages = enabled }
+}
 
 // WithToolConfirmation configures runtime-enforced confirmation for selected tools.
 func WithToolConfirmation(cfg *ToolConfirmationConfig) RuntimeOption {

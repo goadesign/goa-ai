@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	grpcCodes "google.golang.org/grpc/codes"
 	grpcStatus "google.golang.org/grpc/status"
@@ -64,7 +65,7 @@ func TestTracedClientStreamIgnoresCanceledStart(t *testing.T) {
 		stream: func(context.Context, *model.Request) (model.Streamer, error) {
 			return nil, context.Canceled
 		},
-	}, tracer, telemetry.NewNoopLogger(), "bedrock", testGenAIContext())
+	}, tracer, telemetry.NewNoopLogger(), "bedrock", testGenAIContext(), false)
 
 	stream, err := client.Stream(ctx, &model.Request{
 		ModelClass: model.ModelClassDefault,
@@ -89,7 +90,7 @@ func TestTracedClientCompleteIgnoresContextTermination(t *testing.T) {
 		complete: func(context.Context, *model.Request) (*model.Response, error) {
 			return nil, grpcStatus.Error(grpcCodes.Canceled, "context canceled")
 		},
-	}, tracer, telemetry.NewNoopLogger(), "bedrock", testGenAIContext())
+	}, tracer, telemetry.NewNoopLogger(), "bedrock", testGenAIContext(), false)
 
 	resp, err := client.Complete(ctx, &model.Request{ModelClass: model.ModelClassDefault})
 	require.Equal(t, grpcCodes.Canceled, grpcStatus.Code(err))
@@ -159,7 +160,7 @@ func TestTracedClientCompleteEmitsGenAIAttrs(t *testing.T) {
 		ConversationID: "sess-1",
 		AgentID:        "svc.agent",
 		AgentName:      "svc.agent",
-	})
+	}, false)
 
 	resp, err := client.Complete(context.Background(), &model.Request{
 		ModelClass: model.ModelClassHighReasoning,
@@ -249,6 +250,173 @@ func TestTracedStreamDoesNotDoubleCountMetadataAfterUsageDelta(t *testing.T) {
 	assert.Equal(t, "delta-model", attrs[telemetry.AttrGenAIResponseModel].AsString())
 	assert.EqualValues(t, 2, attrs[telemetry.AttrGenAIUsageInputTokens].AsInt64())
 	assert.EqualValues(t, 4, attrs[telemetry.AttrGenAIUsageOutputTokens].AsInt64())
+}
+
+func TestTracedClientCompleteRecordsGenAIMessagesWhenEnabled(t *testing.T) {
+	t.Parallel()
+
+	tracer := &recordingTelemetryTracer{}
+	client := newTracedClient(stubModelClient{
+		complete: func(_ context.Context, _ *model.Request) (*model.Response, error) {
+			return &model.Response{
+				Content: []model.Message{{
+					Role:  model.ConversationRoleAssistant,
+					Parts: []model.Part{model.TextPart{Text: "I will check."}},
+				}},
+				ToolCalls: []model.ToolCall{{
+					ID:      "call-1",
+					Name:    "atlas.read",
+					Payload: rawjson.Message(`{"asset":"pump"}`),
+				}},
+				StopReason: "tool_use",
+			}, nil
+		},
+	}, tracer, telemetry.NewNoopLogger(), "primary", testGenAIContext(), true)
+
+	_, err := client.Complete(context.Background(), &model.Request{
+		ModelClass: model.ModelClassHighReasoning,
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "diagnose pump"}},
+		}},
+	})
+	require.NoError(t, err)
+
+	require.Len(t, tracer.spans, 1)
+	attrs := attrsByKey(tracer.spans[0].attrs)
+	require.JSONEq(t, `[
+		{
+			"role": "user",
+			"parts": [
+				{
+					"type": "text",
+					"content": "diagnose pump"
+				}
+			]
+		}
+	]`, attrs[telemetry.AttrGenAIInputMessages].AsString())
+	require.JSONEq(t, `[
+		{
+			"role": "assistant",
+			"parts": [
+				{
+					"type": "text",
+					"content": "I will check."
+				}
+			],
+			"finish_reason": "tool_use"
+		},
+		{
+			"role": "assistant",
+			"parts": [
+				{
+					"type": "tool_call",
+					"id": "call-1",
+					"name": "atlas.read",
+					"arguments": {
+						"asset": "pump"
+					}
+				}
+			],
+			"finish_reason": "tool_use"
+		}
+	]`, attrs[telemetry.AttrGenAIOutputMessages].AsString())
+}
+
+func TestTracedClientCompleteSkipsMessagesWhenCaptureDisabled(t *testing.T) {
+	t.Parallel()
+
+	tracer := &recordingTelemetryTracer{}
+	client := newTracedClient(stubModelClient{
+		complete: func(_ context.Context, _ *model.Request) (*model.Response, error) {
+			return &model.Response{
+				Content:    []model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "hi"}}}},
+				StopReason: "end_turn",
+			}, nil
+		},
+	}, tracer, telemetry.NewNoopLogger(), "primary", testGenAIContext(), false)
+
+	_, err := client.Complete(context.Background(), &model.Request{
+		ModelClass: model.ModelClassHighReasoning,
+		Messages:   []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "hi"}}}},
+	})
+	require.NoError(t, err)
+
+	require.Len(t, tracer.spans, 1)
+	attrs := attrsByKey(tracer.spans[0].attrs)
+	_, hasInput := attrs[telemetry.AttrGenAIInputMessages]
+	_, hasOutput := attrs[telemetry.AttrGenAIOutputMessages]
+	assert.False(t, hasInput)
+	assert.False(t, hasOutput)
+}
+
+func TestTracedStreamRecordsBufferedOutputMessagesWhenEnabled(t *testing.T) {
+	t.Parallel()
+
+	tracer := &recordingTelemetryTracer{}
+	client := newTracedClient(stubModelClient{
+		stream: func(_ context.Context, _ *model.Request) (model.Streamer, error) {
+			return &stubStreamer{chunks: []model.Chunk{
+				{
+					Type:    model.ChunkTypeText,
+					Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "hel"}}},
+				},
+				{
+					Type:    model.ChunkTypeText,
+					Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "lo"}}},
+				},
+				{
+					Type:    model.ChunkTypeThinking,
+					Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ThinkingPart{Text: "draft", Final: false}}},
+				},
+				{
+					Type:    model.ChunkTypeThinking,
+					Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ThinkingPart{Text: "draft", Final: true}}},
+				},
+				{Type: model.ChunkTypeStop, StopReason: "end_turn"},
+			}}, nil
+		},
+	}, tracer, telemetry.NewNoopLogger(), "primary", testGenAIContext(), true)
+
+	stream, err := client.Stream(context.Background(), &model.Request{
+		ModelClass: model.ModelClassHighReasoning,
+		Messages:   []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "hi"}}}},
+	})
+	require.NoError(t, err)
+	for {
+		_, err = stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		require.NoError(t, err)
+	}
+
+	require.Len(t, tracer.spans, 1)
+	attrs := attrsByKey(tracer.spans[0].attrs)
+	require.JSONEq(t, `[
+		{
+			"role": "user",
+			"parts": [
+				{
+					"type": "text",
+					"content": "hi"
+				}
+			]
+		}
+	]`, attrs[telemetry.AttrGenAIInputMessages].AsString())
+	require.JSONEq(t, `[
+		{
+			"role": "assistant",
+			"parts": [
+				{
+					"type": "text",
+					"content": "hello"
+				}
+			],
+			"finish_reason": "end_turn"
+		}
+	]`, attrs[telemetry.AttrGenAIOutputMessages].AsString())
+	require.NotContains(t, attrs[telemetry.AttrGenAIOutputMessages].AsString(), "draft")
 }
 
 func (t *recordingTelemetryTracer) Start(ctx context.Context, name string, opts ...trace.SpanStartOption) (context.Context, telemetry.Span) {
