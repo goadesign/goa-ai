@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"reflect"
 	"testing"
 
@@ -30,4 +31,27 @@ func TestNewOpenAIModelClientBuildsStatelessClient(t *testing.T) {
 	require.True(t, ok)
 	value := reflect.ValueOf(openaiClient).Elem()
 	require.Equal(t, "gpt-5", value.FieldByName("defaultModel").String())
+}
+
+func TestNewVertexGeminiModelClientValidates(t *testing.T) {
+	rt := &Runtime{}
+
+	client, err := rt.NewVertexGeminiModelClient(context.Background(), VertexConfig{Location: "global", DefaultModel: "gemini-2.5-pro"})
+	require.Error(t, err)
+	require.Nil(t, client)
+	require.Contains(t, err.Error(), "project id is required")
+
+	client, err = rt.NewVertexGeminiModelClient(context.Background(), VertexConfig{ProjectID: "p", DefaultModel: "gemini-2.5-pro"})
+	require.Error(t, err)
+	require.Nil(t, client)
+	require.Contains(t, err.Error(), "location is required")
+}
+
+func TestNewVertexAnthropicModelClientValidates(t *testing.T) {
+	rt := &Runtime{}
+
+	client, err := rt.NewVertexAnthropicModelClient(context.Background(), VertexConfig{ProjectID: "p", Location: "global"})
+	require.Error(t, err)
+	require.Nil(t, client)
+	require.Contains(t, err.Error(), "default model is required")
 }

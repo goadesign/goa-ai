@@ -193,6 +193,18 @@ type (
 
 		// Input is the JSON-compatible arguments object provided by the model.
 		Input any
+
+		// ThoughtSignature is an opaque, provider-defined signature that some
+		// providers (for example, Gemini 3) attach to a tool-call part to
+		// authenticate the reasoning that produced it. The encoding is
+		// provider-specific (the vertex adapter uses standard base64 of the raw
+		// signature bytes, matching ThinkingPart.Signature). Empty means absent;
+		// providers that do not use it ignore it.
+		//
+		// Replay obligation: when a provider round-trips a tool call it emitted,
+		// runtimes and planners MUST carry this value back unchanged so the
+		// provider can validate the continued reasoning chain.
+		ThoughtSignature string
 	}
 
 	// ToolResultPart carries a tool result provided by the user side.
@@ -301,6 +313,18 @@ type (
 
 		// ID is an optional provider-issued identifier for the tool call.
 		ID string
+
+		// ThoughtSignature is an opaque, provider-defined signature that some
+		// providers (for example, Gemini 3) attach to a tool-call part to
+		// authenticate the reasoning that produced it. The encoding is
+		// provider-specific (the vertex adapter uses standard base64 of the raw
+		// signature bytes, matching ThinkingPart.Signature). Empty means absent;
+		// providers that do not use it ignore it.
+		//
+		// Replay obligation: when a provider round-trips a tool call it emitted,
+		// runtimes and planners MUST carry this value back unchanged so the
+		// provider can validate the continued reasoning chain.
+		ThoughtSignature string
 	}
 
 	// ToolCallDelta is an incremental tool-call payload fragment streamed by
@@ -933,9 +957,14 @@ func requestCharacterCount(req *Request) int {
 		}
 		count += len(tool.Name)
 		count += len(tool.Description)
-		count += len(tool.Input.JSONSchema())
-		count += len(tool.Input.SchemaWithoutRootExample())
-		count += len(tool.Input.ExampleJSON())
+		// Providers send one projection of the input contract per request:
+		// either the annotated schema, or the schema without its root example
+		// plus the separate example. Charge the larger of the two so the
+		// estimate stays conservative without summing renderings no provider
+		// combines.
+		annotated := len(tool.Input.JSONSchema())
+		split := len(tool.Input.SchemaWithoutRootExample()) + len(tool.Input.ExampleJSON())
+		count += max(annotated, split)
 	}
 	if req.ToolChoice != nil {
 		count += len(req.ToolChoice.Mode)

@@ -328,6 +328,7 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	l.st.AggUsage = addTokenUsage(l.st.AggUsage, resOutput.Usage)
 	l.st.Result = resOutput.Result
 	l.st.Transcript = resOutput.Transcript
+	l.st.ToolCallSignatures = resOutput.ToolCallSignatures
 	return nil, nil
 }
 

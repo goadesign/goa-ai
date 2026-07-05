@@ -165,6 +165,12 @@ type (
 		ExampleJSON []byte
 		// Typed codec variable name (e.g., "MyToolPayloadCodec").
 		ExportedCodec string
+		// InjectDecodeFunc is the generated composed decode helper name
+		// (e.g., "DecodeGetData") when this type is the payload of a tool
+		// declaring Inject() fields. The codec GoDoc points custom executors
+		// at it: FromJSON alone leaves Inject()-ed fields unset. Empty for
+		// every other type.
+		InjectDecodeFunc string
 		// Untyped codec variable name (e.g., "myToolPayloadCodec").
 		GenericCodec string
 		// Marshal function name (e.g., "MarshalMyToolPayload").

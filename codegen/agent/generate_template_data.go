@@ -9,6 +9,9 @@ type (
 		PackageName string
 		Tools       []*toolEntry
 		Types       []*typeData
+		// RequiredLabels lists, sorted and deduplicated, the run label keys
+		// this toolset's label-backed Inject() fields require.
+		RequiredLabels []string
 	}
 
 	toolTypesFileData struct {
@@ -42,6 +45,11 @@ type (
 
 	toolSpecsAggregateData struct {
 		Toolsets []*ToolsetData
+		// RequiredLabels lists, sorted and deduplicated, the union of every
+		// aggregated toolset's RequiredLabels. Runtime.Start/OneShotRun
+		// validates a run's supplied labels against this set before scheduling
+		// any workflow or activity for the agent.
+		RequiredLabels []string
 	}
 
 	agentToolsetFileData struct {

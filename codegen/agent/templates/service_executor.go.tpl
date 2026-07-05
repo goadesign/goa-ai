@@ -166,6 +166,11 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                 if err != nil {
                     return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}), nil
                 }
+                {{- if .Injected }}
+                if err := {{ $.Toolset.SpecsPackageName }}.Inject{{ .ConstName }}(val, *meta, call.Labels); err != nil {
+                    return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}), nil
+                }
+                {{- end }}
                 toolArgs = val
             }
             {{- end }}
@@ -180,19 +185,8 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                 {{- if .MethodPayloadTypeRef }}
                     {{- if .PayloadAliasesMethod }}
                 methodIn = toolArgs
-                        {{- if .InjectedFields }}
-                p := methodIn.({{ .MethodPayloadTypeRef }})
-                            {{- range .InjectedFields }}
-                p.{{ goify . true }} = meta.{{ goify . true }}
-                            {{- end }}
-                methodIn = p
-                        {{- end }}
                     {{- else }}
-                p := {{ $.Toolset.SpecsPackageName }}.Init{{ goify .Name true }}MethodPayload(toolArgs.(*{{ $.Toolset.SpecsPackageName }}.{{ .ConstName }}Payload))
-                        {{- range .InjectedFields }}
-                p.{{ goify . true }} = meta.{{ goify . true }}
-                        {{- end }}
-                methodIn = p
+                methodIn = {{ $.Toolset.SpecsPackageName }}.Init{{ goify .Name true }}MethodPayload(toolArgs.(*{{ $.Toolset.SpecsPackageName }}.{{ .ConstName }}Payload))
                     {{- end }}
                 {{- end }}
             }
