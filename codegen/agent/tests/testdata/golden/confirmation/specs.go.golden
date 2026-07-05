@@ -67,6 +67,13 @@ var (
 	}
 )
 
+// RequiredLabels lists the run label keys this toolset's Inject-populated
+// tools require to be present via WithLabels(...) at run start. The runtime
+// validates coverage across every toolset an agent uses before starting a
+// run, so a missing label fails fast instead of surfacing mid-run as a tool
+// call error.
+var RequiredLabels = []string{}
+
 // Names returns the identifiers of all generated tools.
 func Names() []tools.Ident {
 	return names

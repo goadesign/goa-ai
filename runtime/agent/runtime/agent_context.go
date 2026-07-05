@@ -98,6 +98,18 @@ func (c *simplePlannerContext) configuredModelClient(id string) (model.Client, b
 		return nil, false
 	}
 	cli := m
+	// Capture opaque provider tool-call thought signatures at the boundary,
+	// before any planner-facing type exists. This wraps the raw client so
+	// capture applies uniformly whether the planner drains it via
+	// PlannerModelClient or via ModelClient + planner.ConsumeStream.
+	if sink, ok := c.ev.(toolCallSignatureSink); ok {
+		cli = newSignatureCapturingClient(cli, sink)
+	} else if c.ev != nil {
+		// Production wiring always passes *runtimePlannerEvents (the sink); a
+		// non-sink PlannerEvents means provider thought signatures are silently
+		// dropped for this turn, so surface it instead of no-opping quietly.
+		c.rt.logger.Warn(context.Background(), "planner events do not implement tool-call signature sink; provider thought signatures will not be captured", "agent", string(c.agent), "run_id", c.runID)
+	}
 	// Apply agent cache policy so planners do not need to thread CacheOptions
 	// through every model.Request construction. Explicit Request.Cache values
 	// continue to take precedence over the agent policy.

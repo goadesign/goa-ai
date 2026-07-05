@@ -31,7 +31,7 @@ import (
 //   - Return: defines the output result schema
 //   - Tags: attaches metadata labels
 //   - BindTo: binds to a service method for implementation (optional)
-//   - Inject: marks fields as infrastructure-only (hidden from LLM)
+//   - Inject: marks fields as server-populated from ToolCallMeta or run labels (hidden from LLM)
 //
 // Example (toolset tool with inline schemas):
 //
@@ -532,11 +532,83 @@ func BindTo(args ...string) {
 	tool.RecordBinding(serviceName, methodName)
 }
 
-// Inject marks specific payload fields as "injected" (server-side infrastructure).
-// Injected fields are:
-//  1. Hidden from the LLM (excluded from the JSON schema).
-//  2. Exposed in the generated struct with a Setter method.
-//  3. Intended to be populated by runtime hooks (ToolInterceptor).
+// Inject marks payload fields as server-populated: hidden from the LLM
+// (excluded from the JSON schema and the model-facing required list) and
+// filled in by generated code before the tool executes, from one of two
+// generation-time-resolved sources:
+//
+//   - Meta-backed: a name that Goify's to one of the five
+//     runtime.ToolCallMeta fields -- sessionId/session_id -> SessionID,
+//     runId/run_id -> RunID, turnId/turn_id -> TurnID,
+//     toolCallId/tool_call_id -> ToolCallID,
+//     parentToolCallId/parent_tool_call_id -> ParentToolCallID -- compiles to
+//     a direct read of the run's ToolCallMeta. Both snake_case and lowerCamel
+//     spellings resolve identically.
+//   - Label-backed: every other name compiles to a run-label lookup. The
+//     label key is the design name verbatim (no case conversion). Callers
+//     supply labels via runtime.WithLabels(...) when starting a run; a label
+//     value goes through the field's own declared validation (Pattern,
+//     Length, enum, ...) exactly as authored on the field, so a malformed
+//     label fails the same way a malformed model-supplied value would.
+//
+// # Both topologies populate injected fields identically
+//
+// Codegen emits one Inject<Tool> function per injecting tool in the
+// toolset's generated inject.go, and both execution topologies call it
+// between decode and execute so behavior never diverges by where the tool
+// runs:
+//
+//   - Local (in-process) execution: the generated service executor calls
+//     Inject<Tool> right after decoding the tool payload, threading the run's
+//     ToolCallMeta and call labels.
+//   - Registry-served (bound) tools: the generated provider calls the same
+//     Inject<Tool> function with the wire ToolCallMeta and a nil labels map.
+//     A bound (BindTo) tool cannot declare a label-backed Inject() field --
+//     it is a generation-time error -- precisely because the registry wire
+//     protocol carries no run labels; the registry-served
+//     Runtime.ClientFor(route)/AgentRoute gateway topology also never
+//     validates RequiredLabels locally (see below), so a bound tool would
+//     otherwise silently receive an empty label value.
+//
+// Custom (hand-written) ToolCallExecutors -- for tools with no BindTo,
+// registered directly with the runtime -- have no generated call site.
+// Their contract is to call the toolset's generated Decode<Tool> function
+// (which composes the payload codec's FromJSON with Inject<Tool> in one
+// call) instead of decoding with the raw payload codec: decoding without
+// Decode<Tool> silently leaves injected fields at their Go zero value, since
+// their wire tag is `json:"-"` and there is no "missing key" to signal.
+//
+// # Run-start enforcement
+//
+// Every label-backed Inject() field across an agent's used toolsets
+// contributes its key to a generated, sorted, deduplicated RequiredLabels
+// list. Runtime.Start/StartOneShot (and their route variants) validate the
+// caller-supplied labels against this list before scheduling any workflow or
+// activity, failing fast with every missing key named in one error. This
+// check is a no-op when the starting process has not locally registered the
+// agent -- for example, a pure Runtime.ClientFor(AgentRoute) gateway/
+// orchestration start -- because RequiredLabels lives on the local
+// AgentRegistration; in that topology a missing label is caught later, when
+// the specific tool call reaches Inject<Tool>, not before the run starts.
+//
+// # Constraints enforced at generation time
+//
+// Inject() is validated when the design is evaluated, not at codegen or
+// runtime:
+//
+//   - The named field must exist on the tool's effective payload (the
+//     explicit Args() when given, otherwise the bound method's payload) and
+//     must be required and of type String. Non-String or optional injected
+//     fields are rejected: an optional injected field is a contradiction,
+//     since injected fields are always server-populated.
+//   - When a bound tool declares BOTH BindTo and an explicit Args() whose
+//     shape diverges from the bound method's payload, the injected name must
+//     exist (required, String) on whichever shape(s) it needs to populate:
+//     the tool Args (populated by the per-toolset Inject<Tool> both
+//     topologies call) and, when it differs, the method payload (populated
+//     by the registry provider's own bound-method dispatch).
+//   - A label-backed field cannot be declared on a bound (BindTo) tool (see
+//     the registry topology note above).
 //
 // Example:
 //
@@ -544,6 +616,19 @@ func BindTo(args ...string) {
 //	    BindTo("data_service", "get")
 //	    // "session_id" is required by the service but hidden from the LLM
 //	    Inject("session_id")
+//	})
+//
+//	Tool("lookup_household", "Lookup scoped to a household", func() {
+//	    Args(func() {
+//	        Attribute("household_id", String, "Household to scope the search to.", func() {
+//	            Pattern("^[a-z0-9-]+$")
+//	        })
+//	        Attribute("query", String, "Search query.")
+//	        Required("household_id", "query")
+//	    })
+//	    // household_id is not a ToolCallMeta field, so it is label-backed:
+//	    // callers must start the run with WithLabels("household_id", "...").
+//	    Inject("household_id")
 //	})
 func Inject(names ...string) {
 	tool, ok := eval.Current().(*agentsexpr.ToolExpr)

@@ -37,6 +37,16 @@ var (
         {{- end }}
     {{- end }}
     }
+
+    // RequiredLabels lists, sorted and deduplicated, the run label keys that
+    // label-backed Inject() fields require across every toolset this agent
+    // uses. Runtime.Start/OneShotRun rejects a run missing any of these keys
+    // before scheduling any workflow or activity.
+    RequiredLabels = []string{
+    {{- range .RequiredLabels }}
+        {{ printf "%q" . }},
+    {{- end }}
+    }
 )
 
 // Names returns the tool identifiers exported by this agent.

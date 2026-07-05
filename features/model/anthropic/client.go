@@ -17,6 +17,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 
+	"goa.design/goa-ai/features/model/internal/claudecaps"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -58,6 +59,13 @@ type (
 		MaxTokens int
 
 		// Temperature is used when a request does not specify Temperature.
+		// It is silently omitted from the wire request for models that no
+		// longer accept the parameter (Claude Opus 4.7+, Claude Sonnet 5+,
+		// and the Fable/Mythos generation) — see
+		// features/model/internal/claudecaps.TemperatureSupported for the
+		// exact rule. Those models run at their own default sampling
+		// behavior regardless of this setting; the omission is recorded on
+		// the ambient trace span.
 		Temperature float64
 
 		// ThinkingBudget defines the default thinking token budget when thinking is
@@ -122,10 +130,7 @@ func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Respo
 	}
 	msg, err := c.msg.New(ctx, *params)
 	if err != nil {
-		if isRateLimited(err) {
-			return nil, fmt.Errorf("%w: %w", model.ErrRateLimited, err)
-		}
-		return nil, fmt.Errorf("anthropic messages.new: %w", err)
+		return nil, wrapAnthropicError("complete", err)
 	}
 	return translateResponse(msg, provToCanon)
 }
@@ -139,10 +144,7 @@ func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer
 	}
 	stream := c.msg.NewStreaming(ctx, *params)
 	if err := stream.Err(); err != nil {
-		if isRateLimited(err) {
-			return nil, fmt.Errorf("%w: %w", model.ErrRateLimited, err)
-		}
-		return nil, fmt.Errorf("anthropic messages.new stream: %w", err)
+		return nil, wrapAnthropicError("stream", err)
 	}
 	return newAnthropicStreamer(ctx, stream, provToCanon), nil
 }
@@ -185,7 +187,11 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*sdk.M
 		params.Tools = tools
 	}
 	if t := c.effectiveTemperature(req.Temperature); t > 0 {
-		params.Temperature = sdk.Float(t)
+		if claudecaps.TemperatureSupported(modelID) {
+			params.Temperature = sdk.Float(t)
+		} else {
+			traceTemperatureOmitted(ctx, modelID, t)
+		}
 	}
 	if req.Thinking != nil && req.Thinking.Enable && !forcesToolUse(req.ToolChoice) {
 		budget := req.Thinking.BudgetTokens
@@ -538,8 +544,58 @@ func isProviderSafeToolName(name string) bool {
 	return true
 }
 
-func isRateLimited(err error) bool {
-	return err != nil && errors.Is(err, model.ErrRateLimited)
+// wrapAnthropicError classifies an error surfaced by the Anthropic Messages
+// API into the goa-ai provider error contract via model.ClassifyHTTPStatus.
+// Real SDK failures carry the HTTP status on *sdk.Error (the SDK always
+// returns a pointer); this extracts that status and a panic-safe message and
+// hands both to the shared classifier so the same status-to-kind table backs
+// every Anthropic-hosted adapter, including features/model/vertex's
+// Claude-on-Vertex constructor, which builds this client directly against
+// the SDK's Vertex transport and relies on this function for its error
+// classification.
+//
+// Context cancellation and deadline errors pass through unwrapped: they are
+// consumer-side flow control, not provider failures, and must not be
+// classified. (io.EOF never reaches this function; the streamer surfaces
+// normal termination as a nil stream error and emits io.EOF itself.)
+//
+// Non-SDK errors (including bare model.ErrRateLimited sentinels used by
+// tests and any caller that pre-classifies) are classified with status 0
+// (kind unknown); the cause is still preserved as the Unwrap target, so
+// errors.Is(result, model.ErrRateLimited) keeps working through the chain.
+func wrapAnthropicError(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	status := 0
+	message := ""
+	var apiErr *sdk.Error
+	if errors.As(err, &apiErr) {
+		status = apiErr.StatusCode
+		message = anthropicErrorMessage(apiErr)
+	} else {
+		message = err.Error()
+	}
+	return model.ClassifyHTTPStatus("anthropic", operation, status, message, err)
+}
+
+// anthropicErrorMessage safely renders an *sdk.Error's message.
+//
+// (*sdk.Error).Error() unconditionally dereferences both Request and
+// Response (see the SDK's internal/apierror/apierror.go), which the SDK
+// always populates when it constructs the error from a live HTTP round trip
+// but which are nil on any error built without one — including
+// hand-constructed test doubles. Calling apiErr.Error() in that case panics
+// with a nil pointer dereference instead of returning a string, so this
+// falls back to a status-only message whenever either field is missing.
+func anthropicErrorMessage(apiErr *sdk.Error) string {
+	if apiErr.Request == nil || apiErr.Response == nil {
+		return fmt.Sprintf("anthropic api error: status %d", apiErr.StatusCode)
+	}
+	return apiErr.Error()
 }
 
 func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Response, error) {

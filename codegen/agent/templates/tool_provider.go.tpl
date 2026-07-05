@@ -38,6 +38,15 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 	if msg.Meta == nil {
 		return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "invalid_call", "meta is required"), nil
 	}
+{{- if .NeedsInject }}
+	meta := runtime.ToolCallMeta{
+		RunID:            msg.Meta.RunID,
+		SessionID:        msg.Meta.SessionID,
+		TurnID:           msg.Meta.TurnID,
+		ToolCallID:       msg.Meta.ToolCallID,
+		ParentToolCallID: msg.Meta.ParentToolCallID,
+	}
+{{- end }}
 
 	switch msg.Tool {
 {{- range .Tools }}
@@ -50,12 +59,12 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 			}
 			return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "invalid_arguments", err.Error()), nil
 		}
+{{- if .Injected }}
+		if err := Inject{{ .ConstName }}(args, meta, nil); err != nil {
+			return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "invalid_arguments", err.Error()), nil
+		}
+{{- end }}
 		methodIn := Init{{ .ConstName }}MethodPayload(args)
-{{- if .InjectedFields }}
-{{- range .InjectedFields }}
-		methodIn.{{ goify . true }} = msg.Meta.{{ goify . true }}
-{{- end }}
-{{- end }}
 		methodOut, err := p.svc.{{ .MethodGoName }}(ctx, methodIn)
 		if err != nil {
 			if issues := toolregistry.ValidationIssues(err); len(issues) > 0 {

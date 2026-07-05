@@ -40,10 +40,10 @@ type (
 
 		toolCalls map[string]*streamToolBuffer
 
-		toolNameMap map[string]string
-		modelID     string
-		modelClass  model.ModelClass
-		output      *model.StructuredOutput
+		codec      *toolCodec
+		modelID    string
+		modelClass model.ModelClass
+		output     *model.StructuredOutput
 
 		completed bool
 		sawText   bool
@@ -60,7 +60,7 @@ type (
 func newOpenAIStreamer(
 	ctx context.Context,
 	stream responseStream,
-	toolNameMap map[string]string,
+	codec *toolCodec,
 	modelID string,
 	modelClass model.ModelClass,
 	output *model.StructuredOutput,
@@ -76,7 +76,7 @@ func newOpenAIStreamer(
 		emit:        streamer.emitChunk,
 		recordUsage: streamer.recordUsage,
 		toolCalls:   make(map[string]*streamToolBuffer),
-		toolNameMap: toolNameMap,
+		codec:       codec,
 		modelID:     modelID,
 		modelClass:  modelClass,
 		output:      output,
@@ -249,7 +249,7 @@ func (p *openAIChunkProcessor) registerOutputItem(item responses.ResponseOutputI
 			buffer.callID = actual.CallID
 		}
 		if actual.Name != "" {
-			buffer.name = canonicalToolName(actual.Name, p.toolNameMap)
+			buffer.name = p.codec.canonicalName(actual.Name)
 		}
 		return p.flushPendingToolDeltas(buffer)
 	default:
@@ -352,7 +352,7 @@ func (p *openAIChunkProcessor) handleThinkingDelta(event responses.ResponseReaso
 func (p *openAIChunkProcessor) handleCompleted(resp responses.Response) error {
 	p.completed = true
 	p.modelID = chooseModelID(resp.Model, p.modelID)
-	translated, err := translateResponse(&resp, p.toolNameMap, p.modelID, p.modelClass, p.output)
+	translated, err := translateResponse(&resp, p.codec, p.modelID, p.modelClass, p.output)
 	if err != nil {
 		return err
 	}
@@ -409,13 +409,6 @@ func (p *openAIChunkProcessor) handleCompleted(resp responses.Response) error {
 		Type:       model.ChunkTypeStop,
 		StopReason: translated.StopReason,
 	})
-}
-
-func canonicalToolName(providerName string, providerToCanonical map[string]string) string {
-	if canonical, ok := providerToCanonical[providerName]; ok {
-		return canonical
-	}
-	return providerName
 }
 
 func structuredOutputName(output *model.StructuredOutput) string {

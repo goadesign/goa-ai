@@ -209,6 +209,12 @@ type ToolRequest struct {
 	TurnID string
 
 	// ToolCallID uniquely identifies this tool invocation for correlation across events.
+	//
+	// The runtime also reattaches opaque provider state (for example, Gemini 3
+	// tool-call thought signatures) by this ID, so planner implementations that
+	// hand-build ToolRequests from a Complete response MUST carry
+	// Response.ToolCalls[i].ID through unchanged — ID preservation is the
+	// load-bearing obligation.
 	ToolCallID string
 
 	// ParentToolCallID is the identifier of the parent tool call when this invocation

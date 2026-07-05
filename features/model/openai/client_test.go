@@ -405,6 +405,74 @@ func TestClientCompleteRoutesModelsAndToolChoice(t *testing.T) {
 	assert.Equal(t, responses.ToolChoiceOptionsRequired, request.ToolChoice.OfToolChoiceMode.Value)
 }
 
+func TestClientCompleteProjectsStrictToolSchemasAndCanonicalizesArguments(t *testing.T) {
+	transport := &mockTransport{
+		completeResponse: mustResponse(t, `{
+			"model":"gpt-4o",
+			"status":"completed",
+			"output":[
+				{
+					"id":"fc_1",
+					"type":"function_call",
+					"call_id":"call_1",
+					"name":"helpers_answer",
+					"arguments":"{\"question\":\"What is the capital of Japan?\",\"style\":null}",
+					"status":"completed"
+				}
+			]
+		}`),
+	}
+	client, err := New(Options{
+		DefaultModel: "gpt-4o",
+		transport:    transport,
+	})
+	require.NoError(t, err)
+
+	resp, err := client.Complete(context.Background(), &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "Ping"}},
+		}},
+		Tools: []*model.ToolDefinition{{
+			Name:        "helpers.answer",
+			Description: "Answer a simple question.",
+			Input: model.ToolInputFromSchema(rawjson.Message(`{
+				"$schema": "https://json-schema.org/draft/2020-12/schema",
+				"type": "object",
+				"properties": {
+					"question": {"type": "string", "description": "User question", "example": "What?"},
+					"style": {"type": "string"}
+				},
+				"example": {"question": "What is the capital of Japan?"},
+				"required": ["question"]
+			}`)),
+		}},
+	})
+	require.NoError(t, err)
+
+	require.Len(t, transport.completeRequests, 1)
+	request := transport.completeRequests[0]
+	require.Len(t, request.Tools, 1)
+	function := request.Tools[0].OfFunction
+	require.NotNil(t, function)
+	assert.True(t, function.Strict.Value)
+	parameters, err := json.Marshal(function.Parameters)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{
+		"type": "object",
+		"additionalProperties": false,
+		"properties": {
+			"question": {"type": "string", "description": "User question"},
+			"style": {"type": ["string", "null"]}
+		},
+		"required": ["question", "style"]
+	}`, string(parameters))
+
+	require.Len(t, resp.ToolCalls, 1)
+	assert.Equal(t, tools.Ident("helpers.answer"), resp.ToolCalls[0].Name)
+	assert.JSONEq(t, `{"question":"What is the capital of Japan?"}`, string(resp.ToolCalls[0].Payload))
+}
+
 func TestClientCompleteRejectsMissingRequestedModelClassConfig(t *testing.T) {
 	tests := []struct {
 		name       string

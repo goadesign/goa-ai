@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"unicode"
 
@@ -23,6 +22,7 @@ import (
 	smithy "github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 
+	"goa.design/goa-ai/features/model/internal/claudecaps"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -238,7 +238,7 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*reque
 	// Adaptive thinking (Opus 4.6+) lets the model skip thinking blocks
 	// entirely, so the thinking-first ordering rule does not apply.
 	thinkingEnabled := req.Thinking != nil && req.Thinking.Enable
-	if thinkingEnabled && !isAdaptiveThinkingModel(modelID) {
+	if thinkingEnabled && !claudecaps.AdaptiveThinkingRequired(modelID) {
 		if err := transcript.ValidateBedrock(req.Messages, true); err != nil {
 			return nil, fmt.Errorf("bedrock: invalid message ordering with thinking enabled (model=%s): %w", modelID, err)
 		}
@@ -446,7 +446,7 @@ func (c *Client) resolveThinking(req *model.Request, parts *requestParts) thinki
 	// and how deeply to reason. Interleaved thinking is automatic in adaptive
 	// mode — no beta header is needed. The legacy type:"enabled" + budget_tokens
 	// config is deprecated for Opus 4.6 and produces unreliable signatures.
-	if isAdaptiveThinkingModel(parts.modelID) {
+	if claudecaps.AdaptiveThinkingRequired(parts.modelID) {
 		return thinkingConfig{
 			enable:   true,
 			adaptive: true,
@@ -506,7 +506,7 @@ func (c *Client) inferenceConfig(modelID string, maxTokens int, temp float32) *b
 	if tokens > 0 {
 		cfg.MaxTokens = aws.Int32(int32(tokens)) //nolint:gosec // AWS SDK requires int32
 	}
-	if supportsTemperature(modelID) {
+	if claudecaps.TemperatureSupported(modelID) {
 		if t := c.effectiveTemperature(temp); t > 0 {
 			cfg.Temperature = aws.Float32(t)
 		}
@@ -515,18 +515,6 @@ func (c *Client) inferenceConfig(modelID string, maxTokens int, temp float32) *b
 		return nil
 	}
 	return &cfg
-}
-
-// supportsTemperature reports whether modelID accepts Bedrock's temperature
-// inference parameter. Claude Opus 4.7 and later removed temperature/top_p/top_k,
-// so the adapter must omit sampling controls for every Opus 4.7+ Bedrock scope.
-// The Claude 5 generation (Fable/Mythos) also rejects sampling controls.
-func supportsTemperature(modelID string) bool {
-	if isFableModel(modelID) {
-		return false
-	}
-	minor, ok := opus4Minor(modelID)
-	return !ok || minor < 7
 }
 
 func cloneAdditionalModelFields(fields map[string]any) map[string]any {
@@ -996,7 +984,7 @@ func encodeTools(
 	// letting Bedrock return an opaque ValidationException: callers must use
 	// auto and steer tool selection through prompting, enforcing the
 	// must-call-tool contract on the response.
-	if forcesToolUse(choice) && isFableModel(modelID) {
+	if forcesToolUse(choice) && claudecaps.IsFableGeneration(modelID) {
 		return nil, nil, nil, nil, fmt.Errorf(
 			"bedrock: model %q does not support forced tool choice (tool_choice mode %q): thinking is always on and incompatible with forced tool use; use mode \"auto\" and steer tool selection through prompting",
 			modelID, choice.Mode,
@@ -1488,55 +1476,6 @@ func hasToolDefinition(defs []*model.ToolDefinition, name string) bool {
 		}
 	}
 	return false
-}
-
-// isAdaptiveThinkingModel reports whether modelID requires adaptive thinking
-// configuration. Starting with Opus 4.6, Anthropic deprecates the manual
-// type:"enabled" + budget_tokens config in favor of type:"adaptive", where the
-// model dynamically decides when and how deeply to reason. Interleaved thinking
-// is automatic in adaptive mode — no beta header is needed. On Opus 4.7+ the
-// legacy config is removed entirely and returns a 400 error. On the Claude 5
-// generation (Fable/Mythos) thinking is always on; only type:"adaptive" is
-// accepted and the legacy config likewise returns a 400 error.
-func isAdaptiveThinkingModel(modelID string) bool {
-	if isFableModel(modelID) {
-		return true
-	}
-	minor, ok := opus4Minor(modelID)
-	return ok && minor >= 6
-}
-
-// isFableModel reports whether modelID belongs to the Claude 5 generation
-// (Fable and its Mythos sibling). Bedrock publishes in-region, geo, and global
-// IDs that all contain the stable "claude-fable-5"/"claude-mythos-5" segment,
-// optionally followed by a provider suffix.
-func isFableModel(modelID string) bool {
-	return strings.Contains(modelID, "claude-fable-5") ||
-		strings.Contains(modelID, "claude-mythos-5")
-}
-
-// opus4Minor extracts the minor number from Anthropic Bedrock Opus 4 model IDs.
-// Bedrock publishes in-region, geo, and global IDs that all contain the stable
-// "claude-opus-4-<minor>" segment, optionally followed by a provider suffix.
-func opus4Minor(modelID string) (int, bool) {
-	const marker = "claude-opus-4-"
-	start := strings.Index(modelID, marker)
-	if start < 0 {
-		return 0, false
-	}
-	rest := modelID[start+len(marker):]
-	end := 0
-	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
-		end++
-	}
-	if end == 0 {
-		return 0, false
-	}
-	minor, err := strconv.Atoi(rest[:end])
-	if err != nil {
-		return 0, false
-	}
-	return minor, true
 }
 
 // isNovaModel reports whether the given model identifier refers to an Amazon

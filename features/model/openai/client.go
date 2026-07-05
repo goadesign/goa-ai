@@ -77,13 +77,14 @@ type (
 	}
 
 	// preparedRequest carries the provider-ready request plus the reversible
-	// mappings needed to translate tool calls back to canonical goa-ai names.
+	// tool projection state needed to translate tool calls back to canonical
+	// goa-ai names and payloads.
 	preparedRequest struct {
-		request             responses.ResponseNewParams
-		providerToCanonical map[string]string
-		resolvedModelID     string
-		resolvedModelClass  model.ModelClass
-		structuredOutput    *model.StructuredOutput
+		request            responses.ResponseNewParams
+		codec              *toolCodec
+		resolvedModelID    string
+		resolvedModelClass model.ModelClass
+		structuredOutput   *model.StructuredOutput
 	}
 
 	// responseStream is the minimal streaming surface needed by the adapter.
@@ -166,7 +167,7 @@ func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Respo
 	}
 	return translateResponse(
 		resp,
-		prepared.providerToCanonical,
+		prepared.codec,
 		prepared.resolvedModelID,
 		prepared.resolvedModelClass,
 		prepared.structuredOutput,
@@ -186,7 +187,7 @@ func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer
 	return newOpenAIStreamer(
 		ctx,
 		stream,
-		prepared.providerToCanonical,
+		prepared.codec,
 		prepared.resolvedModelID,
 		prepared.resolvedModelClass,
 		prepared.structuredOutput,
@@ -210,11 +211,11 @@ func (c *Client) prepareRequest(req *model.Request) (*preparedRequest, error) {
 	if modelID == "" {
 		return nil, errors.New("openai: model identifier is required")
 	}
-	toolDefs, canonicalToProvider, providerToCanonical, err := encodeTools(req.Tools)
+	toolDefs, codec, err := encodeTools(req.Tools)
 	if err != nil {
 		return nil, err
 	}
-	input, err := encodeMessages(req.Messages, canonicalToProvider)
+	input, err := encodeMessages(req.Messages, codec.providerNames())
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +253,7 @@ func (c *Client) prepareRequest(req *model.Request) (*preparedRequest, error) {
 		}
 	}
 	if req.ToolChoice != nil {
-		choice, ok, err := encodeToolChoice(req.ToolChoice, canonicalToProvider)
+		choice, ok, err := encodeToolChoice(req.ToolChoice, codec.providerNames())
 		if err != nil {
 			return nil, err
 		}
@@ -261,11 +262,11 @@ func (c *Client) prepareRequest(req *model.Request) (*preparedRequest, error) {
 		}
 	}
 	return &preparedRequest{
-		request:             request,
-		providerToCanonical: providerToCanonical,
-		resolvedModelID:     modelID,
-		resolvedModelClass:  modelClass,
-		structuredOutput:    req.StructuredOutput,
+		request:            request,
+		codec:              codec,
+		resolvedModelID:    modelID,
+		resolvedModelClass: modelClass,
+		structuredOutput:   req.StructuredOutput,
 	}, nil
 }
 

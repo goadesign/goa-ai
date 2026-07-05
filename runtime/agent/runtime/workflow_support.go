@@ -257,6 +257,7 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 		toolOpts.StartToCloseTimeout = defaultExecuteToolActivityTimeout
 	}
 	st := newRunLoopState(output.Result, output.Transcript, aggUsage, policy.CapsState{}, nextAttempt)
+	st.ToolCallSignatures = output.ToolCallSignatures
 	st.ToolEvents = cloneToolResults(allToolResults)
 	st.ToolOutputs = append([]*planner.ToolOutput(nil), allToolOutputs...)
 	loop := newWorkflowLoop(

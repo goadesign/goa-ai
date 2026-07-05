@@ -81,6 +81,17 @@ func normalizeStructuredOutputSchemaForBedrock(schema []byte) ([]byte, error) {
 	return normalized, nil
 }
 
+// bedrockSchemaNameMapKeywords are the schema keywords whose immediate map
+// keys are user-chosen names (property or definition names), never schema
+// keywords. Keyword stripping must not apply at that level: a property
+// legitimately named "default" or "title" is data, not a keyword.
+var bedrockSchemaNameMapKeywords = map[string]struct{}{
+	"properties":        {},
+	"patternProperties": {},
+	"$defs":             {},
+	"definitions":       {},
+}
+
 // normalizeBedrockSchemaNode rewrites one JSON Schema node in place and
 // recurses through its children. It strips keywords Bedrock does not support,
 // closes implicit object schemas, and rejects map-style additionalProperties
@@ -101,6 +112,18 @@ func normalizeBedrockSchemaNode(node any, path string) error {
 			normalizeBedrockArraySchema(value)
 		}
 		for key, child := range value {
+			if _, namesMap := bedrockSchemaNameMapKeywords[key]; namesMap {
+				childMap, ok := child.(map[string]any)
+				if !ok {
+					return fmt.Errorf("bedrock: structured output schema at %s.%s must be an object of named schemas", path, key)
+				}
+				for name, sub := range childMap {
+					if err := normalizeBedrockSchemaNode(sub, path+"."+key+"."+name); err != nil {
+						return err
+					}
+				}
+				continue
+			}
 			if err := normalizeBedrockSchemaNode(child, path+"."+key); err != nil {
 				return err
 			}

@@ -11,16 +11,21 @@ import (
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
-// runtimePlannerEvents implements planner.PlannerEvents for runtime plan
-// activities.
+// runtimePlannerEvents implements planner.PlannerEvents (and the unexported
+// toolCallSignatureSink) for runtime plan activities.
 //
-// It serves two purposes:
+// It serves three purposes:
 //   - Publish hook events (streaming / persistence / observability) via the runtime bus.
 //   - Capture thinking/text into a per-turn transcript ledger and aggregate token usage
 //     for deterministic workflow consumption.
+//   - Capture opaque provider tool-call thought signatures observed by
+//     signatureCapturingClient at the model-client boundary, keyed by
+//     tool-call ID, so the workflow can reattach them by ID when rebuilding
+//     the transcript without ever routing them through a planner-facing type.
 //
 // The planner (or model wrapper) may emit events while streaming; methods therefore
-// take a mutex to allow concurrent calls without corrupting the ledger or usage totals.
+// take a mutex to allow concurrent calls without corrupting the ledger, usage totals,
+// or captured signatures.
 type runtimePlannerEvents struct {
 	rt        *Runtime
 	agentID   agent.Ident
@@ -32,6 +37,11 @@ type runtimePlannerEvents struct {
 	led *transcript.Ledger
 
 	usage model.TokenUsage
+
+	// signatures holds captured tool-call thought signatures keyed by
+	// tool-call ID. Entries are added only for non-empty IDs and signatures;
+	// absence of a key means the provider did not emit one.
+	signatures map[string]string
 
 	hookErr error
 }
@@ -104,6 +114,33 @@ func (e *runtimePlannerEvents) exportTranscript() []*model.Message {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.led.BuildMessages()
+}
+
+// recordToolCallSignature implements toolCallSignatureSink. It is called by
+// signatureCapturingClient as tool calls are observed at the model-client
+// boundary; toolCallID and signature are guaranteed non-empty by the caller.
+func (e *runtimePlannerEvents) recordToolCallSignature(toolCallID, signature string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.signatures == nil {
+		e.signatures = make(map[string]string)
+	}
+	e.signatures[toolCallID] = signature
+}
+
+// exportToolCallSignatures returns a snapshot of captured tool-call thought
+// signatures for inclusion in the plan activity's output envelope.
+func (e *runtimePlannerEvents) exportToolCallSignatures() map[string]string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if len(e.signatures) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(e.signatures))
+	for k, v := range e.signatures {
+		out[k] = v
+	}
+	return out
 }
 
 func (e *runtimePlannerEvents) exportUsage() model.TokenUsage {
