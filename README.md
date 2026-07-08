@@ -174,9 +174,10 @@ or terminal tool result. During runtime-forced finalization, planners may also
 close through terminal bookkeeping tools; the runtime executes only
 `Bookkeeping()` + `TerminalRun()` tools in that path and requires the terminal
 side effects to succeed inside the remaining hard-deadline window. Retry-owned
-tool restrictions do not block this validated terminal path, while caller
-`WithRestrictToTool` policy still applies. Tool executors decide how work is
-performed.
+tool restrictions filter only budgeted work tools, so bookkeeping tools remain
+available in correction and finalization turns. Caller `WithRestrictToTool`
+policy is run-scoped and still applies to every tool. Tool executors decide how
+work is performed.
 
 ```go
 func (p *Planner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
@@ -470,9 +471,10 @@ Tool("commit_report", "Commit final report", func() {
 
 Bookkeeping tools do not consume the normal `MaxToolCalls` budget. Their events are still durable and streamed. Successful results stay hidden from future planner turns; retryable failures stay visible with their retry hints so the planner can repair the failed call.
 
-During runtime-forced finalization, retry-owned tool restrictions from previous
-repair attempts do not block validated terminal bookkeeping tools. Caller
-`WithRestrictToTool` policy remains run-scoped and still applies.
+Retry-owned tool restrictions filter budgeted work tools only. Bookkeeping tools
+remain available during correction turns, including terminal run tools that close
+the run, while caller `WithRestrictToTool` policy remains run-scoped and applies
+to every tool.
 
 The workflow runtime evaluates one admitted planner result as one step: it executes tool and await work, records durable and planner-facing outputs through one canonical path, then applies one transition policy to resume, finish, or finalize. A terminal payload may only accompany hidden, non-terminal bookkeeping side effects; budgeted tools, retryable bookkeeping failures, terminal tools, and awaits must be separate planner decisions.
 

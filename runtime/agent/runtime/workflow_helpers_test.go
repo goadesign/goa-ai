@@ -421,6 +421,8 @@ func TestAppendUserToolResults_AppendsRetryHintReminderAfterToolResults(t *testi
 	require.True(t, ok)
 	require.Contains(t, txt.Text, "A tool call failed and provided a RetryHint.")
 	require.Contains(t, txt.Text, "Tool: svc.read.aggregate")
+	require.Contains(t, txt.Text, "Restriction: retry the corrected call to svc.read.aggregate.")
+	require.Contains(t, txt.Text, "finish the run through its normal completion path")
 }
 
 func TestAppendUserToolResults_SkipsBookkeepingResults(t *testing.T) {

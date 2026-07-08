@@ -297,34 +297,76 @@ func TestApplyPerRunOverridesUsesAllTagClauses(t *testing.T) {
 	require.Equal(t, "Tool not available: denied", hint)
 }
 
-func TestApplyPerRunOverridesUsesRetryRestriction(t *testing.T) {
+func TestRetryRestrictionAllowsBookkeepingTools(t *testing.T) {
 	correctionSpec := newAnyJSONSpec("ada.get_time_series", "ada")
-	otherSpec := newAnyJSONSpec("tasks.progress.update", "tasks.progress")
+	budgetedSpec := newAnyJSONSpec("ada.resolve_sources", "ada")
+	progressSpec := newBookkeepingSpec("tasks.progress.update")
+	terminalSpec := newTerminalSpec("tasks.progress.complete")
+	specs := []tools.ToolSpec{correctionSpec, budgetedSpec, progressSpec, terminalSpec}
+
 	rt := New()
-	rt.policyToolMetadata = canonicalMetadataMap(correctionSpec, otherSpec)
-	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
-		correctionSpec.Name: correctionSpec,
-		otherSpec.Name:      otherSpec,
+	seedTestToolSpecs(rt, specs...)
+	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{
+		"service.agent": specs,
+	}
+	input := &RunInput{
+		Policy: &PolicyOverrides{
+			RetryRestrictToTool: correctionSpec.Name,
+		},
 	}
 
-	rewritten, err := rt.applyPerRunOverrides(
-		context.Background(),
-		&RunInput{
-			Policy: &PolicyOverrides{
-				RetryRestrictToTool: correctionSpec.Name,
-			},
-		},
-		[]planner.ToolRequest{
-			{Name: correctionSpec.Name},
-			{Name: otherSpec.Name},
-		},
-	)
+	ctx := newAgentContext(agentContextOptions{
+		runtime: rt,
+		agentID: "service.agent",
+		policy:  compileToolPolicy(input.Policy),
+	})
+	definitions := ctx.AdvertisedToolDefinitions()
+	require.Len(t, definitions, 3)
+	require.Equal(t, correctionSpec.Name.String(), definitions[0].Name)
+	require.Equal(t, progressSpec.Name.String(), definitions[1].Name)
+	require.Equal(t, terminalSpec.Name.String(), definitions[2].Name)
 
-	require.NoError(t, err)
-	require.Len(t, rewritten, 2)
-	require.Equal(t, correctionSpec.Name, rewritten[0].Name)
-	require.Equal(t, tools.ToolUnavailable, rewritten[1].Name)
-	require.JSONEq(t, `{"requested_tool":"tasks.progress.update"}`, string(rewritten[1].Payload))
+	cases := []struct {
+		name      string
+		calls     []planner.ToolRequest
+		wantNames []tools.Ident
+		wantJSON  map[int]string
+	}{
+		{
+			name: "terminal bookkeeping and restricted tool execute while budgeted work rewrites",
+			calls: []planner.ToolRequest{
+				{Name: correctionSpec.Name},
+				{Name: terminalSpec.Name},
+				{Name: budgetedSpec.Name},
+			},
+			wantNames: []tools.Ident{correctionSpec.Name, terminalSpec.Name, tools.ToolUnavailable},
+			wantJSON:  map[int]string{2: `{"requested_tool":"ada.resolve_sources"}`},
+		},
+		{
+			name:      "non-terminal bookkeeping executes",
+			calls:     []planner.ToolRequest{{Name: progressSpec.Name}},
+			wantNames: []tools.Ident{progressSpec.Name},
+		},
+		{
+			name:      "restricted tool executes",
+			calls:     []planner.ToolRequest{{Name: correctionSpec.Name}},
+			wantNames: []tools.Ident{correctionSpec.Name},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rewritten, err := rt.applyPerRunOverrides(context.Background(), input, tc.calls)
+			require.NoError(t, err)
+			require.Len(t, rewritten, len(tc.wantNames))
+			for i, want := range tc.wantNames {
+				require.Equal(t, want, rewritten[i].Name)
+			}
+			for i, want := range tc.wantJSON {
+				require.JSONEq(t, want, string(rewritten[i].Payload))
+			}
+		})
+	}
 }
 
 func TestFilterToolCallsKeepsToolUnavailable(t *testing.T) {
