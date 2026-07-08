@@ -378,9 +378,9 @@ func (r *Runtime) buildNextResumeRequest(
 	toolOutputs []*planner.ToolOutput,
 	nextAttempt *int,
 ) (PlanActivityInput, error) {
+	attempt := *nextAttempt
 	resumeCtx := base.RunContext
-	resumeCtx.Attempt = *nextAttempt
-	*nextAttempt++
+	resumeCtx.Attempt = attempt
 	plannerMsgs := cloneMessages(base.Messages)
 	if err := transcript.ValidatePlannerTranscript(plannerMsgs); err != nil {
 		return PlanActivityInput{}, fmt.Errorf("invalid resume transcript for run %s: %w", base.RunContext.RunID, err)
@@ -400,5 +400,7 @@ func (r *Runtime) buildNextResumeRequest(
 	if err := enforcePlanActivityInputBudget(out); err != nil {
 		return PlanActivityInput{}, err
 	}
+	base.RunContext.Attempt = attempt
+	*nextAttempt = attempt + 1
 	return out, nil
 }

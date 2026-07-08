@@ -144,8 +144,9 @@ func nestedRunIDSuffix(toolCallID string) string {
 //
 // Attempt is required to avoid ID collisions when the same run executes multiple
 // tool batches within a single logical turn (for example when callers set TurnID
-// to a constant run identifier). The runtime increments Attempt on each planner
-// iteration so generated IDs remain unique within the run.
+// to a constant run identifier). The workflow stamps RunContext.Attempt with the
+// planner turn attempt before executing that turn's generated tool calls, so
+// generated IDs remain unique within the run.
 func generateDeterministicToolCallID(runID, turnID string, attempt int, toolName tools.Ident, index int) string {
 	if runID == "" {
 		runID = unknownID

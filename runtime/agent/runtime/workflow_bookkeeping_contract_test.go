@@ -300,6 +300,204 @@ func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 	require.Equal(t, model.ConversationRoleSystem, wfCtx.lastPlannerCall.Input.Messages[2].Role)
 }
 
+func TestRunLoopProviderEmptyToolCallIDsAdvanceAcrossResumeAttempts(t *testing.T) {
+	cases := []struct {
+		name string
+		tool tools.Ident
+		want []string
+	}{
+		{
+			name: "tool unavailable resumes",
+			tool: tools.ToolUnavailable,
+			want: []string{
+				"run-1/turn-1/attempt-1/runtime-tool_unavailable/0",
+				"run-1/turn-1/attempt-2/runtime-tool_unavailable/0",
+				"run-1/turn-1/attempt-3/runtime-tool_unavailable/0",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := New(WithLogger(telemetry.NoopLogger{}))
+			agentID := agent.Ident("agent-1")
+			var resumeAttempts []int
+			rt.agents[agentID] = AgentRegistration{
+				ID: agentID,
+				Planner: &stubPlanner{resume: func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+					resumeAttempts = append(resumeAttempts, input.RunContext.Attempt)
+					switch len(resumeAttempts) {
+					case 1, 2:
+						require.Len(t, input.ToolOutputs, len(resumeAttempts))
+						return &planner.PlanResult{
+							ToolCalls: []planner.ToolRequest{{Name: tc.tool}},
+						}, nil
+					case 3:
+						require.Len(t, input.ToolOutputs, len(tc.want))
+						return &planner.PlanResult{
+							FinalResponse: &planner.FinalResponse{
+								Message: &model.Message{
+									Role:  model.ConversationRoleAssistant,
+									Parts: []model.Part{model.TextPart{Text: "done"}},
+								},
+							},
+						}, nil
+					default:
+						require.FailNow(t, "unexpected resume attempt")
+					}
+					return nil, nil
+				}},
+			}
+			wfCtx := &routeWorkflowContext{
+				ctx:         context.Background(),
+				runID:       "run-1",
+				hookRuntime: rt,
+				plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
+					"resume": func(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
+						return rt.PlanResumeActivity(ctx, input)
+					},
+				},
+			}
+			base := &planner.PlanInput{
+				RunContext: run.Context{
+					RunID:     "run-1",
+					SessionID: "sess-1",
+					TurnID:    "turn-1",
+					Attempt:   1,
+				},
+			}
+			input := &RunInput{
+				AgentID:   agentID,
+				RunID:     "run-1",
+				SessionID: "sess-1",
+				TurnID:    "turn-1",
+			}
+			initial := &planner.PlanResult{
+				ToolCalls: []planner.ToolRequest{{Name: tc.tool}},
+			}
+
+			out, err := rt.runLoop(
+				wfCtx,
+				AgentRegistration{ID: agentID, ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
+				input,
+				base,
+				initial,
+				nil,
+				model.TokenUsage{},
+				policy.CapsState{},
+				time.Time{},
+				time.Time{},
+				2,
+				"turn-1",
+				nil,
+				nil,
+				0,
+			)
+			require.NoError(t, err)
+			require.NotNil(t, out)
+			require.Equal(t, []int{2, 3, 4}, resumeAttempts)
+			require.Len(t, out.ToolEvents, len(tc.want))
+			for i, want := range tc.want {
+				require.Equal(t, want, out.ToolEvents[i].ToolCallID)
+			}
+			require.NotEqual(t, out.ToolEvents[1].ToolCallID, out.ToolEvents[2].ToolCallID)
+		})
+	}
+}
+
+func TestRunLoopProviderEmptyToolCallIDsUseBatchIndexes(t *testing.T) {
+	cases := []struct {
+		name  string
+		calls []planner.ToolRequest
+		want  []string
+	}{
+		{
+			name: "two tool unavailable calls",
+			calls: []planner.ToolRequest{
+				{Name: tools.ToolUnavailable},
+				{Name: tools.ToolUnavailable},
+			},
+			want: []string{
+				"run-1/turn-1/attempt-1/runtime-tool_unavailable/0",
+				"run-1/turn-1/attempt-1/runtime-tool_unavailable/1",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := New(WithLogger(telemetry.NoopLogger{}))
+			agentID := agent.Ident("agent-1")
+			rt.agents[agentID] = AgentRegistration{
+				ID: agentID,
+				Planner: &stubPlanner{resume: func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+					require.Len(t, input.ToolOutputs, len(tc.want))
+					return &planner.PlanResult{
+						FinalResponse: &planner.FinalResponse{
+							Message: &model.Message{
+								Role:  model.ConversationRoleAssistant,
+								Parts: []model.Part{model.TextPart{Text: "done"}},
+							},
+						},
+					}, nil
+				}},
+			}
+			wfCtx := &routeWorkflowContext{
+				ctx:         context.Background(),
+				runID:       "run-1",
+				hookRuntime: rt,
+				plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
+					"resume": func(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
+						return rt.PlanResumeActivity(ctx, input)
+					},
+				},
+			}
+			base := &planner.PlanInput{
+				RunContext: run.Context{
+					RunID:     "run-1",
+					SessionID: "sess-1",
+					TurnID:    "turn-1",
+					Attempt:   1,
+				},
+			}
+			input := &RunInput{
+				AgentID:   agentID,
+				RunID:     "run-1",
+				SessionID: "sess-1",
+				TurnID:    "turn-1",
+			}
+			initial := &planner.PlanResult{
+				ToolCalls: tc.calls,
+			}
+
+			out, err := rt.runLoop(
+				wfCtx,
+				AgentRegistration{ID: agentID, ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
+				input,
+				base,
+				initial,
+				nil,
+				model.TokenUsage{},
+				policy.CapsState{},
+				time.Time{},
+				time.Time{},
+				2,
+				"turn-1",
+				nil,
+				nil,
+				0,
+			)
+			require.NoError(t, err)
+			require.NotNil(t, out)
+			require.Len(t, out.ToolEvents, len(tc.want))
+			for i, want := range tc.want {
+				require.Equal(t, want, out.ToolEvents[i].ToolCallID)
+			}
+			require.NotEqual(t, out.ToolEvents[0].ToolCallID, out.ToolEvents[1].ToolCallID)
+		})
+	}
+}
+
 func TestRunLoopMixedBudgetedAndBookkeepingStillResumes(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
