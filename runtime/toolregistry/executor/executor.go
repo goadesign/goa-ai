@@ -3,6 +3,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -361,23 +362,35 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 				"toolregistry.tool_use_id", toolUseID,
 				"toolregistry.result_stream_id", resultStreamID,
 			)
+			result, err := e.decodeToolResult(spec, call, meta.ToolCallID, msg)
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, "decode tool result failed")
+				return nil, err
+			}
 			span.SetStatus(codes.Ok, "ok")
-			return runtime.Executed(e.decodeToolResult(spec, call, meta.ToolCallID, msg)), nil
+			return runtime.Executed(result), nil
 		}
 	}
 }
 
-func (e *Executor) decodeToolResult(spec *tools.ToolSpec, call *planner.ToolRequest, toolCallID string, msg toolregistry.ToolResultMessage) *planner.ToolResult {
+func (e *Executor) decodeToolResult(spec *tools.ToolSpec, call *planner.ToolRequest, toolCallID string, msg toolregistry.ToolResultMessage) (*planner.ToolResult, error) {
 	tool := tools.Ident("")
 	if call != nil {
 		tool = call.Name
+	}
+	if msg.Error != nil {
+		if msg.Bounds != nil {
+			return nil, fmt.Errorf("toolregistry result for %q is invalid: error and bounds are both set (tool_call_id=%s tool_use_id=%s)", tool, toolCallID, msg.ToolUseID)
+		}
+		if rawMessageHasNonNullJSON(msg.Result) {
+			return nil, fmt.Errorf("toolregistry result for %q is invalid: error and result are both set (tool_call_id=%s tool_use_id=%s)", tool, toolCallID, msg.ToolUseID)
+		}
 	}
 	out := &planner.ToolResult{
 		Name:       tool,
 		ToolCallID: toolCallID,
 	}
-	out.Bounds = cloneBounds(msg.Bounds)
-	out.ServerData = marshalServerDataItems(cloneServerDataItems(msg.ServerData))
 	if msg.Error != nil {
 		out.Error = planner.NewToolError(msg.Error.Message)
 		if hint := buildRetryHintFromIssues(tool, spec, msg.Error.Issues); hint != nil {
@@ -388,17 +401,34 @@ func (e *Executor) decodeToolResult(spec *tools.ToolSpec, call *planner.ToolRequ
 		if out.RetryHint != nil && len(out.RetryHint.ExampleJSON) == 0 {
 			out.RetryHint.ExampleJSON = cloneExampleJSON(spec)
 		}
-		return out
+		return out, nil
 	}
+	out.Bounds = cloneBounds(msg.Bounds)
+	out.ServerData = marshalServerDataItems(cloneServerDataItems(msg.ServerData))
 	if spec.Result.Codec.FromJSON != nil {
 		res, err := spec.Result.Codec.FromJSON(msg.Result)
 		if err != nil {
-			out.Error = planner.ToolErrorFromError(err)
-			return out
+			decodeErr := fmt.Errorf("toolregistry result for %q did not match registered schema: %w", tool, err)
+			out.Bounds = nil
+			out.ServerData = nil
+			out.Error = planner.ToolErrorFromError(decodeErr)
+			out.RetryHint = &planner.RetryHint{
+				Reason:  planner.RetryReasonMalformedResponse,
+				Tool:    tool,
+				Message: "provider result did not match the registered result schema",
+			}
+			return out, nil
 		}
 		out.Result = res
 	}
-	return out
+	return out, nil
+}
+
+// rawMessageHasNonNullJSON reports whether a wire result carries a real payload.
+// The registry protocol treats an omitted result and JSON null as absent.
+func rawMessageHasNonNullJSON(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null"))
 }
 
 // cloneBounds copies wire-level bounds metadata into executor-owned memory so

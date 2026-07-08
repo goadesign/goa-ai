@@ -137,6 +137,9 @@ func (r *Runtime) decodeProvidedToolResult(ctx context.Context, spec tools.ToolS
 	if item.Error != nil && resultProvided {
 		return nil, nil, fmt.Errorf("await: tool result for %s is invalid: error and result are both set", call.Name)
 	}
+	if item.Error != nil && item.Bounds != nil {
+		return nil, nil, fmt.Errorf("await: tool result for %s is invalid: error and bounds are both set", call.Name)
+	}
 	bounds := cloneProvidedToolBounds(item.Bounds)
 	var decoded any
 	var err error
