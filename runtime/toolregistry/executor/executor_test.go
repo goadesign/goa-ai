@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -392,6 +393,112 @@ func TestExecutorRestoresBoundsFromRegistryMessage(t *testing.T) {
 	assert.Equal(t, "narrow by device", res.ToolResult.Bounds.RefinementHint)
 }
 
+func TestExecutorRejectsInvalidRegistryErrorResults(t *testing.T) {
+	t.Parallel()
+
+	const (
+		toolUseID  = "tooluse-invalid"
+		toolCallID = "toolcall-invalid"
+	)
+	cases := []struct {
+		name string
+		msg  toolregistry.ToolResultMessage
+		want string
+	}{
+		{
+			name: "error and bounds",
+			msg: toolregistry.ToolResultMessage{
+				ToolUseID: toolUseID,
+				Error:     &toolregistry.ToolError{Code: "execution_failed", Message: "failed"},
+				Bounds:    &agent.Bounds{Returned: 1},
+			},
+			want: "error and bounds are both set",
+		},
+		{
+			name: "error and result",
+			msg: toolregistry.ToolResultMessage{
+				ToolUseID: toolUseID,
+				Error:     &toolregistry.ToolError{Code: "execution_failed", Message: "failed"},
+				Result:    json.RawMessage(`{"ok":true}`),
+			},
+			want: "error and result are both set",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := executeRegistryResultMessage(t, toolUseID, toolCallID, tc.msg, &tools.ToolSpec{
+				Name:    "atlas.read.list_devices",
+				Toolset: "atlas.read",
+				Result:  tools.TypeSpec{},
+				Payload: tools.TypeSpec{},
+			})
+
+			require.Error(t, err)
+			assert.Nil(t, res)
+			assert.Contains(t, err.Error(), tc.want)
+			assert.Contains(t, err.Error(), "tool_call_id="+toolCallID)
+			assert.Contains(t, err.Error(), "tool_use_id="+toolUseID)
+		})
+	}
+}
+
+func TestExecutorResultDecodeFailureReturnsModelVisibleErrorWithoutBounds(t *testing.T) {
+	t.Parallel()
+
+	const (
+		toolUseID  = "tooluse-decode"
+		toolCallID = "toolcall-decode"
+	)
+	nextCursor := "cursor-2"
+	spec := &tools.ToolSpec{
+		Name:    "atlas.read.list_devices",
+		Toolset: "atlas.read",
+		Result: tools.TypeSpec{
+			Codec: tools.JSONCodec[any]{
+				FromJSON: func(data []byte) (any, error) {
+					return nil, errors.New("invalid enum value \"retired\"")
+				},
+			},
+		},
+		Payload: tools.TypeSpec{},
+		Bounds: &tools.BoundsSpec{
+			Paging: &tools.PagingSpec{
+				CursorField:     "cursor",
+				NextCursorField: "next_cursor",
+			},
+		},
+	}
+
+	res, err := executeRegistryResultMessage(t, toolUseID, toolCallID, toolregistry.ToolResultMessage{
+		ToolUseID: toolUseID,
+		Result:    json.RawMessage(`{"status":"retired"}`),
+		Bounds: &agent.Bounds{
+			Returned:   1,
+			Truncated:  true,
+			NextCursor: &nextCursor,
+		},
+		ServerData: []*toolregistry.ServerDataItem{{
+			Kind:     "atlas.devices",
+			Audience: "internal",
+			Data:     json.RawMessage(`{"count":1}`),
+		}},
+	}, spec)
+
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.NotNil(t, res.ToolResult)
+	assert.Nil(t, res.ToolResult.Bounds)
+	assert.Nil(t, res.ToolResult.ServerData)
+	require.NotNil(t, res.ToolResult.Error)
+	assert.Contains(t, res.ToolResult.Error.Error(), "invalid enum value \"retired\"")
+	require.NotNil(t, res.ToolResult.RetryHint)
+	assert.Equal(t, planner.RetryReasonMalformedResponse, res.ToolResult.RetryHint.Reason)
+	assert.Equal(t, tools.Ident("atlas.read.list_devices"), res.ToolResult.RetryHint.Tool)
+	assert.False(t, res.ToolResult.RetryHint.RestrictToTool)
+	assert.Contains(t, res.ToolResult.RetryHint.Message, "registered result schema")
+}
+
 type fakeRegistryClient struct {
 	toolUseID string
 }
@@ -476,6 +583,41 @@ func mustJSON(t *testing.T, v any) []byte {
 		t.Fatalf("marshal: %v", err)
 	}
 	return b
+}
+
+func executeRegistryResultMessage(
+	t *testing.T,
+	toolUseID string,
+	toolCallID string,
+	msg toolregistry.ToolResultMessage,
+	spec *tools.ToolSpec,
+) (*agentsruntime.ToolExecutionResult, error) {
+	t.Helper()
+
+	stream := &fakeStream{
+		t:             t,
+		requiredStart: "0",
+		events: []*streaming.Event{
+			{
+				ID:        "1-0",
+				EventName: toolregistry.ResultEventKey,
+				Payload:   mustJSON(t, msg),
+			},
+		},
+	}
+	exec := New(
+		fakeRegistryClient{toolUseID: toolUseID},
+		fakePulseClient{streamID: toolregistry.ResultStreamID(toolUseID), stream: stream},
+		fakeSpecs{spec: spec},
+	)
+	return exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
+		RunID:      "run",
+		SessionID:  "sess",
+		ToolCallID: toolCallID,
+	}, &planner.ToolRequest{
+		Name:    spec.Name,
+		Payload: []byte(`{}`),
+	})
 }
 
 func (t *recordingTracer) Start(ctx context.Context, name string, opts ...trace.SpanStartOption) (context.Context, telemetry.Span) {
