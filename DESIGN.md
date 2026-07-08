@@ -174,8 +174,9 @@ schema.
   prose final answer. The runtime executes only `Bookkeeping()` + `TerminalRun()`
   tools in that path, keeps them inside the remaining hard-deadline window, and
   closes the run only if every terminal side effect succeeds. Retry-owned
-  restrict-to-tool state does not block this validated terminal path; caller
-  `WithRestrictToTool` policy remains run-scoped and still applies.
+  restrict-to-tool state filters budgeted work tools only, so bookkeeping tools
+  remain available in correction and finalization turns. Caller
+  `WithRestrictToTool` policy remains run-scoped and still applies to every tool.
 - **Visible reasoning contract**: Bedrock adaptive-thinking requests ask for
   summarized reasoning display explicitly so streamed `thinking` events remain
   visible across Claude adaptive model revisions whose provider defaults may

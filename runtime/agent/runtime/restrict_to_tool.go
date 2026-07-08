@@ -11,8 +11,10 @@ package runtime
 //   payload, not to the rest of the run.
 // - Caller-supplied WithRestrictToTool policy is run-scoped. Retry restrictions
 //   live in separate runtime-owned state and never clear caller policy.
-// - Retry restricted-tool mode constrains normal correction turns only; terminal
-//   caps and deadlines may still execute validated terminal bookkeeping tools.
+// - Retry restricted-tool mode constrains budgeted work tools only. Bookkeeping
+//   tools, including terminal run tools, are never filtered by retry-owned state.
+// - Caller-supplied WithRestrictToTool policy is run-scoped and absolute; it
+//   still filters bookkeeping and terminal run tools.
 
 import "goa.design/goa-ai/runtime/agent/planner"
 
@@ -49,19 +51,4 @@ func clearSatisfiedToolRestriction(input *RunInput, results []*planner.ToolResul
 		input.Policy.RetryRestrictToTool = ""
 		return
 	}
-}
-
-// inputForFinalizationTerminalTools returns the run input used to execute an
-// already-validated terminal bookkeeping finalizer. Retry-owned restrictions are
-// correction-turn state, so they must not block terminal run side effects after
-// caps or deadlines have ended normal tool selection. Caller-supplied
-// RestrictToTool remains intact because it is run-scoped policy.
-func inputForFinalizationTerminalTools(input *RunInput) *RunInput {
-	if input.Policy == nil || input.Policy.RetryRestrictToTool == "" {
-		return input
-	}
-	finalInput := *input
-	finalInput.Policy = clonePolicyOverrides(input.Policy)
-	finalInput.Policy.RetryRestrictToTool = ""
-	return &finalInput
 }

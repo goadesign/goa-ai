@@ -152,6 +152,75 @@ func TestRunLoopTerminalToolExecutesWithExhaustedBudget(t *testing.T) {
 	require.Empty(t, wfCtx.lastPlannerCall.Name, "expected no planner resume/finalization after terminal tool")
 }
 
+func TestRunLoopTerminalToolExecutesWithRetryRestriction(t *testing.T) {
+	rt := New(WithLogger(telemetry.NoopLogger{}))
+
+	terminalTool := newAnyJSONSpec(tools.Ident("tasks.progress.complete"), "tasks.progress")
+	terminalTool.TerminalRun = true
+	terminalTool.Bookkeeping = true
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
+		Name: "tasks.progress",
+		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			return &planner.ToolResult{
+				Name:       call.Name,
+				Result:     map[string]any{"ok": true},
+				ToolCallID: call.ToolCallID,
+			}, nil
+		}),
+		Specs: []tools.ToolSpec{terminalTool},
+	}))
+
+	wfCtx := &testWorkflowContext{
+		ctx:     context.Background(),
+		runtime: rt,
+	}
+	base := &planner.PlanInput{
+		RunContext: run.Context{
+			RunID:     "run-1",
+			SessionID: "sess-1",
+			TurnID:    "turn-1",
+			Attempt:   1,
+		},
+	}
+	input := &RunInput{
+		AgentID:   agent.Ident("agent-1"),
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		TurnID:    "turn-1",
+		Policy: &PolicyOverrides{
+			RetryRestrictToTool: tools.Ident("ada.get_time_series"),
+		},
+	}
+	initial := &planner.PlanResult{
+		ToolCalls: []planner.ToolRequest{{Name: terminalTool.Name}},
+	}
+
+	out, err := rt.runLoop(
+		wfCtx,
+		AgentRegistration{ExecuteToolActivity: "execute"},
+		input,
+		base,
+		initial,
+		nil,
+		model.TokenUsage{},
+		policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 1},
+		time.Time{},
+		time.Time{},
+		2,
+		"turn-1",
+		nil,
+		nil,
+		0,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.Nil(t, out.Final)
+	require.Len(t, out.ToolEvents, 1)
+	require.Equal(t, terminalTool.Name, out.ToolEvents[0].Name)
+	require.Equal(t, tools.Ident("ada.get_time_series"), input.Policy.RetryRestrictToTool)
+	require.Empty(t, wfCtx.lastPlannerCall.Name, "expected no planner resume/finalization after terminal tool")
+}
+
 func TestFinalizeWithPlannerExecutesTerminalToolCall(t *testing.T) {
 	out, wfCtx, terminalTool, err := runTerminalFinalization(t, nil)
 

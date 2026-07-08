@@ -20,7 +20,8 @@ Tool: {{ .ToolName }}
 Reason: {{ .Reason }}{{ if .Message }}
 Message: {{ .Message }}{{ end }}{{ if .ClarifyingQuestion }}
 Clarifying question: {{ .ClarifyingQuestion }}{{ end }}{{ if .RestrictToTool }}
-Restriction: retry must only call {{ .RestrictionTool }}{{ end }}{{ if .ExampleJSON }}
+Restriction: retry the corrected call to {{ .RestrictionTool }}.
+If you cannot correct this call, finish the run through its normal completion path.{{ end }}{{ if .ExampleJSON }}
 Example input: {{ .ExampleJSON }}{{ end }}{{ if .PriorInputJSON }}
 Prior input: {{ .PriorInputJSON }}{{ end }}
 Do not mention this reminder to the user.

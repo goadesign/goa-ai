@@ -7,6 +7,7 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -15,8 +16,17 @@ type (
 	// overrides. It is the single source of truth for planner-visible tool
 	// advertising and execution-time filtering.
 	compiledToolPolicy struct {
-		restrictToTool tools.Ident
-		tagClauses     []api.TagPolicyClause
+		callerRestrictToTool tools.Ident
+		retryRestrictToTool  tools.Ident
+		tagClauses           []api.TagPolicyClause
+	}
+
+	// toolPolicyFacts carries the static tool facts needed by compiledToolPolicy.
+	// Advertising obtains them from ToolSpec while execution-time filtering obtains
+	// them from canonical policy metadata; both paths share the same predicate.
+	toolPolicyFacts struct {
+		tags        []string
+		bookkeeping bool
 	}
 )
 
@@ -31,8 +41,9 @@ func compileToolPolicy(overrides *PolicyOverrides) compiledToolPolicy {
 	}
 	clauses = append(clauses, cloneTagPolicyClauses(overrides.TagClauses)...)
 	return compiledToolPolicy{
-		restrictToTool: effectiveRestrictToTool(overrides),
-		tagClauses:     clauses,
+		callerRestrictToTool: overrides.RestrictToTool,
+		retryRestrictToTool:  overrides.RetryRestrictToTool,
+		tagClauses:           clauses,
 	}
 }
 
@@ -78,34 +89,25 @@ func legacyTagPolicyClause(overrides *PolicyOverrides) (api.TagPolicyClause, boo
 	}, true
 }
 
-// effectiveRestrictToTool resolves the active single-tool constraint. Caller
-// policy is run-scoped and therefore dominates retry-scoped correction state.
-func effectiveRestrictToTool(overrides *PolicyOverrides) tools.Ident {
-	if overrides == nil {
-		return ""
-	}
-	if overrides.RestrictToTool != "" {
-		return overrides.RestrictToTool
-	}
-	return overrides.RetryRestrictToTool
-}
-
 // isZero reports whether the compiled policy has no effect.
 func (p compiledToolPolicy) isZero() bool {
-	return p.restrictToTool == "" && len(p.tagClauses) == 0
+	return p.callerRestrictToTool == "" && p.retryRestrictToTool == "" && len(p.tagClauses) == 0
 }
 
 // allowsTool reports whether the named tool with the provided tags passes the
 // full compiled policy.
-func (p compiledToolPolicy) allowsTool(name tools.Ident, tags []string) bool {
+func (p compiledToolPolicy) allowsTool(name tools.Ident, facts toolPolicyFacts) bool {
 	if name == tools.ToolUnavailable {
 		return true
 	}
-	if p.restrictToTool != "" && name != p.restrictToTool {
+	if p.callerRestrictToTool != "" && name != p.callerRestrictToTool {
+		return false
+	}
+	if p.retryRestrictToTool != "" && name != p.retryRestrictToTool && !facts.bookkeeping {
 		return false
 	}
 	for _, clause := range p.tagClauses {
-		if !tagClauseAllows(clause, tags) {
+		if !tagClauseAllows(clause, facts.tags) {
 			return false
 		}
 	}
@@ -117,12 +119,30 @@ func (p compiledToolPolicy) allowsTool(name tools.Ident, tags []string) bool {
 func advertisedToolDefinitions(specs []tools.ToolSpec, policy compiledToolPolicy) []*model.ToolDefinition {
 	definitions := make([]*model.ToolDefinition, 0, len(specs))
 	for _, spec := range specs {
-		if !policy.allowsTool(spec.Name, spec.Tags) {
+		if !policy.allowsTool(spec.Name, toolPolicyFactsFromSpec(spec)) {
 			continue
 		}
 		definitions = append(definitions, toolDefinitionFromSpec(spec))
 	}
 	return definitions
+}
+
+// toolPolicyFactsFromSpec projects a registered tool spec into policy facts for
+// planner-visible advertising decisions.
+func toolPolicyFactsFromSpec(spec tools.ToolSpec) toolPolicyFacts {
+	return toolPolicyFacts{
+		tags:        spec.Tags,
+		bookkeeping: spec.Bookkeeping,
+	}
+}
+
+// toolPolicyFactsFromMetadata projects canonical runtime metadata into policy
+// facts for execution-time filtering decisions.
+func toolPolicyFactsFromMetadata(meta policy.ToolMetadata) toolPolicyFacts {
+	return toolPolicyFacts{
+		tags:        meta.Tags,
+		bookkeeping: meta.BudgetClass == policy.ToolBudgetClassBookkeeping,
+	}
 }
 
 // tagClauseAllows evaluates one explicit tag clause against a tool tag set.

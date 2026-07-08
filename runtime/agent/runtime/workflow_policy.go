@@ -45,7 +45,7 @@ func (r *Runtime) applyPerRunOverrides(ctx context.Context, input *RunInput, can
 	metas := r.toolMetadata(candidates)
 	rewritten := make([]planner.ToolRequest, 0, len(candidates))
 	for i, call := range candidates {
-		if runPolicy.allowsTool(call.Name, metas[i].Tags) {
+		if runPolicy.allowsTool(call.Name, toolPolicyFactsFromMetadata(metas[i])) {
 			rewritten = append(rewritten, call)
 			continue
 		}

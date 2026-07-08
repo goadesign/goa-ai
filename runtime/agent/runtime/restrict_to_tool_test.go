@@ -103,3 +103,43 @@ func TestApplyToolResultPolicyHintsPromotesNewRestrictionAfterSatisfiedCorrectio
 
 	assert.Equal(t, tools.Ident("ada.compile_query"), input.Policy.RetryRestrictToTool)
 }
+
+func TestApplyToolResultPolicyHintsKeepsRestrictionUntilRestrictedToolSucceeds(t *testing.T) {
+	t.Parallel()
+
+	restrictedTool := tools.Ident("ada.resolve_time_series_sources")
+	cases := []struct {
+		name    string
+		results []*planner.ToolResult
+		want    tools.Ident
+	}{
+		{
+			name: "non-terminal bookkeeping success does not clear restriction",
+			results: []*planner.ToolResult{{
+				Name: tools.Ident("tasks.progress.update"),
+			}},
+			want: restrictedTool,
+		},
+		{
+			name: "restricted tool success clears restriction",
+			results: []*planner.ToolResult{{
+				Name: restrictedTool,
+			}},
+			want: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := &RunInput{
+				Policy: &PolicyOverrides{
+					RetryRestrictToTool: restrictedTool,
+				},
+			}
+
+			applyToolResultPolicyHints(input, tc.results)
+
+			assert.Equal(t, tc.want, input.Policy.RetryRestrictToTool)
+		})
+	}
+}
