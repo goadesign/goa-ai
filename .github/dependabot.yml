@@ -1,0 +1,14 @@
+# Weekly dependency-update PRs. Security alerts alone don't open PRs, and
+# the docker/docker advisories dismissed on 2026-07-11 (test-only via
+# testcontainers-go, no patched module published) rely on exactly this
+# mechanism to deliver the fix when moby tags one.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
