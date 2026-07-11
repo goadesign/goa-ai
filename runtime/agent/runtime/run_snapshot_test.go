@@ -52,12 +52,21 @@ func TestNewRunSnapshotDerivesToolStateAndCompletion(t *testing.T) {
 	t1 := time.Unix(11, 0).UTC()
 	t2 := time.Unix(12, 0).UTC()
 	t3 := time.Unix(13, 0).UTC()
+	t4 := time.Unix(14, 0).UTC()
 
+	labels := map[string]string{"household_id": "house-42"}
 	events := []*runlog.Event{
-		mk(t0, hooks.NewRunPhaseChangedEvent(runID, agentID, sessionID, run.PhasePlanning)),
-		mk(t1, hooks.NewToolCallScheduledEvent(runID, agentID, sessionID, tools.Ident("svc.tools.search"), "call-1", []byte(`{"q":"x"}`), "q", "", 0)),
-		mk(t2, hooks.NewToolResultReceivedEvent(runID, agentID, sessionID, tools.Ident("svc.tools.search"), "call-1", "", nil, 0, false, "", nil, "", nil, 250*time.Millisecond, nil, nil, toolerrors.New("boom"))),
-		mk(t3, hooks.NewRunCompletedEvent(runID, agentID, sessionID, "failed", run.PhaseFailed, errors.New("run failed"), nil)),
+		mk(t0, hooks.NewRunStartedEvent(runID, agentID, run.Context{
+			RunID:     runID,
+			SessionID: sessionID,
+			TurnID:    turnID,
+			Attempt:   1,
+			Labels:    labels,
+		}, nil)),
+		mk(t1, hooks.NewRunPhaseChangedEvent(runID, agentID, sessionID, run.PhasePlanning)),
+		mk(t2, hooks.NewToolCallScheduledEvent(runID, agentID, sessionID, tools.Ident("svc.tools.search"), "call-1", []byte(`{"q":"x"}`), "q", "", 0)),
+		mk(t3, hooks.NewToolResultReceivedEvent(runID, agentID, sessionID, tools.Ident("svc.tools.search"), "call-1", "", nil, 0, false, "", nil, "", nil, 250*time.Millisecond, nil, nil, toolerrors.New("boom"))),
+		mk(t4, hooks.NewRunCompletedEvent(runID, agentID, sessionID, "failed", run.PhaseFailed, labels, errors.New("run failed"), nil)),
 	}
 
 	snap, err := newRunSnapshot(events)
@@ -66,6 +75,7 @@ func TestNewRunSnapshotDerivesToolStateAndCompletion(t *testing.T) {
 	require.Equal(t, runID, snap.RunID)
 	require.Equal(t, sessionID, snap.SessionID)
 	require.Equal(t, turnID, snap.TurnID)
+	require.Equal(t, labels, snap.Labels)
 	require.Equal(t, run.StatusFailed, snap.Status)
 	require.Equal(t, run.PhaseFailed, snap.Phase)
 	require.Len(t, snap.ToolCalls, 1)

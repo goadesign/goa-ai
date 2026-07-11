@@ -29,7 +29,7 @@ func TestNewRunCompletedEventPreservesTemporalProviderErrorEnvelope(t *testing.T
 	require.ErrorAs(t, err, &appErr)
 	require.False(t, appErr.NonRetryable())
 
-	evt := NewRunCompletedEvent("run-1", "svc.agent", "sess-1", "failed", run.PhaseFailed, err, nil)
+	evt := NewRunCompletedEvent("run-1", "svc.agent", "sess-1", "failed", run.PhaseFailed, nil, err, nil)
 
 	require.NotNil(t, evt.Failure)
 	require.Equal(t, PublicErrorProviderRateLimited, evt.Failure.Message)
@@ -48,6 +48,7 @@ func TestNewRunCompletedEventCanceledOmitsFailureMetadata(t *testing.T) {
 		"sess-1",
 		"canceled",
 		run.PhaseCanceled,
+		nil,
 		context.Canceled,
 		&run.Cancellation{Reason: run.CancellationReasonUserRequested},
 	)
@@ -55,4 +56,11 @@ func TestNewRunCompletedEventCanceledOmitsFailureMetadata(t *testing.T) {
 	require.Nil(t, evt.Failure)
 	require.NotNil(t, evt.Cancellation)
 	require.Equal(t, run.CancellationReasonUserRequested, evt.Cancellation.Reason)
+}
+
+func TestNewRunCompletedEventCarriesRunLabels(t *testing.T) {
+	labels := map[string]string{"household_id": "house-42"}
+	evt := NewRunCompletedEvent("run-1", "svc.agent", "sess-1", "success", run.PhaseCompleted, labels, nil, nil)
+
+	require.Equal(t, labels, evt.Labels)
 }

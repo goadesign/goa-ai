@@ -82,7 +82,7 @@ func (r *Runtime) RunOneShot(ctx context.Context, input OneShotRunInput, execute
 	})
 	execErr := execute(execCtx)
 	status, phase := oneShotTerminalState(execErr)
-	completed, err := r.buildRunCompletedEvent(ctx, input.RunID, input.AgentID, "", status, phase, execErr)
+	completed, err := r.buildRunCompletedEvent(ctx, input.RunID, input.AgentID, "", status, phase, runCtx.Labels, execErr)
 	if err != nil {
 		if execErr != nil {
 			return execErr

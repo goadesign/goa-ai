@@ -22,6 +22,10 @@ type (
 		SessionID string
 		// TurnID groups events for a single conversational turn.
 		TurnID string
+		// Labels carries the run-scoped labels provided when the run started
+		// (RunInput.Labels), replayed from the RunStarted event. Nil when the
+		// run had none.
+		Labels map[string]string
 
 		// Status is the coarse-grained run lifecycle status derived from events.
 		Status Status

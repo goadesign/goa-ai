@@ -243,6 +243,13 @@ that UIs and stream bridges can consume without heuristics.
     - `error`: **user-safe** message suitable for direct display
     - `debug_error`: raw error string for logs/diagnostics (not for UI)
 
+- **Terminal identity**
+  - `RunCompletedEvent.Labels` carries the run-scoped labels provided at run
+    start (`RunInput.Labels`, nil when the run had none) so completion
+    subscribers can attribute the outcome without tracking run identity out of
+    band. `run.Snapshot.Labels` exposes the same identity to polling readers,
+    replayed from the durable `RunStarted` record.
+
 This keeps consumers simple: render `error`, gate “Retry” on `retryable`, and treat `canceled` as non-error.
 
 ## Runtime Tracing Error Contract

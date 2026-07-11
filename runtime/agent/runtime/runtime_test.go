@@ -422,6 +422,76 @@ func TestExecuteWorkflowSeedsInitialTranscriptInsteadOfAppendingHistory(t *testi
 	require.Equal(t, "done", agentMessageText(appended[0]))
 }
 
+func TestExecuteWorkflowEmitsRunLabelsOnTerminalCompletion(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := runloginmem.New()
+	rt := &Runtime{
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: store,
+		SessionStore:  sessioninmem.New(),
+		Bus:           noopHooks{},
+		agents: map[agent.Ident]AgentRegistration{
+			"svc.agent": {
+				ID: "svc.agent",
+				Planner: &stubPlanner{start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
+					return &planner.PlanResult{
+						FinalResponse: &planner.FinalResponse{
+							Message: &model.Message{
+								Role:  model.ConversationRoleAssistant,
+								Parts: []model.Part{model.TextPart{Text: "done"}},
+							},
+						},
+					}, nil
+				}},
+				PlanActivityName: "plan",
+			},
+		},
+	}
+	wfCtx := &testWorkflowContext{
+		ctx:         ctx,
+		runtime:     rt,
+		hookRuntime: rt,
+	}
+
+	labels := map[string]string{"household_id": "house-42", "source": "email"}
+	_, err := rt.ExecuteWorkflow(wfCtx, &RunInput{
+		AgentID:   "svc.agent",
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		TurnID:    "turn-1",
+		Labels:    labels,
+	})
+	require.NoError(t, err)
+
+	page, err := store.List(ctx, "run-1", "", 20)
+	require.NoError(t, err)
+	require.NotEmpty(t, page.Events)
+	last := page.Events[len(page.Events)-1]
+	require.Equal(t, hooks.RunCompleted, last.Type)
+
+	decoded, err := hooks.DecodeFromRecordInput(&runlog.ActivityInput{
+		Type:      last.Type,
+		RunID:     last.RunID,
+		AgentID:   last.AgentID,
+		SessionID: last.SessionID,
+		TurnID:    last.TurnID,
+		Payload:   last.Payload,
+	})
+	require.NoError(t, err)
+	completed, ok := decoded.(*hooks.RunCompletedEvent)
+	require.True(t, ok)
+	require.Equal(t, "success", completed.Status)
+	require.Equal(t, labels, completed.Labels)
+
+	snapshot, err := rt.GetRunSnapshot(ctx, "run-1")
+	require.NoError(t, err)
+	require.Equal(t, labels, snapshot.Labels)
+}
+
 func TestStartOneShotDoesNotRequireSession(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{

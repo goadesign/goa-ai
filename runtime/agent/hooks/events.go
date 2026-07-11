@@ -106,6 +106,13 @@ type (
 		// is typically PhaseCompleted; failures map to PhaseFailed; cancellations
 		// map to PhaseCanceled.
 		Phase run.Phase
+		// Labels carries the run-scoped labels provided when the run started
+		// (RunInput.Labels). This is the same run identity metadata that rides
+		// ToolRequest.Labels during execution, surfaced on the terminal event so
+		// completion subscribers can attribute the outcome without tracking run
+		// identity out of band. Nil when the run had no labels. Subscribers must
+		// treat the map as read-only.
+		Labels map[string]string
 	}
 
 	// RunPausedEvent fires when a run is intentionally paused.
@@ -578,11 +585,14 @@ func NewRunStartedEvent(runID string, agentID agent.Ident, runContext run.Contex
 //   - Failed runs must provide a non-nil err so Failure can be populated.
 //   - Canceled runs should provide cancellation provenance; when none is supplied,
 //     the runtime records the cancel as engine-originated.
+//   - Labels must be the run-scoped labels provided when the run started
+//     (RunInput.Labels), nil when the run had none.
 func NewRunCompletedEvent(
 	runID string,
 	agentID agent.Ident,
 	sessionID, status string,
 	phase run.Phase,
+	labels map[string]string,
 	err error,
 	cancellation *run.Cancellation,
 ) *RunCompletedEvent {
@@ -595,7 +605,7 @@ func NewRunCompletedEvent(
 	case "canceled":
 		cancellation = newRunCancellation(cancellation)
 	}
-	evt, buildErr := newRunCompletedEventFromPayload(runID, agentID, sessionID, status, phase, failure, cancellation)
+	evt, buildErr := newRunCompletedEventFromPayload(runID, agentID, sessionID, status, phase, labels, failure, cancellation)
 	if buildErr != nil {
 		panic("hooks: " + buildErr.Error())
 	}
@@ -609,6 +619,7 @@ func newRunCompletedEventFromPayload(
 	agentID agent.Ident,
 	sessionID, status string,
 	phase run.Phase,
+	labels map[string]string,
 	failure *run.Failure,
 	cancellation *run.Cancellation,
 ) (*RunCompletedEvent, error) {
@@ -618,6 +629,7 @@ func newRunCompletedEventFromPayload(
 		baseEvent: be,
 		Status:    status,
 		Phase:     phase,
+		Labels:    labels,
 	}
 	switch status {
 	case "success":

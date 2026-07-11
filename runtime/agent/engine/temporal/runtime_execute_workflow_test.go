@@ -99,12 +99,14 @@ func TestExecuteWorkflowCancelsAwaitQuestionsBeforeLateResults(t *testing.T) {
 		})
 	}, 2*time.Second)
 
+	runLabels := map[string]string{"household_id": "house-42"}
 	env.ExecuteWorkflow(func(ctx workflow.Context) (*api.RunOutput, error) {
 		return rt.ExecuteWorkflow(NewWorkflowContext(eng, ctx), &agentruntime.RunInput{
 			AgentID:   agentID,
 			RunID:     runID,
 			SessionID: sessionID,
 			TurnID:    turnID,
+			Labels:    runLabels,
 		})
 	})
 
@@ -149,6 +151,7 @@ func TestExecuteWorkflowCancelsAwaitQuestionsBeforeLateResults(t *testing.T) {
 	require.NotNil(t, completedEvent, "expected terminal run completion event")
 	require.Equal(t, "canceled", completedEvent.Status)
 	require.Equal(t, run.PhaseCanceled, completedEvent.Phase)
+	require.Equal(t, runLabels, completedEvent.Labels)
 	lastEvent, ok := events[len(events)-1].(*hooks.RunCompletedEvent)
 	require.True(t, ok, "terminal completion should be the final hook")
 	require.Equal(t, "canceled", lastEvent.Status)

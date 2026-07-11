@@ -267,12 +267,14 @@ func TestStartRunSynthesizesTerminalCompletionWhenWorkflowClosesWithoutHook(t *t
 	_, err := rt.CreateSession(ctx, "sess-1")
 	require.NoError(t, err)
 
+	labels := map[string]string{"household_id": "house-42"}
 	wfHandle, err := rt.MustClient(agent.Ident("service.agent")).Start(
 		ctx,
 		"sess-1",
 		nil,
 		WithRunID("run-1"),
 		WithTurnID("turn-1"),
+		WithLabels(labels),
 	)
 	require.NoError(t, err)
 
@@ -289,6 +291,24 @@ func TestStartRunSynthesizesTerminalCompletionWhenWorkflowClosesWithoutHook(t *t
 	meta, err := rt.SessionStore.LoadRun(ctx, "run-1")
 	require.NoError(t, err)
 	require.Equal(t, session.RunStatusFailed, meta.Status)
+
+	page, err := rt.ListRunEvents(ctx, "run-1", "", 10)
+	require.NoError(t, err)
+	require.NotEmpty(t, page.Events)
+	last := page.Events[len(page.Events)-1]
+	require.Equal(t, hooks.RunCompleted, last.Type)
+	decoded, err := hooks.DecodeFromRecordInput(&runlog.ActivityInput{
+		Type:      last.Type,
+		RunID:     last.RunID,
+		AgentID:   last.AgentID,
+		SessionID: last.SessionID,
+		TurnID:    last.TurnID,
+		Payload:   last.Payload,
+	})
+	require.NoError(t, err)
+	completed, ok := decoded.(*hooks.RunCompletedEvent)
+	require.True(t, ok)
+	require.Equal(t, labels, completed.Labels)
 }
 
 func TestStartRunDoesNotWaitForCompletionUntilObserved(t *testing.T) {
@@ -441,7 +461,7 @@ func TestStartRunSkipsSynthesizedCompletionWhenRunAlreadyTerminal(t *testing.T) 
 	require.NoError(t, err)
 	require.NoError(t, rt.publishHookErr(
 		ctx,
-		hooks.NewRunCompletedEvent("run-1", "service.agent", "sess-1", runStatusSuccess, run.PhaseCompleted, nil, nil),
+		hooks.NewRunCompletedEvent("run-1", "service.agent", "sess-1", runStatusSuccess, run.PhaseCompleted, nil, nil, nil),
 		"turn-1",
 	))
 
@@ -518,17 +538,20 @@ func TestGetRunSnapshotRepairsTimedOutRunWithTimeoutPublicError(t *testing.T) {
 	_, err := rt.CreateSession(ctx, "sess-1")
 	require.NoError(t, err)
 
+	labels := map[string]string{"household_id": "house-42"}
 	input := RunInput{
 		AgentID:   "service.agent",
 		RunID:     "run-1",
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
+		Labels:    labels,
 	}
 	runCtx := run.Context{
 		RunID:     input.RunID,
 		SessionID: input.SessionID,
 		TurnID:    input.TurnID,
 		Attempt:   1,
+		Labels:    labels,
 	}
 	err = rt.publishHookErr(
 		ctx,
@@ -561,6 +584,64 @@ func TestGetRunSnapshotRepairsTimedOutRunWithTimeoutPublicError(t *testing.T) {
 	require.NotNil(t, completed.Failure)
 	require.Equal(t, hooks.PublicErrorTimeout, completed.Failure.Message)
 	require.Equal(t, hooks.ErrorKindTimeout, completed.Failure.Kind)
+	require.Equal(t, labels, completed.Labels)
+}
+
+func TestGetRunSnapshotRepairsSessionlessRunWithLabelsFromRunLog(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	rt := newObservedHandleTestRuntime(&controlledWaitHandle{
+		ready: make(chan struct{}),
+	})
+	eng, ok := rt.Engine.(*controlledWaitEngine)
+	require.True(t, ok)
+	eng.reportedStatus = engine.RunStatusFailed
+
+	labels := map[string]string{"household_id": "house-42"}
+	input := RunInput{
+		AgentID: "service.agent",
+		RunID:   "run-1",
+		TurnID:  "turn-1",
+		Labels:  labels,
+	}
+	runCtx := run.Context{
+		RunID:   input.RunID,
+		TurnID:  input.TurnID,
+		Attempt: 1,
+		Labels:  labels,
+	}
+	err := rt.publishHookErr(
+		ctx,
+		hooks.NewRunStartedEvent(input.RunID, input.AgentID, runCtx, input),
+		input.TurnID,
+	)
+	require.NoError(t, err)
+
+	snapshot, err := rt.GetRunSnapshot(ctx, "run-1")
+	require.NoError(t, err)
+	require.Equal(t, run.StatusFailed, snapshot.Status)
+	require.Equal(t, labels, snapshot.Labels)
+
+	page, err := rt.ListRunEvents(ctx, "run-1", "", 10)
+	require.NoError(t, err)
+	require.NotEmpty(t, page.Events)
+
+	last := page.Events[len(page.Events)-1]
+	require.Equal(t, hooks.RunCompleted, last.Type)
+	decoded, err := hooks.DecodeFromRecordInput(&runlog.ActivityInput{
+		Type:      last.Type,
+		RunID:     last.RunID,
+		AgentID:   last.AgentID,
+		SessionID: last.SessionID,
+		TurnID:    last.TurnID,
+		Payload:   last.Payload,
+	})
+	require.NoError(t, err)
+
+	completed, ok := decoded.(*hooks.RunCompletedEvent)
+	require.True(t, ok)
+	require.Equal(t, labels, completed.Labels)
 }
 
 func TestGetRunSnapshotRepairsFailedRunWithQueriedProviderError(t *testing.T) {
@@ -932,7 +1013,7 @@ func TestRunCompletedHookClearsStoredHandleWhenEngineSignalsByID(t *testing.T) {
 
 	err = rt.publishHookErr(
 		ctx,
-		hooks.NewRunCompletedEvent("run-1", "service.agent", "sess-1", runStatusSuccess, run.PhaseCompleted, nil, nil),
+		hooks.NewRunCompletedEvent("run-1", "service.agent", "sess-1", runStatusSuccess, run.PhaseCompleted, nil, nil, nil),
 		"turn-1",
 	)
 	require.NoError(t, err)

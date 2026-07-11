@@ -97,9 +97,11 @@ func TestRunOneShotClassifiesCanceledExecutionAsCanceled(t *testing.T) {
 		RunEventStore: runlogStore,
 	})
 	runID := "oneshot-run-canceled"
+	labels := map[string]string{"household_id": "house-42"}
 	err := rt.RunOneShot(context.Background(), OneShotRunInput{
 		AgentID: "example.agent",
 		RunID:   runID,
+		Labels:  labels,
 	}, func(context.Context) error {
 		return context.Canceled
 	})
@@ -123,4 +125,5 @@ func TestRunOneShotClassifiesCanceledExecutionAsCanceled(t *testing.T) {
 	completed, ok := event.(*hooks.RunCompletedEvent)
 	require.True(t, ok)
 	require.Equal(t, runStatusCanceled, completed.Status)
+	require.Equal(t, labels, completed.Labels)
 }

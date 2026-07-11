@@ -231,7 +231,7 @@ func TestStreamSubscriber_WorkflowFromRunCompleted(t *testing.T) {
 	sub, err := NewSubscriber(sink)
 	require.NoError(t, err)
 	ctx := context.Background()
-	evt := hooks.NewRunCompletedEvent("r1", agent.Ident("agent1"), "session-1", "success", run.PhaseCompleted, nil, nil)
+	evt := hooks.NewRunCompletedEvent("r1", agent.Ident("agent1"), "session-1", "success", run.PhaseCompleted, nil, nil, nil)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 	require.Len(t, sink.events, 2)
 	wf, ok := sink.events[0].(Workflow)
@@ -252,7 +252,7 @@ func TestStreamSubscriber_WorkflowFromRunCompleted_FailedHasPublicAndDebugErrors
 	ctx := context.Background()
 
 	pe := model.NewProviderError("bedrock", "converse_stream", 429, model.ProviderErrorKindRateLimited, "rate_limited", "", "", true, context.DeadlineExceeded)
-	evt := hooks.NewRunCompletedEvent("r1", agent.Ident("agent1"), "session-1", "failed", run.PhaseFailed, pe, nil)
+	evt := hooks.NewRunCompletedEvent("r1", agent.Ident("agent1"), "session-1", "failed", run.PhaseFailed, nil, pe, nil)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 
 	require.Len(t, sink.events, 2)
@@ -281,6 +281,7 @@ func TestStreamSubscriber_WorkflowFromRunCompleted_CanceledHasNoFailureMetadata(
 		"session-1",
 		"canceled",
 		run.PhaseCanceled,
+		nil,
 		context.Canceled,
 		&run.Cancellation{Reason: run.CancellationReasonUserRequested},
 	)
@@ -429,7 +430,7 @@ func TestStreamSubscriber_ToolEndPrecedesRunStreamEnd(t *testing.T) {
 	)
 	require.NoError(t, sub.HandleEvent(ctx, toolEnd))
 
-	completed := hooks.NewRunCompletedEvent("r1", agent.Ident("agent1"), "session-1", "success", run.PhaseCompleted, nil, nil)
+	completed := hooks.NewRunCompletedEvent("r1", agent.Ident("agent1"), "session-1", "success", run.PhaseCompleted, nil, nil, nil)
 	require.NoError(t, sub.HandleEvent(ctx, completed))
 
 	require.Len(t, sink.events, 3)

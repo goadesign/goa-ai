@@ -135,6 +135,27 @@ func TestEncodeToRecordInputPreservesDispatchMetadata(t *testing.T) {
 	require.Equal(t, "evt-prompt-rendered", decoded.EventKey())
 }
 
+func TestDecodeFromRecordInput_RunCompletedRoundTripsLabels(t *testing.T) {
+	labels := map[string]string{
+		"household_id": "house-42",
+		"source":       "email",
+	}
+	ev := NewRunCompletedEvent(testRunID, agent.Ident("agent-1"), testSessionID, "success", run.PhaseCompleted, labels, nil, nil)
+
+	in, err := EncodeToRecordInput(ev, EncodeOptions{
+		EventKey:    "evt-run-completed-labels",
+		TimestampMS: 104,
+	})
+	require.NoError(t, err)
+
+	decoded, err := DecodeFromRecordInput(in)
+	require.NoError(t, err)
+
+	got, ok := decoded.(*RunCompletedEvent)
+	require.True(t, ok)
+	require.Equal(t, labels, got.Labels)
+}
+
 func TestDecodeFromRecordInput_RunCompletedRejectsFailedPayloadWithoutFailure(t *testing.T) {
 	payload, err := json.Marshal(runCompletedPayload{
 		Status: "failed",

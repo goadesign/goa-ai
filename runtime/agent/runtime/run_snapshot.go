@@ -52,6 +52,13 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 		}
 
 		switch e.Type {
+		case hooks.RunStarted:
+			var p hooks.RunStartedEvent
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return nil, fmt.Errorf("decode %s payload: %w", hooks.RunStarted, err)
+			}
+			s.Labels = p.RunContext.Labels
+
 		case hooks.ChildRunLinked:
 			var p hooks.ChildRunLinkedEvent
 			if err := json.Unmarshal(e.Payload, &p); err != nil {

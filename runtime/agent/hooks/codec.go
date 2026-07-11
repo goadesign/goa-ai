@@ -33,6 +33,7 @@ type (
 		Phase        run.Phase         `json:"phase"`
 		Failure      *run.Failure      `json:"failure,omitempty"`
 		Cancellation *run.Cancellation `json:"cancellation,omitempty"`
+		Labels       map[string]string `json:"labels,omitempty"`
 	}
 
 	turnIDSetter interface {
@@ -98,6 +99,7 @@ func EncodeToRecordInput(evt Event, opts EncodeOptions) (*runlog.ActivityInput, 
 			Phase:        e.Phase,
 			Failure:      e.Failure,
 			Cancellation: e.Cancellation,
+			Labels:       e.Labels,
 		}
 		b, err := json.Marshal(p)
 		if err != nil {
@@ -200,6 +202,7 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 			input.SessionID,
 			p.Status,
 			p.Phase,
+			p.Labels,
 			p.Failure,
 			p.Cancellation,
 		)

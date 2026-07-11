@@ -962,7 +962,10 @@ out, err := client.Run(ctx, sessionID, messages,
 
 `WithLabels` merges into `RunInput.Labels`, which rides `ToolRequest.Labels`
 unchanged across both engines (inmem and Temporal) down to every tool
-execution in the run. Labels are plain strings; **only `String` fields may be
+execution in the run. The same labels come back out at the end of the run:
+the terminal `RunCompletedEvent.Labels` and `run.Snapshot.Labels` carry the
+start labels so completion hooks and `GetRunSnapshot` readers can recover the
+run identity without out-of-band tracking. Labels are plain strings; **only `String` fields may be
 injected** -- there is no generated conversion to numeric, boolean, or
 structured types. A design that needs a non-string injected value must model
 it as a `String` (with `Pattern`/`Format` validation as needed) and convert
@@ -1359,8 +1362,8 @@ non-workflow code publish directly.
 
 | Event | When |
 |-------|------|
-| `RunStarted` | Run begins |
-| `RunCompleted` | Run finishes (success, failed, canceled) |
+| `RunStarted` | Run begins (carries `RunContext`, including run labels) |
+| `RunCompleted` | Run finishes (success, failed, canceled); carries the run's start labels |
 | `RunPaused` / `RunResumed` | Human-in-the-loop transitions |
 | `RunPhaseChanged` | Phase transitions (planning, executing_tools, etc.) |
 | `PromptRendered` | Runtime resolves and renders a prompt spec |
@@ -1445,6 +1448,15 @@ The stream subscriber translates these into `workflow` stream events:
 
 - **Non-terminal updates** (from `RunPhaseChanged`): `phase` only.
 - **Terminal update** (from `RunCompleted`): `status` + terminal `phase`.
+
+`RunCompleted` also carries `Labels`: the run-scoped labels provided when the
+run started (`RunInput.Labels`), nil when the run had none. Completion
+subscribers can attribute the terminal outcome (for example, call back into the
+service that owns the run's source entity) without maintaining their own
+runID-to-identity map. The same labels are exposed on `run.Snapshot.Labels` for
+polling readers, replayed from the durable `RunStarted` record, so the identity
+survives process restarts on both engines. Labels merged by policy decisions
+mid-run are not included; they remain observable via `PolicyDecision` events.
 
 Terminal status mapping:
 

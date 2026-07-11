@@ -5,6 +5,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -20,19 +21,32 @@ import (
 	"goa.design/goa-ai/runtime/agent/session"
 )
 
-type observedWorkflowHandle struct {
-	inner     engine.WorkflowHandle
-	runtime   *Runtime
-	runID     string
-	agentID   agent.Ident
-	sessionID string
-	turnID    string
+type (
+	observedWorkflowHandle struct {
+		inner     engine.WorkflowHandle
+		runtime   *Runtime
+		runID     string
+		agentID   agent.Ident
+		sessionID string
+		turnID    string
+		labels    map[string]string
 
-	waitOnce sync.Once
-	waitDone chan struct{}
-	out      *api.RunOutput
-	err      error
-}
+		waitOnce sync.Once
+		waitDone chan struct{}
+		out      *api.RunOutput
+		err      error
+	}
+
+	// runCompletionIdentity carries the durable run identity required to
+	// synthesize a canonical RunCompleted event when no in-process observed
+	// handle remains (for example, after a starter restart).
+	runCompletionIdentity struct {
+		AgentID   agent.Ident
+		SessionID string
+		TurnID    string
+		Labels    map[string]string
+	}
+)
 
 // newObservedWorkflowHandle wraps an engine handle so explicit Wait callers and
 // on-demand snapshot repair share one underlying Wait call.
@@ -44,6 +58,7 @@ func newObservedWorkflowHandle(runtime *Runtime, input *RunInput, inner engine.W
 		agentID:   input.AgentID,
 		sessionID: input.SessionID,
 		turnID:    input.TurnID,
+		labels:    cloneLabels(input.Labels),
 		waitDone:  make(chan struct{}),
 	}
 }
@@ -98,7 +113,7 @@ func (h *observedWorkflowHandle) ensureWait() {
 func (h *observedWorkflowHandle) awaitCompletion() {
 	h.out, h.err = h.inner.Wait(context.Background())
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	err := h.runtime.repairObservedTerminalRunCompletion(ctx, h.runID, h.agentID, h.sessionID, h.turnID, h.err)
+	err := h.runtime.repairObservedTerminalRunCompletion(ctx, h.runID, h.agentID, h.sessionID, h.turnID, h.labels, h.err)
 	cancel()
 	if err != nil {
 		h.runtime.logWarn(context.Background(), "run completion repair failed", err, "run_id", h.runID, "agent_id", h.agentID)
@@ -115,6 +130,7 @@ func (r *Runtime) buildRunCompletedEvent(
 	agentID agent.Ident,
 	sessionID, status string,
 	phase run.Phase,
+	labels map[string]string,
 	err error,
 ) (*hooks.RunCompletedEvent, error) {
 	var cancellation *run.Cancellation
@@ -125,7 +141,7 @@ func (r *Runtime) buildRunCompletedEvent(
 		}
 		cancellation = loadCancellation
 	}
-	return hooks.NewRunCompletedEvent(runID, agentID, sessionID, status, phase, err, cancellation), nil
+	return hooks.NewRunCompletedEvent(runID, agentID, sessionID, status, phase, labels, err, cancellation), nil
 }
 
 // repairObservedTerminalRunCompletion publishes the canonical terminal hook for
@@ -137,11 +153,12 @@ func (r *Runtime) repairObservedTerminalRunCompletion(
 	runID string,
 	agentID agent.Ident,
 	sessionID, turnID string,
+	labels map[string]string,
 	waitErr error,
 ) error {
 	status := terminalRunStatusForError(waitErr)
 	phase := terminalRunPhaseForStatus(status)
-	evt, err := r.buildRunCompletedEvent(ctx, runID, agentID, sessionID, status, phase, waitErr)
+	evt, err := r.buildRunCompletedEvent(ctx, runID, agentID, sessionID, status, phase, labels, waitErr)
 	if err != nil {
 		return err
 	}
@@ -235,19 +252,19 @@ func (r *Runtime) runHasTerminalSnapshot(ctx context.Context, runID string) (boo
 // the durable engine status when no in-process observed workflow handle remains
 // to surface the original wait error.
 func (r *Runtime) synthesizeTerminalRunCompletion(ctx context.Context, runID string, status engine.RunStatus) error {
-	agentID, sessionID, turnID, err := r.runCompletionMetadata(ctx, runID)
+	identity, err := r.runCompletionMetadata(ctx, runID)
 	if err != nil {
 		return err
 	}
 	publicStatus := terminalRunStatusForEngineStatus(status)
-	evt, err := r.buildRunCompletedEvent(ctx, runID, agentID, sessionID, publicStatus, terminalRunPhaseForStatus(publicStatus), terminalRunErrorForStatus(status))
+	evt, err := r.buildRunCompletedEvent(ctx, runID, identity.AgentID, identity.SessionID, publicStatus, terminalRunPhaseForStatus(publicStatus), identity.Labels, terminalRunErrorForStatus(status))
 	if err != nil {
 		return err
 	}
 	return r.publishHookErr(
 		ctx,
 		evt,
-		turnID,
+		identity.TurnID,
 	)
 }
 
@@ -259,7 +276,7 @@ func (r *Runtime) repairQueriedTerminalRunCompletion(ctx context.Context, runID 
 		if errors.Is(waitErr, engine.ErrWorkflowNotFound) {
 			return waitErr
 		}
-		agentID, sessionID, turnID, err := r.runCompletionMetadata(ctx, runID)
+		identity, err := r.runCompletionMetadata(ctx, runID)
 		if err != nil {
 			return err
 		}
@@ -267,10 +284,11 @@ func (r *Runtime) repairQueriedTerminalRunCompletion(ctx context.Context, runID 
 		evt, err := r.buildRunCompletedEvent(
 			ctx,
 			runID,
-			agentID,
-			sessionID,
+			identity.AgentID,
+			identity.SessionID,
 			status,
 			terminalRunPhaseForStatus(status),
+			identity.Labels,
 			waitErr,
 		)
 		if err != nil {
@@ -279,50 +297,55 @@ func (r *Runtime) repairQueriedTerminalRunCompletion(ctx context.Context, runID 
 		return r.publishHookErr(
 			ctx,
 			evt,
-			turnID,
+			identity.TurnID,
 		)
 	})
 }
 
-// runCompletionMetadata recovers the identifiers needed to synthesize a
-// canonical RunCompleted event after a restart. Session metadata supplies the
-// durable agent/session mapping while the earliest run-log event preserves the
-// original turn ID when available.
-func (r *Runtime) runCompletionMetadata(ctx context.Context, runID string) (agent.Ident, string, string, error) {
-	var (
-		agentID   agent.Ident
-		sessionID string
-		turnID    string
-	)
+// runCompletionMetadata recovers the durable run identity needed to synthesize
+// a canonical RunCompleted event after a restart. Session metadata supplies the
+// agent/session mapping and run labels while the earliest run-log event
+// preserves the original turn ID (and, for sessionless runs, the labels
+// recorded on RunStarted) when available.
+func (r *Runtime) runCompletionMetadata(ctx context.Context, runID string) (runCompletionIdentity, error) {
+	var identity runCompletionIdentity
 	if r.SessionStore != nil {
 		meta, err := r.SessionStore.LoadRun(ctx, runID)
 		if err == nil {
-			agentID = agent.Ident(meta.AgentID)
-			sessionID = meta.SessionID
+			identity.AgentID = agent.Ident(meta.AgentID)
+			identity.SessionID = meta.SessionID
+			identity.Labels = meta.Labels
 		} else if !errors.Is(err, session.ErrRunNotFound) {
-			return "", "", "", err
+			return runCompletionIdentity{}, err
 		}
 	}
 	if r.RunEventStore != nil {
 		page, err := r.RunEventStore.List(ctx, runID, "", 1)
 		if err != nil {
-			return "", "", "", err
+			return runCompletionIdentity{}, err
 		}
 		if len(page.Events) > 0 {
 			ev := page.Events[0]
-			if agentID == "" {
-				agentID = ev.AgentID
+			if identity.AgentID == "" {
+				identity.AgentID = ev.AgentID
 			}
-			if sessionID == "" {
-				sessionID = ev.SessionID
+			if identity.SessionID == "" {
+				identity.SessionID = ev.SessionID
 			}
-			turnID = ev.TurnID
+			identity.TurnID = ev.TurnID
+			if len(identity.Labels) == 0 && ev.Type == hooks.RunStarted {
+				var p hooks.RunStartedEvent
+				if err := json.Unmarshal(ev.Payload, &p); err != nil {
+					return runCompletionIdentity{}, fmt.Errorf("decode %s payload: %w", hooks.RunStarted, err)
+				}
+				identity.Labels = p.RunContext.Labels
+			}
 		}
 	}
-	if agentID == "" {
-		return "", "", "", run.ErrNotFound
+	if identity.AgentID == "" {
+		return runCompletionIdentity{}, run.ErrNotFound
 	}
-	return agentID, sessionID, turnID, nil
+	return identity, nil
 }
 
 // terminalRunStatusForError maps workflow completion errors onto the public

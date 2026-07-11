@@ -68,6 +68,10 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	}
 	r.logger.Info(wfCtx.Context(), "Agent found, executing plan activity", "agent_id", input.AgentID)
 	ctrl := interrupt.NewController(wfCtx)
+	// Policy decisions merge additional labels into input.Labels in place during
+	// the run loop; the terminal RunCompleted event must carry the run-scoped
+	// labels as provided at start, so capture them before the loop runs.
+	startLabels := cloneLabels(input.Labels)
 	runCtx := run.Context{
 		RunID:            input.RunID,
 		SessionID:        input.SessionID,
@@ -122,6 +126,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 			input.SessionID,
 			finalStatus,
 			phase,
+			startLabels,
 			finalErr,
 		)
 		if buildErr != nil {
