@@ -116,7 +116,7 @@ func validateResponseMessage(message *Message) error {
 	if _, err := cloneMetadata(message.Meta); err != nil {
 		return fmt.Errorf("message metadata: %w", err)
 	}
-	if _, err := json.Marshal(message.Meta); err != nil {
+	if _, err := MarshalMetadata(message.Meta); err != nil {
 		return fmt.Errorf("message metadata is not valid JSON: %w", err)
 	}
 	for index, part := range message.Parts {
@@ -126,7 +126,7 @@ func validateResponseMessage(message *Message) error {
 				return fmt.Errorf("part %d: text is empty", index)
 			}
 		case CitationsPart:
-			if err := validateCitationsPart(actual); err != nil {
+			if err := ValidateCitationsPart(actual); err != nil {
 				return fmt.Errorf("part %d: %w", index, err)
 			}
 		case ToolUsePart:
@@ -175,7 +175,7 @@ func validateChunkMessage(message *Message, thinking bool) error {
 				return fmt.Errorf("model: text chunk part %d is empty", index)
 			}
 		case CitationsPart:
-			if err := validateCitationsPart(actual); err != nil {
+			if err := ValidateCitationsPart(actual); err != nil {
 				return fmt.Errorf("model: text chunk part %d: %w", index, err)
 			}
 		default:
@@ -219,7 +219,9 @@ func validateToolCall(call *ToolCall) error {
 	return nil
 }
 
-func validateCitationsPart(part CitationsPart) error {
+// ValidateCitationsPart verifies that a canonical citation block has generated
+// text, source attribution, and at most one provider-neutral location variant.
+func ValidateCitationsPart(part CitationsPart) error {
 	if part.Text == "" {
 		return errors.New("citation text is empty")
 	}

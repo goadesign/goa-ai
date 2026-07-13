@@ -33,8 +33,10 @@ import (
 )
 
 const (
-	defaultThinkingBudget = 16384
-	bedrockProviderName   = "bedrock"
+	defaultThinkingBudget        = 16384
+	bedrockProviderName          = "bedrock"
+	minBedrockCitationCoordinate = -1 << 31
+	maxBedrockCitationCoordinate = 1<<31 - 1
 )
 
 // RuntimeClient mirrors the subset of the AWS Bedrock runtime client required
@@ -731,7 +733,17 @@ func encodeMessages(msgs []*model.Message, nameMap map[string]string, cacheAfter
 					blocks = append(blocks, &brtypes.ContentBlockMemberText{Value: v.Text})
 				}
 			case model.CitationsPart:
-				return nil, nil, errors.New("bedrock: replaying canonical citations is not supported")
+				if m.Role != model.ConversationRoleAssistant {
+					return nil, nil, fmt.Errorf(
+						"bedrock: citation parts are only supported in assistant messages (role=%s)",
+						m.Role,
+					)
+				}
+				block, err := encodeCitationsContent(v)
+				if err != nil {
+					return nil, nil, err
+				}
+				blocks = append(blocks, block)
 			case model.ImagePart:
 				// Bedrock supports image blocks only for user messages (Claude multimodal).
 				if m.Role != model.ConversationRoleUser {
@@ -901,6 +913,119 @@ func encodeMessages(msgs []*model.Message, nameMap map[string]string, cacheAfter
 		})
 	}
 	return conversation, system, nil
+}
+
+// encodeCitationsContent reconstructs the Bedrock citation block represented by
+// one canonical assistant part. Canonical validation owns content and source
+// invariants; this adapter additionally requires Bedrock's document location.
+func encodeCitationsContent(part model.CitationsPart) (brtypes.ContentBlock, error) {
+	if err := model.ValidateCitationsPart(part); err != nil {
+		return nil, fmt.Errorf("bedrock: invalid citations part: %w", err)
+	}
+	citations := make([]brtypes.Citation, 0, len(part.Citations))
+	for index, citation := range part.Citations {
+		encoded, err := encodeCitation(citation)
+		if err != nil {
+			return nil, fmt.Errorf("bedrock: citation %d: %w", index, err)
+		}
+		citations = append(citations, encoded)
+	}
+	return &brtypes.ContentBlockMemberCitationsContent{
+		Value: brtypes.CitationsContentBlock{
+			Content: []brtypes.CitationGeneratedContent{
+				&brtypes.CitationGeneratedContentMemberText{Value: part.Text},
+			},
+			Citations: citations,
+		},
+	}, nil
+}
+
+// encodeCitation reconstructs one Bedrock citation without dropping optional
+// source identity or source excerpts.
+func encodeCitation(citation model.Citation) (brtypes.Citation, error) {
+	location, err := encodeCitationLocation(citation.Location)
+	if err != nil {
+		return brtypes.Citation{}, err
+	}
+	out := brtypes.Citation{
+		Location: location,
+	}
+	if citation.Title != "" {
+		out.Title = aws.String(citation.Title)
+	}
+	if citation.Source != "" {
+		out.Source = aws.String(citation.Source)
+	}
+	if len(citation.SourceContent) > 0 {
+		out.SourceContent = make([]brtypes.CitationSourceContent, 0, len(citation.SourceContent))
+		for _, content := range citation.SourceContent {
+			out.SourceContent = append(out.SourceContent, &brtypes.CitationSourceContentMemberText{Value: content})
+		}
+	}
+	return out, nil
+}
+
+// encodeCitationLocation converts the one canonical document location into the
+// corresponding Bedrock union member.
+func encodeCitationLocation(location model.CitationLocation) (brtypes.CitationLocation, error) {
+	switch {
+	case location.DocumentChar != nil:
+		value := location.DocumentChar
+		documentIndex, start, end, err := encodeCitationCoordinates(value.DocumentIndex, value.Start, value.End)
+		if err != nil {
+			return nil, err
+		}
+		return &brtypes.CitationLocationMemberDocumentChar{
+			Value: brtypes.DocumentCharLocation{
+				DocumentIndex: documentIndex,
+				Start:         start,
+				End:           end,
+			},
+		}, nil
+	case location.DocumentChunk != nil:
+		value := location.DocumentChunk
+		documentIndex, start, end, err := encodeCitationCoordinates(value.DocumentIndex, value.Start, value.End)
+		if err != nil {
+			return nil, err
+		}
+		return &brtypes.CitationLocationMemberDocumentChunk{
+			Value: brtypes.DocumentChunkLocation{
+				DocumentIndex: documentIndex,
+				Start:         start,
+				End:           end,
+			},
+		}, nil
+	case location.DocumentPage != nil:
+		value := location.DocumentPage
+		documentIndex, start, end, err := encodeCitationCoordinates(value.DocumentIndex, value.Start, value.End)
+		if err != nil {
+			return nil, err
+		}
+		return &brtypes.CitationLocationMemberDocumentPage{
+			Value: brtypes.DocumentPageLocation{
+				DocumentIndex: documentIndex,
+				Start:         start,
+				End:           end,
+			},
+		}, nil
+	default:
+		return nil, errors.New("requires exactly one Bedrock document location")
+	}
+}
+
+// encodeCitationCoordinates narrows canonical int coordinates to Bedrock's
+// int32 wire fields without allowing a lossy replay.
+func encodeCitationCoordinates(documentIndex, start, end int) (*int32, *int32, *int32, error) {
+	if documentIndex < minBedrockCitationCoordinate || documentIndex > maxBedrockCitationCoordinate {
+		return nil, nil, nil, fmt.Errorf("document index %d is outside Bedrock's int32 range", documentIndex)
+	}
+	if start < minBedrockCitationCoordinate || start > maxBedrockCitationCoordinate {
+		return nil, nil, nil, fmt.Errorf("start %d is outside Bedrock's int32 range", start)
+	}
+	if end < minBedrockCitationCoordinate || end > maxBedrockCitationCoordinate {
+		return nil, nil, nil, fmt.Errorf("end %d is outside Bedrock's int32 range", end)
+	}
+	return aws.Int32(int32(documentIndex)), aws.Int32(int32(start)), aws.Int32(int32(end)), nil
 }
 
 func encodeTools(

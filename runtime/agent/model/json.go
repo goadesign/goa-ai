@@ -1,6 +1,6 @@
-// Package model defines JSON helpers for marshaling and unmarshaling provider
-// message parts. This file focuses on decoding messages and discriminating
-// concrete part types based on the Kind field.
+// Package model defines canonical JSON helpers for provider metadata and
+// message parts. This file preserves metadata values and discriminates concrete
+// part types by their Kind field.
 package model
 
 import (
@@ -12,6 +12,44 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
+
+// MarshalMetadata encodes Message.Meta as an opaque JSON object for transport
+// or persistence. Nil and empty metadata both encode as nil, the canonical
+// representation of absent metadata.
+func MarshalMetadata(metadata map[string]any) (rawjson.Message, error) {
+	if len(metadata) == 0 {
+		return nil, nil
+	}
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, fmt.Errorf("model: marshal message metadata: %w", err)
+	}
+	return rawjson.Message(data), nil
+}
+
+// UnmarshalMetadata decodes one Message.Meta JSON object. Numbers are retained
+// as json.Number so provider-authored identifiers and counters replay without
+// float64 precision loss. Nil and empty objects both decode as nil.
+func UnmarshalMetadata(data rawjson.Message) (map[string]any, error) {
+	if data == nil {
+		return nil, nil
+	}
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return nil, errors.New("model: message metadata is empty")
+	}
+	if trimmed[0] != '{' {
+		return nil, errors.New("model: message metadata must be a JSON object")
+	}
+	var metadata map[string]any
+	if err := rawjson.Unmarshal(trimmed, &metadata); err != nil {
+		return nil, fmt.Errorf("model: unmarshal message metadata: %w", err)
+	}
+	if len(metadata) == 0 {
+		return nil, nil
+	}
+	return metadata, nil
+}
 
 // MarshalJSON encodes a Message while preserving the concrete Part types stored
 // in Parts via an explicit Kind discriminator.

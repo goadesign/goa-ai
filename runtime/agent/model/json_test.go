@@ -11,6 +11,74 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+func TestMetadataCodecRoundTrip(t *testing.T) {
+	metadata := map[string]any{
+		"provider_item":   `{"id":"msg_1"}`,
+		"reasoning_items": []string{`{"id":"rs_1"}`, `{"id":"rs_2"}`},
+		"nested": map[string]any{
+			"enabled": true,
+			"values":  []any{"first", json.Number("42")},
+		},
+		"sequence": json.Number("9007199254740993"),
+	}
+
+	encoded, err := MarshalMetadata(metadata)
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), `"sequence":9007199254740993`)
+
+	decoded, err := UnmarshalMetadata(encoded)
+	require.NoError(t, err)
+	providerItem, ok := decoded["provider_item"].(string)
+	require.True(t, ok)
+	require.JSONEq(t, `{"id":"msg_1"}`, providerItem)
+	require.Equal(t, []any{`{"id":"rs_1"}`, `{"id":"rs_2"}`}, decoded["reasoning_items"])
+	require.Equal(t, json.Number("9007199254740993"), decoded["sequence"])
+	require.Equal(t, map[string]any{
+		"enabled": true,
+		"values":  []any{"first", json.Number("42")},
+	}, decoded["nested"])
+}
+
+func TestMetadataCodecCanonicalAbsence(t *testing.T) {
+	for _, metadata := range []map[string]any{nil, {}} {
+		encoded, err := MarshalMetadata(metadata)
+		require.NoError(t, err)
+		require.Nil(t, encoded)
+	}
+
+	for _, encoded := range []rawjson.Message{nil, rawjson.Message(`{}`)} {
+		decoded, err := UnmarshalMetadata(encoded)
+		require.NoError(t, err)
+		require.Nil(t, decoded)
+	}
+}
+
+func TestMarshalMetadataRejectsNonJSONValues(t *testing.T) {
+	_, err := MarshalMetadata(map[string]any{"invalid": make(chan int)})
+	require.ErrorContains(t, err, "model: marshal message metadata")
+}
+
+func TestUnmarshalMetadataRejectsInvalidJSON(t *testing.T) {
+	tests := []struct {
+		name    string
+		data    rawjson.Message
+		wantErr string
+	}{
+		{name: "empty", data: rawjson.Message{}, wantErr: "message metadata is empty"},
+		{name: "truncated", data: rawjson.Message(`{"a"`), wantErr: "unmarshal message metadata"},
+		{name: "trailing", data: rawjson.Message(`{} {}`), wantErr: "rawjson: trailing data"},
+		{name: "null", data: rawjson.Message(`null`), wantErr: "must be a JSON object"},
+		{name: "array", data: rawjson.Message(`[]`), wantErr: "must be a JSON object"},
+		{name: "string", data: rawjson.Message(`"value"`), wantErr: "must be a JSON object"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := UnmarshalMetadata(test.data)
+			require.ErrorContains(t, err, test.wantErr)
+		})
+	}
+}
+
 func TestPartMarshalJSONIncludesKind(t *testing.T) {
 	cases := []struct {
 		name string
