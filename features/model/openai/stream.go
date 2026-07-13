@@ -29,16 +29,14 @@ type (
 		errSet   bool
 		finalErr error
 
-		metaMu   sync.RWMutex
-		metadata map[string]any
-		response *model.Response
+		responseMu sync.RWMutex
+		response   *model.Response
 	}
 
 	// openAIChunkProcessor converts streamed OpenAI events into provider-neutral
 	// model chunks.
 	openAIChunkProcessor struct {
 		emit           func(model.Chunk) error
-		recordUsage    func(model.TokenUsage)
 		recordResponse func(*model.Response)
 
 		toolCalls map[string]*streamToolBuffer
@@ -77,7 +75,6 @@ func newOpenAIStreamer(
 	}
 	processor := &openAIChunkProcessor{
 		emit:           streamer.emitChunk,
-		recordUsage:    streamer.recordUsage,
 		recordResponse: streamer.recordResponse,
 		toolCalls:      make(map[string]*streamToolBuffer),
 		codec:          codec,
@@ -122,22 +119,9 @@ func (s *openAIStreamer) Close() error {
 }
 
 func (s *openAIStreamer) Response() *model.Response {
-	s.metaMu.RLock()
-	defer s.metaMu.RUnlock()
+	s.responseMu.RLock()
+	defer s.responseMu.RUnlock()
 	return s.response
-}
-
-func (s *openAIStreamer) Metadata() map[string]any {
-	s.metaMu.RLock()
-	defer s.metaMu.RUnlock()
-	if len(s.metadata) == 0 {
-		return nil
-	}
-	out := make(map[string]any, len(s.metadata))
-	for key, value := range s.metadata {
-		out[key] = value
-	}
-	return out
 }
 
 func (s *openAIStreamer) run(processor *openAIChunkProcessor) {
@@ -186,19 +170,10 @@ func (s *openAIStreamer) emitChunk(chunk model.Chunk) error {
 	}
 }
 
-func (s *openAIStreamer) recordUsage(usage model.TokenUsage) {
-	s.metaMu.Lock()
-	if s.metadata == nil {
-		s.metadata = make(map[string]any)
-	}
-	s.metadata["usage"] = usage
-	s.metaMu.Unlock()
-}
-
 func (s *openAIStreamer) recordResponse(response *model.Response) {
-	s.metaMu.Lock()
+	s.responseMu.Lock()
 	s.response = response
-	s.metaMu.Unlock()
+	s.responseMu.Unlock()
 }
 
 func (s *openAIStreamer) setErr(err error) {
@@ -419,9 +394,6 @@ func (p *openAIChunkProcessor) handleCompleted(resp responses.Response) error {
 		}
 	}
 	if translated.Usage != (model.TokenUsage{}) {
-		if p.recordUsage != nil {
-			p.recordUsage(translated.Usage)
-		}
 		if err := p.emit(model.UsageChunk{
 			Usage: translated.Usage,
 		}); err != nil {

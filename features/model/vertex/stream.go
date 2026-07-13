@@ -1,6 +1,6 @@
 // Streaming adapter. Invariants: chunks flow through a buffered channel
 // (32) drained by Recv; Recv returns io.EOF after a clean end; Close is
-// idempotent; Metadata returns a copy including final "usage".
+// idempotent; Response returns the canonical terminal response after clean EOF.
 
 package vertex
 
@@ -37,11 +37,7 @@ type geminiStreamer struct {
 	// which is Recv's signal to surface the terminal error or io.EOF.
 	chunks chan model.Chunk
 
-	// meta holds stream metadata (the final cumulative "usage"). Guarded by
-	// mu; Metadata returns a copy.
-	meta map[string]any
-
-	// mu guards meta and err, the only fields that cross the pump/consumer
+	// mu guards err and canonical, the fields that cross the pump/consumer
 	// boundary outside the chunks channel.
 	mu sync.Mutex
 
@@ -77,7 +73,6 @@ func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer
 		ctx:    ctx,
 		cancel: cancel,
 		chunks: make(chan model.Chunk, 32),
-		meta:   make(map[string]any),
 	}
 	go s.run(seq, prep)
 	return s, nil
@@ -115,17 +110,6 @@ func (s *geminiStreamer) Response() *model.Response {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.canonical
-}
-
-// Metadata implements model.Streamer.
-func (s *geminiStreamer) Metadata() map[string]any {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make(map[string]any, len(s.meta))
-	for k, v := range s.meta {
-		out[k] = v
-	}
-	return out
 }
 
 // run is the pump goroutine: it drains the provider sequence, dispatches
@@ -190,9 +174,6 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 			// latest value is emitted, and only once, below.
 			latestUsage = translateUsage(resp.UsageMetadata, prep.modelID, prep.modelClass)
 			usageSeen = true
-			s.mu.Lock()
-			s.meta["usage"] = latestUsage
-			s.mu.Unlock()
 		}
 	}
 	if !sawCandidate {

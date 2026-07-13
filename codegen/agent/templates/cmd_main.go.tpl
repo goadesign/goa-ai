@@ -133,10 +133,6 @@ func (s *exampleCompletionStreamer) Close() error {
 	return nil
 }
 
-// Metadata returns no provider-specific metadata for the example stream.
-func (s *exampleCompletionStreamer) Metadata() map[string]any {
-	return nil
-}
 {{- end }}
 
 func main() {

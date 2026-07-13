@@ -30,9 +30,8 @@ type anthropicStreamer struct {
 	errSet   bool
 	finalErr error
 
-	metaMu   sync.RWMutex
-	metadata map[string]any
-	response *model.Response
+	responseMu sync.RWMutex
+	response   *model.Response
 
 	toolNameMap map[string]string
 }
@@ -83,22 +82,9 @@ func (s *anthropicStreamer) Close() error {
 }
 
 func (s *anthropicStreamer) Response() *model.Response {
-	s.metaMu.RLock()
-	defer s.metaMu.RUnlock()
+	s.responseMu.RLock()
+	defer s.responseMu.RUnlock()
 	return s.response
-}
-
-func (s *anthropicStreamer) Metadata() map[string]any {
-	s.metaMu.RLock()
-	defer s.metaMu.RUnlock()
-	if len(s.metadata) == 0 {
-		return nil
-	}
-	out := make(map[string]any, len(s.metadata))
-	for k, v := range s.metadata {
-		out[k] = v
-	}
-	return out
 }
 
 func (s *anthropicStreamer) run() {
@@ -111,7 +97,7 @@ func (s *anthropicStreamer) run() {
 		}
 	}()
 
-	processor := newAnthropicChunkProcessor(s.emitChunk, s.recordUsage, s.toolNameMap)
+	processor := newAnthropicChunkProcessor(s.emitChunk, s.toolNameMap)
 	var response sdk.Message
 
 	for {
@@ -134,9 +120,9 @@ func (s *anthropicStreamer) run() {
 					s.setErr(err)
 					return
 				}
-				s.metaMu.Lock()
+				s.responseMu.Lock()
 				s.response = translated
-				s.metaMu.Unlock()
+				s.responseMu.Unlock()
 			}
 			return
 		}
@@ -161,15 +147,6 @@ func (s *anthropicStreamer) emitChunk(chunk model.Chunk) error {
 	}
 }
 
-func (s *anthropicStreamer) recordUsage(usage model.TokenUsage) {
-	s.metaMu.Lock()
-	if s.metadata == nil {
-		s.metadata = make(map[string]any)
-	}
-	s.metadata["usage"] = usage
-	s.metaMu.Unlock()
-}
-
 func (s *anthropicStreamer) setErr(err error) {
 	s.errMu.Lock()
 	defer s.errMu.Unlock()
@@ -188,8 +165,7 @@ func (s *anthropicStreamer) err() error {
 
 // anthropicChunkProcessor converts Anthropic streaming events into model.Chunks.
 type anthropicChunkProcessor struct {
-	emit        func(model.Chunk) error
-	recordUsage func(model.TokenUsage)
+	emit func(model.Chunk) error
 
 	toolBlocks     map[int]*toolBuffer
 	thinkingBlocks map[int]*thinkingBuffer
@@ -202,10 +178,9 @@ type anthropicChunkProcessor struct {
 	complete   bool
 }
 
-func newAnthropicChunkProcessor(emit func(model.Chunk) error, recordUsage func(model.TokenUsage), nameMap map[string]string) *anthropicChunkProcessor {
+func newAnthropicChunkProcessor(emit func(model.Chunk) error, nameMap map[string]string) *anthropicChunkProcessor {
 	return &anthropicChunkProcessor{
 		emit:           emit,
-		recordUsage:    recordUsage,
 		toolBlocks:     make(map[int]*toolBuffer),
 		thinkingBlocks: make(map[int]*thinkingBuffer),
 		openBlocks:     make(map[int]struct{}),
@@ -432,9 +407,6 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			TotalTokens:      int(ev.Usage.InputTokens + ev.Usage.OutputTokens),
 			CacheReadTokens:  int(ev.Usage.CacheReadInputTokens),
 			CacheWriteTokens: int(ev.Usage.CacheCreationInputTokens),
-		}
-		if p.recordUsage != nil {
-			p.recordUsage(usage)
 		}
 		return p.emit(model.UsageChunk{Usage: usage})
 	case sdk.MessageStopEvent:

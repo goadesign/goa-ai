@@ -32,8 +32,7 @@ type bedrockStreamer struct {
 	errSet   bool
 	finalErr error
 
-	metaMu      sync.RWMutex
-	metadata    map[string]any
+	responseMu  sync.RWMutex
 	response    *model.Response
 	toolNameMap map[string]string
 	modelID     string
@@ -94,22 +93,9 @@ func (s *bedrockStreamer) Close() error {
 }
 
 func (s *bedrockStreamer) Response() *model.Response {
-	s.metaMu.RLock()
-	defer s.metaMu.RUnlock()
+	s.responseMu.RLock()
+	defer s.responseMu.RUnlock()
 	return s.response
-}
-
-func (s *bedrockStreamer) Metadata() map[string]any {
-	s.metaMu.RLock()
-	defer s.metaMu.RUnlock()
-	if len(s.metadata) == 0 {
-		return nil
-	}
-	out := make(map[string]any, len(s.metadata))
-	for k, v := range s.metadata {
-		out[k] = v
-	}
-	return out
 }
 
 func (s *bedrockStreamer) run() {
@@ -122,8 +108,6 @@ func (s *bedrockStreamer) run() {
 
 	processor := newChunkProcessor(
 		s.emitChunk,
-		s.recordUsage,
-		s.recordCitations,
 		s.toolNameMap,
 		s.modelID,
 		s.modelClass,
@@ -152,9 +136,9 @@ func (s *bedrockStreamer) run() {
 						s.setErr(fmt.Errorf("bedrock: invalid streamed response: %w", err))
 						return
 					}
-					s.metaMu.Lock()
+					s.responseMu.Lock()
 					s.response = response
-					s.metaMu.Unlock()
+					s.responseMu.Unlock()
 				}
 				return
 			}
@@ -173,30 +157,6 @@ func (s *bedrockStreamer) emitChunk(chunk model.Chunk) error {
 	case s.chunks <- chunk:
 		return nil
 	}
-}
-
-func (s *bedrockStreamer) recordUsage(usage model.TokenUsage) {
-	s.metaMu.Lock()
-	if s.metadata == nil {
-		s.metadata = make(map[string]any)
-	}
-	s.metadata["usage"] = usage
-	s.metaMu.Unlock()
-}
-
-func (s *bedrockStreamer) recordCitations(citations []model.Citation) {
-	if len(citations) == 0 {
-		return
-	}
-	s.metaMu.Lock()
-	if s.metadata == nil {
-		s.metadata = make(map[string]any)
-	}
-	if prev, ok := s.metadata["citations"].([]model.Citation); ok && len(prev) > 0 {
-		citations = append(prev, citations...)
-	}
-	s.metadata["citations"] = citations
-	s.metaMu.Unlock()
 }
 
 func (s *bedrockStreamer) setErr(err error) {
@@ -219,9 +179,7 @@ func (s *bedrockStreamer) err() error {
 // stamps model attribution onto usage chunks using the resolved model ID and
 // class provided at construction.
 type chunkProcessor struct {
-	emit        func(model.Chunk) error
-	recordUsage func(model.TokenUsage)
-	recordCites func([]model.Citation)
+	emit func(model.Chunk) error
 
 	toolBlocks map[int]*toolBuffer
 	completion *completionBuffer
@@ -245,8 +203,6 @@ type chunkProcessor struct {
 
 func newChunkProcessor(
 	emit func(model.Chunk) error,
-	recordUsage func(model.TokenUsage),
-	recordCites func([]model.Citation),
 	nameMap map[string]string,
 	modelID string,
 	modelClass model.ModelClass,
@@ -254,8 +210,6 @@ func newChunkProcessor(
 ) *chunkProcessor {
 	return &chunkProcessor{
 		emit:            emit,
-		recordUsage:     recordUsage,
-		recordCites:     recordCites,
 		toolBlocks:      make(map[int]*toolBuffer),
 		reasoningBlocks: make(map[int]*reasoningBuffer),
 		textBlocks:      make(map[int]*strings.Builder),
@@ -384,9 +338,6 @@ func (p *chunkProcessor) Handle(event any) error {
 				return err
 			}
 			p.citationBlocks[idx] = append(p.citationBlocks[idx], citation)
-			if p.recordCites != nil {
-				p.recordCites([]model.Citation{citation})
-			}
 			return nil
 		case *brtypes.ContentBlockDeltaMemberReasoningContent:
 			// Initialize/lookup buffer for this content index.
@@ -582,9 +533,6 @@ func (p *chunkProcessor) Handle(event any) error {
 			TotalTokens:      tot,
 			CacheReadTokens:  cacheRead,
 			CacheWriteTokens: cacheWrite,
-		}
-		if p.recordUsage != nil {
-			p.recordUsage(usage)
 		}
 		p.canonical.Usage = usage
 		if err := p.emit(model.UsageChunk{Usage: usage}); err != nil {

@@ -260,6 +260,22 @@ history from a `RunID`; runtime-owned callers must supply the full transcript,
 and durable recovery rebuilds that transcript from runlog
 `transcript_messages_appended` records.
 
+### Canonical message metadata and citations
+
+`model.Message.Meta` carries provider-authored replay data. Boundaries that
+persist or transport that map should use `model.MarshalMetadata` and
+`model.UnmarshalMetadata`: metadata is one JSON object, decoded numbers remain
+`json.Number`, trailing data and non-object roots are rejected, and nil or an
+empty object canonicalizes to nil.
+
+Citation replay remains provider-specific because a canonical citation must not
+be flattened into ordinary text. Bedrock reconstructs assistant
+`CitationsPart` values as native citation content blocks for document character,
+chunk, and page locations. Bedrock system citations remain unsupported because
+the SDK's system-content union has no citation member. The Anthropic and Vertex
+adapters continue to reject canonical citation replay when they cannot
+reconstruct every provider-required field from the canonical part.
+
 ### Sampling parameters on current-generation Claude models
 
 Anthropic removed the `temperature`/`top_p`/`top_k` sampling parameters from

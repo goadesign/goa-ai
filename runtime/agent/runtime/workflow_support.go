@@ -23,7 +23,9 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-// finalizeWithPlanner asks the planner for a tool-free final response and returns it as RunOutput.
+// finalizeWithPlanner asks the planner to finish after budgeted work is
+// forbidden. The planner returns either a final response or terminal
+// bookkeeping calls.
 func (r *Runtime) finalizeWithPlanner(
 	wfCtx engine.WorkflowContext,
 	reg AgentRegistration,
@@ -42,7 +44,7 @@ func (r *Runtime) finalizeWithPlanner(
 	}
 	ctx := wfCtx.Context()
 	// Transition to synthesizing phase while we obtain a final answer without
-	// scheduling additional tools.
+	// scheduling additional budgeted tools.
 	if err := r.publishHook(
 		ctx,
 		hooks.NewRunPhaseChangedEvent(
@@ -75,7 +77,7 @@ func (r *Runtime) finalizeWithPlanner(
 	// provider. If the last message was an assistant turn with tool_use (e.g.
 	// finalization happened while external results were still outstanding), append
 	// user message with error results for those tools before requesting the
-	// final tool-free response.
+	// final response.
 	if len(messages) > 0 {
 		last := messages[len(messages)-1]
 		if last.Role == model.ConversationRoleAssistant {
@@ -372,13 +374,15 @@ func (r *Runtime) validateFinalizationTerminalToolRecords(records []stepToolReco
 	return nil
 }
 
-// finalizeWithPlannerIfAllowed centralizes the restricted-tool contract for
-// tool-free planner finalization.
+// finalizeWithPlannerIfAllowed centralizes the restricted-tool contract after
+// budgeted work is forbidden.
 //
 // Contract:
 //   - Retry restrictions constrain only future tool selection.
 //   - Terminal runtime policy reasons always finalize through the planner with
-//     tools disabled; caps and deadlines mean there is no legal next tool step.
+//     no legal next budgeted tool step. Planners may retain a catalog to encode
+//     prior tool history and may return only a final response or terminal
+//     bookkeeping calls.
 func (r *Runtime) finalizeWithPlannerIfAllowed(
 	wfCtx engine.WorkflowContext,
 	reg AgentRegistration,

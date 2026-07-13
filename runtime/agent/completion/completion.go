@@ -336,10 +336,6 @@ func (s *completionStream) Response() *model.Response {
 	return s.inner.Response()
 }
 
-func (s *completionStream) Metadata() map[string]any {
-	return s.inner.Metadata()
-}
-
 // validateCompletionDelta enforces the preview-only chunk contract for a typed
 // completion stream.
 func (s *completionStream) validateCompletionDelta(delta model.CompletionDelta) error {

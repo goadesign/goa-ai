@@ -11,7 +11,6 @@ import (
 )
 
 type stubStreamer struct {
-	meta                 map[string]any
 	response             *model.Response
 	chunks               []model.Chunk
 	recvErr              error
@@ -42,7 +41,6 @@ func (s *stubStreamer) Response() *model.Response {
 	}
 	return s.response
 }
-func (s *stubStreamer) Metadata() map[string]any { return s.meta }
 
 type stubProvider struct {
 	response *model.Response

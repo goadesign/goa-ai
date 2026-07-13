@@ -39,7 +39,6 @@ type (
 
 	stubStreamer struct {
 		chunks   []model.Chunk
-		meta     map[string]any
 		response *model.Response
 		index    int
 		recvErr  error
@@ -187,7 +186,7 @@ func TestTracedClientCompleteEmitsGenAIAttrs(t *testing.T) {
 	assert.Equal(t, []string{"stop"}, attrs[telemetry.AttrGenAIResponseFinishReasons].AsStringSlice())
 }
 
-func TestTracedStreamUsesMetadataUsageWhenNoUsageDelta(t *testing.T) {
+func TestTracedStreamUsesResponseUsageWhenNoUsageChunk(t *testing.T) {
 	t.Parallel()
 
 	span := &recordingTelemetrySpan{}
@@ -195,8 +194,8 @@ func TestTracedStreamUsesMetadataUsageWhenNoUsageDelta(t *testing.T) {
 		ctx:  context.Background(),
 		span: span,
 		inner: &stubStreamer{
-			meta: map[string]any{
-				"usage": model.TokenUsage{
+			response: &model.Response{
+				Usage: model.TokenUsage{
 					Model:        "us.anthropic.claude-sonnet-4",
 					InputTokens:  7,
 					OutputTokens: 3,
@@ -214,7 +213,7 @@ func TestTracedStreamUsesMetadataUsageWhenNoUsageDelta(t *testing.T) {
 	assert.EqualValues(t, 3, attrs[telemetry.AttrGenAIUsageOutputTokens].AsInt64())
 }
 
-func TestTracedStreamDoesNotDoubleCountMetadataAfterUsageDelta(t *testing.T) {
+func TestTracedStreamDoesNotReplaceUsageChunkWithResponseUsage(t *testing.T) {
 	t.Parallel()
 
 	span := &recordingTelemetrySpan{}
@@ -231,9 +230,9 @@ func TestTracedStreamDoesNotDoubleCountMetadataAfterUsageDelta(t *testing.T) {
 					},
 				},
 			},
-			meta: map[string]any{
-				"usage": model.TokenUsage{
-					Model:        "metadata-model",
+			response: &model.Response{
+				Usage: model.TokenUsage{
+					Model:        "response-model",
 					InputTokens:  99,
 					OutputTokens: 99,
 				},
@@ -366,6 +365,12 @@ func TestTracedStreamRecordsBufferedOutputMessagesWhenEnabled(t *testing.T) {
 					Message: model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ThinkingPart{Text: "draft", Final: true}}},
 				},
 				model.StopChunk{Reason: "end_turn"},
+			}, response: &model.Response{
+				Content: []model.Message{{
+					Role:  model.ConversationRoleAssistant,
+					Parts: []model.Part{model.TextPart{Text: "hello"}},
+				}},
+				StopReason: "end_turn",
 			}}, nil
 		},
 	}, tracer, telemetry.NewNoopLogger(), "primary", testGenAIContext(), true)
@@ -486,8 +491,4 @@ func (s *stubStreamer) Close() error {
 
 func (s *stubStreamer) Response() *model.Response {
 	return s.response
-}
-
-func (s *stubStreamer) Metadata() map[string]any {
-	return s.meta
 }

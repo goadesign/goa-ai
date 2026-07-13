@@ -830,10 +830,15 @@ type Client interface {
 
 type Streamer interface {
     Recv() (Chunk, error)
+    Response() *Response
     Close() error
-    Metadata() map[string]any
 }
 ```
+
+Drain a stream until `Recv` returns `io.EOF`, then read `Response` for the
+canonical provider-authored content, usage, and stop reason before calling
+`Close`. `UsageChunk` carries progressive usage while the stream is active;
+terminal errors do not produce a canonical response.
 
 ### Message Types
 
