@@ -219,6 +219,19 @@ func TestProjectStrictSchema(t *testing.T) {
 	}
 }
 
+func TestProjectStrictSchemaPreservesLargeIntegers(t *testing.T) {
+	projected, err := projectStrictSchema(rawjson.Message(`{
+		"type":"object",
+		"properties":{"reading":{"type":"integer","const":9007199254740993}},
+		"required":["reading"]
+	}`))
+	require.NoError(t, err)
+
+	properties := projected["properties"].(map[string]any)
+	reading := properties["reading"].(map[string]any)
+	require.Equal(t, json.Number("9007199254740993"), reading["const"])
+}
+
 func TestProjectStrictSchemaRejectsUnrepresentableContracts(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -400,4 +413,20 @@ func TestCanonicalizeStrictPayloadReturnsUntouchedPayloadBytes(t *testing.T) {
 	got, err := canonicalizeStrictPayload(schema, payload)
 	require.NoError(t, err)
 	assert.Equal(t, string(payload), string(got))
+}
+
+func TestCanonicalizeStrictPayloadPreservesLargeIntegers(t *testing.T) {
+	schema := rawjson.Message(`{
+		"type": "object",
+		"properties": {
+			"reading": {"type": "integer"},
+			"note": {"type": "string"}
+		},
+		"required": ["reading"]
+	}`)
+	payload := rawjson.Message(`{"reading":9007199254740993,"note":null}`)
+
+	got, err := canonicalizeStrictPayload(schema, payload)
+	require.NoError(t, err)
+	assert.Equal(t, `{"reading":9007199254740993}`, string(got))
 }

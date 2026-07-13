@@ -9,17 +9,17 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 )
 
-func TestPlanActivityOutput_UnmarshalJSON(t *testing.T) {
-	t.Run("modern transcript", func(t *testing.T) {
+func TestPlanActivityOutputUnmarshalJSON(t *testing.T) {
+	t.Run("canonical transcript", func(t *testing.T) {
 		const payload = `{
 			"Result": null,
 			"Transcript": [{
-				"Role": "assistant",
-				"Meta": {"trace": "abc"},
-				"Parts": [
-					{"Text": "hi there"},
-					{"Name": "search", "Input": {"q": "golang"}},
-					{"ToolUseID": "tool-call-1", "Content": {"items": 1}, "IsError": false}
+				"role": "assistant",
+				"meta": {"trace": "abc"},
+				"parts": [
+					{"kind": "text", "text": "hi there"},
+					{"kind": "tool_use", "id": "tool-call-1", "name": "search", "input": {"z":9007199254740993,"a":1}},
+					{"kind": "tool_result", "tool_use_id": "tool-call-1", "content": {"items": 1}, "is_error": false}
 				]
 			}]
 		}`
@@ -41,9 +41,7 @@ func TestPlanActivityOutput_UnmarshalJSON(t *testing.T) {
 
 		if tu, ok := msg.Parts[1].(model.ToolUsePart); ok {
 			require.Equal(t, "search", tu.Name)
-			args, ok := tu.Input.(map[string]any)
-			require.True(t, ok, "expected Input to be a map")
-			require.Equal(t, map[string]any{"q": "golang"}, args)
+			require.Equal(t, `{"z":9007199254740993,"a":1}`, string(tu.Input))
 		} else {
 			t.Fatalf("unexpected part[1]: %#v", msg.Parts[1])
 		}
@@ -51,32 +49,24 @@ func TestPlanActivityOutput_UnmarshalJSON(t *testing.T) {
 		if tr, ok := msg.Parts[2].(model.ToolResultPart); ok {
 			require.Equal(t, "tool-call-1", tr.ToolUseID)
 			require.False(t, tr.IsError)
-			require.Equal(t, map[string]any{"items": float64(1)}, tr.Content)
+			require.Equal(t, map[string]any{"items": json.Number("1")}, tr.Content)
 		} else {
 			t.Fatalf("unexpected part[2]: %#v", msg.Parts[2])
 		}
 	})
 
-	t.Run("legacy args field", func(t *testing.T) {
-		const legacy = `{
+	t.Run("missing kind", func(t *testing.T) {
+		const invalid = `{
 			"Result": null,
 			"Transcript": [{
-				"Role": "assistant",
-				"Parts": [
-					{"Name": "legacy-tool", "Args": {"q": "old"}}
+				"role": "assistant",
+				"parts": [
+					{"id": "tool-call-1", "name": "search", "input": {"q": "status"}}
 				]
 			}]
 		}`
 
 		var out PlanActivityOutput
-		require.NoError(t, json.Unmarshal([]byte(legacy), &out))
-		require.Len(t, out.Transcript, 1)
-
-		msg := out.Transcript[0]
-		require.Len(t, msg.Parts, 1)
-
-		tu, ok := msg.Parts[0].(model.ToolUsePart)
-		require.True(t, ok, "expected first part to be ToolUsePart")
-		require.Equal(t, map[string]any{"q": "old"}, tu.Input)
+		require.ErrorContains(t, json.Unmarshal([]byte(invalid), &out), "message part requires kind")
 	})
 }

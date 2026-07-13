@@ -2,6 +2,7 @@ package transcript
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 )
@@ -31,7 +33,7 @@ func TestBuildMessagesFromRunLogReplaysCanonicalTranscriptOrder(t *testing.T) {
 			model.ToolUsePart{
 				ID:    "call_1",
 				Name:  "analytics.analyze",
-				Input: map[string]any{"query": "sales"},
+				Input: rawjson.Message(`{"query":"sales"}`),
 			},
 		},
 	}})
@@ -60,7 +62,7 @@ func TestBuildMessagesFromRunLogReplaysCanonicalTranscriptOrder(t *testing.T) {
 	require.Len(t, messages[2].Parts, 1)
 	require.Equal(t, model.ToolResultPart{
 		ToolUseID: "call_1",
-		Content:   map[string]any{"rows": float64(3), "status": "ok"},
+		Content:   map[string]any{"rows": json.Number("3"), "status": "ok"},
 		IsError:   false,
 	}, messages[2].Parts[0])
 }

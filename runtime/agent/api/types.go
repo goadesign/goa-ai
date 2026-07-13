@@ -3,8 +3,6 @@
 package api
 
 import (
-	"encoding/json"
-	"fmt"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
@@ -136,14 +134,7 @@ type (
 		// precedence when both are set.
 		RetryRestrictToTool tools.Ident
 
-		// AllowedTags restricts tool execution to tools tagged with at least one of the listed tags.
-		AllowedTags []string
-
-		// DeniedTags excludes tools tagged with any of the listed tags from execution.
-		DeniedTags []string
-
-		// TagClauses applies explicit tag-policy clauses. Runtimes combine legacy
-		// AllowedTags/DeniedTags with these clauses using logical AND.
+		// TagClauses applies explicit tag-policy clauses using logical AND.
 		TagClauses []TagPolicyClause
 
 		// MaxToolCalls caps the total number of budgeted (non-bookkeeping) tool
@@ -331,16 +322,6 @@ type (
 
 		// Usage is the token usage reported by the model provider when available.
 		Usage model.TokenUsage
-
-		// ToolCallSignatures carries opaque, provider-defined tool-call thought
-		// signatures (for example, Gemini 3) captured by the runtime at the
-		// model-client boundary, keyed by tool-call ID. It is runtime-owned
-		// state, not planner-authored: no planner-facing type (ToolRequest,
-		// PlanResult, ...) ever carries a signature. A missing key means the
-		// provider did not emit one for that tool call. The workflow uses this
-		// map to reattach signatures by ID when rebuilding ToolUsePart entries
-		// for the provider transcript.
-		ToolCallSignatures map[string]string
 	}
 
 	// RecordActivityInput is the canonical workflow-to-activity envelope for
@@ -578,38 +559,3 @@ const (
 	// SignalProvideConfirmation delivers a ConfirmationDecision to a waiting run.
 	SignalProvideConfirmation = "goaai.runtime.provide.confirmation"
 )
-
-// UnmarshalJSON handles decoding PlanActivityOutput so that Transcript entries are
-// deserialized through the richer model.Message decoder (which materializes Part
-// implementations). This keeps workflows resilient to legacy payloads.
-func (o *PlanActivityOutput) UnmarshalJSON(data []byte) error {
-	type alias struct {
-		Result             *planner.PlanResult `json:"Result"`             //nolint:tagliatelle
-		Transcript         []json.RawMessage   `json:"Transcript"`         //nolint:tagliatelle
-		Usage              model.TokenUsage    `json:"Usage"`              //nolint:tagliatelle
-		ToolCallSignatures map[string]string   `json:"ToolCallSignatures"` //nolint:tagliatelle
-	}
-	var tmp alias
-	if err := json.Unmarshal(data, &tmp); err != nil {
-		return err
-	}
-
-	o.Result = tmp.Result
-	o.Usage = tmp.Usage
-	o.ToolCallSignatures = tmp.ToolCallSignatures
-	if len(tmp.Transcript) == 0 {
-		o.Transcript = nil
-		return nil
-	}
-
-	out := make([]*model.Message, 0, len(tmp.Transcript))
-	for i, raw := range tmp.Transcript {
-		var msg model.Message
-		if err := json.Unmarshal(raw, &msg); err != nil {
-			return fmt.Errorf("decode Transcript[%d]: %w", i, err)
-		}
-		out = append(out, &msg)
-	}
-	o.Transcript = out
-	return nil
-}

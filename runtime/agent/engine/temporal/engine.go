@@ -55,7 +55,7 @@ type Options struct {
 
 	// Instrumentation toggles OTEL tracing and metrics for the Temporal client and workers.
 	// Tracing and metrics are enabled by default. Set DisableTracing or DisableMetrics to
-	// opt out. Customize interceptor behavior via TracerOptions and MetricsOptions.
+	// opt out. Customize metric interceptor behavior via MetricsOptions.
 	Instrumentation InstrumentationOptions
 
 	// Logger emits workflow and worker logs. If nil, a noop logger is used (no output).
@@ -121,9 +121,8 @@ type ActivityTimeoutDefaults struct {
 // by the Temporal SDK.
 //
 // Set DisableTracing or DisableMetrics to opt out of automatic instrumentation.
-// Use TracerOptions and MetricsOptions to customize the OTEL interceptor behavior
-// (e.g., span attributes, metric namespaces, sampling). Refer to Temporal's OTEL
-// contrib documentation for available customization options.
+// Use MetricsOptions to customize the OTEL metrics handler. goa-ai's activity
+// interceptors own trace creation and linking.
 type InstrumentationOptions struct {
 	// DisableTracing skips installing the OTEL tracing interceptor on the client
 	// and workers. When false (default), distributed traces are automatically emitted
@@ -134,11 +133,6 @@ type InstrumentationOptions struct {
 	// workers. When false (default), workflow/activity metrics (counts, latencies,
 	// failures) are automatically emitted.
 	DisableMetrics bool
-
-	// TracerOptions is retained for source compatibility but is ignored by the
-	// engine's trace-domain implementation. Traces are emitted by goa-ai's own
-	// activity interceptors (new-root spans + OTel links).
-	TracerOptions temporalotel.TracerOptions
 
 	// MetricsOptions customize the OTEL metrics handler (metric names, labels, etc.).
 	// Only used when DisableMetrics is false. Refer to Temporal SDK OTEL docs.
@@ -234,6 +228,9 @@ func newEngine(opts Options, workerMode bool) (*Engine, error) {
 			return nil, fmt.Errorf("temporal engine: client options are required when Client is nil")
 		}
 		clientOpts := *opts.ClientOptions
+		if clientOpts.DataConverter == nil {
+			clientOpts.DataConverter = NewAgentDataConverter()
+		}
 		applyClientInstrumentation(&clientOpts, inst)
 		lazyClient, err := client.NewLazyClient(clientOpts)
 		if err != nil {

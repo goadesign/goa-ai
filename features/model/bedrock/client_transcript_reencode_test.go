@@ -3,10 +3,11 @@ package bedrock
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
@@ -18,16 +19,93 @@ import (
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
+func TestEncodeMessagesRejectsNonCanonicalThinking(t *testing.T) {
+	tests := []struct {
+		name    string
+		part    model.ThinkingPart
+		wantErr string
+	}{
+		{
+			name: "signed plaintext",
+			part: model.ThinkingPart{Text: "reasoning", Signature: "sig", Final: true},
+		},
+		{
+			name: "redacted",
+			part: model.ThinkingPart{Redacted: []byte("opaque"), Final: true},
+		},
+		{
+			name:    "missing signature",
+			part:    model.ThinkingPart{Text: "reasoning", Final: true},
+			wantErr: "bedrock: thinking part must contain exactly signed plaintext or redacted content",
+		},
+		{
+			name: "mixed variants",
+			part: model.ThinkingPart{
+				Text:      "reasoning",
+				Signature: "sig",
+				Redacted:  []byte("opaque"),
+				Final:     true,
+			},
+			wantErr: "bedrock: thinking part must contain exactly signed plaintext or redacted content",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, _, err := encodeMessages(
+				[]*model.Message{{
+					Role:  model.ConversationRoleAssistant,
+					Parts: []model.Part{test.part},
+				}},
+				nil,
+				false,
+			)
+
+			if test.wantErr != "" {
+				require.EqualError(t, err, test.wantErr)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestTranslateResponsePreservesReasoning(t *testing.T) {
+	output := &bedrockruntime.ConverseOutput{
+		StopReason: brtypes.StopReasonEndTurn,
+		Output: &brtypes.ConverseOutputMemberMessage{Value: brtypes.Message{
+			Role: brtypes.ConversationRoleAssistant,
+			Content: []brtypes.ContentBlock{
+				&brtypes.ContentBlockMemberReasoningContent{
+					Value: &brtypes.ReasoningContentBlockMemberReasoningText{
+						Value: brtypes.ReasoningTextBlock{
+							Text:      aws.String("reasoning"),
+							Signature: aws.String("sig"),
+						},
+					},
+				},
+				&brtypes.ContentBlockMemberText{Value: "answer"},
+			},
+		}},
+	}
+
+	resp, err := translateResponse(output, nil, "", "")
+
+	require.NoError(t, err)
+	require.Equal(t, []model.Part{
+		model.ThinkingPart{Text: "reasoning", Signature: "sig", Final: true},
+		model.TextPart{Text: "answer"},
+	}, resp.Content[0].Parts)
+}
+
 // Ensures encodeMessages preserves transcript order and places reasoning before tool_use
 // inside an assistant message, and encodes user tool_result referencing the prior ID.
 func TestEncodeMessages_ReencodeTranscriptOrder(t *testing.T) {
-	ctx := context.Background()
 	msgs := []*model.Message{
 		{
 			Role: model.ConversationRoleAssistant,
 			Parts: []model.Part{
 				model.ThinkingPart{Text: "thinking", Signature: "sig"},
-				model.ToolUsePart{ID: "tu1", Name: "search_assets", Input: map[string]any{"q": "pump"}},
+				model.ToolUsePart{ID: "tu1", Name: "search_assets", Input: rawjson.Message(`{"q":"pump"}`)},
 			},
 		},
 		{
@@ -41,7 +119,7 @@ func TestEncodeMessages_ReencodeTranscriptOrder(t *testing.T) {
 	nameMap := map[string]string{
 		"search_assets": "search_assets",
 	}
-	conv, system, err := encodeMessages(ctx, msgs, nameMap, false, nil)
+	conv, system, err := encodeMessages(msgs, nameMap, false)
 	if err != nil {
 		t.Fatalf("encodeMessages error: %v", err)
 	}
@@ -88,7 +166,7 @@ func TestClientPrepareRequestLowersRunlogReplayedTranscript(t *testing.T) {
 		think:        defaultThinkingBudget,
 	}
 
-	parts, err := client.prepareRequest(context.Background(), &model.Request{
+	parts, err := client.prepareRequest(&model.Request{
 		Messages: messages,
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
@@ -120,6 +198,25 @@ func TestClientPrepareRequestLowersRunlogReplayedTranscript(t *testing.T) {
 	require.Equal(t, "call_1", *toolResult.Value.ToolUseId)
 }
 
+func TestEncodeMessagesToolUseIDMappingIsBijective(t *testing.T) {
+	messages := []*model.Message{{
+		Role: model.ConversationRoleAssistant,
+		Parts: []model.Part{
+			model.ToolUsePart{ID: "bad/id", Name: "analytics.analyze", Input: rawjson.Message(`{}`)},
+			model.ToolUsePart{ID: "t1", Name: "analytics.analyze", Input: rawjson.Message(`{}`)},
+		},
+	}}
+
+	encoded, _, err := encodeMessages(messages, map[string]string{"analytics.analyze": "analytics_analyze"}, false)
+	require.NoError(t, err)
+	require.Len(t, encoded, 1)
+	require.Len(t, encoded[0].Content, 2)
+	first := encoded[0].Content[0].(*brtypes.ContentBlockMemberToolUse)
+	second := encoded[0].Content[1].(*brtypes.ContentBlockMemberToolUse)
+	require.Equal(t, "t2", aws.ToString(first.Value.ToolUseId))
+	require.Equal(t, "t1", aws.ToString(second.Value.ToolUseId))
+}
+
 func TestClientPrepareRequestFailsOnMissingThinkingInToolLoop(t *testing.T) {
 	client := &Client{
 		defaultModel: "anthropic.claude-3-7-sonnet",
@@ -128,7 +225,7 @@ func TestClientPrepareRequestFailsOnMissingThinkingInToolLoop(t *testing.T) {
 		think:        defaultThinkingBudget,
 	}
 
-	_, err := client.prepareRequest(context.Background(), &model.Request{
+	_, err := client.prepareRequest(&model.Request{
 		Messages: []*model.Message{
 			{
 				Role: model.ConversationRoleAssistant,
@@ -137,7 +234,7 @@ func TestClientPrepareRequestFailsOnMissingThinkingInToolLoop(t *testing.T) {
 					model.ToolUsePart{
 						ID:    "call_1",
 						Name:  "analytics.analyze",
-						Input: map[string]any{"query": "sales"},
+						Input: rawjson.Message(`{"query":"sales"}`),
 					},
 				},
 			},
@@ -163,11 +260,7 @@ func TestClientPrepareRequestFailsOnMissingThinkingInToolLoop(t *testing.T) {
 	require.ErrorContains(t, err, "must start with thinking")
 }
 
-// Ensures encodeMessages fails fast when a tool_use references a tool that is not in the
-// current tool configuration. This catches transcript contamination (e.g., ledger key
-// collision between agent runs) or missing tool definitions.
-func TestEncodeMessages_FailsOnUnknownToolUse(t *testing.T) {
-	ctx := context.Background()
+func TestEncodeMessagesReplaysHistoricalToolUseUnchanged(t *testing.T) {
 	msgs := []*model.Message{
 		{
 			Role: model.ConversationRoleAssistant,
@@ -175,25 +268,22 @@ func TestEncodeMessages_FailsOnUnknownToolUse(t *testing.T) {
 				model.ToolUsePart{
 					ID:    "tu1",
 					Name:  "ada.unknown_tool",
-					Input: map[string]any{"arg": "value"},
+					Input: rawjson.Message(`{"arg":"value"}`),
 				},
 			},
 		},
 	}
-	// Provide a nameMap that does NOT include the tool referenced in messages.
 	nameMap := map[string]string{
 		"atlas.read.some_other_tool": "some_other_tool",
 	}
-	_, _, err := encodeMessages(ctx, msgs, nameMap, false, nil)
-	if err == nil {
-		t.Fatal("expected error for unknown tool_use, got nil")
-	}
-	if !strings.Contains(err.Error(), "ada.unknown_tool") {
-		t.Errorf("error should mention the unknown tool name, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "not in the current tool configuration") {
-		t.Errorf("error should mention tool configuration mismatch, got: %v", err)
-	}
+	conv, _, err := encodeMessages(msgs, nameMap, false)
+	require.NoError(t, err)
+	require.Len(t, conv, 1)
+	use := conv[0].Content[0].(*brtypes.ContentBlockMemberToolUse)
+	require.Equal(t, "ada.unknown_tool", aws.ToString(use.Value.Name))
+	raw, err := use.Value.Input.MarshalSmithyDocument()
+	require.NoError(t, err)
+	require.JSONEq(t, `{"arg":"value"}`, string(raw))
 }
 
 func replayedBedrockToolLoopMessages(t *testing.T) []*model.Message {
@@ -213,7 +303,7 @@ func replayedBedrockToolLoopMessages(t *testing.T) []*model.Message {
 			model.ToolUsePart{
 				ID:    "call_1",
 				Name:  "analytics.analyze",
-				Input: map[string]any{"query": "sales"},
+				Input: rawjson.Message(`{"query":"sales"}`),
 			},
 		},
 	}})
@@ -249,8 +339,7 @@ func appendBedrockReplayDelta(t *testing.T, ctx context.Context, store runlog.St
 	require.NoError(t, err)
 }
 
-func TestEncodeMessages_RewritesUnknownToolUseToToolUnavailable(t *testing.T) {
-	ctx := context.Background()
+func TestEncodeMessagesDoesNotRewriteHistoricalToolUseToToolUnavailable(t *testing.T) {
 	msgs := []*model.Message{
 		{
 			Role: model.ConversationRoleAssistant,
@@ -258,7 +347,7 @@ func TestEncodeMessages_RewritesUnknownToolUseToToolUnavailable(t *testing.T) {
 				model.ToolUsePart{
 					ID:    "tu1",
 					Name:  "atlas_read_count_events",
-					Input: map[string]any{"from": "2026-02-06T00:00:00Z"},
+					Input: rawjson.Message(`{"from":"2026-02-06T00:00:00Z"}`),
 				},
 			},
 		},
@@ -276,7 +365,7 @@ func TestEncodeMessages_RewritesUnknownToolUseToToolUnavailable(t *testing.T) {
 	nameMap := map[string]string{
 		tools.ToolUnavailable.String(): SanitizeToolName(tools.ToolUnavailable.String()),
 	}
-	conv, _, err := encodeMessages(ctx, msgs, nameMap, false, nil)
+	conv, _, err := encodeMessages(msgs, nameMap, false)
 	if err != nil {
 		t.Fatalf("encodeMessages error: %v", err)
 	}
@@ -297,7 +386,7 @@ func TestEncodeMessages_RewritesUnknownToolUseToToolUnavailable(t *testing.T) {
 	if toolUse == nil || toolUse.Value.Name == nil {
 		t.Fatalf("missing tool_use block name")
 	}
-	wantName := SanitizeToolName(tools.ToolUnavailable.String())
+	wantName := "atlas_read_count_events"
 	if got := *toolUse.Value.Name; got != wantName {
 		t.Fatalf("tool_use name = %q, want %q", got, wantName)
 	}
@@ -312,13 +401,12 @@ func TestEncodeMessages_RewritesUnknownToolUseToToolUnavailable(t *testing.T) {
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		t.Fatalf("decode tool_use input: %v", err)
 	}
-	if got := decoded["requested_tool"]; got != "atlas_read_count_events" {
-		t.Fatalf("requested_tool = %#v, want %q", got, "atlas_read_count_events")
+	if got := decoded["from"]; got != "2026-02-06T00:00:00Z" {
+		t.Fatalf("from = %#v, want %q", got, "2026-02-06T00:00:00Z")
 	}
 }
 
 func TestEncodeMessages_AppendsSystemCacheCheckpoint(t *testing.T) {
-	ctx := context.Background()
 	msgs := []*model.Message{
 		{
 			Role: model.ConversationRoleSystem,
@@ -333,7 +421,7 @@ func TestEncodeMessages_AppendsSystemCacheCheckpoint(t *testing.T) {
 			},
 		},
 	}
-	conv, system, err := encodeMessages(ctx, msgs, map[string]string{}, true, nil)
+	conv, system, err := encodeMessages(msgs, map[string]string{}, true)
 	if err != nil {
 		t.Fatalf("encodeMessages error: %v", err)
 	}

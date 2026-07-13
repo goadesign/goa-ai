@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"math/big"
 	"net/http"
 	"strings"
 	"unicode"
@@ -151,7 +153,7 @@ func New(aws *bedrockruntime.Client, opts Options) (*Client, error) {
 // using the Converse API and translates the response into planner-friendly
 // structures (assistant messages + tool calls).
 func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
-	parts, err := c.prepareRequest(ctx, req)
+	parts, err := c.prepareRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +177,7 @@ func (c *Client) CountTokens(ctx context.Context, req *model.Request) (model.Tok
 	countReq := *req
 	countReq.Messages = messagesWithoutThinking(req.Messages)
 	countReq.Thinking = nil
-	parts, err := c.prepareRequest(ctx, &countReq)
+	parts, err := c.prepareRequest(&countReq)
 	if err != nil {
 		return model.TokenCount{}, err
 	}
@@ -199,7 +201,7 @@ func (c *Client) CountTokens(ctx context.Context, req *model.Request) (model.Tok
 // output streams emit completion_delta previews plus one canonical completion
 // payload before stop.
 func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
-	parts, err := c.prepareRequest(ctx, req)
+	parts, err := c.prepareRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +228,7 @@ func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer
 	), nil
 }
 
-func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*requestParts, error) {
+func (c *Client) prepareRequest(req *model.Request) (*requestParts, error) {
 	if len(req.Messages) == 0 {
 		return nil, errors.New("bedrock: messages are required")
 	}
@@ -278,7 +280,7 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*reque
 				"ensure the planner always passes tools when history has tool blocks",
 		)
 	}
-	messages, system, err := encodeMessages(ctx, req.Messages, canonToSan, cacheAfterSystem, c.logger)
+	messages, system, err := encodeMessages(req.Messages, canonToSan, cacheAfterSystem)
 	if err != nil {
 		return nil, err
 	}
@@ -481,7 +483,8 @@ func forcesToolUse(choice *model.ToolChoice) bool {
 // For legacy models (pre-Opus 4.6) with type:"enabled", Bedrock interleaved
 // thinking additionally requires reasoning to precede tool_use within the same
 // assistant message. prepareRequest enforces that representability constraint
-// via transcript.ValidateBedrock after healing missing thinking placeholders.
+// via transcript.ValidateBedrock; transcript construction never invents missing
+// provider reasoning.
 //
 // For adaptive thinking models (Opus 4.6+), thinking is optional — the model
 // may skip reasoning entirely on simple turns. The thinking-first ordering
@@ -655,7 +658,7 @@ func (c *Client) effectiveTemperature(requested float32) float32 {
 	return c.temp
 }
 
-func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[string]string, cacheAfterSystem bool, logger telemetry.Logger) ([]brtypes.Message, []brtypes.SystemContentBlock, error) {
+func encodeMessages(msgs []*model.Message, nameMap map[string]string, cacheAfterSystem bool) ([]brtypes.Message, []brtypes.SystemContentBlock, error) {
 	// toolUseIDMap tracks a per-request mapping from canonical tool_use IDs used
 	// in transcripts (which may be long or contain slashes) to provider-safe
 	// IDs that conform to Bedrock constraints ([a-zA-Z0-9_-]+, <=64 chars). The
@@ -663,6 +666,7 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 	// callers. This ensures we never send internal correlation IDs (for example,
 	// long RunID-based strings) as Bedrock toolUseId values.
 	toolUseIDMap := make(map[string]string)
+	usedToolUseIDs := reservedToolUseIDs(msgs)
 	nextToolUseID := 0
 
 	// docNameMap ensures provider-safe document names are stable and unique
@@ -683,12 +687,16 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 					if v.Text != "" {
 						system = append(system, &brtypes.SystemContentBlockMemberText{Value: v.Text})
 					}
+				case model.CitationsPart:
+					return nil, nil, errors.New("bedrock: replaying canonical citations is not supported")
 				case model.CacheCheckpointPart:
 					system = append(system, &brtypes.SystemContentBlockMemberCachePoint{
 						Value: brtypes.CachePointBlock{Type: brtypes.CachePointTypeDefault},
 					})
 				case model.DocumentPart:
 					return nil, nil, errors.New("bedrock: document parts are not supported in system messages")
+				default:
+					return nil, nil, fmt.Errorf("bedrock: unsupported system message part %T", p)
 				}
 			}
 			continue
@@ -697,8 +705,12 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 		for _, part := range m.Parts {
 			switch v := part.(type) {
 			case model.ThinkingPart:
-				// Encode only provider-valid variants.
-				if v.Signature != "" && v.Text != "" {
+				hasPlaintext := v.Text != "" || v.Signature != ""
+				hasRedacted := len(v.Redacted) > 0
+				if hasPlaintext == hasRedacted || (v.Text == "") != (v.Signature == "") {
+					return nil, nil, errors.New("bedrock: thinking part must contain exactly signed plaintext or redacted content")
+				}
+				if hasPlaintext {
 					blocks = append(blocks, &brtypes.ContentBlockMemberReasoningContent{
 						Value: &brtypes.ReasoningContentBlockMemberReasoningText{
 							Value: brtypes.ReasoningTextBlock{
@@ -709,18 +721,17 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 					})
 					break
 				}
-				if len(v.Redacted) > 0 {
-					blocks = append(blocks, &brtypes.ContentBlockMemberReasoningContent{
-						Value: &brtypes.ReasoningContentBlockMemberRedactedContent{
-							Value: v.Redacted,
-						},
-					})
-					break
-				}
+				blocks = append(blocks, &brtypes.ContentBlockMemberReasoningContent{
+					Value: &brtypes.ReasoningContentBlockMemberRedactedContent{
+						Value: v.Redacted,
+					},
+				})
 			case model.TextPart:
 				if v.Text != "" {
 					blocks = append(blocks, &brtypes.ContentBlockMemberText{Value: v.Text})
 				}
+			case model.CitationsPart:
+				return nil, nil, errors.New("bedrock: replaying canonical citations is not supported")
 			case model.ImagePart:
 				// Bedrock supports image blocks only for user messages (Claude multimodal).
 				if m.Role != model.ConversationRoleUser {
@@ -795,8 +806,10 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 					doc.Format = brtypes.DocumentFormat(v.Format)
 				}
 				// Bedrock disallows S3Location as a source when citations are enabled.
-				// When the caller requests citations, we honor it only for inline sources.
-				if v.Cite && !isS3Source {
+				if v.Cite && isS3Source {
+					return nil, nil, fmt.Errorf("bedrock: document %q cannot enable citations for an S3 source", v.Name)
+				}
+				if v.Cite {
 					doc.Citations = &brtypes.CitationsConfig{Enabled: aws.Bool(true)}
 				}
 				if v.Context != "" {
@@ -807,44 +820,39 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 				// Encode assistant-declared tool_use with optional ID and JSON input.
 				tb := brtypes.ToolUseBlock{}
 				if v.Name != "" {
-					// Contract: providers may require that every tool referenced in prior
-					// tool_use history appears in the current request tool list. When we
-					// encounter a tool_use that is not present in the current tool
-					// configuration (typically due to prior unknown-tool recovery), rewrite
-					// it to the runtime-owned tool_unavailable tool and embed the original
-					// name + payload inside its input.
 					if sanitized, ok := nameMap[v.Name]; ok && sanitized != "" {
 						tb.Name = aws.String(sanitized)
 					} else {
-						unavailable := tools.ToolUnavailable.String()
-						sanitized, ok := nameMap[unavailable]
-						if !ok || sanitized == "" {
-							return nil, nil, fmt.Errorf(
-								"bedrock: tool_use in messages references %q which is not in the current tool configuration and tool_unavailable is not available",
-								v.Name,
-							)
+						for canonical, provider := range nameMap {
+							if provider == v.Name {
+								return nil, nil, fmt.Errorf(
+									"bedrock: historical provider tool name %q collides with current tool %q",
+									v.Name,
+									canonical,
+								)
+							}
 						}
-						tb.Name = aws.String(sanitized)
-						tb.Input = toDocument(ctx, map[string]any{
-							"requested_tool":    v.Name,
-							"requested_payload": v.Input,
-						}, logger)
+						tb.Name = aws.String(v.Name)
 					}
 				}
 				if v.ID != "" {
-					if id := toolUseIDFor(v.ID, toolUseIDMap, &nextToolUseID); id != "" {
+					if id := toolUseIDFor(v.ID, toolUseIDMap, usedToolUseIDs, &nextToolUseID); id != "" {
 						tb.ToolUseId = aws.String(id)
 					}
 				}
 				if tb.Input == nil {
-					tb.Input = toDocument(ctx, v.Input, logger)
+					var err error
+					tb.Input, err = toDocument(v.Input)
+					if err != nil {
+						return nil, nil, fmt.Errorf("bedrock: encode tool_use %q input: %w", v.Name, err)
+					}
 				}
 				blocks = append(blocks, &brtypes.ContentBlockMemberToolUse{Value: tb})
 			case model.ToolResultPart:
 				// Bedrock expects tool_result blocks in user messages, correlated to a prior tool_use.
 				// Encode content as text when Content is a string; otherwise as a JSON document.
 				tr := brtypes.ToolResultBlock{}
-				if id := toolUseIDFor(v.ToolUseID, toolUseIDMap, &nextToolUseID); id != "" {
+				if id := toolUseIDFor(v.ToolUseID, toolUseIDMap, usedToolUseIDs, &nextToolUseID); id != "" {
 					tr.ToolUseId = aws.String(id)
 				}
 				if s, ok := v.Content.(string); ok {
@@ -852,7 +860,10 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 						&brtypes.ToolResultContentBlockMemberText{Value: s},
 					}
 				} else {
-					doc := toDocument(ctx, v.Content, logger)
+					doc, err := toDocument(v.Content)
+					if err != nil {
+						return nil, nil, fmt.Errorf("bedrock: encode tool_result %q content: %w", v.ToolUseID, err)
+					}
 					tr.Content = []brtypes.ToolResultContentBlock{
 						&brtypes.ToolResultContentBlockMemberJson{Value: doc},
 					}
@@ -862,6 +873,8 @@ func encodeMessages(ctx context.Context, msgs []*model.Message, nameMap map[stri
 				blocks = append(blocks, &brtypes.ContentBlockMemberCachePoint{
 					Value: brtypes.CachePointBlock{Type: brtypes.CachePointTypeDefault},
 				})
+			default:
+				return nil, nil, fmt.Errorf("bedrock: unsupported %s message part %T", m.Role, part)
 			}
 		}
 		if len(blocks) == 0 {
@@ -1125,7 +1138,30 @@ func sanitizeDocumentName(in string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func toolUseIDFor(canonical string, toolUseIDMap map[string]string, nextToolUseID *int) string {
+// reservedToolUseIDs reserves every provider-safe canonical ID before unsafe
+// IDs are assigned aliases, making the request-wide mapping bijective.
+func reservedToolUseIDs(messages []*model.Message) map[string]struct{} {
+	used := make(map[string]struct{})
+	for _, message := range messages {
+		if message == nil {
+			continue
+		}
+		for _, part := range message.Parts {
+			use, ok := part.(model.ToolUsePart)
+			if ok && isProviderSafeToolUseID(use.ID) {
+				used[use.ID] = struct{}{}
+			}
+		}
+	}
+	return used
+}
+
+func toolUseIDFor(
+	canonical string,
+	toolUseIDMap map[string]string,
+	usedToolUseIDs map[string]struct{},
+	nextToolUseID *int,
+) string {
 	if canonical == "" {
 		return ""
 	}
@@ -1135,9 +1171,16 @@ func toolUseIDFor(canonical string, toolUseIDMap map[string]string, nextToolUseI
 	if id, ok := toolUseIDMap[canonical]; ok {
 		return id
 	}
-	*nextToolUseID++
-	id := fmt.Sprintf("t%d", *nextToolUseID)
+	var id string
+	for {
+		*nextToolUseID++
+		id = fmt.Sprintf("t%d", *nextToolUseID)
+		if _, exists := usedToolUseIDs[id]; !exists {
+			break
+		}
+	}
 	toolUseIDMap[canonical] = id
+	usedToolUseIDs[id] = struct{}{}
 	return id
 }
 
@@ -1168,36 +1211,50 @@ func docNameFor(original string, docNameMap map[string]string, usedDocNames map[
 	return name
 }
 
-func toDocument(ctx context.Context, schema any, logger telemetry.Logger) document.Interface {
-	if logger == nil {
-		logger = telemetry.NewNoopLogger()
+// toDocument translates a canonical JSON-bearing value into Bedrock's Smithy
+// document without converting JSON numbers through float64.
+func toDocument(value any) (document.Interface, error) {
+	if value == nil {
+		return nil, errors.New("document value is required")
 	}
-	if schema == nil {
-		m := map[string]any{"type": "object"}
-		return lazyDocument(m)
-	}
-	switch v := schema.(type) {
-	case document.Interface:
-		return v
+	switch v := value.(type) {
+	case rawjson.Message:
+		return decodeJSONDocument(v)
 	case json.RawMessage:
-		var decoded any
-		if len(v) == 0 {
-			return lazyDocument(map[string]any{"type": "object"})
-		}
-		if err := json.Unmarshal(v, &decoded); err != nil {
-			logger.Error(
-				ctx,
-				"failed to unmarshal schema",
-				"component", "inference-engine",
-				"event", "unmarshal_schema_failed",
-				"err", err,
-			)
-			return lazyDocument(map[string]any{"type": "object"})
-		}
-		return lazyDocument(decoded)
+		return decodeJSONDocument(v)
 	default:
-		return lazyDocument(v)
+		data, err := json.Marshal(v)
+		if err != nil {
+			return nil, err
+		}
+		return decodeJSONDocument(data)
 	}
+}
+
+// decodeJSONDocument preserves the canonical JSON number spelling while
+// materializing the object form required by the Bedrock SDK.
+func decodeJSONDocument(data []byte) (document.Interface, error) {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil, errors.New("document JSON is required")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var decoded any
+	if err := decoder.Decode(&decoded); err != nil {
+		return nil, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, errors.New("document contains multiple JSON values")
+		}
+		return nil, err
+	}
+	decoded, err := smithyDocumentValue(decoded)
+	if err != nil {
+		return nil, err
+	}
+	return lazyDocument(decoded), nil
 }
 
 func schemaDocument(schema rawjson.Message) (document.Interface, error) {
@@ -1213,11 +1270,72 @@ func schemaMap(schema rawjson.Message) (map[string]any, error) {
 	if len(data) == 0 {
 		return nil, errors.New("schema JSON is required")
 	}
+	if !json.Valid(data) {
+		return nil, errors.New("schema must be valid JSON")
+	}
 	var decoded map[string]any
-	if err := json.Unmarshal(data, &decoded); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
 		return nil, err
 	}
+	if decoded == nil {
+		return nil, errors.New("schema JSON must be an object")
+	}
+	for name, value := range decoded {
+		value, err := smithyDocumentValue(value)
+		if err != nil {
+			return nil, err
+		}
+		decoded[name] = value
+	}
 	return decoded, nil
+}
+
+// smithyDocumentValue preserves canonical JSON numbers using the exact type
+// recognized by the AWS document encoder instead of letting json.Number encode
+// as a JSON string.
+func smithyDocumentValue(value any) (any, error) {
+	switch v := value.(type) {
+	case json.Number:
+		if !strings.ContainsAny(v.String(), ".eE") {
+			integer, ok := new(big.Int).SetString(v.String(), 10)
+			if !ok {
+				return nil, fmt.Errorf("invalid JSON integer %q", v)
+			}
+			return integer, nil
+		}
+		decimal, _, err := big.ParseFloat(
+			v.String(),
+			10,
+			uint(max(64, len(v.String())*4)),
+			big.ToNearestEven,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON number %q: %w", v, err)
+		}
+		return decimal, nil
+	case []any:
+		for i, item := range v {
+			item, err := smithyDocumentValue(item)
+			if err != nil {
+				return nil, err
+			}
+			v[i] = item
+		}
+		return v, nil
+	case map[string]any:
+		for name, item := range v {
+			item, err := smithyDocumentValue(item)
+			if err != nil {
+				return nil, err
+			}
+			v[name] = item
+		}
+		return v, nil
+	default:
+		return value, nil
+	}
 }
 
 // isProviderSafeToolUseID reports whether id conforms to Bedrock's documented
@@ -1252,52 +1370,78 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 		return nil, errors.New("bedrock: response is nil")
 	}
 	resp := &model.Response{}
-	if msg, ok := output.Output.(*brtypes.ConverseOutputMemberMessage); ok {
-		assistant := model.Message{Role: model.ConversationRole(msg.Value.Role)}
-		for _, block := range msg.Value.Content {
-			switch v := block.(type) {
-			case *brtypes.ContentBlockMemberText:
-				if v.Value == "" {
-					continue
+	msg, ok := output.Output.(*brtypes.ConverseOutputMemberMessage)
+	if !ok {
+		return nil, fmt.Errorf("bedrock: unsupported response output %T", output.Output)
+	}
+	assistant := model.Message{Role: model.ConversationRole(msg.Value.Role)}
+	for _, block := range msg.Value.Content {
+		switch v := block.(type) {
+		case *brtypes.ContentBlockMemberReasoningContent:
+			switch reasoning := v.Value.(type) {
+			case *brtypes.ReasoningContentBlockMemberReasoningText:
+				text := aws.ToString(reasoning.Value.Text)
+				signature := aws.ToString(reasoning.Value.Signature)
+				if text == "" || signature == "" {
+					return nil, errors.New("bedrock: response reasoning block requires plaintext and signature")
 				}
-				assistant.Parts = appendAssistantTextPart(assistant.Parts, v.Value)
-			case *brtypes.ContentBlockMemberCitationsContent:
-				part := translateCitationsContent(v.Value)
-				if part.Text == "" && len(part.Citations) == 0 {
-					continue
-				}
-				assistant.Parts = append(assistant.Parts, part)
-			case *brtypes.ContentBlockMemberToolUse:
-				payload := decodeDocument(v.Value.Input)
-				name := ""
-				if v.Value.Name != nil {
-					raw := *v.Value.Name
-					key := normalizeToolName(raw)
-					// Bedrock tool_use blocks echo provider-visible names. When the model
-					// hallucinates a tool name that was not advertised in this request, the
-					// reverse map will not contain it. Surface the tool call as-is and let
-					// the runtime convert it into an "unknown tool" result so the model can
-					// recover on the next resume turn.
-					if canonical, ok := nameMap[key]; ok {
-						name = canonical
-					} else {
-						name = key
-					}
-				}
-				var id string
-				if v.Value.ToolUseId != nil {
-					id = *v.Value.ToolUseId
-				}
-				resp.ToolCalls = append(resp.ToolCalls, model.ToolCall{
-					Name:    tools.Ident(name),
-					Payload: payload,
-					ID:      id,
+				assistant.Parts = append(assistant.Parts, model.ThinkingPart{
+					Text:      text,
+					Signature: signature,
+					Final:     true,
 				})
+			case *brtypes.ReasoningContentBlockMemberRedactedContent:
+				if len(reasoning.Value) == 0 {
+					return nil, errors.New("bedrock: response redacted reasoning block requires data")
+				}
+				assistant.Parts = append(assistant.Parts, model.ThinkingPart{
+					Redacted: append([]byte(nil), reasoning.Value...),
+					Final:    true,
+				})
+			default:
+				return nil, fmt.Errorf("bedrock: unsupported response reasoning block %T", v.Value)
 			}
+		case *brtypes.ContentBlockMemberText:
+			assistant.Parts = append(assistant.Parts, model.TextPart{Text: v.Value})
+		case *brtypes.ContentBlockMemberCitationsContent:
+			part, err := translateCitationsContent(v.Value)
+			if err != nil {
+				return nil, err
+			}
+			assistant.Parts = append(assistant.Parts, part)
+		case *brtypes.ContentBlockMemberToolUse:
+			payload, err := decodeDocument(v.Value.Input)
+			if err != nil {
+				return nil, fmt.Errorf("bedrock: decode tool use input: %w", err)
+			}
+			if v.Value.Name == nil || *v.Value.Name == "" {
+				return nil, errors.New("bedrock: response tool use block missing name")
+			}
+			raw := *v.Value.Name
+			key := normalizeToolName(raw)
+			name := key
+			// Bedrock tool_use blocks echo provider-visible names. When the model
+			// hallucinates a tool name that was not advertised in this request, the
+			// reverse map will not contain it. Surface the tool call as-is and let
+			// the runtime convert it into an "unknown tool" result so the model can
+			// recover on the next resume turn.
+			if canonical, ok := nameMap[key]; ok {
+				name = canonical
+			}
+			if v.Value.ToolUseId == nil || *v.Value.ToolUseId == "" {
+				return nil, errors.New("bedrock: response tool use block missing ID")
+			}
+			assistant.Parts = append(assistant.Parts, model.ToolUsePart{
+				Name:  string(tools.Ident(name)),
+				Input: payload,
+				ID:    *v.Value.ToolUseId,
+			})
+		default:
+			return nil, fmt.Errorf("bedrock: unsupported response content block %T", block)
 		}
-		if len(assistant.Parts) > 0 {
-			resp.Content = append(resp.Content, assistant)
-		}
+	}
+	if len(assistant.Parts) > 0 {
+		resp.Content = append(resp.Content, assistant)
 	}
 	if usage := output.Usage; usage != nil {
 		resp.Usage = model.TokenUsage{
@@ -1311,62 +1455,65 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 		}
 	}
 	resp.StopReason = string(output.StopReason)
+	if resp.StopReason == "" {
+		return nil, errors.New("bedrock: response is missing its stop reason")
+	}
+	if err := model.ValidateResponse(resp); err != nil {
+		return nil, fmt.Errorf("bedrock: invalid response: %w", err)
+	}
 	return resp, nil
 }
 
-// appendAssistantTextPart appends text to the assistant message while
-// preserving the single-message Bedrock response shape. Adjacent text blocks
-// are coalesced because Bedrock may segment one logical assistant message
-// across multiple text blocks.
-func appendAssistantTextPart(parts []model.Part, text string) []model.Part {
-	if text == "" {
-		return parts
-	}
-	if len(parts) == 0 {
-		return append(parts, model.TextPart{Text: text})
-	}
-	if last, ok := parts[len(parts)-1].(model.TextPart); ok {
-		parts[len(parts)-1] = model.TextPart{Text: last.Text + text}
-		return parts
-	}
-	return append(parts, model.TextPart{Text: text})
-}
-
-func decodeDocument(doc document.Interface) rawjson.Message {
+func decodeDocument(doc document.Interface) (rawjson.Message, error) {
 	if doc == nil {
-		return nil
+		return nil, errors.New("document is nil")
 	}
 	data, err := doc.MarshalSmithyDocument()
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	if len(data) == 0 {
-		return nil
+		return nil, errors.New("document is empty")
 	}
-	return rawjson.Message(data)
+	return rawjson.Message(data), nil
 }
 
-func translateCitationsContent(block brtypes.CitationsContentBlock) model.CitationsPart {
+func translateCitationsContent(block brtypes.CitationsContentBlock) (model.CitationsPart, error) {
 	var b strings.Builder
 	for _, content := range block.Content {
-		if v, ok := content.(*brtypes.CitationGeneratedContentMemberText); ok {
+		switch v := content.(type) {
+		case *brtypes.CitationGeneratedContentMemberText:
 			b.WriteString(v.Value)
+		default:
+			return model.CitationsPart{}, fmt.Errorf("bedrock: unsupported citation generated content %T", content)
 		}
 	}
 	citations := make([]model.Citation, 0, len(block.Citations))
 	for _, c := range block.Citations {
-		citations = append(citations, translateCitation(c))
+		citation, err := translateCitation(c)
+		if err != nil {
+			return model.CitationsPart{}, err
+		}
+		citations = append(citations, citation)
 	}
 	return model.CitationsPart{
 		Text:      b.String(),
 		Citations: citations,
-	}
+	}, nil
 }
 
-func translateCitation(c brtypes.Citation) model.Citation {
+func translateCitation(c brtypes.Citation) (model.Citation, error) {
+	location, err := translateCitationLocation(c.Location)
+	if err != nil {
+		return model.Citation{}, err
+	}
+	sourceContent, err := translateCitationSourceContent(c.SourceContent)
+	if err != nil {
+		return model.Citation{}, err
+	}
 	out := model.Citation{
-		Location:      translateCitationLocation(c.Location),
-		SourceContent: translateCitationSourceContent(c.SourceContent),
+		Location:      location,
+		SourceContent: sourceContent,
 	}
 	if c.Title != nil {
 		out.Title = *c.Title
@@ -1374,10 +1521,10 @@ func translateCitation(c brtypes.Citation) model.Citation {
 	if c.Source != nil {
 		out.Source = *c.Source
 	}
-	return out
+	return out, nil
 }
 
-func translateCitationLocation(loc brtypes.CitationLocation) model.CitationLocation {
+func translateCitationLocation(loc brtypes.CitationLocation) (model.CitationLocation, error) {
 	switch v := loc.(type) {
 	case *brtypes.CitationLocationMemberDocumentChar:
 		return model.CitationLocation{
@@ -1386,7 +1533,7 @@ func translateCitationLocation(loc brtypes.CitationLocation) model.CitationLocat
 				Start:         int(ptrValue(v.Value.Start)),
 				End:           int(ptrValue(v.Value.End)),
 			},
-		}
+		}, nil
 	case *brtypes.CitationLocationMemberDocumentChunk:
 		return model.CitationLocation{
 			DocumentChunk: &model.DocumentChunkLocation{
@@ -1394,7 +1541,7 @@ func translateCitationLocation(loc brtypes.CitationLocation) model.CitationLocat
 				Start:         int(ptrValue(v.Value.Start)),
 				End:           int(ptrValue(v.Value.End)),
 			},
-		}
+		}, nil
 	case *brtypes.CitationLocationMemberDocumentPage:
 		return model.CitationLocation{
 			DocumentPage: &model.DocumentPageLocation{
@@ -1402,28 +1549,26 @@ func translateCitationLocation(loc brtypes.CitationLocation) model.CitationLocat
 				Start:         int(ptrValue(v.Value.Start)),
 				End:           int(ptrValue(v.Value.End)),
 			},
-		}
+		}, nil
 	default:
-		return model.CitationLocation{}
+		return model.CitationLocation{}, fmt.Errorf("bedrock: unsupported citation location %T", loc)
 	}
 }
 
-func translateCitationSourceContent(contents []brtypes.CitationSourceContent) []string {
+func translateCitationSourceContent(contents []brtypes.CitationSourceContent) ([]string, error) {
 	if len(contents) == 0 {
-		return nil
+		return nil, nil
 	}
 	out := make([]string, 0, len(contents))
 	for _, content := range contents {
-		if v, ok := content.(*brtypes.CitationSourceContentMemberText); ok {
-			if v.Value != "" {
-				out = append(out, v.Value)
-			}
+		switch v := content.(type) {
+		case *brtypes.CitationSourceContentMemberText:
+			out = append(out, v.Value)
+		default:
+			return nil, fmt.Errorf("bedrock: unsupported citation source content %T", content)
 		}
 	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
+	return out, nil
 }
 
 func ptrValue[T ~int32 | ~int64](ptr *T) T {

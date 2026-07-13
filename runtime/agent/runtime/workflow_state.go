@@ -32,13 +32,9 @@ type (
 		// Transcript is the provider transcript for the current planner result.
 		Transcript []*model.Message
 
-		// ToolCallSignatures carries opaque, provider-defined tool-call thought
-		// signatures captured for the current planner result, keyed by
-		// tool-call ID (see PlanActivityOutput.ToolCallSignatures). Runtime
-		// transcript rebuilding looks up signatures here by ID instead of
-		// reading them from any planner-facing type; a missing key means none
-		// was captured.
-		ToolCallSignatures map[string]string
+		// ResponseCommitted reports whether Transcript or its planner-authored
+		// equivalent has been persisted for the current result.
+		ResponseCommitted bool
 
 		// ToolEvents are the accumulated tool results emitted over the lifetime of this run.
 		ToolEvents []*planner.ToolResult

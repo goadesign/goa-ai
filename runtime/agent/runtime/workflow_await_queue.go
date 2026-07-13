@@ -189,7 +189,6 @@ func (l *workflowLoop) handleAwaitQueue(
 	wfCtx := l.wfCtx
 	input := l.input
 	base := l.base
-	st := l.st
 	ctrl := l.ctrl
 	turnID := l.turnID
 	ctx := wfCtx.Context()
@@ -225,7 +224,7 @@ func (l *workflowLoop) handleAwaitQueue(
 		}
 	}
 	for i, it := range items {
-		if err := r.admitAwaitItem(ctx, input, base, st, turnID, it, i); err != nil {
+		if err := r.admitAwaitItem(ctx, input, base, turnID, it, i); err != nil {
 			return err
 		}
 	}
@@ -252,7 +251,7 @@ func (l *workflowLoop) handleAwaitQueue(
 		batch.timedOut = batch.timedOut || timedOut
 		if len(pauseItems) > 0 {
 			for _, item := range pauseItems {
-				if err := r.admitAwaitItem(ctx, input, base, st, turnID, item, len(items)); err != nil {
+				if err := r.admitAwaitItem(ctx, input, base, turnID, item, len(items)); err != nil {
 					return err
 				}
 				items = append(items, item)
@@ -280,7 +279,7 @@ func (l *workflowLoop) handleAwaitQueue(
 
 // admitAwaitItem publishes the operator-facing await prompt and records any
 // provider-native tool_use side effects required by tool-result awaits.
-func (r *Runtime) admitAwaitItem(ctx context.Context, input *RunInput, base *planner.PlanInput, st *runLoopState, turnID string, it planner.AwaitItem, idx int) error {
+func (r *Runtime) admitAwaitItem(ctx context.Context, input *RunInput, base *planner.PlanInput, turnID string, it planner.AwaitItem, idx int) error {
 	if it.Kind == "" {
 		return fmt.Errorf("await item %d missing kind", idx)
 	}
@@ -335,15 +334,6 @@ func (r *Runtime) admitAwaitItem(ctx context.Context, input *RunInput, base *pla
 		), turnID); err != nil {
 			return err
 		}
-		// Questions are modeled as a provider-native tool use. Record the
-		// assistant tool_use turn before waiting for out-of-band results.
-		if err := r.recordAssistantTurn(ctx, input.AgentID, base, st.Transcript, []planner.ToolRequest{{
-			Name:       q.ToolName,
-			ToolCallID: q.ToolCallID,
-			Payload:    q.Payload,
-		}}, st.ToolCallSignatures, turnID); err != nil {
-			return err
-		}
 		return r.publishHook(ctx, hooks.NewToolCallScheduledEvent(
 			base.RunContext.RunID,
 			input.AgentID,
@@ -387,11 +377,6 @@ func (r *Runtime) admitAwaitItem(ctx context.Context, input *RunInput, base *pla
 			e.ID,
 			items,
 		), turnID); err != nil {
-			return err
-		}
-		// External tools are modeled as a provider-native tool use. Record the
-		// assistant tool_use turn before waiting for out-of-band results.
-		if err := r.recordAssistantTurn(ctx, input.AgentID, base, st.Transcript, awaitCalls, st.ToolCallSignatures, turnID); err != nil {
 			return err
 		}
 		for _, call := range awaitCalls {

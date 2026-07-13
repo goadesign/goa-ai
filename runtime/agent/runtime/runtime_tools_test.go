@@ -472,13 +472,16 @@ func TestToolsetTaskQueueOverrideUsed(t *testing.T) {
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, hasPlanResult: true}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("child")}}}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		Name:    tools.Ident("child"),
+		Payload: rawjson.Message(`{}`),
+	}}}
 	_, err := rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  input.AgentID,
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, time.Time{}, 2, "", nil, nil, 0)
+	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, time.Time{}, "", nil)
 	require.NoError(t, err)
 	require.Equal(t, "q1", wfCtx.lastToolCall.Options.Queue)
 	require.NotNil(t, wfCtx.lastToolCall.Input)
@@ -497,13 +500,17 @@ func TestPreserveModelProvidedToolCallID(t *testing.T) {
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 	// Planner supplies an explicit ToolCallID from the model
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("tool"), ToolCallID: "model-123"}}}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		Name:       tools.Ident("tool"),
+		ToolCallID: "model-123",
+		Payload:    rawjson.Message(`{}`),
+	}}}
 	_, err := rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  input.AgentID,
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, time.Time{}, 2, "", nil, nil, 0)
+	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, time.Time{}, "", nil)
 	require.NoError(t, err)
 	// Activity input should carry the same ID
 	require.NotNil(t, wfCtx.lastToolCall.Input)
@@ -566,14 +573,17 @@ func TestRunLoopPauseResumeEmitsEvents(t *testing.T) {
 		UpdatedAt: now,
 	}))
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("tool")}}}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		Name:    tools.Ident("tool"),
+		Payload: rawjson.Message(`{}`),
+	}}}
 	ctrl := interrupt.NewController(wfCtx)
 	_, err = rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  input.AgentID,
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, time.Time{}, 2, input.TurnID, nil, ctrl, 0)
+	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, time.Time{}, input.TurnID, ctrl)
 	require.NoError(t, err)
 	var sawPause, sawResume bool
 	for _, evt := range recorder.events {
@@ -976,6 +986,7 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
 		Name:       tools.Ident("child.get_time_series"),
 		ToolCallID: "tool-parent",
+		Payload:    rawjson.Message(`{}`),
 	}}}
 	_, err := rt.runLoop(
 		wfCtx,
@@ -988,16 +999,11 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 		input,
 		base,
 		initial,
-		nil,
-		model.TokenUsage{},
 		policy.CapsState{MaxToolCalls: 2, RemainingToolCalls: 2},
 		time.Time{},
 		time.Time{},
-		2,
 		input.TurnID,
 		nil,
-		nil,
-		0,
 	)
 	require.NoError(t, err)
 

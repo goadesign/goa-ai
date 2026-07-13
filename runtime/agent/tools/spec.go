@@ -63,15 +63,15 @@ type (
 		//
 		// This is intended for tools whose result is the user-facing terminal output
 		// (for example, a final report renderer) and should not be followed by extra
-		// model narration. Terminal tools must also declare Bookkeeping so the
-		// retrieval budget cannot trim them away. DSL-defined tools are normalized
+		// model narration. Terminal tools must also declare Bookkeeping so they do
+		// not contribute to the retrieval budget. DSL-defined tools are normalized
 		// during expression preparation; runtime registration rejects inconsistent
 		// specs from other sources.
 		TerminalRun bool
 		// Bookkeeping indicates the tool is a structured bookkeeping tool and must
 		// not be charged against the run-level MaxToolCalls retrieval budget.
-		// Runtimes do not decrement RemainingToolCalls for bookkeeping calls and
-		// never drop them when trimming a batch to fit the remaining budget.
+		// Model-authored batches remain atomic; bookkeeping calls do not contribute
+		// to their budget cost.
 		//
 		// This is intended for structured progress, status, finding, and terminal-
 		// commit tools whose cost is record-keeping rather than retrieval or

@@ -31,7 +31,7 @@ func TestPartMarshalJSONIncludesKind(t *testing.T) {
 		{name: "image", part: ImagePart{Format: ImageFormatPNG, Bytes: []byte{0x01}}, kind: "image"},
 		{name: "document", part: DocumentPart{Name: "doc", Format: DocumentFormatTXT, Text: "hello"}, kind: "document"},
 		{name: "citations", part: CitationsPart{Text: "supported", Citations: []Citation{{Title: "t"}}}, kind: "citations"},
-		{name: "tool_use", part: ToolUsePart{Name: "search", Input: map[string]any{"q": "golang"}}, kind: "tool_use"},
+		{name: "tool_use", part: ToolUsePart{ID: "call-1", Name: "search", Input: rawjson.Message(`{"q":"golang"}`)}, kind: "tool_use"},
 		{name: "tool_result", part: ToolResultPart{ToolUseID: "tu", Content: map[string]any{"hits": 1}}, kind: "tool_result"},
 		{name: "cache_checkpoint", part: CacheCheckpointPart{}, kind: "cache_checkpoint"},
 	}
@@ -47,28 +47,69 @@ func TestPartMarshalJSONIncludesKind(t *testing.T) {
 			require.NoError(t, json.Unmarshal(raw, &obj))
 
 			var parts []json.RawMessage
-			require.NoError(t, json.Unmarshal(obj["Parts"], &parts))
+			require.NoError(t, json.Unmarshal(obj["parts"], &parts))
 			require.Len(t, parts, 1)
 
 			var partObj map[string]json.RawMessage
 			require.NoError(t, json.Unmarshal(parts[0], &partObj))
 
 			var kind string
-			require.NoError(t, json.Unmarshal(partObj["Kind"], &kind))
+			require.NoError(t, json.Unmarshal(partObj["kind"], &kind))
 			require.Equal(t, tt.kind, kind)
 		})
 	}
 }
 
 func TestDecodeMessagePartHonorsKind(t *testing.T) {
-	const payload = `{"Kind":"tool_use","Name":"legacy","Args":{"q":"old"}}`
+	const payload = `{"kind":"tool_use","id":"call-1","name":"search","input":{"z":9007199254740993,"q":"old"}}`
 	part, err := decodeMessagePart([]byte(payload))
 	require.NoError(t, err)
 
 	tu, ok := part.(ToolUsePart)
 	require.True(t, ok)
-	require.Equal(t, "legacy", tu.Name)
-	require.Equal(t, map[string]any{"q": "old"}, tu.Input)
+	require.Equal(t, "search", tu.Name)
+	require.Equal(t, `{"z":9007199254740993,"q":"old"}`, string(tu.Input)) //nolint:testifylint // Exact bytes are the contract.
+}
+
+func TestMessageJSONRejectsUnknownFields(t *testing.T) {
+	var message Message
+	err := json.Unmarshal([]byte(`{"role":"user","parts":[],"unknown":true}`), &message)
+	require.ErrorContains(t, err, `unknown field "unknown"`)
+
+	_, err = decodeMessagePart([]byte(`{"kind":"text","text":"hello","unknown":true}`))
+	require.ErrorContains(t, err, `unknown field "unknown"`)
+}
+
+func TestMessageJSONRejectsObsoleteFieldCasing(t *testing.T) {
+	var message Message
+	err := json.Unmarshal([]byte(`{"Role":"user","Parts":[]}`), &message)
+	require.ErrorContains(t, err, `unknown field "Parts"`)
+
+	_, err = decodeMessagePart([]byte(`{"Kind":"text","Text":"hello"}`))
+	require.EqualError(t, err, "message part requires kind")
+}
+
+func TestMessageJSONRejectsNull(t *testing.T) {
+	var message Message
+	require.EqualError(t, json.Unmarshal([]byte(`null`), &message), "expected JSON object")
+}
+
+func TestMessageUnmarshalPreservesInterfaceValuedNumbers(t *testing.T) {
+	const payload = `{
+		"role":"user",
+		"parts":[{
+			"kind":"tool_result",
+			"tool_use_id":"call-1",
+			"content":{"reading":9007199254740993}
+		}],
+		"meta":{"sequence":9007199254740995}
+	}`
+
+	var message Message
+	require.NoError(t, json.Unmarshal([]byte(payload), &message))
+	result := message.Parts[0].(ToolResultPart)
+	require.Equal(t, json.Number("9007199254740993"), result.Content.(map[string]any)["reading"])
+	require.Equal(t, json.Number("9007199254740995"), message.Meta["sequence"])
 }
 
 func TestToolInputContractRoundTrip(t *testing.T) {
@@ -100,7 +141,10 @@ func TestThinkingPartRoundTripPreservesSignature(t *testing.T) {
 		Final:     true,
 	}
 
-	raw, err := json.Marshal(orig)
+	raw, err := json.Marshal(struct {
+		Kind string `json:"kind"`
+		ThinkingPart
+	}{Kind: "thinking", ThinkingPart: orig})
 	require.NoError(t, err)
 
 	part, err := decodeMessagePart(raw)
@@ -122,7 +166,7 @@ func TestToolUsePartRoundTripPreservesThoughtSignature(t *testing.T) {
 			ToolUsePart{
 				ID:               "tu1",
 				Name:             "search",
-				Input:            map[string]any{"q": "golang"},
+				Input:            rawjson.Message(`{"q":"golang"}`),
 				ThoughtSignature: "opaque-provider-signature",
 			},
 		},
@@ -139,17 +183,40 @@ func TestToolUsePartRoundTripPreservesThoughtSignature(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "search", tu.Name)
 	require.Equal(t, "opaque-provider-signature", tu.ThoughtSignature)
+	require.JSONEq(t, `{"q":"golang"}`, string(tu.Input))
 }
 
-func TestToolUsePartLegacyPayloadDecodesWithoutThoughtSignature(t *testing.T) {
-	const payload = `{"Kind":"tool_use","Name":"legacy","Args":{"q":"old"}}`
-	part, err := decodeMessagePart([]byte(payload))
-	require.NoError(t, err)
+func TestToolUsePartRejectsLegacyArgsField(t *testing.T) {
+	_, err := decodeMessagePart([]byte(`{"kind":"tool_use","name":"search","args":{"q":"old"}}`))
+	require.ErrorContains(t, err, `unknown field "args"`)
+}
 
-	tu, ok := part.(ToolUsePart)
-	require.True(t, ok)
-	require.Equal(t, "legacy", tu.Name)
-	require.Empty(t, tu.ThoughtSignature)
+func TestToolUsePartRejectsMissingCanonicalFields(t *testing.T) {
+	_, err := decodeMessagePart([]byte(`{"kind":"tool_use","name":"search","input":{"q":"old"}}`))
+	require.ErrorContains(t, err, "requires id and name")
+}
+
+func TestToolUsePartRejectsNonObjectInput(t *testing.T) {
+	for _, input := range []string{"null", `[]`, `"value"`} {
+		t.Run(input, func(t *testing.T) {
+			_, err := decodeMessagePart([]byte(
+				`{"kind":"tool_use","id":"call-1","name":"lookup","input":` + input + `}`,
+			))
+			require.ErrorContains(t, err, "requires input to be a JSON object")
+		})
+	}
+}
+
+func TestToolUsePartMarshalRejectsNonObjectInput(t *testing.T) {
+	_, err := json.Marshal(Message{
+		Role: ConversationRoleAssistant,
+		Parts: []Part{ToolUsePart{
+			ID:    "call-1",
+			Name:  "lookup",
+			Input: rawjson.Message(`null`),
+		}},
+	})
+	require.ErrorContains(t, err, "requires input to be a JSON object")
 }
 
 func TestCacheCheckpointPartRoundTrip(t *testing.T) {
@@ -165,11 +232,11 @@ func TestCacheCheckpointPartRoundTrip(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &obj))
 
 	var parts []json.RawMessage
-	require.NoError(t, json.Unmarshal(obj["Parts"], &parts))
+	require.NoError(t, json.Unmarshal(obj["parts"], &parts))
 	require.Len(t, parts, 1)
 
-	// Verify it emits a Kind discriminator, not an empty object.
-	require.JSONEq(t, `{"Kind":"cache_checkpoint"}`, string(parts[0]))
+	// Verify it emits a kind discriminator, not an empty object.
+	require.JSONEq(t, `{"kind":"cache_checkpoint"}`, string(parts[0]))
 
 	part, err := decodeMessagePart(parts[0])
 	require.NoError(t, err)
@@ -180,8 +247,7 @@ func TestCacheCheckpointPartRoundTrip(t *testing.T) {
 
 func TestDecodeEmptyObjectReturnsError(t *testing.T) {
 	_, err := decodeMessagePart([]byte(`{}`))
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "empty part payload")
+	require.EqualError(t, err, "message part requires kind")
 }
 
 func TestDocumentPartDecodeRejectsInvalidSources(t *testing.T) {
@@ -191,15 +257,15 @@ func TestDocumentPartDecodeRejectsInvalidSources(t *testing.T) {
 	}{
 		{
 			name:    "missing_source",
-			payload: `{"Kind":"document","Name":"doc"}`,
+			payload: `{"kind":"document","name":"doc"}`,
 		},
 		{
 			name:    "multiple_sources",
-			payload: `{"Kind":"document","Name":"doc","Text":"a","URI":"s3://b/doc.pdf"}`,
+			payload: `{"kind":"document","name":"doc","text":"a","uri":"s3://b/doc.pdf"}`,
 		},
 		{
 			name:    "empty_chunk",
-			payload: `{"Kind":"document","Name":"doc","Chunks":[""]}`,
+			payload: `{"kind":"document","name":"doc","chunks":[""]}`,
 		},
 	}
 	for _, tt := range cases {

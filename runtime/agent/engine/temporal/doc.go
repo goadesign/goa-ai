@@ -20,12 +20,6 @@
 //	    ClientOptions: &client.Options{
 //	        HostPort:  "temporal:7233",
 //	        Namespace: "default",
-//	        // Required: enforce goa-ai's workflow boundary contract.
-//	        // Tool results/artifacts cross boundaries as canonical JSON bytes (api.ToolEvent/api.ToolArtifact),
-//	        // and planner.ToolResult is rejected if it ever tries to cross a Temporal boundary.
-//	        // Pass the generated tool specs aggregate for the agent(s) hosted by this runtime.
-//	        // Example: specs "<module>/gen/<service>/agents/<agent>/specs"
-//	        // DataConverter: temporal.NewAgentDataConverter(specs.Spec),
 //	    },
 //	    WorkerOptions: temporal.WorkerOptions{
 //	        TaskQueue:              "orchestrator.chat",
@@ -43,6 +37,9 @@
 //	    log.Fatal(err)
 //	}
 //	defer eng.Close()
+//
+// NewWorker and NewClient install NewAgentDataConverter when ClientOptions does
+// not specify one. A preconfigured Client owns its data converter.
 //
 // Client-only processes use NewClient and do not register local workflows or
 // activities:

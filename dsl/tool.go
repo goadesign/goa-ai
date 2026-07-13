@@ -785,8 +785,8 @@ func ResultReminder(s string) {
 //
 // Terminal tools are normalized as bookkeeping during DSL preparation. This
 // keeps the terminal contract safe by construction at a single canonical phase:
-// the run-level retrieval budget must never trim away the tool that commits the
-// terminal outcome.
+// the tool that commits the terminal outcome does not consume the run-level
+// retrieval budget.
 //
 // TerminalRun must appear in a Tool expression.
 func TerminalRun() {
@@ -798,17 +798,18 @@ func TerminalRun() {
 	tool.TerminalRun = true
 }
 
-// Bookkeeping marks the current tool as a bookkeeping tool: a control-plane
-// side effect rather than future reasoning input.
+// Bookkeeping marks the current tool as a control-plane side effect that does
+// not by itself require another planner turn.
 //
 // Runtime contract:
 //   - bookkeeping calls do not consume the run-level MaxToolCalls retrieval budget,
-//   - bookkeeping calls are never dropped when trimming a batch to fit the
-//     remaining budget,
+//   - the runtime admits or rejects each model-authored call batch atomically;
+//     bookkeeping calls do not contribute to that batch's budget cost,
 //   - bookkeeping results remain durable run events for hooks, streams, and
 //     run-log consumers,
-//   - bookkeeping results are not appended back into the model-visible
-//     transcript and are not replayed to future planner turns as ToolOutputs.
+//   - calls and results remain in the model-visible transcript so provider
+//     responses replay unchanged,
+//   - successful results are not replayed to future planner turns as ToolOutputs.
 //
 // A bookkeeping-only planner turn is therefore only valid when the same turn
 // already resolves without another reasoning resume: either a TerminalRun tool,

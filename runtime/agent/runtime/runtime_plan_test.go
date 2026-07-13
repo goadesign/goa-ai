@@ -3,7 +3,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"reflect"
 	"testing"
 	"time"
@@ -209,7 +208,10 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 		require.NotNil(t, input.ToolOutputs[0].Bounds)
 		require.True(t, input.ToolOutputs[0].Bounds.Truncated)
 		require.Equal(t, "narrow the window", input.ToolOutputs[0].Bounds.RefinementHint)
-		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: "svc.other.tool"}}}, nil
+		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+			Name:    "svc.other.tool",
+			Payload: rawjson.Message(`{}`),
+		}}}, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
 	seedTestToolSpecs(rt, newAnyJSONSpec(toolName, "svc.tools"))
@@ -307,7 +309,10 @@ func TestPlanResumeActivityHydratesOmittedResultMetadataFromCanonicalRunlog(t *t
 		require.Equal(t, 12345, input.ToolOutputs[0].ResultBytes)
 		require.Nil(t, input.ToolOutputs[0].Result)
 		require.JSONEq(t, `[{"kind":"evidence"}]`, string(input.ToolOutputs[0].ServerData))
-		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: "svc.other.tool"}}}, nil
+		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+			Name:    "svc.other.tool",
+			Payload: rawjson.Message(`{}`),
+		}}}, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
 	seedTestToolSpecs(rt, newAnyJSONSpec("svc.ts.tool", "svc.tools"))
@@ -361,7 +366,7 @@ func TestPlanResumeActivityHydratesOmittedResultMetadataFromCanonicalRunlog(t *t
 	require.True(t, called)
 }
 
-func TestBuildPlannerToolOutputsPreservesOmittedResultMetadata(t *testing.T) {
+func TestBuildPlannerToolOutputRecordsPreservesOmittedResultMetadata(t *testing.T) {
 	t.Parallel()
 
 	rt := &Runtime{
@@ -371,8 +376,8 @@ func TestBuildPlannerToolOutputsPreservesOmittedResultMetadata(t *testing.T) {
 	}
 	seedTestToolSpecs(rt, newAnyJSONSpec("svc.ts.tool", "svc.tools"))
 
-	outputs, err := rt.buildPlannerToolOutputs(
-		context.Background(),
+	records := stepToolRecordsForTest(
+		t,
 		[]planner.ToolRequest{
 			{
 				Name:       "svc.ts.tool",
@@ -391,6 +396,7 @@ func TestBuildPlannerToolOutputsPreservesOmittedResultMetadata(t *testing.T) {
 			},
 		},
 	)
+	outputs, err := rt.buildPlannerToolOutputRecords(context.Background(), records)
 	require.NoError(t, err)
 	require.Len(t, outputs, 1)
 	require.True(t, outputs[0].ResultOmitted)
@@ -400,7 +406,7 @@ func TestBuildPlannerToolOutputsPreservesOmittedResultMetadata(t *testing.T) {
 	require.JSONEq(t, `[{"kind":"evidence"}]`, string(outputs[0].ServerData))
 }
 
-func TestBuildPlannerToolOutputsSkipsBookkeepingResults(t *testing.T) {
+func TestBuildPlannerToolOutputRecordsSkipsBookkeepingResults(t *testing.T) {
 	t.Parallel()
 
 	rt := &Runtime{
@@ -418,8 +424,8 @@ func TestBuildPlannerToolOutputsSkipsBookkeepingResults(t *testing.T) {
 		}(),
 	)
 
-	outputs, err := rt.buildPlannerToolOutputs(
-		context.Background(),
+	records := stepToolRecordsForTest(
+		t,
 		[]planner.ToolRequest{
 			{
 				Name:       "svc.ts.tool",
@@ -445,6 +451,7 @@ func TestBuildPlannerToolOutputsSkipsBookkeepingResults(t *testing.T) {
 			},
 		},
 	)
+	outputs, err := rt.buildPlannerToolOutputRecords(context.Background(), records)
 	require.NoError(t, err)
 	require.Len(t, outputs, 1)
 	require.Equal(t, "call-1", outputs[0].ToolCallID)
@@ -504,7 +511,7 @@ func TestBuildNextResumeRequestUsesProviderNeutralTranscriptValidation(t *testin
 	require.NotContains(t, err.Error(), "Bedrock")
 }
 
-func TestPlanResumeActivityPreservesEmptyRawJSONPayloads(t *testing.T) {
+func TestPlanResumeActivityRejectsEmptyRawJSONPayloads(t *testing.T) {
 	pl := &stubPlanner{
 		resume: func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
 			return &planner.PlanResult{
@@ -542,53 +549,55 @@ func TestPlanResumeActivityPreservesEmptyRawJSONPayloads(t *testing.T) {
 		RunContext: run.Context{RunID: "run-123"},
 	}
 	out, err := rt.PlanResumeActivity(context.Background(), &input)
-	require.NoError(t, err)
-	require.Len(t, out.Result.ToolCalls, 1)
-	require.NotNil(t, out.Result.ToolCalls[0].Payload)
-	require.Empty(t, out.Result.ToolCalls[0].Payload)
-	require.NotNil(t, out.Result.Await)
-	require.Len(t, out.Result.Await.Items, 2)
-	require.NotNil(t, out.Result.Await.Items[0].Questions)
-	require.NotNil(t, out.Result.Await.Items[0].Questions.Payload)
-	require.Empty(t, out.Result.Await.Items[0].Questions.Payload)
-	require.NotNil(t, out.Result.Await.Items[1].ExternalTools)
-	require.Len(t, out.Result.Await.Items[1].ExternalTools.Items, 1)
-	require.NotNil(t, out.Result.Await.Items[1].ExternalTools.Items[0].Payload)
-	require.Empty(t, out.Result.Await.Items[1].ExternalTools.Items[0].Payload)
+	require.Nil(t, out)
+	require.EqualError(t, err, "planner tool call 0 payload: payload is empty")
 }
 
-func TestNormalizeTranscriptRawJSONNormalizesEmptyRawMessageValues(t *testing.T) {
-	messages := []*model.Message{
-		{
-			Role: "assistant",
-			Parts: []model.Part{
-				model.ToolUsePart{
-					ID:    "call-1",
-					Name:  "tool.one",
-					Input: json.RawMessage{},
-				},
-				model.ToolResultPart{
-					ToolUseID: "call-1",
-					Content: map[string]any{
-						"payload": json.RawMessage{},
-					},
-				},
-			},
-			Meta: map[string]any{
-				"raw": json.RawMessage{},
-			},
+func TestPlanResumeActivityRejectsMissingFinalResponseMessage(t *testing.T) {
+	pl := &stubPlanner{
+		resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			return &planner.PlanResult{FinalResponse: &planner.FinalResponse{}}, nil
 		},
 	}
+	rt := newTestRuntimeWithPlanner("service.agent", pl)
 
-	normalizeTranscriptRawJSON(messages)
+	out, err := rt.PlanResumeActivity(context.Background(), &PlanActivityInput{
+		AgentID:    "service.agent",
+		RunID:      "run-123",
+		RunContext: run.Context{RunID: "run-123"},
+	})
 
-	toolUse, ok := messages[0].Parts[0].(model.ToolUsePart)
-	require.True(t, ok)
-	require.Nil(t, toolUse.Input)
-	toolResult, ok := messages[0].Parts[1].(model.ToolResultPart)
-	require.True(t, ok)
-	content, ok := toolResult.Content.(map[string]any)
-	require.True(t, ok)
-	require.Nil(t, content["payload"])
-	require.Nil(t, messages[0].Meta["raw"])
+	require.Nil(t, out)
+	require.EqualError(t, err, "planner final response is missing its message")
+}
+
+func TestPlanResumeActivityRejectsPlannerAuthoredToolUseInFinalResponse(t *testing.T) {
+	pl := &stubPlanner{
+		resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			return &planner.PlanResult{
+				FinalResponse: &planner.FinalResponse{Message: &model.Message{
+					Role: model.ConversationRoleAssistant,
+					Parts: []model.Part{model.ToolUsePart{
+						ID:    "call-1",
+						Name:  "svc.lookup",
+						Input: rawjson.Message(`{}`),
+					}},
+				}},
+			}, nil
+		},
+	}
+	rt := newTestRuntimeWithPlanner("service.agent", pl)
+
+	out, err := rt.PlanResumeActivity(context.Background(), &PlanActivityInput{
+		AgentID:    "service.agent",
+		RunID:      "run-123",
+		RunContext: run.Context{RunID: "run-123"},
+	})
+
+	require.Nil(t, out)
+	require.EqualError(
+		t,
+		err,
+		"planner-authored final response part 0 contains tool use; return it through ToolCalls",
+	)
 }

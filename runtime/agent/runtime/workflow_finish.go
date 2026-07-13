@@ -25,7 +25,6 @@ import (
 // terminal planner result.
 type terminalPlannerState struct {
 	result     *planner.PlanResult
-	transcript []*model.Message
 	toolEvents []*planner.ToolResult
 	usage      model.TokenUsage
 }
@@ -40,9 +39,11 @@ func (r *Runtime) finishCurrentPlanResult(
 	st *runLoopState,
 	turnID string,
 ) (*RunOutput, error) {
+	if !st.ResponseCommitted {
+		return nil, errors.New("cannot finish an uncommitted planner response")
+	}
 	return r.materializeTerminalPlannerResult(ctx, input, base, turnID, terminalPlannerState{
 		result:     st.Result,
-		transcript: st.Transcript,
 		toolEvents: st.ToolEvents,
 		usage:      st.AggUsage,
 	})
@@ -76,13 +77,7 @@ func (r *Runtime) materializeTerminalPlannerResult(
 	var finalMsg *model.Message
 	if result.FinalResponse != nil {
 		finalMsg = result.FinalResponse.Message
-		if result.Streamed && agentMessageText(finalMsg) == "" {
-			if text := transcriptText(state.transcript); text != "" {
-				finalMsg = newTextAgentMessage(model.ConversationRoleAssistant, text)
-			}
-		}
 	}
-
 	if result.FinalResponse != nil && !result.Streamed {
 		if err := r.publishHook(
 			ctx,
@@ -98,10 +93,6 @@ func (r *Runtime) materializeTerminalPlannerResult(
 			return nil, err
 		}
 	}
-	if err := r.appendTerminalAssistantMessage(ctx, input.AgentID, base, turnID, finalMsg); err != nil {
-		return nil, err
-	}
-
 	for _, note := range result.Notes {
 		if err := r.publishHook(
 			ctx,

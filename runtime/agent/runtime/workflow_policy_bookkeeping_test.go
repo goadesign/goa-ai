@@ -2,8 +2,8 @@ package runtime
 
 // workflow_policy_bookkeeping_test.go verifies that tools declared `Bookkeeping`
 // are exempt from the run-level MaxToolCalls retrieval budget. Bookkeeping
-// calls must never decrement `RemainingToolCalls` and must never be dropped by
-// `capAllowedCalls` when the batch exceeds the remaining budget.
+// calls do not decrement `RemainingToolCalls`; each provider response is still
+// admitted or rejected as one atomic batch.
 
 import (
 	"context"
@@ -56,7 +56,7 @@ func newInvalidTerminalSpec(name tools.Ident) tools.ToolSpec {
 	return spec
 }
 
-func TestCapAllowedCalls_ReportsBudgetCost(t *testing.T) {
+func TestAdmitToolBatchReportsBudgetCost(t *testing.T) {
 	rt := newRuntimeWithSpecs(
 		newRetrievalSpec("ret.a"),
 		newBookkeepingSpec("book.a"),
@@ -73,13 +73,9 @@ func TestCapAllowedCalls_ReportsBudgetCost(t *testing.T) {
 		{Name: "book.b"},
 	}
 
-	out, cost := rt.capAllowedCalls(calls, policy.CapsState{})
-	got := make([]string, 0, len(out))
-	for _, c := range out {
-		got = append(got, string(c.Name))
-	}
-	assert.Equal(t, []string{"ret.a", "book.a", "term.a", "ret.b", "book.b"}, got)
+	cost, admitted := rt.admitToolBatch(calls, policy.CapsState{})
 	assert.Equal(t, 2, cost)
+	assert.True(t, admitted)
 	assert.True(t, rt.isBookkeeping("book.a"))
 	assert.True(t, rt.isBookkeeping("term.a"))
 	assert.False(t, rt.isBookkeeping("ret.a"))
@@ -107,7 +103,7 @@ func TestToolMetadataIncludesBudgetClass(t *testing.T) {
 	}, metas)
 }
 
-func TestCapAllowedCalls_BookkeepingBypassBudget(t *testing.T) {
+func TestAdmitToolBatchBookkeepingDoesNotConsumeBudget(t *testing.T) {
 	rt := newRuntimeWithSpecs(
 		newRetrievalSpec("ret.a"),
 		newRetrievalSpec("ret.b"),
@@ -120,8 +116,8 @@ func TestCapAllowedCalls_BookkeepingBypassBudget(t *testing.T) {
 		name         string
 		calls        []planner.ToolRequest
 		caps         policy.CapsState
-		expected     []string
 		expectedCost int
+		admitted     bool
 	}{
 		{
 			name: "no budget set: passes everything through",
@@ -129,35 +125,32 @@ func TestCapAllowedCalls_BookkeepingBypassBudget(t *testing.T) {
 				{Name: "ret.a"}, {Name: "ret.b"}, {Name: "book.a"},
 			},
 			caps:         policy.CapsState{MaxToolCalls: 0, RemainingToolCalls: 0},
-			expected:     []string{"ret.a", "ret.b", "book.a"},
 			expectedCost: 2,
+			admitted:     true,
 		},
 		{
-			name: "budget=0, mixed batch: drops retrieval, keeps bookkeeping in original order",
+			name: "budget=0, mixed batch: rejects response atomically",
 			calls: []planner.ToolRequest{
 				{Name: "ret.a"}, {Name: "book.a"}, {Name: "ret.b"}, {Name: "book.b"},
 			},
 			caps:         policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 0},
-			expected:     []string{"book.a", "book.b"},
-			expectedCost: 0,
+			expectedCost: 2,
 		},
 		{
-			name: "budget=1, three retrieval: keeps first retrieval only",
+			name: "budget=1, three retrieval: rejects response atomically",
 			calls: []planner.ToolRequest{
 				{Name: "ret.a"}, {Name: "ret.b"}, {Name: "ret.c"},
 			},
 			caps:         policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 1},
-			expected:     []string{"ret.a"},
-			expectedCost: 1,
+			expectedCost: 3,
 		},
 		{
-			name: "budget=1, mixed: keeps first retrieval + all bookkeeping in original order",
+			name: "budget=1, mixed: bookkeeping does not reduce batch cost",
 			calls: []planner.ToolRequest{
 				{Name: "ret.a"}, {Name: "book.a"}, {Name: "ret.b"}, {Name: "book.b"}, {Name: "ret.c"},
 			},
 			caps:         policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 1},
-			expected:     []string{"ret.a", "book.a", "book.b"},
-			expectedCost: 1,
+			expectedCost: 3,
 		},
 		{
 			name: "budget=0, all bookkeeping: passes all through",
@@ -165,43 +158,42 @@ func TestCapAllowedCalls_BookkeepingBypassBudget(t *testing.T) {
 				{Name: "book.a"}, {Name: "book.b"},
 			},
 			caps:         policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 0},
-			expected:     []string{"book.a", "book.b"},
 			expectedCost: 0,
+			admitted:     true,
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			out, cost := rt.capAllowedCalls(tc.calls, tc.caps)
-			got := make([]string, 0, len(out))
-			for _, c := range out {
-				got = append(got, string(c.Name))
-			}
-			assert.Equal(t, tc.expected, got)
+			cost, admitted := rt.admitToolBatch(tc.calls, tc.caps)
 			assert.Equal(t, tc.expectedCost, cost)
+			assert.Equal(t, tc.admitted, admitted)
 		})
 	}
 }
 
-func TestCapAllowedCalls_TerminalRunBypassesBudget(t *testing.T) {
+func TestAdmitToolBatchTerminalRunDoesNotConsumeBudget(t *testing.T) {
 	rt := newRuntimeWithSpecs(
 		newTerminalSpec("term.a"),
 		newRetrievalSpec("ret.a"),
 	)
 
-	out, cost := rt.capAllowedCalls(
+	cost, admitted := rt.admitToolBatch(
 		[]planner.ToolRequest{
 			{Name: "ret.a"},
 			{Name: "term.a"},
 		},
 		policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 0},
 	)
-	got := make([]string, 0, len(out))
-	for _, c := range out {
-		got = append(got, string(c.Name))
-	}
-	assert.Equal(t, []string{"term.a"}, got)
+	assert.Equal(t, 1, cost)
+	assert.False(t, admitted)
+
+	cost, admitted = rt.admitToolBatch(
+		[]planner.ToolRequest{{Name: "term.a"}},
+		policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 0},
+	)
 	assert.Zero(t, cost)
+	assert.True(t, admitted)
 }
 
 func TestRegisterToolset_RejectsTerminalSpecWithoutBookkeeping(t *testing.T) {

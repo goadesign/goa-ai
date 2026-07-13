@@ -4,9 +4,13 @@
 package model
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 // MarshalJSON encodes a Message while preserving the concrete Part types stored
@@ -16,9 +20,9 @@ import (
 // are stored as an interface slice.
 func (m Message) MarshalJSON() ([]byte, error) {
 	type alias struct {
-		Role  ConversationRole `json:"Role"`  //nolint:tagliatelle
-		Parts []any            `json:"Parts"` //nolint:tagliatelle
-		Meta  map[string]any   `json:"Meta"`  //nolint:tagliatelle
+		Role  ConversationRole `json:"role"`
+		Parts []any            `json:"parts"`
+		Meta  map[string]any   `json:"meta"`
 	}
 	if len(m.Parts) == 0 {
 		return json.Marshal(alias{
@@ -48,12 +52,15 @@ func (m Message) MarshalJSON() ([]byte, error) {
 // implementations stored in the Parts slice.
 func (m *Message) UnmarshalJSON(data []byte) error {
 	type alias struct {
-		Role  ConversationRole `json:"Role"` //nolint:tagliatelle
-		Parts []json.RawMessage
-		Meta  map[string]any `json:"Meta"` //nolint:tagliatelle
+		Role  ConversationRole  `json:"role"`
+		Parts []json.RawMessage `json:"parts"`
+		Meta  map[string]any    `json:"meta"`
 	}
 	var tmp alias
-	if err := json.Unmarshal(data, &tmp); err != nil {
+	if err := validateExactJSONKeys(data, "role", "parts", "meta"); err != nil {
+		return err
+	}
+	if err := decodeCanonicalJSON(data, &tmp); err != nil {
 		return err
 	}
 	m.Role = tmp.Role
@@ -77,7 +84,7 @@ func encodeMessagePart(p Part) (any, error) {
 	switch v := p.(type) {
 	case ThinkingPart:
 		return struct {
-			Kind string `json:"Kind"` //nolint:tagliatelle // Kind discriminator is intentionally upper-cased for compatibility.
+			Kind string `json:"kind"`
 			ThinkingPart
 		}{
 			Kind:         "thinking",
@@ -85,23 +92,29 @@ func encodeMessagePart(p Part) (any, error) {
 		}, nil
 	case TextPart:
 		return struct {
-			Kind string `json:"Kind"` //nolint:tagliatelle // Kind discriminator is intentionally upper-cased for compatibility.
+			Kind string `json:"kind"`
 			TextPart
 		}{
 			Kind:     "text",
 			TextPart: v,
 		}, nil
 	case ImagePart:
+		if v.Format == "" || len(v.Bytes) == 0 {
+			return nil, errors.New("ImagePart requires format and bytes")
+		}
 		return struct {
-			Kind string `json:"Kind"` //nolint:tagliatelle // Kind discriminator is intentionally upper-cased for compatibility.
+			Kind string `json:"kind"`
 			ImagePart
 		}{
 			Kind:      "image",
 			ImagePart: v,
 		}, nil
 	case DocumentPart:
+		if err := validateDocumentPart(v); err != nil {
+			return nil, err
+		}
 		return struct {
-			Kind string `json:"Kind"` //nolint:tagliatelle // Kind discriminator is intentionally upper-cased for compatibility.
+			Kind string `json:"kind"`
 			DocumentPart
 		}{
 			Kind:         "document",
@@ -109,23 +122,32 @@ func encodeMessagePart(p Part) (any, error) {
 		}, nil
 	case CitationsPart:
 		return struct {
-			Kind string `json:"Kind"` //nolint:tagliatelle // Kind discriminator is intentionally upper-cased for compatibility.
+			Kind string `json:"kind"`
 			CitationsPart
 		}{
 			Kind:          "citations",
 			CitationsPart: v,
 		}, nil
 	case ToolUsePart:
+		if v.ID == "" || v.Name == "" {
+			return nil, errors.New("ToolUsePart requires id and name")
+		}
+		if data := bytes.TrimSpace(v.Input); !json.Valid(data) || len(data) == 0 || data[0] != '{' {
+			return nil, errors.New("ToolUsePart requires input to be a JSON object")
+		}
 		return struct {
-			Kind string `json:"Kind"` //nolint:tagliatelle // Kind discriminator is intentionally upper-cased for compatibility.
+			Kind string `json:"kind"`
 			ToolUsePart
 		}{
 			Kind:        "tool_use",
 			ToolUsePart: v,
 		}, nil
 	case ToolResultPart:
+		if v.ToolUseID == "" {
+			return nil, errors.New("ToolResultPart requires tool_use_id")
+		}
 		return struct {
-			Kind string `json:"Kind"` //nolint:tagliatelle // Kind discriminator is intentionally upper-cased for compatibility.
+			Kind string `json:"kind"`
 			ToolResultPart
 		}{
 			Kind:           "tool_result",
@@ -133,7 +155,7 @@ func encodeMessagePart(p Part) (any, error) {
 		}, nil
 	case CacheCheckpointPart:
 		return struct {
-			Kind string `json:"Kind"` //nolint:tagliatelle // Kind discriminator is intentionally upper-cased for compatibility.
+			Kind string `json:"kind"`
 		}{
 			Kind: "cache_checkpoint",
 		}, nil
@@ -143,176 +165,262 @@ func encodeMessagePart(p Part) (any, error) {
 }
 
 func decodeMessagePart(raw json.RawMessage) (Part, error) {
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &obj); err != nil {
-		var text string
-		if errText := json.Unmarshal(raw, &text); errText == nil {
-			return TextPart{Text: text}, nil
-		}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return nil, fmt.Errorf("decode part object: %w", err)
 	}
-	if len(obj) == 0 {
-		return nil, errors.New("empty part payload")
+	rawKind, ok := envelope["kind"]
+	if !ok {
+		return nil, errors.New("message part requires kind")
 	}
-
-	// Discriminator-based decoding when Kind is present (preferred).
-	if kindRaw, ok := obj["Kind"]; ok {
-		var kind string
-		if err := json.Unmarshal(kindRaw, &kind); err != nil {
-			return nil, fmt.Errorf("decode Kind: %w", err)
-		}
-		switch kind {
-		case "image":
-			var img ImagePart
-			if err := json.Unmarshal(raw, &img); err != nil {
-				return nil, fmt.Errorf("decode ImagePart: %w", err)
-			}
-			if img.Format == "" {
-				return nil, errors.New("ImagePart requires Format")
-			}
-			if len(img.Bytes) == 0 {
-				return nil, errors.New("ImagePart requires Bytes")
-			}
-			return img, nil
-		case "document":
-			var doc DocumentPart
-			if err := json.Unmarshal(raw, &doc); err != nil {
-				return nil, fmt.Errorf("decode DocumentPart: %w", err)
-			}
-			if doc.Name == "" {
-				return nil, errors.New("DocumentPart requires Name")
-			}
-			sourceCount := 0
-			if len(doc.Bytes) > 0 {
-				sourceCount++
-			}
-			if doc.Text != "" {
-				sourceCount++
-			}
-			if len(doc.Chunks) > 0 {
-				sourceCount++
-			}
-			if doc.URI != "" {
-				sourceCount++
-			}
-			if sourceCount != 1 {
-				return nil, errors.New("DocumentPart requires exactly one of Bytes, Text, Chunks, or URI")
-			}
-			for i, chunk := range doc.Chunks {
-				if chunk == "" {
-					return nil, fmt.Errorf("DocumentPart requires non-empty Chunks[%d]", i)
-				}
-			}
-			return doc, nil
-		case "thinking":
-			var thinking ThinkingPart
-			if err := json.Unmarshal(raw, &thinking); err != nil {
-				return nil, fmt.Errorf("decode ThinkingPart: %w", err)
-			}
-			return thinking, nil
-		case "citations":
-			var citations CitationsPart
-			if err := json.Unmarshal(raw, &citations); err != nil {
-				return nil, fmt.Errorf("decode CitationsPart: %w", err)
-			}
-			return citations, nil
-		case "tool_result":
-			var result ToolResultPart
-			if err := json.Unmarshal(raw, &result); err != nil {
-				return nil, fmt.Errorf("decode ToolResultPart: %w", err)
-			}
-			if result.ToolUseID == "" {
-				return nil, errors.New("ToolResultPart requires ToolUseID")
-			}
-			return result, nil
-		case "tool_use":
-			var use ToolUsePart
-			if err := json.Unmarshal(raw, &use); err != nil {
-				return nil, fmt.Errorf("decode ToolUsePart: %w", err)
-			}
-			if use.Name == "" {
-				return nil, errors.New("ToolUsePart requires Name")
-			}
-			if use.Input == nil {
-				if v, hasArgs := obj["Args"]; hasArgs {
-					var args any
-					if err := json.Unmarshal(v, &args); err != nil {
-						return nil, fmt.Errorf("decode ToolUsePart Args: %w", err)
-					}
-					use.Input = args
-				}
-			}
-			return use, nil
-		case "text":
-			var text TextPart
-			if err := json.Unmarshal(raw, &text); err != nil {
-				return nil, fmt.Errorf("decode TextPart: %w", err)
-			}
-			return text, nil
-		case "cache_checkpoint":
-			return CacheCheckpointPart{}, nil
-		default:
-			return nil, fmt.Errorf("unknown part kind %q", kind)
-		}
+	var kind string
+	if err := json.Unmarshal(rawKind, &kind); err != nil {
+		return nil, fmt.Errorf("decode part kind: %w", err)
 	}
-
-	if hasAnyKey(obj, "Signature", "Redacted", "Index", "Final") {
-		var thinking ThinkingPart
-		if err := json.Unmarshal(raw, &thinking); err != nil {
+	if kind == "" {
+		return nil, errors.New("message part requires kind")
+	}
+	switch kind {
+	case "thinking":
+		var encoded struct {
+			Kind string `json:"kind"`
+			ThinkingPart
+		}
+		if err := decodeCanonicalPartJSON(raw, &encoded, "kind", "text", "signature", "redacted", "index", "final"); err != nil {
 			return nil, fmt.Errorf("decode ThinkingPart: %w", err)
 		}
-		return thinking, nil
-	}
-
-	if _, ok := obj["ToolUseID"]; ok {
-		var result ToolResultPart
-		if err := json.Unmarshal(raw, &result); err != nil {
-			return nil, fmt.Errorf("decode ToolResultPart: %w", err)
+		return encoded.ThinkingPart, nil
+	case "text":
+		var encoded struct {
+			Kind string `json:"kind"`
+			TextPart
 		}
-		if result.ToolUseID == "" {
-			return nil, errors.New("ToolResultPart requires ToolUseID")
-		}
-		return result, nil
-	}
-
-	if _, ok := obj["Name"]; ok {
-		var use ToolUsePart
-		if err := json.Unmarshal(raw, &use); err != nil {
-			return nil, fmt.Errorf("decode ToolUsePart: %w", err)
-		}
-		if use.Name == "" {
-			return nil, errors.New("ToolUsePart requires Name")
-		}
-
-		if _, hasInput := obj["Input"]; !hasInput {
-			if v, hasArgs := obj["Args"]; hasArgs {
-				var args any
-				if err := json.Unmarshal(v, &args); err != nil {
-					return nil, fmt.Errorf("decode ToolUsePart Args: %w", err)
-				}
-				use.Input = args
-			}
-		}
-
-		return use, nil
-	}
-
-	if _, ok := obj["Text"]; ok {
-		var text TextPart
-		if err := json.Unmarshal(raw, &text); err != nil {
+		if err := decodeCanonicalPartJSON(raw, &encoded, "kind", "text"); err != nil {
 			return nil, fmt.Errorf("decode TextPart: %w", err)
 		}
-		return text, nil
+		return encoded.TextPart, nil
+	case "image":
+		var encoded struct {
+			Kind string `json:"kind"`
+			ImagePart
+		}
+		if err := decodeCanonicalPartJSON(raw, &encoded, "kind", "format", "bytes"); err != nil {
+			return nil, fmt.Errorf("decode ImagePart: %w", err)
+		}
+		part := encoded.ImagePart
+		if part.Format == "" || len(part.Bytes) == 0 {
+			return nil, errors.New("ImagePart requires format and bytes")
+		}
+		return part, nil
+	case "document":
+		var encoded struct {
+			Kind string `json:"kind"`
+			DocumentPart
+		}
+		if err := decodeCanonicalPartJSON(
+			raw,
+			&encoded,
+			"kind",
+			"name",
+			"format",
+			"bytes",
+			"text",
+			"chunks",
+			"uri",
+			"context",
+			"cite",
+		); err != nil {
+			return nil, fmt.Errorf("decode DocumentPart: %w", err)
+		}
+		part := encoded.DocumentPart
+		if err := validateDocumentPart(part); err != nil {
+			return nil, err
+		}
+		return part, nil
+	case "citations":
+		var encoded struct {
+			Kind string `json:"kind"`
+			CitationsPart
+		}
+		if err := decodeCanonicalPartJSON(raw, &encoded, "kind", "text", "citations"); err != nil {
+			return nil, fmt.Errorf("decode CitationsPart: %w", err)
+		}
+		if err := validateCitationJSON(raw); err != nil {
+			return nil, fmt.Errorf("decode CitationsPart: %w", err)
+		}
+		return encoded.CitationsPart, nil
+	case "tool_use":
+		var encoded struct {
+			Kind             string          `json:"kind"`
+			ID               string          `json:"id"`
+			Name             string          `json:"name"`
+			Input            json.RawMessage `json:"input"`
+			ThoughtSignature string          `json:"thought_signature"`
+		}
+		if err := decodeCanonicalPartJSON(raw, &encoded, "kind", "id", "name", "input", "thought_signature"); err != nil {
+			return nil, fmt.Errorf("decode ToolUsePart: %w", err)
+		}
+		if encoded.ID == "" || encoded.Name == "" {
+			return nil, errors.New("ToolUsePart requires id and name")
+		}
+		if data := bytes.TrimSpace(encoded.Input); !json.Valid(data) || len(data) == 0 || data[0] != '{' {
+			return nil, errors.New("ToolUsePart requires input to be a JSON object")
+		}
+		return ToolUsePart{
+			ID:               encoded.ID,
+			Name:             encoded.Name,
+			Input:            append(rawjson.Message(nil), encoded.Input...),
+			ThoughtSignature: encoded.ThoughtSignature,
+		}, nil
+	case "tool_result":
+		var encoded struct {
+			Kind string `json:"kind"`
+			ToolResultPart
+		}
+		if err := decodeCanonicalPartJSON(raw, &encoded, "kind", "tool_use_id", "content", "is_error"); err != nil {
+			return nil, fmt.Errorf("decode ToolResultPart: %w", err)
+		}
+		part := encoded.ToolResultPart
+		if part.ToolUseID == "" {
+			return nil, errors.New("ToolResultPart requires tool_use_id")
+		}
+		return part, nil
+	case "cache_checkpoint":
+		var encoded struct {
+			Kind string `json:"kind"`
+		}
+		if err := decodeCanonicalPartJSON(raw, &encoded, "kind"); err != nil {
+			return nil, fmt.Errorf("decode CacheCheckpointPart: %w", err)
+		}
+		return CacheCheckpointPart{}, nil
+	default:
+		return nil, fmt.Errorf("unknown part kind %q", kind)
 	}
-
-	return nil, errors.New("unknown part shape")
 }
 
-func hasAnyKey(obj map[string]json.RawMessage, keys ...string) bool {
-	for _, k := range keys {
-		if _, ok := obj[k]; ok {
-			return true
+// decodeCanonicalPartJSON rejects non-canonical field names before decoding a
+// concrete message part.
+func decodeCanonicalPartJSON(data []byte, value any, fields ...string) error {
+	if err := validateExactJSONKeys(data, fields...); err != nil {
+		return err
+	}
+	return decodeCanonicalJSON(data, value)
+}
+
+// validateExactJSONKeys enforces exact canonical field spelling. The standard
+// library otherwise matches JSON keys case-insensitively, which would silently
+// preserve obsolete Temporal payload shapes.
+func validateExactJSONKeys(data []byte, allowed ...string) error {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(data, &object); err != nil {
+		return err
+	}
+	if object == nil {
+		return errors.New("expected JSON object")
+	}
+	fields := make(map[string]struct{}, len(allowed))
+	for _, field := range allowed {
+		fields[field] = struct{}{}
+	}
+	keys := make([]string, 0, len(object))
+	for field := range object {
+		keys = append(keys, field)
+	}
+	sort.Strings(keys)
+	for _, field := range keys {
+		if _, ok := fields[field]; !ok {
+			return fmt.Errorf("json: unknown field %q", field)
 		}
 	}
-	return false
+	return nil
+}
+
+// validateCitationJSON enforces canonical field spelling inside nested
+// citation and location objects.
+func validateCitationJSON(data []byte) error {
+	var part struct {
+		Citations []json.RawMessage `json:"citations"`
+	}
+	if err := json.Unmarshal(data, &part); err != nil {
+		return err
+	}
+	for citationIndex, rawCitation := range part.Citations {
+		if err := validateExactJSONKeys(rawCitation, "title", "source", "location", "source_content"); err != nil {
+			return fmt.Errorf("citation %d: %w", citationIndex, err)
+		}
+		var citation struct {
+			Location json.RawMessage `json:"location"`
+		}
+		if err := json.Unmarshal(rawCitation, &citation); err != nil {
+			return fmt.Errorf("citation %d: %w", citationIndex, err)
+		}
+		if err := validateExactJSONKeys(citation.Location, "document_char", "document_chunk", "document_page"); err != nil {
+			return fmt.Errorf("citation %d location: %w", citationIndex, err)
+		}
+		var location struct {
+			DocumentChar  json.RawMessage `json:"document_char"`
+			DocumentChunk json.RawMessage `json:"document_chunk"`
+			DocumentPage  json.RawMessage `json:"document_page"`
+		}
+		if err := decodeCanonicalJSON(citation.Location, &location); err != nil {
+			return fmt.Errorf("citation %d location: %w", citationIndex, err)
+		}
+		locations := []struct {
+			name string
+			data json.RawMessage
+		}{
+			{name: "document_char", data: location.DocumentChar},
+			{name: "document_chunk", data: location.DocumentChunk},
+			{name: "document_page", data: location.DocumentPage},
+		}
+		for _, nested := range locations {
+			if len(nested.data) == 0 || bytes.Equal(nested.data, []byte("null")) {
+				continue
+			}
+			if err := validateExactJSONKeys(nested.data, "document_index", "start", "end"); err != nil {
+				return fmt.Errorf("citation %d %s: %w", citationIndex, nested.name, err)
+			}
+		}
+	}
+	return nil
+}
+
+// decodeCanonicalJSON preserves JSON numbers when decoding interface-valued
+// metadata and tool results while retaining json.Unmarshal's strict framing.
+func decodeCanonicalJSON(data []byte, value any) error {
+	if !json.Valid(data) {
+		return errors.New("invalid JSON")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(value)
+}
+
+func validateDocumentPart(part DocumentPart) error {
+	if part.Name == "" {
+		return errors.New("DocumentPart requires Name")
+	}
+	sourceCount := 0
+	if len(part.Bytes) > 0 {
+		sourceCount++
+	}
+	if part.Text != "" {
+		sourceCount++
+	}
+	if len(part.Chunks) > 0 {
+		sourceCount++
+	}
+	if part.URI != "" {
+		sourceCount++
+	}
+	if sourceCount != 1 {
+		return errors.New("DocumentPart requires exactly one of Bytes, Text, Chunks, or URI")
+	}
+	for i, chunk := range part.Chunks {
+		if chunk == "" {
+			return fmt.Errorf("DocumentPart requires non-empty Chunks[%d]", i)
+		}
+	}
+	return nil
 }

@@ -12,9 +12,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
-	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -57,7 +57,10 @@ func TestRunLoopBookkeepingTerminalExecutesWithExhaustedBudget(t *testing.T) {
 		TurnID:    "turn-1",
 	}
 	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{Name: terminal.Name}},
+		ToolCalls: []planner.ToolRequest{{
+			Name:    terminal.Name,
+			Payload: rawjson.Message(`{}`),
+		}},
 	}
 	caps := policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 0}
 
@@ -67,16 +70,11 @@ func TestRunLoopBookkeepingTerminalExecutesWithExhaustedBudget(t *testing.T) {
 		input,
 		base,
 		initial,
-		nil,
-		model.TokenUsage{},
 		caps,
 		time.Time{},
 		time.Time{},
-		2,
 		"turn-1",
 		nil,
-		nil,
-		0,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, out)

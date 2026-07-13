@@ -4,17 +4,19 @@ package runtime
 // conversation message list that is fed back into the planner.
 //
 // Contract:
-// - Produces a canonical assistant message that includes only planner-facing
-//   tool_use parts for the turn.
+// - Produces the complete provider assistant response, including every tool_use
+//   part in provider order.
 // - Appends messages to the PlanInput in the same order used for tool_result
 //   correlation.
 
 import (
 	"context"
+	"errors"
 
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 // appendTranscriptMessages appends canonical transcript messages to the planner
@@ -29,163 +31,98 @@ func (r *Runtime) appendTranscriptMessages(
 	if len(messages) == 0 {
 		return nil
 	}
-	base.Messages = append(base.Messages, messages...)
-	return r.publishTranscriptDelta(
+	owned, err := model.CloneMessages(messages)
+	if err != nil {
+		return err
+	}
+	if err := r.publishTranscriptDelta(
 		ctx,
 		base.RunContext.RunID,
 		agentID,
 		base.RunContext.SessionID,
 		turnID,
-		messages,
-	)
+		owned,
+	); err != nil {
+		return err
+	}
+	base.Messages = append(base.Messages, owned...)
+	return nil
 }
 
-// appendTerminalAssistantMessage persists the final assistant message as the
-// canonical transcript tail for a terminal turn.
-func (r *Runtime) appendTerminalAssistantMessage(
+// appendSelectedModelResponse persists one selected planner turn. Captured
+// provider responses are appended unchanged; planner-authored turns are built
+// once from the result's domain values. The workflow loop owns the exactly-once
+// state transition around this persistence operation.
+func (r *Runtime) appendSelectedModelResponse(
 	ctx context.Context,
 	agentID agent.Ident,
 	base *planner.PlanInput,
 	turnID string,
-	msg *model.Message,
+	result *planner.PlanResult,
+	transcript []*model.Message,
 ) error {
-	if agentMessageText(msg) == "" {
-		return nil
-	}
-	return r.appendTranscriptMessages(ctx, agentID, base, turnID, cloneMessages([]*model.Message{msg}))
-}
-
-// recordAssistantTurn appends the canonical assistant turn. Streamed provider
-// tool uses are discarded and rebuilt from runtime-admitted planner-facing calls
-// so bookkeeping calls can never leak into the provider transcript.
-//
-// signatures carries opaque, provider-defined tool-call thought signatures
-// captured by the runtime at the model-client boundary (see
-// runLoopState.ToolCallSignatures), keyed by tool-call ID. It is looked up by
-// ID rather than read from planner.ToolRequest, which carries no signature
-// field. A nil or missing-key lookup yields "", correctly recording an absent
-// signature.
-func (r *Runtime) recordAssistantTurn(
-	ctx context.Context,
-	agentID agent.Ident,
-	base *planner.PlanInput,
-	transcriptMsgs []*model.Message,
-	allowed []planner.ToolRequest,
-	signatures map[string]string,
-	turnID string,
-) error {
-	allowed = r.filterPlannerFacingToolCalls(allowed)
-	messages := cloneMessagesWithoutToolUse(transcriptMsgs)
-	if len(messages) == 0 && len(allowed) == 0 {
-		return nil
-	}
-	target := findAssistantMessage(messages)
-	if target == nil && len(allowed) > 0 {
-		target = &model.Message{Role: model.ConversationRoleAssistant}
-		messages = append(messages, target)
-	}
-	for _, call := range allowed {
-		target.Parts = append(target.Parts, model.ToolUsePart{
-			ID:               call.ToolCallID,
-			Name:             string(call.TranscriptName()),
-			Input:            call.TranscriptPayload(),
-			ThoughtSignature: signatures[call.ToolCallID],
-		})
+	messages := transcript
+	if len(messages) == 0 {
+		var err error
+		messages, err = plannerAuthoredResponseMessages(result)
+		if err != nil {
+			return err
+		}
 	}
 	return r.appendTranscriptMessages(ctx, agentID, base, turnID, messages)
 }
 
-// appendRetryableBookkeepingToolUses appends bookkeeping tool_use parts that
-// become planner-facing only after execution produced retryable failures.
-//
-// signatures is looked up by tool-call ID for the same reason documented on
-// recordAssistantTurn.
-func (r *Runtime) appendRetryableBookkeepingToolUses(
-	ctx context.Context,
-	agentID agent.Ident,
-	base *planner.PlanInput,
-	records []stepToolRecord,
-	signatures map[string]string,
-	turnID string,
-) error {
-	lateRecords, err := r.filterRetryableBookkeepingToolRecords(records)
-	if err != nil {
+// commitSelectedModelResponse performs the workflow's sole transition from an
+// uncommitted planner result to a durable provider transcript.
+func (l *workflowLoop) commitSelectedModelResponse(result *planner.PlanResult) error {
+	if l.st.ResponseCommitted {
+		return errors.New("workflow planner response was committed more than once")
+	}
+	if err := l.r.appendSelectedModelResponse(
+		l.wfCtx.Context(),
+		l.input.AgentID,
+		l.base,
+		l.turnID,
+		result,
+		l.st.Transcript,
+	); err != nil {
 		return err
 	}
-	if len(lateRecords) == 0 {
-		return nil
-	}
-	msg := &model.Message{Role: model.ConversationRoleAssistant}
-	for _, record := range lateRecords {
-		msg.Parts = append(msg.Parts, model.ToolUsePart{
-			ID:               record.call.ToolCallID,
-			Name:             string(record.call.TranscriptName()),
-			Input:            record.call.TranscriptPayload(),
-			ThoughtSignature: signatures[record.call.ToolCallID],
-		})
-	}
-	return r.appendTranscriptMessages(ctx, agentID, base, turnID, []*model.Message{msg})
-}
-
-// findAssistantMessage returns the last assistant message in msgs, if any.
-func findAssistantMessage(msgs []*model.Message) *model.Message {
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i] != nil && msgs[i].Role == model.ConversationRoleAssistant {
-			return msgs[i]
-		}
-	}
+	l.st.ResponseCommitted = true
 	return nil
 }
 
-// cloneMessages shallow-copies messages and their parts so callers can mutate
-// assistant parts without mutating the original transcript slice.
-func cloneMessages(msgs []*model.Message) []*model.Message {
-	if len(msgs) == 0 {
-		return nil
+// plannerAuthoredResponseMessages builds the transcript shape for a result
+// that did not select a provider response.
+func plannerAuthoredResponseMessages(result *planner.PlanResult) ([]*model.Message, error) {
+	if result == nil {
+		return nil, nil
 	}
-	out := make([]*model.Message, 0, len(msgs))
-	for _, msg := range msgs {
-		if msg == nil {
-			continue
+	var messages []*model.Message
+	if result.FinalResponse != nil && result.FinalResponse.Message != nil {
+		var err error
+		messages, err = model.CloneMessages([]*model.Message{result.FinalResponse.Message})
+		if err != nil {
+			return nil, err
 		}
-		parts := make([]model.Part, len(msg.Parts))
-		copy(parts, msg.Parts)
-		out = append(out, &model.Message{
-			Role:  msg.Role,
-			Parts: parts,
-			Meta:  cloneMetadata(msg.Meta),
+	}
+	calls := planResultModelToolCalls(result)
+	if len(calls) == 0 {
+		return messages, nil
+	}
+	var target *model.Message
+	if len(messages) > 0 && messages[len(messages)-1].Role == model.ConversationRoleAssistant {
+		target = messages[len(messages)-1]
+	} else {
+		target = &model.Message{Role: model.ConversationRoleAssistant}
+		messages = append(messages, target)
+	}
+	for _, call := range calls {
+		target.Parts = append(target.Parts, model.ToolUsePart{
+			ID:    call.id,
+			Name:  string(call.name),
+			Input: append(rawjson.Message(nil), call.payload...),
 		})
 	}
-	return out
-}
-
-// cloneMessagesWithoutToolUse copies streamed transcript messages while removing
-// provider-emitted tool_use parts. Runtime-owned planner.ToolRequest values are
-// the only source of canonical tool_use transcript entries.
-func cloneMessagesWithoutToolUse(msgs []*model.Message) []*model.Message {
-	if len(msgs) == 0 {
-		return nil
-	}
-	out := make([]*model.Message, 0, len(msgs))
-	for _, msg := range msgs {
-		if msg == nil {
-			continue
-		}
-		parts := make([]model.Part, 0, len(msg.Parts))
-		for _, part := range msg.Parts {
-			if _, ok := part.(model.ToolUsePart); ok {
-				continue
-			}
-			parts = append(parts, part)
-		}
-		if len(parts) == 0 {
-			continue
-		}
-		out = append(out, &model.Message{
-			Role:  msg.Role,
-			Parts: parts,
-			Meta:  cloneMetadata(msg.Meta),
-		})
-	}
-	return out
+	return messages, nil
 }

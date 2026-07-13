@@ -8,27 +8,39 @@
 //
 // In this runtime, raw JSON byte fields are intentionally used at workflow and
 // activity boundaries (tool payloads/results, hook envelopes, server-data
-// sidecars). A single accidental `json.RawMessage{}` or `[]byte{}` assignment
-// can therefore crash workflow encoding.
-//
-// Message eliminates that failure mode by normalizing empty/whitespace payloads
-// to JSON null during marshaling while still validating non-empty payloads.
+// sidecars). Message makes absence explicit as nil and rejects accidental
+// non-nil empty or malformed payloads at marshaling.
 package rawjson
 
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 )
 
 // Message is an opaque JSON value encoded as bytes.
 //
 // Contract:
-//   - Nil represents absence (preferred).
+//   - Nil represents absence and marshals as JSON null.
 //   - Non-empty values must be valid JSON.
-//   - Empty/whitespace-only values are normalized to JSON null during marshaling
-//     to avoid runtime encoding failures at workflow boundaries.
+//   - Non-nil empty or whitespace-only values are invalid.
 type Message json.RawMessage
+
+// Unmarshal decodes one JSON value while preserving numbers as json.Number.
+// Generated codecs remain responsible for typed validation.
+func Unmarshal(data []byte, value any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(value); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("rawjson: trailing data")
+	}
+	return nil
+}
 
 // RawMessage returns the underlying value as json.RawMessage.
 func (r Message) RawMessage() json.RawMessage {
@@ -37,12 +49,14 @@ func (r Message) RawMessage() json.RawMessage {
 
 // MarshalJSON implements json.Marshaler.
 //
-// This method never returns an "unexpected end of JSON input" error for empty
-// slices; empty/whitespace is encoded as JSON null.
+// Nil encodes absence as JSON null. Non-nil values must contain canonical JSON.
 func (r Message) MarshalJSON() ([]byte, error) {
+	if r == nil {
+		return []byte("null"), nil
+	}
 	data := []byte(r)
 	if len(bytes.TrimSpace(data)) == 0 {
-		return []byte("null"), nil
+		return nil, fmt.Errorf("rawjson: non-nil message is empty")
 	}
 	if !json.Valid(data) {
 		return nil, fmt.Errorf("rawjson: invalid JSON")
@@ -55,7 +69,10 @@ func (r Message) MarshalJSON() ([]byte, error) {
 // The decoder validates non-null JSON and normalizes null to nil.
 func (r *Message) UnmarshalJSON(data []byte) error {
 	trimmed := bytes.TrimSpace(data)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+	if len(trimmed) == 0 {
+		return fmt.Errorf("rawjson: JSON value is empty")
+	}
+	if bytes.Equal(trimmed, []byte("null")) {
 		*r = nil
 		return nil
 	}

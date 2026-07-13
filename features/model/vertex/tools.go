@@ -1,7 +1,9 @@
 package vertex
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"google.golang.org/genai"
@@ -22,7 +24,7 @@ func encodeTools(defs []*model.ToolDefinition, canonToProv map[string]string) ([
 	for _, def := range defs {
 		prov, ok := canonToProv[def.Name]
 		if !ok {
-			continue // shadowed by sanitization collision
+			return nil, fmt.Errorf("vertex: tool %q has no provider name", def.Name)
 		}
 		if def.Description == "" {
 			return nil, fmt.Errorf("vertex: tool %q requires a description", def.Name)
@@ -40,10 +42,9 @@ func encodeTools(defs []*model.ToolDefinition, canonToProv map[string]string) ([
 	return []*genai.Tool{{FunctionDeclarations: decls}}, nil
 }
 
-// encodeToolConfig maps the goa-ai tool choice onto Gemini's function
-// calling config. A specific tool is expressed as mode ANY restricted to
-// that tool's sanitized name.
-func encodeToolConfig(choice *model.ToolChoice, canonToProv map[string]string) *genai.ToolConfig {
+// encodeToolConfig maps the goa-ai tool choice through the request's bijective
+// name map. A specific tool must be declared in the same request.
+func encodeToolConfig(choice *model.ToolChoice, canonToProv map[string]string) (*genai.ToolConfig, error) {
 	fcc := &genai.FunctionCallingConfig{Mode: genai.FunctionCallingConfigModeAuto}
 	if choice != nil {
 		switch choice.Mode {
@@ -55,14 +56,14 @@ func encodeToolConfig(choice *model.ToolChoice, canonToProv map[string]string) *
 			fcc.Mode = genai.FunctionCallingConfigModeAny
 		case model.ToolChoiceModeTool:
 			fcc.Mode = genai.FunctionCallingConfigModeAny
-			if prov, ok := canonToProv[choice.Name]; ok {
-				fcc.AllowedFunctionNames = []string{prov}
-			} else {
-				fcc.AllowedFunctionNames = []string{sanitizeToolName(choice.Name)}
+			prov, ok := canonToProv[choice.Name]
+			if !ok {
+				return nil, fmt.Errorf("vertex: tool choice %q is not declared in the request", choice.Name)
 			}
+			fcc.AllowedFunctionNames = []string{prov}
 		}
 	}
-	return &genai.ToolConfig{FunctionCallingConfig: fcc}
+	return &genai.ToolConfig{FunctionCallingConfig: fcc}, nil
 }
 
 // normalizeSchema prepares a goa-ai JSON schema for Gemini: it parses the
@@ -72,9 +73,17 @@ func normalizeSchema(raw []byte) (any, error) {
 	if len(raw) == 0 {
 		return map[string]any{"type": "object"}, nil
 	}
+	if !json.Valid(raw) {
+		return nil, errors.New("invalid JSON schema")
+	}
 	var schema map[string]any
-	if err := json.Unmarshal(raw, &schema); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&schema); err != nil {
 		return nil, err
+	}
+	if schema == nil {
+		return nil, errors.New("JSON schema must be an object")
 	}
 	delete(schema, "$schema")
 	delete(schema, "$id")

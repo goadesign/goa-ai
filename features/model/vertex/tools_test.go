@@ -1,6 +1,7 @@
 package vertex
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,7 +28,8 @@ func TestEncodeTools(t *testing.T) {
 	defs := []*model.ToolDefinition{
 		toolDef(t, "feed/find_duplicates", `{"$schema":"x","type":"object","properties":{"title":{"type":"string"}}}`),
 	}
-	canonToProv, _ := buildToolNameMaps(defs)
+	canonToProv, _, err := buildToolNameMaps(defs)
+	require.NoError(t, err)
 	tools, err := encodeTools(defs, canonToProv)
 	require.NoError(t, err)
 	require.Len(t, tools, 1)
@@ -48,7 +50,8 @@ func TestEncodeToolsMissingDescription(t *testing.T) {
 	defs := []*model.ToolDefinition{
 		{Name: "feed/find_duplicates", Input: model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`))},
 	}
-	canonToProv, _ := buildToolNameMaps(defs)
+	canonToProv, _, err := buildToolNameMaps(defs)
+	require.NoError(t, err)
 	tools, err := encodeTools(defs, canonToProv)
 	require.Error(t, err)
 	assert.Nil(t, tools)
@@ -56,10 +59,27 @@ func TestEncodeToolsMissingDescription(t *testing.T) {
 	assert.Contains(t, err.Error(), "description")
 }
 
+func TestEncodeToolsRejectsMissingProviderName(t *testing.T) {
+	defs := []*model.ToolDefinition{
+		toolDef(t, "feed/find_duplicates", `{"type":"object"}`),
+	}
+
+	tools, err := encodeTools(defs, map[string]string{})
+	require.EqualError(t, err, `vertex: tool "feed/find_duplicates" has no provider name`)
+	assert.Nil(t, tools)
+}
+
 func TestNormalizeSchemaMalformedJSON(t *testing.T) {
 	schema, err := normalizeSchema([]byte(`{"type":`))
 	require.Error(t, err)
 	assert.Nil(t, schema)
+}
+
+func TestNormalizeSchemaPreservesLargeIntegers(t *testing.T) {
+	schema, err := normalizeSchema([]byte(`{"type":"integer","const":9007199254740993}`))
+	require.NoError(t, err)
+	object := schema.(map[string]any)
+	assert.Equal(t, json.Number("9007199254740993"), object["const"])
 }
 
 func TestEncodeToolConfig(t *testing.T) {
@@ -77,11 +97,21 @@ func TestEncodeToolConfig(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := encodeToolConfig(tc.choice, canonToProv)
+			cfg, err := encodeToolConfig(tc.choice, canonToProv)
+			require.NoError(t, err)
 			require.NotNil(t, cfg)
 			require.NotNil(t, cfg.FunctionCallingConfig)
 			assert.Equal(t, tc.mode, cfg.FunctionCallingConfig.Mode)
 			assert.Equal(t, tc.names, cfg.FunctionCallingConfig.AllowedFunctionNames)
 		})
 	}
+}
+
+func TestEncodeToolConfigRejectsUndeclaredTool(t *testing.T) {
+	cfg, err := encodeToolConfig(
+		&model.ToolChoice{Mode: model.ToolChoiceModeTool, Name: "missing/tool"},
+		map[string]string{},
+	)
+	require.EqualError(t, err, `vertex: tool choice "missing/tool" is not declared in the request`)
+	assert.Nil(t, cfg)
 }

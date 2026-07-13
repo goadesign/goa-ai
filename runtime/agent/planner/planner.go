@@ -141,8 +141,9 @@ type AgentState interface {
 	Keys() []string
 }
 
-// PlannerEvents allows planners to emit streaming updates that the runtime
-// captures in its provider ledger and publishes to subscribers.
+// PlannerEvents allows planners to publish streaming updates to subscribers.
+// Runtime-managed model clients capture provider transcript state independently
+// at the model boundary, so event emission never owns replay correctness.
 type PlannerEvents interface {
 	// AssistantChunk emits an assistant text delta. Use this for incremental
 	// streaming output instead of returning a full FinalResponse at the end.
@@ -213,7 +214,7 @@ type ToolRequest struct {
 	// The runtime also reattaches opaque provider state (for example, Gemini 3
 	// tool-call thought signatures) by this ID, so planner implementations that
 	// hand-build ToolRequests from a Complete response MUST carry
-	// Response.ToolCalls[i].ID through unchanged — ID preservation is the
+	// Response.ToolCalls()[i].ID through unchanged — ID preservation is the
 	// load-bearing obligation.
 	ToolCallID string
 
@@ -525,7 +526,9 @@ type AwaitClarification struct {
 //
 // Contract: AwaitQuestions represents a single paused tool invocation that must
 // be satisfied out-of-band by the caller (typically a UI) and resumed via the
-// runtime's ProvideToolResults mechanism using ToolCallID.
+// runtime's ProvideToolResults mechanism using ToolCallID. When the model
+// authored the invocation, ToolName, ToolCallID, and Payload must remain exact;
+// place multiple questions in that one payload rather than merging calls.
 type AwaitQuestions struct {
 	// ID uniquely identifies this questions request.
 	ID string
@@ -571,6 +574,7 @@ type AwaitQuestionOption struct {
 }
 
 // AwaitExternalTools requests external tool results (provided out-of-band).
+// Model-authored items preserve their original order, names, IDs, and payloads.
 type AwaitExternalTools struct {
 	// ID uniquely identifies this external-tools request.
 	ID string

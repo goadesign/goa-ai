@@ -116,7 +116,7 @@ func TestCountTokens_OmitsThinkingBlocks(t *testing.T) {
 				Role: model.ConversationRoleAssistant,
 				Parts: []model.Part{
 					model.ThinkingPart{Text: "reasoning", Signature: "sig", Final: true},
-					model.ToolUsePart{ID: "call-1", Name: "lookup", Input: map[string]any{"id": "a"}},
+					model.ToolUsePart{ID: "call-1", Name: "lookup", Input: rawjson.Message(`{"id":"a"}`)},
 				},
 			},
 			{

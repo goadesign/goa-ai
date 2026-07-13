@@ -13,6 +13,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -35,6 +36,35 @@ func wrapExecute(fn func(context.Context, *planner.ToolRequest) (*planner.ToolRe
 	}
 }
 
+// runLoop seeds workflow state directly for focused runtime tests.
+func (r *Runtime) runLoop(
+	wfCtx engine.WorkflowContext,
+	reg AgentRegistration,
+	input *RunInput,
+	base *planner.PlanInput,
+	initialResult *planner.PlanResult,
+	caps policy.CapsState,
+	budgetDeadline time.Time,
+	hardDeadline time.Time,
+	turnID string,
+	ctrl *interrupt.Controller,
+) (*RunOutput, error) {
+	st := newRunLoopState(initialResult, nil, model.TokenUsage{}, caps, 2)
+	return r.runLoopWithState(
+		wfCtx,
+		reg,
+		input,
+		base,
+		st,
+		budgetDeadline,
+		hardDeadline,
+		turnID,
+		nil,
+		ctrl,
+		0,
+	)
+}
+
 func seedTestToolSpecs(rt *Runtime, specs ...tools.ToolSpec) {
 	if rt.toolSpecs == nil {
 		rt.toolSpecs = make(map[tools.Ident]tools.ToolSpec)
@@ -46,6 +76,42 @@ func seedTestToolSpecs(rt *Runtime, specs ...tools.ToolSpec) {
 		rt.toolSpecs[spec.Name] = spec
 		rt.policyToolMetadata[spec.Name] = canonicalToolMetadata(spec, nil)
 	}
+}
+
+func testModelResponse(content []model.Message, calls ...model.ToolCall) *model.Response {
+	response := &model.Response{
+		Content:    append([]model.Message(nil), content...),
+		StopReason: "end_turn",
+	}
+	if len(calls) == 0 {
+		return response
+	}
+	response.StopReason = "tool_use"
+	if len(response.Content) == 0 {
+		response.Content = append(response.Content, model.Message{Role: model.ConversationRoleAssistant})
+	}
+	message := &response.Content[len(response.Content)-1]
+	for _, call := range calls {
+		message.Parts = append(message.Parts, model.ToolUsePart{
+			ID:               call.ID,
+			Name:             string(call.Name),
+			Input:            call.Payload,
+			ThoughtSignature: call.ThoughtSignature,
+		})
+	}
+	return response
+}
+
+// testModelResponseWithUsage builds a canonical response whose terminal usage
+// agrees with the deltas emitted by its test stream.
+func testModelResponseWithUsage(
+	content []model.Message,
+	usage model.TokenUsage,
+	calls ...model.ToolCall,
+) *model.Response {
+	response := testModelResponse(content, calls...)
+	response.Usage = usage
+	return response
 }
 
 // testWorkflowContext is a lightweight engine.WorkflowContext implementation used by tests.

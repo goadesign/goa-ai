@@ -1,7 +1,6 @@
 package bedrock
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 
@@ -48,7 +47,7 @@ func TestBuildConverseStreamInputOpus47AndLaterUsesAdaptiveThinking(t *testing.T
 				},
 			}
 
-			parts, err := client.prepareRequest(context.Background(), req)
+			parts, err := client.prepareRequest(req)
 			require.NoError(t, err)
 
 			thinking := client.resolveThinking(req, parts)
@@ -101,7 +100,7 @@ func TestResolveThinkingOpus47WithoutTools(t *testing.T) {
 		},
 	}
 
-	parts, err := client.prepareRequest(context.Background(), req)
+	parts, err := client.prepareRequest(req)
 	require.NoError(t, err)
 	require.Nil(t, parts.toolConfig, "test requires a no-tools request")
 
@@ -145,7 +144,7 @@ func TestResolveThinkingOpus47ForcedToolDisablesThinking(t *testing.T) {
 		},
 	}
 
-	parts, err := client.prepareRequest(context.Background(), req)
+	parts, err := client.prepareRequest(req)
 	require.NoError(t, err)
 
 	thinking := client.resolveThinking(req, parts)
@@ -190,7 +189,7 @@ func TestResolveThinkingOpus47AnyToolDisablesThinking(t *testing.T) {
 		},
 	}
 
-	parts, err := client.prepareRequest(context.Background(), req)
+	parts, err := client.prepareRequest(req)
 	require.NoError(t, err)
 
 	thinking := client.resolveThinking(req, parts)
@@ -256,7 +255,7 @@ func TestFableRejectsForcedToolChoice(t *testing.T) {
 				ToolChoice: tc.toolChoice,
 			}
 
-			_, err := client.prepareRequest(context.Background(), req)
+			_, err := client.prepareRequest(req)
 			if tc.wantErr {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), "does not support forced tool choice")
@@ -294,7 +293,7 @@ func TestOpusStillAllowsForcedToolChoice(t *testing.T) {
 		},
 	}
 
-	parts, err := client.prepareRequest(context.Background(), req)
+	parts, err := client.prepareRequest(req)
 	require.NoError(t, err)
 	thinking := client.resolveThinking(req, parts)
 	require.False(t, thinking.enable, "forced tool choice must disable thinking on Opus")
@@ -354,7 +353,7 @@ func TestOpus47AndLaterOmitsTemperatureFromInferenceConfig(t *testing.T) {
 				}},
 			}
 
-			parts, err := client.prepareRequest(context.Background(), req)
+			parts, err := client.prepareRequest(req)
 			require.NoError(t, err)
 
 			input := client.buildConverseInput(parts, req)
@@ -401,7 +400,7 @@ func TestSonnet5OmitsTemperatureOnBedrock(t *testing.T) {
 				}},
 			}
 
-			parts, err := client.prepareRequest(context.Background(), req)
+			parts, err := client.prepareRequest(req)
 			require.NoError(t, err)
 
 			input := client.buildConverseInput(parts, req)

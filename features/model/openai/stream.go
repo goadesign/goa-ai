@@ -5,6 +5,7 @@ package openai
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 
@@ -30,13 +31,15 @@ type (
 
 		metaMu   sync.RWMutex
 		metadata map[string]any
+		response *model.Response
 	}
 
 	// openAIChunkProcessor converts streamed OpenAI events into provider-neutral
 	// model chunks.
 	openAIChunkProcessor struct {
-		emit        func(model.Chunk) error
-		recordUsage func(model.TokenUsage)
+		emit           func(model.Chunk) error
+		recordUsage    func(model.TokenUsage)
+		recordResponse func(*model.Response)
 
 		toolCalls map[string]*streamToolBuffer
 
@@ -73,13 +76,14 @@ func newOpenAIStreamer(
 		chunks: make(chan model.Chunk, 32),
 	}
 	processor := &openAIChunkProcessor{
-		emit:        streamer.emitChunk,
-		recordUsage: streamer.recordUsage,
-		toolCalls:   make(map[string]*streamToolBuffer),
-		codec:       codec,
-		modelID:     modelID,
-		modelClass:  modelClass,
-		output:      output,
+		emit:           streamer.emitChunk,
+		recordUsage:    streamer.recordUsage,
+		recordResponse: streamer.recordResponse,
+		toolCalls:      make(map[string]*streamToolBuffer),
+		codec:          codec,
+		modelID:        modelID,
+		modelClass:     modelClass,
+		output:         output,
 	}
 	go streamer.run(processor)
 	return streamer
@@ -93,19 +97,19 @@ func (s *openAIStreamer) Recv() (model.Chunk, error) {
 		}
 		if err := s.err(); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return model.Chunk{}, err
+				return nil, err
 			}
 			s.setErr(err)
-			return model.Chunk{}, err
+			return nil, err
 		}
-		return model.Chunk{}, io.EOF
+		return nil, io.EOF
 	case <-s.ctx.Done():
 		err := s.ctx.Err()
 		if err == nil {
 			err = context.Canceled
 		}
 		s.setErr(err)
-		return model.Chunk{}, err
+		return nil, err
 	}
 }
 
@@ -115,6 +119,12 @@ func (s *openAIStreamer) Close() error {
 		return nil
 	}
 	return s.stream.Close()
+}
+
+func (s *openAIStreamer) Response() *model.Response {
+	s.metaMu.RLock()
+	defer s.metaMu.RUnlock()
+	return s.response
 }
 
 func (s *openAIStreamer) Metadata() map[string]any {
@@ -134,7 +144,9 @@ func (s *openAIStreamer) run(processor *openAIChunkProcessor) {
 	defer close(s.chunks)
 	defer func() {
 		if s.stream != nil {
-			_ = s.stream.Close()
+			if err := s.stream.Close(); err != nil {
+				s.setErr(err)
+			}
 		}
 	}()
 
@@ -156,7 +168,6 @@ func (s *openAIStreamer) run(processor *openAIChunkProcessor) {
 				s.setErr(errors.New("openai: stream ended before response.completed"))
 				return
 			}
-			s.setErr(nil)
 			return
 		}
 		if err := processor.Handle(s.stream.Current()); err != nil {
@@ -184,6 +195,12 @@ func (s *openAIStreamer) recordUsage(usage model.TokenUsage) {
 	s.metaMu.Unlock()
 }
 
+func (s *openAIStreamer) recordResponse(response *model.Response) {
+	s.metaMu.Lock()
+	s.response = response
+	s.metaMu.Unlock()
+}
+
 func (s *openAIStreamer) setErr(err error) {
 	s.errMu.Lock()
 	defer s.errMu.Unlock()
@@ -201,6 +218,9 @@ func (s *openAIStreamer) err() error {
 }
 
 func (p *openAIChunkProcessor) Handle(event responses.ResponseStreamEventUnion) error {
+	if p.completed {
+		return errors.New("openai: event received after response completion")
+	}
 	switch actual := event.AsAny().(type) {
 	case responses.ResponseOutputItemAddedEvent:
 		return p.registerOutputItem(actual.Item)
@@ -232,8 +252,21 @@ func (p *openAIChunkProcessor) Handle(event responses.ResponseStreamEventUnion) 
 			actual.Message,
 			errors.New(actual.Message),
 		)
-	default:
+	case responses.ResponseContentPartAddedEvent,
+		responses.ResponseContentPartDoneEvent,
+		responses.ResponseCreatedEvent,
+		responses.ResponseFunctionCallArgumentsDoneEvent,
+		responses.ResponseInProgressEvent,
+		responses.ResponseOutputTextAnnotationAddedEvent,
+		responses.ResponseTextDoneEvent,
+		responses.ResponseQueuedEvent,
+		responses.ResponseReasoningSummaryPartAddedEvent,
+		responses.ResponseReasoningSummaryPartDoneEvent,
+		responses.ResponseReasoningSummaryTextDoneEvent,
+		responses.ResponseRefusalDoneEvent:
 		return nil
+	default:
+		return fmt.Errorf("openai: unsupported stream event %q (%T)", event.Type, actual)
 	}
 }
 
@@ -290,9 +323,8 @@ func (p *openAIChunkProcessor) emitToolCallDelta(buffer *streamToolBuffer, delta
 	if delta == "" {
 		return nil
 	}
-	return p.emit(model.Chunk{
-		Type: model.ChunkTypeToolCallDelta,
-		ToolCallDelta: &model.ToolCallDelta{
+	return p.emit(model.ToolCallDeltaChunk{
+		Delta: model.ToolCallDelta{
 			Name:  tools.Ident(buffer.name),
 			ID:    buffer.callID,
 			Delta: delta,
@@ -306,17 +338,15 @@ func (p *openAIChunkProcessor) handleTextDelta(delta string, itemID string, outp
 	}
 	p.sawText = true
 	if p.output != nil {
-		return p.emit(model.Chunk{
-			Type: model.ChunkTypeCompletionDelta,
-			CompletionDelta: &model.CompletionDelta{
+		return p.emit(model.CompletionDeltaChunk{
+			Delta: model.CompletionDelta{
 				Name:  structuredOutputName(p.output),
 				Delta: delta,
 			},
 		})
 	}
-	return p.emit(model.Chunk{
-		Type: model.ChunkTypeText,
-		Message: &model.Message{
+	return p.emit(model.TextChunk{
+		Message: model.Message{
 			Role:  model.ConversationRoleAssistant,
 			Parts: []model.Part{model.TextPart{Text: delta}},
 			Meta: map[string]any{
@@ -331,10 +361,8 @@ func (p *openAIChunkProcessor) handleThinkingDelta(event responses.ResponseReaso
 	if event.Delta == "" {
 		return nil
 	}
-	return p.emit(model.Chunk{
-		Type:     model.ChunkTypeThinking,
-		Thinking: event.Delta,
-		Message: &model.Message{
+	return p.emit(model.ThinkingChunk{
+		Message: model.Message{
 			Role: model.ConversationRoleAssistant,
 			Parts: []model.Part{model.ThinkingPart{
 				Text:  event.Delta,
@@ -361,9 +389,8 @@ func (p *openAIChunkProcessor) handleCompleted(resp responses.Response) error {
 		if err != nil {
 			return err
 		}
-		if err := p.emit(model.Chunk{
-			Type: model.ChunkTypeCompletion,
-			Completion: &model.Completion{
+		if err := p.emit(model.CompletionChunk{
+			Completion: model.Completion{
 				Name:    structuredOutputName(p.output),
 				Payload: payload,
 			},
@@ -371,20 +398,17 @@ func (p *openAIChunkProcessor) handleCompleted(resp responses.Response) error {
 			return err
 		}
 	} else {
-		for _, call := range translated.ToolCalls {
-			callCopy := call
-			if err := p.emit(model.Chunk{
-				Type:     model.ChunkTypeToolCall,
-				ToolCall: &callCopy,
+		for _, call := range translated.ToolCalls() {
+			if err := p.emit(model.ToolCallChunk{
+				ToolCall: call,
 			}); err != nil {
 				return err
 			}
 		}
 		if !p.sawText {
 			if text := extractAssistantText(translated.Content); text != "" {
-				if err := p.emit(model.Chunk{
-					Type: model.ChunkTypeText,
-					Message: &model.Message{
+				if err := p.emit(model.TextChunk{
+					Message: model.Message{
 						Role:  model.ConversationRoleAssistant,
 						Parts: []model.Part{model.TextPart{Text: text}},
 					},
@@ -398,17 +422,19 @@ func (p *openAIChunkProcessor) handleCompleted(resp responses.Response) error {
 		if p.recordUsage != nil {
 			p.recordUsage(translated.Usage)
 		}
-		if err := p.emit(model.Chunk{
-			Type:       model.ChunkTypeUsage,
-			UsageDelta: &translated.Usage,
+		if err := p.emit(model.UsageChunk{
+			Usage: translated.Usage,
 		}); err != nil {
 			return err
 		}
 	}
-	return p.emit(model.Chunk{
-		Type:       model.ChunkTypeStop,
-		StopReason: translated.StopReason,
-	})
+	if err := p.emit(model.StopChunk{
+		Reason: translated.StopReason,
+	}); err != nil {
+		return err
+	}
+	p.recordResponse(translated)
+	return nil
 }
 
 func structuredOutputName(output *model.StructuredOutput) string {

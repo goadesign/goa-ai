@@ -159,6 +159,9 @@ func (c *Client) prepareRequest(ctx context.Context, req *model.Request) (*sdk.M
 			model.ErrStructuredOutputUnsupported,
 		)
 	}
+	if req.Cache != nil {
+		return nil, nil, errors.New("anthropic: cache options are not supported")
+	}
 	modelID := c.resolveModelID(req)
 	if modelID == "" {
 		return nil, nil, errors.New("anthropic: model identifier is required")
@@ -263,8 +266,15 @@ func encodeMessages(msgs []*model.Message, nameMap map[string]string) ([]sdk.Mes
 		}
 		if m.Role == model.ConversationRoleSystem {
 			for _, p := range m.Parts {
-				if v, ok := p.(model.TextPart); ok && v.Text != "" {
-					system = append(system, sdk.TextBlockParam{Text: v.Text})
+				switch v := p.(type) {
+				case model.TextPart:
+					if v.Text != "" {
+						system = append(system, sdk.TextBlockParam{Text: v.Text})
+					}
+				case model.CitationsPart:
+					return nil, nil, errors.New("anthropic: replaying canonical citations is not supported")
+				default:
+					return nil, nil, fmt.Errorf("anthropic: unsupported system message part %T", p)
 				}
 			}
 			continue
@@ -272,11 +282,30 @@ func encodeMessages(msgs []*model.Message, nameMap map[string]string) ([]sdk.Mes
 
 		blocks := make([]sdk.ContentBlockParamUnion, 0, len(m.Parts))
 		for _, part := range m.Parts {
+			if v, ok := part.(model.ThinkingPart); ok {
+				if m.Role != model.ConversationRoleAssistant {
+					return nil, nil, errors.New("anthropic: thinking parts are only supported in assistant messages")
+				}
+				hasPlaintext := v.Text != "" || v.Signature != ""
+				hasRedacted := len(v.Redacted) > 0
+				if hasPlaintext == hasRedacted || (v.Text == "") != (v.Signature == "") {
+					return nil, nil, errors.New("anthropic: thinking part must contain exactly signed plaintext or redacted content")
+				}
+				if hasPlaintext {
+					blocks = append(blocks, sdk.NewThinkingBlock(v.Signature, v.Text))
+				} else {
+					blocks = append(blocks, sdk.NewRedactedThinkingBlock(string(v.Redacted)))
+				}
+				continue
+			}
 			if v, ok := part.(model.TextPart); ok {
 				if v.Text != "" {
 					blocks = append(blocks, sdk.NewTextBlock(v.Text))
 				}
 				continue
+			}
+			if _, ok := part.(model.CitationsPart); ok {
+				return nil, nil, errors.New("anthropic: replaying canonical citations is not supported")
 			}
 			if v, ok := part.(model.ToolUsePart); ok {
 				if v.Name == "" {
@@ -286,26 +315,27 @@ func encodeMessages(msgs []*model.Message, nameMap map[string]string) ([]sdk.Mes
 					blocks = append(blocks, sdk.NewToolUseBlock(v.ID, v.Input, sanitized))
 					continue
 				}
-				unavailable := tools.ToolUnavailable.String()
-				sanitized, ok := nameMap[unavailable]
-				if !ok || sanitized == "" {
-					return nil, nil, fmt.Errorf(
-						"anthropic: tool_use in messages references %q which is not in the current tool configuration and tool_unavailable is not available",
-						v.Name,
-					)
+				for canonical, provider := range nameMap {
+					if provider == v.Name {
+						return nil, nil, fmt.Errorf(
+							"anthropic: historical provider tool name %q collides with current tool %q",
+							v.Name,
+							canonical,
+						)
+					}
 				}
-				blocks = append(blocks, sdk.NewToolUseBlock(v.ID, map[string]any{
-					"requested_tool":    v.Name,
-					"requested_payload": v.Input,
-				}, sanitized))
+				blocks = append(blocks, sdk.NewToolUseBlock(v.ID, v.Input, v.Name))
 				continue
 			}
 			if v, ok := part.(model.ToolResultPart); ok {
-				blocks = append(blocks, encodeToolResult(v))
+				result, err := encodeToolResult(v)
+				if err != nil {
+					return nil, nil, err
+				}
+				blocks = append(blocks, result)
 				continue
 			}
-			// Thinking and cache checkpoint parts are provider-specific and are
-			// not re-encoded for Anthropic here.
+			return nil, nil, fmt.Errorf("anthropic: unsupported %s message part %T", m.Role, part)
 		}
 		if len(blocks) == 0 {
 			continue
@@ -325,7 +355,7 @@ func encodeMessages(msgs []*model.Message, nameMap map[string]string) ([]sdk.Mes
 	return conversation, system, nil
 }
 
-func encodeToolResult(v model.ToolResultPart) sdk.ContentBlockParamUnion {
+func encodeToolResult(v model.ToolResultPart) (sdk.ContentBlockParamUnion, error) {
 	var content string
 	switch c := v.Content.(type) {
 	case nil:
@@ -335,11 +365,13 @@ func encodeToolResult(v model.ToolResultPart) sdk.ContentBlockParamUnion {
 	case []byte:
 		content = string(c)
 	default:
-		if data, err := json.Marshal(c); err == nil {
-			content = string(data)
+		data, err := json.Marshal(c)
+		if err != nil {
+			return sdk.ContentBlockParamUnion{}, fmt.Errorf("anthropic: encode tool result %q: %w", v.ToolUseID, err)
 		}
+		content = string(data)
 	}
-	return sdk.NewToolResultBlock(v.ToolUseID, content, v.IsError)
+	return sdk.NewToolResultBlock(v.ToolUseID, content, v.IsError), nil
 }
 
 func encodeTools(ctx context.Context, defs []*model.ToolDefinition) ([]sdk.ToolUnionParam, map[string]string, map[string]string, error) {
@@ -413,8 +445,8 @@ func toolInputSchema(_ context.Context, schema rawjson.Message) (sdk.ToolInputSc
 	if len(raw) == 0 {
 		return sdk.ToolInputSchemaParam{}, nil
 	}
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
+	m, err := decodeToolJSONObject(raw)
+	if err != nil {
 		return sdk.ToolInputSchemaParam{}, err
 	}
 	return sdk.ToolInputSchemaParam{
@@ -427,11 +459,25 @@ func toolExampleInput(raw rawjson.Message) (map[string]any, error) {
 	if len(data) == 0 {
 		return nil, nil
 	}
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
+	return decodeToolJSONObject(data)
+}
+
+// decodeToolJSONObject converts a canonical raw tool schema or example to the
+// SDK document shape without rounding JSON numbers.
+func decodeToolJSONObject(data []byte) (map[string]any, error) {
+	if !json.Valid(data) {
+		return nil, errors.New("invalid JSON object")
+	}
+	var object map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&object); err != nil {
 		return nil, err
 	}
-	return m, nil
+	if object == nil {
+		return nil, errors.New("JSON value must be an object")
+	}
+	return object, nil
 }
 
 // forcesToolUse reports whether Anthropic will treat tool_choice as requiring a
@@ -603,36 +649,66 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 		return nil, errors.New("anthropic: response message is nil")
 	}
 	resp := &model.Response{}
+	assistant := model.Message{Role: model.ConversationRoleAssistant}
 	for _, block := range msg.Content {
 		switch block.Type {
 		case "text":
-			if block.Text == "" {
+			if len(block.Citations) == 0 {
+				assistant.Parts = append(assistant.Parts, model.TextPart{Text: block.Text})
 				continue
 			}
-			resp.Content = append(resp.Content, model.Message{
-				Role:  model.ConversationRoleAssistant,
-				Parts: []model.Part{model.TextPart{Text: block.Text}},
+			citations, err := translateCitations(block.Citations)
+			if err != nil {
+				return nil, err
+			}
+			assistant.Parts = append(assistant.Parts, model.CitationsPart{
+				Text:      block.Text,
+				Citations: citations,
+			})
+		case "thinking":
+			if block.Thinking == "" || block.Signature == "" {
+				return nil, errors.New("anthropic: response thinking block requires plaintext and signature")
+			}
+			assistant.Parts = append(assistant.Parts, model.ThinkingPart{
+				Text:      block.Thinking,
+				Signature: block.Signature,
+				Final:     true,
+			})
+		case "redacted_thinking":
+			if block.Data == "" {
+				return nil, errors.New("anthropic: response redacted thinking block requires data")
+			}
+			assistant.Parts = append(assistant.Parts, model.ThinkingPart{
+				Redacted: []byte(block.Data),
+				Final:    true,
 			})
 		case "tool_use":
-			payload := rawjson.Message(block.Input)
-			name := ""
-			if block.Name != "" {
-				raw := block.Name
-				// When the model hallucinates a tool name that was not advertised in
-				// this request, the reverse map will not contain it. Surface the tool
-				// call as-is and let the runtime return an "unknown tool" error result.
-				if canonical, ok := nameMap[raw]; ok {
-					name = canonical
-				} else {
-					name = raw
-				}
+			if block.ID == "" {
+				return nil, errors.New("anthropic: response tool use block missing ID")
 			}
-			resp.ToolCalls = append(resp.ToolCalls, model.ToolCall{
-				Name:    tools.Ident(name),
-				Payload: payload,
-				ID:      block.ID,
+			if block.Name == "" {
+				return nil, fmt.Errorf("anthropic: response tool use block %q missing name", block.ID)
+			}
+			payload := rawjson.Message(block.Input)
+			raw := block.Name
+			name := raw
+			// When the model hallucinates a tool name that was not advertised in
+			// this request, the reverse map will not contain it. Surface the tool
+			// call as-is and let the runtime return an "unknown tool" error result.
+			if canonical, ok := nameMap[raw]; ok {
+				name = canonical
+			}
+			assistant.Parts = append(assistant.Parts, model.ToolUsePart{
+				Name:  string(tools.Ident(name)),
+				Input: payload,
+				ID:    block.ID,
 			})
+		default:
+			return nil, fmt.Errorf("anthropic: unsupported response content block %q", block.Type)
 		}
+	}
+	if len(assistant.Parts) > 0 {
+		resp.Content = append(resp.Content, assistant)
 	}
 	if u := msg.Usage; u.InputTokens != 0 || u.OutputTokens != 0 || u.CacheReadInputTokens != 0 || u.CacheCreationInputTokens != 0 {
 		resp.Usage = model.TokenUsage{
@@ -644,5 +720,57 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 		}
 	}
 	resp.StopReason = string(msg.StopReason)
+	if resp.StopReason == "" {
+		return nil, errors.New("anthropic: response is missing its stop reason")
+	}
+	if err := model.ValidateResponse(resp); err != nil {
+		return nil, fmt.Errorf("anthropic: invalid response: %w", err)
+	}
 	return resp, nil
+}
+
+// translateCitations preserves every Anthropic text citation in the canonical
+// location model or rejects citation kinds that cannot be represented.
+func translateCitations(input []sdk.TextCitationUnion) ([]model.Citation, error) {
+	out := make([]model.Citation, 0, len(input))
+	for index, citation := range input {
+		translated := model.Citation{
+			Title: citation.DocumentTitle,
+		}
+		if citation.CitedText != "" {
+			translated.SourceContent = []string{citation.CitedText}
+		}
+		switch citation.Type {
+		case "char_location":
+			translated.Source = citation.FileID
+			translated.Location.DocumentChar = &model.DocumentCharLocation{
+				DocumentIndex: int(citation.DocumentIndex),
+				Start:         int(citation.StartCharIndex),
+				End:           int(citation.EndCharIndex),
+			}
+		case "page_location":
+			translated.Source = citation.FileID
+			translated.Location.DocumentPage = &model.DocumentPageLocation{
+				DocumentIndex: int(citation.DocumentIndex),
+				Start:         int(citation.StartPageNumber),
+				End:           int(citation.EndPageNumber),
+			}
+		case "content_block_location":
+			translated.Source = citation.FileID
+			translated.Location.DocumentChunk = &model.DocumentChunkLocation{
+				DocumentIndex: int(citation.DocumentIndex),
+				Start:         int(citation.StartBlockIndex),
+				End:           int(citation.EndBlockIndex),
+			}
+		case "web_search_result_location":
+			translated.Title = citation.Title
+			translated.Source = citation.URL
+		case "search_result_location":
+			translated.Source = citation.Source
+		default:
+			return nil, fmt.Errorf("anthropic: unsupported citation type %q at index %d", citation.Type, index)
+		}
+		out = append(out, translated)
+	}
+	return out, nil
 }

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 func TestEngineAddAndSnapshot(t *testing.T) {
@@ -80,7 +81,7 @@ func TestInjectMessages(t *testing.T) {
 			Role: model.ConversationRoleAssistant,
 			Parts: []model.Part{
 				model.ThinkingPart{Text: "thinking", Signature: "sig", Final: true},
-				model.ToolUsePart{ID: "tu1", Name: "tool", Input: map[string]any{"q": "x"}},
+				model.ToolUsePart{ID: "tu1", Name: "tool", Input: rawjson.Message(`{"q":"x"}`)},
 			},
 		},
 		{
@@ -109,7 +110,10 @@ func TestInjectMessages(t *testing.T) {
 		},
 	}
 
-	out := InjectMessages(msgs, rems)
+	out, err := InjectMessages(msgs, rems)
+	if err != nil {
+		t.Fatalf("inject messages: %v", err)
+	}
 	if len(out) != 5 {
 		t.Fatalf("expected 5 messages after injection, got %d", len(out))
 	}

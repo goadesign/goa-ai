@@ -1,14 +1,7 @@
 package runtime
 
-// workflow_await_queue_test.go covers the await-path fix for tool-call
-// thought signatures: admitAwaitItem constructs planner.ToolRequest values
-// from planner.AwaitQuestions/AwaitExternalTools payloads and records them via
-// recordAssistantTurn. Before the runtime-owned side carry, these
-// constructions could never populate a signature (the classic drop-bug this
-// refactor eliminates). Now the lookup happens against st.ToolCallSignatures
-// by ToolCallID, so these await-originated tool_use parts pick up any
-// signature the runtime captured for the same ID during the plan activity
-// that produced the await.
+// workflow_await_queue_test.go verifies await publication does not duplicate
+// the selected provider response committed by the workflow step.
 
 import (
 	"testing"
@@ -21,12 +14,11 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 )
 
-func TestAdmitAwaitItemQuestionsAttachesCapturedToolCallSignature(t *testing.T) {
+func TestAdmitAwaitItemQuestionsDoesNotDuplicateCommittedResponse(t *testing.T) {
 	rt := New()
 	seedTestToolSpecs(rt, newAnyJSONSpec("chat.ask_question", "chat"))
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1", SessionID: "sess-1"}}
 	input := &RunInput{AgentID: agent.Ident("agent-1"), RunID: "run-1", SessionID: "sess-1"}
-	st := &runLoopState{ToolCallSignatures: map[string]string{"call-1": "opaque-provider-signature"}}
 	item := planner.AwaitQuestionsItem(&planner.AwaitQuestions{
 		ID:         "await-1",
 		ToolName:   "chat.ask_question",
@@ -34,8 +26,19 @@ func TestAdmitAwaitItemQuestionsAttachesCapturedToolCallSignature(t *testing.T) 
 		Payload:    rawjson.Message(`{}`),
 		Questions:  []planner.AwaitQuestion{{ID: "q1", Prompt: "which?"}},
 	})
+	result := &planner.PlanResult{Await: planner.NewAwait(item)}
+	transcript := []*model.Message{{
+		Role: model.ConversationRoleAssistant,
+		Parts: []model.Part{model.ToolUsePart{
+			ID:               "call-1",
+			Name:             "chat.ask_question",
+			Input:            rawjson.Message(`{}`),
+			ThoughtSignature: "opaque-provider-signature",
+		}},
+	}}
 
-	require.NoError(t, rt.admitAwaitItem(t.Context(), input, base, st, "turn-1", item, 0))
+	require.NoError(t, rt.appendSelectedModelResponse(t.Context(), input.AgentID, base, "turn-1", result, transcript))
+	require.NoError(t, rt.admitAwaitItem(t.Context(), input, base, "turn-1", item, 0))
 
 	require.Len(t, base.Messages, 1)
 	require.Len(t, base.Messages[0].Parts, 1)
@@ -45,12 +48,11 @@ func TestAdmitAwaitItemQuestionsAttachesCapturedToolCallSignature(t *testing.T) 
 	require.Equal(t, "opaque-provider-signature", use.ThoughtSignature)
 }
 
-func TestAdmitAwaitItemExternalToolsAttachesCapturedToolCallSignaturePerItem(t *testing.T) {
+func TestAdmitAwaitItemExternalToolsDoesNotRecordAssistantResponse(t *testing.T) {
 	rt := New()
 	seedTestToolSpecs(rt, newAnyJSONSpec("svc.tools.a", "svc.tools"), newAnyJSONSpec("svc.tools.b", "svc.tools"))
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1", SessionID: "sess-1"}}
 	input := &RunInput{AgentID: agent.Ident("agent-1"), RunID: "run-1", SessionID: "sess-1"}
-	st := &runLoopState{ToolCallSignatures: map[string]string{"call-1": "sig-1"}} // call-2 uncaptured
 	item := planner.AwaitExternalToolsItem(&planner.AwaitExternalTools{
 		ID: "await-1",
 		Items: []planner.AwaitToolItem{
@@ -59,16 +61,6 @@ func TestAdmitAwaitItemExternalToolsAttachesCapturedToolCallSignaturePerItem(t *
 		},
 	})
 
-	require.NoError(t, rt.admitAwaitItem(t.Context(), input, base, st, "turn-1", item, 0))
-
-	require.Len(t, base.Messages, 1)
-	require.Len(t, base.Messages[0].Parts, 2)
-	first, ok := base.Messages[0].Parts[0].(model.ToolUsePart)
-	require.True(t, ok)
-	require.Equal(t, "call-1", first.ID)
-	require.Equal(t, "sig-1", first.ThoughtSignature)
-	second, ok := base.Messages[0].Parts[1].(model.ToolUsePart)
-	require.True(t, ok)
-	require.Equal(t, "call-2", second.ID)
-	require.Empty(t, second.ThoughtSignature)
+	require.NoError(t, rt.admitAwaitItem(t.Context(), input, base, "turn-1", item, 0))
+	require.Empty(t, base.Messages)
 }

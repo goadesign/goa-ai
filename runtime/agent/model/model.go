@@ -15,10 +15,10 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-// ConversationRole is the role for a message in a conversation.
-type ConversationRole string
-
 type (
+	// ConversationRole is the role for a message in a conversation.
+	ConversationRole string
+
 	// Part is a marker interface implemented by all message parts. Concrete
 	// implementations capture user-visible text, provider-issued thinking, and
 	// tool call/result content in a strongly typed form.
@@ -45,7 +45,7 @@ type (
 	// Text is emitted as-is to the UI or consumer when the message is rendered.
 	TextPart struct {
 		// Text is the human-readable content for this part.
-		Text string
+		Text string `json:"text"`
 	}
 
 	// ImagePart carries image bytes attached to a user message.
@@ -54,10 +54,10 @@ type (
 	// when images are used in unsupported roles or for unsupported model families.
 	ImagePart struct {
 		// Format identifies the encoding of Bytes (e.g., "png").
-		Format ImageFormat
+		Format ImageFormat `json:"format"`
 
 		// Bytes contains the raw image bytes for the declared format.
-		Bytes []byte
+		Bytes []byte `json:"bytes"`
 	}
 
 	// DocumentPart carries document content attached to a user message.
@@ -66,33 +66,33 @@ type (
 	// generation. Exactly one of Bytes, Text, Chunks, or URI must be provided.
 	DocumentPart struct {
 		// Name is a short neutral identifier for the document (for example, "spec").
-		Name string
+		Name string `json:"name"`
 
 		// Format identifies the document format/extension (for example, "pdf", "txt", "md").
-		Format DocumentFormat
+		Format DocumentFormat `json:"format"`
 
 		// Bytes carries the raw document bytes when the document is provided as an upload.
-		Bytes []byte
+		Bytes []byte `json:"bytes"`
 
 		// Text carries the document content when the document is provided as a single text blob.
-		Text string
+		Text string `json:"text"`
 
 		// Chunks carries the document content split into logical chunks when citations
 		// should reference chunk indices rather than character spans.
-		Chunks []string
+		Chunks []string `json:"chunks"`
 
 		// URI locates the document externally when the document should not be
 		// embedded in the request payload (for example, "s3://bucket/key.pdf").
 		//
 		// Provider adapters fail fast when URI schemes are not supported.
-		URI string
+		URI string `json:"uri"`
 
 		// Context is optional contextual information about how the document should be
 		// interpreted by the model when generating citations.
-		Context string
+		Context string `json:"context"`
 
 		// Cite requests provider-native citations when supported.
-		Cite bool
+		Cite bool `json:"cite"`
 	}
 
 	// CitationsPart is a generated content block paired with citation metadata.
@@ -101,25 +101,25 @@ type (
 	// is enabled.
 	CitationsPart struct {
 		// Text is the generated content supported by Citations.
-		Text string
+		Text string `json:"text"`
 
 		// Citations reference the source documents that informed Text.
-		Citations []Citation
+		Citations []Citation `json:"citations"`
 	}
 
 	// Citation links generated content back to a specific location in a source document.
 	Citation struct {
 		// Title is the source document title/identifier when available.
-		Title string
+		Title string `json:"title"`
 
 		// Source is a provider-specific source identifier when available.
-		Source string
+		Source string `json:"source"`
 
 		// Location identifies where in the source document the cited content can be found.
-		Location CitationLocation
+		Location CitationLocation `json:"location"`
 
 		// SourceContent is the cited excerpt from the source document when provided.
-		SourceContent []string
+		SourceContent []string `json:"source_content"`
 	}
 
 	// CitationLocation identifies where cited content can be found within a document.
@@ -127,34 +127,34 @@ type (
 	// Exactly one of DocumentChar, DocumentChunk, or DocumentPage should be set when present.
 	CitationLocation struct {
 		// DocumentChar identifies a character span within a source document.
-		DocumentChar *DocumentCharLocation
+		DocumentChar *DocumentCharLocation `json:"document_char"`
 
 		// DocumentChunk identifies a range of chunks within a source document.
-		DocumentChunk *DocumentChunkLocation
+		DocumentChunk *DocumentChunkLocation `json:"document_chunk"`
 
 		// DocumentPage identifies a page within a source document.
-		DocumentPage *DocumentPageLocation
+		DocumentPage *DocumentPageLocation `json:"document_page"`
 	}
 
 	// DocumentCharLocation identifies a character span within a document.
 	DocumentCharLocation struct {
-		DocumentIndex int
-		Start         int
-		End           int
+		DocumentIndex int `json:"document_index"`
+		Start         int `json:"start"`
+		End           int `json:"end"`
 	}
 
 	// DocumentChunkLocation identifies a chunk range within a document.
 	DocumentChunkLocation struct {
-		DocumentIndex int
-		Start         int
-		End           int
+		DocumentIndex int `json:"document_index"`
+		Start         int `json:"start"`
+		End           int `json:"end"`
 	}
 
 	// DocumentPageLocation identifies a page number within a document.
 	DocumentPageLocation struct {
-		DocumentIndex int
-		Start         int
-		End           int
+		DocumentIndex int `json:"document_index"`
+		Start         int `json:"start"`
+		End           int `json:"end"`
 	}
 
 	// ThinkingPart represents provider-issued reasoning content.
@@ -163,21 +163,21 @@ type (
 	// as opaque metadata and surface it according to UI policy.
 	ThinkingPart struct {
 		// Text is the provider-visible reasoning text when available.
-		Text string
+		Text string `json:"text"`
 
 		// Signature is the provider-issued signature for Text when present.
-		Signature string
+		Signature string `json:"signature"`
 
 		// Redacted carries provider-issued reasoning content in redacted form
 		// when plaintext Text is not available.
-		Redacted []byte
+		Redacted []byte `json:"redacted"`
 
 		// Index is the position of this block in the reasoning sequence.
-		Index int
+		Index int `json:"index"`
 
 		// Final reports whether this reasoning block is the last one for the
 		// current turn.
-		Final bool
+		Final bool `json:"final"`
 	}
 
 	// ToolUsePart declares a tool invocation by the assistant.
@@ -186,13 +186,13 @@ type (
 	// executions and correlates results via ToolResultPart.ToolUseID.
 	ToolUsePart struct {
 		// ID uniquely identifies this tool call within the run.
-		ID string
+		ID string `json:"id"`
 
 		// Name is the tool identifier requested by the model.
-		Name string
+		Name string `json:"name"`
 
-		// Input is the JSON-compatible arguments object provided by the model.
-		Input any
+		// Input is the exact JSON arguments provided by the model.
+		Input rawjson.Message `json:"input"`
 
 		// ThoughtSignature is an opaque, provider-defined signature that some
 		// providers (for example, Gemini 3) attach to a tool-call part to
@@ -204,7 +204,7 @@ type (
 		// Replay obligation: when a provider round-trips a tool call it emitted,
 		// runtimes and planners MUST carry this value back unchanged so the
 		// provider can validate the continued reasoning chain.
-		ThoughtSignature string
+		ThoughtSignature string `json:"thought_signature"`
 	}
 
 	// ToolResultPart carries a tool result provided by the user side.
@@ -213,7 +213,7 @@ type (
 	// subsequent turns.
 	ToolResultPart struct {
 		// ToolUseID correlates this result to a prior tool use declaration.
-		ToolUseID string
+		ToolUseID string `json:"tool_use_id"`
 
 		// Content is the provider-facing tool result payload.
 		//
@@ -222,17 +222,17 @@ type (
 		//   - Failed results carry plain error text with IsError=true.
 		//   - Runtime/tooling code must not store raw JSON bytes or Go error
 		//     structs here.
-		Content any
+		Content any `json:"content"`
 
 		// IsError reports whether Content represents an error from the tool.
-		IsError bool
+		IsError bool `json:"is_error"`
 	}
 
 	// CacheCheckpointPart marks a cache boundary in a message. Provider adapters
-	// translate this to provider-specific caching directives (e.g., Bedrock
-	// cachePoint). Providers that do not support caching ignore this part. It is
-	// complementary to CacheOptions/CachePolicy: agents can combine explicit
-	// CacheCheckpointPart instances with policy-driven AfterSystem/AfterTools
+	// translate this to provider-specific caching directives (for example,
+	// Bedrock cachePoint) or reject the request when inline checkpoints are not
+	// supported. It is complementary to CacheOptions/CachePolicy: agents can
+	// combine explicit checkpoints with policy-driven AfterSystem/AfterTools
 	// checkpoints to express complex caching layouts.
 	CacheCheckpointPart struct{}
 
@@ -243,14 +243,14 @@ type (
 	// result) rather than flattening to plain strings.
 	Message struct {
 		// Role identifies the speaker for this message.
-		Role ConversationRole
+		Role ConversationRole `json:"role"`
 
 		// Parts are the ordered content blocks for the message.
-		Parts []Part
+		Parts []Part `json:"parts"`
 
 		// Meta carries optional provider- or application-specific metadata
 		// attached to the message.
-		Meta map[string]any
+		Meta map[string]any `json:"meta"`
 	}
 
 	// ToolDefinition describes a tool exposed to the model.
@@ -297,8 +297,8 @@ type (
 
 	// ToolCall is a requested tool invocation from the model.
 	//
-	// Tool calls capture the tool identity, raw arguments, and an optional
-	// provider-issued call identifier.
+	// Tool calls capture the tool identity, raw arguments, and the opaque call
+	// identifier required for result correlation.
 	ToolCall struct {
 		// Name is the tool identifier requested by the model.
 		Name tools.Ident
@@ -311,7 +311,10 @@ type (
 		// (it normalizes empty payloads to JSON null).
 		Payload rawjson.Message
 
-		// ID is an optional provider-issued identifier for the tool call.
+		// ID is the adapter-issued opaque identifier for the tool call. Adapters
+		// preserve a provider identifier when available and otherwise generate a
+		// unique one. The runtime uses it to correlate tool results and preserve
+		// response provenance across planner compilation.
 		ID string
 
 		// ThoughtSignature is an opaque, provider-defined signature that some
@@ -343,7 +346,7 @@ type (
 		// downstream consumers can render tool-specific previews deterministically.
 		Name tools.Ident
 
-		// ID is the provider-issued tool call identifier used to correlate all
+		// ID is the adapter-issued tool call identifier used to correlate all
 		// deltas and the final ToolCall payload.
 		ID string
 
@@ -545,14 +548,12 @@ type (
 
 	// Response is the result of a non-streaming invocation.
 	//
-	// Content carries assistant messages; ToolCalls holds any tool invocations
-	// requested by the model; Usage and StopReason mirror provider metadata.
+	// Content carries the complete ordered provider response, including tool-use
+	// parts. Successful responses contain at least one assistant message and a
+	// non-empty provider stop reason. Usage mirrors provider metadata.
 	Response struct {
 		// Content is the ordered list of assistant messages produced.
 		Content []Message
-
-		// ToolCalls lists tool invocations requested by the model.
-		ToolCalls []ToolCall
 
 		// Usage reports token consumption for the request.
 		Usage TokenUsage
@@ -561,43 +562,59 @@ type (
 		StopReason string
 	}
 
-	// Chunk is a streaming event from the model.
-	//
-	// Chunks are classified by Type and may carry partial messages, tool calls,
-	// usage deltas, or a final stop reason.
-	Chunk struct {
-		// Type identifies the kind of streaming event.
-		Type string
+	// Chunk is a closed progressive presentation event from the model. Concrete
+	// variants make invalid field combinations unrepresentable.
+	Chunk interface {
+		Kind() string
+		isChunk()
+	}
 
-		// Message carries incremental assistant content for text or thinking
-		// chunks when present.
-		Message *Message
+	// TextChunk carries incremental assistant text.
+	TextChunk struct {
+		// Message contains one or more ordered TextPart values.
+		Message Message
+	}
 
-		// Thinking carries incremental reasoning text for providers that surface
-		// it out-of-band from Message.
-		Thinking string
+	// ThinkingChunk carries one incremental or finalized reasoning block.
+	ThinkingChunk struct {
+		// Message contains one or more ordered ThinkingPart values.
+		Message Message
+	}
 
-		// ToolCall carries a single tool invocation when Type is ChunkTypeToolCall.
-		ToolCall *ToolCall
+	// ToolCallChunk carries one finalized tool invocation.
+	ToolCallChunk struct {
+		// ToolCall is the provider-authored invocation.
+		ToolCall ToolCall
+	}
 
-		// ToolCallDelta carries an incremental tool-call payload fragment when Type
-		// is ChunkTypeToolCallDelta. It is strictly optional and may be ignored.
-		ToolCallDelta *ToolCallDelta
+	// ToolCallDeltaChunk carries one progressive tool payload fragment.
+	ToolCallDeltaChunk struct {
+		// Delta is the provider-authored fragment.
+		Delta ToolCallDelta
+	}
 
-		// Completion carries the canonical structured payload when Type is
-		// ChunkTypeCompletion.
-		Completion *Completion
+	// CompletionChunk carries the canonical structured-output payload.
+	CompletionChunk struct {
+		// Completion is the decoded completion envelope.
+		Completion Completion
+	}
 
-		// CompletionDelta carries an incremental structured-output fragment when
-		// Type is ChunkTypeCompletionDelta. It is strictly optional and may be
-		// ignored.
-		CompletionDelta *CompletionDelta
+	// CompletionDeltaChunk carries one structured-output preview fragment.
+	CompletionDeltaChunk struct {
+		// Delta is the progressive completion fragment.
+		Delta CompletionDelta
+	}
 
-		// UsageDelta reports incremental token usage when available.
-		UsageDelta *TokenUsage
+	// UsageChunk carries one token-usage delta.
+	UsageChunk struct {
+		// Usage is the provider-attributed token delta.
+		Usage TokenUsage
+	}
 
-		// StopReason records why streaming stopped when Type is ChunkTypeStop.
-		StopReason string
+	// StopChunk reports why provider generation stopped.
+	StopChunk struct {
+		// Reason is the provider-specific stop reason.
+		Reason string
 	}
 
 	// ThinkingOptions configures provider thinking behavior.
@@ -648,10 +665,14 @@ type (
 	// Streamer delivers incremental model output.
 	//
 	// Callers must drain the stream until Recv returns io.EOF or another
-	// terminal error, then call Close.
+	// terminal error, read Response after clean EOF, then call Close.
 	Streamer interface {
 		// Recv returns the next streaming chunk or an error.
 		Recv() (Chunk, error)
+
+		// Response returns the canonical provider response after Recv reports
+		// io.EOF. It returns nil before clean stream completion.
+		Response() *Response
 
 		// Close releases any resources associated with the stream.
 		Close() error
@@ -831,6 +852,70 @@ const (
 	ModelClassSmall ModelClass = "small"
 )
 
+// Kind identifies a text presentation event.
+func (TextChunk) Kind() string {
+	return ChunkTypeText
+}
+
+func (TextChunk) isChunk() {
+}
+
+// Kind identifies a thinking presentation event.
+func (ThinkingChunk) Kind() string {
+	return ChunkTypeThinking
+}
+
+func (ThinkingChunk) isChunk() {
+}
+
+// Kind identifies a finalized tool-call event.
+func (ToolCallChunk) Kind() string {
+	return ChunkTypeToolCall
+}
+
+func (ToolCallChunk) isChunk() {
+}
+
+// Kind identifies a progressive tool-call event.
+func (ToolCallDeltaChunk) Kind() string {
+	return ChunkTypeToolCallDelta
+}
+
+func (ToolCallDeltaChunk) isChunk() {
+}
+
+// Kind identifies a canonical structured-completion event.
+func (CompletionChunk) Kind() string {
+	return ChunkTypeCompletion
+}
+
+func (CompletionChunk) isChunk() {
+}
+
+// Kind identifies a progressive structured-completion event.
+func (CompletionDeltaChunk) Kind() string {
+	return ChunkTypeCompletionDelta
+}
+
+func (CompletionDeltaChunk) isChunk() {
+}
+
+// Kind identifies a token-usage event.
+func (UsageChunk) Kind() string {
+	return ChunkTypeUsage
+}
+
+func (UsageChunk) isChunk() {
+}
+
+// Kind identifies a stop event.
+func (StopChunk) Kind() string {
+	return ChunkTypeStop
+}
+
+func (StopChunk) isChunk() {
+}
+
 // ErrStreamingUnsupported indicates the provider does not support streaming.
 var ErrStreamingUnsupported = errors.New("model: streaming not supported")
 
@@ -843,6 +928,27 @@ var ErrStructuredOutputUnsupported = errors.New("model: structured output not su
 // in a tight loop and should treat this as a transient infrastructure
 // failure that is safe to surface to higher layers.
 var ErrRateLimited = errors.New("model: rate limited")
+
+// ToolCalls derives model tool invocations from their ordered ToolUsePart
+// entries. Response.Content remains the single source of provider output.
+func (r *Response) ToolCalls() []ToolCall {
+	var calls []ToolCall
+	for _, message := range r.Content {
+		for _, part := range message.Parts {
+			use, ok := part.(ToolUsePart)
+			if !ok {
+				continue
+			}
+			calls = append(calls, ToolCall{
+				Name:             tools.Ident(use.Name),
+				Payload:          append(rawjson.Message(nil), use.Input...),
+				ID:               use.ID,
+				ThoughtSignature: use.ThoughtSignature,
+			})
+		}
+	}
+	return calls
+}
 
 // ToolDefinitionFromSpec converts a generated Goa tool specification into the
 // model-facing tool contract advertised to providers. Generated schema bytes are

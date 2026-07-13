@@ -67,7 +67,10 @@ func (r *Runtime) finalizeWithPlanner(
 	default:
 		hint = "FINALIZE NOW.\n\n- Provide the best possible final answer using ONLY the information already available in the conversation and tool results.\n- Do NOT call any tools.\n- Do NOT say you will call tools.\n- If more work is needed, describe it succinctly and provide the best provisional answer."
 	}
-	messages := cloneMessages(base.Messages)
+	messages, err := model.CloneMessages(base.Messages)
+	if err != nil {
+		return nil, err
+	}
 	// When finalizing, ensure the message history ends in a valid state for the
 	// provider. If the last message was an assistant turn with tool_use (e.g.
 	// finalization happened while external results were still outstanding), append
@@ -204,9 +207,18 @@ func (r *Runtime) finalizeWithPlanner(
 		}
 		return out, nil
 	}
+	if err := r.appendSelectedModelResponse(
+		ctx,
+		input.AgentID,
+		base,
+		turnID,
+		output.Result,
+		output.Transcript,
+	); err != nil {
+		return nil, fmt.Errorf("%s: %w", reasonText, err)
+	}
 	out, err := r.materializeTerminalPlannerResult(ctx, input, base, turnID, terminalPlannerState{
 		result:     output.Result,
-		transcript: output.Transcript,
 		toolEvents: allToolResults,
 		usage:      aggUsage,
 	})
@@ -256,7 +268,6 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 		toolOpts.StartToCloseTimeout = defaultExecuteToolActivityTimeout
 	}
 	st := newRunLoopState(output.Result, output.Transcript, aggUsage, policy.CapsState{}, nextAttempt)
-	st.ToolCallSignatures = output.ToolCallSignatures
 	st.ToolEvents = cloneToolResults(allToolResults)
 	st.ToolOutputs = append([]*planner.ToolOutput(nil), allToolOutputs...)
 	loop := newWorkflowLoop(

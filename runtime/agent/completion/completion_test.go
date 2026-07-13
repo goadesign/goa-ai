@@ -63,10 +63,14 @@ func (c *recordingCompletionClient) Stream(_ context.Context, req *model.Request
 type stubStreamer struct{}
 
 func (stubStreamer) Recv() (model.Chunk, error) {
-	return model.Chunk{}, io.EOF
+	return nil, io.EOF
 }
 
 func (stubStreamer) Close() error {
+	return nil
+}
+
+func (stubStreamer) Response() *model.Response {
 	return nil
 }
 
@@ -82,12 +86,13 @@ type recvResult struct {
 type scriptedStreamer struct {
 	metadata map[string]any
 	results  []recvResult
+	response *model.Response
 	index    int
 }
 
 func (s *scriptedStreamer) Recv() (model.Chunk, error) {
 	if s.index >= len(s.results) {
-		return model.Chunk{}, io.EOF
+		return nil, io.EOF
 	}
 	result := s.results[s.index]
 	s.index++
@@ -96,6 +101,10 @@ func (s *scriptedStreamer) Recv() (model.Chunk, error) {
 
 func (s *scriptedStreamer) Close() error {
 	return nil
+}
+
+func (s *scriptedStreamer) Response() *model.Response {
+	return s.response
 }
 
 func (s *scriptedStreamer) Metadata() map[string]any {
@@ -109,10 +118,11 @@ func TestCompleteSetsStructuredOutputAndDecodesTypedValue(t *testing.T) {
 			Content: []model.Message{{
 				Role: model.ConversationRoleAssistant,
 				Parts: []model.Part{
-					model.ThinkingPart{Text: "internal"},
+					model.ThinkingPart{Text: "internal", Final: true},
 					model.TextPart{Text: `{"assistant_text":"created a draft"}`},
 				},
 			}},
+			StopReason: "stop",
 		},
 	}
 	req := &model.Request{
@@ -245,27 +255,34 @@ func TestStreamEnforcesCanonicalCompletionContract(t *testing.T) {
 	spec := testCompletionSpec()
 	upstream := &scriptedStreamer{
 		metadata: map[string]any{"provider": "test"},
+		response: &model.Response{
+			Content: []model.Message{{
+				Role: model.ConversationRoleAssistant,
+				Parts: []model.Part{
+					model.TextPart{Text: `{"assistant_text":"created a draft"}`},
+				},
+			}},
+			StopReason: "stop",
+		},
 		results: []recvResult{
 			{
-				chunk: model.Chunk{
-					Type: model.ChunkTypeCompletionDelta,
-					CompletionDelta: &model.CompletionDelta{
+				chunk: model.CompletionDeltaChunk{
+					Delta: model.CompletionDelta{
 						Name:  "draft_from_transcript",
 						Delta: `{"assistant_text":"draft`,
 					},
 				},
 			},
 			{
-				chunk: model.Chunk{
-					Type: model.ChunkTypeCompletion,
-					Completion: &model.Completion{
+				chunk: model.CompletionChunk{
+					Completion: model.Completion{
 						Name:    "draft_from_transcript",
 						Payload: []byte(`{"assistant_text":"created a draft"}`),
 					},
 				},
 			},
 			{
-				chunk: model.Chunk{Type: model.ChunkTypeStop},
+				chunk: model.StopChunk{Reason: "stop"},
 			},
 			{err: io.EOF},
 		},
@@ -281,18 +298,75 @@ func TestStreamEnforcesCanonicalCompletionContract(t *testing.T) {
 
 	chunk, err := stream.Recv()
 	require.NoError(t, err)
-	require.Equal(t, model.ChunkTypeCompletionDelta, chunk.Type)
+	require.IsType(t, model.CompletionDeltaChunk{}, chunk)
 
 	chunk, err = stream.Recv()
 	require.NoError(t, err)
-	require.Equal(t, model.ChunkTypeCompletion, chunk.Type)
+	require.IsType(t, model.CompletionChunk{}, chunk)
 
 	chunk, err = stream.Recv()
 	require.NoError(t, err)
-	require.Equal(t, model.ChunkTypeStop, chunk.Type)
+	require.IsType(t, model.StopChunk{}, chunk)
 
 	_, err = stream.Recv()
 	require.ErrorIs(t, err, io.EOF)
+}
+
+func TestStreamComparesCanonicalTypedCompletionValues(t *testing.T) {
+	upstream := &scriptedStreamer{
+		response: &model.Response{
+			Content: []model.Message{{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: `{"summary":null,"assistant_text":"created a draft"}`}},
+			}},
+			StopReason: "stop",
+		},
+		results: []recvResult{
+			{chunk: model.CompletionChunk{Completion: model.Completion{
+				Name:    "draft_from_transcript",
+				Payload: []byte(`{"assistant_text":"created a draft"}`),
+			}}},
+			{chunk: model.StopChunk{Reason: "stop"}},
+			{err: io.EOF},
+		},
+	}
+	stream, err := Stream(
+		context.Background(),
+		&recordingCompletionClient{streamer: upstream},
+		&model.Request{},
+		testCompletionSpec(),
+	)
+	require.NoError(t, err)
+
+	_, err = stream.Recv()
+	require.NoError(t, err)
+	_, err = stream.Recv()
+	require.NoError(t, err)
+	_, err = stream.Recv()
+	require.ErrorIs(t, err, io.EOF)
+}
+
+func TestStreamRejectsChunkAfterStop(t *testing.T) {
+	stream, err := Stream(
+		context.Background(),
+		&recordingCompletionClient{streamer: &scriptedStreamer{results: []recvResult{
+			{chunk: model.CompletionChunk{Completion: model.Completion{
+				Name:    "draft_from_transcript",
+				Payload: []byte(`{"assistant_text":"created a draft"}`),
+			}}},
+			{chunk: model.StopChunk{Reason: "stop"}},
+			{chunk: model.UsageChunk{Usage: model.TokenUsage{TotalTokens: 1}}},
+		}}},
+		&model.Request{},
+		testCompletionSpec(),
+	)
+	require.NoError(t, err)
+	_, err = stream.Recv()
+	require.NoError(t, err)
+	_, err = stream.Recv()
+	require.NoError(t, err)
+	_, err = stream.Recv()
+	require.ErrorContains(t, err, `emitted "usage" after stop`)
 }
 
 func TestStreamRejectsEOFBeforeFinalCompletion(t *testing.T) {
@@ -311,12 +385,37 @@ func TestStreamRejectsEOFBeforeFinalCompletion(t *testing.T) {
 	require.ErrorContains(t, err, "ended without canonical completion chunk")
 }
 
+func TestStreamRejectsFinalCompletionWithoutMatchingCanonicalResponse(t *testing.T) {
+	stream, err := Stream(
+		context.Background(),
+		&recordingCompletionClient{
+			streamer: &scriptedStreamer{results: []recvResult{
+				{chunk: model.CompletionChunk{Completion: model.Completion{
+					Name:    "draft_from_transcript",
+					Payload: []byte(`{"assistant_text":"created a draft"}`),
+				}}},
+				{chunk: model.StopChunk{Reason: "stop"}},
+				{err: io.EOF},
+			}},
+		},
+		&model.Request{},
+		testCompletionSpec(),
+	)
+	require.NoError(t, err)
+	_, err = stream.Recv()
+	require.NoError(t, err)
+	_, err = stream.Recv()
+	require.NoError(t, err)
+	_, err = stream.Recv()
+	require.ErrorContains(t, err, "invalid canonical response")
+}
+
 func TestStreamRejectsStopBeforeFinalCompletion(t *testing.T) {
 	stream, err := Stream(
 		context.Background(),
 		&recordingCompletionClient{
 			streamer: &scriptedStreamer{
-				results: []recvResult{{chunk: model.Chunk{Type: model.ChunkTypeStop}}},
+				results: []recvResult{{chunk: model.StopChunk{Reason: "stop"}}},
 			},
 		},
 		&model.Request{},
@@ -335,9 +434,8 @@ func TestStreamRejectsUnexpectedTextChunk(t *testing.T) {
 		&recordingCompletionClient{
 			streamer: &scriptedStreamer{
 				results: []recvResult{{
-					chunk: model.Chunk{
-						Type: model.ChunkTypeText,
-						Message: &model.Message{
+					chunk: model.TextChunk{
+						Message: model.Message{
 							Role:  model.ConversationRoleAssistant,
 							Parts: []model.Part{model.TextPart{Text: `{"assistant_text":"created a draft"}`}},
 						},
@@ -363,18 +461,17 @@ func TestStreamRejectsInvalidStructuredOutputChunks(t *testing.T) {
 		want    string
 	}{
 		{
-			name: "missing completion delta payload",
+			name: "missing completion delta fields",
 			results: []recvResult{{
-				chunk: model.Chunk{Type: model.ChunkTypeCompletionDelta},
+				chunk: model.CompletionDeltaChunk{},
 			}},
-			want: "completion delta without payload",
+			want: "completion delta is missing its name",
 		},
 		{
 			name: "mismatched completion delta name",
 			results: []recvResult{{
-				chunk: model.Chunk{
-					Type: model.ChunkTypeCompletionDelta,
-					CompletionDelta: &model.CompletionDelta{
+				chunk: model.CompletionDeltaChunk{
+					Delta: model.CompletionDelta{
 						Name:  "other",
 						Delta: `{"assistant_text":"draft`,
 					},
@@ -383,18 +480,17 @@ func TestStreamRejectsInvalidStructuredOutputChunks(t *testing.T) {
 			want: `completion delta for "other"`,
 		},
 		{
-			name: "missing completion payload",
+			name: "missing completion fields",
 			results: []recvResult{{
-				chunk: model.Chunk{Type: model.ChunkTypeCompletion},
+				chunk: model.CompletionChunk{},
 			}},
-			want: "completion without payload",
+			want: "completion is missing its name",
 		},
 		{
 			name: "mismatched completion name",
 			results: []recvResult{{
-				chunk: model.Chunk{
-					Type: model.ChunkTypeCompletion,
-					Completion: &model.Completion{
+				chunk: model.CompletionChunk{
+					Completion: model.Completion{
 						Name:    "other",
 						Payload: []byte(`{"assistant_text":"created a draft"}`),
 					},
@@ -406,18 +502,16 @@ func TestStreamRejectsInvalidStructuredOutputChunks(t *testing.T) {
 			name: "duplicate canonical completion",
 			results: []recvResult{
 				{
-					chunk: model.Chunk{
-						Type: model.ChunkTypeCompletion,
-						Completion: &model.Completion{
+					chunk: model.CompletionChunk{
+						Completion: model.Completion{
 							Name:    "draft_from_transcript",
 							Payload: []byte(`{"assistant_text":"created a draft"}`),
 						},
 					},
 				},
 				{
-					chunk: model.Chunk{
-						Type: model.ChunkTypeCompletion,
-						Completion: &model.Completion{
+					chunk: model.CompletionChunk{
+						Completion: model.Completion{
 							Name:    "draft_from_transcript",
 							Payload: []byte(`{"assistant_text":"created a second draft"}`),
 						},
@@ -431,18 +525,16 @@ func TestStreamRejectsInvalidStructuredOutputChunks(t *testing.T) {
 			name: "completion delta after final completion",
 			results: []recvResult{
 				{
-					chunk: model.Chunk{
-						Type: model.ChunkTypeCompletion,
-						Completion: &model.Completion{
+					chunk: model.CompletionChunk{
+						Completion: model.Completion{
 							Name:    "draft_from_transcript",
 							Payload: []byte(`{"assistant_text":"created a draft"}`),
 						},
 					},
 				},
 				{
-					chunk: model.Chunk{
-						Type: model.ChunkTypeCompletionDelta,
-						CompletionDelta: &model.CompletionDelta{
+					chunk: model.CompletionDeltaChunk{
+						Delta: model.CompletionDelta{
 							Name:  "draft_from_transcript",
 							Delta: `{"assistant_text":"draft`,
 						},
@@ -479,7 +571,15 @@ func TestStreamRejectsInvalidStructuredOutputChunks(t *testing.T) {
 
 func TestDecodeResponseRejectsToolCalls(t *testing.T) {
 	_, err := DecodeResponse(&model.Response{
-		ToolCalls: []model.ToolCall{{ID: "tool-1", Name: "lookup"}},
+		Content: []model.Message{{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{model.ToolUsePart{
+				ID:    "tool-1",
+				Name:  "lookup",
+				Input: rawjson.Message(`{}`),
+			}},
+		}},
+		StopReason: "tool_use",
 	}, testCompletionSpec())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "returned tool calls")
@@ -497,6 +597,7 @@ func TestDecodeResponseRejectsMultipleAssistantMessages(t *testing.T) {
 				Parts: []model.Part{model.TextPart{Text: `{"assistant_text":"second"}`}},
 			},
 		},
+		StopReason: "stop",
 	}, testCompletionSpec())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "expected exactly 1 assistant message")
@@ -511,15 +612,15 @@ func TestDecodeResponseRejectsMultipleContentParts(t *testing.T) {
 				model.TextPart{Text: `{"assistant_text":"second"}`},
 			},
 		}},
+		StopReason: "stop",
 	}, testCompletionSpec())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "multiple content parts")
 }
 
 func TestDecodeChunkIgnoresPreviewChunks(t *testing.T) {
-	value, ok, err := DecodeChunk(model.Chunk{
-		Type: model.ChunkTypeCompletionDelta,
-		CompletionDelta: &model.CompletionDelta{
+	value, ok, err := DecodeChunk(model.CompletionDeltaChunk{
+		Delta: model.CompletionDelta{
 			Name:  "draft_from_transcript",
 			Delta: `{"assistant_text":"draft`,
 		},
@@ -530,9 +631,8 @@ func TestDecodeChunkIgnoresPreviewChunks(t *testing.T) {
 }
 
 func TestDecodeChunkDecodesFinalCompletion(t *testing.T) {
-	value, ok, err := DecodeChunk(model.Chunk{
-		Type: model.ChunkTypeCompletion,
-		Completion: &model.Completion{
+	value, ok, err := DecodeChunk(model.CompletionChunk{
+		Completion: model.Completion{
 			Name:    "draft_from_transcript",
 			Payload: []byte(`{"assistant_text":"created a draft"}`),
 		},
@@ -543,18 +643,15 @@ func TestDecodeChunkDecodesFinalCompletion(t *testing.T) {
 }
 
 func TestDecodeChunkRejectsMalformedCompletionChunk(t *testing.T) {
-	_, ok, err := DecodeChunk(model.Chunk{
-		Type: model.ChunkTypeCompletion,
-	}, testCompletionSpec())
+	_, ok, err := DecodeChunk(model.CompletionChunk{}, testCompletionSpec())
 	require.Error(t, err)
 	assert.False(t, ok)
-	assert.Contains(t, err.Error(), "missing payload")
+	assert.Contains(t, err.Error(), "does not match spec")
 }
 
 func TestDecodeChunkRejectsWrongCompletionName(t *testing.T) {
-	_, ok, err := DecodeChunk(model.Chunk{
-		Type: model.ChunkTypeCompletion,
-		Completion: &model.Completion{
+	_, ok, err := DecodeChunk(model.CompletionChunk{
+		Completion: model.Completion{
 			Name:    "other",
 			Payload: []byte(`{"assistant_text":"created a draft"}`),
 		},

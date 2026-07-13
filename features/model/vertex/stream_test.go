@@ -14,7 +14,6 @@ import (
 	"google.golang.org/genai"
 
 	"goa.design/goa-ai/runtime/agent/model"
-	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 func drain(t *testing.T, s model.Streamer) []model.Chunk {
@@ -34,7 +33,7 @@ func TestStreamTextToolCallUsageStop(t *testing.T) {
 	stub := &stubGenerativeClient{streamChunks: []*genai.GenerateContentResponse{
 		{Candidates: []*genai.Candidate{{Content: &genai.Content{Parts: []*genai.Part{{Text: "part one "}}}}}},
 		{Candidates: []*genai.Candidate{{Content: &genai.Content{Parts: []*genai.Part{
-			{FunctionCall: &genai.FunctionCall{Name: "feed_find_duplicates", Args: map[string]any{"title": "x"}}},
+			{FunctionCall: &genai.FunctionCall{ID: "call-1", Name: "feed_find_duplicates", Args: map[string]any{"title": "x"}}},
 		}}}}},
 		{
 			Candidates:    []*genai.Candidate{{FinishReason: genai.FinishReasonStop}},
@@ -54,15 +53,44 @@ func TestStreamTextToolCallUsageStop(t *testing.T) {
 	chunks := drain(t, s)
 	types := make([]string, 0, len(chunks))
 	for _, ch := range chunks {
-		types = append(types, ch.Type)
+		types = append(types, ch.Kind())
 	}
 	assert.Equal(t, []string{
-		model.ChunkTypeText, model.ChunkTypeToolCall, model.ChunkTypeUsage, model.ChunkTypeStop,
+		model.ChunkTypeText,
+		model.ChunkTypeToolCall,
+		model.ChunkTypeUsage,
+		model.ChunkTypeStop,
 	}, types)
-	assert.Equal(t, "feed/find_duplicates", string(chunks[1].ToolCall.Name))
-	assert.Equal(t, 7, chunks[2].UsageDelta.InputTokens)
-	assert.Equal(t, string(genai.FinishReasonStop), chunks[3].StopReason)
+	assert.Equal(t, "feed/find_duplicates", string(chunks[1].(model.ToolCallChunk).ToolCall.Name))
+	assert.Equal(t, 7, chunks[2].(model.UsageChunk).Usage.InputTokens)
+	assert.Equal(t, string(genai.FinishReasonStop), chunks[3].(model.StopChunk).Reason)
 	assert.NotNil(t, s.Metadata()["usage"])
+	assert.NotNil(t, s.Response())
+}
+
+func TestStreamRejectsProviderEndBeforeFinishReason(t *testing.T) {
+	stub := &stubGenerativeClient{streamChunks: []*genai.GenerateContentResponse{{
+		Candidates: []*genai.Candidate{{Content: &genai.Content{
+			Parts: []*genai.Part{{Text: "partial"}},
+		}}},
+	}}}
+	client, err := New(stub, Options{DefaultModel: "gemini-2.5-flash"})
+	require.NoError(t, err)
+	stream, err := client.Stream(context.Background(), &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "go"}},
+		}},
+	})
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, stream.Close()) }()
+
+	chunk, err := stream.Recv()
+	require.NoError(t, err)
+	require.IsType(t, model.TextChunk{}, chunk)
+	_, err = stream.Recv()
+
+	require.EqualError(t, err, "vertex: stream ended before candidate finish reason")
 }
 
 func TestStreamToolCallThoughtSignature(t *testing.T) {
@@ -70,7 +98,7 @@ func TestStreamToolCallThoughtSignature(t *testing.T) {
 	stub := &stubGenerativeClient{streamChunks: []*genai.GenerateContentResponse{
 		{Candidates: []*genai.Candidate{{Content: &genai.Content{Parts: []*genai.Part{
 			{
-				FunctionCall:     &genai.FunctionCall{Name: "feed_find_duplicates", Args: map[string]any{"title": "x"}},
+				FunctionCall:     &genai.FunctionCall{ID: "call-1", Name: "feed_find_duplicates", Args: map[string]any{"title": "x"}},
 				ThoughtSignature: sig,
 			},
 		}}}}},
@@ -88,8 +116,8 @@ func TestStreamToolCallThoughtSignature(t *testing.T) {
 
 	chunks := drain(t, s)
 	require.Len(t, chunks, 2)
-	require.Equal(t, model.ChunkTypeToolCall, chunks[0].Type)
-	assert.Equal(t, base64.StdEncoding.EncodeToString(sig), chunks[0].ToolCall.ThoughtSignature)
+	call := chunks[0].(model.ToolCallChunk).ToolCall
+	assert.Equal(t, base64.StdEncoding.EncodeToString(sig), call.ThoughtSignature)
 }
 
 func TestStreamThinkingWithSignature(t *testing.T) {
@@ -117,48 +145,39 @@ func TestStreamThinkingWithSignature(t *testing.T) {
 	require.Len(t, chunks, 4)
 
 	// First draft thinking chunk carries the first part's text and is not final.
-	assert.Equal(t, model.ChunkTypeThinking, chunks[0].Type)
-	assert.Equal(t, "thinking hard ", chunks[0].Thinking)
-	require.NotNil(t, chunks[0].Message)
-	require.Len(t, chunks[0].Message.Parts, 1)
-	draft1, ok := chunks[0].Message.Parts[0].(model.ThinkingPart)
+	first := chunks[0].(model.ThinkingChunk)
+	require.Len(t, first.Message.Parts, 1)
+	draft1, ok := first.Message.Parts[0].(model.ThinkingPart)
 	require.True(t, ok)
 	assert.False(t, draft1.Final)
 	assert.Equal(t, "thinking hard ", draft1.Text)
 
 	// Second draft thinking chunk carries the second part's incremental
 	// text (not the accumulated text).
-	assert.Equal(t, model.ChunkTypeThinking, chunks[1].Type)
-	assert.Equal(t, "about it", chunks[1].Thinking)
-	draft2, ok := chunks[1].Message.Parts[0].(model.ThinkingPart)
+	second := chunks[1].(model.ThinkingChunk)
+	draft2, ok := second.Message.Parts[0].(model.ThinkingPart)
 	require.True(t, ok)
 	assert.False(t, draft2.Final)
 	assert.Equal(t, "about it", draft2.Text)
 
 	// The thought signature yields a third, final thinking chunk carrying
 	// the FULL accumulated text and the base64-encoded signature.
-	assert.Equal(t, model.ChunkTypeThinking, chunks[2].Type)
-	require.NotNil(t, chunks[2].Message)
-	require.Len(t, chunks[2].Message.Parts, 1)
-	final, ok := chunks[2].Message.Parts[0].(model.ThinkingPart)
+	third := chunks[2].(model.ThinkingChunk)
+	require.Len(t, third.Message.Parts, 1)
+	final, ok := third.Message.Parts[0].(model.ThinkingPart)
 	require.True(t, ok)
 	assert.True(t, final.Final)
 	assert.Equal(t, "thinking hard about it", final.Text)
 	assert.Equal(t, base64.StdEncoding.EncodeToString(sig), final.Signature)
 
-	assert.Equal(t, model.ChunkTypeStop, chunks[3].Type)
+	require.IsType(t, model.StopChunk{}, chunks[3])
+	require.NotNil(t, s.Response())
 }
 
-// TestStreamThinkingSignatureLedgerSeamRoundTrip verifies the seam between
-// the streamer and the real downstream consumers of the final ThinkingPart
-// and tool-call ThoughtSignature: (1) the transcript ledger
-// (runtime/agent/transcript) only replays thinking parts with BOTH Text and
-// Signature set, and carries ToolUsePart.ThoughtSignature through
-// FromModelMessages/BuildMessages unconditionally, and (2) encodeContents
-// (features/model/vertex/messages.go) must round-trip both signatures back
-// into genai Parts with the original bytes when the assistant message is
-// replayed on a later turn.
-func TestStreamThinkingSignatureLedgerSeamRoundTrip(t *testing.T) {
+// TestStreamThinkingSignatureCanonicalReplay verifies that the stream's
+// canonical response preserves both reasoning and tool-call signatures and
+// that encodeContents returns their original provider bytes on a later turn.
+func TestStreamThinkingSignatureCanonicalReplay(t *testing.T) {
 	thinkSig := []byte("sig-bytes-for-round-trip")
 	toolSig := []byte("tool-call-sig-bytes-for-round-trip")
 	stub := &stubGenerativeClient{streamChunks: []*genai.GenerateContentResponse{
@@ -168,7 +187,7 @@ func TestStreamThinkingSignatureLedgerSeamRoundTrip(t *testing.T) {
 		}}}}},
 		{Candidates: []*genai.Candidate{{Content: &genai.Content{Parts: []*genai.Part{
 			{
-				FunctionCall:     &genai.FunctionCall{Name: "feed_find_duplicates", Args: map[string]any{"title": "x"}},
+				FunctionCall:     &genai.FunctionCall{ID: "call-1", Name: "feed_find_duplicates", Args: map[string]any{"title": "x"}},
 				ThoughtSignature: toolSig,
 			},
 		}}}}},
@@ -188,19 +207,17 @@ func TestStreamThinkingSignatureLedgerSeamRoundTrip(t *testing.T) {
 	var finalThinking *model.ThinkingPart
 	var toolCall *model.ToolCall
 	for _, ch := range chunks {
-		switch ch.Type {
-		case model.ChunkTypeThinking:
-			if ch.Message == nil {
-				continue
-			}
-			for _, p := range ch.Message.Parts {
+		switch actual := ch.(type) {
+		case model.ThinkingChunk:
+			for _, p := range actual.Message.Parts {
 				if tp, ok := p.(model.ThinkingPart); ok && tp.Final {
 					tp := tp
 					finalThinking = &tp
 				}
 			}
-		case model.ChunkTypeToolCall:
-			toolCall = ch.ToolCall
+		case model.ToolCallChunk:
+			call := actual.ToolCall
+			toolCall = &call
 		}
 	}
 	require.NotNil(t, finalThinking, "expected a final ThinkingPart in the stream")
@@ -210,27 +227,15 @@ func TestStreamThinkingSignatureLedgerSeamRoundTrip(t *testing.T) {
 	require.Equal(t, "feed/find_duplicates", string(toolCall.Name))
 	require.NotEmpty(t, toolCall.ThoughtSignature)
 
-	// Build the assistant turn the runtime would record (thinking followed
-	// by tool_use) and push it through the REAL transcript ledger, not a
-	// hand-rolled model.Message, so the seam under test is the one the
-	// runtime actually exercises.
-	msg := &model.Message{
-		Role: model.ConversationRoleAssistant,
-		Parts: []model.Part{
-			*finalThinking,
-			model.ToolUsePart{
-				ID:               toolCall.ID,
-				Name:             string(toolCall.Name),
-				Input:            toolCall.Payload,
-				ThoughtSignature: toolCall.ThoughtSignature,
-			},
-		},
-	}
-	rebuilt := transcript.FromModelMessages([]*model.Message{msg}).BuildMessages()
+	response := s.Response()
+	require.NotNil(t, response)
+	require.Len(t, response.Content, 1)
+	rebuilt := []*model.Message{&response.Content[0]}
 	require.Len(t, rebuilt, 1)
 	require.Len(t, rebuilt[0].Parts, 2)
 
-	canonToProv, _ := buildToolNameMaps([]*model.ToolDefinition{def})
+	canonToProv, _, err := buildToolNameMaps([]*model.ToolDefinition{def})
+	require.NoError(t, err)
 	_, contents, err := encodeContents(rebuilt, canonToProv)
 	require.NoError(t, err)
 	require.Len(t, contents, 1)
@@ -269,13 +274,14 @@ func TestStreamUsageEmittedOnceWithLatestValues(t *testing.T) {
 	chunks := drain(t, s)
 	var usageChunks []model.Chunk
 	for _, ch := range chunks {
-		if ch.Type == model.ChunkTypeUsage {
+		if _, ok := ch.(model.UsageChunk); ok {
 			usageChunks = append(usageChunks, ch)
 		}
 	}
 	require.Len(t, usageChunks, 1, "exactly one usage chunk must be emitted even though two responses carried UsageMetadata")
-	assert.Equal(t, 7, usageChunks[0].UsageDelta.InputTokens)
-	assert.Equal(t, 12, usageChunks[0].UsageDelta.TotalTokens)
+	usageChunk := usageChunks[0].(model.UsageChunk)
+	assert.Equal(t, 7, usageChunk.Usage.InputTokens)
+	assert.Equal(t, 12, usageChunk.Usage.TotalTokens)
 
 	usage, ok := s.Metadata()["usage"].(model.TokenUsage)
 	require.True(t, ok)
@@ -389,7 +395,7 @@ func TestStreamStructuredOutputEmitsCompletionDeltaAndFinalCompletion(t *testing
 	chunks := drain(t, s)
 	types := make([]string, 0, len(chunks))
 	for _, ch := range chunks {
-		types = append(types, ch.Type)
+		types = append(types, ch.Kind())
 	}
 	assert.Equal(t, []string{
 		model.ChunkTypeCompletionDelta,
@@ -398,17 +404,23 @@ func TestStreamStructuredOutputEmitsCompletionDeltaAndFinalCompletion(t *testing
 		model.ChunkTypeUsage,
 		model.ChunkTypeStop,
 	}, types)
+	response := s.Response()
+	require.NotNil(t, response)
+	require.Len(t, response.Content, 1)
+	require.Equal(t, []model.Part{
+		model.TextPart{Text: `{"assistant_text":"created a draft"}`},
+	}, response.Content[0].Parts)
 
-	require.NotNil(t, chunks[0].CompletionDelta)
-	assert.Equal(t, "draft_from_transcript", chunks[0].CompletionDelta.Name)
-	assert.Equal(t, `{"assistant_text":`, chunks[0].CompletionDelta.Delta)
+	first := chunks[0].(model.CompletionDeltaChunk).Delta
+	assert.Equal(t, "draft_from_transcript", first.Name)
+	assert.Equal(t, `{"assistant_text":`, first.Delta)
 
-	require.NotNil(t, chunks[1].CompletionDelta)
-	assert.Equal(t, `"created a draft"}`, chunks[1].CompletionDelta.Delta)
+	second := chunks[1].(model.CompletionDeltaChunk).Delta
+	assert.Equal(t, `"created a draft"}`, second.Delta)
 
-	require.NotNil(t, chunks[2].Completion)
-	assert.Equal(t, "draft_from_transcript", chunks[2].Completion.Name)
-	assert.JSONEq(t, `{"assistant_text":"created a draft"}`, string(chunks[2].Completion.Payload))
+	completion := chunks[2].(model.CompletionChunk).Completion
+	assert.Equal(t, "draft_from_transcript", completion.Name)
+	assert.JSONEq(t, `{"assistant_text":"created a draft"}`, string(completion.Payload))
 }
 
 func TestStreamStructuredOutputRejectsInvalidFinalJSON(t *testing.T) {

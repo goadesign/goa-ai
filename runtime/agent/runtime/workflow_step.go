@@ -146,6 +146,21 @@ func (r *Runtime) normalizeStep(result *planner.PlanResult) (stepProgram, error)
 // runStep executes one normalized planner result and applies one post-step
 // transition.
 func (l *workflowLoop) runStep(program stepProgram) (*RunOutput, error) {
+	if len(program.calls) > 0 {
+		program.calls = l.r.prepareAllowedCallsMetadata(
+			l.input.AgentID,
+			l.base,
+			program.calls,
+			l.parentTracker,
+		)
+		program.result.ToolCalls = program.calls
+	}
+	if err := validatePlanResultToolCallIDs(program.result); err != nil {
+		return nil, err
+	}
+	if err := l.commitSelectedModelResponse(program.result); err != nil {
+		return nil, err
+	}
 	if program.kind == stepKindTerminal {
 		return l.r.finishCurrentPlanResult(l.wfCtx.Context(), l.input, l.base, l.st, l.turnID)
 	}
@@ -157,9 +172,25 @@ func (l *workflowLoop) runStep(program stepProgram) (*RunOutput, error) {
 	return l.advanceStep(batch)
 }
 
+// validatePlanResultToolCallIDs proves that every model-facing call has one
+// stable identity before the selected response is accepted or effects begin.
+func validatePlanResultToolCallIDs(result *planner.PlanResult) error {
+	seen := make(map[string]struct{})
+	for _, call := range planResultModelToolCalls(result) {
+		if call.id == "" {
+			return fmt.Errorf("workflow step tool %q is missing tool_call_id", call.name)
+		}
+		if _, exists := seen[call.id]; exists {
+			return fmt.Errorf("workflow step contains duplicate tool_call_id %s", call.id)
+		}
+		seen[call.id] = struct{}{}
+	}
+	return nil
+}
+
 // validateToolTerminalProgram enforces the only legal terminal-with-tools
-// shape: hidden, non-terminal bookkeeping side effects followed by a terminal
-// planner payload in the same step.
+// shape: non-resuming bookkeeping side effects followed by a terminal planner
+// payload in the same step.
 func (r *Runtime) validateToolTerminalProgram(calls []planner.ToolRequest) error {
 	for _, call := range calls {
 		spec, ok := r.toolSpec(call.Name)
@@ -188,7 +219,10 @@ func (l *workflowLoop) executeStepProgram(program stepProgram) (stepBatch, error
 		if batch.finalize != nil {
 			return batch, nil
 		}
-		if len(confirmations) == 0 && len(items) > 0 {
+		// Tool-owned pauses occur after their tool result and must expose that
+		// result before the user's answer. Planner-authored awaits remain behind
+		// the step barrier so all tool uses receive one correlated result message.
+		if len(confirmations) == 0 && len(program.awaitItems) == 0 && len(items) > 0 {
 			if err := l.recordUnrecordedStepToolResults(&batch); err != nil {
 				return stepBatch{}, err
 			}
@@ -223,11 +257,11 @@ func (l *workflowLoop) executeStepProgram(program stepProgram) (stepBatch, error
 // advanceStep applies all post-step policy and either completes the run or
 // advances state to the next planner result.
 func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
-	if batch.finalize != nil {
-		return l.finalizeStep(batch.finalize.reason, batch.finalize.skippedErr)
-	}
 	if err := l.recordUnrecordedStepToolResults(&batch); err != nil {
 		return nil, err
+	}
+	if batch.finalize != nil {
+		return l.finalizeStep(batch.finalize.reason, batch.finalize.skippedErr)
 	}
 	if batch.timedOut {
 		out, finalized, err := l.tryFinalizeStep(planner.TerminationReasonTimeBudget)
@@ -328,7 +362,7 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	l.st.AggUsage = addTokenUsage(l.st.AggUsage, resOutput.Usage)
 	l.st.Result = resOutput.Result
 	l.st.Transcript = resOutput.Transcript
-	l.st.ToolCallSignatures = resOutput.ToolCallSignatures
+	l.st.ResponseCommitted = false
 	return nil, nil
 }
 
@@ -414,69 +448,46 @@ func stepToolResults(records []stepToolRecord) []*planner.ToolResult {
 	return results
 }
 
-// stepToolRecordsFromCallsAndResults adapts legacy helper boundaries to the
-// paired record model while preserving canonical call order.
-func stepToolRecordsFromCallsAndResults(context string, calls []planner.ToolRequest, results []*planner.ToolResult) ([]stepToolRecord, error) {
-	if len(calls) == 0 && len(results) == 0 {
-		return nil, nil
-	}
-	if len(calls) != len(results) {
-		return nil, fmt.Errorf("%s: calls/results length mismatch (%d != %d)", context, len(calls), len(results))
-	}
-
-	resultsByToolCallID := make(map[string]*planner.ToolResult, len(results))
-	for _, result := range results {
-		if result == nil {
-			return nil, fmt.Errorf("%s: nil tool result", context)
-		}
-		if result.ToolCallID == "" {
-			return nil, fmt.Errorf("%s: missing result tool_call_id for %s", context, result.Name)
-		}
-		if _, exists := resultsByToolCallID[result.ToolCallID]; exists {
-			return nil, fmt.Errorf("%s: duplicate result tool_call_id %s", context, result.ToolCallID)
-		}
-		resultsByToolCallID[result.ToolCallID] = result
-	}
-
-	records := make([]stepToolRecord, 0, len(calls))
-	for _, call := range calls {
-		if call.ToolCallID == "" {
-			return nil, fmt.Errorf("%s: missing call tool_call_id for %s", context, call.Name)
-		}
-		result, ok := resultsByToolCallID[call.ToolCallID]
-		if !ok {
-			return nil, fmt.Errorf("%s: missing result for tool_call_id %s", context, call.ToolCallID)
-		}
-		if result.Name != "" && result.Name != call.Name {
-			return nil, fmt.Errorf("%s: result name %s does not match call %s", context, result.Name, call.Name)
-		}
-		records = append(records, stepToolRecord{
-			call:   call,
-			result: result,
-		})
-	}
-	return records, nil
-}
-
-// stepToolRecordsFromExecutions pairs executed calls with their runtime-owned
-// execution outcomes.
+// stepToolRecordsFromExecutions pairs execution outcomes by tool-call identity
+// and returns records in canonical call order. Timeout grouping may execute
+// calls in a different order than the provider-authored transcript.
 func stepToolRecordsFromExecutions(calls []planner.ToolRequest, outcomes []*ToolExecutionResult) ([]stepToolRecord, error) {
 	if len(calls) != len(outcomes) {
 		return nil, fmt.Errorf("workflow step execution mismatch: calls=%d outcomes=%d", len(calls), len(outcomes))
 	}
-	records := make([]stepToolRecord, 0, len(calls))
-	remaining := outcomes
-	for _, call := range calls {
-		outcome := remaining[0]
-		remaining = remaining[1:]
+	byID := make(map[string]*ToolExecutionResult, len(outcomes))
+	for _, outcome := range outcomes {
 		if outcome == nil || outcome.ToolResult == nil {
+			return nil, errors.New("workflow step execution returned an empty outcome")
+		}
+		id := outcome.ToolResult.ToolCallID
+		if id == "" {
+			return nil, fmt.Errorf("workflow step execution result for %q is missing tool_call_id", outcome.ToolResult.Name)
+		}
+		if _, exists := byID[id]; exists {
+			return nil, fmt.Errorf("workflow step execution returned duplicate tool_call_id %s", id)
+		}
+		byID[id] = outcome
+	}
+	records := make([]stepToolRecord, 0, len(calls))
+	for _, call := range calls {
+		outcome, ok := byID[call.ToolCallID]
+		if !ok {
 			return nil, fmt.Errorf("workflow step execution missing result for %q (%s)", call.Name, call.ToolCallID)
 		}
-		records = append(records, stepToolRecord{
+		record := stepToolRecord{
 			call:   call,
 			result: outcome.ToolResult,
 			pause:  outcome.Pause,
-		})
+		}
+		if err := validateStepToolRecord("workflow step execution", record); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+		delete(byID, call.ToolCallID)
+	}
+	if len(byID) > 0 {
+		return nil, errors.New("workflow step execution returned results for unknown tool calls")
 	}
 	return records, nil
 }

@@ -116,7 +116,10 @@ func TestRunLoopBookkeepingOnlyFinalResponseFinishesWithoutResume(t *testing.T) 
 		TurnID:    "turn-1",
 	}
 	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{Name: bookkeeping.Name}},
+		ToolCalls: []planner.ToolRequest{{
+			Name:    bookkeeping.Name,
+			Payload: rawjson.Message(`{}`),
+		}},
 		FinalResponse: &planner.FinalResponse{
 			Message: &model.Message{
 				Role:  model.ConversationRoleAssistant,
@@ -131,16 +134,11 @@ func TestRunLoopBookkeepingOnlyFinalResponseFinishesWithoutResume(t *testing.T) 
 		input,
 		base,
 		initial,
-		nil,
-		model.TokenUsage{},
 		policy.CapsState{},
 		time.Time{},
 		time.Time{},
-		2,
 		"turn-1",
 		nil,
-		nil,
-		0,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -184,7 +182,10 @@ func TestRunLoopBookkeepingOnlyWithoutTerminalPayloadFailsFast(t *testing.T) {
 		TurnID:    "turn-1",
 	}
 	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{Name: bookkeeping.Name}},
+		ToolCalls: []planner.ToolRequest{{
+			Name:    bookkeeping.Name,
+			Payload: rawjson.Message(`{}`),
+		}},
 	}
 
 	out, err := rt.runLoop(
@@ -193,16 +194,11 @@ func TestRunLoopBookkeepingOnlyWithoutTerminalPayloadFailsFast(t *testing.T) {
 		input,
 		base,
 		initial,
-		nil,
-		model.TokenUsage{},
 		policy.CapsState{},
 		time.Time{},
 		time.Time{},
-		2,
 		"turn-1",
 		nil,
-		nil,
-		0,
 	)
 	require.Error(t, err)
 	require.Nil(t, out)
@@ -269,7 +265,10 @@ func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 		TurnID:    "turn-1",
 	}
 	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{Name: terminal.Name}},
+		ToolCalls: []planner.ToolRequest{{
+			Name:    terminal.Name,
+			Payload: rawjson.Message(`{}`),
+		}},
 	}
 
 	out, err := rt.runLoop(
@@ -278,16 +277,11 @@ func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 		input,
 		base,
 		initial,
-		nil,
-		model.TokenUsage{},
 		policy.CapsState{},
 		time.Time{},
 		time.Time{},
-		2,
 		"turn-1",
 		nil,
-		nil,
-		0,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -330,7 +324,10 @@ func TestRunLoopProviderEmptyToolCallIDsAdvanceAcrossResumeAttempts(t *testing.T
 					case 1, 2:
 						require.Len(t, input.ToolOutputs, len(resumeAttempts))
 						return &planner.PlanResult{
-							ToolCalls: []planner.ToolRequest{{Name: tc.tool}},
+							ToolCalls: []planner.ToolRequest{{
+								Name:    tc.tool,
+								Payload: rawjson.Message(`{}`),
+							}},
 						}, nil
 					case 3:
 						require.Len(t, input.ToolOutputs, len(tc.want))
@@ -373,7 +370,10 @@ func TestRunLoopProviderEmptyToolCallIDsAdvanceAcrossResumeAttempts(t *testing.T
 				TurnID:    "turn-1",
 			}
 			initial := &planner.PlanResult{
-				ToolCalls: []planner.ToolRequest{{Name: tc.tool}},
+				ToolCalls: []planner.ToolRequest{{
+					Name:    tc.tool,
+					Payload: rawjson.Message(`{}`),
+				}},
 			}
 
 			out, err := rt.runLoop(
@@ -382,16 +382,11 @@ func TestRunLoopProviderEmptyToolCallIDsAdvanceAcrossResumeAttempts(t *testing.T
 				input,
 				base,
 				initial,
-				nil,
-				model.TokenUsage{},
 				policy.CapsState{},
 				time.Time{},
 				time.Time{},
-				2,
 				"turn-1",
 				nil,
-				nil,
-				0,
 			)
 			require.NoError(t, err)
 			require.NotNil(t, out)
@@ -414,8 +409,8 @@ func TestRunLoopProviderEmptyToolCallIDsUseBatchIndexes(t *testing.T) {
 		{
 			name: "two tool unavailable calls",
 			calls: []planner.ToolRequest{
-				{Name: tools.ToolUnavailable},
-				{Name: tools.ToolUnavailable},
+				{Name: tools.ToolUnavailable, Payload: rawjson.Message(`{}`)},
+				{Name: tools.ToolUnavailable, Payload: rawjson.Message(`{}`)},
 			},
 			want: []string{
 				"run-1/turn-1/attempt-1/runtime-tool_unavailable/0",
@@ -476,16 +471,11 @@ func TestRunLoopProviderEmptyToolCallIDsUseBatchIndexes(t *testing.T) {
 				input,
 				base,
 				initial,
-				nil,
-				model.TokenUsage{},
 				policy.CapsState{},
 				time.Time{},
 				time.Time{},
-				2,
 				"turn-1",
 				nil,
-				nil,
-				0,
 			)
 			require.NoError(t, err)
 			require.NotNil(t, out)
@@ -548,8 +538,8 @@ func TestRunLoopMixedBudgetedAndBookkeepingStillResumes(t *testing.T) {
 	}
 	initial := &planner.PlanResult{
 		ToolCalls: []planner.ToolRequest{
-			{Name: budgeted.Name},
-			{Name: bookkeeping.Name},
+			{Name: budgeted.Name, Payload: rawjson.Message(`{}`)},
+			{Name: bookkeeping.Name, Payload: rawjson.Message(`{}`)},
 		},
 	}
 
@@ -559,16 +549,11 @@ func TestRunLoopMixedBudgetedAndBookkeepingStillResumes(t *testing.T) {
 		input,
 		base,
 		initial,
-		nil,
-		model.TokenUsage{},
 		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
 		time.Time{},
 		time.Time{},
-		2,
 		"turn-1",
 		nil,
-		nil,
-		0,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -577,7 +562,7 @@ func TestRunLoopMixedBudgetedAndBookkeepingStillResumes(t *testing.T) {
 	require.Equal(t, "run-1/turn-1/attempt-1/svc-tools-lookup/0", wfCtx.lastPlannerCall.Input.ToolOutputs[0].ToolCallID)
 }
 
-func TestRunLoopBookkeepingOnlyToolPauseAwaitsWithoutToolReplay(t *testing.T) {
+func TestRunLoopBookkeepingOnlyToolPausePreservesTranscriptWithoutToolOutput(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
 	bookkeeping := newAnyJSONSpec(tools.Ident("tasks.progress.set_step_status"), "tasks.progress")
@@ -641,7 +626,10 @@ func TestRunLoopBookkeepingOnlyToolPauseAwaitsWithoutToolReplay(t *testing.T) {
 	}
 	seedRunMeta(t, rt, input)
 	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{Name: bookkeeping.Name}},
+		ToolCalls: []planner.ToolRequest{{
+			Name:    bookkeeping.Name,
+			Payload: rawjson.Message(`{}`),
+		}},
 	}
 
 	out, err := rt.runLoop(
@@ -650,23 +638,20 @@ func TestRunLoopBookkeepingOnlyToolPauseAwaitsWithoutToolReplay(t *testing.T) {
 		input,
 		base,
 		initial,
-		nil,
-		model.TokenUsage{},
 		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
 		time.Time{},
 		time.Time{},
-		2,
 		"turn-1",
-		nil,
 		ctrl,
-		0,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.Equal(t, "done", agentMessageText(out.Final))
 	require.Equal(t, "resume", wfCtx.lastPlannerCall.Name)
 	require.Empty(t, wfCtx.lastPlannerCall.Input.ToolOutputs, "bookkeeping pauses must not replay tool outputs into the planner")
-	require.Len(t, wfCtx.lastPlannerCall.Input.Messages, 1)
+	require.Len(t, wfCtx.lastPlannerCall.Input.Messages, 3)
+	require.Equal(t, model.ConversationRoleAssistant, wfCtx.lastPlannerCall.Input.Messages[0].Role)
+	require.Equal(t, model.ConversationRoleUser, wfCtx.lastPlannerCall.Input.Messages[1].Role)
 	last := wfCtx.lastPlannerCall.Input.Messages[len(wfCtx.lastPlannerCall.Input.Messages)-1]
 	require.Equal(t, model.ConversationRoleUser, last.Role)
 	part, ok := last.Parts[0].(model.TextPart)
@@ -737,7 +722,10 @@ func TestRunLoopBudgetedToolPauseRecordsResultBeforeUserAnswer(t *testing.T) {
 	}
 	seedRunMeta(t, rt, input)
 	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{Name: budgeted.Name}},
+		ToolCalls: []planner.ToolRequest{{
+			Name:    budgeted.Name,
+			Payload: rawjson.Message(`{}`),
+		}},
 	}
 
 	out, err := rt.runLoop(
@@ -746,16 +734,11 @@ func TestRunLoopBudgetedToolPauseRecordsResultBeforeUserAnswer(t *testing.T) {
 		input,
 		base,
 		initial,
-		nil,
-		model.TokenUsage{},
 		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
 		time.Time{},
 		time.Time{},
-		2,
 		"turn-1",
-		nil,
 		ctrl,
-		0,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -837,7 +820,10 @@ func TestRunLoopBookkeepingToolTerminalRejectsPause(t *testing.T) {
 	}
 	seedRunMeta(t, rt, input)
 	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{Name: bookkeeping.Name}},
+		ToolCalls: []planner.ToolRequest{{
+			Name:    bookkeeping.Name,
+			Payload: rawjson.Message(`{}`),
+		}},
 		FinalResponse: &planner.FinalResponse{
 			Message: &model.Message{
 				Role:  model.ConversationRoleAssistant,
@@ -853,16 +839,11 @@ func TestRunLoopBookkeepingToolTerminalRejectsPause(t *testing.T) {
 		input,
 		base,
 		initial,
-		nil,
-		model.TokenUsage{},
 		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
 		time.Time{},
 		time.Time{},
-		2,
 		"turn-1",
 		nil,
-		nil,
-		0,
 	)
 	require.Error(t, err)
 	require.Nil(t, out)

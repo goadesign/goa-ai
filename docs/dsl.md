@@ -243,7 +243,7 @@ on agent/tool contracts.
 | `ResultReminder(text)`                        | Inside `Tool`                          | Static system reminder injected after tool result                                                   |
 | `Confirmation(dsl)`                           | Inside `Tool`                          | Declares that tool execution must be explicitly approved out-of-band                                |
 | `TerminalRun()`                               | Inside `Tool`                          | Marks tool as terminal: run completes immediately after execution                                   |
-| `Bookkeeping()`                               | Inside `Tool`                          | Marks tool as control-plane bookkeeping: no `MaxToolCalls` budget, hidden from future planner turns by default |
+| `Bookkeeping()`                               | Inside `Tool`                          | Marks control-plane work that consumes no `MaxToolCalls` budget and does not force another planner turn |
 
 
 ### Tool payload defaults (Feature)
@@ -1066,12 +1066,14 @@ future reasoning input.
 Runtime contract:
 
 - bookkeeping calls do not consume the run-level `MaxToolCalls` retrieval budget,
-- bookkeeping calls are never dropped when a batch is trimmed to fit the
-  remaining budget,
+- model-authored call batches are admitted or rejected atomically, with
+  bookkeeping calls excluded from the batch's budget cost,
 - bookkeeping results still publish durable run events for hooks, streams, and
   run-log consumers,
-- successful bookkeeping results stay hidden from the model-visible transcript
-  and future `ToolOutputs`.
+- all bookkeeping calls and results remain in the provider transcript so signed
+  responses replay unchanged,
+- successful bookkeeping results stay out of compact future `ToolOutputs` and
+  do not force another planner turn.
 
 This means a bookkeeping-only planner turn is only valid when the same turn
 already resolves without another reasoning resume (a `TerminalRun` tool, a

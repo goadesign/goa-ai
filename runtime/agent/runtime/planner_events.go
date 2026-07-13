@@ -1,3 +1,5 @@
+// Package runtime publishes planner presentation events independently from
+// provider transcript ownership.
 package runtime
 
 import (
@@ -8,46 +10,28 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/tools"
-	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
-// runtimePlannerEvents implements planner.PlannerEvents (and the unexported
-// toolCallSignatureSink) for runtime plan activities.
-//
-// It serves three purposes:
-//   - Publish hook events (streaming / persistence / observability) via the runtime bus.
-//   - Capture thinking/text into a per-turn transcript ledger and aggregate token usage
-//     for deterministic workflow consumption.
-//   - Capture opaque provider tool-call thought signatures observed by
-//     signatureCapturingClient at the model-client boundary, keyed by
-//     tool-call ID, so the workflow can reattach them by ID when rebuilding
-//     the transcript without ever routing them through a planner-facing type.
-//
-// The planner (or model wrapper) may emit events while streaming; methods therefore
-// take a mutex to allow concurrent calls without corrupting the ledger, usage totals,
-// or captured signatures.
-type runtimePlannerEvents struct {
-	rt        *Runtime
-	agentID   agent.Ident
-	runID     string
-	sessionID string
-	turnID    string
+type (
+	// runtimePlannerEvents implements planner.PlannerEvents for runtime plan
+	// activities.
+	//
+	// It publishes hook events; the model invocation journal owns usage and
+	// provider transcript state.
+	runtimePlannerEvents struct {
+		rt        *Runtime
+		agentID   agent.Ident
+		runID     string
+		sessionID string
+		turnID    string
 
-	mu  sync.Mutex
-	led *transcript.Ledger
+		mu      sync.Mutex
+		hookErr error
+	}
+)
 
-	usage model.TokenUsage
-
-	// signatures holds captured tool-call thought signatures keyed by
-	// tool-call ID. Entries are added only for non-empty IDs and signatures;
-	// absence of a key means the provider did not emit one.
-	signatures map[string]string
-
-	hookErr error
-}
-
-// newPlannerEvents constructs a planner event sink that publishes to rt.Bus and
-// records a provider transcript.
+// newPlannerEvents constructs a planner presentation sink that publishes to
+// rt.Bus.
 //
 // The runtime requires a hook bus. If rt.Bus is nil, this panics to surface an
 // invalid runtime configuration early.
@@ -64,7 +48,6 @@ func newPlannerEvents(rt *Runtime, agentID agent.Ident, runID, sessionID, turnID
 		runID:     runID,
 		sessionID: sessionID,
 		turnID:    turnID,
-		led:       transcript.NewLedger(),
 	}
 }
 
@@ -72,9 +55,6 @@ func (e *runtimePlannerEvents) AssistantChunk(ctx context.Context, text string) 
 	if text == "" {
 		return
 	}
-	e.mu.Lock()
-	e.led.AppendText(text)
-	e.mu.Unlock()
 	e.publish(ctx, hooks.NewAssistantMessageEvent(e.runID, e.agentID, e.sessionID, text, nil))
 }
 
@@ -93,60 +73,14 @@ func (e *runtimePlannerEvents) PlannerThought(ctx context.Context, note string, 
 }
 
 func (e *runtimePlannerEvents) UsageDelta(ctx context.Context, usage model.TokenUsage) {
-	e.mu.Lock()
-	e.usage = addTokenUsage(e.usage, usage)
-	e.mu.Unlock()
-
 	e.publish(ctx, hooks.NewUsageEvent(e.runID, e.agentID, e.sessionID, usage))
 }
 
 func (e *runtimePlannerEvents) PlannerThinkingBlock(ctx context.Context, block model.ThinkingPart) {
-	e.mu.Lock()
-	e.led.AppendThinking(toTranscriptThinking(block))
-	e.mu.Unlock()
 	e.publish(ctx, hooks.NewThinkingBlockEvent(
 		e.runID, e.agentID, e.sessionID,
 		block.Text, block.Signature, block.Redacted, block.Index, block.Final,
 	))
-}
-
-func (e *runtimePlannerEvents) exportTranscript() []*model.Message {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.led.BuildMessages()
-}
-
-// recordToolCallSignature implements toolCallSignatureSink. It is called by
-// signatureCapturingClient as tool calls are observed at the model-client
-// boundary; toolCallID and signature are guaranteed non-empty by the caller.
-func (e *runtimePlannerEvents) recordToolCallSignature(toolCallID, signature string) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.signatures == nil {
-		e.signatures = make(map[string]string)
-	}
-	e.signatures[toolCallID] = signature
-}
-
-// exportToolCallSignatures returns a snapshot of captured tool-call thought
-// signatures for inclusion in the plan activity's output envelope.
-func (e *runtimePlannerEvents) exportToolCallSignatures() map[string]string {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if len(e.signatures) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(e.signatures))
-	for k, v := range e.signatures {
-		out[k] = v
-	}
-	return out
-}
-
-func (e *runtimePlannerEvents) exportUsage() model.TokenUsage {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.usage
 }
 
 func (e *runtimePlannerEvents) hookError() error {
@@ -166,17 +100,4 @@ func (e *runtimePlannerEvents) publish(ctx context.Context, evt hooks.Event) {
 		}
 		e.mu.Unlock()
 	}
-}
-
-func toTranscriptThinking(block model.ThinkingPart) transcript.ThinkingPart {
-	cp := transcript.ThinkingPart{
-		Text:      block.Text,
-		Signature: block.Signature,
-		Index:     block.Index,
-		Final:     block.Final,
-	}
-	if len(block.Redacted) > 0 {
-		cp.Redacted = append([]byte(nil), block.Redacted...)
-	}
-	return cp
 }

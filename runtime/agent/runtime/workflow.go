@@ -17,9 +17,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/interrupt"
-	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 )
@@ -268,7 +266,6 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	st.AggUsage = firstOutput.Usage
 	st.Result = firstOutput.Result
 	st.Transcript = firstOutput.Transcript
-	st.ToolCallSignatures = firstOutput.ToolCallSignatures
 	r.logger.Info(wfCtx.Context(), "Starting runLoop", "tool_calls", len(result.ToolCalls))
 	// Create parentTracker if this is a nested agent run (has ParentToolCallID)
 	var parentTracker *childTracker
@@ -307,45 +304,6 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	finalStatus = runStatusSuccess
 	finalErr = nil
 	return out, nil
-}
-
-// runLoop executes the plan/tool/resume cycle until the planner returns a final response
-// or a cap/deadline is exceeded. The turnID parameter enables turn-based event stamping.
-// It does not thread ToolCallSignatures into the loop state; production enters via
-// runLoopWithState with state seeded from PlanActivityOutput.
-//
-//nolint:unparam // compatibility wrapper retained for direct unit tests that seed run-loop state explicitly.
-func (r *Runtime) runLoop(
-	wfCtx engine.WorkflowContext,
-	reg AgentRegistration,
-	input *RunInput,
-	base *planner.PlanInput,
-	initialResult *planner.PlanResult,
-	initialTranscript []*model.Message,
-	initialUsage model.TokenUsage,
-	caps policy.CapsState,
-	budgetDeadline time.Time,
-	hardDeadline time.Time,
-	nextAttempt int,
-	turnID string,
-	parentTracker *childTracker,
-	ctrl *interrupt.Controller,
-	finalizerGrace time.Duration,
-) (*RunOutput, error) {
-	st := newRunLoopState(initialResult, initialTranscript, initialUsage, caps, nextAttempt)
-	return r.runLoopWithState(
-		wfCtx,
-		reg,
-		input,
-		base,
-		st,
-		budgetDeadline,
-		hardDeadline,
-		turnID,
-		parentTracker,
-		ctrl,
-		finalizerGrace,
-	)
 }
 
 func (r *Runtime) runLoopWithState(

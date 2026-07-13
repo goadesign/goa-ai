@@ -1,7 +1,6 @@
 package bedrock
 
 import (
-	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -153,7 +152,6 @@ func TestEncodeTools_AnthropicModelKeepsAllToolsWhenOneHasExample(t *testing.T) 
 }
 
 func TestBuildConverseStreamInputAnthropicToolExamplesUseNativeToolsOnly(t *testing.T) {
-	ctx := context.Background()
 	client := &Client{
 		defaultModel: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
 		maxTok:       32,
@@ -171,7 +169,7 @@ func TestBuildConverseStreamInputAnthropicToolExamplesUseNativeToolsOnly(t *test
 		}},
 	}
 
-	parts, err := client.prepareRequest(ctx, req)
+	parts, err := client.prepareRequest(req)
 	require.NoError(t, err)
 	require.NotNil(t, parts.toolConfig)
 
@@ -190,7 +188,6 @@ func TestBuildConverseStreamInputAnthropicToolExamplesUseNativeToolsOnly(t *test
 }
 
 func TestBuildConverseStreamInputWithToolResultsUsesBedrockToolConfig(t *testing.T) {
-	ctx := context.Background()
 	client := &Client{
 		defaultModel: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
 		maxTok:       32,
@@ -210,7 +207,7 @@ func TestBuildConverseStreamInputWithToolResultsUsesBedrockToolConfig(t *testing
 					model.ToolUsePart{
 						ID:    "toolu_1",
 						Name:  "reports.lookup",
-						Input: map[string]any{"query": "status"},
+						Input: rawjson.Message(`{"query":"status"}`),
 					},
 				},
 			},
@@ -238,7 +235,7 @@ func TestBuildConverseStreamInputWithToolResultsUsesBedrockToolConfig(t *testing
 		},
 	}
 
-	parts, err := client.prepareRequest(ctx, req)
+	parts, err := client.prepareRequest(req)
 	require.NoError(t, err)
 
 	input := client.buildConverseStreamInput(parts, req, thinkingConfig{})
@@ -256,6 +253,35 @@ func TestEncodeTools_AnthropicToolChoiceUsesNativeFieldWithExamples(t *testing.T
 	}, &model.ToolChoice{Mode: model.ToolChoiceModeTool, Name: "reports.complete"}, false)
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"type": "tool", "name": "reports_complete"}, fields["tool_choice"])
+}
+
+func TestToDocumentPreservesCanonicalRawJSONNumbers(t *testing.T) {
+	doc, err := toDocument(rawjson.Message(`{"large":9007199254740993}`))
+	require.NoError(t, err)
+
+	got, err := decodeDocument(doc)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"large":9007199254740993}`, string(got))
+}
+
+func TestToDocumentPreservesDecodedJSONNumbers(t *testing.T) {
+	doc, err := toDocument(map[string]any{"large": json.Number("9007199254740993")})
+	require.NoError(t, err)
+
+	got, err := decodeDocument(doc)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"large":9007199254740993}`, string(got))
+}
+
+func TestSchemaDocumentPreservesNumericKeywords(t *testing.T) {
+	doc, err := schemaDocument(rawjson.Message(
+		`{"type":"integer","default":50,"minimum":1,"maximum":200}`,
+	))
+	require.NoError(t, err)
+
+	got, err := decodeDocument(doc)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"type":"integer","default":50,"minimum":1,"maximum":200}`, string(got))
 }
 
 func TestIsNovaModel(t *testing.T) {

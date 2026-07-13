@@ -121,9 +121,15 @@ func executeToolUnavailable(ctx context.Context, call *planner.ToolRequest) (*To
 // tool_unavailable tool while preserving the originally requested tool name and
 // payload in the rewritten input.
 func (r *Runtime) rewriteToolCallUnavailable(call planner.ToolRequest) (planner.ToolRequest, error) {
+	requestedName := call.TranscriptName()
+	requestedPayload := call.TranscriptPayload()
+	if call.ModelName == "" {
+		call.ModelName = requestedName
+		call.ModelPayload = append(rawjson.Message(nil), requestedPayload...)
+	}
 	payload, err := json.Marshal(toolUnavailablePayload{
-		RequestedTool:    call.Name.String(),
-		RequestedPayload: call.Payload,
+		RequestedTool:    requestedName.String(),
+		RequestedPayload: requestedPayload,
 	})
 	if err != nil {
 		return planner.ToolRequest{}, fmt.Errorf("runtime: encode tool_unavailable payload for %s: %w", call.Name, err)

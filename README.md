@@ -198,13 +198,8 @@ func (p *Planner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planne
 		return &planner.PlanResult{ToolCalls: summary.ToolCalls}, nil
 	}
 	return &planner.PlanResult{
-		FinalResponse: &planner.FinalResponse{
-			Message: &model.Message{
-				Role:  model.ConversationRoleAssistant,
-				Parts: []model.Part{model.TextPart{Text: summary.Text}},
-			},
-		},
-		Streamed: true,
+		FinalResponse: summary.FinalResponse(),
+		Streamed:      true,
 	}, nil
 }
 ```
@@ -469,14 +464,14 @@ Tool("commit_report", "Commit final report", func() {
 })
 ```
 
-Bookkeeping tools do not consume the normal `MaxToolCalls` budget. Their events are still durable and streamed. Successful results stay hidden from future planner turns; retryable failures stay visible with their retry hints so the planner can repair the failed call.
+Bookkeeping tools do not consume the normal `MaxToolCalls` budget. Their events are still durable and streamed, and their provider transcript blocks remain intact. Successful results stay out of compact future `ToolOutputs`; retryable failures stay visible there with their retry hints so the planner can repair the failed call.
 
 Retry-owned tool restrictions filter budgeted work tools only. Bookkeeping tools
 remain available during correction turns, including terminal run tools that close
 the run, while caller `WithRestrictToTool` policy remains run-scoped and applies
 to every tool.
 
-The workflow runtime evaluates one admitted planner result as one step: it executes tool and await work, records durable and planner-facing outputs through one canonical path, then applies one transition policy to resume, finish, or finalize. A terminal payload may only accompany hidden, non-terminal bookkeeping side effects; budgeted tools, retryable bookkeeping failures, terminal tools, and awaits must be separate planner decisions.
+The workflow runtime evaluates one admitted planner result as one step: it executes tool and await work, records durable and planner-facing outputs through one canonical path, then applies one transition policy to resume, finish, or finalize. A terminal payload may only accompany non-resuming, non-terminal bookkeeping side effects; budgeted tools, retryable bookkeeping failures, terminal tools, and awaits must be separate planner decisions. Bookkeeping calls remain in the provider transcript so signed responses are never edited.
 
 ---
 
@@ -515,8 +510,22 @@ rt := runtime.New(
 
 For model streaming inside planners, choose one style per planner call:
 
-- `PlannerContext.PlannerModelClient(id)` is recommended. It owns assistant/thinking/usage event emission and returns a `planner.StreamSummary`.
+- `PlannerContext.PlannerModelClient(id)` is recommended for the selected, single model call. It owns assistant/thinking/usage event emission and returns a `planner.StreamSummary`.
 - `PlannerContext.ModelClient(id)` gives you a raw `model.Client`. Pair it with `planner.ConsumeStream` or drain the stream yourself when you need lower-level control.
+
+The runtime captures each model response before planner code sees it. When a
+planner probes through the raw client, goa-ai matches returned model-facing tool
+calls to the exact response that produced them and replays only that transcript.
+Every stream exposes closed typed presentation events, then makes its canonical
+response available separately after clean EOF. Model gateways carry that
+response independently from planner-facing chunks, and terminal helpers return
+the selected provider message without exposing transcript identity. Future
+session turns retain provider-authored thinking without inferring ownership from
+visible text.
+Planners keep the existing obligation to preserve model tool-call identities
+and, when compiling synthetic tools, `ModelName`/`ModelPayload`; they never
+manage transcript identities. The workflow commits the selected response once
+after atomic admission and before effects. Usage includes all attempts.
 
 ---
 

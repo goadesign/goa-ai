@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -581,7 +580,7 @@ func (e *toolBatchExec) executionFromActivityOutput(ctx context.Context, info fu
 		}
 		if len(h.PriorInput) == 0 && len(info.call.Payload) > 0 {
 			var prior map[string]any
-			if err := json.Unmarshal(info.call.Payload, &prior); err == nil && len(prior) > 0 {
+			if err := rawjson.Unmarshal(info.call.Payload, &prior); err == nil && len(prior) > 0 {
 				h.PriorInput = prior
 			}
 		}

@@ -73,15 +73,15 @@ type (
 		// TerminalRun indicates that once this tool executes, the runtime should
 		// terminate the run immediately without requesting a follow-up planner
 		// PlanResume/finalization turn. Terminal tools are always treated as
-		// bookkeeping so the run-level retrieval budget cannot trim them away.
+		// bookkeeping and do not contribute to the run-level retrieval budget.
 		// It is set via the TerminalRun DSL helper.
 		TerminalRun bool
 
 		// Bookkeeping indicates the tool is a structured bookkeeping tool (status
 		// updates, findings, terminal commits) and must not be accounted against
-		// the run-level MaxToolCalls retrieval budget. Runtimes do not decrement
-		// the budget for bookkeeping calls and never drop them during budget
-		// trimming. It is set via the Bookkeeping DSL helper.
+		// the run-level MaxToolCalls retrieval budget. Model-authored batches are
+		// admitted atomically; bookkeeping calls do not contribute to their budget
+		// cost. It is set via the Bookkeeping DSL helper.
 		Bookkeeping bool
 
 		// ResultReminder is an optional system reminder that is injected into

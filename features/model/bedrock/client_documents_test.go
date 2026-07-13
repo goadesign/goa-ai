@@ -1,7 +1,6 @@
 package bedrock
 
 import (
-	"context"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -13,8 +12,6 @@ import (
 )
 
 func TestEncodeMessages_DocumentPartWithCitations(t *testing.T) {
-	ctx := context.Background()
-
 	msgs := []*model.Message{
 		{
 			Role: model.ConversationRoleUser,
@@ -28,7 +25,7 @@ func TestEncodeMessages_DocumentPartWithCitations(t *testing.T) {
 			},
 		},
 	}
-	got, _, err := encodeMessages(ctx, msgs, nil, false, nil)
+	got, _, err := encodeMessages(msgs, nil, false)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	require.Equal(t, brtypes.ConversationRoleUser, got[0].Role)
@@ -50,9 +47,7 @@ func TestEncodeMessages_DocumentPartWithCitations(t *testing.T) {
 	require.True(t, ok)
 }
 
-func TestEncodeMessages_DocumentPartS3Source(t *testing.T) {
-	ctx := context.Background()
-
+func TestEncodeMessages_DocumentPartS3SourceRejectsCitations(t *testing.T) {
 	msgs := []*model.Message{
 		{
 			Role: model.ConversationRoleUser,
@@ -66,21 +61,13 @@ func TestEncodeMessages_DocumentPartS3Source(t *testing.T) {
 			},
 		},
 	}
-	got, _, err := encodeMessages(ctx, msgs, nil, false, nil)
-	require.NoError(t, err)
-	require.Len(t, got, 1)
-
-	doc, ok := got[0].Content[0].(*brtypes.ContentBlockMemberDocument)
-	require.True(t, ok)
-	require.Nil(t, doc.Value.Citations)
-	source, ok := doc.Value.Source.(*brtypes.DocumentSourceMemberS3Location)
-	require.True(t, ok)
-	require.NotNil(t, source.Value.Uri)
-	require.Equal(t, "s3://bucket/key.pdf", *source.Value.Uri)
+	_, _, err := encodeMessages(msgs, nil, false)
+	require.EqualError(t, err, `bedrock: document "paper" cannot enable citations for an S3 source`)
 }
 
 func TestTranslateResponse_CitationsContentBlock(t *testing.T) {
 	out := &bedrockruntime.ConverseOutput{
+		StopReason: brtypes.StopReasonEndTurn,
 		Output: &brtypes.ConverseOutputMemberMessage{
 			Value: brtypes.Message{
 				Role: brtypes.ConversationRoleAssistant,
@@ -130,6 +117,7 @@ func TestTranslateResponse_CitationsContentBlock(t *testing.T) {
 
 func TestTranslateResponse_PreservesSingleAssistantMessageAcrossBlocks(t *testing.T) {
 	out := &bedrockruntime.ConverseOutput{
+		StopReason: brtypes.StopReasonEndTurn,
 		Output: &brtypes.ConverseOutputMemberMessage{
 			Value: brtypes.Message{
 				Role: brtypes.ConversationRoleAssistant,
@@ -145,9 +133,12 @@ func TestTranslateResponse_PreservesSingleAssistantMessageAcrossBlocks(t *testin
 	require.NoError(t, err)
 	require.Len(t, resp.Content, 1)
 	require.Equal(t, model.ConversationRoleAssistant, resp.Content[0].Role)
-	require.Len(t, resp.Content[0].Parts, 1)
+	require.Len(t, resp.Content[0].Parts, 2)
 
-	part, ok := resp.Content[0].Parts[0].(model.TextPart)
+	first, ok := resp.Content[0].Parts[0].(model.TextPart)
 	require.True(t, ok)
-	require.JSONEq(t, `{"assistant_text":"created a draft"}`, part.Text)
+	require.Equal(t, `{"assistant_`, first.Text)
+	second, ok := resp.Content[0].Parts[1].(model.TextPart)
+	require.True(t, ok)
+	require.Equal(t, `text":"created a draft"}`, second.Text)
 }

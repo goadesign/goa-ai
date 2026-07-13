@@ -641,7 +641,7 @@ func (r *Runtime) buildPromptTemplateData(ctx context.Context, toolName tools.Id
 		return map[string]any{}, nil
 	}
 	var decoded any
-	if err := json.Unmarshal(raw, &decoded); err != nil {
+	if err := rawjson.Unmarshal(raw, &decoded); err != nil {
 		return nil, err
 	}
 	object, ok := decoded.(map[string]any)

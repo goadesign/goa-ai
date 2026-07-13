@@ -1,6 +1,7 @@
 package vertex
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,11 +26,49 @@ func TestEncodeContentsSystemAndRoles(t *testing.T) {
 	assert.Equal(t, "model", contents[1].Role)
 }
 
+func TestEncodeContentsRejectsUnsupportedSystemPart(t *testing.T) {
+	_, _, err := encodeContents([]*model.Message{{
+		Role:  model.ConversationRoleSystem,
+		Parts: []model.Part{model.CacheCheckpointPart{}},
+	}}, nil)
+	require.EqualError(t, err, "vertex: unsupported system message part model.CacheCheckpointPart")
+}
+
+func TestEncodeContentsPreservesDocumentContent(t *testing.T) {
+	msgs := []*model.Message{{
+		Role: model.ConversationRoleUser,
+		Parts: []model.Part{model.DocumentPart{
+			Name:   "manual",
+			Format: model.DocumentFormatPDF,
+			Bytes:  []byte("pdf"),
+		}},
+	}}
+
+	_, contents, err := encodeContents(msgs, nil)
+	require.NoError(t, err)
+	require.Equal(t, "application/pdf", contents[0].Parts[0].InlineData.MIMEType)
+	require.Equal(t, []byte("pdf"), contents[0].Parts[0].InlineData.Data)
+}
+
+func TestEncodeContentsRejectsUnsupportedDocumentMetadata(t *testing.T) {
+	msgs := []*model.Message{{
+		Role: model.ConversationRoleUser,
+		Parts: []model.Part{model.DocumentPart{
+			Name: "manual",
+			Text: "content",
+			Cite: true,
+		}},
+	}}
+
+	_, _, err := encodeContents(msgs, nil)
+	require.ErrorContains(t, err, `document "manual" citation configuration is not supported`)
+}
+
 func TestEncodeContentsToolLoop(t *testing.T) {
 	canonToProv := map[string]string{"feed/find_duplicates": "feed_find_duplicates"}
 	msgs := []*model.Message{
 		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
-			model.ToolUsePart{ID: "c1", Name: "feed/find_duplicates", Input: map[string]any{"title": "picnic"}},
+			model.ToolUsePart{ID: "c1", Name: "feed/find_duplicates", Input: rawjson.Message(`{"title":"picnic"}`)},
 		}},
 		{Role: model.ConversationRoleUser, Parts: []model.Part{
 			model.ToolResultPart{ToolUseID: "c1", Content: []any{"m1"}},
@@ -61,17 +100,58 @@ func TestEncodeContentsToolResultWithoutToolUse(t *testing.T) {
 	assert.Contains(t, err.Error(), `tool result "orphan" has no matching tool use`)
 }
 
+func TestEncodeContentsReplaysHistoricalToolUseUnchanged(t *testing.T) {
+	system, contents, err := encodeContents([]*model.Message{
+		{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{model.ToolUsePart{
+				ID:    "call-1",
+				Name:  "removed.tool",
+				Input: rawjson.Message(`{"reading":9007199254740993}`),
+			}},
+		},
+		{
+			Role: model.ConversationRoleUser,
+			Parts: []model.Part{model.ToolResultPart{
+				ToolUseID: "call-1",
+				Content:   map[string]any{"error": "unknown tool"},
+				IsError:   true,
+			}},
+		},
+	}, nil)
+	require.NoError(t, err)
+	assert.Nil(t, system)
+	require.Len(t, contents, 2)
+	call := contents[0].Parts[0].FunctionCall
+	require.NotNil(t, call)
+	assert.Equal(t, "removed.tool", call.Name)
+	assert.Equal(t, json.Number("9007199254740993"), call.Args["reading"])
+	result := contents[1].Parts[0].FunctionResponse
+	require.NotNil(t, result)
+	assert.Equal(t, "removed.tool", result.Name)
+}
+
+func TestToResponseMapPreservesLargeIntegers(t *testing.T) {
+	response, err := toResponseMap(struct {
+		Reading json.Number `json:"reading"`
+	}{
+		Reading: json.Number("9007199254740993"),
+	}, false)
+	require.NoError(t, err)
+	assert.Equal(t, json.Number("9007199254740993"), response["reading"])
+}
+
 func TestEncodeContentsToolResultErrorDoesNotMutateContent(t *testing.T) {
 	content := map[string]any{"detail": "boom"}
 	msgs := []*model.Message{
 		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
-			model.ToolUsePart{ID: "c1", Name: "feed/find_duplicates", Input: map[string]any{}},
+			model.ToolUsePart{ID: "c1", Name: "feed/find_duplicates", Input: rawjson.Message(`{}`)},
 		}},
 		{Role: model.ConversationRoleUser, Parts: []model.Part{
 			model.ToolResultPart{ToolUseID: "c1", Content: content, IsError: true},
 		}},
 	}
-	_, contents, err := encodeContents(msgs, nil)
+	_, contents, err := encodeContents(msgs, map[string]string{"feed/find_duplicates": "feed_find_duplicates"})
 	require.NoError(t, err)
 	require.Len(t, contents, 2)
 	fr := contents[1].Parts[0].FunctionResponse
@@ -95,20 +175,15 @@ func TestEncodeContentsThinkingEcho(t *testing.T) {
 	assert.Equal(t, []byte("sig"), parts[0].ThoughtSignature) // "c2ln" is base64("sig")
 }
 
-func TestEncodeContentsRedactedOnlyThinkingSkipped(t *testing.T) {
+func TestEncodeContentsRejectsRedactedThinking(t *testing.T) {
 	msgs := []*model.Message{
 		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
 			model.ThinkingPart{Redacted: []byte("opaque"), Final: true},
 			model.TextPart{Text: "answer"},
 		}},
 	}
-	_, contents, err := encodeContents(msgs, nil)
-	require.NoError(t, err)
-	require.Len(t, contents, 1)
-	// The redacted-only thinking part is dropped entirely, leaving only the
-	// text part.
-	require.Len(t, contents[0].Parts, 1)
-	assert.Equal(t, "answer", contents[0].Parts[0].Text)
+	_, _, err := encodeContents(msgs, nil)
+	require.EqualError(t, err, "vertex: redacted thinking is not supported")
 }
 
 func TestEncodeContentsThinkingSignatureInvalidBase64(t *testing.T) {
@@ -128,12 +203,12 @@ func TestEncodeContentsToolUseThoughtSignatureRoundTrips(t *testing.T) {
 			model.ToolUsePart{
 				ID:               "c1",
 				Name:             "feed/find_duplicates",
-				Input:            map[string]any{"title": "picnic"},
+				Input:            rawjson.Message(`{"title":"picnic"}`),
 				ThoughtSignature: "c2ln", // base64("sig")
 			},
 		}},
 	}
-	_, contents, err := encodeContents(msgs, nil)
+	_, contents, err := encodeContents(msgs, map[string]string{"feed/find_duplicates": "feed_find_duplicates"})
 	require.NoError(t, err)
 	require.Len(t, contents, 1)
 	fc := contents[0].Parts[0]
@@ -147,12 +222,12 @@ func TestEncodeContentsToolUseThoughtSignatureInvalidBase64(t *testing.T) {
 			model.ToolUsePart{
 				ID:               "c1",
 				Name:             "feed/find_duplicates",
-				Input:            map[string]any{},
+				Input:            rawjson.Message(`{}`),
 				ThoughtSignature: "not*base64!",
 			},
 		}},
 	}
-	_, _, err := encodeContents(msgs, nil)
+	_, _, err := encodeContents(msgs, map[string]string{"feed/find_duplicates": "feed_find_duplicates"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `vertex: encode tool use "feed/find_duplicates": thought signature is not valid base64`)
 }
@@ -160,7 +235,7 @@ func TestEncodeContentsToolUseThoughtSignatureInvalidBase64(t *testing.T) {
 func TestEncodeContentsToolUseNonObjectInputErrors(t *testing.T) {
 	msgs := []*model.Message{
 		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
-			model.ToolUsePart{ID: "c1", Name: "feed/find_duplicates", Input: "not-an-object"},
+			model.ToolUsePart{ID: "c1", Name: "feed/find_duplicates", Input: rawjson.Message(`"not-an-object"`)},
 		}},
 	}
 	_, _, err := encodeContents(msgs, nil)
@@ -168,57 +243,42 @@ func TestEncodeContentsToolUseNonObjectInputErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), `vertex: encode tool use "feed/find_duplicates": tool input must be a JSON object`)
 }
 
-func TestEncodeContentsToolUseNilInputEncodesEmptyArgs(t *testing.T) {
-	// JSON null unmarshals into a nil map without error, so a nil Input must
-	// not slip past the object check as nil Args: no-arg tool calls are
-	// legal and Gemini requires Args to be an object.
+func TestEncodeContentsToolUseMissingInputErrors(t *testing.T) {
 	msgs := []*model.Message{
 		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
 			model.ToolUsePart{ID: "c1", Name: "feed/find_duplicates", Input: nil},
 		}},
 	}
-	_, contents, err := encodeContents(msgs, nil)
-	require.NoError(t, err)
-	fc := contents[0].Parts[0].FunctionCall
-	require.NotNil(t, fc)
-	require.NotNil(t, fc.Args)
-	assert.Empty(t, fc.Args)
+	_, _, err := encodeContents(msgs, nil)
+	require.ErrorContains(t, err, `vertex: encode tool use "feed/find_duplicates": tool input must be a JSON object`)
 }
 
 func TestEncodeContentsToolResultNilContentError(t *testing.T) {
-	// Nil Content used to leave the response map nil (JSON null unmarshals
-	// into a nil map without error), so m["error"] = true panicked. It must
-	// encode as {"error": true}.
+	// Gemini requires an object, so nil is represented explicitly under output.
 	msgs := []*model.Message{
 		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
-			model.ToolUsePart{ID: "c1", Name: "feed/find_duplicates", Input: map[string]any{}},
+			model.ToolUsePart{ID: "c1", Name: "feed/find_duplicates", Input: rawjson.Message(`{}`)},
 		}},
 		{Role: model.ConversationRoleUser, Parts: []model.Part{
 			model.ToolResultPart{ToolUseID: "c1", Content: nil, IsError: true},
 		}},
 	}
-	_, contents, err := encodeContents(msgs, nil)
+	_, contents, err := encodeContents(msgs, map[string]string{"feed/find_duplicates": "feed_find_duplicates"})
 	require.NoError(t, err)
 	fr := contents[1].Parts[0].FunctionResponse
 	require.NotNil(t, fr)
-	assert.Equal(t, map[string]any{"error": true}, fr.Response)
+	assert.Equal(t, map[string]any{"output": nil, "error": true}, fr.Response)
 }
 
-func TestEncodeContentsToolResultNullRawContentEncodesObject(t *testing.T) {
-	// rawjson.Message{} marshals as JSON null; the response must still be a
-	// non-nil object on the wire because Gemini requires
-	// FunctionResponse.Response to be an object.
+func TestEncodeContentsToolResultRejectsEmptyRawContent(t *testing.T) {
 	msgs := []*model.Message{
 		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
-			model.ToolUsePart{ID: "c1", Name: "feed/find_duplicates", Input: map[string]any{}},
+			model.ToolUsePart{ID: "c1", Name: "feed/find_duplicates", Input: rawjson.Message(`{}`)},
 		}},
 		{Role: model.ConversationRoleUser, Parts: []model.Part{
 			model.ToolResultPart{ToolUseID: "c1", Content: rawjson.Message{}},
 		}},
 	}
-	_, contents, err := encodeContents(msgs, nil)
-	require.NoError(t, err)
-	fr := contents[1].Parts[0].FunctionResponse
-	require.NotNil(t, fr)
-	require.NotNil(t, fr.Response)
+	_, _, err := encodeContents(msgs, map[string]string{"feed/find_duplicates": "feed_find_duplicates"})
+	require.ErrorContains(t, err, "rawjson: non-nil message is empty")
 }
