@@ -25,7 +25,6 @@ type (
 
 	chunkStreamer struct {
 		chunks   []model.Chunk
-		meta     map[string]any
 		response *model.Response
 		index    int
 		closed   bool
@@ -64,10 +63,6 @@ func (s *chunkStreamer) Close() error {
 
 func (s *chunkStreamer) Response() *model.Response {
 	return s.response
-}
-
-func (s *chunkStreamer) Metadata() map[string]any {
-	return s.meta
 }
 
 func TestSimplePlannerContextModelClientDoesNotEmitPlannerEvents(t *testing.T) {
@@ -128,9 +123,6 @@ func TestSimplePlannerContextPlannerModelClientOwnsEventEmission(t *testing.T) {
 			model.StopChunk{
 				Reason: "tool_use",
 			},
-		},
-		meta: map[string]any{
-			"usage": model.TokenUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
 		},
 		response: testModelResponseWithUsage(
 			[]model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "hello"}}}},

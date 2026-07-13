@@ -156,6 +156,11 @@ func (s *tracedStream) Recv() (model.Chunk, error) {
 	ch, err := s.inner.Recv()
 	if err != nil {
 		if errors.Is(err, io.EOF) {
+			s.mu.Lock()
+			if !s.sawUsageDelta {
+				s.usage = s.inner.Response().Usage
+			}
+			s.mu.Unlock()
 			s.end(codes.Ok, "eof")
 			return ch, err
 		}
@@ -212,15 +217,10 @@ func (s *tracedStream) Response() *model.Response {
 	return s.inner.Response()
 }
 
-func (s *tracedStream) Metadata() map[string]any {
-	return s.inner.Metadata()
-}
-
 func (s *tracedStream) end(code codes.Code, desc string) {
 	s.endOnce.Do(func() {
 		s.mu.Lock()
 		usage := s.usage
-		sawUsageDelta := s.sawUsageDelta
 		var (
 			outputMessages []model.Message
 			stopReason     string
@@ -230,9 +230,6 @@ func (s *tracedStream) end(code codes.Code, desc string) {
 			outputMessages, stopReason, haveOutput = s.output.finish()
 		}
 		s.mu.Unlock()
-		if !sawUsageDelta {
-			usage = mergeStreamMetadataUsage(usage, s.inner.Metadata())
-		}
 
 		if (usage != model.TokenUsage{}) {
 			s.span.SetAttributes(modelUsageAttrs(usage)...)
@@ -289,29 +286,6 @@ func hasTokenUsageCounts(usage model.TokenUsage) bool {
 		usage.OutputTokens != 0 ||
 		usage.CacheReadTokens != 0 ||
 		usage.CacheWriteTokens != 0
-}
-
-func mergeStreamMetadataUsage(base model.TokenUsage, meta map[string]any) model.TokenUsage {
-	value, ok := meta["usage"]
-	if !ok {
-		return base
-	}
-	usage, ok := value.(model.TokenUsage)
-	if !ok {
-		panic("runtime: stream metadata usage must be model.TokenUsage")
-	}
-	base.InputTokens += usage.InputTokens
-	base.OutputTokens += usage.OutputTokens
-	base.TotalTokens += usage.TotalTokens
-	base.CacheReadTokens += usage.CacheReadTokens
-	base.CacheWriteTokens += usage.CacheWriteTokens
-	if usage.Model != "" {
-		base.Model = usage.Model
-	}
-	if usage.ModelClass != "" {
-		base.ModelClass = usage.ModelClass
-	}
-	return base
 }
 
 func (s *tracedStream) recordFirstChunk() {

@@ -17,7 +17,6 @@ type (
 
 	testStreamer struct {
 		chunks   []model.Chunk
-		meta     map[string]any
 		response *model.Response
 		index    int
 		closed   bool
@@ -54,10 +53,6 @@ func (s *testStreamer) Response() *model.Response {
 	return s.response
 }
 
-func (s *testStreamer) Metadata() map[string]any {
-	return s.meta
-}
-
 func TestConsumeStreamStampsUsageIdentityFromRequest(t *testing.T) {
 	streamer := &testStreamer{
 		chunks: []model.Chunk{
@@ -65,9 +60,6 @@ func TestConsumeStreamStampsUsageIdentityFromRequest(t *testing.T) {
 				Usage: model.TokenUsage{InputTokens: 2, OutputTokens: 3, TotalTokens: 5},
 			},
 			model.StopChunk{Reason: "stop"},
-		},
-		meta: map[string]any{
-			"usage": model.TokenUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
 		},
 		response: &model.Response{
 			Content:    []model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}}},
@@ -174,9 +166,6 @@ func TestConsumeStreamRejectsTypedCompletionChunks(t *testing.T) {
 func TestConsumeStreamUsesCanonicalResponseUsage(t *testing.T) {
 	streamer := &testStreamer{
 		chunks: []model.Chunk{model.StopChunk{Reason: "stop"}},
-		meta: map[string]any{
-			"usage": model.TokenUsage{InputTokens: 9, OutputTokens: 9, TotalTokens: 18},
-		},
 		response: &model.Response{
 			Content:    []model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}}},
 			StopReason: "stop",

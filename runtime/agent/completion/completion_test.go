@@ -74,17 +74,12 @@ func (stubStreamer) Response() *model.Response {
 	return nil
 }
 
-func (stubStreamer) Metadata() map[string]any {
-	return nil
-}
-
 type recvResult struct {
 	chunk model.Chunk
 	err   error
 }
 
 type scriptedStreamer struct {
-	metadata map[string]any
 	results  []recvResult
 	response *model.Response
 	index    int
@@ -105,10 +100,6 @@ func (s *scriptedStreamer) Close() error {
 
 func (s *scriptedStreamer) Response() *model.Response {
 	return s.response
-}
-
-func (s *scriptedStreamer) Metadata() map[string]any {
-	return s.metadata
 }
 
 func TestCompleteSetsStructuredOutputAndDecodesTypedValue(t *testing.T) {
@@ -254,7 +245,6 @@ func TestStreamRejectsInvariantViolations(t *testing.T) {
 func TestStreamEnforcesCanonicalCompletionContract(t *testing.T) {
 	spec := testCompletionSpec()
 	upstream := &scriptedStreamer{
-		metadata: map[string]any{"provider": "test"},
 		response: &model.Response{
 			Content: []model.Message{{
 				Role: model.ConversationRoleAssistant,
@@ -294,7 +284,6 @@ func TestStreamEnforcesCanonicalCompletionContract(t *testing.T) {
 		spec,
 	)
 	require.NoError(t, err)
-	require.Equal(t, upstream.metadata, stream.Metadata())
 
 	chunk, err := stream.Recv()
 	require.NoError(t, err)

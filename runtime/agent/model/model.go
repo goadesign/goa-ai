@@ -676,9 +676,6 @@ type (
 
 		// Close releases any resources associated with the stream.
 		Close() error
-
-		// Metadata carries provider-specific metadata collected during the call.
-		Metadata() map[string]any
 	}
 )
 

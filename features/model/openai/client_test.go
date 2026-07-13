@@ -865,14 +865,10 @@ func TestOpenAIStreamerEmitsTextToolCallsUsageAndStop(t *testing.T) {
 	assert.JSONEq(t, `{"query":"docs"}`, string(call.Payload))
 	assert.Equal(t, 15, chunks[5].(model.UsageChunk).Usage.TotalTokens)
 	assert.Equal(t, "tool_calls", chunks[6].(model.StopChunk).Reason)
-	require.NotNil(t, streamer.Response())
-
-	meta := streamer.Metadata()
-	require.NotNil(t, meta)
-	usage, ok := meta["usage"].(model.TokenUsage)
-	require.True(t, ok)
-	assert.Equal(t, 15, usage.TotalTokens)
-	assert.Equal(t, "gpt-4o", usage.Model)
+	response := streamer.Response()
+	require.NotNil(t, response)
+	assert.Equal(t, 15, response.Usage.TotalTokens)
+	assert.Equal(t, "gpt-4o", response.Usage.Model)
 }
 
 func TestOpenAIStreamerHandlesIncompleteResponse(t *testing.T) {

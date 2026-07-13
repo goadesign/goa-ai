@@ -299,8 +299,6 @@ func (s *modelInvocationStreamer) Close() error {
 	return errors.Join(finishErr, s.inner.Close())
 }
 
-func (s *modelInvocationStreamer) Metadata() map[string]any { return s.inner.Metadata() }
-
 func (s *modelInvocationStreamer) Response() *model.Response { return s.inner.Response() }
 
 // applyCachePolicy populates Request.Cache from the agent CachePolicy when no

@@ -64,8 +64,9 @@ func TestStreamTextToolCallUsageStop(t *testing.T) {
 	assert.Equal(t, "feed/find_duplicates", string(chunks[1].(model.ToolCallChunk).ToolCall.Name))
 	assert.Equal(t, 7, chunks[2].(model.UsageChunk).Usage.InputTokens)
 	assert.Equal(t, string(genai.FinishReasonStop), chunks[3].(model.StopChunk).Reason)
-	assert.NotNil(t, s.Metadata()["usage"])
-	assert.NotNil(t, s.Response())
+	response := s.Response()
+	require.NotNil(t, response)
+	assert.Equal(t, 7, response.Usage.InputTokens)
 }
 
 func TestStreamRejectsProviderEndBeforeFinishReason(t *testing.T) {
@@ -283,10 +284,10 @@ func TestStreamUsageEmittedOnceWithLatestValues(t *testing.T) {
 	assert.Equal(t, 7, usageChunk.Usage.InputTokens)
 	assert.Equal(t, 12, usageChunk.Usage.TotalTokens)
 
-	usage, ok := s.Metadata()["usage"].(model.TokenUsage)
-	require.True(t, ok)
-	assert.Equal(t, 7, usage.InputTokens)
-	assert.Equal(t, 12, usage.TotalTokens)
+	response := s.Response()
+	require.NotNil(t, response)
+	assert.Equal(t, 7, response.Usage.InputTokens)
+	assert.Equal(t, 12, response.Usage.TotalTokens)
 }
 
 // signalingStreamClient wraps stubGenerativeClient to close pumpDone once

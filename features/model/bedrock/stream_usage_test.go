@@ -9,7 +9,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 )
 
-func TestChunkProcessor_MetadataUsageIncludesCacheTokens(t *testing.T) {
+func TestChunkProcessorUsageIncludesCacheTokens(t *testing.T) {
 	var (
 		inTokens   int32 = 10
 		outTokens  int32 = 4
@@ -18,20 +18,12 @@ func TestChunkProcessor_MetadataUsageIncludesCacheTokens(t *testing.T) {
 		cacheWrite int32 = 5
 	)
 
-	var (
-		recordedUsage model.TokenUsage
-		chunks        []model.Chunk
-	)
+	var chunks []model.Chunk
 
 	cp := newChunkProcessor(
 		func(ch model.Chunk) error {
 			chunks = append(chunks, ch)
 			return nil
-		},
-		func(u model.TokenUsage) {
-			recordedUsage = u
-		},
-		func([]model.Citation) {
 		},
 		map[string]string{},
 		"test-model-id",
@@ -60,22 +52,18 @@ func TestChunkProcessor_MetadataUsageIncludesCacheTokens(t *testing.T) {
 	err = cp.Handle(event)
 	require.NoError(t, err)
 
-	require.Equal(t, int(inTokens), recordedUsage.InputTokens)
-	require.Equal(t, int(outTokens), recordedUsage.OutputTokens)
-	require.Equal(t, int(total), recordedUsage.TotalTokens)
-	require.Equal(t, int(cacheRead), recordedUsage.CacheReadTokens)
-	require.Equal(t, int(cacheWrite), recordedUsage.CacheWriteTokens)
-	require.Equal(t, "test-model-id", recordedUsage.Model)
-	require.Equal(t, model.ModelClassDefault, recordedUsage.ModelClass)
-
 	require.Len(t, chunks, 2)
 	usageChunk, ok := chunks[0].(model.UsageChunk)
 	require.True(t, ok)
+	require.Equal(t, int(inTokens), usageChunk.Usage.InputTokens)
+	require.Equal(t, int(outTokens), usageChunk.Usage.OutputTokens)
+	require.Equal(t, int(total), usageChunk.Usage.TotalTokens)
 	require.Equal(t, int(cacheRead), usageChunk.Usage.CacheReadTokens)
 	require.Equal(t, int(cacheWrite), usageChunk.Usage.CacheWriteTokens)
 	require.Equal(t, "test-model-id", usageChunk.Usage.Model)
 	require.Equal(t, model.ModelClassDefault, usageChunk.Usage.ModelClass)
 	require.IsType(t, model.StopChunk{}, chunks[1])
+	require.Equal(t, usageChunk.Usage, cp.response().Usage)
 }
 
 func TestReasoningBufferFinalizeRequiresCanonicalVariant(t *testing.T) {
@@ -127,10 +115,6 @@ func TestChunkProcessor_StructuredOutputEmitsCompletionDeltaAndFinalCompletion(t
 		func(ch model.Chunk) error {
 			chunks = append(chunks, ch)
 			return nil
-		},
-		func(model.TokenUsage) {
-		},
-		func([]model.Citation) {
 		},
 		map[string]string{},
 		"test-model-id",
@@ -194,10 +178,6 @@ func TestChunkProcessor_StructuredOutputRejectsInvalidFinalJSON(t *testing.T) {
 		func(model.Chunk) error {
 			return nil
 		},
-		func(model.TokenUsage) {
-		},
-		func([]model.Citation) {
-		},
 		map[string]string{},
 		"test-model-id",
 		model.ModelClassDefault,
@@ -233,8 +213,6 @@ func TestChunkProcessorReasoningBlockStartsWithFirstDelta(t *testing.T) {
 			chunks = append(chunks, chunk)
 			return nil
 		},
-		func(model.TokenUsage) {},
-		func([]model.Citation) {},
 		map[string]string{},
 		"test-model-id",
 		model.ModelClassDefault,
@@ -288,8 +266,6 @@ func TestChunkProcessorIgnoresEmptyToolUseDelta(t *testing.T) {
 			chunks = append(chunks, chunk)
 			return nil
 		},
-		func(model.TokenUsage) {},
-		func([]model.Citation) {},
 		map[string]string{name: "reports.lookup"},
 		"test-model-id",
 		model.ModelClassDefault,
@@ -327,8 +303,6 @@ func TestChunkProcessorRejectsMessageStopWithOpenContentBlock(t *testing.T) {
 	idx := int32(0)
 	cp := newChunkProcessor(
 		func(model.Chunk) error { return nil },
-		func(model.TokenUsage) {},
-		func([]model.Citation) {},
 		map[string]string{},
 		"test-model-id",
 		model.ModelClassDefault,

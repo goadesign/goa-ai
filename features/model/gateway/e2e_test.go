@@ -16,7 +16,6 @@ import (
 type seqStreamer struct {
 	chunks   []model.Chunk
 	idx      int
-	meta     map[string]any
 	response *model.Response
 }
 
@@ -30,7 +29,6 @@ func (s *seqStreamer) Recv() (model.Chunk, error) {
 }
 func (s *seqStreamer) Close() error              { return nil }
 func (s *seqStreamer) Response() *model.Response { return s.response }
-func (s *seqStreamer) Metadata() map[string]any  { return s.meta }
 
 type captureProvider struct {
 	lastReq atomic.Value // model.Request
@@ -97,7 +95,6 @@ func (w *serverStreamWrapper) Recv() (model.Chunk, error) {
 }
 func (w *serverStreamWrapper) Close() error              { return nil }
 func (w *serverStreamWrapper) Response() *model.Response { return w.response }
-func (w *serverStreamWrapper) Metadata() map[string]any  { return nil }
 
 // --- Tests ---
 
