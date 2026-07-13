@@ -260,8 +260,14 @@ func TestClientPrepareRequestFailsOnMissingThinkingInToolLoop(t *testing.T) {
 	require.ErrorContains(t, err, "must start with thinking")
 }
 
-func TestEncodeMessagesReplaysHistoricalToolUseUnchanged(t *testing.T) {
-	msgs := []*model.Message{
+func TestClientPrepareRequestSanitizesHistoryOnlyToolName(t *testing.T) {
+	client := &Client{
+		defaultModel: "test-model",
+		maxTok:       32,
+		temp:         0.0,
+		think:        defaultThinkingBudget,
+	}
+	messages := []*model.Message{
 		{
 			Role: model.ConversationRoleAssistant,
 			Parts: []model.Part{
@@ -273,17 +279,50 @@ func TestEncodeMessagesReplaysHistoricalToolUseUnchanged(t *testing.T) {
 			},
 		},
 	}
-	nameMap := map[string]string{
-		"atlas.read.some_other_tool": "some_other_tool",
-	}
-	conv, _, err := encodeMessages(msgs, nameMap, false)
+
+	parts, err := client.prepareRequest(&model.Request{
+		Messages: messages,
+		Tools: []*model.ToolDefinition{{
+			Name:        "atlas.read.some_other_tool",
+			Description: "Read another resource.",
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+		}},
+	})
 	require.NoError(t, err)
-	require.Len(t, conv, 1)
-	use := conv[0].Content[0].(*brtypes.ContentBlockMemberToolUse)
-	require.Equal(t, "ada.unknown_tool", aws.ToString(use.Value.Name))
+	require.Len(t, parts.messages, 1)
+	use := parts.messages[0].Content[0].(*brtypes.ContentBlockMemberToolUse)
+	require.Equal(t, "ada_unknown_tool", aws.ToString(use.Value.Name))
+	require.Equal(t, "ada_unknown_tool", parts.toolNameCanonicalToProv["ada.unknown_tool"])
+	require.Equal(t, "ada.unknown_tool", parts.toolNameProvToCanonical["ada_unknown_tool"])
 	raw, err := use.Value.Input.MarshalSmithyDocument()
 	require.NoError(t, err)
 	require.JSONEq(t, `{"arg":"value"}`, string(raw))
+}
+
+func TestClientPrepareRequestRejectsHistoricalToolNameCollision(t *testing.T) {
+	client := &Client{
+		defaultModel: "test-model",
+		maxTok:       32,
+		temp:         0.0,
+		think:        defaultThinkingBudget,
+	}
+
+	_, err := client.prepareRequest(&model.Request{
+		Messages: []*model.Message{{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{model.ToolUsePart{
+				ID:    "tu1",
+				Name:  "ada.unknown_tool",
+				Input: rawjson.Message(`{}`),
+			}},
+		}},
+		Tools: []*model.ToolDefinition{{
+			Name:        "ada_unknown_tool",
+			Description: "Current tool with a colliding provider name.",
+			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+		}},
+	})
+	require.ErrorContains(t, err, `tool name "ada.unknown_tool" sanitizes to "ada_unknown_tool"`)
 }
 
 func replayedBedrockToolLoopMessages(t *testing.T) []*model.Message {
@@ -346,7 +385,7 @@ func TestEncodeMessagesDoesNotRewriteHistoricalToolUseToToolUnavailable(t *testi
 			Parts: []model.Part{
 				model.ToolUsePart{
 					ID:    "tu1",
-					Name:  "atlas_read_count_events",
+					Name:  "atlas.read.count_events",
 					Input: rawjson.Message(`{"from":"2026-02-06T00:00:00Z"}`),
 				},
 			},
@@ -363,6 +402,7 @@ func TestEncodeMessagesDoesNotRewriteHistoricalToolUseToToolUnavailable(t *testi
 		},
 	}
 	nameMap := map[string]string{
+		"atlas.read.count_events":      SanitizeToolName("atlas.read.count_events"),
 		tools.ToolUnavailable.String(): SanitizeToolName(tools.ToolUnavailable.String()),
 	}
 	conv, _, err := encodeMessages(msgs, nameMap, false)
