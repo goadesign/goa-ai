@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"strings"
 	"unicode"
@@ -1249,6 +1250,10 @@ func decodeJSONDocument(data []byte) (document.Interface, error) {
 		}
 		return nil, err
 	}
+	decoded, err := smithyDocumentValue(decoded)
+	if err != nil {
+		return nil, err
+	}
 	return lazyDocument(decoded), nil
 }
 
@@ -1277,7 +1282,60 @@ func schemaMap(schema rawjson.Message) (map[string]any, error) {
 	if decoded == nil {
 		return nil, errors.New("schema JSON must be an object")
 	}
+	for name, value := range decoded {
+		value, err := smithyDocumentValue(value)
+		if err != nil {
+			return nil, err
+		}
+		decoded[name] = value
+	}
 	return decoded, nil
+}
+
+// smithyDocumentValue preserves canonical JSON numbers using the exact type
+// recognized by the AWS document encoder instead of letting json.Number encode
+// as a JSON string.
+func smithyDocumentValue(value any) (any, error) {
+	switch v := value.(type) {
+	case json.Number:
+		if !strings.ContainsAny(v.String(), ".eE") {
+			integer, ok := new(big.Int).SetString(v.String(), 10)
+			if !ok {
+				return nil, fmt.Errorf("invalid JSON integer %q", v)
+			}
+			return integer, nil
+		}
+		decimal, _, err := big.ParseFloat(
+			v.String(),
+			10,
+			uint(max(64, len(v.String())*4)),
+			big.ToNearestEven,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON number %q: %w", v, err)
+		}
+		return decimal, nil
+	case []any:
+		for i, item := range v {
+			item, err := smithyDocumentValue(item)
+			if err != nil {
+				return nil, err
+			}
+			v[i] = item
+		}
+		return v, nil
+	case map[string]any:
+		for name, item := range v {
+			item, err := smithyDocumentValue(item)
+			if err != nil {
+				return nil, err
+			}
+			v[name] = item
+		}
+		return v, nil
+	default:
+		return value, nil
+	}
 }
 
 // isProviderSafeToolUseID reports whether id conforms to Bedrock's documented

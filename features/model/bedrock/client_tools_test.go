@@ -261,7 +261,7 @@ func TestToDocumentPreservesCanonicalRawJSONNumbers(t *testing.T) {
 
 	got, err := decodeDocument(doc)
 	require.NoError(t, err)
-	require.Contains(t, string(got), "9007199254740993")
+	require.JSONEq(t, `{"large":9007199254740993}`, string(got))
 }
 
 func TestToDocumentPreservesDecodedJSONNumbers(t *testing.T) {
@@ -270,7 +270,18 @@ func TestToDocumentPreservesDecodedJSONNumbers(t *testing.T) {
 
 	got, err := decodeDocument(doc)
 	require.NoError(t, err)
-	require.Contains(t, string(got), "9007199254740993")
+	require.JSONEq(t, `{"large":9007199254740993}`, string(got))
+}
+
+func TestSchemaDocumentPreservesNumericKeywords(t *testing.T) {
+	doc, err := schemaDocument(rawjson.Message(
+		`{"type":"integer","default":50,"minimum":1,"maximum":200}`,
+	))
+	require.NoError(t, err)
+
+	got, err := decodeDocument(doc)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"type":"integer","default":50,"minimum":1,"maximum":200}`, string(got))
 }
 
 func TestIsNovaModel(t *testing.T) {
