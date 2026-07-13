@@ -435,6 +435,9 @@ func (p *chunkProcessor) Handle(event any) error {
 			}
 			if tb := p.toolBlocks[idx]; tb != nil && delta.Value.Input != nil {
 				fragment := *delta.Value.Input
+				if fragment == "" {
+					return nil
+				}
 				tb.fragments = append(tb.fragments, fragment)
 				if tb.id == "" {
 					return fmt.Errorf("bedrock stream: tool JSON delta missing tool call id")

@@ -277,6 +277,52 @@ func TestChunkProcessorReasoningBlockStartsWithFirstDelta(t *testing.T) {
 	}, final.Message.Parts[0])
 }
 
+func TestChunkProcessorIgnoresEmptyToolUseDelta(t *testing.T) {
+	idx := int32(0)
+	name := "reports_lookup"
+	id := "tooluse_1"
+	empty := ""
+	var chunks []model.Chunk
+	cp := newChunkProcessor(
+		func(chunk model.Chunk) error {
+			chunks = append(chunks, chunk)
+			return nil
+		},
+		func(model.TokenUsage) {},
+		func([]model.Citation) {},
+		map[string]string{name: "reports.lookup"},
+		"test-model-id",
+		model.ModelClassDefault,
+		nil,
+	)
+
+	err := cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStart{})
+	require.NoError(t, err)
+	err = cp.Handle(&brtypes.ConverseStreamOutputMemberContentBlockStart{
+		Value: brtypes.ContentBlockStartEvent{
+			ContentBlockIndex: &idx,
+			Start: &brtypes.ContentBlockStartMemberToolUse{
+				Value: brtypes.ToolUseBlockStart{
+					Name:      &name,
+					ToolUseId: &id,
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	err = cp.Handle(&brtypes.ConverseStreamOutputMemberContentBlockDelta{
+		Value: brtypes.ContentBlockDeltaEvent{
+			ContentBlockIndex: &idx,
+			Delta: &brtypes.ContentBlockDeltaMemberToolUse{
+				Value: brtypes.ToolUseBlockDelta{Input: &empty},
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Empty(t, chunks)
+}
+
 func TestChunkProcessorRejectsMessageStopWithOpenContentBlock(t *testing.T) {
 	idx := int32(0)
 	cp := newChunkProcessor(
