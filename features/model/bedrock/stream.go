@@ -343,10 +343,21 @@ func (p *chunkProcessor) Handle(event any) error {
 		if err != nil {
 			return err
 		}
+		delta := ev.Value.Delta
 		if _, ok := p.openBlocks[idx]; !ok {
-			return fmt.Errorf("bedrock stream: content block delta %d has no matching start", idx)
+			switch delta.(type) {
+			case *brtypes.ContentBlockDeltaMemberText,
+				*brtypes.ContentBlockDeltaMemberCitation,
+				*brtypes.ContentBlockDeltaMemberReasoningContent:
+				// Bedrock emits ContentBlockStart only for tool-use blocks.
+				// Text, citation, and reasoning blocks begin with their first
+				// delta and are still closed by ContentBlockStop.
+				p.openBlocks[idx] = struct{}{}
+			case *brtypes.ContentBlockDeltaMemberToolUse:
+				return fmt.Errorf("bedrock stream: tool-use delta %d has no matching start", idx)
+			}
 		}
-		switch delta := ev.Value.Delta.(type) {
+		switch delta := delta.(type) {
 		case *brtypes.ContentBlockDeltaMemberText:
 			if delta.Value == "" {
 				return nil

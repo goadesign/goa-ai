@@ -143,10 +143,6 @@ func TestChunkProcessor_StructuredOutputEmitsCompletionDeltaAndFinalCompletion(t
 
 	err := cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStart{})
 	require.NoError(t, err)
-	err = cp.Handle(&brtypes.ConverseStreamOutputMemberContentBlockStart{
-		Value: brtypes.ContentBlockStartEvent{ContentBlockIndex: &idx},
-	})
-	require.NoError(t, err)
 	err = cp.Handle(&brtypes.ConverseStreamOutputMemberContentBlockDelta{
 		Value: brtypes.ContentBlockDeltaEvent{
 			ContentBlockIndex: &idx,
@@ -213,10 +209,6 @@ func TestChunkProcessor_StructuredOutputRejectsInvalidFinalJSON(t *testing.T) {
 
 	err := cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStart{})
 	require.NoError(t, err)
-	err = cp.Handle(&brtypes.ConverseStreamOutputMemberContentBlockStart{
-		Value: brtypes.ContentBlockStartEvent{ContentBlockIndex: &idx},
-	})
-	require.NoError(t, err)
 	err = cp.Handle(&brtypes.ConverseStreamOutputMemberContentBlockDelta{
 		Value: brtypes.ContentBlockDeltaEvent{
 			ContentBlockIndex: &idx,
@@ -231,6 +223,58 @@ func TestChunkProcessor_StructuredOutputRejectsInvalidFinalJSON(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not valid JSON")
+}
+
+func TestChunkProcessorReasoningBlockStartsWithFirstDelta(t *testing.T) {
+	idx := int32(0)
+	var chunks []model.Chunk
+	cp := newChunkProcessor(
+		func(chunk model.Chunk) error {
+			chunks = append(chunks, chunk)
+			return nil
+		},
+		func(model.TokenUsage) {},
+		func([]model.Citation) {},
+		map[string]string{},
+		"test-model-id",
+		model.ModelClassDefault,
+		nil,
+	)
+
+	err := cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStart{})
+	require.NoError(t, err)
+	err = cp.Handle(&brtypes.ConverseStreamOutputMemberContentBlockDelta{
+		Value: brtypes.ContentBlockDeltaEvent{
+			ContentBlockIndex: &idx,
+			Delta: &brtypes.ContentBlockDeltaMemberReasoningContent{
+				Value: &brtypes.ReasoningContentBlockDeltaMemberText{Value: "reasoning"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	err = cp.Handle(&brtypes.ConverseStreamOutputMemberContentBlockDelta{
+		Value: brtypes.ContentBlockDeltaEvent{
+			ContentBlockIndex: &idx,
+			Delta: &brtypes.ContentBlockDeltaMemberReasoningContent{
+				Value: &brtypes.ReasoningContentBlockDeltaMemberSignature{Value: "signature"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	err = cp.Handle(&brtypes.ConverseStreamOutputMemberContentBlockStop{
+		Value: brtypes.ContentBlockStopEvent{ContentBlockIndex: &idx},
+	})
+	require.NoError(t, err)
+
+	require.Len(t, chunks, 2)
+	final, ok := chunks[1].(model.ThinkingChunk)
+	require.True(t, ok)
+	require.Equal(t, model.ThinkingPart{
+		Text:      "reasoning",
+		Signature: "signature",
+		Index:     0,
+		Final:     true,
+	}, final.Message.Parts[0])
 }
 
 func TestChunkProcessorRejectsMessageStopWithOpenContentBlock(t *testing.T) {
