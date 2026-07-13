@@ -71,25 +71,34 @@ func TestEncodeTools_ModeTool(t *testing.T) {
 	require.Equal(t, "lookup", sanToCanon[*member.Value.Name])
 }
 
-func TestEncodeTools_ModeNonePreservesConfig(t *testing.T) {
-	cfg, _, canonToSan, sanToCanon, err := encodeTools("amazon.nova-pro-v1:0", []*model.ToolDefinition{
+func TestEncodeTools_ModeNoneRejectsDefinedTools(t *testing.T) {
+	_, _, _, _, err := encodeTools("amazon.nova-pro-v1:0", []*model.ToolDefinition{
 		{
 			Name:        "lookup",
 			Description: "Search",
 			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		},
 	}, &model.ToolChoice{Mode: model.ToolChoiceModeNone}, false)
-	require.NoError(t, err)
-	require.NotNil(t, cfg)
-	require.Len(t, cfg.Tools, 1)
-	require.Nil(t, cfg.ToolChoice)
-	require.Len(t, canonToSan, 1)
-	require.Len(t, sanToCanon, 1)
+	require.ErrorContains(t, err, `tool choice mode "none" is unsupported when tools are defined`)
 }
 
 func TestEncodeTools_ChoiceWithoutToolsErrors(t *testing.T) {
 	_, _, _, _, err := encodeTools("amazon.nova-pro-v1:0", nil, &model.ToolChoice{Mode: model.ToolChoiceModeAny}, false)
 	require.Error(t, err)
+}
+
+func TestEncodeTools_ModeNoneWithoutTools(t *testing.T) {
+	cfg, fields, canonToSan, sanToCanon, err := encodeTools(
+		"amazon.nova-pro-v1:0",
+		nil,
+		&model.ToolChoice{Mode: model.ToolChoiceModeNone},
+		false,
+	)
+	require.NoError(t, err)
+	require.Nil(t, cfg)
+	require.Nil(t, fields)
+	require.Nil(t, canonToSan)
+	require.Nil(t, sanToCanon)
 }
 
 func TestEncodeTools_AppendsCacheCheckpoint(t *testing.T) {

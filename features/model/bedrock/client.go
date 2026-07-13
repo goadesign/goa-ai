@@ -1035,7 +1035,7 @@ func encodeTools(
 	cacheAfterTools bool,
 ) (*brtypes.ToolConfiguration, map[string]any, map[string]string, map[string]string, error) {
 	if len(defs) == 0 {
-		if choice == nil {
+		if choice == nil || choice.Mode == model.ToolChoiceModeNone {
 			return nil, nil, nil, nil, nil
 		}
 		return nil, nil, nil, nil, fmt.Errorf("bedrock: tool choice is set but no tools are defined")
@@ -1138,10 +1138,9 @@ func encodeTools(
 		// Auto is the provider default; omit ToolChoice to preserve existing
 		// behavior.
 	case model.ToolChoiceModeNone:
-		// Preserve tool configuration so Bedrock can interpret existing
-		// tool_use and tool_result content blocks in the transcript, but do
-		// not force additional tool calls. Callers rely on prompts and
-		// higher-level contracts to prevent new tool invocations.
+		return nil, nil, nil, nil, errors.New(
+			"bedrock: tool choice mode \"none\" is unsupported when tools are defined",
+		)
 	case model.ToolChoiceModeAny:
 		cfg.ToolChoice = &brtypes.ToolChoiceMemberAny{
 			Value: brtypes.AnyToolChoice{},

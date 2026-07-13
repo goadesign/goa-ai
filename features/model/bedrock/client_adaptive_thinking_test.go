@@ -224,10 +224,6 @@ func TestFableRejectsForcedToolChoice(t *testing.T) {
 			toolChoice: &model.ToolChoice{Mode: model.ToolChoiceModeAuto},
 		},
 		{
-			name:       "none is accepted",
-			toolChoice: &model.ToolChoice{Mode: model.ToolChoiceModeNone},
-		},
-		{
 			name: "nil is accepted",
 		},
 	}
