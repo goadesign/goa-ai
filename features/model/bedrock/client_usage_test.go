@@ -21,6 +21,11 @@ func TestTranslateResponse_UsageIncludesCacheTokens(t *testing.T) {
 	)
 
 	output := &bedrockruntime.ConverseOutput{
+		StopReason: brtypes.StopReasonEndTurn,
+		Output: &brtypes.ConverseOutputMemberMessage{Value: brtypes.Message{
+			Role:    brtypes.ConversationRoleAssistant,
+			Content: []brtypes.ContentBlock{&brtypes.ContentBlockMemberText{Value: "done"}},
+		}},
 		Usage: &brtypes.TokenUsage{
 			InputTokens:           &inTokens,
 			OutputTokens:          &outTokens,

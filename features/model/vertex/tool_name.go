@@ -1,6 +1,10 @@
 package vertex
 
-import "goa.design/goa-ai/runtime/agent/model"
+import (
+	"fmt"
+
+	"goa.design/goa-ai/runtime/agent/model"
+)
 
 // sanitizeToolName rewrites a goa-ai tool identifier into a Gemini-legal
 // function name: first char [a-zA-Z_], rest [a-zA-Z0-9_.:-], max 64 chars.
@@ -38,21 +42,24 @@ func sanitizeToolName(name string) string {
 	return string(out)
 }
 
-// buildToolNameMaps returns the canonical→provider and provider→canonical
-// name maps for one request's tool definitions. Collisions after
-// sanitization keep the first definition and are not remapped; the model
-// then cannot address the shadowed tool, which surfaces as an unknown-tool
-// call the runtime already handles.
-func buildToolNameMaps(defs []*model.ToolDefinition) (map[string]string, map[string]string) {
+// buildToolNameMaps returns the bijective canonical↔provider name mapping for
+// one request. It rejects sanitization collisions because the provider name
+// would otherwise identify two executable tools.
+func buildToolNameMaps(defs []*model.ToolDefinition) (map[string]string, map[string]string, error) {
 	canonToProv := make(map[string]string, len(defs))
 	provToCanon := make(map[string]string, len(defs))
 	for _, def := range defs {
 		prov := sanitizeToolName(def.Name)
-		if _, taken := provToCanon[prov]; taken {
-			continue
+		if existing, taken := provToCanon[prov]; taken {
+			return nil, nil, fmt.Errorf(
+				"vertex: tool names %q and %q both map to provider name %q",
+				existing,
+				def.Name,
+				prov,
+			)
 		}
 		canonToProv[def.Name] = prov
 		provToCanon[prov] = def.Name
 	}
-	return canonToProv, provToCanon
+	return canonToProv, provToCanon, nil
 }

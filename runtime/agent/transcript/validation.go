@@ -2,50 +2,73 @@ package transcript
 
 import (
 	"fmt"
+	"strings"
 
 	"goa.design/goa-ai/runtime/agent/model"
 )
 
 // ValidatePlannerTranscript verifies the shared tool-loop invariants required by
 // the runtime before it resumes planning:
-//   - Assistant messages that declare tool_use must be followed immediately by a
-//     user tool_result message.
+//   - A contiguous assistant response containing tool_use parts must be followed
+//     immediately by one user tool_result message.
 //   - That user message must contain exactly one tool_result for each tool_use
-//     ID declared by the immediately preceding assistant message.
+//     ID declared by the complete assistant response.
 func ValidatePlannerTranscript(messages []*model.Message) error {
 	if len(messages) == 0 {
 		return nil
 	}
-	for i, msg := range messages {
-		if msg == nil || msg.Role != model.ConversationRoleAssistant || !messageHasToolUse(msg) {
+	for i := 0; i < len(messages); {
+		msg := messages[i]
+		if msg == nil {
+			return fmt.Errorf("transcript: message[%d] is nil", i)
+		}
+		if msg.Role != model.ConversationRoleAssistant {
+			if resultCount, _ := toolResultIDs(msg.Parts); resultCount > 0 {
+				return fmt.Errorf(
+					"transcript: message[%d] role %q has tool_result without prior assistant tool_use",
+					i,
+					msg.Role,
+				)
+			}
+			i++
 			continue
 		}
-		nextIndex := i + 1
-		tail := messages[nextIndex:]
-		if len(tail) == 0 {
+		groupEnd := i
+		var assistantParts []model.Part
+		for groupEnd < len(messages) {
+			current := messages[groupEnd]
+			if current == nil || current.Role != model.ConversationRoleAssistant {
+				break
+			}
+			assistantParts = append(assistantParts, current.Parts...)
+			groupEnd++
+		}
+		useCount, useIDs := toolUseIDs(assistantParts)
+		if useCount == 0 {
+			i = groupEnd
+			continue
+		}
+		if groupEnd == len(messages) {
 			return fmt.Errorf(
-				"transcript: assistant message[%d] with tool_use must be followed by user tool_result",
+				"transcript: assistant response messages[%d:%d] with tool_use must be followed by user tool_result",
 				i,
+				groupEnd,
 			)
 		}
-		next := tail[0]
+		nextIndex := groupEnd
+		next := messages[nextIndex]
 		if next == nil || next.Role != model.ConversationRoleUser {
 			return fmt.Errorf(
-				"transcript: assistant message[%d] with tool_use must be followed by user tool_result",
+				"transcript: assistant response messages[%d:%d] with tool_use must be followed by user tool_result",
 				i,
-			)
-		}
-		useCount, useIDs := toolUseIDs(msg.Parts)
-		if useCount == 0 {
-			return fmt.Errorf(
-				"transcript: assistant message[%d] tool_use ids must be non-empty",
-				i,
+				groupEnd,
 			)
 		}
 		if len(useIDs) != useCount {
 			return fmt.Errorf(
-				"transcript: assistant message[%d] tool_use ids must be non-empty and unique",
+				"transcript: assistant response messages[%d:%d] tool_use ids must be non-empty and unique",
 				i,
+				groupEnd,
 			)
 		}
 		resultCount, resultIDs := toolResultIDs(next.Parts)
@@ -87,6 +110,7 @@ func ValidatePlannerTranscript(messages []*model.Message) error {
 				)
 			}
 		}
+		i = nextIndex + 1
 	}
 	return nil
 }
@@ -163,4 +187,26 @@ func toolResultIDs(parts []model.Part) (int, map[string]struct{}) {
 		}
 	}
 	return count, ids
+}
+
+// summarizeParts returns provider-neutral part names for validation errors.
+func summarizeParts(parts []model.Part) string {
+	names := make([]string, len(parts))
+	for i, part := range parts {
+		switch part.(type) {
+		case model.ThinkingPart:
+			names[i] = "thinking"
+		case model.TextPart:
+			names[i] = "text"
+		case model.CitationsPart:
+			names[i] = "citations"
+		case model.ToolUsePart:
+			names[i] = "tool_use"
+		case model.ToolResultPart:
+			names[i] = "tool_result"
+		default:
+			names[i] = fmt.Sprintf("%T", part)
+		}
+	}
+	return "[" + strings.Join(names, ", ") + "]"
 }

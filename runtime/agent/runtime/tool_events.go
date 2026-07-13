@@ -55,27 +55,10 @@ func (r *Runtime) encodeToolEvents(ctx context.Context, events []*planner.ToolRe
 	return out, nil
 }
 
-// buildPlannerToolOutputs converts executed tool calls plus their results into
-// planner ToolOutput values suitable for run-loop state.
-//
-// Contract:
-//   - Calls are emitted in canonical call order, keyed by ToolCallID.
-//   - Results may arrive in a different order (for example, externally provided
-//     await results); they are matched by ToolCallID, not slice position.
-//   - If a result was already omitted at an upstream truthful boundary, the
-//     original omission metadata is preserved without re-encoding synthetic bytes.
-func (r *Runtime) buildPlannerToolOutputs(ctx context.Context, calls []planner.ToolRequest, results []*planner.ToolResult) ([]*planner.ToolOutput, error) {
-	records, err := stepToolRecordsFromCallsAndResults("build planner tool outputs", calls, results)
-	if err != nil {
-		return nil, err
-	}
-	return r.buildPlannerToolOutputRecords(ctx, records)
-}
-
 // buildPlannerToolOutputRecords converts paired step records into planner
 // ToolOutput values suitable for run-loop state.
 func (r *Runtime) buildPlannerToolOutputRecords(ctx context.Context, records []stepToolRecord) ([]*planner.ToolOutput, error) {
-	records, err := r.filterPlannerFacingToolRecords(records)
+	records, err := r.filterResumeRequiredToolRecords(records)
 	if err != nil {
 		return nil, err
 	}

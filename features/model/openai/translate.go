@@ -63,18 +63,16 @@ func translateResponse(
 		case responses.ResponseReasoningItem:
 			part, ok := translateReasoningItem(actual)
 			if !ok {
-				continue
+				return nil, errors.New("openai: reasoning item has no summary or encrypted content")
 			}
 			pendingThinking = append(pendingThinking, part)
 			reasoningRaw = append(reasoningRaw, actual.RawJSON())
 		case responses.ResponseOutputMessage:
-			message, ok, err := translateAssistantMessage(actual, pendingThinking, reasoningRaw)
+			message, err := translateAssistantMessage(actual, pendingThinking, reasoningRaw)
 			if err != nil {
 				return nil, err
 			}
-			if ok {
-				translated.Content = append(translated.Content, message)
-			}
+			translated.Content = append(translated.Content, message)
 			pendingThinking = nil
 			reasoningRaw = nil
 		case responses.ResponseFunctionToolCall:
@@ -86,17 +84,30 @@ func translateResponse(
 			if err != nil {
 				return nil, err
 			}
-			translated.ToolCalls = append(translated.ToolCalls, toolCall)
+			translated.Content = append(translated.Content, model.Message{
+				Role: model.ConversationRoleAssistant,
+				Parts: []model.Part{model.ToolUsePart{
+					ID:    toolCall.ID,
+					Name:  string(toolCall.Name),
+					Input: toolCall.Payload,
+				}},
+				Meta: map[string]any{
+					openAIFunctionCallItemMetaKey: actual.RawJSON(),
+				},
+			})
 		default:
 			return nil, fmt.Errorf("openai: unsupported response output item %T", actual)
 		}
 	}
 	flushThinking()
-	translated.StopReason = translateStopReason(resp, len(translated.ToolCalls) > 0)
+	translated.StopReason = translateStopReason(resp, len(translated.ToolCalls()) > 0)
 	if output != nil {
 		if _, err := structuredOutputPayload(translated.Content, output); err != nil {
 			return nil, err
 		}
+	}
+	if err := model.ValidateResponse(translated); err != nil {
+		return nil, fmt.Errorf("openai: invalid response: %w", err)
 	}
 	return translated, nil
 }
@@ -105,21 +116,25 @@ func translateAssistantMessage(
 	message responses.ResponseOutputMessage,
 	thinking []model.Part,
 	reasoningRaw []string,
-) (model.Message, bool, error) {
+) (model.Message, error) {
 	parts := make([]model.Part, 0, len(thinking)+len(message.Content))
 	parts = append(parts, thinking...)
 	for _, content := range message.Content {
 		switch actual := content.AsAny().(type) {
 		case responses.ResponseOutputText:
-			parts = append(parts, translateTextContent(actual))
+			part, err := translateTextContent(actual)
+			if err != nil {
+				return model.Message{}, err
+			}
+			parts = append(parts, part)
 		case responses.ResponseOutputRefusal:
 			parts = append(parts, model.TextPart{Text: actual.Refusal})
 		default:
-			return model.Message{}, false, fmt.Errorf("openai: unsupported assistant content item %T", actual)
+			return model.Message{}, fmt.Errorf("openai: unsupported assistant content item %T", actual)
 		}
 	}
 	if len(parts) == 0 {
-		return model.Message{}, false, nil
+		return model.Message{}, errors.New("openai: assistant output message has no content")
 	}
 	meta := map[string]any{
 		openAIOutputItemMetaKey: message.RawJSON(),
@@ -131,17 +146,21 @@ func translateAssistantMessage(
 		Role:  model.ConversationRoleAssistant,
 		Parts: parts,
 		Meta:  meta,
-	}, true, nil
+	}, nil
 }
 
-func translateTextContent(content responses.ResponseOutputText) model.Part {
+func translateTextContent(content responses.ResponseOutputText) (model.Part, error) {
 	if len(content.Annotations) == 0 {
-		return model.TextPart{Text: content.Text}
+		return model.TextPart{Text: content.Text}, nil
+	}
+	citations, err := translateCitations(content.Annotations)
+	if err != nil {
+		return nil, err
 	}
 	return model.CitationsPart{
 		Text:      content.Text,
-		Citations: translateCitations(content.Annotations),
-	}
+		Citations: citations,
+	}, nil
 }
 
 func translateReasoningItem(item responses.ResponseReasoningItem) (model.Part, bool) {
@@ -165,7 +184,7 @@ func translateReasoningItem(item responses.ResponseReasoningItem) (model.Part, b
 	return part, true
 }
 
-func translateCitations(annotations []responses.ResponseOutputTextAnnotationUnion) []model.Citation {
+func translateCitations(annotations []responses.ResponseOutputTextAnnotationUnion) ([]model.Citation, error) {
 	citations := make([]model.Citation, 0, len(annotations))
 	for _, annotation := range annotations {
 		switch actual := annotation.AsAny().(type) {
@@ -189,10 +208,10 @@ func translateCitations(annotations []responses.ResponseOutputTextAnnotationUnio
 				Source: actual.FileID,
 			})
 		default:
-			continue
+			return nil, fmt.Errorf("openai: unsupported output text annotation %T", actual)
 		}
 	}
-	return citations
+	return citations, nil
 }
 
 func translateToolCall(

@@ -7,28 +7,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRawJSONMarshalJSONEmptyAndWhitespaceAsNull(t *testing.T) {
+func TestRawJSONMarshalJSONRequiresNilForAbsence(t *testing.T) {
 	testCases := []struct {
-		name  string
-		value Message
+		name    string
+		value   Message
+		wantErr string
 	}{
 		{
 			name:  "nil",
 			value: nil,
 		},
 		{
-			name:  "empty bytes",
-			value: Message([]byte{}),
+			name:    "empty bytes",
+			value:   Message([]byte{}),
+			wantErr: "rawjson: non-nil message is empty",
 		},
 		{
-			name:  "whitespace bytes",
-			value: Message([]byte("  \n\t  ")),
+			name:    "whitespace bytes",
+			value:   Message([]byte("  \n\t  ")),
+			wantErr: "rawjson: non-nil message is empty",
 		},
 	}
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			out, err := testCase.value.MarshalJSON()
+			if testCase.wantErr != "" {
+				require.ErrorContains(t, err, testCase.wantErr)
+				return
+			}
 			require.NoError(t, err)
 			require.Equal(t, "null", string(out))
 		})
@@ -59,7 +66,7 @@ func TestRawJSONMarshalJSONRejectsInvalidJSON(t *testing.T) {
 	}
 }
 
-func TestRawJSONUnmarshalJSONNormalizesAndValidates(t *testing.T) {
+func TestRawJSONUnmarshalJSONValidatesAbsenceAndContent(t *testing.T) {
 	testCases := []struct {
 		name      string
 		input     []byte
@@ -68,9 +75,9 @@ func TestRawJSONUnmarshalJSONNormalizesAndValidates(t *testing.T) {
 		wantErr   string
 	}{
 		{
-			name:    "empty bytes become nil",
+			name:    "empty bytes fail",
 			input:   []byte("   \n\t "),
-			wantNil: true,
+			wantErr: "rawjson: JSON value is empty",
 		},
 		{
 			name:    "null becomes nil",
@@ -106,6 +113,15 @@ func TestRawJSONUnmarshalJSONNormalizesAndValidates(t *testing.T) {
 			require.Equal(t, testCase.wantBytes, string(value))
 		})
 	}
+}
+
+func TestUnmarshalPreservesJSONNumbers(t *testing.T) {
+	var value map[string]any
+
+	err := Unmarshal([]byte(`{"reading":9007199254740993}`), &value)
+
+	require.NoError(t, err)
+	require.Equal(t, json.Number("9007199254740993"), value["reading"])
 }
 
 func TestRawJSONRoundTripWithEncodingJSON(t *testing.T) {

@@ -13,15 +13,15 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-func TestNewAgentDataConverter_RoundTripsToolResult(t *testing.T) {
-	dc := NewAgentDataConverter(func(tools.Ident) (*tools.ToolSpec, bool) { return nil, false })
+func TestNewAgentDataConverterRejectsToolResult(t *testing.T) {
+	dc := NewAgentDataConverter()
 	_, err := dc.ToPayload(&planner.ToolResult{Name: "test.tool"})
 	require.Error(t, err)
 }
 
-func TestNewAgentDataConverter_DecodesToolResultsSetIntoSinglePointer(t *testing.T) {
+func TestNewAgentDataConverterDecodesToolResultsSetIntoSinglePointer(t *testing.T) {
 	toolName := tools.Ident("test.tool")
-	dc := NewAgentDataConverter(func(tools.Ident) (*tools.ToolSpec, bool) { return nil, false })
+	dc := NewAgentDataConverter()
 	p, err := dc.ToPayload(&api.ToolResultsSet{
 		RunID: "run-123",
 		ID:    "await-123",
@@ -43,10 +43,10 @@ func TestNewAgentDataConverter_DecodesToolResultsSetIntoSinglePointer(t *testing
 	require.JSONEq(t, `{"value":"ok"}`, string(decoded.Results[0].Result))
 }
 
-func TestNewAgentDataConverter_RoundTripsPlanActivityInputToolOutputs(t *testing.T) {
+func TestNewAgentDataConverterRoundTripsPlanActivityInputToolOutputs(t *testing.T) {
 	t.Parallel()
 
-	dc := NewAgentDataConverter(func(tools.Ident) (*tools.ToolSpec, bool) { return nil, false })
+	dc := NewAgentDataConverter()
 	p, err := dc.ToPayload(&api.PlanActivityInput{
 		AgentID: "test.agent",
 		RunID:   "run-123",
@@ -77,8 +77,23 @@ func TestNewAgentDataConverter_RoundTripsPlanActivityInputToolOutputs(t *testing
 	require.Equal(t, "call-1", decoded.ToolOutputs[0].ToolCallID)
 }
 
-func TestNewAgentDataConverter_RejectsJSONStringifiedToolResult(t *testing.T) {
-	dc := NewAgentDataConverter(func(tools.Ident) (*tools.ToolSpec, bool) { return nil, false })
+func TestNewAgentDataConverterRejectsJSONStringifiedToolResult(t *testing.T) {
+	dc := NewAgentDataConverter()
 	_, err := dc.ToPayload(planner.ToolResult{Name: "test.tool", Result: `{"value":"ok"}`})
 	require.Error(t, err)
+}
+
+func TestNewAgentDataConverterRejectsObsoletePolicyFields(t *testing.T) {
+	dc := NewAgentDataConverter()
+	payload, err := dc.ToPayload(map[string]any{
+		"AgentID": "test.agent",
+		"RunID":   "run-123",
+		"Policy": map[string]any{
+			"AllowedTags": []string{"obsolete"},
+		},
+	})
+	require.NoError(t, err)
+
+	var decoded *api.RunInput
+	require.ErrorContains(t, dc.FromPayload(payload, &decoded), `unknown field "AllowedTags"`)
 }

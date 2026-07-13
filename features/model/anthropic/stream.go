@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -31,6 +32,7 @@ type anthropicStreamer struct {
 
 	metaMu   sync.RWMutex
 	metadata map[string]any
+	response *model.Response
 
 	toolNameMap map[string]string
 }
@@ -56,19 +58,19 @@ func (s *anthropicStreamer) Recv() (model.Chunk, error) {
 		}
 		if err := s.err(); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return model.Chunk{}, err
+				return nil, err
 			}
 			s.setErr(err)
-			return model.Chunk{}, err
+			return nil, err
 		}
-		return model.Chunk{}, io.EOF
+		return nil, io.EOF
 	case <-s.ctx.Done():
 		err := s.ctx.Err()
 		if err == nil {
 			err = context.Canceled
 		}
 		s.setErr(err)
-		return model.Chunk{}, err
+		return nil, err
 	}
 }
 
@@ -78,6 +80,12 @@ func (s *anthropicStreamer) Close() error {
 		return nil
 	}
 	return s.stream.Close()
+}
+
+func (s *anthropicStreamer) Response() *model.Response {
+	s.metaMu.RLock()
+	defer s.metaMu.RUnlock()
+	return s.response
 }
 
 func (s *anthropicStreamer) Metadata() map[string]any {
@@ -97,11 +105,14 @@ func (s *anthropicStreamer) run() {
 	defer close(s.chunks)
 	defer func() {
 		if s.stream != nil {
-			_ = s.stream.Close()
+			if err := s.stream.Close(); err != nil {
+				s.setErr(err)
+			}
 		}
 	}()
 
 	processor := newAnthropicChunkProcessor(s.emitChunk, s.recordUsage, s.toolNameMap)
+	var response sdk.Message
 
 	for {
 		select {
@@ -115,12 +126,25 @@ func (s *anthropicStreamer) run() {
 				s.setErr(wrapAnthropicError("stream_recv", err))
 			} else if err := s.ctx.Err(); err != nil {
 				s.setErr(err)
+			} else if !processor.complete {
+				s.setErr(errors.New("anthropic: stream ended before message_stop"))
 			} else {
-				s.setErr(nil)
+				translated, err := translateResponse(&response, s.toolNameMap)
+				if err != nil {
+					s.setErr(err)
+					return
+				}
+				s.metaMu.Lock()
+				s.response = translated
+				s.metaMu.Unlock()
 			}
 			return
 		}
 		event := s.stream.Current()
+		if err := response.Accumulate(event); err != nil {
+			s.setErr(fmt.Errorf("anthropic: accumulate streamed response: %w", err))
+			return
+		}
 		if err := processor.Handle(event); err != nil {
 			s.setErr(err)
 			return
@@ -169,10 +193,13 @@ type anthropicChunkProcessor struct {
 
 	toolBlocks     map[int]*toolBuffer
 	thinkingBlocks map[int]*thinkingBuffer
+	openBlocks     map[int]struct{}
 
 	toolNameMap map[string]string
 
 	stopReason string
+	started    bool
+	complete   bool
 }
 
 func newAnthropicChunkProcessor(emit func(model.Chunk) error, recordUsage func(model.TokenUsage), nameMap map[string]string) *anthropicChunkProcessor {
@@ -181,6 +208,7 @@ func newAnthropicChunkProcessor(emit func(model.Chunk) error, recordUsage func(m
 		recordUsage:    recordUsage,
 		toolBlocks:     make(map[int]*toolBuffer),
 		thinkingBlocks: make(map[int]*thinkingBuffer),
+		openBlocks:     make(map[int]struct{}),
 		toolNameMap:    nameMap,
 	}
 }
@@ -188,13 +216,38 @@ func newAnthropicChunkProcessor(emit func(model.Chunk) error, recordUsage func(m
 func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) error {
 	switch ev := event.AsAny().(type) {
 	case sdk.MessageStartEvent:
+		if p.started {
+			return errors.New("anthropic stream: duplicate message start")
+		}
 		p.toolBlocks = make(map[int]*toolBuffer)
 		p.thinkingBlocks = make(map[int]*thinkingBuffer)
+		p.openBlocks = make(map[int]struct{})
 		p.stopReason = ""
+		p.started = true
+		p.complete = false
 		return nil
 	case sdk.ContentBlockStartEvent:
+		if !p.started || p.complete {
+			return errors.New("anthropic stream: content block started outside an active message")
+		}
 		idx := int(ev.Index)
+		if _, ok := p.openBlocks[idx]; ok {
+			return fmt.Errorf("anthropic stream: duplicate content block start %d", idx)
+		}
+		p.openBlocks[idx] = struct{}{}
 		start := ev.ContentBlock.AsAny()
+		if text, ok := start.(sdk.TextBlock); ok {
+			if text.Text == "" {
+				return nil
+			}
+			return p.emit(model.TextChunk{
+				Message: model.Message{
+					Role:  model.ConversationRoleAssistant,
+					Parts: []model.Part{model.TextPart{Text: text.Text}},
+					Meta:  map[string]any{"content_index": idx},
+				},
+			})
+		}
 		if toolUse, ok := start.(sdk.ToolUseBlock); ok {
 			tb := &toolBuffer{}
 			if toolUse.ID == "" {
@@ -218,17 +271,35 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			p.toolBlocks[idx] = tb
 			return nil
 		}
-		return nil
+		if thinking, ok := start.(sdk.ThinkingBlock); ok {
+			tb := &thinkingBuffer{signature: thinking.Signature}
+			tb.text.WriteString(thinking.Thinking)
+			p.thinkingBlocks[idx] = tb
+			return nil
+		}
+		if redacted, ok := start.(sdk.RedactedThinkingBlock); ok {
+			if redacted.Data == "" {
+				return errors.New("anthropic stream: redacted thinking block missing data")
+			}
+			p.thinkingBlocks[idx] = &thinkingBuffer{redacted: []byte(redacted.Data)}
+			return nil
+		}
+		return fmt.Errorf("anthropic stream: unsupported content block %T", start)
 	case sdk.ContentBlockDeltaEvent:
+		if !p.started || p.complete {
+			return errors.New("anthropic stream: content block delta received outside an active message")
+		}
 		idx := int(ev.Index)
+		if _, ok := p.openBlocks[idx]; !ok {
+			return fmt.Errorf("anthropic stream: content block delta %d has no matching start", idx)
+		}
 		switch delta := ev.Delta.AsAny().(type) {
 		case sdk.TextDelta:
 			if delta.Text == "" {
 				return nil
 			}
-			return p.emit(model.Chunk{
-				Type: model.ChunkTypeText,
-				Message: &model.Message{
+			return p.emit(model.TextChunk{
+				Message: model.Message{
 					Role: model.ConversationRoleAssistant,
 					Parts: []model.Part{
 						model.TextPart{Text: delta.Text},
@@ -248,16 +319,15 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 				if tb.name == "" {
 					return fmt.Errorf("anthropic stream: tool JSON delta missing tool name for id %q", tb.id)
 				}
-				return p.emit(model.Chunk{
-					Type: model.ChunkTypeToolCallDelta,
-					ToolCallDelta: &model.ToolCallDelta{
+				return p.emit(model.ToolCallDeltaChunk{
+					Delta: model.ToolCallDelta{
 						Name:  tools.Ident(tb.name),
 						ID:    tb.id,
 						Delta: delta.PartialJSON,
 					},
 				})
 			}
-			return nil
+			return fmt.Errorf("anthropic stream: input JSON delta %d has no tool-use block", idx)
 		case sdk.ThinkingDelta:
 			if delta.Thinking == "" {
 				return nil
@@ -268,10 +338,8 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 				p.thinkingBlocks[idx] = tb
 			}
 			tb.text.WriteString(delta.Thinking)
-			return p.emit(model.Chunk{
-				Type:     model.ChunkTypeThinking,
-				Thinking: delta.Thinking,
-				Message: &model.Message{
+			return p.emit(model.ThinkingChunk{
+				Message: model.Message{
 					Role: model.ConversationRoleAssistant,
 					Parts: []model.Part{
 						model.ThinkingPart{
@@ -293,19 +361,33 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			}
 			tb.signature = delta.Signature
 			return nil
-		default:
+		case sdk.CitationsDelta:
+			// Citation deltas have no presentation chunk. The SDK accumulates
+			// them into the terminal text block, which translateResponse maps
+			// into the canonical CitationsPart returned by Response.
 			return nil
+		default:
+			return fmt.Errorf("anthropic stream: unsupported content block delta %T", delta)
 		}
 	case sdk.ContentBlockStopEvent:
+		if !p.started || p.complete {
+			return errors.New("anthropic stream: content block stopped outside an active message")
+		}
 		idx := int(ev.Index)
+		if _, ok := p.openBlocks[idx]; !ok {
+			return fmt.Errorf("anthropic stream: content block stop %d has no matching start", idx)
+		}
+		delete(p.openBlocks, idx)
 		if tb := p.thinkingBlocks[idx]; tb != nil {
 			delete(p.thinkingBlocks, idx)
-			if part := tb.finalize(idx); part != nil {
+			part, err := tb.finalize(idx)
+			if err != nil {
+				return fmt.Errorf("anthropic stream: finalize thinking block %d: %w", idx, err)
+			}
+			if part != nil {
 				if part.Text != "" {
-					if err := p.emit(model.Chunk{
-						Type:     model.ChunkTypeThinking,
-						Thinking: part.Text,
-						Message: &model.Message{
+					if err := p.emit(model.ThinkingChunk{
+						Message: model.Message{
 							Role:  model.ConversationRoleAssistant,
 							Parts: []model.Part{*part},
 						},
@@ -313,9 +395,8 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 						return err
 					}
 				} else if len(part.Redacted) > 0 {
-					if err := p.emit(model.Chunk{
-						Type: model.ChunkTypeThinking,
-						Message: &model.Message{
+					if err := p.emit(model.ThinkingChunk{
+						Message: model.Message{
 							Role:  model.ConversationRoleAssistant,
 							Parts: []model.Part{*part},
 						},
@@ -326,11 +407,13 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			}
 		}
 		if tb := p.toolBlocks[idx]; tb != nil {
-			payload := decodeToolPayload(tb.finalInput())
+			payload, err := decodeToolPayload(tb.finalInput())
+			if err != nil {
+				return fmt.Errorf("anthropic stream: finalize tool payload %q: %w", tb.id, err)
+			}
 			delete(p.toolBlocks, idx)
-			return p.emit(model.Chunk{
-				Type: model.ChunkTypeToolCall,
-				ToolCall: &model.ToolCall{
+			return p.emit(model.ToolCallChunk{
+				ToolCall: model.ToolCall{
 					Name:    tools.Ident(tb.name),
 					Payload: payload,
 					ID:      tb.id,
@@ -339,6 +422,9 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 		}
 		return nil
 	case sdk.MessageDeltaEvent:
+		if !p.started || p.complete {
+			return errors.New("anthropic stream: message delta received outside an active message")
+		}
 		p.stopReason = string(ev.Delta.StopReason)
 		usage := model.TokenUsage{
 			InputTokens:      int(ev.Usage.InputTokens),
@@ -350,17 +436,23 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 		if p.recordUsage != nil {
 			p.recordUsage(usage)
 		}
-		return p.emit(model.Chunk{Type: model.ChunkTypeUsage, UsageDelta: &usage})
+		return p.emit(model.UsageChunk{Usage: usage})
 	case sdk.MessageStopEvent:
-		chunk := model.Chunk{Type: model.ChunkTypeStop}
-		if p.stopReason != "" {
-			chunk.StopReason = p.stopReason
+		if !p.started || p.complete {
+			return errors.New("anthropic stream: message stop received without an active message")
 		}
-		p.toolBlocks = make(map[int]*toolBuffer)
-		p.thinkingBlocks = make(map[int]*thinkingBuffer)
+		if len(p.openBlocks) > 0 {
+			return fmt.Errorf("anthropic stream: message stopped with %d open content blocks", len(p.openBlocks))
+		}
+		if p.stopReason == "" {
+			return errors.New("anthropic stream: message stopped without a stop reason")
+		}
+		chunk := model.StopChunk{Reason: p.stopReason}
+		p.complete = true
 		return p.emit(chunk)
+	default:
+		return fmt.Errorf("anthropic stream: unsupported event %T", ev)
 	}
-	return nil
 }
 
 type toolBuffer struct {
@@ -386,33 +478,43 @@ type thinkingBuffer struct {
 	redacted  []byte
 }
 
-func (tb *thinkingBuffer) finalize(index int) *model.ThinkingPart {
+func (tb *thinkingBuffer) finalize(index int) (*model.ThinkingPart, error) {
+	text := tb.text.String()
 	if len(tb.redacted) > 0 {
+		if text != "" || tb.signature != "" {
+			return nil, errors.New("thinking block contains both redacted and plaintext content")
+		}
 		return &model.ThinkingPart{
 			Redacted: append([]byte(nil), tb.redacted...),
 			Index:    index,
 			Final:    true,
-		}
+		}, nil
 	}
-	if s := tb.text.String(); s != "" && tb.signature != "" {
-		return &model.ThinkingPart{
-			Text:      s,
-			Signature: tb.signature,
-			Index:     index,
-			Final:     true,
-		}
+	if text == "" && tb.signature == "" {
+		return nil, nil
 	}
-	return nil
+	if text == "" {
+		return nil, errors.New("thinking signature is missing plaintext content")
+	}
+	if tb.signature == "" {
+		return nil, errors.New("thinking plaintext is missing provider signature")
+	}
+	return &model.ThinkingPart{
+		Text:      text,
+		Signature: tb.signature,
+		Index:     index,
+		Final:     true,
+	}, nil
 }
 
-func decodeToolPayload(raw string) rawjson.Message {
+func decodeToolPayload(raw string) (rawjson.Message, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		trimmed = "{}"
 	}
 	data := []byte(trimmed)
-	if len(data) == 0 {
-		return nil
+	if !json.Valid(data) {
+		return nil, errors.New("tool payload is not valid JSON")
 	}
-	return rawjson.Message(data)
+	return rawjson.Message(data), nil
 }

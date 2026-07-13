@@ -707,7 +707,7 @@ func decodeCanonicalJSONValue(eventType EventType, raw rawjson.Message, key stri
 		return nil, nil
 	}
 	var value any
-	if err := json.Unmarshal(trimmed, &value); err != nil {
+	if err := rawjson.Unmarshal(trimmed, &value); err != nil {
 		return nil, fmt.Errorf("memory: decode %s field %q: %w", eventType, key, err)
 	}
 	return value, nil

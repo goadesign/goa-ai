@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"testing"
 
@@ -41,7 +40,32 @@ func (d *testDecoder) Close() error { return nil }
 func (d *testDecoder) Err() error   { return d.err }
 
 func TestAnthropicStreamer_TextAndToolCall(t *testing.T) {
-	// Build a minimal text delta and tool_use JSON sequence.
+	messageStart := sdk.MessageStreamEventUnion{}
+	if err := json.Unmarshal([]byte(`{
+  "type": "message_start",
+  "message": {
+    "id": "msg_1",
+    "type": "message",
+    "role": "assistant",
+    "content": [],
+    "model": "claude-test",
+    "stop_reason": null,
+    "stop_sequence": null,
+    "usage": { "input_tokens": 1, "output_tokens": 0 }
+  }
+}`), &messageStart); err != nil {
+		t.Fatalf("unmarshal message start: %v", err)
+	}
+
+	textStart := sdk.MessageStreamEventUnion{}
+	if err := json.Unmarshal([]byte(`{
+  "type": "content_block_start",
+  "index": 0,
+  "content_block": { "type": "text", "text": "" }
+}`), &textStart); err != nil {
+		t.Fatalf("unmarshal text start: %v", err)
+	}
+
 	textDelta := sdk.MessageStreamEventUnion{
 		Type: "content_block_delta",
 	}
@@ -51,6 +75,14 @@ func TestAnthropicStreamer_TextAndToolCall(t *testing.T) {
   "delta": { "type": "text_delta", "text": "hello" }
 }`), &textDelta); err != nil {
 		t.Fatalf("unmarshal text delta: %v", err)
+	}
+
+	textStop := sdk.MessageStreamEventUnion{}
+	if err := json.Unmarshal([]byte(`{
+  "type": "content_block_stop",
+  "index": 0
+}`), &textStop); err != nil {
+		t.Fatalf("unmarshal text stop: %v", err)
 	}
 
 	toolStart := sdk.MessageStreamEventUnion{}
@@ -79,6 +111,15 @@ func TestAnthropicStreamer_TextAndToolCall(t *testing.T) {
 		t.Fatalf("unmarshal tool stop: %v", err)
 	}
 
+	messageDelta := sdk.MessageStreamEventUnion{}
+	if err := json.Unmarshal([]byte(`{
+  "type": "message_delta",
+  "delta": { "stop_reason": "tool_use", "stop_sequence": null },
+  "usage": { "output_tokens": 3 }
+}`), &messageDelta); err != nil {
+		t.Fatalf("unmarshal message delta: %v", err)
+	}
+
 	stop := sdk.MessageStreamEventUnion{}
 	if err := json.Unmarshal([]byte(`{
   "type": "message_stop"
@@ -87,10 +128,14 @@ func TestAnthropicStreamer_TextAndToolCall(t *testing.T) {
 	}
 
 	events := []ssestream.Event{
+		{Type: "message_start", Data: mustJSON(messageStart)},
+		{Type: "content_block_start", Data: mustJSON(textStart)},
 		{Type: "content_block_delta", Data: mustJSON(textDelta)},
+		{Type: "content_block_stop", Data: mustJSON(textStop)},
 		{Type: "content_block_start", Data: mustJSON(toolStart)},
 		{Type: "content_block_delta", Data: mustJSON(toolDelta)},
 		{Type: "content_block_stop", Data: mustJSON(toolStop)},
+		{Type: "message_delta", Data: mustJSON(messageDelta)},
 		{Type: "message_stop", Data: mustJSON(stop)},
 	}
 
@@ -121,19 +166,17 @@ func TestAnthropicStreamer_TextAndToolCall(t *testing.T) {
 
 	var sawText, sawTool bool
 	for _, ch := range chunks {
-		switch ch.Type {
-		case model.ChunkTypeText:
+		switch actual := ch.(type) {
+		case model.TextChunk:
 			sawText = true
-		case model.ChunkTypeToolCall:
+		case model.ToolCallChunk:
 			sawTool = true
-			if ch.ToolCall == nil {
-				t.Fatalf("tool chunk missing ToolCall")
-			}
-			if string(ch.ToolCall.Name) != "toolset.tool" {
-				t.Fatalf("unexpected tool name %q", ch.ToolCall.Name)
+			if string(actual.ToolCall.Name) != "toolset.tool" {
+				t.Fatalf("unexpected tool name %q", actual.ToolCall.Name)
 			}
 		}
 	}
+	require.NotNil(t, s.Response())
 	if !sawText {
 		t.Fatalf("expected text chunk")
 	}
@@ -180,9 +223,9 @@ func TestAnthropicStreamer_ContextCancelPassthrough(t *testing.T) {
 	assert.False(t, ok)
 }
 
-// TestAnthropicStreamer_EOFPassthrough verifies that normal stream
-// termination surfaces as plain io.EOF, not a classified provider error.
-func TestAnthropicStreamer_EOFPassthrough(t *testing.T) {
+// TestAnthropicStreamerRejectsEOFBeforeCanonicalResponse verifies that a stream
+// cannot terminate successfully without the provider's message_stop boundary.
+func TestAnthropicStreamerRejectsEOFBeforeCanonicalResponse(t *testing.T) {
 	dec := &testDecoder{events: nil}
 	stream := ssestream.NewStream[sdk.MessageStreamEventUnion](dec, nil)
 
@@ -190,9 +233,96 @@ func TestAnthropicStreamer_EOFPassthrough(t *testing.T) {
 	defer func() { _ = s.Close() }()
 
 	_, err := s.Recv()
-	require.ErrorIs(t, err, io.EOF)
+	require.EqualError(t, err, "anthropic: stream ended before message_stop")
 	_, ok := model.AsProviderError(err)
 	assert.False(t, ok)
+}
+
+func TestAnthropicStreamerRejectsMessageStopWithOpenContentBlock(t *testing.T) {
+	rawEvents := []struct {
+		eventType string
+		data      string
+	}{
+		{
+			eventType: "message_start",
+			data: `{
+				"type":"message_start",
+				"message":{
+					"id":"msg_1",
+					"type":"message",
+					"role":"assistant",
+					"content":[],
+					"model":"claude-test",
+					"stop_reason":null,
+					"stop_sequence":null,
+					"usage":{"input_tokens":1,"output_tokens":0}
+				}
+			}`,
+		},
+		{
+			eventType: "content_block_start",
+			data:      `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		},
+		{
+			eventType: "message_stop",
+			data:      `{"type":"message_stop"}`,
+		},
+	}
+	events := make([]ssestream.Event, len(rawEvents))
+	for i, raw := range rawEvents {
+		var event sdk.MessageStreamEventUnion
+		require.NoError(t, json.Unmarshal([]byte(raw.data), &event))
+		events[i] = ssestream.Event{Type: raw.eventType, Data: mustJSON(event)}
+	}
+	stream := ssestream.NewStream[sdk.MessageStreamEventUnion](&testDecoder{events: events}, nil)
+	s := newAnthropicStreamer(context.Background(), stream, nil)
+	defer func() { _ = s.Close() }()
+
+	_, err := s.Recv()
+
+	require.EqualError(t, err, "anthropic stream: message stopped with 1 open content blocks")
+}
+
+func TestThinkingBufferFinalizeRequiresCanonicalVariant(t *testing.T) {
+	tests := []struct {
+		name      string
+		text      string
+		signature string
+		redacted  []byte
+		wantErr   string
+	}{
+		{name: "plaintext", text: "reasoning", signature: "sig"},
+		{name: "redacted", redacted: []byte("opaque")},
+		{name: "missing signature", text: "reasoning", wantErr: "thinking plaintext is missing provider signature"},
+		{name: "missing text", signature: "sig", wantErr: "thinking signature is missing plaintext content"},
+		{
+			name:      "mixed variants",
+			text:      "reasoning",
+			signature: "sig",
+			redacted:  []byte("opaque"),
+			wantErr:   "thinking block contains both redacted and plaintext content",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			buffer := &thinkingBuffer{
+				signature: test.signature,
+				redacted:  test.redacted,
+			}
+			buffer.text.WriteString(test.text)
+
+			part, err := buffer.finalize(3)
+
+			if test.wantErr != "" {
+				require.EqualError(t, err, test.wantErr)
+				require.Nil(t, part)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, part)
+			require.Equal(t, 3, part.Index)
+		})
+	}
 }
 
 func mustJSON(v any) []byte {

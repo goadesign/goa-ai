@@ -678,16 +678,6 @@ func WithRestrictToTool(id tools.Ident) RunOption {
 	}
 }
 
-// WithAllowedTags filters candidate tools to those whose tags intersect this list.
-func WithAllowedTags(tags []string) RunOption {
-	return func(in *RunInput) {
-		if in.Policy == nil {
-			in.Policy = &PolicyOverrides{}
-		}
-		in.Policy.AllowedTags = append([]string(nil), tags...)
-	}
-}
-
 // WithTagPolicyClauses sets explicit tag-policy clauses on the run policy.
 func WithTagPolicyClauses(clauses []TagPolicyClause) RunOption {
 	return func(in *RunInput) {
@@ -695,16 +685,6 @@ func WithTagPolicyClauses(clauses []TagPolicyClause) RunOption {
 			in.Policy = &PolicyOverrides{}
 		}
 		in.Policy.TagClauses = cloneTagPolicyClauses(clauses)
-	}
-}
-
-// WithDeniedTags filters out candidate tools that have any of these tags.
-func WithDeniedTags(tags []string) RunOption {
-	return func(in *RunInput) {
-		if in.Policy == nil {
-			in.Policy = &PolicyOverrides{}
-		}
-		in.Policy.DeniedTags = append([]string(nil), tags...)
 	}
 }
 

@@ -133,8 +133,8 @@ func TestRunLoopMixedImmediateAndConfirmationRecordsOneAssistantToolUseTurn(t *t
 
 	initial := &planner.PlanResult{
 		ToolCalls: []planner.ToolRequest{
-			{Name: lookup.Name},
-			{Name: confirm.Name},
+			{Name: lookup.Name, Payload: rawjson.Message(`{}`)},
+			{Name: confirm.Name, Payload: rawjson.Message(`{}`)},
 		},
 	}
 
@@ -144,16 +144,11 @@ func TestRunLoopMixedImmediateAndConfirmationRecordsOneAssistantToolUseTurn(t *t
 		input,
 		base,
 		initial,
-		nil,
-		model.TokenUsage{},
 		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
 		time.Time{},
 		time.Time{},
-		2,
 		"turn-1",
-		nil,
 		ctrl,
-		0,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, out)

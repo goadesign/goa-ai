@@ -435,18 +435,19 @@ The hook bus (`runtime/agent/hooks`) is the internal pub/sub backbone for runtim
 
 Stream sinks bridge hook events to client‑facing formats via `stream.Subscriber`.
 
-### Transcript Ledger
+### Canonical Transcripts
 
-The transcript ledger (`runtime/agent/transcript`) maintains a provider‑precise record of the
-conversation needed to rebuild model payloads exactly:
-
-- **Provider Fidelity** — Preserves ordering and shape required by providers (thinking → tool_use →
-  tool_result)
-- **Stateless API** — Pure methods safe for workflow replay
-- **Provider‑Agnostic Storage** — Converts to/from provider formats at edges
-
-Use the ledger when you need deterministic conversation replay or provider‑specific payload
-reconstruction.
+Ordered `model.Message` parts are the single provider-neutral transcript
+representation. Model adapters produce complete canonical responses, the
+runtime captures them before planner code observes completion, and workflow
+state persists the selected messages directly. Thinking, citations, tool use,
+provider metadata, and part ordering therefore cross durable boundaries without
+being rebuilt through a second ledger shape. The durable codec is a strict
+tagged union: each part carries its `kind`, unknown fields fail decoding, and
+tool inputs remain raw JSON bytes so replay never changes numbers or object
+representation. Canonical message copies are deep and exhaustive across the
+sealed part union, so planner, reminder, and workflow ownership boundaries
+cannot share mutable provider state.
 
 ## DSL Reference
 
@@ -479,7 +480,7 @@ policies, and MCP servers within Goa service designs.
 | `BoundedResult()` | Mark result as bounded view over larger data |
 | `ResultReminder(text)` | Static system reminder injected after tool result |
 | `TerminalRun()` | Tool completes the run immediately after execution (no follow-up planner turn) |
-| `Bookkeeping()` | Control-plane tool: no `MaxToolCalls` budget and hidden from future planner turns by default |
+| `Bookkeeping()` | Control-plane tool: no `MaxToolCalls` budget and no automatic resume; provider transcript remains exact |
 
 ### Toolset Definition
 
@@ -630,7 +631,9 @@ out, err := client.Run(ctx, "session-1", messages,
     runtime.WithLabels(map[string]string{"env": "prod"}),
     runtime.WithTaskQueue("priority"),
     runtime.WithRunTimeBudget(5*time.Minute),
-    runtime.WithAllowedTags([]string{"safe"}),
+    runtime.WithTagPolicyClauses([]runtime.TagPolicyClause{{
+        AllowedAny: []string{"safe"},
+    }}),
 )
 
 // Asynchronous run
@@ -934,8 +937,6 @@ The `sessionID` argument is required and must be a non-empty, non-whitespace str
 | `WithRunFinalizerGrace(duration)`       | Reserve time for final message |
 | `WithRunInterruptsAllowed(bool)`        | Enable human-in-the-loop     |
 | `WithRestrictToTool(tools.Ident)`       | Limit available tools        |
-| `WithAllowedTags([]string)`             | Filter by tags               |
-| `WithDeniedTags([]string)`              | Exclude by tags              |
 | `WithTagPolicyClauses([]TagPolicyClause)` | Compose explicit tag clauses |
 | `WithTiming(Timing)`                    | Set multiple timing overrides |
 
@@ -943,10 +944,6 @@ Runtime-owned retry restrictions installed from `RetryHint` constrain normal
 repair turns only. They do not block validated terminal bookkeeping tools during
 forced finalization; caller `WithRestrictToTool` policy remains run-scoped and
 still applies.
-
-Prefer `WithTagPolicyClauses` for new code when you need multiple allow/deny
-rules; `WithAllowedTags` and `WithDeniedTags` are convenience shorthands for a
-single clause.
 
 `WithTiming(Timing)` sets semantic run/planner/tool budgets. It does not expose
 engine-level queue-wait or heartbeat tuning.

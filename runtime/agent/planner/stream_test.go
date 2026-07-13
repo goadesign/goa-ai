@@ -16,10 +16,11 @@ type (
 	}
 
 	testStreamer struct {
-		chunks []model.Chunk
-		meta   map[string]any
-		index  int
-		closed bool
+		chunks   []model.Chunk
+		meta     map[string]any
+		response *model.Response
+		index    int
+		closed   bool
 	}
 )
 
@@ -37,7 +38,7 @@ func (e *recordingEvents) UsageDelta(_ context.Context, usage model.TokenUsage) 
 
 func (s *testStreamer) Recv() (model.Chunk, error) {
 	if s.index >= len(s.chunks) {
-		return model.Chunk{}, io.EOF
+		return nil, io.EOF
 	}
 	chunk := s.chunks[s.index]
 	s.index++
@@ -49,6 +50,10 @@ func (s *testStreamer) Close() error {
 	return nil
 }
 
+func (s *testStreamer) Response() *model.Response {
+	return s.response
+}
+
 func (s *testStreamer) Metadata() map[string]any {
 	return s.meta
 }
@@ -56,13 +61,18 @@ func (s *testStreamer) Metadata() map[string]any {
 func TestConsumeStreamStampsUsageIdentityFromRequest(t *testing.T) {
 	streamer := &testStreamer{
 		chunks: []model.Chunk{
-			{
-				Type:       model.ChunkTypeUsage,
-				UsageDelta: &model.TokenUsage{InputTokens: 2, OutputTokens: 3, TotalTokens: 5},
+			model.UsageChunk{
+				Usage: model.TokenUsage{InputTokens: 2, OutputTokens: 3, TotalTokens: 5},
 			},
+			model.StopChunk{Reason: "stop"},
 		},
 		meta: map[string]any{
 			"usage": model.TokenUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
+		},
+		response: &model.Response{
+			Content:    []model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}}},
+			StopReason: "stop",
+			Usage:      model.TokenUsage{InputTokens: 2, OutputTokens: 3, TotalTokens: 5},
 		},
 	}
 	events := &recordingEvents{}
@@ -89,19 +99,31 @@ func TestConsumeStreamStampsUsageIdentityFromRequest(t *testing.T) {
 // TestConsumeStreamToolCallOmitsThoughtSignature documents that ConsumeStream
 // deliberately does not surface model.ToolCall.ThoughtSignature on the
 // resulting planner.ToolRequest: opaque provider state is captured earlier, at
-// the runtime's model-client boundary (see runtime.signatureCapturingClient),
+// the runtime's model-client boundary (see runtime.modelInvocationClient),
 // and never transits this user-facing type.
 func TestConsumeStreamToolCallOmitsThoughtSignature(t *testing.T) {
 	streamer := &testStreamer{
 		chunks: []model.Chunk{
-			{
-				Type: model.ChunkTypeToolCall,
-				ToolCall: &model.ToolCall{
+			model.ToolCallChunk{
+				ToolCall: model.ToolCall{
 					Name:             tools.Ident("svc.read.get_time_series"),
 					ID:               "call-1",
+					Payload:          []byte(`{}`),
 					ThoughtSignature: "opaque-provider-signature",
 				},
 			},
+			model.StopChunk{Reason: "tool_use"},
+		},
+		response: &model.Response{
+			Content: []model.Message{{
+				Role: model.ConversationRoleAssistant,
+				Parts: []model.Part{model.ToolUsePart{
+					ID:    "call-1",
+					Name:  "svc.read.get_time_series",
+					Input: []byte(`{}`),
+				}},
+			}},
+			StopReason: "tool_use",
 		},
 	}
 	events := &recordingEvents{}
@@ -114,10 +136,51 @@ func TestConsumeStreamToolCallOmitsThoughtSignature(t *testing.T) {
 	require.Equal(t, "call-1", summary.ToolCalls[0].ToolCallID)
 }
 
-func TestConsumeStreamFallsBackToMetadataUsage(t *testing.T) {
+func TestConsumeStreamRejectsRepeatedFinalizedToolCall(t *testing.T) {
+	call := model.ToolCall{
+		Name:    tools.Ident("svc.lookup"),
+		ID:      "call-1",
+		Payload: []byte(`{}`),
+	}
 	streamer := &testStreamer{
+		chunks: []model.Chunk{
+			model.ToolCallChunk{ToolCall: call},
+			model.ToolCallChunk{ToolCall: call},
+		},
+	}
+
+	_, err := ConsumeStream(context.Background(), streamer, &model.Request{}, &recordingEvents{})
+
+	require.EqualError(t, err, `planner: model stream repeated finalized tool call "call-1"`)
+	require.True(t, streamer.closed)
+}
+
+func TestConsumeStreamRejectsTypedCompletionChunks(t *testing.T) {
+	streamer := &testStreamer{
+		chunks: []model.Chunk{model.CompletionChunk{
+			Completion: model.Completion{
+				Name:    "draft",
+				Payload: []byte(`{"text":"done"}`),
+			},
+		}},
+	}
+
+	_, err := ConsumeStream(context.Background(), streamer, &model.Request{}, &recordingEvents{})
+
+	require.EqualError(t, err, "planner: ConsumeStream does not accept typed completion chunks; use completion.Stream")
+	require.True(t, streamer.closed)
+}
+
+func TestConsumeStreamUsesCanonicalResponseUsage(t *testing.T) {
+	streamer := &testStreamer{
+		chunks: []model.Chunk{model.StopChunk{Reason: "stop"}},
 		meta: map[string]any{
-			"usage": model.TokenUsage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3},
+			"usage": model.TokenUsage{InputTokens: 9, OutputTokens: 9, TotalTokens: 18},
+		},
+		response: &model.Response{
+			Content:    []model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}}},
+			StopReason: "stop",
+			Usage:      model.TokenUsage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3},
 		},
 	}
 	events := &recordingEvents{}
@@ -139,4 +202,41 @@ func TestConsumeStreamFallsBackToMetadataUsage(t *testing.T) {
 	require.Len(t, events.usage, 1)
 	require.Equal(t, "gpt-5", events.usage[0].Model)
 	require.Equal(t, model.ModelClassDefault, events.usage[0].ModelClass)
+}
+
+func TestConsumeStreamRequiresCanonicalResponse(t *testing.T) {
+	streamer := &testStreamer{}
+
+	_, err := ConsumeStream(context.Background(), streamer, &model.Request{}, &recordingEvents{})
+
+	require.ErrorContains(t, err, "planner: invalid canonical response")
+	require.True(t, streamer.closed)
+}
+
+func TestStreamSummaryWithoutCanonicalResponseHasNoFinalResponse(t *testing.T) {
+	require.Nil(t, (StreamSummary{Text: "presentation"}).FinalResponse())
+}
+
+func TestStreamSummaryFinalResponsePreservesCanonicalMessage(t *testing.T) {
+	source := &model.Message{
+		Role: model.ConversationRoleAssistant,
+		Parts: []model.Part{
+			model.ThinkingPart{Text: "reasoning", Signature: "signature", Final: true},
+			model.TextPart{Text: "canonical"},
+		},
+		Meta: map[string]any{"provider_item": "item-1"},
+	}
+
+	final := (StreamSummary{Text: "presentation", source: source}).FinalResponse()
+	require.NotNil(t, final)
+	require.Same(t, source, final.Message)
+	require.Len(t, final.Message.Parts, 2)
+	require.Equal(t, "item-1", final.Message.Meta["provider_item"])
+}
+
+func TestStreamSummaryWithToolCallsHasNoFinalResponse(t *testing.T) {
+	require.Nil(t, (StreamSummary{
+		source:    &model.Message{Role: model.ConversationRoleAssistant},
+		ToolCalls: []ToolRequest{{Name: "svc.lookup"}},
+	}).FinalResponse())
 }

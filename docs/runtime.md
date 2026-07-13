@@ -484,14 +484,16 @@ Bookkeeping exception:
 
 - tools declared with `Bookkeeping()` still execute and still publish durable
   run events,
-- by default their results are not replayed as `PlanResumeInput.ToolOutputs`
-  and are not appended back into the model-visible transcript,
+- every call and result remains in the model-visible provider transcript so
+  signed assistant responses are replayed unchanged,
+- successful results are omitted from compact
+  `PlanResumeInput.ToolOutputs` and do not force another planner turn,
 - except when a bookkeeping tool fails with a `RetryHint`: that retryable
-  failure becomes planner-visible so the next resume turn can repair and resend
-  the tool call without replaying successful bookkeeping noise,
+  failure enters `ToolOutputs` so the next resume turn can repair and resend the
+  tool call,
 - bookkeeping tools may still drive an await handshake in the same turn (for
   example a runtime-owned `ToolPause`); that control-plane await remains legal
-  even when no successful bookkeeping result is replayed.
+  even when no successful bookkeeping result requires a resume.
 
 Workflow step boundary:
 
@@ -609,7 +611,8 @@ Choose one per planner call.
 `PlannerContext.PlannerModelClient(id)` returns a planner-scoped client that owns
 `AssistantChunk`, `PlannerThinkingBlock`, and `UsageDelta` emission. Its
 `Stream(...)` method drains the underlying provider stream and returns a
-`planner.StreamSummary`:
+`planner.StreamSummary`. A planner client is single-use for the selected
+response; run probes through `ModelClient` before obtaining it:
 
 ```go
 func (p *MyPlanner) PlanResume(ctx context.Context, input *PlanResumeInput) (*PlanResult, error) {
@@ -632,12 +635,7 @@ func (p *MyPlanner) PlanResume(ctx context.Context, input *PlanResumeInput) (*Pl
         return &PlanResult{ToolCalls: sum.ToolCalls}, nil
     }
     return &PlanResult{
-        FinalResponse: &FinalResponse{
-            Message: &model.Message{
-                Role:  model.ConversationRoleAssistant,
-                Parts: []model.Part{model.TextPart{Text: sum.Text}},
-            },
-        },
+        FinalResponse: sum.FinalResponse(),
         Streamed: true, // Text was already streamed
     }, nil
 }
@@ -674,17 +672,50 @@ Use the raw client path when you need full control over stream consumption or
 want to bypass runtime-owned event emission entirely and manage `input.Events`
 yourself.
 
+Each runtime-managed model call creates an isolated response candidate before
+planner code receives the response or stream chunk. Every successful stream
+ends its typed presentation chunks with clean EOF and exposes exactly one
+canonical response through `Streamer.Response()`. The runtime captures and
+validates that response before returning EOF to planner code, including when the
+provider is behind a model gateway. Incomplete provider content blocks are
+contract errors.
+When `PlanResult` contains tool calls, the runtime
+matches their model-facing IDs, names, and payload bytes to exactly one
+candidate and persists only that response's assistant transcript. Mixed,
+copied, incomplete, or ambiguous provider outputs fail the planner activity.
+Selecting a provider message as `FinalResponse` also requires the result to
+preserve that response's complete tool-call set; a terminal result cannot
+silently discard a provider-requested action.
+Call order has no commit semantics: planners may probe with `ModelClient`, then
+make exactly one selected call through `PlannerModelClient`. Terminal helpers
+return the selected provider message without exposing transcript identity or
+matching mechanics. Later session turns therefore replay the provider's signed
+thinking while the planner's presentation message remains user-facing. Token
+usage still includes every invocation. After atomic tool-batch admission, the
+workflow commits the complete selected response once before any effects.
+Selection remains independent from planner event publication.
+
+Provider adapters own reasoning-block validity. Streaming Bedrock and Anthropic
+calls reject plaintext reasoning that closes without its provider signature;
+canonical responses contain only finalized blocks and never fabricate redacted
+placeholders. Bedrock and Anthropic also require every started content block to
+close and an explicit stop reason before message completion, while Vertex
+requires exactly one candidate with an explicit finish reason. Every adapter
+exposes the canonical completed `model.Response` separately from the closed
+typed presentation stream, preserving opaque replay metadata across gateways
+without adding planner-visible events.
+
 **Tool-call thought signatures**: some providers (for example, Gemini 3)
 attach an opaque, provider-defined signature to a tool call that must be
 replayed back verbatim on the next turn. The runtime captures these at the
 model-client boundary — before either streaming style above ever produces a
-`planner.ToolRequest` — and reattaches them by tool-call ID when rebuilding
-the provider transcript. `planner.ToolRequest` never carries a signature
-field; planners and custom `Planner` implementations do not need to know
-signatures exist. Because reattachment is keyed by the provider tool-call ID,
-planners that hand-build `ToolRequest` values from a `Complete` response must
-carry `Response.ToolCalls[i].ID` through unchanged — ID preservation is the
-load-bearing obligation.
+`planner.ToolRequest` — and commits the isolated response candidate whose tool
+call identities match the plan result. `planner.ToolRequest` never carries a
+signature field; planners and custom `Planner` implementations do not need to
+know signatures exist. Planners that hand-build `ToolRequest` values from a
+`Complete` response must carry `Response.ToolCalls()[i].ID`, name, and payload
+through unchanged; those model-facing values identify the response without
+exposing a separate transcript handle.
 
 ---
 
@@ -700,8 +731,9 @@ load-bearing obligation.
 6. **Planner resumes from `ToolOutputs`** — `PlanResumeInput.ToolOutputs` is the canonical execution-history boundary for budgeted tools only
 
 Bookkeeping tools follow the same execution and durability path, but not the
-same reasoning path: the runtime records their hook/stream/run-log events
-without replaying their results into future planner turns.
+same planner-resume path: the runtime records their hook/stream/run-log events
+and preserves their results in the provider transcript while omitting them from
+the compact `ToolOutputs` passed to future planner turns.
 
 ### ToolsetRegistration
 

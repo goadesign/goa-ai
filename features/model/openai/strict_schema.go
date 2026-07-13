@@ -3,6 +3,7 @@ package openai
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -82,8 +83,13 @@ func projectStrictSchema(schema rawjson.Message) (map[string]any, error) {
 	if len(data) == 0 {
 		return map[string]any{"type": strictSchemaTypeObject, "additionalProperties": false}, nil
 	}
+	if !json.Valid(data) {
+		return nil, errors.New("invalid JSON schema")
+	}
 	var doc map[string]any
-	if err := json.Unmarshal(data, &doc); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&doc); err != nil {
 		return nil, fmt.Errorf("invalid JSON schema: %w", err)
 	}
 	if !includesSchemaType(doc, strictSchemaTypeObject) {
@@ -107,12 +113,22 @@ func canonicalizeStrictPayload(schema, payload rawjson.Message) (rawjson.Message
 	if len(schemaData) == 0 || len(payloadData) == 0 {
 		return payload, nil
 	}
+	if !json.Valid(schemaData) {
+		return nil, errors.New("invalid canonical schema")
+	}
+	if !json.Valid(payloadData) {
+		return nil, errors.New("invalid payload JSON")
+	}
 	var root map[string]any
-	if err := json.Unmarshal(schemaData, &root); err != nil {
+	schemaDecoder := json.NewDecoder(bytes.NewReader(schemaData))
+	schemaDecoder.UseNumber()
+	if err := schemaDecoder.Decode(&root); err != nil {
 		return nil, fmt.Errorf("invalid canonical schema: %w", err)
 	}
 	var doc any
-	if err := json.Unmarshal(payloadData, &doc); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(payloadData))
+	decoder.UseNumber()
+	if err := decoder.Decode(&doc); err != nil {
 		return nil, fmt.Errorf("invalid payload JSON: %w", err)
 	}
 	if !canonicalizeStrictValue(resolveStrictSchemas(root, root, nil), doc, root) {

@@ -41,12 +41,18 @@ var _ engine.Future[*api.ToolOutput] = (*testToolFuture)(nil)
 
 func (p *nestedPlannerStub) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
 	p.iter = 0
-	return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("child1")}, {Name: tools.Ident("child2")}}}, nil
+	return &planner.PlanResult{ToolCalls: []planner.ToolRequest{
+		{Name: tools.Ident("child1"), Payload: rawjson.Message(`{}`)},
+		{Name: tools.Ident("child2"), Payload: rawjson.Message(`{}`)},
+	}}, nil
 }
 func (p *nestedPlannerStub) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
 	p.iter++
 	if p.iter == 1 {
-		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("child3")}}}, nil
+		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+			Name:    tools.Ident("child3"),
+			Payload: rawjson.Message(`{}`),
+		}}}, nil
 	}
 	return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "nested done"}}}}}, nil
 }
@@ -146,6 +152,7 @@ func TestFinishCurrentPlanResult_UsesPlannerFinalToolResult(t *testing.T) {
 		},
 	}
 	st := &runLoopState{
+		ResponseCommitted: true,
 		Result: &planner.PlanResult{
 			FinalToolResult: &planner.FinalToolResult{
 				Result: rawjson.Message([]byte(`{"status":"ok"}`)),
@@ -227,6 +234,7 @@ func TestFinishCurrentPlanResultRejectsDualTerminalOutputs(t *testing.T) {
 		},
 	}
 	st := &runLoopState{
+		ResponseCommitted: true,
 		Result: &planner.PlanResult{
 			FinalResponse: &planner.FinalResponse{
 				Message: &model.Message{
@@ -277,11 +285,25 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscript(t *testing.T) {
 			},
 			Streamed: true,
 		},
+		Transcript: []*model.Message{{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{
+				model.ThinkingPart{
+					Text:      "reasoning",
+					Signature: "sig",
+					Final:     true,
+				},
+				model.TextPart{Text: "done"},
+			},
+		}},
 	}
+	require.NoError(t, rt.appendSelectedModelResponse(ctx, input.AgentID, base, "turn-1", st.Result, st.Transcript))
+	st.ResponseCommitted = true
 
 	out, err := rt.finishCurrentPlanResult(ctx, input, base, st, "turn-1")
 	require.NoError(t, err)
 	require.Equal(t, "done", agentMessageText(out.Final))
+	require.Equal(t, []model.Part{model.TextPart{Text: "done"}}, out.Final.Parts)
 
 	page, err := store.List(ctx, "run-1", "", 10)
 	require.NoError(t, err)
@@ -292,6 +314,7 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscript(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	require.Equal(t, "done", agentMessageText(msgs[0]))
+	require.IsType(t, model.ThinkingPart{}, msgs[0].Parts[0])
 }
 
 func TestFinishCurrentPlanResultAppendsTerminalTranscriptFromCitationsPart(t *testing.T) {
@@ -328,6 +351,8 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscriptFromCitationsPart(t *te
 			Streamed: true,
 		},
 	}
+	require.NoError(t, rt.appendSelectedModelResponse(ctx, input.AgentID, base, "turn-1", st.Result, st.Transcript))
+	st.ResponseCommitted = true
 
 	out, err := rt.finishCurrentPlanResult(ctx, input, base, st, "turn-1")
 	require.NoError(t, err)
@@ -848,14 +873,17 @@ func TestConsecutiveFailureBreaker(t *testing.T) {
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Error: "boom"}}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("fail")}}}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		Name:    tools.Ident("fail"),
+		Payload: rawjson.Message(`{}`),
+	}}}
 	_, err := rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  input.AgentID,
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 		Policy:              RunPolicy{MaxConsecutiveFailedToolCalls: 1},
-	}, input, base, initial, nil, model.TokenUsage{}, initialCaps(RunPolicy{MaxConsecutiveFailedToolCalls: 1}), time.Time{}, time.Time{}, 2, "", nil, nil, 0)
+	}, input, base, initial, initialCaps(RunPolicy{MaxConsecutiveFailedToolCalls: 1}), time.Time{}, time.Time{}, "", nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "consecutive failed tool call cap exceeded")
 }
@@ -1033,13 +1061,16 @@ func TestTimeBudgetExceeded(t *testing.T) {
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("tool")}}}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		Name:    tools.Ident("tool"),
+		Payload: rawjson.Message(`{}`),
+	}}}
 	_, err := rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  input.AgentID,
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, wfCtx.Now().Add(-time.Second), wfCtx.Now().Add(-time.Second), 2, "", nil, nil, 0)
+	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, wfCtx.Now().Add(-time.Second), wfCtx.Now().Add(-time.Second), "", nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "time budget exceeded")
 }
@@ -1229,14 +1260,17 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 	// Parent run requests a single agent-tool invocation
 	parentInput := &RunInput{AgentID: "parent.agent", RunID: "run-parent", SessionID: "session-1", TurnID: "turn-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: parentInput.RunID, SessionID: parentInput.SessionID, TurnID: parentInput.TurnID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: parentInput.AgentID, runID: parentInput.RunID})}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("invoke")}}}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		Name:    tools.Ident("invoke"),
+		Payload: rawjson.Message(`{}`),
+	}}}
 
 	_, err = rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  parentInput.AgentID,
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, parentInput, base, initial, nil, model.TokenUsage{}, policy.CapsState{MaxToolCalls: 3, RemainingToolCalls: 3}, time.Time{}, time.Time{}, 2, parentInput.TurnID, nil, nil, 0)
+	}, parentInput, base, initial, policy.CapsState{MaxToolCalls: 3, RemainingToolCalls: 3}, time.Time{}, time.Time{}, parentInput.TurnID, nil)
 	require.NoError(t, err)
 
 	// Assert ToolCallUpdatedEvent emitted twice with counts 2 then 3 referencing parent tool call id
@@ -1459,16 +1493,11 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 		&input,
 		base,
 		initial,
-		nil,
-		model.TokenUsage{},
 		caps,
 		time.Time{},
 		time.Time{},
-		2,
 		input.TurnID,
 		nil,
-		nil,
-		0,
 	)
 	require.NoError(t, err)
 

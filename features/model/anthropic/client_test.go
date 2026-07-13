@@ -27,6 +27,76 @@ type stubMessagesClient struct {
 	stream *ssestream.Stream[sdk.MessageStreamEventUnion]
 }
 
+func TestTranslateResponsePreservesThinkingInOneAssistantMessage(t *testing.T) {
+	resp, err := translateResponse(&sdk.Message{
+		StopReason: sdk.StopReasonToolUse,
+		Content: []sdk.ContentBlockUnion{
+			{Type: "thinking", Thinking: "reasoning", Signature: "sig"},
+			{Type: "text", Text: "answer"},
+			{Type: "tool_use", ID: "call-1", Name: "lookup", Input: json.RawMessage(`{"id":"a"}`)},
+		},
+	}, map[string]string{"lookup": "svc.lookup"})
+
+	require.NoError(t, err)
+	require.Len(t, resp.Content, 1)
+	require.Equal(t, []model.Part{
+		model.ThinkingPart{Text: "reasoning", Signature: "sig", Final: true},
+		model.TextPart{Text: "answer"},
+		model.ToolUsePart{ID: "call-1", Name: "svc.lookup", Input: rawjson.Message(`{"id":"a"}`)},
+	}, resp.Content[0].Parts)
+}
+
+func TestTranslateResponsePreservesTextCitations(t *testing.T) {
+	resp, err := translateResponse(&sdk.Message{
+		StopReason: sdk.StopReasonEndTurn,
+		Content: []sdk.ContentBlockUnion{{
+			Type: "text",
+			Text: "supported answer",
+			Citations: []sdk.TextCitationUnion{{
+				Type:           "char_location",
+				CitedText:      "source excerpt",
+				DocumentIndex:  2,
+				DocumentTitle:  "Manual",
+				FileID:         "file-1",
+				StartCharIndex: 10,
+				EndCharIndex:   20,
+			}},
+		}},
+	}, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, []model.Part{model.CitationsPart{
+		Text: "supported answer",
+		Citations: []model.Citation{{
+			Title:         "Manual",
+			Source:        "file-1",
+			SourceContent: []string{"source excerpt"},
+			Location: model.CitationLocation{
+				DocumentChar: &model.DocumentCharLocation{
+					DocumentIndex: 2,
+					Start:         10,
+					End:           20,
+				},
+			},
+		}},
+	}}, resp.Content[0].Parts)
+}
+
+func TestTranslateResponsePreservesRedactedThinking(t *testing.T) {
+	resp, err := translateResponse(&sdk.Message{
+		StopReason: sdk.StopReasonEndTurn,
+		Content: []sdk.ContentBlockUnion{{
+			Type: "redacted_thinking",
+			Data: "opaque",
+		}},
+	}, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, []model.Part{
+		model.ThinkingPart{Redacted: []byte("opaque"), Final: true},
+	}, resp.Content[0].Parts)
+}
+
 func (s *stubMessagesClient) New(_ context.Context, body sdk.MessageNewParams, _ ...option.RequestOption) (*sdk.Message, error) {
 	s.lastParams = body
 	return s.resp, s.err
@@ -161,10 +231,10 @@ func TestComplete_ToolUse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	if len(resp.ToolCalls) != 1 {
-		t.Fatalf("expected 1 tool call, got %d", len(resp.ToolCalls))
+	if len(resp.ToolCalls()) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(resp.ToolCalls()))
 	}
-	call := resp.ToolCalls[0]
+	call := resp.ToolCalls()[0]
 	if string(call.Name) != "test.tool" {
 		t.Fatalf("unexpected tool name %q", call.Name)
 	}
@@ -276,6 +346,15 @@ func TestEncodeTools_UsesSchemaWithoutRootExampleAndInputExamples(t *testing.T) 
 	if _, ok := tools[0].OfTool.InputSchema.ExtraFields["example"]; ok {
 		t.Fatalf("plain schema should not include root example: %#v", tools[0].OfTool.InputSchema.ExtraFields)
 	}
+}
+
+func TestToolInputSchemaPreservesLargeIntegers(t *testing.T) {
+	schema, err := toolInputSchema(
+		context.Background(),
+		rawjson.Message(`{"type":"integer","const":9007199254740993}`),
+	)
+	require.NoError(t, err)
+	require.Equal(t, json.Number("9007199254740993"), schema.ExtraFields["const"])
 }
 
 func toolInputExampleSpec() tools.TypeSpec {

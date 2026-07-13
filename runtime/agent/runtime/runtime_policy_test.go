@@ -12,6 +12,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
@@ -38,30 +39,27 @@ func restrictedFinalPlanResult(text string) *planner.PlanResult {
 	}
 }
 
-func TestPolicyAllowlistTrimsToolExecution(t *testing.T) {
+func TestPolicyAllowlistRewritesDeniedCalls(t *testing.T) {
 	recorder := &recordingHooks{}
 	allowedSpec := newAnyJSONSpec("allowed", "svc.tools")
 	blockedSpec := newAnyJSONSpec("blocked", "svc.tools")
-	rt := &Runtime{
-		Bus:                recorder,
-		Policy:             &stubPolicyEngine{decision: policy.Decision{AllowedTools: []tools.Ident{tools.Ident("allowed")}}},
-		logger:             telemetry.NoopLogger{},
-		metrics:            telemetry.NoopMetrics{},
-		tracer:             telemetry.NoopTracer{},
-		RunEventStore:      runloginmem.New(),
-		policyToolMetadata: canonicalMetadataMap(allowedSpec, blockedSpec),
+	rt := New()
+	rt.Bus = recorder
+	rt.Policy = &stubPolicyEngine{decision: policy.Decision{AllowedTools: []tools.Ident{tools.Ident("allowed")}}}
+	rt.RunEventStore = runloginmem.New()
+	for name, metadata := range canonicalMetadataMap(allowedSpec, blockedSpec) {
+		rt.policyToolMetadata[name] = metadata
 	}
-	rt.toolsets = map[string]ToolsetRegistration{"svc.tools": {
+	rt.toolsets["svc.tools"] = ToolsetRegistration{
 		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name:   call.Name,
 				Result: map[string]any{"ok": true},
 			}, nil
-		})}}
-	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
-		"allowed": allowedSpec,
-		"blocked": blockedSpec,
+		}),
 	}
+	rt.toolSpecs["allowed"] = allowedSpec
+	rt.toolSpecs["blocked"] = blockedSpec
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		hookRuntime: rt,
@@ -78,23 +76,49 @@ func TestPolicyAllowlistTrimsToolExecution(t *testing.T) {
 	}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tools.Ident("allowed")}, {Name: tools.Ident("blocked")}}}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{
+		{Name: tools.Ident("allowed"), Payload: rawjson.Message(`{}`)},
+		{Name: tools.Ident("blocked"), Payload: rawjson.Message(`{}`)},
+	}}
 	out, err := rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  input.AgentID,
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{MaxToolCalls: 5, RemainingToolCalls: 5}, time.Time{}, time.Time{}, 2, "turn-1", nil, nil, 0)
+	}, input, base, initial, policy.CapsState{MaxToolCalls: 5, RemainingToolCalls: 5}, time.Time{}, time.Time{}, "turn-1", nil)
 	require.NoError(t, err)
-	require.Len(t, out.ToolEvents, 1)
+	require.Len(t, out.ToolEvents, 2)
 	require.Equal(t, tools.Ident("allowed"), out.ToolEvents[0].Name)
+	require.Equal(t, tools.ToolUnavailable, out.ToolEvents[1].Name)
 	var scheduled []tools.Ident
 	for _, evt := range recorder.events {
 		if e, ok := evt.(*hooks.ToolCallScheduledEvent); ok {
 			scheduled = append(scheduled, e.ToolName)
 		}
 	}
-	require.Equal(t, []tools.Ident{tools.Ident("allowed")}, scheduled)
+	require.Equal(t, []tools.Ident{tools.Ident("allowed"), tools.ToolUnavailable}, scheduled)
+}
+
+func TestRewriteToolCallUnavailablePreservesCompiledModelIdentity(t *testing.T) {
+	rt := New()
+	call := planner.ToolRequest{
+		ToolCallID:   "call-1",
+		Name:         "service.execute",
+		Payload:      []byte(`{"compiled":true}`),
+		ModelName:    "planner.resolve",
+		ModelPayload: []byte(`{"scope":"all"}`),
+	}
+
+	rewritten, err := rt.rewriteToolCallUnavailable(call)
+
+	require.NoError(t, err)
+	require.Equal(t, tools.ToolUnavailable, rewritten.Name)
+	require.Equal(t, tools.Ident("planner.resolve"), rewritten.ModelName)
+	require.JSONEq(t, `{"scope":"all"}`, string(rewritten.ModelPayload))
+	var payload toolUnavailablePayload
+	require.NoError(t, json.Unmarshal(rewritten.Payload, &payload))
+	require.Equal(t, "planner.resolve", payload.RequestedTool)
+	require.JSONEq(t, `{"scope":"all"}`, string(payload.RequestedPayload))
 }
 
 func TestRestrictedRunToolCapFinalizes(t *testing.T) {
@@ -124,17 +148,20 @@ func TestRestrictedRunToolCapFinalizes(t *testing.T) {
 		RunContext: run.Context{RunID: input.RunID},
 		Agent:      newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID}),
 	}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: toolSpec.Name}}}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		Name:    toolSpec.Name,
+		Payload: rawjson.Message(`{}`),
+	}}}
 
 	out, err := rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  input.AgentID,
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{
+	}, input, base, initial, policy.CapsState{
 		MaxToolCalls:       1,
 		RemainingToolCalls: 0,
-	}, time.Time{}, time.Time{}, 2, "turn-1", nil, nil, 0)
+	}, time.Time{}, time.Time{}, "turn-1", nil)
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.NotNil(t, out.Final)
@@ -177,19 +204,22 @@ func TestRestrictedRunFailureCapFinalizes(t *testing.T) {
 		RunContext: run.Context{RunID: input.RunID},
 		Agent:      newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID}),
 	}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: toolSpec.Name}}}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		Name:    toolSpec.Name,
+		Payload: rawjson.Message(`{}`),
+	}}}
 
 	out, err := rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  input.AgentID,
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{
+	}, input, base, initial, policy.CapsState{
 		MaxToolCalls:                        5,
 		RemainingToolCalls:                  5,
 		MaxConsecutiveFailedToolCalls:       1,
 		RemainingConsecutiveFailedToolCalls: 1,
-	}, time.Time{}, time.Time{}, 2, "turn-1", nil, nil, 0)
+	}, time.Time{}, time.Time{}, "turn-1", nil)
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.NotNil(t, out.Final)
@@ -218,19 +248,22 @@ func TestRestrictedUnknownToolReachesFailureCap(t *testing.T) {
 		RunContext: run.Context{RunID: input.RunID},
 		Agent:      newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID}),
 	}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: "svc.tools.missing"}}}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		Name:    "svc.tools.missing",
+		Payload: rawjson.Message(`{}`),
+	}}}
 
 	out, err := rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  input.AgentID,
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, nil, model.TokenUsage{}, policy.CapsState{
+	}, input, base, initial, policy.CapsState{
 		MaxToolCalls:                        5,
 		RemainingToolCalls:                  5,
 		MaxConsecutiveFailedToolCalls:       1,
 		RemainingConsecutiveFailedToolCalls: 1,
-	}, time.Time{}, time.Time{}, 2, "turn-1", nil, nil, 0)
+	}, time.Time{}, time.Time{}, "turn-1", nil)
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.NotNil(t, out.Final)
@@ -268,8 +301,8 @@ func TestApplyPerRunOverridesUsesAllTagClauses(t *testing.T) {
 		context.Background(),
 		&RunInput{
 			Policy: &PolicyOverrides{
-				AllowedTags: []string{"system"},
 				TagClauses: []TagPolicyClause{
+					{AllowedAny: []string{"system"}},
 					{AllowedAny: []string{"profile"}},
 					{DeniedAny: []string{"blocked"}},
 				},
@@ -286,6 +319,8 @@ func TestApplyPerRunOverridesUsesAllTagClauses(t *testing.T) {
 	require.Equal(t, tools.Ident("visible"), rewritten[0].Name)
 	require.Equal(t, tools.ToolUnavailable, rewritten[1].Name)
 	require.Equal(t, tools.ToolUnavailable, rewritten[2].Name)
+	require.Equal(t, tools.Ident("missing"), rewritten[1].ModelName)
+	require.Equal(t, tools.Ident("denied"), rewritten[2].ModelName)
 	require.JSONEq(t, `{"requested_tool":"missing"}`, string(rewritten[1].Payload))
 	require.JSONEq(t, `{"requested_tool":"denied"}`, string(rewritten[2].Payload))
 

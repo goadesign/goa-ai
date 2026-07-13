@@ -121,8 +121,9 @@ func (r *Runtime) executeGroupedToolCalls(
 	return out, timedOutAny, nil
 }
 
-// appendUserToolRecordResults appends a user message with planner-facing
-// tool_result blocks in canonical step-record order.
+// appendUserToolRecordResults appends every provider-correlated tool_result in
+// canonical step-record order. Bookkeeping affects resume decisions, never
+// provider transcript fidelity.
 //
 // If any visible tool result has a ResultReminder configured in its spec, a
 // system message with the reminder text is appended after the tool results to
@@ -134,10 +135,6 @@ func (r *Runtime) appendUserToolRecordResults(
 	records []stepToolRecord,
 	turnID string,
 ) error {
-	records, err := r.filterPlannerFacingToolRecords(records)
-	if err != nil {
-		return err
-	}
 	if len(records) == 0 {
 		return nil
 	}
@@ -201,54 +198,18 @@ func (r *Runtime) appendUserToolRecordResults(
 	return r.appendTranscriptMessages(ctx, agentID, base, turnID, messages)
 }
 
-// filterPlannerFacingToolCalls returns the subset of tool calls that are
-// definitely visible before execution.
-//
-// Successful bookkeeping calls remain hidden from future planner turns.
-// Retryable bookkeeping failures are appended later, after execution reveals the
-// RetryHint-bearing result that must be replayed for repair.
-func (r *Runtime) filterPlannerFacingToolCalls(calls []planner.ToolRequest) []planner.ToolRequest {
-	if len(calls) == 0 {
-		return nil
-	}
-	filtered := make([]planner.ToolRequest, 0, len(calls))
-	for _, call := range calls {
-		if r.isBookkeeping(call.Name) {
-			continue
-		}
-		filtered = append(filtered, call)
-	}
-	return filtered
-}
-
-// filterRetryableBookkeepingToolRecords returns bookkeeping records that become
-// planner-facing only after execution produced a retryable failure.
-func (r *Runtime) filterRetryableBookkeepingToolRecords(records []stepToolRecord) ([]stepToolRecord, error) {
-	plannerFacingRecords, err := r.filterPlannerFacingToolRecords(records)
-	if err != nil {
-		return nil, err
-	}
-	filtered := make([]stepToolRecord, 0, len(plannerFacingRecords))
-	for _, record := range plannerFacingRecords {
-		if r.isBookkeeping(record.call.Name) {
-			filtered = append(filtered, record)
-		}
-	}
-	return filtered, nil
-}
-
-// filterPlannerFacingToolRecords returns the subset of paired step records that
-// remain visible to future planner turns.
-func (r *Runtime) filterPlannerFacingToolRecords(records []stepToolRecord) ([]stepToolRecord, error) {
+// filterResumeRequiredToolRecords returns records whose results require another
+// planner turn. All records remain in the provider transcript.
+func (r *Runtime) filterResumeRequiredToolRecords(records []stepToolRecord) ([]stepToolRecord, error) {
 	if len(records) == 0 {
 		return nil, nil
 	}
 	filtered := make([]stepToolRecord, 0, len(records))
 	for _, record := range records {
-		if err := validateStepToolRecord("filter planner-facing tool records", record); err != nil {
+		if err := validateStepToolRecord("filter resume-required tool records", record); err != nil {
 			return nil, err
 		}
-		if !r.plannerFacingToolResult(record.call, record.result) {
+		if !r.toolResultRequiresResume(record.call, record.result) {
 			continue
 		}
 		filtered = append(filtered, record)
@@ -276,9 +237,9 @@ func validateStepToolRecord(context string, record stepToolRecord) error {
 	return nil
 }
 
-// plannerFacingToolResult reports whether the executed result must be replayed
-// into a future planner turn.
-func (r *Runtime) plannerFacingToolResult(call planner.ToolRequest, result *planner.ToolResult) bool {
+// toolResultRequiresResume reports whether an executed result requires another
+// planner turn.
+func (r *Runtime) toolResultRequiresResume(call planner.ToolRequest, result *planner.ToolResult) bool {
 	if !r.isBookkeeping(call.Name) {
 		return true
 	}
@@ -381,7 +342,10 @@ func (r *Runtime) buildNextResumeRequest(
 	attempt := *nextAttempt
 	resumeCtx := base.RunContext
 	resumeCtx.Attempt = attempt
-	plannerMsgs := cloneMessages(base.Messages)
+	plannerMsgs, err := model.CloneMessages(base.Messages)
+	if err != nil {
+		return PlanActivityInput{}, err
+	}
 	if err := transcript.ValidatePlannerTranscript(plannerMsgs); err != nil {
 		return PlanActivityInput{}, fmt.Errorf("invalid resume transcript for run %s: %w", base.RunContext.RunID, err)
 	}

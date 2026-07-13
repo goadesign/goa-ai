@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"reflect"
 	"strings"
 
 	"github.com/openai/openai-go/packages/param"
@@ -17,12 +18,12 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
-	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 const (
-	openAIOutputItemMetaKey     = "openai_output_item"
-	openAIReasoningItemsMetaKey = "openai_reasoning_items"
+	openAIOutputItemMetaKey       = "openai_output_item"
+	openAIFunctionCallItemMetaKey = "openai_function_call_item"
+	openAIReasoningItemsMetaKey   = "openai_reasoning_items"
 )
 
 func encodeMessages(msgs []*model.Message, canonicalToProvider map[string]string) (responses.ResponseInputParam, error) {
@@ -90,11 +91,7 @@ func encodeUserMessage(msg *model.Message, sequence int) ([]responses.ResponseIn
 				},
 			})
 		case model.CitationsPart:
-			content = append(content, responses.ResponseInputContentUnionParam{
-				OfInputText: &responses.ResponseInputTextParam{
-					Text: actual.Text,
-				},
-			})
+			return nil, errors.New("openai: replaying canonical citations without provider output metadata is not supported")
 		case model.ImagePart:
 			item, err := encodeImageContent(actual)
 			if err != nil {
@@ -139,11 +136,20 @@ func encodeAssistantMessage(
 	if err != nil {
 		return nil, err
 	}
+	reusedFunctionCall, err := decodeFunctionCallMeta(msg.Meta)
+	if err != nil {
+		return nil, err
+	}
+	if reusedOutput != nil && reusedFunctionCall != nil {
+		return nil, errors.New("openai: assistant message cannot carry output and function-call metadata")
+	}
 	var (
 		reasoningParts []model.ThinkingPart
+		visibleParts   []model.Part
 		visibleText    strings.Builder
 		toolUses       []model.ToolUsePart
 		sawToolUse     bool
+		sawCitations   bool
 	)
 	for _, part := range msg.Parts {
 		switch actual := part.(type) {
@@ -152,11 +158,14 @@ func encodeAssistantMessage(
 				return nil, errors.New("openai: assistant text after tool_use is not representable")
 			}
 			visibleText.WriteString(actual.Text)
+			visibleParts = append(visibleParts, actual)
 		case model.CitationsPart:
 			if sawToolUse {
 				return nil, errors.New("openai: assistant text after tool_use is not representable")
 			}
 			visibleText.WriteString(actual.Text)
+			visibleParts = append(visibleParts, actual)
+			sawCitations = true
 		case model.ThinkingPart:
 			reasoningParts = append(reasoningParts, actual)
 		case model.ToolUsePart:
@@ -178,20 +187,20 @@ func encodeAssistantMessage(
 			})
 		}
 	} else if len(reasoningParts) > 0 {
-		item, ok, err := synthesizeReasoningItem(reasoningParts, sequence)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			out = append(out, item)
-		}
+		return nil, errors.New("openai: thinking replay requires provider reasoning metadata")
 	}
 
 	if reusedOutput != nil {
+		if err := validateOutputMessageAgreement(msg.Meta, visibleParts); err != nil {
+			return nil, err
+		}
 		out = append(out, responses.ResponseInputItemUnionParam{
 			OfOutputMessage: reusedOutput,
 		})
 	} else if visibleText.Len() > 0 {
+		if sawCitations {
+			return nil, errors.New("openai: replaying canonical citations requires provider output metadata")
+		}
 		out = append(out, responses.ResponseInputItemUnionParam{
 			OfOutputMessage: &responses.ResponseOutputMessageParam{
 				ID:     syntheticID("assistant_message", sequence, 0),
@@ -205,6 +214,18 @@ func encodeAssistantMessage(
 		})
 	}
 
+	if reusedFunctionCall != nil {
+		if len(toolUses) != 1 {
+			return nil, errors.New("openai: function-call metadata requires exactly one tool_use part")
+		}
+		if err := validateFunctionCallAgreement(*reusedFunctionCall, toolUses[0], canonicalToProvider); err != nil {
+			return nil, err
+		}
+		out = append(out, responses.ResponseInputItemUnionParam{
+			OfFunctionCall: reusedFunctionCall,
+		})
+		toolUses = nil
+	}
 	for index, part := range toolUses {
 		call, err := encodeToolUse(part, canonicalToProvider, sequence, index)
 		if err != nil {
@@ -227,7 +248,7 @@ func collectTextParts(role string, parts []model.Part) (string, error) {
 		case model.TextPart:
 			text.WriteString(actual.Text)
 		case model.CitationsPart:
-			text.WriteString(actual.Text)
+			return "", fmt.Errorf("openai: replaying canonical citations in %s messages is not supported", role)
 		case model.CacheCheckpointPart:
 			return "", errors.New("openai: cache checkpoints are not supported")
 		case model.ThinkingPart:
@@ -340,21 +361,16 @@ func encodeToolUse(
 	}
 	providerName, ok := canonicalToProvider[part.Name]
 	if !ok {
-		requestedTool := part.Name
-		requestedPayload := part.Input
-		unavailable := tools.ToolUnavailable.String()
-		providerName, ok = canonicalToProvider[unavailable]
-		if !ok || providerName == "" {
-			return responses.ResponseFunctionToolCallParam{}, fmt.Errorf(
-				"openai: tool_use references %q which is not in the current tool configuration and tool_unavailable is not available",
-				part.Name,
-			)
+		for canonical, provider := range canonicalToProvider {
+			if provider == part.Name {
+				return responses.ResponseFunctionToolCallParam{}, fmt.Errorf(
+					"openai: historical provider tool name %q collides with current tool %q",
+					part.Name,
+					canonical,
+				)
+			}
 		}
-		part.Input = map[string]any{
-			"requested_tool":    requestedTool,
-			"requested_payload": requestedPayload,
-		}
-		part.Name = unavailable
+		providerName = part.Name
 	}
 	payload, err := marshalToolInput(part.Input)
 	if err != nil {
@@ -444,38 +460,11 @@ func encodeToolResultContent(content any) (string, error) {
 	}
 }
 
-func synthesizeReasoningItem(
-	parts []model.ThinkingPart,
-	sequence int,
-) (responses.ResponseInputItemUnionParam, bool, error) {
-	summary := make([]responses.ResponseReasoningItemSummaryParam, 0, len(parts))
-	for _, part := range parts {
-		if part.Signature != "" || len(part.Redacted) > 0 {
-			return responses.ResponseInputItemUnionParam{}, false, errors.New(
-				"openai: thinking replay requires provider reasoning metadata",
-			)
-		}
-		if part.Text == "" {
-			continue
-		}
-		summary = append(summary, responses.ResponseReasoningItemSummaryParam{
-			Text: part.Text,
-		})
-	}
-	if len(summary) == 0 {
-		return responses.ResponseInputItemUnionParam{}, false, nil
-	}
-	return responses.ResponseInputItemUnionParam{
-		OfReasoning: &responses.ResponseReasoningItemParam{
-			ID:      syntheticID("reasoning", sequence, 0),
-			Status:  responses.ResponseReasoningItemStatusCompleted,
-			Summary: summary,
-		},
-	}, true, nil
-}
-
 func decodeOutputMessageMeta(meta map[string]any) (*responses.ResponseOutputMessageParam, error) {
-	raw := metaString(meta, openAIOutputItemMetaKey)
+	raw, err := metaString(meta, openAIOutputItemMetaKey)
+	if err != nil {
+		return nil, err
+	}
 	if raw == "" {
 		return nil, nil
 	}
@@ -486,8 +475,64 @@ func decodeOutputMessageMeta(meta map[string]any) (*responses.ResponseOutputMess
 	return &item, nil
 }
 
+func decodeFunctionCallMeta(meta map[string]any) (*responses.ResponseFunctionToolCallParam, error) {
+	raw, err := metaString(meta, openAIFunctionCallItemMetaKey)
+	if err != nil {
+		return nil, err
+	}
+	if raw == "" {
+		return nil, nil
+	}
+	var item responses.ResponseFunctionToolCallParam
+	if err := json.Unmarshal([]byte(raw), &item); err != nil {
+		return nil, fmt.Errorf("openai: invalid function-call metadata: %w", err)
+	}
+	return &item, nil
+}
+
+// validateOutputMessageAgreement rejects replay when canonical visible parts
+// diverge from the provider output item retained for lossless replay.
+func validateOutputMessageAgreement(meta map[string]any, visibleParts []model.Part) error {
+	raw, err := metaString(meta, openAIOutputItemMetaKey)
+	if err != nil {
+		return err
+	}
+	var output responses.ResponseOutputMessage
+	if err := json.Unmarshal([]byte(raw), &output); err != nil {
+		return fmt.Errorf("openai: invalid assistant output metadata: %w", err)
+	}
+	translated, err := translateAssistantMessage(output, nil, nil)
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(translated.Parts, visibleParts) {
+		return errors.New("openai: assistant parts diverged from provider output metadata")
+	}
+	return nil
+}
+
+// validateFunctionCallAgreement rejects replay when a canonical tool use
+// diverges from its provider-authored function-call envelope.
+func validateFunctionCallAgreement(
+	item responses.ResponseFunctionToolCallParam,
+	part model.ToolUsePart,
+	canonicalToProvider map[string]string,
+) error {
+	providerName, ok := canonicalToProvider[part.Name]
+	if !ok {
+		providerName = part.Name
+	}
+	if item.CallID != part.ID || item.Name != providerName || item.Arguments != string(part.Input) {
+		return errors.New("openai: tool_use diverged from provider function-call metadata")
+	}
+	return nil
+}
+
 func decodeReasoningItemsMeta(meta map[string]any) ([]responses.ResponseReasoningItemParam, error) {
-	rawItems := metaStrings(meta, openAIReasoningItemsMetaKey)
+	rawItems, err := metaStrings(meta, openAIReasoningItemsMetaKey)
+	if err != nil {
+		return nil, err
+	}
 	if len(rawItems) == 0 {
 		return nil, nil
 	}
@@ -502,45 +547,45 @@ func decodeReasoningItemsMeta(meta map[string]any) ([]responses.ResponseReasonin
 	return items, nil
 }
 
-func metaString(meta map[string]any, key string) string {
+func metaString(meta map[string]any, key string) (string, error) {
 	if meta == nil {
-		return ""
+		return "", nil
 	}
 	value, ok := meta[key]
 	if !ok {
-		return ""
+		return "", nil
 	}
 	if text, ok := value.(string); ok {
-		return text
+		return text, nil
 	}
-	return ""
+	return "", fmt.Errorf("openai: metadata %q must be a string, got %T", key, value)
 }
 
-func metaStrings(meta map[string]any, key string) []string {
+func metaStrings(meta map[string]any, key string) ([]string, error) {
 	if meta == nil {
-		return nil
+		return nil, nil
 	}
 	value, ok := meta[key]
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	switch actual := value.(type) {
 	case string:
-		return []string{actual}
+		return []string{actual}, nil
 	case []string:
-		return append([]string(nil), actual...)
+		return append([]string(nil), actual...), nil
 	case []any:
 		out := make([]string, 0, len(actual))
-		for _, item := range actual {
+		for index, item := range actual {
 			text, ok := item.(string)
 			if !ok {
-				return nil
+				return nil, fmt.Errorf("openai: metadata %q item %d must be a string, got %T", key, index, item)
 			}
 			out = append(out, text)
 		}
-		return out
+		return out, nil
 	default:
-		return nil
+		return nil, fmt.Errorf("openai: metadata %q must be a string array, got %T", key, value)
 	}
 }
 
@@ -548,48 +593,9 @@ func syntheticID(prefix string, sequence int, index int) string {
 	return fmt.Sprintf("%s_%d_%d", prefix, sequence, index)
 }
 
-func marshalToolInput(input any) (string, error) {
-	switch actual := input.(type) {
-	case nil:
-		return "{}", nil
-	case string:
-		if strings.TrimSpace(actual) == "" {
-			return "{}", nil
-		}
-		if !json.Valid([]byte(actual)) {
-			return "", errors.New("tool input is not valid JSON")
-		}
-		return actual, nil
-	case []byte:
-		if len(strings.TrimSpace(string(actual))) == 0 {
-			return "{}", nil
-		}
-		if !json.Valid(actual) {
-			return "", errors.New("tool input is not valid JSON")
-		}
-		return string(actual), nil
-	case json.RawMessage:
-		if len(actual) == 0 {
-			return "{}", nil
-		}
-		if !json.Valid(actual) {
-			return "", errors.New("tool input is not valid JSON")
-		}
-		return string(actual), nil
-	case rawjson.Message:
-		data := []byte(actual)
-		if len(data) == 0 {
-			return "{}", nil
-		}
-		if !json.Valid(data) {
-			return "", errors.New("tool input is not valid JSON")
-		}
-		return string(data), nil
-	default:
-		data, err := json.Marshal(actual)
-		if err != nil {
-			return "", err
-		}
-		return string(data), nil
+func marshalToolInput(input rawjson.Message) (string, error) {
+	if !json.Valid(input) {
+		return "", errors.New("tool input is not valid JSON")
 	}
+	return string(input), nil
 }

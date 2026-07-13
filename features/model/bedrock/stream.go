@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 
@@ -33,6 +34,7 @@ type bedrockStreamer struct {
 
 	metaMu      sync.RWMutex
 	metadata    map[string]any
+	response    *model.Response
 	toolNameMap map[string]string
 	modelID     string
 	modelClass  model.ModelClass
@@ -70,25 +72,31 @@ func (s *bedrockStreamer) Recv() (model.Chunk, error) {
 		}
 		if err := s.err(); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return model.Chunk{}, err
+				return nil, err
 			}
 			s.setErr(err)
-			return model.Chunk{}, err
+			return nil, err
 		}
-		return model.Chunk{}, io.EOF
+		return nil, io.EOF
 	case <-s.ctx.Done():
 		err := s.ctx.Err()
 		if err == nil {
 			err = context.Canceled
 		}
 		s.setErr(err)
-		return model.Chunk{}, err
+		return nil, err
 	}
 }
 
 func (s *bedrockStreamer) Close() error {
 	s.cancel()
 	return s.stream.Close()
+}
+
+func (s *bedrockStreamer) Response() *model.Response {
+	s.metaMu.RLock()
+	defer s.metaMu.RUnlock()
+	return s.response
 }
 
 func (s *bedrockStreamer) Metadata() map[string]any {
@@ -134,8 +142,19 @@ func (s *bedrockStreamer) run() {
 					s.setErr(wrapBedrockError("converse_stream.recv", err))
 				} else if err := s.ctx.Err(); err != nil {
 					s.setErr(err)
+				} else if !processor.complete {
+					s.setErr(errors.New("bedrock: stream ended before message stop"))
+				} else if err := processor.finishStream(); err != nil {
+					s.setErr(err)
 				} else {
-					s.setErr(nil)
+					response := processor.response()
+					if err := model.ValidateResponse(response); err != nil {
+						s.setErr(fmt.Errorf("bedrock: invalid streamed response: %w", err))
+						return
+					}
+					s.metaMu.Lock()
+					s.response = response
+					s.metaMu.Unlock()
 				}
 				return
 			}
@@ -208,11 +227,20 @@ type chunkProcessor struct {
 	completion *completionBuffer
 	// reasoningBlocks accumulates reasoning content per content index until stop.
 	reasoningBlocks map[int]*reasoningBuffer
+	textBlocks      map[int]*strings.Builder
+	citationBlocks  map[int][]model.Citation
+	canonicalParts  map[int]model.Part
+	openBlocks      map[int]struct{}
 
 	toolNameMap map[string]string
 	modelID     string
 	modelClass  model.ModelClass
 	output      *model.StructuredOutput
+
+	canonical       model.Response
+	started         bool
+	complete        bool
+	terminalEmitted bool
 }
 
 func newChunkProcessor(
@@ -230,6 +258,10 @@ func newChunkProcessor(
 		recordCites:     recordCites,
 		toolBlocks:      make(map[int]*toolBuffer),
 		reasoningBlocks: make(map[int]*reasoningBuffer),
+		textBlocks:      make(map[int]*strings.Builder),
+		citationBlocks:  make(map[int][]model.Citation),
+		canonicalParts:  make(map[int]model.Part),
+		openBlocks:      make(map[int]struct{}),
 		toolNameMap:     nameMap,
 		modelID:         modelID,
 		modelClass:      modelClass,
@@ -240,14 +272,33 @@ func newChunkProcessor(
 func (p *chunkProcessor) Handle(event any) error {
 	switch ev := event.(type) {
 	case *brtypes.ConverseStreamOutputMemberMessageStart:
+		if p.started {
+			return errors.New("bedrock stream: duplicate message start")
+		}
 		p.toolBlocks = make(map[int]*toolBuffer)
+		p.reasoningBlocks = make(map[int]*reasoningBuffer)
+		p.textBlocks = make(map[int]*strings.Builder)
+		p.citationBlocks = make(map[int][]model.Citation)
+		p.canonicalParts = make(map[int]model.Part)
+		p.openBlocks = make(map[int]struct{})
 		p.completion = nil
+		p.canonical = model.Response{}
+		p.started = true
+		p.complete = false
+		p.terminalEmitted = false
 		return nil
 	case *brtypes.ConverseStreamOutputMemberContentBlockStart:
+		if !p.started || p.complete {
+			return errors.New("bedrock stream: content block started outside an active message")
+		}
 		idx, err := contentIndex(ev.Value.ContentBlockIndex)
 		if err != nil {
 			return err
 		}
+		if _, ok := p.openBlocks[idx]; ok {
+			return fmt.Errorf("bedrock stream: duplicate content block start %d", idx)
+		}
+		p.openBlocks[idx] = struct{}{}
 		if start := ev.Value.Start; start != nil {
 			if toolUse, ok := start.(*brtypes.ContentBlockStartMemberToolUse); ok {
 				if p.output != nil {
@@ -281,38 +332,50 @@ func (p *chunkProcessor) Handle(event any) error {
 				p.toolBlocks[idx] = tb
 				return nil
 			}
+			return fmt.Errorf("bedrock stream: unsupported content block start %T", start)
 		}
 		return nil
 	case *brtypes.ConverseStreamOutputMemberContentBlockDelta:
+		if !p.started || p.complete {
+			return errors.New("bedrock stream: content block delta received outside an active message")
+		}
 		idx, err := contentIndex(ev.Value.ContentBlockIndex)
 		if err != nil {
 			return err
+		}
+		if _, ok := p.openBlocks[idx]; !ok {
+			return fmt.Errorf("bedrock stream: content block delta %d has no matching start", idx)
 		}
 		switch delta := ev.Value.Delta.(type) {
 		case *brtypes.ContentBlockDeltaMemberText:
 			if delta.Value == "" {
 				return nil
 			}
+			buffer := p.textBlocks[idx]
+			if buffer == nil {
+				buffer = &strings.Builder{}
+				p.textBlocks[idx] = buffer
+			}
+			buffer.WriteString(delta.Value)
 			if p.output != nil {
 				return p.handleCompletionDelta(idx, delta.Value)
 			}
-			return p.emit(model.Chunk{
-				Type: model.ChunkTypeText,
-				Message: &model.Message{
+			return p.emit(model.TextChunk{
+				Message: model.Message{
 					Role:  "assistant",
 					Parts: []model.Part{model.TextPart{Text: delta.Value}},
 					Meta:  map[string]any{"content_index": idx},
 				},
 			})
 		case *brtypes.ContentBlockDeltaMemberCitation:
-			if p.recordCites == nil {
-				return nil
+			citation, err := translateCitationDelta(delta.Value)
+			if err != nil {
+				return err
 			}
-			citation := translateCitationDelta(delta.Value)
-			if citation.Title == "" && citation.Source == "" && citation.Location == (model.CitationLocation{}) && len(citation.SourceContent) == 0 {
-				return nil
+			p.citationBlocks[idx] = append(p.citationBlocks[idx], citation)
+			if p.recordCites != nil {
+				p.recordCites([]model.Citation{citation})
 			}
-			p.recordCites([]model.Citation{citation})
 			return nil
 		case *brtypes.ContentBlockDeltaMemberReasoningContent:
 			// Initialize/lookup buffer for this content index.
@@ -329,10 +392,8 @@ func (p *chunkProcessor) Handle(event any) error {
 				}
 				rb.text.WriteString(v.Value)
 				// Stream incremental thinking text for UX; final part is emitted on stop.
-				return p.emit(model.Chunk{
-					Type:     model.ChunkTypeThinking,
-					Thinking: v.Value,
-					Message: &model.Message{
+				return p.emit(model.ThinkingChunk{
+					Message: model.Message{
 						Role: "assistant",
 						Parts: []model.Part{model.ThinkingPart{
 							Text:  v.Value,
@@ -352,7 +413,7 @@ func (p *chunkProcessor) Handle(event any) error {
 				}
 				return nil
 			default:
-				return nil
+				return fmt.Errorf("bedrock stream: unsupported reasoning content delta %T", delta.Value)
 			}
 		case *brtypes.ContentBlockDeltaMemberToolUse:
 			if p.output != nil {
@@ -370,37 +431,48 @@ func (p *chunkProcessor) Handle(event any) error {
 				if tb.name == "" {
 					return fmt.Errorf("bedrock stream: tool JSON delta missing tool name for id %q", tb.id)
 				}
-				return p.emit(model.Chunk{
-					Type: model.ChunkTypeToolCallDelta,
-					ToolCallDelta: &model.ToolCallDelta{
+				return p.emit(model.ToolCallDeltaChunk{
+					Delta: model.ToolCallDelta{
 						Name:  tools.Ident(tb.name),
 						ID:    tb.id,
 						Delta: fragment,
 					},
 				})
 			}
-			return nil
+			return fmt.Errorf("bedrock stream: tool-use delta %d has no matching tool-use start", idx)
+		default:
+			return fmt.Errorf("bedrock stream: unsupported content block delta %T", delta)
 		}
 	case *brtypes.ConverseStreamOutputMemberContentBlockStop:
+		if !p.started || p.complete {
+			return errors.New("bedrock stream: content block stopped outside an active message")
+		}
 		idx, err := contentIndex(ev.Value.ContentBlockIndex)
 		if err != nil {
 			return err
 		}
+		if _, ok := p.openBlocks[idx]; !ok {
+			return fmt.Errorf("bedrock stream: content block stop %d has no matching start", idx)
+		}
+		delete(p.openBlocks, idx)
 		if err := p.finalizeCompletion(idx); err != nil {
 			return err
 		}
 		// Finalize any reasoning block accumulated for this index.
 		if rb := p.reasoningBlocks[idx]; rb != nil {
 			delete(p.reasoningBlocks, idx)
-			if part := rb.finalize(); part != nil {
+			part, err := rb.finalize()
+			if err != nil {
+				return fmt.Errorf("bedrock stream: finalize reasoning block %d: %w", idx, err)
+			}
+			if part != nil {
 				part.Index = idx
 				part.Final = true
+				p.canonicalParts[idx] = *part
 				if part.Text != "" {
 					// Emit final plaintext thinking with signature preserved.
-					if err := p.emit(model.Chunk{
-						Type:     model.ChunkTypeThinking,
-						Thinking: part.Text,
-						Message: &model.Message{
+					if err := p.emit(model.ThinkingChunk{
+						Message: model.Message{
 							Role:  "assistant",
 							Parts: []model.Part{*part},
 						},
@@ -409,9 +481,8 @@ func (p *chunkProcessor) Handle(event any) error {
 					}
 				} else if len(part.Redacted) > 0 {
 					// Emit final redacted thinking.
-					if err := p.emit(model.Chunk{
-						Type: model.ChunkTypeThinking,
-						Message: &model.Message{
+					if err := p.emit(model.ThinkingChunk{
+						Message: model.Message{
 							Role:  "assistant",
 							Parts: []model.Part{*part},
 						},
@@ -422,30 +493,55 @@ func (p *chunkProcessor) Handle(event any) error {
 			}
 		}
 		if tb := p.toolBlocks[idx]; tb != nil {
-			payload := decodeToolPayload(tb.finalInput())
+			payload, err := decodeToolPayload(tb.finalInput())
+			if err != nil {
+				return fmt.Errorf("bedrock stream: finalize tool payload %q: %w", tb.id, err)
+			}
 			delete(p.toolBlocks, idx)
-			return p.emit(model.Chunk{
-				Type: model.ChunkTypeToolCall,
-				ToolCall: &model.ToolCall{
-					Name:    tools.Ident(tb.name),
-					Payload: payload,
-					ID:      tb.id,
-				},
+			call := model.ToolCall{
+				Name:    tools.Ident(tb.name),
+				Payload: payload,
+				ID:      tb.id,
+			}
+			p.canonicalParts[idx] = model.ToolUsePart{
+				Name:  string(call.Name),
+				Input: call.Payload,
+				ID:    call.ID,
+			}
+			return p.emit(model.ToolCallChunk{
+				ToolCall: call,
 			})
+		}
+		if text := p.textBlocks[idx]; text != nil && p.output == nil {
+			if citations := p.citationBlocks[idx]; len(citations) > 0 {
+				p.canonicalParts[idx] = model.CitationsPart{
+					Text:      text.String(),
+					Citations: append([]model.Citation(nil), citations...),
+				}
+			} else {
+				p.canonicalParts[idx] = model.TextPart{Text: text.String()}
+			}
 		}
 		return nil
 	case *brtypes.ConverseStreamOutputMemberMessageStop:
-		chunk := model.Chunk{Type: model.ChunkTypeStop}
-		if ev.Value.StopReason != "" {
-			chunk.StopReason = string(ev.Value.StopReason)
+		if !p.started || p.complete {
+			return errors.New("bedrock stream: message stop received without an active message")
 		}
-		p.toolBlocks = make(map[int]*toolBuffer)
-		p.reasoningBlocks = make(map[int]*reasoningBuffer)
-		p.completion = nil
-		return p.emit(chunk)
+		if len(p.openBlocks) > 0 {
+			return fmt.Errorf("bedrock stream: message stopped with %d open content blocks", len(p.openBlocks))
+		}
+		if ev.Value.StopReason == "" {
+			return errors.New("bedrock stream: message stopped without a stop reason")
+		}
+		p.canonical.StopReason = string(ev.Value.StopReason)
+		p.complete = true
+		return nil
 	case *brtypes.ConverseStreamOutputMemberMetadata:
+		if !p.started || !p.complete || p.terminalEmitted {
+			return errors.New("bedrock stream: metadata received outside a completed message")
+		}
 		if ev.Value.Usage == nil {
-			return nil
+			return p.finishStream()
 		}
 		// Compute ints efficiently with direct nil checks (avoid helper + double cast)
 		var in, out, tot, cacheRead, cacheWrite int
@@ -476,9 +572,49 @@ func (p *chunkProcessor) Handle(event any) error {
 		if p.recordUsage != nil {
 			p.recordUsage(usage)
 		}
-		return p.emit(model.Chunk{Type: model.ChunkTypeUsage, UsageDelta: &usage})
+		p.canonical.Usage = usage
+		if err := p.emit(model.UsageChunk{Usage: usage}); err != nil {
+			return err
+		}
+		return p.finishStream()
+	default:
+		return fmt.Errorf("bedrock stream: unsupported event %T", event)
 	}
-	return nil
+}
+
+// response returns the canonical provider response assembled from the completed
+// stream. The provider event loop calls it only after message stop.
+func (p *chunkProcessor) response() *model.Response {
+	response := p.canonical
+	if len(p.canonicalParts) > 0 {
+		indices := make([]int, 0, len(p.canonicalParts))
+		for index := range p.canonicalParts {
+			indices = append(indices, index)
+		}
+		slices.Sort(indices)
+		parts := make([]model.Part, 0, len(indices))
+		for _, index := range indices {
+			parts = append(parts, p.canonicalParts[index])
+		}
+		response.Content = []model.Message{{
+			Role:  model.ConversationRoleAssistant,
+			Parts: parts,
+		}}
+	}
+	return &response
+}
+
+// finishStream emits the terminal stop after all provider metadata so no
+// presentation or accounting chunk can follow the stop boundary.
+func (p *chunkProcessor) finishStream() error {
+	if p.terminalEmitted {
+		return nil
+	}
+	if !p.complete || p.canonical.StopReason == "" {
+		return errors.New("bedrock stream: cannot finish before message stop")
+	}
+	p.terminalEmitted = true
+	return p.emit(model.StopChunk{Reason: p.canonical.StopReason})
 }
 
 type toolBuffer struct {
@@ -546,9 +682,8 @@ func (p *chunkProcessor) handleCompletionDelta(idx int, delta string) error {
 		)
 	}
 	p.completion.fragments = append(p.completion.fragments, delta)
-	return p.emit(model.Chunk{
-		Type: model.ChunkTypeCompletionDelta,
-		CompletionDelta: &model.CompletionDelta{
+	return p.emit(model.CompletionDeltaChunk{
+		Delta: model.CompletionDelta{
 			Name:  p.completion.name,
 			Delta: delta,
 		},
@@ -567,9 +702,9 @@ func (p *chunkProcessor) finalizeCompletion(idx int) error {
 	}
 	completion := p.completion
 	p.completion = nil
-	return p.emit(model.Chunk{
-		Type: model.ChunkTypeCompletion,
-		Completion: &model.Completion{
+	p.canonicalParts[idx] = model.TextPart{Text: string(payload)}
+	return p.emit(model.CompletionChunk{
+		Completion: model.Completion{
 			Name:    completion.name,
 			Payload: payload,
 		},
@@ -583,24 +718,25 @@ func contentIndex(idx *int32) (int, error) {
 	return int(*idx), nil
 }
 
-func decodeToolPayload(raw string) rawjson.Message {
+func decodeToolPayload(raw string) (rawjson.Message, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return rawjson.Message([]byte("{}"))
+		return rawjson.Message([]byte("{}")), nil
 	}
 	data := []byte(trimmed)
 	if !json.Valid(data) {
-		// Tool payload fragments come from a model stream boundary and can be
-		// truncated when the provider stops on max_tokens. Return an empty object
-		// so tool schema validation can produce a structured tool error.
-		return rawjson.Message([]byte("{}"))
+		return nil, errors.New("tool payload is not valid JSON")
 	}
-	return rawjson.Message(data)
+	return rawjson.Message(data), nil
 }
 
-func translateCitationDelta(delta brtypes.CitationsDelta) model.Citation {
+func translateCitationDelta(delta brtypes.CitationsDelta) (model.Citation, error) {
+	location, err := translateCitationLocationDelta(delta.Location)
+	if err != nil {
+		return model.Citation{}, err
+	}
 	out := model.Citation{
-		Location:      translateCitationLocationDelta(delta.Location),
+		Location:      location,
 		SourceContent: translateCitationSourceContentDelta(delta.SourceContent),
 	}
 	if delta.Title != nil {
@@ -609,10 +745,10 @@ func translateCitationDelta(delta brtypes.CitationsDelta) model.Citation {
 	if delta.Source != nil {
 		out.Source = *delta.Source
 	}
-	return out
+	return out, nil
 }
 
-func translateCitationLocationDelta(loc brtypes.CitationLocation) model.CitationLocation {
+func translateCitationLocationDelta(loc brtypes.CitationLocation) (model.CitationLocation, error) {
 	switch v := loc.(type) {
 	case *brtypes.CitationLocationMemberDocumentChar:
 		return model.CitationLocation{
@@ -621,7 +757,7 @@ func translateCitationLocationDelta(loc brtypes.CitationLocation) model.Citation
 				Start:         int32Value(v.Value.Start),
 				End:           int32Value(v.Value.End),
 			},
-		}
+		}, nil
 	case *brtypes.CitationLocationMemberDocumentChunk:
 		return model.CitationLocation{
 			DocumentChunk: &model.DocumentChunkLocation{
@@ -629,7 +765,7 @@ func translateCitationLocationDelta(loc brtypes.CitationLocation) model.Citation
 				Start:         int32Value(v.Value.Start),
 				End:           int32Value(v.Value.End),
 			},
-		}
+		}, nil
 	case *brtypes.CitationLocationMemberDocumentPage:
 		return model.CitationLocation{
 			DocumentPage: &model.DocumentPageLocation{
@@ -637,9 +773,9 @@ func translateCitationLocationDelta(loc brtypes.CitationLocation) model.Citation
 				Start:         int32Value(v.Value.Start),
 				End:           int32Value(v.Value.End),
 			},
-		}
+		}, nil
 	default:
-		return model.CitationLocation{}
+		return model.CitationLocation{}, fmt.Errorf("bedrock stream: unsupported citation location %T", loc)
 	}
 }
 
@@ -679,16 +815,25 @@ type reasoningBuffer struct {
 	signature string
 }
 
-func (rb *reasoningBuffer) finalize() *model.ThinkingPart {
-	// Prefer redacted variant when present.
+func (rb *reasoningBuffer) finalize() (*model.ThinkingPart, error) {
+	text := rb.text.String()
 	if len(rb.redacted) > 0 {
-		return &model.ThinkingPart{Redacted: append([]byte(nil), rb.redacted...)}
-	}
-	if s := rb.text.String(); s != "" && rb.signature != "" {
-		return &model.ThinkingPart{
-			Text:      s,
-			Signature: rb.signature,
+		if text != "" || rb.signature != "" {
+			return nil, errors.New("reasoning block contains both redacted and plaintext content")
 		}
+		return &model.ThinkingPart{Redacted: append([]byte(nil), rb.redacted...)}, nil
 	}
-	return nil
+	if text == "" && rb.signature == "" {
+		return nil, nil
+	}
+	if text == "" {
+		return nil, errors.New("reasoning signature is missing plaintext content")
+	}
+	if rb.signature == "" {
+		return nil, errors.New("reasoning plaintext is missing provider signature")
+	}
+	return &model.ThinkingPart{
+		Text:      text,
+		Signature: rb.signature,
+	}, nil
 }

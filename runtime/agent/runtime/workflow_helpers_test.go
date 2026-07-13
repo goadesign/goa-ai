@@ -2,13 +2,12 @@ package runtime
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
-	"goa.design/goa-ai/runtime/agent/memory"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -23,17 +22,6 @@ func appendUserToolResultsForTest(t *testing.T, rt *Runtime, agentID agent.Ident
 	require.NoError(t, rt.appendUserToolRecordResults(t.Context(), agentID, base, records, ""))
 }
 
-func appendRetryableBookkeepingToolUsesForTest(t *testing.T, rt *Runtime, agentID agent.Ident, base *planner.PlanInput, calls []planner.ToolRequest, results []*planner.ToolResult) {
-	t.Helper()
-	appendRetryableBookkeepingToolUsesWithSignaturesForTest(t, rt, agentID, base, calls, results, nil)
-}
-
-func appendRetryableBookkeepingToolUsesWithSignaturesForTest(t *testing.T, rt *Runtime, agentID agent.Ident, base *planner.PlanInput, calls []planner.ToolRequest, results []*planner.ToolResult, signatures map[string]string) {
-	t.Helper()
-	records := stepToolRecordsForTest(t, calls, results)
-	require.NoError(t, rt.appendRetryableBookkeepingToolUses(t.Context(), agentID, base, records, signatures, ""))
-}
-
 func stepToolRecordsForTest(t *testing.T, calls []planner.ToolRequest, results []*planner.ToolResult) []stepToolRecord {
 	t.Helper()
 	records, err := stepToolRecordsFromCallsAndResults("test step tool records", calls, results)
@@ -41,147 +29,119 @@ func stepToolRecordsForTest(t *testing.T, calls []planner.ToolRequest, results [
 	return records
 }
 
-func TestRecordAssistantTurnRebuildsToolUsesFromPlannerFacingCalls(t *testing.T) {
+// stepToolRecordsFromCallsAndResults pairs test fixtures by canonical tool-call
+// identity so tests can exercise runtime record consumers directly.
+func stepToolRecordsFromCallsAndResults(context string, calls []planner.ToolRequest, results []*planner.ToolResult) ([]stepToolRecord, error) {
+	if len(calls) == 0 && len(results) == 0 {
+		return nil, nil
+	}
+	if len(calls) != len(results) {
+		return nil, fmt.Errorf("%s: calls/results length mismatch (%d != %d)", context, len(calls), len(results))
+	}
+
+	resultsByToolCallID := make(map[string]*planner.ToolResult, len(results))
+	for _, result := range results {
+		if result == nil {
+			return nil, fmt.Errorf("%s: nil tool result", context)
+		}
+		if result.ToolCallID == "" {
+			return nil, fmt.Errorf("%s: missing result tool_call_id for %s", context, result.Name)
+		}
+		if _, exists := resultsByToolCallID[result.ToolCallID]; exists {
+			return nil, fmt.Errorf("%s: duplicate result tool_call_id %s", context, result.ToolCallID)
+		}
+		resultsByToolCallID[result.ToolCallID] = result
+	}
+
+	records := make([]stepToolRecord, 0, len(calls))
+	for _, call := range calls {
+		if call.ToolCallID == "" {
+			return nil, fmt.Errorf("%s: missing call tool_call_id for %s", context, call.Name)
+		}
+		result, ok := resultsByToolCallID[call.ToolCallID]
+		if !ok {
+			return nil, fmt.Errorf("%s: missing result for tool_call_id %s", context, call.ToolCallID)
+		}
+		if result.Name != "" && result.Name != call.Name {
+			return nil, fmt.Errorf("%s: result name %s does not match call %s", context, result.Name, call.Name)
+		}
+		records = append(records, stepToolRecord{
+			call:   call,
+			result: result,
+		})
+	}
+	return records, nil
+}
+
+func TestStepToolRecordsFromExecutionsRestoresCanonicalCallOrder(t *testing.T) {
+	calls := []planner.ToolRequest{
+		{Name: "svc.first", ToolCallID: "call-1"},
+		{Name: "svc.second", ToolCallID: "call-2"},
+		{Name: "svc.third", ToolCallID: "call-3"},
+	}
+	outcomes := []*ToolExecutionResult{
+		{ToolResult: &planner.ToolResult{Name: "svc.first", ToolCallID: "call-1"}},
+		{ToolResult: &planner.ToolResult{Name: "svc.third", ToolCallID: "call-3"}},
+		{ToolResult: &planner.ToolResult{Name: "svc.second", ToolCallID: "call-2"}},
+	}
+
+	records, err := stepToolRecordsFromExecutions(calls, outcomes)
+	require.NoError(t, err)
+	require.Equal(t, "call-1", records[0].result.ToolCallID)
+	require.Equal(t, "call-2", records[1].result.ToolCallID)
+	require.Equal(t, "call-3", records[2].result.ToolCallID)
+}
+
+func TestCommitSelectedModelResponsePreservesCanonicalParts(t *testing.T) {
 	rt := New()
-	seedTestToolSpecs(
-		rt,
-		newAnyJSONSpec("svc.tools.read", "svc.tools"),
-		func() tools.ToolSpec {
-			spec := newAnyJSONSpec("tasks.progress.update", "tasks.progress")
-			spec.Bookkeeping = true
-			return spec
-		}(),
-	)
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
-	transcriptMsgs := []*model.Message{{
+	transcript := []*model.Message{{
 		Role: model.ConversationRoleAssistant,
 		Parts: []model.Part{
-			model.TextPart{Text: "Working."},
-			model.ToolUsePart{ID: "provider-budgeted", Name: "svc.tools.read", Input: rawjson.Message(`{"q":"old"}`)},
-			model.ToolUsePart{ID: "provider-bookkeeping", Name: "tasks.progress.update", Input: rawjson.Message(`{"ok":true}`)},
+			model.ThinkingPart{Text: "reasoning", Signature: "sig", Final: true},
+			model.CitationsPart{Text: "answer", Citations: []model.Citation{{Title: "source"}}},
+			model.ToolUsePart{
+				ID:               "call-1",
+				Name:             "svc.lookup",
+				Input:            rawjson.Message(`{"q":"status"}`),
+				ThoughtSignature: "tool-sig",
+			},
 		},
 	}}
-	calls := []planner.ToolRequest{
-		{Name: "svc.tools.read", ToolCallID: "runtime-budgeted", Payload: rawjson.Message(`{"q":"new"}`)},
-		{Name: "tasks.progress.update", ToolCallID: "runtime-bookkeeping", Payload: rawjson.Message(`{"ok":true}`)},
-	}
 
-	require.NoError(t, rt.recordAssistantTurn(t.Context(), agentID, base, transcriptMsgs, calls, nil, "turn-1"))
+	require.NoError(t, rt.appendSelectedModelResponse(
+		t.Context(),
+		agentID,
+		base,
+		"turn-1",
+		&planner.PlanResult{},
+		transcript,
+	))
 
-	require.Len(t, base.Messages, 1)
-	require.Equal(t, model.ConversationRoleAssistant, base.Messages[0].Role)
-	require.Len(t, base.Messages[0].Parts, 2)
-	text, ok := base.Messages[0].Parts[0].(model.TextPart)
-	require.True(t, ok)
-	require.Equal(t, "Working.", text.Text)
-	use, ok := base.Messages[0].Parts[1].(model.ToolUsePart)
-	require.True(t, ok)
-	require.Equal(t, "runtime-budgeted", use.ID)
-	require.Equal(t, "svc.tools.read", use.Name)
-	require.Equal(t, rawjson.Message(`{"q":"new"}`), use.Input)
+	require.Equal(t, transcript, base.Messages)
 }
 
-// TestRecordAssistantTurnAttachesToolCallSignatureByID is the lookup-side
-// counterpart to signature capture: recordAssistantTurn must attach a
-// captured thought signature to the rebuilt ToolUsePart by ToolCallID lookup,
-// never by reading a signature field off planner.ToolRequest (which has none).
-func TestRecordAssistantTurnAttachesToolCallSignatureByID(t *testing.T) {
+func TestCommitSelectedModelResponseBuildsPlannerAuthoredModelIdentity(t *testing.T) {
 	rt := New()
-	seedTestToolSpecs(rt, newAnyJSONSpec("svc.tools.read", "svc.tools"))
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
-	calls := []planner.ToolRequest{
-		{
-			Name:       "svc.tools.read",
-			ToolCallID: "runtime-1",
-			Payload:    rawjson.Message(`{"q":"new"}`),
-		},
-	}
-	signatures := map[string]string{"runtime-1": "opaque-provider-signature"}
-
-	require.NoError(t, rt.recordAssistantTurn(t.Context(), agentID, base, nil, calls, signatures, "turn-1"))
-
-	require.Len(t, base.Messages, 1)
-	require.Len(t, base.Messages[0].Parts, 1)
-	use, ok := base.Messages[0].Parts[0].(model.ToolUsePart)
-	require.True(t, ok)
-	require.Equal(t, "opaque-provider-signature", use.ThoughtSignature)
-}
-
-// TestRecordAssistantTurnLeavesSignatureEmptyWhenUncaptured verifies the
-// "missing key means absent" contract: a tool call with no entry in the
-// signatures map (or a nil map) must record an empty ThoughtSignature rather
-// than panicking or fabricating a value.
-func TestRecordAssistantTurnLeavesSignatureEmptyWhenUncaptured(t *testing.T) {
-	rt := New()
-	seedTestToolSpecs(rt, newAnyJSONSpec("svc.tools.read", "svc.tools"))
-	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
-	agentID := agent.Ident("agent-1")
-	calls := []planner.ToolRequest{
-		{
-			Name:       "svc.tools.read",
-			ToolCallID: "runtime-1",
-			Payload:    rawjson.Message(`{"q":"new"}`),
-		},
-	}
-
-	require.NoError(t, rt.recordAssistantTurn(t.Context(), agentID, base, nil, calls, nil, "turn-1"))
-
-	require.Len(t, base.Messages, 1)
-	require.Len(t, base.Messages[0].Parts, 1)
-	use, ok := base.Messages[0].Parts[0].(model.ToolUsePart)
-	require.True(t, ok)
-	require.Empty(t, use.ThoughtSignature)
-}
-
-func TestRecordAssistantTurnUsesModelFacingToolIdentityForCompiledCalls(t *testing.T) {
-	rt := New()
-	seedTestToolSpecs(rt, newAnyJSONSpec("atlas.read.get_time_series", "atlas.read"))
-	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
-	agentID := agent.Ident("agent-1")
-	calls := []planner.ToolRequest{{
+	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
 		Name:         "atlas.read.get_time_series",
-		Payload:      rawjson.Message(`{"mode":"chart","sources":[{"id":"source-1"}]}`),
+		Payload:      rawjson.Message(`{"mode":"chart"}`),
 		ModelName:    "fetch_chart_signal_series",
-		ModelPayload: rawjson.Message(`{"from":"2026-06-12T00:00:00Z","to":"2026-06-13T00:00:00Z"}`),
+		ModelPayload: rawjson.Message(`{"from":"2026-06-12T00:00:00Z"}`),
 		ToolCallID:   "tooluse_1",
-	}}
+	}}}
 
-	require.NoError(t, rt.recordAssistantTurn(t.Context(), agentID, base, nil, calls, nil, "turn-1"))
+	require.NoError(t, rt.appendSelectedModelResponse(t.Context(), agentID, base, "turn-1", result, nil))
 
 	require.Len(t, base.Messages, 1)
-	require.Equal(t, model.ConversationRoleAssistant, base.Messages[0].Role)
-	require.Len(t, base.Messages[0].Parts, 1)
-	use, ok := base.Messages[0].Parts[0].(model.ToolUsePart)
-	require.True(t, ok)
-	require.Equal(t, "tooluse_1", use.ID)
-	require.Equal(t, "fetch_chart_signal_series", use.Name)
-	require.Equal(t, rawjson.Message(`{"from":"2026-06-12T00:00:00Z","to":"2026-06-13T00:00:00Z"}`), use.Input)
-}
-
-func TestRecordAssistantTurnDropsBookkeepingOnlyProviderToolUse(t *testing.T) {
-	rt := New()
-	bookkeeping := newAnyJSONSpec("tasks.progress.update", "tasks.progress")
-	bookkeeping.Bookkeeping = true
-	seedTestToolSpecs(rt, bookkeeping)
-	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
-	agentID := agent.Ident("agent-1")
-	transcriptMsgs := []*model.Message{{
-		Role: model.ConversationRoleAssistant,
-		Parts: []model.Part{
-			model.ToolUsePart{ID: "provider-bookkeeping", Name: "tasks.progress.update", Input: rawjson.Message(`{"ok":true}`)},
-		},
-	}}
-	calls := []planner.ToolRequest{{
-		Name:       "tasks.progress.update",
-		ToolCallID: "runtime-bookkeeping",
-		Payload:    rawjson.Message(`{"ok":true}`),
-	}}
-
-	require.NoError(t, rt.recordAssistantTurn(t.Context(), agentID, base, transcriptMsgs, calls, nil, "turn-1"))
-
-	require.Empty(t, base.Messages)
+	require.Equal(t, []model.Part{model.ToolUsePart{
+		ID:    "tooluse_1",
+		Name:  "fetch_chart_signal_series",
+		Input: rawjson.Message(`{"from":"2026-06-12T00:00:00Z"}`),
+	}}, base.Messages[0].Parts)
 }
 
 func TestAppendUserToolResults_IncludesErrorInToolResultContent(t *testing.T) {
@@ -319,30 +279,14 @@ func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
 			}
 			preview, err := formatToolResultPreviewForCall(t.Context(), rt, &call, tc.tr)
 			require.NoError(t, err)
-			replayed := transcript.BuildMessagesFromEvents([]memory.Event{
-				memory.NewEvent(time.Now(), memory.AssistantMessageData{
-					Message: "calling tool",
-				}, nil),
-				memory.NewEvent(time.Now(), memory.ToolCallData{
-					ToolCallID:  call.ToolCallID,
-					ToolName:    call.Name,
-					PayloadJSON: rawjson.Message(`{"x":1}`),
-				}, nil),
-				memory.NewEvent(time.Now(), memory.ToolResultData{
-					ToolCallID:   call.ToolCallID,
-					ToolName:     call.Name,
-					ResultJSON:   rawjson.Message(resultJSON),
-					Preview:      preview,
-					Bounds:       tc.tr.Bounds,
-					ErrorMessage: errorMessage,
-				}, nil),
-			})
-			require.Len(t, replayed, 2)
-
-			replayPart, ok := replayed[1].Parts[0].(model.ToolResultPart)
-			require.True(t, ok)
-			require.Equal(t, livePart.IsError, replayPart.IsError)
-			require.Equal(t, livePart.Content, replayPart.Content)
+			replayContent, err := transcript.ProjectToolResultContent(
+				rawjson.Message(resultJSON),
+				tc.tr.Bounds,
+				preview,
+				errorMessage,
+			)
+			require.NoError(t, err)
+			require.Equal(t, livePart.Content, replayContent)
 		})
 	}
 }
@@ -425,7 +369,7 @@ func TestAppendUserToolResults_AppendsRetryHintReminderAfterToolResults(t *testi
 	require.Contains(t, txt.Text, "finish the run through its normal completion path")
 }
 
-func TestAppendUserToolResults_SkipsBookkeepingResults(t *testing.T) {
+func TestAppendUserToolResultsPreservesBookkeepingResults(t *testing.T) {
 	rt := New()
 	seedTestToolSpecs(
 		rt,
@@ -459,55 +403,14 @@ func TestAppendUserToolResults_SkipsBookkeepingResults(t *testing.T) {
 	appendUserToolResultsForTest(t, rt, agentID, base, calls, results)
 	require.Len(t, base.Messages, 1)
 	require.Equal(t, model.ConversationRoleUser, base.Messages[0].Role)
-	require.Len(t, base.Messages[0].Parts, 1)
+	require.Len(t, base.Messages[0].Parts, 2)
 
 	part, ok := base.Messages[0].Parts[0].(model.ToolResultPart)
 	require.True(t, ok)
 	require.Equal(t, "call-1", part.ToolUseID)
-}
-
-// TestAppendRetryableBookkeepingToolUsesAttachesToolCallSignatureByID is the
-// lookup-side counterpart to signature capture for the retryable-bookkeeping
-// path: the rebuilt ToolUsePart must get its signature from an ID lookup
-// against the captured signatures map, not from planner.ToolRequest.
-func TestAppendRetryableBookkeepingToolUsesAttachesToolCallSignatureByID(t *testing.T) {
-	rt := New()
-	seedTestToolSpecs(
-		rt,
-		func() tools.ToolSpec {
-			spec := newAnyJSONSpec("tasks.progress.complete", "tasks.progress")
-			spec.Bookkeeping = true
-			spec.TerminalRun = true
-			return spec
-		}(),
-	)
-	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
-	agentID := agent.Ident("agent-1")
-
-	call := planner.ToolRequest{
-		Name:       "tasks.progress.complete",
-		ToolCallID: "call-1",
-		Payload:    rawjson.Message(`{"title":"Final brief"}`),
-	}
-	tr := &planner.ToolResult{
-		Name:       call.Name,
-		ToolCallID: call.ToolCallID,
-		Error:      planner.NewToolError("brief.summary length must be <= 600"),
-		RetryHint: &planner.RetryHint{
-			Reason:             planner.RetryReasonInvalidArguments,
-			Tool:               call.Name,
-			ClarifyingQuestion: "Please resend tasks.progress.complete with a payload that satisfies: brief.summary length must be <= 600.",
-		},
-	}
-	signatures := map[string]string{"call-1": "opaque-provider-signature"}
-
-	appendRetryableBookkeepingToolUsesWithSignaturesForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr}, signatures)
-
-	require.Len(t, base.Messages, 1)
-	require.Equal(t, model.ConversationRoleAssistant, base.Messages[0].Role)
-	use, ok := base.Messages[0].Parts[0].(model.ToolUsePart)
+	bookkeeping, ok := base.Messages[0].Parts[1].(model.ToolResultPart)
 	require.True(t, ok)
-	require.Equal(t, "opaque-provider-signature", use.ThoughtSignature)
+	require.Equal(t, "call-2", bookkeeping.ToolUseID)
 }
 
 func TestAppendUserToolResults_ReplaysRetryableBookkeepingFailures(t *testing.T) {
@@ -540,7 +443,22 @@ func TestAppendUserToolResults_ReplaysRetryableBookkeepingFailures(t *testing.T)
 		},
 	}
 
-	appendRetryableBookkeepingToolUsesForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr})
+	require.NoError(t, rt.appendSelectedModelResponse(
+		t.Context(),
+		agentID,
+		base,
+		"",
+		&planner.PlanResult{ToolCalls: []planner.ToolRequest{call}},
+		[]*model.Message{{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{model.ToolUsePart{
+				ID:               "call-1",
+				Name:             string(call.Name),
+				Input:            call.Payload,
+				ThoughtSignature: "opaque-provider-signature",
+			}},
+		}},
+	))
 	appendUserToolResultsForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr})
 
 	require.Len(t, base.Messages, 3)
@@ -551,6 +469,7 @@ func TestAppendUserToolResults_ReplaysRetryableBookkeepingFailures(t *testing.T)
 	usePart, ok := base.Messages[0].Parts[0].(model.ToolUsePart)
 	require.True(t, ok)
 	require.Equal(t, "call-1", usePart.ID)
+	require.Equal(t, "opaque-provider-signature", usePart.ThoughtSignature)
 
 	resultPart, ok := base.Messages[1].Parts[0].(model.ToolResultPart)
 	require.True(t, ok)

@@ -6,7 +6,8 @@ package runtime
 // Contract:
 // - Per-run overrides are applied first using the same compiled predicate used to
 //   advertise tools to planners.
-// - Runtime policy decisions can further filter calls and update caps.
+// - Runtime policy decisions rewrite denied calls to tool_unavailable so one
+//   provider response remains an atomic transcript unit.
 
 import (
 	"context"
@@ -17,6 +18,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 // applyPerRunOverrides rewrites policy-denied tool calls to the runtime-owned
@@ -35,10 +37,6 @@ func (r *Runtime) applyPerRunOverrides(ctx context.Context, input *RunInput, can
 		"Applying per-run policy overrides",
 		"restrict_to_tool",
 		input.Policy.RestrictToTool,
-		"allowed_tags",
-		input.Policy.AllowedTags,
-		"denied_tags",
-		input.Policy.DeniedTags,
 		"tag_clauses",
 		len(input.Policy.TagClauses),
 	)
@@ -96,7 +94,10 @@ func (r *Runtime) applyRuntimePolicy(
 	}
 	allowed := candidates
 	if len(decision.AllowedTools) > 0 {
-		allowed = filterToolCalls(allowed, decision.AllowedTools)
+		allowed, err = r.rewritePolicyDeniedToolCalls(allowed, decision.AllowedTools)
+		if err != nil {
+			return nil, caps, err
+		}
 	}
 	caps = mergeCaps(caps, decision.Caps)
 	if err := r.publishHook(
@@ -117,33 +118,50 @@ func (r *Runtime) applyRuntimePolicy(
 	return allowed, caps, nil
 }
 
-// capAllowedCalls applies the run-level MaxToolCalls budget to the allowed set.
+// rewritePolicyDeniedToolCalls preserves one provider response atomically by
+// converting denied calls into runtime-owned tool_unavailable executions.
+func (r *Runtime) rewritePolicyDeniedToolCalls(calls []planner.ToolRequest, allowed []tools.Ident) ([]planner.ToolRequest, error) {
+	allow := make(map[tools.Ident]struct{}, len(allowed))
+	for _, name := range allowed {
+		allow[name] = struct{}{}
+	}
+	out := make([]planner.ToolRequest, len(calls))
+	for i, call := range calls {
+		if call.Name == tools.ToolUnavailable {
+			out[i] = call
+			continue
+		}
+		if _, ok := allow[call.Name]; ok {
+			out[i] = call
+			continue
+		}
+		rewritten, err := r.rewriteToolCallUnavailable(call)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = rewritten
+	}
+	return out, nil
+}
+
+// admitToolBatch checks one atomic model tool-call response against the
+// run-level MaxToolCalls budget.
 //
 // The run-level MaxToolCalls budget applies to budgeted (non-bookkeeping) tools
-// only: bookkeeping calls never consume the budget and are never dropped by
-// this cap. When the budgeted subsequence exceeds the remaining budget, only
-// the overflow is discarded; bookkeeping calls retain their original position.
-// The returned budget cost counts only the kept budgeted calls.
-func (r *Runtime) capAllowedCalls(allowed []planner.ToolRequest, caps policy.CapsState) ([]planner.ToolRequest, int) {
+// only. The response is admitted whole when every budgeted call fits and
+// rejected whole otherwise; provider responses are never partially edited.
+func (r *Runtime) admitToolBatch(calls []planner.ToolRequest, caps policy.CapsState) (int, bool) {
 	remaining := caps.RemainingToolCalls
 	if remaining < 0 {
 		panic(fmt.Sprintf("runtime: negative remaining tool calls: %d", remaining))
 	}
-	enforceCap := caps.MaxToolCalls > 0
-	out := make([]planner.ToolRequest, 0, len(allowed))
 	budgetCost := 0
-	for _, call := range allowed {
-		if r.isBookkeeping(call.Name) {
-			out = append(out, call)
-			continue
+	for _, call := range calls {
+		if !r.isBookkeeping(call.Name) {
+			budgetCost++
 		}
-		if enforceCap && budgetCost >= remaining {
-			continue
-		}
-		out = append(out, call)
-		budgetCost++
 	}
-	return out, budgetCost
+	return budgetCost, caps.MaxToolCalls <= 0 || budgetCost <= remaining
 }
 
 // prepareAllowedCallsMetadata stamps run/session/turn IDs and deterministic tool

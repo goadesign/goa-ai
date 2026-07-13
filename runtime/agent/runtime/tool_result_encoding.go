@@ -72,7 +72,7 @@ func projectBoundedToolResultJSON(spec tools.ToolSpec, raw json.RawMessage, boun
 	case len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")):
 		projected = make(map[string]any)
 	default:
-		if err := json.Unmarshal(trimmed, &projected); err != nil {
+		if err := rawjson.Unmarshal(trimmed, &projected); err != nil {
 			return nil, fmt.Errorf("decode bounded tool result JSON: %w", err)
 		}
 		if projected == nil {

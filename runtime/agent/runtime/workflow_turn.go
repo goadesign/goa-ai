@@ -56,32 +56,18 @@ func (l *workflowLoop) executeToolStep(program stepProgram, batch *stepBatch) ([
 		return nil, nil, errors.New("no tools allowed for execution")
 	}
 
-	l.r.logger.Info(ctx, "Executing allowed tool calls", "count", len(allowed))
-	if l.parentTracker != nil {
-		ids := collectToolCallIDs(allowed)
-		if len(ids) > 0 && l.parentTracker.registerDiscovered(ids) {
-			if l.base.RunContext.ParentRunID == "" || l.base.RunContext.ParentAgentID == "" {
-				return nil, nil, errors.New("nested run is missing parent run context")
-			}
-			if err := l.r.publishHook(
-				ctx,
-				hooks.NewToolCallUpdatedEvent(
-					l.base.RunContext.ParentRunID,
-					l.base.RunContext.ParentAgentID,
-					l.base.RunContext.SessionID,
-					l.parentTracker.parentToolCallID,
-					l.parentTracker.currentTotal(),
-				),
-				l.turnID,
-			); err != nil {
-				return nil, nil, err
-			}
-			l.parentTracker.markUpdated()
+	budgetCost, admitted := l.r.admitToolBatch(allowed, l.st.Caps)
+	if !admitted {
+		for _, call := range allowed {
+			batch.records = append(batch.records, stepToolRecord{
+				call: call,
+				result: &planner.ToolResult{
+					Name:       call.Name,
+					ToolCallID: call.ToolCallID,
+					Error:      planner.NewToolError("tool call was not executed because the run tool-call cap was exhausted"),
+				},
+			})
 		}
-	}
-
-	allowed, budgetCost := l.r.capAllowedCalls(allowed, l.st.Caps)
-	if len(allowed) == 0 {
 		batch.finalize = &stepFinalization{
 			reason:     planner.TerminationReasonToolCap,
 			skippedErr: "tool cap finalization skipped without hard deadline",
@@ -89,7 +75,6 @@ func (l *workflowLoop) executeToolStep(program stepProgram, batch *stepBatch) ([
 		return nil, nil, nil
 	}
 	batch.budgetCost += budgetCost
-	allowed = l.r.prepareAllowedCallsMetadata(l.input.AgentID, l.base, allowed, l.parentTracker)
 	if program.kind == stepKindToolTerminal {
 		if err := l.r.validateToolTerminalProgram(allowed); err != nil {
 			return nil, nil, err
@@ -106,10 +91,30 @@ func (l *workflowLoop) executeToolStep(program stepProgram, batch *stepBatch) ([
 	if program.kind == stepKindToolTerminal && len(confirmations) > 0 {
 		return nil, nil, errors.New("workflow step terminal payload cannot accompany confirmation-gated tools")
 	}
-	if err := l.r.recordAssistantTurn(ctx, l.input.AgentID, l.base, l.st.Transcript, allowed, l.st.ToolCallSignatures, l.turnID); err != nil {
-		return nil, nil, err
+	if l.parentTracker != nil &&
+		(l.base.RunContext.ParentRunID == "" || l.base.RunContext.ParentAgentID == "") {
+		return nil, nil, errors.New("nested run is missing parent run context")
 	}
-
+	l.r.logger.Info(ctx, "Executing allowed tool calls", "count", len(allowed))
+	if l.parentTracker != nil {
+		ids := collectToolCallIDs(allowed)
+		if len(ids) > 0 && l.parentTracker.registerDiscovered(ids) {
+			if err := l.r.publishHook(
+				ctx,
+				hooks.NewToolCallUpdatedEvent(
+					l.base.RunContext.ParentRunID,
+					l.base.RunContext.ParentAgentID,
+					l.base.RunContext.SessionID,
+					l.parentTracker.parentToolCallID,
+					l.parentTracker.currentTotal(),
+				),
+				l.turnID,
+			); err != nil {
+				return nil, nil, err
+			}
+			l.parentTracker.markUpdated()
+		}
+	}
 	grouped, timeouts := l.r.groupToolCallsByTimeout(toExecute, l.input, l.toolOpts.StartToCloseTimeout)
 	finishBy := time.Time{}
 	if !l.deadlines.Hard.IsZero() {
@@ -145,8 +150,8 @@ func (l *workflowLoop) executeToolStep(program stepProgram, batch *stepBatch) ([
 }
 
 // recordStepToolResults appends all state derived from concrete tool results.
-// Durable tool events keep every result; planner-facing transcript/tool-output
-// state is filtered by the bookkeeping visibility contract.
+// Provider transcript keeps every correlated result; compact ToolOutputs retain
+// only results that require another planner turn.
 func (r *Runtime) recordStepToolResults(
 	ctx context.Context,
 	input *RunInput,
@@ -159,9 +164,6 @@ func (r *Runtime) recordStepToolResults(
 	applyToolResultPolicyHints(input, results)
 	st.ToolEvents = append(st.ToolEvents, cloneToolResults(results)...)
 	if err := r.appendToolOutputRecords(ctx, st, records); err != nil {
-		return err
-	}
-	if err := r.appendRetryableBookkeepingToolUses(ctx, input.AgentID, base, records, st.ToolCallSignatures, turnID); err != nil {
 		return err
 	}
 	if err := r.appendUserToolRecordResults(ctx, input.AgentID, base, records, turnID); err != nil {
@@ -191,11 +193,11 @@ func (r *Runtime) classifyToolRecords(records []stepToolRecord, result *planner.
 		}
 	}
 
-	plannerFacingRecords, err := r.filterPlannerFacingToolRecords(records)
+	resumeRecords, err := r.filterResumeRequiredToolRecords(records)
 	if err != nil {
 		return 0, err
 	}
-	if len(plannerFacingRecords) > 0 {
+	if len(resumeRecords) > 0 {
 		return stepTransitionResume, nil
 	}
 

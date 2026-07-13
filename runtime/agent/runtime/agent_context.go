@@ -14,44 +14,47 @@ import (
 
 // agentContextOptions configures construction of a planner.PlannerContext.
 type agentContextOptions struct {
-	runtime   *Runtime
-	agentID   agent.Ident
-	runID     string
-	memory    memory.Reader
-	sessionID string
-	labels    map[string]string
-	policy    compiledToolPolicy
-	turnID    string
-	events    planner.PlannerEvents
-	cache     CachePolicy
+	runtime     *Runtime
+	agentID     agent.Ident
+	runID       string
+	memory      memory.Reader
+	sessionID   string
+	labels      map[string]string
+	policy      compiledToolPolicy
+	turnID      string
+	events      planner.PlannerEvents
+	invocations modelInvocationSink
+	cache       CachePolicy
 }
 
 // simplePlannerContext is a minimal implementation of planner.PlannerContext.
 type simplePlannerContext struct {
-	rt        *Runtime
-	agent     agent.Ident
-	runID     string
-	turnID    string
-	mem       memory.Reader
-	sessionID string
-	labels    map[string]string
-	policy    compiledToolPolicy
-	ev        planner.PlannerEvents
-	cache     CachePolicy
+	rt          *Runtime
+	agent       agent.Ident
+	runID       string
+	turnID      string
+	mem         memory.Reader
+	sessionID   string
+	labels      map[string]string
+	policy      compiledToolPolicy
+	ev          planner.PlannerEvents
+	invocations modelInvocationSink
+	cache       CachePolicy
 }
 
 func newAgentContext(opts agentContextOptions) planner.PlannerContext {
 	return &simplePlannerContext{
-		rt:        opts.runtime,
-		agent:     opts.agentID,
-		runID:     opts.runID,
-		turnID:    opts.turnID,
-		mem:       opts.memory,
-		sessionID: opts.sessionID,
-		labels:    cloneLabels(opts.labels),
-		policy:    opts.policy,
-		ev:        opts.events,
-		cache:     opts.cache,
+		rt:          opts.runtime,
+		agent:       opts.agentID,
+		runID:       opts.runID,
+		turnID:      opts.turnID,
+		mem:         opts.memory,
+		sessionID:   opts.sessionID,
+		labels:      cloneLabels(opts.labels),
+		policy:      opts.policy,
+		ev:          opts.events,
+		invocations: opts.invocations,
+		cache:       opts.cache,
 	}
 }
 
@@ -76,11 +79,11 @@ func (c *simplePlannerContext) AdvertisedToolDefinitions() []*model.ToolDefiniti
 	return advertisedToolDefinitions(c.rt.ToolSpecsForAgent(c.agent), c.policy)
 }
 func (c *simplePlannerContext) ModelClient(id string) (model.Client, bool) {
-	return c.configuredModelClient(id)
+	return c.configuredModelClient(id, false)
 }
 
 func (c *simplePlannerContext) PlannerModelClient(id string) (planner.PlannerModelClient, bool) {
-	cli, ok := c.configuredModelClient(id)
+	cli, ok := c.configuredModelClient(id, true)
 	if !ok {
 		return nil, false
 	}
@@ -90,7 +93,7 @@ func (c *simplePlannerContext) PlannerModelClient(id string) (planner.PlannerMod
 // configuredModelClient returns the runtime-managed raw model client for the
 // current planner turn, with transport/policy wrappers applied but without
 // PlannerEvents decoration.
-func (c *simplePlannerContext) configuredModelClient(id string) (model.Client, bool) {
+func (c *simplePlannerContext) configuredModelClient(id string, designated bool) (model.Client, bool) {
 	c.rt.mu.RLock()
 	m, ok := c.rt.models[id]
 	c.rt.mu.RUnlock()
@@ -98,17 +101,13 @@ func (c *simplePlannerContext) configuredModelClient(id string) (model.Client, b
 		return nil, false
 	}
 	cli := m
-	// Capture opaque provider tool-call thought signatures at the boundary,
-	// before any planner-facing type exists. This wraps the raw client so
-	// capture applies uniformly whether the planner drains it via
-	// PlannerModelClient or via ModelClient + planner.ConsumeStream.
-	if sink, ok := c.ev.(toolCallSignatureSink); ok {
-		cli = newSignatureCapturingClient(cli, sink)
-	} else if c.ev != nil {
-		// Production wiring always passes *runtimePlannerEvents (the sink); a
-		// non-sink PlannerEvents means provider thought signatures are silently
-		// dropped for this turn, so surface it instead of no-opping quietly.
-		c.rt.logger.Warn(context.Background(), "planner events do not implement tool-call signature sink; provider thought signatures will not be captured", "agent", string(c.agent), "run_id", c.runID)
+	// Capture each provider response as an isolated transcript candidate before
+	// any planner-facing type exists. This wraps the raw client so both
+	// supported streaming styles have identical ownership.
+	if designated {
+		cli = newDesignatedModelInvocationClient(cli, c.invocations)
+	} else {
+		cli = newModelInvocationClient(cli, c.invocations)
 	}
 	// Apply agent cache policy so planners do not need to thread CacheOptions
 	// through every model.Request construction. Explicit Request.Cache values
@@ -116,8 +115,8 @@ func (c *simplePlannerContext) configuredModelClient(id string) (model.Client, b
 	if c.cache.AfterSystem || c.cache.AfterTools {
 		cli = newCacheConfiguredClient(cli, c.cache)
 	}
-	// Ensure the runtime-owned tool_unavailable tool is always present when tool
-	// history may be re-encoded for providers with strict tool availability rules.
+	// Restore the runtime-owned tool_unavailable definition only when canonical
+	// history contains an actual call to it.
 	cli = newToolUnavailableConfiguredClient(cli)
 	// Wrap with tracing so model invocations are always visible in traces, including
 	// full stream lifetimes when streaming is used.

@@ -30,6 +30,30 @@ func TestValidatePlannerTranscriptAllowsToolLoopWithoutThinking(t *testing.T) {
 	require.NoError(t, ValidatePlannerTranscript(msgs))
 }
 
+func TestValidatePlannerTranscriptAllowsOneResultBatchForAssistantResponse(t *testing.T) {
+	t.Parallel()
+
+	msgs := []*model.Message{
+		{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.ToolUsePart{ID: "tu1", Name: "search"}},
+		},
+		{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.ToolUsePart{ID: "tu2", Name: "lookup"}},
+		},
+		{
+			Role: model.ConversationRoleUser,
+			Parts: []model.Part{
+				model.ToolResultPart{ToolUseID: "tu1", Content: "first"},
+				model.ToolResultPart{ToolUseID: "tu2", Content: "second"},
+			},
+		},
+	}
+
+	require.NoError(t, ValidatePlannerTranscript(msgs))
+}
+
 func TestValidatePlannerTranscriptRejectsMissingUserToolResult(t *testing.T) {
 	t.Parallel()
 
@@ -44,8 +68,20 @@ func TestValidatePlannerTranscriptRejectsMissingUserToolResult(t *testing.T) {
 
 	err := ValidatePlannerTranscript(msgs)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "message[0]")
+	require.Contains(t, err.Error(), "messages[0:1]")
 	require.Contains(t, err.Error(), "user tool_result")
+}
+
+func TestValidatePlannerTranscriptRejectsOrphanToolResult(t *testing.T) {
+	err := ValidatePlannerTranscript([]*model.Message{{
+		Role: model.ConversationRoleUser,
+		Parts: []model.Part{model.ToolResultPart{
+			ToolUseID: "call-1",
+			Content:   map[string]any{"ok": true},
+		}},
+	}})
+
+	require.ErrorContains(t, err, `has tool_result without prior assistant tool_use`)
 }
 
 func TestValidatePlannerTranscriptRejectsPartialToolResults(t *testing.T) {

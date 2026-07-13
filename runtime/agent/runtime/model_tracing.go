@@ -167,28 +167,28 @@ func (s *tracedStream) Recv() (model.Chunk, error) {
 		s.end(codes.Error, "stream recv failed")
 		return ch, err
 	}
-	if ch.UsageDelta != nil {
+	if usage, ok := ch.(model.UsageChunk); ok {
 		s.mu.Lock()
 		s.sawUsageDelta = true
 		if s.usage.Model == "" {
-			s.usage.Model = ch.UsageDelta.Model
+			s.usage.Model = usage.Usage.Model
 		}
 		if s.usage.ModelClass == "" {
-			s.usage.ModelClass = ch.UsageDelta.ModelClass
+			s.usage.ModelClass = usage.Usage.ModelClass
 		}
-		s.usage.InputTokens += ch.UsageDelta.InputTokens
-		s.usage.OutputTokens += ch.UsageDelta.OutputTokens
-		s.usage.TotalTokens += ch.UsageDelta.TotalTokens
-		s.usage.CacheReadTokens += ch.UsageDelta.CacheReadTokens
-		s.usage.CacheWriteTokens += ch.UsageDelta.CacheWriteTokens
+		s.usage.InputTokens += usage.Usage.InputTokens
+		s.usage.OutputTokens += usage.Usage.OutputTokens
+		s.usage.TotalTokens += usage.Usage.TotalTokens
+		s.usage.CacheReadTokens += usage.Usage.CacheReadTokens
+		s.usage.CacheWriteTokens += usage.Usage.CacheWriteTokens
 		s.mu.Unlock()
 	}
-	if isFirstGenAIOutputChunk(ch.Type) {
+	if isFirstGenAIOutputChunk(ch.Kind()) {
 		s.recordFirstChunk()
 	}
 	s.recordOutputChunk(ch)
-	if ch.Type == model.ChunkTypeStop && ch.StopReason != "" {
-		s.span.SetAttributes(telemetry.AttrGenAIResponseFinishReasons.StringSlice([]string{ch.StopReason}))
+	if stop, ok := ch.(model.StopChunk); ok && stop.Reason != "" {
+		s.span.SetAttributes(telemetry.AttrGenAIResponseFinishReasons.StringSlice([]string{stop.Reason}))
 	}
 	return ch, nil
 }
@@ -206,6 +206,10 @@ func (s *tracedStream) Close() error {
 	}
 	s.end(codes.Ok, "closed")
 	return nil
+}
+
+func (s *tracedStream) Response() *model.Response {
+	return s.inner.Response()
 }
 
 func (s *tracedStream) Metadata() map[string]any {
@@ -385,29 +389,10 @@ func (s *tracedStream) recordOutputChunk(chunk model.Chunk) {
 	s.output.recordChunk(chunk)
 }
 
-// responseOutputMessages projects a unary model response onto the transcript
-// shape captured on chat-turn spans. The Response contract carries tool
-// invocations in ToolCalls, separate from the assistant content, so they are
-// appended as one assistant message to mirror the streaming capture.
+// responseOutputMessages returns the canonical ordered provider response used
+// by chat-turn spans.
 func responseOutputMessages(resp *model.Response) []model.Message {
-	if len(resp.ToolCalls) == 0 {
-		return resp.Content
-	}
-	parts := make([]model.Part, 0, len(resp.ToolCalls))
-	for _, call := range resp.ToolCalls {
-		parts = append(parts, model.ToolUsePart{
-			ID:    call.ID,
-			Name:  string(call.Name),
-			Input: call.Payload,
-		})
-	}
-	messages := make([]model.Message, 0, len(resp.Content)+1)
-	messages = append(messages, resp.Content...)
-	messages = append(messages, model.Message{
-		Role:  model.ConversationRoleAssistant,
-		Parts: parts,
-	})
-	return messages
+	return resp.Content
 }
 
 // genAIStreamAccumulator coalesces streamed assistant chunks into one canonical
@@ -424,25 +409,19 @@ func newGenAIStreamAccumulator() *genAIStreamAccumulator {
 }
 
 func (a *genAIStreamAccumulator) recordChunk(chunk model.Chunk) {
-	switch chunk.Type {
-	case model.ChunkTypeText:
-		if chunk.Message != nil {
-			a.appendOutputParts(chunk.Message.Parts)
-		}
-	case model.ChunkTypeToolCall:
-		if chunk.ToolCall != nil {
-			a.parts = append(a.parts, model.ToolUsePart{
-				ID:    chunk.ToolCall.ID,
-				Name:  string(chunk.ToolCall.Name),
-				Input: chunk.ToolCall.Payload,
-			})
-		}
-	case model.ChunkTypeCompletion:
-		if chunk.Completion != nil {
-			a.parts = append(a.parts, model.TextPart{Text: string(chunk.Completion.Payload)})
-		}
-	case model.ChunkTypeStop:
-		a.stopReason = chunk.StopReason
+	switch actual := chunk.(type) {
+	case model.TextChunk:
+		a.appendOutputParts(actual.Message.Parts)
+	case model.ToolCallChunk:
+		a.parts = append(a.parts, model.ToolUsePart{
+			ID:    actual.ToolCall.ID,
+			Name:  string(actual.ToolCall.Name),
+			Input: actual.ToolCall.Payload,
+		})
+	case model.CompletionChunk:
+		a.parts = append(a.parts, model.TextPart{Text: string(actual.Completion.Payload)})
+	case model.StopChunk:
+		a.stopReason = actual.Reason
 	}
 }
 

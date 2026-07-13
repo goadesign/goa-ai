@@ -12,6 +12,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/stream"
@@ -121,6 +122,7 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 					{
 						Name:       invokeToolID,
 						ToolCallID: invokeCallID,
+						Payload:    rawjson.Message(`{}`),
 					},
 				},
 			}, nil

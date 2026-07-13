@@ -40,6 +40,7 @@ type (
 	stubStreamer struct {
 		chunks   []model.Chunk
 		meta     map[string]any
+		response *model.Response
 		index    int
 		recvErr  error
 		closeErr error
@@ -222,9 +223,8 @@ func TestTracedStreamDoesNotDoubleCountMetadataAfterUsageDelta(t *testing.T) {
 		span: span,
 		inner: &stubStreamer{
 			chunks: []model.Chunk{
-				{
-					Type: model.ChunkTypeUsage,
-					UsageDelta: &model.TokenUsage{
+				model.UsageChunk{
+					Usage: model.TokenUsage{
 						Model:        "delta-model",
 						InputTokens:  2,
 						OutputTokens: 4,
@@ -260,13 +260,15 @@ func TestTracedClientCompleteRecordsGenAIMessagesWhenEnabled(t *testing.T) {
 		complete: func(_ context.Context, _ *model.Request) (*model.Response, error) {
 			return &model.Response{
 				Content: []model.Message{{
-					Role:  model.ConversationRoleAssistant,
-					Parts: []model.Part{model.TextPart{Text: "I will check."}},
-				}},
-				ToolCalls: []model.ToolCall{{
-					ID:      "call-1",
-					Name:    "atlas.read",
-					Payload: rawjson.Message(`{"asset":"pump"}`),
+					Role: model.ConversationRoleAssistant,
+					Parts: []model.Part{
+						model.TextPart{Text: "I will check."},
+						model.ToolUsePart{
+							ID:    "call-1",
+							Name:  "atlas.read",
+							Input: rawjson.Message(`{"asset":"pump"}`),
+						},
+					},
 				}},
 				StopReason: "tool_use",
 			}, nil
@@ -302,13 +304,7 @@ func TestTracedClientCompleteRecordsGenAIMessagesWhenEnabled(t *testing.T) {
 				{
 					"type": "text",
 					"content": "I will check."
-				}
-			],
-			"finish_reason": "tool_use"
-		},
-		{
-			"role": "assistant",
-			"parts": [
+				},
 				{
 					"type": "tool_call",
 					"id": "call-1",
@@ -357,23 +353,19 @@ func TestTracedStreamRecordsBufferedOutputMessagesWhenEnabled(t *testing.T) {
 	client := newTracedClient(stubModelClient{
 		stream: func(_ context.Context, _ *model.Request) (model.Streamer, error) {
 			return &stubStreamer{chunks: []model.Chunk{
-				{
-					Type:    model.ChunkTypeText,
-					Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "hel"}}},
+				model.TextChunk{
+					Message: model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "hel"}}},
 				},
-				{
-					Type:    model.ChunkTypeText,
-					Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "lo"}}},
+				model.TextChunk{
+					Message: model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "lo"}}},
 				},
-				{
-					Type:    model.ChunkTypeThinking,
-					Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ThinkingPart{Text: "draft", Final: false}}},
+				model.ThinkingChunk{
+					Message: model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ThinkingPart{Text: "draft", Final: false}}},
 				},
-				{
-					Type:    model.ChunkTypeThinking,
-					Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ThinkingPart{Text: "draft", Final: true}}},
+				model.ThinkingChunk{
+					Message: model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ThinkingPart{Text: "draft", Final: true}}},
 				},
-				{Type: model.ChunkTypeStop, StopReason: "end_turn"},
+				model.StopChunk{Reason: "end_turn"},
 			}}, nil
 		},
 	}, tracer, telemetry.NewNoopLogger(), "primary", testGenAIContext(), true)
@@ -483,13 +475,17 @@ func (s *stubStreamer) Recv() (model.Chunk, error) {
 		return chunk, nil
 	}
 	if s.recvErr != nil {
-		return model.Chunk{}, s.recvErr
+		return nil, s.recvErr
 	}
-	return model.Chunk{}, io.EOF
+	return nil, io.EOF
 }
 
 func (s *stubStreamer) Close() error {
 	return s.closeErr
+}
+
+func (s *stubStreamer) Response() *model.Response {
+	return s.response
 }
 
 func (s *stubStreamer) Metadata() map[string]any {

@@ -311,7 +311,7 @@ func assistantToolUseMsg(id, name string) *model.Message {
 			model.ToolUsePart{
 				ID:    id,
 				Name:  name,
-				Input: map[string]any{"id": "abc"},
+				Input: rawjson.Message(`{"id":"abc"}`),
 			},
 		},
 	}

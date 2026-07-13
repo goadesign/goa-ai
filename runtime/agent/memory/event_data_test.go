@@ -38,7 +38,7 @@ func TestToolCallDataRoundTrip(t *testing.T) {
 
 	input, err := decoded.Input()
 	require.NoError(t, err)
-	assert.Equal(t, map[string]any{"q": float64(1)}, input)
+	assert.Equal(t, map[string]any{"q": json.Number("1")}, input)
 }
 
 func TestToolResultDataRoundTrip(t *testing.T) {
@@ -212,7 +212,7 @@ func TestDecodeToolCallDataAcceptsLegacyStructuredPayload(t *testing.T) {
 	require.NoError(t, err)
 	input, err := decoded.Input()
 	require.NoError(t, err)
-	assert.Equal(t, map[string]any{"q": float64(1)}, input)
+	assert.Equal(t, map[string]any{"q": json.Number("1")}, input)
 }
 
 func TestDecodeThinkingDataAcceptsLegacyRawBytes(t *testing.T) {

@@ -39,7 +39,7 @@ func TestNewRejectsUnknownThinkingEffort(t *testing.T) {
 
 func TestClientCompleteUsesExplicitToolLoopTranscript(t *testing.T) {
 	transport := &mockTransport{
-		completeResponse: mustResponse(t, `{"status":"completed","output":[]}`),
+		completeResponse: mustCompletedResponse(t),
 	}
 	client, err := New(Options{
 		DefaultModel: "gpt-4o",
@@ -56,7 +56,7 @@ func TestClientCompleteUsesExplicitToolLoopTranscript(t *testing.T) {
 					model.ToolUsePart{
 						ID:    "call_1",
 						Name:  "analytics.analyze",
-						Input: map[string]any{"query": "sales"},
+						Input: rawjson.Message(`{"query":"sales"}`),
 					},
 				},
 			},
@@ -93,7 +93,7 @@ func TestClientCompleteUsesExplicitToolLoopTranscript(t *testing.T) {
 
 func TestClientCompleteRejectsUnrepresentableExplicitTranscript(t *testing.T) {
 	transport := &mockTransport{
-		completeResponse: mustResponse(t, `{"status":"completed","output":[]}`),
+		completeResponse: mustCompletedResponse(t),
 	}
 	client, err := New(Options{
 		DefaultModel: "gpt-4o",
@@ -108,7 +108,7 @@ func TestClientCompleteRejectsUnrepresentableExplicitTranscript(t *testing.T) {
 				model.ToolUsePart{
 					ID:    "call_1",
 					Name:  "analytics.analyze",
-					Input: map[string]any{"query": "sales"},
+					Input: rawjson.Message(`{"query":"sales"}`),
 				},
 				model.TextPart{Text: "post tool text"},
 			},
@@ -124,9 +124,53 @@ func TestClientCompleteRejectsUnrepresentableExplicitTranscript(t *testing.T) {
 	assert.Empty(t, transport.completeRequests)
 }
 
+func TestClientCompleteRejectsThinkingWithoutProviderMetadata(t *testing.T) {
+	transport := &mockTransport{
+		completeResponse: mustCompletedResponse(t),
+	}
+	client, err := New(Options{
+		DefaultModel: "gpt-4o",
+		transport:    transport,
+	})
+	require.NoError(t, err)
+
+	_, err = client.Complete(context.Background(), &model.Request{
+		Messages: []*model.Message{{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{
+				model.ThinkingPart{Text: "reasoning", Final: true},
+				model.TextPart{Text: "answer"},
+			},
+		}},
+	})
+
+	require.EqualError(t, err, "openai: thinking replay requires provider reasoning metadata")
+	assert.Empty(t, transport.completeRequests)
+}
+
+func TestClientCompleteRejectsMalformedProviderMetadata(t *testing.T) {
+	transport := &mockTransport{completeResponse: mustCompletedResponse(t)}
+	client, err := New(Options{DefaultModel: "gpt-4o", transport: transport})
+	require.NoError(t, err)
+
+	_, err = client.Complete(context.Background(), &model.Request{
+		Messages: []*model.Message{{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{
+				model.ThinkingPart{Text: "reasoning", Final: true},
+				model.TextPart{Text: "answer"},
+			},
+			Meta: map[string]any{openAIReasoningItemsMetaKey: []any{42}},
+		}},
+	})
+
+	require.ErrorContains(t, err, `metadata "openai_reasoning_items" item 0 must be a string`)
+	assert.Empty(t, transport.completeRequests)
+}
+
 func TestClientCompleteLowersRunlogReplayedTranscript(t *testing.T) {
 	transport := &mockTransport{
-		completeResponse: mustResponse(t, `{"status":"completed","output":[]}`),
+		completeResponse: mustCompletedResponse(t),
 	}
 	client, err := New(Options{
 		DefaultModel: "gpt-4o",
@@ -208,7 +252,7 @@ func TestClientCompleteEncodesToolLoopTranscript(t *testing.T) {
 					model.ToolUsePart{
 						ID:    "call_1",
 						Name:  "analytics.analyze",
-						Input: map[string]any{"query": "sales"},
+						Input: rawjson.Message(`{"query":"sales"}`),
 					},
 				},
 			},
@@ -248,25 +292,27 @@ func TestClientCompleteEncodesToolLoopTranscript(t *testing.T) {
 	assert.Equal(t, "call_1", items[3].OfFunctionCallOutput.CallID)
 	assert.JSONEq(t, `{"status":"ok"}`, items[3].OfFunctionCallOutput.Output)
 
-	require.Len(t, resp.Content, 1)
+	require.Len(t, resp.Content, 2)
 	assert.Equal(t, model.ConversationRoleAssistant, resp.Content[0].Role)
 	text, ok := resp.Content[0].Parts[0].(model.TextPart)
 	require.True(t, ok)
 	assert.Equal(t, "Need a tool.", text.Text)
+	_, ok = resp.Content[1].Parts[0].(model.ToolUsePart)
+	require.True(t, ok)
 
-	require.Len(t, resp.ToolCalls, 1)
-	assert.Equal(t, tools.Ident("analytics.analyze"), resp.ToolCalls[0].Name)
-	assert.Equal(t, "call_2", resp.ToolCalls[0].ID)
-	assert.JSONEq(t, `{"query":"docs"}`, string(resp.ToolCalls[0].Payload))
+	require.Len(t, resp.ToolCalls(), 1)
+	assert.Equal(t, tools.Ident("analytics.analyze"), resp.ToolCalls()[0].Name)
+	assert.Equal(t, "call_2", resp.ToolCalls()[0].ID)
+	assert.JSONEq(t, `{"query":"docs"}`, string(resp.ToolCalls()[0].Payload))
 	assert.Equal(t, "tool_calls", resp.StopReason)
 	assert.Equal(t, 18, resp.Usage.TotalTokens)
 	assert.Equal(t, "gpt-4o", resp.Usage.Model)
 	assert.Equal(t, model.ModelClassDefault, resp.Usage.ModelClass)
 }
 
-func TestClientCompleteRewritesUnknownToolUseToToolUnavailable(t *testing.T) {
+func TestClientCompleteReplaysHistoricalToolUseUnchanged(t *testing.T) {
 	transport := &mockTransport{
-		completeResponse: mustResponse(t, `{"status":"completed","output":[]}`),
+		completeResponse: mustCompletedResponse(t),
 	}
 	client, err := New(Options{
 		DefaultModel: "gpt-4o",
@@ -280,7 +326,7 @@ func TestClientCompleteRewritesUnknownToolUseToToolUnavailable(t *testing.T) {
 			Parts: []model.Part{model.ToolUsePart{
 				ID:    "call_1",
 				Name:  "atlas.read.unknown",
-				Input: map[string]any{"from": "2026-04-03T00:00:00Z"},
+				Input: rawjson.Message(`{"from":"2026-04-03T00:00:00Z"}`),
 			}},
 		}},
 		Tools: []*model.ToolDefinition{{
@@ -295,13 +341,13 @@ func TestClientCompleteRewritesUnknownToolUseToToolUnavailable(t *testing.T) {
 	items := transport.completeRequests[0].Input.OfInputItemList
 	require.Len(t, items, 1)
 	require.NotNil(t, items[0].OfFunctionCall)
-	assert.Equal(t, SanitizeToolName(tools.ToolUnavailable.String()), items[0].OfFunctionCall.Name)
-	assert.JSONEq(t, `{"requested_tool":"atlas.read.unknown","requested_payload":{"from":"2026-04-03T00:00:00Z"}}`, items[0].OfFunctionCall.Arguments)
+	assert.Equal(t, "atlas.read.unknown", items[0].OfFunctionCall.Name)
+	assert.JSONEq(t, `{"from":"2026-04-03T00:00:00Z"}`, items[0].OfFunctionCall.Arguments)
 }
 
 func TestClientCompleteEncodesToolResultErrorsExplicitly(t *testing.T) {
 	transport := &mockTransport{
-		completeResponse: mustResponse(t, `{"status":"completed","output":[]}`),
+		completeResponse: mustCompletedResponse(t),
 	}
 	client, err := New(Options{
 		DefaultModel: "gpt-4o",
@@ -316,7 +362,7 @@ func TestClientCompleteEncodesToolResultErrorsExplicitly(t *testing.T) {
 				Parts: []model.Part{model.ToolUsePart{
 					ID:    "call_1",
 					Name:  "analytics.analyze",
-					Input: map[string]any{"query": "sales"},
+					Input: rawjson.Message(`{"query":"sales"}`),
 				}},
 			},
 			{
@@ -358,7 +404,7 @@ func TestClientCompleteRejectsAssistantTextAfterToolUse(t *testing.T) {
 				model.ToolUsePart{
 					ID:    "call_1",
 					Name:  "analytics.analyze",
-					Input: map[string]any{"query": "sales"},
+					Input: rawjson.Message(`{"query":"sales"}`),
 				},
 				model.TextPart{Text: "post tool text"},
 			},
@@ -375,7 +421,7 @@ func TestClientCompleteRejectsAssistantTextAfterToolUse(t *testing.T) {
 
 func TestClientCompleteRoutesModelsAndToolChoice(t *testing.T) {
 	transport := &mockTransport{
-		completeResponse: mustResponse(t, `{"model":"gpt-5-mini","status":"completed","output":[]}`),
+		completeResponse: mustCompletedResponse(t),
 	}
 	client, err := New(Options{
 		DefaultModel: "gpt-4o",
@@ -468,9 +514,9 @@ func TestClientCompleteProjectsStrictToolSchemasAndCanonicalizesArguments(t *tes
 		"required": ["question", "style"]
 	}`, string(parameters))
 
-	require.Len(t, resp.ToolCalls, 1)
-	assert.Equal(t, tools.Ident("helpers.answer"), resp.ToolCalls[0].Name)
-	assert.JSONEq(t, `{"question":"What is the capital of Japan?"}`, string(resp.ToolCalls[0].Payload))
+	require.Len(t, resp.ToolCalls(), 1)
+	assert.Equal(t, tools.Ident("helpers.answer"), resp.ToolCalls()[0].Name)
+	assert.JSONEq(t, `{"question":"What is the capital of Japan?"}`, string(resp.ToolCalls()[0].Payload))
 }
 
 func TestClientCompleteRejectsMissingRequestedModelClassConfig(t *testing.T) {
@@ -809,21 +855,17 @@ func TestOpenAIStreamerEmitsTextToolCallsUsageAndStop(t *testing.T) {
 	}
 
 	require.Len(t, chunks, 7)
-	assert.Equal(t, model.ChunkTypeText, chunks[0].Type)
-	assert.Equal(t, "Hel", chunks[0].Message.Parts[0].(model.TextPart).Text)
-	assert.Equal(t, model.ChunkTypeText, chunks[1].Type)
-	assert.Equal(t, "lo", chunks[1].Message.Parts[0].(model.TextPart).Text)
-	assert.Equal(t, model.ChunkTypeToolCallDelta, chunks[2].Type)
-	assert.Equal(t, "call_1", chunks[2].ToolCallDelta.ID)
-	assert.Equal(t, tools.Ident("analytics.analyze"), chunks[2].ToolCallDelta.Name)
-	assert.Equal(t, model.ChunkTypeToolCallDelta, chunks[3].Type)
-	assert.Equal(t, model.ChunkTypeToolCall, chunks[4].Type)
-	assert.Equal(t, "call_1", chunks[4].ToolCall.ID)
-	assert.JSONEq(t, `{"query":"docs"}`, string(chunks[4].ToolCall.Payload))
-	assert.Equal(t, model.ChunkTypeUsage, chunks[5].Type)
-	assert.Equal(t, 15, chunks[5].UsageDelta.TotalTokens)
-	assert.Equal(t, model.ChunkTypeStop, chunks[6].Type)
-	assert.Equal(t, "tool_calls", chunks[6].StopReason)
+	assert.Equal(t, "Hel", chunks[0].(model.TextChunk).Message.Parts[0].(model.TextPart).Text)
+	assert.Equal(t, "lo", chunks[1].(model.TextChunk).Message.Parts[0].(model.TextPart).Text)
+	assert.Equal(t, "call_1", chunks[2].(model.ToolCallDeltaChunk).Delta.ID)
+	assert.Equal(t, tools.Ident("analytics.analyze"), chunks[2].(model.ToolCallDeltaChunk).Delta.Name)
+	require.IsType(t, model.ToolCallDeltaChunk{}, chunks[3])
+	call := chunks[4].(model.ToolCallChunk).ToolCall
+	assert.Equal(t, "call_1", call.ID)
+	assert.JSONEq(t, `{"query":"docs"}`, string(call.Payload))
+	assert.Equal(t, 15, chunks[5].(model.UsageChunk).Usage.TotalTokens)
+	assert.Equal(t, "tool_calls", chunks[6].(model.StopChunk).Reason)
+	require.NotNil(t, streamer.Response())
 
 	meta := streamer.Metadata()
 	require.NotNil(t, meta)
@@ -891,12 +933,10 @@ func TestOpenAIStreamerHandlesIncompleteResponse(t *testing.T) {
 	}
 
 	require.Len(t, chunks, 3)
-	assert.Equal(t, model.ChunkTypeText, chunks[0].Type)
-	assert.Equal(t, "Hello", chunks[0].Message.Parts[0].(model.TextPart).Text)
-	assert.Equal(t, model.ChunkTypeUsage, chunks[1].Type)
-	assert.Equal(t, 15, chunks[1].UsageDelta.TotalTokens)
-	assert.Equal(t, model.ChunkTypeStop, chunks[2].Type)
-	assert.Equal(t, "max_output_tokens", chunks[2].StopReason)
+	assert.Equal(t, "Hello", chunks[0].(model.TextChunk).Message.Parts[0].(model.TextPart).Text)
+	assert.Equal(t, 15, chunks[1].(model.UsageChunk).Usage.TotalTokens)
+	assert.Equal(t, "max_output_tokens", chunks[2].(model.StopChunk).Reason)
+	require.NotNil(t, streamer.Response())
 }
 
 func TestOpenAIStreamerStructuredOutput(t *testing.T) {
@@ -962,14 +1002,14 @@ func TestOpenAIStreamerStructuredOutput(t *testing.T) {
 	}
 
 	require.Len(t, chunks, 3)
-	assert.Equal(t, model.ChunkTypeCompletionDelta, chunks[0].Type)
-	assert.Equal(t, "draft_from_transcript", chunks[0].CompletionDelta.Name)
-	assert.JSONEq(t, `{"answer":"ok"}`, chunks[0].CompletionDelta.Delta)
-	assert.Equal(t, model.ChunkTypeCompletion, chunks[1].Type)
-	assert.Equal(t, "draft_from_transcript", chunks[1].Completion.Name)
-	assert.JSONEq(t, `{"answer":"ok"}`, string(chunks[1].Completion.Payload))
-	assert.Equal(t, model.ChunkTypeStop, chunks[2].Type)
-	assert.Equal(t, "stop", chunks[2].StopReason)
+	delta := chunks[0].(model.CompletionDeltaChunk).Delta
+	assert.Equal(t, "draft_from_transcript", delta.Name)
+	assert.JSONEq(t, `{"answer":"ok"}`, delta.Delta)
+	completion := chunks[1].(model.CompletionChunk).Completion
+	assert.Equal(t, "draft_from_transcript", completion.Name)
+	assert.JSONEq(t, `{"answer":"ok"}`, string(completion.Payload))
+	assert.Equal(t, "stop", chunks[2].(model.StopChunk).Reason)
+	require.NotNil(t, streamer.Response())
 }
 
 type mockTransport struct {
@@ -1025,6 +1065,20 @@ func mustResponse(t *testing.T, raw string) *responses.Response {
 	return &resp
 }
 
+func mustCompletedResponse(t *testing.T) *responses.Response {
+	t.Helper()
+	return mustResponse(t, `{
+		"status":"completed",
+		"output":[{
+			"id":"msg_1",
+			"type":"message",
+			"role":"assistant",
+			"status":"completed",
+			"content":[{"type":"output_text","text":"ok","annotations":[],"logprobs":[]}]
+		}]
+	}`)
+}
+
 func mustStreamEvent(t *testing.T, raw string) responses.ResponseStreamEventUnion {
 	t.Helper()
 	var event responses.ResponseStreamEventUnion
@@ -1049,8 +1103,14 @@ func replayedToolLoopMessages(t *testing.T) []*model.Message {
 			model.ToolUsePart{
 				ID:    "call_1",
 				Name:  "analytics.analyze",
-				Input: map[string]any{"query": "sales"},
+				Input: rawjson.Message(`{"query":"sales"}`),
 			},
+		},
+		Meta: map[string]any{
+			openAIReasoningItemsMetaKey: []string{
+				`{"id":"rs_1","type":"reasoning","status":"completed","summary":[{"type":"summary_text","text":"Need the sales data first."}]}`,
+			},
+			openAIOutputItemMetaKey: `{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Need the sales data first."}]}`,
 		},
 	}})
 	appendReplayTranscriptDelta(t, ctx, store, []*model.Message{{

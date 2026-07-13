@@ -366,7 +366,7 @@ if err := rt.RegisterToolset(reg); err != nil { panic(err) }
 * **Interrupts (Human-in-the-Loop):** If your policy allows it, you can pause and resume agent runs with `rt.PauseRun()` and `rt.ResumeRun()`.
 * **Policies & Caps:** The `RunPolicy` in your design (max tool calls, time budgets) is automatically enforced by the runtime.
 * **Persistence & Observability:** The `runtime.New` function accepts `runtime.Options` to configure production-grade components like a Temporal engine, MongoDB for memory, and telemetry hooks.
-* **Temporal DataConverter (required):** When you use the Temporal engine, configure the Temporal client with `temporal.NewAgentDataConverter(...)` to enforce goa‑ai's boundary contract: tool results and artifacts cross workflow boundaries as canonical JSON bytes (`api.ToolEvent` / `api.ToolArtifact`), and `planner.ToolResult` is rejected if it ever tries to cross a Temporal boundary.
+* **Temporal DataConverter:** The Temporal engine automatically installs its strict data converter when `ClientOptions.DataConverter` is unset. Explicit custom converters remain the caller's responsibility.
 * **Registries & Discovery:** When you declare registries and `FromRegistry(...)` toolsets in your DSL, Goa-AI generates typed registry HTTP clients under `gen/<svc>/registry/<name>/` plus per-toolset specs helpers (with `DiscoverAndPopulate`, `Specs`, and `RegistryToolsetID`) so you can discover tools at runtime and register executors using `runtime.ToolsetRegistration`.
 
 ```go
@@ -378,25 +378,18 @@ rt := runtime.New(runtime.Options{
 })
 ```
 
-Example: constructing a Temporal engine with the required DataConverter:
+Example: constructing a Temporal worker engine:
 
 ```go
 import (
     "goa.design/goa-ai/runtime/agent/engine/temporal"
     "go.temporal.io/sdk/client"
-
-    // Your generated tool specs aggregate.
-    // The generated package exposes: func Spec(tools.Ident) (*tools.ToolSpec, bool)
-    specs "<module>/gen/<service>/agents/<agent>/specs"
 )
 
-eng, err := temporal.New(temporal.Options{
+eng, err := temporal.NewWorker(temporal.Options{
     ClientOptions: &client.Options{
         HostPort:      "127.0.0.1:7233",
         Namespace:     "default",
-        // Required: enforce goa-ai's workflow boundary contract.
-        // Tool results/artifacts cross boundaries as canonical JSON bytes (api.ToolEvent/api.ToolArtifact).
-        DataConverter: temporal.NewAgentDataConverter(specs.Spec),
     },
     WorkerOptions: temporal.WorkerOptions{
         TaskQueue: "<service>_<agent>_workflow",

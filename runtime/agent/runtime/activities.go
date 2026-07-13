@@ -22,11 +22,12 @@ import (
 // plannerActivityInvocation is the shared prepared state for one planner
 // activity execution.
 type plannerActivityInvocation struct {
-	reg       *AgentRegistration
-	agentCtx  planner.PlannerContext
-	events    *runtimePlannerEvents
-	messages  []*model.Message
-	reminders []reminder.Reminder
+	reg         *AgentRegistration
+	agentCtx    planner.PlannerContext
+	events      *runtimePlannerEvents
+	invocations *modelInvocationJournal
+	messages    []*model.Message
+	reminders   []reminder.Reminder
 }
 
 // PlanStartActivity executes the planner's PlanStart method.
@@ -108,7 +109,8 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 // the specific PlanStart or PlanResume payload is built.
 func (r *Runtime) preparePlannerActivity(ctx context.Context, input *PlanActivityInput) (*plannerActivityInvocation, error) {
 	events := newPlannerEvents(r, input.AgentID, input.RunID, input.RunContext.SessionID, input.RunContext.TurnID)
-	reg, agentCtx, err := r.plannerContext(ctx, input, events)
+	invocations := &modelInvocationJournal{}
+	reg, agentCtx, err := r.plannerContext(ctx, input, events, invocations)
 	if err != nil {
 		return nil, err
 	}
@@ -121,28 +123,136 @@ func (r *Runtime) preparePlannerActivity(ctx context.Context, input *PlanActivit
 		return nil, err
 	}
 	return &plannerActivityInvocation{
-		reg:       reg,
-		agentCtx:  agentCtx,
-		events:    events,
-		messages:  messages,
-		reminders: rems,
+		reg:         reg,
+		agentCtx:    agentCtx,
+		events:      events,
+		invocations: invocations,
+		messages:    messages,
+		reminders:   rems,
 	}, nil
 }
 
 // output validates hook publication and exports the workflow-safe planner
 // activity result.
 func (a *plannerActivityInvocation) output(result *planner.PlanResult) (*PlanActivityOutput, error) {
+	if err := validatePlannerResultPayloads(result); err != nil {
+		return nil, err
+	}
 	if err := a.events.hookError(); err != nil {
 		return nil, err
 	}
-	transcript := a.events.exportTranscript()
-	normalizeTranscriptRawJSON(transcript)
+	transcript, err := a.invocations.exportModelInvocation(result)
+	if err != nil {
+		return nil, err
+	}
+	if len(transcript) == 0 {
+		if err := validatePlannerAuthoredFinalResponse(result); err != nil {
+			return nil, err
+		}
+	}
 	return &PlanActivityOutput{
-		Result:             result,
-		Transcript:         transcript,
-		Usage:              a.events.exportUsage(),
-		ToolCallSignatures: a.events.exportToolCallSignatures(),
+		Result:     result,
+		Transcript: transcript,
+		Usage:      a.invocations.exportUsage(),
 	}, nil
+}
+
+// validatePlannerResultPayloads enforces canonical tool JSON before Temporal
+// serializes planner activity output.
+func validatePlannerResultPayloads(result *planner.PlanResult) error {
+	if result == nil {
+		return errors.New("planner returned a nil result")
+	}
+	if result.FinalResponse != nil {
+		if result.FinalResponse.Message == nil {
+			return errors.New("planner final response is missing its message")
+		}
+		if err := model.ValidateResponse(&model.Response{
+			Content:    []model.Message{*result.FinalResponse.Message},
+			StopReason: "planner_final",
+		}); err != nil {
+			return fmt.Errorf("planner final response: %w", err)
+		}
+	}
+	for index, call := range result.ToolCalls {
+		if err := validatePlannerToolPayload(call.Payload); err != nil {
+			return fmt.Errorf("planner tool call %d payload: %w", index, err)
+		}
+		if call.ModelPayload != nil {
+			if err := validatePlannerToolPayload(call.ModelPayload); err != nil {
+				return fmt.Errorf("planner tool call %d model payload: %w", index, err)
+			}
+		}
+	}
+	if result.Await == nil {
+		return nil
+	}
+	for itemIndex, item := range result.Await.Items {
+		switch item.Kind {
+		case planner.AwaitItemKindClarification:
+			if item.Clarification == nil {
+				return fmt.Errorf("planner await item %d clarification payload is missing", itemIndex)
+			}
+			if item.Clarification.ExampleJSON != nil {
+				if err := validatePlannerToolPayload(item.Clarification.ExampleJSON); err != nil {
+					return fmt.Errorf("planner await item %d clarification example: %w", itemIndex, err)
+				}
+			}
+		case planner.AwaitItemKindQuestions:
+			if item.Questions == nil {
+				return fmt.Errorf("planner await item %d questions payload is missing", itemIndex)
+			}
+			if err := validatePlannerToolPayload(item.Questions.Payload); err != nil {
+				return fmt.Errorf("planner await item %d questions payload: %w", itemIndex, err)
+			}
+		case planner.AwaitItemKindExternalTools:
+			if item.ExternalTools == nil {
+				return fmt.Errorf("planner await item %d external tools payload is missing", itemIndex)
+			}
+			for toolIndex, tool := range item.ExternalTools.Items {
+				if err := validatePlannerToolPayload(tool.Payload); err != nil {
+					return fmt.Errorf("planner await item %d external tool %d payload: %w", itemIndex, toolIndex, err)
+				}
+			}
+		default:
+			return fmt.Errorf("planner await item %d has unsupported kind %q", itemIndex, item.Kind)
+		}
+	}
+	return nil
+}
+
+// validatePlannerAuthoredFinalResponse ensures planners express tool
+// declarations through PlanResult.ToolCalls. Provider-owned final messages are
+// validated against their captured canonical response by the invocation journal.
+func validatePlannerAuthoredFinalResponse(result *planner.PlanResult) error {
+	if result.FinalResponse == nil {
+		return nil
+	}
+	for index, part := range result.FinalResponse.Message.Parts {
+		if _, ok := part.(model.ToolUsePart); ok {
+			return fmt.Errorf(
+				"planner-authored final response part %d contains tool use; return it through ToolCalls",
+				index,
+			)
+		}
+	}
+	return nil
+}
+
+// validatePlannerToolPayload verifies a required generated tool payload is a
+// non-empty JSON object.
+func validatePlannerToolPayload(payload rawjson.Message) error {
+	data := bytes.TrimSpace(payload)
+	if len(data) == 0 {
+		return errors.New("payload is empty")
+	}
+	if !json.Valid(data) {
+		return errors.New("payload is not valid JSON")
+	}
+	if data[0] != '{' {
+		return errors.New("payload must be a JSON object")
+	}
+	return nil
 }
 
 // notePlannerRateLimit emits a structured planner note for provider
@@ -156,50 +266,6 @@ func (a *plannerActivityInvocation) notePlannerRateLimit(ctx context.Context, er
 		"Model provider is rate-limiting this request. It is safe to retry after a short delay.",
 		map[string]string{"code": "rate_limited"},
 	)
-}
-
-func normalizeTranscriptRawJSON(messages []*model.Message) {
-	for msgIdx := range messages {
-		msg := messages[msgIdx]
-		if msg == nil {
-			continue
-		}
-		for partIdx, part := range msg.Parts {
-			switch value := part.(type) {
-			case model.ToolUsePart:
-				value.Input = normalizeAnyRawMessage(value.Input)
-				msg.Parts[partIdx] = value
-			case model.ToolResultPart:
-				value.Content = normalizeAnyRawMessage(value.Content)
-				msg.Parts[partIdx] = value
-			}
-		}
-		for key, value := range msg.Meta {
-			msg.Meta[key] = normalizeAnyRawMessage(value)
-		}
-	}
-}
-
-func normalizeAnyRawMessage(value any) any {
-	switch typed := value.(type) {
-	case json.RawMessage:
-		if len(bytes.TrimSpace(typed)) == 0 {
-			return nil
-		}
-		return typed
-	case map[string]any:
-		for key, item := range typed {
-			typed[key] = normalizeAnyRawMessage(item)
-		}
-		return typed
-	case []any:
-		for idx, item := range typed {
-			typed[idx] = normalizeAnyRawMessage(item)
-		}
-		return typed
-	default:
-		return value
-	}
 }
 
 // ExecuteToolActivity runs a tool invocation as a workflow activity.
@@ -596,7 +662,12 @@ func (r *Runtime) planResume(ctx context.Context, reg *AgentRegistration, input 
 }
 
 // plannerContext constructs the agent registration and context needed for planner execution.
-func (r *Runtime) plannerContext(ctx context.Context, input *PlanActivityInput, events planner.PlannerEvents) (*AgentRegistration, planner.PlannerContext, error) {
+func (r *Runtime) plannerContext(
+	ctx context.Context,
+	input *PlanActivityInput,
+	events planner.PlannerEvents,
+	invocations modelInvocationSink,
+) (*AgentRegistration, planner.PlannerContext, error) {
 	if input.AgentID == "" {
 		return nil, nil, errors.New("agent id is required")
 	}
@@ -610,16 +681,17 @@ func (r *Runtime) plannerContext(ctx context.Context, input *PlanActivityInput, 
 	}
 	runPolicy := compileToolPolicy(input.Policy)
 	agentCtx := newAgentContext(agentContextOptions{
-		runtime:   r,
-		agentID:   input.AgentID,
-		runID:     input.RunID,
-		memory:    reader,
-		sessionID: input.RunContext.SessionID,
-		labels:    input.RunContext.Labels,
-		policy:    runPolicy,
-		turnID:    input.RunContext.TurnID,
-		events:    events,
-		cache:     reg.Policy.Cache,
+		runtime:     r,
+		agentID:     input.AgentID,
+		runID:       input.RunID,
+		memory:      reader,
+		sessionID:   input.RunContext.SessionID,
+		labels:      input.RunContext.Labels,
+		policy:      runPolicy,
+		turnID:      input.RunContext.TurnID,
+		events:      events,
+		invocations: invocations,
+		cache:       reg.Policy.Cache,
 	})
 	return &reg, agentCtx, nil
 }

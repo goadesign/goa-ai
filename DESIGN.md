@@ -157,6 +157,15 @@ schema.
 - **Durable replay**: The runtime persists canonical transcript deltas as
   runlog records so providers, replay tooling, and future backends can
   reconstruct the exact message order generically.
+- **Planner-transparent provenance**: Each model call produces an isolated
+  canonical response before planner code observes completion. Streams expose
+  only closed typed presentation events and carry the canonical response
+  separately through gateways. The runtime identifies tool turns from unchanged
+  model-facing calls and terminal turns from the canonical provider message
+  returned by its response helpers. It commits the complete selected response
+  once after atomic admission and before effects. Planners never manage
+  transcript handles or provider replay metadata, and uncertain ownership fails
+  instead of selecting by call order or visible text.
 - **History compression**: Agent designs may declare compression defaults with
   `CompressAtTurns`, `CompressAtMaxInputTokens`, `KeepMaxTurns`, and
   `KeepMaxInputTokens`. The runtime evaluates token budgets with the configured
@@ -164,11 +173,11 @@ schema.
   deployment/model-specific while the design records the agent's default policy.
   Exact retention always keeps whole recent turns; it never truncates
   tool_use/tool_result pairs to satisfy a token budget.
-- **Bookkeeping control plane**: `Bookkeeping()` tool results stay durable for
-  hooks, streams, and run logs, but they are not replayed into future
-  planner-facing transcript/tool-output state. A bookkeeping-only turn must
-  therefore resolve in the same turn via a terminal outcome or an await/pause
-  handshake.
+- **Bookkeeping control plane**: `Bookkeeping()` calls and results remain in the
+  provider transcript so signed model-authored parts replay without modification.
+  Successful bookkeeping results are omitted only from compact `ToolOutputs` and
+  do not force another planner turn. A bookkeeping-only turn must therefore
+  resolve in the same turn via a terminal outcome or an await/pause handshake.
 - **Forced finalization control plane**: when runtime caps or deadlines force
   finalization, planners may return terminal bookkeeping tools instead of a
   prose final answer. The runtime executes only `Bookkeeping()` + `TerminalRun()`

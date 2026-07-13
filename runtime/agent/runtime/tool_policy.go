@@ -35,15 +35,10 @@ func compileToolPolicy(overrides *PolicyOverrides) compiledToolPolicy {
 	if overrides == nil {
 		return compiledToolPolicy{}
 	}
-	clauses := make([]api.TagPolicyClause, 0, 1+len(overrides.TagClauses))
-	if clause, ok := legacyTagPolicyClause(overrides); ok {
-		clauses = append(clauses, clause)
-	}
-	clauses = append(clauses, cloneTagPolicyClauses(overrides.TagClauses)...)
 	return compiledToolPolicy{
 		callerRestrictToTool: overrides.RestrictToTool,
 		retryRestrictToTool:  overrides.RetryRestrictToTool,
-		tagClauses:           clauses,
+		tagClauses:           cloneTagPolicyClauses(overrides.TagClauses),
 	}
 }
 
@@ -54,8 +49,6 @@ func clonePolicyOverrides(overrides *PolicyOverrides) *PolicyOverrides {
 		return nil
 	}
 	cloned := *overrides
-	cloned.AllowedTags = append([]string(nil), overrides.AllowedTags...)
-	cloned.DeniedTags = append([]string(nil), overrides.DeniedTags...)
 	cloned.TagClauses = cloneTagPolicyClauses(overrides.TagClauses)
 	if len(overrides.PerToolTimeout) > 0 {
 		cloned.PerToolTimeout = maps.Clone(overrides.PerToolTimeout)
@@ -76,17 +69,6 @@ func cloneTagPolicyClauses(clauses []api.TagPolicyClause) []api.TagPolicyClause 
 		}
 	}
 	return cloned
-}
-
-// legacyTagPolicyClause lifts AllowedTags/DeniedTags into the explicit clause model.
-func legacyTagPolicyClause(overrides *PolicyOverrides) (api.TagPolicyClause, bool) {
-	if overrides == nil || (len(overrides.AllowedTags) == 0 && len(overrides.DeniedTags) == 0) {
-		return api.TagPolicyClause{}, false
-	}
-	return api.TagPolicyClause{
-		AllowedAny: append([]string(nil), overrides.AllowedTags...),
-		DeniedAny:  append([]string(nil), overrides.DeniedTags...),
-	}, true
 }
 
 // isZero reports whether the compiled policy has no effect.

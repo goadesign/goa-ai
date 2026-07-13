@@ -67,7 +67,7 @@ func toolResultOmission(preview string, bounds *agent.Bounds) (map[string]any, e
 // JSON-compatible Go values suitable for transcript message content.
 func decodeToolResultJSONValue(raw json.RawMessage) (any, error) {
 	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
+	if err := rawjson.Unmarshal(raw, &value); err != nil {
 		return nil, fmt.Errorf("transcript: decode tool_result JSON: %w", err)
 	}
 	return value, nil

@@ -1,7 +1,11 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"io"
 
 	"goa.design/goa-ai/runtime/agent/model"
 )
@@ -35,9 +39,11 @@ type (
 	// StreamHandler processes a streaming model completion request by invoking
 	// the provided send callback for each chunk produced by the model. The send
 	// function must be called sequentially for each chunk; returning an error
-	// from send will abort the stream. Implementations are responsible for
-	// managing the underlying stream lifecycle, including cleanup on errors.
-	StreamHandler func(ctx context.Context, req *model.Request, send func(model.Chunk) error) error
+	// from send will abort the stream. A successful handler returns the canonical
+	// provider response after all chunks have been sent. Implementations are
+	// responsible for managing the underlying stream lifecycle, including
+	// cleanup on errors.
+	StreamHandler func(ctx context.Context, req *model.Request, send func(model.Chunk) error) (*model.Response, error)
 
 	// UnaryMiddleware wraps a UnaryHandler to add behavior before, after, or
 	// around the handler invocation. Middleware receives the next handler in
@@ -63,6 +69,19 @@ type (
 		provider model.Client
 		unaryMW  []UnaryMiddleware
 		streamMW []StreamMiddleware
+	}
+
+	// streamValidator enforces request-wide chunk ordering and terminal
+	// agreement for one provider or middleware stream boundary.
+	streamValidator struct {
+		stopped            bool
+		stopReason         string
+		completed          bool
+		completionRequired bool
+		toolCallIDs        map[string]struct{}
+		toolCalls          []model.ToolCall
+		usage              model.TokenUsage
+		sawUsage           bool
 	}
 )
 
@@ -113,21 +132,56 @@ func NewServer(opts ...Option) (*Server, error) {
 	}
 	// Base handlers call the provider directly.
 	baseUnary := func(ctx context.Context, req *model.Request) (*model.Response, error) {
-		return cfg.provider.Complete(ctx, req)
+		response, err := cfg.provider.Complete(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		if err := model.ValidateResponse(response); err != nil {
+			return nil, errors.Join(errors.New("gateway: provider returned invalid canonical response"), err)
+		}
+		return response, nil
 	}
-	baseStream := func(ctx context.Context, req *model.Request, send func(model.Chunk) error) error {
+	baseStream := func(ctx context.Context, req *model.Request, send func(model.Chunk) error) (*model.Response, error) {
 		st, err := cfg.provider.Stream(ctx, req)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		defer func() { _ = st.Close() }()
+		validator := streamValidator{completionRequired: req.StructuredOutput != nil}
 		for {
 			ch, err := st.Recv()
 			if err != nil {
-				return err
+				if errors.Is(err, io.EOF) {
+					response := st.Response()
+					if response == nil {
+						return nil, errors.Join(
+							errors.New("gateway: stream ended without canonical response"),
+							st.Close(),
+						)
+					}
+					responseErr := model.ValidateResponse(response)
+					streamErr := validator.finish(response)
+					closeErr := st.Close()
+					if responseErr != nil || streamErr != nil {
+						return nil, errors.Join(
+							errors.New("gateway: provider returned invalid canonical response"),
+							responseErr,
+							streamErr,
+							closeErr,
+						)
+					}
+					return response, closeErr
+				}
+				return nil, errors.Join(err, st.Close())
+			}
+			if err := validator.accept(ch); err != nil {
+				return nil, errors.Join(
+					errors.New("gateway: provider returned invalid stream chunk"),
+					err,
+					st.Close(),
+				)
 			}
 			if err := send(ch); err != nil {
-				return err
+				return nil, errors.Join(err, st.Close())
 			}
 		}
 	}
@@ -149,14 +203,145 @@ func NewServer(opts ...Option) (*Server, error) {
 // The context is propagated through the chain and can be used for cancellation,
 // timeouts, and request-scoped values.
 func (s *Server) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
-	return s.unary(ctx, req)
+	response, err := s.unary(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if err := model.ValidateResponse(response); err != nil {
+		return nil, errors.Join(errors.New("gateway: invalid canonical response"), err)
+	}
+	return response, nil
 }
 
 // Stream processes a streaming model completion request through the configured
 // middleware chain, invoking send for each chunk produced. The send callback
 // must be called sequentially; returning an error from send or from any
-// middleware aborts the stream. The context is propagated through the chain
-// and controls the lifetime of the stream.
-func (s *Server) Stream(ctx context.Context, req *model.Request, send func(model.Chunk) error) error {
-	return s.stream(ctx, req, send)
+// middleware aborts the stream. A successful call returns the canonical
+// provider response separately from the presentation chunks. The context is
+// propagated through the chain and controls the lifetime of the stream.
+func (s *Server) Stream(ctx context.Context, req *model.Request, send func(model.Chunk) error) (*model.Response, error) {
+	var sendErr error
+	validator := streamValidator{completionRequired: req.StructuredOutput != nil}
+	validatedSend := func(chunk model.Chunk) error {
+		if sendErr != nil {
+			return sendErr
+		}
+		if err := validator.accept(chunk); err != nil {
+			sendErr = errors.Join(errors.New("gateway: invalid stream chunk"), err)
+			return sendErr
+		}
+		sendErr = send(chunk)
+		return sendErr
+	}
+	response, err := s.stream(ctx, req, validatedSend)
+	if err != nil {
+		return nil, err
+	}
+	if sendErr != nil {
+		return nil, sendErr
+	}
+	if err := model.ValidateResponse(response); err != nil {
+		return nil, errors.Join(errors.New("gateway: invalid canonical response"), err)
+	}
+	if err := validator.finish(response); err != nil {
+		return nil, errors.Join(errors.New("gateway: invalid stream sequence"), err)
+	}
+	return response, nil
+}
+
+// accept validates one chunk and advances the stream state only after the
+// chunk satisfies the provider-neutral sequencing contract.
+func (v *streamValidator) accept(chunk model.Chunk) error {
+	if err := model.ValidateChunk(chunk); err != nil {
+		return err
+	}
+	if v.stopped {
+		return fmt.Errorf("stream emitted %q after stop", chunk.Kind())
+	}
+	switch actual := chunk.(type) {
+	case model.ToolCallChunk:
+		if v.toolCallIDs == nil {
+			v.toolCallIDs = make(map[string]struct{})
+		}
+		if _, exists := v.toolCallIDs[actual.ToolCall.ID]; exists {
+			return fmt.Errorf("stream repeated finalized tool call %q", actual.ToolCall.ID)
+		}
+		v.toolCallIDs[actual.ToolCall.ID] = struct{}{}
+		v.toolCalls = append(v.toolCalls, actual.ToolCall)
+	case model.ToolCallDeltaChunk:
+		if _, finalized := v.toolCallIDs[actual.Delta.ID]; finalized {
+			return fmt.Errorf("stream emitted tool call delta after finalized call %q", actual.Delta.ID)
+		}
+	case model.CompletionChunk:
+		if v.completed {
+			return errors.New("stream emitted multiple canonical completion chunks")
+		}
+		v.completed = true
+	case model.CompletionDeltaChunk:
+		if v.completed {
+			return errors.New("stream emitted completion delta after canonical completion")
+		}
+	case model.UsageChunk:
+		v.sawUsage = true
+		v.usage = addUsage(v.usage, actual.Usage)
+	case model.StopChunk:
+		v.stopped = true
+		v.stopReason = actual.Reason
+	}
+	return nil
+}
+
+// finish verifies that the terminal response agrees with all identity-bearing
+// chunks accepted at this boundary.
+func (v *streamValidator) finish(response *model.Response) error {
+	if !v.stopped {
+		return errors.New("stream ended without stop chunk")
+	}
+	if v.completionRequired && !v.completed {
+		return errors.New("structured-output stream ended without canonical completion chunk")
+	}
+	if response.StopReason != v.stopReason {
+		return fmt.Errorf(
+			"stream stop reason %q does not match canonical response %q",
+			v.stopReason,
+			response.StopReason,
+		)
+	}
+	responseCalls := response.ToolCalls()
+	if len(responseCalls) != len(v.toolCalls) {
+		return fmt.Errorf(
+			"stream emitted %d tool calls but canonical response contains %d",
+			len(v.toolCalls),
+			len(responseCalls),
+		)
+	}
+	for index, responseCall := range responseCalls {
+		streamCall := v.toolCalls[index]
+		if responseCall.ID != streamCall.ID ||
+			responseCall.Name != streamCall.Name ||
+			!bytes.Equal(responseCall.Payload, streamCall.Payload) ||
+			responseCall.ThoughtSignature != streamCall.ThoughtSignature {
+			return fmt.Errorf("stream tool call %d does not match canonical response", index)
+		}
+	}
+	if v.sawUsage && response.Usage != v.usage {
+		return errors.New("stream usage deltas do not match canonical response usage")
+	}
+	return nil
+}
+
+// addUsage sums token deltas while preserving provider attribution.
+func addUsage(current, delta model.TokenUsage) model.TokenUsage {
+	if current.Model == "" {
+		current.Model = delta.Model
+	}
+	if current.ModelClass == "" {
+		current.ModelClass = delta.ModelClass
+	}
+	current.InputTokens += delta.InputTokens
+	current.OutputTokens += delta.OutputTokens
+	current.TotalTokens += delta.TotalTokens
+	current.CacheReadTokens += delta.CacheReadTokens
+	current.CacheWriteTokens += delta.CacheWriteTokens
+	return current
 }

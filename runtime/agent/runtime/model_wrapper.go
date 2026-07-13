@@ -2,7 +2,11 @@ package runtime
 
 import (
 	"context"
+	"errors"
+	"io"
+	"sync"
 
+	"goa.design/goa-ai/runtime/agent/internal/provenance"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -11,7 +15,7 @@ import (
 // This file implements planner-scoped model client wrappers owned by the
 // runtime. The planner client wrapper emits runtime planner events as model
 // output is consumed, while the remaining wrappers apply cache/tool/tracing/
-// signature-capture policy to raw model clients returned from
+// model-invocation policy to raw model clients returned from
 // PlannerContext.ModelClient.
 //
 // Critical invariants:
@@ -20,21 +24,27 @@ import (
 //   - Tool call argument deltas MAY be emitted here as a best-effort UX signal
 //     (model.ChunkTypeToolCallDelta). Consumers may ignore them; the canonical
 //     tool payload remains the finalized tool call and the runtime tool_start.
-//   - Emission occurs in the planner activity context to keep ledger writes
+//   - Emission occurs in the planner activity context to keep hook writes
 //     deterministic and scoped to the current turn.
-//   - signatureCapturingClient observes opaque provider tool-call thought
-//     signatures at the model-client boundary, before planner.ToolRequest (or
-//     any other user-facing type) exists. It wraps the client returned by
-//     configuredModelClient regardless of whether the caller drains it via
-//     PlannerModelClient or the raw ModelClient + planner.ConsumeStream path,
-//     so capture is independent of which streaming style a planner chooses.
+//   - modelInvocationClient captures every response in an isolated runtime
+//     candidate before planner-facing types exist. The runtime later identifies
+//     the candidate from exact model-facing tool calls or opaque terminal
+//     provenance; call order never determines the durable transcript.
 
-// plannerModelClient wraps a raw model.Client and owns PlannerEvents emission
-// for one planner turn.
-type plannerModelClient struct {
-	inner  model.Client
-	events planner.PlannerEvents
-}
+type (
+	// modelInvocationID identifies one runtime-owned response candidate within
+	// a planner activity. It never crosses the planner or workflow boundary.
+	modelInvocationID = provenance.Token
+
+	// plannerModelClient wraps a raw model.Client and owns PlannerEvents
+	// emission for one planner turn.
+	plannerModelClient struct {
+		inner  model.Client
+		events planner.PlannerEvents
+		mu     sync.Mutex
+		used   bool
+	}
+)
 
 // newPlannerModelClient returns a planner-scoped client that emits
 // PlannerEvents for assistant text, thinking blocks, and usage.
@@ -51,24 +61,24 @@ func newPlannerModelClient(inner model.Client, events planner.PlannerEvents) pla
 	}
 }
 
-// Complete delegates to the inner client, then emits usage and assistant
-// content (text + thinking) for the final response. If the adapter did not
-// stamp model identity, the wrapper fills it from the request.
+// Complete delegates to the inner client, then emits its ordered assistant
+// presentation and usage. If the adapter did not stamp model identity, the
+// wrapper fills it from the request. Transcript persistence remains a separate
+// exactly-once workflow transition.
 func (c *plannerModelClient) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
+	if err := c.begin(); err != nil {
+		return nil, err
+	}
 	resp, err := c.inner.Complete(ctx, req)
 	if err != nil {
 		return resp, err
 	}
+	for i := range resp.Content {
+		emitMessageContent(ctx, c.events, &resp.Content[i])
+	}
 	if (resp.Usage != model.TokenUsage{}) {
 		stampModelIdentity(&resp.Usage, req)
 		c.events.UsageDelta(ctx, resp.Usage)
-	}
-	for i := range resp.Content {
-		msg := resp.Content[i]
-		if msg.Role != model.ConversationRoleAssistant {
-			continue
-		}
-		emitMessageContent(ctx, c.events, &msg)
 	}
 	return resp, nil
 }
@@ -76,11 +86,26 @@ func (c *plannerModelClient) Complete(ctx context.Context, req *model.Request) (
 // Stream delegates to the inner client, drains the resulting stream through the
 // planner helper, and returns the aggregated summary.
 func (c *plannerModelClient) Stream(ctx context.Context, req *model.Request) (planner.StreamSummary, error) {
+	if err := c.begin(); err != nil {
+		return planner.StreamSummary{}, err
+	}
 	st, err := c.inner.Stream(ctx, req)
 	if err != nil {
 		return planner.StreamSummary{}, err
 	}
 	return planner.ConsumeStream(ctx, st, req, c.events)
+}
+
+// begin reserves this planner client for its one selected invocation. Planners
+// use PlannerContext.ModelClient for probes or retries before this call.
+func (c *plannerModelClient) begin() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.used {
+		return errors.New("runtime: PlannerModelClient permits exactly one model invocation per planner turn")
+	}
+	c.used = true
+	return nil
 }
 
 // cacheConfiguredClient wraps a model.Client and applies the agent CachePolicy
@@ -114,11 +139,8 @@ func (c *cacheConfiguredClient) Stream(ctx context.Context, req *model.Request) 
 	return c.inner.Stream(ctx, req)
 }
 
-// toolUnavailableConfiguredClient adds the runtime-owned tool_unavailable tool
-// only when message history references a tool that is absent from the current
-// request. Some providers require every historical tool_use name to appear in
-// the current request tool list, but advertising this internal tool on normal
-// requests gives planners a fake action they can choose.
+// toolUnavailableConfiguredClient restores the runtime-owned tool_unavailable
+// definition only when canonical history contains an actual call to it.
 type toolUnavailableConfiguredClient struct {
 	inner model.Client
 }
@@ -140,96 +162,146 @@ func (c *toolUnavailableConfiguredClient) Stream(ctx context.Context, req *model
 	return c.inner.Stream(ctx, req)
 }
 
-// toolCallSignatureSink receives opaque, provider-defined tool-call thought
-// signatures captured at the model-client boundary, keyed by tool-call ID.
-// runtimePlannerEvents implements this so captured signatures flow back to
-// the workflow through the same activity-output channel already used for the
-// transcript and usage (see PlanActivityOutput.ToolCallSignatures). This
-// interface is intentionally unexported and separate from planner.PlannerEvents:
-// custom planners never implement it, and capture must not depend on which
-// PlannerEvents value (if any) a planner later passes to planner.ConsumeStream.
-type toolCallSignatureSink interface {
-	recordToolCallSignature(toolCallID, signature string)
+// modelInvocationSink owns isolated provider response candidates for one
+// planner activity. Token usage remains activity-wide so rejected corrective
+// attempts are still accounted for.
+//
+// The interface is intentionally unexported and separate from
+// planner.PlannerEvents: custom planners never implement provider transcript
+// persistence, and capture must not depend on which PlannerEvents value they
+// pass to planner.ConsumeStream.
+type modelInvocationSink interface {
+	beginModelInvocation() modelInvocationID
+	designateModelInvocation(invocationID modelInvocationID) error
+	recordModelResponse(invocationID modelInvocationID, response *model.Response) error
+	recordModelChunk(invocationID modelInvocationID, chunk model.Chunk) error
+	finishModelInvocation(invocationID modelInvocationID, err error) error
 }
 
-// signatureCapturingClient wraps a model.Client to observe opaque
-// provider-defined tool-call thought signatures (for example, Gemini 3) the
-// moment they are produced by the provider, before any planner-facing type
-// (ToolRequest, PlanResult, ...) is constructed. Captured signatures are
-// recorded into sink for later ID-keyed reattachment; empty signatures are
-// never recorded.
-type signatureCapturingClient struct {
-	inner model.Client
-	sink  toolCallSignatureSink
+// modelInvocationClient bounds tentative transcript state to individual model
+// calls and captures provider-defined tool-call thought signatures before any
+// planner-facing type is constructed.
+type modelInvocationClient struct {
+	inner      model.Client
+	sink       modelInvocationSink
+	designated bool
 }
 
-// newSignatureCapturingClient wraps inner with signature capture. It returns
-// inner unchanged when sink is nil so construction never needs a defensive
-// nil check at call sites that lack a capture target (for example, tests).
-func newSignatureCapturingClient(inner model.Client, sink toolCallSignatureSink) model.Client {
+// newModelInvocationClient wraps inner with invocation tracking. It returns
+// inner unchanged when sink is nil.
+func newModelInvocationClient(inner model.Client, sink modelInvocationSink) model.Client {
 	if inner == nil {
 		return nil
 	}
 	if sink == nil {
 		return inner
 	}
-	return &signatureCapturingClient{inner: inner, sink: sink}
+	return &modelInvocationClient{inner: inner, sink: sink}
 }
 
-// Complete delegates to the inner client and captures signatures from the
-// non-streaming response's finalized tool calls.
-func (c *signatureCapturingClient) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
+// newDesignatedModelInvocationClient captures a model call that is contractually
+// the planner's selected invocation and may publish live presentation events.
+func newDesignatedModelInvocationClient(inner model.Client, sink modelInvocationSink) model.Client {
+	if inner == nil {
+		return nil
+	}
+	if sink == nil {
+		return inner
+	}
+	return &modelInvocationClient{inner: inner, sink: sink, designated: true}
+}
+
+// Complete starts a new tentative response, validates the provider result, and
+// records its canonical transcript before returning to planner code.
+func (c *modelInvocationClient) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
+	invocationID := c.sink.beginModelInvocation()
+	if c.designated {
+		if err := c.sink.designateModelInvocation(invocationID); err != nil {
+			return nil, err
+		}
+	}
 	resp, err := c.inner.Complete(ctx, req)
 	if err != nil {
-		return resp, err
+		return resp, c.sink.finishModelInvocation(invocationID, err)
 	}
-	for _, tc := range resp.ToolCalls {
-		c.capture(tc.ID, tc.ThoughtSignature)
+	if err := c.sink.recordModelResponse(invocationID, resp); err != nil {
+		return nil, c.sink.finishModelInvocation(invocationID, err)
+	}
+	if err := c.sink.finishModelInvocation(invocationID, nil); err != nil {
+		return nil, err
 	}
 	return resp, nil
 }
 
-// Stream delegates to the inner client and wraps the returned Streamer so
-// finalized tool-call chunks are observed as they are received.
-func (c *signatureCapturingClient) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
+// Stream starts a new tentative response and wraps the returned Streamer so
+// every chunk is validated and the canonical response is captured.
+func (c *modelInvocationClient) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
+	invocationID := c.sink.beginModelInvocation()
+	if c.designated {
+		if err := c.sink.designateModelInvocation(invocationID); err != nil {
+			return nil, err
+		}
+	}
 	st, err := c.inner.Stream(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, c.sink.finishModelInvocation(invocationID, err)
 	}
-	return &signatureCapturingStreamer{inner: st, sink: c.sink}, nil
+	return &modelInvocationStreamer{
+		inner:        st,
+		sink:         c.sink,
+		invocationID: invocationID,
+	}, nil
 }
 
-// capture records a non-empty signature for a non-empty tool-call ID.
-func (c *signatureCapturingClient) capture(toolCallID, signature string) {
-	if toolCallID == "" || signature == "" {
-		return
-	}
-	c.sink.recordToolCallSignature(toolCallID, signature)
+// modelInvocationStreamer validates every presentation chunk before exposing
+// it to planner code and captures the canonical response at clean EOF.
+type modelInvocationStreamer struct {
+	inner        model.Streamer
+	sink         modelInvocationSink
+	invocationID modelInvocationID
+	finished     bool
 }
 
-// signatureCapturingStreamer wraps a model.Streamer to capture tool-call
-// thought signatures from ChunkTypeToolCall chunks as they are received.
-type signatureCapturingStreamer struct {
-	inner model.Streamer
-	sink  toolCallSignatureSink
-}
-
-func (s *signatureCapturingStreamer) Recv() (model.Chunk, error) {
+func (s *modelInvocationStreamer) Recv() (model.Chunk, error) {
 	ch, err := s.inner.Recv()
 	if err != nil {
+		s.finished = true
+		if errors.Is(err, io.EOF) {
+			response := s.inner.Response()
+			if response == nil {
+				err := errors.New("model stream ended without a canonical response")
+				return nil, s.sink.finishModelInvocation(s.invocationID, err)
+			}
+			if err := s.sink.recordModelResponse(s.invocationID, response); err != nil {
+				return nil, s.sink.finishModelInvocation(s.invocationID, err)
+			}
+			if err := s.sink.finishModelInvocation(s.invocationID, nil); err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, s.sink.finishModelInvocation(s.invocationID, err)
+		}
 		return ch, err
 	}
-	if ch.Type == model.ChunkTypeToolCall && ch.ToolCall != nil {
-		if ch.ToolCall.ID != "" && ch.ToolCall.ThoughtSignature != "" {
-			s.sink.recordToolCallSignature(ch.ToolCall.ID, ch.ToolCall.ThoughtSignature)
-		}
+	if err := s.sink.recordModelChunk(s.invocationID, ch); err != nil {
+		s.finished = true
+		return nil, s.sink.finishModelInvocation(s.invocationID, err)
 	}
 	return ch, nil
 }
 
-func (s *signatureCapturingStreamer) Close() error { return s.inner.Close() }
+func (s *modelInvocationStreamer) Close() error {
+	var finishErr error
+	if !s.finished {
+		s.finished = true
+		finishErr = s.sink.finishModelInvocation(s.invocationID, errors.New("model stream closed before EOF"))
+	}
+	return errors.Join(finishErr, s.inner.Close())
+}
 
-func (s *signatureCapturingStreamer) Metadata() map[string]any { return s.inner.Metadata() }
+func (s *modelInvocationStreamer) Metadata() map[string]any { return s.inner.Metadata() }
+
+func (s *modelInvocationStreamer) Response() *model.Response { return s.inner.Response() }
 
 // applyCachePolicy populates Request.Cache from the agent CachePolicy when no
 // explicit CacheOptions are present on the request.
@@ -283,27 +355,31 @@ func toolHistoryNeedsUnavailableDefinition(req *model.Request) bool {
 		}
 		for _, part := range msg.Parts {
 			use, ok := part.(model.ToolUsePart)
-			if !ok || use.Name == "" {
+			if !ok || use.Name != tools.ToolUnavailable.String() {
 				continue
 			}
-			if _, ok := current[use.Name]; !ok {
-				return true
-			}
+			_, defined := current[use.Name]
+			return !defined
 		}
 	}
 	return false
 }
 
-// emitMessageContent forwards assistant text and thinking parts from a message.
-func emitMessageContent(ctx context.Context, ev planner.PlannerEvents, msg *model.Message) {
-	if ev == nil || msg == nil || len(msg.Parts) == 0 {
-		return
-	}
-	// Emit thinking parts first to preserve natural ordering semantics.
-	emitThinkingParts(ctx, ev, msg)
-	for _, p := range msg.Parts {
-		if tp, ok := p.(model.TextPart); ok && tp.Text != "" {
-			ev.AssistantChunk(ctx, tp.Text)
+// emitMessageContent publishes unary assistant presentation in provider part
+// order while leaving tool calls to the workflow's canonical execution events.
+func emitMessageContent(ctx context.Context, events planner.PlannerEvents, message *model.Message) {
+	for _, part := range message.Parts {
+		switch actual := part.(type) {
+		case model.TextPart:
+			if actual.Text != "" {
+				events.AssistantChunk(ctx, actual.Text)
+			}
+		case model.CitationsPart:
+			if actual.Text != "" {
+				events.AssistantChunk(ctx, actual.Text)
+			}
+		case model.ThinkingPart:
+			events.PlannerThinkingBlock(ctx, actual)
 		}
 	}
 }
@@ -317,17 +393,5 @@ func stampModelIdentity(usage *model.TokenUsage, req *model.Request) {
 	}
 	if usage.ModelClass == "" && req.ModelClass != "" {
 		usage.ModelClass = req.ModelClass
-	}
-}
-
-// emitThinkingParts forwards structured thinking blocks from a message.
-func emitThinkingParts(ctx context.Context, ev planner.PlannerEvents, msg *model.Message) {
-	if ev == nil || msg == nil || len(msg.Parts) == 0 {
-		return
-	}
-	for _, p := range msg.Parts {
-		if tp, ok := p.(model.ThinkingPart); ok {
-			ev.PlannerThinkingBlock(ctx, tp)
-		}
 	}
 }

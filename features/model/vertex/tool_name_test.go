@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -38,8 +39,18 @@ func TestBuildToolNameMapsRoundTrip(t *testing.T) {
 		{Name: "feed/find_duplicates"},
 		{Name: "extraction.emit.emit_event"},
 	}
-	canonToProv, provToCanon := buildToolNameMaps(defs)
+	canonToProv, provToCanon, err := buildToolNameMaps(defs)
+	require.NoError(t, err)
 	assert.Equal(t, "feed_find_duplicates", canonToProv["feed/find_duplicates"])
 	assert.Equal(t, tools.Ident("feed/find_duplicates"), tools.Ident(provToCanon["feed_find_duplicates"]))
 	assert.Equal(t, "extraction.emit.emit_event", provToCanon["extraction.emit.emit_event"])
+}
+
+func TestBuildToolNameMapsRejectsCollision(t *testing.T) {
+	_, _, err := buildToolNameMaps([]*model.ToolDefinition{
+		{Name: "feed/find"},
+		{Name: "feed_find"},
+	})
+
+	assert.ErrorContains(t, err, `both map to provider name "feed_find"`)
 }

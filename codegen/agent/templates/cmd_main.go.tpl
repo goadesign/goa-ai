@@ -68,6 +68,7 @@ func (c *exampleCompletionClient) Complete(_ context.Context, req *model.Request
 				},
 			},
 		},
+		StopReason: "stop",
 	}, nil
 }
 
@@ -82,31 +83,48 @@ func (c *exampleCompletionClient) Stream(_ context.Context, req *model.Request) 
 	}, nil
 }
 
-// Recv advances the example stream through a single preview delta and the final
-// canonical completion payload.
+// Recv advances the example stream through preview, completion, and stop.
 func (s *exampleCompletionStreamer) Recv() (model.Chunk, error) {
 	switch s.step {
 	case 0:
 		s.step++
 		end := min(len(s.payload), 24)
-		return model.Chunk{
-			Type: model.ChunkTypeCompletionDelta,
-			CompletionDelta: &model.CompletionDelta{
+		return model.CompletionDeltaChunk{
+			Delta: model.CompletionDelta{
 				Name:  s.name,
 				Delta: string(s.payload[:end]),
 			},
 		}, nil
 	case 1:
 		s.step++
-		return model.Chunk{
-			Type: model.ChunkTypeCompletion,
-			Completion: &model.Completion{
-				Name:    s.name,
-				Payload: rawjson.Message(append([]byte(nil), s.payload...)),
-			},
-		}, nil
+		completion := model.Completion{
+			Name:    s.name,
+			Payload: rawjson.Message(append([]byte(nil), s.payload...)),
+		}
+		return model.CompletionChunk{Completion: completion}, nil
+	case 2:
+		s.step++
+		return model.StopChunk{Reason: "completed"}, nil
 	default:
-		return model.Chunk{}, io.EOF
+		return nil, io.EOF
+	}
+}
+
+// Response returns the canonical example response after clean EOF.
+func (s *exampleCompletionStreamer) Response() *model.Response {
+	if s.step < 3 {
+		return nil
+	}
+	return &model.Response{
+		Content: []model.Message{
+			{
+				Role: model.ConversationRoleAssistant,
+				Parts: []model.Part{
+					model.TextPart{Text: string(s.payload)},
+				},
+			},
+		},
+		StopReason: "completed",
 	}
 }
 
@@ -209,8 +227,8 @@ func main() {
 			if err != nil {
 				log.Fatalf("completion stream failed: %v", err)
 			}
-			if chunk.Type == model.ChunkTypeCompletionDelta && chunk.CompletionDelta != nil {
-				fmt.Printf("Completion delta %s: %s\n", completions.{{ .GoName }}, chunk.CompletionDelta.Delta)
+			if delta, ok := chunk.(model.CompletionDeltaChunk); ok {
+				fmt.Printf("Completion delta %s: %s\n", completions.{{ .GoName }}, delta.Delta.Delta)
 			}
 			value, ok, err := completions.Decode{{ .GoName }}Chunk(chunk)
 			if err != nil {

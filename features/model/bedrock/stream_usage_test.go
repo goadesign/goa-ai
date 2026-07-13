@@ -20,12 +20,12 @@ func TestChunkProcessor_MetadataUsageIncludesCacheTokens(t *testing.T) {
 
 	var (
 		recordedUsage model.TokenUsage
-		gotChunk      model.Chunk
+		chunks        []model.Chunk
 	)
 
 	cp := newChunkProcessor(
 		func(ch model.Chunk) error {
-			gotChunk = ch
+			chunks = append(chunks, ch)
 			return nil
 		},
 		func(u model.TokenUsage) {
@@ -39,6 +39,12 @@ func TestChunkProcessor_MetadataUsageIncludesCacheTokens(t *testing.T) {
 		nil,
 	)
 
+	err := cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStart{})
+	require.NoError(t, err)
+	err = cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStop{
+		Value: brtypes.MessageStopEvent{StopReason: brtypes.StopReasonEndTurn},
+	})
+	require.NoError(t, err)
 	event := &brtypes.ConverseStreamOutputMemberMetadata{
 		Value: brtypes.ConverseStreamMetadataEvent{
 			Usage: &brtypes.TokenUsage{
@@ -51,7 +57,7 @@ func TestChunkProcessor_MetadataUsageIncludesCacheTokens(t *testing.T) {
 		},
 	}
 
-	err := cp.Handle(event)
+	err = cp.Handle(event)
 	require.NoError(t, err)
 
 	require.Equal(t, int(inTokens), recordedUsage.InputTokens)
@@ -62,12 +68,55 @@ func TestChunkProcessor_MetadataUsageIncludesCacheTokens(t *testing.T) {
 	require.Equal(t, "test-model-id", recordedUsage.Model)
 	require.Equal(t, model.ModelClassDefault, recordedUsage.ModelClass)
 
-	require.Equal(t, model.ChunkTypeUsage, gotChunk.Type)
-	require.NotNil(t, gotChunk.UsageDelta)
-	require.Equal(t, int(cacheRead), gotChunk.UsageDelta.CacheReadTokens)
-	require.Equal(t, int(cacheWrite), gotChunk.UsageDelta.CacheWriteTokens)
-	require.Equal(t, "test-model-id", gotChunk.UsageDelta.Model)
-	require.Equal(t, model.ModelClassDefault, gotChunk.UsageDelta.ModelClass)
+	require.Len(t, chunks, 2)
+	usageChunk, ok := chunks[0].(model.UsageChunk)
+	require.True(t, ok)
+	require.Equal(t, int(cacheRead), usageChunk.Usage.CacheReadTokens)
+	require.Equal(t, int(cacheWrite), usageChunk.Usage.CacheWriteTokens)
+	require.Equal(t, "test-model-id", usageChunk.Usage.Model)
+	require.Equal(t, model.ModelClassDefault, usageChunk.Usage.ModelClass)
+	require.IsType(t, model.StopChunk{}, chunks[1])
+}
+
+func TestReasoningBufferFinalizeRequiresCanonicalVariant(t *testing.T) {
+	tests := []struct {
+		name      string
+		text      string
+		signature string
+		redacted  []byte
+		wantErr   string
+	}{
+		{name: "plaintext", text: "reasoning", signature: "sig"},
+		{name: "redacted", redacted: []byte("opaque")},
+		{name: "missing signature", text: "reasoning", wantErr: "reasoning plaintext is missing provider signature"},
+		{name: "missing text", signature: "sig", wantErr: "reasoning signature is missing plaintext content"},
+		{
+			name:      "mixed variants",
+			text:      "reasoning",
+			signature: "sig",
+			redacted:  []byte("opaque"),
+			wantErr:   "reasoning block contains both redacted and plaintext content",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			buffer := &reasoningBuffer{
+				signature: test.signature,
+				redacted:  test.redacted,
+			}
+			buffer.text.WriteString(test.text)
+
+			part, err := buffer.finalize()
+
+			if test.wantErr != "" {
+				require.EqualError(t, err, test.wantErr)
+				require.Nil(t, part)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, part)
+		})
+	}
 }
 
 func TestChunkProcessor_StructuredOutputEmitsCompletionDeltaAndFinalCompletion(t *testing.T) {
@@ -94,6 +143,10 @@ func TestChunkProcessor_StructuredOutputEmitsCompletionDeltaAndFinalCompletion(t
 
 	err := cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStart{})
 	require.NoError(t, err)
+	err = cp.Handle(&brtypes.ConverseStreamOutputMemberContentBlockStart{
+		Value: brtypes.ContentBlockStartEvent{ContentBlockIndex: &idx},
+	})
+	require.NoError(t, err)
 	err = cp.Handle(&brtypes.ConverseStreamOutputMemberContentBlockDelta{
 		Value: brtypes.ContentBlockDeltaEvent{
 			ContentBlockIndex: &idx,
@@ -107,21 +160,35 @@ func TestChunkProcessor_StructuredOutputEmitsCompletionDeltaAndFinalCompletion(t
 		Value: brtypes.ContentBlockStopEvent{ContentBlockIndex: &idx},
 	})
 	require.NoError(t, err)
-	err = cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStop{})
+	err = cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStop{
+		Value: brtypes.MessageStopEvent{StopReason: brtypes.StopReasonEndTurn},
+	})
+	require.NoError(t, err)
+	usage := int32(3)
+	err = cp.Handle(&brtypes.ConverseStreamOutputMemberMetadata{
+		Value: brtypes.ConverseStreamMetadataEvent{
+			Usage: &brtypes.TokenUsage{TotalTokens: &usage},
+		},
+	})
 	require.NoError(t, err)
 
-	require.Len(t, chunks, 3)
-	require.Equal(t, model.ChunkTypeCompletionDelta, chunks[0].Type)
-	require.NotNil(t, chunks[0].CompletionDelta)
-	require.Equal(t, "draft_from_transcript", chunks[0].CompletionDelta.Name)
-	require.JSONEq(t, `{"assistant_text":"created a draft"}`, chunks[0].CompletionDelta.Delta)
+	require.Len(t, chunks, 4)
+	delta, ok := chunks[0].(model.CompletionDeltaChunk)
+	require.True(t, ok)
+	require.Equal(t, "draft_from_transcript", delta.Delta.Name)
+	require.JSONEq(t, `{"assistant_text":"created a draft"}`, delta.Delta.Delta)
 
-	require.Equal(t, model.ChunkTypeCompletion, chunks[1].Type)
-	require.NotNil(t, chunks[1].Completion)
-	require.Equal(t, "draft_from_transcript", chunks[1].Completion.Name)
-	require.JSONEq(t, `{"assistant_text":"created a draft"}`, string(chunks[1].Completion.Payload))
+	completion, ok := chunks[1].(model.CompletionChunk)
+	require.True(t, ok)
+	require.Equal(t, "draft_from_transcript", completion.Completion.Name)
+	require.JSONEq(t, `{"assistant_text":"created a draft"}`, string(completion.Completion.Payload))
 
-	require.Equal(t, model.ChunkTypeStop, chunks[2].Type)
+	require.IsType(t, model.UsageChunk{}, chunks[2])
+	require.IsType(t, model.StopChunk{}, chunks[3])
+	response := cp.response()
+	require.NoError(t, model.ValidateResponse(response))
+	require.Len(t, response.Content, 1)
+	require.Equal(t, model.TextPart{Text: `{"assistant_text":"created a draft"}`}, response.Content[0].Parts[0])
 }
 
 func TestChunkProcessor_StructuredOutputRejectsInvalidFinalJSON(t *testing.T) {
@@ -146,6 +213,10 @@ func TestChunkProcessor_StructuredOutputRejectsInvalidFinalJSON(t *testing.T) {
 
 	err := cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStart{})
 	require.NoError(t, err)
+	err = cp.Handle(&brtypes.ConverseStreamOutputMemberContentBlockStart{
+		Value: brtypes.ContentBlockStartEvent{ContentBlockIndex: &idx},
+	})
+	require.NoError(t, err)
 	err = cp.Handle(&brtypes.ConverseStreamOutputMemberContentBlockDelta{
 		Value: brtypes.ContentBlockDeltaEvent{
 			ContentBlockIndex: &idx,
@@ -160,4 +231,27 @@ func TestChunkProcessor_StructuredOutputRejectsInvalidFinalJSON(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not valid JSON")
+}
+
+func TestChunkProcessorRejectsMessageStopWithOpenContentBlock(t *testing.T) {
+	idx := int32(0)
+	cp := newChunkProcessor(
+		func(model.Chunk) error { return nil },
+		func(model.TokenUsage) {},
+		func([]model.Citation) {},
+		map[string]string{},
+		"test-model-id",
+		model.ModelClassDefault,
+		nil,
+	)
+
+	err := cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStart{})
+	require.NoError(t, err)
+	err = cp.Handle(&brtypes.ConverseStreamOutputMemberContentBlockStart{
+		Value: brtypes.ContentBlockStartEvent{ContentBlockIndex: &idx},
+	})
+	require.NoError(t, err)
+	err = cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStop{})
+
+	require.EqualError(t, err, "bedrock stream: message stopped with 1 open content blocks")
 }

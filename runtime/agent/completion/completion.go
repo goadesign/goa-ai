@@ -5,7 +5,9 @@
 package completion
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -47,9 +49,12 @@ type (
 	//   - Exactly one canonical ChunkTypeCompletion must arrive before EOF.
 	//   - Text and tool chunks are invalid on this typed completion surface.
 	completionStream struct {
-		inner     model.Streamer
-		name      Ident
-		finalSeen bool
+		inner        model.Streamer
+		name         Ident
+		finalSeen    bool
+		stopped      bool
+		finalJSON    []byte
+		canonicalize func([]byte) ([]byte, error)
 	}
 )
 
@@ -96,7 +101,7 @@ func Stream[T any](ctx context.Context, client model.Client, req *model.Request,
 	if streamer == nil {
 		return nil, fmt.Errorf("completion %q stream is nil", spec.Name)
 	}
-	return newCompletionStream(streamer, spec.Name), nil
+	return newCompletionStream(streamer, spec), nil
 }
 
 // DecodeResponse decodes the structured assistant response with the generated
@@ -106,7 +111,10 @@ func DecodeResponse[T any](resp *model.Response, spec Spec[T]) (T, error) {
 	if resp == nil {
 		return zero, errors.New("completion response is nil")
 	}
-	if len(resp.ToolCalls) > 0 {
+	if err := model.ValidateResponse(resp); err != nil {
+		return zero, fmt.Errorf("completion %q response is invalid: %w", spec.Name, err)
+	}
+	if len(resp.ToolCalls()) > 0 {
 		return zero, fmt.Errorf("completion %q returned tool calls", spec.Name)
 	}
 	payload, err := responseJSON(resp)
@@ -120,20 +128,18 @@ func DecodeResponse[T any](resp *model.Response, spec Spec[T]) (T, error) {
 // completion stream. Non-completion chunks are ignored and return ok=false.
 func DecodeChunk[T any](chunk model.Chunk, spec Spec[T]) (T, bool, error) {
 	var zero T
-	if chunk.Type != model.ChunkTypeCompletion {
+	completion, ok := chunk.(model.CompletionChunk)
+	if !ok {
 		return zero, false, nil
 	}
-	if chunk.Completion == nil {
-		return zero, false, fmt.Errorf("decode completion %q: completion chunk missing payload", spec.Name)
-	}
-	if chunk.Completion.Name != string(spec.Name) {
+	if completion.Completion.Name != string(spec.Name) {
 		return zero, false, fmt.Errorf(
 			"decode completion %q: completion chunk name %q does not match spec",
 			spec.Name,
-			chunk.Completion.Name,
+			completion.Completion.Name,
 		)
 	}
-	value, err := decodePayload(chunk.Completion.Payload, spec)
+	value, err := decodePayload(completion.Completion.Payload, spec)
 	if err != nil {
 		return zero, false, err
 	}
@@ -229,10 +235,17 @@ func decodePayload[T any](payload []byte, spec Spec[T]) (T, error) {
 
 // newCompletionStream wraps a provider-neutral streamer with the typed
 // completion streaming contract.
-func newCompletionStream(inner model.Streamer, name Ident) model.Streamer {
+func newCompletionStream[T any](inner model.Streamer, spec Spec[T]) model.Streamer {
 	return &completionStream{
 		inner: inner,
-		name:  name,
+		name:  spec.Name,
+		canonicalize: func(payload []byte) ([]byte, error) {
+			value, err := spec.Codec.FromJSON(payload)
+			if err != nil {
+				return nil, err
+			}
+			return spec.Codec.ToJSON(value)
+		},
 	}
 }
 
@@ -245,6 +258,9 @@ func structuredOutputFor[T any](spec Spec[T]) (*model.StructuredOutput, error) {
 	if len(spec.Result.Schema) == 0 {
 		return nil, fmt.Errorf("completion %q requires a result schema", spec.Name)
 	}
+	if spec.Codec.FromJSON == nil || spec.Codec.ToJSON == nil {
+		return nil, fmt.Errorf("completion %q requires a bidirectional result codec", spec.Name)
+	}
 	return &model.StructuredOutput{
 		Name:   string(spec.Name),
 		Schema: append([]byte(nil), spec.Result.Schema...),
@@ -255,43 +271,58 @@ func (s *completionStream) Recv() (model.Chunk, error) {
 	chunk, err := s.inner.Recv()
 	if err != nil {
 		if errors.Is(err, io.EOF) && !s.finalSeen {
-			return model.Chunk{}, fmt.Errorf(
+			return nil, fmt.Errorf(
 				"completion %q stream ended without canonical completion chunk",
 				s.name,
 			)
 		}
+		if errors.Is(err, io.EOF) {
+			if !s.stopped {
+				return nil, fmt.Errorf("completion %q stream ended without stop chunk", s.name)
+			}
+			if err := s.validateCanonicalResponse(); err != nil {
+				return nil, err
+			}
+		}
 		return chunk, err
 	}
-	switch chunk.Type {
-	case model.ChunkTypeCompletionDelta:
-		if err := s.validateCompletionDelta(chunk.CompletionDelta); err != nil {
-			return model.Chunk{}, err
+	if err := model.ValidateChunk(chunk); err != nil {
+		return nil, fmt.Errorf("completion %q stream emitted invalid chunk: %w", s.name, err)
+	}
+	if s.stopped {
+		return nil, fmt.Errorf("completion %q stream emitted %q after stop", s.name, chunk.Kind())
+	}
+	switch actual := chunk.(type) {
+	case model.CompletionDeltaChunk:
+		if err := s.validateCompletionDelta(actual.Delta); err != nil {
+			return nil, err
 		}
-	case model.ChunkTypeCompletion:
-		if err := s.validateCompletion(chunk.Completion); err != nil {
-			return model.Chunk{}, err
+	case model.CompletionChunk:
+		if err := s.validateCompletion(actual.Completion); err != nil {
+			return nil, err
 		}
 		s.finalSeen = true
-	case model.ChunkTypeThinking, model.ChunkTypeUsage:
+	case model.ThinkingChunk, model.UsageChunk:
 		return chunk, nil
-	case model.ChunkTypeStop:
+	case model.StopChunk:
 		if !s.finalSeen {
-			return model.Chunk{}, fmt.Errorf(
+			return nil, fmt.Errorf(
 				"completion %q stream stopped before canonical completion chunk",
 				s.name,
 			)
 		}
-	case model.ChunkTypeText, model.ChunkTypeToolCall, model.ChunkTypeToolCallDelta:
-		return model.Chunk{}, fmt.Errorf(
+		s.stopped = true
+	case model.TextChunk, model.ToolCallChunk, model.ToolCallDeltaChunk:
+		return nil, fmt.Errorf(
 			"completion %q stream emitted unexpected %q chunk",
 			s.name,
-			chunk.Type,
+			chunk.Kind(),
 		)
 	default:
-		return model.Chunk{}, fmt.Errorf(
+		return nil, fmt.Errorf(
 			"completion %q stream emitted unsupported %q chunk",
 			s.name,
-			chunk.Type,
+			chunk.Kind(),
 		)
 	}
 	return chunk, nil
@@ -301,16 +332,17 @@ func (s *completionStream) Close() error {
 	return s.inner.Close()
 }
 
+func (s *completionStream) Response() *model.Response {
+	return s.inner.Response()
+}
+
 func (s *completionStream) Metadata() map[string]any {
 	return s.inner.Metadata()
 }
 
 // validateCompletionDelta enforces the preview-only chunk contract for a typed
 // completion stream.
-func (s *completionStream) validateCompletionDelta(delta *model.CompletionDelta) error {
-	if delta == nil {
-		return fmt.Errorf("completion %q stream emitted completion delta without payload", s.name)
-	}
+func (s *completionStream) validateCompletionDelta(delta model.CompletionDelta) error {
 	if s.finalSeen {
 		return fmt.Errorf("completion %q stream emitted completion delta after final completion", s.name)
 	}
@@ -326,10 +358,7 @@ func (s *completionStream) validateCompletionDelta(delta *model.CompletionDelta)
 
 // validateCompletion enforces the canonical final chunk contract for a typed
 // completion stream.
-func (s *completionStream) validateCompletion(completion *model.Completion) error {
-	if completion == nil {
-		return fmt.Errorf("completion %q stream emitted completion without payload", s.name)
-	}
+func (s *completionStream) validateCompletion(completion model.Completion) error {
 	if s.finalSeen {
 		return fmt.Errorf("completion %q stream emitted multiple canonical completion chunks", s.name)
 	}
@@ -342,6 +371,35 @@ func (s *completionStream) validateCompletion(completion *model.Completion) erro
 	}
 	if len(completion.Payload) == 0 {
 		return fmt.Errorf("completion %q stream emitted empty canonical completion payload", s.name)
+	}
+	if !json.Valid(completion.Payload) {
+		return fmt.Errorf("completion %q stream emitted invalid canonical completion JSON", s.name)
+	}
+	canonical, err := s.canonicalize(completion.Payload)
+	if err != nil {
+		return fmt.Errorf("completion %q stream emitted invalid canonical completion payload: %w", s.name, err)
+	}
+	s.finalJSON = canonical
+	return nil
+}
+
+// validateCanonicalResponse ensures the terminal completion chunk and the
+// streamer's replayable response describe the same provider output.
+func (s *completionStream) validateCanonicalResponse() error {
+	response := s.inner.Response()
+	if err := model.ValidateResponse(response); err != nil {
+		return fmt.Errorf("completion %q stream returned an invalid canonical response: %w", s.name, err)
+	}
+	payload, err := responseJSON(response)
+	if err != nil {
+		return fmt.Errorf("completion %q stream returned an invalid canonical response: %w", s.name, err)
+	}
+	canonical, err := s.canonicalize(payload)
+	if err != nil {
+		return fmt.Errorf("completion %q stream returned an invalid canonical response: %w", s.name, err)
+	}
+	if !bytes.Equal(canonical, s.finalJSON) {
+		return fmt.Errorf("completion %q stream chunk does not match canonical response", s.name)
 	}
 	return nil
 }

@@ -120,7 +120,13 @@ func (c *Client) prepareRequest(req *model.Request) (*preparedRequest, error) {
 	if req.StructuredOutput != nil && len(req.Tools) > 0 {
 		return nil, model.ErrStructuredOutputUnsupported
 	}
-	canonToProv, provToCanon := buildToolNameMaps(req.Tools)
+	if req.Cache != nil {
+		return nil, errors.New("vertex: cache options are not supported")
+	}
+	canonToProv, provToCanon, err := buildToolNameMaps(req.Tools)
+	if err != nil {
+		return nil, err
+	}
 	system, contents, err := encodeContents(req.Messages, canonToProv)
 	if err != nil {
 		return nil, err
@@ -147,7 +153,10 @@ func (c *Client) prepareRequest(req *model.Request) (*preparedRequest, error) {
 			return nil, err
 		}
 		config.Tools = tools
-		config.ToolConfig = encodeToolConfig(req.ToolChoice, canonToProv)
+		config.ToolConfig, err = encodeToolConfig(req.ToolChoice, canonToProv)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if req.StructuredOutput != nil {
 		schema, err := normalizeSchema(req.StructuredOutput.Schema)
