@@ -66,18 +66,19 @@ func TestChunkProcessorUsageIncludesCacheTokens(t *testing.T) {
 	require.Equal(t, usageChunk.Usage, cp.response().Usage)
 }
 
-func TestReasoningBufferFinalizeRequiresCanonicalVariant(t *testing.T) {
+func TestReasoningBufferFinalize(t *testing.T) {
 	tests := []struct {
 		name      string
 		text      string
 		signature string
 		redacted  []byte
 		wantErr   string
+		wantPart  bool
 	}{
-		{name: "plaintext", text: "reasoning", signature: "sig"},
-		{name: "redacted", redacted: []byte("opaque")},
-		{name: "missing signature", text: "reasoning", wantErr: "reasoning plaintext is missing provider signature"},
-		{name: "missing text", signature: "sig", wantErr: "reasoning signature is missing plaintext content"},
+		{name: "plaintext", text: "reasoning", signature: "sig", wantPart: true},
+		{name: "redacted", redacted: []byte("opaque"), wantPart: true},
+		{name: "missing signature", text: "reasoning"},
+		{name: "missing text", signature: "sig"},
 		{
 			name:      "mixed variants",
 			text:      "reasoning",
@@ -102,7 +103,11 @@ func TestReasoningBufferFinalizeRequiresCanonicalVariant(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			require.NotNil(t, part)
+			if test.wantPart {
+				require.NotNil(t, part)
+				return
+			}
+			require.Nil(t, part)
 		})
 	}
 }

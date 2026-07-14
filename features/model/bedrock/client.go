@@ -1543,8 +1543,14 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 			case *brtypes.ReasoningContentBlockMemberReasoningText:
 				text := aws.ToString(reasoning.Value.Text)
 				signature := aws.ToString(reasoning.Value.Signature)
+				// Signature-only reasoning blocks are documented Anthropic
+				// behavior (thinking display "omitted", default on Claude
+				// Opus 4.7+ and Sonnet 5+). Skip incomplete blocks rather
+				// than fail the whole response; encodeMessages only replays
+				// signed-plaintext or redacted parts. See
+				// reasoningBuffer.finalize for the streaming equivalent.
 				if text == "" || signature == "" {
-					return nil, errors.New("bedrock: response reasoning block requires plaintext and signature")
+					continue
 				}
 				assistant.Parts = append(assistant.Parts, model.ThinkingPart{
 					Text:      text,

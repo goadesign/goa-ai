@@ -777,6 +777,18 @@ type reasoningBuffer struct {
 	signature string
 }
 
+// finalize converts the buffered reasoning block into a canonical
+// ThinkingPart, or (nil, nil) when the block cannot be represented.
+//
+// Signature-only reasoning blocks are documented Anthropic behavior, not a
+// protocol violation: with thinking display "omitted" (the default on Claude
+// Opus 4.7+ and Sonnet 5+), the block opens, a single signature delta
+// arrives, and the block closes with no text deltas. Text-only blocks are
+// likewise tolerated. Treating either as fatal would abort the stream at
+// content-block stop and discard the rest of the response, so incomplete
+// blocks are dropped instead: encodeMessages only replays signed-plaintext
+// or redacted thinking parts. Mixing redacted and plaintext content in one
+// block remains an error because it indicates corrupted block accounting.
 func (rb *reasoningBuffer) finalize() (*model.ThinkingPart, error) {
 	text := rb.text.String()
 	if len(rb.redacted) > 0 {
@@ -785,14 +797,8 @@ func (rb *reasoningBuffer) finalize() (*model.ThinkingPart, error) {
 		}
 		return &model.ThinkingPart{Redacted: append([]byte(nil), rb.redacted...)}, nil
 	}
-	if text == "" && rb.signature == "" {
+	if text == "" || rb.signature == "" {
 		return nil, nil
-	}
-	if text == "" {
-		return nil, errors.New("reasoning signature is missing plaintext content")
-	}
-	if rb.signature == "" {
-		return nil, errors.New("reasoning plaintext is missing provider signature")
 	}
 	return &model.ThinkingPart{
 		Text:      text,

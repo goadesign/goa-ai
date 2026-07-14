@@ -97,6 +97,43 @@ func TestTranslateResponsePreservesReasoning(t *testing.T) {
 	}, resp.Content[0].Parts)
 }
 
+func TestTranslateResponseDropsIncompleteReasoning(t *testing.T) {
+	tests := []struct {
+		name      string
+		text      *string
+		signature *string
+	}{
+		{name: "missing plaintext", signature: aws.String("sig")},
+		{name: "missing signature", text: aws.String("reasoning")},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			output := &bedrockruntime.ConverseOutput{
+				StopReason: brtypes.StopReasonEndTurn,
+				Output: &brtypes.ConverseOutputMemberMessage{Value: brtypes.Message{
+					Role: brtypes.ConversationRoleAssistant,
+					Content: []brtypes.ContentBlock{
+						&brtypes.ContentBlockMemberReasoningContent{
+							Value: &brtypes.ReasoningContentBlockMemberReasoningText{
+								Value: brtypes.ReasoningTextBlock{
+									Text:      test.text,
+									Signature: test.signature,
+								},
+							},
+						},
+						&brtypes.ContentBlockMemberText{Value: "answer"},
+					},
+				}},
+			}
+
+			resp, err := translateResponse(output, nil, "", "")
+
+			require.NoError(t, err)
+			require.Equal(t, []model.Part{model.TextPart{Text: "answer"}}, resp.Content[0].Parts)
+		})
+	}
+}
+
 // Ensures encodeMessages preserves transcript order and places reasoning before tool_use
 // inside an assistant message, and encodes user tool_result referencing the prior ID.
 func TestEncodeMessages_ReencodeTranscriptOrder(t *testing.T) {
