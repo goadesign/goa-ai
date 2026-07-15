@@ -29,6 +29,11 @@ const (
 	ProviderErrorKindUnknown ProviderErrorKind = "unknown"
 )
 
+// providerErrorCodeEmptyStream is the stable code carried by empty-stream
+// provider errors. Detection goes through errors.Is(err, ErrEmptyStream);
+// the code exists for observability (span/error attributes), not matching.
+const providerErrorCodeEmptyStream = "empty_stream"
+
 // ProviderError describes a failure returned by a model provider (e.g. Bedrock).
 // It is intended to cross package boundaries so runtimes can surface stable,
 // structured information to callers.
@@ -123,6 +128,30 @@ func AsProviderError(err error) (*ProviderError, bool) {
 		return pe, true
 	}
 	return nil, false
+}
+
+// NewEmptyStreamError classifies a streaming response that the provider
+// terminated without ever starting an assistant message. Adapters call it
+// from their stream event loops when the terminal event (or the end of the
+// event stream) arrives before any message started, which providers
+// intermittently produce for empty model completions. The result carries
+// ErrEmptyStream for errors.Is detection plus a retryable unavailable
+// ProviderError so retry middleware and observability see one consistent
+// classification. message describes the protocol shape observed (for
+// example, "message stop received without an active message").
+func NewEmptyStreamError(provider, operation, message string) error {
+	pe := NewProviderError(
+		provider,
+		operation,
+		0,
+		ProviderErrorKindUnavailable,
+		providerErrorCodeEmptyStream,
+		message,
+		"",
+		true,
+		nil,
+	)
+	return errors.Join(ErrEmptyStream, pe)
 }
 
 // ClassifyHTTPStatus maps an HTTP status code returned by a model provider to

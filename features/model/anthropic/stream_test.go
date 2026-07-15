@@ -223,9 +223,11 @@ func TestAnthropicStreamer_ContextCancelPassthrough(t *testing.T) {
 	assert.False(t, ok)
 }
 
-// TestAnthropicStreamerRejectsEOFBeforeCanonicalResponse verifies that a stream
-// cannot terminate successfully without the provider's message_stop boundary.
-func TestAnthropicStreamerRejectsEOFBeforeCanonicalResponse(t *testing.T) {
+// TestAnthropicStreamerClassifiesEventlessStreamAsEmptyStream verifies that a
+// stream closing before any message starts is classified as a retryable empty
+// stream (model.ErrEmptyStream) instead of an opaque protocol error, so retry
+// middleware can safely reissue the request.
+func TestAnthropicStreamerClassifiesEventlessStreamAsEmptyStream(t *testing.T) {
 	dec := &testDecoder{events: nil}
 	stream := ssestream.NewStream[sdk.MessageStreamEventUnion](dec, nil)
 
@@ -233,9 +235,32 @@ func TestAnthropicStreamerRejectsEOFBeforeCanonicalResponse(t *testing.T) {
 	defer func() { _ = s.Close() }()
 
 	_, err := s.Recv()
-	require.EqualError(t, err, "anthropic: stream ended before message_stop")
-	_, ok := model.AsProviderError(err)
-	assert.False(t, ok)
+	require.ErrorIs(t, err, model.ErrEmptyStream)
+	pe, ok := model.AsProviderError(err)
+	require.True(t, ok)
+	assert.Equal(t, model.ProviderErrorKindUnavailable, pe.Kind())
+	assert.True(t, pe.Retryable())
+}
+
+// TestAnthropicStreamerClassifiesMessageStopWithoutStartAsEmptyStream verifies
+// that a message_stop arriving before message_start carries the empty-stream
+// classification: this is the wire shape Anthropic-family models produce when
+// they emit an empty completion.
+func TestAnthropicStreamerClassifiesMessageStopWithoutStartAsEmptyStream(t *testing.T) {
+	var stop sdk.MessageStreamEventUnion
+	require.NoError(t, json.Unmarshal([]byte(`{"type":"message_stop"}`), &stop))
+	events := []ssestream.Event{{Type: "message_stop", Data: mustJSON(stop)}}
+	stream := ssestream.NewStream[sdk.MessageStreamEventUnion](&testDecoder{events: events}, nil)
+
+	s := newAnthropicStreamer(context.Background(), stream, nil)
+	defer func() { _ = s.Close() }()
+
+	_, err := s.Recv()
+	require.ErrorIs(t, err, model.ErrEmptyStream)
+	pe, ok := model.AsProviderError(err)
+	require.True(t, ok)
+	assert.Equal(t, model.ProviderErrorKindUnavailable, pe.Kind())
+	assert.True(t, pe.Retryable())
 }
 
 func TestAnthropicStreamerRejectsMessageStopWithOpenContentBlock(t *testing.T) {

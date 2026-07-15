@@ -926,6 +926,15 @@ var ErrStructuredOutputUnsupported = errors.New("model: structured output not su
 // failure that is safe to surface to higher layers.
 var ErrRateLimited = errors.New("model: rate limited")
 
+// ErrEmptyStream indicates the provider terminated a streaming response
+// without ever starting an assistant message, so no output was produced.
+// Providers intermittently do this when a model emits an empty completion
+// (observed on Bedrock as messageStop with no prior messageStart). Adapters
+// classify the condition with NewEmptyStreamError instead of fabricating an
+// empty response; callers detect it with errors.Is and may retry the request
+// a bounded number of times before surfacing the failure.
+var ErrEmptyStream = errors.New("model: provider returned an empty stream")
+
 // ToolCalls derives model tool invocations from their ordered ToolUsePart
 // entries. Response.Content remains the single source of provider output.
 func (r *Response) ToolCalls() []ToolCall {

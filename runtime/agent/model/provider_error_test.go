@@ -51,6 +51,20 @@ func TestClassifyHTTPStatus(t *testing.T) {
 	}
 }
 
+func TestNewEmptyStreamError(t *testing.T) {
+	err := NewEmptyStreamError("test-provider", "converse_stream", "message stop received without an active message")
+
+	require.ErrorIs(t, err, ErrEmptyStream)
+	pe, ok := AsProviderError(err)
+	require.True(t, ok)
+	assert.Equal(t, ProviderErrorKindUnavailable, pe.Kind())
+	assert.Equal(t, "empty_stream", pe.Code())
+	assert.True(t, pe.Retryable())
+	assert.Equal(t, "test-provider", pe.Provider())
+	assert.Equal(t, "converse_stream", pe.Operation())
+	assert.Equal(t, "message stop received without an active message", pe.Message())
+}
+
 func TestClassifyHTTPStatusPreservesRateLimitedCause(t *testing.T) {
 	// A pre-classified sentinel (status 0) must still satisfy errors.Is via
 	// the Unwrap chain even though the status alone does not select the

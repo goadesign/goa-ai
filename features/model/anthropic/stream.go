@@ -113,7 +113,7 @@ func (s *anthropicStreamer) run() {
 			} else if err := s.ctx.Err(); err != nil {
 				s.setErr(err)
 			} else if !processor.complete {
-				s.setErr(errors.New("anthropic: stream ended before message_stop"))
+				s.setErr(streamEndedEarlyError(processor.started))
 			} else {
 				translated, err := translateResponse(&response, s.toolNameMap)
 				if err != nil {
@@ -410,8 +410,18 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 		}
 		return p.emit(model.UsageChunk{Usage: usage})
 	case sdk.MessageStopEvent:
-		if !p.started || p.complete {
-			return errors.New("anthropic stream: message stop received without an active message")
+		if !p.started {
+			// Anthropic models intermittently emit an empty completion whose
+			// stream stops a message that never started. Classify as a
+			// retryable empty stream instead of an opaque protocol error.
+			return model.NewEmptyStreamError(
+				anthropicProviderName,
+				"stream_recv",
+				"message stop received without an active message",
+			)
+		}
+		if p.complete {
+			return errors.New("anthropic stream: duplicate message stop")
 		}
 		if len(p.openBlocks) > 0 {
 			return fmt.Errorf("anthropic stream: message stopped with %d open content blocks", len(p.openBlocks))
@@ -489,4 +499,31 @@ func decodeToolPayload(raw string) (rawjson.Message, error) {
 		return nil, errors.New("tool payload is not valid JSON")
 	}
 	return rawjson.Message(data), nil
+}
+
+// streamEndedEarlyError classifies an Anthropic event stream that closed
+// cleanly before message stop. When no message ever started, the provider
+// produced an empty completion and callers may retry (model.ErrEmptyStream).
+// When a message was underway, the stream was truncated mid-generation: a
+// fresh request regenerates the full response, so the failure is a retryable
+// provider fault but not an empty stream.
+func streamEndedEarlyError(started bool) error {
+	if !started {
+		return model.NewEmptyStreamError(
+			anthropicProviderName,
+			"stream_recv",
+			"stream ended before message start",
+		)
+	}
+	return model.NewProviderError(
+		anthropicProviderName,
+		"stream_recv",
+		0,
+		model.ProviderErrorKindUnavailable,
+		"truncated_stream",
+		"stream ended before message stop",
+		"",
+		true,
+		nil,
+	)
 }
