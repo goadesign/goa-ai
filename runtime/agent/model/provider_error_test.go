@@ -65,6 +65,40 @@ func TestNewEmptyStreamError(t *testing.T) {
 	assert.Equal(t, "message stop received without an active message", pe.Message())
 }
 
+// TestNewStreamEndedEarlyError verifies the two terminal shapes of an event
+// stream that closes before message stop: never-started streams are retryable
+// empty streams, mid-message closes are retryable truncations that must not
+// carry the empty-stream sentinel.
+func TestNewStreamEndedEarlyError(t *testing.T) {
+	tests := []struct {
+		name      string
+		started   bool
+		wantEmpty bool
+		wantCode  string
+	}{
+		{name: "never started", started: false, wantEmpty: true, wantCode: "empty_stream"},
+		{name: "truncated mid message", started: true, wantEmpty: false, wantCode: "truncated_stream"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := NewStreamEndedEarlyError("test-provider", "converse_stream", tt.started)
+
+			if tt.wantEmpty {
+				require.ErrorIs(t, err, ErrEmptyStream)
+			} else {
+				require.NotErrorIs(t, err, ErrEmptyStream)
+			}
+			pe, ok := AsProviderError(err)
+			require.True(t, ok)
+			assert.Equal(t, ProviderErrorKindUnavailable, pe.Kind())
+			assert.Equal(t, tt.wantCode, pe.Code())
+			assert.True(t, pe.Retryable())
+			assert.Equal(t, "test-provider", pe.Provider())
+			assert.Equal(t, "converse_stream", pe.Operation())
+		})
+	}
+}
+
 func TestClassifyHTTPStatusPreservesRateLimitedCause(t *testing.T) {
 	// A pre-classified sentinel (status 0) must still satisfy errors.Is via
 	// the Unwrap chain even though the status alone does not select the
