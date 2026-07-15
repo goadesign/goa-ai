@@ -113,7 +113,11 @@ func (s *anthropicStreamer) run() {
 			} else if err := s.ctx.Err(); err != nil {
 				s.setErr(err)
 			} else if !processor.complete {
-				s.setErr(streamEndedEarlyError(processor.started))
+				s.setErr(model.NewStreamEndedEarlyError(
+					anthropicProviderName,
+					"stream_recv",
+					processor.started,
+				))
 			} else {
 				translated, err := translateResponse(&response, s.toolNameMap)
 				if err != nil {
@@ -499,31 +503,4 @@ func decodeToolPayload(raw string) (rawjson.Message, error) {
 		return nil, errors.New("tool payload is not valid JSON")
 	}
 	return rawjson.Message(data), nil
-}
-
-// streamEndedEarlyError classifies an Anthropic event stream that closed
-// cleanly before message stop. When no message ever started, the provider
-// produced an empty completion and callers may retry (model.ErrEmptyStream).
-// When a message was underway, the stream was truncated mid-generation: a
-// fresh request regenerates the full response, so the failure is a retryable
-// provider fault but not an empty stream.
-func streamEndedEarlyError(started bool) error {
-	if !started {
-		return model.NewEmptyStreamError(
-			anthropicProviderName,
-			"stream_recv",
-			"stream ended before message start",
-		)
-	}
-	return model.NewProviderError(
-		anthropicProviderName,
-		"stream_recv",
-		0,
-		model.ProviderErrorKindUnavailable,
-		"truncated_stream",
-		"stream ended before message stop",
-		"",
-		true,
-		nil,
-	)
 }

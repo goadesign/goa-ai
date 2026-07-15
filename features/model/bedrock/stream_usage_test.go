@@ -369,35 +369,3 @@ func TestChunkProcessorRejectsDuplicateMessageStop(t *testing.T) {
 	require.EqualError(t, err, "bedrock stream: duplicate message stop")
 	require.NotErrorIs(t, err, model.ErrEmptyStream)
 }
-
-// TestStreamEndedEarlyErrorClassification verifies the two terminal shapes of
-// a Bedrock event stream that closes before messageStop: never-started
-// streams are retryable empty streams, mid-message closes are retryable
-// truncations that must not carry the empty-stream sentinel.
-func TestStreamEndedEarlyErrorClassification(t *testing.T) {
-	tests := []struct {
-		name      string
-		started   bool
-		wantEmpty bool
-		wantCode  string
-	}{
-		{name: "never started", started: false, wantEmpty: true, wantCode: "empty_stream"},
-		{name: "truncated mid message", started: true, wantEmpty: false, wantCode: "truncated_stream"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := streamEndedEarlyError(tt.started)
-
-			if tt.wantEmpty {
-				require.ErrorIs(t, err, model.ErrEmptyStream)
-			} else {
-				require.NotErrorIs(t, err, model.ErrEmptyStream)
-			}
-			pe, ok := model.AsProviderError(err)
-			require.True(t, ok)
-			require.Equal(t, model.ProviderErrorKindUnavailable, pe.Kind())
-			require.Equal(t, tt.wantCode, pe.Code())
-			require.True(t, pe.Retryable())
-		})
-	}
-}

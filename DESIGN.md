@@ -278,10 +278,15 @@ shapes are classified instead of surfaced as opaque protocol errors:
   `errors.Is(err, model.ErrEmptyStream)` and may retry the request a bounded
   number of times before surfacing the failure.
 - **Truncated stream** — the stream closes cleanly after a message started but
-  before `messageStop`. Adapters classify it as a retryable `unavailable`
+  before `messageStop`. The classification is a retryable `unavailable`
   ProviderError (code `truncated_stream`) without the empty-stream sentinel:
   output was partially produced, so blind pre-output retry policies must not
   match it.
+
+`model.NewStreamEndedEarlyError(provider, operation, started)` is the single
+classifier for streams that close before message stop; adapters pass whether a
+message had started and the model package owns which of the two shapes
+applies.
 
 Adapters never retry internally; retry policy belongs to the integrating
 application (for example, a guard that retries only before the first visible
