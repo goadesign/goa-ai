@@ -2361,7 +2361,14 @@ var ErrNotFound = errors.New("run not found")  // run.ErrNotFound
 ```go
 var ErrStreamingUnsupported = errors.New("model: streaming not supported")
 var ErrRateLimited = errors.New("model: rate limited")
+var ErrEmptyStream = errors.New("model: provider returned an empty stream")
 ```
+
+`ErrEmptyStream` is joined (via `model.NewEmptyStreamError`) with a retryable
+`unavailable` ProviderError when a provider terminates a stream before any
+assistant message starts — the wire shape produced by intermittent empty model
+completions. Detect it with `errors.Is(err, model.ErrEmptyStream)` and retry
+the request a bounded number of times before surfacing the failure.
 
 ---
 

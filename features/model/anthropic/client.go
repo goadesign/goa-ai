@@ -86,6 +86,9 @@ type (
 	}
 )
 
+// anthropicProviderName identifies this adapter in model.ProviderError values.
+const anthropicProviderName = "anthropic"
+
 // New builds an Anthropic-backed model client from the provided Anthropic
 // Messages client and configuration options.
 func New(msg MessagesClient, opts Options) (*Client, error) {
@@ -625,7 +628,7 @@ func wrapAnthropicError(operation string, err error) error {
 	} else {
 		message = err.Error()
 	}
-	return model.ClassifyHTTPStatus("anthropic", operation, status, message, err)
+	return model.ClassifyHTTPStatus(anthropicProviderName, operation, status, message, err)
 }
 
 // anthropicErrorMessage safely renders an *sdk.Error's message.
