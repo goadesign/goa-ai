@@ -29,6 +29,18 @@ const (
 	ProviderErrorKindUnknown ProviderErrorKind = "unknown"
 )
 
+const (
+	// providerErrorCodeEmptyStream is the stable code carried by empty-stream
+	// provider errors. Detection goes through errors.Is(err, ErrEmptyStream);
+	// the code exists for observability (span/error attributes), not matching.
+	providerErrorCodeEmptyStream = "empty_stream"
+
+	// providerErrorCodeTruncatedStream is the stable code carried by provider
+	// errors for streams that closed mid-message. Like the empty-stream code,
+	// it exists for observability, not matching.
+	providerErrorCodeTruncatedStream = "truncated_stream"
+)
+
 // ProviderError describes a failure returned by a model provider (e.g. Bedrock).
 // It is intended to cross package boundaries so runtimes can surface stable,
 // structured information to callers.
@@ -123,6 +135,60 @@ func AsProviderError(err error) (*ProviderError, bool) {
 		return pe, true
 	}
 	return nil, false
+}
+
+// NewEmptyStreamError classifies a streaming response that the provider
+// terminated without ever starting an assistant message. Adapters call it
+// from their stream event loops when the terminal event (or the end of the
+// event stream) arrives before any message started, which providers
+// intermittently produce for empty model completions. The result carries
+// ErrEmptyStream for errors.Is detection plus a retryable unavailable
+// ProviderError so retry middleware and observability see one consistent
+// classification. message describes the protocol shape observed (for
+// example, "message stop received without an active message").
+func NewEmptyStreamError(provider, operation, message string) error {
+	pe := NewProviderError(
+		provider,
+		operation,
+		0,
+		ProviderErrorKindUnavailable,
+		providerErrorCodeEmptyStream,
+		message,
+		"",
+		true,
+		nil,
+	)
+	return errors.Join(ErrEmptyStream, pe)
+}
+
+// NewStreamEndedEarlyError classifies an event stream that terminated cleanly
+// before the provider's message-stop boundary. Adapters call it from their
+// stream event loops when the provider closes the connection without error
+// but the message protocol is unfinished. started reports whether an
+// assistant message had begun:
+//
+//   - started=false means the provider produced an empty completion; the
+//     result is an empty-stream error (see NewEmptyStreamError) that callers
+//     may retry via errors.Is(err, ErrEmptyStream).
+//   - started=true means the stream was truncated mid-generation; the result
+//     is a retryable unavailable ProviderError (code truncated_stream)
+//     without the empty-stream sentinel, so pre-output retry policies never
+//     match partially delivered responses.
+func NewStreamEndedEarlyError(provider, operation string, started bool) error {
+	if !started {
+		return NewEmptyStreamError(provider, operation, "stream ended before message start")
+	}
+	return NewProviderError(
+		provider,
+		operation,
+		0,
+		ProviderErrorKindUnavailable,
+		providerErrorCodeTruncatedStream,
+		"stream ended before message stop",
+		"",
+		true,
+		nil,
+	)
 }
 
 // ClassifyHTTPStatus maps an HTTP status code returned by a model provider to
