@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"io"
 	"math/big"
-	"net/http"
 	"strings"
 	"unicode"
 
@@ -21,7 +20,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/document"
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
-	smithy "github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 
 	"goa.design/goa-ai/features/model/internal/claudecaps"
@@ -184,16 +182,23 @@ func (c *Client) CountTokens(ctx context.Context, req *model.Request) (model.Tok
 		return model.TokenCount{}, err
 	}
 	output, err := c.runtime.CountTokens(ctx, c.buildCountTokensInput(parts, &countReq))
+	var inputTokens int
 	if err != nil {
-		return model.TokenCount{}, wrapBedrockError("count_tokens", err)
-	}
-	if output.InputTokens == nil {
-		return model.TokenCount{}, errors.New("bedrock: count_tokens response missing input tokens")
+		var ok bool
+		inputTokens, ok = promptTooLongTokenCount(err)
+		if !ok {
+			return model.TokenCount{}, wrapBedrockError("count_tokens", err)
+		}
+	} else {
+		if output.InputTokens == nil {
+			return model.TokenCount{}, errors.New("bedrock: count_tokens response missing input tokens")
+		}
+		inputTokens = int(*output.InputTokens)
 	}
 	return model.TokenCount{
 		Model:       parts.modelID,
 		ModelClass:  parts.modelClass,
-		InputTokens: int(*output.InputTokens),
+		InputTokens: inputTokens,
 		Exact:       true,
 	}, nil
 }
@@ -577,73 +582,6 @@ func removeAnthropicBeta(fields map[string]any, beta string) {
 		return
 	}
 	fields["anthropic_beta"] = out
-}
-
-// isRateLimited reports whether err represents a provider rate limiting
-// condition. It treats both HTTP 429 responses and provider error codes like
-// ThrottlingException as rate-limited signals and is idempotent when
-// ErrRateLimited is already present in the error chain.
-func isRateLimited(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, model.ErrRateLimited) {
-		return true
-	}
-
-	var apiErr smithy.APIError
-	if errors.As(err, &apiErr) {
-		switch apiErr.ErrorCode() {
-		case "ThrottlingException", "TooManyRequestsException":
-			return true
-		}
-	}
-	var respErr *smithyhttp.ResponseError
-	if errors.As(err, &respErr) && respErr.HTTPStatusCode() == 429 {
-		return true
-	}
-
-	return false
-}
-
-func wrapBedrockError(operation string, err error) error {
-	if isRateLimited(err) {
-		pe := model.NewProviderError(bedrockProviderName, operation, http.StatusTooManyRequests, model.ProviderErrorKindRateLimited, "rate_limited", "", "", true, err)
-		return errors.Join(model.ErrRateLimited, pe)
-	}
-
-	var (
-		status int
-		code   string
-		msg    string
-	)
-
-	var apiErr smithy.APIError
-	if errors.As(err, &apiErr) {
-		code = apiErr.ErrorCode()
-		msg = apiErr.ErrorMessage()
-	}
-	var respErr *smithyhttp.ResponseError
-	if errors.As(err, &respErr) {
-		status = respErr.HTTPStatusCode()
-	}
-
-	kind := model.ProviderErrorKindUnknown
-	retryable := false
-	switch {
-	case status == http.StatusBadRequest:
-		kind = model.ProviderErrorKindInvalidRequest
-	case status == http.StatusUnauthorized || status == http.StatusForbidden:
-		kind = model.ProviderErrorKindAuth
-	case status == http.StatusTooManyRequests:
-		kind = model.ProviderErrorKindRateLimited
-		retryable = true
-	case status >= http.StatusInternalServerError && status <= http.StatusNetworkAuthenticationRequired:
-		kind = model.ProviderErrorKindUnavailable
-		retryable = true
-	}
-
-	return model.NewProviderError(bedrockProviderName, operation, status, kind, code, msg, "", retryable, err)
 }
 
 func (c *Client) effectiveMaxTokens(requested int) int {
