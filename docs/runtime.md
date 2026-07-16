@@ -1705,6 +1705,11 @@ trigger budget from the exact-retention budget:
   tokenization depends on the deployed model. Token-budget compression requires
   a history model that implements `model.TokenCounter` with exact counts; the
   Bedrock adapter does this with Bedrock's native `CountTokens` API.
+- When Bedrock returns its canonical `prompt is too long: N tokens > M
+  maximum` `ValidationException`, the adapter decodes that complete provider
+  message as an exact count. This allows history compression to run after the
+  request has crossed the model context window. Every other validation error
+  remains an error.
 - Counts exclude replayed thinking blocks: thinking signatures only verify on
   the model that issued them, and the history model class can differ from the
   model that produced the transcript. This matches Anthropic billing, which
