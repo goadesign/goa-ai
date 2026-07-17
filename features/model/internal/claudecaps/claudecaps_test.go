@@ -96,7 +96,12 @@ func TestAdaptiveThinkingRequired(t *testing.T) {
 		{"opus-4-5 legacy config", "anthropic.claude-opus-4-5-20251101-v1", false},
 		{"opus-4-0 dated (date is not a minor)", "claude-opus-4-20250514", false},
 		{"sonnet-4-5", "us.anthropic.claude-sonnet-4-5-20250929-v1:0", false},
+		{"sonnet-4-6", "global.anthropic.claude-sonnet-4-6", false},
+		{"sonnet-5 bare", "claude-sonnet-5", true},
+		{"sonnet-5 global", "global.anthropic.claude-sonnet-5", true},
+		{"sonnet-5 suffixed", "us.anthropic.claude-sonnet-5-v1:0", true},
 		{"haiku-4-5", "global.anthropic.claude-haiku-4-5-20251001-v1:0", false},
+		{"future haiku-5", "global.anthropic.claude-haiku-5", true},
 		{"mythos-preview", "claude-mythos-preview", false},
 		{"empty", "", false},
 	}

@@ -77,16 +77,24 @@ func TemperatureSupported(modelID string) bool {
 // needed. On Opus 4.7+ the legacy config is removed entirely and returns a
 // 400 error. On the Claude 5 generation (Fable/Mythos) thinking is always
 // on; only type:"adaptive" is accepted and the legacy config likewise
-// returns a 400 error.
+// returns a 400 error. Sonnet 5 and Haiku 5 remove the legacy config the
+// same way (adaptive is the only on-mode; budget_tokens returns a 400), so
+// generation >= 5 of those families requires adaptive too — the same
+// newer-generation default direction TemperatureSupported documents.
 func AdaptiveThinkingRequired(modelID string) bool {
 	if IsFableGeneration(modelID) {
 		return true
 	}
-	gen, minor, hasMinor, ok := familyVersion(modelID, "claude-opus-")
-	if !ok {
-		return false
+	if gen, minor, hasMinor, ok := familyVersion(modelID, "claude-opus-"); ok {
+		return gen >= 5 || (gen == 4 && hasMinor && minor >= 6)
 	}
-	return gen >= 5 || (gen == 4 && hasMinor && minor >= 6)
+	if gen, _, _, ok := familyVersion(modelID, "claude-sonnet-"); ok {
+		return gen >= 5
+	}
+	if gen, _, _, ok := familyVersion(modelID, "claude-haiku-"); ok {
+		return gen >= 5
+	}
+	return false
 }
 
 // IsFableGeneration reports whether modelID belongs to the Claude 5
