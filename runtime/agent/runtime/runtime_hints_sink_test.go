@@ -298,3 +298,30 @@ func mustTemplate(t *testing.T, id tools.Ident, src string) *template.Template {
 	require.NoError(t, err)
 	return tpl
 }
+
+func TestHintingSinkPreservesToolStartEventKey(t *testing.T) {
+	toolID := tools.Ident("runtime.hints.test.event_key")
+	rthints.RegisterCallHint(toolID, mustTemplate(t, toolID, "Checking active alarms"))
+
+	rt := &Runtime{
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			toolID: newAnyJSONSpec(toolID, "test"),
+		},
+		logger: telemetry.NoopLogger{},
+	}
+	sink := &hintRecordingStreamSink{}
+	decorated := newHintingSink(rt, sink)
+
+	payload := stream.ToolStartPayload{
+		ToolCallID: "call-1",
+		ToolName:   string(toolID),
+	}
+	ev := stream.ToolStart{
+		Base: stream.NewBaseWithEventKey(stream.EventToolStart, "run-1", "session-1", payload, "wf-1/7"),
+		Data: payload,
+	}
+
+	require.NoError(t, decorated.Send(context.Background(), ev))
+	require.Len(t, sink.events, 1)
+	assert.Equal(t, "wf-1/7", sink.events[0].EventKey())
+}
