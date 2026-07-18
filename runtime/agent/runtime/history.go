@@ -452,7 +452,26 @@ func exactTailStart(
 		// request that compression would not immediately re-trigger on. Fail
 		// loudly with the true invariant instead of silently proceeding.
 		if cfg.CompressAtMaxInputTokens > 0 && newestTokens > cfg.CompressAtMaxInputTokens {
-			return 0, fmt.Errorf("runtime: newest history turn cannot fit within CompressAtMaxInputTokens (%d > %d): compression keeps the newest turn whole and cannot produce a smaller planner request", newestTokens, cfg.CompressAtMaxInputTokens)
+			// Distinguish the two ways the ceiling can be infeasible: fixed
+			// request overhead (system prompt + advertised tool catalog) that
+			// compression can never reclaim, versus a genuinely oversized
+			// newest turn. Blaming the turn for catalog weight sends operators
+			// tuning the wrong thing.
+			overhead, err := countMessages(ctx, runtimeCfg, client, requestShape(system, nil), tools)
+			if err != nil {
+				return 0, err
+			}
+			if overhead.InputTokens > cfg.CompressAtMaxInputTokens {
+				return 0, fmt.Errorf(
+					"runtime: fixed request overhead exceeds CompressAtMaxInputTokens (system+tools=%d > %d; system messages=%d, tools=%d): compression cannot reclaim the system prompt or tool catalog; raise the ceiling or shrink the catalog",
+					overhead.InputTokens, cfg.CompressAtMaxInputTokens, len(system), len(tools),
+				)
+			}
+			return 0, fmt.Errorf(
+				"runtime: newest history turn cannot fit within CompressAtMaxInputTokens (%d > %d; overhead=%d, turns=%d, newest turn messages=%d): compression keeps the newest turn whole and cannot produce a smaller planner request",
+				newestTokens, cfg.CompressAtMaxInputTokens,
+				overhead.InputTokens, len(turns), len(turns[len(turns)-1].messages),
+			)
 		}
 	}
 	keepStart := len(turns) - 1
@@ -542,6 +561,7 @@ func parseTurns(msgs []*model.Message) []turn {
 	var turns []turn
 	var current turn
 
+	hasAssistant := false
 	for _, m := range msgs {
 		if m == nil {
 			continue
@@ -549,6 +569,21 @@ func parseTurns(msgs []*model.Message) []turn {
 		// A User message starts a new turn UNLESS it contains only tool results,
 		// in which case it is a continuation of the prior assistant turn.
 		isNewTurn := m.Role == model.ConversationRoleUser && !isToolResultOnly(m)
+		// An Assistant message also starts a new turn once the current turn
+		// already holds one: autonomous runs have a single user kickoff, so
+		// without plan-step boundaries the whole run would be one monolithic
+		// newest turn that compression must keep whole and can never shrink.
+		// The kickoff stays paired with its first response step; each later
+		// plan step (assistant message plus the tool results that answer it)
+		// is its own logical turn.
+		if m.Role == model.ConversationRoleAssistant && hasAssistant {
+			isNewTurn = true
+		}
+		if isNewTurn {
+			hasAssistant = m.Role == model.ConversationRoleAssistant
+		} else if m.Role == model.ConversationRoleAssistant {
+			hasAssistant = true
+		}
 
 		if isNewTurn {
 			// Start of a new turn - save previous if non-empty
