@@ -86,7 +86,8 @@ jobs:
           go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.35.1
           go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
 
+      # The Makefile itest target is the single source of truth for the
+      # integration lane: end-to-end scenarios plus Docker-backed tests.
       - name: Run integration tests
         run: |
-          cd integration_tests
-          go test -v ./tests
+          make itest
