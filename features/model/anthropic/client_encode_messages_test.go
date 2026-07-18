@@ -32,7 +32,7 @@ func TestEncodeMessagesReplaysHistoricalToolUseUnchanged(t *testing.T) {
 				},
 			},
 		},
-	}, nil)
+	}, nil, false)
 	require.NoError(t, err)
 	require.Len(t, messages, 2)
 	require.Len(t, messages[0].Content, 1)
@@ -79,7 +79,7 @@ func TestEncodeMessagesThinkingVariants(t *testing.T) {
 			_, _, err := encodeMessages([]*model.Message{{
 				Role:  model.ConversationRoleAssistant,
 				Parts: []model.Part{test.part},
-			}}, nil)
+			}}, nil, false)
 
 			if test.wantErr != "" {
 				require.EqualError(t, err, test.wantErr)

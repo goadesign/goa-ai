@@ -374,12 +374,15 @@ func TestExecuteWorkflowSeedsInitialTranscriptInsteadOfAppendingHistory(t *testi
 
 	ctx := context.Background()
 	store := runloginmem.New()
+	sessions := sessioninmem.New()
+	_, err := sessions.CreateSession(ctx, "sess-1", time.Now().UTC())
+	require.NoError(t, err)
 	rt := &Runtime{
 		logger:        telemetry.NoopLogger{},
 		metrics:       telemetry.NoopMetrics{},
 		tracer:        telemetry.NoopTracer{},
 		RunEventStore: store,
-		SessionStore:  sessioninmem.New(),
+		SessionStore:  sessions,
 		Bus:           noopHooks{},
 		agents: map[agent.Ident]AgentRegistration{
 			"svc.agent": {
@@ -405,7 +408,7 @@ func TestExecuteWorkflowSeedsInitialTranscriptInsteadOfAppendingHistory(t *testi
 		hookRuntime: rt,
 	}
 
-	_, err := rt.ExecuteWorkflow(wfCtx, &RunInput{
+	_, err = rt.ExecuteWorkflow(wfCtx, &RunInput{
 		AgentID:   "svc.agent",
 		RunID:     "run-1",
 		SessionID: "sess-1",
@@ -452,12 +455,15 @@ func TestExecuteWorkflowEmitsRunLabelsOnTerminalCompletion(t *testing.T) {
 
 	ctx := context.Background()
 	store := runloginmem.New()
+	sessions := sessioninmem.New()
+	_, err := sessions.CreateSession(ctx, "sess-1", time.Now().UTC())
+	require.NoError(t, err)
 	rt := &Runtime{
 		logger:        telemetry.NoopLogger{},
 		metrics:       telemetry.NoopMetrics{},
 		tracer:        telemetry.NoopTracer{},
 		RunEventStore: store,
-		SessionStore:  sessioninmem.New(),
+		SessionStore:  sessions,
 		Bus:           noopHooks{},
 		agents: map[agent.Ident]AgentRegistration{
 			"svc.agent": {
@@ -483,7 +489,7 @@ func TestExecuteWorkflowEmitsRunLabelsOnTerminalCompletion(t *testing.T) {
 	}
 
 	labels := map[string]string{"household_id": "house-42", "source": "email"}
-	_, err := rt.ExecuteWorkflow(wfCtx, &RunInput{
+	_, err = rt.ExecuteWorkflow(wfCtx, &RunInput{
 		AgentID:   "svc.agent",
 		RunID:     "run-1",
 		SessionID: "sess-1",

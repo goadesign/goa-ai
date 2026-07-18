@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"goa.design/goa-ai/features/model/toolname"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -84,7 +85,7 @@ func TestClientCompleteUsesExplicitToolLoopTranscript(t *testing.T) {
 	assert.Equal(t, "Need a tool.", items[0].OfOutputMessage.Content[0].OfOutputText.Text)
 	require.NotNil(t, items[1].OfFunctionCall)
 	assert.Equal(t, "call_1", items[1].OfFunctionCall.CallID)
-	assert.Equal(t, SanitizeToolName("analytics.analyze"), items[1].OfFunctionCall.Name)
+	assert.Equal(t, toolname.Sanitize("analytics.analyze"), items[1].OfFunctionCall.Name)
 	assert.JSONEq(t, `{"query":"sales"}`, items[1].OfFunctionCall.Arguments)
 	require.NotNil(t, items[2].OfFunctionCallOutput)
 	assert.Equal(t, "call_1", items[2].OfFunctionCallOutput.CallID)
@@ -285,7 +286,7 @@ func TestClientCompleteEncodesToolLoopTranscript(t *testing.T) {
 	require.Len(t, items[1].OfOutputMessage.Content, 1)
 	assert.Equal(t, "Need a tool.", items[1].OfOutputMessage.Content[0].OfOutputText.Text)
 	require.NotNil(t, items[2].OfFunctionCall)
-	assert.Equal(t, SanitizeToolName("analytics.analyze"), items[2].OfFunctionCall.Name)
+	assert.Equal(t, toolname.Sanitize("analytics.analyze"), items[2].OfFunctionCall.Name)
 	assert.Equal(t, "call_1", items[2].OfFunctionCall.CallID)
 	assert.JSONEq(t, `{"query":"sales"}`, items[2].OfFunctionCall.Arguments)
 	require.NotNil(t, items[3].OfFunctionCallOutput)

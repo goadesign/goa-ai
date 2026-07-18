@@ -25,10 +25,6 @@ const (
 	// be parsed or didn't match the expected schema (e.g., invalid JSON).
 	RetryReasonMalformedResponse RetryReason = "malformed_response"
 
-	// RetryReasonTimeout indicates the tool execution exceeded time limits.
-	// Policy engines may reduce caps or disable the tool for this run.
-	RetryReasonTimeout RetryReason = "timeout"
-
 	// RetryReasonRateLimited indicates the tool or underlying service is rate-limited.
 	// Policy engines may back off or disable the tool temporarily.
 	RetryReasonRateLimited RetryReason = "rate_limited"

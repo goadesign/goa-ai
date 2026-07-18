@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/features/model/toolname"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -402,8 +403,8 @@ func TestEncodeMessagesDoesNotRewriteHistoricalToolUseToToolUnavailable(t *testi
 		},
 	}
 	nameMap := map[string]string{
-		"atlas.read.count_events":      SanitizeToolName("atlas.read.count_events"),
-		tools.ToolUnavailable.String(): SanitizeToolName(tools.ToolUnavailable.String()),
+		"atlas.read.count_events":      toolname.Sanitize("atlas.read.count_events"),
+		tools.ToolUnavailable.String(): toolname.Sanitize(tools.ToolUnavailable.String()),
 	}
 	conv, _, err := encodeMessages(msgs, nameMap, false)
 	if err != nil {

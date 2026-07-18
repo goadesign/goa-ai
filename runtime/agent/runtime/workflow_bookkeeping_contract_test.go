@@ -314,6 +314,8 @@ func TestRunLoopProviderEmptyToolCallIDsAdvanceAcrossResumeAttempts(t *testing.T
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rt := New(WithLogger(telemetry.NoopLogger{}))
+			_, err := rt.CreateSession(context.Background(), "sess-1")
+			require.NoError(t, err)
 			agentID := agent.Ident("agent-1")
 			var resumeAttempts []int
 			rt.agents[agentID] = AgentRegistration{
@@ -422,6 +424,8 @@ func TestRunLoopProviderEmptyToolCallIDsUseBatchIndexes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rt := New(WithLogger(telemetry.NoopLogger{}))
+			_, err := rt.CreateSession(context.Background(), "sess-1")
+			require.NoError(t, err)
 			agentID := agent.Ident("agent-1")
 			rt.agents[agentID] = AgentRegistration{
 				ID: agentID,

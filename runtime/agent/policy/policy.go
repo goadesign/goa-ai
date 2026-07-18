@@ -9,7 +9,7 @@ import (
 	"context"
 	"time"
 
-	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -171,30 +171,25 @@ const (
 	ToolBudgetClassBookkeeping ToolBudgetClass = "bookkeeping"
 )
 
-// RetryReason categorizes planner failures communicated via RetryHint. These values
-// mirror planner.RetryReason so policy engines can share logic without importing the
-// planner package, avoiding import cycles with hooks.
-type RetryReason string
+type (
+	// RetryReason categorizes planner failures communicated via RetryHint.
+	// The planner package owns the enum; the alias keeps policy engines on
+	// the same vocabulary with one source of truth, so retiring or adding a
+	// reason is a single edit the compiler propagates.
+	RetryReason = planner.RetryReason
 
-const (
-	RetryReasonInvalidArguments  RetryReason = "invalid_arguments"
-	RetryReasonMissingFields     RetryReason = "missing_fields"
-	RetryReasonMalformedResponse RetryReason = "malformed_response"
-	RetryReasonTimeout           RetryReason = "timeout"
-	RetryReasonRateLimited       RetryReason = "rate_limited"
-	RetryReasonToolUnavailable   RetryReason = "tool_unavailable"
+	// RetryHint communicates planner guidance after tool failures so policy
+	// engines can adjust allowlists or caps. The runtime hands Engine.Decide
+	// the planner's hint directly; engines must treat it as read-only.
+	RetryHint = planner.RetryHint
 )
 
-// RetryHint communicates planner guidance after tool failures so policy engines can
-// adjust allowlists or caps. The runtime converts planner retry hints into this type
-// before invoking Engine.Decide.
-type RetryHint struct {
-	Reason             RetryReason
-	Tool               tools.Ident
-	RestrictToTool     bool
-	MissingFields      []string
-	ExampleJSON        rawjson.Message
-	PriorInput         map[string]any
-	ClarifyingQuestion string
-	Message            string
-}
+// Re-exported retry reasons so policy engines need not import the planner
+// package to match on them.
+const (
+	RetryReasonInvalidArguments  = planner.RetryReasonInvalidArguments
+	RetryReasonMissingFields     = planner.RetryReasonMissingFields
+	RetryReasonMalformedResponse = planner.RetryReasonMalformedResponse
+	RetryReasonRateLimited       = planner.RetryReasonRateLimited
+	RetryReasonToolUnavailable   = planner.RetryReasonToolUnavailable
+)

@@ -66,6 +66,11 @@ func NewAnthropicClient(ctx context.Context, opts AnthropicOptions) (model.Clien
 		return nil, errors.New("vertex: default model is required")
 	}
 	client := sdk.NewClient(sdkvertex.WithGoogleAuth(ctx, opts.Region, opts.ProjectID))
+	// Vertex serves the same provider-native tool contract as the direct
+	// API: input_examples are delivered to the model with no beta
+	// activation, and the conditional anthropic-beta header the adapter
+	// attaches for the direct API is accepted and ignored (live-verified
+	// via rawPredict usage.input_tokens, 2026-07-18).
 	inner, err := anthropicprovider.New(&client.Messages, anthropicprovider.Options{
 		DefaultModel:   opts.DefaultModel,
 		HighModel:      opts.HighModel,

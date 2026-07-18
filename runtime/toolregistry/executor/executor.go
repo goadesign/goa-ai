@@ -498,11 +498,6 @@ func retryHintFromToolErrorCode(tool tools.Ident, code string) *planner.RetryHin
 			Tool:           tool,
 			RestrictToTool: true,
 		}
-	case "timeout":
-		return &planner.RetryHint{
-			Reason: planner.RetryReasonTimeout,
-			Tool:   tool,
-		}
 	}
 	return nil
 }

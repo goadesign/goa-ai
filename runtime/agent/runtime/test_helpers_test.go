@@ -532,6 +532,9 @@ type controlledChildHandle struct {
 	ready chan struct{}
 	out   *api.RunOutput
 	err   error
+
+	mu       sync.Mutex
+	canceled bool
 }
 
 func (h *controlledChildHandle) Get(ctx context.Context) (*api.RunOutput, error) {
@@ -558,9 +561,20 @@ func (h *controlledChildHandle) IsReady() bool {
 	}
 }
 
-func (h *controlledChildHandle) Cancel(ctx context.Context) error { return nil }
+func (h *controlledChildHandle) Cancel(context.Context) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.canceled = true
+	return nil
+}
 
 func (h *controlledChildHandle) RunID() string { return "" }
+
+func (h *controlledChildHandle) wasCanceled() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.canceled
+}
 
 type testReceiver[T any] struct{ ch chan T }
 

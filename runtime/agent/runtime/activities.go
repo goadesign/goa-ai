@@ -15,6 +15,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/reminder"
+	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -45,6 +47,11 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 	stopHeartbeat := startActivityHeartbeat(ctx)
 	defer stopHeartbeat()
 
+	if ended, err := r.sessionEndedForPlanning(ctx, input); err != nil {
+		return nil, err
+	} else if ended {
+		return &PlanActivityOutput{SessionEnded: true}, nil
+	}
 	act, err := r.preparePlannerActivity(ctx, input)
 	if err != nil {
 		return nil, err
@@ -80,6 +87,11 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	stopHeartbeat := startActivityHeartbeat(ctx)
 	defer stopHeartbeat()
 
+	if ended, err := r.sessionEndedForPlanning(ctx, input); err != nil {
+		return nil, err
+	} else if ended {
+		return &PlanActivityOutput{SessionEnded: true}, nil
+	}
 	act, err := r.preparePlannerActivity(ctx, input)
 	if err != nil {
 		return nil, err
@@ -628,6 +640,36 @@ func buildRetryHintFromAgentToolRequestError(err error, toolName tools.Ident, sp
 }
 
 // planStart invokes the planner's PlanStart method with tracing.
+// sessionEndedForPlanning is the turn-boundary session lifecycle gate: every
+// planner activity (start and resume) refuses to plan when the run's durable
+// session has been ended, mirroring startRunOn's refusal to start new runs.
+// Before reporting the refusal it records CancellationReasonSessionEnded on
+// the run (idempotently), so the terminal RunCompleted event carries the
+// canonical provenance even when engine cancellation never delivered —
+// CancelRun rolls its provisional reason back in exactly that case. One-shot
+// runs (empty SessionID) intentionally bypass SessionStore and are never
+// gated.
+func (r *Runtime) sessionEndedForPlanning(ctx context.Context, input *PlanActivityInput) (bool, error) {
+	sessionID := input.RunContext.SessionID
+	if sessionID == "" {
+		return false, nil
+	}
+	sess, err := r.SessionStore.LoadSession(ctx, sessionID)
+	if err != nil {
+		return false, fmt.Errorf("load session %q for planning: %w", sessionID, err)
+	}
+	if sess.Status != session.StatusEnded {
+		return false, nil
+	}
+	if _, _, err := r.recordRunCancellation(ctx, CancelRequest{
+		RunID:  input.RunID,
+		Reason: run.CancellationReasonSessionEnded,
+	}); err != nil {
+		return false, fmt.Errorf("record session-ended cancellation for run %q: %w", input.RunID, err)
+	}
+	return true, nil
+}
+
 func (r *Runtime) planStart(ctx context.Context, reg *AgentRegistration, input *planner.PlanInput) (*planner.PlanResult, error) {
 	if reg.Planner == nil {
 		return nil, errors.New("planner not configured")

@@ -53,6 +53,8 @@ func TestExecuteWorkflowCancelsAwaitQuestionsBeforeLateResults(t *testing.T) {
 		toolCallID: questionToolCallID,
 	}
 	rt := agentruntime.New()
+	_, err := rt.CreateSession(context.Background(), sessionID)
+	require.NoError(t, err)
 	require.NoError(t, rt.RegisterAgent(context.Background(), agentruntime.AgentRegistration{
 		ID:      agentID,
 		Planner: pl,
@@ -110,7 +112,7 @@ func TestExecuteWorkflowCancelsAwaitQuestionsBeforeLateResults(t *testing.T) {
 		})
 	})
 
-	err := env.GetWorkflowError()
+	err = env.GetWorkflowError()
 	require.Error(t, err)
 	require.ErrorContains(t, err, "canceled")
 	require.Zero(t, pl.ResumeCalls(), "cancel should win before late tool results resume the run")

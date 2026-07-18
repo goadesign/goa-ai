@@ -171,6 +171,14 @@ schema.
   `KeepMaxInputTokens`. The runtime evaluates token budgets with the configured
   model client's exact `model.TokenCounter`, so tokenization stays
   deployment/model-specific while the design records the agent's default policy.
+  The Anthropic adapter implements this capability through the Messages token
+  count API using the same message, tool, and cache encoding as completion, so
+  direct Anthropic and compatible gateways such as Bedrock Mantle can provide
+  exact counts without a second transcript conversion. Counting consumes the
+  canonical encoding only — completion policy such as the max_tokens
+  requirement never applies, because the count API carries no max_tokens.
+  When encoded tools carry authored `input_examples`, completion, streaming,
+  and counting all attach the same Anthropic tool-examples beta header.
   Exact retention always keeps whole recent turns; it never truncates
   tool_use/tool_result pairs to satisfy a token budget.
 - **Bookkeeping control plane**: `Bookkeeping()` calls and results remain in the
@@ -251,6 +259,9 @@ that UIs and stream bridges can consume without heuristics.
     - `retryable`: whether retrying may succeed without changing input
     - `error`: **user-safe** message suitable for direct display
     - `debug_error`: raw error string for logs/diagnostics (not for UI)
+  - Invalid-argument tool failures may carry a planner retry hint. Timeout,
+    cancellation, and exhausted run budget are terminal and carry no retry
+    hint.
 
 - **Terminal identity**
   - `RunCompletedEvent.Labels` carries the run-scoped labels provided at run
@@ -367,8 +378,15 @@ consume JSON Schema annotations use the annotated schema. Direct Anthropic and
 Bedrock Claude use top-level `input_examples` with the schema that omits the root
 example; Bedrock carries those examples through Anthropic's provider-native
 request fields in `additionalModelRequestFields` when the required beta contract
-applies. Runtime and product code do not inspect or rewrite schemas to infer
-provider-specific shapes.
+applies, while the direct Anthropic adapter attaches the corresponding beta
+header (additively, preserving caller-configured betas) to completion,
+streaming, and token-count requests. The header is attached only when a tool
+carries authored examples because header-compatible gateways such as Bedrock
+Mantle reject beta identifiers they do not recognize. Claude-on-Vertex serves
+the same native contract: it delivers `input_examples` with no beta
+activation and ignores the header (live-verified via rawPredict
+`usage.input_tokens`). Runtime and product code do not inspect or rewrite
+schemas to infer provider-specific shapes.
 
 Any proxy or product-owned model boundary that reconstructs goa-ai model tools
 must carry these projections as one provider-neutral `model.ToolInputContract`.

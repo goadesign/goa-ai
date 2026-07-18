@@ -12,6 +12,7 @@ import (
 	"github.com/openai/openai-go/packages/param"
 	"github.com/openai/openai-go/responses"
 
+	"goa.design/goa-ai/features/model/toolname"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
@@ -33,30 +34,19 @@ func encodeTools(defs []*model.ToolDefinition) ([]responses.ToolUnionParam, *too
 	if len(defs) == 0 {
 		return nil, nil, nil
 	}
+	canonToProv, provToCanon, err := toolname.BuildMaps(defs)
+	if err != nil {
+		return nil, nil, fmt.Errorf("openai: %w", err)
+	}
 	tools := make([]responses.ToolUnionParam, 0, len(defs))
 	codec := &toolCodec{
-		canonicalToProvider: make(map[string]string, len(defs)),
-		providerToCanonical: make(map[string]string, len(defs)),
+		canonicalToProvider: canonToProv,
+		providerToCanonical: provToCanon,
 		canonicalSchemas:    make(map[string]rawjson.Message, len(defs)),
 	}
-	for i, def := range defs {
-		if def == nil {
-			return nil, nil, fmt.Errorf("openai: tool[%d] is nil", i)
-		}
-		if def.Name == "" {
-			return nil, nil, fmt.Errorf("openai: tool[%d] is missing name", i)
-		}
+	for _, def := range defs {
 		if def.Description == "" {
 			return nil, nil, fmt.Errorf("openai: tool %q is missing description", def.Name)
-		}
-		providerName := SanitizeToolName(def.Name)
-		if previous, ok := codec.providerToCanonical[providerName]; ok && previous != def.Name {
-			return nil, nil, fmt.Errorf(
-				"openai: tool %q sanitizes to %q which collides with %q",
-				def.Name,
-				providerName,
-				previous,
-			)
 		}
 		schema := def.Input.JSONSchema()
 		parameters, err := projectStrictSchema(schema)
@@ -65,14 +55,12 @@ func encodeTools(defs []*model.ToolDefinition) ([]responses.ToolUnionParam, *too
 		}
 		tools = append(tools, responses.ToolUnionParam{
 			OfFunction: &responses.FunctionToolParam{
-				Name:        providerName,
+				Name:        canonToProv[def.Name],
 				Description: param.NewOpt(def.Description),
 				Parameters:  parameters,
 				Strict:      param.NewOpt(true),
 			},
 		})
-		codec.canonicalToProvider[def.Name] = providerName
-		codec.providerToCanonical[providerName] = def.Name
 		codec.canonicalSchemas[def.Name] = schema
 	}
 	return tools, codec, nil
@@ -141,7 +129,7 @@ func encodeStructuredOutput(output *model.StructuredOutput) (responses.ResponseT
 	if output.Name != "" {
 		name = output.Name
 	}
-	name = SanitizeToolName(name)
+	name = toolname.Sanitize(name)
 	parameters, err := projectStrictSchema(rawjson.Message(schema))
 	if err != nil {
 		return responses.ResponseTextConfigParam{}, false, fmt.Errorf(

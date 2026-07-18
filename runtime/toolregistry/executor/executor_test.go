@@ -107,6 +107,13 @@ func TestRetryHintFromInvalidArgumentsRestrictsToFailedTool(t *testing.T) {
 	assert.True(t, hint.RestrictToTool)
 }
 
+func TestRetryHintFromTimeoutIsTerminal(t *testing.T) {
+	t.Parallel()
+
+	assert.Nil(t, retryHintFromToolErrorCode("atlas.read.get_time_series", "timeout"))
+	assert.Nil(t, retryHintFromToolErrorCode("atlas.read.get_time_series", "query_too_expensive"))
+}
+
 func TestExecutorDerivesResultStreamIDFromToolUseID(t *testing.T) {
 	t.Parallel()
 

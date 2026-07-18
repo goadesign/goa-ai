@@ -202,9 +202,7 @@ func NewHealthTracker(streamManager StreamManager, healthMap, catalogMap *rmap.M
 		logger = telemetry.NewNoopLogger()
 	}
 
-	// Staleness threshold = (missedPingThreshold + 1) * pingInterval
-	// This gives providers enough time to respond before being marked unhealthy.
-	stalenessThreshold := time.Duration(options.missedPingThreshold+1) * options.pingInterval
+	stalenessThreshold := deriveStalenessThreshold(options.pingInterval, options.missedPingThreshold)
 
 	// Subscribe before spawning goroutine to avoid race: if a catalog event
 	// arrives before the goroutine calls Subscribe(), the event is missed.
@@ -329,11 +327,8 @@ func (h *healthTracker) Health(toolset string) (ToolsetHealth, error) {
 		return ToolsetHealth{}, fmt.Errorf("resolve registration token: %w", err)
 	}
 
-	now := time.Now()
 	prefix := healthKeyPrefixForToolset(toolset)
-	health := ToolsetHealth{
-		StalenessThreshold: h.stalenessThreshold,
-	}
+	records := make([]healthRecord, 0, 4)
 	for _, key := range h.healthMap.Keys() {
 		if !strings.HasPrefix(key, prefix) {
 			continue
@@ -346,40 +341,9 @@ func (h *healthTracker) Health(toolset string) (ToolsetHealth, error) {
 		if err != nil {
 			return ToolsetHealth{}, fmt.Errorf("parse provider health record for %q: %w", toolset, err)
 		}
-		if record.RegistrationToken != registrationToken {
-			continue
-		}
-		registeredAt := time.Unix(0, record.RegisteredUnixNano)
-		health.ProviderCount++
-		if health.RegisteredAt.IsZero() || registeredAt.After(health.RegisteredAt) {
-			health.ProviderID = record.ProviderID
-			health.RegisteredAt = registeredAt
-		}
-		if record.LastPongUnixNano == 0 {
-			continue
-		}
-		lastPong := time.Unix(0, record.LastPongUnixNano)
-		age := now.Sub(lastPong)
-		if health.LastPong.IsZero() || lastPong.After(health.LastPong) {
-			health.ProviderID = record.ProviderID
-			health.LastPong = lastPong
-			health.Age = age
-		}
-		if age <= h.stalenessThreshold {
-			health.HealthyProviderCount++
-		}
+		records = append(records, record)
 	}
-	health.Healthy = health.HealthyProviderCount > 0
-	return ToolsetHealth{
-		Healthy:              health.Healthy,
-		ProviderID:           health.ProviderID,
-		LastPong:             health.LastPong,
-		RegisteredAt:         health.RegisteredAt,
-		Age:                  health.Age,
-		ProviderCount:        health.ProviderCount,
-		HealthyProviderCount: health.HealthyProviderCount,
-		StalenessThreshold:   health.StalenessThreshold,
-	}, nil
+	return computeToolsetHealth(records, registrationToken, time.Now(), h.stalenessThreshold), nil
 }
 
 // IsHealthy implements HealthTracker.
@@ -762,6 +726,66 @@ func (h *healthTracker) observeHealth(ctx context.Context, toolset string) {
 		return
 	}
 	h.noteHealth(ctx, toolset, health, "ok")
+}
+
+// deriveStalenessThreshold is the contract between ping configuration and the
+// staleness rule computeToolsetHealth applies: a provider may miss
+// missedPingThreshold pings and still answer the next one, so the freshness
+// window is (missedPingThreshold + 1) * pingInterval. Unit tests pin this
+// derivation so a config change cannot silently shrink the window providers
+// have to respond.
+func deriveStalenessThreshold(pingInterval time.Duration, missedPingThreshold int) time.Duration {
+	return time.Duration(missedPingThreshold+1) * pingInterval
+}
+
+// computeToolsetHealth derives a toolset's health from its provider health
+// records. It is the single owner of the staleness rule: a provider is healthy
+// when its last pong is no older than stalenessThreshold at now, and a toolset
+// is healthy when at least one provider is. Records from other registration
+// epochs (token mismatch) are ignored so a re-registered toolset never
+// inherits health from a previous provider. ProviderID/LastPong/Age report the
+// provider with the freshest pong; when no provider has ponged yet,
+// ProviderID falls back to the newest registration. RegisteredAt always
+// reports the newest registration. Winners are selected explicitly so the
+// result is independent of record order (callers iterate a replicated map).
+// Pure function: Health gathers records from the replicated health map and
+// delegates here, and unit tests exercise this directly without
+// infrastructure.
+func computeToolsetHealth(records []healthRecord, registrationToken string, now time.Time, stalenessThreshold time.Duration) ToolsetHealth {
+	health := ToolsetHealth{
+		StalenessThreshold: stalenessThreshold,
+	}
+	var freshestPong, newestRegistered *healthRecord
+	for i := range records {
+		record := &records[i]
+		if record.RegistrationToken != registrationToken {
+			continue
+		}
+		health.ProviderCount++
+		if newestRegistered == nil || record.RegisteredUnixNano > newestRegistered.RegisteredUnixNano {
+			newestRegistered = record
+		}
+		if record.LastPongUnixNano == 0 {
+			continue
+		}
+		if now.Sub(time.Unix(0, record.LastPongUnixNano)) <= stalenessThreshold {
+			health.HealthyProviderCount++
+		}
+		if freshestPong == nil || record.LastPongUnixNano > freshestPong.LastPongUnixNano {
+			freshestPong = record
+		}
+	}
+	if newestRegistered != nil {
+		health.ProviderID = newestRegistered.ProviderID
+		health.RegisteredAt = time.Unix(0, newestRegistered.RegisteredUnixNano)
+	}
+	if freshestPong != nil {
+		health.ProviderID = freshestPong.ProviderID
+		health.LastPong = time.Unix(0, freshestPong.LastPongUnixNano)
+		health.Age = now.Sub(health.LastPong)
+	}
+	health.Healthy = health.HealthyProviderCount > 0
+	return health
 }
 
 // parseHealthRecord decodes the shared health-map payload.

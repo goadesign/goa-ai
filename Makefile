@@ -20,9 +20,13 @@ lint: tools
 test: tools
 	$(GO) test -race -covermode=atomic -coverprofile=cover.out `$(GO) list ./... | grep -v '/integration_tests'`
 
-# Run integration tests (scenarios under integration_tests/)
+# Run integration tests: end-to-end scenarios under integration_tests/ and
+# Docker-backed tests guarded by the `integration` build tag (registry health
+# tracking against real Redis). `make test` excludes both so the default suite
+# stays fast and deterministic.
 itest: tools
 	$(GO) test -race -vet=off -parallel 1 ./integration_tests/...
+	$(GO) test -race -tags integration ./registry/...
 
 ci: build lint test
 

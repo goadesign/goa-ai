@@ -361,7 +361,8 @@ type ToolOutput struct {
 }
 
 // RetryHint communicates planner guidance after tool failures so policy engines
-// and UIs can react. See policy.RetryHint for the runtime-converted form.
+// and UIs can react. The policy package aliases this type; the runtime hands
+// policy engines the hint directly, and engines must treat it as read-only.
 type RetryHint struct {
 	// Reason classifies the retry hint for policy/UX decisions.
 	Reason RetryReason

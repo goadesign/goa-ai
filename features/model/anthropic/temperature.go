@@ -5,7 +5,7 @@
 // claude-sonnet-5 on Vertex) — lives in
 // features/model/internal/claudecaps.TemperatureSupported so this adapter
 // (which also backs Claude-on-Vertex) and features/model/bedrock apply the
-// identical boundary. Adjacent-layer contract: prepareRequest (client.go)
+// identical boundary. Adjacent-layer contract: completionParams (client.go)
 // consults the shared predicate before setting params.Temperature and calls
 // traceTemperatureOmitted when it drops a caller-configured value; the model
 // then runs at its own default sampling behavior.
