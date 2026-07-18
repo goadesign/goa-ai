@@ -1,7 +1,6 @@
 package anthropic
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -35,14 +34,13 @@ func TestPrepareRequestOmitsTemperatureForUnsupportedModels(t *testing.T) {
 				maxTok:       4096,
 			}
 
-			params, _, err := cl.prepareRequest(context.Background(), &model.Request{
+			params := completionParamsFor(t, cl, &model.Request{
 				Temperature: 0.2,
 				Messages: []*model.Message{{
 					Role:  model.ConversationRoleUser,
 					Parts: []model.Part{model.TextPart{Text: "hello"}},
 				}},
 			})
-			require.NoError(t, err)
 			assert.False(t, params.Temperature.Valid(), "temperature must be omitted for %s", modelID)
 		})
 	}
@@ -66,14 +64,13 @@ func TestPrepareRequestKeepsTemperatureForSupportedModels(t *testing.T) {
 				maxTok:       4096,
 			}
 
-			params, _, err := cl.prepareRequest(context.Background(), &model.Request{
+			params := completionParamsFor(t, cl, &model.Request{
 				Temperature: 0.2,
 				Messages: []*model.Message{{
 					Role:  model.ConversationRoleUser,
 					Parts: []model.Part{model.TextPart{Text: "hello"}},
 				}},
 			})
-			require.NoError(t, err)
 			require.True(t, params.Temperature.Valid(), "temperature must be sent for %s", modelID)
 			assert.InDelta(t, 0.2, params.Temperature.Value, 0.0001)
 		})
@@ -93,13 +90,12 @@ func TestPrepareRequestOmitsZeroTemperatureRegardlessOfModel(t *testing.T) {
 				maxTok:       4096,
 			}
 
-			params, _, err := cl.prepareRequest(context.Background(), &model.Request{
+			params := completionParamsFor(t, cl, &model.Request{
 				Messages: []*model.Message{{
 					Role:  model.ConversationRoleUser,
 					Parts: []model.Part{model.TextPart{Text: "hello"}},
 				}},
 			})
-			require.NoError(t, err)
 			assert.False(t, params.Temperature.Valid())
 		})
 	}

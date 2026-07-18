@@ -276,12 +276,16 @@ var Docs = Toolset("docs", func() {
 - JSON Schema for LLM function calling (auto-generated)
 - Validation at boundaries: invalid calls get structured retry hints, including
   generated JSON type mismatch guidance, not crashes or schema-string parsing
+- Timeout and parent-budget failures are terminal for the current run and do
+  not produce retry hints. Planners may repair invalid arguments, but elapsed
+  execution time is not an instruction to repeat a call.
 - Type-safe Go structs for payloads and results
 - Provider-facing examples only when you author a top-level Goa `Example(...)`
   on the tool payload. Codegen precomputes the annotated schema, the schema with
   the root `example` removed, and the parsed example input so OpenAI-style
-  providers consume schema annotations while Anthropic and Bedrock Claude receive
-  provider-native `input_examples`.
+  providers consume schema annotations while Anthropic, Bedrock Claude, and
+  Claude-on-Vertex receive provider-native `input_examples` under the required
+  tool-examples beta contract, including exact Anthropic token counting.
 - Explicit control-plane contracts: `Bookkeeping()` keeps tools durable,
   budget-exempt, and hidden from future planner turns
 
@@ -340,7 +344,10 @@ Unary helpers request provider-enforced structured output and decode with genera
 
 ### Agent-as-Tool Composition
 
-Agents can export toolsets that other agents use. The nested agent runs as a child workflow, not as flattened helper code.
+Agents can export toolsets that other agents use. The nested agent runs as a
+child workflow, not as flattened helper code. The parent finish-by timer covers
+child execution; when it expires, the runtime cancels pending child workflows
+before returning terminal tool results to the parent planner.
 
 ```go
 Agent("researcher", "Research specialist", func() {
@@ -739,7 +746,7 @@ Production checklist:
 | `runtime/toolregistry` | Registry wire protocol, executor, provider support, schema validation |
 | `features/model/openai` | OpenAI Responses API adapter |
 | `features/model/bedrock` | AWS Bedrock adapter, including visible Claude thinking support |
-| `features/model/anthropic` | Direct Anthropic adapter |
+| `features/model/anthropic` | Anthropic Messages adapter with streaming and exact token counting; also composes with compatible gateways such as Bedrock Mantle |
 | `features/model/vertex` | Google Vertex AI adapters: Gemini (`vertex.New`) and Claude-on-Vertex (`vertex.NewAnthropicClient`), both with native token counting and provider-error classification. |
 | `features/model/gateway` | Remote model gateway client |
 | `features/model/middleware` | Rate limiting, logging, metrics middleware |

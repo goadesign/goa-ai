@@ -679,6 +679,19 @@ type (
 	}
 )
 
+// CountingRequest projects req to the input a TokenCounter counts: replayed
+// thinking parts are removed (messages containing only thinking are omitted)
+// and the thinking configuration is cleared, because thinking never counts
+// toward durable-transcript input tokens. Every TokenCounter implementation
+// counts this projection so exact counts agree across providers. The returned
+// request is a shallow clone; req is never mutated.
+func CountingRequest(req *Request) *Request {
+	counted := *req
+	counted.Messages = messagesWithoutThinking(req.Messages)
+	counted.Thinking = nil
+	return &counted
+}
+
 // CountTokens estimates req's input-token usage with Exact=false. It is intended
 // for explicit fallback paths such as rate limiting or non-native providers, not
 // for provider-specific billing or hard context-window guarantees.
@@ -699,10 +712,7 @@ func (e TokenEstimator) estimate(req *Request) int {
 	if charCount <= 0 {
 		return e.minimumTokens()
 	}
-	tokens := charCount / e.charactersPerToken()
-	if tokens < 1 {
-		tokens = 1
-	}
+	tokens := max(charCount/e.charactersPerToken(), 1)
 	return tokens + e.overheadTokens()
 }
 
@@ -1030,6 +1040,33 @@ func (in ToolInput) SchemaWithoutRootExample() rawjson.Message {
 // top-level input example support.
 func (in ToolInput) ExampleJSON() rawjson.Message {
 	return in.exampleJSON
+}
+
+// messagesWithoutThinking implements the CountingRequest transcript
+// projection: it returns a shallow copy of messages with ThinkingParts
+// removed and thinking-only messages dropped, never mutating the input.
+func messagesWithoutThinking(messages []*Message) []*Message {
+	out := make([]*Message, 0, len(messages))
+	for _, message := range messages {
+		parts := make([]Part, 0, len(message.Parts))
+		for _, part := range message.Parts {
+			if _, ok := part.(ThinkingPart); ok {
+				continue
+			}
+			parts = append(parts, part)
+		}
+		if len(parts) == 0 {
+			continue
+		}
+		if len(parts) == len(message.Parts) {
+			out = append(out, message)
+			continue
+		}
+		clone := *message
+		clone.Parts = parts
+		out = append(out, &clone)
+	}
+	return out
 }
 
 func reqModel(req *Request) string {

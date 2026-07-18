@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
@@ -19,13 +21,27 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-type stubMessagesClient struct {
-	lastParams sdk.MessageNewParams
-	resp       *sdk.Message
-	err        error
+type (
+	// stubMessagesClient records the last request per Messages endpoint and
+	// replays canned responses.
+	stubMessagesClient struct {
+		lastParams      sdk.MessageNewParams
+		lastCountParams sdk.MessageCountTokensParams
+		resp            *sdk.Message
+		countResp       *sdk.MessageTokensCount
+		err             error
+		countErr        error
 
-	stream *ssestream.Stream[sdk.MessageStreamEventUnion]
-}
+		stream *ssestream.Stream[sdk.MessageStreamEventUnion]
+	}
+
+	// noopDecoder terminates a stream immediately for streaming stubs.
+	noopDecoder struct{}
+
+	// roundTripFunc adapts a function to http.RoundTripper so tests can
+	// observe the wire request a real SDK client produces.
+	roundTripFunc func(*http.Request) (*http.Response, error)
+)
 
 func TestTranslateResponsePreservesThinkingInOneAssistantMessage(t *testing.T) {
 	resp, err := translateResponse(&sdk.Message{
@@ -111,12 +127,19 @@ func (s *stubMessagesClient) NewStreaming(_ context.Context, body sdk.MessageNew
 	return s.stream
 }
 
-type noopDecoder struct{}
+func (s *stubMessagesClient) CountTokens(_ context.Context, body sdk.MessageCountTokensParams, _ ...option.RequestOption) (*sdk.MessageTokensCount, error) {
+	s.lastCountParams = body
+	return s.countResp, s.countErr
+}
 
 func (n *noopDecoder) Event() ssestream.Event { return ssestream.Event{} }
 func (n *noopDecoder) Next() bool             { return false }
 func (n *noopDecoder) Close() error           { return nil }
 func (n *noopDecoder) Err() error             { return nil }
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 func TestComplete_TextOnly(t *testing.T) {
 	stub := &stubMessagesClient{}
@@ -171,6 +194,205 @@ func TestComplete_TextOnly(t *testing.T) {
 	}
 }
 
+func TestCountTokensUsesCanonicalAnthropicRequest(t *testing.T) {
+	stub := &stubMessagesClient{
+		countResp: &sdk.MessageTokensCount{InputTokens: 42},
+	}
+	client, err := New(stub, Options{
+		DefaultModel: "anthropic.claude-sonnet-5",
+		MaxTokens:    128,
+	})
+	require.NoError(t, err)
+
+	count, err := client.CountTokens(context.Background(), &model.Request{
+		ModelClass: model.ModelClassDefault,
+		Messages: []*model.Message{
+			{
+				Role:  model.ConversationRoleSystem,
+				Parts: []model.Part{model.TextPart{Text: "system"}},
+			},
+			{
+				Role:  model.ConversationRoleUser,
+				Parts: []model.Part{model.TextPart{Text: "hello"}},
+			},
+			{
+				Role: model.ConversationRoleAssistant,
+				Parts: []model.Part{
+					model.ThinkingPart{Text: "reasoning", Signature: "sig", Final: true},
+					model.TextPart{Text: "answer"},
+				},
+			},
+		},
+		Tools: []*model.ToolDefinition{{
+			Name:        "lookup",
+			Description: "Look up a value.",
+			Input: model.ToolInputFromSchema(rawjson.Message(
+				`{"type":"object","properties":{"id":{"type":"string"}}}`,
+			)),
+		}},
+		Cache: &model.CacheOptions{
+			AfterSystem: true,
+			AfterTools:  true,
+		},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, model.TokenCount{
+		Model:       "anthropic.claude-sonnet-5",
+		ModelClass:  model.ModelClassDefault,
+		InputTokens: 42,
+		Exact:       true,
+	}, count)
+	assert.Equal(t, sdk.Model("anthropic.claude-sonnet-5"), stub.lastCountParams.Model)
+	require.Len(t, stub.lastCountParams.Messages, 2)
+	require.Len(t, stub.lastCountParams.Messages[1].Content, 1)
+	assert.NotNil(t, stub.lastCountParams.Messages[1].Content[0].OfText)
+	require.Len(t, stub.lastCountParams.System.OfTextBlockArray, 1)
+	assert.Equal(t, "ephemeral", string(stub.lastCountParams.System.OfTextBlockArray[0].CacheControl.Type))
+	require.Len(t, stub.lastCountParams.Tools, 1)
+	assert.Equal(t, "ephemeral", string(stub.lastCountParams.Tools[0].OfTool.CacheControl.Type))
+}
+
+// Counting is exempt from completion policy: a client that relies on
+// per-request MaxTokens for completions (Options.MaxTokens unset) must still
+// count, because the count API carries no max_tokens at all.
+func TestCountTokensWithoutDefaultMaxTokens(t *testing.T) {
+	stub := &stubMessagesClient{
+		countResp: &sdk.MessageTokensCount{InputTokens: 7},
+	}
+	client, err := New(stub, Options{DefaultModel: "anthropic.claude-sonnet-5"})
+	require.NoError(t, err)
+
+	count, err := client.CountTokens(context.Background(), &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "hello"}},
+		}},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 7, count.InputTokens)
+	assert.True(t, count.Exact)
+}
+
+// A tool-less count request must omit the tools field entirely, exactly as
+// the equivalent completion does — gateways may treat "tools": [] and an
+// absent field differently.
+func TestCountTokensOmitsEmptyTools(t *testing.T) {
+	stub := &stubMessagesClient{
+		countResp: &sdk.MessageTokensCount{InputTokens: 7},
+	}
+	client, err := New(stub, Options{DefaultModel: "anthropic.claude-sonnet-5"})
+	require.NoError(t, err)
+
+	_, err = client.CountTokens(context.Background(), &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "hello"}},
+		}},
+	})
+
+	require.NoError(t, err)
+	assert.Nil(t, stub.lastCountParams.Tools)
+}
+
+func TestCountTokensEnablesToolExamplesBeta(t *testing.T) {
+	var beta string
+	httpClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		beta = req.Header.Get("anthropic-beta")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"input_tokens":42}`)),
+		}, nil
+	})}
+	sdkClient := sdk.NewClient(
+		option.WithAPIKey("test-key"),
+		option.WithBaseURL("https://anthropic.test"),
+		option.WithHTTPClient(httpClient),
+	)
+	client, err := New(&sdkClient.Messages, Options{
+		DefaultModel: "anthropic.claude-sonnet-5",
+		MaxTokens:    128,
+	})
+	require.NoError(t, err)
+
+	_, err = client.CountTokens(context.Background(), &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "hello"}},
+		}},
+		Tools: []*model.ToolDefinition{{
+			Name:        "reports.complete",
+			Description: "Complete a report",
+			Input:       model.ToolInputFromSpec(toolInputExampleSpec()),
+		}},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "tool-examples-2025-10-29", beta)
+}
+
+// The beta must be opt-in per request: gateways that proxy the Messages API
+// (Bedrock Mantle) reject beta identifiers they do not recognize, so a tool set
+// carrying no authored examples must go out with no beta header at all.
+func TestToolExamplesBetaOmittedWithoutAuthoredExamples(t *testing.T) {
+	cases := []struct {
+		name  string
+		tools []*model.ToolDefinition
+	}{
+		{
+			name:  "no tools",
+			tools: nil,
+		},
+		{
+			name: "tool without examples",
+			tools: []*model.ToolDefinition{{
+				Name:        "reports.complete",
+				Description: "Complete a report",
+				Input: model.ToolInputFromSchema(rawjson.Message(
+					`{"type":"object","properties":{"id":{"type":"string"}}}`,
+				)),
+			}},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var headers http.Header
+			httpClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				headers = req.Header
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"input_tokens":7}`)),
+				}, nil
+			})}
+			sdkClient := sdk.NewClient(
+				option.WithAPIKey("test-key"),
+				option.WithBaseURL("https://anthropic.test"),
+				option.WithHTTPClient(httpClient),
+			)
+			client, err := New(&sdkClient.Messages, Options{
+				DefaultModel: "anthropic.claude-sonnet-5",
+				MaxTokens:    128,
+			})
+			require.NoError(t, err)
+
+			_, err = client.CountTokens(context.Background(), &model.Request{
+				Messages: []*model.Message{{
+					Role:  model.ConversationRoleUser,
+					Parts: []model.Part{model.TextPart{Text: "hello"}},
+				}},
+				Tools: tc.tools,
+			})
+
+			require.NoError(t, err)
+			assert.Empty(t, headers.Values("anthropic-beta"))
+		})
+	}
+}
+
 func TestComplete_ToolUse(t *testing.T) {
 	stub := &stubMessagesClient{}
 	cl, err := New(stub, Options{
@@ -199,7 +421,7 @@ func TestComplete_ToolUse(t *testing.T) {
 		},
 	}
 
-	tools, canon, prov, err := encodeTools(context.Background(), req.Tools)
+	tools, canon, prov, err := encodeTools(context.Background(), req.Tools, false)
 	if err != nil {
 		t.Fatalf("encodeTools: %v", err)
 	}
@@ -253,7 +475,7 @@ func TestPrepareRequestForcedToolDisablesThinking(t *testing.T) {
 		think:        2048,
 	}
 
-	params, _, err := cl.prepareRequest(context.Background(), &model.Request{
+	req := &model.Request{
 		Messages: []*model.Message{{
 			Role: model.ConversationRoleUser,
 			Parts: []model.Part{
@@ -273,10 +495,8 @@ func TestPrepareRequestForcedToolDisablesThinking(t *testing.T) {
 			Enable:       true,
 			BudgetTokens: 2048,
 		},
-	})
-	if err != nil {
-		t.Fatalf("prepareRequest: %v", err)
 	}
+	params := completionParamsFor(t, cl, req)
 	if params.Thinking.OfEnabled != nil {
 		t.Fatalf("forced tool choice must not send thinking config")
 	}
@@ -292,7 +512,7 @@ func TestPrepareRequestAnyToolDisablesThinking(t *testing.T) {
 		think:        2048,
 	}
 
-	params, _, err := cl.prepareRequest(context.Background(), &model.Request{
+	req := &model.Request{
 		Messages: []*model.Message{{
 			Role: model.ConversationRoleUser,
 			Parts: []model.Part{
@@ -311,16 +531,25 @@ func TestPrepareRequestAnyToolDisablesThinking(t *testing.T) {
 			Enable:       true,
 			BudgetTokens: 2048,
 		},
-	})
-	if err != nil {
-		t.Fatalf("prepareRequest: %v", err)
 	}
+	params := completionParamsFor(t, cl, req)
 	if params.Thinking.OfEnabled != nil {
 		t.Fatalf("any tool choice must not send thinking config")
 	}
 	if params.ToolChoice.OfAny == nil {
 		t.Fatalf("expected any tool choice to survive")
 	}
+}
+
+// completionParamsFor runs the full encode + completion-policy pipeline the
+// way Complete and Stream do, failing the test on any error.
+func completionParamsFor(t *testing.T, cl *Client, req *model.Request) *sdk.MessageNewParams {
+	t.Helper()
+	enc, err := cl.encodeRequest(context.Background(), req)
+	require.NoError(t, err)
+	params, err := cl.completionParams(context.Background(), req, enc)
+	require.NoError(t, err)
+	return params
 }
 
 func TestEncodeTools_UsesSchemaWithoutRootExampleAndInputExamples(t *testing.T) {
@@ -330,7 +559,7 @@ func TestEncodeTools_UsesSchemaWithoutRootExampleAndInputExamples(t *testing.T) 
 		Input:       model.ToolInputFromSpec(toolInputExampleSpec()),
 	}}
 
-	tools, _, _, err := encodeTools(context.Background(), defs)
+	tools, _, _, err := encodeTools(context.Background(), defs, false)
 	if err != nil {
 		t.Fatalf("encodeTools: %v", err)
 	}

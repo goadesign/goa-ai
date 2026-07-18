@@ -2,7 +2,6 @@ package bedrock
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -318,69 +317,4 @@ func toolInputExampleSpec() tools.TypeSpec {
 		SchemaWithoutRootExample: tools.RawJSON(`{"type":"object"}`),
 		ExampleJSON:              tools.RawJSON(`{"summary":"Done"}`),
 	}
-}
-
-func TestSanitizeToolName_StripsNamespaces(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{
-			name: "ada toolset preserves namespace",
-			in:   "ada.get_application_status",
-			want: "ada_get_application_status",
-		},
-		{
-			name: "ada time series preserves namespace",
-			in:   "ada.get_time_series",
-			want: "ada_get_time_series",
-		},
-		{
-			name: "chat atlas read subset preserves full canonical id",
-			in:   "atlas.read.chat.chat_get_user_details",
-			want: "atlas_read_chat_chat_get_user_details",
-		},
-		{
-			name: "chat emit toolset preserves namespace",
-			in:   "chat.emit.ask_clarifying_question",
-			want: "chat_emit_ask_clarifying_question",
-		},
-		{
-			name: "todos toolset preserves namespace",
-			in:   "todos.todos.update_todos",
-			want: "todos_todos_update_todos",
-		},
-		{
-			name: "plain name passthrough",
-			in:   "lookup",
-			want: "lookup",
-		},
-	}
-
-	for _, tt := range cases {
-		t.Run(tt.name, func(t *testing.T) {
-			got := SanitizeToolName(tt.in)
-			require.Equal(t, tt.want, got)
-		})
-	}
-}
-
-func TestSanitizeToolName_NoCollisionsAcrossToolsets(t *testing.T) {
-	a := SanitizeToolName("atlas.read.explain_control_logic")
-	b := SanitizeToolName("ada.explain_control_logic")
-
-	require.NotEmpty(t, a)
-	require.NotEmpty(t, b)
-	require.NotEqual(t, a, b)
-}
-
-func TestSanitizeToolName_TruncatesWithStableHashSuffix(t *testing.T) {
-	in := "atlas.read.chat." + strings.Repeat("very_long_segment_", 10) + "tool"
-	got := SanitizeToolName(in)
-
-	require.NotEmpty(t, got)
-	require.LessOrEqual(t, len(got), 64)
-	require.Regexp(t, `_[0-9a-f]{8}$`, got)
-	require.Equal(t, got, SanitizeToolName(in))
 }

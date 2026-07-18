@@ -12,7 +12,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math/big"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -22,7 +24,9 @@ import (
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 
+	"goa.design/goa-ai/features/model/internal/claudebeta"
 	"goa.design/goa-ai/features/model/internal/claudecaps"
+	"goa.design/goa-ai/features/model/toolname"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -116,6 +120,11 @@ type thinkingConfig struct {
 	budget      int
 }
 
+var (
+	_ model.Client       = (*Client)(nil)
+	_ model.TokenCounter = (*Client)(nil)
+)
+
 // New initializes a Bedrock-powered model client configured for chat
 // completion and streaming requests.
 func New(aws *bedrockruntime.Client, opts Options) (*Client, error) {
@@ -174,14 +183,12 @@ func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Respo
 // in thinking block"), and the Claude 5 generation does not support
 // CountTokens at all, so the count input must never carry thinking content.
 func (c *Client) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
-	countReq := *req
-	countReq.Messages = messagesWithoutThinking(req.Messages)
-	countReq.Thinking = nil
-	parts, err := c.prepareRequest(&countReq)
+	countReq := model.CountingRequest(req)
+	parts, err := c.prepareRequest(countReq)
 	if err != nil {
 		return model.TokenCount{}, err
 	}
-	output, err := c.runtime.CountTokens(ctx, c.buildCountTokensInput(parts, &countReq))
+	output, err := c.runtime.CountTokens(ctx, c.buildCountTokensInput(parts, countReq))
 	var inputTokens int
 	if err != nil {
 		var ok bool
@@ -532,9 +539,7 @@ func cloneAdditionalModelFields(fields map[string]any) map[string]any {
 		return nil
 	}
 	out := make(map[string]any, len(fields))
-	for k, v := range fields {
-		out[k] = v
-	}
+	maps.Copy(out, fields)
 	return out
 }
 
@@ -549,7 +554,7 @@ func additionalModelFieldsForRequest(fields map[string]any, req *model.Request) 
 	}
 	delete(out, "tools")
 	delete(out, "tool_choice")
-	removeAnthropicBeta(out, "tool-examples-2025-10-29")
+	removeAnthropicBeta(out, claudebeta.ToolExamples)
 	return out
 }
 
@@ -558,10 +563,8 @@ func addAnthropicBeta(fields map[string]any, beta string) {
 		return
 	}
 	values, _ := fields["anthropic_beta"].([]string)
-	for _, value := range values {
-		if value == beta {
-			return
-		}
+	if slices.Contains(values, beta) {
+		return
 	}
 	fields["anthropic_beta"] = append(values, beta)
 }
@@ -978,31 +981,17 @@ func encodeTools(
 		}
 		return nil, nil, nil, nil, fmt.Errorf("bedrock: tool choice is set but no tools are defined")
 	}
+	canonToSan, sanToCanon, err := toolname.BuildMaps(defs)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("bedrock: %w", err)
+	}
 	toolList := make([]brtypes.Tool, 0, len(defs))
-	// canonToSan maps canonical IDs (toolset.tool) to provider-visible sanitized names.
-	canonToSan := make(map[string]string, len(defs))
-	// sanToCanon is the reverse map used to translate provider names back to canonical IDs.
-	sanToCanon := make(map[string]string, len(defs))
 	anthropicModel := isAnthropicBedrockModel(modelID)
 	anthropicTools := make([]map[string]any, 0, len(defs))
 	anthropicHasExamples := false
 	for _, def := range defs {
-		if def == nil {
-			continue
-		}
 		canonical := def.Name
-		if canonical == "" {
-			continue
-		}
-		sanitized := SanitizeToolName(canonical)
-		if prev, ok := sanToCanon[sanitized]; ok && prev != canonical {
-			return nil, nil, nil, nil, fmt.Errorf(
-				"bedrock: tool name %q sanitizes to %q which collides with %q",
-				canonical, sanitized, prev,
-			)
-		}
-		sanToCanon[sanitized] = canonical
-		canonToSan[canonical] = sanitized
+		sanitized := canonToSan[canonical]
 		if def.Description == "" {
 			return nil, nil, nil, nil, fmt.Errorf("bedrock: tool %q is missing description", canonical)
 		}
@@ -1033,12 +1022,6 @@ func encodeTools(
 			InputSchema: &brtypes.ToolInputSchemaMemberJson{Value: schemaDoc},
 		}
 		toolList = append(toolList, &brtypes.ToolMemberToolSpec{Value: spec})
-	}
-	if len(toolList) == 0 {
-		if choice == nil || choice.Mode == model.ToolChoiceModeNone {
-			return nil, nil, nil, nil, nil
-		}
-		return nil, nil, nil, nil, fmt.Errorf("bedrock: tool choice is set but no tools are defined")
 	}
 	// Policy-driven: append a cache checkpoint after tools when requested.
 	// Note: Only Claude models support tool-level cache checkpoints; Nova does not.
@@ -1090,7 +1073,7 @@ func encodeTools(
 		if !hasToolDefinition(defs, choice.Name) {
 			return nil, nil, nil, nil, fmt.Errorf("bedrock: tool choice name %q does not match any tool", choice.Name)
 		}
-		sanitized := SanitizeToolName(choice.Name)
+		sanitized := toolname.Sanitize(choice.Name)
 		if canonical, ok := sanToCanon[sanitized]; !ok || canonical != choice.Name {
 			return nil, nil, nil, nil, fmt.Errorf("bedrock: tool choice name %q does not match any tool", choice.Name)
 		}
@@ -1144,11 +1127,11 @@ func anthropicToolExampleFields(tools []map[string]any, hasExamples bool, choice
 		case model.ToolChoiceModeTool:
 			fields["tool_choice"] = map[string]any{
 				"type": "tool",
-				"name": SanitizeToolName(choice.Name),
+				"name": toolname.Sanitize(choice.Name),
 			}
 		}
 	}
-	addAnthropicBeta(fields, "tool-examples-2025-10-29")
+	addAnthropicBeta(fields, claudebeta.ToolExamples)
 	return fields
 }
 
@@ -1425,8 +1408,9 @@ func isProviderSafeToolUseID(id string) bool {
 	return true
 }
 
-// isProviderSafeToolName reports whether name conforms to Bedrock's documented tool
-// name constraints: pattern [a-zA-Z0-9_-]+ and length <= 64.
+// translateResponse converts a Bedrock Converse output into the canonical
+// model.Response, mapping provider tool names back to canonical identifiers
+// via nameMap and stamping the resolved model identifier and class.
 func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string]string, modelID string, modelClass model.ModelClass) (*model.Response, error) {
 	if output == nil {
 		return nil, errors.New("bedrock: response is nil")
@@ -1642,35 +1626,6 @@ func ptrValue[T ~int32 | ~int64](ptr *T) T {
 
 func lazyDocument(v any) document.Interface {
 	return document.NewLazyDocument(&v)
-}
-
-// messagesWithoutThinking returns msgs with all ThinkingParts removed for
-// CountTokens inputs. Messages left with no parts (thinking-only assistant
-// messages) are dropped entirely so the count request never carries empty
-// content blocks. Retained messages are shallow-cloned; the caller's messages
-// are never mutated.
-func messagesWithoutThinking(msgs []*model.Message) []*model.Message {
-	out := make([]*model.Message, 0, len(msgs))
-	for _, m := range msgs {
-		kept := make([]model.Part, 0, len(m.Parts))
-		for _, p := range m.Parts {
-			if _, ok := p.(model.ThinkingPart); ok {
-				continue
-			}
-			kept = append(kept, p)
-		}
-		if len(kept) == 0 {
-			continue
-		}
-		if len(kept) == len(m.Parts) {
-			out = append(out, m)
-			continue
-		}
-		clone := *m
-		clone.Parts = kept
-		out = append(out, &clone)
-	}
-	return out
 }
 
 func hasToolDefinition(defs []*model.ToolDefinition, name string) bool {
