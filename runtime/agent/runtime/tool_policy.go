@@ -4,7 +4,6 @@ package runtime
 
 import (
 	"maps"
-	"slices"
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -18,7 +17,6 @@ type (
 	// advertising and execution-time filtering.
 	compiledToolPolicy struct {
 		callerRestrictToTool tools.Ident
-		retryRestrictToTools []tools.Ident
 		tagClauses           []api.TagPolicyClause
 	}
 
@@ -38,7 +36,6 @@ func compileToolPolicy(overrides *PolicyOverrides) compiledToolPolicy {
 	}
 	return compiledToolPolicy{
 		callerRestrictToTool: overrides.RestrictToTool,
-		retryRestrictToTools: slices.Clone(overrides.RetryRestrictToTools),
 		tagClauses:           cloneTagPolicyClauses(overrides.TagClauses),
 	}
 }
@@ -50,7 +47,6 @@ func clonePolicyOverrides(overrides *PolicyOverrides) *PolicyOverrides {
 		return nil
 	}
 	cloned := *overrides
-	cloned.RetryRestrictToTools = slices.Clone(overrides.RetryRestrictToTools)
 	cloned.TagClauses = cloneTagPolicyClauses(overrides.TagClauses)
 	if len(overrides.PerToolTimeout) > 0 {
 		cloned.PerToolTimeout = maps.Clone(overrides.PerToolTimeout)
@@ -75,7 +71,7 @@ func cloneTagPolicyClauses(clauses []api.TagPolicyClause) []api.TagPolicyClause 
 
 // isZero reports whether the compiled policy has no effect.
 func (p compiledToolPolicy) isZero() bool {
-	return p.callerRestrictToTool == "" && len(p.retryRestrictToTools) == 0 && len(p.tagClauses) == 0
+	return p.callerRestrictToTool == "" && len(p.tagClauses) == 0
 }
 
 // allowsTool reports whether the named tool with the provided tags passes the
@@ -85,9 +81,6 @@ func (p compiledToolPolicy) allowsTool(name tools.Ident, facts toolPolicyFacts) 
 		return true
 	}
 	if p.callerRestrictToTool != "" && name != p.callerRestrictToTool {
-		return false
-	}
-	if len(p.retryRestrictToTools) > 0 && !slices.Contains(p.retryRestrictToTools, name) && !facts.bookkeeping {
 		return false
 	}
 	for _, clause := range p.tagClauses {

@@ -817,6 +817,12 @@ func TerminalRun() {
 // Use Bookkeeping for structured progress, status, finding, and terminal-commit
 // tools whose cost is record-keeping, not retrieval.
 //
+// Do NOT mark a tool Bookkeeping when its successful result feeds later planner
+// decisions (for example a state-machine snapshot the planner reads from
+// ToolOutputs), or when the model routinely calls it alone mid-run expecting to
+// continue afterwards: both patterns require the reasoning resume that
+// bookkeeping semantics deliberately skip.
+//
 // Bookkeeping must appear in a Tool expression.
 //
 // Example:

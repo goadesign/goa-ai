@@ -370,7 +370,10 @@ type RetryHint struct {
 	// Tool is the tool identifier associated with this hint.
 	Tool tools.Ident
 
-	// RestrictToTool instructs callers to retry only the specified tool.
+	// RestrictToTool marks recovery for this failure as a corrected call to
+	// Tool. It steers the model through the runtime's retry reminder; it does
+	// not narrow the advertised tool set, so the model may still perform other
+	// legitimate work (task bookkeeping, sibling tools) in the same turn.
 	RestrictToTool bool
 
 	// MissingFields lists required fields that were missing or invalid.

@@ -129,14 +129,6 @@ type (
 		// RestrictToTool restricts tool execution to the given tool identifier.
 		RestrictToTool tools.Ident
 
-		// RetryRestrictToTools is runtime-owned retry state installed from
-		// restricting RetryHints. Every restricting hint in a tool-result batch
-		// contributes its tool, and each entry clears independently once that
-		// tool succeeds, so the active restriction always matches the retry
-		// reminders the runtime emits. Caller-supplied RestrictToTool remains
-		// run-scoped and takes precedence when both are set.
-		RetryRestrictToTools []tools.Ident
-
 		// TagClauses applies explicit tag-policy clauses using logical AND.
 		TagClauses []TagPolicyClause
 
