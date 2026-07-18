@@ -577,19 +577,20 @@ func toolExampleInput(raw rawjson.Message) (map[string]any, error) {
 }
 
 // decodeToolJSONObject converts a canonical raw tool schema or example to the
-// SDK document shape without rounding JSON numbers.
+// top-level map required by the Anthropic SDK. Raw field values preserve the
+// canonical JSON because the SDK's document encoder treats json.Number as a
+// string.
 func decodeToolJSONObject(data []byte) (map[string]any, error) {
-	if !json.Valid(data) {
-		return nil, errors.New("invalid JSON object")
-	}
-	var object map[string]any
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := decoder.Decode(&object); err != nil {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
 		return nil, err
 	}
-	if object == nil {
+	if fields == nil {
 		return nil, errors.New("JSON value must be an object")
+	}
+	object := make(map[string]any, len(fields))
+	for name, value := range fields {
+		object[name] = value
 	}
 	return object, nil
 }
