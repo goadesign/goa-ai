@@ -31,13 +31,17 @@ func TestEncodeMessagesRejectsNonCanonicalThinking(t *testing.T) {
 			part: model.ThinkingPart{Text: "reasoning", Signature: "sig", Final: true},
 		},
 		{
+			name: "signature only",
+			part: model.ThinkingPart{Signature: "sig", Final: true},
+		},
+		{
 			name: "redacted",
 			part: model.ThinkingPart{Redacted: []byte("opaque"), Final: true},
 		},
 		{
 			name:    "missing signature",
 			part:    model.ThinkingPart{Text: "reasoning", Final: true},
-			wantErr: "bedrock: thinking part must contain exactly signed plaintext or redacted content",
+			wantErr: "bedrock: thinking part must contain exactly signed content or redacted content",
 		},
 		{
 			name: "mixed variants",
@@ -47,7 +51,7 @@ func TestEncodeMessagesRejectsNonCanonicalThinking(t *testing.T) {
 				Redacted:  []byte("opaque"),
 				Final:     true,
 			},
-			wantErr: "bedrock: thinking part must contain exactly signed plaintext or redacted content",
+			wantErr: "bedrock: thinking part must contain exactly signed content or redacted content",
 		},
 	}
 	for _, test := range tests {

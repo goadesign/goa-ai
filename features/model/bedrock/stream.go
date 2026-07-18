@@ -802,12 +802,14 @@ func (rb *reasoningBuffer) finalize() (*model.ThinkingPart, error) {
 	if text == "" && rb.signature == "" {
 		return nil, nil
 	}
-	if text == "" {
-		return nil, errors.New("reasoning signature is missing plaintext content")
-	}
 	if rb.signature == "" {
 		return nil, errors.New("reasoning plaintext is missing provider signature")
 	}
+	// A signature with empty text is canonical provider output, not an
+	// anomaly: Opus 4.8-class models with thinking display "omitted" (the
+	// default) emit signed thinking blocks whose plaintext is withheld. The
+	// signed empty-text part must be preserved verbatim so transcript replay
+	// can echo it back to the provider unchanged.
 	return &model.ThinkingPart{
 		Text:      text,
 		Signature: rb.signature,

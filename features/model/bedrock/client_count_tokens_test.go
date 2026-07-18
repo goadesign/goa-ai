@@ -56,7 +56,7 @@ func TestCountTokens_UsesConverseRequestPreparation(t *testing.T) {
 	rt := &countTokensRuntimeClient{}
 	client := &Client{
 		runtime:      rt,
-		defaultModel: "test-model",
+		defaultModel: "anthropic.claude-opus-4-8",
 		maxTok:       10,
 		temp:         0.5,
 		think:        defaultThinkingBudget,
@@ -87,17 +87,45 @@ func TestCountTokens_UsesConverseRequestPreparation(t *testing.T) {
 	count, err := client.CountTokens(context.Background(), req)
 	require.NoError(t, err)
 	require.Equal(t, 42, count.InputTokens)
-	require.Equal(t, "test-model", count.Model)
+	require.Equal(t, "anthropic.claude-opus-4-8", count.Model)
 	require.Equal(t, model.ModelClassDefault, count.ModelClass)
 	require.True(t, count.Exact)
 
 	require.NotNil(t, rt.input)
-	require.Equal(t, "test-model", *rt.input.ModelId)
+	require.Equal(t, "anthropic.claude-opus-4-8", *rt.input.ModelId)
 	converse, ok := rt.input.Input.(*brtypes.CountTokensInputMemberConverse)
 	require.True(t, ok)
 	require.Len(t, converse.Value.System, 1)
 	require.Len(t, converse.Value.Messages, 1)
 	require.NotNil(t, converse.Value.ToolConfig)
+}
+
+// TestCountTokens_SendsFoundationModelID verifies that a count configured with
+// a cross-region inference profile sends the backing foundation model ID on the
+// wire (Runtime CountTokens rejects the profile ID), while the returned
+// TokenCount still reports the configured profile ID for observability.
+func TestCountTokens_SendsFoundationModelID(t *testing.T) {
+	rt := &countTokensRuntimeClient{}
+	client := &Client{
+		runtime:      rt,
+		defaultModel: "us.anthropic.claude-opus-4-8",
+		think:        defaultThinkingBudget,
+	}
+
+	count, err := client.CountTokens(context.Background(), &model.Request{
+		ModelClass: model.ModelClassHighReasoning,
+		Messages: []*model.Message{
+			{
+				Role:  model.ConversationRoleUser,
+				Parts: []model.Part{model.TextPart{Text: "hello"}},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, rt.input)
+	require.Equal(t, "anthropic.claude-opus-4-8", *rt.input.ModelId)
+	require.Equal(t, "us.anthropic.claude-opus-4-8", count.Model)
+	require.Equal(t, model.ModelClassHighReasoning, count.ModelClass)
 }
 
 // TestCountTokens_ReturnsExactCountFromPromptTooLong verifies Bedrock's
@@ -118,7 +146,7 @@ func TestCountTokens_ReturnsExactCountFromPromptTooLong(t *testing.T) {
 	}
 	client := &Client{
 		runtime:      rt,
-		defaultModel: "test-model",
+		defaultModel: "anthropic.claude-opus-4-8",
 		think:        defaultThinkingBudget,
 	}
 
@@ -134,7 +162,7 @@ func TestCountTokens_ReturnsExactCountFromPromptTooLong(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, 215065, count.InputTokens)
-	require.Equal(t, "test-model", count.Model)
+	require.Equal(t, "anthropic.claude-opus-4-8", count.Model)
 	require.Equal(t, model.ModelClassSmall, count.ModelClass)
 	require.True(t, count.Exact)
 }
@@ -163,7 +191,7 @@ func TestCountTokens_PreservesOtherValidationErrors(t *testing.T) {
 	}
 	client := &Client{
 		runtime:      rt,
-		defaultModel: "test-model",
+		defaultModel: "anthropic.claude-opus-4-8",
 		think:        defaultThinkingBudget,
 	}
 
@@ -199,7 +227,7 @@ func TestCountTokens_OmitsThinkingBlocks(t *testing.T) {
 	rt := &countTokensRuntimeClient{}
 	client := &Client{
 		runtime:      rt,
-		defaultModel: "test-model",
+		defaultModel: "anthropic.claude-opus-4-8",
 		maxTok:       10,
 		temp:         0.5,
 		think:        defaultThinkingBudget,

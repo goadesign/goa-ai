@@ -407,12 +407,15 @@ func encodeMessages(msgs []*model.Message, nameMap map[string]string, cacheAfter
 				if m.Role != model.ConversationRoleAssistant {
 					return nil, nil, errors.New("anthropic: thinking parts are only supported in assistant messages")
 				}
-				hasPlaintext := v.Text != "" || v.Signature != ""
+				// Signature without text is valid (thinking display "omitted"
+				// on Opus 4.8-class models); text without signature is not
+				// replayable to the provider.
+				hasSigned := v.Signature != ""
 				hasRedacted := len(v.Redacted) > 0
-				if hasPlaintext == hasRedacted || (v.Text == "") != (v.Signature == "") {
-					return nil, nil, errors.New("anthropic: thinking part must contain exactly signed plaintext or redacted content")
+				if hasSigned == hasRedacted || (!hasSigned && v.Text != "") {
+					return nil, nil, errors.New("anthropic: thinking part must contain exactly signed content or redacted content")
 				}
-				if hasPlaintext {
+				if hasSigned {
 					blocks = append(blocks, sdk.NewThinkingBlock(v.Signature, v.Text))
 				} else {
 					blocks = append(blocks, sdk.NewRedactedThinkingBlock(string(v.Redacted)))

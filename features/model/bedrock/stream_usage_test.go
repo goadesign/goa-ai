@@ -77,7 +77,10 @@ func TestReasoningBufferFinalizeRequiresCanonicalVariant(t *testing.T) {
 		{name: "plaintext", text: "reasoning", signature: "sig"},
 		{name: "redacted", redacted: []byte("opaque")},
 		{name: "missing signature", text: "reasoning", wantErr: "reasoning plaintext is missing provider signature"},
-		{name: "missing text", signature: "sig", wantErr: "reasoning signature is missing plaintext content"},
+		// Opus 4.8-class models with thinking display "omitted" (the default)
+		// stream thinking blocks whose text is empty but which still carry the
+		// replay signature; they must decode to a signed empty-text part.
+		{name: "signature only", signature: "sig"},
 		{
 			name:      "mixed variants",
 			text:      "reasoning",

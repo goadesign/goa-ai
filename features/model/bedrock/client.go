@@ -188,7 +188,15 @@ func (c *Client) CountTokens(ctx context.Context, req *model.Request) (model.Tok
 	if err != nil {
 		return model.TokenCount{}, err
 	}
-	output, err := c.runtime.CountTokens(ctx, c.buildCountTokensInput(parts, countReq))
+	// Runtime CountTokens is a foundation-model operation: translate the resolved
+	// model ID (which may be a cross-region inference profile) to its foundation
+	// model ID for the wire request. The returned TokenCount keeps parts.modelID
+	// so callers still observe the configured profile/class.
+	foundationModelID, err := FoundationModelID(parts.modelID)
+	if err != nil {
+		return model.TokenCount{}, err
+	}
+	output, err := c.runtime.CountTokens(ctx, c.buildCountTokensInput(parts, countReq, foundationModelID))
 	var inputTokens int
 	if err != nil {
 		var ok bool
@@ -358,7 +366,10 @@ func (c *Client) buildConverseInput(parts *requestParts, req *model.Request) *be
 	return input
 }
 
-func (c *Client) buildCountTokensInput(parts *requestParts, req *model.Request) *bedrockruntime.CountTokensInput {
+// buildCountTokensInput builds the Runtime CountTokens request. foundationModelID
+// is the foundation model ID resolved from parts.modelID (see FoundationModelID);
+// CountTokens rejects the cross-region inference-profile ID that Converse uses.
+func (c *Client) buildCountTokensInput(parts *requestParts, req *model.Request, foundationModelID string) *bedrockruntime.CountTokensInput {
 	fields := additionalModelFieldsForRequest(parts.additionalModelFields, req)
 	converse := brtypes.ConverseTokensRequest{
 		Messages: parts.messages,
@@ -371,7 +382,7 @@ func (c *Client) buildCountTokensInput(parts *requestParts, req *model.Request) 
 		converse.AdditionalModelRequestFields = document.NewLazyDocument(&fields)
 	}
 	return &bedrockruntime.CountTokensInput{
-		ModelId: aws.String(parts.modelID),
+		ModelId: aws.String(foundationModelID),
 		Input:   &brtypes.CountTokensInputMemberConverse{Value: converse},
 	}
 }
@@ -651,12 +662,16 @@ func encodeMessages(msgs []*model.Message, nameMap map[string]string, cacheAfter
 		for _, part := range m.Parts {
 			switch v := part.(type) {
 			case model.ThinkingPart:
-				hasPlaintext := v.Text != "" || v.Signature != ""
+				// Valid variants: signed content (signature present; text may
+				// be empty — Opus 4.8-class "omitted" thinking display emits
+				// signature-only blocks that must replay verbatim) or
+				// redacted bytes. Text without a signature is unreplayable.
+				hasSigned := v.Signature != ""
 				hasRedacted := len(v.Redacted) > 0
-				if hasPlaintext == hasRedacted || (v.Text == "") != (v.Signature == "") {
-					return nil, nil, errors.New("bedrock: thinking part must contain exactly signed plaintext or redacted content")
+				if hasSigned == hasRedacted || (!hasSigned && v.Text != "") {
+					return nil, nil, errors.New("bedrock: thinking part must contain exactly signed content or redacted content")
 				}
-				if hasPlaintext {
+				if hasSigned {
 					blocks = append(blocks, &brtypes.ContentBlockMemberReasoningContent{
 						Value: &brtypes.ReasoningContentBlockMemberReasoningText{
 							Value: brtypes.ReasoningTextBlock{

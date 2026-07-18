@@ -61,7 +61,7 @@ func TestEncodeMessagesThinkingVariants(t *testing.T) {
 		{
 			name:    "missing signature",
 			part:    model.ThinkingPart{Text: "reasoning", Final: true},
-			wantErr: "anthropic: thinking part must contain exactly signed plaintext or redacted content",
+			wantErr: "anthropic: thinking part must contain exactly signed content or redacted content",
 		},
 		{
 			name: "mixed variants",
@@ -71,7 +71,7 @@ func TestEncodeMessagesThinkingVariants(t *testing.T) {
 				Redacted:  []byte("opaque"),
 				Final:     true,
 			},
-			wantErr: "anthropic: thinking part must contain exactly signed plaintext or redacted content",
+			wantErr: "anthropic: thinking part must contain exactly signed content or redacted content",
 		},
 	}
 	for _, test := range tests {

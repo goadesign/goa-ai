@@ -479,12 +479,11 @@ func (tb *thinkingBuffer) finalize(index int) (*model.ThinkingPart, error) {
 	if text == "" && tb.signature == "" {
 		return nil, nil
 	}
-	if text == "" {
-		return nil, errors.New("thinking signature is missing plaintext content")
-	}
 	if tb.signature == "" {
 		return nil, errors.New("thinking plaintext is missing provider signature")
 	}
+	// Signature with empty text is canonical output for thinking display
+	// "omitted" (the Opus 4.8-class default); preserve it for verbatim replay.
 	return &model.ThinkingPart{
 		Text:      text,
 		Signature: tb.signature,

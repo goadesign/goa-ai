@@ -186,16 +186,14 @@ func validateChunkMessage(message *Message, thinking bool) error {
 }
 
 func validateThinkingPart(part ThinkingPart) error {
-	plaintext := part.Text != ""
+	// Valid variants: signed or plaintext reasoning (text and/or signature —
+	// Opus 4.8-class thinking display "omitted" emits signature-only blocks
+	// whose empty text must be preserved for verbatim replay), or redacted
+	// bytes. Redacted content is exclusive of both text and signature.
+	content := part.Text != "" || part.Signature != ""
 	redacted := len(part.Redacted) > 0
-	if plaintext == redacted {
-		return errors.New("thinking must contain exactly plaintext or redacted content")
-	}
-	if redacted && part.Signature != "" {
-		return errors.New("redacted thinking cannot contain a plaintext signature")
-	}
-	if part.Signature != "" && !plaintext {
-		return errors.New("thinking signature requires plaintext content")
+	if content == redacted {
+		return errors.New("thinking must contain exactly signed/plaintext or redacted content")
 	}
 	return nil
 }
