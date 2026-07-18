@@ -294,6 +294,9 @@ func (c *Client) prepareRequest(req *model.Request) (*requestParts, error) {
 				"ensure the planner always passes tools when history has tool blocks",
 		)
 	}
+	if err := registerHistoricalToolNames(req.Messages, canonToSan, sanToCanon); err != nil {
+		return nil, err
+	}
 	messages, system, err := encodeMessages(req.Messages, canonToSan, cacheAfterSystem)
 	if err != nil {
 		return nil, err
@@ -770,23 +773,18 @@ func encodeMessages(msgs []*model.Message, nameMap map[string]string, cacheAfter
 				}
 				blocks = append(blocks, &brtypes.ContentBlockMemberDocument{Value: doc})
 			case model.ToolUsePart:
-				// Encode assistant-declared tool_use with optional ID and JSON input.
+				// Encode assistant-declared tool_use with its request-scoped provider
+				// name, optional ID, and JSON input.
 				tb := brtypes.ToolUseBlock{}
 				if v.Name != "" {
-					if sanitized, ok := nameMap[v.Name]; ok && sanitized != "" {
-						tb.Name = aws.String(sanitized)
-					} else {
-						for canonical, provider := range nameMap {
-							if provider == v.Name {
-								return nil, nil, fmt.Errorf(
-									"bedrock: historical provider tool name %q collides with current tool %q",
-									v.Name,
-									canonical,
-								)
-							}
-						}
-						tb.Name = aws.String(v.Name)
+					providerName, ok := nameMap[v.Name]
+					if !ok {
+						return nil, nil, fmt.Errorf(
+							"bedrock: historical canonical tool name %q is not registered",
+							v.Name,
+						)
 					}
+					tb.Name = aws.String(providerName)
 				}
 				if v.ID != "" {
 					if id := toolUseIDFor(v.ID, toolUseIDMap, usedToolUseIDs, &nextToolUseID); id != "" {
@@ -1085,6 +1083,50 @@ func encodeTools(
 	}
 
 	return &cfg, anthropicToolExampleFields(anthropicTools, anthropicHasExamples, choice), canonToSan, sanToCanon, nil
+}
+
+// registerHistoricalToolNames extends the request-scoped provider mapping with
+// canonical tool identifiers already present in transcript history. Historical
+// tools remain representable even when they are not advertised in this turn.
+func registerHistoricalToolNames(
+	messages []*model.Message,
+	canonToSan, sanToCanon map[string]string,
+) error {
+	for _, message := range messages {
+		for _, part := range message.Parts {
+			use, ok := part.(model.ToolUsePart)
+			if !ok || use.Name == "" {
+				continue
+			}
+			if _, err := registerToolName(use.Name, canonToSan, sanToCanon); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// registerToolName adds one canonical identifier to the request-scoped Bedrock
+// name mapping and rejects collisions before any provider request is sent.
+func registerToolName(
+	canonical string,
+	canonToSan, sanToCanon map[string]string,
+) (string, error) {
+	if provider, ok := canonToSan[canonical]; ok {
+		return provider, nil
+	}
+	sanitized := toolname.Sanitize(canonical)
+	if prev, ok := sanToCanon[sanitized]; ok && prev != canonical {
+		return "", fmt.Errorf(
+			"bedrock: tool name %q sanitizes to %q which collides with %q",
+			canonical,
+			sanitized,
+			prev,
+		)
+	}
+	sanToCanon[sanitized] = canonical
+	canonToSan[canonical] = sanitized
+	return sanitized, nil
 }
 
 func anthropicToolDefinition(name string, def *model.ToolDefinition, includeExample bool) (map[string]any, error) {

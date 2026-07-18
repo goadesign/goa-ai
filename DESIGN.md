@@ -272,6 +272,37 @@ that UIs and stream bridges can consume without heuristics.
 
 This keeps consumers simple: render `error`, gate “Retry” on `retryable`, and treat `canceled` as non-error.
 
+## Provider Stream Integrity Contract
+
+Provider adapters (Bedrock, Anthropic) validate the streaming event protocol
+with a strict state machine: a message must start before content blocks flow
+and must stop exactly once before metadata. Violations never produce a
+fabricated response; they fail the stream with a precise error. Two terminal
+shapes are classified instead of surfaced as opaque protocol errors:
+
+- **Empty stream** — the stream terminates before any message starts (a
+  `messageStop` with no prior `messageStart`, or a stream that closes with no
+  events at all). Providers intermittently do this when a model emits an
+  empty completion. Adapters build the error with `model.NewEmptyStreamError`,
+  which carries the `model.ErrEmptyStream` sentinel plus a retryable
+  `unavailable` ProviderError (code `empty_stream`). Callers detect it with
+  `errors.Is(err, model.ErrEmptyStream)` and may retry the request a bounded
+  number of times before surfacing the failure.
+- **Truncated stream** — the stream closes cleanly after a message started but
+  before `messageStop`. The classification is a retryable `unavailable`
+  ProviderError (code `truncated_stream`) without the empty-stream sentinel:
+  output was partially produced, so blind pre-output retry policies must not
+  match it.
+
+`model.NewStreamEndedEarlyError(provider, operation, started)` is the single
+classifier for streams that close before message stop; adapters pass whether a
+message had started and the model package owns which of the two shapes
+applies.
+
+Adapters never retry internally; retry policy belongs to the integrating
+application (for example, a guard that retries only before the first visible
+output chunk).
+
 ## Runtime Tracing Error Contract
 
 The runtime uses one generic rule for span failures across model clients and

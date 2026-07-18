@@ -127,7 +127,11 @@ func (s *bedrockStreamer) run() {
 				} else if err := s.ctx.Err(); err != nil {
 					s.setErr(err)
 				} else if !processor.complete {
-					s.setErr(errors.New("bedrock: stream ended before message stop"))
+					s.setErr(model.NewStreamEndedEarlyError(
+						bedrockProviderName,
+						"converse_stream",
+						processor.started,
+					))
 				} else if err := processor.finishStream(); err != nil {
 					s.setErr(err)
 				} else {
@@ -489,8 +493,18 @@ func (p *chunkProcessor) Handle(event any) error {
 		}
 		return nil
 	case *brtypes.ConverseStreamOutputMemberMessageStop:
-		if !p.started || p.complete {
-			return errors.New("bedrock stream: message stop received without an active message")
+		if !p.started {
+			// Bedrock intermittently stops a message it never started when the
+			// model produces an empty completion (observed on Haiku). Classify
+			// as a retryable empty stream instead of an opaque protocol error.
+			return model.NewEmptyStreamError(
+				bedrockProviderName,
+				"converse_stream",
+				"message stop received without an active message",
+			)
+		}
+		if p.complete {
+			return errors.New("bedrock stream: duplicate message stop")
 		}
 		if len(p.openBlocks) > 0 {
 			return fmt.Errorf("bedrock stream: message stopped with %d open content blocks", len(p.openBlocks))

@@ -113,7 +113,11 @@ func (s *anthropicStreamer) run() {
 			} else if err := s.ctx.Err(); err != nil {
 				s.setErr(err)
 			} else if !processor.complete {
-				s.setErr(errors.New("anthropic: stream ended before message_stop"))
+				s.setErr(model.NewStreamEndedEarlyError(
+					anthropicProviderName,
+					"stream_recv",
+					processor.started,
+				))
 			} else {
 				translated, err := translateResponse(&response, s.toolNameMap)
 				if err != nil {
@@ -410,8 +414,18 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 		}
 		return p.emit(model.UsageChunk{Usage: usage})
 	case sdk.MessageStopEvent:
-		if !p.started || p.complete {
-			return errors.New("anthropic stream: message stop received without an active message")
+		if !p.started {
+			// Anthropic models intermittently emit an empty completion whose
+			// stream stops a message that never started. Classify as a
+			// retryable empty stream instead of an opaque protocol error.
+			return model.NewEmptyStreamError(
+				anthropicProviderName,
+				"stream_recv",
+				"message stop received without an active message",
+			)
+		}
+		if p.complete {
+			return errors.New("anthropic stream: duplicate message stop")
 		}
 		if len(p.openBlocks) > 0 {
 			return fmt.Errorf("anthropic stream: message stopped with %d open content blocks", len(p.openBlocks))

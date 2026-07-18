@@ -109,6 +109,9 @@ type (
 	}
 )
 
+// anthropicProviderName identifies this adapter in model.ProviderError values.
+const anthropicProviderName = "anthropic"
+
 var (
 	_ model.Client       = (*Client)(nil)
 	_ model.TokenCounter = (*Client)(nil)
@@ -674,7 +677,7 @@ func wrapAnthropicError(operation string, err error) error {
 	} else {
 		message = err.Error()
 	}
-	return model.ClassifyHTTPStatus("anthropic", operation, status, message, err)
+	return model.ClassifyHTTPStatus(anthropicProviderName, operation, status, message, err)
 }
 
 // anthropicErrorMessage safely renders an *sdk.Error's message.
