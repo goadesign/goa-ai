@@ -1,7 +1,8 @@
 package runtime
 
-// restrict_to_tool_test.go verifies retry-driven tool restrictions do not leak
-// beyond the correction they were created for or clear caller run policy.
+// restrict_to_tool_test.go verifies retry-driven tool restrictions track every
+// restricting hint in a batch, clear per tool on success, and never leak beyond
+// the corrections they were created for or clear caller run policy.
 
 import (
 	"testing"
@@ -25,7 +26,7 @@ func TestApplyToolResultPolicyHintsKeepsCallerRestrictionAfterSuccessfulToolResu
 	}})
 
 	assert.Equal(t, tools.Ident("ada.resolve_time_series_sources"), input.Policy.RestrictToTool)
-	assert.Empty(t, input.Policy.RetryRestrictToTool)
+	assert.Empty(t, input.Policy.RetryRestrictToTools)
 }
 
 func TestApplyToolResultPolicyHintsClearsSatisfiedRetryRestriction(t *testing.T) {
@@ -33,7 +34,7 @@ func TestApplyToolResultPolicyHintsClearsSatisfiedRetryRestriction(t *testing.T)
 
 	input := &RunInput{
 		Policy: &PolicyOverrides{
-			RetryRestrictToTool: tools.Ident("ada.resolve_time_series_sources"),
+			RetryRestrictToTools: []tools.Ident{"ada.resolve_time_series_sources"},
 		},
 	}
 
@@ -41,7 +42,7 @@ func TestApplyToolResultPolicyHintsClearsSatisfiedRetryRestriction(t *testing.T)
 		Name: tools.Ident("ada.resolve_time_series_sources"),
 	}})
 
-	assert.Empty(t, input.Policy.RetryRestrictToTool)
+	assert.Empty(t, input.Policy.RetryRestrictToTools)
 }
 
 func TestApplyToolResultPolicyHintsKeepsRestrictionAfterFailedCorrection(t *testing.T) {
@@ -49,7 +50,7 @@ func TestApplyToolResultPolicyHintsKeepsRestrictionAfterFailedCorrection(t *test
 
 	input := &RunInput{
 		Policy: &PolicyOverrides{
-			RetryRestrictToTool: tools.Ident("ada.resolve_time_series_sources"),
+			RetryRestrictToTools: []tools.Ident{"ada.resolve_time_series_sources"},
 		},
 	}
 
@@ -58,7 +59,7 @@ func TestApplyToolResultPolicyHintsKeepsRestrictionAfterFailedCorrection(t *test
 		Error: planner.NewToolError("invalid arguments"),
 	}})
 
-	assert.Equal(t, tools.Ident("ada.resolve_time_series_sources"), input.Policy.RetryRestrictToTool)
+	assert.Equal(t, []tools.Ident{"ada.resolve_time_series_sources"}, input.Policy.RetryRestrictToTools)
 }
 
 func TestApplyToolResultPolicyHintsPromotesNewRestriction(t *testing.T) {
@@ -75,7 +76,78 @@ func TestApplyToolResultPolicyHintsPromotesNewRestriction(t *testing.T) {
 		},
 	}})
 
-	assert.Equal(t, tools.Ident("ada.resolve_time_series_sources"), input.Policy.RetryRestrictToTool)
+	assert.Equal(t, []tools.Ident{"ada.resolve_time_series_sources"}, input.Policy.RetryRestrictToTools)
+}
+
+func TestApplyToolResultPolicyHintsPromotesEveryRestrictingHintInBatch(t *testing.T) {
+	t.Parallel()
+
+	input := &RunInput{}
+
+	applyToolResultPolicyHints(input, []*planner.ToolResult{
+		{
+			Name:  tools.Ident("ada.review_recent_changes"),
+			Error: planner.NewToolError("no matching app selection"),
+			RetryHint: &planner.RetryHint{
+				Tool:           tools.Ident("ada.review_recent_changes"),
+				RestrictToTool: true,
+			},
+		},
+		{
+			Name:  tools.Ident("ada.list_setting_changes"),
+			Error: planner.NewToolError("no matching app selection"),
+			RetryHint: &planner.RetryHint{
+				Tool:           tools.Ident("ada.list_setting_changes"),
+				RestrictToTool: true,
+			},
+		},
+	})
+
+	assert.Equal(t,
+		[]tools.Ident{"ada.review_recent_changes", "ada.list_setting_changes"},
+		input.Policy.RetryRestrictToTools,
+	)
+}
+
+func TestApplyToolResultPolicyHintsClearsOnlySatisfiedMember(t *testing.T) {
+	t.Parallel()
+
+	input := &RunInput{
+		Policy: &PolicyOverrides{
+			RetryRestrictToTools: []tools.Ident{
+				"ada.review_recent_changes",
+				"ada.list_setting_changes",
+			},
+		},
+	}
+
+	applyToolResultPolicyHints(input, []*planner.ToolResult{{
+		Name: tools.Ident("ada.review_recent_changes"),
+	}})
+
+	assert.Equal(t, []tools.Ident{"ada.list_setting_changes"}, input.Policy.RetryRestrictToTools)
+}
+
+func TestApplyToolResultPolicyHintsDoesNotPromoteToolSatisfiedInSameBatch(t *testing.T) {
+	t.Parallel()
+
+	input := &RunInput{}
+
+	applyToolResultPolicyHints(input, []*planner.ToolResult{
+		{
+			Name:  tools.Ident("ada.compile_query"),
+			Error: planner.NewToolError("missing fields"),
+			RetryHint: &planner.RetryHint{
+				Tool:           tools.Ident("ada.compile_query"),
+				RestrictToTool: true,
+			},
+		},
+		{
+			Name: tools.Ident("ada.compile_query"),
+		},
+	})
+
+	assert.Nil(t, input.Policy)
 }
 
 func TestApplyToolResultPolicyHintsPromotesNewRestrictionAfterSatisfiedCorrection(t *testing.T) {
@@ -83,7 +155,7 @@ func TestApplyToolResultPolicyHintsPromotesNewRestrictionAfterSatisfiedCorrectio
 
 	input := &RunInput{
 		Policy: &PolicyOverrides{
-			RetryRestrictToTool: tools.Ident("ada.resolve_time_series_sources"),
+			RetryRestrictToTools: []tools.Ident{"ada.resolve_time_series_sources"},
 		},
 	}
 
@@ -101,7 +173,7 @@ func TestApplyToolResultPolicyHintsPromotesNewRestrictionAfterSatisfiedCorrectio
 		},
 	})
 
-	assert.Equal(t, tools.Ident("ada.compile_query"), input.Policy.RetryRestrictToTool)
+	assert.Equal(t, []tools.Ident{"ada.compile_query"}, input.Policy.RetryRestrictToTools)
 }
 
 func TestApplyToolResultPolicyHintsKeepsRestrictionUntilRestrictedToolSucceeds(t *testing.T) {
@@ -111,21 +183,21 @@ func TestApplyToolResultPolicyHintsKeepsRestrictionUntilRestrictedToolSucceeds(t
 	cases := []struct {
 		name    string
 		results []*planner.ToolResult
-		want    tools.Ident
+		want    []tools.Ident
 	}{
 		{
 			name: "non-terminal bookkeeping success does not clear restriction",
 			results: []*planner.ToolResult{{
 				Name: tools.Ident("tasks.progress.update"),
 			}},
-			want: restrictedTool,
+			want: []tools.Ident{restrictedTool},
 		},
 		{
 			name: "restricted tool success clears restriction",
 			results: []*planner.ToolResult{{
 				Name: restrictedTool,
 			}},
-			want: "",
+			want: nil,
 		},
 	}
 
@@ -133,13 +205,13 @@ func TestApplyToolResultPolicyHintsKeepsRestrictionUntilRestrictedToolSucceeds(t
 		t.Run(tc.name, func(t *testing.T) {
 			input := &RunInput{
 				Policy: &PolicyOverrides{
-					RetryRestrictToTool: restrictedTool,
+					RetryRestrictToTools: []tools.Ident{restrictedTool},
 				},
 			}
 
 			applyToolResultPolicyHints(input, tc.results)
 
-			assert.Equal(t, tc.want, input.Policy.RetryRestrictToTool)
+			assert.Equal(t, tc.want, input.Policy.RetryRestrictToTools)
 		})
 	}
 }

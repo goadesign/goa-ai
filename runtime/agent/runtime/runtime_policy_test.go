@@ -346,7 +346,7 @@ func TestRetryRestrictionAllowsBookkeepingTools(t *testing.T) {
 	}
 	input := &RunInput{
 		Policy: &PolicyOverrides{
-			RetryRestrictToTool: correctionSpec.Name,
+			RetryRestrictToTools: []tools.Ident{correctionSpec.Name},
 		},
 	}
 

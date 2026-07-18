@@ -183,7 +183,7 @@ func TestRunLoopTerminalToolExecutesWithRetryRestriction(t *testing.T) {
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
 		Policy: &PolicyOverrides{
-			RetryRestrictToTool: tools.Ident("ada.get_time_series"),
+			RetryRestrictToTools: []tools.Ident{"ada.get_time_series"},
 		},
 	}
 	initial := &planner.PlanResult{
@@ -210,7 +210,7 @@ func TestRunLoopTerminalToolExecutesWithRetryRestriction(t *testing.T) {
 	require.Nil(t, out.Final)
 	require.Len(t, out.ToolEvents, 1)
 	require.Equal(t, terminalTool.Name, out.ToolEvents[0].Name)
-	require.Equal(t, tools.Ident("ada.get_time_series"), input.Policy.RetryRestrictToTool)
+	require.Equal(t, []tools.Ident{"ada.get_time_series"}, input.Policy.RetryRestrictToTools)
 	require.Empty(t, wfCtx.lastPlannerCall.Name, "expected no planner resume/finalization after terminal tool")
 }
 
@@ -228,7 +228,7 @@ func TestFinalizeWithPlannerExecutesTerminalToolCall(t *testing.T) {
 }
 
 func TestFinalizeWithPlannerTerminalToolIgnoresRetryRestriction(t *testing.T) {
-	runPolicy := &PolicyOverrides{RetryRestrictToTool: tools.Ident("ada.get_time_series")}
+	runPolicy := &PolicyOverrides{RetryRestrictToTools: []tools.Ident{"ada.get_time_series"}}
 	out, _, terminalTool, err := runTerminalFinalization(t, runPolicy)
 
 	require.NoError(t, err)
@@ -236,7 +236,7 @@ func TestFinalizeWithPlannerTerminalToolIgnoresRetryRestriction(t *testing.T) {
 	require.Nil(t, out.Final)
 	require.Len(t, out.ToolEvents, 1)
 	require.Equal(t, terminalTool.Name, out.ToolEvents[0].Name)
-	require.Equal(t, tools.Ident("ada.get_time_series"), runPolicy.RetryRestrictToTool)
+	require.Equal(t, []tools.Ident{"ada.get_time_series"}, runPolicy.RetryRestrictToTools)
 }
 
 func TestFinalizeWithPlannerTerminalToolHonorsCallerRestriction(t *testing.T) {
