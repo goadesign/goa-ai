@@ -25,6 +25,13 @@ const (
 	// be parsed or didn't match the expected schema (e.g., invalid JSON).
 	RetryReasonMalformedResponse RetryReason = "malformed_response"
 
+	// RetryReasonTimeout classifies a tool failure caused by exceeding a time or
+	// budget limit. It is a terminal classification, not a retry instruction:
+	// hints carrying this reason never set RestrictToTool, so the tool is not
+	// re-issued. Consumers use it to page timeouts distinctly from internal
+	// failures rather than to drive recovery.
+	RetryReasonTimeout RetryReason = "timeout"
+
 	// RetryReasonRateLimited indicates the tool or underlying service is rate-limited.
 	// Policy engines may back off or disable the tool temporarily.
 	RetryReasonRateLimited RetryReason = "rate_limited"

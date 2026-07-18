@@ -107,11 +107,121 @@ func TestRetryHintFromInvalidArgumentsRestrictsToFailedTool(t *testing.T) {
 	assert.True(t, hint.RestrictToTool)
 }
 
-func TestRetryHintFromTimeoutIsTerminal(t *testing.T) {
+func TestRetryHintFromTimeoutClassifiesWithoutRetry(t *testing.T) {
 	t.Parallel()
 
-	assert.Nil(t, retryHintFromToolErrorCode("atlas.read.get_time_series", "timeout"))
+	hint := retryHintFromToolErrorCode("atlas.read.get_time_series", "timeout")
+
+	require.NotNil(t, hint)
+	assert.Equal(t, planner.RetryReasonTimeout, hint.Reason)
+	assert.Equal(t, tools.Ident("atlas.read.get_time_series"), hint.Tool)
+	assert.False(t, hint.RestrictToTool, "a timeout is terminal and must not force a same-tool retry")
+
+	// Unknown codes carry no hint.
 	assert.Nil(t, retryHintFromToolErrorCode("atlas.read.get_time_series", "query_too_expensive"))
+}
+
+func TestRetryHintFromInvalidInputDoesNotRestrict(t *testing.T) {
+	t.Parallel()
+
+	// Service-level invalid_input is a domain rejection that may name a sibling
+	// tool as the remedy. It classifies as invalid input for the UI but must not
+	// pin the model to the rejecting tool.
+	hint := retryHintFromToolErrorCode("atlas.read.get_time_series", "invalid_input")
+
+	require.NotNil(t, hint)
+	assert.Equal(t, planner.RetryReasonInvalidArguments, hint.Reason)
+	assert.Equal(t, tools.Ident("atlas.read.get_time_series"), hint.Tool)
+	assert.False(t, hint.RestrictToTool, "invalid_input must not force a same-tool retry")
+}
+
+func TestExecutorErrorHintCarriesExampleJSONOnlyWhenRestricting(t *testing.T) {
+	t.Parallel()
+
+	const (
+		toolUseID  = "tooluse-example"
+		toolCallID = "toolcall-example"
+	)
+	example := tools.RawJSON(`{"query":"latency"}`)
+
+	cases := []struct {
+		name         string
+		code         string
+		wantReason   planner.RetryReason
+		wantRestrict bool
+		wantExample  bool
+	}{
+		// A timeout is terminal: it must not hand the model a payload-correction
+		// template that reads as a same-tool retry instruction.
+		{"timeout carries no retry template", "timeout", planner.RetryReasonTimeout, false, false},
+		// invalid_input may name a sibling tool as the remedy; a payload example
+		// would wrongly pin the model to the rejecting tool.
+		{"invalid_input carries no retry template", "invalid_input", planner.RetryReasonInvalidArguments, false, false},
+		// invalid_arguments restricts to the same tool for payload correction, so
+		// the canonical example belongs here.
+		{"invalid_arguments carries the payload example", "invalid_arguments", planner.RetryReasonInvalidArguments, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			spec := &tools.ToolSpec{
+				Name:    "atlas.read.get_time_series",
+				Toolset: "atlas.read",
+				Result:  tools.TypeSpec{},
+				Payload: tools.TypeSpec{ExampleJSON: example},
+			}
+			res, err := executeRegistryResultMessage(t, toolUseID, toolCallID, toolregistry.ToolResultMessage{
+				ToolUseID: toolUseID,
+				Error:     &toolregistry.ToolError{Code: tc.code, Message: "boom"},
+			}, spec)
+			require.NoError(t, err)
+			require.NotNil(t, res)
+			require.NotNil(t, res.ToolResult)
+			require.NotNil(t, res.ToolResult.RetryHint)
+			assert.Equal(t, tc.wantReason, res.ToolResult.RetryHint.Reason)
+			assert.Equal(t, tc.wantRestrict, res.ToolResult.RetryHint.RestrictToTool)
+			if tc.wantExample {
+				assert.NotEmpty(t, res.ToolResult.RetryHint.ExampleJSON)
+			} else {
+				assert.Empty(t, res.ToolResult.RetryHint.ExampleJSON)
+			}
+		})
+	}
+}
+
+func TestExecutorTransportFailureClassifiesToolUnavailable(t *testing.T) {
+	t.Parallel()
+
+	spec := &tools.ToolSpec{
+		Name:    "atlas.read.get_time_series",
+		Toolset: "atlas.read",
+		Result:  tools.TypeSpec{},
+		Payload: tools.TypeSpec{ExampleJSON: tools.RawJSON(`{"query":"latency"}`)},
+	}
+	exec := New(
+		fakeRegistryClient{err: errors.New("dial registry gateway: connection refused")},
+		fakePulseClient{},
+		fakeSpecs{spec: spec},
+	)
+
+	res, err := exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
+		RunID:      "run",
+		SessionID:  "sess",
+		ToolCallID: "toolcall-transport",
+	}, &planner.ToolRequest{
+		Name:    "atlas.read.get_time_series",
+		Payload: []byte(`{}`),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.NotNil(t, res.ToolResult)
+	require.NotNil(t, res.ToolResult.Error)
+	require.NotNil(t, res.ToolResult.RetryHint)
+	assert.Equal(t, planner.RetryReasonToolUnavailable, res.ToolResult.RetryHint.Reason)
+	assert.Equal(t, tools.Ident("atlas.read.get_time_series"), res.ToolResult.RetryHint.Tool)
+	assert.False(t, res.ToolResult.RetryHint.RestrictToTool, "a transport blip must not force a same-tool retry")
+	assert.Empty(t, res.ToolResult.RetryHint.ExampleJSON, "a transient transport failure is not a payload-correction case")
+	assert.Equal(t, "toolcall-transport", res.ToolResult.ToolCallID)
 }
 
 func TestExecutorDerivesResultStreamIDFromToolUseID(t *testing.T) {
@@ -508,9 +618,13 @@ func TestExecutorResultDecodeFailureReturnsModelVisibleErrorWithoutBounds(t *tes
 
 type fakeRegistryClient struct {
 	toolUseID string
+	err       error
 }
 
 func (c fakeRegistryClient) CallTool(ctx context.Context, toolset string, tool tools.Ident, payload []byte, meta toolregistry.ToolCallMeta) (string, error) {
+	if c.err != nil {
+		return "", c.err
+	}
 	return c.toolUseID, nil
 }
 
