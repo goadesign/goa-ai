@@ -297,9 +297,15 @@ func TestCountTokensOmitsEmptyTools(t *testing.T) {
 }
 
 func TestCountTokensEnablesToolExamplesBeta(t *testing.T) {
-	var beta string
+	var (
+		beta string
+		body []byte
+	)
 	httpClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		beta = req.Header.Get("anthropic-beta")
+		var err error
+		body, err = io.ReadAll(req.Body)
+		require.NoError(t, err)
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -323,14 +329,36 @@ func TestCountTokensEnablesToolExamplesBeta(t *testing.T) {
 			Parts: []model.Part{model.TextPart{Text: "hello"}},
 		}},
 		Tools: []*model.ToolDefinition{{
-			Name:        "reports.complete",
-			Description: "Complete a report",
-			Input:       model.ToolInputFromSpec(toolInputExampleSpec()),
+			Name:        "reports.concurrent",
+			Description: "Check concurrent reports",
+			Input: model.ToolInputFromSpec(tools.TypeSpec{
+				Name:                     "ReportsConcurrentPayload",
+				Schema:                   tools.RawJSON(`{"type":"object","properties":{"minimum":{"type":"integer","const":9007199254740993},"ratios":{"type":"array","items":{"type":"number"}}},"required":["minimum","ratios"],"example":{"minimum":9007199254740993,"ratios":[0.25,2]}}`),
+				SchemaWithoutRootExample: tools.RawJSON(`{"type":"object","properties":{"minimum":{"type":"integer","const":9007199254740993},"ratios":{"type":"array","items":{"type":"number"}}},"required":["minimum","ratios"]}`),
+				ExampleJSON:              tools.RawJSON(`{"minimum":9007199254740993,"ratios":[0.25,2]}`),
+			}),
 		}},
 	})
 
 	require.NoError(t, err)
 	assert.Equal(t, "tool-examples-2025-10-29", beta)
+	var request struct {
+		Tools []struct {
+			InputSchema   json.RawMessage   `json:"input_schema"`
+			InputExamples []json.RawMessage `json:"input_examples"`
+		} `json:"tools"`
+	}
+	require.NoError(t, json.Unmarshal(body, &request))
+	require.Len(t, request.Tools, 1)
+	require.Len(t, request.Tools[0].InputExamples, 1)
+	require.JSONEq(t,
+		`{"type":"object","properties":{"minimum":{"type":"integer","const":9007199254740993},"ratios":{"type":"array","items":{"type":"number"}}},"required":["minimum","ratios"]}`,
+		string(request.Tools[0].InputSchema),
+	)
+	require.JSONEq(t,
+		`{"minimum":9007199254740993,"ratios":[0.25,2]}`,
+		string(request.Tools[0].InputExamples[0]),
+	)
 }
 
 // The beta must be opt-in per request: gateways that proxy the Messages API
@@ -550,49 +578,6 @@ func completionParamsFor(t *testing.T, cl *Client, req *model.Request) *sdk.Mess
 	params, err := cl.completionParams(context.Background(), req, enc)
 	require.NoError(t, err)
 	return params
-}
-
-func TestEncodeTools_UsesSchemaWithoutRootExampleAndInputExamples(t *testing.T) {
-	defs := []*model.ToolDefinition{{
-		Name:        "reports.complete",
-		Description: "Complete a report",
-		Input:       model.ToolInputFromSpec(toolInputExampleSpec()),
-	}}
-
-	tools, _, _, err := encodeTools(context.Background(), defs, false)
-	if err != nil {
-		t.Fatalf("encodeTools: %v", err)
-	}
-	if len(tools) != 1 || tools[0].OfTool == nil {
-		t.Fatalf("expected one encoded tool, got %#v", tools)
-	}
-	if len(tools[0].OfTool.InputExamples) != 1 {
-		t.Fatalf("expected one input example, got %#v", tools[0].OfTool.InputExamples)
-	}
-	if got := tools[0].OfTool.InputExamples[0]["summary"]; got != "Done" {
-		t.Fatalf("unexpected input example summary %v", got)
-	}
-	if _, ok := tools[0].OfTool.InputSchema.ExtraFields["example"]; ok {
-		t.Fatalf("plain schema should not include root example: %#v", tools[0].OfTool.InputSchema.ExtraFields)
-	}
-}
-
-func TestToolInputSchemaPreservesLargeIntegers(t *testing.T) {
-	schema, err := toolInputSchema(
-		context.Background(),
-		rawjson.Message(`{"type":"integer","const":9007199254740993}`),
-	)
-	require.NoError(t, err)
-	require.Equal(t, json.Number("9007199254740993"), schema.ExtraFields["const"])
-}
-
-func toolInputExampleSpec() tools.TypeSpec {
-	return tools.TypeSpec{
-		Name:                     "ReportsCompletePayload",
-		Schema:                   tools.RawJSON(`{"type":"object","example":{"summary":"Done"}}`),
-		SchemaWithoutRootExample: tools.RawJSON(`{"type":"object"}`),
-		ExampleJSON:              tools.RawJSON(`{"summary":"Done"}`),
-	}
 }
 
 func TestComplete_RateLimited(t *testing.T) {
