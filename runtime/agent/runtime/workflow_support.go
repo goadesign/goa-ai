@@ -696,6 +696,14 @@ func (r *Runtime) handleMissingFieldsPolicy(
 	}
 }
 
+// errRunSessionEnded terminates the run loop when a planner activity observes
+// that the run's durable session was ended mid-run. It wraps context.Canceled
+// so the terminal mapping (isRunCancellationError) classifies the run as
+// canceled; the refusing planner activity recorded
+// CancellationReasonSessionEnded on the run, so the terminal RunCompleted
+// event carries the canonical reason.
+var errRunSessionEnded = fmt.Errorf("run session ended: %w", context.Canceled)
+
 // runPlanActivity schedules a plan/resume activity with the configured options.
 func (r *Runtime) runPlanActivity(
 	wfCtx engine.WorkflowContext,
@@ -738,6 +746,9 @@ func (r *Runtime) runPlanActivity(
 	}
 	if out == nil {
 		return nil, fmt.Errorf("runPlanActivity received nil PlanActivityOutput")
+	}
+	if out.SessionEnded {
+		return nil, errRunSessionEnded
 	}
 	if out.Result == nil {
 		return nil, fmt.Errorf("runPlanActivity received nil PlanResult")

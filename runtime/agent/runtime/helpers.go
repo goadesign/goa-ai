@@ -20,7 +20,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/prompt"
-	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -252,17 +251,6 @@ func cloneMetadata(src map[string]any) map[string]any {
 	return dst
 }
 
-// cloneStrings creates a defensive copy of a string slice.
-// It returns nil if the source slice is empty to avoid unnecessary allocations.
-func cloneStrings(src []string) []string {
-	if len(src) == 0 {
-		return nil
-	}
-	dst := make([]string, len(src))
-	copy(dst, src)
-	return dst
-}
-
 // cloneToolResults creates a shallow copy of a tool result slice by copying the
 // ToolResult struct values. It does not deep-copy nested fields.
 func cloneToolResults(src []*planner.ToolResult) []*planner.ToolResult {
@@ -304,24 +292,6 @@ func mergeLabels(dst map[string]string, src map[string]string) map[string]string
 		dst[k] = v
 	}
 	return dst
-}
-
-// handlesToIDs removed: policy uses []tools.Ident directly.
-
-func toPolicyRetryHint(hint *planner.RetryHint) *policy.RetryHint {
-	if hint == nil {
-		return nil
-	}
-	return &policy.RetryHint{
-		Reason:             policy.RetryReason(hint.Reason),
-		Tool:               hint.Tool,
-		RestrictToTool:     hint.RestrictToTool,
-		MissingFields:      cloneStrings(hint.MissingFields),
-		ExampleJSON:        append(rawjson.Message(nil), hint.ExampleJSON...),
-		PriorInput:         cloneMetadata(hint.PriorInput),
-		ClarifyingQuestion: hint.ClarifyingQuestion,
-		Message:            hint.Message,
-	}
 }
 
 // applyHistoryPolicy applies the agent's history policy to the given messages.

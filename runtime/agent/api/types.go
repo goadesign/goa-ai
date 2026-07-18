@@ -322,6 +322,14 @@ type (
 
 		// Usage is the token usage reported by the model provider when available.
 		Usage model.TokenUsage
+
+		// SessionEnded reports that the run's durable session was ended before
+		// this turn could be planned: the activity refused to plan and Result
+		// is nil. The workflow terminates the run as canceled. This is the
+		// turn-boundary enforcement of session lifecycle — the durable session
+		// status is the authority; engine cancellation only expedites
+		// shutdown.
+		SessionEnded bool
 	}
 
 	// RecordActivityInput is the canonical workflow-to-activity envelope for

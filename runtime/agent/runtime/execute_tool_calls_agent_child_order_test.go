@@ -127,6 +127,84 @@ func TestExecuteToolCalls_AgentToolsPublishResultsAsComplete(t *testing.T) {
 	require.Equal(t, calls[0].ToolCallID, ends[1].ToolCallID)
 }
 
+func TestExecuteToolCalls_CancelsAgentToolAtParentDeadline(t *testing.T) {
+	t.Parallel()
+
+	rt := &Runtime{
+		agents:        make(map[agent.Ident]AgentRegistration),
+		toolsets:      make(map[string]ToolsetRegistration),
+		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+		Bus:           &recordingHooks{},
+		SessionStore:  sessioninmem.New(),
+	}
+	cfg := AgentToolConfig{
+		AgentID: agent.Ident("nested.agent"),
+		Name:    "svc.agenttools",
+		Route: AgentRoute{
+			ID:               agent.Ident("nested.agent"),
+			WorkflowName:     "nested.workflow",
+			DefaultTaskQueue: "q",
+		},
+		AgentToolContent: AgentToolContent{
+			Prompt: func(tools.Ident, any) string {
+				return invokePromptText
+			},
+		},
+	}
+	reg := NewAgentToolsetRegistration(rt, cfg)
+	rt.toolsets[reg.Name] = reg
+	tool := tools.Ident("svc.agenttools.slow")
+	spec := newAnyJSONSpec(tool, reg.Name)
+	spec.IsAgentTool = true
+	spec.AgentID = string(cfg.AgentID)
+	seedTestToolSpecs(rt, spec)
+
+	childHandles := make(chan *controlledChildHandle, 1)
+	wfCtx := &testWorkflowContext{
+		ctx:                    context.Background(),
+		hookRuntime:            rt,
+		controlledChildHandles: childHandles,
+	}
+	runCtx := &run.Context{
+		RunID:     "run-parent",
+		SessionID: "session-1",
+		TurnID:    "turn-1",
+	}
+	seedParentRun(t, rt.SessionStore, runCtx.RunID, runCtx.SessionID)
+	calls := []planner.ToolRequest{{
+		Name:       tool,
+		RunID:      runCtx.RunID,
+		SessionID:  runCtx.SessionID,
+		TurnID:     runCtx.TurnID,
+		ToolCallID: "call-slow",
+	}}
+
+	finishBy := wfCtx.Now().Add(15 * time.Millisecond)
+	results, timedOut, err := rt.executeToolCalls(
+		wfCtx,
+		"execute",
+		engine.ActivityOptions{},
+		agent.Ident("parent.agent"),
+		runCtx,
+		nil,
+		calls,
+		0,
+		nil,
+		finishBy,
+	)
+	require.NoError(t, err)
+	require.True(t, timedOut)
+	require.Len(t, results, 1)
+	require.Equal(t, canceledByTimeBudgetMessage, results[0].ToolResult.Error.Message)
+
+	handle := waitForChildHandle(t, childHandles, "timed out child")
+	require.True(t, handle.wasCanceled())
+}
+
 func waitForToolResult(t *testing.T, ch <-chan hooks.Event, toolCallID string) {
 	t.Helper()
 	deadline := time.NewTimer(2 * time.Second)
