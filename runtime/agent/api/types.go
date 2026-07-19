@@ -136,7 +136,9 @@ type (
 		// calls a run may execute.
 		MaxToolCalls int
 
-		// MaxConsecutiveFailedToolCalls caps the number of consecutive failing tool calls before finalizing.
+		// MaxConsecutiveFailedToolCalls caps the number of consecutive failing
+		// tool batches before finalizing: a batch whose budgeted calls all fail
+		// consumes one unit, and any budgeted success resets the streak.
 		MaxConsecutiveFailedToolCalls int
 
 		// TimeBudget caps the total wall-clock runtime budget for the run.

@@ -295,16 +295,14 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	}
 
 	results := batch.results()
-	if capFailures(results) > 0 {
-		l.st.Caps.RemainingConsecutiveFailedToolCalls = decrementCap(
-			l.st.Caps.RemainingConsecutiveFailedToolCalls,
-			capFailures(results),
-		)
-		if l.st.Caps.MaxConsecutiveFailedToolCalls > 0 && l.st.Caps.RemainingConsecutiveFailedToolCalls <= 0 {
-			return l.finalizeStep(planner.TerminationReasonFailureCap, "failure-cap finalization skipped without hard deadline")
-		}
-	} else if l.st.Caps.MaxConsecutiveFailedToolCalls > 0 {
-		l.st.Caps.RemainingConsecutiveFailedToolCalls = l.st.Caps.MaxConsecutiveFailedToolCalls
+	// The failure streak counts planner decision points whose budgeted work
+	// failed outright: any budgeted success resets the streak, an all-failure
+	// batch consumes one unit regardless of its parallel width, and
+	// bookkeeping results never move the counter. One exploratory batch that
+	// partially fails is progress, not thrash.
+	progress, failed := l.r.budgetedBatchOutcome(batch.records)
+	if applyFailureStreak(&l.st.Caps, progress, failed) {
+		return l.finalizeStep(planner.TerminationReasonFailureCap, "failure-cap finalization skipped without hard deadline")
 	}
 
 	if out, err := l.r.handleMissingFieldsPolicy(

@@ -593,16 +593,40 @@ func decrementCap(current int, delta int) int {
 // Contract:
 //   - Every tool result error counts as one failed attempt.
 //   - Retry hints may shape the next planner attempt, but they do not make the
-//     failed attempt free for cap accounting.
-func capFailures(results []*planner.ToolResult) int {
-	count := 0
-	for _, res := range results {
-		if res == nil || res.Error == nil {
+// budgetedBatchOutcome classifies a step batch's budgeted (non-bookkeeping)
+// results for failure-streak accounting: progress reports at least one
+// budgeted success and failed reports at least one budgeted failure.
+func (r *Runtime) budgetedBatchOutcome(records []stepToolRecord) (progress, failed bool) {
+	for _, record := range records {
+		if record.result == nil || r.isBookkeeping(record.call.Name) {
 			continue
 		}
-		count++
+		if record.result.Error != nil {
+			failed = true
+		} else {
+			progress = true
+		}
 	}
-	return count
+	return progress, failed
+}
+
+// applyFailureStreak advances the consecutive-failure cap for one step batch
+// and reports whether the cap tripped. Progress resets the streak, an
+// all-failure batch consumes one unit, and batches without budgeted results
+// leave the counter unchanged.
+func applyFailureStreak(caps *policy.CapsState, progress, failed bool) bool {
+	switch {
+	case progress:
+		if caps.MaxConsecutiveFailedToolCalls > 0 {
+			caps.RemainingConsecutiveFailedToolCalls = caps.MaxConsecutiveFailedToolCalls
+		}
+	case failed:
+		caps.RemainingConsecutiveFailedToolCalls = decrementCap(caps.RemainingConsecutiveFailedToolCalls, 1)
+		if caps.MaxConsecutiveFailedToolCalls > 0 && caps.RemainingConsecutiveFailedToolCalls <= 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // mergeCaps merges policy decision caps into the current caps state. Policy

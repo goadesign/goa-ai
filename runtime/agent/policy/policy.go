@@ -146,15 +146,17 @@ type (
 		// are permitted.
 		RemainingToolCalls int
 
-		// MaxConsecutiveFailedToolCalls caps consecutive failures per run. Zero means
-		// the cap is not configured. Used for circuit breaking: if N tools fail in
-		// a row, terminate.
+		// MaxConsecutiveFailedToolCalls caps consecutive failing planner decision
+		// points per run. Zero means the cap is not configured. Used for circuit
+		// breaking: if N successive tool batches fail outright, terminate.
 		MaxConsecutiveFailedToolCalls int
 
-		// RemainingConsecutiveFailedToolCalls tracks how many consecutive failures are allowed
-		// before circuit breaking. The runtime decrements this on each failure and resets
-		// it to MaxConsecutiveFailedToolCalls on success. When this reaches zero, the
-		// run is terminated.
+		// RemainingConsecutiveFailedToolCalls tracks how many failing decision
+		// points are allowed before circuit breaking. A tool batch whose budgeted
+		// (non-bookkeeping) calls all fail consumes one unit regardless of its
+		// parallel width; any budgeted success resets the counter to
+		// MaxConsecutiveFailedToolCalls; bookkeeping results never move it. When
+		// this reaches zero, the run is terminated.
 		RemainingConsecutiveFailedToolCalls int
 
 		// ExpiresAt conveys when the run-level budgets expire (wall-clock deadline).
