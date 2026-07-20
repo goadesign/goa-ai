@@ -107,6 +107,25 @@ callable capabilities, while completions model final assistant answers. Both reu
 the same Goa types, validations, and codegen pipeline so there is one contract
 surface for structured model I/O.
 
+## Planner Step Contract
+
+Each `PlanResult` is one admitted workflow step. Planners may return tool calls,
+await work, or a terminal result according to the runtime's mutually exclusive
+step shapes.
+
+`PlanResult.SynthesizeAfterTools` expresses a stronger transition for a
+tool-only step: after the selected batch executes, the next planner activity may
+only synthesize a final response. The workflow serializes that decision in its
+activity input and exposes it as `PlanResumeInput.SynthesisOnly`, so the contract
+survives activity retries and execution on another worker. Planners remain
+responsible for enforcing synthesis-only output because provider APIs may need
+the tool catalog to interpret the preceding tool results.
+Synthesis-after-tools batches must contain at least one budgeted tool and cannot
+contain a `TerminalRun` tool, ensuring the existing step classification always
+reaches that planner resume.
+The resume activity validates the returned planner result, so ignoring
+`SynthesisOnly` fails at the activity boundary rather than reopening execution.
+
 ## Registry Integration
 
 Declare centralized registry sources for dynamic tool discovery and agent publication:

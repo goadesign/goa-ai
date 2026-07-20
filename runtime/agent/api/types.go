@@ -305,6 +305,10 @@ type (
 		//   planner-visible metadata from the run event log before invoking planners.
 		ToolOutputs []*ToolOutputRef
 
+		// SynthesisOnly requires the planner to produce a final response without
+		// new tool calls.
+		SynthesisOnly bool
+
 		// Finalize requests a final turn with no further tool calls.
 		Finalize *planner.Termination
 	}

@@ -101,18 +101,27 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		return nil, err
 	}
 	planInput := &planner.PlanResumeInput{
-		Messages:    act.messages,
-		RunContext:  input.RunContext,
-		Agent:       act.agentCtx,
-		Events:      act.events,
-		ToolOutputs: toolOutputs,
-		Finalize:    input.Finalize,
-		Reminders:   act.reminders,
+		Messages:      act.messages,
+		RunContext:    input.RunContext,
+		Agent:         act.agentCtx,
+		Events:        act.events,
+		ToolOutputs:   toolOutputs,
+		SynthesisOnly: input.SynthesisOnly,
+		Finalize:      input.Finalize,
+		Reminders:     act.reminders,
 	}
 	result, err := r.planResume(ctx, act.reg, planInput)
 	if err != nil {
 		act.notePlannerRateLimit(ctx, err)
 		return nil, err
+	}
+	if input.SynthesisOnly {
+		if result != nil && len(result.ToolCalls) > 0 {
+			return nil, errors.New("synthesis-only planner result contains tool calls")
+		}
+		if err := validateTerminalPlanResult(result); err != nil {
+			return nil, fmt.Errorf("synthesis-only planner result: %w", err)
+		}
 	}
 	return act.output(result)
 }

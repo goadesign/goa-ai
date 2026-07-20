@@ -198,6 +198,7 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 	pl := &stubPlanner{resume: func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
 		called = true
 		require.NotNil(t, input)
+		require.True(t, input.SynthesisOnly)
 		require.Len(t, input.ToolOutputs, 1)
 		require.Equal(t, toolName, input.ToolOutputs[0].Name)
 		require.Equal(t, "call-1", input.ToolOutputs[0].ToolCallID)
@@ -208,10 +209,14 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 		require.NotNil(t, input.ToolOutputs[0].Bounds)
 		require.True(t, input.ToolOutputs[0].Bounds.Truncated)
 		require.Equal(t, "narrow the window", input.ToolOutputs[0].Bounds.RefinementHint)
-		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-			Name:    "svc.other.tool",
-			Payload: rawjson.Message(`{}`),
-		}}}, nil
+		return &planner.PlanResult{
+			FinalResponse: &planner.FinalResponse{
+				Message: &model.Message{
+					Role:  model.ConversationRoleAssistant,
+					Parts: []model.Part{model.TextPart{Text: "done"}},
+				},
+			},
+		}, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
 	seedTestToolSpecs(rt, newAnyJSONSpec(toolName, "svc.tools"))
@@ -254,15 +259,38 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 		"",
 	))
 	input := PlanActivityInput{
-		AgentID:     "service.agent",
-		RunID:       "run-123",
-		RunContext:  run.Context{RunID: "run-123", Attempt: 3},
-		ToolOutputs: toolOutputs,
+		AgentID:       "service.agent",
+		RunID:         "run-123",
+		RunContext:    run.Context{RunID: "run-123", Attempt: 3},
+		ToolOutputs:   toolOutputs,
+		SynthesisOnly: true,
 	}
 	out, err := rt.PlanResumeActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.True(t, called)
-	require.Len(t, out.Result.ToolCalls, 1)
+	require.NotNil(t, out.Result.FinalResponse)
+}
+
+func TestPlanResumeActivityEnforcesSynthesisOnly(t *testing.T) {
+	pl := &stubPlanner{resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
+		return &planner.PlanResult{
+			ToolCalls: []planner.ToolRequest{{
+				Name:    "svc.other.tool",
+				Payload: rawjson.Message(`{}`),
+			}},
+		}, nil
+	}}
+	rt := newTestRuntimeWithPlanner("service.agent", pl)
+
+	out, err := rt.PlanResumeActivity(context.Background(), &PlanActivityInput{
+		AgentID:       "service.agent",
+		RunID:         "run-123",
+		RunContext:    run.Context{RunID: "run-123", Attempt: 3},
+		SynthesisOnly: true,
+	})
+
+	require.Nil(t, out)
+	require.ErrorContains(t, err, "synthesis-only planner result contains tool calls")
 }
 
 func TestPlanResumeActivityFailsWhenCanonicalToolResultIsMissing(t *testing.T) {
@@ -475,6 +503,7 @@ func TestBuildNextResumeRequestRejectsNilToolOutputEntry(t *testing.T) {
 		base,
 		nil,
 		[]*planner.ToolOutput{nil},
+		false,
 		&nextAttempt,
 	)
 	require.Error(t, err)
@@ -504,6 +533,7 @@ func TestBuildNextResumeRequestUsesProviderNeutralTranscriptValidation(t *testin
 		base,
 		nil,
 		nil,
+		false,
 		&nextAttempt,
 	)
 	require.Error(t, err)

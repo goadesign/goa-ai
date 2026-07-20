@@ -480,6 +480,16 @@ to every tool.
 
 The workflow runtime evaluates one admitted planner result as one step: it executes tool and await work, records durable and planner-facing outputs through one canonical path, then applies one transition policy to resume, finish, or finalize. A terminal payload may only accompany non-resuming, non-terminal bookkeeping side effects; budgeted tools, retryable bookkeeping failures, terminal tools, and awaits must be separate planner decisions. Bookkeeping calls remain in the provider transcript so signed responses are never edited.
 
+A planner that already knows a selected tool batch will provide the final
+evidence can set `PlanResult.SynthesizeAfterTools`. The durable workflow carries
+that decision to the next activity as `PlanResumeInput.SynthesisOnly`; the
+runtime requires the planner to return a terminal result without additional
+tool calls. The
+flag is valid only on a tool-only result, keeping execution and answer synthesis
+as separate turns without relying on process-local state. The batch must contain
+at least one budgeted tool and cannot contain a terminal tool; bookkeeping and
+terminal-run semantics therefore remain independent.
+
 ---
 
 ## Runtime and Observability

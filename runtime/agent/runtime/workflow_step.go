@@ -108,6 +108,14 @@ func (r *Runtime) normalizeStep(result *planner.PlanResult) (stepProgram, error)
 	if !hasCalls && !hasTerminal && !hasAwait {
 		return stepProgram{}, errors.New("workflow step received empty PlanResult")
 	}
+	if result.SynthesizeAfterTools && (!hasCalls || hasTerminal || hasAwait) {
+		return stepProgram{}, errors.New("workflow step synthesis-after-tools requires only tool calls")
+	}
+	if result.SynthesizeAfterTools {
+		if err := r.validateSynthesisAfterTools(result.ToolCalls); err != nil {
+			return stepProgram{}, err
+		}
+	}
 
 	if hasTerminal && hasAwait {
 		return stepProgram{}, errors.New("workflow step cannot combine terminal payload and await")
@@ -141,6 +149,25 @@ func (r *Runtime) normalizeStep(result *planner.PlanResult) (stepProgram, error)
 		awaitItems: awaitItems,
 		kind:       stepKindAwait,
 	}, nil
+}
+
+// validateSynthesisAfterTools requires a batch whose existing execution
+// classification guarantees a subsequent planner resume.
+func (r *Runtime) validateSynthesisAfterTools(calls []planner.ToolRequest) error {
+	hasBudgeted := false
+	for _, call := range calls {
+		spec, ok := r.toolSpec(call.Name)
+		if ok && spec.TerminalRun {
+			return fmt.Errorf("workflow step synthesis-after-tools cannot include terminal tool %q", call.Name)
+		}
+		if !r.isBookkeeping(call.Name) {
+			hasBudgeted = true
+		}
+	}
+	if !hasBudgeted {
+		return errors.New("workflow step synthesis-after-tools requires at least one budgeted tool")
+	}
+	return nil
 }
 
 // runStep executes one normalized planner result and applies one post-step
@@ -346,7 +373,14 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 		}
 	}
 
-	resumeReq, err := l.r.buildNextResumeRequest(l.input.AgentID, l.base, l.input.Policy, l.st.ToolOutputs, &l.st.NextAttempt)
+	resumeReq, err := l.r.buildNextResumeRequest(
+		l.input.AgentID,
+		l.base,
+		l.input.Policy,
+		l.st.ToolOutputs,
+		batch.program.result.SynthesizeAfterTools,
+		&l.st.NextAttempt,
+	)
 	if err != nil {
 		return nil, err
 	}
