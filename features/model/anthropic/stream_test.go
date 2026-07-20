@@ -319,7 +319,9 @@ func TestThinkingBufferFinalizeRequiresCanonicalVariant(t *testing.T) {
 		{name: "plaintext", text: "reasoning", signature: "sig"},
 		{name: "redacted", redacted: []byte("opaque")},
 		{name: "missing signature", text: "reasoning", wantErr: "thinking plaintext is missing provider signature"},
-		{name: "missing text", signature: "sig", wantErr: "thinking signature is missing plaintext content"},
+		// Signature-only blocks are canonical for thinking display "omitted"
+		// (the Opus 4.8-class default) and must decode as signed empty text.
+		{name: "signature only", signature: "sig"},
 		{
 			name:      "mixed variants",
 			text:      "reasoning",

@@ -17,7 +17,6 @@ type (
 	// advertising and execution-time filtering.
 	compiledToolPolicy struct {
 		callerRestrictToTool tools.Ident
-		retryRestrictToTool  tools.Ident
 		tagClauses           []api.TagPolicyClause
 	}
 
@@ -37,7 +36,6 @@ func compileToolPolicy(overrides *PolicyOverrides) compiledToolPolicy {
 	}
 	return compiledToolPolicy{
 		callerRestrictToTool: overrides.RestrictToTool,
-		retryRestrictToTool:  overrides.RetryRestrictToTool,
 		tagClauses:           cloneTagPolicyClauses(overrides.TagClauses),
 	}
 }
@@ -73,7 +71,7 @@ func cloneTagPolicyClauses(clauses []api.TagPolicyClause) []api.TagPolicyClause 
 
 // isZero reports whether the compiled policy has no effect.
 func (p compiledToolPolicy) isZero() bool {
-	return p.callerRestrictToTool == "" && p.retryRestrictToTool == "" && len(p.tagClauses) == 0
+	return p.callerRestrictToTool == "" && len(p.tagClauses) == 0
 }
 
 // allowsTool reports whether the named tool with the provided tags passes the
@@ -83,9 +81,6 @@ func (p compiledToolPolicy) allowsTool(name tools.Ident, facts toolPolicyFacts) 
 		return true
 	}
 	if p.callerRestrictToTool != "" && name != p.callerRestrictToTool {
-		return false
-	}
-	if p.retryRestrictToTool != "" && name != p.retryRestrictToTool && !facts.bookkeeping {
 		return false
 	}
 	for _, clause := range p.tagClauses {

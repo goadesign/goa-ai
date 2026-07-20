@@ -172,8 +172,9 @@ out, err = client.OneShotRun(ctx, []*model.Message{{
 Planners decide what happens next: final response, tool calls, await human input,
 or terminal tool result. During runtime-forced finalization, planners may also
 close through terminal bookkeeping tools; the runtime executes only
-`Bookkeeping()` + `TerminalRun()` tools in that path and requires the terminal
-side effects to succeed inside the remaining hard-deadline window. Retry-owned
+`TerminalRun()` tools in that path (`TerminalRun()` implies bookkeeping) and
+requires the terminal side effects to succeed inside the remaining
+hard-deadline window. Retry-owned
 tool restrictions filter only budgeted work tools, so bookkeeping tools remain
 available in correction and finalization turns. Caller `WithRestrictToTool`
 policy is run-scoped and still applies to every tool. Tool executors decide how
@@ -276,14 +277,19 @@ var Docs = Toolset("docs", func() {
 - JSON Schema for LLM function calling (auto-generated)
 - Validation at boundaries: invalid calls get structured retry hints, including
   generated JSON type mismatch guidance, not crashes or schema-string parsing
+- Timeout and parent-budget failures are terminal for the current run and do
+  not produce retry hints. Planners may repair invalid arguments, but elapsed
+  execution time is not an instruction to repeat a call.
 - Type-safe Go structs for payloads and results
 - Provider-facing examples only when you author a top-level Goa `Example(...)`
   on the tool payload. Codegen precomputes the annotated schema, the schema with
   the root `example` removed, and the parsed example input so OpenAI-style
-  providers consume schema annotations while Anthropic and Bedrock Claude receive
-  provider-native `input_examples`.
-- Explicit control-plane contracts: `Bookkeeping()` keeps tools durable,
-  budget-exempt, and hidden from future planner turns
+  providers consume schema annotations while Anthropic, Bedrock Claude, and
+  Claude-on-Vertex receive provider-native `input_examples` under the required
+  tool-examples beta contract, including exact Anthropic token counting.
+- Explicit control-plane contracts: `Bookkeeping()` keeps calls durable and
+  model-visible while exempting them from retrieval/failure budgets and omitting
+  successful results from typed future `ToolOutputs`
 
 ### Bind Tools to Goa Services
 
@@ -340,7 +346,10 @@ Unary helpers request provider-enforced structured output and decode with genera
 
 ### Agent-as-Tool Composition
 
-Agents can export toolsets that other agents use. The nested agent runs as a child workflow, not as flattened helper code.
+Agents can export toolsets that other agents use. The nested agent runs as a
+child workflow, not as flattened helper code. The parent finish-by timer covers
+child execution; when it expires, the runtime cancels pending child workflows
+before returning terminal tool results to the parent planner.
 
 ```go
 Agent("researcher", "Research specialist", func() {
@@ -447,7 +456,9 @@ Tool("get_time_series", "Get a bounded time-series view", func() {
 
 ### Bookkeeping and Terminal Tools
 
-Use `Bookkeeping()` for control-plane side effects such as status updates, progress snapshots, or terminal commits.
+Use `Bookkeeping()` for control-plane records such as status markers, transition
+declarations, or terminal commits. Do not use it for a snapshot whose success
+must schedule the next planner turn.
 
 ```go
 Tool("set_step_status", "Update task step status", func() {
@@ -464,7 +475,11 @@ Tool("commit_report", "Commit final report", func() {
 })
 ```
 
-Bookkeeping tools do not consume the normal `MaxToolCalls` budget. Their events are still durable and streamed, and their provider transcript blocks remain intact. Successful results stay out of compact future `ToolOutputs`; retryable failures stay visible there with their retry hints so the planner can repair the failed call.
+Bookkeeping tools consume neither the normal `MaxToolCalls` budget nor the
+consecutive-failure allowance. Their events are still durable and streamed, and
+their provider transcript blocks remain intact. Successful results stay out of
+compact future `ToolOutputs`; recoverable failures stay visible there so the
+planner can repair the failed call.
 
 Retry-owned tool restrictions filter budgeted work tools only. Bookkeeping tools
 remain available during correction turns, including terminal run tools that close
@@ -472,6 +487,20 @@ the run, while caller `WithRestrictToTool` policy remains run-scoped and applies
 to every tool.
 
 The workflow runtime evaluates one admitted planner result as one step: it executes tool and await work, records durable and planner-facing outputs through one canonical path, then applies one transition policy to resume, finish, or finalize. A terminal payload may only accompany non-resuming, non-terminal bookkeeping side effects; budgeted tools, retryable bookkeeping failures, terminal tools, and awaits must be separate planner decisions. Bookkeeping calls remain in the provider transcript so signed responses are never edited.
+
+A planner that knows a successful selected tool batch will provide the final
+evidence can set `PlanResult.SynthesizeAfterTools`. The durable workflow carries
+that decision to the next activity as `PlanResumeInput.SynthesisOnly`; the
+runtime requires the planner to return a terminal result without additional
+tool calls. A recoverable tool failure takes the normal repair path first.
+`RetryHint.AllowsRetry()` is the single authority for that distinction because
+some hints, such as timeout classification, are terminal.
+
+The flag is valid only on a tool-only result, keeping execution and answer
+synthesis as separate turns without relying on process-local state. The batch
+must contain at least one budgeted tool and cannot contain a terminal tool;
+bookkeeping and terminal-run semantics therefore remain independent. See
+[DESIGN.md](DESIGN.md#planner-step-contract) for the complete transition table.
 
 ---
 
@@ -739,7 +768,7 @@ Production checklist:
 | `runtime/toolregistry` | Registry wire protocol, executor, provider support, schema validation |
 | `features/model/openai` | OpenAI Responses API adapter |
 | `features/model/bedrock` | AWS Bedrock adapter, including visible Claude thinking support |
-| `features/model/anthropic` | Direct Anthropic adapter |
+| `features/model/anthropic` | Anthropic Messages adapter with streaming and exact token counting; also composes with compatible gateways such as Bedrock Mantle |
 | `features/model/vertex` | Google Vertex AI adapters: Gemini (`vertex.New`) and Claude-on-Vertex (`vertex.NewAnthropicClient`), both with native token counting and provider-error classification. |
 | `features/model/gateway` | Remote model gateway client |
 | `features/model/middleware` | Rate limiting, logging, metrics middleware |

@@ -36,8 +36,19 @@ func (r *Runtime) CreateSession(ctx context.Context, sessionID string) (session.
 // DeleteSession ends a session with the given ID.
 //
 // Contract:
-// - Ending a session is durable and monotonic.
-// - Cancellation of in-flight runs is best-effort and bounded.
+//   - Ending a session is durable and monotonic. The EndSession write below is
+//     the only step deletion depends on; callers never need to call again.
+//   - No new run starts under an ended session: startRunOn loads the session
+//     and rejects StatusEnded before writing pending RunMeta.
+//   - No in-flight run plans another turn under an ended session: every
+//     planner activity consults the durable session status first
+//     (sessionEndedForPlanning), records CancellationReasonSessionEnded, and
+//     the workflow terminates the run as canceled. The durable status is the
+//     authority; engine cancellation below is an expedite-only optimization
+//     that interrupts in-progress activities when the engine supports it. A
+//     cancellation failure is therefore logged, never returned: the caller
+//     has no action that would improve the outcome, and the run stops at its
+//     next turn boundary regardless.
 func (r *Runtime) DeleteSession(ctx context.Context, sessionID string) (session.Session, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -53,7 +64,7 @@ func (r *Runtime) DeleteSession(ctx context.Context, sessionID string) (session.
 	cancelCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := r.cancelSessionRuns(cancelCtx, id); err != nil {
-		r.logWarn(ctx, "cancel session runs failed", err, "session_id", id)
+		r.logWarn(ctx, "expedited cancellation of session runs failed", err, "session_id", id)
 	}
 	return ended, nil
 }

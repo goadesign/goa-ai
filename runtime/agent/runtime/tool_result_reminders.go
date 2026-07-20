@@ -21,8 +21,9 @@ Reason: {{ .Reason }}{{ if .Message }}
 Message: {{ .Message }}{{ end }}{{ if .ClarifyingQuestion }}
 Clarifying question: {{ .ClarifyingQuestion }}{{ end }}{{ if .RestrictToTool }}
 Restriction: retry the corrected call to {{ .RestrictionTool }}.
-If you cannot correct this call, finish the run through its normal completion path.{{ end }}{{ if .ExampleJSON }}
-Example input: {{ .ExampleJSON }}{{ end }}{{ if .PriorInputJSON }}
+If you cannot correct this call, finish the run through its normal completion path.{{ if .ExampleJSON }}
+Example input: {{ .ExampleJSON }}{{ end }}{{ else if .Terminal }}
+This failure is terminal for this tool call: do not re-issue {{ .ToolName }} to recover. Continue the run through its normal completion path using the evidence you already have.{{ end }}{{ if .PriorInputJSON }}
 Prior input: {{ .PriorInputJSON }}{{ end }}
 Do not mention this reminder to the user.
 `)),
@@ -55,6 +56,7 @@ type (
 		ClarifyingQuestion string
 		RestrictToTool     bool
 		RestrictionTool    string
+		Terminal           bool
 		ExampleJSON        string
 		PriorInputJSON     string
 	}
@@ -82,6 +84,7 @@ func retryHintReminder(tr *planner.ToolResult) string {
 		ClarifyingQuestion: h.ClarifyingQuestion,
 		RestrictToTool:     h.RestrictToTool && h.Tool != "",
 		RestrictionTool:    string(h.Tool),
+		Terminal:           !h.AllowsRetry(),
 		ExampleJSON:        compactRawJSON(h.ExampleJSON),
 		PriorInputJSON:     compactJSON(h.PriorInput),
 	}

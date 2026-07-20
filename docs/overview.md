@@ -479,8 +479,8 @@ policies, and MCP servers within Goa service designs.
 | `ResultHintTemplate(tmpl)` | Go template for successful tool result display (`.Args`, `.Result`, optional `.Bounds`; rendered by runtime) |
 | `BoundedResult()` | Mark result as bounded view over larger data |
 | `ResultReminder(text)` | Static system reminder injected after tool result |
-| `TerminalRun()` | Tool completes the run immediately after execution (no follow-up planner turn) |
-| `Bookkeeping()` | Control-plane tool: no `MaxToolCalls` budget and no automatic resume; provider transcript remains exact |
+| `TerminalRun()` | Tool becomes bookkeeping and completes the run after successful execution |
+| `Bookkeeping()` | Durable control record: no retrieval or consecutive-failure budget; no automatic resume after success |
 
 ### Toolset Definition
 
@@ -735,6 +735,7 @@ type PlanResumeInput struct {
     Agent       PlannerContext
     Events      PlannerEvents
     ToolOutputs []*ToolOutput      // Canonical executed tool-call history
+    SynthesisOnly bool             // Final response required; tools forbidden
     Finalize    *Termination       // Non-nil when runtime forces finalization
     Reminders   []reminder.Reminder
 }
@@ -745,6 +746,7 @@ type PlanResumeInput struct {
 ```go
 type PlanResult struct {
     ToolCalls     []ToolRequest    // Tools to execute
+    SynthesizeAfterTools bool      // Synthesize after success; repair stays allowed
     FinalResponse *FinalResponse   // Terminal assistant message
     FinalToolResult *FinalToolResult // Terminal tool result for nested agent runs
     Streamed      bool             // True if text already streamed via Events
@@ -754,6 +756,12 @@ type PlanResult struct {
     Notes         []PlannerAnnotation // Intermediate reasoning
 }
 ```
+
+`SynthesizeAfterTools` is batch intent, not retry policy. A failed result whose
+`RetryHint.AllowsRetry()` returns true receives a normal repair turn first.
+Otherwise the runtime carries the batch intent as `SynthesisOnly`, which rejects
+additional tool calls. `Finalize` remains reserved for runtime-forced cap or
+deadline termination.
 
 ### PlannerContext
 

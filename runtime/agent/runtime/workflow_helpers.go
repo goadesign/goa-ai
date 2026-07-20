@@ -243,7 +243,7 @@ func (r *Runtime) toolResultRequiresResume(call planner.ToolRequest, result *pla
 	if !r.isBookkeeping(call.Name) {
 		return true
 	}
-	return result != nil && result.Error != nil && result.RetryHint != nil
+	return result != nil && result.Error != nil && result.RetryHint.AllowsRetry()
 }
 
 func (r *Runtime) toolResultContent(call *planner.ToolRequest, tr *planner.ToolResult) (any, error) {
@@ -337,6 +337,7 @@ func (r *Runtime) buildNextResumeRequest(
 	base *planner.PlanInput,
 	runPolicy *PolicyOverrides,
 	toolOutputs []*planner.ToolOutput,
+	synthesisOnly bool,
 	nextAttempt *int,
 ) (PlanActivityInput, error) {
 	attempt := *nextAttempt
@@ -354,12 +355,13 @@ func (r *Runtime) buildNextResumeRequest(
 		return PlanActivityInput{}, err
 	}
 	out := PlanActivityInput{
-		AgentID:     agentID,
-		RunID:       base.RunContext.RunID,
-		Messages:    plannerMsgs,
-		RunContext:  resumeCtx,
-		Policy:      clonePolicyOverrides(runPolicy),
-		ToolOutputs: encodedToolOutputs,
+		AgentID:       agentID,
+		RunID:         base.RunContext.RunID,
+		Messages:      plannerMsgs,
+		RunContext:    resumeCtx,
+		Policy:        clonePolicyOverrides(runPolicy),
+		ToolOutputs:   encodedToolOutputs,
+		SynthesisOnly: synthesisOnly,
 	}
 	if err := enforcePlanActivityInputBudget(out); err != nil {
 		return PlanActivityInput{}, err

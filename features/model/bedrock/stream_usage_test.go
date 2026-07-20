@@ -66,19 +66,21 @@ func TestChunkProcessorUsageIncludesCacheTokens(t *testing.T) {
 	require.Equal(t, usageChunk.Usage, cp.response().Usage)
 }
 
-func TestReasoningBufferFinalize(t *testing.T) {
+func TestReasoningBufferFinalizeRequiresCanonicalVariant(t *testing.T) {
 	tests := []struct {
 		name      string
 		text      string
 		signature string
 		redacted  []byte
 		wantErr   string
-		wantPart  bool
 	}{
-		{name: "plaintext", text: "reasoning", signature: "sig", wantPart: true},
-		{name: "redacted", redacted: []byte("opaque"), wantPart: true},
-		{name: "missing signature", text: "reasoning"},
-		{name: "missing text", signature: "sig"},
+		{name: "plaintext", text: "reasoning", signature: "sig"},
+		{name: "redacted", redacted: []byte("opaque")},
+		{name: "missing signature", text: "reasoning", wantErr: "reasoning plaintext is missing provider signature"},
+		// Opus 4.8-class models with thinking display "omitted" (the default)
+		// stream thinking blocks whose text is empty but which still carry the
+		// replay signature; they must decode to a signed empty-text part.
+		{name: "signature only", signature: "sig"},
 		{
 			name:      "mixed variants",
 			text:      "reasoning",
@@ -103,11 +105,7 @@ func TestReasoningBufferFinalize(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			if test.wantPart {
-				require.NotNil(t, part)
-				return
-			}
-			require.Nil(t, part)
+			require.NotNil(t, part)
 		})
 	}
 }

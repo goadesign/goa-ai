@@ -1,3 +1,5 @@
+//go:build integration
+
 package registry
 
 import (
@@ -9,9 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/leanovate/gopter"
-	"github.com/leanovate/gopter/gen"
-	"github.com/leanovate/gopter/prop"
 	"github.com/stretchr/testify/require"
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	mockpulse "goa.design/goa-ai/features/stream/pulse/clients/pulse/mocks"
@@ -21,195 +20,9 @@ import (
 	"goa.design/pulse/rmap"
 )
 
-// iterCounter provides unique IDs for each property test iteration.
+// iterCounter provides unique suffixes so concurrent tests never share
+// replicated map names on the shared Redis container.
 var iterCounter atomic.Int64
-
-// TestUnhealthyToolsetFastFailure verifies Property 9: Unhealthy toolset fast failure.
-// **Feature: internal-tool-registry, Property 9: Unhealthy toolset fast failure**
-// *For any* toolset where all providers are marked unhealthy, CallTool should
-// immediately return service unavailable without waiting for timeout.
-// **Validates: Requirements 9.5, 13.4**
-//
-// This test verifies the health tracker correctly determines health based on
-// the staleness threshold. We test the core logic by directly manipulating
-// timestamps in the health map rather than relying on timing.
-func TestUnhealthyToolsetFastFailure(t *testing.T) {
-	rdb := getRedis(t)
-	ctx := context.Background()
-
-	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
-	properties := gopter.NewProperties(parameters)
-
-	properties.Property("toolset is unhealthy when last pong exceeds staleness threshold", prop.ForAll(
-		func(toolsetName string, missedPingThreshold int) bool {
-			// Use unique suffix per iteration to avoid conflicts.
-			iter := iterCounter.Add(1)
-			suffix := fmt.Sprintf("%s-%d", toolsetName, iter)
-
-			// Create unique rmaps for this test iteration.
-			healthMap, err := rmap.Join(ctx, "health-test-"+suffix, rdb)
-			if err != nil {
-				return false
-			}
-			defer healthMap.Close()
-
-			registryMap, err := rmap.Join(ctx, "registry-test-"+suffix, rdb)
-			if err != nil {
-				return false
-			}
-			defer registryMap.Close()
-			registryEvents := registryMap.Subscribe()
-			defer registryMap.Unsubscribe(registryEvents)
-			healthEvents := healthMap.Subscribe()
-			defer healthMap.Unsubscribe(healthEvents)
-
-			// Create a pool node for distributed tickers.
-			node, err := pool.AddNode(ctx, "health-test-pool-"+suffix, rdb, testNodeOpts()...)
-			if err != nil {
-				return false
-			}
-			defer func() { _ = node.Close(ctx) }()
-
-			mockSM := newMockStreamManager()
-
-			pingInterval := 100 * time.Millisecond
-			tracker, err := NewHealthTracker(
-				mockSM,
-				healthMap,
-				registryMap,
-				node,
-				WithPingInterval(pingInterval),
-				WithMissedPingThreshold(missedPingThreshold),
-			)
-			if err != nil {
-				return false
-			}
-			defer func() { _ = tracker.Close() }()
-
-			catalog := newToolsetCatalog(registryMap)
-			if err := saveHealthTestToolset(ctx, catalog, toolsetName, "registration-1"); err != nil {
-				return false
-			}
-			awaitMapEvent(registryEvents)
-			registrationToken, err := catalog.RegistrationToken(ctx, toolsetName)
-			if err != nil {
-				return false
-			}
-
-			// Directly set a stale timestamp in the health map.
-			// stalenessThreshold = (missedPingThreshold + 1) * pingInterval
-			stalenessThreshold := time.Duration(missedPingThreshold+1) * pingInterval
-			staleTime := time.Now().Add(-stalenessThreshold - time.Second)
-			if err := setHealthRecordForTest(ctx, healthMap, toolsetName, "provider-a", registrationToken, staleTime); err != nil {
-				return false
-			}
-			awaitMapEvent(healthEvents)
-			return !tracker.IsHealthy(toolsetName)
-		},
-		genHealthyToolsetName(),
-		genMissedPingThreshold(),
-	))
-
-	properties.TestingRun(t)
-}
-
-// TestPongRestoresHealthyStatus verifies that responding to a ping restores healthy status.
-// **Feature: internal-tool-registry, Property 9: Unhealthy toolset fast failure**
-// This is a complementary test that verifies pong responses restore health.
-// **Validates: Requirements 13.5**
-func TestPongRestoresHealthyStatus(t *testing.T) {
-	rdb := getRedis(t)
-	ctx := context.Background()
-
-	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
-	properties := gopter.NewProperties(parameters)
-
-	properties.Property("pong response restores healthy status", prop.ForAll(
-		func(toolsetName string) bool {
-			// Use unique suffix per iteration to avoid conflicts.
-			iter := iterCounter.Add(1)
-			suffix := fmt.Sprintf("%s-%d", toolsetName, iter)
-
-			healthMap, err := rmap.Join(ctx, "health-pong-test-"+suffix, rdb)
-			if err != nil {
-				return false
-			}
-			defer healthMap.Close()
-
-			registryMap, err := rmap.Join(ctx, "registry-pong-test-"+suffix, rdb)
-			if err != nil {
-				return false
-			}
-			defer registryMap.Close()
-			registryEvents := registryMap.Subscribe()
-			defer registryMap.Unsubscribe(registryEvents)
-
-			node, err := pool.AddNode(ctx, "health-pong-pool-"+suffix, rdb, testNodeOpts()...)
-			if err != nil {
-				return false
-			}
-			defer func() { _ = node.Close(ctx) }()
-
-			mockSM := newMockStreamManager()
-
-			pingInterval := 100 * time.Millisecond
-			tracker, err := NewHealthTracker(
-				mockSM,
-				healthMap,
-				registryMap,
-				node,
-				WithPingInterval(pingInterval),
-				WithMissedPingThreshold(2),
-			)
-			if err != nil {
-				return false
-			}
-			defer func() { _ = tracker.Close() }()
-
-			catalog := newToolsetCatalog(registryMap)
-			if err := saveHealthTestToolset(ctx, catalog, toolsetName, "registration-1"); err != nil {
-				return false
-			}
-			awaitMapEvent(registryEvents)
-			registrationToken, err := catalog.RegistrationToken(ctx, toolsetName)
-			if err != nil {
-				return false
-			}
-
-			// Subscribe to health map events to wait for updates to propagate.
-			healthEvents := healthMap.Subscribe()
-			defer healthMap.Unsubscribe(healthEvents)
-
-			// Directly set a stale timestamp to make toolset unhealthy.
-			// stalenessThreshold = (2 + 1) * 100ms = 300ms
-			staleTime := time.Now().Add(-500 * time.Millisecond)
-			const providerID = "provider-a"
-			if err := setHealthRecordForTest(ctx, healthMap, toolsetName, providerID, registrationToken, staleTime); err != nil {
-				return false
-			}
-			awaitMapEvent(healthEvents)
-
-			// Should be unhealthy because the timestamp is stale.
-			if tracker.IsHealthy(toolsetName) {
-				return false
-			}
-
-			// Record a pong (updates timestamp to now).
-			if err := tracker.RecordPong(ctx, toolsetName, providerID, newPingID(registrationToken)); err != nil {
-				return false
-			}
-			awaitMapEvent(healthEvents)
-
-			// Should be healthy again.
-			return tracker.IsHealthy(toolsetName)
-		},
-		genHealthyToolsetName(),
-	))
-
-	properties.TestingRun(t)
-}
 
 func TestPongForUnregisteredToolsetDoesNotCreateHealth(t *testing.T) {
 	ctx := context.Background()
@@ -242,7 +55,7 @@ func TestToolsetHealthyWhenAnyProviderInstanceFresh(t *testing.T) {
 	}))
 	awaitMapEvent(registryEvents)
 	token := requireRegistrationToken(t, ctx, catalog)
-	require.NoError(t, setHealthRecordForTest(ctx, healthMap, "toolset-1", "provider-a", token, time.Now().Add(-400*time.Millisecond)))
+	require.NoError(t, setHealthRecordForTest(ctx, healthMap, "toolset-1", "provider-a", token, time.Now().Add(-time.Hour)))
 	awaitMapEvent(healthEvents)
 
 	require.NoError(t, setHealthRecordForTest(ctx, healthMap, "toolset-1", "provider-b", token, time.Now()))
@@ -371,9 +184,8 @@ func TestStaleProviderHealthRecordsArePruned(t *testing.T) {
 	awaitMapEvent(registryEvents)
 	token := requireRegistrationToken(t, ctx, catalog)
 	healthTracker := tracker.(*healthTracker)
-	healthTracker.stalenessThreshold = 10 * time.Second
 
-	require.NoError(t, setHealthRecordForTest(ctx, healthMap, "toolset-1", "provider-old", token, time.Now().Add(-time.Minute)))
+	require.NoError(t, setHealthRecordForTest(ctx, healthMap, "toolset-1", "provider-old", token, time.Now().Add(-time.Hour)))
 	awaitMapEvent(healthEvents)
 	require.NoError(t, setHealthRecordForTest(ctx, healthMap, "toolset-1", "provider-fresh", token, time.Now()))
 	awaitMapEvent(healthEvents)
@@ -438,13 +250,18 @@ func newPongTestService(t *testing.T) (*Service, HealthTracker, *toolsetCatalog,
 		require.NoError(t, node.Close(ctx))
 	})
 
+	// A deliberately wide staleness window (5m) keeps "recent pong => healthy"
+	// immune to Redis and scheduler latency: these tests verify pong/token/
+	// record plumbing, not freshness classification, which is unit-tested on
+	// computeToolsetHealth. Tests needing stale records seed timestamps far in
+	// the past instead of waiting for wall clock to pass.
 	tracker, err := NewHealthTracker(
 		newMockStreamManager(),
 		healthMap,
 		registryMap,
 		node,
-		WithPingInterval(100*time.Millisecond),
-		WithMissedPingThreshold(2),
+		WithPingInterval(time.Minute),
+		WithMissedPingThreshold(4),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -524,20 +341,6 @@ func (m *mockStreamManager) PublishToolCall(ctx context.Context, toolset string,
 	defer m.mu.Unlock()
 	m.messages[toolset] = append(m.messages[toolset], msg)
 	return nil
-}
-
-func genHealthyToolsetName() gopter.Gen {
-	return gen.OneConstOf(
-		"data-tools",
-		"analytics",
-		"etl-pipeline",
-		"search-service",
-		"notification-tools",
-	)
-}
-
-func genMissedPingThreshold() gopter.Gen {
-	return gen.IntRange(1, 5)
 }
 
 var _ StreamManager = (*mockStreamManager)(nil)

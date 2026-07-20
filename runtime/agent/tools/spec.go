@@ -49,13 +49,14 @@ type (
 		Toolset string
 		// Description provides human-readable context for planners and tooling.
 		Description string
-		// Tags carries optional metadata labels used by policy or UI layers.
+		// Tags carries flat labels used by generic policy and UI filtering.
 		Tags []string
 		// Meta carries arbitrary design-time metadata attached to the tool via DSL.
 		//
-		// Meta is intended for downstream consumers (policy engines, UIs, orchestration
-		// layers) that need structured tool annotations without requiring runtime
-		// design introspection. Code generation emits Meta only when present.
+		// Meta is intended for named consumer-owned contracts that need structured
+		// tool annotations without runtime design introspection. It has no built-in
+		// runtime behavior: the planner, policy, or UI interpreting a key owns that
+		// key's semantics. Code generation emits Meta only when present.
 		Meta map[string][]string
 		// TerminalRun indicates that once this tool executes in a run, the runtime
 		// terminates the run immediately after publishing the tool result(s), without
@@ -63,19 +64,20 @@ type (
 		//
 		// This is intended for tools whose result is the user-facing terminal output
 		// (for example, a final report renderer) and should not be followed by extra
-		// model narration. Terminal tools must also declare Bookkeeping so they do
-		// not contribute to the retrieval budget. DSL-defined tools are normalized
-		// during expression preparation; runtime registration rejects inconsistent
-		// specs from other sources.
+		// model narration. Terminal tools are bookkeeping, so they do not
+		// contribute to the retrieval or consecutive-failure budgets. DSL-defined
+		// tools are normalized during expression preparation; runtime registration
+		// rejects inconsistent specs from other sources.
 		TerminalRun bool
 		// Bookkeeping indicates the tool is a structured bookkeeping tool and must
-		// not be charged against the run-level MaxToolCalls retrieval budget.
-		// Model-authored batches remain atomic; bookkeeping calls do not contribute
-		// to their budget cost.
+		// not be charged against the run-level MaxToolCalls retrieval budget or
+		// change the consecutive-failure counter. Model-authored batches remain
+		// atomic; bookkeeping calls do not contribute to their budget cost.
 		//
-		// This is intended for structured progress, status, finding, and terminal-
-		// commit tools whose cost is record-keeping rather than retrieval or
-		// side-effecting work.
+		// This is intended for structured progress, status, transition
+		// declarations, findings, and terminal-commit tools whose success must
+		// not independently schedule another planner turn. Calls and results
+		// still remain in the exact provider transcript.
 		Bookkeeping bool
 		// IsAgentTool indicates this tool is implemented by an agent (agent-as-tool).
 		// When true, the runtime executes the tool by starting the provider agent as a

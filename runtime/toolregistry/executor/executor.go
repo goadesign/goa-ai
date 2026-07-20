@@ -193,7 +193,22 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "call tool via registry failed")
-		return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err), ToolCallID: meta.ToolCallID}), nil
+		// CallTool only initiates the invocation through the registry gateway; a
+		// tool's own domain failure arrives later on the result stream as
+		// msg.Error. Any error here is therefore a transport-layer failure (dial,
+		// publish, gateway) and is transient. Classify it as tool_unavailable
+		// without restricting to the tool so downstream planners treat it as a
+		// retryable blip rather than a terminal, hint-less failure that forces the
+		// model to answer from partial evidence.
+		return runtime.Executed(&planner.ToolResult{
+			Name:       call.Name,
+			Error:      planner.ToolErrorFromError(err),
+			ToolCallID: meta.ToolCallID,
+			RetryHint: &planner.RetryHint{
+				Reason: planner.RetryReasonToolUnavailable,
+				Tool:   call.Name,
+			},
+		}), nil
 	}
 	resultStreamID := toolregistry.ResultStreamID(toolUseID)
 	span.AddEvent(
@@ -398,7 +413,10 @@ func (e *Executor) decodeToolResult(spec *tools.ToolSpec, call *planner.ToolRequ
 		} else if hint := retryHintFromToolErrorCode(tool, msg.Error.Code); hint != nil {
 			out.RetryHint = hint
 		}
-		if out.RetryHint != nil && len(out.RetryHint.ExampleJSON) == 0 {
+		// The payload example is a same-tool payload-correction aid. Attach it only
+		// to hints that restrict to the failing tool; terminal or sibling-tool
+		// hints (timeout, invalid_input) must not hand the model a retry template.
+		if out.RetryHint != nil && out.RetryHint.RestrictToTool && len(out.RetryHint.ExampleJSON) == 0 {
 			out.RetryHint.ExampleJSON = cloneExampleJSON(spec)
 		}
 		return out, nil
@@ -481,24 +499,36 @@ func marshalServerDataItems(items []*toolregistry.ServerDataItem) rawjson.Messag
 func retryHintFromToolErrorCode(tool tools.Ident, code string) *planner.RetryHint {
 	switch code {
 	case "invalid_input":
-		// Service-level invalid_input errors should surface as invalid input to callers.
-		// We reuse the invalid_arguments retry reason so downstream UIs classify the
-		// failure correctly (invalid_input vs internal) without adding new wire fields.
+		// Service-level invalid_input is a domain rejection raised by the tool's
+		// own logic, not a codec-schema violation. It is not guaranteed to be
+		// correctable by re-sending the same tool with a fixed payload: the
+		// rejection may name a sibling tool as the remedy (e.g. atlas-data's
+		// 7-day physical-timeline cap points to evaluate_state_activity). We
+		// reuse the invalid_arguments reason so downstream UIs classify the
+		// failure as invalid input (not internal), but we do NOT set
+		// RestrictToTool: forcing a same-tool retry livelocks the model on a
+		// rejection it cannot satisfy. The model reads the tool-error message and
+		// either corrects the payload or switches tools.
 		return &planner.RetryHint{
-			Reason:         planner.RetryReasonInvalidArguments,
-			Tool:           tool,
-			RestrictToTool: true,
+			Reason: planner.RetryReasonInvalidArguments,
+			Tool:   tool,
 		}
 	case "invalid_arguments":
 		// Tool-codec validation errors are surfaced by providers as invalid_arguments.
 		// These are always user-actionable: they indicate the payload did not satisfy
-		// the tool schema (missing fields, enum violations, range constraints, etc.).
+		// the tool schema (missing fields, enum violations, range constraints, etc.),
+		// so recovery is a corrected call to the same tool.
 		return &planner.RetryHint{
 			Reason:         planner.RetryReasonInvalidArguments,
 			Tool:           tool,
 			RestrictToTool: true,
 		}
 	case "timeout":
+		// Providers emit "timeout" for goa deadline failures. A timeout is
+		// terminal for the current run: elapsed time is not an instruction to
+		// repeat the call, so no RestrictToTool. The hint exists only to carry
+		// the classification so consumers page timeouts distinctly from internal
+		// failures instead of dropping the signal.
 		return &planner.RetryHint{
 			Reason: planner.RetryReasonTimeout,
 			Tool:   tool,

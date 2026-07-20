@@ -161,7 +161,6 @@ func (r *Runtime) recordStepToolResults(
 	records []stepToolRecord,
 ) error {
 	results := stepToolResults(records)
-	applyToolResultPolicyHints(input, results)
 	st.ToolEvents = append(st.ToolEvents, cloneToolResults(results)...)
 	if err := r.appendToolOutputRecords(ctx, st, records); err != nil {
 		return err

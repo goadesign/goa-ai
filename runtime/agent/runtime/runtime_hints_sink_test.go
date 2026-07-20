@@ -65,7 +65,13 @@ func TestHintingSinkRendersHintForNilAndEmptyPayload(t *testing.T) {
 				Payload:    tc.payload,
 			}
 			ev := stream.ToolStart{
-				Base: stream.NewBase(stream.EventToolStart, "run-1", "session-1", payload),
+				Base: stream.NewBaseWithEventKey(
+					stream.EventToolStart,
+					"run-1",
+					"session-1",
+					payload,
+					"event-1",
+				),
 				Data: payload,
 			}
 
@@ -74,6 +80,7 @@ func TestHintingSinkRendersHintForNilAndEmptyPayload(t *testing.T) {
 
 			out, ok := sink.events[0].(stream.ToolStart)
 			require.True(t, ok)
+			assert.Equal(t, "event-1", out.EventKey())
 			assert.Equal(t, "Checking active alarms", out.Data.DisplayHint)
 		})
 	}

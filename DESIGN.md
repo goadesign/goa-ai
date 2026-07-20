@@ -107,6 +107,39 @@ callable capabilities, while completions model final assistant answers. Both reu
 the same Goa types, validations, and codegen pipeline so there is one contract
 surface for structured model I/O.
 
+## Planner Step Contract
+
+Each `PlanResult` is one admitted workflow step. Planners may return tool calls,
+await work, or a terminal result according to the runtime's mutually exclusive
+step shapes.
+
+`PlanResult.SynthesizeAfterTools` selects the success transition for a tool-only
+step: after the selected batch succeeds, the next planner activity may only
+synthesize a final response. The workflow serializes that decision in its
+activity input and exposes it as `PlanResumeInput.SynthesisOnly`, so the contract
+survives activity retries and execution on another worker. Planners remain
+responsible for enforcing synthesis-only output because provider APIs may need
+the tool catalog to interpret the preceding tool results.
+
+The runtime keeps execution policy and planner intent separate:
+
+| Completed step | Next state |
+| --- | --- |
+| A cap or deadline requires finalization | `PlanResumeInput.Finalize` |
+| A successful `TerminalRun` tool completed | End the run without another planner turn |
+| Any failed tool has a `RetryHint` whose `AllowsRetry()` is true | Normal repair turn |
+| `SynthesizeAfterTools` is true and no failure allows retry | `PlanResumeInput.SynthesisOnly` |
+| Otherwise | Normal continuation turn |
+
+This order makes recovery explicit rather than presence-based. `RetryHint` may
+also carry terminal classification such as `timeout`; callers use
+`AllowsRetry()` instead of treating every non-nil hint as permission to retry.
+Synthesis-after-tools batches must contain at least one budgeted tool and cannot
+contain a `TerminalRun` tool, ensuring the existing step classification always
+reaches the appropriate planner resume. The resume activity validates the
+returned planner result, so ignoring `SynthesisOnly` fails at the activity
+boundary rather than reopening execution.
+
 ## Registry Integration
 
 Declare centralized registry sources for dynamic tool discovery and agent publication:
@@ -171,18 +204,30 @@ schema.
   `KeepMaxInputTokens`. The runtime evaluates token budgets with the configured
   model client's exact `model.TokenCounter`, so tokenization stays
   deployment/model-specific while the design records the agent's default policy.
+  The Anthropic adapter implements this capability through the Messages token
+  count API using the same message, tool, and cache encoding as completion, so
+  direct Anthropic and compatible gateways such as Bedrock Mantle can provide
+  exact counts without a second transcript conversion. Counting consumes the
+  canonical encoding only — completion policy such as the max_tokens
+  requirement never applies, because the count API carries no max_tokens.
+  When encoded tools carry authored `input_examples`, completion, streaming,
+  and counting all attach the same Anthropic tool-examples beta header.
   Exact retention always keeps whole recent turns; it never truncates
   tool_use/tool_result pairs to satisfy a token budget.
 - **Bookkeeping control plane**: `Bookkeeping()` calls and results remain in the
   provider transcript so signed model-authored parts replay without modification.
-  Successful bookkeeping results are omitted only from compact `ToolOutputs` and
-  do not force another planner turn. A bookkeeping-only turn must therefore
-  resolve in the same turn via a terminal outcome or an await/pause handshake.
+  They consume neither retrieval budget nor consecutive-failure allowance.
+  Successful bookkeeping results are omitted only from compact `ToolOutputs`
+  and do not force another planner turn. A failed bookkeeping result enters a
+  repair turn only when its `RetryHint.AllowsRetry()` is true. A bookkeeping-only
+  turn must otherwise resolve in the same turn via a terminal outcome or an
+  await/pause handshake.
 - **Forced finalization control plane**: when runtime caps or deadlines force
   finalization, planners may return terminal bookkeeping tools instead of a
-  prose final answer. The runtime executes only `Bookkeeping()` + `TerminalRun()`
-  tools in that path, keeps them inside the remaining hard-deadline window, and
-  closes the run only if every terminal side effect succeeds. Retry-owned
+  prose final answer. The runtime executes only `TerminalRun()` tools in that
+  path (`TerminalRun()` implies bookkeeping), keeps them inside the remaining
+  hard-deadline window, and closes the run only if every terminal side effect
+  succeeds. Retry-owned
   restrict-to-tool state filters budgeted work tools only, so bookkeeping tools
   remain available in correction and finalization turns. Caller
   `WithRestrictToTool` policy remains run-scoped and still applies to every tool.
@@ -251,6 +296,9 @@ that UIs and stream bridges can consume without heuristics.
     - `retryable`: whether retrying may succeed without changing input
     - `error`: **user-safe** message suitable for direct display
     - `debug_error`: raw error string for logs/diagnostics (not for UI)
+  - Invalid-argument tool failures may carry a planner retry hint. Timeout,
+    cancellation, and exhausted run budget are terminal and carry no retry
+    hint.
 
 - **Terminal identity**
   - `RunCompletedEvent.Labels` carries the run-scoped labels provided at run
@@ -367,8 +415,15 @@ consume JSON Schema annotations use the annotated schema. Direct Anthropic and
 Bedrock Claude use top-level `input_examples` with the schema that omits the root
 example; Bedrock carries those examples through Anthropic's provider-native
 request fields in `additionalModelRequestFields` when the required beta contract
-applies. Runtime and product code do not inspect or rewrite schemas to infer
-provider-specific shapes.
+applies, while the direct Anthropic adapter attaches the corresponding beta
+header (additively, preserving caller-configured betas) to completion,
+streaming, and token-count requests. The header is attached only when a tool
+carries authored examples because header-compatible gateways such as Bedrock
+Mantle reject beta identifiers they do not recognize. Claude-on-Vertex serves
+the same native contract: it delivers `input_examples` with no beta
+activation and ignores the header (live-verified via rawPredict
+`usage.input_tokens`). Runtime and product code do not inspect or rewrite
+schemas to infer provider-specific shapes.
 
 Any proxy or product-owned model boundary that reconstructs goa-ai model tools
 must carry these projections as one provider-neutral `model.ToolInputContract`.

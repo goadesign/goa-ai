@@ -20,7 +20,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/prompt"
-	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -252,17 +251,6 @@ func cloneMetadata(src map[string]any) map[string]any {
 	return dst
 }
 
-// cloneStrings creates a defensive copy of a string slice.
-// It returns nil if the source slice is empty to avoid unnecessary allocations.
-func cloneStrings(src []string) []string {
-	if len(src) == 0 {
-		return nil
-	}
-	dst := make([]string, len(src))
-	copy(dst, src)
-	return dst
-}
-
 // cloneToolResults creates a shallow copy of a tool result slice by copying the
 // ToolResult struct values. It does not deep-copy nested fields.
 func cloneToolResults(src []*planner.ToolResult) []*planner.ToolResult {
@@ -304,24 +292,6 @@ func mergeLabels(dst map[string]string, src map[string]string) map[string]string
 		dst[k] = v
 	}
 	return dst
-}
-
-// handlesToIDs removed: policy uses []tools.Ident directly.
-
-func toPolicyRetryHint(hint *planner.RetryHint) *policy.RetryHint {
-	if hint == nil {
-		return nil
-	}
-	return &policy.RetryHint{
-		Reason:             policy.RetryReason(hint.Reason),
-		Tool:               hint.Tool,
-		RestrictToTool:     hint.RestrictToTool,
-		MissingFields:      cloneStrings(hint.MissingFields),
-		ExampleJSON:        append(rawjson.Message(nil), hint.ExampleJSON...),
-		PriorInput:         cloneMetadata(hint.PriorInput),
-		ClarifyingQuestion: hint.ClarifyingQuestion,
-		Message:            hint.Message,
-	}
 }
 
 // applyHistoryPolicy applies the agent's history policy to the given messages.
@@ -623,16 +593,40 @@ func decrementCap(current int, delta int) int {
 // Contract:
 //   - Every tool result error counts as one failed attempt.
 //   - Retry hints may shape the next planner attempt, but they do not make the
-//     failed attempt free for cap accounting.
-func capFailures(results []*planner.ToolResult) int {
-	count := 0
-	for _, res := range results {
-		if res == nil || res.Error == nil {
+// budgetedBatchOutcome classifies a step batch's budgeted (non-bookkeeping)
+// results for failure-streak accounting: progress reports at least one
+// budgeted success and failed reports at least one budgeted failure.
+func (r *Runtime) budgetedBatchOutcome(records []stepToolRecord) (progress, failed bool) {
+	for _, record := range records {
+		if record.result == nil || r.isBookkeeping(record.call.Name) {
 			continue
 		}
-		count++
+		if record.result.Error != nil {
+			failed = true
+		} else {
+			progress = true
+		}
 	}
-	return count
+	return progress, failed
+}
+
+// applyFailureStreak advances the consecutive-failure cap for one step batch
+// and reports whether the cap tripped. Progress resets the streak, an
+// all-failure batch consumes one unit, and batches without budgeted results
+// leave the counter unchanged.
+func applyFailureStreak(caps *policy.CapsState, progress, failed bool) bool {
+	switch {
+	case progress:
+		if caps.MaxConsecutiveFailedToolCalls > 0 {
+			caps.RemainingConsecutiveFailedToolCalls = caps.MaxConsecutiveFailedToolCalls
+		}
+	case failed:
+		caps.RemainingConsecutiveFailedToolCalls = decrementCap(caps.RemainingConsecutiveFailedToolCalls, 1)
+		if caps.MaxConsecutiveFailedToolCalls > 0 && caps.RemainingConsecutiveFailedToolCalls <= 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // mergeCaps merges policy decision caps into the current caps state. Policy

@@ -353,15 +353,21 @@ type ToolOutput struct {
 	// Error is the structured tool error, when the tool execution failed.
 	Error *ToolError
 
-	// RetryHint provides structured recovery guidance for tool-scoped failures.
+	// RetryHint provides structured handling guidance for tool-scoped failures.
+	// Call AllowsRetry to distinguish recoverable failures from terminal
+	// classifications such as timeout.
 	RetryHint *RetryHint
 
 	// Telemetry contains execution metrics attributed to this tool output.
 	Telemetry *telemetry.ToolTelemetry
 }
 
-// RetryHint communicates planner guidance after tool failures so policy engines
-// and UIs can react. See policy.RetryHint for the runtime-converted form.
+// RetryHint communicates typed handling guidance after a tool failure so
+// planners, policy engines, and UIs can react without parsing error text. A hint
+// may classify a terminal failure; callers use AllowsRetry to determine whether
+// another tool attempt is permitted. The policy package aliases this type; the
+// runtime hands policy engines the hint directly, and engines must treat it as
+// read-only.
 type RetryHint struct {
 	// Reason classifies the retry hint for policy/UX decisions.
 	Reason RetryReason
@@ -369,7 +375,10 @@ type RetryHint struct {
 	// Tool is the tool identifier associated with this hint.
 	Tool tools.Ident
 
-	// RestrictToTool instructs callers to retry only the specified tool.
+	// RestrictToTool marks recovery for this failure as a corrected call to
+	// Tool. It steers the model through the runtime's retry reminder; it does
+	// not narrow the advertised tool set, so the model may still perform other
+	// legitimate work (task bookkeeping, sibling tools) in the same turn.
 	RestrictToTool bool
 
 	// MissingFields lists required fields that were missing or invalid.
@@ -432,7 +441,8 @@ type FinalToolResult struct {
 	// a tool-scoped failure.
 	Error *ToolError
 
-	// RetryHint provides structured recovery guidance for tool-scoped failures.
+	// RetryHint provides structured handling guidance for tool-scoped failures.
+	// Call AllowsRetry before scheduling another tool attempt.
 	RetryHint *RetryHint
 
 	// Telemetry contains execution metrics attributed to the final tool result.
@@ -659,6 +669,12 @@ type PlanResumeInput struct {
 	// canonical tool outputs instead of relying on a duplicate runtime field.
 	ToolOutputs []*ToolOutput
 
+	// SynthesisOnly requires this turn to produce a final response without new
+	// tool calls. The workflow sets it after a successful tool batch whose
+	// PlanResult requested SynthesizeAfterTools. A recoverable tool failure takes
+	// the repair path instead.
+	SynthesisOnly bool
+
 	// Finalize is non-nil when the runtime forces termination and requests a final response.
 	Finalize *Termination
 
@@ -670,6 +686,12 @@ type PlanResumeInput struct {
 type PlanResult struct {
 	// ToolCalls are the tool invocations the runtime should execute next.
 	ToolCalls []ToolRequest
+
+	// SynthesizeAfterTools requires the planner turn following a successful tool
+	// batch to produce a final response without new tool calls. Recoverable tool
+	// failures retain their normal repair path; terminal failures still proceed
+	// to synthesis.
+	SynthesizeAfterTools bool
 
 	// FinalResponse ends the run with a final assistant message.
 	FinalResponse *FinalResponse
@@ -687,7 +709,8 @@ type PlanResult struct {
 	// Await requests the runtime to pause the run and wait for additional input.
 	Await *Await
 
-	// RetryHint provides structured guidance for recovering from failures without terminating.
+	// RetryHint provides structured handling guidance for a planner-produced
+	// failure. Call AllowsRetry before scheduling another tool attempt.
 	RetryHint *RetryHint
 
 	// ExpectedChildren is an optional hint for how many nested tool results a planner expects.

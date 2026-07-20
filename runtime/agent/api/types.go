@@ -129,11 +129,6 @@ type (
 		// RestrictToTool restricts tool execution to the given tool identifier.
 		RestrictToTool tools.Ident
 
-		// RetryRestrictToTool is runtime-owned retry state installed from a
-		// RetryHint. Caller-supplied RestrictToTool remains run-scoped and takes
-		// precedence when both are set.
-		RetryRestrictToTool tools.Ident
-
 		// TagClauses applies explicit tag-policy clauses using logical AND.
 		TagClauses []TagPolicyClause
 
@@ -141,7 +136,9 @@ type (
 		// calls a run may execute.
 		MaxToolCalls int
 
-		// MaxConsecutiveFailedToolCalls caps the number of consecutive failing tool calls before finalizing.
+		// MaxConsecutiveFailedToolCalls caps the number of consecutive failing
+		// tool batches before finalizing: a batch whose budgeted calls all fail
+		// consumes one unit, and any budgeted success resets the streak.
 		MaxConsecutiveFailedToolCalls int
 
 		// TimeBudget caps the total wall-clock runtime budget for the run.
@@ -308,6 +305,11 @@ type (
 		//   planner-visible metadata from the run event log before invoking planners.
 		ToolOutputs []*ToolOutputRef
 
+		// SynthesisOnly requires the planner to produce a final response without
+		// new tool calls. The workflow sets it only when a selected
+		// synthesis-after-tools batch has no recoverable failure.
+		SynthesisOnly bool
+
 		// Finalize requests a final turn with no further tool calls.
 		Finalize *planner.Termination
 	}
@@ -322,6 +324,14 @@ type (
 
 		// Usage is the token usage reported by the model provider when available.
 		Usage model.TokenUsage
+
+		// SessionEnded reports that the run's durable session was ended before
+		// this turn could be planned: the activity refused to plan and Result
+		// is nil. The workflow terminates the run as canceled. This is the
+		// turn-boundary enforcement of session lifecycle — the durable session
+		// status is the authority; engine cancellation only expedites
+		// shutdown.
+		SessionEnded bool
 	}
 
 	// RecordActivityInput is the canonical workflow-to-activity envelope for

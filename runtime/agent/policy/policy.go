@@ -9,7 +9,7 @@ import (
 	"context"
 	"time"
 
-	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -146,15 +146,17 @@ type (
 		// are permitted.
 		RemainingToolCalls int
 
-		// MaxConsecutiveFailedToolCalls caps consecutive failures per run. Zero means
-		// the cap is not configured. Used for circuit breaking: if N tools fail in
-		// a row, terminate.
+		// MaxConsecutiveFailedToolCalls caps consecutive failing planner decision
+		// points per run. Zero means the cap is not configured. Used for circuit
+		// breaking: if N successive tool batches fail outright, terminate.
 		MaxConsecutiveFailedToolCalls int
 
-		// RemainingConsecutiveFailedToolCalls tracks how many consecutive failures are allowed
-		// before circuit breaking. The runtime decrements this on each failure and resets
-		// it to MaxConsecutiveFailedToolCalls on success. When this reaches zero, the
-		// run is terminated.
+		// RemainingConsecutiveFailedToolCalls tracks how many failing decision
+		// points are allowed before circuit breaking. A tool batch whose budgeted
+		// (non-bookkeeping) calls all fail consumes one unit regardless of its
+		// parallel width; any budgeted success resets the counter to
+		// MaxConsecutiveFailedToolCalls; bookkeeping results never move it. When
+		// this reaches zero, the run is terminated.
 		RemainingConsecutiveFailedToolCalls int
 
 		// ExpiresAt conveys when the run-level budgets expire (wall-clock deadline).
@@ -171,30 +173,25 @@ const (
 	ToolBudgetClassBookkeeping ToolBudgetClass = "bookkeeping"
 )
 
-// RetryReason categorizes planner failures communicated via RetryHint. These values
-// mirror planner.RetryReason so policy engines can share logic without importing the
-// planner package, avoiding import cycles with hooks.
-type RetryReason string
+type (
+	// RetryReason categorizes planner failures communicated via RetryHint.
+	// The planner package owns the enum; the alias keeps policy engines on
+	// the same vocabulary with one source of truth, so retiring or adding a
+	// reason is a single edit the compiler propagates.
+	RetryReason = planner.RetryReason
 
-const (
-	RetryReasonInvalidArguments  RetryReason = "invalid_arguments"
-	RetryReasonMissingFields     RetryReason = "missing_fields"
-	RetryReasonMalformedResponse RetryReason = "malformed_response"
-	RetryReasonTimeout           RetryReason = "timeout"
-	RetryReasonRateLimited       RetryReason = "rate_limited"
-	RetryReasonToolUnavailable   RetryReason = "tool_unavailable"
+	// RetryHint communicates planner guidance after tool failures so policy
+	// engines can adjust allowlists or caps. The runtime hands Engine.Decide
+	// the planner's hint directly; engines must treat it as read-only.
+	RetryHint = planner.RetryHint
 )
 
-// RetryHint communicates planner guidance after tool failures so policy engines can
-// adjust allowlists or caps. The runtime converts planner retry hints into this type
-// before invoking Engine.Decide.
-type RetryHint struct {
-	Reason             RetryReason
-	Tool               tools.Ident
-	RestrictToTool     bool
-	MissingFields      []string
-	ExampleJSON        rawjson.Message
-	PriorInput         map[string]any
-	ClarifyingQuestion string
-	Message            string
-}
+// Re-exported retry reasons so policy engines need not import the planner
+// package to match on them.
+const (
+	RetryReasonInvalidArguments  = planner.RetryReasonInvalidArguments
+	RetryReasonMissingFields     = planner.RetryReasonMissingFields
+	RetryReasonMalformedResponse = planner.RetryReasonMalformedResponse
+	RetryReasonRateLimited       = planner.RetryReasonRateLimited
+	RetryReasonToolUnavailable   = planner.RetryReasonToolUnavailable
+)

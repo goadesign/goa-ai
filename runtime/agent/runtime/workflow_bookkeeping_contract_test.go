@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
@@ -28,10 +29,12 @@ import (
 func TestNormalizeStepRejectsContradictoryTerminalShapes(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 	budgeted := newAnyJSONSpec(tools.Ident("svc.lookup"), "svc")
+	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"), "svc")
+	bookkeeping.Bookkeeping = true
 	terminalTool := newAnyJSONSpec(tools.Ident("svc.complete"), "svc")
 	terminalTool.Bookkeeping = true
 	terminalTool.TerminalRun = true
-	seedTestToolSpecs(rt, budgeted, terminalTool)
+	seedTestToolSpecs(rt, budgeted, bookkeeping, terminalTool)
 
 	final := &planner.FinalResponse{
 		Message: &model.Message{
@@ -54,6 +57,42 @@ func TestNormalizeStepRejectsContradictoryTerminalShapes(t *testing.T) {
 				})),
 			},
 			want: "cannot combine terminal payload and await",
+		},
+		{
+			name: "synthesis without tool calls",
+			result: &planner.PlanResult{
+				FinalResponse:        final,
+				SynthesizeAfterTools: true,
+			},
+			want: "synthesis-after-tools requires only tool calls",
+		},
+		{
+			name: "synthesis with await",
+			result: &planner.PlanResult{
+				ToolCalls: []planner.ToolRequest{{Name: budgeted.Name}},
+				Await: planner.NewAwait(planner.AwaitClarificationItem(&planner.AwaitClarification{
+					ID:       "clarify-1",
+					Question: "Which item?",
+				})),
+				SynthesizeAfterTools: true,
+			},
+			want: "synthesis-after-tools requires only tool calls",
+		},
+		{
+			name: "synthesis with bookkeeping only",
+			result: &planner.PlanResult{
+				ToolCalls:            []planner.ToolRequest{{Name: bookkeeping.Name}},
+				SynthesizeAfterTools: true,
+			},
+			want: "synthesis-after-tools requires at least one budgeted tool",
+		},
+		{
+			name: "synthesis with terminal tool",
+			result: &planner.PlanResult{
+				ToolCalls:            []planner.ToolRequest{{Name: terminalTool.Name}},
+				SynthesizeAfterTools: true,
+			},
+			want: "synthesis-after-tools cannot include terminal tool",
 		},
 		{
 			name: "terminal plus budgeted tool",
@@ -79,6 +118,69 @@ func TestNormalizeStepRejectsContradictoryTerminalShapes(t *testing.T) {
 			require.ErrorContains(t, err, tt.want)
 		})
 	}
+}
+
+func TestSynthesisOnlyAfterToolBatch(t *testing.T) {
+	t.Parallel()
+
+	success := &planner.ToolResult{}
+	terminalFailure := &planner.ToolResult{Error: planner.NewToolError("failed")}
+	timeout := &planner.ToolResult{
+		Error:     planner.NewToolError("timed out"),
+		RetryHint: &planner.RetryHint{Reason: planner.RetryReasonTimeout},
+	}
+	recoverableFailure := &planner.ToolResult{
+		Error:     planner.NewToolError("invalid input"),
+		RetryHint: &planner.RetryHint{Reason: planner.RetryReasonInvalidArguments},
+	}
+	tests := []struct {
+		name      string
+		requested bool
+		results   []*planner.ToolResult
+		want      bool
+	}{
+		{name: "ordinary continuation", results: []*planner.ToolResult{success}, want: false},
+		{name: "successful final batch", requested: true, results: []*planner.ToolResult{success}, want: true},
+		{name: "terminal failure", requested: true, results: []*planner.ToolResult{terminalFailure}, want: true},
+		{name: "timeout", requested: true, results: []*planner.ToolResult{timeout}, want: true},
+		{name: "recoverable failure", requested: true, results: []*planner.ToolResult{recoverableFailure}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			records := make([]stepToolRecord, len(tt.results))
+			for i, result := range tt.results {
+				records[i].result = result
+			}
+			batch := stepBatch{
+				program: stepProgram{
+					result: &planner.PlanResult{SynthesizeAfterTools: tt.requested},
+				},
+				records: records,
+			}
+			assert.Equal(t, tt.want, synthesisOnlyAfterToolBatch(batch))
+		})
+	}
+}
+
+func TestBookkeepingResultRequiresResumeOnlyForRecoverableFailure(t *testing.T) {
+	t.Parallel()
+
+	rt := New(WithLogger(telemetry.NoopLogger{}))
+	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"), "svc")
+	bookkeeping.Bookkeeping = true
+	seedTestToolSpecs(rt, bookkeeping)
+	call := planner.ToolRequest{Name: bookkeeping.Name}
+
+	assert.False(t, rt.toolResultRequiresResume(call, &planner.ToolResult{}))
+	assert.False(t, rt.toolResultRequiresResume(call, &planner.ToolResult{
+		Error:     planner.NewToolError("timed out"),
+		RetryHint: &planner.RetryHint{Reason: planner.RetryReasonTimeout},
+	}))
+	assert.True(t, rt.toolResultRequiresResume(call, &planner.ToolResult{
+		Error:     planner.NewToolError("invalid input"),
+		RetryHint: &planner.RetryHint{Reason: planner.RetryReasonInvalidArguments},
+	}))
 }
 
 func TestRunLoopBookkeepingOnlyFinalResponseFinishesWithoutResume(t *testing.T) {
@@ -314,6 +416,8 @@ func TestRunLoopProviderEmptyToolCallIDsAdvanceAcrossResumeAttempts(t *testing.T
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rt := New(WithLogger(telemetry.NoopLogger{}))
+			_, err := rt.CreateSession(context.Background(), "sess-1")
+			require.NoError(t, err)
 			agentID := agent.Ident("agent-1")
 			var resumeAttempts []int
 			rt.agents[agentID] = AgentRegistration{
@@ -422,6 +526,8 @@ func TestRunLoopProviderEmptyToolCallIDsUseBatchIndexes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rt := New(WithLogger(telemetry.NoopLogger{}))
+			_, err := rt.CreateSession(context.Background(), "sess-1")
+			require.NoError(t, err)
 			agentID := agent.Ident("agent-1")
 			rt.agents[agentID] = AgentRegistration{
 				ID: agentID,
@@ -488,7 +594,7 @@ func TestRunLoopProviderEmptyToolCallIDsUseBatchIndexes(t *testing.T) {
 	}
 }
 
-func TestRunLoopMixedBudgetedAndBookkeepingStillResumes(t *testing.T) {
+func TestRunLoopMixedBudgetedAndBookkeepingCarriesSynthesisOnly(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
 	budgeted := newAnyJSONSpec(tools.Ident("svc.tools.lookup"), "svc.tools")
@@ -541,6 +647,7 @@ func TestRunLoopMixedBudgetedAndBookkeepingStillResumes(t *testing.T) {
 			{Name: budgeted.Name, Payload: rawjson.Message(`{}`)},
 			{Name: bookkeeping.Name, Payload: rawjson.Message(`{}`)},
 		},
+		SynthesizeAfterTools: true,
 	}
 
 	out, err := rt.runLoop(
@@ -558,6 +665,7 @@ func TestRunLoopMixedBudgetedAndBookkeepingStillResumes(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.Equal(t, "resume", wfCtx.lastPlannerCall.Name)
+	require.True(t, wfCtx.lastPlannerCall.Input.SynthesisOnly)
 	require.Len(t, wfCtx.lastPlannerCall.Input.ToolOutputs, 1)
 	require.Equal(t, "run-1/turn-1/attempt-1/svc-tools-lookup/0", wfCtx.lastPlannerCall.Input.ToolOutputs[0].ToolCallID)
 }

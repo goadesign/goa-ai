@@ -2,9 +2,9 @@ package planner
 
 import toolerrors "goa.design/goa-ai/runtime/agent/toolerrors"
 
-// RetryReason categorizes the type of failure that triggered a retry hint.
-// Policy engines use this to make informed decisions about retry strategies
-// (e.g., disable tools, adjust caps, request human intervention).
+// RetryReason categorizes the failure described by a RetryHint. Policy engines
+// use this to make informed handling decisions such as retrying, disabling
+// tools, adjusting caps, or requesting human intervention.
 type RetryReason string
 
 // ToolError represents a structured tool failure and is an alias to the runtime
@@ -25,8 +25,11 @@ const (
 	// be parsed or didn't match the expected schema (e.g., invalid JSON).
 	RetryReasonMalformedResponse RetryReason = "malformed_response"
 
-	// RetryReasonTimeout indicates the tool execution exceeded time limits.
-	// Policy engines may reduce caps or disable the tool for this run.
+	// RetryReasonTimeout classifies a tool failure caused by exceeding a time or
+	// budget limit. It is a terminal classification, not a retry instruction:
+	// hints carrying this reason never set RestrictToTool, so the tool is not
+	// re-issued. Consumers use it to page timeouts distinctly from internal
+	// failures rather than to drive recovery.
 	RetryReasonTimeout RetryReason = "timeout"
 
 	// RetryReasonRateLimited indicates the tool or underlying service is rate-limited.
@@ -57,4 +60,25 @@ func ToolErrorFromError(err error) *ToolError {
 // a ToolError.
 func ToolErrorf(format string, args ...any) *ToolError {
 	return toolerrors.Errorf(format, args...)
+}
+
+// AllowsRetry reports whether the hint authorizes another tool attempt in the
+// current run. Timeout hints classify a terminal failure for policy and UX
+// consumers; every other defined reason describes a recoverable failure.
+func (h *RetryHint) AllowsRetry() bool {
+	if h == nil {
+		return false
+	}
+	switch h.Reason {
+	case RetryReasonInvalidArguments,
+		RetryReasonMissingFields,
+		RetryReasonMalformedResponse,
+		RetryReasonRateLimited,
+		RetryReasonToolUnavailable:
+		return true
+	case RetryReasonTimeout:
+		return false
+	default:
+		panic("planner: unknown retry reason " + h.Reason)
+	}
 }

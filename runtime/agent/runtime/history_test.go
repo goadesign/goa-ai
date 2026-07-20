@@ -184,13 +184,16 @@ func TestCompress_TokenBudgetTriggersAndKeepsWholeRecentTurns(t *testing.T) {
 	require.Len(t, client.summarized.Messages, 1)
 	assert.Contains(t, textPart(t, client.summarized.Messages[0]), "question 1")
 	assert.Contains(t, textPart(t, client.summarized.Messages[0]), "question 2")
-	require.Len(t, out, 6)
+	// Plan-step segmentation: the newest logical turn is the final assistant
+	// step alone. The 10-token keep budget cannot reunite it with the earlier
+	// tool step, so question 3's step is summarized (step atomicity holds:
+	// the tool_use and its result compress together) and only the final
+	// answer stays exact.
+	assert.Contains(t, textPart(t, client.summarized.Messages[0]), "question 3")
+	require.Len(t, out, 3)
 	assert.Equal(t, model.ConversationRoleSystem, out[0].Role)
 	assert.Equal(t, model.ConversationRoleSystem, out[1].Role)
-	assert.Equal(t, "question 3", textPart(t, out[2]))
-	assertToolUse(t, out[3], "call-1", "lookup")
-	assertToolResult(t, out[4], "call-1", map[string]any{"next_cursor": "cursor-token"})
-	assert.Equal(t, "answer 3", textPart(t, out[5]))
+	assert.Equal(t, "answer 3", textPart(t, out[2]))
 }
 
 // TestCompress_KeepBudgetExcludesToolCatalog verifies KeepMaxInputTokens
@@ -279,7 +282,7 @@ func TestCompress_ErrsWhenNewestTurnCannotFitCompressTrigger(t *testing.T) {
 	// Total counts 1050 (5 messages + catalog) which trips the 1025 trigger,
 	// and the newest tail alone counts 1030 which still exceeds it.
 	out, err := policy(context.Background(), msgs, toolDefs)
-	require.ErrorContains(t, err, "newest history turn cannot fit within CompressAtMaxInputTokens (1030 > 1025)")
+	require.ErrorContains(t, err, "newest history turn cannot fit within CompressAtMaxInputTokens (1030 > 1025;")
 	require.Len(t, out, 5)
 }
 
@@ -337,24 +340,6 @@ func textPart(t *testing.T, msg *model.Message) string {
 	return part.Text
 }
 
-func assertToolUse(t *testing.T, msg *model.Message, id, name string) {
-	t.Helper()
-	require.Len(t, msg.Parts, 1)
-	part, ok := msg.Parts[0].(model.ToolUsePart)
-	require.True(t, ok)
-	assert.Equal(t, id, part.ID)
-	assert.Equal(t, name, part.Name)
-}
-
-func assertToolResult(t *testing.T, msg *model.Message, id string, content any) {
-	t.Helper()
-	require.Len(t, msg.Parts, 1)
-	part, ok := msg.Parts[0].(model.ToolResultPart)
-	require.True(t, ok)
-	assert.Equal(t, id, part.ToolUseID)
-	assert.Equal(t, content, part.Content)
-}
-
 // TestCompressCountsToolBearingHistoryWithUnavailableDefinition pins the
 // counting contract for transcripts that carry unknown-tool recovery: every
 // token-count request synthesized from history must include the runtime-owned
@@ -398,4 +383,27 @@ func TestCompressCountsToolBearingHistoryWithUnavailableDefinition(t *testing.T)
 				"count request with recovered tool_use history must carry the tool_unavailable definition, got tools %v", names)
 		}
 	}
+}
+
+// TestParseTurnsSegmentsPlanStepsWithinOneUserTurn proves an autonomous run
+// with a single user kickoff is segmented at assistant plan-step boundaries:
+// the kickoff pairs with the first step, and each later assistant message
+// opens a new logical turn so compression has real boundaries instead of one
+// monolithic turn it must keep whole.
+func TestParseTurnsSegmentsPlanStepsWithinOneUserTurn(t *testing.T) {
+	msgs := []*model.Message{
+		{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "run the task"}}},
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ToolUsePart{ID: "t1", Name: "a"}}},
+		{Role: model.ConversationRoleUser, Parts: []model.Part{model.ToolResultPart{ToolUseID: "t1"}}},
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ToolUsePart{ID: "t2", Name: "b"}}},
+		{Role: model.ConversationRoleUser, Parts: []model.Part{model.ToolResultPart{ToolUseID: "t2"}}},
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}},
+	}
+
+	turns := parseTurns(msgs)
+
+	require.Len(t, turns, 3)
+	require.Len(t, turns[0].messages, 3)
+	require.Len(t, turns[1].messages, 2)
+	require.Len(t, turns[2].messages, 1)
 }

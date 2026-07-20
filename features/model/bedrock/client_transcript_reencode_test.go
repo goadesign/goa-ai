@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/features/model/toolname"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -30,13 +31,17 @@ func TestEncodeMessagesRejectsNonCanonicalThinking(t *testing.T) {
 			part: model.ThinkingPart{Text: "reasoning", Signature: "sig", Final: true},
 		},
 		{
+			name: "signature only",
+			part: model.ThinkingPart{Signature: "sig", Final: true},
+		},
+		{
 			name: "redacted",
 			part: model.ThinkingPart{Redacted: []byte("opaque"), Final: true},
 		},
 		{
 			name:    "missing signature",
 			part:    model.ThinkingPart{Text: "reasoning", Final: true},
-			wantErr: "bedrock: thinking part must contain exactly signed plaintext or redacted content",
+			wantErr: "bedrock: thinking part must contain exactly signed content or redacted content",
 		},
 		{
 			name: "mixed variants",
@@ -46,7 +51,7 @@ func TestEncodeMessagesRejectsNonCanonicalThinking(t *testing.T) {
 				Redacted:  []byte("opaque"),
 				Final:     true,
 			},
-			wantErr: "bedrock: thinking part must contain exactly signed plaintext or redacted content",
+			wantErr: "bedrock: thinking part must contain exactly signed content or redacted content",
 		},
 	}
 	for _, test := range tests {
@@ -97,14 +102,27 @@ func TestTranslateResponsePreservesReasoning(t *testing.T) {
 	}, resp.Content[0].Parts)
 }
 
-func TestTranslateResponseDropsIncompleteReasoning(t *testing.T) {
+func TestTranslateResponseHandlesIncompleteReasoning(t *testing.T) {
 	tests := []struct {
 		name      string
 		text      *string
 		signature *string
+		wantErr   string
+		wantParts []model.Part
 	}{
-		{name: "missing plaintext", signature: aws.String("sig")},
-		{name: "missing signature", text: aws.String("reasoning")},
+		{
+			name:      "signature only",
+			signature: aws.String("sig"),
+			wantParts: []model.Part{
+				model.ThinkingPart{Signature: "sig", Final: true},
+				model.TextPart{Text: "answer"},
+			},
+		},
+		{
+			name:    "missing signature",
+			text:    aws.String("reasoning"),
+			wantErr: "bedrock: response reasoning plaintext is missing provider signature",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -128,8 +146,13 @@ func TestTranslateResponseDropsIncompleteReasoning(t *testing.T) {
 
 			resp, err := translateResponse(output, nil, "", "")
 
+			if test.wantErr != "" {
+				require.EqualError(t, err, test.wantErr)
+				require.Nil(t, resp)
+				return
+			}
 			require.NoError(t, err)
-			require.Equal(t, []model.Part{model.TextPart{Text: "answer"}}, resp.Content[0].Parts)
+			require.Equal(t, test.wantParts, resp.Content[0].Parts)
 		})
 	}
 }
@@ -439,8 +462,8 @@ func TestEncodeMessagesDoesNotRewriteHistoricalToolUseToToolUnavailable(t *testi
 		},
 	}
 	nameMap := map[string]string{
-		"atlas.read.count_events":      SanitizeToolName("atlas.read.count_events"),
-		tools.ToolUnavailable.String(): SanitizeToolName(tools.ToolUnavailable.String()),
+		"atlas.read.count_events":      toolname.Sanitize("atlas.read.count_events"),
+		tools.ToolUnavailable.String(): toolname.Sanitize(tools.ToolUnavailable.String()),
 	}
 	conv, _, err := encodeMessages(msgs, nameMap, false)
 	if err != nil {

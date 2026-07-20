@@ -108,6 +108,14 @@ func (r *Runtime) normalizeStep(result *planner.PlanResult) (stepProgram, error)
 	if !hasCalls && !hasTerminal && !hasAwait {
 		return stepProgram{}, errors.New("workflow step received empty PlanResult")
 	}
+	if result.SynthesizeAfterTools && (!hasCalls || hasTerminal || hasAwait) {
+		return stepProgram{}, errors.New("workflow step synthesis-after-tools requires only tool calls")
+	}
+	if result.SynthesizeAfterTools {
+		if err := r.validateSynthesisAfterTools(result.ToolCalls); err != nil {
+			return stepProgram{}, err
+		}
+	}
 
 	if hasTerminal && hasAwait {
 		return stepProgram{}, errors.New("workflow step cannot combine terminal payload and await")
@@ -141,6 +149,25 @@ func (r *Runtime) normalizeStep(result *planner.PlanResult) (stepProgram, error)
 		awaitItems: awaitItems,
 		kind:       stepKindAwait,
 	}, nil
+}
+
+// validateSynthesisAfterTools requires a batch whose existing execution
+// classification guarantees a subsequent planner resume.
+func (r *Runtime) validateSynthesisAfterTools(calls []planner.ToolRequest) error {
+	hasBudgeted := false
+	for _, call := range calls {
+		spec, ok := r.toolSpec(call.Name)
+		if ok && spec.TerminalRun {
+			return fmt.Errorf("workflow step synthesis-after-tools cannot include terminal tool %q", call.Name)
+		}
+		if !r.isBookkeeping(call.Name) {
+			hasBudgeted = true
+		}
+	}
+	if !hasBudgeted {
+		return errors.New("workflow step synthesis-after-tools requires at least one budgeted tool")
+	}
+	return nil
 }
 
 // runStep executes one normalized planner result and applies one post-step
@@ -295,16 +322,14 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	}
 
 	results := batch.results()
-	if capFailures(results) > 0 {
-		l.st.Caps.RemainingConsecutiveFailedToolCalls = decrementCap(
-			l.st.Caps.RemainingConsecutiveFailedToolCalls,
-			capFailures(results),
-		)
-		if l.st.Caps.MaxConsecutiveFailedToolCalls > 0 && l.st.Caps.RemainingConsecutiveFailedToolCalls <= 0 {
-			return l.finalizeStep(planner.TerminationReasonFailureCap, "failure-cap finalization skipped without hard deadline")
-		}
-	} else if l.st.Caps.MaxConsecutiveFailedToolCalls > 0 {
-		l.st.Caps.RemainingConsecutiveFailedToolCalls = l.st.Caps.MaxConsecutiveFailedToolCalls
+	// The failure streak counts planner decision points whose budgeted work
+	// failed outright: any budgeted success resets the streak, an all-failure
+	// batch consumes one unit regardless of its parallel width, and
+	// bookkeeping results never move the counter. One exploratory batch that
+	// partially fails is progress, not thrash.
+	progress, failed := l.r.budgetedBatchOutcome(batch.records)
+	if applyFailureStreak(&l.st.Caps, progress, failed) {
+		return l.finalizeStep(planner.TerminationReasonFailureCap, "failure-cap finalization skipped without hard deadline")
 	}
 
 	if out, err := l.r.handleMissingFieldsPolicy(
@@ -348,7 +373,14 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 		}
 	}
 
-	resumeReq, err := l.r.buildNextResumeRequest(l.input.AgentID, l.base, l.input.Policy, l.st.ToolOutputs, &l.st.NextAttempt)
+	resumeReq, err := l.r.buildNextResumeRequest(
+		l.input.AgentID,
+		l.base,
+		l.input.Policy,
+		l.st.ToolOutputs,
+		synthesisOnlyAfterToolBatch(batch),
+		&l.st.NextAttempt,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -381,6 +413,20 @@ func (l *workflowLoop) recordUnrecordedStepToolResults(batch *stepBatch) error {
 	}
 	batch.recorded = len(batch.records)
 	return nil
+}
+
+// synthesisOnlyAfterToolBatch applies the planner's requested success
+// transition without overriding typed recovery guidance from a failed tool.
+func synthesisOnlyAfterToolBatch(batch stepBatch) bool {
+	if !batch.program.result.SynthesizeAfterTools {
+		return false
+	}
+	for _, record := range batch.records {
+		if record.result.Error != nil && record.result.RetryHint.AllowsRetry() {
+			return false
+		}
+	}
+	return true
 }
 
 // finalizeStep runs a required finalization transition and fails if restricted

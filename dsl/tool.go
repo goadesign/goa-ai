@@ -798,11 +798,12 @@ func TerminalRun() {
 	tool.TerminalRun = true
 }
 
-// Bookkeeping marks the current tool as a control-plane side effect that does
-// not by itself require another planner turn.
+// Bookkeeping marks the current tool as a control record whose success does not
+// independently schedule another planner turn.
 //
 // Runtime contract:
 //   - bookkeeping calls do not consume the run-level MaxToolCalls retrieval budget,
+//   - bookkeeping results do not change the consecutive-failure counter,
 //   - the runtime admits or rejects each model-authored call batch atomically;
 //     bookkeeping calls do not contribute to that batch's budget cost,
 //   - bookkeeping results remain durable run events for hooks, streams, and
@@ -814,8 +815,15 @@ func TerminalRun() {
 // A bookkeeping-only planner turn is therefore only valid when the same turn
 // already resolves without another reasoning resume: either a TerminalRun tool,
 // a FinalResponse/FinalToolResult, or an await/pause control-plane handshake.
-// Use Bookkeeping for structured progress, status, finding, and terminal-commit
-// tools whose cost is record-keeping, not retrieval.
+// Use Bookkeeping for structured progress, status, transition declarations,
+// findings, and terminal-commit tools whose success must not independently
+// schedule another planner turn.
+//
+// Do NOT mark a tool Bookkeeping when its successful result must schedule later
+// planner reasoning (for example a state-machine snapshot consumed from
+// ToolOutputs), or when the model routinely calls it alone mid-run expecting to
+// continue afterwards: both patterns require the reasoning resume that
+// bookkeeping semantics deliberately skip.
 //
 // Bookkeeping must appear in a Tool expression.
 //

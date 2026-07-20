@@ -484,6 +484,7 @@ type PlanResumeInput struct {
     Agent       PlannerContext
     Events      PlannerEvents
     ToolOutputs []*ToolOutput         // Results from previous tool calls
+    SynthesisOnly bool                 // Final response required; tools forbidden
     Finalize    *Termination          // Non-nil when runtime forces finalization
     Reminders   []reminder.Reminder
 }
@@ -504,9 +505,9 @@ Bookkeeping exception:
   signed assistant responses are replayed unchanged,
 - successful results are omitted from compact
   `PlanResumeInput.ToolOutputs` and do not force another planner turn,
-- except when a bookkeeping tool fails with a `RetryHint`: that retryable
-  failure enters `ToolOutputs` so the next resume turn can repair and resend the
-  tool call,
+- except when a bookkeeping tool fails with a `RetryHint` whose
+  `AllowsRetry()` method returns true: that recoverable failure enters
+  `ToolOutputs` so the next resume turn can repair and resend the tool call,
 - bookkeeping tools may still drive an await handshake in the same turn (for
   example a runtime-owned `ToolPause`); that control-plane await remains legal
   even when no successful bookkeeping result requires a resume.
@@ -523,10 +524,10 @@ Workflow step boundary:
   bookkeeping side effects that complete successfully in the same step,
 - when forced finalization is active (`PlanResumeInput.Finalize != nil`), a
   planner may close through terminal bookkeeping tools instead of prose; the
-  runtime admits only `Bookkeeping()` + `TerminalRun()` calls, executes them
-  inside the remaining hard-deadline window, stamps generated tool-call IDs with
-  the finalization attempt, and requires every terminal side effect in the batch
-  to complete successfully,
+  runtime admits only `TerminalRun()` calls (`TerminalRun()` implies
+  bookkeeping), executes them inside the remaining hard-deadline window, stamps
+  generated tool-call IDs with the finalization attempt, and requires every
+  terminal side effect in the batch to complete successfully,
 - retry-owned restrict-to-tool state constrains normal repair turns but not this
   validated terminal bookkeeping path; caller-supplied `WithRestrictToTool`
   remains run-scoped and still applies,
@@ -539,6 +540,7 @@ Workflow step boundary:
 ```go
 type PlanResult struct {
     ToolCalls     []ToolRequest    // Tools to execute (empty for final response)
+    SynthesizeAfterTools bool      // Synthesize after success; repair remains allowed
     FinalResponse *FinalResponse   // Terminal assistant message
     FinalToolResult *FinalToolResult // Terminal tool result for nested agent runs
     Streamed      bool             // True if text was already streamed via Events
@@ -549,6 +551,33 @@ type PlanResult struct {
 }
 ```
 
+These fields answer different questions:
+
+| Contract | Scope | Question answered |
+| --- | --- | --- |
+| `ToolSpec.Tags` | One tool for every run | Which flat labels are available to generic policy and UI filtering? |
+| `ToolSpec.Meta` | One tool for every run | Which inert generated annotations are available to their named consumers? Metadata alone changes no runtime behavior. |
+| `ToolSpec.Bookkeeping` | One tool for every run | Does this call consume retrieval or failure budget, and does its success independently schedule another planner turn? |
+| `ToolSpec.TerminalRun` | One tool for every run | Does successful execution itself complete the run? |
+| `RetryHint.AllowsRetry()` | One failed result | Is another tool attempt allowed in this run? |
+| `PlanResult.SynthesizeAfterTools` | One selected batch | If the batch has no recoverable failure, must the next turn answer? |
+| `PlanResumeInput.SynthesisOnly` | One planner activity | Must this planner result be terminal and tool-free? |
+| `PlanResumeInput.Finalize` | Runtime-forced termination | Did a cap or deadline prohibit normal work? |
+
+The runtime applies them in this order:
+
+| Completed step | Next state |
+| --- | --- |
+| Cap or deadline exhausted | Forced `Finalize` turn |
+| Successful `TerminalRun` tool | End immediately |
+| Any failure allows retry | Normal repair turn |
+| `SynthesizeAfterTools` requested | `SynthesisOnly` turn |
+| Otherwise | Normal continuation turn |
+
+`SynthesizeAfterTools` therefore does not create a second retry policy.
+Recoverable failures use the existing `RetryHint` contract; terminal failures
+and successful batches proceed to the requested answer.
+
 Bookkeeping turn invariant:
 
 - if a planner turn emits any budgeted tool call, the runtime resumes as usual
@@ -557,9 +586,9 @@ Bookkeeping turn invariant:
   must also resolve that turn without another reasoning resume: either a
   terminal outcome (`TerminalRun` tool or `FinalResponse` / `FinalToolResult`),
   or an await/pause control-plane handshake,
-- retryable bookkeeping failures are the one planner-visible exception: when a
-  bookkeeping tool returns a `RetryHint`, the runtime resumes so the planner can
-  repair and resend that tool call,
+- recoverable bookkeeping failures are the one planner-visible exception: when
+  a bookkeeping tool returns a `RetryHint` whose `AllowsRetry()` method is true,
+  the runtime resumes so the planner can repair and resend that tool call,
 - during forced finalization, terminal bookkeeping calls are not replayed into a
   later planner turn; they either durably close the run or fail finalization,
 - otherwise the runtime fails fast instead of scheduling an implicit extra
@@ -747,9 +776,11 @@ exposing a separate transcript handle.
 6. **Planner resumes from `ToolOutputs`** — `PlanResumeInput.ToolOutputs` is the canonical execution-history boundary for budgeted tools only
 
 Bookkeeping tools follow the same execution and durability path, but not the
-same planner-resume path: the runtime records their hook/stream/run-log events
-and preserves their results in the provider transcript while omitting them from
-the compact `ToolOutputs` passed to future planner turns.
+same accounting or planner-resume path: the runtime records their
+hook/stream/run-log events and preserves their results in the provider
+transcript while charging neither retrieval nor consecutive-failure budget.
+Successful results are omitted from compact `ToolOutputs`; recoverable failures
+remain visible for repair.
 
 ### ToolsetRegistration
 
@@ -1705,6 +1736,11 @@ trigger budget from the exact-retention budget:
   tokenization depends on the deployed model. Token-budget compression requires
   a history model that implements `model.TokenCounter` with exact counts; the
   Bedrock adapter does this with Bedrock's native `CountTokens` API.
+- When Bedrock returns its canonical `prompt is too long: N tokens > M
+  maximum` `ValidationException`, the adapter decodes that complete provider
+  message as an exact count. This allows history compression to run after the
+  request has crossed the model context window. Every other validation error
+  remains an error.
 - Counts exclude replayed thinking blocks: thinking signatures only verify on
   the model that issued them, and the history model class can differ from the
   model that produced the transcript. This matches Anthropic billing, which
