@@ -243,7 +243,7 @@ func (r *Runtime) toolResultRequiresResume(call planner.ToolRequest, result *pla
 	if !r.isBookkeeping(call.Name) {
 		return true
 	}
-	return result != nil && result.Error != nil && result.RetryHint != nil
+	return result != nil && result.Error != nil && result.RetryHint.AllowsRetry()
 }
 
 func (r *Runtime) toolResultContent(call *planner.ToolRequest, tr *planner.ToolResult) (any, error) {

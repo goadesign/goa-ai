@@ -84,7 +84,7 @@ func retryHintReminder(tr *planner.ToolResult) string {
 		ClarifyingQuestion: h.ClarifyingQuestion,
 		RestrictToTool:     h.RestrictToTool && h.Tool != "",
 		RestrictionTool:    string(h.Tool),
-		Terminal:           h.Reason == planner.RetryReasonTimeout,
+		Terminal:           !h.AllowsRetry(),
 		ExampleJSON:        compactRawJSON(h.ExampleJSON),
 		PriorInputJSON:     compactJSON(h.PriorInput),
 	}

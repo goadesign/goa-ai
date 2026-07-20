@@ -306,7 +306,8 @@ type (
 		ToolOutputs []*ToolOutputRef
 
 		// SynthesisOnly requires the planner to produce a final response without
-		// new tool calls.
+		// new tool calls. The workflow sets it only when a selected
+		// synthesis-after-tools batch has no recoverable failure.
 		SynthesisOnly bool
 
 		// Finalize requests a final turn with no further tool calls.

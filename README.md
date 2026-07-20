@@ -172,8 +172,9 @@ out, err = client.OneShotRun(ctx, []*model.Message{{
 Planners decide what happens next: final response, tool calls, await human input,
 or terminal tool result. During runtime-forced finalization, planners may also
 close through terminal bookkeeping tools; the runtime executes only
-`Bookkeeping()` + `TerminalRun()` tools in that path and requires the terminal
-side effects to succeed inside the remaining hard-deadline window. Retry-owned
+`TerminalRun()` tools in that path (`TerminalRun()` implies bookkeeping) and
+requires the terminal side effects to succeed inside the remaining
+hard-deadline window. Retry-owned
 tool restrictions filter only budgeted work tools, so bookkeeping tools remain
 available in correction and finalization turns. Caller `WithRestrictToTool`
 policy is run-scoped and still applies to every tool. Tool executors decide how
@@ -286,8 +287,9 @@ var Docs = Toolset("docs", func() {
   providers consume schema annotations while Anthropic, Bedrock Claude, and
   Claude-on-Vertex receive provider-native `input_examples` under the required
   tool-examples beta contract, including exact Anthropic token counting.
-- Explicit control-plane contracts: `Bookkeeping()` keeps tools durable,
-  budget-exempt, and hidden from future planner turns
+- Explicit control-plane contracts: `Bookkeeping()` keeps calls durable and
+  model-visible while exempting them from retrieval/failure budgets and omitting
+  successful results from typed future `ToolOutputs`
 
 ### Bind Tools to Goa Services
 
@@ -454,7 +456,9 @@ Tool("get_time_series", "Get a bounded time-series view", func() {
 
 ### Bookkeeping and Terminal Tools
 
-Use `Bookkeeping()` for control-plane side effects such as status updates, progress snapshots, or terminal commits.
+Use `Bookkeeping()` for control-plane records such as status markers, transition
+declarations, or terminal commits. Do not use it for a snapshot whose success
+must schedule the next planner turn.
 
 ```go
 Tool("set_step_status", "Update task step status", func() {
@@ -471,7 +475,11 @@ Tool("commit_report", "Commit final report", func() {
 })
 ```
 
-Bookkeeping tools do not consume the normal `MaxToolCalls` budget. Their events are still durable and streamed, and their provider transcript blocks remain intact. Successful results stay out of compact future `ToolOutputs`; retryable failures stay visible there with their retry hints so the planner can repair the failed call.
+Bookkeeping tools consume neither the normal `MaxToolCalls` budget nor the
+consecutive-failure allowance. Their events are still durable and streamed, and
+their provider transcript blocks remain intact. Successful results stay out of
+compact future `ToolOutputs`; recoverable failures stay visible there so the
+planner can repair the failed call.
 
 Retry-owned tool restrictions filter budgeted work tools only. Bookkeeping tools
 remain available during correction turns, including terminal run tools that close
@@ -480,15 +488,19 @@ to every tool.
 
 The workflow runtime evaluates one admitted planner result as one step: it executes tool and await work, records durable and planner-facing outputs through one canonical path, then applies one transition policy to resume, finish, or finalize. A terminal payload may only accompany non-resuming, non-terminal bookkeeping side effects; budgeted tools, retryable bookkeeping failures, terminal tools, and awaits must be separate planner decisions. Bookkeeping calls remain in the provider transcript so signed responses are never edited.
 
-A planner that already knows a selected tool batch will provide the final
+A planner that knows a successful selected tool batch will provide the final
 evidence can set `PlanResult.SynthesizeAfterTools`. The durable workflow carries
 that decision to the next activity as `PlanResumeInput.SynthesisOnly`; the
 runtime requires the planner to return a terminal result without additional
-tool calls. The
-flag is valid only on a tool-only result, keeping execution and answer synthesis
-as separate turns without relying on process-local state. The batch must contain
-at least one budgeted tool and cannot contain a terminal tool; bookkeeping and
-terminal-run semantics therefore remain independent.
+tool calls. A recoverable tool failure takes the normal repair path first.
+`RetryHint.AllowsRetry()` is the single authority for that distinction because
+some hints, such as timeout classification, are terminal.
+
+The flag is valid only on a tool-only result, keeping execution and answer
+synthesis as separate turns without relying on process-local state. The batch
+must contain at least one budgeted tool and cannot contain a terminal tool;
+bookkeeping and terminal-run semantics therefore remain independent. See
+[DESIGN.md](DESIGN.md#planner-step-contract) for the complete transition table.
 
 ---
 

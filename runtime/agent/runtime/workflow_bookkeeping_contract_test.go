@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
@@ -117,6 +118,69 @@ func TestNormalizeStepRejectsContradictoryTerminalShapes(t *testing.T) {
 			require.ErrorContains(t, err, tt.want)
 		})
 	}
+}
+
+func TestSynthesisOnlyAfterToolBatch(t *testing.T) {
+	t.Parallel()
+
+	success := &planner.ToolResult{}
+	terminalFailure := &planner.ToolResult{Error: planner.NewToolError("failed")}
+	timeout := &planner.ToolResult{
+		Error:     planner.NewToolError("timed out"),
+		RetryHint: &planner.RetryHint{Reason: planner.RetryReasonTimeout},
+	}
+	recoverableFailure := &planner.ToolResult{
+		Error:     planner.NewToolError("invalid input"),
+		RetryHint: &planner.RetryHint{Reason: planner.RetryReasonInvalidArguments},
+	}
+	tests := []struct {
+		name      string
+		requested bool
+		results   []*planner.ToolResult
+		want      bool
+	}{
+		{name: "ordinary continuation", results: []*planner.ToolResult{success}, want: false},
+		{name: "successful final batch", requested: true, results: []*planner.ToolResult{success}, want: true},
+		{name: "terminal failure", requested: true, results: []*planner.ToolResult{terminalFailure}, want: true},
+		{name: "timeout", requested: true, results: []*planner.ToolResult{timeout}, want: true},
+		{name: "recoverable failure", requested: true, results: []*planner.ToolResult{recoverableFailure}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			records := make([]stepToolRecord, len(tt.results))
+			for i, result := range tt.results {
+				records[i].result = result
+			}
+			batch := stepBatch{
+				program: stepProgram{
+					result: &planner.PlanResult{SynthesizeAfterTools: tt.requested},
+				},
+				records: records,
+			}
+			assert.Equal(t, tt.want, synthesisOnlyAfterToolBatch(batch))
+		})
+	}
+}
+
+func TestBookkeepingResultRequiresResumeOnlyForRecoverableFailure(t *testing.T) {
+	t.Parallel()
+
+	rt := New(WithLogger(telemetry.NoopLogger{}))
+	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"), "svc")
+	bookkeeping.Bookkeeping = true
+	seedTestToolSpecs(rt, bookkeeping)
+	call := planner.ToolRequest{Name: bookkeeping.Name}
+
+	assert.False(t, rt.toolResultRequiresResume(call, &planner.ToolResult{}))
+	assert.False(t, rt.toolResultRequiresResume(call, &planner.ToolResult{
+		Error:     planner.NewToolError("timed out"),
+		RetryHint: &planner.RetryHint{Reason: planner.RetryReasonTimeout},
+	}))
+	assert.True(t, rt.toolResultRequiresResume(call, &planner.ToolResult{
+		Error:     planner.NewToolError("invalid input"),
+		RetryHint: &planner.RetryHint{Reason: planner.RetryReasonInvalidArguments},
+	}))
 }
 
 func TestRunLoopBookkeepingOnlyFinalResponseFinishesWithoutResume(t *testing.T) {

@@ -378,7 +378,7 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 		l.base,
 		l.input.Policy,
 		l.st.ToolOutputs,
-		batch.program.result.SynthesizeAfterTools,
+		synthesisOnlyAfterToolBatch(batch),
 		&l.st.NextAttempt,
 	)
 	if err != nil {
@@ -413,6 +413,20 @@ func (l *workflowLoop) recordUnrecordedStepToolResults(batch *stepBatch) error {
 	}
 	batch.recorded = len(batch.records)
 	return nil
+}
+
+// synthesisOnlyAfterToolBatch applies the planner's requested success
+// transition without overriding typed recovery guidance from a failed tool.
+func synthesisOnlyAfterToolBatch(batch stepBatch) bool {
+	if !batch.program.result.SynthesizeAfterTools {
+		return false
+	}
+	for _, record := range batch.records {
+		if record.result.Error != nil && record.result.RetryHint.AllowsRetry() {
+			return false
+		}
+	}
+	return true
 }
 
 // finalizeStep runs a required finalization transition and fails if restricted
