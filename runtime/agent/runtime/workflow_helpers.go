@@ -337,6 +337,7 @@ func (r *Runtime) buildNextResumeRequest(
 	base *planner.PlanInput,
 	runPolicy *PolicyOverrides,
 	toolOutputs []*planner.ToolOutput,
+	synthesisOnly bool,
 	nextAttempt *int,
 ) (PlanActivityInput, error) {
 	attempt := *nextAttempt
@@ -354,12 +355,13 @@ func (r *Runtime) buildNextResumeRequest(
 		return PlanActivityInput{}, err
 	}
 	out := PlanActivityInput{
-		AgentID:     agentID,
-		RunID:       base.RunContext.RunID,
-		Messages:    plannerMsgs,
-		RunContext:  resumeCtx,
-		Policy:      clonePolicyOverrides(runPolicy),
-		ToolOutputs: encodedToolOutputs,
+		AgentID:       agentID,
+		RunID:         base.RunContext.RunID,
+		Messages:      plannerMsgs,
+		RunContext:    resumeCtx,
+		Policy:        clonePolicyOverrides(runPolicy),
+		ToolOutputs:   encodedToolOutputs,
+		SynthesisOnly: synthesisOnly,
 	}
 	if err := enforcePlanActivityInputBudget(out); err != nil {
 		return PlanActivityInput{}, err

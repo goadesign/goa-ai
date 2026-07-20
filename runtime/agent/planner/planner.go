@@ -663,6 +663,11 @@ type PlanResumeInput struct {
 	// canonical tool outputs instead of relying on a duplicate runtime field.
 	ToolOutputs []*ToolOutput
 
+	// SynthesisOnly requires this turn to produce a final response without new
+	// tool calls. The workflow sets it after executing a PlanResult whose
+	// SynthesizeAfterTools field is true.
+	SynthesisOnly bool
+
 	// Finalize is non-nil when the runtime forces termination and requests a final response.
 	Finalize *Termination
 
@@ -674,6 +679,10 @@ type PlanResumeInput struct {
 type PlanResult struct {
 	// ToolCalls are the tool invocations the runtime should execute next.
 	ToolCalls []ToolRequest
+
+	// SynthesizeAfterTools requires the planner turn following this tool batch
+	// to produce a final response without new tool calls.
+	SynthesizeAfterTools bool
 
 	// FinalResponse ends the run with a final assistant message.
 	FinalResponse *FinalResponse

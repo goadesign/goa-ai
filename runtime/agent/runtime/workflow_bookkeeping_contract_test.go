@@ -28,10 +28,12 @@ import (
 func TestNormalizeStepRejectsContradictoryTerminalShapes(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 	budgeted := newAnyJSONSpec(tools.Ident("svc.lookup"), "svc")
+	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"), "svc")
+	bookkeeping.Bookkeeping = true
 	terminalTool := newAnyJSONSpec(tools.Ident("svc.complete"), "svc")
 	terminalTool.Bookkeeping = true
 	terminalTool.TerminalRun = true
-	seedTestToolSpecs(rt, budgeted, terminalTool)
+	seedTestToolSpecs(rt, budgeted, bookkeeping, terminalTool)
 
 	final := &planner.FinalResponse{
 		Message: &model.Message{
@@ -54,6 +56,42 @@ func TestNormalizeStepRejectsContradictoryTerminalShapes(t *testing.T) {
 				})),
 			},
 			want: "cannot combine terminal payload and await",
+		},
+		{
+			name: "synthesis without tool calls",
+			result: &planner.PlanResult{
+				FinalResponse:        final,
+				SynthesizeAfterTools: true,
+			},
+			want: "synthesis-after-tools requires only tool calls",
+		},
+		{
+			name: "synthesis with await",
+			result: &planner.PlanResult{
+				ToolCalls: []planner.ToolRequest{{Name: budgeted.Name}},
+				Await: planner.NewAwait(planner.AwaitClarificationItem(&planner.AwaitClarification{
+					ID:       "clarify-1",
+					Question: "Which item?",
+				})),
+				SynthesizeAfterTools: true,
+			},
+			want: "synthesis-after-tools requires only tool calls",
+		},
+		{
+			name: "synthesis with bookkeeping only",
+			result: &planner.PlanResult{
+				ToolCalls:            []planner.ToolRequest{{Name: bookkeeping.Name}},
+				SynthesizeAfterTools: true,
+			},
+			want: "synthesis-after-tools requires at least one budgeted tool",
+		},
+		{
+			name: "synthesis with terminal tool",
+			result: &planner.PlanResult{
+				ToolCalls:            []planner.ToolRequest{{Name: terminalTool.Name}},
+				SynthesizeAfterTools: true,
+			},
+			want: "synthesis-after-tools cannot include terminal tool",
 		},
 		{
 			name: "terminal plus budgeted tool",
@@ -492,7 +530,7 @@ func TestRunLoopProviderEmptyToolCallIDsUseBatchIndexes(t *testing.T) {
 	}
 }
 
-func TestRunLoopMixedBudgetedAndBookkeepingStillResumes(t *testing.T) {
+func TestRunLoopMixedBudgetedAndBookkeepingCarriesSynthesisOnly(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
 	budgeted := newAnyJSONSpec(tools.Ident("svc.tools.lookup"), "svc.tools")
@@ -545,6 +583,7 @@ func TestRunLoopMixedBudgetedAndBookkeepingStillResumes(t *testing.T) {
 			{Name: budgeted.Name, Payload: rawjson.Message(`{}`)},
 			{Name: bookkeeping.Name, Payload: rawjson.Message(`{}`)},
 		},
+		SynthesizeAfterTools: true,
 	}
 
 	out, err := rt.runLoop(
@@ -562,6 +601,7 @@ func TestRunLoopMixedBudgetedAndBookkeepingStillResumes(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.Equal(t, "resume", wfCtx.lastPlannerCall.Name)
+	require.True(t, wfCtx.lastPlannerCall.Input.SynthesisOnly)
 	require.Len(t, wfCtx.lastPlannerCall.Input.ToolOutputs, 1)
 	require.Equal(t, "run-1/turn-1/attempt-1/svc-tools-lookup/0", wfCtx.lastPlannerCall.Input.ToolOutputs[0].ToolCallID)
 }
