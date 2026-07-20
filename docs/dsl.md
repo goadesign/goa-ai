@@ -1000,7 +1000,8 @@ model-visible result JSON using model-facing field names derived from
 
 ### Tags
 
-`Tags` attaches metadata labels to tools or toolsets for categorization and filtering:
+`Tags` attaches flat labels to tools or toolsets for generic policy and UI
+categorization. Toolset tags are inherited by their tools.
 
 ```go
 Tool("delete_file", "Delete a file", func() {
@@ -1019,6 +1020,32 @@ Common tag patterns include:
 - Domain: `"nlp"`, `"database"`, `"api"`, `"filesystem"`
 - Capability: `"read"`, `"write"`, `"search"`, `"transform"`
 - Risk: `"safe"`, `"destructive"`, `"external"`
+
+### Meta
+
+Goa's standard `Meta(name, values...)` DSL attaches a named design-time
+annotation to the current tool. Goa-AI code generation preserves it in
+`ToolSpec.Meta` as `map[string][]string`.
+
+```go
+Tool("resolve_source", "Resolve a selectable source", func() {
+    Args(ResolveSourceArgs)
+    Return(ResolveSourceResult)
+    Meta("example.chat.supplies_tool_input")
+})
+```
+
+Use `Meta` for a stable, consumer-owned contract that is not a generic policy
+category. Metadata is inert: Goa-AI does not change scheduling, visibility,
+budgets, retries, or terminal behavior merely because a key is present. The
+planner, policy, or UI that interprets a key owns and documents its semantics.
+
+Keep the built-in contracts canonical:
+
+- use `Tags` for generic allow/deny and capability filtering,
+- use `Bookkeeping` and `TerminalRun` for accounting and terminal behavior,
+- use `RetryHint` for per-result failure handling,
+- use planner fields such as `SynthesizeAfterTools` for per-batch transitions.
 
 ### ResultReminder
 
@@ -1060,12 +1087,13 @@ Tool("tasks_complete", "Commit the terminal task artifact", func() {
 
 ### Bookkeeping
 
-`Bookkeeping` marks a tool as a control-plane bookkeeping tool rather than a
-future reasoning input.
+`Bookkeeping` marks a tool as a control-plane record whose success does not
+independently schedule another planner turn.
 
 Runtime contract:
 
 - bookkeeping calls do not consume the run-level `MaxToolCalls` retrieval budget,
+- bookkeeping results do not change the consecutive-failure counter,
 - model-authored call batches are admitted or rejected atomically, with
   bookkeeping calls excluded from the batch's budget cost,
 - bookkeeping results still publish durable run events for hooks, streams, and
@@ -1078,8 +1106,9 @@ Runtime contract:
 This means a bookkeeping-only planner turn is only valid when the same turn
 already resolves without another reasoning resume (a `TerminalRun` tool, a
 `FinalResponse` / `FinalToolResult`, or an await/pause control-plane
-handshake). Retryable bookkeeping failures remain planner-visible through
-`RetryHint` so the planner can repair the failed control-plane call.
+handshake). A failed bookkeeping result remains planner-visible only when its
+`RetryHint.AllowsRetry()` is true, so terminal classifications do not create an
+accidental repair turn.
 
 Operationally, a planner result is processed as one workflow step: the runtime
 executes admitted tool and await work, records durable and planner-visible
@@ -1101,9 +1130,9 @@ Tool("set_step_status", "Update step status", func() {
 })
 ```
 
-`Bookkeeping` composes with `TerminalRun`: a terminal commit tool is typically
-both (bookkeeping so it always executes and terminal so the run completes when
-it does).
+`TerminalRun` implies `Bookkeeping`: a terminal commit consumes no retrieval or
+consecutive-failure budget and completes the run when it succeeds. Declare
+`TerminalRun()` alone; the DSL supplies the bookkeeping classification.
 
 ---
 

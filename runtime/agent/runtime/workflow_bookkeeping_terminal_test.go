@@ -1,9 +1,9 @@
 package runtime
 
 // workflow_bookkeeping_terminal_test.go exercises the end-to-end invariant that
-// a bookkeeping tool executes even when the run-level retrieval budget is
-// exhausted. The standard terminal-commit pattern (`Bookkeeping() + TerminalRun()`)
-// must complete the run cleanly in this state.
+// a terminal bookkeeping tool executes even when the run-level retrieval budget
+// is exhausted. TerminalRun implies Bookkeeping, and the tool must complete the
+// run cleanly in this state.
 
 import (
 	"context"
