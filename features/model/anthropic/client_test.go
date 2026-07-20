@@ -62,6 +62,22 @@ func TestTranslateResponsePreservesThinkingInOneAssistantMessage(t *testing.T) {
 	}, resp.Content[0].Parts)
 }
 
+func TestTranslateResponsePreservesOmittedThinkingDisplay(t *testing.T) {
+	resp, err := translateResponse(&sdk.Message{
+		StopReason: sdk.StopReasonToolUse,
+		Content: []sdk.ContentBlockUnion{
+			{Type: "thinking", Signature: "sig"},
+			{Type: "tool_use", ID: "call-1", Name: "lookup", Input: json.RawMessage(`{"id":"a"}`)},
+		},
+	}, map[string]string{"lookup": "svc.lookup"})
+
+	require.NoError(t, err)
+	require.Equal(t, []model.Part{
+		model.ThinkingPart{Signature: "sig", Final: true},
+		model.ToolUsePart{ID: "call-1", Name: "svc.lookup", Input: rawjson.Message(`{"id":"a"}`)},
+	}, resp.Content[0].Parts)
+}
+
 func TestTranslateResponsePreservesTextCitations(t *testing.T) {
 	resp, err := translateResponse(&sdk.Message{
 		StopReason: sdk.StopReasonEndTurn,

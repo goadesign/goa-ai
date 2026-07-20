@@ -722,8 +722,8 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 				Citations: citations,
 			})
 		case "thinking":
-			if block.Thinking == "" || block.Signature == "" {
-				return nil, errors.New("anthropic: response thinking block requires plaintext and signature")
+			if block.Signature == "" {
+				return nil, errors.New("anthropic: response thinking block requires signature")
 			}
 			assistant.Parts = append(assistant.Parts, model.ThinkingPart{
 				Text:      block.Thinking,
