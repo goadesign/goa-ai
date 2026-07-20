@@ -102,6 +102,61 @@ func TestTranslateResponsePreservesReasoning(t *testing.T) {
 	}, resp.Content[0].Parts)
 }
 
+func TestTranslateResponseHandlesIncompleteReasoning(t *testing.T) {
+	tests := []struct {
+		name      string
+		text      *string
+		signature *string
+		wantErr   string
+		wantParts []model.Part
+	}{
+		{
+			name:      "signature only",
+			signature: aws.String("sig"),
+			wantParts: []model.Part{
+				model.ThinkingPart{Signature: "sig", Final: true},
+				model.TextPart{Text: "answer"},
+			},
+		},
+		{
+			name:    "missing signature",
+			text:    aws.String("reasoning"),
+			wantErr: "bedrock: response reasoning plaintext is missing provider signature",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			output := &bedrockruntime.ConverseOutput{
+				StopReason: brtypes.StopReasonEndTurn,
+				Output: &brtypes.ConverseOutputMemberMessage{Value: brtypes.Message{
+					Role: brtypes.ConversationRoleAssistant,
+					Content: []brtypes.ContentBlock{
+						&brtypes.ContentBlockMemberReasoningContent{
+							Value: &brtypes.ReasoningContentBlockMemberReasoningText{
+								Value: brtypes.ReasoningTextBlock{
+									Text:      test.text,
+									Signature: test.signature,
+								},
+							},
+						},
+						&brtypes.ContentBlockMemberText{Value: "answer"},
+					},
+				}},
+			}
+
+			resp, err := translateResponse(output, nil, "", "")
+
+			if test.wantErr != "" {
+				require.EqualError(t, err, test.wantErr)
+				require.Nil(t, resp)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, test.wantParts, resp.Content[0].Parts)
+		})
+	}
+}
+
 // Ensures encodeMessages preserves transcript order and places reasoning before tool_use
 // inside an assistant message, and encodes user tool_result referencing the prior ID.
 func TestEncodeMessages_ReencodeTranscriptOrder(t *testing.T) {

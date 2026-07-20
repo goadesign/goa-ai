@@ -1485,9 +1485,11 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 			case *brtypes.ReasoningContentBlockMemberReasoningText:
 				text := aws.ToString(reasoning.Value.Text)
 				signature := aws.ToString(reasoning.Value.Signature)
-				if text == "" || signature == "" {
-					return nil, errors.New("bedrock: response reasoning block requires plaintext and signature")
+				if signature == "" {
+					return nil, errors.New("bedrock: response reasoning plaintext is missing provider signature")
 				}
+				// Signature-only reasoning blocks are canonical when thinking
+				// display is "omitted"; preserve them for verbatim replay.
 				assistant.Parts = append(assistant.Parts, model.ThinkingPart{
 					Text:      text,
 					Signature: signature,
