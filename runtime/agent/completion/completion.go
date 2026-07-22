@@ -262,8 +262,9 @@ func structuredOutputFor[T any](spec Spec[T]) (*model.StructuredOutput, error) {
 		return nil, fmt.Errorf("completion %q requires a bidirectional result codec", spec.Name)
 	}
 	return &model.StructuredOutput{
-		Name:   string(spec.Name),
-		Schema: append([]byte(nil), spec.Result.Schema...),
+		Name:        string(spec.Name),
+		Schema:      append([]byte(nil), spec.Result.Schema...),
+		Description: spec.Description,
 	}, nil
 }
 

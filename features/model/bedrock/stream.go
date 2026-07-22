@@ -32,14 +32,20 @@ type bedrockStreamer struct {
 	errSet   bool
 	finalErr error
 
-	responseMu  sync.RWMutex
-	response    *model.Response
-	toolNameMap map[string]string
-	modelID     string
-	modelClass  model.ModelClass
-	output      *model.StructuredOutput
+	responseMu       sync.RWMutex
+	response         *model.Response
+	toolNameMap      map[string]string
+	modelID          string
+	modelClass       model.ModelClass
+	output           *model.StructuredOutput
+	toolFallbackName string
 }
 
+// newBedrockStreamer adapts a Bedrock ConverseStream to model.Streamer.
+// toolFallbackName is non-empty only when structuredOutputUsesToolFallback
+// chose to express output (structured output) as a forced tool call; the
+// streamer then treats that one tool_use block as the completion channel
+// instead of a canonical ToolCallChunk.
 func newBedrockStreamer(
 	ctx context.Context,
 	stream *bedrockruntime.ConverseStreamEventStream,
@@ -47,17 +53,19 @@ func newBedrockStreamer(
 	modelID string,
 	modelClass model.ModelClass,
 	output *model.StructuredOutput,
+	toolFallbackName string,
 ) model.Streamer {
 	cctx, cancel := context.WithCancel(ctx)
 	bs := &bedrockStreamer{
-		ctx:         cctx,
-		cancel:      cancel,
-		stream:      stream,
-		chunks:      make(chan model.Chunk, 32),
-		toolNameMap: nameMap,
-		modelID:     modelID,
-		modelClass:  modelClass,
-		output:      output,
+		ctx:              cctx,
+		cancel:           cancel,
+		stream:           stream,
+		chunks:           make(chan model.Chunk, 32),
+		toolNameMap:      nameMap,
+		modelID:          modelID,
+		modelClass:       modelClass,
+		output:           output,
+		toolFallbackName: toolFallbackName,
 	}
 	go bs.run()
 	return bs
@@ -112,6 +120,7 @@ func (s *bedrockStreamer) run() {
 		s.modelID,
 		s.modelClass,
 		s.output,
+		s.toolFallbackName,
 	)
 	events := s.stream.Events()
 
@@ -194,10 +203,11 @@ type chunkProcessor struct {
 	canonicalParts  map[int]model.Part
 	openBlocks      map[int]struct{}
 
-	toolNameMap map[string]string
-	modelID     string
-	modelClass  model.ModelClass
-	output      *model.StructuredOutput
+	toolNameMap      map[string]string
+	modelID          string
+	modelClass       model.ModelClass
+	output           *model.StructuredOutput
+	toolFallbackName string
 
 	canonical       model.Response
 	started         bool
@@ -205,25 +215,32 @@ type chunkProcessor struct {
 	terminalEmitted bool
 }
 
+// newChunkProcessor builds the stream event decoder. toolFallbackName is
+// non-empty only when the request encoded structured output as a forced tool
+// call (see structuredOutputUsesToolFallback); the processor then routes that
+// one tool_use content block through the completion buffer instead of
+// emitting a ToolCallChunk.
 func newChunkProcessor(
 	emit func(model.Chunk) error,
 	nameMap map[string]string,
 	modelID string,
 	modelClass model.ModelClass,
 	output *model.StructuredOutput,
+	toolFallbackName string,
 ) *chunkProcessor {
 	return &chunkProcessor{
-		emit:            emit,
-		toolBlocks:      make(map[int]*toolBuffer),
-		reasoningBlocks: make(map[int]*reasoningBuffer),
-		textBlocks:      make(map[int]*strings.Builder),
-		citationBlocks:  make(map[int][]model.Citation),
-		canonicalParts:  make(map[int]model.Part),
-		openBlocks:      make(map[int]struct{}),
-		toolNameMap:     nameMap,
-		modelID:         modelID,
-		modelClass:      modelClass,
-		output:          output,
+		emit:             emit,
+		toolBlocks:       make(map[int]*toolBuffer),
+		reasoningBlocks:  make(map[int]*reasoningBuffer),
+		textBlocks:       make(map[int]*strings.Builder),
+		citationBlocks:   make(map[int][]model.Citation),
+		canonicalParts:   make(map[int]model.Part),
+		openBlocks:       make(map[int]struct{}),
+		toolNameMap:      nameMap,
+		modelID:          modelID,
+		modelClass:       modelClass,
+		output:           output,
+		toolFallbackName: toolFallbackName,
 	}
 }
 
@@ -258,39 +275,49 @@ func (p *chunkProcessor) Handle(event any) error {
 		}
 		p.openBlocks[idx] = struct{}{}
 		if start := ev.Value.Start; start != nil {
-			if toolUse, ok := start.(*brtypes.ContentBlockStartMemberToolUse); ok {
-				if p.output != nil {
+			toolUse, ok := start.(*brtypes.ContentBlockStartMemberToolUse)
+			if !ok {
+				return fmt.Errorf("bedrock stream: unsupported content block start %T", start)
+			}
+			if toolUse.Value.ToolUseId == nil || *toolUse.Value.ToolUseId == "" {
+				return fmt.Errorf("bedrock stream: tool use block missing tool_use_id")
+			}
+			id := *toolUse.Value.ToolUseId
+			if toolUse.Value.Name == nil || *toolUse.Value.Name == "" {
+				return fmt.Errorf("bedrock stream: tool use block %q missing name", id)
+			}
+			raw := *toolUse.Value.Name
+			name := normalizeToolName(raw)
+			// Bedrock tool_use blocks echo back the provider-visible tool name. The
+			// adapter normally translates that provider name back to the canonical
+			// tool ID via the per-request reverse map. When the model hallucinates a
+			// tool name that was not advertised in this request, the reverse map will
+			// not contain it. This is not a transport/protocol failure: it is normal
+			// model behavior and must be handled by the runtime as a tool error so
+			// the model can recover on the next resume turn.
+			if canonical, ok := p.toolNameMap[name]; ok {
+				name = canonical
+			}
+			if p.output != nil {
+				if p.toolFallbackName == "" || name != p.toolFallbackName {
 					return fmt.Errorf(
 						"bedrock stream: structured output %q emitted tool_use start",
 						p.output.Name,
 					)
 				}
-				tb := &toolBuffer{}
-				if toolUse.Value.ToolUseId == nil || *toolUse.Value.ToolUseId == "" {
-					return fmt.Errorf("bedrock stream: tool use block missing tool_use_id")
+				if p.completion != nil {
+					return fmt.Errorf(
+						"bedrock stream: structured output %q spanned multiple content blocks (%d, %d)",
+						p.output.Name,
+						p.completion.index,
+						idx,
+					)
 				}
-				tb.id = *toolUse.Value.ToolUseId
-				if toolUse.Value.Name == nil || *toolUse.Value.Name == "" {
-					return fmt.Errorf("bedrock stream: tool use block %q missing name", tb.id)
-				}
-				raw := *toolUse.Value.Name
-				name := normalizeToolName(raw)
-				// Bedrock tool_use blocks echo back the provider-visible tool name. The
-				// adapter normally translates that provider name back to the canonical
-				// tool ID via the per-request reverse map. When the model hallucinates a
-				// tool name that was not advertised in this request, the reverse map will
-				// not contain it. This is not a transport/protocol failure: it is normal
-				// model behavior and must be handled by the runtime as a tool error so
-				// the model can recover on the next resume turn.
-				if canonical, ok := p.toolNameMap[name]; ok {
-					tb.name = canonical
-				} else {
-					tb.name = name
-				}
-				p.toolBlocks[idx] = tb
+				p.completion = &completionBuffer{name: p.output.Name, index: idx}
 				return nil
 			}
-			return fmt.Errorf("bedrock stream: unsupported content block start %T", start)
+			p.toolBlocks[idx] = &toolBuffer{id: id, name: name}
+			return nil
 		}
 		return nil
 	case *brtypes.ConverseStreamOutputMemberContentBlockDelta:
@@ -383,10 +410,16 @@ func (p *chunkProcessor) Handle(event any) error {
 			}
 		case *brtypes.ContentBlockDeltaMemberToolUse:
 			if p.output != nil {
-				return fmt.Errorf(
-					"bedrock stream: structured output %q emitted tool_use delta",
-					p.output.Name,
-				)
+				if p.completion == nil || p.completion.index != idx {
+					return fmt.Errorf(
+						"bedrock stream: structured output %q emitted tool_use delta",
+						p.output.Name,
+					)
+				}
+				if delta.Value.Input == nil || *delta.Value.Input == "" {
+					return nil
+				}
+				return p.handleCompletionDelta(idx, *delta.Value.Input)
 			}
 			if tb := p.toolBlocks[idx]; tb != nil && delta.Value.Input != nil {
 				fragment := *delta.Value.Input
