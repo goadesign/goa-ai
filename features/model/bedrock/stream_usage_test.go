@@ -29,6 +29,7 @@ func TestChunkProcessorUsageIncludesCacheTokens(t *testing.T) {
 		"test-model-id",
 		model.ModelClassDefault,
 		nil,
+		"",
 	)
 
 	err := cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStart{})
@@ -126,6 +127,7 @@ func TestChunkProcessor_StructuredOutputEmitsCompletionDeltaAndFinalCompletion(t
 			Name:   "draft_from_transcript",
 			Schema: []byte(`{"type":"object"}`),
 		},
+		"",
 	)
 
 	err := cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStart{})
@@ -188,6 +190,7 @@ func TestChunkProcessor_StructuredOutputRejectsInvalidFinalJSON(t *testing.T) {
 			Name:   "draft_from_transcript",
 			Schema: []byte(`{"type":"object"}`),
 		},
+		"",
 	)
 
 	err := cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStart{})
@@ -220,6 +223,7 @@ func TestChunkProcessorReasoningBlockStartsWithFirstDelta(t *testing.T) {
 		"test-model-id",
 		model.ModelClassDefault,
 		nil,
+		"",
 	)
 
 	err := cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStart{})
@@ -273,6 +277,7 @@ func TestChunkProcessorIgnoresEmptyToolUseDelta(t *testing.T) {
 		"test-model-id",
 		model.ModelClassDefault,
 		nil,
+		"",
 	)
 
 	err := cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStart{})
@@ -310,6 +315,7 @@ func TestChunkProcessorRejectsMessageStopWithOpenContentBlock(t *testing.T) {
 		"test-model-id",
 		model.ModelClassDefault,
 		nil,
+		"",
 	)
 
 	err := cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStart{})
@@ -335,6 +341,7 @@ func TestChunkProcessorClassifiesMessageStopWithoutStartAsEmptyStream(t *testing
 		"test-model-id",
 		model.ModelClassDefault,
 		nil,
+		"",
 	)
 
 	err := cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStop{
@@ -359,6 +366,7 @@ func TestChunkProcessorRejectsDuplicateMessageStop(t *testing.T) {
 		"test-model-id",
 		model.ModelClassDefault,
 		nil,
+		"",
 	)
 
 	require.NoError(t, cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStart{}))

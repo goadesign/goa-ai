@@ -111,6 +111,12 @@ type requestParts struct {
 	additionalModelFields   map[string]any
 	toolNameCanonicalToProv map[string]string
 	toolNameProvToCanonical map[string]string
+
+	// structuredOutputToolName is non-empty exactly when prepareRequest chose
+	// to express Request.StructuredOutput as the forced tool call described in
+	// structuredOutputUsesToolFallback. Complete and Stream read this single
+	// decision instead of re-deriving it from modelID.
+	structuredOutputToolName string
 }
 
 type thinkingConfig struct {
@@ -173,7 +179,16 @@ func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Respo
 		}
 		return nil, wrapBedrockError("converse", err)
 	}
-	return translateResponse(output, parts.toolNameProvToCanonical, parts.modelID, parts.modelClass)
+	resp, err := translateResponse(output, parts.toolNameProvToCanonical, parts.modelID, parts.modelClass)
+	if err != nil {
+		return nil, err
+	}
+	if parts.structuredOutputToolName != "" {
+		if err := reifyStructuredOutputToolFallback(resp, parts.structuredOutputToolName); err != nil {
+			return nil, err
+		}
+	}
+	return resp, nil
 }
 
 // CountTokens asks Bedrock to count the exact input tokens for req using the
@@ -247,6 +262,7 @@ func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer
 		parts.modelID,
 		parts.modelClass,
 		req.StructuredOutput,
+		parts.structuredOutputToolName,
 	), nil
 }
 
@@ -285,13 +301,41 @@ func (c *Client) prepareRequest(req *model.Request) (*requestParts, error) {
 	// Build tool configuration and name maps before encoding messages so tool_use
 	// names can reuse the exact sanitized identifiers. encodeTools is the single
 	// source of truth for name sanitization.
-	toolConfig, additionalModelFields, canonToSan, sanToCanon, err := encodeTools(modelID, req.Tools, req.ToolChoice, cacheAfterTools)
+	//
+	// Anthropic models reject Bedrock's native structured-output response
+	// format (see encodeOutputConfig), so structured output for those models is
+	// expressed as a forced single tool call instead, reusing encodeTools for
+	// naming, thinking-compatibility, and schema encoding exactly as a real
+	// tool call would. This is the one place that decides which wire mechanism
+	// to use; Complete and Stream read the decision back from
+	// requestParts.structuredOutputToolName instead of re-deriving it.
+	toolDefs, toolChoice := req.Tools, req.ToolChoice
+	useToolFallback := structuredOutputUsesToolFallback(modelID, req.StructuredOutput)
+	if useToolFallback {
+		if len(req.Tools) > 0 || req.ToolChoice != nil {
+			return nil, errors.New("bedrock: structured output cannot be combined with request tool definitions")
+		}
+		def, err := structuredOutputToolDefinition(req.StructuredOutput)
+		if err != nil {
+			return nil, err
+		}
+		toolDefs = []*model.ToolDefinition{def}
+		toolChoice = &model.ToolChoice{Mode: model.ToolChoiceModeTool, Name: def.Name}
+	}
+	toolConfig, additionalModelFields, canonToSan, sanToCanon, err := encodeTools(modelID, toolDefs, toolChoice, cacheAfterTools)
 	if err != nil {
 		return nil, err
 	}
-	outputConfig, err := encodeOutputConfig(req.StructuredOutput)
-	if err != nil {
-		return nil, err
+	var outputConfig *brtypes.OutputConfig
+	if req.StructuredOutput != nil && !useToolFallback {
+		outputConfig, err = encodeOutputConfig(req.StructuredOutput)
+		if err != nil {
+			return nil, err
+		}
+	}
+	structuredOutputToolName := ""
+	if useToolFallback {
+		structuredOutputToolName = req.StructuredOutput.Name
 	}
 	// Bedrock requires toolConfig when messages contain tool_use or tool_result
 	// blocks. Fail fast with a clear error rather than letting Bedrock reject
@@ -310,15 +354,16 @@ func (c *Client) prepareRequest(req *model.Request) (*requestParts, error) {
 		return nil, err
 	}
 	return &requestParts{
-		modelID:                 modelID,
-		modelClass:              req.ModelClass,
-		messages:                messages,
-		system:                  system,
-		outputConfig:            outputConfig,
-		toolConfig:              toolConfig,
-		additionalModelFields:   additionalModelFields,
-		toolNameCanonicalToProv: canonToSan,
-		toolNameProvToCanonical: sanToCanon,
+		modelID:                  modelID,
+		modelClass:               req.ModelClass,
+		messages:                 messages,
+		system:                   system,
+		outputConfig:             outputConfig,
+		toolConfig:               toolConfig,
+		additionalModelFields:    additionalModelFields,
+		toolNameCanonicalToProv:  canonToSan,
+		toolNameProvToCanonical:  sanToCanon,
+		structuredOutputToolName: structuredOutputToolName,
 	}, nil
 }
 
@@ -463,6 +508,59 @@ func encodeOutputConfig(output *model.StructuredOutput) (*brtypes.OutputConfig, 
 			Structure: &brtypes.OutputFormatStructureMemberJsonSchema{Value: def},
 		},
 	}, nil
+}
+
+// structuredOutputUsesToolFallback reports whether a structured-output request
+// must be expressed as a forced tool call instead of Bedrock's native
+// OutputConfig response format. Bedrock's Converse API translates
+// OutputConfig.TextFormat into Anthropic's own (unsupported-on-Converse)
+// output_config.format field before forwarding it to Anthropic models, and the
+// model then rejects it with "Extra inputs are not permitted" — a documented
+// AWS/Anthropic incompatibility, not a request bug. Forcing a single tool call
+// is the well-supported alternative that Bedrock validates against the same
+// JSON Schema with the same guarantee, so callers see no difference in the
+// canonical model.Response.
+func structuredOutputUsesToolFallback(modelID string, output *model.StructuredOutput) bool {
+	return output != nil && isAnthropicBedrockModel(modelID)
+}
+
+// structuredOutputToolDefinition adapts a provider-neutral structured-output
+// request into the single forced tool definition used by
+// structuredOutputUsesToolFallback. The tool name and description are the
+// request's own Name/Description so the response's tool_use block reifies
+// back to the same structured-output identity in reifyStructuredOutputToolFallback.
+func structuredOutputToolDefinition(output *model.StructuredOutput) (*model.ToolDefinition, error) {
+	if len(output.Schema) == 0 {
+		return nil, errors.New("bedrock: structured output requires a schema")
+	}
+	if output.Name == "" {
+		return nil, errors.New("bedrock: structured output requires a name")
+	}
+	return &model.ToolDefinition{
+		Name:        output.Name,
+		Description: output.Description,
+		Input:       model.ToolInputFromSchema(rawjson.Message(output.Schema)),
+	}, nil
+}
+
+// reifyStructuredOutputToolFallback rewrites the forced tool_use response
+// produced by structuredOutputUsesToolFallback into the canonical single-text
+// shape every model.Client caller expects for structured output, regardless of
+// which wire mechanism the provider adapter used to obtain it.
+func reifyStructuredOutputToolFallback(resp *model.Response, toolName string) error {
+	if len(resp.Content) != 1 {
+		return fmt.Errorf("bedrock: structured output tool fallback expected exactly one assistant message, got %d", len(resp.Content))
+	}
+	parts := resp.Content[0].Parts
+	if len(parts) != 1 {
+		return fmt.Errorf("bedrock: structured output tool fallback expected exactly one content part, got %d", len(parts))
+	}
+	toolUse, ok := parts[0].(model.ToolUsePart)
+	if !ok || toolUse.Name != toolName {
+		return fmt.Errorf("bedrock: structured output tool fallback did not return the forced tool call %q", toolName)
+	}
+	resp.Content[0].Parts = []model.Part{model.TextPart{Text: string(toolUse.Input)}}
+	return nil
 }
 
 func (c *Client) resolveThinking(req *model.Request, parts *requestParts) thinkingConfig {

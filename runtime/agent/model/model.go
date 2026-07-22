@@ -411,13 +411,23 @@ type (
 	// for a request.
 	//
 	// Provider adapters fail fast when structured output is requested but not
-	// supported instead of silently degrading to free-form text.
+	// supported instead of silently degrading to free-form text. An adapter may
+	// still choose among multiple provider-enforced wire mechanisms (for
+	// example, a forced tool call in place of a broken native response-format
+	// feature) as long as the response it returns is indistinguishable from the
+	// caller's point of view: a single canonical JSON payload conforming to
+	// Schema.
 	StructuredOutput struct {
 		// Schema constrains the assistant response as JSON Schema.
 		Schema []byte
 
 		// Name is an optional provider-facing schema identifier.
 		Name string
+
+		// Description explains the purpose of the structured output to the
+		// model. Adapters that must express the schema as a tool (see above)
+		// use this as the tool description.
+		Description string
 	}
 
 	// TokenUsage tracks token counts and model attribution for a single model
