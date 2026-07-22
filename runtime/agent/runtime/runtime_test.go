@@ -591,63 +591,50 @@ func TestOneShotRunRejectsSessionSearchAttribute(t *testing.T) {
 	require.Contains(t, err.Error(), "SessionID is not allowed for one-shot runs")
 }
 
-func TestStartRunUsesPolicyBudgetForRunTimeout(t *testing.T) {
-	eng := &stubEngine{}
-	rt := &Runtime{
-		Engine:       eng,
-		logger:       telemetry.NoopLogger{},
-		metrics:      telemetry.NoopMetrics{},
-		tracer:       telemetry.NoopTracer{},
-		SessionStore: sessioninmem.New(),
-		agents: map[agent.Ident]AgentRegistration{
-			"service.agent": {
-				ID: "service.agent",
-				Workflow: engine.WorkflowDefinition{
-					Name:      "service.workflow",
-					TaskQueue: "svc.queue",
-				},
-				Policy: RunPolicy{
-					TimeBudget:     20 * time.Minute,
-					FinalizerGrace: 10 * time.Second,
-				},
-				ResumeActivityOptions: engine.ActivityOptions{
-					StartToCloseTimeout: 20 * time.Second,
-				},
-			},
-		},
+// TestStartRunNeverSetsEngineRunTimeout proves that no policy shape (a
+// generous budget, no budget at all) ever projects onto the engine-level
+// WorkflowStartRequest.RunTimeout. Active-time enforcement belongs solely to
+// the workflow's own Hard deadline so that an indefinite external-input await
+// (see workflow_await_queue.go) can never be cut short by an engine ceiling.
+func TestStartRunNeverSetsEngineRunTimeout(t *testing.T) {
+	cases := []struct {
+		name   string
+		policy RunPolicy
+	}{
+		{name: "with policy budget", policy: RunPolicy{TimeBudget: 20 * time.Minute, FinalizerGrace: 10 * time.Second}},
+		{name: "without policy budget", policy: RunPolicy{}},
 	}
-	client := rt.MustClient(agent.Ident("service.agent"))
-	_, err := rt.CreateSession(context.Background(), "sess-1")
-	require.NoError(t, err)
-	_, err = client.Start(context.Background(), "sess-1", nil)
-	require.NoError(t, err)
-	require.Equal(t, 20*time.Minute+50*time.Second, eng.last.RunTimeout)
-}
-
-func TestStartRunUsesDefaultTimeoutWithoutPolicyBudget(t *testing.T) {
-	eng := &stubEngine{}
-	rt := &Runtime{
-		Engine:       eng,
-		logger:       telemetry.NoopLogger{},
-		metrics:      telemetry.NoopMetrics{},
-		tracer:       telemetry.NoopTracer{},
-		SessionStore: sessioninmem.New(),
-		agents: map[agent.Ident]AgentRegistration{
-			"service.agent": {
-				ID: "service.agent",
-				Workflow: engine.WorkflowDefinition{
-					Name:      "service.workflow",
-					TaskQueue: "svc.queue",
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			eng := &stubEngine{}
+			rt := &Runtime{
+				Engine:       eng,
+				logger:       telemetry.NoopLogger{},
+				metrics:      telemetry.NoopMetrics{},
+				tracer:       telemetry.NoopTracer{},
+				SessionStore: sessioninmem.New(),
+				agents: map[agent.Ident]AgentRegistration{
+					"service.agent": {
+						ID: "service.agent",
+						Workflow: engine.WorkflowDefinition{
+							Name:      "service.workflow",
+							TaskQueue: "svc.queue",
+						},
+						Policy: tc.policy,
+						ResumeActivityOptions: engine.ActivityOptions{
+							StartToCloseTimeout: 20 * time.Second,
+						},
+					},
 				},
-			},
-		},
+			}
+			client := rt.MustClient(agent.Ident("service.agent"))
+			_, err := rt.CreateSession(context.Background(), "sess-1")
+			require.NoError(t, err)
+			_, err = client.Start(context.Background(), "sess-1", nil)
+			require.NoError(t, err)
+			require.Zero(t, eng.last.RunTimeout)
+		})
 	}
-	client := rt.MustClient(agent.Ident("service.agent"))
-	_, err := rt.CreateSession(context.Background(), "sess-1")
-	require.NoError(t, err)
-	_, err = client.Start(context.Background(), "sess-1", nil)
-	require.NoError(t, err)
-	require.Equal(t, 15*time.Minute, eng.last.RunTimeout)
 }
 
 func TestWorkerConfigOnlyExposesQueuePlacement(t *testing.T) {
