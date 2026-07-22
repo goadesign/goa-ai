@@ -19,6 +19,7 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 type stepTransition uint8
@@ -59,13 +60,17 @@ func (l *workflowLoop) executeToolStep(program stepProgram, batch *stepBatch) ([
 	budgetCost, admitted := l.r.admitToolBatch(allowed, l.st.Caps)
 	if !admitted {
 		for _, call := range allowed {
+			tr := &planner.ToolResult{
+				Name:       call.Name,
+				ToolCallID: call.ToolCallID,
+				Error:      planner.NewToolError("tool call was not executed because the run tool-call cap was exhausted"),
+			}
+			if err := l.recordCapDeniedToolCall(ctx, call, tr); err != nil {
+				return nil, nil, err
+			}
 			batch.records = append(batch.records, stepToolRecord{
-				call: call,
-				result: &planner.ToolResult{
-					Name:       call.Name,
-					ToolCallID: call.ToolCallID,
-					Error:      planner.NewToolError("tool call was not executed because the run tool-call cap was exhausted"),
-				},
+				call:   call,
+				result: tr,
 			})
 		}
 		batch.finalize = &stepFinalization{
@@ -232,6 +237,65 @@ func (r *Runtime) executedSuccessfulTerminalRunTool(records []stepToolRecord) (b
 		}
 	}
 	return false, nil
+}
+
+// recordCapDeniedToolCall publishes the canonical scheduled/result handshake
+// for a tool call the runtime refused to execute because the run tool-call cap
+// was exhausted. The synthetic error result is planner-visible: it enters the
+// provider transcript and ToolOutputs, and finalization plan activities
+// rehydrate tool outputs from the canonical run log by tool_call_id. Every
+// planner-visible result must therefore be durably recorded here, exactly like
+// denied confirmations and canceled executions.
+func (l *workflowLoop) recordCapDeniedToolCall(ctx context.Context, call planner.ToolRequest, tr *planner.ToolResult) error {
+	parentID := parentToolCallID(call, &l.base.RunContext)
+	if err := l.r.publishHook(
+		ctx,
+		hooks.NewToolCallScheduledEvent(
+			l.base.RunContext.RunID,
+			l.input.AgentID,
+			l.base.RunContext.SessionID,
+			call.Name,
+			call.ToolCallID,
+			call.Payload,
+			"",
+			parentID,
+			0,
+		),
+		l.turnID,
+	); err != nil {
+		return err
+	}
+	var resultJSON rawjson.Message
+	if _, ok := l.r.toolSpec(call.Name); ok {
+		encoded, err := l.r.materializeToolResult(ctx, call, tr)
+		if err != nil {
+			return err
+		}
+		resultJSON = encoded
+	}
+	return l.r.publishHook(
+		ctx,
+		hooks.NewToolResultReceivedEvent(
+			l.base.RunContext.RunID,
+			l.input.AgentID,
+			l.base.RunContext.SessionID,
+			call.Name,
+			call.ToolCallID,
+			parentID,
+			resultJSON,
+			len(resultJSON),
+			false,
+			"",
+			nil,
+			"",
+			nil,
+			0,
+			nil,
+			tr.RetryHint,
+			tr.Error,
+		),
+		l.turnID,
+	)
 }
 
 // toolPauseAwaitItems projects runtime-owned tool pauses into the existing await

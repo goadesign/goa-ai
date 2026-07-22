@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -168,6 +169,63 @@ func TestRestrictedRunToolCapFinalizes(t *testing.T) {
 	require.Equal(t, model.ConversationRoleAssistant, out.Final.Role)
 	require.NotNil(t, wfCtx.lastPlannerCall.Input.Finalize)
 	require.Equal(t, planner.TerminationReasonToolCap, wfCtx.lastPlannerCall.Input.Finalize.Reason)
+}
+
+func TestToolCapDeniedCallHydratesFromCanonicalRunLog(t *testing.T) {
+	t.Parallel()
+
+	toolSpec := newAnyJSONSpec("svc.tools.read", "svc.tools")
+	rt := &Runtime{
+		Bus:           noopHooks{},
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+	}
+	seedTestToolSpecs(rt, toolSpec)
+	wfCtx := &testWorkflowContext{
+		ctx:           context.Background(),
+		hookRuntime:   rt,
+		planResult:    restrictedFinalPlanResult("finalized after tool cap"),
+		hasPlanResult: true,
+	}
+	input := &RunInput{
+		AgentID: "svc.agent",
+		RunID:   "run-1",
+		Policy:  &PolicyOverrides{RestrictToTool: toolSpec.Name},
+	}
+	base := &planner.PlanInput{
+		RunContext: run.Context{RunID: input.RunID},
+		Agent:      newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID}),
+	}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		Name:       toolSpec.Name,
+		ToolCallID: "call-cap-denied",
+		Payload:    rawjson.Message(`{"q":"x"}`),
+	}}}
+
+	out, err := rt.runLoop(wfCtx, AgentRegistration{
+		ID:                  input.AgentID,
+		Planner:             &stubPlanner{},
+		ExecuteToolActivity: "execute",
+		ResumeActivityName:  "resume",
+	}, input, base, initial, policy.CapsState{
+		MaxToolCalls:       1,
+		RemainingToolCalls: 0,
+	}, time.Time{}, time.Time{}, "turn-1", nil)
+	require.NoError(t, err)
+	require.NotNil(t, out)
+
+	// Finalization plan activities rehydrate tool outputs from the canonical
+	// run log by tool_call_id; before the fix this failed with "missing
+	// canonical tool history in run log".
+	outputs, err := rt.loadPlannerToolOutputs(context.Background(), input.RunID, []*api.ToolOutputRef{{ToolCallID: "call-cap-denied"}})
+	require.NoError(t, err)
+	require.Len(t, outputs, 1)
+	require.Equal(t, toolSpec.Name, outputs[0].Name)
+	require.NotNil(t, outputs[0].Error)
+	require.Contains(t, outputs[0].Error.Message, "tool-call cap was exhausted")
+	require.JSONEq(t, `{"q":"x"}`, string(outputs[0].Payload))
 }
 
 func TestRestrictedRunFailureCapFinalizes(t *testing.T) {
