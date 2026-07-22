@@ -140,6 +140,26 @@ reaches the appropriate planner resume. The resume activity validates the
 returned planner result, so ignoring `SynthesisOnly` fails at the activity
 boundary rather than reopening execution.
 
+### Run Timing and Indefinite Awaits
+
+The workflow loop is the sole owner of run-duration enforcement. `TimeBudget`
+and `FinalizerGrace` (`RunPolicy`) become a deterministic "Hard" deadline
+tracked in workflow code; the run finalizes gracefully through the normal
+terminal-hook path once that deadline elapses during active planner/tool
+work. Time spent blocked on an external-input await (`await_clarification`,
+`await_confirmation`, provided tool results) is explicitly excluded from that
+deadline, so an operator can take arbitrarily long to respond without
+burning the run's active-time budget.
+
+Engines must never impose a second, competing wall-clock ceiling (for
+example Temporal's `WorkflowRunTimeout`) on top of this. Unlike the
+workflow's own deadline check, an engine-level timeout force-closes the run
+from outside application code, so it can fire mid-await and permanently
+strand the run without ever emitting a `RunCompleted` event — exactly the
+failure this design avoids. `resolveRunTiming` therefore never derives an
+engine run timeout from policy; engine start requests leave that field
+unset.
+
 ## Registry Integration
 
 Declare centralized registry sources for dynamic tool discovery and agent publication:

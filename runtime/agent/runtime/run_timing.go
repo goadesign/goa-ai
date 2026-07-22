@@ -1,38 +1,42 @@
-// Package runtime centralizes the timeout contract shared by run submission and
-// workflow execution so the engine-level run timeout can never undercut the
-// workflow's own hard deadline.
+// Package runtime centralizes the timing contract shared by run submission and
+// workflow execution.
+//
+// The workflow loop (workflow_loop.go) is the sole owner of run-duration
+// enforcement: it tracks TimeBudget/FinalizerGrace as a deterministic "Hard"
+// deadline and finalizes gracefully (emitting a terminal hook) once that
+// deadline elapses during active planner/tool work. Time spent blocked on an
+// external-input await (clarification, confirmation, provided tool results)
+// is explicitly paused out of that deadline by (*runDeadlines).pause, so an
+// operator response never burns the run's active-time budget.
+//
+// The engine (e.g. Temporal WorkflowRunTimeout) must never impose a second,
+// competing wall-clock ceiling on top of this: unlike the workflow's own
+// deadline check, an engine-level timeout force-closes the run from outside
+// application code, so it can fire mid-await and permanently strand the run
+// without ever emitting a RunCompleted event. Engine run-timeout fields exist
+// for engines/callers that want one, but this runtime intentionally leaves
+// them unset for every run it starts.
 package runtime
 
 import "time"
 
-const (
-	// defaultEngineRunTimeout bounds runs that do not declare an explicit policy budget.
-	defaultEngineRunTimeout = 15 * time.Minute
-
-	// runTimeoutHeadroom leaves a small buffer after the hard workflow deadline so
-	// the engine timeout does not preempt deterministic terminal hook emission.
-	runTimeoutHeadroom = 30 * time.Second
-)
-
 type runTiming struct {
 	TimeBudget     time.Duration
 	FinalizerGrace time.Duration
-	RunTimeout     time.Duration
 }
 
 // resolveRunTiming derives the workflow timing contract shared by startRunOn and
 // ExecuteWorkflow.
 //
 // Contract:
-//   - TimeBudget governs active planner/tool execution. Zero means "use the engine
-//     default run timeout" rather than introducing an unbounded workflow.
+//   - TimeBudget governs active planner/tool execution only; zero means no
+//     active-time budget (the run finalizes only via caps or a terminal tool).
 //   - FinalizerGrace always reserves enough time for one final planner resume turn.
-//   - RunTimeout is the engine-level wall clock bound and must never undercut the
-//     workflow hard deadline computed from TimeBudget + FinalizerGrace.
+//   - Neither value is ever projected onto an engine-level run timeout: see the
+//     package comment for why that would undermine indefinite external-input
+//     awaits.
 func resolveRunTiming(reg AgentRegistration, input *RunInput) runTiming {
-	timing := runTiming{
-		RunTimeout: defaultEngineRunTimeout,
-	}
+	var timing runTiming
 	if reg.Policy.TimeBudget > 0 {
 		timing.TimeBudget = reg.Policy.TimeBudget
 	}
@@ -58,9 +62,6 @@ func resolveRunTiming(reg AgentRegistration, input *RunInput) runTiming {
 	}
 	if timing.FinalizerGrace < resumeTimeout {
 		timing.FinalizerGrace = resumeTimeout
-	}
-	if timing.TimeBudget > 0 {
-		timing.RunTimeout = timing.TimeBudget + timing.FinalizerGrace + runTimeoutHeadroom
 	}
 	return timing
 }

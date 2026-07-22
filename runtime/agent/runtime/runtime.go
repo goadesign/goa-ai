@@ -1581,8 +1581,12 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 		Workflow:  workflowName,
 		TaskQueue: defaultQueue,
 		Input:     input,
+		// RunTimeout is intentionally left zero (engine-unbounded): active-time
+		// enforcement is owned by the workflow's own Hard deadline (run_timing.go,
+		// workflow_loop.go), which correctly exempts indefinite external-input
+		// awaits. An engine-level ceiling here would race that deadline and can
+		// force-close the workflow mid-await with no chance to finalize.
 	}
-	req.RunTimeout = resolveRunTiming(reg, input).RunTimeout
 	if opts := input.WorkflowOptions; opts != nil {
 		if opts.TaskQueue != "" {
 			req.TaskQueue = opts.TaskQueue
