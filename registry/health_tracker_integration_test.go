@@ -303,6 +303,40 @@ func TestPingsContinueAfterPeerClose(t *testing.T) {
 	}
 }
 
+// TestConcurrentRevisionPinsConverge locks the atomicity of the revision
+// repair: pins from many concurrent repairers must converge on the highest
+// target instead of summing increments, which would lift the counter far
+// above the wall clock and silently break clock domination at the next Redis
+// state loss.
+func TestConcurrentRevisionPinsConverge(t *testing.T) {
+	rdb := getRedis(t)
+	ctx := context.Background()
+	hashKey := "map:pin-converge:content"
+	defer rdb.Del(ctx, hashKey)
+
+	base := time.Now().UnixMilli()
+	const racers = 8
+	var wg sync.WaitGroup
+	for i := range racers {
+		wg.Add(1)
+		go func(target int64) {
+			defer wg.Done()
+			if err := revisionPinScript.Run(ctx, rdb, []string{hashKey}, target).Err(); err != nil {
+				t.Errorf("concurrent pin failed: %v", err)
+			}
+		}(base + int64(i))
+	}
+	wg.Wait()
+
+	rev, err := rdb.HGet(ctx, hashKey, "=rev").Int64()
+	if err != nil {
+		t.Fatalf("failed to read pinned revision: %v", err)
+	}
+	if want := base + racers - 1; rev != want {
+		t.Fatalf("expected converged revision %d, got %d", want, rev)
+	}
+}
+
 // TestPingsAndHealthRecoverAfterRedisStateLoss reproduces the production
 // incident: Redis loses every key (FLUSHDB) while the registry keeps running.
 // Ping scheduling must resume on its own — the lease is recreated on the next

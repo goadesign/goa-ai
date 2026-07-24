@@ -171,6 +171,22 @@ const (
 	revFloorSlack = 1 << 20
 )
 
+// revisionPinScript atomically raises a replicated map's "=rev" counter to
+// the target when the counter is lower, returning {raised, final counter}.
+// The compare and the write execute in one Redis script so concurrent repairs
+// from several registry replicas converge on the highest target instead of
+// summing increments, which would push the counter above the wall clock and
+// silently break clock domination at the next Redis state loss.
+var revisionPinScript = redis.NewScript(`
+local rev = tonumber(redis.call("HGET", KEYS[1], "=rev")) or 0
+local target = tonumber(ARGV[1])
+if rev < target then
+	redis.call("HSET", KEYS[1], "=rev", target)
+	return {1, target}
+end
+return {0, rev}
+`)
+
 // WithPingInterval sets the interval between health check pings.
 func WithPingInterval(d time.Duration) HealthTrackerOption {
 	return func(o *healthTrackerOptions) {
@@ -466,6 +482,12 @@ func (h *healthTracker) repairMapRevisions(ctx context.Context) {
 // established floor proves Redis lost the map, and the repair re-pins it so
 // post-loss writes propagate to all replicas again.
 //
+// The pin is a single compare-and-set script: it raises the counter to the
+// target only when the counter is lower. Concurrent repairs from several
+// registry replicas therefore converge on the highest target instead of
+// summing increments, which would push the counter above the wall clock and
+// break clock domination at the next state loss.
+//
 // Two contracts pin this to the goa.design/pulse version in go.mod: the hash
 // key and "=rev" field name (rmap does not expose its revision counter), and
 // the millisecond resolution — rmap's Lua scripts format revisions with Lua's
@@ -482,16 +504,16 @@ func (h *healthTracker) ensureMapRevision(ctx context.Context, m *rmap.Map) erro
 		return nil
 	}
 	target := max(time.Now().UnixMilli(), floor+revFloorSlack)
-	if rev >= target {
-		// Another node already pinned the counter this high; adopt its floor.
-		h.revFloors[hashKey] = rev
-		return nil
+	res, err := revisionPinScript.Run(ctx, h.redis, []string{hashKey}, target).Int64Slice()
+	if err != nil {
+		return fmt.Errorf("pin revision of %q: %w", hashKey, err)
 	}
-	if err := h.redis.HIncrBy(ctx, hashKey, "=rev", target-rev).Err(); err != nil {
-		return fmt.Errorf("advance revision of %q: %w", hashKey, err)
+	if len(res) != 2 {
+		return fmt.Errorf("pin revision of %q: unexpected script reply %v", hashKey, res)
 	}
-	h.revFloors[hashKey] = target
-	if floor == 0 {
+	raised, final := res[0] == 1, res[1]
+	h.revFloors[hashKey] = final
+	if !raised || floor == 0 {
 		return nil
 	}
 	h.logger.Warn(
@@ -501,7 +523,7 @@ func (h *healthTracker) ensureMapRevision(ctx context.Context, m *rmap.Map) erro
 		"component", "tool-registry-health",
 		"map", m.Name,
 		"redis_revision", rev,
-		"restored_revision", target,
+		"restored_revision", final,
 	)
 	return nil
 }

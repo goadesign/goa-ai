@@ -44,7 +44,6 @@ import (
 	grpcserver "goa.design/goa-ai/registry/gen/grpc/registry/server"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/telemetry"
-	"goa.design/pulse/pool"
 	"goa.design/pulse/rmap"
 	"google.golang.org/grpc"
 )
@@ -92,13 +91,6 @@ type (
 		// ResultStreamTTL is the TTL for per-call result streams in Redis.
 		// Defaults to 15 minutes if not provided.
 		ResultStreamTTL time.Duration
-		// PoolNodeOptions are additional options for the Pulse pool node.
-		//
-		// Deprecated: the registry no longer creates a Pulse pool node. Health
-		// ping coordination uses expiring Redis leases so it survives Redis
-		// state loss. The field is retained for source compatibility and is
-		// ignored.
-		PoolNodeOptions []pool.NodeOption
 	}
 )
 
