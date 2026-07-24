@@ -16,7 +16,6 @@ import (
 	mockpulse "goa.design/goa-ai/features/stream/pulse/clients/pulse/mocks"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/toolregistry"
-	"goa.design/pulse/pool"
 	"goa.design/pulse/rmap"
 )
 
@@ -223,6 +222,46 @@ func TestDeleteHealthRecordsRemovesProviderAndLegacyKeys(t *testing.T) {
 	waitForMapKeyRemoval(t, healthMap, legacyHealthKey("toolset-1"))
 }
 
+// TestReregisterAfterCatalogLossRestoresRegistration verifies the provider
+// re-registration recovery path end to end on the registry side: when Redis
+// loses a toolset's catalog entry, the provider's periodic Register call (the
+// EnsureRegistration hook in the provider loop) restores the catalog entry and
+// the next pong marks the toolset healthy again.
+func TestReregisterAfterCatalogLossRestoresRegistration(t *testing.T) {
+	ctx := context.Background()
+	svc, tracker, catalog, _, registryMap := newPongTestService(t)
+	registryEvents := registryMap.Subscribe()
+	defer registryMap.Unsubscribe(registryEvents)
+
+	payload := validRegisterPayloadForSchemaAdmission("toolset-1")
+	_, err := svc.Register(ctx, payload)
+	require.NoError(t, err)
+	awaitMapEvent(registryEvents)
+	firstToken := requireRegistrationToken(t, ctx, catalog)
+
+	// Redis loses the catalog entry.
+	_, err = registryMap.Delete(ctx, toolsetCatalogKey("toolset-1"))
+	require.NoError(t, err)
+	awaitMapEvent(registryEvents)
+	_, err = catalog.RegistrationToken(ctx, "toolset-1")
+	require.ErrorIs(t, err, errToolsetNotFound)
+
+	// The provider's ensure loop re-asserts the exact same registration.
+	_, err = svc.Register(ctx, payload)
+	require.NoError(t, err)
+	awaitMapEvent(registryEvents)
+	secondToken := requireRegistrationToken(t, ctx, catalog)
+	require.NotEqual(t, firstToken, secondToken, "a lost catalog entry starts a new registration epoch")
+
+	// The provider answers the next ping and the toolset is healthy again.
+	require.NoError(t, svc.Pong(ctx, &genregistry.PongPayload{
+		PingID:     newPingID(secondToken),
+		Toolset:    "toolset-1",
+		ProviderID: payload.ProviderID,
+	}))
+	require.Eventually(t, func() bool { return tracker.IsHealthy("toolset-1") }, 5*time.Second, 10*time.Millisecond)
+}
+
 // newPongTestService builds a registry service backed by a real health tracker
 // so Pong tests exercise the full health admission path.
 func newPongTestService(t *testing.T) (*Service, HealthTracker, *toolsetCatalog, *rmap.Map, *rmap.Map) {
@@ -244,12 +283,6 @@ func newPongTestService(t *testing.T) (*Service, HealthTracker, *toolsetCatalog,
 		registryMap.Close()
 	})
 
-	node, err := pool.AddNode(ctx, "health-pong-service-pool-"+suffix, rdb, testNodeOpts()...)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, node.Close(ctx))
-	})
-
 	// A deliberately wide staleness window (5m) keeps "recent pong => healthy"
 	// immune to Redis and scheduler latency: these tests verify pong/token/
 	// record plumbing, not freshness classification, which is unit-tested on
@@ -259,9 +292,10 @@ func newPongTestService(t *testing.T) (*Service, HealthTracker, *toolsetCatalog,
 		newMockStreamManager(),
 		healthMap,
 		registryMap,
-		node,
+		rdb,
 		WithPingInterval(time.Minute),
 		WithMissedPingThreshold(4),
+		WithPingLeaseScope("lease-pong-service-"+suffix),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() {

@@ -17,7 +17,7 @@
 // Nodes with the same name automatically:
 //
 //   - Share toolset registrations via replicated maps
-//   - Coordinate health check pings via distributed tickers (only one node pings at a time)
+//   - Coordinate health check pings via expiring Redis leases (only one node pings per interval)
 //   - Share provider health state across all nodes
 //
 // This enables horizontal scaling and high availability. Clients can connect
@@ -44,7 +44,6 @@ import (
 	grpcserver "goa.design/goa-ai/registry/gen/grpc/registry/server"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/telemetry"
-	"goa.design/pulse/pool"
 	"goa.design/pulse/rmap"
 	"google.golang.org/grpc"
 )
@@ -58,7 +57,6 @@ type (
 		pulseClient   clientspulse.Client
 		healthMap     *rmap.Map
 		registryMap   *rmap.Map
-		poolNode      *pool.Node
 		healthTracker HealthTracker
 		streamManager StreamManager
 		redis         *redis.Client
@@ -93,8 +91,6 @@ type (
 		// ResultStreamTTL is the TTL for per-call result streams in Redis.
 		// Defaults to 15 minutes if not provided.
 		ResultStreamTTL time.Duration
-		// PoolNodeOptions are additional options for the Pulse pool node.
-		PoolNodeOptions []pool.NodeOption
 	}
 )
 
@@ -113,7 +109,6 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 	if name == "" {
 		name = "registry"
 	}
-	poolName := name
 	healthMapName := name + ":health"
 	registryMapName := name + ":toolsets"
 
@@ -137,19 +132,12 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 		return nil, fmt.Errorf("join registry map: %w", err)
 	}
 
-	// Create Pulse pool node for distributed tickers.
-	poolNode, err := pool.AddNode(ctx, poolName, cfg.Redis, cfg.PoolNodeOptions...)
-	if err != nil {
-		healthMap.Close()
-		registryMap.Close()
-		return nil, fmt.Errorf("add pool node: %w", err)
-	}
-
 	// Create stream manager.
 	streamManager := NewStreamManager(pulseClient)
 
-	// Build health tracker options.
-	var healthOpts []HealthTrackerOption
+	// Build health tracker options. The lease scope isolates ping leases of
+	// distinct registry clusters sharing one Redis database.
+	healthOpts := []HealthTrackerOption{WithPingLeaseScope(name)}
 	if cfg.PingInterval > 0 {
 		healthOpts = append(healthOpts, WithPingInterval(cfg.PingInterval))
 	}
@@ -161,12 +149,11 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 	}
 
 	// Create health tracker.
-	healthTracker, err := NewHealthTracker(streamManager, healthMap, registryMap, poolNode, healthOpts...)
+	healthTracker, err := NewHealthTracker(streamManager, healthMap, registryMap, cfg.Redis, healthOpts...)
 	if err != nil {
 		healthMap.Close()
 		registryMap.Close()
-		closeErr := poolNode.Close(ctx)
-		return nil, errors.Join(fmt.Errorf("create health tracker: %w", err), closeErr)
+		return nil, fmt.Errorf("create health tracker: %w", err)
 	}
 
 	// Create the authoritative toolset catalog.
@@ -184,8 +171,7 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 		htCloseErr := healthTracker.Close()
 		healthMap.Close()
 		registryMap.Close()
-		poolCloseErr := poolNode.Close(ctx)
-		return nil, errors.Join(fmt.Errorf("create service: %w", err), htCloseErr, poolCloseErr)
+		return nil, errors.Join(fmt.Errorf("create service: %w", err), htCloseErr)
 	}
 
 	return &Registry{
@@ -193,7 +179,6 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 		pulseClient:   pulseClient,
 		healthMap:     healthMap,
 		registryMap:   registryMap,
-		poolNode:      poolNode,
 		healthTracker: healthTracker,
 		streamManager: streamManager,
 		redis:         cfg.Redis,
@@ -215,17 +200,10 @@ func (r *Registry) Service() *Service {
 func (r *Registry) Close(ctx context.Context) error {
 	var errs []error
 
-	// Stop all ping loops via health tracker.
+	// Stop the ping scheduler via health tracker.
 	if r.healthTracker != nil {
 		if err := r.healthTracker.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("close health tracker: %w", err))
-		}
-	}
-
-	// Close Pulse pool node.
-	if r.poolNode != nil {
-		if err := r.poolNode.Close(ctx); err != nil {
-			errs = append(errs, fmt.Errorf("close pool node: %w", err))
 		}
 	}
 

@@ -74,6 +74,30 @@ type (
 		// When 0, Serve defaults to a short value suitable for transient outages.
 		PongTimeout time.Duration
 
+		// EnsureRegistration re-asserts this provider's registration with the
+		// registry. Implementations typically call the registry Register method
+		// with the same toolset schema used at startup; registration is
+		// idempotent, so re-asserting an unchanged registration preserves the
+		// current registration epoch and provider health.
+		//
+		// Serve invokes it periodically (see EnsureInterval) so that when Redis
+		// loses registry state, the catalog entry is restored and health pings
+		// resume without redeploying the provider. Errors are logged and
+		// retried on the next interval; they never stop the provider loop.
+		//
+		// When nil, Serve still repairs its own consumer group but the caller
+		// owns registration recovery.
+		EnsureRegistration func(ctx context.Context) error
+
+		// EnsureInterval is how often Serve re-asserts registration
+		// (EnsureRegistration) and recreates the toolset stream consumer group
+		// if Redis lost it. Pulse sinks silently retry on missing groups, so
+		// without this repair a provider whose group was lost would never
+		// receive pings or tool calls again.
+		//
+		// When 0, defaults to 30 seconds.
+		EnsureInterval time.Duration
+
 		// MaxConcurrentToolCalls caps the number of tool calls executed
 		// concurrently by this provider (worker pool size).
 		//
@@ -98,6 +122,20 @@ type (
 
 		// Tracer is used for provider spans. When nil, defaults to a noop tracer.
 		Tracer telemetry.Tracer
+	}
+
+	// ensureLoopConfig carries the dependencies of the provider reconcile loop:
+	// the toolset stream whose consumer group must be repaired after Redis data
+	// loss, the optional registration re-assertion callback, and logging
+	// identity fields.
+	ensureLoopConfig struct {
+		stream     pulseclients.Stream
+		sinkName   string
+		ensure     func(ctx context.Context) error
+		interval   time.Duration
+		logger     telemetry.Logger
+		toolset    string
+		providerID string
 	}
 
 	// pulseOutputDeltaPublisher publishes best-effort tool output fragments to the
@@ -165,6 +203,10 @@ func Serve(ctx context.Context, pulse pulseclients.Client, toolset string, handl
 	if pongTimeout <= 0 {
 		pongTimeout = 2 * time.Second
 	}
+	ensureInterval := opts.EnsureInterval
+	if ensureInterval <= 0 {
+		ensureInterval = 30 * time.Second
+	}
 
 	maxConcurrent := opts.MaxConcurrentToolCalls
 	if maxConcurrent <= 0 {
@@ -207,6 +249,20 @@ func Serve(ctx context.Context, pulse pulseclients.Client, toolset string, handl
 		errc              = make(chan error, 1)
 	)
 	defer cancel()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		runEnsureLoop(cancelCtx, ensureLoopConfig{
+			stream:     stream,
+			sinkName:   sinkName,
+			ensure:     opts.EnsureRegistration,
+			interval:   ensureInterval,
+			logger:     logger,
+			toolset:    toolset,
+			providerID: opts.ProviderID,
+		})
+	}()
 
 	type workItem struct {
 		ev  *streaming.Event
@@ -453,6 +509,49 @@ func Serve(ctx context.Context, pulse pulseclients.Client, toolset string, handl
 					)
 				}
 			case <-cancelCtx.Done():
+			}
+		}
+	}
+}
+
+// runEnsureLoop periodically repairs the provider's registry footprint until
+// the context is canceled. Each interval it recreates the toolset stream
+// consumer group when Redis lost it (so the subscription created by Serve
+// resumes receiving pings and tool calls) and, when configured, re-asserts the
+// provider's registration so the catalog entry and health ping loop are
+// restored without redeploying the provider. Failures are logged and retried
+// on the next interval; they never terminate the provider loop.
+func runEnsureLoop(ctx context.Context, cfg ensureLoopConfig) {
+	ticker := time.NewTicker(cfg.interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := cfg.stream.EnsureGroup(ctx, cfg.sinkName); err != nil {
+				cfg.logger.Error(
+					ctx,
+					"ensure consumer group failed",
+					"component", "tool-registry-provider",
+					"toolset", cfg.toolset,
+					"provider_id", cfg.providerID,
+					"sink", cfg.sinkName,
+					"err", err,
+				)
+			}
+			if cfg.ensure == nil {
+				continue
+			}
+			if err := cfg.ensure(ctx); err != nil {
+				cfg.logger.Error(
+					ctx,
+					"ensure registration failed",
+					"component", "tool-registry-provider",
+					"toolset", cfg.toolset,
+					"provider_id", cfg.providerID,
+					"err", err,
+				)
 			}
 		}
 	}

@@ -6,8 +6,6 @@ import (
 	"context"
 	"testing"
 	"time"
-
-	"goa.design/pulse/pool"
 )
 
 // TestNewRegistry verifies that the Registry constructor wires all components correctly.
@@ -21,7 +19,6 @@ func TestNewRegistry(t *testing.T) {
 		Name:                "test-" + t.Name(),
 		PingInterval:        50 * time.Millisecond,
 		MissedPingThreshold: 2,
-		PoolNodeOptions:     testNodeOpts(),
 	})
 	if err != nil {
 		t.Fatalf("failed to create registry: %v", err)
@@ -58,9 +55,6 @@ func TestRegistryGracefulShutdown(t *testing.T) {
 		Name:                "test-" + t.Name(),
 		PingInterval:        50 * time.Millisecond,
 		MissedPingThreshold: 2,
-		PoolNodeOptions: []pool.NodeOption{
-			pool.WithJobSinkBlockDuration(100 * time.Millisecond),
-		},
 	})
 	if err != nil {
 		t.Fatalf("failed to create registry: %v", err)
