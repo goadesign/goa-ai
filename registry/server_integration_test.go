@@ -38,7 +38,6 @@ func TestServerIntegration(t *testing.T) {
 		Name:                "server-test-" + t.Name(),
 		PingInterval:        50 * time.Millisecond,
 		MissedPingThreshold: 2,
-		PoolNodeOptions:     testNodeOpts(),
 	})
 	if err != nil {
 		t.Fatalf("create registry: %v", err)
@@ -241,7 +240,6 @@ func TestServerMultiNodeSync(t *testing.T) {
 		Name:                clusterName,
 		PingInterval:        50 * time.Millisecond,
 		MissedPingThreshold: 2,
-		PoolNodeOptions:     testNodeOpts(),
 	})
 	if err != nil {
 		t.Fatalf("create registry 1: %v", err)
@@ -253,7 +251,6 @@ func TestServerMultiNodeSync(t *testing.T) {
 		Name:                clusterName,
 		PingInterval:        50 * time.Millisecond,
 		MissedPingThreshold: 2,
-		PoolNodeOptions:     testNodeOpts(),
 	})
 	if err != nil {
 		t.Fatalf("create registry 2: %v", err)
@@ -321,7 +318,6 @@ func TestServerValidationErrors(t *testing.T) {
 		Name:                "validation-test-" + t.Name(),
 		PingInterval:        50 * time.Millisecond,
 		MissedPingThreshold: 2,
-		PoolNodeOptions:     testNodeOpts(),
 	})
 	if err != nil {
 		t.Fatalf("create registry: %v", err)
