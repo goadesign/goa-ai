@@ -50,6 +50,131 @@ func TestServe_RejectsEmptyProviderID(t *testing.T) {
 	require.ErrorContains(t, err, "provider id is required")
 }
 
+func TestServe_EnsureLoopRepairsGroupAndReregisters(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const toolset = "test.toolset"
+
+	eventsCh := make(chan *streaming.Event)
+
+	sink := mockpulse.NewSink(t)
+	sink.SetSubscribe(func() <-chan *streaming.Event { return eventsCh })
+	sink.SetClose(func(_ context.Context) {})
+
+	var ensuredGroups atomic.Int64
+	toolsetStream := mockpulse.NewStream(t)
+	toolsetStream.SetNewSink(func(_ context.Context, _ string, _ ...streamopts.Sink) (pulse.Sink, error) {
+		return sink, nil
+	})
+	toolsetStream.SetEnsureGroup(func(_ context.Context, group string) error {
+		require.Equal(t, "provider", group)
+		ensuredGroups.Add(1)
+		return nil
+	})
+
+	client := mockpulse.NewClient(t)
+	client.SetStream(func(_ string, _ ...streamopts.Stream) (pulse.Stream, error) {
+		return toolsetStream, nil
+	})
+
+	var reregistrations atomic.Int64
+	errc := make(chan error, 1)
+	go func() {
+		errc <- Serve(ctx, client, toolset, &blockingHandler{}, Options{
+			ProviderID: testProviderID,
+			Pong:       func(_ context.Context, _, _ string) error { return nil },
+			EnsureRegistration: func(_ context.Context) error {
+				reregistrations.Add(1)
+				return nil
+			},
+			EnsureInterval: 10 * time.Millisecond,
+		})
+	}()
+
+	// The ensure loop must keep repairing the consumer group and re-asserting
+	// registration while the provider serves.
+	deadline := time.After(2 * time.Second)
+	for ensuredGroups.Load() < 2 || reregistrations.Load() < 2 {
+		select {
+		case <-deadline:
+			t.Fatalf("ensure loop stalled: groups=%d registrations=%d", ensuredGroups.Load(), reregistrations.Load())
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	cancel()
+	select {
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve did not stop")
+	case <-errc:
+	}
+}
+
+// TestServe_EnsureLoopFailuresDoNotStopProvider verifies that ensure-loop
+// errors (registry unreachable, Redis down) are retried on the next interval
+// and never terminate the provider loop.
+func TestServe_EnsureLoopFailuresDoNotStopProvider(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	eventsCh := make(chan *streaming.Event)
+
+	sink := mockpulse.NewSink(t)
+	sink.SetSubscribe(func() <-chan *streaming.Event { return eventsCh })
+	sink.SetClose(func(_ context.Context) {})
+
+	var attempts atomic.Int64
+	toolsetStream := mockpulse.NewStream(t)
+	toolsetStream.SetNewSink(func(_ context.Context, _ string, _ ...streamopts.Sink) (pulse.Sink, error) {
+		return sink, nil
+	})
+	toolsetStream.SetEnsureGroup(func(_ context.Context, _ string) error {
+		attempts.Add(1)
+		return errors.New("redis unavailable")
+	})
+
+	client := mockpulse.NewClient(t)
+	client.SetStream(func(_ string, _ ...streamopts.Stream) (pulse.Stream, error) {
+		return toolsetStream, nil
+	})
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- Serve(ctx, client, "test.toolset", &blockingHandler{}, Options{
+			ProviderID: testProviderID,
+			Pong:       func(_ context.Context, _, _ string) error { return nil },
+			EnsureRegistration: func(_ context.Context) error {
+				return errors.New("registry unreachable")
+			},
+			EnsureInterval: 10 * time.Millisecond,
+		})
+	}()
+
+	// The loop must keep retrying despite persistent failures.
+	deadline := time.After(2 * time.Second)
+	for attempts.Load() < 3 {
+		select {
+		case err := <-errc:
+			t.Fatalf("Serve stopped on ensure failure: %v", err)
+		case <-deadline:
+			t.Fatalf("ensure loop stalled after failures: attempts=%d", attempts.Load())
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	cancel()
+	select {
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve did not stop")
+	case <-errc:
+	}
+}
+
 func TestServe_RespondsToPingWhileToolCallInFlight(t *testing.T) {
 	t.Parallel()
 

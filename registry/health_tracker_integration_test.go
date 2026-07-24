@@ -15,7 +15,6 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	"goa.design/goa-ai/runtime/toolregistry"
-	"goa.design/pulse/pool"
 	"goa.design/pulse/rmap"
 )
 
@@ -85,28 +84,14 @@ func getRedis(t *testing.T) *redis.Client {
 	return testRedisClient
 }
 
-// testNodeOpts returns pool node options optimized for fast test execution.
-// WithJobSinkBlockDuration controls how long node.Close() blocks waiting for jobs.
-// The default is 5s which causes slow test cleanup.
-func testNodeOpts() []pool.NodeOption {
-	return []pool.NodeOption{
-		// Use small TTLs so worker disappearance and job failover are prompt and
-		// reliable in CI. Defaults (workerTTL=30s, ackGracePeriod=20s) make the
-		// failover tests nondeterministic at typical timeouts.
-		pool.WithWorkerTTL(1 * time.Second),
-		pool.WithAckGracePeriod(200 * time.Millisecond),
-		pool.WithWorkerShutdownTTL(2 * time.Second),
-		pool.WithJobSinkBlockDuration(100 * time.Millisecond),
-	}
-}
-
-// TestMultiNodeRegistrationSync verifies that when a toolset is registered on one node,
-// all other nodes become aware and start participating in the distributed ticker.
+// TestMultiNodeRegistrationSync verifies that when a toolset is registered on
+// one node, the whole cluster starts pinging it (exactly one node per interval
+// wins the ping lease) while the toolset stays unhealthy until a provider pong.
 func TestMultiNodeRegistrationSync(t *testing.T) {
 	rdb := getRedis(t)
 	ctx := context.Background()
 
-	// Use unique map/pool names per test to ensure isolation.
+	// Use unique map names per test to ensure isolation.
 	healthMap, err := rmap.Join(ctx, "health-"+t.Name(), rdb)
 	if err != nil {
 		t.Fatalf("failed to create health map: %v", err)
@@ -119,64 +104,17 @@ func TestMultiNodeRegistrationSync(t *testing.T) {
 	}
 	defer registryMap.Close()
 
-	// Subscribe to registry changes before creating trackers.
-	registryEvents := registryMap.Subscribe()
-	defer registryMap.Unsubscribe(registryEvents)
-
-	// Create two pool nodes in the same pool simulating two gateway instances.
-	poolName := "pool-" + t.Name()
-	node1, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
-	if err != nil {
-		t.Fatalf("failed to create node1: %v", err)
-	}
-	defer func() { _ = node1.Close(ctx) }()
-
-	node2, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
-	if err != nil {
-		t.Fatalf("failed to create node2: %v", err)
-	}
-	defer func() { _ = node2.Close(ctx) }()
-
-	mockSM := newMockStreamManager()
+	mockSM := newPingChannelStreamManager()
 
 	// Create two health trackers (simulating two gateway nodes).
-	tracker1, err := NewHealthTracker(
-		mockSM,
-		healthMap,
-		registryMap,
-		node1,
-		WithPingInterval(50*time.Millisecond),
-		WithMissedPingThreshold(2),
-	)
-	if err != nil {
-		t.Fatalf("failed to create tracker1: %v", err)
-	}
-	defer func() { _ = tracker1.Close() }()
-
-	tracker2, err := NewHealthTracker(
-		mockSM,
-		healthMap,
-		registryMap,
-		node2,
-		WithPingInterval(50*time.Millisecond),
-		WithMissedPingThreshold(2),
-	)
-	if err != nil {
-		t.Fatalf("failed to create tracker2: %v", err)
-	}
-	defer func() { _ = tracker2.Close() }()
+	tracker1 := newTestTracker(t, mockSM, healthMap, registryMap, rdb)
+	tracker2 := newTestTracker(t, mockSM, healthMap, registryMap, rdb)
 
 	// Register a toolset on node 1.
 	registerCatalogToolset(t, ctx, registryMap, tracker1, "test-toolset")
 
-	// Wait for the registry event and for the peer node to start local ticker
-	// participation for this toolset.
-	select {
-	case <-registryEvents:
-	case <-time.After(5 * time.Second):
-		t.Fatal("timeout waiting for registry event")
-	}
-	waitForTicker(t, tracker2, "test-toolset")
+	// The cluster (either node) must start pinging the registered toolset.
+	waitForPing(t, mockSM, "test-toolset")
 
 	// A toolset is healthy only after a provider Pong; StartPingLoop must not
 	// treat registration as provider liveness.
@@ -194,7 +132,10 @@ func TestMultiNodeRegistrationSync(t *testing.T) {
 	}
 }
 
-func TestCatalogRegistrationSyncStartsTickers(t *testing.T) {
+// TestCatalogRegistrationStartsPings verifies that catalog membership alone
+// drives ping scheduling: saving a catalog entry starts pings without any
+// StartPingLoop call.
+func TestCatalogRegistrationStartsPings(t *testing.T) {
 	rdb := getRedis(t)
 	ctx := context.Background()
 
@@ -210,80 +151,28 @@ func TestCatalogRegistrationSyncStartsTickers(t *testing.T) {
 	}
 	defer registryMap.Close()
 
-	registryEvents := registryMap.Subscribe()
-	defer registryMap.Unsubscribe(registryEvents)
-
-	poolName := "pool-" + t.Name()
-	node1, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
-	if err != nil {
-		t.Fatalf("failed to create node1: %v", err)
-	}
-	defer func() { _ = node1.Close(ctx) }()
-
-	node2, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
-	if err != nil {
-		t.Fatalf("failed to create node2: %v", err)
-	}
-	defer func() { _ = node2.Close(ctx) }()
-
-	mockSM := newMockStreamManager()
-
-	tracker1, err := NewHealthTracker(
-		mockSM,
-		healthMap,
-		registryMap,
-		node1,
-		WithPingInterval(50*time.Millisecond),
-		WithMissedPingThreshold(2),
-	)
-	if err != nil {
-		t.Fatalf("failed to create tracker1: %v", err)
-	}
-	defer func() { _ = tracker1.Close() }()
-
-	tracker2, err := NewHealthTracker(
-		mockSM,
-		healthMap,
-		registryMap,
-		node2,
-		WithPingInterval(50*time.Millisecond),
-		WithMissedPingThreshold(2),
-	)
-	if err != nil {
-		t.Fatalf("failed to create tracker2: %v", err)
-	}
-	defer func() { _ = tracker2.Close() }()
+	mockSM := newPingChannelStreamManager()
+	tracker := newTestTracker(t, mockSM, healthMap, registryMap, rdb)
 
 	catalog := newToolsetCatalog(registryMap)
-	requireToolsetName := "catalog-toolset"
-	if err := catalog.SaveToolset(ctx, testCatalogToolset(requireToolsetName, "Catalog registration", []string{"catalog"})); err != nil {
+	toolset := "catalog-toolset"
+	if err := catalog.SaveToolset(ctx, testCatalogToolset(toolset, "Catalog registration", []string{"catalog"})); err != nil {
 		t.Fatalf("failed to save catalog toolset: %v", err)
 	}
 
-	select {
-	case <-registryEvents:
-	case <-time.After(5 * time.Second):
-		t.Fatal("timeout waiting for catalog event")
-	}
+	waitForPing(t, mockSM, toolset)
 
-	waitForTicker(t, tracker1, requireToolsetName)
-	waitForTicker(t, tracker2, requireToolsetName)
-
-	if tracker1.IsHealthy(requireToolsetName) {
-		t.Error("tracker1 should see toolset as unhealthy before any pong")
-	}
-	if tracker2.IsHealthy(requireToolsetName) {
-		t.Error("tracker2 should see toolset as unhealthy before any pong")
+	if tracker.IsHealthy(toolset) {
+		t.Error("tracker should see toolset as unhealthy before any pong")
 	}
 }
 
-// TestMultiNodeUnregistrationSync verifies that when a toolset is unregistered on one node,
-// all other nodes stop their ticker participation.
+// TestMultiNodeUnregistrationSync verifies that when a toolset is unregistered
+// on one node, pings stop cluster-wide and shared health state is cleaned up.
 func TestMultiNodeUnregistrationSync(t *testing.T) {
 	rdb := getRedis(t)
 	ctx := context.Background()
 
-	// Use unique map names to avoid interference from previous test's cached state.
 	healthMap, err := rmap.Join(ctx, "health-unreg-"+t.Name(), rdb)
 	if err != nil {
 		t.Fatalf("failed to create health map: %v", err)
@@ -296,59 +185,13 @@ func TestMultiNodeUnregistrationSync(t *testing.T) {
 	}
 	defer registryMap.Close()
 
-	registryEvents := registryMap.Subscribe()
-	defer registryMap.Unsubscribe(registryEvents)
+	mockSM := newPingChannelStreamManager()
+	tracker1 := newTestTracker(t, mockSM, healthMap, registryMap, rdb)
+	tracker2 := newTestTracker(t, mockSM, healthMap, registryMap, rdb)
 
-	poolName := "pool-" + t.Name()
-	node1, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
-	if err != nil {
-		t.Fatalf("failed to create node1: %v", err)
-	}
-	defer func() { _ = node1.Close(ctx) }()
-
-	node2, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
-	if err != nil {
-		t.Fatalf("failed to create node2: %v", err)
-	}
-	defer func() { _ = node2.Close(ctx) }()
-
-	mockSM := newMockStreamManager()
-
-	tracker1, err := NewHealthTracker(
-		mockSM,
-		healthMap,
-		registryMap,
-		node1,
-		WithPingInterval(50*time.Millisecond),
-		WithMissedPingThreshold(2),
-	)
-	if err != nil {
-		t.Fatalf("failed to create tracker1: %v", err)
-	}
-	defer func() { _ = tracker1.Close() }()
-
-	tracker2, err := NewHealthTracker(
-		mockSM,
-		healthMap,
-		registryMap,
-		node2,
-		WithPingInterval(50*time.Millisecond),
-		WithMissedPingThreshold(2),
-	)
-	if err != nil {
-		t.Fatalf("failed to create tracker2: %v", err)
-	}
-	defer func() { _ = tracker2.Close() }()
-
-	// Register on node 1.
+	// Register on node 1 and wait for cluster pings.
 	registerCatalogToolset(t, ctx, registryMap, tracker1, "test-toolset")
-
-	// Wait for registration event.
-	select {
-	case <-registryEvents:
-	case <-time.After(5 * time.Second):
-		t.Fatal("timeout waiting for registration event")
-	}
+	waitForPing(t, mockSM, "test-toolset")
 
 	// Seed shared health state for the active registration so unregister cleanup
 	// has real distributed state to delete.
@@ -361,28 +204,8 @@ func TestMultiNodeUnregistrationSync(t *testing.T) {
 		t.Fatalf("failed to seed health record: %v", err)
 	}
 
-	// Subscribe to health map changes to detect cleanup.
-	healthEvents := healthMap.Subscribe()
-	defer healthMap.Unsubscribe(healthEvents)
-
 	// Unregister on node 2 (different node than registration).
 	unregisterCatalogToolset(t, ctx, registryMap, tracker2, "test-toolset")
-
-	// Wait for both unregistration event (registry map) and health cleanup event.
-	// They may arrive in any order, so we wait for both.
-	gotRegistryEvent := false
-	gotHealthEvent := false
-	timeout := time.After(5 * time.Second)
-	for !gotRegistryEvent || !gotHealthEvent {
-		select {
-		case <-registryEvents:
-			gotRegistryEvent = true
-		case <-healthEvents:
-			gotHealthEvent = true
-		case <-timeout:
-			t.Fatalf("timeout waiting for events (registry=%v, health=%v)", gotRegistryEvent, gotHealthEvent)
-		}
-	}
 
 	// Toolset should be removed from registry map.
 	waitForMapKeyRemoval(t, registryMap, toolsetCatalogKey("test-toolset"))
@@ -391,86 +214,9 @@ func TestMultiNodeUnregistrationSync(t *testing.T) {
 	waitForMapKeyRemoval(t, healthMap, healthKey("test-toolset", "provider-a"))
 }
 
-// TestNewNodeSyncsExistingToolsets verifies that a new node joining the cluster
-// syncs with existing registered toolsets.
-func TestNewNodeSyncsExistingToolsets(t *testing.T) {
-	rdb := getRedis(t)
-	ctx := context.Background()
-
-	healthMap, err := rmap.Join(ctx, "health-"+t.Name(), rdb)
-	if err != nil {
-		t.Fatalf("failed to create health map: %v", err)
-	}
-	defer healthMap.Close()
-
-	registryMap, err := rmap.Join(ctx, "registry-"+t.Name(), rdb)
-	if err != nil {
-		t.Fatalf("failed to create registry map: %v", err)
-	}
-	defer registryMap.Close()
-
-	registryEvents := registryMap.Subscribe()
-	defer registryMap.Unsubscribe(registryEvents)
-
-	poolName := "pool-" + t.Name()
-	node1, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
-	if err != nil {
-		t.Fatalf("failed to create node1: %v", err)
-	}
-	defer func() { _ = node1.Close(ctx) }()
-
-	mockSM := newMockStreamManager()
-
-	// Create first tracker and register a toolset.
-	tracker1, err := NewHealthTracker(
-		mockSM,
-		healthMap,
-		registryMap,
-		node1,
-		WithPingInterval(50*time.Millisecond),
-		WithMissedPingThreshold(2),
-	)
-	if err != nil {
-		t.Fatalf("failed to create tracker1: %v", err)
-	}
-	defer func() { _ = tracker1.Close() }()
-
-	registerCatalogToolset(t, ctx, registryMap, tracker1, "existing-toolset")
-
-	// Wait for registration event.
-	select {
-	case <-registryEvents:
-	case <-time.After(5 * time.Second):
-		t.Fatal("timeout waiting for registration event")
-	}
-
-	// Now create a second node (simulating a new gateway joining).
-	node2, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
-	if err != nil {
-		t.Fatalf("failed to create node2: %v", err)
-	}
-	defer func() { _ = node2.Close(ctx) }()
-
-	// The new tracker should sync existing toolsets on creation.
-	tracker2, err := NewHealthTracker(
-		mockSM,
-		healthMap,
-		registryMap,
-		node2,
-		WithPingInterval(50*time.Millisecond),
-		WithMissedPingThreshold(2),
-	)
-	if err != nil {
-		t.Fatalf("failed to create tracker2: %v", err)
-	}
-	defer func() { _ = tracker2.Close() }()
-
-	waitForTicker(t, tracker2, "existing-toolset")
-	if tracker2.IsHealthy("existing-toolset") {
-		t.Error("tracker2 should see existing toolset as unhealthy before any pong")
-	}
-}
-
+// TestNewNodeBootstrapsExistingCatalogToolsets verifies that a tracker created
+// after a toolset was cataloged (a new gateway node joining, or a node
+// restarting) participates in ping scheduling without any registration event.
 func TestNewNodeBootstrapsExistingCatalogToolsets(t *testing.T) {
 	rdb := getRedis(t)
 	ctx := context.Background()
@@ -493,55 +239,222 @@ func TestNewNodeBootstrapsExistingCatalogToolsets(t *testing.T) {
 		t.Fatalf("failed to save catalog toolset: %v", err)
 	}
 
-	poolName := "pool-" + t.Name()
-	node, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
-	if err != nil {
-		t.Fatalf("failed to create node: %v", err)
-	}
-	defer func() { _ = node.Close(ctx) }()
+	mockSM := newPingChannelStreamManager()
+	tracker := newTestTracker(t, mockSM, healthMap, registryMap, rdb)
 
-	tracker, err := NewHealthTracker(
-		newMockStreamManager(),
-		healthMap,
-		registryMap,
-		node,
-		WithPingInterval(50*time.Millisecond),
-		WithMissedPingThreshold(2),
-	)
-	if err != nil {
-		t.Fatalf("failed to create tracker: %v", err)
-	}
-	defer func() { _ = tracker.Close() }()
-
-	waitForTicker(t, tracker, toolset)
+	waitForPing(t, mockSM, toolset)
 	if tracker.IsHealthy(toolset) {
 		t.Error("tracker should see existing catalog toolset as unhealthy before any pong")
 	}
 }
 
-func waitForTicker(t *testing.T, tracker HealthTracker, toolset string) {
+// TestPingsContinueAfterPeerClose verifies that pings continue when the node
+// currently winning the ping lease goes away. With expiring leases there is no
+// distinction between graceful shutdown and crash: the departed node simply
+// stops contending, its last lease expires, and a surviving node takes over.
+func TestPingsContinueAfterPeerClose(t *testing.T) {
+	rdb := getRedis(t)
+	ctx := context.Background()
+
+	healthMap, err := rmap.Join(ctx, "health-"+t.Name(), rdb)
+	if err != nil {
+		t.Fatalf("failed to create health map: %v", err)
+	}
+	defer healthMap.Close()
+
+	registryMap, err := rmap.Join(ctx, "registry-"+t.Name(), rdb)
+	if err != nil {
+		t.Fatalf("failed to create registry map: %v", err)
+	}
+	defer registryMap.Close()
+
+	mockSM := newPingChannelStreamManager()
+	tracker1 := newTestTracker(t, mockSM, healthMap, registryMap, rdb)
+	tracker2 := newTestTracker(t, mockSM, healthMap, registryMap, rdb)
+
+	toolset := "failover-toolset"
+	registerCatalogToolset(t, ctx, registryMap, tracker1, toolset)
+
+	// Wait for at least 2 pings to ensure scheduling is working.
+	for range 2 {
+		waitForPing(t, mockSM, toolset)
+	}
+	if tracker2.IsHealthy(toolset) {
+		t.Error("tracker2 should see toolset as unhealthy before any pong")
+	}
+
+	// Close tracker1 (rolling update or crash; leases make them equivalent).
+	if err := tracker1.Close(); err != nil {
+		t.Fatalf("failed to close tracker1: %v", err)
+	}
+	mockSM.drain()
+	pingCountBefore := mockSM.getPingCount(toolset)
+
+	// Pings must continue from the remaining node.
+	for range 3 {
+		waitForPing(t, mockSM, toolset)
+	}
+	if mockSM.getPingCount(toolset) <= pingCountBefore {
+		t.Fatalf(
+			"expected ping count to increase after peer close: before=%d after=%d",
+			pingCountBefore,
+			mockSM.getPingCount(toolset),
+		)
+	}
+}
+
+// TestPingsAndHealthRecoverAfterRedisStateLoss reproduces the production
+// incident: Redis loses every key (FLUSHDB) while the registry keeps running.
+// Ping scheduling must resume on its own — the lease is recreated on the next
+// tick — and a provider pong must mark the toolset healthy again instead of
+// leaving it permanently unhealthy.
+func TestPingsAndHealthRecoverAfterRedisStateLoss(t *testing.T) {
+	rdb := getRedis(t)
+	ctx := context.Background()
+
+	healthMap, err := rmap.Join(ctx, "health-recover-"+t.Name(), rdb)
+	if err != nil {
+		t.Fatalf("failed to create health map: %v", err)
+	}
+	defer healthMap.Close()
+
+	registryMap, err := rmap.Join(ctx, "registry-recover-"+t.Name(), rdb)
+	if err != nil {
+		t.Fatalf("failed to create registry map: %v", err)
+	}
+	defer registryMap.Close()
+
+	mockSM := newPingChannelStreamManager()
+	tracker := newTestTracker(t, mockSM, healthMap, registryMap, rdb)
+
+	toolset := "recover-toolset"
+	registerCatalogToolset(t, ctx, registryMap, tracker, toolset)
+	waitForPing(t, mockSM, toolset)
+
+	// A provider pong marks the toolset healthy. Replicated-map writes become
+	// visible to local reads asynchronously, so poll instead of asserting
+	// immediately.
+	pingID := lastPingID(t, mockSM, toolset)
+	if err := tracker.RecordPong(ctx, toolset, "provider-a", pingID); err != nil {
+		t.Fatalf("failed to record pong: %v", err)
+	}
+	waitForHealthy(t, tracker, toolset)
+
+	// Inflate the health map revision so the flush resets Redis far below the
+	// local replica revision. Without revision repair, every post-flush write
+	// would be silently dropped by the replica and this test fails
+	// deterministically instead of only under unlucky timing.
+	for range 20 {
+		if _, err := healthMap.Set(ctx, "scratch", "x"); err != nil {
+			t.Fatalf("failed to inflate health map revision: %v", err)
+		}
+	}
+	if _, err := healthMap.Delete(ctx, "scratch"); err != nil {
+		t.Fatalf("failed to remove scratch key: %v", err)
+	}
+
+	// Redis loses all state (consumer groups, leases, map hashes).
+	if err := rdb.FlushDB(ctx).Err(); err != nil {
+		t.Fatalf("failed to flush redis: %v", err)
+	}
+	mockSM.drain()
+
+	// Ping scheduling must self-heal: the next tick recreates the lease.
+	for range 3 {
+		waitForPing(t, mockSM, toolset)
+	}
+
+	// The pre-flush pong ages out and the toolset goes unhealthy, exactly as in
+	// the incident. Recovery below can then only come from a post-flush pong
+	// actually propagating.
+	waitForUnhealthy(t, tracker, toolset)
+
+	// A provider answering a post-flush ping must restore health.
+	waitForPing(t, mockSM, toolset)
+	pingID = lastPingID(t, mockSM, toolset)
+	if err := tracker.RecordPong(ctx, toolset, "provider-a", pingID); err != nil {
+		t.Fatalf("failed to record pong after flush: %v", err)
+	}
+	waitForHealthy(t, tracker, toolset)
+}
+
+// newTestTracker builds a health tracker with fast test intervals and
+// registers cleanup.
+func newTestTracker(t *testing.T, sm StreamManager, healthMap, registryMap *rmap.Map, rdb *redis.Client) HealthTracker {
 	t.Helper()
 
-	ht, ok := tracker.(*healthTracker)
-	if !ok {
-		t.Fatalf("unexpected tracker type %T", tracker)
+	tracker, err := NewHealthTracker(
+		sm,
+		healthMap,
+		registryMap,
+		rdb,
+		WithPingInterval(50*time.Millisecond),
+		WithMissedPingThreshold(2),
+		WithPingLeaseScope("lease-"+t.Name()),
+	)
+	if err != nil {
+		t.Fatalf("failed to create tracker: %v", err)
 	}
+	t.Cleanup(func() { _ = tracker.Close() })
+	return tracker
+}
+
+// waitForHealthy polls until the tracker reports the toolset healthy.
+// Replicated-map writes propagate to local replicas asynchronously, so health
+// reads after a pong must poll rather than assert immediately.
+func waitForHealthy(t *testing.T, tracker HealthTracker, toolset string) {
+	t.Helper()
 
 	deadline := time.NewTimer(5 * time.Second)
 	defer deadline.Stop()
 	poll := time.NewTicker(10 * time.Millisecond)
 	defer poll.Stop()
 	for {
-		ht.mu.Lock()
-		_, hasTicker := ht.tickers[toolset]
-		ht.mu.Unlock()
-		if hasTicker {
+		if tracker.IsHealthy(toolset) {
 			return
 		}
 		select {
 		case <-poll.C:
 		case <-deadline.C:
-			t.Fatalf("tracker did not start local ticker for %q", toolset)
+			t.Fatalf("toolset %q did not become healthy", toolset)
+		}
+	}
+}
+
+// waitForUnhealthy polls until the tracker reports the toolset unhealthy,
+// i.e. the last recorded pong has aged past the staleness threshold.
+func waitForUnhealthy(t *testing.T, tracker HealthTracker, toolset string) {
+	t.Helper()
+
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
+	for {
+		if !tracker.IsHealthy(toolset) {
+			return
+		}
+		select {
+		case <-poll.C:
+		case <-deadline.C:
+			t.Fatalf("toolset %q did not become unhealthy", toolset)
+		}
+	}
+}
+
+// waitForPing blocks until a ping for the toolset is published or fails the test.
+func waitForPing(t *testing.T, sm *pingChannelStreamManager, toolset string) {
+	t.Helper()
+
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case got := <-sm.pingCh:
+			if got == toolset {
+				return
+			}
+		case <-deadline:
+			t.Fatalf("timeout waiting for ping for %q", toolset)
 		}
 	}
 }
@@ -587,410 +500,51 @@ func unregisterCatalogToolset(t *testing.T, ctx context.Context, registryMap *rm
 	tracker.StopPingLoop(ctx, toolset)
 }
 
-// TestPingsContinueAfterNodeFailure verifies that pings continue when the
-// node that was sending pings crashes (simulated by closing the node without
-// gracefully stopping the ticker).
-func TestPingsContinueAfterNodeFailure(t *testing.T) {
-	rdb := getRedis(t)
-	ctx := context.Background()
+// lastPingID returns the ping ID of the most recent ping recorded for a toolset.
+func lastPingID(t *testing.T, sm *pingChannelStreamManager, toolset string) string {
+	t.Helper()
 
-	healthMap, err := rmap.Join(ctx, "health-"+t.Name(), rdb)
-	if err != nil {
-		t.Fatalf("failed to create health map: %v", err)
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	id := sm.lastPingIDs[toolset]
+	if id == "" {
+		t.Fatalf("no ping recorded for %q", toolset)
 	}
-	defer healthMap.Close()
+	return id
+}
 
-	registryMap, err := rmap.Join(ctx, "registry-"+t.Name(), rdb)
-	if err != nil {
-		t.Fatalf("failed to create registry map: %v", err)
-	}
-	defer registryMap.Close()
+// pingChannelStreamManager counts pings per toolset, remembers the last ping
+// ID, and signals each ping via channel.
+type pingChannelStreamManager struct {
+	mu          sync.RWMutex
+	messages    map[string]int
+	lastPingIDs map[string]string
+	pingCh      chan string
+}
 
-	registryEvents := registryMap.Subscribe()
-	defer registryMap.Unsubscribe(registryEvents)
-
-	poolName := "pool-" + t.Name()
-	node1, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
-	if err != nil {
-		t.Fatalf("failed to create node1: %v", err)
-	}
-
-	node2, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
-	if err != nil {
-		t.Fatalf("failed to create node2: %v", err)
-	}
-	defer func() { _ = node2.Close(ctx) }()
-
-	mockSM := &pingCountingStreamManager{
-		messages: make(map[string]int),
-		pingCh:   make(chan string, 100),
-	}
-
-	// Create tracker2 FIRST so it's ready to receive registry events.
-	tracker2, err := NewHealthTracker(
-		mockSM,
-		healthMap,
-		registryMap,
-		node2,
-		WithPingInterval(50*time.Millisecond),
-		WithMissedPingThreshold(2),
-	)
-	if err != nil {
-		t.Fatalf("failed to create tracker2: %v", err)
-	}
-	defer func() { _ = tracker2.Close() }()
-
-	tracker1, err := NewHealthTracker(
-		mockSM,
-		healthMap,
-		registryMap,
-		node1,
-		WithPingInterval(50*time.Millisecond),
-		WithMissedPingThreshold(2),
-	)
-	if err != nil {
-		t.Fatalf("failed to create tracker1: %v", err)
-	}
-
-	// Register toolset on node1.
-	registerCatalogToolset(t, ctx, registryMap, tracker1, "failover-toolset")
-
-	// Wait for registration event (tracker2 will sync and create its ticker).
-	select {
-	case <-registryEvents:
-	case <-time.After(5 * time.Second):
-		t.Fatal("timeout waiting for registration event")
-	}
-
-	// Wait for at least 2 pings to ensure the distributed ticker is working.
-	for range 2 {
-		select {
-		case <-mockSM.pingCh:
-		case <-time.After(5 * time.Second):
-			t.Fatal("timeout waiting for pings before failure")
-		}
-	}
-
-	initialPings := mockSM.getPingCount("failover-toolset")
-	if initialPings < 2 {
-		t.Errorf("should have received at least 2 pings before failure, got %d", initialPings)
-	}
-
-	// Simulate node 1 crash by closing the node directly (without graceful tracker close).
-	// This simulates a real crash where the process dies unexpectedly.
-	// Pulse should detect the node failure and failover the ticker to node2.
-	_ = node1.Close(ctx)
-
-	// Drain any buffered pings that were sent before the node closed.
-	pingCountBefore := mockSM.getPingCount("failover-toolset")
-drainLoop:
-	for {
-		select {
-		case <-mockSM.pingCh:
-			// Drain buffered pings.
-		default:
-			break drainLoop
-		}
-	}
-
-	// Wait for NEW pings from node 2 (failover).
-	// The distributed ticker should automatically failover to node 2.
-	// Give it a bit more time since Pulse needs to detect the node failure.
-	for range 3 {
-		select {
-		case <-mockSM.pingCh:
-		case <-time.After(10 * time.Second):
-			t.Fatalf("timeout waiting for pings after failover (before=%d, current=%d)",
-				pingCountBefore, mockSM.getPingCount("failover-toolset"))
-		}
-	}
-
-	finalPings := mockSM.getPingCount("failover-toolset")
-	if finalPings <= pingCountBefore {
-		t.Errorf("pings should continue after node failure: before=%d, after=%d", pingCountBefore, finalPings)
+func newPingChannelStreamManager() *pingChannelStreamManager {
+	return &pingChannelStreamManager{
+		messages:    make(map[string]int),
+		lastPingIDs: make(map[string]string),
+		pingCh:      make(chan string, 1024),
 	}
 }
 
-// TestPingsContinueAfterPeerTrackerClose verifies that gracefully closing a
-// health tracker on one node does not stop the shared distributed ticker for
-// other nodes.
-//
-// Regression: HealthTracker.Close used to call (*pool.Ticker).Stop, which deletes
-// the shared ticker-map entry and can stop pings cluster-wide during rolling
-// updates.
-func TestPingsContinueAfterPeerTrackerClose(t *testing.T) {
-	rdb := getRedis(t)
-	ctx := context.Background()
-
-	healthMap, err := rmap.Join(ctx, "health-"+t.Name(), rdb)
-	if err != nil {
-		t.Fatalf("failed to create health map: %v", err)
-	}
-	defer healthMap.Close()
-
-	registryMap, err := rmap.Join(ctx, "registry-"+t.Name(), rdb)
-	if err != nil {
-		t.Fatalf("failed to create registry map: %v", err)
-	}
-	defer registryMap.Close()
-
-	registryEvents := registryMap.Subscribe()
-	defer registryMap.Unsubscribe(registryEvents)
-
-	poolName := "pool-" + t.Name()
-	node1, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
-	if err != nil {
-		t.Fatalf("failed to create node1: %v", err)
-	}
-	defer func() { _ = node1.Close(ctx) }()
-
-	node2, err := pool.AddNode(ctx, poolName, rdb, testNodeOpts()...)
-	if err != nil {
-		t.Fatalf("failed to create node2: %v", err)
-	}
-	defer func() { _ = node2.Close(ctx) }()
-
-	mockSM := &pingCountingStreamManager{
-		messages: make(map[string]int),
-		pingCh:   make(chan string, 100),
-	}
-
-	// Create tracker2 FIRST so it's ready to receive registry events.
-	tracker2, err := NewHealthTracker(
-		mockSM,
-		healthMap,
-		registryMap,
-		node2,
-		WithPingInterval(50*time.Millisecond),
-		WithMissedPingThreshold(2),
-	)
-	if err != nil {
-		t.Fatalf("failed to create tracker2: %v", err)
-	}
-	defer func() { _ = tracker2.Close() }()
-
-	tracker1, err := NewHealthTracker(
-		mockSM,
-		healthMap,
-		registryMap,
-		node1,
-		WithPingInterval(50*time.Millisecond),
-		WithMissedPingThreshold(2),
-	)
-	if err != nil {
-		t.Fatalf("failed to create tracker1: %v", err)
-	}
-
-	toolset := "peer-close-toolset"
-	registerCatalogToolset(t, ctx, registryMap, tracker1, toolset)
-
-	// Wait for registration event (tracker2 will sync and create its ticker).
-	select {
-	case <-registryEvents:
-	case <-time.After(5 * time.Second):
-		_ = tracker1.Close()
-		t.Fatal("timeout waiting for registration event")
-	}
-
-	// Deterministically ensure tracker2 processed the registry entry and started
-	// its local distributed ticker participation before we close tracker1.
-	//
-	// The tracker receives registry events asynchronously, and observing a map
-	// event from this test does not guarantee tracker2 has already synced. Avoid
-	// forcing a sync here: wait for the local ticker to appear to exercise the
-	// real async event path.
-	ht2, ok := tracker2.(*healthTracker)
-	if !ok {
-		_ = tracker1.Close()
-		t.Fatalf("unexpected tracker2 type %T", tracker2)
-	}
-	deadline := time.NewTimer(5 * time.Second)
-	defer deadline.Stop()
-	poll := time.NewTicker(10 * time.Millisecond)
-	defer poll.Stop()
-	for {
-		ht2.mu.Lock()
-		_, hasTicker := ht2.tickers[toolset]
-		ht2.mu.Unlock()
-		if hasTicker {
-			break
-		}
-		select {
-		case <-poll.C:
-		case <-deadline.C:
-			_ = tracker1.Close()
-			t.Fatalf("tracker2 did not start local ticker for %q", toolset)
-		}
-	}
-
-	// Wait for at least 2 pings to ensure the distributed ticker is working.
-	for range 2 {
-		select {
-		case <-mockSM.pingCh:
-		case <-time.After(5 * time.Second):
-			_ = tracker1.Close()
-			t.Fatal("timeout waiting for pings before peer close")
-		}
-	}
-
-	pingCountBefore := mockSM.getPingCount(toolset)
-
-	// Gracefully close tracker1 (simulating rolling update shutdown).
-	if err := tracker1.Close(); err != nil {
-		t.Fatalf("failed to close tracker1: %v", err)
-	}
-
-	// Pings should continue from the remaining node.
-	for range 3 {
-		select {
-		case <-mockSM.pingCh:
-		case <-time.After(10 * time.Second):
-			t.Fatalf(
-				"timeout waiting for pings after peer close (before=%d, current=%d)",
-				pingCountBefore,
-				mockSM.getPingCount(toolset),
-			)
-		}
-	}
-	if mockSM.getPingCount(toolset) <= pingCountBefore {
-		t.Fatalf(
-			"expected ping count to increase after peer close: before=%d after=%d",
-			pingCountBefore,
-			mockSM.getPingCount(toolset),
-		)
-	}
-}
-
-func TestStaleTickerRepairsAfterLocalTickerDies(t *testing.T) {
-	rdb := getRedis(t)
-	ctx := context.Background()
-
-	healthMap, err := rmap.Join(ctx, "health-"+t.Name(), rdb)
-	if err != nil {
-		t.Fatalf("failed to create health map: %v", err)
-	}
-	defer healthMap.Close()
-
-	registryMap, err := rmap.Join(ctx, "registry-"+t.Name(), rdb)
-	if err != nil {
-		t.Fatalf("failed to create registry map: %v", err)
-	}
-	defer registryMap.Close()
-
-	node, err := pool.AddNode(ctx, "pool-"+t.Name(), rdb, testNodeOpts()...)
-	if err != nil {
-		t.Fatalf("failed to create node: %v", err)
-	}
-	defer func() { _ = node.Close(ctx) }()
-
-	mockSM := &pingCountingStreamManager{
-		messages: make(map[string]int),
-		pingCh:   make(chan string, 100),
-	}
-
-	tracker, err := NewHealthTracker(
-		mockSM,
-		healthMap,
-		registryMap,
-		node,
-		WithPingInterval(50*time.Millisecond),
-		WithMissedPingThreshold(1),
-	)
-	if err != nil {
-		t.Fatalf("failed to create tracker: %v", err)
-	}
-	defer func() { _ = tracker.Close() }()
-
-	toolset := "repair-toolset"
-	registerCatalogToolset(t, ctx, registryMap, tracker, toolset)
-	waitForTicker(t, tracker, toolset)
-
-	select {
-	case <-mockSM.pingCh:
-	case <-time.After(5 * time.Second):
-		t.Fatal("timeout waiting for initial ping")
-	}
-
-drainLoop:
-	for {
-		select {
-		case <-mockSM.pingCh:
-		default:
-			break drainLoop
-		}
-	}
-
-	catalog := newToolsetCatalog(registryMap)
-	registrationToken, err := catalog.RegistrationToken(ctx, toolset)
-	if err != nil {
-		t.Fatalf("failed to resolve registration token: %v", err)
-	}
-	if err := setHealthRecordForTest(ctx, healthMap, toolset, "provider-a", registrationToken, time.Now()); err != nil {
-		t.Fatalf("failed to seed health record: %v", err)
-	}
-
-	ht, ok := tracker.(*healthTracker)
-	if !ok {
-		t.Fatalf("unexpected tracker type %T", tracker)
-	}
-
-	ht.mu.Lock()
-	oldTicker := ht.tickers[toolset]
-	if oldTicker == nil {
-		ht.mu.Unlock()
-		t.Fatalf("tracker does not have a local ticker for %q", toolset)
-	}
-	oldTicker.Close()
-	ht.mu.Unlock()
-
-	repaired := false
-	deadline := time.NewTimer(5 * time.Second)
-	defer deadline.Stop()
-	poll := time.NewTicker(10 * time.Millisecond)
-	defer poll.Stop()
-	for !repaired {
-		select {
-		case <-poll.C:
-			ht.mu.Lock()
-			current := ht.tickers[toolset]
-			ht.mu.Unlock()
-			repaired = current != nil && current != oldTicker
-		case <-deadline.C:
-			t.Fatal("tracker did not recreate the dead local ticker")
-		}
-	}
-
-	select {
-	case repairedToolset := <-mockSM.pingCh:
-		if repairedToolset != toolset {
-			t.Fatalf("expected repaired ping for %q, got %q", toolset, repairedToolset)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("timeout waiting for ping from repaired ticker")
-	}
-}
-
-// pingCountingStreamManager counts pings per toolset and signals via channel.
-type pingCountingStreamManager struct {
-	mu       sync.RWMutex
-	messages map[string]int
-	pingCh   chan string
-}
-
-func (m *pingCountingStreamManager) GetOrCreateStream(ctx context.Context, toolset string) (clientspulse.Stream, string, error) {
+func (m *pingChannelStreamManager) GetOrCreateStream(ctx context.Context, toolset string) (clientspulse.Stream, string, error) {
 	return nil, "mock-stream:" + toolset, nil
 }
 
-func (m *pingCountingStreamManager) GetStream(toolset string) clientspulse.Stream {
+func (m *pingChannelStreamManager) GetStream(toolset string) clientspulse.Stream {
 	return nil
 }
 
-func (m *pingCountingStreamManager) RemoveStream(toolset string) {}
+func (m *pingChannelStreamManager) RemoveStream(toolset string) {}
 
-func (m *pingCountingStreamManager) PublishToolCall(ctx context.Context, toolset string, msg toolregistry.ToolCallMessage) error {
+func (m *pingChannelStreamManager) PublishToolCall(ctx context.Context, toolset string, msg toolregistry.ToolCallMessage) error {
 	if msg.Type == toolregistry.MessageTypePing {
 		m.mu.Lock()
 		m.messages[toolset]++
+		m.lastPingIDs[toolset] = msg.PingID
 		m.mu.Unlock()
 		select {
 		case m.pingCh <- toolset:
@@ -1000,10 +554,22 @@ func (m *pingCountingStreamManager) PublishToolCall(ctx context.Context, toolset
 	return nil
 }
 
-func (m *pingCountingStreamManager) getPingCount(toolset string) int {
+func (m *pingChannelStreamManager) getPingCount(toolset string) int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.messages[toolset]
 }
 
-var _ StreamManager = (*pingCountingStreamManager)(nil)
+// drain discards buffered ping notifications so subsequent waits observe only
+// new pings.
+func (m *pingChannelStreamManager) drain() {
+	for {
+		select {
+		case <-m.pingCh:
+		default:
+			return
+		}
+	}
+}
+
+var _ StreamManager = (*pingChannelStreamManager)(nil)

@@ -674,6 +674,8 @@ func (s *fakeStream) NewSink(ctx context.Context, name string, opts ...streamopt
 	return &fakeSink{events: s.events}, nil
 }
 
+func (s *fakeStream) EnsureGroup(context.Context, string) error { return nil }
+
 func (s *fakeStream) Destroy(ctx context.Context) error {
 	return nil
 }

@@ -363,6 +363,13 @@ To serve tool calls from the registry gateway, run the provider loop inside the 
 // cmd/<service>/main.go (or your service bootstrap)
 handler := <toolsetpkg>.NewProvider(svcImpl)
 providerID := "<pod-name>/" + toolsetID
+register := func(ctx context.Context) error {
+    _, err := registryClient.Register(ctx, registrationPayload) // same schema as startup
+    return err
+}
+if err := register(ctx); err != nil {
+    panic(err)
+}
 go func() {
     err := toolprovider.Serve(ctx, pulseClient, toolsetID, handler, toolprovider.Options{
         ProviderID: providerID,
@@ -373,6 +380,10 @@ go func() {
                 ProviderID: providerID,
             })
         },
+        // Re-assert registration periodically so the provider self-heals
+        // after Redis state loss (catalog entry restored, health pings
+        // resumed) without a redeploy. Registration is idempotent.
+        EnsureRegistration: register,
     })
     if err != nil {
         panic(err)

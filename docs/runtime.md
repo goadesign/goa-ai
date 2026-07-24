@@ -851,6 +851,13 @@ To run it, wire the generated provider into the runtime provider loop:
 ```go
 handler := toolsetpkg.NewProvider(serviceImpl)
 providerID := podName + "/" + toolsetID
+register := func(ctx context.Context) error {
+    _, err := registryClient.Register(ctx, registrationPayload) // same schema as startup
+    return err
+}
+if err := register(ctx); err != nil {
+    panic(err)
+}
 go func() {
     err := toolprovider.Serve(ctx, pulseClient, toolsetID, handler, toolprovider.Options{
         ProviderID: providerID,
@@ -861,6 +868,11 @@ go func() {
                 ProviderID: providerID,
             })
         },
+        // Re-assert registration periodically so the provider self-heals
+        // after Redis state loss: the catalog entry is restored and health
+        // pings resume without redeploying the provider. Registration is
+        // idempotent; an unchanged schema preserves the registration token.
+        EnsureRegistration: register,
     })
     if err != nil {
         panic(err)
@@ -880,6 +892,14 @@ toolset as healthy when any provider instance for the active schema registration
 token has a fresh pong. Re-registering an identical schema preserves the token;
 registering a changed schema rotates it and requires a fresh pong from a
 provider serving the new schema.
+
+Both sides self-heal after Redis state loss. The registry schedules pings
+through short-lived Redis leases that are simply re-acquired on the next tick,
+and repairs its replicated-map revision counters so post-loss health and
+catalog writes propagate to every node. `toolprovider.Serve` runs a reconcile
+loop (`EnsureInterval`, default 30s) that recreates the toolset stream's
+consumer group when Redis lost it and calls `EnsureRegistration` to restore
+the catalog entry, so a flushed Redis recovers without restarting providers.
 
 ### Registry-Routed Execution (Agent/Consumer Side)
 

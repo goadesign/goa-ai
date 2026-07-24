@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -52,6 +53,14 @@ type (
 		Add(ctx context.Context, event string, payload []byte) (string, error)
 		// NewSink creates a Pulse sink (consumer group) on this stream for reading events.
 		NewSink(ctx context.Context, name string, opts ...streamopts.Sink) (Sink, error)
+		// EnsureGroup recreates the named consumer group (and the backing stream)
+		// when Redis lost them, so a sink created earlier with NewSink resumes
+		// receiving events. Long-running subscribers such as tool providers call
+		// it periodically: Pulse sinks poll with XREADGROUP and silently retry on
+		// NOGROUP, so a group deleted by Redis data loss would otherwise starve
+		// the subscriber forever. The group is created at the stream tail; it is
+		// a no-op when the group already exists.
+		EnsureGroup(ctx context.Context, group string) error
 		// Destroy deletes the entire stream and all its messages from Redis.
 		Destroy(ctx context.Context) error
 	}
@@ -109,7 +118,7 @@ func (c *client) Stream(name string, opts ...streamopts.Stream) (Stream, error) 
 	if err != nil {
 		return nil, fmt.Errorf("create pulse stream: %w", err)
 	}
-	return &handle{stream: str, timeout: c.timeout}, nil
+	return &handle{stream: str, key: pulseStreamKey(name), redis: c.redis, timeout: c.timeout}, nil
 }
 
 // Close is a no-op because the caller typically owns and manages the Redis
@@ -121,6 +130,8 @@ func (c *client) Close(ctx context.Context) error {
 // handle wraps a Pulse stream and applies optional timeouts to operations.
 type handle struct {
 	stream  *streaming.Stream
+	key     string
+	redis   *redis.Client
 	timeout time.Duration
 }
 
@@ -153,6 +164,26 @@ func (h *handle) NewSink(ctx context.Context, name string, opts ...streamopts.Si
 	return &sinkAdapter{Sink: sink}, nil
 }
 
+// EnsureGroup recreates the consumer group at the stream tail when Redis lost
+// it. Sinks previously created with NewSink resume consuming as soon as the
+// group exists again: XREADGROUP re-creates their consumer on the next poll.
+// Existing groups are left untouched.
+func (h *handle) EnsureGroup(ctx context.Context, group string) error {
+	if group == "" {
+		return errors.New("group name is required")
+	}
+	if h.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, h.timeout)
+		defer cancel()
+	}
+	err := h.redis.XGroupCreateMkStream(ctx, h.key, group, "$").Err()
+	if err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {
+		return fmt.Errorf("ensure consumer group %q: %w", group, err)
+	}
+	return nil
+}
+
 // Destroy deletes the entire stream and all its messages from Redis.
 func (h *handle) Destroy(ctx context.Context) error {
 	return h.stream.Destroy(ctx)
@@ -167,4 +198,12 @@ type sinkAdapter struct {
 // Close delegates to the underlying Pulse sink.
 func (s sinkAdapter) Close(ctx context.Context) {
 	s.Sink.Close(ctx)
+}
+
+// pulseStreamKey returns the Redis key Pulse uses for a stream. The prefix is
+// pinned to the goa.design/pulse version in go.mod: Pulse does not export it,
+// and EnsureGroup must address the raw stream key to recreate consumer groups
+// after Redis data loss.
+func pulseStreamKey(name string) string {
+	return "pulse:stream:" + name
 }

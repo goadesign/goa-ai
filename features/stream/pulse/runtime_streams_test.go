@@ -88,6 +88,8 @@ func (f *fakeStream) NewSink(ctx context.Context, name string, opts ...streamopt
 	return f.sink, nil
 }
 
+func (f *fakeStream) EnsureGroup(context.Context, string) error { return nil }
+
 func (f *fakeStream) Destroy(ctx context.Context) error {
 	return nil
 }
