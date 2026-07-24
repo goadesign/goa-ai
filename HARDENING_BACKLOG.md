@@ -57,6 +57,27 @@ a coordinated rollout with every registry consumer and provider:
 - Public docs (this repo + goa.design site content) not yet updated for the
   final recovery and registration contracts.
 
+## Backlog candidates from the provider-reregistration ship review (2026-07-23)
+
+Non-blocking findings from the diff-scoped review of the
+`provider-reregistration` branch; pre-existing on main or accepted residue:
+
+- `Serve`'s "toolset stream subscription closed" return path does not join
+  `wg`/`ackWG` (pre-existing pattern, now also covers the ensure goroutine).
+- `EnsureGroup` matches BUSYGROUP by error-string substring (Pulse itself does
+  the same; brittle across Redis error-message changes).
+- `Health()` resolves the registration token with `context.Background()`
+  (pre-existing).
+- The `=rev` / `map:<name>:content` / `pulse:stream:` pins to Pulse rmap
+  internals are documented and enforced only by integration tests; a
+  compile-time or version-pinned guard would fail Pulse upgrades earlier.
+- Residual clock-skew caveat in revision repair: if the only node holding a
+  fast-clock floor disappears, a later repair under-pins until the wall clock
+  overtakes the old pin (self-limiting to the skew duration).
+- `TestServerIntegration/register_and_list` can flake (~1/27): Register writes
+  via `rmap.Set` while List reads the local replica — an eventual-consistency
+  window identical on main.
+
 ## Process contract for landing the parked work
 
 Same as Pulse: dedicated changes with written contracts, diff-scoped reviews
