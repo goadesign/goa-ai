@@ -44,6 +44,7 @@ import (
 	grpcserver "goa.design/goa-ai/registry/gen/grpc/registry/server"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/telemetry"
+	"goa.design/goa-ai/runtime/toolregistry"
 	"goa.design/pulse/pool"
 	"goa.design/pulse/rmap"
 	"google.golang.org/grpc"
@@ -56,7 +57,6 @@ type (
 	Registry struct {
 		service       *Service
 		pulseClient   clientspulse.Client
-		healthMap     *rmap.Map
 		registryMap   *rmap.Map
 		poolNode      *pool.Node
 		healthTracker HealthTracker
@@ -72,9 +72,8 @@ type (
 		// Multiple nodes with the same Name and Redis connection form a cluster,
 		// sharing state and coordinating health checks automatically.
 		//
-		// The pool, health map, and registry map names are derived as:
+		// The pool and registry map names are derived as:
 		//   - Pool: "<name>"
-		//   - Health map: "<name>:health"
 		//   - Registry map: "<name>:toolsets"
 		//
 		// Defaults to "registry" if not provided.
@@ -89,10 +88,13 @@ type (
 		// before marking a toolset as unhealthy.
 		// Defaults to 3 if not provided.
 		MissedPingThreshold int
-		// ResultStreamMappingTTL is the TTL for tool_use_id to stream_id mappings.
-		// ResultStreamTTL is the TTL for per-call result streams in Redis.
-		// Defaults to 15 minutes if not provided.
+		// ResultStreamTTL is the singular sliding TTL for per-call result streams.
+		// Zero uses toolregistry.DefaultResultStreamTTL.
 		ResultStreamTTL time.Duration
+		// ProviderLeaseDuration is how long identical registration admits one
+		// provider instance without renewal. Provider Serve derives its renewal
+		// schedule from this duration; the default is two minutes.
+		ProviderLeaseDuration time.Duration
 		// PoolNodeOptions are additional options for the Pulse pool node.
 		PoolNodeOptions []pool.NodeOption
 	}
@@ -107,6 +109,24 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 	if cfg.Redis == nil {
 		return nil, fmt.Errorf("redis client is required")
 	}
+	if cfg.ResultStreamTTL != 0 &&
+		(cfg.ResultStreamTTL < toolregistry.MinResultStreamTTL ||
+			cfg.ResultStreamTTL > toolregistry.MaxResultStreamTTL) {
+		return nil, fmt.Errorf(
+			"result stream TTL must be between %s and %s",
+			toolregistry.MinResultStreamTTL,
+			toolregistry.MaxResultStreamTTL,
+		)
+	}
+	if cfg.ProviderLeaseDuration != 0 &&
+		(cfg.ProviderLeaseDuration < toolregistry.MinProviderLeaseDuration ||
+			cfg.ProviderLeaseDuration > toolregistry.MaxProviderLeaseDuration) {
+		return nil, fmt.Errorf(
+			"provider lease duration must be between %s and %s",
+			toolregistry.MinProviderLeaseDuration,
+			toolregistry.MaxProviderLeaseDuration,
+		)
+	}
 
 	// Apply defaults and derive Pulse resource names.
 	name := cfg.Name
@@ -114,7 +134,6 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 		name = "registry"
 	}
 	poolName := name
-	healthMapName := name + ":health"
 	registryMapName := name + ":toolsets"
 
 	// Create Pulse client for stream operations.
@@ -125,22 +144,14 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 		return nil, fmt.Errorf("create pulse client: %w", err)
 	}
 
-	// Create Pulse replicated maps for shared state.
-	healthMap, err := rmap.Join(ctx, healthMapName, cfg.Redis)
-	if err != nil {
-		return nil, fmt.Errorf("join health map: %w", err)
-	}
-
 	registryMap, err := rmap.Join(ctx, registryMapName, cfg.Redis)
 	if err != nil {
-		healthMap.Close()
 		return nil, fmt.Errorf("join registry map: %w", err)
 	}
 
 	// Create Pulse pool node for distributed tickers.
 	poolNode, err := pool.AddNode(ctx, poolName, cfg.Redis, cfg.PoolNodeOptions...)
 	if err != nil {
-		healthMap.Close()
 		registryMap.Close()
 		return nil, fmt.Errorf("add pool node: %w", err)
 	}
@@ -160,29 +171,32 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 		healthOpts = append(healthOpts, WithHealthLogger(cfg.Logger))
 	}
 
+	clock := newRedisTimeSource(cfg.Redis)
+
+	// Create the one authoritative toolset catalog shared by the service and
+	// health tracker.
+	catalog := newToolsetCatalog(registryMap, clock)
+
 	// Create health tracker.
-	healthTracker, err := NewHealthTracker(streamManager, healthMap, registryMap, poolNode, healthOpts...)
+	healthTracker, err := newHealthTracker(ctx, streamManager, catalog, poolNode, healthOpts...)
 	if err != nil {
-		healthMap.Close()
 		registryMap.Close()
 		closeErr := poolNode.Close(ctx)
 		return nil, errors.Join(fmt.Errorf("create health tracker: %w", err), closeErr)
 	}
 
-	// Create the authoritative toolset catalog.
-	catalog := newToolsetCatalog(registryMap)
-
 	// Create the service.
 	service, err := newService(serviceOptions{
-		catalog:         catalog,
-		StreamManager:   streamManager,
-		HealthTracker:   healthTracker,
-		PulseClient:     pulseClient,
-		ResultStreamTTL: cfg.ResultStreamTTL,
+		catalog:               catalog,
+		StreamManager:         streamManager,
+		HealthTracker:         healthTracker,
+		CallAdmissions:        newCallAdmissionStore(cfg.Redis, name),
+		PulseClient:           pulseClient,
+		ResultStreamTTL:       cfg.ResultStreamTTL,
+		ProviderLeaseDuration: cfg.ProviderLeaseDuration,
 	})
 	if err != nil {
 		htCloseErr := healthTracker.Close()
-		healthMap.Close()
 		registryMap.Close()
 		poolCloseErr := poolNode.Close(ctx)
 		return nil, errors.Join(fmt.Errorf("create service: %w", err), htCloseErr, poolCloseErr)
@@ -191,7 +205,6 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 	return &Registry{
 		service:       service,
 		pulseClient:   pulseClient,
-		healthMap:     healthMap,
 		registryMap:   registryMap,
 		poolNode:      poolNode,
 		healthTracker: healthTracker,
@@ -230,9 +243,6 @@ func (r *Registry) Close(ctx context.Context) error {
 	}
 
 	// Close rmap instances.
-	if r.healthMap != nil {
-		r.healthMap.Close()
-	}
 	if r.registryMap != nil {
 		r.registryMap.Close()
 	}

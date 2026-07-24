@@ -19,9 +19,11 @@ import (
 // "Register" endpoint of the "registry" service.
 func NewProtoRegisterRequest(payload *registry.RegisterPayload) *registrypb.RegisterRequest {
 	message := &registrypb.RegisterRequest{
-		Name:        payload.Name,
-		Description: payload.Description,
-		ProviderId:  payload.ProviderID,
+		Name:                  payload.Name,
+		Description:           payload.Description,
+		ProviderId:            payload.ProviderID,
+		AdmissionRevision:     payload.AdmissionRevision,
+		ProviderIncarnationId: payload.ProviderIncarnationID,
 	}
 	if payload.Version != nil {
 		version := string(*payload.Version)
@@ -58,16 +60,31 @@ func NewProtoRegisterRequest(payload *registry.RegisterPayload) *registrypb.Regi
 // "registry" service from the gRPC response type.
 func NewRegisterResult(message *registrypb.RegisterResponse) *registry.RegisterResult {
 	result := &registry.RegisterResult{
-		RegisteredAt: message.RegisteredAt,
+		RegisteredAt:      message.RegisteredAt,
+		RegistrationToken: message.RegistrationToken,
+		LeaseDurationMs:   message.LeaseDurationMs,
 	}
 	return result
+}
+
+// NewProtoReleaseProviderRequest builds the gRPC request type from the payload
+// of the "ReleaseProvider" endpoint of the "registry" service.
+func NewProtoReleaseProviderRequest(payload *registry.ReleaseProviderPayload) *registrypb.ReleaseProviderRequest {
+	message := &registrypb.ReleaseProviderRequest{
+		Name:                      payload.Name,
+		ProviderId:                payload.ProviderID,
+		ExpectedRegistrationToken: payload.ExpectedRegistrationToken,
+		ProviderIncarnationId:     payload.ProviderIncarnationID,
+	}
+	return message
 }
 
 // NewProtoUnregisterRequest builds the gRPC request type from the payload of
 // the "Unregister" endpoint of the "registry" service.
 func NewProtoUnregisterRequest(payload *registry.UnregisterPayload) *registrypb.UnregisterRequest {
 	message := &registrypb.UnregisterRequest{
-		Name: payload.Name,
+		Name:                      payload.Name,
+		ExpectedRegistrationToken: payload.ExpectedRegistrationToken,
 	}
 	return message
 }
@@ -76,9 +93,10 @@ func NewProtoUnregisterRequest(payload *registry.UnregisterPayload) *registrypb.
 // "Pong" endpoint of the "registry" service.
 func NewProtoPongRequest(payload *registry.PongPayload) *registrypb.PongRequest {
 	message := &registrypb.PongRequest{
-		PingId:     payload.PingID,
-		Toolset:    payload.Toolset,
-		ProviderId: payload.ProviderID,
+		PingId:                payload.PingID,
+		Toolset:               payload.Toolset,
+		ProviderId:            payload.ProviderID,
+		ProviderIncarnationId: payload.ProviderIncarnationID,
 	}
 	return message
 }
@@ -227,7 +245,9 @@ func NewProtoCallToolRequest(payload *registry.CallToolPayload) *registrypb.Call
 // "registry" service from the gRPC response type.
 func NewCallToolResult(message *registrypb.CallToolResponse) *registry.CallToolResult {
 	result := &registry.CallToolResult{
-		ToolUseID: message.ToolUseId,
+		ToolUseID:         message.ToolUseId,
+		RegistrationToken: message.RegistrationToken,
+		ResultStreamTTLMs: message.ResultStreamTtlMs,
 	}
 	return result
 }
@@ -252,6 +272,13 @@ func ValidateToolSchema(elem *registrypb.ToolSchema) (err error) {
 // ValidateRegisterResponse runs the validations defined on RegisterResponse.
 func ValidateRegisterResponse(message *registrypb.RegisterResponse) (err error) {
 	err = goa.MergeErrors(err, goa.ValidateFormat("message.registered_at", message.RegisteredAt, goa.FormatDateTime))
+	err = goa.MergeErrors(err, goa.ValidatePattern("message.registration_token", message.RegistrationToken, "^[0-9a-f]{64}$"))
+	if message.LeaseDurationMs < 1 {
+		err = goa.MergeErrors(err, goa.InvalidRangeError("message.lease_duration_ms", message.LeaseDurationMs, 1, true))
+	}
+	if message.LeaseDurationMs > 8.64e+07 {
+		err = goa.MergeErrors(err, goa.InvalidRangeError("message.lease_duration_ms", message.LeaseDurationMs, 8.64e+07, false))
+	}
 	return
 }
 
@@ -331,6 +358,13 @@ func ValidateCallToolResponse(message *registrypb.CallToolResponse) (err error) 
 	}
 	if utf8.RuneCountInString(message.ToolUseId) > 256 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("message.tool_use_id", message.ToolUseId, utf8.RuneCountInString(message.ToolUseId), 256, false))
+	}
+	err = goa.MergeErrors(err, goa.ValidatePattern("message.registration_token", message.RegistrationToken, "^[0-9a-f]{64}$"))
+	if message.ResultStreamTtlMs < 660000 {
+		err = goa.MergeErrors(err, goa.InvalidRangeError("message.result_stream_ttl_ms", message.ResultStreamTtlMs, 660000, true))
+	}
+	if message.ResultStreamTtlMs > 8.64e+07 {
+		err = goa.MergeErrors(err, goa.InvalidRangeError("message.result_stream_ttl_ms", message.ResultStreamTtlMs, 8.64e+07, false))
 	}
 	return
 }

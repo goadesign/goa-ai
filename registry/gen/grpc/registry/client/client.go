@@ -41,12 +41,35 @@ func (c *Client) Register() goa.Endpoint {
 			DecodeRegisterResponse)
 		res, err := inv.Invoke(ctx, v)
 		if err != nil {
-			// Try to decode a Goa error response detail before falling back to Fault.
 			resp := goagrpc.DecodeError(err)
-			if eresp, ok := resp.(*goapb.ErrorResponse); ok {
-				return nil, goagrpc.NewServiceError(eresp)
+			switch message := resp.(type) {
+			case *goapb.ErrorResponse:
+				return nil, goagrpc.NewServiceError(message)
+			default:
+				return nil, goa.Fault("%s", err.Error())
 			}
-			return nil, goa.Fault("%s", err.Error())
+		}
+		return res, nil
+	}
+}
+
+// ReleaseProvider calls the "ReleaseProvider" function in
+// registrypb.RegistryClient interface.
+func (c *Client) ReleaseProvider() goa.Endpoint {
+	return func(ctx context.Context, v any) (any, error) {
+		inv := goagrpc.NewInvoker(
+			BuildReleaseProviderFunc(c.grpccli, c.opts...),
+			EncodeReleaseProviderRequest,
+			nil)
+		res, err := inv.Invoke(ctx, v)
+		if err != nil {
+			resp := goagrpc.DecodeError(err)
+			switch message := resp.(type) {
+			case *goapb.ErrorResponse:
+				return nil, goagrpc.NewServiceError(message)
+			default:
+				return nil, goa.Fault("%s", err.Error())
+			}
 		}
 		return res, nil
 	}

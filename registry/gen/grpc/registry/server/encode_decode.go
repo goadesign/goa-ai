@@ -49,6 +49,35 @@ func DecodeRegisterRequest(ctx context.Context, v any, md metadata.MD) (any, err
 	return payload, nil
 }
 
+// EncodeReleaseProviderResponse encodes responses from the "registry" service
+// "ReleaseProvider" endpoint.
+func EncodeReleaseProviderResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
+	resp := NewProtoReleaseProviderResponse()
+	return resp, nil
+}
+
+// DecodeReleaseProviderRequest decodes requests sent to "registry" service
+// "ReleaseProvider" endpoint.
+func DecodeReleaseProviderRequest(ctx context.Context, v any, md metadata.MD) (any, error) {
+	var (
+		message *registrypb.ReleaseProviderRequest
+		ok      bool
+	)
+	{
+		if message, ok = v.(*registrypb.ReleaseProviderRequest); !ok {
+			return nil, goagrpc.ErrInvalidType("registry", "ReleaseProvider", "*registrypb.ReleaseProviderRequest", v)
+		}
+		if err := ValidateReleaseProviderRequest(message); err != nil {
+			return nil, err
+		}
+	}
+	var payload *registry.ReleaseProviderPayload
+	{
+		payload = NewReleaseProviderPayload(message)
+	}
+	return payload, nil
+}
+
 // EncodeUnregisterResponse encodes responses from the "registry" service
 // "Unregister" endpoint.
 func EncodeUnregisterResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {

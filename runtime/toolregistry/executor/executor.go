@@ -31,9 +31,16 @@ import (
 )
 
 type (
-	// Client initiates tool calls through a registry gateway.
+	// Client initiates tool calls and returns both transport identity and the
+	// exact admission-generation token stamped on the routed request.
 	Client interface {
-		CallTool(ctx context.Context, toolset string, tool tools.Ident, payload []byte, meta toolregistry.ToolCallMeta) (toolUseID string, err error)
+		CallTool(
+			ctx context.Context,
+			toolset string,
+			tool tools.Ident,
+			payload []byte,
+			meta toolregistry.ToolCallMeta,
+		) (toolregistry.ToolCallRef, error)
 	}
 
 	// SpecLookup resolves tool specifications for decoding results and server data.
@@ -46,7 +53,6 @@ type (
 		pulse  pulsec.Client
 		specs  SpecLookup
 
-		sinkName       string
 		resultEventKey string
 		outputDeltaKey string
 		streamSink     aistream.Sink
@@ -57,10 +63,10 @@ type (
 
 	Option func(*Executor)
 
-	// sinkFailureDiagnostics captures stable, high-signal context for sink join
+	// readerFailureDiagnostics captures stable, high-signal context for reader
 	// failures so production incidents can be correlated across run/pod/node and
 	// quickly classified as DNS or generic network failures.
-	sinkFailureDiagnostics struct {
+	readerFailureDiagnostics struct {
 		hostName               string
 		podName                string
 		nodeName               string
@@ -75,14 +81,7 @@ type (
 	}
 )
 
-// WithSinkName sets the Pulse sink/consumer-group name used when subscribing to
-// per-call result streams. Callers should use a stable name across restarts so
-// pending entries are not orphaned in Redis.
-func WithSinkName(name string) Option {
-	return func(e *Executor) {
-		e.sinkName = name
-	}
-}
+const resultReaderBlockDuration = 100 * time.Millisecond
 
 // WithResultEventKey sets the Pulse event name used for canonical ToolResultMessage
 // payloads on per-call result streams.
@@ -123,7 +122,6 @@ func New(client Client, pulse pulsec.Client, specs SpecLookup, opts ...Option) *
 		client:         client,
 		pulse:          pulse,
 		specs:          specs,
-		sinkName:       "agent",
 		resultEventKey: toolregistry.ResultEventKey,
 		outputDeltaKey: toolregistry.OutputDeltaEventKey,
 		logger:         telemetry.NewNoopLogger(),
@@ -162,6 +160,8 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 	if toolsetID == "" {
 		return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.NewToolError(fmt.Sprintf("tool %q missing toolset routing id", call.Name))}), nil
 	}
+	ctx, cancel := context.WithTimeout(ctx, toolregistry.MaxToolCallWait)
+	defer cancel()
 
 	ctx, span := e.tracer.Start(
 		ctx,
@@ -175,7 +175,6 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 			attribute.String("toolregistry.turn_id", meta.TurnID),
 			attribute.String("toolregistry.tool_call_id", meta.ToolCallID),
 			attribute.String("toolregistry.parent_tool_call_id", meta.ParentToolCallID),
-			attribute.String("toolregistry.sink", e.sinkName),
 			attribute.String("toolregistry.result_event_key", e.resultEventKey),
 			attribute.String("toolregistry.output_delta_key", e.outputDeltaKey),
 		),
@@ -189,7 +188,7 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 		ToolCallID:       meta.ToolCallID,
 		ParentToolCallID: meta.ParentToolCallID,
 	}
-	toolUseID, err := e.client.CallTool(ctx, toolsetID, call.Name, call.Payload, tmeta)
+	callRef, err := e.client.CallTool(ctx, toolsetID, call.Name, call.Payload, tmeta)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "call tool via registry failed")
@@ -210,6 +209,17 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 			},
 		}), nil
 	}
+	if err := toolregistry.ValidateRegistrationToken(callRef.RegistrationToken); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "call tool returned invalid registration token")
+		return nil, fmt.Errorf("call tool returned invalid registration token: %w", err)
+	}
+	if err := toolregistry.ValidateResultStreamTTLMillis(callRef.ResultStreamTTL.Milliseconds()); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "call tool returned invalid result stream TTL")
+		return nil, fmt.Errorf("call tool returned invalid result stream TTL: %w", err)
+	}
+	toolUseID := callRef.ToolUseID
 	resultStreamID := toolregistry.ResultStreamID(toolUseID)
 	span.AddEvent(
 		"toolregistry.call_tool_ok",
@@ -217,21 +227,32 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 		"toolregistry.result_stream_id", resultStreamID,
 	)
 
-	stream, err := e.pulse.Stream(resultStreamID)
+	stream, err := e.pulse.Stream(
+		resultStreamID,
+		options.WithStreamSlidingTTL(callRef.ResultStreamTTL),
+	)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "open tool result stream failed")
-		return nil, fmt.Errorf("open tool result stream %q: %w", resultStreamID, err)
+		return runtime.Executed(e.unavailableResult(
+			call,
+			meta,
+			fmt.Errorf("open tool result stream %q: %w", resultStreamID, err),
+		)), nil
 	}
 	// Result streams are per-tool-call and short-lived. Providers can publish the
 	// result very quickly after the registry returns from CallTool, so we must
 	// start at the oldest event to avoid missing an already-published result.
-	sink, err := stream.NewSink(ctx, e.sinkName, options.WithSinkStartAtOldest())
+	reader, err := stream.NewReader(
+		ctx,
+		options.WithReaderStartAtOldest(),
+		options.WithReaderBlockDuration(resultReaderBlockDuration),
+	)
 	if err != nil {
-		diag := buildSinkFailureDiagnostics(ctx, err)
+		diag := buildReaderFailureDiagnostics(ctx, err)
 		e.logger.Error(
 			ctx,
-			"toolregistry result stream sink create failed",
+			"toolregistry result stream reader create failed",
 			"component", "tool-registry-executor",
 			"toolset", toolsetID,
 			"tool", call.Name,
@@ -241,7 +262,6 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 			"turn_id", meta.TurnID,
 			"tool_call_id", meta.ToolCallID,
 			"result_stream_id", resultStreamID,
-			"sink", e.sinkName,
 			"host", diag.hostName,
 			"pod", diag.podName,
 			"node", diag.nodeName,
@@ -256,9 +276,8 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 			"err", err,
 		)
 		span.AddEvent(
-			"toolregistry.result_sink_create_failed",
+			"toolregistry.result_reader_create_failed",
 			"toolregistry.result_stream_id", resultStreamID,
-			"toolregistry.sink", e.sinkName,
 			"toolregistry.error", err.Error(),
 			"toolregistry.host", diag.hostName,
 			"toolregistry.pod", diag.podName,
@@ -273,13 +292,13 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 			"toolregistry.dns_temporary", diag.dnsIsTemporary,
 		)
 		span.RecordError(err)
-		span.SetStatus(codes.Error, "create sink for tool result stream failed")
-		return nil, fmt.Errorf("create sink %q for tool result stream %q: %w", e.sinkName, resultStreamID, err)
+		span.SetStatus(codes.Error, "create reader for tool result stream failed")
+		return runtime.Executed(e.unavailableResult(call, meta, err)), nil
 	}
-	defer sink.Close(ctx)
+	defer reader.Close()
 	span.AddEvent("toolregistry.result_subscribed", "toolregistry.result_stream_id", resultStreamID)
 
-	events := sink.Subscribe()
+	events := reader.Subscribe()
 	for {
 		select {
 		case <-ctx.Done():
@@ -288,29 +307,23 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 			return nil, ctx.Err()
 		case ev, ok := <-events:
 			if !ok {
-				span.RecordError(fmt.Errorf("tool result stream subscription closed"))
+				err := fmt.Errorf("tool result stream subscription closed")
+				span.RecordError(err)
 				span.SetStatus(codes.Error, "tool result stream subscription closed")
-				return nil, fmt.Errorf("tool result stream subscription closed")
+				return runtime.Executed(e.unavailableResult(call, meta, err)), nil
 			}
 			if ev.EventName == e.outputDeltaKey {
 				var msg toolregistry.ToolOutputDeltaMessage
 				if err := json.Unmarshal(ev.Payload, &msg); err != nil {
 					span.RecordError(err)
-					if ackErr := sink.Ack(ctx, ev); ackErr != nil {
-						return nil, fmt.Errorf("ack malformed tool output delta message: %w", ackErr)
-					}
 					continue
 				}
-				if msg.ToolUseID != toolUseID {
-					if err := sink.Ack(ctx, ev); err != nil {
-						return nil, fmt.Errorf("ack unrelated tool output delta message: %w", err)
-					}
-					continue
-				}
-				if err := sink.Ack(ctx, ev); err != nil {
+				if err := toolregistry.ValidateRegistrationToken(msg.RegistrationToken); err != nil {
 					span.RecordError(err)
-					span.SetStatus(codes.Error, "ack tool output delta message failed")
-					return nil, fmt.Errorf("ack tool output delta message: %w", err)
+					continue
+				}
+				if msg.ToolUseID != toolUseID || msg.RegistrationToken != callRef.RegistrationToken {
+					continue
 				}
 
 				if e.streamSink != nil {
@@ -340,37 +353,27 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 				continue
 			}
 			if ev.EventName != e.resultEventKey {
-				if err := sink.Ack(ctx, ev); err != nil {
-					span.RecordError(err)
-					span.SetStatus(codes.Error, "ack non-result event failed")
-					return nil, fmt.Errorf("ack tool result stream event: %w", err)
-				}
 				continue
 			}
 
 			var msg toolregistry.ToolResultMessage
 			if err := json.Unmarshal(ev.Payload, &msg); err != nil {
 				span.RecordError(err)
-				if ackErr := sink.Ack(ctx, ev); ackErr != nil {
-					return nil, fmt.Errorf("ack malformed tool result message: %w", ackErr)
-				}
-				continue
+				return nil, fmt.Errorf("decode terminal tool result event %s: %w", ev.ID, err)
 			}
-			if msg.ToolUseID != toolUseID {
-				if err := sink.Ack(ctx, ev); err != nil {
-					return nil, fmt.Errorf("ack unrelated tool result message: %w", err)
-				}
-				continue
-			}
-			if err := sink.Ack(ctx, ev); err != nil {
+			if err := toolregistry.ValidateRegistrationToken(msg.RegistrationToken); err != nil {
 				span.RecordError(err)
-				span.SetStatus(codes.Error, "ack tool result message failed")
-				return nil, fmt.Errorf("ack tool result message: %w", err)
+				return nil, fmt.Errorf("validate terminal tool result event %s: %w", ev.ID, err)
 			}
-			if destroyErr := stream.Destroy(ctx); destroyErr != nil {
-				span.RecordError(destroyErr)
-				span.SetStatus(codes.Error, "destroy tool result stream failed")
-				return nil, fmt.Errorf("destroy tool result stream %q: %w", resultStreamID, destroyErr)
+			if msg.ToolUseID != toolUseID || msg.RegistrationToken != callRef.RegistrationToken {
+				continue
+			}
+			if msg.Error != nil && msg.Error.Code == toolregistry.ToolErrorCodeProviderOverloaded {
+				if _, err := e.client.CallTool(ctx, toolsetID, call.Name, call.Payload, tmeta); err != nil {
+					span.RecordError(err)
+					return runtime.Executed(e.unavailableResult(call, meta, err)), nil
+				}
+				continue
 			}
 			span.AddEvent(
 				"toolregistry.result_received",
@@ -386,6 +389,24 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 			span.SetStatus(codes.Ok, "ok")
 			return runtime.Executed(result), nil
 		}
+	}
+}
+
+// unavailableResult maps registry and Pulse infrastructure failures to the one
+// retryable planner outcome used for temporarily unavailable tools.
+func (e *Executor) unavailableResult(
+	call *planner.ToolRequest,
+	meta *runtime.ToolCallMeta,
+	err error,
+) *planner.ToolResult {
+	return &planner.ToolResult{
+		Name:       call.Name,
+		Error:      planner.ToolErrorFromError(err),
+		ToolCallID: meta.ToolCallID,
+		RetryHint: &planner.RetryHint{
+			Reason: planner.RetryReasonToolUnavailable,
+			Tool:   call.Name,
+		},
 	}
 }
 
@@ -498,6 +519,12 @@ func marshalServerDataItems(items []*toolregistry.ServerDataItem) rawjson.Messag
 
 func retryHintFromToolErrorCode(tool tools.Ident, code string) *planner.RetryHint {
 	switch code {
+	case toolregistry.ToolErrorCodeStaleRegistration,
+		toolregistry.ToolErrorCodeProviderOverloaded:
+		return &planner.RetryHint{
+			Reason: planner.RetryReasonToolUnavailable,
+			Tool:   tool,
+		}
 	case "invalid_input":
 		// Service-level invalid_input is a domain rejection raised by the tool's
 		// own logic, not a codec-schema violation. It is not guaranteed to be
@@ -629,11 +656,11 @@ func uniqueStrings(in []string) []string {
 	return out
 }
 
-// buildSinkFailureDiagnostics extracts deterministic runtime context for sink
+// buildReaderFailureDiagnostics extracts deterministic runtime context for reader
 // creation failures (deadline state, host identity, and net/DNS classification)
 // without mutating control flow.
-func buildSinkFailureDiagnostics(ctx context.Context, err error) sinkFailureDiagnostics {
-	diag := sinkFailureDiagnostics{
+func buildReaderFailureDiagnostics(ctx context.Context, err error) readerFailureDiagnostics {
+	diag := readerFailureDiagnostics{
 		hostName: firstNonEmpty(os.Getenv("HOSTNAME"), "unknown"),
 		podName:  firstNonEmpty(os.Getenv("POD_NAME"), os.Getenv("HOSTNAME"), "unknown"),
 		nodeName: firstNonEmpty(os.Getenv("K8S_NODE_NAME"), os.Getenv("NODE_NAME"), "unknown"),

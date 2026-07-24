@@ -5,6 +5,8 @@ package design
 
 import (
 	. "goa.design/goa/v3/dsl"
+
+	"goa.design/goa-ai/runtime/toolregistry"
 )
 
 var _ = API("registry", func() {
@@ -21,18 +23,24 @@ var _ = API("registry", func() {
 	// Error definitions
 	Error("not_found", ErrorResult, "Toolset or tool not found")
 	Error("validation_error", ErrorResult, "Payload validation failed")
-	Error("service_unavailable", ErrorResult, "No healthy providers available")
+	Error("service_unavailable", ErrorResult, "Registry routing infrastructure or healthy providers are unavailable")
+	Error("admission_blocked", ErrorResult, "Another admission still has active provider leases")
+	Error("admission_retired", ErrorResult, "The requested admission was intentionally retired")
+	Error("admission_conflict", ErrorResult, "The expected admission token does not match the catalog record")
 
 	// gRPC transport configuration
 	GRPC(func() {
 		Response("not_found", CodeNotFound)
 		Response("validation_error", CodeInvalidArgument)
 		Response("service_unavailable", CodeUnavailable)
+		Response("admission_blocked", CodeUnavailable)
+		Response("admission_retired", CodeFailedPrecondition)
+		Response("admission_conflict", CodeFailedPrecondition)
 	})
 })
 
 var _ = Service("registry", func() {
-	Description("Internal tool registry gateway for toolset discovery and tool invocation")
+	Description("The registry owns serialized toolset admission generations, provider leases and health, discovery, and routed invocation over Pulse streams. Providers renew leases for the one active schema and admission revision; consumers discover and invoke only healthy admitted providers.")
 
 	// Set a non-generic protobuf package to avoid collisions when multiple Goa
 	// services named "registry" are linked into the same binary.
@@ -43,21 +51,33 @@ var _ = Service("registry", func() {
 	// ---- Provider Operations ----
 
 	Method("Register", func() {
-		Description("Register a toolset with the registry")
+		Description("Atomically admit or renew one provider-incarnation lease in the catalog admission record. The same schema and admission revision add or renew replicas under one token. A different token replaces the admission after Redis-time pruning proves every old lease expired and atomically tombstones the prior token; otherwise admission_blocked asks the provider to retry. Any candidate in the permanent retired-token set returns admission_retired and cannot resurrect.")
 		Payload(RegisterPayload)
 		Result(RegisterResult)
+		Error("admission_blocked")
+		Error("admission_retired")
+		Error("validation_error")
+		Error("service_unavailable")
+		GRPC(func() {})
+	})
+
+	Method("ReleaseProvider", func() {
+		Description("Release one exact provider-incarnation lease from the admission token after that Serve lifecycle has stopped claiming work and settled in-flight calls. Missing incarnations and stale tokens succeed without mutation; infrastructure failures are retryable.")
+		Payload(ReleaseProviderPayload)
+		Error("service_unavailable")
 		GRPC(func() {})
 	})
 
 	Method("Unregister", func() {
-		Description("Unregister a toolset from the registry")
+		Description("Intentionally retire the exact active admission while preserving its provider leases until graceful release or expiry and atomically adding its token to the permanent retired-token set. Repeating the same-token retirement succeeds; a stale token returns admission_conflict. Retirement removes the toolset from discovery and routing and permanently prevents that exact token from registering again.")
 		Payload(UnregisterPayload)
-		Error("not_found")
+		Error("admission_conflict")
+		Error("service_unavailable")
 		GRPC(func() {})
 	})
 
 	Method("Pong", func() {
-		Description("Respond to a health check ping")
+		Description("Atomically record shared consumer-group liveness for a token-and-membership-epoch health ping. The responding provider incarnation must hold an unexpired lease in that same catalog record.")
 		Payload(PongPayload)
 		GRPC(func() {})
 	})
@@ -89,7 +109,7 @@ var _ = Service("registry", func() {
 	// ---- Invocation Operations ----
 
 	Method("CallTool", func() {
-		Description("Initiate a tool call by publishing a tool call message to the toolset request stream and returning the tool use identifier.")
+		Description("Admit or attach to one run-scoped tool call. The registry atomically owns publication by tool_use_id and registration token, retries provider overload with bounded backoff, preserves immutable sliding-TTL result history, and returns the exact identity, admission token, and retention used by independent replay readers.")
 		Payload(CallToolPayload)
 		Result(CallToolResult)
 		Error("not_found")
@@ -111,25 +131,30 @@ var ToolCallMeta = Type("ToolCallMeta", func() {
 	Description("Context metadata propagated alongside tool calls for routing, correlation, and domain injection (for example, session-scoped data access).")
 	Field(1, "run_id", String, "Run identifier for the agent execution that issued this tool call.", func() {
 		MinLength(1)
+		MaxLength(256)
 		Example("run_01J3K9Q9T6E2G7N0G2ZQH2KX1A")
 	})
 	Field(2, "session_id", String, "Chat session identifier used to scope tool behavior and persistence.", func() {
 		MinLength(1)
+		MaxLength(256)
 		Example("sess_01J3K9Q9T6E2G7N0G2ZQH2KX1A")
 	})
 	Field(3, "turn_id", String, "Turn identifier within the session.", func() {
 		MinLength(1)
+		MaxLength(256)
 		Example("turn_0001")
 	})
 	Field(4, "tool_call_id", String, "Tool call identifier used for correlation with model provider tool calls.", func() {
 		MinLength(1)
+		MaxLength(256)
 		Example("call_01J3K9Q9T6E2G7N0G2ZQH2KX1A")
 	})
 	Field(5, "parent_tool_call_id", String, "Parent tool call identifier when the tool call is nested.", func() {
 		MinLength(1)
+		MaxLength(256)
 		Example("call_01J3K9Q9T6E2G7N0G2ZQH2KX19Z")
 	})
-	Required("run_id", "session_id")
+	Required("run_id", "session_id", "tool_call_id")
 })
 
 var RegisterPayload = Type("RegisterPayload", func() {
@@ -153,7 +178,15 @@ var RegisterPayload = Type("RegisterPayload", func() {
 		MaxLength(512)
 		Example("atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover")
 	})
-	Required("name", "tools", "provider_id")
+	Field(7, "admission_revision", String, "Deployment-issued revision shared by every replica of one fenced admission. Reuse it for same-contract scaling and rolling updates; change it only to create a new fenced admission.", func() {
+		Pattern(toolregistry.AdmissionRevisionPattern)
+		Example("2026-07-23.4+441534ae50f6")
+	})
+	Field(8, "provider_incarnation_id", String, "Runtime-generated UUID identifying one Serve lifecycle. The provider runtime generates it once and reuses it for every renewal.", func() {
+		Format(FormatUUID)
+		Example("8af45fe9-5c32-4b46-8da5-d350e98b68f3")
+	})
+	Required("name", "tools", "provider_id", "admission_revision", "provider_incarnation_id")
 })
 
 var RegisterResult = Type("RegisterResult", func() {
@@ -162,16 +195,52 @@ var RegisterResult = Type("RegisterResult", func() {
 		Format(FormatDateTime)
 		Example("2024-01-15T10:30:00Z")
 	})
-	Required("registered_at")
+	Field(2, "registration_token", String, "Deterministic admission-generation token derived from the canonical schema fingerprint and deployment-issued admission revision", func() {
+		Pattern(toolregistry.RegistrationTokenPattern)
+		Example("270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c")
+	})
+	Field(3, "lease_duration_ms", Int64, "Duration of the admitted provider lease in milliseconds", func() {
+		Minimum(1)
+		Maximum(toolregistry.MaxProviderLeaseDuration.Milliseconds())
+		Example(120000)
+	})
+	Required("registered_at", "registration_token", "lease_duration_ms")
 })
 
 var UnregisterPayload = Type("UnregisterPayload", func() {
-	Description("Payload for unregistering a toolset")
+	Description("Generation-fenced payload for unregistering a toolset")
 	Field(1, "name", String, "Name of the toolset to unregister", func() {
 		MinLength(1)
 		Example("data-tools")
 	})
-	Required("name")
+	Field(2, "expected_registration_token", String, "Exact admission-generation token returned by Register for the stopped provider rollout", func() {
+		Pattern(toolregistry.RegistrationTokenPattern)
+		Example("270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c")
+	})
+	Required("name", "expected_registration_token")
+})
+
+var ReleaseProviderPayload = Type("ReleaseProviderPayload", func() {
+	Description("Exact provider lease release payload")
+	Field(1, "name", String, "Name of the toolset whose provider is leaving", func() {
+		MinLength(1)
+		MaxLength(256)
+		Example("data-tools")
+	})
+	Field(2, "provider_id", String, "Stable identity of the provider process releasing its lease", func() {
+		MinLength(1)
+		MaxLength(512)
+		Example("atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover")
+	})
+	Field(3, "expected_registration_token", String, "Exact admission-generation token returned by Register", func() {
+		Pattern(toolregistry.RegistrationTokenPattern)
+		Example("270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c")
+	})
+	Field(4, "provider_incarnation_id", String, "Runtime-generated UUID of the exact Serve lifecycle releasing its lease.", func() {
+		Format(FormatUUID)
+		Example("8af45fe9-5c32-4b46-8da5-d350e98b68f3")
+	})
+	Required("name", "provider_id", "expected_registration_token", "provider_incarnation_id")
 })
 
 var PongPayload = Type("PongPayload", func() {
@@ -191,7 +260,11 @@ var PongPayload = Type("PongPayload", func() {
 		MaxLength(512)
 		Example("atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover")
 	})
-	Required("ping_id", "toolset", "provider_id")
+	Field(4, "provider_incarnation_id", String, "Runtime-generated UUID of the Serve lifecycle responding to the ping.", func() {
+		Format(FormatUUID)
+		Example("8af45fe9-5c32-4b46-8da5-d350e98b68f3")
+	})
+	Required("ping_id", "toolset", "provider_id", "provider_incarnation_id")
 })
 
 var ListToolsetsPayload = Type("ListToolsetsPayload", func() {
@@ -251,13 +324,22 @@ var CallToolPayload = Type("CallToolPayload", func() {
 })
 
 var CallToolResult = Type("CallToolResult", func() {
-	Description("Result of initiating a tool call through the registry gateway.")
-	Field(1, "tool_use_id", String, "Unique identifier for this invocation", func() {
+	Description("Routing contract for awaiting one registry-routed call on its bounded sliding-TTL result stream.")
+	Field(1, "tool_use_id", String, "Global transport identifier derived from required run_id and tool_call_id.", func() {
 		MinLength(1)
 		MaxLength(256)
 		Example("call-abc123")
 	})
-	Required("tool_use_id")
+	Field(2, "registration_token", String, "Exact admission-generation token stamped on the routed call", func() {
+		Pattern(toolregistry.RegistrationTokenPattern)
+		Example("270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c")
+	})
+	Field(3, "result_stream_ttl_ms", Int64, "Registry-selected sliding retention for the per-call result stream in milliseconds.", func() {
+		Minimum(toolregistry.MinResultStreamTTL.Milliseconds())
+		Maximum(toolregistry.MaxResultStreamTTL.Milliseconds())
+		Example(900000)
+	})
+	Required("tool_use_id", "registration_token", "result_stream_ttl_ms")
 })
 
 // ---- Shared Types ----

@@ -851,18 +851,52 @@ To run it, wire the generated provider into the runtime provider loop:
 ```go
 handler := toolsetpkg.NewProvider(serviceImpl)
 providerID := podName + "/" + toolsetID
+admissionRevision := mustRequiredEnv("TOOL_REGISTRY_ADMISSION_REVISION")
 go func() {
-    err := toolprovider.Serve(ctx, pulseClient, toolsetID, handler, toolprovider.Options{
-        ProviderID: providerID,
-        Pong: func(ctx context.Context, providerID, pingID string) error {
-            return registryClient.Pong(ctx, &registry.PongPayload{
-                PingID:     pingID,
-                Toolset:    toolsetID,
-                ProviderID: providerID,
-            })
+    err := toolprovider.Serve(ctx, pulseClient, toolsetID, handler,
+        toolprovider.Registration{
+            AdmissionRevision: admissionRevision,
+            Register: func(ctx context.Context, toolset, providerID, incarnationID, admissionRevision string) (toolprovider.RegistrationLease, error) {
+                result, err := registryClient.Register(ctx, &genregistry.RegisterPayload{
+                    Name:              toolset,
+                    Description:       toolsetDescription,
+                    Version:           toolsetVersion,
+                    Tags:              toolsetTags,
+                    Tools:             toolSchemas,
+                    ProviderID:        providerID,
+                    ProviderIncarnationID: incarnationID,
+                    AdmissionRevision: admissionRevision,
+                })
+                if err != nil {
+                    return toolprovider.RegistrationLease{}, err
+                }
+                return toolprovider.RegistrationLease{
+                    RegistrationToken: result.RegistrationToken,
+                    Duration:          time.Duration(result.LeaseDurationMs) * time.Millisecond,
+                }, nil
+            },
+            Release: func(ctx context.Context, toolset, providerID, incarnationID, expectedToken string) error {
+                return registryClient.ReleaseProvider(ctx, &genregistry.ReleaseProviderPayload{
+                    Name:                      toolset,
+                    ProviderID:                providerID,
+                    ProviderIncarnationID:     incarnationID,
+                    ExpectedRegistrationToken: expectedToken,
+                })
+            },
         },
-    })
-    if err != nil {
+        toolprovider.Options{
+            ProviderID: providerID,
+            Pong: func(ctx context.Context, providerID, incarnationID, pingID string) error {
+                return registryClient.Pong(ctx, &genregistry.PongPayload{
+                    PingID:     pingID,
+                    Toolset:    toolsetID,
+                    ProviderID: providerID,
+                    ProviderIncarnationID: incarnationID,
+                })
+            },
+        },
+    )
+    if err != nil && !errors.Is(err, context.Canceled) {
         panic(err)
     }
 }()
@@ -870,23 +904,174 @@ go func() {
 
 This integration is intentionally split:
 
-- **Registry gateway**: validates payloads, tracks provider-instance health, creates per-call result streams, and returns `tool_use_id`
+- **Registry gateway**: validates payloads, atomically owns provider-incarnation leases, health epoch/pong state, and per-call publication admission, and returns `tool_use_id`, the routed `registration_token`, and the selected sliding result-history TTL
 - **Service provider loop**: executes tools using the generated provider adapters and publishes results
 
-Provider health is instance-scoped. Each provider process must supply a stable
-`ProviderID` for the process/toolset pair and send the same value on registration
-and pong. The registry stores health records per provider id and treats a
-toolset as healthy when any provider instance for the active schema registration
-token has a fresh pong. Re-registering an identical schema preserves the token;
-registering a changed schema rotates it and requires a fresh pong from a
-provider serving the new schema.
+Provider leases are scoped by stable `ProviderID` plus a runtime-generated UUID
+incarnation. `Serve` generates the incarnation once and passes it to typed
+Register, Release, and Pong callbacks; deployment code never supplies or
+infers it. A delayed old-process release therefore cannot delete its replacement.
+Deployment
+configuration supplies one required `AdmissionRevision` shared by every replica
+in one fenced admission. Reuse it for scaling and same-contract RollingUpdate;
+change it only when a new schema or rollout fence is intended. `Serve` passes
+the revision and runtime identity to registration and Pong. It
+opens the Pulse stream, waits for typed registration, and only then creates the
+consumer-group sink. Calls published after admission but before sink startup
+remain queued; an unadmitted process cannot claim them.
+Read the revision once in the service composition root from required deployment
+configuration such as `TOOL_REGISTRY_ADMISSION_REVISION`. Store the value on the
+pod template and expose it to every replica of that admission. Do not rotate it
+for a same-contract binary rollout. Do not derive the revision from pod names,
+startup time, random process IDs, ReplicaSet hashes, filesystem metadata, or
+runtime Kubernetes inspection. The accepted syntax is
+`^[A-Za-z0-9][A-Za-z0-9._:/@+\-]{0,255}$`.
+Transient registration failures use bounded exponential jitter. `Serve`
+schedules successful renewal from the returned lease duration—approximately
+one third into the lease with jitter—so short and non-round lease durations
+retain time for retries. Every callback invocation
+receives an attempt deadline and must return promptly when that context is
+canceled because `Serve` waits for it during shutdown.
+
+The registration callback must always submit the same generated schema payload
+and `AdmissionRevision` for one `Serve` lifecycle. An identical schema/revision
+registration renews only that provider's application lease: it preserves
+catalog identity metadata and token, exact-CAS updates the embedded lease, and
+does not restart a healthy ticker. `RegisterResult` returns the active `RegistrationToken` and
+`LeaseDurationMs`. `Serve` derives a conservative monotonic deadline from the
+local attempt start, bounds retries by that deadline, and closes consumption
+before it expires. A failed or ambiguous identical renewal preserves the prior
+lease and is safe to retry. The single exact-CAS catalog record contains
+active/retired state, toolset metadata, schema fingerprint, admission revision,
+token, Redis `RegisteredAt`, every provider-incarnation lease, health epoch,
+last pong, and the exact set of all retired registration tokens. Whenever
+leases transition from nonzero to zero, CAS advances the epoch and clears pong
+freshness. Ping IDs carry token plus epoch; Pong atomically authenticates that
+pair and the responding incarnation. Aggregate health requires one unexpired
+embedded lease plus one fresh current-epoch pong; it does not require every
+replica to pong. Registry-issued leases are at least 45
+seconds—longer than the default shutdown, attempt, and retry budget—and at most
+24 hours. Providers additionally reject any returned lease that does not exceed
+their configured shutdown margin plus bounded attempt and retry delay.
+
+A different token prunes leases using Redis TIME. While an old lease remains,
+`Register` returns retryable `admission_blocked`; once none remain, exact CAS
+replaces the record with the candidate and first lease. A blocked initial
+registration retries with jitter. A blocked renewal means the provider is
+superseded, so `Serve` immediately stops claiming work instead of waiting for
+its local lease cutoff. Replacement atomically adds the prior token to the
+catalog's permanent tombstone set. Retirement does the same for the current
+token. Any later A candidate after A→B receives permanent
+`admission_retired`; a fresh revision derives a new token. This exact set is
+permanent unbounded correctness history and grows with distinct admissions.
+Do not truncate or probabilistically compact it.
+
+After every admitted exit, `Serve` stops claiming, closes an established sink
+with a bounded lifecycle context, closes work intake, waits workers and terminal
+result publication, drains all queued acknowledgements, and stops renewal. A
+sink-creation failure has no consumption to settle and proceeds directly to
+bounded release. Only a proven clean settlement releases the exact provider
+lease. A sink-close, worker, result-publication, or acknowledgement failure is
+returned and suppresses release so lease expiry can converge safely. A stale
+release token or missing lease is an idempotent success.
+Because a failed acknowledgement can redeliver a call whose terminal result was
+already published, handlers must make repeated `tool_use_id` execution
+idempotent or durably deduplicate it. Handlers must honor context cancellation
+and return promptly; otherwise `Serve` returns a precise worker-settlement
+timeout and withholds lease release.
+
+Use RollingUpdate only when every replica derives the same token. A schema or
+admission-revision change requires Recreate so incompatible admissions never
+overlap. Graceful release permits immediate server-owned handoff; a crash delays
+handoff until lease expiry. No deployment component persists registration
+tokens or calls `Unregister` during rollout. `Unregister` is reserved for
+intentional retirement: exact active becomes retired while preserving leases,
+same-token retry succeeds, stale token returns `admission_conflict`, and the
+same retired token returns permanent `admission_retired` from `Register`.
+
+Do not overlap different admission generations on the same toolset stream.
+The registry persists `SchemaFingerprint` and `AdmissionRevision` separately.
+The registration token is the lowercase SHA-256 digest of
+`goa-ai/tool-registry-admission/v1\0`, the raw 32-byte schema fingerprint, a
+uint32 big-endian admission-revision byte length, and the revision bytes. It is
+identity, not a secret, and every API and Pulse boundary requires the canonical
+`^[0-9a-f]{64}$` spelling. Tool order and toolset/tool tag order are normalized,
+while payload, result, and sidecar schema bytes are hashed exactly. Generated
+raw schemas must therefore be canonical: reformatting semantically equivalent
+schema JSON changes schema and admission identity.
+Incoming `run_id`, `session_id`, `turn_id`, `tool_call_id`, and
+`parent_tool_call_id` values are bounded to 256
+characters at the generated transport boundary; an invalid identifier is
+rejected before any tool-call publication.
+The gateway requires `tool_call_id` and derives the global transport
+`tool_use_id` as lowercase SHA-256 over the domain
+`goa-ai/tool-registry-use/v1\0` plus uint64-length-delimited `run_id` and
+`tool_call_id`. Retries of one run/call reuse the ID, while equal model call IDs
+in concurrent runs cannot collide. The model/provider `tool_call_id` remains
+unchanged in metadata. Direct callers must generate and retain a stable call ID.
+Every routed call carries the exact active registration token used for
+validation and health admission. A provider executes only calls matching its
+latest admitted token; it completes stale queued calls with a typed
+`stale_registration` result that echoes the stale call token, then acknowledges
+the call. Executors map it to retryable tool-unavailable. Every provider
+success, error, and best-effort output delta echoes the call token. Executors
+forward deltas and accept terminal results only for the
+exact `(tool_use_id, registration_token)` pair; mismatched late events from a
+reused tool-use ID are ignored by each independent replay reader.
+
+`MaxQueuedToolCalls` is the exact waiting bound and provider concurrency/queue
+settings reject negative or excessive allocation. When that queue is full, the
+provider publishes transient `provider_overloaded` with a bounded retry-after
+for the exact call/token and only then acknowledges the request. The registry
+uses the call admission to serialize one delayed republication per overload
+event across nodes; the bounded publish operation never blocks provider ping
+intake. Exhausted or failed registry/Pulse infrastructure maps to retryable
+tool-unavailable. `stale_registration` remains a retryable terminal outcome.
+
+Call publication and result retention have one owner. The registry atomically
+admits immutable requests by `(tool_use_id, registration_token)`: the first
+caller initializes/publishes, while concurrent or sequential retries attach to
+existing history. An exact-owner expiring publication lock prevents concurrent
+cross-node attempts. The registry validates a sliding TTL between
+11 minutes and 24 hours (15 minutes by default), returns it in
+`CallToolResult.result_stream_ttl_ms`, and carries it in
+`ToolCallMessage.result_stream_ttl_ms`. Call admission and every
+`result:<toolUseID>` handle use that retention. Executors subscribe with
+independent oldest-first Pulse Readers; sequential and concurrent waiters each
+replay immutable history and create no consumer-group, acknowledgement, pending,
+or keepalive metadata. The executor waits at most ten minutes; the minimum
+retention leaves a one-minute transport margin. Readers close but never destroy
+the stream. Event publication refreshes expiry, so long calls remain live and
+completed, abandoned, duplicate, and recreated state expires without a
+separate cleanup protocol. Malformed exact terminal events fail immediately as
+protocol errors instead of being skipped until timeout.
+
+Recovery has two owners. Pulse owns recovery of an admitted provider sink.
+`Serve` registration reconciliation owns recovery of the catalog-owned lease,
+and the registry's ensure-only ping loop after temporary registry or Redis
+state loss. Supported rmap destruction, stream destruction, and ticker loss
+recover live under the same registry name without a process restart; the
+reconstructed ping/pong exchange restores group-health freshness.
+
+A raw total Redis reset is not that supported path: it erases rmap revision
+history and the catalog's permanent retirement tombstones. Canonical schema and
+revision still derive the same token, but live recovery and anti-resurrection
+cannot be guaranteed from empty Redis. Stop incompatible admissions and restore
+a catalog backup or deliberately rebootstrap the registry before resuming
+providers. Never overlap incompatible admissions.
+
+Pre-contract Redis records and unfenced queued messages require a one-time
+operational hard cutover. Follow
+[`POST_ROLLOUT_CLEANUP.md`](POST_ROLLOUT_CLEANUP.md); do not remove the permanent
+catalog lease, token-fencing, flat-stream, or non-overlap mechanisms after the
+cleanup.
 
 ### Registry-Routed Execution (Agent/Consumer Side)
 
 On the consumer side (an agent calling registry-routed toolsets), the runtime needs a `ToolCallExecutor` that:
 
-- calls the registry gateway to publish the tool request and get a `(tool_use_id, result_stream_id)`, then
-- subscribes to the per-call result stream and decodes the result using the compiled tool specs/codecs.
+- calls the registry gateway to publish the tool request and get `(tool_use_id, registration_token, result_stream_ttl_ms)`, then
+- subscribes to the per-call result stream with that sliding TTL and decodes the result using the compiled tool specs/codecs.
 
 Goa-AI provides a reusable executor implementation in `runtime/toolregistry/executor` that implements `runtime.ToolCallExecutor`:
 

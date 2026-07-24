@@ -52,6 +52,9 @@ type (
 		Add(ctx context.Context, event string, payload []byte) (string, error)
 		// NewSink creates a Pulse sink (consumer group) on this stream for reading events.
 		NewSink(ctx context.Context, name string, opts ...streamopts.Sink) (Sink, error)
+		// NewReader creates an independent reader. Readers do not create consumer
+		// groups or acknowledgement state, and every reader receives every event.
+		NewReader(ctx context.Context, opts ...streamopts.Reader) (Reader, error)
 		// Destroy deletes the entire stream and all its messages from Redis.
 		Destroy(ctx context.Context) error
 	}
@@ -65,6 +68,14 @@ type (
 		Ack(context.Context, *streaming.Event) error
 		// Close stops the sink and releases resources.
 		Close(context.Context)
+	}
+
+	// Reader is an independent immutable-history subscription.
+	Reader interface {
+		// Subscribe returns every event from the reader's configured cursor.
+		Subscribe() <-chan *streaming.Event
+		// Close stops polling and joins the reader goroutine.
+		Close()
 	}
 )
 
@@ -151,6 +162,11 @@ func (h *handle) NewSink(ctx context.Context, name string, opts ...streamopts.Si
 		return nil, err
 	}
 	return &sinkAdapter{Sink: sink}, nil
+}
+
+// NewReader creates an independent stream reader.
+func (h *handle) NewReader(ctx context.Context, opts ...streamopts.Reader) (Reader, error) {
+	return h.stream.NewReader(ctx, opts...)
 }
 
 // Destroy deletes the entire stream and all its messages from Redis.

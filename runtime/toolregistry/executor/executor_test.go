@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,7 +25,12 @@ import (
 	streamopts "goa.design/pulse/streaming/options"
 )
 
-func TestExecutorUsesOldestStartForResultStreamSink(t *testing.T) {
+const (
+	testRegistrationTokenA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	testRegistrationTokenB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+)
+
+func TestExecutorUsesOldestStartForResultStreamReader(t *testing.T) {
 	t.Parallel()
 
 	const (
@@ -49,8 +56,9 @@ func TestExecutorUsesOldestStartForResultStreamSink(t *testing.T) {
 				ID:        "1-0",
 				EventName: resultEventName,
 				Payload: mustJSON(t, toolregistry.ToolResultMessage{
-					ToolUseID: toolUseID,
-					Result:    json.RawMessage(`{}`),
+					RegistrationToken: testRegistrationTokenA,
+					ToolUseID:         toolUseID,
+					Result:            json.RawMessage(`{}`),
 				}),
 			},
 		},
@@ -76,6 +84,201 @@ func TestExecutorUsesOldestStartForResultStreamSink(t *testing.T) {
 	assert.NotNil(t, res)
 	require.NotNil(t, res.ToolResult)
 	assert.Equal(t, tools.Ident("todos.update_todos"), res.ToolResult.Name)
+	assert.False(t, stream.destroyed)
+}
+
+func TestExecutorSequentialAndConcurrentWaitersReplayTerminalHistory(t *testing.T) {
+	t.Parallel()
+
+	const toolUseID = "replay-tool-use-id"
+	stream := &fakeStream{
+		t:             t,
+		requiredStart: "0",
+		events: []*streaming.Event{{
+			ID:        "1-0",
+			EventName: toolregistry.ResultEventKey,
+			Payload: mustJSON(t, toolregistry.ToolResultMessage{
+				RegistrationToken: testRegistrationTokenA,
+				ToolUseID:         toolUseID,
+				Result:            json.RawMessage(`{}`),
+			}),
+		}},
+	}
+	exec := New(
+		fakeRegistryClient{toolUseID: toolUseID},
+		fakePulseClient{streamID: toolregistry.ResultStreamID(toolUseID), stream: stream},
+		fakeSpecs{spec: &tools.ToolSpec{
+			Name:    "todos.update_todos",
+			Toolset: "todos.todos",
+			Result:  tools.TypeSpec{},
+			Payload: tools.TypeSpec{},
+		}},
+	)
+	execute := func() (*agentsruntime.ToolExecutionResult, error) {
+		return exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
+			RunID:      "run",
+			SessionID:  "session",
+			ToolCallID: "call-1",
+		}, &planner.ToolRequest{
+			Name:    "todos.update_todos",
+			Payload: []byte(`{}`),
+		})
+	}
+
+	first, err := execute()
+	require.NoError(t, err)
+	require.NotNil(t, first)
+	results := make(chan *agentsruntime.ToolExecutionResult, 2)
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			result, executeErr := execute()
+			results <- result
+			errs <- executeErr
+		}()
+	}
+	for range 2 {
+		require.NoError(t, <-errs)
+		require.NotNil(t, <-results)
+	}
+	assert.Empty(t, stream.acked)
+}
+
+func TestExecutorRejectsMalformedTerminalHistoryImmediately(t *testing.T) {
+	t.Parallel()
+
+	const toolUseID = "malformed-tool-use-id"
+	stream := &fakeStream{
+		t:             t,
+		requiredStart: "0",
+		events: []*streaming.Event{{
+			ID:        "1-0",
+			EventName: toolregistry.ResultEventKey,
+			Payload:   []byte(`{"registration_token":`),
+		}},
+	}
+	exec := New(
+		fakeRegistryClient{toolUseID: toolUseID},
+		fakePulseClient{streamID: toolregistry.ResultStreamID(toolUseID), stream: stream},
+		fakeSpecs{spec: &tools.ToolSpec{
+			Name:    "todos.update_todos",
+			Toolset: "todos.todos",
+			Result:  tools.TypeSpec{},
+			Payload: tools.TypeSpec{},
+		}},
+	)
+
+	_, err := exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
+		RunID:      "run",
+		SessionID:  "session",
+		ToolCallID: "call-1",
+	}, &planner.ToolRequest{Name: "todos.update_todos", Payload: []byte(`{}`)})
+	require.ErrorContains(t, err, "decode terminal tool result event 1-0")
+}
+
+func TestExecutorAsksRegistryToRetryTransientProviderOverload(t *testing.T) {
+	t.Parallel()
+
+	const toolUseID = "overload-tool-use-id"
+	overloaded := toolregistry.NewToolResultErrorMessage(
+		testRegistrationTokenA,
+		toolUseID,
+		toolregistry.ToolErrorCodeProviderOverloaded,
+		"full",
+	)
+	overloaded.Error.RetryAfterMillis = toolregistry.ProviderOverloadRetryAfter.Milliseconds()
+	stream := &fakeStream{
+		t:             t,
+		requiredStart: "0",
+		events: []*streaming.Event{
+			{
+				ID:        "1-0",
+				EventName: toolregistry.ResultEventKey,
+				Payload:   mustJSON(t, overloaded),
+			},
+			{
+				ID:        "2-0",
+				EventName: toolregistry.ResultEventKey,
+				Payload: mustJSON(t, toolregistry.NewToolResultMessage(
+					testRegistrationTokenA,
+					toolUseID,
+					json.RawMessage(`{}`),
+				)),
+			},
+		},
+	}
+	var calls atomic.Int64
+	exec := New(
+		fakeRegistryClient{toolUseID: toolUseID, calls: &calls},
+		fakePulseClient{streamID: toolregistry.ResultStreamID(toolUseID), stream: stream},
+		fakeSpecs{spec: &tools.ToolSpec{
+			Name:    "todos.update_todos",
+			Toolset: "todos.todos",
+			Result:  tools.TypeSpec{},
+			Payload: tools.TypeSpec{},
+		}},
+	)
+
+	result, err := exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
+		RunID:      "run",
+		SessionID:  "session",
+		ToolCallID: "call-1",
+	}, &planner.ToolRequest{Name: "todos.update_todos", Payload: []byte(`{}`)})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, int64(2), calls.Load())
+}
+
+func TestExecutorIgnoresLateResultFromReusedToolUseID(t *testing.T) {
+	t.Parallel()
+
+	const toolUseID = "reused-tool-use-id"
+	stream := &fakeStream{
+		t:             t,
+		requiredStart: "0",
+		events: []*streaming.Event{
+			{
+				ID:        "1-0",
+				EventName: toolregistry.ResultEventKey,
+				Payload: mustJSON(t, toolregistry.ToolResultMessage{
+					RegistrationToken: testRegistrationTokenB,
+					ToolUseID:         toolUseID,
+					Result:            json.RawMessage(`{}`),
+				}),
+			},
+			{
+				ID:        "2-0",
+				EventName: toolregistry.ResultEventKey,
+				Payload: mustJSON(t, toolregistry.ToolResultMessage{
+					RegistrationToken: testRegistrationTokenA,
+					ToolUseID:         toolUseID,
+					Result:            json.RawMessage(`{}`),
+				}),
+			},
+		},
+	}
+	exec := New(
+		fakeRegistryClient{toolUseID: toolUseID},
+		fakePulseClient{streamID: toolregistry.ResultStreamID(toolUseID), stream: stream},
+		fakeSpecs{spec: &tools.ToolSpec{
+			Name:    "todos.update_todos",
+			Toolset: "todos.todos",
+			Result:  tools.TypeSpec{},
+			Payload: tools.TypeSpec{},
+		}},
+	)
+
+	result, err := exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
+		RunID:     "run",
+		SessionID: "session",
+	}, &planner.ToolRequest{
+		Name:    "todos.update_todos",
+		Payload: []byte(`{}`),
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Empty(t, stream.acked)
 }
 
 func TestBuildRetryHintFromIssuesRestrictsToFailedTool(t *testing.T) {
@@ -119,6 +322,19 @@ func TestRetryHintFromTimeoutClassifiesWithoutRetry(t *testing.T) {
 
 	// Unknown codes carry no hint.
 	assert.Nil(t, retryHintFromToolErrorCode("atlas.read.get_time_series", "query_too_expensive"))
+}
+
+func TestRetryHintFromStaleRegistrationIsToolUnavailable(t *testing.T) {
+	t.Parallel()
+
+	hint := retryHintFromToolErrorCode(
+		"atlas.read.get_time_series",
+		toolregistry.ToolErrorCodeStaleRegistration,
+	)
+
+	require.NotNil(t, hint)
+	assert.Equal(t, planner.RetryReasonToolUnavailable, hint.Reason)
+	assert.False(t, hint.RestrictToTool)
 }
 
 func TestRetryHintFromInvalidInputDoesNotRestrict(t *testing.T) {
@@ -171,8 +387,9 @@ func TestExecutorErrorHintCarriesExampleJSONOnlyWhenRestricting(t *testing.T) {
 				Payload: tools.TypeSpec{ExampleJSON: example},
 			}
 			res, err := executeRegistryResultMessage(t, toolUseID, toolCallID, toolregistry.ToolResultMessage{
-				ToolUseID: toolUseID,
-				Error:     &toolregistry.ToolError{Code: tc.code, Message: "boom"},
+				RegistrationToken: testRegistrationTokenA,
+				ToolUseID:         toolUseID,
+				Error:             &toolregistry.ToolError{Code: tc.code, Message: "boom"},
 			}, spec)
 			require.NoError(t, err)
 			require.NotNil(t, res)
@@ -224,6 +441,36 @@ func TestExecutorTransportFailureClassifiesToolUnavailable(t *testing.T) {
 	assert.Equal(t, "toolcall-transport", res.ToolResult.ToolCallID)
 }
 
+func TestExecutorRejectsNoncanonicalRegistrationToken(t *testing.T) {
+	t.Parallel()
+
+	exec := New(
+		fakeRegistryClient{
+			toolUseID:         "tooluse-invalid-token",
+			registrationToken: "ABC123",
+		},
+		fakePulseClient{},
+		fakeSpecs{spec: &tools.ToolSpec{
+			Name:    "todos.update_todos",
+			Toolset: "todos.todos",
+			Result:  tools.TypeSpec{},
+			Payload: tools.TypeSpec{},
+		}},
+	)
+
+	result, err := exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
+		RunID:     "run",
+		SessionID: "session",
+	}, &planner.ToolRequest{
+		Name:    "todos.update_todos",
+		Payload: []byte(`{}`),
+	})
+
+	assert.Nil(t, result)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "invalid registration token")
+}
+
 func TestExecutorDerivesResultStreamIDFromToolUseID(t *testing.T) {
 	t.Parallel()
 
@@ -250,8 +497,9 @@ func TestExecutorDerivesResultStreamIDFromToolUseID(t *testing.T) {
 				ID:        "1-0",
 				EventName: resultEventName,
 				Payload: mustJSON(t, toolregistry.ToolResultMessage{
-					ToolUseID: toolUseID,
-					Result:    json.RawMessage(`{}`),
+					RegistrationToken: testRegistrationTokenA,
+					ToolUseID:         toolUseID,
+					Result:            json.RawMessage(`{}`),
 				}),
 			},
 		},
@@ -301,8 +549,9 @@ func TestExecutorEmitsRegistrySpan(t *testing.T) {
 				ID:        "1-0",
 				EventName: resultEventName,
 				Payload: mustJSON(t, toolregistry.ToolResultMessage{
-					ToolUseID: toolUseID,
-					Result:    json.RawMessage(`{}`),
+					RegistrationToken: testRegistrationTokenA,
+					ToolUseID:         toolUseID,
+					Result:            json.RawMessage(`{}`),
 				}),
 			},
 		},
@@ -332,7 +581,8 @@ func TestExecutorEmitsRegistrySpan(t *testing.T) {
 	assert.Equal(t, "todos.update_todos", attrs[attribute.Key("toolregistry.tool")].AsString())
 	assert.Equal(t, "todos.todos", attrs[attribute.Key("toolregistry.toolset")].AsString())
 	assert.Equal(t, "toolcall-1", attrs[attribute.Key("toolregistry.tool_call_id")].AsString())
-	assert.Equal(t, "agent", attrs[attribute.Key("toolregistry.sink")].AsString())
+	_, hasConsumerGroup := attrs[attribute.Key("toolregistry.sink")]
+	assert.False(t, hasConsumerGroup)
 }
 
 type captureSink struct {
@@ -357,7 +607,7 @@ func (s *captureSink) Close(ctx context.Context) error {
 	return nil
 }
 
-func TestExecutorForwardsOutputDelta(t *testing.T) {
+func TestExecutorForwardsOnlyExactAdmissionOutputDeltaForReusedToolUseID(t *testing.T) {
 	t.Parallel()
 
 	const (
@@ -375,7 +625,24 @@ func TestExecutorForwardsOutputDelta(t *testing.T) {
 		},
 	}
 
-	delta := toolregistry.NewToolOutputDeltaMessage(toolUseID, "stdout", "hi\n")
+	malformedDelta := toolregistry.NewToolOutputDeltaMessage(
+		"ABC123",
+		toolUseID,
+		"stdout",
+		"malformed\n",
+	)
+	staleDelta := toolregistry.NewToolOutputDeltaMessage(
+		testRegistrationTokenB,
+		toolUseID,
+		"stdout",
+		"stale\n",
+	)
+	delta := toolregistry.NewToolOutputDeltaMessage(
+		testRegistrationTokenA,
+		toolUseID,
+		"stdout",
+		"hi\n",
+	)
 	stream := &fakeStream{
 		t:             t,
 		requiredStart: "0",
@@ -383,14 +650,25 @@ func TestExecutorForwardsOutputDelta(t *testing.T) {
 			{
 				ID:        "1-0",
 				EventName: toolregistry.OutputDeltaEventKey,
-				Payload:   mustJSON(t, delta),
+				Payload:   mustJSON(t, malformedDelta),
 			},
 			{
 				ID:        "2-0",
+				EventName: toolregistry.OutputDeltaEventKey,
+				Payload:   mustJSON(t, staleDelta),
+			},
+			{
+				ID:        "3-0",
+				EventName: toolregistry.OutputDeltaEventKey,
+				Payload:   mustJSON(t, delta),
+			},
+			{
+				ID:        "4-0",
 				EventName: resultEventName,
 				Payload: mustJSON(t, toolregistry.ToolResultMessage{
-					ToolUseID: toolUseID,
-					Result:    json.RawMessage(`{}`),
+					RegistrationToken: testRegistrationTokenA,
+					ToolUseID:         toolUseID,
+					Result:            json.RawMessage(`{}`),
 				}),
 			},
 		},
@@ -423,6 +701,7 @@ func TestExecutorForwardsOutputDelta(t *testing.T) {
 	require.NotNil(t, res)
 
 	require.Len(t, sink.events, 1)
+	assert.Empty(t, stream.acked)
 	ev, ok := sink.events[0].(aistream.ToolOutputDelta)
 	require.True(t, ok)
 	assert.Equal(t, aistream.EventToolOutputDelta, ev.Type())
@@ -466,8 +745,9 @@ func TestExecutorRestoresBoundsFromRegistryMessage(t *testing.T) {
 				ID:        "1-0",
 				EventName: resultEventName,
 				Payload: mustJSON(t, toolregistry.ToolResultMessage{
-					ToolUseID: toolUseID,
-					Result:    json.RawMessage(`{}`),
+					RegistrationToken: testRegistrationTokenA,
+					ToolUseID:         toolUseID,
+					Result:            json.RawMessage(`{}`),
 					Bounds: &agent.Bounds{
 						Returned:       1,
 						Truncated:      true,
@@ -525,18 +805,20 @@ func TestExecutorRejectsInvalidRegistryErrorResults(t *testing.T) {
 		{
 			name: "error and bounds",
 			msg: toolregistry.ToolResultMessage{
-				ToolUseID: toolUseID,
-				Error:     &toolregistry.ToolError{Code: "execution_failed", Message: "failed"},
-				Bounds:    &agent.Bounds{Returned: 1},
+				RegistrationToken: testRegistrationTokenA,
+				ToolUseID:         toolUseID,
+				Error:             &toolregistry.ToolError{Code: "execution_failed", Message: "failed"},
+				Bounds:            &agent.Bounds{Returned: 1},
 			},
 			want: "error and bounds are both set",
 		},
 		{
 			name: "error and result",
 			msg: toolregistry.ToolResultMessage{
-				ToolUseID: toolUseID,
-				Error:     &toolregistry.ToolError{Code: "execution_failed", Message: "failed"},
-				Result:    json.RawMessage(`{"ok":true}`),
+				RegistrationToken: testRegistrationTokenA,
+				ToolUseID:         toolUseID,
+				Error:             &toolregistry.ToolError{Code: "execution_failed", Message: "failed"},
+				Result:            json.RawMessage(`{"ok":true}`),
 			},
 			want: "error and result are both set",
 		},
@@ -588,8 +870,9 @@ func TestExecutorResultDecodeFailureReturnsModelVisibleErrorWithoutBounds(t *tes
 	}
 
 	res, err := executeRegistryResultMessage(t, toolUseID, toolCallID, toolregistry.ToolResultMessage{
-		ToolUseID: toolUseID,
-		Result:    json.RawMessage(`{"status":"retired"}`),
+		RegistrationToken: testRegistrationTokenA,
+		ToolUseID:         toolUseID,
+		Result:            json.RawMessage(`{"status":"retired"}`),
 		Bounds: &agent.Bounds{
 			Returned:   1,
 			Truncated:  true,
@@ -617,15 +900,39 @@ func TestExecutorResultDecodeFailureReturnsModelVisibleErrorWithoutBounds(t *tes
 }
 
 type fakeRegistryClient struct {
-	toolUseID string
-	err       error
+	toolUseID         string
+	registrationToken string
+	resultStreamTTL   time.Duration
+	err               error
+	calls             *atomic.Int64
 }
 
-func (c fakeRegistryClient) CallTool(ctx context.Context, toolset string, tool tools.Ident, payload []byte, meta toolregistry.ToolCallMeta) (string, error) {
-	if c.err != nil {
-		return "", c.err
+func (c fakeRegistryClient) CallTool(
+	context.Context,
+	string,
+	tools.Ident,
+	[]byte,
+	toolregistry.ToolCallMeta,
+) (toolregistry.ToolCallRef, error) {
+	if c.calls != nil {
+		c.calls.Add(1)
 	}
-	return c.toolUseID, nil
+	if c.err != nil {
+		return toolregistry.ToolCallRef{}, c.err
+	}
+	registrationToken := c.registrationToken
+	if registrationToken == "" {
+		registrationToken = testRegistrationTokenA
+	}
+	resultStreamTTL := c.resultStreamTTL
+	if resultStreamTTL == 0 {
+		resultStreamTTL = toolregistry.DefaultResultStreamTTL
+	}
+	return toolregistry.ToolCallRef{
+		ToolUseID:         c.toolUseID,
+		RegistrationToken: registrationToken,
+		ResultStreamTTL:   resultStreamTTL,
+	}, nil
 }
 
 type fakeSpecs struct {
@@ -647,10 +954,13 @@ type fakePulseClient struct {
 	stream   pulse.Stream
 }
 
-func (c fakePulseClient) Stream(name string, _ ...streamopts.Stream) (pulse.Stream, error) {
+func (c fakePulseClient) Stream(name string, opts ...streamopts.Stream) (pulse.Stream, error) {
 	if name != c.streamID {
 		return nil, assert.AnError
 	}
+	parsed := streamopts.ParseStreamOptions(opts...)
+	assert.Equal(c.stream.(*fakeStream).t, toolregistry.DefaultResultStreamTTL, parsed.TTL)
+	assert.True(c.stream.(*fakeStream).t, parsed.TTLSliding)
 	return c.stream, nil
 }
 
@@ -662,6 +972,8 @@ type fakeStream struct {
 	t             *testing.T
 	requiredStart string
 	events        []*streaming.Event
+	acked         []*streaming.Event
+	destroyed     bool
 }
 
 func (s *fakeStream) Add(ctx context.Context, event string, payload []byte) (string, error) {
@@ -671,16 +983,39 @@ func (s *fakeStream) Add(ctx context.Context, event string, payload []byte) (str
 func (s *fakeStream) NewSink(ctx context.Context, name string, opts ...streamopts.Sink) (pulse.Sink, error) {
 	o := streamopts.ParseSinkOptions(opts...)
 	assert.Equal(s.t, s.requiredStart, o.LastEventID)
-	return &fakeSink{events: s.events}, nil
+	return &fakeSink{events: s.events, acked: &s.acked}, nil
+}
+
+func (s *fakeStream) NewReader(ctx context.Context, opts ...streamopts.Reader) (pulse.Reader, error) {
+	o := streamopts.ParseReaderOptions(opts...)
+	assert.Equal(s.t, s.requiredStart, o.LastEventID)
+	return &fakeReader{events: s.events}, nil
 }
 
 func (s *fakeStream) Destroy(ctx context.Context) error {
+	s.destroyed = true
 	return nil
 }
 
 type fakeSink struct {
 	events []*streaming.Event
+	acked  *[]*streaming.Event
 }
+
+type fakeReader struct {
+	events []*streaming.Event
+}
+
+func (r *fakeReader) Subscribe() <-chan *streaming.Event {
+	ch := make(chan *streaming.Event, len(r.events))
+	for _, event := range r.events {
+		ch <- event
+	}
+	close(ch)
+	return ch
+}
+
+func (r *fakeReader) Close() {}
 
 func (s *fakeSink) Subscribe() <-chan *streaming.Event {
 	ch := make(chan *streaming.Event, len(s.events))
@@ -692,6 +1027,7 @@ func (s *fakeSink) Subscribe() <-chan *streaming.Event {
 }
 
 func (s *fakeSink) Ack(ctx context.Context, ev *streaming.Event) error {
+	*s.acked = append(*s.acked, ev)
 	return nil
 }
 

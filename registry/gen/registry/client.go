@@ -15,29 +15,37 @@ import (
 
 // Client is the "registry" service client.
 type Client struct {
-	RegisterEndpoint     goa.Endpoint
-	UnregisterEndpoint   goa.Endpoint
-	PongEndpoint         goa.Endpoint
-	ListToolsetsEndpoint goa.Endpoint
-	GetToolsetEndpoint   goa.Endpoint
-	SearchEndpoint       goa.Endpoint
-	CallToolEndpoint     goa.Endpoint
+	RegisterEndpoint        goa.Endpoint
+	ReleaseProviderEndpoint goa.Endpoint
+	UnregisterEndpoint      goa.Endpoint
+	PongEndpoint            goa.Endpoint
+	ListToolsetsEndpoint    goa.Endpoint
+	GetToolsetEndpoint      goa.Endpoint
+	SearchEndpoint          goa.Endpoint
+	CallToolEndpoint        goa.Endpoint
 }
 
 // NewClient initializes a "registry" service client given the endpoints.
-func NewClient(register, unregister, pong, listToolsets, getToolset, search, callTool goa.Endpoint) *Client {
+func NewClient(register, releaseProvider, unregister, pong, listToolsets, getToolset, search, callTool goa.Endpoint) *Client {
 	return &Client{
-		RegisterEndpoint:     register,
-		UnregisterEndpoint:   unregister,
-		PongEndpoint:         pong,
-		ListToolsetsEndpoint: listToolsets,
-		GetToolsetEndpoint:   getToolset,
-		SearchEndpoint:       search,
-		CallToolEndpoint:     callTool,
+		RegisterEndpoint:        register,
+		ReleaseProviderEndpoint: releaseProvider,
+		UnregisterEndpoint:      unregister,
+		PongEndpoint:            pong,
+		ListToolsetsEndpoint:    listToolsets,
+		GetToolsetEndpoint:      getToolset,
+		SearchEndpoint:          search,
+		CallToolEndpoint:        callTool,
 	}
 }
 
 // Register calls the "Register" endpoint of the "registry" service.
+// Register may return the following errors:
+//   - "admission_blocked" (type *goa.ServiceError)
+//   - "admission_retired" (type *goa.ServiceError)
+//   - "validation_error" (type *goa.ServiceError)
+//   - "service_unavailable" (type *goa.ServiceError)
+//   - error: internal error
 func (c *Client) Register(ctx context.Context, p *RegisterPayload) (res *RegisterResult, err error) {
 	var ires any
 	ires, err = c.RegisterEndpoint(ctx, p)
@@ -47,9 +55,20 @@ func (c *Client) Register(ctx context.Context, p *RegisterPayload) (res *Registe
 	return ires.(*RegisterResult), nil
 }
 
+// ReleaseProvider calls the "ReleaseProvider" endpoint of the "registry"
+// service.
+// ReleaseProvider may return the following errors:
+//   - "service_unavailable" (type *goa.ServiceError)
+//   - error: internal error
+func (c *Client) ReleaseProvider(ctx context.Context, p *ReleaseProviderPayload) (err error) {
+	_, err = c.ReleaseProviderEndpoint(ctx, p)
+	return
+}
+
 // Unregister calls the "Unregister" endpoint of the "registry" service.
 // Unregister may return the following errors:
-//   - "not_found" (type *goa.ServiceError)
+//   - "admission_conflict" (type *goa.ServiceError)
+//   - "service_unavailable" (type *goa.ServiceError)
 //   - error: internal error
 func (c *Client) Unregister(ctx context.Context, p *UnregisterPayload) (err error) {
 	_, err = c.UnregisterEndpoint(ctx, p)

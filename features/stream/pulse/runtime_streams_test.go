@@ -88,6 +88,10 @@ func (f *fakeStream) NewSink(ctx context.Context, name string, opts ...streamopt
 	return f.sink, nil
 }
 
+func (f *fakeStream) NewReader(context.Context, ...streamopts.Reader) (clientspulse.Reader, error) {
+	return nil, nil
+}
+
 func (f *fakeStream) Destroy(ctx context.Context) error {
 	return nil
 }

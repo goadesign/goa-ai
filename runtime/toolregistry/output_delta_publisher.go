@@ -12,7 +12,8 @@ import "context"
 type (
 	// OutputDeltaPublisher emits best-effort tool output deltas for a single tool
 	// execution. Providers inject an instance into the tool call context so tool
-	// implementations can stream partial output while running.
+	// implementations can stream partial output while running. The publisher
+	// owns the call's registration token and stamps it on every delta.
 	OutputDeltaPublisher interface {
 		PublishToolOutputDelta(ctx context.Context, stream string, delta string) error
 	}

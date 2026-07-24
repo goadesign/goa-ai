@@ -1,264 +1,437 @@
 package registry
 
+// These tests pin the single-record admission state machine independently from
+// rmap replication. Integration tests exercise the same CAS transitions across
+// real registry replicas.
+
 import (
 	"context"
-	"encoding/json"
+	"errors"
+	"math"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
+	"goa.design/goa-ai/runtime/toolregistry"
+	"goa.design/pulse/rmap"
 )
 
-func TestToolsetCatalogSaveGetDelete(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	cat := newToolsetCatalog(newTestCatalogMap())
-
-	toolset := &genregistry.Toolset{
-		Name:         "atlas.read",
-		Tags:         []string{"atlas", "read"},
-		RegisteredAt: "2026-03-16T12:00:00Z",
-		Tools: []*genregistry.ToolSchema{
-			{
-				Name:          "atlas.read.get_time_series",
-				PayloadSchema: []byte(`{"type":"object"}`),
-				ResultSchema:  []byte(`{"type":"object"}`),
-			},
-		},
-	}
-
-	require.NoError(t, cat.SaveToolset(ctx, toolset))
-
-	got, err := cat.GetToolset(ctx, toolset.Name)
-	require.NoError(t, err)
-	require.NotNil(t, got)
-	assert.Equal(t, toolset.Name, got.Name)
-	assert.Equal(t, toolset.RegisteredAt, got.RegisteredAt)
-	assert.Equal(t, toolset.Tags, got.Tags)
-
-	require.NoError(t, cat.DeleteToolset(ctx, toolset.Name))
-
-	_, err = cat.GetToolset(ctx, toolset.Name)
-	require.ErrorIs(t, err, errToolsetNotFound)
-
-	err = cat.DeleteToolset(ctx, toolset.Name)
-	require.ErrorIs(t, err, errToolsetNotFound)
-}
-
-func TestToolsetCatalogSavePreservesRegistrationTokenForIdenticalSchema(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	backingMap := newTestCatalogMap()
-	cat := newToolsetCatalog(backingMap)
-	toolset := testCatalogToolset("atlas.read", "Atlas reads", []string{"atlas", "read"})
-
-	require.NoError(t, cat.SaveToolset(ctx, toolset))
-	firstRaw, ok := backingMap.Get(toolsetCatalogKey(toolset.Name))
-	require.True(t, ok)
-	firstEntry, err := parseCatalogEntry(toolset.Name, firstRaw)
-	require.NoError(t, err)
-
-	require.NoError(t, cat.SaveToolset(ctx, toolset))
-	secondRaw, ok := backingMap.Get(toolsetCatalogKey(toolset.Name))
-	require.True(t, ok)
-	secondEntry, err := parseCatalogEntry(toolset.Name, secondRaw)
-	require.NoError(t, err)
-
-	assert.NotEmpty(t, firstEntry.RegistrationToken)
-	assert.NotEmpty(t, secondEntry.RegistrationToken)
-	assert.Equal(t, firstEntry.RegistrationToken, secondEntry.RegistrationToken)
-	assert.Equal(t, firstEntry.SchemaFingerprint, secondEntry.SchemaFingerprint)
-	assert.Equal(t, toolset.Name, secondEntry.Toolset.Name)
-	assert.Equal(t, toolset.RegisteredAt, secondEntry.Toolset.RegisteredAt)
-}
-
-func TestToolsetCatalogSaveRotatesRegistrationTokenForChangedSchema(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	backingMap := newTestCatalogMap()
-	cat := newToolsetCatalog(backingMap)
-	toolset := testCatalogToolset("atlas.read", "Atlas reads", []string{"atlas", "read"})
-
-	require.NoError(t, cat.SaveToolset(ctx, toolset))
-	firstRaw, ok := backingMap.Get(toolsetCatalogKey(toolset.Name))
-	require.True(t, ok)
-	firstEntry, err := parseCatalogEntry(toolset.Name, firstRaw)
-	require.NoError(t, err)
-
-	changed := testCatalogToolset("atlas.read", "Atlas reads changed", []string{"atlas", "read"})
-	require.NoError(t, cat.SaveToolset(ctx, changed))
-	secondRaw, ok := backingMap.Get(toolsetCatalogKey(changed.Name))
-	require.True(t, ok)
-	secondEntry, err := parseCatalogEntry(changed.Name, secondRaw)
-	require.NoError(t, err)
-
-	assert.NotEqual(t, firstEntry.RegistrationToken, secondEntry.RegistrationToken)
-	assert.NotEqual(t, firstEntry.SchemaFingerprint, secondEntry.SchemaFingerprint)
-}
-
-func TestToolsetCatalogSavePreservesLegacyRegistrationTokenForIdenticalSchema(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	backingMap := newTestCatalogMap()
-	cat := newToolsetCatalog(backingMap)
-	toolset := testCatalogToolset("atlas.read", "Atlas reads", []string{"atlas", "read"})
-	legacyEntry := catalogEntry{
-		Toolset:           toolset,
-		RegistrationToken: "legacy-registration-token",
-	}
-	body, err := json.Marshal(legacyEntry)
-	require.NoError(t, err)
-	_, err = backingMap.Set(ctx, toolsetCatalogKey(toolset.Name), string(body))
-	require.NoError(t, err)
-
-	require.NoError(t, cat.SaveToolset(ctx, toolset))
-	raw, ok := backingMap.Get(toolsetCatalogKey(toolset.Name))
-	require.True(t, ok)
-	entry, err := parseCatalogEntry(toolset.Name, raw)
-	require.NoError(t, err)
-
-	assert.Equal(t, legacyEntry.RegistrationToken, entry.RegistrationToken)
-	assert.NotEmpty(t, entry.SchemaFingerprint)
-}
-
-func TestToolsetSchemaFingerprintNormalizesUnorderedFields(t *testing.T) {
-	t.Parallel()
-
-	description := "Atlas reads"
-	first := &genregistry.Toolset{
-		Name:        "atlas.read",
-		Description: &description,
-		Tags:        []string{"read", "atlas"},
-		Tools: []*genregistry.ToolSchema{
-			{Name: "atlas.read.z", Tags: []string{"z", "a"}, PayloadSchema: []byte(`{"type":"object"}`), ResultSchema: []byte(`{"type":"object"}`)},
-			{Name: "atlas.read.a", Tags: []string{"b", "a"}, PayloadSchema: []byte(`{"type":"object"}`), ResultSchema: []byte(`{"type":"object"}`)},
-		},
-	}
-	second := &genregistry.Toolset{
-		Name:        "atlas.read",
-		Description: &description,
-		Tags:        []string{"atlas", "read"},
-		Tools: []*genregistry.ToolSchema{
-			{Name: "atlas.read.a", Tags: []string{"a", "b"}, PayloadSchema: []byte(`{"type":"object"}`), ResultSchema: []byte(`{"type":"object"}`)},
-			{Name: "atlas.read.z", Tags: []string{"a", "z"}, PayloadSchema: []byte(`{"type":"object"}`), ResultSchema: []byte(`{"type":"object"}`)},
-		},
-	}
-
-	firstFingerprint, err := toolsetSchemaFingerprint(first)
-	require.NoError(t, err)
-	secondFingerprint, err := toolsetSchemaFingerprint(second)
-	require.NoError(t, err)
-
-	assert.Equal(t, firstFingerprint, secondFingerprint)
-	assert.Equal(t, []string{"read", "atlas"}, first.Tags)
-	assert.Equal(t, []string{"z", "a"}, first.Tools[0].Tags)
-}
-
-func TestToolsetCatalogListToolsetsFiltersTags(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	cat := newToolsetCatalog(newTestCatalogMap())
-	require.NoError(t, cat.SaveToolset(ctx, testCatalogToolset("atlas.read", "Atlas reads", []string{"atlas", "read"})))
-	require.NoError(t, cat.SaveToolset(ctx, testCatalogToolset("atlas.write", "Atlas writes", []string{"atlas", "write"})))
-	require.NoError(t, cat.SaveToolset(ctx, testCatalogToolset("grafana.read", "Grafana reads", []string{"grafana", "read"})))
-
-	got, err := cat.ListToolsets(ctx, []string{"atlas", "read"})
-	require.NoError(t, err)
-	require.Len(t, got, 1)
-	assert.Equal(t, "atlas.read", got[0].Name)
-}
-
-func TestToolsetCatalogSearchToolsetsMatchesNameDescriptionAndTags(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	cat := newToolsetCatalog(newTestCatalogMap())
-	require.NoError(t, cat.SaveToolset(ctx, testCatalogToolset("atlas.read", "Reads Atlas time series", []string{"atlas", "signals"})))
-	require.NoError(t, cat.SaveToolset(ctx, testCatalogToolset("grafana.read", "Reads dashboards", []string{"dashboards"})))
-
-	t.Run("matches name", func(t *testing.T) {
-		got, err := cat.SearchToolsets(ctx, "atlas")
-		require.NoError(t, err)
-		require.Len(t, got, 1)
-		assert.Equal(t, "atlas.read", got[0].Name)
-	})
-
-	t.Run("matches description", func(t *testing.T) {
-		got, err := cat.SearchToolsets(ctx, "dashboards")
-		require.NoError(t, err)
-		require.Len(t, got, 1)
-		assert.Equal(t, "grafana.read", got[0].Name)
-	})
-
-	t.Run("matches tags case insensitively", func(t *testing.T) {
-		got, err := cat.SearchToolsets(ctx, "SIGNALS")
-		require.NoError(t, err)
-		require.Len(t, got, 1)
-		assert.Equal(t, "atlas.read", got[0].Name)
-	})
-}
+const (
+	testAdmissionRevisionA = "2026-07-23.1"
+	testAdmissionRevisionB = "2026-07-23.2"
+	testStaleToken         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	testIncarnationA       = "11111111-1111-4111-8111-111111111111"
+	testIncarnationB       = "22222222-2222-4222-8222-222222222222"
+)
 
 type testCatalogMap struct {
-	mu     sync.RWMutex
-	values map[string]string
+	mu            sync.RWMutex
+	content       map[string]string
+	events        chan rmap.EventKind
+	testAndSetErr error
+	subscribe     func() <-chan rmap.EventKind
+}
+
+func TestCatalogSameTokenAddRenewReleaseRolling(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	now := time.Unix(1_700_000_000, 0)
+	clock := newTestTimeSource(now)
+	catalog := newToolsetCatalog(newTestCatalogMap(), clock)
+	toolset := testCatalogToolset("test.toolset", "test", []string{"one"})
+
+	first, err := catalog.Register(ctx, toolset, testAdmissionRevisionA, "provider-a", testIncarnationA, time.Minute)
+	require.NoError(t, err)
+	second, err := catalog.Register(ctx, testCatalogToolset("test.toolset", "test", []string{"one"}), testAdmissionRevisionA, "provider-b", testIncarnationB, time.Minute)
+	require.NoError(t, err)
+	clock.Set(now.Add(20 * time.Second))
+	renewed, err := catalog.Register(ctx, testCatalogToolset("test.toolset", "test", []string{"one"}), testAdmissionRevisionA, "provider-a", testIncarnationA, time.Minute)
+	require.NoError(t, err)
+
+	assert.Equal(t, first.RegistrationToken, second.RegistrationToken)
+	assert.Equal(t, first.RegisteredAt, renewed.RegisteredAt)
+	assert.Equal(t, now.Add(80*time.Second).UnixNano(), renewed.ProviderLeases[providerLeaseKey("provider-a", testIncarnationA)])
+	assert.Contains(t, renewed.ProviderLeases, providerLeaseKey("provider-b", testIncarnationB))
+
+	require.NoError(t, catalog.ReleaseProvider(ctx, "test.toolset", "provider-a", testIncarnationA, first.RegistrationToken))
+	entry, err := catalog.ActiveRegistration(ctx, "test.toolset")
+	require.NoError(t, err)
+	assert.NotContains(t, entry.ProviderLeases, providerLeaseKey("provider-a", testIncarnationA))
+	assert.Contains(t, entry.ProviderLeases, providerLeaseKey("provider-b", testIncarnationB))
+
+	require.NoError(t, catalog.ReleaseProvider(ctx, "test.toolset", "provider-b", testIncarnationB, testStaleToken))
+	entry, err = catalog.ActiveRegistration(ctx, "test.toolset")
+	require.NoError(t, err)
+	assert.Contains(t, entry.ProviderLeases, providerLeaseKey("provider-b", testIncarnationB))
+}
+
+func TestCatalogDelayedOldIncarnationReleaseCannotDeleteReplacement(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	catalog := newToolsetCatalog(
+		newTestCatalogMap(),
+		newTestTimeSource(time.Unix(1_700_000_000, 0)),
+	)
+	first, err := catalog.Register(
+		ctx,
+		testCatalogToolset("test.toolset", "test", nil),
+		testAdmissionRevisionA,
+		"provider",
+		testIncarnationA,
+		time.Minute,
+	)
+	require.NoError(t, err)
+	second, err := catalog.Register(
+		ctx,
+		testCatalogToolset("test.toolset", "test", nil),
+		testAdmissionRevisionA,
+		"provider",
+		testIncarnationB,
+		time.Minute,
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, catalog.ReleaseProvider(
+		ctx,
+		"test.toolset",
+		"provider",
+		testIncarnationA,
+		first.RegistrationToken,
+	))
+	entry, err := catalog.ActiveRegistration(ctx, "test.toolset")
+	require.NoError(t, err)
+	assert.NotContains(t, entry.ProviderLeases, providerLeaseKey("provider", testIncarnationA))
+	assert.Contains(t, entry.ProviderLeases, providerLeaseKey("provider", testIncarnationB))
+	assert.Equal(t, second.HealthEpoch, entry.HealthEpoch)
+}
+
+func TestCatalogDifferentAdmissionGracefulAndExpiryHandoff(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	now := time.Unix(1_700_000_000, 0)
+	clock := newTestTimeSource(now)
+	catalog := newToolsetCatalog(newTestCatalogMap(), clock)
+	old, err := catalog.Register(ctx, testCatalogToolset("test.toolset", "old", nil), testAdmissionRevisionA, "old", testIncarnationA, time.Minute)
+	require.NoError(t, err)
+
+	_, err = catalog.Register(ctx, testCatalogToolset("test.toolset", "new", nil), testAdmissionRevisionB, "new", testIncarnationB, time.Minute)
+	require.ErrorIs(t, err, errAdmissionBlocked)
+
+	require.NoError(t, catalog.ReleaseProvider(ctx, "test.toolset", "old", testIncarnationA, old.RegistrationToken))
+	next, err := catalog.Register(ctx, testCatalogToolset("test.toolset", "new", nil), testAdmissionRevisionB, "new", testIncarnationB, time.Minute)
+	require.NoError(t, err)
+	assert.NotEqual(t, old.RegistrationToken, next.RegistrationToken)
+	require.ErrorIs(t, catalog.Retire(ctx, "test.toolset", old.RegistrationToken), errAdmissionConflict)
+
+	expiryCatalog := newToolsetCatalog(newTestCatalogMap(), clock)
+	_, err = expiryCatalog.Register(ctx, testCatalogToolset("expiry.toolset", "old", nil), testAdmissionRevisionA, "crashed", testIncarnationA, time.Minute)
+	require.NoError(t, err)
+	clock.Set(now.Add(time.Minute))
+	replacement, err := expiryCatalog.Register(ctx, testCatalogToolset("expiry.toolset", "new", nil), testAdmissionRevisionB, "new", testIncarnationB, time.Minute)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int64{
+		providerLeaseKey("new", testIncarnationB): now.Add(2 * time.Minute).UnixNano(),
+	}, replacement.ProviderLeases)
+}
+
+func TestCatalogOldRenewalAndReplacementSerialize(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	now := time.Unix(1_700_000_000, 0)
+	clock := newTestTimeSource(now)
+	catalog := newToolsetCatalog(newTestCatalogMap(), clock)
+	_, err := catalog.Register(
+		ctx,
+		testCatalogToolset("test.toolset", "old", nil),
+		testAdmissionRevisionA,
+		"old",
+		testIncarnationA,
+		toolregistry.MinProviderLeaseDuration,
+	)
+	require.NoError(t, err)
+	clock.Set(now.Add(toolregistry.MinProviderLeaseDuration))
+
+	errs := make(chan error, 2)
+	go func() {
+		_, registerErr := catalog.Register(
+			ctx,
+			testCatalogToolset("test.toolset", "old", nil),
+			testAdmissionRevisionA,
+			"old",
+			testIncarnationA,
+			time.Minute,
+		)
+		errs <- registerErr
+	}()
+	go func() {
+		_, registerErr := catalog.Register(
+			ctx,
+			testCatalogToolset("test.toolset", "new", nil),
+			testAdmissionRevisionB,
+			"new",
+			testIncarnationB,
+			time.Minute,
+		)
+		errs <- registerErr
+	}()
+
+	var succeeded, fenced int
+	for range 2 {
+		err := <-errs
+		if err == nil {
+			succeeded++
+			continue
+		}
+		require.True(
+			t,
+			errors.Is(err, errAdmissionRetired) || errors.Is(err, errAdmissionBlocked),
+			"renewal/replacement loser must be fenced: %v",
+			err,
+		)
+		fenced++
+	}
+	assert.Equal(t, 1, succeeded)
+	assert.Equal(t, 1, fenced)
+	entry, err := catalog.ActiveRegistration(ctx, "test.toolset")
+	require.NoError(t, err)
+	assert.Len(t, entry.ProviderLeases, 1)
+}
+
+func TestCatalogRetirementAndFreshRevisionReturn(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	clock := newTestTimeSource(time.Unix(1_700_000_000, 0))
+	catalog := newToolsetCatalog(newTestCatalogMap(), clock)
+	a, err := catalog.Register(ctx, testCatalogToolset("test.toolset", "A", nil), testAdmissionRevisionA, "a", testIncarnationA, time.Minute)
+	require.NoError(t, err)
+	require.NoError(t, catalog.Retire(ctx, "test.toolset", a.RegistrationToken))
+	require.NoError(t, catalog.Retire(ctx, "test.toolset", a.RegistrationToken))
+
+	_, err = catalog.Register(ctx, testCatalogToolset("test.toolset", "A", nil), testAdmissionRevisionA, "a", testIncarnationA, time.Minute)
+	require.ErrorIs(t, err, errAdmissionRetired)
+	err = catalog.Retire(ctx, "test.toolset", testStaleToken)
+	require.ErrorIs(t, err, errAdmissionConflict)
+
+	require.NoError(t, catalog.ReleaseProvider(ctx, "test.toolset", "a", testIncarnationA, a.RegistrationToken))
+	b, err := catalog.Register(ctx, testCatalogToolset("test.toolset", "B", nil), testAdmissionRevisionB, "b", testIncarnationB, time.Minute)
+	require.NoError(t, err)
+	require.NoError(t, catalog.ReleaseProvider(ctx, "test.toolset", "b", testIncarnationB, b.RegistrationToken))
+	_, err = catalog.Register(ctx, testCatalogToolset("test.toolset", "A", nil), testAdmissionRevisionA, "a-again", testIncarnationA, time.Minute)
+	require.ErrorIs(t, err, errAdmissionRetired)
+	a2, err := catalog.Register(ctx, testCatalogToolset("test.toolset", "A", nil), "2026-07-23.3", "a2", testIncarnationA, time.Minute)
+	require.NoError(t, err)
+	assert.NotEqual(t, a.RegistrationToken, a2.RegistrationToken)
+	assert.Contains(t, a2.RetiredTokens, a.RegistrationToken)
+	assert.Contains(t, a2.RetiredTokens, b.RegistrationToken)
+}
+
+func TestCatalogConcurrentCandidatesSerialize(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	now := time.Unix(1_700_000_000, 0)
+	clock := newTestTimeSource(now)
+	catalog := newToolsetCatalog(newTestCatalogMap(), clock)
+	_, err := catalog.Register(
+		ctx,
+		testCatalogToolset("test.toolset", "old", nil),
+		testAdmissionRevisionA,
+		"old",
+		testIncarnationA,
+		toolregistry.MinProviderLeaseDuration,
+	)
+	require.NoError(t, err)
+	clock.Set(now.Add(toolregistry.MinProviderLeaseDuration))
+
+	type result struct {
+		entry catalogEntry
+		err   error
+	}
+	results := make(chan result, 2)
+	for _, candidate := range []struct {
+		description string
+		revision    string
+		provider    string
+	}{
+		{description: "B", revision: testAdmissionRevisionB, provider: "b"},
+		{description: "C", revision: "2026-07-23.3", provider: "c"},
+	} {
+		go func() {
+			entry, registerErr := catalog.Register(
+				ctx,
+				testCatalogToolset("test.toolset", candidate.description, nil),
+				candidate.revision,
+				candidate.provider,
+				testIncarnationB,
+				time.Minute,
+			)
+			results <- result{entry: entry, err: registerErr}
+		}()
+	}
+	var succeeded, blocked int
+	for range 2 {
+		result := <-results
+		switch {
+		case result.err == nil:
+			succeeded++
+		case errors.Is(result.err, errAdmissionBlocked):
+			blocked++
+		default:
+			require.NoError(t, result.err)
+		}
+	}
+	assert.Equal(t, 1, succeeded)
+	assert.Equal(t, 1, blocked)
+}
+
+func TestCatalogRedisLossRecoversSameAdmissionIdentity(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	m := newTestCatalogMap()
+	clock := newTestTimeSource(time.Unix(1_700_000_000, 0))
+	catalog := newToolsetCatalog(m, clock)
+	first, err := catalog.Register(ctx, testCatalogToolset("test.toolset", "same", nil), testAdmissionRevisionA, "a", testIncarnationA, time.Minute)
+	require.NoError(t, err)
+
+	m.mu.Lock()
+	clear(m.content)
+	m.mu.Unlock()
+
+	recovered, err := catalog.Register(ctx, testCatalogToolset("test.toolset", "same", nil), testAdmissionRevisionA, "b", testIncarnationB, time.Minute)
+	require.NoError(t, err)
+	assert.Equal(t, first.RegistrationToken, recovered.RegistrationToken)
+}
+
+func TestCatalogRejectsLeaseDurationAndDeadlineOverflow(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	toolset := testCatalogToolset("test.toolset", "test", nil)
+	catalog := newToolsetCatalog(
+		newTestCatalogMap(),
+		newTestTimeSource(time.Unix(1_700_000_000, 0)),
+	)
+	_, err := catalog.Register(
+		ctx,
+		toolset,
+		testAdmissionRevisionA,
+		"provider-a",
+		testIncarnationA,
+		toolregistry.MaxProviderLeaseDuration+time.Nanosecond,
+	)
+	require.ErrorContains(t, err, "provider lease duration")
+
+	overflowCatalog := newToolsetCatalog(
+		newTestCatalogMap(),
+		newTestTimeSource(time.Unix(0, math.MaxInt64-toolregistry.MinProviderLeaseDuration.Nanoseconds()+1)),
+	)
+	_, err = overflowCatalog.Register(
+		ctx,
+		testCatalogToolset("overflow.toolset", "test", nil),
+		testAdmissionRevisionA,
+		"provider-a",
+		testIncarnationA,
+		toolregistry.MinProviderLeaseDuration,
+	)
+	require.ErrorContains(t, err, "overflows Unix nanoseconds")
+}
+
+func testCatalogToolset(name, description string, tags []string) *genregistry.Toolset {
+	return &genregistry.Toolset{
+		Name:        name,
+		Description: &description,
+		Tags:        tags,
+		Tools:       []*genregistry.ToolSchema{},
+	}
 }
 
 func newTestCatalogMap() *testCatalogMap {
-	return &testCatalogMap{values: make(map[string]string)}
-}
-
-func (m *testCatalogMap) Delete(ctx context.Context, key string) (string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	prev := m.values[key]
-	delete(m.values, key)
-	return prev, nil
+	return &testCatalogMap{
+		content: make(map[string]string),
+		events:  make(chan rmap.EventKind, 64),
+	}
 }
 
 func (m *testCatalogMap) Get(key string) (string, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	val, ok := m.values[key]
-	return val, ok
+	value, exists := m.content[key]
+	return value, exists
 }
 
 func (m *testCatalogMap) Keys() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	keys := make([]string, 0, len(m.values))
-	for key := range m.values {
+	keys := make([]string, 0, len(m.content))
+	for key := range m.content {
 		keys = append(keys, key)
 	}
 	return keys
 }
 
-func (m *testCatalogMap) Set(ctx context.Context, key, value string) (string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	prev := m.values[key]
-	m.values[key] = value
-	return prev, nil
+func (m *testCatalogMap) Subscribe() <-chan rmap.EventKind {
+	if m.subscribe != nil {
+		return m.subscribe()
+	}
+	return m.events
 }
 
-func testCatalogToolset(name string, description string, tags []string) *genregistry.Toolset {
-	return &genregistry.Toolset{
-		Name:         name,
-		Description:  &description,
-		Tags:         tags,
-		RegisteredAt: "2026-03-16T12:00:00Z",
-		Tools: []*genregistry.ToolSchema{
-			{
-				Name:          name + ".tool",
-				PayloadSchema: []byte(`{"type":"object"}`),
-				ResultSchema:  []byte(`{"type":"object"}`),
-			},
-		},
+func (m *testCatalogMap) Unsubscribe(<-chan rmap.EventKind) {}
+
+func (m *testCatalogMap) SetIfNotExists(_ context.Context, key, value string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.content[key]; exists {
+		return false, nil
 	}
+	m.content[key] = value
+	return true, nil
+}
+
+func (m *testCatalogMap) TestAndSetEx(
+	_ context.Context,
+	key, test, value string,
+) (string, bool, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.testAndSetErr != nil {
+		err := m.testAndSetErr
+		m.testAndSetErr = nil
+		return "", false, false, err
+	}
+	current, exists := m.content[key]
+	if !exists {
+		return "", false, false, nil
+	}
+	if current != test {
+		return current, true, false, nil
+	}
+	m.content[key] = value
+	return current, true, true, nil
+}
+
+func (m *testCatalogMap) TestAndDeleteEx(
+	_ context.Context,
+	key, test string,
+) (string, bool, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, exists := m.content[key]
+	if !exists {
+		return "", false, false, nil
+	}
+	if current != test {
+		return current, true, false, nil
+	}
+	delete(m.content, key)
+	return current, true, true, nil
 }

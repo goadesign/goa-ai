@@ -19,9 +19,11 @@ import (
 // "registry" service from the gRPC request type.
 func NewRegisterPayload(message *registrypb.RegisterRequest) *registry.RegisterPayload {
 	v := &registry.RegisterPayload{
-		Name:        message.Name,
-		Description: message.Description,
-		ProviderID:  message.ProviderId,
+		Name:                  message.Name,
+		Description:           message.Description,
+		ProviderID:            message.ProviderId,
+		AdmissionRevision:     message.AdmissionRevision,
+		ProviderIncarnationID: message.ProviderIncarnationId,
 	}
 	if message.Version != nil {
 		version := registry.SemVer(*message.Version)
@@ -58,8 +60,29 @@ func NewRegisterPayload(message *registrypb.RegisterRequest) *registry.RegisterP
 // the "Register" endpoint of the "registry" service.
 func NewProtoRegisterResponse(result *registry.RegisterResult) *registrypb.RegisterResponse {
 	message := &registrypb.RegisterResponse{
-		RegisteredAt: result.RegisteredAt,
+		RegisteredAt:      result.RegisteredAt,
+		RegistrationToken: result.RegistrationToken,
+		LeaseDurationMs:   result.LeaseDurationMs,
 	}
+	return message
+}
+
+// NewReleaseProviderPayload builds the payload of the "ReleaseProvider"
+// endpoint of the "registry" service from the gRPC request type.
+func NewReleaseProviderPayload(message *registrypb.ReleaseProviderRequest) *registry.ReleaseProviderPayload {
+	v := &registry.ReleaseProviderPayload{
+		Name:                      message.Name,
+		ProviderID:                message.ProviderId,
+		ExpectedRegistrationToken: message.ExpectedRegistrationToken,
+		ProviderIncarnationID:     message.ProviderIncarnationId,
+	}
+	return v
+}
+
+// NewProtoReleaseProviderResponse builds the gRPC response type from the
+// result of the "ReleaseProvider" endpoint of the "registry" service.
+func NewProtoReleaseProviderResponse() *registrypb.ReleaseProviderResponse {
+	message := &registrypb.ReleaseProviderResponse{}
 	return message
 }
 
@@ -67,7 +90,8 @@ func NewProtoRegisterResponse(result *registry.RegisterResult) *registrypb.Regis
 // "registry" service from the gRPC request type.
 func NewUnregisterPayload(message *registrypb.UnregisterRequest) *registry.UnregisterPayload {
 	v := &registry.UnregisterPayload{
-		Name: message.Name,
+		Name:                      message.Name,
+		ExpectedRegistrationToken: message.ExpectedRegistrationToken,
 	}
 	return v
 }
@@ -83,9 +107,10 @@ func NewProtoUnregisterResponse() *registrypb.UnregisterResponse {
 // service from the gRPC request type.
 func NewPongPayload(message *registrypb.PongRequest) *registry.PongPayload {
 	v := &registry.PongPayload{
-		PingID:     message.PingId,
-		Toolset:    message.Toolset,
-		ProviderID: message.ProviderId,
+		PingID:                message.PingId,
+		Toolset:               message.Toolset,
+		ProviderID:            message.ProviderId,
+		ProviderIncarnationID: message.ProviderIncarnationId,
 	}
 	return v
 }
@@ -241,7 +266,9 @@ func NewCallToolPayload(message *registrypb.CallToolRequest) *registry.CallToolP
 // the "CallTool" endpoint of the "registry" service.
 func NewProtoCallToolResponse(result *registry.CallToolResult) *registrypb.CallToolResponse {
 	message := &registrypb.CallToolResponse{
-		ToolUseId: result.ToolUseID,
+		ToolUseId:         result.ToolUseID,
+		RegistrationToken: result.RegistrationToken,
+		ResultStreamTtlMs: result.ResultStreamTTLMs,
 	}
 	return message
 }
@@ -278,6 +305,8 @@ func ValidateRegisterRequest(message *registrypb.RegisterRequest) (err error) {
 	if utf8.RuneCountInString(message.ProviderId) > 512 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", message.ProviderId, utf8.RuneCountInString(message.ProviderId), 512, false))
 	}
+	err = goa.MergeErrors(err, goa.ValidatePattern("message.admission_revision", message.AdmissionRevision, "^[A-Za-z0-9][A-Za-z0-9._:/@+\\-]{0,255}$"))
+	err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", message.ProviderIncarnationId, goa.FormatUUID))
 	return
 }
 
@@ -298,11 +327,32 @@ func ValidateToolSchema(elem *registrypb.ToolSchema) (err error) {
 	return
 }
 
+// ValidateReleaseProviderRequest runs the validations defined on
+// ReleaseProviderRequest.
+func ValidateReleaseProviderRequest(message *registrypb.ReleaseProviderRequest) (err error) {
+	if utf8.RuneCountInString(message.Name) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", message.Name, utf8.RuneCountInString(message.Name), 1, true))
+	}
+	if utf8.RuneCountInString(message.Name) > 256 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", message.Name, utf8.RuneCountInString(message.Name), 256, false))
+	}
+	if utf8.RuneCountInString(message.ProviderId) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", message.ProviderId, utf8.RuneCountInString(message.ProviderId), 1, true))
+	}
+	if utf8.RuneCountInString(message.ProviderId) > 512 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", message.ProviderId, utf8.RuneCountInString(message.ProviderId), 512, false))
+	}
+	err = goa.MergeErrors(err, goa.ValidatePattern("message.expected_registration_token", message.ExpectedRegistrationToken, "^[0-9a-f]{64}$"))
+	err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", message.ProviderIncarnationId, goa.FormatUUID))
+	return
+}
+
 // ValidateUnregisterRequest runs the validations defined on UnregisterRequest.
 func ValidateUnregisterRequest(message *registrypb.UnregisterRequest) (err error) {
 	if utf8.RuneCountInString(message.Name) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", message.Name, utf8.RuneCountInString(message.Name), 1, true))
 	}
+	err = goa.MergeErrors(err, goa.ValidatePattern("message.expected_registration_token", message.ExpectedRegistrationToken, "^[0-9a-f]{64}$"))
 	return
 }
 
@@ -326,6 +376,7 @@ func ValidatePongRequest(message *registrypb.PongRequest) (err error) {
 	if utf8.RuneCountInString(message.ProviderId) > 512 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", message.ProviderId, utf8.RuneCountInString(message.ProviderId), 512, false))
 	}
+	err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", message.ProviderIncarnationId, goa.FormatUUID))
 	return
 }
 
@@ -381,22 +432,39 @@ func ValidateToolCallMeta(meta *registrypb.ToolCallMeta) (err error) {
 	if utf8.RuneCountInString(meta.RunId) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("meta.run_id", meta.RunId, utf8.RuneCountInString(meta.RunId), 1, true))
 	}
+	if utf8.RuneCountInString(meta.RunId) > 256 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("meta.run_id", meta.RunId, utf8.RuneCountInString(meta.RunId), 256, false))
+	}
 	if utf8.RuneCountInString(meta.SessionId) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("meta.session_id", meta.SessionId, utf8.RuneCountInString(meta.SessionId), 1, true))
+	}
+	if utf8.RuneCountInString(meta.SessionId) > 256 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("meta.session_id", meta.SessionId, utf8.RuneCountInString(meta.SessionId), 256, false))
 	}
 	if meta.TurnId != nil {
 		if utf8.RuneCountInString(*meta.TurnId) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("meta.turn_id", *meta.TurnId, utf8.RuneCountInString(*meta.TurnId), 1, true))
 		}
 	}
-	if meta.ToolCallId != nil {
-		if utf8.RuneCountInString(*meta.ToolCallId) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("meta.tool_call_id", *meta.ToolCallId, utf8.RuneCountInString(*meta.ToolCallId), 1, true))
+	if meta.TurnId != nil {
+		if utf8.RuneCountInString(*meta.TurnId) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("meta.turn_id", *meta.TurnId, utf8.RuneCountInString(*meta.TurnId), 256, false))
 		}
+	}
+	if utf8.RuneCountInString(meta.ToolCallId) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("meta.tool_call_id", meta.ToolCallId, utf8.RuneCountInString(meta.ToolCallId), 1, true))
+	}
+	if utf8.RuneCountInString(meta.ToolCallId) > 256 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("meta.tool_call_id", meta.ToolCallId, utf8.RuneCountInString(meta.ToolCallId), 256, false))
 	}
 	if meta.ParentToolCallId != nil {
 		if utf8.RuneCountInString(*meta.ParentToolCallId) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("meta.parent_tool_call_id", *meta.ParentToolCallId, utf8.RuneCountInString(*meta.ParentToolCallId), 1, true))
+		}
+	}
+	if meta.ParentToolCallId != nil {
+		if utf8.RuneCountInString(*meta.ParentToolCallId) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("meta.parent_tool_call_id", *meta.ParentToolCallId, utf8.RuneCountInString(*meta.ParentToolCallId), 256, false))
 		}
 	}
 	return

@@ -194,13 +194,118 @@ var AnthropicRegistry = Registry("anthropic", func() {
 
 Generated `registry.go` files in agent packages are local runtime registration helpers; they do not implement the clustered registry service.
 
-Provider health is owned by the clustered registry and is scoped to provider
-instances, not just toolset names. Provider processes supply one stable
-`ProviderID` per process/toolset pair on registration, `toolprovider.Serve`, and
-`Pong`. The registry stores health per provider id and schema registration token:
-identical schema re-registration preserves the token for rollout overlap, while
-schema changes rotate it and require a fresh pong from a provider serving the new
-schema.
+Provider admission is owned by the clustered registry. `Serve` generates one
+UUID incarnation per lifecycle; leases are keyed by stable provider ID plus
+incarnation, so delayed old-process release cannot remove a replacement.
+Membership epoch and pong freshness live beside those leases in the same CAS
+record. The active `toolprovider.Serve` lifecycle owns an
+immutable, required `AdmissionRevision`, opens the Pulse stream, invokes a typed
+context-compliant registration callback with that revision, and creates the
+shared sink only after admission. It renews with jitter while the last
+duration-derived monotonic deadline remains valid and closes consumption before
+expiration. The first renewal is derived from one third of the granted lease
+duration; bounded retries preserve cutoff slack. After every admitted exit,
+`Serve` stops claiming, boundedly closes an established sink, closes work
+intake, waits workers and terminal result publication, drains every queued
+acknowledgement, and stops renewal. A sink-setup failure has no consumption to
+settle and proceeds directly to bounded release. Established sinks release
+exact provider leases only after the sequence proves consumption settled.
+Close, worker, result, or acknowledgement failure is explicit and suppresses
+release; lease expiry is the durable fallback. Acknowledgement failure permits
+Pulse redelivery after a result was published, so handlers must make repeated
+tool-use IDs idempotent or durably deduplicate them.
+
+Provider processes supply one stable `ProviderID` per process/toolset pair and
+one deployment-issued `AdmissionRevision` per fenced admission to `Serve`.
+Every replica with the same contract shares the revision across scaling and
+RollingUpdate; a revision changes only when a new execution fence is intended.
+The registry stores active/retired state, toolset, canonical schema fingerprint,
+admission revision, token, Redis `RegisteredAt`, every provider-incarnation
+lease, health epoch, last pong, and the exact set of all retired registration
+tokens in one exact-CAS catalog record. A nonzero-to-zero lease transition
+advances the epoch and resets pong freshness. Ping IDs carry token plus epoch;
+pongs authenticate that pair and the responding incarnation atomically.
+Aggregate health requires one unexpired lease plus a fresh current-epoch pong.
+
+The wire-visible `RegistrationToken` is not a secret. It is the lowercase
+SHA-256 digest of the domain `goa-ai/tool-registry-admission/v1\0`, the raw
+32-byte canonical schema fingerprint, a uint32 big-endian admission-revision
+byte length, and the revision bytes. Tool order and toolset/tool tag order are
+normalized before schema fingerprinting; payload, result, and sidecar raw schema
+bytes are exact identity inputs, so generated schema JSON must remain canonical.
+The same schema and revision derive the same admission token across replicas.
+The same schema under another revision derives a different token. Every Goa and
+Pulse boundary requires the canonical lowercase 64-hex spelling
+`^[0-9a-f]{64}$`.
+
+Registration is one exact-CAS state machine. An absent record becomes an active
+candidate plus its first lease. The exact token adds or renews one provider.
+A different token first prunes expired leases using Redis TIME: while any old
+lease remains it returns retryable `admission_blocked`; once none remain it
+replaces the record with the candidate and first lease while atomically
+tombstoning the prior token. Concurrent renewal, replacement, and competing
+candidates serialize on that CAS. Retirement also atomically tombstones the
+current token. Any candidate in the tombstone set returns permanent
+`admission_retired`; therefore A→B→A cannot resurrect A. Another fresh token may
+activate after retired leases are released or expire. Tombstones are permanent,
+unbounded correctness history. They grow with distinct admissions; no lossy
+compaction is safe without another immutable authority that can prove
+non-resurrection.
+
+Same-token scaling and RollingUpdate require no deployment token persistence.
+A different schema or admission revision requires Kubernetes Recreate so
+incompatible providers never overlap: graceful releases permit immediate
+server-owned handoff, while crashes delay handoff until lease expiry.
+`Unregister` is not rollout orchestration; it intentionally changes active to
+retired while preserving leases. Same-token retirement retry succeeds, a stale
+expected token returns `admission_conflict`, retired toolsets are unavailable to
+discovery and calls, and the retired exact token cannot register again.
+
+Supported rmap `Destroy`, stream destruction, and ticker loss recover live under
+the same registry name without a process restart: renewal reconstructs the
+catalog lease, the stream recreates, and ticker reconciliation restores pings.
+A raw total Redis reset is different because it erases rmap revision history and
+the permanent retirement tombstones. Deterministic identity still derives the
+same token, but live recovery and anti-resurrection cannot be claimed without a
+restored catalog backup. Operators must stop incompatible admissions and restore
+or deliberately rebootstrap state before resuming providers.
+The gateway stamps each routed call with the exact active token used for
+validation. It derives the global transport `ToolUseID` as a domain-separated,
+uint64-length-delimited SHA-256 hash of required `run_id` plus model/provider
+`tool_call_id`; retries in one run therefore reuse the result stream while
+concurrent runs cannot collide. Both IDs are required; direct callers generate
+and retain stable call identity. The original model/provider ID remains separate
+metadata.
+
+Providers execute only matching calls and publish a terminal typed
+`stale_registration` error for stale queued calls, then acknowledge them, so
+generation changes cannot execute old work or strand a waiting caller. Every
+success and error result echoes the call token; independent executor readers
+accept only the exact tool-use ID and token pair and ignore mismatched late
+results from reused IDs. Best-effort output deltas carry the same token, and executors forward only
+deltas matching that exact pair. The waiting queue is exact and bounded. A
+provider that claims a call after that queue fills publishes transient
+retryable `provider_overloaded` with a bounded retry-after for the exact
+ID/token before acknowledging it. The registry's expiring call admission
+serializes one delayed republication per overload event across replicas, without
+blocking provider ping intake. Handlers remain responsible for idempotency when Pulse
+redelivers after result publication but before acknowledgement.
+
+The registry atomically admits each immutable request under
+`(ToolUseID, RegistrationToken)`. The first caller initializes and publishes;
+concurrent and sequential retries attach to retained history. An exact-owner
+short publication lock prevents concurrent cross-node attempts. The registry
+selects one bounded sliding TTL for both admission and result history. Executors
+use independent oldest-first Pulse Readers, so each waiter replays every event
+without consumer groups, acknowledgements, or keepalive metadata. No consumer
+destroys the stream; abandoned, completed, and recreated state expires through
+the same inactivity policy.
+
+The one-time cleanup of pre-contract Redis records and queued unfenced messages
+is an operational hard-cutover concern, not a compatibility mechanism. See
+[`docs/POST_ROLLOUT_CLEANUP.md`](docs/POST_ROLLOUT_CLEANUP.md). Deterministic
+admission identity, catalog-owned leases, token fencing, flat shared streams,
+server-owned handoff, and incompatible-admission non-overlap remain permanent.
 
 ### Transcript Boundary
 

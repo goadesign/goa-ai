@@ -98,6 +98,9 @@ func (m *streamManager) RemoveStream(toolset string) {
 // It lazily creates a local stream handle if one doesn't exist, enabling
 // cross-node tool invocation where the toolset was registered on a different node.
 func (m *streamManager) PublishToolCall(ctx context.Context, toolset string, msg toolregistry.ToolCallMessage) error {
+	if err := toolregistry.ValidateToolCallMessage(msg); err != nil {
+		return fmt.Errorf("publish invalid toolset message: %w", err)
+	}
 	// Use GetOrCreateStream to handle cross-node scenarios where the toolset
 	// was registered on a different gateway node.
 	stream, streamID, err := m.GetOrCreateStream(ctx, toolset)
