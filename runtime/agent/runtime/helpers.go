@@ -593,6 +593,7 @@ func decrementCap(current int, delta int) int {
 // Contract:
 //   - Every tool result error counts as one failed attempt.
 //   - Retry hints may shape the next planner attempt, but they do not make the
+//
 // budgetedBatchOutcome classifies a step batch's budgeted (non-bookkeeping)
 // results for failure-streak accounting: progress reports at least one
 // budgeted success and failed reports at least one budgeted failure.
