@@ -378,6 +378,10 @@ func (m *testCatalogMap) Keys() []string {
 	return keys
 }
 
+func (m *testCatalogMap) AuthoritativeKeys(context.Context) ([]string, error) {
+	return m.Keys(), nil
+}
+
 func (m *testCatalogMap) Subscribe() <-chan rmap.EventKind {
 	if m.subscribe != nil {
 		return m.subscribe()
