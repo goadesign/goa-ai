@@ -450,7 +450,16 @@ func TestLiveRegistryRecoversOwnedStateLossSameName(t *testing.T) {
 	waitForRegistrationPing(t, events, first.RegistrationToken)
 
 	require.NoError(t, reg.registryMap.Destroy(ctx))
-	require.NoError(t, stream.Destroy(ctx))
+	// Simulate Redis losing the toolset stream's state (data, groups, and
+	// lifecycle) rather than an intentional Stream.Destroy: destruction leaves
+	// a terminal tombstone by contract, while genuine loss is what Pulse's
+	// genesis re-establishment and this registry's self-healing recover from.
+	streamKey := "pulse:stream:" + toolregistry.ToolsetStreamID(payload.Name)
+	require.NoError(t, rdb.Del(ctx,
+		streamKey,
+		streamKey+":lifecycle",
+		streamKey+":sink-recovery:1",
+	).Err())
 	recovered, err := reg.Service().Register(ctx, payload)
 	require.NoError(t, err)
 	assert.Equal(t, first.RegistrationToken, recovered.RegistrationToken)
