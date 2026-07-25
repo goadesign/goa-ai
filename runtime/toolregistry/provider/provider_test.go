@@ -1117,3 +1117,117 @@ func TestServe_PublishesOutputDeltaToResultStream(t *testing.T) {
 	case <-errc:
 	}
 }
+
+// TestServeEnsureLoopRepairsConsumerGroup verifies Serve keeps recreating the
+// toolset stream consumer group while serving, so a group Redis lost is
+// repaired without redeploying the provider.
+func TestServeEnsureLoopRepairsConsumerGroup(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	eventsCh := make(chan *streaming.Event)
+	sink := mockpulse.NewSink(t)
+	sink.SetSubscribe(func() <-chan *streaming.Event { return eventsCh })
+	sink.SetClose(func(_ context.Context) {})
+
+	var ensuredGroups atomic.Int64
+	toolsetStream := mockpulse.NewStream(t)
+	toolsetStream.SetNewSink(func(_ context.Context, _ string, _ ...streamopts.Sink) (pulse.Sink, error) {
+		return sink, nil
+	})
+	toolsetStream.SetEnsureGroup(func(_ context.Context, group string) error {
+		require.Equal(t, "provider", group)
+		ensuredGroups.Add(1)
+		return nil
+	})
+
+	client := mockpulse.NewClient(t)
+	client.SetStream(func(_ string, _ ...streamopts.Stream) (pulse.Stream, error) {
+		return toolsetStream, nil
+	})
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- Serve(ctx, client, "test.toolset", &blockingHandler{}, successfulRegistration(), Options{
+			ProviderID:     testProviderID,
+			Pong:           func(context.Context, string, string, string) error { return nil },
+			EnsureInterval: 10 * time.Millisecond,
+		})
+	}()
+
+	deadline := time.After(2 * time.Second)
+	for ensuredGroups.Load() < 2 {
+		select {
+		case err := <-errc:
+			t.Fatalf("Serve stopped early: %v", err)
+		case <-deadline:
+			t.Fatalf("ensure loop stalled: groups=%d", ensuredGroups.Load())
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	cancel()
+	select {
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve did not stop")
+	case <-errc:
+	}
+}
+
+// TestServeEnsureLoopFailuresDoNotStopProvider verifies ensure-loop errors
+// (Redis down) are retried on the next interval and never terminate Serve.
+func TestServeEnsureLoopFailuresDoNotStopProvider(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	eventsCh := make(chan *streaming.Event)
+	sink := mockpulse.NewSink(t)
+	sink.SetSubscribe(func() <-chan *streaming.Event { return eventsCh })
+	sink.SetClose(func(_ context.Context) {})
+
+	var attempts atomic.Int64
+	toolsetStream := mockpulse.NewStream(t)
+	toolsetStream.SetNewSink(func(_ context.Context, _ string, _ ...streamopts.Sink) (pulse.Sink, error) {
+		return sink, nil
+	})
+	toolsetStream.SetEnsureGroup(func(_ context.Context, _ string) error {
+		attempts.Add(1)
+		return errors.New("redis unavailable")
+	})
+
+	client := mockpulse.NewClient(t)
+	client.SetStream(func(_ string, _ ...streamopts.Stream) (pulse.Stream, error) {
+		return toolsetStream, nil
+	})
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- Serve(ctx, client, "test.toolset", &blockingHandler{}, successfulRegistration(), Options{
+			ProviderID:     testProviderID,
+			Pong:           func(context.Context, string, string, string) error { return nil },
+			EnsureInterval: 10 * time.Millisecond,
+		})
+	}()
+
+	deadline := time.After(2 * time.Second)
+	for attempts.Load() < 3 {
+		select {
+		case err := <-errc:
+			t.Fatalf("Serve stopped on ensure failure: %v", err)
+		case <-deadline:
+			t.Fatalf("ensure loop stalled after failures: attempts=%d", attempts.Load())
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	cancel()
+	select {
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve did not stop")
+	case <-errc:
+	}
+}

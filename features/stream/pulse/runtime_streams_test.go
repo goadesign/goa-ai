@@ -92,6 +92,8 @@ func (f *fakeStream) NewReader(context.Context, ...streamopts.Reader) (clientspu
 	return nil, nil
 }
 
+func (f *fakeStream) EnsureGroup(context.Context, string) error { return nil }
+
 func (f *fakeStream) Destroy(ctx context.Context) error {
 	return nil
 }

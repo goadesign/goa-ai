@@ -307,6 +307,13 @@ is an operational hard-cutover concern, not a compatibility mechanism. See
 admission identity, catalog-owned leases, token fencing, flat shared streams,
 server-owned handoff, and incompatible-admission non-overlap remain permanent.
 
+Health tracking and provider registration self-heal after Redis state loss.
+Ping scheduling uses expiring per-toolset Redis leases that the next scheduler
+tick re-acquires, the registry repairs its replicated-map revision counters so
+post-loss writes propagate to surviving nodes, and `toolprovider.Serve`
+periodically recreates its consumer group and re-asserts registration via the
+`EnsureRegistration` option, restoring the catalog entry without redeploys.
+
 ### Transcript Boundary
 
 - **Stateless model adapters**: Provider clients accept the full provider-ready

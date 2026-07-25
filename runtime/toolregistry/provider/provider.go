@@ -80,6 +80,16 @@ type (
 		// When 0, Serve defaults to a short value suitable for transient outages.
 		PongTimeout time.Duration
 
+		// EnsureInterval is how often Serve recreates the toolset stream
+		// consumer group if Redis lost it. Pulse sinks silently retry on
+		// missing groups, so without this repair a provider whose group was
+		// lost would never receive pings or tool calls again. Registration
+		// recovery needs no equivalent: the required Registration supervision
+		// re-registers on every lease renewal.
+		//
+		// When 0, defaults to 30 seconds.
+		EnsureInterval time.Duration
+
 		// MaxConcurrentToolCalls caps the number of tool calls executed
 		// concurrently by this provider (worker pool size).
 		//
@@ -203,6 +213,10 @@ func Serve(
 	if pongTimeout <= 0 {
 		pongTimeout = 2 * time.Second
 	}
+	ensureInterval := opts.EnsureInterval
+	if ensureInterval <= 0 {
+		ensureInterval = 30 * time.Second
+	}
 
 	maxConcurrent := opts.MaxConcurrentToolCalls
 	if maxConcurrent < 0 {
@@ -291,6 +305,12 @@ func Serve(
 		settleErrMu   sync.Mutex
 		settlementErr error
 	)
+
+	ensureDone := make(chan struct{})
+	go func() {
+		defer close(ensureDone)
+		runEnsureGroupLoop(cancelCtx, stream, sinkName, toolset, opts.ProviderID, ensureInterval, logger)
+	}()
 
 	type workItem struct {
 		ev  *streaming.Event
@@ -486,6 +506,7 @@ func Serve(
 		close(work)
 
 		registrationErr := waitForDone(shutdownCtx, registrationDone, "registration renewal")
+		ensureErr := waitForDone(shutdownCtx, ensureDone, "consumer-group ensure")
 		workerErr := waitForWorkers(shutdownCtx, workerDone, maxConcurrent)
 		if workerErr == nil {
 			close(acks)
@@ -498,7 +519,7 @@ func Serve(
 		recordedSettlementErr := settlementErr
 		settleErrMu.Unlock()
 
-		stopErr := errors.Join(closeErr, registrationErr, workerErr, ackDrainErr, recordedSettlementErr)
+		stopErr := errors.Join(closeErr, registrationErr, ensureErr, workerErr, ackDrainErr, recordedSettlementErr)
 		if stopErr != nil {
 			return errors.Join(runErr, stopErr)
 		}
@@ -741,5 +762,40 @@ func waitForDone(ctx context.Context, done <-chan struct{}, phase string) error 
 		return nil
 	case <-ctx.Done():
 		return fmt.Errorf("settle %s: %w", phase, ctx.Err())
+	}
+}
+
+// runEnsureGroupLoop periodically recreates the toolset stream consumer group
+// when Redis lost it, so the subscription created by Serve resumes receiving
+// pings and tool calls after Redis state loss. Registration re-assertion is
+// owned by the registration supervision loop; group repair is the only
+// concern left here. Failures are logged and retried on the next interval and
+// never terminate the provider.
+func runEnsureGroupLoop(
+	ctx context.Context,
+	stream pulseclients.Stream,
+	sinkName, toolset, providerID string,
+	interval time.Duration,
+	logger telemetry.Logger,
+) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := stream.EnsureGroup(ctx, sinkName); err != nil {
+				logger.Error(
+					ctx,
+					"ensure consumer group failed",
+					"component", "tool-registry-provider",
+					"toolset", toolset,
+					"provider_id", providerID,
+					"sink", sinkName,
+					"err", err,
+				)
+			}
+		}
 	}
 }

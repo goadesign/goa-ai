@@ -115,8 +115,9 @@ func TestHealthTrackerZeroLeaseReregistrationRejectsOldPong(t *testing.T) {
 	assert.True(t, health.Healthy)
 }
 
-func newDirectHealthTracker(ctx context.Context, catalog *toolsetCatalog) *healthTracker {
-	lifecycleCtx := context.WithoutCancel(ctx)
+func newDirectHealthTracker(_ context.Context, catalog *toolsetCatalog) *healthTracker {
+	closed := make(chan struct{})
+	close(closed)
 	return &healthTracker{
 		catalog:             catalog,
 		catalogMap:          catalog.m,
@@ -124,13 +125,10 @@ func newDirectHealthTracker(ctx context.Context, catalog *toolsetCatalog) *healt
 		missedPingThreshold: 1,
 		stalenessThreshold:  2 * time.Second,
 		logger:              telemetry.NewNoopLogger(),
-		lifecycleCtx:        lifecycleCtx,
-		lifecycleCancel:     func() {},
-		tickers:             make(map[string]healthTicker),
-		cancels:             make(map[string]context.CancelFunc),
-		tickerIdentities:    make(map[string]string),
-		nextRepair:          make(map[string]time.Time),
+		revFloors:           make(map[string]int64),
 		lastObservedHealthy: make(map[string]bool),
 		lastObservedPong:    make(map[string]int64),
+		closeCh:             make(chan struct{}),
+		doneCh:              closed,
 	}
 }

@@ -17,7 +17,7 @@
 // Nodes with the same name automatically:
 //
 //   - Share toolset registrations via replicated maps
-//   - Coordinate health check pings via distributed tickers (only one node pings at a time)
+//   - Coordinate health check pings via expiring Redis leases (only one node pings per interval)
 //   - Share provider health state across all nodes
 //
 // This enables horizontal scaling and high availability. Clients can connect
@@ -45,7 +45,6 @@ import (
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/toolregistry"
-	"goa.design/pulse/pool"
 	"goa.design/pulse/rmap"
 	"google.golang.org/grpc"
 )
@@ -58,7 +57,6 @@ type (
 		service       *Service
 		pulseClient   clientspulse.Client
 		registryMap   *rmap.Map
-		poolNode      *pool.Node
 		healthTracker HealthTracker
 		streamManager StreamManager
 		redis         *redis.Client
@@ -95,8 +93,6 @@ type (
 		// provider instance without renewal. Provider Serve derives its renewal
 		// schedule from this duration; the default is two minutes.
 		ProviderLeaseDuration time.Duration
-		// PoolNodeOptions are additional options for the Pulse pool node.
-		PoolNodeOptions []pool.NodeOption
 	}
 )
 
@@ -133,7 +129,7 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 	if name == "" {
 		name = "registry"
 	}
-	poolName := name
+
 	registryMapName := name + ":toolsets"
 
 	// Create Pulse client for stream operations.
@@ -149,17 +145,12 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 		return nil, fmt.Errorf("join registry map: %w", err)
 	}
 
-	// Create Pulse pool node for distributed tickers.
-	poolNode, err := pool.AddNode(ctx, poolName, cfg.Redis, cfg.PoolNodeOptions...)
-	if err != nil {
-		registryMap.Close()
-		return nil, fmt.Errorf("add pool node: %w", err)
-	}
-
 	// Create stream manager.
 	streamManager := NewStreamManager(pulseClient, cfg.Redis)
 
-	// Build health tracker options.
+	// Build health tracker options. The registry map name passed to the
+	// tracker scopes ping leases, isolating distinct registry clusters
+	// sharing one Redis database.
 	var healthOpts []HealthTrackerOption
 	if cfg.PingInterval > 0 {
 		healthOpts = append(healthOpts, WithPingInterval(cfg.PingInterval))
@@ -178,11 +169,10 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 	catalog := newToolsetCatalog(registryMap, clock)
 
 	// Create health tracker.
-	healthTracker, err := newHealthTracker(ctx, streamManager, catalog, poolNode, healthOpts...)
+	healthTracker, err := newHealthTracker(streamManager, catalog, cfg.Redis, registryMapName, healthOpts...)
 	if err != nil {
 		registryMap.Close()
-		closeErr := poolNode.Close(ctx)
-		return nil, errors.Join(fmt.Errorf("create health tracker: %w", err), closeErr)
+		return nil, fmt.Errorf("create health tracker: %w", err)
 	}
 
 	// Create the service.
@@ -198,15 +188,13 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 	if err != nil {
 		htCloseErr := healthTracker.Close()
 		registryMap.Close()
-		poolCloseErr := poolNode.Close(ctx)
-		return nil, errors.Join(fmt.Errorf("create service: %w", err), htCloseErr, poolCloseErr)
+		return nil, errors.Join(fmt.Errorf("create service: %w", err), htCloseErr)
 	}
 
 	return &Registry{
 		service:       service,
 		pulseClient:   pulseClient,
 		registryMap:   registryMap,
-		poolNode:      poolNode,
 		healthTracker: healthTracker,
 		streamManager: streamManager,
 		redis:         cfg.Redis,
@@ -228,17 +216,10 @@ func (r *Registry) Service() *Service {
 func (r *Registry) Close(ctx context.Context) error {
 	var errs []error
 
-	// Stop all ping loops via health tracker.
+	// Stop the ping scheduler via health tracker.
 	if r.healthTracker != nil {
 		if err := r.healthTracker.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("close health tracker: %w", err))
-		}
-	}
-
-	// Close Pulse pool node.
-	if r.poolNode != nil {
-		if err := r.poolNode.Close(ctx); err != nil {
-			errs = append(errs, fmt.Errorf("close pool node: %w", err))
 		}
 	}
 

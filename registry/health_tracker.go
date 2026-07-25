@@ -1,8 +1,15 @@
 // Package registry coordinates distributed health pings for catalog admissions.
 //
 // The catalog record atomically owns provider leases, membership epoch, and
-// last-pong time. This tracker owns only local participation in Pulse's
-// distributed ticker; it never caches or duplicates authoritative health.
+// last-pong time; this tracker never caches or duplicates authoritative
+// health. Ping scheduling is deliberately stateless in Redis: every registry
+// node runs one local scheduler and competes for a short-lived per-toolset
+// lease (SET NX PX), so exactly one node pings per interval and the next tick
+// simply re-acquires a lease Redis lost. This replaced Pulse distributed
+// tickers, whose replicated state could not be rebuilt after Redis lost it.
+// The scheduler also pins the catalog map's replicated revision counter above
+// the wall clock so surviving rmap replicas keep applying writes after Redis
+// state loss.
 package registry
 
 import (
@@ -15,36 +22,25 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
+
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/toolregistry"
-	"goa.design/pulse/pool"
-	"goa.design/pulse/rmap"
 )
 
 type (
-	// healthTicker abstracts one local distributed ticker participant.
-	healthTicker interface {
-		Channel() <-chan time.Time
-		Close()
-		Stop()
-	}
-
-	// poolHealthTicker adapts the production Pulse ticker.
-	poolHealthTicker struct {
-		ticker *pool.Ticker
-	}
-
-	healthTickerFactory func(ctx context.Context, name string, interval time.Duration) (healthTicker, error)
-
 	// HealthTracker coordinates pings and derives health from the catalog.
 	HealthTracker interface {
 		// Health returns authoritative health for one exact admission token.
 		Health(ctx context.Context, toolset, registrationToken string) (ToolsetHealth, error)
 		// RecordPong authenticates one exact provider incarnation and ping epoch.
 		RecordPong(ctx context.Context, toolset, providerID, incarnationID, pingID string) error
-		// EnsurePingLoop ensures this node participates in distributed pings.
+		// EnsurePingLoop validates that catalog-driven scheduling covers the
+		// toolset. Participation derives from the catalog, so the call is
+		// ensure-only and idempotent: renewals and re-registrations never
+		// restart or duplicate ping scheduling.
 		EnsurePingLoop(ctx context.Context, toolset string) error
-		// Close joins catalog watching and every local ping loop.
+		// Close joins the scheduler goroutine.
 		Close() error
 	}
 
@@ -70,27 +66,27 @@ type (
 		streamManager       StreamManager
 		catalog             *toolsetCatalog
 		catalogMap          catalogMap
-		newTicker           healthTickerFactory
+		redis               *redis.Client
+		nodeID              string
+		leaseScope          string
+		revisionHashKey     string
 		pingInterval        time.Duration
 		missedPingThreshold int
 		stalenessThreshold  time.Duration
 		logger              telemetry.Logger
-		lifecycleCtx        context.Context
-		lifecycleCancel     context.CancelFunc
 
-		mu               sync.Mutex
-		tickers          map[string]healthTicker
-		cancels          map[string]context.CancelFunc
-		tickerIdentities map[string]string
-		nextRepair       map[string]time.Time
-		closed           bool
+		// revFloors remembers the highest revision this node pinned or
+		// observed per replicated-map hash key; a Redis counter below the
+		// floor proves state loss.
+		revFloors map[string]int64
 
 		stateMu             sync.Mutex
 		lastObservedHealthy map[string]bool
 		lastObservedPong    map[string]int64
 
+		closeCh   chan struct{}
+		doneCh    chan struct{}
 		closeOnce sync.Once
-		wg        sync.WaitGroup
 	}
 )
 
@@ -99,7 +95,26 @@ const (
 	DefaultPingInterval = 10 * time.Second
 	// DefaultMissedPingThreshold is the tolerated number of missed pings.
 	DefaultMissedPingThreshold = 3
+
+	// revFloorSlack guards revision repair against a wall clock that stepped
+	// backwards between two pins: a repair target is never below the last
+	// established floor plus this slack.
+	revFloorSlack = 1 << 20
 )
+
+// revisionPinScript atomically raises a replicated map's "=rev" counter to
+// the target when the counter is lower, so concurrent repairs from several
+// registry replicas converge on the highest target instead of summing
+// increments.
+var revisionPinScript = redis.NewScript(`
+local rev = tonumber(redis.call("HGET", KEYS[1], "=rev") or "0")
+local target = tonumber(ARGV[1])
+if rev < target then
+    redis.call("HSET", KEYS[1], "=rev", target)
+    return {1, target}
+end
+return {0, rev}
+`)
 
 // WithPingInterval sets the ping interval.
 func WithPingInterval(duration time.Duration) HealthTrackerOption {
@@ -122,12 +137,14 @@ func WithHealthLogger(logger telemetry.Logger) HealthTrackerOption {
 	}
 }
 
-// newHealthTracker creates ticker coordination over the canonical catalog.
+// newHealthTracker creates lease-scheduled ping coordination over the
+// canonical catalog. registryMapName scopes the ping leases and identifies
+// the replicated map whose revision counter the scheduler keeps repaired.
 func newHealthTracker(
-	ctx context.Context,
 	streamManager StreamManager,
 	catalog *toolsetCatalog,
-	node *pool.Node,
+	rdb *redis.Client,
+	registryMapName string,
 	opts ...HealthTrackerOption,
 ) (HealthTracker, error) {
 	if streamManager == nil {
@@ -136,8 +153,11 @@ func newHealthTracker(
 	if catalog == nil {
 		return nil, fmt.Errorf("catalog is required")
 	}
-	if node == nil {
-		return nil, fmt.Errorf("pool node is required")
+	if rdb == nil {
+		return nil, fmt.Errorf("redis client is required")
+	}
+	if registryMapName == "" {
+		return nil, fmt.Errorf("registry map name is required")
 	}
 	options := healthTrackerOptions{
 		pingInterval:        DefaultPingInterval,
@@ -147,37 +167,25 @@ func newHealthTracker(
 	for _, option := range opts {
 		option(&options)
 	}
-	detachedCtx := context.WithoutCancel(ctx)
-	// #nosec G118 -- Close stores and invokes lifecycleCancel after stopping all tickers.
-	lifecycleCtx, lifecycleCancel := context.WithCancel(detachedCtx)
-	events := catalog.m.Subscribe()
 	tracker := &healthTracker{
-		streamManager: streamManager,
-		catalog:       catalog,
-		catalogMap:    catalog.m,
-		newTicker: func(ctx context.Context, name string, interval time.Duration) (healthTicker, error) {
-			ticker, err := node.NewTicker(ctx, name, interval)
-			if err != nil {
-				return nil, err
-			}
-			return &poolHealthTicker{ticker: ticker}, nil
-		},
+		streamManager:       streamManager,
+		catalog:             catalog,
+		catalogMap:          catalog.m,
+		redis:               rdb,
+		nodeID:              uuid.NewString(),
+		leaseScope:          registryMapName,
+		revisionHashKey:     "map:" + registryMapName + ":content",
 		pingInterval:        options.pingInterval,
 		missedPingThreshold: options.missedPingThreshold,
 		stalenessThreshold:  deriveStalenessThreshold(options.pingInterval, options.missedPingThreshold),
 		logger:              options.logger,
-		lifecycleCtx:        lifecycleCtx,
-		lifecycleCancel:     lifecycleCancel,
-		tickers:             make(map[string]healthTicker),
-		cancels:             make(map[string]context.CancelFunc),
-		tickerIdentities:    make(map[string]string),
-		nextRepair:          make(map[string]time.Time),
+		revFloors:           make(map[string]int64),
 		lastObservedHealthy: make(map[string]bool),
 		lastObservedPong:    make(map[string]int64),
+		closeCh:             make(chan struct{}),
+		doneCh:              make(chan struct{}),
 	}
-	tracker.wg.Add(1)
-	go tracker.watchCatalogChanges(events)
-	tracker.syncWithCatalog()
+	go tracker.run()
 	return tracker, nil
 }
 
@@ -231,176 +239,169 @@ func (h *healthTracker) Health(
 
 // EnsurePingLoop implements HealthTracker.
 func (h *healthTracker) EnsurePingLoop(ctx context.Context, toolset string) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.ensurePingLoopLocked(ctx, toolset)
-}
-
-// ensurePingLoopLocked repairs missing or stale local participation.
-func (h *healthTracker) ensurePingLoopLocked(ctx context.Context, toolset string) error {
-	if h.closed {
+	select {
+	case <-h.closeCh:
 		return fmt.Errorf("health tracker is closed")
+	default:
 	}
-	token, epoch, err := h.catalog.HealthIdentity(ctx, toolset)
-	if err != nil {
+	// Scheduling derives from catalog membership; validating the health
+	// identity is the entire ensure contract.
+	if _, _, err := h.catalog.HealthIdentity(ctx, toolset); err != nil {
 		return err
 	}
-	identity := pingIdentity(token, epoch)
-	if _, exists := h.tickers[toolset]; !exists {
-		return h.startLocalTickerLocked(toolset, identity)
-	}
-	if h.tickerIdentities[toolset] != identity {
-		return h.restartLocalTickerLocked(toolset, identity)
-	}
-	health, err := h.Health(ctx, toolset, token)
-	if err != nil {
-		return err
-	}
-	now := time.Now()
-	if health.Healthy {
-		h.nextRepair[toolset] = now.Add(2 * h.pingInterval)
-		return nil
-	}
-	if now.Before(h.nextRepair[toolset]) {
-		return nil
-	}
-	if err := h.restartLocalTickerLocked(toolset, identity); err != nil {
-		h.nextRepair[toolset] = now.Add(h.pingInterval)
-		return err
-	}
-	h.nextRepair[toolset] = now.Add(2 * h.pingInterval)
 	return nil
 }
 
-// restartLocalTickerLocked replaces one local ticker participant.
-func (h *healthTracker) restartLocalTickerLocked(toolset, identity string) error {
-	h.closeLocalTickerLocked(toolset, false)
-	return h.startLocalTickerLocked(toolset, identity)
-}
-
-// startLocalTickerLocked starts one local ping loop.
-func (h *healthTracker) startLocalTickerLocked(toolset, identity string) error {
-	loopCtx, cancel := context.WithCancel(h.lifecycleCtx)
-	ticker, err := h.newTicker(loopCtx, "registry:ping:"+toolset, h.pingInterval)
-	if err != nil {
-		cancel()
-		return fmt.Errorf("create distributed ticker: %w", err)
-	}
-	h.tickers[toolset] = ticker
-	h.cancels[toolset] = cancel
-	h.tickerIdentities[toolset] = identity
-	h.nextRepair[toolset] = time.Now().Add(2 * h.pingInterval)
-	h.wg.Add(1)
-	go h.runPingLoop(loopCtx, toolset, ticker)
+// Close implements HealthTracker.
+func (h *healthTracker) Close() error {
+	h.closeOnce.Do(func() {
+		close(h.closeCh)
+		<-h.doneCh
+	})
 	return nil
 }
 
-// closeLocalTickerLocked stops one local participant. Retirement intentionally
-// removes shared ticker state; replacement only closes this node's handle.
-func (h *healthTracker) closeLocalTickerLocked(toolset string, retire bool) {
-	if cancel, exists := h.cancels[toolset]; exists {
-		cancel()
-		delete(h.cancels, toolset)
-	}
-	if ticker, exists := h.tickers[toolset]; exists {
-		if retire {
-			ticker.Stop()
-		} else {
-			ticker.Close()
-		}
-		delete(h.tickers, toolset)
-	}
-	delete(h.tickerIdentities, toolset)
-	delete(h.nextRepair, toolset)
-}
+// run is the single ping scheduler goroutine. It samples the catalog at a
+// fraction of the ping interval so newly registered toolsets are picked up
+// promptly and lease expirations are re-contended with little slack.
+func (h *healthTracker) run() {
+	defer close(h.doneCh)
+	ticker := time.NewTicker(h.schedulerTickPeriod())
+	defer ticker.Stop()
 
-// watchCatalogChanges reconciles events and periodically repairs ticker state.
-func (h *healthTracker) watchCatalogChanges(events <-chan rmap.EventKind) {
-	defer h.wg.Done()
-	defer h.catalogMap.Unsubscribe(events)
-	repair := time.NewTicker(h.pingInterval)
-	defer repair.Stop()
 	for {
 		select {
-		case <-h.lifecycleCtx.Done():
+		case <-h.closeCh:
 			return
-		case _, open := <-events:
-			if !open {
-				h.catalogMap.Unsubscribe(events)
-				timer := time.NewTimer(h.pingInterval)
-				select {
-				case <-h.lifecycleCtx.Done():
-					timer.Stop()
-					return
-				case <-timer.C:
-				}
-				events = h.catalogMap.Subscribe()
-				continue
-			}
-			h.syncWithCatalog()
-		case <-repair.C:
-			h.syncWithCatalog()
+		case <-ticker.C:
+			h.repairMapRevisions(context.Background())
+			h.pingRegisteredToolsets()
 		}
 	}
 }
 
-// syncWithCatalog reconciles active admissions without treating transient reads
-// as retirement.
-func (h *healthTracker) syncWithCatalog() {
-	active := make(map[string]struct{})
-	authoritative := true
+// repairMapRevisions guards the catalog replicated map against Redis state
+// loss. Pulse rmap replicas apply an update only when its revision exceeds
+// their local revision, and a flushed hash restarts "=rev" at zero, so
+// without repair every replica that outlived the loss would silently drop
+// all subsequent catalog writes — registrations, provider leases, membership
+// epochs, and pongs all ride this one map. The scheduler keeps the map's
+// Redis counter pinned above the wall clock, which strictly dominates every
+// replica's local revision; replicated content then converges as periodic
+// writers (provider renewals, pongs) rewrite their keys.
+func (h *healthTracker) repairMapRevisions(ctx context.Context) {
+	if err := h.ensureMapRevision(ctx, h.revisionHashKey); err != nil {
+		h.logger.Error(
+			ctx,
+			"repair replicated map revision failed",
+			"event", "repair_map_revision_failed",
+			"component", "tool-registry-health",
+			"map", h.leaseScope,
+			"err", err,
+		)
+	}
+}
+
+// ensureMapRevision pins one replicated map's Redis revision counter above
+// the wall clock in milliseconds so replica-local revisions can never
+// outrank it. Revisions advance at most one per committed write while the
+// clock advances around a millisecond per write or faster, so a counter
+// seeded from time.Now().UnixMilli() strictly dominates every replica's
+// local revision — including revisions committed between two scheduler
+// ticks, which no sampling scheme can observe. On the first pass the counter
+// is silently raised to the current clock (genesis); afterwards a counter
+// below the established floor proves Redis lost the map, and the repair
+// re-pins it so post-loss writes propagate to all replicas again.
+//
+// Two contracts pin this to the goa.design/pulse version in go.mod: the hash
+// key and "=rev" field name (rmap does not expose its revision counter), and
+// the millisecond resolution — rmap's Lua scripts format revisions with
+// Lua's %.14g tostring, so counters must stay far below 1e14, which rules
+// out micro- or nanosecond clocks.
+func (h *healthTracker) ensureMapRevision(ctx context.Context, hashKey string) error {
+	rev, err := h.redis.HGet(ctx, hashKey, "=rev").Int64()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return fmt.Errorf("read revision of %q: %w", hashKey, err)
+	}
+	floor := h.revFloors[hashKey]
+	if floor > 0 && rev >= floor {
+		return nil
+	}
+	target := max(time.Now().UnixMilli(), floor+revFloorSlack)
+	res, err := revisionPinScript.Run(ctx, h.redis, []string{hashKey}, target).Int64Slice()
+	if err != nil {
+		return fmt.Errorf("pin revision of %q: %w", hashKey, err)
+	}
+	if len(res) != 2 {
+		return fmt.Errorf("pin revision of %q: unexpected script reply %v", hashKey, res)
+	}
+	raised, final := res[0] == 1, res[1]
+	h.revFloors[hashKey] = final
+	if !raised || floor == 0 {
+		return nil
+	}
+	h.logger.Warn(
+		ctx,
+		"repaired replicated map revision after Redis state loss",
+		"event", "repaired_map_revision",
+		"component", "tool-registry-health",
+		"map", h.leaseScope,
+		"redis_revision", rev,
+		"restored_revision", final,
+	)
+	return nil
+}
+
+// pingRegisteredToolsets enumerates catalog-registered toolsets and, for each
+// lease this node wins, observes health and publishes one ping. Losing the
+// lease means another node (or a previous tick) already owns the current
+// ping interval.
+func (h *healthTracker) pingRegisteredToolsets() {
+	ctx := context.Background()
 	for _, key := range h.catalogMap.Keys() {
 		toolset := toolsetFromCatalogKey(key)
 		if toolset == "" {
 			continue
 		}
-		raw, exists, err := h.catalog.exactRaw(h.lifecycleCtx, key)
+		acquired, err := h.acquirePingLease(ctx, toolset)
 		if err != nil {
-			h.logger.Error(h.lifecycleCtx, "read catalog entry failed", "toolset", toolset, "err", err)
-			authoritative = false
+			h.logger.Error(
+				ctx,
+				"acquire ping lease failed",
+				"event", "acquire_ping_lease_failed",
+				"component", "tool-registry-health",
+				"toolset", toolset,
+				"err", err,
+			)
 			continue
 		}
-		if !exists {
+		if !acquired {
 			continue
 		}
-		entry, err := parseCatalogEntry(toolset, raw)
-		if err != nil {
-			h.logger.Error(h.lifecycleCtx, "parse catalog entry failed", "toolset", toolset, "err", err)
-			authoritative = false
-			continue
-		}
-		if entry.State == catalogEntryActive {
-			active[toolset] = struct{}{}
-		}
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for toolset := range active {
-		if err := h.ensurePingLoopLocked(h.lifecycleCtx, toolset); err != nil {
-			h.logger.Error(h.lifecycleCtx, "ensure ticker failed", "toolset", toolset, "err", err)
-		}
-	}
-	if authoritative {
-		for toolset := range h.tickers {
-			if _, exists := active[toolset]; !exists {
-				h.closeLocalTickerLocked(toolset, true)
-			}
-		}
+		h.observeHealth(ctx, toolset)
+		h.sendPing(ctx, toolset)
 	}
 }
 
-// runPingLoop publishes pings when this pool node wins a distributed tick.
-func (h *healthTracker) runPingLoop(ctx context.Context, toolset string, ticker healthTicker) {
-	defer h.wg.Done()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.Channel():
-			h.observeHealth(ctx, toolset)
-			h.sendPing(ctx, toolset)
-		}
-	}
+// acquirePingLease attempts to win the current ping interval for a toolset.
+// The lease is a plain Redis key with the ping interval as TTL: exactly one
+// node acquires it per interval, and after Redis state loss the next attempt
+// recreates it, which is what makes ping scheduling self-healing.
+func (h *healthTracker) acquirePingLease(ctx context.Context, toolset string) (bool, error) {
+	return h.redis.SetNX(ctx, h.pingLeaseKey(toolset), h.nodeID, h.pingInterval).Result()
+}
+
+// pingLeaseKey returns the Redis key electing the pinging node for a toolset.
+func (h *healthTracker) pingLeaseKey(toolset string) string {
+	return h.leaseScope + ":ping-lease:" + toolset
+}
+
+// schedulerTickPeriod returns how often the scheduler samples the catalog and
+// contends for expired leases. A quarter of the ping interval keeps the ping
+// cadence within [pingInterval, pingInterval*5/4) without meaningful Redis
+// load.
+func (h *healthTracker) schedulerTickPeriod() time.Duration {
+	return max(h.pingInterval/4, time.Millisecond)
 }
 
 // sendPing publishes one token-and-epoch-fenced ping.
@@ -459,27 +460,12 @@ func (h *healthTracker) noteHealth(ctx context.Context, toolset string, health T
 	}
 }
 
-// Close implements HealthTracker.
-func (h *healthTracker) Close() error {
-	h.closeOnce.Do(func() {
-		h.lifecycleCancel()
-		h.mu.Lock()
-		h.closed = true
-		for toolset := range h.tickers {
-			h.closeLocalTickerLocked(toolset, false)
-		}
-		h.mu.Unlock()
-		h.wg.Wait()
-	})
-	return nil
-}
-
 // deriveStalenessThreshold defines the shared-pong freshness window.
 func deriveStalenessThreshold(interval time.Duration, missed int) time.Duration {
 	return time.Duration(missed+1) * interval
 }
 
-// pingIdentity binds a ticker participant to one token and membership epoch.
+// pingIdentity binds a ping to one token and membership epoch.
 func pingIdentity(token string, epoch uint64) string {
 	return token + "/" + strconv.FormatUint(epoch, 10)
 }
@@ -514,19 +500,4 @@ func toolsetFromCatalogKey(key string) string {
 		return ""
 	}
 	return strings.TrimPrefix(key, toolsetCatalogKeyPrefix)
-}
-
-// Channel returns the production ticker channel.
-func (ticker *poolHealthTicker) Channel() <-chan time.Time {
-	return ticker.ticker.C
-}
-
-// Close stops only local participation.
-func (ticker *poolHealthTicker) Close() {
-	ticker.ticker.Close()
-}
-
-// Stop removes shared participation during retirement.
-func (ticker *poolHealthTicker) Stop() {
-	ticker.ticker.Stop()
 }

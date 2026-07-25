@@ -992,6 +992,8 @@ func (s *fakeStream) NewReader(ctx context.Context, opts ...streamopts.Reader) (
 	return &fakeReader{events: s.events}, nil
 }
 
+func (s *fakeStream) EnsureGroup(context.Context, string) error { return nil }
+
 func (s *fakeStream) Destroy(ctx context.Context) error {
 	s.destroyed = true
 	return nil

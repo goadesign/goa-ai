@@ -30,10 +30,11 @@ type (
 		t *testing.T
 	}
 
-	StreamAddFunc       func(ctx context.Context, event string, payload []byte) (string, error)
-	StreamNewSinkFunc   func(ctx context.Context, name string, opts ...options.Sink) (pulse.Sink, error)
-	StreamNewReaderFunc func(ctx context.Context, opts ...options.Reader) (pulse.Reader, error)
-	StreamDestroyFunc   func(ctx context.Context) error
+	StreamAddFunc         func(ctx context.Context, event string, payload []byte) (string, error)
+	StreamNewSinkFunc     func(ctx context.Context, name string, opts ...options.Sink) (pulse.Sink, error)
+	StreamNewReaderFunc   func(ctx context.Context, opts ...options.Reader) (pulse.Reader, error)
+	StreamEnsureGroupFunc func(ctx context.Context, group string) error
+	StreamDestroyFunc     func(ctx context.Context) error
 
 	Sink struct {
 		m *mock.Mock
@@ -156,6 +157,23 @@ func (m *Stream) NewReader(ctx context.Context, opts ...options.Reader) (pulse.R
 	m.t.Helper()
 	m.t.Error("unexpected NewReader call")
 	return nil, nil
+}
+
+func (m *Stream) AddEnsureGroup(f StreamEnsureGroupFunc) {
+	m.m.Add("EnsureGroup", f)
+}
+
+func (m *Stream) SetEnsureGroup(f StreamEnsureGroupFunc) {
+	m.m.Set("EnsureGroup", f)
+}
+
+func (m *Stream) EnsureGroup(ctx context.Context, group string) error {
+	if f := m.m.Next("EnsureGroup"); f != nil {
+		return f.(StreamEnsureGroupFunc)(ctx, group)
+	}
+	m.t.Helper()
+	m.t.Error("unexpected EnsureGroup call")
+	return nil
 }
 
 func (m *Stream) AddDestroy(f StreamDestroyFunc) {

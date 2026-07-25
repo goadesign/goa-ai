@@ -22,7 +22,6 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/toolregistry"
-	"goa.design/pulse/pool"
 	"goa.design/pulse/rmap"
 	"goa.design/pulse/streaming"
 	streamopts "goa.design/pulse/streaming/options"
@@ -426,7 +425,6 @@ func TestLiveRegistryRecoversOwnedStateLossSameName(t *testing.T) {
 		Name:                registryName,
 		PingInterval:        30 * time.Millisecond,
 		MissedPingThreshold: 1,
-		PoolNodeOptions:     testNodeOpts(),
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reg.Close(ctx)) })
@@ -451,10 +449,6 @@ func TestLiveRegistryRecoversOwnedStateLossSameName(t *testing.T) {
 	events := sink.Subscribe()
 	waitForRegistrationPing(t, events, first.RegistrationToken)
 
-	tracker := reg.healthTracker.(*healthTracker)
-	tracker.mu.Lock()
-	tracker.closeLocalTickerLocked(payload.Name, false)
-	tracker.mu.Unlock()
 	require.NoError(t, reg.registryMap.Destroy(ctx))
 	require.NoError(t, stream.Destroy(ctx))
 	recovered, err := reg.Service().Register(ctx, payload)
@@ -497,13 +491,4 @@ func getRedis(t *testing.T) *redis.Client {
 	t.Helper()
 	require.NoError(t, testRedisClient.FlushDB(context.Background()).Err())
 	return testRedisClient
-}
-
-func testNodeOpts() []pool.NodeOption {
-	return []pool.NodeOption{
-		pool.WithWorkerTTL(time.Second),
-		pool.WithAckGracePeriod(200 * time.Millisecond),
-		pool.WithWorkerShutdownTTL(2 * time.Second),
-		pool.WithJobSinkBlockDuration(100 * time.Millisecond),
-	}
 }
