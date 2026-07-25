@@ -36,11 +36,15 @@ func TestProviderRecoversAfterRedisStateLoss(t *testing.T) {
 	defer cancel()
 
 	registryName := fmt.Sprintf("recovery-e2e-%d", time.Now().UnixNano())
+	// The minimum provider lease makes registration renewal — the mechanism
+	// that restores the catalog record after state loss — fire every
+	// leaseDuration/3, bounding recovery time for this test.
 	reg, err := New(ctx, Config{
-		Redis:               rdb,
-		Name:                registryName,
-		PingInterval:        50 * time.Millisecond,
-		MissedPingThreshold: 2,
+		Redis:                 rdb,
+		Name:                  registryName,
+		PingInterval:          50 * time.Millisecond,
+		MissedPingThreshold:   2,
+		ProviderLeaseDuration: toolregistry.MinProviderLeaseDuration,
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reg.Close(context.Background())) })
@@ -115,10 +119,14 @@ func TestProviderRecoversAfterRedisStateLoss(t *testing.T) {
 	// registration supervision restores the catalog entry with the same
 	// token, and the ensure loop recreates the consumer group. New pongs
 	// prove the full loop is live again.
+	// Recovery is bounded by one registration renewal period (lease/3 = 15s
+	// at the minimum lease): the renewal restores the catalog record, the
+	// next scheduler tick re-acquires the ping lease, and the ensure loop has
+	// already recreated the consumer group.
 	pongsBeforeRecovery := pongs.Load()
-	require.Eventually(t, func() bool { return pongs.Load() >= pongsBeforeRecovery+2 }, 15*time.Second, 20*time.Millisecond,
+	require.Eventually(t, func() bool { return pongs.Load() >= pongsBeforeRecovery+2 }, 30*time.Second, 20*time.Millisecond,
 		"provider should pong post-flush pings after consumer group repair")
-	require.Eventually(t, healthy, 15*time.Second, 20*time.Millisecond,
+	require.Eventually(t, healthy, 30*time.Second, 20*time.Millisecond,
 		"toolset should be healthy again after recovery")
 
 	// Recovery must repair durable catalog state under the SAME map name: a

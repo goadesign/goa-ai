@@ -1,7 +1,8 @@
-// Bounded toolset-stream publication. The toolset request stream is the call
-// queue, so its backlog bound is enforced at the XADD linearization point:
-// counting queued work and appending are one Redis operation, which is the
-// only way an admitted call can never be silently trimmed away.
+// Package registry implements bounded toolset-stream publication. The toolset
+// request stream is the call queue, so its backlog bound is enforced at the
+// XADD linearization point: counting queued work and appending are one Redis
+// operation, which is the only way an admitted call can never be silently
+// trimmed away.
 //
 // This file intentionally pins two Pulse internals, mirroring the documented
 // rmap pins: the stream data key ("pulse:stream:" + name) and the event field
