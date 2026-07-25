@@ -157,7 +157,7 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 	}
 
 	// Create stream manager.
-	streamManager := NewStreamManager(pulseClient)
+	streamManager := NewStreamManager(pulseClient, cfg.Redis)
 
 	// Build health tracker options.
 	var healthOpts []HealthTrackerOption

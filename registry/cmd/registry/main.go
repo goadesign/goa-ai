@@ -60,6 +60,8 @@ func run() error {
 	redisPassword := os.Getenv("REDIS_PASSWORD")
 	pingInterval := envDurationOr("PING_INTERVAL", 10*time.Second)
 	missedPingThreshold := envIntOr("MISSED_PING_THRESHOLD", 3)
+	resultStreamTTL := envDurationOr("RESULT_STREAM_TTL", 0)
+	providerLeaseDuration := envDurationOr("PROVIDER_LEASE_DURATION", 0)
 
 	// Connect to Redis.
 	rdb := redis.NewClient(&redis.Options{
@@ -79,10 +81,12 @@ func run() error {
 
 	// Create the registry.
 	reg, err := registry.New(ctx, registry.Config{
-		Redis:               rdb,
-		Name:                name,
-		PingInterval:        pingInterval,
-		MissedPingThreshold: missedPingThreshold,
+		Redis:                 rdb,
+		Name:                  name,
+		PingInterval:          pingInterval,
+		MissedPingThreshold:   missedPingThreshold,
+		ResultStreamTTL:       resultStreamTTL,
+		ProviderLeaseDuration: providerLeaseDuration,
 	})
 	if err != nil {
 		return fmt.Errorf("create registry: %w", err)
